@@ -1,34 +1,30 @@
 import { test, expect, type Page } from "@playwright/test";
 import { loginAsDefault, waitForPageText } from "./helpers";
-import { DEFAULT_TRAINING_ROUTE, TRAINING_ROUTES, trainingRoutePath, trainingRouteURLPath } from "./training-routes";
+import { TRAINING_ROUTES, trainingRouteURLPath } from "./training-routes";
 
 const ROUTE_CHANGE_TIMEOUT = 30000;
-const ROUTE_INTRO_TITLES: Record<string, string> = {
-  datasets: "数据集题库",
-  "test-suites": "测试套件回归",
-  "evaluation-runs": "评测记录与证据",
-};
-const ROUTE_OPERATING_TEXT: Record<string, string> = {
-  datasets: "样本入库、版本快照、下游复用",
-  "test-suites": "固定试卷、断言回归、失败定位",
-  "evaluation-runs": "运行检索、证据展开、人工复核",
-};
 
 async function expectTrainingPageShell(page: Page, item: (typeof TRAINING_ROUTES)[number]) {
-  const routeIntroTitle = ROUTE_INTRO_TITLES[item.path];
-  const hasRouteIntro = Boolean(routeIntroTitle);
+  if (item.pageKind === "agent-playground") {
+    await expect(page.getByTestId("training-page-shell")).toHaveCount(0);
+    await expect(page.getByText("Agent 调试场", { exact: true }).first()).toBeVisible();
+    return;
+  }
+  const hasRouteIntro = item.introRoute !== null;
+  const introRoute = item.introRoute ?? item.path;
+  const panelRoute = item.panelRoute ?? item.path;
   await expect(page.getByTestId("training-page-shell")).toHaveCount(1);
   await expect(page.getByTestId("training-tab-strip")).toHaveCount(0);
   await expect(page.getByTestId(`training-route-${item.path}`)).toHaveCount(1);
-  await expect(page.getByTestId(`training-route-intro-${item.path}`)).toHaveCount(hasRouteIntro ? 1 : 0);
-  await expect(page.getByTestId(`training-route-panel-${item.path}`)).toHaveCount(hasRouteIntro ? 1 : 0);
-  await expect(page.getByTestId(`training-route-operating-model-${item.path}`)).toHaveCount(hasRouteIntro ? 1 : 0);
-  if (routeIntroTitle) {
-    await expect(page.getByTestId(`training-route-intro-${item.path}`)).toContainText(routeIntroTitle);
-    await expect(page.getByTestId(`training-route-operating-model-${item.path}`)).toContainText(ROUTE_OPERATING_TEXT[item.path]!);
-    await expect(page.getByTestId(`training-route-operating-step-${item.path}-1`)).toBeVisible();
-    await expect(page.getByTestId(`training-route-operating-step-${item.path}-2`)).toBeVisible();
-    await expect(page.getByTestId(`training-route-operating-step-${item.path}-3`)).toBeVisible();
+  await expect(page.getByTestId(`training-route-intro-${introRoute}`)).toHaveCount(hasRouteIntro ? 1 : 0);
+  await expect(page.getByTestId(`training-route-panel-${panelRoute}`)).toHaveCount(hasRouteIntro ? 1 : 0);
+  await expect(page.getByTestId(`training-route-operating-model-${introRoute}`)).toHaveCount(hasRouteIntro ? 1 : 0);
+  if (item.introTitle && item.operatingText) {
+    await expect(page.getByTestId(`training-route-intro-${introRoute}`)).toContainText(item.introTitle);
+    await expect(page.getByTestId(`training-route-operating-model-${introRoute}`)).toContainText(item.operatingText);
+    await expect(page.getByTestId(`training-route-operating-step-${introRoute}-1`)).toBeVisible();
+    await expect(page.getByTestId(`training-route-operating-step-${introRoute}-2`)).toBeVisible();
+    await expect(page.getByTestId(`training-route-operating-step-${introRoute}-3`)).toBeVisible();
   }
 }
 
@@ -36,10 +32,6 @@ async function expectTrainingNavigationMarker(page: Page, item: (typeof TRAINING
   const link = page.getByRole("link", { name: item.nav, exact: true }).first();
   await expect(link).toBeVisible();
   await expect(link).toHaveAttribute("href", new RegExp(`/${trainingRouteURLPath(item.path)}$`));
-}
-
-function expectsTrainingSummaryStrip(item: (typeof TRAINING_ROUTES)[number]) {
-  return false;
 }
 
 test.describe("Navigation", () => {
@@ -87,39 +79,26 @@ test.describe("Navigation", () => {
       await expectTrainingPageShell(page, item);
       await expectTrainingNavigationMarker(page, item);
       await expect(page.getByTestId("prompt-library-editor")).toHaveCount(item.showPromptEditor ? 1 : 0);
+      await expect(page.getByTestId("case-library-editor")).toHaveCount(item.showCaseLibrary ? 1 : 0);
       if (!item.showPromptEditor) {
         await expect(page.getByTestId("prompt-version-history")).toHaveCount(0);
       }
-      await expect(page.getByTestId("prompt-playground-workbench")).toHaveCount(item.showPromptPlayground ? 1 : 0);
-      await expect(page.getByTestId("agent-playground-workbench")).toHaveCount(item.showAgentWorkbench ? 1 : 0);
-      await expect(page.getByTestId("prompt-playground-selector-summary")).toHaveCount(item.showPromptPlayground ? 1 : 0);
-      await expect(page.getByTestId("agent-playground-selector-summary")).toHaveCount(item.showAgentWorkbench ? 1 : 0);
-      await expect(page.getByTestId("prompt-template-actions")).toHaveCount(item.path === "prompts" ? 1 : 0);
-      await expect(page.getByRole("button", { name: "起草需求澄清模板" })).toHaveCount(item.path === "prompts" ? 1 : 0);
-      await expect(page.getByRole("button", { name: "创建 user-center 需求澄清提示词" })).toHaveCount(0);
-      await expect(page.getByTestId("training-summary-strip")).toHaveCount(expectsTrainingSummaryStrip(item) ? 1 : 0);
     }
   });
 
   test("sidebar opens every training submodule", async ({ page }) => {
-    await page.getByRole("link", { name: "训练与评估" }).click();
-    await expect(page).toHaveURL(new RegExp(`/${trainingRouteURLPath(DEFAULT_TRAINING_ROUTE.path)}$`), { timeout: ROUTE_CHANGE_TIMEOUT });
-    await waitForPageText(page, DEFAULT_TRAINING_ROUTE.text);
-
     for (const item of TRAINING_ROUTES) {
+      await page.getByRole("link", { name: item.section, exact: true }).click();
       await page.locator('[data-sidebar="menu-button"]').filter({ hasText: item.nav }).first().click();
       await expect(page).toHaveURL(new RegExp(`/${trainingRouteURLPath(item.path)}$`), { timeout: ROUTE_CHANGE_TIMEOUT });
       await waitForPageText(page, item.text);
       await expectTrainingPageShell(page, item);
       await expectTrainingNavigationMarker(page, item);
       await expect(page.getByTestId("prompt-library-editor")).toHaveCount(item.showPromptEditor ? 1 : 0);
+      await expect(page.getByTestId("case-library-editor")).toHaveCount(item.showCaseLibrary ? 1 : 0);
       if (!item.showPromptEditor) {
         await expect(page.getByTestId("prompt-version-history")).toHaveCount(0);
       }
-      await expect(page.getByTestId("prompt-playground-workbench")).toHaveCount(item.showPromptPlayground ? 1 : 0);
-      await expect(page.getByTestId("agent-playground-workbench")).toHaveCount(item.showAgentWorkbench ? 1 : 0);
-      await expect(page.getByTestId("prompt-playground-selector-summary")).toHaveCount(item.showPromptPlayground ? 1 : 0);
-      await expect(page.getByTestId("agent-playground-selector-summary")).toHaveCount(item.showAgentWorkbench ? 1 : 0);
     }
   });
 

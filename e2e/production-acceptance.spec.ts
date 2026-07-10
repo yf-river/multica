@@ -18,16 +18,6 @@ const frontendURL = process.env.ACCEPTANCE_FRONTEND_URL
 const workspaceName = process.env.E2E_WORKSPACE_NAME || "AI Studio 工作区";
 const RUN_PRODUCTION_ACCEPTANCE = process.env.RUN_PRODUCTION_ACCEPTANCE === "1";
 const evidencePrefix = "生产验收训练证据";
-const ROUTE_INTRO_TITLES: Record<string, string> = {
-  datasets: "数据集题库",
-  "test-suites": "测试套件回归",
-  "evaluation-runs": "评测记录",
-};
-const ROUTE_OPERATING_TEXT: Record<string, string> = {
-  datasets: "样本入库、版本快照、下游复用",
-  "test-suites": "固定试卷、断言回归、失败定位",
-  "evaluation-runs": "运行检索、证据展开、人工复核",
-};
 const routeByPath = (path: (typeof TRAINING_ROUTES)[number]["path"]) => {
   const route = TRAINING_ROUTES.find((item) => item.path === path);
   if (!route) throw new Error(`missing training route fixture: ${path}`);
@@ -138,28 +128,25 @@ async function prepareTrainingDashboardEvidence() {
 }
 
 async function expectTrainingRouteShell(page: Page, route: (typeof TRAINING_ROUTES)[number]) {
-  const routeIntroTitle = ROUTE_INTRO_TITLES[route.path];
-  const hasRouteIntro = Boolean(routeIntroTitle);
+  const hasRouteIntro = route.introRoute !== null;
+  const introRoute = route.introRoute ?? route.path;
+  const panelRoute = route.panelRoute ?? route.path;
   await expect(page.getByTestId("training-page-shell")).toHaveCount(1);
   await expect(page.getByTestId("training-tab-strip")).toHaveCount(0);
   await expect(page.getByTestId(`training-route-${route.path}`)).toHaveCount(1);
-  await expect(page.getByTestId(`training-route-intro-${route.path}`)).toHaveCount(hasRouteIntro ? 1 : 0);
-  await expect(page.getByTestId(`training-route-panel-${route.path}`)).toHaveCount(hasRouteIntro ? 1 : 0);
-  await expect(page.getByTestId(`training-route-operating-model-${route.path}`)).toHaveCount(hasRouteIntro ? 1 : 0);
-  if (routeIntroTitle) {
-    await expect(page.getByTestId(`training-route-intro-${route.path}`)).toContainText(routeIntroTitle);
-    await expect(page.getByTestId(`training-route-operating-model-${route.path}`)).toContainText(ROUTE_OPERATING_TEXT[route.path]!);
-    await expect(page.getByTestId(`training-route-operating-step-${route.path}-1`)).toBeVisible();
-    await expect(page.getByTestId(`training-route-operating-step-${route.path}-2`)).toBeVisible();
-    await expect(page.getByTestId(`training-route-operating-step-${route.path}-3`)).toBeVisible();
+  await expect(page.getByTestId(`training-route-intro-${introRoute}`)).toHaveCount(hasRouteIntro ? 1 : 0);
+  await expect(page.getByTestId(`training-route-panel-${panelRoute}`)).toHaveCount(hasRouteIntro ? 1 : 0);
+  await expect(page.getByTestId(`training-route-operating-model-${introRoute}`)).toHaveCount(hasRouteIntro ? 1 : 0);
+  if (route.introTitle && route.operatingText) {
+    await expect(page.getByTestId(`training-route-intro-${introRoute}`)).toContainText(route.introTitle);
+    await expect(page.getByTestId(`training-route-operating-model-${introRoute}`)).toContainText(route.operatingText);
+    await expect(page.getByTestId(`training-route-operating-step-${introRoute}-1`)).toBeVisible();
+    await expect(page.getByTestId(`training-route-operating-step-${introRoute}-2`)).toBeVisible();
+    await expect(page.getByTestId(`training-route-operating-step-${introRoute}-3`)).toBeVisible();
   }
   await expect(page.getByTestId("prompt-library-editor")).toHaveCount(route.showPromptEditor ? 1 : 0);
+  await expect(page.getByTestId("case-library-editor")).toHaveCount(route.showCaseLibrary ? 1 : 0);
   await expect(page.getByTestId("prompt-version-history")).toHaveCount(route.showPromptEditor ? 1 : 0);
-  await expect(page.getByTestId("prompt-playground-workbench")).toHaveCount(route.showPromptPlayground ? 1 : 0);
-  await expect(page.getByTestId("agent-playground-workbench")).toHaveCount(route.showAgentWorkbench ? 1 : 0);
-  await expect(page.getByTestId("prompt-template-actions")).toHaveCount(route.path === "prompts" ? 1 : 0);
-  await expect(page.getByRole("button", { name: "起草需求澄清模板" })).toHaveCount(route.path === "prompts" ? 1 : 0);
-  await expect(page.getByRole("button", { name: "创建 user-center 需求澄清提示词" })).toHaveCount(0);
 }
 
 async function expectTrainingRouteSurvivesReload(page: Page, route: (typeof TRAINING_ROUTES)[number]) {

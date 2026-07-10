@@ -20,6 +20,14 @@ interface TestWorkspace {
   repos?: Array<Record<string, unknown>>;
 }
 
+interface TestWorkspaceMember {
+  id: string;
+  user_id: string;
+  account: string;
+  name: string;
+  role: string;
+}
+
 interface PromptLibraryItem {
   id: string;
   name: string;
@@ -1055,6 +1063,23 @@ export class TestApiClient {
       throw new Error(`update workspace failed: ${res.status} ${await res.text()}`);
     }
     return res.json();
+  }
+
+  async listWorkspaceMembers(workspaceId: string): Promise<TestWorkspaceMember[]> {
+    const res = await this.authedFetch(`/api/workspaces/${workspaceId}/members`);
+    if (!res.ok) {
+      throw new Error(`list workspace members failed: ${res.status} ${await res.text()}`);
+    }
+    return res.json();
+  }
+
+  async deleteWorkspaceMember(workspaceId: string, memberId: string): Promise<void> {
+    const res = await this.authedFetch(`/api/workspaces/${workspaceId}/members/${memberId}`, {
+      method: "DELETE",
+    });
+    if (!res.ok && res.status !== 404) {
+      throw new Error(`delete workspace member failed: ${res.status} ${await res.text()}`);
+    }
   }
 
   async deleteProject(id: string) {
