@@ -206,6 +206,7 @@ function RunReviewSummaryCard({
   terminalTasks: AgentTask[];
   traceEvents: TaskTraceEvent[];
 }) {
+  const { t } = useT("issues");
   const paths = useWorkspacePaths();
   const runReviewHref = `${paths.runReviews()}?issue=${encodeURIComponent(issueId)}`;
   const summary = tree?.issue_summary;
@@ -223,13 +224,33 @@ function RunReviewSummaryCard({
     <div className="rounded-md border border-info/30 bg-info/5 px-2 py-2 text-xs" data-testid="issue-run-review-summary-card">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
-          <div className="font-medium text-foreground">运行复盘</div>
+          <div className="font-medium text-foreground">
+            {t(($) => $.execution_log.review_title)}
+          </div>
           <div className="mt-1 grid gap-x-3 gap-y-0.5 text-[11px] leading-5 text-muted-foreground sm:grid-cols-2">
-            <span className="truncate">验收：{summary?.acceptance_status ?? deriveAcceptanceStatus(terminalTasks)}</span>
-            <span className="truncate">总耗时：{formatNullableMilliseconds(summary?.total_duration_ms)}</span>
-            <span className="truncate">任务数：{taskCount}</span>
-            <span className="truncate">异常数：{anomalyCount}</span>
-            <span className="truncate sm:col-span-2">Token：{tokenTotal > 0 ? tokenTotal.toLocaleString() : "未记录"}</span>
+            <span className="truncate">
+              {t(($) => $.execution_log.review_acceptance, {
+                value: summary?.acceptance_status ?? deriveAcceptanceStatus(terminalTasks),
+              })}
+            </span>
+            <span className="truncate">
+              {t(($) => $.execution_log.review_duration, {
+                value: formatNullableMilliseconds(summary?.total_duration_ms),
+              })}
+            </span>
+            <span className="truncate">
+              {t(($) => $.execution_log.review_task_count, { count: taskCount })}
+            </span>
+            <span className="truncate">
+              {t(($) => $.execution_log.review_anomaly_count, { count: anomalyCount })}
+            </span>
+            <span className="truncate sm:col-span-2">
+              {t(($) => $.execution_log.review_tokens, {
+                value: tokenTotal > 0
+                  ? tokenTotal.toLocaleString()
+                  : t(($) => $.execution_log.not_recorded),
+              })}
+            </span>
           </div>
           {failureSummary && (
             <div className="mt-1 line-clamp-2 text-[11px] leading-5 text-destructive">
@@ -242,7 +263,7 @@ function RunReviewSummaryCard({
             className="rounded border bg-background px-2 py-1 text-[11px] hover:bg-accent"
             href={runReviewHref}
           >
-            查看完整复盘
+            {t(($) => $.execution_log.review_open)}
           </a>
         </div>
       </div>
@@ -285,30 +306,56 @@ function ExecutionRunSummary({
   summary: ExecutionSummary;
   events: MacroEvent[];
 }) {
+  const { t } = useT("issues");
+  const notRecorded = t(($) => $.execution_log.not_recorded);
   return (
     <div className="rounded-md border border-border/70 bg-muted/25 px-2 py-1.5" data-testid="issue-active-run-signals">
       <div className="space-y-1">
         <div className="flex min-w-0 items-center justify-between gap-2 text-[11px] text-muted-foreground">
-          <span>当前阶段</span>
-          <span className="min-w-0 truncate text-foreground">{currentStage || "未记录"}</span>
+          <span>{t(($) => $.execution_log.current_stage)}</span>
+          <span className="min-w-0 truncate text-foreground">{currentStage || notRecorded}</span>
         </div>
         <div className="grid gap-x-3 gap-y-0.5 text-[11px] leading-5 text-muted-foreground sm:grid-cols-2">
-          <span className="truncate">Agent：{summary.agentCount > 0 ? summary.agentCount : "未记录"}</span>
           <span className="truncate">
-            任务：{summary.totalTasks}
-            {summary.activeTasks > 0 ? ` 进行中 ${summary.activeTasks}` : ""}
+            {t(($) => $.execution_log.run_agents, {
+              value: summary.agentCount > 0 ? summary.agentCount : notRecorded,
+            })}
           </span>
-          <span className="truncate">已完成：{summary.completedTasks}</span>
           <span className="truncate">
-            异常：{summary.failedTasks + summary.cancelledTasks}
+            {t(($) => $.execution_log.run_tasks, { count: summary.totalTasks })}
+            {summary.activeTasks > 0
+              ? ` ${t(($) => $.execution_log.run_active, { count: summary.activeTasks })}`
+              : ""}
           </span>
-          <span className="truncate">首次领取：{summary.firstClaimedAt || "未记录"}</span>
-          <span className="truncate">首次开始：{summary.firstStartedAt || "未记录"}</span>
-          <span className="truncate sm:col-span-2">最后完成：{summary.lastCompletedAt || "未记录"}</span>
+          <span className="truncate">
+            {t(($) => $.execution_log.run_completed, { count: summary.completedTasks })}
+          </span>
+          <span className="truncate">
+            {t(($) => $.execution_log.run_anomalies, {
+              count: summary.failedTasks + summary.cancelledTasks,
+            })}
+          </span>
+          <span className="truncate">
+            {t(($) => $.execution_log.run_first_claimed, {
+              value: summary.firstClaimedAt || notRecorded,
+            })}
+          </span>
+          <span className="truncate">
+            {t(($) => $.execution_log.run_first_started, {
+              value: summary.firstStartedAt || notRecorded,
+            })}
+          </span>
+          <span className="truncate sm:col-span-2">
+            {t(($) => $.execution_log.run_last_completed, {
+              value: summary.lastCompletedAt || notRecorded,
+            })}
+          </span>
         </div>
         {events.length > 0 && (
           <div className="space-y-0.5">
-            <div className="text-[11px] text-muted-foreground">最近事件</div>
+            <div className="text-[11px] text-muted-foreground">
+              {t(($) => $.execution_log.recent_events)}
+            </div>
             {events.map((event) => (
               <RecentMacroEventRow key={event.id} event={event} />
             ))}

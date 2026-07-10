@@ -391,7 +391,9 @@ function ResourceRow({
                   {item.label}: {statusLabel(item.value)}
                 </div>
               ))}
-              <div className="text-muted-foreground">Gongfeng</div>
+              <div className="text-muted-foreground">
+                {t(($) => $.resources.gongfeng_provider)}
+              </div>
             </div>
           </TooltipContent>
         </Tooltip>

@@ -60,7 +60,9 @@
     "no_results": "无结果",
     "group_current": "当前页面",
     "group_recent": "最近浏览",
-    "group_search": "搜索结果"
+    "group_search": "搜索结果",
+    "entity_agent": "智能体",
+    "entity_squad": "小队"
   },
   "slash_command": {
     "no_skills_configured": "暂无配置的技能",

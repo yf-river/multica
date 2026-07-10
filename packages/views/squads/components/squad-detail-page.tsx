@@ -1389,9 +1389,11 @@ function SquadInstructionsTab({
       </p>
 
       <div>
-        <div className="text-sm font-medium text-foreground">PM 提示词</div>
+        <div className="text-sm font-medium text-foreground">
+          {t(($) => $.instructions_tab.pm_prompt_label)}
+        </div>
         <div className="mt-1 text-xs text-muted-foreground">
-          这里的内容会注入给小队队长，用来约束它如何调度成员、推进阶段和收口。
+          {t(($) => $.instructions_tab.pm_prompt_description)}
         </div>
       </div>
       <div className="min-h-80 rounded-md border bg-background px-4 py-3 transition-colors focus-within:border-input">
@@ -1400,14 +1402,14 @@ function SquadInstructionsTab({
             key={squad.id}
             defaultValue={value}
             onUpdate={setValue}
-            placeholder="例如：先澄清需求和验收口径，再拆分任务；实现后必须补齐测试证据和交接记录。"
+            placeholder={t(($) => $.instructions_tab.placeholder)}
             debounceMs={150}
             disableMentions
             className="min-h-full"
           />
         ) : (
           <div className="whitespace-pre-wrap text-sm text-muted-foreground">
-            {value || "暂无小队指令。"}
+            {value || t(($) => $.instructions_tab.empty)}
           </div>
         )}
       </div>

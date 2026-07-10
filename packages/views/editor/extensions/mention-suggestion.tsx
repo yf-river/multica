@@ -449,10 +449,14 @@ function MentionRow({
         {item.type === "all" ? t(($) => $.mention.all_members) : item.label}
       </span>
       {item.type === "agent" && (
-        <Badge variant="outline" className="ml-auto text-[10px] h-4 px-1.5">智能体</Badge>
+        <Badge variant="outline" className="ml-auto text-[10px] h-4 px-1.5">
+          {t(($) => $.mention.entity_agent)}
+        </Badge>
       )}
       {item.type === "squad" && (
-        <Badge variant="outline" className="ml-auto text-[10px] h-4 px-1.5">小队</Badge>
+        <Badge variant="outline" className="ml-auto text-[10px] h-4 px-1.5">
+          {t(($) => $.mention.entity_squad)}
+        </Badge>
       )}
     </button>
   );

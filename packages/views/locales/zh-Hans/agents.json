@@ -144,7 +144,9 @@
     "agent_archived_toast": "已归档智能体",
     "archive_failed_toast": "归档智能体失败",
     "agent_restored_toast": "已恢复智能体",
-    "restore_failed_toast": "恢复智能体失败"
+    "restore_failed_toast": "恢复智能体失败",
+    "observability_title": "Agent 观测摘要",
+    "observability_scope": "按当前智能体聚合链路追踪、令牌、成本、耗时和证据"
   },
   "inspector": {
     "section_properties": "属性",
@@ -460,7 +462,9 @@
     "no_data": "未记录执行数据。",
     "sort_label": "排序",
     "sort_chronological": "时间顺序",
-    "sort_newest_first": "最新在前"
+    "sort_newest_first": "最新在前",
+    "timeline_aria": "执行时间线",
+    "more_events_other": "另 {{count}} 条"
   },
   "task_failure": {
     "agent_error": "智能体执行出错",

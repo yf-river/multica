@@ -10,6 +10,27 @@
     "hours_ago": "{{count}} 小时前",
     "days_ago": "{{count}} 天前"
   },
+  "observability": {
+    "task_trace_count": "任务观测 {{count}}",
+    "complete": "完整",
+    "truncated_hint": "当前指标只代表最近样本；请缩小时间、项目、小队或 Agent 范围后再用于汇报。",
+    "metric_sop_runs": "SOP 执行数",
+    "metric_sop_events": "SOP 事件数",
+    "metric_queue_wait": "队列等待",
+    "metric_execution_duration": "执行耗时",
+    "metric_total_duration": "总耗时",
+    "metric_input_tokens": "输入 token",
+    "metric_output_tokens": "输出 token",
+    "metric_estimated_cost": "预估成本",
+    "metric_retries": "重试次数",
+    "metric_evidence": "证据数",
+    "failure_reasons": "失败原因：{{reasons}}",
+    "model_breakdown": "模型明细",
+    "runtime_breakdown": "runtime 明细",
+    "unknown_name": "未记录",
+    "usage_line": "{{tokens}} token · {{cost}}",
+    "missing_price_suffix": " · 缺少价格"
+  },
   "lark_bind": {
     "page_title": "绑定飞书账号",
     "redeeming": "正在兑换绑定 token…",

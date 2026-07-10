@@ -107,6 +107,8 @@
     "local_compat_badge": "兼容保留",
     "local_compat_tooltip": "历史本地目录资源。标准任务默认使用平台 worktree，不再自动进入这个目录。",
     "chat_hint_prefix": "智能体将在",
+    "chat_hint_suffix": "，复用服务器已有目录，不隔离 worktree。",
+    "gongfeng_provider": "Gongfeng",
     "toast_local_attached": "已添加本地目录",
     "toast_local_renamed": "已重命名",
     "toast_local_rename_failed": "重命名失败",

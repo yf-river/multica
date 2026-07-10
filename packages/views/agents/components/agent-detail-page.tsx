@@ -299,8 +299,8 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
             onShowIntegrations={() => setTabNavIntent("integrations")}
           />
           <ObservabilitySummaryCard
-            title="Agent 观测摘要"
-            scopeLabel="按当前智能体聚合链路追踪、令牌、成本、耗时和证据"
+            title={t(($) => $.detail.observability_title)}
+            scopeLabel={t(($) => $.detail.observability_scope)}
             agentId={agent.id}
           />
         </div>

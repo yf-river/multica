@@ -664,6 +664,7 @@ function TimelineBar({
   selectedSeq: number | null;
   onSegmentClick: (seq: number) => void;
 }) {
+  const { t } = useT("agents");
   const segments: { startIdx: number; endIdx: number; color: EventColor; count: number }[] = [];
   let currentColor: EventColor | null = null;
   let currentStart = 0;
@@ -684,7 +685,7 @@ function TimelineBar({
   }
 
   return (
-    <div className="flex gap-0.5 h-5 rounded overflow-hidden" role="navigation" aria-label="执行时间线">
+    <div className="flex gap-0.5 h-5 rounded overflow-hidden" role="navigation" aria-label={t(($) => $.transcript.timeline_aria)}>
       {segments.map((seg) => {
         const isSelected = selectedSeq !== null && items.slice(seg.startIdx, seg.endIdx + 1).some((i) => i.seq === selectedSeq);
         const color = colorClasses[seg.color];
@@ -701,12 +702,16 @@ function TimelineBar({
             )}
             style={{ width: `${Math.max(widthPercent, 0.5)}%` }}
             onClick={() => onSegmentClick(items[seg.startIdx]!.seq)}
-            title={`${formatEventLabel(items[seg.startIdx]!)}${seg.count > 1 ? `（另 ${seg.count - 1} 条）` : ""}`}
+            title={`${formatEventLabel(items[seg.startIdx]!)}${seg.count > 1 ? `（${t(($) => $.transcript.more_events, { count: seg.count - 1 })}）` : ""}`}
           >
             <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block z-10 pointer-events-none">
               <div className="rounded bg-popover border px-2 py-1 text-[10px] text-popover-foreground shadow-md whitespace-nowrap">
                 {formatEventLabel(items[seg.startIdx]!)}
-                {seg.count > 1 && <span className="text-muted-foreground ml-1">另 {seg.count - 1} 条</span>}
+                {seg.count > 1 && (
+                  <span className="text-muted-foreground ml-1">
+                    {t(($) => $.transcript.more_events, { count: seg.count - 1 })}
+                  </span>
+                )}
               </div>
             </div>
           </button>
