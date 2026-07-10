@@ -1,6 +1,7 @@
 import { test, expect, type ConsoleMessage } from "@playwright/test";
 import { authenticateBrowserSession } from "./helpers";
 import { TestApiClient } from "./fixtures";
+import { DEFAULT_E2E_PASSWORD } from "./test-identity";
 
 const E2E_WORKER = process.env.TEST_PARALLEL_INDEX ?? process.env.TEST_WORKER_INDEX ?? "0";
 const E2E_RUN_ID = process.env.E2E_RUN_ID ?? `${Date.now().toString(36)}-${process.pid.toString(36)}`;
@@ -13,6 +14,7 @@ const EXISTING_ISSUE_E2E_ACCOUNT = process.env.E2E_ACCOUNT ?? "develop";
 const EXISTING_ISSUE_E2E_NAME = process.env.E2E_NAME ?? "AI Studio Developer";
 const EXISTING_ISSUE_E2E_WORKSPACE = process.env.E2E_WORKSPACE ?? "ai-studio";
 const EXISTING_ISSUE_E2E_WORKSPACE_NAME = process.env.E2E_WORKSPACE_NAME ?? "AI Studio 工作区";
+const EXISTING_ISSUE_E2E_PASSWORD = process.env.E2E_PASSWORD ?? "develop123";
 
 test.describe("run review eval draft flow", () => {
   test.describe.configure({ timeout: 120_000 });
@@ -22,7 +24,7 @@ test.describe("run review eval draft flow", () => {
 
   test.beforeEach(async ({ page }) => {
     api = new TestApiClient();
-    await api.login(E2E_ACCOUNT, E2E_NAME);
+    await api.login(E2E_ACCOUNT, E2E_NAME, DEFAULT_E2E_PASSWORD);
     const workspace = await api.ensureWorkspace(E2E_WORKSPACE_NAME, E2E_WORKSPACE);
     await api.markUserOnboarded();
     workspaceSlug = workspace.slug;
@@ -133,7 +135,11 @@ test.describe("run review eval draft flow for existing completed issues", () => 
 
   test.beforeEach(async ({ page }) => {
     api = new TestApiClient();
-    await api.login(EXISTING_ISSUE_E2E_ACCOUNT, EXISTING_ISSUE_E2E_NAME);
+    await api.login(
+      EXISTING_ISSUE_E2E_ACCOUNT,
+      EXISTING_ISSUE_E2E_NAME,
+      EXISTING_ISSUE_E2E_PASSWORD,
+    );
     const workspace = await api.ensureWorkspace(EXISTING_ISSUE_E2E_WORKSPACE_NAME, EXISTING_ISSUE_E2E_WORKSPACE);
     await api.markUserOnboarded();
     workspaceSlug = workspace.slug;
@@ -286,12 +292,13 @@ async function findExistingCompletedIssueWithRunReview(api: TestApiClient) {
 function hasUsableRunReviewTree(tree: Awaited<ReturnType<TestApiClient["getIssueExecutionTree"]>>) {
   const timelineNodes = tree.timeline_nodes ?? [];
   if (timelineNodes.length === 0) return false;
-  const summary = tree.issue_summary ?? {};
-  const summaryHasEvidence =
-    Number(summary.node_count ?? 0) > 0 ||
-    Number(summary.message_count ?? 0) > 0 ||
-    Number(summary.agent_turn_count ?? 0) > 0 ||
-    Number(summary.total_input_tokens ?? 0) + Number(summary.total_output_tokens ?? 0) > 0;
+  const summary = tree.issue_summary;
+  const summaryHasEvidence = summary
+    ? Number(summary.node_count ?? 0) > 0 ||
+      Number(summary.message_count ?? 0) > 0 ||
+      Number(summary.agent_turn_count ?? 0) > 0 ||
+      Number(summary.total_input_tokens ?? 0) + Number(summary.total_output_tokens ?? 0) > 0
+    : false;
   const timelineHasEvidence = timelineNodes.some((node) =>
     Number(node.message_count ?? 0) > 0 ||
     Number(node.agent_turn_count ?? 0) > 0 ||

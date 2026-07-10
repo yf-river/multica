@@ -4,6 +4,7 @@ import { authenticateBrowserSession, waitForPageText } from "./helpers";
 
 const RUN_REAL_AGENT_E2E = process.env.RUN_REAL_AGENT_E2E === "1";
 const REAL_AGENT_ACCOUNT = process.env.REAL_AGENT_E2E_ACCOUNT || "develop";
+const REAL_AGENT_PASSWORD = process.env.REAL_AGENT_E2E_PASSWORD || process.env.E2E_PASSWORD || "develop123";
 const REAL_AGENT_WORKSPACE = process.env.REAL_AGENT_E2E_WORKSPACE || "ai-studio";
 const EXPECTED_AGENT_PROVIDER = process.env.MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER || "codebuddy";
 const EXPECTED_AGENT_MODEL = process.env.MULTICA_PROMPT_EVALUATION_AGENT_MODEL || "deepseek-v4-pro-ioa";
@@ -16,7 +17,7 @@ test.describe("训练与评估真实 Agent 闭环", () => {
 
     const api = new TestApiClient();
     const prefix = `真实Agent验收 ${Date.now()}`;
-    await api.login(REAL_AGENT_ACCOUNT, "胡云飞");
+    await api.login(REAL_AGENT_ACCOUNT, "胡云飞", REAL_AGENT_PASSWORD);
     const workspace = await api.ensureWorkspace("AI Studio 工作区", REAL_AGENT_WORKSPACE);
     await api.markUserOnboarded();
     await api.cleanupPromptArtifactsByPrefix(prefix);

@@ -458,14 +458,14 @@ export class TestApiClient {
   private createdRuntimeIds: string[] = [];
   private createdSquadIds: string[] = [];
 
-  async login(account: string, name: string) {
+  async login(account: string, name: string, password: string) {
     const res = await fetch(`${API_BASE}/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ account, password: "develop123" }),
+      body: JSON.stringify({ account, password }),
     });
     if (!res.ok) {
-      throw new Error(`login failed: ${res.status}`);
+      throw new Error(`login failed: ${res.status} ${await res.text()}`);
     }
     const data = await res.json();
 
@@ -493,6 +493,17 @@ export class TestApiClient {
       throw new Error(`get workspace failed: ${res.status} ${await res.text()}`);
     }
     return res.json();
+  }
+
+  async deleteWorkspace(id: string): Promise<void> {
+    const res = await this.authedFetch(`/api/workspaces/${id}`, { method: "DELETE" });
+    if (!res.ok) {
+      throw new Error(`delete workspace failed: ${res.status} ${await res.text()}`);
+    }
+    if (this.workspaceId === id) {
+      this.workspaceId = null;
+      this.workspaceSlug = null;
+    }
   }
 
   setWorkspaceId(id: string) {
@@ -535,28 +546,19 @@ export class TestApiClient {
   }
 
   async markUserOnboarded() {
-    if (!this.account) {
-      throw new Error("Cannot mark E2E user onboarded before login");
+    if (!this.workspaceId) {
+      throw new Error("Cannot mark E2E user onboarded before selecting a workspace");
     }
 
-    const client = new pg.Client(DATABASE_URL);
-    await client.connect();
-    try {
-      const result = await client.query(
-        `
-          UPDATE "user"
-          SET
-            onboarded_at = COALESCE(onboarded_at, now()),
-            onboarding_questionnaire = COALESCE(onboarding_questionnaire, '{}'::jsonb)
-          WHERE account = $1
-        `,
-        [this.account],
-      );
-      if (result.rowCount !== 1) {
-        throw new Error(`Failed to mark E2E user onboarded: ${this.account}`);
-      }
-    } finally {
-      await client.end();
+    const res = await this.authedFetch("/api/me/onboarding/complete", {
+      method: "POST",
+      body: JSON.stringify({
+        completion_path: "skip_existing",
+        workspace_id: this.workspaceId,
+      }),
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to mark E2E user onboarded: ${res.status} ${await res.text()}`);
     }
   }
 

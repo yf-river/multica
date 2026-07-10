@@ -5,6 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { TestApiClient } from "./fixtures";
+import { DEFAULT_E2E_PASSWORD } from "./test-identity";
 
 const execFileAsync = promisify(execFile);
 const E2E_WORKER = process.env.TEST_PARALLEL_INDEX ?? process.env.TEST_WORKER_INDEX ?? "0";
@@ -30,7 +31,7 @@ test.describe("Goal E Gongfeng controlled skill writeback", () => {
     const changelogPath = WRITEBACK_CHANGELOG_PATH;
     let tempDir: string | null = null;
     try {
-      await api.login(E2E_ACCOUNT, E2E_NAME);
+      await api.login(E2E_ACCOUNT, E2E_NAME, DEFAULT_E2E_PASSWORD);
       const workspace = await api.ensureWorkspace(E2E_WORKSPACE_NAME, E2E_WORKSPACE);
       await api.markUserOnboarded();
       await api.cleanupPromptArtifactsByPrefix("GoalE Gongfeng Writeback");

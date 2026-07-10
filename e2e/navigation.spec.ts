@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import { loginAsDefault, waitForPageText } from "./helpers";
 import { DEFAULT_TRAINING_ROUTE, TRAINING_ROUTES, trainingRoutePath, trainingRouteURLPath } from "./training-routes";
 
@@ -14,7 +14,7 @@ const ROUTE_OPERATING_TEXT: Record<string, string> = {
   "evaluation-runs": "运行检索、证据展开、人工复核",
 };
 
-async function expectTrainingPageShell(page, item: (typeof TRAINING_ROUTES)[number]) {
+async function expectTrainingPageShell(page: Page, item: (typeof TRAINING_ROUTES)[number]) {
   const routeIntroTitle = ROUTE_INTRO_TITLES[item.path];
   const hasRouteIntro = Boolean(routeIntroTitle);
   await expect(page.getByTestId("training-page-shell")).toHaveCount(1);
@@ -32,7 +32,7 @@ async function expectTrainingPageShell(page, item: (typeof TRAINING_ROUTES)[numb
   }
 }
 
-async function expectTrainingNavigationMarker(page, item: (typeof TRAINING_ROUTES)[number]) {
+async function expectTrainingNavigationMarker(page: Page, item: (typeof TRAINING_ROUTES)[number]) {
   const link = page.getByRole("link", { name: item.nav, exact: true }).first();
   await expect(link).toBeVisible();
   await expect(link).toHaveAttribute("href", new RegExp(`/${trainingRouteURLPath(item.path)}$`));

@@ -1,13 +1,12 @@
 import { expect, type Page } from "@playwright/test";
 import { TestApiClient } from "./fixtures";
-
-const DEFAULT_E2E_NAME = process.env.E2E_NAME ?? "E2E User";
-const E2E_WORKER = process.env.TEST_PARALLEL_INDEX ?? process.env.TEST_WORKER_INDEX ?? "0";
-const E2E_RUN_ID = process.env.E2E_RUN_ID ?? `${Date.now().toString(36)}-${process.pid.toString(36)}`;
-const DEFAULT_E2E_ACCOUNT = process.env.E2E_ACCOUNT ?? `e2e-${E2E_WORKER}-${E2E_RUN_ID}`;
-const DEFAULT_E2E_WORKSPACE = process.env.E2E_WORKSPACE ?? `e2e-workspace-${E2E_WORKER}-${E2E_RUN_ID}`;
-const DEFAULT_E2E_WORKSPACE_NAME = process.env.E2E_WORKSPACE_NAME ?? `E2E Workspace ${E2E_WORKER}`;
-const E2E_PASSWORD = process.env.E2E_PASSWORD ?? "develop123";
+import {
+  DEFAULT_E2E_ACCOUNT,
+  DEFAULT_E2E_NAME,
+  DEFAULT_E2E_PASSWORD,
+  DEFAULT_E2E_WORKSPACE,
+  DEFAULT_E2E_WORKSPACE_NAME,
+} from "./test-identity";
 
 async function waitForIssuesPage(page: Page) {
   await waitForPageText(page, "新建任务", 60000);
@@ -67,7 +66,7 @@ export async function reloadAppPage(page: Page) {
  */
 export async function loginAsDefault(page: Page): Promise<string> {
   const api = new TestApiClient();
-  await api.login(DEFAULT_E2E_ACCOUNT, DEFAULT_E2E_NAME);
+  await api.login(DEFAULT_E2E_ACCOUNT, DEFAULT_E2E_NAME, DEFAULT_E2E_PASSWORD);
   const workspace = await api.ensureWorkspace(
     DEFAULT_E2E_WORKSPACE_NAME,
     DEFAULT_E2E_WORKSPACE,
@@ -80,7 +79,7 @@ export async function loginAsDefault(page: Page): Promise<string> {
   }
 
   const browserLogin = await page.request.post("/auth/login", {
-    data: { account: DEFAULT_E2E_ACCOUNT, password: E2E_PASSWORD },
+    data: { account: DEFAULT_E2E_ACCOUNT, password: DEFAULT_E2E_PASSWORD },
   });
   if (!browserLogin.ok()) {
     throw new Error(`E2E browser login failed: ${browserLogin.status()}`);
@@ -97,7 +96,7 @@ export async function loginAsDefault(page: Page): Promise<string> {
  */
 export async function createTestApi(): Promise<TestApiClient> {
   const api = new TestApiClient();
-  await api.login(DEFAULT_E2E_ACCOUNT, DEFAULT_E2E_NAME);
+  await api.login(DEFAULT_E2E_ACCOUNT, DEFAULT_E2E_NAME, DEFAULT_E2E_PASSWORD);
   await api.ensureWorkspace(DEFAULT_E2E_WORKSPACE_NAME, DEFAULT_E2E_WORKSPACE);
   await api.markUserOnboarded();
   return api;

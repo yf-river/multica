@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import { TRAINING_ROUTES, trainingRoutePath } from "./training-routes";
 import { TestApiClient } from "./fixtures";
 
@@ -16,6 +16,7 @@ const frontendURL = process.env.ACCEPTANCE_FRONTEND_URL
   || process.env.FRONTEND_ORIGIN
   || "http://localhost:3000";
 const workspaceName = process.env.E2E_WORKSPACE_NAME || "AI Studio 工作区";
+const RUN_PRODUCTION_ACCEPTANCE = process.env.RUN_PRODUCTION_ACCEPTANCE === "1";
 const evidencePrefix = "生产验收训练证据";
 const ROUTE_INTRO_TITLES: Record<string, string> = {
   datasets: "数据集题库",
@@ -38,7 +39,7 @@ const TEST_SUITES_ROUTE = routeByPath("test-suites");
 
 async function prepareTrainingDashboardEvidence() {
   const api = new TestApiClient();
-  await api.login(account, "胡云飞");
+  await api.login(account, "胡云飞", password);
   await api.ensureWorkspace(workspaceName, workspaceSlug);
   await api.markUserOnboarded();
   await api.cleanupPromptArtifactsByPrefix(evidencePrefix);
@@ -136,7 +137,7 @@ async function prepareTrainingDashboardEvidence() {
   };
 }
 
-async function expectTrainingRouteShell(page, route: (typeof TRAINING_ROUTES)[number]) {
+async function expectTrainingRouteShell(page: Page, route: (typeof TRAINING_ROUTES)[number]) {
   const routeIntroTitle = ROUTE_INTRO_TITLES[route.path];
   const hasRouteIntro = Boolean(routeIntroTitle);
   await expect(page.getByTestId("training-page-shell")).toHaveCount(1);
@@ -161,7 +162,7 @@ async function expectTrainingRouteShell(page, route: (typeof TRAINING_ROUTES)[nu
   await expect(page.getByRole("button", { name: "创建 user-center 需求澄清提示词" })).toHaveCount(0);
 }
 
-async function expectTrainingRouteSurvivesReload(page, route: (typeof TRAINING_ROUTES)[number]) {
+async function expectTrainingRouteSurvivesReload(page: Page, route: (typeof TRAINING_ROUTES)[number]) {
   await page.reload({ waitUntil: "domcontentloaded" });
   await expect(page).toHaveURL(new RegExp(`${trainingRoutePath(workspaceSlug, route.path)}$`), { timeout: 30000 });
   await expect(page.getByText(route.text).first()).toBeVisible({ timeout: 15000 });
@@ -169,6 +170,8 @@ async function expectTrainingRouteSurvivesReload(page, route: (typeof TRAINING_R
 }
 
 test.describe("生产部署验收", () => {
+  test.skip(!RUN_PRODUCTION_ACCEPTANCE, "Set RUN_PRODUCTION_ACCEPTANCE=1 to run deployment acceptance.");
+
   test("验收账号可以看到训练评估运行看板和服务端证据快照", async ({ page }) => {
     test.setTimeout(180_000);
     const evidence = await prepareTrainingDashboardEvidence();

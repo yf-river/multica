@@ -56,7 +56,7 @@ make goal-test-dashboard-click-audit
 make goal-test-real-agent-e2e
 GOAL_TEST_TOKEN_OPTIMIZER=rtk make goal-test-smart-verify MODE=dev
 GOAL_TEST_TOKEN_OPTIMIZER=rtk make goal-test-smart-verify MODE=precommit
-pnpm exec playwright test e2e/production-acceptance.spec.ts --project=chromium
+RUN_PRODUCTION_ACCEPTANCE=1 pnpm exec playwright test e2e/production-acceptance.spec.ts --project=chromium
 ```
 
 For complex goal-test delivery, prefer `gpt-5.5 high` as the main controller. Simple local slices or generating the goal prompt itself can use `gpt-5.5 medium`. Read-only exploration and repeated verification can use lower-cost models when available. Local runtime should prefer Codex unless the user explicitly chooses another runtime.

@@ -55,6 +55,7 @@ postgres_port="$(find_free_port $((15432 + offset)))"
 backend_port="$(find_free_port $((18080 + offset)))"
 frontend_port="$(find_free_port $((13000 + offset)))"
 frontend_origin="http://localhost:${frontend_port}"
+e2e_slug="${slug//_/-}"
 
 cat > "$ENV_FILE" <<EOF
 COMPOSE_PROJECT_NAME=${compose_project_name}
@@ -73,6 +74,14 @@ FRONTEND_PORT=${frontend_port}
 FRONTEND_ORIGIN=${frontend_origin}
 NEXT_PUBLIC_API_URL=http://localhost:${backend_port}
 NEXT_PUBLIC_WS_URL=ws://localhost:${backend_port}/ws
+
+ALLOW_SIGNUP=true
+DISABLE_WORKSPACE_CREATION=false
+E2E_FIXTURE_ACCOUNT=e2e_${slug}
+E2E_FIXTURE_NAME=E2E_${slug}
+E2E_FIXTURE_PASSWORD=MulticaE2E1!
+E2E_FIXTURE_WORKSPACE=e2e-${e2e_slug}
+E2E_FIXTURE_WORKSPACE_NAME=E2E_${slug}
 EOF
 
 echo "Generated $ENV_FILE for worktree '$worktree_name'"

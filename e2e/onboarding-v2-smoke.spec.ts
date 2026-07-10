@@ -1,12 +1,17 @@
 import { test, expect, type Page } from "@playwright/test";
 import { TestApiClient } from "./fixtures";
 import { waitForPageText } from "./helpers";
+import {
+  DEFAULT_E2E_ACCOUNT,
+  DEFAULT_E2E_WORKSPACE,
+  E2E_FIXTURE_PASSWORD,
+} from "./test-identity";
 
-const ACCOUNT_PREFIX = `onboarding_disabled_${Date.now()}`;
-const SLUG_PREFIX = `onboarding-disabled-${Date.now()}`;
+const ACCOUNT_PREFIX = `${DEFAULT_E2E_ACCOUNT.slice(0, 40)}_onboarding`;
+const SLUG_PREFIX = `${DEFAULT_E2E_WORKSPACE.slice(0, 40)}-onboarding`;
 async function loginInBrowser(page: Page, account: string) {
   const res = await page.request.post("/auth/login", {
-    data: { account, password: "develop123" },
+    data: { account, password: E2E_FIXTURE_PASSWORD },
   });
   expect(res.ok()).toBe(true);
   const data = await res.json();
@@ -31,7 +36,7 @@ async function loginInBrowser(page: Page, account: string) {
 test("旧 onboarding 链接会直接进入已有工作区", async ({ page }) => {
   const api = new TestApiClient();
   const account = `${ACCOUNT_PREFIX}_with_workspace`;
-  await api.login(account, "跳过引导用户");
+  await api.login(account, "跳过引导用户", E2E_FIXTURE_PASSWORD);
   const workspace = await api.ensureWorkspace(
     "跳过引导工作区",
     `${SLUG_PREFIX}-workspace`,
@@ -49,7 +54,10 @@ test("旧 onboarding 链接会直接进入已有工作区", async ({ page }) => 
 test("旧 onboarding 链接对无工作区用户进入新建工作区", async ({ page }) => {
   const api = new TestApiClient();
   const account = `${ACCOUNT_PREFIX}_no_workspace`;
-  await api.login(account, "无工作区用户");
+  await api.login(account, "无工作区用户", E2E_FIXTURE_PASSWORD);
+  for (const workspace of await api.getWorkspaces()) {
+    await api.deleteWorkspace(workspace.id);
+  }
   await loginInBrowser(page, account);
 
   await page.goto("/onboarding", { waitUntil: "domcontentloaded" });
