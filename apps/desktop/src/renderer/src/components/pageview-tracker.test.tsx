@@ -5,7 +5,7 @@ import { render } from "@testing-library/react";
 // test can mutate it then re-render to drive the tracker.
 const state = vi.hoisted(() => ({
   user: null as { id: string } | null,
-  overlay: null as { type: string } | null,
+  isOpen: false,
   activeWorkspaceSlug: null as string | null,
   byWorkspace: {} as Record<
     string,
@@ -26,10 +26,11 @@ vi.mock("@multica/core/auth", () => {
 });
 
 // Window overlay store — same shape.
-vi.mock("@/stores/window-overlay-store", () => {
-  const useWindowOverlayStore = (selector: (s: typeof state) => unknown) =>
-    selector(state);
-  return { useWindowOverlayStore };
+vi.mock("@/stores/workspace-creation-overlay-store", () => {
+  const useWorkspaceCreationOverlayStore = (
+    selector: (s: typeof state) => unknown,
+  ) => selector(state);
+  return { useWorkspaceCreationOverlayStore };
 });
 
 // Tab store — selectors read activeWorkspaceSlug + byWorkspace. Also expose
@@ -61,7 +62,7 @@ import { PageviewTracker } from "./pageview-tracker";
 
 function reset() {
   state.user = { id: "u1" };
-  state.overlay = null;
+  state.isOpen = false;
   state.activeWorkspaceSlug = null;
   state.byWorkspace = {};
   state.capturePageview.mockClear();
@@ -212,15 +213,15 @@ describe("PageviewTracker", () => {
     const { rerender } = render(<PageviewTracker />);
     state.capturePageview.mockClear();
 
-    // Open onboarding overlay.
-    state.overlay = { type: "onboarding" };
+    // Open workspace-creation overlay.
+    state.isOpen = true;
     rerender(<PageviewTracker />);
-    expect(state.capturePageview).toHaveBeenLastCalledWith("/onboarding");
+    expect(state.capturePageview).toHaveBeenLastCalledWith("/workspaces/new");
 
     // Close overlay back to the tab — the tab is already observed on
     // /acme/issues so this is a re-activation, no pageview.
     state.capturePageview.mockClear();
-    state.overlay = null;
+    state.isOpen = false;
     rerender(<PageviewTracker />);
     expect(state.capturePageview).not.toHaveBeenCalled();
 

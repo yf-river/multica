@@ -51,15 +51,6 @@ const pendingOps: PendingOp[] = [];
 let superProperties: Record<string, unknown> = {};
 
 export {
-  captureDownloadIntent,
-  captureDownloadPageViewed,
-  captureDownloadInitiated,
-  type DownloadIntentSource,
-  type DownloadDetectPayload,
-  type DownloadInitiatedPayload,
-} from "./download";
-
-export {
   captureFeedbackOpened,
   type FeedbackOpenedSource,
 } from "./feedback";
@@ -193,9 +184,8 @@ export function initAnalytics(config: AnalyticsConfig | null | undefined): boole
     pendingPageview = null;
   }
   // Replay buffered events / person-property updates in their original
-  // order — funnel correctness depends on sequence (e.g. a user submits
-  // the questionnaire and then finishes onboarding within the same
-  // config-race window).
+  // order so funnel transitions remain correctly ordered across the config
+  // initialization race.
   while (pendingOps.length > 0) {
     const op = pendingOps.shift()!;
     if (op.kind === "event") {

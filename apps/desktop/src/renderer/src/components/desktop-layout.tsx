@@ -21,7 +21,7 @@ import { useDesktopUnreadBadge } from "@multica/views/platform";
 import { DesktopNavigationProvider } from "@/platform/navigation";
 import { TabBar } from "./tab-bar";
 import { TabContent } from "./tab-content";
-import { WindowOverlay } from "./window-overlay";
+import { WorkspaceCreationOverlay } from "./workspace-creation-overlay";
 
 const TOP_BAR_HEIGHT_CLASS = "h-12";
 const WINDOW_TOOLBAR_CLEARANCE = 184;
@@ -229,7 +229,7 @@ export function DesktopShell() {
         </div>
         {slug && <ModalRegistry />}
         {slug && <SearchCommand />}
-        <WindowOverlay />
+        <WorkspaceCreationOverlay />
       </WorkspaceSlugProvider>
     </DesktopNavigationProvider>
   );

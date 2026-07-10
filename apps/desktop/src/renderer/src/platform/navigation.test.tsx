@@ -42,6 +42,9 @@ const state = vi.hoisted(() => ({
   openTab: vi.fn<(path: string, title?: string, icon?: string) => string>(),
   setActiveTab: vi.fn<(tabId: string) => void>(),
   switchWorkspace: vi.fn<(slug: string, openPath?: string) => void>(),
+  workspaceCreationOpen: false,
+  openWorkspaceCreation: vi.fn(),
+  closeWorkspaceCreation: vi.fn(),
 }));
 
 vi.mock("@/stores/tab-store", () => {
@@ -85,10 +88,16 @@ vi.mock("@/stores/tab-store", () => {
   };
 });
 
-vi.mock("@/stores/window-overlay-store", () => ({
-  useWindowOverlayStore: Object.assign(
+vi.mock("@/stores/workspace-creation-overlay-store", () => ({
+  useWorkspaceCreationOverlayStore: Object.assign(
     () => null,
-    { getState: () => ({ overlay: null, open: vi.fn(), close: vi.fn() }) },
+    {
+      getState: () => ({
+        isOpen: state.workspaceCreationOpen,
+        open: state.openWorkspaceCreation,
+        close: state.closeWorkspaceCreation,
+      }),
+    },
   ),
 }));
 
@@ -109,6 +118,9 @@ beforeEach(() => {
   state.openTab.mockReset();
   state.setActiveTab.mockReset();
   state.switchWorkspace.mockReset();
+  state.openWorkspaceCreation.mockReset();
+  state.closeWorkspaceCreation.mockReset();
+  state.workspaceCreationOpen = false;
   state.openTab.mockImplementation(() => "tNew");
   state.activeWorkspaceSlug = "acme";
   state.byWorkspace = {
@@ -259,6 +271,25 @@ describe("DesktopNavigationProvider.push with pinned active tab", () => {
     // Cross-workspace push runs through tryRouteToOtherWorkspace before
     // tryRouteToPinnedNewTab, so switchWorkspace wins.
     expect(state.switchWorkspace).toHaveBeenCalledWith("butter", "/butter/inbox");
+    expect(state.openTab).not.toHaveBeenCalled();
+  });
+});
+
+describe("DesktopNavigationProvider workspace creation", () => {
+  it("opens the workspace-creation overlay instead of a tab route", () => {
+    let adapter: ReturnType<typeof useNavigation> | null = null;
+    const Probe = captureAdapter((value) => {
+      adapter = value;
+    });
+    render(
+      <DesktopNavigationProvider>
+        <Probe />
+      </DesktopNavigationProvider>,
+    );
+
+    adapter!.push("/workspaces/new");
+
+    expect(state.openWorkspaceCreation).toHaveBeenCalledOnce();
     expect(state.openTab).not.toHaveBeenCalled();
   });
 });

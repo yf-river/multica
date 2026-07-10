@@ -13,7 +13,7 @@ import {
   useActiveTabRouter,
   getActiveTab,
 } from "@/stores/tab-store";
-import { useWindowOverlayStore } from "@/stores/window-overlay-store";
+import { useWorkspaceCreationOverlayStore } from "@/stores/workspace-creation-overlay-store";
 
 function requireRuntimeAppUrl(scope: string): string {
   const runtimeConfig = window.desktopAPI.runtimeConfig;
@@ -49,24 +49,20 @@ function extractWorkspaceSlug(path: string): string | null {
  * render after the list cache updates would then throw (useWorkspaceId
  * etc) because the slug no longer resolves.
  */
-function tryRouteToOverlay(path: string, router?: DataRouter): boolean {
-  const overlay = useWindowOverlayStore.getState();
+function tryRouteToWorkspaceCreation(
+  path: string,
+  router?: DataRouter,
+): boolean {
+  const overlay = useWorkspaceCreationOverlayStore.getState();
   if (path === "/workspaces/new") {
-    overlay.open({ type: "new-workspace" });
-    if (router && router.state.location.pathname !== "/") {
-      router.navigate("/", { replace: true });
-    }
-    return true;
-  }
-  if (path === "/onboarding") {
-    overlay.open({ type: "new-workspace" });
+    overlay.open();
     if (router && router.state.location.pathname !== "/") {
       router.navigate("/", { replace: true });
     }
     return true;
   }
   // Any other navigation cancels a live overlay.
-  if (overlay.overlay) overlay.close();
+  if (overlay.isOpen) overlay.close();
   return false;
 }
 
@@ -127,7 +123,7 @@ function tryRouteToPinnedNewTab(path: string): boolean {
 
 /**
  * Root-level navigation provider for components outside the per-tab
- * RouterProviders (sidebar, search dialog, modals, WindowOverlay contents).
+ * RouterProviders (sidebar, search dialog, modals, workspace creation).
  *
  * Reads from the active tab's memory router via router.subscribe().
  * Does NOT use any react-router hooks — it's above all RouterProviders.
@@ -180,7 +176,7 @@ export function DesktopNavigationProvider({
           return;
         }
         const active = currentActiveTab();
-        if (tryRouteToOverlay(path, active?.router)) return;
+        if (tryRouteToWorkspaceCreation(path, active?.router)) return;
         if (active && routerLocationPath(active.router) === path) return;
         if (tryRouteToOtherWorkspace(path)) return;
         if (tryRouteToPinnedNewTab(path)) return;
@@ -188,7 +184,7 @@ export function DesktopNavigationProvider({
       },
       replace: (path: string) => {
         const active = currentActiveTab();
-        if (tryRouteToOverlay(path, active?.router)) return;
+        if (tryRouteToWorkspaceCreation(path, active?.router)) return;
         if (tryRouteToOtherWorkspace(path)) return;
         active?.router.navigate(path, { replace: true });
       },
@@ -267,14 +263,14 @@ export function TabNavigationProvider({
   const adapter: NavigationAdapter = useMemo(
     () => ({
       push: (path: string) => {
-        if (tryRouteToOverlay(path, router)) return;
+        if (tryRouteToWorkspaceCreation(path, router)) return;
         if (routerLocationPath(router) === path) return;
         if (tryRouteToOtherWorkspace(path)) return;
         if (tryRouteToPinnedNewTab(path)) return;
         router.navigate(path);
       },
       replace: (path: string) => {
-        if (tryRouteToOverlay(path, router)) return;
+        if (tryRouteToWorkspaceCreation(path, router)) return;
         if (tryRouteToOtherWorkspace(path)) return;
         router.navigate(path, { replace: true });
       },

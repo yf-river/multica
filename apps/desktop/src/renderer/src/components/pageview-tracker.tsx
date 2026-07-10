@@ -6,7 +6,7 @@ import {
   useActiveTabIdentity,
   useTabStore,
 } from "@/stores/tab-store";
-import { useWindowOverlayStore, type WindowOverlay } from "@/stores/window-overlay-store";
+import { useWorkspaceCreationOverlayStore } from "@/stores/workspace-creation-overlay-store";
 import type { RendererRouteContextInput } from "../../../shared/renderer-route-context";
 
 /**
@@ -17,9 +17,9 @@ import type { RendererRouteContextInput } from "../../../shared/renderer-route-c
  * Desktop has three layers that can own the visible page:
  *
  *   1. Logged-out state → `/login`. No workspace context, no tabs.
- *   2. Window overlays (onboarding, new-workspace) → synthetic paths
- *      that match the equivalent web routes. Overlays are NOT tab routes on
- *      desktop (see `stores/window-overlay-store.ts` + `routes.tsx`), so the
+ *   2. Workspace-creation overlay → the equivalent web route. The overlay is
+ *      NOT a tab route on desktop (see
+ *      `stores/workspace-creation-overlay-store.ts` + `routes.tsx`), so the
  *      tab path alone would either miss them or mislabel them as "/".
  *   3. Otherwise → the active tab's path (workspace-scoped, e.g.
  *      `/acme/issues/123`). Kept in sync by `useTabRouterSync`.
@@ -43,7 +43,9 @@ import type { RendererRouteContextInput } from "../../../shared/renderer-route-c
  */
 export function PageviewTracker() {
   const user = useAuthStore((s) => s.user);
-  const overlay = useWindowOverlayStore((s) => s.overlay);
+  const isWorkspaceCreationOpen = useWorkspaceCreationOverlayStore(
+    (state) => state.isOpen,
+  );
   const { slug: activeWorkspaceSlug, tabId: activeTabId } = useActiveTabIdentity();
   const activeTabPath = useTabStore((s) => getActiveTab(s)?.path ?? null);
 
@@ -76,9 +78,9 @@ export function PageviewTracker() {
     if (!user) {
       kind = "login";
       path = "/login";
-    } else if (overlay) {
+    } else if (isWorkspaceCreationOpen) {
       kind = "overlay";
-      path = overlayPath(overlay);
+      path = "/workspaces/new";
     } else if (activeTabPath && activeTabId && activeWorkspaceSlug) {
       kind = "tab";
       key = `${activeWorkspaceSlug}:${activeTabId}`;
@@ -118,7 +120,13 @@ export function PageviewTracker() {
 
     capturePageview(path);
     lastSurfaceRef.current = next;
-  }, [user, overlay, activeWorkspaceSlug, activeTabId, activeTabPath]);
+  }, [
+    user,
+    isWorkspaceCreationOpen,
+    activeWorkspaceSlug,
+    activeTabId,
+    activeTabPath,
+  ]);
 
   return null;
 }
@@ -128,13 +136,4 @@ function reportRendererRouteContext(context: RendererRouteContextInput) {
     | { setRendererRouteContext?: (context: RendererRouteContextInput) => void }
     | undefined;
   desktopAPI?.setRendererRouteContext?.(context);
-}
-
-function overlayPath(overlay: WindowOverlay): string {
-  switch (overlay.type) {
-    case "new-workspace":
-      return "/workspaces/new";
-    case "onboarding":
-      return "/onboarding";
-  }
 }

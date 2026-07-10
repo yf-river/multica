@@ -9,7 +9,6 @@ import type settings from "../locales/zh-Hans/settings.json";
 import type issues from "../locales/zh-Hans/issues.json";
 import type agents from "../locales/zh-Hans/agents.json";
 import type editor from "../locales/zh-Hans/editor.json";
-import type onboarding from "../locales/zh-Hans/onboarding.json";
 import type labels from "../locales/zh-Hans/labels.json";
 import type members from "../locales/zh-Hans/members.json";
 import type myIssues from "../locales/zh-Hans/my-issues.json";
@@ -48,7 +47,6 @@ declare global {
     issues: typeof issues;
     agents: typeof agents;
     editor: typeof editor;
-    onboarding: typeof onboarding;
     labels: typeof labels;
     members: typeof members;
     "my-issues": typeof myIssues;

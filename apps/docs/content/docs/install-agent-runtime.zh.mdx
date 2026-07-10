@@ -5,7 +5,7 @@ description: Multica 驱动本机上已安装的 AI 编程工具。这一页讲�
 
 import { Callout } from "fumadocs-ui/components/callout";
 
-在 Multica 里，一个**运行时**（runtime）就是你机器上的守护进程，配上守护进程在 `PATH` 里扫到的某一款 AI 编程工具。如果 onboarding 的 "连接运行时" 这一步显示 **未检测到支持的工具**，说明守护进程扫了 `PATH`，但 12 款它认得的工具一个都没找到。装下面任意一款（或几款），回到这一步重新扫描，几秒内运行时就会出现。
+在 Multica 里，一个**运行时**（runtime）就是你机器上的守护进程，配上守护进程在 `PATH` 里扫到的某一款 AI 编程工具。如果「运行时」页面显示 **未检测到支持的工具**，说明守护进程扫了 `PATH`，但 12 款它认得的工具一个都没找到。装下面任意一款（或几款），回到该页面重新扫描，几秒内运行时就会出现。
 
 这一页是装机的入口，和它配套的是：
 
@@ -163,7 +163,7 @@ Google 的 Antigravity CLI（`agy`）。搭配 Google Antigravity 服务，默�
 1. **确认可执行文件在 `PATH` 上。** 开一个新终端，跑 `which <名字>`（比如 `which claude`、`which cursor-agent`、`which kiro-cli`、`which agy`）。打印出路径，守护进程就找得到；什么都不打印，先修 shell 的 `PATH`（最常见原因是 rc 文件没重新加载）。
 2. **重启守护进程。** `multica daemon restart`，或者重启桌面端。守护进程只在启动时扫一次 `PATH`。
 3. **看 Runtimes 页面。** Multica UI 的 **Runtimes** 页应该会出现一行 `(工作区 × 工具)`。如果显示 "offline"，看[守护进程与运行时 → 运行时何时被标记为离线](/zh/daemon-runtimes#运行时何时被标记为离线)。
-4. **回到 onboarding。** "连接运行时" 这一步会一直轮询，几秒内就能扫到新运行时，不需要手动刷新。
+4. **回到「运行时」页面。** 页面会自动刷新，几秒内就能看到新运行时。
 
 ## 排错
 

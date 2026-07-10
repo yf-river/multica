@@ -220,7 +220,6 @@ import type {
   TestExternalCredentialProfileRequest,
   TestExternalCredentialProfileResponse,
 } from "../types";
-import type { OnboardingCompletionPath } from "../onboarding/types";
 import { type Logger, noopLogger } from "../logger";
 import { createRequestId } from "../utils";
 import { getCurrentSlug } from "../platform/workspace-storage";
@@ -604,31 +603,6 @@ export class ApiClient {
     const raw = await this.fetch<unknown>("/api/me");
     return parseWithFallback(raw, UserSchema, EMPTY_USER, {
       endpoint: "GET /api/me",
-    });
-  }
-
-  async markOnboardingComplete(payload?: {
-    completion_path?: OnboardingCompletionPath;
-    workspace_id?: string;
-  }): Promise<User> {
-    const raw = await this.fetch<unknown>("/api/me/onboarding/complete", {
-      method: "POST",
-      body: payload ? JSON.stringify(payload) : undefined,
-    });
-    return parseWithFallback(raw, UserSchema, EMPTY_USER, {
-      endpoint: "POST /api/me/onboarding/complete",
-    });
-  }
-
-  async patchOnboarding(payload: {
-    questionnaire?: Record<string, unknown>;
-  }): Promise<User> {
-    const raw = await this.fetch<unknown>("/api/me/onboarding", {
-      method: "PATCH",
-      body: JSON.stringify(payload),
-    });
-    return parseWithFallback(raw, UserSchema, EMPTY_USER, {
-      endpoint: "PATCH /api/me/onboarding",
     });
   }
 

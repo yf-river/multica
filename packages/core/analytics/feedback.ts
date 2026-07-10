@@ -20,8 +20,8 @@ export type FeedbackOpenedSource = "help_menu";
 
 /**
  * Fires once on FeedbackModal mount. Workspace id is attached when the
- * modal opens inside a workspace; pre-workspace surfaces (e.g. inbox,
- * onboarding transitions) omit it rather than sending an empty string.
+ * modal opens inside a workspace; pre-workspace surfaces omit it rather than
+ * sending an empty string.
  */
 export function captureFeedbackOpened(
   source: FeedbackOpenedSource,

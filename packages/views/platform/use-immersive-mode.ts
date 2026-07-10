@@ -18,9 +18,8 @@ function getDesktopAPI(): ImmersiveCapableAPI | undefined {
  * is a no-op.
  *
  * `enabled=false` skips the IPC call (and cleanup) entirely, so a caller that
- * conditionally wants traffic lights visible — like onboarding, which has no
- * UI in the top-left and benefits from native window chrome — can opt out
- * without unmounting the hook.
+ * conditionally wants traffic lights visible can opt out without unmounting
+ * the hook.
  */
 export function useImmersiveMode(enabled: boolean = true): void {
   useEffect(() => {

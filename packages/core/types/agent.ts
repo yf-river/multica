@@ -325,9 +325,6 @@ export interface CreateAgentRequest {
   model?: string;
   /** Optional runtime-native reasoning/effort token. See `Agent.thinking_level`. */
   thinking_level?: string;
-  /** Optional template slug used by the onboarding agent picker. Surfaced
-   *  as the `template` property on the `agent_created` PostHog event. */
-  template?: string;
 }
 
 /** Agent template summary — fields needed by the picker grid. Does NOT

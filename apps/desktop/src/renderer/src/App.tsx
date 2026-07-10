@@ -3,7 +3,6 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CoreProvider } from "@multica/core/platform";
 import { DEFAULT_LOCALE } from "@multica/core/i18n";
 import { useAuthStore } from "@multica/core/auth";
-import { useWelcomeStore } from "@multica/core/onboarding";
 import { workspaceKeys, workspaceListOptions } from "@multica/core/workspace/queries";
 import { api } from "@multica/core/api";
 import { setCurrentWorkspace } from "@multica/core/platform";
@@ -15,7 +14,7 @@ import { DesktopShell } from "./components/desktop-layout";
 import { PageviewTracker } from "./components/pageview-tracker";
 import { UpdateNotification } from "./components/update-notification";
 import { useTabStore } from "./stores/tab-store";
-import { useWindowOverlayStore } from "./stores/window-overlay-store";
+import { useWorkspaceCreationOverlayStore } from "./stores/workspace-creation-overlay-store";
 import { useDaemonIPCBridge } from "./platform/daemon-ipc-bridge";
 import { captureEvent } from "@multica/core/analytics";
 import { RESOURCES } from "@multica/views/locales";
@@ -26,7 +25,7 @@ import { RESOURCES } from "@multica/views/locales";
  * (or no tabs/workspace exist — e.g. login page), close the window.
  *
  * Mounted at the App root so every renderer state — including login,
- * loading, onboarding, and runtime-config errors — has a working Cmd+W
+ * loading, workspace creation, and runtime-config errors — has a working Cmd+W
  * handler. Without this, states outside the tab shell would swallow the
  * shortcut and do nothing.
  */
@@ -138,16 +137,15 @@ function AppContent() {
     : undefined;
   useDaemonIPCBridge(activeWsId);
 
-  // Pre-workspace overlay routing for desktop. The team edition does not
-  // force the product onboarding questionnaire; users with a workspace go
-  // straight to the dashboard, and users without one create a workspace.
+  // Pre-workspace overlay routing for desktop. Users with a workspace go
+  // straight to the dashboard; users without one create a workspace.
   useEffect(() => {
     if (!user || !workspaceListFetched) return undefined;
-    const { overlay, open } = useWindowOverlayStore.getState();
-    if (overlay) return undefined;
+    const { isOpen, open } = useWorkspaceCreationOverlayStore.getState();
+    if (isOpen) return undefined;
     if (wsCount > 0) return undefined;
     setCurrentWorkspace(null, null);
-    open({ type: "new-workspace" });
+    open();
     return undefined;
   }, [user, workspaceListFetched, wsCount, workspaces, qc]);
 
@@ -238,10 +236,7 @@ function BlockingRuntimeConfigError({ message }: { message: string }) {
 // we explicitly reset them here.
 async function handleDaemonLogout() {
   useTabStore.getState().reset();
-  useWindowOverlayStore.getState().close();
-  // Drop any post-onboarding welcome signal so user B logging in next
-  // doesn't inherit user A's pending modal state.
-  useWelcomeStore.getState().reset();
+  useWorkspaceCreationOverlayStore.getState().close();
   try {
     await window.daemonAPI.clearToken();
   } catch {

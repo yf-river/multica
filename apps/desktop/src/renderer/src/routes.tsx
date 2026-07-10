@@ -95,10 +95,10 @@ function PageShell() {
 /**
  * Route definitions shared by all tabs.
  *
- * Every tab path is workspace-scoped: `/{slug}/{route}/...`. Pre-workspace
- * flows (create workspace, onboarding) are NOT routes — they render as a
- * window-level overlay via `WindowOverlay`, dispatched by the navigation
- * adapter's transition-path interception. The `activeWorkspaceSlug` in the
+ * Every tab path is workspace-scoped: `/{slug}/{route}/...`. Creating the
+ * first workspace is NOT a route — it renders as a window-level overlay via
+ * `WorkspaceCreationOverlay`, dispatched by the navigation adapter's
+ * transition-path interception. The `activeWorkspaceSlug` in the
  * tab store decides which workspace's tabs are visible in the TabBar;
  * workspace-less state (zero-workspace user) shows the overlay instead.
  *

@@ -106,7 +106,7 @@ beforeEach(() => {
 });
 
 describe("WorkspaceRouteLayout", () => {
-  it("renders the workspace outlet without onboarding popups", () => {
+  it("renders the workspace outlet", () => {
     const { queryByTestId } = renderLayout();
     expect(queryByTestId("outlet")).not.toBeNull();
   });

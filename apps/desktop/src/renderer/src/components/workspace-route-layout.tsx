@@ -27,7 +27,7 @@ import { useTabStore } from "@/stores/tab-store";
  * tab group for a workspace the current user no longer has access to, or
  * active eviction). Both cases resolve by dropping the stale tab group
  * from the tab store — the TabBar then renders a different workspace or
- * the WindowOverlay takes over (zero valid workspaces).
+ * the WorkspaceCreationOverlay takes over (zero valid workspaces).
  */
 export function WorkspaceRouteLayout() {
   const { workspaceSlug } = useParams<{ workspaceSlug: string }>();

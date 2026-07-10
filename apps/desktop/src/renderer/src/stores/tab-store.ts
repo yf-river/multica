@@ -43,7 +43,8 @@ interface TabStore {
    *   - Fresh install, before any workspace exists or is selected.
    *   - Logged-out state (reset() wipes it).
    *   - Every workspace the user had access to got deleted / revoked.
-   * When null, TabContent renders nothing and the WindowOverlay takes over.
+   * When null, TabContent renders nothing and the workspace-creation overlay
+   * takes over.
    */
   activeWorkspaceSlug: string | null;
 

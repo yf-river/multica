@@ -1,10 +1,9 @@
 # Creating agents — source map
 
 Evidence layer for `SKILL.md`. Every contract maps to `file:line` on the
-current tree (branch `feat/builtin-skills`, latest `main` merged), the runtime
-effect, and a safe read-only check. Line numbers were re-derived against this
-tree — re-derive again if the files move, the surrounding context (not the
-number) is the anchor.
+current tree, the runtime effect, and a safe read-only check. Line numbers were
+re-derived against this tree — re-derive again if the files move; the
+surrounding context, not the number, is the anchor.
 
 ## Verification
 
@@ -38,11 +37,9 @@ Note: the CLI no longer exposes `--from-template`. The agent-template backend
 still exists (registry `server/internal/agenttmpl/`, handler `agent_template.go`,
 routes `GET /api/agent-templates` and `POST /api/agents/from-template`, plus the
 `packages/core` client/query wrappers) but is currently orphaned plumbing with no
-live caller: the removed CLI flag was its only non-test consumer, and onboarding
-does NOT use it — `packages/views/onboarding/steps/step-agent.tsx` builds four
-hardcoded local presets (i18n-resolved) and creates via plain `POST /api/agents`
-(`createAgent`), never `POST /api/agents/from-template`. Do not treat the template
-API as a supported agent-creation path. This skill teaches manual `agent create`
+live caller: the removed CLI flag was its only non-test consumer, and the
+historical onboarding flow has also been removed. Do not treat the template API
+as a supported agent-creation path. This skill teaches manual `agent create`
 only.
 
 ## Create handler — `server/internal/handler/agent.go`
