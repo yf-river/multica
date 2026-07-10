@@ -126,14 +126,22 @@ describe("WorkspaceTab — issue prefix editing", () => {
 
   it("renders the current prefix in the input", () => {
     render(<WorkspaceTab />, { wrapper: I18nWrapper });
-    const input = screen.getByPlaceholderText("TES") as HTMLInputElement;
+    const input = screen.getByLabelText("任务编号前缀") as HTMLInputElement;
     expect(input.value).toBe("TES");
+  });
+
+  it("associates workspace form labels with their controls", () => {
+    render(<WorkspaceTab />, { wrapper: I18nWrapper });
+
+    expect(screen.getByLabelText("名称")).toHaveValue("Test Workspace");
+    expect(screen.getByLabelText("描述")).toBeInTheDocument();
+    expect(screen.getByLabelText("上下文")).toBeInTheDocument();
   });
 
   it("uppercases and strips non-alphanumeric input as the user types", async () => {
     const user = userEvent.setup();
     render(<WorkspaceTab />, { wrapper: I18nWrapper });
-    const input = screen.getByPlaceholderText("TES") as HTMLInputElement;
+    const input = screen.getByLabelText("任务编号前缀") as HTMLInputElement;
 
     await user.clear(input);
     await user.type(input, "ab-12!cd");
@@ -168,7 +176,7 @@ describe("WorkspaceTab — issue prefix editing", () => {
     const user = userEvent.setup();
     render(<WorkspaceTab />, { wrapper: I18nWrapper });
 
-    const input = screen.getByPlaceholderText("TES") as HTMLInputElement;
+    const input = screen.getByLabelText("任务编号前缀") as HTMLInputElement;
     await user.clear(input);
     await user.type(input, "NEW");
 
@@ -204,7 +212,7 @@ describe("WorkspaceTab — issue prefix editing", () => {
     const user = userEvent.setup();
     render(<WorkspaceTab />, { wrapper: I18nWrapper });
 
-    const input = screen.getByPlaceholderText("TES") as HTMLInputElement;
+    const input = screen.getByLabelText("任务编号前缀") as HTMLInputElement;
     await user.clear(input);
     await user.type(input, "NEW");
 
@@ -222,7 +230,7 @@ describe("WorkspaceTab — issue prefix editing", () => {
     const user = userEvent.setup();
     render(<WorkspaceTab />, { wrapper: I18nWrapper });
 
-    const input = screen.getByPlaceholderText("TES") as HTMLInputElement;
+    const input = screen.getByLabelText("任务编号前缀") as HTMLInputElement;
     await user.clear(input);
 
     expect(screen.getByRole("button", { name: /^保存$/ })).toBeDisabled();
@@ -231,6 +239,6 @@ describe("WorkspaceTab — issue prefix editing", () => {
   it("disables the prefix input for non-admins", () => {
     membersRef.current = [{ user_id: "user-1", role: "member" }];
     render(<WorkspaceTab />, { wrapper: I18nWrapper });
-    expect(screen.getByPlaceholderText("TES")).toBeDisabled();
+    expect(screen.getByLabelText("任务编号前缀")).toBeDisabled();
   });
 });
