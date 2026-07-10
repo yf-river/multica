@@ -31,6 +31,7 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 		failureReason = taskfailure.Classify(errMsg).String()
 	}
 	var task db.AgentTaskQueue
+	var failedEvent events.Event
 	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
 		t, err := qtx.FailAgentTask(ctx, db.FailAgentTaskParams{
 			ID:            taskID,
@@ -64,7 +65,8 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 				return fmt.Errorf("update chat session resume pointer: %w", err)
 			}
 		}
-		return nil
+		failedEvent, err = s.enqueueTaskEvent(ctx, qtx, protocol.EventTaskFailed, task)
+		return err
 	}); err != nil {
 		if existing, lookupErr := s.Queries.GetAgentTask(ctx, taskID); lookupErr == nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -97,7 +99,7 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 	if sc, ok := ParseIssueSourceSummaryContext(task); ok {
 		s.failIssueSourceSummaryTask(ctx, task, sc, errMsg)
 		s.ReconcileAgentStatus(ctx, task.AgentID)
-		s.broadcastTaskEvent(ctx, protocol.EventTaskFailed, task)
+		s.Bus.Publish(failedEvent)
 		return &task, nil
 	}
 
@@ -181,7 +183,7 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 	s.ReconcileAgentStatus(ctx, task.AgentID)
 
 	// Broadcast
-	s.broadcastTaskEvent(ctx, protocol.EventTaskFailed, task)
+	s.Bus.Publish(failedEvent)
 
 	return &task, nil
 }
@@ -734,59 +736,24 @@ func (s *TaskService) broadcastTaskDispatch(ctx context.Context, task db.AgentTa
 }
 
 func (s *TaskService) broadcastTaskEvent(ctx context.Context, eventType string, task db.AgentTaskQueue) {
-	workspaceID := s.ResolveTaskWorkspaceID(ctx, task)
-	if workspaceID == "" {
+	event, err := s.buildTaskEvent(ctx, s.Queries, eventType, task)
+	if err != nil {
+		slog.Warn("build task event failed", "task_id", util.UUIDToString(task.ID), "event_type", eventType, "error", err)
 		return
 	}
-	payload := map[string]any{
-		"task_id":  util.UUIDToString(task.ID),
-		"agent_id": util.UUIDToString(task.AgentID),
-		"issue_id": util.UUIDToString(task.IssueID),
-		"status":   task.Status,
-	}
-	if task.ChatSessionID.Valid {
-		payload["chat_session_id"] = util.UUIDToString(task.ChatSessionID)
-	}
-	s.Bus.Publish(events.Event{
-		Type:        eventType,
-		WorkspaceID: workspaceID,
-		ActorType:   "system",
-		ActorID:     "",
-		Payload:     payload,
-	})
+	s.Bus.Publish(event)
 }
 
-// ResolveTaskWorkspaceID determines the workspace ID for a task.
-// For issue tasks, it comes from the issue. For chat tasks, from the chat session.
-// For autopilot tasks, from the autopilot via its run.
-// Returns "" when none of the links resolve — callers treat that as "not found".
+// ResolveTaskWorkspaceID determines the workspace ID from the task's owned
+// resource, with the task agent as the current-model fallback. It returns ""
+// only when neither the resource nor the required agent row can be resolved.
 func (s *TaskService) ResolveTaskWorkspaceID(ctx context.Context, task db.AgentTaskQueue) string {
-	if task.IssueID.Valid {
-		if issue, err := s.Queries.GetIssue(ctx, task.IssueID); err == nil {
-			return util.UUIDToString(issue.WorkspaceID)
-		}
+	workspaceID, err := s.resolveTaskWorkspaceID(ctx, s.Queries, task)
+	if err != nil {
+		slog.Warn("resolve task workspace failed", "task_id", util.UUIDToString(task.ID), "error", err)
+		return ""
 	}
-	if task.ChatSessionID.Valid {
-		if cs, err := s.Queries.GetChatSession(ctx, task.ChatSessionID); err == nil {
-			return util.UUIDToString(cs.WorkspaceID)
-		}
-	}
-	if task.AutopilotRunID.Valid {
-		if run, err := s.Queries.GetAutopilotRun(ctx, task.AutopilotRunID); err == nil {
-			if ap, err := s.Queries.GetAutopilot(ctx, run.AutopilotID); err == nil {
-				return util.UUIDToString(ap.WorkspaceID)
-			}
-		}
-	}
-	// Quick-create tasks have no issue / chat / autopilot link — workspace
-	// lives in the context JSONB. Returning "" here is what blocked
-	// requireDaemonTaskAccess (404 on /start, /progress, /complete, /fail
-	// for the daemon) and silently dropped task:dispatch / task:completed
-	// broadcasts, which is why quick-create tasks appeared stuck queued.
-	if qc, ok := s.parseQuickCreateContext(task); ok {
-		return qc.WorkspaceID
-	}
-	return ""
+	return workspaceID
 }
 
 func (s *TaskService) broadcastChatDone(ctx context.Context, task db.AgentTaskQueue, msg *db.ChatMessage) {

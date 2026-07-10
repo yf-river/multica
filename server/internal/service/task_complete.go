@@ -13,6 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -21,6 +22,7 @@ import (
 
 func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, result []byte, sessionID, workDir string) (*db.AgentTaskQueue, error) {
 	var task db.AgentTaskQueue
+	var completedEvent events.Event
 	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
 		t, err := qtx.CompleteAgentTask(ctx, db.CompleteAgentTaskParams{
 			ID:        taskID,
@@ -53,7 +55,8 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 				return fmt.Errorf("update chat session resume pointer: %w", err)
 			}
 		}
-		return nil
+		completedEvent, err = s.enqueueTaskEvent(ctx, qtx, protocol.EventTaskCompleted, task)
+		return err
 	}); err != nil {
 		// When parallel agents race, a task may already be completed,
 		// cancelled, or failed by the time this call runs. The UPDATE
@@ -90,7 +93,7 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 	if sc, ok := ParseIssueSourceSummaryContext(task); ok {
 		s.completeIssueSourceSummaryTask(ctx, task, sc, result)
 		s.ReconcileAgentStatus(ctx, task.AgentID)
-		s.broadcastTaskEvent(ctx, protocol.EventTaskCompleted, task)
+		s.Bus.Publish(completedEvent)
 		return &task, nil
 	}
 	s.linkGongfengMRsFromTaskComments(ctx, task)
@@ -196,7 +199,7 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 	s.ReconcileAgentStatus(ctx, task.AgentID)
 
 	// Broadcast
-	s.broadcastTaskEvent(ctx, protocol.EventTaskCompleted, task)
+	s.Bus.Publish(completedEvent)
 
 	return &task, nil
 }
