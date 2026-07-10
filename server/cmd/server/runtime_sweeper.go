@@ -83,15 +83,15 @@ func runRuntimeSweeper(ctx context.Context, queries *db.Queries, liveness handle
 			return
 		case <-ticker.C:
 			sweepStaleRuntimes(ctx, queries, liveness, taskSvc, bus)
-			sweepStaleTasks(ctx, queries, taskSvc, bus)
-			sweepExpiredQueuedTasks(ctx, queries, taskSvc)
+			sweepOfflineRuntimeTasks(ctx, taskSvc)
+			sweepStaleTasks(ctx, taskSvc)
+			sweepExpiredQueuedTasks(ctx, taskSvc)
 			gcRuntimes(ctx, queries, bus)
 		}
 	}
 }
 
-// sweepStaleRuntimes marks runtimes offline if they haven't heartbeated,
-// then fails any tasks belonging to those offline runtimes.
+// sweepStaleRuntimes marks runtimes offline if they haven't heartbeated.
 func sweepStaleRuntimes(ctx context.Context, queries *db.Queries, liveness handler.LivenessStore, taskSvc *service.TaskService, bus *events.Bus) {
 	candidates, err := queries.SelectStaleOnlineRuntimes(ctx, staleThresholdSeconds)
 	if err != nil {
@@ -150,15 +150,6 @@ func sweepStaleRuntimes(ctx context.Context, queries *db.Queries, liveness handl
 
 	slog.Info("runtime sweeper: marked stale runtimes offline", "count", len(staleRows), "workspaces", len(workspaces))
 
-	// Fail orphaned tasks (dispatched/running) whose runtimes just went offline.
-	failedTasks, err := queries.FailTasksForOfflineRuntimes(ctx)
-	if err != nil {
-		slog.Warn("runtime sweeper: failed to clean up stale tasks", "error", err)
-	} else if len(failedTasks) > 0 {
-		slog.Info("runtime sweeper: failed orphaned tasks", "count", len(failedTasks))
-		taskSvc.HandleFailedTasks(ctx, failedTasks)
-	}
-
 	// Notify frontend clients so they re-fetch runtime list.
 	for wsID := range workspaces {
 		bus.Publish(events.Event{
@@ -170,6 +161,22 @@ func sweepStaleRuntimes(ctx context.Context, queries *db.Queries, liveness handl
 			},
 		})
 	}
+}
+
+// sweepOfflineRuntimeTasks runs every tick, independently of whether a runtime
+// changed state during that tick. If the task+event transaction fails after a
+// runtime was already marked offline, the next tick therefore retries it.
+func sweepOfflineRuntimeTasks(ctx context.Context, taskSvc *service.TaskService) {
+	failedTasks, err := taskSvc.FailTasksForOfflineRuntimes(ctx)
+	if err != nil {
+		slog.Warn("runtime sweeper: failed to clean up offline-runtime tasks", "error", err)
+		return
+	}
+	if len(failedTasks) == 0 {
+		return
+	}
+	slog.Info("runtime sweeper: failed orphaned tasks", "count", len(failedTasks))
+	taskSvc.HandleFailedTasks(ctx, failedTasks)
 }
 
 // filterStaleRuntimesByLiveness narrows a SELECT-of-stale-candidates down to
@@ -243,8 +250,8 @@ func gcRuntimes(ctx context.Context, queries *db.Queries, bus *events.Bus) {
 // - The agent process hangs and the daemon is still heartbeating
 // - The daemon failed to report task completion/failure
 // - A server restart left tasks in a non-terminal state
-func sweepStaleTasks(ctx context.Context, queries *db.Queries, taskSvc *service.TaskService, bus *events.Bus) {
-	failedTasks, err := queries.FailStaleTasks(ctx, db.FailStaleTasksParams{
+func sweepStaleTasks(ctx context.Context, taskSvc *service.TaskService) {
+	failedTasks, err := taskSvc.FailStaleTasks(ctx, db.FailStaleTasksParams{
 		DispatchTimeoutSecs: dispatchTimeoutSeconds,
 		RunningTimeoutSecs:  runningTimeoutSeconds,
 	})
@@ -267,8 +274,8 @@ func sweepStaleTasks(ctx context.Context, queries *db.Queries, taskSvc *service.
 // historical backlog and catches the race where a runtime goes offline AFTER
 // a task is already queued. Capped to queuedExpireBatchSize per tick so a
 // big backlog can't monopolise the DB.
-func sweepExpiredQueuedTasks(ctx context.Context, queries *db.Queries, taskSvc *service.TaskService) {
-	failedTasks, err := queries.ExpireStaleQueuedTasks(ctx, db.ExpireStaleQueuedTasksParams{
+func sweepExpiredQueuedTasks(ctx context.Context, taskSvc *service.TaskService) {
+	failedTasks, err := taskSvc.ExpireStaleQueuedTasks(ctx, db.ExpireStaleQueuedTasksParams{
 		TtlSecs:    queuedTTLSeconds,
 		MaxPerTick: queuedExpireBatchSize,
 	})
@@ -283,69 +290,4 @@ func sweepExpiredQueuedTasks(ctx context.Context, queries *db.Queries, taskSvc *
 	slog.Info("task sweeper: expired stale queued tasks", "count", len(failedTasks))
 	taskSvc.CaptureQueuedExpiredTasks(ctx, failedTasks)
 	taskSvc.HandleFailedTasks(ctx, failedTasks)
-}
-
-// broadcastFailedTasks is preserved as a thin shim for the integration tests
-// in this package. New call sites should use TaskService.HandleFailedTasks
-// directly so the side effects (event broadcast, agent reconcile, issue
-// rollback, auto-retry) are guaranteed in one place.
-func broadcastFailedTasks(ctx context.Context, queries *db.Queries, taskSvc *service.TaskService, bus *events.Bus, tasks []db.AgentTaskQueue) {
-	if taskSvc != nil {
-		taskSvc.HandleFailedTasks(ctx, tasks)
-		return
-	}
-	// Fallback path used by tests that don't construct a TaskService:
-	// publish task:failed events with workspace IDs and reset stuck issues.
-	processedIssues := make(map[string]bool)
-	affectedAgents := make(map[string]pgtype.UUID)
-	for _, t := range tasks {
-		failureReason := "agent_error"
-		if t.FailureReason.Valid && t.FailureReason.String != "" {
-			failureReason = t.FailureReason.String
-		}
-		workspaceID := ""
-		if t.IssueID.Valid {
-			if issue, err := queries.GetIssue(ctx, t.IssueID); err == nil {
-				workspaceID = util.UUIDToString(issue.WorkspaceID)
-				issueKey := util.UUIDToString(t.IssueID)
-				if issue.Status == "in_progress" && !processedIssues[issueKey] {
-					processedIssues[issueKey] = true
-					if hasActive, herr := queries.HasActiveTaskForIssue(ctx, t.IssueID); herr == nil && !hasActive {
-						queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{ID: t.IssueID, Status: "todo", WorkspaceID: issue.WorkspaceID})
-					}
-				}
-			}
-		}
-		bus.Publish(events.Event{
-			Type:        protocol.EventTaskFailed,
-			WorkspaceID: workspaceID,
-			ActorType:   "system",
-			Payload: map[string]any{
-				"task_id":        util.UUIDToString(t.ID),
-				"agent_id":       util.UUIDToString(t.AgentID),
-				"issue_id":       util.UUIDToString(t.IssueID),
-				"status":         "failed",
-				"failure_reason": failureReason,
-			},
-		})
-		affectedAgents[util.UUIDToString(t.AgentID)] = t.AgentID
-	}
-	for _, agentID := range affectedAgents {
-		reconcileAgentStatus(ctx, queries, bus, agentID)
-	}
-}
-
-// reconcileAgentStatus refreshes agent status from the current active task set.
-// Used only by the test-fallback path of broadcastFailedTasks above.
-func reconcileAgentStatus(ctx context.Context, queries *db.Queries, bus *events.Bus, agentID pgtype.UUID) {
-	agent, err := queries.RefreshAgentStatusFromTasks(ctx, agentID)
-	if err != nil {
-		return
-	}
-	bus.Publish(events.Event{
-		Type:        protocol.EventAgentStatus,
-		WorkspaceID: util.UUIDToString(agent.WorkspaceID),
-		ActorType:   "system",
-		Payload:     map[string]any{"agent_id": util.UUIDToString(agent.ID), "status": agent.Status},
-	})
 }

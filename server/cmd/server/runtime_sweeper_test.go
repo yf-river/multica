@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -75,7 +76,19 @@ func cleanupSweeperFixture(t *testing.T, issueID, agentID string) {
 	ctx := context.Background()
 	testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
 	testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID)
+	testPool.Exec(ctx, `DELETE FROM domain_event_outbox WHERE stream_key = 'issue:' || $1`, issueID)
 	testPool.Exec(ctx, `UPDATE agent SET status = 'idle' WHERE id = $1`, agentID)
+}
+
+func failStaleTasksForTest(t *testing.T, queries *db.Queries, bus *events.Bus, params db.FailStaleTasksParams) []db.AgentTaskQueue {
+	t.Helper()
+	taskService := service.NewTaskService(queries, testPool, nil, bus)
+	failed, err := taskService.FailStaleTasks(context.Background(), params)
+	if err != nil {
+		t.Fatalf("FailStaleTasks: %v", err)
+	}
+	taskService.HandleFailedTasks(context.Background(), failed)
+	return failed
 }
 
 func setupStaleRunningIssueFixture(t *testing.T, issueStatus, title string) (string, string) {
@@ -107,6 +120,7 @@ func setupStaleRunningIssueFixture(t *testing.T, issueStatus, title string) (str
 	t.Cleanup(func() {
 		testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
 		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID)
+		testPool.Exec(ctx, `DELETE FROM domain_event_outbox WHERE stream_key = 'issue:' || $1`, issueID)
 	})
 
 	var taskID string
@@ -190,13 +204,10 @@ func TestSweepStaleTasksBroadcastsWithWorkspaceID(t *testing.T) {
 	})
 
 	// Use very short timeouts to trigger the sweep on our test task
-	failedTasks, err := queries.FailStaleTasks(context.Background(), db.FailStaleTasksParams{
+	failedTasks := failStaleTasksForTest(t, queries, bus, db.FailStaleTasksParams{
 		DispatchTimeoutSecs: 300.0,
 		RunningTimeoutSecs:  1.0, // 1 second — our task is 3 hours old
 	})
-	if err != nil {
-		t.Fatalf("FailStaleTasks query failed: %v", err)
-	}
 	if len(failedTasks) == 0 {
 		t.Fatal("expected at least 1 stale task to be failed")
 	}
@@ -212,9 +223,6 @@ func TestSweepStaleTasksBroadcastsWithWorkspaceID(t *testing.T) {
 	if !found {
 		t.Fatalf("expected task %s to be in failed tasks list", taskID)
 	}
-
-	// Call broadcastFailedTasks — this is what we're testing
-	broadcastFailedTasks(context.Background(), queries, nil, bus, failedTasks)
 
 	// Verify the event was published with WorkspaceID (the core of the bug fix)
 	mu.Lock()
@@ -239,7 +247,7 @@ func TestSweepStaleTasksBroadcastsWithWorkspaceID(t *testing.T) {
 
 	// Verify DB: task should be failed
 	var status string
-	err = testPool.QueryRow(context.Background(), `SELECT status FROM agent_task_queue WHERE id = $1`, taskID).Scan(&status)
+	err := testPool.QueryRow(context.Background(), `SELECT status FROM agent_task_queue WHERE id = $1`, taskID).Scan(&status)
 	if err != nil {
 		t.Fatalf("failed to query task status: %v", err)
 	}
@@ -248,8 +256,9 @@ func TestSweepStaleTasksBroadcastsWithWorkspaceID(t *testing.T) {
 	}
 }
 
-// TestSweepStaleTasksReconcileAgentStatus verifies that after the sweeper fails
-// stale tasks, the agent status is reconciled from "working" back to "idle".
+// TestSweepStaleTasksReconcileAgentStatus verifies the current retry-aware
+// contract: the failed attempt is replaced by a queued retry, while agent
+// status returns to idle until a daemon actually dispatches that retry.
 func TestSweepStaleTasksReconcileAgentStatus(t *testing.T) {
 	if testPool == nil {
 		t.Skip("no database connection")
@@ -271,27 +280,22 @@ func TestSweepStaleTasksReconcileAgentStatus(t *testing.T) {
 	})
 
 	// Fail stale tasks with short timeout
-	failedTasks, err := queries.FailStaleTasks(context.Background(), db.FailStaleTasksParams{
+	failedTasks := failStaleTasksForTest(t, queries, bus, db.FailStaleTasksParams{
 		DispatchTimeoutSecs: 300.0,
 		RunningTimeoutSecs:  1.0,
 	})
-	if err != nil {
-		t.Fatalf("FailStaleTasks failed: %v", err)
-	}
 	if len(failedTasks) == 0 {
 		t.Fatal("expected at least 1 stale task")
 	}
 
-	broadcastFailedTasks(context.Background(), queries, nil, bus, failedTasks)
-
-	// Verify agent status is now "idle" in DB
+	// Queued work is not yet executing, so the agent returns to idle.
 	var agentStatus string
-	err = testPool.QueryRow(context.Background(), `SELECT status FROM agent WHERE id = $1`, agentID).Scan(&agentStatus)
+	err := testPool.QueryRow(context.Background(), `SELECT status FROM agent WHERE id = $1`, agentID).Scan(&agentStatus)
 	if err != nil {
 		t.Fatalf("failed to query agent status: %v", err)
 	}
 	if agentStatus != "idle" {
-		t.Fatalf("expected agent status 'idle', got '%s'", agentStatus)
+		t.Fatalf("expected retrying agent status 'idle' before dispatch, got '%s'", agentStatus)
 	}
 
 	// Verify agent:status event was published with correct WorkspaceID
@@ -332,22 +336,17 @@ func TestSweepDispatchedStaleTask(t *testing.T) {
 	})
 
 	// Fail stale tasks — dispatch timeout of 1 second (our task is 10 minutes old)
-	failedTasks, err := queries.FailStaleTasks(context.Background(), db.FailStaleTasksParams{
+	failedTasks := failStaleTasksForTest(t, queries, bus, db.FailStaleTasksParams{
 		DispatchTimeoutSecs: 1.0,
 		RunningTimeoutSecs:  9000.0,
 	})
-	if err != nil {
-		t.Fatalf("FailStaleTasks failed: %v", err)
-	}
 	if len(failedTasks) == 0 {
 		t.Fatal("expected at least 1 stale dispatched task")
 	}
 
-	broadcastFailedTasks(context.Background(), queries, nil, bus, failedTasks)
-
 	// Verify DB: task should be failed
 	var status string
-	err = testPool.QueryRow(context.Background(), `SELECT status FROM agent_task_queue WHERE id = $1`, taskID).Scan(&status)
+	err := testPool.QueryRow(context.Background(), `SELECT status FROM agent_task_queue WHERE id = $1`, taskID).Scan(&status)
 	if err != nil {
 		t.Fatalf("failed to query task: %v", err)
 	}
@@ -376,24 +375,103 @@ func TestSweepDispatchedStaleTask(t *testing.T) {
 		t.Fatalf("expected task:failed event for task %s", taskID)
 	}
 
-	// Verify agent status reconciled to idle
+	// The timeout is retryable, but a queued replacement is not yet working.
 	var agentStatus string
 	err = testPool.QueryRow(context.Background(), `SELECT status FROM agent WHERE id = $1`, agentID).Scan(&agentStatus)
 	if err != nil {
 		t.Fatalf("failed to query agent: %v", err)
 	}
 	if agentStatus != "idle" {
-		t.Fatalf("expected agent status 'idle' after sweep, got '%s'", agentStatus)
+		t.Fatalf("expected agent status 'idle' before retry dispatch, got '%s'", agentStatus)
 	}
 }
 
-// TestSweepResetsInProgressIssueToTodo verifies the core fix: when the sweeper
-// force-fails a stale task whose issue is still in_progress (because the daemon
-// crashed mid-run), the issue is reset back to todo so the daemon can re-queue it.
-//
-// Without this fix the issue stays in_progress permanently — the agent never runs
-// to update the status because it was never dispatched.
-func TestSweepResetsInProgressIssueToTodo(t *testing.T) {
+func TestOfflineRuntimeTaskSweepRetriesAfterRuntimeAlreadyOffline(t *testing.T) {
+	if testPool == nil {
+		t.Skip("no database connection")
+	}
+	ctx := context.Background()
+	runtimeID := seedStaleRuntime(t, ctx, "offline-task-recovery-runtime")
+	if _, err := testPool.Exec(ctx, `UPDATE agent_runtime SET status = 'offline' WHERE id = $1`, runtimeID); err != nil {
+		t.Fatalf("mark runtime offline: %v", err)
+	}
+
+	var agentID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent (
+			workspace_id, name, description, runtime_mode, runtime_config,
+			runtime_id, scope, max_concurrent_tasks, owner_id
+		)
+		VALUES ($1, $2, '', 'cloud', '{}'::jsonb, $3, 'workspace', 1, $4)
+		RETURNING id
+	`, testWorkspaceID, "offline-sweep-"+runtimeID, runtimeID, testUserID).Scan(&agentID); err != nil {
+		t.Fatalf("create offline-runtime agent: %v", err)
+	}
+
+	var issueID string
+	if err := testPool.QueryRow(ctx, `
+		WITH bumped AS (
+			UPDATE workspace SET issue_counter = issue_counter + 1
+			WHERE id = $1 RETURNING issue_counter
+		)
+		INSERT INTO issue (workspace_id, title, status, priority, creator_type, creator_id, assignee_type, assignee_id, number)
+		VALUES ($1, 'Offline task recovery', 'in_progress', 'none', 'member', $2, 'agent', $3, (SELECT issue_counter FROM bumped))
+		RETURNING id
+	`, testWorkspaceID, testUserID, agentID).Scan(&issueID); err != nil {
+		t.Fatalf("create offline-runtime issue: %v", err)
+	}
+	var taskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, dispatched_at, started_at)
+		VALUES ($1, $2, $3, 'running', now() - interval '5 minutes', now() - interval '5 minutes')
+		RETURNING id
+	`, agentID, runtimeID, issueID).Scan(&taskID); err != nil {
+		t.Fatalf("create offline-runtime task: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
+		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID)
+		testPool.Exec(ctx, `DELETE FROM domain_event_outbox WHERE stream_key = 'issue:' || $1`, issueID)
+		testPool.Exec(ctx, `DELETE FROM agent WHERE id = $1`, agentID)
+	})
+
+	bus := events.New()
+	var failedEvent events.Event
+	bus.Subscribe("task:failed", func(event events.Event) {
+		if payload, ok := event.Payload.(map[string]any); ok && payload["task_id"] == taskID {
+			failedEvent = event
+		}
+	})
+	taskService := service.NewTaskService(db.New(testPool), testPool, nil, bus)
+	sweepOfflineRuntimeTasks(ctx, taskService)
+
+	var status string
+	if err := testPool.QueryRow(ctx, `SELECT status FROM agent_task_queue WHERE id = $1`, taskID).Scan(&status); err != nil {
+		t.Fatalf("load recovered task: %v", err)
+	}
+	if status != "failed" {
+		t.Fatalf("already-offline runtime task status = %q, want failed", status)
+	}
+	if failedEvent.WorkspaceID != testWorkspaceID {
+		t.Fatalf("already-offline task event workspace = %q, want %q", failedEvent.WorkspaceID, testWorkspaceID)
+	}
+	var eventCount int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*) FROM domain_event_outbox
+		WHERE event_type = 'task:failed' AND payload ->> 'task_id' = $1
+	`, taskID).Scan(&eventCount); err != nil {
+		t.Fatalf("count recovered task events: %v", err)
+	}
+	if eventCount != 1 {
+		t.Fatalf("already-offline task durable events = %d, want 1", eventCount)
+	}
+}
+
+// TestSweepRetriesStaleTaskWithoutFlappingIssue exercises the production
+// pipeline rather than the removed test-only fallback: timeout-shaped failures
+// enqueue a bounded retry first, so the issue stays in_progress while the next
+// attempt is queued.
+func TestSweepRetriesStaleTaskWithoutFlappingIssue(t *testing.T) {
 	if testPool == nil {
 		t.Skip("no database connection")
 	}
@@ -407,13 +485,10 @@ func TestSweepResetsInProgressIssueToTodo(t *testing.T) {
 	bus := events.New()
 
 	// Fail the stale task (running timeout of 1 second — our task is 3 hours old).
-	failedTasks, err := queries.FailStaleTasks(ctx, db.FailStaleTasksParams{
+	failedTasks := failStaleTasksForTest(t, queries, bus, db.FailStaleTasksParams{
 		DispatchTimeoutSecs: 300.0,
 		RunningTimeoutSecs:  1.0,
 	})
-	if err != nil {
-		t.Fatalf("FailStaleTasks failed: %v", err)
-	}
 
 	// Confirm our task was swept.
 	found := false
@@ -427,16 +502,23 @@ func TestSweepResetsInProgressIssueToTodo(t *testing.T) {
 		t.Fatalf("expected task %s to be in failed tasks, got %v", taskID, failedTasks)
 	}
 
-	// This is what we're testing: issue must be reset from in_progress → todo.
-	broadcastFailedTasks(ctx, queries, nil, bus, failedTasks)
-
 	var issueStatus string
-	err = testPool.QueryRow(ctx, `SELECT status FROM issue WHERE id = $1`, issueID).Scan(&issueStatus)
+	err := testPool.QueryRow(ctx, `SELECT status FROM issue WHERE id = $1`, issueID).Scan(&issueStatus)
 	if err != nil {
 		t.Fatalf("failed to query issue status: %v", err)
 	}
-	if issueStatus != "todo" {
-		t.Fatalf("expected issue status 'todo' after sweep, got '%s' — issue is stuck", issueStatus)
+	if issueStatus != "in_progress" {
+		t.Fatalf("expected retrying issue to stay in_progress, got %q", issueStatus)
+	}
+	var retryCount int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*) FROM agent_task_queue
+		WHERE issue_id = $1 AND parent_task_id = $2 AND status = 'queued'
+	`, issueID, taskID).Scan(&retryCount); err != nil {
+		t.Fatalf("count stale-task retries: %v", err)
+	}
+	if retryCount != 1 {
+		t.Fatalf("queued retries = %d, want 1", retryCount)
 	}
 }
 
@@ -455,19 +537,17 @@ func TestSweepDoesNotResetIssueAlreadyInReview(t *testing.T) {
 	queries := db.New(testPool)
 	bus := events.New()
 
-	failedTasks, err := queries.FailStaleTasks(ctx, db.FailStaleTasksParams{
+	failedTasks := failStaleTasksForTest(t, queries, bus, db.FailStaleTasksParams{
 		DispatchTimeoutSecs: 300.0,
 		RunningTimeoutSecs:  1.0,
 	})
-	if err != nil {
-		t.Fatalf("FailStaleTasks failed: %v", err)
+	if len(failedTasks) == 0 {
+		t.Fatal("expected at least one stale task")
 	}
-
-	broadcastFailedTasks(ctx, queries, nil, bus, failedTasks)
 
 	// Issue should remain in_review — the sweeper must not clobber agent progress.
 	var issueStatus string
-	err = testPool.QueryRow(ctx, `SELECT status FROM issue WHERE id = $1`, issueID).Scan(&issueStatus)
+	err := testPool.QueryRow(ctx, `SELECT status FROM issue WHERE id = $1`, issueID).Scan(&issueStatus)
 	if err != nil {
 		t.Fatalf("failed to query issue status: %v", err)
 	}
@@ -522,6 +602,7 @@ func TestExpireStaleQueuedTasks(t *testing.T) {
 	t.Cleanup(func() {
 		testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE issue_id IN ($1, $2)`, oldIssueID, freshIssueID)
 		testPool.Exec(ctx, `DELETE FROM issue WHERE id IN ($1, $2)`, oldIssueID, freshIssueID)
+		testPool.Exec(ctx, `DELETE FROM domain_event_outbox WHERE stream_key IN ('issue:' || $1, 'issue:' || $2)`, oldIssueID, freshIssueID)
 	})
 
 	var oldTaskID, freshTaskID string
@@ -541,7 +622,8 @@ func TestExpireStaleQueuedTasks(t *testing.T) {
 	}
 
 	queries := db.New(testPool)
-	failed, err := queries.ExpireStaleQueuedTasks(ctx, db.ExpireStaleQueuedTasksParams{
+	taskService := service.NewTaskService(queries, testPool, nil, events.New())
+	failed, err := taskService.ExpireStaleQueuedTasks(ctx, db.ExpireStaleQueuedTasksParams{
 		TtlSecs:    3600.0, // 1h TTL — old task is 5h, fresh task is 0s
 		MaxPerTick: 100,
 	})
@@ -551,6 +633,7 @@ func TestExpireStaleQueuedTasks(t *testing.T) {
 	if len(failed) != 1 {
 		t.Fatalf("expected exactly 1 expired task, got %d", len(failed))
 	}
+	taskService.HandleFailedTasks(ctx, failed)
 	if failed[0].ID.Bytes != parseUUIDBytes(oldTaskID) {
 		t.Fatalf("expired the wrong task: got %x", failed[0].ID.Bytes)
 	}
@@ -611,6 +694,7 @@ func TestExpireStaleQueuedTasksRespectsBatchLimit(t *testing.T) {
 		for _, id := range issueIDs {
 			testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, id)
 			testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, id)
+			testPool.Exec(ctx, `DELETE FROM domain_event_outbox WHERE stream_key = 'issue:' || $1`, id)
 		}
 	})
 	for i := 0; i < 5; i++ {
@@ -637,7 +721,8 @@ func TestExpireStaleQueuedTasksRespectsBatchLimit(t *testing.T) {
 	}
 
 	queries := db.New(testPool)
-	failed, err := queries.ExpireStaleQueuedTasks(ctx, db.ExpireStaleQueuedTasksParams{
+	taskService := service.NewTaskService(queries, testPool, nil, events.New())
+	failed, err := taskService.ExpireStaleQueuedTasks(ctx, db.ExpireStaleQueuedTasksParams{
 		TtlSecs:    3600.0,
 		MaxPerTick: 2, // cap below the backlog
 	})
@@ -647,6 +732,7 @@ func TestExpireStaleQueuedTasksRespectsBatchLimit(t *testing.T) {
 	if len(failed) != 2 {
 		t.Fatalf("expected batch cap of 2, got %d", len(failed))
 	}
+	taskService.HandleFailedTasks(ctx, failed)
 
 	var remaining int
 	if err := testPool.QueryRow(ctx, `

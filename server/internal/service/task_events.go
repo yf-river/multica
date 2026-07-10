@@ -6,10 +6,12 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/eventoutbox"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 func (s *TaskService) enqueueTaskEvent(
@@ -53,6 +55,9 @@ func (s *TaskService) buildTaskEvent(
 	if task.ChatSessionID.Valid {
 		payload["chat_session_id"] = util.UUIDToString(task.ChatSessionID)
 	}
+	if task.FailureReason.Valid {
+		payload["failure_reason"] = task.FailureReason.String
+	}
 	return events.Event{
 		Type:        eventType,
 		StreamKey:   streamKey,
@@ -60,6 +65,61 @@ func (s *TaskService) buildTaskEvent(
 		ActorType:   "system",
 		Payload:     payload,
 	}, nil
+}
+
+func (s *TaskService) failTasksDurably(
+	ctx context.Context,
+	mutate func(*db.Queries) ([]db.AgentTaskQueue, error),
+) ([]db.AgentTaskQueue, error) {
+	var failed []db.AgentTaskQueue
+	var persistedEvents []events.Event
+	err := s.runInTx(ctx, func(queries *db.Queries) error {
+		var err error
+		failed, err = mutate(queries)
+		if err != nil {
+			return err
+		}
+		persistedEvents = make([]events.Event, 0, len(failed))
+		for _, task := range failed {
+			event, err := s.enqueueTaskEvent(ctx, queries, protocol.EventTaskFailed, task)
+			if err != nil {
+				return err
+			}
+			persistedEvents = append(persistedEvents, event)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	for _, event := range persistedEvents {
+		s.Bus.Publish(event)
+	}
+	return failed, nil
+}
+
+func (s *TaskService) FailTasksForOfflineRuntimes(ctx context.Context) ([]db.AgentTaskQueue, error) {
+	return s.failTasksDurably(ctx, func(queries *db.Queries) ([]db.AgentTaskQueue, error) {
+		return queries.FailTasksForOfflineRuntimes(ctx)
+	})
+}
+
+func (s *TaskService) FailStaleTasks(ctx context.Context, params db.FailStaleTasksParams) ([]db.AgentTaskQueue, error) {
+	return s.failTasksDurably(ctx, func(queries *db.Queries) ([]db.AgentTaskQueue, error) {
+		return queries.FailStaleTasks(ctx, params)
+	})
+}
+
+func (s *TaskService) ExpireStaleQueuedTasks(ctx context.Context, params db.ExpireStaleQueuedTasksParams) ([]db.AgentTaskQueue, error) {
+	return s.failTasksDurably(ctx, func(queries *db.Queries) ([]db.AgentTaskQueue, error) {
+		return queries.ExpireStaleQueuedTasks(ctx, params)
+	})
+}
+
+func (s *TaskService) RecoverOrphanedTasksForRuntime(ctx context.Context, runtimeID pgtype.UUID) ([]db.AgentTaskQueue, error) {
+	return s.failTasksDurably(ctx, func(queries *db.Queries) ([]db.AgentTaskQueue, error) {
+		return queries.RecoverOrphanedTasksForRuntime(ctx, runtimeID)
+	})
 }
 
 func (s *TaskService) resolveTaskWorkspaceID(ctx context.Context, queries *db.Queries, task db.AgentTaskQueue) (string, error) {

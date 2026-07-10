@@ -440,8 +440,8 @@ func (s *TaskService) enqueueRerunTask(ctx context.Context, issue db.Issue, agen
 }
 
 // HandleFailedTasks runs the post-failure side effects for a batch of
-// freshly-failed tasks: optional auto-retry, task:failed event broadcast,
-// agent status reconciliation, and (when an issue has no remaining active
+// freshly-failed tasks: optional auto-retry, agent status reconciliation,
+// and (when an issue has no remaining active
 // task and isn't being retried) blocking the issue so the user sees that the
 // current attempt needs attention.
 //
@@ -470,10 +470,6 @@ func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTas
 			}
 		}
 
-		failureReason := "agent_error"
-		if t.FailureReason.Valid && t.FailureReason.String != "" {
-			failureReason = t.FailureReason.String
-		}
 		s.captureTaskFailed(ctx, t)
 		if retryChild != nil {
 			s.reassignPromptEvaluationRunToRetry(ctx, t, *retryChild)
@@ -481,10 +477,8 @@ func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTas
 			s.syncPromptEvaluationRunForTask(ctx, t, "task_failed_batch")
 		}
 
-		workspaceID := ""
 		if t.IssueID.Valid {
 			if issue, err := s.Queries.GetIssue(ctx, t.IssueID); err == nil {
-				workspaceID = util.UUIDToString(issue.WorkspaceID)
 				// Block stuck in_progress issues only when no other active
 				// task exists for the issue and no retry was just enqueued.
 				issueKey := util.UUIDToString(t.IssueID)
@@ -501,24 +495,6 @@ func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTas
 					}
 				}
 			}
-		}
-		if workspaceID == "" {
-			workspaceID = s.ResolveTaskWorkspaceID(ctx, t)
-		}
-
-		if workspaceID != "" {
-			s.Bus.Publish(events.Event{
-				Type:        protocol.EventTaskFailed,
-				WorkspaceID: workspaceID,
-				ActorType:   "system",
-				Payload: map[string]any{
-					"task_id":        util.UUIDToString(t.ID),
-					"agent_id":       util.UUIDToString(t.AgentID),
-					"issue_id":       util.UUIDToString(t.IssueID),
-					"status":         "failed",
-					"failure_reason": failureReason,
-				},
-			})
 		}
 
 		affectedAgents[util.UUIDToString(t.AgentID)] = t.AgentID

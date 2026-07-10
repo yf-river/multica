@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/multica-ai/multica/server/internal/util"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -95,6 +96,28 @@ func TestFailTaskRollsBackWhenTerminalEventCannotBeInserted(t *testing.T) {
 		"agent_error",
 	); err == nil {
 		t.Fatal("FailTask succeeded without a durable terminal event")
+	}
+	assertTaskStatus(t, fixture.TaskID, "running")
+	assertNoTerminalTaskEvent(t, fixture.TaskID)
+}
+
+func TestFailStaleTasksRollsBackWhenTerminalEventCannotBeInserted(t *testing.T) {
+	fixture := newTerminalTaskFixture(t, "Stale task outbox rollback")
+	if _, err := testPool.Exec(context.Background(), `
+		UPDATE agent_task_queue
+		SET dispatched_at = now() - interval '3 hours',
+		    started_at = now() - interval '3 hours'
+		WHERE id = $1
+	`, fixture.TaskID); err != nil {
+		t.Fatalf("age running task: %v", err)
+	}
+	installOutboxStreamFailure(t, "issue:"+fixture.IssueID)
+
+	if _, err := testHandler.TaskService.FailStaleTasks(context.Background(), db.FailStaleTasksParams{
+		DispatchTimeoutSecs: 300,
+		RunningTimeoutSecs:  1,
+	}); err == nil {
+		t.Fatal("FailStaleTasks succeeded without durable terminal events")
 	}
 	assertTaskStatus(t, fixture.TaskID, "running")
 	assertNoTerminalTaskEvent(t, fixture.TaskID)
