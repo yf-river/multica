@@ -45,26 +45,31 @@ func consumeTaskTerminalIssueProjection(ctx context.Context, queries *db.Queries
 }
 
 func loadTaskProjection(ctx context.Context, queries *db.Queries, event events.Event) (taskEventPayload, bool, error) {
+	payload, _, exists, err := loadTaskProjectionRow(ctx, queries, event)
+	return payload, exists, err
+}
+
+func loadTaskProjectionRow(ctx context.Context, queries *db.Queries, event events.Event) (taskEventPayload, db.AgentTaskQueue, bool, error) {
 	payload, ok := decodeTaskEvent(event)
 	if !ok || payload.TaskID == "" {
-		return taskEventPayload{}, false, fmt.Errorf("decode terminal task projection payload")
+		return taskEventPayload{}, db.AgentTaskQueue{}, false, fmt.Errorf("decode terminal task projection payload")
 	}
 	taskID, err := util.ParseUUID(payload.TaskID)
 	if err != nil {
-		return taskEventPayload{}, false, fmt.Errorf("projection event has invalid task ID: %w", err)
+		return taskEventPayload{}, db.AgentTaskQueue{}, false, fmt.Errorf("projection event has invalid task ID: %w", err)
 	}
 	task, err := queries.GetAgentTask(ctx, taskID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return payload, false, nil
+		return payload, db.AgentTaskQueue{}, false, nil
 	}
 	if err != nil {
-		return taskEventPayload{}, false, fmt.Errorf("load task before projection: %w", err)
+		return taskEventPayload{}, db.AgentTaskQueue{}, false, fmt.Errorf("load task before projection: %w", err)
 	}
 	if payload.AgentID != util.UUIDToString(task.AgentID) || payload.IssueID != util.UUIDToString(task.IssueID) {
-		return taskEventPayload{}, false, fmt.Errorf("task projection identity mismatch")
+		return taskEventPayload{}, db.AgentTaskQueue{}, false, fmt.Errorf("task projection identity mismatch")
 	}
 	if payload.Status != task.Status {
-		return taskEventPayload{}, false, fmt.Errorf("task projection status mismatch: event=%s row=%s", payload.Status, task.Status)
+		return taskEventPayload{}, db.AgentTaskQueue{}, false, fmt.Errorf("task projection status mismatch: event=%s row=%s", payload.Status, task.Status)
 	}
 	expectedStatus := map[string]string{
 		protocol.EventTaskCompleted: "completed",
@@ -72,7 +77,7 @@ func loadTaskProjection(ctx context.Context, queries *db.Queries, event events.E
 		protocol.EventTaskCancelled: "cancelled",
 	}[event.Type]
 	if expectedStatus == "" || task.Status != expectedStatus {
-		return taskEventPayload{}, false, fmt.Errorf("task projection event %s cannot project row status %s", event.Type, task.Status)
+		return taskEventPayload{}, db.AgentTaskQueue{}, false, fmt.Errorf("task projection event %s cannot project row status %s", event.Type, task.Status)
 	}
-	return payload, true, nil
+	return payload, task, true, nil
 }

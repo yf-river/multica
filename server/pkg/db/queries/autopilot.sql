@@ -219,12 +219,14 @@ RETURNING *;
 UPDATE autopilot_run
 SET status = 'completed', completed_at = now(), result = sqlc.narg('result')
 WHERE id = $1
+  AND status IN ('issue_created', 'running')
 RETURNING *;
 
 -- name: UpdateAutopilotRunFailed :one
 UPDATE autopilot_run
 SET status = 'failed', completed_at = now(), failure_reason = $2
 WHERE id = $1
+  AND status IN ('issue_created', 'running')
 RETURNING *;
 
 -- name: UpdateAutopilotRunSkipped :one
@@ -373,4 +375,3 @@ ON CONFLICT (autopilot_id, user_type, user_id) DO NOTHING;
 -- Paired with a re-insert loop to implement full-replace PATCH semantics.
 DELETE FROM autopilot_subscriber
 WHERE autopilot_id = $1;
-

@@ -267,6 +267,10 @@ func main() {
 		slog.Error("register durable activity consumers", "error", err)
 		os.Exit(1)
 	}
+	if err := registerDurableAutopilotConsumers(eventDispatcher); err != nil {
+		slog.Error("register durable autopilot consumers", "error", err)
+		os.Exit(1)
+	}
 	registerNotificationListeners(bus, queries)
 
 	metricsConfig := obsmetrics.ConfigFromEnv()
@@ -349,7 +353,7 @@ func main() {
 	taskSvc.Analytics = analyticsClient
 	taskSvc.Metrics = businessMetrics
 	autopilotSvc := service.NewAutopilotService(queries, pool, bus, taskSvc)
-	registerAutopilotListeners(bus, autopilotSvc)
+	registerAutopilotAnalyticsListener(bus, autopilotSvc)
 
 	// Construct a LivenessStore that mirrors the one wired into the HTTP
 	// handler. Both the heartbeat write path (handler) and the sweeper read

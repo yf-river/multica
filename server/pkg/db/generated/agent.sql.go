@@ -1756,6 +1756,21 @@ func (q *Queries) HasPendingTaskForIssueAndAgentExcludingTriggerComment(ctx cont
 	return has_pending, err
 }
 
+const hasRetryTaskForParent = `-- name: HasRetryTaskForParent :one
+SELECT count(*) > 0 AS has_retry FROM agent_task_queue
+WHERE parent_task_id = $1
+`
+
+// A failed parent is not the terminal attempt once CreateRetryTask has
+// materialized a child, regardless of the child's current status by the time
+// an asynchronous projection replays the parent failure.
+func (q *Queries) HasRetryTaskForParent(ctx context.Context, parentTaskID pgtype.UUID) (bool, error) {
+	row := q.db.QueryRow(ctx, hasRetryTaskForParent, parentTaskID)
+	var has_retry bool
+	err := row.Scan(&has_retry)
+	return has_retry, err
+}
+
 const linkTaskToIssue = `-- name: LinkTaskToIssue :exec
 UPDATE agent_task_queue
 SET issue_id = $2

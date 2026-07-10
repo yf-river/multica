@@ -541,6 +541,13 @@ WHERE agent_id = $1 AND status IN ('dispatched', 'running', 'waiting_local_direc
 SELECT count(*) > 0 AS has_active FROM agent_task_queue
 WHERE issue_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory');
 
+-- name: HasRetryTaskForParent :one
+-- A failed parent is not the terminal attempt once CreateRetryTask has
+-- materialized a child, regardless of the child's current status by the time
+-- an asynchronous projection replays the parent failure.
+SELECT count(*) > 0 AS has_retry FROM agent_task_queue
+WHERE parent_task_id = $1;
+
 -- name: HasPendingTaskForIssue :one
 -- Returns true if there is a queued or dispatched (but not yet running) task for the issue.
 -- Used by the coalescing queue: allow enqueue when a task is running (so

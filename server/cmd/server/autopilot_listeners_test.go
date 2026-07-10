@@ -2,12 +2,15 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -25,7 +28,6 @@ func setupAutopilotListenerFixture(t *testing.T) autopilotListenerFixture {
 	bus := events.New()
 	taskSvc := service.NewTaskService(queries, testPool, nil, bus)
 	autopilotSvc := service.NewAutopilotService(queries, testPool, bus, taskSvc)
-	registerAutopilotListeners(bus, autopilotSvc)
 
 	var agentID string
 	if err := testPool.QueryRow(ctx,
@@ -41,6 +43,61 @@ func setupAutopilotListenerFixture(t *testing.T) autopilotListenerFixture {
 		autopilotSvc: autopilotSvc,
 		agentID:      agentID,
 	}
+}
+
+func latestTaskTerminalEvent(t *testing.T, taskID pgtype.UUID) events.Event {
+	t.Helper()
+	var event events.Event
+	var payload []byte
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT event_type,
+		       COALESCE(stream_key, ''),
+		       COALESCE(workspace_id::text, ''),
+		       COALESCE(actor_type, ''),
+		       COALESCE(actor_id, ''),
+		       COALESCE(task_id, ''),
+		       COALESCE(chat_session_id, ''),
+		       payload
+		FROM domain_event_outbox
+		WHERE payload->>'task_id' = $1::text
+		  AND event_type IN ('task:completed', 'task:failed', 'task:cancelled')
+		ORDER BY sequence_no DESC
+		LIMIT 1
+	`, util.UUIDToString(taskID)).Scan(
+		&event.Type,
+		&event.StreamKey,
+		&event.WorkspaceID,
+		&event.ActorType,
+		&event.ActorID,
+		&event.TaskID,
+		&event.ChatSessionID,
+		&payload,
+	); err != nil {
+		t.Fatalf("load terminal task event: %v", err)
+	}
+	var object map[string]any
+	if err := json.Unmarshal(payload, &object); err != nil {
+		t.Fatalf("decode terminal task event: %v", err)
+	}
+	event.Payload = object
+	return event
+}
+
+func projectTaskTerminalEvent(t *testing.T, queries *db.Queries, taskID pgtype.UUID) []events.Event {
+	t.Helper()
+	tx, err := testPool.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin autopilot projection: %v", err)
+	}
+	defer tx.Rollback(context.Background())
+	emitted, err := consumeAutopilotRunProjection(context.Background(), queries.WithTx(tx), latestTaskTerminalEvent(t, taskID))
+	if err != nil {
+		t.Fatalf("project terminal task: %v", err)
+	}
+	if err := tx.Commit(context.Background()); err != nil {
+		t.Fatalf("commit autopilot projection: %v", err)
+	}
+	return emitted
 }
 
 func TestAutopilotRunOnlyTaskTerminalEventsUpdateRun(t *testing.T) {
@@ -73,6 +130,16 @@ func TestAutopilotRunOnlyTaskTerminalEventsUpdateRun(t *testing.T) {
 			},
 			wantStatus: "failed",
 			wantReason: "boom",
+		},
+		{
+			name: "cancelled",
+			finalize: func(task db.AgentTaskQueue) {
+				if _, err := f.taskSvc.CancelTask(ctx, task.ID); err != nil {
+					t.Fatalf("CancelTask: %v", err)
+				}
+			},
+			wantStatus: "failed",
+			wantReason: "task cancelled",
 		},
 	}
 
@@ -119,6 +186,16 @@ func TestAutopilotRunOnlyTaskTerminalEventsUpdateRun(t *testing.T) {
 			}
 
 			tc.finalize(task)
+			beforeProjection, err := f.queries.GetAutopilotRun(ctx, run.ID)
+			if err != nil {
+				t.Fatalf("GetAutopilotRun before projection: %v", err)
+			}
+			if beforeProjection.Status != "running" {
+				t.Fatalf("task completion mutated run before durable projection: %q", beforeProjection.Status)
+			}
+			if emitted := projectTaskTerminalEvent(t, f.queries, task.ID); len(emitted) != 1 || emitted[0].Type != "autopilot:run_done" {
+				t.Fatalf("autopilot projection emitted %+v, want one run_done event", emitted)
+			}
 
 			updatedRun, err := f.queries.GetAutopilotRun(ctx, run.ID)
 			if err != nil {
@@ -145,7 +222,7 @@ func TestAutopilotRunOnlyTaskTerminalEventsUpdateRun(t *testing.T) {
 // linkedIssueAutopilotFixture is the starting state every create_issue
 // linked-issue listener test shares: a dispatched create_issue run sitting in
 // issue_created with exactly one issue task that carries no autopilot_run_id
-// (so it must be reached via the issue_id lookup, not SyncRunFromTask).
+// (so the durable projection must reach it through the issue_id lookup).
 type linkedIssueAutopilotFixture struct {
 	taskSvc *service.TaskService
 	queries *db.Queries
@@ -296,6 +373,7 @@ func TestAutopilotCreateIssueTaskNoProgressFailureUpdatesRun(t *testing.T) {
 	if _, err := f.taskSvc.FailTask(ctx, f.taskID, errMsg, "", "", "codex_semantic_inactivity"); err != nil {
 		t.Fatalf("FailTask: %v", err)
 	}
+	projectTaskTerminalEvent(t, f.queries, f.taskID)
 
 	updatedRun, err := f.queries.GetAutopilotRun(ctx, f.run.ID)
 	if err != nil {
@@ -324,6 +402,7 @@ func TestAutopilotCreateIssueTaskAgentErrorFailureUpdatesRun(t *testing.T) {
 	if _, err := f.taskSvc.FailTask(ctx, f.taskID, errMsg, "", "", "agent_error"); err != nil {
 		t.Fatalf("FailTask: %v", err)
 	}
+	projectTaskTerminalEvent(t, f.queries, f.taskID)
 
 	updatedRun, err := f.queries.GetAutopilotRun(ctx, f.run.ID)
 	if err != nil {
@@ -353,6 +432,9 @@ func TestAutopilotCreateIssueTaskRetryPendingKeepsRunOpen(t *testing.T) {
 	if _, err := f.taskSvc.FailTask(ctx, f.taskID, "runtime went offline", "", "", "timeout"); err != nil {
 		t.Fatalf("FailTask: %v", err)
 	}
+	if emitted := projectTaskTerminalEvent(t, f.queries, f.taskID); len(emitted) != 0 {
+		t.Fatalf("retry-pending task emitted terminal autopilot event: %+v", emitted)
+	}
 
 	hasActive, err := f.queries.HasActiveTaskForIssue(ctx, f.run.IssueID)
 	if err != nil {
@@ -368,6 +450,169 @@ func TestAutopilotCreateIssueTaskRetryPendingKeepsRunOpen(t *testing.T) {
 	}
 	if updatedRun.Status != "issue_created" {
 		t.Fatalf("expected run to stay issue_created while a retry is pending, got %q", updatedRun.Status)
+	}
+}
+
+func TestAutopilotDelayedParentFailureDoesNotOverrideCompletedRetry(t *testing.T) {
+	ctx := context.Background()
+	f := dispatchCreateIssueAutopilot(t, "Delayed parent failure")
+	runTaskWithBudget(t, f.queries, f.taskID, 2)
+	if _, err := f.taskSvc.FailTask(ctx, f.taskID, "runtime went offline", "", "", "timeout"); err != nil {
+		t.Fatalf("fail parent task: %v", err)
+	}
+
+	tasks, err := f.queries.ListTasksByIssue(ctx, f.run.IssueID)
+	if err != nil {
+		t.Fatalf("list retry tasks: %v", err)
+	}
+	var child db.AgentTaskQueue
+	for _, task := range tasks {
+		if task.ParentTaskID.Valid && util.UUIDToString(task.ParentTaskID) == util.UUIDToString(f.taskID) {
+			child = task
+			break
+		}
+	}
+	if !child.ID.Valid {
+		t.Fatal("retry child was not created")
+	}
+	if _, err := testPool.Exec(ctx, `UPDATE agent_task_queue SET status = 'dispatched', dispatched_at = now() WHERE id = $1`, child.ID); err != nil {
+		t.Fatalf("dispatch retry child: %v", err)
+	}
+	if _, err := f.queries.StartAgentTask(ctx, child.ID); err != nil {
+		t.Fatalf("start retry child: %v", err)
+	}
+	if _, err := f.taskSvc.CompleteTask(ctx, child.ID, []byte(`{"output":"retry succeeded"}`), "", ""); err != nil {
+		t.Fatalf("complete retry child: %v", err)
+	}
+
+	if emitted := projectTaskTerminalEvent(t, f.queries, f.taskID); len(emitted) != 0 {
+		t.Fatalf("delayed parent failure emitted terminal run event after retry succeeded: %+v", emitted)
+	}
+	run, err := f.queries.GetAutopilotRun(ctx, f.run.ID)
+	if err != nil {
+		t.Fatalf("load run after delayed parent event: %v", err)
+	}
+	if run.Status != "issue_created" {
+		t.Fatalf("delayed parent event changed run to %q, want issue_created", run.Status)
+	}
+}
+
+func TestAutopilotIssueTerminalEventsProjectRun(t *testing.T) {
+	for _, tc := range []struct {
+		issueStatus string
+		wantRun     string
+	}{
+		{issueStatus: "done", wantRun: "completed"},
+		{issueStatus: "blocked", wantRun: "failed"},
+	} {
+		t.Run(tc.issueStatus, func(t *testing.T) {
+			f := dispatchCreateIssueAutopilot(t, "Issue terminal "+tc.issueStatus)
+			if _, err := testPool.Exec(context.Background(), `UPDATE issue SET status = $2 WHERE id = $1`, f.run.IssueID, tc.issueStatus); err != nil {
+				t.Fatalf("set issue terminal status: %v", err)
+			}
+			event := events.Event{
+				Type:        "issue:updated",
+				WorkspaceID: testWorkspaceID,
+				ActorType:   "member",
+				ActorID:     testUserID,
+				Payload: issueEventPayload{
+					Issue: eventIssue{
+						ID:          util.UUIDToString(f.run.IssueID),
+						WorkspaceID: testWorkspaceID,
+						Status:      tc.issueStatus,
+					},
+					StatusChanged: true,
+				},
+			}
+			tx, err := testPool.Begin(context.Background())
+			if err != nil {
+				t.Fatalf("begin issue projection: %v", err)
+			}
+			defer tx.Rollback(context.Background())
+			emitted, err := consumeAutopilotRunProjection(context.Background(), f.queries.WithTx(tx), event)
+			if err != nil {
+				t.Fatalf("project terminal issue: %v", err)
+			}
+			if len(emitted) != 1 {
+				t.Fatalf("terminal issue emitted %d events, want 1", len(emitted))
+			}
+			if err := tx.Commit(context.Background()); err != nil {
+				t.Fatalf("commit issue projection: %v", err)
+			}
+			updated, err := f.queries.GetAutopilotRun(context.Background(), f.run.ID)
+			if err != nil {
+				t.Fatalf("load projected run: %v", err)
+			}
+			if updated.Status != tc.wantRun {
+				t.Fatalf("projected run status = %q, want %q", updated.Status, tc.wantRun)
+			}
+		})
+	}
+}
+
+func TestAutopilotTaskProjectionReturnsTransientDatabaseFailure(t *testing.T) {
+	ctx := context.Background()
+	f := setupAutopilotListenerFixture(t)
+	ap, err := f.queries.CreateAutopilot(ctx, db.CreateAutopilotParams{
+		WorkspaceID:        parseUUID(testWorkspaceID),
+		Title:              "Durable projection retry",
+		Description:        pgtype.Text{String: "failure propagation", Valid: true},
+		AssigneeType:       "agent",
+		AssigneeID:         parseUUID(f.agentID),
+		Status:             "active",
+		ExecutionMode:      "run_only",
+		IssueTitleTemplate: pgtype.Text{},
+		CreatedByType:      "member",
+		CreatedByID:        parseUUID(testUserID),
+	})
+	if err != nil {
+		t.Fatalf("create autopilot: %v", err)
+	}
+	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM autopilot WHERE id = $1`, ap.ID) })
+	run, err := f.autopilotSvc.DispatchAutopilot(ctx, ap, pgtype.UUID{}, "manual", nil)
+	if err != nil {
+		t.Fatalf("dispatch autopilot: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `UPDATE agent_task_queue SET status = 'dispatched', dispatched_at = now() WHERE id = $1`, run.TaskID); err != nil {
+		t.Fatalf("dispatch task: %v", err)
+	}
+	if _, err := f.queries.StartAgentTask(ctx, run.TaskID); err != nil {
+		t.Fatalf("start task: %v", err)
+	}
+	if _, err := f.taskSvc.CompleteTask(ctx, run.TaskID, []byte(`{"output":"done"}`), "", ""); err != nil {
+		t.Fatalf("complete task: %v", err)
+	}
+
+	blocker, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin blocker: %v", err)
+	}
+	defer blocker.Rollback(context.Background())
+	if _, err := blocker.Exec(ctx, `SELECT 1 FROM autopilot_run WHERE id = $1 FOR UPDATE`, run.ID); err != nil {
+		blocker.Rollback(ctx)
+		t.Fatalf("lock autopilot run: %v", err)
+	}
+	timeoutCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+	defer cancel()
+	_, projectionErr := consumeAutopilotRunProjection(timeoutCtx, f.queries, latestTaskTerminalEvent(t, run.TaskID))
+	if projectionErr == nil {
+		blocker.Rollback(ctx)
+		t.Fatal("locked run update returned nil error; event would be falsely acknowledged")
+	}
+	if err := blocker.Rollback(ctx); err != nil {
+		t.Fatalf("release blocker: %v", err)
+	}
+	unchanged, err := f.queries.GetAutopilotRun(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("load run after failed projection: %v", err)
+	}
+	if unchanged.Status != "running" {
+		t.Fatalf("failed projection left run status %q, want running", unchanged.Status)
+	}
+	projectTaskTerminalEvent(t, f.queries, run.TaskID)
+	updated, err := f.queries.GetAutopilotRun(ctx, run.ID)
+	if err != nil || updated.Status != "completed" {
+		t.Fatalf("retry projection status = %q, err = %v", updated.Status, err)
 	}
 }
 

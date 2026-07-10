@@ -2,72 +2,17 @@ package main
 
 import (
 	"context"
-	"log/slog"
 
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// registerAutopilotListeners hooks into issue and task events to keep
-// autopilot runs in sync with their linked issues and tasks.
-func registerAutopilotListeners(bus *events.Bus, svc *service.AutopilotService) {
-	ctx := context.Background()
-
-	// When an issue with origin_type='autopilot' reaches a terminal status,
-	// update the corresponding autopilot run.
-	bus.Subscribe(protocol.EventIssueUpdated, func(e events.Event) {
-		payload, ok := decodeIssueEvent(e)
-		if !ok {
-			return
-		}
-		if !payload.StatusChanged {
-			return
-		}
-		issue := payload.Issue
-		// Only handle statuses that finalize an autopilot run.
-		if issue.Status != "done" && issue.Status != "in_review" && issue.Status != "cancelled" && issue.Status != "blocked" {
-			return
-		}
-		// Load the full issue from DB to check origin_type.
-		dbIssue, err := svc.Queries.GetIssue(ctx, parseUUID(issue.ID))
-		if err != nil {
-			slog.Debug("autopilot listener: failed to load issue", "issue_id", issue.ID, "error", err)
-			return
-		}
-		svc.SyncRunFromIssue(ctx, dbIssue)
+// registerAutopilotAnalyticsListener keeps best-effort analytics outside the
+// durable projection transaction. The run_done event is emitted only after the
+// run state and delivery receipt commit.
+func registerAutopilotAnalyticsListener(bus *events.Bus, svc *service.AutopilotService) {
+	bus.Subscribe(protocol.EventAutopilotRunDone, func(event events.Event) {
+		svc.CaptureAutopilotRunDone(context.Background(), event)
 	})
-
-	// When a task completes or fails, check if it's an autopilot run_only task.
-	bus.Subscribe(protocol.EventTaskCompleted, func(e events.Event) {
-		syncRunFromTaskEvent(ctx, svc, e)
-	})
-	bus.Subscribe(protocol.EventTaskFailed, func(e events.Event) {
-		syncRunFromTaskEvent(ctx, svc, e)
-	})
-	bus.Subscribe(protocol.EventTaskCancelled, func(e events.Event) {
-		syncRunFromTaskEvent(ctx, svc, e)
-	})
-}
-
-func syncRunFromTaskEvent(ctx context.Context, svc *service.AutopilotService, e events.Event) {
-	payload, ok := decodeTaskEvent(e)
-	if !ok {
-		return
-	}
-	taskID := payload.TaskID
-	if taskID == "" {
-		return
-	}
-	task, err := svc.Queries.GetAgentTask(ctx, parseUUID(taskID))
-	if err != nil {
-		return
-	}
-	if task.AutopilotRunID.Valid {
-		svc.SyncRunFromTask(ctx, task)
-		return
-	}
-	if e.Type == protocol.EventTaskFailed {
-		svc.SyncRunFromLinkedIssueTask(ctx, task)
-	}
 }

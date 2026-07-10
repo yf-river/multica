@@ -25,6 +25,10 @@ An autopilot is not an agent. It is a rule that dispatches work to an agent, or 
 
 The chain is: trigger fires (`schedule`, `webhook`, or `manual`) -> `autopilot_run` row -> `execution_mode` decides output -> assignee readiness check -> issue/task execution -> run status sync.
 
+Issue/task terminal events update the run through the durable domain-event
+outbox. A transient projection failure is retried; do not infer that a run is
+stuck merely because the task reached a terminal state moments earlier.
+
 Execution modes:
 
 - `create_issue` creates a Multica issue, making the run visible as issue state.

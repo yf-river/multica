@@ -36,25 +36,31 @@ func validateIssueProjectionScope(event events.Event, issue eventIssue) error {
 }
 
 func issueExistsForProjection(ctx context.Context, queries *db.Queries, issue eventIssue) (bool, error) {
+	_, exists, err := getIssueForProjection(ctx, queries, issue)
+	return exists, err
+}
+
+func getIssueForProjection(ctx context.Context, queries *db.Queries, issue eventIssue) (db.Issue, bool, error) {
 	issueID, err := util.ParseUUID(issue.ID)
 	if err != nil {
-		return false, fmt.Errorf("projection event has invalid issue ID: %w", err)
+		return db.Issue{}, false, fmt.Errorf("projection event has invalid issue ID: %w", err)
 	}
 	workspaceID, err := util.ParseUUID(issue.WorkspaceID)
 	if err != nil {
-		return false, fmt.Errorf("projection event has invalid workspace ID: %w", err)
+		return db.Issue{}, false, fmt.Errorf("projection event has invalid workspace ID: %w", err)
 	}
-	if _, err := queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{
+	dbIssue, err := queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{
 		ID:          issueID,
 		WorkspaceID: workspaceID,
-	}); errors.Is(err, pgx.ErrNoRows) {
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
 		// The issue was deleted after the primary transaction committed. There
 		// is no visible projection left to build, so completing the consumer is
 		// correct; retrying an unavoidable foreign-key failure would poison the
 		// stream forever.
-		return false, nil
+		return db.Issue{}, false, nil
 	} else if err != nil {
-		return false, fmt.Errorf("load issue before projection: %w", err)
+		return db.Issue{}, false, fmt.Errorf("load issue before projection: %w", err)
 	}
-	return true, nil
+	return dbIssue, true, nil
 }
