@@ -6,6 +6,17 @@ afterEach(() => {
 });
 
 describe("ApiClient", () => {
+  it("validates agent and secret env responses", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(
+      new Response(JSON.stringify({ id: 42 }), { status: 200, headers: { "Content-Type": "application/json" } }),
+    )));
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.listAgents()).resolves.toEqual([]);
+    await expect(client.getAgent("agent-1")).resolves.toMatchObject({ id: "", skills: [] });
+    await expect(client.getAgentEnv("agent-1")).resolves.toEqual({ agent_id: "", custom_env: {} });
+    await expect(client.cancelAgentTasks("agent-1")).resolves.toMatchObject({ cancelled: 0 });
+  });
+
   it("validates workspace, repository, and member responses", async () => {
     vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(
       new Response(JSON.stringify({ id: 42 }), {

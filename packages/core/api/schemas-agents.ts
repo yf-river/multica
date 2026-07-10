@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type {
   Agent,
+  AgentEnvResponse,
   AgentTemplate,
   AgentTemplateSummary,
   CancelTaskResponse,
@@ -13,6 +14,60 @@ import type {
 import { EmbeddedAttachmentSchema } from "./schemas-internal";
 
 // Runtime response contracts for agents.
+const AgentSkillSummarySchema = z.object({
+  id: z.string(),
+  name: z.string().default(""),
+  description: z.string().default(""),
+}).loose();
+
+export const AgentSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  runtime_id: z.string(),
+  name: z.string(),
+  description: z.string().default(""),
+  instructions: z.string().default(""),
+  avatar_url: z.string().nullable().optional().transform((value) => value ?? null),
+  runtime_mode: z.string().default("local"),
+  runtime_config: z.record(z.string(), z.unknown()).default({}),
+  custom_args: z.array(z.string()).default([]),
+  has_custom_env: z.boolean().optional(),
+  custom_env_key_count: z.number().optional(),
+  mcp_config: z.unknown().optional(),
+  mcp_config_redacted: z.boolean().optional(),
+  scope: z.string().default("workspace"),
+  status: z.string().default("idle"),
+  max_concurrent_tasks: z.number().default(1),
+  model: z.string().default(""),
+  thinking_level: z.string().optional(),
+  owner_id: z.string().nullable().optional().transform((value) => value ?? null),
+  skills: z.array(AgentSkillSummarySchema).default([]),
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+  archived_at: z.string().nullable().optional().transform((value) => value ?? null),
+  archived_by: z.string().nullable().optional().transform((value) => value ?? null),
+}).loose();
+
+export const AgentListSchema = z.array(AgentSchema);
+
+export const AgentEnvResponseSchema = z.object({
+  agent_id: z.string(),
+  custom_env: z.record(z.string(), z.string()).default({}),
+}).loose();
+
+export const AgentTaskCancellationCountSchema = z.object({
+  cancelled: z.number().default(0),
+}).loose();
+
+export const EMPTY_AGENT: Agent = {
+  id: "", workspace_id: "", runtime_id: "", name: "", description: "", instructions: "",
+  avatar_url: null, runtime_mode: "local", runtime_config: {}, custom_args: [], scope: "workspace",
+  status: "offline", max_concurrent_tasks: 1, model: "", owner_id: null, skills: [],
+  created_at: "", updated_at: "", archived_at: null, archived_by: null,
+};
+
+export const EMPTY_AGENT_ENV_RESPONSE: AgentEnvResponse = { agent_id: "", custom_env: {} };
+
 // ---------------------------------------------------------------------------
 // Task cancellation (`POST /api/tasks/:id/cancel`)
 //

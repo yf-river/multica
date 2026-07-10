@@ -226,6 +226,10 @@ import { getCurrentSlug } from "../platform/workspace-storage";
 import { parseWithFallback } from "./schema";
 import {
   AgentTemplateSchema,
+  AgentSchema,
+  AgentListSchema,
+  AgentEnvResponseSchema,
+  AgentTaskCancellationCountSchema,
   AgentTemplateSummaryListSchema,
   AttachmentResponseSchema,
   CancelTaskResponseSchema,
@@ -238,6 +242,8 @@ import {
   DashboardUsageByAgentListSchema,
   DashboardUsageDailyListSchema,
   EMPTY_AGENT_TEMPLATE_DETAIL,
+  EMPTY_AGENT,
+  EMPTY_AGENT_ENV_RESPONSE,
   EMPTY_AGENT_TEMPLATE_SUMMARY_LIST,
   EMPTY_APP_CONFIG,
   EMPTY_ATTACHMENT,
@@ -984,18 +990,21 @@ export class ApiClient {
     const search = new URLSearchParams();
     if (params?.workspace_id) search.set("workspace_id", params.workspace_id);
     if (params?.include_archived) search.set("include_archived", "true");
-    return this.fetch(`/api/agents?${search}`);
+    const raw = await this.fetch<unknown>(`/api/agents?${search}`);
+    return parseWithFallback(raw, AgentListSchema, [], { endpoint: "GET /api/agents" });
   }
 
   async getAgent(id: string): Promise<Agent> {
-    return this.fetch(`/api/agents/${id}`);
+    const raw = await this.fetch<unknown>(`/api/agents/${id}`);
+    return parseWithFallback(raw, AgentSchema, EMPTY_AGENT, { endpoint: "GET /api/agents/:id" });
   }
 
   async createAgent(data: CreateAgentRequest): Promise<Agent> {
-    return this.fetch("/api/agents", {
+    const raw = await this.fetch<unknown>("/api/agents", {
       method: "POST",
       body: JSON.stringify(data),
     });
+    return parseWithFallback(raw, AgentSchema, EMPTY_AGENT, { endpoint: "POST /api/agents" });
   }
 
   async listAgentTemplates(): Promise<AgentTemplateSummary[]> {
@@ -1044,14 +1053,16 @@ export class ApiClient {
   }
 
   async updateAgent(id: string, data: UpdateAgentRequest): Promise<Agent> {
-    return this.fetch(`/api/agents/${id}`, {
+    const raw = await this.fetch<unknown>(`/api/agents/${id}`, {
       method: "PUT",
       body: JSON.stringify(data),
     });
+    return parseWithFallback(raw, AgentSchema, EMPTY_AGENT, { endpoint: "PUT /api/agents/:id" });
   }
 
   async archiveAgent(id: string): Promise<Agent> {
-    return this.fetch(`/api/agents/${id}/archive`, { method: "POST" });
+    const raw = await this.fetch<unknown>(`/api/agents/${id}/archive`, { method: "POST" });
+    return parseWithFallback(raw, AgentSchema, EMPTY_AGENT, { endpoint: "POST /api/agents/:id/archive" });
   }
 
   /**
@@ -1061,7 +1072,8 @@ export class ApiClient {
    * MUL-2600.
    */
   async getAgentEnv(id: string): Promise<AgentEnvResponse> {
-    return this.fetch(`/api/agents/${id}/env`);
+    const raw = await this.fetch<unknown>(`/api/agents/${id}/env`);
+    return parseWithFallback(raw, AgentEnvResponseSchema, EMPTY_AGENT_ENV_RESPONSE, { endpoint: "GET /api/agents/:id/env" });
   }
 
   /**
@@ -1073,14 +1085,16 @@ export class ApiClient {
    * MUL-2600.
    */
   async updateAgentEnv(id: string, data: UpdateAgentEnvRequest): Promise<AgentEnvResponse> {
-    return this.fetch(`/api/agents/${id}/env`, {
+    const raw = await this.fetch<unknown>(`/api/agents/${id}/env`, {
       method: "PUT",
       body: JSON.stringify(data),
     });
+    return parseWithFallback(raw, AgentEnvResponseSchema, EMPTY_AGENT_ENV_RESPONSE, { endpoint: "PUT /api/agents/:id/env" });
   }
 
   async restoreAgent(id: string): Promise<Agent> {
-    return this.fetch(`/api/agents/${id}/restore`, { method: "POST" });
+    const raw = await this.fetch<unknown>(`/api/agents/${id}/restore`, { method: "POST" });
+    return parseWithFallback(raw, AgentSchema, EMPTY_AGENT, { endpoint: "POST /api/agents/:id/restore" });
   }
 
   // Bulk-cancel every active task (queued/dispatched/running) for the agent.
@@ -1088,7 +1102,8 @@ export class ApiClient {
   // count of cancelled rows; broadcasts task:cancelled for each so other
   // surfaces can clear their live cards.
   async cancelAgentTasks(id: string): Promise<{ cancelled: number }> {
-    return this.fetch(`/api/agents/${id}/cancel-tasks`, { method: "POST" });
+    const raw = await this.fetch<unknown>(`/api/agents/${id}/cancel-tasks`, { method: "POST" });
+    return parseWithFallback(raw, AgentTaskCancellationCountSchema, { cancelled: 0 }, { endpoint: "POST /api/agents/:id/cancel-tasks" });
   }
 
   async listRuntimes(params?: { workspace_id?: string; owner?: "me" }): Promise<AgentRuntime[]> {
