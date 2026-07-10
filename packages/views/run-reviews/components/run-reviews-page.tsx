@@ -15,7 +15,6 @@ import type {
   Issue,
   IssueExecutionTreeResponse,
   IssueTimelineNode,
-  IssueTimelineSummary,
 } from "@multica/core/types";
 import type { TaskMessagePayload } from "@multica/core/types/events";
 import { useWSEvent, useWSReconnect } from "@multica/core/realtime";
@@ -26,6 +25,7 @@ import { Dialog, DialogContent, DialogTitle } from "@multica/ui/components/ui/di
 import { PageHeader } from "../../layout/page-header";
 import { AppLink, useNavigation } from "../../navigation";
 import { TranscriptButton } from "../../common/task-transcript";
+import { useT } from "../../i18n";
 import { createIssueReviewDraftCase } from "./run-review-draft-case";
 import {
   buildEventTaskLabelById,
@@ -90,26 +90,8 @@ export function buildRunReviewOptimizerHref(evaluationView: (view: string) => st
   return `${evaluationView("runs")}?issue=${encodeURIComponent(issueId)}`;
 }
 
-function buildRunReviewTokenSummary(summary: IssueTimelineSummary | undefined): string {
-  const cacheRead = summary?.total_cache_read_tokens ?? 0;
-  const cacheWrite = summary?.total_cache_write_tokens ?? 0;
-  return [
-    `输入 ${formatTokenMillions(summary?.total_input_tokens ?? 0)}`,
-    `输出 ${formatTokenMillions(summary?.total_output_tokens ?? 0)}`,
-    `读 ${formatTokenMillions(cacheRead)}`,
-    `写 ${formatTokenMillions(cacheWrite)}`,
-    `命中 ${formatPercent(cacheReuseRate(cacheRead, cacheWrite))}`,
-  ].join(" · ");
-}
-
-function buildRunReviewTurnSummary(agentRows: ReturnType<typeof buildAgentNodeRows>): string {
-  const summary = agentRows
-    .map((row) => `${agentNodeDisplayLabel(row)} ${formatNumber(row.node.agent_turn_count ?? 0)}`)
-    .join(" · ");
-  return summary || "暂无执行轮次";
-}
-
 export function RunReviewsPage() {
+  const { t } = useT("run-reviews");
   const wsId = useWorkspaceId();
   const paths = useWorkspacePaths();
   const navigation = useNavigation();
@@ -129,21 +111,25 @@ export function RunReviewsPage() {
     <div className="flex h-full min-h-0 flex-col bg-background">
       <PageHeader>
         <div className="min-w-0">
-          <h1 className="truncate text-sm font-semibold">运行复盘</h1>
+          <h1 className="truncate text-sm font-semibold">{t(($) => $.page_title)}</h1>
         </div>
       </PageHeader>
 
       <div className="grid min-h-0 flex-1 grid-cols-1 overflow-hidden lg:grid-cols-[360px_minmax(0,1fr)]">
         <aside className="min-h-0 border-b lg:border-r lg:border-b-0">
           <div className="flex h-10 items-center justify-between border-b px-3">
-            <div className="text-xs font-medium text-muted-foreground">Issue 运行记录</div>
-            <div className="text-xs text-muted-foreground">{issues.length} 条</div>
+            <div className="text-xs font-medium text-muted-foreground">{t(($) => $.issue_runs)}</div>
+            <div className="text-xs text-muted-foreground">
+              {t(($) => $.issue_count, { count: issues.length })}
+            </div>
           </div>
           <div className="max-h-[38vh] min-h-0 overflow-y-auto lg:max-h-none lg:h-[calc(100vh-7.5rem)]">
             {issuesQuery.isLoading ? (
               <IssueListSkeleton />
             ) : issues.length === 0 ? (
-              <div className="px-3 py-6 text-sm text-muted-foreground">暂无 issue。请先通过公开 UI/API 创建任务。</div>
+              <div className="px-3 py-6 text-sm text-muted-foreground">
+                {t(($) => $.empty_issues)}
+              </div>
             ) : (
               <div className="divide-y">
                 {issues.map((issue) => (
@@ -170,7 +156,9 @@ export function RunReviewsPage() {
               optimizerHref={buildRunReviewOptimizerHref(paths.evaluationView, selectedIssue.id)}
             />
           ) : (
-            <div className="px-6 py-10 text-sm text-muted-foreground">选择一条 issue 查看完整链路。</div>
+            <div className="px-6 py-10 text-sm text-muted-foreground">
+              {t(($) => $.select_issue)}
+            </div>
           )}
         </main>
       </div>
@@ -179,7 +167,21 @@ export function RunReviewsPage() {
 }
 
 function IssueRunRow({ issue, active, href }: { issue: Issue; active: boolean; href: string }) {
-  const activityLabel = issueRunRowActivityLabel(issue);
+  const { t } = useT("run-reviews");
+  const meta = issueRunRowMeta(issue);
+  const activity = issueRunRowActivity(issue);
+  const metaLabels = [
+    meta.projectTitle ?? t(($) => $.list.unbound_project),
+    t(($) => $.list.status, { status: statusLabel(meta.status) }),
+    ...(meta.childProgress
+      ? [t(($) => $.list.child_progress, meta.childProgress)]
+      : []),
+  ];
+  const activityLabel = activity
+    ? activity.tone === "running"
+      ? t(($) => $.list.running, { count: activity.count })
+      : t(($) => $.list.queued, { count: activity.count })
+    : null;
   return (
     <AppLink
       href={href}
@@ -192,14 +194,14 @@ function IssueRunRow({ issue, active, href }: { issue: Issue; active: boolean; h
         <div className="min-w-0">
           <div className="truncate font-medium">{issue.identifier ? `${issue.identifier} ` : ""}{issue.title}</div>
           <div className="mt-1 flex flex-wrap gap-1 text-[11px] text-muted-foreground">
-            {issueRunRowMetaLabels(issue).map((label) => (
+            {metaLabels.map((label) => (
               <span key={label}>{label}</span>
             ))}
           </div>
         </div>
-        {activityLabel && (
-          <span className={cn("shrink-0 rounded border px-1.5 py-0.5 text-[11px]", activityLabel.tone === "running" ? "border-info/40 text-info" : "text-muted-foreground")}>
-            {activityLabel.label}
+        {activity && activityLabel && (
+          <span className={cn("shrink-0 rounded border px-1.5 py-0.5 text-[11px]", activity.tone === "running" ? "border-info/40 text-info" : "text-muted-foreground")}>
+            {activityLabel}
           </span>
         )}
       </div>
@@ -207,22 +209,24 @@ function IssueRunRow({ issue, active, href }: { issue: Issue; active: boolean; h
   );
 }
 
-export function issueRunRowMetaLabels(issue: Pick<Issue, "project" | "status" | "child_progress">): string[] {
+export function issueRunRowMeta(issue: Pick<Issue, "project" | "status" | "child_progress">) {
   const childTotal = issue.child_progress?.total ?? 0;
-  return [
-    issue.project?.title ?? "未绑定项目",
-    `状态 ${statusLabel(issue.status)}`,
-    ...(childTotal > 0 ? [`子任务 ${issue.child_progress?.done ?? 0}/${childTotal}`] : []),
-  ];
+  return {
+    projectTitle: issue.project?.title ?? null,
+    status: issue.status,
+    childProgress: childTotal > 0
+      ? { done: issue.child_progress?.done ?? 0, total: childTotal }
+      : null,
+  };
 }
 
-export function issueRunRowActivityLabel(
+export function issueRunRowActivity(
   issue: Pick<Issue, "agent_activity">,
-): { label: string; tone: "running" | "queued" } | null {
+): { count: number; tone: "running" | "queued" } | null {
   const running = issue.agent_activity?.running_count ?? 0;
   const queued = issue.agent_activity?.queued_count ?? 0;
-  if (running > 0) return { label: `运行 ${running}`, tone: "running" };
-  if (queued > 0) return { label: `排队 ${queued}`, tone: "queued" };
+  if (running > 0) return { count: running, tone: "running" };
+  if (queued > 0) return { count: queued, tone: "queued" };
   return null;
 }
 
@@ -297,6 +301,7 @@ function RunReviewDetail({
   evalDraftHref: string;
   optimizerHref: string;
 }) {
+  const { t } = useT("run-reviews");
   const wsId = useWorkspaceId();
   const queryClient = useQueryClient();
   const [eventQuery, setEventQuery] = useState("");
@@ -348,6 +353,20 @@ function RunReviewDetail({
     (summary?.total_output_tokens ?? 0) +
     (summary?.total_cache_read_tokens ?? 0) +
     (summary?.total_cache_write_tokens ?? 0);
+  const cacheRead = summary?.total_cache_read_tokens ?? 0;
+  const cacheWrite = summary?.total_cache_write_tokens ?? 0;
+  const tokenSummary = [
+    t(($) => $.metrics.token_input, { value: formatTokenMillions(summary?.total_input_tokens ?? 0) }),
+    t(($) => $.metrics.token_output, { value: formatTokenMillions(summary?.total_output_tokens ?? 0) }),
+    t(($) => $.metrics.token_cache_read, { value: formatTokenMillions(cacheRead) }),
+    t(($) => $.metrics.token_cache_write, { value: formatTokenMillions(cacheWrite) }),
+    t(($) => $.metrics.token_cache_hit, {
+      value: formatPercent(cacheReuseRate(cacheRead, cacheWrite)),
+    }),
+  ].join(" · ");
+  const turnSummary = agentNodeRows
+    .map((row) => `${agentNodeDisplayLabel(row)} ${formatNumber(row.node.agent_turn_count ?? 0)}`)
+    .join(" · ") || t(($) => $.metrics.no_turns);
   const nodeXlsxSheets = buildRunReviewNodeXlsxSheets(issue, summary, agentNodeRows, visibleChildLanes);
   const rawEventsXlsxSheets = buildRunReviewRawEventsXlsxSheets(eventRows);
   const taskById = useMemo(() => {
@@ -373,20 +392,20 @@ function RunReviewDetail({
     ? latestTerminalTask
     : null;
   const taskStatusLabel = activeTasks.length > 0
-    ? `运行中 ${activeTasks.length}`
+    ? t(($) => $.detail.task_running, { count: activeTasks.length })
     : latestFailedTask
-      ? "任务失败，待重试"
+      ? t(($) => $.detail.task_failed_retry)
       : latestTerminalTask
         ? statusLabel(latestTerminalTask.status)
-        : "无运行任务";
+        : t(($) => $.detail.no_running_task);
   const createDraftMut = useMutation({
     mutationFn: () => createIssueReviewDraftCase(issue, tree, stageRows, childLanes),
     onSuccess: (created) => {
       queryClient.invalidateQueries({ queryKey: ["prompt-library"] });
-      toast.success(`评测用例已生成：${created.case_name || created.id}`);
+      toast.success(t(($) => $.toast.case_created, { name: created.case_name || created.id }));
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "生成评测用例失败");
+      toast.error(error instanceof Error ? error.message : t(($) => $.toast.case_create_failed));
     },
   });
   const retryTaskMut = useMutation({
@@ -396,10 +415,10 @@ function RunReviewDetail({
       queryClient.invalidateQueries({ queryKey: issueKeys.executionTree(issue.id) });
       queryClient.invalidateQueries({ queryKey: issueKeys.list(wsId) });
       queryClient.invalidateQueries({ queryKey: issueKeys.detail(wsId, issue.id) });
-      toast.success("已重新入队最新失败任务");
+      toast.success(t(($) => $.toast.task_requeued));
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "重试失败任务失败");
+      toast.error(error instanceof Error ? error.message : t(($) => $.toast.task_retry_failed));
     },
   });
   const createdDraft = createDraftMut.data;
@@ -415,14 +434,16 @@ function RunReviewDetail({
             <div className="text-xs text-muted-foreground">{issue.identifier}</div>
             <h2 className="mt-0.5 truncate text-base font-semibold">{issue.title}</h2>
             <div className="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground">
-              <span>项目：{issue.project?.title ?? "未绑定"}</span>
-              <span>状态：{statusLabel(issue.status)}</span>
-              <span>任务：{taskStatusLabel}</span>
-              <span>验收：{summary?.acceptance_status ?? "待运行"}</span>
+              <span>{t(($) => $.detail.project, { value: issue.project?.title ?? t(($) => $.detail.unbound_project) })}</span>
+              <span>{t(($) => $.detail.status, { value: statusLabel(issue.status) })}</span>
+              <span>{t(($) => $.detail.task, { value: taskStatusLabel })}</span>
+              <span>{t(($) => $.detail.acceptance, { value: summary?.acceptance_status ?? t(($) => $.detail.pending_acceptance) })}</span>
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            <AppLink className="rounded border px-2.5 py-1.5 text-xs hover:bg-accent" href={issueHref}>返回 issue</AppLink>
+            <AppLink className="rounded border px-2.5 py-1.5 text-xs hover:bg-accent" href={issueHref}>
+              {t(($) => $.detail.back_to_issue)}
+            </AppLink>
             <button
               type="button"
               className="rounded border border-info/40 bg-info/10 px-2.5 py-1.5 text-xs text-info hover:bg-info/15 disabled:cursor-not-allowed disabled:opacity-60"
@@ -430,17 +451,21 @@ function RunReviewDetail({
               disabled={createDraftMut.isPending || !tree}
               data-testid="run-review-create-eval-draft"
             >
-              {createDraftMut.isPending ? "生成中..." : "生成评测用例"}
+              {createDraftMut.isPending
+                ? t(($) => $.detail.generating_case)
+                : t(($) => $.detail.generate_case)}
             </button>
-            <AppLink className="rounded border px-2.5 py-1.5 text-xs hover:bg-accent" href={optimizerHref}>进入评测资产</AppLink>
+            <AppLink className="rounded border px-2.5 py-1.5 text-xs hover:bg-accent" href={optimizerHref}>
+              {t(($) => $.detail.open_evaluation)}
+            </AppLink>
           </div>
         </div>
 
         {createdDraft && (
           <div className="border-b bg-info/5 px-4 py-2 text-xs text-muted-foreground" data-testid="run-review-created-eval-draft">
-            已生成 draft case {createdDraft.id}。请进入训练与评估确认输入、期望行为和验证方式，再批准为 active。
+            {t(($) => $.detail.draft_created, { id: createdDraft.id })}
             <AppLink className="ml-2 text-info underline-offset-2 hover:underline" href={createdDraftHref}>
-              查看 Draft
+              {t(($) => $.detail.view_draft)}
             </AppLink>
           </div>
         )}
@@ -455,19 +480,19 @@ function RunReviewDetail({
 
         <div className="grid gap-3 border-t p-4 text-sm md:grid-cols-3">
           <Metric
-            label="总耗时"
+            label={t(($) => $.metrics.total_duration)}
             value={formatDuration(wallClockDurationMs)}
             detail={buildRunReviewDurationSummary(summary)}
           />
           <Metric
-            label="总 Token"
+            label={t(($) => $.metrics.total_tokens)}
             value={formatNumber(tokenTotal)}
-            detail={buildRunReviewTokenSummary(summary)}
+            detail={tokenSummary}
           />
           <Metric
-            label="执行轮次"
+            label={t(($) => $.metrics.turns)}
             value={formatNumber(summary?.agent_turn_count ?? 0)}
-            detail={buildRunReviewTurnSummary(agentNodeRows)}
+            detail={turnSummary}
           />
         </div>
       </section>
@@ -475,17 +500,17 @@ function RunReviewDetail({
       {loading ? <DetailSkeleton /> : null}
 
       <section className="rounded-md border bg-card">
-        <SectionTitle title="横向时序图" subtitle="按真实出现的执行节点绘制；节点存在但缺少开始/结束时间时会单独标记。" />
+        <SectionTitle title={t(($) => $.timeline.title)} subtitle={t(($) => $.timeline.subtitle)} />
         <TimelineLaneChart stageRows={visibleTimelineRows} childLanes={visibleChildLanes} timelineNodes={timelineNodes} />
       </section>
 
       <section className="rounded-md border bg-card">
         <SectionTitle
-          title="节点表"
-          subtitle="按 Agent 运行节点展示耗时、token、执行轮次和产物。"
+          title={t(($) => $.nodes.title)}
+          subtitle={t(($) => $.nodes.subtitle)}
           action={
             <ExportButton
-              label="导出节点数据"
+              label={t(($) => $.nodes.export)}
               onClick={() => downloadXlsx(`run-review-nodes-${issue.identifier || issue.id}.xlsx`, nodeXlsxSheets)}
             />
           }
@@ -494,12 +519,12 @@ function RunReviewDetail({
           <table className="w-full table-fixed text-sm">
             <thead className="border-y bg-muted/40 text-left text-xs text-muted-foreground">
               <tr>
-                <th className="w-[20%] px-3 py-2 font-medium">节点</th>
-                <th className="w-[18%] px-3 py-2 font-medium">Agent</th>
-                <th className="w-[12%] px-3 py-2 font-medium">耗时</th>
-                <th className="w-[12%] px-3 py-2 font-medium">Token</th>
-                <th className="w-[12%] px-3 py-2 font-medium">执行轮次</th>
-                <th className="w-[26%] px-3 py-2 font-medium">产物</th>
+                <th className="w-[20%] px-3 py-2 font-medium">{t(($) => $.nodes.column_node)}</th>
+                <th className="w-[18%] px-3 py-2 font-medium">{t(($) => $.nodes.column_agent)}</th>
+                <th className="w-[12%] px-3 py-2 font-medium">{t(($) => $.nodes.column_duration)}</th>
+                <th className="w-[12%] px-3 py-2 font-medium">{t(($) => $.nodes.column_tokens)}</th>
+                <th className="w-[12%] px-3 py-2 font-medium">{t(($) => $.nodes.column_turns)}</th>
+                <th className="w-[26%] px-3 py-2 font-medium">{t(($) => $.nodes.column_artifacts)}</th>
               </tr>
             </thead>
             <tbody className="divide-y">
@@ -508,17 +533,17 @@ function RunReviewDetail({
                   <td className="truncate px-3 py-2">{agentNodeDisplayLabel(row)}</td>
                   <td className="truncate px-3 py-2 text-muted-foreground">{row.node.agent_name ?? row.key}</td>
                   <td className="truncate px-3 py-2">
-                    <NodeMetric value={formatDuration(row.node.duration_ms ?? 0)} tooltip={nodeDurationTooltip(row.node)} />
+                    <NodeMetric value={formatDuration(row.node.duration_ms ?? 0)} tooltip={<NodeDurationTooltip node={row.node} />} />
                   </td>
                   <td className="truncate px-3 py-2">
-                    <NodeMetric value={formatNumber(nodeTokenTotal(row.node))} tooltip={nodeTokenTooltip(row.node)} />
+                    <NodeMetric value={formatNumber(nodeTokenTotal(row.node))} tooltip={<NodeTokenTooltip node={row.node} />} />
                   </td>
                   <td className="truncate px-3 py-2">{formatNumber(row.node.agent_turn_count ?? 0)}</td>
                   <td className="px-3 py-2"><ArtifactLinks artifacts={row.node.artifacts ?? []} /></td>
                 </tr>
               )) : (
                 <tr>
-                  <td className="px-3 py-5 text-sm text-muted-foreground" colSpan={6}>暂无真实 Agent 节点。</td>
+                  <td className="px-3 py-5 text-sm text-muted-foreground" colSpan={6}>{t(($) => $.nodes.empty)}</td>
                 </tr>
               )}
             </tbody>
@@ -529,28 +554,28 @@ function RunReviewDetail({
             <div key={row.key} className="px-4 py-3 text-sm">
               <div className="min-w-0 truncate font-medium">{agentNodeDisplayLabel(row)}</div>
               <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                <NodeFact label="Agent" value={row.node.agent_name ?? row.key} />
-                <NodeFact label="耗时" value={formatDuration(row.node.duration_ms ?? 0)} />
-                <NodeFact label="Token" value={formatNumber(nodeTokenTotal(row.node))} />
-                <NodeFact label="执行轮次" value={formatNumber(row.node.agent_turn_count ?? 0)} />
+                <NodeFact label={t(($) => $.nodes.column_agent)} value={row.node.agent_name ?? row.key} />
+                <NodeFact label={t(($) => $.nodes.fact_duration)} value={formatDuration(row.node.duration_ms ?? 0)} />
+                <NodeFact label={t(($) => $.nodes.column_tokens)} value={formatNumber(nodeTokenTotal(row.node))} />
+                <NodeFact label={t(($) => $.nodes.fact_turns)} value={formatNumber(row.node.agent_turn_count ?? 0)} />
               </div>
               <div className="mt-2 text-xs">
                 <ArtifactLinks artifacts={row.node.artifacts ?? []} />
               </div>
             </div>
           )) : (
-            <div className="px-4 py-5 text-sm text-muted-foreground">暂无真实 Agent 节点。</div>
+            <div className="px-4 py-5 text-sm text-muted-foreground">{t(($) => $.nodes.empty)}</div>
           )}
         </div>
       </section>
 
       <section className="rounded-md border bg-card">
         <SectionTitle
-          title="事件流"
-          subtitle="展示可读动作；完整记录见 RAW 导出。"
+          title={t(($) => $.events.title)}
+          subtitle={t(($) => $.events.subtitle)}
           action={
             <ExportButton
-              label="导出 RAW 交互信息"
+              label={t(($) => $.events.export)}
               onClick={() => downloadXlsx(`run-review-events-${issue.identifier || issue.id}.xlsx`, rawEventsXlsxSheets)}
             />
           }
@@ -560,7 +585,7 @@ function RunReviewDetail({
             className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus:border-ring"
             value={eventQuery}
             onChange={(event) => setEventQuery(event.target.value)}
-            placeholder="搜索事件、Agent、工具、结果或 task"
+            placeholder={t(($) => $.events.search_placeholder)}
           />
         </div>
         <div className="min-h-[24rem] space-y-3 p-3">
@@ -578,10 +603,10 @@ function RunReviewDetail({
             <div className="flex gap-2 rounded-md border border-dashed bg-muted/20 px-3 py-6 text-sm text-muted-foreground">
               <AlertTriangle className="size-4" />
               {eventSearchActive
-                ? "没有匹配的事件。"
+                ? t(($) => $.events.no_matches)
                 : eventRows.length > 0
-                  ? "暂无可读动作，完整记录可通过 RAW 导出查看。"
-                  : "暂无事件。真实任务开始后会回写 trace、用量和证据。"}
+                  ? t(($) => $.events.no_readable)
+                  : t(($) => $.events.empty)}
             </div>
           )}
         </div>
@@ -605,6 +630,7 @@ function RunReviewEventGroup({
   onToggle: () => void;
   onOpenRaw: (event: RunReviewEventRowData) => void;
 }) {
+  const { t } = useT("run-reviews");
   return (
     <div className="overflow-hidden rounded-md border bg-muted/15 shadow-sm" data-testid="run-review-event-group">
       <div className="flex items-start gap-3 border-b bg-muted/45 px-3 py-3">
@@ -612,7 +638,7 @@ function RunReviewEventGroup({
           type="button"
           className="mt-0.5 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
           onClick={onToggle}
-          aria-label={open ? "收起事件组" : "展开事件组"}
+          aria-label={open ? t(($) => $.events.collapse_group) : t(($) => $.events.expand_group)}
         >
           <ChevronRight className={cn("size-3.5 transition-transform", open && "rotate-90")} />
         </button>
@@ -623,15 +649,25 @@ function RunReviewEventGroup({
             <span className={cn("shrink-0 rounded border px-1.5 py-0.5 text-[11px]", eventGroupOutcomeClass(group))}>{group.outcome}</span>
           </div>
           <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
-            <span className="rounded border px-1.5 py-0.5">{formatNumber(group.events.length)} 个事件</span>
+            <span className="rounded border px-1.5 py-0.5">
+              {t(($) => $.events.event_count, { count: group.events.length })}
+            </span>
             {group.timeRangeLabel && <span className="rounded border px-1.5 py-0.5">{group.timeRangeLabel}</span>}
-            {group.tokenTotal > 0 && <span className="rounded border px-1.5 py-0.5">Token {formatNumber(group.tokenTotal)}</span>}
-            {group.taskId && <span className="rounded border px-1.5 py-0.5 font-mono">task {shortId(group.taskId)}</span>}
+            {group.tokenTotal > 0 && (
+              <span className="rounded border px-1.5 py-0.5">
+                {t(($) => $.events.token, { value: formatNumber(group.tokenTotal) })}
+              </span>
+            )}
+            {group.taskId && (
+              <span className="rounded border px-1.5 py-0.5 font-mono">
+                {t(($) => $.events.task, { id: shortId(group.taskId) })}
+              </span>
+            )}
           </div>
         </div>
         {task && (
           <div className="shrink-0">
-            <TranscriptButton task={task} agentName="" title="完整 transcript" />
+            <TranscriptButton task={task} agentName="" title={t(($) => $.events.full_transcript)} />
           </div>
         )}
       </div>
@@ -660,6 +696,7 @@ function RunReviewEventRow({
   colorClassName: string;
   onOpenRaw: () => void;
 }) {
+  const { t } = useT("run-reviews");
   const tone = eventToneClasses(event.severity);
   return (
     <article
@@ -668,7 +705,7 @@ function RunReviewEventRow({
       data-event-id={event.id}
       role="button"
       tabIndex={0}
-      aria-label={`查看事件详情：${event.title}`}
+      aria-label={t(($) => $.events.open_detail_aria, { title: event.title })}
       onClick={onOpenRaw}
       onKeyDown={(keyboardEvent) => {
         if (keyboardEvent.key === "Enter" || keyboardEvent.key === " ") {
@@ -694,9 +731,21 @@ function RunReviewEventRow({
           <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
             {event.sourceLabel && <span className="rounded border px-1.5 py-0.5">{event.sourceLabel}</span>}
             {event.object && <span className="rounded border px-1.5 py-0.5">{event.object}</span>}
-            {event.durationMs >= 1000 && <span className="rounded border px-1.5 py-0.5">耗时 {formatDuration(event.durationMs)}</span>}
-            {event.tokenTotal > 0 && <span className="rounded border px-1.5 py-0.5">Token {formatNumber(event.tokenTotal)}</span>}
-            {event.taskId && <span className="rounded border px-1.5 py-0.5 font-mono">task {shortId(event.taskId)}</span>}
+            {event.durationMs >= 1000 && (
+              <span className="rounded border px-1.5 py-0.5">
+                {t(($) => $.events.duration, { value: formatDuration(event.durationMs) })}
+              </span>
+            )}
+            {event.tokenTotal > 0 && (
+              <span className="rounded border px-1.5 py-0.5">
+                {t(($) => $.events.token, { value: formatNumber(event.tokenTotal) })}
+              </span>
+            )}
+            {event.taskId && (
+              <span className="rounded border px-1.5 py-0.5 font-mono">
+                {t(($) => $.events.task, { id: shortId(event.taskId) })}
+              </span>
+            )}
           </div>
         </div>
       </div>
@@ -711,25 +760,35 @@ function RunReviewEventRawDialog({
   event: RunReviewEventRowData | null;
   onOpenChange: (open: boolean) => void;
 }) {
+  const { t } = useT("run-reviews");
   return (
     <Dialog open={Boolean(event)} onOpenChange={onOpenChange}>
       <DialogContent className="flex max-h-[88vh] w-[calc(100vw-2rem)] max-w-6xl flex-col gap-0 p-0 sm:!max-w-6xl lg:w-[calc(100vw-4rem)]">
         <div className="border-b px-5 py-4">
-          <DialogTitle className="text-base font-semibold">{event?.title ?? "事件详情"}</DialogTitle>
+          <DialogTitle className="text-base font-semibold">
+            {event?.title ?? t(($) => $.events.detail_title)}
+          </DialogTitle>
           <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
             {event?.category && <span className="rounded border px-1.5 py-0.5">{event.category}</span>}
             {event?.outcome && <span className="rounded border px-1.5 py-0.5">{event.outcome}</span>}
             {event?.timeLabel && <span className="rounded border px-1.5 py-0.5">{event.timeLabel}</span>}
-            {event?.taskId && <span className="rounded border px-1.5 py-0.5 font-mono">task {shortId(event.taskId)}</span>}
+            {event?.taskId && (
+              <span className="rounded border px-1.5 py-0.5 font-mono">
+                {t(($) => $.events.task, { id: shortId(event.taskId) })}
+              </span>
+            )}
           </div>
         </div>
         <div className="min-h-0 flex-1 space-y-3 overflow-auto bg-muted/10 p-5 text-sm">
           {event ? (
             <>
-              <EventRawBlock title="摘要" value={event.summary || "无摘要"} />
-              {event.detail && <EventRawBlock title="详情" value={event.detail} />}
-              {event.metadataDetail && <EventRawBlock title="Metadata" value={event.metadataDetail} />}
-              <EventRawBlock title={event.rawSourceLabel || "Raw JSON"} value={event.rawPayload === undefined ? "无 raw payload" : formatJSON(event.rawPayload)} />
+              <EventRawBlock title={t(($) => $.events.summary)} value={event.summary || t(($) => $.events.no_summary)} />
+              {event.detail && <EventRawBlock title={t(($) => $.events.detail)} value={event.detail} />}
+              {event.metadataDetail && <EventRawBlock title={t(($) => $.events.metadata)} value={event.metadataDetail} />}
+              <EventRawBlock
+                title={event.rawSourceLabel || t(($) => $.events.raw_json)}
+                value={event.rawPayload === undefined ? t(($) => $.events.no_raw_payload) : formatJSON(event.rawPayload)}
+              />
               {event.linkedRawPayloads?.map((item, index) => (
                 <EventRawBlock key={`${item.label}:${index}`} title={item.label} value={formatJSON(item.payload)} />
               ))}
@@ -824,6 +883,7 @@ function RunFailureBanner({
   retrying: boolean;
   onRetry: () => void;
 }) {
+  const { t } = useT("run-reviews");
   const failureReason = String(task.failure_reason ?? "");
   const providerNetwork = failureReason === "agent_error.provider_network";
   return (
@@ -834,10 +894,10 @@ function RunFailureBanner({
         </div>
         <div className="min-w-0">
           <div className="font-medium text-destructive">
-            {providerNetwork ? "模型网络连接中断，网络恢复后可重试" : "最新任务失败，等待重试"}
+            {providerNetwork ? t(($) => $.failure.provider_network) : t(($) => $.failure.latest_failed)}
           </div>
           <div className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
-            {task.error || failureReason || "未记录失败详情"}
+            {task.error || failureReason || t(($) => $.failure.missing_detail)}
           </div>
         </div>
       </div>
@@ -849,7 +909,7 @@ function RunFailureBanner({
         data-testid="run-review-retry-latest-failed-task"
       >
         {retrying ? <Loader2 className="size-3.5 animate-spin" /> : <RotateCcw className="size-3.5" />}
-        重试最新失败任务
+        {t(($) => $.failure.retry)}
       </button>
     </div>
   );
@@ -904,6 +964,7 @@ function ExportButton({ label, onClick }: { label: string; onClick: () => void }
 }
 
 function NodeMetric({ value, tooltip }: { value: string; tooltip: ReactNode }) {
+  const { t } = useT("run-reviews");
   return (
     <span className="inline-flex min-w-0 items-center gap-1">
       <span className="truncate">{value}</span>
@@ -911,7 +972,7 @@ function NodeMetric({ value, tooltip }: { value: string; tooltip: ReactNode }) {
         <Tooltip>
           <TooltipTrigger
             render={
-              <button type="button" className="shrink-0 text-muted-foreground hover:text-foreground" aria-label="节点指标说明">
+              <button type="button" className="shrink-0 text-muted-foreground hover:text-foreground" aria-label={t(($) => $.nodes.metric_help_aria)}>
                 <HelpCircle className="size-3" />
               </button>
             }
@@ -926,9 +987,12 @@ function NodeMetric({ value, tooltip }: { value: string; tooltip: ReactNode }) {
 }
 
 function NodeFact({ label, value }: { label: string; value: string }) {
+  const { t } = useT("run-reviews");
   return (
     <div className="min-w-0">
-      <span className="text-muted-foreground/80">{label}：</span>
+      <span className="text-muted-foreground/80">
+        {t(($) => $.nodes.fact_label, { label })}
+      </span>
       <span className="break-words">{value}</span>
     </div>
   );
@@ -969,6 +1033,7 @@ function TimelineLaneChart({
   childLanes: ChildLane[];
   timelineNodes: IssueTimelineNode[];
 }) {
+  const { t } = useT("run-reviews");
   const rows = buildTimelineBarRows(stageRows, childLanes, timelineNodes);
   const timedSegments = rows.flatMap((row) => row.segments).filter((segment) => segment.startMs !== null && segment.endMs !== null);
   const min = timedSegments.length > 0 ? Math.min(...timedSegments.map((segment) => segment.startMs as number)) : 0;
@@ -976,7 +1041,7 @@ function TimelineLaneChart({
   const span = Math.max(max - min, 1);
   const ticks = timedSegments.length > 0
     ? [min, min + span / 2, max].map((value) => formatTimeTick(value))
-    : ["开始", "中点", "结束"];
+    : [t(($) => $.timeline.start), t(($) => $.timeline.middle), t(($) => $.timeline.end)];
 
   return (
     <div className="px-4 pb-4" data-testid="run-review-horizontal-timeline">
@@ -1003,7 +1068,7 @@ function TimelineLaneChart({
                 <div className="absolute inset-y-0 left-2/3 w-px bg-border/70" />
                 {row.missing || row.segments.length === 0 || row.segments.every((segment) => segment.startMs === null || segment.endMs === null) ? (
                   <div className="flex h-full items-center px-2 text-[11px] text-muted-foreground">
-                    {row.missing ? "缺节点" : "缺时间"}
+                    {row.missing ? t(($) => $.timeline.missing_node) : t(($) => $.timeline.missing_time)}
                   </div>
                 ) : (
                   row.segments.map((segment) => {
@@ -1024,7 +1089,7 @@ function TimelineLaneChart({
                               tabIndex={0}
                             >
                               <span className="block truncate">
-                                {timelineSegmentText(row, segment)}
+                                <TimelineSegmentText row={row} segment={segment} />
                               </span>
                             </div>
                           }
@@ -1040,7 +1105,7 @@ function TimelineLaneChart({
             </div>
           )) : (
             <div className="rounded-md border border-dashed bg-muted/20 px-3 py-4 text-sm text-muted-foreground">
-              暂无可绘制的真实执行节点。
+              {t(($) => $.timeline.empty)}
             </div>
           )}
         </div>
@@ -1054,12 +1119,13 @@ function timelineSegmentClassName(kind: TimelineBarRow["kind"], _segment: Timeli
   return timelineNodeColorClass(_segment.node);
 }
 
-function timelineSegmentText(row: TimelineBarRow, segment: TimelineBarSegment) {
+function TimelineSegmentText({ row, segment }: { row: TimelineBarRow; segment: TimelineBarSegment }) {
+  const { t } = useT("run-reviews");
   if (row.kind === "human_confirmation") {
-    return `${formatDuration(segment.durationMs)} · 人工确认`;
+    return `${formatDuration(segment.durationMs)} · ${t(($) => $.timeline.human_confirmation)}`;
   }
   if (row.kind === "child") {
-    return `${formatDuration(segment.durationMs)} · 等待子任务`;
+    return `${formatDuration(segment.durationMs)} · ${t(($) => $.timeline.child_wait)}`;
   }
   return `${formatDuration(segment.durationMs)} · ${formatNumber(segment.tokenTotal)} token`;
 }
@@ -1082,27 +1148,29 @@ function IssueListSkeleton() {
 function DetailSkeleton() {
   return <Skeleton className="h-24 w-full rounded-md" />;
 }
-function nodeDurationTooltip(node: IssueTimelineNode | undefined) {
+function NodeDurationTooltip({ node }: { node: IssueTimelineNode | undefined }) {
+  const { t } = useT("run-reviews");
   return (
     <MetricTooltip
       rows={[
-        ["开始时间", formatDateTime(node?.started_at)],
-        ["结束时间", formatDateTime(node?.completed_at)],
-        ["执行耗时", formatDuration(node?.duration_ms ?? 0)],
+        [t(($) => $.nodes.tooltip_started), formatDateTime(node?.started_at)],
+        [t(($) => $.nodes.tooltip_completed), formatDateTime(node?.completed_at)],
+        [t(($) => $.nodes.tooltip_duration), formatDuration(node?.duration_ms ?? 0)],
       ]}
     />
   );
 }
 
-function nodeTokenTooltip(node: IssueTimelineNode | undefined) {
+function NodeTokenTooltip({ node }: { node: IssueTimelineNode | undefined }) {
+  const { t } = useT("run-reviews");
   return (
     <MetricTooltip
       rows={[
-        ["输入", formatNumber(node?.input_tokens ?? 0)],
-        ["输出", formatNumber(node?.output_tokens ?? 0)],
-        ["缓存读", formatNumber(node?.cache_read_tokens ?? 0)],
-        ["缓存写", formatNumber(node?.cache_write_tokens ?? 0)],
-        ["缓存命中率", formatPercent(cacheReuseRate(node?.cache_read_tokens ?? 0, node?.cache_write_tokens ?? 0))],
+        [t(($) => $.nodes.tooltip_input), formatNumber(node?.input_tokens ?? 0)],
+        [t(($) => $.nodes.tooltip_output), formatNumber(node?.output_tokens ?? 0)],
+        [t(($) => $.nodes.tooltip_cache_read), formatNumber(node?.cache_read_tokens ?? 0)],
+        [t(($) => $.nodes.tooltip_cache_write), formatNumber(node?.cache_write_tokens ?? 0)],
+        [t(($) => $.nodes.tooltip_cache_hit), formatPercent(cacheReuseRate(node?.cache_read_tokens ?? 0, node?.cache_write_tokens ?? 0))],
       ]}
     />
   );

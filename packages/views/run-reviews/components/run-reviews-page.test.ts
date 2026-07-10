@@ -33,7 +33,7 @@ import {
   timelineSegmentTooltipRows,
   timelineSegmentWidthPercent,
 } from "./run-review-timeline";
-import { buildRunReviewOptimizerHref, issueRunRowActivityLabel, issueRunRowMetaLabels } from "./run-reviews-page";
+import { buildRunReviewOptimizerHref, issueRunRowActivity, issueRunRowMeta } from "./run-reviews-page";
 import { sopStageDisplayName } from "../../common/sop-stage-labels";
 
 function trace(overrides: Partial<TaskTraceEvent> = {}): TaskTraceEvent {
@@ -352,15 +352,19 @@ describe("run review realtime helpers", () => {
   });
 });
 
-describe("issue run review list row labels", () => {
-  it("keeps project and status while hiding empty child progress", () => {
+describe("issue run review list row metadata", () => {
+  it("keeps project and status while omitting empty child progress", () => {
     const issue = {
       project: { id: "project-1", title: "goal-test", icon: null },
       status: "todo",
       child_progress: { done: 0, total: 0 },
     } as Issue;
 
-    expect(issueRunRowMetaLabels(issue)).toEqual(["goal-test", "状态 待办"]);
+    expect(issueRunRowMeta(issue)).toEqual({
+      projectTitle: "goal-test",
+      status: "todo",
+      childProgress: null,
+    });
   });
 
   it("shows child progress only when an issue has children", () => {
@@ -370,7 +374,11 @@ describe("issue run review list row labels", () => {
       child_progress: { done: 1, total: 3 },
     } as Issue;
 
-    expect(issueRunRowMetaLabels(issue)).toEqual(["未绑定项目", "状态 进行中", "子任务 1/3"]);
+    expect(issueRunRowMeta(issue)).toEqual({
+      projectTitle: null,
+      status: "in_progress",
+      childProgress: { done: 1, total: 3 },
+    });
   });
 
   it("only shows special activity labels and omits the default review label", () => {
@@ -378,13 +386,13 @@ describe("issue run review list row labels", () => {
       agent_activity: { running_count: runningCount, queued_count: queuedCount, agent_ids: [] },
     });
 
-    expect(issueRunRowActivityLabel(activity(0, 0))).toBeNull();
-    expect(issueRunRowActivityLabel(activity(2, 1))).toEqual({
-      label: "运行 2",
+    expect(issueRunRowActivity(activity(0, 0))).toBeNull();
+    expect(issueRunRowActivity(activity(2, 1))).toEqual({
+      count: 2,
       tone: "running",
     });
-    expect(issueRunRowActivityLabel(activity(0, 3))).toEqual({
-      label: "排队 3",
+    expect(issueRunRowActivity(activity(0, 3))).toEqual({
+      count: 3,
       tone: "queued",
     });
   });
