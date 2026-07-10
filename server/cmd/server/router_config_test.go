@@ -31,6 +31,14 @@ func TestAllowedOriginsExtendsExplicitOriginsWithLoopbackFrontendPort(t *testing
 	}
 }
 
+func TestCloudFleetURLUsesCanonicalEnvironmentName(t *testing.T) {
+	t.Setenv("MULTICA_CLOUD_FLEET_URL", "https://fleet.example.test")
+
+	if got := cloudFleetURLFromEnv(); got != "https://fleet.example.test" {
+		t.Fatalf("cloudFleetURLFromEnv() = %q", got)
+	}
+}
+
 func containsString(items []string, want string) bool {
 	for _, item := range items {
 		if item == want {

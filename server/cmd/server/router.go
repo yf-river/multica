@@ -1265,8 +1265,5 @@ func splitAndTrim(s string) []string {
 }
 
 func cloudFleetURLFromEnv() string {
-	if url := strings.TrimSpace(os.Getenv("MULTICA_CLOUD_FLEET_URL")); url != "" {
-		return url
-	}
-	return strings.TrimSpace(os.Getenv("MULTICA_FLEET_URL"))
+	return strings.TrimSpace(os.Getenv("MULTICA_CLOUD_FLEET_URL"))
 }

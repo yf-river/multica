@@ -50,10 +50,7 @@ func init() {
 }
 
 func loadAllowedOrigins() []string {
-	raw := strings.TrimSpace(os.Getenv("ALLOWED_ORIGINS"))
-	if raw == "" {
-		raw = strings.TrimSpace(os.Getenv("CORS_ALLOWED_ORIGINS"))
-	}
+	raw := strings.TrimSpace(os.Getenv("CORS_ALLOWED_ORIGINS"))
 	if raw == "" {
 		raw = strings.TrimSpace(os.Getenv("FRONTEND_ORIGIN"))
 	}
