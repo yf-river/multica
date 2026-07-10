@@ -47,6 +47,7 @@ import {
 import { useChatStore } from "@multica/core/chat";
 import { ChatMessageList, ChatMessageSkeleton } from "./chat-message-list";
 import { ChatInput } from "./chat-input";
+import { reconcileChatSendFailure } from "./chat-send-failure";
 import { ChatResizeHandles } from "./chat-resize-handles";
 import { useChatContextItems } from "./use-chat-context-items";
 import { useChatResize } from "./use-chat-resize";
@@ -442,10 +443,12 @@ export function ChatWindow() {
           err,
         });
         qc.invalidateQueries({ queryKey: chatKeys.messagesPage(sessionId) });
+        qc.invalidateQueries({ queryKey: chatKeys.pendingTask(sessionId) });
+        qc.invalidateQueries({ queryKey: chatKeys.pendingTasks(wsId) });
         return null;
       }
     },
-    [qc],
+    [qc, wsId],
   );
 
   const handleSend = useCallback(
@@ -539,10 +542,29 @@ export function ChatWindow() {
       try {
         result = await api.sendChatMessage(sessionId, finalContent, attachmentIds);
       } catch (err) {
+        const disposition = reconcileChatSendFailure(err, {
+          refreshServerState: () => {
+            qc.invalidateQueries({ queryKey: chatKeys.messagesPage(sessionId) });
+            qc.invalidateQueries({ queryKey: chatKeys.pendingTask(sessionId) });
+            qc.invalidateQueries({ queryKey: chatKeys.pendingTasks(wsId) });
+            qc.invalidateQueries({ queryKey: chatKeys.sessions(wsId) });
+          },
+          rollbackOptimisticState: () => {
+            stopRequestedBeforeTaskRef.current = false;
+            removeChatMessageFromCaches(qc, sessionId, optimistic.id);
+            qc.setQueryData(chatKeys.pendingTask(sessionId), {});
+          },
+        });
+        if (disposition === "outcome-unknown") {
+          apiLogger.warn("sendChatMessage.response.invalid.reconcile", {
+            sessionId,
+            optimisticId: optimistic.id,
+            err,
+          });
+          toast.warning(t(($) => $.input.send_status_unknown_toast));
+          return true;
+        }
         apiLogger.error("sendChatMessage.error.rollback", { sessionId, optimisticId: optimistic.id, err });
-        stopRequestedBeforeTaskRef.current = false;
-        removeChatMessageFromCaches(qc, sessionId, optimistic.id);
-        qc.setQueryData(chatKeys.pendingTask(sessionId), {});
         setRestoreDraftRequest({
           id: `send-failed-${optimistic.id}`,
           content: finalContent,
@@ -605,8 +627,20 @@ export function ChatWindow() {
       qc,
       setActiveSession,
       t,
+      wsId,
     ],
   );
+
+  useEffect(() => {
+    if (!stopRequestedBeforeTaskRef.current) return;
+    if (!pendingTaskId || !activeSessionId || !isTaskMessageTaskId(pendingTaskId)) return;
+
+    stopRequestedBeforeTaskRef.current = false;
+    void cancelChatTask(pendingTaskId, activeSessionId, {
+      restoreDraftToInput: true,
+      source: "reconciled-send",
+    });
+  }, [pendingTaskId, activeSessionId, cancelChatTask]);
 
   const handleStop = useCallback(() => {
     if (!pendingTaskId || !activeSessionId) {

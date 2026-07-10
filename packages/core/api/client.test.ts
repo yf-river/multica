@@ -6,26 +6,107 @@ afterEach(() => {
 });
 
 describe("ApiClient", () => {
+  it("classifies malformed JSON by whether the request may have committed", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((_url: string, init?: RequestInit) =>
+      Promise.resolve(new Response(
+        init?.method === "POST" ? "<html>proxy error</html>" : "",
+        { status: 200, headers: { "Content-Type": "text/html" } },
+      )),
+    ));
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.listAgents()).rejects.toMatchObject({
+      code: "api_response_contract_invalid",
+      mayHaveCommitted: false,
+    });
+    await expect(client.probeWorkspaceRepo("workspace-1", { url: "https://example.test/repo" }))
+      .rejects.toMatchObject({
+        code: "api_response_contract_invalid",
+        mayHaveCommitted: false,
+      });
+    await expect(client.createAgent({
+      name: "Agent",
+      runtime_id: "runtime-1",
+    })).rejects.toMatchObject({
+      code: "api_response_contract_invalid",
+      mayHaveCommitted: true,
+    });
+  });
+
+  it("keeps void 204 mutations successful", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 204 })));
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.deleteChatSession("session-1")).resolves.toBeUndefined();
+  });
+
   it("validates inbox and notification preference responses", async () => {
     vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(
       new Response(JSON.stringify({ id: 42 }), { status: 200, headers: { "Content-Type": "application/json" } }),
     )));
     const client = new ApiClient("https://api.example.test");
     await expect(client.listInbox()).resolves.toEqual([]);
-    await expect(client.markInboxRead("inbox-1")).resolves.toMatchObject({ id: "", read: false });
+    await expect(client.markInboxRead("inbox-1")).rejects.toMatchObject({ code: "api_response_contract_invalid" });
     await expect(client.getUnreadInboxCount()).resolves.toMatchObject({ count: 0 });
     await expect(client.getNotificationPreferences()).resolves.toEqual({ workspace_id: "", preferences: {} });
   });
 
   it("validates agent and secret env responses", async () => {
     vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(
-      new Response(JSON.stringify({ id: 42 }), { status: 200, headers: { "Content-Type": "application/json" } }),
+      new Response(JSON.stringify({ cancelled: "invalid" }), { status: 200, headers: { "Content-Type": "application/json" } }),
     )));
     const client = new ApiClient("https://api.example.test");
     await expect(client.listAgents()).resolves.toEqual([]);
     await expect(client.getAgent("agent-1")).resolves.toMatchObject({ id: "", skills: [] });
-    await expect(client.getAgentEnv("agent-1")).resolves.toEqual({ agent_id: "", custom_env: {} });
-    await expect(client.cancelAgentTasks("agent-1")).resolves.toMatchObject({ cancelled: 0 });
+    await expect(client.getAgentEnv("agent-1")).rejects.toMatchObject({
+      code: "api_response_contract_invalid",
+      mayHaveCommitted: false,
+    });
+    await expect(client.updateAgentEnv("agent-1", { custom_env: { TOKEN: "new" } }))
+      .rejects.toMatchObject({
+        code: "api_response_contract_invalid",
+        mayHaveCommitted: true,
+      });
+    await expect(client.cancelAgentTasks("agent-1")).rejects.toMatchObject({
+      code: "api_response_contract_invalid",
+      mayHaveCommitted: true,
+    });
+  });
+
+  it("rejects an agent environment response for a different agent", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(
+      new Response(JSON.stringify({
+        agent_id: "agent-2",
+        custom_env: { TOKEN: "secret" },
+      }), { status: 200, headers: { "Content-Type": "application/json" } }),
+    )));
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.getAgentEnv("agent-1")).rejects.toMatchObject({
+      code: "api_response_contract_invalid",
+      mayHaveCommitted: false,
+    });
+    await expect(client.updateAgentEnv("agent-1", { custom_env: { TOKEN: "new" } }))
+      .rejects.toMatchObject({
+        code: "api_response_contract_invalid",
+        mayHaveCommitted: true,
+      });
+  });
+
+  it("rejects empty identifiers in a successful chat send response", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({
+        message_id: "",
+        task_id: "",
+        created_at: "",
+      }), { status: 201, headers: { "Content-Type": "application/json" } }),
+    ));
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.sendChatMessage("session-1", "hello")).rejects.toMatchObject({
+      code: "api_response_contract_invalid",
+      mayHaveCommitted: true,
+    });
   });
 
   it("validates workspace, repository, and member responses", async () => {
@@ -40,12 +121,12 @@ describe("ApiClient", () => {
     await expect(client.listWorkspaces()).resolves.toEqual([]);
     await expect(client.getWorkspace("workspace-1")).resolves.toMatchObject({ id: "", repos: [] });
     await expect(client.resolveWorkspaceRepo("workspace-1", { url: "https://example.test/repo" }))
-      .resolves.toEqual({ url: "" });
+      .rejects.toMatchObject({ code: "api_response_contract_invalid" });
     await expect(client.probeWorkspaceRepo("workspace-1", { url: "https://example.test/repo" }))
-      .resolves.toMatchObject({ url: "", branches: [] });
+      .rejects.toMatchObject({ code: "api_response_contract_invalid" });
     await expect(client.listMembers("workspace-1")).resolves.toEqual([]);
     await expect(client.createMember("workspace-1", { account: "ada", role: "member" }))
-      .resolves.toMatchObject({ id: "", user_id: "", role: "member" });
+      .rejects.toMatchObject({ code: "api_response_contract_invalid" });
   });
 
   it("validates auth and personal token responses", async () => {
@@ -57,16 +138,10 @@ describe("ApiClient", () => {
     )));
     const client = new ApiClient("https://api.example.test");
 
-    await expect(client.login("ada", "secret")).resolves.toMatchObject({
-      token: "",
-      user: { id: "" },
-    });
-    await expect(client.issueCliToken()).resolves.toEqual({ token: "" });
+    await expect(client.login("ada", "secret")).rejects.toMatchObject({ code: "api_response_contract_invalid" });
+    await expect(client.issueCliToken()).rejects.toMatchObject({ code: "api_response_contract_invalid" });
     await expect(client.listPersonalAccessTokens()).resolves.toEqual([]);
-    await expect(client.createPersonalAccessToken({ name: "CLI" })).resolves.toMatchObject({
-      id: "",
-      token: "",
-    });
+    await expect(client.createPersonalAccessToken({ name: "CLI" })).rejects.toMatchObject({ code: "api_response_contract_invalid" });
   });
 
   it("validates issue, comment, and reaction write responses", async () => {
@@ -82,19 +157,9 @@ describe("ApiClient", () => {
       id: "",
       metadata: {},
     });
-    await expect(client.createComment("issue-1", "hello")).resolves.toMatchObject({
-      id: "",
-      reactions: [],
-      attachments: [],
-    });
-    await expect(client.addReaction("comment-1", "👍")).resolves.toMatchObject({
-      id: "",
-      comment_id: "",
-    });
-    await expect(client.addIssueReaction("issue-1", "👍")).resolves.toMatchObject({
-      id: "",
-      issue_id: "",
-    });
+    await expect(client.createComment("issue-1", "hello")).rejects.toMatchObject({ code: "api_response_contract_invalid" });
+    await expect(client.addReaction("comment-1", "👍")).rejects.toMatchObject({ code: "api_response_contract_invalid" });
+    await expect(client.addIssueReaction("issue-1", "👍")).rejects.toMatchObject({ code: "api_response_contract_invalid" });
   });
 
   it("validates runtime profile responses instead of trusting typed JSON", async () => {
@@ -604,7 +669,7 @@ describe("ApiClient", () => {
         },
       ],
       ["a null body", null],
-    ])("falls back for %s", async (_label, body) => {
+    ])("rejects a malformed successful response for %s", async (_label, body) => {
       vi.stubGlobal(
         "fetch",
         vi.fn().mockResolvedValue(
@@ -616,17 +681,22 @@ describe("ApiClient", () => {
       );
 
       const client = new ApiClient("https://api.example.test");
-      const result = await client.cancelTaskById("task-1");
-
-      expect(result.id).toBe("");
-      expect(result.cancelled_chat_message).toBeUndefined();
+      await expect(client.cancelTaskById("task-1")).rejects.toMatchObject({
+        code: "api_response_contract_invalid",
+        mayHaveCommitted: true,
+      });
     });
   });
 
   describe("chat attachment wiring", () => {
     it("uploadFile includes chat_session_id in the FormData body", async () => {
       const fetchMock = vi.fn().mockResolvedValue(
-        new Response(JSON.stringify({ id: "att-1", url: "https://cdn/x" }), {
+        new Response(JSON.stringify({
+          id: "att-1",
+          url: "https://cdn/x",
+          download_url: "https://cdn/x?download=1",
+          filename: "hi.png",
+        }), {
           status: 200,
           headers: { "Content-Type": "application/json" },
         }),
@@ -650,7 +720,11 @@ describe("ApiClient", () => {
 
     it("sendChatMessage serialises attachment_ids onto the JSON body when present", async () => {
       const fetchMock = vi.fn().mockResolvedValue(
-        new Response(JSON.stringify({ message_id: "m1", task_id: "t1", created_at: "" }), {
+        new Response(JSON.stringify({
+          message_id: "m1",
+          task_id: "t1",
+          created_at: "2026-07-11T00:00:00Z",
+        }), {
           status: 201,
           headers: { "Content-Type": "application/json" },
         }),
@@ -670,7 +744,11 @@ describe("ApiClient", () => {
     it("sendChatMessage omits attachment_ids when the list is empty or undefined", async () => {
       const fetchMock = vi.fn().mockImplementation(() =>
         Promise.resolve(
-          new Response(JSON.stringify({ message_id: "m1", task_id: "t1", created_at: "" }), {
+          new Response(JSON.stringify({
+            message_id: "m1",
+            task_id: "t1",
+            created_at: "2026-07-11T00:00:00Z",
+          }), {
             status: 201,
             headers: { "Content-Type": "application/json" },
           }),

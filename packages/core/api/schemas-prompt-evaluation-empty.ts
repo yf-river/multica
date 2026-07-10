@@ -15,6 +15,8 @@ import type {
   PromptEvaluationCaseOperation,
   BulkUpdatePromptEvaluationCaseTagsResponse,
   PromptEvaluationDatasetVersionDiff,
+  PromptEvaluationDatasetVersion,
+  PromptEvaluationRun,
   RestorePromptEvaluationDatasetVersionResponse,
   PromptEvaluationDimensionScore,
   ListPromptEvaluationDimensionScoresResponse,
@@ -36,8 +38,6 @@ import type {
   PromptEvaluationAssetEvidenceArchivePackage,
   PublishPromptEvaluationOptimizationCandidateResponse,
 } from "../types";
-import { PromptEvaluationDatasetVersionSchema } from "./schemas-prompt-evaluation-assets";
-import { PromptEvaluationRunSchema } from "./schemas-prompt-evaluation-runs";
 import { EMPTY_PROMPT_LIBRARY_ITEM } from "./schemas-prompt-library";
 
 // Runtime response contracts for prompt evaluation empty.
@@ -85,17 +85,22 @@ export const EMPTY_PROMPT_EVALUATION_DATASET_VERSION_TAG_TREND_LIST_RESPONSE: Li
   total: 0,
 };
 
+const EMPTY_PROMPT_EVALUATION_DATASET_VERSION: PromptEvaluationDatasetVersion = {
+  id: "",
+  workspace_id: "",
+  dataset_asset_id: "",
+  version: 0,
+  version_label: "",
+  row_count: 0,
+  row_fingerprint: "",
+  metadata: {},
+  created_by: null,
+  created_at: "",
+};
+
 export const EMPTY_PROMPT_EVALUATION_DATASET_VERSION_DIFF: PromptEvaluationDatasetVersionDiff = {
-  base_version: PromptEvaluationDatasetVersionSchema.parse({
-    id: "",
-    workspace_id: "",
-    dataset_asset_id: "",
-  }),
-  target_version: PromptEvaluationDatasetVersionSchema.parse({
-    id: "",
-    workspace_id: "",
-    dataset_asset_id: "",
-  }),
+  base_version: EMPTY_PROMPT_EVALUATION_DATASET_VERSION,
+  target_version: EMPTY_PROMPT_EVALUATION_DATASET_VERSION,
   summary: {},
   added: [],
   removed: [],
@@ -103,13 +108,43 @@ export const EMPTY_PROMPT_EVALUATION_DATASET_VERSION_DIFF: PromptEvaluationDatas
   unchanged: [],
 };
 
-export const EMPTY_PROMPT_EVALUATION_RUN = PromptEvaluationRunSchema.parse({
+export const EMPTY_PROMPT_EVALUATION_RUN: PromptEvaluationRun = {
   id: "",
   workspace_id: "",
   asset_id: "",
+  prompt_id: null,
   run_kind: "模板渲染检查",
   status: "已入队",
-});
+  trigger_source: "手动",
+  agent_id: null,
+  runtime_id: null,
+  task_id: null,
+  chat_session_id: null,
+  model: "",
+  runtime_provider: "",
+  total_cases: 0,
+  passed_cases: 0,
+  failed_cases: 0,
+  pass_rate: 0,
+  total_duration_ms: 0,
+  average_duration_ms: 0,
+  input_tokens: 0,
+  output_tokens: 0,
+  estimated_cost: 0,
+  failure_reason: "",
+  conclusion: "",
+  metrics: {},
+  evidence: {},
+  started_at: "",
+  completed_at: "",
+  created_by: null,
+  created_at: "",
+  updated_at: "",
+  review_decision: "",
+  review_note: "",
+  reviewed_by: null,
+  reviewed_at: "",
+};
 
 export const EMPTY_PROMPT_EVALUATION_RUN_LIST_RESPONSE = {
   items: [],

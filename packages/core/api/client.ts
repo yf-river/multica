@@ -128,7 +128,6 @@ import type {
   UpdateSquadRequest,
   PromptLibraryItem,
   PromptLibraryTrial,
-  PromptLibraryVersion,
   PromptEvaluationAsset,
   PromptEvaluationRun,
   PromptEvaluationRunEvidence,
@@ -222,7 +221,7 @@ import type {
 import { type Logger, noopLogger } from "../logger";
 import { createRequestId } from "../utils";
 import { getCurrentSlug } from "../platform/workspace-storage";
-import { parseWithFallback } from "./schema";
+import { ApiResponseValidationError, parseOrThrow, parseWithFallback } from "./schema";
 import {
   AgentTemplateSchema,
   AgentSchema,
@@ -352,6 +351,7 @@ import {
   RestorePromptEvaluationDatasetVersionResponseSchema,
   PromptEvaluationRunListResponseSchema,
   PromptEvaluationRunSchema,
+  PromptEvaluationAgentRunResponseSchema,
   PromptEvaluationTrialListResponseSchema,
   PromptEvaluationRunEvidenceSchema,
   PromptEvaluationAssetEvidenceArchivePackageSchema,
@@ -381,8 +381,8 @@ import {
   PromptLibraryItemListResponseSchema,
   PromptLibraryTrialListResponseSchema,
   PromptLibraryTrialSchema,
-  PromptLibraryVersionSchema,
   PromptLibraryVersionListResponseSchema,
+  CreatePromptLibraryVersionResponseSchema,
   AgentPlaygroundDetailSchema,
   AgentPlaygroundExperimentListResponseSchema,
   IssueSOPRunsResponseSchema,
@@ -437,6 +437,10 @@ export interface ApiClientOptions {
   /** Identifies the client to the server. Sent as X-Client-* headers. */
   identity?: ApiClientIdentity;
 }
+
+type JsonRequestInit = RequestInit & {
+  responseMayHaveCommitted?: boolean;
+};
 
 export interface LoginResponse {
   token: string;
@@ -620,16 +624,36 @@ export class ApiClient {
     return res;
   }
 
-  private async fetch<T>(path: string, init?: RequestInit): Promise<T> {
+  private async parseSuccessJson<T>(
+    res: Response,
+    endpoint: string,
+    mayHaveCommitted: boolean,
+  ): Promise<T> {
+    try {
+      return await res.json() as T;
+    } catch {
+      this.logger.warn("API response body is not valid JSON", {
+        endpoint,
+        status: res.status,
+      });
+      throw new ApiResponseValidationError(endpoint, mayHaveCommitted);
+    }
+  }
+
+  private async fetch<T>(path: string, init?: JsonRequestInit): Promise<T> {
+    const { responseMayHaveCommitted, ...requestInit } = init ?? {};
+    const method = (requestInit.method ?? "GET").toUpperCase();
     const res = await this.fetchRaw(path, {
-      ...init,
+      ...requestInit,
       extraHeaders: { "Content-Type": "application/json" },
     });
     // Handle 204 No Content
     if (res.status === 204) {
       return undefined as T;
     }
-    return res.json() as Promise<T>;
+    const mayHaveCommitted = responseMayHaveCommitted
+      ?? !["GET", "HEAD", "OPTIONS"].includes(method);
+    return this.parseSuccessJson<T>(res, `${method} ${path}`, mayHaveCommitted);
   }
 
   // Auth
@@ -638,7 +662,7 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify({ account, password }),
     });
-    return parseWithFallback(raw, LoginResponseSchema, { token: "", user: EMPTY_USER }, {
+    return parseOrThrow(raw, LoginResponseSchema, { token: "", user: EMPTY_USER }, {
       endpoint: "POST /auth/login",
     });
   }
@@ -649,7 +673,7 @@ export class ApiClient {
 
   async issueCliToken(): Promise<{ token: string }> {
     const raw = await this.fetch<unknown>("/api/cli-token", { method: "POST" });
-    return parseWithFallback(raw, CliTokenResponseSchema, { token: "" }, {
+    return parseOrThrow(raw, CliTokenResponseSchema, { token: "" }, {
       endpoint: "POST /api/cli-token",
     });
   }
@@ -666,7 +690,7 @@ export class ApiClient {
       method: "PATCH",
       body: JSON.stringify(data),
     });
-    return parseWithFallback(raw, UserSchema, EMPTY_USER, {
+    return parseOrThrow(raw, UserSchema, EMPTY_USER, {
       endpoint: "PATCH /api/me",
     });
   }
@@ -758,7 +782,7 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify(data),
     });
-    return parseWithFallback(raw, IssueSchema, EMPTY_ISSUE, {
+    return parseOrThrow(raw, IssueSchema, EMPTY_ISSUE, {
       endpoint: "POST /api/issues",
     });
   }
@@ -802,7 +826,7 @@ export class ApiClient {
       method: "PUT",
       body: JSON.stringify(data),
     });
-    return parseWithFallback(raw, IssueSchema, EMPTY_ISSUE, {
+    return parseOrThrow(raw, IssueSchema, EMPTY_ISSUE, {
       endpoint: "PUT /api/issues/:id",
     });
   }
@@ -875,7 +899,7 @@ export class ApiClient {
         ...(suppressAgentIds?.length ? { suppress_agent_ids: suppressAgentIds } : {}),
       }),
     });
-    return parseWithFallback(raw, CommentSchema, EMPTY_COMMENT, {
+    return parseOrThrow(raw, CommentSchema, EMPTY_COMMENT, {
       endpoint: "POST /api/issues/:id/comments",
     });
   }
@@ -916,7 +940,7 @@ export class ApiClient {
         ...(suppressAgentIds?.length ? { suppress_agent_ids: suppressAgentIds } : {}),
       }),
     });
-    return parseWithFallback(raw, CommentSchema, EMPTY_COMMENT, {
+    return parseOrThrow(raw, CommentSchema, EMPTY_COMMENT, {
       endpoint: "PUT /api/comments/:id",
     });
   }
@@ -927,14 +951,14 @@ export class ApiClient {
 
   async resolveComment(commentId: string): Promise<Comment> {
     const raw = await this.fetch<unknown>(`/api/comments/${commentId}/resolve`, { method: "POST" });
-    return parseWithFallback(raw, CommentSchema, EMPTY_COMMENT, {
+    return parseOrThrow(raw, CommentSchema, EMPTY_COMMENT, {
       endpoint: "POST /api/comments/:id/resolve",
     });
   }
 
   async unresolveComment(commentId: string): Promise<Comment> {
     const raw = await this.fetch<unknown>(`/api/comments/${commentId}/resolve`, { method: "DELETE" });
-    return parseWithFallback(raw, CommentSchema, EMPTY_COMMENT, {
+    return parseOrThrow(raw, CommentSchema, EMPTY_COMMENT, {
       endpoint: "DELETE /api/comments/:id/resolve",
     });
   }
@@ -944,7 +968,7 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify({ emoji }),
     });
-    return parseWithFallback(raw, ReactionSchema, EMPTY_REACTION, {
+    return parseOrThrow(raw, ReactionSchema, EMPTY_REACTION, {
       endpoint: "POST /api/comments/:id/reactions",
     });
   }
@@ -961,7 +985,7 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify({ emoji }),
     });
-    return parseWithFallback(raw, IssueReactionSchema, EMPTY_ISSUE_REACTION, {
+    return parseOrThrow(raw, IssueReactionSchema, EMPTY_ISSUE_REACTION, {
       endpoint: "POST /api/issues/:id/reactions",
     });
   }
@@ -1020,7 +1044,7 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify(data),
     });
-    return parseWithFallback(raw, AgentSchema, EMPTY_AGENT, { endpoint: "POST /api/agents" });
+    return parseOrThrow(raw, AgentSchema, EMPTY_AGENT, { endpoint: "POST /api/agents" });
   }
 
   async listAgentTemplates(): Promise<AgentTemplateSummary[]> {
@@ -1060,7 +1084,7 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify(data),
     });
-    return parseWithFallback(
+    return parseOrThrow(
       raw,
       CreateAgentFromTemplateResponseSchema,
       EMPTY_CREATE_AGENT_FROM_TEMPLATE_RESPONSE,
@@ -1073,12 +1097,12 @@ export class ApiClient {
       method: "PUT",
       body: JSON.stringify(data),
     });
-    return parseWithFallback(raw, AgentSchema, EMPTY_AGENT, { endpoint: "PUT /api/agents/:id" });
+    return parseOrThrow(raw, AgentSchema, EMPTY_AGENT, { endpoint: "PUT /api/agents/:id" });
   }
 
   async archiveAgent(id: string): Promise<Agent> {
     const raw = await this.fetch<unknown>(`/api/agents/${id}/archive`, { method: "POST" });
-    return parseWithFallback(raw, AgentSchema, EMPTY_AGENT, { endpoint: "POST /api/agents/:id/archive" });
+    return parseOrThrow(raw, AgentSchema, EMPTY_AGENT, { endpoint: "POST /api/agents/:id/archive" });
   }
 
   /**
@@ -1089,7 +1113,18 @@ export class ApiClient {
    */
   async getAgentEnv(id: string): Promise<AgentEnvResponse> {
     const raw = await this.fetch<unknown>(`/api/agents/${id}/env`);
-    return parseWithFallback(raw, AgentEnvResponseSchema, EMPTY_AGENT_ENV_RESPONSE, { endpoint: "GET /api/agents/:id/env" });
+    return parseOrThrow(
+      raw,
+      AgentEnvResponseSchema.refine((response) => response.agent_id === id, {
+        path: ["agent_id"],
+        message: "agent id does not match request",
+      }),
+      EMPTY_AGENT_ENV_RESPONSE,
+      {
+        endpoint: "GET /api/agents/:id/env",
+        mayHaveCommitted: false,
+      },
+    );
   }
 
   /**
@@ -1105,12 +1140,20 @@ export class ApiClient {
       method: "PUT",
       body: JSON.stringify(data),
     });
-    return parseWithFallback(raw, AgentEnvResponseSchema, EMPTY_AGENT_ENV_RESPONSE, { endpoint: "PUT /api/agents/:id/env" });
+    return parseOrThrow(
+      raw,
+      AgentEnvResponseSchema.refine((response) => response.agent_id === id, {
+        path: ["agent_id"],
+        message: "agent id does not match request",
+      }),
+      EMPTY_AGENT_ENV_RESPONSE,
+      { endpoint: "PUT /api/agents/:id/env" },
+    );
   }
 
   async restoreAgent(id: string): Promise<Agent> {
     const raw = await this.fetch<unknown>(`/api/agents/${id}/restore`, { method: "POST" });
-    return parseWithFallback(raw, AgentSchema, EMPTY_AGENT, { endpoint: "POST /api/agents/:id/restore" });
+    return parseOrThrow(raw, AgentSchema, EMPTY_AGENT, { endpoint: "POST /api/agents/:id/restore" });
   }
 
   // Bulk-cancel every active task (queued/dispatched/running) for the agent.
@@ -1119,7 +1162,7 @@ export class ApiClient {
   // surfaces can clear their live cards.
   async cancelAgentTasks(id: string): Promise<{ cancelled: number }> {
     const raw = await this.fetch<unknown>(`/api/agents/${id}/cancel-tasks`, { method: "POST" });
-    return parseWithFallback(raw, AgentTaskCancellationCountSchema, { cancelled: 0 }, { endpoint: "POST /api/agents/:id/cancel-tasks" });
+    return parseOrThrow(raw, AgentTaskCancellationCountSchema, { cancelled: 0 }, { endpoint: "POST /api/agents/:id/cancel-tasks" });
   }
 
   async listRuntimes(params?: { workspace_id?: string; owner?: "me" }): Promise<AgentRuntime[]> {
@@ -1198,7 +1241,7 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify(body),
     });
-    return parseWithFallback(raw, RuntimeProfileSchema, EMPTY_RUNTIME_PROFILE, {
+    return parseOrThrow(raw, RuntimeProfileSchema, EMPTY_RUNTIME_PROFILE, {
       endpoint: "POST /api/workspaces/:workspaceId/runtime-profiles",
     });
   }
@@ -1215,7 +1258,7 @@ export class ApiClient {
         body: JSON.stringify(patch),
       },
     );
-    return parseWithFallback(raw, RuntimeProfileSchema, EMPTY_RUNTIME_PROFILE, {
+    return parseOrThrow(raw, RuntimeProfileSchema, EMPTY_RUNTIME_PROFILE, {
       endpoint: "PATCH /api/workspaces/:workspaceId/runtime-profiles/:profileId",
     });
   }
@@ -1501,7 +1544,7 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify(data),
     });
-    return parseWithFallback(raw, SquadSOPRunSchema, EMPTY_SQUAD_SOP_RUN, {
+    return parseOrThrow(raw, SquadSOPRunSchema, EMPTY_SQUAD_SOP_RUN, {
       endpoint: "POST /api/issues/:id/sop-runs",
     }) as SquadSOPRun;
   }
@@ -1534,12 +1577,12 @@ export class ApiClient {
 
   async markInboxRead(id: string): Promise<InboxItem> {
     const raw = await this.fetch<unknown>(`/api/inbox/${id}/read`, { method: "POST" });
-    return parseWithFallback(raw, InboxItemSchema, EMPTY_INBOX_ITEM, { endpoint: "POST /api/inbox/:id/read" });
+    return parseOrThrow(raw, InboxItemSchema, EMPTY_INBOX_ITEM, { endpoint: "POST /api/inbox/:id/read" });
   }
 
   async archiveInbox(id: string): Promise<InboxItem> {
     const raw = await this.fetch<unknown>(`/api/inbox/${id}/archive`, { method: "POST" });
-    return parseWithFallback(raw, InboxItemSchema, EMPTY_INBOX_ITEM, { endpoint: "POST /api/inbox/:id/archive" });
+    return parseOrThrow(raw, InboxItemSchema, EMPTY_INBOX_ITEM, { endpoint: "POST /api/inbox/:id/archive" });
   }
 
   async getUnreadInboxCount(): Promise<{ count: number }> {
@@ -1549,22 +1592,22 @@ export class ApiClient {
 
   async markAllInboxRead(): Promise<{ count: number }> {
     const raw = await this.fetch<unknown>("/api/inbox/mark-all-read", { method: "POST" });
-    return parseWithFallback(raw, InboxCountResponseSchema, { count: 0 }, { endpoint: "POST /api/inbox/mark-all-read" });
+    return parseOrThrow(raw, InboxCountResponseSchema, { count: 0 }, { endpoint: "POST /api/inbox/mark-all-read" });
   }
 
   async archiveAllInbox(): Promise<{ count: number }> {
     const raw = await this.fetch<unknown>("/api/inbox/archive-all", { method: "POST" });
-    return parseWithFallback(raw, InboxCountResponseSchema, { count: 0 }, { endpoint: "POST /api/inbox/archive-all" });
+    return parseOrThrow(raw, InboxCountResponseSchema, { count: 0 }, { endpoint: "POST /api/inbox/archive-all" });
   }
 
   async archiveAllReadInbox(): Promise<{ count: number }> {
     const raw = await this.fetch<unknown>("/api/inbox/archive-all-read", { method: "POST" });
-    return parseWithFallback(raw, InboxCountResponseSchema, { count: 0 }, { endpoint: "POST /api/inbox/archive-all-read" });
+    return parseOrThrow(raw, InboxCountResponseSchema, { count: 0 }, { endpoint: "POST /api/inbox/archive-all-read" });
   }
 
   async archiveCompletedInbox(): Promise<{ count: number }> {
     const raw = await this.fetch<unknown>("/api/inbox/archive-completed", { method: "POST" });
-    return parseWithFallback(raw, InboxCountResponseSchema, { count: 0 }, { endpoint: "POST /api/inbox/archive-completed" });
+    return parseOrThrow(raw, InboxCountResponseSchema, { count: 0 }, { endpoint: "POST /api/inbox/archive-completed" });
   }
 
   // Notification preferences
@@ -1588,7 +1631,7 @@ export class ApiClient {
       method: "PUT",
       body: JSON.stringify({ preferences }),
     });
-    return parseWithFallback(raw, NotificationPreferenceResponseSchema, EMPTY_NOTIFICATION_PREFERENCE_RESPONSE, {
+    return parseOrThrow(raw, NotificationPreferenceResponseSchema, EMPTY_NOTIFICATION_PREFERENCE_RESPONSE, {
       endpoint: "PUT /api/notification-preferences",
     });
   }
@@ -1633,7 +1676,7 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify(data),
     });
-    return parseWithFallback(raw, WorkspaceSchema, EMPTY_WORKSPACE, {
+    return parseOrThrow(raw, WorkspaceSchema, EMPTY_WORKSPACE, {
       endpoint: "POST /api/workspaces",
     });
   }
@@ -1643,7 +1686,7 @@ export class ApiClient {
       method: "PATCH",
       body: JSON.stringify(data),
     });
-    return parseWithFallback(raw, WorkspaceSchema, EMPTY_WORKSPACE, {
+    return parseOrThrow(raw, WorkspaceSchema, EMPTY_WORKSPACE, {
       endpoint: "PATCH /api/workspaces/:id",
     });
   }
@@ -1651,23 +1694,29 @@ export class ApiClient {
   async resolveWorkspaceRepo(workspaceId: string, data: { url: string; default_branch?: string }): Promise<WorkspaceRepo> {
     const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/repos/resolve`, {
       method: "POST",
+      responseMayHaveCommitted: false,
       body: JSON.stringify(data),
     });
-    return parseWithFallback(raw, WorkspaceRepoSchema, EMPTY_WORKSPACE_REPO, {
+    return parseOrThrow(raw, WorkspaceRepoSchema, EMPTY_WORKSPACE_REPO, {
       endpoint: "POST /api/workspaces/:workspaceId/repos/resolve",
+      mayHaveCommitted: false,
     });
   }
 
   async probeWorkspaceRepo(workspaceId: string, data: { url: string }): Promise<WorkspaceRepoProbeResponse> {
     const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/repos/probe`, {
       method: "POST",
+      responseMayHaveCommitted: false,
       body: JSON.stringify(data),
     });
-    return parseWithFallback(
+    return parseOrThrow(
       raw,
       WorkspaceRepoProbeResponseSchema,
       EMPTY_WORKSPACE_REPO_PROBE_RESPONSE,
-      { endpoint: "POST /api/workspaces/:workspaceId/repos/probe" },
+      {
+        endpoint: "POST /api/workspaces/:workspaceId/repos/probe",
+        mayHaveCommitted: false,
+      },
     );
   }
 
@@ -1684,7 +1733,7 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify(data),
     });
-    return parseWithFallback(raw, MemberWithUserSchema, EMPTY_MEMBER_WITH_USER, {
+    return parseOrThrow(raw, MemberWithUserSchema, EMPTY_MEMBER_WITH_USER, {
       endpoint: "POST /api/workspaces/:workspaceId/members",
     });
   }
@@ -1694,7 +1743,7 @@ export class ApiClient {
       method: "PATCH",
       body: JSON.stringify(data),
     });
-    return parseWithFallback(raw, MemberWithUserSchema, EMPTY_MEMBER_WITH_USER, {
+    return parseOrThrow(raw, MemberWithUserSchema, EMPTY_MEMBER_WITH_USER, {
       endpoint: "PATCH /api/workspaces/:workspaceId/members/:memberId",
     });
   }
@@ -1785,7 +1834,7 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify(data),
     });
-    return parseWithFallback(
+    return parseOrThrow(
       raw,
       CreatePersonalAccessTokenResponseSchema,
       EMPTY_CREATE_PERSONAL_ACCESS_TOKEN_RESPONSE,
@@ -1827,8 +1876,8 @@ export class ApiClient {
     }
 
     this.logger.info(`← ${res.status} /api/upload-file`, { rid, duration: `${Date.now() - start}ms` });
-    const raw = (await res.json()) as unknown;
-    return parseWithFallback(raw, AttachmentResponseSchema, EMPTY_ATTACHMENT, {
+    const raw = await this.parseSuccessJson<unknown>(res, "POST /api/upload-file", true);
+    return parseOrThrow(raw, AttachmentResponseSchema, EMPTY_ATTACHMENT, {
       endpoint: "POST /api/upload-file",
     });
   }
@@ -1850,7 +1899,7 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify(data),
     });
-    return parseWithFallback(raw, ChatSessionSchema, EMPTY_CHAT_SESSION, { endpoint: "POST /api/chat/sessions" });
+    return parseOrThrow(raw, ChatSessionSchema, EMPTY_CHAT_SESSION, { endpoint: "POST /api/chat/sessions" });
   }
 
   async deleteChatSession(id: string): Promise<void> {
@@ -1862,7 +1911,7 @@ export class ApiClient {
       method: "PATCH",
       body: JSON.stringify(data),
     });
-    return parseWithFallback(raw, ChatSessionSchema, EMPTY_CHAT_SESSION, { endpoint: "PATCH /api/chat/sessions/:id" });
+    return parseOrThrow(raw, ChatSessionSchema, EMPTY_CHAT_SESSION, { endpoint: "PATCH /api/chat/sessions/:id" });
   }
 
   async listChatMessagesPage(
@@ -1896,7 +1945,7 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify(body),
     });
-    return parseWithFallback(raw, SendChatMessageResponseSchema, EMPTY_SEND_CHAT_MESSAGE_RESPONSE, {
+    return parseOrThrow(raw, SendChatMessageResponseSchema, EMPTY_SEND_CHAT_MESSAGE_RESPONSE, {
       endpoint: "POST /api/chat/sessions/:id/messages",
     });
   }
@@ -1917,7 +1966,7 @@ export class ApiClient {
 
   async cancelTaskById(taskId: string): Promise<CancelTaskResponse> {
     const raw = await this.fetch<unknown>(`/api/tasks/${taskId}/cancel`, { method: "POST" });
-    return parseWithFallback(raw, CancelTaskResponseSchema, EMPTY_CANCEL_TASK_RESPONSE, {
+    return parseOrThrow(raw, CancelTaskResponseSchema, EMPTY_CANCEL_TASK_RESPONSE, {
       endpoint: "POST /api/tasks/{taskId}/cancel",
     });
   }
@@ -2041,7 +2090,7 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify(data),
     });
-    return parseWithFallback(raw, PromptLibraryItemSchema, EMPTY_PROMPT_LIBRARY_ITEM, {
+    return parseOrThrow(raw, PromptLibraryItemSchema, EMPTY_PROMPT_LIBRARY_ITEM, {
       endpoint: "POST /api/prompt-library",
     }) as PromptLibraryItem;
   }
@@ -2051,15 +2100,12 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify(data),
     });
-    const response = raw && typeof raw === "object" ? raw as { item?: unknown; version?: unknown } : {};
-    return {
-      item: parseWithFallback(response.item, PromptLibraryItemSchema, EMPTY_PROMPT_LIBRARY_ITEM, {
-        endpoint: "POST /api/prompt-library/:id/versions.item",
-      }) as PromptLibraryItem,
-      version: parseWithFallback(response.version, PromptLibraryVersionSchema, EMPTY_PROMPT_LIBRARY_VERSION, {
-        endpoint: "POST /api/prompt-library/:id/versions.version",
-      }) as PromptLibraryVersion,
-    };
+    return parseOrThrow(
+      raw,
+      CreatePromptLibraryVersionResponseSchema,
+      { item: EMPTY_PROMPT_LIBRARY_ITEM, version: EMPTY_PROMPT_LIBRARY_VERSION },
+      { endpoint: "POST /api/prompt-library/:id/versions" },
+    ) as CreatePromptLibraryVersionResponse;
   }
 
   async createPromptLibraryTrial(id: string, versionId: string, data: CreatePromptLibraryTrialRequest): Promise<PromptLibraryTrial> {
@@ -2067,7 +2113,7 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify(data),
     });
-    return parseWithFallback(raw, PromptLibraryTrialSchema, EMPTY_PROMPT_LIBRARY_TRIAL, {
+    return parseOrThrow(raw, PromptLibraryTrialSchema, EMPTY_PROMPT_LIBRARY_TRIAL, {
       endpoint: "POST /api/prompt-library/:id/versions/:versionId/trials",
     }) as PromptLibraryTrial;
   }
@@ -2077,7 +2123,7 @@ export class ApiClient {
       method: "PUT",
       body: JSON.stringify(data),
     });
-    return parseWithFallback(raw, PromptLibraryItemSchema, EMPTY_PROMPT_LIBRARY_ITEM, {
+    return parseOrThrow(raw, PromptLibraryItemSchema, EMPTY_PROMPT_LIBRARY_ITEM, {
       endpoint: "PUT /api/prompt-library/:id",
     }) as PromptLibraryItem;
   }
@@ -2106,21 +2152,21 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify(data),
     });
-    return parseWithFallback(raw, AgentPlaygroundDetailSchema, EMPTY_AGENT_PLAYGROUND_DETAIL, {
+    return parseOrThrow(raw, AgentPlaygroundDetailSchema, EMPTY_AGENT_PLAYGROUND_DETAIL, {
       endpoint: "POST /api/agent-playground-experiments",
     }) as AgentPlaygroundDetail;
   }
 
   async runAgentPlaygroundExperiment(id: string): Promise<AgentPlaygroundDetail> {
     const raw = await this.fetch<unknown>(`/api/agent-playground-experiments/${id}/run`, { method: "POST" });
-    return parseWithFallback(raw, AgentPlaygroundDetailSchema, EMPTY_AGENT_PLAYGROUND_DETAIL, {
+    return parseOrThrow(raw, AgentPlaygroundDetailSchema, EMPTY_AGENT_PLAYGROUND_DETAIL, {
       endpoint: "POST /api/agent-playground-experiments/:id/run",
     }) as AgentPlaygroundDetail;
   }
 
   async syncAgentPlaygroundExperiment(id: string): Promise<AgentPlaygroundDetail> {
     const raw = await this.fetch<unknown>(`/api/agent-playground-experiments/${id}/sync`, { method: "POST" });
-    return parseWithFallback(raw, AgentPlaygroundDetailSchema, EMPTY_AGENT_PLAYGROUND_DETAIL, {
+    return parseOrThrow(raw, AgentPlaygroundDetailSchema, EMPTY_AGENT_PLAYGROUND_DETAIL, {
       endpoint: "POST /api/agent-playground-experiments/:id/sync",
     }) as AgentPlaygroundDetail;
   }
@@ -2130,7 +2176,7 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify(data ?? {}),
     });
-    return parseWithFallback(raw, AgentPlaygroundDetailSchema, EMPTY_AGENT_PLAYGROUND_DETAIL, {
+    return parseOrThrow(raw, AgentPlaygroundDetailSchema, EMPTY_AGENT_PLAYGROUND_DETAIL, {
       endpoint: "POST /api/agent-playground-experiments/:id/judge",
     }) as AgentPlaygroundDetail;
   }
@@ -2160,7 +2206,7 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify(data),
     });
-    return parseWithFallback(raw, PromptEvaluationAssetSchema, EMPTY_PROMPT_EVALUATION_ASSET, {
+    return parseOrThrow(raw, PromptEvaluationAssetSchema, EMPTY_PROMPT_EVALUATION_ASSET, {
       endpoint: "POST /api/prompt-evaluation-assets",
     }) as PromptEvaluationAsset;
   }
@@ -2170,7 +2216,7 @@ export class ApiClient {
       method: "PUT",
       body: JSON.stringify(data),
     });
-    return parseWithFallback(raw, PromptEvaluationAssetSchema, EMPTY_PROMPT_EVALUATION_ASSET, {
+    return parseOrThrow(raw, PromptEvaluationAssetSchema, EMPTY_PROMPT_EVALUATION_ASSET, {
       endpoint: "PUT /api/prompt-evaluation-assets/:id",
     }) as PromptEvaluationAsset;
   }
@@ -2187,7 +2233,7 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify(data),
     });
-    return parseWithFallback(raw, PromptEvaluationSkillInventoryResponseSchema, EMPTY_PROMPT_EVALUATION_SKILL_INVENTORY_RESPONSE, {
+    return parseOrThrow(raw, PromptEvaluationSkillInventoryResponseSchema, EMPTY_PROMPT_EVALUATION_SKILL_INVENTORY_RESPONSE, {
       endpoint: "POST /api/prompt-evaluation-assets/:id/skill-inventory",
     }) as PromptEvaluationSkillInventoryResponse;
   }
@@ -2200,7 +2246,7 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify(data),
     });
-    return parseWithFallback(raw, PromptEvaluationSkillSnapshotResultSchema, EMPTY_PROMPT_EVALUATION_SKILL_SNAPSHOT_RESULT, {
+    return parseOrThrow(raw, PromptEvaluationSkillSnapshotResultSchema, EMPTY_PROMPT_EVALUATION_SKILL_SNAPSHOT_RESULT, {
       endpoint: "POST /api/prompt-evaluation-assets/:id/skill-snapshot",
     }) as PromptEvaluationSkillSnapshotResult;
   }
@@ -2213,7 +2259,7 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify(data),
     });
-    return parseWithFallback(raw, PromptEvaluationSkillCaseDraftsResultSchema, EMPTY_PROMPT_EVALUATION_SKILL_CASE_DRAFTS_RESULT, {
+    return parseOrThrow(raw, PromptEvaluationSkillCaseDraftsResultSchema, EMPTY_PROMPT_EVALUATION_SKILL_CASE_DRAFTS_RESULT, {
       endpoint: "POST /api/prompt-evaluation-assets/:id/skill-case-drafts",
     }) as PromptEvaluationSkillCaseDraftsResult;
   }
@@ -2238,7 +2284,7 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify(data),
     });
-    return parseWithFallback(raw, ImportPromptEvaluationDatasetResponseSchema, {
+    return parseOrThrow(raw, ImportPromptEvaluationDatasetResponseSchema, {
       asset: EMPTY_PROMPT_EVALUATION_ASSET,
       source_asset_id: data.export.source_asset_id,
       case_count: 0,
@@ -2256,7 +2302,7 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify(data),
     });
-    return parseWithFallback(raw, PromptEvaluationDatasetFromTracesResponseSchema, {
+    return parseOrThrow(raw, PromptEvaluationDatasetFromTracesResponseSchema, {
       asset: EMPTY_PROMPT_EVALUATION_ASSET,
       cases: [],
       trace_events: [],
@@ -2297,7 +2343,7 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify(data),
     });
-    return parseWithFallback(raw, PromptEvaluationDatasetVersionSchema, {
+    return parseOrThrow(raw, PromptEvaluationDatasetVersionSchema, {
       id: "",
       workspace_id: "",
       dataset_asset_id: id,
@@ -2341,7 +2387,7 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify(data),
     });
-    return parseWithFallback(raw, RestorePromptEvaluationDatasetVersionResponseSchema, EMPTY_RESTORE_PROMPT_EVALUATION_DATASET_VERSION_RESPONSE, {
+    return parseOrThrow(raw, RestorePromptEvaluationDatasetVersionResponseSchema, EMPTY_RESTORE_PROMPT_EVALUATION_DATASET_VERSION_RESPONSE, {
       endpoint: "POST /api/prompt-evaluation-assets/:id/dataset-versions/:versionId/restore",
     }) as RestorePromptEvaluationDatasetVersionResponse;
   }
@@ -2407,7 +2453,7 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify(data),
     });
-    return parseWithFallback(raw, PromptEvaluationCaseSchema, EMPTY_PROMPT_EVALUATION_CASE, {
+    return parseOrThrow(raw, PromptEvaluationCaseSchema, EMPTY_PROMPT_EVALUATION_CASE, {
       endpoint: "POST /api/prompt-evaluation-cases",
     }) as PromptEvaluationStructuredCase;
   }
@@ -2417,7 +2463,7 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify(data),
     });
-    return parseWithFallback(raw, BulkUpdatePromptEvaluationCaseTagsResponseSchema, EMPTY_BULK_PROMPT_EVALUATION_CASE_TAGS_RESPONSE, {
+    return parseOrThrow(raw, BulkUpdatePromptEvaluationCaseTagsResponseSchema, EMPTY_BULK_PROMPT_EVALUATION_CASE_TAGS_RESPONSE, {
       endpoint: "POST /api/prompt-evaluation-cases/bulk-tags",
     }) as BulkUpdatePromptEvaluationCaseTagsResponse;
   }
@@ -2427,7 +2473,7 @@ export class ApiClient {
       method: "PUT",
       body: JSON.stringify(data),
     });
-    return parseWithFallback(raw, PromptEvaluationCaseSchema, EMPTY_PROMPT_EVALUATION_CASE, {
+    return parseOrThrow(raw, PromptEvaluationCaseSchema, EMPTY_PROMPT_EVALUATION_CASE, {
       endpoint: "PUT /api/prompt-evaluation-cases/:id",
     }) as PromptEvaluationStructuredCase;
   }
@@ -2476,29 +2522,26 @@ export class ApiClient {
 
   async runPromptEvaluationAsset(id: string): Promise<PromptEvaluationAsset> {
     const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/run`, { method: "POST" });
-    return parseWithFallback(raw, PromptEvaluationAssetSchema, EMPTY_PROMPT_EVALUATION_ASSET, {
+    return parseOrThrow(raw, PromptEvaluationAssetSchema, EMPTY_PROMPT_EVALUATION_ASSET, {
       endpoint: "POST /api/prompt-evaluation-assets/:id/run",
     }) as PromptEvaluationAsset;
   }
 
   async runPromptEvaluationAssetAgent(id: string): Promise<PromptEvaluationAgentRunResponse> {
     const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/agent-run`, { method: "POST" });
-    const data = raw as Partial<PromptEvaluationAgentRunResponse>;
-    return {
-      asset: parseWithFallback(data.asset, PromptEvaluationAssetSchema, EMPTY_PROMPT_EVALUATION_ASSET, {
-        endpoint: "POST /api/prompt-evaluation-assets/:id/agent-run.asset",
-      }) as PromptEvaluationAsset,
-      run: parseWithFallback(data.run, PromptEvaluationRunSchema, EMPTY_PROMPT_EVALUATION_RUN, {
-        endpoint: "POST /api/prompt-evaluation-assets/:id/agent-run.run",
-      }) as PromptEvaluationRun,
-      task_id: data.task_id ?? "",
-      chat_session_id: data.chat_session_id ?? "",
-      agent_id: data.agent_id ?? "",
-      runtime_id: data.runtime_id ?? "",
-      model: data.model ?? "",
-      status: data.status ?? "",
-      message: data.message ?? "",
-    };
+    return parseOrThrow(raw, PromptEvaluationAgentRunResponseSchema, {
+      asset: EMPTY_PROMPT_EVALUATION_ASSET,
+      run: EMPTY_PROMPT_EVALUATION_RUN,
+      task_id: "",
+      chat_session_id: "",
+      agent_id: "",
+      runtime_id: "",
+      model: "",
+      status: "",
+      message: "",
+    }, {
+      endpoint: "POST /api/prompt-evaluation-assets/:id/agent-run",
+    }) as PromptEvaluationAgentRunResponse;
   }
 
   async listPromptEvaluationRuns(params?: ListPromptEvaluationRunsParams): Promise<ListPromptEvaluationRunsResponse> {
@@ -2542,7 +2585,7 @@ export class ApiClient {
   async createPromptEvaluationEvidenceSnapshot(runId: string, snapshotType: PromptEvaluationEvidenceSnapshotType = "手动归档"): Promise<PromptEvaluationEvidenceSnapshot> {
     const search = new URLSearchParams({ snapshot_type: snapshotType });
     const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/evidence-snapshots?${search.toString()}`, { method: "POST" });
-    return parseWithFallback(raw, PromptEvaluationEvidenceSnapshotSchema, EMPTY_PROMPT_EVALUATION_EVIDENCE_SNAPSHOT, {
+    return parseOrThrow(raw, PromptEvaluationEvidenceSnapshotSchema, EMPTY_PROMPT_EVALUATION_EVIDENCE_SNAPSHOT, {
       endpoint: "POST /api/prompt-evaluation-runs/:id/evidence-snapshots",
     }) as PromptEvaluationEvidenceSnapshot;
   }
@@ -2550,7 +2593,7 @@ export class ApiClient {
   async createPromptEvaluationAssetEvidenceSnapshots(assetId: string, snapshotType: PromptEvaluationEvidenceSnapshotType = "验收归档", limit = 20): Promise<PromptEvaluationAssetEvidenceSnapshotResponse> {
     const search = new URLSearchParams({ snapshot_type: snapshotType, limit: String(limit) });
     const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${assetId}/evidence-snapshots?${search.toString()}`, { method: "POST" });
-    return parseWithFallback(raw, PromptEvaluationAssetEvidenceSnapshotResponseSchema, EMPTY_PROMPT_EVALUATION_ASSET_EVIDENCE_SNAPSHOT_RESPONSE, {
+    return parseOrThrow(raw, PromptEvaluationAssetEvidenceSnapshotResponseSchema, EMPTY_PROMPT_EVALUATION_ASSET_EVIDENCE_SNAPSHOT_RESPONSE, {
       endpoint: "POST /api/prompt-evaluation-assets/:id/evidence-snapshots",
     }) as PromptEvaluationAssetEvidenceSnapshotResponse;
   }
@@ -2572,14 +2615,14 @@ export class ApiClient {
 
   async syncPromptEvaluationRun(runId: string): Promise<PromptEvaluationRun> {
     const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/sync`, { method: "POST" });
-    return parseWithFallback(raw, PromptEvaluationRunSchema, EMPTY_PROMPT_EVALUATION_RUN, {
+    return parseOrThrow(raw, PromptEvaluationRunSchema, EMPTY_PROMPT_EVALUATION_RUN, {
       endpoint: "POST /api/prompt-evaluation-runs/:id/sync",
     }) as PromptEvaluationRun;
   }
 
   async cancelPromptEvaluationRun(runId: string): Promise<PromptEvaluationRun> {
     const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/cancel`, { method: "POST" });
-    return parseWithFallback(raw, PromptEvaluationRunSchema, EMPTY_PROMPT_EVALUATION_RUN, {
+    return parseOrThrow(raw, PromptEvaluationRunSchema, EMPTY_PROMPT_EVALUATION_RUN, {
       endpoint: "POST /api/prompt-evaluation-runs/:id/cancel",
     }) as PromptEvaluationRun;
   }
@@ -2589,7 +2632,7 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify(data),
     });
-    return parseWithFallback(raw, PromptEvaluationRunSchema, EMPTY_PROMPT_EVALUATION_RUN, {
+    return parseOrThrow(raw, PromptEvaluationRunSchema, EMPTY_PROMPT_EVALUATION_RUN, {
       endpoint: "POST /api/prompt-evaluation-runs/:id/review",
     }) as PromptEvaluationRun;
   }
@@ -2609,7 +2652,7 @@ export class ApiClient {
 
   async createPromptEvaluationOptimizationCandidate(runId: string): Promise<PromptEvaluationOptimizationCandidate> {
     const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/optimization-candidates`, { method: "POST" });
-    return parseWithFallback(raw, PromptEvaluationOptimizationCandidateSchema, EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE, {
+    return parseOrThrow(raw, PromptEvaluationOptimizationCandidateSchema, EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE, {
       endpoint: "POST /api/prompt-evaluation-runs/:id/optimization-candidates",
     }) as PromptEvaluationOptimizationCandidate;
   }
@@ -2619,14 +2662,14 @@ export class ApiClient {
       method: "PUT",
       body: JSON.stringify(data),
     });
-    return parseWithFallback(raw, PromptEvaluationOptimizationCandidateSchema, EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE, {
+    return parseOrThrow(raw, PromptEvaluationOptimizationCandidateSchema, EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE, {
       endpoint: "PUT /api/prompt-evaluation-optimization-candidates/:id",
     }) as PromptEvaluationOptimizationCandidate;
   }
 
   async publishPromptEvaluationOptimizationCandidate(candidateId: string): Promise<PublishPromptEvaluationOptimizationCandidateResponse> {
     const raw = await this.fetch<unknown>(`/api/prompt-evaluation-optimization-candidates/${candidateId}/publish`, { method: "POST" });
-    return parseWithFallback(raw, PublishPromptEvaluationOptimizationCandidateResponseSchema, EMPTY_PUBLISH_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE_RESPONSE, {
+    return parseOrThrow(raw, PublishPromptEvaluationOptimizationCandidateResponseSchema, EMPTY_PUBLISH_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE_RESPONSE, {
       endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/publish",
     }) as PublishPromptEvaluationOptimizationCandidateResponse;
   }
@@ -2639,7 +2682,7 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify(data),
     });
-    return parseWithFallback(raw, PromptEvaluationSkillFreshnessResultSchema, EMPTY_PROMPT_EVALUATION_SKILL_FRESHNESS_RESULT, {
+    return parseOrThrow(raw, PromptEvaluationSkillFreshnessResultSchema, EMPTY_PROMPT_EVALUATION_SKILL_FRESHNESS_RESULT, {
       endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/skill-freshness",
     }) as PromptEvaluationSkillFreshnessResult;
   }
@@ -2652,7 +2695,7 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify(data),
     });
-    return parseWithFallback(raw, PromptEvaluationSkillApplyCandidateResponseSchema, EMPTY_PROMPT_EVALUATION_SKILL_APPLY_CANDIDATE_RESPONSE, {
+    return parseOrThrow(raw, PromptEvaluationSkillApplyCandidateResponseSchema, EMPTY_PROMPT_EVALUATION_SKILL_APPLY_CANDIDATE_RESPONSE, {
       endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/skill-apply",
     }) as PromptEvaluationSkillApplyCandidateResponse;
   }
@@ -2665,7 +2708,7 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify(data),
     });
-    return parseWithFallback(raw, PromptEvaluationSkillReEvalAssetResponseSchema, EMPTY_PROMPT_EVALUATION_SKILL_RE_EVAL_ASSET_RESPONSE, {
+    return parseOrThrow(raw, PromptEvaluationSkillReEvalAssetResponseSchema, EMPTY_PROMPT_EVALUATION_SKILL_RE_EVAL_ASSET_RESPONSE, {
       endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/skill-re-eval-asset",
     }) as PromptEvaluationSkillReEvalAssetResponse;
   }
@@ -2678,7 +2721,7 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify(data),
     });
-    return parseWithFallback(raw, PromptEvaluationSkillReEvalRunResponseSchema, EMPTY_PROMPT_EVALUATION_SKILL_RE_EVAL_RUN_RESPONSE, {
+    return parseOrThrow(raw, PromptEvaluationSkillReEvalRunResponseSchema, EMPTY_PROMPT_EVALUATION_SKILL_RE_EVAL_RUN_RESPONSE, {
       endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/skill-re-eval-run",
     }) as PromptEvaluationSkillReEvalRunResponse;
   }
@@ -2688,7 +2731,7 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify({ reason: reason ?? "" }),
     });
-    return parseWithFallback(raw, PromptEvaluationOptimizationCandidateSchema, EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE, {
+    return parseOrThrow(raw, PromptEvaluationOptimizationCandidateSchema, EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE, {
       endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/reject",
     }) as PromptEvaluationOptimizationCandidate;
   }
@@ -2869,7 +2912,7 @@ export class ApiClient {
 
   async createSquad(data: CreateSquadRequest): Promise<Squad> {
     const raw = await this.fetch<unknown>("/api/squads", { method: "POST", body: JSON.stringify(data) });
-    return parseWithFallback(raw, SquadSchema, EMPTY_SQUAD, {
+    return parseOrThrow(raw, SquadSchema, EMPTY_SQUAD, {
       endpoint: "POST /api/squads",
     }) as Squad;
   }
@@ -2885,7 +2928,7 @@ export class ApiClient {
 
   async updateSquad(id: string, data: UpdateSquadRequest): Promise<Squad> {
     const raw = await this.fetch<unknown>(`/api/squads/${id}`, { method: "PUT", body: JSON.stringify(data) });
-    return parseWithFallback(raw, SquadSchema, EMPTY_SQUAD, {
+    return parseOrThrow(raw, SquadSchema, EMPTY_SQUAD, {
       endpoint: "PUT /api/squads/:id",
     }) as Squad;
   }
@@ -2896,7 +2939,7 @@ export class ApiClient {
 
   async restoreSquad(id: string): Promise<Squad> {
     const raw = await this.fetch<unknown>(`/api/squads/${id}/restore`, { method: "POST" });
-    return parseWithFallback(raw, SquadSchema, EMPTY_SQUAD, {
+    return parseOrThrow(raw, SquadSchema, EMPTY_SQUAD, {
       endpoint: "POST /api/squads/:id/restore",
     }) as Squad;
   }
@@ -3059,7 +3102,7 @@ export class ApiClient {
       `/api/autopilots/${autopilotId}/deliveries/${deliveryId}/replay`,
       { method: "POST" },
     );
-    return parseWithFallback(
+    return parseOrThrow(
       raw,
       WebhookDeliveryResponseSchema,
       { ...EMPTY_WEBHOOK_DELIVERY, autopilot_id: autopilotId },

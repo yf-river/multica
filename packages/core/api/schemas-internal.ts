@@ -1,9 +1,11 @@
 import { z } from "zod";
 
+export const NonEmptyStringSchema = z.string().min(1);
+
 // Nested attachment records intentionally validate only the identity field.
 // Timeline and cancellation payloads must survive additive server fields.
 export const EmbeddedAttachmentSchema = z.object({
-  id: z.string(),
+  id: NonEmptyStringSchema,
 }).loose();
 
 export const PromptEvaluationTaskTraceEventSchema = z.object({

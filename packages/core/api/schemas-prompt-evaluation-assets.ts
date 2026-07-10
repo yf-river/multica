@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { PromptEvaluationCaseSchema } from "./schemas-prompt-evaluation-cases";
+import { NonEmptyStringSchema } from "./schemas-internal";
 
 // Runtime response contracts for prompt evaluation assets.
 export const PromptEvaluationPayloadCaseSchema = z.object({
@@ -30,8 +31,8 @@ export const PromptEvaluationPayloadSchema = z.record(z.string(), z.unknown()).d
 });
 
 export const PromptEvaluationAssetSchema = z.object({
-  id: z.string(),
-  workspace_id: z.string(),
+  id: NonEmptyStringSchema,
+  workspace_id: NonEmptyStringSchema,
   prompt_id: z.string().nullable().optional().transform((v) => v ?? null),
   name: z.string(),
   description: z.string().default(""),
@@ -59,9 +60,9 @@ export const PromptEvaluationAssetListResponseSchema = z.object({
 }).loose();
 
 export const PromptEvaluationDatasetVersionSchema = z.object({
-  id: z.string(),
-  workspace_id: z.string(),
-  dataset_asset_id: z.string(),
+  id: NonEmptyStringSchema,
+  workspace_id: NonEmptyStringSchema,
+  dataset_asset_id: NonEmptyStringSchema,
   version: z.number().default(0),
   version_label: z.string().default(""),
   row_count: z.number().default(0),

@@ -4,6 +4,7 @@ import type {
   PersonalAccessToken,
   User,
 } from "../types";
+import { NonEmptyStringSchema } from "./schemas-internal";
 
 // Runtime response contracts for auth.
 // ---------------------------------------------------------------------------
@@ -18,7 +19,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 export const UserSchema = z.object({
-  id: z.string(),
+  id: NonEmptyStringSchema,
   name: z.string().default(""),
   account: z.string().default(""),
   avatar_url: z.string().nullable().default(null),
@@ -32,16 +33,16 @@ export const UserSchema = z.object({
 }).loose();
 
 export const LoginResponseSchema = z.object({
-  token: z.string(),
+  token: NonEmptyStringSchema,
   user: UserSchema,
 }).loose();
 
 export const CliTokenResponseSchema = z.object({
-  token: z.string(),
+  token: NonEmptyStringSchema,
 }).loose();
 
 export const PersonalAccessTokenSchema = z.object({
-  id: z.string(),
+  id: NonEmptyStringSchema,
   name: z.string(),
   token_prefix: z.string(),
   expires_at: z.string().nullable().optional().transform((value) => value ?? null),
@@ -52,7 +53,7 @@ export const PersonalAccessTokenSchema = z.object({
 export const PersonalAccessTokenListSchema = z.array(PersonalAccessTokenSchema);
 
 export const CreatePersonalAccessTokenResponseSchema = PersonalAccessTokenSchema.extend({
-  token: z.string(),
+  token: NonEmptyStringSchema,
 }).loose();
 
 export const EMPTY_USER: User = {

@@ -5,14 +5,14 @@ import type {
   PromptEvaluationDatasetFromTracesResponse,
 } from "../types";
 import { PromptEvaluationAssetSchema } from "./schemas-prompt-evaluation-assets";
-import { PromptEvaluationTaskTraceEventSchema } from "./schemas-internal";
+import { NonEmptyStringSchema, PromptEvaluationTaskTraceEventSchema } from "./schemas-internal";
 
 // Runtime response contracts for prompt evaluation cases.
 export const PromptEvaluationCaseAssertionSchema = z.object({
-  id: z.string(),
-  workspace_id: z.string(),
-  asset_id: z.string(),
-  case_id: z.string(),
+  id: NonEmptyStringSchema,
+  workspace_id: NonEmptyStringSchema,
+  asset_id: NonEmptyStringSchema,
+  case_id: NonEmptyStringSchema,
   assertion_index: z.number().default(0),
   assertion_type: z.literal("包含文本").default("包含文本"),
   expected_text: z.string().default(""),
@@ -22,9 +22,9 @@ export const PromptEvaluationCaseAssertionSchema = z.object({
 }).loose();
 
 export const PromptEvaluationCaseSchema = z.object({
-  id: z.string(),
-  workspace_id: z.string(),
-  asset_id: z.string(),
+  id: NonEmptyStringSchema,
+  workspace_id: NonEmptyStringSchema,
+  asset_id: NonEmptyStringSchema,
   prompt_id: z.string().nullable().optional().transform((v) => v ?? null),
   case_index: z.number().default(0),
   case_name: z.string().default(""),

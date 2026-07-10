@@ -10,7 +10,7 @@ import type {
   Reaction,
   TimelineEntry,
 } from "../types";
-import { EmbeddedAttachmentSchema } from "./schemas-internal";
+import { EmbeddedAttachmentSchema, NonEmptyStringSchema } from "./schemas-internal";
 
 // Runtime response contracts for issues.
 // ---------------------------------------------------------------------------
@@ -42,8 +42,8 @@ import { EmbeddedAttachmentSchema } from "./schemas-internal";
 // ---------------------------------------------------------------------------
 
 export const ReactionSchema = z.object({
-  id: z.string(),
-  comment_id: z.string(),
+  id: NonEmptyStringSchema,
+  comment_id: NonEmptyStringSchema,
   actor_type: z.string(),
   actor_id: z.string(),
   emoji: z.string(),
@@ -51,8 +51,8 @@ export const ReactionSchema = z.object({
 }).loose();
 
 export const IssueReactionSchema = z.object({
-  id: z.string(),
-  issue_id: z.string(),
+  id: NonEmptyStringSchema,
+  issue_id: NonEmptyStringSchema,
   actor_type: z.string(),
   actor_id: z.string(),
   emoji: z.string(),
@@ -72,9 +72,9 @@ export const IssueReactionSchema = z.object({
 // `attachmentDownloadPath` shape when `markdown_url` is empty), so the
 // empty-string default does not silently break any persistence path.
 export const AttachmentResponseSchema = z.object({
-  id: z.string(),
-  url: z.string(),
-  download_url: z.string(),
+  id: NonEmptyStringSchema,
+  url: NonEmptyStringSchema,
+  download_url: NonEmptyStringSchema,
   markdown_url: z.string().optional().default(""),
   filename: z.string(),
   chat_session_id: z.string().nullable().optional(),
@@ -133,8 +133,8 @@ export const EMPTY_TIMELINE_ENTRIES: TimelineEntry[] = [];
 
 
 export const CommentSchema = z.object({
-  id: z.string(),
-  issue_id: z.string(),
+  id: NonEmptyStringSchema,
+  issue_id: NonEmptyStringSchema,
   author_type: z.string(),
   author_id: z.string(),
   content: z.string(),
@@ -202,8 +202,8 @@ export const CommentTriggerPreviewSchema = z.object({
 const IssueMetadataSchema = z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).default({});
 
 export const IssueSchema = z.object({
-  id: z.string(),
-  workspace_id: z.string(),
+  id: NonEmptyStringSchema,
+  workspace_id: NonEmptyStringSchema,
   number: z.number(),
   identifier: z.string(),
   title: z.string(),

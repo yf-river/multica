@@ -93,7 +93,7 @@ export function EnvTab({
     setRevealing(true);
     try {
       const resp = await api.getAgentEnv(agent.id);
-      const env = resp.custom_env ?? {};
+      const env = resp.custom_env;
       setOriginalMap(env);
       setRevealed(envMapToEntries(env));
     } catch (err) {
@@ -152,7 +152,7 @@ export function EnvTab({
       const resp = await api.updateAgentEnv(agent.id, {
         custom_env: currentEnvMap,
       });
-      const env = resp.custom_env ?? {};
+      const env = resp.custom_env;
       setOriginalMap(env);
       setRevealed(envMapToEntries(env));
       toast.success(t(($) => $.tab_body.env.saved_toast));

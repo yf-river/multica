@@ -11,19 +11,19 @@ import type {
   Squad,
   SquadSOPRun,
 } from "../types";
-import { EmbeddedAttachmentSchema } from "./schemas-internal";
+import { EmbeddedAttachmentSchema, NonEmptyStringSchema } from "./schemas-internal";
 
 // Runtime response contracts for agents.
 const AgentSkillSummarySchema = z.object({
-  id: z.string(),
+  id: NonEmptyStringSchema,
   name: z.string().default(""),
   description: z.string().default(""),
 }).loose();
 
-export const AgentSchema = z.object({
-  id: z.string(),
-  workspace_id: z.string(),
-  runtime_id: z.string(),
+const AgentWireSchema = z.object({
+  id: NonEmptyStringSchema,
+  workspace_id: NonEmptyStringSchema,
+  runtime_id: NonEmptyStringSchema,
   name: z.string(),
   description: z.string().default(""),
   instructions: z.string().default(""),
@@ -48,15 +48,23 @@ export const AgentSchema = z.object({
   archived_by: z.string().nullable().optional().transform((value) => value ?? null),
 }).loose();
 
+export const AgentSchema = AgentWireSchema.transform((wire) => {
+  const safe: Record<string, unknown> = { ...wire };
+  delete safe.custom_env;
+  delete safe.custom_env_redacted;
+  delete safe.custom_env_redacted_reason;
+  return safe;
+});
+
 export const AgentListSchema = z.array(AgentSchema);
 
 export const AgentEnvResponseSchema = z.object({
-  agent_id: z.string(),
-  custom_env: z.record(z.string(), z.string()).default({}),
-}).loose();
+  agent_id: NonEmptyStringSchema,
+  custom_env: z.record(z.string(), z.string()),
+});
 
 export const AgentTaskCancellationCountSchema = z.object({
-  cancelled: z.number().default(0),
+  cancelled: z.number(),
 }).loose();
 
 export const EMPTY_AGENT: Agent = {
@@ -78,7 +86,7 @@ export const EMPTY_AGENT_ENV_RESPONSE: AgentEnvResponse = { agent_id: "", custom
 // ---------------------------------------------------------------------------
 
 const AgentTaskResponseSchema = z.object({
-  id: z.string(),
+  id: NonEmptyStringSchema,
   agent_id: z.string().default(""),
   runtime_id: z.string().default(""),
   issue_id: z.string().default(""),
@@ -198,7 +206,7 @@ export const EMPTY_AGENT_TEMPLATE_DETAIL: AgentTemplate = {
 // navigate to the new agent's detail page). Downstream code already
 // optional-chains the rest.
 const MinimalAgentSchema = z.object({
-  id: z.string(),
+  id: NonEmptyStringSchema,
 }).loose();
 
 export const CreateAgentFromTemplateResponseSchema = z.object({
@@ -207,11 +215,8 @@ export const CreateAgentFromTemplateResponseSchema = z.object({
   reused_skill_ids: z.array(z.string()).default([]),
 }).loose();
 
-// Fallback when the success response fails to parse. The agent server-side
-// has likely been created already, so we can't pretend nothing happened —
-// the caller (`create-agent-dialog.tsx`) is responsible for noticing
-// `agent.id === ""` and skipping navigation while keeping the list
-// invalidation, so the user finds their new agent in the list.
+// Type witness used by strict mutation parsing. It is never returned for an
+// invalid response.
 export const EMPTY_CREATE_AGENT_FROM_TEMPLATE_RESPONSE: CreateAgentFromTemplateResponse = {
   agent: { id: "" } as Agent,
   imported_skill_ids: [],

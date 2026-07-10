@@ -10,6 +10,7 @@ import type {
   PromptLibraryTrial,
   PromptLibraryVersion,
 } from "../types";
+import { NonEmptyStringSchema } from "./schemas-internal";
 // Runtime response contracts for prompt library.
 const PromptLibraryVariableSchema = z.object({
   name: z.string(),
@@ -20,8 +21,8 @@ const PromptLibraryVariableSchema = z.object({
 }).loose();
 
 export const PromptLibraryItemSchema = z.object({
-  id: z.string(),
-  workspace_id: z.string(),
+  id: NonEmptyStringSchema,
+  workspace_id: NonEmptyStringSchema,
   project_id: z.string().nullable().optional().transform((v) => v ?? null),
   name: z.string(),
   description: z.string().default(""),
@@ -42,9 +43,9 @@ export const PromptLibraryItemListResponseSchema = z.object({
 }).loose();
 
 export const PromptLibraryVersionSchema = z.object({
-  id: z.string(),
-  prompt_id: z.string(),
-  workspace_id: z.string(),
+  id: NonEmptyStringSchema,
+  prompt_id: NonEmptyStringSchema,
+  workspace_id: NonEmptyStringSchema,
   project_id: z.string().nullable().optional().transform((v) => v ?? null),
   version: z.number().default(1),
   name: z.string(),
@@ -65,12 +66,17 @@ export const PromptLibraryVersionListResponseSchema = z.object({
   total: z.number().default(0),
 }).loose();
 
+export const CreatePromptLibraryVersionResponseSchema = z.object({
+  item: PromptLibraryItemSchema,
+  version: PromptLibraryVersionSchema,
+}).loose();
+
 export const PromptLibraryTrialSchema = z.object({
-  id: z.string(),
-  workspace_id: z.string(),
-  prompt_id: z.string(),
-  version_id: z.string(),
-  agent_id: z.string(),
+  id: NonEmptyStringSchema,
+  workspace_id: NonEmptyStringSchema,
+  prompt_id: NonEmptyStringSchema,
+  version_id: NonEmptyStringSchema,
+  agent_id: NonEmptyStringSchema,
   chat_session_id: z.string().nullable().optional().transform((v) => v ?? null),
   task_id: z.string().nullable().optional().transform((v) => v ?? null),
   input: z.string().default(""),

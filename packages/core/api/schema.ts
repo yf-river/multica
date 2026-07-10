@@ -16,6 +16,19 @@ export interface ParseOptions {
   endpoint: string;
 }
 
+export class ApiResponseValidationError extends Error {
+  readonly code = "api_response_contract_invalid";
+  readonly endpoint: string;
+  readonly mayHaveCommitted: boolean;
+
+  constructor(endpoint: string, mayHaveCommitted: boolean) {
+    super("服务器返回格式异常，请刷新后确认操作结果");
+    this.name = "ApiResponseValidationError";
+    this.endpoint = endpoint;
+    this.mayHaveCommitted = mayHaveCommitted;
+  }
+}
+
 type ReceivedShape =
   | { kind: "null" }
   | { kind: "array"; length: number }
@@ -48,6 +61,21 @@ function describeReceivedShape(data: unknown): ReceivedShape {
   }
 }
 
+function logValidationFailure(
+  data: unknown,
+  issues: ReadonlyArray<{ code: string; path: PropertyKey[] }>,
+  opts: ParseOptions,
+): void {
+  schemaLogger.warn(
+    `API response failed schema validation: ${opts.endpoint}`,
+    {
+      endpoint: opts.endpoint,
+      issues: issues.map((issue) => ({ code: issue.code, path: issue.path })),
+      received: describeReceivedShape(data),
+    },
+  );
+}
+
 /**
  * Validate a JSON value parsed from an API response against a zod schema,
  * returning the parsed value on success or `fallback` on failure.
@@ -75,16 +103,24 @@ export function parseWithFallback<T>(
 ): T {
   const result = schema.safeParse(data);
   if (result.success) return result.data as T;
-  schemaLogger.warn(
-    `API response failed schema validation: ${opts.endpoint}`,
-    {
-      endpoint: opts.endpoint,
-      issues: result.error.issues.map((issue) => ({
-        code: issue.code,
-        path: issue.path,
-      })),
-      received: describeReceivedShape(data),
-    },
-  );
+  logValidationFailure(data, result.error.issues, opts);
   return fallback;
+}
+
+/**
+ * Validate a successful mutation response without manufacturing success.
+ * `typeWitness` anchors the caller's current TypeScript contract but is never
+ * returned. Schemas remain forward-compatible; only genuinely malformed
+ * required fields reach this error path.
+ */
+export function parseOrThrow<T>(
+  data: unknown,
+  schema: ZodType,
+  _typeWitness: T,
+  opts: ParseOptions & { mayHaveCommitted?: boolean },
+): T {
+  const result = schema.safeParse(data);
+  if (result.success) return result.data as T;
+  logValidationFailure(data, result.error.issues, opts);
+  throw new ApiResponseValidationError(opts.endpoint, opts.mayHaveCommitted ?? true);
 }

@@ -239,12 +239,15 @@ The desktop app installed on a user's machine is older than any backend it talks
 
 When writing code that consumes an API response, follow these rules:
 
-- **Parse, don't cast.** Untyped JSON crossing the network is not `T`. Use `parseWithFallback` in `packages/core/api/schema.ts` with a `zod` schema and an explicit fallback. On validation failure it logs a warning and returns the fallback; it never throws into the UI.
+- **Parse, don't cast.** Untyped JSON crossing the network is not `T`. Every consumed response must pass through a `zod` schema in `packages/core/api/schema.ts`.
+- **Fallback only when degradation is safe.** Read-only display queries and optional enhancements use `parseWithFallback` when an empty or partial result cannot trigger a write, erase data, bypass a permission decision, or manufacture success.
+- **Fail closed for mutations and security-sensitive reads.** Use `parseOrThrow` when a malformed response would otherwise look like a successful write or expose an unsafe default (for example, a missing secret map becoming `{}`). A malformed successful mutation response has an unknown outcome: preserve the user's draft, invalidate and refetch authoritative state, and do not offer an immediate blind retry that can duplicate work.
+- **Malformed JSON follows the same rule.** A 2xx response with an empty, HTML, or invalid JSON body is an API contract error, not an ordinary network failure. Preserve whether the request may already have committed.
 - **No bare `as` casts on response bodies.** Every endpoint method whose response is consumed by UI logic must run through a schema before returning.
-- **Optional-chain and default everywhere downstream.** Treat every field as possibly missing. Use explicit boolean checks (`=== true`) over truthy/falsy negation, which silently treats `undefined` and `null` as `false`.
+- **Establish invariants at the boundary.** Optional and drifting fields are normalized by the schema. Downstream code should use the parsed type directly instead of repeating fallback checks at every layer.
 - **Don't pin a UI affordance to a single backend field.** If a button or indicator depends on exactly one boolean from the server, a backend bug deletes it. Combine signals (cursor presence, page length, etc.) so the affordance stays available in the worst case.
 - **Enum drift downgrades, not crashes.** A new server-side enum value should render a generic fallback. `switch` statements on server-driven strings must have a `default` branch.
-- **When you add or change an endpoint:** add the schema in the same PR, and write at least one test that feeds a malformed response through it (missing field, wrong type, `null` array). The test fails closed if a future change breaks the contract.
+- **When you add or change an endpoint:** add the schema in the same PR, and write at least one test that feeds a malformed response through it (missing field, wrong type, `null` array). Assert the correct policy explicitly: safe fallback for degradable reads, controlled rejection and reconciliation for writes or sensitive reads.
 
 This is not premature defense — it is the *only* defense for an installed-app architecture. CSR-only browser apps can ship a fix in minutes; an Electron build sitting on a developer's laptop cannot.
 

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { ApiClient } from "./client";
 import { noopLogger } from "../logger";
-import { parseWithFallback, setSchemaLogger } from "./schema";
+import { ApiResponseValidationError, parseOrThrow, parseWithFallback, setSchemaLogger } from "./schema";
 
 // Helper: stub fetch with a single JSON response. Status defaults to 200.
 function stubFetchJson(body: unknown, status = 200) {
@@ -191,11 +191,11 @@ describe("ApiClient schema fallback", () => {
   });
 
   describe("previewCommentTriggers", () => {
-    it("returns an empty agent list when the response is malformed", async () => {
+    it("returns an empty enhancement when the response is malformed", async () => {
       stubFetchJson({ agents: "not-an-array" });
       const client = new ApiClient("https://api.example.test");
-      const preview = await client.previewCommentTriggers("issue-1", "hello");
-      expect(preview).toEqual({ agents: [] });
+      await expect(client.previewCommentTriggers("issue-1", "hello"))
+        .resolves.toEqual({ agents: [] });
     });
   });
 
@@ -351,20 +351,17 @@ describe("ApiClient schema fallback", () => {
   });
 
   describe("createAgentFromTemplate", () => {
-    it("falls back to an empty agent when the response is malformed", async () => {
-      // The agent was created server-side even though the client can't
-      // parse the response — UI code reads `agent.id === ""` and skips
-      // the navigation step rather than landing on `/agents/`.
+    it("rejects a malformed response without manufacturing an empty agent", async () => {
       stubFetchJson({ unexpected: "shape" });
       const client = new ApiClient("https://api.example.test");
-      const resp = await client.createAgentFromTemplate({
+      await expect(client.createAgentFromTemplate({
         template_slug: "x",
         name: "X",
         runtime_id: "rt-1",
+      })).rejects.toMatchObject({
+        code: "api_response_contract_invalid",
+        mayHaveCommitted: true,
       });
-      expect(resp.agent.id).toBe("");
-      expect(resp.imported_skill_ids).toEqual([]);
-      expect(resp.reused_skill_ids).toEqual([]);
     });
 
     it("defaults imported_skill_ids / reused_skill_ids to [] when missing", async () => {
@@ -442,5 +439,55 @@ describe("parseWithFallback", () => {
     const serialized = JSON.stringify(context);
     expect(serialized).not.toContain(secret);
     expect(serialized).not.toContain("private prompt evidence");
+  });
+});
+
+describe("parseOrThrow", () => {
+  it("throws a sanitized contract error instead of returning a false success", () => {
+    const warn = vi.fn();
+    setSchemaLogger({ debug: vi.fn(), info: vi.fn(), warn, error: vi.fn() });
+    const secret = "sk-mutation-response-secret";
+
+    expect(() => parseOrThrow(
+      { id: 42, token: secret },
+      z.object({ id: z.string() }),
+      { id: "" },
+      { endpoint: "POST /api/items" },
+    )).toThrow(ApiResponseValidationError);
+
+    try {
+      parseOrThrow(
+        { id: 42 },
+        z.object({ id: z.string() }),
+        { id: "" },
+        { endpoint: "POST /api/items" },
+      );
+    } catch (error) {
+      expect(error).toMatchObject({
+        code: "api_response_contract_invalid",
+        endpoint: "POST /api/items",
+        mayHaveCommitted: true,
+      });
+    }
+
+    expect(JSON.stringify(warn.mock.calls[0]?.[1])).not.toContain(secret);
+  });
+
+  it("returns the parsed value on success", () => {
+    expect(parseOrThrow(
+      { id: "item-1", ignored: true },
+      z.object({ id: z.string() }),
+      { id: "" },
+      { endpoint: "POST /api/items" },
+    )).toEqual({ id: "item-1" });
+  });
+
+  it("rejects empty required values when the schema establishes that invariant", () => {
+    expect(() => parseOrThrow(
+      { token: "" },
+      z.object({ token: z.string().min(1) }),
+      { token: "" },
+      { endpoint: "POST /api/token" },
+    )).toThrow(ApiResponseValidationError);
   });
 });

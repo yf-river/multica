@@ -2,6 +2,7 @@ import { z } from "zod";
 import { PromptEvaluationAssetSchema } from "./schemas-prompt-evaluation-assets";
 import { PromptEvaluationRunSchema } from "./schemas-prompt-evaluation-runs";
 import { PromptLibraryItemSchema } from "./schemas-prompt-library";
+import { NonEmptyStringSchema } from "./schemas-internal";
 
 // Runtime response contracts for prompt evaluation optimization.
 export const PromptEvaluationSkillPatchSchema = z.object({
@@ -28,11 +29,11 @@ export const PromptEvaluationSkillPatchSchema = z.object({
 }).loose();
 
 export const PromptEvaluationOptimizationCandidateSchema = z.object({
-  id: z.string(),
-  workspace_id: z.string(),
-  asset_id: z.string(),
-  run_id: z.string(),
-  prompt_id: z.string(),
+  id: NonEmptyStringSchema,
+  workspace_id: NonEmptyStringSchema,
+  asset_id: NonEmptyStringSchema,
+  run_id: NonEmptyStringSchema,
+  prompt_id: NonEmptyStringSchema,
   candidate_name: z.string(),
   candidate_content: z.string(),
   rationale: z.string().default(""),

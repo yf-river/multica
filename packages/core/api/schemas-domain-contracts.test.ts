@@ -44,6 +44,7 @@ import { RuntimeUsageListSchema } from "./schemas-usage";
 import { EMPTY_WORKSPACE, WorkspaceSchema } from "./schemas-workspaces";
 import { EMPTY_INBOX_ITEM, InboxItemSchema } from "./schemas-inbox";
 import { EMPTY_CHAT_MESSAGES_PAGE, ChatMessagesPageSchema } from "./schemas-chat";
+import { AgentEnvResponseSchema, EMPTY_AGENT, AgentSchema } from "./schemas-agents";
 
 describe("domain response schema fallbacks", () => {
   it("keeps app configuration usable when the response is not an object", () => {
@@ -177,5 +178,29 @@ describe("domain response schema fallbacks", () => {
       EMPTY_CHAT_MESSAGES_PAGE,
       { endpoint: "GET /api/chat/sessions/:id/messages/page" },
     )).toBe(EMPTY_CHAT_MESSAGES_PAGE);
+  });
+
+  it("strips forbidden secret fields from generic agent responses", () => {
+    const parsed = AgentSchema.parse({
+      ...EMPTY_AGENT,
+      id: "agent-1",
+      workspace_id: "workspace-1",
+      runtime_id: "runtime-1",
+      custom_env: { TOKEN: "secret" },
+      custom_env_redacted: { TOKEN: "****" },
+      future_capability: "kept",
+    });
+    expect(parsed).not.toHaveProperty("custom_env");
+    expect(parsed).not.toHaveProperty("custom_env_redacted");
+    expect(parsed).toHaveProperty("future_capability", "kept");
+  });
+
+  it("requires the complete dedicated agent environment payload", () => {
+    expect(AgentEnvResponseSchema.safeParse({ agent_id: "agent-1" }).success).toBe(false);
+    expect(AgentEnvResponseSchema.parse({
+      agent_id: "agent-1",
+      custom_env: {},
+      ignored: "not exposed",
+    })).toEqual({ agent_id: "agent-1", custom_env: {} });
   });
 });
