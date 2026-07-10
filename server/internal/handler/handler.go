@@ -283,13 +283,23 @@ func parseUUIDSliceOrBadRequest(w http.ResponseWriter, ids []string, fieldName s
 
 // publish sends a domain event through the event bus.
 func (h *Handler) publish(eventType, workspaceID, actorType, actorID string, payload any) {
-	h.Bus.Publish(events.Event{
+	h.publishEvent(domainEvent(eventType, workspaceID, actorType, actorID, payload))
+}
+
+func domainEvent(eventType, workspaceID, actorType, actorID string, payload any) events.Event {
+	return events.Event{
 		Type:        eventType,
 		WorkspaceID: workspaceID,
 		ActorType:   actorType,
 		ActorID:     actorID,
 		Payload:     payload,
-	})
+	}
+}
+
+func (h *Handler) publishEvent(event events.Event) {
+	if h.Bus != nil {
+		h.Bus.Publish(event)
+	}
 }
 
 // publishTask is publish() plus a TaskID hint so the realtime layer can route

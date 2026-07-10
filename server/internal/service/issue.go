@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
+	"github.com/multica-ai/multica/server/internal/eventoutbox"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/issueposition"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
@@ -76,13 +77,11 @@ type IssueCreateParams struct {
 // callers leave it zero-valued.
 type IssueCreateOpts struct {
 	// BroadcastPayload, if non-nil, is invoked after the issue row is
-	// created and attachments are linked. Its return value is sent as
-	// the EventIssueCreated payload via the event bus. The HTTP handler
-	// uses this hook to inject its IssueResponse without forcing this
-	// package to depend on handler-layer types. If nil, the service
-	// emits a minimal `{"issue_id": <uuid>}` payload — enough for cache
-	// invalidation, but front-ends that expect the full response shape
-	// must provide BroadcastPayload.
+	// created and attachments are linked, but before the transaction commits.
+	// It must be a pure conversion with no external I/O. Its return value
+	// becomes both the durable EventIssueCreated payload and the immediate
+	// event-bus payload. The HTTP handler uses this hook to include
+	// transport-only response fields without depending on handler types.
 	BroadcastPayload func(issue db.Issue, attachments []db.Attachment) map[string]any
 
 	// ActorID overrides the actor ID used for broadcast + analytics
@@ -296,16 +295,24 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 		return IssueCreateResult{}, err
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return IssueCreateResult{}, fmt.Errorf("commit: %w", err)
-	}
-
 	actorID := opts.ActorID
 	if actorID == "" {
 		actorID = util.UUIDToString(issue.CreatorID)
 	}
+	createdEvent := s.buildIssueCreatedEvent(issue, attachments, p.CreatorType, actorID, opts)
+	createdEvent, err = eventoutbox.Enqueue(ctx, qtx, createdEvent)
+	if err != nil {
+		return IssueCreateResult{}, fmt.Errorf("enqueue issue-created event: %w", err)
+	}
 
-	s.publishIssueCreated(issue, attachments, p.CreatorType, actorID, opts)
+	if err := tx.Commit(ctx); err != nil {
+		return IssueCreateResult{}, fmt.Errorf("commit: %w", err)
+	}
+
+	if s.Bus != nil {
+		s.Bus.Publish(createdEvent)
+	}
+
 	s.captureCreatedAnalytics(issue, p.CreatorType, actorID, opts)
 	if requestedStatus == "backlog" && hasProject && agentLeadReviewRequested {
 		s.enqueueProjectOwnerApprovalTask(ctx, issue, project)
@@ -621,26 +628,42 @@ func linkAttachmentsForNewIssue(ctx context.Context, q *db.Queries, issue db.Iss
 	return attachments, nil
 }
 
-func (s *IssueService) publishIssueCreated(issue db.Issue, attachments []db.Attachment, creatorType, actorID string, opts IssueCreateOpts) {
-	if s.Bus == nil {
-		return
-	}
+func (s *IssueService) buildIssueCreatedEvent(issue db.Issue, attachments []db.Attachment, creatorType, actorID string, opts IssueCreateOpts) events.Event {
 	var payload map[string]any
 	if opts.BroadcastPayload != nil {
 		payload = opts.BroadcastPayload(issue, attachments)
 	} else {
-		// Minimal fallback so cache invalidations still fire even if the
-		// caller forgot to supply a builder. Front-ends that expect the
-		// full IssueResponse must pass BroadcastPayload.
-		payload = map[string]any{"issue_id": util.UUIDToString(issue.ID)}
+		payload = map[string]any{"issue": issueCreatedProjection(issue)}
 	}
-	s.Bus.Publish(events.Event{
+	return events.Event{
 		Type:        protocol.EventIssueCreated,
 		WorkspaceID: util.UUIDToString(issue.WorkspaceID),
 		ActorType:   creatorType,
 		ActorID:     actorID,
 		Payload:     payload,
-	})
+	}
+}
+
+// issueCreatedProjection is the transport-neutral subset required by durable
+// subscribers, notifications, and activity projections. Non-HTTP producers
+// must emit the same semantic event shape as HTTP producers; a bare issue ID
+// cannot be replayed into those consumers after a process restart.
+func issueCreatedProjection(issue db.Issue) map[string]any {
+	return map[string]any{
+		"id":              util.UUIDToString(issue.ID),
+		"workspace_id":    util.UUIDToString(issue.WorkspaceID),
+		"title":           issue.Title,
+		"description":     util.TextToPtr(issue.Description),
+		"status":          issue.Status,
+		"priority":        issue.Priority,
+		"assignee_type":   util.TextToPtr(issue.AssigneeType),
+		"assignee_id":     util.UUIDToPtr(issue.AssigneeID),
+		"creator_type":    issue.CreatorType,
+		"creator_id":      util.UUIDToString(issue.CreatorID),
+		"start_date":      util.DateToPtr(issue.StartDate),
+		"due_date":        util.DateToPtr(issue.DueDate),
+		"parent_issue_id": util.UUIDToPtr(issue.ParentIssueID),
+	}
 }
 
 func (s *IssueService) captureCreatedAnalytics(issue db.Issue, creatorType, actorID string, opts IssueCreateOpts) {

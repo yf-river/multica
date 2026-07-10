@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/eventoutbox"
 	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/service"
@@ -1140,23 +1141,9 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if err := tx.Commit(r.Context()); err != nil {
-		slog.Warn("commit update issue transaction failed", append(logger.RequestAttrs(r), "error", err, "issue_id", id, "workspace_id", workspaceID)...)
-		writeError(w, http.StatusInternalServerError, "failed to update issue")
-		return
-	}
-
-	if len(metadataChanges) > 0 {
-		h.publish(protocol.EventIssueMetadataChanged, workspaceID, actorType, actorID, map[string]any{
-			"issue_id": uuidToString(issue.ID),
-			"metadata": parseIssueMetadata(issue.Metadata),
-		})
-	}
 
 	prefix := h.getIssuePrefix(r.Context(), issue.WorkspaceID)
 	resp := issueToResponse(issue, prefix)
-	slog.Info("issue updated", append(logger.RequestAttrs(r), "issue_id", id, "workspace_id", workspaceID)...)
-
 	assigneeChanged := (req.AssigneeType != nil || req.AssigneeID != nil) &&
 		(prevIssue.AssigneeType.String != issue.AssigneeType.String || uuidToString(prevIssue.AssigneeID) != uuidToString(issue.AssigneeID))
 	statusChanged := req.Status != nil && prevIssue.Status != issue.Status
@@ -1171,7 +1158,7 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	dueDateChanged := prevDueDate != resp.DueDate && (prevDueDate == nil) != (resp.DueDate == nil) ||
 		(prevDueDate != nil && resp.DueDate != nil && *prevDueDate != *resp.DueDate)
 
-	h.publish(protocol.EventIssueUpdated, workspaceID, actorType, actorID, map[string]any{
+	updatedEvent := domainEvent(protocol.EventIssueUpdated, workspaceID, actorType, actorID, map[string]any{
 		"issue":               resp,
 		"assignee_changed":    assigneeChanged,
 		"status_changed":      statusChanged,
@@ -1191,6 +1178,26 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		"creator_type":        prevIssue.CreatorType,
 		"creator_id":          uuidToString(prevIssue.CreatorID),
 	})
+	updatedEvent, err = eventoutbox.Enqueue(r.Context(), qtx, updatedEvent)
+	if err != nil {
+		slog.Warn("enqueue issue update event failed", append(logger.RequestAttrs(r), "error", err, "issue_id", id, "workspace_id", workspaceID)...)
+		writeError(w, http.StatusInternalServerError, "failed to update issue")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		slog.Warn("commit update issue transaction failed", append(logger.RequestAttrs(r), "error", err, "issue_id", id, "workspace_id", workspaceID)...)
+		writeError(w, http.StatusInternalServerError, "failed to update issue")
+		return
+	}
+
+	if len(metadataChanges) > 0 {
+		h.publish(protocol.EventIssueMetadataChanged, workspaceID, actorType, actorID, map[string]any{
+			"issue_id": uuidToString(issue.ID),
+			"metadata": parseIssueMetadata(issue.Metadata),
+		})
+	}
+	h.publishEvent(updatedEvent)
+	slog.Info("issue updated", append(logger.RequestAttrs(r), "issue_id", id, "workspace_id", workspaceID)...)
 
 	h.reconcileIssueUpdateSideEffects(r.Context(), r, prevIssue, issue, assigneeChanged, statusChanged, actorType, actorID)
 	if issue.Status == "backlog" && (statusChanged || projectChanged || assigneeChanged) {

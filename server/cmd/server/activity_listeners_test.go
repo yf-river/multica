@@ -32,6 +32,7 @@ func cleanupActivities(t *testing.T, issueID string) {
 }
 
 type activityIssueTestFixture struct {
+	t       *testing.T
 	queries *db.Queries
 	bus     *events.Bus
 	issueID string
@@ -47,13 +48,36 @@ func setupActivityIssueTest(t *testing.T) activityIssueTestFixture {
 		cleanupActivities(t, issueID)
 		cleanupTestIssue(t, issueID)
 	})
-	return activityIssueTestFixture{queries: queries, bus: bus, issueID: issueID}
+	return activityIssueTestFixture{t: t, queries: queries, bus: bus, issueID: issueID}
+}
+
+func (fixture activityIssueTestFixture) publish(event events.Event) {
+	fixture.t.Helper()
+	var (
+		emitted []events.Event
+		err     error
+	)
+	switch event.Type {
+	case protocol.EventIssueCreated:
+		emitted, err = consumeIssueCreatedActivity(context.Background(), fixture.queries, event)
+	case protocol.EventIssueUpdated:
+		emitted, err = consumeIssueUpdatedActivities(context.Background(), fixture.queries, event)
+	default:
+		fixture.bus.Publish(event)
+		return
+	}
+	if err != nil {
+		fixture.t.Fatalf("consume %s activity: %v", event.Type, err)
+	}
+	for _, emittedEvent := range emitted {
+		fixture.bus.Publish(emittedEvent)
+	}
 }
 
 func TestActivityIssueCreated(t *testing.T) {
 	fixture := setupActivityIssueTest(t)
 
-	fixture.bus.Publish(events.Event{
+	fixture.publish(events.Event{
 		Type:        protocol.EventIssueCreated,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
@@ -86,7 +110,7 @@ func TestActivityIssueCreated(t *testing.T) {
 func TestActivityIssueUpdated_StatusChanged(t *testing.T) {
 	fixture := setupActivityIssueTest(t)
 
-	fixture.bus.Publish(events.Event{
+	fixture.publish(events.Event{
 		Type:        protocol.EventIssueUpdated,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
@@ -134,7 +158,7 @@ func TestActivityIssueUpdated_AssigneeChanged(t *testing.T) {
 	t.Cleanup(func() { cleanupTestUser(t, assigneeAccount) })
 
 	assigneeType := "member"
-	fixture.bus.Publish(events.Event{
+	fixture.publish(events.Event{
 		Type:        protocol.EventIssueUpdated,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
@@ -181,7 +205,7 @@ func TestActivityIssueUpdated_NoChangeFlags(t *testing.T) {
 	fixture := setupActivityIssueTest(t)
 
 	// Publish issue:updated with no change flags set
-	fixture.bus.Publish(events.Event{
+	fixture.publish(events.Event{
 		Type:        protocol.EventIssueUpdated,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
@@ -211,7 +235,7 @@ func TestActivityIssueUpdated_NoChangeFlags(t *testing.T) {
 func TestActivityIssueUpdated_TitleChanged(t *testing.T) {
 	fixture := setupActivityIssueTest(t)
 
-	fixture.bus.Publish(events.Event{
+	fixture.publish(events.Event{
 		Type:        protocol.EventIssueUpdated,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
@@ -251,12 +275,42 @@ func TestActivityIssueUpdated_TitleChanged(t *testing.T) {
 	}
 }
 
+func TestActivityIssueCreatedSkipsIssueDeletedBeforeProjection(t *testing.T) {
+	fixture := setupActivityIssueTest(t)
+	event := events.Event{
+		Type:        protocol.EventIssueCreated,
+		WorkspaceID: testWorkspaceID,
+		ActorType:   "member",
+		ActorID:     testUserID,
+		Payload: map[string]any{
+			"issue": handler.IssueResponse{
+				ID:          fixture.issueID,
+				WorkspaceID: testWorkspaceID,
+				Title:       "deleted before projection",
+				Status:      "todo",
+				Priority:    "medium",
+				CreatorType: "member",
+				CreatorID:   testUserID,
+			},
+		},
+	}
+	cleanupTestIssue(t, fixture.issueID)
+
+	emitted, err := consumeIssueCreatedActivity(context.Background(), fixture.queries, event)
+	if err != nil {
+		t.Fatalf("deleted issue should not poison activity projection: %v", err)
+	}
+	if len(emitted) != 0 {
+		t.Fatalf("deleted issue emitted %d activity events, want 0", len(emitted))
+	}
+}
+
 func TestActivityTaskCompleted(t *testing.T) {
 	fixture := setupActivityIssueTest(t)
 
 	agentID := testUserID // reuse as a stand-in for agent ID
 
-	fixture.bus.Publish(events.Event{
+	fixture.publish(events.Event{
 		Type:        protocol.EventTaskCompleted,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "system",
@@ -286,7 +340,7 @@ func TestActivityTaskFailed(t *testing.T) {
 
 	agentID := testUserID
 
-	fixture.bus.Publish(events.Event{
+	fixture.publish(events.Event{
 		Type:        protocol.EventTaskFailed,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "system",

@@ -11,10 +11,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/daemonws"
+	"github.com/multica-ai/multica/server/internal/eventoutbox"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/handler"
 	"github.com/multica-ai/multica/server/internal/logger"
@@ -246,6 +248,21 @@ func main() {
 
 	queries := db.New(pool)
 	hub.SetAuthorizer(newScopeAuthorizer(queries))
+	eventDispatcher, err := eventoutbox.NewDispatcher(
+		queries,
+		pool,
+		bus,
+		"api-"+uuid.NewString(),
+		eventoutbox.DispatcherConfig{},
+	)
+	if err != nil {
+		slog.Error("initialize domain event dispatcher", "error", err)
+		os.Exit(1)
+	}
+	if err := registerDurableActivityConsumers(eventDispatcher); err != nil {
+		slog.Error("register durable activity consumers", "error", err)
+		os.Exit(1)
+	}
 	// Order matters: subscriber listeners must register BEFORE notification listeners.
 	// The notification listener queries the subscriber table to determine recipients,
 	// so subscribers must be written first within the same synchronous event dispatch.
@@ -345,6 +362,7 @@ func main() {
 
 	// Start background sweeper to mark stale runtimes as offline.
 	go runRuntimeSweeper(sweepCtx, queries, liveness, taskSvc, bus)
+	go eventDispatcher.Run(sweepCtx)
 	go heartbeatScheduler.Run(sweepCtx)
 	go runAutopilotScheduler(autopilotCtx, queries, autopilotSvc)
 	go runAutopilotFailureMonitor(autopilotCtx, queries, bus, envFailureMonitorConfig())

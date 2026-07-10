@@ -2166,6 +2166,19 @@ func TestCreateIssueRollsBackWhenAttachmentCannotBeLinked(t *testing.T) {
 	if linkedIssueID != nil {
 		t.Fatalf("CreateIssue: partial attachment claim was not rolled back, issue_id=%s", *linkedIssueID)
 	}
+
+	var eventCount int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM domain_event_outbox
+		WHERE event_type = 'issue:created'
+		  AND payload #>> '{issue,title}' = $1
+	`, title).Scan(&eventCount); err != nil {
+		t.Fatalf("count rolled-back issue-created event: %v", err)
+	}
+	if eventCount != 0 {
+		t.Fatalf("CreateIssue: rollback left %d durable issue-created events", eventCount)
+	}
 }
 
 func TestCreateIssueCommitsAttachmentWithIssue(t *testing.T) {
