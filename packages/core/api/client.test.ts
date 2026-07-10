@@ -6,6 +6,34 @@ afterEach(() => {
 });
 
 describe("ApiClient", () => {
+  it("validates issue, comment, and reaction write responses", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(
+      new Response(JSON.stringify({ id: 42 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )));
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.getIssue("issue-1")).resolves.toMatchObject({
+      id: "",
+      metadata: {},
+    });
+    await expect(client.createComment("issue-1", "hello")).resolves.toMatchObject({
+      id: "",
+      reactions: [],
+      attachments: [],
+    });
+    await expect(client.addReaction("comment-1", "👍")).resolves.toMatchObject({
+      id: "",
+      comment_id: "",
+    });
+    await expect(client.addIssueReaction("issue-1", "👍")).resolves.toMatchObject({
+      id: "",
+      issue_id: "",
+    });
+  });
+
   it("validates runtime profile responses instead of trusting typed JSON", async () => {
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ runtime_profiles: [{ id: 42 }] }), {

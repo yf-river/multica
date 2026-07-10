@@ -1,9 +1,13 @@
 import { z } from "zod";
 import type {
   Attachment,
+  Comment,
   GroupedIssuesResponse,
+  Issue,
+  IssueReaction,
   ListIssueBucketsResponse,
   ListIssuesResponse,
+  Reaction,
   TimelineEntry,
 } from "../types";
 import { EmbeddedAttachmentSchema } from "./schemas-internal";
@@ -37,14 +41,23 @@ import { EmbeddedAttachmentSchema } from "./schemas-internal";
 // type still flows out at the call site; the schema only guards shape.
 // ---------------------------------------------------------------------------
 
-const ReactionSchema = z.object({
+export const ReactionSchema = z.object({
   id: z.string(),
   comment_id: z.string(),
   actor_type: z.string(),
   actor_id: z.string(),
   emoji: z.string(),
   created_at: z.string(),
-});
+}).loose();
+
+export const IssueReactionSchema = z.object({
+  id: z.string(),
+  issue_id: z.string(),
+  actor_type: z.string(),
+  actor_id: z.string(),
+  emoji: z.string(),
+  created_at: z.string(),
+}).loose();
 
 // Standalone attachment lookup (`GET /api/attachments/{id}`) is the source of
 // truth for click-time download URLs. The two fields the download flow opens
@@ -136,6 +149,41 @@ export const CommentSchema = z.object({
 
 export const CommentsListSchema = z.array(CommentSchema);
 
+export const EMPTY_COMMENT: Comment = {
+  id: "",
+  issue_id: "",
+  author_type: "member",
+  author_id: "",
+  content: "",
+  type: "comment",
+  parent_id: null,
+  reactions: [],
+  attachments: [],
+  created_at: "",
+  updated_at: "",
+  resolved_at: null,
+  resolved_by_type: null,
+  resolved_by_id: null,
+};
+
+export const EMPTY_REACTION: Reaction = {
+  id: "",
+  comment_id: "",
+  actor_type: "",
+  actor_id: "",
+  emoji: "",
+  created_at: "",
+};
+
+export const EMPTY_ISSUE_REACTION: IssueReaction = {
+  id: "",
+  issue_id: "",
+  actor_type: "",
+  actor_id: "",
+  emoji: "",
+  created_at: "",
+};
+
 const CommentTriggerPreviewAgentSchema = z.object({
   id: z.string(),
   name: z.string().default(""),
@@ -179,6 +227,31 @@ export const IssueSchema = z.object({
   work_started_at: z.string().nullable().optional(),
   work_completed_at: z.string().nullable().optional(),
 }).loose();
+
+export const EMPTY_ISSUE: Issue = {
+  id: "",
+  workspace_id: "",
+  number: 0,
+  identifier: "",
+  title: "",
+  description: null,
+  status: "todo",
+  priority: "none",
+  assignee_type: null,
+  assignee_id: null,
+  creator_type: "member",
+  creator_id: "",
+  parent_issue_id: null,
+  project_id: null,
+  position: 0,
+  start_date: null,
+  due_date: null,
+  metadata: {},
+  reactions: [],
+  labels: [],
+  created_at: "",
+  updated_at: "",
+};
 
 export const ListIssuesResponseSchema = z.object({
   issues: z.array(IssueSchema).default([]),

@@ -245,6 +245,10 @@ import {
   EMPTY_GROUPED_ISSUES_RESPONSE,
   EMPTY_LIST_ISSUE_BUCKETS_RESPONSE,
   EMPTY_LIST_ISSUES_RESPONSE,
+  EMPTY_ISSUE,
+  EMPTY_COMMENT,
+  EMPTY_REACTION,
+  EMPTY_ISSUE_REACTION,
   EMPTY_SQUAD,
   EMPTY_SQUAD_LIST,
   EMPTY_SQUAD_MEMBER_STATUS_LIST,
@@ -306,6 +310,10 @@ import {
   ListAutopilotsResponseSchema,
   EMPTY_LIST_AUTOPILOTS_RESPONSE,
   ListIssuesResponseSchema,
+  IssueSchema,
+  CommentSchema,
+  ReactionSchema,
+  IssueReactionSchema,
   ListWebhookDeliveriesResponseSchema,
   RuntimeHourlyActivityListSchema,
   RuntimeUsageByAgentListSchema,
@@ -696,13 +704,19 @@ export class ApiClient {
   }
 
   async getIssue(id: string): Promise<Issue> {
-    return this.fetch(`/api/issues/${id}`);
+    const raw = await this.fetch<unknown>(`/api/issues/${id}`);
+    return parseWithFallback(raw, IssueSchema, EMPTY_ISSUE, {
+      endpoint: "GET /api/issues/:id",
+    });
   }
 
   async createIssue(data: CreateIssueRequest): Promise<Issue> {
-    return this.fetch("/api/issues", {
+    const raw = await this.fetch<unknown>("/api/issues", {
       method: "POST",
       body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, IssueSchema, EMPTY_ISSUE, {
+      endpoint: "POST /api/issues",
     });
   }
 
@@ -741,9 +755,12 @@ export class ApiClient {
   }
 
   async updateIssue(id: string, data: UpdateIssueRequest): Promise<Issue> {
-    return this.fetch(`/api/issues/${id}`, {
+    const raw = await this.fetch<unknown>(`/api/issues/${id}`, {
       method: "PUT",
       body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, IssueSchema, EMPTY_ISSUE, {
+      endpoint: "PUT /api/issues/:id",
     });
   }
 
@@ -805,7 +822,7 @@ export class ApiClient {
     attachmentIds?: string[],
     suppressAgentIds?: string[],
   ): Promise<Comment> {
-    return this.fetch(`/api/issues/${issueId}/comments`, {
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/comments`, {
       method: "POST",
       body: JSON.stringify({
         content,
@@ -814,6 +831,9 @@ export class ApiClient {
         ...(attachmentIds?.length ? { attachment_ids: attachmentIds } : {}),
         ...(suppressAgentIds?.length ? { suppress_agent_ids: suppressAgentIds } : {}),
       }),
+    });
+    return parseWithFallback(raw, CommentSchema, EMPTY_COMMENT, {
+      endpoint: "POST /api/issues/:id/comments",
     });
   }
 
@@ -845,13 +865,16 @@ export class ApiClient {
   }
 
   async updateComment(commentId: string, content: string, attachmentIds?: string[], suppressAgentIds?: string[]): Promise<Comment> {
-    return this.fetch(`/api/comments/${commentId}`, {
+    const raw = await this.fetch<unknown>(`/api/comments/${commentId}`, {
       method: "PUT",
       body: JSON.stringify({
         content,
         attachment_ids: attachmentIds,
         ...(suppressAgentIds?.length ? { suppress_agent_ids: suppressAgentIds } : {}),
       }),
+    });
+    return parseWithFallback(raw, CommentSchema, EMPTY_COMMENT, {
+      endpoint: "PUT /api/comments/:id",
     });
   }
 
@@ -860,17 +883,26 @@ export class ApiClient {
   }
 
   async resolveComment(commentId: string): Promise<Comment> {
-    return this.fetch(`/api/comments/${commentId}/resolve`, { method: "POST" });
+    const raw = await this.fetch<unknown>(`/api/comments/${commentId}/resolve`, { method: "POST" });
+    return parseWithFallback(raw, CommentSchema, EMPTY_COMMENT, {
+      endpoint: "POST /api/comments/:id/resolve",
+    });
   }
 
   async unresolveComment(commentId: string): Promise<Comment> {
-    return this.fetch(`/api/comments/${commentId}/resolve`, { method: "DELETE" });
+    const raw = await this.fetch<unknown>(`/api/comments/${commentId}/resolve`, { method: "DELETE" });
+    return parseWithFallback(raw, CommentSchema, EMPTY_COMMENT, {
+      endpoint: "DELETE /api/comments/:id/resolve",
+    });
   }
 
   async addReaction(commentId: string, emoji: string): Promise<Reaction> {
-    return this.fetch(`/api/comments/${commentId}/reactions`, {
+    const raw = await this.fetch<unknown>(`/api/comments/${commentId}/reactions`, {
       method: "POST",
       body: JSON.stringify({ emoji }),
+    });
+    return parseWithFallback(raw, ReactionSchema, EMPTY_REACTION, {
+      endpoint: "POST /api/comments/:id/reactions",
     });
   }
 
@@ -882,9 +914,12 @@ export class ApiClient {
   }
 
   async addIssueReaction(issueId: string, emoji: string): Promise<IssueReaction> {
-    return this.fetch(`/api/issues/${issueId}/reactions`, {
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/reactions`, {
       method: "POST",
       body: JSON.stringify({ emoji }),
+    });
+    return parseWithFallback(raw, IssueReactionSchema, EMPTY_ISSUE_REACTION, {
+      endpoint: "POST /api/issues/:id/reactions",
     });
   }
 
