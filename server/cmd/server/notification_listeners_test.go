@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/handler"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -80,7 +82,12 @@ func createTestSubIssue(t *testing.T, workspaceID, creatorID, parentIssueID stri
 func newNotificationBus(t *testing.T, queries *db.Queries) *events.Bus {
 	t.Helper()
 	bus := events.New()
-	registerNotificationListeners(bus, queries)
+	bus.Subscribe(protocol.EventIssueReactionAdded, func(event events.Event) {
+		projectDurableEventForTest(t, queries, bus, event, consumeIssueReactionNotification)
+	})
+	bus.Subscribe(protocol.EventReactionAdded, func(event events.Event) {
+		projectDurableEventForTest(t, queries, bus, event, consumeCommentReactionNotification)
+	})
 	bus.Subscribe(protocol.EventIssueCreated, func(event events.Event) {
 		projectDurableEventForTest(t, queries, bus, event, consumeIssueCreatedAudience)
 	})
@@ -170,6 +177,114 @@ func setupNotificationIssueTest(t *testing.T) notificationIssueTestFixture {
 
 func (f notificationIssueTestFixture) inboxEventCount() int {
 	return len(*f.inboxEvents)
+}
+
+func TestDurableIssueReactionNotifiesCreator(t *testing.T) {
+	f := setupNotificationIssueTest(t)
+	actorAccount := "reaction-actor-issue@multica"
+	actorID := createTestUser(t, actorAccount)
+	t.Cleanup(func() { cleanupTestUser(t, actorAccount) })
+
+	f.bus.Publish(events.Event{
+		Type:        protocol.EventIssueReactionAdded,
+		WorkspaceID: testWorkspaceID,
+		ActorType:   "member",
+		ActorID:     actorID,
+		Payload: map[string]any{
+			"reaction": map[string]any{
+				"id":         "issue-reaction-event",
+				"issue_id":   f.issueID,
+				"actor_type": "member",
+				"actor_id":   actorID,
+				"emoji":      "eyes",
+			},
+		},
+	})
+
+	items := inboxItemsForRecipient(t, f.queries, testUserID)
+	if len(items) != 1 || items[0].Type != "reaction_added" {
+		t.Fatalf("issue reaction inbox items = %+v", items)
+	}
+	var details map[string]string
+	if err := json.Unmarshal(items[0].Details, &details); err != nil {
+		t.Fatalf("decode issue reaction details: %v", err)
+	}
+	if details["emoji"] != "eyes" || f.inboxEventCount() != 1 {
+		t.Fatalf("issue reaction details/events = %+v/%d", details, f.inboxEventCount())
+	}
+}
+
+func TestDurableCommentReactionNotifiesCommentAuthor(t *testing.T) {
+	f := setupNotificationIssueTest(t)
+	comment, err := f.queries.CreateComment(context.Background(), db.CreateCommentParams{
+		IssueID:     util.MustParseUUID(f.issueID),
+		WorkspaceID: util.MustParseUUID(testWorkspaceID),
+		AuthorType:  "member",
+		AuthorID:    util.MustParseUUID(testUserID),
+		Content:     "reaction notification target",
+		Type:        "comment",
+		ParentID:    pgtype.UUID{},
+	})
+	if err != nil {
+		t.Fatalf("create comment: %v", err)
+	}
+	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM comment WHERE id = $1`, comment.ID) })
+	actorAccount := "reaction-actor-comment@multica"
+	actorID := createTestUser(t, actorAccount)
+	t.Cleanup(func() { cleanupTestUser(t, actorAccount) })
+
+	f.bus.Publish(events.Event{
+		Type:        protocol.EventReactionAdded,
+		WorkspaceID: testWorkspaceID,
+		ActorType:   "member",
+		ActorID:     actorID,
+		Payload: map[string]any{
+			"reaction": map[string]any{
+				"id":         "comment-reaction-event",
+				"comment_id": util.UUIDToString(comment.ID),
+				"actor_type": "member",
+				"actor_id":   actorID,
+				"emoji":      "rocket",
+			},
+		},
+	})
+
+	items := inboxItemsForRecipient(t, f.queries, testUserID)
+	if len(items) != 1 || items[0].Type != "reaction_added" {
+		t.Fatalf("comment reaction inbox items = %+v", items)
+	}
+	var details map[string]string
+	if err := json.Unmarshal(items[0].Details, &details); err != nil {
+		t.Fatalf("decode comment reaction details: %v", err)
+	}
+	if details["emoji"] != "rocket" || details["comment_id"] != util.UUIDToString(comment.ID) || f.inboxEventCount() != 1 {
+		t.Fatalf("comment reaction details/events = %+v/%d", details, f.inboxEventCount())
+	}
+}
+
+func TestDurableReactionRejectsActorMismatch(t *testing.T) {
+	f := setupNotificationIssueTest(t)
+	_, err := consumeIssueReactionNotification(context.Background(), f.queries, events.Event{
+		Type:        protocol.EventIssueReactionAdded,
+		WorkspaceID: testWorkspaceID,
+		ActorType:   "member",
+		ActorID:     testUserID,
+		Payload: map[string]any{
+			"reaction": map[string]any{
+				"id":         "mismatched-reaction-event",
+				"issue_id":   f.issueID,
+				"actor_type": "member",
+				"actor_id":   "00000000-0000-0000-0000-000000000001",
+				"emoji":      "eyes",
+			},
+		},
+	})
+	if err == nil {
+		t.Fatal("actor-mismatched reaction event was accepted")
+	}
+	if count := inboxItemCountForIssue(t, f.issueID); count != 0 {
+		t.Fatalf("actor-mismatched reaction created %d inbox items", count)
+	}
 }
 
 type parentBubbleNotificationFixture struct {

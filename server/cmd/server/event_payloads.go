@@ -69,6 +69,30 @@ type taskEventPayload struct {
 	Status  string `json:"status"`
 }
 
+type issueReactionEventPayload struct {
+	Reaction eventIssueReaction `json:"reaction"`
+}
+
+type eventIssueReaction struct {
+	ID        string `json:"id"`
+	IssueID   string `json:"issue_id"`
+	ActorType string `json:"actor_type"`
+	ActorID   string `json:"actor_id"`
+	Emoji     string `json:"emoji"`
+}
+
+type commentReactionEventPayload struct {
+	Reaction eventCommentReaction `json:"reaction"`
+}
+
+type eventCommentReaction struct {
+	ID        string `json:"id"`
+	CommentID string `json:"comment_id"`
+	ActorType string `json:"actor_type"`
+	ActorID   string `json:"actor_id"`
+	Emoji     string `json:"emoji"`
+}
+
 func decodeEventPayload[T any](event events.Event) (T, bool) {
 	var payload T
 	raw, err := json.Marshal(event.Payload)
@@ -94,4 +118,16 @@ func decodeCommentEvent(event events.Event) (commentEventPayload, bool) {
 func decodeTaskEvent(event events.Event) (taskEventPayload, bool) {
 	payload, ok := decodeEventPayload[taskEventPayload](event)
 	return payload, ok
+}
+
+func decodeIssueReactionEvent(event events.Event) (issueReactionEventPayload, bool) {
+	payload, ok := decodeEventPayload[issueReactionEventPayload](event)
+	reaction := payload.Reaction
+	return payload, ok && reaction.ID != "" && reaction.IssueID != "" && reaction.ActorID != "" && reaction.Emoji != ""
+}
+
+func decodeCommentReactionEvent(event events.Event) (commentReactionEventPayload, bool) {
+	payload, ok := decodeEventPayload[commentReactionEventPayload](event)
+	reaction := payload.Reaction
+	return payload, ok && reaction.ID != "" && reaction.CommentID != "" && reaction.ActorID != "" && reaction.Emoji != ""
 }

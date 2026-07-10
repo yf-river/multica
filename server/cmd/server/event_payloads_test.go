@@ -63,4 +63,32 @@ func TestEventPayloadContractsSurviveJSONReplay(t *testing.T) {
 	if !ok || task.TaskID != "task-1" || task.AgentID != "agent-1" {
 		t.Fatalf("decoded task payload = %#v, ok=%v", task, ok)
 	}
+
+	issueReactionPayload := replayedPayload(t, map[string]any{
+		"reaction": handler.IssueReactionResponse{
+			ID:        "issue-reaction-1",
+			IssueID:   "issue-1",
+			ActorType: "member",
+			ActorID:   "member-1",
+			Emoji:     "eyes",
+		},
+	})
+	issueReaction, ok := decodeIssueReactionEvent(events.Event{Payload: issueReactionPayload})
+	if !ok || issueReaction.Reaction.IssueID != "issue-1" || issueReaction.Reaction.Emoji != "eyes" {
+		t.Fatalf("decoded issue reaction payload = %#v, ok=%v", issueReaction, ok)
+	}
+
+	commentReactionPayload := replayedPayload(t, map[string]any{
+		"reaction": handler.ReactionResponse{
+			ID:        "comment-reaction-1",
+			CommentID: "comment-1",
+			ActorType: "member",
+			ActorID:   "member-1",
+			Emoji:     "rocket",
+		},
+	})
+	commentReaction, ok := decodeCommentReactionEvent(events.Event{Payload: commentReactionPayload})
+	if !ok || commentReaction.Reaction.CommentID != "comment-1" || commentReaction.Reaction.Emoji != "rocket" {
+		t.Fatalf("decoded comment reaction payload = %#v, ok=%v", commentReaction, ok)
+	}
 }

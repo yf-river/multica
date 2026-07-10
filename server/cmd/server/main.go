@@ -271,7 +271,10 @@ func main() {
 		slog.Error("register durable autopilot consumers", "error", err)
 		os.Exit(1)
 	}
-	registerNotificationListeners(bus, queries)
+	if err := registerDurableReactionConsumers(eventDispatcher); err != nil {
+		slog.Error("register durable reaction consumers", "error", err)
+		os.Exit(1)
+	}
 
 	metricsConfig := obsmetrics.ConfigFromEnv()
 	var metricsServer *http.Server

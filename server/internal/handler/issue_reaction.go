@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/multica-ai/multica/server/internal/eventoutbox"
 	"github.com/multica-ai/multica/server/internal/logger"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -82,7 +83,15 @@ func (h *Handler) AddIssueReaction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	reaction, err := h.Queries.AddIssueReaction(r.Context(), db.AddIssueReactionParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		slog.Warn("begin issue reaction transaction failed", append(logger.RequestAttrs(r), "error", err, "issue_id", reactionReq.issueID)...)
+		writeError(w, http.StatusInternalServerError, "failed to add reaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	queries := h.Queries.WithTx(tx)
+	reaction, err := queries.AddIssueReaction(r.Context(), db.AddIssueReactionParams{
 		IssueID:     reactionReq.issue.ID,
 		WorkspaceID: reactionReq.issue.WorkspaceID,
 		ActorType:   reactionReq.actorType,
@@ -96,7 +105,7 @@ func (h *Handler) AddIssueReaction(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := issueReactionToResponse(reaction)
-	h.publish(protocol.EventIssueReactionAdded, reactionReq.workspaceID, reactionReq.actorType, reactionReq.actorID, map[string]any{
+	event := domainEvent(protocol.EventIssueReactionAdded, reactionReq.workspaceID, reactionReq.actorType, reactionReq.actorID, map[string]any{
 		"reaction":     resp,
 		"issue_id":     uuidToString(reactionReq.issue.ID),
 		"issue_title":  reactionReq.issue.Title,
@@ -104,6 +113,19 @@ func (h *Handler) AddIssueReaction(w http.ResponseWriter, r *http.Request) {
 		"creator_type": reactionReq.issue.CreatorType,
 		"creator_id":   uuidToString(reactionReq.issue.CreatorID),
 	})
+	event.StreamKey = "issue:" + uuidToString(reactionReq.issue.ID)
+	event, err = eventoutbox.Enqueue(r.Context(), queries, event)
+	if err != nil {
+		slog.Warn("enqueue issue reaction event failed", append(logger.RequestAttrs(r), "error", err, "issue_id", reactionReq.issueID)...)
+		writeError(w, http.StatusInternalServerError, "failed to add reaction")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		slog.Warn("commit issue reaction failed", append(logger.RequestAttrs(r), "error", err, "issue_id", reactionReq.issueID)...)
+		writeError(w, http.StatusInternalServerError, "failed to add reaction")
+		return
+	}
+	h.publishEvent(event)
 	writeJSON(w, http.StatusCreated, resp)
 }
 

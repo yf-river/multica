@@ -8,7 +8,6 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/events"
-	"github.com/multica-ai/multica/server/internal/handler"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -778,97 +777,6 @@ func setAnyOptionalDetail(details map[string]any, key string, value *string) {
 	if value != nil {
 		details[key] = *value
 	}
-}
-
-// registerNotificationListeners retains reaction event types whose producers
-// have not moved to the outbox yet. Issue, Comment, and terminal Task database
-// projections are durable consumers.
-//
-// NOTE: uses context.Background() because the event bus dispatches synchronously
-// within the HTTP request goroutine. Adding per-handler timeouts is a bus-level
-// concern — see events.Bus for future improvements.
-func registerNotificationListeners(bus *events.Bus, queries *db.Queries) {
-	ctx := context.Background()
-
-	// issue_reaction:added — notify the issue creator
-	bus.Subscribe(protocol.EventIssueReactionAdded, func(e events.Event) {
-		payload, ok := e.Payload.(map[string]any)
-		if !ok {
-			return
-		}
-
-		reaction, ok := payload["reaction"].(handler.IssueReactionResponse)
-		if !ok {
-			return
-		}
-
-		creatorType, _ := payload["creator_type"].(string)
-		creatorID, _ := payload["creator_id"].(string)
-		issueID, _ := payload["issue_id"].(string)
-		issueTitle, _ := payload["issue_title"].(string)
-		issueStatus, _ := payload["issue_status"].(string)
-
-		if creatorType == "" || creatorID == "" {
-			return
-		}
-
-		details, _ := json.Marshal(map[string]string{
-			"emoji": reaction.Emoji,
-		})
-
-		if err := notifyDirect(ctx, queries, bus,
-			creatorType, creatorID,
-			e.WorkspaceID, e, issueID, issueStatus,
-			"reaction_added", "info",
-			issueTitle, "",
-			details,
-		); err != nil {
-			slog.Error("project issue reaction notification", "issue_id", issueID, "error", err)
-		}
-	})
-
-	// reaction:added — notify the comment author
-	bus.Subscribe(protocol.EventReactionAdded, func(e events.Event) {
-		payload, ok := e.Payload.(map[string]any)
-		if !ok {
-			return
-		}
-
-		reaction, ok := payload["reaction"].(handler.ReactionResponse)
-		if !ok {
-			return
-		}
-
-		commentAuthorType, _ := payload["comment_author_type"].(string)
-		commentAuthorID, _ := payload["comment_author_id"].(string)
-		commentID, _ := payload["comment_id"].(string)
-		issueID, _ := payload["issue_id"].(string)
-		issueTitle, _ := payload["issue_title"].(string)
-		issueStatus, _ := payload["issue_status"].(string)
-
-		if commentAuthorType == "" || commentAuthorID == "" {
-			return
-		}
-
-		detailsMap := map[string]string{
-			"emoji": reaction.Emoji,
-		}
-		if commentID != "" {
-			detailsMap["comment_id"] = commentID
-		}
-		details, _ := json.Marshal(detailsMap)
-
-		if err := notifyDirect(ctx, queries, bus,
-			commentAuthorType, commentAuthorID,
-			e.WorkspaceID, e, issueID, issueStatus,
-			"reaction_added", "info",
-			issueTitle, "",
-			details,
-		); err != nil {
-			slog.Error("project comment reaction notification", "issue_id", issueID, "error", err)
-		}
-	})
-
 }
 
 // inboxItemToResponse converts a db.InboxItem into a map suitable for
