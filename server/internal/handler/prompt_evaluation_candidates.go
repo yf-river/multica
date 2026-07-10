@@ -174,10 +174,6 @@ func (h *Handler) CreatePromptEvaluationOptimizationCandidate(w http.ResponseWri
 	writeJSON(w, http.StatusCreated, promptEvaluationOptimizationCandidateToResponse(item))
 }
 
-func (h *Handler) RunPromptEvaluationOptimizationAgent(w http.ResponseWriter, r *http.Request) {
-	writeError(w, http.StatusGone, "optimization run assets have been removed; create optimization candidates from failed evaluation runs")
-}
-
 func (h *Handler) promptEvaluationCandidateRuntimeEvidence(ctx context.Context, run db.PromptEvaluationRun) (map[string]any, error) {
 	if !run.TaskID.Valid {
 		return nil, nil
@@ -935,4 +931,3 @@ func (h *Handler) ImportPromptEvaluationDataset(w http.ResponseWriter, r *http.R
 		Cases:         importedCases,
 	})
 }
-

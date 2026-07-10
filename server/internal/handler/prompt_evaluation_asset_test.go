@@ -2676,20 +2676,6 @@ func TestPromptEvaluationOptimizationCandidateUsesAgentEvidence(t *testing.T) {
 	}
 }
 
-func TestRunPromptEvaluationOptimizationAgentIsRemoved(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
-	cleanupPromptEvaluationAgentRunTest(t)
-	_, sourceResp, _ := createPromptEvaluationAgentRunFixture(t, "真实智能体优化候选来源套件", "输出缺少验收条件")
-
-	optW := httptest.NewRecorder()
-	testHandler.RunPromptEvaluationOptimizationAgent(optW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-runs/"+sourceResp.Run.ID+"/optimization-agent-run", nil), "id", sourceResp.Run.ID))
-	if optW.Code != http.StatusGone || !strings.Contains(optW.Body.String(), "optimization run assets have been removed") {
-		t.Fatalf("optimization agent status = %d, body = %s", optW.Code, optW.Body.String())
-	}
-}
-
 func TestPromptEvaluationRequestedAgentIDIgnoresAutoModeLabel(t *testing.T) {
 	payload := map[string]any{
 		"调试包": map[string]any{
