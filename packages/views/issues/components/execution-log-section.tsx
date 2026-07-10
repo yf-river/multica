@@ -64,9 +64,9 @@ export function ExecutionLogSection({ issueId }: ExecutionLogSectionProps) {
     refetchOnWindowFocus: true,
   });
   const { data: traceData } = useQuery(issueTaskTraceOptions(issueId));
-  const traceEvents = traceData?.events ?? [];
+  const traceEvents = useMemo(() => traceData?.events ?? [], [traceData?.events]);
   const { data: sopData } = useQuery(issueSOPRunsOptions(issueId));
-  const sopRuns = sopData?.items ?? [];
+  const sopRuns = useMemo(() => sopData?.items ?? [], [sopData?.items]);
   const { data: executionTree } = useQuery(issueExecutionTreeOptions(issueId));
   const allTasks = useMemo(
     () => mergeTasks(tasks, collectExecutionTreeTasks(executionTree)),
@@ -157,7 +157,7 @@ export function IssueRunReviewSummaryCard({ issueId }: ExecutionLogSectionProps)
     refetchOnWindowFocus: true,
   });
   const { data: traceData } = useQuery(issueTaskTraceOptions(issueId));
-  const traceEvents = traceData?.events ?? [];
+  const traceEvents = useMemo(() => traceData?.events ?? [], [traceData?.events]);
   const { data: executionTree } = useQuery(issueExecutionTreeOptions(issueId));
   const treeTasks = useMemo(() => collectExecutionTreeTasks(executionTree), [executionTree]);
   const terminalTasks = useMemo(

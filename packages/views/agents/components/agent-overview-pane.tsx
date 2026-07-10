@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   Activity,
   BookOpenText,
@@ -176,14 +176,14 @@ export function AgentOverviewPane({
     ? activeTab
     : "activity";
 
-  const requestTabChange = (next: DetailTab) => {
+  const requestTabChange = useCallback((next: DetailTab) => {
     if (next === activeTab) return;
     if (activeDirty) {
       setPendingTab(next);
       return;
     }
     setActiveTab(next);
-  };
+  }, [activeDirty, activeTab]);
 
   const commitTabChange = () => {
     if (pendingTab) {

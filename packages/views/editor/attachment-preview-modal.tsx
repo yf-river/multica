@@ -174,15 +174,20 @@ export function useAttachmentPreview(): AttachmentPreviewHandle {
     return true;
   }, []);
 
-  const modal = current ? (
-    <AttachmentPreviewModal
-      source={current}
-      open
-      onClose={() => setCurrent(null)}
-    />
-  ) : null;
-
-  return useMemo(() => ({ open, tryOpen, modal }), [open, tryOpen, modal]);
+  return useMemo(
+    () => ({
+      open,
+      tryOpen,
+      modal: current ? (
+        <AttachmentPreviewModal
+          source={current}
+          open
+          onClose={() => setCurrent(null)}
+        />
+      ) : null,
+    }),
+    [current, open, tryOpen],
+  );
 }
 
 // ---------------------------------------------------------------------------

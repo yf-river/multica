@@ -115,7 +115,7 @@ export function RunReviewsPage() {
   const navigation = useNavigation();
   const selectedIssueId = navigation.searchParams.get("issue");
   const issuesQuery = useQuery(issueListOptions(wsId, { sort_by: "created_at", sort_direction: "desc" }));
-  const issues = issuesQuery.data ?? [];
+  const issues = useMemo(() => issuesQuery.data ?? [], [issuesQuery.data]);
   const selectedIssue = useMemo(
     () => issues.find((issue) => issue.id === selectedIssueId) ?? issues[0] ?? null,
     [issues, selectedIssueId],
@@ -310,7 +310,10 @@ function RunReviewDetail({
     refetchOnWindowFocus: true,
   });
   const activeTasks = useMemo(() => tasks.filter(isActiveTask), [tasks]);
-  const baseTimelineNodes = tree?.timeline_nodes ?? [];
+  const baseTimelineNodes = useMemo(
+    () => tree?.timeline_nodes ?? [],
+    [tree?.timeline_nodes],
+  );
   const liveNowMs = useRunReviewLiveNow(activeTasks.length > 0 || hasActiveTimelineNode(baseTimelineNodes));
   const timelineNodes = useMemo(
     () => buildRunReviewLiveTimelineNodes(baseTimelineNodes, liveNowMs),

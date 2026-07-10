@@ -333,7 +333,7 @@ export function PromptLibraryPage({
       })),
   });
   const items = listQuery.data?.items ?? [];
-  const assets = assetQuery.data?.items ?? [];
+  const assets = useMemo(() => assetQuery.data?.items ?? [], [assetQuery.data?.items]);
   const cases = caseQuery.data?.items ?? [];
   const runs = runQuery.data?.items ?? [];
   const candidates = candidateQuery.data?.items ?? [];
@@ -354,7 +354,10 @@ export function PromptLibraryPage({
     queryFn: () => api.listPromptLibraryVersions(selectedFromList?.id ?? ""),
     enabled: !!workspaceId && needsPromptVersions && !!selectedFromList,
   });
-  const promptVersions = versionQuery.data?.items ?? [];
+  const promptVersions = useMemo(
+    () => versionQuery.data?.items ?? [],
+    [versionQuery.data?.items],
+  );
   const trialQuery = useQuery({
     queryKey: promptLibraryKeys.trials(workspaceId ?? "", selectedFromList?.id ?? null),
     queryFn: () => api.listPromptLibraryTrials(selectedFromList?.id ?? ""),
@@ -3083,7 +3086,10 @@ export function CaseLibraryEditorPanel({
     () => datasetAssets.find((asset) => asset.id === selectedAssetId) ?? datasetAssets[0] ?? null,
     [datasetAssets, selectedAssetId],
   );
-  const selectedCases = selectedAsset ? casesByAsset.get(selectedAsset.id) ?? [] : cases;
+  const selectedCases = useMemo(
+    () => selectedAsset ? casesByAsset.get(selectedAsset.id) ?? [] : cases,
+    [cases, casesByAsset, selectedAsset],
+  );
   const caseTags = useMemo(() => uniqueSortedStrings(selectedCases.flatMap((item) => item.tags.map((value) => String(value)).filter(Boolean))), [selectedCases]);
   const filteredCases = useMemo(() => {
     const keyword = keywordFilter.trim().toLowerCase();

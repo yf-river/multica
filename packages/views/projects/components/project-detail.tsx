@@ -7,7 +7,7 @@ import { useQuery, type QueryKey } from "@tanstack/react-query";
 import { cn } from "@multica/ui/lib/utils";
 import { copyText } from "@multica/ui/lib/clipboard";
 import { toast } from "sonner";
-import type { Issue, IssueAssigneeGroup, ProjectStatus, ProjectPriority, UpdateIssueRequest } from "@multica/core/types";
+import type { Issue, IssueAssigneeGroup, Project, ProjectStatus, ProjectPriority, UpdateIssueRequest } from "@multica/core/types";
 import { useAuthStore } from "@multica/core/auth";
 import { projectDetailOptions } from "@multica/core/projects/queries";
 import { useUpdateProject, useDeleteProject } from "@multica/core/projects/mutations";
@@ -411,6 +411,19 @@ function ProjectIssuesSurface({
 // ProjectDetail
 // ---------------------------------------------------------------------------
 
+export function buildProjectRecentContext(
+  project: Pick<Project, "id" | "title" | "description" | "icon" | "status">,
+) {
+  return {
+    type: "project" as const,
+    id: project.id,
+    label: project.title,
+    subtitle: project.description ?? undefined,
+    icon: project.icon,
+    projectStatus: project.status,
+  };
+}
+
 export function ProjectDetail({ projectId }: { projectId: string }) {
   const { t } = useT("projects");
   const statusLabels = useProjectStatusLabels();
@@ -421,18 +434,35 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
   const userId = useAuthStore((s) => s.user?.id);
   const { data: project, isLoading } = useQuery(projectDetailOptions(wsId, projectId));
   const recordRecentContext = useRecentContextStore((s) => s.recordVisit);
+  const recentProjectId = project?.id;
+  const recentProjectTitle = project?.title;
+  const recentProjectDescription = project?.description;
+  const recentProjectIcon = project?.icon;
+  const recentProjectStatus = project?.status;
   useEffect(() => {
-    if (project) {
-      recordRecentContext(wsId, {
-        type: "project",
-        id: project.id,
-        label: project.title,
-        subtitle: project.description ?? undefined,
-        icon: project.icon,
-        projectStatus: project.status,
-      });
-    }
-  }, [project?.id, project?.title, project?.description, project?.icon, project?.status, recordRecentContext, wsId]);
+    if (
+      !recentProjectId ||
+      !recentProjectTitle ||
+      recentProjectDescription === undefined ||
+      recentProjectIcon === undefined ||
+      !recentProjectStatus
+    ) return;
+    recordRecentContext(wsId, buildProjectRecentContext({
+      id: recentProjectId,
+      title: recentProjectTitle,
+      description: recentProjectDescription,
+      icon: recentProjectIcon,
+      status: recentProjectStatus,
+    }));
+  }, [
+    recentProjectDescription,
+    recentProjectIcon,
+    recentProjectId,
+    recentProjectStatus,
+    recentProjectTitle,
+    recordRecentContext,
+    wsId,
+  ]);
   const projectScope = `project:${projectId}`;
   const projectFilter = useMemo<MyIssuesFilter>(
     () => ({ project_id: projectId }),
