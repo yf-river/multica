@@ -309,13 +309,11 @@ func normalizeChatType(t string) ChatType {
 //     compare against `mentions[].id.union_id`. This is the correct
 //     path and is unambiguous in multi-bot deployments.
 //
-//  2. When `union_id` is unknown — single-bot installs created
-//     before migration 112, or contact-scope-restricted operators
-//     where /contact/v3/users denied the lookup — fall back to the
+//  2. When `union_id` is unknown because a contact-scope-restricted
+//     operator denied the /contact/v3/users lookup, fall back to the
 //     per-app `open_id` comparison. This is structurally inverted
 //     in multi-bot group chats but is fine for the p2p/single-bot
-//     case the WS sees most of the time, and avoids hard-failing
-//     pre-backfill installations.
+//     case the WS sees most of the time.
 //
 // Empty inputs short-circuit to false rather than matching every
 // mention; that defends against an installation row that somehow

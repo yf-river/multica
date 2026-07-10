@@ -65,28 +65,6 @@ func TestRegionOrDefault(t *testing.T) {
 	}
 }
 
-// TestIsLarkInternationalHost gates the upgrade-repair backfill: only a
-// deployment-wide override pointing at open.larksuite.com should relabel
-// legacy installs. Mainland, empty, mock/staging, and scheme-less values
-// must NOT trigger it.
-func TestIsLarkInternationalHost(t *testing.T) {
-	cases := map[string]bool{
-		"https://open.larksuite.com":  true,
-		"https://open.larksuite.com/": true,
-		"https://OPEN.LARKSUITE.COM":  true, // host compare is case-insensitive
-		"https://open.feishu.cn":      false,
-		"":                            false,
-		"   ":                         false,
-		"https://mock.internal:8080":  false,
-		"open.larksuite.com":          false, // no scheme → not a usable override anyway
-	}
-	for in, want := range cases {
-		if got := isLarkInternationalHost(in); got != want {
-			t.Errorf("isLarkInternationalHost(%q) = %v, want %v", in, got, want)
-		}
-	}
-}
-
 // TestHTTPClient_ResolvesHostFromRegion is the core dual-region guarantee:
 // with NO deployment-wide BaseURL override, the open-platform host is
 // chosen per call from InstallationCredentials.Region, so Feishu and Lark

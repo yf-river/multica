@@ -61,29 +61,6 @@ func (q *Queries) AcquireLarkWSLease(ctx context.Context, arg AcquireLarkWSLease
 	return i, err
 }
 
-const backfillLarkInstallationRegionToLark = `-- name: BackfillLarkInstallationRegionToLark :execrows
-UPDATE lark_installation
-SET region     = 'lark',
-    updated_at = now()
-WHERE region = 'feishu'
-`
-
-// Upgrade repair: flip every installation still carrying the migration-116
-// default ('feishu') to 'lark'. Called ONLY by
-// BackfillRegionFromLegacyOverride, and ONLY when the deployment's global
-// base-URL override pointed at Lark international — on such a deployment the
-// whole integration talked to open.larksuite.com, so every existing install
-// is really Lark and the migration's mainland default mislabels it.
-// Idempotent: once flipped there is nothing left at 'feishu' to update, and
-// new installs already carry the device-flow-detected region.
-func (q *Queries) BackfillLarkInstallationRegionToLark(ctx context.Context) (int64, error) {
-	result, err := q.db.Exec(ctx, backfillLarkInstallationRegionToLark)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const claimLarkInboundDedup = `-- name: ClaimLarkInboundDedup :one
 
 INSERT INTO lark_inbound_message_dedup (installation_id, message_id, claim_token)
@@ -261,79 +238,6 @@ func (q *Queries) CreateLarkChatSessionBinding(ctx context.Context, arg CreateLa
 		&i.LarkChatID,
 		&i.LarkChatType,
 		&i.CreatedAt,
-	)
-	return i, err
-}
-
-const createLarkInstallation = `-- name: CreateLarkInstallation :one
-
-
-INSERT INTO lark_installation (
-    workspace_id, agent_id, app_id, app_secret_encrypted,
-    tenant_key, bot_open_id, bot_union_id, installer_user_id
-) VALUES (
-    $1, $2, $3, $4, $7, $5, $8, $6
-)
-RETURNING id, workspace_id, agent_id, app_id, app_secret_encrypted, tenant_key, bot_open_id, installer_user_id, status, ws_lease_token, ws_lease_expires_at, installed_at, created_at, updated_at, bot_union_id, region
-`
-
-type CreateLarkInstallationParams struct {
-	WorkspaceID        pgtype.UUID `json:"workspace_id"`
-	AgentID            pgtype.UUID `json:"agent_id"`
-	AppID              string      `json:"app_id"`
-	AppSecretEncrypted []byte      `json:"app_secret_encrypted"`
-	BotOpenID          string      `json:"bot_open_id"`
-	InstallerUserID    pgtype.UUID `json:"installer_user_id"`
-	TenantKey          pgtype.Text `json:"tenant_key"`
-	BotUnionID         pgtype.Text `json:"bot_union_id"`
-}
-
-// Lark (飞书) Bot integration queries. The current schema baseline defines
-// these tables; the architectural boundaries the package enforces on top are
-// documented in server/internal/integrations/lark/doc.go.
-//
-// Scoping convention: every public-facing read goes through a
-// workspace-scoped variant where one exists. The lookups that take only
-// a UUID PK (e.g. GetLarkInstallation) are reserved for internal trusted
-// callers (the WS lease scanner, the inbound dispatcher after identity
-// resolution); HTTP handlers should prefer the *InWorkspace forms.
-// =====================
-// lark_installation
-// =====================
-// Used by the OAuth callback. `app_secret_encrypted` is the ciphertext
-// produced by internal/util/secretbox — never plaintext. The
-// (workspace_id, agent_id) UNIQUE constraint enforces the spec rule
-// "one Multica Agent ↔ one Lark Bot"; re-installing on the same agent
-// goes through UpsertLarkInstallation instead.
-func (q *Queries) CreateLarkInstallation(ctx context.Context, arg CreateLarkInstallationParams) (LarkInstallation, error) {
-	row := q.db.QueryRow(ctx, createLarkInstallation,
-		arg.WorkspaceID,
-		arg.AgentID,
-		arg.AppID,
-		arg.AppSecretEncrypted,
-		arg.BotOpenID,
-		arg.InstallerUserID,
-		arg.TenantKey,
-		arg.BotUnionID,
-	)
-	var i LarkInstallation
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.AgentID,
-		&i.AppID,
-		&i.AppSecretEncrypted,
-		&i.TenantKey,
-		&i.BotOpenID,
-		&i.InstallerUserID,
-		&i.Status,
-		&i.WsLeaseToken,
-		&i.WsLeaseExpiresAt,
-		&i.InstalledAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.BotUnionID,
-		&i.Region,
 	)
 	return i, err
 }
@@ -1013,29 +917,6 @@ func (q *Queries) ReleaseLarkWSLease(ctx context.Context, arg ReleaseLarkWSLease
 	return err
 }
 
-const setLarkInstallationBotUnionID = `-- name: SetLarkInstallationBotUnionID :exec
-UPDATE lark_installation
-SET bot_union_id = $2,
-    updated_at   = now()
-WHERE id = $1
-`
-
-type SetLarkInstallationBotUnionIDParams struct {
-	ID         pgtype.UUID `json:"id"`
-	BotUnionID pgtype.Text `json:"bot_union_id"`
-}
-
-// Operator-only backfill for installations created before the
-// bot_union_id column existed (migration 112). Production reads do
-// NOT use this — finishSuccess writes union_id during install, and
-// the upsert path writes it on re-install. Kept as a focused single-
-// column UPDATE so the backfill cannot accidentally overwrite app
-// credentials, status, or lease state.
-func (q *Queries) SetLarkInstallationBotUnionID(ctx context.Context, arg SetLarkInstallationBotUnionIDParams) error {
-	_, err := q.db.Exec(ctx, setLarkInstallationBotUnionID, arg.ID, arg.BotUnionID)
-	return err
-}
-
 const setLarkInstallationStatus = `-- name: SetLarkInstallationStatus :exec
 UPDATE lark_installation
 SET status = $2, updated_at = now()
@@ -1070,6 +951,8 @@ func (q *Queries) UpdateLarkOutboundCardStatus(ctx context.Context, arg UpdateLa
 }
 
 const upsertLarkInstallation = `-- name: UpsertLarkInstallation :one
+
+
 INSERT INTO lark_installation (
     workspace_id, agent_id, app_id, app_secret_encrypted,
     tenant_key, bot_open_id, bot_union_id, installer_user_id, region
@@ -1102,6 +985,18 @@ type UpsertLarkInstallationParams struct {
 	Region             string      `json:"region"`
 }
 
+// Lark (飞书) Bot integration queries. The current schema baseline defines
+// these tables; the architectural boundaries the package enforces on top are
+// documented in server/internal/integrations/lark/doc.go.
+//
+// Scoping convention: every public-facing read goes through a
+// workspace-scoped variant where one exists. The lookups that take only
+// a UUID PK (e.g. GetLarkInstallation) are reserved for internal trusted
+// callers (the WS lease scanner, the inbound dispatcher after identity
+// resolution); HTTP handlers should prefer the *InWorkspace forms.
+// =====================
+// lark_installation
+// =====================
 // Re-install path: a user who already bound this agent to Lark scans
 // the QR again (e.g. they rotated their Lark app secret, or revoked +
 // reinstalled). We refresh the app credentials, bot identity, and

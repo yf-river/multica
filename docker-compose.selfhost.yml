@@ -92,9 +92,7 @@ services:
       # Lark are auto-detected per installation and served side by side, so
       # the two base-URL knobs should normally stay EMPTY. They are optional
       # deployment-wide overrides that force every installation onto one host
-      # (proxy / mock / single-cloud staging). Upgrading from a setup that
-      # used https://open.larksuite.com here? The server relabels existing
-      # installs to region=lark on first boot, then you can clear them.
+      # (proxy / mock / single-cloud staging).
       # See docs/lark-bot-integration.
       MULTICA_LARK_SECRET_KEY: ${MULTICA_LARK_SECRET_KEY:-}
       MULTICA_LARK_HTTP_BASE_URL: ${MULTICA_LARK_HTTP_BASE_URL:-}

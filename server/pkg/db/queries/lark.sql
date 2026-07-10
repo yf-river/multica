@@ -12,20 +12,6 @@
 -- lark_installation
 -- =====================
 
--- name: CreateLarkInstallation :one
--- Used by the OAuth callback. `app_secret_encrypted` is the ciphertext
--- produced by internal/util/secretbox — never plaintext. The
--- (workspace_id, agent_id) UNIQUE constraint enforces the spec rule
--- "one Multica Agent ↔ one Lark Bot"; re-installing on the same agent
--- goes through UpsertLarkInstallation instead.
-INSERT INTO lark_installation (
-    workspace_id, agent_id, app_id, app_secret_encrypted,
-    tenant_key, bot_open_id, bot_union_id, installer_user_id
-) VALUES (
-    $1, $2, $3, $4, sqlc.narg('tenant_key'), $5, sqlc.narg('bot_union_id'), $6
-)
-RETURNING *;
-
 -- name: UpsertLarkInstallation :one
 -- Re-install path: a user who already bound this agent to Lark scans
 -- the QR again (e.g. they rotated their Lark app secret, or revoked +
@@ -51,32 +37,6 @@ ON CONFLICT (workspace_id, agent_id) DO UPDATE SET
     installed_at         = now(),
     updated_at           = now()
 RETURNING *;
-
--- name: BackfillLarkInstallationRegionToLark :execrows
--- Upgrade repair: flip every installation still carrying the migration-116
--- default ('feishu') to 'lark'. Called ONLY by
--- BackfillRegionFromLegacyOverride, and ONLY when the deployment's global
--- base-URL override pointed at Lark international — on such a deployment the
--- whole integration talked to open.larksuite.com, so every existing install
--- is really Lark and the migration's mainland default mislabels it.
--- Idempotent: once flipped there is nothing left at 'feishu' to update, and
--- new installs already carry the device-flow-detected region.
-UPDATE lark_installation
-SET region     = 'lark',
-    updated_at = now()
-WHERE region = 'feishu';
-
--- name: SetLarkInstallationBotUnionID :exec
--- Operator-only backfill for installations created before the
--- bot_union_id column existed (migration 112). Production reads do
--- NOT use this — finishSuccess writes union_id during install, and
--- the upsert path writes it on re-install. Kept as a focused single-
--- column UPDATE so the backfill cannot accidentally overwrite app
--- credentials, status, or lease state.
-UPDATE lark_installation
-SET bot_union_id = $2,
-    updated_at   = now()
-WHERE id = $1;
 
 -- name: GetLarkInstallation :one
 SELECT * FROM lark_installation WHERE id = $1;
