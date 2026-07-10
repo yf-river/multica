@@ -382,29 +382,35 @@ func (s *TaskService) syncSquadSOPTaskStepWithResult(ctx context.Context, task d
 	}
 }
 
-func (s *TaskService) squadSOPFailureComment(ctx context.Context, task db.AgentTaskQueue, errMsg, failureReason string) (string, bool) {
+func squadSOPFailureComment(ctx context.Context, queries *db.Queries, task db.AgentTaskQueue, errMsg, failureReason string) (string, bool, error) {
 	if !task.IssueID.Valid {
-		return "", false
+		return "", false, nil
 	}
-	issue, err := s.Queries.GetIssue(ctx, task.IssueID)
-	if err != nil || !issue.AssigneeType.Valid || issue.AssigneeType.String != "squad" {
-		return "", false
-	}
-	run, err := s.Queries.GetOpenSquadSOPRunByIssue(ctx, task.IssueID)
+	issue, err := queries.GetIssue(ctx, task.IssueID)
 	if err != nil {
-		return "", false
+		return "", false, err
 	}
-	agent, err := s.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
+	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "squad" {
+		return "", false, nil
+	}
+	run, err := queries.GetOpenSquadSOPRunByIssue(ctx, task.IssueID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", false, nil
+		}
+		return "", false, err
+	}
+	agent, err := queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
 		ID:          task.AgentID,
 		WorkspaceID: issue.WorkspaceID,
 	})
 	if err != nil {
-		return "", false
+		return "", false, err
 	}
 	steps := parseSquadSOPProfileSteps(run.Profile)
 	step, _, ok := matchSquadSOPStepForAgentRecord(steps, agent)
 	if !ok {
-		return "", false
+		return "", false, nil
 	}
 	reason := strings.TrimSpace(failureReason)
 	if reason == "" {
@@ -420,43 +426,44 @@ func (s *TaskService) squadSOPFailureComment(ctx context.Context, task db.AgentT
 	if summary := taskFailureSummary(errMsg); summary != "" {
 		fmt.Fprintf(&b, "- 错误摘要：%s\n", summary)
 	}
-	return b.String(), true
+	return b.String(), true, nil
 }
 
-func (s *TaskService) squadSOPTaskHasDeliveryComment(ctx context.Context, task db.AgentTaskQueue) bool {
+func squadSOPTaskHasDeliveryComment(ctx context.Context, queries *db.Queries, task db.AgentTaskQueue) (bool, error) {
 	if !task.IssueID.Valid {
-		return false
+		return false, nil
 	}
-	issue, err := s.Queries.GetIssue(ctx, task.IssueID)
-	if err != nil || !issue.AssigneeType.Valid || issue.AssigneeType.String != "squad" {
-		return false
+	issue, err := queries.GetIssue(ctx, task.IssueID)
+	if err != nil {
+		return false, err
 	}
-	run, ok := s.squadSOPRunForWorkerTask(ctx, task, issue)
+	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "squad" {
+		return false, nil
+	}
+	run, ok, err := squadSOPRunForWorkerTask(ctx, queries, task, issue)
+	if err != nil {
+		return false, err
+	}
 	if !ok {
-		return false
+		return false, nil
 	}
-	agent, err := s.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
+	agent, err := queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
 		ID:          task.AgentID,
 		WorkspaceID: issue.WorkspaceID,
 	})
 	if err != nil {
-		return false
+		return false, err
 	}
 	if _, _, ok := matchSquadSOPStepForAgentRecord(parseSquadSOPProfileSteps(run.Profile), agent); !ok {
-		return false
+		return false, nil
 	}
-	comments, err := s.Queries.ListCommentsForIssue(ctx, db.ListCommentsForIssueParams{
+	comments, err := queries.ListCommentsForIssue(ctx, db.ListCommentsForIssueParams{
 		IssueID:     issue.ID,
 		WorkspaceID: issue.WorkspaceID,
 		Limit:       2000,
 	})
 	if err != nil {
-		slog.Warn("squad SOP delivery comment lookup failed",
-			"task_id", util.UUIDToString(task.ID),
-			"issue_id", util.UUIDToString(task.IssueID),
-			"error", err,
-		)
-		return false
+		return false, err
 	}
 	for _, comment := range comments {
 		if comment.AuthorType == "agent" &&
@@ -464,10 +471,10 @@ func (s *TaskService) squadSOPTaskHasDeliveryComment(ctx context.Context, task d
 			comment.SourceTaskID == task.ID &&
 			comment.Type != "system" &&
 			strings.TrimSpace(comment.Content) != "" {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 func taskFailureSummary(errMsg string) string {

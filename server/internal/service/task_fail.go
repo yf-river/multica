@@ -34,6 +34,8 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 	var retried *db.AgentTaskQueue
 	var retryCreated bool
 	var sourceSummary *issueSourceSummaryProjection
+	var deliveryCommentPosted bool
+	var failureComment *agentCommentProjection
 	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
 		t, err := qtx.FailAgentTask(ctx, db.FailAgentTaskParams{
 			ID:            taskID,
@@ -81,6 +83,36 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 				return fmt.Errorf("project issue source summary failure: %w", err)
 			}
 			sourceSummary = &projection
+			return nil
+		}
+		if retried != nil {
+			return nil
+		}
+		deliveryCommentPosted, err = squadSOPTaskHasDeliveryComment(ctx, qtx, task)
+		if err != nil {
+			return fmt.Errorf("check squad SOP delivery comment: %w", err)
+		}
+		if errMsg == "" || !task.IssueID.Valid || deliveryCommentPosted {
+			return nil
+		}
+		body := redact.Text(errMsg)
+		if structured, ok, err := squadSOPFailureComment(ctx, qtx, task, errMsg, failureReason); err != nil {
+			return fmt.Errorf("build squad SOP failure comment: %w", err)
+		} else if ok {
+			body = structured
+		}
+		failureComment, err = createAgentCommentInTx(
+			ctx,
+			qtx,
+			task.IssueID,
+			task.AgentID,
+			body,
+			"system",
+			task.TriggerCommentID,
+			task.ID,
+		)
+		if err != nil {
+			return fmt.Errorf("create task failure comment: %w", err)
 		}
 		return nil
 	}); err != nil {
@@ -122,14 +154,6 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 		return &task, nil
 	}
 
-	deliveryCommentPosted := retried == nil && s.squadSOPTaskHasDeliveryComment(ctx, task)
-
-	var failureComment string
-	if errMsg != "" && task.IssueID.Valid && retried == nil && !deliveryCommentPosted {
-		if body, ok := s.squadSOPFailureComment(ctx, task, errMsg, failureReason); ok {
-			failureComment = body
-		}
-	}
 	if deliveryCommentPosted {
 		s.linkGongfengMRsFromTaskComments(ctx, task)
 		s.syncSquadSOPTaskStepWithResult(ctx, task, "步骤完成", "已完成", nil)
@@ -146,13 +170,7 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 	// the new task will surface its own status to the user, and we don't
 	// want to spam the issue with "task timed out" messages on every
 	// daemon hiccup.
-	if errMsg != "" && task.IssueID.Valid && retried == nil && !deliveryCommentPosted {
-		body := redact.Text(errMsg)
-		if failureComment != "" {
-			body = failureComment
-		}
-		s.createAgentComment(ctx, task.IssueID, task.AgentID, body, "system", task.TriggerCommentID, task.ID)
-	}
+	s.publishAgentCommentProjection(ctx, failureComment)
 
 	// Reconcile agent status
 	s.ReconcileAgentStatus(ctx, task.AgentID)

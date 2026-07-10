@@ -19,7 +19,7 @@ Current evidence for issue execution, MR linkage and status-trigger behavior.
 | Explicit merge-request create route/handler | server/cmd/server/router.go:719; server/internal/handler/github.go:674 |
 | CLI mr create/list/link | server/cmd/multica/cmd_issue_pull_request.go |
 | Provider lifecycle state fold | server/internal/handler/github_webhook.go:522 |
-| SOP completion MR gate | server/internal/service/task_claim.go:484 |
+| SOP completion MR gate | server/internal/service/task_claim.go:492 |
 
 The durable issue association is the explicit platform row created or linked
 through the API/CLI. Human-readable issue keys in titles or branches are not a

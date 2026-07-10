@@ -676,7 +676,15 @@ func (s *TaskService) enqueueSquadLeaderAfterWorkerStageCompletion(ctx context.C
 	if issue.Status == "done" || issue.Status == "cancelled" {
 		return
 	}
-	run, ok := s.squadSOPRunForWorkerTask(ctx, task, issue)
+	run, ok, err := squadSOPRunForWorkerTask(ctx, s.Queries, task, issue)
+	if err != nil {
+		slog.Warn("load squad SOP run after worker completion failed",
+			"task_id", util.UUIDToString(task.ID),
+			"issue_id", util.UUIDToString(issue.ID),
+			"error", err,
+		)
+		return
+	}
 	if !ok {
 		return
 	}
@@ -738,19 +746,25 @@ func (s *TaskService) enqueueSquadLeaderAfterWorkerStageCompletion(ctx context.C
 	s.NotifyTaskEnqueued(ctx, nextTask)
 }
 
-func (s *TaskService) squadSOPRunForWorkerTask(ctx context.Context, task db.AgentTaskQueue, issue db.Issue) (db.SquadSopRun, bool) {
-	run, err := s.Queries.GetOpenSquadSOPRunByIssue(ctx, task.IssueID)
+func squadSOPRunForWorkerTask(ctx context.Context, queries *db.Queries, task db.AgentTaskQueue, issue db.Issue) (db.SquadSopRun, bool, error) {
+	run, err := queries.GetOpenSquadSOPRunByIssue(ctx, task.IssueID)
 	if err == nil {
-		return run, true
+		return run, true, nil
 	}
-	runs, err := s.Queries.ListIssueSquadSOPRuns(ctx, db.ListIssueSquadSOPRunsParams{
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return db.SquadSopRun{}, false, err
+	}
+	runs, err := queries.ListIssueSquadSOPRuns(ctx, db.ListIssueSquadSOPRunsParams{
 		IssueID:     issue.ID,
 		WorkspaceID: issue.WorkspaceID,
 	})
-	if err != nil || len(runs) == 0 {
-		return db.SquadSopRun{}, false
+	if err != nil {
+		return db.SquadSopRun{}, false, err
 	}
-	return runs[0], true
+	if len(runs) == 0 {
+		return db.SquadSopRun{}, false, nil
+	}
+	return runs[0], true, nil
 }
 
 // FailTask marks a task as failed.

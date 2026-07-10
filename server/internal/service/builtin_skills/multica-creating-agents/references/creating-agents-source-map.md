@@ -56,7 +56,7 @@ a separate server surface and are not taught by this skill.
 | Claim handler | server/internal/handler/daemon_tasks.go:21 |
 | Fresh agent read, workspace skills and filtered built-ins | server/internal/handler/daemon_tasks.go:72-80 |
 | TaskAgentData carries instructions, env, args, model, thinking and MCP | server/internal/handler/daemon_tasks.go:105-119 |
-| Workspace skill loading | server/internal/service/task_fail.go:571-592 |
+| Workspace skill loading | server/internal/service/task_fail.go:589-610 |
 | Embedded built-in skill loader | server/internal/service/builtin_skills.go:10-68 |
 
 ## Persistence

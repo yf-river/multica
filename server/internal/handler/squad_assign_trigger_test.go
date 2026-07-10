@@ -617,6 +617,26 @@ func TestFailTaskBlocksSquadSOPIssueWithStructuredComment(t *testing.T) {
 	}
 
 	rawProviderTrace := "I'll start by understanding the issue context. Tool TaskCreate not found in agent cli. " + strings.Repeat("模型输出碎片", 60)
+	removeFailure := installCompletionFallbackCommentFailure(t, fixture.taskID)
+	if _, err := testHandler.TaskService.FailTask(
+		ctx,
+		parseUUID(fixture.taskID),
+		rawProviderTrace,
+		"",
+		"",
+		"agent_error.model_not_found_or_unavailable",
+	); err == nil {
+		t.Fatal("task failure succeeded despite forced structured failure comment error")
+	}
+	var rolledBackStatus string
+	if err := testPool.QueryRow(ctx, `SELECT status FROM agent_task_queue WHERE id = $1`, fixture.taskID).Scan(&rolledBackStatus); err != nil {
+		t.Fatalf("load task after structured failure comment rollback: %v", err)
+	}
+	if rolledBackStatus != "running" {
+		t.Fatalf("task status after structured failure comment rollback = %q, want running", rolledBackStatus)
+	}
+	removeFailure()
+
 	failW := httptest.NewRecorder()
 	failReq := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+fixture.taskID+"/fail", map[string]any{
 		"error":          rawProviderTrace,

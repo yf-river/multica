@@ -390,23 +390,6 @@ type agentCommentProjection struct {
 	threadReopened  bool
 }
 
-func (s *TaskService) createAgentComment(ctx context.Context, issueID, agentID pgtype.UUID, content, commentType string, parentID, sourceTaskID pgtype.UUID) {
-	if content == "" {
-		return
-	}
-	var projection *agentCommentProjection
-	err := s.runInTx(ctx, func(queries *db.Queries) error {
-		var err error
-		projection, err = createAgentCommentInTx(ctx, queries, issueID, agentID, content, commentType, parentID, sourceTaskID)
-		return err
-	})
-	if err != nil {
-		slog.Warn("create agent comment transaction failed", "issue_id", util.UUIDToString(issueID), "agent_id", util.UUIDToString(agentID), "error", err)
-		return
-	}
-	s.publishAgentCommentProjection(ctx, projection)
-}
-
 func createAgentCommentInTx(
 	ctx context.Context,
 	queries *db.Queries,
