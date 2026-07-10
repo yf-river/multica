@@ -218,5 +218,13 @@ func (s *AutopilotService) CaptureAutopilotRunDone(ctx context.Context, event ev
 			reason = run.FailureReason.String
 		}
 		s.captureAutopilotRunFailed(autopilot, run, run.Source, reason)
+	case "skipped":
+		if s.TaskSvc != nil && s.TaskSvc.Metrics != nil {
+			reason := "unknown"
+			if run.FailureReason.Valid && strings.TrimSpace(run.FailureReason.String) != "" {
+				reason = run.FailureReason.String
+			}
+			s.TaskSvc.Metrics.RecordAutopilotRunSkipped(run.Source, reason)
+		}
 	}
 }

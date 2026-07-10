@@ -91,30 +91,26 @@ func (s *AutopilotService) DispatchAutopilot(
 	case "create_issue":
 		triggerTimezone := s.resolveAutopilotTriggerTimezone(ctx, triggerID)
 		if err := s.dispatchCreateIssue(ctx, autopilot, &run, triggerTimezone); err != nil {
-			if skipped := s.handleDispatchSkip(ctx, autopilot, &run, err); skipped != nil {
-				return skipped, nil
+			skipped, skipErr := s.handleDispatchSkip(ctx, autopilot, &run, err)
+			if skipped {
+				return &run, skipErr
 			}
-			s.failRun(ctx, run.ID, err.Error())
-			s.captureAutopilotRunFailed(autopilot, run, source, err.Error())
-			return &run, fmt.Errorf("dispatch create_issue: %w", err)
+			dispatchErr := fmt.Errorf("dispatch create_issue: %w", err)
+			return &run, s.failDispatchRun(ctx, autopilot, &run, err.Error(), dispatchErr)
 		}
 	case "run_only":
 		if err := s.dispatchRunOnly(ctx, autopilot, &run); err != nil {
-			if skipped := s.handleDispatchSkip(ctx, autopilot, &run, err); skipped != nil {
-				return skipped, nil
+			skipped, skipErr := s.handleDispatchSkip(ctx, autopilot, &run, err)
+			if skipped {
+				return &run, skipErr
 			}
-			s.failRun(ctx, run.ID, err.Error())
-			s.captureAutopilotRunFailed(autopilot, run, source, err.Error())
-			return &run, fmt.Errorf("dispatch run_only: %w", err)
+			dispatchErr := fmt.Errorf("dispatch run_only: %w", err)
+			return &run, s.failDispatchRun(ctx, autopilot, &run, err.Error(), dispatchErr)
 		}
 	default:
-		s.failRun(ctx, run.ID, "unknown execution_mode: "+autopilot.ExecutionMode)
-		s.captureAutopilotRunFailed(autopilot, run, source, "unknown execution_mode: "+autopilot.ExecutionMode)
-		return &run, fmt.Errorf("unknown execution_mode: %s", autopilot.ExecutionMode)
+		dispatchErr := fmt.Errorf("unknown execution_mode: %s", autopilot.ExecutionMode)
+		return &run, s.failDispatchRun(ctx, autopilot, &run, dispatchErr.Error(), dispatchErr)
 	}
-
-	// Update last_run_at on the autopilot.
-	s.Queries.UpdateAutopilotLastRunAt(ctx, autopilot.ID)
 
 	// Publish run start event.
 	s.Bus.Publish(events.Event{
@@ -147,6 +143,13 @@ func (s *AutopilotService) dispatchCreateIssue(ctx context.Context, ap db.Autopi
 	leader, _, err := s.resolveAutopilotLeader(ctx, ap)
 	if err != nil {
 		return fmt.Errorf("resolve leader: %w", err)
+	}
+	// Re-check the private squad leader after the admission gate and before
+	// opening the write transaction. A leader rotation can happen between the
+	// two reads; rejecting here prevents an inaccessible Issue from committing
+	// before the dispatch is classified as skipped.
+	if ap.AssigneeType == "squad" && leader.Scope == "personal" && !s.canCreatorAccessPrivateLeader(ctx, ap, leader) {
+		return &errDispatchSkipped{reason: formatAdmissionReason(ap, "creator cannot access private squad leader")}
 	}
 
 	tx, err := s.TxStarter.Begin(ctx)
@@ -244,6 +247,9 @@ func (s *AutopilotService) dispatchCreateIssue(ctx context.Context, ap db.Autopi
 	if err != nil {
 		return err
 	}
+	if err := qtx.UpdateAutopilotLastRunAt(ctx, ap.ID); err != nil {
+		return fmt.Errorf("update autopilot last run: %w", err)
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("commit tx: %w", err)
@@ -265,12 +271,6 @@ func (s *AutopilotService) dispatchCreateIssue(ctx context.Context, ap db.Autopi
 	// MUL-2429); agent-assigned autopilots go through the standard issue
 	// path. Both code paths land in agent_task_queue with agent_id = leader.
 	if ap.AssigneeType == "squad" {
-		// Fail-closed personal-leader gate: if the leader is personal, verify
-		// the autopilot creator still has access. This catches illegitimate
-		// configs that were saved before the save-time gate was added.
-		if leader.Scope == "personal" && !s.canCreatorAccessPrivateLeader(ctx, ap, leader) {
-			return fmt.Errorf("autopilot creator cannot access private squad leader")
-		}
 		if _, err := s.TaskSvc.EnqueueTaskForSquadLeader(ctx, issue, leader.ID, pgtype.UUID{}); err != nil {
 			return fmt.Errorf("enqueue squad leader task: %w", err)
 		}
@@ -414,7 +414,13 @@ func (s *AutopilotService) dispatchRunOnly(ctx context.Context, ap db.Autopilot,
 		return &errDispatchSkipped{reason: formatAdmissionReason(ap, "creator cannot access private squad leader")}
 	}
 
-	task, err := s.Queries.CreateAutopilotTask(ctx, db.CreateAutopilotTaskParams{
+	tx, err := s.TxStarter.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin run-only dispatch: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	queries := s.Queries.WithTx(tx)
+	task, err := queries.CreateAutopilotTask(ctx, db.CreateAutopilotTaskParams{
 		AgentID:        agent.ID,
 		RuntimeID:      agent.RuntimeID,
 		Priority:       0,
@@ -432,15 +438,20 @@ func (s *AutopilotService) dispatchRunOnly(ctx context.Context, ap db.Autopilot,
 	}
 
 	// Update run with task reference.
-	updatedRun, err := s.Queries.UpdateAutopilotRunRunning(ctx, db.UpdateAutopilotRunRunningParams{
+	updatedRun, err := queries.UpdateAutopilotRunRunning(ctx, db.UpdateAutopilotRunRunningParams{
 		ID:     run.ID,
 		TaskID: task.ID,
 	})
 	if err != nil {
-		slog.Warn("failed to update run with task_id", "run_id", util.UUIDToString(run.ID), "error", err)
-	} else {
-		*run = updatedRun
+		return fmt.Errorf("link run-only task: %w", err)
 	}
+	if err := queries.UpdateAutopilotLastRunAt(ctx, ap.ID); err != nil {
+		return fmt.Errorf("update autopilot last run: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit run-only dispatch: %w", err)
+	}
+	*run = updatedRun
 
 	// Drop the empty-claim cache and wake the daemon. dispatchRunOnly
 	// inserts the task row directly via Queries.CreateAutopilotTask
@@ -459,29 +470,37 @@ func (s *AutopilotService) dispatchRunOnly(ctx context.Context, ap db.Autopilot,
 
 // handleDispatchSkip recognises an errDispatchSkipped returned from a
 // dispatch function and rewrites the in-flight run to `skipped` (instead of
-// `failed`). Returns the updated run on a real skip, nil otherwise — callers
-// fall through to the failure path on nil.
+// `failed`). The bool distinguishes "not a skip" from a failed skip
+// transaction, so callers never misclassify a persistence error as a normal
+// dispatch failure.
 //
 // Lives here, not inside dispatchRunOnly, because the run row was created by
 // DispatchAutopilot up the stack and the failure-vs-skip distinction is
 // owned by the dispatcher entry point. Keeps dispatchRunOnly free of
 // state-mutation helpers.
-func (s *AutopilotService) handleDispatchSkip(ctx context.Context, ap db.Autopilot, run *db.AutopilotRun, err error) *db.AutopilotRun {
+func (s *AutopilotService) handleDispatchSkip(ctx context.Context, ap db.Autopilot, run *db.AutopilotRun, err error) (bool, error) {
 	var skipErr *errDispatchSkipped
 	if !errors.As(err, &skipErr) {
-		return nil
+		return false, nil
 	}
-	updated, uerr := s.Queries.UpdateAutopilotRunSkipped(ctx, db.UpdateAutopilotRunSkippedParams{
+	tx, txErr := s.TxStarter.Begin(ctx)
+	if txErr != nil {
+		return true, fmt.Errorf("begin skipped dispatch: %w", txErr)
+	}
+	defer tx.Rollback(ctx)
+	queries := s.Queries.WithTx(tx)
+	updated, txErr := queries.UpdateAutopilotRunSkipped(ctx, db.UpdateAutopilotRunSkippedParams{
 		ID:            run.ID,
 		FailureReason: pgtype.Text{String: skipErr.reason, Valid: true},
 	})
-	if uerr != nil {
-		slog.Warn("failed to mark dispatch as skipped",
-			"run_id", util.UUIDToString(run.ID), "error", uerr)
-		// Leave the run in its current (running/issue_created) state if
-		// the update failed; the failure monitor will eventually fail it
-		// out, but at least we didn't pretend it succeeded.
-		return nil
+	if txErr != nil {
+		return true, fmt.Errorf("mark dispatch skipped: %w", txErr)
+	}
+	if txErr := queries.UpdateAutopilotLastRunAt(ctx, ap.ID); txErr != nil {
+		return true, fmt.Errorf("update autopilot last run: %w", txErr)
+	}
+	if txErr := tx.Commit(ctx); txErr != nil {
+		return true, fmt.Errorf("commit skipped dispatch: %w", txErr)
 	}
 	*run = updated
 	slog.Info("autopilot dispatch skipped post-admission",
@@ -489,22 +508,33 @@ func (s *AutopilotService) handleDispatchSkip(ctx context.Context, ap db.Autopil
 		"run_id", util.UUIDToString(run.ID),
 		"reason", skipErr.reason,
 	)
-	// Bump last_run_at on parity with recordSkippedRun (pre-flight skip) and
-	// the success path: from the scheduler's / UI's point of view we did
-	// evaluate the trigger this tick, even though the post-admission gate
-	// caught a late readiness regression.
-	s.Queries.UpdateAutopilotLastRunAt(ctx, ap.ID)
 	s.publishRunDone(util.UUIDToString(ap.WorkspaceID), updated, "skipped")
-	return run
+	return true, nil
 }
 
-func (s *AutopilotService) failRun(ctx context.Context, runID pgtype.UUID, reason string) {
-	if _, err := s.Queries.UpdateAutopilotRunFailed(ctx, db.UpdateAutopilotRunFailedParams{
-		ID:            runID,
-		FailureReason: pgtype.Text{String: reason, Valid: true},
-	}); err != nil {
-		slog.Warn("failed to mark autopilot run as failed", "run_id", util.UUIDToString(runID), "error", err)
+func (s *AutopilotService) failDispatchRun(ctx context.Context, ap db.Autopilot, run *db.AutopilotRun, reason string, cause error) error {
+	tx, err := s.TxStarter.Begin(ctx)
+	if err != nil {
+		return errors.Join(cause, fmt.Errorf("begin failed dispatch: %w", err))
 	}
+	defer tx.Rollback(ctx)
+	queries := s.Queries.WithTx(tx)
+	updated, err := queries.UpdateAutopilotRunFailed(ctx, db.UpdateAutopilotRunFailedParams{
+		ID:            run.ID,
+		FailureReason: pgtype.Text{String: reason, Valid: true},
+	})
+	if err != nil {
+		return errors.Join(cause, fmt.Errorf("mark dispatch failed: %w", err))
+	}
+	if err := queries.UpdateAutopilotLastRunAt(ctx, ap.ID); err != nil {
+		return errors.Join(cause, fmt.Errorf("update autopilot last run: %w", err))
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return errors.Join(cause, fmt.Errorf("commit failed dispatch: %w", err))
+	}
+	*run = updated
+	s.publishRunDone(util.UUIDToString(ap.WorkspaceID), updated, "failed")
+	return cause
 }
 
 // shouldSkipDispatch is the pre-flight admission check from MUL-1899.
@@ -697,7 +727,13 @@ func (s *AutopilotService) recordSkippedRun(
 	payload []byte,
 	reason string,
 ) (*db.AutopilotRun, error) {
-	run, err := s.Queries.CreateAutopilotRun(ctx, db.CreateAutopilotRunParams{
+	tx, err := s.TxStarter.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("begin skipped run: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	queries := s.Queries.WithTx(tx)
+	run, err := queries.CreateAutopilotRun(ctx, db.CreateAutopilotRunParams{
 		AutopilotID:    autopilot.ID,
 		TriggerID:      triggerID,
 		Source:         source,
@@ -709,16 +745,20 @@ func (s *AutopilotService) recordSkippedRun(
 		return nil, fmt.Errorf("create skipped run: %w", err)
 	}
 
-	updated, err := s.Queries.UpdateAutopilotRunSkipped(ctx, db.UpdateAutopilotRunSkippedParams{
+	updated, err := queries.UpdateAutopilotRunSkipped(ctx, db.UpdateAutopilotRunSkippedParams{
 		ID:            run.ID,
 		FailureReason: pgtype.Text{String: reason, Valid: true},
 	})
-	if err == nil {
-		run = updated
-	} else {
-		slog.Warn("failed to set skip reason on autopilot run",
-			"run_id", util.UUIDToString(run.ID), "error", err)
+	if err != nil {
+		return nil, fmt.Errorf("set skipped run reason: %w", err)
 	}
+	if err := queries.UpdateAutopilotLastRunAt(ctx, autopilot.ID); err != nil {
+		return nil, fmt.Errorf("update autopilot last run: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit skipped run: %w", err)
+	}
+	run = updated
 
 	slog.Info("autopilot dispatch skipped",
 		"autopilot_id", util.UUIDToString(autopilot.ID),
@@ -726,10 +766,6 @@ func (s *AutopilotService) recordSkippedRun(
 		"source", source,
 		"reason", reason,
 	)
-
-	// Bump last_run_at so scheduler advancement and "last seen" UI both
-	// reflect that we did evaluate the trigger this tick.
-	s.Queries.UpdateAutopilotLastRunAt(ctx, autopilot.ID)
 
 	s.publishRunDone(util.UUIDToString(autopilot.WorkspaceID), run, "skipped")
 	return &run, nil

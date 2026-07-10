@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/service"
@@ -616,6 +618,82 @@ func TestAutopilotTaskProjectionReturnsTransientDatabaseFailure(t *testing.T) {
 	}
 }
 
+func TestAutopilotRunOnlyRollsBackTaskWhenRunLinkFails(t *testing.T) {
+	ctx := context.Background()
+	f := setupAutopilotListenerFixture(t)
+	ap, err := f.queries.CreateAutopilot(ctx, db.CreateAutopilotParams{
+		WorkspaceID:        parseUUID(testWorkspaceID),
+		Title:              "Atomic run-only dispatch",
+		Description:        pgtype.Text{String: "task and run link must commit together", Valid: true},
+		AssigneeType:       "agent",
+		AssigneeID:         parseUUID(f.agentID),
+		Status:             "active",
+		ExecutionMode:      "run_only",
+		IssueTitleTemplate: pgtype.Text{},
+		CreatedByType:      "member",
+		CreatedByID:        parseUUID(testUserID),
+	})
+	if err != nil {
+		t.Fatalf("create autopilot: %v", err)
+	}
+	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM autopilot WHERE id = $1`, ap.ID) })
+	installAutopilotTaskLinkFailure(t, util.UUIDToString(ap.ID))
+
+	run, dispatchErr := f.autopilotSvc.DispatchAutopilot(ctx, ap, pgtype.UUID{}, "manual", nil)
+	if dispatchErr == nil {
+		t.Fatal("run-only dispatch returned success after run link failure")
+	}
+	if run == nil {
+		t.Fatal("failed dispatch did not return its audit run")
+	}
+	var taskCount int
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM agent_task_queue WHERE autopilot_run_id = $1`, run.ID).Scan(&taskCount); err != nil {
+		t.Fatalf("count orphaned run-only tasks: %v", err)
+	}
+	if taskCount != 0 {
+		t.Fatalf("run-link failure left %d executable tasks", taskCount)
+	}
+	persisted, err := f.queries.GetAutopilotRun(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("load failed dispatch run: %v", err)
+	}
+	if persisted.Status != "failed" || !persisted.FailureReason.Valid || !strings.Contains(persisted.FailureReason.String, "link run-only task") {
+		t.Fatalf("failed dispatch run = status %q reason %+v", persisted.Status, persisted.FailureReason)
+	}
+	updatedAutopilot, err := f.queries.GetAutopilot(ctx, ap.ID)
+	if err != nil {
+		t.Fatalf("load autopilot after failed dispatch: %v", err)
+	}
+	if !updatedAutopilot.LastRunAt.Valid {
+		t.Fatal("failed dispatch did not record last_run_at")
+	}
+}
+
+func installAutopilotTaskLinkFailure(t *testing.T, autopilotID string) {
+	t.Helper()
+	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
+	functionName := "autopilot_task_link_fail_fn_" + suffix
+	triggerName := "autopilot_task_link_fail_" + suffix
+	ctx := context.Background()
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON autopilot_run`, triggerName))
+		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, functionName))
+	})
+	if _, err := testPool.Exec(ctx, fmt.Sprintf(`
+		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			RAISE EXCEPTION 'forced autopilot task link failure';
+		END;
+		$$;
+		CREATE TRIGGER %s
+		BEFORE UPDATE ON autopilot_run
+		FOR EACH ROW WHEN (OLD.autopilot_id = '%s' AND NEW.task_id IS NOT NULL)
+		EXECUTE FUNCTION %s();
+	`, functionName, triggerName, autopilotID, functionName)); err != nil {
+		t.Fatalf("install autopilot task link failure: %v", err)
+	}
+}
+
 // TestAutopilotDispatchSkipsWhenRuntimeOffline locks in the MUL-1899
 // admission gate: when the assignee agent's runtime is not online we must
 // record a `skipped` autopilot_run with a failure_reason and NOT enqueue an
@@ -648,6 +726,13 @@ func TestAutopilotDispatchSkipsWhenRuntimeOffline(t *testing.T) {
 	}
 	if run.TaskID.Valid {
 		t.Fatalf("expected no task to be enqueued, got task_id %v", run.TaskID)
+	}
+	updatedAutopilot, err := queries.GetAutopilot(ctx, ap.ID)
+	if err != nil {
+		t.Fatalf("load skipped autopilot: %v", err)
+	}
+	if !updatedAutopilot.LastRunAt.Valid {
+		t.Fatal("skipped dispatch did not record last_run_at")
 	}
 
 	// Defensive: confirm at the DB layer that nothing landed on the queue.

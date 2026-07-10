@@ -29,6 +29,10 @@ Issue/task terminal events update the run through the durable domain-event
 outbox. A transient projection failure is retried; do not infer that a run is
 stuck merely because the task reached a terminal state moments earlier.
 
+For `run_only`, task creation, the run's `task_id`, and `last_run_at` commit
+together. A dispatch persistence failure leaves no executable orphan task and
+records the audit run as failed when the database remains writable.
+
 Execution modes:
 
 - `create_issue` creates a Multica issue, making the run visible as issue state.
