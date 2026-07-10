@@ -12,7 +12,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/multica-ai/multica/server/internal/eventoutbox"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -239,7 +238,7 @@ func (s *TaskService) StartTask(ctx context.Context, taskID pgtype.UUID) (*db.Ag
 	slog.Info("task started", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID))
 	s.autoStartIssueForTask(ctx, task)
 	s.captureTaskStarted(ctx, task)
-	s.syncSquadSOPTaskStep(ctx, task, "步骤开始", "进行中")
+	s.syncSquadSOPTaskStarted(ctx, task)
 	// Tell every connected workspace WS client that this task transitioned
 	// (dispatched | waiting_local_directory) → running. Without this, the
 	// workspace-wide `agentTaskSnapshot` query only refreshes on the 30s
@@ -260,11 +259,10 @@ type squadSOPProfile struct {
 	Steps []squadSOPProfileStep `json:"steps"`
 }
 
-func (s *TaskService) syncSquadSOPTaskStep(ctx context.Context, task db.AgentTaskQueue, eventType, eventStatus string) {
-	s.syncSquadSOPTaskStepWithResult(ctx, task, eventType, eventStatus, nil)
-}
-
-func (s *TaskService) syncSquadSOPTaskStepWithResult(ctx context.Context, task db.AgentTaskQueue, eventType, eventStatus string, result []byte) {
+// syncSquadSOPTaskStarted preserves the existing start-time projection. Task
+// terminal events use projectSquadSOPTerminal so their task/event/run/Issue
+// writes share one transaction; start-time projection is a separate slice.
+func (s *TaskService) syncSquadSOPTaskStarted(ctx context.Context, task db.AgentTaskQueue) {
 	if !task.IssueID.Valid {
 		return
 	}
@@ -290,7 +288,7 @@ func (s *TaskService) syncSquadSOPTaskStepWithResult(ctx context.Context, task d
 		return
 	}
 	steps := parseSquadSOPProfileSteps(run.Profile)
-	step, index, ok := matchSquadSOPStepForAgentRecord(steps, agent)
+	step, _, ok := matchSquadSOPStepForAgentRecord(steps, agent)
 	if !ok {
 		return
 	}
@@ -304,23 +302,9 @@ func (s *TaskService) syncSquadSOPTaskStepWithResult(ctx context.Context, task d
 		return
 	}
 	for _, existing := range events {
-		if existing.TaskID.Valid && existing.TaskID == task.ID && existing.EventType == eventType {
+		if existing.TaskID.Valid && existing.TaskID == task.ID && existing.EventType == "步骤开始" {
 			return
 		}
-	}
-
-	var duration pgtype.Int8
-	if eventType != "步骤开始" && task.StartedAt.Valid && task.CompletedAt.Valid {
-		duration = pgtype.Int8{Int64: task.CompletedAt.Time.Sub(task.StartedAt.Time).Milliseconds(), Valid: true}
-	}
-	reason := "Agent task 状态自动同步到 SOP 阶段。"
-	switch eventType {
-	case "步骤开始":
-		reason = "Agent task 已开始，自动记录 SOP 阶段开始。"
-	case "步骤完成":
-		reason = "Agent task 已完成，自动记录 SOP 阶段完成。"
-	case "步骤失败":
-		reason = "Agent task 已失败，自动记录 SOP 阶段失败。"
 	}
 	if _, err := s.Queries.CreateSquadSOPStepEvent(ctx, db.CreateSquadSOPStepEventParams{
 		RunID:         run.ID,
@@ -330,10 +314,9 @@ func (s *TaskService) syncSquadSOPTaskStepWithResult(ctx context.Context, task d
 		StepKey:       step.Key,
 		StepName:      step.Name,
 		RoleKey:       step.RoleKey,
-		EventType:     eventType,
-		Status:        eventStatus,
-		Reason:        reason,
-		DurationMs:    duration,
+		EventType:     "步骤开始",
+		Status:        "进行中",
+		Reason:        "Agent task 已开始，自动记录 SOP 阶段开始。",
 		CreatedByType: "system",
 		TaskID:        task.ID,
 	}); err != nil {
@@ -341,44 +324,26 @@ func (s *TaskService) syncSquadSOPTaskStepWithResult(ctx context.Context, task d
 			"run_id", util.UUIDToString(run.ID),
 			"task_id", util.UUIDToString(task.ID),
 			"step_key", step.Key,
-			"event_type", eventType,
+			"event_type", "步骤开始",
 			"error", err,
 		)
 		return
 	}
 
-	nextStatus, nextStepKey, shouldUpdate := nextSquadSOPStateForTaskEvent(issue, steps, index, step.Key, eventType)
-	if !shouldUpdate {
-		return
-	}
-	finalStepBlocked := eventType == "步骤完成" && nextStatus == "已完成" && squadSOPFinalOutputBlocked(result)
-	if finalStepBlocked {
-		nextStatus = "已阻塞"
-	}
-	updatedRun, err := s.Queries.UpdateSquadSOPRunStatus(ctx, db.UpdateSquadSOPRunStatusParams{
+	_, err = s.Queries.UpdateSquadSOPRunStatus(ctx, db.UpdateSquadSOPRunStatusParams{
 		ID:             run.ID,
 		WorkspaceID:    run.WorkspaceID,
-		Status:         nextStatus,
-		CurrentStepKey: pgtype.Text{String: nextStepKey, Valid: nextStepKey != ""},
+		Status:         "进行中",
+		CurrentStepKey: pgtype.Text{String: step.Key, Valid: step.Key != ""},
 	})
 	if err != nil {
 		slog.Warn("sync squad SOP run status failed",
 			"run_id", util.UUIDToString(run.ID),
 			"task_id", util.UUIDToString(task.ID),
 			"step_key", step.Key,
-			"event_type", eventType,
+			"event_type", "步骤开始",
 			"error", err,
 		)
-		return
-	}
-	if eventType == "步骤完成" && updatedRun.Status == "已完成" {
-		s.closeIssueAfterCompletedSOPRun(ctx, issue)
-	}
-	if eventType == "步骤完成" && updatedRun.Status == "已阻塞" {
-		s.blockIssueAfterBlockedSOPRun(ctx, issue)
-	}
-	if eventType == "步骤失败" && updatedRun.Status == "已失败" {
-		s.blockIssueAfterBlockedSOPRun(ctx, issue)
 	}
 }
 
@@ -487,111 +452,6 @@ func taskFailureSummary(errMsg string) string {
 		return "原始错误较长，已保留在任务运行记录中。"
 	}
 	return errMsg
-}
-
-func (s *TaskService) closeIssueAfterCompletedSOPRun(ctx context.Context, issue db.Issue) {
-	switch issue.Status {
-	case "done", "cancelled", "blocked":
-		return
-	}
-	pullRequests, err := s.Queries.ListPullRequestsByIssue(ctx, issue.ID)
-	if err != nil {
-		slog.Warn("auto-close issue after completed SOP skipped: pull request lookup failed",
-			"issue_id", util.UUIDToString(issue.ID),
-			"error", err,
-		)
-		return
-	}
-	if s.issueRequiresGongfengMR(ctx, issue) {
-		if len(pullRequests) > 0 {
-			if _, err := s.updateIssueStatusAfterCompletedSOPRun(ctx, issue, "done"); err != nil {
-				slog.Warn("auto-close issue after completed SOP with linked MR failed",
-					"issue_id", util.UUIDToString(issue.ID),
-					"error", err,
-				)
-				return
-			}
-			slog.Info("issue auto-closed after completed SOP run with linked MR", "issue_id", util.UUIDToString(issue.ID))
-			return
-		}
-		blockedIssue, err := s.updateIssueStatusAfterCompletedSOPRun(ctx, issue, "blocked")
-		if err != nil {
-			slog.Warn("block issue after completed SOP without MR failed",
-				"issue_id", util.UUIDToString(issue.ID),
-				"error", err,
-			)
-			return
-		}
-		s.recordMissingMRGateComment(ctx, blockedIssue)
-		slog.Info("issue blocked after completed SOP run without linked MR", "issue_id", util.UUIDToString(issue.ID))
-		return
-	}
-	if len(pullRequests) > 0 {
-		return
-	}
-	if _, err := s.updateIssueStatusAfterCompletedSOPRun(ctx, issue, "done"); err != nil {
-		slog.Warn("auto-close issue after completed SOP failed",
-			"issue_id", util.UUIDToString(issue.ID),
-			"error", err,
-		)
-		return
-	}
-	slog.Info("issue auto-closed after completed SOP run", "issue_id", util.UUIDToString(issue.ID))
-}
-
-func (s *TaskService) blockIssueAfterBlockedSOPRun(ctx context.Context, issue db.Issue) {
-	switch issue.Status {
-	case "done", "cancelled", "blocked":
-		return
-	}
-	if _, err := s.updateIssueStatusAfterCompletedSOPRun(ctx, issue, "blocked"); err != nil {
-		slog.Warn("block issue after blocked SOP run failed",
-			"issue_id", util.UUIDToString(issue.ID),
-			"error", err,
-		)
-		return
-	}
-	slog.Info("issue blocked after blocked SOP run", "issue_id", util.UUIDToString(issue.ID))
-}
-
-func (s *TaskService) updateIssueStatusAfterCompletedSOPRun(ctx context.Context, issue db.Issue, status string) (db.Issue, error) {
-	if status == "done" {
-		incomplete, err := s.countIncompleteChildIssues(ctx, issue)
-		if err != nil {
-			return db.Issue{}, err
-		}
-		if incomplete > 0 {
-			return db.Issue{}, fmt.Errorf("%w: %d incomplete child issue(s)", errIssueDoneBlockedByChildren, incomplete)
-		}
-	}
-	updated, err := s.persistIssueUpdate(ctx, issue, taskIssueUpdateChanges{Status: true}, func(queries *db.Queries) (db.Issue, error) {
-		return queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
-			ID:          issue.ID,
-			Status:      status,
-			WorkspaceID: issue.WorkspaceID,
-		})
-	})
-	if err != nil {
-		return db.Issue{}, err
-	}
-	if s.IssueStatusChanged != nil {
-		s.IssueStatusChanged(ctx, issue, updated, "system", "")
-	}
-	return updated, nil
-}
-
-func (s *TaskService) countIncompleteChildIssues(ctx context.Context, issue db.Issue) (int, error) {
-	children, err := s.Queries.ListChildIssues(ctx, issue.ID)
-	if err != nil {
-		return 0, err
-	}
-	incomplete := 0
-	for _, child := range children {
-		if child.Status != "done" {
-			incomplete++
-		}
-	}
-	return incomplete, nil
 }
 
 func (s *TaskService) autoStartIssueForTask(ctx context.Context, task db.AgentTaskQueue) {
@@ -774,62 +634,6 @@ func isAssignmentIssueTaskForStatusAutomation(task db.AgentTaskQueue) bool {
 		return false
 	}
 	return true
-}
-
-func (s *TaskService) issueRequiresGongfengMR(ctx context.Context, issue db.Issue) bool {
-	if !issue.ProjectID.Valid {
-		return false
-	}
-	resources, err := s.Queries.ListProjectResources(ctx, issue.ProjectID)
-	if err != nil {
-		slog.Warn("detect issue gongfeng MR requirement failed",
-			"issue_id", util.UUIDToString(issue.ID),
-			"project_id", util.UUIDToString(issue.ProjectID),
-			"error", err,
-		)
-		return false
-	}
-	for _, resource := range resources {
-		if resource.ResourceType == "gongfeng_repo" {
-			return true
-		}
-	}
-	return false
-}
-
-func (s *TaskService) recordMissingMRGateComment(ctx context.Context, issue db.Issue) {
-	content := strings.TrimSpace(`05 验证已完成，但平台还没有关联 MR。请通过平台创建并关联 MR 后再进入人工 CodeReview：
-
-multica issue mr create <issue-id> --provider gongfeng --project-path <project-path> --source-branch <branch> --target-branch <target-branch> --title "<title>" --output json
-
-创建成功后，平台会把 MR 写入任务的关联 MR 区域。`)
-	var comment db.Comment
-	var createdEvent events.Event
-	err := s.runInTx(ctx, func(queries *db.Queries) error {
-		var err error
-		comment, err = queries.CreateComment(ctx, db.CreateCommentParams{
-			IssueID:     issue.ID,
-			WorkspaceID: issue.WorkspaceID,
-			AuthorType:  "system",
-			AuthorID:    util.MustParseUUID("00000000-0000-0000-0000-000000000000"),
-			Content:     content,
-			Type:        "comment",
-		})
-		if err != nil {
-			return err
-		}
-		createdEvent = taskCommentCreatedEvent(issue, comment, "system", "")
-		createdEvent, err = eventoutbox.Enqueue(ctx, queries, createdEvent)
-		return err
-	})
-	if err != nil {
-		slog.Warn("create missing MR gate comment transaction failed",
-			"issue_id", util.UUIDToString(issue.ID),
-			"error", err,
-		)
-		return
-	}
-	s.Bus.Publish(createdEvent)
 }
 
 func parseSquadSOPProfileSteps(raw []byte) []squadSOPProfileStep {

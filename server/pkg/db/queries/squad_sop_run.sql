@@ -31,6 +31,26 @@ WHERE issue_id = $1 AND status IN ('待开始', '进行中', '已阻塞')
 ORDER BY created_at DESC
 LIMIT 1;
 
+-- name: LockOpenSquadSOPRunByIssue :one
+SELECT * FROM squad_sop_run
+WHERE issue_id = $1 AND status IN ('待开始', '进行中', '已阻塞')
+ORDER BY created_at DESC
+LIMIT 1
+FOR UPDATE;
+
+-- name: LockSquadSOPRunForAutomaticTaskEvent :one
+-- Replays of an already-terminal task must repair the exact run that owns the
+-- durable automatic event, not whichever newer run happens to be open now.
+SELECT r.*
+FROM squad_sop_run r
+JOIN squad_sop_step_event e ON e.run_id = r.id
+WHERE e.task_id = $1
+  AND e.event_type = $2
+  AND e.created_by_type = 'system'
+ORDER BY e.created_at DESC, e.id DESC
+LIMIT 1
+FOR UPDATE OF r;
+
 -- name: GetSquadSOPRunInWorkspace :one
 SELECT * FROM squad_sop_run
 WHERE id = $1 AND workspace_id = $2;
@@ -77,6 +97,36 @@ INSERT INTO squad_sop_step_event (
     COALESCE(sqlc.narg('evidence')::jsonb, '{}'::jsonb),
     $10, sqlc.narg('duration_ms'), $11, sqlc.narg('created_by_id'), sqlc.narg('task_id')
 )
+RETURNING *;
+
+-- name: UpsertAutomaticSquadSOPTerminalEvent :one
+-- Migration 006 guarantees one system-owned terminal event per
+-- (run, task, event type). The no-op conflict update returns the durable row
+-- so replay can continue repairing run/Issue projection instead of treating
+-- an existing event as proof that every downstream write succeeded.
+INSERT INTO squad_sop_step_event (
+    run_id, workspace_id, issue_id, squad_id,
+    step_key, step_name, role_key, event_type, status,
+    evidence, reason, duration_ms, created_by_type, task_id
+) VALUES (
+    $1, $2, $3, $4,
+    $5, $6, $7, $8, $9,
+    '{}'::jsonb, $10, sqlc.narg('duration_ms'), 'system', $11
+)
+ON CONFLICT (run_id, task_id, event_type)
+WHERE task_id IS NOT NULL
+  AND created_by_type = 'system'
+  AND event_type IN ('步骤完成', '步骤失败')
+DO UPDATE SET status = squad_sop_step_event.status
+RETURNING *;
+
+-- name: UpdateAutomaticSquadSOPTerminalEventEvidence :one
+UPDATE squad_sop_step_event
+SET evidence = sqlc.arg('evidence')::jsonb
+WHERE id = $1
+  AND task_id IS NOT NULL
+  AND created_by_type = 'system'
+  AND event_type IN ('步骤完成', '步骤失败')
 RETURNING *;
 
 -- name: ListSquadSOPStepEventsByRun :many

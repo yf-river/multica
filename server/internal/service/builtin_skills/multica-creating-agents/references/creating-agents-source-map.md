@@ -30,15 +30,15 @@ a separate server surface and are not taught by this skill.
 
 | Contract | Current source |
 |---|---|
-| Response redacts custom_env and MCP secrets | server/internal/handler/agent.go:33-76 |
+| Response redacts custom_env and MCP secrets | server/internal/handler/agent.go:79-135 |
 | CreateAgentRequest current fields | server/internal/handler/agent.go:729 |
 | CreateAgent boundary | server/internal/handler/agent.go:766 |
-| Required name/runtime, description cap, runtime access | server/internal/handler/agent.go:784-824 |
-| Provider thinking-level validation | server/internal/handler/agent.go:836-844 |
-| Current defaults and database insert | server/internal/handler/agent.go:851-898 |
+| Required name/runtime, description cap, runtime access | server/internal/handler/agent.go:781-832 |
+| Provider thinking-level validation | server/internal/handler/agent.go:834-841 |
+| Current defaults and database insert | server/internal/handler/agent.go:851-894 |
 | UpdateAgent boundary | server/internal/handler/agent.go:1061 |
-| custom_env rejected in generic update; use env endpoint | server/internal/handler/agent.go:1109-1115 |
-| MCP tri-state update/clear | server/internal/handler/agent.go:1140-1150,1255-1272 |
+| custom_env rejected in generic update; use env endpoint | server/internal/handler/agent.go:1078-1088 |
+| MCP tri-state update/clear | server/internal/handler/agent.go:1122-1126,1282-1292 |
 
 ## Env authorization
 
@@ -47,17 +47,17 @@ a separate server surface and are not taught by this skill.
 | Shared authorizeAgentEnv gate | server/internal/handler/agent_env.go:66 |
 | Agent actors denied; owner/admin required | server/internal/handler/agent_env.go:80-91 |
 | GET and PUT handlers | server/internal/handler/agent_env.go:106,154 |
-| Routes | server/cmd/server/router.go:952-953 |
+| Routes | server/cmd/server/router.go:1005-1006 |
 
 ## Claim-time runtime payload
 
 | Contract | Current source |
 |---|---|
 | Claim handler | server/internal/handler/daemon_tasks.go:21 |
-| Fresh agent read, workspace skills and filtered built-ins | server/internal/handler/daemon_tasks.go:72-80 |
-| TaskAgentData carries instructions, env, args, model, thinking and MCP | server/internal/handler/daemon_tasks.go:105-119 |
-| Workspace skill loading | server/internal/service/task_fail.go:552-573 |
-| Embedded built-in skill loader | server/internal/service/builtin_skills.go:10-68 |
+| Fresh agent read, workspace skills and filtered built-ins | server/internal/handler/daemon_tasks.go:71-80 |
+| TaskAgentData carries instructions, env, args, model, thinking and MCP | server/internal/handler/daemon_tasks.go:105-116 |
+| Workspace skill loading | server/internal/service/task_fail.go:541-562 |
+| Embedded built-in skill loader | server/internal/service/builtin_skills.go:10-71 |
 
 ## Persistence
 

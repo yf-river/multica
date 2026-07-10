@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -110,7 +111,9 @@ func (s *TaskService) failTasksDurably(
 	var failed []db.AgentTaskQueue
 	var persistedEvents []events.Event
 	var createdRetries []db.AgentTaskQueue
+	retriedTasks := make(map[pgtype.UUID]struct{})
 	var sourceSummaries []issueSourceSummaryProjection
+	var sopProjections []*squadSOPTerminalProjection
 	var issueStatuses []*taskIssueStatusProjection
 	err := s.runInTx(ctx, func(queries *db.Queries) error {
 		var err error
@@ -118,6 +121,18 @@ func (s *TaskService) failTasksDurably(
 		if err != nil {
 			return err
 		}
+		// Bulk UPDATE ... RETURNING has no row-order contract. Project in a
+		// stable issue/task order so every sweeper acquires Issue locks in the
+		// same sequence and concurrent terminal outcomes cannot depend on the
+		// planner's return order.
+		sort.Slice(failed, func(i, j int) bool {
+			leftIssue := util.UUIDToString(failed[i].IssueID)
+			rightIssue := util.UUIDToString(failed[j].IssueID)
+			if leftIssue != rightIssue {
+				return leftIssue < rightIssue
+			}
+			return util.UUIDToString(failed[i].ID) < util.UUIDToString(failed[j].ID)
+		})
 		for _, task := range failed {
 			child, created, err := s.materializeRetryTask(ctx, queries, task)
 			if err != nil {
@@ -125,6 +140,9 @@ func (s *TaskService) failTasksDurably(
 			}
 			if created {
 				createdRetries = append(createdRetries, *child)
+			}
+			if child != nil {
+				retriedTasks[task.ID] = struct{}{}
 			}
 		}
 		persistedEvents, err = s.enqueueTaskEvents(ctx, queries, protocol.EventTaskFailed, failed)
@@ -141,7 +159,31 @@ func (s *TaskService) failTasksDurably(
 				sourceSummaries = append(sourceSummaries, projection)
 				continue
 			}
-			projection, err := s.projectTaskFailureIssueStatus(ctx, queries, task, false)
+			if _, retried := retriedTasks[task.ID]; retried {
+				// A durable retry is now the active outcome for this failure. Do
+				// not let a comment written by the failed attempt advance the SOP
+				// or enqueue a leader continuation while that retry is pending.
+				continue
+			}
+			delivered, err := squadSOPTaskHasDeliveryComment(ctx, queries, task)
+			if err != nil {
+				return fmt.Errorf("classify failed Squad SOP task %s: %w", util.UUIDToString(task.ID), err)
+			}
+			outcome := failedSquadSOPOutcome()
+			if delivered {
+				if err := s.linkGongfengMRsFromTaskComments(ctx, queries, task); err != nil {
+					return fmt.Errorf("link merge requests for delivered failed task %s: %w", util.UUIDToString(task.ID), err)
+				}
+				outcome = completedSquadSOPOutcome(nil)
+			}
+			sopProjection, err := s.projectSquadSOPTerminal(ctx, queries, task, outcome)
+			if err != nil {
+				return fmt.Errorf("project failed Squad SOP task %s: %w", util.UUIDToString(task.ID), err)
+			}
+			if sopProjection != nil {
+				sopProjections = append(sopProjections, sopProjection)
+			}
+			projection, err := s.projectTaskFailureIssueStatus(ctx, queries, task, delivered)
 			if err != nil {
 				return fmt.Errorf("project failed task issue status %s: %w", util.UUIDToString(task.ID), err)
 			}
@@ -157,6 +199,9 @@ func (s *TaskService) failTasksDurably(
 	s.publishTaskEvents(persistedEvents)
 	for _, projection := range sourceSummaries {
 		s.publishIssueSourceSummaryProjection(ctx, projection)
+	}
+	for _, projection := range sopProjections {
+		s.publishSquadSOPTerminalProjection(ctx, projection)
 	}
 	for _, projection := range issueStatuses {
 		s.publishTaskIssueStatusProjection(ctx, projection)

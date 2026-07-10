@@ -13,13 +13,13 @@ Current evidence for issue execution, MR linkage and status-trigger behavior.
 
 | Contract | Current source |
 |---|---|
-| CLI pull-requests command | server/cmd/multica/cmd_issue.go:105,594 |
-| GET issue pull requests route | server/cmd/server/router.go:717 |
+| CLI pull-requests command | server/cmd/multica/cmd_issue.go:142,594 |
+| GET issue pull requests route | server/cmd/server/router.go:770 |
 | List handler and response mapper | server/internal/handler/github.go:188,594 |
-| Explicit merge-request create route/handler | server/cmd/server/router.go:719; server/internal/handler/github.go:674 |
+| Explicit merge-request create route/handler | server/cmd/server/router.go:772; server/internal/handler/github.go:674 |
 | CLI mr create/list/link | server/cmd/multica/cmd_issue_pull_request.go |
 | Provider lifecycle state fold | server/internal/handler/github_webhook.go:522 |
-| SOP completion MR gate | server/internal/service/task_claim.go:492 |
+| SOP completion MR gate and atomic local link projection | server/internal/service/task_sop_terminal_projection.go:433-566; server/internal/service/task_complete.go:477 |
 
 The durable issue association is the explicit platform row created or linked
 through the API/CLI. Human-readable issue keys in titles or branches are not a
@@ -33,12 +33,12 @@ closed, draft or open. checks_conclusion and check counts report CI state.
 
 | Contract | Current source |
 |---|---|
-| CreateIssue boundary | server/internal/handler/issue.go:591 |
-| Current assignee pair validation | server/internal/handler/issue.go:1212 |
-| Agent non-backlog enqueue decision | server/internal/handler/issue.go:1283 |
-| UpdateIssue and backlog promotion | server/internal/handler/issue.go:893,1181 |
-| Batch update equivalent | server/internal/handler/issue_batch.go:17-260 |
-| Child done parent notification/dispatch | server/internal/handler/issue_child_done.go:15-387 |
+| CreateIssue boundary | server/internal/handler/issue.go:593 |
+| Current assignee pair validation | server/internal/handler/issue.go:1298 |
+| Agent non-backlog enqueue decision | server/internal/handler/issue.go:1369 |
+| UpdateIssue and backlog promotion | server/internal/handler/issue.go:899,1267 |
+| Batch update equivalent | server/internal/handler/issue_batch.go:18-357 |
+| Child done parent notification/dispatch | server/internal/handler/issue_child_done.go:51-397 |
 
 An agent-assigned non-backlog issue may enqueue immediately. Backlog is the
 parking state; promotion to a non-terminal executable state runs the readiness
@@ -48,7 +48,7 @@ and dedup path.
 
 | Contract | Current source |
 |---|---|
-| metadata set/delete commands | server/cmd/multica/cmd_issue_metadata.go:80-113 |
-| metadata PUT/DELETE routes | server/cmd/server/router.go:714-715 |
+| metadata set/delete commands | server/cmd/multica/cmd_issue_metadata.go:226,256 |
+| metadata PUT/DELETE routes | server/cmd/server/router.go:767-768 |
 
 Values are JSON by default; the type flag forces string, number or bool.

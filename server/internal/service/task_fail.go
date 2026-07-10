@@ -37,6 +37,8 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 	var deliveryCommentPosted bool
 	var failureComment *agentCommentProjection
 	var issueStatus *taskIssueStatusProjection
+	var sopProjection *squadSOPTerminalProjection
+	terminalTransitioned := false
 	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
 		t, err := qtx.FailAgentTask(ctx, db.FailAgentTaskParams{
 			ID:            taskID,
@@ -49,6 +51,7 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 			return err
 		}
 		task = t
+		terminalTransitioned = true
 
 		// Keep resume-unsafe sessions on the task row for observability, but
 		// do not promote them to the chat-level resume pointer.
@@ -73,6 +76,9 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 		retried, retryCreated, err = s.materializeRetryTask(ctx, qtx, task)
 		if err != nil {
 			return fmt.Errorf("materialize task retry: %w", err)
+		}
+		if err := lockIssueForTaskTerminalProjection(ctx, qtx, task); err != nil {
+			return err
 		}
 		failedEvent, err = s.enqueueTaskEvent(ctx, qtx, protocol.EventTaskFailed, task)
 		if err != nil {
@@ -113,11 +119,27 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 				}
 			}
 		}
+		outcome := failedSquadSOPOutcome()
+		if deliveryCommentPosted {
+			if err := s.linkGongfengMRsFromTaskComments(ctx, qtx, task); err != nil {
+				return fmt.Errorf("link Gongfeng merge requests from delivered failed task: %w", err)
+			}
+			outcome = completedSquadSOPOutcome(nil)
+		}
+		sopProjection, err = s.projectSquadSOPTerminal(ctx, qtx, task, outcome)
+		if err != nil {
+			return err
+		}
 		issueStatus, err = s.projectTaskFailureIssueStatus(ctx, qtx, task, deliveryCommentPosted)
 		return err
 	}); err != nil {
 		if existing, lookupErr := s.Queries.GetAgentTask(ctx, taskID); lookupErr == nil {
-			if errors.Is(err, pgx.ErrNoRows) {
+			if !terminalTransitioned && errors.Is(err, pgx.ErrNoRows) && isTerminalTaskStatus(existing.Status) {
+				repaired, repairErr := s.reconcileExistingSquadSOPTerminal(ctx, existing)
+				if repairErr != nil {
+					return nil, fmt.Errorf("fail task: repair terminal Squad SOP projection: %w", repairErr)
+				}
+				s.publishSquadSOPTerminalProjection(ctx, repaired)
 				slog.Info("fail task: already finalized",
 					"task_id", util.UUIDToString(taskID),
 					"current_status", existing.Status,
@@ -154,13 +176,7 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 		return &task, nil
 	}
 
-	if deliveryCommentPosted {
-		s.linkGongfengMRsFromTaskComments(ctx, task)
-		s.syncSquadSOPTaskStepWithResult(ctx, task, "步骤完成", "已完成", nil)
-		s.enqueueSquadLeaderAfterWorkerStageCompletion(ctx, task)
-	} else if s.shouldSyncSquadSOPTaskFailure(ctx, task, retried) {
-		s.syncSquadSOPTaskStep(ctx, task, "步骤失败", "已失败")
-	}
+	s.publishSquadSOPTerminalProjection(ctx, sopProjection)
 	if retried == nil && !deliveryCommentPosted {
 		s.publishTaskIssueStatusProjection(ctx, issueStatus)
 	}
@@ -178,32 +194,6 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 	s.Bus.Publish(failedEvent)
 
 	return &task, nil
-}
-
-func (s *TaskService) shouldSyncSquadSOPTaskFailure(ctx context.Context, task db.AgentTaskQueue, retried *db.AgentTaskQueue) bool {
-	if retried != nil {
-		return false
-	}
-	if !task.IssueID.Valid {
-		return true
-	}
-	hasActive, err := s.Queries.HasActiveTaskForIssue(ctx, task.IssueID)
-	if err != nil {
-		slog.Warn("failed to check active issue tasks before failing squad SOP run",
-			"issue_id", util.UUIDToString(task.IssueID),
-			"task_id", util.UUIDToString(task.ID),
-			"error", err,
-		)
-		return true
-	}
-	if hasActive {
-		slog.Info("squad SOP task failure did not close run because issue still has active tasks",
-			"issue_id", util.UUIDToString(task.IssueID),
-			"task_id", util.UUIDToString(task.ID),
-		)
-		return false
-	}
-	return true
 }
 
 // retryableReasons enumerates failure reasons that the auto-retry path is

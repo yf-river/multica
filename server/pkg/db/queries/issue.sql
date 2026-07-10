@@ -66,6 +66,15 @@ LIMIT $2 OFFSET $3;
 SELECT * FROM issue
 WHERE id = $1;
 
+-- name: LockIssueForTaskTerminalProjection :one
+-- Terminal task projection locks in task -> issue -> SOP run order. Every
+-- automatic completion/failure path uses this row lock before changing the
+-- run or enqueuing a leader continuation, so concurrent worker terminals for
+-- one issue cannot create divergent run/Issue state.
+SELECT * FROM issue
+WHERE id = $1
+FOR UPDATE;
+
 -- name: GetIssueInWorkspace :one
 SELECT * FROM issue
 WHERE id = $1 AND workspace_id = $2;

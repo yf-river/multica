@@ -552,6 +552,117 @@ func (q *Queries) ListWorkspaceSquadSOPStepEvents(ctx context.Context, arg ListW
 	return items, nil
 }
 
+const lockOpenSquadSOPRunByIssue = `-- name: LockOpenSquadSOPRunByIssue :one
+SELECT id, workspace_id, issue_id, squad_id, leader_task_id, profile_key, profile, status, current_step_key, started_at, completed_at, total_duration_ms, created_at, updated_at FROM squad_sop_run
+WHERE issue_id = $1 AND status IN ('待开始', '进行中', '已阻塞')
+ORDER BY created_at DESC
+LIMIT 1
+FOR UPDATE
+`
+
+func (q *Queries) LockOpenSquadSOPRunByIssue(ctx context.Context, issueID pgtype.UUID) (SquadSopRun, error) {
+	row := q.db.QueryRow(ctx, lockOpenSquadSOPRunByIssue, issueID)
+	var i SquadSopRun
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.IssueID,
+		&i.SquadID,
+		&i.LeaderTaskID,
+		&i.ProfileKey,
+		&i.Profile,
+		&i.Status,
+		&i.CurrentStepKey,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.TotalDurationMs,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const lockSquadSOPRunForAutomaticTaskEvent = `-- name: LockSquadSOPRunForAutomaticTaskEvent :one
+SELECT r.id, r.workspace_id, r.issue_id, r.squad_id, r.leader_task_id, r.profile_key, r.profile, r.status, r.current_step_key, r.started_at, r.completed_at, r.total_duration_ms, r.created_at, r.updated_at
+FROM squad_sop_run r
+JOIN squad_sop_step_event e ON e.run_id = r.id
+WHERE e.task_id = $1
+  AND e.event_type = $2
+  AND e.created_by_type = 'system'
+ORDER BY e.created_at DESC, e.id DESC
+LIMIT 1
+FOR UPDATE OF r
+`
+
+type LockSquadSOPRunForAutomaticTaskEventParams struct {
+	TaskID    pgtype.UUID `json:"task_id"`
+	EventType string      `json:"event_type"`
+}
+
+// Replays of an already-terminal task must repair the exact run that owns the
+// durable automatic event, not whichever newer run happens to be open now.
+func (q *Queries) LockSquadSOPRunForAutomaticTaskEvent(ctx context.Context, arg LockSquadSOPRunForAutomaticTaskEventParams) (SquadSopRun, error) {
+	row := q.db.QueryRow(ctx, lockSquadSOPRunForAutomaticTaskEvent, arg.TaskID, arg.EventType)
+	var i SquadSopRun
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.IssueID,
+		&i.SquadID,
+		&i.LeaderTaskID,
+		&i.ProfileKey,
+		&i.Profile,
+		&i.Status,
+		&i.CurrentStepKey,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.TotalDurationMs,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const updateAutomaticSquadSOPTerminalEventEvidence = `-- name: UpdateAutomaticSquadSOPTerminalEventEvidence :one
+UPDATE squad_sop_step_event
+SET evidence = $2::jsonb
+WHERE id = $1
+  AND task_id IS NOT NULL
+  AND created_by_type = 'system'
+  AND event_type IN ('步骤完成', '步骤失败')
+RETURNING id, run_id, workspace_id, issue_id, squad_id, step_key, step_name, role_key, event_type, status, evidence, reason, duration_ms, created_by_type, created_by_id, task_id, created_at
+`
+
+type UpdateAutomaticSquadSOPTerminalEventEvidenceParams struct {
+	ID       pgtype.UUID `json:"id"`
+	Evidence []byte      `json:"evidence"`
+}
+
+func (q *Queries) UpdateAutomaticSquadSOPTerminalEventEvidence(ctx context.Context, arg UpdateAutomaticSquadSOPTerminalEventEvidenceParams) (SquadSopStepEvent, error) {
+	row := q.db.QueryRow(ctx, updateAutomaticSquadSOPTerminalEventEvidence, arg.ID, arg.Evidence)
+	var i SquadSopStepEvent
+	err := row.Scan(
+		&i.ID,
+		&i.RunID,
+		&i.WorkspaceID,
+		&i.IssueID,
+		&i.SquadID,
+		&i.StepKey,
+		&i.StepName,
+		&i.RoleKey,
+		&i.EventType,
+		&i.Status,
+		&i.Evidence,
+		&i.Reason,
+		&i.DurationMs,
+		&i.CreatedByType,
+		&i.CreatedByID,
+		&i.TaskID,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const updateSquadSOPRunStatus = `-- name: UpdateSquadSOPRunStatus :one
 UPDATE squad_sop_run
 SET status = $3,
@@ -596,6 +707,81 @@ func (q *Queries) UpdateSquadSOPRunStatus(ctx context.Context, arg UpdateSquadSO
 		&i.TotalDurationMs,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const upsertAutomaticSquadSOPTerminalEvent = `-- name: UpsertAutomaticSquadSOPTerminalEvent :one
+INSERT INTO squad_sop_step_event (
+    run_id, workspace_id, issue_id, squad_id,
+    step_key, step_name, role_key, event_type, status,
+    evidence, reason, duration_ms, created_by_type, task_id
+) VALUES (
+    $1, $2, $3, $4,
+    $5, $6, $7, $8, $9,
+    '{}'::jsonb, $10, $12, 'system', $11
+)
+ON CONFLICT (run_id, task_id, event_type)
+WHERE task_id IS NOT NULL
+  AND created_by_type = 'system'
+  AND event_type IN ('步骤完成', '步骤失败')
+DO UPDATE SET status = squad_sop_step_event.status
+RETURNING id, run_id, workspace_id, issue_id, squad_id, step_key, step_name, role_key, event_type, status, evidence, reason, duration_ms, created_by_type, created_by_id, task_id, created_at
+`
+
+type UpsertAutomaticSquadSOPTerminalEventParams struct {
+	RunID       pgtype.UUID `json:"run_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	IssueID     pgtype.UUID `json:"issue_id"`
+	SquadID     pgtype.UUID `json:"squad_id"`
+	StepKey     string      `json:"step_key"`
+	StepName    string      `json:"step_name"`
+	RoleKey     string      `json:"role_key"`
+	EventType   string      `json:"event_type"`
+	Status      string      `json:"status"`
+	Reason      string      `json:"reason"`
+	TaskID      pgtype.UUID `json:"task_id"`
+	DurationMs  pgtype.Int8 `json:"duration_ms"`
+}
+
+// Migration 006 guarantees one system-owned terminal event per
+// (run, task, event type). The no-op conflict update returns the durable row
+// so replay can continue repairing run/Issue projection instead of treating
+// an existing event as proof that every downstream write succeeded.
+func (q *Queries) UpsertAutomaticSquadSOPTerminalEvent(ctx context.Context, arg UpsertAutomaticSquadSOPTerminalEventParams) (SquadSopStepEvent, error) {
+	row := q.db.QueryRow(ctx, upsertAutomaticSquadSOPTerminalEvent,
+		arg.RunID,
+		arg.WorkspaceID,
+		arg.IssueID,
+		arg.SquadID,
+		arg.StepKey,
+		arg.StepName,
+		arg.RoleKey,
+		arg.EventType,
+		arg.Status,
+		arg.Reason,
+		arg.TaskID,
+		arg.DurationMs,
+	)
+	var i SquadSopStepEvent
+	err := row.Scan(
+		&i.ID,
+		&i.RunID,
+		&i.WorkspaceID,
+		&i.IssueID,
+		&i.SquadID,
+		&i.StepKey,
+		&i.StepName,
+		&i.RoleKey,
+		&i.EventType,
+		&i.Status,
+		&i.Evidence,
+		&i.Reason,
+		&i.DurationMs,
+		&i.CreatedByType,
+		&i.CreatedByID,
+		&i.TaskID,
+		&i.CreatedAt,
 	)
 	return i, err
 }

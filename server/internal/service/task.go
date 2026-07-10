@@ -53,8 +53,6 @@ type TaskService struct {
 
 var ErrTaskStartConflict = errors.New("task is no longer startable")
 
-var errIssueDoneBlockedByChildren = errors.New("issue has child issues that are not done")
-
 type TaskStartConflictError struct {
 	Status string
 }

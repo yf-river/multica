@@ -343,6 +343,17 @@ INSERT INTO comment (issue_id, workspace_id, author_type, author_id, content, ty
 VALUES ($1, $2, $3, $4, $5, $6, sqlc.narg(parent_id), sqlc.narg(source_task_id))
 RETURNING *;
 
+-- name: GetSystemCommentByIssueAndContent :one
+-- Used by idempotent automatic projections that may be replaying state written
+-- by an older build before source_task_id was populated.
+SELECT * FROM comment
+WHERE issue_id = $1
+  AND workspace_id = $2
+  AND author_type = 'system'
+  AND content = $3
+ORDER BY created_at ASC, id ASC
+LIMIT 1;
+
 -- name: UpdateComment :one
 UPDATE comment SET
     content = $2,

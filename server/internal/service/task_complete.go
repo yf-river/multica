@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -26,6 +27,8 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 	var sourceSummary *issueSourceSummaryProjection
 	var completionComment *agentCommentProjection
 	var issueStatus *taskIssueStatusProjection
+	var sopProjection *squadSOPTerminalProjection
+	terminalTransitioned := false
 	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
 		t, err := qtx.CompleteAgentTask(ctx, db.CompleteAgentTaskParams{
 			ID:        taskID,
@@ -37,6 +40,7 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 			return err
 		}
 		task = t
+		terminalTransitioned = true
 
 		if t.ChatSessionID.Valid {
 			// Pin the chat_session's runtime_id alongside the session_id so the
@@ -58,6 +62,9 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 				return fmt.Errorf("update chat session resume pointer: %w", err)
 			}
 		}
+		if err := lockIssueForTaskTerminalProjection(ctx, qtx, task); err != nil {
+			return err
+		}
 		completedEvent, err = s.enqueueTaskEvent(ctx, qtx, protocol.EventTaskCompleted, task)
 		if err != nil {
 			return err
@@ -74,6 +81,13 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 		if err != nil {
 			return err
 		}
+		if err := s.linkGongfengMRsFromTaskComments(ctx, qtx, task); err != nil {
+			return fmt.Errorf("link Gongfeng merge requests from task comments: %w", err)
+		}
+		sopProjection, err = s.projectSquadSOPTerminal(ctx, qtx, task, completedSquadSOPOutcome(result))
+		if err != nil {
+			return err
+		}
 		issueStatus, err = s.projectTaskCompletionIssueStatus(ctx, qtx, task)
 		return err
 	}); err != nil {
@@ -82,7 +96,12 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 		// … WHERE status = 'running' returns no rows in that case.
 		// Treat it as an idempotent success — same pattern as CancelTask.
 		if existing, lookupErr := s.Queries.GetAgentTask(ctx, taskID); lookupErr == nil {
-			if errors.Is(err, pgx.ErrNoRows) {
+			if !terminalTransitioned && errors.Is(err, pgx.ErrNoRows) && isTerminalTaskStatus(existing.Status) {
+				repaired, repairErr := s.reconcileExistingSquadSOPTerminal(ctx, existing)
+				if repairErr != nil {
+					return nil, fmt.Errorf("complete task: repair terminal Squad SOP projection: %w", repairErr)
+				}
+				s.publishSquadSOPTerminalProjection(ctx, repaired)
 				slog.Info("complete task: already finalized",
 					"task_id", util.UUIDToString(taskID),
 					"current_status", existing.Status,
@@ -115,9 +134,7 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 		s.Bus.Publish(completedEvent)
 		return &task, nil
 	}
-	s.linkGongfengMRsFromTaskComments(ctx, task)
-	s.syncSquadSOPTaskStepWithResult(ctx, task, "步骤完成", "已完成", result)
-	s.enqueueSquadLeaderAfterWorkerStageCompletion(ctx, task)
+	s.publishSquadSOPTerminalProjection(ctx, sopProjection)
 	s.publishTaskIssueStatusProjection(ctx, issueStatus)
 
 	s.publishAgentCommentProjection(ctx, completionComment)
@@ -457,31 +474,21 @@ type gongfengMRCommentRef struct {
 	Title        string
 }
 
-func (s *TaskService) linkGongfengMRsFromTaskComments(ctx context.Context, task db.AgentTaskQueue) {
+func (s *TaskService) linkGongfengMRsFromTaskComments(ctx context.Context, queries *db.Queries, task db.AgentTaskQueue) error {
 	if !task.IssueID.Valid {
-		return
+		return nil
 	}
-	issue, err := s.Queries.GetIssue(ctx, task.IssueID)
+	issue, err := queries.GetIssue(ctx, task.IssueID)
 	if err != nil {
-		slog.Warn("task comment MR collection skipped: issue lookup failed",
-			"task_id", util.UUIDToString(task.ID),
-			"issue_id", util.UUIDToString(task.IssueID),
-			"error", err,
-		)
-		return
+		return fmt.Errorf("load task issue: %w", err)
 	}
-	comments, err := s.Queries.ListCommentsForIssue(ctx, db.ListCommentsForIssueParams{
+	comments, err := queries.ListCommentsForIssue(ctx, db.ListCommentsForIssueParams{
 		IssueID:     issue.ID,
 		WorkspaceID: issue.WorkspaceID,
 		Limit:       2000,
 	})
 	if err != nil {
-		slog.Warn("task comment MR collection skipped: comments lookup failed",
-			"task_id", util.UUIDToString(task.ID),
-			"issue_id", util.UUIDToString(task.IssueID),
-			"error", err,
-		)
-		return
+		return fmt.Errorf("list task comments: %w", err)
 	}
 	refsByURL := map[string]gongfengMRCommentRef{}
 	for _, comment := range comments {
@@ -492,19 +499,20 @@ func (s *TaskService) linkGongfengMRsFromTaskComments(ctx context.Context, task 
 			refsByURL[ref.HTMLURL] = ref
 		}
 	}
-	for _, ref := range refsByURL {
-		if err := s.linkGongfengMRCommentRef(ctx, issue, task, ref); err != nil {
-			slog.Warn("task comment MR collection failed to link MR",
-				"task_id", util.UUIDToString(task.ID),
-				"issue_id", util.UUIDToString(issue.ID),
-				"html_url", ref.HTMLURL,
-				"error", err,
-			)
+	urls := make([]string, 0, len(refsByURL))
+	for url := range refsByURL {
+		urls = append(urls, url)
+	}
+	sort.Strings(urls)
+	for _, url := range urls {
+		if err := s.linkGongfengMRCommentRef(ctx, queries, issue, task, refsByURL[url]); err != nil {
+			return err
 		}
 	}
+	return nil
 }
 
-func (s *TaskService) linkGongfengMRCommentRef(ctx context.Context, issue db.Issue, task db.AgentTaskQueue, ref gongfengMRCommentRef) error {
+func (s *TaskService) linkGongfengMRCommentRef(ctx context.Context, queries *db.Queries, issue db.Issue, task db.AgentTaskQueue, ref gongfengMRCommentRef) error {
 	repoOwner, repoName := splitGongfengProjectPath(ref.ProjectPath)
 	if repoOwner == "" || repoName == "" || ref.Number <= 0 || ref.HTMLURL == "" {
 		return nil
@@ -514,7 +522,7 @@ func (s *TaskService) linkGongfengMRCommentRef(ctx context.Context, issue db.Iss
 	if title == "" {
 		title = fmt.Sprintf("MR !%d", ref.Number)
 	}
-	pr, err := s.Queries.UpsertGitHubPullRequest(ctx, db.UpsertGitHubPullRequestParams{
+	pr, err := queries.UpsertGitHubPullRequest(ctx, db.UpsertGitHubPullRequestParams{
 		WorkspaceID:         issue.WorkspaceID,
 		InstallationID:      0,
 		RepoOwner:           repoOwner,
@@ -540,7 +548,7 @@ func (s *TaskService) linkGongfengMRCommentRef(ctx context.Context, issue db.Iss
 	if err != nil {
 		return fmt.Errorf("upsert pull request: %w", err)
 	}
-	if err := s.Queries.LinkIssueToPullRequest(ctx, db.LinkIssueToPullRequestParams{
+	if err := queries.LinkIssueToPullRequest(ctx, db.LinkIssueToPullRequestParams{
 		IssueID:             issue.ID,
 		PullRequestID:       pr.ID,
 		CloseIntent:         false,
@@ -668,87 +676,6 @@ func splitGongfengProjectPath(projectPath string) (string, string) {
 		return "", ""
 	}
 	return strings.Join(parts[:len(parts)-1], "/"), parts[len(parts)-1]
-}
-
-func (s *TaskService) enqueueSquadLeaderAfterWorkerStageCompletion(ctx context.Context, task db.AgentTaskQueue) {
-	if !task.IssueID.Valid || task.IsLeaderTask {
-		return
-	}
-	issue, err := s.Queries.GetIssue(ctx, task.IssueID)
-	if err != nil || !issue.AssigneeType.Valid || issue.AssigneeType.String != "squad" || !issue.AssigneeID.Valid {
-		return
-	}
-	if issue.Status == "done" || issue.Status == "cancelled" {
-		return
-	}
-	run, ok, err := squadSOPRunForWorkerTask(ctx, s.Queries, task, issue)
-	if err != nil {
-		slog.Warn("load squad SOP run after worker completion failed",
-			"task_id", util.UUIDToString(task.ID),
-			"issue_id", util.UUIDToString(issue.ID),
-			"error", err,
-		)
-		return
-	}
-	if !ok {
-		return
-	}
-	agent, err := s.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
-		ID:          task.AgentID,
-		WorkspaceID: issue.WorkspaceID,
-	})
-	if err != nil {
-		return
-	}
-	if _, _, ok := matchSquadSOPStepForAgentRecord(parseSquadSOPProfileSteps(run.Profile), agent); !ok {
-		return
-	}
-	squad, err := s.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
-		ID:          issue.AssigneeID,
-		WorkspaceID: issue.WorkspaceID,
-	})
-	if err != nil {
-		return
-	}
-	leader, err := s.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
-		ID:          squad.LeaderID,
-		WorkspaceID: issue.WorkspaceID,
-	})
-	if err != nil || !leader.RuntimeID.Valid || leader.ArchivedAt.Valid {
-		return
-	}
-	hasPending, err := s.Queries.HasPendingTaskForIssueAndAgent(ctx, db.HasPendingTaskForIssueAndAgentParams{
-		IssueID: issue.ID,
-		AgentID: squad.LeaderID,
-	})
-	if err != nil || hasPending {
-		return
-	}
-	nextTask, err := s.Queries.CreateAgentTask(ctx, db.CreateAgentTaskParams{
-		AgentID:        squad.LeaderID,
-		RuntimeID:      leader.RuntimeID,
-		IssueID:        issue.ID,
-		Priority:       priorityToInt(issue.Priority),
-		TriggerSummary: pgtype.Text{String: "SOP 阶段任务已完成，继续协调下一阶段。", Valid: true},
-		IsLeaderTask:   pgtype.Bool{Bool: true, Valid: true},
-	})
-	if err != nil {
-		slog.Warn("enqueue squad leader after worker stage completion failed",
-			"issue_id", util.UUIDToString(issue.ID),
-			"worker_task_id", util.UUIDToString(task.ID),
-			"leader_id", util.UUIDToString(squad.LeaderID),
-			"error", err,
-		)
-		return
-	}
-	slog.Info("squad leader enqueued after worker stage completion",
-		"task_id", util.UUIDToString(nextTask.ID),
-		"issue_id", util.UUIDToString(issue.ID),
-		"worker_task_id", util.UUIDToString(task.ID),
-		"leader_id", util.UUIDToString(squad.LeaderID),
-	)
-	s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, nextTask)
-	s.NotifyTaskEnqueued(ctx, nextTask)
 }
 
 func squadSOPRunForWorkerTask(ctx context.Context, queries *db.Queries, task db.AgentTaskQueue, issue db.Issue) (db.SquadSopRun, bool, error) {

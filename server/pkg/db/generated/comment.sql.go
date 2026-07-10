@@ -276,6 +276,46 @@ func (q *Queries) GetCommentInWorkspace(ctx context.Context, arg GetCommentInWor
 	return i, err
 }
 
+const getSystemCommentByIssueAndContent = `-- name: GetSystemCommentByIssueAndContent :one
+SELECT id, issue_id, author_type, author_id, content, type, created_at, updated_at, parent_id, workspace_id, resolved_at, resolved_by_type, resolved_by_id, source_task_id FROM comment
+WHERE issue_id = $1
+  AND workspace_id = $2
+  AND author_type = 'system'
+  AND content = $3
+ORDER BY created_at ASC, id ASC
+LIMIT 1
+`
+
+type GetSystemCommentByIssueAndContentParams struct {
+	IssueID     pgtype.UUID `json:"issue_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	Content     string      `json:"content"`
+}
+
+// Used by idempotent automatic projections that may be replaying state written
+// by an older build before source_task_id was populated.
+func (q *Queries) GetSystemCommentByIssueAndContent(ctx context.Context, arg GetSystemCommentByIssueAndContentParams) (Comment, error) {
+	row := q.db.QueryRow(ctx, getSystemCommentByIssueAndContent, arg.IssueID, arg.WorkspaceID, arg.Content)
+	var i Comment
+	err := row.Scan(
+		&i.ID,
+		&i.IssueID,
+		&i.AuthorType,
+		&i.AuthorID,
+		&i.Content,
+		&i.Type,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ParentID,
+		&i.WorkspaceID,
+		&i.ResolvedAt,
+		&i.ResolvedByType,
+		&i.ResolvedByID,
+		&i.SourceTaskID,
+	)
+	return i, err
+}
+
 const getThreadRoot = `-- name: GetThreadRoot :one
 WITH RECURSIVE root_of AS (
     SELECT c.id, c.parent_id
