@@ -377,7 +377,7 @@ func TestBuildIssueTimelineNodesAssignsQueueTimeToAgentResponsibility(t *testing
 	}
 }
 
-func TestSummarizeIssueTimelineCountsChildIssueRuntimeAsHumanWait(t *testing.T) {
+func TestSummarizeIssueTimelineReportsChildIssueRuntimeSeparately(t *testing.T) {
 	root := IssueExecutionNodeResponse{
 		Issue: IssueResponse{ID: "parent-issue"},
 		Tasks: []AgentTaskResponse{
@@ -427,8 +427,11 @@ func TestSummarizeIssueTimelineCountsChildIssueRuntimeAsHumanWait(t *testing.T) 
 	if summary.AgentExecutionDurationMs != 120000 {
 		t.Fatalf("agent execution = %d, want parent agent work 120000", summary.AgentExecutionDurationMs)
 	}
-	if summary.HumanConfirmationDurationMs == nil || *summary.HumanConfirmationDurationMs != 540000 {
-		t.Fatalf("human confirmation = %v, want child issue wait 540000", summary.HumanConfirmationDurationMs)
+	if summary.HumanConfirmationDurationMs == nil || *summary.HumanConfirmationDurationMs != 0 {
+		t.Fatalf("human confirmation = %v, want 0", summary.HumanConfirmationDurationMs)
+	}
+	if summary.ChildIssueWaitDurationMs == nil || *summary.ChildIssueWaitDurationMs != 540000 {
+		t.Fatalf("child issue wait = %v, want 540000", summary.ChildIssueWaitDurationMs)
 	}
 	if summary.TotalDurationMs != 660000 {
 		t.Fatalf("total duration = %d, want parent agent + child wait 660000", summary.TotalDurationMs)
@@ -647,13 +650,15 @@ func TestGetIssueExecutionTreeAggregatesHierarchySOPTraceAndWakeups(t *testing.T
 	`, testWorkspaceID, fx.parent.ID, commentID, agentID).Scan(&attachmentID); err != nil {
 		t.Fatalf("create artifact attachment: %v", err)
 	}
-	if _, err := testPool.Exec(ctx, `
+	var duplicateAttachmentID string
+	if err := testPool.QueryRow(ctx, `
 		INSERT INTO attachment (
 			workspace_id, issue_id, comment_id, uploader_type, uploader_id,
 			filename, url, content_type, size_bytes
 		)
 		VALUES ($1, $2, $3, 'agent', $4, '01-需求澄清.md', '/uploads/clarify-duplicate.md', 'text/markdown', 128)
-	`, testWorkspaceID, fx.parent.ID, commentID, agentID); err != nil {
+		RETURNING id::text
+	`, testWorkspaceID, fx.parent.ID, commentID, agentID).Scan(&duplicateAttachmentID); err != nil {
 		t.Fatalf("create duplicate artifact attachment: %v", err)
 	}
 
@@ -748,7 +753,8 @@ func TestGetIssueExecutionTreeAggregatesHierarchySOPTraceAndWakeups(t *testing.T
 	if len(resp.Root.Artifacts) != 1 {
 		t.Fatalf("root artifacts = %+v, want one artifact", resp.Root.Artifacts)
 	}
-	if resp.Root.Artifacts[0].ID != attachmentID || resp.Root.Artifacts[0].TaskID != taskID || resp.Root.Artifacts[0].CommentID != commentID {
+	rootArtifact := resp.Root.Artifacts[0]
+	if (rootArtifact.ID != attachmentID && rootArtifact.ID != duplicateAttachmentID) || rootArtifact.TaskID != taskID || rootArtifact.CommentID != commentID {
 		t.Fatalf("root artifact = %+v, want attachment/task/comment linkage", resp.Root.Artifacts[0])
 	}
 	if resp.Root.Artifacts[0].Title != "01-需求澄清" || resp.Root.Artifacts[0].Kind != "stage_markdown" {
@@ -811,12 +817,12 @@ func TestGetIssueExecutionTreeAggregatesHierarchySOPTraceAndWakeups(t *testing.T
 			break
 		}
 	}
-	if len(taskNode.Artifacts) != 1 || taskNode.Artifacts[0].ID != attachmentID {
+	if len(taskNode.Artifacts) != 1 || taskNode.Artifacts[0].ID != rootArtifact.ID {
 		t.Fatalf("task node artifacts = %+v, want uploaded attachment", taskNode.Artifacts)
 	}
 	hasAttachmentRef := false
 	for _, ref := range taskNode.EvidenceRefs {
-		if ref.Type == "attachment" && ref.ID == attachmentID && ref.Href != "" {
+		if ref.Type == "attachment" && ref.ID == rootArtifact.ID && ref.Href != "" {
 			hasAttachmentRef = true
 			break
 		}
