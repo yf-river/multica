@@ -6,6 +6,17 @@ afterEach(() => {
 });
 
 describe("ApiClient", () => {
+  it("validates inbox and notification preference responses", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(
+      new Response(JSON.stringify({ id: 42 }), { status: 200, headers: { "Content-Type": "application/json" } }),
+    )));
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.listInbox()).resolves.toEqual([]);
+    await expect(client.markInboxRead("inbox-1")).resolves.toMatchObject({ id: "", read: false });
+    await expect(client.getUnreadInboxCount()).resolves.toMatchObject({ count: 0 });
+    await expect(client.getNotificationPreferences()).resolves.toEqual({ workspace_id: "", preferences: {} });
+  });
+
   it("validates agent and secret env responses", async () => {
     vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(
       new Response(JSON.stringify({ id: 42 }), { status: 200, headers: { "Content-Type": "application/json" } }),

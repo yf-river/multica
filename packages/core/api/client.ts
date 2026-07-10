@@ -268,6 +268,8 @@ import {
   EMPTY_WORKSPACE_REPO,
   EMPTY_WORKSPACE_REPO_PROBE_RESPONSE,
   EMPTY_MEMBER_WITH_USER,
+  EMPTY_INBOX_ITEM,
+  EMPTY_NOTIFICATION_PREFERENCE_RESPONSE,
   EMPTY_LIST_WEBHOOK_DELIVERIES_RESPONSE,
   EMPTY_PROMPT_LIBRARY_ITEM,
   EMPTY_PROMPT_LIBRARY_LIST_RESPONSE,
@@ -398,6 +400,10 @@ import {
   WorkspaceRepoProbeResponseSchema,
   MemberWithUserListSchema,
   MemberWithUserSchema,
+  InboxListSchema,
+  InboxItemSchema,
+  InboxCountResponseSchema,
+  NotificationPreferenceResponseSchema,
   WebhookDeliveryResponseSchema,
   EMPTY_CANCEL_TASK_RESPONSE,
 } from "./schemas";
@@ -1512,35 +1518,43 @@ export class ApiClient {
 
   // Inbox
   async listInbox(): Promise<InboxItem[]> {
-    return this.fetch("/api/inbox");
+    const raw = await this.fetch<unknown>("/api/inbox");
+    return parseWithFallback(raw, InboxListSchema, [], { endpoint: "GET /api/inbox" });
   }
 
   async markInboxRead(id: string): Promise<InboxItem> {
-    return this.fetch(`/api/inbox/${id}/read`, { method: "POST" });
+    const raw = await this.fetch<unknown>(`/api/inbox/${id}/read`, { method: "POST" });
+    return parseWithFallback(raw, InboxItemSchema, EMPTY_INBOX_ITEM, { endpoint: "POST /api/inbox/:id/read" });
   }
 
   async archiveInbox(id: string): Promise<InboxItem> {
-    return this.fetch(`/api/inbox/${id}/archive`, { method: "POST" });
+    const raw = await this.fetch<unknown>(`/api/inbox/${id}/archive`, { method: "POST" });
+    return parseWithFallback(raw, InboxItemSchema, EMPTY_INBOX_ITEM, { endpoint: "POST /api/inbox/:id/archive" });
   }
 
   async getUnreadInboxCount(): Promise<{ count: number }> {
-    return this.fetch("/api/inbox/unread-count");
+    const raw = await this.fetch<unknown>("/api/inbox/unread-count");
+    return parseWithFallback(raw, InboxCountResponseSchema, { count: 0 }, { endpoint: "GET /api/inbox/unread-count" });
   }
 
   async markAllInboxRead(): Promise<{ count: number }> {
-    return this.fetch("/api/inbox/mark-all-read", { method: "POST" });
+    const raw = await this.fetch<unknown>("/api/inbox/mark-all-read", { method: "POST" });
+    return parseWithFallback(raw, InboxCountResponseSchema, { count: 0 }, { endpoint: "POST /api/inbox/mark-all-read" });
   }
 
   async archiveAllInbox(): Promise<{ count: number }> {
-    return this.fetch("/api/inbox/archive-all", { method: "POST" });
+    const raw = await this.fetch<unknown>("/api/inbox/archive-all", { method: "POST" });
+    return parseWithFallback(raw, InboxCountResponseSchema, { count: 0 }, { endpoint: "POST /api/inbox/archive-all" });
   }
 
   async archiveAllReadInbox(): Promise<{ count: number }> {
-    return this.fetch("/api/inbox/archive-all-read", { method: "POST" });
+    const raw = await this.fetch<unknown>("/api/inbox/archive-all-read", { method: "POST" });
+    return parseWithFallback(raw, InboxCountResponseSchema, { count: 0 }, { endpoint: "POST /api/inbox/archive-all-read" });
   }
 
   async archiveCompletedInbox(): Promise<{ count: number }> {
-    return this.fetch("/api/inbox/archive-completed", { method: "POST" });
+    const raw = await this.fetch<unknown>("/api/inbox/archive-completed", { method: "POST" });
+    return parseWithFallback(raw, InboxCountResponseSchema, { count: 0 }, { endpoint: "POST /api/inbox/archive-completed" });
   }
 
   // Notification preferences
@@ -1550,16 +1564,22 @@ export class ApiClient {
   // preferences — e.g. honoring the mute setting of the workspace an inbox
   // notification came from while the user is viewing a different one (#3766).
   async getNotificationPreferences(workspaceSlug?: string): Promise<NotificationPreferenceResponse> {
-    return this.fetch(
+    const raw = await this.fetch<unknown>(
       "/api/notification-preferences",
       workspaceSlug ? { headers: { "X-Workspace-Slug": workspaceSlug } } : undefined,
     );
+    return parseWithFallback(raw, NotificationPreferenceResponseSchema, EMPTY_NOTIFICATION_PREFERENCE_RESPONSE, {
+      endpoint: "GET /api/notification-preferences",
+    });
   }
 
   async updateNotificationPreferences(preferences: NotificationPreferences): Promise<NotificationPreferenceResponse> {
-    return this.fetch("/api/notification-preferences", {
+    const raw = await this.fetch<unknown>("/api/notification-preferences", {
       method: "PUT",
       body: JSON.stringify({ preferences }),
+    });
+    return parseWithFallback(raw, NotificationPreferenceResponseSchema, EMPTY_NOTIFICATION_PREFERENCE_RESPONSE, {
+      endpoint: "PUT /api/notification-preferences",
     });
   }
 

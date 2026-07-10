@@ -42,6 +42,7 @@ import {
 } from "./schemas-runtimes";
 import { RuntimeUsageListSchema } from "./schemas-usage";
 import { EMPTY_WORKSPACE, WorkspaceSchema } from "./schemas-workspaces";
+import { EMPTY_INBOX_ITEM, InboxItemSchema } from "./schemas-inbox";
 
 describe("domain response schema fallbacks", () => {
   it("keeps app configuration usable when the response is not an object", () => {
@@ -157,5 +158,14 @@ describe("domain response schema fallbacks", () => {
       EMPTY_WORKSPACE,
       { endpoint: "GET /api/workspaces/:id" },
     )).toBe(EMPTY_WORKSPACE);
+  });
+
+  it("rejects a malformed inbox identity", () => {
+    expect(parseWithFallback(
+      { id: 42 },
+      InboxItemSchema,
+      EMPTY_INBOX_ITEM,
+      { endpoint: "GET /api/inbox" },
+    )).toBe(EMPTY_INBOX_ITEM);
   });
 });
