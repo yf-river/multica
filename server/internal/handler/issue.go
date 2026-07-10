@@ -1144,19 +1144,20 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 
 	prefix := h.getIssuePrefix(r.Context(), issue.WorkspaceID)
 	resp := issueToResponse(issue, prefix)
-	assigneeChanged := (req.AssigneeType != nil || req.AssigneeID != nil) &&
+	assigneeChanged := (touchedType || touchedID) &&
 		(prevIssue.AssigneeType.String != issue.AssigneeType.String || uuidToString(prevIssue.AssigneeID) != uuidToString(issue.AssigneeID))
 	statusChanged := req.Status != nil && prevIssue.Status != issue.Status
-	projectChanged := req.ProjectID != nil && prevIssue.ProjectID != issue.ProjectID
+	_, touchedProject := rawFields["project_id"]
+	projectChanged := touchedProject && prevIssue.ProjectID != issue.ProjectID
 	priorityChanged := req.Priority != nil && prevIssue.Priority != issue.Priority
-	descriptionChanged := req.Description != nil && textToPtr(prevIssue.Description) != resp.Description
+	descriptionChanged := req.Description != nil && optionalStringChanged(textToPtr(prevIssue.Description), resp.Description)
 	titleChanged := req.Title != nil && prevIssue.Title != issue.Title
 	prevStartDate := dateToPtr(prevIssue.StartDate)
-	startDateChanged := prevStartDate != resp.StartDate && (prevStartDate == nil) != (resp.StartDate == nil) ||
-		(prevStartDate != nil && resp.StartDate != nil && *prevStartDate != *resp.StartDate)
+	_, touchedStartDate := rawFields["start_date"]
+	startDateChanged := touchedStartDate && optionalStringChanged(prevStartDate, resp.StartDate)
 	prevDueDate := dateToPtr(prevIssue.DueDate)
-	dueDateChanged := prevDueDate != resp.DueDate && (prevDueDate == nil) != (resp.DueDate == nil) ||
-		(prevDueDate != nil && resp.DueDate != nil && *prevDueDate != *resp.DueDate)
+	_, touchedDueDate := rawFields["due_date"]
+	dueDateChanged := touchedDueDate && optionalStringChanged(prevDueDate, resp.DueDate)
 
 	updatedEvent := domainEvent(protocol.EventIssueUpdated, workspaceID, actorType, actorID, map[string]any{
 		"issue":               resp,
@@ -1205,6 +1206,13 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func optionalStringChanged(before, after *string) bool {
+	if before == nil || after == nil {
+		return before != nil || after != nil
+	}
+	return *before != *after
 }
 
 func (h *Handler) reconcileIssueUpdateSideEffects(ctx context.Context, r *http.Request, prevIssue db.Issue, issue db.Issue, assigneeChanged bool, statusChanged bool, actorType string, actorID string) {
