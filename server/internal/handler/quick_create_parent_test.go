@@ -19,18 +19,15 @@ import (
 func enableQuickCreateRuntime(t *testing.T, ctx context.Context) string {
 	t.Helper()
 
-	var runtimeID, agentID string
-	if err := testPool.QueryRow(ctx,
-		`SELECT id FROM agent_runtime WHERE workspace_id = $1 LIMIT 1`,
-		testWorkspaceID,
-	).Scan(&runtimeID); err != nil {
-		t.Fatalf("fetch runtime: %v", err)
-	}
-	if err := testPool.QueryRow(ctx,
-		`SELECT id FROM agent WHERE workspace_id = $1 LIMIT 1`,
-		testWorkspaceID,
-	).Scan(&agentID); err != nil {
-		t.Fatalf("fetch agent: %v", err)
+	var agentID, runtimeID string
+	var previousMetadata []byte
+	if err := testPool.QueryRow(ctx, `
+		SELECT a.id, r.id, r.metadata
+		FROM agent a
+		JOIN agent_runtime r ON r.id = a.runtime_id
+		WHERE a.workspace_id = $1 AND a.name = 'Handler Test Agent'
+	`, testWorkspaceID).Scan(&agentID, &runtimeID, &previousMetadata); err != nil {
+		t.Fatalf("fetch quick-create agent runtime: %v", err)
 	}
 	if _, err := testPool.Exec(ctx,
 		`UPDATE agent_runtime SET metadata = jsonb_build_object('cli_version', $1::text) WHERE id = $2`,
@@ -39,8 +36,8 @@ func enableQuickCreateRuntime(t *testing.T, ctx context.Context) string {
 		t.Fatalf("bump runtime cli_version: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(),
-			`UPDATE agent_runtime SET metadata = '{}'::jsonb WHERE id = $1`, runtimeID)
+		_, _ = testPool.Exec(context.Background(),
+			`UPDATE agent_runtime SET metadata = $1::jsonb WHERE id = $2`, previousMetadata, runtimeID)
 	})
 
 	return agentID
@@ -397,8 +394,9 @@ func TestQuickCreateIssueTapdWikiCreatesFetchedIssueDirectly(t *testing.T) {
 	}
 	select {
 	case issuePayload := <-gotIssueUpdated:
-		if issuePayload["description"] != summaryOutput {
-			t.Fatalf("issue:updated description = %q, want source summary output", issuePayload["description"])
+		description, ok := issuePayload["description"].(*string)
+		if !ok || description == nil || *description != summaryOutput {
+			t.Fatalf("issue:updated description = %#v, want pointer to source summary output", issuePayload["description"])
 		}
 		metadata, ok := issuePayload["metadata"].(map[string]any)
 		if !ok {

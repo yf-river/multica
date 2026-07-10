@@ -92,11 +92,12 @@ func newSquadCommentTriggerFixture(t *testing.T) squadCommentTriggerFixture {
 	})
 
 	var issueID string
+	issueNumber := nextHandlerTestIssueNumber(t)
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, creator_type, creator_id, title, assignee_type, assignee_id)
-		VALUES ($1, 'member', $2, $3, 'squad', $4)
+		INSERT INTO issue (workspace_id, creator_type, creator_id, title, assignee_type, assignee_id, number)
+		VALUES ($1, 'member', $2, $3, 'squad', $4, $5)
 		RETURNING id
-	`, testWorkspaceID, testUserID, "squad comment trigger", squadID).Scan(&issueID); err != nil {
+	`, testWorkspaceID, testUserID, "squad comment trigger", squadID, issueNumber).Scan(&issueID); err != nil {
 		t.Fatalf("create issue: %v", err)
 	}
 	t.Cleanup(func() {

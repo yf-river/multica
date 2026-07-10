@@ -11,12 +11,10 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// TestCanUseRuntimeForAgent_Pure exercises the pure predicate behind the
-// CreateAgent / UpdateAgent runtime gate. The truth table mirrors the issue
-// (MUL-2062) acceptance criteria: workspace owner / admin can use any
-// runtime, runtime owners can use their own runtime regardless of scope, and
-// any member can use a workspace runtime; everyone else gets denied for a
-// personal runtime owned by someone else.
+// TestCanUseRuntimeForAgent_Pure exercises the membership and visibility gate
+// shared by CreateAgent and UpdateAgent. Scope compatibility is a separate
+// invariant: a personal agent and its personal runtime must have the same
+// owner even when a workspace owner or admin can administer that runtime.
 func TestCanUseRuntimeForAgent_Pure(t *testing.T) {
 	ownerUserID := "11111111-1111-1111-1111-111111111111"
 	otherUserID := "22222222-2222-2222-2222-222222222222"
@@ -130,11 +128,12 @@ func runtimeVisibilityFixture(t *testing.T) (runtimeID, runtimeOwnerID, plainMem
 	return runtimeID, runtimeOwnerID, plainMemberID
 }
 
-// TestCreateAgent_RejectsPersonalRuntimeForNonOwner walks the gate end-to-end:
-// the runtime is personal and owned by a non-admin member, so a workspace
-// owner and the runtime owner can both create agents on it, but a plain
-// workspace member cannot.
-func TestCreateAgent_RejectsPersonalRuntimeForNonOwner(t *testing.T) {
+// TestCreateAgent_RequiresPersonalRuntimeOwnerMatch walks both gates
+// end-to-end. A workspace owner can administer another member's personal
+// runtime, but cannot create a personal agent owned by themselves on it. The
+// runtime owner can create the matching personal agent; a plain third party
+// is rejected before the scope compatibility check.
+func TestCreateAgent_RequiresPersonalRuntimeOwnerMatch(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
@@ -157,12 +156,12 @@ func TestCreateAgent_RejectsPersonalRuntimeForNonOwner(t *testing.T) {
 		}
 	}
 
-	// Workspace owner (testUserID): allowed via admin override even though
-	// the runtime is personal and owned by someone else.
+	// Workspace owner: runtime access is allowed, but the requested personal
+	// agent would have a different owner from the personal runtime.
 	w := httptest.NewRecorder()
 	testHandler.CreateAgent(w, newRequest(http.MethodPost, "/api/agents", body("runtime-scope-test-admin")))
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateAgent as workspace owner: expected 201, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("CreateAgent as workspace owner: expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 
 	// Runtime owner: allowed because they own the runtime.

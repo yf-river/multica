@@ -18,6 +18,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/realtime"
+	"github.com/multica-ai/multica/server/internal/util/secretbox"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -57,6 +58,13 @@ func TestMain(m *testing.M) {
 	go hub.Run()
 	bus := events.New()
 	testHandler = New(queries, pool, hub, bus, nil, nil, analytics.NoopClient{}, Config{AllowSignup: true})
+	testCredentialBox, err := secretbox.New(bytes.Repeat([]byte{0x42}, secretbox.KeySize))
+	if err != nil {
+		fmt.Printf("Failed to create handler test credential box: %v\n", err)
+		pool.Close()
+		os.Exit(1)
+	}
+	testHandler.ExternalCredentialBox = testCredentialBox
 	// httptest.NewRequest defaults RemoteAddr to 192.0.2.1, so every webhook
 	// test in the suite shares one IP bucket. With the production default
 	// (30/min) the budget runs out partway through the suite and unrelated
@@ -121,9 +129,9 @@ func setupHandlerTestFixture(ctx context.Context, pool *pgxpool.Pool) (string, s
 		INSERT INTO agent_runtime (
 			workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, scope, last_seen_at
 		)
-		VALUES ($1, NULL, $2, 'cloud', $3, 'online', $4, '{}'::jsonb, $5, 'personal', now())
+		VALUES ($1, $2, $3, 'cloud', $4, 'online', $5, '{"cli_version":"0.2.21"}'::jsonb, $6, 'personal', now())
 		RETURNING id
-	`, workspaceID, "Handler Test Runtime", "handler_test_runtime", "Handler test runtime", userID).Scan(&runtimeID); err != nil {
+	`, workspaceID, "handler-test-personal-daemon", "Handler Test Runtime", "handler_test_runtime", "Handler test runtime", userID).Scan(&runtimeID); err != nil {
 		return "", "", err
 	}
 	testRuntimeID = runtimeID
@@ -187,16 +195,28 @@ func setWorkspaceIssuePrefixForTest(t *testing.T, prefix string) {
 
 func handlerTestRuntimeID(t *testing.T) string {
 	t.Helper()
-
-	var runtimeID string
-	if err := testPool.QueryRow(context.Background(),
-		`SELECT id FROM agent_runtime WHERE workspace_id = $1 ORDER BY created_at ASC LIMIT 1`,
-		testWorkspaceID,
-	).Scan(&runtimeID); err != nil {
-		t.Fatalf("failed to load handler test runtime: %v", err)
+	if testRuntimeID == "" {
+		t.Fatal("handler test runtime is not initialized")
 	}
+	return testRuntimeID
+}
 
-	return runtimeID
+func nextHandlerTestIssueNumber(t *testing.T) int32 {
+	t.Helper()
+
+	var number int32
+	if err := testPool.QueryRow(context.Background(), `
+		UPDATE workspace
+		SET issue_counter = GREATEST(
+			issue_counter,
+			(SELECT COALESCE(MAX(number), 0) FROM issue WHERE workspace_id = $1)
+		) + 1
+		WHERE id = $1
+		RETURNING issue_counter
+	`, testWorkspaceID).Scan(&number); err != nil {
+		t.Fatalf("reserve handler test issue number: %v", err)
+	}
+	return number
 }
 
 func createHandlerTestAgent(t *testing.T, name string, mcpConfig []byte) string {
