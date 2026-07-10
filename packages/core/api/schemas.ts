@@ -15,3 +15,4 @@ export * from "./schemas-workspaces";
 export * from "./schemas-inbox";
 export * from "./schemas-chat";
 export * from "./schemas-projects";
+export * from "./schemas-external-credentials";

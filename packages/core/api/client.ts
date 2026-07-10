@@ -273,6 +273,9 @@ import {
   EMPTY_PENDING_CHAT_TASKS_RESPONSE,
   EMPTY_PROJECT_RESOURCE,
   EMPTY_PROJECT_RESOURCE_LIST_RESPONSE,
+  EMPTY_EXTERNAL_CREDENTIAL_PROFILE,
+  EMPTY_EXTERNAL_CREDENTIAL_PROFILE_LIST_RESPONSE,
+  EMPTY_TEST_EXTERNAL_CREDENTIAL_PROFILE_RESPONSE,
   EMPTY_LIST_WEBHOOK_DELIVERIES_RESPONSE,
   EMPTY_PROMPT_LIBRARY_ITEM,
   EMPTY_PROMPT_LIBRARY_LIST_RESPONSE,
@@ -416,6 +419,9 @@ import {
   PendingChatTasksResponseSchema,
   ProjectResourceSchema,
   ProjectResourceListResponseSchema,
+  ExternalCredentialProfileSchema,
+  ExternalCredentialProfileListResponseSchema,
+  TestExternalCredentialProfileResponseSchema,
   WebhookDeliveryResponseSchema,
   EMPTY_CANCEL_TASK_RESPONSE,
 } from "./schemas";
@@ -2785,15 +2791,26 @@ export class ApiClient {
     const search = new URLSearchParams();
     if (provider) search.set("provider", provider);
     const query = search.toString();
-    return this.fetch(`/api/external-credential-profiles${query ? `?${query}` : ""}`);
+    const raw = await this.fetch<unknown>(
+      `/api/external-credential-profiles${query ? `?${query}` : ""}`,
+    );
+    return parseWithFallback(
+      raw,
+      ExternalCredentialProfileListResponseSchema,
+      EMPTY_EXTERNAL_CREDENTIAL_PROFILE_LIST_RESPONSE,
+      { endpoint: "GET /api/external-credential-profiles" },
+    );
   }
 
   async createExternalCredentialProfile(
     data: CreateExternalCredentialProfileRequest,
   ): Promise<ExternalCredentialProfile> {
-    return this.fetch("/api/external-credential-profiles", {
+    const raw = await this.fetch<unknown>("/api/external-credential-profiles", {
       method: "POST",
       body: JSON.stringify(data),
+    });
+    return parseOrThrow(raw, ExternalCredentialProfileSchema, EMPTY_EXTERNAL_CREDENTIAL_PROFILE, {
+      endpoint: "POST /api/external-credential-profiles",
     });
   }
 
@@ -2801,19 +2818,28 @@ export class ApiClient {
     id: string,
     data: UpdateExternalCredentialProfileRequest,
   ): Promise<ExternalCredentialProfile> {
-    return this.fetch(`/api/external-credential-profiles/${id}`, {
+    const raw = await this.fetch<unknown>(`/api/external-credential-profiles/${id}`, {
       method: "PUT",
       body: JSON.stringify(data),
+    });
+    return parseOrThrow(raw, ExternalCredentialProfileSchema, EMPTY_EXTERNAL_CREDENTIAL_PROFILE, {
+      endpoint: "PUT /api/external-credential-profiles/:id",
     });
   }
 
   async testExternalCredentialProfile(
     data: TestExternalCredentialProfileRequest,
   ): Promise<TestExternalCredentialProfileResponse> {
-    return this.fetch("/api/external-credential-profiles/test", {
+    const raw = await this.fetch<unknown>("/api/external-credential-profiles/test", {
       method: "POST",
       body: JSON.stringify(data),
     });
+    return parseOrThrow(
+      raw,
+      TestExternalCredentialProfileResponseSchema,
+      EMPTY_TEST_EXTERNAL_CREDENTIAL_PROFILE_RESPONSE,
+      { endpoint: "POST /api/external-credential-profiles/test" },
+    );
   }
 
   async deleteExternalCredentialProfile(id: string): Promise<void> {

@@ -45,6 +45,10 @@ import { EMPTY_WORKSPACE, WorkspaceSchema } from "./schemas-workspaces";
 import { EMPTY_INBOX_ITEM, InboxItemSchema } from "./schemas-inbox";
 import { EMPTY_CHAT_MESSAGES_PAGE, ChatMessagesPageSchema } from "./schemas-chat";
 import { AgentEnvResponseSchema, EMPTY_AGENT, AgentSchema } from "./schemas-agents";
+import {
+  ExternalCredentialProfileSchema,
+  TestExternalCredentialProfileResponseSchema,
+} from "./schemas-external-credentials";
 
 describe("domain response schema fallbacks", () => {
   it("keeps app configuration usable when the response is not an object", () => {
@@ -202,5 +206,22 @@ describe("domain response schema fallbacks", () => {
       custom_env: {},
       ignored: "not exposed",
     })).toEqual({ agent_id: "agent-1", custom_env: {} });
+  });
+
+  it("fails closed when credential responses omit their redaction contract", () => {
+    expect(ExternalCredentialProfileSchema.safeParse({
+      id: "profile-1",
+      user_id: "user-1",
+      scope: "account",
+      provider: "gongfeng",
+      name: "Gongfeng",
+      status: "verified",
+      last_verified_at: null,
+    }).success).toBe(false);
+    expect(TestExternalCredentialProfileResponseSchema.safeParse({
+      provider: "gongfeng",
+      status: "verified",
+      last_verified_at: null,
+    }).success).toBe(false);
   });
 });

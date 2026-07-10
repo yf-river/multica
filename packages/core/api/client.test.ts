@@ -130,6 +130,65 @@ describe("ApiClient", () => {
       .rejects.toMatchObject({ code: "api_response_contract_invalid" });
   });
 
+  it("whitelists external credential responses without exposing secret fields", async () => {
+    const profile = {
+      id: "profile-1",
+      user_id: "user-1",
+      scope: "account",
+      provider: "gongfeng",
+      name: "Gongfeng",
+      secret_binding: {
+        configured: true,
+        redacted: true,
+        mode: "encrypted_secret",
+        hint: "****abcd",
+      },
+      capabilities: {},
+      status: "verified",
+      last_verified_at: "2026-07-11T00:00:00Z",
+      created_at: "2026-07-11T00:00:00Z",
+      updated_at: "2026-07-11T00:00:00Z",
+      token: "must-not-cross-boundary",
+      encrypted_secret: "ciphertext",
+    };
+    vi.stubGlobal("fetch", vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      const body = url.endsWith("/test")
+        ? {
+            provider: "gongfeng",
+            secret_binding: profile.secret_binding,
+            status: "verified",
+            last_verified_at: "2026-07-11T00:00:00Z",
+            token: "must-not-cross-boundary",
+          }
+        : init?.method
+          ? profile
+          : { profiles: [profile] };
+      return Promise.resolve(new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }));
+    }));
+    const client = new ApiClient("https://api.example.test");
+
+    const listed = await client.listExternalCredentialProfiles("gongfeng");
+    const created = await client.createExternalCredentialProfile({
+      provider: "gongfeng",
+      token: "input-secret",
+    });
+    const updated = await client.updateExternalCredentialProfile("profile-1", {
+      name: "Updated",
+    });
+    const tested = await client.testExternalCredentialProfile({
+      provider: "gongfeng",
+      token: "input-secret",
+    });
+
+    for (const value of [listed.profiles[0], created, updated, tested]) {
+      expect(value).not.toHaveProperty("token");
+      expect(value).not.toHaveProperty("encrypted_secret");
+    }
+  });
+
   it("validates workspace, repository, and member responses", async () => {
     vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(
       new Response(JSON.stringify({ id: 42 }), {
