@@ -2,36 +2,38 @@ import { describe, expect, it } from "vitest";
 import type { AgentTask, AgentTaskArtifact, Issue, IssueExecutionTreeResponse, IssueTimelineNode, TaskTraceEvent } from "@multica/core/types";
 import type { TaskMessagePayload } from "@multica/core/types/events";
 import type { PromptEvaluationToolCallChain } from "@multica/core/types/prompt-evaluation";
+import { buildIssueReviewDraftCaseRequest } from "./run-review-draft-case";
+import {
+  buildEventTaskLabelById,
+  buildRunReviewEventGroups,
+  buildRunReviewEventRows,
+  filterVisibleRunReviewEventRows,
+} from "./run-review-events";
 import {
   artifactDownloadHref,
   artifactXlsxHyperlinkHref,
-  buildAgentNodeRows,
-  buildIssueReviewDraftCaseRequest,
+  buildRunReviewNodeXlsxSheets,
+  buildRunReviewRawEventsXlsxSheets,
+} from "./run-review-export";
+import { cacheReuseRate } from "./run-review-format";
+import {
   buildRunReviewDurationSummary,
-  buildRunReviewDurationTooltipRows,
   buildRunReviewLiveSummary,
   buildRunReviewLiveTimelineNodes,
-  buildRunReviewNodeXlsxSheets,
-  buildRunReviewEventGroups,
-  buildRunReviewEventRows,
-  buildRunReviewOptimizerHref,
-  buildRunReviewRawEventsXlsxSheets,
-  buildEventTaskLabelById,
-  buildTimelineBarRows,
-  buildTimelineAgentRows,
-  cacheReuseRate,
-  filterVisibleRunReviewEventRows,
-  issueRunRowActivityLabel,
-  issueRunRowMetaLabels,
   runReviewMessageRefreshDelayMs,
   runReviewTotalDurationMs,
-  shouldShowTimelineSegmentText,
   shouldRefreshRunReviewForTaskEvent,
+} from "./run-review-live";
+import {
+  buildAgentNodeRows,
+  buildTimelineAgentRows,
+  buildTimelineBarRows,
   timelineTiming,
   timelineSegmentStyle,
   timelineSegmentTooltipRows,
   timelineSegmentWidthPercent,
-} from "./run-reviews-page";
+} from "./run-review-timeline";
+import { buildRunReviewOptimizerHref, issueRunRowActivityLabel, issueRunRowMetaLabels } from "./run-reviews-page";
 import { sopStageDisplayName } from "../../common/sop-stage-labels";
 
 function trace(overrides: Partial<TaskTraceEvent> = {}): TaskTraceEvent {
@@ -198,11 +200,6 @@ describe("run review duration summary", () => {
 
     expect(runReviewTotalDurationMs(summary)).toBe(360000);
     expect(buildRunReviewDurationSummary(summary)).toBe("Agent 执行 2m · 人工确认 3m · 子任务等待 1m");
-    expect(buildRunReviewDurationTooltipRows(summary)).toEqual([
-      ["Agent 执行耗时", "2m"],
-      ["人工确认耗时", "3m"],
-      ["子任务等待耗时", "1m"],
-    ]);
   });
 
   it("ignores wall clock duration even when unclassified idle gaps exist", () => {
@@ -228,13 +225,6 @@ describe("run review duration summary", () => {
     expect(runReviewTotalDurationMs(summary)).toBe(180000);
   });
 
-  it("does not show artificial waiting time when timing data is missing", () => {
-    expect(buildRunReviewDurationTooltipRows(undefined)).toEqual([
-      ["Agent 执行耗时", "0m"],
-      ["人工确认耗时", "未记录"],
-      ["子任务等待耗时", "未记录"],
-    ]);
-  });
 });
 
 describe("run review cache metrics", () => {
@@ -454,6 +444,27 @@ describe("buildRunReviewEventRows", () => {
       }),
     ]);
     expect(rows.find((row) => row.kind === "trace")?.tokenTotal).toBe(30);
+  });
+
+  it("preserves agent mentions in readable detail and raw evidence", () => {
+    const dispatch = "handoff: mention://agent/02-design 请继续方案设计并保留真实调度内容";
+    const tree = {
+      root: {
+        tasks: [],
+        task_messages: [message({ seq: 3, type: "text", content: dispatch, output: "" })],
+        trace_events: [],
+        tool_call_chains: [],
+        children: [],
+      },
+    } as unknown as IssueExecutionTreeResponse;
+
+    const [row] = buildRunReviewEventRows(tree, []);
+    const [rawSheet] = buildRunReviewRawEventsXlsxSheets(row ? [row] : []);
+
+    expect(row?.summary).toContain("mention://agent/02-design");
+    expect(row?.detail).toContain(dispatch);
+    expect(row?.rawPayload).toMatchObject({ content: dispatch });
+    expect(String(rawSheet?.rows[1]?.at(-2))).toContain("mention://agent/02-design");
   });
 
   it("deduplicates source fetch timeline nodes when a source trace already exists", () => {
@@ -1611,8 +1622,6 @@ describe("buildRunReviewEventRows", () => {
       left: "0%",
       width: `${width}%`,
     });
-    expect(shouldShowTimelineSegmentText(width)).toBe(false);
-    expect(shouldShowTimelineSegmentText(10.76)).toBe(true);
   });
 
   it("does not inflate short timeline runs to one minute", () => {
@@ -1695,7 +1704,7 @@ describe("buildRunReviewEventRows", () => {
           message({
             seq: 1,
             type: "text",
-            content: "01 阶段输入：用户希望事件流可诊断。handoff: 已明确验收口径。",
+            content: "01 阶段输入：用户希望事件流可诊断。handoff: mention://agent/02-design 已明确验收口径。",
           }),
         ],
         trace_events: [trace({ event_type: "task.completed", event_name: "任务完成", status: "completed", failure_reason: "", error_type: "" })],
@@ -1787,6 +1796,7 @@ describe("buildRunReviewEventRows", () => {
     const stages = runSnapshot.stages as Array<Record<string, unknown>>;
     const toolEvidence = runSnapshot.tool_evidence as Array<Record<string, unknown>>;
     const promptSnapshots = runSnapshot.prompt_skill_snapshots as Array<Record<string, unknown>>;
+    const firstStage = stages[0] as Record<string, unknown>;
     const assertions = expected.assertions as Record<string, unknown>;
 
     expect(request.status).toBe("draft");
@@ -1797,6 +1807,7 @@ describe("buildRunReviewEventRows", () => {
       input_summary: expect.stringContaining("用户要求优化"),
       output_summary: expect.stringContaining("需求边界明确"),
     });
+    expect(firstStage.handoff_summary).toContain("mention://agent/02-design");
     expect(toolEvidence[0]).toMatchObject({
       category: "搜索",
       action: "搜索代码：生成评测用例",
