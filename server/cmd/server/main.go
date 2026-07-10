@@ -267,7 +267,6 @@ func main() {
 		slog.Error("register durable activity consumers", "error", err)
 		os.Exit(1)
 	}
-	registerActivityListeners(bus, queries)
 	registerNotificationListeners(bus, queries)
 
 	metricsConfig := obsmetrics.ConfigFromEnv()

@@ -42,7 +42,6 @@ func setupActivityIssueTest(t *testing.T) activityIssueTestFixture {
 	t.Helper()
 	queries := db.New(testPool)
 	bus := events.New()
-	registerActivityListeners(bus, queries)
 	issueID := createTestIssue(t, testWorkspaceID, testUserID)
 	t.Cleanup(func() {
 		cleanupActivities(t, issueID)
@@ -62,6 +61,16 @@ func (fixture activityIssueTestFixture) publish(event events.Event) {
 		emitted, err = consumeIssueCreatedActivity(context.Background(), fixture.queries, event)
 	case protocol.EventIssueUpdated:
 		emitted, err = consumeIssueUpdatedActivities(context.Background(), fixture.queries, event)
+	case protocol.EventTaskCompleted, protocol.EventTaskFailed:
+		payload, ok := decodeTaskEvent(event)
+		if !ok {
+			fixture.t.Fatalf("decode task activity event")
+		}
+		action := "task_completed"
+		if event.Type == protocol.EventTaskFailed {
+			action = "task_failed"
+		}
+		emitted, err = projectTaskActivity(context.Background(), fixture.queries, event, payload, action)
 	default:
 		fixture.bus.Publish(event)
 		return
@@ -359,5 +368,102 @@ func TestActivityTaskFailed(t *testing.T) {
 	}
 	if activities[0].Action != "task_failed" {
 		t.Fatalf("expected action 'task_failed', got %q", activities[0].Action)
+	}
+}
+
+func TestDurableTaskFailedProjectsActivityAndInboxTogether(t *testing.T) {
+	queries := db.New(testPool)
+	issueID := createTestIssue(t, testWorkspaceID, testUserID)
+	t.Cleanup(func() {
+		cleanupInboxForIssue(t, issueID)
+		cleanupActivities(t, issueID)
+		cleanupTestIssue(t, issueID)
+	})
+	addTestSubscriber(t, issueID, "member", testUserID, "creator")
+
+	var taskID, agentID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, started_at, completed_at, error, failure_reason)
+		SELECT id, runtime_id, $2, 'failed', now(), now(), 'durable failure', 'agent_error'
+		FROM agent
+		WHERE workspace_id = $1 AND archived_at IS NULL
+		ORDER BY created_at, id
+		LIMIT 1
+		RETURNING id, agent_id
+	`, testWorkspaceID, issueID).Scan(&taskID, &agentID); err != nil {
+		t.Fatalf("insert failed task: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+	})
+
+	event := events.Event{
+		Type:        protocol.EventTaskFailed,
+		StreamKey:   "issue:" + issueID,
+		WorkspaceID: testWorkspaceID,
+		ActorType:   "system",
+		Payload: map[string]any{
+			"task_id":  taskID,
+			"agent_id": agentID,
+			"issue_id": issueID,
+			"status":   "failed",
+		},
+	}
+	emitted, err := consumeTaskTerminalIssueProjection(context.Background(), queries, event)
+	if err != nil {
+		t.Fatalf("consume durable failed task: %v", err)
+	}
+	if len(emitted) != 2 {
+		t.Fatalf("durable failed task emitted %d events, want activity + inbox", len(emitted))
+	}
+	activities := listActivitiesForIssue(t, queries, issueID)
+	if len(activities) != 1 || activities[0].Action != "task_failed" {
+		t.Fatalf("durable failed task activities = %+v", activities)
+	}
+	items := inboxItemsForRecipient(t, queries, testUserID)
+	if len(items) != 1 || items[0].Type != "task_failed" {
+		t.Fatalf("durable failed task inbox = %+v", items)
+	}
+}
+
+func TestDurableTaskProjectionRejectsStatusMismatch(t *testing.T) {
+	queries := db.New(testPool)
+	issueID := createTestIssue(t, testWorkspaceID, testUserID)
+	t.Cleanup(func() {
+		cleanupActivities(t, issueID)
+		cleanupTestIssue(t, issueID)
+	})
+
+	var taskID, agentID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, started_at, completed_at)
+		SELECT id, runtime_id, $2, 'completed', now(), now()
+		FROM agent
+		WHERE workspace_id = $1 AND archived_at IS NULL
+		ORDER BY created_at, id
+		LIMIT 1
+		RETURNING id, agent_id
+	`, testWorkspaceID, issueID).Scan(&taskID, &agentID); err != nil {
+		t.Fatalf("insert completed task: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+	})
+
+	_, err := consumeTaskTerminalIssueProjection(context.Background(), queries, events.Event{
+		Type:        protocol.EventTaskFailed,
+		WorkspaceID: testWorkspaceID,
+		Payload: map[string]any{
+			"task_id":  taskID,
+			"agent_id": agentID,
+			"issue_id": issueID,
+			"status":   "failed",
+		},
+	})
+	if err == nil {
+		t.Fatal("status-mismatched task event was accepted")
+	}
+	if activities := listActivitiesForIssue(t, queries, issueID); len(activities) != 0 {
+		t.Fatalf("status-mismatched event created %d activities", len(activities))
 	}
 }

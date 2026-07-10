@@ -3,9 +3,10 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"log/slog"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/eventoutbox"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -13,28 +14,17 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// registerActivityListeners retains task lifecycle projections until those
-// producers move to the durable outbox. Issue activity is registered through
-// registerDurableActivityConsumers below.
-func registerActivityListeners(bus *events.Bus, queries *db.Queries) {
-	ctx := context.Background()
-
-	// task:completed — record "task_completed" activity
-	bus.Subscribe(protocol.EventTaskCompleted, func(e events.Event) {
-		handleTaskActivity(ctx, bus, queries, e, "task_completed")
-	})
-
-	// task:failed — record "task_failed" activity
-	bus.Subscribe(protocol.EventTaskFailed, func(e events.Event) {
-		handleTaskActivity(ctx, bus, queries, e, "task_failed")
-	})
-}
-
 func registerDurableActivityConsumers(dispatcher *eventoutbox.Dispatcher) error {
 	if err := dispatcher.Register(protocol.EventIssueCreated, "activity_log", consumeIssueCreatedActivity); err != nil {
 		return err
 	}
-	return dispatcher.Register(protocol.EventIssueUpdated, "activity_log", consumeIssueUpdatedActivities)
+	if err := dispatcher.Register(protocol.EventIssueUpdated, "activity_log", consumeIssueUpdatedActivities); err != nil {
+		return err
+	}
+	if err := dispatcher.Register(protocol.EventTaskCompleted, "task_issue_projection", consumeTaskTerminalIssueProjection); err != nil {
+		return err
+	}
+	return dispatcher.Register(protocol.EventTaskFailed, "task_issue_projection", consumeTaskTerminalIssueProjection)
 }
 
 func consumeIssueCreatedActivity(ctx context.Context, queries *db.Queries, event events.Event) ([]events.Event, error) {
@@ -133,47 +123,35 @@ func setOptionalDetail(details map[string]string, key string, value *string) {
 	}
 }
 
-// handleTaskActivity records an activity for task:completed or task:failed events.
-func handleTaskActivity(ctx context.Context, bus *events.Bus, queries *db.Queries, e events.Event, action string) {
-	payload, ok := decodeTaskEvent(e)
-	if !ok {
-		return
-	}
-	agentID := payload.AgentID
+func projectTaskActivity(ctx context.Context, queries *db.Queries, event events.Event, payload taskEventPayload, action string) ([]events.Event, error) {
 	issueID := payload.IssueID
 	if issueID == "" {
-		return
+		return nil, nil
 	}
 
-	// Look up issue to get workspace_id
 	issue, err := queries.GetIssue(ctx, parseUUID(issueID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
 	if err != nil {
-		slog.Error("activity: failed to get issue for task event",
-			"issue_id", issueID, "action", action, "error", err)
-		return
+		return nil, fmt.Errorf("load issue %s for %s activity: %w", issueID, action, err)
+	}
+	if util.UUIDToString(issue.WorkspaceID) != event.WorkspaceID {
+		return nil, fmt.Errorf("task activity workspace mismatch")
 	}
 
 	activity, err := queries.CreateActivity(ctx, db.CreateActivityParams{
 		WorkspaceID: issue.WorkspaceID,
 		IssueID:     parseUUID(issueID),
 		ActorType:   util.StrToText("agent"),
-		ActorID:     parseUUID(agentID),
+		ActorID:     parseUUID(payload.AgentID),
 		Action:      action,
 		Details:     []byte("{}"),
 	})
 	if err != nil {
-		slog.Error("activity: failed to record task activity",
-			"issue_id", issueID, "action", action, "error", err)
-		return
+		return nil, fmt.Errorf("record %s activity for issue %s: %w", action, issueID, err)
 	}
-
-	publishActivityEvent(bus, e, activity)
-}
-
-// publishActivityEvent sends an activity:created event for WS broadcasting.
-// Payload matches frontend ActivityCreatedPayload: { issue_id, entry: TimelineEntry }
-func publishActivityEvent(bus *events.Bus, original events.Event, activity db.ActivityLog) {
-	bus.Publish(activityCreatedEvent(original, activity))
+	return []events.Event{activityCreatedEvent(event, activity)}, nil
 }
 
 func activityCreatedEvent(original events.Event, activity db.ActivityLog) events.Event {

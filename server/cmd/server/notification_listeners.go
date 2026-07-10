@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -735,14 +736,52 @@ func projectCommentCreatedNotifications(ctx context.Context, queries *db.Queries
 	return collector.events, nil
 }
 
+func projectTaskFailedNotifications(ctx context.Context, queries *db.Queries, event events.Event, payload taskEventPayload) ([]events.Event, error) {
+	if payload.IssueID == "" {
+		return nil, nil
+	}
+	issue, err := queries.GetIssue(ctx, parseUUID(payload.IssueID))
+	if err != nil {
+		return nil, err
+	}
+	if util.UUIDToString(issue.WorkspaceID) != event.WorkspaceID {
+		return nil, fmt.Errorf("task failure notification workspace mismatch")
+	}
+	exclude := map[string]bool{}
+	if payload.AgentID != "" {
+		exclude[payload.AgentID] = true
+	}
+	collector := newNotificationEventCollector()
+	if err := notifySubscribers(ctx, queries, collector.bus,
+		payload.IssueID,
+		issue.Status,
+		event.WorkspaceID,
+		events.Event{
+			Type:        event.Type,
+			WorkspaceID: event.WorkspaceID,
+			ActorType:   "agent",
+			ActorID:     payload.AgentID,
+		},
+		exclude,
+		"task_failed",
+		"action_required",
+		issue.Title,
+		"",
+		emptyDetails,
+	); err != nil {
+		return nil, err
+	}
+	return collector.events, nil
+}
+
 func setAnyOptionalDetail(details map[string]any, key string, value *string) {
 	if value != nil {
 		details[key] = *value
 	}
 }
 
-// registerNotificationListeners retains reaction and task-failure event types
-// whose producers have not moved to the outbox yet. Issue and Comment audience
+// registerNotificationListeners retains reaction event types whose producers
+// have not moved to the outbox yet. Issue, Comment, and terminal Task database
 // projections are durable consumers.
 //
 // NOTE: uses context.Background() because the event bus dispatches synchronously
@@ -830,44 +869,6 @@ func registerNotificationListeners(bus *events.Bus, queries *db.Queries) {
 		}
 	})
 
-	// task:completed — no inbox notification (completion is visible from status change)
-
-	// task:failed — notify all subscribers except the agent
-	bus.Subscribe(protocol.EventTaskFailed, func(e events.Event) {
-		payload, ok := decodeTaskEvent(e)
-		if !ok {
-			return
-		}
-		agentID := payload.AgentID
-		issueID := payload.IssueID
-		if issueID == "" {
-			return
-		}
-
-		issue, err := queries.GetIssue(ctx, parseUUID(issueID))
-		if err != nil {
-			slog.Error("task:failed notification: failed to get issue", "issue_id", issueID, "error", err)
-			return
-		}
-
-		exclude := map[string]bool{}
-		if agentID != "" {
-			exclude[agentID] = true
-		}
-
-		if err := notifySubscribers(ctx, queries, bus, issueID, issue.Status, e.WorkspaceID,
-			events.Event{
-				Type:        e.Type,
-				WorkspaceID: e.WorkspaceID,
-				ActorType:   "agent",
-				ActorID:     agentID,
-			},
-			exclude, "task_failed", "action_required",
-			issue.Title, "",
-			emptyDetails); err != nil {
-			slog.Error("project task failure notifications", "issue_id", issueID, "error", err)
-		}
-	})
 }
 
 // inboxItemToResponse converts a db.InboxItem into a map suitable for

@@ -106,6 +106,17 @@ func newNotificationBus(t *testing.T, queries *db.Queries) *events.Bus {
 		}
 		publishProjectedEvents(bus, emitted)
 	})
+	bus.Subscribe(protocol.EventTaskFailed, func(event events.Event) {
+		payload, ok := decodeTaskEvent(event)
+		if !ok {
+			t.Fatalf("decode task failure notification test event")
+		}
+		emitted, err := projectTaskFailedNotifications(context.Background(), queries, event, payload)
+		if err != nil {
+			t.Fatalf("project task failure notification test event: %v", err)
+		}
+		publishProjectedEvents(bus, emitted)
+	})
 	return bus
 }
 

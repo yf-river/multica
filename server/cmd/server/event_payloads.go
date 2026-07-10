@@ -66,6 +66,7 @@ type taskEventPayload struct {
 	TaskID  string `json:"task_id"`
 	IssueID string `json:"issue_id"`
 	AgentID string `json:"agent_id"`
+	Status  string `json:"status"`
 }
 
 func decodeEventPayload[T any](event events.Event) (T, bool) {
