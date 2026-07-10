@@ -397,6 +397,9 @@ export function PromptLibraryPage({
   const invalidateRuns = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runs(workspaceId ?? "") });
   const invalidateCandidates = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.candidates(workspaceId ?? "") });
   const invalidateRunEvidenceSnapshots = (runId: string) => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runEvidenceSnapshots(workspaceId ?? "", runId) });
+  const reportMutationError = (error: unknown) => {
+    toast.error(error instanceof Error ? error.message : t(($) => $.page.toast.action_failed));
+  };
   const rememberSelectedPrompt = (promptId: string | null) => {
     setSelectedId(promptId);
     if (!selectedPromptStorageKey) return;
@@ -421,6 +424,7 @@ export function PromptLibraryPage({
       rememberSelectedPrompt(item.id);
       toast.success(t(($) => $.page.toast.prompt_created));
     },
+    onError: reportMutationError,
   });
 
   const createVersionMut = useMutation({
@@ -440,6 +444,7 @@ export function PromptLibraryPage({
       rememberSelectedPrompt(item.id);
       toast.success(t(($) => $.page.toast.version_created, { version: result.version.version }));
     },
+    onError: reportMutationError,
   });
 
   const createTrialMut = useMutation({
@@ -449,6 +454,7 @@ export function PromptLibraryPage({
       invalidateTrials(variables.id);
       toast.success(t(($) => $.page.toast.trial_submitted));
     },
+    onError: reportMutationError,
   });
 
   const deleteMut = useMutation({
@@ -459,6 +465,7 @@ export function PromptLibraryPage({
       setDraft(emptyDraft());
       toast.success(t(($) => $.page.toast.prompt_deleted));
     },
+    onError: reportMutationError,
   });
 
   const updateAssetMut = useMutation({
@@ -469,6 +476,7 @@ export function PromptLibraryPage({
       invalidateRuns();
       toast.success(t(($) => $.page.toast.updated));
     },
+    onError: reportMutationError,
   });
 
   const deleteAssetMut = useMutation({
@@ -479,6 +487,7 @@ export function PromptLibraryPage({
       invalidateRuns();
       toast.success(t(($) => $.page.toast.deleted));
     },
+    onError: reportMutationError,
   });
 
   const importDatasetFromTracesMut = useMutation({
@@ -526,6 +535,7 @@ export function PromptLibraryPage({
       invalidateCases();
       toast.success(t(($) => $.page.toast.manual_case_created));
     },
+    onError: reportMutationError,
   });
 
   const updateCaseMut = useMutation({
@@ -534,6 +544,7 @@ export function PromptLibraryPage({
       invalidateCases();
       toast.success(t(($) => $.page.toast.manual_case_saved));
     },
+    onError: reportMutationError,
   });
 
   const deleteCaseMut = useMutation({
@@ -542,6 +553,7 @@ export function PromptLibraryPage({
       invalidateCases();
       toast.success(t(($) => $.page.toast.manual_case_deleted));
     },
+    onError: reportMutationError,
   });
 
   const createCaseLibraryCaseMut = useMutation({
@@ -554,6 +566,7 @@ export function PromptLibraryPage({
       invalidateCases();
       toast.success(t(($) => $.page.toast.case_created));
     },
+    onError: reportMutationError,
   });
 
   const syncRunMut = useMutation({
@@ -565,6 +578,7 @@ export function PromptLibraryPage({
       invalidateRunEvidenceSnapshots(runId);
       toast.success(t(($) => $.page.toast.run_synced));
     },
+    onError: reportMutationError,
   });
 
   const cancelRunMut = useMutation({
@@ -576,6 +590,7 @@ export function PromptLibraryPage({
       invalidateRunEvidenceSnapshots(run.id);
       toast.success(t(($) => $.page.toast.run_cancelled));
     },
+    onError: reportMutationError,
   });
 
   const reviewRunMut = useMutation({
@@ -588,6 +603,7 @@ export function PromptLibraryPage({
       invalidateRunEvidenceSnapshots(run.id);
       toast.success(t(($) => $.page.toast.reviewed, { status: run.review_decision || run.status }));
     },
+    onError: reportMutationError,
   });
 
   const createEvidenceSnapshotMut = useMutation({
@@ -596,6 +612,7 @@ export function PromptLibraryPage({
       invalidateRunEvidenceSnapshots(snapshot.run_id);
       toast.success(t(($) => $.page.toast.snapshot_archived));
     },
+    onError: reportMutationError,
   });
 
   const createAssetEvidenceSnapshotsMut = useMutation({
@@ -610,6 +627,7 @@ export function PromptLibraryPage({
         : "";
       toast.success(t(($) => $.page.toast.evidence_archived, { count: result.created_count, skipped: skippedText }));
     },
+    onError: reportMutationError,
   });
 
   const handleDownloadAssetEvidencePackage = async (assetId: string) => {
@@ -623,6 +641,8 @@ export function PromptLibraryPage({
       } else {
         toast.info(t(($) => $.page.toast.archive_exported_empty));
       }
+    } catch (error) {
+      reportMutationError(error);
     } finally {
       setExportingAssetEvidencePackageAssetId(null);
     }
@@ -634,6 +654,7 @@ export function PromptLibraryPage({
       invalidateCandidates();
       toast.success(t(($) => $.page.toast.candidate_created));
     },
+    onError: reportMutationError,
   });
 
   const saving = createMut.isPending || createVersionMut.isPending;
@@ -646,6 +667,7 @@ export function PromptLibraryPage({
       invalidateCases();
       toast.success(t(($) => $.page.toast.asset_created));
     },
+    onError: reportMutationError,
   });
 
   const createWorkbenchAsset = (assetType: PromptEvaluationAssetType) => {
@@ -673,8 +695,8 @@ export function PromptLibraryPage({
     createAssetMut.mutate(buildWritingModelBenchmarkAssetRequest());
   };
 
-  const createCaseLibraryDataset = (name: string, description: string) => {
-    createAssetMut.mutate({
+  const createCaseLibraryDataset = (name: string, description: string) =>
+    createAssetMut.mutateAsync({
       name,
       description,
       asset_type: "数据集",
@@ -689,7 +711,6 @@ export function PromptLibraryPage({
         },
       },
     });
-  };
 
   const creatingAsset = createAssetMut.isPending;
   const savingAsset = creatingAsset || updateAssetMut.isPending || deleteAssetMut.isPending || importDatasetFromTracesMut.isPending || createDatasetVersionMut.isPending;
@@ -820,9 +841,8 @@ export function PromptLibraryPage({
     importDatasetFromTracesMut.mutate(asset.id);
   };
 
-  const updateCaseLibraryDataset = (asset: PromptEvaluationAsset, data: UpdatePromptEvaluationAssetRequest) => {
-    updateAssetMut.mutate({ id: asset.id, data });
-  };
+  const updateCaseLibraryDataset = (asset: PromptEvaluationAsset, data: UpdatePromptEvaluationAssetRequest) =>
+    updateAssetMut.mutateAsync({ id: asset.id, data });
 
   const deleteCaseLibraryDataset = (asset: PromptEvaluationAsset) => {
     if (!window.confirm(t(($) => $.page.confirm.delete_dataset, { name: asset.name }))) return;
@@ -870,12 +890,12 @@ export function PromptLibraryPage({
       onDeleteAsset={deleteAsset}
       onImportDatasetFromTraces={importDatasetFromTraces}
       importingTraceDatasetAssetId={importDatasetFromTracesMut.isPending ? importDatasetFromTracesMut.variables ?? null : null}
-      onCreateDatasetVersion={(asset, versionLabel = "手动快照") => createDatasetVersionMut.mutate({
+      onCreateDatasetVersion={(asset, versionLabel = "手动快照") => createDatasetVersionMut.mutateAsync({
         assetId: asset.id,
         versionLabel: versionLabel.trim() || "手动快照",
       })}
       creatingDatasetVersionAssetId={createDatasetVersionMut.isPending ? createDatasetVersionMut.variables?.assetId ?? null : null}
-      onCreateCase={(data) => createCaseMut.mutate(data)}
+      onCreateCase={(data) => createCaseMut.mutateAsync(data)}
       onCreateCaseLibraryCase={(asset, draft) => createCaseLibraryCaseMut.mutateAsync({ asset, draft })}
       creatingCaseAssetId={createCaseMut.isPending ? createCaseMut.variables?.asset_id ?? null : null}
       creatingCaseLibraryCase={createCaseLibraryCaseMut.isPending}
@@ -1086,8 +1106,8 @@ type WorkbenchPanelProps = TrainingAssetPanelBaseProps & {
   onCreateAsset: (assetType: PromptEvaluationAssetType) => void;
   onCreateSkillScenarioAsset: (assetType: Extract<PromptEvaluationAssetType, "数据集" | "测试套件">) => void;
   onCreateWritingBenchmarkAsset: () => void;
-  onCreateCaseLibraryDataset: (name: string, description: string) => void;
-  onUpdateCaseLibraryDataset: (asset: PromptEvaluationAsset, data: UpdatePromptEvaluationAssetRequest) => void;
+  onCreateCaseLibraryDataset: (name: string, description: string) => Promise<unknown>;
+  onUpdateCaseLibraryDataset: (asset: PromptEvaluationAsset, data: UpdatePromptEvaluationAssetRequest) => Promise<unknown>;
   updatingCaseLibraryDatasetId: string | null;
   onDeleteCaseLibraryDataset: (asset: PromptEvaluationAsset) => void;
   deletingCaseLibraryDatasetId: string | null;

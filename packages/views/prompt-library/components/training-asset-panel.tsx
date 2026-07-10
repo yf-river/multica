@@ -50,9 +50,9 @@ export type TrainingAssetPanelBaseProps = {
   onDeleteAsset: (asset: PromptEvaluationAsset) => void;
   onImportDatasetFromTraces: (asset: PromptEvaluationAsset) => void;
   importingTraceDatasetAssetId: string | null;
-  onCreateDatasetVersion: (asset: PromptEvaluationAsset, versionLabel?: string) => void;
+  onCreateDatasetVersion: (asset: PromptEvaluationAsset, versionLabel?: string) => Promise<unknown>;
   creatingDatasetVersionAssetId: string | null;
-  onCreateCase: (data: CreatePromptEvaluationCaseRequest) => void;
+  onCreateCase: (data: CreatePromptEvaluationCaseRequest) => Promise<unknown>;
   creatingCaseAssetId: string | null;
   caseDrafts: Record<string, ManualCaseDraft>;
   onCaseDraftsChange: Dispatch<SetStateAction<Record<string, ManualCaseDraft>>>;
@@ -315,10 +315,14 @@ export function TrainingAssetPanel({
                   cases={casesByAsset.get(asset.id) ?? []}
                   draft={caseDrafts[asset.id] ?? emptyManualCaseDraft()}
                   onDraftChange={(draft) => onCaseDraftsChange((prev) => ({ ...prev, [asset.id]: draft }))}
-                  onCreateCase={() => {
+                  onCreateCase={async () => {
                     const draft = caseDrafts[asset.id] ?? emptyManualCaseDraft();
-                    onCreateCase(buildManualCaseRequest(asset, draft, casesByAsset.get(asset.id)?.length ?? 0));
-                    onCaseDraftsChange((prev) => ({ ...prev, [asset.id]: emptyManualCaseDraft() }));
+                    try {
+                      await onCreateCase(buildManualCaseRequest(asset, draft, casesByAsset.get(asset.id)?.length ?? 0));
+                      onCaseDraftsChange((prev) => ({ ...prev, [asset.id]: emptyManualCaseDraft() }));
+                    } catch {
+                      // The mutation owner reports the error; keep the user's draft.
+                    }
                   }}
                   creating={creatingCaseAssetId === asset.id}
                   focusedCaseId={focusedCaseId}

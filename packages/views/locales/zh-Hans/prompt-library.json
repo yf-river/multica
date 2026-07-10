@@ -56,6 +56,7 @@
       "archive_exported_empty": "资产归档包已导出，但该资产还没有服务端证据快照",
       "candidate_created": "优化候选已生成，等待人工确认",
       "asset_created": "资产已创建",
+      "action_failed": "操作失败，请重试",
       "save_prompt_first": "请先保存提示词",
       "name_required": "请输入名称",
       "content_required": "请输入提示词内容",

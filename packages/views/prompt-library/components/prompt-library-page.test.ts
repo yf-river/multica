@@ -209,13 +209,13 @@ describe("case library editor", () => {
       saving: false,
       draft: { caseName: "", variablesText: "", expectedText: "", tagsText: "" },
       onDraftChange: vi.fn(),
-      onCreateDataset: vi.fn(),
+      onCreateDataset: vi.fn().mockResolvedValue(undefined),
       creatingDataset: false,
-      onUpdateDataset: vi.fn(),
+      onUpdateDataset: vi.fn().mockResolvedValue(undefined),
       updatingDatasetId: null,
       onDeleteDataset: vi.fn(),
       deletingDatasetId: null,
-      onCreateDatasetVersion: vi.fn(),
+      onCreateDatasetVersion: vi.fn().mockResolvedValue(undefined),
       creatingDatasetVersionAssetId: null,
       onCreateCase: vi.fn(),
       creating: false,
@@ -290,7 +290,7 @@ describe("case library editor", () => {
   });
 
   it("opens dataset editing controls", () => {
-    const onUpdateDataset = vi.fn();
+    const onUpdateDataset = vi.fn().mockResolvedValue(undefined);
     renderCaseLibrary({ onUpdateDataset });
 
     fireEvent.click(screen.getByTestId("edit-case-library-dataset-asset-1"));
@@ -314,7 +314,7 @@ describe("case library editor", () => {
   });
 
   it("creates dataset versions with a version note", () => {
-    const onCreateDatasetVersion = vi.fn();
+    const onCreateDatasetVersion = vi.fn().mockResolvedValue(undefined);
     renderCaseLibrary({ onCreateDatasetVersion });
 
     fireEvent.click(screen.getByRole("button", { name: "创建版本" }));

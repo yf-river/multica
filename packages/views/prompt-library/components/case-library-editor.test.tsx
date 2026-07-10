@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { PromptEvaluationAsset, PromptEvaluationStructuredCase } from "@multica/core/types";
 import {
@@ -138,13 +138,13 @@ function renderEditor(overrides: Partial<CaseLibraryEditorPanelProps> = {}) {
       tagsText: "账号系统",
     },
     onDraftChange: vi.fn(),
-    onCreateDataset: vi.fn(),
+    onCreateDataset: vi.fn().mockResolvedValue(undefined),
     creatingDataset: false,
-    onUpdateDataset: vi.fn(),
+    onUpdateDataset: vi.fn().mockResolvedValue(undefined),
     updatingDatasetId: null,
     onDeleteDataset: vi.fn(),
     deletingDatasetId: null,
-    onCreateDatasetVersion: vi.fn(),
+    onCreateDatasetVersion: vi.fn().mockResolvedValue(undefined),
     creatingDatasetVersionAssetId: null,
     onCreateCase: vi.fn().mockResolvedValue(undefined),
     creating: false,
@@ -166,7 +166,7 @@ function renderEditor(overrides: Partial<CaseLibraryEditorPanelProps> = {}) {
 }
 
 describe("case library editor", () => {
-  it("preserves case creation and version creation orchestration", () => {
+  it("preserves case creation and version creation orchestration", async () => {
     const props = renderEditor();
 
     fireEvent.click(screen.getByRole("button", { name: copy.addCase }));
@@ -176,6 +176,54 @@ describe("case library editor", () => {
 
     fireEvent.click(screen.getByRole("button", { name: copy.createVersion }));
     fireEvent.click(screen.getByRole("button", { name: copy.saveVersion }));
-    expect(props.onCreateDatasetVersion).toHaveBeenCalledWith(asset, copy.defaultVersionLabel);
+    await waitFor(() =>
+      expect(props.onCreateDatasetVersion).toHaveBeenCalledWith(asset, copy.defaultVersionLabel),
+    );
+  });
+
+  it("keeps a new dataset draft open when creation fails", async () => {
+    const onCreateDataset = vi.fn().mockRejectedValue(new Error("save failed"));
+    renderEditor({ onCreateDataset });
+
+    fireEvent.click(screen.getByRole("button", { name: copy.createDataset }));
+    fireEvent.change(screen.getByPlaceholderText(copy.datasetNamePlaceholder), {
+      target: { value: "登录失败回归" },
+    });
+    fireEvent.change(screen.getByPlaceholderText(copy.datasetDescriptionPlaceholder), {
+      target: { value: "保留这段尚未保存的描述" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: copy.save }));
+
+    await waitFor(() => expect(onCreateDataset).toHaveBeenCalledTimes(1));
+    expect(screen.getByDisplayValue("登录失败回归")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("保留这段尚未保存的描述")).toBeInTheDocument();
+  });
+
+  it("keeps dataset edits open when update fails", async () => {
+    const onUpdateDataset = vi.fn().mockRejectedValue(new Error("save failed"));
+    renderEditor({ onUpdateDataset });
+
+    fireEvent.click(screen.getByTestId("edit-case-library-dataset-asset-1"));
+    fireEvent.change(screen.getByDisplayValue(asset.name), {
+      target: { value: "登录失败回归集" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: copy.saveDataset }));
+
+    await waitFor(() => expect(onUpdateDataset).toHaveBeenCalledTimes(1));
+    expect(screen.getByDisplayValue("登录失败回归集")).toBeInTheDocument();
+  });
+
+  it("keeps the version note open when version creation fails", async () => {
+    const onCreateDatasetVersion = vi.fn().mockRejectedValue(new Error("save failed"));
+    renderEditor({ onCreateDatasetVersion });
+
+    fireEvent.click(screen.getByRole("button", { name: copy.createVersion }));
+    fireEvent.change(screen.getByPlaceholderText(copy.versionPlaceholder), {
+      target: { value: "补充并发失败边界" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: copy.saveVersion }));
+
+    await waitFor(() => expect(onCreateDatasetVersion).toHaveBeenCalledTimes(1));
+    expect(screen.getByDisplayValue("补充并发失败边界")).toBeInTheDocument();
   });
 });

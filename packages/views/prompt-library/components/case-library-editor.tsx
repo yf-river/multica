@@ -119,13 +119,13 @@ export interface CaseLibraryEditorPanelProps {
   saving: boolean;
   draft: ManualCaseDraft;
   onDraftChange: (draft: ManualCaseDraft) => void;
-  onCreateDataset: (name: string, description: string) => void;
+  onCreateDataset: (name: string, description: string) => Promise<unknown>;
   creatingDataset: boolean;
-  onUpdateDataset: (asset: PromptEvaluationAsset, data: UpdatePromptEvaluationAssetRequest) => void;
+  onUpdateDataset: (asset: PromptEvaluationAsset, data: UpdatePromptEvaluationAssetRequest) => Promise<unknown>;
   updatingDatasetId: string | null;
   onDeleteDataset: (asset: PromptEvaluationAsset) => void;
   deletingDatasetId: string | null;
-  onCreateDatasetVersion: (asset: PromptEvaluationAsset, versionLabel?: string) => void;
+  onCreateDatasetVersion: (asset: PromptEvaluationAsset, versionLabel?: string) => Promise<unknown>;
   creatingDatasetVersionAssetId: string | null;
   onCreateCase: (asset: PromptEvaluationAsset, draft: ManualCaseDraft) => Promise<unknown>;
   creating: boolean;
@@ -241,40 +241,52 @@ export function CaseLibraryEditorPanel({
     );
   }, [selectedAsset]);
 
-  const submitDataset = () => {
+  const submitDataset = async () => {
     const name = datasetDraft.name.trim();
     if (!name) {
       toast.error(copy.missingDatasetNameError);
       return;
     }
-    onCreateDataset(name, datasetDraft.description.trim());
-    setDatasetDraft({ name: "", description: "" });
-    setShowDatasetForm(false);
+    try {
+      await onCreateDataset(name, datasetDraft.description.trim());
+      setDatasetDraft({ name: "", description: "" });
+      setShowDatasetForm(false);
+    } catch {
+      // The mutation owner reports the error; keep the user's draft open.
+    }
   };
 
-  const submitDatasetEdit = () => {
+  const submitDatasetEdit = async () => {
     if (!selectedAsset) return;
     const name = datasetEditDraft.name.trim();
     if (!name) {
       toast.error(copy.missingDatasetNameError);
       return;
     }
-    onUpdateDataset(selectedAsset, {
-      name,
-      description: datasetEditDraft.description.trim(),
-      asset_type: "数据集",
-      prompt_id: selectedAsset.prompt_id,
-      payload: selectedAsset.payload,
-      status: selectedAsset.status,
-    });
-    setEditingDataset(false);
+    try {
+      await onUpdateDataset(selectedAsset, {
+        name,
+        description: datasetEditDraft.description.trim(),
+        asset_type: "数据集",
+        prompt_id: selectedAsset.prompt_id,
+        payload: selectedAsset.payload,
+        status: selectedAsset.status,
+      });
+      setEditingDataset(false);
+    } catch {
+      // The mutation owner reports the error; keep the editor open.
+    }
   };
 
-  const submitDatasetVersion = () => {
+  const submitDatasetVersion = async () => {
     if (!selectedAsset) return;
-    onCreateDatasetVersion(selectedAsset, versionLabelDraft.trim() || copy.defaultVersionLabel);
-    setShowVersionForm(false);
-    setVersionLabelDraft("");
+    try {
+      await onCreateDatasetVersion(selectedAsset, versionLabelDraft.trim() || copy.defaultVersionLabel);
+      setShowVersionForm(false);
+      setVersionLabelDraft("");
+    } catch {
+      // The mutation owner reports the error; keep the version note.
+    }
   };
 
   const submitCase = async (asset: PromptEvaluationAsset, caseDraft: ManualCaseDraft) => {
