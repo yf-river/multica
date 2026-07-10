@@ -12,8 +12,8 @@ import type {
 } from "@multica/core/types/events";
 import { formatDuration, parseTimeMs } from "./run-review-format";
 
-export const RUN_REVIEW_MESSAGE_REFRESH_DEBOUNCE_MS = 1_200;
-export const RUN_REVIEW_MESSAGE_REFRESH_MAX_WAIT_MS = 4_000;
+const RUN_REVIEW_MESSAGE_REFRESH_DEBOUNCE_MS = 1_200;
+const RUN_REVIEW_MESSAGE_REFRESH_MAX_WAIT_MS = 4_000;
 const RUN_REVIEW_LIVE_DURATION_TICK_MS = 1_000;
 
 export type RunReviewTaskEventPayload =
