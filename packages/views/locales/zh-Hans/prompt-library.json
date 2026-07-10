@@ -2,6 +2,67 @@
   "shared": {
     "unknown_time": "未记录时间"
   },
+  "page": {
+    "route_context": "当前{{section}}子模块：{{tab}}",
+    "new": "新建",
+    "search_placeholder": "搜索名称、内容",
+    "empty": "暂无提示词",
+    "no_description": "无描述",
+    "new_prompt": "新建提示词",
+    "version_context": "当前查看 {{current}} · 最新 v{{latest}}",
+    "unsaved": "未保存",
+    "delete": "删除",
+    "save_version": "保存为新版本",
+    "create_prompt": "创建提示词",
+    "change_note_placeholder": "例如：收紧输出格式、补充边界条件",
+    "fields": {
+      "name": "名称",
+      "description": "描述",
+      "content": "提示词内容",
+      "change_note": "版本说明"
+    },
+    "confirm": {
+      "delete_prompt": "删除提示词「{{name}}」？",
+      "delete_asset": "删除资产「{{name}}」？",
+      "delete_dataset": "删除评估数据集「{{name}}」？这会同时删除其中的用例和版本记录。"
+    },
+    "review": {
+      "pass_prompt": "请输入通过说明",
+      "fail_prompt": "请输入驳回说明"
+    },
+    "toast": {
+      "prompt_created": "提示词已创建",
+      "version_created": "已创建版本 {{version}}",
+      "trial_submitted": "试跑已提交",
+      "prompt_deleted": "提示词已删除",
+      "updated": "已更新",
+      "deleted": "已删除",
+      "trace_imported": "已从 trace 导入 {{count}} 条用例",
+      "trace_import_failed": "trace 导入失败，请先产生真实任务记录",
+      "dataset_version_locked": "用例库版本 v{{version}} 已锁定",
+      "dataset_version_failed": "用例库版本锁定失败，请先补充启用用例",
+      "manual_case_created": "手工评测用例已创建",
+      "manual_case_saved": "手工评测用例已保存",
+      "manual_case_deleted": "手工评测用例已删除",
+      "case_created": "用例已创建",
+      "run_synced": "运行记录已同步",
+      "run_cancelled": "训练评估运行已取消",
+      "reviewed": "人工复核已处理：{{status}}",
+      "snapshot_archived": "服务端证据快照已归档",
+      "archive_skipped": "，跳过 {{count}} 条已归档",
+      "evidence_archived": "已归档 {{count}} 条运行证据{{skipped}}",
+      "archive_exported": "资产归档包已导出：{{count}} 条运行证据",
+      "archive_exported_empty": "资产归档包已导出，但该资产还没有服务端证据快照",
+      "candidate_created": "优化候选已生成，等待人工确认",
+      "asset_created": "资产已创建",
+      "save_prompt_first": "请先保存提示词",
+      "name_required": "请输入名称",
+      "content_required": "请输入提示词内容",
+      "save_version_first": "请先保存提示词版本",
+      "agent_required": "请选择 Agent",
+      "variables_required": "请填写变量：{{names}}"
+    }
+  },
   "version_history": {
     "unsaved": "保存后会生成第一个不可变版本记录。",
     "title": "版本历史",

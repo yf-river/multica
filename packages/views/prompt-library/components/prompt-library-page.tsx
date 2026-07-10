@@ -50,6 +50,7 @@ import { PageHeader } from "../../layout/page-header";
 import { AppLink } from "../../navigation";
 import { useNavigation } from "../../navigation";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
+import { useT } from "../../i18n/use-t";
 import {
   buildAssetPayload,
   draftToRequest,
@@ -135,6 +136,7 @@ export function PromptLibraryPage({
   activeView?: TrainingWorkbenchViewId;
   showPromptEditor?: boolean;
 }) {
+  const { t } = useT("prompt-library");
   const workspaceId = useWorkspaceId();
   const workspacePaths = useWorkspacePaths();
   const navigation = useNavigation();
@@ -399,7 +401,7 @@ export function PromptLibraryPage({
       setActiveVersionId(null);
       setIsDraftingNew(false);
       rememberSelectedPrompt(item.id);
-      toast.success("提示词已创建");
+      toast.success(t(($) => $.page.toast.prompt_created));
     },
   });
 
@@ -418,7 +420,7 @@ export function PromptLibraryPage({
       setChangeNote("");
       setIsDraftingNew(false);
       rememberSelectedPrompt(item.id);
-      toast.success(`已创建版本 ${result.version.version}`);
+      toast.success(t(($) => $.page.toast.version_created, { version: result.version.version }));
     },
   });
 
@@ -427,7 +429,7 @@ export function PromptLibraryPage({
       api.createPromptLibraryTrial(id, versionId, data),
     onSuccess: (_trial, variables) => {
       invalidateTrials(variables.id);
-      toast.success("试跑已提交");
+      toast.success(t(($) => $.page.toast.trial_submitted));
     },
   });
 
@@ -437,7 +439,7 @@ export function PromptLibraryPage({
       invalidate();
       rememberSelectedPrompt(null);
       setDraft(emptyDraft());
-      toast.success("提示词已删除");
+      toast.success(t(($) => $.page.toast.prompt_deleted));
     },
   });
 
@@ -447,7 +449,7 @@ export function PromptLibraryPage({
       invalidateAssets();
       invalidateCases();
       invalidateRuns();
-      toast.success("已更新");
+      toast.success(t(($) => $.page.toast.updated));
     },
   });
 
@@ -457,7 +459,7 @@ export function PromptLibraryPage({
       invalidateAssets();
       invalidateCases();
       invalidateRuns();
-      toast.success("已删除");
+      toast.success(t(($) => $.page.toast.deleted));
     },
   });
 
@@ -474,10 +476,10 @@ export function PromptLibraryPage({
     onSuccess: (result) => {
       invalidateAssets();
       invalidateCases();
-      toast.success(`已从 trace 导入 ${result.created_count} 条用例`);
+      toast.success(t(($) => $.page.toast.trace_imported, { count: result.created_count }));
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "trace 导入失败，请先产生真实任务记录");
+      toast.error(error instanceof Error ? error.message : t(($) => $.page.toast.trace_import_failed));
     },
   });
 
@@ -493,10 +495,10 @@ export function PromptLibraryPage({
     onSuccess: (version, variables) => {
       invalidateAssets();
       queryClient.invalidateQueries({ queryKey: promptLibraryKeys.datasetVersions(workspaceId ?? "", variables.assetId) });
-      toast.success(`用例库版本 v${version.version} 已锁定`);
+      toast.success(t(($) => $.page.toast.dataset_version_locked, { version: version.version }));
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "用例库版本锁定失败，请先补充启用用例");
+      toast.error(error instanceof Error ? error.message : t(($) => $.page.toast.dataset_version_failed));
     },
   });
 
@@ -504,7 +506,7 @@ export function PromptLibraryPage({
     mutationFn: (data: CreatePromptEvaluationCaseRequest) => api.createPromptEvaluationCase(data),
     onSuccess: () => {
       invalidateCases();
-      toast.success("手工评测用例已创建");
+      toast.success(t(($) => $.page.toast.manual_case_created));
     },
   });
 
@@ -512,7 +514,7 @@ export function PromptLibraryPage({
     mutationFn: ({ caseId, data }: { caseId: string; data: UpdatePromptEvaluationCaseRequest }) => api.updatePromptEvaluationCase(caseId, data),
     onSuccess: () => {
       invalidateCases();
-      toast.success("手工评测用例已保存");
+      toast.success(t(($) => $.page.toast.manual_case_saved));
     },
   });
 
@@ -520,7 +522,7 @@ export function PromptLibraryPage({
     mutationFn: (id: string) => api.deletePromptEvaluationCase(id),
     onSuccess: () => {
       invalidateCases();
-      toast.success("手工评测用例已删除");
+      toast.success(t(($) => $.page.toast.manual_case_deleted));
     },
   });
 
@@ -532,7 +534,7 @@ export function PromptLibraryPage({
     onSuccess: () => {
       invalidateAssets();
       invalidateCases();
-      toast.success("用例已创建");
+      toast.success(t(($) => $.page.toast.case_created));
     },
   });
 
@@ -543,7 +545,7 @@ export function PromptLibraryPage({
       invalidateCandidates();
       queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runEvidence(workspaceId ?? "", runId) });
       invalidateRunEvidenceSnapshots(runId);
-      toast.success("运行记录已同步");
+      toast.success(t(($) => $.page.toast.run_synced));
     },
   });
 
@@ -554,7 +556,7 @@ export function PromptLibraryPage({
       invalidateCandidates();
       queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runEvidence(workspaceId ?? "", run.id) });
       invalidateRunEvidenceSnapshots(run.id);
-      toast.success("训练评估运行已取消");
+      toast.success(t(($) => $.page.toast.run_cancelled));
     },
   });
 
@@ -566,7 +568,7 @@ export function PromptLibraryPage({
       invalidateCandidates();
       queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runEvidence(workspaceId ?? "", run.id) });
       invalidateRunEvidenceSnapshots(run.id);
-      toast.success(`人工复核已处理：${run.review_decision || run.status}`);
+      toast.success(t(($) => $.page.toast.reviewed, { status: run.review_decision || run.status }));
     },
   });
 
@@ -574,7 +576,7 @@ export function PromptLibraryPage({
     mutationFn: (runId: string) => api.createPromptEvaluationEvidenceSnapshot(runId, "验收归档"),
     onSuccess: (snapshot) => {
       invalidateRunEvidenceSnapshots(snapshot.run_id);
-      toast.success("服务端证据快照已归档");
+      toast.success(t(($) => $.page.toast.snapshot_archived));
     },
   });
 
@@ -585,8 +587,10 @@ export function PromptLibraryPage({
       for (const snapshot of result.items) {
         invalidateRunEvidenceSnapshots(snapshot.run_id);
       }
-      const skippedText = result.skipped_count > 0 ? `，跳过 ${result.skipped_count} 条已归档` : "";
-      toast.success(`已归档 ${result.created_count} 条运行证据${skippedText}`);
+      const skippedText = result.skipped_count > 0
+        ? t(($) => $.page.toast.archive_skipped, { count: result.skipped_count })
+        : "";
+      toast.success(t(($) => $.page.toast.evidence_archived, { count: result.created_count, skipped: skippedText }));
     },
   });
 
@@ -597,9 +601,9 @@ export function PromptLibraryPage({
       const filename = `multica-training-asset-evidence-${assetId}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
       downloadTextFile(JSON.stringify(archivePackage, null, 2), filename, "application/json;charset=utf-8");
       if (archivePackage.archived_run_count > 0) {
-        toast.success(`资产归档包已导出：${archivePackage.archived_run_count} 条运行证据`);
+        toast.success(t(($) => $.page.toast.archive_exported, { count: archivePackage.archived_run_count }));
       } else {
-        toast.info("资产归档包已导出，但该资产还没有服务端证据快照");
+        toast.info(t(($) => $.page.toast.archive_exported_empty));
       }
     } finally {
       setExportingAssetEvidencePackageAssetId(null);
@@ -610,7 +614,7 @@ export function PromptLibraryPage({
     mutationFn: (runId: string) => api.createPromptEvaluationOptimizationCandidate(runId),
     onSuccess: () => {
       invalidateCandidates();
-      toast.success("优化候选已生成，等待人工确认");
+      toast.success(t(($) => $.page.toast.candidate_created));
     },
   });
 
@@ -622,14 +626,14 @@ export function PromptLibraryPage({
     onSuccess: () => {
       invalidateAssets();
       invalidateCases();
-      toast.success("资产已创建");
+      toast.success(t(($) => $.page.toast.asset_created));
     },
   });
 
   const createWorkbenchAsset = (assetType: PromptEvaluationAssetType) => {
     const prompt = selected ?? visiblePromptItems[0] ?? null;
     if (!prompt) {
-      toast.error("请先保存提示词");
+      toast.error(t(($) => $.page.toast.save_prompt_first));
       return;
     }
     const assetLabel = assetTypeLabel(assetType);
@@ -730,11 +734,11 @@ export function PromptLibraryPage({
   const saveDraft = () => {
     const payload = draftToRequest(draft);
     if (!payload.name.trim()) {
-      toast.error("请输入名称");
+      toast.error(t(($) => $.page.toast.name_required));
       return;
     }
     if (!payload.content.trim()) {
-      toast.error("请输入提示词内容");
+      toast.error(t(($) => $.page.toast.content_required));
       return;
     }
     if (selected) {
@@ -754,16 +758,16 @@ export function PromptLibraryPage({
 
   const runPromptTrial = () => {
     if (!selected || !activeVersion) {
-      toast.error("请先保存提示词版本");
+      toast.error(t(($) => $.page.toast.save_version_first));
       return;
     }
     if (!trialAgentId) {
-      toast.error("请选择 Agent");
+      toast.error(t(($) => $.page.toast.agent_required));
       return;
     }
     const missingVariables = detectedVariables.filter((name) => !trialVariables[name]?.trim());
     if (missingVariables.length > 0) {
-      toast.error(`请填写变量：${missingVariables.join("、")}`);
+      toast.error(t(($) => $.page.toast.variables_required, { names: missingVariables.join("、") }));
       return;
     }
     createTrialMut.mutate({
@@ -778,7 +782,7 @@ export function PromptLibraryPage({
 
   const deleteSelected = () => {
     if (!selected) return;
-    if (!window.confirm(`删除提示词「${selected.name}」？`)) return;
+    if (!window.confirm(t(($) => $.page.confirm.delete_prompt, { name: selected.name }))) return;
     deleteMut.mutate(selected.id);
   };
 
@@ -790,7 +794,7 @@ export function PromptLibraryPage({
   };
 
   const deleteAsset = (asset: PromptEvaluationAsset) => {
-    if (!window.confirm(`删除资产「${asset.name}」？`)) return;
+    if (!window.confirm(t(($) => $.page.confirm.delete_asset, { name: asset.name }))) return;
     deleteAssetMut.mutate(asset.id);
   };
 
@@ -803,13 +807,16 @@ export function PromptLibraryPage({
   };
 
   const deleteCaseLibraryDataset = (asset: PromptEvaluationAsset) => {
-    if (!window.confirm(`删除评估数据集「${asset.name}」？这会同时删除其中的用例和版本记录。`)) return;
+    if (!window.confirm(t(($) => $.page.confirm.delete_dataset, { name: asset.name }))) return;
     deleteAssetMut.mutate(asset.id);
   };
 
   const reviewRun = (run: PromptEvaluationRun, decision: "通过" | "未通过") => {
     const defaultNote = decision === "通过" ? "人工复核确认通过" : "人工复核驳回";
-    const note = window.prompt(`请输入${decision === "通过" ? "通过" : "驳回"}说明`, defaultNote);
+    const note = window.prompt(
+      decision === "通过" ? t(($) => $.page.review.pass_prompt) : t(($) => $.page.review.fail_prompt),
+      defaultNote,
+    );
     if (note === null) return;
     reviewRunMut.mutate({ runId: run.id, decision, note: note.trim() || defaultNote });
   };
@@ -880,7 +887,7 @@ export function PromptLibraryPage({
   return (
     <div className="flex h-full min-h-0 flex-col bg-background" data-testid="training-page-shell" data-training-view={activeViewId}>
       <div className="sr-only" data-testid={`training-route-${activeViewId}`}>
-        当前{activeSectionLabel}子模块：{activeTab}
+        {t(($) => $.page.route_context, { section: activeSectionLabel, tab: activeTab })}
       </div>
       <PageHeader>
         <div className="flex min-w-0 flex-1 items-center gap-2">
@@ -892,7 +899,7 @@ export function PromptLibraryPage({
           <div className="flex items-center gap-2">
             <Button size="sm" onClick={startNew}>
               <Plus className="size-3.5" />
-              新建
+              {t(($) => $.page.new)}
             </Button>
           </div>
         )}
@@ -907,7 +914,7 @@ export function PromptLibraryPage({
                 <Input
                   value={query}
                   onChange={(event) => setQuery(event.target.value)}
-                  placeholder="搜索名称、内容"
+                  placeholder={t(($) => $.page.search_placeholder)}
                   className="h-8 pl-8 text-sm"
                 />
               </div>
@@ -921,7 +928,7 @@ export function PromptLibraryPage({
                   ))}
                 </div>
               ) : filteredItems.length === 0 ? (
-                <div className="p-6 text-sm text-muted-foreground">暂无提示词</div>
+                <div className="p-6 text-sm text-muted-foreground">{t(($) => $.page.empty)}</div>
               ) : (
                 <div className="divide-y">
                   {filteredItems.map((item) => (
@@ -942,7 +949,7 @@ export function PromptLibraryPage({
 	                        <Badge variant="outline" className="shrink-0 text-[10px]">v{item.version}</Badge>
 	                      </div>
                       <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-                        <span className="truncate">{item.description || "无描述"}</span>
+                        <span className="truncate">{item.description || t(($) => $.page.no_description)}</span>
                       </div>
                     </button>
                   ))}
@@ -955,21 +962,26 @@ export function PromptLibraryPage({
             <div className="mx-auto flex max-w-5xl flex-col gap-4">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0">
-	                  <h2 className="truncate text-base font-semibold">{selected ? selected.name : "新建提示词"}</h2>
+	                  <h2 className="truncate text-base font-semibold">{selected ? selected.name : t(($) => $.page.new_prompt)}</h2>
 	                  <div className="mt-1 text-xs text-muted-foreground">
-	                    {selected ? `当前查看 ${activeVersion ? `v${activeVersion.version}` : `v${selected.version}`} · 最新 v${selected.version}` : "未保存"}
+	                    {selected
+                        ? t(($) => $.page.version_context, {
+                            current: activeVersion ? `v${activeVersion.version}` : `v${selected.version}`,
+                            latest: selected.version,
+                          })
+                        : t(($) => $.page.unsaved)}
 	                  </div>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
                   {selected && (
                     <Button size="sm" variant="destructive" onClick={deleteSelected} disabled={deleting}>
                       <Trash2 className="size-3.5" />
-                      删除
+                      {t(($) => $.page.delete)}
                     </Button>
                   )}
 	                  <Button size="sm" onClick={saveDraft} disabled={saving}>
 	                    {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-	                    {selected ? "保存为新版本" : "创建提示词"}
+	                    {selected ? t(($) => $.page.save_version) : t(($) => $.page.create_prompt)}
 	                  </Button>
                 </div>
               </div>
@@ -983,15 +995,15 @@ export function PromptLibraryPage({
               />
 
               <div className="grid gap-4 md:grid-cols-2">
-                <Field label="名称">
+                <Field label={t(($) => $.page.fields.name)}>
                   <Input value={draft.name} onChange={(event) => setDraftField(setDraft, "name", event.target.value)} />
                 </Field>
-                <Field label="描述">
+                <Field label={t(($) => $.page.fields.description)}>
                   <Input value={draft.description} onChange={(event) => setDraftField(setDraft, "description", event.target.value)} />
                 </Field>
               </div>
 
-	              <Field label="提示词内容">
+	              <Field label={t(($) => $.page.fields.content)}>
 	                <Textarea
 	                  value={draft.content}
 	                  onChange={(event) => setDraftField(setDraft, "content", event.target.value)}
@@ -1000,11 +1012,11 @@ export function PromptLibraryPage({
 	              </Field>
 
 	              {selected && (
-	                <Field label="版本说明">
+	                <Field label={t(($) => $.page.fields.change_note)}>
 	                  <Input
 	                    value={changeNote}
 	                    onChange={(event) => setChangeNote(event.target.value)}
-	                    placeholder="例如：收紧输出格式、补充边界条件"
+	                    placeholder={t(($) => $.page.change_note_placeholder)}
 	                  />
 	                </Field>
 	              )}
