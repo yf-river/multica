@@ -317,6 +317,30 @@ type DaemonToken struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
+type DomainEventDelivery struct {
+	EventID     pgtype.UUID        `json:"event_id"`
+	Consumer    string             `json:"consumer"`
+	DeliveredAt pgtype.Timestamptz `json:"delivered_at"`
+}
+
+type DomainEventOutbox struct {
+	ID            pgtype.UUID        `json:"id"`
+	EventType     string             `json:"event_type"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	ActorType     pgtype.Text        `json:"actor_type"`
+	ActorID       pgtype.Text        `json:"actor_id"`
+	TaskID        pgtype.Text        `json:"task_id"`
+	ChatSessionID pgtype.Text        `json:"chat_session_id"`
+	Payload       []byte             `json:"payload"`
+	Attempts      int32              `json:"attempts"`
+	AvailableAt   pgtype.Timestamptz `json:"available_at"`
+	LeaseOwner    pgtype.Text        `json:"lease_owner"`
+	LeaseUntil    pgtype.Timestamptz `json:"lease_until"`
+	LastError     pgtype.Text        `json:"last_error"`
+	ProcessedAt   pgtype.Timestamptz `json:"processed_at"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
 type ExternalCredentialProfile struct {
 	ID              pgtype.UUID        `json:"id"`
 	UserID          pgtype.UUID        `json:"user_id"`
