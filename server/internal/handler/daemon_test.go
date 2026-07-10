@@ -3079,6 +3079,35 @@ func installCompletionFallbackCommentFailure(t *testing.T, taskID string) func()
 	return remove
 }
 
+func installTaskIssueStatusUpdateFailure(t *testing.T, issueID string) func() {
+	t.Helper()
+	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
+	functionName := "task_issue_status_fail_fn_" + suffix
+	triggerName := "task_issue_status_fail_" + suffix
+	ctx := context.Background()
+	remove := func() {
+		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON issue`, triggerName))
+		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, functionName))
+	}
+	t.Cleanup(remove)
+	if _, err := testPool.Exec(ctx, fmt.Sprintf(`
+		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF NEW.id = '%s' AND NEW.status IS DISTINCT FROM OLD.status THEN
+				RAISE EXCEPTION 'forced task issue status update failure';
+			END IF;
+			RETURN NEW;
+		END;
+		$$;
+		CREATE TRIGGER %s
+		BEFORE UPDATE ON issue
+		FOR EACH ROW EXECUTE FUNCTION %s();
+	`, functionName, issueID, triggerName, functionName)); err != nil {
+		t.Fatalf("install task issue status update failure: %v", err)
+	}
+	return remove
+}
+
 // Regression test for MUL-1198: comment-triggered tasks that finish without
 // the agent posting any comment must still deliver a synthesized result
 // comment, threaded under the trigger. Before the fix, CompleteTask exempted
@@ -3207,8 +3236,26 @@ func TestCompleteTask_AssignmentTriggered_SynthesizedMentionDispatchesAgent(t *t
 	ctx := context.Background()
 
 	fixture := createRunningAssignmentCompleteTask(t, ctx, "mul-3313 synthesized top-level mention fixture", 3313)
+	if _, err := testPool.Exec(ctx, `
+		UPDATE issue SET assignee_type = 'agent', assignee_id = $2 WHERE id = $1
+	`, fixture.IssueID, fixture.AgentID); err != nil {
+		t.Fatalf("assign completion fixture issue: %v", err)
+	}
 	targetAgentID := createHandlerTestMentionTargetAgent(t, "Synthesized Top Level Mention Target "+uuid.NewString())
 	agentFinalOutput := "调度 01-需求澄清：请继续。 [@01-需求澄清](mention://agent/" + targetAgentID + ")"
+	result, _ := json.Marshal(map[string]string{"output": agentFinalOutput})
+	removeFailure := installTaskIssueStatusUpdateFailure(t, fixture.IssueID)
+	if _, err := testHandler.TaskService.CompleteTask(ctx, parseUUID(fixture.TaskID), result, "", ""); err == nil {
+		t.Fatal("assignment task completion succeeded despite forced issue status failure")
+	}
+	var rolledBackStatus string
+	if err := testPool.QueryRow(ctx, `SELECT status FROM agent_task_queue WHERE id = $1`, fixture.TaskID).Scan(&rolledBackStatus); err != nil {
+		t.Fatalf("load assignment task after issue status rollback: %v", err)
+	}
+	if rolledBackStatus != "running" {
+		t.Fatalf("assignment task status after issue rollback = %q, want running", rolledBackStatus)
+	}
+	removeFailure()
 
 	completeDaemonTaskForTest(t, fixture.TaskID, agentFinalOutput)
 

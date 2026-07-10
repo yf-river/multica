@@ -601,34 +601,89 @@ func (s *TaskService) autoStartIssueForTask(ctx context.Context, task db.AgentTa
 	s.autoTransitionIssueStatus(ctx, task, "todo", "in_progress", "task_started")
 }
 
-func (s *TaskService) autoReviewIssueForTask(ctx context.Context, task db.AgentTaskQueue) {
-	if !shouldConsiderAutoReviewIssueForTask(task) {
-		return
-	}
-	issue, ok := s.issueForTaskStatusAutomation(ctx, task)
-	if !ok || !shouldAutoReviewIssueForTask(task, issue) || issue.Status != "in_progress" {
-		return
-	}
-	s.updateIssueStatusForTaskAutomation(ctx, task, issue, "in_review", "task_completed")
+type taskIssueStatusProjection struct {
+	previous db.Issue
+	updated  db.Issue
+	event    events.Event
+	reason   string
 }
 
-func (s *TaskService) autoBlockIssueForTaskFailure(ctx context.Context, task db.AgentTaskQueue) {
-	if !shouldAutoBlockIssueForTaskFailure(task) {
-		return
+func (s *TaskService) projectTaskCompletionIssueStatus(ctx context.Context, queries *db.Queries, task db.AgentTaskQueue) (*taskIssueStatusProjection, error) {
+	if !shouldConsiderAutoReviewIssueForTask(task) {
+		return nil, nil
 	}
-	hasActive, err := s.Queries.HasActiveTaskForIssue(ctx, task.IssueID)
+	issue, err := queries.GetIssue(ctx, task.IssueID)
 	if err != nil {
-		slog.Warn("task failure issue status automation skipped: active task check failed",
-			"task_id", util.UUIDToString(task.ID),
-			"issue_id", util.UUIDToString(task.IssueID),
-			"error", err,
-		)
-		return
+		return nil, fmt.Errorf("load completed task issue: %w", err)
+	}
+	if !shouldAutoReviewIssueForTask(task, issue) || issue.Status != "in_progress" {
+		return nil, nil
+	}
+	return s.projectTaskIssueStatus(ctx, queries, issue, "in_review", "task_completed")
+}
+
+func (s *TaskService) projectTaskFailureIssueStatus(
+	ctx context.Context,
+	queries *db.Queries,
+	task db.AgentTaskQueue,
+	skip bool,
+) (*taskIssueStatusProjection, error) {
+	if skip || !shouldAutoBlockIssueForTaskFailure(task) {
+		return nil, nil
+	}
+	hasActive, err := queries.HasActiveTaskForIssue(ctx, task.IssueID)
+	if err != nil {
+		return nil, fmt.Errorf("check active issue tasks after failure: %w", err)
 	}
 	if hasActive {
+		return nil, nil
+	}
+	issue, err := queries.GetIssue(ctx, task.IssueID)
+	if err != nil {
+		return nil, fmt.Errorf("load failed task issue: %w", err)
+	}
+	if issue.Status != "in_progress" {
+		return nil, nil
+	}
+	return s.projectTaskIssueStatus(ctx, queries, issue, "blocked", "task_failed")
+}
+
+func (s *TaskService) projectTaskIssueStatus(
+	ctx context.Context,
+	queries *db.Queries,
+	issue db.Issue,
+	status string,
+	reason string,
+) (*taskIssueStatusProjection, error) {
+	updated, event, err := s.persistIssueUpdateInTx(ctx, queries, issue, taskIssueUpdateChanges{Status: true}, func(queries *db.Queries) (db.Issue, error) {
+		return queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
+			ID:          issue.ID,
+			Status:      status,
+			WorkspaceID: issue.WorkspaceID,
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &taskIssueStatusProjection{previous: issue, updated: updated, event: event, reason: reason}, nil
+}
+
+func (s *TaskService) publishTaskIssueStatusProjection(ctx context.Context, projection *taskIssueStatusProjection) {
+	if projection == nil {
 		return
 	}
-	s.autoTransitionIssueStatus(ctx, task, "in_progress", "blocked", "task_failed")
+	if s.Bus != nil {
+		s.Bus.Publish(projection.event)
+	}
+	slog.Info("task issue status automated",
+		"issue_id", util.UUIDToString(projection.updated.ID),
+		"from_status", projection.previous.Status,
+		"to_status", projection.updated.Status,
+		"reason", projection.reason,
+	)
+	if s.IssueStatusChanged != nil {
+		s.IssueStatusChanged(ctx, projection.previous, projection.updated, "system", "")
+	}
 }
 
 func (s *TaskService) autoTransitionIssueStatus(ctx context.Context, task db.AgentTaskQueue, fromStatus, toStatus, reason string) {

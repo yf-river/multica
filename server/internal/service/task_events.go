@@ -111,6 +111,7 @@ func (s *TaskService) failTasksDurably(
 	var persistedEvents []events.Event
 	var createdRetries []db.AgentTaskQueue
 	var sourceSummaries []issueSourceSummaryProjection
+	var issueStatuses []*taskIssueStatusProjection
 	err := s.runInTx(ctx, func(queries *db.Queries) error {
 		var err error
 		failed, err = mutate(queries)
@@ -132,14 +133,21 @@ func (s *TaskService) failTasksDurably(
 		}
 		for _, task := range failed {
 			sc, ok := ParseIssueSourceSummaryContext(task)
-			if !ok {
+			if ok {
+				projection, err := s.projectIssueSourceSummaryTask(ctx, queries, task, sc, nil)
+				if err != nil {
+					return fmt.Errorf("project failed issue source summary %s: %w", util.UUIDToString(task.ID), err)
+				}
+				sourceSummaries = append(sourceSummaries, projection)
 				continue
 			}
-			projection, err := s.projectIssueSourceSummaryTask(ctx, queries, task, sc, nil)
+			projection, err := s.projectTaskFailureIssueStatus(ctx, queries, task, false)
 			if err != nil {
-				return fmt.Errorf("project failed issue source summary %s: %w", util.UUIDToString(task.ID), err)
+				return fmt.Errorf("project failed task issue status %s: %w", util.UUIDToString(task.ID), err)
 			}
-			sourceSummaries = append(sourceSummaries, projection)
+			if projection != nil {
+				issueStatuses = append(issueStatuses, projection)
+			}
 		}
 		return nil
 	})
@@ -149,6 +157,9 @@ func (s *TaskService) failTasksDurably(
 	s.publishTaskEvents(persistedEvents)
 	for _, projection := range sourceSummaries {
 		s.publishIssueSourceSummaryProjection(ctx, projection)
+	}
+	for _, projection := range issueStatuses {
+		s.publishTaskIssueStatusProjection(ctx, projection)
 	}
 	for _, retry := range createdRetries {
 		s.publishRetryTask(ctx, retry)

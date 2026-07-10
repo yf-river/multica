@@ -25,6 +25,7 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 	var completedEvent events.Event
 	var sourceSummary *issueSourceSummaryProjection
 	var completionComment *agentCommentProjection
+	var issueStatus *taskIssueStatusProjection
 	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
 		t, err := qtx.CompleteAgentTask(ctx, db.CompleteAgentTaskParams{
 			ID:        taskID,
@@ -70,6 +71,10 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 			return nil
 		}
 		completionComment, err = projectTaskCompletionFallbackComment(ctx, qtx, task, result)
+		if err != nil {
+			return err
+		}
+		issueStatus, err = s.projectTaskCompletionIssueStatus(ctx, qtx, task)
 		return err
 	}); err != nil {
 		// When parallel agents race, a task may already be completed,
@@ -113,7 +118,7 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 	s.linkGongfengMRsFromTaskComments(ctx, task)
 	s.syncSquadSOPTaskStepWithResult(ctx, task, "步骤完成", "已完成", result)
 	s.enqueueSquadLeaderAfterWorkerStageCompletion(ctx, task)
-	s.autoReviewIssueForTask(ctx, task)
+	s.publishTaskIssueStatusProjection(ctx, issueStatus)
 
 	s.publishAgentCommentProjection(ctx, completionComment)
 

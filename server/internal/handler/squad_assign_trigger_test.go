@@ -636,6 +636,24 @@ func TestFailTaskBlocksSquadSOPIssueWithStructuredComment(t *testing.T) {
 		t.Fatalf("task status after structured failure comment rollback = %q, want running", rolledBackStatus)
 	}
 	removeFailure()
+	removeStatusFailure := installTaskIssueStatusUpdateFailure(t, fixture.issueID)
+	if _, err := testHandler.TaskService.FailTask(
+		ctx,
+		parseUUID(fixture.taskID),
+		rawProviderTrace,
+		"",
+		"",
+		"agent_error.model_not_found_or_unavailable",
+	); err == nil {
+		t.Fatal("task failure succeeded despite forced issue status update error")
+	}
+	if err := testPool.QueryRow(ctx, `SELECT status FROM agent_task_queue WHERE id = $1`, fixture.taskID).Scan(&rolledBackStatus); err != nil {
+		t.Fatalf("reload task after issue status rollback: %v", err)
+	}
+	if rolledBackStatus != "running" {
+		t.Fatalf("task status after issue status rollback = %q, want running", rolledBackStatus)
+	}
+	removeStatusFailure()
 
 	failW := httptest.NewRecorder()
 	failReq := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+fixture.taskID+"/fail", map[string]any{

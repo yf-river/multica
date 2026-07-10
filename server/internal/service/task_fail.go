@@ -36,6 +36,7 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 	var sourceSummary *issueSourceSummaryProjection
 	var deliveryCommentPosted bool
 	var failureComment *agentCommentProjection
+	var issueStatus *taskIssueStatusProjection
 	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
 		t, err := qtx.FailAgentTask(ctx, db.FailAgentTaskParams{
 			ID:            taskID,
@@ -85,36 +86,35 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 			sourceSummary = &projection
 			return nil
 		}
-		if retried != nil {
-			return nil
+		if retried == nil {
+			deliveryCommentPosted, err = squadSOPTaskHasDeliveryComment(ctx, qtx, task)
+			if err != nil {
+				return fmt.Errorf("check squad SOP delivery comment: %w", err)
+			}
+			if errMsg != "" && task.IssueID.Valid && !deliveryCommentPosted {
+				body := redact.Text(errMsg)
+				if structured, ok, err := squadSOPFailureComment(ctx, qtx, task, errMsg, failureReason); err != nil {
+					return fmt.Errorf("build squad SOP failure comment: %w", err)
+				} else if ok {
+					body = structured
+				}
+				failureComment, err = createAgentCommentInTx(
+					ctx,
+					qtx,
+					task.IssueID,
+					task.AgentID,
+					body,
+					"system",
+					task.TriggerCommentID,
+					task.ID,
+				)
+				if err != nil {
+					return fmt.Errorf("create task failure comment: %w", err)
+				}
+			}
 		}
-		deliveryCommentPosted, err = squadSOPTaskHasDeliveryComment(ctx, qtx, task)
-		if err != nil {
-			return fmt.Errorf("check squad SOP delivery comment: %w", err)
-		}
-		if errMsg == "" || !task.IssueID.Valid || deliveryCommentPosted {
-			return nil
-		}
-		body := redact.Text(errMsg)
-		if structured, ok, err := squadSOPFailureComment(ctx, qtx, task, errMsg, failureReason); err != nil {
-			return fmt.Errorf("build squad SOP failure comment: %w", err)
-		} else if ok {
-			body = structured
-		}
-		failureComment, err = createAgentCommentInTx(
-			ctx,
-			qtx,
-			task.IssueID,
-			task.AgentID,
-			body,
-			"system",
-			task.TriggerCommentID,
-			task.ID,
-		)
-		if err != nil {
-			return fmt.Errorf("create task failure comment: %w", err)
-		}
-		return nil
+		issueStatus, err = s.projectTaskFailureIssueStatus(ctx, qtx, task, deliveryCommentPosted)
+		return err
 	}); err != nil {
 		if existing, lookupErr := s.Queries.GetAgentTask(ctx, taskID); lookupErr == nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -158,12 +158,11 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 		s.linkGongfengMRsFromTaskComments(ctx, task)
 		s.syncSquadSOPTaskStepWithResult(ctx, task, "步骤完成", "已完成", nil)
 		s.enqueueSquadLeaderAfterWorkerStageCompletion(ctx, task)
-		s.autoReviewIssueForTask(ctx, task)
 	} else if s.shouldSyncSquadSOPTaskFailure(ctx, task, retried) {
 		s.syncSquadSOPTaskStep(ctx, task, "步骤失败", "已失败")
 	}
 	if retried == nil && !deliveryCommentPosted {
-		s.autoBlockIssueForTaskFailure(ctx, task)
+		s.publishTaskIssueStatusProjection(ctx, issueStatus)
 	}
 
 	// Skip the per-failure system comment when we'll immediately retry —
@@ -455,23 +454,15 @@ func (s *TaskService) enqueueRerunTask(ctx context.Context, issue db.Issue, agen
 	return s.enqueueMentionTask(ctx, issue, agentID, triggerCommentID, isLeader, true)
 }
 
-// HandleFailedTasks runs the post-failure side effects for a batch of
-// freshly-failed tasks: optional auto-retry, agent status reconciliation,
-// and (when an issue has no remaining active
-// task and isn't being retried) blocking the issue so the user sees that the
-// current attempt needs attention.
-//
-// All callers that surface a task as failed — sweepers, FailTask,
-// recover-orphans — funnel through here so the same UI-consistency
-// guarantees apply on every code path.
+// HandleFailedTasks publishes post-commit traces/retries and reconciles agents
+// for a batch whose terminal state, retry decision and Issue projection were
+// already committed by failTasksDurably.
 func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTaskQueue) int {
 	if len(tasks) == 0 {
 		return 0
 	}
 
 	affectedAgents := make(map[string]pgtype.UUID)
-	processedIssues := make(map[string]bool)
-	retriedIssues := make(map[string]bool)
 	retried := 0
 
 	for _, t := range tasks {
@@ -479,37 +470,9 @@ func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTas
 		// flapping todo → in_progress within a tick.
 		if child, _ := s.MaybeRetryFailedTask(ctx, t); child != nil {
 			retried++
-			if t.IssueID.Valid {
-				retriedIssues[util.UUIDToString(t.IssueID)] = true
-			}
 		}
 
 		s.captureTaskFailed(ctx, t)
-		if _, isSourceSummary := ParseIssueSourceSummaryContext(t); isSourceSummary {
-			affectedAgents[util.UUIDToString(t.AgentID)] = t.AgentID
-			continue
-		}
-
-		if t.IssueID.Valid {
-			if issue, err := s.Queries.GetIssue(ctx, t.IssueID); err == nil {
-				// Block stuck in_progress issues only when no other active
-				// task exists for the issue and no retry was just enqueued.
-				issueKey := util.UUIDToString(t.IssueID)
-				if issue.Status == "in_progress" && !processedIssues[issueKey] && !retriedIssues[issueKey] {
-					processedIssues[issueKey] = true
-					hasActive, checkErr := s.Queries.HasActiveTaskForIssue(ctx, t.IssueID)
-					if checkErr != nil {
-						slog.Warn("handle failed tasks: active check failed",
-							"issue_id", issueKey,
-							"error", checkErr,
-						)
-					} else if !hasActive && shouldAutoBlockIssueForTaskFailure(t) {
-						s.autoTransitionIssueStatus(ctx, t, "in_progress", "blocked", "failed_task_batch")
-					}
-				}
-			}
-		}
-
 		affectedAgents[util.UUIDToString(t.AgentID)] = t.AgentID
 	}
 
