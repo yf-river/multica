@@ -283,29 +283,46 @@ func modelListRequestTerminal(status ModelListStatus) bool {
 // Handlers
 // ---------------------------------------------------------------------------
 
-// InitiateListModels creates a pending model list request for a runtime.
-// Called by the frontend; the daemon picks it up on its next heartbeat.
-func (h *Handler) InitiateListModels(w http.ResponseWriter, r *http.Request) {
-	runtimeID := chi.URLParam(r, "runtimeId")
+type runtimeModelAccess struct {
+	runtimeID string
+	status    string
+}
+
+func (h *Handler) requireRuntimeModelAccess(w http.ResponseWriter, r *http.Request, runtimeID string) (runtimeModelAccess, bool) {
 	runtimeUUID, ok := parseUUIDOrBadRequest(w, runtimeID, "runtime_id")
 	if !ok {
-		return
+		return runtimeModelAccess{}, false
 	}
 
 	rt, err := h.Queries.GetAgentRuntime(r.Context(), runtimeUUID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "runtime not found")
-		return
+		return runtimeModelAccess{}, false
 	}
 	if _, ok := h.requireWorkspaceMember(w, r, uuidToString(rt.WorkspaceID), "runtime not found"); !ok {
+		return runtimeModelAccess{}, false
+	}
+
+	return runtimeModelAccess{
+		runtimeID: uuidToString(rt.ID),
+		status:    rt.Status,
+	}, true
+}
+
+// InitiateListModels creates a pending model list request for a runtime.
+// Called by the frontend; the daemon picks it up on its next heartbeat.
+func (h *Handler) InitiateListModels(w http.ResponseWriter, r *http.Request) {
+	runtimeID := chi.URLParam(r, "runtimeId")
+	rt, ok := h.requireRuntimeModelAccess(w, r, runtimeID)
+	if !ok {
 		return
 	}
-	if rt.Status != "online" {
+	if rt.status != "online" {
 		writeError(w, http.StatusServiceUnavailable, "runtime is offline")
 		return
 	}
 
-	req, err := h.ModelListStore.Create(r.Context(), uuidToString(rt.ID))
+	req, err := h.ModelListStore.Create(r.Context(), rt.runtimeID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to enqueue model list request: "+err.Error())
 		return
@@ -315,6 +332,12 @@ func (h *Handler) InitiateListModels(w http.ResponseWriter, r *http.Request) {
 
 // GetModelListRequest returns the status of a model list request.
 func (h *Handler) GetModelListRequest(w http.ResponseWriter, r *http.Request) {
+	runtimeID := chi.URLParam(r, "runtimeId")
+	rt, ok := h.requireRuntimeModelAccess(w, r, runtimeID)
+	if !ok {
+		return
+	}
+
 	requestID := chi.URLParam(r, "requestId")
 
 	req, err := h.ModelListStore.Get(r.Context(), requestID)
@@ -322,7 +345,7 @@ func (h *Handler) GetModelListRequest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load request: "+err.Error())
 		return
 	}
-	if req == nil {
+	if req == nil || req.RuntimeID != rt.runtimeID {
 		writeError(w, http.StatusNotFound, "request not found")
 		return
 	}

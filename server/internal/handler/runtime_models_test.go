@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -142,6 +143,59 @@ func TestReportModelListResult_DecodesJSONBodyDefault(t *testing.T) {
 	}
 	if !body.Models[0].Default {
 		t.Errorf("default flag lost on model[0]: %+v", body.Models[0])
+	}
+}
+
+func TestGetModelListRequestRejectsCrossWorkspaceRequest(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler test fixture not initialized")
+	}
+
+	ctx := context.Background()
+	workspaceSlug := fmt.Sprintf("model-access-isolation-%d", time.Now().UnixNano())
+	var workspaceID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO workspace (name, slug, description, issue_prefix)
+		VALUES ('Model Access Isolation', $1, '', 'MAI')
+		RETURNING id
+	`, workspaceSlug).Scan(&workspaceID); err != nil {
+		t.Fatalf("create isolated workspace: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM workspace WHERE id = $1`, workspaceID)
+	})
+
+	var runtimeID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_runtime (
+			workspace_id, daemon_id, name, runtime_mode, provider, status,
+			device_info, metadata, scope, last_seen_at
+		)
+		VALUES ($1, 'model-access-daemon', 'Isolated Runtime', 'cloud',
+			'model-access-test', 'online', '', '{}'::jsonb, 'workspace', now())
+		RETURNING id
+	`, workspaceID).Scan(&runtimeID); err != nil {
+		t.Fatalf("create isolated runtime: %v", err)
+	}
+
+	store := NewInMemoryModelListStore()
+	request, err := store.Create(ctx, runtimeID)
+	if err != nil {
+		t.Fatalf("create model request: %v", err)
+	}
+	h := *testHandler
+	h.ModelListStore = store
+
+	w := httptest.NewRecorder()
+	r := withURLParams(
+		newRequest(http.MethodGet, "/api/runtimes/"+runtimeID+"/models/"+request.ID, nil),
+		"runtimeId", runtimeID,
+		"requestId", request.ID,
+	)
+	h.GetModelListRequest(w, r)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("cross-workspace model request status = %d, body = %s", w.Code, w.Body.String())
 	}
 }
 
