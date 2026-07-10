@@ -111,12 +111,6 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 		return &task, nil
 	}
 
-	if retried != nil {
-		s.reassignPromptEvaluationRunToRetry(ctx, task, *retried)
-	} else {
-		s.syncPromptEvaluationRunForTask(ctx, task, "task_failed")
-	}
-
 	deliveryCommentPosted := retried == nil && s.squadSOPTaskHasDeliveryComment(ctx, task)
 
 	var failureComment string
@@ -452,11 +446,9 @@ func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTas
 	retried := 0
 
 	for _, t := range tasks {
-		var retryChild *db.AgentTaskQueue
 		// Auto-retry first so the issue stays in_progress rather than
 		// flapping todo → in_progress within a tick.
 		if child, _ := s.MaybeRetryFailedTask(ctx, t); child != nil {
-			retryChild = child
 			retried++
 			if t.IssueID.Valid {
 				retriedIssues[util.UUIDToString(t.IssueID)] = true
@@ -464,11 +456,6 @@ func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTas
 		}
 
 		s.captureTaskFailed(ctx, t)
-		if retryChild != nil {
-			s.reassignPromptEvaluationRunToRetry(ctx, t, *retryChild)
-		} else {
-			s.syncPromptEvaluationRunForTask(ctx, t, "task_failed_batch")
-		}
 
 		if t.IssueID.Valid {
 			if issue, err := s.Queries.GetIssue(ctx, t.IssueID); err == nil {

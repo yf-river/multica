@@ -1866,6 +1866,9 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 	if completeW.Code != http.StatusOK {
 		t.Fatalf("complete status = %d, body = %s", completeW.Code, completeW.Body.String())
 	}
+	if _, err := projectPromptEvaluationTerminalTask(context.Background(), resp.TaskID); err != nil {
+		t.Fatalf("project completed prompt evaluation task: %v", err)
+	}
 
 	evidenceW := httptest.NewRecorder()
 	testHandler.GetPromptEvaluationRunEvidence(evidenceW, withURLParam(newRequest(http.MethodGet, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/evidence", nil), "id", resp.Run.ID))
@@ -2127,6 +2130,9 @@ func TestPromptEvaluationRuntimeReadinessReportsRecentCapacityFailure(t *testing
 	if failW.Code != http.StatusOK {
 		t.Fatalf("fail status = %d, body = %s", failW.Code, failW.Body.String())
 	}
+	if _, err := projectPromptEvaluationTerminalTask(context.Background(), resp.TaskID); err != nil {
+		t.Fatalf("project failed prompt evaluation task: %v", err)
+	}
 
 	readinessW := httptest.NewRecorder()
 	testHandler.GetPromptEvaluationRuntimeReadiness(readinessW, newRequest(http.MethodGet, "/api/prompt-evaluation-runtime-readiness", nil))
@@ -2319,6 +2325,9 @@ func TestRunPromptEvaluationAssetAgentCompletedWithoutStructuredVerdictNeedsRevi
 	if completeW.Code != http.StatusOK {
 		t.Fatalf("complete status = %d, body = %s", completeW.Code, completeW.Body.String())
 	}
+	if _, err := projectPromptEvaluationTerminalTask(context.Background(), resp.TaskID); err != nil {
+		t.Fatalf("project completed prompt evaluation task: %v", err)
+	}
 
 	evidenceW := httptest.NewRecorder()
 	testHandler.GetPromptEvaluationRunEvidence(evidenceW, withURLParam(newRequest(http.MethodGet, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/evidence", nil), "id", resp.Run.ID))
@@ -2402,6 +2411,9 @@ func TestRunPromptEvaluationAssetAgentAutoSyncsFailedTask(t *testing.T) {
 	if failW.Code != http.StatusOK {
 		t.Fatalf("fail status = %d, body = %s", failW.Code, failW.Body.String())
 	}
+	if _, err := projectPromptEvaluationTerminalTask(context.Background(), resp.TaskID); err != nil {
+		t.Fatalf("project failed prompt evaluation task: %v", err)
+	}
 
 	evidenceW := httptest.NewRecorder()
 	testHandler.GetPromptEvaluationRunEvidence(evidenceW, withURLParam(newRequest(http.MethodGet, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/evidence", nil), "id", resp.Run.ID))
@@ -2438,6 +2450,9 @@ func TestPromptEvaluationEvidenceSnapshotArchivesRunEvidence(t *testing.T) {
 	testHandler.FailTask(failW, withURLParam(failReq, "taskId", resp.TaskID))
 	if failW.Code != http.StatusOK {
 		t.Fatalf("fail status = %d, body = %s", failW.Code, failW.Body.String())
+	}
+	if _, err := projectPromptEvaluationTerminalTask(context.Background(), resp.TaskID); err != nil {
+		t.Fatalf("project failed prompt evaluation task: %v", err)
 	}
 
 	createSnapshotW := httptest.NewRecorder()
@@ -2621,6 +2636,9 @@ func TestPromptEvaluationOptimizationCandidateUsesAgentEvidence(t *testing.T) {
 	if failW.Code != http.StatusOK {
 		t.Fatalf("fail status = %d, body = %s", failW.Code, failW.Body.String())
 	}
+	if _, err := projectPromptEvaluationTerminalTask(context.Background(), resp.TaskID); err != nil {
+		t.Fatalf("project failed prompt evaluation task: %v", err)
+	}
 
 	candidateW := httptest.NewRecorder()
 	testHandler.CreatePromptEvaluationOptimizationCandidate(candidateW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/optimization-candidates", nil), "id", resp.Run.ID))
@@ -2706,6 +2724,9 @@ func TestRunPromptEvaluationAssetAgentAutoSyncsCancelledTask(t *testing.T) {
 	if _, err := testHandler.TaskService.CancelTask(context.Background(), parseUUID(resp.TaskID)); err != nil {
 		t.Fatalf("cancel task: %v", err)
 	}
+	if _, err := projectPromptEvaluationTerminalTask(context.Background(), resp.TaskID); err != nil {
+		t.Fatalf("project cancelled prompt evaluation task: %v", err)
+	}
 
 	evidenceW := httptest.NewRecorder()
 	testHandler.GetPromptEvaluationRunEvidence(evidenceW, withURLParam(newRequest(http.MethodGet, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/evidence", nil), "id", resp.Run.ID))
@@ -2776,6 +2797,9 @@ func TestRunPromptEvaluationAssetAgentBatchFailureAutoSyncsTask(t *testing.T) {
 		t.Fatalf("fail task row: %v", err)
 	}
 	testHandler.TaskService.HandleFailedTasks(context.Background(), []db.AgentTaskQueue{failed})
+	if _, err := projectPromptEvaluationTerminalTask(context.Background(), resp.TaskID); err != nil {
+		t.Fatalf("project batch failed evaluation task: %v", err)
+	}
 
 	evidenceW := httptest.NewRecorder()
 	testHandler.GetPromptEvaluationRunEvidence(evidenceW, withURLParam(newRequest(http.MethodGet, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/evidence", nil), "id", resp.Run.ID))
@@ -2813,6 +2837,9 @@ func TestRunPromptEvaluationAssetAgentRetryReassignsRunTask(t *testing.T) {
 	retried := testHandler.TaskService.HandleFailedTasks(context.Background(), []db.AgentTaskQueue{failed})
 	if retried != 1 {
 		t.Fatalf("expected one retry, got %d", retried)
+	}
+	if _, err := projectPromptEvaluationTerminalTask(context.Background(), resp.TaskID); err != nil {
+		t.Fatalf("project retrying evaluation task: %v", err)
 	}
 
 	var childTaskID string

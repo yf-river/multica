@@ -271,6 +271,10 @@ func main() {
 		slog.Error("register durable chat consumers", "error", err)
 		os.Exit(1)
 	}
+	if err := registerDurablePromptEvaluationConsumers(eventDispatcher); err != nil {
+		slog.Error("register durable prompt evaluation consumers", "error", err)
+		os.Exit(1)
+	}
 	if err := registerDurableQuickCreateConsumers(eventDispatcher); err != nil {
 		slog.Error("register durable quick-create consumers", "error", err)
 		os.Exit(1)

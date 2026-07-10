@@ -414,7 +414,6 @@ func (s *TaskService) captureTaskCompleted(ctx context.Context, task db.AgentTas
 		source, runtimeMode, _ := s.taskMetricsContext(ctx, task)
 		s.Metrics.RecordTaskTerminal(util.UUIDToString(task.ID), source, runtimeMode, task.Status, taskRunSeconds(task), taskTotalSeconds(task), task.Attempt)
 	}
-	s.syncPromptEvaluationRunForTask(ctx, task, "task_completed")
 }
 
 func (s *TaskService) captureTaskFailed(ctx context.Context, task db.AgentTaskQueue) {
@@ -494,7 +493,6 @@ func (s *TaskService) finalizeTaskCancelledSideEffects(ctx context.Context, task
 		slog.Warn("cancel task: failed to revoke task tokens",
 			"task_id", util.UUIDToString(task.ID), "error", err)
 	}
-	s.syncPromptEvaluationRunForTask(ctx, task, "task_cancelled")
 }
 
 // CaptureCancelledTaskTracesInTx records cancel traces inside the caller's

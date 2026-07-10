@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"log/slog"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,63 +17,43 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// SyncPromptEvaluationRunForTask回写绑定到该任务的训练评估运行。
-// 返回 synced=false 表示该任务不是训练评估智能体 运行，不需要处理。
-func SyncPromptEvaluationRunForTask(ctx context.Context, q *db.Queries, task db.AgentTaskQueue) (db.PromptEvaluationRun, bool, error) {
+// ProjectPromptEvaluationTerminalTask applies the current run/trial/snapshot
+// state for one terminal task through the caller's transaction. A retry child
+// becomes the run's new authoritative task instead of materializing a final
+// failure for the superseded parent attempt.
+func ProjectPromptEvaluationTerminalTask(ctx context.Context, q *db.Queries, task db.AgentTaskQueue) (bool, error) {
+	switch task.Status {
+	case "completed", "failed", "cancelled":
+	default:
+		return false, errors.New("prompt evaluation projection requires a terminal task")
+	}
 	run, err := q.GetPromptEvaluationRunByTask(ctx, task.ID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
 	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return db.PromptEvaluationRun{}, false, nil
+		return false, err
+	}
+	if task.Status == "failed" {
+		child, retryErr := q.GetRetryTaskForParent(ctx, task.ID)
+		switch {
+		case retryErr == nil:
+			run, err = q.ReassignPromptEvaluationRunTask(ctx, db.ReassignPromptEvaluationRunTaskParams{
+				TaskID:        task.ID,
+				TaskID_2:      child.ID,
+				ChatSessionID: child.ChatSessionID,
+			})
+			if err != nil {
+				return true, err
+			}
+			_, err = syncPromptEvaluationRunWithTask(ctx, q, run, child)
+			return true, err
+		case !errors.Is(retryErr, pgx.ErrNoRows):
+			return true, retryErr
 		}
-		return db.PromptEvaluationRun{}, false, err
 	}
-	updated, err := SyncPromptEvaluationRunFromTask(ctx, q, run)
-	if err != nil {
-		return db.PromptEvaluationRun{}, true, err
-	}
-	return updated, true, nil
-}
-
-func (s *TaskService) syncPromptEvaluationRunForTask(ctx context.Context, task db.AgentTaskQueue, source string) {
-	if s == nil || s.Queries == nil {
-		return
-	}
-	if _, synced, err := SyncPromptEvaluationRunForTask(ctx, s.Queries, task); err != nil {
-		slog.Warn("prompt evaluation auto-sync failed",
-			"source", source,
-			"task_id", util.UUIDToString(task.ID),
-			"status", task.Status,
-			"error", err,
-		)
-	} else if synced {
-		slog.Info("prompt evaluation auto-synced",
-			"source", source,
-			"task_id", util.UUIDToString(task.ID),
-			"status", task.Status,
-		)
-	}
-}
-
-func (s *TaskService) reassignPromptEvaluationRunToRetry(ctx context.Context, parent db.AgentTaskQueue, child db.AgentTaskQueue) {
-	if s == nil || s.Queries == nil {
-		return
-	}
-	if _, err := s.Queries.ReassignPromptEvaluationRunTask(ctx, db.ReassignPromptEvaluationRunTaskParams{
-		TaskID:        parent.ID,
-		TaskID_2:      child.ID,
-		ChatSessionID: child.ChatSessionID,
-	}); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return
-		}
-		slog.Warn("prompt evaluation retry reassign failed",
-			"parent_task_id", util.UUIDToString(parent.ID),
-			"child_task_id", util.UUIDToString(child.ID),
-			"error", err,
-		)
-		return
-	}
-	s.syncPromptEvaluationRunForTask(ctx, child, "task_retry")
+	_, err = syncPromptEvaluationRunWithTask(ctx, q, run, task)
+	return true, err
 }
 
 // SyncPromptEvaluationRunFromTask从绑定的 agent_task_queue 重新计算 run、trial 和资产快照。
