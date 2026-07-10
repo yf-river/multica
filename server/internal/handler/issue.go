@@ -130,8 +130,6 @@ type tapdSourceRef struct {
 	URL          string
 }
 
-
-
 func (h *Handler) incompleteChildrenBlockingDone(ctx context.Context, issue db.Issue) ([]IncompleteChildIssueResponse, error) {
 	children, err := h.Queries.ListChildIssues(ctx, issue.ID)
 	if err != nil {
@@ -221,7 +219,6 @@ func (h *Handler) validateProjectInWorkspace(ctx context.Context, workspaceID, p
 	return err
 }
 
-
 // issueListRowToResponse converts a list-query row (no description) to an IssueResponse.
 
 // labelsByIssue bulk-loads labels for the given issue IDs and returns a map
@@ -254,7 +251,6 @@ func (h *Handler) labelsByIssue(ctx context.Context, wsUUID pgtype.UUID, issueID
 	}
 	return out
 }
-
 
 type IssueAssigneeGroupResponse struct {
 	ID           string          `json:"id"`
@@ -319,12 +315,6 @@ const issueListSelectSQL = `i.id, i.workspace_id, i.title, i.description, i.stat
        COALESCE(agent_activity.queued_count, 0)::bigint AS agent_queued_count,
        COALESCE(agent_activity.agent_ids, ARRAY[]::uuid[]) AS agent_ids`
 
-
-
-
-
-
-
 func (h *Handler) visibleAgentUUIDsForIssueList(w http.ResponseWriter, r *http.Request, workspaceID string) ([]pgtype.UUID, bool) {
 	member, ok := h.workspaceMember(w, r, workspaceID)
 	if !ok {
@@ -348,7 +338,6 @@ func (h *Handler) visibleAgentUUIDsForIssueList(w http.ResponseWriter, r *http.R
 	}
 	return ids, true
 }
-
 
 // SearchIssueResponse extends IssueResponse with search metadata.
 type SearchIssueResponse struct {
@@ -850,13 +839,6 @@ func (h *Handler) enrichIssueSourceMetadata(ctx context.Context, metadata map[st
 	return h.enrichSourceCredentialMetadata(ctx, metadata, creatorUserID)
 }
 
-
-
-
-
-
-
-
 func (h *Handler) enrichSourceCredentialMetadata(ctx context.Context, metadata map[string]json.RawMessage, creatorUserID string) map[string]json.RawMessage {
 	provider, ok := metadataString(metadata, "source_provider")
 	if !ok || provider != externalCredentialProviderTAPD {
@@ -888,7 +870,6 @@ func (h *Handler) enrichSourceCredentialMetadata(ctx context.Context, metadata m
 	set("source_fetch_status", "pending_mcp_fetch")
 	return out
 }
-
 
 type UpdateIssueRequest struct {
 	Title         *string  `json:"title"`
@@ -1435,7 +1416,7 @@ func (h *Handler) DeleteIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.deleteS3Objects(r.Context(), attachmentURLs)
+	h.deleteStorageObjects(r.Context(), attachmentURLs)
 	userID := requestUserID(r)
 	actorType, actorID := h.resolveActor(r, userID, uuidToString(issue.WorkspaceID))
 	// Always emit the resolved UUID — frontend caches key by UUID, so an
@@ -1455,4 +1436,3 @@ type BatchUpdateIssuesRequest struct {
 	IssueIDs []string           `json:"issue_ids"`
 	Updates  UpdateIssueRequest `json:"updates"`
 }
-

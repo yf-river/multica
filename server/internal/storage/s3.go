@@ -200,24 +200,27 @@ func (s *S3Storage) PresignGetWithContentDisposition(ctx context.Context, key st
 	return out.URL, nil
 }
 
-// Delete removes an object from S3. Errors are logged but not fatal.
-func (s *S3Storage) Delete(ctx context.Context, key string) {
+// Delete removes an object from S3.
+func (s *S3Storage) Delete(ctx context.Context, key string) error {
 	if key == "" {
-		return
+		return nil
 	}
 	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(key),
 	})
 	if err != nil {
-		slog.Error("s3 DeleteObject failed", "key", key, "error", err)
+		return fmt.Errorf("s3 DeleteObject: %w", err)
 	}
+	return nil
 }
 
 // DeleteKeys removes multiple objects from S3. Best-effort, errors are logged.
 func (s *S3Storage) DeleteKeys(ctx context.Context, keys []string) {
 	for _, key := range keys {
-		s.Delete(ctx, key)
+		if err := s.Delete(ctx, key); err != nil {
+			slog.Error("s3 DeleteObject failed", "key", key, "error", err)
+		}
 	}
 }
 

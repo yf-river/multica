@@ -320,7 +320,7 @@ func (h *Handler) BatchDeleteIssues(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		h.deleteS3Objects(r.Context(), attachmentURLs)
+		h.deleteStorageObjects(r.Context(), attachmentURLs)
 
 		// Always emit the resolved UUID — frontend caches key by UUID.
 		actorType, actorID := h.resolveActor(r, userID, workspaceID)

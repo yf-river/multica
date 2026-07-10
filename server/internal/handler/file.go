@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -145,17 +146,17 @@ func attachmentDownloadPath(id string) string {
 //
 //  1. Persist `a.Url` only when the deployment has signaled the storage
 //     backend serves URLs publicly without per-request auth:
-//       - `Storage.CdnDomain()` is non-empty (operator configured a
-//         public-facing base URL — `S3_CDN_DOMAIN` for the S3 backend or
-//         `LOCAL_UPLOAD_BASE_URL` for LocalStorage), AND
-//       - `h.CFSigner` is nil (no per-request CloudFront signing — when
-//         signing is on, the same CDN domain serves PRIVATE content via
-//         time-bounded signed URLs and the raw `a.Url` is unauth-deny),
-//         AND
-//       - `a.Url` is itself an absolute http(s) URL with no signature
-//         query — defends against legacy rows backfilled while baseURL
-//         was unset, and against a freshly-signed `download_url` ever
-//         leaking into `a.Url` (the original MUL-3130 bug).
+//     - `Storage.CdnDomain()` is non-empty (operator configured a
+//     public-facing base URL — `S3_CDN_DOMAIN` for the S3 backend or
+//     `LOCAL_UPLOAD_BASE_URL` for LocalStorage), AND
+//     - `h.CFSigner` is nil (no per-request CloudFront signing — when
+//     signing is on, the same CDN domain serves PRIVATE content via
+//     time-bounded signed URLs and the raw `a.Url` is unauth-deny),
+//     AND
+//     - `a.Url` is itself an absolute http(s) URL with no signature
+//     query — defends against legacy rows backfilled while baseURL
+//     was unset, and against a freshly-signed `download_url` ever
+//     leaking into `a.Url` (the original MUL-3130 bug).
 //
 //  2. Every other shape — CloudFront-signed mode, S3 presign /proxy
 //     against a private bucket without a CDN domain, raw S3 / R2 /
@@ -444,21 +445,15 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		}
 		params.Url = link
 
-		att, err := h.Queries.CreateAttachment(r.Context(), params)
+		att, err := persistUploadedAttachment(r.Context(), h.Storage, key, func() (db.Attachment, error) {
+			return h.Queries.CreateAttachment(r.Context(), params)
+		})
 		if err != nil {
-			slog.Error("failed to create attachment record", "error", err)
-			// S3 upload succeeded but DB record failed — still return the link
-			// so the file is usable. Log the error for investigation.
-		} else {
-			writeJSON(w, http.StatusOK, h.attachmentToResponse(att))
+			slog.Error("failed to persist uploaded attachment", "error", err)
+			writeError(w, http.StatusInternalServerError, "failed to create attachment")
 			return
 		}
-
-		writeJSON(w, http.StatusOK, map[string]string{
-			"id":       "",
-			"url":      link,
-			"filename": header.Filename,
-		})
+		writeJSON(w, http.StatusOK, h.attachmentToResponse(att))
 		return
 	}
 
@@ -474,6 +469,27 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		"url":      link,
 		"filename": header.Filename,
 	})
+}
+
+func persistUploadedAttachment(
+	ctx context.Context,
+	objectStore storage.Storage,
+	key string,
+	create func() (db.Attachment, error),
+) (db.Attachment, error) {
+	attachment, err := create()
+	if err == nil {
+		return attachment, nil
+	}
+
+	createErr := fmt.Errorf("create attachment record: %w", err)
+	if rollbackErr := objectStore.Delete(ctx, key); rollbackErr != nil {
+		return db.Attachment{}, errors.Join(
+			createErr,
+			fmt.Errorf("rollback uploaded object: %w", rollbackErr),
+		)
+	}
+	return db.Attachment{}, createErr
 }
 
 // ---------------------------------------------------------------------------
@@ -938,7 +954,7 @@ func (h *Handler) DeleteAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.deleteS3Object(r.Context(), att.Url)
+	h.deleteStorageObject(r.Context(), att.Url)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -970,16 +986,19 @@ func (h *Handler) linkAttachmentsByIDs(ctx context.Context, commentID, issueID p
 	}
 }
 
-// deleteS3Object removes a single file from S3 by its CDN URL.
-func (h *Handler) deleteS3Object(ctx context.Context, url string) {
+// deleteStorageObject removes a single object by its persisted URL.
+func (h *Handler) deleteStorageObject(ctx context.Context, url string) {
 	if h.Storage == nil || url == "" {
 		return
 	}
-	h.Storage.Delete(ctx, h.Storage.KeyFromURL(url))
+	key := h.Storage.KeyFromURL(url)
+	if err := h.Storage.Delete(ctx, key); err != nil {
+		slog.Error("storage object delete failed", "key", key, "error", err)
+	}
 }
 
-// deleteS3Objects removes multiple files from S3 by their CDN URLs.
-func (h *Handler) deleteS3Objects(ctx context.Context, urls []string) {
+// deleteStorageObjects removes multiple objects by their persisted URLs.
+func (h *Handler) deleteStorageObjects(ctx context.Context, urls []string) {
 	if h.Storage == nil || len(urls) == 0 {
 		return
 	}

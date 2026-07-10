@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -104,24 +105,28 @@ func (s *LocalStorage) GetReader(ctx context.Context, key string) (io.ReadCloser
 	return f, nil
 }
 
-func (s *LocalStorage) Delete(ctx context.Context, key string) {
+func (s *LocalStorage) Delete(ctx context.Context, key string) error {
 	if key == "" {
-		return
+		return nil
 	}
+	var deleteErr error
 	filePath := filepath.Join(s.uploadDir, key)
 	if err := os.Remove(filePath); err != nil {
 		if !os.IsNotExist(err) {
-			slog.Error("local storage Delete failed", "key", key, "error", err)
+			deleteErr = fmt.Errorf("remove object: %w", err)
 		}
 	}
 	if err := os.Remove(filePath + metaSuffix); err != nil && !os.IsNotExist(err) {
-		slog.Error("local storage meta Delete failed", "key", key, "error", err)
+		deleteErr = errors.Join(deleteErr, fmt.Errorf("remove metadata: %w", err))
 	}
+	return deleteErr
 }
 
 func (s *LocalStorage) DeleteKeys(ctx context.Context, keys []string) {
 	for _, key := range keys {
-		s.Delete(ctx, key)
+		if err := s.Delete(ctx, key); err != nil {
+			slog.Error("local storage Delete failed", "key", key, "error", err)
+		}
 	}
 }
 

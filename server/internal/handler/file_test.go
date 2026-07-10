@@ -9,6 +9,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -54,6 +55,7 @@ type mockStorage struct {
 	files               map[string][]byte
 	presignCalls        []string
 	presignDispositions []string
+	deleteErr           error
 }
 
 func (m *mockStorage) Upload(_ context.Context, key string, data []byte, _ string, _ string) (string, error) {
@@ -66,10 +68,14 @@ func (m *mockStorage) Upload(_ context.Context, key string, data []byte, _ strin
 	return fmt.Sprintf("https://cdn.example.com/%s", key), nil
 }
 
-func (m *mockStorage) Delete(_ context.Context, key string) {
+func (m *mockStorage) Delete(_ context.Context, key string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.deleteErr != nil {
+		return m.deleteErr
+	}
 	delete(m.files, key)
+	return nil
 }
 func (m *mockStorage) DeleteKeys(_ context.Context, _ []string) {}
 func (m *mockStorage) KeyFromURL(rawURL string) string {
@@ -133,6 +139,46 @@ func (m *mockStorage) put(key string, data []byte) {
 		m.files = map[string][]byte{}
 	}
 	m.files[key] = append([]byte(nil), data...)
+}
+
+func TestPersistUploadedAttachmentRollsBackObjectOnDatabaseFailure(t *testing.T) {
+	store := &mockStorage{}
+	store.put("workspaces/ws-1/file.txt", []byte("private"))
+
+	_, err := persistUploadedAttachment(
+		context.Background(),
+		store,
+		"workspaces/ws-1/file.txt",
+		func() (db.Attachment, error) {
+			return db.Attachment{}, errors.New("database unavailable")
+		},
+	)
+
+	if err == nil {
+		t.Fatal("expected persistence failure")
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if _, exists := store.files["workspaces/ws-1/file.txt"]; exists {
+		t.Fatal("uploaded object was not rolled back")
+	}
+}
+
+func TestPersistUploadedAttachmentReportsRollbackFailure(t *testing.T) {
+	store := &mockStorage{deleteErr: errors.New("object store unavailable")}
+
+	_, err := persistUploadedAttachment(
+		context.Background(),
+		store,
+		"workspaces/ws-1/file.txt",
+		func() (db.Attachment, error) {
+			return db.Attachment{}, errors.New("database unavailable")
+		},
+	)
+
+	if err == nil || !strings.Contains(err.Error(), "rollback uploaded object") {
+		t.Fatalf("expected joined rollback error, got %v", err)
+	}
 }
 
 func TestUploadFileForeignWorkspace(t *testing.T) {
