@@ -206,6 +206,28 @@ func TestTriggerAutopilot_SquadPrivateLeader_OwnerCanDispatch(t *testing.T) {
 	if run.Status != "issue_created" {
 		t.Fatalf("run status = %q, want issue_created", run.Status)
 	}
+	if run.IssueID == nil {
+		t.Fatal("create_issue run has no issue_id")
+	}
+	var leaderTaskID string
+	if err := testPool.QueryRow(ctx, `
+		SELECT id::text
+		FROM agent_task_queue
+		WHERE issue_id = $1 AND agent_id = $2
+		  AND is_leader_task = true AND force_fresh_session = true
+	`, *run.IssueID, agentID).Scan(&leaderTaskID); err != nil {
+		t.Fatalf("load atomic squad leader task: %v", err)
+	}
+	var sopRunCount int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*) FROM squad_sop_run
+		WHERE issue_id = $1 AND leader_task_id = $2
+	`, *run.IssueID, leaderTaskID).Scan(&sopRunCount); err != nil {
+		t.Fatalf("count squad SOP runs: %v", err)
+	}
+	if sopRunCount != 1 {
+		t.Fatalf("atomic squad dispatch created %d SOP runs, want 1", sopRunCount)
+	}
 }
 
 // TestTriggerAutopilot_SquadPrivateLeader_PlainMemberCreator_Blocked verifies

@@ -179,24 +179,29 @@ func (s *TaskService) enqueueMentionTask(ctx context.Context, issue db.Issue, ag
 }
 
 func (s *TaskService) ensureSquadSOPRunForLeaderTask(ctx context.Context, issue db.Issue, task db.AgentTaskQueue) {
-	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "squad" || !issue.AssigneeID.Valid {
-		return
+	if err := s.createSquadSOPRunForLeaderTask(ctx, s.Queries, issue, task); err != nil {
+		slog.Warn("create squad SOP run for leader task failed",
+			"issue_id", util.UUIDToString(issue.ID),
+			"task_id", util.UUIDToString(task.ID),
+			"error", err)
 	}
-	squad, err := s.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
+}
+
+func (s *TaskService) createSquadSOPRunForLeaderTask(ctx context.Context, queries *db.Queries, issue db.Issue, task db.AgentTaskQueue) error {
+	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "squad" || !issue.AssigneeID.Valid {
+		return nil
+	}
+	squad, err := queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
 		ID:          issue.AssigneeID,
 		WorkspaceID: issue.WorkspaceID,
 	})
 	if err != nil {
-		slog.Warn("create squad SOP run skipped: squad not found",
-			"issue_id", util.UUIDToString(issue.ID),
-			"squad_id", util.UUIDToString(issue.AssigneeID),
-			"error", err)
-		return
+		return fmt.Errorf("load squad for SOP run: %w", err)
 	}
 
 	profile := normalizeSquadSOPProfile(squad.SopProfile)
 	profileKey, currentStepKey, currentStepName, roleKey := squadSOPProfileSummary(profile)
-	run, err := s.Queries.CreateSquadSOPRun(ctx, db.CreateSquadSOPRunParams{
+	run, err := queries.CreateSquadSOPRun(ctx, db.CreateSquadSOPRunParams{
 		WorkspaceID:    issue.WorkspaceID,
 		IssueID:        issue.ID,
 		SquadID:        squad.ID,
@@ -207,17 +212,12 @@ func (s *TaskService) ensureSquadSOPRunForLeaderTask(ctx context.Context, issue 
 		CurrentStepKey: currentStepKey,
 	})
 	if err != nil {
-		slog.Warn("create squad SOP run failed",
-			"issue_id", util.UUIDToString(issue.ID),
-			"squad_id", util.UUIDToString(squad.ID),
-			"task_id", util.UUIDToString(task.ID),
-			"error", err)
-		return
+		return fmt.Errorf("create squad SOP run: %w", err)
 	}
 	if currentStepKey == "" {
-		return
+		return nil
 	}
-	if _, err := s.Queries.CreateSquadSOPStepEvent(ctx, db.CreateSquadSOPStepEventParams{
+	if _, err := queries.CreateSquadSOPStepEvent(ctx, db.CreateSquadSOPStepEventParams{
 		RunID:         run.ID,
 		WorkspaceID:   issue.WorkspaceID,
 		IssueID:       issue.ID,
@@ -231,11 +231,9 @@ func (s *TaskService) ensureSquadSOPRunForLeaderTask(ctx context.Context, issue 
 		CreatedByType: "system",
 		TaskID:        task.ID,
 	}); err != nil {
-		slog.Warn("create squad SOP initial step event failed",
-			"run_id", util.UUIDToString(run.ID),
-			"task_id", util.UUIDToString(task.ID),
-			"error", err)
+		return fmt.Errorf("create squad SOP initial step event: %w", err)
 	}
+	return nil
 }
 
 func firstSOPStringField(obj map[string]any, keys ...string) string {

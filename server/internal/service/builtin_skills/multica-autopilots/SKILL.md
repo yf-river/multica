@@ -33,6 +33,10 @@ For `run_only`, task creation, the run's `task_id`, and `last_run_at` commit
 together. A dispatch persistence failure leaves no executable orphan task and
 records the audit run as failed when the database remains writable.
 
+For `create_issue`, the Issue, initial task, run link, subscriber/inbox state,
+durable Issue event, and squad SOP state commit as one unit. A failed initial
+task insert leaves only the failed audit run, not a half-created Issue.
+
 Execution modes:
 
 - `create_issue` creates a Multica issue, making the run visible as issue state.

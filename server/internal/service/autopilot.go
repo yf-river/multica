@@ -131,10 +131,9 @@ func (s *AutopilotService) DispatchAutopilot(
 // dispatchCreateIssue creates an issue and enqueues a task for the agent.
 //
 // When the autopilot is assigned to a squad (Path A from MUL-2429), the
-// created issue inherits assignee_type='squad' + assignee_id=squad. The
-// existing issue listener chain (shouldEnqueueSquadLeaderOnAssign →
-// enqueueSquadLeaderTask) then routes the work to the squad leader, exactly
-// as a human manually assigning the issue to that squad would.
+// created issue inherits assignee_type='squad' + assignee_id=squad while the
+// task is bound to the resolved leader. Issue, task, run link, subscribers,
+// inbox rows, SOP state, and the durable Issue event commit together.
 //
 // Creator on the issue is always the agent that will actually do the work
 // (the resolved leader for a squad autopilot, otherwise the assignee agent
@@ -143,6 +142,13 @@ func (s *AutopilotService) dispatchCreateIssue(ctx context.Context, ap db.Autopi
 	leader, _, err := s.resolveAutopilotLeader(ctx, ap)
 	if err != nil {
 		return fmt.Errorf("resolve leader: %w", err)
+	}
+	ready, reason, err := AgentReadiness(ctx, s.Queries, leader)
+	if err != nil {
+		return fmt.Errorf("check agent readiness: %w", err)
+	}
+	if !ready {
+		return &errDispatchSkipped{reason: formatAdmissionReason(ap, reason)}
 	}
 	// Re-check the private squad leader after the admission gate and before
 	// opening the write transaction. A leader rotation can happen between the
@@ -200,6 +206,23 @@ func (s *AutopilotService) dispatchCreateIssue(ctx context.Context, ap db.Autopi
 	if err != nil {
 		return fmt.Errorf("create issue: %w", err)
 	}
+	isSquad := ap.AssigneeType == "squad"
+	task, err := qtx.CreateAgentTask(ctx, db.CreateAgentTaskParams{
+		AgentID:           leader.ID,
+		RuntimeID:         leader.RuntimeID,
+		IssueID:           issue.ID,
+		Priority:          priorityToInt(issue.Priority),
+		ForceFreshSession: pgtype.Bool{Bool: isSquad, Valid: isSquad},
+		IsLeaderTask:      pgtype.Bool{Bool: isSquad, Valid: isSquad},
+	})
+	if err != nil {
+		return fmt.Errorf("create autopilot issue task: %w", err)
+	}
+	if isSquad {
+		if err := s.TaskSvc.createSquadSOPRunForLeaderTask(ctx, qtx, issue, task); err != nil {
+			return fmt.Errorf("create autopilot squad SOP state: %w", err)
+		}
+	}
 
 	// Fan out the default subscriber template inside the same tx as the
 	// issue insert, before EventIssueCreated fires — so notification
@@ -256,34 +279,22 @@ func (s *AutopilotService) dispatchCreateIssue(ctx context.Context, ap db.Autopi
 	}
 	*run = updatedRun
 
-	// Publish the committed event for realtime invalidation; durable audience,
-	// activity, and notification projections consume the outbox copy. For
-	// squad autopilots, this is what triggers shouldEnqueueSquadLeaderOnAssign
-	// → enqueueSquadLeaderTask — no separate squad-routing code needed here.
+	// Publish the committed events for realtime invalidation; durable audience,
+	// activity, and notification projections consume the outbox copy.
 	s.Bus.Publish(createdEvent)
 	for _, event := range inboxEvents {
 		s.Bus.Publish(event)
 	}
 	s.captureIssueCreatedFromAutopilot(ap, run, issue, leader.ID)
 
-	// Enqueue agent task via the existing flow. Squad-assigned autopilots
-	// route to the resolved leader as the executing agent (Path A from
-	// MUL-2429); agent-assigned autopilots go through the standard issue
-	// path. Both code paths land in agent_task_queue with agent_id = leader.
-	if ap.AssigneeType == "squad" {
-		if _, err := s.TaskSvc.EnqueueTaskForSquadLeader(ctx, issue, leader.ID, pgtype.UUID{}); err != nil {
-			return fmt.Errorf("enqueue squad leader task: %w", err)
-		}
-	} else {
-		if _, err := s.TaskSvc.EnqueueTaskForIssue(ctx, issue); err != nil {
-			return fmt.Errorf("enqueue task for issue: %w", err)
-		}
-	}
+	s.TaskSvc.broadcastTaskEvent(ctx, protocol.EventTaskQueued, task)
+	s.TaskSvc.NotifyTaskEnqueued(ctx, task)
 
 	slog.Info("autopilot dispatched (create_issue)",
 		"autopilot_id", util.UUIDToString(ap.ID),
 		"assignee_type", ap.AssigneeType,
 		"issue_id", util.UUIDToString(issue.ID),
+		"task_id", util.UUIDToString(task.ID),
 		"leader_id", util.UUIDToString(leader.ID),
 		"run_id", util.UUIDToString(run.ID),
 	)

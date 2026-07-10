@@ -694,6 +694,85 @@ func installAutopilotTaskLinkFailure(t *testing.T, autopilotID string) {
 	}
 }
 
+func TestAutopilotCreateIssueRollsBackIssueWhenTaskInsertFails(t *testing.T) {
+	ctx := context.Background()
+	f := setupAutopilotListenerFixture(t)
+	ap, err := f.queries.CreateAutopilot(ctx, db.CreateAutopilotParams{
+		WorkspaceID:        parseUUID(testWorkspaceID),
+		Title:              "Atomic create-issue dispatch",
+		Description:        pgtype.Text{String: "issue and task must commit together", Valid: true},
+		AssigneeType:       "agent",
+		AssigneeID:         parseUUID(f.agentID),
+		Status:             "active",
+		ExecutionMode:      "create_issue",
+		IssueTitleTemplate: pgtype.Text{String: "Atomic create-issue task", Valid: true},
+		CreatedByType:      "member",
+		CreatedByID:        parseUUID(testUserID),
+	})
+	if err != nil {
+		t.Fatalf("create autopilot: %v", err)
+	}
+	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM autopilot WHERE id = $1`, ap.ID) })
+	installAutopilotIssueTaskFailure(t, util.UUIDToString(ap.ID))
+
+	run, dispatchErr := f.autopilotSvc.DispatchAutopilot(ctx, ap, pgtype.UUID{}, "manual", nil)
+	if dispatchErr == nil {
+		t.Fatal("create-issue dispatch returned success after task insert failure")
+	}
+	if run == nil {
+		t.Fatal("failed create-issue dispatch did not return its audit run")
+	}
+	var issueCount, taskCount int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*) FROM issue WHERE origin_type = 'autopilot' AND origin_id = $1
+	`, ap.ID).Scan(&issueCount); err != nil {
+		t.Fatalf("count partial autopilot issues: %v", err)
+	}
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM agent_task_queue WHERE autopilot_run_id = $1 OR issue_id = $2`, run.ID, run.IssueID).Scan(&taskCount); err != nil {
+		t.Fatalf("count partial autopilot tasks: %v", err)
+	}
+	if issueCount != 0 || taskCount != 0 {
+		t.Fatalf("failed create-issue dispatch left issue=%d task=%d", issueCount, taskCount)
+	}
+	persisted, err := f.queries.GetAutopilotRun(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("load failed create-issue run: %v", err)
+	}
+	if persisted.Status != "failed" || persisted.IssueID.Valid {
+		t.Fatalf("failed create-issue run = status %q issue_id %+v", persisted.Status, persisted.IssueID)
+	}
+}
+
+func installAutopilotIssueTaskFailure(t *testing.T, autopilotID string) {
+	t.Helper()
+	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
+	functionName := "autopilot_issue_task_fail_fn_" + suffix
+	triggerName := "autopilot_issue_task_fail_" + suffix
+	ctx := context.Background()
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON agent_task_queue`, triggerName))
+		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, functionName))
+	})
+	if _, err := testPool.Exec(ctx, fmt.Sprintf(`
+		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF NEW.issue_id IS NOT NULL AND EXISTS (
+				SELECT 1 FROM issue
+				WHERE id = NEW.issue_id AND origin_type = 'autopilot' AND origin_id = '%s'
+			) THEN
+				RAISE EXCEPTION 'forced autopilot issue task failure';
+			END IF;
+			RETURN NEW;
+		END;
+		$$;
+		CREATE TRIGGER %s
+		BEFORE INSERT ON agent_task_queue
+		FOR EACH ROW EXECUTE FUNCTION %s();
+	`, functionName, autopilotID, triggerName, functionName)); err != nil {
+		t.Fatalf("install autopilot issue task failure: %v", err)
+	}
+}
+
 // TestAutopilotDispatchSkipsWhenRuntimeOffline locks in the MUL-1899
 // admission gate: when the assignee agent's runtime is not online we must
 // record a `skipped` autopilot_run with a failure_reason and NOT enqueue an
