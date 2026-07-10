@@ -2,10 +2,11 @@
  * @vitest-environment jsdom
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { renderHook } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import type { WSClient } from "../api/ws-client";
+import type { WSMessage } from "../types";
 import { useRealtimeSync, type RealtimeSyncStores } from "./use-realtime-sync";
 
 vi.mock("../platform/workspace-storage", () => ({
@@ -26,6 +27,26 @@ function createMockWs(): WSClient {
     onAny: vi.fn(() => () => {}),
     onReconnect: vi.fn(() => () => {}),
   } as unknown as WSClient;
+}
+
+function createCapturingMockWs() {
+  let onAnyHandler: ((message: WSMessage) => void) | null = null;
+  const ws = {
+    on: vi.fn(() => () => {}),
+    onAny: vi.fn((handler: (message: WSMessage) => void) => {
+      onAnyHandler = handler;
+      return () => {};
+    }),
+    onReconnect: vi.fn(() => () => {}),
+  } as unknown as WSClient;
+
+  return {
+    ws,
+    emit(message: WSMessage) {
+      if (!onAnyHandler) throw new Error("onAny handler is not registered");
+      onAnyHandler(message);
+    },
+  };
 }
 
 function createStores(): RealtimeSyncStores {
@@ -160,5 +181,26 @@ describe("useRealtimeSync — ws instance change", () => {
     expect(calls).toContainEqual(["issues", "usage"]);
     expect(calls).toContainEqual(["issues", "attachments"]);
     expect(calls).toContainEqual(["issues", "tasks"]);
+  });
+
+  it("debounces project resource events into one project cache invalidation", () => {
+    vi.useFakeTimers();
+    const { ws, emit } = createCapturingMockWs();
+    const { unmount } = renderRealtimeSync(ws);
+    invalidateSpy.mockClear();
+
+    act(() => {
+      emit({ type: "project_resource:created", payload: {} });
+      emit({ type: "project_resource:updated", payload: {} });
+      emit({ type: "project_resource:deleted", payload: {} });
+      vi.advanceTimersByTime(100);
+    });
+
+    expect(invalidatedQueryKeys().filter(
+      (key: unknown) => JSON.stringify(key) === JSON.stringify(["projects", "ws-1"]),
+    )).toHaveLength(1);
+
+    unmount();
+    vi.useRealTimers();
   });
 });

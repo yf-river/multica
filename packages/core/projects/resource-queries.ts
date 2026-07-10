@@ -41,7 +41,7 @@ export function useCreateProjectResource(wsId: string, projectId: string) {
     },
     onSettled: () => {
       qc.invalidateQueries({
-        queryKey: projectResourceKeys.list(wsId, projectId),
+        queryKey: projectKeys.all(wsId),
       });
     },
   });
@@ -126,16 +126,18 @@ export function useDeleteProjectResource(wsId: string, projectId: string) {
       );
       qc.setQueryData<ListProjectResourcesResponse>(
         projectResourceKeys.list(wsId, projectId),
-        (old) =>
-          old
-            ? {
-                ...old,
-                resources: old.resources.filter(
-                  (r: ProjectResource) => r.id !== resourceId,
-                ),
-                total: old.total - 1,
-              }
-            : old,
+        (old) => {
+          if (!old || !old.resources.some((resource) => resource.id === resourceId)) {
+            return old;
+          }
+          return {
+            ...old,
+            resources: old.resources.filter(
+              (resource: ProjectResource) => resource.id !== resourceId,
+            ),
+            total: Math.max(0, old.total - 1),
+          };
+        },
       );
       return { prev };
     },
@@ -146,7 +148,7 @@ export function useDeleteProjectResource(wsId: string, projectId: string) {
     },
     onSettled: () => {
       qc.invalidateQueries({
-        queryKey: projectResourceKeys.list(wsId, projectId),
+        queryKey: projectKeys.all(wsId),
       });
     },
   });

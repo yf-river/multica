@@ -109,6 +109,28 @@ describe("ApiClient", () => {
     });
   });
 
+  it("validates project resource read and mutation responses", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(
+      new Response(JSON.stringify({ id: 42 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )));
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.listProjectResources("project-1"))
+      .resolves.toMatchObject({ resources: [], total: 0 });
+    await expect(client.createProjectResource("project-1", {
+      resource_type: "github_repo",
+      resource_ref: { url: "https://example.test/repo" },
+    })).rejects.toMatchObject({ code: "api_response_contract_invalid" });
+    await expect(client.updateProjectResource("project-1", "resource-1", {
+      label: "Repository",
+    })).rejects.toMatchObject({ code: "api_response_contract_invalid" });
+    await expect(client.syncProjectResource("project-1", "resource-1"))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid" });
+  });
+
   it("validates workspace, repository, and member responses", async () => {
     vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(
       new Response(JSON.stringify({ id: 42 }), {

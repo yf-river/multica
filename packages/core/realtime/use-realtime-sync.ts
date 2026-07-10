@@ -407,6 +407,10 @@ export function useRealtimeSync(
         const wsId = getCurrentWsId();
         if (wsId) qc.invalidateQueries({ queryKey: projectKeys.all(wsId) });
       },
+      project_resource: () => {
+        const wsId = getCurrentWsId();
+        if (wsId) qc.invalidateQueries({ queryKey: projectKeys.all(wsId) });
+      },
       squad: () => {
         const wsId = getCurrentWsId();
         if (wsId) {

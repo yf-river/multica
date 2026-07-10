@@ -4,7 +4,7 @@ import type { InboxItem } from "./inbox";
 import type { Comment, Reaction } from "./comment";
 import type { TimelineEntry } from "./activity";
 import type { Workspace, MemberWithUser } from "./workspace";
-import type { Project } from "./project";
+import type { Project, ProjectResource } from "./project";
 import type { Label } from "./label";
 
 // WebSocket event types (matching Go server protocol/events.go)
@@ -60,6 +60,9 @@ export type WSEventType =
   | "project:created"
   | "project:updated"
   | "project:deleted"
+  | "project_resource:created"
+  | "project_resource:updated"
+  | "project_resource:deleted"
   | "squad:created"
   | "squad:updated"
   | "squad:deleted"
@@ -354,6 +357,17 @@ export interface ProjectDeletedPayload {
   project_id: string;
 }
 
+export interface ProjectResourceChangedPayload {
+  project_id: string;
+  resource: ProjectResource;
+  action?: string;
+}
+
+export interface ProjectResourceDeletedPayload {
+  project_id: string;
+  resource_id: string;
+}
+
 /**
  * Maps every WSEventType to its payload interface. Events whose payload
  * shape isn't formally typed (server emits an object the client doesn't
@@ -415,6 +429,9 @@ export interface WSEventPayloadMap {
   "project:created": ProjectCreatedPayload;
   "project:updated": ProjectUpdatedPayload;
   "project:deleted": ProjectDeletedPayload;
+  "project_resource:created": ProjectResourceChangedPayload;
+  "project_resource:updated": ProjectResourceChangedPayload;
+  "project_resource:deleted": ProjectResourceDeletedPayload;
   // No formal payload interfaces yet — server emits domain objects clients
   // currently consume as opaque triggers (refetch on receipt).
   "daemon:heartbeat": unknown;

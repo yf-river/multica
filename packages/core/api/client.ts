@@ -273,6 +273,8 @@ import {
   EMPTY_SEND_CHAT_MESSAGE_RESPONSE,
   EMPTY_CHAT_PENDING_TASK,
   EMPTY_PENDING_CHAT_TASKS_RESPONSE,
+  EMPTY_PROJECT_RESOURCE,
+  EMPTY_PROJECT_RESOURCE_LIST_RESPONSE,
   EMPTY_LIST_WEBHOOK_DELIVERIES_RESPONSE,
   EMPTY_PROMPT_LIBRARY_ITEM,
   EMPTY_PROMPT_LIBRARY_LIST_RESPONSE,
@@ -414,6 +416,8 @@ import {
   SendChatMessageResponseSchema,
   ChatPendingTaskSchema,
   PendingChatTasksResponseSchema,
+  ProjectResourceSchema,
+  ProjectResourceListResponseSchema,
   WebhookDeliveryResponseSchema,
   EMPTY_CANCEL_TASK_RESPONSE,
 } from "./schemas";
@@ -2740,16 +2744,25 @@ export class ApiClient {
   async listProjectResources(
     projectId: string,
   ): Promise<ListProjectResourcesResponse> {
-    return this.fetch(`/api/projects/${projectId}/resources`);
+    const raw = await this.fetch<unknown>(`/api/projects/${projectId}/resources`);
+    return parseWithFallback(
+      raw,
+      ProjectResourceListResponseSchema,
+      EMPTY_PROJECT_RESOURCE_LIST_RESPONSE,
+      { endpoint: "GET /api/projects/:id/resources" },
+    );
   }
 
   async createProjectResource(
     projectId: string,
     data: CreateProjectResourceRequest,
   ): Promise<ProjectResource> {
-    return this.fetch(`/api/projects/${projectId}/resources`, {
+    const raw = await this.fetch<unknown>(`/api/projects/${projectId}/resources`, {
       method: "POST",
       body: JSON.stringify(data),
+    });
+    return parseOrThrow(raw, ProjectResourceSchema, EMPTY_PROJECT_RESOURCE, {
+      endpoint: "POST /api/projects/:id/resources",
     });
   }
 
@@ -2758,9 +2771,12 @@ export class ApiClient {
     resourceId: string,
     data: UpdateProjectResourceRequest,
   ): Promise<ProjectResource> {
-    return this.fetch(`/api/projects/${projectId}/resources/${resourceId}`, {
+    const raw = await this.fetch<unknown>(`/api/projects/${projectId}/resources/${resourceId}`, {
       method: "PUT",
       body: JSON.stringify(data),
+    });
+    return parseOrThrow(raw, ProjectResourceSchema, EMPTY_PROJECT_RESOURCE, {
+      endpoint: "PUT /api/projects/:id/resources/:resourceId",
     });
   }
 
@@ -2768,8 +2784,11 @@ export class ApiClient {
     projectId: string,
     resourceId: string,
   ): Promise<ProjectResource> {
-    return this.fetch(`/api/projects/${projectId}/resources/${resourceId}/sync`, {
+    const raw = await this.fetch<unknown>(`/api/projects/${projectId}/resources/${resourceId}/sync`, {
       method: "POST",
+    });
+    return parseOrThrow(raw, ProjectResourceSchema, EMPTY_PROJECT_RESOURCE, {
+      endpoint: "POST /api/projects/:id/resources/:resourceId/sync",
     });
   }
 
