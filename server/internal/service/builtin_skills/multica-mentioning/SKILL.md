@@ -1,6 +1,6 @@
 ---
 name: multica-mentioning
-description: "Use when an issue comment needs to @mention someone — link to a person, trigger another agent, hand work to a squad, or broadcast with @all. Documents the verified mention contract: how a mention link is built from a real UUID, the four mention types and exactly what each one enqueues (agent → a run for that agent, squad → a run for the squad leader, member and issue → a rendered link with NO run), comment create/edit preview and suppression, the @all broadcast and how it suppresses the assignee's auto-trigger, and the silent no-op cases (a name where a UUID belongs, a bad/unknown UUID, an already-pending task, an archived agent, a personal agent you cannot access). WHETHER to mention — loop avoidance, staying silent on acknowledgements — lives in the runtime brief's Mentions section, not here. This skill is the backend contract only, traced to server/internal/util/mention.go and server/internal/handler/comment.go."
+description: "Use when an issue comment needs to @mention someone — link to a person, trigger another agent, hand work to a squad, or broadcast with @all. Documents the verified mention contract: how a mention link is built from a real UUID, the four mention types and exactly what each one enqueues (agent → a run for that agent, squad → a run for the squad leader, member and issue → a rendered link with NO run), comment create/edit preview and suppression, the @all broadcast and how it suppresses the assignee's auto-trigger, and the silent no-op cases (a name where a UUID belongs, a bad/unknown UUID, an already-pending task, an archived agent, a personal agent you cannot access). WHETHER to mention — loop avoidance, staying silent on acknowledgements — lives in the runtime brief's Mentions section, not here. This skill is the backend contract only, traced to server/internal/util/mention.go and server/internal/handler/comment_triggers.go."
 user-invocable: false
 allowed-tools: Bash(multica *)
 ---
@@ -58,7 +58,7 @@ match, or the link resolves to the wrong entity (or to nothing).
 | reference an issue   | `issue`  | issue.id        | renders a link; enqueues NOTHING — always safe           |
 
 The mention trigger set is computed by `computeMentionedAgentCommentTriggers`
-(`server/internal/handler/comment.go`); the comment path folds that result into
+(`server/internal/handler/comment_triggers.go`); the comment path folds that result into
 `computeCommentAgentTriggers` and enqueues it via `enqueueCommentAgentTriggers`.
 This applies both to ordinary comments created through the issue comment API and
 to agent final-output comments synthesized by `TaskService.createAgentComment`;
@@ -102,7 +102,7 @@ is a no-op; a malformed UUID is rejected at the request boundary.
 
 It addresses everyone on the issue. It does NOT make any specific agent run.
 And it is special at trigger time: in `commentMentionsOthersButNotAssignee`
-(`server/internal/handler/comment.go`), a comment that carries an `@all`
+(`server/internal/handler/comment_triggers.go`), a comment that carries an `@all`
 mention is treated as a broadcast that SUPPRESSES the issue assignee's
 automatic on-comment trigger. Use `@all` to announce, not to request work from
 the assignee.
