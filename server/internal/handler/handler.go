@@ -333,10 +333,9 @@ func isAgentNameUniqueViolation(err error) bool {
 		return false
 	}
 	switch pgErr.ConstraintName {
-	case "agent_workspace_name_unique",
-		"agent_workspace_name_active_unique",
-		"agent_private_owner_name_active_unique",
-		"agent_private_no_owner_name_active_unique":
+	case "agent_workspace_name_active_unique",
+		"agent_personal_owner_name_active_unique",
+		"agent_personal_no_owner_name_active_unique":
 		return true
 	default:
 		return false
