@@ -637,14 +637,50 @@ func (s *TaskService) captureTaskFailed(ctx context.Context, task db.AgentTaskQu
 }
 
 func (s *TaskService) captureTaskCancelled(ctx context.Context, task db.AgentTaskQueue) {
-	s.recordTaskTraceEvent(ctx, task, "task.cancelled", "任务已取消", taskTraceOptions{
+	s.recordTaskCancelledTrace(ctx, s.Queries, task)
+	s.finalizeTaskCancelledSideEffects(ctx, task)
+}
+
+// recordTaskCancelledTrace writes the task.cancelled observability row.
+// Callers that hard-delete a chat session must pass the same transaction
+// queries used for cancel+delete so chat_session_id still resolves while
+// the session row is locked. The session id is also mirrored into metadata
+// because task_trace_event.chat_session_id is ON DELETE SET NULL.
+func (s *TaskService) recordTaskCancelledTrace(ctx context.Context, q *db.Queries, task db.AgentTaskQueue) {
+	if q == nil {
+		q = s.Queries
+	}
+	var metadata []byte
+	if task.ChatSessionID.Valid {
+		metadata = mergeTaskTraceMetadata(nil, map[string]any{
+			"chat_session_id": util.UUIDToString(task.ChatSessionID),
+		})
+	}
+	opts := taskTraceOptions{
 		DurationMs:    taskTotalMilliseconds(task),
 		QueueWaitMs:   taskQueueWaitMilliseconds(task),
 		RunMs:         taskRunMilliseconds(task),
 		TotalMs:       taskTotalMilliseconds(task),
 		FailureReason: "cancelled",
 		ErrorType:     "cancelled",
-	})
+		Metadata:      metadata,
+	}
+	params, ok := s.buildTaskTraceEventParams(ctx, task, "task.cancelled", "任务已取消", opts)
+	if !ok {
+		return
+	}
+	if _, err := q.CreateTaskTraceEvent(ctx, params); err != nil {
+		slog.Warn("record task trace event failed",
+			"task_id", util.UUIDToString(task.ID),
+			"event_type", "task.cancelled",
+			"error", err,
+		)
+	}
+}
+
+// finalizeTaskCancelledSideEffects applies post-cancel metrics/token/eval
+// bookkeeping that does not need to share the cancel transaction.
+func (s *TaskService) finalizeTaskCancelledSideEffects(ctx context.Context, task db.AgentTaskQueue) {
 	if s.Metrics != nil {
 		source, runtimeMode, _ := s.taskMetricsContext(ctx, task)
 		s.Metrics.RecordTaskTerminal(util.UUIDToString(task.ID), source, runtimeMode, task.Status, taskRunSeconds(task), taskTotalSeconds(task), task.Attempt)
@@ -660,6 +696,26 @@ func (s *TaskService) captureTaskCancelled(ctx context.Context, task db.AgentTas
 			"task_id", util.UUIDToString(task.ID), "error", err)
 	}
 	s.syncPromptEvaluationRunForTask(ctx, task, "task_cancelled")
+}
+
+// CaptureCancelledTaskTracesInTx records cancel traces inside the caller's
+// transaction. Used by DeleteChatSession so task_trace_event.chat_session_id
+// still points at a live session row when the insert runs.
+func (s *TaskService) CaptureCancelledTaskTracesInTx(ctx context.Context, q *db.Queries, cancelled []db.AgentTaskQueue) {
+	for _, task := range cancelled {
+		s.recordTaskCancelledTrace(ctx, q, task)
+	}
+}
+
+// NotifyCancelledTasks reconciles agent status and broadcasts task:cancelled
+// without writing another cancel trace. Call after commit when traces were
+// already recorded in the cancel transaction (e.g. chat session delete).
+func (s *TaskService) NotifyCancelledTasks(ctx context.Context, cancelled []db.AgentTaskQueue) {
+	for _, t := range cancelled {
+		s.finalizeTaskCancelledSideEffects(ctx, t)
+		s.ReconcileAgentStatus(ctx, t.AgentID)
+		s.broadcastTaskEvent(ctx, protocol.EventTaskCancelled, t)
+	}
 }
 
 func (s *TaskService) CaptureTaskUsage(ctx context.Context, task db.AgentTaskQueue, provider, model string, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens int64) {
@@ -992,6 +1048,24 @@ func (s *TaskService) buildTaskTraceEventParams(ctx context.Context, task db.Age
 		opts.Provider = providerFromRuntime
 	}
 
+	// task_trace_event.chat_session_id is a hard FK. DeleteChatSession writes
+	// cancel traces before delete inside the same tx; other post-commit
+	// cancel paths may race with session hard-delete. Prefer keeping the
+	// cancel evidence and drop only the FK column when the session is gone,
+	// retaining the id in metadata for later forensics.
+	chatSessionID := task.ChatSessionID
+	metadata := opts.Metadata
+	if chatSessionID.Valid {
+		if _, err := s.Queries.GetChatSession(ctx, chatSessionID); err != nil {
+			sessionID := util.UUIDToString(chatSessionID)
+			metadata = mergeTaskTraceMetadata(metadata, map[string]any{
+				"deleted_chat_session_id": sessionID,
+				"chat_session_missing":    true,
+			})
+			chatSessionID = pgtype.UUID{}
+		}
+	}
+
 	return db.CreateTaskTraceEventParams{
 		WorkspaceID:      workspaceID,
 		TaskID:           task.ID,
@@ -1019,9 +1093,26 @@ func (s *TaskService) buildTaskTraceEventParams(ctx context.Context, task db.Age
 		ErrorType:        opts.ErrorType,
 		TriggerCommentID: task.TriggerCommentID,
 		AutopilotRunID:   task.AutopilotRunID,
-		ChatSessionID:    task.ChatSessionID,
-		Metadata:         opts.Metadata,
+		ChatSessionID:    chatSessionID,
+		Metadata:         metadata,
 	}, true
+}
+
+func mergeTaskTraceMetadata(raw []byte, extra map[string]any) []byte {
+	base := map[string]any{}
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &base); err != nil {
+			base = map[string]any{"raw_metadata": string(raw)}
+		}
+	}
+	for k, v := range extra {
+		base[k] = v
+	}
+	encoded, err := json.Marshal(base)
+	if err != nil {
+		return raw
+	}
+	return encoded
 }
 
 func taskQueueWaitSeconds(task db.AgentTaskQueue) float64 {

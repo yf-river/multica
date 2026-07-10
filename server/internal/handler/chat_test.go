@@ -424,3 +424,88 @@ func TestListChatMessagesPage_RejectsInvalidLimit(t *testing.T) {
 		t.Fatalf("ListChatMessagesPage invalid limit: expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 }
+
+// TestDeleteChatSession_RecordsCancelTraceWithSessionFK proves that hard
+// deleting a chat session with an in-flight task still writes task.cancelled
+// evidence. Previously BroadcastCancelledTasks ran after the session row was
+// gone and CreateTaskTraceEvent failed on task_trace_event_chat_session_id_fkey,
+// silently dropping cancel evidence while the API still returned 204.
+func TestDeleteChatSession_RecordsCancelTraceWithSessionFK(t *testing.T) {
+	agentID := createHandlerTestAgent(t, "ChatDeleteCancelTraceAgent", []byte("[]"))
+	sessionID := createHandlerTestChatSession(t, agentID)
+
+	var taskID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, status, priority, chat_session_id, started_at)
+		VALUES ($1, $2, 'running', 0, $3, now())
+		RETURNING id
+	`, agentID, handlerTestRuntimeID(t), sessionID).Scan(&taskID); err != nil {
+		t.Fatalf("seed chat task: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM task_trace_event WHERE task_id = $1`, taskID)
+		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+	})
+
+	req := newRequest("DELETE", "/api/chat/sessions/"+sessionID, nil)
+	req = withURLParam(req, "sessionId", sessionID)
+	req = withChatTestWorkspaceCtx(t, req)
+	w := httptest.NewRecorder()
+	testHandler.DeleteChatSession(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("DeleteChatSession: expected 204, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var taskStatus string
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT status FROM agent_task_queue WHERE id = $1
+	`, taskID).Scan(&taskStatus); err != nil {
+		t.Fatalf("load cancelled task: %v", err)
+	}
+	if taskStatus != "cancelled" {
+		t.Fatalf("task status: want cancelled, got %q", taskStatus)
+	}
+
+	var (
+		eventCount int
+		eventType  string
+		metadata   []byte
+	)
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT count(*)::int
+		FROM task_trace_event
+		WHERE task_id = $1 AND event_type = 'task.cancelled'
+	`, taskID).Scan(&eventCount); err != nil {
+		t.Fatalf("count cancel traces: %v", err)
+	}
+	if eventCount != 1 {
+		t.Fatalf("expected exactly one task.cancelled trace, got %d", eventCount)
+	}
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT event_type, metadata
+		FROM task_trace_event
+		WHERE task_id = $1 AND event_type = 'task.cancelled'
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, taskID).Scan(&eventType, &metadata); err != nil {
+		t.Fatalf("load cancel trace: %v", err)
+	}
+	if eventType != "task.cancelled" {
+		t.Fatalf("event_type: want task.cancelled, got %q", eventType)
+	}
+	// FK column is ON DELETE SET NULL after session hard-delete; durable
+	// linkage lives in metadata written before the session row vanished.
+	if !bytes.Contains(metadata, []byte(sessionID)) {
+		t.Fatalf("cancel trace metadata missing session id %s: %s", sessionID, string(metadata))
+	}
+
+	var sessionGone bool
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT NOT EXISTS(SELECT 1 FROM chat_session WHERE id = $1)
+	`, sessionID).Scan(&sessionGone); err != nil {
+		t.Fatalf("check session deleted: %v", err)
+	}
+	if !sessionGone {
+		t.Fatal("expected chat session hard-deleted")
+	}
+}
