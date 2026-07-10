@@ -2,7 +2,7 @@
 
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-import { createWorkspaceAwareStorage, registerForWorkspaceRehydration } from "../../platform/workspace-storage";
+import { createWorkspaceAwareStorage, registerWorkspacePersistStore } from "../../platform/workspace-storage";
 import { defaultStorage } from "../../platform/storage";
 
 export type QuickCreateActorType = "agent" | "squad";
@@ -12,15 +12,10 @@ export type QuickCreateActorType = "agent" | "squad";
 // open so frequent users skip the pickers entirely — without this, anyone
 // targeting a single project ends up retyping "in project A" on every
 // prompt. Persisted with the workspace-aware StateStorage so switching
-// workspaces shows the right default automatically. Per-user scoping comes
-// for free from localStorage being browser-profile-local — matches how
-// draft-store / issues-scope-store / comment-collapse-store already
-// namespace themselves.
-//
-// lastActorType + lastActorId replace the prior `lastAgentId` field once
-// squads became selectable. Users who had a persisted agent preference
-// land back on whatever the picker shows first; a one-time re-pick is
-// preferable to the type-tag ambiguity of overloading a single UUID.
+// workspaces shows the right default automatically. Account logout clears
+// the namespace so another user on the same browser profile cannot inherit
+// these choices. Actor type and id stay paired so an agent UUID is never
+// interpreted as a squad UUID (or vice versa).
 interface QuickCreateState {
   lastActorType: QuickCreateActorType | null;
   lastActorId: string | null;
@@ -55,4 +50,4 @@ export const useQuickCreateStore = create<QuickCreateState>()(
   ),
 );
 
-registerForWorkspaceRehydration(() => useQuickCreateStore.persist.rehydrate());
+registerWorkspacePersistStore(useQuickCreateStore);

@@ -2,7 +2,7 @@
 
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-import { createWorkspaceAwareStorage, registerForWorkspaceRehydration } from "../../platform/workspace-storage";
+import { createWorkspaceAwareStorage, registerWorkspacePersistStore } from "../../platform/workspace-storage";
 import { defaultStorage } from "../../platform/storage";
 
 // Projects is the one dual-view list: a dense table (compact) and a card
@@ -140,4 +140,4 @@ export const useProjectViewStore = create<ProjectViewState>()(
   )
 );
 
-registerForWorkspaceRehydration(() => useProjectViewStore.persist.rehydrate());
+registerWorkspacePersistStore(useProjectViewStore);

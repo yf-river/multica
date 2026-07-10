@@ -4,7 +4,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import {
   createWorkspaceAwareStorage,
-  registerForWorkspaceRehydration,
+  registerWorkspacePersistStore,
 } from "../platform/workspace-storage";
 import { defaultStorage } from "../platform/storage";
 
@@ -45,4 +45,4 @@ export const useNavigationStore = create<NavigationState>()(
 );
 
 // Workspace-aware: re-read lastPath when current workspace changes.
-registerForWorkspaceRehydration(() => useNavigationStore.persist.rehydrate());
+registerWorkspacePersistStore(useNavigationStore);

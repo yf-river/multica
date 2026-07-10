@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import type { IssueStatus, IssuePriority, IssueAssigneeType, Attachment } from "../../types";
-import { createWorkspaceAwareStorage, registerForWorkspaceRehydration } from "../../platform/workspace-storage";
+import { createWorkspaceAwareStorage, registerWorkspacePersistStore } from "../../platform/workspace-storage";
 import { defaultStorage } from "../../platform/storage";
 
 interface IssueDraft {
@@ -83,4 +83,4 @@ export const useIssueDraftStore = create<IssueDraftStore>()(
   ),
 );
 
-registerForWorkspaceRehydration(() => useIssueDraftStore.persist.rehydrate());
+registerWorkspacePersistStore(useIssueDraftStore);

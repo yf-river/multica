@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import type { ProjectStatus, ProjectPriority } from "../types";
-import { createWorkspaceAwareStorage, registerForWorkspaceRehydration } from "../platform/workspace-storage";
+import { createWorkspaceAwareStorage, registerWorkspacePersistStore } from "../platform/workspace-storage";
 import { defaultStorage } from "../platform/storage";
 
 interface ProjectDraft {
@@ -51,4 +51,4 @@ export const useProjectDraftStore = create<ProjectDraftStore>()(
   ),
 );
 
-registerForWorkspaceRehydration(() => useProjectDraftStore.persist.rehydrate());
+registerWorkspacePersistStore(useProjectDraftStore);

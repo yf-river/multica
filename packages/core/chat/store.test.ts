@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { createChatStore, newSessionDraftKey } from "./store";
 import type { StorageAdapter } from "../types";
 import type { Attachment } from "../types";
+import { setCurrentWorkspace } from "../platform/workspace-storage";
 
 function memStorage(): StorageAdapter {
   const m = new Map<string, string>();
@@ -47,6 +48,7 @@ describe("chat store — draft attachments", () => {
   let store: ReturnType<typeof createChatStore>;
 
   beforeEach(() => {
+    setCurrentWorkspace(null, null);
     store = createChatStore({ storage: memStorage() });
   });
 
@@ -69,5 +71,34 @@ describe("chat store — draft attachments", () => {
 
     expect(store.getState().inputDrafts["draft-1"]).toBeUndefined();
     expect(store.getState().inputDraftAttachments["draft-1"]).toBeUndefined();
+  });
+});
+
+describe("chat store — workspace lifecycle", () => {
+  const flush = () =>
+    new Promise<void>((resolve) => queueMicrotask(() => resolve()));
+
+  it("does not persist a draft before a workspace is selected", () => {
+    setCurrentWorkspace(null, null);
+    const storage = memStorage();
+    const store = createChatStore({ storage });
+    store.getState().setInputDraft("draft-1", "private");
+    expect(storage.getItem("multica:chat:drafts")).toBeNull();
+  });
+
+  it("restores drafts only from the active workspace", async () => {
+    const storage = memStorage();
+    setCurrentWorkspace("team-a", "ws-a");
+    const store = createChatStore({ storage });
+    store.getState().setInputDraft("draft-a", "from A");
+
+    setCurrentWorkspace("team-b", "ws-b");
+    await flush();
+    expect(store.getState().inputDrafts).toEqual({});
+    store.getState().setInputDraft("draft-b", "from B");
+
+    setCurrentWorkspace("team-a", "ws-a");
+    await flush();
+    expect(store.getState().inputDrafts).toEqual({ "draft-a": "from A" });
   });
 });

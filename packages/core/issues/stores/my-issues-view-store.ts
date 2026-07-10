@@ -8,7 +8,7 @@ import {
   viewStorePersistOptions,
   mergeViewStatePersisted,
 } from "./view-store";
-import { registerForWorkspaceRehydration } from "../../platform/workspace-storage";
+import { registerWorkspacePersistStore } from "../../platform/workspace-storage";
 
 export type MyIssuesScope = "all" | "assigned" | "created" | "agents";
 
@@ -44,4 +44,4 @@ const _myIssuesViewStore = createStore<MyIssuesViewState>()(
 
 export const myIssuesViewStore: StoreApi<MyIssuesViewState> = _myIssuesViewStore;
 
-registerForWorkspaceRehydration(() => _myIssuesViewStore.persist.rehydrate());
+registerWorkspacePersistStore(_myIssuesViewStore);

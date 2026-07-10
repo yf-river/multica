@@ -4,7 +4,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import {
   createWorkspaceAwareStorage,
-  registerForWorkspaceRehydration,
+  registerWorkspacePersistStore,
 } from "../../platform/workspace-storage";
 import { defaultStorage } from "../../platform/storage";
 
@@ -171,6 +171,4 @@ export const useAutopilotsViewStore = create<AutopilotsViewState>()(
   ),
 );
 
-registerForWorkspaceRehydration(() =>
-  useAutopilotsViewStore.persist.rehydrate(),
-);
+registerWorkspacePersistStore(useAutopilotsViewStore);

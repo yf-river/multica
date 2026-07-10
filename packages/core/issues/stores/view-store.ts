@@ -6,7 +6,7 @@ import { createStore, type StoreApi } from "zustand/vanilla";
 import { createJSONStorage, persist } from "zustand/middleware";
 import type { IssueStatus, IssuePriority } from "../../types";
 import { ALL_STATUSES } from "../config";
-import { createWorkspaceAwareStorage, registerForWorkspaceRehydration } from "../../platform/workspace-storage";
+import { createWorkspaceAwareStorage, registerWorkspacePersistStore } from "../../platform/workspace-storage";
 import { defaultStorage } from "../../platform/storage";
 
 export type ViewMode = "board" | "list" | "gantt" | "swimlane";
@@ -359,7 +359,7 @@ export function createIssueViewStore(persistKey: string): StoreApi<IssueViewStat
   const store = createStore<IssueViewState>()(
     persist(viewStoreSlice, viewStorePersistOptions(persistKey))
   );
-  registerForWorkspaceRehydration(() => store.persist.rehydrate());
+  registerWorkspacePersistStore(store);
   return store;
 }
 
@@ -368,7 +368,7 @@ export const useIssueViewStore = create<IssueViewState>()(
   persist(viewStoreSlice, viewStorePersistOptions("multica_issues_view"))
 );
 
-registerForWorkspaceRehydration(() => useIssueViewStore.persist.rehydrate());
+registerWorkspacePersistStore(useIssueViewStore);
 
 /**
  * Clears the given view store's filters whenever the workspace id changes.

@@ -1,8 +1,13 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
+import { createStore } from "zustand/vanilla";
+import { createJSONStorage, persist } from "zustand/middleware";
 import {
   createWorkspaceAwareStorage,
+  registerWorkspacePersistStore,
+  registerWorkspaceStoreLifecycle,
+  registerAccountStateReset,
+  resetAccountState,
   setCurrentWorkspace,
-  registerForWorkspaceRehydration,
 } from "./workspace-storage";
 import type { StorageAdapter } from "../types/storage";
 
@@ -73,19 +78,26 @@ describe("workspace-aware storage", () => {
 describe("setCurrentWorkspace — rehydrate side effect", () => {
   const flush = () => new Promise((resolve) => queueMicrotask(() => resolve(null)));
 
-  it("runs registered fns once when slug changes", async () => {
-    const fn = vi.fn();
-    registerForWorkspaceRehydration(fn);
+  it("resets before rehydrating when the slug changes", async () => {
+    const calls: string[] = [];
+    const unregister = registerWorkspaceStoreLifecycle({
+      reset: () => calls.push("reset"),
+      rehydrate: () => calls.push("rehydrate"),
+    });
 
     setCurrentWorkspace("team-a", "ws_a");
     await flush();
 
-    expect(fn).toHaveBeenCalledTimes(1);
+    expect(calls).toEqual(["reset", "rehydrate"]);
+    unregister();
   });
 
   it("is a no-op when slug is unchanged — repeat calls with same slug skip the side effect", async () => {
-    const fn = vi.fn();
-    registerForWorkspaceRehydration(fn);
+    const rehydrate = vi.fn();
+    const unregister = registerWorkspaceStoreLifecycle({
+      reset: vi.fn(),
+      rehydrate,
+    });
 
     setCurrentWorkspace("team-a", "ws_a");
     await flush();
@@ -94,24 +106,32 @@ describe("setCurrentWorkspace — rehydrate side effect", () => {
     setCurrentWorkspace("team-a", "ws_a");
     await flush();
 
-    expect(fn).toHaveBeenCalledTimes(1);
+    expect(rehydrate).toHaveBeenCalledTimes(1);
+    unregister();
   });
 
   it("runs again on real workspace switch", async () => {
-    const fn = vi.fn();
-    registerForWorkspaceRehydration(fn);
+    const rehydrate = vi.fn();
+    const unregister = registerWorkspaceStoreLifecycle({
+      reset: vi.fn(),
+      rehydrate,
+    });
 
     setCurrentWorkspace("team-a", "ws_a");
     await flush();
     setCurrentWorkspace("team-b", "ws_b");
     await flush();
 
-    expect(fn).toHaveBeenCalledTimes(2);
+    expect(rehydrate).toHaveBeenCalledTimes(2);
+    unregister();
   });
 
   it("runs again after logout → re-entry into same workspace", async () => {
-    const fn = vi.fn();
-    registerForWorkspaceRehydration(fn);
+    const rehydrate = vi.fn();
+    const unregister = registerWorkspaceStoreLifecycle({
+      reset: vi.fn(),
+      rehydrate,
+    });
 
     setCurrentWorkspace("team-a", "ws_a");
     await flush();
@@ -120,6 +140,41 @@ describe("setCurrentWorkspace — rehydrate side effect", () => {
     setCurrentWorkspace("team-a", "ws_a");
     await flush();
 
-    expect(fn).toHaveBeenCalledTimes(3);
+    expect(rehydrate).toHaveBeenCalledTimes(3);
+    unregister();
+  });
+
+  it("resets account state without rehydrating it", () => {
+    const reset = vi.fn();
+    const unregister = registerAccountStateReset(reset);
+    resetAccountState();
+    expect(reset).toHaveBeenCalledTimes(1);
+    unregister();
+  });
+
+  it("preserves each workspace's saved state while resetting in-memory state", async () => {
+    const adapter = mockAdapter();
+    setCurrentWorkspace("team-a", "ws_a");
+    const store = createStore<{ value: number }>()(
+      persist(() => ({ value: 0 }), {
+        name: "test_workspace_state",
+        storage: createJSONStorage(() =>
+          createWorkspaceAwareStorage(adapter),
+        ),
+        skipHydration: true,
+      }),
+    );
+    const unregister = registerWorkspacePersistStore(store);
+
+    store.setState({ value: 1 });
+    setCurrentWorkspace("team-b", "ws_b");
+    await flush();
+    expect(store.getState().value).toBe(0);
+
+    store.setState({ value: 2 });
+    setCurrentWorkspace("team-a", "ws_a");
+    await flush();
+    expect(store.getState().value).toBe(1);
+    unregister();
   });
 });
