@@ -26,7 +26,6 @@ test.describe("run review eval draft flow", () => {
     api = new TestApiClient();
     await api.login(E2E_ACCOUNT, E2E_NAME, DEFAULT_E2E_PASSWORD);
     const workspace = await api.ensureWorkspace(E2E_WORKSPACE_NAME, E2E_WORKSPACE);
-    await api.markUserOnboarded();
     workspaceSlug = workspace.slug;
     const token = api.getToken();
     if (!token) throw new Error("E2E login did not return an auth token");
@@ -126,7 +125,6 @@ test.describe("run review eval draft flow for existing completed issues", () => 
       EXISTING_ISSUE_E2E_PASSWORD,
     );
     const workspace = await api.ensureWorkspace(EXISTING_ISSUE_E2E_WORKSPACE_NAME, EXISTING_ISSUE_E2E_WORKSPACE);
-    await api.markUserOnboarded();
     workspaceSlug = workspace.slug;
     const token = api.getToken();
     if (!token) throw new Error("E2E login did not return an auth token");

@@ -292,7 +292,7 @@ When the two apps need different behavior for the same concept (e.g., different 
 When adding a new page or feature for web/desktop:
 
 1. **New page component** → add to `packages/views/<domain>/`. Never import from `next/*` or `react-router-dom`.
-2. **Wire it in both apps** → add a route in `apps/web/app/` (Next.js page file) AND in the desktop router. **Exception**: pre-workspace transition flows (create workspace, onboarding) are NOT routes on desktop — they're `WindowOverlay` state. See *Desktop-specific Rules → Route categories*.
+2. **Wire it in both apps** → add a route in `apps/web/app/` (Next.js page file) AND in the desktop router. **Exception**: workspace creation is not a desktop route; it uses `WorkspaceCreationOverlay`. See *Desktop-specific Rules → Route categories*.
 3. **Navigation** → use `useNavigation().push()` or `<AppLink>`. Never use framework-specific link/router APIs in shared code.
 4. **Shared guards/providers** → use `DashboardGuard` from `packages/views/layout/`. Don't create separate guard logic per app.
 5. **Platform-specific UI** → if a feature is web-only or desktop-only, keep it in the respective app. Use props slots (`extra`, `topSlot`) on shared layout components to inject platform-specific UI.
@@ -315,10 +315,11 @@ These rules apply to `apps/desktop/` only. Web has different constraints (URL ba
 Every path in the desktop app falls into exactly one category. Choosing the wrong one reproduces bugs we've already fixed.
 
 - **Session routes** — workspace-scoped pages (`/:slug/issues`, `/:slug/settings`). Rendered by the per-tab memory router under `WorkspaceRouteLayout`. These are legitimate tab destinations.
-- **Transition flows** — pre-workspace / one-shot actions (create workspace, onboarding). **NOT routes.** They live as `WindowOverlay` state, dispatched when the navigation adapter sees `push('/workspaces/new')` or the app needs onboarding. The shared view (`NewWorkspacePage`) is the content; the overlay wrapper supplies platform chrome.
+- **Workspace creation** — a pre-workspace transition, **not a route**. It uses `WorkspaceCreationOverlay`, dispatched when the navigation adapter sees `push('/workspaces/new')` or a user has no workspace. The shared `NewWorkspacePage` supplies the content.
 - **Error / stale states** — "workspace not available", tabs pointing at a revoked workspace. **NOT pages.** `WorkspaceRouteLayout` auto-heals by dropping the stale tab group from the store; the user never lands on an explicit error screen. Web keeps `NoAccessPage` (shareable URL makes the error state meaningful); desktop has no URL bar so stale = heal silently.
 
-**Adding a new pre-workspace flow on desktop**: register a new `WindowOverlay` type in `stores/window-overlay-store.ts`. Do NOT add it to `routes.tsx`. If a shared view needs the flow on both platforms, add the route on web (`apps/web/app/(auth)/...`) AND the overlay type on desktop — the shared view component is identical.
+Do not put `/workspaces/new` into `routes.tsx`; keep its state in
+`stores/workspace-creation-overlay-store.ts` so the tab system cannot persist it.
 
 ### Workspace context
 

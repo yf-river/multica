@@ -9,11 +9,9 @@ export const mockUser: User = {
   name: "Test User",
   account: "test",
   avatar_url: null,
-  onboarded_at: "2026-01-01T00:00:00Z",
+  onboarded_at: null,
   onboarding_questionnaire: {},
-  // Matches real server behavior for anyone who onboarded before this
-  // field shipped — migration 054 backfills 'skipped_legacy'.
-  starter_content_state: "skipped_legacy",
+  starter_content_state: null,
   timezone: null,
   profile_description: "",
   created_at: "2026-01-01T00:00:00Z",

@@ -33,7 +33,6 @@ test.describe("Goal E Gongfeng controlled skill writeback", () => {
     try {
       await api.login(E2E_ACCOUNT, E2E_NAME, DEFAULT_E2E_PASSWORD);
       const workspace = await api.ensureWorkspace(E2E_WORKSPACE_NAME, E2E_WORKSPACE);
-      await api.markUserOnboarded();
       await api.cleanupPromptArtifactsByPrefix("GoalE Gongfeng Writeback");
 
       const branch = (await git(WRITEBACK_REPO, ["branch", "--show-current"])).trim();

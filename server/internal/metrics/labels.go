@@ -18,18 +18,17 @@ const (
 	labelModelAlias     = "model_alias"
 
 	// PR3 labels (team usage and runtime observability).
-	labelPlatform     = "platform"
-	labelPath         = "path"
-	labelCadence      = "cadence"
-	labelTriggerKind  = "trigger_kind"
-	labelReason       = "reason"
-	labelRecoverable  = "recoverable"
-	labelKind         = "kind"
-	labelStatus       = "status"
-	labelEventKind    = "event_kind"
-	labelAction       = "action"
-	labelResult       = "result"
-	labelOp           = "op"
+	labelPlatform    = "platform"
+	labelCadence     = "cadence"
+	labelTriggerKind = "trigger_kind"
+	labelReason      = "reason"
+	labelRecoverable = "recoverable"
+	labelKind        = "kind"
+	labelStatus      = "status"
+	labelEventKind   = "event_kind"
+	labelAction      = "action"
+	labelResult      = "result"
+	labelOp          = "op"
 )
 
 var businessMetricLabels = map[string][]string{
@@ -51,30 +50,27 @@ var businessMetricLabels = map[string][]string{
 	"multica_task_lease_expired_total":      {labelSource},
 
 	// PR3 funnel / community / commercial.
-	"multica_signup_total":                             {},
-	"multica_workspace_created_total":                  {labelSource},
-	"multica_onboarding_started_total":                 {labelPlatform},
-	"multica_onboarding_questionnaire_submitted_total": {},
-	"multica_onboarding_completed_total":               {labelPath},
-	"multica_issue_created_total":                      {labelSource, labelPlatform},
-	"multica_chat_message_sent_total":                  {labelPlatform},
-	"multica_agent_created_total":                      {labelRuntimeMode, labelSource},
-	"multica_squad_created_total":                      {},
-	"multica_autopilot_created_total":                  {labelCadence},
-	"multica_issue_executed_total":                     {labelSource},
-	"multica_runtime_registered_total":                 {labelRuntimeMode, labelProvider},
-	"multica_runtime_ready_total":                      {labelRuntimeMode, labelProvider},
-	"multica_runtime_ready_seconds":                    {labelRuntimeMode, labelProvider},
-	"multica_runtime_failed_total":                     {labelRuntimeMode, labelProvider, labelFailureReason, labelRecoverable},
-	"multica_runtime_offline_total":                    {labelRuntimeMode, labelProvider},
-	"multica_daemon_ws_message_received_total":         {labelKind},
-	"multica_autopilot_run_started_total":              {labelCadence, labelTriggerKind},
-	"multica_autopilot_run_terminal_total":             {labelCadence, labelTriggerKind, labelTerminalStatus},
-	"multica_autopilot_run_skipped_total":              {labelCadence, labelReason},
-	"multica_webhook_delivery_total":                   {labelProvider, labelStatus},
-	"multica_github_event_received_total":              {labelEventKind, labelAction},
-	"multica_github_pr_review_total":                   {labelResult},
-	"multica_feedback_submitted_total":                 {labelKind, labelPlatform},
+	"multica_signup_total":                     {},
+	"multica_workspace_created_total":          {labelSource},
+	"multica_issue_created_total":              {labelSource, labelPlatform},
+	"multica_chat_message_sent_total":          {labelPlatform},
+	"multica_agent_created_total":              {labelRuntimeMode, labelSource},
+	"multica_squad_created_total":              {},
+	"multica_autopilot_created_total":          {labelCadence},
+	"multica_issue_executed_total":             {labelSource},
+	"multica_runtime_registered_total":         {labelRuntimeMode, labelProvider},
+	"multica_runtime_ready_total":              {labelRuntimeMode, labelProvider},
+	"multica_runtime_ready_seconds":            {labelRuntimeMode, labelProvider},
+	"multica_runtime_failed_total":             {labelRuntimeMode, labelProvider, labelFailureReason, labelRecoverable},
+	"multica_runtime_offline_total":            {labelRuntimeMode, labelProvider},
+	"multica_daemon_ws_message_received_total": {labelKind},
+	"multica_autopilot_run_started_total":      {labelCadence, labelTriggerKind},
+	"multica_autopilot_run_terminal_total":     {labelCadence, labelTriggerKind, labelTerminalStatus},
+	"multica_autopilot_run_skipped_total":      {labelCadence, labelReason},
+	"multica_webhook_delivery_total":           {labelProvider, labelStatus},
+	"multica_github_event_received_total":      {labelEventKind, labelAction},
+	"multica_github_pr_review_total":           {labelResult},
+	"multica_feedback_submitted_total":         {labelKind, labelPlatform},
 }
 
 var forbiddenMetricLabels = map[string]struct{}{

@@ -26,31 +26,28 @@ var prMergeSecondsBuckets = []float64{
 // so business.go (PR2 task lifecycle / LLM) stays focused; both are exposed
 // through the same BusinessMetrics receiver and the same Collectors() slice.
 type businessEventMetrics struct {
-	signup                        *prometheus.CounterVec
-	workspaceCreated              *prometheus.CounterVec
-	onboardingStarted             *prometheus.CounterVec
-	onboardingQuestionnaireSubmit *prometheus.CounterVec
-	onboardingCompleted           *prometheus.CounterVec
-	issueCreated                  *prometheus.CounterVec
-	chatMessageSent               *prometheus.CounterVec
-	agentCreated                  *prometheus.CounterVec
-	squadCreated                  *prometheus.CounterVec
-	autopilotCreated              *prometheus.CounterVec
-	issueExecuted                 *prometheus.CounterVec
-	runtimeRegistered             *prometheus.CounterVec
-	runtimeReady                  *prometheus.CounterVec
-	runtimeReadySeconds           *prometheus.HistogramVec
-	runtimeFailed                 *prometheus.CounterVec
-	runtimeOffline                *prometheus.CounterVec
-	daemonWSMessageReceived       *prometheus.CounterVec
-	autopilotRunStarted           *prometheus.CounterVec
-	autopilotRunTerminal          *prometheus.CounterVec
-	autopilotRunSkipped           *prometheus.CounterVec
-	webhookDelivery               *prometheus.CounterVec
-	githubEventReceived           *prometheus.CounterVec
-	githubPRReview                *prometheus.CounterVec
-	githubPRMergeSeconds          prometheus.Histogram
-	feedbackSubmitted             *prometheus.CounterVec
+	signup                  *prometheus.CounterVec
+	workspaceCreated        *prometheus.CounterVec
+	issueCreated            *prometheus.CounterVec
+	chatMessageSent         *prometheus.CounterVec
+	agentCreated            *prometheus.CounterVec
+	squadCreated            *prometheus.CounterVec
+	autopilotCreated        *prometheus.CounterVec
+	issueExecuted           *prometheus.CounterVec
+	runtimeRegistered       *prometheus.CounterVec
+	runtimeReady            *prometheus.CounterVec
+	runtimeReadySeconds     *prometheus.HistogramVec
+	runtimeFailed           *prometheus.CounterVec
+	runtimeOffline          *prometheus.CounterVec
+	daemonWSMessageReceived *prometheus.CounterVec
+	autopilotRunStarted     *prometheus.CounterVec
+	autopilotRunTerminal    *prometheus.CounterVec
+	autopilotRunSkipped     *prometheus.CounterVec
+	webhookDelivery         *prometheus.CounterVec
+	githubEventReceived     *prometheus.CounterVec
+	githubPRReview          *prometheus.CounterVec
+	githubPRMergeSeconds    prometheus.Histogram
+	feedbackSubmitted       *prometheus.CounterVec
 }
 
 func newBusinessEventMetrics() *businessEventMetrics {
@@ -63,18 +60,6 @@ func newBusinessEventMetrics() *businessEventMetrics {
 			Name: "multica_workspace_created_total",
 			Help: "Total workspaces created.",
 		}, metricLabels("multica_workspace_created_total")),
-		onboardingStarted: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "multica_onboarding_started_total",
-			Help: "Total onboarding flows started.",
-		}, metricLabels("multica_onboarding_started_total")),
-		onboardingQuestionnaireSubmit: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "multica_onboarding_questionnaire_submitted_total",
-			Help: "Total onboarding questionnaires submitted.",
-		}, metricLabels("multica_onboarding_questionnaire_submitted_total")),
-		onboardingCompleted: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "multica_onboarding_completed_total",
-			Help: "Total onboarding flows completed.",
-		}, metricLabels("multica_onboarding_completed_total")),
 		issueCreated: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "multica_issue_created_total",
 			Help: "Total issues created (any source).",
@@ -167,9 +152,6 @@ func (e *businessEventMetrics) collectors() []prometheus.Collector {
 	return []prometheus.Collector{
 		e.signup,
 		e.workspaceCreated,
-		e.onboardingStarted,
-		e.onboardingQuestionnaireSubmit,
-		e.onboardingCompleted,
 		e.issueCreated,
 		e.chatMessageSent,
 		e.agentCreated,
@@ -229,12 +211,6 @@ func (m *BusinessMetrics) IncForEvent(ev analytics.Event) {
 		m.events.signup.WithLabelValues().Inc()
 	case analytics.EventWorkspaceCreated:
 		m.events.workspaceCreated.WithLabelValues(NormalizeTaskSource(stringProp(ev.Properties, "source"))).Inc()
-	case analytics.EventOnboardingStarted:
-		m.events.onboardingStarted.WithLabelValues(NormalizePlatform(stringProp(ev.Properties, "platform"))).Inc()
-	case analytics.EventOnboardingQuestionnaireSubmit:
-		m.events.onboardingQuestionnaireSubmit.WithLabelValues().Inc()
-	case analytics.EventOnboardingCompleted:
-		m.events.onboardingCompleted.WithLabelValues(NormalizeOnboardingPath(stringProp(ev.Properties, "completion_path"))).Inc()
 	case analytics.EventIssueCreated:
 		m.events.issueCreated.WithLabelValues(
 			NormalizeTaskSource(stringProp(ev.Properties, "source")),

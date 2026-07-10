@@ -224,13 +224,6 @@ func (h *Handler) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// NOTE: CreateWorkspace deliberately does NOT mark the user as
-	// onboarded. The `onboarded_at` flag is owned by CompleteOnboarding
-	// (Step 3 of the flow). This decouples "the user has a workspace"
-	// from "the user has finished setup"; the workspace-layer route
-	// gate (web layout / desktop App.tsx overlay) redirects un-onboarded
-	// users back to /onboarding instead.
-
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create workspace")
 		return
@@ -730,7 +723,7 @@ func (h *Handler) CreateMember(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusInternalServerError, "failed to create user")
 				return
 			}
-			if _, err := h.DB.Exec(r.Context(), `UPDATE "user" SET password_hash = $2, onboarded_at = COALESCE(onboarded_at, now()), updated_at = now() WHERE id = $1`, user.ID, passwordHash); err != nil {
+			if _, err := h.DB.Exec(r.Context(), `UPDATE "user" SET password_hash = $2, updated_at = now() WHERE id = $1`, user.ID, passwordHash); err != nil {
 				writeError(w, http.StatusInternalServerError, "failed to save password")
 				return
 			}

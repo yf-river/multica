@@ -740,12 +740,6 @@ type CreateAgentRequest struct {
 	MaxConcurrentTasks int32             `json:"max_concurrent_tasks"`
 	Model              string            `json:"model"`
 	ThinkingLevel      string            `json:"thinking_level"`
-	// Template records which template slug was used to seed this agent
-	// (e.g. "coding" / "planning" / "writing" / "assistant"). Empty when
-	// the caller didn't come from a template picker — the `agent_created`
-	// event still fires with `template=""`, which is the correct signal
-	// for "manually authored agent".
-	Template string `json:"template"`
 }
 
 func decodeJSONBodyWithRawFields(body io.Reader, dst any) (map[string]json.RawMessage, error) {
@@ -846,11 +840,9 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Probe workspace agent count BEFORE the insert so the funnel has a
-	// clean "first agent ever in this workspace" signal — Step 4 of
-	// onboarding always lands in this branch. A non-fatal read: if the
-	// list fails we fall through with isFirstAgent=false rather than
-	// blocking creation, since the primary DB operation is the insert.
+	// Probe workspace agent count before the insert so analytics can identify
+	// the first agent in a workspace. This read is non-fatal: creation remains
+	// the primary operation if the count cannot be loaded.
 	isFirstAgent := false
 	if existing, listErr := h.Queries.ListAgents(r.Context(), wsUUID); listErr == nil {
 		isFirstAgent = len(existing) == 0
@@ -928,7 +920,7 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		uuidToString(created.ID),
 		runtime.Provider,
 		runtime.RuntimeMode,
-		req.Template,
+		"",
 		isFirstAgent,
 	))
 

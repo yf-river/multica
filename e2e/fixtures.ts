@@ -545,23 +545,6 @@ export class TestApiClient {
     throw new Error(`Failed to ensure workspace ${slug}: ${res.status} ${res.statusText}`);
   }
 
-  async markUserOnboarded() {
-    if (!this.workspaceId) {
-      throw new Error("Cannot mark E2E user onboarded before selecting a workspace");
-    }
-
-    const res = await this.authedFetch("/api/me/onboarding/complete", {
-      method: "POST",
-      body: JSON.stringify({
-        completion_path: "skip_existing",
-        workspace_id: this.workspaceId,
-      }),
-    });
-    if (!res.ok) {
-      throw new Error(`Failed to mark E2E user onboarded: ${res.status} ${await res.text()}`);
-    }
-  }
-
   async ensureOnlineRuntime(provider = "codebuddy", name = `E2E ${provider} Runtime ${Date.now()}`) {
     if (!this.workspaceId) {
       throw new Error(`Cannot seed ${provider} runtime before workspace is selected`);

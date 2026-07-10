@@ -33,7 +33,6 @@ test.describe("Skill candidate workflow", () => {
     api = new TestApiClient();
     await api.login(E2E_ACCOUNT, E2E_NAME, DEFAULT_E2E_PASSWORD);
     const workspace = await api.ensureWorkspace(E2E_WORKSPACE_NAME, E2E_WORKSPACE);
-    await api.markUserOnboarded();
     workspaceSlug = workspace.slug;
     artifactPrefix = `GoalD Skill UI ${Date.now()}`;
     await api.cleanupPromptArtifactsByPrefix("GoalD Skill UI");

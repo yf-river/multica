@@ -76,8 +76,8 @@ only.
 
 | Contract | Line | Behavior |
 |---|---|---|
-| `GET /env` | 603 | `h.GetAgentEnv` (plaintext read, gated) |
-| `PUT /env` | 604 | `h.UpdateAgentEnv` (full-map overwrite, gated) |
+| `GET /env` | 952 | `h.GetAgentEnv` (plaintext read, gated) |
+| `PUT /env` | 953 | `h.UpdateAgentEnv` (full-map overwrite, gated) |
 
 ## Claim-time injection — `server/internal/handler/daemon.go`
 

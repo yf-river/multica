@@ -85,14 +85,16 @@ handler → analytics.Client.Capture(Event)   ← non-blocking, returns immediat
 - **`workspace_id`** — added to every event as a property when present. v1
   uses event property filtering (free tier) rather than PostHog Groups
   Analytics (paid) to compute workspace-level metrics.
-  it's available for individual debugging but not broadcast with every
-  event.
+- **`user_id`** — added to event properties for authenticated human users.
+  It is available for individual debugging but may be absent from agent or
+  system events.
 - **Person properties (`$set`)** — use for mutable cohort signals
   (role, use_case, team_size, platform_preference) that a user can
-  legitimately change during onboarding. `Event.Set` on the backend
+  legitimately change over time. `Event.Set` on the backend
   maps to `$set`; the frontend helper is
-  `setPersonProperties()` in `@multica/core/analytics`. Use
-  initial attribution, first-completion timestamp).
+  `setPersonProperties()` in `@multica/core/analytics`.
+- **Initial person properties (`$set_once`)** — use for immutable acquisition
+  attribution so later events cannot overwrite the user's origin.
 
 ## Taxonomy
 
@@ -101,15 +103,13 @@ Every event is assigned to one dashboard category:
 | Category | Events |
 |---|---|
 | `core_loop` | `workspace_created`, `agent_created`, `issue_created`, `chat_message_sent`, `issue_executed`, `autopilot_created`, `squad_created` |
-| `onboarding_support` | `onboarding_started`, `onboarding_questionnaire_submitted`, `onboarding_completed`, `onboarding_runtime_path_selected`, `onboarding_runtime_detected` |
 | `acquisition` | `signup` |
 | `ops_feedback` | `feedback_opened`, `feedback_submitted` |
 | `system/noise` | `$pageview`, `$set`, `$identify`, `$autocapture`, `$rageclick` |
 | `operational (Prometheus-only — NOT in PostHog)` | `runtime_registered`, `runtime_ready`, `runtime_failed`, `runtime_offline`, `agent_task_queued`, `agent_task_dispatched`, `agent_task_started`, `agent_task_completed`, `agent_task_failed`, `agent_task_cancelled`, `autopilot_run_started`, `autopilot_run_completed`, `autopilot_run_failed` |
 
-The v0 core dashboard must use only `core_loop` plus the specific
-`onboarding_support` steps used by the activation funnel. Acquisition,
-feedback, and system/noise events stay in separate dashboards. The
+The v0 core dashboard must use only `core_loop`. Acquisition, feedback, and
+system/noise events stay in separate dashboards. The
 `operational` row is **not shipped to PostHog** — those signals live in
 Grafana via `multica_*` business counters (see `server/internal/metrics`).
 
@@ -126,7 +126,7 @@ Canonical core events should carry these properties whenever the entity exists:
 | `agent_id` | string UUID | Required for agent/task events. |
 | `task_id` | string UUID | Required for `agent_task_*` events. |
 | `issue_id` / `chat_session_id` / `autopilot_run_id` | string UUID | Relevant source entity for the task/entry event. |
-| `source` | string | Canonical values: `onboarding`, `manual`, `chat`, `autopilot`, `api`. UI surface details use `surface` or `trigger_source`. |
+| `source` | string | Canonical values: `manual`, `chat`, `autopilot`, `api`. UI surface details use `surface` or `trigger_source`. |
 | `runtime_mode` | string | `cloud` / `local` when a runtime/agent task is involved. |
 | `provider` | string | `claude`, `codex`, `cursor`, etc. when a runtime/agent task is involved. |
 | `is_demo` | bool | Currently always `false`; reserved for future demo/test workspace filtering. |
@@ -368,50 +368,11 @@ now Prometheus-only). Per-task completion counts live in Grafana via
 `BusinessMetrics.RecordTaskTerminal`; use `issue_executed` for the
 PostHog-side activation funnel and filter by `source` as needed.
 
-### `onboarding_started`
-
-Fires once when the onboarding shell mounts and the initial workspace list has
-resolved. Existing-workspace users carry `workspace_id`; brand-new users do
-not have a workspace yet.
-
-| Property | Type | Description |
-|---|---|---|
-| `workspace_id` | string (UUID) | Present only when the user already has a workspace. |
-| `source` | string | Always `onboarding`. |
-
-### `onboarding_questionnaire_submitted`
-
-Fires on the first PatchOnboarding that transitions the user's
-questionnaire JSONB from "at least one slot empty" to "all three
-filled" (team_size, role, use_case). Revisions past that point don't
-re-emit — the funnel counts users, not edits.
-
-| Property | Type | Description |
-|---|---|---|
-| `team_size` | string | `solo` / `team` / `other`. |
-| `role` | string | `developer` / `product_lead` / `writer` / `founder` / `other`. |
-| `use_case` | string | `coding` / `planning` / `writing_research` / `explore` / `other`. |
-| `team_size_has_other` | bool | `true` when the user filled the Q1 free-text escape. |
-| `role_has_other` | bool | Ditto Q2. |
-| `use_case_has_other` | bool | Ditto Q3. |
-
-Person properties set with `$set` (not once — users can go back and
-change answers before submitting again):
-
-| Property | Type | Description |
-|---|---|---|
-| `team_size` | string | Mirrors the event property for cohort queries. |
-| `role` | string | Same. |
-| `use_case` | string | Same. |
-
-`distinct_id` is the user's id. No workspace_id — the questionnaire is
-per-user, not per-workspace.
-
 ### `agent_created`
 
-Fires on every successful `POST /api/workspaces/:id/agents`. Not
-onboarding-specific — the `is_first_agent_in_workspace` property
-isolates the Step 4 signal from later agent additions.
+Fires on every successful `POST /api/agents`. The
+`is_first_agent_in_workspace` property distinguishes the first agent from
+later additions.
 
 | Property | Type | Description |
 |---|---|---|
@@ -422,32 +383,6 @@ isolates the Step 4 signal from later agent additions.
 | `is_first_agent_in_workspace` | bool | `true` when the workspace had zero agents before this insert. |
 
 `distinct_id` is the authenticated owner's user id.
-
-### `onboarding_completed`
-
-Fires from CompleteOnboarding on the first call that actually flips
-`user.onboarded_at` from NULL. Retries are idempotent server-side but
-deliberately do NOT re-emit, so the funnel counts first-completions
-only. The client sends `completion_path` in the POST body to label
-which exit the user took.
-
-| Property | Type | Description |
-|---|---|---|
-| `workspace_id` | string (UUID) | Present for workspace-linked onboarding completions. |
-| `completion_path` | string | One of `full` / `runtime_skipped` / `skip_existing` / `unknown`. See below. |
-
-Person properties set with `$set_once`:
-
-| Property | Type | Description |
-|---|---|---|
-| `onboarded_at` | string (RFC3339) | Timestamp the first completion landed. Enables cohort queries like "users onboarded before X" directly from person_properties. |
-
-`completion_path` values:
-
-- `full` — Reached Step 5 (first_issue) with a runtime connected.
-- `runtime_skipped` — Completed without connecting a runtime (user hit Skip in Step 3).
-- `skip_existing` — "I've done this before" from Welcome. The user already had a workspace.
-- `unknown` — Legacy fallback when the client didn't send a path. Should stay near zero after rollout.
 
 | Property | Type | Description |
 |---|---|---|
@@ -491,59 +426,6 @@ sent from a pre-workspace surface.
   are deduplicated. This keeps PostHog at section granularity rather than
   billing a `$pageview` per resource or per filter/sort/search change. The
   tracker is deliberately NOT keyed on the query string.
-- `onboarding_runtime_path_selected` — fired from
-  `packages/views/onboarding/steps/step-platform-fork.tsx` when the web
-  user clicks one of the Step 3 fork cards (before any server
-  call happens, so it's frontend-only). Properties: `path`
-  (`download_desktop` / `cli`), `source`
-  (`onboarding`), `surface` (`step3`), `workspace_id`, and `is_mac`.
-  Also writes `platform_preference` (`web` / `desktop`) to person
-  properties so every subsequent event on the user can be broken down
-  by chosen platform. **Note**: semantic "download
-  intent" is now better served by `download_intent_expressed` below —
-  `path: "download_desktop"` signals Step 3 path choice specifically,
-  not actual download start.
-
-- `onboarding_runtime_detected` — fired from
-  `packages/views/onboarding/steps/step-runtime-connect.tsx` (desktop
-  Step 3) once per mount, when the scanning phase resolves — either
-  immediately on first runtime registration, or after the 5 s empty
-  timeout. Answers the question "did the user have any AI CLI
-  installed on this machine when they hit Step 3" — currently
-  unanswerable from the existing funnel because the bundled daemon
-  fails to register at all when zero CLIs are on PATH, so
-  `runtime_registered` is silent on that cohort. Splits
-  `completion_path=runtime_skipped` into "had CLIs, skipped anyway"
-  vs "no CLIs available, had no choice". Properties:
-  - `source`: `onboarding`.
-  - `surface`: `step3_desktop`.
-  - `workspace_id`: current onboarding workspace.
-  - `outcome`: `found` (at least one runtime registered before the
-    5 s grace window expired) or `empty` (none registered by then).
-  - `runtime_count`: number of runtimes visible to this user at
-    resolution time.
-  - `online_count`: subset of `runtime_count` whose `status` is
-    `online`.
-  - `providers`: sorted array of distinct provider names (e.g.
-    `["claude", "codex"]`).
-  - `has_claude` / `has_codex` / `has_cursor`: convenience booleans
-    derived from `providers` for funnel breakdowns without array
-    filtering in HogQL.
-  - `detect_ms`: wall-clock ms from component mount to resolution.
-    Surfaces daemon boot latency — `found` events with a high
-    `detect_ms` approach the timeout threshold and inform whether
-    to lengthen the grace period.
-
-  Person properties set with `$set`:
-  - `has_any_cli`: boolean — cohort signal for "user has at least
-    one local AI CLI detected on this machine".
-  - `detected_cli_count`: number — granular cohort signal.
-
-  Not emitted from the web Step 3 (`step-platform-fork.tsx`) — web
-  users don't run the bundled daemon, so their runtime list reflects
-  daemons from other machines and would corrupt the
-  "CLI installed locally" signal.
-
 - `feedback_opened` — fired when the in-app Feedback modal mounts
   (user clicked "Feedback" in the Help launcher). Paired with the
   backend's `feedback_submitted` to give a completion rate for the

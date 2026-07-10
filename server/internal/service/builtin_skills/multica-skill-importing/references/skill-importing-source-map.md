@@ -26,7 +26,7 @@ grep -n "func IsReservedContentPath"    server/internal/skill/reserved.go
 | Builds skill + files via `createSkillWithFiles` (def `server/internal/handler/skill_create.go:77`, tx body `:29`) | wrapped by `createImportedSkillWithName` at `server/internal/handler/skill.go:1774` |
 | Structured success: `201 Created` with `{status:"created", skill}` when `on_conflict` was sent | `server/internal/handler/skill.go:1985-1988` |
 | Legacy success: `201 Created` with bare `SkillWithFilesResponse` when `on_conflict` was omitted | `server/internal/handler/skill.go:1990` |
-| Route registration `r.Post("/import", h.ImportSkill)` | `server/cmd/server/router.go:874` |
+| Route registration `r.Post("/import", h.ImportSkill)` | `server/cmd/server/router.go:970` |
 
 ## CLI: `multica skill import --url`
 
@@ -90,9 +90,9 @@ that omit `on_conflict` still receive a bare `SkillWithFilesResponse`.
 | Behavior | File:line |
 |---|---|
 | `AddAgentSkills` (additive: AddAgentSkill loop, no RemoveAll) | `server/internal/handler/skill.go:2161`; loop `:2192-2200` |
-| Route `POST /api/agents/{id}/skills/add` | `server/cmd/server/router.go:851` |
+| Route `POST /api/agents/{id}/skills/add` | `server/cmd/server/router.go:947` |
 | `SetAgentSkills` (replace-all: RemoveAllAgentSkills then re-add) | `server/internal/handler/skill.go:2106`; `RemoveAllAgentSkills` `:2138`; re-add `:2143-2151` |
-| Route `PUT /api/agents/{id}/skills` | `server/cmd/server/router.go:850` |
+| Route `PUT /api/agents/{id}/skills` | `server/cmd/server/router.go:946` |
 | CLI `agent skills add` def ("without replacing existing assignments") | `server/cmd/multica/cmd_agent.go:125-130` |
 | `runAgentSkillsAdd` → `POST .../skills/add` | `server/cmd/multica/cmd_agent.go:797`; POST `:818` |
 | CLI `agent skills set` def ("replaces all current assignments") | `server/cmd/multica/cmd_agent.go:118-123` |

@@ -546,16 +546,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// --- User-scoped routes (no workspace context required) ---
 		r.Get("/api/me", h.GetMe)
 		r.Patch("/api/me", h.UpdateMe)
-		r.Patch("/api/me/onboarding", h.PatchOnboarding)
-		r.Post("/api/me/onboarding/complete", h.CompleteOnboarding)
-		// DEPRECATED — shim routes for desktop < v3 during the rollout
-		// window. v3 frontend creates the Helper agent + starter issue
-		// via generic CreateAgent / CreateIssue and only calls /complete
-		// here. Remove once X-Client-Version telemetry confirms zero
-		// pre-v3 desktops are still calling these. Handlers live in
-		// server/internal/handler/onboarding_shim.go.
-		r.Post("/api/me/onboarding/runtime-bootstrap", h.BootstrapOnboardingRuntime)
-		r.Post("/api/me/onboarding/no-runtime-bootstrap", h.BootstrapOnboardingNoRuntime)
 		r.Post("/api/cli-token", h.IssueCliToken)
 		r.Post("/api/upload-file", h.UploadFile)
 		r.Post("/api/feedback", h.CreateFeedback)

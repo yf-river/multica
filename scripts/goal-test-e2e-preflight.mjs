@@ -79,13 +79,13 @@ await check("workspace is readable", async () => {
   return { workspace_id: workspace.id, slug: workspace.slug };
 });
 
-await check("database user onboarding state is ready", async () => {
+await check("database user/workspace membership is ready", async () => {
   const client = new pg.Client({ connectionString: databaseURL, connectionTimeoutMillis: 2_000 });
   await client.connect();
   try {
     const result = await client.query(
       `
-        SELECT u.account, u.onboarded_at IS NOT NULL AS onboarded, w.slug AS workspace_slug, m.role
+        SELECT u.account, w.slug AS workspace_slug, m.role
         FROM "user" u
         JOIN member m ON m.user_id = u.id
         JOIN workspace w ON w.id = m.workspace_id
@@ -96,8 +96,7 @@ await check("database user onboarding state is ready", async () => {
     );
     if (result.rowCount !== 1) throw new Error(`missing user/workspace membership for ${account}/${workspaceSlug}`);
     const row = result.rows[0];
-    if (!row.onboarded) throw new Error(`user ${account} is not onboarded`);
-    return { account: row.account, workspace_slug: row.workspace_slug, role: row.role, onboarded: row.onboarded };
+    return { account: row.account, workspace_slug: row.workspace_slug, role: row.role };
   } finally {
     await client.end();
   }

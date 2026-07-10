@@ -20,7 +20,6 @@ test.describe("小队真实 Agent 闭环", () => {
     const suffix = Date.now();
     await api.login(REAL_AGENT_ACCOUNT, "胡云飞", REAL_AGENT_PASSWORD);
     const workspace = await api.ensureWorkspace("AI Studio 工作区", REAL_AGENT_WORKSPACE);
-    await api.markUserOnboarded();
 
     try {
       const readiness = await api.getPromptEvaluationRuntimeReadiness();

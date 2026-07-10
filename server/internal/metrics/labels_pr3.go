@@ -17,13 +17,6 @@ var (
 		"unknown": "unknown",
 	}
 
-	knownOnboardingPaths = map[string]string{
-		"full":            "full",
-		"runtime_skipped": "runtime_skipped",
-		"skip_existing":   "skip_existing",
-		"unknown":         "unknown",
-	}
-
 	knownAutopilotCadences = map[string]string{
 		"hourly":  "hourly",
 		"daily":   "daily",
@@ -143,10 +136,6 @@ func normalizeFromAllowList(value string, allowList map[string]string, fallback 
 
 func NormalizePlatform(value string) string {
 	return normalizeFromAllowList(value, knownPlatforms, "unknown")
-}
-
-func NormalizeOnboardingPath(value string) string {
-	return normalizeFromAllowList(value, knownOnboardingPaths, "unknown")
 }
 
 func NormalizeAutopilotCadence(value string) string {

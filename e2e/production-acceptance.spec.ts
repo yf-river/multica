@@ -31,7 +31,6 @@ async function prepareTrainingDashboardEvidence() {
   const api = new TestApiClient();
   await api.login(account, "胡云飞", password);
   await api.ensureWorkspace(workspaceName, workspaceSlug);
-  await api.markUserOnboarded();
   await api.cleanupPromptArtifactsByPrefix(evidencePrefix);
   await api.ensureOnlineCodexRuntime(`${evidencePrefix} Codex Runtime`);
 

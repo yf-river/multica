@@ -46,7 +46,7 @@ a pointer.
 
 | Fact | Source |
 | --- | --- |
-| Preview route: `POST /api/issues/{id}/comments/trigger-preview` | `server/cmd/server/router.go:707` |
+| Preview route: `POST /api/issues/{id}/comments/trigger-preview` | `server/cmd/server/router.go:690` |
 | Preview handler loads the issue, expands issue identifiers, then calls `computeCommentAgentTriggers` | `server/internal/handler/comment.go:849-923` |
 | Preview request accepts `content`, optional `parent_id`, and optional `editing_comment_id` | `server/internal/handler/comment.go:780-784` |
 | Preview response returns agent `id`, `name`, optional `avatar_url`, `source`, and `reason` | `server/internal/handler/comment.go:786-795` |

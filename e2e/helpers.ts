@@ -71,8 +71,6 @@ export async function loginAsDefault(page: Page): Promise<string> {
     DEFAULT_E2E_WORKSPACE_NAME,
     DEFAULT_E2E_WORKSPACE,
   );
-  await api.markUserOnboarded();
-
   const token = api.getToken();
   if (!token) {
     throw new Error("E2E login did not return an auth token");
@@ -98,7 +96,6 @@ export async function createTestApi(): Promise<TestApiClient> {
   const api = new TestApiClient();
   await api.login(DEFAULT_E2E_ACCOUNT, DEFAULT_E2E_NAME, DEFAULT_E2E_PASSWORD);
   await api.ensureWorkspace(DEFAULT_E2E_WORKSPACE_NAME, DEFAULT_E2E_WORKSPACE);
-  await api.markUserOnboarded();
   return api;
 }
 

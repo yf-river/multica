@@ -19,7 +19,6 @@ test.describe("训练与评估真实 Agent 闭环", () => {
     const prefix = `真实Agent验收 ${Date.now()}`;
     await api.login(REAL_AGENT_ACCOUNT, "胡云飞", REAL_AGENT_PASSWORD);
     const workspace = await api.ensureWorkspace("AI Studio 工作区", REAL_AGENT_WORKSPACE);
-    await api.markUserOnboarded();
     await api.cleanupPromptArtifactsByPrefix(prefix);
 
     try {
