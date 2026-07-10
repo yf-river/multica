@@ -11,6 +11,9 @@ import { useRealtimeSync, type RealtimeSyncStores } from "./use-realtime-sync";
 vi.mock("../platform/workspace-storage", () => ({
   getCurrentWsId: () => "ws-1",
   getCurrentSlug: () => "test-ws",
+  registerWorkspacePersistStore: () => () => {},
+  registerWorkspaceStoreLifecycle: () => () => {},
+  registerAccountPersistStore: () => () => {},
 }));
 
 vi.mock("../paths", () => ({
