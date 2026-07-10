@@ -181,15 +181,6 @@ describe("ApiClient schema fallback", () => {
     });
   });
 
-  describe("listComments", () => {
-    it("returns [] when the response is not an array", async () => {
-      stubFetchJson({ wrong: "shape" });
-      const client = new ApiClient("https://api.example.test");
-      const comments = await client.listComments("issue-1");
-      expect(comments).toEqual([]);
-    });
-  });
-
   describe("previewCommentTriggers", () => {
     it("returns an empty enhancement when the response is malformed", async () => {
       stubFetchJson({ agents: "not-an-array" });
@@ -350,33 +341,6 @@ describe("ApiClient schema fallback", () => {
     });
   });
 
-  describe("createAgentFromTemplate", () => {
-    it("rejects a malformed response without manufacturing an empty agent", async () => {
-      stubFetchJson({ unexpected: "shape" });
-      const client = new ApiClient("https://api.example.test");
-      await expect(client.createAgentFromTemplate({
-        template_slug: "x",
-        name: "X",
-        runtime_id: "rt-1",
-      })).rejects.toMatchObject({
-        code: "api_response_contract_invalid",
-        mayHaveCommitted: true,
-      });
-    });
-
-    it("defaults imported_skill_ids / reused_skill_ids to [] when missing", async () => {
-      stubFetchJson({ agent: { id: "agent-1" } });
-      const client = new ApiClient("https://api.example.test");
-      const resp = await client.createAgentFromTemplate({
-        template_slug: "x",
-        name: "X",
-        runtime_id: "rt-1",
-      });
-      expect(resp.agent.id).toBe("agent-1");
-      expect(resp.imported_skill_ids).toEqual([]);
-      expect(resp.reused_skill_ids).toEqual([]);
-    });
-  });
 });
 
 // Direct tests for the helper, decoupled from any specific endpoint —

@@ -17,8 +17,6 @@ import type {
   CreateAgentRequest,
   AgentTemplate,
   AgentTemplateSummary,
-  CreateAgentFromTemplateRequest,
-  CreateAgentFromTemplateResponse,
   UpdateAgentRequest,
   AgentEnvResponse,
   UpdateAgentEnvRequest,
@@ -45,18 +43,12 @@ import type {
   CreateSkillRequest,
   UpdateSkillRequest,
   SetAgentSkillsRequest,
-  PersonalAccessToken,
-  CreatePersonalAccessTokenRequest,
-  CreatePersonalAccessTokenResponse,
   RuntimeUsage,
   IssueUsageSummary,
   IssueTaskTraceResponse,
   IssueExecutionTreeResponse,
   ListIssueSOPRunsResponse,
-  CreateSOPRunRequest,
-  SquadSOPRun,
   ObservabilitySummary,
-  RuntimeHourlyActivity,
   RuntimeUsageByAgent,
   RuntimeUsageByTask,
   RuntimeUsageByHour,
@@ -134,67 +126,34 @@ import type {
   PromptEvaluationEvidenceSnapshot,
   PromptEvaluationEvidenceSnapshotType,
   PromptEvaluationStructuredCase,
-  PromptEvaluationAgentRunResponse,
   CreatePromptEvaluationDatasetFromTracesRequest,
-  PromptEvaluationDatasetExportResponse,
-  ImportPromptEvaluationDatasetRequest,
-  ImportPromptEvaluationDatasetResponse,
   CreatePromptEvaluationDatasetVersionRequest,
   PromptEvaluationDatasetFromTracesResponse,
   PromptEvaluationDatasetVersion,
-  PromptEvaluationDatasetVersionDiff,
-  RestorePromptEvaluationDatasetVersionRequest,
-  RestorePromptEvaluationDatasetVersionResponse,
   PromptEvaluationOptimizationCandidate,
-  UpdatePromptEvaluationOptimizationCandidateRequest,
-  PublishPromptEvaluationOptimizationCandidateResponse,
   ApplyPromptEvaluationSkillCandidateRequest,
   CheckPromptEvaluationSkillFreshnessRequest,
-  CreatePromptEvaluationSkillCaseDraftsRequest,
-  CreatePromptEvaluationSkillInventoryRequest,
-  CreatePromptEvaluationSkillSnapshotRequest,
   PreparePromptEvaluationSkillReEvalRequest,
   RunPromptEvaluationSkillReEvalRequest,
   PromptEvaluationSkillApplyCandidateResponse,
-  PromptEvaluationSkillCaseDraftsResult,
   PromptEvaluationSkillFreshnessResult,
-  PromptEvaluationSkillInventoryResponse,
   PromptEvaluationSkillReEvalAssetResponse,
   PromptEvaluationSkillReEvalRunResponse,
-  PromptEvaluationSkillSnapshotResult,
   ListPromptEvaluationAssetsParams,
   ListPromptEvaluationRunsParams,
   ListPromptEvaluationCasesParams,
-  ListPromptEvaluationCaseTagSummariesParams,
-  ListPromptEvaluationCaseTagDatasetSummariesParams,
-  ListPromptEvaluationCaseOperationsParams,
-  ListPromptEvaluationDatasetVersionTagTrendsParams,
-  ListPromptEvaluationDimensionScoresParams,
-  ListPromptEvaluationDimensionScoreSummariesParams,
-  ListPromptEvaluationDimensionScoreTrendsParams,
   ListPromptEvaluationOptimizationCandidatesParams,
   ListPromptEvaluationAssetsResponse,
-  ListPromptEvaluationDatasetVersionRowsResponse,
-  ListPromptEvaluationDatasetVersionTagTrendsResponse,
   ListPromptEvaluationDatasetVersionsResponse,
   ListPromptEvaluationRunsResponse,
-  ListPromptEvaluationTrialsResponse,
   ListPromptEvaluationEvidenceSnapshotsResponse,
   ListPromptEvaluationCasesResponse,
-  ListPromptEvaluationCaseTagSummariesResponse,
-  ListPromptEvaluationCaseTagDatasetSummariesResponse,
-  ListPromptEvaluationCaseOperationsResponse,
-  ListPromptEvaluationDimensionScoresResponse,
-  ListPromptEvaluationDimensionScoreSummariesResponse,
-  ListPromptEvaluationDimensionScoreTrendsResponse,
   ListPromptEvaluationOptimizationCandidatesResponse,
   CreatePromptEvaluationAssetRequest,
   UpdatePromptEvaluationAssetRequest,
   ReviewPromptEvaluationRunRequest,
   CreatePromptEvaluationCaseRequest,
   UpdatePromptEvaluationCaseRequest,
-  BulkUpdatePromptEvaluationCaseTagsRequest,
-  BulkUpdatePromptEvaluationCaseTagsResponse,
   ListPromptLibraryItemsParams,
   ListPromptLibraryItemsResponse,
   ListPromptLibraryTrialsResponse,
@@ -203,7 +162,6 @@ import type {
   CreatePromptLibraryVersionRequest,
   CreatePromptLibraryVersionResponse,
   CreatePromptLibraryTrialRequest,
-  UpdatePromptLibraryItemRequest,
   AgentPlaygroundDetail,
   ListAgentPlaygroundExperimentsResponse,
   CreateAgentPlaygroundExperimentRequest,
@@ -230,9 +188,7 @@ import {
   AttachmentResponseSchema,
   CancelTaskResponseSchema,
   ChildIssuesResponseSchema,
-  CommentsListSchema,
   CommentTriggerPreviewSchema,
-  CreateAgentFromTemplateResponseSchema,
   DashboardAgentRunTimeListSchema,
   DashboardRunTimeDailyListSchema,
   DashboardUsageByAgentListSchema,
@@ -243,7 +199,6 @@ import {
   EMPTY_AGENT_TEMPLATE_SUMMARY_LIST,
   EMPTY_APP_CONFIG,
   EMPTY_ATTACHMENT,
-  EMPTY_CREATE_AGENT_FROM_TEMPLATE_RESPONSE,
   EMPTY_GROUPED_ISSUES_RESPONSE,
   EMPTY_LIST_ISSUE_BUCKETS_RESPONSE,
   EMPTY_LIST_ISSUES_RESPONSE,
@@ -254,12 +209,10 @@ import {
   EMPTY_SQUAD,
   EMPTY_SQUAD_LIST,
   EMPTY_SQUAD_MEMBER_STATUS_LIST,
-  EMPTY_SQUAD_SOP_RUN,
   EMPTY_ISSUE_SOP_RUNS_RESPONSE,
   EMPTY_OBSERVABILITY_SUMMARY,
   EMPTY_TIMELINE_ENTRIES,
   EMPTY_USER,
-  EMPTY_CREATE_PERSONAL_ACCESS_TOKEN_RESPONSE,
   EMPTY_WORKSPACE,
   EMPTY_WORKSPACE_REPO,
   EMPTY_WORKSPACE_REPO_PROBE_RESPONSE,
@@ -294,13 +247,9 @@ import {
   EMPTY_AGENT_PLAYGROUND_EXPERIMENT_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_ASSET,
   EMPTY_PROMPT_EVALUATION_ASSET_LIST_RESPONSE,
-  EMPTY_PROMPT_EVALUATION_DATASET_VERSION_DIFF,
   EMPTY_PROMPT_EVALUATION_DATASET_VERSION_LIST_RESPONSE,
-  EMPTY_PROMPT_EVALUATION_DATASET_VERSION_ROW_LIST_RESPONSE,
-  EMPTY_PROMPT_EVALUATION_DATASET_VERSION_TAG_TREND_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_RUN,
   EMPTY_PROMPT_EVALUATION_RUN_LIST_RESPONSE,
-  EMPTY_PROMPT_EVALUATION_TRIAL_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_RUN_EVIDENCE,
   EMPTY_PROMPT_EVALUATION_ASSET_EVIDENCE_ARCHIVE_PACKAGE,
   EMPTY_PROMPT_EVALUATION_ASSET_EVIDENCE_SNAPSHOT_RESPONSE,
@@ -308,24 +257,12 @@ import {
   EMPTY_PROMPT_EVALUATION_EVIDENCE_SNAPSHOT_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_CASE,
   EMPTY_PROMPT_EVALUATION_CASE_LIST_RESPONSE,
-  EMPTY_PROMPT_EVALUATION_CASE_TAG_SUMMARY_LIST_RESPONSE,
-  EMPTY_PROMPT_EVALUATION_CASE_TAG_DATASET_SUMMARY_LIST_RESPONSE,
-  EMPTY_PROMPT_EVALUATION_CASE_OPERATION_LIST_RESPONSE,
-  EMPTY_BULK_PROMPT_EVALUATION_CASE_TAGS_RESPONSE,
-  EMPTY_PROMPT_EVALUATION_DIMENSION_SCORE_LIST_RESPONSE,
-  EMPTY_PROMPT_EVALUATION_DIMENSION_SCORE_SUMMARY_LIST_RESPONSE,
-  EMPTY_PROMPT_EVALUATION_DIMENSION_SCORE_TREND_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE,
   EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_SKILL_APPLY_CANDIDATE_RESPONSE,
-  EMPTY_PROMPT_EVALUATION_SKILL_CASE_DRAFTS_RESULT,
   EMPTY_PROMPT_EVALUATION_SKILL_FRESHNESS_RESULT,
-  EMPTY_PROMPT_EVALUATION_SKILL_INVENTORY_RESPONSE,
   EMPTY_PROMPT_EVALUATION_SKILL_RE_EVAL_ASSET_RESPONSE,
   EMPTY_PROMPT_EVALUATION_SKILL_RE_EVAL_RUN_RESPONSE,
-  EMPTY_PROMPT_EVALUATION_SKILL_SNAPSHOT_RESULT,
-  EMPTY_PUBLISH_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE_RESPONSE,
-  EMPTY_RESTORE_PROMPT_EVALUATION_DATASET_VERSION_RESPONSE,
   EMPTY_RUNTIME_PROFILE,
   EMPTY_RUNTIME_PROFILE_LIST_RESPONSE,
   EMPTY_RUNTIME_DEVICE,
@@ -346,7 +283,6 @@ import {
   ReactionSchema,
   IssueReactionSchema,
   ListWebhookDeliveriesResponseSchema,
-  RuntimeHourlyActivityListSchema,
   RuntimeUsageByAgentListSchema,
   RuntimeUsageByTaskListSchema,
   RuntimeUsageByHourListSchema,
@@ -361,19 +297,11 @@ import {
   RuntimeLocalSkillImportRequestSchema,
   PromptEvaluationAssetSchema,
   PromptEvaluationAssetListResponseSchema,
-  PromptEvaluationDatasetExportResponseSchema,
-  ImportPromptEvaluationDatasetResponseSchema,
   PromptEvaluationDatasetFromTracesResponseSchema,
-  PromptEvaluationDatasetVersionDiffSchema,
   PromptEvaluationDatasetVersionListResponseSchema,
-  PromptEvaluationDatasetVersionRowListResponseSchema,
-  PromptEvaluationDatasetVersionTagTrendListResponseSchema,
   PromptEvaluationDatasetVersionSchema,
-  RestorePromptEvaluationDatasetVersionResponseSchema,
   PromptEvaluationRunListResponseSchema,
   PromptEvaluationRunSchema,
-  PromptEvaluationAgentRunResponseSchema,
-  PromptEvaluationTrialListResponseSchema,
   PromptEvaluationRunEvidenceSchema,
   PromptEvaluationAssetEvidenceArchivePackageSchema,
   PromptEvaluationAssetEvidenceSnapshotResponseSchema,
@@ -381,23 +309,12 @@ import {
   PromptEvaluationEvidenceSnapshotListResponseSchema,
   PromptEvaluationCaseSchema,
   PromptEvaluationCaseListResponseSchema,
-  PromptEvaluationCaseTagSummaryListResponseSchema,
-  PromptEvaluationCaseTagDatasetSummaryListResponseSchema,
-  PromptEvaluationCaseOperationListResponseSchema,
-  BulkUpdatePromptEvaluationCaseTagsResponseSchema,
-  PromptEvaluationDimensionScoreListResponseSchema,
-  PromptEvaluationDimensionScoreSummaryListResponseSchema,
-  PromptEvaluationDimensionScoreTrendListResponseSchema,
   PromptEvaluationOptimizationCandidateSchema,
   PromptEvaluationOptimizationCandidateListResponseSchema,
   PromptEvaluationSkillApplyCandidateResponseSchema,
-  PromptEvaluationSkillCaseDraftsResultSchema,
   PromptEvaluationSkillFreshnessResultSchema,
-  PromptEvaluationSkillInventoryResponseSchema,
   PromptEvaluationSkillReEvalAssetResponseSchema,
   PromptEvaluationSkillReEvalRunResponseSchema,
-  PromptEvaluationSkillSnapshotResultSchema,
-  PublishPromptEvaluationOptimizationCandidateResponseSchema,
   PromptLibraryItemSchema,
   PromptLibraryItemListResponseSchema,
   PromptLibraryTrialListResponseSchema,
@@ -409,7 +326,6 @@ import {
   IssueSOPRunsResponseSchema,
   ObservabilitySummarySchema,
   SquadSchema,
-  SquadSOPRunSchema,
   SquadListSchema,
   SquadMemberStatusListResponseSchema,
   SubscribersListSchema,
@@ -417,8 +333,6 @@ import {
   UserSchema,
   LoginResponseSchema,
   CliTokenResponseSchema,
-  PersonalAccessTokenListSchema,
-  CreatePersonalAccessTokenResponseSchema,
   WorkspaceListSchema,
   WorkspaceSchema,
   WorkspaceRepoSchema,
@@ -907,13 +821,6 @@ export class ApiClient {
   }
 
   // Comments
-  async listComments(issueId: string): Promise<Comment[]> {
-    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/comments`);
-    return parseWithFallback(raw, CommentsListSchema, [], {
-      endpoint: "GET /api/issues/:id/comments",
-    });
-  }
-
   async createComment(
     issueId: string,
     content: string,
@@ -1105,26 +1012,6 @@ export class ApiClient {
     );
   }
 
-  /** Creates an agent from a curated template. The server fetches every
-   *  referenced skill URL in parallel, materializes them into the workspace
-   *  (find-or-create by name), and writes the agent + skill bindings in a
-   *  single transaction. On any upstream fetch failure, the entire write is
-   *  rolled back and the API returns 422 with `failed_urls`. */
-  async createAgentFromTemplate(
-    data: CreateAgentFromTemplateRequest,
-  ): Promise<CreateAgentFromTemplateResponse> {
-    const raw = await this.fetch<unknown>("/api/agents/from-template", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseOrThrow(
-      raw,
-      CreateAgentFromTemplateResponseSchema,
-      EMPTY_CREATE_AGENT_FROM_TEMPLATE_RESPONSE,
-      { endpoint: "POST /api/agents/from-template" },
-    );
-  }
-
   async updateAgent(id: string, data: UpdateAgentRequest): Promise<Agent> {
     const raw = await this.fetch<unknown>(`/api/agents/${id}`, {
       method: "PUT",
@@ -1272,18 +1159,6 @@ export class ApiClient {
     ).runtime_profiles;
   }
 
-  async getRuntimeProfile(
-    workspaceId: string,
-    profileId: string,
-  ): Promise<RuntimeProfile> {
-    const raw = await this.fetch<unknown>(
-      `/api/workspaces/${workspaceId}/runtime-profiles/${profileId}`,
-    );
-    return parseWithFallback(raw, RuntimeProfileSchema, EMPTY_RUNTIME_PROFILE, {
-      endpoint: "GET /api/workspaces/:workspaceId/runtime-profiles/:profileId",
-    });
-  }
-
   async createRuntimeProfile(
     workspaceId: string,
     body: CreateRuntimeProfileRequest,
@@ -1340,25 +1215,6 @@ export class ApiClient {
     return parseWithFallback<RuntimeUsage[]>(raw, RuntimeUsageListSchema, [], {
       endpoint: "GET /api/runtimes/:id/usage",
     });
-  }
-
-  async getRuntimeTaskActivity(
-    runtimeId: string,
-    params?: { tz?: string },
-  ): Promise<RuntimeHourlyActivity[]> {
-    // Hour-of-day heatmap follows the viewer's tz, like the other reports on
-    // this page. Pass the viewer's IANA zone so the server buckets correctly.
-    const search = new URLSearchParams();
-    if (params?.tz) search.set("tz", params.tz);
-    const raw = await this.fetch<unknown>(
-      `/api/runtimes/${runtimeId}/activity?${search}`,
-    );
-    return parseWithFallback<RuntimeHourlyActivity[]>(
-      raw,
-      RuntimeHourlyActivityListSchema,
-      [],
-      { endpoint: "GET /api/runtimes/:id/activity" },
-    );
   }
 
   async getRuntimeUsageByAgent(
@@ -1649,16 +1505,6 @@ export class ApiClient {
     }) as ListIssueSOPRunsResponse;
   }
 
-  async createIssueSOPRun(issueId: string, data: CreateSOPRunRequest = {}): Promise<SquadSOPRun> {
-    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/sop-runs`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseOrThrow(raw, SquadSOPRunSchema, EMPTY_SQUAD_SOP_RUN, {
-      endpoint: "POST /api/issues/:id/sop-runs",
-    }) as SquadSOPRun;
-  }
-
   async cancelTask(issueId: string, taskId: string): Promise<AgentTask> {
     return this.fetch(`/api/issues/${issueId}/tasks/${taskId}/cancel`, {
       method: "POST",
@@ -1747,13 +1593,6 @@ export class ApiClient {
     const raw = await this.fetch<unknown>("/api/workspaces");
     return parseWithFallback(raw, WorkspaceListSchema, [], {
       endpoint: "GET /api/workspaces",
-    });
-  }
-
-  async getWorkspace(id: string): Promise<Workspace> {
-    const raw = await this.fetch<unknown>(`/api/workspaces/${id}`);
-    return parseWithFallback(raw, WorkspaceSchema, EMPTY_WORKSPACE, {
-      endpoint: "GET /api/workspaces/:id",
     });
   }
 
@@ -1916,26 +1755,6 @@ export class ApiClient {
   }
 
   // Personal Access Tokens
-  async listPersonalAccessTokens(): Promise<PersonalAccessToken[]> {
-    const raw = await this.fetch<unknown>("/api/tokens");
-    return parseWithFallback(raw, PersonalAccessTokenListSchema, [], {
-      endpoint: "GET /api/tokens",
-    });
-  }
-
-  async createPersonalAccessToken(data: CreatePersonalAccessTokenRequest): Promise<CreatePersonalAccessTokenResponse> {
-    const raw = await this.fetch<unknown>("/api/tokens", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseOrThrow(
-      raw,
-      CreatePersonalAccessTokenResponseSchema,
-      EMPTY_CREATE_PERSONAL_ACCESS_TOKEN_RESPONSE,
-      { endpoint: "POST /api/tokens" },
-    );
-  }
-
   async revokePersonalAccessToken(id: string): Promise<void> {
     await this.fetch(`/api/tokens/${id}`, { method: "DELETE" });
   }
@@ -2158,13 +1977,6 @@ export class ApiClient {
     }) as ListPromptLibraryItemsResponse;
   }
 
-  async getPromptLibraryItem(id: string): Promise<PromptLibraryItem> {
-    const raw = await this.fetch<unknown>(`/api/prompt-library/${id}`);
-    return parseWithFallback(raw, PromptLibraryItemSchema, EMPTY_PROMPT_LIBRARY_ITEM, {
-      endpoint: "GET /api/prompt-library/:id",
-    }) as PromptLibraryItem;
-  }
-
   async listPromptLibraryVersions(id: string): Promise<ListPromptLibraryVersionsResponse> {
     const raw = await this.fetch<unknown>(`/api/prompt-library/${id}/versions`);
     return parseWithFallback(raw, PromptLibraryVersionListResponseSchema, EMPTY_PROMPT_LIBRARY_VERSION_LIST_RESPONSE, {
@@ -2210,16 +2022,6 @@ export class ApiClient {
     return parseOrThrow(raw, PromptLibraryTrialSchema, EMPTY_PROMPT_LIBRARY_TRIAL, {
       endpoint: "POST /api/prompt-library/:id/versions/:versionId/trials",
     }) as PromptLibraryTrial;
-  }
-
-  async updatePromptLibraryItem(id: string, data: UpdatePromptLibraryItemRequest): Promise<PromptLibraryItem> {
-    const raw = await this.fetch<unknown>(`/api/prompt-library/${id}`, {
-      method: "PUT",
-      body: JSON.stringify(data),
-    });
-    return parseOrThrow(raw, PromptLibraryItemSchema, EMPTY_PROMPT_LIBRARY_ITEM, {
-      endpoint: "PUT /api/prompt-library/:id",
-    }) as PromptLibraryItem;
   }
 
   async deletePromptLibraryItem(id: string): Promise<void> {
@@ -2288,13 +2090,6 @@ export class ApiClient {
     }) as ListPromptEvaluationAssetsResponse;
   }
 
-  async getPromptEvaluationAsset(id: string): Promise<PromptEvaluationAsset> {
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}`);
-    return parseWithFallback(raw, PromptEvaluationAssetSchema, EMPTY_PROMPT_EVALUATION_ASSET, {
-      endpoint: "GET /api/prompt-evaluation-assets/:id",
-    }) as PromptEvaluationAsset;
-  }
-
   async createPromptEvaluationAsset(data: CreatePromptEvaluationAssetRequest): Promise<PromptEvaluationAsset> {
     const raw = await this.fetch<unknown>("/api/prompt-evaluation-assets", {
       method: "POST",
@@ -2317,75 +2112,6 @@ export class ApiClient {
 
   async deletePromptEvaluationAsset(id: string): Promise<void> {
     await this.fetch(`/api/prompt-evaluation-assets/${id}`, { method: "DELETE" });
-  }
-
-  async createPromptEvaluationSkillInventory(
-    id: string,
-    data: CreatePromptEvaluationSkillInventoryRequest,
-  ): Promise<PromptEvaluationSkillInventoryResponse> {
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/skill-inventory`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseOrThrow(raw, PromptEvaluationSkillInventoryResponseSchema, EMPTY_PROMPT_EVALUATION_SKILL_INVENTORY_RESPONSE, {
-      endpoint: "POST /api/prompt-evaluation-assets/:id/skill-inventory",
-    }) as PromptEvaluationSkillInventoryResponse;
-  }
-
-  async createPromptEvaluationSkillSnapshot(
-    id: string,
-    data: CreatePromptEvaluationSkillSnapshotRequest,
-  ): Promise<PromptEvaluationSkillSnapshotResult> {
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/skill-snapshot`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseOrThrow(raw, PromptEvaluationSkillSnapshotResultSchema, EMPTY_PROMPT_EVALUATION_SKILL_SNAPSHOT_RESULT, {
-      endpoint: "POST /api/prompt-evaluation-assets/:id/skill-snapshot",
-    }) as PromptEvaluationSkillSnapshotResult;
-  }
-
-  async createPromptEvaluationSkillCaseDrafts(
-    id: string,
-    data: CreatePromptEvaluationSkillCaseDraftsRequest,
-  ): Promise<PromptEvaluationSkillCaseDraftsResult> {
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/skill-case-drafts`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseOrThrow(raw, PromptEvaluationSkillCaseDraftsResultSchema, EMPTY_PROMPT_EVALUATION_SKILL_CASE_DRAFTS_RESULT, {
-      endpoint: "POST /api/prompt-evaluation-assets/:id/skill-case-drafts",
-    }) as PromptEvaluationSkillCaseDraftsResult;
-  }
-
-  async exportPromptEvaluationDataset(id: string): Promise<PromptEvaluationDatasetExportResponse> {
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/dataset-export`);
-    return parseWithFallback(raw, PromptEvaluationDatasetExportResponseSchema, {
-      schema: "multica.prompt_evaluation.dataset_export.v1",
-      exported_at: "",
-      source_asset_id: id,
-      asset: EMPTY_PROMPT_EVALUATION_ASSET,
-      case_count: 0,
-      cases: [],
-      payload: {},
-    }, {
-      endpoint: "GET /api/prompt-evaluation-assets/:id/dataset-export",
-    }) as PromptEvaluationDatasetExportResponse;
-  }
-
-  async importPromptEvaluationDataset(data: ImportPromptEvaluationDatasetRequest): Promise<ImportPromptEvaluationDatasetResponse> {
-    const raw = await this.fetch<unknown>("/api/prompt-evaluation-assets/dataset-import", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseOrThrow(raw, ImportPromptEvaluationDatasetResponseSchema, {
-      asset: EMPTY_PROMPT_EVALUATION_ASSET,
-      source_asset_id: data.export.source_asset_id,
-      case_count: 0,
-      cases: [],
-    }, {
-      endpoint: "POST /api/prompt-evaluation-assets/dataset-import",
-    }) as ImportPromptEvaluationDatasetResponse;
   }
 
   async createPromptEvaluationDatasetFromTraces(
@@ -2418,17 +2144,6 @@ export class ApiClient {
     }) as ListPromptEvaluationDatasetVersionsResponse;
   }
 
-  async listPromptEvaluationDatasetVersionTagTrends(id: string, params?: ListPromptEvaluationDatasetVersionTagTrendsParams): Promise<ListPromptEvaluationDatasetVersionTagTrendsResponse> {
-    const search = new URLSearchParams();
-    if (params?.version_limit) search.set("version_limit", String(params.version_limit));
-    if (params?.limit) search.set("limit", String(params.limit));
-    const query = search.toString();
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/dataset-versions/tag-trends${query ? `?${query}` : ""}`);
-    return parseWithFallback(raw, PromptEvaluationDatasetVersionTagTrendListResponseSchema, EMPTY_PROMPT_EVALUATION_DATASET_VERSION_TAG_TREND_LIST_RESPONSE, {
-      endpoint: "GET /api/prompt-evaluation-assets/:id/dataset-versions/tag-trends",
-    }) as ListPromptEvaluationDatasetVersionTagTrendsResponse;
-  }
-
   async createPromptEvaluationDatasetVersion(
     id: string,
     data: CreatePromptEvaluationDatasetVersionRequest = {},
@@ -2453,39 +2168,6 @@ export class ApiClient {
     }) as PromptEvaluationDatasetVersion;
   }
 
-  async listPromptEvaluationDatasetVersionRows(id: string, versionId: string): Promise<ListPromptEvaluationDatasetVersionRowsResponse> {
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/dataset-versions/${versionId}/rows`);
-    return parseWithFallback(raw, PromptEvaluationDatasetVersionRowListResponseSchema, EMPTY_PROMPT_EVALUATION_DATASET_VERSION_ROW_LIST_RESPONSE, {
-      endpoint: "GET /api/prompt-evaluation-assets/:id/dataset-versions/:versionId/rows",
-    }) as ListPromptEvaluationDatasetVersionRowsResponse;
-  }
-
-  async diffPromptEvaluationDatasetVersion(
-    id: string,
-    baseVersionId: string,
-    targetVersionId: string,
-  ): Promise<PromptEvaluationDatasetVersionDiff> {
-    const search = new URLSearchParams({ target_version_id: targetVersionId });
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/dataset-versions/${baseVersionId}/diff?${search}`);
-    return parseWithFallback(raw, PromptEvaluationDatasetVersionDiffSchema, EMPTY_PROMPT_EVALUATION_DATASET_VERSION_DIFF, {
-      endpoint: "GET /api/prompt-evaluation-assets/:id/dataset-versions/:versionId/diff",
-    }) as PromptEvaluationDatasetVersionDiff;
-  }
-
-  async restorePromptEvaluationDatasetVersion(
-    id: string,
-    versionId: string,
-    data: RestorePromptEvaluationDatasetVersionRequest = {},
-  ): Promise<RestorePromptEvaluationDatasetVersionResponse> {
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/dataset-versions/${versionId}/restore`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseOrThrow(raw, RestorePromptEvaluationDatasetVersionResponseSchema, EMPTY_RESTORE_PROMPT_EVALUATION_DATASET_VERSION_RESPONSE, {
-      endpoint: "POST /api/prompt-evaluation-assets/:id/dataset-versions/:versionId/restore",
-    }) as RestorePromptEvaluationDatasetVersionResponse;
-  }
-
   async listPromptEvaluationCases(params?: ListPromptEvaluationCasesParams): Promise<ListPromptEvaluationCasesResponse> {
     const search = new URLSearchParams();
     if (params?.asset_id) search.set("asset_id", params.asset_id);
@@ -2504,44 +2186,6 @@ export class ApiClient {
     }) as ListPromptEvaluationCasesResponse;
   }
 
-  async listPromptEvaluationCaseTagSummaries(params?: ListPromptEvaluationCaseTagSummariesParams): Promise<ListPromptEvaluationCaseTagSummariesResponse> {
-    const search = new URLSearchParams();
-    if (params?.asset_id) search.set("asset_id", params.asset_id);
-    if (params?.status) search.set("status", params.status);
-    if (params?.source) search.set("source", params.source);
-    if (params?.keyword) search.set("keyword", params.keyword);
-    if (params?.limit) search.set("limit", String(params.limit));
-    const query = search.toString();
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-cases/tag-summaries${query ? `?${query}` : ""}`);
-    return parseWithFallback(raw, PromptEvaluationCaseTagSummaryListResponseSchema, EMPTY_PROMPT_EVALUATION_CASE_TAG_SUMMARY_LIST_RESPONSE, {
-      endpoint: "GET /api/prompt-evaluation-cases/tag-summaries",
-    }) as ListPromptEvaluationCaseTagSummariesResponse;
-  }
-
-  async listPromptEvaluationCaseTagDatasetSummaries(params?: ListPromptEvaluationCaseTagDatasetSummariesParams): Promise<ListPromptEvaluationCaseTagDatasetSummariesResponse> {
-    const search = new URLSearchParams();
-    if (params?.status) search.set("status", params.status);
-    if (params?.source) search.set("source", params.source);
-    if (params?.keyword) search.set("keyword", params.keyword);
-    if (params?.limit) search.set("limit", String(params.limit));
-    if (params?.top_dataset_limit) search.set("top_dataset_limit", String(params.top_dataset_limit));
-    const query = search.toString();
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-cases/tag-dataset-summaries${query ? `?${query}` : ""}`);
-    return parseWithFallback(raw, PromptEvaluationCaseTagDatasetSummaryListResponseSchema, EMPTY_PROMPT_EVALUATION_CASE_TAG_DATASET_SUMMARY_LIST_RESPONSE, {
-      endpoint: "GET /api/prompt-evaluation-cases/tag-dataset-summaries",
-    }) as ListPromptEvaluationCaseTagDatasetSummariesResponse;
-  }
-
-  async listPromptEvaluationCaseOperations(id: string, params?: ListPromptEvaluationCaseOperationsParams): Promise<ListPromptEvaluationCaseOperationsResponse> {
-    const search = new URLSearchParams();
-    if (params?.limit) search.set("limit", String(params.limit));
-    const query = search.toString();
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/case-operations${query ? `?${query}` : ""}`);
-    return parseWithFallback(raw, PromptEvaluationCaseOperationListResponseSchema, EMPTY_PROMPT_EVALUATION_CASE_OPERATION_LIST_RESPONSE, {
-      endpoint: "GET /api/prompt-evaluation-assets/:id/case-operations",
-    }) as ListPromptEvaluationCaseOperationsResponse;
-  }
-
   async createPromptEvaluationCase(data: CreatePromptEvaluationCaseRequest): Promise<PromptEvaluationStructuredCase> {
     const raw = await this.fetch<unknown>("/api/prompt-evaluation-cases", {
       method: "POST",
@@ -2550,16 +2194,6 @@ export class ApiClient {
     return parseOrThrow(raw, PromptEvaluationCaseSchema, EMPTY_PROMPT_EVALUATION_CASE, {
       endpoint: "POST /api/prompt-evaluation-cases",
     }) as PromptEvaluationStructuredCase;
-  }
-
-  async bulkUpdatePromptEvaluationCaseTags(data: BulkUpdatePromptEvaluationCaseTagsRequest): Promise<BulkUpdatePromptEvaluationCaseTagsResponse> {
-    const raw = await this.fetch<unknown>("/api/prompt-evaluation-cases/bulk-tags", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseOrThrow(raw, BulkUpdatePromptEvaluationCaseTagsResponseSchema, EMPTY_BULK_PROMPT_EVALUATION_CASE_TAGS_RESPONSE, {
-      endpoint: "POST /api/prompt-evaluation-cases/bulk-tags",
-    }) as BulkUpdatePromptEvaluationCaseTagsResponse;
   }
 
   async updatePromptEvaluationCase(id: string, data: UpdatePromptEvaluationCaseRequest): Promise<PromptEvaluationStructuredCase> {
@@ -2576,68 +2210,6 @@ export class ApiClient {
     await this.fetch(`/api/prompt-evaluation-cases/${id}`, { method: "DELETE" });
   }
 
-  async listPromptEvaluationDimensionScores(params?: ListPromptEvaluationDimensionScoresParams): Promise<ListPromptEvaluationDimensionScoresResponse> {
-    const search = new URLSearchParams();
-    if (params?.run_id) search.set("run_id", params.run_id);
-    if (params?.asset_id) search.set("asset_id", params.asset_id);
-    if (params?.prompt_id) search.set("prompt_id", params.prompt_id);
-    if (params?.status) search.set("status", params.status);
-    const query = search.toString();
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-dimension-scores${query ? `?${query}` : ""}`);
-    return parseWithFallback(raw, PromptEvaluationDimensionScoreListResponseSchema, EMPTY_PROMPT_EVALUATION_DIMENSION_SCORE_LIST_RESPONSE, {
-      endpoint: "GET /api/prompt-evaluation-dimension-scores",
-    }) as ListPromptEvaluationDimensionScoresResponse;
-  }
-
-  async listPromptEvaluationDimensionScoreSummaries(params?: ListPromptEvaluationDimensionScoreSummariesParams): Promise<ListPromptEvaluationDimensionScoreSummariesResponse> {
-    const search = new URLSearchParams();
-    if (params?.asset_id) search.set("asset_id", params.asset_id);
-    if (params?.prompt_id) search.set("prompt_id", params.prompt_id);
-    if (params?.status) search.set("status", params.status);
-    const query = search.toString();
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-dimension-score-summaries${query ? `?${query}` : ""}`);
-    return parseWithFallback(raw, PromptEvaluationDimensionScoreSummaryListResponseSchema, EMPTY_PROMPT_EVALUATION_DIMENSION_SCORE_SUMMARY_LIST_RESPONSE, {
-      endpoint: "GET /api/prompt-evaluation-dimension-score-summaries",
-    }) as ListPromptEvaluationDimensionScoreSummariesResponse;
-  }
-
-  async listPromptEvaluationDimensionScoreTrends(params?: ListPromptEvaluationDimensionScoreTrendsParams): Promise<ListPromptEvaluationDimensionScoreTrendsResponse> {
-    const search = new URLSearchParams();
-    if (params?.asset_id) search.set("asset_id", params.asset_id);
-    if (params?.prompt_id) search.set("prompt_id", params.prompt_id);
-    if (params?.status) search.set("status", params.status);
-    if (params?.since) search.set("since", params.since);
-    const query = search.toString();
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-dimension-score-trends${query ? `?${query}` : ""}`);
-    return parseWithFallback(raw, PromptEvaluationDimensionScoreTrendListResponseSchema, EMPTY_PROMPT_EVALUATION_DIMENSION_SCORE_TREND_LIST_RESPONSE, {
-      endpoint: "GET /api/prompt-evaluation-dimension-score-trends",
-    }) as ListPromptEvaluationDimensionScoreTrendsResponse;
-  }
-
-  async runPromptEvaluationAsset(id: string): Promise<PromptEvaluationAsset> {
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/run`, { method: "POST" });
-    return parseOrThrow(raw, PromptEvaluationAssetSchema, EMPTY_PROMPT_EVALUATION_ASSET, {
-      endpoint: "POST /api/prompt-evaluation-assets/:id/run",
-    }) as PromptEvaluationAsset;
-  }
-
-  async runPromptEvaluationAssetAgent(id: string): Promise<PromptEvaluationAgentRunResponse> {
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/agent-run`, { method: "POST" });
-    return parseOrThrow(raw, PromptEvaluationAgentRunResponseSchema, {
-      asset: EMPTY_PROMPT_EVALUATION_ASSET,
-      run: EMPTY_PROMPT_EVALUATION_RUN,
-      task_id: "",
-      chat_session_id: "",
-      agent_id: "",
-      runtime_id: "",
-      model: "",
-      status: "",
-      message: "",
-    }, {
-      endpoint: "POST /api/prompt-evaluation-assets/:id/agent-run",
-    }) as PromptEvaluationAgentRunResponse;
-  }
-
   async listPromptEvaluationRuns(params?: ListPromptEvaluationRunsParams): Promise<ListPromptEvaluationRunsResponse> {
     const search = new URLSearchParams();
     if (params?.asset_id) search.set("asset_id", params.asset_id);
@@ -2650,13 +2222,6 @@ export class ApiClient {
     return parseWithFallback(raw, PromptEvaluationRunListResponseSchema, EMPTY_PROMPT_EVALUATION_RUN_LIST_RESPONSE, {
       endpoint: "GET /api/prompt-evaluation-runs",
     }) as ListPromptEvaluationRunsResponse;
-  }
-
-  async listPromptEvaluationRunTrials(runId: string): Promise<ListPromptEvaluationTrialsResponse> {
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/trials`);
-    return parseWithFallback(raw, PromptEvaluationTrialListResponseSchema, EMPTY_PROMPT_EVALUATION_TRIAL_LIST_RESPONSE, {
-      endpoint: "GET /api/prompt-evaluation-runs/:id/trials",
-    }) as ListPromptEvaluationTrialsResponse;
   }
 
   async getPromptEvaluationRunEvidence(runId: string): Promise<PromptEvaluationRunEvidence> {
@@ -2698,13 +2263,6 @@ export class ApiClient {
     return parseWithFallback(raw, PromptEvaluationAssetEvidenceArchivePackageSchema, EMPTY_PROMPT_EVALUATION_ASSET_EVIDENCE_ARCHIVE_PACKAGE, {
       endpoint: "GET /api/prompt-evaluation-assets/:id/evidence-snapshots/export",
     }) as PromptEvaluationAssetEvidenceArchivePackage;
-  }
-
-  async getPromptEvaluationEvidenceSnapshot(runId: string, snapshotId: string): Promise<PromptEvaluationEvidenceSnapshot> {
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/evidence-snapshots/${snapshotId}`);
-    return parseWithFallback(raw, PromptEvaluationEvidenceSnapshotSchema, EMPTY_PROMPT_EVALUATION_EVIDENCE_SNAPSHOT, {
-      endpoint: "GET /api/prompt-evaluation-runs/:id/evidence-snapshots/:snapshotId",
-    }) as PromptEvaluationEvidenceSnapshot;
   }
 
   async syncPromptEvaluationRun(runId: string): Promise<PromptEvaluationRun> {
@@ -2749,23 +2307,6 @@ export class ApiClient {
     return parseOrThrow(raw, PromptEvaluationOptimizationCandidateSchema, EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE, {
       endpoint: "POST /api/prompt-evaluation-runs/:id/optimization-candidates",
     }) as PromptEvaluationOptimizationCandidate;
-  }
-
-  async updatePromptEvaluationOptimizationCandidate(candidateId: string, data: UpdatePromptEvaluationOptimizationCandidateRequest): Promise<PromptEvaluationOptimizationCandidate> {
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-optimization-candidates/${candidateId}`, {
-      method: "PUT",
-      body: JSON.stringify(data),
-    });
-    return parseOrThrow(raw, PromptEvaluationOptimizationCandidateSchema, EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE, {
-      endpoint: "PUT /api/prompt-evaluation-optimization-candidates/:id",
-    }) as PromptEvaluationOptimizationCandidate;
-  }
-
-  async publishPromptEvaluationOptimizationCandidate(candidateId: string): Promise<PublishPromptEvaluationOptimizationCandidateResponse> {
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-optimization-candidates/${candidateId}/publish`, { method: "POST" });
-    return parseOrThrow(raw, PublishPromptEvaluationOptimizationCandidateResponseSchema, EMPTY_PUBLISH_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE_RESPONSE, {
-      endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/publish",
-    }) as PublishPromptEvaluationOptimizationCandidateResponse;
   }
 
   async checkPromptEvaluationSkillCandidateFreshness(
@@ -2818,16 +2359,6 @@ export class ApiClient {
     return parseOrThrow(raw, PromptEvaluationSkillReEvalRunResponseSchema, EMPTY_PROMPT_EVALUATION_SKILL_RE_EVAL_RUN_RESPONSE, {
       endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/skill-re-eval-run",
     }) as PromptEvaluationSkillReEvalRunResponse;
-  }
-
-  async rejectPromptEvaluationOptimizationCandidate(candidateId: string, reason?: string): Promise<PromptEvaluationOptimizationCandidate> {
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-optimization-candidates/${candidateId}/reject`, {
-      method: "POST",
-      body: JSON.stringify({ reason: reason ?? "" }),
-    });
-    return parseOrThrow(raw, PromptEvaluationOptimizationCandidateSchema, EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE, {
-      endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/reject",
-    }) as PromptEvaluationOptimizationCandidate;
   }
 
   // Project resources

@@ -7,7 +7,6 @@ import type { ExternalCredentialProfile } from "@multica/core/types";
 import enCommon from "../../locales/zh-Hans/common.json";
 import enSettings from "../../locales/zh-Hans/settings.json";
 
-const mockListPersonalAccessTokens = vi.hoisted(() => vi.fn());
 const mockCreateProfile = vi.hoisted(() => vi.fn());
 const mockUpdateProfile = vi.hoisted(() => vi.fn());
 const mockDeleteProfile = vi.hoisted(() => vi.fn());
@@ -33,12 +32,6 @@ const mockProfiles = vi.hoisted(() => ({
       updated_at: "2026-06-28T00:00:00Z",
     },
   ] as ExternalCredentialProfile[],
-}));
-
-vi.mock("@multica/core/api", () => ({
-  api: {
-    listPersonalAccessTokens: mockListPersonalAccessTokens,
-  },
 }));
 
 vi.mock("@tanstack/react-query", () => ({
@@ -87,7 +80,6 @@ function I18nWrapper({ children }: { children: ReactNode }) {
 describe("TokensTab", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockListPersonalAccessTokens.mockResolvedValue([]);
     mockProfiles.current = [
       {
         id: "credential-1",
@@ -151,7 +143,6 @@ describe("TokensTab", () => {
     expect(panel.queryByRole("button", { name: "保存凭据" })).toBeNull();
     expect(panel.queryByPlaceholderText("输入新 token 可替换当前凭据")).toBeNull();
     expect(screen.getByTestId("settings-tapd-credential-panel")).toBeTruthy();
-    expect(mockListPersonalAccessTokens).not.toHaveBeenCalled();
   });
 
   it("点击更换凭据后显示工蜂凭据编辑表单", async () => {

@@ -197,7 +197,6 @@ vi.mock("../../projects/components/project-picker", () => ({
 const mockApiObj = vi.hoisted(() => ({
   getIssue: vi.fn(),
   listTimeline: vi.fn().mockResolvedValue([]),
-  listComments: vi.fn().mockResolvedValue([]),
   createComment: vi.fn(),
   updateComment: vi.fn(),
   deleteComment: vi.fn(),

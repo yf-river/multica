@@ -331,7 +331,6 @@ describe("ApiClient", () => {
     const client = new ApiClient("https://api.example.test");
 
     await expect(client.listWorkspaces()).resolves.toEqual([]);
-    await expect(client.getWorkspace("workspace-1")).resolves.toMatchObject({ id: "", repos: [] });
     await expect(client.resolveWorkspaceRepo("workspace-1", { url: "https://example.test/repo" }))
       .rejects.toMatchObject({ code: "api_response_contract_invalid" });
     await expect(client.probeWorkspaceRepo("workspace-1", { url: "https://example.test/repo" }))
@@ -341,7 +340,7 @@ describe("ApiClient", () => {
       .rejects.toMatchObject({ code: "api_response_contract_invalid" });
   });
 
-  it("validates auth and personal token responses", async () => {
+  it("validates auth responses", async () => {
     vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(
       new Response(JSON.stringify({ token: 42 }), {
         status: 200,
@@ -352,8 +351,6 @@ describe("ApiClient", () => {
 
     await expect(client.login("ada", "secret")).rejects.toMatchObject({ code: "api_response_contract_invalid" });
     await expect(client.issueCliToken()).rejects.toMatchObject({ code: "api_response_contract_invalid" });
-    await expect(client.listPersonalAccessTokens()).resolves.toEqual([]);
-    await expect(client.createPersonalAccessToken({ name: "CLI" })).rejects.toMatchObject({ code: "api_response_contract_invalid" });
   });
 
   it("validates issue, comment, and reaction write responses", async () => {
@@ -374,25 +371,17 @@ describe("ApiClient", () => {
     await expect(client.addIssueReaction("issue-1", "👍")).rejects.toMatchObject({ code: "api_response_contract_invalid" });
   });
 
-  it("validates runtime profile responses instead of trusting typed JSON", async () => {
-    const fetchMock = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ runtime_profiles: [{ id: 42 }] }), {
+  it("validates runtime profile lists instead of trusting typed JSON", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ runtime_profiles: [{ id: 42 }] }), {
         status: 200,
         headers: { "Content-Type": "application/json" },
-      }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 42 }), {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      }));
+      }),
+    );
     vi.stubGlobal("fetch", fetchMock);
     const client = new ApiClient("https://api.example.test");
 
     await expect(client.listRuntimeProfiles("workspace-1")).resolves.toEqual([]);
-    await expect(client.getRuntimeProfile("workspace-1", "profile-1")).resolves.toMatchObject({
-      id: "",
-      workspace_id: "",
-      protocol_family: "claude",
-    });
   });
 
   it("fails closed on malformed runtime mutations and async request states", async () => {
