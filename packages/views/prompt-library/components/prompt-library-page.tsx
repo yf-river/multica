@@ -71,6 +71,7 @@ import { trainingSelectedPromptStorageKey } from "./prompt-selection-storage";
 import { PromptTrialPanel, PromptVersionHistory } from "./prompt-editor-panels";
 import { Field } from "./form-field";
 import { extractPromptVariables } from "./prompt-trial-model";
+import { caseSourceLabel, type DatasetCaseSourceFilter } from "./case-source";
 
 const promptLibraryKeys = {
   list: (workspaceId: string) => ["prompt-library", workspaceId, "list"] as const,
@@ -3646,8 +3647,6 @@ function datasetCaseSearchText(item: PromptEvaluationStructuredCase) {
   ].join(" ").toLowerCase();
 }
 
-type DatasetCaseSourceFilter = "全部" | "手工" | "trace导入" | "资产载荷";
-
 function tabToAssetType(tab: WorkbenchTab): PromptEvaluationAssetType | null {
   if (tab === "用例库") return "数据集";
   if (tab === "测试套件") return "测试套件";
@@ -3660,12 +3659,6 @@ function assetTypeLabel(assetType: PromptEvaluationAssetType): string {
 
 function canManageStructuredCases(asset: PromptEvaluationAsset): boolean {
   return asset.asset_type === "数据集" || asset.asset_type === "测试套件";
-}
-
-function caseSourceLabel(source: string): string {
-  if (source === "manual") return "手工";
-  if (source === "trace") return "trace导入";
-  return "导入";
 }
 
 function caseReviewStatusLabel(status: string): string {
