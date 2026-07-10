@@ -189,6 +189,63 @@ describe("ApiClient", () => {
     }
   });
 
+  it("validates Lark installation state without exposing installation secrets", async () => {
+    const installation = {
+      id: "installation-1",
+      workspace_id: "workspace-1",
+      agent_id: "agent-1",
+      app_id: "app-1",
+      bot_open_id: "bot-1",
+      installer_user_id: "user-1",
+      status: "active",
+      region: "feishu",
+      installed_at: "2026-07-11T00:00:00Z",
+      created_at: "2026-07-11T00:00:00Z",
+      updated_at: "2026-07-11T00:00:00Z",
+      app_secret_encrypted: "must-not-cross-boundary",
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        installations: [installation],
+        configured: true,
+        install_supported: true,
+      }), { status: 200, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        session_id: "",
+        qr_code_url: "",
+        expires_in_seconds: 0,
+        poll_interval_seconds: 0,
+      }), { status: 200, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        status: "success",
+      }), { status: 200, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        workspace_id: "",
+        installation_id: "",
+        lark_open_id: "",
+      }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+
+    const listed = await client.listLarkInstallations("workspace-1");
+    expect(listed.installations[0]).not.toHaveProperty("app_secret_encrypted");
+    await expect(client.beginLarkInstall("workspace-1", "agent-1", "feishu"))
+      .rejects.toMatchObject({
+        code: "api_response_contract_invalid",
+        mayHaveCommitted: true,
+      });
+    await expect(client.getLarkInstallStatus("workspace-1", "session-1"))
+      .rejects.toMatchObject({
+        code: "api_response_contract_invalid",
+        mayHaveCommitted: false,
+      });
+    await expect(client.redeemLarkBindingToken("binding-token"))
+      .rejects.toMatchObject({
+        code: "api_response_contract_invalid",
+        mayHaveCommitted: true,
+      });
+  });
+
   it("validates workspace, repository, and member responses", async () => {
     vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(
       new Response(JSON.stringify({ id: 42 }), {

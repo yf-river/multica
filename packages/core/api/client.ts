@@ -276,6 +276,10 @@ import {
   EMPTY_EXTERNAL_CREDENTIAL_PROFILE,
   EMPTY_EXTERNAL_CREDENTIAL_PROFILE_LIST_RESPONSE,
   EMPTY_TEST_EXTERNAL_CREDENTIAL_PROFILE_RESPONSE,
+  EMPTY_LARK_INSTALLATION_LIST_RESPONSE,
+  EMPTY_BEGIN_LARK_INSTALL_RESPONSE,
+  EMPTY_LARK_INSTALL_STATUS_RESPONSE,
+  EMPTY_REDEEM_LARK_BINDING_TOKEN_RESPONSE,
   EMPTY_LIST_WEBHOOK_DELIVERIES_RESPONSE,
   EMPTY_PROMPT_LIBRARY_ITEM,
   EMPTY_PROMPT_LIBRARY_LIST_RESPONSE,
@@ -422,6 +426,10 @@ import {
   ExternalCredentialProfileSchema,
   ExternalCredentialProfileListResponseSchema,
   TestExternalCredentialProfileResponseSchema,
+  LarkInstallationListResponseSchema,
+  BeginLarkInstallResponseSchema,
+  LarkInstallStatusResponseSchema,
+  RedeemLarkBindingTokenResponseSchema,
   WebhookDeliveryResponseSchema,
   EMPTY_CANCEL_TASK_RESPONSE,
 } from "./schemas";
@@ -3150,7 +3158,13 @@ export class ApiClient {
 
   // Lark integration
   async listLarkInstallations(workspaceId: string): Promise<ListLarkInstallationsResponse> {
-    return this.fetch(`/api/workspaces/${workspaceId}/lark/installations`);
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/lark/installations`);
+    return parseWithFallback(
+      raw,
+      LarkInstallationListResponseSchema,
+      EMPTY_LARK_INSTALLATION_LIST_RESPONSE,
+      { endpoint: "GET /api/workspaces/:id/lark/installations" },
+    );
   }
 
   async beginLarkInstall(
@@ -3167,13 +3181,22 @@ export class ApiClient {
     // arg here so every call site is forced to make a deliberate
     // choice rather than silently defaulting to mainland.
     const search = new URLSearchParams({ agent_id: agentId, region });
-    return this.fetch(`/api/workspaces/${workspaceId}/lark/install/begin?${search.toString()}`, {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/lark/install/begin?${search.toString()}`, {
       method: "POST",
+    });
+    return parseOrThrow(raw, BeginLarkInstallResponseSchema, EMPTY_BEGIN_LARK_INSTALL_RESPONSE, {
+      endpoint: "POST /api/workspaces/:id/lark/install/begin",
     });
   }
 
   async getLarkInstallStatus(workspaceId: string, sessionId: string): Promise<LarkInstallStatusResponse> {
-    return this.fetch(`/api/workspaces/${workspaceId}/lark/install/${sessionId}/status`);
+    const raw = await this.fetch<unknown>(
+      `/api/workspaces/${workspaceId}/lark/install/${sessionId}/status`,
+    );
+    return parseOrThrow(raw, LarkInstallStatusResponseSchema, EMPTY_LARK_INSTALL_STATUS_RESPONSE, {
+      endpoint: "GET /api/workspaces/:id/lark/install/:sessionId/status",
+      mayHaveCommitted: false,
+    });
   }
 
   async deleteLarkInstallation(workspaceId: string, installationId: string): Promise<void> {
@@ -3183,9 +3206,15 @@ export class ApiClient {
   }
 
   async redeemLarkBindingToken(token: string): Promise<RedeemLarkBindingTokenResponse> {
-    return this.fetch(`/api/lark/binding/redeem`, {
+    const raw = await this.fetch<unknown>(`/api/lark/binding/redeem`, {
       method: "POST",
       body: JSON.stringify({ token }),
     });
+    return parseOrThrow(
+      raw,
+      RedeemLarkBindingTokenResponseSchema,
+      EMPTY_REDEEM_LARK_BINDING_TOKEN_RESPONSE,
+      { endpoint: "POST /api/lark/binding/redeem" },
+    );
   }
 }

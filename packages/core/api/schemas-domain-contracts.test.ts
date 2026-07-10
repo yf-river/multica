@@ -49,6 +49,7 @@ import {
   ExternalCredentialProfileSchema,
   TestExternalCredentialProfileResponseSchema,
 } from "./schemas-external-credentials";
+import { LarkInstallStatusResponseSchema } from "./schemas-lark";
 
 describe("domain response schema fallbacks", () => {
   it("keeps app configuration usable when the response is not an object", () => {
@@ -223,5 +224,11 @@ describe("domain response schema fallbacks", () => {
       status: "verified",
       last_verified_at: null,
     }).success).toBe(false);
+  });
+
+  it("requires terminal Lark install states to carry their discriminator data", () => {
+    expect(LarkInstallStatusResponseSchema.safeParse({ status: "pending" }).success).toBe(true);
+    expect(LarkInstallStatusResponseSchema.safeParse({ status: "success" }).success).toBe(false);
+    expect(LarkInstallStatusResponseSchema.safeParse({ status: "error" }).success).toBe(false);
   });
 });
