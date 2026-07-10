@@ -424,6 +424,10 @@ func (h *Handler) quickCreateTAPDSourceIssue(ctx context.Context, w http.Respons
 		writeError(w, http.StatusBadRequest, "project not found in this workspace")
 		return QuickCreateIssueResponse{}, false
 	}
+	if errors.Is(err, service.ErrAttachmentsUnavailable) {
+		writeError(w, http.StatusBadRequest, "one or more attachments are unavailable in this workspace")
+		return QuickCreateIssueResponse{}, false
+	}
 	if err != nil {
 		slog.Warn("quick-create TAPD issue create failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to create TAPD issue: "+err.Error())
@@ -695,4 +699,3 @@ type CreateIssueRequest struct {
 	OriginType *string `json:"origin_type,omitempty"`
 	OriginID   *string `json:"origin_id,omitempty"`
 }
-

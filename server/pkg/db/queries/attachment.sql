@@ -106,12 +106,13 @@ SELECT * FROM attachment
 WHERE chat_message_id = ANY($1::uuid[]) AND workspace_id = $2
 ORDER BY created_at ASC;
 
--- name: LinkAttachmentsToIssue :exec
+-- name: LinkAttachmentsToIssue :many
 UPDATE attachment
-SET issue_id = $1
-WHERE workspace_id = $2
+SET issue_id = sqlc.arg(issue_id)
+WHERE workspace_id = sqlc.arg(workspace_id)
   AND issue_id IS NULL
-  AND id = ANY($3::uuid[]);
+  AND id = ANY(sqlc.arg(attachment_ids)::uuid[])
+RETURNING id;
 
 -- name: DeleteAttachment :exec
 DELETE FROM attachment WHERE id = $1 AND workspace_id = $2;

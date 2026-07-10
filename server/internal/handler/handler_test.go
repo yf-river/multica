@@ -2117,6 +2117,106 @@ func TestCreateIssueRejectsMalformedAttachmentIDBeforeWrite(t *testing.T) {
 	}
 }
 
+func TestCreateIssueRollsBackWhenAttachmentCannotBeLinked(t *testing.T) {
+	const title = "Issue with unavailable attachment"
+	ctx := context.Background()
+	missingAttachmentID := "019f4abd-b831-7db6-9344-c35d4e7bc384"
+	var availableAttachmentID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO attachment (
+			workspace_id, uploader_type, uploader_id, filename, url,
+			content_type, size_bytes
+		)
+		VALUES ($1, 'member', $2, 'rollback.txt', 'memory://rollback.txt', 'text/plain', 8)
+		RETURNING id
+	`, testWorkspaceID, testUserID).Scan(&availableAttachmentID); err != nil {
+		t.Fatalf("insert available attachment: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM attachment WHERE id = $1`, availableAttachmentID)
+	})
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		"title":          title,
+		"attachment_ids": []string{availableAttachmentID, missingAttachmentID},
+	})
+	testHandler.CreateIssue(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("CreateIssue: expected 400 for unavailable attachment, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "attachments are unavailable") {
+		t.Fatalf("CreateIssue: expected unavailable attachment error, got %s", w.Body.String())
+	}
+
+	var count int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*) FROM issue WHERE workspace_id = $1 AND title = $2
+	`, testWorkspaceID, title).Scan(&count); err != nil {
+		t.Fatalf("count issues after rejected create: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("CreateIssue: unavailable attachment must roll back issue creation, found %d rows", count)
+	}
+
+	var linkedIssueID *string
+	if err := testPool.QueryRow(ctx, `SELECT issue_id FROM attachment WHERE id = $1`, availableAttachmentID).Scan(&linkedIssueID); err != nil {
+		t.Fatalf("load available attachment after rollback: %v", err)
+	}
+	if linkedIssueID != nil {
+		t.Fatalf("CreateIssue: partial attachment claim was not rolled back, issue_id=%s", *linkedIssueID)
+	}
+}
+
+func TestCreateIssueCommitsAttachmentWithIssue(t *testing.T) {
+	ctx := context.Background()
+	var attachmentID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO attachment (
+			workspace_id, uploader_type, uploader_id, filename, url,
+			content_type, size_bytes
+		)
+		VALUES ($1, 'member', $2, 'atomic.txt', 'memory://atomic.txt', 'text/plain', 6)
+		RETURNING id
+	`, testWorkspaceID, testUserID).Scan(&attachmentID); err != nil {
+		t.Fatalf("insert attachment: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM attachment WHERE id = $1`, attachmentID)
+	})
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		"title":          "Issue with atomic attachment",
+		"attachment_ids": []string{attachmentID, attachmentID},
+	})
+	testHandler.CreateIssue(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var created IssueResponse
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	t.Cleanup(func() {
+		cleanupReq := newRequest("DELETE", "/api/issues/"+created.ID, nil)
+		cleanupReq = withURLParam(cleanupReq, "id", created.ID)
+		testHandler.DeleteIssue(httptest.NewRecorder(), cleanupReq)
+	})
+	if len(created.Attachments) != 1 || created.Attachments[0].ID != attachmentID {
+		t.Fatalf("CreateIssue: attachment response = %#v, want only %s", created.Attachments, attachmentID)
+	}
+
+	var linkedIssueID string
+	if err := testPool.QueryRow(ctx, `SELECT issue_id FROM attachment WHERE id = $1`, attachmentID).Scan(&linkedIssueID); err != nil {
+		t.Fatalf("load linked attachment: %v", err)
+	}
+	if linkedIssueID != created.ID {
+		t.Fatalf("attachment issue_id = %s, want %s", linkedIssueID, created.ID)
+	}
+}
+
 // TestUpdateIssueRejectsMalformedAssigneeID is the equivalent for the update
 // path, where the same parseUUID-shaped gap existed on a previously-unassigned
 // issue.

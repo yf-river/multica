@@ -123,6 +123,11 @@ var ErrParentIssueNotFound = errors.New("parent issue not found in this workspac
 // having to remember it. Callers translate this into 400.
 var ErrProjectNotFound = errors.New("project not found in this workspace")
 
+// ErrAttachmentsUnavailable means at least one requested attachment does not
+// exist as an unbound row in the issue's workspace. Issue creation is rolled
+// back rather than silently succeeding without the user's selected files.
+var ErrAttachmentsUnavailable = errors.New("one or more attachments are unavailable in this workspace")
+
 // IssueCreateResult is the typed return from IssueService.Create.
 type IssueCreateResult struct {
 	Issue       db.Issue
@@ -135,8 +140,8 @@ type IssueCreateResult struct {
 //  2. Resolve & validate parent / project belong to the same workspace.
 //  3. Increment the workspace issue counter.
 //  4. Insert the issue row (with optional origin stamping).
-//  5. Commit.
-//  6. Link any pre-uploaded attachments (post-commit, idempotent).
+//  5. Link every requested pre-uploaded attachment.
+//  6. Commit the issue and attachment links together.
 //  7. Publish EventIssueCreated to the bus (payload via opts.BroadcastPayload).
 //  8. Capture the IssueCreated analytics event.
 //  9. Enqueue an agent task or trigger the squad leader when the issue is
@@ -286,11 +291,14 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 		}
 	}
 
+	attachments, err := linkAttachmentsForNewIssue(ctx, qtx, issue, p.AttachmentIDs)
+	if err != nil {
+		return IssueCreateResult{}, err
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return IssueCreateResult{}, fmt.Errorf("commit: %w", err)
 	}
-
-	attachments := s.linkAttachments(ctx, issue, p.AttachmentIDs)
 
 	actorID := opts.ActorID
 	if actorID == "" {
@@ -570,36 +578,47 @@ func (s *IssueService) defaultProjectLeadAssignee(ctx context.Context, q *db.Que
 	return project.LeadType, project.LeadID
 }
 
-// linkAttachments links the given attachment IDs to the newly created
-// issue and returns the re-fetched attachment rows so callers can build
-// their response without a second query. Errors are logged and swallowed
-// — attachment linking is a best-effort post-commit step, and a stale
-// attachment row doesn't justify failing the whole create.
-func (s *IssueService) linkAttachments(ctx context.Context, issue db.Issue, ids []pgtype.UUID) []db.Attachment {
+// linkAttachmentsForNewIssue claims every requested attachment inside the
+// issue creation transaction. A partial match is a failed create: otherwise
+// the API would acknowledge an issue while silently dropping user files.
+func linkAttachmentsForNewIssue(ctx context.Context, q *db.Queries, issue db.Issue, ids []pgtype.UUID) ([]db.Attachment, error) {
 	if len(ids) == 0 {
-		return nil
+		return nil, nil
 	}
-	if err := s.Queries.LinkAttachmentsToIssue(ctx, db.LinkAttachmentsToIssueParams{
-		IssueID:     issue.ID,
-		WorkspaceID: issue.WorkspaceID,
-		Column3:     ids,
-	}); err != nil {
-		slog.Error("failed to link attachments to issue",
-			"issue_id", util.UUIDToString(issue.ID),
-			"error", err)
-		return nil
+
+	uniqueIDs := make([]pgtype.UUID, 0, len(ids))
+	seen := make(map[[16]byte]struct{}, len(ids))
+	for _, id := range ids {
+		if !id.Valid {
+			return nil, ErrAttachmentsUnavailable
+		}
+		if _, exists := seen[id.Bytes]; exists {
+			continue
+		}
+		seen[id.Bytes] = struct{}{}
+		uniqueIDs = append(uniqueIDs, id)
 	}
-	list, err := s.Queries.ListAttachmentsByIssue(ctx, db.ListAttachmentsByIssueParams{
+
+	linkedIDs, err := q.LinkAttachmentsToIssue(ctx, db.LinkAttachmentsToIssueParams{
+		IssueID:       issue.ID,
+		WorkspaceID:   issue.WorkspaceID,
+		AttachmentIds: uniqueIDs,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("link attachments to issue: %w", err)
+	}
+	if len(linkedIDs) != len(uniqueIDs) {
+		return nil, ErrAttachmentsUnavailable
+	}
+
+	attachments, err := q.ListAttachmentsByIssue(ctx, db.ListAttachmentsByIssueParams{
 		IssueID:     issue.ID,
 		WorkspaceID: issue.WorkspaceID,
 	})
 	if err != nil {
-		slog.Warn("failed to list attachments for new issue",
-			"issue_id", util.UUIDToString(issue.ID),
-			"error", err)
-		return nil
+		return nil, fmt.Errorf("list linked attachments: %w", err)
 	}
-	return list
+	return attachments, nil
 }
 
 func (s *IssueService) publishIssueCreated(issue db.Issue, attachments []db.Attachment, creatorType, actorID string, opts IssueCreateOpts) {

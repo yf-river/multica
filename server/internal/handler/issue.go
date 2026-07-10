@@ -816,6 +816,10 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "project not found in this workspace")
 		return
 	}
+	if errors.Is(err, service.ErrAttachmentsUnavailable) {
+		writeError(w, http.StatusBadRequest, "one or more attachments are unavailable in this workspace")
+		return
+	}
 	if isCheckViolation(err) {
 		writeError(w, http.StatusBadRequest, "metadata exceeds the 8KB size limit")
 		return

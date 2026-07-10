@@ -965,10 +965,10 @@ func (h *Handler) DeleteAttachment(w http.ResponseWriter, r *http.Request) {
 // linkAttachmentsByIssueIDs links the given attachment IDs to an issue.
 // Only updates attachments that have no issue_id yet.
 func (h *Handler) linkAttachmentsByIssueIDs(ctx context.Context, issueID, workspaceID pgtype.UUID, ids []pgtype.UUID) {
-	if err := h.Queries.LinkAttachmentsToIssue(ctx, db.LinkAttachmentsToIssueParams{
-		IssueID:     issueID,
-		WorkspaceID: workspaceID,
-		Column3:     ids,
+	if _, err := h.Queries.LinkAttachmentsToIssue(ctx, db.LinkAttachmentsToIssueParams{
+		IssueID:       issueID,
+		WorkspaceID:   workspaceID,
+		AttachmentIds: ids,
 	}); err != nil {
 		slog.Error("failed to link attachments to issue", "error", err)
 	}
