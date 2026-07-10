@@ -16,6 +16,7 @@ import { NativeSelect } from "@multica/ui/components/ui/native-select";
 import { Popover, PopoverContent, PopoverTrigger } from "@multica/ui/components/ui/popover";
 import { cn } from "@multica/ui/lib/utils";
 import { PageHeader } from "../../layout/page-header";
+import { useT } from "../../i18n";
 
 const keys = {
   experiments: (workspaceId: string) => ["agent-playground", workspaceId, "experiments"] as const,
@@ -41,11 +42,12 @@ function hasActiveAgentPlaygroundWork(detail: AgentPlaygroundDetail | null): boo
 }
 
 export function AgentPlaygroundPage() {
+  const { t } = useT("agent-playground");
   const workspaceId = useWorkspaceId();
   const workspacePaths = useWorkspacePaths();
   const queryClient = useQueryClient();
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [name, setName] = useState("Agent 对比实验");
+  const [name, setName] = useState(() => t(($) => $.create.default_name));
   const [description, setDescription] = useState("");
   const [datasetId, setDatasetId] = useState("");
   const [datasetVersionId, setDatasetVersionId] = useState("");
@@ -86,11 +88,11 @@ export function AgentPlaygroundPage() {
   const createMutation = useMutation({
     mutationFn: (data: CreateAgentPlaygroundExperimentRequest) => api.createAgentPlaygroundExperiment(data),
     onSuccess: (created) => {
-      toast.success("已创建 Agent 调试实验");
+      toast.success(t(($) => $.toast.created));
       setSelectedId(created.experiment.id);
       queryClient.invalidateQueries({ queryKey: keys.experiments(workspaceId) });
     },
-    onError: (error) => toast.error(error instanceof Error ? error.message : "创建失败"),
+    onError: (error) => toast.error(error instanceof Error ? error.message : t(($) => $.toast.create_failed)),
   });
   const runMutation = useMutation({
     mutationFn: (id: string) => api.runAgentPlaygroundExperiment(id),
@@ -98,7 +100,7 @@ export function AgentPlaygroundPage() {
       queryClient.setQueryData(keys.detail(workspaceId, updated.experiment.id), updated);
       queryClient.invalidateQueries({ queryKey: keys.experiments(workspaceId) });
     },
-    onError: (error) => toast.error(error instanceof Error ? error.message : "运行失败"),
+    onError: (error) => toast.error(error instanceof Error ? error.message : t(($) => $.toast.run_failed)),
   });
   const syncMutation = useMutation({
     mutationFn: (id: string) => api.syncAgentPlaygroundExperiment(id),
@@ -111,28 +113,30 @@ export function AgentPlaygroundPage() {
   const judgeMutation = useMutation({
     mutationFn: (id: string) => api.judgeAgentPlaygroundExperiment(id, judgeAgentId ? { judge_agent_id: judgeAgentId } : undefined),
     onSuccess: (updated) => queryClient.setQueryData(keys.detail(workspaceId, updated.experiment.id), updated),
-    onError: (error) => toast.error(error instanceof Error ? error.message : "裁判失败"),
+    onError: (error) => toast.error(error instanceof Error ? error.message : t(($) => $.toast.judge_failed)),
   });
 
   const canCreate = Boolean(name.trim() && selectedAgentIds.length > 0 && datasetId && datasetVersionId);
   const createMissingReasons = useMemo(() => {
     const reasons: string[] = [];
-    if (!name.trim()) reasons.push("填写名称");
+    if (!name.trim()) reasons.push(t(($) => $.create.missing_name));
     if (!datasetId) {
-      reasons.push("选择用例库");
+      reasons.push(t(($) => $.create.missing_dataset));
     } else if (!datasetVersionId) {
       if (datasetVersionsQuery.isFetching) {
-        reasons.push("等待快照加载");
+        reasons.push(t(($) => $.create.missing_snapshot_loading));
       } else if (datasetVersions.length === 0) {
-        reasons.push("为用例库创建快照");
+        reasons.push(t(($) => $.create.missing_snapshot_empty));
       } else {
-        reasons.push("选择快照");
+        reasons.push(t(($) => $.create.missing_snapshot));
       }
     }
-    if (selectedAgentIds.length === 0) reasons.push("选择执行 Agent");
+    if (selectedAgentIds.length === 0) reasons.push(t(($) => $.create.missing_agents));
     return reasons;
-  }, [datasetId, datasetVersionId, datasetVersions.length, datasetVersionsQuery.isFetching, name, selectedAgentIds.length]);
-  const createHint = canCreate ? "" : `还需要：${createMissingReasons.join("、")}`;
+  }, [datasetId, datasetVersionId, datasetVersions.length, datasetVersionsQuery.isFetching, name, selectedAgentIds.length, t]);
+  const createHint = canCreate
+    ? ""
+    : t(($) => $.create.missing_hint, { reasons: createMissingReasons.join("、") });
   const resultsByCell = useMemo(() => {
     const map = new Map<string, AgentPlaygroundDetail["results"][number]>();
     for (const result of detail?.results ?? []) {
@@ -200,14 +204,16 @@ export function AgentPlaygroundPage() {
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
       <PageHeader className="h-auto min-h-12 flex-col items-start justify-center gap-0.5 py-2">
-        <div className="text-sm font-semibold">Agent 调试场</div>
-        <div className="text-xs text-muted-foreground">用同一批输入对比多个 Agent，手动同步结果，再交给裁判 Agent 评价。</div>
+        <div className="text-sm font-semibold">{t(($) => $.page_title)}</div>
+        <div className="text-xs text-muted-foreground">{t(($) => $.page_description)}</div>
       </PageHeader>
       <div className="grid min-h-0 flex-1 grid-cols-[320px_minmax(0,1fr)] border-t">
         <aside className="min-h-0 border-r bg-muted/20">
           <div className="border-b p-3">
-            <div className="text-sm font-medium">实验</div>
-            <div className="text-xs text-muted-foreground">{experimentsQuery.data?.total ?? 0} 个实验</div>
+            <div className="text-sm font-medium">{t(($) => $.experiments)}</div>
+            <div className="text-xs text-muted-foreground">
+              {t(($) => $.experiment_count, { count: experimentsQuery.data?.total ?? 0 })}
+            </div>
           </div>
           <div className="max-h-full overflow-y-auto">
             {(experimentsQuery.data?.items ?? []).map((item) => (
@@ -219,9 +225,14 @@ export function AgentPlaygroundPage() {
               >
                 <div className="flex items-center justify-between gap-2">
                   <span className="truncate text-sm font-medium">{item.name}</span>
-                  <Badge variant="secondary">{item.status}</Badge>
+                  <PlaygroundStatusBadge status={item.status} />
                 </div>
-                <div className="mt-1 text-xs text-muted-foreground">{item.input_count} 用例 · {item.agent_count} Agent</div>
+                <div className="mt-1 text-xs text-muted-foreground">
+                  {t(($) => $.experiment_summary, {
+                    inputCount: item.input_count,
+                    agentCount: item.agent_count,
+                  })}
+                </div>
               </button>
             ))}
           </div>
@@ -230,37 +241,48 @@ export function AgentPlaygroundPage() {
           <section className="mb-5 border-b pb-5">
             <div className="mb-3 flex items-center justify-between">
               <div>
-                <h2 className="text-base font-semibold">新建调试实验</h2>
-                <p className="text-xs text-muted-foreground">选择一个用例库快照，批量对比多个 Agent 的真实执行结果。</p>
+                <h2 className="text-base font-semibold">{t(($) => $.create.title)}</h2>
+                <p className="text-xs text-muted-foreground">{t(($) => $.create.description)}</p>
               </div>
               <div className="flex flex-col items-end gap-1">
                 <Button onClick={createExperiment} disabled={!canCreate || createMutation.isPending}>
                   {createMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
-                  创建实验
+                  {t(($) => $.create.button)}
                 </Button>
                 {createHint ? <div className="text-xs text-muted-foreground">{createHint}</div> : null}
               </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <Labeled label="名称"><Input value={name} onChange={(event) => setName(event.target.value)} /></Labeled>
-              <Labeled label="描述"><Input value={description} onChange={(event) => setDescription(event.target.value)} /></Labeled>
-              <Labeled label="用例库">
+              <Labeled label={t(($) => $.create.name)}><Input value={name} onChange={(event) => setName(event.target.value)} /></Labeled>
+              <Labeled label={t(($) => $.create.description_label)}><Input value={description} onChange={(event) => setDescription(event.target.value)} /></Labeled>
+              <Labeled label={t(($) => $.create.dataset)}>
                 <NativeSelect value={datasetId} onChange={(event) => { setDatasetId(event.target.value); setDatasetVersionId(""); }}>
-                  <option value="">选择用例库</option>
+                  <option value="">{t(($) => $.create.dataset_placeholder)}</option>
                   {datasets.map((dataset: PromptEvaluationAsset) => <option key={dataset.id} value={dataset.id}>{dataset.name}</option>)}
                 </NativeSelect>
               </Labeled>
-              <Labeled label="快照">
+              <Labeled label={t(($) => $.create.snapshot)}>
                 <NativeSelect value={datasetVersionId} onChange={(event) => setDatasetVersionId(event.target.value)} disabled={!datasetId}>
-                  <option value="">选择快照</option>
+                  <option value="">{t(($) => $.create.snapshot_placeholder)}</option>
                   {datasetVersions.map((version: PromptEvaluationDatasetVersion) => (
-                    <option key={version.id} value={version.id}>v{version.version} {version.version_label || ""} · {version.row_count} 条</option>
+                    <option key={version.id} value={version.id}>
+                      {version.version_label
+                        ? t(($) => $.create.snapshot_option_labeled, {
+                          version: version.version,
+                          label: version.version_label,
+                          count: version.row_count,
+                        })
+                        : t(($) => $.create.snapshot_option, {
+                          version: version.version,
+                          count: version.row_count,
+                        })}
+                    </option>
                   ))}
                 </NativeSelect>
               </Labeled>
-              <Labeled label="裁判 Agent">
+              <Labeled label={t(($) => $.create.judge_agent)}>
                 <NativeSelect value={judgeAgentId} onChange={(event) => setJudgeAgentId(event.target.value)}>
-                  <option value="">稍后选择</option>
+                  <option value="">{t(($) => $.create.judge_later)}</option>
                   {agents.map((agent: Agent) => <option key={agent.id} value={agent.id}>{agent.name}</option>)}
                 </NativeSelect>
               </Labeled>
@@ -276,10 +298,14 @@ export function AgentPlaygroundPage() {
               />
               <div className="mt-2 text-xs text-muted-foreground">
                 {selectedDatasetVersion && selectedAgentIds.length > 0
-                  ? `本次将创建 ${selectedDatasetVersion.row_count} 条用例 × ${selectedAgentIds.length} 个 Agent = ${plannedTaskCount} 个执行任务。`
+                  ? t(($) => $.create.planned_tasks, {
+                    caseCount: selectedDatasetVersion.row_count,
+                    agentCount: selectedAgentIds.length,
+                    taskCount: plannedTaskCount,
+                  })
                   : selectedAgentIds.length > 0
-                    ? `已选择 ${selectedAgentIds.length} 个 Agent。选择快照后会显示本次执行任务数。`
-                    : "请选择至少 1 个 Agent。"}
+                    ? t(($) => $.create.selected_agents_hint, { count: selectedAgentIds.length })
+                    : t(($) => $.create.select_agent_hint)}
               </div>
             </div>
           </section>
@@ -299,7 +325,9 @@ export function AgentPlaygroundPage() {
               loading={detailQuery.isFetching}
             />
           ) : (
-            <div className="rounded-md border border-dashed p-8 text-sm text-muted-foreground">暂无实验。创建一个实验后会在这里看到结果矩阵。</div>
+            <div className="rounded-md border border-dashed p-8 text-sm text-muted-foreground">
+              {t(($) => $.empty_experiments)}
+            </div>
           )}
         </main>
       </div>
@@ -322,6 +350,7 @@ function AgentMultiSelect({
   onChange: (ids: string[]) => void;
   onOpen: () => void;
 }) {
+  const { t } = useT("agent-playground");
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
@@ -354,7 +383,9 @@ function AgentMultiSelect({
 
   return (
     <div>
-      <div className="mb-2 text-xs font-medium text-muted-foreground">执行 Agent</div>
+      <div className="mb-2 text-xs font-medium text-muted-foreground">
+        {t(($) => $.agent_picker.label)}
+      </div>
       <Popover open={open} onOpenChange={handleOpenChange}>
         <PopoverTrigger
           render={
@@ -363,7 +394,9 @@ function AgentMultiSelect({
               className="flex h-9 w-full items-center justify-between rounded-md border bg-background px-3 text-left text-sm transition-colors hover:bg-muted/50"
             >
               <span className={selectedIds.length > 0 ? "text-foreground" : "text-muted-foreground"}>
-                {selectedIds.length > 0 ? `已选择 ${selectedIds.length} 个 Agent` : "搜索并选择执行 Agent"}
+                {selectedIds.length > 0
+                  ? t(($) => $.agent_picker.selected, { count: selectedIds.length })
+                  : t(($) => $.agent_picker.trigger)}
               </span>
               <ChevronsUpDown className="h-4 w-4 text-muted-foreground" />
             </button>
@@ -375,7 +408,7 @@ function AgentMultiSelect({
             <input
               value={query}
               onChange={(event) => setQuery(event.target.value)}
-              placeholder="搜索 Agent"
+              placeholder={t(($) => $.agent_picker.search_placeholder)}
               className="h-8 min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground"
             />
             {loading ? <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /> : null}
@@ -383,13 +416,15 @@ function AgentMultiSelect({
           <div className="max-h-72 overflow-y-auto p-1">
             {agents.length === 0 ? (
               <div className="p-4 text-sm text-muted-foreground">
-                <div>暂无可执行 Agent。</div>
+                <div>{t(($) => $.agent_picker.empty)}</div>
                 <a href={agentsHref} className="mt-2 inline-flex text-foreground underline-offset-4 hover:underline">
-                  去智能体页面创建
+                  {t(($) => $.agent_picker.create_agent)}
                 </a>
               </div>
             ) : filteredAgents.length === 0 ? (
-              <div className="p-4 text-sm text-muted-foreground">没有匹配的 Agent</div>
+              <div className="p-4 text-sm text-muted-foreground">
+                {t(($) => $.agent_picker.no_matches)}
+              </div>
             ) : (
               filteredAgents.map((agent) => {
                 const selected = selectedIdSet.has(agent.id);
@@ -421,7 +456,7 @@ function AgentMultiSelect({
                 type="button"
                 onClick={() => removeAgent(agent.id)}
                 className="rounded-sm text-muted-foreground hover:text-foreground"
-                aria-label={`移除 ${agent.name}`}
+                aria-label={t(($) => $.agent_picker.remove_aria, { name: agent.name })}
               >
                 <X className="h-3 w-3" />
               </button>
@@ -458,33 +493,39 @@ function ExperimentDetail({
   judging: boolean;
   loading: boolean;
 }) {
+  const { t } = useT("agent-playground");
   const busy = running || syncing || judging || loading;
   return (
     <section>
       <div className="mb-3 flex items-center justify-between">
         <div>
           <h2 className="text-base font-semibold">{detail.experiment.name}</h2>
-          <p className="text-xs text-muted-foreground">{detail.inputs.length} 条输入 · {detail.agents.length} 个 Agent</p>
+          <p className="text-xs text-muted-foreground">
+            {t(($) => $.detail.summary, {
+              inputCount: detail.inputs.length,
+              agentCount: detail.agents.length,
+            })}
+          </p>
         </div>
         <div className="flex items-center gap-3">
           {autoSyncing ? (
             <div className="inline-flex items-center gap-1 text-xs text-muted-foreground">
               <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              自动同步中
+              {t(($) => $.detail.auto_syncing)}
             </div>
           ) : null}
           <div className="flex gap-2">
             <Button variant="outline" onClick={onSync} disabled={busy}>
               <RefreshCw className={`mr-2 h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
-              同步
+              {t(($) => $.detail.sync)}
             </Button>
             <Button variant="outline" onClick={onJudge} disabled={busy}>
               {judging ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Scale className="mr-2 h-4 w-4" />}
-              裁判
+              {t(($) => $.detail.judge)}
             </Button>
             <Button onClick={onRun} disabled={busy}>
               {running ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}
-              运行
+              {t(($) => $.detail.run)}
             </Button>
           </div>
         </div>
@@ -493,9 +534,13 @@ function ExperimentDetail({
         <table className="w-full min-w-[900px] border-collapse text-sm">
           <thead className="bg-muted/50">
             <tr>
-              <th className="w-64 border-b border-r p-3 text-left font-medium">输入</th>
+              <th className="w-64 border-b border-r p-3 text-left font-medium">
+                {t(($) => $.detail.input)}
+              </th>
               {detail.agents.map((agent) => <th key={agent.id} className="border-b border-r p-3 text-left font-medium">{agent.agent_name}</th>)}
-              <th className="border-b p-3 text-left font-medium">裁判</th>
+              <th className="border-b p-3 text-left font-medium">
+                {t(($) => $.detail.judge_column)}
+              </th>
             </tr>
           </thead>
           <tbody>
@@ -504,19 +549,25 @@ function ExperimentDetail({
               return (
                 <tr key={input.id} className="align-top">
                   <td className="border-r border-t p-3">
-                    <div className="font-medium">{input.name || `用例 ${input.row_index + 1}`}</div>
+                    <div className="font-medium">
+                      {input.name || t(($) => $.detail.case_name, { count: input.row_index + 1 })}
+                    </div>
                     <div className="mt-1 line-clamp-4 text-xs text-muted-foreground">{input.input}</div>
                   </td>
                   {detail.agents.map((agent) => {
                     const result = resultsByCell.get(`${input.id}:${agent.id}`);
                     return (
                       <td key={agent.id} className="border-r border-t p-3">
-                        {result ? <ResultCell status={result.status} output={result.output} error={result.error} /> : <span className="text-xs text-muted-foreground">未运行</span>}
+                        {result
+                          ? <ResultCell status={result.status} output={result.output} error={result.error} />
+                          : <span className="text-xs text-muted-foreground">{t(($) => $.detail.not_run)}</span>}
                       </td>
                     );
                   })}
                   <td className="border-t p-3">
-                    {judgement ? <ResultCell status={judgement.status} output={judgement.output} error="" /> : <span className="text-xs text-muted-foreground">未裁判</span>}
+                    {judgement
+                      ? <ResultCell status={judgement.status} output={judgement.output} error="" />
+                      : <span className="text-xs text-muted-foreground">{t(($) => $.detail.not_judged)}</span>}
                   </td>
                 </tr>
               );
@@ -529,11 +580,34 @@ function ExperimentDetail({
 }
 
 function ResultCell({ status, output, error }: { status: string; output: string; error: string }) {
+  const { t } = useT("agent-playground");
   return (
     <div>
-      <Badge variant={status === "completed" ? "default" : status === "failed" ? "destructive" : "secondary"}>{status}</Badge>
-      <div className="mt-2 whitespace-pre-wrap text-xs leading-5">{output || error || "暂无输出"}</div>
+      <PlaygroundStatusBadge status={status} />
+      <div className="mt-2 whitespace-pre-wrap text-xs leading-5">
+        {output || error || t(($) => $.detail.no_output)}
+      </div>
     </div>
+  );
+}
+
+function PlaygroundStatusBadge({ status }: { status: string }) {
+  const { t } = useT("agent-playground");
+  const label = (() => {
+    switch (status) {
+      case "draft": return t(($) => $.status.draft);
+      case "queued": return t(($) => $.status.queued);
+      case "running": return t(($) => $.status.running);
+      case "completed": return t(($) => $.status.completed);
+      case "failed": return t(($) => $.status.failed);
+      case "cancelled": return t(($) => $.status.cancelled);
+      default: return status;
+    }
+  })();
+  return (
+    <Badge variant={status === "completed" ? "default" : status === "failed" ? "destructive" : "secondary"}>
+      {label}
+    </Badge>
   );
 }
 

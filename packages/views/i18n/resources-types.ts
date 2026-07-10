@@ -24,6 +24,7 @@ import type runtimes from "../locales/zh-Hans/runtimes.json";
 import type layout from "../locales/zh-Hans/layout.json";
 import type usage from "../locales/zh-Hans/usage.json";
 import type squads from "../locales/zh-Hans/squads.json";
+import type agentPlayground from "../locales/zh-Hans/agent-playground.json";
 
 // Module augmentation enables i18next v26 selector API across the monorepo:
 // `t($ => $.signin.title)` resolves to the value in zh-Hans/auth.json.
@@ -62,6 +63,7 @@ declare global {
     layout: typeof layout;
     usage: typeof usage;
     squads: typeof squads;
+    "agent-playground": typeof agentPlayground;
   }
 }
 
