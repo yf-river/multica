@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { ApiClient } from "./client";
-import { parseWithFallback } from "./schema";
+import { noopLogger } from "../logger";
+import { parseWithFallback, setSchemaLogger } from "./schema";
 
 // Helper: stub fetch with a single JSON response. Status defaults to 200.
 function stubFetchJson(body: unknown, status = 200) {
@@ -18,6 +19,7 @@ function stubFetchJson(body: unknown, status = 200) {
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  setSchemaLogger(noopLogger);
 });
 
 // These tests cover the five failure modes that white-screened the desktop
@@ -403,5 +405,42 @@ describe("parseWithFallback", () => {
     const fallback = { id: "fallback" };
     const out = parseWithFallback(null, schema, fallback, opts);
     expect(out).toBe(fallback);
+  });
+
+  it("logs contract shape without leaking response values", () => {
+    const warn = vi.fn();
+    setSchemaLogger({
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn,
+      error: vi.fn(),
+    });
+    const schema = z.object({ id: z.string() });
+    const secret = "sk-private-response-value";
+
+    parseWithFallback(
+      {
+        id: 123,
+        prompt: "private prompt evidence",
+        api_key: secret,
+      },
+      schema,
+      { id: "fallback" },
+      opts,
+    );
+
+    expect(warn).toHaveBeenCalledOnce();
+    const context = warn.mock.calls[0]?.[1];
+    expect(context).toEqual({
+      endpoint: opts.endpoint,
+      issues: [{ code: "invalid_type", path: ["id"] }],
+      received: {
+        kind: "object",
+        keys: ["id", "prompt", "api_key"],
+      },
+    });
+    const serialized = JSON.stringify(context);
+    expect(serialized).not.toContain(secret);
+    expect(serialized).not.toContain("private prompt evidence");
   });
 });
