@@ -38,6 +38,9 @@ import {
 } from "./schemas-prompt-library";
 import {
   EMPTY_RUNTIME_PROFILE_LIST_RESPONSE,
+  RuntimeLocalSkillImportRequestSchema,
+  RuntimeLocalSkillListRequestSchema,
+  RuntimeModelListRequestSchema,
   RuntimeProfileListResponseSchema,
 } from "./schemas-runtimes";
 import { RuntimeUsageListSchema } from "./schemas-usage";
@@ -266,5 +269,59 @@ describe("domain response schema fallbacks", () => {
       configured: true,
       url: "https://git.code.tencent.com/install",
     }).success).toBe(false);
+  });
+
+  it("rejects unknown runtime polling states and incomplete terminal payloads", () => {
+    const base = {
+      id: "request-1",
+      runtime_id: "runtime-1",
+      supported: true,
+      created_at: "2026-07-11T00:00:00Z",
+      updated_at: "2026-07-11T00:00:00Z",
+    };
+
+    expect(RuntimeModelListRequestSchema.safeParse({
+      ...base,
+      status: "unknown",
+    }).success).toBe(false);
+    expect(RuntimeLocalSkillListRequestSchema.safeParse({
+      ...base,
+      status: "completed",
+      skills: "not-an-array",
+    }).success).toBe(false);
+    expect(RuntimeLocalSkillImportRequestSchema.safeParse({
+      ...base,
+      skill_key: "skill-1",
+      status: "completed",
+    }).success).toBe(false);
+    expect(RuntimeLocalSkillImportRequestSchema.safeParse({
+      ...base,
+      skill_key: "skill-1",
+      status: "conflict",
+    }).success).toBe(false);
+  });
+
+  it("normalizes the current completed runtime skill import payload", () => {
+    const parsed = RuntimeLocalSkillImportRequestSchema.parse({
+      id: "request-1",
+      runtime_id: "runtime-1",
+      skill_key: "skill-1",
+      status: "completed",
+      skill: {
+        id: "skill-id",
+        workspace_id: "workspace-1",
+        name: "Imported skill",
+        description: "",
+        content: "# Skill",
+        config: {},
+        created_by: "user-1",
+        created_at: "2026-07-11T00:00:00Z",
+        updated_at: "2026-07-11T00:00:00Z",
+      },
+      created_at: "2026-07-11T00:00:00Z",
+      updated_at: "2026-07-11T00:00:00Z",
+    });
+
+    expect(parsed.skill?.files).toEqual([]);
   });
 });

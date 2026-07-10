@@ -395,6 +395,58 @@ describe("ApiClient", () => {
     });
   });
 
+  it("fails closed on malformed runtime mutations and async request states", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ id: 42 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    ));
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.listRuntimes()).resolves.toEqual([]);
+    await expect(client.archiveAgentsAndDeleteRuntime("runtime-1", []))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
+    await expect(client.updateRuntime("runtime-1", { scope: "workspace" }))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
+    await expect(client.initiateListModels("runtime-1"))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
+    await expect(client.getListModelsResult("runtime-1", "request-1"))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: false });
+    await expect(client.initiateListLocalSkills("runtime-1"))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
+    await expect(client.getListLocalSkillsResult("runtime-1", "request-1"))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: false });
+    await expect(client.initiateImportLocalSkill("runtime-1", { skill_key: "skill-1" }))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
+    await expect(client.getImportLocalSkillResult("runtime-1", "request-1"))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: false });
+  });
+
+  it("binds runtime async responses to both runtime and request identities", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({
+        id: "request-other",
+        runtime_id: "runtime-other",
+        status: "pending",
+        supported: true,
+        created_at: "2026-07-11T00:00:00Z",
+        updated_at: "2026-07-11T00:00:00Z",
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    ));
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.getListModelsResult("runtime-1", "request-1"))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: false });
+    await expect(client.getListLocalSkillsResult("runtime-1", "request-1"))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: false });
+    await expect(client.getImportLocalSkillResult("runtime-1", "request-1"))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: false });
+  });
+
   it("preserves HTTP status on failed requests", async () => {
     vi.stubGlobal(
       "fetch",

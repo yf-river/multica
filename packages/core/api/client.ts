@@ -328,6 +328,11 @@ import {
   EMPTY_RESTORE_PROMPT_EVALUATION_DATASET_VERSION_RESPONSE,
   EMPTY_RUNTIME_PROFILE,
   EMPTY_RUNTIME_PROFILE_LIST_RESPONSE,
+  EMPTY_RUNTIME_DEVICE,
+  EMPTY_RUNTIME_CASCADE_DELETE_RESPONSE,
+  EMPTY_RUNTIME_MODEL_LIST_REQUEST,
+  EMPTY_RUNTIME_LOCAL_SKILL_LIST_REQUEST,
+  EMPTY_RUNTIME_LOCAL_SKILL_IMPORT_REQUEST,
   EMPTY_WEBHOOK_DELIVERY,
   AppConfigSchema,
   type AppConfigResponse,
@@ -348,6 +353,12 @@ import {
   RuntimeUsageListSchema,
   RuntimeProfileListResponseSchema,
   RuntimeProfileSchema,
+  RuntimeDeviceListSchema,
+  RuntimeDeviceSchema,
+  RuntimeCascadeDeleteResponseSchema,
+  RuntimeModelListRequestSchema,
+  RuntimeLocalSkillListRequestSchema,
+  RuntimeLocalSkillImportRequestSchema,
   PromptEvaluationAssetSchema,
   PromptEvaluationAssetListResponseSchema,
   PromptEvaluationDatasetExportResponseSchema,
@@ -1191,7 +1202,10 @@ export class ApiClient {
     const search = new URLSearchParams();
     if (params?.workspace_id) search.set("workspace_id", params.workspace_id);
     if (params?.owner) search.set("owner", params.owner);
-    return this.fetch(`/api/runtimes?${search}`);
+    const raw = await this.fetch<unknown>(`/api/runtimes?${search}`);
+    return parseWithFallback(raw, RuntimeDeviceListSchema, [], {
+      endpoint: "GET /api/runtimes",
+    }) as AgentRuntime[];
   }
 
   async deleteRuntime(runtimeId: string): Promise<void> {
@@ -1210,20 +1224,35 @@ export class ApiClient {
     runtimeId: string,
     expectedActiveAgentIds: string[],
   ): Promise<{ status: string; agents_archived: number; tasks_cancelled: number }> {
-    return this.fetch(`/api/runtimes/${runtimeId}/archive-agents-and-delete`, {
+    const raw = await this.fetch<unknown>(`/api/runtimes/${runtimeId}/archive-agents-and-delete`, {
       method: "POST",
       body: JSON.stringify({ expected_active_agent_ids: expectedActiveAgentIds }),
     });
+    return parseOrThrow(
+      raw,
+      RuntimeCascadeDeleteResponseSchema,
+      EMPTY_RUNTIME_CASCADE_DELETE_RESPONSE,
+      { endpoint: "POST /api/runtimes/:id/archive-agents-and-delete" },
+    );
   }
 
   async updateRuntime(
     runtimeId: string,
     patch: { scope?: "personal" | "workspace" },
   ): Promise<AgentRuntime> {
-    return this.fetch(`/api/runtimes/${runtimeId}`, {
+    const raw = await this.fetch<unknown>(`/api/runtimes/${runtimeId}`, {
       method: "PATCH",
       body: JSON.stringify(patch),
     });
+    return parseOrThrow(
+      raw,
+      RuntimeDeviceSchema.refine((runtime) => runtime.id === runtimeId, {
+        path: ["id"],
+        message: "runtime id does not match request",
+      }),
+      EMPTY_RUNTIME_DEVICE,
+      { endpoint: "PATCH /api/runtimes/:id" },
+    ) as AgentRuntime;
   }
 
   // ---------------------------------------------------------------------
@@ -1462,46 +1491,109 @@ export class ApiClient {
   }
 
   async initiateListModels(runtimeId: string): Promise<RuntimeModelListRequest> {
-    return this.fetch(`/api/runtimes/${runtimeId}/models`, { method: "POST" });
+    const raw = await this.fetch<unknown>(`/api/runtimes/${runtimeId}/models`, { method: "POST" });
+    return parseOrThrow(
+      raw,
+      RuntimeModelListRequestSchema.refine((request) => request.runtime_id === runtimeId, {
+        path: ["runtime_id"],
+        message: "runtime id does not match request",
+      }),
+      EMPTY_RUNTIME_MODEL_LIST_REQUEST,
+      { endpoint: "POST /api/runtimes/:id/models" },
+    ) as RuntimeModelListRequest;
   }
 
   async getListModelsResult(
     runtimeId: string,
     requestId: string,
   ): Promise<RuntimeModelListRequest> {
-    return this.fetch(`/api/runtimes/${runtimeId}/models/${requestId}`);
+    const raw = await this.fetch<unknown>(`/api/runtimes/${runtimeId}/models/${requestId}`);
+    return parseOrThrow(
+      raw,
+      RuntimeModelListRequestSchema.refine(
+        (request) => request.runtime_id === runtimeId && request.id === requestId,
+        { message: "runtime model request identity does not match request" },
+      ),
+      EMPTY_RUNTIME_MODEL_LIST_REQUEST,
+      {
+        endpoint: "GET /api/runtimes/:id/models/:requestId",
+        mayHaveCommitted: false,
+      },
+    ) as RuntimeModelListRequest;
   }
 
   async initiateListLocalSkills(
     runtimeId: string,
   ): Promise<RuntimeLocalSkillListRequest> {
-    return this.fetch(`/api/runtimes/${runtimeId}/local-skills`, {
+    const raw = await this.fetch<unknown>(`/api/runtimes/${runtimeId}/local-skills`, {
       method: "POST",
     });
+    return parseOrThrow(
+      raw,
+      RuntimeLocalSkillListRequestSchema.refine((request) => request.runtime_id === runtimeId, {
+        path: ["runtime_id"],
+        message: "runtime id does not match request",
+      }),
+      EMPTY_RUNTIME_LOCAL_SKILL_LIST_REQUEST,
+      { endpoint: "POST /api/runtimes/:id/local-skills" },
+    ) as RuntimeLocalSkillListRequest;
   }
 
   async getListLocalSkillsResult(
     runtimeId: string,
     requestId: string,
   ): Promise<RuntimeLocalSkillListRequest> {
-    return this.fetch(`/api/runtimes/${runtimeId}/local-skills/${requestId}`);
+    const raw = await this.fetch<unknown>(`/api/runtimes/${runtimeId}/local-skills/${requestId}`);
+    return parseOrThrow(
+      raw,
+      RuntimeLocalSkillListRequestSchema.refine(
+        (request) => request.runtime_id === runtimeId && request.id === requestId,
+        { message: "runtime local skill request identity does not match request" },
+      ),
+      EMPTY_RUNTIME_LOCAL_SKILL_LIST_REQUEST,
+      {
+        endpoint: "GET /api/runtimes/:id/local-skills/:requestId",
+        mayHaveCommitted: false,
+      },
+    ) as RuntimeLocalSkillListRequest;
   }
 
   async initiateImportLocalSkill(
     runtimeId: string,
     data: CreateRuntimeLocalSkillImportRequest,
   ): Promise<RuntimeLocalSkillImportRequest> {
-    return this.fetch(`/api/runtimes/${runtimeId}/local-skills/import`, {
+    const raw = await this.fetch<unknown>(`/api/runtimes/${runtimeId}/local-skills/import`, {
       method: "POST",
       body: JSON.stringify(data),
     });
+    return parseOrThrow(
+      raw,
+      RuntimeLocalSkillImportRequestSchema.refine((request) => request.runtime_id === runtimeId, {
+        path: ["runtime_id"],
+        message: "runtime id does not match request",
+      }),
+      EMPTY_RUNTIME_LOCAL_SKILL_IMPORT_REQUEST,
+      { endpoint: "POST /api/runtimes/:id/local-skills/import" },
+    ) as RuntimeLocalSkillImportRequest;
   }
 
   async getImportLocalSkillResult(
     runtimeId: string,
     requestId: string,
   ): Promise<RuntimeLocalSkillImportRequest> {
-    return this.fetch(`/api/runtimes/${runtimeId}/local-skills/import/${requestId}`);
+    const raw = await this.fetch<unknown>(`/api/runtimes/${runtimeId}/local-skills/import/${requestId}`);
+    return parseOrThrow(
+      raw,
+      RuntimeLocalSkillImportRequestSchema.refine(
+        (request) => request.runtime_id === runtimeId && request.id === requestId,
+        { message: "runtime local skill import identity does not match request" },
+      ),
+      EMPTY_RUNTIME_LOCAL_SKILL_IMPORT_REQUEST,
+      {
+        endpoint: "GET /api/runtimes/:id/local-skills/import/:requestId",
+        mayHaveCommitted: false,
+      },
+    ) as RuntimeLocalSkillImportRequest;
   }
 
   async listAgentTasks(agentId: string): Promise<AgentTask[]> {
