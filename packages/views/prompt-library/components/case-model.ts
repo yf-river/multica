@@ -31,7 +31,8 @@ export type CaseContentSummary = {
 };
 
 export type CaseValidation =
-  | { kind: "validation" | "expected-behavior"; value: string }
+  | { kind: "validation"; value: string }
+  | { kind: "expected-behavior"; value: string }
   | { kind: "contains"; values: string[] };
 
 export type CaseEvidenceFacts = {
