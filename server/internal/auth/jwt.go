@@ -4,12 +4,19 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 )
 
 const defaultJWTSecret = "multica-dev-secret-change-in-production"
+
+const (
+	composeJWTSecretPlaceholder = "change-me-in-production"
+	minimumJWTSecretBytes       = 32
+)
 
 var (
 	jwtSecret     []byte
@@ -26,6 +33,32 @@ func JWTSecret() []byte {
 	})
 
 	return jwtSecret
+}
+
+// ValidateJWTConfiguration rejects weak signing keys in production while
+// preserving the zero-setup local development fallback.
+func ValidateJWTConfiguration(appEnv, secret string) error {
+	if !strings.EqualFold(strings.TrimSpace(appEnv), "production") {
+		return nil
+	}
+	return ValidateJWTSecret(secret)
+}
+
+// ValidateJWTSecret returns a safe diagnostic without echoing secret data.
+func ValidateJWTSecret(secret string) error {
+	if secret == "" {
+		return errors.New("JWT_SECRET is not set")
+	}
+	if secret != strings.TrimSpace(secret) {
+		return errors.New("JWT_SECRET must not contain surrounding whitespace")
+	}
+	if secret == defaultJWTSecret || secret == composeJWTSecretPlaceholder {
+		return errors.New("JWT_SECRET uses a published placeholder")
+	}
+	if len(secret) < minimumJWTSecretBytes {
+		return fmt.Errorf("JWT_SECRET must contain at least %d bytes", minimumJWTSecretBytes)
+	}
+	return nil
 }
 
 // GeneratePATToken creates a new personal access token: "mul_" + 40 random hex chars.

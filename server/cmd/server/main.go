@@ -13,6 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/analytics"
+	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/handler"
@@ -121,9 +122,13 @@ func envDuration(name string, def time.Duration) time.Duration {
 func main() {
 	logger.Init()
 
-	// Warn about missing configuration
-	if os.Getenv("JWT_SECRET") == "" {
-		slog.Warn("JWT_SECRET is not set — using insecure default. Set JWT_SECRET for production use.")
+	jwtSecret := os.Getenv("JWT_SECRET")
+	if err := auth.ValidateJWTConfiguration(os.Getenv("APP_ENV"), jwtSecret); err != nil {
+		slog.Error("invalid production authentication configuration", "error", err)
+		os.Exit(1)
+	}
+	if err := auth.ValidateJWTSecret(jwtSecret); err != nil {
+		slog.Warn("insecure JWT configuration allowed outside production", "reason", err)
 	}
 
 	port := os.Getenv("PORT")
