@@ -288,7 +288,7 @@ const linkAttachmentsToIssue = `-- name: LinkAttachmentsToIssue :many
 UPDATE attachment
 SET issue_id = $1
 WHERE workspace_id = $2
-  AND issue_id IS NULL
+  AND (issue_id IS NULL OR issue_id = $1)
   AND id = ANY($3::uuid[])
 RETURNING id
 `

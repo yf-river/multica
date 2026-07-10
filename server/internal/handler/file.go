@@ -973,26 +973,15 @@ func (h *Handler) DeleteAttachment(w http.ResponseWriter, r *http.Request) {
 // Attachment linking
 // ---------------------------------------------------------------------------
 
-// linkAttachmentsByIssueIDs links the given attachment IDs to an issue.
-// Only updates attachments that have no issue_id yet.
-func (h *Handler) linkAttachmentsByIssueIDs(ctx context.Context, issueID, workspaceID pgtype.UUID, ids []pgtype.UUID) {
-	if _, err := h.Queries.LinkAttachmentsToIssue(ctx, db.LinkAttachmentsToIssueParams{
-		IssueID:       issueID,
-		WorkspaceID:   workspaceID,
-		AttachmentIds: ids,
-	}); err != nil {
-		slog.Error("failed to link attachments to issue", "error", err)
-	}
-}
-
 var errCommentAttachmentsUnavailable = errors.New("one or more attachments are unavailable for this comment")
+var errIssueAttachmentsUnavailable = errors.New("one or more attachments are unavailable for this issue")
 
-func uniqueAttachmentIDs(ids []pgtype.UUID) ([]pgtype.UUID, error) {
+func uniqueValidAttachmentIDs(ids []pgtype.UUID) ([]pgtype.UUID, bool) {
 	unique := make([]pgtype.UUID, 0, len(ids))
 	seen := make(map[[16]byte]struct{}, len(ids))
 	for _, id := range ids {
 		if !id.Valid {
-			return nil, errCommentAttachmentsUnavailable
+			return nil, false
 		}
 		if _, exists := seen[id.Bytes]; exists {
 			continue
@@ -1000,13 +989,13 @@ func uniqueAttachmentIDs(ids []pgtype.UUID) ([]pgtype.UUID, error) {
 		seen[id.Bytes] = struct{}{}
 		unique = append(unique, id)
 	}
-	return unique, nil
+	return unique, true
 }
 
 func linkAttachmentsToNewComment(ctx context.Context, q *db.Queries, comment db.Comment, ids []pgtype.UUID) ([]db.Attachment, error) {
-	uniqueIDs, err := uniqueAttachmentIDs(ids)
-	if err != nil {
-		return nil, err
+	uniqueIDs, ok := uniqueValidAttachmentIDs(ids)
+	if !ok {
+		return nil, errCommentAttachmentsUnavailable
 	}
 	if len(uniqueIDs) > 0 {
 		linkedIDs, err := q.LinkAttachmentsToComment(ctx, db.LinkAttachmentsToCommentParams{
@@ -1025,9 +1014,9 @@ func linkAttachmentsToNewComment(ctx context.Context, q *db.Queries, comment db.
 }
 
 func replaceCommentAttachmentSet(ctx context.Context, q *db.Queries, comment db.Comment, ids []pgtype.UUID) ([]db.Attachment, error) {
-	uniqueIDs, err := uniqueAttachmentIDs(ids)
-	if err != nil {
-		return nil, err
+	uniqueIDs, ok := uniqueValidAttachmentIDs(ids)
+	if !ok {
+		return nil, errCommentAttachmentsUnavailable
 	}
 	if err := q.ReplaceCommentAttachments(ctx, db.ReplaceCommentAttachmentsParams{
 		CommentID:     comment.ID,
@@ -1045,6 +1034,28 @@ func replaceCommentAttachmentSet(ctx context.Context, q *db.Queries, comment db.
 		return nil, errCommentAttachmentsUnavailable
 	}
 	return attachments, nil
+}
+
+func linkAttachmentsToExistingIssue(ctx context.Context, q *db.Queries, issue db.Issue, ids []pgtype.UUID) error {
+	uniqueIDs, ok := uniqueValidAttachmentIDs(ids)
+	if !ok {
+		return errIssueAttachmentsUnavailable
+	}
+	if len(uniqueIDs) == 0 {
+		return nil
+	}
+	linkedIDs, err := q.LinkAttachmentsToIssue(ctx, db.LinkAttachmentsToIssueParams{
+		IssueID:       issue.ID,
+		WorkspaceID:   issue.WorkspaceID,
+		AttachmentIds: uniqueIDs,
+	})
+	if err != nil {
+		return fmt.Errorf("link attachments to issue: %w", err)
+	}
+	if len(linkedIDs) != len(uniqueIDs) {
+		return errIssueAttachmentsUnavailable
+	}
+	return nil
 }
 
 func listCommentAttachments(ctx context.Context, q *db.Queries, comment db.Comment) ([]db.Attachment, error) {

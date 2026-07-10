@@ -1073,50 +1073,84 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	issue, err := h.Queries.UpdateIssue(r.Context(), params)
+	var metadataChanges map[string]json.RawMessage
+	if req.Title != nil || req.Description != nil {
+		nextTitle := prevIssue.Title
+		if params.Title.Valid {
+			nextTitle = params.Title.String
+		}
+		nextDescription := ""
+		if prevIssue.Description.Valid {
+			nextDescription = prevIssue.Description.String
+		}
+		if params.Description.Valid {
+			nextDescription = params.Description.String
+		}
+		metadataBefore := decodeIssueMetadataRaw(prevIssue.Metadata)
+		metadataAfter := h.enrichIssueSourceMetadata(r.Context(), metadataBefore, userID, nextTitle, nextDescription)
+		if _, err := validateIssueMetadataObject(metadataAfter); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		metadataChanges = changedIssueMetadataKeys(metadataBefore, metadataAfter)
+	}
+
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		slog.Warn("begin update issue transaction failed", append(logger.RequestAttrs(r), "error", err, "issue_id", id, "workspace_id", workspaceID)...)
+		writeError(w, http.StatusInternalServerError, "failed to update issue")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+
+	issue, err := qtx.UpdateIssue(r.Context(), params)
 	if err != nil {
 		slog.Warn("update issue failed", append(logger.RequestAttrs(r), "error", err, "issue_id", id, "workspace_id", workspaceID)...)
 		writeError(w, http.StatusInternalServerError, "failed to update issue: "+err.Error())
 		return
 	}
 
-	if len(attachmentIDs) > 0 {
-		h.linkAttachmentsByIssueIDs(r.Context(), issue.ID, issue.WorkspaceID, attachmentIDs)
+	if err := linkAttachmentsToExistingIssue(r.Context(), qtx, issue, attachmentIDs); errors.Is(err, errIssueAttachmentsUnavailable) {
+		writeError(w, http.StatusBadRequest, "one or more attachments are unavailable for this issue")
+		return
+	} else if err != nil {
+		slog.Warn("link issue attachments failed", append(logger.RequestAttrs(r), "error", err, "issue_id", id, "workspace_id", workspaceID)...)
+		writeError(w, http.StatusInternalServerError, "failed to update issue")
+		return
 	}
 
 	// Determine actor identity: agent (via X-Agent-ID header) or member.
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
 
-	if req.Title != nil || req.Description != nil {
-		nextDescription := ""
-		if issue.Description.Valid {
-			nextDescription = issue.Description.String
-		}
-		metadataBefore := decodeIssueMetadataRaw(issue.Metadata)
-		metadataAfter := h.enrichIssueSourceMetadata(r.Context(), metadataBefore, userID, issue.Title, nextDescription)
-		if _, err := validateIssueMetadataObject(metadataAfter); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
+	for key, value := range metadataChanges {
+		issue, err = qtx.SetIssueMetadataKey(r.Context(), db.SetIssueMetadataKeyParams{
+			ID:          issue.ID,
+			WorkspaceID: issue.WorkspaceID,
+			Key:         key,
+			Value:       value,
+		})
+		if err != nil {
+			if isCheckViolation(err) {
+				writeError(w, http.StatusBadRequest, "metadata exceeds the 8KB size limit")
+			} else {
+				slog.Warn("update issue source metadata failed", append(logger.RequestAttrs(r), "error", err, "issue_id", id, "workspace_id", workspaceID)...)
+				writeError(w, http.StatusInternalServerError, "failed to update issue source metadata")
+			}
 			return
 		}
-		metadataChanges := changedIssueMetadataKeys(metadataBefore, metadataAfter)
-		if len(metadataChanges) > 0 {
-			for key, value := range metadataChanges {
-				issue, err = h.Queries.SetIssueMetadataKey(r.Context(), db.SetIssueMetadataKeyParams{
-					ID:          issue.ID,
-					WorkspaceID: issue.WorkspaceID,
-					Key:         key,
-					Value:       value,
-				})
-				if err != nil {
-					writeError(w, http.StatusInternalServerError, "failed to update issue source metadata")
-					return
-				}
-			}
-			h.publish(protocol.EventIssueMetadataChanged, workspaceID, actorType, actorID, map[string]any{
-				"issue_id": uuidToString(issue.ID),
-				"metadata": parseIssueMetadata(issue.Metadata),
-			})
-		}
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		slog.Warn("commit update issue transaction failed", append(logger.RequestAttrs(r), "error", err, "issue_id", id, "workspace_id", workspaceID)...)
+		writeError(w, http.StatusInternalServerError, "failed to update issue")
+		return
+	}
+
+	if len(metadataChanges) > 0 {
+		h.publish(protocol.EventIssueMetadataChanged, workspaceID, actorType, actorID, map[string]any{
+			"issue_id": uuidToString(issue.ID),
+			"metadata": parseIssueMetadata(issue.Metadata),
+		})
 	}
 
 	prefix := h.getIssuePrefix(r.Context(), issue.WorkspaceID)

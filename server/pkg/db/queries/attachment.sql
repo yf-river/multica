@@ -111,7 +111,7 @@ ORDER BY created_at ASC;
 UPDATE attachment
 SET issue_id = sqlc.arg(issue_id)
 WHERE workspace_id = sqlc.arg(workspace_id)
-  AND issue_id IS NULL
+  AND (issue_id IS NULL OR issue_id = sqlc.arg(issue_id))
   AND id = ANY(sqlc.arg(attachment_ids)::uuid[])
 RETURNING id;
 
