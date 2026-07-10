@@ -33,6 +33,7 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 	var failedEvent events.Event
 	var retried *db.AgentTaskQueue
 	var retryCreated bool
+	var sourceSummary *issueSourceSummaryProjection
 	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
 		t, err := qtx.FailAgentTask(ctx, db.FailAgentTaskParams{
 			ID:            taskID,
@@ -71,7 +72,17 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 			return fmt.Errorf("materialize task retry: %w", err)
 		}
 		failedEvent, err = s.enqueueTaskEvent(ctx, qtx, protocol.EventTaskFailed, task)
-		return err
+		if err != nil {
+			return err
+		}
+		if sc, ok := ParseIssueSourceSummaryContext(task); ok {
+			projection, err := s.projectIssueSourceSummaryTask(ctx, qtx, task, sc, nil)
+			if err != nil {
+				return fmt.Errorf("project issue source summary failure: %w", err)
+			}
+			sourceSummary = &projection
+		}
+		return nil
 	}); err != nil {
 		if existing, lookupErr := s.Queries.GetAgentTask(ctx, taskID); lookupErr == nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -104,8 +115,8 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 	if retryCreated {
 		s.publishRetryTask(ctx, *retried)
 	}
-	if sc, ok := ParseIssueSourceSummaryContext(task); ok {
-		s.failIssueSourceSummaryTask(ctx, task, sc, errMsg)
+	if sourceSummary != nil {
+		s.publishIssueSourceSummaryProjection(ctx, *sourceSummary)
 		s.ReconcileAgentStatus(ctx, task.AgentID)
 		s.Bus.Publish(failedEvent)
 		return &task, nil
@@ -456,6 +467,10 @@ func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTas
 		}
 
 		s.captureTaskFailed(ctx, t)
+		if _, isSourceSummary := ParseIssueSourceSummaryContext(t); isSourceSummary {
+			affectedAgents[util.UUIDToString(t.AgentID)] = t.AgentID
+			continue
+		}
 
 		if t.IssueID.Valid {
 			if issue, err := s.Queries.GetIssue(ctx, t.IssueID); err == nil {
@@ -727,27 +742,7 @@ func (s *TaskService) persistIssueUpdate(
 	var event events.Event
 	err := s.runInTx(ctx, func(queries *db.Queries) error {
 		var err error
-		updated, err = update(queries)
-		if err != nil {
-			return err
-		}
-		prefix := s.getIssuePrefix(updated.WorkspaceID)
-		event = events.Event{
-			Type:        protocol.EventIssueUpdated,
-			StreamKey:   "issue:" + util.UUIDToString(updated.ID),
-			WorkspaceID: util.UUIDToString(updated.WorkspaceID),
-			ActorType:   "system",
-			Payload: map[string]any{
-				"issue":               issueToMap(updated, prefix),
-				"status_changed":      changes.Status,
-				"description_changed": changes.Description,
-				"prev_status":         previous.Status,
-				"prev_description":    util.TextToPtr(previous.Description),
-				"creator_type":        previous.CreatorType,
-				"creator_id":          util.UUIDToString(previous.CreatorID),
-			},
-		}
-		event, err = eventoutbox.Enqueue(ctx, queries, event)
+		updated, event, err = s.persistIssueUpdateInTx(ctx, queries, previous, changes, update)
 		return err
 	})
 	if err != nil {
@@ -759,10 +754,47 @@ func (s *TaskService) persistIssueUpdate(
 	return updated, nil
 }
 
-func (s *TaskService) getIssuePrefix(workspaceID pgtype.UUID) string {
-	ws, err := s.Queries.GetWorkspace(context.Background(), workspaceID)
+func (s *TaskService) persistIssueUpdateInTx(
+	ctx context.Context,
+	queries *db.Queries,
+	previous db.Issue,
+	changes taskIssueUpdateChanges,
+	update func(*db.Queries) (db.Issue, error),
+) (db.Issue, events.Event, error) {
+	updated, err := update(queries)
 	if err != nil {
-		return ""
+		return db.Issue{}, events.Event{}, err
 	}
-	return ws.IssuePrefix
+	prefix, err := s.getIssuePrefixWithQueries(ctx, queries, updated.WorkspaceID)
+	if err != nil {
+		return db.Issue{}, events.Event{}, fmt.Errorf("load issue prefix: %w", err)
+	}
+	event := events.Event{
+		Type:        protocol.EventIssueUpdated,
+		StreamKey:   "issue:" + util.UUIDToString(updated.ID),
+		WorkspaceID: util.UUIDToString(updated.WorkspaceID),
+		ActorType:   "system",
+		Payload: map[string]any{
+			"issue":               issueToMap(updated, prefix),
+			"status_changed":      changes.Status,
+			"description_changed": changes.Description,
+			"prev_status":         previous.Status,
+			"prev_description":    util.TextToPtr(previous.Description),
+			"creator_type":        previous.CreatorType,
+			"creator_id":          util.UUIDToString(previous.CreatorID),
+		},
+	}
+	event, err = eventoutbox.Enqueue(ctx, queries, event)
+	if err != nil {
+		return db.Issue{}, events.Event{}, err
+	}
+	return updated, event, nil
+}
+
+func (s *TaskService) getIssuePrefixWithQueries(ctx context.Context, queries *db.Queries, workspaceID pgtype.UUID) (string, error) {
+	ws, err := queries.GetWorkspace(ctx, workspaceID)
+	if err != nil {
+		return "", err
+	}
+	return ws.IssuePrefix, nil
 }

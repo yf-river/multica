@@ -23,6 +23,7 @@ import (
 func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, result []byte, sessionID, workDir string) (*db.AgentTaskQueue, error) {
 	var task db.AgentTaskQueue
 	var completedEvent events.Event
+	var sourceSummary *issueSourceSummaryProjection
 	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
 		t, err := qtx.CompleteAgentTask(ctx, db.CompleteAgentTaskParams{
 			ID:        taskID,
@@ -56,7 +57,17 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 			}
 		}
 		completedEvent, err = s.enqueueTaskEvent(ctx, qtx, protocol.EventTaskCompleted, task)
-		return err
+		if err != nil {
+			return err
+		}
+		if sc, ok := ParseIssueSourceSummaryContext(task); ok {
+			projection, err := s.projectIssueSourceSummaryTask(ctx, qtx, task, sc, result)
+			if err != nil {
+				return fmt.Errorf("project issue source summary: %w", err)
+			}
+			sourceSummary = &projection
+		}
+		return nil
 	}); err != nil {
 		// When parallel agents race, a task may already be completed,
 		// cancelled, or failed by the time this call runs. The UPDATE
@@ -90,8 +101,8 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 
 	slog.Info("task completed", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID))
 	s.captureTaskCompleted(ctx, task)
-	if sc, ok := ParseIssueSourceSummaryContext(task); ok {
-		s.completeIssueSourceSummaryTask(ctx, task, sc, result)
+	if sourceSummary != nil {
+		s.publishIssueSourceSummaryProjection(ctx, *sourceSummary)
 		s.ReconcileAgentStatus(ctx, task.AgentID)
 		s.Bus.Publish(completedEvent)
 		return &task, nil
@@ -162,41 +173,53 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 	return &task, nil
 }
 
-func (s *TaskService) completeIssueSourceSummaryTask(ctx context.Context, task db.AgentTaskQueue, sc IssueSourceSummaryContext, result []byte) {
-	description, ok := issueSourceSummaryDescriptionFromResult(result)
-	status := "completed"
+type issueSourceSummaryProjection struct {
+	issueEvent events.Event
+	nextTask   db.AgentTaskQueue
+	hasNext    bool
+}
+
+func (s *TaskService) projectIssueSourceSummaryTask(
+	ctx context.Context,
+	queries *db.Queries,
+	task db.AgentTaskQueue,
+	sc IssueSourceSummaryContext,
+	result []byte,
+) (issueSourceSummaryProjection, error) {
+	status := "failed"
 	errorMessage := ""
-	if !ok {
-		status = "failed"
-		errorMessage = "摘要任务输出无效，已使用来源内容生成兜底摘要。"
-		description = s.fallbackIssueSourceSummaryDescription(ctx, task.IssueID, errorMessage)
+	var description string
+	switch task.Status {
+	case "completed":
+		var ok bool
+		description, ok = issueSourceSummaryDescriptionFromResult(result)
+		if ok {
+			status = "completed"
+		} else {
+			errorMessage = "摘要任务输出无效，已使用来源内容生成兜底摘要。"
+		}
+	case "failed":
+		if task.Error.Valid {
+			errorMessage = strings.TrimSpace(task.Error.String)
+		}
+		if errorMessage == "" {
+			errorMessage = "摘要任务执行失败，已使用来源内容生成兜底摘要。"
+		}
+	default:
+		return issueSourceSummaryProjection{}, fmt.Errorf("source summary task is not terminal: %s", task.Status)
 	}
-	s.applyIssueSourceSummary(ctx, task, sc, description, status, errorMessage)
-}
-
-func (s *TaskService) failIssueSourceSummaryTask(ctx context.Context, task db.AgentTaskQueue, sc IssueSourceSummaryContext, errMsg string) {
-	errorMessage := strings.TrimSpace(errMsg)
-	if errorMessage == "" {
-		errorMessage = "摘要任务执行失败，已使用来源内容生成兜底摘要。"
+	if description == "" {
+		description = s.fallbackIssueSourceSummaryDescription(ctx, queries, task.IssueID, errorMessage)
 	}
-	description := s.fallbackIssueSourceSummaryDescription(ctx, task.IssueID, errorMessage)
-	s.applyIssueSourceSummary(ctx, task, sc, description, "failed", errorMessage)
-}
-
-func (s *TaskService) applyIssueSourceSummary(ctx context.Context, task db.AgentTaskQueue, sc IssueSourceSummaryContext, description, status, errorMessage string) {
 	if strings.TrimSpace(description) == "" {
-		return
+		return issueSourceSummaryProjection{}, errors.New("source summary description is empty")
 	}
-	issue, err := s.Queries.GetIssue(ctx, task.IssueID)
+
+	issue, err := queries.GetIssue(ctx, task.IssueID)
 	if err != nil {
-		slog.Warn("source summary completion: issue not found",
-			"task_id", util.UUIDToString(task.ID),
-			"issue_id", util.UUIDToString(task.IssueID),
-			"error", err,
-		)
-		return
+		return issueSourceSummaryProjection{}, fmt.Errorf("load source summary issue: %w", err)
 	}
-	updated, err := s.persistIssueUpdate(ctx, issue, taskIssueUpdateChanges{Description: true}, func(queries *db.Queries) (db.Issue, error) {
+	updated, issueEvent, err := s.persistIssueUpdateInTx(ctx, queries, issue, taskIssueUpdateChanges{Description: true}, func(queries *db.Queries) (db.Issue, error) {
 		updated, err := queries.UpdateIssue(ctx, db.UpdateIssueParams{
 			ID:            issue.ID,
 			Description:   pgtype.Text{String: redact.Text(description), Valid: true},
@@ -238,14 +261,29 @@ func (s *TaskService) applyIssueSourceSummary(ctx context.Context, task db.Agent
 		return updated, nil
 	})
 	if err != nil {
-		slog.Warn("source summary completion: persist issue update failed",
-			"task_id", util.UUIDToString(task.ID),
-			"issue_id", util.UUIDToString(issue.ID),
-			"error", err,
-		)
+		return issueSourceSummaryProjection{}, fmt.Errorf("persist source summary issue: %w", err)
+	}
+	nextTask, hasNext, err := s.enqueueIssueAfterSourceSummaryInTx(ctx, queries, updated)
+	if err != nil {
+		return issueSourceSummaryProjection{}, err
+	}
+	return issueSourceSummaryProjection{issueEvent: issueEvent, nextTask: nextTask, hasNext: hasNext}, nil
+}
+
+func (s *TaskService) publishIssueSourceSummaryProjection(ctx context.Context, projection issueSourceSummaryProjection) {
+	if s.Bus != nil {
+		s.Bus.Publish(projection.issueEvent)
+	}
+	if !projection.hasNext {
 		return
 	}
-	s.enqueueIssueAfterSourceSummary(ctx, updated)
+	slog.Info("task enqueued after issue source summary",
+		"task_id", util.UUIDToString(projection.nextTask.ID),
+		"issue_id", util.UUIDToString(projection.nextTask.IssueID),
+		"agent_id", util.UUIDToString(projection.nextTask.AgentID),
+	)
+	s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, projection.nextTask)
+	s.NotifyTaskEnqueued(ctx, projection.nextTask)
 }
 
 func issueSourceSummaryDescriptionFromResult(result []byte) (string, bool) {
@@ -280,8 +318,8 @@ func unwrapMarkdownFence(body string) string {
 	return strings.TrimSpace(strings.Join(lines[1:len(lines)-1], "\n"))
 }
 
-func (s *TaskService) fallbackIssueSourceSummaryDescription(ctx context.Context, issueID pgtype.UUID, reason string) string {
-	issue, err := s.Queries.GetIssue(ctx, issueID)
+func (s *TaskService) fallbackIssueSourceSummaryDescription(ctx context.Context, queries *db.Queries, issueID pgtype.UUID, reason string) string {
+	issue, err := queries.GetIssue(ctx, issueID)
 	if err != nil {
 		return "## 需求摘要\n摘要生成失败，请查看 TAPD 来源卡片或重新触发摘要。\n"
 	}
@@ -315,48 +353,80 @@ func (s *TaskService) fallbackIssueSourceSummaryDescription(ctx context.Context,
 	return b.String()
 }
 
-func (s *TaskService) enqueueIssueAfterSourceSummary(ctx context.Context, issue db.Issue) {
+func (s *TaskService) enqueueIssueAfterSourceSummaryInTx(ctx context.Context, queries *db.Queries, issue db.Issue) (db.AgentTaskQueue, bool, error) {
 	if issue.Status == "backlog" || !issue.AssigneeType.Valid || !issue.AssigneeID.Valid {
-		return
+		return db.AgentTaskQueue{}, false, nil
 	}
 	switch issue.AssigneeType.String {
 	case "agent":
-		if _, err := s.EnqueueTaskForIssue(ctx, issue); err != nil {
-			slog.Warn("source summary completion: enqueue assigned agent failed",
-				"issue_id", util.UUIDToString(issue.ID),
-				"agent_id", util.UUIDToString(issue.AssigneeID),
-				"error", err,
-			)
+		task, err := s.createIssueTaskAfterSourceSummary(ctx, queries, issue, issue.AssigneeID, false)
+		if err != nil {
+			return db.AgentTaskQueue{}, false, err
 		}
+		return task, true, nil
 	case "squad":
-		squad, err := s.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
+		squad, err := queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
 			ID:          issue.AssigneeID,
 			WorkspaceID: issue.WorkspaceID,
 		})
 		if err != nil {
-			slog.Warn("source summary completion: load squad failed",
-				"issue_id", util.UUIDToString(issue.ID),
-				"squad_id", util.UUIDToString(issue.AssigneeID),
-				"error", err,
-			)
-			return
+			return db.AgentTaskQueue{}, false, fmt.Errorf("load source summary issue squad: %w", err)
 		}
-		hasPending, err := s.Queries.HasPendingTaskForIssueAndAgent(ctx, db.HasPendingTaskForIssueAndAgentParams{
+		hasPending, err := queries.HasPendingTaskForIssueAndAgent(ctx, db.HasPendingTaskForIssueAndAgentParams{
 			IssueID: issue.ID,
 			AgentID: squad.LeaderID,
 		})
-		if err != nil || hasPending {
-			return
+		if err != nil {
+			return db.AgentTaskQueue{}, false, fmt.Errorf("check source summary issue leader task: %w", err)
 		}
-		if _, err := s.EnqueueTaskForSquadLeader(ctx, issue, squad.LeaderID, pgtype.UUID{}); err != nil {
-			slog.Warn("source summary completion: enqueue squad leader failed",
-				"issue_id", util.UUIDToString(issue.ID),
-				"squad_id", util.UUIDToString(squad.ID),
-				"leader_id", util.UUIDToString(squad.LeaderID),
-				"error", err,
-			)
+		if hasPending {
+			return db.AgentTaskQueue{}, false, nil
 		}
+		task, err := s.createIssueTaskAfterSourceSummary(ctx, queries, issue, squad.LeaderID, true)
+		if err != nil {
+			return db.AgentTaskQueue{}, false, err
+		}
+		if err := s.createSquadSOPRunForLeaderTask(ctx, queries, issue, task); err != nil {
+			return db.AgentTaskQueue{}, false, fmt.Errorf("create source summary squad SOP state: %w", err)
+		}
+		return task, true, nil
+	default:
+		return db.AgentTaskQueue{}, false, nil
 	}
+}
+
+func (s *TaskService) createIssueTaskAfterSourceSummary(
+	ctx context.Context,
+	queries *db.Queries,
+	issue db.Issue,
+	agentID pgtype.UUID,
+	isLeader bool,
+) (db.AgentTaskQueue, error) {
+	agent, err := queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
+		ID:          agentID,
+		WorkspaceID: issue.WorkspaceID,
+	})
+	if err != nil {
+		return db.AgentTaskQueue{}, fmt.Errorf("load source summary issue agent: %w", err)
+	}
+	if agent.ArchivedAt.Valid {
+		return db.AgentTaskQueue{}, errors.New("source summary issue agent is archived")
+	}
+	if !agent.RuntimeID.Valid {
+		return db.AgentTaskQueue{}, errors.New("source summary issue agent has no runtime")
+	}
+	task, err := queries.CreateAgentTask(ctx, db.CreateAgentTaskParams{
+		AgentID:           agent.ID,
+		RuntimeID:         agent.RuntimeID,
+		IssueID:           issue.ID,
+		Priority:          priorityToInt(issue.Priority),
+		IsLeaderTask:      pgtype.Bool{Bool: isLeader, Valid: isLeader},
+		ForceFreshSession: pgtype.Bool{Bool: isLeader, Valid: isLeader},
+	})
+	if err != nil {
+		return db.AgentTaskQueue{}, fmt.Errorf("create task after source summary: %w", err)
+	}
+	return task, nil
 }
 
 var (

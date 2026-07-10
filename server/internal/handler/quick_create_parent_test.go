@@ -13,6 +13,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/pkg/agent"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -374,6 +375,24 @@ func TestQuickCreateIssueTapdWikiCreatesFetchedIssueDirectly(t *testing.T) {
 	}
 	summaryOutput := "## 需求摘要\n租户创建校验场景需要通过租户 ID 查询初始化管理员信息。\n\n## 验收要点\n- 已初始化管理员时返回用户基础信息。\n- 未初始化管理员时返回明确业务错误。"
 	result, _ := json.Marshal(map[string]string{"output": summaryOutput})
+	removeFailure := installSourceSummaryIssueUpdateFailure(t, resp.IssueID)
+	if _, err := testHandler.TaskService.CompleteTask(ctx, parseUUID(summaryTaskID), result, "", ""); err == nil {
+		t.Fatal("source summary completion succeeded despite forced issue update failure")
+	}
+	var summaryTaskStatus string
+	if err := testPool.QueryRow(ctx, `SELECT status FROM agent_task_queue WHERE id = $1`, summaryTaskID).Scan(&summaryTaskStatus); err != nil {
+		t.Fatalf("load source summary task after rollback: %v", err)
+	}
+	if summaryTaskStatus != "running" {
+		t.Fatalf("source summary task status after rollback = %q, want running", summaryTaskStatus)
+	}
+	if err := testPool.QueryRow(ctx, `SELECT COUNT(*) FROM agent_task_queue WHERE issue_id = $1 AND context IS NULL`, resp.IssueID).Scan(&formalTasksBefore); err != nil {
+		t.Fatalf("count formal tasks after rollback: %v", err)
+	}
+	if formalTasksBefore != 0 {
+		t.Fatalf("source summary rollback left %d formal tasks", formalTasksBefore)
+	}
+	removeFailure()
 	gotIssueUpdated := make(chan map[string]any, 1)
 	testHandler.Bus.Subscribe(protocol.EventIssueUpdated, func(e events.Event) {
 		payload, ok := e.Payload.(map[string]any)
@@ -442,6 +461,173 @@ func TestQuickCreateIssueTapdWikiCreatesFetchedIssueDirectly(t *testing.T) {
 	}
 	if formalTasksAfter != 1 {
 		t.Fatalf("expected formal execution task after source summary completion, got %d", formalTasksAfter)
+	}
+}
+
+func installSourceSummaryIssueUpdateFailure(t *testing.T, issueID string) func() {
+	t.Helper()
+	suffix := time.Now().UnixNano()
+	functionName := fmt.Sprintf("source_summary_issue_fail_fn_%d", suffix)
+	triggerName := fmt.Sprintf("source_summary_issue_fail_%d", suffix)
+	ctx := context.Background()
+	remove := func() {
+		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON issue`, triggerName))
+		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, functionName))
+	}
+	t.Cleanup(remove)
+	if _, err := testPool.Exec(ctx, fmt.Sprintf(`
+		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF NEW.id = '%s' THEN
+				RAISE EXCEPTION 'forced source summary issue update failure';
+			END IF;
+			RETURN NEW;
+		END;
+		$$;
+		CREATE TRIGGER %s
+		BEFORE UPDATE ON issue
+		FOR EACH ROW EXECUTE FUNCTION %s();
+	`, functionName, issueID, triggerName, functionName)); err != nil {
+		t.Fatalf("install source summary issue update failure: %v", err)
+	}
+	return remove
+}
+
+func TestIssueSourceSummaryFailureCommitsFallbackAndNextTaskAtomically(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	agentID := enableQuickCreateRuntime(t, ctx)
+	var issueID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (
+			workspace_id, title, description, status, priority,
+			assignee_type, assignee_id, creator_type, creator_id, number, metadata
+		)
+		VALUES (
+			$1, 'source summary failure atomicity', '摘要生成中，请稍候。', 'todo', 'medium',
+			'agent', $2, 'member', $3,
+			(SELECT COALESCE(MAX(number), 0) + 1 FROM issue WHERE workspace_id = $1),
+			'{"source_provider":"tapd","source_fetch_title":"原始 TAPD 需求","source_fetch_summary":"原始需求正文","source_summary_status":"pending"}'::jsonb
+		)
+		RETURNING id::text
+	`, testWorkspaceID, agentID, testUserID).Scan(&issueID); err != nil {
+		t.Fatalf("create source summary issue: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+	})
+	issue, err := testHandler.Queries.GetIssue(ctx, parseUUID(issueID))
+	if err != nil {
+		t.Fatalf("load source summary issue: %v", err)
+	}
+	summaryTask, err := testHandler.TaskService.EnqueueIssueSourceSummaryTask(ctx, issue, parseUUID(agentID))
+	if err != nil {
+		t.Fatalf("enqueue source summary task: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		UPDATE agent_task_queue SET status = 'running', started_at = now() WHERE id = $1
+	`, summaryTask.ID); err != nil {
+		t.Fatalf("mark source summary task running: %v", err)
+	}
+
+	removeFailure := installSourceSummaryIssueUpdateFailure(t, issueID)
+	if _, err := testHandler.TaskService.FailTask(ctx, summaryTask.ID, "摘要智能体执行失败", "", "", "agent_error"); err == nil {
+		t.Fatal("source summary failure succeeded despite forced issue update failure")
+	}
+	var taskStatus string
+	if err := testPool.QueryRow(ctx, `SELECT status FROM agent_task_queue WHERE id = $1`, summaryTask.ID).Scan(&taskStatus); err != nil {
+		t.Fatalf("load source summary task after rollback: %v", err)
+	}
+	if taskStatus != "running" {
+		t.Fatalf("source summary task status after rollback = %q, want running", taskStatus)
+	}
+	var formalTasks int
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM agent_task_queue WHERE issue_id = $1 AND context IS NULL`, issueID).Scan(&formalTasks); err != nil {
+		t.Fatalf("count formal tasks after source summary rollback: %v", err)
+	}
+	if formalTasks != 0 {
+		t.Fatalf("source summary rollback left %d formal tasks", formalTasks)
+	}
+	removeFailure()
+
+	if _, err := testHandler.TaskService.FailTask(ctx, summaryTask.ID, "摘要智能体执行失败", "", "", "agent_error"); err != nil {
+		t.Fatalf("retry source summary failure: %v", err)
+	}
+	issue, err = testHandler.Queries.GetIssue(ctx, parseUUID(issueID))
+	if err != nil {
+		t.Fatalf("reload source summary issue: %v", err)
+	}
+	metadata := parseIssueMetadata(issue.Metadata)
+	if metadata["source_summary_status"] != "failed" || metadata["source_summary_error"] != "摘要智能体执行失败" {
+		t.Fatalf("source summary failure metadata = %+v", metadata)
+	}
+	if !strings.Contains(issue.Description.String, "原始 TAPD 需求") || !strings.Contains(issue.Description.String, "摘要智能体执行失败") {
+		t.Fatalf("source summary fallback description = %q", issue.Description.String)
+	}
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*) FROM agent_task_queue
+		WHERE issue_id = $1 AND context IS NULL AND status = 'queued'
+	`, issueID).Scan(&formalTasks); err != nil {
+		t.Fatalf("count formal tasks after source summary failure: %v", err)
+	}
+	if formalTasks != 1 {
+		t.Fatalf("source summary failure created %d formal tasks, want 1", formalTasks)
+	}
+
+	if _, err := testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1 AND context IS NULL`, issueID); err != nil {
+		t.Fatalf("clear formal task before batch failure: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		UPDATE issue
+		SET description = '摘要生成中，请稍候。',
+		    metadata = jsonb_set(metadata, '{source_summary_status}', '"pending"'::jsonb)
+		WHERE id = $1
+	`, issueID); err != nil {
+		t.Fatalf("reset issue before batch failure: %v", err)
+	}
+	issue, err = testHandler.Queries.GetIssue(ctx, parseUUID(issueID))
+	if err != nil {
+		t.Fatalf("reload issue before batch failure: %v", err)
+	}
+	batchTask, err := testHandler.TaskService.EnqueueIssueSourceSummaryTask(ctx, issue, parseUUID(agentID))
+	if err != nil {
+		t.Fatalf("enqueue batch source summary task: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		UPDATE agent_task_queue SET status = 'running', started_at = '1900-01-01T00:00:00Z' WHERE id = $1
+	`, batchTask.ID); err != nil {
+		t.Fatalf("age batch source summary task: %v", err)
+	}
+	failed, err := testHandler.TaskService.FailStaleTasks(ctx, db.FailStaleTasksParams{
+		DispatchTimeoutSecs: 100 * 365 * 24 * 60 * 60,
+		RunningTimeoutSecs:  100 * 365 * 24 * 60 * 60,
+	})
+	if err != nil {
+		t.Fatalf("fail stale source summary task: %v", err)
+	}
+	if len(failed) != 1 || failed[0].ID != batchTask.ID {
+		t.Fatalf("failed stale source summary tasks = %+v, want only %s", failed, uuidToString(batchTask.ID))
+	}
+	testHandler.TaskService.HandleFailedTasks(ctx, failed)
+	issue, err = testHandler.Queries.GetIssue(ctx, parseUUID(issueID))
+	if err != nil {
+		t.Fatalf("reload issue after batch failure: %v", err)
+	}
+	metadata = parseIssueMetadata(issue.Metadata)
+	if metadata["source_summary_status"] != "failed" || metadata["source_summary_error"] != "task timed out" {
+		t.Fatalf("batch source summary failure metadata = %+v", metadata)
+	}
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*) FROM agent_task_queue
+		WHERE issue_id = $1 AND context IS NULL AND status = 'queued'
+	`, issueID).Scan(&formalTasks); err != nil {
+		t.Fatalf("count formal tasks after batch source summary failure: %v", err)
+	}
+	if formalTasks != 1 {
+		t.Fatalf("batch source summary failure created %d formal tasks, want 1", formalTasks)
 	}
 }
 
