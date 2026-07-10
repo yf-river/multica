@@ -6,6 +6,27 @@ afterEach(() => {
 });
 
 describe("ApiClient", () => {
+  it("validates auth and personal token responses", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(
+      new Response(JSON.stringify({ token: 42 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )));
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.login("ada", "secret")).resolves.toMatchObject({
+      token: "",
+      user: { id: "" },
+    });
+    await expect(client.issueCliToken()).resolves.toEqual({ token: "" });
+    await expect(client.listPersonalAccessTokens()).resolves.toEqual([]);
+    await expect(client.createPersonalAccessToken({ name: "CLI" })).resolves.toMatchObject({
+      id: "",
+      token: "",
+    });
+  });
+
   it("validates issue, comment, and reaction write responses", async () => {
     vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(
       new Response(JSON.stringify({ id: 42 }), {

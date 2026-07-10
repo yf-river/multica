@@ -257,6 +257,7 @@ import {
   EMPTY_OBSERVABILITY_SUMMARY,
   EMPTY_TIMELINE_ENTRIES,
   EMPTY_USER,
+  EMPTY_CREATE_PERSONAL_ACCESS_TOKEN_RESPONSE,
   EMPTY_LIST_WEBHOOK_DELIVERIES_RESPONSE,
   EMPTY_PROMPT_LIBRARY_ITEM,
   EMPTY_PROMPT_LIBRARY_LIST_RESPONSE,
@@ -377,6 +378,10 @@ import {
   SubscribersListSchema,
   TimelineEntriesSchema,
   UserSchema,
+  LoginResponseSchema,
+  CliTokenResponseSchema,
+  PersonalAccessTokenListSchema,
+  CreatePersonalAccessTokenResponseSchema,
   WebhookDeliveryResponseSchema,
   EMPTY_CANCEL_TASK_RESPONSE,
 } from "./schemas";
@@ -597,9 +602,12 @@ export class ApiClient {
 
   // Auth
   async login(account: string, password: string): Promise<LoginResponse> {
-    return this.fetch("/auth/login", {
+    const raw = await this.fetch<unknown>("/auth/login", {
       method: "POST",
       body: JSON.stringify({ account, password }),
+    });
+    return parseWithFallback(raw, LoginResponseSchema, { token: "", user: EMPTY_USER }, {
+      endpoint: "POST /auth/login",
     });
   }
 
@@ -608,7 +616,10 @@ export class ApiClient {
   }
 
   async issueCliToken(): Promise<{ token: string }> {
-    return this.fetch("/api/cli-token", { method: "POST" });
+    const raw = await this.fetch<unknown>("/api/cli-token", { method: "POST" });
+    return parseWithFallback(raw, CliTokenResponseSchema, { token: "" }, {
+      endpoint: "POST /api/cli-token",
+    });
   }
 
   async getMe(): Promise<User> {
@@ -1678,14 +1689,23 @@ export class ApiClient {
 
   // Personal Access Tokens
   async listPersonalAccessTokens(): Promise<PersonalAccessToken[]> {
-    return this.fetch("/api/tokens");
+    const raw = await this.fetch<unknown>("/api/tokens");
+    return parseWithFallback(raw, PersonalAccessTokenListSchema, [], {
+      endpoint: "GET /api/tokens",
+    });
   }
 
   async createPersonalAccessToken(data: CreatePersonalAccessTokenRequest): Promise<CreatePersonalAccessTokenResponse> {
-    return this.fetch("/api/tokens", {
+    const raw = await this.fetch<unknown>("/api/tokens", {
       method: "POST",
       body: JSON.stringify(data),
     });
+    return parseWithFallback(
+      raw,
+      CreatePersonalAccessTokenResponseSchema,
+      EMPTY_CREATE_PERSONAL_ACCESS_TOKEN_RESPONSE,
+      { endpoint: "POST /api/tokens" },
+    );
   }
 
   async revokePersonalAccessToken(id: string): Promise<void> {

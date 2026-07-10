@@ -1,5 +1,7 @@
 import { z } from "zod";
 import type {
+  CreatePersonalAccessTokenResponse,
+  PersonalAccessToken,
   User,
 } from "../types";
 
@@ -29,6 +31,30 @@ export const UserSchema = z.object({
   updated_at: z.string().default(""),
 }).loose();
 
+export const LoginResponseSchema = z.object({
+  token: z.string(),
+  user: UserSchema,
+}).loose();
+
+export const CliTokenResponseSchema = z.object({
+  token: z.string(),
+}).loose();
+
+export const PersonalAccessTokenSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  token_prefix: z.string(),
+  expires_at: z.string().nullable().optional().transform((value) => value ?? null),
+  last_used_at: z.string().nullable().optional().transform((value) => value ?? null),
+  created_at: z.string(),
+}).loose();
+
+export const PersonalAccessTokenListSchema = z.array(PersonalAccessTokenSchema);
+
+export const CreatePersonalAccessTokenResponseSchema = PersonalAccessTokenSchema.extend({
+  token: z.string(),
+}).loose();
+
 export const EMPTY_USER: User = {
   id: "",
   name: "",
@@ -41,4 +67,18 @@ export const EMPTY_USER: User = {
   timezone: null,
   created_at: "",
   updated_at: "",
+};
+
+export const EMPTY_PERSONAL_ACCESS_TOKEN: PersonalAccessToken = {
+  id: "",
+  name: "",
+  token_prefix: "",
+  expires_at: null,
+  last_used_at: null,
+  created_at: "",
+};
+
+export const EMPTY_CREATE_PERSONAL_ACCESS_TOKEN_RESPONSE: CreatePersonalAccessTokenResponse = {
+  ...EMPTY_PERSONAL_ACCESS_TOKEN,
+  token: "",
 };
