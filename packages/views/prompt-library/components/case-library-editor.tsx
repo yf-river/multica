@@ -54,6 +54,7 @@ export interface DatasetVersionHistoryCopy {
   noSnapshots: string;
   emptyDescription: string;
   unnamedVersion: string;
+  version: (version: number) => string;
   latest: string;
   rowFingerprint: (rowCount: number, fingerprint: string) => string;
   missingFingerprint: string;
@@ -822,7 +823,7 @@ export function DatasetVersionHistoryPanel({
             >
               <div className="min-w-0">
                 <div className="flex min-w-0 flex-wrap items-center gap-2">
-                  <span className="font-medium text-foreground">v{version.version}</span>
+                  <span className="font-medium text-foreground">{copy.version(version.version)}</span>
                   <span className="truncate text-foreground">
                     {version.version_label || copy.unnamedVersion}
                   </span>

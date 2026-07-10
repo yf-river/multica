@@ -312,6 +312,7 @@
       "no_snapshots": "暂无版本快照",
       "empty_description": "创建版本后，后续评估和调试可以固定使用这批用例。",
       "unnamed_version": "未命名版本",
+      "version": "v{{version}}",
       "latest": "最新",
       "row_fingerprint": "{{count}} 条用例 · 指纹 {{fingerprint}}",
       "missing_fingerprint": "未生成",

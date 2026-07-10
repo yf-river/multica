@@ -146,6 +146,7 @@ const caseLibraryCopy: CaseLibraryEditorCopy = {
     noSnapshots: "暂无版本快照",
     emptyDescription: "创建版本后，后续评估和调试可以固定使用这批用例。",
     unnamedVersion: "未命名版本",
+    version: (version) => `v${version}`,
     latest: "最新",
     rowFingerprint: (rowCount, fingerprint) => `${rowCount} 条用例 · 指纹 ${fingerprint}`,
     missingFingerprint: "未生成",
