@@ -964,12 +964,10 @@ export function useRealtimeSync(
         task_id: payload.task_id,
         chat_session_id: payload.chat_session_id,
       });
-      // FailTask writes a failure chat_message (mirroring CompleteTask's
-      // success message), so this path mirrors the task:completed handler:
-      // clear the pending signal AND invalidate the messages list so the
-      // failure bubble shows up without requiring a page refresh. Pre-#1823
-      // this branch only flipped pending — the comment "No new message"
-      // was true then, but FailTask now persists a row.
+      // The durable failure projection writes the final failure message only
+      // when no retry child exists. Clear the pending signal immediately;
+      // its post-commit chat:message event invalidates messages again after
+      // the row is guaranteed visible.
       qc.setQueryData(chatKeys.pendingTask(payload.chat_session_id), {});
       invalidateChatMessageQueries(qc, payload.chat_session_id);
       qc.invalidateQueries({ queryKey: chatKeys.pendingTask(payload.chat_session_id) });

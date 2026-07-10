@@ -19,39 +19,78 @@ import (
 
 const chatCompletionProjectionConsumer = "chat_completion_projection"
 
+const chatFailureProjectionConsumer = "chat_failure_projection"
+
+type chatTerminalProjection struct {
+	task db.AgentTaskQueue
+}
+
 func registerDurableChatConsumers(dispatcher *eventoutbox.Dispatcher) error {
-	return dispatcher.Register(protocol.EventTaskCompleted, chatCompletionProjectionConsumer, consumeChatCompletionProjection)
+	if err := dispatcher.Register(protocol.EventTaskCompleted, chatCompletionProjectionConsumer, consumeChatCompletionProjection); err != nil {
+		return err
+	}
+	return dispatcher.Register(protocol.EventTaskFailed, chatFailureProjectionConsumer, consumeChatFailureProjection)
 }
 
 func consumeChatCompletionProjection(ctx context.Context, queries *db.Queries, event events.Event) ([]events.Event, error) {
+	projection, exists, err := loadChatTerminalProjection(ctx, queries, event)
+	if err != nil || !exists {
+		return nil, err
+	}
+	message, err := projectCompletedChatMessage(ctx, queries, projection.task)
+	if err != nil {
+		return nil, err
+	}
+	return []events.Event{completedChatEvent(event, projection.task, message)}, nil
+}
+
+func consumeChatFailureProjection(ctx context.Context, queries *db.Queries, event events.Event) ([]events.Event, error) {
+	projection, exists, err := loadChatTerminalProjection(ctx, queries, event)
+	if err != nil || !exists {
+		return nil, err
+	}
+	_, err = queries.GetRetryTaskForParent(ctx, projection.task.ID)
+	if err == nil {
+		return nil, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, fmt.Errorf("load chat failure retry decision: %w", err)
+	}
+	message, err := projectFailedChatMessage(ctx, queries, projection.task)
+	if err != nil {
+		return nil, err
+	}
+	return []events.Event{failedChatMessageEvent(event, projection.task, message)}, nil
+}
+
+func loadChatTerminalProjection(
+	ctx context.Context,
+	queries *db.Queries,
+	event events.Event,
+) (chatTerminalProjection, bool, error) {
 	payload, task, exists, err := loadTaskProjectionRow(ctx, queries, event)
 	if err != nil || !exists || payload.ChatSessionID == "" {
-		return nil, err
+		return chatTerminalProjection{}, false, err
 	}
 	if !task.ChatSessionID.Valid {
 		// Deleting a chat session clears the task FK. Its terminal event is then
 		// intentionally a no-op because there is no conversation left to update.
-		return nil, nil
+		return chatTerminalProjection{}, false, nil
 	}
 	if util.UUIDToString(task.ChatSessionID) != payload.ChatSessionID {
-		return nil, fmt.Errorf("chat completion projection session mismatch")
+		return chatTerminalProjection{}, false, fmt.Errorf("chat terminal projection session mismatch")
 	}
 	session, err := queries.GetChatSession(ctx, task.ChatSessionID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
+		return chatTerminalProjection{}, false, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("load chat completion session: %w", err)
+		return chatTerminalProjection{}, false, fmt.Errorf("load chat terminal session: %w", err)
 	}
 	if util.UUIDToString(session.WorkspaceID) != event.WorkspaceID {
-		return nil, fmt.Errorf("chat completion projection workspace mismatch")
+		return chatTerminalProjection{}, false, fmt.Errorf("chat terminal projection workspace mismatch")
 	}
-
-	message, err := projectCompletedChatMessage(ctx, queries, task)
-	if err != nil {
-		return nil, err
-	}
-	return []events.Event{completedChatEvent(event, task, message)}, nil
+	return chatTerminalProjection{task: task}, true, nil
 }
 
 func projectCompletedChatMessage(ctx context.Context, queries *db.Queries, task db.AgentTaskQueue) (*db.ChatMessage, error) {
@@ -76,6 +115,28 @@ func projectCompletedChatMessage(ctx context.Context, queries *db.Queries, task 
 	return &message, nil
 }
 
+func projectFailedChatMessage(ctx context.Context, queries *db.Queries, task db.AgentTaskQueue) (db.ChatMessage, error) {
+	message := ""
+	if task.Error.Valid {
+		message = redact.Text(task.Error.String)
+	}
+	created, err := queries.CreateChatMessage(ctx, db.CreateChatMessageParams{
+		ChatSessionID: task.ChatSessionID,
+		Role:          "assistant",
+		Content:       message,
+		TaskID:        task.ID,
+		FailureReason: task.FailureReason,
+		ElapsedMs:     service.ComputeChatElapsedMs(task),
+	})
+	if err != nil {
+		return db.ChatMessage{}, fmt.Errorf("persist failed chat message: %w", err)
+	}
+	if err := queries.SetUnreadSinceIfNull(ctx, task.ChatSessionID); err != nil {
+		return db.ChatMessage{}, fmt.Errorf("mark failed chat session unread: %w", err)
+	}
+	return created, nil
+}
+
 func completedChatEvent(event events.Event, task db.AgentTaskQueue, message *db.ChatMessage) events.Event {
 	payload := protocol.ChatDonePayload{
 		ChatSessionID: util.UUIDToString(task.ChatSessionID),
@@ -97,5 +158,26 @@ func completedChatEvent(event events.Event, task db.AgentTaskQueue, message *db.
 		ActorType:     "system",
 		ChatSessionID: util.UUIDToString(task.ChatSessionID),
 		Payload:       payload,
+	}
+}
+
+func failedChatMessageEvent(event events.Event, task db.AgentTaskQueue, message db.ChatMessage) events.Event {
+	createdAt := ""
+	if message.CreatedAt.Valid {
+		createdAt = message.CreatedAt.Time.UTC().Format(time.RFC3339Nano)
+	}
+	return events.Event{
+		Type:          protocol.EventChatMessage,
+		WorkspaceID:   event.WorkspaceID,
+		ActorType:     "system",
+		ChatSessionID: util.UUIDToString(task.ChatSessionID),
+		Payload: protocol.ChatMessagePayload{
+			ChatSessionID: util.UUIDToString(task.ChatSessionID),
+			MessageID:     util.UUIDToString(message.ID),
+			Role:          message.Role,
+			Content:       message.Content,
+			TaskID:        util.UUIDToString(task.ID),
+			CreatedAt:     createdAt,
+		},
 	}
 }

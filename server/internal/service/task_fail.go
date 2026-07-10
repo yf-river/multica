@@ -149,31 +149,6 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 		s.createAgentComment(ctx, task.IssueID, task.AgentID, body, "system", task.TriggerCommentID, task.ID)
 	}
 
-	// Mirror the issue fallback for chat tasks: write an assistant
-	// chat_message tagged with the daemon-reported failure_reason so the
-	// conversation history shows what happened. Skip when auto-retry is
-	// pending (the new attempt will write its own outcome) — same guard as
-	// the issue path above.
-	if task.ChatSessionID.Valid && retried == nil {
-		if _, err := s.Queries.CreateChatMessage(ctx, db.CreateChatMessageParams{
-			ChatSessionID: task.ChatSessionID,
-			Role:          "assistant",
-			Content:       redact.Text(errMsg),
-			TaskID:        pgtype.UUID{Bytes: task.ID.Bytes, Valid: true},
-			FailureReason: pgtype.Text{String: failureReason, Valid: failureReason != ""},
-			ElapsedMs:     ComputeChatElapsedMs(task),
-		}); err != nil {
-			slog.Error("failed to save failure chat message",
-				"task_id", util.UUIDToString(task.ID),
-				"chat_session_id", util.UUIDToString(task.ChatSessionID),
-				"error", err)
-		} else if err := s.Queries.SetUnreadSinceIfNull(ctx, task.ChatSessionID); err != nil {
-			slog.Warn("failed to set unread_since on failure",
-				"chat_session_id", util.UUIDToString(task.ChatSessionID),
-				"error", err)
-		}
-	}
-
 	// Reconcile agent status
 	s.ReconcileAgentStatus(ctx, task.AgentID)
 

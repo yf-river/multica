@@ -53,14 +53,14 @@ func TestChatCompletionProjectionRollsBackAndRetries(t *testing.T) {
 	event := latestTaskTerminalEvent(t, fixture.task.ID)
 	removeFailure := installAssistantMessageFailure(t)
 
-	if _, err := runChatCompletionProjection(ctx, fixture.queries, event); err == nil {
+	if _, err := runChatProjection(ctx, fixture.queries, event, consumeChatCompletionProjection); err == nil {
 		t.Fatal("chat completion projection succeeded despite forced message failure")
 	}
 	assertAssistantMessageCount(t, ctx, fixture.task.ID, 0)
 	assertChatSessionUnread(t, ctx, fixture.queries, fixture.session.ID, false)
 
 	removeFailure()
-	emitted, err := runChatCompletionProjection(ctx, fixture.queries, event)
+	emitted, err := runChatProjection(ctx, fixture.queries, event, consumeChatCompletionProjection)
 	if err != nil {
 		t.Fatalf("retry chat completion projection: %v", err)
 	}
@@ -86,14 +86,14 @@ func TestChatCompletionProjectionRollsBackMessageWhenUnreadUpdateFails(t *testin
 	}
 	removeFailure := installChatUnreadFailure(t, fixture.session.ID)
 
-	if _, err := runChatCompletionProjection(ctx, fixture.queries, latestTaskTerminalEvent(t, fixture.task.ID)); err == nil {
+	if _, err := runChatProjection(ctx, fixture.queries, latestTaskTerminalEvent(t, fixture.task.ID), consumeChatCompletionProjection); err == nil {
 		t.Fatal("chat completion projection succeeded despite forced unread update failure")
 	}
 	assertAssistantMessageCount(t, ctx, fixture.task.ID, 0)
 	assertChatSessionUnread(t, ctx, fixture.queries, fixture.session.ID, false)
 
 	removeFailure()
-	if _, err := runChatCompletionProjection(ctx, fixture.queries, latestTaskTerminalEvent(t, fixture.task.ID)); err != nil {
+	if _, err := runChatProjection(ctx, fixture.queries, latestTaskTerminalEvent(t, fixture.task.ID), consumeChatCompletionProjection); err != nil {
 		t.Fatalf("retry chat completion after unread failure: %v", err)
 	}
 	assertAssistantMessageCount(t, ctx, fixture.task.ID, 1)
@@ -106,7 +106,7 @@ func TestChatCompletionProjectionKeepsEmptyOutputContract(t *testing.T) {
 	if _, err := fixture.taskService.CompleteTask(ctx, fixture.task.ID, []byte(`{}`), "", ""); err != nil {
 		t.Fatalf("CompleteTask: %v", err)
 	}
-	emitted, err := runChatCompletionProjection(ctx, fixture.queries, latestTaskTerminalEvent(t, fixture.task.ID))
+	emitted, err := runChatProjection(ctx, fixture.queries, latestTaskTerminalEvent(t, fixture.task.ID), consumeChatCompletionProjection)
 	if err != nil {
 		t.Fatalf("project empty chat completion: %v", err)
 	}
@@ -118,13 +118,102 @@ func TestChatCompletionProjectionKeepsEmptyOutputContract(t *testing.T) {
 	assertChatSessionUnread(t, ctx, fixture.queries, fixture.session.ID, false)
 }
 
-func runChatCompletionProjection(ctx context.Context, queries *db.Queries, event events.Event) ([]events.Event, error) {
+func TestChatFailureLeavesMessageProjectionToOutbox(t *testing.T) {
+	ctx := context.Background()
+	fixture := setupChatCompletionFixture(t, ctx)
+	installChatUnreadFailure(t, fixture.session.ID)
+
+	if _, err := fixture.taskService.FailTask(ctx, fixture.task.ID, "invalid agent request", "", "", "api_invalid_request"); err != nil {
+		t.Fatalf("FailTask: %v", err)
+	}
+	assertAssistantMessageCount(t, ctx, fixture.task.ID, 0)
+	assertChatSessionUnread(t, ctx, fixture.queries, fixture.session.ID, false)
+}
+
+func TestChatFailureProjectionRollsBackAndRedacts(t *testing.T) {
+	ctx := context.Background()
+	fixture := setupChatCompletionFixture(t, ctx)
+	const secret = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJmYWlsZWQtY2hhdCJ9.signature"
+	if _, err := fixture.taskService.FailTask(
+		ctx,
+		fixture.task.ID,
+		"Authorization: Bearer "+secret,
+		"",
+		"",
+		"api_invalid_request",
+	); err != nil {
+		t.Fatalf("FailTask: %v", err)
+	}
+	event := latestTaskTerminalEvent(t, fixture.task.ID)
+	removeFailure := installChatUnreadFailure(t, fixture.session.ID)
+
+	if _, err := runChatProjection(ctx, fixture.queries, event, consumeChatFailureProjection); err == nil {
+		t.Fatal("chat failure projection succeeded despite forced unread update failure")
+	}
+	assertAssistantMessageCount(t, ctx, fixture.task.ID, 0)
+	assertChatSessionUnread(t, ctx, fixture.queries, fixture.session.ID, false)
+
+	removeFailure()
+	emitted, err := runChatProjection(ctx, fixture.queries, event, consumeChatFailureProjection)
+	if err != nil {
+		t.Fatalf("retry chat failure projection: %v", err)
+	}
+	if len(emitted) != 1 || emitted[0].Type != protocol.EventChatMessage {
+		t.Fatalf("chat failure emitted events = %#v", emitted)
+	}
+	payload, ok := emitted[0].Payload.(protocol.ChatMessagePayload)
+	if !ok || payload.MessageID == "" || payload.Role != "assistant" {
+		t.Fatalf("chat failure payload = %#v", emitted[0].Payload)
+	}
+	if strings.Contains(payload.Content, secret) {
+		t.Fatal("chat failure realtime payload leaked bearer token")
+	}
+	var content, failureReason string
+	if err := testPool.QueryRow(ctx, `
+		SELECT content, COALESCE(failure_reason, '') FROM chat_message
+		WHERE task_id = $1 AND role = 'assistant'
+	`, fixture.task.ID).Scan(&content, &failureReason); err != nil {
+		t.Fatalf("load failed chat message: %v", err)
+	}
+	if strings.Contains(content, secret) || failureReason != "api_invalid_request" {
+		t.Fatalf("failed chat message = content %q reason %q", content, failureReason)
+	}
+	assertAssistantMessageCount(t, ctx, fixture.task.ID, 1)
+	assertChatSessionUnread(t, ctx, fixture.queries, fixture.session.ID, true)
+}
+
+func TestChatFailureProjectionSkipsRetryingAttempt(t *testing.T) {
+	ctx := context.Background()
+	fixture := setupChatCompletionFixture(t, ctx)
+	if _, err := testPool.Exec(ctx, `UPDATE agent_task_queue SET max_attempts = 2 WHERE id = $1`, fixture.task.ID); err != nil {
+		t.Fatalf("increase retry budget: %v", err)
+	}
+	if _, err := fixture.taskService.FailTask(ctx, fixture.task.ID, "task timed out", "", "", "timeout"); err != nil {
+		t.Fatalf("FailTask: %v", err)
+	}
+	emitted, err := runChatProjection(ctx, fixture.queries, latestTaskTerminalEvent(t, fixture.task.ID), consumeChatFailureProjection)
+	if err != nil {
+		t.Fatalf("project retrying chat failure: %v", err)
+	}
+	if len(emitted) != 0 {
+		t.Fatalf("retrying chat failure emitted events = %#v", emitted)
+	}
+	assertAssistantMessageCount(t, ctx, fixture.task.ID, 0)
+	assertChatSessionUnread(t, ctx, fixture.queries, fixture.session.ID, false)
+}
+
+func runChatProjection(
+	ctx context.Context,
+	queries *db.Queries,
+	event events.Event,
+	project func(context.Context, *db.Queries, events.Event) ([]events.Event, error),
+) ([]events.Event, error) {
 	tx, err := testPool.Begin(ctx)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	emitted, err := consumeChatCompletionProjection(ctx, queries.WithTx(tx), event)
+	emitted, err := project(ctx, queries.WithTx(tx), event)
 	if err != nil {
 		return nil, err
 	}
