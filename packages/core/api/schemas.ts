@@ -11,3 +11,4 @@ export * from "./schemas-prompt-evaluation-optimization";
 export * from "./schemas-prompt-evaluation-empty";
 export * from "./schemas-automation";
 export * from "./schemas-auth";
+export * from "./schemas-workspaces";

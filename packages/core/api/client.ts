@@ -258,6 +258,10 @@ import {
   EMPTY_TIMELINE_ENTRIES,
   EMPTY_USER,
   EMPTY_CREATE_PERSONAL_ACCESS_TOKEN_RESPONSE,
+  EMPTY_WORKSPACE,
+  EMPTY_WORKSPACE_REPO,
+  EMPTY_WORKSPACE_REPO_PROBE_RESPONSE,
+  EMPTY_MEMBER_WITH_USER,
   EMPTY_LIST_WEBHOOK_DELIVERIES_RESPONSE,
   EMPTY_PROMPT_LIBRARY_ITEM,
   EMPTY_PROMPT_LIBRARY_LIST_RESPONSE,
@@ -382,6 +386,12 @@ import {
   CliTokenResponseSchema,
   PersonalAccessTokenListSchema,
   CreatePersonalAccessTokenResponseSchema,
+  WorkspaceListSchema,
+  WorkspaceSchema,
+  WorkspaceRepoSchema,
+  WorkspaceRepoProbeResponseSchema,
+  MemberWithUserListSchema,
+  MemberWithUserSchema,
   WebhookDeliveryResponseSchema,
   EMPTY_CANCEL_TASK_RESPONSE,
 } from "./schemas";
@@ -1548,11 +1558,17 @@ export class ApiClient {
 
   // Workspaces
   async listWorkspaces(): Promise<Workspace[]> {
-    return this.fetch("/api/workspaces");
+    const raw = await this.fetch<unknown>("/api/workspaces");
+    return parseWithFallback(raw, WorkspaceListSchema, [], {
+      endpoint: "GET /api/workspaces",
+    });
   }
 
   async getWorkspace(id: string): Promise<Workspace> {
-    return this.fetch(`/api/workspaces/${id}`);
+    const raw = await this.fetch<unknown>(`/api/workspaces/${id}`);
+    return parseWithFallback(raw, WorkspaceSchema, EMPTY_WORKSPACE, {
+      endpoint: "GET /api/workspaces/:id",
+    });
   }
 
   async getWorkspaceObservabilitySummary(id: string, paramsInput?: { since?: string; squad_id?: string; project_id?: string; agent_id?: string }): Promise<ObservabilitySummary> {
@@ -1568,49 +1584,73 @@ export class ApiClient {
   }
 
   async createWorkspace(data: { name: string; slug: string; description?: string; context?: string }): Promise<Workspace> {
-    return this.fetch("/api/workspaces", {
+    const raw = await this.fetch<unknown>("/api/workspaces", {
       method: "POST",
       body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, WorkspaceSchema, EMPTY_WORKSPACE, {
+      endpoint: "POST /api/workspaces",
     });
   }
 
   async updateWorkspace(id: string, data: { name?: string; description?: string; context?: string; settings?: Record<string, unknown>; repos?: WorkspaceRepo[]; issue_prefix?: string; avatar_url?: string }): Promise<Workspace> {
-    return this.fetch(`/api/workspaces/${id}`, {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${id}`, {
       method: "PATCH",
       body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, WorkspaceSchema, EMPTY_WORKSPACE, {
+      endpoint: "PATCH /api/workspaces/:id",
     });
   }
 
   async resolveWorkspaceRepo(workspaceId: string, data: { url: string; default_branch?: string }): Promise<WorkspaceRepo> {
-    return this.fetch(`/api/workspaces/${workspaceId}/repos/resolve`, {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/repos/resolve`, {
       method: "POST",
       body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, WorkspaceRepoSchema, EMPTY_WORKSPACE_REPO, {
+      endpoint: "POST /api/workspaces/:workspaceId/repos/resolve",
     });
   }
 
   async probeWorkspaceRepo(workspaceId: string, data: { url: string }): Promise<WorkspaceRepoProbeResponse> {
-    return this.fetch(`/api/workspaces/${workspaceId}/repos/probe`, {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/repos/probe`, {
       method: "POST",
       body: JSON.stringify(data),
     });
+    return parseWithFallback(
+      raw,
+      WorkspaceRepoProbeResponseSchema,
+      EMPTY_WORKSPACE_REPO_PROBE_RESPONSE,
+      { endpoint: "POST /api/workspaces/:workspaceId/repos/probe" },
+    );
   }
 
   // Members
   async listMembers(workspaceId: string): Promise<MemberWithUser[]> {
-    return this.fetch(`/api/workspaces/${workspaceId}/members`);
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/members`);
+    return parseWithFallback(raw, MemberWithUserListSchema, [], {
+      endpoint: "GET /api/workspaces/:workspaceId/members",
+    });
   }
 
   async createMember(workspaceId: string, data: CreateMemberRequest): Promise<MemberWithUser> {
-    return this.fetch(`/api/workspaces/${workspaceId}/members`, {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/members`, {
       method: "POST",
       body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, MemberWithUserSchema, EMPTY_MEMBER_WITH_USER, {
+      endpoint: "POST /api/workspaces/:workspaceId/members",
     });
   }
 
   async updateMember(workspaceId: string, memberId: string, data: UpdateMemberRequest): Promise<MemberWithUser> {
-    return this.fetch(`/api/workspaces/${workspaceId}/members/${memberId}`, {
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/members/${memberId}`, {
       method: "PATCH",
       body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, MemberWithUserSchema, EMPTY_MEMBER_WITH_USER, {
+      endpoint: "PATCH /api/workspaces/:workspaceId/members/:memberId",
     });
   }
 

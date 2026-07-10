@@ -41,6 +41,7 @@ import {
   RuntimeProfileListResponseSchema,
 } from "./schemas-runtimes";
 import { RuntimeUsageListSchema } from "./schemas-usage";
+import { EMPTY_WORKSPACE, WorkspaceSchema } from "./schemas-workspaces";
 
 describe("domain response schema fallbacks", () => {
   it("keeps app configuration usable when the response is not an object", () => {
@@ -147,5 +148,14 @@ describe("domain response schema fallbacks", () => {
       EMPTY_USER,
       { endpoint: "GET /api/me" },
     )).toBe(EMPTY_USER);
+  });
+
+  it("rejects a malformed workspace identity", () => {
+    expect(parseWithFallback(
+      { id: 42, name: "broken" },
+      WorkspaceSchema,
+      EMPTY_WORKSPACE,
+      { endpoint: "GET /api/workspaces/:id" },
+    )).toBe(EMPTY_WORKSPACE);
   });
 });

@@ -6,6 +6,26 @@ afterEach(() => {
 });
 
 describe("ApiClient", () => {
+  it("validates workspace, repository, and member responses", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(
+      new Response(JSON.stringify({ id: 42 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )));
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.listWorkspaces()).resolves.toEqual([]);
+    await expect(client.getWorkspace("workspace-1")).resolves.toMatchObject({ id: "", repos: [] });
+    await expect(client.resolveWorkspaceRepo("workspace-1", { url: "https://example.test/repo" }))
+      .resolves.toEqual({ url: "" });
+    await expect(client.probeWorkspaceRepo("workspace-1", { url: "https://example.test/repo" }))
+      .resolves.toMatchObject({ url: "", branches: [] });
+    await expect(client.listMembers("workspace-1")).resolves.toEqual([]);
+    await expect(client.createMember("workspace-1", { account: "ada", role: "member" }))
+      .resolves.toMatchObject({ id: "", user_id: "", role: "member" });
+  });
+
   it("validates auth and personal token responses", async () => {
     vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(
       new Response(JSON.stringify({ token: 42 }), {
