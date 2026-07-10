@@ -19,7 +19,10 @@
     "code-health:knip": "mkdir -p artifacts/code-health/one-time-cleanup && knip --config knip.json --reporter markdown --no-exit-code > artifacts/code-health/one-time-cleanup/knip-report.md",
     "clean": "turbo clean && rm -rf node_modules",
     "ui:add": "cd packages/ui && npx shadcn@latest add",
-    "generate:reserved-slugs": "node scripts/generate-reserved-slugs.mjs"
+    "generate:reserved-slugs": "node scripts/generate-reserved-slugs.mjs",
+    "generate:current-system-map": "node scripts/generate-current-system-map.mjs",
+    "check:current-system-map": "node scripts/generate-current-system-map.mjs --check",
+    "test:current-system-map": "node --test scripts/current-system-map.test.mjs"
   },
   "packageManager": "pnpm@10.28.2",
   "pnpm": {

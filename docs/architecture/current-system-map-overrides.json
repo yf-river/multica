@@ -1,0 +1,274 @@
+{
+  "schemaVersion": 1,
+  "chiRoutes": [],
+  "auxiliaryHttpRoutes": [
+    {
+      "method": "GET",
+      "path": "/metrics",
+      "server": "metrics listener",
+      "source": "server/internal/metrics/server.go",
+      "notes": "Separate optional Prometheus listener, not mounted on the main Chi router."
+    },
+    {
+      "method": "GET",
+      "path": "/callback",
+      "server": "CLI loopback OAuth callback",
+      "source": "server/cmd/multica/cmd_auth.go",
+      "notes": "Ephemeral localhost listener created only during browser-based CLI authentication."
+    },
+    {
+      "method": "GET",
+      "path": "/health",
+      "server": "daemon localhost control listener",
+      "source": "server/internal/daemon/health.go",
+      "notes": "Local daemon liveness/readiness and runtime inventory; bound to 127.0.0.1."
+    },
+    {
+      "method": "POST",
+      "path": "/shutdown",
+      "server": "daemon localhost control listener",
+      "source": "server/internal/daemon/health.go",
+      "notes": "Triggers graceful daemon shutdown; local-host boundary is security-relevant."
+    },
+    {
+      "method": "POST",
+      "path": "/repo/checkout",
+      "server": "daemon localhost control listener",
+      "source": "server/internal/daemon/health.go",
+      "notes": "Creates a task worktree from a configured workspace repository after request validation."
+    }
+  ],
+  "webPages": [],
+  "desktopRoutes": [],
+  "websocketEvents": {
+    "go": [],
+    "typescript": []
+  },
+  "environmentAliases": [
+    {
+      "canonical": "GONGFENG_ACCESS_TOKEN",
+      "aliases": [
+        "GONGFENG_PRIVATE_TOKEN"
+      ],
+      "reason": "Task source context accepts either token name and exports both names to the Gongfeng MCP process.",
+      "disposition": "external-protocol-required",
+      "sources": [
+        "server/internal/handler/task_source_context.go"
+      ]
+    }
+  ],
+  "externalSystems": [
+    {
+      "id": "agent-cli-runtimes",
+      "kind": "local subprocess and provider network",
+      "environment": [
+        "CODEX_HOME",
+        "MULTICA_AGENT_PROVIDERS",
+        "MULTICA_CODEX_HOME",
+        "MULTICA_CODEX_SOURCE_HOME"
+      ],
+      "sources": [
+        "server/internal/daemon/task_run.go",
+        "server/pkg/agent/models.go"
+      ],
+      "notes": "The daemon starts installed agent CLIs; provider network traffic occurs inside those child processes and is not statically visible to the Go server."
+    },
+    {
+      "id": "github",
+      "kind": "REST API, webhook ingress, and repository import",
+      "environment": [
+        "GITHUB_APP_ID",
+        "GITHUB_APP_PRIVATE_KEY",
+        "GITHUB_APP_SLUG",
+        "GITHUB_TOKEN",
+        "GITHUB_WEBHOOK_SECRET"
+      ],
+      "sources": [
+        "server/internal/handler/github.go",
+        "server/internal/handler/github_webhook.go",
+        "server/internal/handler/skill_import_github.go",
+        "server/internal/cli/update.go"
+      ],
+      "notes": "GitHub App installation, webhook, repository import, and CLI release lookup are current external boundaries."
+    },
+    {
+      "id": "public-skill-registries",
+      "kind": "ClawHub and skills.sh REST/file APIs",
+      "environment": [],
+      "sources": [
+        "server/internal/handler/skill_import.go",
+        "server/internal/handler/skill_import_clawhub.go"
+      ],
+      "notes": "Skill search/import accepts current ClawHub and skills.sh sources and downloads their metadata and files."
+    },
+    {
+      "id": "user-git-remotes",
+      "kind": "git subprocess network and local worktrees",
+      "environment": [],
+      "sources": [
+        "server/internal/daemon/repocache/cache.go",
+        "server/internal/daemon/execenv/git.go",
+        "server/internal/handler/prompt_evaluation_skill_build.go"
+      ],
+      "notes": "Daemon repository caches and exec environments fetch user-configured remotes; evaluation skill workflows run git only against validated local worktrees."
+    },
+    {
+      "id": "gongfeng",
+      "kind": "REST API and MCP subprocess",
+      "environment": [
+        "GONGFENG_ACCESS_TOKEN",
+        "GONGFENG_API_BASE",
+        "GONGFENG_MCP_SERVER_ENTRYPOINT",
+        "GONGFENG_PRIVATE_TOKEN"
+      ],
+      "sources": [
+        "server/internal/handler/project_resource.go",
+        "server/internal/handler/task_source_context.go"
+      ],
+      "notes": "Project resources and task source context call Gongfeng directly or through the configured MCP entrypoint."
+    },
+    {
+      "id": "lark-feishu",
+      "kind": "Open Platform HTTP API and long-lived WebSocket",
+      "environment": [
+        "MULTICA_LARK_CALLBACK_BASE_URL",
+        "MULTICA_LARK_HTTP_BASE_URL",
+        "MULTICA_LARK_REGISTRATION_DOMAIN",
+        "MULTICA_LARK_REGISTRATION_LARK_DOMAIN",
+        "MULTICA_LARK_SECRET_KEY"
+      ],
+      "sources": [
+        "server/internal/handler/lark.go",
+        "server/internal/integrations/lark/http_client.go",
+        "server/internal/integrations/lark/ws_connector.go"
+      ],
+      "notes": "Each installation selects the Lark or Feishu region; deployment-wide hosts are optional overrides."
+    },
+    {
+      "id": "local-or-s3-attachments",
+      "kind": "filesystem, S3-compatible object storage, and optional CloudFront signing",
+      "environment": [
+        "ATTACHMENT_DOWNLOAD_MODE",
+        "AWS_ACCESS_KEY_ID",
+        "AWS_ENDPOINT_URL",
+        "AWS_SECRET_ACCESS_KEY",
+        "CLOUDFRONT_DOMAIN",
+        "CLOUDFRONT_KEY_PAIR_ID",
+        "CLOUDFRONT_PRIVATE_KEY",
+        "CLOUDFRONT_PRIVATE_KEY_SECRET",
+        "LOCAL_UPLOAD_BASE_URL",
+        "LOCAL_UPLOAD_DIR",
+        "S3_BUCKET",
+        "S3_REGION"
+      ],
+      "sources": [
+        "server/internal/auth/cloudfront.go",
+        "server/internal/storage/local.go",
+        "server/internal/storage/s3.go"
+      ],
+      "notes": "Storage selection is a current deployment boundary; local and object-storage modes intentionally coexist."
+    },
+    {
+      "id": "multica-fleet",
+      "kind": "remote token verification API",
+      "environment": [
+        "MULTICA_CLOUD_FLEET_URL"
+      ],
+      "sources": [
+        "server/internal/auth/cloud_pat.go",
+        "server/internal/middleware/auth.go"
+      ],
+      "notes": "Configured deployments verify cloud PATs against Fleet; unconfigured deployments reject that token class."
+    },
+    {
+      "id": "postgresql",
+      "kind": "primary relational database",
+      "environment": [
+        "DATABASE_MAX_CONNS",
+        "DATABASE_MIN_CONNS",
+        "DATABASE_URL"
+      ],
+      "sources": [
+        "server/cmd/server/main.go",
+        "server/sqlc.yaml"
+      ],
+      "notes": "PostgreSQL is the durable system of record; schema and typed query surfaces are inventoried separately."
+    },
+    {
+      "id": "posthog",
+      "kind": "analytics batch HTTP API",
+      "environment": [
+        "ANALYTICS_DISABLED",
+        "ANALYTICS_ENVIRONMENT",
+        "POSTHOG_API_KEY",
+        "POSTHOG_HOST"
+      ],
+      "sources": [
+        "server/internal/analytics/client.go",
+        "server/internal/analytics/posthog.go"
+      ],
+      "notes": "Analytics can be disabled; enabled deployments batch events to the configured PostHog host."
+    },
+    {
+      "id": "redis",
+      "kind": "realtime relay, coordination, rate limiting, and caches",
+      "environment": [
+        "REALTIME_RELAY_MODE",
+        "REDIS_URL"
+      ],
+      "sources": [
+        "server/cmd/server/main.go",
+        "server/internal/realtime/redis_relay.go",
+        "server/internal/realtime/sharded_stream_relay.go"
+      ],
+      "notes": "Redis is optional for some single-process behavior but required for coordinated multi-instance relay and shared limits."
+    },
+    {
+      "id": "tapd",
+      "kind": "REST API",
+      "environment": [
+        "TAPD_ACCESS_TOKEN",
+        "TAPD_API_BASE_URL"
+      ],
+      "sources": [
+        "server/internal/handler/external_credential_profile.go",
+        "server/internal/handler/issue_source_fetch.go"
+      ],
+      "notes": "TAPD issue source reads use credential profiles or the current deployment environment boundary."
+    }
+  ],
+  "notes": [
+    {
+      "id": "chi-parser",
+      "text": "The Go route inventory resolves literal r.Route prefixes and literal verb registrations in server/cmd/server/router.go. Computed paths, helper-owned routers, Mount/Handle registrations, build tags, and runtime conditionals require a manual override."
+    },
+    {
+      "id": "database-model",
+      "text": "The database inventory replays CREATE/DROP declarations from ordered up migrations for tables, functions, triggers, and indexes. It does not connect to a running database, expand every inline constraint, or detect environment-specific schema drift."
+    },
+    {
+      "id": "desktop-parser",
+      "text": "Desktop paths are recovered from literal path properties in the appRoutes RouteObject tree. Index routes, Navigate targets, overlay transitions, and paths created outside that tree are not route literals."
+    },
+    {
+      "id": "environment-parser",
+      "text": "Environment discovery covers literal and same-file constant Go os.Getenv/LookupEnv calls, common Go env helpers, Node process.env/import.meta.env access, Docker Compose template references, and .env.example declarations. Dynamically constructed names, general shell-script variables, CI secrets, and values are intentionally excluded."
+    },
+    {
+      "id": "external-io-parser",
+      "text": "Automatic external-I/O detection identifies concrete library and syscall primitives, not business semantics or delivery guarantees. Named external systems are maintained as evidence-backed manual overrides."
+    },
+    {
+      "id": "react-query-parser",
+      "text": "React Query counts are syntax-level call counts in production TypeScript sources. Wrapper hooks and aliased imports may hide calls; a call count is not a count of unique server-state domains."
+    },
+    {
+      "id": "websocket-difference",
+      "text": "Go-versus-TypeScript event differences and production reference sources are reported mechanically. Reference presence does not by itself distinguish producer from consumer; daemon/internal contracts and dynamic dispatch still require human classification."
+    },
+    {
+      "id": "inventory-not-domain-map",
+      "text": "This generated inventory is a drift-checked architecture input. It does not replace maintained domain-flow documentation that connects UI/query keys through HTTP, handlers, services, SQL, events, failure recovery, and user-visible outcomes."
+    }
+  ]
+}
