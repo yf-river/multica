@@ -145,6 +145,8 @@ echo ""
 echo "==> [3/5] Go tests..."
 echo "==> Running database migrations..."
 (cd server && go run ./cmd/migrate up) || { EXIT_CODE=1; exit 1; }
+echo "==> Checking dedicated Redis test service..."
+bash scripts/ensure-test-redis.sh "$ENV_FILE" || { EXIT_CODE=1; exit 1; }
 (cd server && go test ./...) || { EXIT_CODE=1; exit 1; }
 
 # --------------------------------------------------------------------------

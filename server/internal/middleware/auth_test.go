@@ -15,7 +15,7 @@ import (
 
 func newRedisTestClient(t *testing.T) *redis.Client {
 	t.Helper()
-	return testutil.NewRedisTestClient(t)
+	return testutil.NewRedisTestClient(t, testutil.RedisDBMiddleware)
 }
 
 func generateToken(claims jwt.MapClaims, secret []byte) string {

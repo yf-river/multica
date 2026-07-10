@@ -11,7 +11,7 @@ import (
 
 func newRedisTestClient(t *testing.T) *redis.Client {
 	t.Helper()
-	return testutil.NewRedisTestClient(t)
+	return testutil.NewRedisTestClient(t, testutil.RedisDBAuth)
 }
 
 func TestPATCache_NilSafe(t *testing.T) {

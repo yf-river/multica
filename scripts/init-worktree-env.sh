@@ -54,6 +54,7 @@ find_free_port() {
 postgres_port="$(find_free_port $((15432 + offset)))"
 backend_port="$(find_free_port $((18080 + offset)))"
 frontend_port="$(find_free_port $((13000 + offset)))"
+redis_test_port="$(find_free_port 16380)"
 frontend_origin="http://localhost:${frontend_port}"
 e2e_slug="${slug//_/-}"
 
@@ -75,6 +76,9 @@ FRONTEND_ORIGIN=${frontend_origin}
 NEXT_PUBLIC_API_URL=http://localhost:${backend_port}
 NEXT_PUBLIC_WS_URL=ws://localhost:${backend_port}/ws
 
+REDIS_TEST_PORT=${redis_test_port}
+REDIS_TEST_URL=redis://127.0.0.1:${redis_test_port}/0
+
 ALLOW_SIGNUP=true
 DISABLE_WORKSPACE_CREATION=false
 E2E_FIXTURE_ACCOUNT=e2e_${slug}
@@ -90,6 +94,7 @@ echo "  Isolated Postgres: localhost:${postgres_port}"
 echo "  Database: ${postgres_db}"
 echo "  Backend:  http://localhost:${backend_port}"
 echo "  Frontend: ${frontend_origin}"
+echo "  Test Redis: localhost:${redis_test_port}"
 echo ""
 echo "Next steps:"
 echo "  make setup-worktree"

@@ -13,7 +13,7 @@ import (
 
 func newRedisTestClient(t *testing.T) *redis.Client {
 	t.Helper()
-	return testutil.NewRedisTestClient(t)
+	return testutil.NewRedisTestClient(t, testutil.RedisDBHandler)
 }
 
 func assertSingleConcurrentPopWinner[T any](t *testing.T, wantID string, pop func() (*T, error), requestID func(*T) string) {

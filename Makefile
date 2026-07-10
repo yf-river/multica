@@ -437,6 +437,7 @@ build: ## Build the server, CLI, and migrate binaries into server/bin
 test: ## Run Go tests after ensuring the target DB exists and migrations are applied
 	$(REQUIRE_ENV)
 	@bash scripts/ensure-postgres.sh "$(ENV_FILE)"
+	@bash scripts/ensure-test-redis.sh "$(ENV_FILE)"
 	cd server && go run ./cmd/migrate up
 	cd server && go test -race ./...
 
