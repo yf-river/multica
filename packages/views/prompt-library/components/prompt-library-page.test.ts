@@ -3,10 +3,13 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 import {
-  CaseLibraryEditorPanel,
   promptDraftSyncKey,
   resolvePromptSelection,
 } from "./prompt-library-page";
+import {
+  CaseLibraryEditorPanel,
+  type CaseLibraryEditorCopy,
+} from "./case-library-editor";
 import {
   allPromptTrialVariablesFilled,
   extractPromptVariables,
@@ -74,6 +77,81 @@ describe("prompt library template variables", () => {
     expect(summarizePromptTrialVariables({})).toBeNull();
   });
 });
+
+
+const caseLibraryCopy: CaseLibraryEditorCopy = {
+  title: "评估数据集",
+  loading: "正在读取数据集",
+  count: (datasetCount, caseCount) => `${datasetCount} 个数据集 · ${caseCount} 条用例`,
+  createDataset: "新建",
+  searchPlaceholder: "搜索数据集、用例、标签",
+  searchAriaLabel: "搜索数据集和用例",
+  datasetNamePlaceholder: "数据集名称",
+  datasetDescriptionPlaceholder: "描述",
+  cancel: "取消",
+  save: "保存",
+  missingDatasetNameError: "请输入数据集名称",
+  missingCaseNameError: "请输入用例名称",
+  missingCaseInputError: "请输入用例输入",
+  noDatasets: "暂无数据集，先新建一个评估数据集。",
+  noDatasetSearchResults: "当前搜索没有命中数据集。",
+  noDescription: "无描述",
+  updatedAt: (value) => `更新于 ${value}`,
+  missingTime: "未记录时间",
+  emptyTitle: "先选择或新建数据集",
+  emptyDescription: "数据集用于集中维护评估用例，并锁定可追溯版本。",
+  saveDataset: "保存数据集",
+  createVersion: "创建版本",
+  edit: "编辑",
+  delete: "删除",
+  addCase: "新增用例",
+  versionLabel: "版本标签",
+  versionPlaceholder: "例如：补充登录失败边界用例",
+  defaultVersionLabel: "手动快照",
+  saveVersion: "保存版本",
+  tagFilterAriaLabel: "筛选用例标签",
+  allTags: "全部标签",
+  matchCount: (visible, total) => `命中 ${visible} / ${total}`,
+  newCaseTitle: "新增用例",
+  editCaseTitle: "编辑用例",
+  saveCase: "保存用例",
+  caseCount: (count) => `${count} 条用例`,
+  caseName: (index) => `用例 ${index}`,
+  sourceLabel: (source) =>
+    ({ manual: "手工", trace: "trace导入", payload: "资产载荷", imported: "导入" } as const)[source],
+  inputPrefix: "输入：",
+  expectedPrefix: "期望：",
+  missingInput: "未填写输入",
+  missingExpected: "未填写期望",
+  noTags: "无标签",
+  noCases: "暂无用例，先新增一条评估用例。",
+  noCaseFilterResults: "当前筛选没有命中用例。",
+  datasetVersionSummary: (summary) =>
+    `用例库版本 v${summary.version ?? "?"} · ${summary.rowCount ?? "0"} 行 · 指纹 ${summary.fingerprint ?? "未生成"}`,
+  draft: {
+    nameLabel: "名称",
+    namePlaceholder: "用例名称",
+    tagsLabel: "标签",
+    tagsPlaceholder: "标签，逗号分隔",
+    inputLabel: "输入",
+    inputPlaceholder: "评估输入内容",
+    expectedLabel: "期望",
+    expectedPlaceholder: "期望输出或验收点，可换行",
+    cancel: "取消",
+  },
+  versionHistory: {
+    title: "版本历史",
+    loading: "正在读取版本",
+    count: (count) => `${count} 个版本快照`,
+    noSnapshots: "暂无版本快照",
+    emptyDescription: "创建版本后，后续评估和调试可以固定使用这批用例。",
+    unnamedVersion: "未命名版本",
+    latest: "最新",
+    rowFingerprint: (rowCount, fingerprint) => `${rowCount} 条用例 · 指纹 ${fingerprint}`,
+    missingFingerprint: "未生成",
+    missingTime: "未记录时间",
+  },
+};
 
 describe("case library editor", () => {
   const baseAsset: PromptEvaluationAsset = {
@@ -145,6 +223,7 @@ describe("case library editor", () => {
       updatingCaseId: null,
       onDeleteCase: vi.fn(),
       deletingCaseId: null,
+      copy: caseLibraryCopy,
       ...overrides,
     };
     return render(

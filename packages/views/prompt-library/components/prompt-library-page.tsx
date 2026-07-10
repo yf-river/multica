@@ -13,7 +13,6 @@ import {
   TRAINING_WORKBENCH_VIEW_BY_TAB,
   buildSkillScenarioAssetRequest,
   buildWritingModelBenchmarkAssetRequest,
-  isSkillScenarioPayload,
   summarizeSkillScenarioTarget,
   summarizeWritingModelBenchmark,
   trainingWorkbenchSectionLabelFromView,
@@ -56,9 +55,7 @@ import {
   draftToRequest,
   emptyDraft,
   itemToDraft,
-  parseDebugValues,
   setDraftField,
-  splitList,
   type PromptDraft,
 } from "./prompt-library-request-builders";
 import { trainingSelectedPromptStorageKey } from "./prompt-selection-storage";
@@ -77,6 +74,23 @@ import {
   type RunStatusFilter,
 } from "./run-model";
 import { RunHistoryPanel } from "./run-history-panel";
+import {
+  CaseLibraryEditorPanel,
+  type CaseLibraryEditorCopy,
+} from "./case-library-editor";
+import {
+  buildCaseLibraryCreateRequest,
+  buildCaseSummaries,
+  buildCasesByAsset,
+  buildCaseTagUpdateRequest,
+  buildManualCaseRequest,
+  buildManualCaseUpdateRequest,
+  emptyManualCaseDraft,
+  manualCaseToDraft,
+  uniqueSortedStrings,
+  type CaseSummary,
+  type ManualCaseDraft,
+} from "./case-model";
 
 type WorkbenchTab = TrainingWorkbenchTab;
 
@@ -1183,6 +1197,88 @@ function WorkbenchPanel({
   }
 
   if (activeTab === "用例库") {
+    const caseLibraryCopy: CaseLibraryEditorCopy = {
+      title: t(($) => $.case_library.title),
+      loading: t(($) => $.case_library.loading),
+      count: (datasetCount, caseCount) =>
+        t(($) => $.case_library.count, { datasets: datasetCount, cases: caseCount }),
+      createDataset: t(($) => $.case_library.create_dataset),
+      searchPlaceholder: t(($) => $.case_library.search_placeholder),
+      searchAriaLabel: t(($) => $.case_library.search_aria_label),
+      datasetNamePlaceholder: t(($) => $.case_library.dataset_name_placeholder),
+      datasetDescriptionPlaceholder: t(($) => $.case_library.dataset_description_placeholder),
+      cancel: t(($) => $.case_library.cancel),
+      save: t(($) => $.case_library.save),
+      missingDatasetNameError: t(($) => $.case_library.missing_dataset_name_error),
+      missingCaseNameError: t(($) => $.case_library.missing_case_name_error),
+      missingCaseInputError: t(($) => $.case_library.missing_case_input_error),
+      noDatasets: t(($) => $.case_library.no_datasets),
+      noDatasetSearchResults: t(($) => $.case_library.no_dataset_search_results),
+      noDescription: t(($) => $.case_library.no_description),
+      updatedAt: (value) => t(($) => $.case_library.updated_at, { time: value }),
+      missingTime: t(($) => $.case_library.missing_time),
+      emptyTitle: t(($) => $.case_library.empty_title),
+      emptyDescription: t(($) => $.case_library.empty_description),
+      saveDataset: t(($) => $.case_library.save_dataset),
+      createVersion: t(($) => $.case_library.create_version),
+      edit: t(($) => $.case_library.edit),
+      delete: t(($) => $.case_library.delete),
+      addCase: t(($) => $.case_library.add_case),
+      versionLabel: t(($) => $.case_library.version_label),
+      versionPlaceholder: t(($) => $.case_library.version_placeholder),
+      defaultVersionLabel: t(($) => $.case_library.default_version_label),
+      saveVersion: t(($) => $.case_library.save_version),
+      tagFilterAriaLabel: t(($) => $.case_library.tag_filter_aria_label),
+      allTags: t(($) => $.case_library.all_tags),
+      matchCount: (visible, total) => t(($) => $.case_library.match_count, { visible, total }),
+      newCaseTitle: t(($) => $.case_library.new_case_title),
+      editCaseTitle: t(($) => $.case_library.edit_case_title),
+      saveCase: t(($) => $.case_library.save_case),
+      caseCount: (count) => t(($) => $.case_library.case_count, { count }),
+      caseName: (index) => t(($) => $.case_library.case_name, { index }),
+      sourceLabel: (source) => t(($) => $.case_library.source[source]),
+      inputPrefix: t(($) => $.case_library.input_prefix),
+      expectedPrefix: t(($) => $.case_library.expected_prefix),
+      missingInput: t(($) => $.case_library.missing_input),
+      missingExpected: t(($) => $.case_library.missing_expected),
+      noTags: t(($) => $.case_library.no_tags),
+      noCases: t(($) => $.case_library.no_cases),
+      noCaseFilterResults: t(($) => $.case_library.no_case_filter_results),
+      datasetVersionSummary: (summary) => {
+        const version = summary.version ?? "?";
+        const rows = summary.rowCount ?? "0";
+        const fingerprint = summary.fingerprint ? summary.fingerprint.slice(0, 10) : t(($) => $.case_library.version_history.missing_fingerprint);
+        return t(($) => $.case_library.dataset_version_summary, {
+          version,
+          rows,
+          fingerprint,
+        });
+      },
+      draft: {
+        nameLabel: t(($) => $.case_library.draft.name_label),
+        namePlaceholder: t(($) => $.case_library.draft.name_placeholder),
+        tagsLabel: t(($) => $.case_library.draft.tags_label),
+        tagsPlaceholder: t(($) => $.case_library.draft.tags_placeholder),
+        inputLabel: t(($) => $.case_library.draft.input_label),
+        inputPlaceholder: t(($) => $.case_library.draft.input_placeholder),
+        expectedLabel: t(($) => $.case_library.draft.expected_label),
+        expectedPlaceholder: t(($) => $.case_library.draft.expected_placeholder),
+        cancel: t(($) => $.case_library.draft.cancel),
+      },
+      versionHistory: {
+        title: t(($) => $.case_library.version_history.title),
+        loading: t(($) => $.case_library.version_history.loading),
+        count: (count) => t(($) => $.case_library.version_history.count, { count }),
+        noSnapshots: t(($) => $.case_library.version_history.no_snapshots),
+        emptyDescription: t(($) => $.case_library.version_history.empty_description),
+        unnamedVersion: t(($) => $.case_library.version_history.unnamed_version),
+        latest: t(($) => $.case_library.version_history.latest),
+        rowFingerprint: (rowCount, fingerprint) =>
+          t(($) => $.case_library.version_history.row_fingerprint, { count: rowCount, fingerprint }),
+        missingFingerprint: t(($) => $.case_library.version_history.missing_fingerprint),
+        missingTime: t(($) => $.case_library.version_history.missing_time),
+      },
+    };
     return (
       <CaseLibraryEditorPanel
         assets={assets}
@@ -1209,6 +1305,7 @@ function WorkbenchPanel({
         updatingCaseId={updatingCaseId}
         onDeleteCase={onDeleteCase}
         deletingCaseId={deletingCaseId}
+        copy={caseLibraryCopy}
       />
     );
   }
@@ -1870,558 +1967,6 @@ function FilterButton({
   );
 }
 
-export function CaseLibraryEditorPanel({
-  assets,
-  cases,
-  loading,
-  saving,
-  draft,
-  onDraftChange,
-  onCreateDataset,
-  creatingDataset,
-  onUpdateDataset,
-  updatingDatasetId,
-  onDeleteDataset,
-  deletingDatasetId,
-  onCreateDatasetVersion,
-  creatingDatasetVersionAssetId,
-  onCreateCase,
-  creating,
-  focusedCaseId,
-  onUpdateCase,
-  updatingCaseId,
-  onDeleteCase,
-  deletingCaseId,
-}: {
-  assets: PromptEvaluationAsset[];
-  cases: PromptEvaluationStructuredCase[];
-  loading: boolean;
-  saving: boolean;
-  draft: ManualCaseDraft;
-  onDraftChange: (draft: ManualCaseDraft) => void;
-  onCreateDataset: (name: string, description: string) => void;
-  creatingDataset: boolean;
-  onUpdateDataset: (asset: PromptEvaluationAsset, data: UpdatePromptEvaluationAssetRequest) => void;
-  updatingDatasetId: string | null;
-  onDeleteDataset: (asset: PromptEvaluationAsset) => void;
-  deletingDatasetId: string | null;
-  onCreateDatasetVersion: (asset: PromptEvaluationAsset, versionLabel?: string) => void;
-  creatingDatasetVersionAssetId: string | null;
-  onCreateCase: (asset: PromptEvaluationAsset, draft: ManualCaseDraft) => Promise<unknown>;
-  creating: boolean;
-  focusedCaseId: string | null;
-  onUpdateCase: (caseId: string, data: UpdatePromptEvaluationCaseRequest) => Promise<unknown>;
-  updatingCaseId: string | null;
-  onDeleteCase: (caseId: string) => void;
-  deletingCaseId: string | null;
-}) {
-  const [keywordFilter, setKeywordFilter] = useState("");
-  const [tagFilter, setTagFilter] = useState("全部");
-  const [showCreateForm, setShowCreateForm] = useState(false);
-  const [showDatasetForm, setShowDatasetForm] = useState(false);
-  const [datasetDraft, setDatasetDraft] = useState({ name: "", description: "" });
-  const [editingDataset, setEditingDataset] = useState(false);
-  const [datasetEditDraft, setDatasetEditDraft] = useState({ name: "", description: "" });
-  const [showVersionForm, setShowVersionForm] = useState(false);
-  const [versionLabelDraft, setVersionLabelDraft] = useState("");
-  const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null);
-  const [editingCaseId, setEditingCaseId] = useState<string | null>(null);
-  const [editDrafts, setEditDrafts] = useState<Record<string, ManualCaseDraft>>({});
-  const datasetAssets = useMemo(
-    () => assets.filter((asset) => asset.asset_type === "数据集"),
-    [assets],
-  );
-  const casesByAsset = useMemo(() => buildCasesByAsset(cases), [cases]);
-  const selectedAsset = useMemo(
-    () => datasetAssets.find((asset) => asset.id === selectedAssetId) ?? datasetAssets[0] ?? null,
-    [datasetAssets, selectedAssetId],
-  );
-  const selectedCases = useMemo(
-    () => selectedAsset ? casesByAsset.get(selectedAsset.id) ?? [] : cases,
-    [cases, casesByAsset, selectedAsset],
-  );
-  const caseTags = useMemo(() => uniqueSortedStrings(selectedCases.flatMap((item) => item.tags.map((value) => String(value)).filter(Boolean))), [selectedCases]);
-  const filteredCases = useMemo(() => {
-    const keyword = keywordFilter.trim().toLowerCase();
-    return selectedCases
-      .filter((item) => {
-        const tagOK = tagFilter === "全部" || item.tags.some((value) => String(value) === tagFilter);
-        const keywordOK = !keyword || datasetCaseSearchText(item).includes(keyword);
-        return tagOK && keywordOK;
-      })
-      .toSorted((a, b) => Date.parse(b.updated_at) - Date.parse(a.updated_at) || a.case_index - b.case_index);
-  }, [selectedCases, keywordFilter, tagFilter]);
-  const datasetFilter = keywordFilter.trim().toLowerCase();
-  const filteredAssets = useMemo(() => {
-    if (!datasetFilter) return datasetAssets;
-    return datasetAssets.filter((asset) => {
-      const text = [asset.name, asset.description, summarizeDatasetVersion(asset)].join(" ").toLowerCase();
-      return text.includes(datasetFilter) || matchesPinyin(text, datasetFilter);
-    });
-  }, [datasetAssets, datasetFilter]);
-
-  useEffect(() => {
-    if (selectedAssetId && datasetAssets.some((asset) => asset.id === selectedAssetId)) return;
-    setSelectedAssetId(datasetAssets[0]?.id ?? null);
-  }, [datasetAssets, selectedAssetId]);
-
-  useEffect(() => {
-    setTagFilter("全部");
-    setEditingDataset(false);
-    setShowVersionForm(false);
-    setVersionLabelDraft("");
-    setShowCreateForm(false);
-    setEditingCaseId(null);
-  }, [selectedAssetId]);
-
-  useEffect(() => {
-    if (!selectedAsset) {
-      setDatasetEditDraft({ name: "", description: "" });
-      return;
-    }
-    setDatasetEditDraft({
-      name: selectedAsset.name,
-      description: selectedAsset.description,
-    });
-  }, [selectedAsset]);
-
-  const submitDataset = () => {
-    const name = datasetDraft.name.trim();
-    if (!name) {
-      toast.error("请输入数据集名称");
-      return;
-    }
-    onCreateDataset(name, datasetDraft.description.trim());
-    setDatasetDraft({ name: "", description: "" });
-    setShowDatasetForm(false);
-  };
-
-  const submitDatasetEdit = () => {
-    if (!selectedAsset) return;
-    const name = datasetEditDraft.name.trim();
-    if (!name) {
-      toast.error("请输入数据集名称");
-      return;
-    }
-    onUpdateDataset(selectedAsset, {
-      name,
-      description: datasetEditDraft.description.trim(),
-      asset_type: "数据集",
-      prompt_id: selectedAsset.prompt_id,
-      payload: selectedAsset.payload,
-      status: selectedAsset.status,
-    });
-    setEditingDataset(false);
-  };
-
-  const submitDatasetVersion = () => {
-    if (!selectedAsset) return;
-    onCreateDatasetVersion(selectedAsset, versionLabelDraft.trim() || "手动快照");
-    setShowVersionForm(false);
-    setVersionLabelDraft("");
-  };
-
-  const submitCase = async (asset: PromptEvaluationAsset, caseDraft: ManualCaseDraft) => {
-    if (!caseDraft.caseName.trim()) {
-      toast.error("请输入用例名称");
-      return;
-    }
-    if (!caseDraft.variablesText.trim()) {
-      toast.error("请输入用例输入");
-      return;
-    }
-    await onCreateCase(asset, caseDraft);
-    setShowCreateForm(false);
-  };
-
-  return (
-    <section className="grid min-h-[620px] gap-0 overflow-hidden rounded-md border md:grid-cols-[320px_minmax(0,1fr)]" data-testid="case-library-editor">
-      <aside className="flex min-h-0 flex-col border-b md:border-b-0 md:border-r">
-        <div className="grid gap-3 border-b p-3">
-          <div className="flex items-center justify-between gap-2">
-            <div className="min-w-0">
-              <h2 className="text-base font-semibold">评估数据集</h2>
-              <div className="mt-1 text-xs text-muted-foreground">
-                {loading ? "正在读取数据集" : `${datasetAssets.length} 个数据集 · ${cases.length} 条用例`}
-              </div>
-            </div>
-            <Button size="sm" onClick={() => setShowDatasetForm((value) => !value)} disabled={saving || creatingDataset}>
-              <Plus className="size-3.5" />
-              新建
-            </Button>
-          </div>
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={keywordFilter}
-              onChange={(event) => setKeywordFilter(event.target.value)}
-              placeholder="搜索数据集、用例、标签"
-              aria-label="搜索数据集和用例"
-              className="h-8 pl-8 text-sm"
-            />
-          </div>
-          {showDatasetForm && (
-            <div className="grid gap-2 rounded-md border bg-muted/10 p-2">
-              <Input
-                value={datasetDraft.name}
-                onChange={(event) => setDatasetDraft((current) => ({ ...current, name: event.target.value }))}
-                placeholder="数据集名称"
-                className="h-8 text-sm"
-              />
-              <Input
-                value={datasetDraft.description}
-                onChange={(event) => setDatasetDraft((current) => ({ ...current, description: event.target.value }))}
-                placeholder="描述"
-                className="h-8 text-sm"
-              />
-              <div className="flex justify-end gap-2">
-                <Button size="sm" variant="ghost" onClick={() => setShowDatasetForm(false)}>
-                  取消
-                </Button>
-                <Button size="sm" onClick={submitDataset} disabled={creatingDataset || !datasetDraft.name.trim()}>
-                  {creatingDataset ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-                  保存
-                </Button>
-              </div>
-            </div>
-          )}
-        </div>
-
-        <div className="min-h-0 flex-1 overflow-y-auto">
-          {loading ? (
-            <div className="space-y-2 p-3">
-              {Array.from({ length: 4 }).map((_, index) => (
-                <div key={index} className="h-16 rounded-md bg-muted/60" />
-              ))}
-            </div>
-          ) : filteredAssets.length === 0 ? (
-            <div className="p-6 text-sm text-muted-foreground">
-              {datasetAssets.length === 0 ? "暂无数据集，可以先新建一个评估数据集。" : "当前搜索没有命中数据集。"}
-            </div>
-          ) : (
-            <div className="divide-y" data-testid="case-library-dataset-list">
-              {filteredAssets.map((asset) => {
-                const assetCases = casesByAsset.get(asset.id) ?? [];
-                const selected = selectedAsset?.id === asset.id;
-                return (
-                  <button
-                    key={asset.id}
-                    type="button"
-                    onClick={() => {
-                      setSelectedAssetId(asset.id);
-                      setShowCreateForm(false);
-                      setEditingCaseId(null);
-                    }}
-                    className={`flex w-full flex-col gap-1 px-3 py-3 text-left transition-colors hover:bg-muted/60 ${selected ? "bg-muted" : ""}`}
-                    data-testid={`case-library-dataset-${asset.id}`}
-                  >
-                    <div className="flex min-w-0 items-center gap-2">
-                      <span className="min-w-0 flex-1 truncate text-sm font-medium">{asset.name}</span>
-                      <Badge variant="outline" className="shrink-0 text-[10px]">{assetCases.length}</Badge>
-                    </div>
-                    <div className="truncate text-xs text-muted-foreground">{asset.description || "无描述"}</div>
-                    <div className="truncate text-[11px] text-muted-foreground">
-                      {summarizeDatasetVersion(asset) || `更新于 ${asset.updated_at || "未记录时间"}`}
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
-      </aside>
-
-      <main className="min-h-0 overflow-y-auto p-4">
-        {!selectedAsset && !loading ? (
-          <div className="grid min-h-[360px] place-items-center rounded-md border border-dashed px-4 py-10 text-center text-sm text-muted-foreground" data-testid="case-library-empty">
-            <div>
-              <div className="font-medium text-foreground">还没有评估数据集</div>
-              <div className="mt-1">先新建数据集，再沉淀可复现的评估用例。</div>
-            </div>
-          </div>
-        ) : selectedAsset ? (
-          <div className="grid gap-4">
-            <div className="flex flex-col gap-3 border-b pb-4 md:flex-row md:items-start md:justify-between">
-              <div className="min-w-0 flex-1">
-                {editingDataset ? (
-                  <div className="grid gap-2">
-                    <div className="grid gap-2 md:grid-cols-2">
-                      <Input
-                        value={datasetEditDraft.name}
-                        onChange={(event) => setDatasetEditDraft((current) => ({ ...current, name: event.target.value }))}
-                        placeholder="数据集名称"
-                      />
-                      <Input
-                        value={datasetEditDraft.description}
-                        onChange={(event) => setDatasetEditDraft((current) => ({ ...current, description: event.target.value }))}
-                        placeholder="描述"
-                      />
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <Button size="sm" onClick={submitDatasetEdit} disabled={saving || updatingDatasetId === selectedAsset.id || !datasetEditDraft.name.trim()}>
-                        {updatingDatasetId === selectedAsset.id ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-                        保存数据集
-                      </Button>
-                      <Button size="sm" variant="ghost" onClick={() => setEditingDataset(false)}>
-                        取消
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    <h2 className="truncate text-base font-semibold">{selectedAsset.name}</h2>
-                    <div className="mt-1 text-sm text-muted-foreground">{selectedAsset.description || "无描述"}</div>
-                    <div className="mt-2 flex flex-wrap gap-2 text-xs text-muted-foreground">
-                      <Badge variant="outline">{selectedCases.length} 条用例</Badge>
-                      <span>更新于 {selectedAsset.updated_at || "未记录时间"}</span>
-                    </div>
-                  </>
-                )}
-              </div>
-              <div className="flex shrink-0 flex-wrap gap-2">
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  onClick={() => setShowVersionForm((value) => !value)}
-                  disabled={saving || creatingDatasetVersionAssetId === selectedAsset.id || selectedCases.length === 0}
-                >
-                  {creatingDatasetVersionAssetId === selectedAsset.id ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-                  创建版本
-                </Button>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  data-testid={`edit-case-library-dataset-${selectedAsset.id}`}
-                  onClick={() => setEditingDataset(true)}
-                  disabled={saving || editingDataset}
-                >
-                  编辑
-                </Button>
-                <Button
-                  size="sm"
-                  variant="destructive"
-                  data-testid={`delete-case-library-dataset-${selectedAsset.id}`}
-                  onClick={() => onDeleteDataset(selectedAsset)}
-                  disabled={saving || deletingDatasetId === selectedAsset.id}
-                >
-                  {deletingDatasetId === selectedAsset.id ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
-                  删除
-                </Button>
-                <Button size="sm" onClick={() => setShowCreateForm((value) => !value)} disabled={saving}>
-                  <Plus className="size-3.5" />
-                  新增用例
-                </Button>
-              </div>
-            </div>
-
-            {showVersionForm && (
-              <div className="grid gap-2 rounded-md border bg-muted/10 p-3">
-                <Field label="版本说明">
-                  <Input
-                    value={versionLabelDraft}
-                    onChange={(event) => setVersionLabelDraft(event.target.value)}
-                    placeholder="例如：补充登录失败边界用例"
-                  />
-                </Field>
-                <div className="flex justify-end gap-2">
-                  <Button size="sm" variant="ghost" onClick={() => setShowVersionForm(false)}>
-                    取消
-                  </Button>
-                  <Button size="sm" onClick={submitDatasetVersion} disabled={creatingDatasetVersionAssetId === selectedAsset.id}>
-                    {creatingDatasetVersionAssetId === selectedAsset.id ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-                    保存版本
-                  </Button>
-                </div>
-              </div>
-            )}
-
-            <DatasetVersionHistoryPanel asset={selectedAsset} />
-
-            <div className="flex flex-col gap-2 md:flex-row md:items-center" data-testid="case-library-toolbar">
-              <select
-                aria-label="筛选用例标签"
-                className="h-8 rounded-md border bg-background px-2 text-sm"
-                value={tagFilter}
-                onChange={(event) => setTagFilter(event.target.value)}
-              >
-                <option value="全部">全部标签</option>
-                {caseTags.map((tag) => (
-                  <option key={tag} value={tag}>{tag}</option>
-                ))}
-              </select>
-              <Badge variant="outline" className="h-8 px-2">
-                命中 {filteredCases.length} / {selectedCases.length}
-              </Badge>
-            </div>
-
-            {showCreateForm && (
-              <CaseDraftEditor
-                title="新增用例"
-                draft={draft}
-                onDraftChange={onDraftChange}
-                saving={creating}
-                onSave={() => submitCase(selectedAsset, draft)}
-                onCancel={() => setShowCreateForm(false)}
-                saveLabel="保存用例"
-              />
-            )}
-
-            {filteredCases.length === 0 ? (
-              <div className="rounded-md border border-dashed px-3 py-8 text-center text-sm text-muted-foreground" data-testid="case-library-empty">
-                {selectedCases.length === 0 ? "暂无用例，先新增一条评估用例。" : "当前筛选没有命中用例。"}
-              </div>
-            ) : (
-              <div className="divide-y rounded-md border" data-testid="case-library-case-list">
-                {filteredCases.map((item) => {
-                  const editing = editingCaseId === item.id;
-                  const editDraft = editDrafts[item.id] ?? manualCaseToDraft(item);
-                  const focused = focusedCaseId === item.id;
-                  return (
-                    <div
-                      key={item.id}
-                      className={`grid gap-2 px-3 py-3 ${focused ? "bg-info/5 ring-1 ring-inset ring-info/40" : ""}`}
-                      data-testid={`case-library-case-${item.id}`}
-                    >
-                      <div className="flex min-w-0 flex-col gap-2 md:flex-row md:items-start md:justify-between">
-                        <div className="min-w-0">
-                          <div className="flex min-w-0 flex-wrap items-center gap-2">
-                            <span className="truncate text-sm font-medium">{item.case_name || `用例 ${item.case_index + 1}`}</span>
-                            {item.source !== "manual" && (
-                              <Badge variant="outline" className="text-[11px]">{caseSourceLabel(item.source)}</Badge>
-                            )}
-                          </div>
-                          <div className="mt-2 grid gap-1 text-xs">
-                            <div className="line-clamp-2 text-muted-foreground">
-                              <span className="font-medium text-foreground">输入：</span>{caseLibraryInputText(item) || "未填写输入"}
-                            </div>
-                            <div className="line-clamp-2 text-muted-foreground">
-                              <span className="font-medium text-foreground">期望：</span>{caseLibraryExpectedText(item) || "未填写期望"}
-                            </div>
-                          </div>
-                          <div className="mt-1 truncate text-[11px] text-muted-foreground">
-                            {item.tags.map(String).filter(Boolean).join("、") || "无标签"} · 更新于 {item.updated_at || "未记录时间"}
-                          </div>
-                        </div>
-                        <div className="flex shrink-0 flex-wrap gap-2">
-                          <Button
-                            size="sm"
-                            variant="secondary"
-                            className="h-8"
-                            onClick={() => {
-                              setEditingCaseId(item.id);
-                              setEditDrafts((prev) => ({ ...prev, [item.id]: manualCaseToDraft(item) }));
-                            }}
-                          >
-                            编辑
-                          </Button>
-                          <Button size="sm" variant="destructive" className="h-8" onClick={() => onDeleteCase(item.id)} disabled={deletingCaseId === item.id || saving}>
-                            {deletingCaseId === item.id ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
-                            删除
-                          </Button>
-                        </div>
-                      </div>
-                      {editing && (
-                        <CaseDraftEditor
-                          title="编辑用例"
-                          draft={editDraft}
-                          onDraftChange={(nextDraft) => setEditDrafts((prev) => ({ ...prev, [item.id]: nextDraft }))}
-                          saving={updatingCaseId === item.id}
-                          onSave={async () => {
-                            await onUpdateCase(item.id, buildCaseLibraryUpdateRequest(item, editDraft));
-                            setEditingCaseId(null);
-                          }}
-                          onCancel={() => setEditingCaseId(null)}
-                          saveLabel="保存"
-                        />
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        ) : (
-          <div className="h-28 rounded-md bg-muted/60" />
-        )}
-      </main>
-    </section>
-  );
-}
-
-function CaseDraftEditor({
-  title,
-  draft,
-  onDraftChange,
-  saving,
-  onSave,
-  onCancel,
-  saveLabel,
-}: {
-  title: string;
-  draft: ManualCaseDraft;
-  onDraftChange: (draft: ManualCaseDraft) => void;
-  saving: boolean;
-  onSave: () => Promise<unknown>;
-  onCancel: () => void;
-  saveLabel: string;
-}) {
-  return (
-    <div className="grid gap-3 rounded-md border bg-muted/10 p-3" data-testid="case-library-draft-editor">
-      <div className="text-sm font-medium">{title}</div>
-      <div className="grid gap-3 md:grid-cols-2">
-        <Field label="名称">
-          <Input
-            value={draft.caseName}
-            onChange={(event) => onDraftChange({ ...draft, caseName: event.target.value })}
-            placeholder="例如：登录失败时说明原因"
-          />
-        </Field>
-        <Field label="标签">
-          <Input
-            value={draft.tagsText}
-            onChange={(event) => onDraftChange({ ...draft, tagsText: event.target.value })}
-            placeholder="账号系统, 回归"
-          />
-        </Field>
-      </div>
-      <div className="grid gap-3 md:grid-cols-2">
-        <Field label="输入">
-          <Textarea
-            value={draft.variablesText}
-            onChange={(event) => onDraftChange({ ...draft, variablesText: event.target.value })}
-            className="min-h-28 font-mono text-sm"
-            placeholder="用户输入、问题描述或待评估内容"
-          />
-        </Field>
-        <Field label="期望">
-          <Textarea
-            value={draft.expectedText}
-            onChange={(event) => onDraftChange({ ...draft, expectedText: event.target.value })}
-            className="min-h-28 text-sm"
-            placeholder="期望输出、判断标准或必须覆盖的要点；多行会拆成简单包含断言"
-          />
-        </Field>
-      </div>
-      <div className="flex justify-end gap-2">
-        <Button size="sm" variant="ghost" onClick={onCancel}>
-          取消
-        </Button>
-        <Button size="sm" onClick={() => void onSave()} disabled={saving || !draft.caseName.trim() || !draft.variablesText.trim()}>
-          {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-          {saveLabel}
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-type ManualCaseDraft = {
-  caseName: string;
-  variablesText: string;
-  expectedText: string;
-  tagsText: string;
-};
-
 function ManualCasePanel({
   asset,
   cases,
@@ -2804,190 +2349,6 @@ function caseReviewStatusLabel(status: string): string {
   return status;
 }
 
-function emptyManualCaseDraft(): ManualCaseDraft {
-  return {
-    caseName: "",
-    variablesText: "",
-    expectedText: "",
-    tagsText: "",
-  };
-}
-
-function buildManualCaseRequest(asset: PromptEvaluationAsset, draft: ManualCaseDraft, existingCount: number): CreatePromptEvaluationCaseRequest {
-  const variables = parseDebugValues(draft.variablesText);
-  const expectedContains = splitList(draft.expectedText);
-  const skillScenario = isSkillScenarioPayload(asset.payload) ? asset.payload : null;
-  return {
-    asset_id: asset.id,
-    prompt_id: asset.prompt_id,
-    case_index: existingCount,
-    case_name: draft.caseName.trim(),
-    variables,
-    expected_contains: expectedContains,
-    input: {
-      变量: variables,
-      来源: "训练与评估手工用例",
-      ...(skillScenario ? { skill_scenario: {
-        target: skillScenario.target,
-        scenario: skillScenario.scenario,
-        rubric: skillScenario.rubric,
-      } } : {}),
-    },
-    expected: {
-      期望包含: expectedContains,
-      ...(skillScenario ? { skill_scenario: {
-        rubric_keys: skillScenario.rubric.map((item) => item.key),
-        target_skill_path: skillScenario.target.skill_path,
-      } } : {}),
-    },
-    tags: splitList(draft.tagsText),
-    status: "active",
-  };
-}
-
-function buildCaseLibraryCreateRequest(asset: PromptEvaluationAsset, draft: ManualCaseDraft, existingCount: number): CreatePromptEvaluationCaseRequest {
-  const inputText = draft.variablesText.trim();
-  const expectedText = draft.expectedText.trim();
-  const expectedContains = splitExpectationLines(expectedText);
-  return {
-    asset_id: asset.id,
-    prompt_id: asset.prompt_id,
-    case_index: existingCount,
-    case_name: draft.caseName.trim(),
-    variables: inputText ? { input: inputText } : {},
-    expected_contains: expectedContains,
-    input: {
-      内容: inputText,
-      来源: "用例库手工维护",
-    },
-    expected: {
-      内容: expectedText,
-      期望包含: expectedContains,
-    },
-    tags: splitList(draft.tagsText),
-    status: "active",
-  };
-}
-
-function buildCaseLibraryUpdateRequest(item: PromptEvaluationStructuredCase, draft: ManualCaseDraft): UpdatePromptEvaluationCaseRequest {
-  const inputText = draft.variablesText.trim();
-  const expectedText = draft.expectedText.trim();
-  const expectedContains = splitExpectationLines(expectedText);
-  return {
-    asset_id: item.asset_id,
-    prompt_id: item.prompt_id,
-    case_index: item.case_index,
-    case_name: draft.caseName.trim(),
-    variables: inputText ? { input: inputText } : {},
-    expected_contains: expectedContains,
-    input: {
-      内容: inputText,
-      来源: "用例库手工维护",
-      最近人工维护: new Date().toISOString(),
-    },
-    expected: {
-      内容: expectedText,
-      期望包含: expectedContains,
-    },
-    tags: splitList(draft.tagsText),
-    status: item.status,
-  };
-}
-
-function buildManualCaseUpdateRequest(asset: PromptEvaluationAsset, item: PromptEvaluationStructuredCase, draft: ManualCaseDraft): UpdatePromptEvaluationCaseRequest {
-  const variables = parseDebugValues(draft.variablesText);
-  const expectedContains = splitList(draft.expectedText);
-  const skillScenario = isSkillScenarioPayload(asset.payload) ? asset.payload : null;
-  return {
-    asset_id: asset.id,
-    prompt_id: asset.prompt_id,
-    case_index: item.case_index,
-    case_name: draft.caseName.trim(),
-    variables,
-    expected_contains: expectedContains,
-    input: {
-      变量: variables,
-      来源: "训练与评估手工用例",
-      最近人工维护: new Date().toISOString(),
-      ...(skillScenario ? { skill_scenario: {
-        target: skillScenario.target,
-        scenario: skillScenario.scenario,
-        rubric: skillScenario.rubric,
-      } } : {}),
-    },
-    expected: {
-      期望包含: expectedContains,
-      ...(skillScenario ? { skill_scenario: {
-        rubric_keys: skillScenario.rubric.map((entry) => entry.key),
-        target_skill_path: skillScenario.target.skill_path,
-      } } : {}),
-    },
-    tags: splitList(draft.tagsText),
-    status: item.status,
-  };
-}
-
-function buildCaseTagUpdateRequest(asset: PromptEvaluationAsset, item: PromptEvaluationStructuredCase, tagsText: string): UpdatePromptEvaluationCaseRequest {
-  return {
-    asset_id: asset.id,
-    prompt_id: item.prompt_id ?? asset.prompt_id,
-    case_index: item.case_index,
-    case_name: item.case_name,
-    tags: splitList(tagsText),
-    status: item.status,
-  };
-}
-
-function manualCaseToDraft(item: PromptEvaluationStructuredCase): ManualCaseDraft {
-  return {
-    caseName: item.case_name,
-    variablesText: caseLibraryInputText(item),
-    expectedText: caseLibraryExpectedText(item),
-    tagsText: item.tags.map((value) => String(value)).join(", "),
-  };
-}
-
-type CaseSummary = {
-  total: number;
-  manual: number;
-  payload: number;
-  trace: number;
-};
-
-function buildCaseSummaries(cases: PromptEvaluationStructuredCase[]): Map<string, CaseSummary> {
-  const counts = new Map<string, CaseSummary>();
-  for (const item of cases) {
-    const current = counts.get(item.asset_id) ?? { total: 0, manual: 0, payload: 0, trace: 0 };
-    current.total += 1;
-    if (item.source === "manual") {
-      current.manual += 1;
-    } else if (item.source === "trace") {
-      current.trace += 1;
-    } else {
-      current.payload += 1;
-    }
-    counts.set(item.asset_id, current);
-  }
-  return counts;
-}
-
-function buildCasesByAsset(cases: PromptEvaluationStructuredCase[]): Map<string, PromptEvaluationStructuredCase[]> {
-  const result = new Map<string, PromptEvaluationStructuredCase[]>();
-  for (const item of cases) {
-    const bucket = result.get(item.asset_id) ?? [];
-    bucket.push(item);
-    result.set(item.asset_id, bucket);
-  }
-  for (const bucket of result.values()) {
-    bucket.sort((a, b) => a.case_index - b.case_index || a.case_name.localeCompare(b.case_name, "zh-CN"));
-  }
-  return result;
-}
-
-function uniqueSortedStrings(values: string[]): string[] {
-  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, "zh-CN"));
-}
-
 function summarizeJSONValue(value: unknown): string {
   if (!value || (typeof value === "object" && !Array.isArray(value) && Object.keys(value as Record<string, unknown>).length === 0)) {
     return "无额外配置";
@@ -3023,79 +2384,6 @@ function summarizeStructuredCase(item: PromptEvaluationStructuredCase): string {
   if (variables.length > 0) parts.push(`变量 ${variables.join("、")}`);
   if (expected.length > 0) parts.push(`期望 ${expected.join("、")}`);
   return parts.length > 0 ? parts.join(" · ") : "未填写输入和期望";
-}
-
-function caseLibraryInputText(item: PromptEvaluationStructuredCase): string {
-  const inputRecord = item.input ?? {};
-  const variableRecord = item.variables ?? {};
-  return (
-    stringFromRecord(inputRecord, "内容") ||
-    stringFromRecord(inputRecord, "input") ||
-    stringFromRecord(variableRecord, "input") ||
-    Object.entries(variableRecord).map(([key, value]) => `${key}=${String(value)}`).join("\n")
-  ).trim();
-}
-
-function caseLibraryExpectedText(item: PromptEvaluationStructuredCase): string {
-  const expectedRecord = item.expected ?? {};
-  return (
-    stringFromRecord(expectedRecord, "内容") ||
-    stringFromRecord(expectedRecord, "expected") ||
-    item.expected_contains.map((value) => String(value)).join("\n")
-  ).trim();
-}
-
-function splitExpectationLines(value: string): string[] {
-  return value
-    .split(/[\n\r,，]/)
-    .map((part) => part.trim())
-    .filter(Boolean);
-}
-
-function DatasetVersionHistoryPanel({ asset }: { asset: PromptEvaluationAsset }) {
-  const workspaceId = asset.workspace_id;
-  const versionsQuery = useQuery({
-    queryKey: promptLibraryKeys.datasetVersions(workspaceId, asset.id),
-    queryFn: () => api.listPromptEvaluationDatasetVersions(asset.id, 10),
-    enabled: Boolean(workspaceId && asset.id),
-  });
-  const versions = versionsQuery.data?.items ?? [];
-  return (
-    <section className="grid gap-2 rounded-md border bg-muted/10 p-3" data-testid={`case-library-version-history-${asset.id}`}>
-      <div className="flex items-center justify-between gap-2">
-        <div className="min-w-0">
-          <h3 className="text-sm font-semibold">版本历史</h3>
-          <div className="mt-1 text-xs text-muted-foreground">
-            {versionsQuery.isLoading ? "正在读取版本" : versions.length > 0 ? `${versions.length} 个版本快照` : "暂无版本快照"}
-          </div>
-        </div>
-        {versionsQuery.isFetching && <Loader2 className="size-3.5 animate-spin text-muted-foreground" />}
-      </div>
-      {versions.length === 0 ? (
-        <div className="rounded-md border border-dashed bg-background px-3 py-3 text-sm text-muted-foreground">
-          创建版本后，后续评估和调试可以固定使用这批用例。
-        </div>
-      ) : (
-        <div className="grid gap-2">
-          {versions.slice(0, 5).map((version) => (
-            <div key={version.id} className="grid gap-1 rounded-md border bg-background px-3 py-2 text-xs md:grid-cols-[minmax(0,1fr)_auto]">
-              <div className="min-w-0">
-                <div className="flex min-w-0 flex-wrap items-center gap-2">
-                  <span className="font-medium text-foreground">v{version.version}</span>
-                  <span className="truncate text-foreground">{version.version_label || "未命名版本"}</span>
-                  {versions[0]?.id === version.id && <Badge variant="outline" className="text-[10px]">最新</Badge>}
-                </div>
-                <div className="mt-1 truncate text-muted-foreground">
-                  {version.row_count} 条用例 · 指纹 {version.row_fingerprint ? version.row_fingerprint.slice(0, 10) : "未生成"}
-                </div>
-              </div>
-              <div className="text-muted-foreground md:text-right">{version.created_at || "未记录时间"}</div>
-            </div>
-          ))}
-        </div>
-      )}
-    </section>
-  );
 }
 
 function summarizeAgentRun(asset: PromptEvaluationAsset): string | null {
