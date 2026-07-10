@@ -170,15 +170,6 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 		}
 	}
 
-	// Quick-create tasks: push a failure inbox notification to the
-	// requester so they can either retry or fall back to the advanced form
-	// without losing their original prompt. Skipped when an auto-retry is
-	// pending — the new attempt will write its own outcome.
-	if retried == nil {
-		if qc, ok := s.parseQuickCreateContext(task); ok {
-			s.notifyQuickCreateFailed(ctx, task, qc, errMsg)
-		}
-	}
 	// Reconcile agent status
 	s.ReconcileAgentStatus(ctx, task.AgentID)
 

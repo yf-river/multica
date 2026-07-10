@@ -267,6 +267,10 @@ func main() {
 		slog.Error("register durable activity consumers", "error", err)
 		os.Exit(1)
 	}
+	if err := registerDurableQuickCreateConsumers(eventDispatcher); err != nil {
+		slog.Error("register durable quick-create consumers", "error", err)
+		os.Exit(1)
+	}
 	if err := registerDurableAutopilotConsumers(eventDispatcher); err != nil {
 		slog.Error("register durable autopilot consumers", "error", err)
 		os.Exit(1)

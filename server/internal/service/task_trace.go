@@ -62,7 +62,7 @@ func (s *TaskService) buildTaskUserInputMetadata(ctx context.Context, task db.Ag
 	case task.AutopilotRunID.Valid:
 		return s.buildAutopilotUserInputMetadata(ctx, task, task.AutopilotRunID)
 	default:
-		if qc, ok := s.parseQuickCreateContext(task); ok {
+		if qc, ok := ParseQuickCreateContext(task); ok {
 			return s.buildQuickCreateUserInputMetadata(task, qc)
 		}
 		if task.IssueID.Valid {
@@ -644,7 +644,7 @@ func (s *TaskService) taskMetricsContext(ctx context.Context, task db.AgentTaskQ
 	case task.AutopilotRunID.Valid:
 		source = "autopilot"
 	default:
-		if _, ok := s.parseQuickCreateContext(task); ok {
+		if _, ok := ParseQuickCreateContext(task); ok {
 			source = "quick_create"
 		} else if tc.Source != "" {
 			source = tc.Source
@@ -729,7 +729,7 @@ func (s *TaskService) taskAnalyticsContext(ctx context.Context, task db.AgentTas
 			}
 		}
 	}
-	if qc, ok := s.parseQuickCreateContext(task); ok {
+	if qc, ok := ParseQuickCreateContext(task); ok {
 		tc.WorkspaceID = qc.WorkspaceID
 		tc.UserID = qc.RequesterID
 		tc.Source = analytics.SourceManual
@@ -809,7 +809,7 @@ func (s *TaskService) buildTaskTraceEventParams(ctx context.Context, task db.Age
 			}
 		}
 	}
-	if qc, ok := s.parseQuickCreateContext(task); ok {
+	if qc, ok := ParseQuickCreateContext(task); ok {
 		if !workspaceID.Valid && qc.WorkspaceID != "" {
 			if parsed, err := util.ParseUUID(qc.WorkspaceID); err == nil {
 				workspaceID = parsed

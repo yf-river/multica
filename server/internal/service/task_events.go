@@ -217,7 +217,7 @@ func (s *TaskService) resolveTaskWorkspaceID(ctx context.Context, queries *db.Qu
 			return "", err
 		}
 	}
-	if quickCreate, ok := s.parseQuickCreateContext(task); ok {
+	if quickCreate, ok := ParseQuickCreateContext(task); ok {
 		return quickCreate.WorkspaceID, nil
 	}
 

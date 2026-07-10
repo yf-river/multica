@@ -300,8 +300,8 @@ func squadSOPProfileSummary(profile []byte) (profileKey, currentStepKey, current
 
 // QuickCreateContext is the JSON payload stored on a quick-create task's
 // context column. The daemon detects this variant via Type == "quick_create"
-// and switches to the quick-create prompt template; the completion path
-// uses RequesterID + WorkspaceID to write the inbox notification.
+// and switches to the quick-create prompt template; the durable terminal
+// projection uses RequesterID + WorkspaceID for requester-facing results.
 //
 // ProjectID is the optional project the user picked in the modal. When
 // non-empty the daemon claim handler resolves the project's title +

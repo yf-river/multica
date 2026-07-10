@@ -152,16 +152,6 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 		}
 	}
 
-	// Quick-create tasks: locate the issue the agent just created and push
-	// an inbox confirmation to the requester. The agent has no issue / chat
-	// link, so the regular completion paths above don't apply. We find the
-	// new issue by querying for the most recent issue this agent created in
-	// the requester's workspace since the task started — more robust than
-	// parsing the agent's stdout for an identifier.
-	if qc, ok := s.parseQuickCreateContext(task); ok {
-		s.notifyQuickCreateCompleted(ctx, task, qc)
-	}
-
 	// For chat tasks, save assistant reply and broadcast chat:done. The
 	// resume pointer was already persisted inside the transaction above.
 	if task.ChatSessionID.Valid {

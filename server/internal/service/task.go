@@ -22,7 +22,6 @@ import (
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
-	"github.com/multica-ai/multica/server/pkg/redact"
 )
 
 type TaskService struct {
@@ -522,12 +521,12 @@ func issueMetadataMap(raw []byte) map[string]any {
 	return metadata
 }
 
-// parseQuickCreateContext returns the quick-create payload if the task's
+// ParseQuickCreateContext returns the quick-create payload if the task's
 // context JSONB contains type == "quick_create"; otherwise the bool is
 // false so callers can short-circuit. Tasks linked to an issue / chat /
 // autopilot are never quick-create even if they happen to carry a
 // context blob, so those are filtered up front.
-func (s *TaskService) parseQuickCreateContext(task db.AgentTaskQueue) (QuickCreateContext, bool) {
+func ParseQuickCreateContext(task db.AgentTaskQueue) (QuickCreateContext, bool) {
 	if task.IssueID.Valid || task.ChatSessionID.Valid || task.AutopilotRunID.Valid {
 		return QuickCreateContext{}, false
 	}
@@ -559,191 +558,6 @@ func ParseIssueSourceSummaryContext(task db.AgentTaskQueue) (IssueSourceSummaryC
 		return IssueSourceSummaryContext{}, false
 	}
 	return sc, true
-}
-
-// notifyQuickCreateCompleted writes a success inbox notification to the
-// requester pointing at the issue the agent just created. The issue is
-// stamped with origin_type=quick_create + origin_id=<task_id> by the
-// daemon-injected MULTICA_QUICK_CREATE_TASK_ID env var, so this lookup is
-// deterministic — robust against the same agent creating other issues in
-// parallel (e.g. assignment task running while max_concurrent_tasks > 1
-// permits another quick-create alongside it).
-func (s *TaskService) notifyQuickCreateCompleted(ctx context.Context, task db.AgentTaskQueue, qc QuickCreateContext) {
-	requesterID, err := util.ParseUUID(qc.RequesterID)
-	if err != nil {
-		slog.Warn("quick-create completion: invalid requester id", "task_id", util.UUIDToString(task.ID), "error", err)
-		return
-	}
-	workspaceID, err := util.ParseUUID(qc.WorkspaceID)
-	if err != nil {
-		slog.Warn("quick-create completion: invalid workspace id", "task_id", util.UUIDToString(task.ID), "error", err)
-		return
-	}
-	issue, err := s.Queries.GetIssueByOrigin(ctx, db.GetIssueByOriginParams{
-		WorkspaceID: workspaceID,
-		OriginType:  pgtype.Text{String: "quick_create", Valid: true},
-		OriginID:    task.ID,
-	})
-	if err != nil {
-		// No issue created — agent ran to completion but the CLI call must
-		// have failed. Surface as a failure inbox so the user sees something.
-		slog.Warn("quick-create completion: no issue found, writing failure inbox",
-			"task_id", util.UUIDToString(task.ID),
-			"agent_id", util.UUIDToString(task.AgentID),
-			"workspace_id", qc.WorkspaceID,
-		)
-		s.notifyQuickCreateFailed(ctx, task, qc, "agent finished without creating an issue")
-		return
-	}
-
-	// Link the new issue back to this task so subsequent reads of the task
-	// (Activity tab, Recent work, etc.) render it as a normal issue task
-	// (kind = "direct") instead of staying on the "Creating issue" active-
-	// wording label. Best-effort: a write failure here doesn't block the
-	// inbox notification, which is the more important signal to the user.
-	if err := s.Queries.LinkTaskToIssue(ctx, db.LinkTaskToIssueParams{
-		ID:      task.ID,
-		IssueID: issue.ID,
-	}); err != nil {
-		slog.Warn("quick-create completion: link task→issue failed",
-			"task_id", util.UUIDToString(task.ID),
-			"issue_id", util.UUIDToString(issue.ID),
-			"error", err,
-		)
-	}
-
-	// Subscribe the requester so they receive notifications for follow-up
-	// comments and updates. The DB row's creator_type/creator_id is the
-	// agent (it ran the CLI), but the human who triggered the quick-create
-	// is the semantic creator from a UX perspective — without this they
-	// only see the one-shot completion inbox and miss everything after.
-	// Best-effort: log on failure but don't block the inbox notification.
-	if err := s.Queries.AddIssueSubscriber(ctx, db.AddIssueSubscriberParams{
-		IssueID:  issue.ID,
-		UserType: "member",
-		UserID:   requesterID,
-		Reason:   "creator",
-	}); err != nil {
-		slog.Warn("quick-create completion: subscribe requester failed",
-			"task_id", util.UUIDToString(task.ID),
-			"issue_id", util.UUIDToString(issue.ID),
-			"requester_id", qc.RequesterID,
-			"error", err,
-		)
-	} else {
-		s.Bus.Publish(events.Event{
-			Type:        protocol.EventSubscriberAdded,
-			WorkspaceID: qc.WorkspaceID,
-			ActorType:   "agent",
-			ActorID:     util.UUIDToString(task.AgentID),
-			Payload: map[string]any{
-				"issue_id":  util.UUIDToString(issue.ID),
-				"user_type": "member",
-				"user_id":   qc.RequesterID,
-				"reason":    "creator",
-			},
-		})
-	}
-	prefix := s.getIssuePrefix(workspaceID)
-	identifier := fmt.Sprintf("%s-%d", prefix, issue.Number)
-	details, _ := json.Marshal(map[string]any{
-		"task_id":         util.UUIDToString(task.ID),
-		"agent_id":        util.UUIDToString(task.AgentID),
-		"issue_id":        util.UUIDToString(issue.ID),
-		"identifier":      identifier,
-		"original_prompt": qc.Prompt,
-	})
-	item, err := s.Queries.CreateInboxItem(ctx, db.CreateInboxItemParams{
-		WorkspaceID:   workspaceID,
-		RecipientType: "member",
-		RecipientID:   requesterID,
-		Type:          "quick_create_done",
-		Severity:      "info",
-		IssueID:       issue.ID,
-		Title:         issue.Title,
-		Body:          pgtype.Text{},
-		ActorType:     pgtype.Text{String: "agent", Valid: true},
-		ActorID:       task.AgentID,
-		Details:       details,
-	})
-	if err != nil {
-		slog.Error("quick-create completion: inbox write failed", "task_id", util.UUIDToString(task.ID), "error", err)
-		return
-	}
-	s.publishQuickCreateInbox(item, qc.WorkspaceID, util.UUIDToString(task.AgentID), issue.Status)
-}
-
-// notifyQuickCreateFailed writes a failure inbox notification carrying the
-// original prompt + agent ID so the frontend can render an "Edit as
-// advanced form" entry that pre-fills the legacy create-issue modal
-// without asking the user to retype.
-func (s *TaskService) notifyQuickCreateFailed(ctx context.Context, task db.AgentTaskQueue, qc QuickCreateContext, errMsg string) {
-	requesterID, err := util.ParseUUID(qc.RequesterID)
-	if err != nil {
-		return
-	}
-	workspaceID, err := util.ParseUUID(qc.WorkspaceID)
-	if err != nil {
-		return
-	}
-	if errMsg == "" {
-		errMsg = "Quick create did not finish successfully"
-	}
-	details, _ := json.Marshal(map[string]any{
-		"task_id":         util.UUIDToString(task.ID),
-		"agent_id":        util.UUIDToString(task.AgentID),
-		"original_prompt": qc.Prompt,
-		"error":           redact.Text(errMsg),
-	})
-	item, err := s.Queries.CreateInboxItem(ctx, db.CreateInboxItemParams{
-		WorkspaceID:   workspaceID,
-		RecipientType: "member",
-		RecipientID:   requesterID,
-		Type:          "quick_create_failed",
-		Severity:      "action_required",
-		IssueID:       pgtype.UUID{},
-		Title:         "Quick create failed",
-		Body:          pgtype.Text{String: redact.Text(errMsg), Valid: true},
-		ActorType:     pgtype.Text{String: "agent", Valid: true},
-		ActorID:       task.AgentID,
-		Details:       details,
-	})
-	if err != nil {
-		slog.Error("quick-create failure: inbox write failed", "task_id", util.UUIDToString(task.ID), "error", err)
-		return
-	}
-	s.publishQuickCreateInbox(item, qc.WorkspaceID, util.UUIDToString(task.AgentID), "")
-}
-
-// publishQuickCreateInbox emits the WS event so the requester's inbox list
-// updates immediately. Mirrors the payload shape used by the other inbox
-// listeners (notification_listeners.go).
-func (s *TaskService) publishQuickCreateInbox(item db.InboxItem, workspaceID, agentID, issueStatus string) {
-	resp := map[string]any{
-		"id":             util.UUIDToString(item.ID),
-		"workspace_id":   util.UUIDToString(item.WorkspaceID),
-		"recipient_type": item.RecipientType,
-		"recipient_id":   util.UUIDToString(item.RecipientID),
-		"type":           item.Type,
-		"severity":       item.Severity,
-		"issue_id":       util.UUIDToPtr(item.IssueID),
-		"title":          item.Title,
-		"body":           util.TextToPtr(item.Body),
-		"read":           item.Read,
-		"archived":       item.Archived,
-		"created_at":     util.TimestampToString(item.CreatedAt),
-		"actor_type":     util.TextToPtr(item.ActorType),
-		"actor_id":       util.UUIDToPtr(item.ActorID),
-		"details":        json.RawMessage(item.Details),
-		"issue_status":   issueStatus,
-	}
-	s.Bus.Publish(events.Event{
-		Type:        protocol.EventInboxNew,
-		WorkspaceID: workspaceID,
-		ActorType:   "agent",
-		ActorID:     agentID,
-		Payload:     map[string]any{"item": resp},
-	})
 }
 
 // agentToMap builds a simple map for broadcasting agent status updates.
