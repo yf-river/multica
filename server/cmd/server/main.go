@@ -287,11 +287,12 @@ func main() {
 		}
 
 		metricsRegistry := obsmetrics.NewRegistry(obsmetrics.RegistryOptions{
-			Pool:     pool,
-			Realtime: realtime.M,
-			DaemonWS: daemonws.M,
-			Version:  version,
-			Commit:   commit,
+			Pool:       pool,
+			OutboxPool: samplerPool,
+			Realtime:   realtime.M,
+			DaemonWS:   daemonws.M,
+			Version:    version,
+			Commit:     commit,
 			BusinessSampler: func() *obsmetrics.BusinessSamplerOptions {
 				if samplerPool == nil {
 					return nil

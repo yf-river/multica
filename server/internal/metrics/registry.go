@@ -24,6 +24,7 @@ type RegistryOptions struct {
 	// METRICS_ADDR) cannot accidentally start hitting the database on
 	// every /metrics scrape.
 	BusinessSampler *BusinessSamplerOptions
+	OutboxPool      *pgxpool.Pool
 }
 
 type Registry struct {
@@ -34,6 +35,7 @@ type Registry struct {
 	// supplied with a valid Pool. Exposed so the cmd/server entrypoint
 	// can plumb the same instance into health checks if it ever wants to.
 	Sampler *BusinessSamplerCollector
+	Outbox  *OutboxCollector
 }
 
 func NewRegistry(opts RegistryOptions) *Registry {
@@ -68,12 +70,17 @@ func NewRegistry(opts RegistryOptions) *Registry {
 	if sampler != nil {
 		reg.MustRegister(sampler.Collectors()...)
 	}
+	outbox := NewOutboxCollector(opts.OutboxPool)
+	if outbox != nil {
+		reg.MustRegister(outbox)
+	}
 
 	return &Registry{
 		Gatherer: reg,
 		HTTP:     httpMetrics,
 		Business: businessMetrics,
 		Sampler:  sampler,
+		Outbox:   outbox,
 	}
 }
 
