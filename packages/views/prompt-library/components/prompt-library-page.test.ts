@@ -4,12 +4,14 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 import {
   CaseLibraryEditorPanel,
-  allPromptTrialVariablesFilled,
-  extractPromptVariables,
   promptDraftSyncKey,
   resolvePromptSelection,
-  summarizePromptTrialVariables,
 } from "./prompt-library-page";
+import {
+  allPromptTrialVariablesFilled,
+  extractPromptVariables,
+  summarizePromptTrialVariables,
+} from "./prompt-trial-model";
 import { draftToRequest, type PromptDraft } from "./prompt-library-request-builders";
 import type { PromptEvaluationAsset, PromptEvaluationStructuredCase } from "@multica/core/types";
 
@@ -69,7 +71,7 @@ describe("prompt library template variables", () => {
     expect(summarizePromptTrialVariables({ 任务标题: "登录失败", 项目背景: "账号系统", empty: " " })).toBe(
       "任务标题=登录失败，项目背景=账号系统",
     );
-    expect(summarizePromptTrialVariables({})).toBe("无变量");
+    expect(summarizePromptTrialVariables({})).toBeNull();
   });
 });
 

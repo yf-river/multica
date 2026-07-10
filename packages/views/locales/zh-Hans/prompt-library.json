@@ -1,0 +1,32 @@
+{
+  "shared": {
+    "unknown_time": "未记录时间"
+  },
+  "version_history": {
+    "unsaved": "保存后会生成第一个不可变版本记录。",
+    "title": "版本历史",
+    "loading": "正在读取版本链",
+    "summary": "{{count}} 个版本记录 · 当前版本 {{version}}",
+    "empty": "暂无版本历史。保存后创建的版本会显示在这里。",
+    "version": "版本 {{version}}",
+    "candidate": "候选 {{id}}"
+  },
+  "trial": {
+    "title": "Agent 试跑",
+    "saved_version": "使用已保存版本 v{{version}}",
+    "save_first": "保存提示词后可以选择 Agent 试跑",
+    "run": "试跑",
+    "agent": "执行 Agent",
+    "agents_loading": "正在读取 Agent",
+    "no_agents": "暂无可用 Agent",
+    "variables": "试跑变量",
+    "variable": "变量：{{name}}",
+    "no_variables": "该提示词没有变量，将直接使用当前版本试跑。",
+    "recent": "最近试跑",
+    "empty": "暂无试跑记录",
+    "unknown_agent": "未知 Agent",
+    "variables_summary": "变量：{{value}}",
+    "no_variables_short": "无变量",
+    "output": "输出：{{value}}"
+  }
+}

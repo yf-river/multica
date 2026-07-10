@@ -26,6 +26,7 @@ import type usage from "../locales/zh-Hans/usage.json";
 import type squads from "../locales/zh-Hans/squads.json";
 import type agentPlayground from "../locales/zh-Hans/agent-playground.json";
 import type runReviews from "../locales/zh-Hans/run-reviews.json";
+import type promptLibrary from "../locales/zh-Hans/prompt-library.json";
 
 // Module augmentation enables i18next v26 selector API across the monorepo:
 // `t($ => $.signin.title)` resolves to the value in zh-Hans/auth.json.
@@ -66,6 +67,7 @@ declare global {
     squads: typeof squads;
     "agent-playground": typeof agentPlayground;
     "run-reviews": typeof runReviews;
+    "prompt-library": typeof promptLibrary;
   }
 }
 

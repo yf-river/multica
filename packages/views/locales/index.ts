@@ -23,6 +23,7 @@ import zhHansUi from "./zh-Hans/ui.json";
 import zhHansSquads from "./zh-Hans/squads.json";
 import zhHansAgentPlayground from "./zh-Hans/agent-playground.json";
 import zhHansRunReviews from "./zh-Hans/run-reviews.json";
+import zhHansPromptLibrary from "./zh-Hans/prompt-library.json";
 
 export const RESOURCES: Record<SupportedLocale, LocaleResources> = {
   "zh-Hans": {
@@ -50,5 +51,6 @@ export const RESOURCES: Record<SupportedLocale, LocaleResources> = {
     squads: zhHansSquads,
     "agent-playground": zhHansAgentPlayground,
     "run-reviews": zhHansRunReviews,
+    "prompt-library": zhHansPromptLibrary,
   },
 };

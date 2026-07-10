@@ -25,7 +25,6 @@ import {
   type TrainingWorkbenchViewId,
 } from "@multica/core/training";
 import type {
-  Agent,
   CreatePromptLibraryItemRequest,
   CreatePromptLibraryTrialRequest,
   CreatePromptLibraryVersionRequest,
@@ -47,7 +46,6 @@ import type {
   Project,
   ProjectResource,
   PromptLibraryItem,
-  PromptLibraryTrial,
   PromptLibraryVersion,
   UpdatePromptEvaluationAssetRequest,
   UpdatePromptEvaluationOptimizationCandidateRequest,
@@ -71,6 +69,9 @@ import {
   type PromptDraft,
 } from "./prompt-library-request-builders";
 import { trainingSelectedPromptStorageKey } from "./prompt-selection-storage";
+import { PromptTrialPanel, PromptVersionHistory } from "./prompt-editor-panels";
+import { Field } from "./form-field";
+import { extractPromptVariables } from "./prompt-trial-model";
 
 const promptLibraryKeys = {
   list: (workspaceId: string) => ["prompt-library", workspaceId, "list"] as const,
@@ -128,27 +129,6 @@ function collectIssueExecutionTaskIds(tree: IssueExecutionTreeResponse | undefin
   };
   visit(tree.root);
   return [...ids];
-}
-
-export function extractPromptVariables(content: string): string[] {
-  const names = new Set<string>();
-  for (const match of content.matchAll(/\{\{\s*([^{}\n\r]+?)\s*\}\}/g)) {
-    const name = match[1]?.trim();
-    if (name) names.add(name);
-  }
-  return [...names];
-}
-
-export function allPromptTrialVariablesFilled(variableNames: string[], variables: Record<string, string>): boolean {
-  return variableNames.every((name) => Boolean(variables[name]?.trim()));
-}
-
-export function summarizePromptTrialVariables(variables: Record<string, unknown> | null | undefined): string {
-  const entries = Object.entries(variables ?? {})
-    .map(([name, value]) => [name.trim(), String(value ?? "").trim()] as const)
-    .filter(([name, value]) => name && value);
-  if (entries.length === 0) return "无变量";
-  return entries.map(([name, value]) => `${name}=${value}`).join("，");
 }
 
 export function resolvePromptSelection(
@@ -1142,190 +1122,6 @@ export function PromptLibraryPage({
         </main>
       )}
     </div>
-  );
-}
-
-function PromptVersionHistory({
-  selected,
-  versions,
-  activeVersionId,
-  onSelectVersion,
-  loading,
-}: {
-  selected: PromptLibraryItem | null;
-  versions: PromptLibraryVersion[];
-  activeVersionId: string | null;
-  onSelectVersion: (versionId: string) => void;
-  loading: boolean;
-}) {
-  if (!selected) {
-    return (
-      <section className="rounded-md border border-dashed bg-muted/10 px-3 py-3 text-sm text-muted-foreground">
-        保存后会生成第一个不可变版本记录。
-      </section>
-    );
-  }
-  return (
-    <section className="rounded-md border bg-muted/10 p-3" data-testid="prompt-version-history">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0">
-          <h3 className="text-sm font-semibold">版本历史</h3>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {loading ? "正在读取版本链" : `${versions.length} 个版本记录 · 当前版本 ${selected.version}`}
-          </p>
-        </div>
-      </div>
-      {versions.length === 0 ? (
-        <div className="mt-3 rounded-md border border-dashed bg-background px-3 py-3 text-sm text-muted-foreground">
-          暂无版本历史；旧数据会在迁移中回填为“历史回填”。
-        </div>
-      ) : (
-        <div className="mt-3 grid gap-2">
-          {versions.slice(0, 4).map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => onSelectVersion(item.id)}
-              className={`grid gap-1 rounded-md border bg-background px-3 py-2 text-left text-xs transition-colors hover:bg-muted/60 md:grid-cols-[minmax(0,1fr)_auto] ${
-                activeVersionId === item.id ? "border-primary" : ""
-              }`}
-            >
-              <div className="min-w-0">
-                <div className="flex min-w-0 flex-wrap items-center gap-2">
-                  <span className="font-medium text-foreground">版本 {item.version}</span>
-                  {item.source_candidate_id && <span className="text-muted-foreground">候选 {item.source_candidate_id}</span>}
-                </div>
-                {item.change_note && <div className="mt-1 truncate text-foreground">{item.change_note}</div>}
-                <div className="mt-1 truncate text-muted-foreground">{item.content}</div>
-              </div>
-              <div className="text-muted-foreground md:text-right">{item.created_at || "未记录时间"}</div>
-            </button>
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function PromptTrialPanel({
-  selected,
-  activeVersion,
-  agents,
-  agentsLoading,
-  selectedAgentId,
-  onSelectedAgentIdChange,
-  variableNames,
-  variables,
-  onVariablesChange,
-  trials,
-  trialsLoading,
-  running,
-  onRun,
-}: {
-  selected: PromptLibraryItem | null;
-  activeVersion: PromptLibraryVersion | null;
-  agents: Agent[];
-  agentsLoading: boolean;
-  selectedAgentId: string;
-  onSelectedAgentIdChange: (agentId: string) => void;
-  variableNames: string[];
-  variables: Record<string, string>;
-  onVariablesChange: Dispatch<SetStateAction<Record<string, string>>>;
-  trials: PromptLibraryTrial[];
-  trialsLoading: boolean;
-  running: boolean;
-  onRun: () => void;
-}) {
-  const agentNameById = useMemo(() => new Map(agents.map((agent) => [agent.id, agent.name])), [agents]);
-  const canRun = Boolean(selected && activeVersion && selectedAgentId && allPromptTrialVariablesFilled(variableNames, variables));
-
-  return (
-    <section className="rounded-md border bg-muted/10 p-3">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0">
-          <h3 className="text-sm font-semibold">Agent 试跑</h3>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {activeVersion ? `使用已保存版本 v${activeVersion.version}` : "保存提示词后可以选择 Agent 试跑"}
-          </p>
-        </div>
-        <Button size="sm" onClick={onRun} disabled={!canRun || running}>
-          {running ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
-          试跑
-        </Button>
-      </div>
-
-      <div className="mt-3 grid gap-3 md:grid-cols-[240px_minmax(0,1fr)]">
-        <Field label="执行 Agent">
-          <select
-            value={selectedAgentId}
-            onChange={(event) => onSelectedAgentIdChange(event.target.value)}
-            disabled={!selected || agentsLoading || agents.length === 0}
-            className="h-9 w-full rounded-md border bg-background px-2 text-sm"
-          >
-            {agents.length === 0 ? (
-              <option value="">{agentsLoading ? "正在读取 Agent" : "暂无可用 Agent"}</option>
-            ) : (
-              agents.map((agent) => (
-                <option key={agent.id} value={agent.id}>
-                  {agent.name}
-                </option>
-              ))
-            )}
-          </select>
-        </Field>
-        <div className="grid gap-3">
-          <div className="text-xs font-medium text-muted-foreground">试跑变量</div>
-          {variableNames.length > 0 ? (
-            <div className="grid gap-3 md:grid-cols-2">
-              {variableNames.map((name) => (
-                <Field key={name} label={`变量：${name}`}>
-                  <Input
-                    value={variables[name] ?? ""}
-                    onChange={(event) =>
-                      onVariablesChange((current) => ({
-                        ...current,
-                        [name]: event.target.value,
-                      }))
-                    }
-                    disabled={!selected}
-                  />
-                </Field>
-              ))}
-            </div>
-          ) : (
-            <div className="rounded-md border border-dashed bg-background px-3 py-3 text-sm text-muted-foreground">
-              该提示词没有变量，将直接使用当前版本试跑。
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div className="mt-4 border-t pt-3">
-        <div className="mb-2 flex items-center justify-between">
-          <h4 className="text-xs font-medium text-muted-foreground">最近试跑</h4>
-          {trialsLoading && <Loader2 className="size-3.5 animate-spin text-muted-foreground" />}
-        </div>
-        {trials.length === 0 ? (
-          <div className="rounded-md border border-dashed bg-background px-3 py-3 text-sm text-muted-foreground">
-            暂无试跑记录
-          </div>
-        ) : (
-          <div className="grid gap-2">
-            {trials.slice(0, 5).map((trial) => (
-              <div key={trial.id} className="grid gap-1 rounded-md border bg-background px-3 py-2 text-xs">
-                <div className="flex min-w-0 flex-wrap items-center gap-2">
-                  <Badge variant="outline">{trial.status || "queued"}</Badge>
-                  <span className="truncate text-foreground">{agentNameById.get(trial.agent_id) ?? "未知 Agent"}</span>
-                  <span className="text-muted-foreground">{trial.created_at || "未记录时间"}</span>
-                </div>
-                <div className="truncate text-muted-foreground">变量：{summarizePromptTrialVariables(trial.variables)}</div>
-                {trial.output_preview && <div className="truncate text-muted-foreground">输出：{trial.output_preview}</div>}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </section>
   );
 }
 
@@ -3933,15 +3729,6 @@ function datasetCaseSearchText(item: PromptEvaluationStructuredCase) {
 }
 
 type DatasetCaseSourceFilter = "全部" | "手工" | "trace导入" | "资产载荷";
-
-function Field({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <label className="grid gap-1.5 text-sm">
-      <span className="text-xs font-medium text-muted-foreground">{label}</span>
-      {children}
-    </label>
-  );
-}
 
 function tabToAssetType(tab: WorkbenchTab): PromptEvaluationAssetType | null {
   if (tab === "用例库") return "数据集";
