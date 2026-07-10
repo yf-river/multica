@@ -1777,7 +1777,7 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 	if recent["trace/task id"] != resp.TaskID || recent["状态"] != "已入队" || recent["评估结论"] != "等待智能体执行完成" {
 		t.Fatalf("recent agent run = %#v", recent)
 	}
-	if resp.Run.ID == "" || resp.Run.Status != "已入队" || resp.Run.RunKind != "Agent执行" || resp.Run.TaskID == nil || *resp.Run.TaskID != resp.TaskID {
+	if resp.Run.ID == "" || resp.Run.Status != "已入队" || resp.Run.RunKind != "Agent执行" || resp.Run.TriggerSource != "评测运行" || resp.Run.TaskID == nil || *resp.Run.TaskID != resp.TaskID {
 		t.Fatalf("agent structured run response = %+v", resp.Run)
 	}
 	var runStatus, runKind, taskID, chatSessionID, trialStatus string

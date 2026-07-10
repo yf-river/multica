@@ -143,9 +143,9 @@ test.describe("Issues", () => {
     const dialog = page.getByRole("dialog");
     await expect(dialog.getByText("通过智能体创建")).toBeVisible();
     await expect(
-      dialog.getByPlaceholder(
-        '告诉智能体要做什么，例如："让 Bohan 修一下 Web 项目里收件箱加载慢的问题"',
-      ),
+      dialog.getByRole("textbox", {
+        name: '告诉智能体要做什么，例如："让 Bohan 修一下 Web 项目里收件箱加载慢的问题"',
+      }),
     ).toBeVisible();
   });
 
@@ -198,14 +198,12 @@ test.describe("Issues", () => {
   test("can dismiss issue creation", async ({ page }) => {
     await page.getByRole("button", { name: "新建任务" }).click();
 
-    const promptInput = page.getByPlaceholder(
-      '告诉智能体要做什么，例如："让 Bohan 修一下 Web 项目里收件箱加载慢的问题"',
-    );
-    await expect(promptInput).toBeVisible();
+    const dialog = page.getByRole("dialog", { name: "快速创建任务" });
+    await expect(dialog).toBeVisible();
 
     await page.keyboard.press("Escape");
 
-    await expect(promptInput).not.toBeVisible();
+    await expect(dialog).not.toBeVisible();
     await expect(page.getByRole("button", { name: "新建任务" })).toBeVisible();
   });
 });

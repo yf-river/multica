@@ -39,8 +39,7 @@ test.describe("Chat attachments", () => {
   let api: TestApiClient;
   let pgClient: pg.Client | null = null;
   let createdSessionId: string | null = null;
-  let createdAgentId: string | null = null;
-  let createdRuntimeId: string | null = null;
+  let createdWorkspaceSlug: string | null = null;
 
   test.beforeEach(async () => {
     api = await createTestApi();
@@ -50,23 +49,17 @@ test.describe("Chat attachments", () => {
 
   test.afterEach(async () => {
     try {
-      if (pgClient) {
-        if (createdSessionId) {
-          await pgClient.query(`DELETE FROM chat_session WHERE id = $1`, [createdSessionId]);
-        }
-        if (createdAgentId) {
-          await pgClient.query(`DELETE FROM agent WHERE id = $1`, [createdAgentId]);
-        }
-        if (createdRuntimeId) {
-          await pgClient.query(`DELETE FROM agent_runtime WHERE id = $1`, [createdRuntimeId]);
-        }
+      if (createdSessionId && createdWorkspaceSlug) {
+        await authedFetch(api, `/api/chat/sessions/${createdSessionId}`, {
+          method: "DELETE",
+          headers: { "X-Workspace-Slug": createdWorkspaceSlug },
+        });
       }
     } finally {
       if (pgClient) await pgClient.end();
       pgClient = null;
       createdSessionId = null;
-      createdAgentId = null;
-      createdRuntimeId = null;
+      createdWorkspaceSlug = null;
       await api.cleanup();
     }
   });
@@ -75,51 +68,31 @@ test.describe("Chat attachments", () => {
     expect(pgClient).not.toBeNull();
     const pgc = pgClient!;
 
-    // Resolve the workspace + caller so we can seed an agent/runtime/session
-    // directly via SQL. Going through the HTTP API would require modelling
-    // local-daemon ownership which isn't needed for this contract test.
     const workspaces = await api.getWorkspaces();
     const ws = workspaces[0]!;
     api.setWorkspaceSlug(ws.slug);
     api.setWorkspaceId(ws.id);
+    createdWorkspaceSlug = ws.slug;
 
-    const userRow = await pgc.query(
-      `SELECT id FROM "user" WHERE account = $1 LIMIT 1`,
-      [api.getAccount()],
-    );
-    if (userRow.rows.length === 0) throw new Error("e2e user missing");
-    const userId = userRow.rows[0].id as string;
-
-    // Seed runtime + agent + chat_session.
-    const runtimeIns = await pgc.query(
-      `INSERT INTO agent_runtime (
-         workspace_id, daemon_id, name, runtime_mode, provider, status,
-         device_info, metadata, last_seen_at
-       )
-       VALUES ($1, NULL, $2, 'cloud', $3, 'online', $4, '{}'::jsonb, now())
-       RETURNING id`,
-      [ws.id, `e2e chat runtime ${Date.now()}`, "e2e_chat_runtime", "E2E chat runtime"],
-    );
-    createdRuntimeId = runtimeIns.rows[0].id as string;
-
-    const agentIns = await pgc.query(
-      `INSERT INTO agent (
-         workspace_id, name, description, runtime_mode, runtime_config,
-         runtime_id, visibility, max_concurrent_tasks, owner_id
-       )
-       VALUES ($1, $2, '', 'cloud', '{}'::jsonb, $3, 'workspace', 1, $4)
-       RETURNING id`,
-      [ws.id, `E2E Chat Agent ${Date.now()}`, createdRuntimeId, userId],
-    );
-    createdAgentId = agentIns.rows[0].id as string;
-
-    const sessionIns = await pgc.query(
-      `INSERT INTO chat_session (workspace_id, agent_id, creator_id, title, status)
-       VALUES ($1, $2, $3, 'E2E Chat Attachment Session', 'active')
-       RETURNING id`,
-      [ws.id, createdAgentId, userId],
-    );
-    createdSessionId = sessionIns.rows[0].id as string;
+    // Build the current runtime → agent → chat chain through public APIs. The
+    // only direct database access below is the persistence assertion itself.
+    const { runtime } = await api.registerDaemonCodeBuddyRuntime(`E2E Chat Runtime ${Date.now()}`);
+    const agent = await api.createAgent({
+      name: `E2E Chat Agent ${Date.now()}`,
+      runtime_id: runtime.id,
+      scope: "workspace",
+    });
+    const sessionRes = await authedFetch(api, "/api/chat/sessions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Workspace-Slug": ws.slug,
+      },
+      body: JSON.stringify({ agent_id: agent.id, title: "E2E Chat Attachment Session" }),
+    });
+    expect(sessionRes.status).toBe(201);
+    const session = (await sessionRes.json()) as { id: string };
+    createdSessionId = session.id;
 
     // 1. Upload a small PNG against the chat session.
     const pngBytes = Buffer.from([
@@ -128,7 +101,7 @@ test.describe("Chat attachments", () => {
     ]);
     const form = new FormData();
     form.append("file", new Blob([new Uint8Array(pngBytes)], { type: "image/png" }), "e2e.png");
-    form.append("chat_session_id", createdSessionId);
+    form.append("chat_session_id", session.id);
     const uploadRes = await authedFetch(api, "/api/upload-file", {
       method: "POST",
       body: form,
@@ -136,12 +109,12 @@ test.describe("Chat attachments", () => {
     });
     expect(uploadRes.status).toBe(200);
     const uploaded = (await uploadRes.json()) as UploadRow;
-    expect(uploaded.chat_session_id).toBe(createdSessionId);
+    expect(uploaded.chat_session_id).toBe(session.id);
     expect(uploaded.chat_message_id).toBeNull();
     expect(uploaded.url).toBeTruthy();
 
     // 2. Send a chat message that references the attachment.
-    const sendRes = await authedFetch(api, `/api/chat/sessions/${createdSessionId}/messages`, {
+    const sendRes = await authedFetch(api, `/api/chat/sessions/${session.id}/messages`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",

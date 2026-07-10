@@ -125,7 +125,7 @@ test.describe("训练与评估 daemon 协议闭环", () => {
       运行时名称: runtime.name,
       运行时提供方: "codebuddy",
       模型: queued.model,
-      触发来源: "智能体调试场",
+      触发来源: "评测运行",
       提示词名称: prompt.name,
       评测资产名称: asset.name,
     });

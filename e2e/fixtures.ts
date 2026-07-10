@@ -624,7 +624,7 @@ export class TestApiClient {
     description?: string;
     instructions?: string;
     model?: string;
-    visibility?: "workspace" | "private";
+    scope?: "workspace" | "personal";
     max_concurrent_tasks?: number;
   }): Promise<AgentResponse> {
     const res = await this.authedFetch("/api/agents", {
@@ -637,7 +637,7 @@ export class TestApiClient {
         runtime_config: {},
         custom_env: {},
         custom_args: [],
-        visibility: data.visibility ?? "workspace",
+        scope: data.scope ?? "personal",
         max_concurrent_tasks: data.max_concurrent_tasks ?? 1,
         model: data.model ?? "deepseek-v4-pro-ioa",
       }),
