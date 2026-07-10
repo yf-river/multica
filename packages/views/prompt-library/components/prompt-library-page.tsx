@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
+import { useEffect, useMemo, useRef, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, BookOpenText, CheckCircle, Download, Loader2, Play, Plus, RefreshCw, Save, Search, Trash2, XCircle } from "lucide-react";
+import { Archive, BookOpenText, Download, Loader2, Plus, Save, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -32,11 +32,9 @@ import type {
   CreatePromptEvaluationCaseRequest,
   UpdatePromptEvaluationCaseRequest,
   PromptEvaluationAsset,
-  PromptEvaluationEvidenceSnapshot,
   PromptEvaluationOptimizationCandidate,
   PromptEvaluationStructuredCase,
   PromptEvaluationRun,
-  PromptEvaluationRunEvidence,
   PromptEvaluationAssetEvidenceArchivePackage,
   PromptEvaluationAssetType,
   IssueExecutionTreeResponse,
@@ -70,27 +68,14 @@ import { caseSourceLabel, type DatasetCaseSourceFilter } from "./case-source";
 import { asRecord, shortId, stringFromUnknown } from "./record-utils";
 import {
   buildSkillResourceOptions,
-  candidateSkillWorkflowEvidence,
-  defaultSkillCandidateWorkflowDraft,
-  type SkillCandidateWorkflowAction,
-  type SkillCandidateWorkflowDraft,
   type SkillResourceOption,
 } from "./skill-candidate-model";
-import { SkillCandidateWorkflowPanel } from "./skill-candidate-workflow";
-
-const promptLibraryKeys = {
-  list: (workspaceId: string) => ["prompt-library", workspaceId, "list"] as const,
-  versions: (workspaceId: string, promptId: string | null) => ["prompt-library", workspaceId, "versions", promptId ?? ""] as const,
-  trials: (workspaceId: string, promptId: string | null) => ["prompt-library", workspaceId, "trials", promptId ?? ""] as const,
-  agents: (workspaceId: string) => ["prompt-library", workspaceId, "agents"] as const,
-  assets: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-assets"] as const,
-  datasetVersions: (workspaceId: string, assetId: string) => ["prompt-library", workspaceId, "evaluation-dataset-versions", assetId] as const,
-  cases: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-cases"] as const,
-  runs: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-runs"] as const,
-  runEvidence: (workspaceId: string, runId: string | null) => ["prompt-library", workspaceId, "run-evidence", runId ?? ""] as const,
-  runEvidenceSnapshots: (workspaceId: string, runId: string | null) => ["prompt-library", workspaceId, "run-evidence-snapshots", runId ?? ""] as const,
-  candidates: (workspaceId: string) => ["prompt-library", workspaceId, "optimization-candidates"] as const,
-};
+import { promptLibraryKeys } from "./prompt-library-query-keys";
+import {
+  type EvidenceFocus,
+  type RunStatusFilter,
+} from "./run-model";
+import { RunHistoryPanel } from "./run-history-panel";
 
 type WorkbenchTab = TrainingWorkbenchTab;
 
@@ -98,18 +83,6 @@ function isEvaluationRunRecordsTab(tab: WorkbenchTab): boolean {
   return tab === "评测记录";
 }
 
-type RunStatusFilter = "全部" | PromptEvaluationRun["status"];
-type EvidenceFocus = {
-  traceSeq: string | null;
-  toolChainId: string | null;
-  trialAnchor: string | null;
-  assertionAnchor: string | null;
-  messageSeq: string | null;
-  spanAnchor: string | null;
-  failureAnchor: string | null;
-};
-
-const RUN_STATUS_FILTERS: RunStatusFilter[] = ["全部", "已入队", "运行中", "通过", "未通过", "失败", "已取消", "需人工复核"];
 const DEFAULT_CASE_LIBRARY_DRAFT_KEY = "__default_case_library__";
 function trainingViewFromLocation(pathname: string, searchParams: URLSearchParams) {
   const match = pathname.match(/\/(debug|evaluation)\/([^/?#]+)/);
@@ -1530,431 +1503,6 @@ function TrainingAssetPanel({
   );
 }
 
-function RunHistoryPanel({
-  workspaceId,
-  runs,
-  focusedRunId,
-  evidenceFocus,
-  runStatusFilter,
-  onRunStatusFilterChange,
-  candidates,
-  skillResources,
-  loading,
-  onSyncRun,
-  syncingRunId,
-  onCancelRun,
-  cancellingRunId,
-  onReviewRun,
-  reviewingRunId,
-  onCreateEvidenceSnapshot,
-  creatingEvidenceSnapshotRunId,
-  onGenerateCandidate,
-  generatingCandidateRunId,
-}: {
-  workspaceId: string;
-  runs: PromptEvaluationRun[];
-  focusedRunId: string | null;
-  evidenceFocus: EvidenceFocus;
-  runStatusFilter: RunStatusFilter;
-  onRunStatusFilterChange: (status: RunStatusFilter) => void;
-  candidates: PromptEvaluationOptimizationCandidate[];
-  skillResources: SkillResourceOption[];
-  loading: boolean;
-  onSyncRun: (runId: string) => void;
-  syncingRunId: string | null;
-  onCancelRun: (runId: string) => void;
-  cancellingRunId: string | null;
-  onReviewRun: (run: PromptEvaluationRun, decision: "通过" | "未通过") => void;
-  reviewingRunId: string | null;
-  onCreateEvidenceSnapshot: (runId: string) => void;
-  creatingEvidenceSnapshotRunId: string | null;
-  onGenerateCandidate: (runId: string) => void;
-  generatingCandidateRunId: string | null;
-}) {
-  const candidatesByRun = useMemo(() => buildCandidatesByRun(candidates), [candidates]);
-  const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
-  useEffect(() => {
-    if (!focusedRunId || !runs.some((run) => run.id === focusedRunId)) return;
-    setExpandedRunId(focusedRunId);
-    window.requestAnimationFrame(() => {
-      document.querySelector(`[data-testid="prompt-evaluation-run-${focusedRunId}"]`)?.scrollIntoView({ block: "center" });
-    });
-  }, [focusedRunId, runs]);
-  const evidenceQuery = useQuery({
-    queryKey: promptLibraryKeys.runEvidence(workspaceId, expandedRunId),
-    queryFn: () => api.getPromptEvaluationRunEvidence(expandedRunId ?? ""),
-    enabled: !!expandedRunId,
-  });
-  const evidenceSnapshotQuery = useQuery({
-    queryKey: promptLibraryKeys.runEvidenceSnapshots(workspaceId, expandedRunId),
-    queryFn: () => api.listPromptEvaluationEvidenceSnapshots(expandedRunId ?? "", 5),
-    enabled: !!expandedRunId,
-  });
-
-  return (
-    <section className="grid gap-3" aria-label="运行历史内容" data-testid="training-route-panel-run-history">
-      {loading ? (
-        <div className="h-20 rounded-md bg-muted/60" />
-      ) : runs.length === 0 ? (
-        <div className="grid gap-3">
-          <RunStatusFilterBar value={runStatusFilter} onChange={onRunStatusFilterChange} />
-          <div className="rounded-md border border-dashed px-3 py-6 text-center text-sm text-muted-foreground" data-testid="training-route-empty-run-history">
-            {runStatusFilter === "全部" ? "暂无结构化运行记录" : `暂无${runStatusFilter}运行记录`}
-          </div>
-        </div>
-      ) : (
-        <div className="grid gap-3">
-          <RunStatusFilterBar value={runStatusFilter} onChange={onRunStatusFilterChange} />
-          <div className="divide-y rounded-md border" data-testid="prompt-evaluation-run-list">
-            {runs.map((run) => {
-              const hasPendingCandidate = candidatesByRun.get(run.id)?.some((candidate) => candidate.status === "待确认") ?? false;
-              return (
-                <div key={run.id} data-testid={`prompt-evaluation-run-${run.id}`} className="grid gap-2 px-3 py-3 md:grid-cols-[minmax(0,1fr)_auto]">
-                  <div className="min-w-0">
-                    <div className="flex min-w-0 items-center gap-2">
-                      <span className="truncate text-sm font-medium">{displayRunKind(run.run_kind)} · {run.status}</span>
-                      <Badge variant={run.status === "通过" ? "secondary" : run.status === "已入队" || run.status === "运行中" ? "outline" : "destructive"} className="shrink-0">
-                        {run.total_cases} 用例 · 通过率 {Math.round(run.pass_rate * 100)}%
-                      </Badge>
-                    </div>
-                    <div className="mt-1 text-xs text-muted-foreground">{summarizeStructuredRun(run)}</div>
-                    {run.review_decision && (
-                      <div className="mt-1 text-xs text-muted-foreground">
-                        人工复核：{run.review_decision}{run.review_note ? ` · ${run.review_note}` : ""}{run.reviewed_at ? ` · ${run.reviewed_at}` : ""}
-                      </div>
-                    )}
-                    <div className="mt-1 break-all text-[11px] text-muted-foreground">
-                      运行 {run.id}{run.task_id ? ` · 任务 ${run.task_id}` : ""}
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-end gap-2 text-right text-[11px] text-muted-foreground">
-                    <div>
-                      <div>{run.created_at}</div>
-                      <div>{run.total_duration_ms} ms</div>
-                    </div>
-                    <Button size="sm" variant="secondary" onClick={() => setExpandedRunId(expandedRunId === run.id ? null : run.id)}>
-                      {expandedRunId === run.id ? "收起证据" : "查看证据"}
-                    </Button>
-                    {run.task_id && (
-                      <Button size="sm" variant="secondary" onClick={() => onSyncRun(run.id)} disabled={syncingRunId === run.id}>
-                        {syncingRunId === run.id ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
-                        同步任务
-                      </Button>
-                    )}
-                    {canCancelPromptEvaluationRun(run) && (
-                      <Button
-                        size="sm"
-                        variant="destructive"
-                        onClick={() => onCancelRun(run.id)}
-                        disabled={cancellingRunId === run.id}
-                        data-testid={`cancel-prompt-evaluation-run-${run.id}`}
-                      >
-                        {cancellingRunId === run.id ? <Loader2 className="size-3.5 animate-spin" /> : <XCircle className="size-3.5" />}
-                        取消运行
-                      </Button>
-                    )}
-                    {canReviewPromptEvaluationRun(run) && (
-                      <>
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => onReviewRun(run, "通过")}
-                          disabled={reviewingRunId === run.id}
-                          data-testid={`review-prompt-evaluation-run-pass-${run.id}`}
-                        >
-                          {reviewingRunId === run.id ? <Loader2 className="size-3.5 animate-spin" /> : <CheckCircle className="size-3.5" />}
-                          人工通过
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="destructive"
-                          onClick={() => onReviewRun(run, "未通过")}
-                          disabled={reviewingRunId === run.id}
-                          data-testid={`review-prompt-evaluation-run-fail-${run.id}`}
-                        >
-                          {reviewingRunId === run.id ? <Loader2 className="size-3.5 animate-spin" /> : <XCircle className="size-3.5" />}
-                          人工驳回
-                        </Button>
-                      </>
-                    )}
-                    {canGenerateOptimizationCandidate(run) && (
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={() => onGenerateCandidate(run.id)}
-                        disabled={generatingCandidateRunId === run.id || hasPendingCandidate}
-                      >
-                        {generatingCandidateRunId === run.id ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
-                        {hasPendingCandidate ? "已有候选" : "生成优化候选"}
-                      </Button>
-                    )}
-                  </div>
-                  {expandedRunId === run.id && (
-                    <RunEvidencePanel
-                      evidence={evidenceQuery.data ?? null}
-                      snapshots={evidenceSnapshotQuery.data?.items ?? []}
-                      snapshotsLoading={evidenceSnapshotQuery.isLoading || evidenceSnapshotQuery.isFetching}
-                      loading={evidenceQuery.isLoading || evidenceQuery.isFetching}
-                      error={evidenceQuery.isError}
-                      skillResources={skillResources}
-                      evidenceFocus={evidenceFocus}
-                      optimizationActions={{
-                        canGenerate: canGenerateOptimizationCandidate(run),
-                        hasPendingCandidate,
-                        generatingCandidate: generatingCandidateRunId === run.id,
-                        onGenerateCandidate: () => onGenerateCandidate(run.id),
-                      }}
-                      creatingSnapshot={creatingEvidenceSnapshotRunId === run.id}
-                      onCreateSnapshot={() => onCreateEvidenceSnapshot(run.id)}
-                    />
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-    </section>
-  );
-}
-
-function RunEvidencePanel({
-  evidence,
-  snapshots,
-  snapshotsLoading,
-  loading,
-  error,
-  skillResources,
-  evidenceFocus,
-  optimizationActions,
-  creatingSnapshot,
-  onCreateSnapshot,
-}: {
-  evidence: PromptEvaluationRunEvidence | null;
-  snapshots: PromptEvaluationEvidenceSnapshot[];
-  snapshotsLoading: boolean;
-  loading: boolean;
-  error: boolean;
-  skillResources: SkillResourceOption[];
-  evidenceFocus?: EvidenceFocus;
-  optimizationActions?: {
-    canGenerate: boolean;
-    hasPendingCandidate: boolean;
-    generatingCandidate: boolean;
-    onGenerateCandidate: () => void;
-  };
-  creatingSnapshot: boolean;
-  onCreateSnapshot: () => void;
-}) {
-  const workspaceId = useWorkspaceId();
-  const queryClient = useQueryClient();
-  const run = evidence?.run ?? null;
-  const runId = run?.id ?? "";
-  const [skillDrafts, setSkillDrafts] = useState<Record<string, SkillCandidateWorkflowDraft>>({});
-  const [skillAction, setSkillAction] = useState<{ candidateId: string; action: SkillCandidateWorkflowAction } | null>(null);
-  const candidatesQuery = useQuery({
-    queryKey: ["prompt-library", workspaceId ?? "", "optimization-candidates", "run", runId],
-    queryFn: () => api.listPromptEvaluationOptimizationCandidates({ run_id: runId, limit: 5 }),
-    enabled: Boolean(workspaceId && runId),
-  });
-  const candidates = candidatesQuery.data?.items ?? [];
-  const candidate = candidates[0] ?? null;
-  const invalidateRunCandidates = useCallback(() => {
-    if (!workspaceId || !runId) return;
-    queryClient.invalidateQueries({ queryKey: ["prompt-library", workspaceId, "optimization-candidates", "run", runId] });
-    queryClient.invalidateQueries({ queryKey: promptLibraryKeys.candidates(workspaceId) });
-    queryClient.invalidateQueries({ queryKey: promptLibraryKeys.assets(workspaceId) });
-    queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runs(workspaceId) });
-  }, [queryClient, runId, workspaceId]);
-  const runSkillWorkflowAction = useCallback(async (
-    item: PromptEvaluationOptimizationCandidate,
-    action: SkillCandidateWorkflowAction,
-  ) => {
-    const draft = skillDrafts[item.id] ?? defaultSkillCandidateWorkflowDraft(item);
-    setSkillAction({ candidateId: item.id, action });
-    try {
-      if (action === "freshness") {
-        const result = await api.checkPromptEvaluationSkillCandidateFreshness(item.id, {
-          source_resource_id: draft.sourceResourceId || undefined,
-          repo_path: draft.repoPath.trim() || undefined,
-          target_branch: draft.targetBranch.trim() || undefined,
-          skill_path: draft.skillPath.trim() || undefined,
-        });
-        toast.success(`Skill freshness: ${result.status} / ${result.patch_check}`);
-      } else if (action === "apply") {
-        const result = await api.applyPromptEvaluationSkillCandidate(item.id, {
-          source_resource_id: draft.sourceResourceId || undefined,
-          repo_path: draft.repoPath.trim() || undefined,
-          target_branch: draft.targetBranch.trim() || undefined,
-          skill_path: draft.skillPath.trim() || undefined,
-          changelog_path: draft.changelogPath.trim() || undefined,
-          allow_dirty: draft.allowDirty,
-          skip_changelog: draft.skipChangelog,
-        });
-        toast.success(`Skill apply: ${result.apply.status}`);
-      } else if (action === "prepare-re-eval") {
-        const result = await api.preparePromptEvaluationSkillReEvalAsset(item.id, {
-          source_resource_id: draft.sourceResourceId || undefined,
-          repo_path: draft.repoPath.trim() || undefined,
-          target_branch: draft.targetBranch.trim() || undefined,
-          skill_path: draft.skillPath.trim() || undefined,
-          include_draft: draft.includeDraft,
-        });
-        setSkillDrafts((prev) => ({ ...prev, [item.id]: { ...draft, reEvalAssetId: result.asset.id } }));
-        toast.success(`Skill re-eval asset ready: ${result.case_count} cases`);
-      } else {
-        const result = await api.runPromptEvaluationSkillReEval(item.id, {
-          asset_id: draft.reEvalAssetId.trim() || undefined,
-        });
-        toast.success(`Skill re-eval run: ${result.run.status}`);
-      }
-      invalidateRunCandidates();
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Skill workflow action failed");
-    } finally {
-      setSkillAction(null);
-    }
-  }, [invalidateRunCandidates, skillDrafts]);
-
-  if (loading) {
-    return <div className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground md:col-span-2">正在读取运行证据...</div>;
-  }
-  if (error || !evidence || !run) {
-    return <div className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-4 text-sm text-destructive md:col-span-2">运行证据读取失败。</div>;
-  }
-
-  const totalTokens = Number(run.input_tokens ?? 0) + Number(run.output_tokens ?? 0);
-  const focusLabels = [
-    evidenceFocus?.traceSeq ? `trace ${evidenceFocus.traceSeq}` : "",
-    evidenceFocus?.toolChainId ? `tool ${evidenceFocus.toolChainId}` : "",
-    evidenceFocus?.messageSeq ? `message ${evidenceFocus.messageSeq}` : "",
-    evidenceFocus?.failureAnchor ? `failure ${evidenceFocus.failureAnchor}` : "",
-  ].filter(Boolean);
-  const rawPayload = {
-    run: evidence.run,
-    trials: evidence.trials,
-    task_usage: evidence.task_usage,
-    task_messages: evidence.task_messages,
-    trace_events: evidence.trace_events,
-    execution_spans: evidence.execution_spans,
-    tool_call_chains: evidence.tool_call_chains,
-    tool_call_summary: evidence.tool_call_summary,
-    execution_summary: evidence.execution_summary,
-    evidence: evidence.evidence,
-    context: evidence.上下文,
-  };
-
-  return (
-    <section className="grid gap-3 rounded-md border bg-muted/10 p-3 md:col-span-2" data-testid="run-evidence-panel">
-      <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_auto]">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-medium text-foreground">运行证据摘要</span>
-            <Badge variant={run.status === "通过" ? "secondary" : run.failed_cases > 0 ? "destructive" : "outline"}>{run.status}</Badge>
-            <Badge variant={totalTokens > 0 ? "secondary" : "outline"}>{formatNumber(totalTokens)} token</Badge>
-            <Badge variant={snapshots.length > 0 ? "secondary" : "outline"}>{snapshotsLoading ? "快照读取中" : `${snapshots.length} 个快照`}</Badge>
-            {focusLabels.map((label) => <Badge key={label} variant="outline">{label}</Badge>)}
-          </div>
-          <div className="mt-1 break-all text-[11px] leading-5 text-muted-foreground">
-            run {run.id} · task {run.task_id || "未绑定"} · model {run.model || "未记录"} · runtime {run.runtime_provider || "未记录"}
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-2 md:justify-end">
-          {optimizationActions?.canGenerate && (
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={optimizationActions.onGenerateCandidate}
-              disabled={optimizationActions.generatingCandidate || optimizationActions.hasPendingCandidate}
-            >
-              {optimizationActions.generatingCandidate ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
-              {optimizationActions.hasPendingCandidate ? "已有候选" : "生成候选"}
-            </Button>
-          )}
-          <Button size="sm" variant="secondary" onClick={() => candidatesQuery.refetch()} disabled={candidatesQuery.isFetching}>
-            {candidatesQuery.isFetching ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
-            刷新候选
-          </Button>
-          <Button size="sm" variant="secondary" onClick={onCreateSnapshot} disabled={creatingSnapshot}>
-            {creatingSnapshot ? <Loader2 className="size-3.5 animate-spin" /> : <Archive className="size-3.5" />}
-            归档快照
-          </Button>
-        </div>
-      </div>
-
-      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-        <EvidenceMetric label="用例" value={`${formatNumber(run.passed_cases)}/${formatNumber(run.total_cases)}`} />
-        <EvidenceMetric label="耗时" value={formatDuration(run.total_duration_ms)} />
-        <EvidenceMetric label="成本" value={formatMoney(run.estimated_cost)} />
-        <EvidenceMetric label="证据" value={`${evidence.trials.length} trial · ${evidence.task_messages.length} message · ${evidence.trace_events.length} trace`} />
-      </div>
-
-      <div className="grid gap-2 rounded border bg-background px-3 py-2 text-xs" data-testid="run-evidence-snapshots">
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="font-medium text-foreground">服务端证据快照</span>
-          <Badge variant={snapshots.length > 0 ? "secondary" : "outline"}>{snapshotsLoading ? "读取中" : `${snapshots.length} 个`}</Badge>
-        </div>
-        <div className="break-all text-muted-foreground">run {run.id} · task {run.task_id || "未绑定"}</div>
-        {snapshotsLoading ? (
-          <div className="text-muted-foreground">正在读取快照...</div>
-        ) : snapshots.length === 0 ? (
-          <div className="text-muted-foreground">暂无归档快照，可点击“归档快照”保存当前运行证据。</div>
-        ) : (
-          <div className="grid gap-1.5">
-            {snapshots.map((snapshot) => (
-              <div key={snapshot.id} className="grid gap-1 rounded border bg-muted/10 px-2 py-1.5">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Badge variant="outline">{snapshot.snapshot_type}</Badge>
-                  <span className="break-all font-mono text-[11px] text-muted-foreground">{snapshot.id}</span>
-                  <span className="text-muted-foreground">{snapshot.created_at}</span>
-                </div>
-                <div className="break-all text-muted-foreground">{snapshotSummary(snapshot)}</div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {candidate && (
-        <div className="grid gap-2 rounded border bg-background px-2 py-2 text-xs" data-testid="run-evidence-candidate">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-medium">{candidate.candidate_name}</span>
-            <Badge variant={candidate.status === "待确认" ? "secondary" : "outline"}>{candidate.status}</Badge>
-            <Badge variant="outline">失败 {candidate.failed_case_count}</Badge>
-          </div>
-          <div className="text-muted-foreground">{candidate.rationale || "基于失败运行生成，等待人工确认。"}</div>
-          <SkillCandidateWorkflowPanel
-            candidate={candidate}
-            draft={skillDrafts[candidate.id] ?? defaultSkillCandidateWorkflowDraft(candidate)}
-            evidence={candidateSkillWorkflowEvidence(candidate)}
-            resources={skillResources}
-            pendingAction={skillAction?.candidateId === candidate.id ? skillAction.action : null}
-            disabled={candidate.status !== "待确认"}
-            onDraftChange={(next) => setSkillDrafts((prev) => ({ ...prev, [candidate.id]: next }))}
-            onRunAction={(action) => void runSkillWorkflowAction(candidate, action)}
-          />
-        </div>
-      )}
-
-      <details className="rounded border bg-background px-3 py-2 text-xs" open={focusLabels.length > 0}>
-        <summary className="cursor-pointer font-medium text-muted-foreground">完整原始 evidence JSON</summary>
-        <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap font-mono text-[11px] leading-5">
-          {JSON.stringify(rawPayload, null, 2)}
-        </pre>
-      </details>
-    </section>
-  );
-}
-
-function EvidenceMetric({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="min-w-0 rounded border bg-background px-2 py-1.5 text-xs">
-      <div className="truncate text-[11px] text-muted-foreground">{label}</div>
-      <div className="mt-0.5 truncate font-semibold">{value}</div>
-    </div>
-  );
-}
-
 function emptyTrainingRouteText(activeTab: WorkbenchTab) {
   switch (activeTab) {
     case "用例库":
@@ -2224,25 +1772,6 @@ function trainingRouteOperatingModel(
   }
 }
 
-function RunStatusFilterBar({
-  value,
-  onChange,
-}: {
-  value: RunStatusFilter;
-  onChange: (status: RunStatusFilter) => void;
-}) {
-  return (
-    <div className="flex flex-wrap items-center gap-2 rounded-md border border-border/70 bg-muted/10 px-3 py-2" data-testid="run-status-filter-bar">
-      <span className="text-xs font-medium text-muted-foreground">运行状态</span>
-      {RUN_STATUS_FILTERS.map((status) => (
-        <FilterButton key={status} active={value === status} onClick={() => onChange(status)}>
-          {status === "需人工复核" ? "人工复核队列" : status}
-        </FilterButton>
-      ))}
-    </div>
-  );
-}
-
 function issueIdFromStructuredCase(item: PromptEvaluationStructuredCase): string | null {
   const variableIssueId = stringFromUnknown(item.variables["issue_id"]);
   if (variableIssueId) return variableIssueId;
@@ -2273,20 +1802,6 @@ function caseEvidenceSummary(item: PromptEvaluationStructuredCase): string {
     timelineNodeCount > 0 ? `${timelineNodeCount} 个事件` : "",
   ].filter(Boolean);
   return pieces.join(" · ");
-}
-
-function snapshotSummary(snapshot: PromptEvaluationEvidenceSnapshot): string {
-  const summary = asRecord(snapshot.summary);
-  const candidates = [
-    stringFromUnknown(summary["说明"]),
-    stringFromUnknown(summary["结论"]),
-    stringFromUnknown(summary["summary"]),
-    stringFromUnknown(summary["status"]),
-  ].filter(Boolean);
-  if (candidates.length > 0) return candidates.join(" · ");
-  const keys = Object.keys(summary).slice(0, 4);
-  if (keys.length === 0) return `run ${snapshot.run_id}`;
-  return keys.map((key) => `${key}: ${stringFromUnknown(summary[key]) || "已记录"}`).join(" · ");
 }
 
 function cssEscape(value: string): string {
@@ -3442,16 +2957,6 @@ function uniqueSortedStrings(values: string[]): string[] {
   return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, "zh-CN"));
 }
 
-function buildCandidatesByRun(candidates: PromptEvaluationOptimizationCandidate[]): Map<string, PromptEvaluationOptimizationCandidate[]> {
-  const result = new Map<string, PromptEvaluationOptimizationCandidate[]>();
-  for (const candidate of candidates) {
-    const bucket = result.get(candidate.run_id) ?? [];
-    bucket.push(candidate);
-    result.set(candidate.run_id, bucket);
-  }
-  return result;
-}
-
 function summarizeJSONValue(value: unknown): string {
   if (!value || (typeof value === "object" && !Array.isArray(value) && Object.keys(value as Record<string, unknown>).length === 0)) {
     return "无额外配置";
@@ -3459,21 +2964,6 @@ function summarizeJSONValue(value: unknown): string {
   const text = JSON.stringify(value);
   if (!text) return "无额外配置";
   return text.length > 120 ? `${text.slice(0, 117)}...` : text;
-}
-
-function canGenerateOptimizationCandidate(run: PromptEvaluationRun): boolean {
-  if (!run.prompt_id) return false;
-  if (run.failed_cases > 0) return true;
-  if (run.status === "未通过" || run.status === "失败") return true;
-  return Boolean(run.failure_reason && run.failure_reason !== "无");
-}
-
-function canCancelPromptEvaluationRun(run: PromptEvaluationRun): boolean {
-  return run.status === "已入队" || run.status === "运行中";
-}
-
-function canReviewPromptEvaluationRun(run: PromptEvaluationRun): boolean {
-  return run.status === "需人工复核";
 }
 
 function summarizeAssetPayload(asset: PromptEvaluationAsset, caseSummary?: CaseSummary): string {
@@ -3626,23 +3116,6 @@ function summarizeLinkedDatasetVersions(asset: PromptEvaluationAsset): string | 
   return parts.length > 0 ? `绑定用例库版本：${parts.join("；")}` : null;
 }
 
-function displayRunKind(runKind: string): string {
-  return runKind === "Agent执行" ? "智能体执行" : runKind;
-}
-
-function summarizeStructuredRun(run: PromptEvaluationRun): string {
-  const pieces = [
-    `模型 ${run.model || "未记录"}`,
-    `运行时 ${run.runtime_provider || "未记录"}`,
-    `通过 ${run.passed_cases}/${run.total_cases}`,
-    `输入 ${run.input_tokens} token`,
-    `输出 ${run.output_tokens} token`,
-  ];
-  if (run.failure_reason) pieces.push(`失败原因：${run.failure_reason}`);
-  if (run.conclusion) pieces.push(`结论：${run.conclusion}`);
-  return pieces.join(" · ");
-}
-
 function stringFromRecord(record: Record<string, unknown>, key: string): string {
   const value = record[key];
   if (typeof value === "string") return value;
@@ -3652,23 +3125,6 @@ function stringFromRecord(record: Record<string, unknown>, key: string): string 
 
 function formatNumber(value: unknown): string {
   return typeof value === "number" && Number.isFinite(value) ? value.toLocaleString("zh-CN") : "0";
-}
-
-function formatMoney(value: unknown): string {
-  const n = typeof value === "number" ? value : Number(value ?? 0);
-  if (!Number.isFinite(n) || n <= 0) return "$0.00";
-  if (n < 0.01) return `$${n.toFixed(6)}`;
-  return `$${n.toFixed(2)}`;
-}
-
-function formatDuration(value: unknown): string {
-  const ms = typeof value === "number" ? value : Number(value ?? 0);
-  if (!Number.isFinite(ms) || ms <= 0) return "0 ms";
-  if (ms < 1000) return `${Math.round(ms)} ms`;
-  const seconds = ms / 1000;
-  if (seconds < 60) return `${Math.round(seconds * 10) / 10} 秒`;
-  const minutes = seconds / 60;
-  return `${Math.round(minutes * 10) / 10} 分钟`;
 }
 
 function downloadTextFile(content: string, filename: string, mimeType: string) {
