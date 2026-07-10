@@ -46,7 +46,6 @@ import { Input } from "@multica/ui/components/ui/input";
 import { Textarea } from "@multica/ui/components/ui/textarea";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { PageHeader } from "../../layout/page-header";
-import { AppLink } from "../../navigation";
 import { useNavigation } from "../../navigation";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 import { useT } from "../../i18n/use-t";
@@ -62,8 +61,7 @@ import { trainingSelectedPromptStorageKey } from "./prompt-selection-storage";
 import { PromptTrialPanel, PromptVersionHistory } from "./prompt-editor-panels";
 import { Field } from "./form-field";
 import { extractPromptVariables } from "./prompt-trial-model";
-import { caseSourceLabel, type DatasetCaseSourceFilter } from "./case-source";
-import { asRecord, shortId, stringFromUnknown } from "./record-utils";
+import { shortId } from "./record-utils";
 import {
   buildSkillResourceOptions,
   type SkillResourceOption,
@@ -79,15 +77,15 @@ import {
   type CaseLibraryEditorCopy,
 } from "./case-library-editor";
 import {
+  ManualCasePanel,
+  type ManualCasePanelCopy,
+} from "./manual-case-panel";
+import {
   buildCaseLibraryCreateRequest,
   buildCaseSummaries,
   buildCasesByAsset,
-  buildCaseTagUpdateRequest,
   buildManualCaseRequest,
-  buildManualCaseUpdateRequest,
   emptyManualCaseDraft,
-  manualCaseToDraft,
-  uniqueSortedStrings,
   type CaseSummary,
   type ManualCaseDraft,
 } from "./case-model";
@@ -119,6 +117,11 @@ function collectIssueExecutionTaskIds(tree: IssueExecutionTreeResponse | undefin
   };
   visit(tree.root);
   return [...ids];
+}
+
+function escapeCssIdentifier(value: string): string {
+  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") return CSS.escape(value);
+  return value.replace(/["\\]/g, "\\$&");
 }
 
 export function resolvePromptSelection(
@@ -264,7 +267,7 @@ export function PromptLibraryPage({
   useEffect(() => {
     if (!focusedCaseId || activeTab !== "用例库") return;
     const timer = window.setTimeout(() => {
-      document.querySelector(`[data-testid="case-library-case-${cssEscape(focusedCaseId)}"]`)?.scrollIntoView({
+      document.querySelector(`[data-testid="case-library-case-${escapeCssIdentifier(focusedCaseId)}"]`)?.scrollIntoView({
         block: "center",
       });
     }, 0);
@@ -1476,6 +1479,91 @@ function TrainingAssetPanel({
   exportingAssetEvidencePackageAssetId,
 }: TrainingAssetPanelProps) {
   const { t } = useT("prompt-library");
+  const workspacePaths = useWorkspacePaths();
+  const manualCaseCopy: ManualCasePanelCopy = {
+    title: t(($) => $.manual_case.title),
+    counts: ({ manual, trace, draft, approved, active }) =>
+      t(($) => $.manual_case.counts, { manual, trace, draft, approved, active }),
+    filter: {
+      title: t(($) => $.manual_case.filter.title),
+      description: t(($) => $.manual_case.filter.description),
+      matchCount: (visible, total) => t(($) => $.manual_case.filter.match_count, { visible, total }),
+      sourceLabel: t(($) => $.manual_case.filter.source_label),
+      sourceOptions: {
+        all: t(($) => $.manual_case.filter.source_all),
+        manual: t(($) => $.manual_case.filter.source_manual),
+        trace: t(($) => $.manual_case.filter.source_trace),
+        payload: t(($) => $.manual_case.filter.source_payload),
+      },
+      tagsLabel: t(($) => $.manual_case.filter.tags_label),
+      tagFilterAriaLabel: t(($) => $.manual_case.filter.tag_filter_aria_label),
+      allTags: t(($) => $.manual_case.filter.all_tags),
+      keywordPlaceholder: t(($) => $.manual_case.filter.keyword_placeholder),
+      keywordAriaLabel: t(($) => $.manual_case.filter.keyword_aria_label),
+    },
+    noFilterResults: t(($) => $.manual_case.no_filter_results),
+    caseName: (index) => t(($) => $.manual_case.case_name, { index }),
+    sourceName: (source) => t(($) => $.manual_case.source[source]),
+    statusName: (status) => {
+      if (status === "draft") return t(($) => $.manual_case.status.draft);
+      if (status === "approved") return t(($) => $.manual_case.status.approved);
+      if (status === "active" || status === "启用") return t(($) => $.manual_case.status.active);
+      if (status === "归档") return t(($) => $.manual_case.status.archived);
+      return status;
+    },
+    summary: ({ variableNames, expectedValues }) => {
+      if (variableNames.length > 0 && expectedValues.length > 0) {
+        return t(($) => $.manual_case.summary.both, {
+          names: variableNames.join("、"),
+          values: expectedValues.join("、"),
+        });
+      }
+      if (variableNames.length > 0) {
+        return t(($) => $.manual_case.summary.variables, { names: variableNames.join("、") });
+      }
+      if (expectedValues.length > 0) {
+        return t(($) => $.manual_case.summary.expected, { values: expectedValues.join("、") });
+      }
+      return t(($) => $.manual_case.summary.empty);
+    },
+    approveDraft: t(($) => $.manual_case.approve_draft),
+    activateCase: t(($) => $.manual_case.activate_case),
+    editCase: t(($) => $.manual_case.edit_case),
+    deleteCase: t(($) => $.manual_case.delete_case),
+    editTags: t(($) => $.manual_case.edit_tags),
+    sourceIssue: (issueId) => t(($) => $.manual_case.source_issue, { id: shortId(issueId) }),
+    openRunReview: t(($) => $.manual_case.open_run_review),
+    validation: (value) => {
+      if (value.kind === "contains") {
+        return t(($) => $.manual_case.validation_contains, { values: value.values.join("、") });
+      }
+      if (value.kind === "expected-behavior") {
+        return t(($) => $.manual_case.validation_behavior, { value: value.value });
+      }
+      return t(($) => $.manual_case.validation_label, { value: value.value });
+    },
+    evidence: (facts) =>
+      t(($) => $.manual_case.evidence, {
+        stages: facts.stageCount,
+        lanes: facts.childLaneCount,
+        timeline: facts.timelineNodeCount,
+      }),
+    tagsPlaceholder: t(($) => $.manual_case.tags_placeholder),
+    tagsAriaLabel: t(($) => $.manual_case.tags_aria_label),
+    saveTags: t(($) => $.manual_case.save_tags),
+    cancel: t(($) => $.manual_case.cancel),
+    editCaseNamePlaceholder: t(($) => $.manual_case.edit_case_name_placeholder),
+    editVariablesPlaceholder: t(($) => $.manual_case.edit_variables_placeholder),
+    editExpectedPlaceholder: t(($) => $.manual_case.edit_expected_placeholder),
+    editTagsPlaceholder: t(($) => $.manual_case.edit_tags_placeholder),
+    saveCase: t(($) => $.manual_case.save_case),
+    noCases: t(($) => $.manual_case.no_cases),
+    caseNamePlaceholder: t(($) => $.manual_case.case_name_placeholder),
+    variablesPlaceholder: t(($) => $.manual_case.variables_placeholder),
+    expectedPlaceholder: t(($) => $.manual_case.expected_placeholder),
+    newTagsPlaceholder: t(($) => $.manual_case.new_tags_placeholder),
+    addCase: t(($) => $.manual_case.add_case),
+  };
   const caseSummaries = useMemo(() => buildCaseSummaries(cases), [cases]);
   const casesByAsset = useMemo(() => buildCasesByAsset(cases), [cases]);
   const runCountByAsset = useMemo(() => {
@@ -1611,10 +1699,12 @@ function TrainingAssetPanel({
                   focusedCaseId={focusedCaseId}
                   focusedIssueId={focusedIssueId}
                   focusedIssueRunReviewHref={focusedIssueRunReviewHref}
+                  runReviewHrefForIssue={(issueId) => `${workspacePaths.runReviews()}?issue=${encodeURIComponent(issueId)}`}
                   onUpdateCase={onUpdateCase}
                   updatingCaseId={updatingCaseId}
                   onDeleteCase={onDeleteCase}
                   deletingCaseId={deletingCaseId}
+                  copy={manualCaseCopy}
                 />
               )}
             </div>
@@ -1900,433 +1990,6 @@ function trainingRouteOperatingModel(
   }
 }
 
-function issueIdFromStructuredCase(item: PromptEvaluationStructuredCase): string | null {
-  const variableIssueId = stringFromUnknown(item.variables["issue_id"]);
-  if (variableIssueId) return variableIssueId;
-  const issue = asRecord(item.input["issue"]);
-  const inputIssueId = stringFromUnknown(issue["id"]);
-  if (inputIssueId) return inputIssueId;
-  const issueTag = item.tags.map((tag) => stringFromUnknown(tag)).find((tag) => tag.startsWith("issue:"));
-  return issueTag?.slice("issue:".length) || null;
-}
-
-function caseValidationSummary(item: PromptEvaluationStructuredCase): string {
-  const validation = stringFromUnknown(item.expected["validation"]);
-  if (validation) return validation;
-  const expectedBehavior = stringFromUnknown(item.expected["expected_behavior"]);
-  if (expectedBehavior) return expectedBehavior;
-  if (item.expected_contains.length > 0) return `包含 ${item.expected_contains.map((value) => stringFromUnknown(value)).filter(Boolean).slice(0, 5).join("、")}`;
-  return "";
-}
-
-function caseEvidenceSummary(item: PromptEvaluationStructuredCase): string {
-  const runReview = asRecord(item.input["run_review"]);
-  const stageFacts = Array.isArray(runReview["stage_facts"]) ? runReview["stage_facts"].length : 0;
-  const childLanes = Array.isArray(runReview["child_lanes"]) ? runReview["child_lanes"].length : 0;
-  const timelineNodeCount = Number(runReview["timeline_node_count"] ?? 0);
-  const pieces = [
-    stageFacts > 0 ? `${stageFacts} 个阶段` : "",
-    childLanes > 0 ? `${childLanes} 条子任务 lane` : "",
-    timelineNodeCount > 0 ? `${timelineNodeCount} 个事件` : "",
-  ].filter(Boolean);
-  return pieces.join(" · ");
-}
-
-function cssEscape(value: string): string {
-  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
-    return CSS.escape(value);
-  }
-  return value.replace(/["\\]/g, "\\$&");
-}
-
-function FilterButton({
-  active,
-  onClick,
-  href,
-  children,
-}: {
-  active: boolean;
-  onClick: () => void;
-  href?: string;
-  children: ReactNode;
-}) {
-  const className = `inline-flex h-7 items-center rounded-md border px-2.5 text-xs transition-colors ${
-    active ? "border-foreground bg-foreground text-background" : "border-border bg-background text-muted-foreground hover:text-foreground"
-  }`;
-  if (href) {
-    return (
-      <AppLink href={href} onClick={onClick} className={className} data-active={active ? "true" : undefined} aria-current={active ? "page" : undefined}>
-        {children}
-      </AppLink>
-    );
-  }
-  return (
-    <button type="button" onClick={onClick} className={className} data-active={active ? "true" : undefined}>
-      {children}
-    </button>
-  );
-}
-
-function ManualCasePanel({
-  asset,
-  cases,
-  draft,
-  onDraftChange,
-  onCreateCase,
-  creating,
-  focusedCaseId,
-  focusedIssueId,
-  focusedIssueRunReviewHref,
-  onUpdateCase,
-  updatingCaseId,
-  onDeleteCase,
-  deletingCaseId,
-}: {
-  asset: PromptEvaluationAsset;
-  cases: PromptEvaluationStructuredCase[];
-  draft: ManualCaseDraft;
-  onDraftChange: (draft: ManualCaseDraft) => void;
-  onCreateCase: () => void;
-  creating: boolean;
-  focusedCaseId: string | null;
-  focusedIssueId: string | null;
-  focusedIssueRunReviewHref: string | null;
-  onUpdateCase: (caseId: string, data: UpdatePromptEvaluationCaseRequest) => Promise<unknown>;
-  updatingCaseId: string | null;
-  onDeleteCase: (caseId: string) => void;
-  deletingCaseId: string | null;
-}) {
-  const workspacePaths = useWorkspacePaths();
-  const manualCases = cases.filter((item) => item.source === "manual");
-  const traceCases = cases.filter((item) => item.source === "trace");
-  const [caseSourceFilter, setCaseSourceFilter] = useState<DatasetCaseSourceFilter>("全部");
-  const [caseTagFilter, setCaseTagFilter] = useState("全部");
-  const [caseKeywordFilter, setCaseKeywordFilter] = useState("");
-  const [editingCaseId, setEditingCaseId] = useState<string | null>(null);
-  const [editDrafts, setEditDrafts] = useState<Record<string, ManualCaseDraft>>({});
-  const [tagEditingCaseId, setTagEditingCaseId] = useState<string | null>(null);
-  const [tagEditDrafts, setTagEditDrafts] = useState<Record<string, string>>({});
-  const caseTags = useMemo(() => uniqueSortedStrings(cases.flatMap((item) => item.tags.map((value) => String(value)).filter(Boolean))), [cases]);
-  const filteredCases = useMemo(() => {
-    const keyword = caseKeywordFilter.trim().toLowerCase();
-    return cases.filter((item) => {
-      const sourceOK = caseSourceFilter === "全部" || caseSourceLabel(item.source) === caseSourceFilter;
-      const tagOK = caseTagFilter === "全部" || item.tags.some((value) => String(value) === caseTagFilter);
-      const keywordOK = !keyword || datasetCaseSearchText(item).includes(keyword);
-      return sourceOK && tagOK && keywordOK;
-    });
-  }, [caseSourceFilter, caseTagFilter, caseKeywordFilter, cases]);
-  return (
-    <div data-testid={`prompt-evaluation-cases-${asset.id}`} className="md:col-span-2 grid gap-2 rounded-md border border-border/70 bg-muted/10 p-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="text-xs font-medium text-muted-foreground">结构化评测用例</div>
-        <Badge variant="outline" className="text-[11px]">
-          手工 {manualCases.length} · trace {traceCases.length} · draft {cases.filter((item) => item.status === "draft").length} · approved {cases.filter((item) => item.status === "approved").length} · active {cases.filter((item) => item.status === "active" || item.status === "启用").length}
-        </Badge>
-      </div>
-      <CaseFilterBar
-        totalCount={cases.length}
-        visibleCount={filteredCases.length}
-        tags={caseTags}
-        sourceFilter={caseSourceFilter}
-        onSourceFilterChange={setCaseSourceFilter}
-        tagFilter={caseTagFilter}
-        onTagFilterChange={setCaseTagFilter}
-        keywordFilter={caseKeywordFilter}
-        onKeywordFilterChange={setCaseKeywordFilter}
-      />
-      {cases.length > 0 ? (
-        <div className="grid gap-1.5">
-          {filteredCases.length === 0 ? (
-            <div className="rounded border border-dashed px-2 py-2 text-xs text-muted-foreground" data-testid={`dataset-case-filter-empty-${asset.id}`}>
-              当前筛选没有命中用例，请切换来源或标签。
-            </div>
-          ) : filteredCases.map((item) => {
-            const editing = editingCaseId === item.id;
-            const editDraft = editDrafts[item.id] ?? manualCaseToDraft(item);
-            const focused = focusedCaseId === item.id;
-            const sourceIssueId = issueIdFromStructuredCase(item) || focusedIssueId;
-            const runReviewHref = sourceIssueId
-              ? sourceIssueId === focusedIssueId && focusedIssueRunReviewHref
-                ? focusedIssueRunReviewHref
-                : `${workspacePaths.runReviews()}?issue=${encodeURIComponent(sourceIssueId)}`
-              : null;
-            const validationSummary = caseValidationSummary(item);
-            const evidenceSummary = caseEvidenceSummary(item);
-            return (
-              <div
-                key={item.id}
-                data-testid={`prompt-evaluation-case-${item.id}`}
-                className={`grid gap-2 rounded px-2 py-1.5 text-xs ${focused ? "border border-info/60 bg-info/5 ring-1 ring-info/40" : "border bg-background"}`}
-              >
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-medium text-foreground">{item.case_name || `用例 ${item.case_index + 1}`}</span>
-                  <span className="text-muted-foreground">{caseSourceLabel(item.source)}</span>
-                  <Badge variant={item.status === "active" || item.status === "启用" ? "secondary" : "outline"} className="text-[11px]">
-                    {caseReviewStatusLabel(item.status)}
-                  </Badge>
-                  <span className="min-w-0 flex-1 truncate text-muted-foreground">{summarizeStructuredCase(item)}</span>
-                  {item.source === "manual" && (
-                    <>
-                      {item.status === "draft" && (
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          className="h-7"
-                          data-testid={`approve-eval-case-${item.id}`}
-                          onClick={() => onUpdateCase(item.id, { status: "approved" })}
-                          disabled={updatingCaseId === item.id}
-                        >
-                          批准 Draft
-                        </Button>
-                      )}
-                      {item.status === "approved" && (
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          className="h-7"
-                          data-testid={`activate-eval-case-${item.id}`}
-                          onClick={() => onUpdateCase(item.id, { status: "active" })}
-                          disabled={updatingCaseId === item.id}
-                        >
-                          激活评测
-                        </Button>
-                      )}
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        className="h-7"
-                        onClick={() => {
-                          setEditingCaseId(item.id);
-                          setEditDrafts((prev) => ({ ...prev, [item.id]: manualCaseToDraft(item) }));
-                        }}
-                      >
-                        编辑用例
-                      </Button>
-                      <Button size="sm" variant="destructive" className="h-7" onClick={() => onDeleteCase(item.id)} disabled={deletingCaseId === item.id}>
-                        {deletingCaseId === item.id ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
-                        删除用例
-                      </Button>
-                    </>
-                  )}
-                  {asset.asset_type === "数据集" && item.source !== "manual" && (
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      className="h-7"
-                      onClick={() => {
-                        setTagEditingCaseId(item.id);
-                        setTagEditDrafts((prev) => ({ ...prev, [item.id]: item.tags.map((value) => String(value)).join(", ") }));
-                      }}
-                    >
-                      编辑标签
-                    </Button>
-                  )}
-                </div>
-                {(sourceIssueId || validationSummary || evidenceSummary) && (
-                  <div
-                    className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-sm border border-border/70 bg-muted/20 px-2 py-1.5 text-[11px] text-muted-foreground"
-                    data-testid={`prompt-evaluation-case-source-${item.id}`}
-                  >
-                    {sourceIssueId && (
-                      <span>
-                        来源 issue <span className="font-medium text-foreground">{shortId(sourceIssueId)}</span>
-                      </span>
-                    )}
-                    {runReviewHref && (
-                      <AppLink href={runReviewHref} className="font-medium text-primary underline-offset-2 hover:underline">
-                        查看运行复盘
-                      </AppLink>
-                    )}
-                    {validationSummary && <span>验证：{validationSummary}</span>}
-                    {evidenceSummary && <span>证据：{evidenceSummary}</span>}
-                  </div>
-                )}
-                {tagEditingCaseId === item.id && (
-                  <div className="flex flex-wrap items-center gap-2 rounded-sm border border-border/70 bg-muted/20 p-2" data-testid={`dataset-case-tag-editor-${item.id}`}>
-                    <Input
-                      value={tagEditDrafts[item.id] ?? item.tags.map((value) => String(value)).join(", ")}
-                      onChange={(event) => setTagEditDrafts((prev) => ({ ...prev, [item.id]: event.target.value }))}
-                      placeholder="编辑用例标签"
-                      aria-label="编辑用例标签"
-                      className="h-9 min-w-52 flex-1 text-xs"
-                    />
-                    <Button
-                      size="sm"
-                      className="h-9 shrink-0"
-                      onClick={() => {
-                        void onUpdateCase(item.id, buildCaseTagUpdateRequest(asset, item, tagEditDrafts[item.id] ?? ""));
-                        setTagEditingCaseId(null);
-                      }}
-                      disabled={updatingCaseId === item.id}
-                    >
-                      {updatingCaseId === item.id ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-                      保存标签
-                    </Button>
-                    <Button size="sm" variant="ghost" className="h-9 shrink-0" onClick={() => setTagEditingCaseId(null)}>
-                      取消
-                    </Button>
-                  </div>
-                )}
-                {editing && (
-                  <div className="grid gap-2 rounded-sm border border-border/70 bg-muted/20 p-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-                    <Input
-                      value={editDraft.caseName}
-                      onChange={(event) => setEditDrafts((prev) => ({ ...prev, [item.id]: { ...editDraft, caseName: event.target.value } }))}
-                      placeholder="编辑用例名称"
-                    />
-                    <Textarea
-                      value={editDraft.variablesText}
-                      onChange={(event) => setEditDrafts((prev) => ({ ...prev, [item.id]: { ...editDraft, variablesText: event.target.value } }))}
-                      className="min-h-20 text-xs"
-                      placeholder="编辑变量：任务标题=登录失败"
-                    />
-                    <Input
-                      value={editDraft.expectedText}
-                      onChange={(event) => setEditDrafts((prev) => ({ ...prev, [item.id]: { ...editDraft, expectedText: event.target.value } }))}
-                      placeholder="编辑期望包含"
-                    />
-                    <div className="flex gap-2">
-                      <Input
-                        value={editDraft.tagsText}
-                        onChange={(event) => setEditDrafts((prev) => ({ ...prev, [item.id]: { ...editDraft, tagsText: event.target.value } }))}
-                        placeholder="编辑标签"
-                      />
-                      <Button
-                        size="sm"
-                        className="h-10 shrink-0"
-                        onClick={() => {
-                          void onUpdateCase(item.id, buildManualCaseUpdateRequest(asset, item, editDraft));
-                          setEditingCaseId(null);
-                        }}
-                        disabled={updatingCaseId === item.id || !editDraft.caseName.trim()}
-                      >
-                        {updatingCaseId === item.id ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-                        保存用例
-                      </Button>
-                      <Button size="sm" variant="ghost" className="h-10 shrink-0" onClick={() => setEditingCaseId(null)}>
-                        取消
-                      </Button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      ) : (
-        <div className="rounded border border-dashed px-2 py-2 text-xs text-muted-foreground">暂无结构化用例，运行时会回退到资产载荷。</div>
-      )}
-      <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-        <Input
-          value={draft.caseName}
-          onChange={(event) => onDraftChange({ ...draft, caseName: event.target.value })}
-          placeholder="手工用例名称"
-        />
-        <Textarea
-          value={draft.variablesText}
-          onChange={(event) => onDraftChange({ ...draft, variablesText: event.target.value })}
-          className="min-h-20 text-sm"
-          placeholder="变量：任务标题=登录失败"
-        />
-        <Input
-          value={draft.expectedText}
-          onChange={(event) => onDraftChange({ ...draft, expectedText: event.target.value })}
-          placeholder="期望包含：验收条件, trace/任务标识"
-        />
-        <div className="flex gap-2">
-          <Input
-            value={draft.tagsText}
-            onChange={(event) => onDraftChange({ ...draft, tagsText: event.target.value })}
-            placeholder="标签：账号系统, 回归"
-          />
-          <Button size="sm" className="h-10 shrink-0" onClick={onCreateCase} disabled={creating || !draft.caseName.trim()}>
-            {creating ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
-            新增用例
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function CaseFilterBar({
-  totalCount,
-  visibleCount,
-  tags,
-  sourceFilter,
-  onSourceFilterChange,
-  tagFilter,
-  onTagFilterChange,
-  keywordFilter,
-  onKeywordFilterChange,
-}: {
-  totalCount: number;
-  visibleCount: number;
-  tags: string[];
-  sourceFilter: DatasetCaseSourceFilter;
-  onSourceFilterChange: (value: DatasetCaseSourceFilter) => void;
-  tagFilter: string;
-  onTagFilterChange: (value: string) => void;
-  keywordFilter: string;
-  onKeywordFilterChange: (value: string) => void;
-}) {
-  return (
-    <section className="grid gap-2 rounded-md border bg-background px-3 py-2 text-xs" data-testid="case-library-filter-bar">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <div className="font-medium text-foreground">用例筛选</div>
-          <div className="mt-0.5 text-muted-foreground">按来源、标签和关键词快速定位用例。</div>
-        </div>
-        <Badge variant="outline" data-testid="case-library-filter-count">
-          命中 {visibleCount} / {totalCount}
-        </Badge>
-      </div>
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-muted-foreground">来源</span>
-        {(["全部", "手工", "trace导入", "资产载荷"] as const).map((source) => (
-          <FilterButton key={source} active={sourceFilter === source} onClick={() => onSourceFilterChange(source)}>
-            {source}
-          </FilterButton>
-        ))}
-        <span className="ml-1 text-muted-foreground">标签</span>
-        <select
-          aria-label="筛选用例标签"
-          className="h-8 rounded-md border bg-background px-2 text-xs"
-          value={tagFilter}
-          onChange={(event) => onTagFilterChange(event.target.value)}
-        >
-          <option value="全部">全部标签</option>
-          {tags.map((tag) => (
-            <option key={tag} value={tag}>{tag}</option>
-          ))}
-        </select>
-        <Input
-          value={keywordFilter}
-          onChange={(event) => onKeywordFilterChange(event.target.value)}
-          placeholder="搜索名称、变量、期望或标签"
-          aria-label="筛选用例关键词"
-          className="h-8 min-w-60 flex-1 text-xs"
-        />
-      </div>
-    </section>
-  );
-}
-
-function datasetCaseSearchText(item: PromptEvaluationStructuredCase) {
-  return [
-    item.case_name,
-    item.status,
-    caseSourceLabel(item.source),
-    ...item.tags.map(String),
-    summarizeStructuredCase(item),
-    summarizeJSONValue(item.variables),
-    summarizeJSONValue(item.expected_contains),
-    summarizeJSONValue(item.input),
-    summarizeJSONValue(item.expected),
-  ].join(" ").toLowerCase();
-}
-
 function tabToAssetType(tab: WorkbenchTab): PromptEvaluationAssetType | null {
   if (tab === "用例库") return "数据集";
   if (tab === "测试套件") return "测试套件";
@@ -2341,21 +2004,11 @@ function canManageStructuredCases(asset: PromptEvaluationAsset): boolean {
   return asset.asset_type === "数据集" || asset.asset_type === "测试套件";
 }
 
-function caseReviewStatusLabel(status: string): string {
-  if (status === "draft") return "待确认";
-  if (status === "approved") return "已批准";
-  if (status === "active" || status === "启用") return "已激活";
-  if (status === "归档") return "已归档";
-  return status;
-}
-
-function summarizeJSONValue(value: unknown): string {
-  if (!value || (typeof value === "object" && !Array.isArray(value) && Object.keys(value as Record<string, unknown>).length === 0)) {
-    return "无额外配置";
+function cssEscape(value: string): string {
+  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+    return CSS.escape(value);
   }
-  const text = JSON.stringify(value);
-  if (!text) return "无额外配置";
-  return text.length > 120 ? `${text.slice(0, 117)}...` : text;
+  return value.replace(/["\\]/g, "\\$&");
 }
 
 function summarizeAssetPayload(asset: PromptEvaluationAsset, caseSummary?: CaseSummary): string {
@@ -2375,15 +2028,6 @@ function summarizeAssetPayload(asset: PromptEvaluationAsset, caseSummary?: CaseS
   if (payload["最近Agent运行"]) return "包含真实智能体运行";
   if (payload["运行结果"]) return "包含运行结果";
   return cases > 0 ? `${cases} 个用例` : "未记录用例";
-}
-
-function summarizeStructuredCase(item: PromptEvaluationStructuredCase): string {
-  const expected = item.expected_contains.map((value) => String(value)).filter(Boolean);
-  const variables = Object.keys(item.variables ?? {});
-  const parts = [];
-  if (variables.length > 0) parts.push(`变量 ${variables.join("、")}`);
-  if (expected.length > 0) parts.push(`期望 ${expected.join("、")}`);
-  return parts.length > 0 ? parts.join(" · ") : "未填写输入和期望";
 }
 
 function summarizeAgentRun(asset: PromptEvaluationAsset): string | null {
