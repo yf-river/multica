@@ -7,23 +7,58 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 var okHandler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 })
 
-func TestRateLimit_NilRedis(t *testing.T) {
-	mw := RateLimit(nil, 5, time.Minute, nil)
+func TestRateLimit_NilRedisUsesLocalFallback(t *testing.T) {
+	mw := RateLimit(nil, 1, time.Minute, nil)
 	handler := mw(okHandler)
 
-	req := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
-	req.RemoteAddr = "1.2.3.4:12345"
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
+	request := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
+		req.RemoteAddr = "1.2.3.4:12345"
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec
+	}
 
-	if rec.Code != http.StatusOK {
-		t.Fatalf("nil redis should pass through; got status %d", rec.Code)
+	if rec := request(); rec.Code != http.StatusOK {
+		t.Fatalf("first request: expected 200, got %d", rec.Code)
+	}
+	if rec := request(); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("local fallback should return 429, got %d", rec.Code)
+	}
+}
+
+func TestRateLimit_RedisFailureUsesLocalFallback(t *testing.T) {
+	rdb := redis.NewClient(&redis.Options{
+		Addr:         "127.0.0.1:1",
+		DialTimeout:  10 * time.Millisecond,
+		ReadTimeout:  10 * time.Millisecond,
+		WriteTimeout: 10 * time.Millisecond,
+		MaxRetries:   -1,
+	})
+	t.Cleanup(func() { _ = rdb.Close() })
+	handler := RateLimit(rdb, 1, time.Minute, nil)(okHandler)
+
+	request := func() *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/auth/login", nil)
+		req.RemoteAddr = "1.2.3.5:12345"
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return rec
+	}
+
+	if rec := request(); rec.Code != http.StatusOK {
+		t.Fatalf("first fallback request: expected 200, got %d", rec.Code)
+	}
+	if rec := request(); rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("local fallback should return 429, got %d", rec.Code)
 	}
 }
 
