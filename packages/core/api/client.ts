@@ -280,6 +280,9 @@ import {
   EMPTY_BEGIN_LARK_INSTALL_RESPONSE,
   EMPTY_LARK_INSTALL_STATUS_RESPONSE,
   EMPTY_REDEEM_LARK_BINDING_TOKEN_RESPONSE,
+  EMPTY_GITHUB_CONNECT_RESPONSE,
+  EMPTY_GITHUB_INSTALLATION_LIST_RESPONSE,
+  EMPTY_GITHUB_PULL_REQUEST_LIST_RESPONSE,
   EMPTY_LIST_WEBHOOK_DELIVERIES_RESPONSE,
   EMPTY_PROMPT_LIBRARY_ITEM,
   EMPTY_PROMPT_LIBRARY_LIST_RESPONSE,
@@ -430,6 +433,9 @@ import {
   BeginLarkInstallResponseSchema,
   LarkInstallStatusResponseSchema,
   RedeemLarkBindingTokenResponseSchema,
+  GitHubConnectResponseSchema,
+  GitHubInstallationListResponseSchema,
+  GitHubPullRequestListResponseSchema,
   WebhookDeliveryResponseSchema,
   EMPTY_CANCEL_TASK_RESPONSE,
 } from "./schemas";
@@ -3139,11 +3145,20 @@ export class ApiClient {
 
   // GitHub integration
   async getGitHubConnectURL(workspaceId: string): Promise<GitHubConnectResponse> {
-    return this.fetch(`/api/workspaces/${workspaceId}/github/connect`);
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/github/connect`);
+    return parseWithFallback(raw, GitHubConnectResponseSchema, EMPTY_GITHUB_CONNECT_RESPONSE, {
+      endpoint: "GET /api/workspaces/:id/github/connect",
+    });
   }
 
   async listGitHubInstallations(workspaceId: string): Promise<ListGitHubInstallationsResponse> {
-    return this.fetch(`/api/workspaces/${workspaceId}/github/installations`);
+    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/github/installations`);
+    return parseWithFallback(
+      raw,
+      GitHubInstallationListResponseSchema,
+      EMPTY_GITHUB_INSTALLATION_LIST_RESPONSE,
+      { endpoint: "GET /api/workspaces/:id/github/installations" },
+    );
   }
 
   async deleteGitHubInstallation(workspaceId: string, installationId: string): Promise<void> {
@@ -3153,7 +3168,13 @@ export class ApiClient {
   }
 
   async listIssuePullRequests(issueId: string): Promise<{ pull_requests: GitHubPullRequest[] }> {
-    return this.fetch(`/api/issues/${issueId}/pull-requests`);
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/pull-requests`);
+    return parseWithFallback(
+      raw,
+      GitHubPullRequestListResponseSchema,
+      EMPTY_GITHUB_PULL_REQUEST_LIST_RESPONSE,
+      { endpoint: "GET /api/issues/:id/pull-requests" },
+    );
   }
 
   // Lark integration

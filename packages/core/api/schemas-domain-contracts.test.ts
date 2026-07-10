@@ -50,6 +50,10 @@ import {
   TestExternalCredentialProfileResponseSchema,
 } from "./schemas-external-credentials";
 import { LarkInstallStatusResponseSchema } from "./schemas-lark";
+import {
+  GitHubConnectResponseSchema,
+  GitHubPullRequestListResponseSchema,
+} from "./schemas-github";
 
 describe("domain response schema fallbacks", () => {
   it("keeps app configuration usable when the response is not an object", () => {
@@ -230,5 +234,37 @@ describe("domain response schema fallbacks", () => {
     expect(LarkInstallStatusResponseSchema.safeParse({ status: "pending" }).success).toBe(true);
     expect(LarkInstallStatusResponseSchema.safeParse({ status: "success" }).success).toBe(false);
     expect(LarkInstallStatusResponseSchema.safeParse({ status: "error" }).success).toBe(false);
+  });
+
+  it("drops a GitHub URL whenever the integration is not configured", () => {
+    expect(GitHubConnectResponseSchema.parse({
+      configured: false,
+      url: "https://github.com/apps/ignored/installations/new",
+    })).toEqual({ configured: false });
+  });
+
+  it("accepts current HTTPS merge-request providers without weakening install URLs", () => {
+    expect(GitHubPullRequestListResponseSchema.parse({
+      pull_requests: [{
+        id: "pr-61234",
+        workspace_id: "workspace-1",
+        repo_owner: "ChainWeaver/ida",
+        repo_name: "user-center",
+        number: 61234,
+        title: "Current Gongfeng merge request",
+        state: "open",
+        html_url: "https://git.code.tencent.com/ChainWeaver/ida/user-center/merge_requests/61234",
+        branch: null,
+        author_login: null,
+        author_avatar_url: null,
+        merged_at: null,
+        closed_at: null,
+      }],
+    }).pull_requests).toHaveLength(1);
+
+    expect(GitHubConnectResponseSchema.safeParse({
+      configured: true,
+      url: "https://git.code.tencent.com/install",
+    }).success).toBe(false);
   });
 });

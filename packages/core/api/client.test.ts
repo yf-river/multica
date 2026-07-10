@@ -246,6 +246,81 @@ describe("ApiClient", () => {
       });
   });
 
+  it("fails closed on unsafe GitHub navigation and strips installation internals", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        configured: true,
+        url: "javascript:alert(1)",
+      }), { status: 200, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        installations: [{
+          id: "installation-1",
+          workspace_id: "workspace-1",
+          installation_id: 42,
+          account_login: "multica",
+          account_type: "Organization",
+          account_avatar_url: null,
+          created_at: "2026-07-11T00:00:00Z",
+          private_key: "must-not-cross-boundary",
+        }],
+        configured: true,
+        can_manage: true,
+      }), { status: 200, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        pull_requests: [{
+          id: "pr-1",
+          workspace_id: "workspace-1",
+          repo_owner: "ChainWeaver/ida",
+          repo_name: "user-center",
+          number: 61234,
+          title: "Current Gongfeng merge request",
+          state: "open",
+          html_url: "https://git.code.tencent.com/ChainWeaver/ida/user-center/merge_requests/61234",
+          branch: null,
+          author_login: null,
+          author_avatar_url: null,
+          merged_at: null,
+          closed_at: null,
+          pr_created_at: "",
+          pr_updated_at: "",
+        }],
+      }), { status: 200, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        pull_requests: [{
+          id: "pr-unsafe",
+          workspace_id: "workspace-1",
+          repo_owner: "multica",
+          repo_name: "multica",
+          number: 1,
+          title: "Unsafe",
+          state: "open",
+          html_url: "javascript:alert(1)",
+          branch: null,
+          author_login: null,
+          author_avatar_url: null,
+          merged_at: null,
+          closed_at: null,
+          pr_created_at: "",
+          pr_updated_at: "",
+        }],
+      }), { status: 200, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.getGitHubConnectURL("workspace-1"))
+      .resolves.toEqual({ configured: false });
+    const installations = await client.listGitHubInstallations("workspace-1");
+    expect(installations.installations[0]).not.toHaveProperty("private_key");
+    await expect(client.listIssuePullRequests("issue-1"))
+      .resolves.toMatchObject({
+        pull_requests: [{
+          html_url: "https://git.code.tencent.com/ChainWeaver/ida/user-center/merge_requests/61234",
+        }],
+      });
+    await expect(client.listIssuePullRequests("issue-1"))
+      .resolves.toEqual({ pull_requests: [] });
+  });
+
   it("validates workspace, repository, and member responses", async () => {
     vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(
       new Response(JSON.stringify({ id: 42 }), {
