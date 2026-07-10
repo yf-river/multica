@@ -1207,7 +1207,7 @@ func newCrossProjectGateSOPFixture(t *testing.T, childDone bool) crossProjectGat
 	t.Helper()
 	ctx := context.Background()
 	leaderID := createHandlerTestAgent(t, "Cross Project Gate PM "+randomID()[:8], nil)
-	implementID := createHandlerTestAgent(t, projectSOPAgent04, nil)
+	implementID := createHandlerTestSOPAgent(t, "Cross Project Gate 04 "+randomID()[:8], "04-implement")
 	profile := `{
 		"mode":"stage_chain",
 		"steps":[
@@ -1238,11 +1238,12 @@ func newCrossProjectGateSOPFixture(t *testing.T, childDone bool) crossProjectGat
 	}
 
 	var issueID string
+	issueNumber := nextHandlerTestIssueNumber(t)
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, creator_type, creator_id, title, status, assignee_type, assignee_id)
-		VALUES ($1, 'member', $2, $3, 'in_progress', 'squad', $4)
+		INSERT INTO issue (workspace_id, creator_type, creator_id, title, status, assignee_type, assignee_id, number)
+		VALUES ($1, 'member', $2, $3, 'in_progress', 'squad', $4, $5)
 		RETURNING id
-	`, testWorkspaceID, testUserID, "cross-project parent gate "+randomID()[:8], squadID).Scan(&issueID); err != nil {
+	`, testWorkspaceID, testUserID, "cross-project parent gate "+randomID()[:8], squadID, issueNumber).Scan(&issueID); err != nil {
 		t.Fatalf("create issue: %v", err)
 	}
 	t.Cleanup(func() {
@@ -1252,10 +1253,11 @@ func newCrossProjectGateSOPFixture(t *testing.T, childDone bool) crossProjectGat
 		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
 	})
 	if childDone {
+		childNumber := nextHandlerTestIssueNumber(t)
 		if _, err := testPool.Exec(ctx, `
-			INSERT INTO issue (workspace_id, creator_type, creator_id, title, status, parent_issue_id)
-			VALUES ($1, 'member', $2, 'ida-deployment child', 'done', $3)
-		`, testWorkspaceID, testUserID, issueID); err != nil {
+			INSERT INTO issue (workspace_id, creator_type, creator_id, title, status, parent_issue_id, number)
+			VALUES ($1, 'member', $2, 'ida-deployment child', 'done', $3, $4)
+		`, testWorkspaceID, testUserID, issueID, childNumber); err != nil {
 			t.Fatalf("create done child: %v", err)
 		}
 	}
@@ -1375,11 +1377,12 @@ func TestEnqueueCommentAgentTriggers_AllowsCrossProjectChildWithoutFurtherChildr
 	fx := newCrossProjectGateSOPFixture(t, false)
 
 	var parentID string
+	parentNumber := nextHandlerTestIssueNumber(t)
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, creator_type, creator_id, title, status)
-		VALUES ($1, 'member', $2, 'parent for cross-project child', 'in_progress')
+		INSERT INTO issue (workspace_id, creator_type, creator_id, title, status, number)
+		VALUES ($1, 'member', $2, 'parent for cross-project child', 'in_progress', $3)
 		RETURNING id
-	`, testWorkspaceID, testUserID).Scan(&parentID); err != nil {
+	`, testWorkspaceID, testUserID, parentNumber).Scan(&parentID); err != nil {
 		t.Fatalf("create parent issue: %v", err)
 	}
 	t.Cleanup(func() {
