@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
+	"github.com/multica-ai/multica/server/internal/eventoutbox"
 	"github.com/multica-ai/multica/server/internal/events"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/realtime"
@@ -425,24 +426,59 @@ func (s *TaskService) createAgentComment(ctx context.Context, issueID, agentID p
 			rootComment = &root
 		}
 	}
-	comment, err := s.Queries.CreateComment(ctx, db.CreateCommentParams{
-		IssueID:      issueID,
-		WorkspaceID:  issue.WorkspaceID,
-		AuthorType:   "agent",
-		AuthorID:     agentID,
-		Content:      content,
-		Type:         commentType,
-		ParentID:     parentID,
-		SourceTaskID: sourceTaskID,
+	var comment db.Comment
+	var createdEvent events.Event
+	var unresolvedEvent events.Event
+	var threadReopened bool
+	err = s.runInTx(ctx, func(queries *db.Queries) error {
+		comment, err = queries.CreateComment(ctx, db.CreateCommentParams{
+			IssueID:      issueID,
+			WorkspaceID:  issue.WorkspaceID,
+			AuthorType:   "agent",
+			AuthorID:     agentID,
+			Content:      content,
+			Type:         commentType,
+			ParentID:     parentID,
+			SourceTaskID: sourceTaskID,
+		})
+		if err != nil {
+			return err
+		}
+		createdEvent = taskCommentCreatedEvent(issue, comment, "agent", util.UUIDToString(agentID))
+		unresolvedEvent, threadReopened, err = UnresolveThreadOnReply(
+			ctx,
+			queries,
+			rootComment,
+			util.UUIDToString(issue.WorkspaceID),
+			"agent",
+			util.UUIDToString(agentID),
+		)
+		if err != nil {
+			return err
+		}
+		createdEvent, err = eventoutbox.Enqueue(ctx, queries, createdEvent)
+		return err
 	})
 	if err != nil {
+		slog.Warn("create agent comment transaction failed", "issue_id", util.UUIDToString(issueID), "agent_id", util.UUIDToString(agentID), "error", err)
 		return
 	}
-	s.Bus.Publish(events.Event{
+	s.Bus.Publish(createdEvent)
+	if threadReopened {
+		s.Bus.Publish(unresolvedEvent)
+	}
+	if commentType == "comment" && s.AgentCommentCreated != nil {
+		s.AgentCommentCreated(ctx, issue, comment, parentComment)
+	}
+}
+
+func taskCommentCreatedEvent(issue db.Issue, comment db.Comment, actorType, actorID string) events.Event {
+	return events.Event{
 		Type:        protocol.EventCommentCreated,
+		StreamKey:   "issue:" + util.UUIDToString(issue.ID),
 		WorkspaceID: util.UUIDToString(issue.WorkspaceID),
-		ActorType:   "agent",
-		ActorID:     util.UUIDToString(agentID),
+		ActorType:   actorType,
+		ActorID:     actorID,
 		Payload: map[string]any{
 			"comment": map[string]any{
 				"id":             util.UUIDToString(comment.ID),
@@ -458,50 +494,7 @@ func (s *TaskService) createAgentComment(ctx context.Context, issueID, agentID p
 			"issue_title":  issue.Title,
 			"issue_status": issue.Status,
 		},
-	})
-	s.AutoUnresolveThreadOnReply(ctx, rootComment, util.UUIDToString(issue.WorkspaceID), "agent", util.UUIDToString(agentID))
-	if commentType == "comment" && s.AgentCommentCreated != nil {
-		s.AgentCommentCreated(ctx, issue, comment, parentComment)
 	}
-}
-
-// AutoUnresolveThreadOnReply clears resolved_at on the thread root when a
-// reply lands in a resolved thread, and broadcasts comment:unresolved. Shared
-// between the user-facing Handler.CreateComment path and the agent-facing
-// TaskService.createAgentComment path so the resolved-then-replied state can
-// never desync (one of the bugs Emacs flagged on PR #2300). Errors are logged
-// — the reply itself already committed, the desync is recoverable on next read.
-func (s *TaskService) AutoUnresolveThreadOnReply(ctx context.Context, parent *db.Comment, workspaceID, actorType, actorID string) {
-	if parent == nil || !parent.ResolvedAt.Valid {
-		return
-	}
-	updated, err := s.Queries.UnresolveComment(ctx, parent.ID)
-	if err != nil {
-		slog.Warn("auto-unresolve on reply failed", "error", err, "comment_id", util.UUIDToString(parent.ID))
-		return
-	}
-	s.Bus.Publish(events.Event{
-		Type:        protocol.EventCommentUnresolved,
-		WorkspaceID: workspaceID,
-		ActorType:   actorType,
-		ActorID:     actorID,
-		Payload: map[string]any{
-			"comment": map[string]any{
-				"id":               util.UUIDToString(updated.ID),
-				"issue_id":         util.UUIDToString(updated.IssueID),
-				"author_type":      updated.AuthorType,
-				"author_id":        util.UUIDToString(updated.AuthorID),
-				"content":          updated.Content,
-				"type":             updated.Type,
-				"parent_id":        util.UUIDToPtr(updated.ParentID),
-				"created_at":       util.TimestampToString(updated.CreatedAt),
-				"updated_at":       util.TimestampToString(updated.UpdatedAt),
-				"resolved_at":      util.TimestampToPtr(updated.ResolvedAt),
-				"resolved_by_type": util.TextToPtr(updated.ResolvedByType),
-				"resolved_by_id":   util.UUIDToPtr(updated.ResolvedByID),
-			},
-		},
-	})
 }
 
 func issueToMap(issue db.Issue, issuePrefix string) map[string]any {

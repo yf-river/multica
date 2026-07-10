@@ -259,18 +259,14 @@ func main() {
 		slog.Error("initialize domain event dispatcher", "error", err)
 		os.Exit(1)
 	}
-	if err := registerDurableIssueAudienceConsumers(eventDispatcher); err != nil {
-		slog.Error("register durable issue audience consumers", "error", err)
+	if err := registerDurableAudienceConsumers(eventDispatcher); err != nil {
+		slog.Error("register durable audience consumers", "error", err)
 		os.Exit(1)
 	}
 	if err := registerDurableActivityConsumers(eventDispatcher); err != nil {
 		slog.Error("register durable activity consumers", "error", err)
 		os.Exit(1)
 	}
-	// Comment events still use the synchronous bus until their producers move to
-	// the outbox. Registration order remains explicit for that temporary boundary;
-	// Issue audience + inbox writes are one durable transaction.
-	registerSubscriberListeners(bus, queries)
 	registerActivityListeners(bus, queries)
 	registerNotificationListeners(bus, queries)
 

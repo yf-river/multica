@@ -63,6 +63,17 @@ func TestCreateCommentRollsBackWhenAttachmentCannotBeLinked(t *testing.T) {
 	if commentID != nil {
 		t.Fatalf("CreateComment: partial attachment claim was not rolled back, comment_id=%s", *commentID)
 	}
+	var eventCount int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*) FROM domain_event_outbox
+		WHERE event_type = 'comment:created'
+		  AND payload #>> '{comment,content}' = $1
+	`, content).Scan(&eventCount); err != nil {
+		t.Fatalf("count rolled-back comment events: %v", err)
+	}
+	if eventCount != 0 {
+		t.Fatalf("attachment rollback left %d durable comment events", eventCount)
+	}
 }
 
 func TestUpdateCommentRollsBackContentAndAttachmentsTogether(t *testing.T) {

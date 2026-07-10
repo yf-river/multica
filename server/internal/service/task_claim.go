@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/eventoutbox"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -506,14 +507,15 @@ func (s *TaskService) closeIssueAfterCompletedSOPRun(ctx context.Context, issue 
 			slog.Info("issue auto-closed after completed SOP run with linked MR", "issue_id", util.UUIDToString(issue.ID))
 			return
 		}
-		if _, err := s.updateIssueStatusAfterCompletedSOPRun(ctx, issue, "blocked"); err != nil {
+		blockedIssue, err := s.updateIssueStatusAfterCompletedSOPRun(ctx, issue, "blocked")
+		if err != nil {
 			slog.Warn("block issue after completed SOP without MR failed",
 				"issue_id", util.UUIDToString(issue.ID),
 				"error", err,
 			)
 			return
 		}
-		s.recordMissingMRGateComment(ctx, issue)
+		s.recordMissingMRGateComment(ctx, blockedIssue)
 		slog.Info("issue blocked after completed SOP run without linked MR", "issue_id", util.UUIDToString(issue.ID))
 		return
 	}
@@ -739,40 +741,33 @@ func (s *TaskService) recordMissingMRGateComment(ctx context.Context, issue db.I
 multica issue mr create <issue-id> --provider gongfeng --project-path <project-path> --source-branch <branch> --target-branch <target-branch> --title "<title>" --output json
 
 创建成功后，平台会把 MR 写入任务的关联 MR 区域。`)
-	comment, err := s.Queries.CreateComment(ctx, db.CreateCommentParams{
-		IssueID:     issue.ID,
-		WorkspaceID: issue.WorkspaceID,
-		AuthorType:  "system",
-		AuthorID:    util.MustParseUUID("00000000-0000-0000-0000-000000000000"),
-		Content:     content,
-		Type:        "comment",
+	var comment db.Comment
+	var createdEvent events.Event
+	err := s.runInTx(ctx, func(queries *db.Queries) error {
+		var err error
+		comment, err = queries.CreateComment(ctx, db.CreateCommentParams{
+			IssueID:     issue.ID,
+			WorkspaceID: issue.WorkspaceID,
+			AuthorType:  "system",
+			AuthorID:    util.MustParseUUID("00000000-0000-0000-0000-000000000000"),
+			Content:     content,
+			Type:        "comment",
+		})
+		if err != nil {
+			return err
+		}
+		createdEvent = taskCommentCreatedEvent(issue, comment, "system", "")
+		createdEvent, err = eventoutbox.Enqueue(ctx, queries, createdEvent)
+		return err
 	})
 	if err != nil {
-		slog.Warn("create missing MR gate comment failed",
+		slog.Warn("create missing MR gate comment transaction failed",
 			"issue_id", util.UUIDToString(issue.ID),
 			"error", err,
 		)
 		return
 	}
-	s.Bus.Publish(events.Event{
-		Type:        protocol.EventCommentCreated,
-		WorkspaceID: util.UUIDToString(issue.WorkspaceID),
-		ActorType:   "system",
-		ActorID:     "",
-		Payload: map[string]any{
-			"comment": map[string]any{
-				"id":          util.UUIDToString(comment.ID),
-				"issue_id":    util.UUIDToString(comment.IssueID),
-				"author_type": comment.AuthorType,
-				"author_id":   util.UUIDToString(comment.AuthorID),
-				"content":     comment.Content,
-				"type":        comment.Type,
-				"created_at":  comment.CreatedAt.Time.Format("2006-01-02T15:04:05Z"),
-			},
-			"issue_title":  issue.Title,
-			"issue_status": "blocked",
-		},
-	})
+	s.Bus.Publish(createdEvent)
 }
 
 func parseSquadSOPProfileSteps(raw []byte) []squadSOPProfileStep {

@@ -1155,6 +1155,41 @@ func (q *Queries) UnresolveComment(ctx context.Context, id pgtype.UUID) (Comment
 	return i, err
 }
 
+const unresolveCommentIfResolved = `-- name: UnresolveCommentIfResolved :one
+UPDATE comment SET
+    resolved_at = NULL,
+    resolved_by_type = NULL,
+    resolved_by_id = NULL,
+    updated_at = now()
+WHERE id = $1 AND resolved_at IS NOT NULL
+RETURNING id, issue_id, author_type, author_id, content, type, created_at, updated_at, parent_id, workspace_id, resolved_at, resolved_by_type, resolved_by_id, source_task_id
+`
+
+// Atomically clears a current resolution and returns no row when the comment
+// was already unresolved. Reply creation uses this to decide whether a
+// comment:unresolved event belongs to the same transaction as the reply.
+func (q *Queries) UnresolveCommentIfResolved(ctx context.Context, id pgtype.UUID) (Comment, error) {
+	row := q.db.QueryRow(ctx, unresolveCommentIfResolved, id)
+	var i Comment
+	err := row.Scan(
+		&i.ID,
+		&i.IssueID,
+		&i.AuthorType,
+		&i.AuthorID,
+		&i.Content,
+		&i.Type,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ParentID,
+		&i.WorkspaceID,
+		&i.ResolvedAt,
+		&i.ResolvedByType,
+		&i.ResolvedByID,
+		&i.SourceTaskID,
+	)
+	return i, err
+}
+
 const updateComment = `-- name: UpdateComment :one
 UPDATE comment SET
     content = $2,

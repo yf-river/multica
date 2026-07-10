@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"log/slog"
 
 	"github.com/multica-ai/multica/server/internal/eventoutbox"
 	"github.com/multica-ai/multica/server/internal/events"
@@ -12,25 +11,14 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// registerSubscriberListeners retains comment subscription projection until
-// comment producers enqueue their events transactionally. Issue projections
-// are registered through registerDurableIssueAudienceConsumers.
-func registerSubscriberListeners(bus *events.Bus, queries *db.Queries) {
-	bus.Subscribe(protocol.EventCommentCreated, func(event events.Event) {
-		emitted, err := consumeCommentCreatedSubscriber(context.Background(), queries, event)
-		if err != nil {
-			slog.Error("project comment subscriber", "error", err)
-			return
-		}
-		publishProjectedEvents(bus, emitted)
-	})
-}
-
-func registerDurableIssueAudienceConsumers(dispatcher *eventoutbox.Dispatcher) error {
+func registerDurableAudienceConsumers(dispatcher *eventoutbox.Dispatcher) error {
 	if err := dispatcher.Register(protocol.EventIssueCreated, "issue_audience", consumeIssueCreatedAudience); err != nil {
 		return err
 	}
-	return dispatcher.Register(protocol.EventIssueUpdated, "issue_audience", consumeIssueUpdatedAudience)
+	if err := dispatcher.Register(protocol.EventIssueUpdated, "issue_audience", consumeIssueUpdatedAudience); err != nil {
+		return err
+	}
+	return dispatcher.Register(protocol.EventCommentCreated, "comment_audience", consumeCommentCreatedAudience)
 }
 
 func consumeIssueCreatedAudience(ctx context.Context, queries *db.Queries, event events.Event) ([]events.Event, error) {
@@ -59,6 +47,25 @@ func consumeIssueUpdatedAudience(ctx context.Context, queries *db.Queries, event
 		return nil, err
 	}
 	notificationEvents, err := projectIssueUpdatedNotifications(ctx, queries, event, payload)
+	if err != nil {
+		return nil, err
+	}
+	return append(subscriberEvents, notificationEvents...), nil
+}
+
+func consumeCommentCreatedAudience(ctx context.Context, queries *db.Queries, event events.Event) ([]events.Event, error) {
+	payload, exists, err := loadCommentProjection(ctx, queries, event)
+	if err != nil || !exists {
+		return nil, err
+	}
+	if payload.Comment.AuthorType == "system" {
+		return nil, nil
+	}
+	subscriberEvents, err := projectCommentCreatedSubscriber(ctx, queries, event, payload)
+	if err != nil {
+		return nil, err
+	}
+	notificationEvents, err := projectCommentCreatedNotifications(ctx, queries, event, payload)
 	if err != nil {
 		return nil, err
 	}
@@ -151,10 +158,14 @@ func projectIssueUpdatedSubscribers(ctx context.Context, queries *db.Queries, ev
 }
 
 func consumeCommentCreatedSubscriber(ctx context.Context, queries *db.Queries, event events.Event) ([]events.Event, error) {
-	payload, ok := decodeCommentEvent(event)
-	if !ok {
-		return nil, fmt.Errorf("decode comment-created subscriber payload")
+	payload, exists, err := loadCommentProjection(ctx, queries, event)
+	if err != nil || !exists {
+		return nil, err
 	}
+	return projectCommentCreatedSubscriber(ctx, queries, event, payload)
+}
+
+func projectCommentCreatedSubscriber(ctx context.Context, queries *db.Queries, event events.Event, payload commentEventPayload) ([]events.Event, error) {
 	comment := payload.Comment
 	if comment.AuthorType == "system" || comment.AuthorID == "" {
 		return nil, nil

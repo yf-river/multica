@@ -700,73 +700,56 @@ func projectIssueUpdatedNotifications(ctx context.Context, queries *db.Queries, 
 	return collector.events, nil
 }
 
+func consumeCommentCreatedNotifications(ctx context.Context, queries *db.Queries, event events.Event) ([]events.Event, error) {
+	payload, exists, err := loadCommentProjection(ctx, queries, event)
+	if err != nil || !exists {
+		return nil, err
+	}
+	if payload.Comment.AuthorType == "system" {
+		return nil, nil
+	}
+	return projectCommentCreatedNotifications(ctx, queries, event, payload)
+}
+
+func projectCommentCreatedNotifications(ctx context.Context, queries *db.Queries, event events.Event, payload commentEventPayload) ([]events.Event, error) {
+	comment := payload.Comment
+	details := emptyDetails
+	if comment.ID != "" {
+		details, _ = json.Marshal(map[string]string{"comment_id": comment.ID})
+	}
+	collector := newNotificationEventCollector()
+	if err := notifySubscribers(ctx, queries, collector.bus,
+		comment.IssueID, payload.IssueStatus, event.WorkspaceID, event,
+		nil, "new_comment", "info", payload.IssueTitle, comment.Content, details,
+	); err != nil {
+		return nil, err
+	}
+	mentions := parseMentions(comment.Content)
+	if len(mentions) > 0 {
+		if err := notifyMentionedMembers(ctx, collector.bus, queries, event, mentions,
+			comment.IssueID, payload.IssueTitle, payload.IssueStatus, payload.IssueTitle,
+			map[string]bool{event.ActorID: true}, details); err != nil {
+			return nil, err
+		}
+	}
+	return collector.events, nil
+}
+
 func setAnyOptionalDetail(details map[string]any, key string, value *string) {
 	if value != nil {
 		details[key] = *value
 	}
 }
 
-// registerNotificationListeners retains event types whose producers have not
-// moved to the outbox yet. Issue-created and issue-updated notifications are
-// part of the durable issue_audience consumer above.
+// registerNotificationListeners retains reaction and task-failure event types
+// whose producers have not moved to the outbox yet. Issue and Comment audience
+// projections are durable consumers.
 //
 // NOTE: uses context.Background() because the event bus dispatches synchronously
 // within the HTTP request goroutine. Adding per-handler timeouts is a bus-level
 // concern — see events.Bus for future improvements.
 func registerNotificationListeners(bus *events.Bus, queries *db.Queries) {
 	ctx := context.Background()
-
-	// comment:created — notify all subscribers except the commenter
-	bus.Subscribe(protocol.EventCommentCreated, func(e events.Event) {
-		payload, ok := decodeCommentEvent(e)
-		if !ok {
-			return
-		}
-		issueID := payload.Comment.IssueID
-		commentID := payload.Comment.ID
-		commentContent := payload.Comment.Content
-		authorType := payload.Comment.AuthorType
-
-		// Platform-authored system comments (MUL-2538 child-done parent
-		// notify) must NOT create inbox rows or parse mentions from their
-		// body — the comment is a controlled platform signal, not a human
-		// commenter. Mention parsing is the dangerous bit: if the body
-		// transcluded a child title containing `mention://member/<uuid>`,
-		// the parent's assignee inbox would light up via the generic path.
-		// Skip the listener entirely; the WS broadcast still delivers the
-		// comment to the issue timeline.
-		if authorType == "system" {
-			return
-		}
-
-		issueTitle := payload.IssueTitle
-		issueStatus := payload.IssueStatus
-
-		commentDetails := emptyDetails
-		if commentID != "" {
-			commentDetails, _ = json.Marshal(map[string]string{
-				"comment_id": commentID,
-			})
-		}
-
-		if err := notifySubscribers(ctx, queries, bus, issueID, issueStatus, e.WorkspaceID, e,
-			nil, "new_comment", "info",
-			issueTitle, commentContent,
-			commentDetails); err != nil {
-			slog.Error("project comment subscriber notifications", "issue_id", issueID, "error", err)
-			return
-		}
-
-		// Notify @mentions in comment content.
-		mentions := parseMentions(commentContent)
-		if len(mentions) > 0 {
-			skip := map[string]bool{e.ActorID: true}
-			if err := notifyMentionedMembers(ctx, bus, queries, e, mentions, issueID, issueTitle, issueStatus,
-				issueTitle, skip, commentDetails); err != nil {
-				slog.Error("project comment mention notifications", "issue_id", issueID, "error", err)
-			}
-		}
-	})
 
 	// issue_reaction:added — notify the issue creator
 	bus.Subscribe(protocol.EventIssueReactionAdded, func(e events.Event) {

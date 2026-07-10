@@ -80,18 +80,36 @@ func createTestSubIssue(t *testing.T, workspaceID, creatorID, parentIssueID stri
 func newNotificationBus(t *testing.T, queries *db.Queries) *events.Bus {
 	t.Helper()
 	bus := events.New()
-	registerSubscriberListeners(bus, queries)
 	registerNotificationListeners(bus, queries)
 	bus.Subscribe(protocol.EventIssueCreated, func(event events.Event) {
-		projectDurableIssueEventForTest(t, queries, bus, event, consumeIssueCreatedAudience)
+		projectDurableEventForTest(t, queries, bus, event, consumeIssueCreatedAudience)
 	})
 	bus.Subscribe(protocol.EventIssueUpdated, func(event events.Event) {
-		projectDurableIssueEventForTest(t, queries, bus, event, consumeIssueUpdatedAudience)
+		projectDurableEventForTest(t, queries, bus, event, consumeIssueUpdatedAudience)
+	})
+	bus.Subscribe(protocol.EventCommentCreated, func(event events.Event) {
+		payload, ok := decodeCommentEvent(event)
+		if !ok {
+			t.Fatalf("decode comment audience test event")
+		}
+		if payload.Comment.AuthorType == "system" {
+			return
+		}
+		emitted, err := projectCommentCreatedSubscriber(context.Background(), queries, event, payload)
+		if err != nil {
+			t.Fatalf("project comment subscriber test event: %v", err)
+		}
+		publishProjectedEvents(bus, emitted)
+		emitted, err = projectCommentCreatedNotifications(context.Background(), queries, event, payload)
+		if err != nil {
+			t.Fatalf("project comment notification test event: %v", err)
+		}
+		publishProjectedEvents(bus, emitted)
 	})
 	return bus
 }
 
-func projectDurableIssueEventForTest(
+func projectDurableEventForTest(
 	t *testing.T,
 	queries *db.Queries,
 	bus *events.Bus,
@@ -558,13 +576,11 @@ func TestNotification_SystemCommentSkipsInboxAndMentions(t *testing.T) {
 // constraint violation on every child-done event.
 func TestSubscriberSystemCommentDoesNotSubscribe(t *testing.T) {
 	queries := db.New(testPool)
-	bus := events.New()
-	registerSubscriberListeners(bus, queries)
 
 	issueID := createTestIssue(t, testWorkspaceID, testUserID)
 	t.Cleanup(func() { cleanupTestIssue(t, issueID) })
 
-	bus.Publish(events.Event{
+	event := events.Event{
 		Type:        protocol.EventCommentCreated,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "system",
@@ -579,7 +595,18 @@ func TestSubscriberSystemCommentDoesNotSubscribe(t *testing.T) {
 				Type:       "system",
 			},
 		},
-	})
+	}
+	payload, ok := decodeCommentEvent(event)
+	if !ok {
+		t.Fatal("decode system comment event")
+	}
+	emitted, err := projectCommentCreatedSubscriber(context.Background(), queries, event, payload)
+	if err != nil {
+		t.Fatalf("project system comment subscriber: %v", err)
+	}
+	if len(emitted) != 0 {
+		t.Fatalf("system comment emitted %d subscriber events, want 0", len(emitted))
+	}
 
 	if count := subscriberCount(t, queries, issueID); count != 0 {
 		t.Fatalf("expected 0 subscribers after system comment, got %d", count)

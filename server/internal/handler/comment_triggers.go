@@ -8,9 +8,9 @@ import (
 	"unicode"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/eventoutbox"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
-	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 func isNoteComment(content string) bool {
@@ -346,7 +346,14 @@ func requiredCrossProjectSectionHasEntries(text string) bool {
 
 func (h *Handler) recordBlockedParentSOPStageTriggerComment(ctx context.Context, issue db.Issue, stageName string) {
 	content := strings.TrimSpace("平台已阻止父任务阶段调度：03-任务拆分已识别 required 跨项目依赖，但父 issue 的 child issue 仍缺失或未全部完成，因此不能触发父 issue 的 " + stageName + "。请 PM 先创建/复用并回读 required child issue；所有 required child issue 完成后，再继续父 issue 阶段。")
-	comment, err := h.Queries.CreateComment(ctx, db.CreateCommentParams{
+	tx, err := h.TxStarter.Begin(ctx)
+	if err != nil {
+		slog.Warn("begin sop cross-project child gate comment transaction failed", "issue_id", uuidToString(issue.ID), "stage", stageName, "error", err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	queries := h.Queries.WithTx(tx)
+	comment, err := queries.CreateComment(ctx, db.CreateCommentParams{
 		IssueID:     issue.ID,
 		WorkspaceID: issue.WorkspaceID,
 		AuthorType:  "system",
@@ -361,13 +368,17 @@ func (h *Handler) recordBlockedParentSOPStageTriggerComment(ctx context.Context,
 			"error", err)
 		return
 	}
-	h.publish(protocol.EventCommentCreated, uuidToString(issue.WorkspaceID), "system", "", map[string]any{
-		"comment":             commentToResponse(comment, nil, nil),
-		"issue_title":         issue.Title,
-		"issue_assignee_type": textToPtr(issue.AssigneeType),
-		"issue_assignee_id":   uuidToPtr(issue.AssigneeID),
-		"issue_status":        issue.Status,
-	})
+	createdEvent := buildCommentCreatedEvent(issue, commentToResponse(comment, nil, nil), "system", "")
+	createdEvent, err = eventoutbox.Enqueue(ctx, queries, createdEvent)
+	if err != nil {
+		slog.Warn("enqueue sop cross-project child gate comment event failed", "issue_id", uuidToString(issue.ID), "stage", stageName, "error", err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		slog.Warn("commit sop cross-project child gate comment failed", "issue_id", uuidToString(issue.ID), "stage", stageName, "error", err)
+		return
+	}
+	h.publishEvent(createdEvent)
 }
 
 func (h *Handler) computeCommentAgentTriggers(ctx context.Context, issue db.Issue, content string, parentComment *db.Comment, actorType, actorID string, opts commentTriggerComputeOptions) []commentAgentTrigger {
@@ -807,4 +818,3 @@ func normalizeSOPRoleMentionKey(value string) string {
 	value = strings.ReplaceAll(value, "_", "-")
 	return strings.Trim(value, "-")
 }
-

@@ -93,6 +93,12 @@ func publishSubscriberProjection(t *testing.T, queries *db.Queries, bus *events.
 		emitted, err = consumeIssueCreatedSubscribers(context.Background(), queries, event)
 	case protocol.EventIssueUpdated:
 		emitted, err = consumeIssueUpdatedSubscribers(context.Background(), queries, event)
+	case protocol.EventCommentCreated:
+		payload, ok := decodeCommentEvent(event)
+		if !ok {
+			t.Fatalf("decode comment subscriber test event")
+		}
+		emitted, err = projectCommentCreatedSubscriber(context.Background(), queries, event, payload)
 	default:
 		bus.Publish(event)
 		return
@@ -106,7 +112,6 @@ func publishSubscriberProjection(t *testing.T, queries *db.Queries, bus *events.
 func TestSubscriberIssueCreated_CreatorSubscribed(t *testing.T) {
 	queries := db.New(testPool)
 	bus := events.New()
-	registerSubscriberListeners(bus, queries)
 
 	issueID := createTestIssue(t, testWorkspaceID, testUserID)
 	t.Cleanup(func() { cleanupTestIssue(t, issueID) })
@@ -141,7 +146,6 @@ func TestSubscriberIssueCreated_CreatorSubscribed(t *testing.T) {
 func TestSubscriberIssueCreated_CreatorAndAssignee(t *testing.T) {
 	queries := db.New(testPool)
 	bus := events.New()
-	registerSubscriberListeners(bus, queries)
 
 	assigneeAccount := "subscriber-assignee-test@multica"
 	assigneeID := createTestUser(t, assigneeAccount)
@@ -185,7 +189,6 @@ func TestSubscriberIssueCreated_CreatorAndAssignee(t *testing.T) {
 func TestSubscriberIssueCreated_SkipsUnsupportedAssigneeAndIssueMentionTypes(t *testing.T) {
 	queries := db.New(testPool)
 	bus := events.New()
-	registerSubscriberListeners(bus, queries)
 
 	issueID := createTestIssue(t, testWorkspaceID, testUserID)
 	t.Cleanup(func() { cleanupTestIssue(t, issueID) })
@@ -225,7 +228,6 @@ func TestSubscriberIssueCreated_SkipsUnsupportedAssigneeAndIssueMentionTypes(t *
 func TestSubscriberIssueCreated_SelfAssign(t *testing.T) {
 	queries := db.New(testPool)
 	bus := events.New()
-	registerSubscriberListeners(bus, queries)
 
 	issueID := createTestIssue(t, testWorkspaceID, testUserID)
 	t.Cleanup(func() { cleanupTestIssue(t, issueID) })
@@ -265,7 +267,6 @@ func TestSubscriberIssueCreated_SelfAssign(t *testing.T) {
 func TestSubscriberIssueUpdated_AssigneeChanged(t *testing.T) {
 	queries := db.New(testPool)
 	bus := events.New()
-	registerSubscriberListeners(bus, queries)
 
 	assigneeAccount := "subscriber-new-assignee-test@multica"
 	assigneeID := createTestUser(t, assigneeAccount)
@@ -304,7 +305,6 @@ func TestSubscriberIssueUpdated_AssigneeChanged(t *testing.T) {
 func TestSubscriberIssueUpdated_NoAssigneeChange(t *testing.T) {
 	queries := db.New(testPool)
 	bus := events.New()
-	registerSubscriberListeners(bus, queries)
 
 	issueID := createTestIssue(t, testWorkspaceID, testUserID)
 	t.Cleanup(func() { cleanupTestIssue(t, issueID) })
@@ -339,7 +339,6 @@ func TestSubscriberIssueUpdated_NoAssigneeChange(t *testing.T) {
 func TestSubscriberCommentCreated_CommenterSubscribed(t *testing.T) {
 	queries := db.New(testPool)
 	bus := events.New()
-	registerSubscriberListeners(bus, queries)
 
 	commenterAccount := "subscriber-commenter-test@multica"
 	commenterID := createTestUser(t, commenterAccount)
@@ -370,10 +369,84 @@ func TestSubscriberCommentCreated_CommenterSubscribed(t *testing.T) {
 	}
 }
 
+func TestDurableCommentAudienceLoadsCommittedComment(t *testing.T) {
+	queries := db.New(testPool)
+	commenterAccount := "durable-commenter-test@multica"
+	commenterID := createTestUser(t, commenterAccount)
+	t.Cleanup(func() { cleanupTestUser(t, commenterAccount) })
+	issueID := createTestIssue(t, testWorkspaceID, testUserID)
+	t.Cleanup(func() { cleanupTestIssue(t, issueID) })
+
+	var commentID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO comment (issue_id, workspace_id, author_type, author_id, content, type)
+		VALUES ($1, $2, 'member', $3, 'durable audience', 'comment')
+		RETURNING id
+	`, issueID, testWorkspaceID, commenterID).Scan(&commentID); err != nil {
+		t.Fatalf("insert comment: %v", err)
+	}
+	event := events.Event{
+		Type:        protocol.EventCommentCreated,
+		StreamKey:   "issue:" + issueID,
+		WorkspaceID: testWorkspaceID,
+		ActorType:   "member",
+		ActorID:     commenterID,
+		Payload: map[string]any{
+			"comment": map[string]any{
+				"id":          commentID,
+				"issue_id":    issueID,
+				"author_type": "member",
+				"author_id":   commenterID,
+				"content":     "durable audience",
+			},
+			"issue_title":  "subscriber test issue",
+			"issue_status": "todo",
+		},
+	}
+	emitted, err := consumeCommentCreatedAudience(context.Background(), queries, event)
+	if err != nil {
+		t.Fatalf("consume durable comment audience: %v", err)
+	}
+	if !isSubscribed(t, queries, issueID, "member", commenterID) {
+		t.Fatal("durable comment audience did not subscribe commenter")
+	}
+	if len(emitted) != 1 || emitted[0].Type != protocol.EventSubscriberAdded {
+		t.Fatalf("durable comment audience emitted %+v, want one subscriber event", emitted)
+	}
+}
+
+func TestDurableCommentAudienceSkipsDeletedComment(t *testing.T) {
+	queries := db.New(testPool)
+	issueID := createTestIssue(t, testWorkspaceID, testUserID)
+	t.Cleanup(func() { cleanupTestIssue(t, issueID) })
+	commentID := "019f4c39-e1b4-7af0-8172-c0fd3623f1cd"
+	event := events.Event{
+		Type:        protocol.EventCommentCreated,
+		StreamKey:   "issue:" + issueID,
+		WorkspaceID: testWorkspaceID,
+		ActorType:   "member",
+		ActorID:     testUserID,
+		Payload: map[string]any{
+			"comment": map[string]any{
+				"id":          commentID,
+				"issue_id":    issueID,
+				"author_type": "member",
+				"author_id":   testUserID,
+			},
+		},
+	}
+	emitted, err := consumeCommentCreatedAudience(context.Background(), queries, event)
+	if err != nil {
+		t.Fatalf("deleted comment should not poison projection: %v", err)
+	}
+	if len(emitted) != 0 {
+		t.Fatalf("deleted comment emitted %d events, want 0", len(emitted))
+	}
+}
+
 func TestSubscriberAddedEventPublished(t *testing.T) {
 	queries := db.New(testPool)
 	bus := events.New()
-	registerSubscriberListeners(bus, queries)
 
 	issueID := createTestIssue(t, testWorkspaceID, testUserID)
 	t.Cleanup(func() { cleanupTestIssue(t, issueID) })
@@ -426,7 +499,6 @@ func TestSubscriberAddedEventPublished(t *testing.T) {
 func TestSubscriberIssueCreated_AutopilotMapPayload(t *testing.T) {
 	queries := db.New(testPool)
 	bus := events.New()
-	registerSubscriberListeners(bus, queries)
 
 	issueID := createTestIssue(t, testWorkspaceID, testUserID)
 	t.Cleanup(func() { cleanupTestIssue(t, issueID) })

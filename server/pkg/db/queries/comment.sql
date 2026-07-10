@@ -436,3 +436,15 @@ UPDATE comment SET
     updated_at = CASE WHEN resolved_at IS NOT NULL THEN now() ELSE updated_at END
 WHERE id = $1
 RETURNING *;
+
+-- name: UnresolveCommentIfResolved :one
+-- Atomically clears a current resolution and returns no row when the comment
+-- was already unresolved. Reply creation uses this to decide whether a
+-- comment:unresolved event belongs to the same transaction as the reply.
+UPDATE comment SET
+    resolved_at = NULL,
+    resolved_by_type = NULL,
+    resolved_by_id = NULL,
+    updated_at = now()
+WHERE id = $1 AND resolved_at IS NOT NULL
+RETURNING *;
