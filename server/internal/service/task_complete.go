@@ -24,6 +24,7 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 	var task db.AgentTaskQueue
 	var completedEvent events.Event
 	var sourceSummary *issueSourceSummaryProjection
+	var completionComment *agentCommentProjection
 	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
 		t, err := qtx.CompleteAgentTask(ctx, db.CompleteAgentTaskParams{
 			ID:        taskID,
@@ -66,8 +67,10 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 				return fmt.Errorf("project issue source summary: %w", err)
 			}
 			sourceSummary = &projection
+			return nil
 		}
-		return nil
+		completionComment, err = projectTaskCompletionFallbackComment(ctx, qtx, task, result)
+		return err
 	}); err != nil {
 		// When parallel agents race, a task may already be completed,
 		// cancelled, or failed by the time this call runs. The UPDATE
@@ -112,57 +115,7 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 	s.enqueueSquadLeaderAfterWorkerStageCompletion(ctx, task)
 	s.autoReviewIssueForTask(ctx, task)
 
-	// Invariant: every completed issue task must have at least one agent
-	// comment on the issue, so the user always sees something when a run
-	// ends. If the agent posted a comment during execution (result, progress
-	// ping, or CLI reply), HasAgentCommentedSince returns true and we skip.
-	// Otherwise, synthesize one from the final output. For comment-triggered
-	// tasks, TriggerCommentID threads the fallback under the original comment;
-	// for assignment-triggered tasks it is NULL and the fallback is top-level.
-	// Chat tasks have no IssueID; their assistant result is projected durably
-	// from the terminal event after this method commits.
-	if task.IssueID.Valid {
-		suppressNoActionComment, err := HasSquadLeaderNoActionEvaluationForTask(ctx, s.Queries, task)
-		if err != nil {
-			slog.Warn("checking squad leader no_action evaluation failed",
-				"task_id", util.UUIDToString(task.ID),
-				"issue_id", util.UUIDToString(task.IssueID),
-				"agent_id", util.UUIDToString(task.AgentID),
-				"error", err,
-			)
-		}
-		agentCommented, _ := s.Queries.HasAgentCommentedSince(ctx, db.HasAgentCommentedSinceParams{
-			IssueID:  task.IssueID,
-			AuthorID: task.AgentID,
-			Since:    task.StartedAt,
-		})
-		if !suppressNoActionComment && !agentCommented {
-			var payload protocol.TaskCompletedPayload
-			if err := json.Unmarshal(result, &payload); err == nil {
-				if payload.Output != "" {
-					// Match the CLI's --content / --description behavior: agents that
-					// emit literal `\n` 4-char sequences (Python/JSON-style) get them
-					// decoded into real newlines before the comment hits the DB. See
-					// util.UnescapeBackslashEscapes for the exact contract.
-					body := util.UnescapeBackslashEscapes(payload.Output)
-					if !containsAgentMention(body) {
-						if dispatchBody := s.fallbackDispatchCommentFromMessages(ctx, task.ID); dispatchBody != "" {
-							body = dispatchBody
-						}
-					}
-					if task.TriggerCommentID.Valid && isTrivialDoneOutput(body) {
-						slog.Warn("suppressing trivial comment-trigger fallback output",
-							"task_id", util.UUIDToString(task.ID),
-							"issue_id", util.UUIDToString(task.IssueID),
-							"agent_id", util.UUIDToString(task.AgentID),
-						)
-					} else {
-						s.createAgentComment(ctx, task.IssueID, task.AgentID, redact.Text(body), "comment", task.TriggerCommentID, task.ID)
-					}
-				}
-			}
-		}
-	}
+	s.publishAgentCommentProjection(ctx, completionComment)
 
 	// Reconcile agent status
 	s.ReconcileAgentStatus(ctx, task.AgentID)
@@ -171,6 +124,62 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 	s.Bus.Publish(completedEvent)
 
 	return &task, nil
+}
+
+// projectTaskCompletionFallbackComment enforces the user-visible completion
+// invariant in the task's terminal transaction: an issue task that did not
+// already post a result comment gets one synthesized from its final output.
+func projectTaskCompletionFallbackComment(
+	ctx context.Context,
+	queries *db.Queries,
+	task db.AgentTaskQueue,
+	result []byte,
+) (*agentCommentProjection, error) {
+	if !task.IssueID.Valid {
+		return nil, nil
+	}
+	suppress, err := HasSquadLeaderNoActionEvaluationForTask(ctx, queries, task)
+	if err != nil {
+		return nil, fmt.Errorf("check squad leader no-action result: %w", err)
+	}
+	commented, err := queries.HasAgentCommentedSince(ctx, db.HasAgentCommentedSinceParams{
+		IssueID:  task.IssueID,
+		AuthorID: task.AgentID,
+		Since:    task.StartedAt,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("check existing agent result comment: %w", err)
+	}
+	if suppress || commented {
+		return nil, nil
+	}
+	var payload protocol.TaskCompletedPayload
+	if err := json.Unmarshal(result, &payload); err != nil || payload.Output == "" {
+		return nil, nil
+	}
+	body := util.UnescapeBackslashEscapes(payload.Output)
+	if !containsAgentMention(body) {
+		dispatchBody, err := fallbackDispatchCommentFromMessages(ctx, queries, task.ID)
+		if err != nil {
+			return nil, err
+		}
+		if dispatchBody != "" {
+			body = dispatchBody
+		}
+	}
+	if task.TriggerCommentID.Valid && isTrivialDoneOutput(body) {
+		return nil, nil
+	}
+	return createAgentCommentInTx(
+		ctx,
+		queries,
+		task.IssueID,
+		task.AgentID,
+		redact.Text(body),
+		"comment",
+		task.TriggerCommentID,
+		task.ID,
+	)
 }
 
 type issueSourceSummaryProjection struct {

@@ -202,16 +202,12 @@ func dispatchCommentFromTaskMessages(messages []db.TaskMessage) string {
 	return ""
 }
 
-func (s *TaskService) fallbackDispatchCommentFromMessages(ctx context.Context, taskID pgtype.UUID) string {
-	messages, err := s.Queries.ListTaskMessages(ctx, taskID)
+func fallbackDispatchCommentFromMessages(ctx context.Context, queries *db.Queries, taskID pgtype.UUID) (string, error) {
+	messages, err := queries.ListTaskMessages(ctx, taskID)
 	if err != nil {
-		slog.Warn("list task messages for dispatch fallback failed",
-			"task_id", util.UUIDToString(taskID),
-			"error", err,
-		)
-		return ""
+		return "", fmt.Errorf("list task messages for dispatch fallback: %w", err)
 	}
-	return dispatchCommentFromTaskMessages(messages)
+	return dispatchCommentFromTaskMessages(messages), nil
 }
 
 func (s *TaskService) CancelTasksForIssue(ctx context.Context, issueID pgtype.UUID) error {
@@ -385,76 +381,119 @@ func finalizeCancelledChatMessageInTx(ctx context.Context, queries *db.Queries, 
 	return nil, nil
 }
 
-// ClaimTask atomically claims the next queued task for an agent,
-// respecting max_concurrent_tasks.
+type agentCommentProjection struct {
+	issue           db.Issue
+	comment         db.Comment
+	parentComment   *db.Comment
+	createdEvent    events.Event
+	unresolvedEvent events.Event
+	threadReopened  bool
+}
+
 func (s *TaskService) createAgentComment(ctx context.Context, issueID, agentID pgtype.UUID, content, commentType string, parentID, sourceTaskID pgtype.UUID) {
 	if content == "" {
 		return
 	}
-	// Look up issue to get workspace ID for mention expansion and broadcasting.
-	issue, err := s.Queries.GetIssue(ctx, issueID)
-	if err != nil {
-		return
-	}
-	// Resolve the thread root for thread-level side effects without overwriting
-	// parentID. The stored parent_id must remain the exact comment being replied
-	// to; recursive thread reads recover the root when needed.
-	var parentComment *db.Comment
-	var rootComment *db.Comment
-	if parentID.Valid {
-		if parent, err := s.Queries.GetComment(ctx, parentID); err == nil && parent.IssueID == issueID {
-			parentComment = &parent
-		}
-		if root, err := s.Queries.GetThreadRoot(ctx, db.GetThreadRootParams{
-			CommentID:   parentID,
-			WorkspaceID: issue.WorkspaceID,
-		}); err == nil {
-			rootComment = &root
-		}
-	}
-	var comment db.Comment
-	var createdEvent events.Event
-	var unresolvedEvent events.Event
-	var threadReopened bool
-	err = s.runInTx(ctx, func(queries *db.Queries) error {
-		comment, err = queries.CreateComment(ctx, db.CreateCommentParams{
-			IssueID:      issueID,
-			WorkspaceID:  issue.WorkspaceID,
-			AuthorType:   "agent",
-			AuthorID:     agentID,
-			Content:      content,
-			Type:         commentType,
-			ParentID:     parentID,
-			SourceTaskID: sourceTaskID,
-		})
-		if err != nil {
-			return err
-		}
-		createdEvent = taskCommentCreatedEvent(issue, comment, "agent", util.UUIDToString(agentID))
-		unresolvedEvent, threadReopened, err = UnresolveThreadOnReply(
-			ctx,
-			queries,
-			rootComment,
-			util.UUIDToString(issue.WorkspaceID),
-			"agent",
-			util.UUIDToString(agentID),
-		)
-		if err != nil {
-			return err
-		}
-		createdEvent, err = eventoutbox.Enqueue(ctx, queries, createdEvent)
+	var projection *agentCommentProjection
+	err := s.runInTx(ctx, func(queries *db.Queries) error {
+		var err error
+		projection, err = createAgentCommentInTx(ctx, queries, issueID, agentID, content, commentType, parentID, sourceTaskID)
 		return err
 	})
 	if err != nil {
 		slog.Warn("create agent comment transaction failed", "issue_id", util.UUIDToString(issueID), "agent_id", util.UUIDToString(agentID), "error", err)
 		return
 	}
-	s.Bus.Publish(createdEvent)
-	if threadReopened {
-		s.Bus.Publish(unresolvedEvent)
+	s.publishAgentCommentProjection(ctx, projection)
+}
+
+func createAgentCommentInTx(
+	ctx context.Context,
+	queries *db.Queries,
+	issueID, agentID pgtype.UUID,
+	content, commentType string,
+	parentID, sourceTaskID pgtype.UUID,
+) (*agentCommentProjection, error) {
+	if content == "" {
+		return nil, nil
 	}
-	if commentType == "comment" && s.AgentCommentCreated != nil {
-		s.AgentCommentCreated(ctx, issue, comment, parentComment)
+	issue, err := queries.GetIssue(ctx, issueID)
+	if err != nil {
+		return nil, fmt.Errorf("load issue for agent comment: %w", err)
+	}
+	var parentComment *db.Comment
+	var rootComment *db.Comment
+	if parentID.Valid {
+		parent, err := queries.GetComment(ctx, parentID)
+		if err != nil {
+			return nil, fmt.Errorf("load parent agent comment: %w", err)
+		}
+		if parent.IssueID != issueID {
+			return nil, errors.New("parent agent comment belongs to another issue")
+		}
+		parentComment = &parent
+		root, err := queries.GetThreadRoot(ctx, db.GetThreadRootParams{
+			CommentID:   parentID,
+			WorkspaceID: issue.WorkspaceID,
+		})
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("load agent comment thread root: %w", err)
+		}
+		if err == nil {
+			rootComment = &root
+		}
+	}
+	comment, err := queries.CreateComment(ctx, db.CreateCommentParams{
+		IssueID:      issueID,
+		WorkspaceID:  issue.WorkspaceID,
+		AuthorType:   "agent",
+		AuthorID:     agentID,
+		Content:      content,
+		Type:         commentType,
+		ParentID:     parentID,
+		SourceTaskID: sourceTaskID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	createdEvent := taskCommentCreatedEvent(issue, comment, "agent", util.UUIDToString(agentID))
+	unresolvedEvent, threadReopened, err := UnresolveThreadOnReply(
+		ctx,
+		queries,
+		rootComment,
+		util.UUIDToString(issue.WorkspaceID),
+		"agent",
+		util.UUIDToString(agentID),
+	)
+	if err != nil {
+		return nil, err
+	}
+	createdEvent, err = eventoutbox.Enqueue(ctx, queries, createdEvent)
+	if err != nil {
+		return nil, err
+	}
+	return &agentCommentProjection{
+		issue:           issue,
+		comment:         comment,
+		parentComment:   parentComment,
+		createdEvent:    createdEvent,
+		unresolvedEvent: unresolvedEvent,
+		threadReopened:  threadReopened,
+	}, nil
+}
+
+func (s *TaskService) publishAgentCommentProjection(ctx context.Context, projection *agentCommentProjection) {
+	if projection == nil {
+		return
+	}
+	if s.Bus != nil {
+		s.Bus.Publish(projection.createdEvent)
+		if projection.threadReopened {
+			s.Bus.Publish(projection.unresolvedEvent)
+		}
+	}
+	if projection.comment.Type == "comment" && s.AgentCommentCreated != nil {
+		s.AgentCommentCreated(ctx, projection.issue, projection.comment, projection.parentComment)
 	}
 }
 

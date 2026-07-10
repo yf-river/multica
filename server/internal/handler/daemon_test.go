@@ -3050,6 +3050,35 @@ func completeDaemonTaskForTest(t *testing.T, taskID, output string) {
 	}
 }
 
+func installCompletionFallbackCommentFailure(t *testing.T, taskID string) func() {
+	t.Helper()
+	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
+	functionName := "completion_comment_fail_fn_" + suffix
+	triggerName := "completion_comment_fail_" + suffix
+	ctx := context.Background()
+	remove := func() {
+		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON comment`, triggerName))
+		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, functionName))
+	}
+	t.Cleanup(remove)
+	if _, err := testPool.Exec(ctx, fmt.Sprintf(`
+		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF NEW.source_task_id = '%s' THEN
+				RAISE EXCEPTION 'forced completion fallback comment failure';
+			END IF;
+			RETURN NEW;
+		END;
+		$$;
+		CREATE TRIGGER %s
+		BEFORE INSERT ON comment
+		FOR EACH ROW EXECUTE FUNCTION %s();
+	`, functionName, taskID, triggerName, functionName)); err != nil {
+		t.Fatalf("install completion fallback comment failure: %v", err)
+	}
+	return remove
+}
+
 // Regression test for MUL-1198: comment-triggered tasks that finish without
 // the agent posting any comment must still deliver a synthesized result
 // comment, threaded under the trigger. Before the fix, CompleteTask exempted
@@ -3072,6 +3101,19 @@ func TestCompleteTask_CommentTriggered_SynthesizesCommentWhenAgentSilent(t *test
 		"sure, see MUL-3310, issue/MUL-3310, feature/MUL-3310, and [MUL-3310](mention://issue/%s)",
 		fixture.IssueID,
 	)
+	result, _ := json.Marshal(map[string]string{"output": agentFinalOutput})
+	removeFailure := installCompletionFallbackCommentFailure(t, fixture.TaskID)
+	if _, err := testHandler.TaskService.CompleteTask(ctx, parseUUID(fixture.TaskID), result, "", ""); err == nil {
+		t.Fatal("task completion succeeded despite forced fallback comment failure")
+	}
+	var taskStatus string
+	if err := testPool.QueryRow(ctx, `SELECT status FROM agent_task_queue WHERE id = $1`, fixture.TaskID).Scan(&taskStatus); err != nil {
+		t.Fatalf("load task after fallback comment rollback: %v", err)
+	}
+	if taskStatus != "running" {
+		t.Fatalf("task status after fallback comment rollback = %q, want running", taskStatus)
+	}
+	removeFailure()
 
 	completeDaemonTaskForTest(t, fixture.TaskID, agentFinalOutput)
 

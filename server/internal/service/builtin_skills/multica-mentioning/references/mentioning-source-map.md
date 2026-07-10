@@ -54,7 +54,7 @@ by the guards in comment_triggers.go:622-680.
 | Contract | Current source |
 |---|---|
 | TaskService comment callback contract | server/internal/service/task.go:38-41 |
-| createAgentComment invokes the callback | server/internal/service/task.go:390-459 |
+| Post-commit agent comment projection invokes the callback | server/internal/service/task.go:485-498 |
 | Handler wires callback to the shared trigger path | server/internal/handler/handler.go:210; comment_triggers.go:48 |
 
 ## CLI id sources
