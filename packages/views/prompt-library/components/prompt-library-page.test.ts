@@ -188,6 +188,27 @@ describe("case library editor", () => {
     expect(screen.getByRole("button", { name: "保存用例" })).toBeDisabled();
   });
 
+  it("creates a case only inside the selected dataset", () => {
+    const onCreateCase = vi.fn().mockResolvedValue(undefined);
+    renderCaseLibrary({
+      draft: {
+        caseName: "登录失败边界",
+        variablesText: "任务标题=登录失败",
+        expectedText: "说明失败原因",
+        tagsText: "账号系统",
+      },
+      onCreateCase,
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "新增用例" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存用例" }));
+
+    expect(onCreateCase).toHaveBeenCalledWith(
+      baseAsset,
+      expect.objectContaining({ caseName: "登录失败边界" }),
+    );
+  });
+
   it("opens dataset editing controls", () => {
     const onUpdateDataset = vi.fn();
     renderCaseLibrary({ onUpdateDataset });

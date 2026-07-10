@@ -107,7 +107,6 @@ type EvidenceFocus = {
 };
 
 const RUN_STATUS_FILTERS: RunStatusFilter[] = ["全部", "已入队", "运行中", "通过", "未通过", "失败", "已取消", "需人工复核"];
-const DEFAULT_CASE_LIBRARY_ASSET_NAME = "默认用例库";
 const DEFAULT_CASE_LIBRARY_DRAFT_KEY = "__default_case_library__";
 function trainingViewFromLocation(pathname: string, searchParams: URLSearchParams) {
   const match = pathname.match(/\/(debug|evaluation)\/([^/?#]+)/);
@@ -549,34 +548,8 @@ export function PromptLibraryPage({
     },
   });
 
-  const ensureDefaultCaseLibraryAsset = useCallback(async () => {
-    const existing = assets.find((asset) =>
-      asset.asset_type === "数据集" &&
-      asset.name === DEFAULT_CASE_LIBRARY_ASSET_NAME &&
-      asset.status === "启用"
-    );
-    if (existing) return existing;
-    return api.createPromptEvaluationAsset({
-      name: DEFAULT_CASE_LIBRARY_ASSET_NAME,
-      description: "用例库页面自动维护的默认用例承载资产。",
-      asset_type: "数据集",
-      status: "启用",
-      payload: {
-        schema_version: 1,
-        schema: "multica.training_evaluation.payload.v1",
-        语义版本: "multica.training_evaluation.v1",
-        cases: [],
-        payload_contract: {
-          source: "case-library-editor",
-          hidden_asset: true,
-        },
-      },
-    });
-  }, [assets]);
-
   const createCaseLibraryCaseMut = useMutation({
-    mutationFn: async ({ asset: requestedAsset, draft }: { asset?: PromptEvaluationAsset; draft: ManualCaseDraft }) => {
-      const asset = requestedAsset ?? await ensureDefaultCaseLibraryAsset();
+    mutationFn: async ({ asset, draft }: { asset: PromptEvaluationAsset; draft: ManualCaseDraft }) => {
       const existingCount = cases.filter((item) => item.asset_id === asset.id).length;
       return api.createPromptEvaluationCase(buildCaseLibraryCreateRequest(asset, draft, existingCount));
     },
@@ -1138,7 +1111,7 @@ type WorkbenchPanelProps = TrainingAssetPanelBaseProps & {
   updatingCaseLibraryDatasetId: string | null;
   onDeleteCaseLibraryDataset: (asset: PromptEvaluationAsset) => void;
   deletingCaseLibraryDatasetId: string | null;
-  onCreateCaseLibraryCase: (asset: PromptEvaluationAsset | undefined, draft: ManualCaseDraft) => Promise<unknown>;
+  onCreateCaseLibraryCase: (asset: PromptEvaluationAsset, draft: ManualCaseDraft) => Promise<unknown>;
   creatingCaseLibraryCase: boolean;
   onSyncRun: (runId: string) => void;
   syncingRunId: string | null;
@@ -2772,7 +2745,7 @@ export function CaseLibraryEditorPanel({
   deletingDatasetId: string | null;
   onCreateDatasetVersion: (asset: PromptEvaluationAsset, versionLabel?: string) => void;
   creatingDatasetVersionAssetId: string | null;
-  onCreateCase: (asset: PromptEvaluationAsset | undefined, draft: ManualCaseDraft) => Promise<unknown>;
+  onCreateCase: (asset: PromptEvaluationAsset, draft: ManualCaseDraft) => Promise<unknown>;
   creating: boolean;
   focusedCaseId: string | null;
   onUpdateCase: (caseId: string, data: UpdatePromptEvaluationCaseRequest) => Promise<unknown>;
@@ -2886,7 +2859,7 @@ export function CaseLibraryEditorPanel({
     setVersionLabelDraft("");
   };
 
-  const submitCase = async (caseDraft: ManualCaseDraft) => {
+  const submitCase = async (asset: PromptEvaluationAsset, caseDraft: ManualCaseDraft) => {
     if (!caseDraft.caseName.trim()) {
       toast.error("请输入用例名称");
       return;
@@ -2895,7 +2868,7 @@ export function CaseLibraryEditorPanel({
       toast.error("请输入用例输入");
       return;
     }
-    await onCreateCase(selectedAsset ?? undefined, caseDraft);
+    await onCreateCase(asset, caseDraft);
     setShowCreateForm(false);
   };
 
@@ -3125,7 +3098,7 @@ export function CaseLibraryEditorPanel({
                 draft={draft}
                 onDraftChange={onDraftChange}
                 saving={creating}
-                onSave={() => submitCase(draft)}
+                onSave={() => submitCase(selectedAsset, draft)}
                 onCancel={() => setShowCreateForm(false)}
                 saveLabel="保存用例"
               />
