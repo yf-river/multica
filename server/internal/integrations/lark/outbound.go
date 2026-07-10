@@ -201,9 +201,9 @@ func (c PatcherConfig) withDefaults() PatcherConfig {
 //   - Each EventChatDone yields one Lark text message; there is no
 //     streaming, no throttling, no DB row to track card-state.
 //
-//   - Multi-replica safety is inherited from the inbound WS lease: at
-//     most one replica holds the installation lease at a time, the
-//     event bus is per-process, so exactly one Patcher reacts per run.
+//   - Successful chat replies arrive only after the durable chat projection
+//     commits. The domain-event lease selects one replica, whose process-local
+//     bus invokes one Patcher for that completion.
 type Patcher struct {
 	queries         PatcherQueries
 	credentials     CredentialsResolver

@@ -63,10 +63,11 @@ type eventComment struct {
 }
 
 type taskEventPayload struct {
-	TaskID  string `json:"task_id"`
-	IssueID string `json:"issue_id"`
-	AgentID string `json:"agent_id"`
-	Status  string `json:"status"`
+	TaskID        string `json:"task_id"`
+	IssueID       string `json:"issue_id"`
+	ChatSessionID string `json:"chat_session_id"`
+	AgentID       string `json:"agent_id"`
+	Status        string `json:"status"`
 }
 
 type issueReactionEventPayload struct {

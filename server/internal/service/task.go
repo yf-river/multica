@@ -378,7 +378,7 @@ func finalizeCancelledChatMessageInTx(ctx context.Context, queries *db.Queries, 
 		Role:          "assistant",
 		Content:       "Stopped.",
 		TaskID:        task.ID,
-		ElapsedMs:     computeChatElapsedMs(task),
+		ElapsedMs:     ComputeChatElapsedMs(task),
 	}); err != nil {
 		return nil, fmt.Errorf("create cancelled chat message: %w", err)
 	}

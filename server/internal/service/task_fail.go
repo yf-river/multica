@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -157,7 +156,7 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 			Content:       redact.Text(errMsg),
 			TaskID:        pgtype.UUID{Bytes: task.ID.Bytes, Valid: true},
 			FailureReason: pgtype.Text{String: failureReason, Valid: failureReason != ""},
-			ElapsedMs:     computeChatElapsedMs(task),
+			ElapsedMs:     ComputeChatElapsedMs(task),
 		}); err != nil {
 			slog.Error("failed to save failure chat message",
 				"task_id", util.UUIDToString(task.ID),
@@ -590,13 +589,13 @@ type AgentSkillFileData struct {
 	Content string `json:"content"`
 }
 
-// computeChatElapsedMs returns the wall-clock duration from task creation
+// ComputeChatElapsedMs returns the wall-clock duration from task creation
 // (user hit send) to terminal state (completed/failed). Stored on the
 // assistant chat_message so the UI can render "Replied in 38s" /
 // "Failed after 12s". Uses created_at — not started_at — because users
 // experience total wait time, including queue + dispatch, not just the
 // daemon's actual run time.
-func computeChatElapsedMs(task db.AgentTaskQueue) pgtype.Int8 {
+func ComputeChatElapsedMs(task db.AgentTaskQueue) pgtype.Int8 {
 	if !task.CompletedAt.Valid || !task.CreatedAt.Valid {
 		return pgtype.Int8{}
 	}
@@ -709,35 +708,6 @@ func (s *TaskService) ResolveTaskWorkspaceID(ctx context.Context, task db.AgentT
 		return ""
 	}
 	return workspaceID
-}
-
-func (s *TaskService) broadcastChatDone(ctx context.Context, task db.AgentTaskQueue, msg *db.ChatMessage) {
-	workspaceID := s.ResolveTaskWorkspaceID(ctx, task)
-	if workspaceID == "" {
-		return
-	}
-	payload := protocol.ChatDonePayload{
-		ChatSessionID: util.UUIDToString(task.ChatSessionID),
-		TaskID:        util.UUIDToString(task.ID),
-	}
-	if msg != nil {
-		payload.MessageID = util.UUIDToString(msg.ID)
-		payload.Content = msg.Content
-		if msg.CreatedAt.Valid {
-			payload.CreatedAt = msg.CreatedAt.Time.UTC().Format(time.RFC3339Nano)
-		}
-		if msg.ElapsedMs.Valid {
-			payload.ElapsedMs = msg.ElapsedMs.Int64
-		}
-	}
-	s.Bus.Publish(events.Event{
-		Type:          protocol.EventChatDone,
-		WorkspaceID:   workspaceID,
-		ActorType:     "system",
-		ActorID:       "",
-		ChatSessionID: util.UUIDToString(task.ChatSessionID),
-		Payload:       payload,
-	})
 }
 
 type taskIssueUpdateChanges struct {

@@ -949,12 +949,11 @@ export function useRealtimeSync(
         task_id: payload.task_id,
         chat_session_id: payload.chat_session_id,
       });
-      // `chat:done` (broadcast immediately before this event in CompleteTask)
-      // already wrote the assistant message into the messages cache and
-      // cleared `chatKeys.pendingTask`. This event is now only responsible
-      // for refreshing the per-user cross-session aggregate that drives the
-      // FAB indicator — `chat:done` is per-session and doesn't carry that
-      // information.
+      // The durable chat projection emits `chat:done` after the assistant
+      // message commits; it may arrive after this terminal event. That event
+      // owns the message-cache handoff and pending-task clear. This handler
+      // only refreshes the per-user cross-session aggregate that drives the
+      // FAB indicator.
       invalidatePendingAggregate();
     });
 

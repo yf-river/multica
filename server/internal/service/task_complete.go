@@ -108,7 +108,8 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 	// Otherwise, synthesize one from the final output. For comment-triggered
 	// tasks, TriggerCommentID threads the fallback under the original comment;
 	// for assignment-triggered tasks it is NULL and the fallback is top-level.
-	// Chat tasks have no IssueID and are handled separately below.
+	// Chat tasks have no IssueID; their assistant result is projected durably
+	// from the terminal event after this method commits.
 	if task.IssueID.Valid {
 		suppressNoActionComment, err := HasSquadLeaderNoActionEvaluationForTask(ctx, s.Queries, task)
 		if err != nil {
@@ -150,39 +151,6 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 				}
 			}
 		}
-	}
-
-	// For chat tasks, save assistant reply and broadcast chat:done. The
-	// resume pointer was already persisted inside the transaction above.
-	if task.ChatSessionID.Valid {
-		var assistantMsg *db.ChatMessage
-		var payload protocol.TaskCompletedPayload
-		if err := json.Unmarshal(result, &payload); err == nil && payload.Output != "" {
-			// Same unescape as the issue-comment path above: literal `\n` from
-			// agent stdout becomes a real newline so the chat panel renders
-			// paragraph breaks instead of one wall of prose.
-			body := util.UnescapeBackslashEscapes(payload.Output)
-			row, err := s.Queries.CreateChatMessage(ctx, db.CreateChatMessageParams{
-				ChatSessionID: task.ChatSessionID,
-				Role:          "assistant",
-				Content:       redact.Text(body),
-				TaskID:        task.ID,
-				ElapsedMs:     computeChatElapsedMs(task),
-			})
-			if err != nil {
-				slog.Error("failed to save assistant chat message", "task_id", util.UUIDToString(task.ID), "error", err)
-			} else {
-				assistantMsg = &row
-				// Event-driven unread: stamp unread_since on the first unread
-				// assistant message. No-op if the session already has unread.
-				// If the user is actively viewing the session, the frontend's
-				// auto-mark-read effect will clear this within a tick.
-				if err := s.Queries.SetUnreadSinceIfNull(ctx, task.ChatSessionID); err != nil {
-					slog.Warn("failed to set unread_since", "chat_session_id", util.UUIDToString(task.ChatSessionID), "error", err)
-				}
-			}
-		}
-		s.broadcastChatDone(ctx, task, assistantMsg)
 	}
 
 	// Reconcile agent status
