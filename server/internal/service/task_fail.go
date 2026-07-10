@@ -31,6 +31,8 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 	}
 	var task db.AgentTaskQueue
 	var failedEvent events.Event
+	var retried *db.AgentTaskQueue
+	var retryCreated bool
 	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
 		t, err := qtx.FailAgentTask(ctx, db.FailAgentTaskParams{
 			ID:            taskID,
@@ -64,6 +66,10 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 				return fmt.Errorf("update chat session resume pointer: %w", err)
 			}
 		}
+		retried, retryCreated, err = s.materializeRetryTask(ctx, qtx, task)
+		if err != nil {
+			return fmt.Errorf("materialize task retry: %w", err)
+		}
 		failedEvent, err = s.enqueueTaskEvent(ctx, qtx, protocol.EventTaskFailed, task)
 		return err
 	}); err != nil {
@@ -95,6 +101,9 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 
 	slog.Warn("task failed", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID), "error", errMsg, "failure_reason", failureReason)
 	s.captureTaskFailed(ctx, task)
+	if retryCreated {
+		s.publishRetryTask(ctx, *retried)
+	}
 	if sc, ok := ParseIssueSourceSummaryContext(task); ok {
 		s.failIssueSourceSummaryTask(ctx, task, sc, errMsg)
 		s.ReconcileAgentStatus(ctx, task.AgentID)
@@ -102,10 +111,6 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 		return &task, nil
 	}
 
-	// Auto-retry eligible failures (orphan, timeout, runtime_offline,
-	// runtime_recovery). The helper itself enforces attempt < max_attempts
-	// and only triggers for issue/chat tasks.
-	retried, _ := s.MaybeRetryFailedTask(ctx, task)
 	if retried != nil {
 		s.reassignPromptEvaluationRunToRetry(ctx, task, *retried)
 	} else {
@@ -243,26 +248,56 @@ func resumeUnsafeFailureReason(reason string) bool {
 	}
 }
 
-// MaybeRetryFailedTask spawns a fresh queued attempt for a recently-failed
-// task when the failure was infrastructure-shaped (daemon crash, runtime
-// went offline, dispatch/run timeout) and the task hasn't exhausted its
-// max_attempts budget. The child task inherits agent/runtime/issue/chat
-// links and, for resume-safe failures, the parent's session_id/work_dir so
-// the agent can resume the conversation when the backend supports it. Returns
-// the new task, or nil when no retry was created.
+// MaybeRetryFailedTask ensures a fresh queued attempt exists for a recently
+// failed task when the failure is infrastructure-shaped and the attempt budget
+// remains. It returns an existing child when another current path already
+// materialized the retry, so callers observe one authoritative decision.
 //
 // Autopilot tasks are NOT auto-retried here; the autopilot scheduler owns
 // its own re-run cadence and we don't want to double-fire it.
 func (s *TaskService) MaybeRetryFailedTask(ctx context.Context, parent db.AgentTaskQueue) (*db.AgentTaskQueue, error) {
-	if parent.Status != "failed" {
-		return nil, nil
+	var child *db.AgentTaskQueue
+	var created bool
+	if err := s.runInTx(ctx, func(queries *db.Queries) error {
+		var err error
+		child, created, err = s.materializeRetryTask(ctx, queries, parent)
+		return err
+	}); err != nil {
+		return nil, err
 	}
+	if created {
+		s.publishRetryTask(ctx, *child)
+	}
+	return child, nil
+}
+
+func (s *TaskService) materializeRetryTask(
+	ctx context.Context,
+	queries *db.Queries,
+	parent db.AgentTaskQueue,
+) (*db.AgentTaskQueue, bool, error) {
+	if parent.Status != "failed" {
+		return nil, false, nil
+	}
+	if _, isSourceSummary := ParseIssueSourceSummaryContext(parent); isSourceSummary {
+		// Source summaries own a deterministic fallback write and have never
+		// entered the general task auto-retry flow.
+		return nil, false, nil
+	}
+	locked, err := queries.LockAgentTaskForRetry(ctx, parent.ID)
+	if err != nil {
+		return nil, false, fmt.Errorf("lock retry parent: %w", err)
+	}
+	if locked.Status != "failed" {
+		return nil, false, nil
+	}
+	parent = locked
 	reason := ""
 	if parent.FailureReason.Valid {
 		reason = parent.FailureReason.String
 	}
 	if !retryableReasons[reason] {
-		return nil, nil
+		return nil, false, nil
 	}
 	retryBudget := taskRetryBudget(reason, parent.MaxAttempts)
 	if parent.Attempt >= retryBudget {
@@ -273,29 +308,35 @@ func (s *TaskService) MaybeRetryFailedTask(ctx context.Context, parent db.AgentT
 			"retry_budget", retryBudget,
 			"reason", reason,
 		)
-		return nil, nil
+		return nil, false, nil
 	}
 	if parent.AutopilotRunID.Valid {
 		// Autopilot has its own retry semantics; do not double-trigger.
-		return nil, nil
+		return nil, false, nil
 	}
 	if !parent.IssueID.Valid && !parent.ChatSessionID.Valid {
-		return nil, nil
+		return nil, false, nil
 	}
 
-	child, err := s.Queries.CreateRetryTask(ctx, parent.ID)
-	if err != nil {
-		slog.Warn("task auto-retry failed",
-			"parent_task_id", util.UUIDToString(parent.ID),
-			"reason", reason,
-			"error", err,
-		)
-		return nil, err
+	existing, err := queries.GetRetryTaskForParent(ctx, parent.ID)
+	if err == nil {
+		return &existing, false, nil
 	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, false, fmt.Errorf("load existing retry task: %w", err)
+	}
+
+	child, err := queries.CreateRetryTask(ctx, parent.ID)
+	if err != nil {
+		return nil, false, fmt.Errorf("create retry task: %w", err)
+	}
+	return &child, true, nil
+}
+
+func (s *TaskService) publishRetryTask(ctx context.Context, child db.AgentTaskQueue) {
 	slog.Info("task auto-retry enqueued",
-		"parent_task_id", util.UUIDToString(parent.ID),
+		"parent_task_id", util.UUIDToString(child.ParentTaskID),
 		"child_task_id", util.UUIDToString(child.ID),
-		"reason", reason,
 		"attempt", child.Attempt,
 		"max_attempts", child.MaxAttempts,
 	)
@@ -304,7 +345,6 @@ func (s *TaskService) MaybeRetryFailedTask(ctx context.Context, parent db.AgentT
 	// see EnqueueTaskForIssue for ordering rationale.
 	s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, child)
 	s.NotifyTaskEnqueued(ctx, child)
-	return &child, nil
 }
 
 // RerunIssue creates a fresh queued task for an agent on the issue. Used by

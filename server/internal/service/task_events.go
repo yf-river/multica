@@ -103,11 +103,21 @@ func (s *TaskService) failTasksDurably(
 ) ([]db.AgentTaskQueue, error) {
 	var failed []db.AgentTaskQueue
 	var persistedEvents []events.Event
+	var createdRetries []db.AgentTaskQueue
 	err := s.runInTx(ctx, func(queries *db.Queries) error {
 		var err error
 		failed, err = mutate(queries)
 		if err != nil {
 			return err
+		}
+		for _, task := range failed {
+			child, created, err := s.materializeRetryTask(ctx, queries, task)
+			if err != nil {
+				return fmt.Errorf("materialize retry for failed task %s: %w", util.UUIDToString(task.ID), err)
+			}
+			if created {
+				createdRetries = append(createdRetries, *child)
+			}
 		}
 		persistedEvents, err = s.enqueueTaskEvents(ctx, queries, protocol.EventTaskFailed, failed)
 		return err
@@ -116,6 +126,9 @@ func (s *TaskService) failTasksDurably(
 		return nil, err
 	}
 	s.publishTaskEvents(persistedEvents)
+	for _, retry := range createdRetries {
+		s.publishRetryTask(ctx, retry)
+	}
 	return failed, nil
 }
 

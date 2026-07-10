@@ -191,7 +191,7 @@ func setupChatCompletionFixture(t *testing.T, ctx context.Context) *chatCompleti
 		t.Fatalf("StartAgentTask: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, fixture.task.ID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE parent_task_id = $1 OR id = $1`, fixture.task.ID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM chat_session WHERE id = $1`, fixture.session.ID)
 	})
 	return fixture

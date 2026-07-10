@@ -548,6 +548,19 @@ WHERE issue_id = $1 AND status IN ('queued', 'dispatched', 'running', 'waiting_l
 SELECT count(*) > 0 AS has_retry FROM agent_task_queue
 WHERE parent_task_id = $1;
 
+-- name: LockAgentTaskForRetry :one
+-- Serializes retry materialization for one failed parent. Every current retry
+-- creator takes this lock before checking for an existing child.
+SELECT * FROM agent_task_queue
+WHERE id = $1
+FOR UPDATE;
+
+-- name: GetRetryTaskForParent :one
+SELECT * FROM agent_task_queue
+WHERE parent_task_id = $1
+ORDER BY created_at, id
+LIMIT 1;
+
 -- name: HasPendingTaskForIssue :one
 -- Returns true if there is a queued or dispatched (but not yet running) task for the issue.
 -- Used by the coalescing queue: allow enqueue when a task is running (so
