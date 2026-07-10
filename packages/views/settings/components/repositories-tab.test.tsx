@@ -292,14 +292,14 @@ describe("RepositoriesTab", () => {
 
     await user.click(screen.getByRole("button", { name: "添加仓库" }));
     expect(screen.getByRole("dialog")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "请先检测仓库链接" })).toHaveAttribute("disabled");
+    expect(screen.getByLabelText("默认分支")).toHaveAttribute("disabled");
     expect(screen.getByRole("button", { name: "usercenter" })).toHaveAttribute("disabled");
 
     await user.click(screen.getByRole("button", { name: "gateway" }));
     expect(screen.getByPlaceholderText(/git.code.tencent.com/)).toHaveValue(
       "https://git.code.tencent.com/ChainWeaver/ida/gateway",
     );
-    expect(screen.getByRole("button", { name: "请先检测仓库链接" })).toHaveAttribute("disabled");
+    expect(screen.getByLabelText("默认分支")).toHaveAttribute("disabled");
     expect(screen.getByRole("button", { name: "添加" })).toHaveAttribute("disabled");
 
     await user.click(screen.getByRole("button", { name: "检测" }));
@@ -307,11 +307,11 @@ describe("RepositoriesTab", () => {
       expect(mockProbeWorkspaceRepo).toHaveBeenCalledWith("workspace-1", {
         url: "https://git.code.tencent.com/ChainWeaver/ida/gateway",
       });
-      expect(screen.getByRole("button", { name: "dev_sop" })).not.toHaveAttribute("disabled");
+      expect(screen.getByLabelText("默认分支")).not.toHaveAttribute("disabled");
     });
     expect(screen.getByText("已连接 ChainWeaver/ida/gateway，可选分支 3 个。")).toBeTruthy();
 
-    await user.click(screen.getByRole("button", { name: "dev_sop" }));
+    await user.click(screen.getByLabelText("默认分支"));
     await user.type(screen.getByPlaceholderText("搜索分支"), "v5");
     await user.click(screen.getByRole("option", { name: "v5.0.0_dev" }));
 
@@ -363,12 +363,12 @@ describe("RepositoriesTab", () => {
     await user.click(screen.getByRole("button", { name: "添加仓库" }));
     await user.click(screen.getByRole("button", { name: "gateway" }));
     await user.click(screen.getByRole("button", { name: "检测" }));
-    await waitFor(() => expect(screen.getByRole("button", { name: "dev_sop" })).toBeTruthy());
+    await waitFor(() => expect(screen.getByLabelText("默认分支")).toBeTruthy());
 
     await user.clear(screen.getByPlaceholderText(/git.code.tencent.com/));
     await user.type(screen.getByPlaceholderText(/git.code.tencent.com/), "https://git.code.tencent.com/ChainWeaver/ida/ida-deployment");
 
-    expect(screen.getByRole("button", { name: "请先检测仓库链接" })).toHaveAttribute("disabled");
+    expect(screen.getByLabelText("默认分支")).toHaveAttribute("disabled");
     expect(screen.getByRole("button", { name: "添加" })).toHaveAttribute("disabled");
     expect(screen.queryByText((content) => content.includes("已连接 ChainWeaver/ida/gateway"))).toBeNull();
   });
@@ -628,7 +628,7 @@ describe("RepositoriesTab", () => {
         url: "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
       });
     });
-    await user.click(screen.getByRole("button", { name: "v5.0.0_dev" }));
+    await user.click(screen.getByLabelText("修改默认分支"));
     await user.click(screen.getByRole("option", { name: "dev_sop" }));
 
     expect(screen.getByText("确认切换到 dev_sop？将同步 2 个项目关联。")).toBeTruthy();
@@ -684,7 +684,7 @@ describe("RepositoriesTab", () => {
 
     await user.click(screen.getByRole("button", { name: "详情" }));
     await user.click(screen.getByRole("button", { name: "修改默认分支" }));
-    await user.click(screen.getByRole("button", { name: "v5.0.0_dev" }));
+    await user.click(screen.getByLabelText("修改默认分支"));
     await user.click(screen.getByRole("option", { name: "dev_sop" }));
     await user.click(screen.getByRole("button", { name: "确认同步" }));
 

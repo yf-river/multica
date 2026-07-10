@@ -108,6 +108,8 @@ interface ContentEditorProps {
   defaultValue?: string;
   onUpdate?: (markdown: string) => void;
   placeholder?: string;
+  /** Accessible name for the editable textbox. Defaults to the placeholder. */
+  ariaLabel?: string;
   className?: string;
   debounceMs?: number;
   onSubmit?: () => void;
@@ -185,6 +187,7 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
       defaultValue = "",
       onUpdate,
       placeholder: placeholderText = "",
+      ariaLabel,
       className,
       debounceMs = 300,
       onSubmit,
@@ -380,6 +383,11 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
         },
         attributes: {
           class: cn("flex-1 rich-text-editor text-sm outline-none", className),
+          role: "textbox",
+          "aria-multiline": "true",
+          ...(ariaLabel || placeholderText
+            ? { "aria-label": ariaLabel || placeholderText }
+            : {}),
         },
       },
     });

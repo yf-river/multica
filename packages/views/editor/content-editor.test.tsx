@@ -62,7 +62,10 @@ vi.mock("./attachment-download-context", () => ({
 const editorRef = vi.hoisted<{ current: unknown }>(() => ({ current: null }));
 const onCreateFired = vi.hoisted(() => ({ value: false }));
 const latestEditorOptions = vi.hoisted<{
-  current?: { onUpdate?: (args: { editor: unknown }) => void };
+  current?: {
+    onUpdate?: (args: { editor: unknown }) => void;
+    editorProps?: { attributes?: Record<string, string> };
+  };
 }>(() => ({}));
 
 vi.mock("@tiptap/react", () => ({
@@ -140,6 +143,16 @@ describe("ContentEditor", () => {
     fireEvent.mouseDown(shell!);
 
     expect(mockFocus).toHaveBeenCalledWith("end");
+  });
+
+  it("exposes the rich editor as a labelled multiline textbox", () => {
+    render(<ContentEditor placeholder="添加描述..." />);
+
+    expect(latestEditorOptions.current?.editorProps?.attributes).toMatchObject({
+      role: "textbox",
+      "aria-multiline": "true",
+      "aria-label": "添加描述...",
+    });
   });
 
   it("does not hijack clicks that land inside the ProseMirror node", () => {

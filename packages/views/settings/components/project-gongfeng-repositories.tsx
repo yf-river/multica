@@ -133,7 +133,7 @@ export function ProjectGongfengRepositories() {
       });
     }
     return rows.sort((a, b) => a.url.localeCompare(b.url));
-  }, [resolvedReposByURL, usages, workspace?.repos]);
+  }, [resolvedReposByURL, usages, workspace]);
 
   if (!workspace) return null;
 
@@ -350,6 +350,7 @@ function AddGongfengRepositoryDialog({
               {t(($) => $.repositories.gongfeng_inventory.default_branch_field)}
             </span>
             <BranchPicker
+              ariaLabel={t(($) => $.repositories.gongfeng_inventory.default_branch_field)}
               branches={probe?.branches ?? []}
               value={selectedBranch}
               onChange={setSelectedBranch}
@@ -386,11 +387,13 @@ function AddGongfengRepositoryDialog({
 }
 
 function BranchPicker({
+  ariaLabel,
   branches,
   value,
   onChange,
   disabled,
 }: {
+  ariaLabel: string;
   branches: string[];
   value: string;
   onChange: (value: string) => void;
@@ -428,6 +431,7 @@ function BranchPicker({
       }}
     >
       <PopoverTrigger
+        aria-label={ariaLabel}
         type="button"
         disabled={disabled}
         className="flex h-9 w-full min-w-0 items-center gap-2 rounded-md border bg-background px-2 text-left font-mono text-sm outline-none transition-colors hover:bg-muted focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground disabled:opacity-70"
@@ -760,6 +764,7 @@ function RepositoryDetailsDialog({
               {editingBranch && (
                 <div className="space-y-2">
                   <BranchPicker
+                    ariaLabel={t(($) => $.repositories.gongfeng_inventory.change_branch)}
                     branches={branchOptions}
                     value={selectedBranch}
                     onChange={setSelectedBranch}
