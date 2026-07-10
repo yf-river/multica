@@ -24,6 +24,12 @@ func (s *TaskService) enqueueTaskEvent(
 	if err != nil {
 		return events.Event{}, err
 	}
+	// A terminal task token must not outlive the terminal state that invalidates
+	// it. Keeping revocation in the same transaction also makes every terminal
+	// producer (daemon result, sweeper and bulk cancellation) follow one path.
+	if err := queries.DeleteTaskTokensByTask(ctx, task.ID); err != nil {
+		return events.Event{}, fmt.Errorf("revoke terminal task tokens: %w", err)
+	}
 	return eventoutbox.Enqueue(ctx, queries, event)
 }
 

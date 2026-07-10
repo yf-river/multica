@@ -436,7 +436,7 @@ func (s *TaskService) captureTaskFailed(ctx context.Context, task db.AgentTaskQu
 
 func (s *TaskService) captureTaskCancelled(ctx context.Context, task db.AgentTaskQueue) {
 	s.recordTaskCancelledTrace(ctx, s.Queries, task)
-	s.finalizeTaskCancelledSideEffects(ctx, task)
+	s.recordTaskCancelledMetrics(ctx, task)
 }
 
 // recordTaskCancelledTrace writes the task.cancelled observability row.
@@ -476,22 +476,10 @@ func (s *TaskService) recordTaskCancelledTrace(ctx context.Context, q *db.Querie
 	}
 }
 
-// finalizeTaskCancelledSideEffects applies post-cancel metrics/token/eval
-// bookkeeping that does not need to share the cancel transaction.
-func (s *TaskService) finalizeTaskCancelledSideEffects(ctx context.Context, task db.AgentTaskQueue) {
+func (s *TaskService) recordTaskCancelledMetrics(ctx context.Context, task db.AgentTaskQueue) {
 	if s.Metrics != nil {
 		source, runtimeMode, _ := s.taskMetricsContext(ctx, task)
 		s.Metrics.RecordTaskTerminal(util.UUIDToString(task.ID), source, runtimeMode, task.Status, taskRunSeconds(task), taskTotalSeconds(task), task.Attempt)
-	}
-	// Revoke any mat_ task tokens minted for this task. Cancellation is
-	// a terminal transition, so the running agent process no longer
-	// needs to call back; eagerly deleting the token closes the
-	// window where a compromised process could keep authenticating
-	// against the API until the 24h expiry. Failure is non-fatal — the
-	// expiry / FK cascade are the durable guards. MUL-2600.
-	if err := s.Queries.DeleteTaskTokensByTask(ctx, task.ID); err != nil {
-		slog.Warn("cancel task: failed to revoke task tokens",
-			"task_id", util.UUIDToString(task.ID), "error", err)
 	}
 }
 
@@ -509,7 +497,7 @@ func (s *TaskService) CaptureCancelledTaskTracesInTx(ctx context.Context, q *db.
 // recorded in the business transaction (for example chat session deletion).
 func (s *TaskService) NotifyCancelledTasks(ctx context.Context, cancelled []db.AgentTaskQueue, persistedEvents []events.Event) {
 	for _, t := range cancelled {
-		s.finalizeTaskCancelledSideEffects(ctx, t)
+		s.recordTaskCancelledMetrics(ctx, t)
 	}
 	s.reconcileCancelledTaskAgents(ctx, cancelled)
 	s.publishTaskEvents(persistedEvents)
