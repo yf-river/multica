@@ -910,6 +910,34 @@ func TestHubWaitWithTimeoutReturnsTrueWhenSupervisorsExit(t *testing.T) {
 	}
 }
 
+func TestHubWaitBeforeRunPreventsLaterSupervisorStart(t *testing.T) {
+	q := newFakeHubQueries()
+	q.installations = []db.LarkInstallation{{
+		ID:     uuidFromString(t, "91919191-9191-9191-9191-919191919191"),
+		Status: "active",
+	}}
+	var factoryCalls atomic.Int32
+	hub := NewHub(q, func(db.LarkInstallation) (EventConnector, error) {
+		factoryCalls.Add(1)
+		return &fakeConnector{}, nil
+	}, nil, HubConfig{Logger: newDiscardLogger()})
+
+	hub.Wait()
+	done := make(chan struct{})
+	go func() {
+		hub.Run(context.Background())
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("Run did not return after Wait closed the single-use Hub")
+	}
+	if calls := factoryCalls.Load(); calls != 0 {
+		t.Fatalf("Run started %d supervisors after Wait", calls)
+	}
+}
+
 // TestHubWaitWithTimeoutReturnsFalseWhenSupervisorStuck pins the
 // bound on the join itself: if a (future real) connector or release
 // path ignores ctx and refuses to exit, WaitWithTimeout MUST return

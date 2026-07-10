@@ -231,8 +231,9 @@ type Hub struct {
 	// minted (initial start OR rotation restart).
 	supervisorGen uint64
 	wg            sync.WaitGroup
+	running       bool
 	stopped       bool
-	stopChan      chan struct{}
+	runDone       chan struct{}
 
 	// replyWg tracks in-flight outbound reply goroutines (NeedsBinding
 	// card, offline notice, etc.). The replier is detached from the
@@ -279,7 +280,7 @@ func NewHub(queries HubQueries, factory ConnectorFactory, dispatcher *Dispatcher
 		cfg:         cfg,
 		nodeID:      newNodeID(),
 		supervisors: make(map[string]supervisorEntry),
-		stopChan:    make(chan struct{}),
+		runDone:     make(chan struct{}),
 	}
 }
 
@@ -313,7 +314,14 @@ func (h *Hub) NodeID() string { return h.nodeID }
 // cancelled; the caller MUST then call Wait to join all supervisor
 // goroutines before exiting.
 func (h *Hub) Run(ctx context.Context) {
-	defer close(h.stopChan)
+	h.mu.Lock()
+	if h.running || h.stopped {
+		h.mu.Unlock()
+		return
+	}
+	h.running = true
+	h.mu.Unlock()
+	defer h.finishRun()
 
 	// First sweep immediately so a freshly-restarted server doesn't
 	// wait a full PollInterval before picking up its installations.
@@ -334,8 +342,8 @@ func (h *Hub) Run(ctx context.Context) {
 
 // Wait blocks until every supervisor goroutine AND every detached
 // reply goroutine the Hub started has exited. Call this AFTER
-// cancelling Run's context; calling it before returns immediately if
-// no goroutines are active.
+// cancelling Run's context. Calling Wait before Run permanently closes this
+// single-use Hub to prevent a later Run from adding goroutines after Wait.
 //
 // Prefer WaitWithTimeout in shutdown paths so a stuck supervisor
 // (typically a hung lease release on a frozen DB pool) cannot block
@@ -343,6 +351,18 @@ func (h *Hub) Run(ctx context.Context) {
 // bounded by ReplyTimeout, so even Wait() (unbounded) eventually
 // returns once those deadlines elapse.
 func (h *Hub) Wait() {
+	// WaitGroup forbids Add racing with Wait. Run is the sole owner of
+	// supervisor creation, so join the run loop before waiting on supervisors.
+	h.mu.Lock()
+	runDone := h.runDone
+	if !h.running {
+		h.stopped = true
+		runDone = nil
+	}
+	h.mu.Unlock()
+	if runDone != nil {
+		<-runDone
+	}
 	h.wg.Wait()
 	// Supervisors (and thus inbound delivery) have stopped, so no new
 	// run triggers can be scheduled. Drain the debounced pending triggers
@@ -848,6 +868,14 @@ func (h *Hub) cancelAll() {
 		entry.cancel()
 		delete(h.supervisors, id)
 	}
+	h.mu.Unlock()
+}
+
+func (h *Hub) finishRun() {
+	h.mu.Lock()
+	h.running = false
+	h.stopped = true
+	close(h.runDone)
 	h.mu.Unlock()
 }
 
