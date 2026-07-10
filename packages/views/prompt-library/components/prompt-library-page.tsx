@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { BookOpenText, Loader2, Plus, Save, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
@@ -22,12 +22,6 @@ import {
   type TrainingWorkbenchViewId,
 } from "@multica/core/training";
 import type {
-  CreatePromptLibraryItemRequest,
-  CreatePromptLibraryTrialRequest,
-  CreatePromptLibraryVersionRequest,
-  CreatePromptEvaluationAssetRequest,
-  CreatePromptEvaluationCaseRequest,
-  UpdatePromptEvaluationCaseRequest,
   PromptEvaluationAsset,
   PromptEvaluationOptimizationCandidate,
   PromptEvaluationRun,
@@ -86,10 +80,10 @@ import {
   type TrainingAssetPanelBaseProps,
 } from "./training-asset-panel";
 import {
-  buildCaseLibraryCreateRequest,
   emptyManualCaseDraft,
   type ManualCaseDraft,
 } from "./case-model";
+import { usePromptLibraryMutations } from "./use-prompt-library-mutations";
 
 type WorkbenchTab = TrainingWorkbenchTab;
 
@@ -158,7 +152,6 @@ export function PromptLibraryPage({
   const workspaceId = useWorkspaceId();
   const workspacePaths = useWorkspacePaths();
   const navigation = useNavigation();
-  const queryClient = useQueryClient();
   const [query, setQuery] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isDraftingNew, setIsDraftingNew] = useState(false);
@@ -389,17 +382,6 @@ export function PromptLibraryPage({
     });
   }, [query, visiblePromptItems]);
 
-  const invalidate = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.list(workspaceId ?? "") });
-  const invalidateVersions = (promptId: string | null) => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.versions(workspaceId ?? "", promptId) });
-  const invalidateTrials = (promptId: string | null) => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.trials(workspaceId ?? "", promptId) });
-  const invalidateAssets = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.assets(workspaceId ?? "") });
-  const invalidateCases = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.cases(workspaceId ?? "") });
-  const invalidateRuns = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runs(workspaceId ?? "") });
-  const invalidateCandidates = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.candidates(workspaceId ?? "") });
-  const invalidateRunEvidenceSnapshots = (runId: string) => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runEvidenceSnapshots(workspaceId ?? "", runId) });
-  const reportMutationError = (error: unknown) => {
-    toast.error(error instanceof Error ? error.message : t(($) => $.page.toast.action_failed));
-  };
   const rememberSelectedPrompt = (promptId: string | null) => {
     setSelectedId(promptId);
     if (!selectedPromptStorageKey) return;
@@ -414,25 +396,38 @@ export function PromptLibraryPage({
     }
   };
 
-  const createMut = useMutation({
-    mutationFn: (data: CreatePromptLibraryItemRequest) => api.createPromptLibraryItem(data),
-    onSuccess: (item) => {
-      invalidate();
-      invalidateVersions(item.id);
+  const {
+    reportError: reportMutationError,
+    createPrompt: createMut,
+    createPromptVersion: createVersionMut,
+    createPromptTrial: createTrialMut,
+    deletePrompt: deleteMut,
+    createAsset: createAssetMut,
+    updateAsset: updateAssetMut,
+    deleteAsset: deleteAssetMut,
+    importDatasetFromTraces: importDatasetFromTracesMut,
+    createDatasetVersion: createDatasetVersionMut,
+    createCase: createCaseMut,
+    updateCase: updateCaseMut,
+    deleteCase: deleteCaseMut,
+    createCaseLibraryCase: createCaseLibraryCaseMut,
+    syncRun: syncRunMut,
+    cancelRun: cancelRunMut,
+    reviewRun: reviewRunMut,
+    createEvidenceSnapshot: createEvidenceSnapshotMut,
+    createAssetEvidenceSnapshots: createAssetEvidenceSnapshotsMut,
+    createCandidate: createCandidateMut,
+  } = usePromptLibraryMutations({
+    workspaceId,
+    focusedIssueId,
+    focusedIssueTaskIds,
+    cases,
+    onPromptCreated: (item) => {
       setActiveVersionId(null);
       setIsDraftingNew(false);
       rememberSelectedPrompt(item.id);
-      toast.success(t(($) => $.page.toast.prompt_created));
     },
-    onError: reportMutationError,
-  });
-
-  const createVersionMut = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: CreatePromptLibraryVersionRequest }) => api.createPromptLibraryVersion(id, data),
-    onSuccess: (result) => {
-      const item = result.item;
-      invalidate();
-      invalidateVersions(item.id);
+    onPromptVersionCreated: (result) => {
       setActiveVersionId(result.version.id);
       setDraft({
         name: result.version.name,
@@ -441,193 +436,12 @@ export function PromptLibraryPage({
       });
       setChangeNote("");
       setIsDraftingNew(false);
-      rememberSelectedPrompt(item.id);
-      toast.success(t(($) => $.page.toast.version_created, { version: result.version.version }));
+      rememberSelectedPrompt(result.item.id);
     },
-    onError: reportMutationError,
-  });
-
-  const createTrialMut = useMutation({
-    mutationFn: ({ id, versionId, data }: { id: string; versionId: string; data: CreatePromptLibraryTrialRequest }) =>
-      api.createPromptLibraryTrial(id, versionId, data),
-    onSuccess: (_trial, variables) => {
-      invalidateTrials(variables.id);
-      toast.success(t(($) => $.page.toast.trial_submitted));
-    },
-    onError: reportMutationError,
-  });
-
-  const deleteMut = useMutation({
-    mutationFn: (id: string) => api.deletePromptLibraryItem(id),
-    onSuccess: () => {
-      invalidate();
+    onPromptDeleted: () => {
       rememberSelectedPrompt(null);
       setDraft(emptyDraft());
-      toast.success(t(($) => $.page.toast.prompt_deleted));
     },
-    onError: reportMutationError,
-  });
-
-  const updateAssetMut = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: UpdatePromptEvaluationAssetRequest }) => api.updatePromptEvaluationAsset(id, data),
-    onSuccess: () => {
-      invalidateAssets();
-      invalidateCases();
-      invalidateRuns();
-      toast.success(t(($) => $.page.toast.updated));
-    },
-    onError: reportMutationError,
-  });
-
-  const deleteAssetMut = useMutation({
-    mutationFn: (id: string) => api.deletePromptEvaluationAsset(id),
-    onSuccess: () => {
-      invalidateAssets();
-      invalidateCases();
-      invalidateRuns();
-      toast.success(t(($) => $.page.toast.deleted));
-    },
-    onError: reportMutationError,
-  });
-
-  const importDatasetFromTracesMut = useMutation({
-    mutationFn: (assetId: string) =>
-      api.createPromptEvaluationDatasetFromTraces(assetId, {
-        limit: focusedIssueTaskIds.length > 0 ? focusedIssueTaskIds.length : 5,
-        ...(focusedIssueTaskIds.length > 0 ? { task_ids: focusedIssueTaskIds } : {}),
-        expected_contains: ["任务", "trace"],
-        tags: focusedIssueId
-          ? ["trace导入", "真实执行记录", `issue:${focusedIssueId}`]
-          : ["trace导入", "真实执行记录"],
-      }),
-    onSuccess: (result) => {
-      invalidateAssets();
-      invalidateCases();
-      toast.success(t(($) => $.page.toast.trace_imported, { count: result.created_count }));
-    },
-    onError: (error) => {
-      toast.error(error instanceof Error ? error.message : t(($) => $.page.toast.trace_import_failed));
-    },
-  });
-
-  const createDatasetVersionMut = useMutation({
-    mutationFn: ({ assetId, versionLabel }: { assetId: string; versionLabel: string }) => api.createPromptEvaluationDatasetVersion(assetId, {
-      version_label: versionLabel,
-      metadata: {
-        来源: "训练与评估页面",
-        用途: "锁定当前用例库版本，供后续评估运行和实验对比复盘",
-        创建时间: new Date().toISOString(),
-      },
-    }),
-    onSuccess: (version, variables) => {
-      invalidateAssets();
-      queryClient.invalidateQueries({ queryKey: promptLibraryKeys.datasetVersions(workspaceId ?? "", variables.assetId) });
-      toast.success(t(($) => $.page.toast.dataset_version_locked, { version: version.version }));
-    },
-    onError: (error) => {
-      toast.error(error instanceof Error ? error.message : t(($) => $.page.toast.dataset_version_failed));
-    },
-  });
-
-  const createCaseMut = useMutation({
-    mutationFn: (data: CreatePromptEvaluationCaseRequest) => api.createPromptEvaluationCase(data),
-    onSuccess: () => {
-      invalidateCases();
-      toast.success(t(($) => $.page.toast.manual_case_created));
-    },
-    onError: reportMutationError,
-  });
-
-  const updateCaseMut = useMutation({
-    mutationFn: ({ caseId, data }: { caseId: string; data: UpdatePromptEvaluationCaseRequest }) => api.updatePromptEvaluationCase(caseId, data),
-    onSuccess: () => {
-      invalidateCases();
-      toast.success(t(($) => $.page.toast.manual_case_saved));
-    },
-    onError: reportMutationError,
-  });
-
-  const deleteCaseMut = useMutation({
-    mutationFn: (id: string) => api.deletePromptEvaluationCase(id),
-    onSuccess: () => {
-      invalidateCases();
-      toast.success(t(($) => $.page.toast.manual_case_deleted));
-    },
-    onError: reportMutationError,
-  });
-
-  const createCaseLibraryCaseMut = useMutation({
-    mutationFn: async ({ asset, draft }: { asset: PromptEvaluationAsset; draft: ManualCaseDraft }) => {
-      const existingCount = cases.filter((item) => item.asset_id === asset.id).length;
-      return api.createPromptEvaluationCase(buildCaseLibraryCreateRequest(asset, draft, existingCount));
-    },
-    onSuccess: () => {
-      invalidateAssets();
-      invalidateCases();
-      toast.success(t(($) => $.page.toast.case_created));
-    },
-    onError: reportMutationError,
-  });
-
-  const syncRunMut = useMutation({
-    mutationFn: (runId: string) => api.syncPromptEvaluationRun(runId),
-    onSuccess: (_run, runId) => {
-      invalidateRuns();
-      invalidateCandidates();
-      queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runEvidence(workspaceId ?? "", runId) });
-      invalidateRunEvidenceSnapshots(runId);
-      toast.success(t(($) => $.page.toast.run_synced));
-    },
-    onError: reportMutationError,
-  });
-
-  const cancelRunMut = useMutation({
-    mutationFn: (runId: string) => api.cancelPromptEvaluationRun(runId),
-    onSuccess: (run) => {
-      invalidateRuns();
-      invalidateCandidates();
-      queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runEvidence(workspaceId ?? "", run.id) });
-      invalidateRunEvidenceSnapshots(run.id);
-      toast.success(t(($) => $.page.toast.run_cancelled));
-    },
-    onError: reportMutationError,
-  });
-
-  const reviewRunMut = useMutation({
-    mutationFn: ({ runId, decision, note }: { runId: string; decision: "通过" | "未通过"; note: string }) =>
-      api.reviewPromptEvaluationRun(runId, { decision, note }),
-    onSuccess: (run) => {
-      invalidateRuns();
-      invalidateCandidates();
-      queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runEvidence(workspaceId ?? "", run.id) });
-      invalidateRunEvidenceSnapshots(run.id);
-      toast.success(t(($) => $.page.toast.reviewed, { status: run.review_decision || run.status }));
-    },
-    onError: reportMutationError,
-  });
-
-  const createEvidenceSnapshotMut = useMutation({
-    mutationFn: (runId: string) => api.createPromptEvaluationEvidenceSnapshot(runId, "验收归档"),
-    onSuccess: (snapshot) => {
-      invalidateRunEvidenceSnapshots(snapshot.run_id);
-      toast.success(t(($) => $.page.toast.snapshot_archived));
-    },
-    onError: reportMutationError,
-  });
-
-  const createAssetEvidenceSnapshotsMut = useMutation({
-    mutationFn: (assetId: string) => api.createPromptEvaluationAssetEvidenceSnapshots(assetId, "验收归档", 20),
-    onSuccess: (result) => {
-      invalidateRuns();
-      for (const snapshot of result.items) {
-        invalidateRunEvidenceSnapshots(snapshot.run_id);
-      }
-      const skippedText = result.skipped_count > 0
-        ? t(($) => $.page.toast.archive_skipped, { count: result.skipped_count })
-        : "";
-      toast.success(t(($) => $.page.toast.evidence_archived, { count: result.created_count, skipped: skippedText }));
-    },
-    onError: reportMutationError,
   });
 
   const handleDownloadAssetEvidencePackage = async (assetId: string) => {
@@ -648,27 +462,8 @@ export function PromptLibraryPage({
     }
   };
 
-  const createCandidateMut = useMutation({
-    mutationFn: (runId: string) => api.createPromptEvaluationOptimizationCandidate(runId),
-    onSuccess: () => {
-      invalidateCandidates();
-      toast.success(t(($) => $.page.toast.candidate_created));
-    },
-    onError: reportMutationError,
-  });
-
   const saving = createMut.isPending || createVersionMut.isPending;
   const deleting = deleteMut.isPending;
-
-  const createAssetMut = useMutation({
-    mutationFn: (data: CreatePromptEvaluationAssetRequest) => api.createPromptEvaluationAsset(data),
-    onSuccess: () => {
-      invalidateAssets();
-      invalidateCases();
-      toast.success(t(($) => $.page.toast.asset_created));
-    },
-    onError: reportMutationError,
-  });
 
   const createWorkbenchAsset = (assetType: PromptEvaluationAssetType) => {
     const prompt = selected ?? visiblePromptItems[0] ?? null;
