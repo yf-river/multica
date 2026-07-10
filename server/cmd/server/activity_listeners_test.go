@@ -58,7 +58,7 @@ func TestActivityIssueCreated(t *testing.T) {
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
 		ActorID:     testUserID,
-		Payload: map[string]any{
+		Payload: replayedPayload(t, map[string]any{
 			"issue": handler.IssueResponse{
 				ID:          fixture.issueID,
 				WorkspaceID: testWorkspaceID,
@@ -68,7 +68,7 @@ func TestActivityIssueCreated(t *testing.T) {
 				CreatorType: "member",
 				CreatorID:   testUserID,
 			},
-		},
+		}),
 	})
 
 	activities := listActivitiesForIssue(t, fixture.queries, fixture.issueID)

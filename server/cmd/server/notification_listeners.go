@@ -552,14 +552,11 @@ func registerNotificationListeners(bus *events.Bus, queries *db.Queries) {
 
 	// issue:created — Direct notification to assignee if assignee != actor
 	bus.Subscribe(protocol.EventIssueCreated, func(e events.Event) {
-		payload, ok := e.Payload.(map[string]any)
+		payload, ok := decodeIssueEvent(e)
 		if !ok {
 			return
 		}
-		issue, ok := payload["issue"].(handler.IssueResponse)
-		if !ok {
-			return
-		}
+		issue := payload.Issue
 
 		// Track who already got notified to avoid duplicates
 		skip := map[string]bool{e.ActorID: true}
@@ -587,20 +584,17 @@ func registerNotificationListeners(bus *events.Bus, queries *db.Queries) {
 
 	// issue:updated — handle assignee changes, status changes, priority, due date
 	bus.Subscribe(protocol.EventIssueUpdated, func(e events.Event) {
-		payload, ok := e.Payload.(map[string]any)
+		payload, ok := decodeIssueEvent(e)
 		if !ok {
 			return
 		}
-		issue, ok := payload["issue"].(handler.IssueResponse)
-		if !ok {
-			return
-		}
-		assigneeChanged, _ := payload["assignee_changed"].(bool)
-		statusChanged, _ := payload["status_changed"].(bool)
-		descriptionChanged, _ := payload["description_changed"].(bool)
-		prevAssigneeType, _ := payload["prev_assignee_type"].(*string)
-		prevAssigneeID, _ := payload["prev_assignee_id"].(*string)
-		prevDescription, _ := payload["prev_description"].(*string)
+		issue := payload.Issue
+		assigneeChanged := payload.AssigneeChanged
+		statusChanged := payload.StatusChanged
+		descriptionChanged := payload.DescriptionChanged
+		prevAssigneeType := payload.PrevAssigneeType
+		prevAssigneeID := payload.PrevAssigneeID
+		prevDescription := payload.PrevDescription
 
 		if assigneeChanged {
 			// Build structured details for assignee change
@@ -659,9 +653,8 @@ func registerNotificationListeners(bus *events.Bus, queries *db.Queries) {
 		}
 
 		if statusChanged {
-			prevStatus, _ := payload["prev_status"].(string)
 			statusDetails, _ := json.Marshal(map[string]string{
-				"from": prevStatus,
+				"from": payload.PrevStatus,
 				"to":   issue.Status,
 			})
 			notifySubscribers(ctx, queries, bus, issue.ID, issue.Status, e.WorkspaceID, e,
@@ -678,10 +671,9 @@ func registerNotificationListeners(bus *events.Bus, queries *db.Queries) {
 			}
 		}
 
-		if priorityChanged, _ := payload["priority_changed"].(bool); priorityChanged {
-			prevPriority, _ := payload["prev_priority"].(string)
+		if payload.PriorityChanged {
 			priorityDetails, _ := json.Marshal(map[string]string{
-				"from": prevPriority,
+				"from": payload.PrevPriority,
 				"to":   issue.Priority,
 			})
 			notifySubscribers(ctx, queries, bus, issue.ID, issue.Status, e.WorkspaceID, e,
@@ -690,10 +682,10 @@ func registerNotificationListeners(bus *events.Bus, queries *db.Queries) {
 				priorityDetails)
 		}
 
-		if startDateChanged, _ := payload["start_date_changed"].(bool); startDateChanged {
+		if payload.StartDateChanged {
 			prevStartDateStr := ""
-			if prevStartDate, ok := payload["prev_start_date"].(*string); ok && prevStartDate != nil {
-				prevStartDateStr = *prevStartDate
+			if payload.PrevStartDate != nil {
+				prevStartDateStr = *payload.PrevStartDate
 			}
 			newStartDateStr := ""
 			if issue.StartDate != nil {
@@ -709,10 +701,10 @@ func registerNotificationListeners(bus *events.Bus, queries *db.Queries) {
 				startDateDetails)
 		}
 
-		if dueDateChanged, _ := payload["due_date_changed"].(bool); dueDateChanged {
+		if payload.DueDateChanged {
 			prevDueDateStr := ""
-			if prevDueDate, ok := payload["prev_due_date"].(*string); ok && prevDueDate != nil {
-				prevDueDateStr = *prevDueDate
+			if payload.PrevDueDate != nil {
+				prevDueDateStr = *payload.PrevDueDate
 			}
 			newDueDateStr := ""
 			if issue.DueDate != nil {
@@ -753,29 +745,14 @@ func registerNotificationListeners(bus *events.Bus, queries *db.Queries) {
 
 	// comment:created — notify all subscribers except the commenter
 	bus.Subscribe(protocol.EventCommentCreated, func(e events.Event) {
-		payload, ok := e.Payload.(map[string]any)
+		payload, ok := decodeCommentEvent(e)
 		if !ok {
 			return
 		}
-
-		// The comment payload can come as handler.CommentResponse from the
-		// HTTP handler, or as map[string]any from the agent comment path in
-		// task.go. Handle both.
-		var issueID, commentID, commentContent, authorType string
-		switch c := payload["comment"].(type) {
-		case handler.CommentResponse:
-			issueID = c.IssueID
-			commentID = c.ID
-			commentContent = c.Content
-			authorType = c.AuthorType
-		case map[string]any:
-			issueID, _ = c["issue_id"].(string)
-			commentID, _ = c["id"].(string)
-			commentContent, _ = c["content"].(string)
-			authorType, _ = c["author_type"].(string)
-		default:
-			return
-		}
+		issueID := payload.Comment.IssueID
+		commentID := payload.Comment.ID
+		commentContent := payload.Comment.Content
+		authorType := payload.Comment.AuthorType
 
 		// Platform-authored system comments (MUL-2538 child-done parent
 		// notify) must NOT create inbox rows or parse mentions from their
@@ -789,8 +766,8 @@ func registerNotificationListeners(bus *events.Bus, queries *db.Queries) {
 			return
 		}
 
-		issueTitle, _ := payload["issue_title"].(string)
-		issueStatus, _ := payload["issue_status"].(string)
+		issueTitle := payload.IssueTitle
+		issueStatus := payload.IssueStatus
 
 		commentDetails := emptyDetails
 		if commentID != "" {
@@ -892,12 +869,12 @@ func registerNotificationListeners(bus *events.Bus, queries *db.Queries) {
 
 	// task:failed — notify all subscribers except the agent
 	bus.Subscribe(protocol.EventTaskFailed, func(e events.Event) {
-		payload, ok := e.Payload.(map[string]any)
+		payload, ok := decodeTaskEvent(e)
 		if !ok {
 			return
 		}
-		agentID, _ := payload["agent_id"].(string)
-		issueID, _ := payload["issue_id"].(string)
+		agentID := payload.AgentID
+		issueID := payload.IssueID
 		if issueID == "" {
 			return
 		}

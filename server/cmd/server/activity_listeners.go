@@ -6,7 +6,6 @@ import (
 	"log/slog"
 
 	"github.com/multica-ai/multica/server/internal/events"
-	"github.com/multica-ai/multica/server/internal/handler"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -21,14 +20,11 @@ func registerActivityListeners(bus *events.Bus, queries *db.Queries) {
 
 	// issue:created — record "created" activity
 	bus.Subscribe(protocol.EventIssueCreated, func(e events.Event) {
-		payload, ok := e.Payload.(map[string]any)
+		payload, ok := decodeIssueEvent(e)
 		if !ok {
 			return
 		}
-		issue, ok := payload["issue"].(handler.IssueResponse)
-		if !ok {
-			return
-		}
+		issue := payload.Issue
 
 		activity, err := queries.CreateActivity(ctx, db.CreateActivityParams{
 			WorkspaceID: parseUUID(issue.WorkspaceID),
@@ -49,24 +45,20 @@ func registerActivityListeners(bus *events.Bus, queries *db.Queries) {
 
 	// issue:updated — record specific changes as separate activities
 	bus.Subscribe(protocol.EventIssueUpdated, func(e events.Event) {
-		payload, ok := e.Payload.(map[string]any)
+		payload, ok := decodeIssueEvent(e)
 		if !ok {
 			return
 		}
-		issue, ok := payload["issue"].(handler.IssueResponse)
-		if !ok {
-			return
-		}
+		issue := payload.Issue
 
-		statusChanged, _ := payload["status_changed"].(bool)
-		priorityChanged, _ := payload["priority_changed"].(bool)
-		assigneeChanged, _ := payload["assignee_changed"].(bool)
-		descriptionChanged, _ := payload["description_changed"].(bool)
+		statusChanged := payload.StatusChanged
+		priorityChanged := payload.PriorityChanged
+		assigneeChanged := payload.AssigneeChanged
+		descriptionChanged := payload.DescriptionChanged
 
 		if statusChanged {
-			prevStatus, _ := payload["prev_status"].(string)
 			details, _ := json.Marshal(map[string]string{
-				"from": prevStatus,
+				"from": payload.PrevStatus,
 				"to":   issue.Status,
 			})
 			activity, err := queries.CreateActivity(ctx, db.CreateActivityParams{
@@ -86,9 +78,8 @@ func registerActivityListeners(bus *events.Bus, queries *db.Queries) {
 		}
 
 		if priorityChanged {
-			prevPriority, _ := payload["prev_priority"].(string)
 			details, _ := json.Marshal(map[string]string{
-				"from": prevPriority,
+				"from": payload.PrevPriority,
 				"to":   issue.Priority,
 			})
 			activity, err := queries.CreateActivity(ctx, db.CreateActivityParams{
@@ -108,15 +99,12 @@ func registerActivityListeners(bus *events.Bus, queries *db.Queries) {
 		}
 
 		if assigneeChanged {
-			prevAssigneeType, _ := payload["prev_assignee_type"].(*string)
-			prevAssigneeID, _ := payload["prev_assignee_id"].(*string)
-
 			detailsMap := map[string]string{}
-			if prevAssigneeType != nil {
-				detailsMap["from_type"] = *prevAssigneeType
+			if payload.PrevAssigneeType != nil {
+				detailsMap["from_type"] = *payload.PrevAssigneeType
 			}
-			if prevAssigneeID != nil {
-				detailsMap["from_id"] = *prevAssigneeID
+			if payload.PrevAssigneeID != nil {
+				detailsMap["from_id"] = *payload.PrevAssigneeID
 			}
 			if issue.AssigneeType != nil {
 				detailsMap["to_type"] = *issue.AssigneeType
@@ -142,10 +130,10 @@ func registerActivityListeners(bus *events.Bus, queries *db.Queries) {
 			}
 		}
 
-		if startDateChanged, _ := payload["start_date_changed"].(bool); startDateChanged {
+		if payload.StartDateChanged {
 			prevStartDate := ""
-			if v, ok := payload["prev_start_date"].(*string); ok && v != nil {
-				prevStartDate = *v
+			if payload.PrevStartDate != nil {
+				prevStartDate = *payload.PrevStartDate
 			}
 			newStartDate := ""
 			if issue.StartDate != nil {
@@ -171,10 +159,10 @@ func registerActivityListeners(bus *events.Bus, queries *db.Queries) {
 			}
 		}
 
-		if dueDateChanged, _ := payload["due_date_changed"].(bool); dueDateChanged {
+		if payload.DueDateChanged {
 			prevDueDate := ""
-			if v, ok := payload["prev_due_date"].(*string); ok && v != nil {
-				prevDueDate = *v
+			if payload.PrevDueDate != nil {
+				prevDueDate = *payload.PrevDueDate
 			}
 			newDueDate := ""
 			if issue.DueDate != nil {
@@ -200,10 +188,9 @@ func registerActivityListeners(bus *events.Bus, queries *db.Queries) {
 			}
 		}
 
-		if titleChanged, _ := payload["title_changed"].(bool); titleChanged {
-			prevTitle, _ := payload["prev_title"].(string)
+		if payload.TitleChanged {
 			details, _ := json.Marshal(map[string]string{
-				"from": prevTitle,
+				"from": payload.PrevTitle,
 				"to":   issue.Title,
 			})
 			activity, err := queries.CreateActivity(ctx, db.CreateActivityParams{
@@ -253,12 +240,12 @@ func registerActivityListeners(bus *events.Bus, queries *db.Queries) {
 
 // handleTaskActivity records an activity for task:completed or task:failed events.
 func handleTaskActivity(ctx context.Context, bus *events.Bus, queries *db.Queries, e events.Event, action string) {
-	payload, ok := e.Payload.(map[string]any)
+	payload, ok := decodeTaskEvent(e)
 	if !ok {
 		return
 	}
-	agentID, _ := payload["agent_id"].(string)
-	issueID, _ := payload["issue_id"].(string)
+	agentID := payload.AgentID
+	issueID := payload.IssueID
 	if issueID == "" {
 		return
 	}

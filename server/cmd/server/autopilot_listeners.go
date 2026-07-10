@@ -5,7 +5,6 @@ import (
 	"log/slog"
 
 	"github.com/multica-ai/multica/server/internal/events"
-	"github.com/multica-ai/multica/server/internal/handler"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -18,18 +17,14 @@ func registerAutopilotListeners(bus *events.Bus, svc *service.AutopilotService) 
 	// When an issue with origin_type='autopilot' reaches a terminal status,
 	// update the corresponding autopilot run.
 	bus.Subscribe(protocol.EventIssueUpdated, func(e events.Event) {
-		payload, ok := e.Payload.(map[string]any)
+		payload, ok := decodeIssueEvent(e)
 		if !ok {
 			return
 		}
-		statusChanged, _ := payload["status_changed"].(bool)
-		if !statusChanged {
+		if !payload.StatusChanged {
 			return
 		}
-		issue, ok := payload["issue"].(handler.IssueResponse)
-		if !ok {
-			return
-		}
+		issue := payload.Issue
 		// Only handle statuses that finalize an autopilot run.
 		if issue.Status != "done" && issue.Status != "in_review" && issue.Status != "cancelled" && issue.Status != "blocked" {
 			return
@@ -56,12 +51,12 @@ func registerAutopilotListeners(bus *events.Bus, svc *service.AutopilotService) 
 }
 
 func syncRunFromTaskEvent(ctx context.Context, svc *service.AutopilotService, e events.Event) {
-	payload, ok := e.Payload.(map[string]any)
+	payload, ok := decodeTaskEvent(e)
 	if !ok {
 		return
 	}
-	taskID, ok := payload["task_id"].(string)
-	if !ok || taskID == "" {
+	taskID := payload.TaskID
+	if taskID == "" {
 		return
 	}
 	task, err := svc.Queries.GetAgentTask(ctx, parseUUID(taskID))
