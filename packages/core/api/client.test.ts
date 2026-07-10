@@ -6,6 +6,27 @@ afterEach(() => {
 });
 
 describe("ApiClient", () => {
+  it("validates runtime profile responses instead of trusting typed JSON", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ runtime_profiles: [{ id: 42 }] }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ id: 42 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.listRuntimeProfiles("workspace-1")).resolves.toEqual([]);
+    await expect(client.getRuntimeProfile("workspace-1", "profile-1")).resolves.toMatchObject({
+      id: "",
+      workspace_id: "",
+      protocol_family: "claude",
+    });
+  });
+
   it("preserves HTTP status on failed requests", async () => {
     vi.stubGlobal(
       "fetch",

@@ -36,6 +36,10 @@ import {
   EMPTY_PROMPT_LIBRARY_LIST_RESPONSE,
   PromptLibraryItemListResponseSchema,
 } from "./schemas-prompt-library";
+import {
+  EMPTY_RUNTIME_PROFILE_LIST_RESPONSE,
+  RuntimeProfileListResponseSchema,
+} from "./schemas-runtimes";
 import { RuntimeUsageListSchema } from "./schemas-usage";
 
 describe("domain response schema fallbacks", () => {
@@ -116,6 +120,15 @@ describe("domain response schema fallbacks", () => {
       fallback,
       { endpoint: "GET /api/runtimes/runtime-1/usage" },
     )).toBe(fallback);
+  });
+
+  it("rejects malformed runtime profiles", () => {
+    expect(parseWithFallback(
+      { runtime_profiles: [{ id: 42 }] },
+      RuntimeProfileListResponseSchema,
+      EMPTY_RUNTIME_PROFILE_LIST_RESPONSE,
+      { endpoint: "GET /api/workspaces/:workspaceId/runtime-profiles" },
+    )).toBe(EMPTY_RUNTIME_PROFILE_LIST_RESPONSE);
   });
 
   it("rejects malformed webhook deliveries", () => {
