@@ -48,7 +48,6 @@ import type {
   PromptLibraryItem,
   PromptLibraryVersion,
   UpdatePromptEvaluationAssetRequest,
-  UpdatePromptEvaluationOptimizationCandidateRequest,
 } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
@@ -664,35 +663,6 @@ export function PromptLibraryPage({
     },
   });
 
-  const publishCandidateMut = useMutation({
-    mutationFn: (candidateId: string) => api.publishPromptEvaluationOptimizationCandidate(candidateId),
-    onSuccess: (result) => {
-      invalidate();
-      invalidateVersions(result.prompt.id);
-      invalidateCandidates();
-      rememberSelectedPrompt(result.prompt.id);
-      toast.success(`已发布新提示词版本：${result.prompt.name}`);
-    },
-  });
-
-  const updateCandidateMut = useMutation({
-    mutationFn: ({ candidateId, data }: { candidateId: string; data: UpdatePromptEvaluationOptimizationCandidateRequest }) =>
-      api.updatePromptEvaluationOptimizationCandidate(candidateId, data),
-    onSuccess: (candidate) => {
-      invalidateCandidates();
-      toast.success(`优化候选已保存：${candidate.candidate_name}`);
-    },
-  });
-
-  const rejectCandidateMut = useMutation({
-    mutationFn: ({ candidateId, reason }: { candidateId: string; reason: string }) =>
-      api.rejectPromptEvaluationOptimizationCandidate(candidateId, reason),
-    onSuccess: (candidate) => {
-      invalidateCandidates();
-      toast.success(`已暂不采纳优化候选：${candidate.candidate_name}`);
-    },
-  });
-
   const saving = createMut.isPending || createVersionMut.isPending;
   const deleting = deleteMut.isPending;
 
@@ -953,12 +923,6 @@ export function PromptLibraryPage({
       exportingAssetEvidencePackageAssetId={exportingAssetEvidencePackageAssetId}
       onGenerateCandidate={(runId) => createCandidateMut.mutate(runId)}
       generatingCandidateRunId={createCandidateMut.isPending ? createCandidateMut.variables ?? null : null}
-      onUpdateCandidate={(candidateId, data) => updateCandidateMut.mutate({ candidateId, data })}
-      updatingCandidateId={updateCandidateMut.isPending ? updateCandidateMut.variables?.candidateId ?? null : null}
-      onPublishCandidate={(candidateId) => publishCandidateMut.mutate(candidateId)}
-      publishingCandidateId={publishCandidateMut.isPending ? publishCandidateMut.variables ?? null : null}
-      onRejectCandidate={(candidateId, reason) => rejectCandidateMut.mutate({ candidateId, reason })}
-      rejectingCandidateId={rejectCandidateMut.isPending ? rejectCandidateMut.variables?.candidateId ?? null : null}
     />
   );
 
@@ -1184,12 +1148,6 @@ type WorkbenchPanelProps = TrainingAssetPanelBaseProps & {
   creatingEvidenceSnapshotRunId: string | null;
   onGenerateCandidate: (runId: string) => void;
   generatingCandidateRunId: string | null;
-  onUpdateCandidate: (candidateId: string, data: UpdatePromptEvaluationOptimizationCandidateRequest) => void;
-  updatingCandidateId: string | null;
-  onPublishCandidate: (candidateId: string) => void;
-  publishingCandidateId: string | null;
-  onRejectCandidate: (candidateId: string, reason: string) => void;
-  rejectingCandidateId: string | null;
 };
 
 function WorkbenchPanel({
@@ -1248,25 +1206,12 @@ function WorkbenchPanel({
   exportingAssetEvidencePackageAssetId,
   onGenerateCandidate,
   generatingCandidateRunId,
-  onUpdateCandidate,
-  updatingCandidateId,
-  onPublishCandidate,
-  publishingCandidateId,
-  onRejectCandidate,
-  rejectingCandidateId,
 }: WorkbenchPanelProps) {
   const tabAssetType = tabToAssetType(activeTab);
   const tabAssetLabel = tabAssetType ? assetTypeLabel(tabAssetType) : activeTab;
   const tabAssets = tabAssetType ? assets.filter((asset) => asset.asset_type === tabAssetType) : assets;
   const visibleAssets = tabAssets;
   const visibleCandidates = candidates;
-  void onUpdateCandidate;
-  void updatingCandidateId;
-  void onPublishCandidate;
-  void publishingCandidateId;
-  void onRejectCandidate;
-  void rejectingCandidateId;
-
   if (activeTab === "提示词库") {
     return null;
   }
@@ -1520,7 +1465,6 @@ function TrainingAssetPanel({
                     {summarizeLinkedDatasetVersions(asset)}
                   </div>
                 )}
-                <ModelComparisonJudgePanel asset={asset} />
                 {asset.asset_type === "数据集" && (
                   <DatasetVersionControls asset={asset} saving={saving} />
                 )}
@@ -1608,33 +1552,6 @@ function TrainingAssetPanel({
         </div>
       )}
     </section>
-  );
-}
-
-function ModelComparisonJudgePanel({ asset }: { asset: PromptEvaluationAsset }) {
-  const summary = modelComparisonJudgeSummary(asset);
-  if (!summary) return null;
-  return (
-    <div className="mt-2 grid gap-2 border-l pl-3 text-xs" data-testid={`model-comparison-judge-${asset.id}`}>
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="font-medium text-foreground">模型对比评分</span>
-        <Badge variant="secondary">Judge：{summary.judgeModel}</Badge>
-        {summary.winner && <Badge variant="outline">推荐：{summary.winner}</Badge>}
-      </div>
-      {summary.conclusion && <div className="text-muted-foreground">{summary.conclusion}</div>}
-      <div className="grid gap-1 md:grid-cols-2">
-        {summary.scores.map((score) => (
-          <div key={score.model} className="min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="truncate font-medium text-foreground">{score.model}</span>
-              <Badge variant="outline">{score.totalScore}/100</Badge>
-            </div>
-            {score.dimensionSummary && <div className="mt-0.5 truncate text-muted-foreground">{score.dimensionSummary}</div>}
-            {score.recommendation && <div className="mt-0.5 line-clamp-2 text-muted-foreground">建议：{score.recommendation}</div>}
-          </div>
-        ))}
-      </div>
-    </div>
   );
 }
 
@@ -3993,24 +3910,6 @@ function summarizeAssetPayload(asset: PromptEvaluationAsset, caseSummary?: CaseS
   if (payload["最近Agent运行"]) return "包含真实智能体运行";
   if (payload["运行结果"]) return "包含运行结果";
   return cases > 0 ? `${cases} 个用例` : "未记录用例";
-}
-
-type ModelComparisonJudgeScore = {
-  model: string;
-  totalScore: number;
-  dimensionSummary: string;
-  recommendation: string;
-};
-
-type ModelComparisonJudgeSummary = {
-  judgeModel: string;
-  winner: string;
-  conclusion: string;
-  scores: ModelComparisonJudgeScore[];
-};
-
-function modelComparisonJudgeSummary(_asset: PromptEvaluationAsset): ModelComparisonJudgeSummary | null {
-  return null;
 }
 
 function summarizeStructuredCase(item: PromptEvaluationStructuredCase): string {
