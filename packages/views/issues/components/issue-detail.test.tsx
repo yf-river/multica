@@ -206,7 +206,6 @@ const mockApiObj = vi.hoisted(() => ({
   listIssueSubscribers: vi.fn().mockResolvedValue([]),
   subscribeToIssue: vi.fn().mockResolvedValue(undefined),
   unsubscribeFromIssue: vi.fn().mockResolvedValue(undefined),
-  getActiveTasksForIssue: vi.fn().mockResolvedValue({ tasks: [] }),
   listTasksByIssue: vi.fn().mockResolvedValue([]),
   listIssueTaskTraceEvents: vi.fn().mockResolvedValue({ events: [] }),
   getIssueExecutionTree: vi.fn().mockResolvedValue(null),
@@ -509,7 +508,6 @@ describe("IssueDetail (shared)", () => {
     mockApiObj.listIssueSubscribers.mockResolvedValue([]);
     mockApiObj.listChildIssues.mockResolvedValue({ issues: [] });
     mockApiObj.listIssues.mockResolvedValue({ issues: [], total: 0 });
-    mockApiObj.getActiveTasksForIssue.mockResolvedValue({ tasks: [] });
     mockApiObj.listTasksByIssue.mockResolvedValue([]);
     mockApiObj.listIssueTaskTraceEvents.mockResolvedValue({ events: [] });
     mockApiObj.getIssueExecutionTree.mockResolvedValue(null);

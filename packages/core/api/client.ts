@@ -54,9 +54,7 @@ import type {
   IssueExecutionTreeResponse,
   ListIssueSOPRunsResponse,
   CreateSOPRunRequest,
-  CreateSOPStepEventRequest,
   SquadSOPRun,
-  SquadSOPStepEvent,
   ObservabilitySummary,
   RuntimeHourlyActivity,
   RuntimeUsageByAgent,
@@ -1512,10 +1510,6 @@ export class ApiClient {
     return this.fetch(`/api/agent-run-counts`);
   }
 
-  async getActiveTasksForIssue(issueId: string): Promise<{ tasks: AgentTask[] }> {
-    return this.fetch(`/api/issues/${issueId}/active-task`);
-  }
-
   async listTaskMessages(taskId: string): Promise<TaskMessagePayload[]> {
     return this.fetch(`/api/tasks/${taskId}/messages`);
   }
@@ -1553,13 +1547,6 @@ export class ApiClient {
     }) as SquadSOPRun;
   }
 
-  async recordSOPStepEvent(runId: string, stepId: string, data: CreateSOPStepEventRequest): Promise<SquadSOPStepEvent> {
-    return this.fetch(`/api/sop-runs/${runId}/steps/${encodeURIComponent(stepId)}/events`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-  }
-
   async cancelTask(issueId: string, taskId: string): Promise<AgentTask> {
     return this.fetch(`/api/issues/${issueId}/tasks/${taskId}/cancel`, {
       method: "POST",
@@ -1587,11 +1574,6 @@ export class ApiClient {
   async archiveInbox(id: string): Promise<InboxItem> {
     const raw = await this.fetch<unknown>(`/api/inbox/${id}/archive`, { method: "POST" });
     return parseOrThrow(raw, InboxItemSchema, EMPTY_INBOX_ITEM, { endpoint: "POST /api/inbox/:id/archive" });
-  }
-
-  async getUnreadInboxCount(): Promise<{ count: number }> {
-    const raw = await this.fetch<unknown>("/api/inbox/unread-count");
-    return parseWithFallback(raw, InboxCountResponseSchema, { count: 0 }, { endpoint: "GET /api/inbox/unread-count" });
   }
 
   async markAllInboxRead(): Promise<{ count: number }> {
@@ -1802,10 +1784,6 @@ export class ApiClient {
       method: "POST",
       body: JSON.stringify(data),
     });
-  }
-
-  async listAgentSkills(agentId: string): Promise<SkillSummary[]> {
-    return this.fetch(`/api/agents/${agentId}/skills`);
   }
 
   async setAgentSkills(agentId: string, data: SetAgentSkillsRequest): Promise<void> {
@@ -2847,10 +2825,6 @@ export class ApiClient {
   // Labels
   async listLabels(): Promise<ListLabelsResponse> {
     return this.fetch(`/api/labels`);
-  }
-
-  async getLabel(id: string): Promise<Label> {
-    return this.fetch(`/api/labels/${id}`);
   }
 
   async createLabel(data: CreateLabelRequest): Promise<Label> {
