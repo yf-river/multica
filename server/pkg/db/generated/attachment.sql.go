@@ -249,23 +249,39 @@ func (q *Queries) LinkAttachmentsToChatMessage(ctx context.Context, arg LinkAtta
 	return items, nil
 }
 
-const linkAttachmentsToComment = `-- name: LinkAttachmentsToComment :exec
+const linkAttachmentsToComment = `-- name: LinkAttachmentsToComment :many
 UPDATE attachment
 SET comment_id = $1
 WHERE issue_id = $2
   AND comment_id IS NULL
   AND id = ANY($3::uuid[])
+RETURNING id
 `
 
 type LinkAttachmentsToCommentParams struct {
-	CommentID pgtype.UUID   `json:"comment_id"`
-	IssueID   pgtype.UUID   `json:"issue_id"`
-	Column3   []pgtype.UUID `json:"column_3"`
+	CommentID     pgtype.UUID   `json:"comment_id"`
+	IssueID       pgtype.UUID   `json:"issue_id"`
+	AttachmentIds []pgtype.UUID `json:"attachment_ids"`
 }
 
-func (q *Queries) LinkAttachmentsToComment(ctx context.Context, arg LinkAttachmentsToCommentParams) error {
-	_, err := q.db.Exec(ctx, linkAttachmentsToComment, arg.CommentID, arg.IssueID, arg.Column3)
-	return err
+func (q *Queries) LinkAttachmentsToComment(ctx context.Context, arg LinkAttachmentsToCommentParams) ([]pgtype.UUID, error) {
+	rows, err := q.db.Query(ctx, linkAttachmentsToComment, arg.CommentID, arg.IssueID, arg.AttachmentIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var id pgtype.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const linkAttachmentsToIssue = `-- name: LinkAttachmentsToIssue :many

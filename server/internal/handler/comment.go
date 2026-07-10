@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 
@@ -288,7 +289,16 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	comment, err := h.Queries.CreateComment(r.Context(), db.CreateCommentParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		slog.Warn("begin create comment transaction failed", append(logger.RequestAttrs(r), "error", err, "issue_id", issueID)...)
+		writeError(w, http.StatusInternalServerError, "failed to create comment")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+
+	comment, err := qtx.CreateComment(r.Context(), db.CreateCommentParams{
 		IssueID:      issue.ID,
 		WorkspaceID:  issue.WorkspaceID,
 		AuthorType:   authorType,
@@ -304,14 +314,23 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Link uploaded attachments to this comment.
-	if len(attachmentIDs) > 0 {
-		h.linkAttachmentsByIDs(r.Context(), comment.ID, issue.ID, attachmentIDs)
+	attachments, err := linkAttachmentsToNewComment(r.Context(), qtx, comment, attachmentIDs)
+	if errors.Is(err, errCommentAttachmentsUnavailable) {
+		writeError(w, http.StatusBadRequest, "one or more attachments are unavailable for this comment")
+		return
+	}
+	if err != nil {
+		slog.Warn("link comment attachments failed", append(logger.RequestAttrs(r), "error", err, "issue_id", issueID)...)
+		writeError(w, http.StatusInternalServerError, "failed to create comment")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		slog.Warn("commit create comment transaction failed", append(logger.RequestAttrs(r), "error", err, "issue_id", issueID)...)
+		writeError(w, http.StatusInternalServerError, "failed to create comment")
+		return
 	}
 
-	// Fetch linked attachments so the response includes them.
-	groupedAtt := h.groupAttachments(r, []pgtype.UUID{comment.ID})
-	resp := commentToResponse(comment, nil, groupedAtt[uuidToString(comment.ID)])
+	resp := commentToResponse(comment, nil, h.attachmentsToResponses(attachments))
 	slog.Info("comment created", append(logger.RequestAttrs(r), "comment_id", uuidToString(comment.ID), "issue_id", issueID)...)
 	h.publish(protocol.EventCommentCreated, uuidToString(issue.WorkspaceID), authorType, authorID, map[string]any{
 		"comment":             resp,
@@ -413,7 +432,16 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 
 	oldContent := existing.Content
 
-	comment, err := h.Queries.UpdateComment(r.Context(), db.UpdateCommentParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		slog.Warn("begin update comment transaction failed", append(logger.RequestAttrs(r), "error", err, "comment_id", commentId)...)
+		writeError(w, http.StatusInternalServerError, "failed to update comment")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+
+	comment, err := qtx.UpdateComment(r.Context(), db.UpdateCommentParams{
 		ID:      commentUUID,
 		Content: req.Content,
 	})
@@ -423,26 +451,31 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Replace the comment attachment set when a modern client sends
-	// attachment_ids. Older clients omit the field; in that case preserve the
-	// existing attachment links rather than unlinking everything.
+	var attachments []db.Attachment
 	if replaceAttachments {
-		if err := h.Queries.ReplaceCommentAttachments(r.Context(), db.ReplaceCommentAttachmentsParams{
-			CommentID:     comment.ID,
-			IssueID:       existing.IssueID,
-			AttachmentIds: attachmentIDs,
-		}); err != nil {
-			slog.Error("failed to replace comment attachments", "error", err)
-			writeError(w, http.StatusInternalServerError, "failed to update attachments")
-			return
-		}
+		attachments, err = replaceCommentAttachmentSet(r.Context(), qtx, comment, attachmentIDs)
+	} else {
+		attachments, err = listCommentAttachments(r.Context(), qtx, comment)
+	}
+	if errors.Is(err, errCommentAttachmentsUnavailable) {
+		writeError(w, http.StatusBadRequest, "one or more attachments are unavailable for this comment")
+		return
+	}
+	if err != nil {
+		slog.Warn("update comment attachments failed", append(logger.RequestAttrs(r), "error", err, "comment_id", commentId)...)
+		writeError(w, http.StatusInternalServerError, "failed to update comment")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		slog.Warn("commit update comment transaction failed", append(logger.RequestAttrs(r), "error", err, "comment_id", commentId)...)
+		writeError(w, http.StatusInternalServerError, "failed to update comment")
+		return
 	}
 
-	// Fetch reactions and attachments for the updated comment.
+	// Reactions are independent derived state and can be read after commit.
 	grouped := h.groupReactions(r, []pgtype.UUID{comment.ID})
-	groupedAtt := h.groupAttachments(r, []pgtype.UUID{comment.ID})
 	cid := uuidToString(comment.ID)
-	resp := commentToResponse(comment, grouped[cid], groupedAtt[cid])
+	resp := commentToResponse(comment, grouped[cid], h.attachmentsToResponses(attachments))
 	slog.Info("comment updated", append(logger.RequestAttrs(r), "comment_id", commentId)...)
 	h.publish(protocol.EventCommentUpdated, workspaceID, actorType, actorID, map[string]any{"comment": resp})
 

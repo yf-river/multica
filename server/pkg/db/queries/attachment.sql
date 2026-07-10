@@ -47,12 +47,13 @@ WHERE a.issue_id = $1
 SELECT url FROM attachment
 WHERE comment_id = $1;
 
--- name: LinkAttachmentsToComment :exec
+-- name: LinkAttachmentsToComment :many
 UPDATE attachment
-SET comment_id = $1
-WHERE issue_id = $2
+SET comment_id = sqlc.arg(comment_id)
+WHERE issue_id = sqlc.arg(issue_id)
   AND comment_id IS NULL
-  AND id = ANY($3::uuid[]);
+  AND id = ANY(sqlc.arg(attachment_ids)::uuid[])
+RETURNING id;
 
 -- name: ReplaceCommentAttachments :exec
 UPDATE attachment

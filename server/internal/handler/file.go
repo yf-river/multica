@@ -134,6 +134,17 @@ func (h *Handler) attachmentToResponse(a db.Attachment) AttachmentResponse {
 	return resp
 }
 
+func (h *Handler) attachmentsToResponses(attachments []db.Attachment) []AttachmentResponse {
+	if len(attachments) == 0 {
+		return nil
+	}
+	responses := make([]AttachmentResponse, len(attachments))
+	for i, attachment := range attachments {
+		responses[i] = h.attachmentToResponse(attachment)
+	}
+	return responses
+}
+
 func attachmentDownloadPath(id string) string {
 	return "/api/attachments/" + id + "/download"
 }
@@ -974,16 +985,93 @@ func (h *Handler) linkAttachmentsByIssueIDs(ctx context.Context, issueID, worksp
 	}
 }
 
-// linkAttachmentsByIDs links the given attachment IDs to a comment.
-// Only updates attachments that belong to the same issue and have no comment_id yet.
-func (h *Handler) linkAttachmentsByIDs(ctx context.Context, commentID, issueID pgtype.UUID, ids []pgtype.UUID) {
-	if err := h.Queries.LinkAttachmentsToComment(ctx, db.LinkAttachmentsToCommentParams{
-		CommentID: commentID,
-		IssueID:   issueID,
-		Column3:   ids,
-	}); err != nil {
-		slog.Error("failed to link attachments to comment", "error", err)
+var errCommentAttachmentsUnavailable = errors.New("one or more attachments are unavailable for this comment")
+
+func uniqueAttachmentIDs(ids []pgtype.UUID) ([]pgtype.UUID, error) {
+	unique := make([]pgtype.UUID, 0, len(ids))
+	seen := make(map[[16]byte]struct{}, len(ids))
+	for _, id := range ids {
+		if !id.Valid {
+			return nil, errCommentAttachmentsUnavailable
+		}
+		if _, exists := seen[id.Bytes]; exists {
+			continue
+		}
+		seen[id.Bytes] = struct{}{}
+		unique = append(unique, id)
 	}
+	return unique, nil
+}
+
+func linkAttachmentsToNewComment(ctx context.Context, q *db.Queries, comment db.Comment, ids []pgtype.UUID) ([]db.Attachment, error) {
+	uniqueIDs, err := uniqueAttachmentIDs(ids)
+	if err != nil {
+		return nil, err
+	}
+	if len(uniqueIDs) > 0 {
+		linkedIDs, err := q.LinkAttachmentsToComment(ctx, db.LinkAttachmentsToCommentParams{
+			CommentID:     comment.ID,
+			IssueID:       comment.IssueID,
+			AttachmentIds: uniqueIDs,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("link attachments to comment: %w", err)
+		}
+		if len(linkedIDs) != len(uniqueIDs) {
+			return nil, errCommentAttachmentsUnavailable
+		}
+	}
+	return listCommentAttachments(ctx, q, comment)
+}
+
+func replaceCommentAttachmentSet(ctx context.Context, q *db.Queries, comment db.Comment, ids []pgtype.UUID) ([]db.Attachment, error) {
+	uniqueIDs, err := uniqueAttachmentIDs(ids)
+	if err != nil {
+		return nil, err
+	}
+	if err := q.ReplaceCommentAttachments(ctx, db.ReplaceCommentAttachmentsParams{
+		CommentID:     comment.ID,
+		IssueID:       comment.IssueID,
+		AttachmentIds: uniqueIDs,
+	}); err != nil {
+		return nil, fmt.Errorf("replace comment attachments: %w", err)
+	}
+
+	attachments, err := listCommentAttachments(ctx, q, comment)
+	if err != nil {
+		return nil, err
+	}
+	if !hasExactAttachmentIDs(attachments, uniqueIDs) {
+		return nil, errCommentAttachmentsUnavailable
+	}
+	return attachments, nil
+}
+
+func listCommentAttachments(ctx context.Context, q *db.Queries, comment db.Comment) ([]db.Attachment, error) {
+	attachments, err := q.ListAttachmentsByComment(ctx, db.ListAttachmentsByCommentParams{
+		CommentID:   comment.ID,
+		WorkspaceID: comment.WorkspaceID,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list comment attachments: %w", err)
+	}
+	return attachments, nil
+}
+
+func hasExactAttachmentIDs(attachments []db.Attachment, expected []pgtype.UUID) bool {
+	if len(attachments) != len(expected) {
+		return false
+	}
+	want := make(map[[16]byte]struct{}, len(expected))
+	for _, id := range expected {
+		want[id.Bytes] = struct{}{}
+	}
+	for _, attachment := range attachments {
+		if _, ok := want[attachment.ID.Bytes]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // deleteStorageObject removes a single object by its persisted URL.
