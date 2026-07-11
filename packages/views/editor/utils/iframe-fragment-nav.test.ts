@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   __FRAGMENT_NAV_SHIM__,
   withFragmentNavShim,
@@ -30,18 +30,23 @@ describe("withFragmentNavShim", () => {
 // the iframe closely enough for the click-handling contract.
 //
 // scrollIntoView is not implemented in jsdom; we stub it per-test.
-function loadShimIntoDocument() {
+function loadShimIntoDocument(targetDocument: Document) {
   const inner = __FRAGMENT_NAV_SHIM__
     .replace(/^<script>/, "")
     .replace(/<\/script>$/, "");
-  new Function(inner)();
+  new Function("document", inner)(targetDocument);
 }
 
 describe("fragment-nav shim runtime behavior", () => {
   let scrollSpy: ReturnType<typeof vi.fn>;
+  let testDocument: Document;
 
   beforeEach(() => {
-    document.body.innerHTML = "";
+    // A detached document has DOM event semantics but no browsing context,
+    // so links that the shim intentionally ignores cannot ask jsdom to perform
+    // its unimplemented top-level navigation. It also gives every test one
+    // listener set instead of accumulating handlers on the global document.
+    testDocument = document.implementation.createHTMLDocument("fragment-nav-test");
     scrollSpy = vi.fn();
     // Patch the prototype so any element we create inherits the stub.
     Object.defineProperty(window.Element.prototype, "scrollIntoView", {
@@ -49,29 +54,19 @@ describe("fragment-nav shim runtime behavior", () => {
       writable: true,
       value: scrollSpy,
     });
-    loadShimIntoDocument();
-  });
-
-  afterEach(() => {
-    document.body.innerHTML = "";
-    // Reload document listeners by clearing the DOM; jsdom isolates the
-    // listener registration to the document instance, but next test calls
-    // loadShimIntoDocument() again — that double-registers handlers across
-    // tests within the same document. We isolate by recreating the link
-    // each test and asserting based on whether scrollIntoView fired *on the
-    // intended target*, not call-count totals.
+    loadShimIntoDocument(testDocument);
   });
 
   it("scrolls the matching target into view when a fragment link is clicked", () => {
-    const section = document.createElement("section");
+    const section = testDocument.createElement("section");
     section.id = "intro";
     section.textContent = "intro";
-    document.body.appendChild(section);
+    testDocument.body.appendChild(section);
 
-    const link = document.createElement("a");
+    const link = testDocument.createElement("a");
     link.setAttribute("href", "#intro");
     link.textContent = "go";
-    document.body.appendChild(link);
+    testDocument.body.appendChild(link);
 
     const evt = new MouseEvent("click", { bubbles: true, cancelable: true });
     link.dispatchEvent(evt);
@@ -82,13 +77,13 @@ describe("fragment-nav shim runtime behavior", () => {
   });
 
   it("falls back to <a name='...'> when no element id matches", () => {
-    const target = document.createElement("a");
+    const target = testDocument.createElement("a");
     target.setAttribute("name", "legacy");
-    document.body.appendChild(target);
+    testDocument.body.appendChild(target);
 
-    const link = document.createElement("a");
+    const link = testDocument.createElement("a");
     link.setAttribute("href", "#legacy");
-    document.body.appendChild(link);
+    testDocument.body.appendChild(link);
 
     const evt = new MouseEvent("click", { bubbles: true, cancelable: true });
     link.dispatchEvent(evt);
@@ -99,13 +94,13 @@ describe("fragment-nav shim runtime behavior", () => {
   });
 
   it("decodes percent-encoded fragment ids", () => {
-    const section = document.createElement("section");
+    const section = testDocument.createElement("section");
     section.id = "中文";
-    document.body.appendChild(section);
+    testDocument.body.appendChild(section);
 
-    const link = document.createElement("a");
+    const link = testDocument.createElement("a");
     link.setAttribute("href", `#${encodeURIComponent("中文")}`);
-    document.body.appendChild(link);
+    testDocument.body.appendChild(link);
 
     link.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
 
@@ -114,9 +109,9 @@ describe("fragment-nav shim runtime behavior", () => {
   });
 
   it("does not intercept when the click target is not inside an anchor", () => {
-    const div = document.createElement("div");
+    const div = testDocument.createElement("div");
     div.textContent = "not a link";
-    document.body.appendChild(div);
+    testDocument.body.appendChild(div);
 
     const evt = new MouseEvent("click", { bubbles: true, cancelable: true });
     div.dispatchEvent(evt);
@@ -126,9 +121,9 @@ describe("fragment-nav shim runtime behavior", () => {
   });
 
   it("does not intercept links to external URLs", () => {
-    const link = document.createElement("a");
+    const link = testDocument.createElement("a");
     link.setAttribute("href", "https://example.com/page#section");
-    document.body.appendChild(link);
+    testDocument.body.appendChild(link);
 
     const evt = new MouseEvent("click", { bubbles: true, cancelable: true });
     link.dispatchEvent(evt);
@@ -138,9 +133,9 @@ describe("fragment-nav shim runtime behavior", () => {
   });
 
   it("does not intercept bare '#' links", () => {
-    const link = document.createElement("a");
+    const link = testDocument.createElement("a");
     link.setAttribute("href", "#");
-    document.body.appendChild(link);
+    testDocument.body.appendChild(link);
 
     const evt = new MouseEvent("click", { bubbles: true, cancelable: true });
     link.dispatchEvent(evt);
@@ -150,9 +145,9 @@ describe("fragment-nav shim runtime behavior", () => {
   });
 
   it("does not intercept when target id is missing — lets in-document handlers run", () => {
-    const link = document.createElement("a");
+    const link = testDocument.createElement("a");
     link.setAttribute("href", "#nonexistent");
-    document.body.appendChild(link);
+    testDocument.body.appendChild(link);
 
     const evt = new MouseEvent("click", { bubbles: true, cancelable: true });
     link.dispatchEvent(evt);
@@ -162,17 +157,17 @@ describe("fragment-nav shim runtime behavior", () => {
   });
 
   it("yields to a user handler that already called preventDefault", () => {
-    const section = document.createElement("section");
+    const section = testDocument.createElement("section");
     section.id = "intro";
-    document.body.appendChild(section);
+    testDocument.body.appendChild(section);
 
-    const link = document.createElement("a");
+    const link = testDocument.createElement("a");
     link.setAttribute("href", "#intro");
-    document.body.appendChild(link);
+    testDocument.body.appendChild(link);
 
     // A user-installed handler that suppresses default behavior. Capture
     // phase + preventDefault — our shim must see defaultPrevented and bail.
-    document.addEventListener(
+    testDocument.addEventListener(
       "click",
       (e) => {
         if (e.target === link) e.preventDefault();

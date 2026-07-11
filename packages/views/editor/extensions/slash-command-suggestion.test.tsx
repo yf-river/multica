@@ -1,4 +1,4 @@
-import { render } from "@testing-library/react";
+import { act, render } from "@testing-library/react";
 import { createRef, type ReactNode } from "react";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "@multica/core/i18n/react";
@@ -289,21 +289,23 @@ describe("SlashCommandList keyboard handling", () => {
       </I18nWrapper>,
     );
 
-    expect(
-      ref.current?.onKeyDown({
-        event: new KeyboardEvent("keydown", { key: "ArrowUp" }),
-      }),
-    ).toBe(true);
-    expect(
-      ref.current?.onKeyDown({
-        event: new KeyboardEvent("keydown", { key: "ArrowDown" }),
-      }),
-    ).toBe(true);
-    expect(
-      ref.current?.onKeyDown({
-        event: new KeyboardEvent("keydown", { key: "Enter" }),
-      }),
-    ).toBe(true);
+    act(() => {
+      expect(
+        ref.current?.onKeyDown({
+          event: new KeyboardEvent("keydown", { key: "ArrowUp" }),
+        }),
+      ).toBe(true);
+      expect(
+        ref.current?.onKeyDown({
+          event: new KeyboardEvent("keydown", { key: "ArrowDown" }),
+        }),
+      ).toBe(true);
+      expect(
+        ref.current?.onKeyDown({
+          event: new KeyboardEvent("keydown", { key: "Enter" }),
+        }),
+      ).toBe(true);
+    });
     expect(command).toHaveBeenCalledWith(selectableItems[0]);
   });
 });

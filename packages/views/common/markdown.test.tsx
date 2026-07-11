@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import { renderWithI18n as render } from "../test/i18n";
 import { Markdown } from "./markdown";
 
 vi.mock("@multica/core/config", () => ({

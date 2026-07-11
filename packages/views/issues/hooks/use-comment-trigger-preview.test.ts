@@ -43,10 +43,11 @@ function createWrapper() {
 }
 
 async function advancePreviewDebounce() {
-  act(() => {
-    vi.advanceTimersByTime(300);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(300);
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(0);
   });
-  await act(async () => {});
 }
 
 describe("useCommentTriggerPreview", () => {
@@ -139,8 +140,10 @@ describe("useCommentTriggerPreview", () => {
     );
 
     await advancePreviewDebounce();
-    await vi.waitFor(() => {
-      expect(result.current.agents).toEqual([waltAgent]);
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(result.current.agents).toEqual([waltAgent]);
+      });
     });
 
     rerender({ parentId: "kim-thread" });
@@ -174,8 +177,10 @@ describe("useCommentTriggerPreview", () => {
     );
 
     await advancePreviewDebounce();
-    await vi.waitFor(() => {
-      expect(result.current.agents).toEqual([waltAgent]);
+    await act(async () => {
+      await vi.waitFor(() => {
+        expect(result.current.agents).toEqual([waltAgent]);
+      });
     });
 
     rerender({ content: `[@Kim](mention://agent/${kimAgent.id})` });

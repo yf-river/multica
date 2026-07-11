@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, act } from "@testing-library/react";
+import { TestI18nProvider } from "../../test/i18n";
 
 // Mock @multica/core/issues/mutations to mimic TanStack Query v5's contract:
 // useMutation returns a fresh result wrapper on every render, but the
@@ -107,6 +108,12 @@ vi.mock("sonner", () => ({
 
 import { useIssueTimeline } from "./use-issue-timeline";
 
+const hookOptions = { wrapper: TestI18nProvider };
+
+function renderIssueTimelineHook() {
+  return renderHook(() => useIssueTimeline("issue-1", "user-1"), hookOptions);
+}
+
 describe("useIssueTimeline", () => {
   beforeEach(() => {
     wsHandlers.clear();
@@ -127,7 +134,7 @@ describe("useIssueTimeline", () => {
   // listing the whole mutation object as a dep flips its identity every time
   // — that is the exact regression this test guards against.
   it("submitReply / editComment / deleteComment / toggleReaction keep identity across unrelated re-renders", () => {
-    const { result, rerender } = renderHook(() => useIssueTimeline("issue-1", "user-1"));
+    const { result, rerender } = renderIssueTimelineHook();
 
     const first = {
       submitComment: result.current.submitComment,
@@ -153,12 +160,12 @@ describe("useIssueTimeline", () => {
       { type: "comment", id: "c2", actor_type: "member", actor_id: "u", created_at: "2026-05-06T02:00:00Z" },
       { type: "comment", id: "c3", actor_type: "member", actor_id: "u", created_at: "2026-05-06T03:00:00Z" },
     ];
-    const { result } = renderHook(() => useIssueTimeline("issue-1", "user-1"));
+    const { result } = renderIssueTimelineHook();
     expect(result.current.timeline.map((e) => e.id)).toEqual(["c1", "c2", "c3"]);
   });
 
   it("passes suppressed agent ids through editComment", async () => {
-    const { result } = renderHook(() => useIssueTimeline("issue-1", "user-1"));
+    const { result } = renderIssueTimelineHook();
 
     await act(async () => {
       await result.current.editComment("comment-1", "updated", ["attachment-1"], ["agent-1"]);
@@ -174,7 +181,7 @@ describe("useIssueTimeline", () => {
 
   it("comment:created appends the new entry to the cache", () => {
     queryState.data = [];
-    renderHook(() => useIssueTimeline("issue-1", "user-1"));
+    renderIssueTimelineHook();
     const handler = wsHandlers.get("comment:created");
     act(() => {
       handler!({
@@ -202,7 +209,7 @@ describe("useIssueTimeline", () => {
       { type: "comment", id: "c1", actor_type: "member", actor_id: "u", created_at: "2026-05-06T01:00:00Z" },
       { type: "comment", id: "c3", actor_type: "member", actor_id: "u", created_at: "2026-05-06T03:00:00Z" },
     ];
-    renderHook(() => useIssueTimeline("issue-1", "user-1"));
+    renderIssueTimelineHook();
     const handler = wsHandlers.get("comment:created");
     act(() => {
       handler!({
@@ -230,7 +237,7 @@ describe("useIssueTimeline", () => {
       { type: "comment", id: "c2", actor_type: "member", actor_id: "u", created_at: "2026-05-06T02:00:00Z" },
       { type: "comment", id: "c3", actor_type: "member", actor_id: "u", created_at: "2026-05-06T03:00:00Z" },
     ];
-    renderHook(() => useIssueTimeline("issue-1", "user-1"));
+    renderIssueTimelineHook();
     const handler = wsHandlers.get("comment:created");
     act(() => {
       handler!({
@@ -255,7 +262,7 @@ describe("useIssueTimeline", () => {
 
   it("ignores WS events for other issues", () => {
     queryState.data = [];
-    renderHook(() => useIssueTimeline("issue-1", "user-1"));
+    renderIssueTimelineHook();
     const handler = wsHandlers.get("comment:created");
     act(() => {
       handler!({
@@ -318,7 +325,7 @@ describe("useIssueTimeline", () => {
         resolved_by_id: null,
       },
     ];
-    renderHook(() => useIssueTimeline("issue-1", "user-1"));
+    renderIssueTimelineHook();
     const handler = wsHandlers.get("comment:resolved");
     expect(handler).toBeDefined();
     act(() => {
@@ -373,7 +380,7 @@ describe("useIssueTimeline", () => {
         resolved_by_id: "u",
       },
     ];
-    renderHook(() => useIssueTimeline("issue-1", "user-1"));
+    renderIssueTimelineHook();
     const handler = wsHandlers.get("comment:unresolved");
     expect(handler).toBeDefined();
     act(() => {
@@ -421,7 +428,7 @@ describe("useIssueTimeline", () => {
         resolved_by_id: null,
       },
     ];
-    renderHook(() => useIssueTimeline("issue-1", "user-1"));
+    renderIssueTimelineHook();
     const handler = wsHandlers.get("comment:resolved");
     act(() => {
       handler!({

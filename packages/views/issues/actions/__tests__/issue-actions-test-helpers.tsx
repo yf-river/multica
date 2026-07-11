@@ -1,13 +1,7 @@
 import type { ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Issue } from "@multica/core/types";
-import { I18nProvider } from "@multica/core/i18n/react";
-import zhHansCommon from "../../../locales/zh-Hans/common.json";
-import zhHansIssues from "../../../locales/zh-Hans/issues.json";
-
-const TEST_RESOURCES = {
-  "zh-Hans": { common: zhHansCommon, issues: zhHansIssues },
-};
+import { TestI18nProvider } from "../../../test/i18n";
 
 export const mockIssue: Issue = {
   id: "issue-1",
@@ -37,14 +31,12 @@ export function IssueActionsQueryProvider({
 }) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return (
-    <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    <TestI18nProvider>
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    </TestI18nProvider>
   );
 }
 
 export function wrapIssueActionsMenu(ui: ReactNode) {
-  return (
-    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
-      <IssueActionsQueryProvider>{ui}</IssueActionsQueryProvider>
-    </I18nProvider>
-  );
+  return <IssueActionsQueryProvider>{ui}</IssueActionsQueryProvider>;
 }

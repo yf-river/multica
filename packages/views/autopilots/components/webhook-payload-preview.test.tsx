@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, vi } from "vitest";
-import { screen, fireEvent } from "@testing-library/react";
+import { act, fireEvent, screen } from "@testing-library/react";
 import { renderWithI18n } from "../../test/i18n";
 import { WebhookPayloadPreview } from "./webhook-payload-preview";
 
@@ -11,9 +11,11 @@ vi.mock("sonner", () => ({
 }));
 
 // jsdom doesn't provide navigator.clipboard by default. Stub it once.
+const clipboardWriteText = vi.fn().mockResolvedValue(undefined);
+
 beforeAll(() => {
   Object.assign(navigator, {
-    clipboard: { writeText: vi.fn().mockResolvedValue(undefined) },
+    clipboard: { writeText: clipboardWriteText },
   });
 });
 
@@ -44,6 +46,7 @@ describe("WebhookPayloadPreview", () => {
   });
 
   it("truncates display when the payload exceeds 4 KiB but copies full text", async () => {
+    clipboardWriteText.mockClear();
     // 5 KiB string field → stringified envelope > 4 KiB.
     const bigPayload = envelope("demo.big", { blob: "x".repeat(5 * 1024) });
     renderWithI18n(
@@ -60,10 +63,12 @@ describe("WebhookPayloadPreview", () => {
     expect((pre!.textContent ?? "").length).toBeLessThan(5 * 1024 + 200);
 
     // Clicking Copy must still hand the FULL payload to the clipboard.
-    fireEvent.click(screen.getByRole("button", { name: /复制/i }));
-    const writeText = navigator.clipboard.writeText as ReturnType<typeof vi.fn>;
-    expect(writeText).toHaveBeenCalled();
-    const lastCall = writeText.mock.calls[writeText.mock.calls.length - 1];
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: /复制/i }));
+      await Promise.resolve();
+    });
+    expect(clipboardWriteText).toHaveBeenCalled();
+    const lastCall = clipboardWriteText.mock.calls[clipboardWriteText.mock.calls.length - 1];
     if (!lastCall) throw new Error("clipboard.writeText was not called");
     const written = lastCall[0] as string;
     expect(written.length).toBeGreaterThan(5 * 1024);
