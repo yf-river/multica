@@ -1,8 +1,14 @@
 import { z } from "zod";
 import type {
+  Autopilot,
+  AutopilotRun,
+  AutopilotTrigger,
+  GetAutopilotResponse,
+  ListAutopilotRunsResponse,
   ListWebhookDeliveriesResponse,
   WebhookDelivery,
 } from "../types";
+import { NonEmptyStringSchema } from "./schemas-internal";
 
 // Runtime response contracts for automation.
 // Squad member status — backs the Squad detail page's Members tab. status
@@ -86,9 +92,15 @@ export const EMPTY_LIST_WEBHOOK_DELIVERIES_RESPONSE: ListWebhookDeliveriesRespon
 // servers — optional by contract, the list renders "—" without them.
 // ---------------------------------------------------------------------------
 
-const AutopilotListItemSchema = z.object({
-  id: z.string(),
-  workspace_id: z.string(),
+const AutopilotSubscriberSchema = z.object({
+  user_type: z.string(),
+  user_id: NonEmptyStringSchema,
+  created_at: z.string(),
+}).loose();
+
+export const AutopilotSchema = z.object({
+  id: NonEmptyStringSchema,
+  workspace_id: NonEmptyStringSchema,
   title: z.string(),
   description: z.string().nullable().optional(),
   project_id: z.string().nullable().optional(),
@@ -107,15 +119,142 @@ const AutopilotListItemSchema = z.object({
   trigger_kinds: z.array(z.string()).optional(),
   next_run_at: z.string().nullable().optional(),
   last_run_status: z.string().nullable().optional(),
+  subscribers: z.array(AutopilotSubscriberSchema).default([]),
 }).loose();
 
 export const ListAutopilotsResponseSchema = z.object({
-  autopilots: z.array(AutopilotListItemSchema).default([]),
+  autopilots: z.array(AutopilotSchema).default([]),
   total: z.number().default(0),
 }).loose();
 
 export const EMPTY_LIST_AUTOPILOTS_RESPONSE = {
   autopilots: [],
+  total: 0,
+};
+
+export const EMPTY_AUTOPILOT: Autopilot = {
+  id: "",
+  workspace_id: "",
+  title: "",
+  description: null,
+  project_id: null,
+  assignee_type: "agent",
+  assignee_id: "",
+  status: "paused",
+  execution_mode: "run_only",
+  issue_title_template: null,
+  created_by_type: "member",
+  created_by_id: "",
+  last_run_at: null,
+  created_at: "",
+  updated_at: "",
+  subscribers: [],
+};
+
+const WebhookEventFilterSchema = z.object({
+  event: z.string(),
+  actions: z.array(z.string()).optional(),
+}).loose();
+
+const AutopilotTriggerWireSchema = z.object({
+  id: NonEmptyStringSchema,
+  autopilot_id: NonEmptyStringSchema,
+  kind: z.string(),
+  enabled: z.boolean(),
+  cron_expression: z.string().nullable(),
+  timezone: z.string().nullable(),
+  next_run_at: z.string().nullable(),
+  webhook_token: z.string().nullable(),
+  webhook_path: z.string().nullable().optional(),
+  webhook_url: z.string().nullable().optional(),
+  provider: z.string().nullable().optional(),
+  has_signing_secret: z.boolean().optional(),
+  signing_secret_hint: z.string().nullable().optional(),
+  label: z.string().nullable(),
+  event_filters: z.array(WebhookEventFilterSchema).nullable().optional(),
+  last_fired_at: z.string().nullable(),
+  created_at: z.string(),
+  updated_at: z.string(),
+}).loose();
+
+export const AutopilotTriggerSchema = AutopilotTriggerWireSchema.transform((wire) => {
+  const safe: Record<string, unknown> = { ...wire };
+  // webhook_token is an intentional current bearer-path contract. Signing
+  // secrets are write-only and must never cross this response boundary even
+  // if a future server serializer accidentally adds one.
+  delete safe.signing_secret;
+  delete safe.encrypted_signing_secret;
+  delete safe.signing_secret_ciphertext;
+  return safe;
+});
+
+export const EMPTY_AUTOPILOT_TRIGGER: AutopilotTrigger = {
+  id: "",
+  autopilot_id: "",
+  kind: "api",
+  enabled: false,
+  cron_expression: null,
+  timezone: null,
+  next_run_at: null,
+  webhook_token: null,
+  webhook_path: null,
+  webhook_url: null,
+  label: null,
+  event_filters: null,
+  last_fired_at: null,
+  created_at: "",
+  updated_at: "",
+};
+
+export const AutopilotRunSchema = z.object({
+  id: NonEmptyStringSchema,
+  autopilot_id: NonEmptyStringSchema,
+  trigger_id: z.string().nullable(),
+  source: z.string(),
+  status: z.string(),
+  issue_id: z.string().nullable(),
+  task_id: z.string().nullable(),
+  triggered_at: z.string(),
+  completed_at: z.string().nullable(),
+  failure_reason: z.string().nullable(),
+  trigger_payload: z.unknown().default(null),
+  result: z.unknown().default(null),
+  created_at: z.string(),
+}).loose();
+
+export const EMPTY_AUTOPILOT_RUN: AutopilotRun = {
+  id: "",
+  autopilot_id: "",
+  trigger_id: null,
+  source: "manual",
+  status: "failed",
+  issue_id: null,
+  task_id: null,
+  triggered_at: "",
+  completed_at: null,
+  failure_reason: null,
+  trigger_payload: null,
+  result: null,
+  created_at: "",
+};
+
+export const GetAutopilotResponseSchema = z.object({
+  autopilot: AutopilotSchema,
+  triggers: z.array(AutopilotTriggerSchema).default([]),
+}).loose();
+
+export const EMPTY_GET_AUTOPILOT_RESPONSE: GetAutopilotResponse = {
+  autopilot: EMPTY_AUTOPILOT,
+  triggers: [],
+};
+
+export const ListAutopilotRunsResponseSchema = z.object({
+  runs: z.array(AutopilotRunSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
+export const EMPTY_LIST_AUTOPILOT_RUNS_RESPONSE: ListAutopilotRunsResponse = {
+  runs: [],
   total: 0,
 };
 

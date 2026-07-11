@@ -7,6 +7,10 @@ import {
 } from "./schemas-agents";
 import { EMPTY_USER, UserSchema } from "./schemas-auth";
 import {
+  AutopilotRunSchema,
+  AutopilotTriggerSchema,
+  EMPTY_GET_AUTOPILOT_RESPONSE,
+  GetAutopilotResponseSchema,
   EMPTY_LIST_WEBHOOK_DELIVERIES_RESPONSE,
   ListWebhookDeliveriesResponseSchema,
 } from "./schemas-automation";
@@ -160,6 +164,43 @@ describe("domain response schema fallbacks", () => {
       EMPTY_LIST_WEBHOOK_DELIVERIES_RESPONSE,
       { endpoint: "GET /api/webhook-deliveries" },
     )).toBe(EMPTY_LIST_WEBHOOK_DELIVERIES_RESPONSE);
+  });
+
+  it("rejects malformed Autopilot identity and run linkage", () => {
+    expect(parseWithFallback(
+      { autopilot: { id: 42 }, triggers: [] },
+      GetAutopilotResponseSchema,
+      EMPTY_GET_AUTOPILOT_RESPONSE,
+      { endpoint: "GET /api/autopilots/:id" },
+    )).toBe(EMPTY_GET_AUTOPILOT_RESPONSE);
+    expect(AutopilotRunSchema.safeParse({
+      id: "run-1",
+      autopilot_id: "",
+      source: "manual",
+      status: "running",
+    }).success).toBe(false);
+  });
+
+  it("strips write-only Autopilot signing secrets", () => {
+    const parsed = AutopilotTriggerSchema.parse({
+      id: "trigger-1",
+      autopilot_id: "autopilot-1",
+      kind: "webhook",
+      enabled: true,
+      cron_expression: null,
+      timezone: null,
+      next_run_at: null,
+      webhook_token: "current-bearer-token",
+      label: null,
+      last_fired_at: null,
+      created_at: "2026-07-11T00:00:00Z",
+      updated_at: "2026-07-11T00:00:00Z",
+      signing_secret: "must-not-cross-boundary",
+      signing_secret_ciphertext: "ciphertext",
+    });
+    expect(parsed).toHaveProperty("webhook_token", "current-bearer-token");
+    expect(parsed).not.toHaveProperty("signing_secret");
+    expect(parsed).not.toHaveProperty("signing_secret_ciphertext");
   });
 
   it("rejects a malformed current user", () => {

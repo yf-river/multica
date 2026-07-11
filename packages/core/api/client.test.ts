@@ -190,6 +190,30 @@ describe("ApiClient", () => {
       .rejects.toMatchObject({ code: "api_response_contract_invalid" });
   });
 
+  it("validates Autopilot reads and never manufactures successful mutations", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(
+      new Response(JSON.stringify({ id: 42, status: "running" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )));
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.getAutopilot("autopilot-1"))
+      .resolves.toMatchObject({ autopilot: { id: "" }, triggers: [] });
+    await expect(client.listAutopilotRuns("autopilot-1"))
+      .resolves.toMatchObject({ runs: [], total: 0 });
+    await expect(client.createAutopilot({
+      title: "Daily review",
+      assignee_id: "agent-1",
+      execution_mode: "run_only",
+    })).rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
+    await expect(client.triggerAutopilot("autopilot-1"))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
+    await expect(client.rotateAutopilotTriggerWebhookToken("autopilot-1", "trigger-1"))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
+  });
+
   it("whitelists external credential responses without exposing secret fields", async () => {
     const profile = {
       id: "profile-1",
@@ -524,12 +548,67 @@ describe("ApiClient", () => {
   });
 
   it("uses the expected HTTP contract for autopilot endpoints", async () => {
-    const fetchMock = vi.fn().mockImplementation(() => Promise.resolve(
-      new Response(JSON.stringify({ autopilots: [], runs: [], total: 0 }), {
+    const autopilot = {
+      id: "ap-1",
+      workspace_id: "workspace-1",
+      title: "Daily triage",
+      description: null,
+      project_id: null,
+      assignee_type: "agent",
+      assignee_id: "agent-1",
+      status: "active",
+      execution_mode: "create_issue",
+      issue_title_template: null,
+      created_by_type: "member",
+      created_by_id: "user-1",
+      last_run_at: null,
+      created_at: "2026-07-11T00:00:00Z",
+      updated_at: "2026-07-11T00:00:00Z",
+      subscribers: [],
+    };
+    const trigger = {
+      id: "tr-1",
+      autopilot_id: "ap-1",
+      kind: "schedule",
+      enabled: true,
+      cron_expression: "0 9 * * *",
+      timezone: "UTC",
+      next_run_at: null,
+      webhook_token: null,
+      label: null,
+      last_fired_at: null,
+      created_at: "2026-07-11T00:00:00Z",
+      updated_at: "2026-07-11T00:00:00Z",
+    };
+    const run = {
+      id: "run-1",
+      autopilot_id: "ap-1",
+      trigger_id: null,
+      source: "manual",
+      status: "running",
+      issue_id: null,
+      task_id: "task-1",
+      triggered_at: "2026-07-11T00:00:00Z",
+      completed_at: null,
+      failure_reason: null,
+      trigger_payload: null,
+      result: null,
+      created_at: "2026-07-11T00:00:00Z",
+    };
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      let body: unknown = autopilot;
+      if (url.includes("/runs?")) body = { runs: [], total: 0 };
+      else if (url.endsWith("/trigger")) body = run;
+      else if (url.includes("/triggers")) body = trigger;
+      else if (url.endsWith("/api/autopilots?status=active")) body = { autopilots: [], total: 0 };
+      else if (url.endsWith("/api/autopilots/ap-1") && (init?.method ?? "GET") === "GET") {
+        body = { autopilot, triggers: [] };
+      }
+      return Promise.resolve(new Response(JSON.stringify(body), {
         status: 200,
         headers: { "Content-Type": "application/json" },
-      }),
-    ));
+      }));
+    });
     vi.stubGlobal("fetch", fetchMock);
 
     const client = new ApiClient("https://api.example.test");

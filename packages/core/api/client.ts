@@ -292,6 +292,16 @@ import {
   ListIssueBucketsResponseSchema,
   ListAutopilotsResponseSchema,
   EMPTY_LIST_AUTOPILOTS_RESPONSE,
+  AutopilotSchema,
+  AutopilotTriggerSchema,
+  AutopilotRunSchema,
+  GetAutopilotResponseSchema,
+  ListAutopilotRunsResponseSchema,
+  EMPTY_AUTOPILOT,
+  EMPTY_AUTOPILOT_TRIGGER,
+  EMPTY_AUTOPILOT_RUN,
+  EMPTY_GET_AUTOPILOT_RESPONSE,
+  EMPTY_LIST_AUTOPILOT_RUNS_RESPONSE,
   ListIssuesResponseSchema,
   IssueSchema,
   CommentSchema,
@@ -2735,20 +2745,34 @@ export class ApiClient {
   }
 
   async getAutopilot(id: string): Promise<GetAutopilotResponse> {
-    return this.fetch(`/api/autopilots/${id}`);
+    const raw = await this.fetch<unknown>(`/api/autopilots/${id}`);
+    return parseWithFallback(
+      raw,
+      GetAutopilotResponseSchema,
+      EMPTY_GET_AUTOPILOT_RESPONSE,
+      { endpoint: "GET /api/autopilots/:id" },
+    );
   }
 
   async createAutopilot(data: CreateAutopilotRequest): Promise<Autopilot> {
-    return this.fetch("/api/autopilots", {
+    const raw = await this.fetch<unknown>("/api/autopilots", {
       method: "POST",
       body: JSON.stringify(data),
+    });
+    return parseOrThrow(raw, AutopilotSchema, EMPTY_AUTOPILOT, {
+      endpoint: "POST /api/autopilots",
+      mayHaveCommitted: true,
     });
   }
 
   async updateAutopilot(id: string, data: UpdateAutopilotRequest): Promise<Autopilot> {
-    return this.fetch(`/api/autopilots/${id}`, {
+    const raw = await this.fetch<unknown>(`/api/autopilots/${id}`, {
       method: "PATCH",
       body: JSON.stringify(data),
+    });
+    return parseOrThrow(raw, AutopilotSchema, EMPTY_AUTOPILOT, {
+      endpoint: "PATCH /api/autopilots/:id",
+      mayHaveCommitted: true,
     });
   }
 
@@ -2757,34 +2781,55 @@ export class ApiClient {
   }
 
   async triggerAutopilot(id: string): Promise<AutopilotRun> {
-    return this.fetch(`/api/autopilots/${id}/trigger`, { method: "POST" });
+    const raw = await this.fetch<unknown>(`/api/autopilots/${id}/trigger`, { method: "POST" });
+    return parseOrThrow(raw, AutopilotRunSchema, EMPTY_AUTOPILOT_RUN, {
+      endpoint: "POST /api/autopilots/:id/trigger",
+      mayHaveCommitted: true,
+    });
   }
 
   async listAutopilotRuns(id: string, params?: { limit?: number; offset?: number }): Promise<ListAutopilotRunsResponse> {
     const search = new URLSearchParams();
     if (params?.limit) search.set("limit", params.limit.toString());
     if (params?.offset) search.set("offset", params.offset.toString());
-    return this.fetch(`/api/autopilots/${id}/runs?${search}`);
+    const raw = await this.fetch<unknown>(`/api/autopilots/${id}/runs?${search}`);
+    return parseWithFallback(
+      raw,
+      ListAutopilotRunsResponseSchema,
+      EMPTY_LIST_AUTOPILOT_RUNS_RESPONSE,
+      { endpoint: "GET /api/autopilots/:id/runs" },
+    );
   }
 
   // Returns a single run including its full trigger_payload. List responses
   // omit trigger_payload to keep them small (a webhook envelope can be
   // up to 256 KiB × limit rows), so the detail view fetches via this route.
   async getAutopilotRun(autopilotId: string, runId: string): Promise<AutopilotRun> {
-    return this.fetch(`/api/autopilots/${autopilotId}/runs/${runId}`);
+    const raw = await this.fetch<unknown>(`/api/autopilots/${autopilotId}/runs/${runId}`);
+    return parseWithFallback(raw, AutopilotRunSchema, EMPTY_AUTOPILOT_RUN, {
+      endpoint: "GET /api/autopilots/:id/runs/:runId",
+    });
   }
 
   async createAutopilotTrigger(autopilotId: string, data: CreateAutopilotTriggerRequest): Promise<AutopilotTrigger> {
-    return this.fetch(`/api/autopilots/${autopilotId}/triggers`, {
+    const raw = await this.fetch<unknown>(`/api/autopilots/${autopilotId}/triggers`, {
       method: "POST",
       body: JSON.stringify(data),
+    });
+    return parseOrThrow(raw, AutopilotTriggerSchema, EMPTY_AUTOPILOT_TRIGGER, {
+      endpoint: "POST /api/autopilots/:id/triggers",
+      mayHaveCommitted: true,
     });
   }
 
   async updateAutopilotTrigger(autopilotId: string, triggerId: string, data: UpdateAutopilotTriggerRequest): Promise<AutopilotTrigger> {
-    return this.fetch(`/api/autopilots/${autopilotId}/triggers/${triggerId}`, {
+    const raw = await this.fetch<unknown>(`/api/autopilots/${autopilotId}/triggers/${triggerId}`, {
       method: "PATCH",
       body: JSON.stringify(data),
+    });
+    return parseOrThrow(raw, AutopilotTriggerSchema, EMPTY_AUTOPILOT_TRIGGER, {
+      endpoint: "PATCH /api/autopilots/:id/triggers/:triggerId",
+      mayHaveCommitted: true,
     });
   }
 
@@ -2796,10 +2841,14 @@ export class ApiClient {
     autopilotId: string,
     triggerId: string,
   ): Promise<AutopilotTrigger> {
-    return this.fetch(
+    const raw = await this.fetch<unknown>(
       `/api/autopilots/${autopilotId}/triggers/${triggerId}/rotate-webhook-token`,
       { method: "POST" },
     );
+    return parseOrThrow(raw, AutopilotTriggerSchema, EMPTY_AUTOPILOT_TRIGGER, {
+      endpoint: "POST /api/autopilots/:id/triggers/:triggerId/rotate-webhook-token",
+      mayHaveCommitted: true,
+    });
   }
 
   // Webhook deliveries — list is slim (no raw_body / selected_headers /
