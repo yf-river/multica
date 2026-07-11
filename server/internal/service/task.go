@@ -114,11 +114,11 @@ const (
 // it for storage on the task row. Returns an invalid pgtype.Text when
 // the comment is missing (deleted / wrong workspace / etc) so the column
 // stays NULL — front-end falls back to a structural label in that case.
-func (s *TaskService) buildCommentTriggerSummary(ctx context.Context, commentID pgtype.UUID) pgtype.Text {
+func (s *TaskService) buildCommentTriggerSummaryWithQueries(ctx context.Context, queries *db.Queries, commentID pgtype.UUID) pgtype.Text {
 	if !commentID.Valid {
 		return pgtype.Text{}
 	}
-	comment, err := s.Queries.GetComment(ctx, commentID)
+	comment, err := queries.GetComment(ctx, commentID)
 	if err != nil {
 		return pgtype.Text{}
 	}

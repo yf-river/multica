@@ -28,44 +28,66 @@ func (s *TaskService) EnqueueTaskForIssue(ctx context.Context, issue db.Issue, t
 // user already judged the prior output bad, a fresh agent session is the
 // expected behavior.
 func (s *TaskService) enqueueIssueTask(ctx context.Context, issue db.Issue, triggerCommentID pgtype.UUID, forceFreshSession bool) (db.AgentTaskQueue, error) {
+	var task db.AgentTaskQueue
+	err := s.runInTx(ctx, func(queries *db.Queries) error {
+		var err error
+		task, err = s.CreateIssueTaskInTx(ctx, queries, issue, triggerCommentID, forceFreshSession)
+		return err
+	})
+	if err != nil {
+		return db.AgentTaskQueue{}, err
+	}
+	s.PublishIssueTaskEnqueued(ctx, task)
+	return task, nil
+}
+
+// CreateIssueTaskInTx validates the assigned agent and inserts the task using
+// the caller's transaction. The caller must publish the task only after the
+// transaction commits.
+func (s *TaskService) CreateIssueTaskInTx(
+	ctx context.Context,
+	queries *db.Queries,
+	issue db.Issue,
+	triggerCommentID pgtype.UUID,
+	forceFreshSession bool,
+) (db.AgentTaskQueue, error) {
 	if !issue.AssigneeID.Valid {
-		slog.Error("task enqueue failed", "issue_id", util.UUIDToString(issue.ID), "error", "issue has no assignee")
 		return db.AgentTaskQueue{}, fmt.Errorf("issue has no assignee")
 	}
 
-	agent, err := s.Queries.GetAgent(ctx, issue.AssigneeID)
+	agent, err := queries.GetAgent(ctx, issue.AssigneeID)
 	if err != nil {
-		slog.Error("task enqueue failed", "issue_id", util.UUIDToString(issue.ID), "error", err)
 		return db.AgentTaskQueue{}, fmt.Errorf("load agent: %w", err)
 	}
 	if agent.ArchivedAt.Valid {
-		slog.Debug("task enqueue skipped: agent is archived", "issue_id", util.UUIDToString(issue.ID), "agent_id", util.UUIDToString(agent.ID))
 		return db.AgentTaskQueue{}, fmt.Errorf("agent is archived")
 	}
 	if !agent.RuntimeID.Valid {
-		slog.Error("task enqueue failed", "issue_id", util.UUIDToString(issue.ID), "error", "agent has no runtime")
 		return db.AgentTaskQueue{}, fmt.Errorf("agent has no runtime")
 	}
 
-	task, err := s.Queries.CreateAgentTask(ctx, db.CreateAgentTaskParams{
+	task, err := queries.CreateAgentTask(ctx, db.CreateAgentTaskParams{
 		AgentID:           issue.AssigneeID,
 		RuntimeID:         agent.RuntimeID,
 		IssueID:           issue.ID,
 		Priority:          priorityToInt(issue.Priority),
 		TriggerCommentID:  triggerCommentID,
-		TriggerSummary:    s.buildCommentTriggerSummary(ctx, triggerCommentID),
+		TriggerSummary:    s.buildCommentTriggerSummaryWithQueries(ctx, queries, triggerCommentID),
 		ForceFreshSession: pgtype.Bool{Bool: forceFreshSession, Valid: forceFreshSession},
 	})
 	if err != nil {
-		slog.Error("task enqueue failed", "issue_id", util.UUIDToString(issue.ID), "error", err)
 		return db.AgentTaskQueue{}, fmt.Errorf("create task: %w", err)
 	}
+	return task, nil
+}
 
+// PublishIssueTaskEnqueued emits only post-commit effects for an issue task.
+func (s *TaskService) PublishIssueTaskEnqueued(ctx context.Context, task db.AgentTaskQueue) {
 	slog.Info("task enqueued",
 		"task_id", util.UUIDToString(task.ID),
-		"issue_id", util.UUIDToString(issue.ID),
-		"agent_id", util.UUIDToString(issue.AssigneeID),
-		"force_fresh_session", forceFreshSession,
+		"issue_id", util.UUIDToString(task.IssueID),
+		"agent_id", util.UUIDToString(task.AgentID),
+		"force_fresh_session", task.ForceFreshSession,
 	)
 	// Order matters: broadcast first, notify daemon second. notifyTaskAvailable
 	// kicks an in-process channel that the daemon picks up over HTTP and
@@ -75,7 +97,6 @@ func (s *TaskService) enqueueIssueTask(ctx context.Context, issue db.Issue, trig
 	// in the desired observe-order makes correctness independent of timing.
 	s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, task)
 	s.NotifyTaskEnqueued(ctx, task)
-	return task, nil
 }
 
 // EnqueueTaskForMention creates a queued task for a mentioned agent on an issue.
@@ -139,52 +160,68 @@ func (s *TaskService) EnqueueProjectOwnerApprovalTask(ctx context.Context, issue
 }
 
 func (s *TaskService) enqueueMentionTask(ctx context.Context, issue db.Issue, agentID pgtype.UUID, triggerCommentID pgtype.UUID, isLeader bool, forceFreshSession bool) (db.AgentTaskQueue, error) {
-	agent, err := s.Queries.GetAgent(ctx, agentID)
+	var task db.AgentTaskQueue
+	err := s.runInTx(ctx, func(queries *db.Queries) error {
+		var err error
+		task, err = s.CreateMentionTaskInTx(ctx, queries, issue, agentID, triggerCommentID, isLeader, forceFreshSession)
+		return err
+	})
 	if err != nil {
-		slog.Error("mention task enqueue failed: agent not found", "issue_id", util.UUIDToString(issue.ID), "agent_id", util.UUIDToString(agentID), "error", err)
+		return db.AgentTaskQueue{}, err
+	}
+	s.PublishMentionTaskEnqueued(ctx, task)
+	return task, nil
+}
+
+// CreateMentionTaskInTx inserts a mention or squad-leader task and its SOP
+// projection in the caller's transaction. The caller publishes after commit.
+func (s *TaskService) CreateMentionTaskInTx(
+	ctx context.Context,
+	queries *db.Queries,
+	issue db.Issue,
+	agentID pgtype.UUID,
+	triggerCommentID pgtype.UUID,
+	isLeader bool,
+	forceFreshSession bool,
+) (db.AgentTaskQueue, error) {
+	agent, err := queries.GetAgent(ctx, agentID)
+	if err != nil {
 		return db.AgentTaskQueue{}, fmt.Errorf("load agent: %w", err)
 	}
 	if agent.ArchivedAt.Valid {
-		slog.Debug("mention task enqueue skipped: agent is archived", "issue_id", util.UUIDToString(issue.ID), "agent_id", util.UUIDToString(agentID))
 		return db.AgentTaskQueue{}, fmt.Errorf("agent is archived")
 	}
 	if !agent.RuntimeID.Valid {
-		slog.Error("mention task enqueue failed: agent has no runtime", "issue_id", util.UUIDToString(issue.ID), "agent_id", util.UUIDToString(agentID))
 		return db.AgentTaskQueue{}, fmt.Errorf("agent has no runtime")
 	}
 
-	task, err := s.Queries.CreateAgentTask(ctx, db.CreateAgentTaskParams{
+	task, err := queries.CreateAgentTask(ctx, db.CreateAgentTaskParams{
 		AgentID:           agentID,
 		RuntimeID:         agent.RuntimeID,
 		IssueID:           issue.ID,
 		Priority:          priorityToInt(issue.Priority),
 		TriggerCommentID:  triggerCommentID,
-		TriggerSummary:    s.buildCommentTriggerSummary(ctx, triggerCommentID),
+		TriggerSummary:    s.buildCommentTriggerSummaryWithQueries(ctx, queries, triggerCommentID),
 		IsLeaderTask:      pgtype.Bool{Bool: isLeader, Valid: isLeader},
 		ForceFreshSession: pgtype.Bool{Bool: forceFreshSession, Valid: forceFreshSession},
 	})
 	if err != nil {
-		slog.Error("mention task enqueue failed", "issue_id", util.UUIDToString(issue.ID), "agent_id", util.UUIDToString(agentID), "error", err)
 		return db.AgentTaskQueue{}, fmt.Errorf("create task: %w", err)
 	}
-
-	slog.Info("mention task enqueued", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(issue.ID), "agent_id", util.UUIDToString(agentID), "is_leader_task", isLeader)
 	if isLeader {
-		s.ensureSquadSOPRunForLeaderTask(ctx, issue, task)
+		if err := s.createSquadSOPRunForLeaderTask(ctx, queries, issue, task); err != nil {
+			return db.AgentTaskQueue{}, fmt.Errorf("create squad SOP run: %w", err)
+		}
 	}
-	// See EnqueueTaskForIssue for ordering rationale.
-	s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, task)
-	s.NotifyTaskEnqueued(ctx, task)
 	return task, nil
 }
 
-func (s *TaskService) ensureSquadSOPRunForLeaderTask(ctx context.Context, issue db.Issue, task db.AgentTaskQueue) {
-	if err := s.createSquadSOPRunForLeaderTask(ctx, s.Queries, issue, task); err != nil {
-		slog.Warn("create squad SOP run for leader task failed",
-			"issue_id", util.UUIDToString(issue.ID),
-			"task_id", util.UUIDToString(task.ID),
-			"error", err)
-	}
+// PublishMentionTaskEnqueued emits only post-commit effects for a mention task.
+func (s *TaskService) PublishMentionTaskEnqueued(ctx context.Context, task db.AgentTaskQueue) {
+	slog.Info("mention task enqueued", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID), "agent_id", util.UUIDToString(task.AgentID), "is_leader_task", task.IsLeaderTask)
+	// See EnqueueTaskForIssue for ordering rationale.
+	s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, task)
+	s.NotifyTaskEnqueued(ctx, task)
 }
 
 func (s *TaskService) createSquadSOPRunForLeaderTask(ctx context.Context, queries *db.Queries, issue db.Issue, task db.AgentTaskQueue) error {

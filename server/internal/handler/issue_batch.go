@@ -296,6 +296,15 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 			Description: req.Updates.Description != nil && optionalStringChanged(textToPtr(prevIssue.Description), resp.Description),
 			Title:       req.Updates.Title != nil && prevIssue.Title != issue.Title,
 		}
+		skipBacklogEnqueue := statusChanged && !assigneeChanged && prevIssue.Status == "backlog" &&
+			h.isAssignedAgentRunningOnIssue(r.Context(), r, actorType, actorID, issue)
+		taskProjection, err := h.reconcileIssueUpdateTasksInTx(r.Context(), qtx, prevIssue, issue, assigneeChanged, statusChanged, skipBacklogEnqueue, actorType, actorID)
+		if err != nil {
+			_ = tx.Rollback(r.Context())
+			slog.Warn("batch project issue update tasks failed", "issue_id", issueID, "error", err)
+			recordFailure(issueID, "task_projection_failed")
+			continue
+		}
 		updatedEvent := buildIssueUpdatedEvent(workspaceID, actorType, actorID, prevIssue, resp, changes)
 		updatedEvent, err = eventoutbox.Enqueue(r.Context(), qtx, updatedEvent)
 		if err != nil {
@@ -310,9 +319,9 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		h.publishEvent(updatedEvent)
-
-		if err := h.reconcileIssueUpdateSideEffects(r.Context(), r, prevIssue, issue, assigneeChanged, statusChanged, actorType, actorID); err != nil {
-			slog.Error("reconcile batch issue update side effects failed", "issue_id", issueID, "error", err)
+		h.publishIssueUpdateTaskProjection(r.Context(), taskProjection)
+		if statusChanged {
+			h.notifyParentOfChildDone(r.Context(), prevIssue, issue, actorType, actorID)
 		}
 
 		updated++

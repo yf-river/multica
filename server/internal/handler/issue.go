@@ -1173,6 +1173,14 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		Description: descriptionChanged,
 		Title:       titleChanged,
 	}
+	skipBacklogEnqueue := statusChanged && !assigneeChanged && prevIssue.Status == "backlog" &&
+		h.isAssignedAgentRunningOnIssue(r.Context(), r, actorType, actorID, issue)
+	taskProjection, err := h.reconcileIssueUpdateTasksInTx(r.Context(), qtx, prevIssue, issue, assigneeChanged, statusChanged, skipBacklogEnqueue, actorType, actorID)
+	if err != nil {
+		slog.Warn("project issue update tasks failed", append(logger.RequestAttrs(r), "error", err, "issue_id", id, "workspace_id", workspaceID)...)
+		writeError(w, http.StatusInternalServerError, "failed to reconcile issue tasks")
+		return
+	}
 	updatedEvent := buildIssueUpdatedEvent(workspaceID, actorType, actorID, prevIssue, resp, changes)
 	updatedEvent, err = eventoutbox.Enqueue(r.Context(), qtx, updatedEvent)
 	if err != nil {
@@ -1195,8 +1203,9 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	h.publishEvent(updatedEvent)
 	slog.Info("issue updated", append(logger.RequestAttrs(r), "issue_id", id, "workspace_id", workspaceID)...)
 
-	if err := h.reconcileIssueUpdateSideEffects(r.Context(), r, prevIssue, issue, assigneeChanged, statusChanged, actorType, actorID); err != nil {
-		slog.Error("reconcile issue update side effects failed", append(logger.RequestAttrs(r), "issue_id", id, "error", err)...)
+	h.publishIssueUpdateTaskProjection(r.Context(), taskProjection)
+	if statusChanged {
+		h.notifyParentOfChildDone(r.Context(), prevIssue, issue, actorType, actorID)
 	}
 	if issue.Status == "backlog" && (statusChanged || projectChanged || assigneeChanged) {
 		h.IssueService.EnsureProjectOwnerApprovalForBacklog(r.Context(), issue, actorType, actorID)
@@ -1254,50 +1263,79 @@ func buildIssueUpdatedEvent(
 	return event
 }
 
-func (h *Handler) reconcileIssueUpdateSideEffects(ctx context.Context, r *http.Request, prevIssue db.Issue, issue db.Issue, assigneeChanged bool, statusChanged bool, actorType string, actorID string) error {
-	// Reconcile task queue when assignee changes.
-	if assigneeChanged {
-		if err := h.TaskService.CancelTasksForIssue(ctx, issue.ID); err != nil {
-			return fmt.Errorf("cancel tasks after assignee change: %w", err)
+type issueUpdateTaskProjection struct {
+	cancelled       []db.AgentTaskQueue
+	cancelledEvents []events.Event
+	queued          []db.AgentTaskQueue
+}
+
+func (h *Handler) reconcileIssueUpdateTasksInTx(
+	ctx context.Context,
+	queries *db.Queries,
+	prevIssue db.Issue,
+	issue db.Issue,
+	assigneeChanged bool,
+	statusChanged bool,
+	skipBacklogEnqueue bool,
+	actorType string,
+	actorID string,
+) (issueUpdateTaskProjection, error) {
+	projection := issueUpdateTaskProjection{}
+	if assigneeChanged || statusChanged && issue.Status == "cancelled" {
+		cancelled, persistedEvents, err := h.TaskService.CancelTasksForIssueInTx(ctx, queries, issue.ID)
+		if err != nil {
+			return projection, fmt.Errorf("cancel issue tasks: %w", err)
 		}
-		if h.shouldEnqueueAgentTask(ctx, issue) {
-			if _, err := h.TaskService.EnqueueTaskForIssue(ctx, issue); err != nil {
-				return fmt.Errorf("enqueue task after assignee change: %w", err)
-			}
-		}
-		if h.shouldEnqueueSquadLeaderOnAssign(ctx, issue) {
-			h.enqueueSquadLeaderTask(ctx, issue, pgtype.UUID{}, actorType, actorID)
-		}
+		projection.cancelled = cancelled
+		projection.cancelledEvents = persistedEvents
 	}
 
-	// Trigger the assigned agent when an issue moves out of backlog. Backlog
-	// acts as a parking lot; the self-loop guard prevents an agent from
-	// re-triggering the same issue its current task is running on.
-	if statusChanged && !assigneeChanged &&
-		prevIssue.Status == "backlog" && issue.Status != "done" && issue.Status != "cancelled" &&
-		!h.isAssignedAgentRunningOnIssue(ctx, r, actorType, actorID, issue) {
-		if h.isAgentAssigneeReady(ctx, issue) {
-			if _, err := h.TaskService.EnqueueTaskForIssue(ctx, issue); err != nil {
-				return fmt.Errorf("enqueue task after backlog transition: %w", err)
-			}
-		}
-		if h.isSquadLeaderReady(ctx, issue) {
-			h.enqueueSquadLeaderTask(ctx, issue, pgtype.UUID{}, actorType, actorID)
-		}
+	if issue.Status == "cancelled" || issue.Status == "done" {
+		return projection, nil
+	}
+	shouldEnqueue := assigneeChanged && issue.Status != "backlog" ||
+		statusChanged && !assigneeChanged && prevIssue.Status == "backlog" && !skipBacklogEnqueue
+	if !shouldEnqueue {
+		return projection, nil
 	}
 
-	// Cancellation is a user-initiated terminal action that should stop execution.
-	if statusChanged && issue.Status == "cancelled" {
-		if err := h.TaskService.CancelTasksForIssue(ctx, issue.ID); err != nil {
-			return fmt.Errorf("cancel tasks after issue cancellation: %w", err)
+	if issue.AssigneeType.Valid && issue.AssigneeType.String == "agent" && issue.AssigneeID.Valid {
+		agent, err := queries.GetAgent(ctx, issue.AssigneeID)
+		if err != nil {
+			return projection, fmt.Errorf("load assigned agent: %w", err)
 		}
+		if agent.ArchivedAt.Valid || !agent.RuntimeID.Valid {
+			return projection, nil
+		}
+		task, err := h.TaskService.CreateIssueTaskInTx(ctx, queries, issue, pgtype.UUID{}, false)
+		if err != nil {
+			return projection, fmt.Errorf("create assigned agent task: %w", err)
+		}
+		projection.queued = append(projection.queued, task)
+		return projection, nil
 	}
 
-	// Best-effort parent notification for child done transitions.
-	if statusChanged {
-		h.notifyParentOfChildDone(ctx, prevIssue, issue, actorType, actorID)
+	if issue.AssigneeType.Valid && issue.AssigneeType.String == "squad" && issue.AssigneeID.Valid {
+		task, err := h.createSquadLeaderTaskInTx(ctx, queries, issue, pgtype.UUID{}, actorType, actorID)
+		if err != nil {
+			return projection, err
+		}
+		if task != nil {
+			projection.queued = append(projection.queued, *task)
+		}
 	}
-	return nil
+	return projection, nil
+}
+
+func (h *Handler) publishIssueUpdateTaskProjection(ctx context.Context, projection issueUpdateTaskProjection) {
+	h.TaskService.PublishCancelledTasks(ctx, projection.cancelled, projection.cancelledEvents)
+	for _, task := range projection.queued {
+		if task.IsLeaderTask {
+			h.TaskService.PublishMentionTaskEnqueued(ctx, task)
+		} else {
+			h.TaskService.PublishIssueTaskEnqueued(ctx, task)
+		}
+	}
 }
 
 // validateAssigneePair verifies the (assignee_type, assignee_id) pair refers
@@ -1374,18 +1412,6 @@ func (h *Handler) validateAssigneePair(ctx context.Context, r *http.Request, wor
 	default:
 		return http.StatusBadRequest, "assignee_type must be 'member', 'agent', or 'squad'"
 	}
-}
-
-// shouldEnqueueAgentTask returns true when an issue creation or assignment
-// should trigger the assigned agent. Backlog issues are skipped — backlog
-// acts as a parking lot where issues can be pre-assigned without immediately
-// triggering execution. Moving out of backlog is handled separately in
-// UpdateIssue.
-func (h *Handler) shouldEnqueueAgentTask(ctx context.Context, issue db.Issue) bool {
-	if issue.Status == "backlog" {
-		return false
-	}
-	return h.isAgentAssigneeReady(ctx, issue)
 }
 
 // shouldEnqueueOnComment returns true if a member comment on this issue should
@@ -1477,21 +1503,6 @@ func (h *Handler) actorIsIssueExecutor(ctx context.Context, actorID string, issu
 	default:
 		return false
 	}
-}
-
-// isAgentAssigneeReady checks if an issue is assigned to an active agent
-// with a valid runtime.
-func (h *Handler) isAgentAssigneeReady(ctx context.Context, issue db.Issue) bool {
-	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "agent" || !issue.AssigneeID.Valid {
-		return false
-	}
-
-	agent, err := h.Queries.GetAgent(ctx, issue.AssigneeID)
-	if err != nil || !agent.RuntimeID.Valid || agent.ArchivedAt.Valid {
-		return false
-	}
-
-	return true
 }
 
 func (h *Handler) DeleteIssue(w http.ResponseWriter, r *http.Request) {

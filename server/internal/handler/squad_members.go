@@ -3,7 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
-	"log/slog"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -552,77 +552,91 @@ func commentMentionsAnyone(content string) bool {
 	return false
 }
 
-// shouldEnqueueSquadLeaderOnAssign returns true when assigning an issue to a
-// squad (or creating an issue pre-assigned to a squad) should immediately
-// trigger the squad leader. Mirrors shouldEnqueueAgentTask: backlog issues
-// are skipped (parking lot), and the leader agent must have a runtime and
-// not be archived.
-func (h *Handler) shouldEnqueueSquadLeaderOnAssign(ctx context.Context, issue db.Issue) bool {
-	if issue.Status == "backlog" {
-		return false
-	}
-	return h.isSquadLeaderReady(ctx, issue)
-}
-
-// isSquadLeaderReady returns true when the issue is assigned to a squad whose
-// leader agent can accept work right now. Readiness criteria (archived,
-// runtime bound, runtime online) are shared with the autopilot admission
-// gate via service.AgentReadiness — both paths must move together or one
-// will start enqueueing tasks the other refuses (MUL-2429 RFC §4.b B4).
-func (h *Handler) isSquadLeaderReady(ctx context.Context, issue db.Issue) bool {
-	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "squad" || !issue.AssigneeID.Valid {
-		return false
-	}
-	squad, err := h.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
+// createSquadLeaderTaskInTx performs the assignment checks and task/SOP writes
+// in the caller's transaction. A nil task means the current actor is not
+// allowed to use a personal leader or an equivalent task is already pending.
+func (h *Handler) createSquadLeaderTaskInTx(
+	ctx context.Context,
+	queries *db.Queries,
+	issue db.Issue,
+	triggerCommentID pgtype.UUID,
+	authorType string,
+	authorID string,
+) (*db.AgentTaskQueue, error) {
+	squad, err := queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
 		ID:          issue.AssigneeID,
 		WorkspaceID: issue.WorkspaceID,
 	})
 	if err != nil {
-		return false
-	}
-	agent, err := h.Queries.GetAgent(ctx, squad.LeaderID)
-	if err != nil {
-		return false
-	}
-	ready, _, err := service.AgentReadiness(ctx, h.Queries, agent)
-	if err != nil {
-		// Fail closed when we can't tell — same posture as the rest of
-		// this function (any error path returns false).
-		return false
-	}
-	return ready
-}
-
-// enqueueSquadLeaderTask triggers the squad leader agent for an issue assigned
-// to a squad. Assign and backlog-promotion paths use this directly; comment
-// paths go through computeCommentAgentTriggers so preview and create share the
-// same trigger set.
-func (h *Handler) enqueueSquadLeaderTask(ctx context.Context, issue db.Issue, triggerCommentID pgtype.UUID, authorType, authorID string) {
-	squad, err := h.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
-		ID:          issue.AssigneeID,
-		WorkspaceID: issue.WorkspaceID,
-	})
-	if err != nil {
-		return
+		return nil, fmt.Errorf("load assigned squad: %w", err)
 	}
 
-	if !h.canEnqueueSquadLeader(ctx, squad.LeaderID, authorType, authorID, uuidToString(issue.WorkspaceID)) {
-		return
+	leader, err := queries.GetAgent(ctx, squad.LeaderID)
+	if err != nil {
+		return nil, fmt.Errorf("load squad leader: %w", err)
+	}
+	ready, _, err := service.AgentReadiness(ctx, queries, leader)
+	if err != nil {
+		return nil, fmt.Errorf("check squad leader readiness: %w", err)
+	}
+	if !ready {
+		return nil, nil
 	}
 
-	hasPending, err := h.Queries.HasPendingTaskForIssueAndAgent(ctx, db.HasPendingTaskForIssueAndAgentParams{
+	allowed, err := h.canEnqueuePersonalLeaderInTx(ctx, queries, leader, authorType, authorID, uuidToString(issue.WorkspaceID))
+	if err != nil {
+		return nil, err
+	}
+	if !allowed {
+		return nil, nil
+	}
+
+	hasPending, err := queries.HasPendingTaskForIssueAndAgent(ctx, db.HasPendingTaskForIssueAndAgentParams{
 		IssueID: issue.ID,
 		AgentID: squad.LeaderID,
 	})
-	if err != nil || hasPending {
-		return
+	if err != nil {
+		return nil, fmt.Errorf("check pending squad leader task: %w", err)
+	}
+	if hasPending {
+		return nil, nil
 	}
 
-	if _, err := h.TaskService.EnqueueTaskForSquadLeader(ctx, issue, squad.LeaderID, triggerCommentID); err != nil {
-		slog.Warn("enqueue squad leader task failed",
-			"issue_id", uuidToString(issue.ID),
-			"squad_id", uuidToString(squad.ID),
-			"leader_id", uuidToString(squad.LeaderID),
-			"error", err)
+	task, err := h.TaskService.CreateMentionTaskInTx(ctx, queries, issue, squad.LeaderID, triggerCommentID, true, true)
+	if err != nil {
+		return nil, fmt.Errorf("create squad leader task: %w", err)
 	}
+	return &task, nil
+}
+
+func (h *Handler) canEnqueuePersonalLeaderInTx(
+	ctx context.Context,
+	queries *db.Queries,
+	leader db.Agent,
+	actorType string,
+	actorID string,
+	workspaceID string,
+) (bool, error) {
+	if leader.Scope != scopePersonal || actorType == "agent" || actorType == "system" || uuidToString(leader.OwnerID) == actorID {
+		return true, nil
+	}
+	if actorType != "member" {
+		return false, nil
+	}
+	userID, err := util.ParseUUID(actorID)
+	if err != nil {
+		return false, fmt.Errorf("parse task actor: %w", err)
+	}
+	wsID, err := util.ParseUUID(workspaceID)
+	if err != nil {
+		return false, fmt.Errorf("parse task workspace: %w", err)
+	}
+	member, err := queries.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{
+		UserID:      userID,
+		WorkspaceID: wsID,
+	})
+	if err != nil {
+		return false, fmt.Errorf("load task actor membership: %w", err)
+	}
+	return roleAllowed(member.Role, "owner", "admin"), nil
 }
