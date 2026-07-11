@@ -567,6 +567,7 @@ func TestNotification_CommentCreated(t *testing.T) {
 	// by subscriber_listeners when the event fires.
 	addTestSubscriber(t, issueID, "member", testUserID, "creator")
 	addTestSubscriber(t, issueID, "member", sub1ID, "assignee")
+	commentID := createTestComment(t, issueID, "member", commenterID, "test comment content", "comment")
 
 	bus.Publish(events.Event{
 		Type:        protocol.EventCommentCreated,
@@ -575,7 +576,7 @@ func TestNotification_CommentCreated(t *testing.T) {
 		ActorID:     commenterID, // commenter is the actor
 		Payload: map[string]any{
 			"comment": handler.CommentResponse{
-				ID:         "00000000-0000-0000-0000-000000000000",
+				ID:         commentID,
 				IssueID:    issueID,
 				AuthorType: "member",
 				AuthorID:   commenterID,
@@ -646,6 +647,7 @@ func TestNotification_SystemCommentSkipsInboxAndMentions(t *testing.T) {
 	})
 
 	addTestSubscriber(t, issueID, "member", subID, "manual")
+	commentID := createTestComment(t, issueID, "system", "00000000-0000-0000-0000-000000000000", "Sub-issue done — see [@Target](mention://member/"+targetID+").", "system")
 
 	// Publish a system-authored comment that transcludes a member mention
 	// in the body — the exact attack vector the reviewer flagged. If the
@@ -658,7 +660,7 @@ func TestNotification_SystemCommentSkipsInboxAndMentions(t *testing.T) {
 		ActorID:     "",
 		Payload: map[string]any{
 			"comment": handler.CommentResponse{
-				ID:         "00000000-0000-0000-0000-000000000000",
+				ID:         commentID,
 				IssueID:    issueID,
 				AuthorType: "system",
 				AuthorID:   "00000000-0000-0000-0000-000000000000",
@@ -1141,6 +1143,7 @@ func TestNotification_ParentBubble_NewCommentSuppressed(t *testing.T) {
 	commenterAccount := "notif-parent-bubble-commenter@multica"
 	commenterID := createTestUser(t, commenterAccount)
 	t.Cleanup(func() { cleanupTestUser(t, commenterAccount) })
+	commentID := createTestComment(t, f.subID, "member", commenterID, "comment on sub-issue", "comment")
 
 	f.bus.Publish(events.Event{
 		Type:        protocol.EventCommentCreated,
@@ -1149,7 +1152,7 @@ func TestNotification_ParentBubble_NewCommentSuppressed(t *testing.T) {
 		ActorID:     commenterID,
 		Payload: map[string]any{
 			"comment": handler.CommentResponse{
-				ID:         "00000000-0000-0000-0000-000000000000",
+				ID:         commentID,
 				IssueID:    f.subID,
 				AuthorType: "member",
 				AuthorID:   commenterID,

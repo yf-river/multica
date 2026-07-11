@@ -34,6 +34,19 @@ func createTestIssue(t *testing.T, workspaceID, creatorID string) string {
 	return issueID
 }
 
+func createTestComment(t *testing.T, issueID, authorType, authorID, content, commentType string) string {
+	t.Helper()
+	var commentID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO comment (issue_id, workspace_id, author_type, author_id, content, type)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		RETURNING id
+	`, issueID, testWorkspaceID, authorType, authorID, content, commentType).Scan(&commentID); err != nil {
+		t.Fatalf("createTestComment: %v", err)
+	}
+	return commentID
+}
+
 // createTestUser inserts a user with the given account and returns the UUID string.
 func createTestUser(t *testing.T, account string) string {
 	t.Helper()
@@ -348,6 +361,7 @@ func TestSubscriberCommentCreated_CommenterSubscribed(t *testing.T) {
 
 	issueID := createTestIssue(t, testWorkspaceID, testUserID)
 	t.Cleanup(func() { cleanupTestIssue(t, issueID) })
+	commentID := createTestComment(t, issueID, "member", commenterID, "test comment", "comment")
 
 	publishSubscriberProjection(t, queries, bus, events.Event{
 		Type:        protocol.EventCommentCreated,
@@ -356,7 +370,7 @@ func TestSubscriberCommentCreated_CommenterSubscribed(t *testing.T) {
 		ActorID:     commenterID,
 		Payload: map[string]any{
 			"comment": handler.CommentResponse{
-				ID:         "00000000-0000-0000-0000-000000000000",
+				ID:         commentID,
 				IssueID:    issueID,
 				AuthorType: "member",
 				AuthorID:   commenterID,
