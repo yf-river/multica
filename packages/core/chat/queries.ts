@@ -10,7 +10,7 @@ import { api } from "../api";
 
 export const chatKeys = {
   all: (wsId: string) => ["chat", wsId] as const,
-  /** Full sessions list (active + archived); the dropdown splits locally. */
+  /** Current sessions list for the workspace. */
   sessions: (wsId: string) => [...chatKeys.all(wsId), "sessions"] as const,
   session: (wsId: string, id: string) => [...chatKeys.all(wsId), "session", id] as const,
   messagesPage: (sessionId: string) => ["chat", "messages-page", sessionId] as const,
@@ -30,7 +30,7 @@ export function isTaskMessageTaskId(taskId: string | null | undefined): taskId i
 export function chatSessionsOptions(wsId: string) {
   return queryOptions({
     queryKey: chatKeys.sessions(wsId),
-    queryFn: () => api.listChatSessions({ status: "all" }),
+    queryFn: () => api.listChatSessions(),
     staleTime: Infinity,
   });
 }

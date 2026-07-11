@@ -12,16 +12,9 @@ SELECT * FROM chat_session
 WHERE id = $1 AND workspace_id = $2;
 
 -- name: ListChatSessionsByCreator :many
--- Returns active sessions with a boolean unread flag. Unread is strictly
+-- Returns sessions with a boolean unread flag. Unread is strictly
 -- per-session: either the user has uncleared assistant replies in this
 -- session or they don't. Counting messages would be misleading.
-SELECT cs.*,
-       (cs.unread_since IS NOT NULL)::bool AS has_unread
-FROM chat_session cs
-WHERE cs.workspace_id = $1 AND cs.creator_id = $2 AND cs.status = 'active'
-ORDER BY cs.updated_at DESC;
-
--- name: ListAllChatSessionsByCreator :many
 SELECT cs.*,
        (cs.unread_since IS NOT NULL)::bool AS has_unread
 FROM chat_session cs

@@ -24,9 +24,9 @@
     "databaseFunctions": 9,
     "databaseTriggers": 4,
     "databaseIndexes": 185,
-    "migrations": 46,
+    "migrations": 48,
     "sqlcModules": 54,
-    "sqlcQueries": 577,
+    "sqlcQueries": 576,
     "goWebsocketEvents": 80,
     "typescriptWebsocketEvents": 70,
     "zustandStores": 31,
@@ -5889,6 +5889,32 @@
           "droppedFunctions": [],
           "droppedTriggers": [],
           "droppedIndexes": []
+        },
+        {
+          "version": 24,
+          "name": "remove_chat_session_archive_state",
+          "direction": "down",
+          "source": "server/migrations/024_remove_chat_session_archive_state.down.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 24,
+          "name": "remove_chat_session_archive_state",
+          "direction": "up",
+          "source": "server/migrations/024_remove_chat_session_archive_state.up.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
         }
       ],
       "tables": [
@@ -8216,11 +8242,6 @@
               "name": "LinkChatMessageToTask",
               "command": "exec",
               "source": "server/pkg/db/queries/chat.sql#LinkChatMessageToTask"
-            },
-            {
-              "name": "ListAllChatSessionsByCreator",
-              "command": "many",
-              "source": "server/pkg/db/queries/chat.sql#ListAllChatSessionsByCreator"
             },
             {
               "name": "ListChatMessages",

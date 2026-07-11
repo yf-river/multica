@@ -616,9 +616,6 @@ func (s *TaskService) EnqueueChatTask(ctx context.Context, chatSession db.ChatSe
 		if err != nil {
 			return fmt.Errorf("lock chat session: %w", err)
 		}
-		if lockedSession.Status != "active" {
-			return errors.New("chat task: session is not active")
-		}
 		task, err = s.CreateChatTaskInTx(ctx, queries, lockedSession, agent, initiatorUserID)
 		return err
 	})

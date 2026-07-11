@@ -218,6 +218,33 @@ func TestUpdateChatSession_RenamesTitle(t *testing.T) {
 	}
 }
 
+func TestListChatSessionsReturnsCurrentActiveContract(t *testing.T) {
+	agentID := createHandlerTestAgent(t, "ChatListCurrentAgent", []byte("[]"))
+	sessionID := createHandlerTestChatSession(t, agentID)
+
+	req := newRequest(http.MethodGet, "/api/chat/sessions", nil)
+	req = withChatTestWorkspaceCtx(t, req)
+	w := httptest.NewRecorder()
+	testHandler.ListChatSessions(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ListChatSessions: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var sessions []ChatSessionResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &sessions); err != nil {
+		t.Fatalf("decode sessions: %v", err)
+	}
+	for _, session := range sessions {
+		if session.ID == sessionID {
+			if session.Status != "active" {
+				t.Fatalf("session status = %q, want active", session.Status)
+			}
+			return
+		}
+	}
+	t.Fatalf("created session %s missing from list", sessionID)
+}
+
 // TestUpdateChatSession_RejectsBlank refuses an empty/whitespace title with 400.
 // (Untitled is a render-side fallback, not a stored value.)
 func TestUpdateChatSession_RejectsBlank(t *testing.T) {

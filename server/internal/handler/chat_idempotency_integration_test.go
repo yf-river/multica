@@ -136,8 +136,8 @@ func TestSendChatMessageReplaysWithoutDuplicateWritesOrEvents(t *testing.T) {
 
 	session := createIdempotentChatSession(t, h, chatCreateKey, "idempotent send "+uuid.NewString())
 	first := sendIdempotentChatMessage(t, h, session.ID, chatSendKey, "hello exactly once", http.StatusCreated)
-	if _, err := testPool.Exec(context.Background(), `UPDATE chat_session SET status = 'archived' WHERE id = $1`, session.ID); err != nil {
-		t.Fatalf("archive session after committed send: %v", err)
+	if _, err := testPool.Exec(context.Background(), `UPDATE chat_session SET title = title || ' changed' WHERE id = $1`, session.ID); err != nil {
+		t.Fatalf("rename session after committed send: %v", err)
 	}
 	second := sendIdempotentChatMessage(t, h, session.ID, chatSendKey, "hello exactly once", http.StatusCreated)
 	if first.MessageID != second.MessageID || first.TaskID != second.TaskID || first.CreatedAt != second.CreatedAt {

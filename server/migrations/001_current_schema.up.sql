@@ -651,12 +651,10 @@ CREATE TABLE public.chat_session (
     title text DEFAULT ''::text NOT NULL,
     session_id text,
     work_dir text,
-    status text DEFAULT 'active'::text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     unread_since timestamp with time zone,
-    runtime_id uuid,
-    CONSTRAINT chat_session_status_check CHECK ((status = ANY (ARRAY['active'::text, 'archived'::text])))
+    runtime_id uuid
 );
 
 CREATE TABLE public.comment (

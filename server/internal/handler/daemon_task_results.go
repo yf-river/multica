@@ -831,7 +831,7 @@ func (h *Handler) GetChatSessionGCCheck(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"status":     session.Status,
+		"status":     "active",
 		"updated_at": session.UpdatedAt.Time,
 	})
 }

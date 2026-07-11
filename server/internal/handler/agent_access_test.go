@@ -351,8 +351,8 @@ func TestListChatMessagesPage_PrivateAgentForbidsAfterAccessRevoked(t *testing.T
 	// landed).
 	var sessionID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO chat_session (workspace_id, agent_id, creator_id, title, status)
-		VALUES ($1, $2, $3, 'pre-revocation session', 'active')
+		INSERT INTO chat_session (workspace_id, agent_id, creator_id, title)
+		VALUES ($1, $2, $3, 'pre-revocation session')
 		RETURNING id
 	`, testWorkspaceID, agentID, memberID).Scan(&sessionID); err != nil {
 		t.Fatalf("seed chat session: %v", err)

@@ -172,63 +172,30 @@ func (h *Handler) ListChatSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	status := r.URL.Query().Get("status")
-
-	// Two call sites → two row types with identical shape. Collect into a
-	// common response slice via small per-branch loops.
-	var resp []ChatSessionResponse
-	if status == "all" {
-		rows, err := h.Queries.ListAllChatSessionsByCreator(r.Context(), db.ListAllChatSessionsByCreatorParams{
-			WorkspaceID: parseUUID(workspaceID),
-			CreatorID:   parseUUID(userID),
+	rows, err := h.Queries.ListChatSessionsByCreator(r.Context(), db.ListChatSessionsByCreatorParams{
+		WorkspaceID: parseUUID(workspaceID),
+		CreatorID:   parseUUID(userID),
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list chat sessions")
+		return
+	}
+	resp := make([]ChatSessionResponse, 0, len(rows))
+	for _, s := range rows {
+		if _, ok := allowed[uuidToString(s.AgentID)]; !ok {
+			continue
+		}
+		resp = append(resp, ChatSessionResponse{
+			ID:          uuidToString(s.ID),
+			WorkspaceID: uuidToString(s.WorkspaceID),
+			AgentID:     uuidToString(s.AgentID),
+			CreatorID:   uuidToString(s.CreatorID),
+			Title:       s.Title,
+			Status:      "active",
+			HasUnread:   s.HasUnread,
+			CreatedAt:   timestampToString(s.CreatedAt),
+			UpdatedAt:   timestampToString(s.UpdatedAt),
 		})
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to list chat sessions")
-			return
-		}
-		resp = make([]ChatSessionResponse, 0, len(rows))
-		for _, s := range rows {
-			if _, ok := allowed[uuidToString(s.AgentID)]; !ok {
-				continue
-			}
-			resp = append(resp, ChatSessionResponse{
-				ID:          uuidToString(s.ID),
-				WorkspaceID: uuidToString(s.WorkspaceID),
-				AgentID:     uuidToString(s.AgentID),
-				CreatorID:   uuidToString(s.CreatorID),
-				Title:       s.Title,
-				Status:      s.Status,
-				HasUnread:   s.HasUnread,
-				CreatedAt:   timestampToString(s.CreatedAt),
-				UpdatedAt:   timestampToString(s.UpdatedAt),
-			})
-		}
-	} else {
-		rows, err := h.Queries.ListChatSessionsByCreator(r.Context(), db.ListChatSessionsByCreatorParams{
-			WorkspaceID: parseUUID(workspaceID),
-			CreatorID:   parseUUID(userID),
-		})
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to list chat sessions")
-			return
-		}
-		resp = make([]ChatSessionResponse, 0, len(rows))
-		for _, s := range rows {
-			if _, ok := allowed[uuidToString(s.AgentID)]; !ok {
-				continue
-			}
-			resp = append(resp, ChatSessionResponse{
-				ID:          uuidToString(s.ID),
-				WorkspaceID: uuidToString(s.WorkspaceID),
-				AgentID:     uuidToString(s.AgentID),
-				CreatorID:   uuidToString(s.CreatorID),
-				Title:       s.Title,
-				Status:      s.Status,
-				HasUnread:   s.HasUnread,
-				CreatedAt:   timestampToString(s.CreatedAt),
-				UpdatedAt:   timestampToString(s.UpdatedAt),
-			})
-		}
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -302,8 +269,8 @@ type UpdateChatSessionRequest struct {
 
 // UpdateChatSession updates user-editable fields on a chat session — today
 // just `title`, surfaced by the inline rename affordance in the session
-// dropdown. Title is the only field accepted: `status` is legacy + read-only,
-// agent/creator/workspace are immutable, the resume pointers
+// dropdown. Title is the only field accepted; agent/creator/workspace are
+// immutable, and the resume pointers
 // (session_id / work_dir / runtime_id) are daemon-owned.
 func (h *Handler) UpdateChatSession(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
@@ -589,8 +556,6 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "you do not have access to this agent")
 		return
 	}
-	// New archive flow no longer exists, but retained current data may still
-	// contain archived rows. They remain readable and cannot enqueue new work.
 	lockedSession, err := qtx.LockChatSessionForSend(r.Context(), db.LockChatSessionForSendParams{
 		ID:          session.ID,
 		WorkspaceID: session.WorkspaceID,
@@ -604,11 +569,6 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusConflict, "chat session agent changed")
 		return
 	}
-	if lockedSession.Status != "active" {
-		writeError(w, http.StatusBadRequest, "chat session is archived")
-		return
-	}
-
 	if len(attachmentIDs) > 0 {
 		if _, err := qtx.LockAttachmentsForChatMessage(r.Context(), db.LockAttachmentsForChatMessageParams{
 			WorkspaceID:   lockedSession.WorkspaceID,
@@ -928,7 +888,7 @@ func (h *Handler) ListPendingChatTasks(w http.ResponseWriter, r *http.Request) {
 	// Map session → agent so we can filter without an N+1. The user's own
 	// session list is small, so one extra query is cheaper than per-row
 	// lookups.
-	sessions, err := h.Queries.ListAllChatSessionsByCreator(r.Context(), db.ListAllChatSessionsByCreatorParams{
+	sessions, err := h.Queries.ListChatSessionsByCreator(r.Context(), db.ListChatSessionsByCreatorParams{
 		WorkspaceID: parseUUID(workspaceID),
 		CreatorID:   parseUUID(userID),
 	})
@@ -1144,7 +1104,7 @@ func chatSessionToResponse(s db.ChatSession) ChatSessionResponse {
 		AgentID:     uuidToString(s.AgentID),
 		CreatorID:   uuidToString(s.CreatorID),
 		Title:       s.Title,
-		Status:      s.Status,
+		Status:      "active",
 		CreatedAt:   timestampToString(s.CreatedAt),
 		UpdatedAt:   timestampToString(s.UpdatedAt),
 	}

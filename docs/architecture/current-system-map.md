@@ -25,9 +25,9 @@ evidence reviewable by humans.
 | Database functions | 9 |
 | Database triggers | 4 |
 | Database indexes | 185 |
-| Migration files (up + down) | 46 |
+| Migration files (up + down) | 48 |
 | sqlc modules | 54 |
-| sqlc queries | 577 |
+| sqlc queries | 576 |
 | Go WebSocket events | 80 |
 | TypeScript WebSocket events | 70 |
 | Zustand store definitions | 31 |
@@ -539,6 +539,8 @@ intentionally platform-specific.
 | 22 | remove_waiting_local_directory | up | — | 0 | 0 | 0 | `server/migrations/022_remove_waiting_local_directory.up.sql` |
 | 23 | rename_workspace_secret_setting | down | — | 0 | 0 | 0 | `server/migrations/023_rename_workspace_secret_setting.down.sql` |
 | 23 | rename_workspace_secret_setting | up | — | 0 | 0 | 0 | `server/migrations/023_rename_workspace_secret_setting.up.sql` |
+| 24 | remove_chat_session_archive_state | down | — | 0 | 0 | 0 | `server/migrations/024_remove_chat_session_archive_state.down.sql` |
+| 24 | remove_chat_session_archive_state | up | — | 0 | 0 | 0 | `server/migrations/024_remove_chat_session_archive_state.up.sql` |
 
 ### Current tables discovered from up migrations
 
@@ -644,7 +646,7 @@ intentionally platform-specific.
 
 ### sqlc modules
 
-All 577 query names, commands, and stable source anchors are stored in the JSON companion.
+All 576 query names, commands, and stable source anchors are stored in the JSON companion.
 
 | Module | Queries | SQL source | Generated source |
 | --- | --- | --- | --- |
@@ -653,7 +655,7 @@ All 577 query names, commands, and stable source anchors are stored in the JSON 
 | agent_playground | 17 | `server/pkg/db/queries/agent_playground.sql` | `server/pkg/db/generated/agent_playground.sql.go` |
 | attachment | 17 | `server/pkg/db/queries/attachment.sql` | `server/pkg/db/generated/attachment.sql.go` |
 | autopilot | 40 | `server/pkg/db/queries/autopilot.sql` | `server/pkg/db/generated/autopilot.sql.go` |
-| chat | 25 | `server/pkg/db/queries/chat.sql` | `server/pkg/db/generated/chat.sql.go` |
+| chat | 24 | `server/pkg/db/queries/chat.sql` | `server/pkg/db/generated/chat.sql.go` |
 | chat_idempotency | 3 | `server/pkg/db/queries/chat_idempotency.sql` | `server/pkg/db/generated/chat_idempotency.sql.go` |
 | comment | 22 | `server/pkg/db/queries/comment.sql` | `server/pkg/db/generated/comment.sql.go` |
 | domain_event_outbox | 9 | `server/pkg/db/queries/domain_event_outbox.sql` | `server/pkg/db/generated/domain_event_outbox.sql.go` |

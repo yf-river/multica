@@ -145,10 +145,8 @@ export function ChatWindow() {
     setRestoreDraftRequest(null);
   }, []);
 
-  // Legacy archived sessions (the old soft-archive feature was removed but
-  // pre-existing rows with status='archived' may still exist) are excluded
-  // from the history dropdown. If one is still the active session, ChatInput
-  // is disabled and the server still rejects POST /messages for it.
+  // An older backend may still return archived sessions to Desktop. Keep that
+  // response-drift boundary read-only; the current backend emits only active.
   const currentSession = activeSessionId
     ? sessions.find((s) => s.id === activeSessionId)
     : null;
@@ -850,7 +848,7 @@ export function ChatWindow() {
         <OfflineBanner agentName={activeAgent?.name} availability={availability} />
       )}
 
-      {/* Input — disabled for legacy archived sessions; locked out entirely
+      {/* Input — disabled for an archived response from an older backend; locked out entirely
        *  when there's no agent (the EmptyState above carries the CTA). */}
       <ChatInput
         onSend={handleSend}
@@ -883,8 +881,8 @@ export function ChatWindow() {
  */
 
 /**
- * Session dropdown: a flat "Chat history" list of all non-archived
- * sessions. Selecting a session from a different agent implicitly
+ * Session dropdown: a flat "Chat history" list. Archived responses from an
+ * older backend stay hidden. Selecting a session from a different agent implicitly
  * switches the agent too
  * (sessions are bound 1:1 to an agent). "New chat" lives in the header's
  * ⊕ button, not inside this dropdown.
@@ -909,8 +907,8 @@ function SessionDropdown({
   const title = activeSession?.title?.trim() || t(($) => $.window.untitled);
   const triggerAgent = activeSession ? agentById.get(activeSession.agent_id) ?? null : null;
 
-  // The old soft-archive feature was removed. Pre-existing rows with
-  // status='archived' are legacy dead data and are excluded from history.
+  // Current servers emit active sessions; this filter protects Desktop from
+  // an older server that still exposes archived rows.
   const historySessions = useMemo(
     () => sessions.filter((s) => s.status !== "archived"),
     [sessions],

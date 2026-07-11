@@ -277,7 +277,6 @@ type ChatSession struct {
 	Title       string             `json:"title"`
 	SessionID   pgtype.Text        `json:"session_id"`
 	WorkDir     pgtype.Text        `json:"work_dir"`
-	Status      string             `json:"status"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 	UnreadSince pgtype.Timestamptz `json:"unread_since"`

@@ -4158,8 +4158,8 @@ func TestGetChatSessionGCCheck(t *testing.T) {
 
 	var sessionID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO chat_session (workspace_id, agent_id, creator_id, title, status)
-		VALUES ($1, $2, $3, 'gc-check fixture', 'active')
+		INSERT INTO chat_session (workspace_id, agent_id, creator_id, title)
+		VALUES ($1, $2, $3, 'gc-check fixture')
 		RETURNING id
 	`, testWorkspaceID, agentID, testUserID).Scan(&sessionID); err != nil {
 		t.Fatalf("setup: create chat session: %v", err)

@@ -2016,9 +2016,8 @@ export class ApiClient {
   }
 
   // Chat Sessions
-  async listChatSessions(params?: { status?: string }): Promise<ChatSession[]> {
-    const query = params?.status ? `?status=${params.status}` : "";
-    const raw = await this.fetch<unknown>(`/api/chat/sessions${query}`);
+  async listChatSessions(): Promise<ChatSession[]> {
+    const raw = await this.fetch<unknown>("/api/chat/sessions");
     return parseWithFallback(raw, ChatSessionListSchema, [], { endpoint: "GET /api/chat/sessions" });
   }
 

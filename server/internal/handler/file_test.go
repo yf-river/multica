@@ -34,8 +34,8 @@ func createHandlerTestChatSession(t *testing.T, agentID string) string {
 
 	var sessionID string
 	if err := testPool.QueryRow(context.Background(), `
-		INSERT INTO chat_session (workspace_id, agent_id, creator_id, title, status)
-		VALUES ($1, $2, $3, $4, 'active')
+		INSERT INTO chat_session (workspace_id, agent_id, creator_id, title)
+		VALUES ($1, $2, $3, $4)
 		RETURNING id
 	`, testWorkspaceID, agentID, testUserID, "Handler Test Chat Session").Scan(&sessionID); err != nil {
 		t.Fatalf("failed to create handler test chat session: %v", err)
