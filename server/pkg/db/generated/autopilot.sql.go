@@ -1013,8 +1013,8 @@ type RotateAutopilotTriggerWebhookTokenParams struct {
 }
 
 // Rotates the bearer token for a webhook trigger. Restricted to kind='webhook'
-// so an accidental call against a schedule/api trigger is a no-op (returns no
-// rows) rather than corrupting unrelated state.
+// so an accidental call against a schedule trigger is a no-op (returns no rows)
+// rather than corrupting unrelated state.
 func (q *Queries) RotateAutopilotTriggerWebhookToken(ctx context.Context, arg RotateAutopilotTriggerWebhookTokenParams) (AutopilotTrigger, error) {
 	row := q.db.QueryRow(ctx, rotateAutopilotTriggerWebhookToken, arg.ID, arg.WebhookToken)
 	var i AutopilotTrigger

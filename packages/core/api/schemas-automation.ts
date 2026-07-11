@@ -88,8 +88,8 @@ export const EMPTY_LIST_WEBHOOK_DELIVERIES_RESPONSE: ListWebhookDeliveriesRespon
 // Autopilot list schema. Enums (`status`, `execution_mode`, `trigger_kinds`,
 // `last_run_status`) stay `z.string()` so future server-side values degrade
 // to a generic UI fallback. The three derived fields (trigger_kinds /
-// next_run_at / last_run_status) are list-endpoint-only and absent on older
-// servers — optional by contract, the list renders "—" without them.
+// next_run_at / last_run_status) are list-endpoint-only, so they remain
+// optional in the shared wire schema; the list renders "—" without them.
 // ---------------------------------------------------------------------------
 
 const AutopilotSubscriberSchema = z.object({

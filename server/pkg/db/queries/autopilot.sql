@@ -156,8 +156,8 @@ WHERE id = $1;
 
 -- name: RotateAutopilotTriggerWebhookToken :one
 -- Rotates the bearer token for a webhook trigger. Restricted to kind='webhook'
--- so an accidental call against a schedule/api trigger is a no-op (returns no
--- rows) rather than corrupting unrelated state.
+-- so an accidental call against a schedule trigger is a no-op (returns no rows)
+-- rather than corrupting unrelated state.
 UPDATE autopilot_trigger
 SET webhook_token = $2,
     updated_at = now()

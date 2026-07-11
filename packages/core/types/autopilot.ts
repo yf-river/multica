@@ -4,8 +4,7 @@ export type AutopilotExecutionMode = "create_issue" | "run_only";
 
 // `assignee_type` selects which polymorphic actor backs the autopilot:
 // "agent" → assignee_id references agent(id); "squad" → assignee_id references
-// squad(id) and dispatch resolves to squad.leader_id at run time (MUL-2429,
-// Path A). Older servers omit this field — callers should default to "agent".
+// squad(id) and dispatch resolves to squad.leader_id at run time.
 export type AutopilotAssigneeType = "agent" | "squad";
 
 export type AutopilotTriggerKind = "schedule" | "webhook";
@@ -40,14 +39,14 @@ export interface Autopilot {
   created_at: string;
   updated_at: string;
   // List-endpoint-only derived fields; absent on detail/create/update
-  // responses and on older servers. Enabled triggers only. `trigger_kinds`
+  // responses. Enabled triggers only. `trigger_kinds`
   // and `last_run_status` are server-driven strings — render unknown values
   // through a generic fallback, never an exhaustive switch.
   trigger_kinds?: string[];
   next_run_at?: string | null;
   last_run_status?: string | null;
   // List endpoint returns []; only the detail endpoint populates this.
-  // Treat undefined as empty on older servers.
+  // Treat an omitted field on non-detail responses as empty.
   subscribers?: AutopilotSubscriber[];
 }
 
@@ -72,8 +71,8 @@ export interface AutopilotTrigger {
   next_run_at: string | null;
   webhook_token: string | null;
   // webhook_path is computed server-side from webhook_token (always
-  // "/api/webhooks/autopilots/{token}"). Optional so older servers can be
-  // talked to gracefully.
+  // "/api/webhooks/autopilots/{token}"). It remains optional at the Desktop
+  // response-drift boundary; clients can compose it from webhook_token.
   webhook_path?: string | null;
   // webhook_url is only present when MULTICA_PUBLIC_URL is configured
   // server-side. Clients fall back to composing from getBaseUrl/origin +

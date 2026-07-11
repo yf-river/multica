@@ -47,8 +47,8 @@ type AutopilotResponse struct {
 	CreatedAt          string  `json:"created_at"`
 	UpdatedAt          string  `json:"updated_at"`
 
-	// List-endpoint-only derived fields (absent on the detail/create/update
-	// responses and on older servers — clients must treat them as optional).
+	// List-endpoint-only derived fields (absent on detail/create/update
+	// responses, so clients must treat them as optional).
 	// Enabled triggers only; last_run_status is the most recent run's status.
 	TriggerKinds  []string `json:"trigger_kinds,omitempty"`
 	NextRunAt     *string  `json:"next_run_at,omitempty"`
@@ -80,7 +80,7 @@ type AutopilotTriggerResponse struct {
 	NextRunAt      *string `json:"next_run_at"`
 	WebhookToken   *string `json:"webhook_token"`
 	// WebhookPath is computed from webhook_token. Always present for webhook
-	// triggers; nil for schedule/api. Not stored — see triggerToResponse.
+	// triggers; nil for schedule triggers. Not stored — see triggerToResponse.
 	WebhookPath *string `json:"webhook_path"`
 	// WebhookURL is the absolute URL composed from the server's
 	// MULTICA_PUBLIC_URL setting. Nil when the server has no public URL
