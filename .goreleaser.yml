@@ -23,19 +23,6 @@ builds:
       - arm64
 
 archives:
-  # Legacy archive name kept so already-released CLIs (whose `multica update`
-  # looks for `multica_{os}_{arch}.{ext}`) can keep self-updating. Remove
-  # once those versions are no longer in use.
-  - id: legacy
-    formats:
-      - tar.gz
-    format_overrides:
-      - goos: windows
-        formats:
-          - zip
-    name_template: "{{ .ProjectName }}_{{ .Os }}_{{ .Arch }}"
-  # Versioned archive name used by current CLI / install scripts /
-  # desktop bootstrap going forward.
   - id: versioned
     formats:
       - tar.gz

@@ -8,65 +8,49 @@ import (
 	"time"
 )
 
-func TestReleaseAssetCandidates(t *testing.T) {
+func TestReleaseAssetName(t *testing.T) {
 	tests := []struct {
 		name          string
 		targetVersion string
 		goos          string
 		goarch        string
-		wantAssets    []string
+		wantAsset     string
 	}{
 		{
-			name:          "darwin prefers versioned then legacy candidate",
+			name:          "darwin versioned archive",
 			targetVersion: "v1.2.3",
 			goos:          "darwin",
 			goarch:        "arm64",
-			wantAssets: []string{
-				"multica-cli-1.2.3-darwin-arm64.tar.gz",
-				"multica_darwin_arm64.tar.gz",
-			},
+			wantAsset:     "multica-cli-1.2.3-darwin-arm64.tar.gz",
 		},
 		{
-			name:          "linux normalizes missing v in versioned candidate",
+			name:          "linux normalizes missing v",
 			targetVersion: "1.2.3",
 			goos:          "linux",
 			goarch:        "amd64",
-			wantAssets: []string{
-				"multica-cli-1.2.3-linux-amd64.tar.gz",
-				"multica_linux_amd64.tar.gz",
-			},
+			wantAsset:     "multica-cli-1.2.3-linux-amd64.tar.gz",
 		},
 		{
 			name:          "windows uses zip assets",
 			targetVersion: "1.2.3",
 			goos:          "windows",
 			goarch:        "amd64",
-			wantAssets: []string{
-				"multica-cli-1.2.3-windows-amd64.zip",
-				"multica_windows_amd64.zip",
-			},
+			wantAsset:     "multica-cli-1.2.3-windows-amd64.zip",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := releaseAssetCandidates(tt.targetVersion, tt.goos, tt.goarch)
-			if len(got) != len(tt.wantAssets) {
-				t.Fatalf("candidate count mismatch: got %d, want %d", len(got), len(tt.wantAssets))
-			}
-			for i := range got {
-				if got[i] != tt.wantAssets[i] {
-					t.Fatalf("candidate[%d] mismatch: got %q, want %q", i, got[i], tt.wantAssets[i])
-				}
+			if got := releaseAssetName(tt.targetVersion, tt.goos, tt.goarch); got != tt.wantAsset {
+				t.Fatalf("releaseAssetName() = %q, want %q", got, tt.wantAsset)
 			}
 		})
 	}
 }
 
 func TestFindReleaseAsset(t *testing.T) {
-	t.Run("prefers versioned asset when both names exist", func(t *testing.T) {
+	t.Run("finds the current versioned asset", func(t *testing.T) {
 		assets := []GitHubReleaseAsset{
-			{Name: "multica_darwin_amd64.tar.gz", BrowserDownloadURL: "old"},
 			{Name: "multica-cli-1.2.3-darwin-amd64.tar.gz", BrowserDownloadURL: "new"},
 		}
 
@@ -75,20 +59,6 @@ func TestFindReleaseAsset(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if got.Name != "multica-cli-1.2.3-darwin-amd64.tar.gz" {
-			t.Fatalf("asset mismatch: got %q", got.Name)
-		}
-	})
-
-	t.Run("falls back to legacy asset when versioned is absent", func(t *testing.T) {
-		assets := []GitHubReleaseAsset{
-			{Name: "multica_linux_amd64.tar.gz", BrowserDownloadURL: "old"},
-		}
-
-		got, err := findReleaseAsset(assets, "1.2.3", "linux", "amd64")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if got.Name != "multica_linux_amd64.tar.gz" {
 			t.Fatalf("asset mismatch: got %q", got.Name)
 		}
 	})
@@ -187,7 +157,7 @@ func TestParseChecksumManifest(t *testing.T) {
 		"aaaa1111  multica-cli-1.2.3-darwin-arm64.tar.gz",
 		"bbbb2222  multica-cli-1.2.3-darwin-amd64.tar.gz",
 		"cccc3333\tmulti-tab-separator.tar.gz",
-		"DDDD4444  multica_linux_amd64.tar.gz",
+		"DDDD4444  multica-cli-1.2.3-windows-amd64.zip",
 	}, "\n"))
 
 	t.Run("returns lowercase sha for matched entry", func(t *testing.T) {
@@ -211,7 +181,7 @@ func TestParseChecksumManifest(t *testing.T) {
 	})
 
 	t.Run("downcases an uppercase entry", func(t *testing.T) {
-		got, err := parseChecksumManifest(manifest, "multica_linux_amd64.tar.gz")
+		got, err := parseChecksumManifest(manifest, "multica-cli-1.2.3-windows-amd64.zip")
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}

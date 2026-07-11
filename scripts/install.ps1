@@ -4,7 +4,7 @@
 #   irm https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.ps1 | iex
 #
 # Self-host: starts a local Multica server + installs CLI + configures
-#   $env:MULTICA_MODE="local"; irm https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.ps1 | iex
+#   $env:MULTICA_MODE="with-server"; irm https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.ps1 | iex
 #
 
 $ErrorActionPreference = "Stop"
@@ -272,25 +272,22 @@ function Install-CliBinary {
         $zipFile = Join-Path $tmpDir "multica.zip"
         $actualHash = (Get-FileHash -Path $zipFile -Algorithm SHA256).Hash.ToLower()
         $releaseAsset = "multica-cli-$version-windows-$arch.zip"
-        $legacyAsset = "multica_windows_$arch.zip"
         $expectedLine = ($checksumContent -split "`r?`n") |
-            Where-Object {
-                $_ -match [regex]::Escape($releaseAsset) -or
-                $_ -match [regex]::Escape($legacyAsset)
-            } |
+            Where-Object { ($_ -split "\s+")[-1] -eq $releaseAsset } |
             Select-Object -First 1
-        if ($expectedLine) {
-            $expectedHash = ($expectedLine -split "\s+")[0].ToLower()
-            if ($actualHash -ne $expectedHash) {
-                Remove-Item $tmpDir -Recurse -Force
-                Write-Fail "Checksum verification failed. Expected: $expectedHash, Got: $actualHash"
-            }
-            Write-Ok "Checksum verified"
-        } else {
-            Write-Warn "Could not find checksum entry for $releaseAsset — skipping verification."
+        if (-not $expectedLine) {
+            Remove-Item $tmpDir -Recurse -Force
+            Write-Fail "Release checksum for $releaseAsset is missing; refusing an unverified install."
         }
+        $expectedHash = ($expectedLine -split "\s+")[0].ToLower()
+        if ($actualHash -ne $expectedHash) {
+            Remove-Item $tmpDir -Recurse -Force
+            Write-Fail "Checksum verification failed. Expected: $expectedHash, Got: $actualHash"
+        }
+        Write-Ok "Checksum verified"
     } catch {
-        Write-Warn "Could not download checksums.txt — skipping verification."
+        Remove-Item $tmpDir -Recurse -Force -ErrorAction SilentlyContinue
+        Write-Fail "Could not verify checksums.txt; refusing an unverified install: $_"
     }
 
     Expand-Archive -Path (Join-Path $tmpDir "multica.zip") -DestinationPath $tmpDir -Force
@@ -379,7 +376,7 @@ Docker is not installed. Multica self-hosting requires Docker and Docker Compose
 Install Docker Desktop for Windows:
   https://docs.docker.com/desktop/install/windows-install/
 
-After installing Docker, re-run this script with `$env:MULTICA_MODE="local"`.
+After installing Docker, re-run this script with `$env:MULTICA_MODE="with-server"`.
 "@
     }
 
@@ -564,7 +561,6 @@ $mode = if ($env:MULTICA_MODE) { $env:MULTICA_MODE.ToLower() } else { "default" 
 
 switch ($mode) {
     "with-server" { Start-LocalInstall }
-    "local"       { Start-LocalInstall }  # backwards compat alias
     "stop"        { Start-Stop }
     default       { Start-DefaultInstall }
 }

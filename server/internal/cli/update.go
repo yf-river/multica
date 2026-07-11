@@ -139,29 +139,21 @@ func normalizeReleaseTag(targetVersion string) string {
 	return tag
 }
 
-func releaseAssetCandidates(targetVersion, goos, goarch string) []string {
+func releaseAssetName(targetVersion, goos, goarch string) string {
 	tag := normalizeReleaseTag(targetVersion)
 	version := strings.TrimPrefix(tag, "v")
 	ext := releaseArchiveExtension(goos)
-	// Prefer the versioned name (current scheme); fall back to the legacy
-	// `multica_{os}_{arch}` name for releases that still ship it.
-	return []string{
-		fmt.Sprintf("multica-cli-%s-%s-%s.%s", version, goos, goarch, ext),
-		fmt.Sprintf("multica_%s_%s.%s", goos, goarch, ext),
-	}
+	return fmt.Sprintf("multica-cli-%s-%s-%s.%s", version, goos, goarch, ext)
 }
 
 func findReleaseAsset(assets []GitHubReleaseAsset, targetVersion, goos, goarch string) (*GitHubReleaseAsset, error) {
-	for _, candidate := range releaseAssetCandidates(targetVersion, goos, goarch) {
-		for i := range assets {
-			if assets[i].Name == candidate {
-				return &assets[i], nil
-			}
+	want := releaseAssetName(targetVersion, goos, goarch)
+	for i := range assets {
+		if assets[i].Name == want {
+			return &assets[i], nil
 		}
 	}
-
-	candidates := strings.Join(releaseAssetCandidates(targetVersion, goos, goarch), ", ")
-	return nil, fmt.Errorf("no matching release asset for %s/%s (tried: %s)", goos, goarch, candidates)
+	return nil, fmt.Errorf("release asset %q not present for %s/%s", want, goos, goarch)
 }
 
 // findChecksumManifestAsset locates the GoReleaser-generated checksums.txt

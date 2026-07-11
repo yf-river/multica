@@ -3,23 +3,14 @@ import { describe, expect, it } from "vitest";
 import { selectPlatformReleaseAssetName } from "./cli-release-asset";
 
 describe("selectPlatformReleaseAssetName", () => {
-  it("prefers the versioned archive name when both exist", () => {
+  it("selects the current versioned archive name", () => {
     const assetNames = [
       "checksums.txt",
-      "multica_darwin_amd64.tar.gz",
       "multica-cli-1.2.3-darwin-amd64.tar.gz",
     ];
 
     expect(selectPlatformReleaseAssetName(assetNames, "darwin", "x64")).toBe(
       "multica-cli-1.2.3-darwin-amd64.tar.gz",
-    );
-  });
-
-  it("falls back to the legacy archive name when only legacy is present", () => {
-    const assetNames = ["checksums.txt", "multica_darwin_amd64.tar.gz"];
-
-    expect(selectPlatformReleaseAssetName(assetNames, "darwin", "x64")).toBe(
-      "multica_darwin_amd64.tar.gz",
     );
   });
 
@@ -50,7 +41,7 @@ describe("selectPlatformReleaseAssetName", () => {
   it("fails when the current platform asset is missing", () => {
     expect(() =>
       selectPlatformReleaseAssetName(
-        ["multica-cli-1.2.3-linux-amd64.tar.gz", "multica_linux_amd64.tar.gz"],
+        ["multica-cli-1.2.3-linux-amd64.tar.gz", "checksums.txt"],
         "darwin",
         "arm64",
       ),

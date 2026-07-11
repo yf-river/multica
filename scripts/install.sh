@@ -149,7 +149,9 @@ install_cli_binary() {
   fi
 
   local version="${latest#v}"
-  local url="https://github.com/multica-ai/multica/releases/download/${latest}/multica-cli-${version}-${OS}-${ARCH}.tar.gz"
+  local asset="multica-cli-${version}-${OS}-${ARCH}.tar.gz"
+  local release_base="https://github.com/multica-ai/multica/releases/download/${latest}"
+  local url="${release_base}/${asset}"
   local tmp_dir
   tmp_dir=$(mktemp -d)
 
@@ -158,6 +160,31 @@ install_cli_binary() {
     rm -rf "$tmp_dir"
     fail "Failed to download CLI binary."
   fi
+
+  if ! curl -fsSL "${release_base}/checksums.txt" -o "$tmp_dir/checksums.txt"; then
+    rm -rf "$tmp_dir"
+    fail "Failed to download CLI checksums; refusing an unverified install."
+  fi
+
+  local expected_hash actual_hash
+  expected_hash=$(awk -v asset="$asset" '$2 == asset { print tolower($1); exit }' "$tmp_dir/checksums.txt")
+  if [ -z "$expected_hash" ]; then
+    rm -rf "$tmp_dir"
+    fail "Release checksum for $asset is missing; refusing an unverified install."
+  fi
+  if command_exists sha256sum; then
+    actual_hash=$(sha256sum "$tmp_dir/multica.tar.gz" | awk '{print tolower($1)}')
+  elif command_exists shasum; then
+    actual_hash=$(shasum -a 256 "$tmp_dir/multica.tar.gz" | awk '{print tolower($1)}')
+  else
+    rm -rf "$tmp_dir"
+    fail "No SHA-256 tool found (sha256sum or shasum); refusing an unverified install."
+  fi
+  if [ "$actual_hash" != "$expected_hash" ]; then
+    rm -rf "$tmp_dir"
+    fail "CLI checksum verification failed."
+  fi
+  ok "CLI checksum verified"
 
   tar -xzf "$tmp_dir/multica.tar.gz" -C "$tmp_dir" multica
 
@@ -503,7 +530,6 @@ main() {
   while [ $# -gt 0 ]; do
     case "$1" in
       --with-server) mode="with-server" ;;
-      --local)       mode="with-server" ;;  # backwards compat alias
       --stop)        mode="stop" ;;
       --help|-h)
         echo "Usage: install.sh [--with-server | --stop]"
