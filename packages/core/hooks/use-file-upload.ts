@@ -3,7 +3,6 @@
 import { useState, useCallback } from "react";
 import type { ApiClient } from "../api/client";
 import type { Attachment } from "../types";
-import { attachmentDownloadPath } from "../types/attachment-url";
 import { MAX_FILE_SIZE } from "../constants/upload";
 
 // Carries the full Attachment so editors that need preview metadata
@@ -33,17 +32,6 @@ import { MAX_FILE_SIZE } from "../constants/upload";
 //                    `/api/attachments/<id>/download` couldn't resolve
 //                    against `file://` (MUL-3192).
 //
-//                    Falls back through two layers when the server
-//                    didn't populate `markdown_url`:
-//                      1. `attachmentDownloadPath(att.id)` — the legacy
-//                         site-relative shape. Works on web (Next
-//                         rewrite proxies /api/* to the API host) and
-//                         is what older comments persist; render
-//                         surfaces handle the absolutize for non-web
-//                         clients via attachment.tsx's legacy compat.
-//                      2. `att.url` — the no-workspace avatar branch
-//                         where there's no attachment-row id at all.
-//
 // MUL-3130 introduced the persisted-image regression by collapsing
 // these two semantics into a single `link` field; MUL-3192 followed up
 // by moving the durable-URL choice from the client to the server so
@@ -58,26 +46,6 @@ export interface UploadContext {
   issueId?: string;
   commentId?: string;
   chatSessionId?: string;
-}
-
-// pickMarkdownLink chooses the URL the editor will write into markdown.
-//
-// Order:
-//   1. `att.markdown_url` — server-provided durable URL. This is the
-//      modern contract introduced in MUL-3192; the server (`buildMarkdownURL`)
-//      decides whether to emit a public CDN URL or an absolute API
-//      endpoint pinned to `MULTICA_PUBLIC_URL` based on the deployment.
-//   2. `attachmentDownloadPath(att.id)` — site-relative legacy shape,
-//      retained for compatibility with backends old enough to predate
-//      MUL-3192. Web's Next rewrite makes this load; desktop / mobile
-//      surfaces hit the attachment.tsx legacy-absolutize fallback.
-//   3. `att.url` — no attachment-row id (the no-workspace avatar branch
-//      of UploadFile). Markdown callers fall back to whatever storage
-//      backend produced for the upload; persistence is on the caller.
-function pickMarkdownLink(att: Attachment): string {
-  if (att.markdown_url) return att.markdown_url;
-  if (att.id) return attachmentDownloadPath(att.id);
-  return att.url;
 }
 
 export function useFileUpload(
@@ -99,7 +67,7 @@ export function useFileUpload(
           commentId: ctx?.commentId,
           chatSessionId: ctx?.chatSessionId,
         });
-        return { ...att, link: att.url, markdownLink: pickMarkdownLink(att) };
+        return { ...att, link: att.url, markdownLink: att.markdown_url };
       } finally {
         setUploading(false);
       }

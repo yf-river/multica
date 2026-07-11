@@ -26,13 +26,7 @@ export interface Attachment {
    * session and to load as a native browser resource fetch on every
    * supported client (web / desktop / mobile webview). MUL-3192.
    *
-   * Empty when the response was produced by a server old enough to
-   * predate this field, or by an upload path that did not produce a
-   * persisted attachment row (e.g. the no-workspace avatar branch).
-   * Frontend callers that need to embed a URL into markdown should use
-   * the helper in `useFileUpload` rather than reading this field
-   * directly so the legacy fallbacks (download path / `att.url`) stay
-   * centralized.
+   * Every current upload produces a persisted attachment row and this URL.
    */
   markdown_url: string;
   content_type: string;

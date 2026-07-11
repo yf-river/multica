@@ -336,6 +336,10 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	workspaceID := h.resolveWorkspaceID(r)
+	if workspaceID == "" {
+		writeError(w, http.StatusBadRequest, "workspace_id is required")
+		return
+	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, maxUploadSize)
 
@@ -384,102 +388,79 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	filename := id.String() + path.Ext(header.Filename)
-	var key string
-	if workspaceID != "" {
-		key = "workspaces/" + workspaceID + "/" + filename
-	} else {
-		key = "users/" + userID + "/" + filename
-	}
+	key := "workspaces/" + workspaceID + "/" + filename
 
-	// If workspace context is available, validate membership before uploading.
-	if workspaceID != "" {
-		if _, err := h.getWorkspaceMember(r.Context(), userID, workspaceID); err != nil {
-			writeError(w, http.StatusForbidden, "not a member of this workspace")
-			return
-		}
-
-		uploaderType, uploaderID := h.resolveActor(r, userID, workspaceID)
-
-		params := db.CreateAttachmentParams{
-			ID:           pgtype.UUID{Bytes: id, Valid: true},
-			WorkspaceID:  parseUUID(workspaceID),
-			UploaderType: uploaderType,
-			UploaderID:   parseUUID(uploaderID),
-			Filename:     header.Filename,
-			ContentType:  contentType,
-			SizeBytes:    int64(len(data)),
-		}
-
-		if issueID := r.FormValue("issue_id"); issueID != "" {
-			issueUUID, ok := parseUUIDOrBadRequest(w, issueID, "issue_id")
-			if !ok {
-				return
-			}
-			issue, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
-				ID:          issueUUID,
-				WorkspaceID: parseUUID(workspaceID),
-			})
-			if err != nil {
-				writeError(w, http.StatusForbidden, "invalid issue_id")
-				return
-			}
-			params.IssueID = issue.ID
-		}
-		if commentID := r.FormValue("comment_id"); commentID != "" {
-			commentUUID, ok := parseUUIDOrBadRequest(w, commentID, "comment_id")
-			if !ok {
-				return
-			}
-			comment, err := h.Queries.GetComment(r.Context(), commentUUID)
-			if err != nil || uuidToString(comment.WorkspaceID) != workspaceID {
-				writeError(w, http.StatusForbidden, "invalid comment_id")
-				return
-			}
-			params.CommentID = comment.ID
-		}
-		if chatSessionID := r.FormValue("chat_session_id"); chatSessionID != "" {
-			// Re-use the existing personal-agent gate so the user can still
-			// reach this session — covers role downgrade and agent
-			// visibility flips. The gate writes 4xx on failure.
-			session, ok := h.gateChatSessionForUser(w, r, userID, workspaceID, chatSessionID)
-			if !ok {
-				return
-			}
-			params.ChatSessionID = session.ID
-		}
-
-		link, err := h.Storage.Upload(r.Context(), key, data, contentType, header.Filename)
-		if err != nil {
-			slog.Error("file upload failed", "error", err)
-			writeError(w, http.StatusInternalServerError, "upload failed")
-			return
-		}
-		params.Url = link
-
-		att, err := persistUploadedAttachment(r.Context(), h.Storage, key, func() (db.Attachment, error) {
-			return h.Queries.CreateAttachment(r.Context(), params)
-		})
-		if err != nil {
-			slog.Error("failed to persist uploaded attachment", "error", err)
-			writeError(w, http.StatusInternalServerError, "failed to create attachment")
-			return
-		}
-		writeJSON(w, http.StatusOK, h.attachmentToResponse(att))
+	if _, err := h.getWorkspaceMember(r.Context(), userID, workspaceID); err != nil {
+		writeError(w, http.StatusForbidden, "not a member of this workspace")
 		return
 	}
 
-	// No workspace context (e.g. avatar upload) — upload directly.
+	uploaderType, uploaderID := h.resolveActor(r, userID, workspaceID)
+	params := db.CreateAttachmentParams{
+		ID:           pgtype.UUID{Bytes: id, Valid: true},
+		WorkspaceID:  parseUUID(workspaceID),
+		UploaderType: uploaderType,
+		UploaderID:   parseUUID(uploaderID),
+		Filename:     header.Filename,
+		ContentType:  contentType,
+		SizeBytes:    int64(len(data)),
+	}
+
+	if issueID := r.FormValue("issue_id"); issueID != "" {
+		issueUUID, ok := parseUUIDOrBadRequest(w, issueID, "issue_id")
+		if !ok {
+			return
+		}
+		issue, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
+			ID:          issueUUID,
+			WorkspaceID: parseUUID(workspaceID),
+		})
+		if err != nil {
+			writeError(w, http.StatusForbidden, "invalid issue_id")
+			return
+		}
+		params.IssueID = issue.ID
+	}
+	if commentID := r.FormValue("comment_id"); commentID != "" {
+		commentUUID, ok := parseUUIDOrBadRequest(w, commentID, "comment_id")
+		if !ok {
+			return
+		}
+		comment, err := h.Queries.GetComment(r.Context(), commentUUID)
+		if err != nil || uuidToString(comment.WorkspaceID) != workspaceID {
+			writeError(w, http.StatusForbidden, "invalid comment_id")
+			return
+		}
+		params.CommentID = comment.ID
+	}
+	if chatSessionID := r.FormValue("chat_session_id"); chatSessionID != "" {
+		// Re-use the existing personal-agent gate so the user can still
+		// reach this session — covers role downgrade and agent
+		// visibility flips. The gate writes 4xx on failure.
+		session, ok := h.gateChatSessionForUser(w, r, userID, workspaceID, chatSessionID)
+		if !ok {
+			return
+		}
+		params.ChatSessionID = session.ID
+	}
+
 	link, err := h.Storage.Upload(r.Context(), key, data, contentType, header.Filename)
 	if err != nil {
 		slog.Error("file upload failed", "error", err)
 		writeError(w, http.StatusInternalServerError, "upload failed")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{
-		"id":       id.String(),
-		"url":      link,
-		"filename": header.Filename,
+	params.Url = link
+
+	att, err := persistUploadedAttachment(r.Context(), h.Storage, key, func() (db.Attachment, error) {
+		return h.Queries.CreateAttachment(r.Context(), params)
 	})
+	if err != nil {
+		slog.Error("failed to persist uploaded attachment", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to create attachment")
+		return
+	}
+	writeJSON(w, http.StatusOK, h.attachmentToResponse(att))
 }
 
 func persistUploadedAttachment(

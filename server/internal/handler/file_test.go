@@ -181,6 +181,41 @@ func TestPersistUploadedAttachmentReportsRollbackFailure(t *testing.T) {
 	}
 }
 
+func TestUploadFileRequiresWorkspaceBeforeWritingObject(t *testing.T) {
+	origStorage := testHandler.Storage
+	store := &mockStorage{}
+	testHandler.Storage = store
+	defer func() { testHandler.Storage = origStorage }()
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", "orphan.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = part.Write([]byte("must not be uploaded"))
+	_ = writer.Close()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/upload-file", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("X-User-ID", testUserID)
+	w := httptest.NewRecorder()
+
+	testHandler.UploadFile(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("UploadFile without workspace: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "workspace") {
+		t.Fatalf("UploadFile without workspace returned unclear error: %s", w.Body.String())
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if len(store.files) != 0 {
+		t.Fatalf("UploadFile without workspace wrote %d orphaned objects", len(store.files))
+	}
+}
+
 func TestUploadFileForeignWorkspace(t *testing.T) {
 	origStorage := testHandler.Storage
 	testHandler.Storage = &mockStorage{}
@@ -281,10 +316,9 @@ func TestUploadFileResolvesWorkspaceViaSlugHeader(t *testing.T) {
 	}
 }
 
-// TestUploadFileResolvesWorkspaceViaIDHeaderStill confirms the legacy path
-// (CLI / daemon clients sending X-Workspace-ID as a UUID) still works after
-// the refactor. Prevents a regression in the CLI/daemon compat branch.
-func TestUploadFileResolvesWorkspaceViaIDHeaderStill(t *testing.T) {
+// TestUploadFileResolvesWorkspaceViaIDHeader confirms that current CLI and
+// daemon clients can address the workspace by UUID.
+func TestUploadFileResolvesWorkspaceViaIDHeader(t *testing.T) {
 	origStorage := testHandler.Storage
 	testHandler.Storage = &mockStorage{}
 	defer func() { testHandler.Storage = origStorage }()

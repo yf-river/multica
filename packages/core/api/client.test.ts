@@ -1124,6 +1124,7 @@ describe("ApiClient", () => {
               url: "https://static.example.test/ws/att-1.md",
               download_url:
                 "https://static.example.test/ws/att-1.md?Policy=p&Signature=s&Key-Pair-Id=k",
+              markdown_url: "https://static.example.test/ws/att-1.md",
               content_type: "text/markdown",
               size_bytes: 123,
               created_at: "2026-05-11T00:00:00Z",
@@ -1358,9 +1359,20 @@ describe("ApiClient", () => {
       const fetchMock = vi.fn().mockResolvedValue(
         new Response(JSON.stringify({
           id: "att-1",
+          workspace_id: "ws-1",
+          issue_id: null,
+          comment_id: null,
+          chat_session_id: "session-123",
+          chat_message_id: null,
+          uploader_type: "member",
+          uploader_id: "user-1",
           url: "https://cdn/x",
           download_url: "https://cdn/x?download=1",
+          markdown_url: "https://cdn/x",
           filename: "hi.png",
+          content_type: "image/png",
+          size_bytes: 2,
+          created_at: "2026-07-12T00:00:00Z",
         }), {
           status: 200,
           headers: { "Content-Type": "application/json" },

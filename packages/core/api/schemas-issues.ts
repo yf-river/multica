@@ -72,17 +72,11 @@ export const IssueReactionSchema = z.object({
 // happily `window.open(undefined)`. `filename` gates the toast/title and is
 // also enforced so a missing value falls back to the empty record below.
 //
-// `markdown_url` is parsed lenient: a server old enough to predate
-// MUL-3192 omits the field, in which case the schema defaults it to "".
-// Callers that need to persist a URL into markdown should go through the
-// `useFileUpload` helper (which falls back to the legacy
-// `attachmentDownloadPath` shape when `markdown_url` is empty), so the
-// empty-string default does not silently break any persistence path.
 export const AttachmentResponseSchema = z.object({
   id: NonEmptyStringSchema,
   url: NonEmptyStringSchema,
   download_url: NonEmptyStringSchema,
-  markdown_url: z.string().optional().default(""),
+  markdown_url: NonEmptyStringSchema,
   filename: z.string(),
   chat_session_id: z.string().nullable().optional(),
   chat_message_id: z.string().nullable().optional(),
