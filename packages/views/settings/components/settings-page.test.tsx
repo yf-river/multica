@@ -43,6 +43,9 @@ vi.mock("./workspace-tab", () => ({
 vi.mock("./repositories-tab", () => ({
   RepositoriesTab: () => <div>Repositories content</div>,
 }));
+vi.mock("./github-tab", () => ({
+  GitHubTab: () => <div>GitHub content</div>,
+}));
 vi.mock("./integrations-tab", () => ({
   IntegrationsTab: () => <div>Integrations content</div>,
 }));
@@ -86,6 +89,14 @@ describe("SettingsPage tabs", () => {
 
     expect(screen.queryByRole("tab", { name: "实验室" })).toBeNull();
     expect(screen.queryByText("暂无实验")).toBeNull();
+  });
+
+  it("opens the GitHub settings surface used by the installation callback", () => {
+    renderSettingsPage("tab=github&github_connected=1");
+
+    expect(screen.getByRole("tab", { name: "GitHub" })).toBeTruthy();
+    expect(screen.getByText("GitHub content")).toBeTruthy();
+    expect(screen.queryByText("Profile content")).toBeNull();
   });
 
   it("keeps the legacy lark redirect on integrations", () => {

@@ -1741,8 +1741,8 @@ func TestSetupCallback_ConsumesPendingInstallationCreated(t *testing.T) {
 	if setupRec.Code != http.StatusFound {
 		t.Fatalf("setup callback: expected 302, got %d (%s)", setupRec.Code, setupRec.Body.String())
 	}
-	if loc := setupRec.Header().Get("Location"); !strings.Contains(loc, "github_connected=1") {
-		t.Fatalf("setup callback redirect = %q, want github_connected=1", loc)
+	if loc := setupRec.Header().Get("Location"); !strings.Contains(loc, "?tab=github&github_connected=1") {
+		t.Fatalf("setup callback redirect = %q, want GitHub settings tab with github_connected=1", loc)
 	}
 
 	got, err := testHandler.Queries.GetGitHubInstallationByInstallationID(ctx, installationID)
