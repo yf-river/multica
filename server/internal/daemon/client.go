@@ -202,7 +202,7 @@ type TaskMessageData struct {
 func (c *Client) ReportTaskMessages(ctx context.Context, taskID string, messages []TaskMessageData) error {
 	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/messages", taskID), map[string]any{
 		"messages": messages,
-	}, nil, taskMessageRetrySchedule)
+	}, nil, taskReportRetrySchedule)
 }
 
 func (c *Client) CompleteTask(ctx context.Context, taskID, output, branchName, sessionID, workDir string) error {
@@ -223,9 +223,9 @@ func (c *Client) ReportTaskUsage(ctx context.Context, taskID string, usage []Tas
 	if len(usage) == 0 {
 		return nil
 	}
-	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/usage", taskID), map[string]any{
+	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/usage", taskID), map[string]any{
 		"usage": usage,
-	}, nil)
+	}, nil, taskReportRetrySchedule)
 }
 
 func (c *Client) FailTask(ctx context.Context, taskID, errMsg, sessionID, workDir, failureReason string) error {
@@ -508,10 +508,10 @@ var defaultTerminalRetrySchedule = []time.Duration{
 	64 * time.Second,
 }
 
-// Task messages are flushed while an agent is still streaming, so retries
-// must fit inside the flush call's five-second context. The server deduplicates
-// replays by (task_id, seq), making response-loss retries safe.
-var taskMessageRetrySchedule = []time.Duration{
+// Task messages and usage are reported on the execution path, so retries must
+// fit inside the message flush call's five-second context. Both server writes
+// are idempotent, making response-loss retries safe.
+var taskReportRetrySchedule = []time.Duration{
 	200 * time.Millisecond,
 	500 * time.Millisecond,
 	1 * time.Second,
