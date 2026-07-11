@@ -2540,6 +2540,35 @@ func TestPromptEvaluationEvidenceSnapshotArchivesRunEvidence(t *testing.T) {
 	}
 }
 
+func TestPromptEvaluationRunEvidenceFailsWhenRequiredProjectionCannotLoad(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler test fixture not initialized")
+	}
+	cleanupPromptEvaluationAgentRunTest(t)
+	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "证据任务读取失败实验", "不得返回残缺证据")
+
+	for _, queryName := range []string{"GetAgentTaskInWorkspace", "GetPromptEvaluationAssetInWorkspace"} {
+		t.Run(queryName, func(t *testing.T) {
+			h := *testHandler
+			h.Queries = db.New(queryRowFailingDB{
+				DBTX:      testPool,
+				queryName: queryName,
+				err:       context.DeadlineExceeded,
+			})
+			w := httptest.NewRecorder()
+			h.GetPromptEvaluationRunEvidence(w, withURLParam(
+				newRequest(http.MethodGet, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/evidence", nil),
+				"id",
+				resp.Run.ID,
+			))
+
+			if w.Code != http.StatusInternalServerError {
+				t.Fatalf("status = %d, want %d; body=%s", w.Code, http.StatusInternalServerError, w.Body.String())
+			}
+		})
+	}
+}
+
 func TestPromptEvaluationAssetEvidenceSnapshotsArchiveRecentRuns(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("handler test fixture not initialized")

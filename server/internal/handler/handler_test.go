@@ -50,6 +50,23 @@ func (tx listSkillFilesFailingTx) Query(ctx context.Context, sql string, args ..
 	return tx.Tx.Query(ctx, sql, args...)
 }
 
+type queryRowFailingDB struct {
+	db.DBTX
+	queryName string
+	err       error
+}
+
+func (f queryRowFailingDB) QueryRow(ctx context.Context, sql string, args ...interface{}) pgx.Row {
+	if strings.Contains(sql, "-- name: "+f.queryName+" ") {
+		return errorRow{err: f.err}
+	}
+	return f.DBTX.QueryRow(ctx, sql, args...)
+}
+
+type errorRow struct{ err error }
+
+func (r errorRow) Scan(...interface{}) error { return r.err }
+
 var testHandler *Handler
 var testPool *pgxpool.Pool
 var testUserID string

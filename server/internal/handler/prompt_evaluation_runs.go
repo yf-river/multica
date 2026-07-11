@@ -435,11 +435,12 @@ func (h *Handler) buildPromptEvaluationRunEvidenceResponse(ctx context.Context, 
 		if err != nil {
 			return PromptEvaluationRunEvidenceResponse{}, err
 		}
-		issueID := ""
-		if loadedTask, err := h.Queries.GetAgentTaskInWorkspace(ctx, db.GetAgentTaskInWorkspaceParams{ID: run.TaskID, WorkspaceID: workspaceUUID}); err == nil {
-			task = &loadedTask
-			issueID = uuidToString(loadedTask.IssueID)
+		loadedTask, err := h.Queries.GetAgentTaskInWorkspace(ctx, db.GetAgentTaskInWorkspaceParams{ID: run.TaskID, WorkspaceID: workspaceUUID})
+		if err != nil {
+			return PromptEvaluationRunEvidenceResponse{}, err
 		}
+		task = &loadedTask
+		issueID := uuidToString(loadedTask.IssueID)
 		messageResp = make([]protocol.TaskMessagePayload, len(messages))
 		for i, message := range messages {
 			messageResp[i] = taskMessageToPayload(message, uuidToString(run.TaskID), issueID)
@@ -454,7 +455,10 @@ func (h *Handler) buildPromptEvaluationRunEvidenceResponse(ctx context.Context, 
 			traceResp[i] = taskTraceEventToResponse(event)
 		}
 	}
-	refs := h.loadPromptEvaluationEvidenceRefs(ctx, workspaceUUID, run, task, traceResp)
+	refs, err := h.loadPromptEvaluationEvidenceRefs(ctx, workspaceUUID, run, task, traceResp)
+	if err != nil {
+		return PromptEvaluationRunEvidenceResponse{}, err
+	}
 	executionSpans, toolCallChains, toolCallSummary, executionSummary := buildPromptEvaluationExecutionEvidence(promptEvaluationRunToResponse(run), usageResp, messageResp, traceResp)
 
 	return PromptEvaluationRunEvidenceResponse{
@@ -789,27 +793,35 @@ func (h *Handler) loadPromptEvaluationEvidenceRefs(
 	run db.PromptEvaluationRun,
 	task *db.AgentTaskQueue,
 	traceEvents []TaskTraceEventResponse,
-) promptEvaluationEvidenceRefs {
+) (promptEvaluationEvidenceRefs, error) {
 	refs := promptEvaluationEvidenceRefs{}
 	if run.AssetID.Valid {
-		if asset, err := h.Queries.GetPromptEvaluationAssetInWorkspace(ctx, db.GetPromptEvaluationAssetInWorkspaceParams{ID: run.AssetID, WorkspaceID: workspaceID}); err == nil {
-			refs.Asset = &asset
+		asset, err := h.Queries.GetPromptEvaluationAssetInWorkspace(ctx, db.GetPromptEvaluationAssetInWorkspaceParams{ID: run.AssetID, WorkspaceID: workspaceID})
+		if err != nil {
+			return refs, err
 		}
+		refs.Asset = &asset
 	}
 	if run.PromptID.Valid {
-		if prompt, err := h.Queries.GetPromptLibraryItemInWorkspace(ctx, db.GetPromptLibraryItemInWorkspaceParams{ID: run.PromptID, WorkspaceID: workspaceID}); err == nil {
-			refs.Prompt = &prompt
+		prompt, err := h.Queries.GetPromptLibraryItemInWorkspace(ctx, db.GetPromptLibraryItemInWorkspaceParams{ID: run.PromptID, WorkspaceID: workspaceID})
+		if err != nil {
+			return refs, err
 		}
+		refs.Prompt = &prompt
 	}
 	if run.AgentID.Valid {
-		if agent, err := h.Queries.GetAgent(ctx, run.AgentID); err == nil && uuidToString(agent.WorkspaceID) == uuidToString(workspaceID) {
-			refs.Agent = &agent
+		agent, err := h.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{ID: run.AgentID, WorkspaceID: workspaceID})
+		if err != nil {
+			return refs, err
 		}
+		refs.Agent = &agent
 	}
 	if run.RuntimeID.Valid {
-		if runtime, err := h.Queries.GetAgentRuntimeForWorkspace(ctx, db.GetAgentRuntimeForWorkspaceParams{ID: run.RuntimeID, WorkspaceID: workspaceID}); err == nil {
-			refs.Runtime = &runtime
+		runtime, err := h.Queries.GetAgentRuntimeForWorkspace(ctx, db.GetAgentRuntimeForWorkspaceParams{ID: run.RuntimeID, WorkspaceID: workspaceID})
+		if err != nil {
+			return refs, err
 		}
+		refs.Runtime = &runtime
 	}
 
 	issueID := pgtype.UUID{}
@@ -819,9 +831,11 @@ func (h *Handler) loadPromptEvaluationEvidenceRefs(
 		issueID = id
 	}
 	if issueID.Valid {
-		if issue, err := h.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: issueID, WorkspaceID: workspaceID}); err == nil {
-			refs.Issue = &issue
+		issue, err := h.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: issueID, WorkspaceID: workspaceID})
+		if err != nil {
+			return refs, err
 		}
+		refs.Issue = &issue
 	}
 
 	projectID := pgtype.UUID{}
@@ -833,9 +847,11 @@ func (h *Handler) loadPromptEvaluationEvidenceRefs(
 		projectID = id
 	}
 	if projectID.Valid {
-		if project, err := h.Queries.GetProjectInWorkspace(ctx, db.GetProjectInWorkspaceParams{ID: projectID, WorkspaceID: workspaceID}); err == nil {
-			refs.Project = &project
+		project, err := h.Queries.GetProjectInWorkspace(ctx, db.GetProjectInWorkspaceParams{ID: projectID, WorkspaceID: workspaceID})
+		if err != nil {
+			return refs, err
 		}
+		refs.Project = &project
 	}
 
 	squadID := pgtype.UUID{}
@@ -845,11 +861,13 @@ func (h *Handler) loadPromptEvaluationEvidenceRefs(
 		squadID = id
 	}
 	if squadID.Valid {
-		if squad, err := h.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{ID: squadID, WorkspaceID: workspaceID}); err == nil {
-			refs.Squad = &squad
+		squad, err := h.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{ID: squadID, WorkspaceID: workspaceID})
+		if err != nil {
+			return refs, err
 		}
+		refs.Squad = &squad
 	}
-	return refs
+	return refs, nil
 }
 
 func (h *Handler) buildPromptEvaluationEvidenceSnapshotInsight(ctx context.Context, workspaceID pgtype.UUID, evidence PromptEvaluationRunEvidenceResponse) (map[string]any, error) {
