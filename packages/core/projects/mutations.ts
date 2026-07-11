@@ -13,15 +13,21 @@ export function useCreateProject() {
   return useMutation({
     mutationFn: async (data: CreateProjectRequest) => {
       const draftStore = useProjectDraftStore.getState();
-      const requestKey = draftStore.draft.createRequestKey ?? generateUUID();
-      draftStore.setDraft({ createRequestKey: requestKey });
+      const pendingCreate = draftStore.draft.pendingCreate ?? {
+        requestKey: generateUUID(),
+        request: data,
+      };
+      draftStore.setDraft({ pendingCreate });
       try {
-        const project = await api.createProject(data, requestKey);
-        useProjectDraftStore.getState().setDraft({ createRequestKey: undefined });
+        const project = await api.createProject(
+          pendingCreate.request,
+          pendingCreate.requestKey,
+        );
+        useProjectDraftStore.getState().setDraft({ pendingCreate: undefined });
         return project;
       } catch (error) {
         if (!isMutationOutcomeUnknown(error)) {
-          useProjectDraftStore.getState().setDraft({ createRequestKey: undefined });
+          useProjectDraftStore.getState().setDraft({ pendingCreate: undefined });
         }
         throw error;
       }

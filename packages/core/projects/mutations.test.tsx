@@ -47,8 +47,10 @@ describe("Project create request identity", () => {
     await expect(
       act(() => first.result.current.mutateAsync({ title: "Roadmap" })),
     ).rejects.toBeInstanceOf(ApiTransportError);
-    const retainedKey = useProjectDraftStore.getState().draft.createRequestKey;
+    const retained = useProjectDraftStore.getState().draft.pendingCreate;
+    const retainedKey = retained?.requestKey;
     expect(retainedKey).toBeTruthy();
+    expect(retained?.request).toEqual({ title: "Roadmap" });
     const storageKey = "multica_project_draft:test-workspace";
     const persistedDraft = localStorage.getItem(storageKey);
     expect(persistedDraft).toContain(retainedKey);
@@ -59,15 +61,16 @@ describe("Project create request identity", () => {
     await act(async () => {
       await useProjectDraftStore.persist.rehydrate();
     });
-    expect(useProjectDraftStore.getState().draft.createRequestKey).toBe(retainedKey);
+    expect(useProjectDraftStore.getState().draft.pendingCreate).toEqual(retained);
     first.unmount();
 
     const second = renderHook(() => useCreateProject(), { wrapper });
-    await act(() => second.result.current.mutateAsync({ title: "Roadmap" }));
+    await act(() => second.result.current.mutateAsync({ title: "Changed after reload" }));
 
+    expect(apiMock.createProject.mock.calls[1]?.[0]).toEqual({ title: "Roadmap" });
     expect(apiMock.createProject.mock.calls[0]?.[1]).toBe(retainedKey);
     expect(apiMock.createProject.mock.calls[1]?.[1]).toBe(retainedKey);
-    expect(useProjectDraftStore.getState().draft.createRequestKey).toBeUndefined();
+    expect(useProjectDraftStore.getState().draft.pendingCreate).toBeUndefined();
   });
 
   it("releases the key after a definitive rejection", async () => {

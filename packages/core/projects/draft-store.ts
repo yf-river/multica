@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-import type { ProjectStatus, ProjectPriority } from "../types";
+import type { CreateProjectRequest, ProjectStatus, ProjectPriority } from "../types";
 import { createWorkspaceAwareStorage, registerWorkspacePersistStore } from "../platform/workspace-storage";
 import { defaultStorage } from "../platform/storage";
 
@@ -12,7 +12,10 @@ interface ProjectDraft {
   leadType?: "member" | "agent";
   leadId?: string;
   icon?: string;
-  createRequestKey?: string;
+  pendingCreate?: {
+    requestKey: string;
+    request: CreateProjectRequest;
+  };
 }
 
 const EMPTY_DRAFT: ProjectDraft = {
@@ -23,7 +26,7 @@ const EMPTY_DRAFT: ProjectDraft = {
   leadType: undefined,
   leadId: undefined,
   icon: undefined,
-  createRequestKey: undefined,
+  pendingCreate: undefined,
 };
 
 interface ProjectDraftStore {
