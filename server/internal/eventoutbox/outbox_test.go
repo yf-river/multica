@@ -395,6 +395,60 @@ func TestDeadLetterUnblocksStreamAndCanBeRequeued(t *testing.T) {
 	assertOutboxComplete(t, first.ID, 0)
 }
 
+func TestDeadLetterProjectionCommitsWithTerminalEventState(t *testing.T) {
+	fixture := newOutboxFixture(t)
+	ctx := context.Background()
+	eventType := "test:dead-letter-projection:" + uuid.NewString()
+	event, err := Enqueue(ctx, fixture.queries, fixture.event(eventType))
+	if err != nil {
+		t.Fatalf("enqueue dead-letter projection event: %v", err)
+	}
+	dispatcher, err := NewDispatcher(fixture.queries, outboxTestPool, events.New(), "dead-letter-projection-"+uuid.NewString(), DispatcherConfig{
+		BatchSize:   10,
+		Lease:       time.Second,
+		RetryBase:   time.Millisecond,
+		MaxRetry:    time.Millisecond,
+		MaxAttempts: 1,
+	})
+	if err != nil {
+		t.Fatalf("NewDispatcher: %v", err)
+	}
+	action := "dead_letter_projection_" + uuid.NewString()
+	if err := dispatcher.RegisterWithDeadLetter(
+		eventType,
+		"terminal_projection",
+		func(context.Context, *db.Queries, events.Event) ([]events.Event, error) {
+			return nil, errors.New("permanent projection failure")
+		},
+		func(ctx context.Context, queries *db.Queries, event events.Event, cause error) error {
+			_, err := queries.CreateActivity(ctx, db.CreateActivityParams{
+				WorkspaceID: util.MustParseUUID(fixture.workspaceID),
+				IssueID:     util.MustParseUUID(fixture.issueID),
+				ActorType:   pgtype.Text{String: event.ActorType, Valid: true},
+				ActorID:     util.MustParseUUID(fixture.userID),
+				Action:      action,
+				Details:     []byte(fmt.Sprintf(`{"error":%q}`, cause.Error())),
+			})
+			return err
+		},
+	); err != nil {
+		t.Fatalf("RegisterWithDeadLetter: %v", err)
+	}
+	if count, err := dispatcher.ProcessBatch(ctx); count != 1 || err == nil {
+		t.Fatalf("dead-letter projection batch = (%d, %v)", count, err)
+	}
+	assertOutboxDeadLettered(t, event.ID, 1)
+	var activities int
+	if err := outboxTestPool.QueryRow(ctx, `
+		SELECT count(*) FROM activity_log WHERE issue_id = $1 AND action = $2
+	`, fixture.issueID, action).Scan(&activities); err != nil {
+		t.Fatalf("count dead-letter projection activities: %v", err)
+	}
+	if activities != 1 {
+		t.Fatalf("dead-letter projection activities = %d, want 1", activities)
+	}
+}
+
 func TestPruneExpiredKeepsFreshAndPendingEvents(t *testing.T) {
 	fixture := newOutboxFixture(t)
 	ctx := context.Background()

@@ -74,9 +74,16 @@ type TxStarter interface {
 // projection transaction commits.
 type Consumer func(context.Context, *db.Queries, events.Event) ([]events.Event, error)
 
+// DeadLetterHandler projects a consumer's terminal failure into its domain
+// aggregate. It runs in the same transaction that marks the outbox row as
+// dead-lettered, so user-visible failure state cannot drift from the
+// operational retry state.
+type DeadLetterHandler func(context.Context, *db.Queries, events.Event, error) error
+
 type registeredConsumer struct {
-	name    string
-	handler Consumer
+	name       string
+	handler    Consumer
+	deadLetter DeadLetterHandler
 }
 
 type DispatcherConfig struct {
@@ -160,6 +167,10 @@ func NewDispatcher(queries *db.Queries, txStarter TxStarter, bus *events.Bus, le
 }
 
 func (d *Dispatcher) Register(eventType, name string, handler Consumer) error {
+	return d.RegisterWithDeadLetter(eventType, name, handler, nil)
+}
+
+func (d *Dispatcher) RegisterWithDeadLetter(eventType, name string, handler Consumer, deadLetter DeadLetterHandler) error {
 	eventType = strings.TrimSpace(eventType)
 	name = strings.TrimSpace(name)
 	if eventType == "" || name == "" || handler == nil {
@@ -172,7 +183,7 @@ func (d *Dispatcher) Register(eventType, name string, handler Consumer) error {
 			return fmt.Errorf("event outbox: consumer %q already registered for %s", name, eventType)
 		}
 	}
-	d.consumers[eventType] = append(d.consumers[eventType], registeredConsumer{name: name, handler: handler})
+	d.consumers[eventType] = append(d.consumers[eventType], registeredConsumer{name: name, handler: handler, deadLetter: deadLetter})
 	return nil
 }
 
@@ -252,7 +263,7 @@ func (d *Dispatcher) processEvent(ctx context.Context, row db.DomainEventOutbox)
 
 	for _, consumer := range consumers {
 		if err := d.deliver(ctx, row.ID, event, consumer); err != nil {
-			retryErr := d.retry(ctx, row, consumer.name, err)
+			retryErr := d.retry(ctx, row, event, consumer, err)
 			return errors.Join(fmt.Errorf("deliver %s to %s: %w", event.Type, consumer.name, err), retryErr)
 		}
 	}
@@ -308,19 +319,16 @@ func (d *Dispatcher) deliver(ctx context.Context, eventID pgtype.UUID, event eve
 	return nil
 }
 
-func (d *Dispatcher) retry(ctx context.Context, row db.DomainEventOutbox, consumer string, cause error) error {
+func (d *Dispatcher) retry(ctx context.Context, row db.DomainEventOutbox, event events.Event, consumer registeredConsumer, cause error) error {
 	message := cause.Error()
 	if len(message) > 2000 {
 		message = message[:2000]
 	}
 	if row.Attempts+1 >= d.config.MaxAttempts {
-		updated, err := d.queries.DeadLetterDomainEvent(ctx, db.DeadLetterDomainEventParams{
-			DeadLetterReason: optionalText("consumer " + consumer + ": " + message),
-			ID:               row.ID,
-			LeaseOwner:       optionalText(d.leaseOwner),
-		})
+		reason := "consumer " + consumer.name + ": " + message
+		updated, err := d.deadLetter(ctx, row.ID, event, consumer, cause, reason)
 		if err != nil {
-			return fmt.Errorf("dead-letter domain event: %w", err)
+			return err
 		}
 		if updated != 1 {
 			return fmt.Errorf("dead-letter domain event: lease lost")
@@ -328,7 +336,7 @@ func (d *Dispatcher) retry(ctx context.Context, row db.DomainEventOutbox, consum
 		d.config.Logger.Error("domain event dead-lettered",
 			"event_id", util.UUIDToString(row.ID),
 			"event_type", row.EventType,
-			"consumer", consumer,
+			"consumer", consumer.name,
 			"attempts", row.Attempts+1,
 		)
 		return nil
@@ -354,6 +362,51 @@ func (d *Dispatcher) retry(ctx context.Context, row db.DomainEventOutbox, consum
 		return fmt.Errorf("schedule domain event retry: lease lost")
 	}
 	return nil
+}
+
+func (d *Dispatcher) deadLetter(
+	ctx context.Context,
+	eventID pgtype.UUID,
+	event events.Event,
+	consumer registeredConsumer,
+	cause error,
+	reason string,
+) (int64, error) {
+	if consumer.deadLetter == nil {
+		updated, err := d.queries.DeadLetterDomainEvent(ctx, db.DeadLetterDomainEventParams{
+			DeadLetterReason: optionalText(reason),
+			ID:               eventID,
+			LeaseOwner:       optionalText(d.leaseOwner),
+		})
+		if err != nil {
+			return 0, fmt.Errorf("dead-letter domain event: %w", err)
+		}
+		return updated, nil
+	}
+	tx, err := d.txStarter.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("begin dead-letter transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	queries := d.queries.WithTx(tx)
+	if err := consumer.deadLetter(ctx, queries, event, cause); err != nil {
+		return 0, fmt.Errorf("project domain event dead letter: %w", err)
+	}
+	updated, err := queries.DeadLetterDomainEvent(ctx, db.DeadLetterDomainEventParams{
+		DeadLetterReason: optionalText(reason),
+		ID:               eventID,
+		LeaseOwner:       optionalText(d.leaseOwner),
+	})
+	if err != nil {
+		return 0, fmt.Errorf("dead-letter domain event: %w", err)
+	}
+	if updated != 1 {
+		return 0, fmt.Errorf("dead-letter domain event: lease lost")
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("commit domain event dead letter: %w", err)
+	}
+	return updated, nil
 }
 
 func eventFromRow(row db.DomainEventOutbox) events.Event {
