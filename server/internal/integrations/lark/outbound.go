@@ -383,10 +383,14 @@ func (p *Patcher) installationCredentials(inst db.LarkInstallation) (Installatio
 	if err != nil {
 		return InstallationCredentials{}, fmt.Errorf("decrypt app_secret: %w", err)
 	}
+	region, err := ParseRegion(inst.Region)
+	if err != nil {
+		return InstallationCredentials{}, err
+	}
 	creds := InstallationCredentials{
 		AppID:     inst.AppID,
 		AppSecret: secret,
-		Region:    RegionOrDefault(inst.Region),
+		Region:    region,
 	}
 	if inst.TenantKey.Valid {
 		creds.TenantKey = inst.TenantKey.String

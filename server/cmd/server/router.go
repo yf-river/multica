@@ -1137,10 +1137,14 @@ func buildLarkConnectorFactory(installSvc *lark.InstallationService, apiClient l
 		if err != nil {
 			return lark.InstallationCredentials{}, err
 		}
+		region, err := lark.ParseRegion(inst.Region)
+		if err != nil {
+			return lark.InstallationCredentials{}, err
+		}
 		creds := lark.InstallationCredentials{
 			AppID:     inst.AppID,
 			AppSecret: secret,
-			Region:    lark.RegionOrDefault(inst.Region),
+			Region:    region,
 		}
 		if inst.TenantKey.Valid {
 			creds.TenantKey = inst.TenantKey.String

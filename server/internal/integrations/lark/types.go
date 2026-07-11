@@ -1,6 +1,9 @@
 package lark
 
-import "time"
+import (
+	"fmt"
+	"time"
+)
 
 // OpenID is a Lark user's per-installation identifier. Different
 // installations of the same app produce different open_ids for the
@@ -58,26 +61,29 @@ const larkInternationalOpenBaseURL = "https://open.larksuite.com"
 
 // OpenPlatformBaseURL maps a region to its open-platform host — the base
 // URL for both the REST API (http_client.go) and the WebSocket
-// /callback/ws/endpoint bootstrap (ws_endpoint.go). An unset or unknown
-// region falls back to Feishu (mainland), which is the default every
-// pre-region installation row carries.
+// /callback/ws/endpoint bootstrap (ws_endpoint.go). Invalid regions return an
+// empty host so callers fail closed instead of contacting the wrong cloud.
 func (r Region) OpenPlatformBaseURL() string {
-	if r == RegionLark {
+	switch r {
+	case RegionFeishu:
+		return defaultLarkBaseURL
+	case RegionLark:
 		return larkInternationalOpenBaseURL
+	default:
+		return ""
 	}
-	return defaultLarkBaseURL
 }
 
-// RegionOrDefault normalizes a stored region string (originating from the
-// lark_installation.region column) to a Region, defaulting to Feishu for
-// empty or unrecognized values so a malformed row never resolves to an
-// empty host (or a CHECK-violating write). Exported because the router's
-// WS credentials provider (package main) hydrates creds from the raw row.
-func RegionOrDefault(s string) Region {
-	if Region(s) == RegionLark {
-		return RegionLark
+func ParseRegion(value string) (Region, error) {
+	region := Region(value)
+	if !isSupportedRegion(region) {
+		return "", fmt.Errorf("invalid Lark region %q", value)
 	}
-	return RegionFeishu
+	return region, nil
+}
+
+func isSupportedRegion(region Region) bool {
+	return region == RegionFeishu || region == RegionLark
 }
 
 // DropReason enumerates the categories the inbound pipeline writes

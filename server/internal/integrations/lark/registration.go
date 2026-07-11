@@ -247,7 +247,7 @@ func (e *RegistrationError) Error() string {
 // still change it on the form), and it rides on the QR URL — not the
 // begin POST body, which has no name field. Empty omits the pre-fill.
 func (c *RegistrationClient) Begin(ctx context.Context, namePreset string, region Region) (*BeginResult, error) {
-	if !isRegistrationRegion(region) {
+	if !isSupportedRegion(region) {
 		return nil, errors.New("registration: region must be feishu or lark")
 	}
 	// Pick the begin domain from the validated user choice.
@@ -302,10 +302,6 @@ func (c *RegistrationClient) Begin(ctx context.Context, namePreset string, regio
 		Interval:   time.Duration(interval) * time.Second,
 		ExpiresIn:  time.Duration(expireIn) * time.Second,
 	}, nil
-}
-
-func isRegistrationRegion(region Region) bool {
-	return region == RegionFeishu || region == RegionLark
 }
 
 // Poll runs a single poll round-trip against the supplied domain (which

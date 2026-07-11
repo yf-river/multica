@@ -208,10 +208,14 @@ func (m *TypingIndicatorManager) resolveCredentials(inst db.LarkInstallation) (I
 	if err != nil {
 		return InstallationCredentials{}, err
 	}
+	region, err := ParseRegion(inst.Region)
+	if err != nil {
+		return InstallationCredentials{}, err
+	}
 	creds := InstallationCredentials{
 		AppID:     inst.AppID,
 		AppSecret: secret,
-		Region:    RegionOrDefault(inst.Region),
+		Region:    region,
 	}
 	if inst.TenantKey.Valid {
 		creds.TenantKey = inst.TenantKey.String

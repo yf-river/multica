@@ -321,7 +321,7 @@ func (s *RegistrationService) BeginInstall(ctx context.Context, p BeginInstallPa
 	if !p.WorkspaceID.Valid || !p.AgentID.Valid || !p.InitiatorID.Valid {
 		return BeginInstallResult{}, errors.New("lark registration: workspace, agent, and initiator are required")
 	}
-	if !isRegistrationRegion(p.Region) {
+	if !isSupportedRegion(p.Region) {
 		return BeginInstallResult{}, errors.New("lark registration: region must be feishu or lark")
 	}
 	// Agent ownership pre-check — without this, a workspace admin

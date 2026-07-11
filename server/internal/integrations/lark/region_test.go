@@ -37,8 +37,8 @@ func TestRegion_OpenPlatformBaseURL(t *testing.T) {
 	}{
 		{RegionFeishu, "https://open.feishu.cn"},
 		{RegionLark, "https://open.larksuite.com"},
-		{Region(""), "https://open.feishu.cn"},
-		{Region("bogus"), "https://open.feishu.cn"},
+		{Region(""), ""},
+		{Region("bogus"), ""},
 	}
 	for _, tc := range cases {
 		if got := tc.region.OpenPlatformBaseURL(); got != tc.want {
@@ -47,20 +47,15 @@ func TestRegion_OpenPlatformBaseURL(t *testing.T) {
 	}
 }
 
-// TestRegionOrDefault pins the normalization used at every credential-
-// build site: unknown / empty strings collapse to Feishu so a malformed
-// row never yields an empty host or a CHECK-violating write.
-func TestRegionOrDefault(t *testing.T) {
-	cases := map[string]Region{
-		"feishu": RegionFeishu,
-		"lark":   RegionLark,
-		"":       RegionFeishu,
-		"LARK":   RegionFeishu, // case-sensitive on purpose; CHECK stores lowercase
-		"intl":   RegionFeishu,
+func TestParseRegionRejectsInvalidStoredValues(t *testing.T) {
+	for _, value := range []string{"", "LARK", "intl"} {
+		if _, err := ParseRegion(value); err == nil {
+			t.Errorf("ParseRegion(%q) succeeded", value)
+		}
 	}
-	for in, want := range cases {
-		if got := RegionOrDefault(in); got != want {
-			t.Errorf("RegionOrDefault(%q) = %q, want %q", in, got, want)
+	for value, want := range map[string]Region{"feishu": RegionFeishu, "lark": RegionLark} {
+		if got, err := ParseRegion(value); err != nil || got != want {
+			t.Errorf("ParseRegion(%q) = %q, %v; want %q", value, got, err, want)
 		}
 	}
 }
@@ -77,7 +72,6 @@ func TestHTTPClient_ResolvesHostFromRegion(t *testing.T) {
 	}{
 		{"feishu", RegionFeishu, "open.feishu.cn"},
 		{"lark", RegionLark, "open.larksuite.com"},
-		{"empty defaults to feishu", Region(""), "open.feishu.cn"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -132,7 +126,6 @@ func TestWSEndpoint_ResolvesHostFromRegion(t *testing.T) {
 	}{
 		{RegionFeishu, "open.feishu.cn"},
 		{RegionLark, "open.larksuite.com"},
-		{Region(""), "open.feishu.cn"},
 	}
 	for _, tc := range cases {
 		rt := &wsEndpointRoundTripper{}

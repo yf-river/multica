@@ -150,6 +150,7 @@ func newTestPatcher(t *testing.T) (*Patcher, *fakePatcherQueries, *fakeAPIClient
 			AppSecretEncrypted: []byte("ciphertext"),
 			Status:             string(InstallationActive),
 			AgentID:            uuidFromString(t, "aaaa1111-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
+			Region:             "feishu",
 		},
 		agent:   db.Agent{Name: "TestAgent"},
 		cardErr: pgx.ErrNoRows,

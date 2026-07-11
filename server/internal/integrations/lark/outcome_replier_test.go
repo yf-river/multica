@@ -186,7 +186,7 @@ func TestLarkOutcomeReplierAgentOfflineSendsCard(t *testing.T) {
 		PublicURL:   "https://multica.test",
 		Logger:      log,
 	})
-	inst := db.LarkInstallation{AppID: "cli_x"}
+	inst := db.LarkInstallation{AppID: "cli_x", Region: "feishu"}
 	inst.ID = mustUUID("11111111-1111-1111-1111-111111111111")
 	msg := InboundMessage{ChatID: "oc_chat_1", SenderOpenID: "ou_user_1"}
 	rep.Reply(context.Background(), inst, msg, DispatchResult{Outcome: OutcomeAgentOffline})
@@ -222,7 +222,7 @@ func TestLarkOutcomeReplierAgentArchivedSendsCard(t *testing.T) {
 		Logger:      log,
 	})
 	msg := InboundMessage{ChatID: "oc_chat_arch"}
-	rep.Reply(context.Background(), db.LarkInstallation{}, msg, DispatchResult{Outcome: OutcomeAgentArchived})
+	rep.Reply(context.Background(), db.LarkInstallation{Region: "feishu"}, msg, DispatchResult{Outcome: OutcomeAgentArchived})
 	if len(stub.interactiveOut) != 1 {
 		t.Fatalf("expected one SendInteractiveCard call, got %d", len(stub.interactiveOut))
 	}
@@ -310,7 +310,7 @@ func TestLarkOutcomeReplierIssueCreatedSendsConfirmation(t *testing.T) {
 		Logger:      log,
 	})
 
-	inst := db.LarkInstallation{AppID: "cli_x"}
+	inst := db.LarkInstallation{AppID: "cli_x", Region: "feishu"}
 	inst.ID = mustUUID("11111111-1111-1111-1111-111111111111")
 	msg := InboundMessage{ChatID: "oc_chat_42", SenderOpenID: "ou_user"}
 	rep.Reply(context.Background(), inst, msg, DispatchResult{
