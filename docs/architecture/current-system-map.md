@@ -27,7 +27,7 @@ evidence reviewable by humans.
 | Database indexes | 187 |
 | Migration files (up + down) | 24 |
 | sqlc modules | 55 |
-| sqlc queries | 581 |
+| sqlc queries | 582 |
 | Go WebSocket events | 81 |
 | TypeScript WebSocket events | 71 |
 | Zustand store definitions | 31 |
@@ -625,7 +625,7 @@ intentionally platform-specific.
 
 ### sqlc modules
 
-All 581 query names, commands, and stable source anchors are stored in the JSON companion.
+All 582 query names, commands, and stable source anchors are stored in the JSON companion.
 
 | Module | Queries | SQL source | Generated source |
 | --- | --- | --- | --- |
@@ -675,7 +675,7 @@ All 581 query names, commands, and stable source anchors are stored in the JSON 
 | skill | 19 | `server/pkg/db/queries/skill.sql` | `server/pkg/db/generated/skill.sql.go` |
 | squad | 22 | `server/pkg/db/queries/squad.sql` | `server/pkg/db/generated/squad.sql.go` |
 | squad_create_request | 3 | `server/pkg/db/queries/squad_create_request.sql` | `server/pkg/db/generated/squad_create_request.sql.go` |
-| squad_sop_run | 16 | `server/pkg/db/queries/squad_sop_run.sql` | `server/pkg/db/generated/squad_sop_run.sql.go` |
+| squad_sop_run | 17 | `server/pkg/db/queries/squad_sop_run.sql` | `server/pkg/db/generated/squad_sop_run.sql.go` |
 | subscriber | 4 | `server/pkg/db/queries/subscriber.sql` | `server/pkg/db/generated/subscriber.sql.go` |
 | task_message | 4 | `server/pkg/db/queries/task_message.sql` | `server/pkg/db/generated/task_message.sql.go` |
 | task_token | 4 | `server/pkg/db/queries/task_token.sql` | `server/pkg/db/generated/task_token.sql.go` |

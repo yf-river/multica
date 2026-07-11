@@ -26,7 +26,7 @@
     "databaseIndexes": 187,
     "migrations": 24,
     "sqlcModules": 55,
-    "sqlcQueries": 581,
+    "sqlcQueries": 582,
     "goWebsocketEvents": 81,
     "typescriptWebsocketEvents": 71,
     "zustandStores": 31,
@@ -10140,6 +10140,11 @@
               "name": "LockSquadSOPRunForAutomaticTaskEvent",
               "command": "one",
               "source": "server/pkg/db/queries/squad_sop_run.sql#LockSquadSOPRunForAutomaticTaskEvent"
+            },
+            {
+              "name": "LockSquadSOPRunInWorkspace",
+              "command": "one",
+              "source": "server/pkg/db/queries/squad_sop_run.sql#LockSquadSOPRunInWorkspace"
             },
             {
               "name": "UpdateAutomaticSquadSOPTerminalEventEvidence",

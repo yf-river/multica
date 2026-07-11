@@ -623,6 +623,39 @@ func (q *Queries) LockSquadSOPRunForAutomaticTaskEvent(ctx context.Context, arg 
 	return i, err
 }
 
+const lockSquadSOPRunInWorkspace = `-- name: LockSquadSOPRunInWorkspace :one
+SELECT id, workspace_id, issue_id, squad_id, leader_task_id, profile_key, profile, status, current_step_key, started_at, completed_at, total_duration_ms, created_at, updated_at FROM squad_sop_run
+WHERE id = $1 AND workspace_id = $2
+FOR UPDATE
+`
+
+type LockSquadSOPRunInWorkspaceParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) LockSquadSOPRunInWorkspace(ctx context.Context, arg LockSquadSOPRunInWorkspaceParams) (SquadSopRun, error) {
+	row := q.db.QueryRow(ctx, lockSquadSOPRunInWorkspace, arg.ID, arg.WorkspaceID)
+	var i SquadSopRun
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.IssueID,
+		&i.SquadID,
+		&i.LeaderTaskID,
+		&i.ProfileKey,
+		&i.Profile,
+		&i.Status,
+		&i.CurrentStepKey,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.TotalDurationMs,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const updateAutomaticSquadSOPTerminalEventEvidence = `-- name: UpdateAutomaticSquadSOPTerminalEventEvidence :one
 UPDATE squad_sop_step_event
 SET evidence = $2::jsonb

@@ -425,6 +425,25 @@ func (h *Handler) RecordSOPStepEvent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "status must be 待开始, 进行中, 已完成, 已失败 or 已阻塞")
 		return
 	}
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start SOP event transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	run, err = qtx.LockSquadSOPRunInWorkspace(r.Context(), db.LockSquadSOPRunInWorkspaceParams{
+		ID:          runID,
+		WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		if err == pgx.ErrNoRows {
+			writeError(w, http.StatusNotFound, "SOP run not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to lock SOP run")
+		return
+	}
 	profileSteps := sopProfileStepsForHandler(run.Profile)
 	step, stepIndex, stepKnown := findSOPProfileStep(profileSteps, stepKey)
 	if len(profileSteps) > 0 && !stepKnown {
@@ -479,7 +498,7 @@ func (h *Handler) RecordSOPStepEvent(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	event, err := h.Queries.CreateSquadSOPStepEvent(r.Context(), db.CreateSquadSOPStepEventParams{
+	event, err := qtx.CreateSquadSOPStepEvent(r.Context(), db.CreateSquadSOPStepEventParams{
 		RunID:         run.ID,
 		WorkspaceID:   run.WorkspaceID,
 		IssueID:       run.IssueID,
@@ -501,7 +520,7 @@ func (h *Handler) RecordSOPStepEvent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if shouldUpdate {
-		if _, err := h.Queries.UpdateSquadSOPRunStatus(r.Context(), db.UpdateSquadSOPRunStatusParams{
+		if _, err := qtx.UpdateSquadSOPRunStatus(r.Context(), db.UpdateSquadSOPRunStatusParams{
 			ID:             run.ID,
 			WorkspaceID:    run.WorkspaceID,
 			Status:         nextStatus,
@@ -510,6 +529,10 @@ func (h *Handler) RecordSOPStepEvent(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "failed to update SOP run state")
 			return
 		}
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit SOP event")
+		return
 	}
 	writeJSON(w, http.StatusCreated, squadSOPEventToResponse(event))
 }

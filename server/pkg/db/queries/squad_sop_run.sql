@@ -55,6 +55,11 @@ FOR UPDATE OF r;
 SELECT * FROM squad_sop_run
 WHERE id = $1 AND workspace_id = $2;
 
+-- name: LockSquadSOPRunInWorkspace :one
+SELECT * FROM squad_sop_run
+WHERE id = $1 AND workspace_id = $2
+FOR UPDATE;
+
 -- name: ListIssueSquadSOPRuns :many
 SELECT * FROM squad_sop_run
 WHERE issue_id = $1 AND workspace_id = $2
