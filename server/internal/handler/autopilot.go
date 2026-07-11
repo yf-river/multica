@@ -131,13 +131,6 @@ type AutopilotRunResponse struct {
 // ── Converters ──────────────────────────────────────────────────────────────
 
 func autopilotToResponse(a db.Autopilot, subscribers []db.AutopilotSubscriber) AutopilotResponse {
-	assigneeType := a.AssigneeType
-	if assigneeType == "" {
-		// Older rows pre-MUL-2429 may surface as "" against an out-of-date
-		// schema view; default to "agent" so the API contract stays
-		// non-null.
-		assigneeType = "agent"
-	}
 	subResp := make([]AutopilotSubscriberEntry, len(subscribers))
 	for i, s := range subscribers {
 		subResp[i] = AutopilotSubscriberEntry{
@@ -152,7 +145,7 @@ func autopilotToResponse(a db.Autopilot, subscribers []db.AutopilotSubscriber) A
 		Title:              a.Title,
 		Description:        textToPtr(a.Description),
 		ProjectID:          uuidToPtr(a.ProjectID),
-		AssigneeType:       assigneeType,
+		AssigneeType:       a.AssigneeType,
 		AssigneeID:         uuidToString(a.AssigneeID),
 		Status:             a.Status,
 		ExecutionMode:      a.ExecutionMode,
