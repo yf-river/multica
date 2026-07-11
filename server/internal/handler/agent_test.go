@@ -262,11 +262,11 @@ func TestWorkspaceAlwaysRedactSecrets(t *testing.T) {
 	}{
 		{"nil settings", nil, false},
 		{"empty settings", []byte(`{}`), false},
-		{"false", []byte(`{"always_redact_env": false}`), false},
-		{"true", []byte(`{"always_redact_env": true}`), true},
+		{"false", []byte(`{"always_redact_secrets": false}`), false},
+		{"true", []byte(`{"always_redact_secrets": true}`), true},
 		{"invalid json", []byte(`not json`), false},
 		{"other fields only", []byte(`{"theme": "dark"}`), false},
-		{"true among other fields", []byte(`{"theme": "dark", "always_redact_env": true}`), true},
+		{"true among other fields", []byte(`{"theme": "dark", "always_redact_secrets": true}`), true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

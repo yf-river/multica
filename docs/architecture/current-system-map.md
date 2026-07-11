@@ -25,7 +25,7 @@ evidence reviewable by humans.
 | Database functions | 9 |
 | Database triggers | 4 |
 | Database indexes | 185 |
-| Migration files (up + down) | 44 |
+| Migration files (up + down) | 46 |
 | sqlc modules | 54 |
 | sqlc queries | 577 |
 | Go WebSocket events | 80 |
@@ -537,6 +537,8 @@ intentionally platform-specific.
 | 21 | deduplicate_task_messages | up | — | 0 | 0 | 1 | `server/migrations/021_deduplicate_task_messages.up.sql` |
 | 22 | remove_waiting_local_directory | down | — | 0 | 0 | 0 | `server/migrations/022_remove_waiting_local_directory.down.sql` |
 | 22 | remove_waiting_local_directory | up | — | 0 | 0 | 0 | `server/migrations/022_remove_waiting_local_directory.up.sql` |
+| 23 | rename_workspace_secret_setting | down | — | 0 | 0 | 0 | `server/migrations/023_rename_workspace_secret_setting.down.sql` |
+| 23 | rename_workspace_secret_setting | up | — | 0 | 0 | 0 | `server/migrations/023_rename_workspace_secret_setting.up.sql` |
 
 ### Current tables discovered from up migrations
 

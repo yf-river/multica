@@ -969,23 +969,19 @@ type UpdateAgentRequest struct {
 // into unconditional redaction of secret-bearing fields (currently
 // `mcp_config`) on read responses, regardless of the caller's role.
 //
-// The legacy JSON key is still `always_redact_env` for backwards-
-// compatibility with workspaces that flipped the setting before MUL-2600
-// shipped. The setting no longer affects `custom_env` because that field
-// is never serialized on agent resources anymore — secrets there are
-// fetched exclusively through `GET /api/agents/{id}/env` with audit
-// logging — so the flag now only governs `mcp_config` exposure.
+// The setting governs mcp_config exposure. custom_env is never serialized on
+// agent resources and is fetched only through the audited env endpoint.
 func workspaceAlwaysRedactSecrets(settings []byte) bool {
 	if len(settings) == 0 {
 		return false
 	}
 	var s struct {
-		AlwaysRedactEnv bool `json:"always_redact_env"`
+		AlwaysRedactSecrets bool `json:"always_redact_secrets"`
 	}
 	if err := json.Unmarshal(settings, &s); err != nil {
 		return false
 	}
-	return s.AlwaysRedactEnv
+	return s.AlwaysRedactSecrets
 }
 
 // canViewAgentSecrets checks whether the requesting user is allowed to

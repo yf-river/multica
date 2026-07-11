@@ -191,9 +191,7 @@ export function CreateAgentDialog({
       }
       const createdAgent = await onCreate(data);
       // Follow-up: attach selected skills to the newly created agent.
-      // onCreate returns the created Agent for this path; if the caller
-      // doesn't return it we fall back to skipping (preserves
-      // backward compatibility with non-skill-aware callers).
+      // onCreate returns the authoritative created Agent for follow-up writes.
       if (selectedSkillIds.size > 0) {
         try {
           await api.setAgentSkills(createdAgent.id, {
