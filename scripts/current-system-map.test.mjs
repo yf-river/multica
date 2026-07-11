@@ -115,3 +115,71 @@ test("external and non-page HTTP surfaces are present without Once.Do false posi
     ],
   );
 });
+
+test("maintained domain flows stay anchored to current routes, tables and sources", () => {
+  const routeKeys = new Set(
+    inventory.backend.chiRoutes.map((route) => `${route.method} ${route.path}`),
+  );
+  const tableNames = new Set(
+    inventory.persistence.database.tables.map((table) => table.name),
+  );
+  const flows = [
+    {
+      file: "chat-send-flow.md",
+      routes: [
+        "POST /api/chat/sessions",
+        "POST /api/chat/sessions/{sessionId}/messages",
+      ],
+      tables: ["chat_idempotency_record"],
+      sources: [
+        "packages/core/chat/pending-operation-store.ts",
+        "server/internal/handler/chat.go",
+        "server/internal/service/task_enqueue.go",
+      ],
+    },
+    {
+      file: "project-create-flow.md",
+      routes: ["POST /api/projects"],
+      tables: ["project", "project_create_request", "project_resource"],
+      sources: [
+        "packages/core/projects/mutations.ts",
+        "packages/views/modals/create-project.tsx",
+        "server/internal/handler/project.go",
+        "server/pkg/db/queries/project_create_request.sql",
+      ],
+    },
+    {
+      file: "autopilot-flow.md",
+      routes: [
+        "POST /api/autopilots",
+        "POST /api/autopilots/{id}/trigger",
+        "POST /api/webhooks/autopilots/{token}",
+      ],
+      tables: ["autopilot", "autopilot_run", "autopilot_trigger"],
+      sources: [
+        "packages/core/autopilots/mutations.ts",
+        "packages/core/autopilots/pending-operation-store.ts",
+        "server/internal/handler/autopilot.go",
+        "server/internal/handler/autopilot_triggers.go",
+        "server/internal/service/autopilot.go",
+      ],
+    },
+  ];
+
+  const index = fs.readFileSync(
+    path.join(root, "docs/architecture/domain-flows.md"),
+    "utf8",
+  );
+  for (const flow of flows) {
+    const flowPath = path.join(root, "docs/architecture", flow.file);
+    assert.ok(fs.existsSync(flowPath), `missing maintained flow: ${flow.file}`);
+    assert.match(index, new RegExp(flow.file.replaceAll(".", "\\.")));
+    const content = fs.readFileSync(flowPath, "utf8");
+    for (const route of flow.routes) assert.ok(routeKeys.has(route), `${flow.file}: stale route ${route}`);
+    for (const table of flow.tables) assert.ok(tableNames.has(table), `${flow.file}: stale table ${table}`);
+    for (const source of flow.sources) {
+      assert.ok(fs.existsSync(path.join(root, source)), `${flow.file}: missing source ${source}`);
+      assert.ok(content.includes(`\`${source}\``), `${flow.file}: undocumented source ${source}`);
+    }
+  }
+});
