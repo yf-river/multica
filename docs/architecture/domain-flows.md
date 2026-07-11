@@ -11,6 +11,7 @@ and the one supported path through those surfaces.
 | Project create | Optional resources, exact response replay, Web reload and CLI retry | [Project create](./project-create-flow.md) |
 | Autopilot create and dispatch | Atomic initial trigger, three ingress identities and Issue/task materialization | [Autopilot lifecycle](./autopilot-flow.md) |
 | Squad create | Atomic leader and initial membership, exact replay, Web reload and CLI retry | [Squad create](./squad-create-flow.md) |
+| Lark inbound and outbound | Verified inbound dedup and durable at-least-once final delivery | [Lark boundary](./lark-boundary-flow.md) |
 
 ## Shared rules
 

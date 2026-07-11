@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/eventoutbox"
 	"github.com/multica-ai/multica/server/internal/events"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -232,11 +233,12 @@ func (p *Patcher) SetTypingIndicatorManager(m *TypingIndicatorManager) {
 	p.typingIndicator = m
 }
 
-// Register subscribes the patcher to the task-lifecycle events it
-// cares about on the supplied bus. Idempotent only if you call it
-// against a fresh bus; call sites should invoke it exactly once
-// during server boot (after the bus + patcher are constructed and
-// before HTTP traffic starts).
+const larkOutboundDeliveryConsumer = "lark_outbound_delivery"
+
+// RegisterDurable makes final Lark delivery an outbox consumer. Business
+// state commits first; transient provider failures retry with bounded backoff
+// and become visible dead letters instead of being swallowed by an in-process
+// event listener.
 //
 // Subscriptions are deliberately minimal:
 //
@@ -257,25 +259,19 @@ func (p *Patcher) SetTypingIndicatorManager(m *TypingIndicatorManager) {
 // would early-return). Leaving EventTaskCompleted unsubscribed also
 // avoids the prior "Done." overwrite regression where the no-content
 // EventTaskCompleted payload would wipe the real reply.
-func (p *Patcher) Register(bus *events.Bus) {
-	bus.Subscribe(protocol.EventTaskFailed, p.handleEvent)
-	bus.Subscribe(protocol.EventChatDone, p.handleEvent)
+func (p *Patcher) RegisterDurable(dispatcher *eventoutbox.Dispatcher) error {
+	for _, eventType := range []string{protocol.EventTaskFailed, protocol.EventChatDone} {
+		if err := dispatcher.Register(eventType, larkOutboundDeliveryConsumer, p.consumeEvent); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
-func (p *Patcher) handleEvent(e events.Event) {
-	// Use a fresh background ctx with a tight timeout: bus delivery is
-	// synchronous so a stuck Lark HTTP call would otherwise wedge the
-	// whole publish call site.
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+func (p *Patcher) consumeEvent(ctx context.Context, _ *db.Queries, event events.Event) ([]events.Event, error) {
+	deliveryCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	if err := p.processEvent(ctx, e); err != nil {
-		p.cfg.Logger.Warn("lark patcher: event handling failed",
-			"event_type", e.Type,
-			"task_id", e.TaskID,
-			"chat_session_id", e.ChatSessionID,
-			"error", err,
-		)
-	}
+	return nil, p.processEvent(deliveryCtx, event)
 }
 
 func (p *Patcher) processEvent(ctx context.Context, e events.Event) error {
@@ -404,9 +400,8 @@ func (p *Patcher) installationCredentials(inst db.LarkInstallation) (Installatio
 // header-styled card is much harder to miss than a regular bubble,
 // and these are rare enough that the card chrome isn't noisy.
 //
-// One-shot send (no patching, no DB row): if the task fails a second
-// time we'd just send a second card, which is fine — failure is
-// usually a single terminal event.
+// Each delivery attempt is one send (no patching). The durable dispatcher
+// retries provider failures and records the successful consumer receipt.
 func (p *Patcher) fail(ctx context.Context, creds InstallationCredentials, binding db.LarkChatSessionBinding, taskID pgtype.UUID, agentName string, payload any) error {
 	render, err := p.cfg.Renderer.Render(RenderInput{
 		Kind:         CardKindError,

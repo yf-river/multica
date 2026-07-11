@@ -41,7 +41,21 @@ func consumeChatCompletionProjection(ctx context.Context, queries *db.Queries, e
 	if err != nil {
 		return nil, err
 	}
-	return []events.Event{completedChatEvent(event, projection.task, message)}, nil
+	chatEvent := completedChatEvent(event, projection.task, message)
+	if message != nil && message.Content != "" {
+		_, bindingErr := queries.GetLarkChatSessionBindingBySession(ctx, projection.task.ChatSessionID)
+		switch {
+		case bindingErr == nil:
+			if _, err := eventoutbox.Enqueue(ctx, queries, chatEvent); err != nil {
+				return nil, fmt.Errorf("enqueue durable Lark chat reply: %w", err)
+			}
+		case errors.Is(bindingErr, pgx.ErrNoRows):
+			// Web/Desktop-only session: realtime delivery is sufficient.
+		default:
+			return nil, fmt.Errorf("lookup Lark chat binding for reply: %w", bindingErr)
+		}
+	}
+	return []events.Event{chatEvent}, nil
 }
 
 func consumeChatFailureProjection(ctx context.Context, queries *db.Queries, event events.Event) ([]events.Event, error) {
@@ -154,8 +168,10 @@ func completedChatEvent(event events.Event, task db.AgentTaskQueue, message *db.
 	}
 	return events.Event{
 		Type:          protocol.EventChatDone,
+		StreamKey:     "chat:" + util.UUIDToString(task.ChatSessionID),
 		WorkspaceID:   event.WorkspaceID,
 		ActorType:     "system",
+		TaskID:        util.UUIDToString(task.ID),
 		ChatSessionID: util.UUIDToString(task.ChatSessionID),
 		Payload:       payload,
 	}

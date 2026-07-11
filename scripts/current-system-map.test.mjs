@@ -175,6 +175,22 @@ test("maintained domain flows stay anchored to current routes, tables and source
         "packages/core/squads/mutations.test.tsx",
       ],
     },
+    {
+      file: "lark-boundary-flow.md",
+      routes: ["POST /api/lark/binding/redeem"],
+      tables: [
+        "domain_event_delivery",
+        "domain_event_outbox",
+        "lark_chat_session_binding",
+        "lark_inbound_message_dedup",
+      ],
+      sources: [
+        "server/internal/integrations/lark/dispatcher.go",
+        "server/internal/integrations/lark/outbound.go",
+        "server/cmd/server/chat_projection.go",
+        "server/internal/eventoutbox/outbox.go",
+      ],
+    },
   ];
 
   const index = fs.readFileSync(

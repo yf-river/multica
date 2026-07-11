@@ -350,6 +350,7 @@ func main() {
 		DaemonHub:          daemonHub,
 		DaemonWakeup:       daemonWakeup,
 		HeartbeatScheduler: heartbeatScheduler,
+		EventDispatcher:    eventDispatcher,
 	})
 	if err != nil {
 		slog.Error("invalid server configuration", "error", err)

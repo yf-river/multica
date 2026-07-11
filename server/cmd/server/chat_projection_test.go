@@ -78,6 +78,54 @@ func TestChatCompletionProjectionRollsBackAndRetries(t *testing.T) {
 	assertChatSessionUnread(t, ctx, fixture.queries, fixture.session.ID, true)
 }
 
+func TestChatCompletionProjectionEnqueuesLarkBoundReply(t *testing.T) {
+	ctx := context.Background()
+	fixture := setupChatCompletionFixture(t, ctx)
+	installation, err := fixture.queries.UpsertLarkInstallation(ctx, db.UpsertLarkInstallationParams{
+		WorkspaceID:        fixture.session.WorkspaceID,
+		AgentID:            fixture.task.AgentID,
+		AppID:              "chat-projection-" + uuid.NewString(),
+		AppSecretEncrypted: []byte("test-ciphertext"),
+		BotOpenID:          "bot-" + uuid.NewString(),
+		InstallerUserID:    parseUUID(testUserID),
+		Region:             "feishu",
+	})
+	if err != nil {
+		t.Fatalf("create Lark installation: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM lark_installation WHERE id = $1`, installation.ID)
+	})
+	if _, err := fixture.queries.CreateLarkChatSessionBinding(ctx, db.CreateLarkChatSessionBindingParams{
+		ChatSessionID:  fixture.session.ID,
+		InstallationID: installation.ID,
+		LarkChatID:     "chat-" + uuid.NewString(),
+		LarkChatType:   "p2p",
+	}); err != nil {
+		t.Fatalf("create Lark chat binding: %v", err)
+	}
+	if _, err := fixture.taskService.CompleteTask(ctx, fixture.task.ID, []byte(`{"output":"durable Lark reply"}`), "", ""); err != nil {
+		t.Fatalf("CompleteTask: %v", err)
+	}
+	if _, err := runChatProjection(ctx, fixture.queries, latestTaskTerminalEvent(t, fixture.task.ID), consumeChatCompletionProjection); err != nil {
+		t.Fatalf("project Lark-bound completion: %v", err)
+	}
+
+	var count int
+	var payload []byte
+	if err := testPool.QueryRow(ctx, `
+		SELECT payload, count(*) OVER ()::int
+		FROM domain_event_outbox
+		WHERE event_type = $1 AND task_id = $2::text
+		LIMIT 1
+	`, protocol.EventChatDone, util.UUIDToString(fixture.task.ID)).Scan(&payload, &count); err != nil {
+		t.Fatalf("load durable Lark reply event: %v", err)
+	}
+	if count != 1 || !strings.Contains(string(payload), "durable Lark reply") {
+		t.Fatalf("durable Lark reply count=%d payload=%s", count, payload)
+	}
+}
+
 func TestChatCompletionProjectionRollsBackMessageWhenUnreadUpdateFails(t *testing.T) {
 	ctx := context.Background()
 	fixture := setupChatCompletionFixture(t, ctx)

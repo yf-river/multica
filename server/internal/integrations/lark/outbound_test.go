@@ -162,6 +162,10 @@ func newTestPatcher(t *testing.T) (*Patcher, *fakePatcherQueries, *fakeAPIClient
 	return p, q, api
 }
 
+func deliverPatcherTestEvent(p *Patcher, event events.Event) {
+	_ = p.processEvent(context.Background(), event)
+}
+
 // TestPatcherSendsPlainTextOnChatDone pins the new behaviour Bohan asked
 // for: when the agent finishes replying, the Patcher posts the reply as
 // a plain Lark IM text message (msg_type=text), not nested inside an
@@ -171,7 +175,7 @@ func TestPatcherSendsPlainTextOnChatDone(t *testing.T) {
 	p, q, api := newTestPatcher(t)
 	taskID := uuidFromString(t, "ee333333-ee33-ee33-ee33-eeeeeeeeeeee")
 
-	p.handleEvent(events.Event{
+	deliverPatcherTestEvent(p, events.Event{
 		Type:          protocol.EventChatDone,
 		TaskID:        uuidString(taskID),
 		ChatSessionID: uuidString(q.binding.ChatSessionID),
@@ -214,7 +218,7 @@ func TestPatcherRoutesMarkdownReplyToCard(t *testing.T) {
 	taskID := uuidFromString(t, "ee444444-ee44-ee44-ee44-eeeeeeeeeeee")
 
 	body := "# Summary\n\n- bullet one\n- bullet two\n\n```go\nfunc f() {}\n```\n"
-	p.handleEvent(events.Event{
+	deliverPatcherTestEvent(p, events.Event{
 		Type:          protocol.EventChatDone,
 		TaskID:        uuidString(taskID),
 		ChatSessionID: uuidString(q.binding.ChatSessionID),
@@ -252,7 +256,7 @@ func TestPatcherRoutesPlainReplyToText(t *testing.T) {
 	p, q, api := newTestPatcher(t)
 	taskID := uuidFromString(t, "ee555555-ee55-ee55-ee55-eeeeeeeeeeee")
 
-	p.handleEvent(events.Event{
+	deliverPatcherTestEvent(p, events.Event{
 		Type:          protocol.EventChatDone,
 		TaskID:        uuidString(taskID),
 		ChatSessionID: uuidString(q.binding.ChatSessionID),
@@ -282,7 +286,7 @@ func TestPatcherDropsEmptyChatReply(t *testing.T) {
 	p, q, api := newTestPatcher(t)
 	taskID := uuidFromString(t, "ee777777-ee77-ee77-ee77-eeeeeeeeeeee")
 
-	p.handleEvent(events.Event{
+	deliverPatcherTestEvent(p, events.Event{
 		Type:          protocol.EventChatDone,
 		TaskID:        uuidString(taskID),
 		ChatSessionID: uuidString(q.binding.ChatSessionID),
@@ -304,7 +308,7 @@ func TestPatcherSkipsWhenNoChatSessionBinding(t *testing.T) {
 	p, q, api := newTestPatcher(t)
 	q.bindingErr = pgx.ErrNoRows
 
-	p.handleEvent(events.Event{
+	deliverPatcherTestEvent(p, events.Event{
 		Type:          protocol.EventChatDone,
 		TaskID:        uuidString(uuidFromString(t, "ee222222-ee22-ee22-ee22-eeeeeeeeeeee")),
 		ChatSessionID: uuidString(uuidFromString(t, "cc222222-cc22-cc22-cc22-cccccccccccc")),
@@ -331,7 +335,7 @@ func TestPatcherFailEventSendsErrorCard(t *testing.T) {
 	p, q, api := newTestPatcher(t)
 	taskID := uuidFromString(t, "ee444444-ee44-ee44-ee44-eeeeeeeeeeee")
 
-	p.handleEvent(events.Event{
+	deliverPatcherTestEvent(p, events.Event{
 		Type:          protocol.EventTaskFailed,
 		TaskID:        uuidString(taskID),
 		ChatSessionID: uuidString(q.binding.ChatSessionID),
@@ -359,7 +363,7 @@ func TestPatcherSwallowsInstallationLoadErrors(t *testing.T) {
 	p, q, api := newTestPatcher(t)
 	q.installationErr = errors.New("db down")
 
-	p.handleEvent(events.Event{
+	deliverPatcherTestEvent(p, events.Event{
 		Type:          protocol.EventChatDone,
 		TaskID:        uuidString(uuidFromString(t, "ee555555-ee55-ee55-ee55-eeeeeeeeeeee")),
 		ChatSessionID: uuidString(q.binding.ChatSessionID),
@@ -384,14 +388,15 @@ func TestPatcherSwallowsInstallationLoadErrors(t *testing.T) {
 // re-send the same text reply (duplicate bubble) or send the "Done."
 // fallback (the original bug Bohan reported). The fix is to leave
 // EventTaskCompleted unsubscribed; this test asserts exactly one
-// outbound text message from the sequence.
+// outbound text message from the sequence. In production ChatDone is emitted
+// by the durable chat projection and consumed from the outbox.
 func TestPatcherIgnoresEventTaskCompletedForChatTasks(t *testing.T) {
 	p, q, api := newTestPatcher(t)
 	taskID := uuidFromString(t, "ee666666-ee66-ee66-ee66-eeeeeeeeeeee")
 
 	// Step 1: ChatDone arrives with the real agent reply. Plain text
 	// is sent to Lark.
-	p.handleEvent(events.Event{
+	deliverPatcherTestEvent(p, events.Event{
 		Type:          protocol.EventChatDone,
 		TaskID:        uuidString(taskID),
 		ChatSessionID: uuidString(q.binding.ChatSessionID),
@@ -405,7 +410,7 @@ func TestPatcherIgnoresEventTaskCompletedForChatTasks(t *testing.T) {
 	// Step 2: TaskCompleted fires immediately after with no content.
 	// The Patcher MUST NOT send a second message — neither a
 	// duplicate of the reply nor the "Done." fallback.
-	p.handleEvent(events.Event{
+	deliverPatcherTestEvent(p, events.Event{
 		Type:          protocol.EventTaskCompleted,
 		TaskID:        uuidString(taskID),
 		ChatSessionID: uuidString(q.binding.ChatSessionID),
@@ -427,6 +432,26 @@ func TestPatcherIgnoresEventTaskCompletedForChatTasks(t *testing.T) {
 	if len(api.sent) != 0 || len(api.patched) != 0 {
 		t.Errorf("no card outbound expected on the success path; got sent=%d patched=%d",
 			len(api.sent), len(api.patched))
+	}
+}
+
+func TestPatcherDurableConsumerReturnsProviderFailureForRetry(t *testing.T) {
+	p, q, api := newTestPatcher(t)
+	api.textSendErr = errors.New("lark unavailable")
+	taskID := uuidFromString(t, "ee777777-ee77-ee77-ee77-eeeeeeeeeeee")
+
+	_, err := p.consumeEvent(context.Background(), nil, events.Event{
+		Type:          protocol.EventChatDone,
+		TaskID:        uuidString(taskID),
+		ChatSessionID: uuidString(q.binding.ChatSessionID),
+		Payload: protocol.ChatDonePayload{
+			TaskID:        uuidString(taskID),
+			ChatSessionID: uuidString(q.binding.ChatSessionID),
+			Content:       "retry me",
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "lark unavailable") {
+		t.Fatalf("durable consumer error = %v", err)
 	}
 }
 

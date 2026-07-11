@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -21,6 +22,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/daemonws"
+	"github.com/multica-ai/multica/server/internal/eventoutbox"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/handler"
 	"github.com/multica-ai/multica/server/internal/integrations/lark"
@@ -136,6 +138,7 @@ type RouterOptions struct {
 	BusinessMetrics *obsmetrics.BusinessMetrics
 	DaemonHub       *daemonws.Hub
 	DaemonWakeup    service.TaskWakeupNotifier
+	EventDispatcher *eventoutbox.Dispatcher
 	// HeartbeatScheduler, when non-nil, replaces the default synchronous
 	// passthrough scheduler on the constructed Handler. main.go injects a
 	// BatchedHeartbeatScheduler here so the caller can also drive Run/Stop;
@@ -330,7 +333,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				})
 				h.LarkAPIClient = larkClient
 				patcher := lark.NewPatcher(queries, installSvc, larkClient, lark.PatcherConfig{})
-				patcher.Register(bus)
+				if opts.EventDispatcher == nil {
+					return nil, nil, errors.New("Lark integration requires the durable event dispatcher")
+				}
+				if err := patcher.RegisterDurable(opts.EventDispatcher); err != nil {
+					return nil, nil, fmt.Errorf("register durable Lark delivery: %w", err)
+				}
 
 				// Typing indicator: shows a "processing" reaction on the user's
 				// message while the agent is working, then removes it before the
