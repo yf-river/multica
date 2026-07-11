@@ -56,6 +56,38 @@ func TestPostJSON(t *testing.T) {
 		}
 	})
 
+	t.Run("idempotency key", func(t *testing.T) {
+		const requestKey = "33333333-3333-4333-8333-333333333333"
+		calls := 0
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			calls++
+			if got := r.Header.Get("Idempotency-Key"); got != requestKey {
+				t.Errorf("Idempotency-Key = %q, want %q", got, requestKey)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			if calls == 1 {
+				_, _ = w.Write([]byte(`{"id":`))
+				return
+			}
+			_ = json.NewEncoder(w).Encode(respBody{ID: "project-1"})
+		}))
+		defer srv.Close()
+
+		client := NewAPIClient(srv.URL, "", "test-token")
+		var out respBody
+		if err := client.PostJSONWithIdempotencyKey(
+			context.Background(), "/test", reqBody{Name: "roadmap"}, requestKey, &out,
+		); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if out.ID != "project-1" {
+			t.Fatalf("response id = %q", out.ID)
+		}
+		if calls != 2 {
+			t.Fatalf("requests = %d, want one retry", calls)
+		}
+	})
+
 	t.Run("error status", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusBadRequest)

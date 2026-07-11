@@ -844,6 +844,7 @@ export class TestApiClient {
   async createProject(title: string, opts?: Record<string, unknown>) {
     const res = await this.authedFetch("/api/projects", {
       method: "POST",
+      headers: { "Idempotency-Key": crypto.randomUUID() },
       body: JSON.stringify({ title, ...opts }),
     });
     if (!res.ok) {

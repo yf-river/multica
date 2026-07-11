@@ -20,13 +20,13 @@
     "webRouteHandlers": 1,
     "webRewrites": 6,
     "desktopRouteLiterals": 29,
-    "databaseTables": 86,
+    "databaseTables": 87,
     "databaseFunctions": 9,
     "databaseTriggers": 4,
     "databaseIndexes": 187,
-    "migrations": 20,
-    "sqlcModules": 53,
-    "sqlcQueries": 575,
+    "migrations": 22,
+    "sqlcModules": 54,
+    "sqlcQueries": 578,
     "goWebsocketEvents": 81,
     "typescriptWebsocketEvents": 71,
     "zustandStores": 29,
@@ -5528,6 +5528,37 @@
           "droppedFunctions": [],
           "droppedTriggers": [],
           "droppedIndexes": []
+        },
+        {
+          "version": 11,
+          "name": "project_create_idempotency",
+          "direction": "down",
+          "source": "server/migrations/011_project_create_idempotency.down.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 11,
+          "name": "project_create_idempotency",
+          "direction": "up",
+          "source": "server/migrations/011_project_create_idempotency.up.sql",
+          "tablesCreated": [
+            {
+              "name": "project_create_request",
+              "source": "server/migrations/011_project_create_idempotency.up.sql#project_create_request"
+            }
+          ],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
         }
       ],
       "tables": [
@@ -5734,6 +5765,10 @@
         {
           "name": "project",
           "source": "server/migrations/001_current_schema.up.sql#project"
+        },
+        {
+          "name": "project_create_request",
+          "source": "server/migrations/011_project_create_idempotency.up.sql#project_create_request"
         },
         {
           "name": "project_resource",
@@ -8892,6 +8927,28 @@
               "name": "UpdateProject",
               "command": "one",
               "source": "server/pkg/db/queries/project.sql#UpdateProject"
+            }
+          ]
+        },
+        {
+          "module": "project_create_request",
+          "source": "server/pkg/db/queries/project_create_request.sql",
+          "generatedSource": "server/pkg/db/generated/project_create_request.sql.go",
+          "queries": [
+            {
+              "name": "CompleteProjectCreateRequest",
+              "command": "one",
+              "source": "server/pkg/db/queries/project_create_request.sql#CompleteProjectCreateRequest"
+            },
+            {
+              "name": "GetProjectCreateRequest",
+              "command": "one",
+              "source": "server/pkg/db/queries/project_create_request.sql#GetProjectCreateRequest"
+            },
+            {
+              "name": "ReserveProjectCreateRequest",
+              "command": "one",
+              "source": "server/pkg/db/queries/project_create_request.sql#ReserveProjectCreateRequest"
             }
           ]
         },

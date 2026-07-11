@@ -3,6 +3,7 @@ import { ApiClient, ApiError } from "./client";
 
 const CHAT_IDEMPOTENCY_KEY = "11111111-1111-4111-8111-111111111111";
 const AUTOPILOT_IDEMPOTENCY_KEY = "22222222-2222-4222-8222-222222222222";
+const PROJECT_IDEMPOTENCY_KEY = "33333333-3333-4333-8333-333333333333";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -70,6 +71,44 @@ describe("ApiClient", () => {
 
     expect((fetchMock.mock.calls[0]![1]?.headers as Record<string, string>)["Idempotency-Key"])
       .toBe(CHAT_IDEMPOTENCY_KEY);
+  });
+
+  it("retries an unknown project create with the same idempotency key", async () => {
+    const project = {
+      id: "project-1",
+      workspace_id: "workspace-1",
+      title: "Roadmap",
+      description: null,
+      icon: null,
+      status: "planned",
+      priority: "none",
+      lead_type: null,
+      lead_id: null,
+      created_at: "2026-07-11T00:00:00Z",
+      updated_at: "2026-07-11T00:00:00Z",
+      issue_count: 0,
+      done_count: 0,
+      resource_count: 0,
+    };
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("connection reset"))
+      .mockResolvedValueOnce(new Response(JSON.stringify(project), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.createProject(
+      { title: "Roadmap" },
+      PROJECT_IDEMPOTENCY_KEY,
+    )).resolves.toMatchObject({ id: "project-1" });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    for (const call of fetchMock.mock.calls) {
+      expect((call[1]?.headers as Record<string, string>)["Idempotency-Key"])
+        .toBe(PROJECT_IDEMPOTENCY_KEY);
+    }
   });
 
   it("keeps void 204 mutations successful", async () => {

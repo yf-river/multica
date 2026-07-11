@@ -21,13 +21,13 @@ evidence reviewable by humans.
 | Next.js route handlers | 1 |
 | Next.js rewrites | 6 |
 | Desktop route literals | 29 |
-| Database tables | 86 |
+| Database tables | 87 |
 | Database functions | 9 |
 | Database triggers | 4 |
 | Database indexes | 187 |
-| Migration files (up + down) | 20 |
-| sqlc modules | 53 |
-| sqlc queries | 575 |
+| Migration files (up + down) | 22 |
+| sqlc modules | 54 |
+| sqlc queries | 578 |
 | Go WebSocket events | 81 |
 | TypeScript WebSocket events | 71 |
 | Zustand store definitions | 29 |
@@ -515,6 +515,8 @@ intentionally platform-specific.
 | 9 | autopilot_create_idempotency | up | — | 0 | 0 | 1 | `server/migrations/009_autopilot_create_idempotency.up.sql` |
 | 10 | remove_inert_autopilot_api_kind | down | — | 0 | 0 | 0 | `server/migrations/010_remove_inert_autopilot_api_kind.down.sql` |
 | 10 | remove_inert_autopilot_api_kind | up | — | 0 | 0 | 0 | `server/migrations/010_remove_inert_autopilot_api_kind.up.sql` |
+| 11 | project_create_idempotency | down | — | 0 | 0 | 0 | `server/migrations/011_project_create_idempotency.down.sql` |
+| 11 | project_create_idempotency | up | project_create_request | 0 | 0 | 0 | `server/migrations/011_project_create_idempotency.up.sql` |
 
 ### Current tables discovered from up migrations
 
@@ -569,6 +571,7 @@ intentionally platform-specific.
 - `personal_access_token` — `server/migrations/001_current_schema.up.sql#personal_access_token`
 - `pinned_item` — `server/migrations/001_current_schema.up.sql#pinned_item`
 - `project` — `server/migrations/001_current_schema.up.sql#project`
+- `project_create_request` — `server/migrations/011_project_create_idempotency.up.sql#project_create_request`
 - `project_resource` — `server/migrations/001_current_schema.up.sql#project_resource`
 - `prompt_evaluation_asset` — `server/migrations/001_current_schema.up.sql#prompt_evaluation_asset`
 - `prompt_evaluation_case` — `server/migrations/001_current_schema.up.sql#prompt_evaluation_case`
@@ -619,7 +622,7 @@ intentionally platform-specific.
 
 ### sqlc modules
 
-All 575 query names, commands, and stable source anchors are stored in the JSON companion.
+All 578 query names, commands, and stable source anchors are stored in the JSON companion.
 
 | Module | Queries | SQL source | Generated source |
 | --- | --- | --- | --- |
@@ -646,6 +649,7 @@ All 575 query names, commands, and stable source anchors are stored in the JSON 
 | personal_access_token | 6 | `server/pkg/db/queries/personal_access_token.sql` | `server/pkg/db/generated/personal_access_token.sql.go` |
 | pinned_item | 6 | `server/pkg/db/queries/pinned_item.sql` | `server/pkg/db/generated/pinned_item.sql.go` |
 | project | 8 | `server/pkg/db/queries/project.sql` | `server/pkg/db/generated/project.sql.go` |
+| project_create_request | 3 | `server/pkg/db/queries/project_create_request.sql` | `server/pkg/db/generated/project_create_request.sql.go` |
 | project_resource | 10 | `server/pkg/db/queries/project_resource.sql` | `server/pkg/db/generated/project_resource.sql.go` |
 | prompt_evaluation_asset | 5 | `server/pkg/db/queries/prompt_evaluation_asset.sql` | `server/pkg/db/generated/prompt_evaluation_asset.sql.go` |
 | prompt_evaluation_case | 10 | `server/pkg/db/queries/prompt_evaluation_case.sql` | `server/pkg/db/generated/prompt_evaluation_case.sql.go` |

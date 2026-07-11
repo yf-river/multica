@@ -687,6 +687,17 @@ type Project struct {
 	OwnerID     pgtype.UUID        `json:"owner_id"`
 }
 
+type ProjectCreateRequest struct {
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	ActorID        pgtype.UUID        `json:"actor_id"`
+	IdempotencyKey pgtype.UUID        `json:"idempotency_key"`
+	RequestHash    string             `json:"request_hash"`
+	ProjectID      pgtype.UUID        `json:"project_id"`
+	ResponseBody   []byte             `json:"response_body"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	CompletedAt    pgtype.Timestamptz `json:"completed_at"`
+}
+
 type ProjectResource struct {
 	ID           pgtype.UUID        `json:"id"`
 	ProjectID    pgtype.UUID        `json:"project_id"`

@@ -2182,15 +2182,22 @@ export class ApiClient {
     });
   }
 
-  async createProject(data: CreateProjectRequest): Promise<Project> {
-    const raw = await this.fetch<unknown>("/api/projects", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseOrThrow(raw, ProjectSchema, EMPTY_PROJECT, {
-      endpoint: "POST /api/projects",
-      mayHaveCommitted: true,
-    });
+  async createProject(
+    data: CreateProjectRequest,
+    idempotencyKey = generateUUID(),
+  ): Promise<Project> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>("/api/projects", {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow(raw, ProjectSchema, EMPTY_PROJECT, {
+        endpoint: "POST /api/projects",
+        mayHaveCommitted: true,
+      });
+    };
+    return retryUnknownMutationOnce(attempt);
   }
 
   async updateProject(id: string, data: UpdateProjectRequest): Promise<Project> {

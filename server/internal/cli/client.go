@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -305,6 +306,51 @@ func (c *APIClient) DeleteJSONWithBody(ctx context.Context, path string, body an
 
 // PostJSON performs a POST request with a JSON body.
 func (c *APIClient) PostJSON(ctx context.Context, path string, body any, out any) error {
+	return c.postJSON(ctx, path, body, "", out)
+}
+
+// PostJSONWithIdempotencyKey performs a POST for a caller-owned logical
+// operation. Reusing the key lets the server return the committed response
+// when the first response was lost.
+func (c *APIClient) PostJSONWithIdempotencyKey(
+	ctx context.Context,
+	path string,
+	body any,
+	idempotencyKey string,
+	out any,
+) error {
+	if out == nil {
+		err := c.postJSON(ctx, path, body, idempotencyKey, nil)
+		if err == nil || isHTTPResponseError(err) {
+			return err
+		}
+		return c.postJSON(ctx, path, body, idempotencyKey, nil)
+	}
+
+	var raw json.RawMessage
+	err := c.postJSON(ctx, path, body, idempotencyKey, &raw)
+	if err != nil && !isHTTPResponseError(err) {
+		raw = nil
+		err = c.postJSON(ctx, path, body, idempotencyKey, &raw)
+	}
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(raw, out)
+}
+
+func isHTTPResponseError(err error) bool {
+	var httpErr *HTTPError
+	return errors.As(err, &httpErr)
+}
+
+func (c *APIClient) postJSON(
+	ctx context.Context,
+	path string,
+	body any,
+	idempotencyKey string,
+	out any,
+) error {
 	data, err := json.Marshal(body)
 	if err != nil {
 		return err
@@ -316,6 +362,9 @@ func (c *APIClient) PostJSON(ctx context.Context, path string, body any, out any
 	}
 	req.Header.Set("Content-Type", "application/json")
 	c.setHeaders(req)
+	if idempotencyKey != "" {
+		req.Header.Set("Idempotency-Key", idempotencyKey)
+	}
 
 	resp, err := c.HTTPClient.Do(req)
 	err = wrapTransport(req, err)

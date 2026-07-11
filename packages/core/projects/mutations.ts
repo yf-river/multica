@@ -1,15 +1,31 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "../api";
+import { api, isMutationOutcomeUnknown } from "../api";
 import { projectKeys } from "./queries";
 import { useWorkspaceId } from "../hooks";
 import { useRecentContextStore } from "../chat/recent-context-store";
 import type { Project, CreateProjectRequest, UpdateProjectRequest, ListProjectsResponse } from "../types";
+import { generateUUID } from "../utils";
+import { useProjectDraftStore } from "./draft-store";
 
 export function useCreateProject() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
   return useMutation({
-    mutationFn: (data: CreateProjectRequest) => api.createProject(data),
+    mutationFn: async (data: CreateProjectRequest) => {
+      const draftStore = useProjectDraftStore.getState();
+      const requestKey = draftStore.draft.createRequestKey ?? generateUUID();
+      draftStore.setDraft({ createRequestKey: requestKey });
+      try {
+        const project = await api.createProject(data, requestKey);
+        useProjectDraftStore.getState().setDraft({ createRequestKey: undefined });
+        return project;
+      } catch (error) {
+        if (!isMutationOutcomeUnknown(error)) {
+          useProjectDraftStore.getState().setDraft({ createRequestKey: undefined });
+        }
+        throw error;
+      }
+    },
     onSuccess: (newProject) => {
       qc.setQueryData<ListProjectsResponse>(projectKeys.list(wsId), (old) =>
         old && !old.projects.some((p) => p.id === newProject.id)

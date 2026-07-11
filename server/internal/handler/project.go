@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -11,6 +12,8 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/logger"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -89,6 +92,11 @@ type CreateProjectResourceRequestPayload struct {
 	ResourceRef  json.RawMessage `json:"resource_ref"`
 	Label        *string         `json:"label"`
 	Position     *int32          `json:"position"`
+}
+
+type CreateProjectResponse struct {
+	ProjectResponse
+	Resources []ProjectResourceResponse `json:"resources,omitempty"`
 }
 
 type UpdateProjectRequest struct {
@@ -288,10 +296,6 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "resources["+strconv.Itoa(i)+"]: "+err.Error())
 			return
 		}
-		if err := h.ensureGongfengProjectPathRegistered(r.Context(), wsUUID, res.ResourceType, ref); err != nil {
-			writeError(w, http.StatusBadRequest, "resources["+strconv.Itoa(i)+"]: "+err.Error())
-			return
-		}
 		normalizedRefs[i] = ref
 		if res.ResourceType == "local_directory" {
 			var ld localDirectoryRef
@@ -306,6 +310,35 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 			localDirSeen[ld.DaemonID] = i
 		}
 	}
+	req.Status = status
+	req.Priority = priority
+	requestHash, err := hashRequestFingerprint(req)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create project")
+		return
+	}
+	idempotencyKey, ok := projectCreateIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	actorID := parseUUID(userID)
+	if replayed, found, err := h.loadProjectCreateReplay(
+		r.Context(), wsUUID, actorID, idempotencyKey, requestHash,
+	); err != nil {
+		h.writeProjectCreateReplayError(w, err)
+		return
+	} else if found {
+		writeJSON(w, http.StatusCreated, replayed)
+		return
+	}
+	for i, res := range req.Resources {
+		if err := h.ensureGongfengProjectPathRegistered(
+			r.Context(), wsUUID, strings.TrimSpace(res.ResourceType), normalizedRefs[i],
+		); err != nil {
+			writeError(w, http.StatusBadRequest, "resources["+strconv.Itoa(i)+"]: "+err.Error())
+			return
+		}
+	}
 
 	createParams := db.CreateProjectParams{
 		WorkspaceID: wsUUID,
@@ -318,20 +351,9 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		Priority:    priority,
 	}
 
-	// Without resources, keep the simple non-tx path.
-	if len(req.Resources) == 0 {
-		project, err := h.Queries.CreateProject(r.Context(), createParams)
-		if err != nil {
-			h.writeProjectWriteError(w, r, err, "create")
-			return
-		}
-		resp := projectToResponse(project)
-		h.publish(protocol.EventProjectCreated, workspaceID, "member", userID, map[string]any{"project": resp})
-		writeJSON(w, http.StatusCreated, resp)
-		return
-	}
-
-	// Transactional path: project + all resources are atomic.
+	// Project, optional resources, and the exact replay response share one
+	// transaction. This is deliberately the only create path: a response lost
+	// after commit can be retried without creating a duplicate Project.
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start transaction")
@@ -340,6 +362,31 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
 
+	_, err = qtx.ReserveProjectCreateRequest(r.Context(), db.ReserveProjectCreateRequestParams{
+		WorkspaceID:    wsUUID,
+		ActorID:        actorID,
+		IdempotencyKey: idempotencyKey,
+		RequestHash:    requestHash,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		_ = tx.Rollback(r.Context())
+		replayed, found, replayErr := h.loadProjectCreateReplay(
+			r.Context(), wsUUID, actorID, idempotencyKey, requestHash,
+		)
+		if replayErr != nil || !found {
+			if replayErr == nil {
+				replayErr = errors.New("project create replay disappeared after conflict")
+			}
+			h.writeProjectCreateReplayError(w, replayErr)
+			return
+		}
+		writeJSON(w, http.StatusCreated, replayed)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reserve project request")
+		return
+	}
 	project, err := qtx.CreateProject(r.Context(), createParams)
 	if err != nil {
 		h.writeProjectWriteError(w, r, err, "create")
@@ -376,17 +423,37 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		}
 		resourceRows = append(resourceRows, row)
 	}
-	if err := tx.Commit(r.Context()); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to commit project create")
-		return
-	}
-
 	resourceResp := make([]ProjectResourceResponse, len(resourceRows))
 	for i, row := range resourceRows {
 		resourceResp[i] = projectResourceToResponse(row)
 	}
 	resp := projectToResponse(project)
 	resp.ResourceCount = int64(len(resourceResp))
+	createResp := CreateProjectResponse{ProjectResponse: resp}
+	if len(resourceResp) > 0 {
+		createResp.Resources = resourceResp
+	}
+	responseBody, err := json.Marshal(createResp)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to encode project response")
+		return
+	}
+	if _, err := qtx.CompleteProjectCreateRequest(r.Context(), db.CompleteProjectCreateRequestParams{
+		WorkspaceID:    wsUUID,
+		ActorID:        actorID,
+		IdempotencyKey: idempotencyKey,
+		RequestHash:    requestHash,
+		ProjectID:      project.ID,
+		ResponseBody:   responseBody,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to complete project request")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit project create")
+		return
+	}
+
 	h.publish(protocol.EventProjectCreated, workspaceID, "member", userID, map[string]any{"project": resp})
 	for _, rr := range resourceResp {
 		h.publish(protocol.EventProjectResourceCreated, workspaceID, "member", userID, map[string]any{
@@ -394,16 +461,64 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 			"project_id": resp.ID,
 		})
 	}
-	// One-shot create echo: the parent ProjectResponse fields plus the just-
-	// created resources. This is a transient creation echo, not a contract for
-	// reads — GET /projects/{id} stays metadata-only with resource_count.
-	writeJSON(w, http.StatusCreated, struct {
-		ProjectResponse
-		Resources []ProjectResourceResponse `json:"resources"`
-	}{
-		ProjectResponse: resp,
-		Resources:       resourceResp,
+	writeJSON(w, http.StatusCreated, createResp)
+}
+
+var errProjectCreateIdempotencyConflict = errors.New("project create idempotency conflict")
+
+func projectCreateIdempotencyKey(w http.ResponseWriter, r *http.Request) (pgtype.UUID, bool) {
+	if len(r.Header.Values("Idempotency-Key")) == 0 {
+		// The current public contract keeps the header optional for external
+		// clients; first-party clients always send a stable UUIDv4 so they can
+		// safely recover an unknown outcome.
+		return parseUUID(uuid.NewString()), true
+	}
+	return requireIdempotencyKey(w, r)
+}
+
+func (h *Handler) loadProjectCreateReplay(
+	ctx context.Context,
+	workspaceID pgtype.UUID,
+	actorID pgtype.UUID,
+	idempotencyKey pgtype.UUID,
+	requestHash string,
+) (CreateProjectResponse, bool, error) {
+	record, err := h.Queries.GetProjectCreateRequest(ctx, db.GetProjectCreateRequestParams{
+		WorkspaceID:    workspaceID,
+		ActorID:        actorID,
+		IdempotencyKey: idempotencyKey,
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return CreateProjectResponse{}, false, nil
+	}
+	if err != nil {
+		return CreateProjectResponse{}, false, err
+	}
+	if record.RequestHash != requestHash {
+		return CreateProjectResponse{}, false, errProjectCreateIdempotencyConflict
+	}
+	if len(record.ResponseBody) == 0 || !record.CompletedAt.Valid {
+		return CreateProjectResponse{}, false, errors.New("project create request is incomplete")
+	}
+	var response CreateProjectResponse
+	if err := json.Unmarshal(record.ResponseBody, &response); err != nil {
+		return CreateProjectResponse{}, false, fmt.Errorf("decode project create replay: %w", err)
+	}
+	if response.ID == "" {
+		return CreateProjectResponse{}, false, errors.New("project create replay has no project id")
+	}
+	return response, true, nil
+}
+
+func (h *Handler) writeProjectCreateReplayError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errProjectCreateIdempotencyConflict) {
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": "Idempotency-Key was already used with a different request",
+			"code":  "idempotency_conflict",
+		})
+		return
+	}
+	writeError(w, http.StatusInternalServerError, "failed to load project request")
 }
 
 func (h *Handler) UpdateProject(w http.ResponseWriter, r *http.Request) {
