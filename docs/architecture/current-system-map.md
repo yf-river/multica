@@ -25,7 +25,7 @@ evidence reviewable by humans.
 | Database functions | 9 |
 | Database triggers | 4 |
 | Database indexes | 187 |
-| Migration files (up + down) | 36 |
+| Migration files (up + down) | 38 |
 | sqlc modules | 55 |
 | sqlc queries | 579 |
 | Go WebSocket events | 81 |
@@ -530,6 +530,8 @@ intentionally platform-specific.
 | 17 | unify_prompt_evaluation_agent_name | up | — | 0 | 0 | 0 | `server/migrations/017_unify_prompt_evaluation_agent_name.up.sql` |
 | 18 | require_task_usage_updated_at | down | — | 0 | 0 | 0 | `server/migrations/018_require_task_usage_updated_at.down.sql` |
 | 18 | require_task_usage_updated_at | up | — | 2 | 0 | 0 | `server/migrations/018_require_task_usage_updated_at.up.sql` |
+| 19 | remove_runtime_profile_visibility | down | — | 0 | 0 | 0 | `server/migrations/019_remove_runtime_profile_visibility.down.sql` |
+| 19 | remove_runtime_profile_visibility | up | — | 0 | 0 | 0 | `server/migrations/019_remove_runtime_profile_visibility.up.sql` |
 
 ### Current tables discovered from up migrations
 

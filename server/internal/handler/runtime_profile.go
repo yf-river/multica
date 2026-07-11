@@ -38,7 +38,6 @@ type RuntimeProfileResponse struct {
 	CommandName    string   `json:"command_name"`
 	Description    *string  `json:"description"`
 	FixedArgs      []string `json:"fixed_args"`
-	Visibility     string   `json:"visibility"`
 	CreatedBy      *string  `json:"created_by"`
 	Enabled        bool     `json:"enabled"`
 	CreatedAt      string   `json:"created_at"`
@@ -61,23 +60,12 @@ func runtimeProfileToResponse(p db.RuntimeProfile) RuntimeProfileResponse {
 		CommandName:    p.CommandName,
 		Description:    textToPtr(p.Description),
 		FixedArgs:      args,
-		Visibility:     p.Visibility,
 		CreatedBy:      uuidToPtr(p.CreatedBy),
 		Enabled:        p.Enabled,
 		CreatedAt:      timestampToString(p.CreatedAt),
 		UpdatedAt:      timestampToString(p.UpdatedAt),
 	}
 }
-
-// NOTE: runtime_profile.visibility is intentionally NOT user-settable in v1.
-// The column exists and the API still returns it, but creation always forces
-// 'workspace': the daemon-pull, DaemonRegister and ListRuntimeProfiles read
-// paths do not yet enforce 'private', so accepting 'private' from a client
-// would silently leak a "private" profile's name/command to other members and
-// let other machines' daemons register it (lateral data leak). Re-expose a
-// visibility control only once those read paths enforce creator visibility.
-// Follow-up: MUL-3308.
-const runtimeProfileDefaultVisibility = "workspace"
 
 // marshalFixedArgs validates and JSON-encodes the fixed_args list. Each entry
 // must be a non-empty string; the column defaults to an empty array.
@@ -120,7 +108,9 @@ func (h *Handler) CreateRuntimeProfile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req createRuntimeProfileRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
@@ -158,7 +148,6 @@ func (h *Handler) CreateRuntimeProfile(w http.ResponseWriter, r *http.Request) {
 		CommandName:    req.CommandName,
 		Description:    ptrToText(req.Description),
 		FixedArgs:      fixedArgs,
-		Visibility:     runtimeProfileDefaultVisibility,
 		CreatedBy:      member.UserID,
 		Enabled:        enabled,
 	})
@@ -258,7 +247,9 @@ func (h *Handler) UpdateRuntimeProfile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req updateRuntimeProfileRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}

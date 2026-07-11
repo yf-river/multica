@@ -24,7 +24,7 @@
     "databaseFunctions": 9,
     "databaseTriggers": 4,
     "databaseIndexes": 187,
-    "migrations": 36,
+    "migrations": 38,
     "sqlcModules": 55,
     "sqlcQueries": 579,
     "goWebsocketEvents": 81,
@@ -5750,6 +5750,32 @@
           "droppedIndexes": [
             "idx_task_usage_created_at_legacy"
           ]
+        },
+        {
+          "version": 19,
+          "name": "remove_runtime_profile_visibility",
+          "direction": "down",
+          "source": "server/migrations/019_remove_runtime_profile_visibility.down.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 19,
+          "name": "remove_runtime_profile_visibility",
+          "direction": "up",
+          "source": "server/migrations/019_remove_runtime_profile_visibility.up.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
         }
       ],
       "tables": [

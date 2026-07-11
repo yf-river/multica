@@ -41,7 +41,6 @@ func TestProfileSetSignature_DetectsRegistrationAffectingChanges(t *testing.T) {
 		ProtocolFamily: "codex",
 		CommandName:    "company-codex",
 		FixedArgs:      []string{"--foo"},
-		Visibility:     "workspace",
 		Enabled:        true,
 	}}
 	baseSig := profileSetSignature(base)
@@ -76,11 +75,6 @@ func TestProfileSetSignature_DetectsRegistrationAffectingChanges(t *testing.T) {
 		{"change fixed_args", func(in []RuntimeProfile) []RuntimeProfile {
 			out := append([]RuntimeProfile(nil), in...)
 			out[0].FixedArgs = []string{"--foo", "--bar"}
-			return out
-		}},
-		{"change visibility", func(in []RuntimeProfile) []RuntimeProfile {
-			out := append([]RuntimeProfile(nil), in...)
-			out[0].Visibility = "private"
 			return out
 		}},
 	}
@@ -215,7 +209,7 @@ func TestRefreshWorkspaceRuntimeProfiles_NoDrift_DoesNotReregister(t *testing.T)
 	profiles := []RuntimeProfile{{
 		ID: "prof-1", WorkspaceID: "ws-1", DisplayName: "Company Codex",
 		ProtocolFamily: "codex", CommandName: "company-codex",
-		Visibility: "workspace", Enabled: true,
+		Enabled: true,
 	}}
 	fx := newDriftFixture(t, profiles)
 	d := fx.daemon
@@ -257,7 +251,7 @@ func TestRefreshWorkspaceRuntimeProfiles_NewProfileTriggersReregister(t *testing
 	initial := []RuntimeProfile{{
 		ID: "prof-1", WorkspaceID: "ws-1", DisplayName: "Company Codex",
 		ProtocolFamily: "codex", CommandName: "company-codex",
-		Visibility: "workspace", Enabled: true,
+		Enabled: true,
 	}}
 	fx := newDriftFixture(t, initial)
 	d := fx.daemon
@@ -282,10 +276,10 @@ func TestRefreshWorkspaceRuntimeProfiles_NewProfileTriggersReregister(t *testing
 	fx.setProfiles([]RuntimeProfile{
 		{ID: "prof-1", WorkspaceID: "ws-1", DisplayName: "Company Codex",
 			ProtocolFamily: "codex", CommandName: "company-codex",
-			Visibility: "workspace", Enabled: true},
+			Enabled: true},
 		{ID: "prof-2", WorkspaceID: "ws-1", DisplayName: "Team Claude",
 			ProtocolFamily: "claude", CommandName: "team-claude",
-			Visibility: "workspace", Enabled: true},
+			Enabled: true},
 	})
 
 	if err := d.refreshWorkspaceRuntimeProfiles(context.Background(), "ws-1"); err != nil {
@@ -352,7 +346,7 @@ func TestRefreshWorkspaceRuntimeProfiles_DriftWithRunningRuntimeSkipsOrphanRecov
 	initial := []RuntimeProfile{{
 		ID: "prof-1", WorkspaceID: "ws-1", DisplayName: "Company Codex",
 		ProtocolFamily: "codex", CommandName: "company-codex",
-		Visibility: "workspace", Enabled: true,
+		Enabled: true,
 	}}
 	fx := newDriftFixture(t, initial)
 	d := fx.daemon
@@ -377,10 +371,10 @@ func TestRefreshWorkspaceRuntimeProfiles_DriftWithRunningRuntimeSkipsOrphanRecov
 	fx.setProfiles([]RuntimeProfile{
 		{ID: "prof-1", WorkspaceID: "ws-1", DisplayName: "Company Codex",
 			ProtocolFamily: "codex", CommandName: "company-codex",
-			Visibility: "workspace", Enabled: true},
+			Enabled: true},
 		{ID: "prof-2", WorkspaceID: "ws-1", DisplayName: "Team Claude",
 			ProtocolFamily: "claude", CommandName: "team-claude",
-			Visibility: "workspace", Enabled: true},
+			Enabled: true},
 	})
 
 	if err := d.refreshWorkspaceRuntimeProfiles(context.Background(), "ws-1"); err != nil {
@@ -408,7 +402,7 @@ func TestRefreshWorkspaceRuntimeProfiles_DisableConvergesCustomOnlyDaemon(t *tes
 	initial := []RuntimeProfile{{
 		ID: "prof-1", WorkspaceID: "ws-1", DisplayName: "Company Codex",
 		ProtocolFamily: "codex", CommandName: "company-codex",
-		Visibility: "workspace", Enabled: true,
+		Enabled: true,
 	}}
 	fx := newDriftFixture(t, initial)
 	d := fx.daemon
@@ -507,7 +501,7 @@ func TestRefreshWorkspaceRuntimeProfiles_DisableOneOfManyDeregistersDroppedID(t 
 	initial := []RuntimeProfile{{
 		ID: "prof-1", WorkspaceID: "ws-1", DisplayName: "Company Codex",
 		ProtocolFamily: "codex", CommandName: "company-codex",
-		Visibility: "workspace", Enabled: true,
+		Enabled: true,
 	}}
 	fx := newDriftFixture(t, initial)
 	d := fx.daemon
@@ -573,7 +567,7 @@ func TestRefreshWorkspaceRuntimeProfiles_DisableOneOfManyDeregistersDroppedID(t 
 }
 
 // TestRefreshWorkspaceRuntimeProfiles_FetchErrorIsBestEffort verifies that
-// a network blip or older server (404) does NOT clear the cached signature
+// a network blip or an unexpected 404 does NOT clear the cached signature
 // or trigger a spurious re-register. Without this, a transient 5xx during
 // the workspace sync loop would loop the daemon into re-registering forever.
 func TestRefreshWorkspaceRuntimeProfiles_FetchErrorIsBestEffort(t *testing.T) {
@@ -582,7 +576,7 @@ func TestRefreshWorkspaceRuntimeProfiles_FetchErrorIsBestEffort(t *testing.T) {
 	profiles := []RuntimeProfile{{
 		ID: "prof-1", WorkspaceID: "ws-1", DisplayName: "Company Codex",
 		ProtocolFamily: "codex", CommandName: "company-codex",
-		Visibility: "workspace", Enabled: true,
+		Enabled: true,
 	}}
 	// Server that returns 404 for the profiles route.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

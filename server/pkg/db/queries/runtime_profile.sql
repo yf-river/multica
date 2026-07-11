@@ -10,10 +10,9 @@ INSERT INTO runtime_profile (
     command_name,
     description,
     fixed_args,
-    visibility,
     created_by,
     enabled
-) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 RETURNING *;
 
 -- name: GetRuntimeProfile :one
@@ -46,7 +45,6 @@ SET display_name = COALESCE(sqlc.narg('display_name'), display_name),
     command_name = COALESCE(sqlc.narg('command_name'), command_name),
     description  = COALESCE(sqlc.narg('description'), description),
     fixed_args   = COALESCE(sqlc.narg('fixed_args'), fixed_args),
-    visibility   = COALESCE(sqlc.narg('visibility'), visibility),
     enabled      = COALESCE(sqlc.narg('enabled'), enabled),
     updated_at   = now()
 WHERE id = @id AND workspace_id = @workspace_id

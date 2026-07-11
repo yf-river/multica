@@ -50,7 +50,6 @@ func TestClient_GetRuntimeProfiles_RequestShape(t *testing.T) {
 				"command_name":"company-codex",
 				"description":null,
 				"fixed_args":["--foo"],
-				"visibility":"workspace",
 				"created_by":null,
 				"enabled":true,
 				"created_at":"2026-01-01T00:00:00Z",
@@ -162,7 +161,6 @@ func TestRegisterRuntimes_AppendsProfileRuntime(t *testing.T) {
 		ProtocolFamily: "codex",
 		CommandName:    "company-codex",
 		FixedArgs:      []string{"--profile-mode", "team"},
-		Visibility:     "workspace",
 		Enabled:        true,
 	}}
 	fx := newProfileRegisterFixture(t, profiles, http.StatusOK)

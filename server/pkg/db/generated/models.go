@@ -1024,7 +1024,6 @@ type RuntimeProfile struct {
 	CommandName    string             `json:"command_name"`
 	Description    pgtype.Text        `json:"description"`
 	FixedArgs      []byte             `json:"fixed_args"`
-	Visibility     string             `json:"visibility"`
 	CreatedBy      pgtype.UUID        `json:"created_by"`
 	Enabled        bool               `json:"enabled"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`

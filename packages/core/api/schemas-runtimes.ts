@@ -214,12 +214,11 @@ export const RuntimeProfileSchema = z.object({
   id: z.string(),
   workspace_id: z.string(),
   display_name: z.string(),
-  // Keep protocol and visibility forward-compatible with newer daemons.
+  // Keep the protocol family forward-compatible with newer daemons.
   protocol_family: z.string().default("claude"),
   command_name: z.string(),
   description: z.string().nullable().optional().transform((value) => value ?? null),
   fixed_args: z.array(z.string()).default([]),
-  visibility: z.string().default("workspace"),
   created_by: z.string().nullable().optional().transform((value) => value ?? null),
   enabled: z.boolean().default(true),
   created_at: z.string().default(""),
@@ -238,7 +237,6 @@ export const EMPTY_RUNTIME_PROFILE: RuntimeProfile = {
   command_name: "",
   description: null,
   fixed_args: [],
-  visibility: "workspace",
   created_by: null,
   enabled: false,
   created_at: "",

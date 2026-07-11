@@ -126,11 +126,6 @@ func validateProtocolFamily(family string) error {
 	return nil
 }
 
-// NOTE: a --visibility flag is intentionally NOT exposed in v1. The server
-// forces every profile to 'workspace' because the read paths do not yet
-// enforce 'private' (exposing it would leak "private" profiles). Re-add once
-// creator-visibility filtering exists. Follow-up: MUL-3308.
-
 func runRuntimeProfileList(cmd *cobra.Command, _ []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {

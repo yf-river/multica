@@ -72,10 +72,6 @@ export const RUNTIME_PROFILE_PROTOCOL_FAMILIES = [
 export type RuntimeProtocolFamily =
   (typeof RUNTIME_PROFILE_PROTOCOL_FAMILIES)[number];
 
-// Profile visibility mirrors RuntimeScope's vocabulary but uses the
-// workspace/private axis the server documents for profiles.
-export type RuntimeProfileVisibility = "workspace" | "private";
-
 export interface RuntimeProfile {
   id: string;
   workspace_id: string;
@@ -84,7 +80,6 @@ export interface RuntimeProfile {
   command_name: string;
   description: string | null;
   fixed_args: string[];
-  visibility: RuntimeProfileVisibility;
   created_by: string | null;
   enabled: boolean;
   created_at: string;
@@ -100,7 +95,6 @@ export interface CreateRuntimeProfileRequest {
   command_name: string;
   description?: string;
   fixed_args?: string[];
-  visibility?: RuntimeProfileVisibility;
   enabled?: boolean;
 }
 
@@ -111,7 +105,6 @@ export interface UpdateRuntimeProfileRequest {
   command_name?: string;
   description?: string | null;
   fixed_args?: string[];
-  visibility?: RuntimeProfileVisibility;
   enabled?: boolean;
 }
 

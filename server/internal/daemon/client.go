@@ -471,7 +471,6 @@ type RuntimeProfile struct {
 	CommandName    string   `json:"command_name"`
 	Description    *string  `json:"description"`
 	FixedArgs      []string `json:"fixed_args"`
-	Visibility     string   `json:"visibility"`
 	Enabled        bool     `json:"enabled"`
 }
 

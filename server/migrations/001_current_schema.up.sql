@@ -1489,13 +1489,11 @@ CREATE TABLE public.runtime_profile (
     command_name text NOT NULL,
     description text,
     fixed_args jsonb DEFAULT '[]'::jsonb NOT NULL,
-    visibility text DEFAULT 'workspace'::text NOT NULL,
     created_by uuid,
     enabled boolean DEFAULT true NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT runtime_profile_protocol_family_check CHECK ((protocol_family = ANY (ARRAY['claude'::text, 'codebuddy'::text, 'codex'::text, 'copilot'::text, 'opencode'::text, 'openclaw'::text, 'hermes'::text, 'gemini'::text, 'pi'::text, 'cursor'::text, 'kimi'::text, 'kiro'::text, 'antigravity'::text]))),
-    CONSTRAINT runtime_profile_visibility_check CHECK ((visibility = ANY (ARRAY['workspace'::text, 'private'::text])))
+    CONSTRAINT runtime_profile_protocol_family_check CHECK ((protocol_family = ANY (ARRAY['claude'::text, 'codebuddy'::text, 'codex'::text, 'copilot'::text, 'opencode'::text, 'openclaw'::text, 'hermes'::text, 'gemini'::text, 'pi'::text, 'cursor'::text, 'kimi'::text, 'kiro'::text, 'antigravity'::text])))
 );
 
 CREATE TABLE public.skill (

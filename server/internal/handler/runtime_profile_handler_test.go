@@ -2,7 +2,6 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -137,49 +136,53 @@ func TestDeleteRuntimeProfile_ActiveAgentBlocks(t *testing.T) {
 	}
 }
 
-
-// TestCreateRuntimeProfile_ForcesWorkspaceVisibility is the regression guard
-// for the visibility leak: visibility=private is not user-settable in v1
-// because the read paths don't enforce it. A client that POSTs
-// scope: "personal" must get a profile stored as 'workspace' — never
-// private — so a "private" profile can't leak to other members or be
-// registered by other daemons. Belt-and-suspenders: also assert the row in
-// the DB is 'workspace'.
-func TestCreateRuntimeProfile_ForcesWorkspaceVisibility(t *testing.T) {
+// Runtime profiles have one current visibility contract: workspace-shared.
+// The former private/scope request surface was never enforceable by daemon
+// tokens, so current clients must not be allowed to believe those fields work.
+func TestCreateRuntimeProfile_RejectsRemovedVisibilityFields(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
-	ctx := context.Background()
+
+	for _, removedField := range []string{"visibility", "scope"} {
+		t.Run(removedField, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			req := newRequest("POST", "/api/workspaces/"+testWorkspaceID+"/runtime-profiles", map[string]any{
+				"display_name":    "Removed Field " + removedField,
+				"protocol_family": "codex",
+				"command_name":    "removed-field-codex",
+				removedField:      "private",
+			})
+			req = withURLParam(req, "id", testWorkspaceID)
+			testHandler.CreateRuntimeProfile(w, req)
+
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
+func TestUpdateRuntimeProfile_RejectsRemovedVisibilityField(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	profileID := insertRuntimeProfileFixture(
+		t,
+		context.Background(),
+		"Removed Update Visibility",
+		"codex",
+		"removed-update-visibility",
+	)
 
 	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/workspaces/"+testWorkspaceID+"/runtime-profiles", map[string]any{
-		"display_name":    "Visibility Forced Profile",
-		"protocol_family": "codex",
-		"command_name":    "vis-forced-codex",
-		"scope": "personal", // must be ignored
+	req := newRequest("PATCH", "/api/workspaces/"+testWorkspaceID+"/runtime-profiles/"+profileID, map[string]any{
+		"visibility": "private",
 	})
-	req = withURLParam(req, "id", testWorkspaceID)
-	testHandler.CreateRuntimeProfile(w, req)
+	req = withURLParams(req, "id", testWorkspaceID, "profileId", profileID)
+	testHandler.UpdateRuntimeProfile(w, req)
 
-	if w.Code != http.StatusCreated {
-		t.Fatalf("expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var resp RuntimeProfileResponse
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	t.Cleanup(func() {
-		mustExec(t, context.Background(), `DELETE FROM runtime_profile WHERE id = $1`, resp.ID)
-	})
-
-	if resp.Visibility != "workspace" {
-		t.Fatalf("response visibility = %q, want workspace (private must be forced to workspace)", resp.Visibility)
-	}
-	var dbVis string
-	if err := testPool.QueryRow(ctx, `SELECT visibility FROM runtime_profile WHERE id = $1`, resp.ID).Scan(&dbVis); err != nil {
-		t.Fatalf("read stored visibility: %v", err)
-	}
-	if dbVis != "workspace" {
-		t.Fatalf("stored visibility = %q, want workspace", dbVis)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 }

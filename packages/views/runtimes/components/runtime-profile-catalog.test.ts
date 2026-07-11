@@ -21,7 +21,6 @@ function profile(
     command_name: "codex",
     description: null,
     fixed_args: [],
-    visibility: "workspace",
     created_by: "user-1",
     enabled,
     created_at: "2026-01-01T00:00:00Z",
