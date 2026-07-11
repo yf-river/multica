@@ -356,29 +356,21 @@ func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	// Verify the caller owns this task's workspace.
+	task, workspaceID, ok := h.requireDaemonTaskAccessWithWorkspace(w, r, taskID)
+	if !ok {
+		return
+	}
 	if len(req.Messages) == 0 {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 		return
 	}
 
-	// Verify the caller owns this task's workspace.
-	task, ok := h.requireDaemonTaskAccess(w, r, taskID)
-	if !ok {
-		return
+	type preparedTaskMessage struct {
+		request TaskMessageRequest
+		input   []byte
 	}
-
-	workspaceID := ""
-	if task.IssueID.Valid {
-		if issue, err := h.Queries.GetIssue(r.Context(), task.IssueID); err == nil {
-			workspaceID = uuidToString(issue.WorkspaceID)
-		}
-	}
-	if workspaceID == "" && task.ChatSessionID.Valid {
-		if cs, err := h.Queries.GetChatSession(r.Context(), task.ChatSessionID); err == nil {
-			workspaceID = uuidToString(cs.WorkspaceID)
-		}
-	}
-
+	prepared := make([]preparedTaskMessage, 0, len(req.Messages))
 	for _, msg := range req.Messages {
 		// Redact sensitive information before persisting or broadcasting.
 		msg.Type = sanitizeTaskMessageText(msg.Type)
@@ -389,27 +381,49 @@ func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 
 		var inputJSON []byte
 		if msg.Input != nil {
-			inputJSON, _ = json.Marshal(msg.Input)
+			var err error
+			inputJSON, err = json.Marshal(msg.Input)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "invalid task message input")
+				return
+			}
 		}
-		created, createErr := h.Queries.CreateTaskMessage(r.Context(), db.CreateTaskMessageParams{
+		prepared = append(prepared, preparedTaskMessage{request: msg, input: inputJSON})
+	}
+
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to begin task message update")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	createdMessages := make([]db.TaskMessage, 0, len(prepared))
+	for _, item := range prepared {
+		msg := item.request
+		created, err := qtx.CreateTaskMessage(r.Context(), db.CreateTaskMessageParams{
 			TaskID:  parseUUID(taskID),
 			Seq:     int32(msg.Seq),
 			Type:    msg.Type,
 			Tool:    pgtype.Text{String: msg.Tool, Valid: msg.Tool != ""},
 			Content: pgtype.Text{String: msg.Content, Valid: msg.Content != ""},
-			Input:   inputJSON,
+			Input:   item.input,
 			Output:  pgtype.Text{String: msg.Output, Valid: msg.Output != ""},
 		})
-		if createErr != nil {
-			slog.Error("failed to create task message", "task_id", taskID, "seq", msg.Seq, "error", createErr)
+		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to persist task message")
 			return
 		}
+		createdMessages = append(createdMessages, created)
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit task messages")
+		return
+	}
 
-		if workspaceID != "" {
-			h.publishTask(protocol.EventTaskMessage, workspaceID, "system", "", taskID,
-				taskMessageToPayload(created, taskID, uuidToString(task.IssueID)))
-		}
+	for _, created := range createdMessages {
+		h.publishTask(protocol.EventTaskMessage, workspaceID, "system", "", taskID,
+			taskMessageToPayload(created, taskID, uuidToString(task.IssueID)))
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})

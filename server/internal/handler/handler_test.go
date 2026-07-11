@@ -113,6 +113,51 @@ func (tx *failTaskUsageTx) Exec(ctx context.Context, sql string, args ...any) (p
 	return tx.Tx.Exec(ctx, sql, args...)
 }
 
+type failTaskMessageDB struct {
+	db.DBTX
+	failAt int
+	calls  int
+}
+
+func (f *failTaskMessageDB) QueryRow(ctx context.Context, sql string, args ...interface{}) pgx.Row {
+	if strings.Contains(sql, "-- name: CreateTaskMessage ") {
+		f.calls++
+		if f.calls == f.failAt {
+			return errorRow{err: errors.New("injected task message create failure")}
+		}
+	}
+	return f.DBTX.QueryRow(ctx, sql, args...)
+}
+
+type failTaskMessageTxStarter struct {
+	pool   *pgxpool.Pool
+	failAt int
+}
+
+func (s failTaskMessageTxStarter) Begin(ctx context.Context) (pgx.Tx, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &failTaskMessageTx{Tx: tx, failAt: s.failAt}, nil
+}
+
+type failTaskMessageTx struct {
+	pgx.Tx
+	failAt int
+	calls  int
+}
+
+func (tx *failTaskMessageTx) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+	if strings.Contains(sql, "-- name: CreateTaskMessage ") {
+		tx.calls++
+		if tx.calls == tx.failAt {
+			return errorRow{err: errors.New("injected task message create failure")}
+		}
+	}
+	return tx.Tx.QueryRow(ctx, sql, args...)
+}
+
 var testHandler *Handler
 var testPool *pgxpool.Pool
 var testUserID string

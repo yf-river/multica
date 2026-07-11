@@ -1237,6 +1237,42 @@ func TestReportTaskMessagesSanitizesNullBytesBeforePersisting(t *testing.T) {
 	}
 }
 
+func TestReportTaskMessagesRollsBackBatchWhenOneWriteFails(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	runtimeID := createClaimReclaimRuntime(t, ctx, "Task message rollback runtime")
+	agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, "Task message rollback agent")
+	taskID := createDispatchedClaimFixtureTask(t, ctx, agentID, runtimeID, issueID, "1 second", true)
+	t.Cleanup(func() { _ = testHandler.Queries.DeleteTaskMessages(context.Background(), parseUUID(taskID)) })
+
+	h := *testHandler
+	h.Queries = db.New(&failTaskMessageDB{DBTX: testPool, failAt: 2})
+	h.TxStarter = failTaskMessageTxStarter{pool: testPool, failAt: 2}
+	w := httptest.NewRecorder()
+	req := newDaemonUserRequest("POST", "/api/daemon/tasks/"+taskID+"/messages", map[string]any{
+		"messages": []map[string]any{
+			{"seq": 31, "type": "assistant", "content": "first"},
+			{"seq": 32, "type": "assistant", "content": "second"},
+		},
+	}, testWorkspaceID, "task-message-rollback-daemon")
+	req = withURLParam(req, "taskId", taskID)
+
+	h.ReportTaskMessages(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d; body=%s", w.Code, http.StatusInternalServerError, w.Body.String())
+	}
+	messages, err := testHandler.Queries.ListTaskMessages(ctx, parseUUID(taskID))
+	if err != nil {
+		t.Fatalf("list task messages: %v", err)
+	}
+	if len(messages) != 0 {
+		t.Fatalf("persisted messages = %+v, want atomic rollback", messages)
+	}
+}
+
 // setupForeignWorkspaceFixture creates an isolated workspace (not reachable
 // from testUserID) with its own agent, runtime, issue, and queued task.
 // Returns (issueID, taskID). All rows are cleaned up when the test ends.
