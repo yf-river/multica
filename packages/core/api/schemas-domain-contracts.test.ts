@@ -2,8 +2,13 @@ import { describe, expect, it } from "vitest";
 import { parseWithFallback } from "./schema";
 import { AppConfigSchema, EMPTY_APP_CONFIG } from "./schemas-app-config";
 import {
+  AgentEnvResponseSchema,
+  AgentSchema,
   AgentTemplateSummaryListSchema,
+  EMPTY_AGENT,
   EMPTY_AGENT_TEMPLATE_SUMMARY_LIST,
+  EMPTY_INTERNAL_SQUAD_TEMPLATE_RESPONSE,
+  InternalSquadTemplateResponseSchema,
 } from "./schemas-agents";
 import { EMPTY_USER, UserSchema } from "./schemas-auth";
 import {
@@ -52,7 +57,6 @@ import { RuntimeUsageListSchema } from "./schemas-usage";
 import { EMPTY_WORKSPACE, WorkspaceSchema } from "./schemas-workspaces";
 import { EMPTY_INBOX_ITEM, InboxItemSchema } from "./schemas-inbox";
 import { EMPTY_CHAT_MESSAGES_PAGE, ChatMessagesPageSchema } from "./schemas-chat";
-import { AgentEnvResponseSchema, EMPTY_AGENT, AgentSchema } from "./schemas-agents";
 import {
   ExternalCredentialProfileSchema,
   TestExternalCredentialProfileResponseSchema,
@@ -67,6 +71,8 @@ import {
   ListProjectsResponseSchema,
 } from "./schemas-projects";
 import { EMPTY_SKILL, SkillSchema } from "./schemas-skills";
+import { EMPTY_LABEL_LIST_RESPONSE, ListLabelsResponseSchema } from "./schemas-labels";
+import { EMPTY_PINNED_ITEM_LIST, PinnedItemListSchema } from "./schemas-pins";
 import {
   AgentTaskListSchema,
   EMPTY_ISSUE_EXECUTION_TREE,
@@ -273,6 +279,27 @@ describe("domain response schema fallbacks", () => {
       EMPTY_SKILL,
       { endpoint: "GET /api/skills/:id" },
     )).toBe(EMPTY_SKILL);
+  });
+
+  it("rejects malformed Label, Pin and internal Squad identities", () => {
+    expect(parseWithFallback(
+      { labels: [{ id: "label-1", color: "red" }], total: 1 },
+      ListLabelsResponseSchema,
+      EMPTY_LABEL_LIST_RESPONSE,
+      { endpoint: "GET /api/labels" },
+    )).toBe(EMPTY_LABEL_LIST_RESPONSE);
+    expect(parseWithFallback(
+      [{ id: "pin-1", item_id: 42 }],
+      PinnedItemListSchema,
+      EMPTY_PINNED_ITEM_LIST,
+      { endpoint: "GET /api/pins" },
+    )).toBe(EMPTY_PINNED_ITEM_LIST);
+    expect(parseWithFallback(
+      { squad: { id: 42 }, agents: [] },
+      InternalSquadTemplateResponseSchema,
+      EMPTY_INTERNAL_SQUAD_TEMPLATE_RESPONSE,
+      { endpoint: "POST /api/squads/internal-template" },
+    )).toBe(EMPTY_INTERNAL_SQUAD_TEMPLATE_RESPONSE);
   });
 
   it("accepts the current task execution response and preserves additive fields", () => {

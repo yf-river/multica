@@ -17,6 +17,8 @@ export * from "./schemas-inbox";
 export * from "./schemas-chat";
 export * from "./schemas-projects";
 export * from "./schemas-skills";
+export * from "./schemas-labels";
+export * from "./schemas-pins";
 export * from "./schemas-external-credentials";
 export * from "./schemas-lark";
 export * from "./schemas-github";

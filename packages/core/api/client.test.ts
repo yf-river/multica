@@ -233,6 +233,28 @@ describe("ApiClient", () => {
       .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
   });
 
+  it("validates Label, Pin and Squad member reads and mutations", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(
+      new Response(JSON.stringify({ id: 42 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )));
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.listLabels()).resolves.toMatchObject({ labels: [], total: 0 });
+    await expect(client.listPins()).resolves.toEqual([]);
+    await expect(client.listSquadMembers("squad-1")).resolves.toEqual([]);
+    await expect(client.createLabel({ name: "bug", color: "#ff0000" }))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
+    await expect(client.createPin({ item_type: "issue", item_id: "issue-1" }))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
+    await expect(client.addSquadMember("squad-1", {
+      member_type: "agent",
+      member_id: "agent-1",
+    })).rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
+  });
+
   it("whitelists external credential responses without exposing secret fields", async () => {
     const profile = {
       id: "profile-1",

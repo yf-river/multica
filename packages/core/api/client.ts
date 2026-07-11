@@ -381,11 +381,27 @@ import {
   SearchProjectsResponseSchema,
   SkillSchema,
   SkillSummaryListSchema,
+  LabelSchema,
+  ListLabelsResponseSchema,
+  IssueLabelsResponseSchema,
+  PinnedItemSchema,
+  PinnedItemListSchema,
+  SquadMemberSchema,
+  SquadMemberListSchema,
+  InternalSquadTemplateResponseSchema,
   EMPTY_PROJECT,
   EMPTY_PROJECT_LIST_RESPONSE,
   EMPTY_SEARCH_PROJECTS_RESPONSE,
   EMPTY_SKILL,
   EMPTY_SKILL_SUMMARIES,
+  EMPTY_LABEL,
+  EMPTY_LABEL_LIST_RESPONSE,
+  EMPTY_ISSUE_LABELS_RESPONSE,
+  EMPTY_PINNED_ITEM,
+  EMPTY_PINNED_ITEM_LIST,
+  EMPTY_SQUAD_MEMBER,
+  EMPTY_SQUAD_MEMBERS,
+  EMPTY_INTERNAL_SQUAD_TEMPLATE_RESPONSE,
   ExternalCredentialProfileSchema,
   ExternalCredentialProfileListResponseSchema,
   TestExternalCredentialProfileResponseSchema,
@@ -2642,20 +2658,31 @@ export class ApiClient {
 
   // Labels
   async listLabels(): Promise<ListLabelsResponse> {
-    return this.fetch(`/api/labels`);
+    const raw = await this.fetch<unknown>(`/api/labels`);
+    return parseWithFallback(raw, ListLabelsResponseSchema, EMPTY_LABEL_LIST_RESPONSE, {
+      endpoint: "GET /api/labels",
+    });
   }
 
   async createLabel(data: CreateLabelRequest): Promise<Label> {
-    return this.fetch(`/api/labels`, {
+    const raw = await this.fetch<unknown>(`/api/labels`, {
       method: "POST",
       body: JSON.stringify(data),
+    });
+    return parseOrThrow(raw, LabelSchema, EMPTY_LABEL, {
+      endpoint: "POST /api/labels",
+      mayHaveCommitted: true,
     });
   }
 
   async updateLabel(id: string, data: UpdateLabelRequest): Promise<Label> {
-    return this.fetch(`/api/labels/${id}`, {
+    const raw = await this.fetch<unknown>(`/api/labels/${id}`, {
       method: "PUT",
       body: JSON.stringify(data),
+    });
+    return parseOrThrow(raw, LabelSchema, EMPTY_LABEL, {
+      endpoint: "PUT /api/labels/:id",
+      mayHaveCommitted: true,
     });
   }
 
@@ -2664,31 +2691,49 @@ export class ApiClient {
   }
 
   async listLabelsForIssue(issueId: string): Promise<IssueLabelsResponse> {
-    return this.fetch(`/api/issues/${issueId}/labels`);
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/labels`);
+    return parseWithFallback(raw, IssueLabelsResponseSchema, EMPTY_ISSUE_LABELS_RESPONSE, {
+      endpoint: "GET /api/issues/:id/labels",
+    });
   }
 
   async attachLabel(issueId: string, labelId: string): Promise<IssueLabelsResponse> {
-    return this.fetch(`/api/issues/${issueId}/labels`, {
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/labels`, {
       method: "POST",
       body: JSON.stringify({ label_id: labelId }),
+    });
+    return parseOrThrow(raw, IssueLabelsResponseSchema, EMPTY_ISSUE_LABELS_RESPONSE, {
+      endpoint: "POST /api/issues/:id/labels",
+      mayHaveCommitted: true,
     });
   }
 
   async detachLabel(issueId: string, labelId: string): Promise<IssueLabelsResponse> {
-    return this.fetch(`/api/issues/${issueId}/labels/${labelId}`, {
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/labels/${labelId}`, {
       method: "DELETE",
+    });
+    return parseOrThrow(raw, IssueLabelsResponseSchema, EMPTY_ISSUE_LABELS_RESPONSE, {
+      endpoint: "DELETE /api/issues/:id/labels/:labelId",
+      mayHaveCommitted: true,
     });
   }
 
   // Pins
   async listPins(): Promise<PinnedItem[]> {
-    return this.fetch("/api/pins");
+    const raw = await this.fetch<unknown>("/api/pins");
+    return parseWithFallback(raw, PinnedItemListSchema, EMPTY_PINNED_ITEM_LIST, {
+      endpoint: "GET /api/pins",
+    });
   }
 
   async createPin(data: CreatePinRequest): Promise<PinnedItem> {
-    return this.fetch("/api/pins", {
+    const raw = await this.fetch<unknown>("/api/pins", {
       method: "POST",
       body: JSON.stringify(data),
+    });
+    return parseOrThrow(raw, PinnedItemSchema, EMPTY_PINNED_ITEM, {
+      endpoint: "POST /api/pins",
+      mayHaveCommitted: true,
     });
   }
 
@@ -2731,10 +2776,16 @@ export class ApiClient {
   async ensureInternalSquadTemplate(template: InternalSquadTemplateKey | EnsureInternalSquadTemplateRequest): Promise<InternalSquadTemplateResponse> {
     const body =
       typeof template === "string" ? { template_key: template } : template;
-    return this.fetch("/api/squads/internal-template", {
+    const raw = await this.fetch<unknown>("/api/squads/internal-template", {
       method: "POST",
       body: JSON.stringify(body),
     });
+    return parseOrThrow(
+      raw,
+      InternalSquadTemplateResponseSchema,
+      EMPTY_INTERNAL_SQUAD_TEMPLATE_RESPONSE,
+      { endpoint: "POST /api/squads/internal-template", mayHaveCommitted: true },
+    );
   }
 
   async updateSquad(id: string, data: UpdateSquadRequest): Promise<Squad> {
@@ -2756,11 +2807,21 @@ export class ApiClient {
   }
 
   async listSquadMembers(squadId: string): Promise<SquadMember[]> {
-    return this.fetch(`/api/squads/${squadId}/members`);
+    const raw = await this.fetch<unknown>(`/api/squads/${squadId}/members`);
+    return parseWithFallback(raw, SquadMemberListSchema, EMPTY_SQUAD_MEMBERS, {
+      endpoint: "GET /api/squads/:id/members",
+    });
   }
 
   async addSquadMember(squadId: string, data: { member_type: string; member_id: string; role?: string }): Promise<SquadMember> {
-    return this.fetch(`/api/squads/${squadId}/members`, { method: "POST", body: JSON.stringify(data) });
+    const raw = await this.fetch<unknown>(`/api/squads/${squadId}/members`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseOrThrow(raw, SquadMemberSchema, EMPTY_SQUAD_MEMBER, {
+      endpoint: "POST /api/squads/:id/members",
+      mayHaveCommitted: true,
+    });
   }
 
   async removeSquadMember(squadId: string, data: { member_type: string; member_id: string }): Promise<void> {
@@ -2768,7 +2829,14 @@ export class ApiClient {
   }
 
   async updateSquadMemberRole(squadId: string, data: { member_type: string; member_id: string; role: string }): Promise<SquadMember> {
-    return this.fetch(`/api/squads/${squadId}/members/role`, { method: "PATCH", body: JSON.stringify(data) });
+    const raw = await this.fetch<unknown>(`/api/squads/${squadId}/members/role`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+    return parseOrThrow(raw, SquadMemberSchema, EMPTY_SQUAD_MEMBER, {
+      endpoint: "PATCH /api/squads/:id/members/role",
+      mayHaveCommitted: true,
+    });
   }
 
   // Per-squad members status snapshot: one row per member with derived

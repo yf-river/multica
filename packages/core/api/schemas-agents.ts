@@ -6,8 +6,10 @@ import type {
   AgentTemplateSummary,
   CreateAgentFromTemplateResponse,
   ListIssueSOPRunsResponse,
+  InternalSquadTemplateResponse,
   ObservabilitySummary,
   Squad,
+  SquadMember,
   SquadSOPRun,
 } from "../types";
 import { NonEmptyStringSchema } from "./schemas-internal";
@@ -205,6 +207,43 @@ export const EMPTY_SQUAD: Squad = {
   archived_by: null,
   member_count: 0,
   member_preview: [],
+};
+
+export const SquadMemberSchema = z.object({
+  id: NonEmptyStringSchema,
+  squad_id: NonEmptyStringSchema,
+  member_type: z.string(),
+  member_id: NonEmptyStringSchema,
+  role: z.string().default(""),
+  created_at: z.string(),
+}).loose();
+
+export const SquadMemberListSchema = z.array(SquadMemberSchema);
+export const EMPTY_SQUAD_MEMBERS: SquadMember[] = [];
+export const EMPTY_SQUAD_MEMBER: SquadMember = {
+  id: "",
+  squad_id: "",
+  member_type: "agent",
+  member_id: "",
+  role: "",
+  created_at: "",
+};
+
+const InternalSquadTemplateAgentSchema = z.object({
+  id: NonEmptyStringSchema,
+  name: z.string(),
+  role_key: z.string(),
+  role: z.string(),
+}).loose();
+
+export const InternalSquadTemplateResponseSchema = z.object({
+  squad: SquadSchema,
+  agents: z.array(InternalSquadTemplateAgentSchema).default([]),
+}).loose();
+
+export const EMPTY_INTERNAL_SQUAD_TEMPLATE_RESPONSE: InternalSquadTemplateResponse = {
+  squad: EMPTY_SQUAD,
+  agents: [],
 };
 
 const SOPStepEventSchema = z.object({
