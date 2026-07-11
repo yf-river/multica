@@ -45,14 +45,6 @@ type CodexHomeOptions struct {
 	GOOS string
 }
 
-// prepareCodexHome is a thin wrapper around prepareCodexHomeWithOpts kept for
-// tests that don't care about platform-aware sandbox configuration. It
-// assumes a Linux-like environment where workspace-write + network_access
-// works correctly.
-func prepareCodexHome(codexHome string, logger *slog.Logger) error {
-	return prepareCodexHomeWithOpts(codexHome, CodexHomeOptions{GOOS: "linux"}, logger)
-}
-
 // prepareCodexHomeWithOpts creates a per-task CODEX_HOME directory and seeds
 // it from the daemon's shared runtime Codex home. Auth is symlinked to the
 // runtime profile; config files are copied; session/log/state files stay local
@@ -224,31 +216,6 @@ func exposeSharedCodexPluginCache(codexHome, sharedHome string) error {
 		return fmt.Errorf("expose shared plugin cache: %w", err)
 	}
 	return nil
-}
-
-// ensureDirSymlink creates a symlink dst → src for a directory.
-// Unlike ensureSymlink, it creates the source directory if it doesn't exist,
-// so Codex can write to it immediately.
-func ensureDirSymlink(src, dst string) error {
-	if err := os.MkdirAll(src, 0o755); err != nil {
-		return fmt.Errorf("create shared dir %s: %w", src, err)
-	}
-
-	// Check if dst already exists.
-	if fi, err := os.Lstat(dst); err == nil {
-		if fi.Mode()&os.ModeSymlink != 0 {
-			target, err := os.Readlink(dst)
-			if err == nil && target == src {
-				return nil // already correct
-			}
-			_ = os.Remove(dst)
-		} else {
-			// Regular file/dir exists — don't overwrite.
-			return nil
-		}
-	}
-
-	return createDirLink(src, dst)
 }
 
 // ensureSymlink ensures dst tracks src. If src doesn't exist, it's a no-op.
