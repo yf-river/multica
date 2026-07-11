@@ -553,7 +553,7 @@ describe("project gantt cache invalidation", () => {
   it("invalidates the project Gantt cache on issue:updated", () => {
     onIssueUpdated(qc, WS_ID, {
       id: ISSUE_ID,
-      start_date: "2026-01-01T00:00:00Z",
+      start_date: "2026-01-01",
     });
     expectInvalidated(qc, issueKeys.projectGantt(WS_ID, PROJECT_ID));
   });

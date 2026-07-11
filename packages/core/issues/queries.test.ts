@@ -36,7 +36,7 @@ function makeIssue(idx: number): Issue {
     parent_issue_id: null,
     project_id: PROJECT_ID,
     position: idx,
-    start_date: "2026-05-01T00:00:00Z",
+    start_date: "2026-05-01",
     due_date: null,
     labels: [],
     metadata: {},

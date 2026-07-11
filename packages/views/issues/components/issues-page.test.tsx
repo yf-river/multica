@@ -388,7 +388,7 @@ const mockIssues: Issue[] = [
     creator_type: "member",
     creator_id: "user-1",
     start_date: null,
-    due_date: "2026-02-01T00:00:00Z",
+    due_date: "2026-02-01",
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
   },
