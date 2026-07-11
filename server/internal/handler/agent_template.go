@@ -542,8 +542,10 @@ func (h *Handler) CreateAgentFromTemplate(w http.ResponseWriter, r *http.Request
 	}
 
 	if runtime.Status == "online" {
-		h.TaskService.ReconcileAgentStatus(r.Context(), agent.ID)
-		agent, _ = h.Queries.GetAgent(r.Context(), agent.ID)
+		refreshed, err := h.TaskService.ReconcileAgentStatus(r.Context(), agent.ID)
+		if err == nil {
+			agent = refreshed
+		}
 	}
 
 	resp := agentToResponse(agent)

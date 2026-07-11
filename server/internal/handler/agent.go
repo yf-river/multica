@@ -906,8 +906,10 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	slog.Info("agent created", append(logger.RequestAttrs(r), "agent_id", uuidToString(created.ID), "name", created.Name, "workspace_id", workspaceID)...)
 
 	if runtime.Status == "online" {
-		h.TaskService.ReconcileAgentStatus(r.Context(), created.ID)
-		created, _ = h.Queries.GetAgent(r.Context(), created.ID)
+		refreshed, err := h.TaskService.ReconcileAgentStatus(r.Context(), created.ID)
+		if err == nil {
+			created = refreshed
+		}
 	}
 
 	resp := agentToResponse(created)

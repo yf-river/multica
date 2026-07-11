@@ -224,6 +224,24 @@ func TestCreateAgent_DefaultsMaxConcurrentTasksToTwenty(t *testing.T) {
 	}
 }
 
+func TestReconcileAgentStatus_ReportsRefreshFailure(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	agentID := createHandlerTestAgent(t, "reconcile-status-error", []byte(`{}`))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	refreshed, err := testHandler.TaskService.ReconcileAgentStatus(ctx, parseUUID(agentID))
+	if err == nil {
+		t.Fatal("ReconcileAgentStatus must report a failed refresh")
+	}
+	if refreshed.ID.Valid {
+		t.Fatalf("failed refresh returned a fabricated agent: %+v", refreshed)
+	}
+}
+
 func TestAgentModelForRuntimeDefaultsCodeBuddyToDeepSeek(t *testing.T) {
 	if got := agentModelForRuntime("codebuddy", ""); got != "deepseek-v4-pro-ioa" {
 		t.Fatalf("codebuddy default model = %q", got)

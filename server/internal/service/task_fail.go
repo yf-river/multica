@@ -507,25 +507,18 @@ func (s *TaskService) ReportProgress(ctx context.Context, taskID string, workspa
 	})
 }
 
-// ReconcileAgentStatus refreshes agent status from the current active task set.
-func (s *TaskService) ReconcileAgentStatus(ctx context.Context, agentID pgtype.UUID) {
+// ReconcileAgentStatus refreshes agent status from the current active task set
+// and returns the persisted row. Callers that need the refreshed representation
+// must handle the error instead of issuing a second, best-effort read.
+func (s *TaskService) ReconcileAgentStatus(ctx context.Context, agentID pgtype.UUID) (db.Agent, error) {
 	agent, err := s.Queries.RefreshAgentStatusFromTasks(ctx, agentID)
 	if err != nil {
-		return
+		slog.Warn("reconcile agent status failed", "agent_id", util.UUIDToString(agentID), "error", err)
+		return db.Agent{}, fmt.Errorf("refresh agent status: %w", err)
 	}
 	slog.Debug("agent status reconciled", "agent_id", util.UUIDToString(agentID), "status", agent.Status)
 	s.publishAgentStatus(agent)
-}
-
-func (s *TaskService) updateAgentStatus(ctx context.Context, agentID pgtype.UUID, status string) {
-	agent, err := s.Queries.UpdateAgentStatus(ctx, db.UpdateAgentStatusParams{
-		ID:     agentID,
-		Status: status,
-	})
-	if err != nil {
-		return
-	}
-	s.publishAgentStatus(agent)
+	return agent, nil
 }
 
 func (s *TaskService) publishAgentStatus(agent db.Agent) {
