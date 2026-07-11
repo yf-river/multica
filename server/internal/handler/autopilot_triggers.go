@@ -73,11 +73,6 @@ func prepareAutopilotTrigger(
 		return preparedAutopilotTrigger{}, false
 	}
 	if req.Kind != "schedule" && req.Kind != "webhook" {
-		// "api" kind is deprecated: it was reserved-but-inert (no scheduler,
-		// no ingress route), and the only way to actually fire one was via
-		// the manual /trigger endpoint — which already works regardless of
-		// trigger kind. Surface stragglers with 400 so callers move to
-		// schedule or webhook.
 		writeError(w, http.StatusBadRequest, "kind must be schedule or webhook")
 		return preparedAutopilotTrigger{}, false
 	}

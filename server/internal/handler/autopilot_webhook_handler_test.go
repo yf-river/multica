@@ -111,7 +111,7 @@ func TestWebhookHandler_FiltersUndeclaredEvent(t *testing.T) {
 	})
 
 	w := postWebhook(t, *trig.WebhookToken, map[string]any{
-		"action": "in_progress",
+		"action":       "in_progress",
 		"workflow_run": map[string]any{"id": 123},
 	}, map[string]string{"X-GitHub-Event": "workflow_run"})
 	if w.Code != http.StatusOK {
@@ -149,7 +149,7 @@ func TestWebhookHandler_AllowsDeclaredEvent(t *testing.T) {
 	})
 
 	w := postWebhook(t, *trig.WebhookToken, map[string]any{
-		"action": "completed",
+		"action":       "completed",
 		"workflow_run": map[string]any{"id": 123},
 	}, map[string]string{"X-GitHub-Event": "workflow_run"})
 	if w.Code != http.StatusOK {
@@ -170,7 +170,7 @@ func TestWebhookHandler_EmptyFiltersAllowsAll(t *testing.T) {
 	trig := createWebhookTriggerViaHandler(t, apID)
 
 	w := postWebhook(t, *trig.WebhookToken, map[string]any{
-		"action": "in_progress",
+		"action":       "in_progress",
 		"workflow_run": map[string]any{"id": 123},
 	}, map[string]string{"X-GitHub-Event": "workflow_run"})
 	if w.Code != http.StatusOK {
@@ -824,18 +824,18 @@ func TestWebhookHandler_DBErrorOnTokenLookupReturns500(t *testing.T) {
 	t.Skip("500-branch requires injecting a stub Queries; left as a code-review-protected invariant")
 }
 
-func TestCreateAutopilotTrigger_RejectsAPIKind(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "WebhookAPIKind Agent")
+func TestCreateAutopilotTrigger_RejectsUnknownKind(t *testing.T) {
+	agentID := createWebhookTestAgent(t, "WebhookUnknownKind Agent")
 	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
 
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/autopilots/"+apID+"/triggers", map[string]any{
-		"kind": "api",
+		"kind": "poll",
 	})
 	req = withURLParam(req, "id", apID)
 	testHandler.CreateAutopilotTrigger(w, req)
 	if w.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 on kind=api, got %d body=%s", w.Code, w.Body.String())
+		t.Fatalf("expected 400 on unknown kind, got %d body=%s", w.Code, w.Body.String())
 	}
 	if !strings.Contains(w.Body.String(), "schedule or webhook") {
 		t.Fatalf("expected message to name allowed kinds, body=%s", w.Body.String())

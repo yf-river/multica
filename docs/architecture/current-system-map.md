@@ -25,7 +25,7 @@ evidence reviewable by humans.
 | Database functions | 9 |
 | Database triggers | 4 |
 | Database indexes | 187 |
-| Migration files (up + down) | 18 |
+| Migration files (up + down) | 20 |
 | sqlc modules | 53 |
 | sqlc queries | 575 |
 | Go WebSocket events | 81 |
@@ -513,6 +513,8 @@ intentionally platform-specific.
 | 8 | autopilot_manual_trigger_idempotency | up | — | 0 | 0 | 1 | `server/migrations/008_autopilot_manual_trigger_idempotency.up.sql` |
 | 9 | autopilot_create_idempotency | down | — | 0 | 0 | 0 | `server/migrations/009_autopilot_create_idempotency.down.sql` |
 | 9 | autopilot_create_idempotency | up | — | 0 | 0 | 1 | `server/migrations/009_autopilot_create_idempotency.up.sql` |
+| 10 | remove_inert_autopilot_api_kind | down | — | 0 | 0 | 0 | `server/migrations/010_remove_inert_autopilot_api_kind.down.sql` |
+| 10 | remove_inert_autopilot_api_kind | up | — | 0 | 0 | 0 | `server/migrations/010_remove_inert_autopilot_api_kind.up.sql` |
 
 ### Current tables discovered from up migrations
 

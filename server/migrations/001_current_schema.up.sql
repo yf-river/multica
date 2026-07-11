@@ -614,7 +614,7 @@ CREATE TABLE public.autopilot_run (
     result jsonb,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     squad_id uuid,
-    CONSTRAINT autopilot_run_source_check CHECK ((source = ANY (ARRAY['schedule'::text, 'manual'::text, 'webhook'::text, 'api'::text]))),
+    CONSTRAINT autopilot_run_source_check CHECK ((source = ANY (ARRAY['schedule'::text, 'manual'::text, 'webhook'::text]))),
     CONSTRAINT autopilot_run_status_check CHECK ((status = ANY (ARRAY['issue_created'::text, 'running'::text, 'completed'::text, 'failed'::text, 'skipped'::text])))
 );
 
@@ -642,7 +642,7 @@ CREATE TABLE public.autopilot_trigger (
     provider text DEFAULT 'generic'::text NOT NULL,
     signing_secret text,
     event_filters jsonb,
-    CONSTRAINT autopilot_trigger_kind_check CHECK ((kind = ANY (ARRAY['schedule'::text, 'webhook'::text, 'api'::text]))),
+    CONSTRAINT autopilot_trigger_kind_check CHECK ((kind = ANY (ARRAY['schedule'::text, 'webhook'::text]))),
     CONSTRAINT autopilot_trigger_provider_check CHECK ((provider = ANY (ARRAY['generic'::text, 'github'::text])))
 );
 

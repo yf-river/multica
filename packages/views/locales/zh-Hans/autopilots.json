@@ -111,8 +111,7 @@
   "run_source": {
     "schedule": "时间表",
     "manual": "手动",
-    "webhook": "Webhook",
-    "api": "API"
+    "webhook": "Webhook"
   },
   "run": {
     "issue_linked": "已关联任务",
@@ -135,12 +134,10 @@
   },
   "trigger_kind": {
     "schedule": "时间表",
-    "webhook": "Webhook",
-    "api": "API"
+    "webhook": "Webhook"
   },
   "trigger_row": {
     "disabled_badge": "已禁用",
-    "deprecated_badge": "已弃用",
     "next_label": "下次：{{date}}",
     "webhook_url_label": "Webhook URL",
     "copy_url": "复制 URL",

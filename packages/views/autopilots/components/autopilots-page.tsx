@@ -6,7 +6,6 @@ import {
   BarChart3,
   Bug,
   Clock,
-  Code,
   FileSearch,
   GitPullRequest,
   Newspaper,
@@ -250,7 +249,6 @@ function AssigneeCell({ autopilot }: { autopilot: Autopilot }) {
 const TRIGGER_ICONS: Record<string, typeof Zap> = {
   schedule: Clock,
   webhook: Webhook,
-  api: Code,
 };
 
 function TriggerCell({ autopilot }: { autopilot: Autopilot }) {
@@ -269,7 +267,7 @@ function TriggerCell({ autopilot }: { autopilot: Autopilot }) {
         // Server-driven enum: unknown kinds get a generic icon + raw label.
         const Icon = TRIGGER_ICONS[kind] ?? Zap;
         const label =
-          kind === "schedule" || kind === "webhook" || kind === "api"
+          kind === "schedule" || kind === "webhook"
             ? t(($) => $.trigger_kind[kind])
             : kind;
         return (

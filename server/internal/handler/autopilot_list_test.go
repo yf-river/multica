@@ -44,15 +44,15 @@ func TestListAutopilots_DerivedFields(t *testing.T) {
 	withData := insertListTestAutopilot(t, agentID, "list-derived-with-data")
 	bare := insertListTestAutopilot(t, agentID, "list-derived-bare")
 
-	// Enabled schedule (carries next_run_at), enabled webhook, and a
-	// DISABLED api trigger that must not leak into trigger_kinds.
+	// Enabled schedule (carries next_run_at), enabled webhook, and a second
+	// DISABLED schedule trigger that must not affect the derived fields.
 	for _, q := range []string{
 		`INSERT INTO autopilot_trigger (autopilot_id, kind, enabled, cron_expression, timezone, next_run_at)
 		 VALUES ($1, 'schedule', true, '0 9 * * *', 'UTC', now() + interval '1 hour')`,
 		`INSERT INTO autopilot_trigger (autopilot_id, kind, enabled, webhook_token)
 		 VALUES ($1, 'webhook', true, 'list-derived-tok')`,
 		`INSERT INTO autopilot_trigger (autopilot_id, kind, enabled)
-		 VALUES ($1, 'api', false)`,
+		 VALUES ($1, 'schedule', false)`,
 	} {
 		if _, err := testPool.Exec(ctx, q, withData); err != nil {
 			t.Fatalf("failed to insert trigger: %v", err)

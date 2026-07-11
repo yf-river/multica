@@ -193,7 +193,7 @@ export const CreateAutopilotResponseSchema = AutopilotSchema.extend({
 export const EMPTY_AUTOPILOT_TRIGGER: AutopilotTrigger = {
   id: "",
   autopilot_id: "",
-  kind: "api",
+  kind: "schedule",
   enabled: false,
   cron_expression: null,
   timezone: null,

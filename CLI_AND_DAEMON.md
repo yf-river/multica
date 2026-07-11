@@ -680,7 +680,7 @@ multica autopilot trigger-update <autopilot-id> <trigger-id> --enabled=false
 multica autopilot trigger-delete <autopilot-id> <trigger-id>
 ```
 
-Only cron-based `schedule` triggers are currently exposed via the CLI. The data model also defines `webhook` and `api` kinds, but there is no server endpoint that fires them yet, so they're not surfaced here.
+The CLI manages cron-based `schedule` triggers. Webhook triggers are configured in the web UI, which exposes their ingress URL and provider-specific signing options.
 
 ## Other Commands
 

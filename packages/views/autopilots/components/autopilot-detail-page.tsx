@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import {
-  Zap, Play, Clock, Plus, Trash2, CheckCircle2, XCircle, Loader2, Pencil,
+  Play, Clock, Plus, Trash2, CheckCircle2, XCircle, Loader2, Pencil,
   Ban, ChevronDown, ChevronRight,
   Webhook, Copy, Check, RotateCw,
 } from "lucide-react";
@@ -144,7 +144,7 @@ function RunRow({ run, agentId, agentName }: { run: AutopilotRun; agentId: strin
         {t(($) => $.run_status[status])}
       </span>
       <span className="w-20 shrink-0 text-xs text-muted-foreground">
-        {t(($) => $.run_source[run.source as "schedule" | "manual" | "webhook" | "api"]) ?? run.source}
+        {t(($) => $.run_source[run.source as "schedule" | "manual" | "webhook"]) ?? run.source}
       </span>
       <span className="flex-1 min-w-0 text-xs text-muted-foreground truncate">
         {run.issue_id ? (
@@ -283,7 +283,6 @@ function TriggerRow({ trigger, autopilotId }: { trigger: AutopilotTrigger; autop
   };
 
   const isWebhook = trigger.kind === "webhook";
-  const isApi = trigger.kind === "api";
   // Resolve the URL from the server's webhook_url first, then compose
   // from the API base URL (desktop) or window.origin (web). Falls back
   // to the relative path if neither is available.
@@ -320,12 +319,12 @@ function TriggerRow({ trigger, autopilotId }: { trigger: AutopilotTrigger; autop
     }
   };
 
-  const Icon = isWebhook ? Webhook : isApi ? Zap : Clock;
+  const Icon = isWebhook ? Webhook : Clock;
   const showWebhookUrlRow = isWebhook && webhookUrl;
 
   // Delete control extracted so a webhook trigger can render it inline
   // with Copy / Rotate on the URL action row (where the other action
-  // buttons live), while schedule / api triggers — which have no URL row
+  // buttons live), while schedule triggers — which have no URL row
   // — keep it pinned to the row's top-right corner. Without this the
   // trash icon visually floats above the URL action buttons because the
   // outer flex uses `items-start`.
@@ -353,11 +352,6 @@ function TriggerRow({ trigger, autopilotId }: { trigger: AutopilotTrigger; autop
           {!trigger.enabled && (
             <span className="text-xs bg-muted px-1.5 py-0.5 rounded">
               {t(($) => $.trigger_row.disabled_badge)}
-            </span>
-          )}
-          {isApi && (
-            <span className="text-xs bg-muted px-1.5 py-0.5 rounded">
-              {t(($) => $.trigger_row.deprecated_badge)}
             </span>
           )}
         </div>
