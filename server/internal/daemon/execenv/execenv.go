@@ -5,6 +5,7 @@ package execenv
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -528,12 +529,8 @@ const (
 // GCMeta is persisted to .gc_meta.json inside the env root so the GC loop
 // can decide whether the directory is reclaimable. It is a discriminated
 // union keyed on Kind: only the ID field matching Kind is meaningful.
-//
-// Older meta files (pre-v2) lack the Kind field; readers must default empty
-// Kind to GCKindIssue for backward compatibility — only IssueID was written
-// before, and only issue-centric tasks ever produced a meta file.
 type GCMeta struct {
-	Kind           GCMetaKind `json:"kind,omitempty"`
+	Kind           GCMetaKind `json:"kind"`
 	IssueID        string     `json:"issue_id,omitempty"`
 	ChatSessionID  string     `json:"chat_session_id,omitempty"`
 	AutopilotRunID string     `json:"autopilot_run_id,omitempty"`
@@ -574,9 +571,7 @@ func WriteGCMeta(envRoot string, meta GCMeta, logger *slog.Logger) error {
 	return os.WriteFile(filepath.Join(envRoot, gcMetaFile), data, 0o644)
 }
 
-// ReadGCMeta reads GC metadata from a task directory root. Pre-v2 meta files
-// (no kind field) are normalized to GCKindIssue so the legacy issue path
-// keeps working without a migration.
+// ReadGCMeta reads current GC metadata from a task directory root.
 func ReadGCMeta(envRoot string) (*GCMeta, error) {
 	data, err := os.ReadFile(filepath.Join(envRoot, gcMetaFile))
 	if err != nil {
@@ -587,7 +582,7 @@ func ReadGCMeta(envRoot string) (*GCMeta, error) {
 		return nil, err
 	}
 	if meta.Kind == "" {
-		meta.Kind = GCKindIssue
+		return nil, errors.New("gc metadata kind is required")
 	}
 	return &meta, nil
 }

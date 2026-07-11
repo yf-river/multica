@@ -3276,29 +3276,19 @@ func TestWriteGCMeta_EmptyKind(t *testing.T) {
 	}
 }
 
-// Pre-v2 meta files lacked the kind field. ReadGCMeta must default an empty
-// kind to GCKindIssue so the existing on-disk meta files keep flowing
-// through the issue path.
-func TestReadGCMeta_LegacyFileDefaultsToIssueKind(t *testing.T) {
+func TestReadGCMeta_RejectsMissingKind(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	legacy := []byte(`{"issue_id":"a1b2c3d4-e5f6-7890-abcd-ef1234567890","workspace_id":"ws","completed_at":"2025-01-01T00:00:00Z"}`)
-	if err := os.WriteFile(filepath.Join(dir, gcMetaFile), legacy, 0o644); err != nil {
+	missingKind := []byte(`{"issue_id":"a1b2c3d4-e5f6-7890-abcd-ef1234567890","workspace_id":"ws","completed_at":"2025-01-01T00:00:00Z"}`)
+	if err := os.WriteFile(filepath.Join(dir, gcMetaFile), missingKind, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	meta, err := ReadGCMeta(dir)
-	if err != nil {
-		t.Fatalf("ReadGCMeta: %v", err)
-	}
-	if meta.Kind != GCKindIssue {
-		t.Fatalf("legacy kind: want %q, got %q", GCKindIssue, meta.Kind)
-	}
-	if meta.IssueID != "a1b2c3d4-e5f6-7890-abcd-ef1234567890" {
-		t.Fatalf("legacy issue_id: got %q", meta.IssueID)
+	if _, err := ReadGCMeta(dir); err == nil {
+		t.Fatal("ReadGCMeta accepted metadata without kind")
 	}
 }
 
-// New v2 meta files for chat / autopilot / quick-create round-trip without
+// Current meta files for chat / autopilot / quick-create round-trip without
 // being misclassified as the issue kind.
 func TestWriteReadGCMeta_KindRoundTrip(t *testing.T) {
 	t.Parallel()
