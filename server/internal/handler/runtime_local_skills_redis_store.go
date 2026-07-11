@@ -265,18 +265,17 @@ func NewRedisLocalSkillImportStore(rdb *redis.Client) *RedisLocalSkillImportStor
 func (s *RedisLocalSkillImportStore) Create(ctx context.Context, input LocalSkillImportRequestInput) (*RuntimeLocalSkillImportRequest, error) {
 	now := time.Now()
 	req := &RuntimeLocalSkillImportRequest{
-		ID:               randomID(),
-		RuntimeID:        input.RuntimeID,
-		SkillKey:         input.SkillKey,
-		Name:             input.Name,
-		Description:      input.Description,
-		Action:           input.Action,
-		TargetSkillID:    input.TargetSkillID,
-		SupportsConflict: input.SupportsConflict,
-		Status:           RuntimeLocalSkillPending,
-		CreatedAt:        now,
-		UpdatedAt:        now,
-		CreatorID:        input.CreatorID,
+		ID:            randomID(),
+		RuntimeID:     input.RuntimeID,
+		SkillKey:      input.SkillKey,
+		Name:          input.Name,
+		Description:   input.Description,
+		Action:        input.Action,
+		TargetSkillID: input.TargetSkillID,
+		Status:        RuntimeLocalSkillPending,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+		CreatorID:     input.CreatorID,
 	}
 	data, err := s.marshalImport(req)
 	if err != nil {

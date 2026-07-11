@@ -660,7 +660,6 @@ export function RuntimeLocalSkillImportPanel({
           skill_key: skill.key,
           name: importName,
           description: importDescription,
-          supports_conflict: true,
         });
         if (result.status === "conflict") {
           results.push({
@@ -782,7 +781,6 @@ export function RuntimeLocalSkillImportPanel({
               ? resolution.renameName.trim()
               : r.name,
           description: r.description,
-          supports_conflict: true,
           ...(resolution.action === "overwrite" && r.conflict
             ? {
                 action: "overwrite" as const,

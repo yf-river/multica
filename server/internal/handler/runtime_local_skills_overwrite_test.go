@@ -182,7 +182,7 @@ func TestRuntimeLocalSkillImport_ConflictCreatorCanOverwrite(t *testing.T) {
 	existingID := createImportTargetSkill(t, name, testUserID, nil)
 
 	got := runLocalSkillImport(t, runtimeID,
-		map[string]any{"skill_key": "review-helper", "supports_conflict": true},
+		map[string]any{"skill_key": "review-helper"},
 		reportBundleBody(name, "incoming description", "# incoming", map[string]string{"a.md": "A"}),
 	)
 
@@ -221,7 +221,7 @@ func TestRuntimeLocalSkillImport_ConflictNonCreatorCannotOverwrite(t *testing.T)
 	existingID := createImportTargetSkill(t, name, otherUserID, nil)
 
 	got := runLocalSkillImport(t, runtimeID,
-		map[string]any{"skill_key": "review-helper", "supports_conflict": true},
+		map[string]any{"skill_key": "review-helper"},
 		reportBundleBody(name, "incoming description", "# incoming", nil),
 	)
 
@@ -374,34 +374,23 @@ func TestRuntimeLocalSkillImport_OverwriteRetryIsIdempotent(t *testing.T) {
 	}
 }
 
-// TestRuntimeLocalSkillImport_LegacyClientGetsFailedOnConflict verifies the
-// installed-app compatibility gate: a client that does NOT opt into the
-// structured-conflict contract keeps the legacy `failed` + "already exists"
-// behavior on a same-name collision, instead of the new `conflict` status its
-// older poll loop wouldn't understand.
-func TestRuntimeLocalSkillImport_LegacyClientGetsFailedOnConflict(t *testing.T) {
+func TestRuntimeLocalSkillImportRejectsRemovedSupportsConflictFlag(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
 
 	runtimeID := createRuntimeLocalSkillTestRuntime(t, testUserID)
-	name := fmt.Sprintf("legacy-conflict-%d", time.Now().UnixNano())
-	createImportTargetSkill(t, name, testUserID, nil)
-
-	got := runLocalSkillImport(t, runtimeID,
-		// No supports_conflict (and no action) — an old client.
-		map[string]any{"skill_key": "review-helper"},
-		reportBundleBody(name, "incoming description", "# incoming", nil),
+	w := httptest.NewRecorder()
+	req := withURLParams(
+		newRequestAsUser(testUserID, http.MethodPost, "/api/runtimes/"+runtimeID+"/local-skills/import", map[string]any{
+			"skill_key":         "review-helper",
+			"supports_conflict": true,
+		}),
+		"runtimeId", runtimeID,
 	)
-
-	if got.Status != RuntimeLocalSkillFailed {
-		t.Fatalf("status = %s, want failed (legacy contract)", got.Status)
-	}
-	if got.Conflict != nil {
-		t.Fatalf("legacy client must not receive structured conflict metadata: %+v", got.Conflict)
-	}
-	if got.Error != "a skill with this name already exists" {
-		t.Fatalf("error = %q, want legacy already-exists message", got.Error)
+	testHandler.InitiateImportLocalSkill(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("removed supports_conflict field: expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

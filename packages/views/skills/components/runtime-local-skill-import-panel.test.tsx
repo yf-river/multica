@@ -215,7 +215,6 @@ function expectReviewHelperOverwriteRequest() {
       skill_key: "review-helper",
       name: "Review Helper",
       description: "Review pull requests",
-      supports_conflict: true,
       action: "overwrite",
       target_skill_id: "existing-skill-1",
     },
@@ -261,7 +260,6 @@ describe("RuntimeLocalSkillImportPanel", () => {
             skill_key: "review-helper",
             name: "Review Helper",
             description: "Review pull requests",
-            supports_conflict: true,
           },
         );
       },

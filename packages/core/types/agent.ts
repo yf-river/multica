@@ -818,7 +818,6 @@ export interface CreateRuntimeLocalSkillImportRequest {
   description?: string;
   action?: RuntimeLocalSkillImportAction;
   target_skill_id?: string;
-  supports_conflict?: boolean;
 }
 
 export interface RuntimeLocalSkillImportRequest {
@@ -829,7 +828,6 @@ export interface RuntimeLocalSkillImportRequest {
   description?: string;
   action?: RuntimeLocalSkillImportAction;
   target_skill_id?: string;
-  supports_conflict?: boolean;
   status: RuntimeLocalSkillStatus;
   skill?: Skill;
   conflict?: RuntimeLocalSkillImportConflict;

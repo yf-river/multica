@@ -156,7 +156,6 @@ export const RuntimeLocalSkillImportRequestSchema = z.object({
   description: z.string().optional(),
   action: z.literal("overwrite").optional(),
   target_skill_id: z.string().optional(),
-  supports_conflict: z.boolean().optional(),
   status: RuntimeAsyncRequestStatusSchema,
   skill: RuntimeImportedSkillSchema.optional(),
   conflict: RuntimeLocalSkillConflictSchema.optional(),
