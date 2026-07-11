@@ -191,6 +191,10 @@ export interface BatchUpdateIssuesResponse {
 
 export interface BatchDeleteIssuesResponse {
   deleted: number;
+  failed?: Array<{
+    issue_id: string;
+    code: "invalid_id" | "not_found" | "lookup_failed" | "delete_failed";
+  }>;
 }
 
 export interface UpdateMeRequest {

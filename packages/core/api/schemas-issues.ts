@@ -303,7 +303,13 @@ export const ChildIssueProgressResponseSchema = z.object({
 export const EMPTY_CHILD_ISSUE_PROGRESS_RESPONSE: ChildIssueProgressResponse = { progress: [] };
 
 export const BatchUpdateIssuesResponseSchema = z.object({ updated: z.number() }).loose();
-export const BatchDeleteIssuesResponseSchema = z.object({ deleted: z.number() }).loose();
+export const BatchDeleteIssuesResponseSchema = z.object({
+  deleted: z.number(),
+  failed: z.array(z.object({
+    issue_id: z.string(),
+    code: z.enum(["invalid_id", "not_found", "lookup_failed", "delete_failed"]),
+  })).optional(),
+}).loose();
 export const EMPTY_BATCH_UPDATE_ISSUES_RESPONSE: BatchUpdateIssuesResponse = { updated: 0 };
 export const EMPTY_BATCH_DELETE_ISSUES_RESPONSE: BatchDeleteIssuesResponse = { deleted: 0 };
 

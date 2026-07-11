@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -1486,23 +1487,15 @@ func (h *Handler) DeleteIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.TaskService.CancelTasksForIssue(r.Context(), issue.ID)
-	// Fail any linked autopilot runs before delete (ON DELETE SET NULL clears issue_id).
-	h.Queries.FailAutopilotRunsByIssue(r.Context(), issue.ID)
-
-	// Collect all attachment URLs (issue-level + comment-level) before CASCADE delete.
-	attachmentURLs, _ := h.Queries.ListAttachmentURLsByIssueOrComments(r.Context(), issue.ID)
-
-	err := h.Queries.DeleteIssue(r.Context(), db.DeleteIssueParams{
-		ID:          issue.ID,
-		WorkspaceID: issue.WorkspaceID,
-	})
+	deleted, err := h.deleteIssueAtomically(r.Context(), issue)
 	if err != nil {
+		slog.Error("delete issue transaction failed", append(logger.RequestAttrs(r), "issue_id", uuidToString(issue.ID), "error", err)...)
 		writeError(w, http.StatusInternalServerError, "failed to delete issue")
 		return
 	}
 
-	h.deleteStorageObjects(r.Context(), attachmentURLs)
+	h.TaskService.PublishCancelledTasks(r.Context(), deleted.cancelledTasks, deleted.cancelledEvents)
+	h.deleteStorageObjects(r.Context(), deleted.attachmentURLs)
 	userID := requestUserID(r)
 	actorType, actorID := h.resolveActor(r, userID, uuidToString(issue.WorkspaceID))
 	// Always emit the resolved UUID — frontend caches key by UUID, so an
@@ -1512,6 +1505,46 @@ func (h *Handler) DeleteIssue(w http.ResponseWriter, r *http.Request) {
 	h.publish(protocol.EventIssueDeleted, uuidToString(issue.WorkspaceID), actorType, actorID, map[string]any{"issue_id": resolvedID})
 	slog.Info("issue deleted", append(logger.RequestAttrs(r), "issue_id", resolvedID, "workspace_id", uuidToString(issue.WorkspaceID))...)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type issueDeletionResult struct {
+	attachmentURLs  []string
+	cancelledTasks  []db.AgentTaskQueue
+	cancelledEvents []events.Event
+}
+
+func (h *Handler) deleteIssueAtomically(ctx context.Context, issue db.Issue) (issueDeletionResult, error) {
+	attachmentURLs, err := h.Queries.ListAttachmentURLsByIssueOrComments(ctx, issue.ID)
+	if err != nil {
+		return issueDeletionResult{}, fmt.Errorf("list issue attachments: %w", err)
+	}
+	tx, err := h.TxStarter.Begin(ctx)
+	if err != nil {
+		return issueDeletionResult{}, fmt.Errorf("begin issue delete: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	queries := h.Queries.WithTx(tx)
+	cancelledTasks, cancelledEvents, err := h.TaskService.CancelTasksForIssueInTx(ctx, queries, issue.ID)
+	if err != nil {
+		return issueDeletionResult{}, fmt.Errorf("cancel issue tasks: %w", err)
+	}
+	if err := queries.FailAutopilotRunsByIssue(ctx, issue.ID); err != nil {
+		return issueDeletionResult{}, fmt.Errorf("fail linked Autopilot runs: %w", err)
+	}
+	if err := queries.DeleteIssue(ctx, db.DeleteIssueParams{
+		ID:          issue.ID,
+		WorkspaceID: issue.WorkspaceID,
+	}); err != nil {
+		return issueDeletionResult{}, fmt.Errorf("delete issue: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return issueDeletionResult{}, fmt.Errorf("commit issue delete: %w", err)
+	}
+	return issueDeletionResult{
+		attachmentURLs:  attachmentURLs,
+		cancelledTasks:  cancelledTasks,
+		cancelledEvents: cancelledEvents,
+	}, nil
 }
 
 // ---------------------------------------------------------------------------

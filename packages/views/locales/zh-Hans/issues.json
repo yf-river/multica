@@ -410,6 +410,7 @@
     "update_success_other": "已更新 {{count}} 个任务",
     "update_failed": "更新任务失败",
     "delete_success_other": "已删除 {{count}} 个任务",
+    "delete_partial": "已删除 {{deleted}} 个任务，{{failed}} 个删除失败",
     "delete_failed": "删除任务失败",
     "delete_dialog_title_other": "删除 {{count}} 个任务？",
     "delete_dialog_desc_other": "此操作无法撤销，所选任务及其全部关联数据都会被永久删除。",

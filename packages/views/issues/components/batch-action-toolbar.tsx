@@ -35,6 +35,7 @@ export function BatchActionToolbar({
   const { t } = useT("issues");
   const selectedIds = useIssueSelectionStore((s) => s.selectedIds);
   const clear = useIssueSelectionStore((s) => s.clear);
+  const deselect = useIssueSelectionStore((s) => s.deselect);
   const count = selectedIds.size;
 
   const [statusOpen, setStatusOpen] = useState(false);
@@ -64,9 +65,19 @@ export function BatchActionToolbar({
 
   const handleBatchDelete = async () => {
     try {
-      await batchDelete.mutateAsync(ids);
-      clear();
-      toast.success(t(($) => $.batch.delete_success, { count }));
+      const result = await batchDelete.mutateAsync(ids);
+      const failedIds = new Set(result.failed?.map((failure) => failure.issue_id));
+      const deletedIds = ids.filter((id) => !failedIds.has(id));
+      if (failedIds.size === 0) {
+        clear();
+        toast.success(t(($) => $.batch.delete_success, { count: result.deleted }));
+      } else {
+        deselect(deletedIds);
+        toast.error(t(($) => $.batch.delete_partial, {
+          deleted: result.deleted,
+          failed: failedIds.size,
+        }));
+      }
     } catch (err) {
       toast.error(
         err instanceof Error && err.message
@@ -173,4 +184,3 @@ export function BatchActionToolbar({
     </>
   );
 }
-

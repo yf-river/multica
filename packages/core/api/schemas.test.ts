@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   AppConfigSchema,
+  BatchDeleteIssuesResponseSchema,
   DashboardAgentRunTimeListSchema,
   DashboardUsageByAgentListSchema,
   DashboardUsageDailyListSchema,
@@ -45,6 +46,25 @@ const baseIssue = {
   created_at: "2026-01-01T00:00:00Z",
   updated_at: "2026-01-01T00:00:00Z",
 };
+
+describe("BatchDeleteIssuesResponseSchema", () => {
+  it("preserves explicit per-item failures", () => {
+    expect(BatchDeleteIssuesResponseSchema.parse({
+      deleted: 1,
+      failed: [{ issue_id: "issue-2", code: "delete_failed" }],
+    })).toEqual({
+      deleted: 1,
+      failed: [{ issue_id: "issue-2", code: "delete_failed" }],
+    });
+  });
+
+  it("rejects unknown failure codes", () => {
+    expect(BatchDeleteIssuesResponseSchema.safeParse({
+      deleted: 0,
+      failed: [{ issue_id: "issue-1", code: "mystery" }],
+    }).success).toBe(false);
+  });
+});
 
 describe("IssueSchema (via ListIssuesResponseSchema)", () => {
   it("accepts a primitive metadata KV map", () => {

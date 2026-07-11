@@ -2,11 +2,13 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"strconv"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/eventoutbox"
 	"github.com/multica-ai/multica/server/internal/logger"
@@ -317,9 +319,15 @@ func (h *Handler) BatchDeleteIssues(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	deleted := 0
+	type batchDeleteFailure struct {
+		IssueID string `json:"issue_id"`
+		Code    string `json:"code"`
+	}
+	failed := make([]batchDeleteFailure, 0)
 	for _, issueID := range req.IssueIDs {
 		issueUUID, err := util.ParseUUID(issueID)
 		if err != nil {
+			failed = append(failed, batchDeleteFailure{IssueID: issueID, Code: "invalid_id"})
 			continue
 		}
 		issue, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
@@ -327,24 +335,23 @@ func (h *Handler) BatchDeleteIssues(w http.ResponseWriter, r *http.Request) {
 			WorkspaceID: wsUUID,
 		})
 		if err != nil {
+			code := "lookup_failed"
+			if errors.Is(err, pgx.ErrNoRows) {
+				code = "not_found"
+			}
+			failed = append(failed, batchDeleteFailure{IssueID: issueID, Code: code})
 			continue
 		}
 
-		h.TaskService.CancelTasksForIssue(r.Context(), issue.ID)
-		h.Queries.FailAutopilotRunsByIssue(r.Context(), issue.ID)
-
-		// Collect attachment URLs before CASCADE delete to clean up S3 objects.
-		attachmentURLs, _ := h.Queries.ListAttachmentURLsByIssueOrComments(r.Context(), issue.ID)
-
-		if err := h.Queries.DeleteIssue(r.Context(), db.DeleteIssueParams{
-			ID:          issue.ID,
-			WorkspaceID: issue.WorkspaceID,
-		}); err != nil {
+		result, err := h.deleteIssueAtomically(r.Context(), issue)
+		if err != nil {
 			slog.Warn("batch delete issue failed", "issue_id", issueID, "error", err)
+			failed = append(failed, batchDeleteFailure{IssueID: issueID, Code: "delete_failed"})
 			continue
 		}
 
-		h.deleteStorageObjects(r.Context(), attachmentURLs)
+		h.TaskService.PublishCancelledTasks(r.Context(), result.cancelledTasks, result.cancelledEvents)
+		h.deleteStorageObjects(r.Context(), result.attachmentURLs)
 
 		// Always emit the resolved UUID — frontend caches key by UUID.
 		actorType, actorID := h.resolveActor(r, userID, workspaceID)
@@ -353,5 +360,9 @@ func (h *Handler) BatchDeleteIssues(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("batch delete issues", append(logger.RequestAttrs(r), "count", deleted)...)
-	writeJSON(w, http.StatusOK, map[string]any{"deleted": deleted})
+	response := map[string]any{"deleted": deleted}
+	if len(failed) > 0 {
+		response["failed"] = failed
+	}
+	writeJSON(w, http.StatusOK, response)
 }

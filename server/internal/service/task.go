@@ -209,14 +209,37 @@ func fallbackDispatchCommentFromMessages(ctx context.Context, queries *db.Querie
 }
 
 func (s *TaskService) CancelTasksForIssue(ctx context.Context, issueID pgtype.UUID) error {
-	cancelled, persistedEvents, err := s.cancelTasksDurably(ctx, func(queries *db.Queries) ([]db.AgentTaskQueue, error) {
-		return queries.CancelAgentTasksByIssue(ctx, issueID)
+	var cancelled []db.AgentTaskQueue
+	var persistedEvents []events.Event
+	err := s.runInTx(ctx, func(queries *db.Queries) error {
+		var err error
+		cancelled, persistedEvents, err = s.CancelTasksForIssueInTx(ctx, queries, issueID)
+		return err
 	})
 	if err != nil {
 		return err
 	}
 	s.PublishCancelledTasks(ctx, cancelled, persistedEvents)
 	return nil
+}
+
+// CancelTasksForIssueInTx lets a parent mutation commit task cancellation and
+// its durable terminal events with the parent row change. The caller owns the
+// transaction and must call PublishCancelledTasks only after commit.
+func (s *TaskService) CancelTasksForIssueInTx(
+	ctx context.Context,
+	queries *db.Queries,
+	issueID pgtype.UUID,
+) ([]db.AgentTaskQueue, []events.Event, error) {
+	cancelled, err := queries.CancelAgentTasksByIssue(ctx, issueID)
+	if err != nil {
+		return nil, nil, err
+	}
+	persistedEvents, err := s.EnqueueCancelledTaskEvents(ctx, queries, cancelled)
+	if err != nil {
+		return nil, nil, err
+	}
+	return cancelled, persistedEvents, nil
 }
 
 // CancelTasksForAgent cancels every active task belonging to an agent
