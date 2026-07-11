@@ -34,9 +34,8 @@ import {
   DropdownMenuItem,
 } from "@multica/ui/components/ui/dropdown-menu";
 import { ActorAvatar } from "../actor-avatar";
-import { api } from "@multica/core/api";
 import { useTranscriptViewStore, type TranscriptSortDirection } from "@multica/core/agents/stores";
-import type { AgentTask, Agent, AgentRuntime } from "@multica/core/types/agent";
+import type { AgentTask } from "@multica/core/types/agent";
 import { redactSecrets } from "./redact";
 import type { TimelineItem } from "./build-timeline";
 import {
@@ -47,6 +46,7 @@ import {
   truncateTranscriptText,
 } from "./format";
 import { useT } from "../../i18n";
+import { useTranscriptMetadata } from "./use-transcript-metadata";
 
 interface AgentTranscriptDialogProps {
   open: boolean;
@@ -184,8 +184,11 @@ export function AgentTranscriptDialog({
   const [elapsed, setElapsed] = useState("");
   const [copied, setCopied] = useState(false);
   const [copiedWorkdir, setCopiedWorkdir] = useState(false);
-  const [agentInfo, setAgentInfo] = useState<Agent | null>(null);
-  const [runtimeInfo, setRuntimeInfo] = useState<AgentRuntime | null>(null);
+  const { agentInfo, runtimeInfo } = useTranscriptMetadata(
+    open,
+    task.agent_id,
+    task.runtime_id,
+  );
   const [selectedTools, setSelectedTools] = useState<Set<string>>(new Set());
   const sortDirection = useTranscriptViewStore((s) => s.sortDirection);
   const setSortDirection = useTranscriptViewStore((s) => s.setSortDirection);
@@ -242,28 +245,6 @@ export function AgentTranscriptDialog({
     },
     [sortDirection, setSortDirection],
   );
-
-  // Fetch agent and runtime metadata when dialog opens
-  useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
-
-    if (task.agent_id) {
-      api.getAgent(task.agent_id).then((agent) => {
-        if (!cancelled) setAgentInfo(agent);
-      }).catch(() => {});
-    }
-
-    if (task.runtime_id) {
-      api.listRuntimes().then((runtimes) => {
-        if (cancelled) return;
-        const rt = runtimes.find((r) => r.id === task.runtime_id);
-        if (rt) setRuntimeInfo(rt);
-      }).catch(() => {});
-    }
-
-    return () => { cancelled = true; };
-  }, [open, task.agent_id, task.runtime_id]);
 
   // Elapsed time for live tasks
   useEffect(() => {
