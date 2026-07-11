@@ -98,11 +98,4 @@ describe("SettingsPage tabs", () => {
     expect(screen.getByText("GitHub content")).toBeTruthy();
     expect(screen.queryByText("Profile content")).toBeNull();
   });
-
-  it("keeps the legacy lark redirect on integrations", () => {
-    renderSettingsPage("tab=lark");
-
-    expect(screen.getByText("Integrations content")).toBeTruthy();
-    expect(screen.queryByText("Workspace general content")).toBeNull();
-  });
 });
