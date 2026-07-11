@@ -24,9 +24,9 @@
     "databaseFunctions": 9,
     "databaseTriggers": 4,
     "databaseIndexes": 185,
-    "migrations": 40,
+    "migrations": 42,
     "sqlcModules": 54,
-    "sqlcQueries": 576,
+    "sqlcQueries": 577,
     "goWebsocketEvents": 81,
     "typescriptWebsocketEvents": 71,
     "zustandStores": 31,
@@ -4961,7 +4961,7 @@
             {
               "name": "idx_task_message_task_id_seq",
               "table": "public.task_message",
-              "unique": false,
+              "unique": true,
               "source": "server/migrations/001_current_schema.up.sql#idx_task_message_task_id_seq"
             },
             {
@@ -5802,6 +5802,50 @@
           "droppedFunctions": [],
           "droppedTriggers": [],
           "droppedIndexes": []
+        },
+        {
+          "version": 21,
+          "name": "deduplicate_task_messages",
+          "direction": "down",
+          "source": "server/migrations/021_deduplicate_task_messages.down.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [
+            {
+              "name": "idx_task_message_task_id_seq",
+              "table": "task_message",
+              "unique": false,
+              "source": "server/migrations/021_deduplicate_task_messages.down.sql#idx_task_message_task_id_seq"
+            }
+          ],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": [
+            "idx_task_message_task_id_seq"
+          ]
+        },
+        {
+          "version": 21,
+          "name": "deduplicate_task_messages",
+          "direction": "up",
+          "source": "server/migrations/021_deduplicate_task_messages.up.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [
+            {
+              "name": "idx_task_message_task_id_seq",
+              "table": "task_message",
+              "unique": true,
+              "source": "server/migrations/021_deduplicate_task_messages.up.sql#idx_task_message_task_id_seq"
+            }
+          ],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": [
+            "idx_task_message_task_id_seq"
+          ]
         }
       ],
       "tables": [
@@ -7175,9 +7219,9 @@
         },
         {
           "name": "idx_task_message_task_id_seq",
-          "table": "public.task_message",
-          "unique": false,
-          "source": "server/migrations/001_current_schema.up.sql#idx_task_message_task_id_seq"
+          "table": "task_message",
+          "unique": true,
+          "source": "server/migrations/021_deduplicate_task_messages.up.sql#idx_task_message_task_id_seq"
         },
         {
           "name": "idx_task_token_hash",
@@ -10358,6 +10402,11 @@
               "name": "CreateTaskMessage",
               "command": "one",
               "source": "server/pkg/db/queries/task_message.sql#CreateTaskMessage"
+            },
+            {
+              "name": "CreateTaskMessageIdempotent",
+              "command": "one",
+              "source": "server/pkg/db/queries/task_message.sql#CreateTaskMessageIdempotent"
             },
             {
               "name": "DeleteTaskMessages",

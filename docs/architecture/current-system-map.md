@@ -25,9 +25,9 @@ evidence reviewable by humans.
 | Database functions | 9 |
 | Database triggers | 4 |
 | Database indexes | 185 |
-| Migration files (up + down) | 40 |
+| Migration files (up + down) | 42 |
 | sqlc modules | 54 |
-| sqlc queries | 576 |
+| sqlc queries | 577 |
 | Go WebSocket events | 81 |
 | TypeScript WebSocket events | 71 |
 | Zustand store definitions | 31 |
@@ -534,6 +534,8 @@ intentionally platform-specific.
 | 19 | remove_runtime_profile_visibility | up | — | 0 | 0 | 0 | `server/migrations/019_remove_runtime_profile_visibility.up.sql` |
 | 20 | remove_unused_daemon_tokens | down | daemon_token | 0 | 0 | 2 | `server/migrations/020_remove_unused_daemon_tokens.down.sql` |
 | 20 | remove_unused_daemon_tokens | up | — | 0 | 0 | 0 | `server/migrations/020_remove_unused_daemon_tokens.up.sql` |
+| 21 | deduplicate_task_messages | down | — | 0 | 0 | 1 | `server/migrations/021_deduplicate_task_messages.down.sql` |
+| 21 | deduplicate_task_messages | up | — | 0 | 0 | 1 | `server/migrations/021_deduplicate_task_messages.up.sql` |
 
 ### Current tables discovered from up migrations
 
@@ -639,7 +641,7 @@ intentionally platform-specific.
 
 ### sqlc modules
 
-All 576 query names, commands, and stable source anchors are stored in the JSON companion.
+All 577 query names, commands, and stable source anchors are stored in the JSON companion.
 
 | Module | Queries | SQL source | Generated source |
 | --- | --- | --- | --- |
@@ -690,7 +692,7 @@ All 576 query names, commands, and stable source anchors are stored in the JSON 
 | squad_create_request | 3 | `server/pkg/db/queries/squad_create_request.sql` | `server/pkg/db/generated/squad_create_request.sql.go` |
 | squad_sop_run | 17 | `server/pkg/db/queries/squad_sop_run.sql` | `server/pkg/db/generated/squad_sop_run.sql.go` |
 | subscriber | 4 | `server/pkg/db/queries/subscriber.sql` | `server/pkg/db/generated/subscriber.sql.go` |
-| task_message | 4 | `server/pkg/db/queries/task_message.sql` | `server/pkg/db/generated/task_message.sql.go` |
+| task_message | 5 | `server/pkg/db/queries/task_message.sql` | `server/pkg/db/generated/task_message.sql.go` |
 | task_token | 4 | `server/pkg/db/queries/task_token.sql` | `server/pkg/db/generated/task_token.sql.go` |
 | task_trace_event | 4 | `server/pkg/db/queries/task_trace_event.sql` | `server/pkg/db/generated/task_trace_event.sql.go` |
 | task_usage | 7 | `server/pkg/db/queries/task_usage.sql` | `server/pkg/db/generated/task_usage.sql.go` |

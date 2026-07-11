@@ -1273,6 +1273,37 @@ func TestReportTaskMessagesRollsBackBatchWhenOneWriteFails(t *testing.T) {
 	}
 }
 
+func TestReportTaskMessagesDeduplicatesRetriedSequence(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	runtimeID := createClaimReclaimRuntime(t, ctx, "Task message retry runtime")
+	agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, "Task message retry agent")
+	taskID := createDispatchedClaimFixtureTask(t, ctx, agentID, runtimeID, issueID, "1 second", true)
+	t.Cleanup(func() { _ = testHandler.Queries.DeleteTaskMessages(context.Background(), parseUUID(taskID)) })
+	for attempt, content := range []string{"stable frame", "must not overwrite committed frame"} {
+		w := httptest.NewRecorder()
+		req := newDaemonUserRequest("POST", "/api/daemon/tasks/"+taskID+"/messages", map[string]any{
+			"messages": []map[string]any{{"seq": 41, "type": "assistant", "content": content}},
+		}, testWorkspaceID, "task-message-retry-daemon")
+		req = withURLParam(req, "taskId", taskID)
+		testHandler.ReportTaskMessages(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("attempt %d status = %d, body=%s", attempt+1, w.Code, w.Body.String())
+		}
+	}
+
+	messages, err := testHandler.Queries.ListTaskMessages(ctx, parseUUID(taskID))
+	if err != nil {
+		t.Fatalf("list task messages: %v", err)
+	}
+	if len(messages) != 1 || messages[0].Seq != 41 || messages[0].Content.String != "stable frame" {
+		t.Fatalf("messages after retry = %+v, want one stable frame", messages)
+	}
+}
+
 // setupForeignWorkspaceFixture creates an isolated workspace (not reachable
 // from testUserID) with its own agent, runtime, issue, and queued task.
 // Returns (issueID, taskID). All rows are cleaned up when the test ends.

@@ -166,6 +166,31 @@ func TestPostJSONWithRetry_TransientThenSuccess(t *testing.T) {
 	}
 }
 
+func TestReportTaskMessagesRetriesTransientFailure(t *testing.T) {
+	defer noSleepRetry(t)()
+
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/daemon/tasks/task-1/messages" {
+			t.Errorf("path = %q", r.URL.Path)
+		}
+		if calls.Add(1) == 1 {
+			w.WriteHeader(http.StatusBadGateway)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL)
+	if err := c.ReportTaskMessages(context.Background(), "task-1", []TaskMessageData{{Seq: 1, Type: "text", Content: "hello"}}); err != nil {
+		t.Fatalf("ReportTaskMessages: %v", err)
+	}
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("calls = %d, want 2", got)
+	}
+}
+
 func TestPostJSONWithRetry_TransientExhausts(t *testing.T) {
 	defer noSleepRetry(t)()
 

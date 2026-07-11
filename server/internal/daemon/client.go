@@ -200,9 +200,9 @@ type TaskMessageData struct {
 }
 
 func (c *Client) ReportTaskMessages(ctx context.Context, taskID string, messages []TaskMessageData) error {
-	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/messages", taskID), map[string]any{
+	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/messages", taskID), map[string]any{
 		"messages": messages,
-	}, nil)
+	}, nil, taskMessageRetrySchedule)
 }
 
 func (c *Client) CompleteTask(ctx context.Context, taskID, output, branchName, sessionID, workDir string) error {
@@ -506,6 +506,15 @@ var defaultTerminalRetrySchedule = []time.Duration{
 	16 * time.Second,
 	32 * time.Second,
 	64 * time.Second,
+}
+
+// Task messages are flushed while an agent is still streaming, so retries
+// must fit inside the flush call's five-second context. The server deduplicates
+// replays by (task_id, seq), making response-loss retries safe.
+var taskMessageRetrySchedule = []time.Duration{
+	200 * time.Millisecond,
+	500 * time.Millisecond,
+	1 * time.Second,
 }
 
 // retrySleep is the sleep used between retry attempts. Pulled into a package

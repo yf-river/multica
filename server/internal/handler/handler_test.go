@@ -120,7 +120,7 @@ type failTaskMessageDB struct {
 }
 
 func (f *failTaskMessageDB) QueryRow(ctx context.Context, sql string, args ...interface{}) pgx.Row {
-	if strings.Contains(sql, "-- name: CreateTaskMessage ") {
+	if strings.Contains(sql, "-- name: CreateTaskMessageIdempotent ") {
 		f.calls++
 		if f.calls == f.failAt {
 			return errorRow{err: errors.New("injected task message create failure")}
@@ -149,7 +149,7 @@ type failTaskMessageTx struct {
 }
 
 func (tx *failTaskMessageTx) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
-	if strings.Contains(sql, "-- name: CreateTaskMessage ") {
+	if strings.Contains(sql, "-- name: CreateTaskMessageIdempotent ") {
 		tx.calls++
 		if tx.calls == tx.failAt {
 			return errorRow{err: errors.New("injected task message create failure")}

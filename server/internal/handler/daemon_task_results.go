@@ -401,7 +401,7 @@ func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 	createdMessages := make([]db.TaskMessage, 0, len(prepared))
 	for _, item := range prepared {
 		msg := item.request
-		created, err := qtx.CreateTaskMessage(r.Context(), db.CreateTaskMessageParams{
+		created, err := qtx.CreateTaskMessageIdempotent(r.Context(), db.CreateTaskMessageIdempotentParams{
 			TaskID:  parseUUID(taskID),
 			Seq:     int32(msg.Seq),
 			Type:    msg.Type,
@@ -414,7 +414,19 @@ func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "failed to persist task message")
 			return
 		}
-		createdMessages = append(createdMessages, created)
+		if created.Inserted {
+			createdMessages = append(createdMessages, db.TaskMessage{
+				ID:        created.ID,
+				TaskID:    created.TaskID,
+				Seq:       created.Seq,
+				Type:      created.Type,
+				Tool:      created.Tool,
+				Content:   created.Content,
+				Input:     created.Input,
+				Output:    created.Output,
+				CreatedAt: created.CreatedAt,
+			})
+		}
 	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit task messages")

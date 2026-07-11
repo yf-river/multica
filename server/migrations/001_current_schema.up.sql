@@ -2441,7 +2441,7 @@ CREATE INDEX idx_sys_cron_exec_job_plan ON public.sys_cron_executions USING btre
 
 CREATE INDEX idx_sys_cron_exec_running_stale ON public.sys_cron_executions USING btree (stale_after) WHERE (status = 'RUNNING'::text);
 
-CREATE INDEX idx_task_message_task_id_seq ON public.task_message USING btree (task_id, seq);
+CREATE UNIQUE INDEX idx_task_message_task_id_seq ON public.task_message USING btree (task_id, seq);
 
 CREATE UNIQUE INDEX idx_task_token_hash ON public.task_token USING btree (token_hash);
 
