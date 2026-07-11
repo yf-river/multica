@@ -8,6 +8,11 @@ import type {
   ListIssuesResponse,
   SearchIssuesResponse,
   SearchProjectsResponse,
+  QuickCreateIssueResponse,
+  FeedbackResponse,
+  ChildIssueProgressResponse,
+  BatchUpdateIssuesResponse,
+  BatchDeleteIssuesResponse,
   UpdateMeRequest,
   CreateMemberRequest,
   UpdateMemberRequest,
@@ -192,6 +197,14 @@ import {
   IssueUsageSummarySchema,
   IssueTaskTraceResponseSchema,
   IssueExecutionTreeResponseSchema,
+  SearchIssuesResponseSchema,
+  QuickCreateIssueResponseSchema,
+  FeedbackResponseSchema,
+  ChildIssueProgressResponseSchema,
+  BatchUpdateIssuesResponseSchema,
+  BatchDeleteIssuesResponseSchema,
+  AssigneeFrequencyListSchema,
+  AttachmentListSchema,
   AgentTemplateSummaryListSchema,
   AttachmentResponseSchema,
   CancelTaskResponseSchema,
@@ -212,6 +225,14 @@ import {
   EMPTY_ISSUE_USAGE_SUMMARY,
   EMPTY_ISSUE_TASK_TRACE_RESPONSE,
   EMPTY_ISSUE_EXECUTION_TREE,
+  EMPTY_SEARCH_ISSUES_RESPONSE,
+  EMPTY_QUICK_CREATE_ISSUE_RESPONSE,
+  EMPTY_FEEDBACK_RESPONSE,
+  EMPTY_CHILD_ISSUE_PROGRESS_RESPONSE,
+  EMPTY_BATCH_UPDATE_ISSUES_RESPONSE,
+  EMPTY_BATCH_DELETE_ISSUES_RESPONSE,
+  EMPTY_ASSIGNEE_FREQUENCY,
+  EMPTY_ATTACHMENTS,
   EMPTY_APP_CONFIG,
   EMPTY_ATTACHMENT,
   EMPTY_GROUPED_ISSUES_RESPONSE,
@@ -789,7 +810,13 @@ export class ApiClient {
     if (params.limit !== undefined) search.set("limit", String(params.limit));
     if (params.offset !== undefined) search.set("offset", String(params.offset));
     if (params.include_closed) search.set("include_closed", "true");
-    return this.fetch(`/api/issues/search?${search}`, params.signal ? { signal: params.signal } : undefined);
+    const raw = await this.fetch<unknown>(
+      `/api/issues/search?${search}`,
+      params.signal ? { signal: params.signal } : undefined,
+    );
+    return parseWithFallback(raw, SearchIssuesResponseSchema, EMPTY_SEARCH_ISSUES_RESPONSE, {
+      endpoint: "GET /api/issues/search",
+    });
   }
 
   async searchProjects(params: { q: string; limit?: number; offset?: number; include_closed?: boolean; signal?: AbortSignal }): Promise<SearchProjectsResponse> {
@@ -837,26 +864,31 @@ export class ApiClient {
     start_date?: string | null;
     due_date?: string | null;
     attachment_ids?: string[];
-  }): Promise<{
-    task_id?: string;
-    issue_id?: string;
-    identifier?: string;
-    source_fetch_status?: string;
-  }> {
-    return this.fetch("/api/issues/quick-create", {
+  }): Promise<QuickCreateIssueResponse> {
+    const raw = await this.fetch<unknown>("/api/issues/quick-create", {
       method: "POST",
       body: JSON.stringify(data),
     });
+    return parseOrThrow(
+      raw,
+      QuickCreateIssueResponseSchema,
+      EMPTY_QUICK_CREATE_ISSUE_RESPONSE,
+      { endpoint: "POST /api/issues/quick-create", mayHaveCommitted: true },
+    );
   }
 
   async createFeedback(data: {
     message: string;
     url?: string;
     workspace_id?: string;
-  }): Promise<{ id: string; created_at: string }> {
-    return this.fetch("/api/feedback", {
+  }): Promise<FeedbackResponse> {
+    const raw = await this.fetch<unknown>("/api/feedback", {
       method: "POST",
       body: JSON.stringify(data),
+    });
+    return parseOrThrow(raw, FeedbackResponseSchema, EMPTY_FEEDBACK_RESPONSE, {
+      endpoint: "POST /api/feedback",
+      mayHaveCommitted: true,
     });
   }
 
@@ -890,25 +922,39 @@ export class ApiClient {
     });
   }
 
-  async getChildIssueProgress(): Promise<{ progress: { parent_issue_id: string; total: number; done: number }[] }> {
-    return this.fetch("/api/issues/child-progress");
+  async getChildIssueProgress(): Promise<ChildIssueProgressResponse> {
+    const raw = await this.fetch<unknown>("/api/issues/child-progress");
+    return parseWithFallback(
+      raw,
+      ChildIssueProgressResponseSchema,
+      EMPTY_CHILD_ISSUE_PROGRESS_RESPONSE,
+      { endpoint: "GET /api/issues/child-progress" },
+    );
   }
 
   async deleteIssue(id: string): Promise<void> {
     await this.fetch(`/api/issues/${id}`, { method: "DELETE" });
   }
 
-  async batchUpdateIssues(issueIds: string[], updates: UpdateIssueRequest): Promise<{ updated: number }> {
-    return this.fetch("/api/issues/batch-update", {
+  async batchUpdateIssues(issueIds: string[], updates: UpdateIssueRequest): Promise<BatchUpdateIssuesResponse> {
+    const raw = await this.fetch<unknown>("/api/issues/batch-update", {
       method: "POST",
       body: JSON.stringify({ issue_ids: issueIds, updates }),
     });
+    return parseOrThrow(raw, BatchUpdateIssuesResponseSchema, EMPTY_BATCH_UPDATE_ISSUES_RESPONSE, {
+      endpoint: "POST /api/issues/batch-update",
+      mayHaveCommitted: true,
+    });
   }
 
-  async batchDeleteIssues(issueIds: string[]): Promise<{ deleted: number }> {
-    return this.fetch("/api/issues/batch-delete", {
+  async batchDeleteIssues(issueIds: string[]): Promise<BatchDeleteIssuesResponse> {
+    const raw = await this.fetch<unknown>("/api/issues/batch-delete", {
       method: "POST",
       body: JSON.stringify({ issue_ids: issueIds }),
+    });
+    return parseOrThrow(raw, BatchDeleteIssuesResponseSchema, EMPTY_BATCH_DELETE_ISSUES_RESPONSE, {
+      endpoint: "POST /api/issues/batch-delete",
+      mayHaveCommitted: true,
     });
   }
 
@@ -960,7 +1006,10 @@ export class ApiClient {
   }
 
   async getAssigneeFrequency(): Promise<AssigneeFrequencyEntry[]> {
-    return this.fetch("/api/assignee-frequency");
+    const raw = await this.fetch<unknown>("/api/assignee-frequency");
+    return parseWithFallback(raw, AssigneeFrequencyListSchema, EMPTY_ASSIGNEE_FREQUENCY, {
+      endpoint: "GET /api/assignee-frequency",
+    });
   }
 
   async updateComment(commentId: string, content: string, attachmentIds?: string[], suppressAgentIds?: string[]): Promise<Comment> {
@@ -2042,7 +2091,10 @@ export class ApiClient {
   }
 
   async listAttachments(issueId: string): Promise<Attachment[]> {
-    return this.fetch(`/api/issues/${issueId}/attachments`);
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/attachments`);
+    return parseWithFallback(raw, AttachmentListSchema, EMPTY_ATTACHMENTS, {
+      endpoint: "GET /api/issues/:id/attachments",
+    });
   }
 
   // Fetches a fresh attachment metadata record. The server re-signs

@@ -1,13 +1,20 @@
 import { z } from "zod";
 import type {
   Attachment,
+  AssigneeFrequencyEntry,
+  BatchDeleteIssuesResponse,
+  BatchUpdateIssuesResponse,
+  ChildIssueProgressResponse,
   Comment,
+  FeedbackResponse,
   GroupedIssuesResponse,
   Issue,
   IssueReaction,
   ListIssueBucketsResponse,
   ListIssuesResponse,
   Reaction,
+  QuickCreateIssueResponse,
+  SearchIssuesResponse,
   TimelineEntry,
 } from "../types";
 import { EmbeddedAttachmentSchema, NonEmptyStringSchema } from "./schemas-internal";
@@ -252,6 +259,63 @@ export const EMPTY_ISSUE: Issue = {
   created_at: "",
   updated_at: "",
 };
+
+export const SearchIssueSchema = IssueSchema.extend({
+  match_source: z.string(),
+  matched_snippet: z.string().optional(),
+  matched_description_snippet: z.string().optional(),
+  matched_comment_snippet: z.string().optional(),
+}).loose();
+
+export const SearchIssuesResponseSchema = z.object({
+  issues: z.array(SearchIssueSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
+export const EMPTY_SEARCH_ISSUES_RESPONSE: SearchIssuesResponse = { issues: [], total: 0 };
+
+export const QuickCreateIssueResponseSchema = z.object({
+  task_id: NonEmptyStringSchema.optional(),
+  issue_id: NonEmptyStringSchema.optional(),
+  identifier: z.string().optional(),
+  source_fetch_status: z.string().optional(),
+}).loose().refine((response) => Boolean(response.task_id || response.issue_id), {
+  message: "quick create response must identify a task or issue",
+});
+
+export const EMPTY_QUICK_CREATE_ISSUE_RESPONSE: QuickCreateIssueResponse = {};
+
+export const FeedbackResponseSchema = z.object({
+  id: NonEmptyStringSchema,
+  created_at: z.string(),
+}).loose();
+
+export const EMPTY_FEEDBACK_RESPONSE: FeedbackResponse = { id: "", created_at: "" };
+
+export const ChildIssueProgressResponseSchema = z.object({
+  progress: z.array(z.object({
+    parent_issue_id: NonEmptyStringSchema,
+    total: z.number(),
+    done: z.number(),
+  }).loose()).default([]),
+}).loose();
+
+export const EMPTY_CHILD_ISSUE_PROGRESS_RESPONSE: ChildIssueProgressResponse = { progress: [] };
+
+export const BatchUpdateIssuesResponseSchema = z.object({ updated: z.number() }).loose();
+export const BatchDeleteIssuesResponseSchema = z.object({ deleted: z.number() }).loose();
+export const EMPTY_BATCH_UPDATE_ISSUES_RESPONSE: BatchUpdateIssuesResponse = { updated: 0 };
+export const EMPTY_BATCH_DELETE_ISSUES_RESPONSE: BatchDeleteIssuesResponse = { deleted: 0 };
+
+export const AssigneeFrequencyListSchema = z.array(z.object({
+  assignee_type: z.string(),
+  assignee_id: NonEmptyStringSchema,
+  frequency: z.number(),
+}).loose());
+export const EMPTY_ASSIGNEE_FREQUENCY: AssigneeFrequencyEntry[] = [];
+
+export const AttachmentListSchema = z.array(AttachmentResponseSchema);
+export const EMPTY_ATTACHMENTS: Attachment[] = [];
 
 export const ListIssuesResponseSchema = z.object({
   issues: z.array(IssueSchema).default([]),

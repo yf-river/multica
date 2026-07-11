@@ -22,7 +22,10 @@ import {
 import {
   EMPTY_ISSUE,
   EMPTY_LIST_ISSUES_RESPONSE,
+  EMPTY_SEARCH_ISSUES_RESPONSE,
   ListIssuesResponseSchema,
+  QuickCreateIssueResponseSchema,
+  SearchIssuesResponseSchema,
 } from "./schemas-issues";
 import {
   PromptEvaluationAssetListResponseSchema,
@@ -93,6 +96,17 @@ describe("domain response schema fallbacks", () => {
       EMPTY_LIST_ISSUES_RESPONSE,
       { endpoint: "GET /api/issues" },
     )).toBe(EMPTY_LIST_ISSUES_RESPONSE);
+  });
+
+  it("rejects malformed search results and empty Quick Create success", () => {
+    expect(parseWithFallback(
+      { issues: [{ id: 42 }], total: 1 },
+      SearchIssuesResponseSchema,
+      EMPTY_SEARCH_ISSUES_RESPONSE,
+      { endpoint: "GET /api/issues/search" },
+    )).toBe(EMPTY_SEARCH_ISSUES_RESPONSE);
+    expect(QuickCreateIssueResponseSchema.safeParse({}).success).toBe(false);
+    expect(QuickCreateIssueResponseSchema.safeParse({ task_id: "task-1" }).success).toBe(true);
   });
 
   it("rejects a malformed agent template collection", () => {

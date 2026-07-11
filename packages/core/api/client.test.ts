@@ -255,6 +255,28 @@ describe("ApiClient", () => {
     })).rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
   });
 
+  it("validates Issue utility reads and rejects empty mutation success", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(
+      new Response(JSON.stringify({}), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )));
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.searchIssues({ q: "bug" }))
+      .resolves.toEqual({ issues: [], total: 0 });
+    await expect(client.getChildIssueProgress()).resolves.toEqual({ progress: [] });
+    await expect(client.getAssigneeFrequency()).resolves.toEqual([]);
+    await expect(client.listAttachments("issue-1")).resolves.toEqual([]);
+    await expect(client.quickCreateIssue({ prompt: "Create issue", agent_id: "agent-1" }))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
+    await expect(client.createFeedback({ message: "Broken" }))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
+    await expect(client.batchUpdateIssues(["issue-1"], { status: "done" }))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
+  });
+
   it("whitelists external credential responses without exposing secret fields", async () => {
     const profile = {
       id: "profile-1",

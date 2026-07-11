@@ -169,6 +169,30 @@ export interface SearchProjectsResponse {
   total: number;
 }
 
+export interface QuickCreateIssueResponse {
+  task_id?: string;
+  issue_id?: string;
+  identifier?: string;
+  source_fetch_status?: string;
+}
+
+export interface FeedbackResponse {
+  id: string;
+  created_at: string;
+}
+
+export interface ChildIssueProgressResponse {
+  progress: Array<{ parent_issue_id: string; total: number; done: number }>;
+}
+
+export interface BatchUpdateIssuesResponse {
+  updated: number;
+}
+
+export interface BatchDeleteIssuesResponse {
+  deleted: number;
+}
+
 export interface UpdateMeRequest {
   name?: string;
   avatar_url?: string;
