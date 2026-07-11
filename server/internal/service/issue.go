@@ -133,6 +133,16 @@ type IssueCreateResult struct {
 	Attachments []db.Attachment
 }
 
+type issueCreateProjection struct {
+	assignmentTask       *db.AgentTaskQueue
+	assignmentLeaderTask bool
+	approvalTask         *db.AgentTaskQueue
+	approvalProject      db.Project
+	approvalIssue        *db.Issue
+	approvalInbox        *db.InboxItem
+	approvalIssueStatus  string
+}
+
 // Create runs the full issue-creation pipeline atomically end-to-end:
 //
 //  1. Begin transaction.
@@ -140,11 +150,9 @@ type IssueCreateResult struct {
 //  3. Increment the workspace issue counter.
 //  4. Insert the issue row (with optional origin stamping).
 //  5. Link every requested pre-uploaded attachment.
-//  6. Commit the issue and attachment links together.
-//  7. Publish EventIssueCreated to the bus (payload via opts.BroadcastPayload).
-//  8. Capture the IssueCreated analytics event.
-//  9. Enqueue an agent task or trigger the squad leader when the issue is
-//     assigned and not in `backlog`.
+//  6. Persist the issue-created event and every task/inbox projection.
+//  7. Commit all durable state together.
+//  8. Publish events, wake queued agents, and capture analytics.
 //
 // Validation that lives in the service (parent existence, project
 // workspace membership, parent → project back-fill) is enforced here so
@@ -201,10 +209,14 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 	}
 	agentLeadReviewRequested := false
 	if requestedStatus == "backlog" && hasProject && project.LeadType.Valid && project.LeadType.String == "agent" && project.LeadID.Valid {
-		if leadAgent, err := qtx.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
+		leadAgent, err := qtx.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
 			ID:          project.LeadID,
 			WorkspaceID: project.WorkspaceID,
-		}); err == nil && !leadAgent.ArchivedAt.Valid {
+		})
+		if err != nil {
+			return IssueCreateResult{}, fmt.Errorf("load project lead agent: %w", err)
+		}
+		if !leadAgent.ArchivedAt.Valid {
 			agentLeadReviewRequested = true
 			if p.Metadata == nil {
 				p.Metadata = map[string][]byte{}
@@ -305,6 +317,21 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 		return IssueCreateResult{}, fmt.Errorf("enqueue issue-created event: %w", err)
 	}
 
+	projection, err := s.createIssueProjectionInTx(
+		ctx,
+		qtx,
+		issue,
+		project,
+		hasProject,
+		agentLeadReviewRequested,
+		p.CreatorType,
+		actorID,
+		opts.SuppressAutoEnqueue,
+	)
+	if err != nil {
+		return IssueCreateResult{}, fmt.Errorf("create issue projection: %w", err)
+	}
+
 	if err := tx.Commit(ctx); err != nil {
 		return IssueCreateResult{}, fmt.Errorf("commit: %w", err)
 	}
@@ -314,16 +341,146 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 	}
 
 	s.captureCreatedAnalytics(issue, p.CreatorType, actorID, opts)
-	if requestedStatus == "backlog" && hasProject && agentLeadReviewRequested {
-		s.enqueueProjectOwnerApprovalTask(ctx, issue, project)
-	} else if requestedStatus == "backlog" && hasProject {
-		s.notifyProjectLeadApprovalRequested(ctx, project, issue, p.CreatorType, actorID)
-	}
-	if !opts.SuppressAutoEnqueue {
-		s.maybeEnqueueOnAssign(ctx, issue, p.CreatorType, actorID)
-	}
+	s.publishIssueCreateProjection(ctx, projection, p.CreatorType, actorID)
 
 	return IssueCreateResult{Issue: issue, Attachments: attachments}, nil
+}
+
+func (s *IssueService) createIssueProjectionInTx(
+	ctx context.Context,
+	queries *db.Queries,
+	issue db.Issue,
+	project db.Project,
+	hasProject bool,
+	agentLeadReviewRequested bool,
+	actorType string,
+	actorID string,
+	suppressAutoEnqueue bool,
+) (issueCreateProjection, error) {
+	projection := issueCreateProjection{}
+	if issue.Status == "backlog" && hasProject {
+		switch {
+		case agentLeadReviewRequested:
+			if s.TaskService == nil {
+				return projection, errors.New("task service is required for project owner approval")
+			}
+			task, err := s.TaskService.CreateProjectOwnerApprovalTaskInTx(ctx, queries, issue, project)
+			if err != nil {
+				return projection, err
+			}
+			updated, err := queries.SetIssueMetadataKey(ctx, db.SetIssueMetadataKeyParams{
+				ID:          issue.ID,
+				WorkspaceID: issue.WorkspaceID,
+				Key:         "project_owner_review_task_id",
+				Value:       mustJSONStringBytes(util.UUIDToString(task.ID)),
+			})
+			if err != nil {
+				return projection, fmt.Errorf("set project owner review task metadata: %w", err)
+			}
+			projection.approvalTask = &task
+			projection.approvalProject = project
+			projection.approvalIssue = &updated
+		case project.LeadType.Valid && project.LeadType.String == "member" && project.LeadID.Valid:
+			item, err := createProjectLeadApprovalInbox(ctx, queries, project, issue, actorType, actorID)
+			if err != nil {
+				return projection, err
+			}
+			projection.approvalInbox = &item
+			projection.approvalIssueStatus = issue.Status
+		}
+		return projection, nil
+	}
+	if issue.Status == "backlog" {
+		return projection, nil
+	}
+
+	if suppressAutoEnqueue || !issue.AssigneeType.Valid || !issue.AssigneeID.Valid {
+		return projection, nil
+	}
+	if s.TaskService == nil {
+		return projection, errors.New("task service is required for assigned issue")
+	}
+
+	switch issue.AssigneeType.String {
+	case "agent":
+		agent, err := queries.GetAgent(ctx, issue.AssigneeID)
+		if err != nil {
+			return projection, fmt.Errorf("load assigned agent: %w", err)
+		}
+		if agent.ArchivedAt.Valid || !agent.RuntimeID.Valid {
+			return projection, nil
+		}
+		task, err := s.TaskService.CreateIssueTaskInTx(ctx, queries, issue, pgtype.UUID{}, false)
+		if err != nil {
+			return projection, err
+		}
+		projection.assignmentTask = &task
+	case "squad":
+		squad, err := queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
+			ID:          issue.AssigneeID,
+			WorkspaceID: issue.WorkspaceID,
+		})
+		if err != nil {
+			return projection, fmt.Errorf("load assigned squad: %w", err)
+		}
+		leader, err := queries.GetAgent(ctx, squad.LeaderID)
+		if err != nil {
+			return projection, fmt.Errorf("load squad leader: %w", err)
+		}
+		ready, _, err := AgentReadiness(ctx, queries, leader)
+		if err != nil {
+			return projection, fmt.Errorf("check squad leader readiness: %w", err)
+		}
+		if !ready {
+			return projection, nil
+		}
+		hasPending, err := queries.HasPendingTaskForIssueAndAgent(ctx, db.HasPendingTaskForIssueAndAgentParams{
+			IssueID: issue.ID,
+			AgentID: squad.LeaderID,
+		})
+		if err != nil {
+			return projection, fmt.Errorf("check pending squad leader task: %w", err)
+		}
+		if hasPending {
+			return projection, nil
+		}
+		task, err := s.TaskService.CreateMentionTaskInTx(ctx, queries, issue, squad.LeaderID, pgtype.UUID{}, true, true)
+		if err != nil {
+			return projection, fmt.Errorf("create squad leader task: %w", err)
+		}
+		projection.assignmentTask = &task
+		projection.assignmentLeaderTask = true
+	}
+	return projection, nil
+}
+
+func (s *IssueService) publishIssueCreateProjection(ctx context.Context, projection issueCreateProjection, actorType, actorID string) {
+	if projection.approvalTask != nil {
+		s.TaskService.PublishProjectOwnerApprovalTaskEnqueued(ctx, *projection.approvalTask, projection.approvalProject)
+	}
+	if projection.approvalIssue != nil && s.Bus != nil {
+		s.Bus.Publish(events.Event{
+			Type:        protocol.EventIssueMetadataChanged,
+			WorkspaceID: util.UUIDToString(projection.approvalIssue.WorkspaceID),
+			ActorType:   "system",
+			Payload: map[string]any{
+				"issue_id": util.UUIDToString(projection.approvalIssue.ID),
+				"issue":    *projection.approvalIssue,
+				"metadata": map[string]any{"project_owner_review_task_id": util.UUIDToString(projection.approvalTask.ID)},
+			},
+		})
+	}
+	if projection.approvalInbox != nil {
+		s.publishProjectLeadApprovalInbox(*projection.approvalInbox, projection.approvalIssueStatus, actorType, actorID)
+	}
+	if projection.assignmentTask == nil {
+		return
+	}
+	if projection.assignmentLeaderTask {
+		s.TaskService.PublishMentionTaskEnqueued(ctx, *projection.assignmentTask)
+	} else {
+		s.TaskService.PublishIssueTaskEnqueued(ctx, *projection.assignmentTask)
+	}
 }
 
 // EnqueueOnAssignForIssue triggers the same create-time assignee behavior
@@ -493,15 +650,39 @@ func (s *IssueService) hasOpenProjectLeadApprovalInbox(ctx context.Context, proj
 }
 
 func (s *IssueService) notifyProjectLeadApprovalRequested(ctx context.Context, project db.Project, issue db.Issue, actorType, actorID string) {
-	if s.Bus == nil || !project.LeadType.Valid || !project.LeadID.Valid || project.LeadType.String != "member" {
+	item, err := createProjectLeadApprovalInbox(ctx, s.Queries, project, issue, actorType, actorID)
+	if err != nil {
+		slog.Error("project lead approval inbox write failed",
+			"project_id", util.UUIDToString(project.ID),
+			"issue_id", util.UUIDToString(issue.ID),
+			"recipient_id", util.UUIDToString(project.LeadID),
+			"error", err,
+		)
 		return
 	}
-	details, _ := json.Marshal(map[string]string{
+	s.publishProjectLeadApprovalInbox(item, issue.Status, actorType, actorID)
+}
+
+func createProjectLeadApprovalInbox(
+	ctx context.Context,
+	queries *db.Queries,
+	project db.Project,
+	issue db.Issue,
+	actorType string,
+	actorID string,
+) (db.InboxItem, error) {
+	if !project.LeadType.Valid || !project.LeadID.Valid || project.LeadType.String != "member" {
+		return db.InboxItem{}, errors.New("project lead is not a member")
+	}
+	details, err := json.Marshal(map[string]string{
 		"project_id":    util.UUIDToString(project.ID),
 		"project_title": project.Title,
 		"reason":        "project_backlog_approval",
 	})
-	item, err := s.Queries.CreateInboxItem(ctx, db.CreateInboxItemParams{
+	if err != nil {
+		return db.InboxItem{}, fmt.Errorf("marshal project lead approval details: %w", err)
+	}
+	item, err := queries.CreateInboxItem(ctx, db.CreateInboxItemParams{
 		WorkspaceID:   issue.WorkspaceID,
 		RecipientType: "member",
 		RecipientID:   project.LeadID,
@@ -515,17 +696,18 @@ func (s *IssueService) notifyProjectLeadApprovalRequested(ctx context.Context, p
 		Details:       details,
 	})
 	if err != nil {
-		slog.Error("project lead approval inbox write failed",
-			"project_id", util.UUIDToString(project.ID),
-			"issue_id", util.UUIDToString(issue.ID),
-			"recipient_id", util.UUIDToString(project.LeadID),
-			"error", err,
-		)
+		return db.InboxItem{}, fmt.Errorf("create project lead approval inbox: %w", err)
+	}
+	return item, nil
+}
+
+func (s *IssueService) publishProjectLeadApprovalInbox(item db.InboxItem, issueStatus, actorType, actorID string) {
+	if s.Bus == nil {
 		return
 	}
 	s.Bus.Publish(events.Event{
 		Type:        protocol.EventInboxNew,
-		WorkspaceID: util.UUIDToString(issue.WorkspaceID),
+		WorkspaceID: util.UUIDToString(item.WorkspaceID),
 		ActorType:   actorType,
 		ActorID:     actorID,
 		Payload: map[string]any{
@@ -537,7 +719,7 @@ func (s *IssueService) notifyProjectLeadApprovalRequested(ctx context.Context, p
 				"type":           item.Type,
 				"severity":       item.Severity,
 				"issue_id":       util.UUIDToPtr(item.IssueID),
-				"issue_status":   issue.Status,
+				"issue_status":   issueStatus,
 				"title":          item.Title,
 				"body":           util.TextToPtr(item.Body),
 				"read":           item.Read,

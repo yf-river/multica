@@ -121,10 +121,32 @@ func (s *TaskService) EnqueueTaskForSquadLeader(ctx context.Context, issue db.Is
 // It deliberately does not use is_leader_task: the agent is acting as project
 // owner/reviewer, not as the issue assignee or squad leader.
 func (s *TaskService) EnqueueProjectOwnerApprovalTask(ctx context.Context, issue db.Issue, project db.Project) (db.AgentTaskQueue, error) {
+	var task db.AgentTaskQueue
+	err := s.runInTx(ctx, func(queries *db.Queries) error {
+		var err error
+		task, err = s.CreateProjectOwnerApprovalTaskInTx(ctx, queries, issue, project)
+		return err
+	})
+	if err != nil {
+		return db.AgentTaskQueue{}, err
+	}
+	s.PublishProjectOwnerApprovalTaskEnqueued(ctx, task, project)
+	return task, nil
+}
+
+// CreateProjectOwnerApprovalTaskInTx inserts the review task using the
+// caller's transaction. The caller publishes and wakes the daemon only after
+// that transaction commits.
+func (s *TaskService) CreateProjectOwnerApprovalTaskInTx(
+	ctx context.Context,
+	queries *db.Queries,
+	issue db.Issue,
+	project db.Project,
+) (db.AgentTaskQueue, error) {
 	if !project.LeadType.Valid || project.LeadType.String != "agent" || !project.LeadID.Valid {
 		return db.AgentTaskQueue{}, fmt.Errorf("project lead is not an agent")
 	}
-	agent, err := s.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
+	agent, err := queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
 		ID:          project.LeadID,
 		WorkspaceID: project.WorkspaceID,
 	})
@@ -137,7 +159,7 @@ func (s *TaskService) EnqueueProjectOwnerApprovalTask(ctx context.Context, issue
 	if !agent.RuntimeID.Valid {
 		return db.AgentTaskQueue{}, fmt.Errorf("project lead agent has no runtime")
 	}
-	task, err := s.Queries.CreateAgentTask(ctx, db.CreateAgentTaskParams{
+	task, err := queries.CreateAgentTask(ctx, db.CreateAgentTaskParams{
 		AgentID:           agent.ID,
 		RuntimeID:         agent.RuntimeID,
 		IssueID:           issue.ID,
@@ -148,15 +170,20 @@ func (s *TaskService) EnqueueProjectOwnerApprovalTask(ctx context.Context, issue
 	if err != nil {
 		return db.AgentTaskQueue{}, fmt.Errorf("create project owner approval task: %w", err)
 	}
+	return task, nil
+}
+
+// PublishProjectOwnerApprovalTaskEnqueued emits the non-durable effects for a
+// review task after its transaction has committed.
+func (s *TaskService) PublishProjectOwnerApprovalTaskEnqueued(ctx context.Context, task db.AgentTaskQueue, project db.Project) {
 	slog.Info("project owner approval task enqueued",
 		"task_id", util.UUIDToString(task.ID),
-		"issue_id", util.UUIDToString(issue.ID),
-		"agent_id", util.UUIDToString(agent.ID),
+		"issue_id", util.UUIDToString(task.IssueID),
+		"agent_id", util.UUIDToString(task.AgentID),
 		"project_id", util.UUIDToString(project.ID),
 	)
 	s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, task)
 	s.NotifyTaskEnqueued(ctx, task)
-	return task, nil
 }
 
 func (s *TaskService) enqueueMentionTask(ctx context.Context, issue db.Issue, agentID pgtype.UUID, triggerCommentID pgtype.UUID, isLeader bool, forceFreshSession bool) (db.AgentTaskQueue, error) {
