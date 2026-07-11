@@ -124,7 +124,7 @@ async function installFresh(): Promise<string> {
     }
 
     await mkdir(dirname(target), { recursive: true });
-    await rm(target, { force: true }).catch(() => {});
+    await rm(target, { force: true });
     await rename(extractedBin, target);
     await chmod(target, 0o755);
 
@@ -139,7 +139,11 @@ async function installFresh(): Promise<string> {
     console.log(`[cli-bootstrap] installed CLI at ${target}`);
     return target;
   } finally {
-    await rm(workDir, { recursive: true, force: true }).catch(() => {});
+    try {
+      await rm(workDir, { recursive: true, force: true });
+    } catch (error) {
+      console.warn(`[cli-bootstrap] failed to remove work directory ${workDir}:`, error);
+    }
   }
 }
 
