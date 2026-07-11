@@ -43,6 +43,17 @@ Dataset import/version/restore remains workspace- and Asset-scoped. A Version
 is immutable evidence for a comparison; restore creates current editable state
 from that snapshot rather than mutating historical rows.
 
+Bulk Case tag operations have one synchronous executor and one durable
+background delivery path. A background request commits the Operation row and
+its `prompt_evaluation_case_operation:requested` outbox event together. The
+consumer applies Case tags, synchronized Dataset/Test Suite rows, Asset payload
+and Operation completion in its receipt transaction. Transient failures roll
+the whole projection back for retry. When retries are exhausted, the generic
+outbox dead-letter hook marks both the event and Operation failed in one
+transaction, so the UI never remains indefinitely at `已入队` after terminal
+failure. Requeueing the dead letter resumes the same stored filter/input rather
+than rebuilding intent from current UI state.
+
 Skill candidates preserve their source snapshot/freshness evidence. Applying a
 candidate and preparing/running re-evaluation are explicit endpoints with one
 controller-owned UI flow. Repository writes remain an external boundary and
@@ -54,6 +65,9 @@ unverified repository write succeeded.
 - Asset/run creation: `server/internal/handler/prompt_evaluation_asset.go`
 - Cases and versions: `server/internal/handler/prompt_evaluation_cases.go` and
   `server/internal/handler/prompt_evaluation_dataset_versions.go`
+- Durable bulk Case operations:
+  `server/internal/handler/prompt_evaluation_case_operation_consumer.go` and
+  `server/internal/eventoutbox/outbox.go`
 - Run/evidence reads: `server/internal/handler/prompt_evaluation_runs.go`
 - Terminal projection: `server/internal/service/prompt_evaluation_sync.go` and
   `server/cmd/server/prompt_evaluation_projection.go`

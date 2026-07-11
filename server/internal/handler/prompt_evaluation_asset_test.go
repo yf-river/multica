@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/events"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -1453,6 +1454,27 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 	if backgroundTags.Operation.Status != "已入队" {
 		t.Fatalf("background operation status = %+v", backgroundTags.Operation)
 	}
+	tx, err := testPool.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin background operation consumer tx: %v", err)
+	}
+	if _, err := testHandler.consumePromptEvaluationCaseOperation(context.Background(), testHandler.Queries.WithTx(tx), events.Event{
+		Type:        promptEvaluationCaseOperationRequestedEvent,
+		WorkspaceID: testWorkspaceID,
+		Payload: map[string]any{
+			"operation_id": backgroundTags.Operation.ID,
+		},
+	}); err != nil {
+		_ = tx.Rollback(context.Background())
+		t.Fatalf("consume background operation: %v", err)
+	}
+	if err := tx.Commit(context.Background()); err != nil {
+		t.Fatalf("commit background operation consumer tx: %v", err)
+	}
+	mustExec(t, context.Background(), `
+		DELETE FROM domain_event_outbox
+		WHERE event_type = $1 AND payload->>'operation_id' = $2
+	`, promptEvaluationCaseOperationRequestedEvent, backgroundTags.Operation.ID)
 	var completedBackground PromptEvaluationCaseOperationResponse
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {

@@ -15,6 +15,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/eventoutbox"
+	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -522,7 +524,14 @@ func (h *Handler) BulkUpdatePromptEvaluationCaseTags(w http.ResponseWriter, r *h
 		return
 	}
 	if executionMode == "后台" {
-		operation, err := h.Queries.CreatePromptEvaluationCaseOperation(r.Context(), db.CreatePromptEvaluationCaseOperationParams{
+		tx, err := h.TxStarter.Begin(r.Context())
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to start prompt evaluation case operation")
+			return
+		}
+		defer func() { _ = tx.Rollback(r.Context()) }()
+		qtx := h.Queries.WithTx(tx)
+		operation, err := qtx.CreatePromptEvaluationCaseOperation(r.Context(), db.CreatePromptEvaluationCaseOperationParams{
 			WorkspaceID:   workspaceUUID,
 			AssetID:       asset.ID,
 			OperationType: operationType,
@@ -538,7 +547,23 @@ func (h *Handler) BulkUpdatePromptEvaluationCaseTags(w http.ResponseWriter, r *h
 			writeError(w, http.StatusInternalServerError, "failed to queue prompt evaluation case operation")
 			return
 		}
-		go h.runPromptEvaluationCaseBulkTagsBackground(operation.ID, job)
+		if _, err := eventoutbox.Enqueue(r.Context(), qtx, events.Event{
+			Type:        promptEvaluationCaseOperationRequestedEvent,
+			WorkspaceID: workspaceID,
+			StreamKey:   "prompt_evaluation_case_operation:" + uuidToString(operation.ID),
+			ActorType:   "member",
+			ActorID:     userID,
+			Payload: map[string]any{
+				"operation_id": uuidToString(operation.ID),
+			},
+		}); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to queue prompt evaluation case operation event")
+			return
+		}
+		if err := tx.Commit(r.Context()); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to commit prompt evaluation case operation")
+			return
+		}
 		writeJSON(w, http.StatusAccepted, BulkPromptEvaluationCaseTagsResponse{
 			Operation:    promptEvaluationCaseOperationToResponse(operation),
 			Cases:        []PromptEvaluationCaseResponse{},
@@ -566,29 +591,46 @@ func (h *Handler) BulkUpdatePromptEvaluationCaseTags(w http.ResponseWriter, r *h
 	})
 }
 
-func (h *Handler) runPromptEvaluationCaseBulkTagsBackground(operationID pgtype.UUID, job promptEvaluationCaseBulkTagsJob) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	defer cancel()
-	if _, err := h.executePromptEvaluationCaseBulkTags(ctx, job, operationID); err != nil {
-		slog.Warn("background prompt evaluation case bulk tags failed", "error", err, "operation_id", uuidToString(operationID), "asset_id", uuidToString(job.Asset.ID))
-		_, _ = h.Queries.FailPromptEvaluationCaseOperation(ctx, db.FailPromptEvaluationCaseOperationParams{
-			ID:           operationID,
-			WorkspaceID:  job.WorkspaceID,
-			ErrorMessage: err.Error(),
-		})
+func (h *Handler) executePromptEvaluationCaseBulkTags(ctx context.Context, job promptEvaluationCaseBulkTagsJob, operationID pgtype.UUID) (promptEvaluationCaseBulkTagsResult, error) {
+	tx, err := h.TxStarter.Begin(ctx)
+	if err != nil {
+		return promptEvaluationCaseBulkTagsResult{}, fmt.Errorf("start prompt evaluation case bulk transaction: %w", err)
 	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	qtx := h.Queries.WithTx(tx)
+	result, err := executePromptEvaluationCaseBulkTagsInTx(ctx, qtx, job, operationID)
+	if err != nil {
+		return promptEvaluationCaseBulkTagsResult{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return promptEvaluationCaseBulkTagsResult{}, fmt.Errorf("commit prompt evaluation case bulk update: %w", err)
+	}
+	return result, nil
 }
 
-func (h *Handler) executePromptEvaluationCaseBulkTags(ctx context.Context, job promptEvaluationCaseBulkTagsJob, operationID pgtype.UUID) (promptEvaluationCaseBulkTagsResult, error) {
+func executePromptEvaluationCaseBulkTagsInTx(ctx context.Context, queries *db.Queries, job promptEvaluationCaseBulkTagsJob, operationID pgtype.UUID) (promptEvaluationCaseBulkTagsResult, error) {
 	if operationID.Valid {
-		if _, err := h.Queries.MarkPromptEvaluationCaseOperationRunning(ctx, db.MarkPromptEvaluationCaseOperationRunningParams{
+		operation, err := queries.MarkPromptEvaluationCaseOperationRunning(ctx, db.MarkPromptEvaluationCaseOperationRunningParams{
 			ID:          operationID,
 			WorkspaceID: job.WorkspaceID,
-		}); err != nil {
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			operation, err = queries.GetPromptEvaluationCaseOperationInWorkspace(ctx, db.GetPromptEvaluationCaseOperationInWorkspaceParams{
+				ID:          operationID,
+				WorkspaceID: job.WorkspaceID,
+			})
+			if err == nil && operation.Status == "已完成" {
+				return promptEvaluationCaseBulkTagsResult{Operation: operation}, nil
+			}
+			if err == nil {
+				err = fmt.Errorf("operation status %q is not claimable", operation.Status)
+			}
+		}
+		if err != nil {
 			return promptEvaluationCaseBulkTagsResult{}, fmt.Errorf("mark operation running: %w", err)
 		}
 	}
-	matched, err := h.Queries.ListPromptEvaluationCases(ctx, db.ListPromptEvaluationCasesParams{
+	matched, err := queries.ListPromptEvaluationCases(ctx, db.ListPromptEvaluationCasesParams{
 		WorkspaceID: job.WorkspaceID,
 		AssetID:     job.Asset.ID,
 		Status:      job.Status,
@@ -600,13 +642,6 @@ func (h *Handler) executePromptEvaluationCaseBulkTags(ctx context.Context, job p
 	if err != nil {
 		return promptEvaluationCaseBulkTagsResult{}, fmt.Errorf("list prompt evaluation cases: %w", err)
 	}
-
-	tx, err := h.TxStarter.Begin(ctx)
-	if err != nil {
-		return promptEvaluationCaseBulkTagsResult{}, fmt.Errorf("start prompt evaluation case bulk transaction: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	qtx := h.Queries.WithTx(tx)
 	changed := make([]db.PromptEvaluationCase, 0, len(matched))
 	sampleIDs := make([]string, 0, 20)
 	skippedCount := int32(0)
@@ -617,7 +652,7 @@ func (h *Handler) executePromptEvaluationCaseBulkTags(ctx context.Context, job p
 			skippedCount += 1
 			continue
 		}
-		updated, err := qtx.UpdatePromptEvaluationCase(ctx, db.UpdatePromptEvaluationCaseParams{
+		updated, err := queries.UpdatePromptEvaluationCase(ctx, db.UpdatePromptEvaluationCaseParams{
 			ID:               item.ID,
 			WorkspaceID:      job.WorkspaceID,
 			AssetID:          item.AssetID,
@@ -635,10 +670,10 @@ func (h *Handler) executePromptEvaluationCaseBulkTags(ctx context.Context, job p
 		if err != nil {
 			return promptEvaluationCaseBulkTagsResult{}, fmt.Errorf("update prompt evaluation case tags: %w", err)
 		}
-		if err := syncPromptEvaluationDatasetRow(ctx, qtx, job.Asset, updated); err != nil {
+		if err := syncPromptEvaluationDatasetRow(ctx, queries, job.Asset, updated); err != nil {
 			return promptEvaluationCaseBulkTagsResult{}, fmt.Errorf("sync prompt evaluation dataset row: %w", err)
 		}
-		if err := syncPromptEvaluationTestSuiteCase(ctx, qtx, job.Asset, updated); err != nil {
+		if err := syncPromptEvaluationTestSuiteCase(ctx, queries, job.Asset, updated); err != nil {
 			return promptEvaluationCaseBulkTagsResult{}, fmt.Errorf("sync prompt evaluation test suite case: %w", err)
 		}
 		changed = append(changed, updated)
@@ -648,7 +683,7 @@ func (h *Handler) executePromptEvaluationCaseBulkTags(ctx context.Context, job p
 	}
 
 	if len(changed) > 0 {
-		allCases, err := qtx.ListPromptEvaluationCases(ctx, db.ListPromptEvaluationCasesParams{
+		allCases, err := queries.ListPromptEvaluationCases(ctx, db.ListPromptEvaluationCasesParams{
 			WorkspaceID: job.WorkspaceID,
 			AssetID:     job.Asset.ID,
 		})
@@ -667,7 +702,7 @@ func (h *Handler) executePromptEvaluationCaseBulkTags(ctx context.Context, job p
 		}
 		payloadBytes := mustJSONBytes(payload)
 		profile := promptEvaluationAssetProfileFromPayload(payloadBytes, job.Asset.PromptID, job.Asset.AssetType)
-		if _, err = qtx.UpdatePromptEvaluationAsset(ctx, db.UpdatePromptEvaluationAssetParams{
+		if _, err = queries.UpdatePromptEvaluationAsset(ctx, db.UpdatePromptEvaluationAssetParams{
 			ID:                       job.Asset.ID,
 			WorkspaceID:              job.Asset.WorkspaceID,
 			PromptID:                 job.Asset.PromptID,
@@ -687,7 +722,7 @@ func (h *Handler) executePromptEvaluationCaseBulkTags(ctx context.Context, job p
 
 	var operation db.PromptEvaluationCaseOperation
 	if operationID.Valid {
-		operation, err = qtx.CompletePromptEvaluationCaseOperation(ctx, db.CompletePromptEvaluationCaseOperationParams{
+		operation, err = queries.CompletePromptEvaluationCaseOperation(ctx, db.CompletePromptEvaluationCaseOperationParams{
 			ID:            operationID,
 			WorkspaceID:   job.WorkspaceID,
 			ChangedCount:  int32(len(changed)),
@@ -696,7 +731,7 @@ func (h *Handler) executePromptEvaluationCaseBulkTags(ctx context.Context, job p
 		})
 	} else {
 		now := pgtype.Timestamptz{Time: time.Now(), Valid: true}
-		operation, err = qtx.CreatePromptEvaluationCaseOperation(ctx, db.CreatePromptEvaluationCaseOperationParams{
+		operation, err = queries.CreatePromptEvaluationCaseOperation(ctx, db.CreatePromptEvaluationCaseOperationParams{
 			WorkspaceID:   job.WorkspaceID,
 			AssetID:       job.Asset.ID,
 			OperationType: job.OperationType,
@@ -713,9 +748,6 @@ func (h *Handler) executePromptEvaluationCaseBulkTags(ctx context.Context, job p
 	}
 	if err != nil {
 		return promptEvaluationCaseBulkTagsResult{}, fmt.Errorf("record prompt evaluation case operation: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return promptEvaluationCaseBulkTagsResult{}, fmt.Errorf("commit prompt evaluation case bulk update: %w", err)
 	}
 	return promptEvaluationCaseBulkTagsResult{
 		Operation:    operation,

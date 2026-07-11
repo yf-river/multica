@@ -285,6 +285,7 @@ SET status = '运行中',
     updated_at = now()
 WHERE id = $1
   AND workspace_id = $2
+  AND status IN ('已入队', '失败')
 RETURNING id, workspace_id, asset_id, operation_type, filter, input, changed_count, skipped_count, sample_case_ids, created_by, created_at, status, error_message, started_at, completed_at, updated_at
 `
 

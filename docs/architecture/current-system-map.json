@@ -24,7 +24,7 @@
     "databaseFunctions": 9,
     "databaseTriggers": 4,
     "databaseIndexes": 188,
-    "migrations": 26,
+    "migrations": 28,
     "sqlcModules": 55,
     "sqlcQueries": 583,
     "goWebsocketEvents": 81,
@@ -5622,6 +5622,32 @@
               "source": "server/migrations/013_pat_create_idempotency.up.sql#personal_access_token_create_request_unique"
             }
           ],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 14,
+          "name": "durable_prompt_case_operations",
+          "direction": "down",
+          "source": "server/migrations/014_durable_prompt_case_operations.down.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 14,
+          "name": "durable_prompt_case_operations",
+          "direction": "up",
+          "source": "server/migrations/014_durable_prompt_case_operations.up.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
           "droppedFunctions": [],
           "droppedTriggers": [],
           "droppedIndexes": []
@@ -17525,6 +17551,7 @@
           "server/internal/handler/prompt_evaluation_asset_mappers.go",
           "server/internal/handler/prompt_evaluation_asset.go",
           "server/internal/handler/prompt_evaluation_candidates.go",
+          "server/internal/handler/prompt_evaluation_case_operation_consumer.go",
           "server/internal/handler/prompt_evaluation_cases.go",
           "server/internal/handler/prompt_evaluation_dataset_versions.go",
           "server/internal/handler/prompt_evaluation_evidence.go",

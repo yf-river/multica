@@ -248,6 +248,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		AttachmentDownloadURLTTL: envDuration("ATTACHMENT_DOWNLOAD_URL_TTL", 30*time.Minute),
 	}
 	h := handler.New(queries, pool, hub, bus, store, cfSigner, analyticsClient, signupConfig, daemonHub)
+	if opts.EventDispatcher != nil {
+		if err := h.RegisterPromptEvaluationCaseOperationConsumer(opts.EventDispatcher); err != nil {
+			return nil, nil, fmt.Errorf("register prompt evaluation case operation consumer: %w", err)
+		}
+	}
 	h.Metrics = opts.BusinessMetrics
 	h.TaskService.Metrics = opts.BusinessMetrics
 	h.IssueService.Metrics = opts.BusinessMetrics
