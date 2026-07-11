@@ -443,6 +443,62 @@ func newIssuePullRequestsTestCmd() *cobra.Command {
 	return cmd
 }
 
+func newIssueSearchTestCmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "search-test"}
+	cmd.Flags().Int("limit", 0, "")
+	cmd.Flags().Bool("include-closed", false, "")
+	cmd.Flags().String("output", "table", "")
+	return cmd
+}
+
+func TestRunIssueSearchTableUsesCurrentCommentSnippet(t *testing.T) {
+	var gotQuery url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query()
+		if err := json.NewEncoder(w).Encode(map[string]any{
+			"issues": []map[string]any{{
+				"identifier":              "MUL-42",
+				"title":                   "Current search response",
+				"status":                  "todo",
+				"match_source":            "comment",
+				"matched_comment_snippet": "the current comment snippet",
+			}},
+			"total": 1,
+		}); err != nil {
+			t.Errorf("encode search response: %v", err)
+		}
+	}))
+	defer srv.Close()
+
+	t.Setenv("MULTICA_SERVER_URL", srv.URL)
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	t.Setenv("MULTICA_TOKEN", "test-token")
+
+	cmd := newIssueSearchTestCmd()
+	_ = cmd.Flags().Set("limit", "7")
+	_ = cmd.Flags().Set("include-closed", "true")
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	err := runIssueSearch(cmd, []string{"current response"})
+	_ = w.Close()
+	os.Stdout = old
+	out, _ := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("runIssueSearch: %v", err)
+	}
+
+	if gotQuery.Get("q") != "current response" || gotQuery.Get("limit") != "7" || gotQuery.Get("include_closed") != "true" {
+		t.Fatalf("search query = %v", gotQuery)
+	}
+	text := string(out)
+	for _, want := range []string{"MUL-42", "Current search response", "comment: the current comment snippet"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("table output missing %q:\n%s", want, text)
+		}
+	}
+}
+
 func newIssuePullRequestLinkTestCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "pull-request link"}
 	cmd.Flags().String("provider", "gongfeng", "")

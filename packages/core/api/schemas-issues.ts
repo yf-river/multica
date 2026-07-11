@@ -262,7 +262,6 @@ export const EMPTY_ISSUE: Issue = {
 
 export const SearchIssueSchema = IssueSchema.extend({
   match_source: z.string(),
-  matched_snippet: z.string().optional(),
   matched_description_snippet: z.string().optional(),
   matched_comment_snippet: z.string().optional(),
 }).loose();

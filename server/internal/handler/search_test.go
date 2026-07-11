@@ -1,9 +1,55 @@
 package handler
 
 import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
+
+	"github.com/google/uuid"
 )
+
+func TestSearchIssuesReturnsOnlyCurrentCommentSnippetField(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler test fixture not initialized")
+	}
+
+	keyword := "current-comment-snippet-" + uuid.NewString()
+	issue := createHandlerCommentIssueFixture(t, "Search response contract")
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO comment (workspace_id, issue_id, author_type, author_id, content)
+		VALUES ($1, $2, 'member', $3, $4)
+	`, testWorkspaceID, issue.ID, testUserID, "Discussion contains "+keyword+" for search"); err != nil {
+		t.Fatalf("insert searchable comment: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	req := newRequest(http.MethodGet, "/api/issues/search?q="+url.QueryEscape(keyword), nil)
+	testHandler.SearchIssues(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("SearchIssues status=%d body=%s", w.Code, w.Body.String())
+	}
+
+	var payload struct {
+		Issues []map[string]any `json:"issues"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode search response: %v", err)
+	}
+	if len(payload.Issues) != 1 {
+		t.Fatalf("search issues=%d, want 1: %#v", len(payload.Issues), payload.Issues)
+	}
+	result := payload.Issues[0]
+	if result["match_source"] != "comment" || !strings.Contains(result["matched_comment_snippet"].(string), keyword) {
+		t.Fatalf("current comment snippet missing: %#v", result)
+	}
+	if _, exists := result["matched_snippet"]; exists {
+		t.Fatalf("obsolete matched_snippet leaked into current response: %#v", result)
+	}
+}
 
 func TestBuildSearchQuery_SingleTerm(t *testing.T) {
 	query, args := buildSearchQuery("Hello", []string{"Hello"}, 0, false, false)

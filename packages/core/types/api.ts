@@ -149,7 +149,6 @@ export interface ListIssueBucketsResponse {
 
 export interface SearchIssueResult extends Issue {
   match_source: "title" | "description" | "comment";
-  matched_snippet?: string;
   matched_description_snippet?: string;
   matched_comment_snippet?: string;
 }
