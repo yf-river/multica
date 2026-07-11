@@ -67,11 +67,9 @@ export function CreateAgentDialog({
   // Members tab.
   squadId?: string;
   onClose: () => void;
-  // Returns the created Agent so the dialog can run a follow-up
-  // setAgentSkills with the IDs the user picked in the form. Pre-skill-
-  // section callers can keep returning `void`; the dialog tolerates a
-  // falsy return (no follow-up runs).
-  onCreate: (data: CreateAgentRequest) => Promise<Agent | void>;
+  // Returns the created Agent so follow-up skill and squad mutations use the
+  // authoritative server identity.
+  onCreate: (data: CreateAgentRequest) => Promise<Agent>;
 }) {
   const { t } = useT("agents");
   const isDuplicate = !!template;
@@ -196,7 +194,7 @@ export function CreateAgentDialog({
       // onCreate returns the created Agent for this path; if the caller
       // doesn't return it we fall back to skipping (preserves
       // backward compatibility with non-skill-aware callers).
-      if (createdAgent && selectedSkillIds.size > 0) {
+      if (selectedSkillIds.size > 0) {
         try {
           await api.setAgentSkills(createdAgent.id, {
             skill_ids: [...selectedSkillIds],
@@ -220,7 +218,7 @@ export function CreateAgentDialog({
       // in place. Atomicity is best-effort by design (see plan in
       // MUL-2178) — a partial failure surfaces a warning toast and
       // the user can retry from the Add Member dialog.
-      if (createdAgent && squadId) {
+      if (squadId) {
         await attachToSquad(createdAgent.id, createdAgent.name);
       }
       onClose();

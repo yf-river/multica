@@ -123,7 +123,7 @@ function renderDialog(runtimes: RuntimeDevice[], template?: Agent) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  const onCreate = vi.fn().mockResolvedValue(undefined);
+  const onCreate = vi.fn().mockResolvedValue(makeTemplate("rt"));
   const onClose = vi.fn();
   render(
     <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
