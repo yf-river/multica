@@ -302,8 +302,7 @@ type (
 func (c *Client) SendHeartbeat(ctx context.Context, runtimeID string, metadata json.RawMessage) (*HeartbeatResponse, error) {
 	var resp HeartbeatResponse
 	body := map[string]any{
-		"runtime_id":            runtimeID,
-		"supports_batch_import": true,
+		"runtime_id": runtimeID,
 	}
 	if len(metadata) > 0 {
 		body["metadata"] = metadata

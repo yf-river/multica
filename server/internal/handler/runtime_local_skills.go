@@ -116,7 +116,6 @@ type LocalSkillImportStore interface {
 	Create(ctx context.Context, input LocalSkillImportRequestInput) (*RuntimeLocalSkillImportRequest, error)
 	Get(ctx context.Context, id string) (*RuntimeLocalSkillImportRequest, error)
 	HasPending(ctx context.Context, runtimeID string) (bool, error)
-	PopPending(ctx context.Context, runtimeID string) (*RuntimeLocalSkillImportRequest, error)
 	// PopPendingBatch claims up to limit pending requests atomically and
 	// transitions them to running. Used by the heartbeat handler to deliver
 	// multiple imports per heartbeat cycle.
@@ -392,29 +391,6 @@ func (s *InMemoryLocalSkillImportStore) HasPending(_ context.Context, runtimeID 
 		}
 	}
 	return false, nil
-}
-
-func (s *InMemoryLocalSkillImportStore) PopPending(_ context.Context, runtimeID string) (*RuntimeLocalSkillImportRequest, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	var oldest *RuntimeLocalSkillImportRequest
-	now := time.Now()
-	for _, req := range s.requests {
-		applyLocalSkillImportTimeout(req, now)
-		if req.RuntimeID == runtimeID && req.Status == RuntimeLocalSkillPending {
-			if oldest == nil || req.CreatedAt.Before(oldest.CreatedAt) {
-				oldest = req
-			}
-		}
-	}
-	if oldest != nil {
-		oldest.Status = RuntimeLocalSkillRunning
-		startedAt := now
-		oldest.RunStartedAt = &startedAt
-		oldest.UpdatedAt = now
-	}
-	return oldest, nil
 }
 
 func (s *InMemoryLocalSkillImportStore) PopPendingBatch(_ context.Context, runtimeID string, limit int) ([]*RuntimeLocalSkillImportRequest, error) {

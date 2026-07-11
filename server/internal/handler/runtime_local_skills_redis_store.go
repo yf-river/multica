@@ -378,57 +378,6 @@ func (s *RedisLocalSkillImportStore) HasPending(ctx context.Context, runtimeID s
 	return cnt > 0, nil
 }
 
-func (s *RedisLocalSkillImportStore) PopPending(ctx context.Context, runtimeID string) (*RuntimeLocalSkillImportRequest, error) {
-	pendingKey := localSkillImportPendingKey(runtimeID)
-
-	for attempt := 0; attempt < localSkillRedisPopMaxRetries; attempt++ {
-		ids, err := s.rdb.ZRange(ctx, pendingKey, 0, 0).Result()
-		if err != nil {
-			return nil, fmt.Errorf("zrange pending: %w", err)
-		}
-		if len(ids) == 0 {
-			return nil, nil
-		}
-		id := ids[0]
-
-		req, err := s.loadImportRequest(ctx, id)
-		if err != nil {
-			return nil, err
-		}
-		if req == nil {
-			s.rdb.ZRem(ctx, pendingKey, id)
-			continue
-		}
-		if req.Status != RuntimeLocalSkillPending {
-			s.rdb.ZRem(ctx, pendingKey, id)
-			continue
-		}
-
-		now := time.Now()
-		req.Status = RuntimeLocalSkillRunning
-		req.RunStartedAt = &now
-		req.UpdatedAt = now
-		data, err := s.marshalImport(req)
-		if err != nil {
-			return nil, err
-		}
-
-		result, err := claimPendingScript.Run(
-			ctx, s.rdb,
-			[]string{pendingKey, localSkillImportKey(id)},
-			id, data, int(runtimeLocalSkillStoreRetention.Seconds()),
-		).Int64()
-		if err != nil {
-			return nil, fmt.Errorf("claim pending: %w", err)
-		}
-		if result == 0 {
-			continue
-		}
-		return req, nil
-	}
-	return nil, nil
-}
-
 func (s *RedisLocalSkillImportStore) PopPendingBatch(ctx context.Context, runtimeID string, limit int) ([]*RuntimeLocalSkillImportRequest, error) {
 	pendingKey := localSkillImportPendingKey(runtimeID)
 

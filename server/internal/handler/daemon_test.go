@@ -62,9 +62,9 @@ type popRecordingLocalSkillImportStore struct {
 	popCalls int
 }
 
-func (s *popRecordingLocalSkillImportStore) PopPending(ctx context.Context, runtimeID string) (*RuntimeLocalSkillImportRequest, error) {
+func (s *popRecordingLocalSkillImportStore) PopPendingBatch(ctx context.Context, runtimeID string, limit int) ([]*RuntimeLocalSkillImportRequest, error) {
 	s.popCalls++
-	return s.LocalSkillImportStore.PopPending(ctx, runtimeID)
+	return s.LocalSkillImportStore.PopPendingBatch(ctx, runtimeID, limit)
 }
 
 func TestCoordinatorExecutionPolicyFiltersExecutionBuiltinSkills(t *testing.T) {
@@ -713,7 +713,7 @@ func TestHandleDaemonWSHeartbeat_RuntimeGoneReturnsAckNotError(t *testing.T) {
 	missingRuntime := uuid.New().String()
 	ack, err := testHandler.HandleDaemonWSHeartbeat(context.Background(),
 		daemonws.ClientIdentity{WorkspaceID: testWorkspaceID},
-		missingRuntime, false)
+		missingRuntime)
 	if err != nil {
 		t.Fatalf("HandleDaemonWSHeartbeat: unexpected error %v", err)
 	}
@@ -767,7 +767,7 @@ func TestHandleDaemonWSHeartbeat_AllowsAnyAuthorizedWorkspace(t *testing.T) {
 
 	ack, err := testHandler.HandleDaemonWSHeartbeat(ctx,
 		daemonws.ClientIdentity{WorkspaceIDs: []string{testWorkspaceID, workspaceID}},
-		runtimeID, false)
+		runtimeID)
 	if err != nil {
 		t.Fatalf("HandleDaemonWSHeartbeat: unexpected error %v", err)
 	}
@@ -922,7 +922,7 @@ func TestDaemonHeartbeat_EmptyQueueSkipsPopPending(t *testing.T) {
 		t.Fatalf("expected 0 PopPending calls on empty list queue, got %d", listSpy.popCalls)
 	}
 	if importSpy.popCalls != 0 {
-		t.Fatalf("expected 0 PopPending calls on empty import queue, got %d", importSpy.popCalls)
+		t.Fatalf("expected 0 PopPendingBatch calls on empty import queue, got %d", importSpy.popCalls)
 	}
 }
 

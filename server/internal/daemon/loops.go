@@ -290,12 +290,12 @@ func (d *Daemon) handleHeartbeatActions(ctx context.Context, runtimeID string, r
 	if resp == nil {
 		return
 	}
-	if resp.PendingModelList != nil || resp.PendingLocalSkills != nil || resp.PendingLocalSkillImport != nil {
+	if resp.PendingModelList != nil || resp.PendingLocalSkills != nil || len(resp.PendingLocalSkillImports) > 0 {
 		d.logger.Debug("heartbeat: pending actions",
 			"runtime_id", runtimeID,
 			"model_list", resp.PendingModelList != nil,
 			"local_skills", resp.PendingLocalSkills != nil,
-			"local_skill_import", resp.PendingLocalSkillImport != nil,
+			"local_skill_imports", len(resp.PendingLocalSkillImports),
 		)
 	}
 	if resp.PendingModelList != nil {
@@ -308,16 +308,11 @@ func (d *Daemon) handleHeartbeatActions(ctx context.Context, runtimeID string, r
 			go d.handleLocalSkillList(ctx, *rt, resp.PendingLocalSkills.ID)
 		}
 	}
-	// Prefer the batch field (new backend); fall back to singular (old backend).
 	if len(resp.PendingLocalSkillImports) > 0 {
 		if rt := d.findRuntime(runtimeID); rt != nil {
 			for _, imp := range resp.PendingLocalSkillImports {
 				go d.handleLocalSkillImport(ctx, *rt, imp)
 			}
-		}
-	} else if resp.PendingLocalSkillImport != nil {
-		if rt := d.findRuntime(runtimeID); rt != nil {
-			go d.handleLocalSkillImport(ctx, *rt, *resp.PendingLocalSkillImport)
 		}
 	}
 }
@@ -892,4 +887,3 @@ func (d *Daemon) watchTaskCancellation(ctx context.Context, taskID string, pollI
 	}()
 	return cancelled
 }
-

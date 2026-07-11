@@ -301,9 +301,13 @@ func TestRedisLocalSkillImportStore_PopPendingAcrossInstances(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 
-	popped, err := nodeB.PopPending(ctx, "runtime-import")
+	poppedBatch, err := nodeB.PopPendingBatch(ctx, "runtime-import", 1)
 	if err != nil {
 		t.Fatalf("pop: %v", err)
+	}
+	var popped *RuntimeLocalSkillImportRequest
+	if len(poppedBatch) > 0 {
+		popped = poppedBatch[0]
 	}
 	if popped == nil || popped.ID != req.ID {
 		t.Fatalf("cross-node pop failed: got %+v", popped)
