@@ -152,8 +152,8 @@ func TestCreateComment_SquadSOPRoleKeyMentionTriggersStageAgent(t *testing.T) {
 	_, _ = testPool.Exec(ctx, `DELETE FROM squad_member WHERE member_id IN (SELECT id FROM agent WHERE workspace_id = $1 AND name IN ($2, $3))`, testWorkspaceID, projectSOPAgentPM, projectSOPAgent01)
 	_, _ = testPool.Exec(ctx, `DELETE FROM agent WHERE workspace_id = $1 AND name IN ($2, $3)`, testWorkspaceID, projectSOPAgentPM, projectSOPAgent01)
 
-	pmID := createHandlerTestAgent(t, projectSOPAgentPM, nil)
-	clarifyID := createHandlerTestAgent(t, projectSOPAgent01, nil)
+	pmID := createHandlerTestSOPAgent(t, projectSOPAgentPM, "pm")
+	clarifyID := createHandlerTestSOPAgent(t, projectSOPAgent01, "01-clarify")
 
 	var squadID string
 	if err := testPool.QueryRow(ctx, `

@@ -803,10 +803,9 @@ func roleKeyFromAgentRuntimeConfig(agent db.Agent) string {
 	return ""
 }
 
-func taskExecutionPolicyForRole(roleKey string, fallbackName string, isSquadLeader bool) TaskExecutionPolicyData {
+func taskExecutionPolicyForRole(roleKey string, isSquadLeader bool) TaskExecutionPolicyData {
 	key := strings.ToLower(strings.TrimSpace(roleKey))
-	name := strings.TrimSpace(fallbackName)
-	if isSquadLeader || key == "pm" || (key == "" && (strings.EqualFold(name, "pm") || strings.HasPrefix(strings.ToUpper(name), "PM-"))) {
+	if isSquadLeader || key == "pm" {
 		return TaskExecutionPolicyData{
 			RoleKey:          "pm",
 			RoleKind:         "coordinator",
@@ -827,24 +826,11 @@ func taskExecutionPolicyForRole(roleKey string, fallbackName string, isSquadLead
 	case "05-verify":
 		return TaskExecutionPolicyData{RoleKey: "05-verify", RoleKind: "verification_stage", CanAccessRepo: true, CanEditRepo: false, ProjectSkillMode: "verification", AllowedProjectSkills: []string{"05-verify"}}
 	}
-	switch name {
-	case projectSOPAgent01:
-		return TaskExecutionPolicyData{RoleKey: "01-clarify", RoleKind: "planning_stage", CanAccessRepo: false, CanEditRepo: false, ProjectSkillMode: "none", AllowedProjectSkills: []string{"01-clarify"}}
-	case projectSOPAgent02:
-		return TaskExecutionPolicyData{RoleKey: "02-design", RoleKind: "planning_stage", CanAccessRepo: true, CanEditRepo: false, ProjectSkillMode: "stage", AllowedProjectSkills: []string{"02-design"}}
-	case projectSOPAgent03:
-		return TaskExecutionPolicyData{RoleKey: "03-task-split", RoleKind: "planning_stage", CanAccessRepo: true, CanEditRepo: false, ProjectSkillMode: "stage", AllowedProjectSkills: []string{"03-task-split"}}
-	case projectSOPAgent04:
-		return TaskExecutionPolicyData{RoleKey: "04-implement", RoleKind: "implementation_stage", CanAccessRepo: true, CanEditRepo: true, ProjectSkillMode: "implementation", AllowedProjectSkills: []string{"04-implement"}}
-	case projectSOPAgent05:
-		return TaskExecutionPolicyData{RoleKey: "05-verify", RoleKind: "verification_stage", CanAccessRepo: true, CanEditRepo: false, ProjectSkillMode: "verification", AllowedProjectSkills: []string{"05-verify"}}
-	default:
-		return TaskExecutionPolicyData{RoleKind: "agent", CanAccessRepo: true, CanEditRepo: true, ProjectSkillMode: "all"}
-	}
+	return TaskExecutionPolicyData{RoleKind: "agent", CanAccessRepo: true, CanEditRepo: true, ProjectSkillMode: "all"}
 }
 
 func taskExecutionPolicyForAgent(agent db.Agent, isSquadLeader bool) TaskExecutionPolicyData {
-	return taskExecutionPolicyForRole(roleKeyFromAgentRuntimeConfig(agent), agent.Name, isSquadLeader)
+	return taskExecutionPolicyForRole(roleKeyFromAgentRuntimeConfig(agent), isSquadLeader)
 }
 
 func filterAgentSkillsForExecutionPolicy(skills []service.AgentSkillData, policy TaskExecutionPolicyData) []service.AgentSkillData {

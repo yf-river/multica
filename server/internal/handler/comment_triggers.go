@@ -231,14 +231,6 @@ func filterSuppressedCommentAgentTriggers(triggers []commentAgentTrigger, suppre
 
 func (h *Handler) shouldBlockParentSOPStageTriggerForCrossProjectChildren(ctx context.Context, issue db.Issue, trigger commentAgentTrigger) (bool, error) {
 	roleKey := normalizeSOPRoleMentionKey(roleKeyFromAgentRuntimeConfig(trigger.Agent))
-	if roleKey == "" {
-		switch trigger.Agent.Name {
-		case projectSOPAgent04:
-			roleKey = "04-implement"
-		case projectSOPAgent05:
-			roleKey = "05-verify"
-		}
-	}
 	if roleKey != "04-implement" && roleKey != "05-verify" {
 		return false, nil
 	}
@@ -829,9 +821,6 @@ func (h *Handler) parseSquadSOPRoleKeyMentions(ctx context.Context, issue db.Iss
 			continue
 		}
 		roleKey := normalizeSOPRoleMentionKey(roleKeyFromAgentRuntimeConfig(agent))
-		if roleKey == "" {
-			roleKey = legacySOPRoleKeyFromAgentName(agent.Name)
-		}
 		if _, ok := wantedRoles[roleKey]; !ok {
 			continue
 		}
@@ -860,25 +849,6 @@ func normalizeSOPRoleAlias(value string) (string, bool) {
 		return "05-verify", true
 	default:
 		return "", false
-	}
-}
-
-func legacySOPRoleKeyFromAgentName(name string) string {
-	switch name {
-	case projectSOPAgentPM:
-		return "pm"
-	case projectSOPAgent01:
-		return "01-clarify"
-	case projectSOPAgent02:
-		return "02-design"
-	case projectSOPAgent03:
-		return "03-task-split"
-	case projectSOPAgent04:
-		return "04-implement"
-	case projectSOPAgent05:
-		return "05-verify"
-	default:
-		return ""
 	}
 }
 

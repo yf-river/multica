@@ -25,7 +25,7 @@ evidence reviewable by humans.
 | Database functions | 9 |
 | Database triggers | 4 |
 | Database indexes | 188 |
-| Migration files (up + down) | 30 |
+| Migration files (up + down) | 32 |
 | sqlc modules | 55 |
 | sqlc queries | 579 |
 | Go WebSocket events | 81 |
@@ -524,6 +524,8 @@ intentionally platform-specific.
 | 14 | durable_prompt_case_operations | up | — | 0 | 0 | 0 | `server/migrations/014_durable_prompt_case_operations.up.sql` |
 | 15 | remove_legacy_daemon_identity | down | — | 0 | 0 | 0 | `server/migrations/015_remove_legacy_daemon_identity.down.sql` |
 | 15 | remove_legacy_daemon_identity | up | — | 0 | 0 | 0 | `server/migrations/015_remove_legacy_daemon_identity.up.sql` |
+| 16 | backfill_sop_agent_role_keys | down | — | 0 | 0 | 0 | `server/migrations/016_backfill_sop_agent_role_keys.down.sql` |
+| 16 | backfill_sop_agent_role_keys | up | — | 0 | 0 | 0 | `server/migrations/016_backfill_sop_agent_role_keys.up.sql` |
 
 ### Current tables discovered from up migrations
 

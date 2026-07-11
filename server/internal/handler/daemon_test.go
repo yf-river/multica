@@ -206,38 +206,38 @@ func createDispatchedClaimFixtureTask(t *testing.T, ctx context.Context, agentID
 }
 
 func TestTaskExecutionPolicyForSOPRoles(t *testing.T) {
-	pm := taskExecutionPolicyForRole("pm", projectSOPAgentPM, true)
+	pm := taskExecutionPolicyForRole("pm", true)
 	if pm.RoleKey != "pm" || pm.CanAccessRepo || pm.CanEditRepo || pm.ProjectSkillMode != "none" {
 		t.Fatalf("PM policy = %+v, want coordinator with no repo access", pm)
 	}
-	stage01 := taskExecutionPolicyForRole("01-clarify", "", false)
+	stage01 := taskExecutionPolicyForRole("01-clarify", false)
 	if stage01.RoleKey != "01-clarify" || stage01.CanAccessRepo || stage01.CanEditRepo || stage01.ProjectSkillMode != "none" {
 		t.Fatalf("01 policy = %+v, want no-repo clarify policy", stage01)
 	}
-	stage03 := taskExecutionPolicyForRole("03-task-split", "", false)
+	stage03 := taskExecutionPolicyForRole("03-task-split", false)
 	if stage03.RoleKey != "03-task-split" || !stage03.CanAccessRepo || stage03.CanEditRepo || stage03.ProjectSkillMode != "stage" {
 		t.Fatalf("03 policy = %+v, want read-only stage policy", stage03)
 	}
-	impl := taskExecutionPolicyForRole("04-implement", "", false)
+	impl := taskExecutionPolicyForRole("04-implement", false)
 	if impl.RoleKey != "04-implement" || !impl.CanAccessRepo || !impl.CanEditRepo || impl.ProjectSkillMode != "implementation" {
 		t.Fatalf("04 policy = %+v, want implementation policy with repo edits", impl)
 	}
-	custom := taskExecutionPolicyForRole("developer", "custom developer", false)
+	custom := taskExecutionPolicyForRole("developer", false)
 	if !custom.CanAccessRepo || !custom.CanEditRepo || custom.ProjectSkillMode != "all" {
 		t.Fatalf("custom policy = %+v, want backward-compatible full project skill visibility", custom)
 	}
 }
 
 func TestNoRepoBoundedPolicySkipsPriorSession(t *testing.T) {
-	stage01 := taskExecutionPolicyForRole("01-clarify", "", false)
+	stage01 := taskExecutionPolicyForRole("01-clarify", false)
 	if !isNoRepoBoundedPolicy(&stage01) {
 		t.Fatalf("01 policy should skip prior provider session: %+v", stage01)
 	}
-	stage03 := taskExecutionPolicyForRole("03-task-split", "", false)
+	stage03 := taskExecutionPolicyForRole("03-task-split", false)
 	if isNoRepoBoundedPolicy(&stage03) {
 		t.Fatalf("03 policy should keep normal provider session behavior: %+v", stage03)
 	}
-	pm := taskExecutionPolicyForRole("pm", projectSOPAgentPM, true)
+	pm := taskExecutionPolicyForRole("pm", true)
 	if isNoRepoBoundedPolicy(&pm) {
 		t.Fatalf("PM coordinator policy should not be treated as no-repo bounded stage: %+v", pm)
 	}

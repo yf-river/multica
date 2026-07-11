@@ -187,7 +187,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 					} else {
 						resp.Agent.Instructions = resp.Agent.Instructions + "\n\n" + briefing
 					}
-					leaderPolicy := taskExecutionPolicyForRole("", resp.Agent.Name, true)
+					leaderPolicy := taskExecutionPolicyForRole("", true)
 					resp.ExecutionPolicy = &leaderPolicy
 					resp.Agent.Skills = filterAgentSkillsForExecutionPolicy(resp.Agent.Skills, leaderPolicy)
 					slog.Debug("injected squad leader briefing",
