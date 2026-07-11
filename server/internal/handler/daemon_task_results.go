@@ -442,7 +442,7 @@ func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 }
 
 func sanitizeTaskMessageText(value string) string {
-	return sanitizeNullBytes(value)
+	return sanitizePostgresText(value)
 }
 
 func sanitizeTaskMessageInput(input map[string]any) map[string]any {

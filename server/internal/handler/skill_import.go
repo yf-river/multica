@@ -80,7 +80,7 @@ func (s *importedSkill) addFile(path, content string) error {
 
 // isLikelyBinaryFilePath reports whether the file's extension indicates a
 // non-text payload. Conservative blacklist — extensions not on the list
-// are assumed text and pass through. `sanitizeNullBytes` (called at PG
+// are assumed text and pass through. `sanitizePostgresText` (called at PG
 // insert time) is the second-line defence against any text file that
 // turns out to have stray invalid-UTF-8 bytes.
 func isLikelyBinaryFilePath(path string) bool {

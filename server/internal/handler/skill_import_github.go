@@ -968,7 +968,7 @@ func (h *Handler) ImportSkill(w http.ResponseWriter, r *http.Request) {
 	if imported.origin != nil {
 		config["origin"] = imported.origin
 	}
-	name := sanitizeNullBytes(imported.name)
+	name := sanitizePostgresText(imported.name)
 
 	if structuredResult {
 		if existing, found, lerr := h.lookupSkillByName(r.Context(), workspaceUUID, name); lerr != nil {
@@ -1060,8 +1060,8 @@ func (h *Handler) UpsertSkillFile(w http.ResponseWriter, r *http.Request) {
 
 	sf, err := h.Queries.UpsertSkillFile(r.Context(), db.UpsertSkillFileParams{
 		SkillID: skill.ID,
-		Path:    sanitizeNullBytes(req.Path),
-		Content: sanitizeNullBytes(req.Content),
+		Path:    sanitizePostgresText(req.Path),
+		Content: sanitizePostgresText(req.Content),
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to upsert skill file: "+err.Error())

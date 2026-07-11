@@ -17,17 +17,14 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// sanitizeNullBytes makes a string safe for a PostgreSQL TEXT column.
+// sanitizePostgresText makes a string safe for a PostgreSQL TEXT column.
 //
 // Two failure modes covered:
 //   - Embedded NUL (0x00) — PG rejects with SQLSTATE 22021. Removed.
 //   - Other invalid-UTF-8 byte sequences (e.g. 0x91 = Windows-1252 smart
 //     quote, which crashed agent-template import of skills containing
 //     Windows-encoded prose). `strings.ToValidUTF8` drops them.
-//
-// Name is kept for compatibility with the many call sites; the behaviour
-// is a strict superset of the original.
-func sanitizeNullBytes(s string) string {
+func sanitizePostgresText(s string) string {
 	return strings.ToValidUTF8(strings.ReplaceAll(s, "\x00", ""), "")
 }
 
@@ -448,13 +445,13 @@ func (h *Handler) UpdateSkill(w http.ResponseWriter, r *http.Request) {
 		ID: parseUUID(id),
 	}
 	if req.Name != nil {
-		params.Name = pgtype.Text{String: sanitizeNullBytes(*req.Name), Valid: true}
+		params.Name = pgtype.Text{String: sanitizePostgresText(*req.Name), Valid: true}
 	}
 	if req.Description != nil {
-		params.Description = pgtype.Text{String: sanitizeNullBytes(*req.Description), Valid: true}
+		params.Description = pgtype.Text{String: sanitizePostgresText(*req.Description), Valid: true}
 	}
 	if req.Content != nil {
-		params.Content = pgtype.Text{String: sanitizeNullBytes(*req.Content), Valid: true}
+		params.Content = pgtype.Text{String: sanitizePostgresText(*req.Content), Valid: true}
 	}
 	if req.Config != nil {
 		config, _ := json.Marshal(req.Config)
@@ -486,8 +483,8 @@ func (h *Handler) UpdateSkill(w http.ResponseWriter, r *http.Request) {
 			}
 			sf, err := qtx.UpsertSkillFile(r.Context(), db.UpsertSkillFileParams{
 				SkillID: skill.ID,
-				Path:    sanitizeNullBytes(f.Path),
-				Content: sanitizeNullBytes(f.Content),
+				Path:    sanitizePostgresText(f.Path),
+				Content: sanitizePostgresText(f.Content),
 			})
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "failed to upsert skill file: "+err.Error())

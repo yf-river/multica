@@ -803,7 +803,7 @@ func (h *Handler) ReportLocalSkillImportResult(w http.ResponseWriter, r *http.Re
 			WorkspaceID:   rt.WorkspaceID,
 			TargetSkillID: targetUUID,
 			UserID:        req.CreatorID,
-			ExpectedName:  sanitizeNullBytes(name),
+			ExpectedName:  sanitizePostgresText(name),
 			Description:   description,
 			Content:       body.Skill.Content,
 			Config:        config,
@@ -840,7 +840,7 @@ func (h *Handler) ReportLocalSkillImportResult(w http.ResponseWriter, r *http.Re
 
 	// Create path: a same-name collision is a structured terminal state so the
 	// caller can offer overwrite / rename / skip.
-	if existing, found, lerr := h.lookupSkillByName(r.Context(), rt.WorkspaceID, sanitizeNullBytes(name)); lerr != nil {
+	if existing, found, lerr := h.lookupSkillByName(r.Context(), rt.WorkspaceID, sanitizePostgresText(name)); lerr != nil {
 		h.failLocalSkillImport(w, r, requestID, "failed to check for existing skill: "+lerr.Error())
 		return
 	} else if found {
@@ -861,7 +861,7 @@ func (h *Handler) ReportLocalSkillImportResult(w http.ResponseWriter, r *http.Re
 		// A unique-violation here means another import won the race between our
 		// lookup and the insert — surface it as a conflict, not a hard failure.
 		if isUniqueViolation(err) {
-			if existing, found, lerr := h.lookupSkillByName(r.Context(), rt.WorkspaceID, sanitizeNullBytes(name)); lerr == nil && found {
+			if existing, found, lerr := h.lookupSkillByName(r.Context(), rt.WorkspaceID, sanitizePostgresText(name)); lerr == nil && found {
 				h.reportLocalSkillConflict(w, r, req.ID, req.CreatorID, existing)
 				return
 			}

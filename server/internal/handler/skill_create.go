@@ -37,9 +37,9 @@ func createSkillWithFilesInTx(ctx context.Context, qtx *db.Queries, input skillC
 
 	skill, err := qtx.CreateSkill(ctx, db.CreateSkillParams{
 		WorkspaceID: input.WorkspaceID,
-		Name:        sanitizeNullBytes(input.Name),
-		Description: sanitizeNullBytes(input.Description),
-		Content:     sanitizeNullBytes(input.Content),
+		Name:        sanitizePostgresText(input.Name),
+		Description: sanitizePostgresText(input.Description),
+		Content:     sanitizePostgresText(input.Content),
 		Config:      config,
 		CreatedBy:   input.CreatorID,
 	})
@@ -56,8 +56,8 @@ func createSkillWithFilesInTx(ctx context.Context, qtx *db.Queries, input skillC
 		}
 		sf, err := qtx.UpsertSkillFile(ctx, db.UpsertSkillFileParams{
 			SkillID: skill.ID,
-			Path:    sanitizeNullBytes(f.Path),
-			Content: sanitizeNullBytes(f.Content),
+			Path:    sanitizePostgresText(f.Path),
+			Content: sanitizePostgresText(f.Content),
 		})
 		if err != nil {
 			return SkillWithFilesResponse{}, err
@@ -173,8 +173,8 @@ func (h *Handler) overwriteSkillWithFiles(ctx context.Context, input skillOverwr
 	// unique-name churn.
 	skill, err := qtx.UpdateSkill(ctx, db.UpdateSkillParams{
 		ID:          existing.ID,
-		Description: pgtype.Text{String: sanitizeNullBytes(input.Description), Valid: true},
-		Content:     pgtype.Text{String: sanitizeNullBytes(input.Content), Valid: true},
+		Description: pgtype.Text{String: sanitizePostgresText(input.Description), Valid: true},
+		Content:     pgtype.Text{String: sanitizePostgresText(input.Content), Valid: true},
 		Config:      config,
 	})
 	if err != nil {
@@ -196,8 +196,8 @@ func (h *Handler) overwriteSkillWithFiles(ctx context.Context, input skillOverwr
 	for _, f := range input.Files {
 		sf, err := qtx.UpsertSkillFile(ctx, db.UpsertSkillFileParams{
 			SkillID: skill.ID,
-			Path:    sanitizeNullBytes(f.Path),
-			Content: sanitizeNullBytes(f.Content),
+			Path:    sanitizePostgresText(f.Path),
+			Content: sanitizePostgresText(f.Content),
 		})
 		if err != nil {
 			return SkillWithFilesResponse{}, err
