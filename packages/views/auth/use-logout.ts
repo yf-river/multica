@@ -2,6 +2,7 @@
 
 import { useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { toast } from "sonner";
 import { useAuthStore } from "@multica/core/auth";
 import {
   clearAccountStorage,
@@ -11,9 +12,10 @@ import {
 } from "@multica/core/platform";
 import { paths } from "@multica/core/paths";
 import { useNavigation } from "../navigation";
+import { useT } from "../i18n";
 
 /**
- * Performs a complete logout: clears per-workspace client storage, legacy
+ * Performs a complete logout: clears per-workspace client storage, navigation
  * cookies, the desktop tab state, the entire React Query cache, the
  * in-memory auth store, and finally navigates to /login. Wraps what was
  * previously duplicated in app-sidebar's logout handler so NoAccessPage's
@@ -29,8 +31,16 @@ export function useLogout() {
   const queryClient = useQueryClient();
   const authLogout = useAuthStore((s) => s.logout);
   const { push } = useNavigation();
+  const { t } = useT("auth");
 
-  return useCallback(() => {
+  return useCallback(async () => {
+    try {
+      await authLogout();
+    } catch {
+      toast.error(t(($) => $.errors.logout_failed));
+      return;
+    }
+
     // Clear workspace-scoped storage for every workspace this user has
     // access to, BEFORE clearing the React Query cache (which holds the
     // workspace list). Otherwise per-workspace drafts/chat/etc would leak
@@ -53,12 +63,11 @@ export function useLogout() {
     // issue UUIDs that must not survive across user sessions on a shared
     // machine. No-op on web (web doesn't write this key).
     queryClient.clear();
-    authLogout();
 
     // Navigate to /login explicitly. authLogout() clears state but doesn't
     // move the URL — without this the caller might be on a workspace URL
     // which renders null (layout gates on user) and leaves the user
     // stuck on a blank page.
     push(paths.login());
-  }, [queryClient, authLogout, push]);
+  }, [queryClient, authLogout, push, t]);
 }

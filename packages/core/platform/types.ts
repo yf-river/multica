@@ -26,7 +26,7 @@ export interface CoreProviderProps {
   /** Called after successful login (e.g. set cookie for Next.js middleware). */
   onLogin?: () => void;
   /** Called after logout (e.g. clear cookie). */
-  onLogout?: () => void;
+  onLogout?: () => void | Promise<void>;
   /** Identifies the calling client (web/desktop + version + os) to the server. */
   identity?: ClientIdentity;
   /** Active locale. Multica is Chinese-only. */

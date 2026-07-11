@@ -8,7 +8,7 @@ export interface AuthStoreOptions {
   api: ApiClient;
   storage: StorageAdapter;
   onLogin?: () => void;
-  onLogout?: () => void;
+  onLogout?: () => void | Promise<void>;
   /** When true, rely on HttpOnly cookies instead of localStorage for auth tokens. */
   cookieAuth?: boolean;
 }
@@ -20,7 +20,7 @@ export interface AuthState {
   initialize: () => Promise<void>;
   login: (account: string, password: string) => Promise<User>;
   loginWithToken: (token: string) => Promise<User>;
-  logout: () => void;
+  logout: () => Promise<void>;
   setUser: (user: User) => void;
   refreshMe: () => Promise<void>;
 }
@@ -45,7 +45,7 @@ export function createAuthStore(options: AuthStoreOptions) {
         return;
       }
 
-      // Token mode: read from localStorage (Electron / legacy).
+      // Desktop token mode reads its session from localStorage.
       const token = storage.getItem("multica_token");
       if (!token) {
         set({ isLoading: false });
@@ -94,16 +94,18 @@ export function createAuthStore(options: AuthStoreOptions) {
       return user;
     },
 
-    logout: () => {
+    logout: async () => {
       if (cookieAuth) {
-        // Clear server-side HttpOnly cookie.
-        api.logout().catch(() => {});
+        // The browser cannot clear the HttpOnly session itself. Do not claim
+        // logout succeeded or erase recoverable client state until the server
+        // has actually expired the cookie.
+        await api.logout();
       }
       storage.removeItem("multica_token");
       api.setToken(null);
       setCurrentWorkspace(null, null);
       resetAnalytics();
-      onLogout?.();
+      await onLogout?.();
       set({ user: null });
     },
 

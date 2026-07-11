@@ -26,7 +26,7 @@ function initCore(
   apiBaseUrl: string,
   storage: StorageAdapter,
   onLogin?: () => void,
-  onLogout?: () => void,
+  onLogout?: () => void | Promise<void>,
   cookieAuth?: boolean,
   identity?: ClientIdentity,
 ) {

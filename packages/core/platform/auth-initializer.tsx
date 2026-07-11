@@ -30,7 +30,7 @@ export function AuthInitializer({
 }: {
   children: ReactNode;
   onLogin?: () => void;
-  onLogout?: () => void;
+  onLogout?: () => void | Promise<void>;
   storage?: StorageAdapter;
   cookieAuth?: boolean;
   identity?: ClientIdentity;
@@ -110,7 +110,7 @@ export function AuthInitializer({
       return;
     }
 
-    // Token mode: read from localStorage (Electron / legacy).
+    // Desktop token mode reads its session from localStorage.
     const token = storage.getItem("multica_token");
     if (!token) {
       onLogout?.();
