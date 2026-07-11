@@ -330,14 +330,14 @@ func TestGetAgent_RejectsForgedAgentIDHeader(t *testing.T) {
 	}
 }
 
-// TestListChatMessages_PrivateAgentForbidsAfterAccessRevoked is the regression
+// TestListChatMessagesPage_PrivateAgentForbidsAfterAccessRevoked is the regression
 // test for the #2359 review finding "chat history read path doesn't re-gate".
 // A member who created a chat session is later denied access to the agent
 // (here simulated by the member never being on the allowlist for a private
 // agent owned by someone else; the equivalent of an after-the-fact ownership
 // transfer). The session row still names them as creator, but the read
 // endpoints must refuse to surface the transcript.
-func TestListChatMessages_PrivateAgentForbidsAfterAccessRevoked(t *testing.T) {
+func TestListChatMessagesPage_PrivateAgentForbidsAfterAccessRevoked(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
@@ -370,12 +370,12 @@ func TestListChatMessages_PrivateAgentForbidsAfterAccessRevoked(t *testing.T) {
 	}
 
 	w := httptest.NewRecorder()
-	req := newRequestAs(memberID, "GET", "/api/chat/sessions/"+sessionID+"/messages", nil)
+	req := newRequestAs(memberID, "GET", "/api/chat/sessions/"+sessionID+"/messages/page", nil)
 	req = req.WithContext(middleware.SetMemberContext(req.Context(), testWorkspaceID, memberRow))
 	req = withURLParam(req, "sessionId", sessionID)
-	testHandler.ListChatMessages(w, req)
+	testHandler.ListChatMessagesPage(w, req)
 	if w.Code != http.StatusForbidden {
-		t.Fatalf("ListChatMessages on stale session: expected 403, got %d: %s", w.Code, w.Body.String())
+		t.Fatalf("ListChatMessagesPage on stale session: expected 403, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

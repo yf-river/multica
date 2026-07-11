@@ -15,7 +15,7 @@
     "manualOverrides": "docs/architecture/current-system-map-overrides.json"
   },
   "summary": {
-    "chiRoutes": 325,
+    "chiRoutes": 324,
     "webPages": 31,
     "webRouteHandlers": 1,
     "webRewrites": 6,
@@ -501,15 +501,6 @@
         "handler": "h.UpdateChatSession",
         "implementation": "server/internal/handler/chat.go#UpdateChatSession",
         "registration": "server/cmd/server/router.go#PATCH /api/chat/sessions/{sessionId}",
-        "middlewareWrapper": false,
-        "origin": "static"
-      },
-      {
-        "method": "GET",
-        "path": "/api/chat/sessions/{sessionId}/messages",
-        "handler": "h.ListChatMessages",
-        "implementation": "server/internal/handler/chat.go#ListChatMessages",
-        "registration": "server/cmd/server/router.go#GET /api/chat/sessions/{sessionId}/messages",
         "middlewareWrapper": false,
         "origin": "static"
       },

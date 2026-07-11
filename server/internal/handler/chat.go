@@ -760,38 +760,6 @@ func parseChatMessagesPageParams(r *http.Request) (int, pgtype.Timestamptz, pgty
 	return limit, pgtype.Timestamptz{Time: beforeTime, Valid: true}, beforeID, nil
 }
 
-func (h *Handler) ListChatMessages(w http.ResponseWriter, r *http.Request) {
-	userID, ok := requireUserID(w, r)
-	if !ok {
-		return
-	}
-	workspaceID := ctxWorkspaceID(r.Context())
-	sessionID := chi.URLParam(r, "sessionId")
-
-	session, ok := h.gateChatSessionForUser(w, r, userID, workspaceID, sessionID)
-	if !ok {
-		return
-	}
-
-	messages, err := h.Queries.ListChatMessages(r.Context(), session.ID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list chat messages")
-		return
-	}
-
-	messageIDs := make([]pgtype.UUID, len(messages))
-	for i, m := range messages {
-		messageIDs[i] = m.ID
-	}
-	groupedAtt := h.groupChatMessageAttachments(r.Context(), workspaceID, messageIDs)
-
-	resp := make([]ChatMessageResponse, len(messages))
-	for i, m := range messages {
-		resp[i] = chatMessageToResponse(m, groupedAtt[uuidToString(m.ID)])
-	}
-	writeJSON(w, http.StatusOK, resp)
-}
-
 func (h *Handler) ListChatMessagesPage(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {

@@ -16,7 +16,7 @@ evidence reviewable by humans.
 
 | Surface | Count |
 | --- | --- |
-| Go Chi routes | 325 |
+| Go Chi routes | 324 |
 | Next.js pages | 31 |
 | Next.js route handlers | 1 |
 | Next.js rewrites | 6 |
@@ -95,7 +95,6 @@ closures intentionally remain unresolved.
 | DELETE | `/api/chat/sessions/{sessionId}` | `h.DeleteChatSession` | `server/internal/handler/chat.go#DeleteChatSession` | `server/cmd/server/router.go#DELETE /api/chat/sessions/{sessionId}` |
 | GET | `/api/chat/sessions/{sessionId}` | `h.GetChatSession` | `server/internal/handler/chat.go#GetChatSession` | `server/cmd/server/router.go#GET /api/chat/sessions/{sessionId}` |
 | PATCH | `/api/chat/sessions/{sessionId}` | `h.UpdateChatSession` | `server/internal/handler/chat.go#UpdateChatSession` | `server/cmd/server/router.go#PATCH /api/chat/sessions/{sessionId}` |
-| GET | `/api/chat/sessions/{sessionId}/messages` | `h.ListChatMessages` | `server/internal/handler/chat.go#ListChatMessages` | `server/cmd/server/router.go#GET /api/chat/sessions/{sessionId}/messages` |
 | POST | `/api/chat/sessions/{sessionId}/messages` | `h.SendChatMessage` | `server/internal/handler/chat.go#SendChatMessage` | `server/cmd/server/router.go#POST /api/chat/sessions/{sessionId}/messages` |
 | GET | `/api/chat/sessions/{sessionId}/messages/page` | `h.ListChatMessagesPage` | `server/internal/handler/chat.go#ListChatMessagesPage` | `server/cmd/server/router.go#GET /api/chat/sessions/{sessionId}/messages/page` |
 | GET | `/api/chat/sessions/{sessionId}/pending-task` | `h.GetPendingChatTask` | `server/internal/handler/chat.go#GetPendingChatTask` | `server/cmd/server/router.go#GET /api/chat/sessions/{sessionId}/pending-task` |

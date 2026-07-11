@@ -291,7 +291,7 @@ func fetchChatMessagesPageForTest(t *testing.T, sessionID string, params url.Val
 	return page
 }
 
-func TestListChatMessagesPage_UsesCursorWithoutChangingLegacyList(t *testing.T) {
+func TestListChatMessagesPage_UsesCursor(t *testing.T) {
 	agentID := createHandlerTestAgent(t, "ChatCursorPaginationAgent", []byte("[]"))
 	sessionID := createHandlerTestChatSession(t, agentID)
 
@@ -307,23 +307,6 @@ func TestListChatMessagesPage_UsesCursorWithoutChangingLegacyList(t *testing.T) 
 		if err != nil {
 			t.Fatalf("insert chat message %d: %v", i, err)
 		}
-	}
-
-	legacyReq := httptest.NewRequest(http.MethodGet, "/api/chat/sessions/"+sessionID+"/messages", nil)
-	legacyReq.Header.Set("X-User-ID", testUserID)
-	legacyReq = withURLParam(legacyReq, "sessionId", sessionID)
-	legacyReq = withChatTestWorkspaceCtx(t, legacyReq)
-	legacyW := httptest.NewRecorder()
-	testHandler.ListChatMessages(legacyW, legacyReq)
-	if legacyW.Code != http.StatusOK {
-		t.Fatalf("ListChatMessages: expected 200, got %d: %s", legacyW.Code, legacyW.Body.String())
-	}
-	var legacy []ChatMessageResponse
-	if err := json.Unmarshal(legacyW.Body.Bytes(), &legacy); err != nil {
-		t.Fatalf("decode legacy messages: %v", err)
-	}
-	if len(legacy) != 3 || legacy[0].Content != "oldest" || legacy[2].Content != "newest" {
-		t.Fatalf("legacy messages = %#v", legacy)
 	}
 
 	latest := fetchChatMessagesPageForTest(t, sessionID, url.Values{"limit": {"2"}})
