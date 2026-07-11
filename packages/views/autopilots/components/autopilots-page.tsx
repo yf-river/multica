@@ -21,7 +21,6 @@ import { autopilotListOptions } from "@multica/core/autopilots/queries";
 import {
   useAutopilotsViewStore,
   AUTOPILOT_DEFAULT_HIDDEN_COLUMNS,
-  AUTOPILOT_SCOPES,
   type AutopilotColumnKey,
   type AutopilotScope,
   type AutopilotSortField,
@@ -567,11 +566,7 @@ export function AutopilotsPage() {
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(
     new Set(),
   );
-  // Persisted scope may hold a retired value (e.g. "archived" from an older
-  // build) — fall back to "all" instead of stranding the user on an
-  // unreachable scope.
-  const rawScope = useAutopilotsViewStore((s) => s.scope);
-  const scope = AUTOPILOT_SCOPES.includes(rawScope) ? rawScope : "all";
+  const scope = useAutopilotsViewStore((s) => s.scope);
   const setScope = useAutopilotsViewStore((s) => s.setScope);
   const sortField = useAutopilotsViewStore((s) => s.sortField);
   const sortDirection = useAutopilotsViewStore((s) => s.sortDirection);

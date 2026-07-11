@@ -98,6 +98,19 @@ const DEFAULTS = {
   filters: EMPTY_AUTOPILOT_FILTERS,
 };
 
+function isAutopilotScope(value: unknown): value is AutopilotScope {
+  return typeof value === "string" && AUTOPILOT_SCOPES.some((scope) => scope === value);
+}
+
+export function migrateAutopilotsViewState(persisted: unknown): Partial<AutopilotsViewState> {
+  if (!persisted || typeof persisted !== "object") return { ...DEFAULTS };
+  const state = persisted as Partial<AutopilotsViewState>;
+  return {
+    ...state,
+    scope: isAutopilotScope(state.scope) ? state.scope : DEFAULTS.scope,
+  };
+}
+
 export const useAutopilotsViewStore = create<AutopilotsViewState>()(
   persist(
     (set) => ({
@@ -152,6 +165,8 @@ export const useAutopilotsViewStore = create<AutopilotsViewState>()(
         hiddenColumns: state.hiddenColumns,
         filters: state.filters,
       }),
+      version: 1,
+      migrate: migrateAutopilotsViewState,
       // On rehydrate, if the new workspace has no persisted value, reset to
       // the defaults instead of leaving the previous workspace's in-memory
       // view state in place (same rationale as the skills view store).
