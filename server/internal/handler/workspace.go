@@ -89,24 +89,6 @@ func workspaceReposForResponse(raw []byte) []any {
 	return repos
 }
 
-type MemberResponse struct {
-	ID          string `json:"id"`
-	WorkspaceID string `json:"workspace_id"`
-	UserID      string `json:"user_id"`
-	Role        string `json:"role"`
-	CreatedAt   string `json:"created_at"`
-}
-
-func memberToResponse(m db.Member) MemberResponse {
-	return MemberResponse{
-		ID:          uuidToString(m.ID),
-		WorkspaceID: uuidToString(m.WorkspaceID),
-		UserID:      uuidToString(m.UserID),
-		Role:        m.Role,
-		CreatedAt:   timestampToString(m.CreatedAt),
-	}
-}
-
 func (h *Handler) ListWorkspaces(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -575,27 +557,6 @@ func (h *Handler) UpdateWorkspace(w http.ResponseWriter, r *http.Request) {
 	h.publish(protocol.EventWorkspaceUpdated, uuidToString(ws.ID), "member", userID, map[string]any{"workspace": workspaceToResponse(ws)})
 
 	writeJSON(w, http.StatusOK, workspaceToResponse(ws))
-}
-
-func (h *Handler) ListMembers(w http.ResponseWriter, r *http.Request) {
-	workspaceID := chi.URLParam(r, "id")
-	member, ok := h.requireWorkspaceMember(w, r, workspaceID, "workspace not found")
-	if !ok {
-		return
-	}
-
-	members, err := h.Queries.ListMembers(r.Context(), member.WorkspaceID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list members")
-		return
-	}
-
-	resp := make([]MemberResponse, len(members))
-	for i, m := range members {
-		resp[i] = memberToResponse(m)
-	}
-
-	writeJSON(w, http.StatusOK, resp)
 }
 
 type MemberWithUserResponse struct {
