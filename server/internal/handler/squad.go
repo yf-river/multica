@@ -801,7 +801,15 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 		sopProfile = req.SOPProfile
 	}
 
-	squad, err := h.Queries.CreateSquad(r.Context(), db.CreateSquadParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start squad create")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+
+	squad, err := qtx.CreateSquad(r.Context(), db.CreateSquadParams{
 		WorkspaceID:  wsUUID,
 		Name:         req.Name,
 		Description:  req.Description,
@@ -817,19 +825,28 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Auto-add leader as a member with role "leader".
-	h.Queries.AddSquadMember(r.Context(), db.AddSquadMemberParams{
+	// Squad identity and its mandatory leader membership are one invariant.
+	if _, err := qtx.AddSquadMember(r.Context(), db.AddSquadMemberParams{
 		SquadID:    squad.ID,
 		MemberType: "agent",
 		MemberID:   leaderUUID,
 		Role:       "leader",
-	})
-
-	resp, err := h.squadToResponseWithPreview(r.Context(), squad)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to load squad member preview")
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to add squad leader")
 		return
 	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit squad create")
+		return
+	}
+
+	resp := squadToResponse(squad)
+	resp.MemberCount = 1
+	resp.MemberPreview = []SquadMemberPreviewResponse{{
+		MemberType: "agent",
+		MemberID:   uuidToString(leaderUUID),
+		Role:       "leader",
+	}}
 	h.publish(protocol.EventSquadCreated, workspaceID, "member", uuidToString(member.UserID), map[string]any{"squad": resp})
 	obsmetrics.RecordEvent(h.Analytics, h.Metrics, analytics.SquadCreated(
 		uuidToString(member.UserID),
@@ -1066,4 +1083,3 @@ func (h *Handler) RestoreSquad(w http.ResponseWriter, r *http.Request) {
 }
 
 // ── Squad Members ───────────────────────────────────────────────────────────
-
