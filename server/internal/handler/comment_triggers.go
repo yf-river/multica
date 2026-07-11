@@ -199,7 +199,7 @@ func (h *Handler) isSquadSOPWorkerStageComment(ctx context.Context, issue db.Iss
 
 func isActiveTaskStatus(status string) bool {
 	switch status {
-	case "queued", "dispatched", "running", "waiting_local_directory":
+	case "queued", "dispatched", "running":
 		return true
 	default:
 		return false

@@ -8,7 +8,6 @@ import type {
   TaskMessagePayload,
   TaskQueuedPayload,
   TaskRunningPayload,
-  TaskWaitingLocalDirectoryPayload,
 } from "@multica/core/types/events";
 import { formatDuration, parseTimeMs } from "./run-review-format";
 
@@ -20,7 +19,6 @@ export type RunReviewTaskEventPayload =
   | TaskQueuedPayload
   | TaskDispatchPayload
   | TaskRunningPayload
-  | TaskWaitingLocalDirectoryPayload
   | TaskCompletedPayload
   | TaskFailedPayload
   | TaskCancelledPayload
@@ -141,7 +139,6 @@ export function runReviewMessageRefreshDelayMs(
 export function isActiveStatus(status: string | undefined) {
   return status === "queued" ||
     status === "dispatched" ||
-    status === "waiting_local_directory" ||
     status === "running";
 }
 

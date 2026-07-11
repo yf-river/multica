@@ -43,7 +43,7 @@ function shouldShowRunReviewEventRow(event: RunReviewEventRowData): boolean {
     if (event.category === "输入" || eventType === "user_input.received") return true;
     if (eventType.includes("source") || eventType.includes("fetch")) return true;
     if (eventType === "task.failed" || eventType === "task.cancelled" || eventType === "task.blocked") return true;
-    if (eventType === "llm.usage_unavailable" || eventType === "task.waiting_local_directory") return true;
+    if (eventType === "llm.usage_unavailable") return true;
     return !RUN_REVIEW_NOISY_TRACE_EVENT_TYPES.has(eventType);
   }
 
@@ -1006,8 +1006,6 @@ function traceEventStageLabel(eventType: string): string {
       return "任务领取";
     case "task.started":
       return "任务开始";
-    case "task.waiting_local_directory":
-      return "等待本地目录";
     case "task.completed":
       return "任务完成";
     case "task.failed":

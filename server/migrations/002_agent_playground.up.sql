@@ -55,7 +55,7 @@ CREATE TABLE IF NOT EXISTS public.agent_playground_result (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT agent_playground_result_unique UNIQUE (input_id, experiment_agent_id),
-    CONSTRAINT agent_playground_result_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'queued'::text, 'dispatched'::text, 'running'::text, 'waiting_local_directory'::text, 'completed'::text, 'failed'::text, 'cancelled'::text])))
+    CONSTRAINT agent_playground_result_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'queued'::text, 'dispatched'::text, 'running'::text, 'completed'::text, 'failed'::text, 'cancelled'::text])))
 );
 
 CREATE TABLE IF NOT EXISTS public.agent_playground_judgement (
@@ -71,7 +71,7 @@ CREATE TABLE IF NOT EXISTS public.agent_playground_judgement (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT agent_playground_judgement_unique UNIQUE (input_id),
-    CONSTRAINT agent_playground_judgement_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'queued'::text, 'dispatched'::text, 'running'::text, 'waiting_local_directory'::text, 'completed'::text, 'failed'::text, 'cancelled'::text])))
+    CONSTRAINT agent_playground_judgement_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'queued'::text, 'dispatched'::text, 'running'::text, 'completed'::text, 'failed'::text, 'cancelled'::text])))
 );
 
 CREATE INDEX IF NOT EXISTS idx_agent_playground_experiment_workspace_created ON public.agent_playground_experiment USING btree (workspace_id, created_at DESC);

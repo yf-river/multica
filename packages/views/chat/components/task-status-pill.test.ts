@@ -13,27 +13,6 @@ describe("pickStageKeys", () => {
     });
   });
 
-  it("returns waiting_local_directory on the daemon-emitted hold status", () => {
-    // Daemon publishes this when it dequeues a task but another task owns the
-    // local_directory's lock. The pill becomes static (no shimmer) because
-    // nothing is actively happening from the user's point of view.
-    expect(pickStageKeys("waiting_local_directory", [], "online")).toEqual({
-      stageKey: "waiting_local_directory",
-      static: true,
-    });
-  });
-
-  it("waiting_local_directory wins over availability hints", () => {
-    // Even if availability says reconnecting/offline, the directory-release
-    // status is the more specific signal — surface it.
-    expect(
-      pickStageKeys("waiting_local_directory", [], "unstable"),
-    ).toEqual({ stageKey: "waiting_local_directory", static: true });
-    expect(
-      pickStageKeys("waiting_local_directory", [], "offline"),
-    ).toEqual({ stageKey: "waiting_local_directory", static: true });
-  });
-
   it("returns thinking for running with no messages", () => {
     expect(pickStageKeys("running", [], "online")).toEqual({ stageKey: "thinking" });
   });

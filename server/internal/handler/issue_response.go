@@ -145,14 +145,14 @@ LEFT JOIN (
 LEFT JOIN (
        SELECT issue_id,
               COUNT(*) FILTER (WHERE status = 'running')::bigint AS running_count,
-              COUNT(*) FILTER (WHERE status IN ('queued', 'dispatched', 'waiting_local_directory'))::bigint AS queued_count,
+              COUNT(*) FILTER (WHERE status IN ('queued', 'dispatched'))::bigint AS queued_count,
               ARRAY_AGG(DISTINCT agent_id) FILTER (
-                  WHERE status IN ('queued', 'dispatched', 'waiting_local_directory', 'running')
+                  WHERE status IN ('queued', 'dispatched', 'running')
               ) AS agent_ids
          FROM agent_task_queue
         WHERE issue_id IS NOT NULL
           AND agent_id = ANY(%s::uuid[])
-          AND status IN ('queued', 'dispatched', 'waiting_local_directory', 'running')
+          AND status IN ('queued', 'dispatched', 'running')
         GROUP BY issue_id
 ) agent_activity
        ON agent_activity.issue_id = i.id`, visibleAgentIDsRef)

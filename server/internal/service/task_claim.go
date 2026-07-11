@@ -259,7 +259,7 @@ func (s *TaskService) StartTask(ctx context.Context, taskID pgtype.UUID) (*db.Ag
 	s.publishTaskIssueStatusProjection(ctx, issueProjection)
 	s.captureTaskStarted(ctx, task)
 	// Tell every connected workspace WS client that this task transitioned
-	// (dispatched | waiting_local_directory) → running. Without this, the
+	// dispatched → running. Without this, the
 	// workspace-wide `agentTaskSnapshot` query only refreshes on the 30s
 	// staleTime, so any UI that distinguishes "queued" from "running" (e.g.
 	// the issue-card agent activity indicator) lags by up to half a minute
@@ -689,36 +689,6 @@ func taskResultOutputText(result []byte) string {
 		return ""
 	}
 	return strings.TrimSpace(util.UnescapeBackslashEscapes(payload.Output))
-}
-
-// MarkTaskWaitingLocalDirectory parks a dispatched task in the
-// waiting_local_directory state while the daemon waits for another in-flight
-// task to release the project_resource path lock. reason carries a short
-// human-readable hint (typically the contested path) that the UI surfaces
-// next to the status. Returns the updated row so the daemon can confirm the
-// transition and so the broadcast carries the up-to-date snapshot.
-func (s *TaskService) MarkTaskWaitingLocalDirectory(ctx context.Context, taskID pgtype.UUID, reason string) (*db.AgentTaskQueue, error) {
-	reason = strings.TrimSpace(reason)
-	task, err := s.Queries.MarkAgentTaskWaitingLocalDirectory(ctx, db.MarkAgentTaskWaitingLocalDirectoryParams{
-		ID:         taskID,
-		WaitReason: pgtype.Text{String: reason, Valid: reason != ""},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("mark task waiting_local_directory: %w", err)
-	}
-
-	slog.Info("task waiting_local_directory",
-		"task_id", util.UUIDToString(task.ID),
-		"issue_id", util.UUIDToString(task.IssueID),
-		"reason", reason,
-	)
-	metadata, _ := json.Marshal(map[string]string{"等待原因": reason})
-	s.recordTaskTraceEvent(ctx, task, "task.waiting_local_directory", "等待本地目录", taskTraceOptions{
-		QueueWaitMs: taskQueueWaitMilliseconds(task),
-		Metadata:    metadata,
-	})
-	s.broadcastTaskEvent(ctx, protocol.EventTaskWaitingLocalDirectory, task)
-	return &task, nil
 }
 
 // CompleteTask marks a task as completed.

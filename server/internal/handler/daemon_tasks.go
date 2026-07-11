@@ -912,45 +912,6 @@ func (h *Handler) StartTask(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, taskToResponse(*task, workspaceID))
 }
 
-// TaskWaitLocalDirectoryRequest is the legacy compatibility body the daemon
-// POSTs when it parks a task on a busy local_directory path.
-type TaskWaitLocalDirectoryRequest struct {
-	// Reason is a short hint surfaced by the UI alongside the status —
-	// typically "<path>" or "<path> (holder: <task short id>)". Small
-	// enough to fit on the issue card. Empty is accepted; the column is
-	// nullable on the server.
-	Reason string `json:"reason"`
-}
-
-// MarkTaskWaitingLocalDirectory transitions a dispatched task to
-// waiting_local_directory for legacy local_directory compatibility paths.
-// Standard issue tasks use issue-scoped managed worktrees instead.
-func (h *Handler) MarkTaskWaitingLocalDirectory(w http.ResponseWriter, r *http.Request) {
-	taskID := chi.URLParam(r, "taskId")
-
-	_, workspaceID, ok := h.requireDaemonTaskAccessWithWorkspace(w, r, taskID)
-	if !ok {
-		return
-	}
-
-	var req TaskWaitLocalDirectoryRequest
-	if r.ContentLength != 0 {
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeError(w, http.StatusBadRequest, "invalid request body")
-			return
-		}
-	}
-
-	task, err := h.TaskService.MarkTaskWaitingLocalDirectory(r.Context(), parseUUID(taskID), req.Reason)
-	if err != nil {
-		slog.Warn("mark task waiting_local_directory failed", "task_id", taskID, "error", err)
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	writeJSON(w, http.StatusOK, taskToResponse(*task, workspaceID))
-}
-
 // ReportTaskProgress broadcasts a progress update.
 type TaskProgressRequest struct {
 	Summary string `json:"summary"`

@@ -147,7 +147,6 @@ multica project resource update <project-id> <resource-id> \
 - **不会自动切分支。** 智能体跑在你当前 checkout 的分支上。如果分支选择重要，请在分发任务前自己切换好。
 - **不会保护脏工作区，也不会自动 commit。** 未提交的改动智能体看得到、可能就地修改，不会被 stash。请把这个目录当作真实的工作区来对待，重要的运行前自己先 commit。
 - **不会自动开 PR。** 任务结束后，改动就停在它实际做出来的分支上 —— Multica 不会 push、不会开 PR。需要 push、需要 PR 的话请自己来。
-- **`waiting_local_directory` 只显示状态，不显示是谁占着。** 这个徽标只告诉你"任务在等"，不会告诉你具体是哪条任务、哪个路径正在持有目录。
 
 这些都列在 local-directory 工作的"智能体任务生命周期"后续项里；在那之前，请把 `local_directory` 当作"智能体在你的目录里跑，跟你自己跑没区别"来用。
 

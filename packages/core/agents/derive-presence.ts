@@ -64,11 +64,7 @@ export function deriveWorkloadDetail(tasks: readonly AgentTask[]): WorkloadDetai
       runningCount += 1;
     } else if (
       t.status === "queued" ||
-      t.status === "dispatched" ||
-      // The daemon parked this task on a busy local_directory path. It's
-      // still on the agent's plate (counts toward "queued" presence), but
-      // it hasn't reached the run phase yet.
-      t.status === "waiting_local_directory"
+      t.status === "dispatched"
     ) {
       queuedCount += 1;
     }

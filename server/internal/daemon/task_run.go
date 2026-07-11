@@ -205,8 +205,8 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	}
 
 	// Issue #3999 race A: now that env.WorkDir is on disk, transition the
-	// server-side state machine dispatched (or waiting_local_directory) →
-	// running. Calling StartTask before Prepare/Reuse let any consumer
+	// server-side state machine dispatched → running. Calling StartTask before
+	// Prepare/Reuse let any consumer
 	// that read status==running and resolved
 	// /multica_workspaces/{ws}/{short-id}/workdir hit FileNotFoundError in
 	// the microsecond window before os.MkdirAll ran.

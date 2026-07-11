@@ -541,9 +541,8 @@ CREATE TABLE public.agent_task_queue (
     trigger_summary text,
     force_fresh_session boolean DEFAULT false NOT NULL,
     is_leader_task boolean DEFAULT false NOT NULL,
-    wait_reason text,
     initiator_user_id uuid,
-    CONSTRAINT agent_task_queue_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'dispatched'::text, 'running'::text, 'waiting_local_directory'::text, 'completed'::text, 'failed'::text, 'cancelled'::text])))
+    CONSTRAINT agent_task_queue_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'dispatched'::text, 'running'::text, 'completed'::text, 'failed'::text, 'cancelled'::text])))
 );
 
 CREATE TABLE public.attachment (
@@ -1454,7 +1453,7 @@ CREATE TABLE public.agent_playground_result (
     completed_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT agent_playground_result_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'queued'::text, 'dispatched'::text, 'running'::text, 'waiting_local_directory'::text, 'completed'::text, 'failed'::text, 'cancelled'::text])))
+    CONSTRAINT agent_playground_result_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'queued'::text, 'dispatched'::text, 'running'::text, 'completed'::text, 'failed'::text, 'cancelled'::text])))
 );
 
 CREATE TABLE public.agent_playground_judgement (
@@ -1469,7 +1468,7 @@ CREATE TABLE public.agent_playground_judgement (
     output text DEFAULT ''::text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT agent_playground_judgement_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'queued'::text, 'dispatched'::text, 'running'::text, 'waiting_local_directory'::text, 'completed'::text, 'failed'::text, 'cancelled'::text])))
+    CONSTRAINT agent_playground_judgement_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'queued'::text, 'dispatched'::text, 'running'::text, 'completed'::text, 'failed'::text, 'cancelled'::text])))
 );
 
 CREATE TABLE public.runtime_profile (

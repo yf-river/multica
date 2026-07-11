@@ -279,7 +279,6 @@ function useRunReviewRealtimeSync(issueId: string, wsId: string) {
   useWSEvent("task:queued", handleLifecycleEvent);
   useWSEvent("task:dispatch", handleLifecycleEvent);
   useWSEvent("task:running", handleLifecycleEvent);
-  useWSEvent("task:waiting_local_directory", handleLifecycleEvent);
   useWSEvent("task:completed", handleLifecycleEvent);
   useWSEvent("task:failed", handleLifecycleEvent);
   useWSEvent("task:cancelled", handleLifecycleEvent);

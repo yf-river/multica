@@ -16,7 +16,7 @@ evidence reviewable by humans.
 
 | Surface | Count |
 | --- | --- |
-| Go Chi routes | 324 |
+| Go Chi routes | 323 |
 | Next.js pages | 31 |
 | Next.js route handlers | 1 |
 | Next.js rewrites | 6 |
@@ -25,11 +25,11 @@ evidence reviewable by humans.
 | Database functions | 9 |
 | Database triggers | 4 |
 | Database indexes | 185 |
-| Migration files (up + down) | 42 |
+| Migration files (up + down) | 44 |
 | sqlc modules | 54 |
 | sqlc queries | 577 |
-| Go WebSocket events | 81 |
-| TypeScript WebSocket events | 71 |
+| Go WebSocket events | 80 |
+| TypeScript WebSocket events | 70 |
 | Zustand store definitions | 31 |
 | React Query consumer files | 175 |
 | Environment variable names | 219 |
@@ -129,7 +129,6 @@ closures intentionally remain unresolved.
 | POST | `/api/daemon/tasks/{taskId}/start` | `h.StartTask` | `server/internal/handler/daemon_tasks.go#StartTask` | `server/cmd/server/router.go#POST /api/daemon/tasks/{taskId}/start` |
 | GET | `/api/daemon/tasks/{taskId}/status` | `h.GetTaskStatus` | `server/internal/handler/daemon_task_results.go#GetTaskStatus` | `server/cmd/server/router.go#GET /api/daemon/tasks/{taskId}/status` |
 | POST | `/api/daemon/tasks/{taskId}/usage` | `h.ReportTaskUsage` | `server/internal/handler/daemon_task_results.go#ReportTaskUsage` | `server/cmd/server/router.go#POST /api/daemon/tasks/{taskId}/usage` |
-| POST | `/api/daemon/tasks/{taskId}/wait-local-directory` | `h.MarkTaskWaitingLocalDirectory` | `server/internal/handler/daemon_tasks.go#MarkTaskWaitingLocalDirectory` | `server/cmd/server/router.go#POST /api/daemon/tasks/{taskId}/wait-local-directory` |
 | GET | `/api/daemon/workspaces/{workspaceId}/repos` | `h.GetDaemonWorkspaceRepos` | `server/internal/handler/daemon_lifecycle.go#GetDaemonWorkspaceRepos` | `server/cmd/server/router.go#GET /api/daemon/workspaces/{workspaceId}/repos` |
 | GET | `/api/daemon/workspaces/{workspaceId}/runtime-profiles` | `h.DaemonListRuntimeProfiles` | `server/internal/handler/runtime_profile.go#DaemonListRuntimeProfiles` | `server/cmd/server/router.go#GET /api/daemon/workspaces/{workspaceId}/runtime-profiles` |
 | GET | `/api/daemon/ws` | `h.DaemonWebSocket` | `server/internal/handler/daemon_ws.go#DaemonWebSocket` | `server/cmd/server/router.go#GET /api/daemon/ws` |
@@ -536,6 +535,8 @@ intentionally platform-specific.
 | 20 | remove_unused_daemon_tokens | up | — | 0 | 0 | 0 | `server/migrations/020_remove_unused_daemon_tokens.up.sql` |
 | 21 | deduplicate_task_messages | down | — | 0 | 0 | 1 | `server/migrations/021_deduplicate_task_messages.down.sql` |
 | 21 | deduplicate_task_messages | up | — | 0 | 0 | 1 | `server/migrations/021_deduplicate_task_messages.up.sql` |
+| 22 | remove_waiting_local_directory | down | — | 0 | 0 | 0 | `server/migrations/022_remove_waiting_local_directory.down.sql` |
+| 22 | remove_waiting_local_directory | up | — | 0 | 0 | 0 | `server/migrations/022_remove_waiting_local_directory.up.sql` |
 
 ### Current tables discovered from up migrations
 
@@ -646,7 +647,7 @@ All 577 query names, commands, and stable source anchors are stored in the JSON 
 | Module | Queries | SQL source | Generated source |
 | --- | --- | --- | --- |
 | activity | 5 | `server/pkg/db/queries/activity.sql` | `server/pkg/db/generated/activity.sql.go` |
-| agent | 60 | `server/pkg/db/queries/agent.sql` | `server/pkg/db/generated/agent.sql.go` |
+| agent | 59 | `server/pkg/db/queries/agent.sql` | `server/pkg/db/generated/agent.sql.go` |
 | agent_playground | 17 | `server/pkg/db/queries/agent_playground.sql` | `server/pkg/db/generated/agent_playground.sql.go` |
 | attachment | 17 | `server/pkg/db/queries/attachment.sql` | `server/pkg/db/generated/attachment.sql.go` |
 | autopilot | 40 | `server/pkg/db/queries/autopilot.sql` | `server/pkg/db/generated/autopilot.sql.go` |
@@ -691,7 +692,7 @@ All 577 query names, commands, and stable source anchors are stored in the JSON 
 | squad | 22 | `server/pkg/db/queries/squad.sql` | `server/pkg/db/generated/squad.sql.go` |
 | squad_create_request | 3 | `server/pkg/db/queries/squad_create_request.sql` | `server/pkg/db/generated/squad_create_request.sql.go` |
 | squad_sop_run | 17 | `server/pkg/db/queries/squad_sop_run.sql` | `server/pkg/db/generated/squad_sop_run.sql.go` |
-| subscriber | 4 | `server/pkg/db/queries/subscriber.sql` | `server/pkg/db/generated/subscriber.sql.go` |
+| subscriber | 5 | `server/pkg/db/queries/subscriber.sql` | `server/pkg/db/generated/subscriber.sql.go` |
 | task_message | 5 | `server/pkg/db/queries/task_message.sql` | `server/pkg/db/generated/task_message.sql.go` |
 | task_token | 4 | `server/pkg/db/queries/task_token.sql` | `server/pkg/db/generated/task_token.sql.go` |
 | task_trace_event | 4 | `server/pkg/db/queries/task_trace_event.sql` | `server/pkg/db/generated/task_trace_event.sql.go` |
@@ -702,8 +703,8 @@ All 577 query names, commands, and stable source anchors are stored in the JSON 
 
 ## WebSocket protocol
 
-- Go (81): `activity:created`, `agent:archived`, `agent:created`, `agent:restored`, `agent:status`, `autopilot:created`, `autopilot:deleted`, `autopilot:run_done`, `autopilot:run_start`, `autopilot:updated`, `chat:done`, `chat:message`, `chat:session_deleted`, `chat:session_read`, `chat:session_updated`, `comment:created`, `comment:deleted`, `comment:resolved`, `comment:unresolved`, `comment:updated`, `daemon:heartbeat`, `daemon:heartbeat_ack`, `daemon:register`, `daemon:runtime_profiles_changed`, `daemon:task_available`, `github_installation:created`, `github_installation:deleted`, `inbox:archived`, `inbox:batch-archived`, `inbox:batch-read`, `inbox:new`, `inbox:read`, `issue_labels:changed`, `issue_metadata:changed`, `issue_reaction:added`, `issue_reaction:removed`, `issue:created`, `issue:deleted`, `issue:updated`, `label:created`, `label:deleted`, `label:updated`, `lark_installation:created`, `lark_installation:revoked`, `member:added`, `member:removed`, `member:updated`, `pin:created`, `pin:deleted`, `pin:reordered`, `project_resource:created`, `project_resource:deleted`, `project_resource:updated`, `project:created`, `project:deleted`, `project:updated`, `pull_request:linked`, `pull_request:unlinked`, `pull_request:updated`, `reaction:added`, `reaction:removed`, `skill:created`, `skill:deleted`, `skill:updated`, `squad:created`, `squad:deleted`, `squad:restored`, `squad:updated`, `subscriber:added`, `subscriber:removed`, `task:cancelled`, `task:completed`, `task:dispatch`, `task:failed`, `task:message`, `task:progress`, `task:queued`, `task:running`, `task:waiting_local_directory`, `workspace:deleted`, `workspace:updated`
-- TypeScript (71): `activity:created`, `agent:archived`, `agent:created`, `agent:restored`, `agent:status`, `chat:done`, `chat:message`, `chat:session_deleted`, `chat:session_read`, `chat:session_updated`, `comment:created`, `comment:deleted`, `comment:resolved`, `comment:unresolved`, `comment:updated`, `daemon:heartbeat`, `daemon:register`, `github_installation:created`, `github_installation:deleted`, `inbox:archived`, `inbox:batch-archived`, `inbox:batch-read`, `inbox:new`, `inbox:read`, `issue_labels:changed`, `issue_metadata:changed`, `issue_reaction:added`, `issue_reaction:removed`, `issue:created`, `issue:deleted`, `issue:updated`, `label:created`, `label:deleted`, `label:updated`, `member:added`, `member:removed`, `member:updated`, `pin:created`, `pin:deleted`, `pin:reordered`, `project_resource:created`, `project_resource:deleted`, `project_resource:updated`, `project:created`, `project:deleted`, `project:updated`, `pull_request:linked`, `pull_request:unlinked`, `pull_request:updated`, `reaction:added`, `reaction:removed`, `skill:created`, `skill:deleted`, `skill:updated`, `squad:created`, `squad:deleted`, `squad:restored`, `squad:updated`, `subscriber:added`, `subscriber:removed`, `task:cancelled`, `task:completed`, `task:dispatch`, `task:failed`, `task:message`, `task:progress`, `task:queued`, `task:running`, `task:waiting_local_directory`, `workspace:deleted`, `workspace:updated`
+- Go (80): `activity:created`, `agent:archived`, `agent:created`, `agent:restored`, `agent:status`, `autopilot:created`, `autopilot:deleted`, `autopilot:run_done`, `autopilot:run_start`, `autopilot:updated`, `chat:done`, `chat:message`, `chat:session_deleted`, `chat:session_read`, `chat:session_updated`, `comment:created`, `comment:deleted`, `comment:resolved`, `comment:unresolved`, `comment:updated`, `daemon:heartbeat`, `daemon:heartbeat_ack`, `daemon:register`, `daemon:runtime_profiles_changed`, `daemon:task_available`, `github_installation:created`, `github_installation:deleted`, `inbox:archived`, `inbox:batch-archived`, `inbox:batch-read`, `inbox:new`, `inbox:read`, `issue_labels:changed`, `issue_metadata:changed`, `issue_reaction:added`, `issue_reaction:removed`, `issue:created`, `issue:deleted`, `issue:updated`, `label:created`, `label:deleted`, `label:updated`, `lark_installation:created`, `lark_installation:revoked`, `member:added`, `member:removed`, `member:updated`, `pin:created`, `pin:deleted`, `pin:reordered`, `project_resource:created`, `project_resource:deleted`, `project_resource:updated`, `project:created`, `project:deleted`, `project:updated`, `pull_request:linked`, `pull_request:unlinked`, `pull_request:updated`, `reaction:added`, `reaction:removed`, `skill:created`, `skill:deleted`, `skill:updated`, `squad:created`, `squad:deleted`, `squad:restored`, `squad:updated`, `subscriber:added`, `subscriber:removed`, `task:cancelled`, `task:completed`, `task:dispatch`, `task:failed`, `task:message`, `task:progress`, `task:queued`, `task:running`, `workspace:deleted`, `workspace:updated`
+- TypeScript (70): `activity:created`, `agent:archived`, `agent:created`, `agent:restored`, `agent:status`, `chat:done`, `chat:message`, `chat:session_deleted`, `chat:session_read`, `chat:session_updated`, `comment:created`, `comment:deleted`, `comment:resolved`, `comment:unresolved`, `comment:updated`, `daemon:heartbeat`, `daemon:register`, `github_installation:created`, `github_installation:deleted`, `inbox:archived`, `inbox:batch-archived`, `inbox:batch-read`, `inbox:new`, `inbox:read`, `issue_labels:changed`, `issue_metadata:changed`, `issue_reaction:added`, `issue_reaction:removed`, `issue:created`, `issue:deleted`, `issue:updated`, `label:created`, `label:deleted`, `label:updated`, `member:added`, `member:removed`, `member:updated`, `pin:created`, `pin:deleted`, `pin:reordered`, `project_resource:created`, `project_resource:deleted`, `project_resource:updated`, `project:created`, `project:deleted`, `project:updated`, `pull_request:linked`, `pull_request:unlinked`, `pull_request:updated`, `reaction:added`, `reaction:removed`, `skill:created`, `skill:deleted`, `skill:updated`, `squad:created`, `squad:deleted`, `squad:restored`, `squad:updated`, `subscriber:added`, `subscriber:removed`, `task:cancelled`, `task:completed`, `task:dispatch`, `task:failed`, `task:message`, `task:progress`, `task:queued`, `task:running`, `workspace:deleted`, `workspace:updated`
 - Go only: `autopilot:created`, `autopilot:deleted`, `autopilot:run_done`, `autopilot:run_start`, `autopilot:updated`, `daemon:heartbeat_ack`, `daemon:runtime_profiles_changed`, `daemon:task_available`, `lark_installation:created`, `lark_installation:revoked`
 - TypeScript only: none
 - Go declarations with no static production reference: `pull_request:unlinked`
@@ -1006,7 +1007,7 @@ written to the generated outputs.
 
 | Kind | Source count | Representative evidence |
 | --- | --- | --- |
-| filesystem | 44 | `server/cmd/migrate/main.go`, `server/cmd/multica/cmd_agent.go`, `server/cmd/multica/cmd_attachment.go`, `server/cmd/multica/cmd_daemon_windows.go`, `server/cmd/multica/cmd_daemon.go`, `server/cmd/multica/cmd_issue_comments.go`, `server/cmd/multica/cmd_issue_pull_request.go`, `server/cmd/multica/cmd_issue.go` |
+| filesystem | 43 | `server/cmd/migrate/main.go`, `server/cmd/multica/cmd_agent.go`, `server/cmd/multica/cmd_attachment.go`, `server/cmd/multica/cmd_daemon_windows.go`, `server/cmd/multica/cmd_daemon.go`, `server/cmd/multica/cmd_issue_comments.go`, `server/cmd/multica/cmd_issue_pull_request.go`, `server/cmd/multica/cmd_issue.go` |
 | object-storage | 1 | `server/internal/storage/s3.go` |
 | outbound-http | 17 | `server/cmd/multica/cmd_daemon.go`, `server/cmd/multica/cmd_setup.go`, `server/internal/analytics/posthog.go`, `server/internal/auth/cloud_pat.go`, `server/internal/cli/client.go`, `server/internal/cli/update.go`, `server/internal/daemon/client.go`, `server/internal/daemon/task_artifacts.go` |
 | postgresql | 126 | `server/cmd/backfill_codex_usage_cache/main.go`, `server/cmd/migrate/main.go`, `server/cmd/server/activity_listeners.go`, `server/cmd/server/autopilot_failure_monitor.go`, `server/cmd/server/autopilot_scheduler.go`, `server/cmd/server/chat_projection.go`, `server/cmd/server/comment_projection.go`, `server/cmd/server/dbstats.go` |

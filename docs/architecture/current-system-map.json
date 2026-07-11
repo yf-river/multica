@@ -15,7 +15,7 @@
     "manualOverrides": "docs/architecture/current-system-map-overrides.json"
   },
   "summary": {
-    "chiRoutes": 324,
+    "chiRoutes": 323,
     "webPages": 31,
     "webRouteHandlers": 1,
     "webRewrites": 6,
@@ -24,11 +24,11 @@
     "databaseFunctions": 9,
     "databaseTriggers": 4,
     "databaseIndexes": 185,
-    "migrations": 42,
+    "migrations": 44,
     "sqlcModules": 54,
     "sqlcQueries": 577,
-    "goWebsocketEvents": 81,
-    "typescriptWebsocketEvents": 71,
+    "goWebsocketEvents": 80,
+    "typescriptWebsocketEvents": 70,
     "zustandStores": 31,
     "reactQueryConsumerFiles": 175,
     "environmentVariables": 219,
@@ -807,15 +807,6 @@
         "handler": "h.ReportTaskUsage",
         "implementation": "server/internal/handler/daemon_task_results.go#ReportTaskUsage",
         "registration": "server/cmd/server/router.go#POST /api/daemon/tasks/{taskId}/usage",
-        "middlewareWrapper": false,
-        "origin": "static"
-      },
-      {
-        "method": "POST",
-        "path": "/api/daemon/tasks/{taskId}/wait-local-directory",
-        "handler": "h.MarkTaskWaitingLocalDirectory",
-        "implementation": "server/internal/handler/daemon_tasks.go#MarkTaskWaitingLocalDirectory",
-        "registration": "server/cmd/server/router.go#POST /api/daemon/tasks/{taskId}/wait-local-directory",
         "middlewareWrapper": false,
         "origin": "static"
       },
@@ -5846,6 +5837,32 @@
           "droppedIndexes": [
             "idx_task_message_task_id_seq"
           ]
+        },
+        {
+          "version": 22,
+          "name": "remove_waiting_local_directory",
+          "direction": "down",
+          "source": "server/migrations/022_remove_waiting_local_directory.down.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 22,
+          "name": "remove_waiting_local_directory",
+          "direction": "up",
+          "source": "server/migrations/022_remove_waiting_local_directory.up.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
         }
       ],
       "tables": [
@@ -7665,11 +7682,6 @@
               "name": "LockAgentTaskForRetry",
               "command": "one",
               "source": "server/pkg/db/queries/agent.sql#LockAgentTaskForRetry"
-            },
-            {
-              "name": "MarkAgentTaskWaitingLocalDirectory",
-              "command": "one",
-              "source": "server/pkg/db/queries/agent.sql#MarkAgentTaskWaitingLocalDirectory"
             },
             {
               "name": "ReclaimStaleDispatchedTaskForRuntime",
@@ -10377,6 +10389,11 @@
               "source": "server/pkg/db/queries/subscriber.sql#AddIssueSubscriber"
             },
             {
+              "name": "AddIssueSubscriberIfIssueExists",
+              "command": "execrows",
+              "source": "server/pkg/db/queries/subscriber.sql#AddIssueSubscriberIfIssueExists"
+            },
+            {
               "name": "IsIssueSubscriber",
               "command": "one",
               "source": "server/pkg/db/queries/subscriber.sql#IsIssueSubscriber"
@@ -11516,16 +11533,6 @@
         "staticReferenceMissing": false
       },
       {
-        "name": "task:waiting_local_directory",
-        "constant": "EventTaskWaitingLocalDirectory",
-        "source": "server/pkg/protocol/events.go#EventTaskWaitingLocalDirectory",
-        "origin": "static",
-        "referenceSources": [
-          "server/internal/service/task_claim.go"
-        ],
-        "staticReferenceMissing": false
-      },
-      {
         "name": "workspace:deleted",
         "constant": "EventWorkspaceDeleted",
         "source": "server/pkg/protocol/events.go#EventWorkspaceDeleted",
@@ -12116,16 +12123,6 @@
         "staticReferenceMissing": false
       },
       {
-        "name": "task:waiting_local_directory",
-        "source": "packages/core/types/events.ts#task:waiting_local_directory",
-        "origin": "static",
-        "referenceSources": [
-          "packages/core/realtime/use-realtime-sync.ts",
-          "packages/views/run-reviews/components/run-reviews-page.tsx"
-        ],
-        "staticReferenceMissing": false
-      },
-      {
         "name": "workspace:deleted",
         "source": "packages/core/types/events.ts#workspace:deleted",
         "origin": "static",
@@ -12213,7 +12210,6 @@
       "task:progress",
       "task:queued",
       "task:running",
-      "task:waiting_local_directory",
       "workspace:deleted",
       "workspace:updated"
     ],
@@ -17565,7 +17561,6 @@
           "server/internal/daemon/execenv/sidecar_manifest.go",
           "server/internal/daemon/gc.go",
           "server/internal/daemon/identity.go",
-          "server/internal/daemon/local_directory.go",
           "server/internal/daemon/local_skills.go",
           "server/internal/daemon/repocache/cache.go",
           "server/internal/daemon/task_artifacts.go",

@@ -175,11 +175,6 @@ type Daemon struct {
 	activeEnvRootsMu sync.Mutex
 	activeEnvRoots   map[string]int // env root path -> reference count (handles reuse paths marked twice)
 
-	// localPathLocks is kept for legacy local_directory compatibility paths.
-	// Normal issue tasks use issue-scoped managed worktrees, so project
-	// local_directory resources no longer override the task workdir.
-	localPathLocks *LocalPathLocker
-
 	runtimeLastTaskStart map[string]time.Time
 
 	// bgSyncs tracks background goroutines started by registerTaskRepos so
@@ -213,7 +208,6 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 		agentVersions:             make(map[string]string),
 		wsHBLastAck:               make(map[string]time.Time),
 		activeEnvRoots:            make(map[string]int),
-		localPathLocks:            NewLocalPathLocker(),
 		runtimeLastTaskStart:      make(map[string]time.Time),
 		runtimeGoneInflight:       make(map[string]struct{}),
 		reregisterNextAttempt:     make(map[string]time.Time),

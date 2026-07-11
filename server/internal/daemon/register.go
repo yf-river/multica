@@ -222,7 +222,7 @@ func (d *Daemon) reregisterWorkspaceAfterRuntimeGone(ctx context.Context, worksp
 	// was working on, mirroring the registration path's recover-orphans call.
 	// This is intentionally scoped to the runtime_gone recovery: the
 	// runtimes were truly gone server-side, so anything still in
-	// dispatched/running/waiting_local_directory on those rows is an orphan
+	// dispatched/running on those rows is an orphan
 	// that needs to be failed-and-retried. The drift-refresh path (which
 	// also feeds applyRegisterResponseInPlace) deliberately skips this step
 	// because its surviving runtime IDs may still be actively executing
@@ -933,7 +933,7 @@ func (d *Daemon) refreshWorkspaceRepos(ctx context.Context, workspaceID string) 
 //
 //  1. It does NOT call RecoverOrphans for the returned runtime IDs. The
 //     server's RecoverOrphanedTasksForRuntime hard-fails every
-//     dispatched/running/waiting_local_directory task on a runtime, which is
+//     dispatched/running task on a runtime, which is
 //     the correct response when a runtime row was actually deleted server-
 //     side, but a catastrophic false positive on profile drift: a built-in
 //     runtime still actively executing tasks would have its work killed
