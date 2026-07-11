@@ -2,23 +2,32 @@ package metrics
 
 import "testing"
 
-func TestEstimateUsageCostUSDMinimax(t *testing.T) {
-	cost, ok := EstimateUsageCostUSD("minimax-m2.7-ioa", 1_000_000, 1_000_000, 100_000, 100_000)
-	if !ok {
-		t.Fatalf("expected minimax-m2.7-ioa to resolve")
+func TestEstimateUsageCostBreakdownUSDAliases(t *testing.T) {
+	tests := []struct {
+		model      string
+		input      int64
+		output     int64
+		cacheRead  int64
+		cacheWrite int64
+		want       float64
+	}{
+		{model: "minimax-m2.7-ioa", input: 1_000_000, output: 1_000_000, cacheRead: 100_000, cacheWrite: 100_000, want: 1.5435},
+		{model: "codebuddy/deepseek-v4-pro-ioa", input: 2_000_000, output: 1_000_000, cacheRead: 1_000_000, cacheWrite: 1_000_000, want: 1.308625},
+		{model: "codex/gpt-5.3-codex-spark", input: 1_000_000, output: 1_000_000, cacheRead: 1_000_000, cacheWrite: 1_000_000, want: 16.1},
+		{model: "codebuddy/deepseek-v4-flash-ioa", input: 2_000_000, output: 1_000_000, cacheRead: 1_000_000, cacheWrite: 1_000_000, want: 0.4228},
+		{model: "codebuddy/kimi-k2.6-ioa", input: 2_000_000, output: 1_000_000, cacheRead: 1_000_000, cacheWrite: 1_000_000, want: 5.11},
+		{model: "codebuddy/kimi-k2.7-ioa", input: 2_000_000, output: 1_000_000, cacheRead: 1_000_000, cacheWrite: 1_000_000, want: 5.14},
 	}
-	if cost != 1.5435 {
-		t.Fatalf("cost = %v, want 1.5435", cost)
-	}
-}
-
-func TestEstimateUsageCostUSDDeepSeekV4ProIOA(t *testing.T) {
-	cost, ok := EstimateUsageCostUSD("codebuddy/deepseek-v4-pro-ioa", 2_000_000, 1_000_000, 1_000_000, 1_000_000)
-	if !ok {
-		t.Fatalf("expected codebuddy/deepseek-v4-pro-ioa to resolve")
-	}
-	if cost != 1.308625 {
-		t.Fatalf("cost = %v, want 1.308625", cost)
+	for _, tt := range tests {
+		t.Run(tt.model, func(t *testing.T) {
+			breakdown, ok := EstimateUsageCostBreakdownUSD("", tt.model, tt.input, tt.output, tt.cacheRead, tt.cacheWrite)
+			if !ok {
+				t.Fatalf("expected %s to resolve", tt.model)
+			}
+			if breakdown.TotalCostUSD != tt.want {
+				t.Fatalf("total = %v, want %v", breakdown.TotalCostUSD, tt.want)
+			}
+		})
 	}
 }
 
@@ -53,16 +62,6 @@ func TestEstimateUsageCostBreakdownUSDCodeBuddyOfficialSamples(t *testing.T) {
 	}
 }
 
-func TestEstimateUsageCostUSDSpark(t *testing.T) {
-	cost, ok := EstimateUsageCostUSD("codex/gpt-5.3-codex-spark", 1_000_000, 1_000_000, 1_000_000, 1_000_000)
-	if !ok {
-		t.Fatalf("expected codex/gpt-5.3-codex-spark to resolve")
-	}
-	if cost != 16.1 {
-		t.Fatalf("cost = %v, want 16.1", cost)
-	}
-}
-
 func TestEstimateUsageCostBreakdownUSDProviderGenericModel(t *testing.T) {
 	breakdown, ok := EstimateUsageCostBreakdownUSD("cursor", "auto", 1_000_000, 1_000_000, 1_000_000, 1_000_000)
 	if !ok {
@@ -79,43 +78,13 @@ func TestEstimateUsageCostBreakdownUSDProviderGenericModel(t *testing.T) {
 	}
 }
 
-func TestEstimateUsageCostUSDDeepSeekV4FlashIOA(t *testing.T) {
-	cost, ok := EstimateUsageCostUSD("codebuddy/deepseek-v4-flash-ioa", 2_000_000, 1_000_000, 1_000_000, 1_000_000)
-	if !ok {
-		t.Fatalf("expected codebuddy/deepseek-v4-flash-ioa to resolve")
-	}
-	if cost != 0.4228 {
-		t.Fatalf("cost = %v, want 0.4228", cost)
-	}
-}
-
-func TestEstimateUsageCostUSDKimiK26IOA(t *testing.T) {
-	cost, ok := EstimateUsageCostUSD("codebuddy/kimi-k2.6-ioa", 2_000_000, 1_000_000, 1_000_000, 1_000_000)
-	if !ok {
-		t.Fatalf("expected codebuddy/kimi-k2.6-ioa to resolve")
-	}
-	if cost != 5.11 {
-		t.Fatalf("cost = %v, want 5.11", cost)
-	}
-}
-
-func TestEstimateUsageCostUSDKimiK27IOA(t *testing.T) {
-	cost, ok := EstimateUsageCostUSD("codebuddy/kimi-k2.7-ioa", 2_000_000, 1_000_000, 1_000_000, 1_000_000)
-	if !ok {
-		t.Fatalf("expected codebuddy/kimi-k2.7-ioa to resolve")
-	}
-	if cost != 5.14 {
-		t.Fatalf("cost = %v, want 5.14", cost)
-	}
-}
-
-func TestEstimateUsageCostUSDUnknownModel(t *testing.T) {
-	cost, ok := EstimateUsageCostUSD("unknown-model", 1_000_000, 1_000_000, 0, 0)
+func TestEstimateUsageCostBreakdownUSDUnknownModel(t *testing.T) {
+	breakdown, ok := EstimateUsageCostBreakdownUSD("", "unknown-model", 1_000_000, 1_000_000, 0, 0)
 	if ok {
 		t.Fatalf("unexpected pricing for unknown model")
 	}
-	if cost != 0 {
-		t.Fatalf("cost = %v, want 0", cost)
+	if breakdown != (UsageCostBreakdown{}) {
+		t.Fatalf("breakdown = %+v, want zero value", breakdown)
 	}
 }
 
