@@ -17,6 +17,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/analytics"
@@ -66,6 +67,51 @@ func (f queryRowFailingDB) QueryRow(ctx context.Context, sql string, args ...int
 type errorRow struct{ err error }
 
 func (r errorRow) Scan(...interface{}) error { return r.err }
+
+type failTaskUsageDB struct {
+	db.DBTX
+	failAt int
+	calls  int
+}
+
+func (f *failTaskUsageDB) Exec(ctx context.Context, sql string, args ...interface{}) (pgconn.CommandTag, error) {
+	if strings.Contains(sql, "-- name: UpsertTaskUsage ") {
+		f.calls++
+		if f.calls == f.failAt {
+			return pgconn.CommandTag{}, errors.New("injected task usage upsert failure")
+		}
+	}
+	return f.DBTX.Exec(ctx, sql, args...)
+}
+
+type failTaskUsageTxStarter struct {
+	pool   *pgxpool.Pool
+	failAt int
+}
+
+func (s failTaskUsageTxStarter) Begin(ctx context.Context) (pgx.Tx, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return &failTaskUsageTx{Tx: tx, failAt: s.failAt}, nil
+}
+
+type failTaskUsageTx struct {
+	pgx.Tx
+	failAt int
+	calls  int
+}
+
+func (tx *failTaskUsageTx) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+	if strings.Contains(sql, "-- name: UpsertTaskUsage ") {
+		tx.calls++
+		if tx.calls == tx.failAt {
+			return pgconn.CommandTag{}, errors.New("injected task usage upsert failure")
+		}
+	}
+	return tx.Tx.Exec(ctx, sql, args...)
+}
 
 var testHandler *Handler
 var testPool *pgxpool.Pool

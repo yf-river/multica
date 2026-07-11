@@ -133,51 +133,100 @@ func (h *Handler) ReportTaskUsage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	if len(req.Usage) == 0 {
+		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+		return
+	}
 
 	// Provider is lowercased on write so client-side pricing lookups tolerate
-	// case drift. An empty provider (an older daemon that omits the field) is
-	// stamped from the task's runtime, so generic model ids like `auto` still
-	// resolve to a provider instead of landing as '' and pricing $0.
+	// case drift. An empty provider is stamped from the task's runtime, so
+	// generic model ids like `auto` still resolve to a provider instead of
+	// landing as '' and pricing $0.
+	type normalizedUsage struct {
+		provider string
+		usage    TaskUsagePayload
+	}
+	normalized := make([]normalizedUsage, 0, len(req.Usage))
 	var runtimeProvider string
 	runtimeProviderLoaded := false
 	for _, u := range req.Usage {
+		u.Model = strings.TrimSpace(u.Model)
+		if u.Model == "" {
+			writeError(w, http.StatusBadRequest, "usage model is required")
+			return
+		}
+		if u.InputTokens < 0 || u.OutputTokens < 0 || u.CacheReadTokens < 0 || u.CacheWriteTokens < 0 {
+			writeError(w, http.StatusBadRequest, "usage token counts must be non-negative")
+			return
+		}
 		provider := normalizeProvider(u.Provider)
 		if provider == "" {
 			if !runtimeProviderLoaded {
-				if rt, err := h.Queries.GetAgentRuntime(r.Context(), task.RuntimeID); err == nil {
-					runtimeProvider = normalizeProvider(rt.Provider)
-				} else {
-					slog.Warn("load runtime provider for usage backfill failed",
-						"task_id", taskID, "runtime_id", uuidToString(task.RuntimeID), "error", err)
+				rt, err := h.Queries.GetAgentRuntime(r.Context(), task.RuntimeID)
+				if err != nil {
+					writeError(w, http.StatusInternalServerError, "failed to load runtime provider")
+					return
 				}
+				runtimeProvider = normalizeProvider(rt.Provider)
 				runtimeProviderLoaded = true
 			}
 			provider = runtimeProvider
 		}
-		u = h.normalizeTaskUsagePayload(r.Context(), task, provider, u)
-		if err := h.Queries.UpsertTaskUsage(r.Context(), db.UpsertTaskUsageParams{
+		if provider == "" {
+			writeError(w, http.StatusInternalServerError, "runtime provider is unavailable")
+			return
+		}
+		normalizedPayload, err := h.normalizeTaskUsagePayload(r.Context(), task, provider, u)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to normalize task usage")
+			return
+		}
+		normalized = append(normalized, normalizedUsage{provider: provider, usage: normalizedPayload})
+	}
+
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to begin task usage update")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	for _, item := range normalized {
+		u := item.usage
+		if err := qtx.UpsertTaskUsage(r.Context(), db.UpsertTaskUsageParams{
 			TaskID:           parseUUID(taskID),
-			Provider:         provider,
+			Provider:         item.provider,
 			Model:            u.Model,
 			InputTokens:      u.InputTokens,
 			OutputTokens:     u.OutputTokens,
 			CacheReadTokens:  u.CacheReadTokens,
 			CacheWriteTokens: u.CacheWriteTokens,
 		}); err != nil {
-			slog.Warn("upsert task usage failed", "task_id", taskID, "model", u.Model, "error", err)
-			continue
+			writeError(w, http.StatusInternalServerError, "failed to store task usage")
+			return
 		}
-		h.TaskService.CaptureTaskUsage(r.Context(), task, provider, u.Model, u.InputTokens, u.OutputTokens, u.CacheReadTokens, u.CacheWriteTokens)
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit task usage")
+		return
+	}
+
+	for _, item := range normalized {
+		u := item.usage
+		h.TaskService.CaptureTaskUsage(r.Context(), task, item.provider, u.Model, u.InputTokens, u.OutputTokens, u.CacheReadTokens, u.CacheWriteTokens)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-func (h *Handler) normalizeTaskUsagePayload(ctx context.Context, task db.AgentTaskQueue, provider string, u TaskUsagePayload) TaskUsagePayload {
+func (h *Handler) normalizeTaskUsagePayload(ctx context.Context, task db.AgentTaskQueue, provider string, u TaskUsagePayload) (TaskUsagePayload, error) {
 	if provider != "codebuddy" {
-		return u
+		return u, nil
 	}
-	previous, ok := h.previousCodebuddySessionUsage(ctx, task, provider, u.Model)
+	previous, ok, err := h.previousCodebuddySessionUsage(ctx, task, provider, u.Model)
+	if err != nil {
+		return TaskUsagePayload{}, err
+	}
 	if ok {
 		u.InputTokens = nonNegativeDelta(u.InputTokens, previous.InputTokens)
 		u.OutputTokens = nonNegativeDelta(u.OutputTokens, previous.OutputTokens)
@@ -185,7 +234,7 @@ func (h *Handler) normalizeTaskUsagePayload(ctx context.Context, task db.AgentTa
 		u.CacheWriteTokens = nonNegativeDelta(u.CacheWriteTokens, previous.CacheWriteTokens)
 	}
 	u.CacheWriteTokens = 0
-	return u
+	return u, nil
 }
 
 type taskUsageTotals struct {
@@ -195,9 +244,9 @@ type taskUsageTotals struct {
 	CacheWriteTokens int64
 }
 
-func (h *Handler) previousCodebuddySessionUsage(ctx context.Context, task db.AgentTaskQueue, provider, model string) (taskUsageTotals, bool) {
+func (h *Handler) previousCodebuddySessionUsage(ctx context.Context, task db.AgentTaskQueue, provider, model string) (taskUsageTotals, bool, error) {
 	if h == nil || h.DB == nil || !task.SessionID.Valid || strings.TrimSpace(task.SessionID.String) == "" || strings.TrimSpace(model) == "" {
-		return taskUsageTotals{}, false
+		return taskUsageTotals{}, false, nil
 	}
 	var previous taskUsageTotals
 	err := h.DB.QueryRow(ctx, `
@@ -220,15 +269,9 @@ func (h *Handler) previousCodebuddySessionUsage(ctx context.Context, task db.Age
 		&previous.CacheWriteTokens,
 	)
 	if err != nil {
-		slog.Warn("load previous codebuddy session usage failed",
-			"task_id", uuidToString(task.ID),
-			"session_id", task.SessionID.String,
-			"model", model,
-			"error", err,
-		)
-		return taskUsageTotals{}, false
+		return taskUsageTotals{}, false, err
 	}
-	return previous, previous.InputTokens > 0 || previous.OutputTokens > 0 || previous.CacheReadTokens > 0 || previous.CacheWriteTokens > 0
+	return previous, previous.InputTokens > 0 || previous.OutputTokens > 0 || previous.CacheReadTokens > 0 || previous.CacheWriteTokens > 0, nil
 }
 
 func nonNegativeDelta(current, previous int64) int64 {

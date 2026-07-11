@@ -1636,6 +1636,66 @@ func TestReportTaskUsageStoresUsageAndTrace(t *testing.T) {
 	}
 }
 
+func TestReportTaskUsageRollsBackBatchWhenOneWriteFails(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	runtimeID := createClaimReclaimRuntime(t, ctx, "Usage rollback runtime")
+	agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, "Usage rollback agent")
+	taskID := createDispatchedClaimFixtureTask(t, ctx, agentID, runtimeID, issueID, "1 second", true)
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM task_trace_event WHERE task_id = $1`, taskID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM task_usage WHERE task_id = $1`, taskID)
+	})
+
+	h := *testHandler
+	h.Queries = db.New(&failTaskUsageDB{DBTX: testPool, failAt: 2})
+	h.TxStarter = failTaskUsageTxStarter{pool: testPool, failAt: 2}
+	w := httptest.NewRecorder()
+	req := newDaemonUserRequest("POST", "/api/daemon/tasks/"+taskID+"/usage", map[string]any{
+		"usage": []map[string]any{
+			{"provider": "test", "model": "model-a", "input_tokens": 10},
+			{"provider": "test", "model": "model-b", "output_tokens": 20},
+		},
+	}, testWorkspaceID, "usage-rollback-daemon")
+	req = withURLParam(req, "taskId", taskID)
+
+	h.ReportTaskUsage(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d; body=%s", w.Code, http.StatusInternalServerError, w.Body.String())
+	}
+	var count int
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM task_usage WHERE task_id = $1`, taskID).Scan(&count); err != nil {
+		t.Fatalf("count task usage rows: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("task usage rows = %d, want atomic rollback", count)
+	}
+}
+
+func TestReportTaskUsageRejectsInvalidCounters(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	runtimeID := createClaimReclaimRuntime(t, ctx, "Usage validation runtime")
+	agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, "Usage validation agent")
+	taskID := createDispatchedClaimFixtureTask(t, ctx, agentID, runtimeID, issueID, "1 second", true)
+
+	w := httptest.NewRecorder()
+	req := newDaemonUserRequest("POST", "/api/daemon/tasks/"+taskID+"/usage", map[string]any{
+		"usage": []map[string]any{{"model": "model-a", "input_tokens": -1}},
+	}, testWorkspaceID, "usage-validation-daemon")
+	req = withURLParam(req, "taskId", taskID)
+	testHandler.ReportTaskUsage(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d; body=%s", w.Code, http.StatusBadRequest, w.Body.String())
+	}
+}
+
 func TestReportTaskUsageNormalizesCodebuddySessionCumulativeUsage(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
