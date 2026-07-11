@@ -408,6 +408,7 @@
     "assignee": "负责人",
     "delete": "删除",
     "update_success_other": "已更新 {{count}} 个任务",
+    "update_partial": "已更新 {{updated}} 个任务，{{failed}} 个更新失败",
     "update_failed": "更新任务失败",
     "delete_success_other": "已删除 {{count}} 个任务",
     "delete_partial": "已删除 {{deleted}} 个任务，{{failed}} 个删除失败",

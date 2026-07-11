@@ -97,9 +97,18 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		IncompleteChildren []IncompleteChildIssueResponse `json:"incomplete_children"`
 	}
 	blocked := make([]batchDoneBlockedIssue, 0)
+	type batchUpdateFailure struct {
+		IssueID string `json:"issue_id"`
+		Code    string `json:"code"`
+	}
+	failed := make([]batchUpdateFailure, 0)
+	recordFailure := func(issueID, code string) {
+		failed = append(failed, batchUpdateFailure{IssueID: issueID, Code: code})
+	}
 	for _, issueID := range req.IssueIDs {
 		issueUUID, err := util.ParseUUID(issueID)
 		if err != nil {
+			recordFailure(issueID, "invalid_id")
 			continue
 		}
 		prevIssue, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
@@ -107,6 +116,11 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 			WorkspaceID: wsUUID,
 		})
 		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				recordFailure(issueID, "not_found")
+			} else {
+				recordFailure(issueID, "lookup_failed")
+			}
 			continue
 		}
 
@@ -146,6 +160,7 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 			if req.Updates.AssigneeID != nil {
 				assigneeUUID, err := util.ParseUUID(*req.Updates.AssigneeID)
 				if err != nil {
+					recordFailure(issueID, "invalid_assignee")
 					continue
 				}
 				params.AssigneeID = assigneeUUID
@@ -157,6 +172,7 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 			if req.Updates.StartDate != nil && *req.Updates.StartDate != "" {
 				d, err := util.ParseCalendarDate(*req.Updates.StartDate)
 				if err != nil {
+					recordFailure(issueID, "invalid_start_date")
 					continue
 				}
 				params.StartDate = d
@@ -168,6 +184,7 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 			if req.Updates.DueDate != nil && *req.Updates.DueDate != "" {
 				d, err := util.ParseCalendarDate(*req.Updates.DueDate)
 				if err != nil {
+					recordFailure(issueID, "invalid_due_date")
 					continue
 				}
 				params.DueDate = d
@@ -180,9 +197,11 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 			if req.Updates.ParentIssueID != nil {
 				newParentID, err := util.ParseUUID(*req.Updates.ParentIssueID)
 				if err != nil {
+					recordFailure(issueID, "invalid_parent")
 					continue
 				}
 				if err := h.validateIssueParentInWorkspace(r.Context(), prevIssue, newParentID); err != nil {
+					recordFailure(issueID, "invalid_parent")
 					continue
 				}
 				params.ParentIssueID = newParentID
@@ -194,9 +213,11 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 			if req.Updates.ProjectID != nil {
 				projectUUID, err := util.ParseUUID(*req.Updates.ProjectID)
 				if err != nil {
+					recordFailure(issueID, "invalid_project")
 					continue
 				}
 				if err := h.validateProjectInWorkspace(r.Context(), prevIssue.WorkspaceID, projectUUID); err != nil {
+					recordFailure(issueID, "invalid_project")
 					continue
 				}
 				params.ProjectID = projectUUID
@@ -211,6 +232,7 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		_, batchTouchedID := rawUpdates["assignee_id"]
 		if batchTouchedType || batchTouchedID {
 			if status, _ := h.validateAssigneePair(r.Context(), r, workspaceID, params.AssigneeType, params.AssigneeID); status != 0 {
+				recordFailure(issueID, "invalid_assignee")
 				continue
 			}
 		}
@@ -219,6 +241,7 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 			incomplete, err := h.incompleteChildrenBlockingDone(r.Context(), prevIssue)
 			if err != nil {
 				slog.Warn("batch check child issue done gate failed", "issue_id", issueID, "error", err)
+				recordFailure(issueID, "child_check_failed")
 				continue
 			}
 			if len(incomplete) > 0 {
@@ -236,6 +259,7 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		tx, err := h.TxStarter.Begin(r.Context())
 		if err != nil {
 			slog.Warn("batch begin issue update transaction failed", "issue_id", issueID, "error", err)
+			recordFailure(issueID, "transaction_failed")
 			continue
 		}
 		qtx := h.Queries.WithTx(tx)
@@ -243,6 +267,7 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			_ = tx.Rollback(r.Context())
 			slog.Warn("batch update issue failed", "issue_id", issueID, "error", err)
+			recordFailure(issueID, "update_failed")
 			continue
 		}
 
@@ -270,10 +295,12 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			_ = tx.Rollback(r.Context())
 			slog.Warn("batch enqueue issue update event failed", "issue_id", issueID, "error", err)
+			recordFailure(issueID, "event_failed")
 			continue
 		}
 		if err := tx.Commit(r.Context()); err != nil {
 			slog.Warn("batch commit issue update failed", "issue_id", issueID, "error", err)
+			recordFailure(issueID, "transaction_failed")
 			continue
 		}
 		h.publishEvent(updatedEvent)
@@ -288,6 +315,9 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 	if len(blocked) > 0 {
 		resp["blocked"] = blocked
 		resp["blocked_reason"] = "child_issues_not_done"
+	}
+	if len(failed) > 0 {
+		resp["failed"] = failed
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

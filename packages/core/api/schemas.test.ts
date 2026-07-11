@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   AppConfigSchema,
   BatchDeleteIssuesResponseSchema,
+  BatchUpdateIssuesResponseSchema,
   DashboardAgentRunTimeListSchema,
   DashboardUsageByAgentListSchema,
   DashboardUsageDailyListSchema,
@@ -63,6 +64,25 @@ describe("BatchDeleteIssuesResponseSchema", () => {
       deleted: 0,
       failed: [{ issue_id: "issue-1", code: "mystery" }],
     }).success).toBe(false);
+  });
+});
+
+describe("BatchUpdateIssuesResponseSchema", () => {
+  it("preserves blocked and failed item results", () => {
+    const parsed = BatchUpdateIssuesResponseSchema.parse({
+      updated: 1,
+      blocked: [{
+        issue_id: "issue-2",
+        identifier: "MUL-2",
+        title: "Parent",
+        incomplete_children: [],
+      }],
+      blocked_reason: "child_issues_not_done",
+      failed: [{ issue_id: "issue-3", code: "event_failed" }],
+    });
+    expect(parsed.updated).toBe(1);
+    expect(parsed.blocked?.[0]?.issue_id).toBe("issue-2");
+    expect(parsed.failed).toEqual([{ issue_id: "issue-3", code: "event_failed" }]);
   });
 });
 

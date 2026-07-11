@@ -302,7 +302,33 @@ export const ChildIssueProgressResponseSchema = z.object({
 
 export const EMPTY_CHILD_ISSUE_PROGRESS_RESPONSE: ChildIssueProgressResponse = { progress: [] };
 
-export const BatchUpdateIssuesResponseSchema = z.object({ updated: z.number() }).loose();
+export const BatchUpdateIssuesResponseSchema = z.object({
+  updated: z.number(),
+  blocked: z.array(z.object({
+    issue_id: z.string(),
+    identifier: z.string(),
+    title: z.string(),
+    incomplete_children: z.array(z.unknown()),
+  })).optional(),
+  blocked_reason: z.string().optional(),
+  failed: z.array(z.object({
+    issue_id: z.string(),
+    code: z.enum([
+      "invalid_id",
+      "not_found",
+      "lookup_failed",
+      "invalid_assignee",
+      "invalid_start_date",
+      "invalid_due_date",
+      "invalid_parent",
+      "invalid_project",
+      "child_check_failed",
+      "transaction_failed",
+      "update_failed",
+      "event_failed",
+    ]),
+  })).optional(),
+}).loose();
 export const BatchDeleteIssuesResponseSchema = z.object({
   deleted: z.number(),
   failed: z.array(z.object({

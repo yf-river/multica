@@ -187,6 +187,29 @@ export interface ChildIssueProgressResponse {
 
 export interface BatchUpdateIssuesResponse {
   updated: number;
+  blocked?: Array<{
+    issue_id: string;
+    identifier: string;
+    title: string;
+    incomplete_children: unknown[];
+  }>;
+  blocked_reason?: string;
+  failed?: Array<{
+    issue_id: string;
+    code:
+      | "invalid_id"
+      | "not_found"
+      | "lookup_failed"
+      | "invalid_assignee"
+      | "invalid_start_date"
+      | "invalid_due_date"
+      | "invalid_parent"
+      | "invalid_project"
+      | "child_check_failed"
+      | "transaction_failed"
+      | "update_failed"
+      | "event_failed";
+  }>;
 }
 
 export interface BatchDeleteIssuesResponse {

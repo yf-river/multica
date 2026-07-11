@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 // TestBatchUpdateNoMutationReturnsZero — regression for #1660.
@@ -133,6 +135,41 @@ func TestBatchUpdateValidUpdatesPersistAndCount(t *testing.T) {
 		if eventCount != 1 {
 			t.Errorf("issue %s: durable update events = %d, want 1", id, eventCount)
 		}
+	}
+}
+
+func TestBatchUpdateReportsEverySkippedItem(t *testing.T) {
+	issueID := createTestIssue(t, "BU-partial", "todo", "low")
+	t.Cleanup(func() { deleteTestIssue(t, issueID) })
+	missingID := uuid.NewString()
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/issues/batch-update", map[string]any{
+		"issue_ids": []string{issueID, "not-a-uuid", missingID},
+		"updates":   map[string]any{"priority": "high"},
+	})
+	testHandler.BatchUpdateIssues(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var response struct {
+		Updated int `json:"updated"`
+		Failed  []struct {
+			IssueID string `json:"issue_id"`
+			Code    string `json:"code"`
+		} `json:"failed"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response.Updated != 1 || len(response.Failed) != 2 {
+		t.Fatalf("response = %#v", response)
+	}
+	if response.Failed[0].IssueID != "not-a-uuid" || response.Failed[0].Code != "invalid_id" {
+		t.Fatalf("invalid-id failure = %#v", response.Failed[0])
+	}
+	if response.Failed[1].IssueID != missingID || response.Failed[1].Code != "not_found" {
+		t.Fatalf("missing-id failure = %#v", response.Failed[1])
 	}
 }
 

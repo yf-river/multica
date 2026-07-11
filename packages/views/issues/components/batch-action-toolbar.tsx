@@ -52,8 +52,16 @@ export function BatchActionToolbar({
 
   const handleBatchUpdate = async (updates: Partial<UpdateIssueRequest>) => {
     try {
-      await batchUpdate.mutateAsync({ ids, updates });
-      toast.success(t(($) => $.batch.update_success, { count }));
+      const result = await batchUpdate.mutateAsync({ ids, updates });
+      const failed = (result.failed?.length ?? 0) + (result.blocked?.length ?? 0);
+      if (failed === 0 && result.updated === ids.length) {
+        toast.success(t(($) => $.batch.update_success, { count: result.updated }));
+      } else {
+        toast.error(t(($) => $.batch.update_partial, {
+          updated: result.updated,
+          failed,
+        }));
+      }
     } catch (err) {
       toast.error(
         err instanceof Error && err.message
