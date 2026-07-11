@@ -1,9 +1,6 @@
 // @vitest-environment jsdom
-import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { useIssueDraftStore } from "./draft-store";
-import { setCurrentWorkspace } from "../../platform/workspace-storage";
-
-const flush = () => new Promise((resolve) => queueMicrotask(() => resolve(null)));
 
 // Node 25 ships a partial `localStorage` shim under jsdom that's missing
 // `clear`/`removeItem`; replace it with a real in-memory Storage so persist
@@ -111,44 +108,5 @@ describe("issue draft store — last assignee", () => {
     clearDraft();
     expect(useIssueDraftStore.getState().draft.assigneeId).toBeUndefined();
     expect(useIssueDraftStore.getState().draft.assigneeType).toBeUndefined();
-  });
-});
-
-describe("issue draft store — legacy rehydrate", () => {
-  beforeEach(() => {
-    localStorage.clear();
-    setCurrentWorkspace(null, null);
-  });
-
-  afterEach(() => {
-    setCurrentWorkspace(null, null);
-  });
-
-  it("backfills attachments for drafts persisted before the field existed", async () => {
-    localStorage.setItem(
-      "multica_issue_draft:acme",
-      JSON.stringify({
-        state: {
-          draft: {
-            title: "legacy",
-            description: "body",
-            status: "todo",
-            priority: "none",
-            startDate: null,
-            dueDate: null,
-            // no `attachments` — written by a build that predates the field
-          },
-        },
-        version: 0,
-      }),
-    );
-
-    setCurrentWorkspace("acme", "ws_a");
-    await flush();
-    await flush();
-
-    const { draft } = useIssueDraftStore.getState();
-    expect(draft.title).toBe("legacy");
-    expect(draft.attachments).toEqual([]);
   });
 });

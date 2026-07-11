@@ -67,18 +67,6 @@ export const useIssueDraftStore = create<IssueDraftStore>()(
     {
       name: "multica_issue_draft",
       storage: createJSONStorage(() => createWorkspaceAwareStorage(defaultStorage)),
-      // Drafts persisted by older builds predate fields added later (e.g.
-      // `attachments`). Backfill EMPTY_DRAFT defaults on rehydrate so every
-      // read site can rely on the declared IssueDraft shape instead of
-      // re-defending with `?? fallback`.
-      merge: (persistedState, currentState) => {
-        const persisted = (persistedState ?? {}) as Partial<IssueDraftStore>;
-        return {
-          ...currentState,
-          ...persisted,
-          draft: { ...EMPTY_DRAFT, ...persisted.draft },
-        };
-      },
     },
   ),
 );
