@@ -293,19 +293,21 @@ func (d *Dispatcher) Handle(ctx context.Context, msg InboundMessage) (DispatchRe
 	inst, err := d.Queries.GetLarkInstallationByAppID(ctx, msg.AppID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			_ = d.Audit.RecordDrop(ctx, AuditDropParams{
+			if err := d.Audit.RecordDrop(ctx, AuditDropParams{
 				EventType:     msg.EventType,
 				LarkEventID:   msg.EventID,
 				LarkMessageID: msg.MessageID,
 				ChatID:        msg.ChatID,
 				Reason:        DropReasonInvalidEvent,
-			})
+			}); err != nil {
+				return DispatchResult{}, fmt.Errorf("record invalid-event drop: %w", err)
+			}
 			return DispatchResult{Outcome: OutcomeDropped, DropReason: DropReasonInvalidEvent}, nil
 		}
 		return DispatchResult{}, fmt.Errorf("load installation: %w", err)
 	}
 	if InstallationStatus(inst.Status) != InstallationActive {
-		return d.drop(ctx, msg, inst.ID, DropReasonRevokedInstallation), nil
+		return d.drop(ctx, msg, inst.ID, DropReasonRevokedInstallation)
 	}
 
 	// 2. Two-phase dedup claim with owner fencing. Spec §4.3 puts this
@@ -340,7 +342,7 @@ func (d *Dispatcher) Handle(ctx context.Context, msg InboundMessage) (DispatchRe
 				// (terminal) or another worker is actively
 				// processing. Either way, the right behavior is to
 				// drop without re-doing the work.
-				return d.drop(ctx, msg, inst.ID, DropReasonDuplicate), nil
+				return d.drop(ctx, msg, inst.ID, DropReasonDuplicate)
 			}
 			return DispatchResult{}, fmt.Errorf("dedup claim: %w", err)
 		}
@@ -359,7 +361,7 @@ func (d *Dispatcher) Handle(ctx context.Context, msg InboundMessage) (DispatchRe
 	// nothing else needs to happen, and the audit row was already
 	// written by the in-tx rollback path's caller (see processClaimed).
 	if errors.Is(err, ErrClaimLost) {
-		return d.drop(ctx, msg, inst.ID, DropReasonDuplicate), nil
+		return d.drop(ctx, msg, inst.ID, DropReasonDuplicate)
 	}
 
 	return res, err
@@ -412,7 +414,11 @@ func (d *Dispatcher) processClaimed(ctx context.Context, msg InboundMessage, ins
 	//    never produces an "you need to bind" reply card spam — the
 	//    Bot is not addressed, so we say nothing.
 	if msg.ChatType == ChatTypeGroup && !msg.AddressedToBot {
-		return d.drop(ctx, msg, inst.ID, DropReasonNotAddressedInGroup), finalizeMark, nil
+		res, err := d.drop(ctx, msg, inst.ID, DropReasonNotAddressedInGroup)
+		if err != nil {
+			return DispatchResult{}, finalizeRelease, err
+		}
+		return res, finalizeMark, nil
 	}
 
 	// 4. Identity check. A row in lark_user_binding means the open_id
@@ -424,14 +430,16 @@ func (d *Dispatcher) processClaimed(ctx context.Context, msg InboundMessage, ins
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			_ = d.Audit.RecordDrop(ctx, AuditDropParams{
+			if err := d.Audit.RecordDrop(ctx, AuditDropParams{
 				InstallationID: inst.ID,
 				ChatID:         msg.ChatID,
 				EventType:      msg.EventType,
 				LarkEventID:    msg.EventID,
 				LarkMessageID:  msg.MessageID,
 				Reason:         DropReasonUnboundUser,
-			})
+			}); err != nil {
+				return DispatchResult{}, finalizeRelease, fmt.Errorf("record unbound-user drop: %w", err)
+			}
 			return DispatchResult{
 				Outcome:        OutcomeNeedsBinding,
 				DropReason:     DropReasonUnboundUser,
@@ -649,37 +657,49 @@ func keyForSession(sessionID pgtype.UUID) string {
 func (d *Dispatcher) applyFinalize(ctx context.Context, installationID pgtype.UUID, messageID string, claimToken pgtype.UUID, action dedupFinalize) {
 	switch action {
 	case finalizeMark:
-		_, _ = d.Queries.MarkLarkInboundDedupProcessed(ctx, db.MarkLarkInboundDedupProcessedParams{
+		rows, err := d.Queries.MarkLarkInboundDedupProcessed(ctx, db.MarkLarkInboundDedupProcessedParams{
 			InstallationID: installationID,
 			MessageID:      messageID,
 			ClaimToken:     claimToken,
 		})
+		if err != nil {
+			d.logger().Error("lark dispatcher: finalize dedup mark failed", "installation_id", uuidString(installationID), "message_id", messageID, "err", err)
+		} else if rows == 0 {
+			d.logger().Warn("lark dispatcher: finalize dedup mark lost claim", "installation_id", uuidString(installationID), "message_id", messageID)
+		}
 	case finalizeRelease:
-		_, _ = d.Queries.ReleaseLarkInboundDedup(ctx, db.ReleaseLarkInboundDedupParams{
+		rows, err := d.Queries.ReleaseLarkInboundDedup(ctx, db.ReleaseLarkInboundDedupParams{
 			InstallationID: installationID,
 			MessageID:      messageID,
 			ClaimToken:     claimToken,
 		})
+		if err != nil {
+			d.logger().Error("lark dispatcher: finalize dedup release failed", "installation_id", uuidString(installationID), "message_id", messageID, "err", err)
+		} else if rows == 0 {
+			d.logger().Warn("lark dispatcher: finalize dedup release lost claim", "installation_id", uuidString(installationID), "message_id", messageID)
+		}
 	case finalizeNone:
 		// AppendUserMessage already finalized the row in-tx, or our
 		// claim was lost to a concurrent reclaim. Do not touch it.
 	}
 }
 
-func (d *Dispatcher) drop(ctx context.Context, msg InboundMessage, instID pgtype.UUID, reason DropReason) DispatchResult {
-	_ = d.Audit.RecordDrop(ctx, AuditDropParams{
+func (d *Dispatcher) drop(ctx context.Context, msg InboundMessage, instID pgtype.UUID, reason DropReason) (DispatchResult, error) {
+	if err := d.Audit.RecordDrop(ctx, AuditDropParams{
 		InstallationID: instID,
 		ChatID:         msg.ChatID,
 		EventType:      msg.EventType,
 		LarkEventID:    msg.EventID,
 		LarkMessageID:  msg.MessageID,
 		Reason:         reason,
-	})
+	}); err != nil {
+		return DispatchResult{}, fmt.Errorf("record %s drop: %w", reason, err)
+	}
 	return DispatchResult{
 		Outcome:        OutcomeDropped,
 		DropReason:     reason,
 		InstallationID: instID,
-	}
+	}, nil
 }
 
 func (d *Dispatcher) createIssueFromCommand(

@@ -264,9 +264,13 @@ func (f *fakeChat) AppendUserMessage(ctx context.Context, p AppendUserMessagePar
 
 type fakeAudit struct {
 	drops []AuditDropParams
+	err   error
 }
 
 func (f *fakeAudit) RecordDrop(ctx context.Context, p AuditDropParams) error {
+	if f.err != nil {
+		return f.err
+	}
 	f.drops = append(f.drops, p)
 	return nil
 }
@@ -359,6 +363,23 @@ func TestDispatcher_UnknownAppDropped(t *testing.T) {
 	}
 }
 
+func TestDispatcher_UnknownAppAuditFailureIsRetryable(t *testing.T) {
+	auditErr := errors.New("audit unavailable")
+	d := &Dispatcher{
+		Queries: &fakeQueries{installationErr: pgx.ErrNoRows},
+		Audit:   &fakeAudit{err: auditErr},
+	}
+
+	res, err := d.Handle(context.Background(), InboundMessage{
+		AppID:     "missing",
+		EventType: "im.message.receive_v1",
+		MessageID: "msg-unknown-audit-failure",
+	})
+	if !errors.Is(err, auditErr) {
+		t.Fatalf("expected retryable audit error, got result=%+v err=%v", res, err)
+	}
+}
+
 func TestDispatcher_RevokedInstallationDropped(t *testing.T) {
 	inst := activeInstallation()
 	inst.Status = string(InstallationRevoked)
@@ -396,6 +417,28 @@ func TestDispatcher_GroupWithoutMentionDropped(t *testing.T) {
 	}
 }
 
+func TestDispatcher_GroupDropAuditFailureReleasesClaim(t *testing.T) {
+	auditErr := errors.New("audit unavailable")
+	queries := &fakeQueries{installationByApp: activeInstallation()}
+	d := &Dispatcher{Queries: queries, Audit: &fakeAudit{err: auditErr}}
+
+	res, err := d.Handle(context.Background(), InboundMessage{
+		AppID:          "ok",
+		ChatType:       ChatTypeGroup,
+		AddressedToBot: false,
+		MessageID:      "msg-group-audit-failure",
+	})
+	if !errors.Is(err, auditErr) {
+		t.Fatalf("expected retryable audit error, got result=%+v err=%v", res, err)
+	}
+	if queries.calledRelease != 1 {
+		t.Fatalf("audit failure must release claim, release calls=%d", queries.calledRelease)
+	}
+	if _, exists := queries.dedup[seedDedupKey("msg-group-audit-failure")]; exists {
+		t.Fatalf("audit failure left a dedup blocker: %+v", queries.dedup)
+	}
+}
+
 func TestDispatcher_UnboundUserAsksForBinding(t *testing.T) {
 	queries := &fakeQueries{
 		installationByApp: activeInstallation(),
@@ -420,6 +463,31 @@ func TestDispatcher_UnboundUserAsksForBinding(t *testing.T) {
 	}
 	if len(audit.drops) != 1 || audit.drops[0].Reason != DropReasonUnboundUser {
 		t.Fatalf("expected one unbound_user audit row, got %+v", audit.drops)
+	}
+}
+
+func TestDispatcher_UnboundAuditFailureReleasesClaim(t *testing.T) {
+	auditErr := errors.New("audit unavailable")
+	queries := &fakeQueries{
+		installationByApp: activeInstallation(),
+		userBindingErr:    pgx.ErrNoRows,
+	}
+	d := &Dispatcher{Queries: queries, Audit: &fakeAudit{err: auditErr}}
+
+	res, err := d.Handle(context.Background(), InboundMessage{
+		AppID:        "ok",
+		ChatType:     ChatTypeP2P,
+		SenderOpenID: "ou_user_a",
+		MessageID:    "msg-unbound-audit-failure",
+	})
+	if !errors.Is(err, auditErr) {
+		t.Fatalf("expected retryable audit error, got result=%+v err=%v", res, err)
+	}
+	if queries.calledRelease != 1 {
+		t.Fatalf("audit failure must release claim, release calls=%d", queries.calledRelease)
+	}
+	if _, exists := queries.dedup[seedDedupKey("msg-unbound-audit-failure")]; exists {
+		t.Fatalf("audit failure left a dedup blocker: %+v", queries.dedup)
 	}
 }
 
