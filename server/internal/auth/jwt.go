@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -68,6 +69,16 @@ func GeneratePATToken() (string, error) {
 		return "", fmt.Errorf("generate PAT token: %w", err)
 	}
 	return "mul_" + hex.EncodeToString(b), nil
+}
+
+// DerivePATToken deterministically derives a PAT for one authenticated create
+// operation. The caller-owned request key is public; security comes from the
+// same deployment secret that already authorizes user sessions. This lets the
+// server replay a response after it was lost without storing the raw PAT.
+func DerivePATToken(userID, requestKey string) string {
+	mac := hmac.New(sha256.New, JWTSecret())
+	_, _ = mac.Write([]byte("pat-create\x00" + userID + "\x00" + requestKey))
+	return "mul_" + hex.EncodeToString(mac.Sum(nil)[:20])
 }
 
 // GenerateDaemonToken creates a new daemon auth token: "mdt_" + 40 random hex chars.

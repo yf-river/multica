@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
 	"github.com/multica-ai/multica/server/internal/auth"
@@ -316,10 +317,10 @@ func runAuthLoginBrowser(cmd *cobra.Command) error {
 	var patResp struct {
 		Token string `json:"token"`
 	}
-	err = client.PostJSON(ctx, "/api/tokens", map[string]any{
+	err = client.PostJSONWithIdempotencyKey(ctx, "/api/tokens", map[string]any{
 		"name":            patName,
 		"expires_in_days": expiresInDays,
-	}, &patResp)
+	}, uuid.NewString(), &patResp)
 	if err != nil {
 		return cli.WithUserMessage("Sign-in did not complete: the server could not issue an access token for the CLI. Run `multica login` again.", err)
 	}

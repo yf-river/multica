@@ -5,14 +5,138 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/auth"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
+
+func newPATCreateRequest(key string, body map[string]any) *http.Request {
+	req := newRequest(http.MethodPost, "/api/tokens", body)
+	if key != "" {
+		req.Header.Set("Idempotency-Key", key)
+	}
+	return req
+}
+
+func decodeCreatePATResponse(t *testing.T, recorder *httptest.ResponseRecorder) CreatePATResponse {
+	t.Helper()
+	var response CreatePATResponse
+	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
+		t.Fatalf("decode PAT create response: %v (body: %s)", err, recorder.Body.String())
+	}
+	return response
+}
+
+func TestCreatePersonalAccessTokenRequiresIdempotencyKey(t *testing.T) {
+	w := httptest.NewRecorder()
+	testHandler.CreatePersonalAccessToken(w, newPATCreateRequest("", map[string]any{"name": "CLI test"}))
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "idempotency_key_required") {
+		t.Fatalf("missing key response = %d %s, want idempotency_key_required", w.Code, w.Body.String())
+	}
+}
+
+func TestCreatePersonalAccessTokenReplaysExactSecret(t *testing.T) {
+	ctx := context.Background()
+	key := uuid.NewString()
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(ctx, `DELETE FROM personal_access_token WHERE user_id = $1 AND idempotency_key = $2`, testUserID, key)
+	})
+	body := map[string]any{"name": "CLI replay", "expires_in_days": 90}
+
+	firstRecorder := httptest.NewRecorder()
+	testHandler.CreatePersonalAccessToken(firstRecorder, newPATCreateRequest(key, body))
+	if firstRecorder.Code != http.StatusCreated {
+		t.Fatalf("first create = %d %s", firstRecorder.Code, firstRecorder.Body.String())
+	}
+	first := decodeCreatePATResponse(t, firstRecorder)
+
+	replayRecorder := httptest.NewRecorder()
+	testHandler.CreatePersonalAccessToken(replayRecorder, newPATCreateRequest(key, body))
+	if replayRecorder.Code != http.StatusCreated || replayRecorder.Header().Get("Idempotency-Replayed") != "true" {
+		t.Fatalf("replay = %d headers=%v body=%s", replayRecorder.Code, replayRecorder.Header(), replayRecorder.Body.String())
+	}
+	replay := decodeCreatePATResponse(t, replayRecorder)
+	if replay.ID != first.ID || replay.Token != first.Token || replay.ExpiresAt == nil || first.ExpiresAt == nil || *replay.ExpiresAt != *first.ExpiresAt {
+		t.Fatalf("replay = %#v, want exact id/token/expiry from %#v", replay, first)
+	}
+	if first.Token != auth.DerivePATToken(testUserID, key) {
+		t.Fatal("response token does not match the operation-scoped derivation")
+	}
+	var count int
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM personal_access_token WHERE user_id = $1 AND idempotency_key = $2`, testUserID, key).Scan(&count); err != nil {
+		t.Fatalf("count PAT rows: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("PAT rows = %d, want 1", count)
+	}
+	if _, err := testPool.Exec(ctx, `UPDATE personal_access_token SET token_hash = 'different-derivation-secret' WHERE id = $1`, first.ID); err != nil {
+		t.Fatalf("simulate derivation secret rotation: %v", err)
+	}
+	unavailable := httptest.NewRecorder()
+	testHandler.CreatePersonalAccessToken(unavailable, newPATCreateRequest(key, body))
+	if unavailable.Code != http.StatusConflict || !strings.Contains(unavailable.Body.String(), "idempotency_replay_unavailable") {
+		t.Fatalf("secret-rotation replay = %d %s, want explicit replay unavailable", unavailable.Code, unavailable.Body.String())
+	}
+}
+
+func TestCreatePersonalAccessTokenRejectsChangedReplay(t *testing.T) {
+	ctx := context.Background()
+	key := uuid.NewString()
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(ctx, `DELETE FROM personal_access_token WHERE user_id = $1 AND idempotency_key = $2`, testUserID, key)
+	})
+
+	first := httptest.NewRecorder()
+	testHandler.CreatePersonalAccessToken(first, newPATCreateRequest(key, map[string]any{"name": "CLI first", "expires_in_days": 90}))
+	if first.Code != http.StatusCreated {
+		t.Fatalf("first create = %d %s", first.Code, first.Body.String())
+	}
+	conflict := httptest.NewRecorder()
+	testHandler.CreatePersonalAccessToken(conflict, newPATCreateRequest(key, map[string]any{"name": "CLI changed", "expires_in_days": 30}))
+	if conflict.Code != http.StatusConflict || !strings.Contains(conflict.Body.String(), "idempotency_conflict") {
+		t.Fatalf("changed replay = %d %s, want idempotency_conflict", conflict.Code, conflict.Body.String())
+	}
+}
+
+func TestCreatePersonalAccessTokenConcurrentReplayConverges(t *testing.T) {
+	ctx := context.Background()
+	key := uuid.NewString()
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(ctx, `DELETE FROM personal_access_token WHERE user_id = $1 AND idempotency_key = $2`, testUserID, key)
+	})
+
+	const concurrency = 8
+	responses := make([]CreatePATResponse, concurrency)
+	statuses := make([]int, concurrency)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	wg.Add(concurrency)
+	for i := range concurrency {
+		go func(index int) {
+			defer wg.Done()
+			<-start
+			recorder := httptest.NewRecorder()
+			testHandler.CreatePersonalAccessToken(recorder, newPATCreateRequest(key, map[string]any{
+				"name": "CLI concurrent", "expires_in_days": 90,
+			}))
+			statuses[index] = recorder.Code
+			_ = json.NewDecoder(recorder.Body).Decode(&responses[index])
+		}(i)
+	}
+	close(start)
+	wg.Wait()
+	for i := range concurrency {
+		if statuses[i] != http.StatusCreated || responses[i].ID != responses[0].ID || responses[i].Token != responses[0].Token {
+			t.Fatalf("response[%d] = status %d %#v, want exact convergence with %#v", i, statuses[i], responses[i], responses[0])
+		}
+	}
+}
 
 // insertTestPAT creates a PAT row for the shared test user with the given
 // expiry and returns (rawToken, patID). Each call generates a fresh raw token

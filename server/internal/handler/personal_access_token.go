@@ -1,8 +1,10 @@
 package handler
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -62,6 +64,10 @@ func (h *Handler) CreatePersonalAccessToken(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
+	idempotencyKey, ok := requireIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
 
 	var req CreatePATRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -72,12 +78,19 @@ func (h *Handler) CreatePersonalAccessToken(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "name is required")
 		return
 	}
-
-	rawToken, err := auth.GeneratePATToken()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to generate token")
+	requestHash := personalAccessTokenRequestHash(req)
+	if existing, err := h.Queries.GetPersonalAccessTokenByCreateRequest(r.Context(), db.GetPersonalAccessTokenByCreateRequestParams{
+		UserID:         parseUUID(userID),
+		IdempotencyKey: idempotencyKey,
+	}); err == nil {
+		h.writePersonalAccessTokenReplay(w, existing, userID, idempotencyKey, requestHash)
+		return
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusInternalServerError, "failed to load token request")
 		return
 	}
+
+	rawToken := auth.DerivePATToken(userID, uuidToString(idempotencyKey))
 
 	var expiresAt pgtype.Timestamptz
 	if req.ExpiresInDays != nil && *req.ExpiresInDays > 0 {
@@ -93,17 +106,64 @@ func (h *Handler) CreatePersonalAccessToken(w http.ResponseWriter, r *http.Reque
 	}
 
 	pat, err := h.Queries.CreatePersonalAccessToken(r.Context(), db.CreatePersonalAccessTokenParams{
-		UserID:      parseUUID(userID),
-		Name:        req.Name,
-		TokenHash:   auth.HashToken(rawToken),
-		TokenPrefix: prefix,
-		ExpiresAt:   expiresAt,
+		UserID:         parseUUID(userID),
+		Name:           req.Name,
+		TokenHash:      auth.HashToken(rawToken),
+		TokenPrefix:    prefix,
+		ExpiresAt:      expiresAt,
+		IdempotencyKey: idempotencyKey,
+		RequestHash:    pgtype.Text{String: requestHash, Valid: true},
 	})
 	if err != nil {
+		if isUniqueViolation(err) {
+			existing, replayErr := h.Queries.GetPersonalAccessTokenByCreateRequest(r.Context(), db.GetPersonalAccessTokenByCreateRequestParams{
+				UserID:         parseUUID(userID),
+				IdempotencyKey: idempotencyKey,
+			})
+			if replayErr == nil {
+				h.writePersonalAccessTokenReplay(w, existing, userID, idempotencyKey, requestHash)
+				return
+			}
+		}
 		writeError(w, http.StatusInternalServerError, "failed to create token")
 		return
 	}
 
+	writeJSON(w, http.StatusCreated, CreatePATResponse{
+		PersonalAccessTokenResponse: patToResponse(pat),
+		Token:                       rawToken,
+	})
+}
+
+func personalAccessTokenRequestHash(req CreatePATRequest) string {
+	payload, _ := json.Marshal(req)
+	digest := sha256.Sum256(payload)
+	return fmt.Sprintf("%x", digest[:])
+}
+
+func (h *Handler) writePersonalAccessTokenReplay(
+	w http.ResponseWriter,
+	pat db.PersonalAccessToken,
+	userID string,
+	idempotencyKey pgtype.UUID,
+	requestHash string,
+) {
+	if !pat.RequestHash.Valid || pat.RequestHash.String != requestHash {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error": "Idempotency-Key was already used with a different request",
+			"code":  "idempotency_conflict",
+		})
+		return
+	}
+	rawToken := auth.DerivePATToken(userID, uuidToString(idempotencyKey))
+	if auth.HashToken(rawToken) != pat.TokenHash {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error": "the token derivation secret changed; retry with a new Idempotency-Key",
+			"code":  "idempotency_replay_unavailable",
+		})
+		return
+	}
+	w.Header().Set("Idempotency-Replayed", "true")
 	writeJSON(w, http.StatusCreated, CreatePATResponse{
 		PersonalAccessTokenResponse: patToResponse(pat),
 		Token:                       rawToken,

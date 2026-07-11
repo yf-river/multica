@@ -23,10 +23,10 @@
     "databaseTables": 88,
     "databaseFunctions": 9,
     "databaseTriggers": 4,
-    "databaseIndexes": 187,
-    "migrations": 24,
+    "databaseIndexes": 188,
+    "migrations": 26,
     "sqlcModules": 55,
-    "sqlcQueries": 582,
+    "sqlcQueries": 583,
     "goWebsocketEvents": 81,
     "typescriptWebsocketEvents": 71,
     "zustandStores": 31,
@@ -5590,6 +5590,41 @@
           "droppedFunctions": [],
           "droppedTriggers": [],
           "droppedIndexes": []
+        },
+        {
+          "version": 13,
+          "name": "pat_create_idempotency",
+          "direction": "down",
+          "source": "server/migrations/013_pat_create_idempotency.down.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": [
+            "personal_access_token_create_request_unique"
+          ]
+        },
+        {
+          "version": 13,
+          "name": "pat_create_idempotency",
+          "direction": "up",
+          "source": "server/migrations/013_pat_create_idempotency.up.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [
+            {
+              "name": "personal_access_token_create_request_unique",
+              "table": "personal_access_token",
+              "unique": true,
+              "source": "server/migrations/013_pat_create_idempotency.up.sql#personal_access_token_create_request_unique"
+            }
+          ],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
         }
       ],
       "tables": [
@@ -7108,6 +7143,12 @@
           "table": "public.issue_label",
           "unique": true,
           "source": "server/migrations/001_current_schema.up.sql#issue_label_workspace_name_lower_idx"
+        },
+        {
+          "name": "personal_access_token_create_request_unique",
+          "table": "personal_access_token",
+          "unique": true,
+          "source": "server/migrations/013_pat_create_idempotency.up.sql#personal_access_token_create_request_unique"
         },
         {
           "name": "prompt_evaluation_asset_prompt_idx",
@@ -8858,6 +8899,11 @@
               "name": "ExtendPersonalAccessTokenExpiry",
               "command": "one",
               "source": "server/pkg/db/queries/personal_access_token.sql#ExtendPersonalAccessTokenExpiry"
+            },
+            {
+              "name": "GetPersonalAccessTokenByCreateRequest",
+              "command": "one",
+              "source": "server/pkg/db/queries/personal_access_token.sql#GetPersonalAccessTokenByCreateRequest"
             },
             {
               "name": "GetPersonalAccessTokenByHash",
@@ -11060,8 +11106,10 @@
         "constant": "EventPullRequestLinked",
         "source": "server/pkg/protocol/events.go#EventPullRequestLinked",
         "origin": "static",
-        "referenceSources": [],
-        "staticReferenceMissing": true
+        "referenceSources": [
+          "server/internal/handler/github.go"
+        ],
+        "staticReferenceMissing": false
       },
       {
         "name": "pull_request:unlinked",
@@ -12020,7 +12068,6 @@
     ],
     "typescriptOnly": [],
     "goWithoutProductionReference": [
-      "pull_request:linked",
       "pull_request:unlinked"
     ],
     "typescriptWithoutLiteralReference": [

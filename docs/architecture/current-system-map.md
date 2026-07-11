@@ -24,10 +24,10 @@ evidence reviewable by humans.
 | Database tables | 88 |
 | Database functions | 9 |
 | Database triggers | 4 |
-| Database indexes | 187 |
-| Migration files (up + down) | 24 |
+| Database indexes | 188 |
+| Migration files (up + down) | 26 |
 | sqlc modules | 55 |
-| sqlc queries | 582 |
+| sqlc queries | 583 |
 | Go WebSocket events | 81 |
 | TypeScript WebSocket events | 71 |
 | Zustand store definitions | 31 |
@@ -519,6 +519,8 @@ intentionally platform-specific.
 | 11 | project_create_idempotency | up | project_create_request | 0 | 0 | 0 | `server/migrations/011_project_create_idempotency.up.sql` |
 | 12 | squad_create_idempotency | down | — | 0 | 0 | 0 | `server/migrations/012_squad_create_idempotency.down.sql` |
 | 12 | squad_create_idempotency | up | squad_create_request | 0 | 0 | 0 | `server/migrations/012_squad_create_idempotency.up.sql` |
+| 13 | pat_create_idempotency | down | — | 0 | 0 | 0 | `server/migrations/013_pat_create_idempotency.down.sql` |
+| 13 | pat_create_idempotency | up | — | 0 | 0 | 1 | `server/migrations/013_pat_create_idempotency.up.sql` |
 
 ### Current tables discovered from up migrations
 
@@ -621,11 +623,11 @@ intentionally platform-specific.
 | `trg_tu_dirty_hourly` | `public.task_usage` | `public.enqueue_task_usage_hourly_dirty_for_tu` | `server/migrations/001_current_schema.up.sql#trg_tu_dirty_hourly` |
 
 - Functions: `public.enqueue_task_usage_hourly_dirty_for_atq`, `public.enqueue_task_usage_hourly_dirty_for_issue_delete`, `public.enqueue_task_usage_hourly_dirty_for_issue_project`, `public.enqueue_task_usage_hourly_dirty_for_tu`, `public.prune_task_usage_hourly_dirty`, `public.rollup_task_usage_hourly`, `public.rollup_task_usage_hourly_window`, `public.task_usage_hour_bucket`, `public.task_usage_hourly_rollup_lag_seconds`
-- Indexes: 187 current definitions; full name/table/uniqueness evidence is in the JSON companion.
+- Indexes: 188 current definitions; full name/table/uniqueness evidence is in the JSON companion.
 
 ### sqlc modules
 
-All 582 query names, commands, and stable source anchors are stored in the JSON companion.
+All 583 query names, commands, and stable source anchors are stored in the JSON companion.
 
 | Module | Queries | SQL source | Generated source |
 | --- | --- | --- | --- |
@@ -649,7 +651,7 @@ All 582 query names, commands, and stable source anchors are stored in the JSON 
 | lark | 29 | `server/pkg/db/queries/lark.sql` | `server/pkg/db/generated/lark.sql.go` |
 | member | 7 | `server/pkg/db/queries/member.sql` | `server/pkg/db/generated/member.sql.go` |
 | notification_preference | 3 | `server/pkg/db/queries/notification_preference.sql` | `server/pkg/db/generated/notification_preference.sql.go` |
-| personal_access_token | 6 | `server/pkg/db/queries/personal_access_token.sql` | `server/pkg/db/generated/personal_access_token.sql.go` |
+| personal_access_token | 7 | `server/pkg/db/queries/personal_access_token.sql` | `server/pkg/db/generated/personal_access_token.sql.go` |
 | pinned_item | 6 | `server/pkg/db/queries/pinned_item.sql` | `server/pkg/db/generated/pinned_item.sql.go` |
 | project | 8 | `server/pkg/db/queries/project.sql` | `server/pkg/db/generated/project.sql.go` |
 | project_create_request | 3 | `server/pkg/db/queries/project_create_request.sql` | `server/pkg/db/generated/project_create_request.sql.go` |
@@ -691,7 +693,7 @@ All 582 query names, commands, and stable source anchors are stored in the JSON 
 - TypeScript (71): `activity:created`, `agent:archived`, `agent:created`, `agent:restored`, `agent:status`, `chat:done`, `chat:message`, `chat:session_deleted`, `chat:session_read`, `chat:session_updated`, `comment:created`, `comment:deleted`, `comment:resolved`, `comment:unresolved`, `comment:updated`, `daemon:heartbeat`, `daemon:register`, `github_installation:created`, `github_installation:deleted`, `inbox:archived`, `inbox:batch-archived`, `inbox:batch-read`, `inbox:new`, `inbox:read`, `issue_labels:changed`, `issue_metadata:changed`, `issue_reaction:added`, `issue_reaction:removed`, `issue:created`, `issue:deleted`, `issue:updated`, `label:created`, `label:deleted`, `label:updated`, `member:added`, `member:removed`, `member:updated`, `pin:created`, `pin:deleted`, `pin:reordered`, `project_resource:created`, `project_resource:deleted`, `project_resource:updated`, `project:created`, `project:deleted`, `project:updated`, `pull_request:linked`, `pull_request:unlinked`, `pull_request:updated`, `reaction:added`, `reaction:removed`, `skill:created`, `skill:deleted`, `skill:updated`, `squad:created`, `squad:deleted`, `squad:restored`, `squad:updated`, `subscriber:added`, `subscriber:removed`, `task:cancelled`, `task:completed`, `task:dispatch`, `task:failed`, `task:message`, `task:progress`, `task:queued`, `task:running`, `task:waiting_local_directory`, `workspace:deleted`, `workspace:updated`
 - Go only: `autopilot:created`, `autopilot:deleted`, `autopilot:run_done`, `autopilot:run_start`, `autopilot:updated`, `daemon:heartbeat_ack`, `daemon:runtime_profiles_changed`, `daemon:task_available`, `lark_installation:created`, `lark_installation:revoked`
 - TypeScript only: none
-- Go declarations with no static production reference: `pull_request:linked`, `pull_request:unlinked`
+- Go declarations with no static production reference: `pull_request:unlinked`
 - TypeScript declarations with no literal production reference: `agent:archived`, `agent:created`, `agent:restored`, `agent:status`, `github_installation:created`, `github_installation:deleted`, `inbox:archived`, `inbox:batch-archived`, `inbox:batch-read`, `inbox:read`, `label:created`, `label:deleted`, `label:updated`, `member:updated`, `pin:created`, `pin:deleted`, `pin:reordered`, `project_resource:created`, `project_resource:deleted`, `project_resource:updated`, `project:created`, `project:deleted`, `project:updated`, `pull_request:linked`, `pull_request:unlinked`, `pull_request:updated`, `skill:created`, `skill:deleted`, `skill:updated`, `squad:created`, `squad:deleted`, `squad:restored`, `squad:updated`, `task:progress`
 
 Each JSON event record carries static production reference sources. A Go event
