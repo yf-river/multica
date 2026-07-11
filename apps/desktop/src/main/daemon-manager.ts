@@ -30,6 +30,7 @@ import {
   isAuthStatusError,
   type AuthProbeResult,
 } from "./daemon-auth-probe";
+import { readOptionalJsonObject } from "./json-config-file";
 
 const DEFAULT_HEALTH_PORT = 19514;
 const POLL_INTERVAL_MS = 5_000;
@@ -241,13 +242,7 @@ function deriveProfileName(targetUrl: string): string {
 async function readProfileConfig(
   profile: string,
 ): Promise<Record<string, unknown>> {
-  try {
-    const raw = await readFile(profileConfigPath(profile), "utf-8");
-    const parsed = JSON.parse(raw);
-    return parsed && typeof parsed === "object" ? parsed : {};
-  } catch {
-    return {};
-  }
+  return readOptionalJsonObject(profileConfigPath(profile));
 }
 
 async function writeProfileConfig(
