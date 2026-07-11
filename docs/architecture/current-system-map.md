@@ -25,9 +25,9 @@ evidence reviewable by humans.
 | Database functions | 9 |
 | Database triggers | 4 |
 | Database indexes | 188 |
-| Migration files (up + down) | 28 |
+| Migration files (up + down) | 30 |
 | sqlc modules | 55 |
-| sqlc queries | 583 |
+| sqlc queries | 579 |
 | Go WebSocket events | 81 |
 | TypeScript WebSocket events | 71 |
 | Zustand store definitions | 31 |
@@ -523,6 +523,8 @@ intentionally platform-specific.
 | 13 | pat_create_idempotency | up | — | 0 | 0 | 1 | `server/migrations/013_pat_create_idempotency.up.sql` |
 | 14 | durable_prompt_case_operations | down | — | 0 | 0 | 0 | `server/migrations/014_durable_prompt_case_operations.down.sql` |
 | 14 | durable_prompt_case_operations | up | — | 0 | 0 | 0 | `server/migrations/014_durable_prompt_case_operations.up.sql` |
+| 15 | remove_legacy_daemon_identity | down | — | 0 | 0 | 0 | `server/migrations/015_remove_legacy_daemon_identity.down.sql` |
+| 15 | remove_legacy_daemon_identity | up | — | 0 | 0 | 0 | `server/migrations/015_remove_legacy_daemon_identity.up.sql` |
 
 ### Current tables discovered from up migrations
 
@@ -629,7 +631,7 @@ intentionally platform-specific.
 
 ### sqlc modules
 
-All 583 query names, commands, and stable source anchors are stored in the JSON companion.
+All 579 query names, commands, and stable source anchors are stored in the JSON companion.
 
 | Module | Queries | SQL source | Generated source |
 | --- | --- | --- | --- |
@@ -673,7 +675,7 @@ All 583 query names, commands, and stable source anchors are stored in the JSON 
 | prompt_library_trial | 2 | `server/pkg/db/queries/prompt_library_trial.sql` | `server/pkg/db/generated/prompt_library_trial.sql.go` |
 | prompt_library_version | 4 | `server/pkg/db/queries/prompt_library_version.sql` | `server/pkg/db/generated/prompt_library_version.sql.go` |
 | reaction | 3 | `server/pkg/db/queries/reaction.sql` | `server/pkg/db/generated/reaction.sql.go` |
-| runtime | 32 | `server/pkg/db/queries/runtime.sql` | `server/pkg/db/generated/runtime.sql.go` |
+| runtime | 28 | `server/pkg/db/queries/runtime.sql` | `server/pkg/db/generated/runtime.sql.go` |
 | runtime_profile | 10 | `server/pkg/db/queries/runtime_profile.sql` | `server/pkg/db/generated/runtime_profile.sql.go` |
 | runtime_usage | 5 | `server/pkg/db/queries/runtime_usage.sql` | `server/pkg/db/generated/runtime_usage.sql.go` |
 | skill | 19 | `server/pkg/db/queries/skill.sql` | `server/pkg/db/generated/skill.sql.go` |

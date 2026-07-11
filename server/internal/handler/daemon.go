@@ -152,15 +152,10 @@ func (h *Handler) verifyDaemonWorkspaceAccess(r *http.Request, workspaceID strin
 type DaemonRegisterRequest struct {
 	WorkspaceID string `json:"workspace_id"`
 	DaemonID    string `json:"daemon_id"`
-	// LegacyDaemonIDs lists prior hostname-derived daemon_ids this machine
-	// may have registered under before switching to a persistent UUID. The
-	// handler merges any matching runtime rows into the new row so agents
-	// and tasks keep working without manual intervention.
-	LegacyDaemonIDs []string `json:"legacy_daemon_ids"`
-	DeviceName      string   `json:"device_name"`
-	CLIVersion      string   `json:"cli_version"` // multica CLI version
-	LaunchedBy      string   `json:"launched_by"` // "desktop" when spawned by the Electron app
-	Runtimes        []struct {
+	DeviceName  string `json:"device_name"`
+	CLIVersion  string `json:"cli_version"` // multica CLI version
+	LaunchedBy  string `json:"launched_by"` // "desktop" when spawned by the Electron app
+	Runtimes    []struct {
 		Name     string          `json:"name"`
 		Type     string          `json:"type"`
 		Version  string          `json:"version"` // agent CLI version (claude/codex)
@@ -246,4 +241,3 @@ func workspaceReposResponse(workspaceID string, raw []byte, settingsRaw []byte) 
 func normalizeProvider(s string) string {
 	return strings.ToLower(strings.TrimSpace(s))
 }
-

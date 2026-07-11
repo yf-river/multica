@@ -24,9 +24,9 @@
     "databaseFunctions": 9,
     "databaseTriggers": 4,
     "databaseIndexes": 188,
-    "migrations": 28,
+    "migrations": 30,
     "sqlcModules": 55,
-    "sqlcQueries": 583,
+    "sqlcQueries": 579,
     "goWebsocketEvents": 81,
     "typescriptWebsocketEvents": 71,
     "zustandStores": 31,
@@ -5651,6 +5651,32 @@
           "droppedFunctions": [],
           "droppedTriggers": [],
           "droppedIndexes": []
+        },
+        {
+          "version": 15,
+          "name": "remove_legacy_daemon_identity",
+          "direction": "down",
+          "source": "server/migrations/015_remove_legacy_daemon_identity.down.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 15,
+          "name": "remove_legacy_daemon_identity",
+          "direction": "up",
+          "source": "server/migrations/015_remove_legacy_daemon_identity.up.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
         }
       ],
       "tables": [
@@ -9697,11 +9723,6 @@
               "source": "server/pkg/db/queries/runtime.sql#FailTasksForOfflineRuntimes"
             },
             {
-              "name": "FindLegacyRuntimesByDaemonID",
-              "command": "many",
-              "source": "server/pkg/db/queries/runtime.sql#FindLegacyRuntimesByDaemonID"
-            },
-            {
               "name": "ForceOfflineRuntimesByIDs",
               "command": "many",
               "source": "server/pkg/db/queries/runtime.sql#ForceOfflineRuntimesByIDs"
@@ -9760,21 +9781,6 @@
               "name": "PauseAutopilotsByAgentAssignees",
               "command": "exec",
               "source": "server/pkg/db/queries/runtime.sql#PauseAutopilotsByAgentAssignees"
-            },
-            {
-              "name": "ReassignAgentsToRuntime",
-              "command": "execrows",
-              "source": "server/pkg/db/queries/runtime.sql#ReassignAgentsToRuntime"
-            },
-            {
-              "name": "ReassignTasksToRuntime",
-              "command": "execrows",
-              "source": "server/pkg/db/queries/runtime.sql#ReassignTasksToRuntime"
-            },
-            {
-              "name": "RecordRuntimeLegacyDaemonID",
-              "command": "exec",
-              "source": "server/pkg/db/queries/runtime.sql#RecordRuntimeLegacyDaemonID"
             },
             {
               "name": "SelectStaleOnlineRuntimes",

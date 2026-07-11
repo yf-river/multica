@@ -262,71 +262,6 @@ func (q *Queries) FailTasksForOfflineRuntimes(ctx context.Context) ([]AgentTaskQ
 	return items, nil
 }
 
-const findLegacyRuntimesByDaemonID = `-- name: FindLegacyRuntimesByDaemonID :many
-SELECT id, workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, last_seen_at, created_at, updated_at, owner_id, legacy_daemon_id, scope, profile_id FROM agent_runtime
-WHERE workspace_id = $1
-  AND provider = $2
-  AND LOWER(daemon_id) = LOWER($3)
-`
-
-type FindLegacyRuntimesByDaemonIDParams struct {
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	Provider    string      `json:"provider"`
-	DaemonID    string      `json:"daemon_id"`
-}
-
-// Looks up runtime rows keyed on a prior (hostname-derived) daemon_id. Used
-// at register-time to find rows owned by the same machine under its old
-// identity so agents/tasks can be re-pointed at the new UUID-keyed row.
-//
-// Comparison is case-insensitive because os.Hostname() has been observed to
-// return different casings on the same machine (e.g. `Jiayuans-MacBook-Pro`
-// vs `jiayuans-macbook-pro`) across reboots/mDNS state changes. A case-
-// sensitive `=` would strand the old row; LOWER() on both sides handles drift
-// without forcing the daemon to enumerate cased permutations.
-//
-// Returns many rather than one because case drift may have already minted
-// duplicate rows historically (e.g. `Foo.local` AND `foo.local` under the
-// same workspace+provider). A single-row lookup would consolidate only one
-// of them and leave the rest orphaned. Callers must merge every returned
-// row into the new UUID-keyed runtime.
-func (q *Queries) FindLegacyRuntimesByDaemonID(ctx context.Context, arg FindLegacyRuntimesByDaemonIDParams) ([]AgentRuntime, error) {
-	rows, err := q.db.Query(ctx, findLegacyRuntimesByDaemonID, arg.WorkspaceID, arg.Provider, arg.DaemonID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []AgentRuntime{}
-	for rows.Next() {
-		var i AgentRuntime
-		if err := rows.Scan(
-			&i.ID,
-			&i.WorkspaceID,
-			&i.DaemonID,
-			&i.Name,
-			&i.RuntimeMode,
-			&i.Provider,
-			&i.Status,
-			&i.DeviceInfo,
-			&i.Metadata,
-			&i.LastSeenAt,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.OwnerID,
-			&i.LegacyDaemonID,
-			&i.Scope,
-			&i.ProfileID,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const forceOfflineRuntimesByIDs = `-- name: ForceOfflineRuntimesByIDs :many
 UPDATE agent_runtime
 SET status = 'offline', updated_at = now()
@@ -375,7 +310,7 @@ func (q *Queries) ForceOfflineRuntimesByIDs(ctx context.Context, runtimeIds []pg
 }
 
 const getAgentRuntime = `-- name: GetAgentRuntime :one
-SELECT id, workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, last_seen_at, created_at, updated_at, owner_id, legacy_daemon_id, scope, profile_id FROM agent_runtime
+SELECT id, workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, last_seen_at, created_at, updated_at, owner_id, scope, profile_id FROM agent_runtime
 WHERE id = $1
 `
 
@@ -396,7 +331,6 @@ func (q *Queries) GetAgentRuntime(ctx context.Context, id pgtype.UUID) (AgentRun
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.OwnerID,
-		&i.LegacyDaemonID,
 		&i.Scope,
 		&i.ProfileID,
 	)
@@ -404,7 +338,7 @@ func (q *Queries) GetAgentRuntime(ctx context.Context, id pgtype.UUID) (AgentRun
 }
 
 const getAgentRuntimeForWorkspace = `-- name: GetAgentRuntimeForWorkspace :one
-SELECT id, workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, last_seen_at, created_at, updated_at, owner_id, legacy_daemon_id, scope, profile_id FROM agent_runtime
+SELECT id, workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, last_seen_at, created_at, updated_at, owner_id, scope, profile_id FROM agent_runtime
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -430,7 +364,6 @@ func (q *Queries) GetAgentRuntimeForWorkspace(ctx context.Context, arg GetAgentR
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.OwnerID,
-		&i.LegacyDaemonID,
 		&i.Scope,
 		&i.ProfileID,
 	)
@@ -438,7 +371,7 @@ func (q *Queries) GetAgentRuntimeForWorkspace(ctx context.Context, arg GetAgentR
 }
 
 const listAgentRuntimes = `-- name: ListAgentRuntimes :many
-SELECT id, workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, last_seen_at, created_at, updated_at, owner_id, legacy_daemon_id, scope, profile_id FROM agent_runtime
+SELECT id, workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, last_seen_at, created_at, updated_at, owner_id, scope, profile_id FROM agent_runtime
 WHERE workspace_id = $1
 ORDER BY created_at ASC
 `
@@ -466,7 +399,6 @@ func (q *Queries) ListAgentRuntimes(ctx context.Context, workspaceID pgtype.UUID
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.OwnerID,
-			&i.LegacyDaemonID,
 			&i.Scope,
 			&i.ProfileID,
 		); err != nil {
@@ -481,7 +413,7 @@ func (q *Queries) ListAgentRuntimes(ctx context.Context, workspaceID pgtype.UUID
 }
 
 const listAgentRuntimesByOwner = `-- name: ListAgentRuntimesByOwner :many
-SELECT id, workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, last_seen_at, created_at, updated_at, owner_id, legacy_daemon_id, scope, profile_id FROM agent_runtime
+SELECT id, workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, last_seen_at, created_at, updated_at, owner_id, scope, profile_id FROM agent_runtime
 WHERE workspace_id = $1 AND owner_id = $2
 ORDER BY created_at ASC
 `
@@ -514,7 +446,6 @@ func (q *Queries) ListAgentRuntimesByOwner(ctx context.Context, arg ListAgentRun
 			&i.CreatedAt,
 			&i.UpdatedAt,
 			&i.OwnerID,
-			&i.LegacyDaemonID,
 			&i.Scope,
 			&i.ProfileID,
 		); err != nil {
@@ -556,7 +487,7 @@ func (q *Queries) ListArchivedAgentIDsByRuntime(ctx context.Context, runtimeID p
 }
 
 const lockAgentRuntime = `-- name: LockAgentRuntime :one
-SELECT id, workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, last_seen_at, created_at, updated_at, owner_id, legacy_daemon_id, scope, profile_id FROM agent_runtime
+SELECT id, workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, last_seen_at, created_at, updated_at, owner_id, scope, profile_id FROM agent_runtime
 WHERE id = $1
 FOR UPDATE
 `
@@ -592,7 +523,6 @@ func (q *Queries) LockAgentRuntime(ctx context.Context, id pgtype.UUID) (AgentRu
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.OwnerID,
-		&i.LegacyDaemonID,
 		&i.Scope,
 		&i.ProfileID,
 	)
@@ -603,7 +533,7 @@ const markAgentRuntimeOnline = `-- name: MarkAgentRuntimeOnline :one
 UPDATE agent_runtime
 SET status = 'online', last_seen_at = now(), updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, last_seen_at, created_at, updated_at, owner_id, legacy_daemon_id, scope, profile_id
+RETURNING id, workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, last_seen_at, created_at, updated_at, owner_id, scope, profile_id
 `
 
 // Used on the offline→online transition (and on first heartbeat after
@@ -626,7 +556,6 @@ func (q *Queries) MarkAgentRuntimeOnline(ctx context.Context, id pgtype.UUID) (A
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.OwnerID,
-		&i.LegacyDaemonID,
 		&i.Scope,
 		&i.ProfileID,
 	)
@@ -788,68 +717,6 @@ func (q *Queries) PauseAutopilotsByAgentAssignees(ctx context.Context, assigneeI
 	return err
 }
 
-const reassignAgentsToRuntime = `-- name: ReassignAgentsToRuntime :execrows
-UPDATE agent
-SET runtime_id = $1
-WHERE runtime_id = $2
-`
-
-type ReassignAgentsToRuntimeParams struct {
-	NewRuntimeID pgtype.UUID `json:"new_runtime_id"`
-	OldRuntimeID pgtype.UUID `json:"old_runtime_id"`
-}
-
-// Re-points every agent referencing old_runtime_id at new_runtime_id.
-func (q *Queries) ReassignAgentsToRuntime(ctx context.Context, arg ReassignAgentsToRuntimeParams) (int64, error) {
-	result, err := q.db.Exec(ctx, reassignAgentsToRuntime, arg.NewRuntimeID, arg.OldRuntimeID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
-const reassignTasksToRuntime = `-- name: ReassignTasksToRuntime :execrows
-UPDATE agent_task_queue
-SET runtime_id = $1
-WHERE runtime_id = $2
-`
-
-type ReassignTasksToRuntimeParams struct {
-	NewRuntimeID pgtype.UUID `json:"new_runtime_id"`
-	OldRuntimeID pgtype.UUID `json:"old_runtime_id"`
-}
-
-// Re-points every queued/running/completed task referencing old_runtime_id.
-// Required before deleting the old runtime row because agent_task_queue has
-// an ON DELETE CASCADE FK that would otherwise drop historical tasks.
-func (q *Queries) ReassignTasksToRuntime(ctx context.Context, arg ReassignTasksToRuntimeParams) (int64, error) {
-	result, err := q.db.Exec(ctx, reassignTasksToRuntime, arg.NewRuntimeID, arg.OldRuntimeID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
-const recordRuntimeLegacyDaemonID = `-- name: RecordRuntimeLegacyDaemonID :exec
-UPDATE agent_runtime
-SET legacy_daemon_id = COALESCE(legacy_daemon_id, $2)
-WHERE id = $1
-`
-
-type RecordRuntimeLegacyDaemonIDParams struct {
-	ID             pgtype.UUID `json:"id"`
-	LegacyDaemonID pgtype.Text `json:"legacy_daemon_id"`
-}
-
-// Remembers the most recent hostname-derived daemon_id that was merged into
-// this row. Useful for debugging when tracing back why a given runtime row
-// subsumed an old one, and only overwrites NULL so the earliest merge is
-// preserved.
-func (q *Queries) RecordRuntimeLegacyDaemonID(ctx context.Context, arg RecordRuntimeLegacyDaemonIDParams) error {
-	_, err := q.db.Exec(ctx, recordRuntimeLegacyDaemonID, arg.ID, arg.LegacyDaemonID)
-	return err
-}
-
 const selectStaleOnlineRuntimes = `-- name: SelectStaleOnlineRuntimes :many
 SELECT id, workspace_id, owner_id, daemon_id, provider FROM agent_runtime
 WHERE status = 'online'
@@ -958,7 +825,7 @@ const updateAgentRuntimeScope = `-- name: UpdateAgentRuntimeScope :one
 UPDATE agent_runtime
 SET scope = $1, updated_at = now()
 WHERE id = $2
-RETURNING id, workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, last_seen_at, created_at, updated_at, owner_id, legacy_daemon_id, scope, profile_id
+RETURNING id, workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, last_seen_at, created_at, updated_at, owner_id, scope, profile_id
 `
 
 type UpdateAgentRuntimeScopeParams struct {
@@ -985,7 +852,6 @@ func (q *Queries) UpdateAgentRuntimeScope(ctx context.Context, arg UpdateAgentRu
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.OwnerID,
-		&i.LegacyDaemonID,
 		&i.Scope,
 		&i.ProfileID,
 	)
@@ -1015,7 +881,7 @@ DO UPDATE SET
     owner_id = COALESCE(EXCLUDED.owner_id, agent_runtime.owner_id),
     last_seen_at = now(),
     updated_at = now()
-RETURNING id, workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, last_seen_at, created_at, updated_at, owner_id, legacy_daemon_id, scope, profile_id, (xmax = 0) AS inserted
+RETURNING id, workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, last_seen_at, created_at, updated_at, owner_id, scope, profile_id, (xmax = 0) AS inserted
 `
 
 type UpsertAgentRuntimeParams struct {
@@ -1031,23 +897,22 @@ type UpsertAgentRuntimeParams struct {
 }
 
 type UpsertAgentRuntimeRow struct {
-	ID             pgtype.UUID        `json:"id"`
-	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
-	DaemonID       pgtype.Text        `json:"daemon_id"`
-	Name           string             `json:"name"`
-	RuntimeMode    string             `json:"runtime_mode"`
-	Provider       string             `json:"provider"`
-	Status         string             `json:"status"`
-	DeviceInfo     string             `json:"device_info"`
-	Metadata       []byte             `json:"metadata"`
-	LastSeenAt     pgtype.Timestamptz `json:"last_seen_at"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
-	OwnerID        pgtype.UUID        `json:"owner_id"`
-	LegacyDaemonID pgtype.Text        `json:"legacy_daemon_id"`
-	Scope          string             `json:"scope"`
-	ProfileID      pgtype.UUID        `json:"profile_id"`
-	Inserted       bool               `json:"inserted"`
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	DaemonID    pgtype.Text        `json:"daemon_id"`
+	Name        string             `json:"name"`
+	RuntimeMode string             `json:"runtime_mode"`
+	Provider    string             `json:"provider"`
+	Status      string             `json:"status"`
+	DeviceInfo  string             `json:"device_info"`
+	Metadata    []byte             `json:"metadata"`
+	LastSeenAt  pgtype.Timestamptz `json:"last_seen_at"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	OwnerID     pgtype.UUID        `json:"owner_id"`
+	Scope       string             `json:"scope"`
+	ProfileID   pgtype.UUID        `json:"profile_id"`
+	Inserted    bool               `json:"inserted"`
 }
 
 // (xmax = 0) AS inserted distinguishes a fresh insert (true) from an upsert
@@ -1084,7 +949,6 @@ func (q *Queries) UpsertAgentRuntime(ctx context.Context, arg UpsertAgentRuntime
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.OwnerID,
-		&i.LegacyDaemonID,
 		&i.Scope,
 		&i.ProfileID,
 		&i.Inserted,
@@ -1117,7 +981,7 @@ DO UPDATE SET
     owner_id = COALESCE(EXCLUDED.owner_id, agent_runtime.owner_id),
     last_seen_at = now(),
     updated_at = now()
-RETURNING id, workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, last_seen_at, created_at, updated_at, owner_id, legacy_daemon_id, scope, profile_id, (xmax = 0) AS inserted
+RETURNING id, workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, last_seen_at, created_at, updated_at, owner_id, scope, profile_id, (xmax = 0) AS inserted
 `
 
 type UpsertAgentRuntimeWithProfileParams struct {
@@ -1134,23 +998,22 @@ type UpsertAgentRuntimeWithProfileParams struct {
 }
 
 type UpsertAgentRuntimeWithProfileRow struct {
-	ID             pgtype.UUID        `json:"id"`
-	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
-	DaemonID       pgtype.Text        `json:"daemon_id"`
-	Name           string             `json:"name"`
-	RuntimeMode    string             `json:"runtime_mode"`
-	Provider       string             `json:"provider"`
-	Status         string             `json:"status"`
-	DeviceInfo     string             `json:"device_info"`
-	Metadata       []byte             `json:"metadata"`
-	LastSeenAt     pgtype.Timestamptz `json:"last_seen_at"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
-	OwnerID        pgtype.UUID        `json:"owner_id"`
-	LegacyDaemonID pgtype.Text        `json:"legacy_daemon_id"`
-	Scope          string             `json:"scope"`
-	ProfileID      pgtype.UUID        `json:"profile_id"`
-	Inserted       bool               `json:"inserted"`
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	DaemonID    pgtype.Text        `json:"daemon_id"`
+	Name        string             `json:"name"`
+	RuntimeMode string             `json:"runtime_mode"`
+	Provider    string             `json:"provider"`
+	Status      string             `json:"status"`
+	DeviceInfo  string             `json:"device_info"`
+	Metadata    []byte             `json:"metadata"`
+	LastSeenAt  pgtype.Timestamptz `json:"last_seen_at"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	OwnerID     pgtype.UUID        `json:"owner_id"`
+	Scope       string             `json:"scope"`
+	ProfileID   pgtype.UUID        `json:"profile_id"`
+	Inserted    bool               `json:"inserted"`
 }
 
 // Custom-runtime registration: a daemon resolved a workspace runtime_profile's
@@ -1188,7 +1051,6 @@ func (q *Queries) UpsertAgentRuntimeWithProfile(ctx context.Context, arg UpsertA
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.OwnerID,
-		&i.LegacyDaemonID,
 		&i.Scope,
 		&i.ProfileID,
 		&i.Inserted,

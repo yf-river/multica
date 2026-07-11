@@ -515,7 +515,6 @@ CREATE TABLE public.agent_runtime (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     owner_id uuid,
-    legacy_daemon_id text,
     scope text DEFAULT 'workspace'::text NOT NULL,
     profile_id uuid,
     CONSTRAINT agent_runtime_runtime_mode_check CHECK ((runtime_mode = ANY (ARRAY['local'::text, 'cloud'::text]))),
