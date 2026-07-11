@@ -30,6 +30,17 @@ const mockApiSetToken = vi.hoisted(() => vi.fn());
 const mockApiGetMe = vi.hoisted(() => vi.fn());
 const mockApiIssueCliToken = vi.hoisted(() => vi.fn());
 const mockSetQueryData = vi.hoisted(() => vi.fn());
+const MockApiError = vi.hoisted(
+  () =>
+    class MockApiError extends Error {
+      constructor(
+        message: string,
+        readonly status: number,
+      ) {
+        super(message);
+      }
+    },
+);
 
 vi.mock("@tanstack/react-query", async () => {
   const actual = await vi.importActual<typeof import("@tanstack/react-query")>(
@@ -53,6 +64,7 @@ vi.mock("@multica/core/auth", () => ({
 }));
 
 vi.mock("@multica/core/api", () => ({
+  ApiError: MockApiError,
   api: {
     login: mockApiLogin,
     listWorkspaces: mockApiListWorkspaces,
@@ -71,7 +83,7 @@ describe("LoginPage", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    mockApiGetMe.mockRejectedValue(new Error("unauthorized"));
+    mockApiGetMe.mockRejectedValue(new MockApiError("unauthorized", 401));
     mockApiListWorkspaces.mockResolvedValue([]);
     localStorage.clear();
     Object.defineProperty(window, "location", {
@@ -161,6 +173,27 @@ describe("LoginPage", () => {
         "http://localhost:39876/callback?token=cli-token&state=state-2",
       );
     });
+  });
+
+  it("reports a failed CLI session check when the server is unavailable", async () => {
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const error = new MockApiError("unavailable", 503);
+    mockApiGetMe.mockRejectedValueOnce(error);
+
+    renderWithI18n(
+      <LoginPage
+        onSuccess={onSuccess}
+        cliCallback={{ url: "http://localhost:39876/callback", state: "state-3" }}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(warning).toHaveBeenCalledWith(
+        "[auth] failed to check existing CLI session",
+        error,
+      );
+    });
+    warning.mockRestore();
   });
 
   it("validates CLI callback hosts", () => {

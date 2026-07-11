@@ -15,7 +15,7 @@ import { Button } from "@multica/ui/components/ui/button";
 import { Label } from "@multica/ui/components/ui/label";
 import { useAuthStore } from "@multica/core/auth";
 import { workspaceKeys } from "@multica/core/workspace/queries";
-import { api } from "@multica/core/api";
+import { api, ApiError } from "@multica/core/api";
 import type { User } from "@multica/core/types";
 import { useT } from "../i18n";
 
@@ -113,7 +113,10 @@ export function LoginPage({
         setExistingUser(user);
         setStep("cli_confirm");
       })
-      .catch(() => undefined);
+      .catch((err: unknown) => {
+        if (err instanceof ApiError && err.status === 401) return;
+        console.warn("[auth] failed to check existing CLI session", err);
+      });
   }, [cliCallback]);
 
   const handleLogin = async (e?: React.FormEvent) => {
