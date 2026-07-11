@@ -23,6 +23,7 @@ const WORKSPACE_LOCAL_KEYS = [
   "multica_skills_view",
   "multica_squads_view",
   "multica_autopilots_view",
+  "multica_autopilot_pending_operations",
   "project_issues_view",
   "multica:chat:selectedAgentId",
   "multica:chat:activeSessionId",

@@ -30,7 +30,7 @@ evidence reviewable by humans.
 | sqlc queries | 578 |
 | Go WebSocket events | 81 |
 | TypeScript WebSocket events | 71 |
-| Zustand store definitions | 29 |
+| Zustand store definitions | 30 |
 | React Query consumer files | 172 |
 | Environment variable names | 220 |
 | Manually identified external systems | 12 |
@@ -708,6 +708,7 @@ still include daemon-only/backend projection events and possible frontend gaps.
 | packages/core | `packages/core/agents/stores/transcript-view-store.ts` | `useTranscriptViewStore` | yes |
 | packages/core | `packages/core/agents/stores/view-store.ts` | `useAgentsViewStore` | yes |
 | packages/core | `packages/core/auth/store.ts` | `createAuthStore` | no |
+| packages/core | `packages/core/autopilots/pending-operation-store.ts` | `useAutopilotPendingOperationStore` | yes |
 | packages/core | `packages/core/autopilots/stores/view-store.ts` | `useAutopilotsViewStore` | yes |
 | packages/core | `packages/core/chat/pending-operation-store.ts` | `usePendingChatOperationStore` | yes |
 | packages/core | `packages/core/chat/recent-context-store.ts` | `useRecentContextStore` | yes |

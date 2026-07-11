@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, renderHook } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, ApiTransportError } from "../api/client";
+import { setCurrentWorkspace } from "../platform/workspace-storage";
 
 const apiMock = vi.hoisted(() => ({
   createAutopilot: vi.fn(),
@@ -21,6 +22,7 @@ vi.mock("../hooks", () => ({
 }));
 
 import { useCreateAutopilot, useTriggerAutopilot } from "./mutations";
+import { useAutopilotPendingOperationStore } from "./pending-operation-store";
 
 function wrapper({ children }: { children: ReactNode }) {
   return (
@@ -38,28 +40,51 @@ const createRequest = {
   trigger: { kind: "webhook" as const },
 };
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks();
+  setCurrentWorkspace("test-workspace", "workspace-1");
+  await Promise.resolve();
+  localStorage.clear();
+  useAutopilotPendingOperationStore.getState().clear();
 });
 
 describe("Autopilot mutation request identity", () => {
-  it("retains the create key after an unknown outcome", async () => {
+  it("rehydrates the exact create intent after an unknown outcome", async () => {
     apiMock.createAutopilot
       .mockRejectedValueOnce(
         new ApiTransportError("POST /api/autopilots", true, new Error("reset")),
       )
       .mockResolvedValueOnce({ id: "autopilot-1" });
-    const { result } = renderHook(() => useCreateAutopilot(), { wrapper });
+    const first = renderHook(() => useCreateAutopilot(), { wrapper });
 
     await expect(
-      act(() => result.current.mutateAsync(createRequest)),
+      act(() => first.result.current.mutateAsync(createRequest)),
     ).rejects.toBeInstanceOf(ApiTransportError);
-    await act(() => result.current.mutateAsync(createRequest));
+    const retained = useAutopilotPendingOperationStore.getState().pendingCreate;
+    expect(retained?.request).toEqual(createRequest);
+    const storageKey = "multica_autopilot_pending_operations:test-workspace";
+    const persisted = localStorage.getItem(storageKey);
+    expect(persisted).toContain(retained?.requestKey);
+
+    useAutopilotPendingOperationStore.getState().clear();
+    localStorage.setItem(storageKey, persisted!);
+    await act(async () => {
+      await useAutopilotPendingOperationStore.persist.rehydrate();
+    });
+    first.unmount();
+
+    const second = renderHook(() => useCreateAutopilot(), { wrapper });
+    await act(() => second.result.current.mutateAsync({
+      ...createRequest,
+      title: "Changed after reload",
+    }));
 
     expect(apiMock.createAutopilot).toHaveBeenCalledTimes(2);
+    expect(apiMock.createAutopilot.mock.calls[1]?.[0]).toEqual(createRequest);
     expect(apiMock.createAutopilot.mock.calls[0]?.[1]).toBe(
       apiMock.createAutopilot.mock.calls[1]?.[1],
     );
+    expect(useAutopilotPendingOperationStore.getState().pendingCreate).toBeUndefined();
   });
 
   it("releases the create key after a definitive rejection", async () => {
@@ -78,7 +103,7 @@ describe("Autopilot mutation request identity", () => {
     );
   });
 
-  it("retains a manual-trigger key per Autopilot after an unknown outcome", async () => {
+  it("rehydrates a manual-trigger key per Autopilot after an unknown outcome", async () => {
     apiMock.triggerAutopilot
       .mockRejectedValueOnce(
         new ApiTransportError(
@@ -88,15 +113,31 @@ describe("Autopilot mutation request identity", () => {
         ),
       )
       .mockResolvedValueOnce({ id: "run-1" });
-    const { result } = renderHook(() => useTriggerAutopilot(), { wrapper });
+    const first = renderHook(() => useTriggerAutopilot(), { wrapper });
 
     await expect(
-      act(() => result.current.mutateAsync("autopilot-1")),
+      act(() => first.result.current.mutateAsync("autopilot-1")),
     ).rejects.toBeInstanceOf(ApiTransportError);
-    await act(() => result.current.mutateAsync("autopilot-1"));
+    const retainedKey = useAutopilotPendingOperationStore.getState()
+      .manualTriggerKeys["autopilot-1"];
+    const storageKey = "multica_autopilot_pending_operations:test-workspace";
+    const persisted = localStorage.getItem(storageKey);
+    expect(persisted).toContain(retainedKey);
+
+    useAutopilotPendingOperationStore.getState().clear();
+    localStorage.setItem(storageKey, persisted!);
+    await act(async () => {
+      await useAutopilotPendingOperationStore.persist.rehydrate();
+    });
+    first.unmount();
+
+    const second = renderHook(() => useTriggerAutopilot(), { wrapper });
+    await act(() => second.result.current.mutateAsync("autopilot-1"));
 
     expect(apiMock.triggerAutopilot.mock.calls[0]?.[1]).toBe(
       apiMock.triggerAutopilot.mock.calls[1]?.[1],
     );
+    expect(useAutopilotPendingOperationStore.getState()
+      .manualTriggerKeys["autopilot-1"]).toBeUndefined();
   });
 });

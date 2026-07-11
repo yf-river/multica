@@ -1,5 +1,4 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useRef } from "react";
 import { api, isMutationOutcomeUnknown } from "../api";
 import { generateUUID } from "../utils";
 import { autopilotKeys } from "./queries";
@@ -12,21 +11,30 @@ import type {
   CreateAutopilotTriggerRequest,
   UpdateAutopilotTriggerRequest,
 } from "../types";
+import { useAutopilotPendingOperationStore } from "./pending-operation-store";
 
 export function useCreateAutopilot() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
-  const pendingRequestKey = useRef<string | null>(null);
   return useMutation({
     mutationFn: async (data: CreateAutopilotRequest) => {
-      const requestKey = pendingRequestKey.current ?? generateUUID();
-      pendingRequestKey.current = requestKey;
+      const operations = useAutopilotPendingOperationStore.getState();
+      const pendingCreate = operations.pendingCreate ?? {
+        requestKey: generateUUID(),
+        request: data,
+      };
+      operations.setPendingCreate(pendingCreate);
       try {
-        const result = await api.createAutopilot(data, requestKey);
-        pendingRequestKey.current = null;
+        const result = await api.createAutopilot(
+          pendingCreate.request,
+          pendingCreate.requestKey,
+        );
+        useAutopilotPendingOperationStore.getState().setPendingCreate();
         return result;
       } catch (error) {
-        if (!isMutationOutcomeUnknown(error)) pendingRequestKey.current = null;
+        if (!isMutationOutcomeUnknown(error)) {
+          useAutopilotPendingOperationStore.getState().setPendingCreate();
+        }
         throw error;
       }
     },
@@ -109,17 +117,19 @@ export function useDeleteAutopilot() {
 export function useTriggerAutopilot() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
-  const pendingKeys = useRef(new Map<string, string>());
   return useMutation({
     mutationFn: async (id: string) => {
-      const requestKey = pendingKeys.current.get(id) ?? generateUUID();
-      pendingKeys.current.set(id, requestKey);
+      const operations = useAutopilotPendingOperationStore.getState();
+      const requestKey = operations.manualTriggerKeys[id] ?? generateUUID();
+      operations.setManualTriggerKey(id, requestKey);
       try {
         const result = await api.triggerAutopilot(id, requestKey);
-        pendingKeys.current.delete(id);
+        useAutopilotPendingOperationStore.getState().clearManualTriggerKey(id);
         return result;
       } catch (error) {
-        if (!isMutationOutcomeUnknown(error)) pendingKeys.current.delete(id);
+        if (!isMutationOutcomeUnknown(error)) {
+          useAutopilotPendingOperationStore.getState().clearManualTriggerKey(id);
+        }
         throw error;
       }
     },

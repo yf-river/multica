@@ -29,7 +29,7 @@
     "sqlcQueries": 578,
     "goWebsocketEvents": 81,
     "typescriptWebsocketEvents": 71,
-    "zustandStores": 29,
+    "zustandStores": 30,
     "reactQueryConsumerFiles": 172,
     "environmentVariables": 220,
     "manualExternalSystems": 12
@@ -12041,6 +12041,14 @@
         "persisted": false
       },
       {
+        "source": "packages/core/autopilots/pending-operation-store.ts",
+        "scope": "packages/core",
+        "exports": [
+          "useAutopilotPendingOperationStore"
+        ],
+        "persisted": true
+      },
+      {
         "source": "packages/core/autopilots/stores/view-store.ts",
         "scope": "packages/core",
         "exports": [
@@ -14245,7 +14253,7 @@
       },
       {
         "scope": "packages/core",
-        "count": 27
+        "count": 28
       }
     ],
     "reactQueryByScope": [
