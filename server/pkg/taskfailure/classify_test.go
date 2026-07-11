@@ -1,6 +1,9 @@
 package taskfailure
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // TestClassifyEmptyAndWhitespace pins the empty/whitespace contract.
 // Daemon callers should never hand us empty error text — but if they
@@ -247,7 +250,7 @@ func TestClassifyAlwaysReturnsAgentSide(t *testing.T) {
 	}
 	for _, s := range samples {
 		got := Classify(s)
-		if !got.IsAgentError() {
+		if !strings.HasPrefix(got.String(), agentErrorPrefix) {
 			t.Errorf("Classify(%q) = %q, must be agent_error.* (in-flight classifier never returns platform-side reasons)", s, got)
 		}
 	}

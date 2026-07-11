@@ -28,7 +28,7 @@
 //
 //   - 14 agent-side values (with `agent_error.` prefix) produced by
 //     Classify(rawError) when the agent process surfaced an error string.
-//     IsAgentError reports membership in this set.
+//     The `agent_error.` prefix identifies membership in this set.
 //
 // Wire stability: the string forms of these constants are persisted into
 // the database and surfaced as Prometheus labels. Renaming a value is a
@@ -36,8 +36,6 @@
 // classifier in MUL-1949 grows a matching rule and a backfill migration
 // re-classifies historical rows.
 package taskfailure
-
-import "strings"
 
 // Reason is a string-backed enum of the canonical failure_reason values
 // stored in agent_task_queue.failure_reason. Use the Reason* constants
@@ -48,8 +46,7 @@ type Reason string
 // agentErrorPrefix marks the 14 sub-reasons that originate inside the
 // agent process (provider error, runner crash, context overflow, etc.)
 // as opposed to the 7 platform-side reasons (queue expiry, runtime
-// offline, sweeper timeout, etc.). IsAgentError uses this prefix so
-// callers don't have to enumerate the agent-side reasons by hand.
+// offline, sweeper timeout, etc.).
 const agentErrorPrefix = "agent_error."
 
 const (
@@ -59,7 +56,7 @@ const (
 	// FailStaleTasks, FailTasksForOfflineRuntimes,
 	// RecoverOrphanedTasksForRuntime) and the daemon's poisoned-session
 	// classifier (api_invalid_request, iteration_limit, agent_blocked).
-	// IsAgentError returns false for all of these.
+	// None of these use the agentErrorPrefix.
 
 	// ReasonQueuedExpired: task sat in 'queued' past the TTL without
 	// being claimed (typically autopilot backlog while the assignee's
@@ -101,8 +98,7 @@ const (
 
 	// Agent process side: failure surfaced by the agent CLI / SDK as
 	// an error string. Classify(rawError) is responsible for picking
-	// the right sub-reason from the string. IsAgentError returns true
-	// for all of these.
+	// the right sub-reason from the string. All use agentErrorPrefix.
 
 	// ReasonAgentProviderAuthOrAccess: 401 / 403, "Not logged in",
 	// invalid API key, no access to the model. Not retryable; user
@@ -217,19 +213,6 @@ var allReasons = []Reason{
 // String returns the wire form of the reason — what gets written to the
 // failure_reason column and exposed as a Prometheus label value.
 func (r Reason) String() string { return string(r) }
-
-// IsAgentError reports whether the reason originates inside the agent
-// process (provider error, runner crash, context overflow, etc.) as
-// opposed to the platform/scheduler/runtime layer (queue expiry, runtime
-// offline, sweeper timeout, etc.).
-//
-// The classification is intentionally based on a string prefix rather
-// than an enum membership test: any future agent_error.* value
-// automatically inherits the correct grouping without needing to update
-// this method.
-func (r Reason) IsAgentError() bool {
-	return strings.HasPrefix(string(r), agentErrorPrefix)
-}
 
 // AllReasons returns the canonical 21 reasons in a stable order. The
 // caller MUST NOT mutate the returned slice; a copy is returned so
