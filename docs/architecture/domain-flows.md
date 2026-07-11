@@ -14,6 +14,7 @@ and the one supported path through those surfaces.
 | Lark inbound and outbound | Verified inbound dedup and durable at-least-once final delivery | [Lark boundary](./lark-boundary-flow.md) |
 | Issue, comment and task lifecycle | Atomic primary writes, terminal outbox and truthful batch semantics | [Issue/task lifecycle](./issue-task-lifecycle-flow.md) |
 | Prompt Evaluation | Versioned datasets, task-bound Runs, atomic terminal projection and review artifacts | [Prompt Evaluation](./prompt-evaluation-flow.md) |
+| Gongfeng repository and MR | Inventory/resource ownership, credential boundary and recoverable remote create | [Gongfeng repository](./gongfeng-repository-flow.md) |
 
 ## Shared rules
 

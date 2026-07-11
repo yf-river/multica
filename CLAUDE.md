@@ -109,13 +109,12 @@ AI Studio gate applicability:
 - `packages/tsconfig/` — Shared TypeScript configuration
 
 The drift-checked current-system inventory is
-[`docs/architecture/current-system-map.md`](docs/architecture/current-system-map.md).
+[`docs/architecture/current-system-map.md`](docs/architecture/current-system-map.md),
+and the maintained high-risk business flows are indexed in
+[`docs/architecture/domain-flows.md`](docs/architecture/domain-flows.md).
 When routes, persistence, state ownership, environment inputs, WebSocket
 contracts, or external I/O change, run `pnpm generate:current-system-map`; CI
 enforces the generated result with `pnpm check:current-system-map`.
-Maintained domain-flow documentation currently includes the
-[`Chat send durable flow`](docs/architecture/chat-send-flow.md), which connects
-client state and recovery through HTTP, transaction, task and event boundaries.
 
 What lives where for sharing purposes is documented in *Sharing Principles* below — read it once.
 

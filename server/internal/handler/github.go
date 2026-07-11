@@ -628,7 +628,7 @@ func (h *Handler) LinkPullRequestToIssue(w http.ResponseWriter, r *http.Request)
 	}
 	repoOwner, repoName := splitRepositoryPath(normalized.ProjectPath)
 	now := time.Now().UTC()
-	pr, err := h.Queries.UpsertGitHubPullRequest(r.Context(), db.UpsertGitHubPullRequestParams{
+	pr, err := h.recordIssuePullRequest(r.Context(), db.UpsertGitHubPullRequestParams{
 		WorkspaceID:         issue.WorkspaceID,
 		InstallationID:      0,
 		RepoOwner:           repoOwner,
@@ -650,24 +650,24 @@ func (h *Handler) LinkPullRequestToIssue(w http.ResponseWriter, r *http.Request)
 		ClosedAt:            pgtype.Timestamptz{},
 		MergeableState:      textFromOptional(normalized.MergeableState),
 		ClearMergeableState: pgtype.Bool{},
-	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to record pull request")
-		return
-	}
-	if err := h.Queries.LinkIssueToPullRequest(r.Context(), db.LinkIssueToPullRequestParams{
+	}, db.LinkIssueToPullRequestParams{
 		IssueID:             issue.ID,
-		PullRequestID:       pr.ID,
 		CloseIntent:         normalized.CloseIntent,
 		LinkedByType:        pgtype.Text{String: "member", Valid: true},
 		LinkedByID:          parseUUID(userID),
 		PreserveCloseIntent: false,
-	}); err != nil {
+	})
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to link pull request")
 		return
 	}
+	pullRequestResponse := githubPullRequestToResponse(pr)
+	h.publish(protocol.EventPullRequestLinked, uuidToString(issue.WorkspaceID), "member", userID, map[string]any{
+		"issue_id":     uuidToString(issue.ID),
+		"pull_request": pullRequestResponse,
+	})
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"pull_request": githubPullRequestToResponse(pr),
+		"pull_request": pullRequestResponse,
 	})
 }
 
@@ -703,7 +703,7 @@ func (h *Handler) CreateMergeRequestForIssue(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "gongfeng credential token is unavailable")
 		return
 	}
-	mr, err := createGongfengMergeRequest(r.Context(), token, normalized)
+	mr, err := ensureGongfengMergeRequest(r.Context(), token, normalized)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
@@ -719,7 +719,7 @@ func (h *Handler) CreateMergeRequestForIssue(w http.ResponseWriter, r *http.Requ
 	}
 	repoOwner, repoName := splitRepositoryPath(normalized.ProjectPath)
 	now := time.Now().UTC()
-	pr, err := h.Queries.UpsertGitHubPullRequest(r.Context(), db.UpsertGitHubPullRequestParams{
+	pr, err := h.recordIssuePullRequest(r.Context(), db.UpsertGitHubPullRequestParams{
 		WorkspaceID:         issue.WorkspaceID,
 		InstallationID:      0,
 		RepoOwner:           repoOwner,
@@ -741,24 +741,24 @@ func (h *Handler) CreateMergeRequestForIssue(w http.ResponseWriter, r *http.Requ
 		Additions:           0,
 		Deletions:           0,
 		ChangedFiles:        0,
-	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to record merge request")
-		return
-	}
-	if err := h.Queries.LinkIssueToPullRequest(r.Context(), db.LinkIssueToPullRequestParams{
+	}, db.LinkIssueToPullRequestParams{
 		IssueID:             issue.ID,
-		PullRequestID:       pr.ID,
 		CloseIntent:         normalized.CloseIntent,
 		LinkedByType:        pgtype.Text{String: "member", Valid: true},
 		LinkedByID:          parseUUID(userID),
 		PreserveCloseIntent: false,
-	}); err != nil {
+	})
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to link merge request")
 		return
 	}
+	pullRequestResponse := githubPullRequestToResponse(pr)
+	h.publish(protocol.EventPullRequestLinked, uuidToString(issue.WorkspaceID), "member", userID, map[string]any{
+		"issue_id":     uuidToString(issue.ID),
+		"pull_request": pullRequestResponse,
+	})
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"pull_request": githubPullRequestToResponse(pr),
+		"pull_request": pullRequestResponse,
 		"linked":       true,
 		"merge_request": map[string]any{
 			"iid":           number,
@@ -767,6 +767,32 @@ func (h *Handler) CreateMergeRequestForIssue(w http.ResponseWriter, r *http.Requ
 			"target_branch": firstNonEmpty(mr.TargetBranch, normalized.TargetBranch),
 		},
 	})
+}
+
+func (h *Handler) recordIssuePullRequest(
+	ctx context.Context,
+	pullRequest db.UpsertGitHubPullRequestParams,
+	link db.LinkIssueToPullRequestParams,
+) (db.GithubPullRequest, error) {
+	tx, err := h.TxStarter.Begin(ctx)
+	if err != nil {
+		return db.GithubPullRequest{}, fmt.Errorf("begin pull request link transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	queries := h.Queries.WithTx(tx)
+	created, err := queries.UpsertGitHubPullRequest(ctx, pullRequest)
+	if err != nil {
+		return db.GithubPullRequest{}, fmt.Errorf("upsert pull request: %w", err)
+	}
+	link.PullRequestID = created.ID
+	if err := queries.LinkIssueToPullRequest(ctx, link); err != nil {
+		return db.GithubPullRequest{}, fmt.Errorf("link issue to pull request: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return db.GithubPullRequest{}, fmt.Errorf("commit pull request link: %w", err)
+	}
+	return created, nil
 }
 
 func normalizeIssuePullRequestLinkRequest(w http.ResponseWriter, req LinkPullRequestRequest) (LinkPullRequestRequest, bool) {
@@ -1001,11 +1027,7 @@ func (mr gongfengMergeRequestResponse) URL() string {
 	return firstNonEmpty(mr.WebURL, mr.HTMLURL)
 }
 
-func createGongfengMergeRequest(ctx context.Context, token string, req CreateMergeRequestRequest) (gongfengMergeRequestResponse, error) {
-	projectID, err := resolveGongfengProjectAPIID(ctx, token, req.ProjectPath)
-	if err != nil {
-		return gongfengMergeRequestResponse{}, err
-	}
+func createGongfengMergeRequestForProject(ctx context.Context, token, projectID string, req CreateMergeRequestRequest) (gongfengMergeRequestResponse, error) {
 	endpoint := strings.TrimRight(gongfengAPIBase(), "/") + "/projects/" + url.PathEscape(projectID) + "/merge_requests"
 	payload := map[string]any{
 		"source_branch": req.SourceBranch,
@@ -1049,6 +1071,92 @@ func createGongfengMergeRequest(ctx context.Context, token string, req CreateMer
 		}
 	}
 	return out, nil
+}
+
+// ensureGongfengMergeRequest reconciles the provider before and after create.
+// The Gongfeng API does not accept a caller idempotency key, so a timeout can
+// mean either "not created" or "created but the response was lost". Matching
+// the current open MR by its repository and branch pair makes a retry recover
+// that remote success instead of creating a second MR.
+func ensureGongfengMergeRequest(ctx context.Context, token string, req CreateMergeRequestRequest) (gongfengMergeRequestResponse, error) {
+	projectID, err := resolveGongfengProjectAPIID(ctx, token, req.ProjectPath)
+	if err != nil {
+		return gongfengMergeRequestResponse{}, err
+	}
+	existing, found, preflightErr := findOpenGongfengMergeRequest(ctx, token, projectID, req.SourceBranch, req.TargetBranch)
+	if preflightErr == nil && found {
+		return existing, nil
+	}
+
+	created, createErr := createGongfengMergeRequestForProject(ctx, token, projectID, req)
+	if createErr == nil && created.Number() > 0 {
+		if preflightErr != nil {
+			slog.Warn("created Gongfeng merge request while preflight reconciliation was unavailable",
+				"project_path", req.ProjectPath,
+				"source_branch", req.SourceBranch,
+				"target_branch", req.TargetBranch,
+				"error", preflightErr,
+			)
+		}
+		return created, nil
+	}
+	existing, found, recoveryErr := findOpenGongfengMergeRequest(ctx, token, projectID, req.SourceBranch, req.TargetBranch)
+	if recoveryErr == nil && found {
+		return existing, nil
+	}
+	if createErr != nil {
+		if recoveryErr != nil {
+			return gongfengMergeRequestResponse{}, fmt.Errorf("%w; provider reconciliation failed: %v", createErr, recoveryErr)
+		}
+		return gongfengMergeRequestResponse{}, createErr
+	}
+	if recoveryErr != nil {
+		return gongfengMergeRequestResponse{}, fmt.Errorf("gongfeng create response missing iid and provider reconciliation failed: %w", recoveryErr)
+	}
+	return created, nil
+}
+
+func findOpenGongfengMergeRequest(
+	ctx context.Context,
+	token string,
+	projectID string,
+	sourceBranch string,
+	targetBranch string,
+) (gongfengMergeRequestResponse, bool, error) {
+	values := url.Values{
+		"state":         {"opened"},
+		"source_branch": {sourceBranch},
+		"target_branch": {targetBranch},
+		"per_page":      {"100"},
+	}
+	endpoint := strings.TrimRight(gongfengAPIBase(), "/") + "/projects/" + url.PathEscape(projectID) + "/merge_requests?" + values.Encode()
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return gongfengMergeRequestResponse{}, false, fmt.Errorf("build gongfeng merge request lookup: %w", err)
+	}
+	httpReq.Header.Set("Accept", "application/json")
+	httpReq.Header.Set("PRIVATE-TOKEN", token)
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(httpReq)
+	if err != nil {
+		return gongfengMergeRequestResponse{}, false, fmt.Errorf("lookup gongfeng merge request: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return gongfengMergeRequestResponse{}, false, fmt.Errorf("gongfeng merge request lookup returned %d: %s", resp.StatusCode, redactGongfengError(body))
+	}
+	var items []gongfengMergeRequestResponse
+	if err := json.Unmarshal(body, &items); err != nil {
+		return gongfengMergeRequestResponse{}, false, fmt.Errorf("decode gongfeng merge request lookup: %w", err)
+	}
+	for _, item := range items {
+		if item.Number() > 0 &&
+			strings.EqualFold(strings.TrimSpace(item.State), "opened") &&
+			item.SourceBranch == sourceBranch && item.TargetBranch == targetBranch {
+			return item, true, nil
+		}
+	}
+	return gongfengMergeRequestResponse{}, false, nil
 }
 
 func resolveGongfengProjectAPIID(ctx context.Context, token, projectPath string) (string, error) {

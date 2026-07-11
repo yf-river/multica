@@ -20,6 +20,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -31,6 +33,12 @@ func TestLinkPullRequestToIssue_GongfengURL(t *testing.T) {
 		t.Skip("handler test fixture not initialized (no DB?)")
 	}
 	ctx := context.Background()
+	handler := *testHandler
+	handler.Bus = events.New()
+	var linkedEvents []events.Event
+	handler.Bus.Subscribe(protocol.EventPullRequestLinked, func(event events.Event) {
+		linkedEvents = append(linkedEvents, event)
+	})
 
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
@@ -62,7 +70,7 @@ func TestLinkPullRequestToIssue_GongfengURL(t *testing.T) {
 		"head_sha":      "abc123",
 	})
 	req = withURLParam(req, "id", created.ID)
-	testHandler.LinkPullRequestToIssue(w, req)
+	handler.LinkPullRequestToIssue(w, req)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("LinkPullRequestToIssue: %d %s", w.Code, w.Body.String())
 	}
@@ -77,6 +85,9 @@ func TestLinkPullRequestToIssue_GongfengURL(t *testing.T) {
 	}
 	if linked.PullRequest.Branch == nil || *linked.PullRequest.Branch != "goa-61234-usercenter-api" {
 		t.Fatalf("branch = %#v, want goa-61234-usercenter-api", linked.PullRequest.Branch)
+	}
+	if len(linkedEvents) != 1 || linkedEvents[0].WorkspaceID != testWorkspaceID || linkedEvents[0].ActorID != testUserID {
+		t.Fatalf("pull_request:linked events = %#v, want one workspace/member event", linkedEvents)
 	}
 
 	w = httptest.NewRecorder()
@@ -104,7 +115,7 @@ func TestLinkPullRequestToIssue_GongfengURL(t *testing.T) {
 		"state":    "opened",
 	})
 	req = withURLParam(req, "id", created.ID)
-	testHandler.LinkPullRequestToIssue(w, req)
+	handler.LinkPullRequestToIssue(w, req)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("LinkPullRequestToIssue repeat without branch: %d %s", w.Code, w.Body.String())
 	}
@@ -244,6 +255,153 @@ func TestLinkPullRequestToIssue_RequiresRepositoryAndNumber(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "project_path is required") {
 		t.Fatalf("error body = %s, want project_path guidance", w.Body.String())
+	}
+}
+
+func TestRecordIssuePullRequestRollsBackUpsertWhenLinkFails(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("handler test fixture not initialized (no DB?)")
+	}
+	ctx := context.Background()
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		"title": "Atomic MR link " + randomID(),
+	})
+	testHandler.CreateIssue(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateIssue: %d %s", w.Code, w.Body.String())
+	}
+	var issue IssueResponse
+	if err := json.NewDecoder(w.Body).Decode(&issue); err != nil {
+		t.Fatalf("decode issue: %v", err)
+	}
+
+	suffix := strings.ReplaceAll(randomID(), "-", "")
+	functionName := pgx.Identifier{"fail_issue_pr_link_" + suffix}.Sanitize()
+	triggerName := pgx.Identifier{"fail_issue_pr_link_" + suffix}.Sanitize()
+	if _, err := testPool.Exec(ctx, fmt.Sprintf(`
+		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF NEW.issue_id = '%s'::uuid THEN
+				RAISE EXCEPTION 'injected issue pull request link failure';
+			END IF;
+			RETURN NEW;
+		END $$;
+		CREATE TRIGGER %s BEFORE INSERT ON issue_pull_request
+		FOR EACH ROW EXECUTE FUNCTION %s();
+	`, functionName, issue.ID, triggerName, functionName)); err != nil {
+		t.Fatalf("install link failure trigger: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(ctx, fmt.Sprintf("DROP TRIGGER IF EXISTS %s ON issue_pull_request", triggerName))
+		_, _ = testPool.Exec(ctx, fmt.Sprintf("DROP FUNCTION IF EXISTS %s()", functionName))
+		_, _ = testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issue.ID)
+	})
+
+	const number = int32(61999)
+	_, err := testHandler.recordIssuePullRequest(ctx, db.UpsertGitHubPullRequestParams{
+		WorkspaceID:     parseUUID(testWorkspaceID),
+		RepoOwner:       "atomic/test",
+		RepoName:        suffix,
+		PrNumber:        number,
+		Title:           "must roll back",
+		State:           "open",
+		HtmlUrl:         "https://git.code.tencent.com/atomic/test/" + suffix + "/merge_requests/61999",
+		PrCreatedAt:     pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true},
+		PrUpdatedAt:     pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true},
+		MergeableState:  pgtype.Text{},
+		AuthorLogin:     pgtype.Text{},
+		AuthorAvatarUrl: pgtype.Text{},
+		MergedAt:        pgtype.Timestamptz{},
+		ClosedAt:        pgtype.Timestamptz{},
+	}, db.LinkIssueToPullRequestParams{
+		IssueID:      parseUUID(issue.ID),
+		LinkedByType: pgtype.Text{String: "member", Valid: true},
+		LinkedByID:   parseUUID(testUserID),
+	})
+	if err == nil || !strings.Contains(err.Error(), "injected issue pull request link failure") {
+		t.Fatalf("recordIssuePullRequest error = %v, want injected link failure", err)
+	}
+	var count int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*) FROM github_pull_request
+		WHERE workspace_id = $1 AND repo_owner = 'atomic/test' AND repo_name = $2 AND pr_number = $3
+	`, testWorkspaceID, suffix, number).Scan(&count); err != nil {
+		t.Fatalf("count rolled-back pull request: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("pull request rows after link failure = %d, want 0", count)
+	}
+}
+
+func TestEnsureGongfengMergeRequestReusesExistingOpenBranchPair(t *testing.T) {
+	postCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			postCount++
+			http.Error(w, "unexpected create", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{
+			"iid": 73,
+			"web_url": "https://git.code.tencent.com/team/repo/merge_requests/73",
+			"state": "opened",
+			"source_branch": "feature/current",
+			"target_branch": "main"
+		}]`))
+	}))
+	defer server.Close()
+	t.Setenv("GONGFENG_API_BASE", server.URL)
+
+	mr, err := ensureGongfengMergeRequest(context.Background(), "secret", CreateMergeRequestRequest{
+		ProjectPath: "42", SourceBranch: "feature/current", TargetBranch: "main", Title: "Current MR",
+	})
+	if err != nil {
+		t.Fatalf("ensureGongfengMergeRequest: %v", err)
+	}
+	if mr.Number() != 73 || postCount != 0 {
+		t.Fatalf("MR = %#v, postCount = %d; want existing !73 without create", mr, postCount)
+	}
+}
+
+func TestEnsureGongfengMergeRequestRecoversCreateErrorFromProviderState(t *testing.T) {
+	lookupCount := 0
+	postCount := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			lookupCount++
+			w.Header().Set("Content-Type", "application/json")
+			if lookupCount == 1 {
+				_, _ = w.Write([]byte(`[]`))
+				return
+			}
+			_, _ = w.Write([]byte(`[{
+				"iid": 74,
+				"web_url": "https://git.code.tencent.com/team/repo/merge_requests/74",
+				"state": "opened",
+				"source_branch": "feature/recovered",
+				"target_branch": "main"
+			}]`))
+		case http.MethodPost:
+			postCount++
+			http.Error(w, "upstream response lost", http.StatusBadGateway)
+		default:
+			http.Error(w, "unexpected method", http.StatusMethodNotAllowed)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("GONGFENG_API_BASE", server.URL)
+
+	mr, err := ensureGongfengMergeRequest(context.Background(), "secret", CreateMergeRequestRequest{
+		ProjectPath: "42", SourceBranch: "feature/recovered", TargetBranch: "main", Title: "Recovered MR",
+	})
+	if err != nil {
+		t.Fatalf("ensureGongfengMergeRequest: %v", err)
+	}
+	if mr.Number() != 74 || lookupCount != 2 || postCount != 1 {
+		t.Fatalf("MR = %#v, lookups = %d, creates = %d; want recovered !74 after one create", mr, lookupCount, postCount)
 	}
 }
 

@@ -244,6 +244,32 @@ test("maintained domain flows stay anchored to current routes, tables and source
         "packages/views/prompt-library/components/use-skill-candidate-workflow-actions.ts",
       ],
     },
+    {
+      file: "gongfeng-repository-flow.md",
+      routes: [
+        "POST /api/workspaces/{id}/repos/probe",
+        "POST /api/workspaces/{id}/repos/resolve",
+        "POST /api/projects/{id}/resources",
+        "POST /api/issues/{id}/merge-requests/create",
+        "POST /api/issues/{id}/pull-requests",
+      ],
+      tables: [
+        "external_credential_profile",
+        "github_pull_request",
+        "issue_pull_request",
+        "project_resource",
+        "workspace",
+      ],
+      sources: [
+        "server/internal/handler/workspace.go",
+        "server/internal/handler/project_resource.go",
+        "server/internal/handler/github.go",
+        "server/internal/service/task_complete.go",
+        "server/internal/handler/issue.go",
+        "packages/views/settings/components/project-gongfeng-repositories.tsx",
+        "server/cmd/multica/cmd_issue_pull_request.go",
+      ],
+    },
   ];
 
   const index = fs.readFileSync(
