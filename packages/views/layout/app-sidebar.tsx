@@ -265,21 +265,21 @@ function SortablePinItem({
             WebkitMaskImage: "linear-gradient(to right, black calc(100% - 12px), transparent)",
           }}
         >{label}</span>
-        <Tooltip>
-          <TooltipTrigger
-            render={<span role="button" />}
-            className="hidden size-2.5 shrink-0 items-center justify-center rounded-sm text-muted-foreground group-hover/pin:flex hover:text-foreground"
-            onClick={(event) => {
-              event.preventDefault();
-              event.stopPropagation();
-              onUnpin();
-            }}
-          >
-            <X className="size-1" />
-          </TooltipTrigger>
-          <TooltipContent side="top" sideOffset={4}>{t(($) => $.sidebar.unpin_tooltip)}</TooltipContent>
-        </Tooltip>
       </SidebarMenuButton>
+      <Tooltip>
+        <TooltipTrigger
+          render={<button type="button" aria-label={t(($) => $.sidebar.unpin_tooltip)} />}
+          className="absolute right-2 top-1/2 hidden size-4 -translate-y-1/2 items-center justify-center rounded-sm text-muted-foreground group-hover/pin:flex hover:text-foreground"
+          onClick={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            onUnpin();
+          }}
+        >
+          <X className="size-2.5" />
+        </TooltipTrigger>
+        <TooltipContent side="top" sideOffset={4}>{t(($) => $.sidebar.unpin_tooltip)}</TooltipContent>
+      </Tooltip>
     </SidebarMenuItem>
   );
 }

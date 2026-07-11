@@ -72,7 +72,7 @@ function LoginPageContent() {
     }
     const list = qc.getQueryData<Workspace[]>(workspaceKeys.list()) ?? [];
     router.replace(resolvePostAuthDestination(list));
-  }, [isLoading, user, router, nextUrl, cliCallbackRaw, isDesktopHandoff, qc]);
+  }, [isLoading, user, router, nextUrl, cliCallbackRaw, isDesktopHandoff, qc, t]);
 
   const handleSuccess = async () => {
     if (nextUrl) {

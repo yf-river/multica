@@ -196,7 +196,6 @@ export function sanitizeTabPath(path: string): string | null {
     // at the interception boundary (older persisted state or stale callers).
     const isTransition = path === "/workspaces/new";
     if (!isTransition) {
-      // eslint-disable-next-line no-console
       console.warn(
         `[tab-store] tab path "${path}" starts with reserved slug "${firstSegment}" — ` +
           `caller likely forgot the workspace prefix. Dropping.`,
@@ -685,7 +684,6 @@ export const useTabStore = create<TabStore>()(
             // manual edit. Drop rather than rewrite so we never silently
             // put users on a path that doesn't match the group's slug.
             if (!clean || extractWorkspaceSlug(clean) !== slug) {
-              // eslint-disable-next-line no-console
               console.warn(
                 `[tab-store] dropping persisted tab "${pTab.path}" from ` +
                   `group "${slug}" — path/slug mismatch`,
