@@ -321,6 +321,7 @@ type startedSquadSOPRunOptions struct {
 	issueTitle       string
 	issueStatus      string
 	daemonName       string
+	skipStart        bool
 }
 
 func createStartedSquadSOPRunFixture(t *testing.T, ctx context.Context, opts startedSquadSOPRunOptions) startedSquadSOPRunFixture {
@@ -396,12 +397,14 @@ func createStartedSquadSOPRunFixture(t *testing.T, ctx context.Context, opts sta
 		t.Fatalf("mark task dispatched: %v", err)
 	}
 
-	startW := httptest.NewRecorder()
-	startReq := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+taskID+"/start", nil, testWorkspaceID, opts.daemonName)
-	startReq = withURLParam(startReq, "taskId", taskID)
-	testHandler.StartTask(startW, startReq)
-	if startW.Code != http.StatusOK {
-		t.Fatalf("StartTask: expected 200, got %d: %s", startW.Code, startW.Body.String())
+	if !opts.skipStart {
+		startW := httptest.NewRecorder()
+		startReq := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+taskID+"/start", nil, testWorkspaceID, opts.daemonName)
+		startReq = withURLParam(startReq, "taskId", taskID)
+		testHandler.StartTask(startW, startReq)
+		if startW.Code != http.StatusOK {
+			t.Fatalf("StartTask: expected 200, got %d: %s", startW.Code, startW.Body.String())
+		}
 	}
 
 	return startedSquadSOPRunFixture{

@@ -225,20 +225,37 @@ func (s *TaskService) maybeLogClaimSlow(agentID pgtype.UUID, outcome string, sta
 // from todo to in_progress. This is mechanical execution state, not workflow
 // semantics, so it should not depend on the agent remembering a CLI call.
 func (s *TaskService) StartTask(ctx context.Context, taskID pgtype.UUID) (*db.AgentTaskQueue, error) {
-	task, err := s.Queries.StartAgentTask(ctx, taskID)
+	tx, err := s.TxStarter.Begin(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("start task transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	queries := s.Queries.WithTx(tx)
+
+	task, err := queries.StartAgentTask(ctx, taskID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
+			_ = tx.Rollback(ctx)
 			if existing, getErr := s.Queries.GetAgentTask(ctx, taskID); getErr == nil {
 				return nil, TaskStartConflictError{Status: existing.Status}
 			}
 		}
 		return nil, fmt.Errorf("start task: %w", err)
 	}
+	issueProjection, err := s.projectTaskStartIssueStatus(ctx, queries, task)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.projectSquadSOPTaskStarted(ctx, queries, task); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit task start: %w", err)
+	}
 
 	slog.Info("task started", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID))
-	s.autoStartIssueForTask(ctx, task)
+	s.publishTaskIssueStatusProjection(ctx, issueProjection)
 	s.captureTaskStarted(ctx, task)
-	s.syncSquadSOPTaskStarted(ctx, task)
 	// Tell every connected workspace WS client that this task transitioned
 	// (dispatched | waiting_local_directory) → running. Without this, the
 	// workspace-wide `agentTaskSnapshot` query only refreshes on the 30s
@@ -259,54 +276,50 @@ type squadSOPProfile struct {
 	Steps []squadSOPProfileStep `json:"steps"`
 }
 
-// syncSquadSOPTaskStarted preserves the existing start-time projection. Task
-// terminal events use projectSquadSOPTerminal so their task/event/run/Issue
-// writes share one transaction; start-time projection is a separate slice.
-func (s *TaskService) syncSquadSOPTaskStarted(ctx context.Context, task db.AgentTaskQueue) {
+func (s *TaskService) projectSquadSOPTaskStarted(
+	ctx context.Context,
+	queries *db.Queries,
+	task db.AgentTaskQueue,
+) error {
 	if !task.IssueID.Valid {
-		return
+		return nil
 	}
-	issue, err := s.Queries.GetIssue(ctx, task.IssueID)
-	if err != nil || !issue.AssigneeType.Valid || issue.AssigneeType.String != "squad" || !issue.AssigneeID.Valid {
-		return
-	}
-	run, err := s.Queries.GetOpenSquadSOPRunByIssue(ctx, task.IssueID)
+	issue, err := queries.GetIssue(ctx, task.IssueID)
 	if err != nil {
-		return
+		return fmt.Errorf("load task issue for Squad SOP start: %w", err)
 	}
-	agent, err := s.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
+	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "squad" || !issue.AssigneeID.Valid {
+		return nil
+	}
+	run, err := queries.LockOpenSquadSOPRunByIssue(ctx, task.IssueID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		}
+		return fmt.Errorf("load Squad SOP run for task start: %w", err)
+	}
+	agent, err := queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
 		ID:          task.AgentID,
 		WorkspaceID: issue.WorkspaceID,
 	})
 	if err != nil {
-		slog.Warn("sync squad SOP task step skipped: agent not found",
-			"task_id", util.UUIDToString(task.ID),
-			"issue_id", util.UUIDToString(task.IssueID),
-			"agent_id", util.UUIDToString(task.AgentID),
-			"error", err,
-		)
-		return
+		return fmt.Errorf("load task agent for Squad SOP start: %w", err)
 	}
 	steps := parseSquadSOPProfileSteps(run.Profile)
 	step, _, ok := matchSquadSOPStepForAgentRecord(steps, agent)
 	if !ok {
-		return
+		return nil
 	}
-	events, err := s.Queries.ListSquadSOPStepEventsByRun(ctx, run.ID)
+	events, err := queries.ListSquadSOPStepEventsByRun(ctx, run.ID)
 	if err != nil {
-		slog.Warn("sync squad SOP task step skipped: list existing events failed",
-			"run_id", util.UUIDToString(run.ID),
-			"task_id", util.UUIDToString(task.ID),
-			"error", err,
-		)
-		return
+		return fmt.Errorf("list Squad SOP events for task start: %w", err)
 	}
 	for _, existing := range events {
 		if existing.TaskID.Valid && existing.TaskID == task.ID && existing.EventType == "步骤开始" {
-			return
+			return nil
 		}
 	}
-	if _, err := s.Queries.CreateSquadSOPStepEvent(ctx, db.CreateSquadSOPStepEventParams{
+	if _, err := queries.CreateSquadSOPStepEvent(ctx, db.CreateSquadSOPStepEventParams{
 		RunID:         run.ID,
 		WorkspaceID:   run.WorkspaceID,
 		IssueID:       run.IssueID,
@@ -320,31 +333,19 @@ func (s *TaskService) syncSquadSOPTaskStarted(ctx context.Context, task db.Agent
 		CreatedByType: "system",
 		TaskID:        task.ID,
 	}); err != nil {
-		slog.Warn("sync squad SOP task step event failed",
-			"run_id", util.UUIDToString(run.ID),
-			"task_id", util.UUIDToString(task.ID),
-			"step_key", step.Key,
-			"event_type", "步骤开始",
-			"error", err,
-		)
-		return
+		return fmt.Errorf("create Squad SOP task start event: %w", err)
 	}
 
-	_, err = s.Queries.UpdateSquadSOPRunStatus(ctx, db.UpdateSquadSOPRunStatusParams{
+	_, err = queries.UpdateSquadSOPRunStatus(ctx, db.UpdateSquadSOPRunStatusParams{
 		ID:             run.ID,
 		WorkspaceID:    run.WorkspaceID,
 		Status:         "进行中",
 		CurrentStepKey: pgtype.Text{String: step.Key, Valid: step.Key != ""},
 	})
 	if err != nil {
-		slog.Warn("sync squad SOP run status failed",
-			"run_id", util.UUIDToString(run.ID),
-			"task_id", util.UUIDToString(task.ID),
-			"step_key", step.Key,
-			"event_type", "步骤开始",
-			"error", err,
-		)
+		return fmt.Errorf("update Squad SOP run for task start: %w", err)
 	}
+	return nil
 }
 
 func squadSOPFailureComment(ctx context.Context, queries *db.Queries, task db.AgentTaskQueue, errMsg, failureReason string) (string, bool, error) {
@@ -454,11 +455,22 @@ func taskFailureSummary(errMsg string) string {
 	return errMsg
 }
 
-func (s *TaskService) autoStartIssueForTask(ctx context.Context, task db.AgentTaskQueue) {
+func (s *TaskService) projectTaskStartIssueStatus(
+	ctx context.Context,
+	queries *db.Queries,
+	task db.AgentTaskQueue,
+) (*taskIssueStatusProjection, error) {
 	if !shouldAutoStartIssueForTask(task) {
-		return
+		return nil, nil
 	}
-	s.autoTransitionIssueStatus(ctx, task, "todo", "in_progress", "task_started")
+	issue, err := queries.GetIssue(ctx, task.IssueID)
+	if err != nil {
+		return nil, fmt.Errorf("load task issue for start transition: %w", err)
+	}
+	if issue.Status != "todo" {
+		return nil, nil
+	}
+	return s.projectTaskIssueStatus(ctx, queries, issue, "in_progress", "task_started")
 }
 
 type taskIssueStatusProjection struct {
@@ -543,61 +555,6 @@ func (s *TaskService) publishTaskIssueStatusProjection(ctx context.Context, proj
 	)
 	if s.IssueStatusChanged != nil {
 		s.IssueStatusChanged(ctx, projection.previous, projection.updated, "system", "")
-	}
-}
-
-func (s *TaskService) autoTransitionIssueStatus(ctx context.Context, task db.AgentTaskQueue, fromStatus, toStatus, reason string) {
-	issue, ok := s.issueForTaskStatusAutomation(ctx, task)
-	if !ok || issue.Status != fromStatus {
-		return
-	}
-	s.updateIssueStatusForTaskAutomation(ctx, task, issue, toStatus, reason)
-}
-
-func (s *TaskService) issueForTaskStatusAutomation(ctx context.Context, task db.AgentTaskQueue) (db.Issue, bool) {
-	if !task.IssueID.Valid {
-		return db.Issue{}, false
-	}
-	issue, err := s.Queries.GetIssue(ctx, task.IssueID)
-	if err != nil {
-		slog.Warn("task issue status automation skipped: issue lookup failed",
-			"task_id", util.UUIDToString(task.ID),
-			"issue_id", util.UUIDToString(task.IssueID),
-			"error", err,
-		)
-		return db.Issue{}, false
-	}
-	return issue, true
-}
-
-func (s *TaskService) updateIssueStatusForTaskAutomation(ctx context.Context, task db.AgentTaskQueue, issue db.Issue, status string, reason string) {
-	updated, err := s.persistIssueUpdate(ctx, issue, taskIssueUpdateChanges{Status: true}, func(queries *db.Queries) (db.Issue, error) {
-		return queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
-			ID:          issue.ID,
-			Status:      status,
-			WorkspaceID: issue.WorkspaceID,
-		})
-	})
-	if err != nil {
-		slog.Warn("task issue status automation failed",
-			"task_id", util.UUIDToString(task.ID),
-			"issue_id", util.UUIDToString(issue.ID),
-			"from_status", issue.Status,
-			"to_status", status,
-			"reason", reason,
-			"error", err,
-		)
-		return
-	}
-	slog.Info("task issue status automated",
-		"task_id", util.UUIDToString(task.ID),
-		"issue_id", util.UUIDToString(issue.ID),
-		"from_status", issue.Status,
-		"to_status", status,
-		"reason", reason,
-	)
-	if s.IssueStatusChanged != nil {
-		s.IssueStatusChanged(ctx, issue, updated, "system", "")
 	}
 }
 

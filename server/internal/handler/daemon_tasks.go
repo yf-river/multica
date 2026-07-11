@@ -833,7 +833,7 @@ func (h *Handler) StartTask(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		slog.Warn("start task failed", "task_id", taskID, "error", err)
-		writeError(w, http.StatusBadRequest, err.Error())
+		writeError(w, http.StatusInternalServerError, "failed to start task")
 		return
 	}
 
@@ -920,4 +920,3 @@ type TaskCompleteRequest struct {
 	SessionID string `json:"session_id"` // Claude session ID for future resumption
 	WorkDir   string `json:"work_dir"`   // working directory used during execution
 }
-
