@@ -13,14 +13,11 @@ import (
 )
 
 // registerListeners wires up event bus listeners for WS broadcasting.
-// Personal events are sent only to the target user via
-// SendToUser. All other events are broadcast to the workspace room.
+// Personal events are sent only to the target user. All other events are
+// broadcast to the workspace room.
 //
-// The broadcaster parameter is intentionally typed as the realtime.Broadcaster
-// interface (not *realtime.Hub) so that this layer can later be swapped out
-// for a Redis-backed relay or a feature-flagged dual-write implementation
-// without touching any of the event listeners below. This is Phase 0 of the
-// horizontal-scaling plan tracked in MUL-1138.
+// The broadcaster interface keeps listener routing identical for the local Hub
+// and the Redis dual-write implementation used by multi-node deployments.
 func registerListeners(bus *events.Bus, b realtime.Broadcaster) {
 	// Personal events should NOT be broadcast to the whole workspace.
 	personalEvents := map[string]bool{
@@ -41,7 +38,7 @@ func registerListeners(bus *events.Bus, b realtime.Broadcaster) {
 			return
 		}
 		realtime.M.RecordEvent(e.Type)
-		b.SendToUser(recipientID, data)
+		b.BroadcastToUser(recipientID, "", data)
 	}
 
 	// inbox:new — extract recipient from nested item
@@ -76,7 +73,7 @@ func registerListeners(bus *events.Bus, b realtime.Broadcaster) {
 
 	// member:added — also send to the added user so they discover the new workspace.
 	// Pass excludeWorkspace so clients already in the target room (reached via
-	// BroadcastToWorkspace in SubscribeAll) don't receive the event twice.
+	// workspace broadcast in SubscribeAll) don't receive the event twice.
 	bus.Subscribe(protocol.EventMemberAdded, func(e events.Event) {
 		payload, ok := e.Payload.(map[string]any)
 		if !ok {
@@ -99,7 +96,7 @@ func registerListeners(bus *events.Bus, b realtime.Broadcaster) {
 			return
 		}
 		realtime.M.RecordEvent(e.Type)
-		b.SendToUser(userID, data, e.WorkspaceID)
+		b.BroadcastToUser(userID, e.WorkspaceID, data)
 	})
 
 	// SubscribeAll handles workspace-broadcast for non-personal events.
@@ -139,7 +136,7 @@ func registerListeners(bus *events.Bus, b realtime.Broadcaster) {
 
 		if e.WorkspaceID != "" {
 			realtime.M.RecordEvent(e.Type)
-			b.BroadcastToWorkspace(e.WorkspaceID, data)
+			b.BroadcastToScope(realtime.ScopeWorkspace, e.WorkspaceID, data)
 		} else if strings.HasPrefix(e.Type, "daemon:") {
 			realtime.M.RecordEvent(e.Type)
 			b.Broadcast(data)

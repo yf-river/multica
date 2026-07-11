@@ -13,7 +13,6 @@ import (
 type fakeBroadcaster struct {
 	mu              sync.Mutex
 	scopeCalls      []scopeCall
-	workspaceCalls  []workspaceCall
 	userCalls       []userCall
 	broadcastCalled int
 }
@@ -22,14 +21,10 @@ type scopeCall struct {
 	scopeType, scopeID string
 	msg                []byte
 }
-type workspaceCall struct {
-	workspaceID string
-	msg         []byte
-}
 type userCall struct {
 	userID  string
 	msg     []byte
-	exclude []string
+	exclude string
 }
 
 func (f *fakeBroadcaster) BroadcastToScope(scopeType, scopeID string, message []byte) {
@@ -37,15 +32,10 @@ func (f *fakeBroadcaster) BroadcastToScope(scopeType, scopeID string, message []
 	defer f.mu.Unlock()
 	f.scopeCalls = append(f.scopeCalls, scopeCall{scopeType, scopeID, message})
 }
-func (f *fakeBroadcaster) BroadcastToWorkspace(workspaceID string, message []byte) {
+func (f *fakeBroadcaster) BroadcastToUser(userID, excludeWorkspaceID string, message []byte) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.workspaceCalls = append(f.workspaceCalls, workspaceCall{workspaceID, message})
-}
-func (f *fakeBroadcaster) SendToUser(userID string, message []byte, excludeWorkspace ...string) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.userCalls = append(f.userCalls, userCall{userID, message, excludeWorkspace})
+	f.userCalls = append(f.userCalls, userCall{userID, message, excludeWorkspaceID})
 }
 func (f *fakeBroadcaster) Broadcast(message []byte) {
 	f.mu.Lock()
@@ -56,7 +46,7 @@ func (f *fakeBroadcaster) Broadcast(message []byte) {
 // TestRegisterListeners_TaskChatGoToWorkspace pins the must-fix #1 contract
 // from the PR #1429 review: until the WS client supports scope-subscribe and
 // reconnect-replay, high-frequency task/chat events MUST keep going through
-// workspace fanout. Routing them via BroadcastToScope("task"|"chat", ...)
+// workspace scope. Routing them via BroadcastToScope("task"|"chat", ...)
 // with no client-side subscriber would silently drop every chat / task
 // message and break the live timeline + chat unread badges.
 func TestRegisterListeners_TaskChatGoToWorkspace(t *testing.T) {
@@ -86,15 +76,36 @@ func TestRegisterListeners_TaskChatGoToWorkspace(t *testing.T) {
 				Payload:       map[string]any{"hello": "world"},
 			})
 
-			if len(fb.scopeCalls) != 0 {
-				t.Fatalf("expected no BroadcastToScope calls (must-fix #1: keep workspace fanout until client lands), got %+v", fb.scopeCalls)
+			if len(fb.scopeCalls) != 1 {
+				t.Fatalf("expected exactly 1 workspace scope call, got %d", len(fb.scopeCalls))
 			}
-			if len(fb.workspaceCalls) != 1 {
-				t.Fatalf("expected exactly 1 BroadcastToWorkspace call, got %d", len(fb.workspaceCalls))
-			}
-			if fb.workspaceCalls[0].workspaceID != "ws-1" {
-				t.Fatalf("expected workspace ws-1, got %q", fb.workspaceCalls[0].workspaceID)
+			if fb.scopeCalls[0].scopeType != "workspace" || fb.scopeCalls[0].scopeID != "ws-1" {
+				t.Fatalf("expected workspace/ws-1, got %s/%s", fb.scopeCalls[0].scopeType, fb.scopeCalls[0].scopeID)
 			}
 		})
+	}
+}
+
+func TestRegisterListeners_MemberAddedExcludesWorkspaceFromUserCopy(t *testing.T) {
+	bus := events.New()
+	fb := &fakeBroadcaster{}
+	registerListeners(bus, fb)
+
+	bus.Publish(events.Event{
+		Type:        protocol.EventMemberAdded,
+		WorkspaceID: "ws-1",
+		Payload: map[string]any{
+			"member": map[string]any{"user_id": "user-1"},
+		},
+	})
+
+	if len(fb.scopeCalls) != 1 || fb.scopeCalls[0].scopeType != "workspace" || fb.scopeCalls[0].scopeID != "ws-1" {
+		t.Fatalf("workspace calls = %+v, want one workspace/ws-1 call", fb.scopeCalls)
+	}
+	if len(fb.userCalls) != 1 {
+		t.Fatalf("user calls = %d, want 1", len(fb.userCalls))
+	}
+	if call := fb.userCalls[0]; call.userID != "user-1" || call.exclude != "ws-1" {
+		t.Fatalf("user call = %+v, want user-1 excluding ws-1", call)
 	}
 }

@@ -102,7 +102,7 @@ func deliverEnvelope(hub *Hub, daemonRuntime DaemonRuntimeDeliverer, ev envelope
 			daemonRuntime.DeliverDaemonRuntime(ev.ScopeID, frame, ev.EventID)
 		}
 	case "global":
-		hub.fanoutAllDedup(frame, "", ev.EventID)
+		hub.fanoutAllDedup(frame, ev.EventID)
 	case ScopeUser:
 		hub.fanoutUser(ev.ScopeID, frame, ev.WorkspaceID, ev.EventID)
 	default:
@@ -178,25 +178,17 @@ func (d *DualWriteBroadcaster) BroadcastToScope(scopeType, scopeID string, messa
 	_ = d.relay.PublishWithID(scopeType, scopeID, "", message, id)
 }
 
-func (d *DualWriteBroadcaster) BroadcastToWorkspace(workspaceID string, message []byte) {
-	d.BroadcastToScope(ScopeWorkspace, workspaceID, message)
-}
-
-func (d *DualWriteBroadcaster) SendToUser(userID string, message []byte, excludeWorkspace ...string) {
-	exclude := ""
-	if len(excludeWorkspace) > 0 {
-		exclude = excludeWorkspace[0]
-	}
+func (d *DualWriteBroadcaster) BroadcastToUser(userID, excludeWorkspaceID string, message []byte) {
 	id := ulid.Make().String()
 	frame := injectEventID(message, id)
-	d.local.fanoutUser(userID, frame, exclude, id)
-	_ = d.relay.PublishWithID(ScopeUser, userID, exclude, message, id)
+	d.local.fanoutUser(userID, frame, excludeWorkspaceID, id)
+	_ = d.relay.PublishWithID(ScopeUser, userID, excludeWorkspaceID, message, id)
 }
 
 func (d *DualWriteBroadcaster) Broadcast(message []byte) {
 	id := ulid.Make().String()
 	frame := injectEventID(message, id)
-	d.local.fanoutAllDedup(frame, "", id)
+	d.local.fanoutAllDedup(frame, id)
 	_ = d.relay.PublishWithID("global", "all", "", message, id)
 }
 

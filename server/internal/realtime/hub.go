@@ -326,7 +326,7 @@ func (h *Hub) Run() {
 			h.removeClient(client)
 
 		case message := <-h.broadcast:
-			h.fanoutAll(message, "")
+			h.fanoutAll(message)
 		}
 	}
 }
@@ -513,22 +513,16 @@ func (h *Hub) BroadcastToScopeDedup(scopeType, scopeID string, message []byte, e
 	}
 }
 
-// fanoutAll delivers message to every connected client. If excludeWorkspace
-// is non-empty, clients whose workspaceID matches are skipped (used by the
-// member:added dedup semantics carried over from SendToUser). eventID is the
-// dedup key (empty disables dedup).
-func (h *Hub) fanoutAll(message []byte, excludeWorkspace string) {
-	h.fanoutAllDedup(message, excludeWorkspace, "")
+// fanoutAll delivers message to every connected client.
+func (h *Hub) fanoutAll(message []byte) {
+	h.fanoutAllDedup(message, "")
 }
 
-func (h *Hub) fanoutAllDedup(message []byte, excludeWorkspace, eventID string) {
+func (h *Hub) fanoutAllDedup(message []byte, eventID string) {
 	h.mu.RLock()
 	var slow []*Client
 	var sent int64
 	for client := range h.clients {
-		if excludeWorkspace != "" && client.workspaceID == excludeWorkspace {
-			continue
-		}
 		if !client.markSeen(eventID) {
 			continue
 		}
@@ -549,19 +543,10 @@ func (h *Hub) fanoutAllDedup(message []byte, excludeWorkspace, eventID string) {
 	}
 }
 
-// BroadcastToWorkspace is a back-compat shortcut.
-func (h *Hub) BroadcastToWorkspace(workspaceID string, message []byte) {
-	h.BroadcastToScope(ScopeWorkspace, workspaceID, message)
-}
-
-// SendToUser delivers a message to every connection belonging to userID,
-// skipping any connections whose workspaceID matches excludeWorkspace.
-func (h *Hub) SendToUser(userID string, message []byte, excludeWorkspace ...string) {
-	exclude := ""
-	if len(excludeWorkspace) > 0 {
-		exclude = excludeWorkspace[0]
-	}
-	h.fanoutUser(userID, message, exclude, "")
+// BroadcastToUser delivers a message to every connection belonging to userID,
+// except connections already covered by excludeWorkspaceID.
+func (h *Hub) BroadcastToUser(userID, excludeWorkspaceID string, message []byte) {
+	h.fanoutUser(userID, message, excludeWorkspaceID, "")
 }
 
 // Broadcast sends a message to every connected client (daemon events).

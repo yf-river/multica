@@ -41,6 +41,27 @@ func TestDualWriteBroadcasterFansOutLocallyBeforePublishing(t *testing.T) {
 	}
 }
 
+func TestDualWriteBroadcasterUserExclusionMatchesRelayEnvelope(t *testing.T) {
+	hub := NewHub()
+	excluded := attachRealtimeTestClient(hub, ScopeUser, "user-1")
+	delivered := attachRealtimeTestClient(hub, ScopeUser, "user-1")
+	delivered.workspaceID = "workspace-2"
+	publisher := &localFirstPublisher{t: t, client: delivered}
+	broadcaster := newDualWriteBroadcaster(hub, publisher)
+	message := []byte(`{"type":"member:added"}`)
+
+	broadcaster.BroadcastToUser("user-1", "workspace-1", message)
+
+	if publisher.scopeType != ScopeUser || publisher.scopeID != "user-1" || publisher.exclude != "workspace-1" {
+		t.Fatalf("relay envelope = %s/%s exclude=%q", publisher.scopeType, publisher.scopeID, publisher.exclude)
+	}
+	select {
+	case frame := <-excluded.send:
+		t.Fatalf("excluded workspace received duplicate frame %s", frame)
+	default:
+	}
+}
+
 func attachRealtimeTestClient(hub *Hub, scopeType, scopeID string) *Client {
 	client := &Client{
 		send:          make(chan []byte, 2),

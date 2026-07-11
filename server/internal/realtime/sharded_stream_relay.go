@@ -145,16 +145,8 @@ func (r *ShardedStreamRelay) BroadcastToScope(scopeType, scopeID string, message
 	_ = r.PublishWithID(scopeType, scopeID, "", message, ulid.Make().String())
 }
 
-func (r *ShardedStreamRelay) BroadcastToWorkspace(workspaceID string, message []byte) {
-	r.BroadcastToScope(ScopeWorkspace, workspaceID, message)
-}
-
-func (r *ShardedStreamRelay) SendToUser(userID string, message []byte, excludeWorkspace ...string) {
-	exclude := ""
-	if len(excludeWorkspace) > 0 {
-		exclude = excludeWorkspace[0]
-	}
-	_ = r.PublishWithID(ScopeUser, userID, exclude, message, ulid.Make().String())
+func (r *ShardedStreamRelay) BroadcastToUser(userID, excludeWorkspaceID string, message []byte) {
+	_ = r.PublishWithID(ScopeUser, userID, excludeWorkspaceID, message, ulid.Make().String())
 }
 
 func (r *ShardedStreamRelay) Broadcast(message []byte) {
