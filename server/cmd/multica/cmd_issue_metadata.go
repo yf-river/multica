@@ -2,9 +2,7 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"sort"
 	"strconv"
@@ -172,20 +170,6 @@ func runIssueMetadataList(cmd *cobra.Command, args []string) error {
 
 	var result map[string]any
 	if err := client.GetJSON(ctx, "/api/issues/"+issueRef.ID+"/metadata", &result); err != nil {
-		// Best-effort degradation: when the server does not expose the
-		// per-issue metadata endpoint (self-hosted backends running an
-		// older build, missing migration, or routing issues that surface
-		// as 404), an agent's bootstrap "metadata list" must not fail
-		// the entire run. Emit an empty map and exit 0 so the agent
-		// still gets the empty-metadata signal it would have gotten on
-		// a fresh issue. Other status codes (auth, server errors) keep
-		// real error semantics, and metadata get/set/delete are
-		// unaffected — those callers still need to know when something
-		// went wrong.
-		var httpErr *cli.HTTPError
-		if errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusNotFound {
-			return printMetadataMapResult(cmd, map[string]any{})
-		}
 		return fmt.Errorf("list metadata: %w", err)
 	}
 	return printMetadataMapResult(cmd, resultMetadataMap(result))
