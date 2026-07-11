@@ -17,6 +17,24 @@ import (
 	"github.com/multica-ai/multica/server/internal/cli"
 )
 
+func mustResolveWorkspaceID(t *testing.T, cmd *cobra.Command) string {
+	t.Helper()
+	value, err := resolveWorkspaceID(cmd)
+	if err != nil {
+		t.Fatalf("resolveWorkspaceID: %v", err)
+	}
+	return value
+}
+
+func mustResolveToken(t *testing.T, cmd *cobra.Command) string {
+	t.Helper()
+	value, err := resolveToken(cmd)
+	if err != nil {
+		t.Fatalf("resolveToken: %v", err)
+	}
+	return value
+}
+
 // freshAgentEnvSetCmd returns a standalone cobra.Command with the three
 // --custom-env* flags registered identically to agentEnvSetCmd, so
 // resolveCustomEnv-shaped tests can mutate flag state without leaking
@@ -55,7 +73,7 @@ func TestResolveWorkspaceID_AgentContextSkipsConfig(t *testing.T) {
 		t.Setenv("MULTICA_TASK_ID", "")
 		t.Setenv("MULTICA_WORKSPACE_ID", "")
 
-		got := resolveWorkspaceID(testCmd())
+		got := mustResolveWorkspaceID(t, testCmd())
 		if got != "config-file-ws" {
 			t.Fatalf("resolveWorkspaceID() = %q, want %q (config fallback)", got, "config-file-ws")
 		}
@@ -66,7 +84,7 @@ func TestResolveWorkspaceID_AgentContextSkipsConfig(t *testing.T) {
 		t.Setenv("MULTICA_TASK_ID", "task-456")
 		t.Setenv("MULTICA_WORKSPACE_ID", "env-ws")
 
-		got := resolveWorkspaceID(testCmd())
+		got := mustResolveWorkspaceID(t, testCmd())
 		if got != "env-ws" {
 			t.Fatalf("resolveWorkspaceID() = %q, want %q (env)", got, "env-ws")
 		}
@@ -77,7 +95,7 @@ func TestResolveWorkspaceID_AgentContextSkipsConfig(t *testing.T) {
 		t.Setenv("MULTICA_TASK_ID", "task-456")
 		t.Setenv("MULTICA_WORKSPACE_ID", "")
 
-		got := resolveWorkspaceID(testCmd())
+		got := mustResolveWorkspaceID(t, testCmd())
 		if got != "" {
 			t.Fatalf("resolveWorkspaceID() = %q, want empty (no silent config fallback in agent context)", got)
 		}
@@ -88,7 +106,7 @@ func TestResolveWorkspaceID_AgentContextSkipsConfig(t *testing.T) {
 		t.Setenv("MULTICA_TASK_ID", "task-456")
 		t.Setenv("MULTICA_WORKSPACE_ID", "")
 
-		if got := resolveWorkspaceID(testCmd()); got != "" {
+		if got := mustResolveWorkspaceID(t, testCmd()); got != "" {
 			t.Fatalf("resolveWorkspaceID() = %q, want empty", got)
 		}
 	})
@@ -120,7 +138,7 @@ func TestResolveToken_AgentContextSkipsConfig(t *testing.T) {
 		t.Setenv("MULTICA_TASK_ID", "")
 		t.Setenv("MULTICA_TOKEN", "")
 
-		if got := resolveToken(testCmd()); got != "mul_profile_token" {
+		if got := mustResolveToken(t, testCmd()); got != "mul_profile_token" {
 			t.Fatalf("resolveToken() = %q, want profile token", got)
 		}
 	})
@@ -130,7 +148,7 @@ func TestResolveToken_AgentContextSkipsConfig(t *testing.T) {
 		t.Setenv("MULTICA_TASK_ID", "task-456")
 		t.Setenv("MULTICA_TOKEN", "")
 
-		if got := resolveToken(testCmd()); got != "" {
+		if got := mustResolveToken(t, testCmd()); got != "" {
 			t.Fatalf("resolveToken() = %q, want empty in agent context without MULTICA_TOKEN", got)
 		}
 	})
@@ -140,7 +158,7 @@ func TestResolveToken_AgentContextSkipsConfig(t *testing.T) {
 		t.Setenv("MULTICA_TASK_ID", "task-456")
 		t.Setenv("MULTICA_TOKEN", "mat_task_token")
 
-		if got := resolveToken(testCmd()); got != "mat_task_token" {
+		if got := mustResolveToken(t, testCmd()); got != "mat_task_token" {
 			t.Fatalf("resolveToken() = %q, want MULTICA_TOKEN", got)
 		}
 	})

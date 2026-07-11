@@ -104,8 +104,14 @@ type workspaceSummary struct {
 // is shared by `list` and `switch` so both see the same access-controlled view
 // of workspaces.
 func fetchWorkspaces(ctx context.Context, cmd *cobra.Command) ([]workspaceSummary, error) {
-	serverURL := resolveServerURL(cmd)
-	token := resolveToken(cmd)
+	serverURL, err := resolveServerURL(cmd)
+	if err != nil {
+		return nil, err
+	}
+	token, err := resolveToken(cmd)
+	if err != nil {
+		return nil, err
+	}
 	if token == "" {
 		return nil, fmt.Errorf("not authenticated: run 'multica login' first")
 	}
@@ -137,7 +143,10 @@ func runWorkspaceList(cmd *cobra.Command, _ []string) error {
 		return nil
 	}
 
-	currentID := resolveWorkspaceID(cmd)
+	currentID, err := resolveWorkspaceID(cmd)
+	if err != nil {
+		return err
+	}
 	fullID, _ := cmd.Flags().GetBool("full-id")
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
 	_, _ = fmt.Fprintln(w, "\tID\tNAME\tSLUG")
@@ -286,7 +295,7 @@ func resolveWorkspaceArg(cmd *cobra.Command, args []string) (string, error) {
 		}
 		return ws.ID, nil
 	}
-	return resolveWorkspaceID(cmd), nil
+	return resolveWorkspaceID(cmd)
 }
 
 func runWorkspaceGet(cmd *cobra.Command, args []string) error {

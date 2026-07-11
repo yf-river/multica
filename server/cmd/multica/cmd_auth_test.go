@@ -3,10 +3,13 @@ package main
 import (
 	"net"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
+
+	"github.com/multica-ai/multica/server/internal/cli"
 )
 
 func TestMain(m *testing.M) {
@@ -31,7 +34,11 @@ func TestResolveAppURL(t *testing.T) {
 		t.Setenv("MULTICA_APP_URL", "http://localhost:14000")
 		t.Setenv("FRONTEND_ORIGIN", "http://localhost:13000")
 
-		if got := resolveAppURL(cmd); got != "http://localhost:14000" {
+		got, err := resolveAppURL(cmd)
+		if err != nil {
+			t.Fatalf("resolveAppURL: %v", err)
+		}
+		if got != "http://localhost:14000" {
 			t.Fatalf("resolveAppURL() = %q, want %q", got, "http://localhost:14000")
 		}
 	})
@@ -40,10 +47,52 @@ func TestResolveAppURL(t *testing.T) {
 		t.Setenv("MULTICA_APP_URL", "")
 		t.Setenv("FRONTEND_ORIGIN", "http://localhost:13026")
 
-		if got := resolveAppURL(cmd); got != "http://localhost:13026" {
+		got, err := resolveAppURL(cmd)
+		if err != nil {
+			t.Fatalf("resolveAppURL: %v", err)
+		}
+		if got != "http://localhost:13026" {
 			t.Fatalf("resolveAppURL() = %q, want %q", got, "http://localhost:13026")
 		}
 	})
+}
+
+func TestAuthCommandsPreserveUnreadableConfig(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MULTICA_SERVER_URL", "")
+	t.Setenv("MULTICA_APP_URL", "")
+	t.Setenv("FRONTEND_ORIGIN", "")
+	t.Setenv("MULTICA_TOKEN", "")
+	t.Setenv("MULTICA_WORKSPACE_ID", "")
+	t.Setenv("MULTICA_AGENT_ID", "")
+	t.Setenv("MULTICA_TASK_ID", "")
+
+	path, err := cli.CLIConfigPathForProfile("")
+	if err != nil {
+		t.Fatalf("CLIConfigPathForProfile: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("create config dir: %v", err)
+	}
+	const invalidConfig = `{"token":`
+	if err := os.WriteFile(path, []byte(invalidConfig), 0o600); err != nil {
+		t.Fatalf("write invalid config: %v", err)
+	}
+
+	if _, err := newAPIClient(testCmd()); err == nil || !strings.Contains(err.Error(), "load CLI config") {
+		t.Fatalf("newAPIClient error = %v, want unreadable config error", err)
+	}
+	if err := runAuthLogout(testCmd(), nil); err == nil || !strings.Contains(err.Error(), "load CLI config") {
+		t.Fatalf("runAuthLogout error = %v, want unreadable config error", err)
+	}
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read config after rejected logout: %v", err)
+	}
+	if string(content) != invalidConfig {
+		t.Fatalf("unreadable config was overwritten: %q", content)
+	}
 }
 
 func TestResolveCallbackBinding(t *testing.T) {

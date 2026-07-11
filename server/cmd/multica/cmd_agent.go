@@ -242,12 +242,17 @@ func resolveProfile(cmd *cobra.Command) string {
 }
 
 func newAPIClient(cmd *cobra.Command) (*cli.APIClient, error) {
-	serverURL := resolveServerURL(cmd)
-	workspaceID := resolveWorkspaceID(cmd)
-	token := resolveToken(cmd)
-
-	if serverURL == "" {
-		return nil, fmt.Errorf("server URL not set: use --server-url flag, MULTICA_SERVER_URL env, or 'multica config set server_url <url>'")
+	serverURL, err := resolveServerURL(cmd)
+	if err != nil {
+		return nil, err
+	}
+	workspaceID, err := resolveWorkspaceID(cmd)
+	if err != nil {
+		return nil, err
+	}
+	token, err := resolveToken(cmd)
+	if err != nil {
+		return nil, err
 	}
 	if inAgentExecutionContext() && !strings.HasPrefix(token, "mat_") {
 		return nil, fmt.Errorf("agent execution context requires MULTICA_TOKEN to be a task-scoped mat_ token")
@@ -264,22 +269,23 @@ func newAPIClient(cmd *cobra.Command) (*cli.APIClient, error) {
 	return client, nil
 }
 
-func resolveServerURL(cmd *cobra.Command) string {
+func resolveServerURL(cmd *cobra.Command) (string, error) {
 	val := cli.FlagOrEnv(cmd, "server-url", "MULTICA_SERVER_URL", "")
 	if val == "" {
 		val = taskContextValue("MULTICA_SERVER_URL")
 	}
 	if val != "" {
-		return normalizeAPIBaseURL(val)
+		return normalizeAPIBaseURL(val), nil
 	}
 	profile := resolveProfile(cmd)
 	cfg, err := cli.LoadCLIConfigForProfile(profile)
-	if err == nil && cfg.ServerURL != "" {
-		return normalizeAPIBaseURL(cfg.ServerURL)
+	if err != nil {
+		return "", fmt.Errorf("load CLI config: %w", err)
 	}
-	fmt.Fprintln(os.Stderr, "No server configured. Run 'multica setup' first.")
-	os.Exit(1)
-	return "" // unreachable
+	if cfg.ServerURL == "" {
+		return "", fmt.Errorf("server URL not set: use --server-url flag, MULTICA_SERVER_URL env, or 'multica config set server_url <url>'")
+	}
+	return normalizeAPIBaseURL(cfg.ServerURL), nil
 }
 
 func normalizeAPIBaseURL(raw string) string {
@@ -301,29 +307,35 @@ func inAgentExecutionContext() bool {
 	return envOrTaskContext("MULTICA_AGENT_ID") != "" || envOrTaskContext("MULTICA_TASK_ID") != ""
 }
 
-func resolveWorkspaceID(cmd *cobra.Command) string {
+func resolveWorkspaceID(cmd *cobra.Command) (string, error) {
 	val := cli.FlagOrEnv(cmd, "workspace-id", "MULTICA_WORKSPACE_ID", "")
 	if val == "" {
 		val = taskContextValue("MULTICA_WORKSPACE_ID")
 	}
 	if val != "" {
-		return val
+		return val, nil
 	}
 	// Inside an agent task the daemon is the only authority on workspace
 	// identity. Never read the user-global CLI config here.
 	if inAgentExecutionContext() {
-		return ""
+		return "", nil
 	}
 	profile := resolveProfile(cmd)
-	cfg, _ := cli.LoadCLIConfigForProfile(profile)
-	return cfg.WorkspaceID
+	cfg, err := cli.LoadCLIConfigForProfile(profile)
+	if err != nil {
+		return "", fmt.Errorf("load CLI config: %w", err)
+	}
+	return cfg.WorkspaceID, nil
 }
 
 // requireWorkspaceID resolves the workspace ID and returns an error with
 // actionable instructions if it is empty (e.g. user has multiple workspaces
 // but no default configured).
 func requireWorkspaceID(cmd *cobra.Command) (string, error) {
-	id := resolveWorkspaceID(cmd)
+	id, err := resolveWorkspaceID(cmd)
+	if err != nil {
+		return "", err
+	}
 	if id == "" {
 		if inAgentExecutionContext() {
 			return "", fmt.Errorf("workspace_id is required: MULTICA_WORKSPACE_ID must be set by the daemon in agent execution context (no fallback to user config)")
