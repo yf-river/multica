@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/handler"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -155,6 +156,27 @@ func TestSubscriberIssueCreated_CreatorSubscribed(t *testing.T) {
 	}
 	if count := subscriberCount(t, queries, issueID); count != 1 {
 		t.Fatalf("expected 1 subscriber, got %d", count)
+	}
+}
+
+func TestAddSubscriberDeletedIssueIsAlreadyComplete(t *testing.T) {
+	queries := db.New(testPool)
+	missingIssueID := uuid.NewString()
+
+	_, created, err := addSubscriber(
+		context.Background(),
+		queries,
+		testWorkspaceID,
+		missingIssueID,
+		"member",
+		testUserID,
+		"creator",
+	)
+	if err != nil {
+		t.Fatalf("addSubscriber for deleted issue: %v", err)
+	}
+	if created {
+		t.Fatal("addSubscriber for deleted issue reported a projection event")
 	}
 }
 

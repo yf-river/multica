@@ -34,6 +34,34 @@ func (q *Queries) AddIssueSubscriber(ctx context.Context, arg AddIssueSubscriber
 	return err
 }
 
+const addIssueSubscriberIfIssueExists = `-- name: AddIssueSubscriberIfIssueExists :execrows
+INSERT INTO issue_subscriber (issue_id, user_type, user_id, reason)
+SELECT $1, $2, $3, $4
+FROM issue
+WHERE id = $1
+ON CONFLICT (issue_id, user_type, user_id) DO NOTHING
+`
+
+type AddIssueSubscriberIfIssueExistsParams struct {
+	IssueID  pgtype.UUID `json:"issue_id"`
+	UserType string      `json:"user_type"`
+	UserID   pgtype.UUID `json:"user_id"`
+	Reason   string      `json:"reason"`
+}
+
+func (q *Queries) AddIssueSubscriberIfIssueExists(ctx context.Context, arg AddIssueSubscriberIfIssueExistsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, addIssueSubscriberIfIssueExists,
+		arg.IssueID,
+		arg.UserType,
+		arg.UserID,
+		arg.Reason,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const isIssueSubscriber = `-- name: IsIssueSubscriber :one
 SELECT EXISTS(
     SELECT 1 FROM issue_subscriber

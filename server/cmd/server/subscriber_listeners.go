@@ -177,13 +177,17 @@ func addSubscriber(
 	if err != nil {
 		return events.Event{}, false, fmt.Errorf("subscriber projection has invalid %s ID: %w", userType, err)
 	}
-	if err := queries.AddIssueSubscriber(ctx, db.AddIssueSubscriberParams{
+	inserted, err := queries.AddIssueSubscriberIfIssueExists(ctx, db.AddIssueSubscriberIfIssueExistsParams{
 		IssueID:  parsedIssueID,
 		UserType: userType,
 		UserID:   parsedUserID,
 		Reason:   reason,
-	}); err != nil {
+	})
+	if err != nil {
 		return events.Event{}, false, fmt.Errorf("add %s issue subscriber %s: %w", reason, userID, err)
+	}
+	if inserted == 0 {
+		return events.Event{}, false, nil
 	}
 	return events.Event{
 		Type:        protocol.EventSubscriberAdded,
