@@ -8,7 +8,7 @@
 //
 // Pure functions only (no React / DOM) so they can be shared with mobile.
 
-const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})/;
+const DATE_ONLY = /^(\d{4})-(\d{2})-(\d{2})$/;
 
 function pad(n: number): string {
   return String(n).padStart(2, "0");
@@ -36,15 +36,22 @@ export function addDaysDateOnly(days: number): string {
 }
 
 /**
- * Parse a date-only string into [year, month, day], tolerating a legacy full
- * ISO timestamp by reading its UTC calendar day. Returns null when unparseable.
+ * Parse the current date-only wire format into [year, month, day]. Returns
+ * null for malformed or impossible calendar dates.
  */
 function parseParts(value: string): [number, number, number] | null {
   const m = DATE_ONLY.exec(value);
-  if (m) return [Number(m[1]), Number(m[2]), Number(m[3])];
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return null;
-  return [d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate()];
+  if (!m) return null;
+  const parts: [number, number, number] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const date = new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
+  if (
+    date.getUTCFullYear() !== parts[0] ||
+    date.getUTCMonth() + 1 !== parts[1] ||
+    date.getUTCDate() !== parts[2]
+  ) {
+    return null;
+  }
+  return parts;
 }
 
 /**

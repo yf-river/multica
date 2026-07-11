@@ -42,11 +42,9 @@ describe("issue date-only helpers", () => {
     expect(dateOnlyToUTCDate(null)).toBeNull();
   });
 
-  it("tolerates a legacy RFC3339 instant by reading its UTC day", () => {
-    // Old clients stored local-midnight-as-UTC; read the stored UTC calendar day.
-    expect(dateOnlyToUTCDate("2026-02-28T16:00:00Z")?.toISOString()).toBe(
-      "2026-02-28T00:00:00.000Z",
-    );
+  it("rejects values outside the current date-only wire format", () => {
+    expect(dateOnlyToUTCDate("2026-02-28T16:00:00Z")).toBeNull();
+    expect(dateOnlyToUTCDate("2026-02-30")).toBeNull();
   });
 
   it("builds a local-midnight Date for the picker's selected day", () => {
