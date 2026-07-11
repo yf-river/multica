@@ -60,7 +60,7 @@ func (h *Handler) ensurePromptEvaluationAgent(w http.ResponseWriter, r *http.Req
 	}
 	instructions := promptEvaluationAgentInstructions()
 	for _, existing := range agents {
-		if existing.Name != promptEvaluationAgentName && existing.Name != legacyPromptEvaluationAgentName {
+		if existing.Name != promptEvaluationAgentName {
 			continue
 		}
 		if uuidToString(existing.RuntimeID) == uuidToString(runtime.ID) &&

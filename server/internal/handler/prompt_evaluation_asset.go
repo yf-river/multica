@@ -23,7 +23,6 @@ const (
 	promptEvaluationDatasetExportV1      = "multica.prompt_evaluation.dataset_export.v1"
 	promptEvaluationDatasetImportV1      = "multica.prompt_evaluation.dataset_import.v1"
 	promptEvaluationAgentName            = "Multica 训练评估智能体"
-	legacyPromptEvaluationAgentName      = "Multica 训练评估 Agent"
 	defaultPromptEvaluationAgentProvider = "codebuddy"
 	defaultPromptEvaluationAgentModel    = "deepseek-v4-pro-ioa"
 	fallbackPromptEvaluationAgentModel   = "deepseek-v4-pro-ioa"
