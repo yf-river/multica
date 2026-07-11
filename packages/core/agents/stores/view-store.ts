@@ -110,7 +110,7 @@ function isAgentsScope(value: unknown): value is AgentsScope {
   return typeof value === "string" && AGENT_SCOPES.some((scope) => scope === value);
 }
 
-export function migrateAgentsViewState(persisted: unknown): Partial<AgentsViewState> {
+function migrateAgentsViewState(persisted: unknown): Partial<AgentsViewState> {
   if (!persisted || typeof persisted !== "object") return { ...DEFAULTS };
   const state = persisted as Partial<AgentsViewState>;
   return {
