@@ -5,7 +5,7 @@ import type {
   PromptEvaluationDatasetFromTracesResponse,
 } from "../types";
 import { PromptEvaluationAssetSchema } from "./schemas-prompt-evaluation-assets";
-import { PromptEvaluationTaskTraceEventSchema } from "./schemas-internal";
+import { TaskTraceEventSchema } from "./schemas-internal";
 import { PromptEvaluationCaseSchema } from "./schemas-prompt-evaluation-case-model";
 
 export {
@@ -105,7 +105,7 @@ export const BulkUpdatePromptEvaluationCaseTagsResponseSchema = z.object({
 export const PromptEvaluationDatasetFromTracesResponseSchema: z.ZodType<PromptEvaluationDatasetFromTracesResponse> = z.object({
   asset: PromptEvaluationAssetSchema,
   cases: z.array(PromptEvaluationCaseSchema).default([]),
-  trace_events: z.array(PromptEvaluationTaskTraceEventSchema).default([]),
+  trace_events: z.array(TaskTraceEventSchema).default([]),
   created_count: z.number().default(0),
   skipped_count: z.number().default(0),
   source: z.literal("trace"),

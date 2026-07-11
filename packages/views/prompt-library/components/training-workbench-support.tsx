@@ -232,7 +232,7 @@ type TrainingRouteOperatingModel = {
   steps: Array<{ label: string; title: string; detail: string }>;
 };
 
-export function trainingRouteOperatingModel(
+function trainingRouteOperatingModel(
   activeTab: WorkbenchTab,
   context: {
     visibleAssets: PromptEvaluationAsset[];
@@ -385,7 +385,7 @@ function stringFromRecord(record: Record<string, unknown>, key: string): string 
   return "";
 }
 
-export function formatNumber(value: unknown): string {
+function formatNumber(value: unknown): string {
   return typeof value === "number" && Number.isFinite(value) ? value.toLocaleString("zh-CN") : "0";
 }
 

@@ -35,7 +35,7 @@ import { shortId } from "./record-utils";
 
 const ALL_TAGS = "__all_tags__";
 
-export interface CaseFilterBarCopy {
+interface CaseFilterBarCopy {
   title: string;
   description: string;
   matchCount: (visible: number, total: number) => string;
@@ -482,7 +482,7 @@ export function ManualCasePanel({
   );
 }
 
-export interface CaseFilterBarProps {
+interface CaseFilterBarProps {
   totalCount: number;
   visibleCount: number;
   tags: string[];
@@ -495,7 +495,7 @@ export interface CaseFilterBarProps {
   copy: CaseFilterBarCopy;
 }
 
-export function CaseFilterBar({
+function CaseFilterBar({
   totalCount,
   visibleCount,
   tags,
@@ -559,7 +559,7 @@ export function CaseFilterBar({
   );
 }
 
-export function FilterButton({
+function FilterButton({
   active,
   onClick,
   href,

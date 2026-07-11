@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { PromptEvaluationAssetSchema } from "./schemas-prompt-evaluation-assets";
-import { NonEmptyStringSchema, PromptEvaluationTaskTraceEventSchema } from "./schemas-internal";
+import { NonEmptyStringSchema, TaskTraceEventSchema } from "./schemas-internal";
 
 // Runtime response contracts for prompt evaluation runs.
 export const PromptEvaluationRunSchema = z.object({
@@ -159,7 +159,7 @@ export const PromptEvaluationRunEvidenceSchema = z.object({
   trials: z.array(PromptEvaluationTrialSchema).default([]),
   task_usage: z.array(PromptEvaluationTaskUsageSchema).default([]),
   task_messages: z.array(PromptEvaluationTaskMessageSchema).default([]),
-  trace_events: z.array(PromptEvaluationTaskTraceEventSchema).default([]),
+  trace_events: z.array(TaskTraceEventSchema).default([]),
   execution_spans: z.array(PromptEvaluationExecutionSpanSchema).default([]),
   tool_call_chains: z.array(PromptEvaluationToolCallChainSchema).default([]),
   tool_call_summary: z.array(PromptEvaluationToolCallSummarySchema).default([]),

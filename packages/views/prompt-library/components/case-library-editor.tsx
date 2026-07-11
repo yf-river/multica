@@ -35,7 +35,7 @@ import { promptLibraryKeys } from "./prompt-library-query-keys";
 
 const ALL_TAGS = "__all_tags__";
 
-export interface CaseDraftEditorCopy {
+interface CaseDraftEditorCopy {
   nameLabel: string;
   namePlaceholder: string;
   tagsLabel: string;
@@ -47,7 +47,7 @@ export interface CaseDraftEditorCopy {
   cancel: string;
 }
 
-export interface DatasetVersionHistoryCopy {
+interface DatasetVersionHistoryCopy {
   title: string;
   loading: string;
   count: (count: number) => string;
@@ -715,7 +715,7 @@ export function CaseLibraryEditorPanel({
   );
 }
 
-export interface CaseDraftEditorProps {
+interface CaseDraftEditorProps {
   title: string;
   draft: ManualCaseDraft;
   onDraftChange: (draft: ManualCaseDraft) => void;
@@ -726,7 +726,7 @@ export interface CaseDraftEditorProps {
   copy: CaseDraftEditorCopy;
 }
 
-export function CaseDraftEditor({
+function CaseDraftEditor({
   title,
   draft,
   onDraftChange,
@@ -790,7 +790,7 @@ export function CaseDraftEditor({
   );
 }
 
-export function DatasetVersionHistoryPanel({
+function DatasetVersionHistoryPanel({
   asset,
   copy,
 }: {

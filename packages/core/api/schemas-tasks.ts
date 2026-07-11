@@ -3,7 +3,6 @@ import type {
   AgentActivityBucket,
   AgentRunCount,
   AgentTask,
-  CancelTaskResponse,
   IssueExecutionTreeResponse,
   IssueTaskTraceResponse,
   IssueUsageSummary,
@@ -74,8 +73,6 @@ export const CancelTaskResponseSchema = AgentTaskSchema.extend({
   cancelled_chat_message: CancelledChatMessageSchema.nullish()
     .transform((value) => value ?? undefined),
 }).loose();
-
-export const EMPTY_CANCEL_TASK_RESPONSE: CancelTaskResponse = EMPTY_AGENT_TASK;
 
 export const AgentActivityBucketListSchema = z.array(z.object({
   agent_id: NonEmptyStringSchema,

@@ -40,7 +40,3 @@ export const TaskTraceEventSchema = z.object({
   metadata: z.record(z.string(), z.unknown()).default({}),
   created_at: z.string().default(""),
 }).loose();
-
-// Prompt Evaluation consumes the same durable task-trace wire contract. Keep
-// the historical export name as an internal source alias, not a second schema.
-export const PromptEvaluationTaskTraceEventSchema = TaskTraceEventSchema;
