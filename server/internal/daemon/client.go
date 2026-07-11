@@ -462,8 +462,7 @@ func (c *Client) GetWorkspaceRepos(ctx context.Context, workspaceID string) (*Wo
 // (MUL-3284). protocol_family is the provider used for task routing (it
 // selects the agent backend), while command_name is the actual executable
 // the daemon resolves on PATH and launches. fixed_args are launch arguments
-// every agent on this runtime inherits — wiring them into the spawned command
-// is best-effort and may not be plumbed yet (see the TODO in runTask).
+// every agent on this runtime inherits.
 type RuntimeProfile struct {
 	ID             string   `json:"id"`
 	WorkspaceID    string   `json:"workspace_id"`
@@ -485,9 +484,9 @@ type RuntimeProfilesResponse struct {
 }
 
 // GetRuntimeProfiles fetches the workspace's enabled custom runtime profiles.
-// Mirrors GetWorkspaceRepos. Callers must treat this as best-effort: an older
-// server with no profiles route returns 404, which the daemon swallows and
-// continues with built-in runtimes only.
+// Mirrors GetWorkspaceRepos. A fetch failure is isolated from built-in runtime
+// registration so a transient profile-service outage does not take the whole
+// daemon offline.
 func (c *Client) GetRuntimeProfiles(ctx context.Context, workspaceID string) (*RuntimeProfilesResponse, error) {
 	var resp RuntimeProfilesResponse
 	if err := c.getJSON(ctx, fmt.Sprintf("/api/daemon/workspaces/%s/runtime-profiles", workspaceID), &resp); err != nil {

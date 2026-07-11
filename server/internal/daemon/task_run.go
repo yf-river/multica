@@ -35,6 +35,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	d.registerTaskRepos(task.WorkspaceID, task.Repos)
 
 	entry, ok := d.cfg.Agents[provider]
+	var profileFixedArgs []string
 	// A custom runtime profile (MUL-3284) overrides the executable path: the
 	// runtime's protocol_family is the provider (so agent.New still selects
 	// the right backend), but the actual binary on PATH is the profile's
@@ -42,12 +43,14 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// Critically, a custom runtime can live on a host that has NO built-in
 	// agent of the same provider installed, so when the runtime is custom we
 	// synthesize an AgentEntry instead of hard-failing on the !ok lookup.
-	if customPath, isCustom := d.customCommandPathForRuntime(task.RuntimeID); isCustom {
-		entry.Path = customPath
+	if launch, isCustom := d.customLaunchForRuntime(task.RuntimeID); isCustom {
+		entry.Path = launch.CommandPath
+		profileFixedArgs = launch.FixedArgs
 		ok = true
 		d.logger.Info("task uses custom runtime profile command",
 			"task_id", task.ID, "runtime_id", task.RuntimeID,
-			"provider", provider, "command_path", customPath)
+			"provider", provider, "command_path", launch.CommandPath,
+			"fixed_args_count", len(profileFixedArgs))
 	}
 	if !ok {
 		return TaskResult{}, fmt.Errorf("no agent configured for provider %q", provider)
@@ -402,13 +405,14 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		}
 	}
 
-	var customArgs []string
+	var agentCustomArgs []string
 	extraArgs := defaultArgsForProvider(d.cfg, provider)
 	var mcpConfig json.RawMessage
 	if task.Agent != nil {
-		customArgs = task.Agent.CustomArgs
+		agentCustomArgs = task.Agent.CustomArgs
 		mcpConfig = task.Agent.McpConfig
 	}
+	customArgs := runtimeProfileCustomArgs(profileFixedArgs, agentCustomArgs)
 	// Two-tier model resolution: an explicit agent.model wins,
 	// then the daemon-wide MULTICA_<PROVIDER>_MODEL env var. If
 	// both are empty we deliberately pass "" through — each
@@ -764,6 +768,12 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			FailureReason: failureReason,
 		}, nil
 	}
+}
+
+func runtimeProfileCustomArgs(fixedArgs, agentArgs []string) []string {
+	args := make([]string, 0, len(fixedArgs)+len(agentArgs))
+	args = append(args, fixedArgs...)
+	return append(args, agentArgs...)
 }
 
 func agentFailureMessage(provider string, result agent.Result) string {

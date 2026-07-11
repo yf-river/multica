@@ -198,7 +198,7 @@ func newDriftFixture(t *testing.T, initial []RuntimeProfile) *driftFixture {
 	}))
 	t.Cleanup(srv.Close)
 	d := freshDaemon(srv.URL)
-	d.profileCommandPaths = make(map[string]string)
+	d.profileLaunches = make(map[string]runtimeProfileLaunch)
 	fx.daemon = d
 	fx.server = srv
 	return fx
@@ -594,7 +594,7 @@ func TestRefreshWorkspaceRuntimeProfiles_FetchErrorIsBestEffort(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	d := freshDaemon(srv.URL)
-	d.profileCommandPaths = make(map[string]string)
+	d.profileLaunches = make(map[string]runtimeProfileLaunch)
 	knownSig := profileSetSignature(profiles)
 	d.workspaces["ws-1"] = newWorkspaceState("ws-1", []string{"rt-1"}, "", nil, nil)
 	d.workspaces["ws-1"].profileSetSig = knownSig

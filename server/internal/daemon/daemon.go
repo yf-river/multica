@@ -129,6 +129,11 @@ type repoCacheBackend interface {
 	CreateWorktree(params repocache.WorktreeParams) (*repocache.WorktreeResult, error)
 }
 
+type runtimeProfileLaunch struct {
+	CommandPath string
+	FixedArgs   []string
+}
+
 // Daemon is the local agent runtime that polls for and executes tasks.
 type Daemon struct {
 	cfg       Config
@@ -139,14 +144,12 @@ type Daemon struct {
 	mu           sync.Mutex
 	workspaces   map[string]*workspaceState
 	runtimeIndex map[string]Runtime // runtimeID -> Runtime for provider lookups
-	// profileCommandPaths maps a custom runtime profile_id -> the absolute
-	// executable path resolved on PATH for that profile's command_name
-	// (MUL-3284). Populated in registerRuntimesForWorkspace when a profile's
-	// command resolves; read by runTask via customCommandPathForRuntime to
-	// launch the custom command for a claimed task. Guarded by mu.
-	profileCommandPaths map[string]string
-	reloading           sync.Mutex         // prevents concurrent workspace syncs
-	runtimeSet          *runtimeSetWatcher // multi-subscriber pub/sub for runtime-set changes
+	// profileLaunches maps a custom runtime profile_id to its host-resolved
+	// executable and the fixed arguments inherited by every task on that
+	// profile. Guarded by mu; stored argument slices are immutable copies.
+	profileLaunches map[string]runtimeProfileLaunch
+	reloading       sync.Mutex         // prevents concurrent workspace syncs
+	runtimeSet      *runtimeSetWatcher // multi-subscriber pub/sub for runtime-set changes
 
 	versionsMu    sync.RWMutex      // guards agentVersions
 	agentVersions map[string]string // provider -> detected CLI version (set during registration)
@@ -205,7 +208,7 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 		logger:                    logger,
 		workspaces:                make(map[string]*workspaceState),
 		runtimeIndex:              make(map[string]Runtime),
-		profileCommandPaths:       make(map[string]string),
+		profileLaunches:           make(map[string]runtimeProfileLaunch),
 		runtimeSet:                newRuntimeSetWatcher(),
 		agentVersions:             make(map[string]string),
 		wsHBLastAck:               make(map[string]time.Time),

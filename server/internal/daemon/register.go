@@ -469,43 +469,42 @@ func (d *Daemon) findRuntime(id string) *Runtime {
 	return nil
 }
 
-// recordProfileCommandPath remembers the absolute executable path resolved
-// for a custom runtime profile's command_name. Called from
-// registerRuntimesForWorkspace. Lazily initializes the map so test fixtures
-// that build a Daemon literal without seeding every map don't panic.
-func (d *Daemon) recordProfileCommandPath(profileID, path string) {
+// recordProfileLaunch remembers the host-resolved executable and fixed
+// arguments for a custom runtime profile. Both write and read copy the args so
+// an API response or caller cannot mutate launch policy after registration.
+func (d *Daemon) recordProfileLaunch(profileID, path string, fixedArgs []string) {
 	if profileID == "" || path == "" {
 		return
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if d.profileCommandPaths == nil {
-		d.profileCommandPaths = make(map[string]string)
+	if d.profileLaunches == nil {
+		d.profileLaunches = make(map[string]runtimeProfileLaunch)
 	}
-	d.profileCommandPaths[profileID] = path
+	d.profileLaunches[profileID] = runtimeProfileLaunch{
+		CommandPath: path,
+		FixedArgs:   append([]string(nil), fixedArgs...),
+	}
 }
 
-// customCommandPathForRuntime returns the resolved custom executable path for
-// a claimed task's RuntimeID, and whether the runtime is a custom-profile
-// runtime. It returns ("", false) for built-in runtimes (no profile) and for
-// runtimes whose profile command was never resolved on this host. runTask
-// uses this to override the launch path so a custom runtime can run even when
-// the host has no built-in agent of the same provider installed.
-func (d *Daemon) customCommandPathForRuntime(runtimeID string) (string, bool) {
+// customLaunchForRuntime resolves the launch policy for a claimed runtime. It
+// returns false for built-ins and unresolved profiles.
+func (d *Daemon) customLaunchForRuntime(runtimeID string) (runtimeProfileLaunch, bool) {
 	if runtimeID == "" {
-		return "", false
+		return runtimeProfileLaunch{}, false
 	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	rt, ok := d.runtimeIndex[runtimeID]
 	if !ok || rt.ProfileID == "" {
-		return "", false
+		return runtimeProfileLaunch{}, false
 	}
-	path, ok := d.profileCommandPaths[rt.ProfileID]
-	if !ok || path == "" {
-		return "", false
+	launch, ok := d.profileLaunches[rt.ProfileID]
+	if !ok || launch.CommandPath == "" {
+		return runtimeProfileLaunch{}, false
 	}
-	return path, true
+	launch.FixedArgs = append([]string(nil), launch.FixedArgs...)
+	return launch, true
 }
 
 func (d *Daemon) registerRuntimesForWorkspace(ctx context.Context, workspaceID string) (*RegisterResponse, string, error) {
@@ -580,14 +579,13 @@ func (d *Daemon) registerRuntimesForWorkspace(ctx context.Context, workspaceID s
 // appendProfileRuntimes fetches the workspace's enabled custom runtime
 // profiles (MUL-3284) and appends a runtime registration entry for each one
 // whose command_name resolves on this host's PATH. For each resolved profile
-// it records the absolute command path keyed by profile_id (via
-// recordProfileCommandPath) so runTask can later launch the custom executable
-// for a claimed task.
+// it records the absolute command path and fixed arguments keyed by profile_id
+// so runTask can later launch the custom executable for a claimed task.
 //
-// Best-effort by contract: any error fetching profiles (older server, network
-// blip) is logged and swallowed — registration proceeds with the built-in
-// runtimes already collected. A profile whose command is not on PATH is
-// skipped with an Info log (this host simply doesn't have that command).
+// Failure isolation by contract: a transient profile fetch error is logged and
+// registration proceeds with the built-in runtimes already collected. A
+// profile whose command is not on PATH is skipped with an Info log (this host
+// simply doesn't have that command).
 //
 // The registration entry mirrors the built-in shape: name = display_name
 // (suffixed with the device name like the built-in path), type =
@@ -604,8 +602,8 @@ func (d *Daemon) registerRuntimesForWorkspace(ctx context.Context, workspaceID s
 func (d *Daemon) appendProfileRuntimes(ctx context.Context, workspaceID string, runtimes *[]map[string]any) string {
 	resp, err := d.client.GetRuntimeProfiles(ctx, workspaceID)
 	if err != nil {
-		// Best-effort: never fail registration because profiles couldn't be
-		// fetched. An older server with no profiles route returns 404.
+		// Keep built-in runtimes available when the profile endpoint is
+		// temporarily unavailable.
 		d.logger.Info("skip custom runtime profiles: fetch failed (continuing with built-in runtimes)",
 			"workspace_id", workspaceID, "error", err)
 		return ""
@@ -667,15 +665,10 @@ func (d *Daemon) appendProfileRuntimes(ctx context.Context, workspaceID string, 
 		if d.cfg.DeviceName != "" {
 			displayName = fmt.Sprintf("%s (%s)", displayName, d.cfg.DeviceName)
 		}
-		d.recordProfileCommandPath(profile.ID, resolved)
+		d.recordProfileLaunch(profile.ID, resolved, profile.FixedArgs)
 		d.logger.Info("registering custom runtime profile",
 			"workspace_id", workspaceID, "profile_id", profile.ID,
 			"protocol_family", profile.ProtocolFamily, "command_path", resolved)
-		// NOTE: profile.FixedArgs are launch args every agent on this runtime
-		// inherits. Wiring them into the spawned command is intentionally not
-		// done here — it's an optional, best-effort enhancement (see MUL-3284
-		// PR2 task notes). TODO(MUL-3284): plumb FixedArgs into the agent
-		// launch command if/when the agent backend exposes a hook for it.
 		*runtimes = append(*runtimes, map[string]any{
 			"name":       displayName,
 			"type":       profile.ProtocolFamily,
