@@ -128,6 +128,7 @@ function createWindow(): void {
       : {}),
     webPreferences: {
       preload: join(__dirname, "../preload/index.js"),
+      contextIsolation: true,
       sandbox: false,
       webSecurity: false,
       // Required for the Chromium PDF viewer (PDFium) to activate inside

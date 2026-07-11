@@ -261,18 +261,7 @@ const updaterAPI = {
   > => ipcRenderer.invoke("updater:check"),
 };
 
-if (process.contextIsolated) {
-  contextBridge.exposeInMainWorld("electron", electronAPI);
-  contextBridge.exposeInMainWorld("desktopAPI", desktopAPI);
-  contextBridge.exposeInMainWorld("daemonAPI", daemonAPI);
-  contextBridge.exposeInMainWorld("updater", updaterAPI);
-} else {
-  // @ts-expect-error - fallback for non-isolated context
-  window.electron = electronAPI;
-  // @ts-expect-error - fallback for non-isolated context
-  window.desktopAPI = desktopAPI;
-  // @ts-expect-error - fallback for non-isolated context
-  window.daemonAPI = daemonAPI;
-  // @ts-expect-error - fallback for non-isolated context
-  window.updater = updaterAPI;
-}
+contextBridge.exposeInMainWorld("electron", electronAPI);
+contextBridge.exposeInMainWorld("desktopAPI", desktopAPI);
+contextBridge.exposeInMainWorld("daemonAPI", daemonAPI);
+contextBridge.exposeInMainWorld("updater", updaterAPI);
