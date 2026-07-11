@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,23 @@ type agentPlaygroundRunFixture struct {
 	experimentID string
 	agentID      string
 	titlePrefix  string
+}
+
+func createAgentPlaygroundRestrictedMember(t *testing.T) string {
+	t.Helper()
+	ctx := context.Background()
+	account := "playground-member-" + uuid.NewString()
+	var userID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO "user" (name, account) VALUES ('Playground restricted member', $1) RETURNING id
+	`, account).Scan(&userID); err != nil {
+		t.Fatalf("create restricted playground member: %v", err)
+	}
+	mustExec(t, ctx, `INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, 'member')`, testWorkspaceID, userID)
+	t.Cleanup(func() {
+		mustExec(t, context.Background(), `DELETE FROM "user" WHERE id = $1`, userID)
+	})
+	return userID
 }
 
 func newAgentPlaygroundRunFixture(t *testing.T, inputCount int) agentPlaygroundRunFixture {
@@ -241,6 +259,76 @@ func TestRunAgentPlaygroundCommitsCompleteMatrix(t *testing.T) {
 	}
 }
 
+func TestRunAgentPlaygroundRejectsInaccessiblePersonalAgent(t *testing.T) {
+	fixture := newAgentPlaygroundRunFixture(t, 1)
+	restrictedUserID := createAgentPlaygroundRestrictedMember(t)
+	w := httptest.NewRecorder()
+	req := newRequest(http.MethodPost, "/api/agent-playground/experiments/"+fixture.experimentID+"/run?workspace_id="+testWorkspaceID, nil)
+	req.Header.Set("X-User-ID", restrictedUserID)
+	req = withURLParam(req, "id", fixture.experimentID)
+	testHandler.RunAgentPlaygroundExperiment(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+	var results, sessions, tasks int
+	ctx := context.Background()
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM agent_playground_result WHERE experiment_id = $1`, fixture.experimentID).Scan(&results); err != nil {
+		t.Fatalf("count playground results: %v", err)
+	}
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM chat_session WHERE title LIKE $1`, "Agent 调试场 · "+fixture.titlePrefix+"%").Scan(&sessions); err != nil {
+		t.Fatalf("count playground sessions: %v", err)
+	}
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM agent_task_queue WHERE agent_id = $1 AND chat_session_id IS NOT NULL`, fixture.agentID).Scan(&tasks); err != nil {
+		t.Fatalf("count playground tasks: %v", err)
+	}
+	if results != 0 || sessions != 0 || tasks != 0 {
+		t.Fatalf("inaccessible experiment created work: results=%d sessions=%d tasks=%d", results, sessions, tasks)
+	}
+}
+
+func TestAgentPlaygroundHidesInaccessiblePersonalAgentHistory(t *testing.T) {
+	fixture := newAgentPlaygroundRunFixture(t, 1)
+	completeAgentPlaygroundRun(t, fixture)
+	restrictedUserID := createAgentPlaygroundRestrictedMember(t)
+
+	getW := httptest.NewRecorder()
+	getReq := newRequest(http.MethodGet, "/api/agent-playground/experiments/"+fixture.experimentID+"?workspace_id="+testWorkspaceID, nil)
+	getReq.Header.Set("X-User-ID", restrictedUserID)
+	getReq = withURLParam(getReq, "id", fixture.experimentID)
+	testHandler.GetAgentPlaygroundExperiment(getW, getReq)
+	if getW.Code != http.StatusForbidden {
+		t.Fatalf("get inaccessible playground: expected 403, got %d: %s", getW.Code, getW.Body.String())
+	}
+
+	listW := httptest.NewRecorder()
+	listReq := newRequest(http.MethodGet, "/api/agent-playground/experiments?workspace_id="+testWorkspaceID, nil)
+	listReq.Header.Set("X-User-ID", restrictedUserID)
+	testHandler.ListAgentPlaygroundExperiments(listW, listReq)
+	if listW.Code != http.StatusOK {
+		t.Fatalf("list playground experiments: expected 200, got %d: %s", listW.Code, listW.Body.String())
+	}
+	var list struct {
+		Items []AgentPlaygroundExperimentResponse `json:"items"`
+	}
+	if err := json.NewDecoder(listW.Body).Decode(&list); err != nil {
+		t.Fatalf("decode playground list: %v", err)
+	}
+	for _, experiment := range list.Items {
+		if experiment.ID == fixture.experimentID {
+			t.Fatalf("inaccessible personal-agent experiment leaked in list: %s", fixture.experimentID)
+		}
+	}
+
+	syncW := httptest.NewRecorder()
+	syncReq := newRequest(http.MethodPost, "/api/agent-playground/experiments/"+fixture.experimentID+"/sync?workspace_id="+testWorkspaceID, nil)
+	syncReq.Header.Set("X-User-ID", restrictedUserID)
+	syncReq = withURLParam(syncReq, "id", fixture.experimentID)
+	testHandler.SyncAgentPlaygroundExperiment(syncW, syncReq)
+	if syncW.Code != http.StatusForbidden {
+		t.Fatalf("sync inaccessible playground: expected 403, got %d: %s", syncW.Code, syncW.Body.String())
+	}
+}
+
 func TestSyncAgentPlaygroundRollsBackResultWhenCompletionFails(t *testing.T) {
 	fixture := newAgentPlaygroundRunFixture(t, 1)
 	w := runAgentPlaygroundFixture(t, fixture)
@@ -356,6 +444,32 @@ func TestJudgeAgentPlaygroundCommitsCompleteMatrix(t *testing.T) {
 	}
 	if linkedJudgements != 2 || sessions != 2 {
 		t.Fatalf("playground judgement matrix = judgements:%d sessions:%d, want 2/2", linkedJudgements, sessions)
+	}
+}
+
+func TestJudgeAgentPlaygroundRejectsInaccessiblePersonalAgent(t *testing.T) {
+	fixture := newAgentPlaygroundRunFixture(t, 1)
+	completeAgentPlaygroundRun(t, fixture)
+	restrictedUserID := createAgentPlaygroundRestrictedMember(t)
+	w := httptest.NewRecorder()
+	req := newRequest(http.MethodPost, "/api/agent-playground/experiments/"+fixture.experimentID+"/judge?workspace_id="+testWorkspaceID, SetAgentPlaygroundJudgeRequest{JudgeAgentID: fixture.agentID})
+	req.Header.Set("X-User-ID", restrictedUserID)
+	req = withURLParam(req, "id", fixture.experimentID)
+	testHandler.JudgeAgentPlaygroundExperiment(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+	ctx := context.Background()
+	var judgements int
+	var judgeAgentIsNull bool
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM agent_playground_judgement WHERE experiment_id = $1`, fixture.experimentID).Scan(&judgements); err != nil {
+		t.Fatalf("count playground judgements: %v", err)
+	}
+	if err := testPool.QueryRow(ctx, `SELECT judge_agent_id IS NULL FROM agent_playground_experiment WHERE id = $1`, fixture.experimentID).Scan(&judgeAgentIsNull); err != nil {
+		t.Fatalf("load experiment judge: %v", err)
+	}
+	if judgements != 0 || !judgeAgentIsNull {
+		t.Fatalf("inaccessible judge persisted work: judgements=%d judge_is_null=%v", judgements, judgeAgentIsNull)
 	}
 }
 

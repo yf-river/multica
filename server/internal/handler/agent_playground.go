@@ -101,9 +101,18 @@ type SetAgentPlaygroundJudgeRequest struct {
 }
 
 func (h *Handler) ListAgentPlaygroundExperiments(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
 	workspaceID := h.resolveWorkspaceID(r)
 	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
 	if !ok {
+		return
+	}
+	allowedAgentIDs, err := h.agentPlaygroundAllowedAgentIDs(r, userID, workspaceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to resolve agent playground access")
 		return
 	}
 	rows, err := h.Queries.ListAgentPlaygroundExperiments(r.Context(), db.ListAgentPlaygroundExperimentsParams{
@@ -116,6 +125,14 @@ func (h *Handler) ListAgentPlaygroundExperiments(w http.ResponseWriter, r *http.
 	}
 	resp := make([]AgentPlaygroundExperimentResponse, 0, len(rows))
 	for _, row := range rows {
+		allowed, err := h.agentPlaygroundExperimentUsesOnlyAllowedAgents(r.Context(), row.ID, row.WorkspaceID, row.JudgeAgentID, allowedAgentIDs)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to filter agent playground experiments")
+			return
+		}
+		if !allowed {
+			continue
+		}
 		resp = append(resp, agentPlaygroundExperimentRowToResponse(row))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": resp, "total": len(resp)})
@@ -157,14 +174,19 @@ func (h *Handler) CreateAgentPlaygroundExperiment(w http.ResponseWriter, r *http
 
 	agentIDs := make([]pgtype.UUID, 0, len(req.AgentIDs))
 	seenAgents := map[string]bool{}
+	actorType, actorID := h.resolveActor(r, userID, workspaceID)
 	for _, rawID := range req.AgentIDs {
 		rawID = strings.TrimSpace(rawID)
-		if rawID == "" || seenAgents[rawID] {
+		if rawID == "" {
 			continue
 		}
 		agentID, ok := parseUUIDOrBadRequest(w, rawID, "agent_id")
 		if !ok {
 			return
+		}
+		canonicalAgentID := uuidToString(agentID)
+		if seenAgents[canonicalAgentID] {
+			continue
 		}
 		agent, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{ID: agentID, WorkspaceID: workspaceUUID})
 		if err != nil {
@@ -175,12 +197,11 @@ func (h *Handler) CreateAgentPlaygroundExperiment(w http.ResponseWriter, r *http
 			writeError(w, http.StatusBadRequest, "agent is archived")
 			return
 		}
-		actorType, actorID := h.resolveActor(r, userID, workspaceID)
 		if !h.canAccessPersonalAgent(r.Context(), agent, actorType, actorID, workspaceID) {
 			writeError(w, http.StatusForbidden, "you do not have access to this agent")
 			return
 		}
-		seenAgents[rawID] = true
+		seenAgents[canonicalAgentID] = true
 		agentIDs = append(agentIDs, agentID)
 	}
 	if len(agentIDs) == 0 {
@@ -240,8 +261,13 @@ func (h *Handler) CreateAgentPlaygroundExperiment(w http.ResponseWriter, r *http
 		if !ok {
 			return
 		}
-		if _, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{ID: parsedJudgeID, WorkspaceID: workspaceUUID}); err != nil {
+		judgeAgent, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{ID: parsedJudgeID, WorkspaceID: workspaceUUID})
+		if err != nil {
 			writeError(w, http.StatusNotFound, "judge agent not found")
+			return
+		}
+		if !h.canAccessPersonalAgent(r.Context(), judgeAgent, actorType, actorID, workspaceID) {
+			writeError(w, http.StatusForbidden, "you do not have access to the judge agent")
 			return
 		}
 		judgeAgentID = parsedJudgeID
@@ -296,14 +322,13 @@ func (h *Handler) CreateAgentPlaygroundExperiment(w http.ResponseWriter, r *http
 			return
 		}
 	}
-	if err := tx.Commit(r.Context()); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to commit agent playground experiment")
-		return
-	}
-
-	detail, err := h.loadAgentPlaygroundDetail(r.Context(), experiment.ID, workspaceUUID)
+	detail, err := loadAgentPlaygroundDetailWithQueries(r.Context(), qtx, experiment.ID, workspaceUUID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load agent playground experiment")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit agent playground experiment")
 		return
 	}
 	writeJSON(w, http.StatusCreated, detail)
@@ -320,6 +345,7 @@ func (h *Handler) RunAgentPlaygroundExperiment(w http.ResponseWriter, r *http.Re
 	}
 	workspaceID := parseUUID(detail.Experiment.WorkspaceID)
 	experimentID := parseUUID(detail.Experiment.ID)
+	actorType, actorID := h.resolveActor(r, userID, detail.Experiment.WorkspaceID)
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start agent playground run")
@@ -361,6 +387,10 @@ func (h *Handler) RunAgentPlaygroundExperiment(w http.ResponseWriter, r *http.Re
 					return
 				}
 				lockedAgents[agentID] = agent
+			}
+			if !h.canAccessPersonalAgent(r.Context(), agent, actorType, actorID, detail.Experiment.WorkspaceID) {
+				writeError(w, http.StatusForbidden, "you do not have access to an experiment agent")
+				return
 			}
 			if reason, unavailable := agentPlaygroundUnavailableReason(agent); unavailable {
 				if _, err := qtx.SyncAgentPlaygroundResult(r.Context(), db.SyncAgentPlaygroundResultParams{
@@ -454,6 +484,9 @@ func (h *Handler) SyncAgentPlaygroundExperiment(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
+	if !h.requireAgentPlaygroundExperimentAccess(w, r, experiment) {
+		return
+	}
 	detail, err := h.syncAgentPlaygroundExperiment(r, experiment.ID, experiment.WorkspaceID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to sync agent playground experiment")
@@ -471,6 +504,10 @@ func (h *Handler) JudgeAgentPlaygroundExperiment(w http.ResponseWriter, r *http.
 	if !ok {
 		return
 	}
+	if !h.requireAgentPlaygroundExperimentAccess(w, r, experiment) {
+		return
+	}
+	actorType, actorID := h.resolveActor(r, userID, uuidToString(experiment.WorkspaceID))
 	var req SetAgentPlaygroundJudgeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -529,6 +566,10 @@ func (h *Handler) JudgeAgentPlaygroundExperiment(w http.ResponseWriter, r *http.
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "failed to load judge agent")
+		return
+	}
+	if !h.canAccessPersonalAgent(r.Context(), judgeAgent, actorType, actorID, uuidToString(experiment.WorkspaceID)) {
+		writeError(w, http.StatusForbidden, "you do not have access to the judge agent")
 		return
 	}
 	queuedTasks := make([]db.AgentTaskQueue, 0, len(synced.Inputs))
@@ -654,12 +695,76 @@ func (h *Handler) agentPlaygroundDetail(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return AgentPlaygroundDetailResponse{}, false
 	}
+	if !h.requireAgentPlaygroundExperimentAccess(w, r, experiment) {
+		return AgentPlaygroundDetailResponse{}, false
+	}
 	detail, err := h.loadAgentPlaygroundDetail(r.Context(), experiment.ID, experiment.WorkspaceID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load agent playground detail")
 		return AgentPlaygroundDetailResponse{}, false
 	}
 	return detail, true
+}
+
+func (h *Handler) requireAgentPlaygroundExperimentAccess(w http.ResponseWriter, r *http.Request, experiment db.AgentPlaygroundExperiment) bool {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return false
+	}
+	workspaceID := uuidToString(experiment.WorkspaceID)
+	allowedAgentIDs, err := h.agentPlaygroundAllowedAgentIDs(r, userID, workspaceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to resolve agent playground access")
+		return false
+	}
+	allowed, err := h.agentPlaygroundExperimentUsesOnlyAllowedAgents(r.Context(), experiment.ID, experiment.WorkspaceID, experiment.JudgeAgentID, allowedAgentIDs)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to check agent playground access")
+		return false
+	}
+	if !allowed {
+		writeError(w, http.StatusForbidden, "you do not have access to this agent playground experiment")
+		return false
+	}
+	return true
+}
+
+func (h *Handler) agentPlaygroundAllowedAgentIDs(r *http.Request, userID, workspaceID string) (map[string]struct{}, error) {
+	actorType, actorID := h.resolveActor(r, userID, workspaceID)
+	role := ""
+	if actorType == "member" {
+		member, err := h.getWorkspaceMember(r.Context(), actorID, workspaceID)
+		if err != nil {
+			return nil, err
+		}
+		role = member.Role
+	}
+	return h.accessibleAgentIDs(r.Context(), workspaceID, actorType, actorID, role)
+}
+
+func (h *Handler) agentPlaygroundExperimentUsesOnlyAllowedAgents(
+	ctx context.Context,
+	experimentID, workspaceID, judgeAgentID pgtype.UUID,
+	allowedAgentIDs map[string]struct{},
+) (bool, error) {
+	agents, err := h.Queries.ListAgentPlaygroundAgents(ctx, db.ListAgentPlaygroundAgentsParams{
+		ExperimentID: experimentID,
+		WorkspaceID:  workspaceID,
+	})
+	if err != nil {
+		return false, err
+	}
+	for _, agent := range agents {
+		if _, allowed := allowedAgentIDs[uuidToString(agent.AgentID)]; !allowed {
+			return false, nil
+		}
+	}
+	if judgeAgentID.Valid {
+		if _, allowed := allowedAgentIDs[uuidToString(judgeAgentID)]; !allowed {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 func (h *Handler) loadAgentPlaygroundDetail(ctx context.Context, experimentID, workspaceID pgtype.UUID) (AgentPlaygroundDetailResponse, error) {

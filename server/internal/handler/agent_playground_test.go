@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -38,6 +39,34 @@ func TestCreateAgentPlaygroundExperiment_AllowsMoreThanThreeAgents(t *testing.T)
 	}
 	if detail.Experiment.AgentCount != int32(len(agentIDs)) {
 		t.Fatalf("experiment agent_count = %d, want %d", detail.Experiment.AgentCount, len(agentIDs))
+	}
+}
+
+func TestCreateAgentPlaygroundExperimentCanonicalizesDuplicateAgentIDs(t *testing.T) {
+	suffix := time.Now().UnixNano()
+	agentID := createHandlerTestAgent(t, fmt.Sprintf("agent-playground-canonical-%d", suffix), nil)
+	assetID, versionID := createAgentPlaygroundDatasetSnapshot(t, suffix)
+
+	w := httptest.NewRecorder()
+	testHandler.CreateAgentPlaygroundExperiment(w, newRequest(http.MethodPost, "/api/agent-playground-experiments", map[string]any{
+		"name":               fmt.Sprintf("canonical agents %d", suffix),
+		"dataset_asset_id":   assetID,
+		"dataset_version_id": versionID,
+		"agent_ids":          []string{agentID, strings.ToUpper(agentID)},
+	}))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateAgentPlaygroundExperiment status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	var detail AgentPlaygroundDetailResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &detail); err != nil {
+		t.Fatalf("decode playground detail: %v", err)
+	}
+	t.Cleanup(func() {
+		mustExec(t, context.Background(), `DELETE FROM agent_playground_experiment WHERE id = $1`, detail.Experiment.ID)
+	})
+	if len(detail.Agents) != 1 || detail.Experiment.AgentCount != 1 {
+		t.Fatalf("canonical duplicate created %d agents with count %d", len(detail.Agents), detail.Experiment.AgentCount)
 	}
 }
 
