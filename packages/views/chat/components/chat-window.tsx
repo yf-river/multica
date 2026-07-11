@@ -139,7 +139,7 @@ export function ChatWindow() {
     id: string;
     content: string;
     attachments?: Attachment[];
-    sessionId?: string;
+    sessionId: string;
   } | null>(null);
   const handleRestoreDraftConsumed = useCallback(() => {
     setRestoreDraftRequest(null);

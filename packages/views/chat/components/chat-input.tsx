@@ -52,13 +52,8 @@ interface ChatInputProps {
     id: string;
     content: string;
     attachments?: Attachment[];
-    /**
-     * Draft slot this restore targets. When set, the restore only fires while
-     * the user is viewing that session — a fire-and-forget send that later
-     * fails restores into the session it was sent from, not whatever the user
-     * navigated to. Omit to restore into the current draft (legacy behavior).
-     */
-    sessionId?: string;
+    /** Draft slot this restore targets. */
+    sessionId: string;
   } | null;
   onRestoreDraftConsumed?: () => void;
   /** Receives a File and returns the attachment row (with id + CDN link).
@@ -171,12 +166,10 @@ export function ChatInput({
       return;
     }
     if (consumedRestoreIdRef.current === restoreDraftRequest.id) return;
-    // Session-scoped restore: if this draft belongs to a specific session,
-    // wait until the user is actually viewing it. A fire-and-forget send that
-    // failed after the user navigated away must not dump its content into the
-    // session they're now looking at — the request stays pending until they
-    // return to the source session (draftKey then matches).
-    if (restoreDraftRequest.sessionId && restoreDraftRequest.sessionId !== draftKey) {
+    // Wait until the user is viewing the source session. A fire-and-forget
+    // failure must not dump its content into whichever session is open when
+    // the response arrives.
+    if (restoreDraftRequest.sessionId !== draftKey) {
       return;
     }
     consumedRestoreIdRef.current = restoreDraftRequest.id;
