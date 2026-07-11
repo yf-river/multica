@@ -144,10 +144,7 @@ func TestCreatePersonalAccessTokenConcurrentReplayConverges(t *testing.T) {
 // The row is auto-cleaned at test end.
 func insertTestPAT(t *testing.T, expiresAt time.Time) (string, string) {
 	t.Helper()
-	raw, err := auth.GeneratePATToken()
-	if err != nil {
-		t.Fatalf("generate pat: %v", err)
-	}
+	raw := auth.DerivePATToken(testUserID, "renew-test:"+uuid.NewString())
 	prefix := raw
 	if len(prefix) > 12 {
 		prefix = prefix[:12]
@@ -460,10 +457,7 @@ func TestRenewPAT_RejectsTokenBelongingToDifferentUser(t *testing.T) {
 		mustExec(t, ctx, `DELETE FROM "user" WHERE id = $1`, parseUUID(otherUserID))
 	})
 
-	raw, err := auth.GeneratePATToken()
-	if err != nil {
-		t.Fatalf("generate pat: %v", err)
-	}
+	raw := auth.DerivePATToken(otherUserID, "other-renew:"+uuid.NewString())
 	prefix := raw
 	if len(prefix) > 12 {
 		prefix = prefix[:12]
