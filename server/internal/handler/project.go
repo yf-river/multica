@@ -297,6 +297,8 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		normalizedRefs[i] = ref
+		req.Resources[i].ResourceType = res.ResourceType
+		req.Resources[i].ResourceRef = ref
 		if res.ResourceType == "local_directory" {
 			var ld localDirectoryRef
 			if err := json.Unmarshal(ref, &ld); err != nil {
