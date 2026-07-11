@@ -165,7 +165,10 @@ const TimelineNodeSchema = z.object({
     id: z.string(),
     href: z.string().optional(),
   }).loose()).default([]),
-  artifacts: z.array(ArtifactSchema).default([]),
+  // Current servers emit [], while Desktop may still talk to a server that
+  // serialized an empty Go slice as null. Preserve the valid tree instead of
+  // replacing all execution evidence with the empty fallback.
+  artifacts: z.array(ArtifactSchema).nullish().transform((value) => value ?? []),
   metadata: z.record(z.string(), z.unknown()).optional(),
 }).loose();
 

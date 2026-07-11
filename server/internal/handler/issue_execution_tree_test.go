@@ -793,6 +793,9 @@ func TestGetIssueExecutionTreeAggregatesHierarchySOPTraceAndWakeups(t *testing.T
 	}
 	nodeTypes := map[string]int{}
 	for _, node := range resp.TimelineNodes {
+		if node.Artifacts == nil {
+			t.Fatalf("timeline node artifacts must encode as [] instead of null: %+v", node)
+		}
 		nodeTypes[node.NodeType]++
 		if node.IssueID != fx.parent.ID {
 			t.Fatalf("timeline node issue id = %q, want parent %q: %+v", node.IssueID, fx.parent.ID, node)

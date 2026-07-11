@@ -355,7 +355,13 @@ describe("domain response schema fallbacks", () => {
         children: [],
       },
       summary: { task_count: 1 },
-      timeline_nodes: [],
+      timeline_nodes: [{
+        issue_id: "issue-1",
+        node_id: "status:issue-1",
+        node_type: "status_change",
+        status: "completed",
+        artifacts: null,
+      }],
       issue_summary: {
         issue_id: "issue-1",
         node_count: 1,
@@ -377,6 +383,9 @@ describe("domain response schema fallbacks", () => {
       },
     });
     expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.timeline_nodes[0]?.artifacts).toEqual([]);
+    }
   });
 
   it("strips forbidden secret fields from generic agent responses", () => {

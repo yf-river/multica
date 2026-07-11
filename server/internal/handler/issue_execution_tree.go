@@ -671,6 +671,14 @@ func buildIssueTimelineNodes(root IssueExecutionNodeResponse) []IssueTimelineNod
 		}
 		return left < right
 	})
+	// Arrays are part of the execution-tree wire contract. A nil slice would
+	// encode as JSON null and force clients to discard the otherwise valid
+	// tree, including usage totals and child-issue lanes.
+	for i := range nodes {
+		if nodes[i].Artifacts == nil {
+			nodes[i].Artifacts = []AgentTaskArtifactResponse{}
+		}
+	}
 	return nodes
 }
 
