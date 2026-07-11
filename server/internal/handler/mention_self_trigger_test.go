@@ -15,7 +15,19 @@ import (
 func enqueueMentionedAgentTasksForTest(t *testing.T, ctx context.Context, issue db.Issue, comment db.Comment, parentComment *db.Comment, authorType, authorID string) {
 	t.Helper()
 	triggers := testHandler.computeMentionedAgentCommentTriggers(ctx, issue, comment.Content, parentComment, authorType, authorID, commentTriggerComputeOptions{})
-	testHandler.enqueueCommentAgentTriggers(ctx, issue, comment.ID, triggers)
+	tx, err := testHandler.TxStarter.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin mention task transaction: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	projection, err := testHandler.createCommentAgentTriggersInTx(ctx, testHandler.Queries.WithTx(tx), issue, comment.ID, triggers)
+	if err != nil {
+		t.Fatalf("create mention task projection: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit mention task projection: %v", err)
+	}
+	testHandler.publishCommentTaskProjection(ctx, projection)
 }
 
 // selfMentionFixture wires the seeded "Handler Test Agent" as J plus two

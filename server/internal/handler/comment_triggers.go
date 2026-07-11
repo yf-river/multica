@@ -3,12 +3,14 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"strings"
 	"unicode"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/eventoutbox"
+	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -37,16 +39,126 @@ func (h *Handler) triggerTasksForComment(ctx context.Context, issue db.Issue, co
 	if isNoteComment(comment.Content) {
 		return
 	}
+	tx, err := h.TxStarter.Begin(ctx)
+	if err != nil {
+		slog.Warn("begin comment task projection failed", "issue_id", uuidToString(issue.ID), "comment_id", uuidToString(comment.ID), "error", err)
+		return
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	projection, err := h.createCommentTaskProjectionInTx(
+		ctx,
+		h.Queries.WithTx(tx),
+		issue,
+		comment,
+		parentComment,
+		actorType,
+		actorID,
+		suppressAgentIDs,
+	)
+	if err != nil {
+		slog.Warn("persist comment task projection failed", "issue_id", uuidToString(issue.ID), "comment_id", uuidToString(comment.ID), "error", err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		slog.Warn("commit comment task projection failed", "issue_id", uuidToString(issue.ID), "comment_id", uuidToString(comment.ID), "error", err)
+		return
+	}
+	h.publishCommentTaskProjection(ctx, projection)
+}
+
+func (h *Handler) triggerTasksForAgentServiceComment(ctx context.Context, issue db.Issue, comment db.Comment, parentComment *db.Comment) {
+	h.triggerTasksForComment(ctx, issue, comment, parentComment, comment.AuthorType, uuidToString(comment.AuthorID), nil)
+}
+
+type commentQueuedTask struct {
+	task      db.AgentTaskQueue
+	issueTask bool
+}
+
+type commentTaskProjection struct {
+	queued        []commentQueuedTask
+	blockedEvents []events.Event
+}
+
+func (h *Handler) createCommentTaskProjectionInTx(
+	ctx context.Context,
+	queries *db.Queries,
+	issue db.Issue,
+	comment db.Comment,
+	parentComment *db.Comment,
+	actorType string,
+	actorID string,
+	suppressAgentIDs []pgtype.UUID,
+) (commentTaskProjection, error) {
+	projection := commentTaskProjection{}
+	if isNoteComment(comment.Content) {
+		return projection, nil
+	}
 	opts := commentTriggerComputeOptions{
 		SuppressAssignedSquadLeader: h.isSquadSOPWorkerStageComment(ctx, issue, comment),
 	}
 	triggers := h.computeCommentAgentTriggers(ctx, issue, comment.Content, parentComment, actorType, actorID, opts)
 	triggers = filterSuppressedCommentAgentTriggers(triggers, suppressAgentIDs)
-	h.enqueueCommentAgentTriggers(ctx, issue, comment.ID, triggers)
+	return h.createCommentAgentTriggersInTx(ctx, queries, issue, comment.ID, triggers)
 }
 
-func (h *Handler) triggerTasksForAgentServiceComment(ctx context.Context, issue db.Issue, comment db.Comment, parentComment *db.Comment) {
-	h.triggerTasksForComment(ctx, issue, comment, parentComment, comment.AuthorType, uuidToString(comment.AuthorID), nil)
+func (h *Handler) createCommentAgentTriggersInTx(
+	ctx context.Context,
+	queries *db.Queries,
+	issue db.Issue,
+	commentID pgtype.UUID,
+	triggers []commentAgentTrigger,
+) (commentTaskProjection, error) {
+	projection := commentTaskProjection{}
+	for _, trigger := range triggers {
+		if h.shouldBlockParentSOPStageTriggerForCrossProjectChildren(ctx, issue, trigger) {
+			event, err := createBlockedParentSOPStageCommentInTx(ctx, queries, issue, trigger.Agent.Name)
+			if err != nil {
+				return projection, err
+			}
+			projection.blockedEvents = append(projection.blockedEvents, event)
+			continue
+		}
+
+		var task db.AgentTaskQueue
+		var err error
+		switch trigger.Source {
+		case commentTriggerSourceIssueAssignee:
+			if trigger.Squad != nil {
+				task, err = h.TaskService.CreateMentionTaskInTx(ctx, queries, issue, trigger.Agent.ID, commentID, true, true)
+			} else {
+				task, err = h.TaskService.CreateIssueTaskInTx(ctx, queries, issue, commentID, false)
+				if err == nil {
+					projection.queued = append(projection.queued, commentQueuedTask{task: task, issueTask: true})
+					continue
+				}
+			}
+		case commentTriggerSourceMentionSquadLeader:
+			task, err = h.TaskService.CreateMentionTaskInTx(ctx, queries, issue, trigger.Agent.ID, commentID, true, true)
+		case commentTriggerSourceMentionAgent:
+			task, err = h.TaskService.CreateMentionTaskInTx(ctx, queries, issue, trigger.Agent.ID, commentID, false, false)
+		default:
+			return projection, fmt.Errorf("unknown comment trigger source %q", trigger.Source)
+		}
+		if err != nil {
+			return projection, fmt.Errorf("create comment task for agent %s: %w", uuidToString(trigger.Agent.ID), err)
+		}
+		projection.queued = append(projection.queued, commentQueuedTask{task: task})
+	}
+	return projection, nil
+}
+
+func (h *Handler) publishCommentTaskProjection(ctx context.Context, projection commentTaskProjection) {
+	for _, event := range projection.blockedEvents {
+		h.publishEvent(event)
+	}
+	for _, queued := range projection.queued {
+		if queued.issueTask {
+			h.TaskService.PublishIssueTaskEnqueued(ctx, queued.task)
+		} else {
+			h.TaskService.PublishMentionTaskEnqueued(ctx, queued.task)
+		}
+	}
 }
 
 func (h *Handler) isSquadSOPWorkerStageComment(ctx context.Context, issue db.Issue, comment db.Comment) bool {
@@ -110,46 +222,7 @@ func filterSuppressedCommentAgentTriggers(triggers []commentAgentTrigger, suppre
 	return filtered
 }
 
-func (h *Handler) enqueueCommentAgentTriggers(ctx context.Context, issue db.Issue, triggerCommentID pgtype.UUID, triggers []commentAgentTrigger) {
-	for _, trigger := range triggers {
-		if h.shouldBlockParentSOPStageTriggerForCrossProjectChildren(ctx, issue, triggerCommentID, trigger) {
-			h.recordBlockedParentSOPStageTriggerComment(ctx, issue, trigger.Agent.Name)
-			continue
-		}
-		switch trigger.Source {
-		case commentTriggerSourceIssueAssignee:
-			if trigger.Squad != nil {
-				if _, err := h.TaskService.EnqueueTaskForSquadLeader(ctx, issue, trigger.Agent.ID, triggerCommentID); err != nil {
-					slog.Warn("enqueue squad leader task failed",
-						"issue_id", uuidToString(issue.ID),
-						"squad_id", uuidToString(trigger.Squad.ID),
-						"leader_id", uuidToString(trigger.Agent.ID),
-						"error", err)
-				}
-				continue
-			}
-			if _, err := h.TaskService.EnqueueTaskForIssue(ctx, issue, triggerCommentID); err != nil {
-				slog.Warn("enqueue agent task on comment failed", "issue_id", uuidToString(issue.ID), "error", err)
-			}
-		case commentTriggerSourceMentionSquadLeader:
-			if _, err := h.TaskService.EnqueueTaskForSquadLeader(ctx, issue, trigger.Agent.ID, triggerCommentID); err != nil {
-				slog.Warn("enqueue squad leader mention task failed",
-					"issue_id", uuidToString(issue.ID),
-					"agent_id", uuidToString(trigger.Agent.ID),
-					"error", err)
-			}
-		case commentTriggerSourceMentionAgent:
-			if _, err := h.TaskService.EnqueueTaskForMention(ctx, issue, trigger.Agent.ID, triggerCommentID); err != nil {
-				slog.Warn("enqueue mention agent task failed",
-					"issue_id", uuidToString(issue.ID),
-					"agent_id", uuidToString(trigger.Agent.ID),
-					"error", err)
-			}
-		}
-	}
-}
-
-func (h *Handler) shouldBlockParentSOPStageTriggerForCrossProjectChildren(ctx context.Context, issue db.Issue, triggerCommentID pgtype.UUID, trigger commentAgentTrigger) bool {
+func (h *Handler) shouldBlockParentSOPStageTriggerForCrossProjectChildren(ctx context.Context, issue db.Issue, trigger commentAgentTrigger) bool {
 	roleKey := normalizeSOPRoleMentionKey(roleKeyFromAgentRuntimeConfig(trigger.Agent))
 	if roleKey == "" {
 		switch trigger.Agent.Name {
@@ -344,15 +417,8 @@ func requiredCrossProjectSectionHasEntries(text string) bool {
 	return false
 }
 
-func (h *Handler) recordBlockedParentSOPStageTriggerComment(ctx context.Context, issue db.Issue, stageName string) {
+func createBlockedParentSOPStageCommentInTx(ctx context.Context, queries *db.Queries, issue db.Issue, stageName string) (events.Event, error) {
 	content := strings.TrimSpace("平台已阻止父任务阶段调度：03-任务拆分已识别 required 跨项目依赖，但父 issue 的 child issue 仍缺失或未全部完成，因此不能触发父 issue 的 " + stageName + "。请 PM 先创建/复用并回读 required child issue；所有 required child issue 完成后，再继续父 issue 阶段。")
-	tx, err := h.TxStarter.Begin(ctx)
-	if err != nil {
-		slog.Warn("begin sop cross-project child gate comment transaction failed", "issue_id", uuidToString(issue.ID), "stage", stageName, "error", err)
-		return
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	queries := h.Queries.WithTx(tx)
 	comment, err := queries.CreateComment(ctx, db.CreateCommentParams{
 		IssueID:     issue.ID,
 		WorkspaceID: issue.WorkspaceID,
@@ -362,23 +428,14 @@ func (h *Handler) recordBlockedParentSOPStageTriggerComment(ctx context.Context,
 		Type:        "comment",
 	})
 	if err != nil {
-		slog.Warn("create sop cross-project child gate comment failed",
-			"issue_id", uuidToString(issue.ID),
-			"stage", stageName,
-			"error", err)
-		return
+		return events.Event{}, fmt.Errorf("create blocked parent stage comment: %w", err)
 	}
 	createdEvent := buildCommentCreatedEvent(issue, commentToResponse(comment, nil, nil), "system", "")
 	createdEvent, err = eventoutbox.Enqueue(ctx, queries, createdEvent)
 	if err != nil {
-		slog.Warn("enqueue sop cross-project child gate comment event failed", "issue_id", uuidToString(issue.ID), "stage", stageName, "error", err)
-		return
+		return events.Event{}, fmt.Errorf("enqueue blocked parent stage comment event: %w", err)
 	}
-	if err := tx.Commit(ctx); err != nil {
-		slog.Warn("commit sop cross-project child gate comment failed", "issue_id", uuidToString(issue.ID), "stage", stageName, "error", err)
-		return
-	}
-	h.publishEvent(createdEvent)
+	return createdEvent, nil
 }
 
 func (h *Handler) computeCommentAgentTriggers(ctx context.Context, issue db.Issue, content string, parentComment *db.Comment, actorType, actorID string, opts commentTriggerComputeOptions) []commentAgentTrigger {

@@ -349,6 +349,21 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to create comment")
 		return
 	}
+	taskProjection, err := h.createCommentTaskProjectionInTx(
+		r.Context(),
+		qtx,
+		issue,
+		comment,
+		parentComment,
+		authorType,
+		authorID,
+		suppressAgentIDs,
+	)
+	if err != nil {
+		slog.Warn("create comment task projection failed", append(logger.RequestAttrs(r), "error", err, "issue_id", issueID)...)
+		writeError(w, http.StatusInternalServerError, "failed to create comment")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		slog.Warn("commit create comment transaction failed", append(logger.RequestAttrs(r), "error", err, "issue_id", issueID)...)
 		writeError(w, http.StatusInternalServerError, "failed to create comment")
@@ -361,7 +376,7 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		h.publishEvent(unresolvedEvent)
 	}
 
-	h.triggerTasksForComment(r.Context(), issue, comment, parentComment, authorType, authorID, suppressAgentIDs)
+	h.publishCommentTaskProjection(r.Context(), taskProjection)
 
 	writeJSON(w, http.StatusCreated, resp)
 }
