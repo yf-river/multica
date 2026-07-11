@@ -34,7 +34,6 @@ vi.mock("../../navigation", () => ({
 function resetConfigStore() {
   configStore.setState({
     cdnDomain: "",
-    allowSignup: true,
     daemonServerUrl: "",
     daemonAppUrl: "",
     workspaceCreationDisabled: false,

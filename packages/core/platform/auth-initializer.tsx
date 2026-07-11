@@ -51,12 +51,9 @@ export function AuthInitializer({
             cdnSigned: cfg.cdn_signed === true,
           });
         }
-        configStore.getState().setAuthConfig({
-          allowSignup: cfg.allow_signup,
-          // Old servers omit this field — treat that as "creation allowed"
-          // (the managed-cloud default) rather than blocking the UI.
-          workspaceCreationDisabled: cfg.workspace_creation_disabled === true,
-        });
+        configStore
+          .getState()
+          .setWorkspaceCreationDisabled(cfg.workspace_creation_disabled === true);
         configStore.getState().setDaemonConfig({
           daemonServerUrl: cfg.daemon_server_url,
           daemonAppUrl: cfg.daemon_app_url,
@@ -70,8 +67,13 @@ export function AuthInitializer({
           });
         }
       })
-      .catch(() => {
-        /* config is optional — legacy file card matching degrades gracefully */
+      .catch((err) => {
+        // Authentication can still proceed when this public display-config
+        // endpoint is unavailable. Fail closed only for workspace creation:
+        // showing an action that the server may forbid creates a false-success
+        // path, while existing workspace use remains unaffected.
+        configStore.getState().setWorkspaceCreationDisabled(true);
+        logger.warn("app config init failed", err);
       });
 
     const onAuthSuccess = (user: User) => {

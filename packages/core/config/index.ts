@@ -7,7 +7,6 @@ interface ConfigState {
   // (CloudFront signing enabled server-side). Renderers must not treat a raw
   // storage URL on that domain as a loadable media source (MUL-3254).
   cdnSigned: boolean;
-  allowSignup: boolean;
   daemonServerUrl: string;
   daemonAppUrl: string;
   // Self-host gate (#3433): when true, every "Create workspace" affordance
@@ -15,10 +14,7 @@ interface ConfigState {
   // the managed-cloud case.
   workspaceCreationDisabled: boolean;
   setCdnConfig: (config: { cdnDomain: string; cdnSigned?: boolean }) => void;
-  setAuthConfig: (config: {
-    allowSignup: boolean;
-    workspaceCreationDisabled?: boolean;
-  }) => void;
+  setWorkspaceCreationDisabled: (disabled: boolean) => void;
   setDaemonConfig: (config: {
     daemonServerUrl?: string;
     daemonAppUrl?: string;
@@ -28,13 +24,12 @@ interface ConfigState {
 export const configStore = createStore<ConfigState>((set) => ({
   cdnDomain: "",
   cdnSigned: false,
-  allowSignup: true,
   daemonServerUrl: "",
   daemonAppUrl: "",
   workspaceCreationDisabled: false,
   setCdnConfig: ({ cdnDomain, cdnSigned = false }) => set({ cdnDomain, cdnSigned }),
-  setAuthConfig: ({ allowSignup, workspaceCreationDisabled = false }) =>
-    set({ allowSignup, workspaceCreationDisabled }),
+  setWorkspaceCreationDisabled: (workspaceCreationDisabled) =>
+    set({ workspaceCreationDisabled }),
   setDaemonConfig: ({ daemonServerUrl = "", daemonAppUrl = "" }) =>
     set({ daemonServerUrl, daemonAppUrl }),
 }));
