@@ -227,9 +227,6 @@ func internalSquadAgentRuntimeConfig(runtime db.AgentRuntime, template internalS
 	}
 	return mustJSONBytes(map[string]any{
 		"provider": runtime.Provider,
-		"用途":       template.Name,
-		"角色":       role.Name,
-		"模板":       template.Key,
 		"internal_squad": map[string]any{
 			"template_key": template.Key,
 			"role_key":     role.Key,
@@ -270,19 +267,15 @@ func matchesInternalSquadAgent(agent db.Agent, name string, template internalSqu
 	if len(bytes.TrimSpace(agent.RuntimeConfig)) == 0 || json.Unmarshal(agent.RuntimeConfig, &runtimeConfig) != nil {
 		return false
 	}
-	if scope, ok := runtimeConfig["internal_squad"].(map[string]any); ok {
-		if stringFromAny(scope["template_key"]) != template.Key ||
-			stringFromAny(scope["role_key"]) != role.Key ||
-			stringFromAny(scope["squad_scope"]) != squadScope ||
-			stringFromAny(scope["agent_scope"]) != agentScope {
-			return false
-		}
-		if squadScope == squadScopePersonal && stringFromAny(scope["owner_id"]) != uuidToString(ownerID) {
-			return false
-		}
-		return true
+	scope, ok := runtimeConfig["internal_squad"].(map[string]any)
+	if !ok ||
+		stringFromAny(scope["template_key"]) != template.Key ||
+		stringFromAny(scope["role_key"]) != role.Key ||
+		stringFromAny(scope["squad_scope"]) != squadScope ||
+		stringFromAny(scope["agent_scope"]) != agentScope {
+		return false
 	}
-	return stringFromAny(runtimeConfig["模板"]) == template.Key && stringFromAny(runtimeConfig["角色"]) == role.Name
+	return squadScope != squadScopePersonal || stringFromAny(scope["owner_id"]) == uuidToString(ownerID)
 }
 
 func internalSquadAgentNeedsSync(agent db.Agent, runtime db.AgentRuntime, template internalSquadTemplate, role internalSquadRole, runtimeConfig []byte, instructions string, description string, model pgtype.Text, scope string) bool {
@@ -518,4 +511,3 @@ func itemNeedsInternalSquadSync(squad db.Squad, template internalSquadTemplate, 
 		!bytes.Equal(bytes.TrimSpace(squad.SopProfile), bytes.TrimSpace(profileBytes)) ||
 		squad.Instructions != template.Instructions
 }
-

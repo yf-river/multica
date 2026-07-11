@@ -25,7 +25,7 @@ evidence reviewable by humans.
 | Database functions | 9 |
 | Database triggers | 4 |
 | Database indexes | 185 |
-| Migration files (up + down) | 50 |
+| Migration files (up + down) | 52 |
 | sqlc modules | 54 |
 | sqlc queries | 576 |
 | Go WebSocket events | 80 |
@@ -543,6 +543,8 @@ intentionally platform-specific.
 | 24 | remove_chat_session_archive_state | up | — | 0 | 0 | 0 | `server/migrations/024_remove_chat_session_archive_state.up.sql` |
 | 25 | normalize_quick_create_inbox_titles | down | — | 0 | 0 | 0 | `server/migrations/025_normalize_quick_create_inbox_titles.down.sql` |
 | 25 | normalize_quick_create_inbox_titles | up | — | 0 | 0 | 0 | `server/migrations/025_normalize_quick_create_inbox_titles.up.sql` |
+| 26 | normalize_internal_squad_agent_config | down | — | 0 | 0 | 0 | `server/migrations/026_normalize_internal_squad_agent_config.down.sql` |
+| 26 | normalize_internal_squad_agent_config | up | — | 0 | 0 | 0 | `server/migrations/026_normalize_internal_squad_agent_config.up.sql` |
 
 ### Current tables discovered from up migrations
 
