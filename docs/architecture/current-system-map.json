@@ -31,7 +31,7 @@
     "typescriptWebsocketEvents": 71,
     "zustandStores": 31,
     "reactQueryConsumerFiles": 175,
-    "environmentVariables": 220,
+    "environmentVariables": 219,
     "manualExternalSystems": 12
   },
   "backend": {
@@ -17127,16 +17127,6 @@
         "classification": "runtime"
       },
       {
-        "name": "REALTIME_RELAY_MODE",
-        "references": [
-          {
-            "source": "server/cmd/server/main.go",
-            "kind": "go-runtime"
-          }
-        ],
-        "classification": "runtime"
-      },
-      {
         "name": "REALTIME_RELAY_SHARDS",
         "references": [
           {
@@ -17831,7 +17821,6 @@
         "id": "redis",
         "kind": "realtime relay, coordination, rate limiting, and caches",
         "environment": [
-          "REALTIME_RELAY_MODE",
           "REDIS_URL"
         ],
         "sources": [

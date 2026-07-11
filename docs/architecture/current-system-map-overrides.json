@@ -212,7 +212,6 @@
       "id": "redis",
       "kind": "realtime relay, coordination, rate limiting, and caches",
       "environment": [
-        "REALTIME_RELAY_MODE",
         "REDIS_URL"
       ],
       "sources": [

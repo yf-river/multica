@@ -32,7 +32,7 @@ evidence reviewable by humans.
 | TypeScript WebSocket events | 71 |
 | Zustand store definitions | 31 |
 | React Query consumer files | 175 |
-| Environment variable names | 220 |
+| Environment variable names | 219 |
 | Manually identified external systems | 12 |
 
 ## Backend HTTP surface
@@ -962,7 +962,6 @@ written to the generated outputs.
 | `RATE_LIMIT_AUTH_LOGIN` | runtime | 2 | `.env.example` (example-declaration), `server/cmd/server/router.go` (go-env-helper) |
 | `RATE_LIMIT_TRUSTED_PROXIES` | runtime | 2 | `.env.example` (example-declaration), `server/cmd/server/router.go` (go-runtime) |
 | `REALTIME_METRICS_TOKEN` | runtime | 2 | `.env.example` (example-declaration), `server/cmd/server/router.go` (go-runtime) |
-| `REALTIME_RELAY_MODE` | runtime | 1 | `server/cmd/server/main.go` (go-runtime) |
 | `REALTIME_RELAY_SHARDS` | runtime | 1 | `server/cmd/server/main.go` (go-env-helper) |
 | `REALTIME_RELAY_STREAM_MAXLEN` | runtime | 1 | `server/cmd/server/main.go` (go-env-helper) |
 | `REALTIME_RELAY_XREAD_BLOCK` | runtime | 1 | `server/cmd/server/main.go` (go-env-helper) |
@@ -1019,7 +1018,7 @@ written to the generated outputs.
 | postgresql | primary relational database | `DATABASE_MAX_CONNS`, `DATABASE_MIN_CONNS`, `DATABASE_URL` | `server/cmd/server/main.go`, `server/sqlc.yaml` | PostgreSQL is the durable system of record; schema and typed query surfaces are inventoried separately. |
 | posthog | analytics batch HTTP API | `ANALYTICS_DISABLED`, `ANALYTICS_ENVIRONMENT`, `POSTHOG_API_KEY`, `POSTHOG_HOST` | `server/internal/analytics/client.go`, `server/internal/analytics/posthog.go` | Analytics can be disabled; enabled deployments batch events to the configured PostHog host. |
 | public-skill-registries | ClawHub and skills.sh REST/file APIs | — | `server/internal/handler/skill_import_clawhub.go`, `server/internal/handler/skill_import.go` | Skill search/import accepts current ClawHub and skills.sh sources and downloads their metadata and files. |
-| redis | realtime relay, coordination, rate limiting, and caches | `REALTIME_RELAY_MODE`, `REDIS_URL` | `server/cmd/server/main.go`, `server/internal/realtime/redis_relay.go`, `server/internal/realtime/sharded_stream_relay.go` | Redis is optional for some single-process behavior but required for coordinated multi-instance relay and shared limits. |
+| redis | realtime relay, coordination, rate limiting, and caches | `REDIS_URL` | `server/cmd/server/main.go`, `server/internal/realtime/redis_relay.go`, `server/internal/realtime/sharded_stream_relay.go` | Redis is optional for some single-process behavior but required for coordinated multi-instance relay and shared limits. |
 | tapd | REST API | `TAPD_ACCESS_TOKEN`, `TAPD_API_BASE_URL` | `server/internal/handler/external_credential_profile.go`, `server/internal/handler/issue_source_fetch.go` | TAPD issue source reads use credential profiles or the current deployment environment boundary. |
 | user-git-remotes | git subprocess network and local worktrees | — | `server/internal/daemon/repocache/cache.go`, `server/internal/handler/prompt_evaluation_skill_build.go` | Daemon repository caches fetch user-configured remotes; evaluation skill workflows run git only against validated local worktrees. |
 
