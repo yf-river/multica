@@ -717,8 +717,8 @@ func (h *Handler) ListIssueTaskTraceEvents(w http.ResponseWriter, r *http.Reques
 }
 
 // GetIssueGCCheck returns minimal issue info needed by the daemon GC loop.
-// Gated on workspace access so a daemon token scoped to workspace A cannot
-// read issue metadata from workspace B via UUID enumeration.
+// Gated on workspace membership so a daemon user cannot read issue metadata
+// from another workspace via UUID enumeration.
 func (h *Handler) GetIssueGCCheck(w http.ResponseWriter, r *http.Request) {
 	issueID := chi.URLParam(r, "issueId")
 	issueUUID, ok := parseUUIDOrBadRequest(w, issueID, "issue_id")
@@ -746,7 +746,7 @@ func (h *Handler) GetIssueGCCheck(w http.ResponseWriter, r *http.Request) {
 // reclaim authorization we can get.
 //
 // Same anti-enumeration shape as GetIssueGCCheck: workspace mismatch returns
-// the same 404 so a scoped daemon token can't probe other workspaces.
+// the same 404 so a daemon user can't probe other workspaces.
 func (h *Handler) GetChatSessionGCCheck(w http.ResponseWriter, r *http.Request) {
 	sessionID := chi.URLParam(r, "sessionId")
 	sessionUUID, ok := parseUUIDOrBadRequest(w, sessionID, "session_id")

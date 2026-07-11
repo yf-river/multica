@@ -293,7 +293,7 @@ func TestRuntimeLocalSkillImportFlow_EndToEnd(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	heartbeatReq := newDaemonTokenRequest(http.MethodPost, "/api/daemon/heartbeat", map[string]any{
+	heartbeatReq := newDaemonUserRequest(http.MethodPost, "/api/daemon/heartbeat", map[string]any{
 		"runtime_id": runtimeID,
 	}, testWorkspaceID, "runtime-local-skills-daemon")
 	testHandler.DaemonHeartbeat(w, heartbeatReq)
@@ -325,7 +325,7 @@ func TestRuntimeLocalSkillImportFlow_EndToEnd(t *testing.T) {
 
 	w = httptest.NewRecorder()
 	reportReq := withURLParams(
-		newDaemonTokenRequest(http.MethodPost, "/api/daemon/runtimes/"+runtimeID+"/local-skills/import/"+importReq.ID+"/result", map[string]any{
+		newDaemonUserRequest(http.MethodPost, "/api/daemon/runtimes/"+runtimeID+"/local-skills/import/"+importReq.ID+"/result", map[string]any{
 			"status": "completed",
 			"skill": map[string]any{
 				"name":        "Original Review Helper",
@@ -412,7 +412,7 @@ func TestBatchImportViaHeartbeat(t *testing.T) {
 
 	// Single heartbeat should return all 5 via the plural field.
 	w := httptest.NewRecorder()
-	heartbeatReq := newDaemonTokenRequest(http.MethodPost, "/api/daemon/heartbeat", map[string]any{
+	heartbeatReq := newDaemonUserRequest(http.MethodPost, "/api/daemon/heartbeat", map[string]any{
 		"runtime_id": runtimeID,
 	}, testWorkspaceID, "runtime-local-skills-daemon")
 	testHandler.DaemonHeartbeat(w, heartbeatReq)
@@ -451,7 +451,7 @@ func TestBatchImportViaHeartbeat(t *testing.T) {
 
 	// Second heartbeat should return nothing (all were claimed).
 	w = httptest.NewRecorder()
-	heartbeatReq2 := newDaemonTokenRequest(http.MethodPost, "/api/daemon/heartbeat", map[string]any{
+	heartbeatReq2 := newDaemonUserRequest(http.MethodPost, "/api/daemon/heartbeat", map[string]any{
 		"runtime_id": runtimeID,
 	}, testWorkspaceID, "runtime-local-skills-daemon")
 	testHandler.DaemonHeartbeat(w, heartbeatReq2)
@@ -501,7 +501,7 @@ func TestReportLocalSkillImportResult_IgnoresTimedOutRequests(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	reportReq := withURLParams(
-		newDaemonTokenRequest(http.MethodPost, "/api/daemon/runtimes/"+runtimeID+"/local-skills/import/"+importReq.ID+"/result", map[string]any{
+		newDaemonUserRequest(http.MethodPost, "/api/daemon/runtimes/"+runtimeID+"/local-skills/import/"+importReq.ID+"/result", map[string]any{
 			"status": "completed",
 			"skill": map[string]any{
 				"name":        "Original Review Helper",
@@ -525,7 +525,7 @@ func TestReportLocalSkillImportResult_IgnoresTimedOutRequests(t *testing.T) {
 	}
 }
 
-func TestReportLocalSkillImportResult_RejectsCrossWorkspaceDaemonToken(t *testing.T) {
+func TestReportLocalSkillImportResult_RejectsCrossWorkspaceDaemonUser(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
@@ -542,7 +542,7 @@ func TestReportLocalSkillImportResult_RejectsCrossWorkspaceDaemonToken(t *testin
 
 	w := httptest.NewRecorder()
 	reportReq := withURLParams(
-		newDaemonTokenRequest(http.MethodPost, "/api/daemon/runtimes/"+runtimeID+"/local-skills/import/"+importReq.ID+"/result", map[string]any{
+		newDaemonUserRequest(http.MethodPost, "/api/daemon/runtimes/"+runtimeID+"/local-skills/import/"+importReq.ID+"/result", map[string]any{
 			"status": "failed",
 			"error":  "forbidden",
 		}, "00000000-0000-0000-0000-000000000000", "attacker-daemon"),

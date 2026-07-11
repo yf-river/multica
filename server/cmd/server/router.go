@@ -435,15 +435,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	if opts.HeartbeatScheduler != nil {
 		h.HeartbeatScheduler = opts.HeartbeatScheduler
 	}
-	// Auth caches: PAT cache is shared between the regular Auth middleware,
-	// the DaemonAuth fallback (mul_) path, and the revoke handler
-	// (invalidate). DaemonTokenCache backs the DaemonAuth mdt_ path. Both
-	// constructors return nil when rdb is nil — every consumer handles that
-	// as "no cache, always hit DB".
+	// The PAT cache is shared by regular and daemon authentication. Its
+	// constructor returns nil without Redis, which means "always hit DB".
 	patCache := auth.NewPATCache(rdb)
-	daemonTokenCache := auth.NewDaemonTokenCache(rdb)
 	h.PATCache = patCache
-	h.DaemonTokenCache = daemonTokenCache
 	h.MembershipCache = auth.NewMembershipCache(rdb)
 
 	// Cloud PAT verifier: validates mcn_ tokens against Multica Fleet.
@@ -553,9 +548,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	r.Post("/api/webhooks/github", h.HandleGitHubWebhook)
 	r.Get("/api/github/setup", h.GitHubSetupCallback)
 
-	// Daemon API routes (require daemon token or valid user token)
+	// Daemon API routes use the daemon's current CLI credential.
 	r.Route("/api/daemon", func(r chi.Router) {
-		r.Use(middleware.DaemonAuth(queries, patCache, daemonTokenCache, cloudPATVerifier))
+		r.Use(middleware.DaemonAuth(queries, patCache, cloudPATVerifier))
 
 		r.Post("/register", h.DaemonRegister)
 		r.Post("/deregister", h.DaemonDeregister)

@@ -489,7 +489,7 @@ func TestClaimTaskIncludesTapdSourceContextWithAccountCredential(t *testing.T) {
 	}
 
 	w = httptest.NewRecorder()
-	req = newDaemonTokenRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/tasks/claim", nil,
+	req = newDaemonUserRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/tasks/claim", nil,
 		testWorkspaceID, "tapd-source-context-claim")
 	req = withURLParam(req, "runtimeId", runtimeID)
 	testHandler.ClaimTaskByRuntime(w, req)

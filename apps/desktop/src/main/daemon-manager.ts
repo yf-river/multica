@@ -599,8 +599,8 @@ async function ensureRunningDaemonVersionMatches(): Promise<
 
 /**
  * Exchange the user's JWT for a long-lived PAT via POST /api/tokens. The
- * daemon needs a PAT (or `mul_` / `mdt_` token) because JWTs expire in 30
- * days and signatures are tied to a specific backend instance.
+ * daemon needs a `mul_` PAT because JWTs expire and their signatures are tied
+ * to a specific backend instance.
  */
 async function mintPat(jwt: string): Promise<string> {
   if (!targetApiBaseUrl) {

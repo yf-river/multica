@@ -20,13 +20,13 @@
     "webRouteHandlers": 1,
     "webRewrites": 6,
     "desktopRouteLiterals": 29,
-    "databaseTables": 88,
+    "databaseTables": 87,
     "databaseFunctions": 9,
     "databaseTriggers": 4,
-    "databaseIndexes": 187,
-    "migrations": 38,
-    "sqlcModules": 55,
-    "sqlcQueries": 579,
+    "databaseIndexes": 185,
+    "migrations": 40,
+    "sqlcModules": 54,
+    "sqlcQueries": 576,
     "goWebsocketEvents": 81,
     "typescriptWebsocketEvents": 71,
     "zustandStores": 31,
@@ -3592,8 +3592,6 @@
             "public.idx_github_installation_workspace",
             "public.idx_feedback_user_created",
             "public.idx_external_credential_profile_user_provider",
-            "public.idx_daemon_token_workspace_daemon",
-            "public.idx_daemon_token_hash",
             "public.idx_comment_reaction_comment_id",
             "public.idx_comment_issue_keyset",
             "public.idx_chat_session_workspace",
@@ -3707,10 +3705,6 @@
             {
               "name": "daemon_connection",
               "source": "server/migrations/001_current_schema.up.sql#daemon_connection"
-            },
-            {
-              "name": "daemon_token",
-              "source": "server/migrations/001_current_schema.up.sql#daemon_token"
             },
             {
               "name": "external_credential_profile",
@@ -4321,18 +4315,6 @@
               "table": "public.comment_reaction",
               "unique": false,
               "source": "server/migrations/001_current_schema.up.sql#idx_comment_reaction_comment_id"
-            },
-            {
-              "name": "idx_daemon_token_hash",
-              "table": "public.daemon_token",
-              "unique": true,
-              "source": "server/migrations/001_current_schema.up.sql#idx_daemon_token_hash"
-            },
-            {
-              "name": "idx_daemon_token_workspace_daemon",
-              "table": "public.daemon_token",
-              "unique": false,
-              "source": "server/migrations/001_current_schema.up.sql#idx_daemon_token_workspace_daemon"
             },
             {
               "name": "idx_external_credential_profile_user_provider",
@@ -5776,6 +5758,50 @@
           "droppedFunctions": [],
           "droppedTriggers": [],
           "droppedIndexes": []
+        },
+        {
+          "version": 20,
+          "name": "remove_unused_daemon_tokens",
+          "direction": "down",
+          "source": "server/migrations/020_remove_unused_daemon_tokens.down.sql",
+          "tablesCreated": [
+            {
+              "name": "daemon_token",
+              "source": "server/migrations/020_remove_unused_daemon_tokens.down.sql#daemon_token"
+            }
+          ],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [
+            {
+              "name": "idx_daemon_token_hash",
+              "table": "daemon_token",
+              "unique": true,
+              "source": "server/migrations/020_remove_unused_daemon_tokens.down.sql#idx_daemon_token_hash"
+            },
+            {
+              "name": "idx_daemon_token_workspace_daemon",
+              "table": "daemon_token",
+              "unique": false,
+              "source": "server/migrations/020_remove_unused_daemon_tokens.down.sql#idx_daemon_token_workspace_daemon"
+            }
+          ],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 20,
+          "name": "remove_unused_daemon_tokens",
+          "direction": "up",
+          "source": "server/migrations/020_remove_unused_daemon_tokens.up.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
         }
       ],
       "tables": [
@@ -5862,10 +5888,6 @@
         {
           "name": "daemon_connection",
           "source": "server/migrations/001_current_schema.up.sql#daemon_connection"
-        },
-        {
-          "name": "daemon_token",
-          "source": "server/migrations/001_current_schema.up.sql#daemon_token"
         },
         {
           "name": "domain_event_delivery",
@@ -6514,18 +6536,6 @@
           "table": "public.comment_reaction",
           "unique": false,
           "source": "server/migrations/001_current_schema.up.sql#idx_comment_reaction_comment_id"
-        },
-        {
-          "name": "idx_daemon_token_hash",
-          "table": "public.daemon_token",
-          "unique": true,
-          "source": "server/migrations/001_current_schema.up.sql#idx_daemon_token_hash"
-        },
-        {
-          "name": "idx_daemon_token_workspace_daemon",
-          "table": "public.daemon_token",
-          "unique": false,
-          "source": "server/migrations/001_current_schema.up.sql#idx_daemon_token_workspace_daemon"
         },
         {
           "name": "idx_domain_event_outbox_dead_lettered",
@@ -8327,33 +8337,6 @@
           ]
         },
         {
-          "module": "daemon_token",
-          "source": "server/pkg/db/queries/daemon_token.sql",
-          "generatedSource": "server/pkg/db/generated/daemon_token.sql.go",
-          "queries": [
-            {
-              "name": "CreateDaemonToken",
-              "command": "one",
-              "source": "server/pkg/db/queries/daemon_token.sql#CreateDaemonToken"
-            },
-            {
-              "name": "DeleteDaemonTokensByWorkspaceAndDaemons",
-              "command": "many",
-              "source": "server/pkg/db/queries/daemon_token.sql#DeleteDaemonTokensByWorkspaceAndDaemons"
-            },
-            {
-              "name": "DeleteExpiredDaemonTokens",
-              "command": "exec",
-              "source": "server/pkg/db/queries/daemon_token.sql#DeleteExpiredDaemonTokens"
-            },
-            {
-              "name": "GetDaemonTokenByHash",
-              "command": "one",
-              "source": "server/pkg/db/queries/daemon_token.sql#GetDaemonTokenByHash"
-            }
-          ]
-        },
-        {
           "module": "domain_event_outbox",
           "source": "server/pkg/db/queries/domain_event_outbox.sql",
           "generatedSource": "server/pkg/db/generated/domain_event_outbox.sql.go",
@@ -9184,11 +9167,6 @@
           "generatedSource": "server/pkg/db/generated/project_resource.sql.go",
           "queries": [
             {
-              "name": "CountProjectResources",
-              "command": "one",
-              "source": "server/pkg/db/queries/project_resource.sql#CountProjectResources"
-            },
-            {
               "name": "CreateProjectResource",
               "command": "one",
               "source": "server/pkg/db/queries/project_resource.sql#CreateProjectResource"
@@ -9227,6 +9205,16 @@
               "name": "ListProjectResourcesForProjects",
               "command": "many",
               "source": "server/pkg/db/queries/project_resource.sql#ListProjectResourcesForProjects"
+            },
+            {
+              "name": "LockProjectForResourcePosition",
+              "command": "one",
+              "source": "server/pkg/db/queries/project_resource.sql#LockProjectForResourcePosition"
+            },
+            {
+              "name": "NextProjectResourcePosition",
+              "command": "one",
+              "source": "server/pkg/db/queries/project_resource.sql#NextProjectResourcePosition"
             },
             {
               "name": "UpdateProjectResource",
@@ -17610,7 +17598,6 @@
           "server/internal/handler/comment_list.go",
           "server/internal/handler/comment_triggers.go",
           "server/internal/handler/comment.go",
-          "server/internal/handler/daemon_lifecycle.go",
           "server/internal/handler/daemon_task_results.go",
           "server/internal/handler/daemon_tasks.go",
           "server/internal/handler/dashboard.go",
@@ -17711,7 +17698,6 @@
           "server/cmd/server/main.go",
           "server/cmd/server/router.go",
           "server/internal/auth/cloud_pat.go",
-          "server/internal/auth/daemon_token_cache.go",
           "server/internal/auth/membership_cache.go",
           "server/internal/auth/pat_cache.go",
           "server/internal/handler/runtime_liveness_store.go",

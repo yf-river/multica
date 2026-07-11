@@ -67,7 +67,7 @@ func TestStartTask_SquadSOPEventFailureRollsBackTaskAndIssue(t *testing.T) {
 	})
 
 	w := httptest.NewRecorder()
-	req := newDaemonTokenRequest(http.MethodPost, "/api/daemon/tasks/"+workerTaskID+"/start", nil, testWorkspaceID, "sop-start-rollback-daemon")
+	req := newDaemonUserRequest(http.MethodPost, "/api/daemon/tasks/"+workerTaskID+"/start", nil, testWorkspaceID, "sop-start-rollback-daemon")
 	req = withURLParam(req, "taskId", workerTaskID)
 	testHandler.StartTask(w, req)
 	if w.Code != http.StatusInternalServerError {

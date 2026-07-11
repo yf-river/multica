@@ -1879,7 +1879,7 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 	// trace count proves that run and trial totals do not double-read trace data.
 
 	completeW := httptest.NewRecorder()
-	completeReq := newDaemonTokenRequest(http.MethodPost, "/api/daemon/tasks/"+resp.TaskID+"/complete", map[string]any{
+	completeReq := newDaemonUserRequest(http.MethodPost, "/api/daemon/tasks/"+resp.TaskID+"/complete", map[string]any{
 		"output":     structuredOutput,
 		"session_id": "prompt-eval-session",
 		"work_dir":   "/tmp/prompt-eval",
@@ -2142,7 +2142,7 @@ func TestPromptEvaluationRuntimeReadinessReportsRecentCapacityFailure(t *testing
 	markPromptEvaluationTaskRunning(t, resp.TaskID)
 
 	failW := httptest.NewRecorder()
-	failReq := newDaemonTokenRequest(http.MethodPost, "/api/daemon/tasks/"+resp.TaskID+"/fail", map[string]any{
+	failReq := newDaemonUserRequest(http.MethodPost, "/api/daemon/tasks/"+resp.TaskID+"/fail", map[string]any{
 		"error":          "429 当前无可用Token额度",
 		"failure_reason": "agent_error.provider_capacity_or_rate_limit",
 		"session_id":     "prompt-eval-capacity-session",
@@ -2338,7 +2338,7 @@ func TestRunPromptEvaluationAssetAgentCompletedWithoutStructuredVerdictNeedsRevi
 	}
 
 	completeW := httptest.NewRecorder()
-	completeReq := newDaemonTokenRequest(http.MethodPost, "/api/daemon/tasks/"+resp.TaskID+"/complete", map[string]any{
+	completeReq := newDaemonUserRequest(http.MethodPost, "/api/daemon/tasks/"+resp.TaskID+"/complete", map[string]any{
 		"output":     "Agent 输出：我已经完成训练评估。",
 		"session_id": "prompt-eval-review-session",
 		"work_dir":   "/tmp/prompt-eval",
@@ -2423,7 +2423,7 @@ func TestRunPromptEvaluationAssetAgentAutoSyncsFailedTask(t *testing.T) {
 	}
 
 	failW := httptest.NewRecorder()
-	failReq := newDaemonTokenRequest(http.MethodPost, "/api/daemon/tasks/"+resp.TaskID+"/fail", map[string]any{
+	failReq := newDaemonUserRequest(http.MethodPost, "/api/daemon/tasks/"+resp.TaskID+"/fail", map[string]any{
 		"error":          "智能体执行超时",
 		"failure_reason": "命令超时",
 		"session_id":     "prompt-eval-failed-session",
@@ -2463,7 +2463,7 @@ func TestPromptEvaluationEvidenceSnapshotArchivesRunEvidence(t *testing.T) {
 	markPromptEvaluationTaskRunning(t, resp.TaskID)
 
 	failW := httptest.NewRecorder()
-	failReq := newDaemonTokenRequest(http.MethodPost, "/api/daemon/tasks/"+resp.TaskID+"/fail", map[string]any{
+	failReq := newDaemonUserRequest(http.MethodPost, "/api/daemon/tasks/"+resp.TaskID+"/fail", map[string]any{
 		"error":          "402 当前账号 Token 额度已耗尽",
 		"failure_reason": "agent_error.provider_quota_limit",
 		"session_id":     "prompt-eval-snapshot-session",
@@ -2648,7 +2648,7 @@ func TestPromptEvaluationOptimizationCandidateUsesAgentEvidence(t *testing.T) {
 	}
 
 	failW := httptest.NewRecorder()
-	failReq := newDaemonTokenRequest(http.MethodPost, "/api/daemon/tasks/"+resp.TaskID+"/fail", map[string]any{
+	failReq := newDaemonUserRequest(http.MethodPost, "/api/daemon/tasks/"+resp.TaskID+"/fail", map[string]any{
 		"error":          "缺少验收条件",
 		"failure_reason": "assertion_mismatch",
 		"session_id":     "prompt-eval-evidence-session",

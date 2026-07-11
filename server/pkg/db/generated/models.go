@@ -323,15 +323,6 @@ type DaemonConnection struct {
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 }
 
-type DaemonToken struct {
-	ID          pgtype.UUID        `json:"id"`
-	TokenHash   string             `json:"token_hash"`
-	WorkspaceID pgtype.UUID        `json:"workspace_id"`
-	DaemonID    string             `json:"daemon_id"`
-	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-}
-
 type DomainEventDelivery struct {
 	EventID     pgtype.UUID        `json:"event_id"`
 	Consumer    string             `json:"consumer"`

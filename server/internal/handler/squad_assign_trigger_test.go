@@ -399,7 +399,7 @@ func createStartedSquadSOPRunFixture(t *testing.T, ctx context.Context, opts sta
 
 	if !opts.skipStart {
 		startW := httptest.NewRecorder()
-		startReq := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+taskID+"/start", nil, testWorkspaceID, opts.daemonName)
+		startReq := newDaemonUserRequest("POST", "/api/daemon/tasks/"+taskID+"/start", nil, testWorkspaceID, opts.daemonName)
 		startReq = withURLParam(startReq, "taskId", taskID)
 		testHandler.StartTask(startW, startReq)
 		if startW.Code != http.StatusOK {
@@ -432,7 +432,7 @@ func TestCompleteTaskClosesSquadSOPRun(t *testing.T) {
 	}
 
 	completeW := httptest.NewRecorder()
-	completeReq := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+fixture.taskID+"/complete", map[string]any{
+	completeReq := newDaemonUserRequest("POST", "/api/daemon/tasks/"+fixture.taskID+"/complete", map[string]any{
 		"output": "verify passed",
 	}, testWorkspaceID, fixture.daemonName)
 	completeReq = withURLParam(completeReq, "taskId", fixture.taskID)
@@ -491,7 +491,7 @@ func TestFailTaskDoesNotCloseSquadSOPRunWhenIssueHasActiveContinuation(t *testin
 	})
 
 	failW := httptest.NewRecorder()
-	failReq := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+fixture.taskID+"/fail", map[string]any{
+	failReq := newDaemonUserRequest("POST", "/api/daemon/tasks/"+fixture.taskID+"/fail", map[string]any{
 		"error":          "provider failed after queuing continuation",
 		"failure_reason": "api_invalid_request",
 	}, testWorkspaceID, fixture.daemonName)
@@ -546,7 +546,7 @@ func TestFailTaskWithDeliveryCommentAdvancesSquadSOPForReview(t *testing.T) {
 	}
 
 	failW := httptest.NewRecorder()
-	failReq := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+fixture.taskID+"/fail", map[string]any{
+	failReq := newDaemonUserRequest("POST", "/api/daemon/tasks/"+fixture.taskID+"/fail", map[string]any{
 		"error":          "provider ended after the delivery comment was already posted",
 		"failure_reason": "agent_error.unknown",
 	}, testWorkspaceID, fixture.daemonName)
@@ -659,7 +659,7 @@ func TestFailTaskBlocksSquadSOPIssueWithStructuredComment(t *testing.T) {
 	removeStatusFailure()
 
 	failW := httptest.NewRecorder()
-	failReq := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+fixture.taskID+"/fail", map[string]any{
+	failReq := newDaemonUserRequest("POST", "/api/daemon/tasks/"+fixture.taskID+"/fail", map[string]any{
 		"error":          rawProviderTrace,
 		"failure_reason": "agent_error.model_not_found_or_unavailable",
 	}, testWorkspaceID, fixture.daemonName)

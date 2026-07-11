@@ -21,13 +21,13 @@ evidence reviewable by humans.
 | Next.js route handlers | 1 |
 | Next.js rewrites | 6 |
 | Desktop route literals | 29 |
-| Database tables | 88 |
+| Database tables | 87 |
 | Database functions | 9 |
 | Database triggers | 4 |
-| Database indexes | 187 |
-| Migration files (up + down) | 38 |
-| sqlc modules | 55 |
-| sqlc queries | 579 |
+| Database indexes | 185 |
+| Migration files (up + down) | 40 |
+| sqlc modules | 54 |
+| sqlc queries | 576 |
 | Go WebSocket events | 81 |
 | TypeScript WebSocket events | 71 |
 | Zustand store definitions | 31 |
@@ -495,7 +495,7 @@ intentionally platform-specific.
 | Version | Name | Direction | Tables | Functions | Triggers | Indexes | Source |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 1 | current_schema | down | — | 0 | 0 | 0 | `server/migrations/001_current_schema.down.sql` |
-| 1 | current_schema | up | activity_log, agent, agent_runtime, agent_skill, agent_task_queue, attachment, autopilot, autopilot_run, autopilot_subscriber, autopilot_trigger, chat_message, chat_session, comment, comment_reaction, daemon_connection, daemon_token, external_credential_profile, feedback, github_installation, github_pending_check_suite, github_pending_installation, github_pull_request, github_pull_request_check_suite, inbox_item, issue, issue_dependency, issue_label, issue_pull_request, issue_reaction, issue_subscriber, issue_to_label, lark_binding_token, lark_chat_session_binding, lark_inbound_audit, lark_inbound_message_dedup, lark_installation, lark_outbound_card_message, lark_user_binding, member, notification_preference, personal_access_token, pinned_item, project, project_resource, prompt_evaluation_asset, prompt_evaluation_case, prompt_evaluation_case_assertion, prompt_evaluation_case_operation, prompt_evaluation_dataset_row, prompt_evaluation_dataset_version, prompt_evaluation_dataset_version_row, prompt_evaluation_dimension_score, prompt_evaluation_evidence_snapshot, prompt_evaluation_optimization_candidate, prompt_evaluation_run, prompt_evaluation_test_suite_case, prompt_evaluation_trial, prompt_library_item, prompt_library_version, prompt_library_trial, agent_playground_experiment, agent_playground_input, agent_playground_agent, agent_playground_result, agent_playground_judgement, runtime_profile, skill, skill_file, squad, squad_member, squad_sop_run, squad_sop_step_event, sys_cron_executions, task_message, task_token, task_trace_event, task_usage, task_usage_hourly, task_usage_hourly_dirty, task_usage_hourly_rollup_state, user, webhook_delivery, workspace | 9 | 4 | 180 | `server/migrations/001_current_schema.up.sql` |
+| 1 | current_schema | up | activity_log, agent, agent_runtime, agent_skill, agent_task_queue, attachment, autopilot, autopilot_run, autopilot_subscriber, autopilot_trigger, chat_message, chat_session, comment, comment_reaction, daemon_connection, external_credential_profile, feedback, github_installation, github_pending_check_suite, github_pending_installation, github_pull_request, github_pull_request_check_suite, inbox_item, issue, issue_dependency, issue_label, issue_pull_request, issue_reaction, issue_subscriber, issue_to_label, lark_binding_token, lark_chat_session_binding, lark_inbound_audit, lark_inbound_message_dedup, lark_installation, lark_outbound_card_message, lark_user_binding, member, notification_preference, personal_access_token, pinned_item, project, project_resource, prompt_evaluation_asset, prompt_evaluation_case, prompt_evaluation_case_assertion, prompt_evaluation_case_operation, prompt_evaluation_dataset_row, prompt_evaluation_dataset_version, prompt_evaluation_dataset_version_row, prompt_evaluation_dimension_score, prompt_evaluation_evidence_snapshot, prompt_evaluation_optimization_candidate, prompt_evaluation_run, prompt_evaluation_test_suite_case, prompt_evaluation_trial, prompt_library_item, prompt_library_version, prompt_library_trial, agent_playground_experiment, agent_playground_input, agent_playground_agent, agent_playground_result, agent_playground_judgement, runtime_profile, skill, skill_file, squad, squad_member, squad_sop_run, squad_sop_step_event, sys_cron_executions, task_message, task_token, task_trace_event, task_usage, task_usage_hourly, task_usage_hourly_dirty, task_usage_hourly_rollup_state, user, webhook_delivery, workspace | 9 | 4 | 178 | `server/migrations/001_current_schema.up.sql` |
 | 2 | agent_playground | down | — | 0 | 0 | 0 | `server/migrations/002_agent_playground.down.sql` |
 | 2 | agent_playground | up | agent_playground_experiment, agent_playground_input, agent_playground_agent, agent_playground_result, agent_playground_judgement | 0 | 0 | 5 | `server/migrations/002_agent_playground.up.sql` |
 | 3 | domain_event_outbox | down | — | 0 | 0 | 0 | `server/migrations/003_domain_event_outbox.down.sql` |
@@ -532,6 +532,8 @@ intentionally platform-specific.
 | 18 | require_task_usage_updated_at | up | — | 2 | 0 | 0 | `server/migrations/018_require_task_usage_updated_at.up.sql` |
 | 19 | remove_runtime_profile_visibility | down | — | 0 | 0 | 0 | `server/migrations/019_remove_runtime_profile_visibility.down.sql` |
 | 19 | remove_runtime_profile_visibility | up | — | 0 | 0 | 0 | `server/migrations/019_remove_runtime_profile_visibility.up.sql` |
+| 20 | remove_unused_daemon_tokens | down | daemon_token | 0 | 0 | 2 | `server/migrations/020_remove_unused_daemon_tokens.down.sql` |
+| 20 | remove_unused_daemon_tokens | up | — | 0 | 0 | 0 | `server/migrations/020_remove_unused_daemon_tokens.up.sql` |
 
 ### Current tables discovered from up migrations
 
@@ -556,7 +558,6 @@ intentionally platform-specific.
 - `comment` — `server/migrations/001_current_schema.up.sql#comment`
 - `comment_reaction` — `server/migrations/001_current_schema.up.sql#comment_reaction`
 - `daemon_connection` — `server/migrations/001_current_schema.up.sql#daemon_connection`
-- `daemon_token` — `server/migrations/001_current_schema.up.sql#daemon_token`
 - `domain_event_delivery` — `server/migrations/003_domain_event_outbox.up.sql#domain_event_delivery`
 - `domain_event_outbox` — `server/migrations/003_domain_event_outbox.up.sql#domain_event_outbox`
 - `external_credential_profile` — `server/migrations/001_current_schema.up.sql#external_credential_profile`
@@ -634,11 +635,11 @@ intentionally platform-specific.
 | `trg_tu_dirty_hourly` | `public.task_usage` | `public.enqueue_task_usage_hourly_dirty_for_tu` | `server/migrations/001_current_schema.up.sql#trg_tu_dirty_hourly` |
 
 - Functions: `public.enqueue_task_usage_hourly_dirty_for_atq`, `public.enqueue_task_usage_hourly_dirty_for_issue_delete`, `public.enqueue_task_usage_hourly_dirty_for_issue_project`, `public.enqueue_task_usage_hourly_dirty_for_tu`, `public.prune_task_usage_hourly_dirty`, `public.rollup_task_usage_hourly`, `public.rollup_task_usage_hourly_window`, `public.task_usage_hour_bucket`, `public.task_usage_hourly_rollup_lag_seconds`
-- Indexes: 187 current definitions; full name/table/uniqueness evidence is in the JSON companion.
+- Indexes: 185 current definitions; full name/table/uniqueness evidence is in the JSON companion.
 
 ### sqlc modules
 
-All 579 query names, commands, and stable source anchors are stored in the JSON companion.
+All 576 query names, commands, and stable source anchors are stored in the JSON companion.
 
 | Module | Queries | SQL source | Generated source |
 | --- | --- | --- | --- |
@@ -650,7 +651,6 @@ All 579 query names, commands, and stable source anchors are stored in the JSON 
 | chat | 25 | `server/pkg/db/queries/chat.sql` | `server/pkg/db/generated/chat.sql.go` |
 | chat_idempotency | 3 | `server/pkg/db/queries/chat_idempotency.sql` | `server/pkg/db/generated/chat_idempotency.sql.go` |
 | comment | 22 | `server/pkg/db/queries/comment.sql` | `server/pkg/db/generated/comment.sql.go` |
-| daemon_token | 4 | `server/pkg/db/queries/daemon_token.sql` | `server/pkg/db/generated/daemon_token.sql.go` |
 | domain_event_outbox | 9 | `server/pkg/db/queries/domain_event_outbox.sql` | `server/pkg/db/generated/domain_event_outbox.sql.go` |
 | external_credential_profile | 6 | `server/pkg/db/queries/external_credential_profile.sql` | `server/pkg/db/generated/external_credential_profile.sql.go` |
 | feedback | 2 | `server/pkg/db/queries/feedback.sql` | `server/pkg/db/generated/feedback.sql.go` |
@@ -666,7 +666,7 @@ All 579 query names, commands, and stable source anchors are stored in the JSON 
 | pinned_item | 6 | `server/pkg/db/queries/pinned_item.sql` | `server/pkg/db/generated/pinned_item.sql.go` |
 | project | 8 | `server/pkg/db/queries/project.sql` | `server/pkg/db/generated/project.sql.go` |
 | project_create_request | 3 | `server/pkg/db/queries/project_create_request.sql` | `server/pkg/db/generated/project_create_request.sql.go` |
-| project_resource | 10 | `server/pkg/db/queries/project_resource.sql` | `server/pkg/db/generated/project_resource.sql.go` |
+| project_resource | 11 | `server/pkg/db/queries/project_resource.sql` | `server/pkg/db/generated/project_resource.sql.go` |
 | prompt_evaluation_asset | 5 | `server/pkg/db/queries/prompt_evaluation_asset.sql` | `server/pkg/db/generated/prompt_evaluation_asset.sql.go` |
 | prompt_evaluation_case | 10 | `server/pkg/db/queries/prompt_evaluation_case.sql` | `server/pkg/db/generated/prompt_evaluation_case.sql.go` |
 | prompt_evaluation_case_assertion | 3 | `server/pkg/db/queries/prompt_evaluation_case_assertion.sql` | `server/pkg/db/generated/prompt_evaluation_case_assertion.sql.go` |
@@ -1007,8 +1007,8 @@ written to the generated outputs.
 | filesystem | 44 | `server/cmd/migrate/main.go`, `server/cmd/multica/cmd_agent.go`, `server/cmd/multica/cmd_attachment.go`, `server/cmd/multica/cmd_daemon_windows.go`, `server/cmd/multica/cmd_daemon.go`, `server/cmd/multica/cmd_issue_comments.go`, `server/cmd/multica/cmd_issue_pull_request.go`, `server/cmd/multica/cmd_issue.go` |
 | object-storage | 1 | `server/internal/storage/s3.go` |
 | outbound-http | 17 | `server/cmd/multica/cmd_daemon.go`, `server/cmd/multica/cmd_setup.go`, `server/internal/analytics/posthog.go`, `server/internal/auth/cloud_pat.go`, `server/internal/cli/client.go`, `server/internal/cli/update.go`, `server/internal/daemon/client.go`, `server/internal/daemon/task_artifacts.go` |
-| postgresql | 127 | `server/cmd/backfill_codex_usage_cache/main.go`, `server/cmd/migrate/main.go`, `server/cmd/server/activity_listeners.go`, `server/cmd/server/autopilot_failure_monitor.go`, `server/cmd/server/autopilot_scheduler.go`, `server/cmd/server/chat_projection.go`, `server/cmd/server/comment_projection.go`, `server/cmd/server/dbstats.go` |
-| redis | 15 | `server/cmd/server/main.go`, `server/cmd/server/router.go`, `server/internal/auth/cloud_pat.go`, `server/internal/auth/daemon_token_cache.go`, `server/internal/auth/membership_cache.go`, `server/internal/auth/pat_cache.go`, `server/internal/handler/runtime_liveness_store.go`, `server/internal/handler/runtime_local_skills_redis_store.go` |
+| postgresql | 126 | `server/cmd/backfill_codex_usage_cache/main.go`, `server/cmd/migrate/main.go`, `server/cmd/server/activity_listeners.go`, `server/cmd/server/autopilot_failure_monitor.go`, `server/cmd/server/autopilot_scheduler.go`, `server/cmd/server/chat_projection.go`, `server/cmd/server/comment_projection.go`, `server/cmd/server/dbstats.go` |
+| redis | 14 | `server/cmd/server/main.go`, `server/cmd/server/router.go`, `server/internal/auth/cloud_pat.go`, `server/internal/auth/membership_cache.go`, `server/internal/auth/pat_cache.go`, `server/internal/handler/runtime_liveness_store.go`, `server/internal/handler/runtime_local_skills_redis_store.go`, `server/internal/handler/runtime_models_redis_store.go` |
 | subprocess | 29 | `server/cmd/multica/cmd_auth.go`, `server/cmd/multica/cmd_daemon_unix.go`, `server/cmd/multica/cmd_daemon.go`, `server/internal/cli/update.go`, `server/internal/daemon/config.go`, `server/internal/daemon/execenv/codex_home_link_windows.go`, `server/internal/daemon/execenv/openclaw_config.go`, `server/internal/daemon/gc.go` |
 | websocket | 4 | `server/internal/daemon/wakeup.go`, `server/internal/daemonws/hub.go`, `server/internal/integrations/lark/ws_connector.go`, `server/internal/realtime/hub.go` |
 

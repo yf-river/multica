@@ -91,7 +91,7 @@ func completeRunningTask(t *testing.T, fx runningSquadLeaderTaskFixture, output 
 	t.Helper()
 
 	w := httptest.NewRecorder()
-	r := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+fx.TaskID+"/complete",
+	r := newDaemonUserRequest("POST", "/api/daemon/tasks/"+fx.TaskID+"/complete",
 		map[string]any{"output": output},
 		testWorkspaceID, "legit-daemon")
 	rctx := chi.NewRouteContext()

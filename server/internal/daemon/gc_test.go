@@ -211,7 +211,7 @@ func TestShouldCleanTaskDir_Issue404OldOrphan(t *testing.T) {
 
 // TestShouldCleanTaskDir_Issue404RecentSkipped locks in the cross-workspace
 // safety: the server returns 404 both for deleted issues and for workspaces
-// the daemon token can't see, so a recent 404 must NOT trigger immediate
+// the authenticated user can't see, so a recent 404 must NOT trigger immediate
 // cleanup — otherwise a token re-scope could wipe dirs whose issues are live.
 func TestShouldCleanTaskDir_Issue404RecentSkipped(t *testing.T) {
 	t.Parallel()

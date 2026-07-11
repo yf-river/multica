@@ -9,7 +9,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/multica-ai/multica/server/internal/middleware"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -17,25 +16,15 @@ import (
 // Daemon workspace ownership helpers
 // ---------------------------------------------------------------------------
 
-// requireDaemonWorkspaceAccess verifies the caller has access to the given workspace.
-// For daemon tokens (mdt_), compares the token's workspace ID directly.
-// For PAT/JWT fallback, verifies user membership in the workspace.
+// requireDaemonWorkspaceAccess verifies the daemon's current CLI user is a
+// member of the target workspace.
 func (h *Handler) requireDaemonWorkspaceAccess(w http.ResponseWriter, r *http.Request, workspaceID string) bool {
 	if workspaceID == "" {
 		writeError(w, http.StatusNotFound, "not found")
 		return false
 	}
 
-	// Daemon token: workspace must match.
-	if daemonWsID := middleware.DaemonWorkspaceIDFromContext(r.Context()); daemonWsID != "" {
-		if daemonWsID != workspaceID {
-			writeError(w, http.StatusNotFound, "not found")
-			return false
-		}
-		return true
-	}
-
-	// PAT/JWT fallback: check membership cache before hitting DB.
+	// Check membership cache before hitting DB.
 	userID := requestUserID(r)
 	if userID != "" {
 		if h.MembershipCache.Get(r.Context(), userID, workspaceID) {
@@ -126,9 +115,6 @@ func (h *Handler) requireDaemonTaskAccessWithWorkspace(w http.ResponseWriter, r 
 func (h *Handler) verifyDaemonWorkspaceAccess(r *http.Request, workspaceID string) bool {
 	if workspaceID == "" {
 		return false
-	}
-	if daemonWsID := middleware.DaemonWorkspaceIDFromContext(r.Context()); daemonWsID != "" {
-		return daemonWsID == workspaceID
 	}
 	userID := requestUserID(r)
 	if userID == "" {

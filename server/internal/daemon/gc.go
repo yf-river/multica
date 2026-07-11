@@ -250,7 +250,7 @@ func (d *Daemon) orphanByMTime(taskDir, reason string) gcAction {
 }
 
 // isAccessNotFound detects the 404 returned by gc-check endpoints. The same
-// status covers "row deleted" and "daemon token can't see this workspace"
+// status covers "row deleted" and "daemon user no longer has workspace access"
 // (the requireDaemonWorkspaceAccess anti-enumeration shape), so callers
 // can't tell the two apart from the response alone.
 func isAccessNotFound(err error) bool {
@@ -267,8 +267,8 @@ func (d *Daemon) gcDecisionIssue(ctx context.Context, taskDir string, meta *exec
 	if err != nil {
 		if isAccessNotFound(err) {
 			// 404 is ambiguous: server returns it for both "issue deleted"
-			// and "daemon token has no access to the workspace". Fall back
-			// to the mtime-gated orphan cleanup so a scoped-down token
+			// and "daemon user has no access to the workspace". Fall back
+			// to the mtime-gated orphan cleanup so a removed user
 			// can't instantly wipe dirs whose issues are still live.
 			return d.orphanByMTime(taskDir, "issue not accessible")
 		}

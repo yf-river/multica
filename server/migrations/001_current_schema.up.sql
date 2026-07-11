@@ -703,15 +703,6 @@ CREATE TABLE public.daemon_connection (
     CONSTRAINT daemon_connection_status_check CHECK ((status = ANY (ARRAY['connected'::text, 'disconnected'::text])))
 );
 
-CREATE TABLE public.daemon_token (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    token_hash text NOT NULL,
-    workspace_id uuid NOT NULL,
-    daemon_id text NOT NULL,
-    expires_at timestamp with time zone NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
 CREATE TABLE public.external_credential_profile (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     user_id uuid NOT NULL,
@@ -1823,9 +1814,6 @@ ALTER TABLE ONLY public.comment_reaction
 ALTER TABLE ONLY public.daemon_connection
     ADD CONSTRAINT daemon_connection_pkey PRIMARY KEY (id);
 
-ALTER TABLE ONLY public.daemon_token
-    ADD CONSTRAINT daemon_token_pkey PRIMARY KEY (id);
-
 ALTER TABLE ONLY public.external_credential_profile
     ADD CONSTRAINT external_credential_profile_pkey PRIMARY KEY (id);
 
@@ -2239,10 +2227,6 @@ CREATE INDEX idx_comment_issue_keyset ON public.comment USING btree (issue_id, c
 
 CREATE INDEX idx_comment_reaction_comment_id ON public.comment_reaction USING btree (comment_id);
 
-CREATE UNIQUE INDEX idx_daemon_token_hash ON public.daemon_token USING btree (token_hash);
-
-CREATE INDEX idx_daemon_token_workspace_daemon ON public.daemon_token USING btree (workspace_id, daemon_id);
-
 CREATE INDEX idx_external_credential_profile_user_provider ON public.external_credential_profile USING btree (user_id, provider, created_at DESC);
 
 CREATE INDEX idx_feedback_user_created ON public.feedback USING btree (user_id, created_at DESC);
@@ -2637,9 +2621,6 @@ ALTER TABLE ONLY public.comment
 
 ALTER TABLE ONLY public.daemon_connection
     ADD CONSTRAINT daemon_connection_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES public.agent(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.daemon_token
-    ADD CONSTRAINT daemon_token_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.external_credential_profile
     ADD CONSTRAINT external_credential_profile_user_id_fkey FOREIGN KEY (user_id) REFERENCES public."user"(id) ON DELETE CASCADE;

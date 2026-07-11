@@ -126,9 +126,8 @@ func WorkspaceCreated(userID, workspaceID string) Event {
 // upsert query to distinguish inserts from updates — heartbeats and repeat
 // registrations never emit this event.
 //
-// ownerID may be empty when the daemon authenticates via a daemon token
-// (no user context); downstream funnels that need per-user attribution
-// fall back to `workspace_id` as the grouping key.
+// ownerID is normally the daemon's CLI user. The workspace fallback keeps
+// analytics robust for imported rows that predate runtime ownership.
 func RuntimeRegistered(ownerID, workspaceID, runtimeID, daemonID, provider, runtimeVersion, cliVersion string) Event {
 	distinct := ownerID
 	if distinct == "" {

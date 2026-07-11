@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
@@ -52,24 +51,13 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 	}
 	req.WorkspaceID = uuidToString(wsUUID)
 
-	// Verify workspace access and resolve owner.
-	// Daemon tokens (mdt_) prove workspace access directly; OwnerID will be zero
-	// (the SQL COALESCE preserves any existing owner on upsert).
-	// PAT/JWT tokens require a membership check and set OwnerID from the member.
-	var ownerID pgtype.UUID
-	if daemonWsID := middleware.DaemonWorkspaceIDFromContext(r.Context()); daemonWsID != "" {
-		if daemonWsID != req.WorkspaceID {
-			writeError(w, http.StatusNotFound, "workspace not found")
-			return
-		}
-		// ownerID stays zero — COALESCE keeps the existing owner on upsert.
-	} else {
-		member, ok := h.requireWorkspaceMember(w, r, req.WorkspaceID, "workspace not found")
-		if !ok {
-			return
-		}
-		ownerID = member.UserID
+	// The daemon uses its current CLI user's credential, so registration is
+	// always owned by an actual workspace member.
+	member, ok := h.requireWorkspaceMember(w, r, req.WorkspaceID, "workspace not found")
+	if !ok {
+		return
 	}
+	ownerID := member.UserID
 
 	ws, err := h.Queries.GetWorkspace(r.Context(), wsUUID)
 	if err != nil {
@@ -746,7 +734,7 @@ func (h *Handler) processHeartbeat(ctx context.Context, rt db.AgentRuntime) (*pr
 // so the prod tail can be attributed without flooding logs at normal rates.
 // auth_ms is further decomposed into decode_ms, runtime_lookup_ms, and
 // workspace_check_ms; auth_path labels which token kind authenticated the
-// request ("daemon_token", "pat", or "jwt"). Mirrors logClaimEndpointSlow.
+// request ("pat", "cloud_pat", or "jwt"). Mirrors logClaimEndpointSlow.
 func logHeartbeatEndpointSlow(runtimeID, outcome, authPath string, start time.Time, decodeMs, runtimeLookupMs, workspaceCheckMs, authMs, updateMs, probeModelMs, popModelMs, probeSkillsMs, popSkillsMs, probeImportMs, popImportMs int64, probeModelTimedOut, probeSkillsTimedOut, probeImportTimedOut bool) {
 	totalMs := time.Since(start).Milliseconds()
 	if totalMs < 500 && !probeModelTimedOut && !probeSkillsTimedOut && !probeImportTimedOut {

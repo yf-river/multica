@@ -23,10 +23,8 @@ import (
 // binding.
 const CloudPATPrefix = "mcn_"
 
-// cloudPATCachePrefix namespaces cloud-PAT cache keys away from
-// mul_/mdt_ caches so the three token kinds can't accidentally share
-// keys. The trailing slash mirrors the existing patCachePrefix /
-// daemonTokenCachePrefix conventions.
+// cloudPATCachePrefix namespaces cloud-PAT cache keys away from local mul_
+// PAT keys. The trailing slash mirrors patCachePrefix.
 const cloudPATCachePrefix = "mul:auth:mcn:"
 
 // cloudPATCacheTTL bounds how long a verified mcn_ token stays cached
@@ -188,7 +186,7 @@ type CloudPATVerifierConfig struct {
 
 	// Redis backs the positive-result cache. Nil disables caching —
 	// every Verify call hits Fleet. Same nil-safe contract as
-	// PATCache / DaemonTokenCache.
+	// PATCache.
 	Redis *redis.Client
 }
 
