@@ -133,8 +133,32 @@ describe("LoginPage", () => {
 
     await waitFor(() => {
       expect(mockApiLogin).toHaveBeenCalledWith("alice", "correct-password");
+      expect(mockApiSetToken).not.toHaveBeenCalledWith("jwt-token");
+      expect(localStorage.getItem("multica_token")).toBeNull();
       expect(window.location.href).toBe(
         "http://localhost:39876/callback?token=jwt-token&state=state-1",
+      );
+    });
+  });
+
+  it("issues a fresh CLI token from the current cookie session", async () => {
+    mockApiGetMe.mockResolvedValueOnce({ id: "u1", account: "alice", name: "Alice" });
+    mockApiIssueCliToken.mockResolvedValueOnce({ token: "cli-token" });
+    const user = userEvent.setup();
+
+    renderWithI18n(
+      <LoginPage
+        onSuccess={onSuccess}
+        cliCallback={{ url: "http://localhost:39876/callback", state: "state-2" }}
+      />,
+    );
+
+    await user.click(await screen.findByRole("button", { name: "授权" }));
+
+    await waitFor(() => {
+      expect(mockApiIssueCliToken).toHaveBeenCalledOnce();
+      expect(window.location.href).toBe(
+        "http://localhost:39876/callback?token=cli-token&state=state-2",
       );
     });
   });
