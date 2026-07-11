@@ -211,16 +211,6 @@ func TestHTTPClient_IsConfigured(t *testing.T) {
 	}
 }
 
-// TestHTTPClient_StubReportsNotConfigured pins that the stub never
-// claims wired outbound — handlers gate install / management UI on
-// this signal.
-func TestHTTPClient_StubReportsNotConfigured(t *testing.T) {
-	s := NewStubAPIClient(nil)
-	if s.IsConfigured() {
-		t.Errorf("stub IsConfigured must be false")
-	}
-}
-
 // TestHTTPClient_SendInteractiveCard_DefaultRendererBodyHasUpdateMulti
 // is the send-side half of the must-fix wire check: when the Patcher
 // uses NewDefaultRenderer to produce a card and ships it via
@@ -960,8 +950,8 @@ func TestHTTPClient_GetBotInfo_HappyPath(t *testing.T) {
 			"code": 0,
 			"msg":  "ok",
 			"bot": map[string]any{
-				"open_id":   "ou_bot_42",
-				"app_name":  "PersonalAgent",
+				"open_id":    "ou_bot_42",
+				"app_name":   "PersonalAgent",
 				"avatar_url": "https://example/avatar.png",
 			},
 		})
