@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readOptionalTextFile } from "./optional-file";
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -11,15 +11,8 @@ function errorMessage(error: unknown): string {
 export async function readOptionalJsonObject(
   path: string,
 ): Promise<Record<string, unknown>> {
-  let raw: string;
-  try {
-    raw = await readFile(path, "utf-8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
-    throw new Error(`cannot read JSON config ${path}: ${errorMessage(error)}`, {
-      cause: error,
-    });
-  }
+  const raw = await readOptionalTextFile(path);
+  if (raw === null) return {};
 
   let parsed: unknown;
   try {

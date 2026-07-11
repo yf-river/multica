@@ -4,7 +4,6 @@ import {
   readFile,
   writeFile,
   mkdir,
-  rm,
   open,
   stat,
 } from "fs/promises";
@@ -31,6 +30,7 @@ import {
   type AuthProbeResult,
 } from "./daemon-auth-probe";
 import { readOptionalJsonObject } from "./json-config-file";
+import { readOptionalTextFile, removeOptionalFile } from "./optional-file";
 
 const DEFAULT_HEALTH_PORT = 19514;
 const POLL_INTERVAL_MS = 5_000;
@@ -118,13 +118,8 @@ function profileUserIdPath(profile: string): string {
 }
 
 async function readProfileUserId(profile: string): Promise<string | null> {
-  try {
-    const raw = await readFile(profileUserIdPath(profile), "utf-8");
-    const trimmed = raw.trim();
-    return trimmed || null;
-  } catch {
-    return null;
-  }
+  const raw = await readOptionalTextFile(profileUserIdPath(profile));
+  return raw?.trim() || null;
 }
 
 async function writeProfileUserId(
@@ -136,11 +131,7 @@ async function writeProfileUserId(
 }
 
 async function removeProfileUserId(profile: string): Promise<void> {
-  try {
-    await rm(profileUserIdPath(profile));
-  } catch {
-    // Already gone — nothing to do.
-  }
+  await removeOptionalFile(profileUserIdPath(profile));
 }
 
 function normalizeUrl(u: string): string {
