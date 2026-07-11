@@ -218,6 +218,32 @@ test("maintained domain flows stay anchored to current routes, tables and source
         "server/cmd/server/task_projection.go",
       ],
     },
+    {
+      file: "prompt-evaluation-flow.md",
+      routes: [
+        "POST /api/prompt-evaluation-assets/{id}/run",
+        "POST /api/prompt-evaluation-runs/{id}/sync",
+        "POST /api/prompt-evaluation-runs/{id}/review",
+        "POST /api/prompt-evaluation-optimization-candidates/{id}/skill-apply",
+      ],
+      tables: [
+        "prompt_evaluation_asset",
+        "prompt_evaluation_case",
+        "prompt_evaluation_dataset_version",
+        "prompt_evaluation_run",
+        "prompt_evaluation_trial",
+        "prompt_evaluation_evidence_snapshot",
+        "prompt_evaluation_optimization_candidate",
+      ],
+      sources: [
+        "server/internal/handler/prompt_evaluation_asset.go",
+        "server/internal/handler/prompt_evaluation_dataset_versions.go",
+        "server/internal/service/prompt_evaluation_sync.go",
+        "server/cmd/server/prompt_evaluation_projection.go",
+        "packages/views/prompt-library/components/use-prompt-library-mutations.ts",
+        "packages/views/prompt-library/components/use-skill-candidate-workflow-actions.ts",
+      ],
+    },
   ];
 
   const index = fs.readFileSync(

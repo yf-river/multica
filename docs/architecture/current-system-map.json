@@ -30,7 +30,7 @@
     "goWebsocketEvents": 81,
     "typescriptWebsocketEvents": 71,
     "zustandStores": 31,
-    "reactQueryConsumerFiles": 173,
+    "reactQueryConsumerFiles": 174,
     "environmentVariables": 220,
     "manualExternalSystems": 12
   },
@@ -14029,6 +14029,17 @@
           }
         },
         {
+          "source": "packages/views/prompt-library/components/use-skill-candidate-workflow-actions.ts",
+          "scope": "packages/views",
+          "operations": {
+            "useQuery": 0,
+            "useInfiniteQuery": 0,
+            "useMutation": 0,
+            "queryOptions": 0,
+            "infiniteQueryOptions": 0
+          }
+        },
+        {
           "source": "packages/views/run-reviews/components/run-reviews-page.tsx",
           "scope": "packages/views",
           "operations": {
@@ -14352,7 +14363,7 @@
       },
       {
         "scope": "packages/views",
-        "count": 112
+        "count": 113
       }
     ]
   },
