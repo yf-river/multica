@@ -75,9 +75,6 @@ func newFleetServer(t *testing.T, opts fleetServerOpts) *httptest.Server {
 // of a nil-deref panic.
 func TestCloudPATVerifier_NilSafe(t *testing.T) {
 	var v *CloudPATVerifier
-	if v.Configured() {
-		t.Fatal("nil verifier reported Configured()=true")
-	}
 	_, err := v.Verify(context.Background(), "mcn_anything", nil)
 	if !errors.Is(err, ErrCloudPATNotConfigured) {
 		t.Fatalf("expected ErrCloudPATNotConfigured, got %v", err)
@@ -344,7 +341,6 @@ func TestCloudPATVerifier_NegativesNotCached(t *testing.T) {
 		t.Fatalf("negative result must not be cached; expected 2 fleet calls, got %d", got)
 	}
 }
-
 
 // TestCloudPATVerifier_LookupRejectsUnknownOwner pins the new
 // owner-existence guard. Cloud says the token is valid, but the

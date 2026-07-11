@@ -211,13 +211,6 @@ func NewCloudPATVerifier(cfg CloudPATVerifierConfig) *CloudPATVerifier {
 	}
 }
 
-// Configured reports whether the verifier has a Fleet URL. Convenience
-// for telemetry — a nil receiver also returns false. The middleware
-// uses ordinary nil checks instead of this in hot paths.
-func (v *CloudPATVerifier) Configured() bool {
-	return v != nil && v.baseURL != ""
-}
-
 // Verify resolves token to a CloudPATIdentity by consulting (in order):
 //
 //  1. Redis cache, keyed by sha256(token). Hit → return cached
