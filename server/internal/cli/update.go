@@ -16,7 +16,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -34,89 +33,6 @@ type GitHubRelease struct {
 	TagName string               `json:"tag_name"`
 	HTMLURL string               `json:"html_url"`
 	Assets  []GitHubReleaseAsset `json:"assets"`
-}
-
-// IsReleaseVersion reports whether v looks like a tagged release version
-// (e.g. "0.1.13", "v0.1.13") rather than a dev build (e.g. an empty version
-// or a `git describe`–style "v0.2.15-235-gdaf0e935"). The auto-update poller
-// uses this to skip self-update for source builds, where downgrading to a
-// public release would clobber unreleased changes.
-func IsReleaseVersion(v string) bool {
-	s := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(v), "v"))
-	if s == "" {
-		return false
-	}
-	parts := strings.Split(s, ".")
-	if len(parts) != 3 {
-		return false
-	}
-	for _, p := range parts {
-		if p == "" {
-			return false
-		}
-		for _, r := range p {
-			if r < '0' || r > '9' {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-// IsNewerVersion reports whether latest is strictly newer than current. Both
-// arguments may carry an optional "v" prefix; non-numeric tails are ignored
-// (a 4th component, pre-release tag, etc.). Returns false if either side
-// cannot be parsed — the caller treats that as "stay on current".
-func IsNewerVersion(latest, current string) bool {
-	l, ok := parseReleaseVersion(latest)
-	if !ok {
-		return false
-	}
-	c, ok := parseReleaseVersion(current)
-	if !ok {
-		return false
-	}
-	for i := 0; i < 3; i++ {
-		if l[i] != c[i] {
-			return l[i] > c[i]
-		}
-	}
-	return false
-}
-
-// parseReleaseVersion extracts the three numeric components of v. Returns
-// (parts, true) on success; (_, false) when v is missing, malformed, or
-// carries any non-numeric tail (a dev-describe suffix, a 4th component, a
-// pre-release tag, etc.). The strict shape is intentional: this is the only
-// parser used by IsNewerVersion, and the manual updater must never silently
-// downgrade a developer build to a public release just because the
-// dev-describe patch happened to look numeric after trimming.
-func parseReleaseVersion(v string) ([3]int, bool) {
-	s := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(v), "v"))
-	if s == "" {
-		return [3]int{}, false
-	}
-	parts := strings.Split(s, ".")
-	if len(parts) != 3 {
-		return [3]int{}, false
-	}
-	var out [3]int
-	for i, p := range parts {
-		if p == "" {
-			return [3]int{}, false
-		}
-		for _, r := range p {
-			if r < '0' || r > '9' {
-				return [3]int{}, false
-			}
-		}
-		n, err := strconv.Atoi(p)
-		if err != nil {
-			return [3]int{}, false
-		}
-		out[i] = n
-	}
-	return out, true
 }
 
 type GitHubReleaseAsset struct {
@@ -325,12 +241,6 @@ func fetchURLBytes(url string, timeout time.Duration) ([]byte, error) {
 		return nil, fmt.Errorf("HTTP %d from %s", resp.StatusCode, url)
 	}
 	return io.ReadAll(resp.Body)
-}
-
-// UpdateViaDownload downloads the latest release binary from GitHub and replaces
-// the current executable in-place. Returns the combined output message and any error.
-func UpdateViaDownload(targetVersion string) (string, error) {
-	return UpdateViaDownloadWithTimeout(targetVersion, DefaultUpdateDownloadTimeout)
 }
 
 // UpdateViaDownloadWithTimeout downloads the latest release binary with a caller-selected timeout.

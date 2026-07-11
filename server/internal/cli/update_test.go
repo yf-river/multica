@@ -71,59 +71,6 @@ func TestFindReleaseAsset(t *testing.T) {
 	})
 }
 
-func TestIsReleaseVersion(t *testing.T) {
-	tests := []struct {
-		name string
-		in   string
-		want bool
-	}{
-		{"bare release", "0.1.13", true},
-		{"v-prefixed release", "v0.1.13", true},
-		{"surrounding whitespace", "  v0.1.13  ", true},
-		{"dev describe", "v0.2.15-235-gdaf0e935", false},
-		{"dirty dev describe", "v0.2.15-235-gdaf0e935-dirty", false},
-		{"empty", "", false},
-		{"two components", "0.1", false},
-		{"four components", "0.1.2.3", false},
-		{"non-numeric", "1.0.x", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := IsReleaseVersion(tt.in); got != tt.want {
-				t.Fatalf("IsReleaseVersion(%q) = %v, want %v", tt.in, got, tt.want)
-			}
-		})
-	}
-}
-
-func TestIsNewerVersion(t *testing.T) {
-	tests := []struct {
-		name            string
-		latest, current string
-		want            bool
-	}{
-		{"patch bump", "v0.1.14", "v0.1.13", true},
-		{"minor bump", "v0.2.0", "v0.1.99", true},
-		{"major bump", "v1.0.0", "v0.99.99", true},
-		{"same version", "v0.1.13", "v0.1.13", false},
-		{"older latest", "v0.1.12", "v0.1.13", false},
-		{"mixed v prefix", "0.1.14", "v0.1.13", true},
-		{"current is dev describe → unparseable → false", "v0.1.14", "v0.1.13-5-gabcdef0", false},
-		{"latest is dev describe → unparseable → false", "v0.1.14-1-gabcdef0", "v0.1.13", false},
-		{"latest unparseable → false", "garbage", "v0.1.13", false},
-		{"current unparseable → false", "v0.1.14", "garbage", false},
-		{"empty latest", "", "v0.1.13", false},
-		{"empty current", "v0.1.14", "", false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := IsNewerVersion(tt.latest, tt.current); got != tt.want {
-				t.Fatalf("IsNewerVersion(%q, %q) = %v, want %v", tt.latest, tt.current, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestFindChecksumManifestAsset(t *testing.T) {
 	t.Run("finds checksums.txt among assets", func(t *testing.T) {
 		assets := []GitHubReleaseAsset{
