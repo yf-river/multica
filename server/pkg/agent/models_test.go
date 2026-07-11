@@ -503,6 +503,23 @@ exit 1
 	}
 }
 
+func TestDiscoverOpenCodeModelsReturnsPlainCommandFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fake binary requires a POSIX shell")
+	}
+
+	fake := filepath.Join(t.TempDir(), "opencode")
+	writeTestExecutable(t, fake, []byte("#!/bin/sh\nexit 23\n"))
+
+	models, err := discoverOpenCodeModels(context.Background(), fake)
+	if err == nil {
+		t.Fatalf("models = %+v, want command failure", models)
+	}
+	if !strings.Contains(err.Error(), "discover OpenCode models") {
+		t.Fatalf("error = %q, want discovery context", err)
+	}
+}
+
 // TestCachedDiscoveryDoesNotCacheEmpty verifies that an empty discovery result
 // is not cached, so a transient failure (e.g. a `pi --list-models` timeout)
 // doesn't keep the model picker blank for the full TTL. A non-empty result is

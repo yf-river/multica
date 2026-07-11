@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -40,8 +41,12 @@ func discoverOpenCodeModels(ctx context.Context, executablePath string) ([]Model
 		// but still prints the IDs.
 		cmd = exec.CommandContext(runCtx, executablePath, "models")
 		hideAgentWindow(cmd)
-		out, _ = cmd.Output()
+		var err error
+		out, err = cmd.Output()
 		models = parseOpenCodeModels(string(out))
+		if len(models) == 0 && err != nil {
+			return nil, fmt.Errorf("discover OpenCode models: %w", err)
+		}
 	}
 	if len(models) == 0 {
 		return []Model{}, nil
