@@ -427,9 +427,12 @@ func (h *Handler) CheckPromptEvaluationSkillCandidateFreshness(w http.ResponseWr
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	_, _ = h.mergePromptEvaluationOptimizationCandidateMetrics(r.Context(), workspaceUUID, candidateID, map[string]any{
+	if _, err := h.mergePromptEvaluationOptimizationCandidateMetrics(r.Context(), workspaceUUID, candidateID, map[string]any{
 		"skill_freshness": result,
-	})
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to persist skill freshness evidence")
+		return
+	}
 	writeJSON(w, http.StatusOK, result)
 }
 
