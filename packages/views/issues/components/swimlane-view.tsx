@@ -8,9 +8,6 @@ import {
   useSensor,
   useSensors,
   useDroppable,
-  pointerWithin,
-  closestCenter,
-  type CollisionDetection,
   type DragStartEvent,
   type DragEndEvent,
   type DragOverEvent,
@@ -59,6 +56,16 @@ import { ProjectIcon } from "../../projects/components/project-icon";
 import { ActorAvatar } from "../../common/actor-avatar";
 import type { ChildProgress } from "./list-row";
 import { useT } from "../../i18n";
+import {
+  NONE_LANE_ID,
+  ORPHAN_LANE_ID,
+  cellId,
+  computePosition,
+  findCellIn,
+  laneIdFor,
+  makeSwimLaneCollision,
+  parseLaneId,
+} from "./swimlane-dnd";
 
 const COLUMN_WIDTH = 280;
 const COLUMN_GAP = 16;
@@ -81,108 +88,6 @@ type SwimLaneMoveUpdates = Pick<
   | "status"
   | "position"
 >;
-
-function makeSwimLaneCollision(cellIds: Set<string>): CollisionDetection {
-  return (args) => {
-    const activeId = args.active.id as string;
-    const isLaneDrag = activeId.startsWith("lane:");
-
-    const pointer = pointerWithin(args);
-    if (pointer.length > 0) {
-      let filtered = pointer;
-      if (isLaneDrag) {
-        // Lane dragging: only consider other lane headers
-        filtered = pointer.filter((c) => (c.id as string).startsWith("lane:"));
-      } else {
-        // Card dragging: ignore parent lane headers entirely
-        filtered = pointer.filter((c) => !(c.id as string).startsWith("lane:"));
-      }
-
-      if (filtered.length > 0) {
-        const cards = filtered.filter((c) => !cellIds.has(c.id as string));
-        if (cards.length > 0) return cards;
-        return filtered;
-      }
-    }
-
-    const closest = closestCenter(args);
-    let filteredClosest = closest;
-    if (isLaneDrag) {
-      filteredClosest = closest.filter((c) => (c.id as string).startsWith("lane:"));
-    } else {
-      filteredClosest = closest.filter((c) => !(c.id as string).startsWith("lane:"));
-    }
-
-    return filteredClosest;
-  };
-}
-
-function parseCellId(id: string): { laneKey: string; status: string } | null {
-  if (!id.startsWith("swim:")) return null;
-  const rest = id.slice(5);
-  const lastColon = rest.lastIndexOf(":");
-  if (lastColon === -1) return null;
-  return {
-    laneKey: rest.slice(0, lastColon),
-    status: rest.slice(lastColon + 1),
-  };
-}
-
-function findCellIn(
-  data: Record<string, Record<string, string[]>>,
-  cellIds: Set<string>,
-  id: string,
-): { laneKey: string; status: string } | null {
-  if (cellIds.has(id)) return parseCellId(id);
-  for (const [pk, statusMap] of Object.entries(data)) {
-    for (const [status, ids] of Object.entries(statusMap)) {
-      if (ids.includes(id)) return { laneKey: pk, status };
-    }
-  }
-  return null;
-}
-
-function cellId(laneKey: string, status: IssueStatus): string {
-  return `swim:${laneKey}:${status}`;
-}
-
-const LANE_ID_PREFIX = "lane:";
-
-/** Sentinel id slice (after the grouping prefix) for the pinned no-X lane. */
-const NONE_LANE_ID = "none";
-
-/** Sentinel id slice for the parent-grouping orphan fallback lane. */
-const ORPHAN_LANE_ID = "__orphans__";
-
-/**
- * Sortable id for a draggable swimlane header. Pinned lanes (no-X) and the
- * orphan fallback get a stable but unique-per-grouping id so dnd-kit doesn't
- * silently collapse them onto a real lane id when both happen to be empty.
- */
-function laneIdFor(grouping: SwimlaneGrouping, rawId: string): string {
-  return `${LANE_ID_PREFIX}${grouping}:${rawId}`;
-}
-
-function parseLaneId(id: string): { grouping: string; rawId: string } | null {
-  if (!id.startsWith(LANE_ID_PREFIX)) return null;
-  const rest = id.slice(LANE_ID_PREFIX.length);
-  const firstColon = rest.indexOf(":");
-  if (firstColon === -1) return null;
-  return {
-    grouping: rest.slice(0, firstColon),
-    rawId: rest.slice(firstColon + 1),
-  };
-}
-
-function computePosition(ids: string[], activeId: string, issueMap: Map<string, Issue>): number {
-  const idx = ids.indexOf(activeId);
-  if (idx === -1) return 0;
-  const getPos = (id: string) => issueMap.get(id)?.position ?? 0;
-  if (ids.length === 1) return issueMap.get(activeId)?.position ?? 0;
-  if (idx === 0) return getPos(ids[1]!) - 1;
-  if (idx === ids.length - 1) return getPos(ids[idx - 1]!) + 1;
-  return (getPos(ids[idx - 1]!) + getPos(ids[idx + 1]!)) / 2;
-}
 
 /**
  * One swimlane row. Lanes are produced by a per-grouping builder
