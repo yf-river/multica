@@ -1,7 +1,6 @@
 import { app, ipcMain, BrowserWindow, shell } from "electron";
 import { execFile } from "child_process";
 import {
-  readFile,
   writeFile,
   mkdir,
   open,
@@ -31,6 +30,7 @@ import {
 } from "./daemon-auth-probe";
 import { readOptionalJsonObject } from "./json-config-file";
 import { readOptionalTextFile, removeOptionalFile } from "./optional-file";
+import { loadDaemonPrefs, saveDaemonPrefs } from "./daemon-prefs";
 
 const DEFAULT_HEALTH_PORT = 19514;
 const POLL_INTERVAL_MS = 5_000;
@@ -49,8 +49,6 @@ const AUTH_PROBE_GRACE_MS = 10_000;
 // healthy-but-slow start is misreported as a failure (the detached daemon child
 // keeps running, so the UI flashes "stopped" then "running").
 const DAEMON_START_EXEC_TIMEOUT_MS = 60_000;
-
-const DEFAULT_PREFS: DaemonPrefs = { autoStart: true, autoStop: false };
 
 interface ActiveProfile {
   name: string; // "" = default profile
@@ -707,19 +705,11 @@ async function syncToken(
 }
 
 async function loadPrefs(): Promise<DaemonPrefs> {
-  try {
-    const raw = await readFile(PREFS_PATH, "utf-8");
-    const parsed = JSON.parse(raw);
-    return { ...DEFAULT_PREFS, ...parsed };
-  } catch {
-    return { ...DEFAULT_PREFS };
-  }
+  return loadDaemonPrefs(PREFS_PATH);
 }
 
-async function savePrefs(prefs: DaemonPrefs): Promise<void> {
-  const dir = join(homedir(), ".multica");
-  await mkdir(dir, { recursive: true });
-  await writeFile(PREFS_PATH, JSON.stringify(prefs, null, 2), "utf-8");
+async function savePrefs(prefs: unknown): Promise<DaemonPrefs> {
+  return saveDaemonPrefs(PREFS_PATH, prefs);
 }
 
 async function clearToken(): Promise<void> {
@@ -1096,7 +1086,7 @@ export function setupDaemonManager(
     (_event, prefs: Partial<DaemonPrefs>) =>
       loadPrefs().then((cur) => {
         const merged = { ...cur, ...prefs };
-        return savePrefs(merged).then(() => merged);
+        return savePrefs(merged);
       }),
   );
   ipcMain.handle("daemon:auto-start", async () => {
