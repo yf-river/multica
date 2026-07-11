@@ -459,15 +459,6 @@ func (c *codexClient) respondError(id int, code int, message string) {
 	_, _ = c.stdin.Write(data)
 }
 
-func (c *codexClient) closeAllPending(err error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	for id, pr := range c.pending {
-		pr.ch <- rpcResult{err: err}
-		delete(c.pending, id)
-	}
-}
-
 func (c *codexClient) markProcessExited(err error) {
 	if err == nil {
 		err = errCodexProcessExited

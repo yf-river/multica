@@ -766,36 +766,6 @@ func TestCodexRawItemAgentMessageFinalAnswerFromSubagentIgnored(t *testing.T) {
 	}
 }
 
-func TestCodexCloseAllPending(t *testing.T) {
-	t.Parallel()
-
-	c, _, _ := newTestCodexClient(t)
-
-	pr1 := &pendingRPC{ch: make(chan rpcResult, 1), method: "m1"}
-	pr2 := &pendingRPC{ch: make(chan rpcResult, 1), method: "m2"}
-	c.mu.Lock()
-	c.pending[1] = pr1
-	c.pending[2] = pr2
-	c.mu.Unlock()
-
-	c.closeAllPending(fmt.Errorf("test error"))
-
-	r1 := <-pr1.ch
-	if r1.err == nil {
-		t.Fatal("expected error for pending 1")
-	}
-	r2 := <-pr2.ch
-	if r2.err == nil {
-		t.Fatal("expected error for pending 2")
-	}
-
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if len(c.pending) != 0 {
-		t.Fatalf("expected empty pending map, got %d", len(c.pending))
-	}
-}
-
 func TestCodexRequestFailsImmediatelyAfterProcessExit(t *testing.T) {
 	t.Parallel()
 

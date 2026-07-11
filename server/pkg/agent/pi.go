@@ -25,11 +25,6 @@ var (
 	piControlTokenRE = regexp.MustCompile(`<\|[A-Za-z0-9_-]+>[A-Za-z0-9_-]*|<[A-Za-z0-9_-]+\|>`)
 )
 
-func stripPiToolCallMarkup(s string) string {
-	s = stripPiStructuredToolMarkup(s)
-	return piControlTokenRE.ReplaceAllString(s, "")
-}
-
 func drainPiTextBuffer(buf *strings.Builder, delta string) string {
 	buf.WriteString(delta)
 	emit, pending := drainPiSanitizedText(buf.String())
@@ -63,25 +58,6 @@ func drainPiSanitizedText(s string) (string, string) {
 		i = end
 	}
 	return piControlTokenRE.ReplaceAllString(out.String(), ""), ""
-}
-
-func stripPiStructuredToolMarkup(s string) string {
-	var out strings.Builder
-	for i := 0; i < len(s); {
-		start, prefixLen := nextPiToolMarkupPrefix(s, i)
-		if start == -1 {
-			out.WriteString(s[i:])
-			break
-		}
-		out.WriteString(s[i:start])
-		end, ok := scanPiToolMarkupEnd(s, start+prefixLen)
-		if !ok {
-			out.WriteString(s[start:])
-			break
-		}
-		i = end
-	}
-	return out.String()
 }
 
 func safePiTextEmitLen(s string) int {
@@ -565,9 +541,4 @@ func ensurePiSessionFile(path string) error {
 		return err
 	}
 	return f.Close()
-}
-
-// PiSessionDir exposes piSessionDir to other packages in this module.
-func PiSessionDir() (string, error) {
-	return piSessionDir()
 }
