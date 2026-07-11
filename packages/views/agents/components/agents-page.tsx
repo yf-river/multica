@@ -161,15 +161,6 @@ function lastActiveDaysAgo(activity: AgentActivity | null): number | null {
   return null;
 }
 
-interface AgentsPageProps {
-  /** Desktop-only daemon wiring, currently unused by the list (kept for
-   *  platform-layer compatibility; the runtime filter lists runtimes by
-   *  name rather than grouped machines). */
-  localDaemonId?: string | null;
-  localMachineName?: string | null;
-  hasLocalMachine?: boolean;
-}
-
 // ---------------------------------------------------------------------------
 // Page header
 // ---------------------------------------------------------------------------
@@ -723,7 +714,7 @@ function AgentBatchToolbar({
 // Page
 // ---------------------------------------------------------------------------
 
-export function AgentsPage(_props: AgentsPageProps = {}) {
+export function AgentsPage() {
   const { t } = useT("agents");
   const wsId = useWorkspaceId();
   const paths = useWorkspacePaths();
