@@ -31,7 +31,7 @@ evidence reviewable by humans.
 | Go WebSocket events | 81 |
 | TypeScript WebSocket events | 71 |
 | Zustand store definitions | 31 |
-| React Query consumer files | 174 |
+| React Query consumer files | 175 |
 | Environment variable names | 220 |
 | Manually identified external systems | 12 |
 
@@ -748,7 +748,7 @@ still include daemon-only/backend projection events and possible frontend gaps.
 | apps/desktop | 12 |
 | apps/web | 3 |
 | packages/core | 46 |
-| packages/views | 113 |
+| packages/views | 114 |
 
 Operation counts: `useQuery` 274, `useInfiniteQuery` 1, `useMutation` 97, `queryOptions` 67, `infiniteQueryOptions` 1.
 The JSON companion lists every consumer file and every discovered exported
