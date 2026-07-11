@@ -206,8 +206,10 @@ describe("ApiClient", () => {
       .resolves.toMatchObject({ runs: [], total: 0 });
     await expect(client.createAutopilot({
       title: "Daily review",
+      assignee_type: "agent",
       assignee_id: "agent-1",
       execution_mode: "run_only",
+      trigger: { kind: "webhook" },
     })).rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
     await expect(client.triggerAutopilot("autopilot-1"))
       .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
@@ -665,6 +667,9 @@ describe("ApiClient", () => {
       else if (url.endsWith("/trigger")) body = run;
       else if (url.includes("/triggers")) body = trigger;
       else if (url.endsWith("/api/autopilots?status=active")) body = { autopilots: [], total: 0 };
+      else if (url.endsWith("/api/autopilots") && init?.method === "POST") {
+        body = { ...autopilot, initial_trigger: trigger };
+      }
       else if (url.endsWith("/api/autopilots/ap-1") && (init?.method ?? "GET") === "GET") {
         body = { autopilot, triggers: [] };
       }
@@ -682,8 +687,14 @@ describe("ApiClient", () => {
     await client.createAutopilot({
       title: "Daily triage",
       project_id: "project-1",
+      assignee_type: "agent",
       assignee_id: "agent-1",
       execution_mode: "create_issue",
+      trigger: {
+        kind: "schedule",
+        cron_expression: "0 9 * * *",
+        timezone: "UTC",
+      },
     });
     await client.updateAutopilot("ap-1", { status: "paused", project_id: null });
     await client.deleteAutopilot("ap-1");
@@ -714,8 +725,17 @@ describe("ApiClient", () => {
         body: JSON.stringify({
           title: "Daily triage",
           project_id: "project-1",
+          assignee_type: "agent",
           assignee_id: "agent-1",
           execution_mode: "create_issue",
+          trigger: {
+            kind: "schedule",
+            cron_expression: "0 9 * * *",
+            timezone: "UTC",
+          },
+        }),
+        headers: expect.objectContaining({
+          "Idempotency-Key": expect.any(String),
         }),
       },
       {
@@ -785,6 +805,69 @@ describe("ApiClient", () => {
     await expect(
       client.triggerAutopilot("ap-1", AUTOPILOT_IDEMPOTENCY_KEY),
     ).resolves.toMatchObject({ id: "run-1", task_id: "task-1" });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    for (const [, init] of fetchMock.mock.calls) {
+      expect((init?.headers as Record<string, string>)["Idempotency-Key"])
+        .toBe(AUTOPILOT_IDEMPOTENCY_KEY);
+    }
+  });
+
+  it("retries an unknown autopilot create outcome with the same key", async () => {
+    const response = {
+      id: "ap-1",
+      workspace_id: "workspace-1",
+      title: "Daily triage",
+      description: null,
+      project_id: null,
+      assignee_type: "agent",
+      assignee_id: "agent-1",
+      status: "active",
+      execution_mode: "run_only",
+      issue_title_template: null,
+      created_by_type: "member",
+      created_by_id: "user-1",
+      last_run_at: null,
+      created_at: "2026-07-11T00:00:00Z",
+      updated_at: "2026-07-11T00:00:00Z",
+      subscribers: [],
+      initial_trigger: {
+        id: "trigger-1",
+        autopilot_id: "ap-1",
+        kind: "webhook",
+        enabled: true,
+        cron_expression: null,
+        timezone: null,
+        next_run_at: null,
+        webhook_token: "awt_test",
+        label: null,
+        last_fired_at: null,
+        created_at: "2026-07-11T00:00:00Z",
+        updated_at: "2026-07-11T00:00:00Z",
+      },
+    };
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("response connection reset"))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(response), {
+          status: 201,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.createAutopilot({
+      title: "Daily triage",
+      assignee_type: "agent",
+      assignee_id: "agent-1",
+      execution_mode: "run_only",
+      trigger: { kind: "webhook" },
+    }, AUTOPILOT_IDEMPOTENCY_KEY)).resolves.toMatchObject({
+      id: "ap-1",
+      initial_trigger: { id: "trigger-1" },
+    });
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     for (const [, init] of fetchMock.mock.calls) {

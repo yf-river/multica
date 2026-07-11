@@ -1,13 +1,17 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
@@ -53,6 +57,9 @@ type AutopilotResponse struct {
 	// Always non-nil (empty slice when no subscribers configured) so
 	// frontend optional-chain rules can treat the field as authoritative.
 	Subscribers []AutopilotSubscriberEntry `json:"subscribers"`
+	// InitialTrigger is returned only by create. The current create contract
+	// commits the Autopilot and its first trigger together.
+	InitialTrigger *AutopilotTriggerResponse `json:"initial_trigger,omitempty"`
 }
 
 // user_type is restricted to "member" at the DB layer; the field is kept on
@@ -262,16 +269,15 @@ func runToResponseSlim(r db.AutopilotRun) AutopilotRunResponse {
 // ── Request types ───────────────────────────────────────────────────────────
 
 type CreateAutopilotRequest struct {
-	Title       string  `json:"title"`
-	Description *string `json:"description"`
-	ProjectID   *string `json:"project_id"`
-	// AssigneeType is optional and defaults to "agent" — preserves backward
-	// compatibility with desktop clients shipped before MUL-2429.
-	AssigneeType       *string           `json:"assignee_type"`
-	AssigneeID         string            `json:"assignee_id"`
-	ExecutionMode      string            `json:"execution_mode"`
-	IssueTitleTemplate *string           `json:"issue_title_template"`
-	Subscribers        []SubscriberInput `json:"subscribers"`
+	Title              string                        `json:"title"`
+	Description        *string                       `json:"description"`
+	ProjectID          *string                       `json:"project_id"`
+	AssigneeType       string                        `json:"assignee_type"`
+	AssigneeID         string                        `json:"assignee_id"`
+	ExecutionMode      string                        `json:"execution_mode"`
+	IssueTitleTemplate *string                       `json:"issue_title_template"`
+	Subscribers        []SubscriberInput             `json:"subscribers"`
+	Trigger            CreateAutopilotTriggerRequest `json:"trigger"`
 }
 
 type UpdateAutopilotRequest struct {
@@ -451,11 +457,28 @@ func (h *Handler) CreateAutopilot(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "execution_mode must be create_issue or run_only")
 		return
 	}
+	if !isValidAutopilotAssigneeType(req.AssigneeType) {
+		writeError(w, http.StatusBadRequest, "assignee_type must be agent or squad")
+		return
+	}
 	if req.IssueTitleTemplate != nil {
 		if err := service.ValidateIssueTitleTemplate(*req.IssueTitleTemplate); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+	}
+	preparedTrigger, ok := prepareAutopilotTrigger(w, req.Trigger)
+	if !ok {
+		return
+	}
+	idempotencyKey, ok := requireIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	requestHash, err := hashRequestFingerprint(req)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create autopilot")
+		return
 	}
 
 	workspaceID := h.resolveWorkspaceID(r)
@@ -472,16 +495,18 @@ func (h *Handler) CreateAutopilot(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-
-	assigneeType := "agent"
-	if req.AssigneeType != nil && *req.AssigneeType != "" {
-		assigneeType = *req.AssigneeType
-	}
-	if !isValidAutopilotAssigneeType(assigneeType) {
-		writeError(w, http.StatusBadRequest, "assignee_type must be agent or squad")
+	creatorID := parseUUID(userID)
+	if replayed, found, err := h.loadAutopilotCreateReplay(
+		r.Context(), wsUUID, creatorID, idempotencyKey, requestHash,
+	); err != nil {
+		h.writeAutopilotCreateReplayError(w, err)
+		return
+	} else if found {
+		writeJSON(w, http.StatusCreated, replayed)
 		return
 	}
-	if !h.validateAutopilotAssignee(w, r, assigneeType, assigneeUUID, wsUUID) {
+
+	if !h.validateAutopilotAssignee(w, r, req.AssigneeType, assigneeUUID, wsUUID) {
 		return
 	}
 	projectID, ok := h.parseAutopilotProjectID(w, r, req.ProjectID, wsUUID)
@@ -506,17 +531,31 @@ func (h *Handler) CreateAutopilot(w http.ResponseWriter, r *http.Request) {
 	autopilot, err := qtx.CreateAutopilot(r.Context(), db.CreateAutopilotParams{
 		WorkspaceID:        wsUUID,
 		Title:              req.Title,
-		AssigneeType:       assigneeType,
+		AssigneeType:       req.AssigneeType,
 		AssigneeID:         assigneeUUID,
 		Status:             "active",
 		ExecutionMode:      req.ExecutionMode,
 		CreatedByType:      "member",
-		CreatedByID:        parseUUID(userID),
+		CreatedByID:        creatorID,
 		Description:        ptrToText(req.Description),
 		IssueTitleTemplate: ptrToText(req.IssueTitleTemplate),
 		ProjectID:          projectID,
+		RequestKey:         idempotencyKey,
+		RequestHash:        pgtype.Text{String: requestHash, Valid: true},
 	})
 	if err != nil {
+		if isAutopilotCreateRequestConflict(err) {
+			_ = tx.Rollback(r.Context())
+			replayed, found, replayErr := h.loadAutopilotCreateReplay(
+				r.Context(), wsUUID, creatorID, idempotencyKey, requestHash,
+			)
+			if replayErr != nil || !found {
+				h.writeAutopilotCreateReplayError(w, replayErr)
+				return
+			}
+			writeJSON(w, http.StatusCreated, replayed)
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "failed to create autopilot")
 		return
 	}
@@ -531,6 +570,21 @@ func (h *Handler) CreateAutopilot(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	trigger, err := createPreparedAutopilotTrigger(
+		r.Context(), qtx, autopilot.ID, preparedTrigger,
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create autopilot trigger")
+		return
+	}
+	autopilot, err = qtx.SetAutopilotInitialTrigger(r.Context(), db.SetAutopilotInitialTriggerParams{
+		ID:               autopilot.ID,
+		InitialTriggerID: trigger.ID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to link autopilot trigger")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create autopilot")
 		return
@@ -541,6 +595,8 @@ func (h *Handler) CreateAutopilot(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := autopilotToResponse(autopilot, subs)
+	initialTrigger := h.triggerToResponse(trigger)
+	resp.InitialTrigger = &initialTrigger
 	h.publish(protocol.EventAutopilotCreated, workspaceID, "member", userID, map[string]any{"autopilot": resp})
 	obsmetrics.RecordEvent(h.Analytics, h.Metrics, analytics.AutopilotCreated(
 		userID,
@@ -550,6 +606,68 @@ func (h *Handler) CreateAutopilot(w http.ResponseWriter, r *http.Request) {
 		"manual",
 	))
 	writeJSON(w, http.StatusCreated, resp)
+}
+
+var errAutopilotCreateIdempotencyConflict = errors.New("autopilot create idempotency conflict")
+
+func (h *Handler) loadAutopilotCreateReplay(
+	ctx context.Context,
+	workspaceID pgtype.UUID,
+	creatorID pgtype.UUID,
+	requestKey pgtype.UUID,
+	requestHash string,
+) (AutopilotResponse, bool, error) {
+	autopilot, err := h.Queries.GetAutopilotByCreateRequest(ctx, db.GetAutopilotByCreateRequestParams{
+		WorkspaceID:   workspaceID,
+		CreatedByType: "member",
+		CreatedByID:   creatorID,
+		RequestKey:    requestKey,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return AutopilotResponse{}, false, nil
+	}
+	if err != nil {
+		return AutopilotResponse{}, false, err
+	}
+	if !autopilot.RequestHash.Valid || autopilot.RequestHash.String != requestHash {
+		return AutopilotResponse{}, false, errAutopilotCreateIdempotencyConflict
+	}
+	subs, err := h.Queries.ListAutopilotSubscribers(ctx, autopilot.ID)
+	if err != nil {
+		return AutopilotResponse{}, false, err
+	}
+	if !autopilot.InitialTriggerID.Valid {
+		return AutopilotResponse{}, false, errors.New("created autopilot has no initial trigger")
+	}
+	trigger, err := h.Queries.GetAutopilotTrigger(ctx, autopilot.InitialTriggerID)
+	if err != nil {
+		return AutopilotResponse{}, false, err
+	}
+	if trigger.AutopilotID != autopilot.ID {
+		return AutopilotResponse{}, false, errors.New("created autopilot initial trigger does not belong to it")
+	}
+	response := autopilotToResponse(autopilot, subs)
+	initialTrigger := h.triggerToResponse(trigger)
+	response.InitialTrigger = &initialTrigger
+	return response, true, nil
+}
+
+func (h *Handler) writeAutopilotCreateReplayError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errAutopilotCreateIdempotencyConflict) {
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": "Idempotency-Key was already used with a different request",
+			"code":  "idempotency_conflict",
+		})
+		return
+	}
+	writeError(w, http.StatusInternalServerError, "failed to load autopilot request")
+}
+
+func isAutopilotCreateRequestConflict(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) &&
+		pgErr.Code == "23505" &&
+		pgErr.ConstraintName == "autopilot_create_request_unique"
 }
 
 // Writes an HTTP error and returns ok=false on the first invalid entry.
@@ -839,4 +957,3 @@ func (h *Handler) DeleteAutopilot(w http.ResponseWriter, r *http.Request) {
 }
 
 // ── Trigger management ──────────────────────────────────────────────────────
-

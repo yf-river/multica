@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/analytics"
@@ -29,6 +30,36 @@ var testPool *pgxpool.Pool
 var testUserID string
 var testWorkspaceID string
 var testRuntimeID string
+
+func currentAutopilotCreateBody(body map[string]any) map[string]any {
+	copy := make(map[string]any, len(body)+2)
+	for key, value := range body {
+		copy[key] = value
+	}
+	if _, exists := copy["assignee_type"]; !exists {
+		copy["assignee_type"] = "agent"
+	}
+	if _, exists := copy["trigger"]; !exists {
+		copy["trigger"] = map[string]any{
+			"kind":            "schedule",
+			"cron_expression": "0 9 * * *",
+			"timezone":        "UTC",
+		}
+	}
+	return copy
+}
+
+func newAutopilotCreateRequest(path string, body map[string]any) *http.Request {
+	req := newRequest(http.MethodPost, path, currentAutopilotCreateBody(body))
+	req.Header.Set("Idempotency-Key", uuid.NewString())
+	return req
+}
+
+func newAutopilotCreateRequestAs(userID, path string, body map[string]any) *http.Request {
+	req := newRequestAs(userID, http.MethodPost, path, currentAutopilotCreateBody(body))
+	req.Header.Set("Idempotency-Key", uuid.NewString())
+	return req
+}
 
 const (
 	handlerTestAccount       = "handler-test@multica"
@@ -468,7 +499,7 @@ func createSameTitleAutopilotFixture(t *testing.T, ctx context.Context, issueTit
 	}
 
 	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
+	req = newAutopilotCreateRequest("/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
 		"title":                autopilotTitle,
 		"assignee_id":          agentID,
 		"execution_mode":       "create_issue",
@@ -1837,7 +1868,7 @@ func TestAutopilotCreatedIssueCreatorIsAssigneeAgent(t *testing.T) {
 	}
 
 	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
+	req := newAutopilotCreateRequest("/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
 		"title":                "Creator attribution autopilot",
 		"assignee_id":          agentID,
 		"execution_mode":       "create_issue",
@@ -1937,7 +1968,7 @@ func TestAutopilotCreateIssueAssociatesConfiguredProject(t *testing.T) {
 	}
 
 	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
+	req := newAutopilotCreateRequest("/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
 		"title":                "Project-linked autopilot",
 		"assignee_id":          agentID,
 		"execution_mode":       "create_issue",
@@ -2010,7 +2041,7 @@ func TestUpdateAutopilotCanSetAndClearProject(t *testing.T) {
 	}
 
 	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
+	req := newAutopilotCreateRequest("/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
 		"title":          "Project update autopilot",
 		"assignee_id":    agentID,
 		"execution_mode": "create_issue",
@@ -2573,7 +2604,7 @@ func TestGetChatSessionRejectsMalformedSessionID(t *testing.T) {
 
 func TestCreateAutopilotRejectsMalformedAssigneeID(t *testing.T) {
 	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/autopilots", map[string]any{
+	req := newAutopilotCreateRequest("/api/autopilots", map[string]any{
 		"title":          "Malformed assignee autopilot",
 		"assignee_id":    "not-a-uuid",
 		"execution_mode": "run_only",

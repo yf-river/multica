@@ -88,19 +88,27 @@ func newChatIdempotencyScope(
 	idempotencyKey pgtype.UUID,
 	fingerprint any,
 ) (chatIdempotencyScope, error) {
-	raw, err := json.Marshal(fingerprint)
+	requestHash, err := hashRequestFingerprint(fingerprint)
 	if err != nil {
-		return chatIdempotencyScope{}, fmt.Errorf("encode chat request fingerprint: %w", err)
+		return chatIdempotencyScope{}, err
 	}
-	digest := sha256.Sum256(raw)
 	return chatIdempotencyScope{
 		workspaceID:    workspaceID,
 		actorType:      actorType,
 		actorID:        actorID,
 		operation:      operation,
 		idempotencyKey: idempotencyKey,
-		requestHash:    hex.EncodeToString(digest[:]),
+		requestHash:    requestHash,
 	}, nil
+}
+
+func hashRequestFingerprint(fingerprint any) (string, error) {
+	raw, err := json.Marshal(fingerprint)
+	if err != nil {
+		return "", fmt.Errorf("encode request fingerprint: %w", err)
+	}
+	digest := sha256.Sum256(raw)
+	return hex.EncodeToString(digest[:]), nil
 }
 
 func canonicalAttachmentIDs(ids []pgtype.UUID) []string {

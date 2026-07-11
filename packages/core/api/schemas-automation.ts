@@ -104,9 +104,7 @@ export const AutopilotSchema = z.object({
   title: z.string(),
   description: z.string().nullable().optional(),
   project_id: z.string().nullable().optional(),
-  // Older servers (pre-MUL-2429) omit assignee_type; "agent" is the
-  // documented default.
-  assignee_type: z.string().default("agent"),
+  assignee_type: NonEmptyStringSchema,
   assignee_id: z.string(),
   status: z.string(),
   execution_mode: z.string(),
@@ -186,6 +184,10 @@ export const AutopilotTriggerSchema = AutopilotTriggerWireSchema.transform((wire
   delete safe.encrypted_signing_secret;
   delete safe.signing_secret_ciphertext;
   return safe;
+});
+
+export const CreateAutopilotResponseSchema = AutopilotSchema.extend({
+  initial_trigger: AutopilotTriggerSchema,
 });
 
 export const EMPTY_AUTOPILOT_TRIGGER: AutopilotTrigger = {

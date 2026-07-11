@@ -24,10 +24,10 @@ evidence reviewable by humans.
 | Database tables | 86 |
 | Database functions | 9 |
 | Database triggers | 4 |
-| Database indexes | 186 |
-| Migration files (up + down) | 16 |
+| Database indexes | 187 |
+| Migration files (up + down) | 18 |
 | sqlc modules | 53 |
-| sqlc queries | 573 |
+| sqlc queries | 575 |
 | Go WebSocket events | 81 |
 | TypeScript WebSocket events | 71 |
 | Zustand store definitions | 29 |
@@ -511,6 +511,8 @@ intentionally platform-specific.
 | 7 | chat_request_idempotency | up | chat_idempotency_record | 0 | 0 | 0 | `server/migrations/007_chat_request_idempotency.up.sql` |
 | 8 | autopilot_manual_trigger_idempotency | down | — | 0 | 0 | 0 | `server/migrations/008_autopilot_manual_trigger_idempotency.down.sql` |
 | 8 | autopilot_manual_trigger_idempotency | up | — | 0 | 0 | 1 | `server/migrations/008_autopilot_manual_trigger_idempotency.up.sql` |
+| 9 | autopilot_create_idempotency | down | — | 0 | 0 | 0 | `server/migrations/009_autopilot_create_idempotency.down.sql` |
+| 9 | autopilot_create_idempotency | up | — | 0 | 0 | 1 | `server/migrations/009_autopilot_create_idempotency.up.sql` |
 
 ### Current tables discovered from up migrations
 
@@ -611,11 +613,11 @@ intentionally platform-specific.
 | `trg_tu_dirty_hourly` | `public.task_usage` | `public.enqueue_task_usage_hourly_dirty_for_tu` | `server/migrations/001_current_schema.up.sql#trg_tu_dirty_hourly` |
 
 - Functions: `public.enqueue_task_usage_hourly_dirty_for_atq`, `public.enqueue_task_usage_hourly_dirty_for_issue_delete`, `public.enqueue_task_usage_hourly_dirty_for_issue_project`, `public.enqueue_task_usage_hourly_dirty_for_tu`, `public.prune_task_usage_hourly_dirty`, `public.rollup_task_usage_hourly`, `public.rollup_task_usage_hourly_window`, `public.task_usage_hour_bucket`, `public.task_usage_hourly_rollup_lag_seconds`
-- Indexes: 186 current definitions; full name/table/uniqueness evidence is in the JSON companion.
+- Indexes: 187 current definitions; full name/table/uniqueness evidence is in the JSON companion.
 
 ### sqlc modules
 
-All 573 query names, commands, and stable source anchors are stored in the JSON companion.
+All 575 query names, commands, and stable source anchors are stored in the JSON companion.
 
 | Module | Queries | SQL source | Generated source |
 | --- | --- | --- | --- |
@@ -623,7 +625,7 @@ All 573 query names, commands, and stable source anchors are stored in the JSON 
 | agent | 60 | `server/pkg/db/queries/agent.sql` | `server/pkg/db/generated/agent.sql.go` |
 | agent_playground | 17 | `server/pkg/db/queries/agent_playground.sql` | `server/pkg/db/generated/agent_playground.sql.go` |
 | attachment | 17 | `server/pkg/db/queries/attachment.sql` | `server/pkg/db/generated/attachment.sql.go` |
-| autopilot | 38 | `server/pkg/db/queries/autopilot.sql` | `server/pkg/db/generated/autopilot.sql.go` |
+| autopilot | 40 | `server/pkg/db/queries/autopilot.sql` | `server/pkg/db/generated/autopilot.sql.go` |
 | chat | 25 | `server/pkg/db/queries/chat.sql` | `server/pkg/db/generated/chat.sql.go` |
 | chat_idempotency | 3 | `server/pkg/db/queries/chat_idempotency.sql` | `server/pkg/db/generated/chat_idempotency.sql.go` |
 | comment | 22 | `server/pkg/db/queries/comment.sql` | `server/pkg/db/generated/comment.sql.go` |

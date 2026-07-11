@@ -45,12 +45,25 @@ WHERE id = $1 AND workspace_id = $2;
 INSERT INTO autopilot (
     workspace_id, title, description, assignee_type, assignee_id,
     status, execution_mode, issue_title_template, project_id,
-    created_by_type, created_by_id
+    created_by_type, created_by_id, request_key, request_hash
 ) VALUES (
     $1, $2, sqlc.narg('description'), $3, $4,
     $5, $6, sqlc.narg('issue_title_template'), sqlc.narg('project_id'),
-    $7, $8
+    $7, $8, sqlc.narg('request_key'), sqlc.narg('request_hash')
 ) RETURNING *;
+
+-- name: GetAutopilotByCreateRequest :one
+SELECT * FROM autopilot
+WHERE workspace_id = $1
+  AND created_by_type = $2
+  AND created_by_id = $3
+  AND request_key = $4;
+
+-- name: SetAutopilotInitialTrigger :one
+UPDATE autopilot
+SET initial_trigger_id = $2
+WHERE id = $1
+RETURNING *;
 
 -- name: UpdateAutopilot :one
 UPDATE autopilot SET

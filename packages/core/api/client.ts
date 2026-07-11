@@ -96,6 +96,7 @@ import type {
   AutopilotTrigger,
   AutopilotRun,
   CreateAutopilotRequest,
+  CreateAutopilotResponse,
   UpdateAutopilotRequest,
   CreateAutopilotTriggerRequest,
   UpdateAutopilotTriggerRequest,
@@ -314,6 +315,7 @@ import {
   ListAutopilotsResponseSchema,
   EMPTY_LIST_AUTOPILOTS_RESPONSE,
   AutopilotSchema,
+  CreateAutopilotResponseSchema,
   AutopilotTriggerSchema,
   AutopilotRunSchema,
   GetAutopilotResponseSchema,
@@ -501,6 +503,25 @@ export class ApiTransportError extends Error {
     this.endpoint = endpoint;
     this.mayHaveCommitted = mayHaveCommitted;
     this.cause = cause;
+  }
+}
+
+export function isMutationOutcomeUnknown(error: unknown): boolean {
+  return (
+    (error instanceof ApiTransportError ||
+      error instanceof ApiResponseValidationError) &&
+    error.mayHaveCommitted
+  );
+}
+
+async function retryUnknownMutationOnce<T>(
+  attempt: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await attempt();
+  } catch (error) {
+    if (!isMutationOutcomeUnknown(error)) throw error;
+    return attempt();
   }
 }
 
@@ -2925,15 +2946,28 @@ export class ApiClient {
     );
   }
 
-  async createAutopilot(data: CreateAutopilotRequest): Promise<Autopilot> {
-    const raw = await this.fetch<unknown>("/api/autopilots", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseOrThrow(raw, AutopilotSchema, EMPTY_AUTOPILOT, {
-      endpoint: "POST /api/autopilots",
-      mayHaveCommitted: true,
-    });
+  async createAutopilot(
+    data: CreateAutopilotRequest,
+    idempotencyKey = generateUUID(),
+  ): Promise<CreateAutopilotResponse> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>("/api/autopilots", {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow(
+        raw,
+        CreateAutopilotResponseSchema,
+        { ...EMPTY_AUTOPILOT, initial_trigger: EMPTY_AUTOPILOT_TRIGGER },
+        {
+          endpoint: "POST /api/autopilots",
+          mayHaveCommitted: true,
+        },
+      );
+    };
+
+    return retryUnknownMutationOnce(attempt);
   }
 
   async updateAutopilot(id: string, data: UpdateAutopilotRequest): Promise<Autopilot> {
@@ -2966,16 +3000,7 @@ export class ApiClient {
       });
     };
 
-    try {
-      return await attempt();
-    } catch (error) {
-      const outcomeUnknown =
-        (error instanceof ApiTransportError ||
-          error instanceof ApiResponseValidationError) &&
-        error.mayHaveCommitted;
-      if (!outcomeUnknown) throw error;
-      return attempt();
-    }
+    return retryUnknownMutationOnce(attempt);
   }
 
   async listAutopilotRuns(id: string, params?: { limit?: number; offset?: number }): Promise<ListAutopilotRunsResponse> {

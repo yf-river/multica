@@ -99,6 +99,7 @@ describe("ApiClient schema fallback", () => {
       workspace_id: "ws-1",
       title: "Daily triage",
       description: null,
+      assignee_type: "agent",
       assignee_id: "agent-1",
       status: "active",
       execution_mode: "run_only",
@@ -117,15 +118,11 @@ describe("ApiClient schema fallback", () => {
       expect(res).toEqual({ autopilots: [], total: 0 });
     });
 
-    it("accepts an old-server row without assignee_type or derived fields", async () => {
-      // Pre-MUL-2429 servers omit assignee_type; servers older than the
-      // list-derived-fields change omit trigger_kinds/next_run_at/
-      // last_run_status. Both must parse, not fall back.
+    it("accepts a current row without list-only derived fields", async () => {
       stubFetchJson({ autopilots: [baseAutopilot], total: 1 });
       const client = new ApiClient("https://api.example.test");
       const res = await client.listAutopilots();
       expect(res.autopilots).toHaveLength(1);
-      expect(res.autopilots[0]?.assignee_type).toBe("agent");
       expect(res.autopilots[0]?.trigger_kinds).toBeUndefined();
       expect(res.autopilots[0]?.last_run_status).toBeUndefined();
     });

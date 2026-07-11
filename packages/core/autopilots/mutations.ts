@@ -1,5 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { api } from "../api";
+import { useRef } from "react";
+import { api, isMutationOutcomeUnknown } from "../api";
+import { generateUUID } from "../utils";
 import { autopilotKeys } from "./queries";
 import { useWorkspaceId } from "../hooks";
 import type {
@@ -14,8 +16,20 @@ import type {
 export function useCreateAutopilot() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
+  const pendingRequestKey = useRef<string | null>(null);
   return useMutation({
-    mutationFn: (data: CreateAutopilotRequest) => api.createAutopilot(data),
+    mutationFn: async (data: CreateAutopilotRequest) => {
+      const requestKey = pendingRequestKey.current ?? generateUUID();
+      pendingRequestKey.current = requestKey;
+      try {
+        const result = await api.createAutopilot(data, requestKey);
+        pendingRequestKey.current = null;
+        return result;
+      } catch (error) {
+        if (!isMutationOutcomeUnknown(error)) pendingRequestKey.current = null;
+        throw error;
+      }
+    },
     onSuccess: (newAutopilot) => {
       qc.setQueryData<ListAutopilotsResponse>(autopilotKeys.list(wsId), (old) =>
         old && !old.autopilots.some((a) => a.id === newAutopilot.id)
@@ -95,8 +109,20 @@ export function useDeleteAutopilot() {
 export function useTriggerAutopilot() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
+  const pendingKeys = useRef(new Map<string, string>());
   return useMutation({
-    mutationFn: (id: string) => api.triggerAutopilot(id),
+    mutationFn: async (id: string) => {
+      const requestKey = pendingKeys.current.get(id) ?? generateUUID();
+      pendingKeys.current.set(id, requestKey);
+      try {
+        const result = await api.triggerAutopilot(id, requestKey);
+        pendingKeys.current.delete(id);
+        return result;
+      } catch (error) {
+        if (!isMutationOutcomeUnknown(error)) pendingKeys.current.delete(id);
+        throw error;
+      }
+    },
     onSettled: (_data, _err, id) => {
       qc.invalidateQueries({ queryKey: autopilotKeys.runs(wsId, id) });
       qc.invalidateQueries({ queryKey: autopilotKeys.detail(wsId, id) });

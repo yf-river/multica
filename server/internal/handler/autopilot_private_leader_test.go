@@ -32,7 +32,7 @@ func TestCreateAutopilot_SquadPrivateLeader_PlainMemberBlocked(t *testing.T) {
 	})
 
 	w := httptest.NewRecorder()
-	r := newRequestAs(memberID, "POST", "/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
+	r := newAutopilotCreateRequestAs(memberID, "/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
 		"title":          "should be blocked",
 		"assignee_type":  "squad",
 		"assignee_id":    squadID,
@@ -71,7 +71,7 @@ func TestUpdateAutopilot_SquadPrivateLeader_PlainMemberBlocked(t *testing.T) {
 
 	// Create autopilot as workspace owner assigned to the public agent.
 	w := httptest.NewRecorder()
-	r := newRequest("POST", "/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
+	r := newAutopilotCreateRequest("/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
 		"title":          "update target ap",
 		"assignee_id":    publicAgentID,
 		"execution_mode": "create_issue",
@@ -126,7 +126,7 @@ func TestCreateAutopilot_SquadPrivateLeader_OwnerAllowed(t *testing.T) {
 
 	// testUserID is workspace owner — should succeed.
 	w := httptest.NewRecorder()
-	r := newRequest("POST", "/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
+	r := newAutopilotCreateRequest("/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
 		"title":          "owner creates personal-leader squad ap",
 		"assignee_type":  "squad",
 		"assignee_id":    squadID,
@@ -170,7 +170,7 @@ func TestTriggerAutopilot_SquadPrivateLeader_OwnerCanDispatch(t *testing.T) {
 
 	// Create autopilot as owner.
 	w := httptest.NewRecorder()
-	r := newRequest("POST", "/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
+	r := newAutopilotCreateRequest("/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
 		"title":          "dispatch test personal leader squad",
 		"assignee_type":  "squad",
 		"assignee_id":    squadID,

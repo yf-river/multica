@@ -125,12 +125,12 @@ const createAutopilot = `-- name: CreateAutopilot :one
 INSERT INTO autopilot (
     workspace_id, title, description, assignee_type, assignee_id,
     status, execution_mode, issue_title_template, project_id,
-    created_by_type, created_by_id
+    created_by_type, created_by_id, request_key, request_hash
 ) VALUES (
     $1, $2, $9, $3, $4,
     $5, $6, $10, $11,
-    $7, $8
-) RETURNING id, workspace_id, title, description, assignee_id, status, execution_mode, issue_title_template, created_by_type, created_by_id, last_run_at, created_at, updated_at, assignee_type, project_id
+    $7, $8, $12, $13
+) RETURNING id, workspace_id, title, description, assignee_id, status, execution_mode, issue_title_template, created_by_type, created_by_id, last_run_at, created_at, updated_at, assignee_type, project_id, request_key, request_hash, initial_trigger_id
 `
 
 type CreateAutopilotParams struct {
@@ -145,6 +145,8 @@ type CreateAutopilotParams struct {
 	Description        pgtype.Text `json:"description"`
 	IssueTitleTemplate pgtype.Text `json:"issue_title_template"`
 	ProjectID          pgtype.UUID `json:"project_id"`
+	RequestKey         pgtype.UUID `json:"request_key"`
+	RequestHash        pgtype.Text `json:"request_hash"`
 }
 
 func (q *Queries) CreateAutopilot(ctx context.Context, arg CreateAutopilotParams) (Autopilot, error) {
@@ -160,6 +162,8 @@ func (q *Queries) CreateAutopilot(ctx context.Context, arg CreateAutopilotParams
 		arg.Description,
 		arg.IssueTitleTemplate,
 		arg.ProjectID,
+		arg.RequestKey,
+		arg.RequestHash,
 	)
 	var i Autopilot
 	err := row.Scan(
@@ -178,6 +182,9 @@ func (q *Queries) CreateAutopilot(ctx context.Context, arg CreateAutopilotParams
 		&i.UpdatedAt,
 		&i.AssigneeType,
 		&i.ProjectID,
+		&i.RequestKey,
+		&i.RequestHash,
+		&i.InitialTriggerID,
 	)
 	return i, err
 }
@@ -403,7 +410,7 @@ func (q *Queries) FailAutopilotRunsByIssue(ctx context.Context, issueID pgtype.U
 }
 
 const getAutopilot = `-- name: GetAutopilot :one
-SELECT id, workspace_id, title, description, assignee_id, status, execution_mode, issue_title_template, created_by_type, created_by_id, last_run_at, created_at, updated_at, assignee_type, project_id FROM autopilot
+SELECT id, workspace_id, title, description, assignee_id, status, execution_mode, issue_title_template, created_by_type, created_by_id, last_run_at, created_at, updated_at, assignee_type, project_id, request_key, request_hash, initial_trigger_id FROM autopilot
 WHERE id = $1
 `
 
@@ -426,12 +433,61 @@ func (q *Queries) GetAutopilot(ctx context.Context, id pgtype.UUID) (Autopilot, 
 		&i.UpdatedAt,
 		&i.AssigneeType,
 		&i.ProjectID,
+		&i.RequestKey,
+		&i.RequestHash,
+		&i.InitialTriggerID,
+	)
+	return i, err
+}
+
+const getAutopilotByCreateRequest = `-- name: GetAutopilotByCreateRequest :one
+SELECT id, workspace_id, title, description, assignee_id, status, execution_mode, issue_title_template, created_by_type, created_by_id, last_run_at, created_at, updated_at, assignee_type, project_id, request_key, request_hash, initial_trigger_id FROM autopilot
+WHERE workspace_id = $1
+  AND created_by_type = $2
+  AND created_by_id = $3
+  AND request_key = $4
+`
+
+type GetAutopilotByCreateRequestParams struct {
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	CreatedByType string      `json:"created_by_type"`
+	CreatedByID   pgtype.UUID `json:"created_by_id"`
+	RequestKey    pgtype.UUID `json:"request_key"`
+}
+
+func (q *Queries) GetAutopilotByCreateRequest(ctx context.Context, arg GetAutopilotByCreateRequestParams) (Autopilot, error) {
+	row := q.db.QueryRow(ctx, getAutopilotByCreateRequest,
+		arg.WorkspaceID,
+		arg.CreatedByType,
+		arg.CreatedByID,
+		arg.RequestKey,
+	)
+	var i Autopilot
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Title,
+		&i.Description,
+		&i.AssigneeID,
+		&i.Status,
+		&i.ExecutionMode,
+		&i.IssueTitleTemplate,
+		&i.CreatedByType,
+		&i.CreatedByID,
+		&i.LastRunAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.AssigneeType,
+		&i.ProjectID,
+		&i.RequestKey,
+		&i.RequestHash,
+		&i.InitialTriggerID,
 	)
 	return i, err
 }
 
 const getAutopilotInWorkspace = `-- name: GetAutopilotInWorkspace :one
-SELECT id, workspace_id, title, description, assignee_id, status, execution_mode, issue_title_template, created_by_type, created_by_id, last_run_at, created_at, updated_at, assignee_type, project_id FROM autopilot
+SELECT id, workspace_id, title, description, assignee_id, status, execution_mode, issue_title_template, created_by_type, created_by_id, last_run_at, created_at, updated_at, assignee_type, project_id, request_key, request_hash, initial_trigger_id FROM autopilot
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -459,6 +515,9 @@ func (q *Queries) GetAutopilotInWorkspace(ctx context.Context, arg GetAutopilotI
 		&i.UpdatedAt,
 		&i.AssigneeType,
 		&i.ProjectID,
+		&i.RequestKey,
+		&i.RequestHash,
+		&i.InitialTriggerID,
 	)
 	return i, err
 }
@@ -778,7 +837,7 @@ func (q *Queries) ListAutopilotTriggers(ctx context.Context, autopilotID pgtype.
 const listAutopilots = `-- name: ListAutopilots :many
 
 SELECT
-  a.id, a.workspace_id, a.title, a.description, a.assignee_id, a.status, a.execution_mode, a.issue_title_template, a.created_by_type, a.created_by_id, a.last_run_at, a.created_at, a.updated_at, a.assignee_type, a.project_id,
+  a.id, a.workspace_id, a.title, a.description, a.assignee_id, a.status, a.execution_mode, a.issue_title_template, a.created_by_type, a.created_by_id, a.last_run_at, a.created_at, a.updated_at, a.assignee_type, a.project_id, a.request_key, a.request_hash, a.initial_trigger_id,
   (
     SELECT array_agg(DISTINCT t.kind ORDER BY t.kind)
     FROM autopilot_trigger t
@@ -848,6 +907,9 @@ func (q *Queries) ListAutopilots(ctx context.Context, arg ListAutopilotsParams) 
 			&i.Autopilot.UpdatedAt,
 			&i.Autopilot.AssigneeType,
 			&i.Autopilot.ProjectID,
+			&i.Autopilot.RequestKey,
+			&i.Autopilot.RequestHash,
+			&i.Autopilot.InitialTriggerID,
 			&i.TriggerKinds,
 			&i.NextRunAt,
 			&i.LastRunStatus,
@@ -1058,6 +1120,44 @@ func (q *Queries) SelectAutopilotsExceedingFailureThreshold(ctx context.Context,
 	return items, nil
 }
 
+const setAutopilotInitialTrigger = `-- name: SetAutopilotInitialTrigger :one
+UPDATE autopilot
+SET initial_trigger_id = $2
+WHERE id = $1
+RETURNING id, workspace_id, title, description, assignee_id, status, execution_mode, issue_title_template, created_by_type, created_by_id, last_run_at, created_at, updated_at, assignee_type, project_id, request_key, request_hash, initial_trigger_id
+`
+
+type SetAutopilotInitialTriggerParams struct {
+	ID               pgtype.UUID `json:"id"`
+	InitialTriggerID pgtype.UUID `json:"initial_trigger_id"`
+}
+
+func (q *Queries) SetAutopilotInitialTrigger(ctx context.Context, arg SetAutopilotInitialTriggerParams) (Autopilot, error) {
+	row := q.db.QueryRow(ctx, setAutopilotInitialTrigger, arg.ID, arg.InitialTriggerID)
+	var i Autopilot
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Title,
+		&i.Description,
+		&i.AssigneeID,
+		&i.Status,
+		&i.ExecutionMode,
+		&i.IssueTitleTemplate,
+		&i.CreatedByType,
+		&i.CreatedByID,
+		&i.LastRunAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.AssigneeType,
+		&i.ProjectID,
+		&i.RequestKey,
+		&i.RequestHash,
+		&i.InitialTriggerID,
+	)
+	return i, err
+}
+
 const setAutopilotTriggerSigningSecret = `-- name: SetAutopilotTriggerSigningSecret :one
 UPDATE autopilot_trigger
 SET signing_secret = $2,
@@ -1145,7 +1245,7 @@ const systemPauseAutopilot = `-- name: SystemPauseAutopilot :one
 UPDATE autopilot
 SET status = 'paused', updated_at = now()
 WHERE id = $1 AND status = 'active'
-RETURNING id, workspace_id, title, description, assignee_id, status, execution_mode, issue_title_template, created_by_type, created_by_id, last_run_at, created_at, updated_at, assignee_type, project_id
+RETURNING id, workspace_id, title, description, assignee_id, status, execution_mode, issue_title_template, created_by_type, created_by_id, last_run_at, created_at, updated_at, assignee_type, project_id, request_key, request_hash, initial_trigger_id
 `
 
 // Atomically pauses an autopilot only if it is currently active. Returns no
@@ -1171,6 +1271,9 @@ func (q *Queries) SystemPauseAutopilot(ctx context.Context, id pgtype.UUID) (Aut
 		&i.UpdatedAt,
 		&i.AssigneeType,
 		&i.ProjectID,
+		&i.RequestKey,
+		&i.RequestHash,
+		&i.InitialTriggerID,
 	)
 	return i, err
 }
@@ -1203,7 +1306,7 @@ UPDATE autopilot SET
     project_id = $9,
     updated_at = now()
 WHERE id = $1
-RETURNING id, workspace_id, title, description, assignee_id, status, execution_mode, issue_title_template, created_by_type, created_by_id, last_run_at, created_at, updated_at, assignee_type, project_id
+RETURNING id, workspace_id, title, description, assignee_id, status, execution_mode, issue_title_template, created_by_type, created_by_id, last_run_at, created_at, updated_at, assignee_type, project_id, request_key, request_hash, initial_trigger_id
 `
 
 type UpdateAutopilotParams struct {
@@ -1247,6 +1350,9 @@ func (q *Queries) UpdateAutopilot(ctx context.Context, arg UpdateAutopilotParams
 		&i.UpdatedAt,
 		&i.AssigneeType,
 		&i.ProjectID,
+		&i.RequestKey,
+		&i.RequestHash,
+		&i.InitialTriggerID,
 	)
 	return i, err
 }

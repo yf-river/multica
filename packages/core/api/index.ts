@@ -2,6 +2,7 @@ export {
   ApiClient,
   ApiError,
   ApiTransportError,
+  isMutationOutcomeUnknown,
   PreviewTooLargeError,
   PreviewUnsupportedError,
 } from "./client";

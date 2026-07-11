@@ -23,10 +23,10 @@
     "databaseTables": 86,
     "databaseFunctions": 9,
     "databaseTriggers": 4,
-    "databaseIndexes": 186,
-    "migrations": 16,
+    "databaseIndexes": 187,
+    "migrations": 18,
     "sqlcModules": 53,
-    "sqlcQueries": 573,
+    "sqlcQueries": 575,
     "goWebsocketEvents": 81,
     "typescriptWebsocketEvents": 71,
     "zustandStores": 29,
@@ -5467,6 +5467,41 @@
           "droppedFunctions": [],
           "droppedTriggers": [],
           "droppedIndexes": []
+        },
+        {
+          "version": 9,
+          "name": "autopilot_create_idempotency",
+          "direction": "down",
+          "source": "server/migrations/009_autopilot_create_idempotency.down.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": [
+            "autopilot_create_request_unique"
+          ]
+        },
+        {
+          "version": 9,
+          "name": "autopilot_create_idempotency",
+          "direction": "up",
+          "source": "server/migrations/009_autopilot_create_idempotency.up.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [
+            {
+              "name": "autopilot_create_request_unique",
+              "table": "autopilot",
+              "unique": true,
+              "source": "server/migrations/009_autopilot_create_idempotency.up.sql#autopilot_create_request_unique"
+            }
+          ],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
         }
       ],
       "tables": [
@@ -5909,6 +5944,12 @@
           "table": "public.agent",
           "unique": true,
           "source": "server/migrations/001_current_schema.up.sql#agent_workspace_name_active_unique"
+        },
+        {
+          "name": "autopilot_create_request_unique",
+          "table": "autopilot",
+          "unique": true,
+          "source": "server/migrations/009_autopilot_create_idempotency.up.sql#autopilot_create_request_unique"
         },
         {
           "name": "autopilot_run_request_key_unique",
@@ -7591,6 +7632,11 @@
               "source": "server/pkg/db/queries/autopilot.sql#GetAutopilot"
             },
             {
+              "name": "GetAutopilotByCreateRequest",
+              "command": "one",
+              "source": "server/pkg/db/queries/autopilot.sql#GetAutopilotByCreateRequest"
+            },
+            {
               "name": "GetAutopilotInWorkspace",
               "command": "one",
               "source": "server/pkg/db/queries/autopilot.sql#GetAutopilotInWorkspace"
@@ -7654,6 +7700,11 @@
               "name": "SelectAutopilotsExceedingFailureThreshold",
               "command": "many",
               "source": "server/pkg/db/queries/autopilot.sql#SelectAutopilotsExceedingFailureThreshold"
+            },
+            {
+              "name": "SetAutopilotInitialTrigger",
+              "command": "one",
+              "source": "server/pkg/db/queries/autopilot.sql#SetAutopilotInitialTrigger"
             },
             {
               "name": "SetAutopilotTriggerSigningSecret",

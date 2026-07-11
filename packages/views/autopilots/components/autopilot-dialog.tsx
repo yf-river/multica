@@ -388,46 +388,28 @@ export function AutopilotDialog(props: AutopilotDialogProps) {
             user_type: "member" as const,
             user_id,
           })),
+          trigger:
+            triggerKind === "webhook"
+              ? {
+                  kind: "webhook",
+                  event_filters:
+                    eventFilters.length > 0 ? eventFilters : undefined,
+                }
+              : {
+                  kind: "schedule",
+                  cron_expression: toCronExpression(triggerConfig),
+                  timezone: triggerConfig.timezone,
+                },
         });
-        let triggerOk = true;
-        let triggerErrMessage: string | null = null;
-        let webhookTrigger: AutopilotTrigger | null = null;
-        try {
-          if (triggerKind === "webhook") {
-            webhookTrigger = await createTrigger.mutateAsync({
-              autopilotId: autopilot.id,
-              kind: "webhook",
-              event_filters: eventFilters.length > 0 ? eventFilters : undefined,
-            });
-          } else {
-            await createTrigger.mutateAsync({
-              autopilotId: autopilot.id,
-              kind: "schedule",
-              cron_expression: toCronExpression(triggerConfig),
-              timezone: triggerConfig.timezone,
-            });
-          }
-        } catch (err) {
-          triggerOk = false;
-          triggerErrMessage =
-            err instanceof Error && err.message ? err.message : null;
-        }
-        if (triggerKind === "webhook" && webhookTrigger) {
+        if (triggerKind === "webhook") {
           // Stay in the dialog and surface the URL inline so the user
           // can copy it without first navigating to the detail page.
-          setCreatedWebhookTrigger(webhookTrigger);
+          setCreatedWebhookTrigger(autopilot.initial_trigger);
           toast.success(t(($) => $.dialog.toast_created));
           return;
         }
         onOpenChange(false);
-        if (triggerOk) {
-          toast.success(t(($) => $.dialog.toast_created));
-        } else {
-          // Partial success: autopilot saved, schedule failed. Show the
-          // server-provided reason so the user can act on it (cron syntax
-          // error, conflict, etc.) instead of seeing a generic message.
-          toast.error(formatSchedulePartialFailureToast(t, "create", triggerErrMessage));
-        }
+        toast.success(t(($) => $.dialog.toast_created));
       } else {
         await updateAutopilot.mutateAsync({
           id: props.autopilotId,

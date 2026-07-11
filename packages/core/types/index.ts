@@ -296,6 +296,7 @@ export type {
   AutopilotRunSource,
   WebhookEventFilter,
   CreateAutopilotRequest,
+  CreateAutopilotResponse,
   UpdateAutopilotRequest,
   CreateAutopilotTriggerRequest,
   UpdateAutopilotTriggerRequest,
