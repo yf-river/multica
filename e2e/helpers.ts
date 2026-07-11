@@ -8,6 +8,31 @@ import {
   DEFAULT_E2E_WORKSPACE_NAME,
 } from "./test-identity";
 
+interface DefaultE2ESession {
+  token: string;
+  account: string;
+  userId: string | null;
+}
+
+let defaultSessionPromise: Promise<DefaultE2ESession> | null = null;
+
+async function defaultE2ESession(): Promise<DefaultE2ESession> {
+  defaultSessionPromise ??= (async () => {
+    const api = new TestApiClient();
+    await api.login(DEFAULT_E2E_ACCOUNT, DEFAULT_E2E_NAME, DEFAULT_E2E_PASSWORD);
+    const token = api.getToken();
+    if (!token) throw new Error("E2E login did not return an auth token");
+    return { token, account: DEFAULT_E2E_ACCOUNT, userId: api.getUserId() };
+  })();
+  return defaultSessionPromise;
+}
+
+async function authenticatedDefaultClient(): Promise<TestApiClient> {
+  const api = new TestApiClient();
+  api.useAuthenticatedSession(await defaultE2ESession());
+  return api;
+}
+
 async function waitForIssuesPage(page: Page) {
   await waitForPageText(page, "新建任务", 60000);
   await expect(page.getByRole("button", { name: "新建任务" })).toBeVisible({
@@ -65,23 +90,13 @@ export async function reloadAppPage(page: Page) {
  * Returns the E2E workspace slug so callers can build workspace-scoped URLs.
  */
 export async function loginAsDefault(page: Page): Promise<string> {
-  const api = new TestApiClient();
-  await api.login(DEFAULT_E2E_ACCOUNT, DEFAULT_E2E_NAME, DEFAULT_E2E_PASSWORD);
+  const api = await authenticatedDefaultClient();
   const workspace = await api.ensureWorkspace(
     DEFAULT_E2E_WORKSPACE_NAME,
     DEFAULT_E2E_WORKSPACE,
   );
   const token = api.getToken();
-  if (!token) {
-    throw new Error("E2E login did not return an auth token");
-  }
-
-  const browserLogin = await page.request.post("/auth/login", {
-    data: { account: DEFAULT_E2E_ACCOUNT, password: DEFAULT_E2E_PASSWORD },
-  });
-  if (!browserLogin.ok()) {
-    throw new Error(`E2E browser login failed: ${browserLogin.status()}`);
-  }
+  if (!token) throw new Error("cached E2E session did not contain an auth token");
   await authenticateBrowserSession(page, token, workspace.slug);
   await page.goto(`/${workspace.slug}/issues`, { waitUntil: "domcontentloaded" });
   await waitForIssuesPage(page);
@@ -93,8 +108,7 @@ export async function loginAsDefault(page: Page): Promise<string> {
  * Call api.cleanup() in afterEach to remove test data created during the test.
  */
 export async function createTestApi(): Promise<TestApiClient> {
-  const api = new TestApiClient();
-  await api.login(DEFAULT_E2E_ACCOUNT, DEFAULT_E2E_NAME, DEFAULT_E2E_PASSWORD);
+  const api = await authenticatedDefaultClient();
   await api.ensureWorkspace(DEFAULT_E2E_WORKSPACE_NAME, DEFAULT_E2E_WORKSPACE);
   return api;
 }

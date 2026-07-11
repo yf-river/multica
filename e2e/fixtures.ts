@@ -448,6 +448,12 @@ export class TestApiClient {
   private createdSquadIds: string[] = [];
   private createdMemberIds: Array<{ workspaceId: string; memberId: string }> = [];
 
+  useAuthenticatedSession(session: { token: string; account: string; userId: string | null }) {
+    this.token = session.token;
+    this.account = session.account;
+    this.userId = session.userId;
+  }
+
   async login(account: string, name: string, password: string) {
     const res = await fetch(`${API_BASE}/auth/login`, {
       method: "POST",

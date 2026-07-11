@@ -167,11 +167,30 @@ fi
 if curl -sf "http://localhost:${FRONTEND_PORT}" > /dev/null 2>&1; then
   echo "    Frontend already running on :$FRONTEND_PORT"
 else
-  echo "    Starting frontend..."
-  FRONTEND_PID="$(start_service "frontend" "/tmp/multica-check-frontend.log" "pnpm dev:web" | tail -n 1)"
+  echo "    Building and starting production frontend..."
+  FRONTEND_PID="$(start_service "frontend" "/tmp/multica-check-frontend.log" "pnpm --filter @multica/web build && exec pnpm --filter @multica/web exec next start --port '${FRONTEND_PORT}'" | tail -n 1)"
   STARTED_FRONTEND=true
-  wait_for_port "$FRONTEND_PORT" "Frontend" 120 "/"
+  # This budget includes a clean production build. On the supported CI-sized
+  # host webpack + TypeScript + static-page generation can exceed two minutes;
+  # keeping that work outside Playwright preserves strict user-flow timeouts.
+  wait_for_port "$FRONTEND_PORT" "Frontend" 240 "/"
 fi
+
+# Check the first authenticated dynamic route as part of service readiness;
+# the cookie passes the proxy guard, while the fixture slug only selects the
+# route shape. E2E runs against the production build so route compilation,
+# external font lookups and dev-server startup work cannot consume user-flow
+# timeouts or make navigation order-dependent.
+E2E_WARM_WORKSPACE="${E2E_FIXTURE_WORKSPACE:-e2e-workspace}"
+echo "    Warming workspace route /${E2E_WARM_WORKSPACE}/issues..."
+if ! curl --max-time 120 -sf \
+  -H "Cookie: multica_logged_in=1; last_workspace_slug=${E2E_WARM_WORKSPACE}" \
+  "http://localhost:${FRONTEND_PORT}/${E2E_WARM_WORKSPACE}/issues" > /dev/null; then
+  echo "    ERROR: workspace route did not compile within 120s"
+  EXIT_CODE=1
+  exit 1
+fi
+echo "    Workspace route ready"
 
 # --------------------------------------------------------------------------
 # Step 5: E2E tests (Playwright)
