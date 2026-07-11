@@ -166,11 +166,3 @@ func (b *pendingBatcher) FlushAll() {
 	// Join flushes whose timer had already fired before we set stopped.
 	b.inflight.Wait()
 }
-
-// pendingCount reports how many sessions currently have an armed window.
-// Used by tests and useful for ops visibility.
-func (b *pendingBatcher) pendingCount() int {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return len(b.pending)
-}

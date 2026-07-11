@@ -105,11 +105,9 @@ func TestChunkAssemblerTTLExpiresPartial(t *testing.T) {
 
 	// Advance past TTL.
 	clock.Advance(200 * time.Millisecond)
-	if n := a.gcExpired(); n != 1 {
-		t.Errorf("gcExpired = %d; want 1", n)
-	}
-	if a.pendingCount() != 0 {
-		t.Errorf("pendingCount after gc = %d; want 0", a.pendingCount())
+	a.admit("om-fresh", 2, 0, []byte("fresh")) // production lazily expires stale entries on admit
+	if a.pendingCount() != 1 {
+		t.Errorf("pendingCount after lazy gc = %d; want only fresh entry", a.pendingCount())
 	}
 
 	// The follow-up chunk arrives after gc — treated as a brand-new
@@ -181,11 +179,11 @@ func TestChunkAssemblerRejectsBadInputs(t *testing.T) {
 func TestParseChunkHeaders(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name       string
-		headers    []FrameHeader
-		wantSum    int
-		wantSeq    int
-		wantMsgID  string
+		name      string
+		headers   []FrameHeader
+		wantSum   int
+		wantSeq   int
+		wantMsgID string
 	}{
 		{
 			name:    "all present",

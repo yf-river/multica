@@ -1110,7 +1110,7 @@ func TestDispatcher_DebounceCoalescesRunTrigger(t *testing.T) {
 	if enq.called != 0 {
 		t.Fatalf("run trigger must be debounced; enqueue called=%d before window closed", enq.called)
 	}
-	if got := d.batcher.pendingCount(); got != 1 {
+	if got := pendingBatchCount(d.batcher); got != 1 {
 		t.Fatalf("both messages share one session window; pending=%d", got)
 	}
 
