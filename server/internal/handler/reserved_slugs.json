@@ -3,7 +3,6 @@
   "groups": [
     {
       "label": "Auth flow",
-      "description": "`onboarding` is historical, kept reserved post-removal of the route.",
       "slugs": [
         "login",
         "logout",
@@ -15,8 +14,7 @@
         "callback",
         "verify",
         "reset",
-        "password",
-        "onboarding"
+        "password"
       ]
     },
     {
