@@ -1,6 +1,7 @@
-import { mkdir, readFile, rename, rm, writeFile } from "fs/promises";
+import { mkdir, rename, rm, writeFile } from "fs/promises";
 import { dirname } from "path";
 import type { DaemonPrefs } from "../shared/daemon-types";
+import { readOptionalJsonObject } from "./json-config-file";
 
 export const DEFAULT_DAEMON_PREFS: DaemonPrefs = {
   autoStart: true,
@@ -32,18 +33,8 @@ function readBooleanPref(
 }
 
 export async function loadDaemonPrefs(path: string): Promise<DaemonPrefs> {
-  let raw: string;
   try {
-    raw = await readFile(path, "utf-8");
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return { ...DEFAULT_DAEMON_PREFS };
-    }
-    throw new Error(`failed to read daemon preferences at ${path}`, { cause: error });
-  }
-
-  try {
-    return parseDaemonPrefs(JSON.parse(raw));
+    return parseDaemonPrefs(await readOptionalJsonObject(path));
   } catch (error) {
     throw new Error(`invalid daemon preferences at ${path}`, { cause: error });
   }
