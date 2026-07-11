@@ -604,7 +604,7 @@ func parseSquadSOPProfileSteps(raw []byte) []squadSOPProfileStep {
 }
 
 func matchSquadSOPStepForAgentRecord(steps []squadSOPProfileStep, agent db.Agent) (squadSOPProfileStep, int, bool) {
-	if roleKey := roleKeyFromAgentRuntimeConfig(agent.RuntimeConfig); roleKey != "" {
+	if roleKey := AgentRoleKey(agent.RuntimeConfig); roleKey != "" {
 		if step, index, ok := matchSquadSOPStepForAgent(steps, roleKey); ok {
 			return step, index, true
 		}
@@ -612,7 +612,9 @@ func matchSquadSOPStepForAgentRecord(steps []squadSOPProfileStep, agent db.Agent
 	return matchSquadSOPStepForAgent(steps, agent.Name)
 }
 
-func roleKeyFromAgentRuntimeConfig(raw []byte) string {
+// AgentRoleKey returns the persisted internal-squad identity for an agent.
+// Display names are deliberately not interpreted as role identity.
+func AgentRoleKey(raw []byte) string {
 	var runtimeConfig map[string]any
 	if len(raw) == 0 || json.Unmarshal(raw, &runtimeConfig) != nil {
 		return ""

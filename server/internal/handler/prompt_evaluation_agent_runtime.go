@@ -16,6 +16,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -152,7 +153,7 @@ func promptEvaluationSOPVerifier(agents []db.Agent) (db.Agent, bool) {
 	var verifier db.Agent
 	verifierFound := false
 	for i := range agents {
-		key := normalizeSOPRoleMentionKey(roleKeyFromAgentRuntimeConfig(agents[i]))
+		key := normalizeSOPRoleMentionKey(service.AgentRoleKey(agents[i].RuntimeConfig))
 		if _, ok := required[key]; ok {
 			required[key] = true
 		}

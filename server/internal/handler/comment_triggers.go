@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/eventoutbox"
 	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -230,7 +231,7 @@ func filterSuppressedCommentAgentTriggers(triggers []commentAgentTrigger, suppre
 }
 
 func (h *Handler) shouldBlockParentSOPStageTriggerForCrossProjectChildren(ctx context.Context, issue db.Issue, trigger commentAgentTrigger) (bool, error) {
-	roleKey := normalizeSOPRoleMentionKey(roleKeyFromAgentRuntimeConfig(trigger.Agent))
+	roleKey := normalizeSOPRoleMentionKey(service.AgentRoleKey(trigger.Agent.RuntimeConfig))
 	if roleKey != "04-implement" && roleKey != "05-verify" {
 		return false, nil
 	}
@@ -820,7 +821,7 @@ func (h *Handler) parseSquadSOPRoleKeyMentions(ctx context.Context, issue db.Iss
 		if _, ok := memberIDs[id]; !ok {
 			continue
 		}
-		roleKey := normalizeSOPRoleMentionKey(roleKeyFromAgentRuntimeConfig(agent))
+		roleKey := normalizeSOPRoleMentionKey(service.AgentRoleKey(agent.RuntimeConfig))
 		if _, ok := wantedRoles[roleKey]; !ok {
 			continue
 		}

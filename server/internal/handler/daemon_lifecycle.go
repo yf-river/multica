@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -780,17 +779,6 @@ func logClaimEndpointSlow(runtimeID, outcome string, start time.Time, authMs, cl
 	)
 }
 
-func roleKeyFromAgentRuntimeConfig(agent db.Agent) string {
-	var runtimeConfig map[string]any
-	if len(bytes.TrimSpace(agent.RuntimeConfig)) == 0 || json.Unmarshal(agent.RuntimeConfig, &runtimeConfig) != nil {
-		return ""
-	}
-	if scope, ok := runtimeConfig["internal_squad"].(map[string]any); ok {
-		return stringFromAny(scope["role_key"])
-	}
-	return ""
-}
-
 func taskExecutionPolicyForRole(roleKey string, isSquadLeader bool) TaskExecutionPolicyData {
 	key := strings.ToLower(strings.TrimSpace(roleKey))
 	if isSquadLeader || key == "pm" {
@@ -818,7 +806,7 @@ func taskExecutionPolicyForRole(roleKey string, isSquadLeader bool) TaskExecutio
 }
 
 func taskExecutionPolicyForAgent(agent db.Agent, isSquadLeader bool) TaskExecutionPolicyData {
-	return taskExecutionPolicyForRole(roleKeyFromAgentRuntimeConfig(agent), isSquadLeader)
+	return taskExecutionPolicyForRole(service.AgentRoleKey(agent.RuntimeConfig), isSquadLeader)
 }
 
 func filterAgentSkillsForExecutionPolicy(skills []service.AgentSkillData, policy TaskExecutionPolicyData) []service.AgentSkillData {
