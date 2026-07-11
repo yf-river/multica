@@ -496,7 +496,11 @@ func (h *Handler) UpdateSkill(w http.ResponseWriter, r *http.Request) {
 			fileResps = append(fileResps, skillFileToResponse(sf))
 		}
 	} else {
-		files, _ := qtx.ListSkillFiles(r.Context(), skill.ID)
+		files, err := qtx.ListSkillFiles(r.Context(), skill.ID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to list skill files")
+			return
+		}
 		fileResps = make([]SkillFileResponse, len(files))
 		for i, f := range files {
 			fileResps[i] = skillFileToResponse(f)

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/analytics"
@@ -24,6 +26,29 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
+
+type listSkillFilesFailingTxStarter struct {
+	pool *pgxpool.Pool
+}
+
+func (s listSkillFilesFailingTxStarter) Begin(ctx context.Context) (pgx.Tx, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return listSkillFilesFailingTx{Tx: tx}, nil
+}
+
+type listSkillFilesFailingTx struct {
+	pgx.Tx
+}
+
+func (tx listSkillFilesFailingTx) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+	if strings.Contains(sql, "-- name: ListSkillFiles") {
+		return nil, errors.New("injected ListSkillFiles failure")
+	}
+	return tx.Tx.Query(ctx, sql, args...)
+}
 
 var testHandler *Handler
 var testPool *pgxpool.Pool
@@ -4250,6 +4275,56 @@ func TestCreateSkillSkipsSkillMdFile(t *testing.T) {
 		if strings.EqualFold(p, "SKILL.md") {
 			t.Fatalf("SKILL.md should not be stored in skill_file")
 		}
+	}
+}
+
+func TestUpdateSkillRollsBackWhenExistingFilesCannotBeLoaded(t *testing.T) {
+	if testPool == nil {
+		t.Skip("no database available")
+	}
+
+	originalName := "test-skill-update-file-read-failure-" + randomID()[:8]
+	createReq := newRequest(http.MethodPost, "/api/workspaces/"+testWorkspaceID+"/skills", CreateSkillRequest{
+		Name:    originalName,
+		Content: "original content",
+		Files: []CreateSkillFileRequest{
+			{Path: "README.md", Content: "original readme"},
+		},
+	})
+	createRec := httptest.NewRecorder()
+	testHandler.CreateSkill(createRec, createReq)
+	if createRec.Code != http.StatusCreated {
+		t.Fatalf("create skill: expected 201, got %d: %s", createRec.Code, createRec.Body.String())
+	}
+
+	var created SkillWithFilesResponse
+	if err := json.Unmarshal(createRec.Body.Bytes(), &created); err != nil {
+		t.Fatalf("unmarshal create response: %v", err)
+	}
+
+	failingHandler := *testHandler
+	failingHandler.TxStarter = listSkillFilesFailingTxStarter{pool: testPool}
+	updatedName := originalName + "-updated"
+	updateReq := newRequest(http.MethodPut, "/api/skills/"+created.ID, UpdateSkillRequest{
+		Name: &updatedName,
+	})
+	updateReq = withURLParam(updateReq, "id", created.ID)
+	updateRec := httptest.NewRecorder()
+	failingHandler.UpdateSkill(updateRec, updateReq)
+
+	if updateRec.Code != http.StatusInternalServerError {
+		t.Fatalf("update skill: expected 500, got %d: %s", updateRec.Code, updateRec.Body.String())
+	}
+	if !strings.Contains(updateRec.Body.String(), "failed to list skill files") {
+		t.Fatalf("update skill: unexpected error body %s", updateRec.Body.String())
+	}
+
+	var persistedName string
+	if err := testPool.QueryRow(context.Background(), `SELECT name FROM skill WHERE id = $1`, created.ID).Scan(&persistedName); err != nil {
+		t.Fatalf("load persisted skill: %v", err)
+	}
+	if persistedName != originalName {
+		t.Fatalf("failed update committed name %q, want original %q", persistedName, originalName)
 	}
 }
 
