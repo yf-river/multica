@@ -319,11 +319,3 @@ func databaseClock(ctx context.Context, pool *pgxpool.Pool) (time.Time, error) {
 func rollupWindow(startedAt, finishedAt time.Time) (time.Time, time.Time) {
 	return startedAt.UTC().Add(-time.Second), finishedAt.UTC().Add(time.Second)
 }
-
-func correctedInputTokens(inputTokens, cacheReadTokens int64) int64 {
-	corrected := inputTokens - cacheReadTokens
-	if corrected < 0 {
-		return 0
-	}
-	return corrected
-}

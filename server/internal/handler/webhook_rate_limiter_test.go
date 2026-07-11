@@ -70,7 +70,7 @@ func TestWebhookLimiterLuaScript_StructureGuard(t *testing.T) {
 	// redis.NewScript stores the body, so we just sanity-check ordering by
 	// matching the source string. The exact whitespace is brittle but the
 	// alternative (Lua AST parsing) is overkill for a 10-line script.
-	src := webhookLimiterAllowSource()
+	src := webhookLimiterAllowSrc
 	mustBefore := func(a, b string) {
 		t.Helper()
 		ia, ib := strings.Index(src, a), strings.Index(src, b)

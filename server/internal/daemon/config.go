@@ -641,16 +641,6 @@ const loginShellResolveTimeout = 3 * time.Second
 // long the user's background processes happen to run.
 const loginShellResolveWaitDelay = 2 * time.Second
 
-const officialCloudHost = "api.multica.ai"
-
-func isOfficialCloudServer(baseURL string) bool {
-	u, err := url.Parse(strings.TrimSpace(baseURL))
-	if err != nil {
-		return false
-	}
-	return strings.EqualFold(u.Hostname(), officialCloudHost)
-}
-
 // supportedLoginShells limits which interpreters we will invoke via
 // `<shell> -ilc <script>`. Sticking to POSIX-compatible shells means the
 // resolver script below works unchanged. Notably absent: fish (uses

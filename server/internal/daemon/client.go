@@ -27,18 +27,6 @@ func (e *requestError) Error() string {
 	return fmt.Sprintf("%s %s returned %d: %s", e.Method, e.Path, e.StatusCode, e.Body)
 }
 
-// isWorkspaceNotFoundError returns true if the error is a 404 with "workspace not found" body.
-func isWorkspaceNotFoundError(err error) bool {
-	var reqErr *requestError
-	if !errors.As(err, &reqErr) {
-		return false
-	}
-	if reqErr.StatusCode != http.StatusNotFound {
-		return false
-	}
-	return strings.Contains(strings.ToLower(reqErr.Body), "workspace not found")
-}
-
 // isTaskNotFoundError returns true if the error is a 404 with "task not found"
 // body. The daemon uses this to detect that a task was deleted server-side
 // (issue removed, agent reassigned, ...) while the local agent was still

@@ -6,29 +6,6 @@ import (
 	"time"
 )
 
-func TestCorrectedInputTokens(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name  string
-		input int64
-		cache int64
-		want  int64
-	}{
-		{name: "subtracts cached input", input: 1000, cache: 300, want: 700},
-		{name: "zero cache leaves input unchanged", input: 1000, cache: 0, want: 1000},
-		{name: "clamps negative values", input: 100, cache: 300, want: 0},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			if got := correctedInputTokens(tt.input, tt.cache); got != tt.want {
-				t.Fatalf("correctedInputTokens(%d, %d) = %d, want %d", tt.input, tt.cache, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestConfigParseAndValidate(t *testing.T) {
 	t.Parallel()
 
