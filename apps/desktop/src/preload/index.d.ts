@@ -139,7 +139,6 @@ interface UpdaterAPI {
   onUpdateDownloaded: (
     callback: (info: { version: string; releaseNotes?: string }) => void,
   ) => () => void;
-  downloadUpdate: () => Promise<void>;
   installUpdate: () => Promise<void>;
   checkForUpdates: () => Promise<
     | { ok: true; currentVersion: string; latestVersion: string; available: boolean }

@@ -10,7 +10,6 @@ const ctx = vi.hoisted(() => ({
     updateInfo: { version: "0.3.18" },
     isUpdateAvailable: false,
   })),
-  downloadUpdate: vi.fn(),
   quitAndInstall: vi.fn(),
   getVersion: vi.fn(() => "0.3.17"),
 }));
@@ -27,7 +26,6 @@ vi.mock("electron-updater", () => {
       return autoUpdater;
     }),
     checkForUpdates: ctx.checkForUpdates,
-    downloadUpdate: ctx.downloadUpdate,
     quitAndInstall: ctx.quitAndInstall,
   };
   return { autoUpdater };
@@ -112,7 +110,6 @@ describe("setupAutoUpdater", () => {
     ctx.handlers.clear();
     ctx.ipcHandle.mockClear();
     ctx.checkForUpdates.mockClear();
-    ctx.downloadUpdate.mockClear();
     ctx.quitAndInstall.mockClear();
     ctx.getVersion.mockClear();
   });

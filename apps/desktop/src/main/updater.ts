@@ -111,12 +111,6 @@ export function setupAutoUpdater(getMainWindow: () => BrowserWindow | null): voi
     console.error("Auto-updater error:", err);
   });
 
-  // Retained for IPC back-compat with older renderer bundles. With
-  // autoDownload=true the renderer no longer triggers this path.
-  ipcMain.handle("updater:download", () => {
-    return autoUpdater.downloadUpdate();
-  });
-
   ipcMain.handle("updater:install", () => {
     autoUpdater.quitAndInstall(false, true);
   });
