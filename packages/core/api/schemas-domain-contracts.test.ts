@@ -11,6 +11,7 @@ import {
   ListWebhookDeliveriesResponseSchema,
 } from "./schemas-automation";
 import {
+  EMPTY_ISSUE,
   EMPTY_LIST_ISSUES_RESPONSE,
   ListIssuesResponseSchema,
 } from "./schemas-issues";
@@ -57,6 +58,11 @@ import {
   GitHubConnectResponseSchema,
   GitHubPullRequestListResponseSchema,
 } from "./schemas-github";
+import {
+  AgentTaskListSchema,
+  EMPTY_ISSUE_EXECUTION_TREE,
+  IssueExecutionTreeResponseSchema,
+} from "./schemas-tasks";
 
 describe("domain response schema fallbacks", () => {
   it("keeps app configuration usable when the response is not an object", () => {
@@ -190,6 +196,85 @@ describe("domain response schema fallbacks", () => {
       EMPTY_CHAT_MESSAGES_PAGE,
       { endpoint: "GET /api/chat/sessions/:id/messages/page" },
     )).toBe(EMPTY_CHAT_MESSAGES_PAGE);
+  });
+
+  it("rejects malformed task identity and execution-tree roots", () => {
+    const emptyTasks: never[] = [];
+    expect(parseWithFallback(
+      [{ id: 42, status: "running" }],
+      AgentTaskListSchema,
+      emptyTasks,
+      { endpoint: "GET /api/agent-task-snapshot" },
+    )).toBe(emptyTasks);
+    expect(parseWithFallback(
+      { root: { tasks: [] }, summary: {} },
+      IssueExecutionTreeResponseSchema,
+      EMPTY_ISSUE_EXECUTION_TREE,
+      { endpoint: "GET /api/issues/:id/execution-tree" },
+    )).toBe(EMPTY_ISSUE_EXECUTION_TREE);
+  });
+
+  it("accepts the current task execution response and preserves additive fields", () => {
+    const task = {
+      id: "task-1",
+      agent_id: "agent-1",
+      runtime_id: "runtime-1",
+      issue_id: "issue-1",
+      status: "running",
+      priority: 2,
+      dispatched_at: null,
+      started_at: null,
+      completed_at: null,
+      result: null,
+      error: null,
+      created_at: "2026-07-11T00:00:00Z",
+      future_runtime_field: "preserved",
+    };
+    expect(AgentTaskListSchema.parse([task])[0]).toHaveProperty(
+      "future_runtime_field",
+      "preserved",
+    );
+
+    const parsed = IssueExecutionTreeResponseSchema.safeParse({
+      root: {
+        issue: {
+          ...EMPTY_ISSUE,
+          id: "issue-1",
+          workspace_id: "workspace-1",
+        },
+        tasks: [task],
+        sop_runs: [],
+        task_messages: [],
+        trace_events: [],
+        tool_call_chains: [],
+        tool_call_summary: [],
+        artifacts: [],
+        wakeup_comments: [],
+        children: [],
+      },
+      summary: { task_count: 1 },
+      timeline_nodes: [],
+      issue_summary: {
+        issue_id: "issue-1",
+        node_count: 1,
+        total_duration_ms: 0,
+        wall_clock_duration_ms: null,
+        agent_execution_duration_ms: 0,
+        human_confirmation_duration_ms: null,
+        child_issue_wait_duration_ms: null,
+        total_input_tokens: 0,
+        total_output_tokens: 0,
+        total_cache_read_tokens: 0,
+        total_cache_write_tokens: 0,
+        message_count: 0,
+        agent_turn_count: 0,
+        trace_event_count: 0,
+        usage_unavailable: false,
+        acceptance_status: "running",
+        full_analysis_deep_link: "/workspace/issues/issue-1",
+      },
+    });
+    expect(parsed.success).toBe(true);
   });
 
   it("strips forbidden secret fields from generic agent responses", () => {

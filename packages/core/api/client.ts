@@ -184,6 +184,14 @@ import {
   AgentListSchema,
   AgentEnvResponseSchema,
   AgentTaskCancellationCountSchema,
+  AgentTaskListSchema,
+  AgentTaskSchema,
+  AgentActivityBucketListSchema,
+  AgentRunCountListSchema,
+  TaskMessageListSchema,
+  IssueUsageSummarySchema,
+  IssueTaskTraceResponseSchema,
+  IssueExecutionTreeResponseSchema,
   AgentTemplateSummaryListSchema,
   AttachmentResponseSchema,
   CancelTaskResponseSchema,
@@ -197,6 +205,13 @@ import {
   EMPTY_AGENT,
   EMPTY_AGENT_ENV_RESPONSE,
   EMPTY_AGENT_TEMPLATE_SUMMARY_LIST,
+  EMPTY_AGENT_TASK,
+  EMPTY_AGENT_ACTIVITY_BUCKETS,
+  EMPTY_AGENT_RUN_COUNTS,
+  EMPTY_TASK_MESSAGES,
+  EMPTY_ISSUE_USAGE_SUMMARY,
+  EMPTY_ISSUE_TASK_TRACE_RESPONSE,
+  EMPTY_ISSUE_EXECUTION_TREE,
   EMPTY_APP_CONFIG,
   EMPTY_ATTACHMENT,
   EMPTY_GROUPED_ISSUES_RESPONSE,
@@ -1485,7 +1500,10 @@ export class ApiClient {
   }
 
   async listAgentTasks(agentId: string): Promise<AgentTask[]> {
-    return this.fetch(`/api/agents/${agentId}/tasks`);
+    const raw = await this.fetch<unknown>(`/api/agents/${agentId}/tasks`);
+    return parseWithFallback(raw, AgentTaskListSchema, [], {
+      endpoint: "GET /api/agents/:id/tasks",
+    }) as AgentTask[];
   }
 
   // Workspace-scoped agent task snapshot: every active task
@@ -1494,7 +1512,10 @@ export class ApiClient {
   // derivation; one fetch backs every per-agent presence read in the app.
   // Workspace is resolved server-side from the X-Workspace-Slug header.
   async getAgentTaskSnapshot(): Promise<AgentTask[]> {
-    return this.fetch(`/api/agent-task-snapshot`);
+    const raw = await this.fetch<unknown>(`/api/agent-task-snapshot`);
+    return parseWithFallback(raw, AgentTaskListSchema, [], {
+      endpoint: "GET /api/agent-task-snapshot",
+    }) as AgentTask[];
   }
 
   // Per-agent daily activity for the last 30 days, anchored on
@@ -1502,32 +1523,59 @@ export class ApiClient {
   // sparkline (uses trailing 7 buckets) and the agent detail "Last 30
   // days" panel (uses all 30).
   async getWorkspaceAgentActivity30d(): Promise<AgentActivityBucket[]> {
-    return this.fetch(`/api/agent-activity-30d`);
+    const raw = await this.fetch<unknown>(`/api/agent-activity-30d`);
+    return parseWithFallback(raw, AgentActivityBucketListSchema, EMPTY_AGENT_ACTIVITY_BUCKETS, {
+      endpoint: "GET /api/agent-activity-30d",
+    });
   }
 
   // Per-agent 30-day total run count for the Agents-list RUNS column.
   async getWorkspaceAgentRunCounts(): Promise<AgentRunCount[]> {
-    return this.fetch(`/api/agent-run-counts`);
+    const raw = await this.fetch<unknown>(`/api/agent-run-counts`);
+    return parseWithFallback(raw, AgentRunCountListSchema, EMPTY_AGENT_RUN_COUNTS, {
+      endpoint: "GET /api/agent-run-counts",
+    });
   }
 
   async listTaskMessages(taskId: string): Promise<TaskMessagePayload[]> {
-    return this.fetch(`/api/tasks/${taskId}/messages`);
+    const raw = await this.fetch<unknown>(`/api/tasks/${taskId}/messages`);
+    return parseWithFallback(raw, TaskMessageListSchema, EMPTY_TASK_MESSAGES, {
+      endpoint: "GET /api/tasks/:id/messages",
+    });
   }
 
   async listTasksByIssue(issueId: string): Promise<AgentTask[]> {
-    return this.fetch(`/api/issues/${issueId}/task-runs`);
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/task-runs`);
+    return parseWithFallback(raw, AgentTaskListSchema, [], {
+      endpoint: "GET /api/issues/:id/task-runs",
+    }) as AgentTask[];
   }
 
   async getIssueUsage(issueId: string): Promise<IssueUsageSummary> {
-    return this.fetch(`/api/issues/${issueId}/usage`);
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/usage`);
+    return parseWithFallback(raw, IssueUsageSummarySchema, EMPTY_ISSUE_USAGE_SUMMARY, {
+      endpoint: "GET /api/issues/:id/usage",
+    });
   }
 
   async listIssueTaskTraceEvents(issueId: string): Promise<IssueTaskTraceResponse> {
-    return this.fetch(`/api/issues/${issueId}/trace`);
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/trace`);
+    return parseWithFallback(
+      raw,
+      IssueTaskTraceResponseSchema,
+      EMPTY_ISSUE_TASK_TRACE_RESPONSE,
+      { endpoint: "GET /api/issues/:id/trace" },
+    );
   }
 
   async getIssueExecutionTree(issueId: string): Promise<IssueExecutionTreeResponse> {
-    return this.fetch(`/api/issues/${issueId}/execution-tree`);
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/execution-tree`);
+    return parseWithFallback(
+      raw,
+      IssueExecutionTreeResponseSchema,
+      EMPTY_ISSUE_EXECUTION_TREE,
+      { endpoint: "GET /api/issues/:id/execution-tree" },
+    );
   }
 
   async listIssueSOPRuns(issueId: string): Promise<ListIssueSOPRunsResponse> {
@@ -1538,15 +1586,23 @@ export class ApiClient {
   }
 
   async cancelTask(issueId: string, taskId: string): Promise<AgentTask> {
-    return this.fetch(`/api/issues/${issueId}/tasks/${taskId}/cancel`, {
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/tasks/${taskId}/cancel`, {
       method: "POST",
+    });
+    return parseOrThrow(raw, AgentTaskSchema, EMPTY_AGENT_TASK, {
+      endpoint: "POST /api/issues/:id/tasks/:taskId/cancel",
+      mayHaveCommitted: true,
     });
   }
 
   async rerunIssue(issueId: string, taskId?: string): Promise<AgentTask> {
-    return this.fetch(`/api/issues/${issueId}/rerun`, {
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/rerun`, {
       method: "POST",
       body: JSON.stringify(taskId ? { task_id: taskId } : {}),
+    });
+    return parseOrThrow(raw, AgentTaskSchema, EMPTY_AGENT_TASK, {
+      endpoint: "POST /api/issues/:id/rerun",
+      mayHaveCommitted: true,
     });
   }
 

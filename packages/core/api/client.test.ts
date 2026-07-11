@@ -110,6 +110,28 @@ describe("ApiClient", () => {
     });
   });
 
+  it("validates task reads and never manufactures successful task mutations", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(
+      new Response(JSON.stringify({ id: 42, status: "running" }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )));
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.getAgentTaskSnapshot()).resolves.toEqual([]);
+    await expect(client.getIssueExecutionTree("issue-1"))
+      .resolves.toMatchObject({ root: { tasks: [], children: [] }, summary: {} });
+    await expect(client.cancelTask("issue-1", "task-1")).rejects.toMatchObject({
+      code: "api_response_contract_invalid",
+      mayHaveCommitted: true,
+    });
+    await expect(client.rerunIssue("issue-1", "task-1")).rejects.toMatchObject({
+      code: "api_response_contract_invalid",
+      mayHaveCommitted: true,
+    });
+  });
+
   it("rejects an agent environment response for a different agent", async () => {
     vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(
       new Response(JSON.stringify({

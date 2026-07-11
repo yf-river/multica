@@ -8,12 +8,12 @@ export const EmbeddedAttachmentSchema = z.object({
   id: NonEmptyStringSchema,
 }).loose();
 
-export const PromptEvaluationTaskTraceEventSchema = z.object({
-  id: z.string(),
-  workspace_id: z.string(),
-  task_id: z.string(),
+export const TaskTraceEventSchema = z.object({
+  id: NonEmptyStringSchema,
+  workspace_id: NonEmptyStringSchema,
+  task_id: NonEmptyStringSchema,
   issue_id: z.string().nullable().optional().transform((value) => value ?? null),
-  agent_id: z.string(),
+  agent_id: NonEmptyStringSchema,
   runtime_id: z.string().nullable().optional().transform((value) => value ?? null),
   squad_id: z.string().nullable().optional().transform((value) => value ?? null),
   project_id: z.string().nullable().optional().transform((value) => value ?? null),
@@ -40,3 +40,7 @@ export const PromptEvaluationTaskTraceEventSchema = z.object({
   metadata: z.record(z.string(), z.unknown()).default({}),
   created_at: z.string().default(""),
 }).loose();
+
+// Prompt Evaluation consumes the same durable task-trace wire contract. Keep
+// the historical export name as an internal source alias, not a second schema.
+export const PromptEvaluationTaskTraceEventSchema = TaskTraceEventSchema;

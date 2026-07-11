@@ -3,6 +3,7 @@ export * from "./schemas-issues";
 export * from "./schemas-usage";
 export * from "./schemas-runtimes";
 export * from "./schemas-agents";
+export * from "./schemas-tasks";
 export * from "./schemas-prompt-library";
 export * from "./schemas-prompt-evaluation-assets";
 export * from "./schemas-prompt-evaluation-runs";
