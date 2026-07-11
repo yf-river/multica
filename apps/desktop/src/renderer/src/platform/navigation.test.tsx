@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render } from "@testing-library/react";
+import { act, render } from "@testing-library/react";
 import { useEffect } from "react";
 
 // Shared in-memory state that the mocked tab store reads / mutates. The test
@@ -161,6 +161,13 @@ function captureAdapter(onAdapter: (adapter: ReturnType<typeof useNavigation>) =
   return Probe;
 }
 
+function push(
+  adapter: ReturnType<typeof useNavigation>,
+  path: string,
+) {
+  act(() => adapter.push(path));
+}
+
 describe("DesktopNavigationProvider.openInNewTab", () => {
   it("opens a background tab (no setActiveTab) for a same-workspace path", () => {
     let adapter: ReturnType<typeof useNavigation> | null = null;
@@ -233,7 +240,7 @@ describe("DesktopNavigationProvider.push with pinned active tab", () => {
         <Probe />
       </DesktopNavigationProvider>,
     );
-    adapter!.push("/acme/projects");
+    push(adapter!, "/acme/projects");
     expect(state.openTab).toHaveBeenCalledWith("/acme/projects", "/acme/projects", "File");
     expect(state.setActiveTab).toHaveBeenCalledWith("tNew");
   });
@@ -249,7 +256,7 @@ describe("DesktopNavigationProvider.push with pinned active tab", () => {
         <Probe />
       </DesktopNavigationProvider>,
     );
-    adapter!.push("/acme/issues?filter=open");
+    push(adapter!, "/acme/issues?filter=open");
     // Pathname unchanged → pinned interception declines and falls through to
     // the router's own navigate — openTab / setActiveTab must not fire.
     expect(state.openTab).not.toHaveBeenCalled();
@@ -267,7 +274,7 @@ describe("DesktopNavigationProvider.push with pinned active tab", () => {
         <Probe />
       </DesktopNavigationProvider>,
     );
-    adapter!.push("/butter/inbox");
+    push(adapter!, "/butter/inbox");
     // Cross-workspace push runs through tryRouteToOtherWorkspace before
     // tryRouteToPinnedNewTab, so switchWorkspace wins.
     expect(state.switchWorkspace).toHaveBeenCalledWith("butter", "/butter/inbox");
@@ -287,7 +294,7 @@ describe("DesktopNavigationProvider workspace creation", () => {
       </DesktopNavigationProvider>,
     );
 
-    adapter!.push("/workspaces/new");
+    push(adapter!, "/workspaces/new");
 
     expect(state.openWorkspaceCreation).toHaveBeenCalledOnce();
     expect(state.openTab).not.toHaveBeenCalled();
@@ -314,7 +321,7 @@ describe("DesktopNavigationProvider.push duplicate path guard", () => {
       </DesktopNavigationProvider>,
     );
 
-    adapter!.push("/acme/issues/child");
+    push(adapter!, "/acme/issues/child");
 
     expect(activeRouter.navigate).not.toHaveBeenCalled();
   });
@@ -382,7 +389,7 @@ describe("TabNavigationProvider.push duplicate path guard", () => {
   it("does not navigate when the target exactly matches the current full location", () => {
     const { getAdapter, fakeRouter } = renderTabProviderAt("/acme/issues/child");
 
-    getAdapter().push("/acme/issues/child");
+    push(getAdapter(), "/acme/issues/child");
 
     expect(fakeRouter.navigate).not.toHaveBeenCalled();
   });
@@ -390,7 +397,7 @@ describe("TabNavigationProvider.push duplicate path guard", () => {
   it("still navigates when only search or hash differs", () => {
     const { getAdapter, fakeRouter } = renderTabProviderAt("/acme/issues");
 
-    getAdapter().push("/acme/issues?filter=open#top");
+    push(getAdapter(), "/acme/issues?filter=open#top");
 
     expect(fakeRouter.navigate).toHaveBeenCalledWith("/acme/issues?filter=open#top");
   });
@@ -432,7 +439,7 @@ describe("TabNavigationProvider.push with pinned active tab", () => {
 
   it("redirects push to a new foreground tab when pathname differs", () => {
     const { getAdapter, fakeRouter } = renderPinnedTabProvider("/acme/issues");
-    getAdapter().push("/acme/projects");
+    push(getAdapter(), "/acme/projects");
     expect(state.openTab).toHaveBeenCalledWith("/acme/projects", "/acme/projects", "File");
     expect(state.setActiveTab).toHaveBeenCalledWith("tNew");
     // Pinned interception short-circuits — the per-tab router must NOT
@@ -442,7 +449,7 @@ describe("TabNavigationProvider.push with pinned active tab", () => {
 
   it("allows in-tab navigation when only search/hash changes", () => {
     const { getAdapter, fakeRouter } = renderPinnedTabProvider("/acme/issues");
-    getAdapter().push("/acme/issues?filter=open");
+    push(getAdapter(), "/acme/issues?filter=open");
     // Same pathname → pinned interception declines, push falls through to
     // the tab's own router.navigate, and no new tab is opened.
     expect(state.openTab).not.toHaveBeenCalled();
