@@ -314,6 +314,53 @@ func TestClaimTaskByRuntime_ReclaimsStaleDispatchedTask(t *testing.T) {
 	}
 }
 
+func TestClaimTaskByRuntime_RejectsIncompleteAgentConfiguration(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	runtimeID := createClaimReclaimRuntime(t, ctx, "Invalid agent config claim runtime")
+	agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, "Invalid agent config claim agent")
+	taskID := createDispatchedClaimFixtureTask(t, ctx, agentID, runtimeID, issueID, "120 seconds", false)
+	if _, err := testPool.Exec(ctx, `UPDATE agent SET custom_env = '[]'::jsonb WHERE id = $1`, agentID); err != nil {
+		t.Fatalf("corrupt agent custom_env fixture: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	req := newDaemonTokenRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/tasks/claim", nil,
+		testWorkspaceID, "invalid-agent-config-claim")
+	req = withURLParam(req, "runtimeId", runtimeID)
+	testHandler.ClaimTaskByRuntime(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("ClaimTaskByRuntime: expected 500, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "failed to build task claim response") {
+		t.Fatalf("ClaimTaskByRuntime body = %q, want build failure", w.Body.String())
+	}
+
+	var status string
+	var dispatchedRecently bool
+	if err := testPool.QueryRow(ctx, `
+		SELECT status, dispatched_at > now() - interval '15 seconds'
+		FROM agent_task_queue WHERE id = $1
+	`, taskID).Scan(&status, &dispatchedRecently); err != nil {
+		t.Fatalf("read failed claim task: %v", err)
+	}
+	if status != "dispatched" || !dispatchedRecently {
+		t.Fatalf("failed claim task status=%q dispatched_recently=%v, want recoverable dispatched task", status, dispatchedRecently)
+	}
+
+	var tokenCount int
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM task_token WHERE task_id = $1`, taskID).Scan(&tokenCount); err != nil {
+		t.Fatalf("count task tokens: %v", err)
+	}
+	if tokenCount != 0 {
+		t.Fatalf("failed claim minted %d task tokens, want 0", tokenCount)
+	}
+}
+
 func TestClaimTaskByRuntime_DoesNotReclaimFreshDispatchedTask(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")

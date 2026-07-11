@@ -538,10 +538,22 @@ func (s *TaskService) publishAgentStatus(agent db.Agent) {
 }
 
 // LoadAgentSkills loads an agent's skills with their files for task execution.
-func (s *TaskService) LoadAgentSkills(ctx context.Context, agentID pgtype.UUID) []AgentSkillData {
-	skills, err := s.Queries.ListAgentSkills(ctx, agentID)
-	if err != nil || len(skills) == 0 {
-		return nil
+type agentSkillReader interface {
+	ListAgentSkills(context.Context, pgtype.UUID) ([]db.Skill, error)
+	ListSkillFiles(context.Context, pgtype.UUID) ([]db.SkillFile, error)
+}
+
+func (s *TaskService) LoadAgentSkills(ctx context.Context, agentID pgtype.UUID) ([]AgentSkillData, error) {
+	return loadAgentSkills(ctx, s.Queries, agentID)
+}
+
+func loadAgentSkills(ctx context.Context, queries agentSkillReader, agentID pgtype.UUID) ([]AgentSkillData, error) {
+	skills, err := queries.ListAgentSkills(ctx, agentID)
+	if err != nil {
+		return nil, fmt.Errorf("list agent skills: %w", err)
+	}
+	if len(skills) == 0 {
+		return nil, nil
 	}
 
 	result := make([]AgentSkillData, 0, len(skills))
@@ -552,13 +564,16 @@ func (s *TaskService) LoadAgentSkills(ctx context.Context, agentID pgtype.UUID) 
 			Description: sk.Description,
 			Content:     sk.Content,
 		}
-		files, _ := s.Queries.ListSkillFiles(ctx, sk.ID)
+		files, err := queries.ListSkillFiles(ctx, sk.ID)
+		if err != nil {
+			return nil, fmt.Errorf("list files for skill %s: %w", util.UUIDToString(sk.ID), err)
+		}
 		for _, f := range files {
 			data.Files = append(data.Files, AgentSkillFileData{Path: f.Path, Content: f.Content})
 		}
 		result = append(result, data)
 	}
-	return result
+	return result, nil
 }
 
 // AgentSkillData represents a skill for task execution responses.

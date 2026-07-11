@@ -70,52 +70,65 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 
 	// Build response with fresh agent data (name + skills + custom_env + custom_args).
 	resp := taskToResponse(*task, runtimeWorkspaceID)
-	if agent, err := h.Queries.GetAgent(r.Context(), task.AgentID); err == nil {
-		executionPolicy := taskExecutionPolicyForAgent(agent, false)
-		// Workspace-bound skills first, then platform built-in skills. Built-in
-		// names carry a "multica-" prefix so their on-disk slugs never collide
-		// with a user-authored workspace skill (see writeSkillFiles).
-		skills := h.TaskService.LoadAgentSkills(r.Context(), task.AgentID)
-		skills = filterAgentSkillsForExecutionPolicy(skills, executionPolicy)
-		skills = append(skills, filterBuiltinSkillsForExecutionPolicy(h.TaskService.BuiltinSkills(), executionPolicy)...)
-		var customEnv map[string]string
-		if agent.CustomEnv != nil {
-			if err := json.Unmarshal(agent.CustomEnv, &customEnv); err != nil {
-				slog.Warn("failed to unmarshal agent custom_env", "agent_id", uuidToString(agent.ID), "error", err)
-			}
-		}
-		var customArgs []string
-		if agent.CustomArgs != nil {
-			if err := json.Unmarshal(agent.CustomArgs, &customArgs); err != nil {
-				slog.Warn("failed to unmarshal agent custom_args", "agent_id", uuidToString(agent.ID), "error", err)
-			}
-		}
-		var mcpConfig json.RawMessage
-		if agent.McpConfig != nil {
-			mcpConfig = json.RawMessage(agent.McpConfig)
-		}
-		// runtime_config is stored as JSONB and may legitimately be the
-		// empty object `{}` for agents that haven't opted into any
-		// provider-specific tuning. Forward only non-empty payloads so the
-		// daemon's per-provider decoders treat absent-or-empty identically.
-		var runtimeConfig json.RawMessage
-		if rc := bytes.TrimSpace(agent.RuntimeConfig); len(rc) > 0 && !bytes.Equal(rc, []byte("{}")) && !bytes.Equal(rc, []byte("null")) {
-			runtimeConfig = json.RawMessage(agent.RuntimeConfig)
-		}
-		resp.Agent = &TaskAgentData{
-			ID:            uuidToString(agent.ID),
-			Name:          agent.Name,
-			Instructions:  agent.Instructions,
-			Skills:        skills,
-			CustomEnv:     customEnv,
-			CustomArgs:    customArgs,
-			McpConfig:     mcpConfig,
-			Model:         agent.Model.String,
-			ThinkingLevel: agent.ThinkingLevel.String,
-			RuntimeConfig: runtimeConfig,
-		}
-		resp.ExecutionPolicy = &executionPolicy
+	agent, err := h.Queries.GetAgent(r.Context(), task.AgentID)
+	if err != nil {
+		h.writeClaimResponseBuildError(w, task.ID, runtimeID, "agent", err)
+		outcome = "error_build"
+		return
 	}
+	executionPolicy := taskExecutionPolicyForAgent(agent, false)
+	// Workspace-bound skills first, then platform built-in skills. Built-in
+	// names carry a "multica-" prefix so their on-disk slugs never collide
+	// with a user-authored workspace skill (see writeSkillFiles).
+	skills, err := h.TaskService.LoadAgentSkills(r.Context(), task.AgentID)
+	if err != nil {
+		h.writeClaimResponseBuildError(w, task.ID, runtimeID, "agent skills", err)
+		outcome = "error_build"
+		return
+	}
+	skills = filterAgentSkillsForExecutionPolicy(skills, executionPolicy)
+	skills = append(skills, filterBuiltinSkillsForExecutionPolicy(h.TaskService.BuiltinSkills(), executionPolicy)...)
+	var customEnv map[string]string
+	if agent.CustomEnv != nil {
+		if err := json.Unmarshal(agent.CustomEnv, &customEnv); err != nil {
+			h.writeClaimResponseBuildError(w, task.ID, runtimeID, "agent custom_env", err)
+			outcome = "error_build"
+			return
+		}
+	}
+	var customArgs []string
+	if agent.CustomArgs != nil {
+		if err := json.Unmarshal(agent.CustomArgs, &customArgs); err != nil {
+			h.writeClaimResponseBuildError(w, task.ID, runtimeID, "agent custom_args", err)
+			outcome = "error_build"
+			return
+		}
+	}
+	var mcpConfig json.RawMessage
+	if agent.McpConfig != nil {
+		mcpConfig = json.RawMessage(agent.McpConfig)
+	}
+	// runtime_config is stored as JSONB and may legitimately be the
+	// empty object `{}` for agents that haven't opted into any
+	// provider-specific tuning. Forward only non-empty payloads so the
+	// daemon's per-provider decoders treat absent-or-empty identically.
+	var runtimeConfig json.RawMessage
+	if rc := bytes.TrimSpace(agent.RuntimeConfig); len(rc) > 0 && !bytes.Equal(rc, []byte("{}")) && !bytes.Equal(rc, []byte("null")) {
+		runtimeConfig = json.RawMessage(agent.RuntimeConfig)
+	}
+	resp.Agent = &TaskAgentData{
+		ID:            uuidToString(agent.ID),
+		Name:          agent.Name,
+		Instructions:  agent.Instructions,
+		Skills:        skills,
+		CustomEnv:     customEnv,
+		CustomArgs:    customArgs,
+		McpConfig:     mcpConfig,
+		Model:         agent.Model.String,
+		ThinkingLevel: agent.ThinkingLevel.String,
+		RuntimeConfig: runtimeConfig,
+	}
+	resp.ExecutionPolicy = &executionPolicy
 
 	// Resolve the runtime owner's profile description so the daemon can
 	// inject "## Requesting User" into the brief. Empty fields short-circuit
@@ -753,6 +766,22 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 
 	slog.Info("task claimed by runtime", "task_id", uuidToString(task.ID), "runtime_id", runtimeID, "agent_id", uuidToString(task.AgentID), "prior_session", resp.PriorSessionID)
 	writeJSON(w, http.StatusOK, map[string]any{"task": resp})
+}
+
+func (h *Handler) writeClaimResponseBuildError(
+	w http.ResponseWriter,
+	taskID pgtype.UUID,
+	runtimeID string,
+	component string,
+	err error,
+) {
+	slog.Error("task claim: response build failed; task remains dispatched for recovery",
+		"task_id", uuidToString(taskID),
+		"runtime_id", runtimeID,
+		"component", component,
+		"error", err,
+	)
+	writeError(w, http.StatusInternalServerError, "failed to build task claim response")
 }
 
 func canonicalGongfengCloneURL(rawURL, projectPath string) string {
