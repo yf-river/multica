@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 
@@ -361,11 +362,7 @@ func (h *Handler) RunAgentPlaygroundExperiment(w http.ResponseWriter, r *http.Re
 				}
 				lockedAgents[agentID] = agent
 			}
-			if agent.ArchivedAt.Valid || !agent.RuntimeID.Valid {
-				reason := "agent is archived"
-				if !agent.RuntimeID.Valid {
-					reason = "agent has no runtime"
-				}
+			if reason, unavailable := agentPlaygroundUnavailableReason(agent); unavailable {
 				if _, err := qtx.SyncAgentPlaygroundResult(r.Context(), db.SyncAgentPlaygroundResultParams{
 					ID:          result.ID,
 					WorkspaceID: workspaceID,
@@ -442,6 +439,16 @@ func (h *Handler) RunAgentPlaygroundExperiment(w http.ResponseWriter, r *http.Re
 	writeJSON(w, http.StatusAccepted, refreshed)
 }
 
+func agentPlaygroundUnavailableReason(agent db.Agent) (string, bool) {
+	if agent.ArchivedAt.Valid {
+		return "agent is archived", true
+	}
+	if !agent.RuntimeID.Valid {
+		return "agent has no runtime", true
+	}
+	return "", false
+}
+
 func (h *Handler) SyncAgentPlaygroundExperiment(w http.ResponseWriter, r *http.Request) {
 	experiment, ok := h.loadAgentPlaygroundExperiment(w, r)
 	if !ok {
@@ -465,24 +472,18 @@ func (h *Handler) JudgeAgentPlaygroundExperiment(w http.ResponseWriter, r *http.
 		return
 	}
 	var req SetAgentPlaygroundJudgeRequest
-	_ = json.NewDecoder(r.Body).Decode(&req)
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	var requestedJudgeID pgtype.UUID
 	if strings.TrimSpace(req.JudgeAgentID) != "" {
-		judgeID, ok := parseUUIDOrBadRequest(w, req.JudgeAgentID, "judge_agent_id")
+		requestedJudgeID, ok = parseUUIDOrBadRequest(w, req.JudgeAgentID, "judge_agent_id")
 		if !ok {
 			return
 		}
-		updated, err := h.Queries.SetAgentPlaygroundJudgeAgent(r.Context(), db.SetAgentPlaygroundJudgeAgentParams{
-			ID:           experiment.ID,
-			WorkspaceID:  experiment.WorkspaceID,
-			JudgeAgentID: judgeID,
-		})
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to set judge agent")
-			return
-		}
-		experiment = updated
 	}
-	if !experiment.JudgeAgentID.Valid {
+	if !requestedJudgeID.Valid && !experiment.JudgeAgentID.Valid {
 		writeError(w, http.StatusBadRequest, "judge_agent_id is required")
 		return
 	}
@@ -491,6 +492,46 @@ func (h *Handler) JudgeAgentPlaygroundExperiment(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusInternalServerError, "failed to sync before judge")
 		return
 	}
+
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start playground judgement")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	experiment, err = qtx.GetAgentPlaygroundExperiment(r.Context(), db.GetAgentPlaygroundExperimentParams{
+		ID:          experiment.ID,
+		WorkspaceID: experiment.WorkspaceID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reload playground experiment")
+		return
+	}
+	if requestedJudgeID.Valid {
+		experiment, err = qtx.SetAgentPlaygroundJudgeAgent(r.Context(), db.SetAgentPlaygroundJudgeAgentParams{
+			ID:           experiment.ID,
+			WorkspaceID:  experiment.WorkspaceID,
+			JudgeAgentID: requestedJudgeID,
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to set judge agent")
+			return
+		}
+	}
+	judgeAgent, err := qtx.LockAgentInWorkspaceForChat(r.Context(), db.LockAgentInWorkspaceForChatParams{
+		ID:          experiment.JudgeAgentID,
+		WorkspaceID: experiment.WorkspaceID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "judge agent not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to load judge agent")
+		return
+	}
+	queuedTasks := make([]db.AgentTaskQueue, 0, len(synced.Inputs))
 	resultByInput := map[string][]AgentPlaygroundResultResponse{}
 	for _, result := range synced.Results {
 		if result.Status == "completed" {
@@ -502,7 +543,7 @@ func (h *Handler) JudgeAgentPlaygroundExperiment(w http.ResponseWriter, r *http.
 		if len(results) == 0 {
 			continue
 		}
-		judgement, err := h.Queries.CreateAgentPlaygroundJudgement(r.Context(), db.CreateAgentPlaygroundJudgementParams{
+		judgement, err := qtx.CreateAgentPlaygroundJudgement(r.Context(), db.CreateAgentPlaygroundJudgementParams{
 			ExperimentID: experiment.ID,
 			InputID:      parseUUID(input.ID),
 			WorkspaceID:  experiment.WorkspaceID,
@@ -515,8 +556,20 @@ func (h *Handler) JudgeAgentPlaygroundExperiment(w http.ResponseWriter, r *http.
 		if judgement.TaskID.Valid {
 			continue
 		}
+		if reason, unavailable := agentPlaygroundUnavailableReason(judgeAgent); unavailable {
+			if _, err := qtx.SyncAgentPlaygroundJudgement(r.Context(), db.SyncAgentPlaygroundJudgementParams{
+				ID:          judgement.ID,
+				WorkspaceID: experiment.WorkspaceID,
+				Status:      "failed",
+				Output:      pgtype.Text{String: reason, Valid: true},
+			}); err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to record unavailable judge agent")
+				return
+			}
+			continue
+		}
 		message := buildAgentPlaygroundJudgeMessage(input, synced.Agents, results)
-		session, err := h.Queries.CreateChatSession(r.Context(), db.CreateChatSessionParams{
+		session, err := qtx.CreateChatSession(r.Context(), db.CreateChatSessionParams{
 			WorkspaceID: experiment.WorkspaceID,
 			AgentID:     experiment.JudgeAgentID,
 			CreatorID:   parseUUID(userID),
@@ -526,7 +579,7 @@ func (h *Handler) JudgeAgentPlaygroundExperiment(w http.ResponseWriter, r *http.
 			writeError(w, http.StatusInternalServerError, "failed to create judge chat session")
 			return
 		}
-		msg, err := h.Queries.CreateChatMessage(r.Context(), db.CreateChatMessageParams{
+		msg, err := qtx.CreateChatMessage(r.Context(), db.CreateChatMessageParams{
 			ChatSessionID: session.ID,
 			Role:          "user",
 			Content:       message,
@@ -535,18 +588,16 @@ func (h *Handler) JudgeAgentPlaygroundExperiment(w http.ResponseWriter, r *http.
 			writeError(w, http.StatusInternalServerError, "failed to create judge chat message")
 			return
 		}
-		task, err := h.TaskService.EnqueueChatTask(r.Context(), session, parseUUID(userID))
+		task, err := h.TaskService.CreateChatTaskInTx(r.Context(), qtx, session, judgeAgent, parseUUID(userID))
 		if err != nil {
-			_, _ = h.Queries.SyncAgentPlaygroundJudgement(r.Context(), db.SyncAgentPlaygroundJudgementParams{
-				ID:          judgement.ID,
-				WorkspaceID: experiment.WorkspaceID,
-				Status:      "failed",
-				Output:      pgtype.Text{String: err.Error(), Valid: true},
-			})
-			continue
+			writeError(w, http.StatusInternalServerError, "failed to create judge task")
+			return
 		}
-		_ = h.Queries.LinkChatMessageToTask(r.Context(), db.LinkChatMessageToTaskParams{ID: msg.ID, TaskID: task.ID})
-		if _, err := h.Queries.StartAgentPlaygroundJudgement(r.Context(), db.StartAgentPlaygroundJudgementParams{
+		if err := qtx.LinkChatMessageToTask(r.Context(), db.LinkChatMessageToTaskParams{ID: msg.ID, TaskID: task.ID}); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to link judge message")
+			return
+		}
+		if _, err := qtx.StartAgentPlaygroundJudgement(r.Context(), db.StartAgentPlaygroundJudgementParams{
 			ID:            judgement.ID,
 			WorkspaceID:   experiment.WorkspaceID,
 			ChatSessionID: session.ID,
@@ -556,11 +607,19 @@ func (h *Handler) JudgeAgentPlaygroundExperiment(w http.ResponseWriter, r *http.
 			writeError(w, http.StatusInternalServerError, "failed to update judgement")
 			return
 		}
+		queuedTasks = append(queuedTasks, task)
 	}
-	refreshed, err := h.syncAgentPlaygroundExperiment(r, experiment.ID, experiment.WorkspaceID)
+	refreshed, err := loadAgentPlaygroundDetailWithQueries(r.Context(), qtx, experiment.ID, experiment.WorkspaceID)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to sync judgement")
+		writeError(w, http.StatusInternalServerError, "failed to load committed playground judgements")
 		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit playground judgements")
+		return
+	}
+	for _, task := range queuedTasks {
+		h.TaskService.PublishChatTaskEnqueued(r.Context(), task)
 	}
 	writeJSON(w, http.StatusAccepted, refreshed)
 }
