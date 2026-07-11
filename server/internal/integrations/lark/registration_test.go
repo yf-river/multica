@@ -71,7 +71,7 @@ func TestRegistrationClient_Begin_HappyPath(t *testing.T) {
 	})
 
 	c := NewRegistrationClient(RegistrationConfig{Domain: fake.URL()})
-	res, err := c.Begin(context.Background(), "Ada - Multica", "")
+	res, err := c.Begin(context.Background(), "Ada - Multica", RegionFeishu)
 	if err != nil {
 		t.Fatalf("Begin: %v", err)
 	}
@@ -111,6 +111,19 @@ func TestRegistrationClient_Begin_HappyPath(t *testing.T) {
 	}
 }
 
+func TestRegistrationClient_Begin_RejectsMissingRegion(t *testing.T) {
+	fake := newRegistrationFake(t)
+	c := NewRegistrationClient(RegistrationConfig{Domain: fake.URL()})
+
+	_, err := c.Begin(context.Background(), "", "")
+	if err == nil || !strings.Contains(err.Error(), "region must be feishu or lark") {
+		t.Fatalf("Begin missing region error = %v", err)
+	}
+	if got := fake.beginN.Load(); got != 0 {
+		t.Fatalf("begin requests = %d, want 0", got)
+	}
+}
+
 // TestRegistrationClient_Begin_OmitsNameWhenPresetEmpty pins that an
 // empty preset leaves the `name` param off the QR URL entirely (rather
 // than emitting name= and pre-filling a blank), so the begin path is
@@ -123,7 +136,7 @@ func TestRegistrationClient_Begin_OmitsNameWhenPresetEmpty(t *testing.T) {
 	})
 
 	c := NewRegistrationClient(RegistrationConfig{Domain: fake.URL()})
-	res, err := c.Begin(context.Background(), "", "")
+	res, err := c.Begin(context.Background(), "", RegionFeishu)
 	if err != nil {
 		t.Fatalf("Begin: %v", err)
 	}
@@ -177,9 +190,8 @@ func TestRegistrationClient_Begin_RegionLarkBeginsOnLarksuite(t *testing.T) {
 }
 
 // TestRegistrationClient_Begin_RegionFeishuBeginsOnFeishu pins the
-// explicit-feishu side of the same split: passing region=feishu (or
-// the empty-string back-compat default) keeps the original mainland
-// host. Documenting both directions catches a future regression where
+// explicit-feishu side of the same split. Documenting both directions
+// catches a future regression where
 // the region selector accidentally inverts.
 func TestRegistrationClient_Begin_RegionFeishuBeginsOnFeishu(t *testing.T) {
 	feishuFake := newRegistrationFake(t)
@@ -226,7 +238,7 @@ func TestRegistrationClient_Begin_DefaultsWhenServerOmitsTimers(t *testing.T) {
 	})
 
 	c := NewRegistrationClient(RegistrationConfig{Domain: fake.URL()})
-	res, err := c.Begin(context.Background(), "", "")
+	res, err := c.Begin(context.Background(), "", RegionFeishu)
 	if err != nil {
 		t.Fatalf("Begin: %v", err)
 	}
@@ -245,7 +257,7 @@ func TestRegistrationClient_Begin_LarkError(t *testing.T) {
 		"error_description": "missing archetype",
 	})
 	c := NewRegistrationClient(RegistrationConfig{Domain: fake.URL()})
-	_, err := c.Begin(context.Background(), "", "")
+	_, err := c.Begin(context.Background(), "", RegionFeishu)
 	if err == nil {
 		t.Fatal("expected error from Lark error response")
 	}
@@ -265,7 +277,7 @@ func TestRegistrationClient_Begin_HTTPNon2xx(t *testing.T) {
 		_, _ = w.Write([]byte("server boom"))
 	})
 	c := NewRegistrationClient(RegistrationConfig{Domain: fake.URL()})
-	_, err := c.Begin(context.Background(), "", "")
+	_, err := c.Begin(context.Background(), "", RegionFeishu)
 	if err == nil {
 		t.Fatal("want error on 500")
 	}

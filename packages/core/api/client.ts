@@ -3194,10 +3194,8 @@ export class ApiClient {
     // vs "Bind to Lark"), and the backend POSTs the device-flow `begin`
     // against the corresponding accounts host (accounts.feishu.cn vs
     // accounts.larksuite.com) so the QR renders against the right
-    // cloud up front. Empty / omitted region still resolves to Feishu
-    // server-side (RegionOrDefault) — we surface region as a required
-    // arg here so every call site is forced to make a deliberate
-    // choice rather than silently defaulting to mainland.
+    // cloud up front. Region is required across the full request chain so
+    // every call site makes a deliberate choice.
     const search = new URLSearchParams({ agent_id: agentId, region });
     const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/lark/install/begin?${search.toString()}`, {
       method: "POST",

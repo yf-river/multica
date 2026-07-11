@@ -15,6 +15,20 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
+func TestRegistrationServiceBeginInstallRejectsMissingRegionBeforeDatabaseAccess(t *testing.T) {
+	validID := pgtype.UUID{Bytes: [16]byte{1}, Valid: true}
+	service := &RegistrationService{}
+
+	_, err := service.BeginInstall(context.Background(), BeginInstallParams{
+		WorkspaceID: validID,
+		AgentID:     validID,
+		InitiatorID: validID,
+	})
+	if err == nil || !strings.Contains(err.Error(), "region must be feishu or lark") {
+		t.Fatalf("BeginInstall missing region error = %v", err)
+	}
+}
+
 // These tests cover the pure-Go halves of RegistrationService —
 // constructor validation, session-id security boundary, status code
 // mapping — without touching the database. The polling goroutine's

@@ -54,6 +54,24 @@ func TestBeginLarkInstall_NotConfigured(t *testing.T) {
 	}
 }
 
+func TestBeginLarkInstall_RequiresExplicitRegion(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	original := testHandler.LarkRegistration
+	testHandler.LarkRegistration = &lark.RegistrationService{}
+	t.Cleanup(func() { testHandler.LarkRegistration = original })
+
+	req := newRequest(http.MethodPost,
+		"/api/workspaces/"+testWorkspaceID+"/lark/install/begin?agent_id=11111111-1111-1111-1111-111111111111", nil)
+	req = withURLParam(req, "id", testWorkspaceID)
+	w := httptest.NewRecorder()
+	testHandler.BeginLarkInstall(w, req)
+	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "region must be") {
+		t.Fatalf("missing region = %d %s, want 400", w.Code, w.Body.String())
+	}
+}
+
 func TestGetLarkInstallStatus_NotConfigured(t *testing.T) {
 	h := &Handler{}
 	req := httptest.NewRequest(http.MethodGet, "/api/workspaces/x/lark/install/sess_y/status", nil)

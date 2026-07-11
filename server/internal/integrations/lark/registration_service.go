@@ -294,9 +294,7 @@ type BeginInstallParams struct {
 	// explicitly in the UI ("Bind to Feishu" vs "Bind to Lark") so the
 	// QR rendered up front already targets the right cloud and Lark
 	// users do not have to hit a Feishu URL first and rely on the
-	// tenant-brand auto-switch. Empty / unknown values fall back to
-	// Feishu, matching RegionOrDefault, so existing callers without
-	// the new field keep working.
+	// tenant-brand auto-switch. The handler requires this value explicitly.
 	Region Region
 }
 
@@ -323,6 +321,9 @@ func (s *RegistrationService) BeginInstall(ctx context.Context, p BeginInstallPa
 	if !p.WorkspaceID.Valid || !p.AgentID.Valid || !p.InitiatorID.Valid {
 		return BeginInstallResult{}, errors.New("lark registration: workspace, agent, and initiator are required")
 	}
+	if !isRegistrationRegion(p.Region) {
+		return BeginInstallResult{}, errors.New("lark registration: region must be feishu or lark")
+	}
 	// Agent ownership pre-check — without this, a workspace admin
 	// could open an install session against another workspace's agent
 	// by guessing the UUID, and the device_code minted against Lark
@@ -340,14 +341,7 @@ func (s *RegistrationService) BeginInstall(ctx context.Context, p BeginInstallPa
 		return BeginInstallResult{}, fmt.Errorf("lark registration: agent not in workspace: %w", err)
 	}
 
-	// Normalize the requested region: empty / unknown → Feishu, the same
-	// back-compat invariant the storage layer uses (RegionOrDefault).
-	// This both protects the device-flow client from a bogus value
-	// from the handler AND means a pre-region caller (omitting the
-	// field) keeps getting the historical mainland-first behaviour.
-	region := RegionOrDefault(string(p.Region))
-
-	begin, err := s.client.Begin(ctx, botNamePreset(agent.Name), region)
+	begin, err := s.client.Begin(ctx, botNamePreset(agent.Name), p.Region)
 	if err != nil {
 		return BeginInstallResult{}, fmt.Errorf("lark registration: begin: %w", err)
 	}
@@ -367,7 +361,7 @@ func (s *RegistrationService) BeginInstall(ctx context.Context, p BeginInstallPa
 		qrCodeURL:   begin.QRCodeURL,
 		interval:    begin.Interval,
 		expiresAt:   now.Add(begin.ExpiresIn),
-		region:      region,
+		region:      p.Region,
 		status:      RegistrationStatusPending,
 	}
 	s.mu.Lock()
@@ -445,9 +439,6 @@ func (s *RegistrationService) runPolling(sess *registrationSession) {
 	// — never by string-matching accounts hostnames (so staging/mock
 	// domains classify correctly too).
 	region := sess.region
-	if region == "" {
-		region = RegionFeishu
-	}
 
 	for {
 		select {
