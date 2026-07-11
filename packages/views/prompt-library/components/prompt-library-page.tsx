@@ -5,7 +5,7 @@ import { useQueries, useQuery } from "@tanstack/react-query";
 import { BookOpenText, Loader2, Plus, Save, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { issueExecutionTreeOptions } from "@multica/core/issues/queries";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { projectListOptions, projectResourcesOptions } from "@multica/core/projects";

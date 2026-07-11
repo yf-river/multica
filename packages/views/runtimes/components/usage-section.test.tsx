@@ -39,7 +39,7 @@ vi.mock("@multica/core/workspace/queries", () => ({
   agentListOptions: () => ({ kind: "agents" as const }),
 }));
 
-vi.mock("@multica/core/hooks", () => ({
+vi.mock("@multica/core/paths", () => ({
   useWorkspaceId: () => "ws-1",
 }));
 

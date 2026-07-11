@@ -7,7 +7,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@multica/ui/components/ui/popover";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { cn } from "@multica/ui/lib/utils";
 import { agentTaskSnapshotOptions } from "@multica/core/agents";

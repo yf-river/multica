@@ -17,7 +17,7 @@ import {
   AlertDialogAction,
 } from "@multica/ui/components/ui/alert-dialog";
 import { toast } from "sonner";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { labelListOptions, useCreateLabel, useUpdateLabel, useDeleteLabel } from "@multica/core/labels";
 import type { Label } from "@multica/core/types";
 import { isImeComposing } from "@multica/core/utils";

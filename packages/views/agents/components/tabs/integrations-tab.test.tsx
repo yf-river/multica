@@ -38,7 +38,7 @@ vi.mock("@tanstack/react-query", () => ({
   queryOptions: <T,>(opts: T) => opts,
 }));
 
-vi.mock("@multica/core/hooks", () => ({
+vi.mock("@multica/core/paths", () => ({
   useWorkspaceId: () => "ws-1",
 }));
 

@@ -2,7 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { useAuthStore } from "../auth";
 import { pinKeys } from "./queries";
-import { useWorkspaceId } from "../hooks";
+import { useWorkspaceId } from "../paths";
 import type { PinnedItem, PinnedItemType } from "../types";
 
 export function useCreatePin() {

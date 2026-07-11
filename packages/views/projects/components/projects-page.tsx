@@ -33,7 +33,7 @@ import {
   useCreatePin,
   useDeletePin,
 } from "@multica/core/pins";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { useAuthStore } from "@multica/core/auth";
 import { useActorName } from "@multica/core/workspace/hooks";

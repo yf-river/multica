@@ -17,7 +17,7 @@ vi.mock("../api", async () => {
   return { ...actual, api: apiMock };
 });
 
-vi.mock("../hooks", () => ({
+vi.mock("../paths", () => ({
   useWorkspaceId: () => "workspace-1",
 }));
 

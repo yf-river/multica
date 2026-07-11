@@ -11,7 +11,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@multica/ui/components/ui/select";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { agentListOptions } from "@multica/core/workspace/queries";
 import { projectListOptions } from "@multica/core/projects/queries";
 import {

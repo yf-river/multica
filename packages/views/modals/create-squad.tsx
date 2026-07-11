@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, UserPlus, X } from "lucide-react";
 import { useAuthStore } from "@multica/core/auth";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { useCreateSquad } from "@multica/core/squads";
 import {

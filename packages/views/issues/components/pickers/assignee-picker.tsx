@@ -7,7 +7,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useAuthStore } from "@multica/core/auth";
 import { canAssignAgentToIssue } from "@multica/core/permissions";
 import { useActorName } from "@multica/core/workspace/hooks";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { memberListOptions, agentListOptions, squadListOptions, assigneeFrequencyOptions } from "@multica/core/workspace/queries";
 import { ActorAvatar } from "../../../common/actor-avatar";
 import {

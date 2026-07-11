@@ -38,7 +38,7 @@ import {
 import { TimeInput } from "@multica/ui/components/ui/time-input";
 import { TimezonePicker } from "./pickers/timezone-picker";
 import { useCurrentWorkspace } from "@multica/core/paths";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { agentListOptions, squadListOptions } from "@multica/core/workspace/queries";
 import { projectListOptions } from "@multica/core/projects/queries";
 import {

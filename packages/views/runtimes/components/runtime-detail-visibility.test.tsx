@@ -15,10 +15,6 @@ const TEST_RESOURCES = {
 
 const mockUpdateRuntime = vi.hoisted(() => vi.fn());
 
-vi.mock("@multica/core/hooks", () => ({
-  useWorkspaceId: () => "ws-1",
-}));
-
 vi.mock("@multica/core/api", () => ({
   api: {
     updateRuntime: (...args: unknown[]) => mockUpdateRuntime(...args),
@@ -66,6 +62,7 @@ vi.mock("@multica/core/agents", () => ({
 }));
 
 vi.mock("@multica/core/paths", () => ({
+  useWorkspaceId: () => "ws-1",
   useWorkspacePaths: () => ({
     runtimes: () => "/runtimes",
     agentDetail: () => "/agents",

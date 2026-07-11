@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import * as XLSX from "xlsx";
 import { api } from "@multica/core/api";
 import { issueExecutionTreeOptions, issueKeys, issueListOptions } from "@multica/core/issues/queries";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { useWorkspacePaths } from "@multica/core/paths";
 import type {
   AgentTask,

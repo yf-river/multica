@@ -21,9 +21,12 @@ const navigationStub: NavigationAdapter = {
 
 const TEST_RESOURCES = { "zh-Hans": { common: enCommon, agents: enAgents } };
 
-vi.mock("@multica/core/hooks", () => ({
-  useWorkspaceId: () => "ws-1",
-}));
+vi.mock("@multica/core/paths", async () => {
+  const actual = await vi.importActual<typeof import("@multica/core/paths")>(
+    "@multica/core/paths",
+  );
+  return { ...actual, useWorkspaceId: () => "ws-1" };
+});
 
 // ModelDropdown talks to the api; the create dialog only needs it as a
 // stand-in here, so swap it out.

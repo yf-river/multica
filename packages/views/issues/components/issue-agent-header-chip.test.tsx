@@ -10,7 +10,7 @@ const mockState = vi.hoisted(() => ({
   taskMessagesOptions: vi.fn(),
 }));
 
-vi.mock("@multica/core/hooks", () => ({
+vi.mock("@multica/core/paths", () => ({
   useWorkspaceId: () => "ws-1",
 }));
 

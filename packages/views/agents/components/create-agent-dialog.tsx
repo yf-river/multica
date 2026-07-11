@@ -9,7 +9,7 @@ import { InstructionsEditor } from "./instructions-editor";
 import { SkillMultiSelect } from "./skill-multi-select";
 import { AvatarPicker } from "./avatar-picker";
 import { api } from "@multica/core/api";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { workspaceKeys } from "@multica/core/workspace/queries";
 import type {
   Agent,

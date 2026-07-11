@@ -7,5 +7,6 @@ export {
   useWorkspaceSlug,
   useRequiredWorkspaceSlug,
   useCurrentWorkspace,
+  useWorkspaceId,
   useWorkspacePaths,
 } from "./hooks";

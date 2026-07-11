@@ -373,8 +373,7 @@ registerWorkspacePersistStore(useIssueViewStore);
 /**
  * Clears the given view store's filters whenever the workspace id changes.
  *
- * URL-driven: wsId arrives from `useWorkspaceId()` (Context fed by the
- * `[workspaceSlug]` route). We track the previous id via ref so the first
+ * URL-driven: the route owner supplies wsId. We track the previous id via ref so the first
  * render doesn't wipe persisted filters — clearing only fires on transitions
  * from one defined workspace to another.
  */

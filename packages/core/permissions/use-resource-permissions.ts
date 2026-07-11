@@ -17,9 +17,7 @@ const PENDING: Decision = deny("unknown", "");
  * Each hook calls `useCurrentMember()` once and threads the context into the
  * pure rules in `rules.ts`.
  *
- * `wsId` is explicit (not read from `WorkspaceIdProvider`) so the hook stays
- * usable outside a workspace context — matches the repo rule for
- * workspace-aware hooks.
+ * `wsId` is explicit so the hook stays usable outside a resolved route.
  *
  * Resource = `null` collapses every Decision to a denied "unknown" — keeps
  * callers branch-free during loading.

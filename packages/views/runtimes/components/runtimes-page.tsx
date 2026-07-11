@@ -10,7 +10,7 @@ import {
 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthStore } from "@multica/core/auth";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { agentTaskSnapshotOptions } from "@multica/core/agents";
 import { runtimeListOptions, runtimeKeys } from "@multica/core/runtimes/queries";
 import { useWSEvent } from "@multica/core/realtime";

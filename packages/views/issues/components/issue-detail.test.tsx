@@ -15,14 +15,6 @@ vi.mock("@multica/ui/hooks/use-mobile", () => ({
   useIsMobile: () => mockViewport.isMobile,
 }));
 
-// useWorkspaceId() derives from useCurrentWorkspace (relative import inside
-// @multica/core/hooks.tsx). vi.mock("@multica/core/paths") only intercepts
-// the bare-specifier, not the internal relative import. Mock the hooks module
-// directly so the bridge hook returns the test UUID.
-vi.mock("@multica/core/hooks", () => ({
-  useWorkspaceId: () => "ws-1",
-}));
-
 // ---------------------------------------------------------------------------
 // Mocks
 // ---------------------------------------------------------------------------
@@ -89,6 +81,7 @@ vi.mock("@multica/core/paths", async () => {
   );
   return {
     ...actual,
+    useWorkspaceId: () => "ws-1",
     useCurrentWorkspace: () => ({ id: "ws-1", name: "Test WS", slug: "test" }),
     useWorkspacePaths: () => actual.paths.workspace("test"),
   };

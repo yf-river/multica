@@ -27,7 +27,7 @@ import { useViewStore, useViewStoreApi } from "@multica/core/issues/stores/view-
 import { filterIssues, type IssueFilters } from "../utils/filter";
 import type { SwimlaneGrouping } from "@multica/core/issues/stores/view-store";
 import { useWorkspacePaths } from "@multica/core/paths";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { projectListOptions } from "@multica/core/projects/queries";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { useLoadMoreByStatus } from "@multica/core/issues/mutations";

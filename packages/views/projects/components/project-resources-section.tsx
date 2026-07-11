@@ -23,7 +23,7 @@ import {
   useSyncProjectResource,
   useUpdateProjectResource,
 } from "@multica/core/projects";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { useCurrentWorkspace } from "@multica/core/paths";
 import type {
   GongfengRepoResourceRef,

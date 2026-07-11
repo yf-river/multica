@@ -10,7 +10,7 @@ import {
   Info,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { runtimeListOptions } from "@multica/core/runtimes";
 import { agentTaskSnapshotOptions } from "@multica/core/agents";
 import { Button } from "@multica/ui/components/ui/button";

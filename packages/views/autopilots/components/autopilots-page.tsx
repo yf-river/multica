@@ -25,7 +25,7 @@ import {
   type AutopilotScope,
   type AutopilotSortField,
 } from "@multica/core/autopilots/stores";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { useActorName } from "@multica/core/workspace/hooks";
 import type { Autopilot } from "@multica/core/types";

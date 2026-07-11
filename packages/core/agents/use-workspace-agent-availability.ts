@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { useWorkspaceId } from "../hooks";
+import { useWorkspaceId } from "../paths";
 import { useAuthStore } from "../auth";
 import { agentListOptions, memberListOptions } from "../workspace/queries";
 import { canAssignAgentToIssue } from "../permissions";

@@ -11,7 +11,7 @@ import { formatDateOnly } from "@multica/core/issues/date";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { useIssueSelectionStore } from "@multica/core/issues/stores/selection-store";
 import { useWorkspacePaths } from "@multica/core/paths";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { useViewStore } from "@multica/core/issues/stores/view-store-context";
 import { projectListOptions } from "@multica/core/projects/queries";
 import { ProjectIcon } from "../../projects/components/project-icon";

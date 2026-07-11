@@ -21,7 +21,7 @@ import type {
 import { useQuery } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useAuthStore } from "@multica/core/auth";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { useWorkspacePaths } from "@multica/core/paths";
 import {
   agentListOptions,

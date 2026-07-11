@@ -51,7 +51,7 @@ import {
 } from "@multica/core/issues/config";
 import { StatusIcon, PriorityIcon } from ".";
 import { useQuery } from "@tanstack/react-query";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { memberListOptions, agentListOptions, squadListOptions } from "@multica/core/workspace/queries";
 import { projectListOptions } from "@multica/core/projects/queries";
 import { labelListOptions } from "@multica/core/labels/queries";

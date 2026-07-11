@@ -19,7 +19,7 @@ import {
   autopilotDeliveryOptions,
   useReplayAutopilotDelivery,
 } from "@multica/core/autopilots";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { Button } from "@multica/ui/components/ui/button";
 import { Badge } from "@multica/ui/components/ui/badge";

@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { inboxKeys } from "./queries";
-import { useWorkspaceId } from "../hooks";
+import { useWorkspaceId } from "../paths";
 import type { InboxItem } from "../types";
 
 export function useMarkInboxRead() {

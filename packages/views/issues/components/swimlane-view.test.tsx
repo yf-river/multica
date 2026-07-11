@@ -9,11 +9,6 @@ import enIssues from "../../locales/zh-Hans/issues.json";
 
 const TEST_RESOURCES = { "zh-Hans": { common: enCommon, issues: enIssues } };
 
-// Mock hooks
-vi.mock("@multica/core/hooks", () => ({
-  useWorkspaceId: () => "ws-1",
-}));
-
 // Mock the API so childrenByParentsOptions doesn't fire real HTTP.
 // Individual tests can override listChildrenByParents via mockResolvedValueOnce.
 const mockListChildrenByParents = vi.hoisted(() =>
@@ -41,6 +36,7 @@ vi.mock("@multica/core/paths", async () => {
   );
   return {
     ...actual,
+    useWorkspaceId: () => "ws-1",
     useWorkspaceSlug: () => "acme",
     useRequiredWorkspaceSlug: () => "acme",
     useWorkspacePaths: () => actual.paths.workspace("acme"),

@@ -16,7 +16,7 @@ import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
 import type { Skill } from "@multica/core/types";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { isImeComposing } from "@multica/core/utils";
 import {
   skillDetailOptions,

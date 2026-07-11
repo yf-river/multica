@@ -17,7 +17,7 @@ import {
 } from "@multica/core/agents";
 import { api, ApiError } from "@multica/core/api";
 import { useAuthStore } from "@multica/core/auth";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { useWorkspacePaths } from "@multica/core/paths";
 import {
   agentListOptions,

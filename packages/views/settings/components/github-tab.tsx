@@ -19,7 +19,7 @@ import {
   AlertDialogTitle,
 } from "@multica/ui/components/ui/alert-dialog";
 import { useAuthStore } from "@multica/core/auth";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { useCurrentWorkspace } from "@multica/core/paths";
 import { memberListOptions, workspaceKeys } from "@multica/core/workspace/queries";
 import {

@@ -16,7 +16,7 @@ import type {
   MemberWithUser,
 } from "@multica/core/types";
 import { useAuthStore } from "@multica/core/auth";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import {
   agentListOptions,
   memberListOptions,

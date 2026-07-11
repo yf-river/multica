@@ -6,7 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import { cn } from "@multica/ui/lib/utils";
 import { useChatStore } from "@multica/core/chat";
 import { chatSessionsOptions, pendingChatTasksOptions } from "@multica/core/chat/queries";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { createLogger } from "@multica/core/logger";
 import {
   Tooltip,

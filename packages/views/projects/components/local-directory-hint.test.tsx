@@ -18,7 +18,7 @@ vi.mock("../../platform", () => ({
   useLocalDaemonStatus: () => mockDaemonStatus,
 }));
 
-vi.mock("@multica/core/hooks", () => ({
+vi.mock("@multica/core/paths", () => ({
   useWorkspaceId: () => "ws-1",
 }));
 

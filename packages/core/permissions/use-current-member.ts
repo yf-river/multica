@@ -10,9 +10,8 @@ import { memberListOptions } from "../workspace/queries";
  * of truth for "what role am I" — replaces ad-hoc `members.find(...)` lookups
  * scattered across the views.
  *
- * `wsId` is explicit (not via `useWorkspaceId()` Context) so this hook stays
- * usable in components that may render before workspace context is wired,
- * matching the repo rule for workspace-aware hooks.
+ * `wsId` is explicit so this hook stays usable before a workspace route has
+ * resolved.
  */
 export function useCurrentMember(wsId: string): {
   userId: string | null;

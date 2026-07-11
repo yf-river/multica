@@ -6,10 +6,6 @@ import { mockIssue, wrapIssueActionsMenu } from "./issue-actions-test-helpers";
 // Mocks — same pattern as the issue-detail test suite.
 // ---------------------------------------------------------------------------
 
-vi.mock("@multica/core/hooks", () => ({
-  useWorkspaceId: () => "ws-1",
-}));
-
 const mockOpenModal = vi.fn();
 vi.mock("@multica/core/modals", () => ({
   useModalStore: Object.assign(
@@ -75,6 +71,7 @@ vi.mock("@multica/core/paths", async () => {
   );
   return {
     ...actual,
+    useWorkspaceId: () => "ws-1",
     useCurrentWorkspace: () => ({ id: "ws-1", name: "Test", slug: "test" }),
     useWorkspacePaths: () => actual.paths.workspace("test"),
   };

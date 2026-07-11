@@ -38,7 +38,7 @@ import {
 import { toast } from "sonner";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthStore, validatePassword } from "@multica/core/auth";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { useCurrentWorkspace } from "@multica/core/paths";
 import { memberListOptions, workspaceKeys } from "@multica/core/workspace/queries";
 import { api } from "@multica/core/api";

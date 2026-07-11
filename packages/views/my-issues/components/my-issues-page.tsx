@@ -17,7 +17,7 @@ import { ListView } from "../../issues/components/list-view";
 import { SwimLaneView } from "../../issues/components/swimlane-view";
 import { BatchActionToolbar } from "../../issues/components/batch-action-toolbar";
 import { useClearFiltersOnWorkspaceChange } from "@multica/core/issues/stores/view-store";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { myIssueAssigneeGroupsOptions, myIssueListOptions, childIssueProgressOptions, type AssigneeGroupedIssuesFilter, type MyIssuesFilter } from "@multica/core/issues/queries";
 import { agentTaskSnapshotOptions } from "@multica/core/agents";
 import { useUpdateIssue } from "@multica/core/issues/mutations";

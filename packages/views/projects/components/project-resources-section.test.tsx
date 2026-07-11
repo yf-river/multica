@@ -21,11 +21,8 @@ vi.mock("@multica/core/projects", () => ({
   useUpdateProjectResource: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 
-vi.mock("@multica/core/hooks", () => ({
-  useWorkspaceId: () => "workspace-1",
-}));
-
 vi.mock("@multica/core/paths", () => ({
+  useWorkspaceId: () => "workspace-1",
   useCurrentWorkspace: () => ({
     id: "workspace-1",
     repos: [

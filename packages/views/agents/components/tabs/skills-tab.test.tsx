@@ -12,7 +12,7 @@ const TEST_RESOURCES = { "zh-Hans": { common: enCommon, agents: enAgents } };
 
 const mockListSkills = vi.hoisted(() => vi.fn());
 
-vi.mock("@multica/core/hooks", () => ({
+vi.mock("@multica/core/paths", () => ({
   useWorkspaceId: () => "ws-1",
 }));
 

@@ -13,7 +13,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { useUpdateIssue } from "@multica/core/issues/mutations";
 import { useWorkspacePaths } from "@multica/core/paths";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { useTimeAgo } from "../../i18n";
 import { projectListOptions } from "@multica/core/projects/queries";

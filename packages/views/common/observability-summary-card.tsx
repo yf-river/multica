@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import type { ObservabilitySummary } from "@multica/core/types";
 import { useT } from "../i18n";
 

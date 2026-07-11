@@ -9,11 +9,8 @@ import { ConnectRemoteDialog } from "./connect-remote-dialog";
 
 const TEST_RESOURCES = { "zh-Hans": { common: enCommon, runtimes: enRuntimes } };
 
-vi.mock("@multica/core/hooks", () => ({
-  useWorkspaceId: () => "ws-test",
-}));
-
 vi.mock("@multica/core/paths", () => ({
+  useWorkspaceId: () => "ws-test",
   paths: {
     workspace: () => ({
       agents: () => "/agents",

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, ChevronRight, Copy, Terminal } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { runtimeKeys } from "@multica/core/runtimes/queries";
 import { useWSEvent } from "@multica/core/realtime";
 import { paths, useWorkspaceSlug } from "@multica/core/paths";

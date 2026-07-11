@@ -23,7 +23,7 @@ function useHealthTick(): number {
  * Derived runtime health (online / recently_lost / offline / about_to_gc),
  * or "loading" while the runtime list is still resolving.
  *
- * Accepts wsId as a parameter so the hook works outside WorkspaceIdProvider.
+ * Accepts wsId explicitly so the hook also works outside a resolved route.
  */
 export function useRuntimeHealth(
   wsId: string | undefined,

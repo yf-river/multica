@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, isMutationOutcomeUnknown } from "../api";
-import { useWorkspaceId } from "../hooks";
+import { useWorkspaceId } from "../paths";
 import type { CreateSquadRequest, Squad } from "../types";
 import { generateUUID } from "../utils";
 import { workspaceKeys } from "../workspace/queries";

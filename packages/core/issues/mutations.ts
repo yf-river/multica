@@ -25,7 +25,7 @@ import {
   pruneDeletedIssueFromListCaches,
   pruneDeletedIssueFromParentChildrenCaches,
 } from "./delete-cache";
-import { useWorkspaceId } from "../hooks";
+import { useWorkspaceId } from "../paths";
 import { useRecentContextStore } from "../chat/recent-context-store";
 import { useRecentIssuesStore } from "./stores";
 import type { GroupedIssuesResponse, Issue, IssueAssigneeGroup, IssueReaction, IssueStatus } from "../types";

@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { labelKeys } from "./queries";
-import { useWorkspaceId } from "../hooks";
+import { useWorkspaceId } from "../paths";
 import { issueKeys } from "../issues/queries";
 import { onIssueLabelsChanged } from "../issues/ws-updaters";
 import type {

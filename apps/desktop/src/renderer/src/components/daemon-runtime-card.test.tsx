@@ -8,7 +8,7 @@ import type { DaemonStatus } from "../../../shared/daemon-types";
 vi.mock("@tanstack/react-query", () => ({
   useQuery: () => ({ data: [] }),
 }));
-vi.mock("@multica/core/hooks", () => ({
+vi.mock("@multica/core/paths", () => ({
   useWorkspaceId: () => "ws-1",
 }));
 vi.mock("@multica/core/runtimes", () => ({

@@ -1,7 +1,7 @@
 import { useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { SkillDetailPage as SharedSkillDetailPage } from "@multica/views/skills";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { skillDetailOptions } from "@multica/core/workspace/queries";
 import { useDocumentTitle } from "@/hooks/use-document-title";
 

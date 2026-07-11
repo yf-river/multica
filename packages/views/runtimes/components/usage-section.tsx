@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { BarChart3, ChevronRight, AlertCircle } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { agentListOptions } from "@multica/core/workspace/queries";
 import type { RuntimeUsage, AgentRuntime } from "@multica/core/types";
 import {

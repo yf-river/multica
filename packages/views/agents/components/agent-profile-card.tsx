@@ -3,7 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import type { Agent, AgentRuntime } from "@multica/core/types";
 import { useAgentPresenceDetail } from "@multica/core/agents";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import {
   deriveRuntimeHealth,
   type RuntimeHealth,

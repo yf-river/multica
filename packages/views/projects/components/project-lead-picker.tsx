@@ -4,7 +4,7 @@ import { useState } from "react";
 import { UserMinus } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { memberListOptions, agentListOptions } from "@multica/core/workspace/queries";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { Popover, PopoverContent, PopoverTrigger } from "@multica/ui/components/ui/popover";
 import type { Project, UpdateProjectRequest } from "@multica/core/types";

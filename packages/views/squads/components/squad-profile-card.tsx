@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import type { SquadMemberPreview } from "@multica/core/types";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import {
   squadListOptions,
   agentListOptions,

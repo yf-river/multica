@@ -23,7 +23,7 @@ vi.mock("@multica/core/api", () => ({
   },
 }));
 
-vi.mock("@multica/core/hooks", () => ({
+vi.mock("@multica/core/paths", () => ({
   useWorkspaceId: () => "ws-1",
 }));
 

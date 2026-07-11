@@ -2,7 +2,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, isMutationOutcomeUnknown } from "../api";
 import { generateUUID } from "../utils";
 import { autopilotKeys } from "./queries";
-import { useWorkspaceId } from "../hooks";
+import { useWorkspaceId } from "../paths";
 import type {
   CreateAutopilotRequest,
   UpdateAutopilotRequest,

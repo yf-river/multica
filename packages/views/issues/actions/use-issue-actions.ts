@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import type { Issue, UpdateIssueRequest } from "@multica/core/types";
 import { useAuthStore } from "@multica/core/auth";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { useModalStore } from "@multica/core/modals";
 import { openCreateIssue } from "@multica/core/issues";

@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { notificationPreferenceOptions } from "@multica/core/notification-preferences/queries";
 import { useUpdateNotificationPreferences } from "@multica/core/notification-preferences/mutations";
 import type { NotificationGroupKey, NotificationPreferences } from "@multica/core/types";

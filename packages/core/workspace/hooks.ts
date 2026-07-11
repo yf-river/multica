@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useWorkspaceId } from "../hooks";
+import { useWorkspaceId } from "../paths";
 import { memberListOptions, agentListOptions, squadListOptions } from "./queries";
 import { resolvePublicFileUrl } from "./avatar-url";
 import type { Agent, MemberWithUser, Squad } from "../types";

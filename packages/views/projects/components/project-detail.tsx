@@ -26,7 +26,7 @@ import { useUpdateIssue } from "@multica/core/issues/mutations";
 import { openCreateIssue } from "@multica/core/issues";
 import { memberListOptions, agentListOptions } from "@multica/core/workspace/queries";
 import { agentTaskSnapshotOptions } from "@multica/core/agents";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { useRecentContextStore } from "@multica/core/chat";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { useActorName } from "@multica/core/workspace/hooks";

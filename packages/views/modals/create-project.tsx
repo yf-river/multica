@@ -10,7 +10,7 @@ import {
   PROJECT_STATUS_ORDER,
   PROJECT_PRIORITY_ORDER,
 } from "@multica/core/projects/config";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { useCurrentWorkspace, useWorkspacePaths } from "@multica/core/paths";
 import { memberListOptions, agentListOptions } from "@multica/core/workspace/queries";
 import { useActorName } from "@multica/core/workspace/hooks";

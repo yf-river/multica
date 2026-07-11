@@ -66,11 +66,8 @@ vi.mock("@multica/core/pins", () => ({
   useDeletePin: () => ({ mutate: mocks.deletePin }),
 }));
 
-vi.mock("@multica/core/hooks", () => ({
-  useWorkspaceId: () => "workspace-1",
-}));
-
 vi.mock("@multica/core/paths", () => ({
+  useWorkspaceId: () => "workspace-1",
   useWorkspacePaths: () => ({
     projectDetail: (id: string) => `/test-workspace/projects/${id}`,
     memberDetail: (id: string) => `/test-workspace/members/${id}`,

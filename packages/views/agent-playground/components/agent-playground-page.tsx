@@ -5,7 +5,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronsUpDown, Loader2, Play, RefreshCw, Scale, Plus, Search, X } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { useWSEvent, useWSReconnect } from "@multica/core/realtime";
 import type { Agent, AgentPlaygroundDetail, CreateAgentPlaygroundExperimentRequest, PromptEvaluationAsset, PromptEvaluationDatasetVersion } from "@multica/core/types";

@@ -5,7 +5,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
 import { useAuthStore } from "@multica/core/auth";
 import { useCurrentWorkspace, useWorkspacePaths } from "@multica/core/paths";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
 import { useFileUpload } from "@multica/core/hooks/use-file-upload";
 import { isImeComposing } from "@multica/core/utils";

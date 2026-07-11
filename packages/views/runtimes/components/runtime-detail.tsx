@@ -12,7 +12,7 @@ import { toast } from "sonner";
 import { useQuery } from "@tanstack/react-query";
 import type { AgentRuntime, Agent, MemberWithUser } from "@multica/core/types";
 import { useAuthStore } from "@multica/core/auth";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { memberListOptions, agentListOptions } from "@multica/core/workspace/queries";
 import { useUpdateRuntime } from "@multica/core/runtimes/mutations";
 import { deriveRuntimeHealth } from "@multica/core/runtimes";

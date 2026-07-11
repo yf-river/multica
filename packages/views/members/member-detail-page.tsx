@@ -2,7 +2,7 @@
 
 import { ChevronRight, UserRound } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { useCurrentWorkspace } from "@multica/core/paths";
 import { memberListOptions } from "@multica/core/workspace/queries";
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";

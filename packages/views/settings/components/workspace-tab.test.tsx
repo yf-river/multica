@@ -32,11 +32,8 @@ vi.mock("@tanstack/react-query", () => ({
   }),
 }));
 
-vi.mock("@multica/core/hooks", () => ({
-  useWorkspaceId: () => "workspace-1",
-}));
-
 vi.mock("@multica/core/paths", () => ({
+  useWorkspaceId: () => "workspace-1",
   useCurrentWorkspace: () => workspaceRef.current,
   resolvePostAuthDestination: () => "/",
 }));

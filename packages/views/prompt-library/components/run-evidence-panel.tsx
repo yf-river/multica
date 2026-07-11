@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Archive, Loader2, Plus, RefreshCw } from "lucide-react";
 import { api } from "@multica/core/api";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import type {
   PromptEvaluationEvidenceSnapshot,
   PromptEvaluationRunEvidence,

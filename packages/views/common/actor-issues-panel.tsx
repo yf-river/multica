@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useStore } from "zustand";
 import { ListTodo, Search } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { BOARD_STATUSES } from "@multica/core/issues/config";
 import {
   childIssueProgressOptions,

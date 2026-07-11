@@ -12,7 +12,7 @@ import { useIssuesScopeStore } from "@multica/core/issues/stores/issues-scope-st
 import { ViewStoreProvider } from "@multica/core/issues/stores/view-store-context";
 import { filterIssues } from "../utils/filter";
 import { BOARD_STATUSES } from "@multica/core/issues/config";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { issueAssigneeGroupsOptions, issueListOptions, childIssueProgressOptions, type AssigneeGroupedIssuesFilter } from "@multica/core/issues/queries";
 import { agentTaskSnapshotOptions } from "@multica/core/agents";
 import { useUpdateIssue } from "@multica/core/issues/mutations";

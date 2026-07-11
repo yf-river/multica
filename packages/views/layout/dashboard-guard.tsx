@@ -15,9 +15,8 @@ interface DashboardGuardProps {
  * Handles: auth check → workspace check → render children.
  * Both web and desktop layouts compose their own UI structure inside this.
  *
- * WorkspaceIdProvider has been removed — useWorkspaceId() now derives from
- * the URL slug via useCurrentWorkspace(). The guard still gates on workspace
- * being resolved so downstream components can safely call useWorkspaceId().
+ * The guard waits for the route slug to resolve to a workspace before children
+ * render, so downstream components can safely call useWorkspaceId().
  */
 export function DashboardGuard({
   children,

@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import {
   issueDetailOptions,
   childIssuesOptions,

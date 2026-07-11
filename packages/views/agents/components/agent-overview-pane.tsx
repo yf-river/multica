@@ -15,7 +15,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import type { Agent, AgentRuntime } from "@multica/core/types";
 import { providerSupportsMcpConfig } from "@multica/core/agents";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { larkInstallationsOptions } from "@multica/core/lark";
 import {
   AlertDialog,

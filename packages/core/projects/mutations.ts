@@ -1,7 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, isMutationOutcomeUnknown } from "../api";
 import { projectKeys } from "./queries";
-import { useWorkspaceId } from "../hooks";
+import { useWorkspaceId } from "../paths";
 import { useRecentContextStore } from "../chat/recent-context-store";
 import type { Project, CreateProjectRequest, UpdateProjectRequest, ListProjectsResponse } from "../types";
 import { generateUUID } from "../utils";

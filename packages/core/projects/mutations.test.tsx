@@ -14,7 +14,7 @@ vi.mock("../api", async () => {
   return { ...actual, api: apiMock };
 });
 
-vi.mock("../hooks", () => ({ useWorkspaceId: () => "workspace-1" }));
+vi.mock("../paths", () => ({ useWorkspaceId: () => "workspace-1" }));
 
 import { useProjectDraftStore } from "./draft-store";
 import { useCreateProject } from "./mutations";

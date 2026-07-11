@@ -14,8 +14,7 @@ import { paths, type WorkspacePaths } from "./paths";
  * `useParams()` in the workspace route layout.
  *
  * packages/core/ cannot import next/navigation or react-router-dom directly,
- * so the slug arrives via this Context — mirroring how WorkspaceIdProvider
- * already works for workspace IDs.
+ * so the platform adapters provide the slug through this narrow Context.
  */
 const WorkspaceSlugContext = createContext<string | null>(null);
 
@@ -58,6 +57,17 @@ export function useCurrentWorkspace(): Workspace | null {
   const { data: list = [] } = useQuery(workspaceListOptions());
   if (!slug) return null;
   return list.find((w) => w.slug === slug) ?? null;
+}
+
+/** Current workspace UUID, derived from the route slug and workspace list. */
+export function useWorkspaceId(): string {
+  const workspace = useCurrentWorkspace();
+  if (!workspace) {
+    throw new Error(
+      "useWorkspaceId called outside a resolved workspace route",
+    );
+  }
+  return workspace.id;
 }
 
 /**

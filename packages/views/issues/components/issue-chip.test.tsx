@@ -7,7 +7,7 @@ vi.mock("@tanstack/react-query", () => ({
   useQuery: vi.fn(),
 }));
 
-vi.mock("@multica/core/hooks", () => ({
+vi.mock("@multica/core/paths", () => ({
   useWorkspaceId: () => "workspace-1",
 }));
 

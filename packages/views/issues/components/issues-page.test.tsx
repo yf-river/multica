@@ -7,10 +7,6 @@ import enCommon from "../../locales/zh-Hans/common.json";
 import enIssues from "../../locales/zh-Hans/issues.json";
 
 const TEST_RESOURCES = { "zh-Hans": { common: enCommon, issues: enIssues } };
-vi.mock("@multica/core/hooks", () => ({
-  useWorkspaceId: () => "ws-1",
-}));
-
 // ---------------------------------------------------------------------------
 // Mocks
 // ---------------------------------------------------------------------------
@@ -38,6 +34,7 @@ vi.mock("@multica/core/paths", async () => {
   );
   return {
     ...actual,
+    useWorkspaceId: () => "ws-1",
     useCurrentWorkspace: () => ({ id: "ws-1", name: "Test WS", slug: "test" }),
     useWorkspacePaths: () => actual.paths.workspace("test"),
   };

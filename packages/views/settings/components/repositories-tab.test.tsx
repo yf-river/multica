@@ -93,11 +93,8 @@ vi.mock("@tanstack/react-query", () => ({
   useQueryClient: () => ({ setQueryData: mockSetQueryData, invalidateQueries: mockInvalidateQueries }),
 }));
 
-vi.mock("@multica/core/hooks", () => ({
-  useWorkspaceId: () => "workspace-1",
-}));
-
 vi.mock("@multica/core/paths", () => ({
+  useWorkspaceId: () => "workspace-1",
   useCurrentWorkspace: () => workspaceRef.current,
   useWorkspacePaths: () => ({
     projectDetail: (id: string) => `/test-workspace/projects/${id}`,

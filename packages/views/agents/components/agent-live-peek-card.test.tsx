@@ -8,15 +8,12 @@ import enAgents from "../../locales/zh-Hans/agents.json";
 
 const TEST_RESOURCES = { "zh-Hans": { common: enCommon, agents: enAgents } };
 
-// useWorkspaceId is a Context-backed hook in core; stub it to a static id so
-// the card runs outside a WorkspaceIdProvider in tests.
-vi.mock("@multica/core/hooks", () => ({
-  useWorkspaceId: () => "ws-1",
-}));
-
+// The card normally derives its workspace from the route; keep this test
+// focused on card presentation with a fixed workspace id.
 // Paths only needs issueDetail for the "Now on" link. A simple stub keeps the
 // test free of WorkspaceSlugProvider wiring.
 vi.mock("@multica/core/paths", () => ({
+  useWorkspaceId: () => "ws-1",
   useWorkspacePaths: () => ({
     issueDetail: (id: string) => `/test/issues/${id}`,
   }),

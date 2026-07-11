@@ -23,7 +23,7 @@ import type {
   TimelineEntry,
 } from "../types";
 
-vi.mock("../hooks", () => ({
+vi.mock("../paths", () => ({
   useWorkspaceId: () => "ws-1",
 }));
 

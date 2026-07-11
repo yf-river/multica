@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
-import { useWorkspaceId } from "../hooks";
+import { useWorkspaceId } from "../paths";
 import { notificationPreferenceKeys } from "./queries";
 import type { NotificationPreferences, NotificationPreferenceResponse } from "../types";
 

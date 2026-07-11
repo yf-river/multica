@@ -17,7 +17,7 @@ vi.mock("@tanstack/react-query", async (importOriginal) => {
   };
 });
 
-vi.mock("../hooks", () => ({
+vi.mock("../paths", () => ({
   useWorkspaceId: () => "ws-1",
 }));
 

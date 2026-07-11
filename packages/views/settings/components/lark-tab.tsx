@@ -34,7 +34,7 @@ import {
   DialogFooter,
 } from "@multica/ui/components/ui/dialog";
 import { useAuthStore } from "@multica/core/auth";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { memberListOptions } from "@multica/core/workspace/queries";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { larkInstallationsOptions, larkKeys } from "@multica/core/lark";

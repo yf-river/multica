@@ -13,7 +13,7 @@ import {
   PopoverTrigger,
 } from "@multica/ui/components/ui/popover";
 import { toast } from "sonner";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { useAuthStore } from "@multica/core/auth";
 import { agentListOptions, memberListOptions } from "@multica/core/workspace/queries";
 import { api } from "@multica/core/api";

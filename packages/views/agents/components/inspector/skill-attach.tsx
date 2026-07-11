@@ -4,7 +4,7 @@ import { useState } from "react";
 import { Plus } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import type { Agent } from "@multica/core/types";
-import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspaceId } from "@multica/core/paths";
 import { skillListOptions } from "@multica/core/workspace/queries";
 import { SkillAddDialog } from "../skill-add-dialog";
 import { useT } from "../../../i18n";

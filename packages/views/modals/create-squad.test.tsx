@@ -60,11 +60,8 @@ vi.mock("@multica/core/auth", () => ({
     selector({ user: { id: ME } }),
 }));
 
-vi.mock("@multica/core/hooks", () => ({
-  useWorkspaceId: () => "ws-1",
-}));
-
 vi.mock("@multica/core/paths", () => ({
+  useWorkspaceId: () => "ws-1",
   useWorkspacePaths: () => ({
     squadDetail: (id: string) => `/test-ws/squads/${id}`,
   }),
