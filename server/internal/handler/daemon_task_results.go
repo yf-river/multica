@@ -836,11 +836,10 @@ func (h *Handler) GetChatSessionGCCheck(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-// GetAutopilotRunGCCheck returns the status and completed_at of an autopilot
-// run for the daemon GC loop. The daemon decides purely on terminal status:
+// GetAutopilotRunGCCheck returns an autopilot run's status to the daemon GC
+// loop. The daemon decides purely on terminal status:
 // an autopilot run's workdir is never reused, so a terminal run is reclaimed on
-// sight while non-terminal status is a skip signal — completed_at is returned
-// for the API contract and diagnostics, not as a TTL anchor.
+// sight while non-terminal status is a skip signal.
 //
 // Workspace ownership is resolved via the parent autopilot row.
 func (h *Handler) GetAutopilotRunGCCheck(w http.ResponseWriter, r *http.Request) {
@@ -865,8 +864,7 @@ func (h *Handler) GetAutopilotRunGCCheck(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"status":       run.Status,
-		"completed_at": run.CompletedAt.Time,
+		"status": run.Status,
 	})
 }
 
@@ -881,7 +879,6 @@ func (h *Handler) GetTaskGCCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"status":       task.Status,
-		"completed_at": task.CompletedAt.Time,
+		"status": task.Status,
 	})
 }

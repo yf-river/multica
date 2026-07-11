@@ -905,7 +905,7 @@ func TestShouldCleanTaskDir_KindDispatch(t *testing.T) {
 			meta: &execenv.GCMeta{Kind: execenv.GCKindAutopilotRun, AutopilotRunID: runID, WorkspaceID: "ws"},
 			servers: []serverResp{{
 				path: "/api/daemon/autopilot-runs/" + runID + "/gc-check",
-				body: map[string]any{"status": "completed", "completed_at": overTTL},
+				body: map[string]any{"status": "completed"},
 			}},
 			want: gcActionClean,
 		},
@@ -914,7 +914,7 @@ func TestShouldCleanTaskDir_KindDispatch(t *testing.T) {
 			meta: &execenv.GCMeta{Kind: execenv.GCKindAutopilotRun, AutopilotRunID: runID, WorkspaceID: "ws"},
 			servers: []serverResp{{
 				path: "/api/daemon/autopilot-runs/" + runID + "/gc-check",
-				body: map[string]any{"status": "issue_created", "completed_at": overTTL},
+				body: map[string]any{"status": "issue_created"},
 			}},
 			want: gcActionClean,
 		},
@@ -937,20 +937,17 @@ func TestShouldCleanTaskDir_KindDispatch(t *testing.T) {
 			want: gcActionSkip,
 		},
 		{
-			// The directory is never reused, so a terminal run is reclaimed on
-			// sight — the recent completed_at no longer buys it a 24h reprieve.
-			name: "autopilot completed within TTL — clean immediately (no 24h gate)",
+			// The directory is never reused, so terminal status is sufficient.
+			name: "autopilot completed — clean immediately",
 			meta: &execenv.GCMeta{Kind: execenv.GCKindAutopilotRun, AutopilotRunID: runID, WorkspaceID: "ws"},
 			servers: []serverResp{{
 				path: "/api/daemon/autopilot-runs/" + runID + "/gc-check",
-				body: map[string]any{"status": "completed", "completed_at": withinTTL},
+				body: map[string]any{"status": "completed"},
 			}},
 			want: gcActionClean,
 		},
 		{
-			// Terminal status with no completed_at stamp at all still cleans —
-			// GC keys purely on the terminal status, not on any timestamp.
-			name: "autopilot skipped with no completed_at — clean",
+			name: "autopilot skipped — clean",
 			meta: &execenv.GCMeta{Kind: execenv.GCKindAutopilotRun, AutopilotRunID: runID, WorkspaceID: "ws"},
 			servers: []serverResp{{
 				path: "/api/daemon/autopilot-runs/" + runID + "/gc-check",
@@ -974,7 +971,7 @@ func TestShouldCleanTaskDir_KindDispatch(t *testing.T) {
 			meta: &execenv.GCMeta{Kind: execenv.GCKindQuickCreate, TaskID: quickTask, WorkspaceID: "ws"},
 			servers: []serverResp{{
 				path: "/api/daemon/tasks/" + quickTask + "/gc-check",
-				body: map[string]any{"status": "completed", "completed_at": withinTTL},
+				body: map[string]any{"status": "completed"},
 			}},
 			want: gcActionClean,
 		},

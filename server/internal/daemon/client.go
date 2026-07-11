@@ -370,14 +370,9 @@ func (c *Client) GetChatSessionGCCheck(ctx context.Context, sessionID string) (*
 	return &resp, nil
 }
 
-// AutopilotRunGCStatus carries the status of an autopilot run. CompletedAt
-// is the run's terminal timestamp (zero for non-terminal runs). The GC loop
-// reclaims a terminal run's never-reused workdir as soon as it sees the
-// terminal status, so it no longer gates on CompletedAt; the field is kept for
-// the API response contract and diagnostics.
+// AutopilotRunGCStatus carries the only value the GC decision consumes.
 type AutopilotRunGCStatus struct {
-	Status      string    `json:"status"`
-	CompletedAt time.Time `json:"completed_at"`
+	Status string `json:"status"`
 }
 
 // GetAutopilotRunGCCheck returns the status of an autopilot run for GC decisions.
@@ -393,8 +388,7 @@ func (c *Client) GetAutopilotRunGCCheck(ctx context.Context, runID string) (*Aut
 // Quick-create tasks have no separate parent record, so GC keys directly on
 // the task itself.
 type TaskGCStatus struct {
-	Status      string    `json:"status"`
-	CompletedAt time.Time `json:"completed_at"`
+	Status string `json:"status"`
 }
 
 // GetTaskGCCheck returns the status of an agent task for GC decisions.

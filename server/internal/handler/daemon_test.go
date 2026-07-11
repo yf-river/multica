@@ -4215,7 +4215,7 @@ func TestGetChatSessionGCCheck(t *testing.T) {
 }
 
 // TestGetAutopilotRunGCCheck verifies the autopilot-run gc-check endpoint:
-// 200 with status+completed_at on success, 404 on cross-workspace probe.
+// 200 with the decision-driving status on success, 404 on cross-workspace probe.
 func TestGetAutopilotRunGCCheck(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
@@ -4269,18 +4269,15 @@ func TestGetAutopilotRunGCCheck(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("same-workspace token: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
-	var resp struct {
-		Status      string `json:"status"`
-		CompletedAt string `json:"completed_at"`
-	}
+	var resp map[string]any
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if resp.Status != "completed" {
-		t.Fatalf("expected status %q, got %q", "completed", resp.Status)
+	if resp["status"] != "completed" {
+		t.Fatalf("expected status %q, got %q", "completed", resp["status"])
 	}
-	if resp.CompletedAt == "" {
-		t.Fatal("expected completed_at to be set for terminal run")
+	if len(resp) != 1 {
+		t.Fatalf("gc-check response = %#v, want status only", resp)
 	}
 }
 
@@ -4340,18 +4337,15 @@ func TestGetTaskGCCheck(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("same-workspace token: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
-	var resp struct {
-		Status      string `json:"status"`
-		CompletedAt string `json:"completed_at"`
-	}
+	var resp map[string]any
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
-	if resp.Status != "completed" {
-		t.Fatalf("expected status %q, got %q", "completed", resp.Status)
+	if resp["status"] != "completed" {
+		t.Fatalf("expected status %q, got %q", "completed", resp["status"])
 	}
-	if resp.CompletedAt == "" {
-		t.Fatal("expected completed_at to be set for completed task")
+	if len(resp) != 1 {
+		t.Fatalf("gc-check response = %#v, want status only", resp)
 	}
 }
 
