@@ -358,3 +358,45 @@ func TestJudgeAgentPlaygroundCommitsCompleteMatrix(t *testing.T) {
 		t.Fatalf("playground judgement matrix = judgements:%d sessions:%d, want 2/2", linkedJudgements, sessions)
 	}
 }
+
+func TestJudgeAgentPlaygroundChangingJudgeCreatesMatchingTask(t *testing.T) {
+	fixture := newAgentPlaygroundRunFixture(t, 1)
+	completeAgentPlaygroundRun(t, fixture)
+	w := judgeAgentPlaygroundFixture(t, fixture, fixture.agentID)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("first judge: expected 202, got %d: %s", w.Code, w.Body.String())
+	}
+
+	ctx := context.Background()
+	var firstTaskID, firstSessionID string
+	if err := testPool.QueryRow(ctx, `
+		SELECT task_id, chat_session_id FROM agent_playground_judgement WHERE experiment_id = $1
+	`, fixture.experimentID).Scan(&firstTaskID, &firstSessionID); err != nil {
+		t.Fatalf("load first judgement: %v", err)
+	}
+	mustExec(t, ctx, `UPDATE agent_task_queue SET status = 'completed', completed_at = now() WHERE id = $1`, firstTaskID)
+	mustExec(t, ctx, `INSERT INTO chat_message (chat_session_id, role, content) VALUES ($1, 'assistant', 'first judge output')`, firstSessionID)
+	w = syncAgentPlaygroundFixture(t, fixture)
+	if w.Code != http.StatusOK {
+		t.Fatalf("sync first judgement: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	secondJudgeID := createHandlerTestAgent(t, "playground-second-judge-"+uuid.NewString(), nil)
+	w = judgeAgentPlaygroundFixture(t, fixture, secondJudgeID)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("second judge: expected 202, got %d: %s", w.Code, w.Body.String())
+	}
+	var judgementJudgeID, taskID, taskAgentID, sessionAgentID, output string
+	if err := testPool.QueryRow(ctx, `
+		SELECT judgement.judge_agent_id, judgement.task_id, task.agent_id, session.agent_id, judgement.output
+		FROM agent_playground_judgement judgement
+		JOIN agent_task_queue task ON task.id = judgement.task_id
+		JOIN chat_session session ON session.id = judgement.chat_session_id
+		WHERE judgement.experiment_id = $1
+	`, fixture.experimentID).Scan(&judgementJudgeID, &taskID, &taskAgentID, &sessionAgentID, &output); err != nil {
+		t.Fatalf("load replacement judgement: %v", err)
+	}
+	if judgementJudgeID != secondJudgeID || taskAgentID != secondJudgeID || sessionAgentID != secondJudgeID || taskID == firstTaskID || output != "" {
+		t.Fatalf("replacement judgement mismatch: row_judge=%s task_agent=%s session_agent=%s task=%s old_task=%s output=%q", judgementJudgeID, taskAgentID, sessionAgentID, taskID, firstTaskID, output)
+	}
+}

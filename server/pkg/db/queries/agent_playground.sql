@@ -144,9 +144,22 @@ INSERT INTO agent_playground_judgement (
 ) VALUES ($1, $2, $3, $4, 'pending')
 ON CONFLICT (input_id) DO UPDATE
 SET judge_agent_id = EXCLUDED.judge_agent_id,
+    chat_session_id = CASE
+        WHEN agent_playground_judgement.judge_agent_id <> EXCLUDED.judge_agent_id THEN NULL
+        ELSE agent_playground_judgement.chat_session_id
+    END,
+    task_id = CASE
+        WHEN agent_playground_judgement.judge_agent_id <> EXCLUDED.judge_agent_id THEN NULL
+        ELSE agent_playground_judgement.task_id
+    END,
     status = CASE
+        WHEN agent_playground_judgement.judge_agent_id <> EXCLUDED.judge_agent_id THEN EXCLUDED.status
         WHEN agent_playground_judgement.status = 'pending' THEN EXCLUDED.status
         ELSE agent_playground_judgement.status
+    END,
+    output = CASE
+        WHEN agent_playground_judgement.judge_agent_id <> EXCLUDED.judge_agent_id THEN ''
+        ELSE agent_playground_judgement.output
     END,
     updated_at = now()
 RETURNING *;
