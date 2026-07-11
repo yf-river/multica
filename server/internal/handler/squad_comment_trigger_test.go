@@ -1327,6 +1327,38 @@ func TestEnqueueCommentAgentTriggers_BlocksParentSOPStageWhenRequiredChildrenMis
 	}
 }
 
+func TestCreateCommentFailsClosedWhenCrossProjectGateProfileIsInvalid(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	fx := newCrossProjectGateSOPFixture(t, false)
+	if _, err := testPool.Exec(ctx, `
+		UPDATE squad SET sop_profile = '{"mode":"stage_chain","steps":"invalid"}'::jsonb
+		WHERE id = $1
+	`, fx.SquadID); err != nil {
+		t.Fatalf("corrupt squad SOP profile fixture: %v", err)
+	}
+	content := "03 通过，请进入 [@04-开发](mention://agent/" + fx.ImplementID + ")"
+
+	w := httptest.NewRecorder()
+	req := withURLParam(newRequest(http.MethodPost, "/api/issues/"+fx.IssueID+"/comments", map[string]any{"content": content}), "id", fx.IssueID)
+	testHandler.CreateComment(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", w.Code, w.Body.String())
+	}
+	var commentCount int
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM comment WHERE issue_id = $1 AND content = $2`, fx.IssueID, content).Scan(&commentCount); err != nil {
+		t.Fatalf("count rolled-back gate comments: %v", err)
+	}
+	if commentCount != 0 {
+		t.Fatalf("comment committed while cross-project gate was unreadable: %d rows", commentCount)
+	}
+	if got := countQueuedOrDispatched(t, fx.ImplementID, fx.IssueID); got != 0 {
+		t.Fatalf("implementation task escaped unreadable cross-project gate: %d", got)
+	}
+}
+
 func TestEnqueueCommentAgentTriggers_AllowsParentSOPStageWhenRequiredChildrenDone(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")

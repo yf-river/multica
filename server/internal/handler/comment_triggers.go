@@ -114,7 +114,11 @@ func (h *Handler) createCommentAgentTriggersInTx(
 ) (commentTaskProjection, error) {
 	projection := commentTaskProjection{}
 	for _, trigger := range triggers {
-		if h.shouldBlockParentSOPStageTriggerForCrossProjectChildren(ctx, issue, trigger) {
+		blocked, gateErr := h.shouldBlockParentSOPStageTriggerForCrossProjectChildren(ctx, issue, trigger)
+		if gateErr != nil {
+			return projection, gateErr
+		}
+		if blocked {
 			event, err := createBlockedParentSOPStageCommentInTx(ctx, queries, issue, trigger.Agent.Name)
 			if err != nil {
 				return projection, err
@@ -225,7 +229,7 @@ func filterSuppressedCommentAgentTriggers(triggers []commentAgentTrigger, suppre
 	return filtered
 }
 
-func (h *Handler) shouldBlockParentSOPStageTriggerForCrossProjectChildren(ctx context.Context, issue db.Issue, trigger commentAgentTrigger) bool {
+func (h *Handler) shouldBlockParentSOPStageTriggerForCrossProjectChildren(ctx context.Context, issue db.Issue, trigger commentAgentTrigger) (bool, error) {
 	roleKey := normalizeSOPRoleMentionKey(roleKeyFromAgentRuntimeConfig(trigger.Agent))
 	if roleKey == "" {
 		switch trigger.Agent.Name {
@@ -236,49 +240,57 @@ func (h *Handler) shouldBlockParentSOPStageTriggerForCrossProjectChildren(ctx co
 		}
 	}
 	if roleKey != "04-implement" && roleKey != "05-verify" {
-		return false
+		return false, nil
 	}
 	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "squad" || !issue.AssigneeID.Valid {
-		return false
+		return false, nil
 	}
 	squad, err := h.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
 		ID:          issue.AssigneeID,
 		WorkspaceID: issue.WorkspaceID,
 	})
-	if err != nil || !isStageChainSOPProfile(squad.SopProfile) {
-		return false
+	if err != nil {
+		return false, fmt.Errorf("load assigned squad for cross-project gate: %w", err)
 	}
-	if !h.latestTaskSplitRequiresCrossProjectChildren(ctx, issue) {
-		return false
+	stageChain, err := isStageChainSOPProfile(squad.SopProfile)
+	if err != nil {
+		return false, fmt.Errorf("decode assigned squad SOP profile: %w", err)
+	}
+	if !stageChain {
+		return false, nil
+	}
+	requiresChildren, err := h.latestTaskSplitRequiresCrossProjectChildren(ctx, issue)
+	if err != nil {
+		return false, err
+	}
+	if !requiresChildren {
+		return false, nil
 	}
 	children, err := h.Queries.ListChildIssues(ctx, issue.ID)
 	if err != nil {
-		slog.Warn("sop cross-project child gate skipped: list children failed",
-			"issue_id", uuidToString(issue.ID),
-			"error", err)
-		return false
+		return false, fmt.Errorf("list cross-project child issues: %w", err)
 	}
 	if len(children) == 0 {
-		return true
+		return true, nil
 	}
 	for _, child := range children {
 		if child.Status != "done" {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
-func isStageChainSOPProfile(raw []byte) bool {
+func isStageChainSOPProfile(raw []byte) (bool, error) {
 	if len(raw) == 0 {
-		return false
+		return false, nil
 	}
 	var profile commentSOPProfile
 	if err := json.Unmarshal(raw, &profile); err != nil {
-		return false
+		return false, err
 	}
 	if strings.EqualFold(profile.Mode, "stage_chain") {
-		return true
+		return true, nil
 	}
 	required := map[string]bool{
 		"pm": true, "01-clarify": true, "02-design": true,
@@ -288,27 +300,24 @@ func isStageChainSOPProfile(raw []byte) bool {
 		key := normalizeSOPRoleMentionKey(step.RoleKey)
 		delete(required, key)
 	}
-	return len(required) == 0
+	return len(required) == 0, nil
 }
 
-func (h *Handler) latestTaskSplitRequiresCrossProjectChildren(ctx context.Context, issue db.Issue) bool {
+func (h *Handler) latestTaskSplitRequiresCrossProjectChildren(ctx context.Context, issue db.Issue) (bool, error) {
 	comments, err := h.Queries.ListCommentsForIssue(ctx, db.ListCommentsForIssueParams{
 		IssueID:     issue.ID,
 		WorkspaceID: issue.WorkspaceID,
 		Limit:       commentHardCap,
 	})
 	if err != nil {
-		slog.Warn("sop cross-project child gate skipped: list task-split comments failed",
-			"issue_id", uuidToString(issue.ID),
-			"error", err)
-		return false
+		return false, fmt.Errorf("list task-split comments for cross-project gate: %w", err)
 	}
 	for i := len(comments) - 1; i >= 0; i-- {
 		if isTaskSplitCrossProjectEvidenceComment(comments[i].Content) {
-			return containsRequiredCrossProjectDependency(comments[i].Content)
+			return containsRequiredCrossProjectDependency(comments[i].Content), nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 func isTaskSplitCrossProjectEvidenceComment(content string) bool {
