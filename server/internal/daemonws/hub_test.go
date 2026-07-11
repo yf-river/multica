@@ -61,12 +61,36 @@ func decodeHubMessagePayloadForTest[T any](t *testing.T, msg protocol.Message) T
 	return payload
 }
 
+func TestHandleWebSocketRejectsMissingWorkspaceScope(t *testing.T) {
+	hub := NewHub()
+	req := httptest.NewRequest(http.MethodGet, "/ws/daemon", nil)
+	w := httptest.NewRecorder()
+
+	hub.HandleWebSocket(w, req, ClientIdentity{
+		WorkspaceIDs: []string{"", "  "},
+		RuntimeIDs:   []string{"runtime-1"},
+	})
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+	if !strings.Contains(w.Body.String(), "workspace scope required") {
+		t.Fatalf("body = %q, want workspace scope error", w.Body.String())
+	}
+	if (ClientIdentity{}).AllowsWorkspace("ws-1") {
+		t.Fatal("empty identity scope must not authorize a workspace")
+	}
+}
+
 func TestNotifyTaskAvailable(t *testing.T) {
 	M.Reset()
 	defer M.Reset()
 
 	hub := NewHub()
-	conn := newTestHubConnection(t, hub, ClientIdentity{RuntimeIDs: []string{"runtime-1"}})
+	conn := newTestHubConnection(t, hub, ClientIdentity{
+		WorkspaceIDs: []string{"ws-1"},
+		RuntimeIDs:   []string{"runtime-1"},
+	})
 
 	deadline := time.Now().Add(time.Second)
 	for hub.RuntimeConnectionCount("runtime-1") == 0 {
@@ -95,8 +119,8 @@ func TestNotifyRuntimeProfilesChanged(t *testing.T) {
 
 	hub := NewHub()
 	conn := newTestHubConnection(t, hub, ClientIdentity{
-		WorkspaceID: "ws-1",
-		RuntimeIDs:  []string{"runtime-1"},
+		WorkspaceIDs: []string{"ws-1"},
+		RuntimeIDs:   []string{"runtime-1"},
 	})
 
 	deadline := time.Now().Add(time.Second)
@@ -319,8 +343,8 @@ func TestHeartbeatRoundTrip(t *testing.T) {
 	var calls atomic.Int32
 	hub.SetHeartbeatHandler(func(_ context.Context, identity ClientIdentity, runtimeID string) (*protocol.DaemonHeartbeatAckPayload, error) {
 		calls.Add(1)
-		if identity.WorkspaceID != "ws-1" {
-			t.Errorf("identity workspace = %q, want ws-1", identity.WorkspaceID)
+		if identity.PrimaryWorkspaceID() != "ws-1" {
+			t.Errorf("identity workspace = %q, want ws-1", identity.PrimaryWorkspaceID())
 		}
 		return &protocol.DaemonHeartbeatAckPayload{
 			RuntimeID: runtimeID,
@@ -329,8 +353,8 @@ func TestHeartbeatRoundTrip(t *testing.T) {
 	})
 
 	conn := newTestHubConnection(t, hub, ClientIdentity{
-		WorkspaceID: "ws-1",
-		RuntimeIDs:  []string{"runtime-1"},
+		WorkspaceIDs: []string{"ws-1"},
+		RuntimeIDs:   []string{"runtime-1"},
 	})
 
 	hbFrame, err := json.Marshal(protocol.Message{
@@ -381,7 +405,10 @@ func TestHeartbeatHandlerCtxNotTimeBounded(t *testing.T) {
 		return &protocol.DaemonHeartbeatAckPayload{RuntimeID: runtimeID, Status: "ok"}, nil
 	})
 
-	conn := newTestHubConnection(t, hub, ClientIdentity{RuntimeIDs: []string{"runtime-1"}})
+	conn := newTestHubConnection(t, hub, ClientIdentity{
+		WorkspaceIDs: []string{"ws-1"},
+		RuntimeIDs:   []string{"runtime-1"},
+	})
 
 	hbFrame, err := json.Marshal(protocol.Message{
 		Type:    protocol.EventDaemonHeartbeat,
@@ -414,7 +441,10 @@ func TestHeartbeatRejectsUnauthorizedRuntime(t *testing.T) {
 		return &protocol.DaemonHeartbeatAckPayload{Status: "ok"}, nil
 	})
 
-	conn := newTestHubConnection(t, hub, ClientIdentity{RuntimeIDs: []string{"runtime-1"}})
+	conn := newTestHubConnection(t, hub, ClientIdentity{
+		WorkspaceIDs: []string{"ws-1"},
+		RuntimeIDs:   []string{"runtime-1"},
+	})
 
 	hbFrame, err := json.Marshal(protocol.Message{
 		Type:    protocol.EventDaemonHeartbeat,

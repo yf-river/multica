@@ -773,7 +773,7 @@ func TestHandleDaemonWSHeartbeat_RuntimeGoneReturnsAckNotError(t *testing.T) {
 	// must turn the resulting pgx.ErrNoRows into a RuntimeGone ack.
 	missingRuntime := uuid.New().String()
 	ack, err := testHandler.HandleDaemonWSHeartbeat(context.Background(),
-		daemonws.ClientIdentity{WorkspaceID: testWorkspaceID},
+		daemonws.ClientIdentity{WorkspaceIDs: []string{testWorkspaceID}},
 		missingRuntime)
 	if err != nil {
 		t.Fatalf("HandleDaemonWSHeartbeat: unexpected error %v", err)

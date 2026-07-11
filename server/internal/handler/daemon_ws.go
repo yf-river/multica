@@ -35,14 +35,8 @@ func (h *Handler) DaemonWebSocket(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	primaryWorkspaceID := ""
-	if len(workspaceIDs) > 0 {
-		primaryWorkspaceID = workspaceIDs[0]
-	}
-
 	h.DaemonHub.HandleWebSocket(w, r, daemonws.ClientIdentity{
 		UserID:        requestUserID(r),
-		WorkspaceID:   primaryWorkspaceID,
 		WorkspaceIDs:  workspaceIDs,
 		RuntimeIDs:    runtimeIDs,
 		ClientVersion: r.Header.Get("X-Client-Version"),
