@@ -10670,7 +10670,7 @@
         "source": "server/pkg/protocol/events.go#EventCommentDeleted",
         "origin": "static",
         "referenceSources": [
-          "server/internal/handler/comment.go"
+          "server/internal/handler/comment_events.go"
         ],
         "staticReferenceMissing": false
       },
@@ -10701,7 +10701,7 @@
         "source": "server/pkg/protocol/events.go#EventCommentUpdated",
         "origin": "static",
         "referenceSources": [
-          "server/internal/handler/comment.go"
+          "server/internal/handler/comment_events.go"
         ],
         "staticReferenceMissing": false
       },
@@ -10804,7 +10804,8 @@
         "referenceSources": [
           "server/cmd/server/listeners.go",
           "server/cmd/server/notification_listeners.go",
-          "server/internal/handler/inbox.go"
+          "server/internal/handler/inbox.go",
+          "server/internal/service/issue.go"
         ],
         "staticReferenceMissing": false
       },
