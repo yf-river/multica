@@ -172,132 +172,137 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 	// project explicitly attached its repos, those are the authoritative set
 	// for issues inside that project. When the project has no github_repo
 	// resources (or no project at all), we fall back to the workspace repos.
-	var issueForSource db.Issue
-	hasIssueForSource := false
 	suppressIssueReposForRole := false
 	if task.IssueID.Valid {
-		if issue, err := h.Queries.GetIssue(r.Context(), task.IssueID); err == nil {
-			issueForSource = issue
-			hasIssueForSource = true
-			resp.WorkspaceID = uuidToString(issue.WorkspaceID)
-			resp.ThreadName = issue.Title
+		issue, err := h.Queries.GetIssue(r.Context(), task.IssueID)
+		if err != nil {
+			h.writeClaimResponseBuildError(w, task.ID, runtimeID, "issue", err)
+			outcome = "error_build"
+			return
+		}
+		resp.WorkspaceID = uuidToString(issue.WorkspaceID)
+		resp.ThreadName = issue.Title
 
-			// Squad-leader briefing injection: when the issue is assigned
-			// to a squad and the claiming agent is that squad's current
-			// leader, append a full briefing (Operating Protocol + Roster
-			// + user Instructions) to the agent's own Instructions. We
-			// append (not replace) so per-agent instructions remain
-			// authoritative for general behavior; the squad briefing
-			// stacks on top as task-specific squad context.
-			if resp.Agent != nil && issue.AssigneeType.Valid && issue.AssigneeType.String == "squad" && issue.AssigneeID.Valid {
-				if squad, err := h.Queries.GetSquadInWorkspace(r.Context(), db.GetSquadInWorkspaceParams{
-					ID:          issue.AssigneeID,
-					WorkspaceID: issue.WorkspaceID,
-				}); err == nil && uuidToString(squad.LeaderID) == resp.Agent.ID {
-					briefing := buildSquadLeaderBriefing(r.Context(), h.Queries, squad)
-					if strings.TrimSpace(resp.Agent.Instructions) == "" {
-						resp.Agent.Instructions = briefing
-					} else {
-						resp.Agent.Instructions = resp.Agent.Instructions + "\n\n" + briefing
-					}
-					leaderPolicy := taskExecutionPolicyForRole("", true)
-					resp.ExecutionPolicy = &leaderPolicy
-					resp.Agent.Skills = filterAgentSkillsForExecutionPolicy(resp.Agent.Skills, leaderPolicy)
-					slog.Debug("injected squad leader briefing",
-						"squad_id", uuidToString(squad.ID),
-						"squad_name", squad.Name,
-						"leader_agent_id", resp.Agent.ID,
-					)
+		// Squad-leader briefing injection: when the issue is assigned
+		// to a squad and the claiming agent is that squad's current
+		// leader, append a full briefing (Operating Protocol + Roster
+		// + user Instructions) to the agent's own Instructions. We
+		// append (not replace) so per-agent instructions remain
+		// authoritative for general behavior; the squad briefing
+		// stacks on top as task-specific squad context.
+		if resp.Agent != nil && issue.AssigneeType.Valid && issue.AssigneeType.String == "squad" && issue.AssigneeID.Valid {
+			if squad, err := h.Queries.GetSquadInWorkspace(r.Context(), db.GetSquadInWorkspaceParams{
+				ID:          issue.AssigneeID,
+				WorkspaceID: issue.WorkspaceID,
+			}); err == nil && uuidToString(squad.LeaderID) == resp.Agent.ID {
+				briefing := buildSquadLeaderBriefing(r.Context(), h.Queries, squad)
+				if strings.TrimSpace(resp.Agent.Instructions) == "" {
+					resp.Agent.Instructions = briefing
+				} else {
+					resp.Agent.Instructions = resp.Agent.Instructions + "\n\n" + briefing
 				}
-			}
-			if resp.ExecutionPolicy != nil && !resp.ExecutionPolicy.CanAccessRepo {
-				suppressIssueReposForRole = true
-			}
-
-			var projectRepos []RepoData
-			projectRepoRef := ""
-			if issue.ProjectID.Valid {
-				resp.ProjectID = uuidToString(issue.ProjectID)
-				if proj, err := h.Queries.GetProject(r.Context(), issue.ProjectID); err == nil {
-					resp.ProjectTitle = proj.Title
-				}
-				if rows := h.listProjectResourcesForProject(r.Context(), issue.ProjectID); len(rows) > 0 && !suppressIssueReposForRole {
-					out := make([]ProjectResourceData, 0, len(rows))
-					for _, row := range rows {
-						label := ""
-						if row.Label.Valid {
-							label = row.Label.String
-						}
-						ref := json.RawMessage(row.ResourceRef)
-						if len(ref) == 0 {
-							ref = json.RawMessage("{}")
-						}
-						out = append(out, ProjectResourceData{
-							ID:           uuidToString(row.ID),
-							ResourceType: row.ResourceType,
-							ResourceRef:  ref,
-							Label:        label,
-						})
-						// Lift git-backed project resources into the daemon's repo list
-						// so `multica repo checkout` and the meta-skill render
-						// them as the issue's repos.
-						switch row.ResourceType {
-						case "github_repo":
-							var payload struct {
-								URL               string `json:"url"`
-								DefaultBranchHint string `json:"default_branch_hint"`
-							}
-							if json.Unmarshal(row.ResourceRef, &payload) == nil && payload.URL != "" {
-								projectRepos = append(projectRepos, RepoData{URL: payload.URL})
-								if projectRepoRef == "" {
-									projectRepoRef = strings.TrimSpace(payload.DefaultBranchHint)
-								}
-							}
-						case "gongfeng_repo":
-							var payload struct {
-								URL         string `json:"url"`
-								ProjectPath string `json:"project_path"`
-								Ref         string `json:"ref"`
-								Branch      string `json:"branch"`
-							}
-							if json.Unmarshal(row.ResourceRef, &payload) == nil {
-								if cloneURL := canonicalGongfengCloneURL(payload.URL, payload.ProjectPath); cloneURL != "" {
-									projectRepos = append(projectRepos, RepoData{URL: cloneURL})
-									if projectRepoRef == "" {
-										projectRepoRef = firstNonEmpty(strings.TrimSpace(payload.Branch), strings.TrimSpace(payload.Ref))
-									}
-								}
-							}
-						}
-					}
-					resp.ProjectResources = out
-				}
-			}
-
-			if suppressIssueReposForRole {
-				resp.ProjectResources = nil
-				resp.Repos = nil
-				resp.IssueExecutionSpace = nil
-				slog.Debug("suppressed issue repos for squad leader task",
-					"task_id", uuidToString(task.ID),
-					"issue_id", uuidToString(issue.ID),
-					"agent_id", uuidToString(task.AgentID),
+				leaderPolicy := taskExecutionPolicyForRole("", true)
+				resp.ExecutionPolicy = &leaderPolicy
+				resp.Agent.Skills = filterAgentSkillsForExecutionPolicy(resp.Agent.Skills, leaderPolicy)
+				slog.Debug("injected squad leader briefing",
+					"squad_id", uuidToString(squad.ID),
+					"squad_name", squad.Name,
+					"leader_agent_id", resp.Agent.ID,
 				)
-			} else if len(projectRepos) > 0 {
-				resp.Repos = projectRepos
-			} else if ws, err := h.Queries.GetWorkspace(r.Context(), issue.WorkspaceID); err == nil && ws.Repos != nil {
-				var repos []RepoData
-				if json.Unmarshal(ws.Repos, &repos) == nil && len(repos) > 0 {
-					resp.Repos = repos
-				}
 			}
-			if !suppressIssueReposForRole && len(projectRepos) > 0 {
-				resp.IssueExecutionSpace = &IssueExecutionSpaceData{
-					Enabled:        true,
-					IssueID:        uuidToString(issue.ID),
-					PrimaryRepoURL: projectRepos[0].URL,
-					Ref:            projectRepoRef,
+		}
+		if resp.ExecutionPolicy != nil && !resp.ExecutionPolicy.CanAccessRepo {
+			suppressIssueReposForRole = true
+		}
+
+		var projectRepos []RepoData
+		projectRepoRef := ""
+		if issue.ProjectID.Valid {
+			resp.ProjectID = uuidToString(issue.ProjectID)
+			proj, err := h.Queries.GetProject(r.Context(), issue.ProjectID)
+			if err != nil {
+				h.writeClaimResponseBuildError(w, task.ID, runtimeID, "issue project", err)
+				outcome = "error_build"
+				return
+			}
+			resp.ProjectTitle = proj.Title
+			rows, err := h.Queries.ListProjectResources(r.Context(), issue.ProjectID)
+			if err != nil {
+				h.writeClaimResponseBuildError(w, task.ID, runtimeID, "issue project resources", err)
+				outcome = "error_build"
+				return
+			}
+			if len(rows) > 0 && !suppressIssueReposForRole {
+				out := make([]ProjectResourceData, 0, len(rows))
+				for _, row := range rows {
+					label := ""
+					if row.Label.Valid {
+						label = row.Label.String
+					}
+					ref := json.RawMessage(row.ResourceRef)
+					if len(ref) == 0 {
+						ref = json.RawMessage("{}")
+					}
+					out = append(out, ProjectResourceData{
+						ID:           uuidToString(row.ID),
+						ResourceType: row.ResourceType,
+						ResourceRef:  ref,
+						Label:        label,
+					})
+					// Lift git-backed project resources into the daemon's repo list
+					// so `multica repo checkout` and the meta-skill render
+					// them as the issue's repos.
+					switch row.ResourceType {
+					case "github_repo":
+						var payload struct {
+							URL               string `json:"url"`
+							DefaultBranchHint string `json:"default_branch_hint"`
+						}
+						if json.Unmarshal(row.ResourceRef, &payload) == nil && payload.URL != "" {
+							projectRepos = append(projectRepos, RepoData{URL: payload.URL})
+							if projectRepoRef == "" {
+								projectRepoRef = strings.TrimSpace(payload.DefaultBranchHint)
+							}
+						}
+					case "gongfeng_repo":
+						var payload struct {
+							URL         string `json:"url"`
+							ProjectPath string `json:"project_path"`
+							Ref         string `json:"ref"`
+							Branch      string `json:"branch"`
+						}
+						if json.Unmarshal(row.ResourceRef, &payload) == nil {
+							if cloneURL := canonicalGongfengCloneURL(payload.URL, payload.ProjectPath); cloneURL != "" {
+								projectRepos = append(projectRepos, RepoData{URL: cloneURL})
+								if projectRepoRef == "" {
+									projectRepoRef = firstNonEmpty(strings.TrimSpace(payload.Branch), strings.TrimSpace(payload.Ref))
+								}
+							}
+						}
+					}
 				}
+				resp.ProjectResources = out
+			}
+		}
+
+		if suppressIssueReposForRole {
+			resp.ProjectResources = nil
+			resp.Repos = nil
+			resp.IssueExecutionSpace = nil
+			slog.Debug("suppressed issue repos for squad leader task",
+				"task_id", uuidToString(task.ID),
+				"issue_id", uuidToString(issue.ID),
+				"agent_id", uuidToString(task.AgentID),
+			)
+		} else if len(projectRepos) > 0 {
+			resp.Repos = projectRepos
+		}
+		if !suppressIssueReposForRole && len(projectRepos) > 0 {
+			resp.IssueExecutionSpace = &IssueExecutionSpaceData{
+				Enabled:        true,
+				IssueID:        uuidToString(issue.ID),
+				PrimaryRepoURL: projectRepos[0].URL,
+				Ref:            projectRepoRef,
 			}
 		}
 
@@ -308,84 +313,86 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 		// was triggered by a human or by another agent — a signal used by the
 		// harness instructions to avoid mention loops between agents.
 		if task.TriggerCommentID.Valid {
-			if comment, err := h.Queries.GetComment(r.Context(), task.TriggerCommentID); err == nil {
-				resp.TriggerCommentContent = comment.Content
-				resp.TriggerThreadID = uuidToString(comment.ID)
-				if comment.ParentID.Valid {
-					resp.TriggerThreadID = uuidToString(comment.ParentID)
-				}
-				resp.TriggerAuthorType = comment.AuthorType
-				// The triggering comment's author is the task initiator — the
-				// real requester behind this run. Surface it (type + id + name,
-				// plus account for members) so a workspace-visible agent can
-				// attribute the request to the right person instead of to the
-				// runtime owner. Same lookups as the display name above; we just
-				// also capture the id and account. See MUL-2645.
-				resp.InitiatorType = comment.AuthorType
+			comment, err := h.Queries.GetComment(r.Context(), task.TriggerCommentID)
+			if err != nil {
+				h.writeClaimResponseBuildError(w, task.ID, runtimeID, "trigger comment", err)
+				outcome = "error_build"
+				return
+			}
+			resp.TriggerCommentContent = comment.Content
+			resp.TriggerThreadID = uuidToString(comment.ID)
+			if comment.ParentID.Valid {
+				resp.TriggerThreadID = uuidToString(comment.ParentID)
+			}
+			resp.TriggerAuthorType = comment.AuthorType
+			// The triggering comment's author is the task initiator — the
+			// real requester behind this run. Surface it (type + id + name,
+			// plus account for members) so a workspace-visible agent can
+			// attribute the request to the right person instead of to the
+			// runtime owner. Same lookups as the display name above; we just
+			// also capture the id and account. See MUL-2645.
+			resp.InitiatorType = comment.AuthorType
+			if comment.AuthorID.Valid {
+				resp.InitiatorID = uuidToString(comment.AuthorID)
+			}
+			switch comment.AuthorType {
+			case "agent":
 				if comment.AuthorID.Valid {
-					resp.InitiatorID = uuidToString(comment.AuthorID)
-				}
-				switch comment.AuthorType {
-				case "agent":
-					if comment.AuthorID.Valid {
-						if a, err := h.Queries.GetAgent(r.Context(), comment.AuthorID); err == nil {
-							resp.TriggerAuthorName = a.Name
-							resp.InitiatorName = a.Name
-						}
-					}
-				case "member":
-					// For member-authored comments, AuthorID is a user UUID
-					// (see handler.resolveActor) — look up the user's display name.
-					if comment.AuthorID.Valid {
-						if u, err := h.Queries.GetUser(r.Context(), comment.AuthorID); err == nil {
-							resp.TriggerAuthorName = u.Name
-							resp.InitiatorName = u.Name
-							resp.InitiatorAccount = u.Account
-						}
+					if a, err := h.Queries.GetAgent(r.Context(), comment.AuthorID); err == nil {
+						resp.TriggerAuthorName = a.Name
+						resp.InitiatorName = a.Name
 					}
 				}
-				// Count comments that arrived issue-wide since this agent's last
-				// run, so the daemon can tell it the full catch-up volume up front
-				// (the prompt then steers it to read the triggering thread first).
-				// Anchor = the prior task's started_at (never completed_at: a long
-				// run would miss comments posted while it ran). Cold start (no prior
-				// task) → no anchor → no hint. Excludes the agent's own comments and
-				// the triggering comment itself because that body is already
-				// injected into the prompt. Best-effort: any DB error or zero count
-				// leaves the hint suppressed.
-				if startedAt, err := h.Queries.GetLastTaskStartedAtForIssueAndAgent(r.Context(), db.GetLastTaskStartedAtForIssueAndAgentParams{
-					AgentID: task.AgentID,
-					IssueID: comment.IssueID,
-				}); err == nil && startedAt.Valid {
-					if cnt, err := h.Queries.CountNewCommentsSince(r.Context(), db.CountNewCommentsSinceParams{
-						AnchorID:    task.TriggerCommentID,
-						IssueID:     comment.IssueID,
-						WorkspaceID: comment.WorkspaceID,
-						Since:       startedAt,
-						AuthorID:    task.AgentID,
-					}); err == nil && cnt > 0 {
-						resp.NewCommentCount = int(cnt)
-						resp.NewCommentsSince = startedAt.Time.UTC().Format(time.RFC3339)
+			case "member":
+				// For member-authored comments, AuthorID is a user UUID
+				// (see handler.resolveActor) — look up the user's display name.
+				if comment.AuthorID.Valid {
+					if u, err := h.Queries.GetUser(r.Context(), comment.AuthorID); err == nil {
+						resp.TriggerAuthorName = u.Name
+						resp.InitiatorName = u.Name
+						resp.InitiatorAccount = u.Account
 					}
+				}
+			}
+			// Count comments that arrived issue-wide since this agent's last
+			// run, so the daemon can tell it the full catch-up volume up front
+			// (the prompt then steers it to read the triggering thread first).
+			// Anchor = the prior task's started_at (never completed_at: a long
+			// run would miss comments posted while it ran). Cold start (no prior
+			// task) → no anchor → no hint. Excludes the agent's own comments and
+			// the triggering comment itself because that body is already
+			// injected into the prompt. Best-effort: any DB error or zero count
+			// leaves the hint suppressed.
+			if startedAt, err := h.Queries.GetLastTaskStartedAtForIssueAndAgent(r.Context(), db.GetLastTaskStartedAtForIssueAndAgentParams{
+				AgentID: task.AgentID,
+				IssueID: comment.IssueID,
+			}); err == nil && startedAt.Valid {
+				if cnt, err := h.Queries.CountNewCommentsSince(r.Context(), db.CountNewCommentsSinceParams{
+					AnchorID:    task.TriggerCommentID,
+					IssueID:     comment.IssueID,
+					WorkspaceID: comment.WorkspaceID,
+					Since:       startedAt,
+					AuthorID:    task.AgentID,
+				}); err == nil && cnt > 0 {
+					resp.NewCommentCount = int(cnt)
+					resp.NewCommentsSince = startedAt.Time.UTC().Format(time.RFC3339)
 				}
 			}
 		}
 
-		if hasIssueForSource {
-			credentialUserID := issueForSource.CreatorID
-			if resp.InitiatorType == "member" && resp.InitiatorID != "" {
-				if initiatorID, err := util.ParseUUID(resp.InitiatorID); err == nil {
-					credentialUserID = initiatorID
-				}
+		credentialUserID := issue.CreatorID
+		if resp.InitiatorType == "member" && resp.InitiatorID != "" {
+			if initiatorID, err := util.ParseUUID(resp.InitiatorID); err == nil {
+				credentialUserID = initiatorID
 			}
-			resp.SourceContext = h.buildIssueSourceContext(r.Context(), issueForSource, credentialUserID)
-			if resp.Agent != nil {
-				resp.Agent.McpConfig = h.injectSourceCredentialMCPEnv(r.Context(), resp.Agent.McpConfig, resp.SourceContext)
-			}
-			if _, ok := service.ParseIssueSourceSummaryContext(*task); ok {
-				resp.SourceSummaryPrompt = "基于任务的 TAPD 来源内容生成结构化需求摘要。"
-				resp.ThreadName = "生成需求摘要：" + issueForSource.Title
-			}
+		}
+		resp.SourceContext = h.buildIssueSourceContext(r.Context(), issue, credentialUserID)
+		if resp.Agent != nil {
+			resp.Agent.McpConfig = h.injectSourceCredentialMCPEnv(r.Context(), resp.Agent.McpConfig, resp.SourceContext)
+		}
+		if _, ok := service.ParseIssueSourceSummaryContext(*task); ok {
+			resp.SourceSummaryPrompt = "基于任务的 TAPD 来源内容生成结构化需求摘要。"
+			resp.ThreadName = "生成需求摘要：" + issue.Title
 		}
 
 		// Look up the prior session for this (agent, issue) pair so the daemon
@@ -418,78 +425,96 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 
 	// Chat task: populate workspace/session info from the chat_session table.
 	if task.ChatSessionID.Valid {
-		if cs, err := h.Queries.GetChatSession(r.Context(), task.ChatSessionID); err == nil {
-			resp.WorkspaceID = uuidToString(cs.WorkspaceID)
-			resp.ChatSessionID = uuidToString(cs.ID)
-			resp.ThreadName = cs.Title
-			if ws, err := h.Queries.GetWorkspace(r.Context(), cs.WorkspaceID); err == nil && ws.Repos != nil {
-				var repos []RepoData
-				if json.Unmarshal(ws.Repos, &repos) == nil && len(repos) > 0 {
-					resp.Repos = repos
+		cs, err := h.Queries.GetChatSession(r.Context(), task.ChatSessionID)
+		if err != nil {
+			h.writeClaimResponseBuildError(w, task.ID, runtimeID, "chat session", err)
+			outcome = "error_build"
+			return
+		}
+		resp.WorkspaceID = uuidToString(cs.WorkspaceID)
+		resp.ChatSessionID = uuidToString(cs.ID)
+		resp.ThreadName = cs.Title
+		if !task.ForceFreshSession {
+			// Resume chat sessions only when the stored pointer was produced
+			// by the same runtime as the claiming task. When the chat_session
+			// pointer is missing (legacy NULL runtime_id), stale (last task
+			// failed before reporting completion), or runtime-mismatched, fall
+			// back to the most recent task row that recorded a session_id —
+			// otherwise a single failed turn would silently drop the entire
+			// conversation memory on the next message. The fallback also
+			// requires runtime to match.
+			if cs.SessionID.Valid && cs.RuntimeID.Valid && cs.RuntimeID == task.RuntimeID {
+				resp.PriorSessionID = cs.SessionID.String
+			}
+			if cs.WorkDir.Valid {
+				resp.PriorWorkDir = cs.WorkDir.String
+			}
+			if prior, err := h.Queries.GetLastChatTaskSession(r.Context(), cs.ID); err == nil && prior.SessionID.Valid {
+				if resp.PriorSessionID == "" && prior.RuntimeID == task.RuntimeID {
+					resp.PriorSessionID = prior.SessionID.String
+				}
+				if prior.WorkDir.Valid && resp.PriorWorkDir == "" {
+					resp.PriorWorkDir = prior.WorkDir.String
 				}
 			}
-			if !task.ForceFreshSession {
-				// Resume chat sessions only when the stored pointer was produced
-				// by the same runtime as the claiming task. When the chat_session
-				// pointer is missing (legacy NULL runtime_id), stale (last task
-				// failed before reporting completion), or runtime-mismatched, fall
-				// back to the most recent task row that recorded a session_id —
-				// otherwise a single failed turn would silently drop the entire
-				// conversation memory on the next message. The fallback also
-				// requires runtime to match.
-				if cs.SessionID.Valid && cs.RuntimeID.Valid && cs.RuntimeID == task.RuntimeID {
-					resp.PriorSessionID = cs.SessionID.String
-				}
-				if cs.WorkDir.Valid {
-					resp.PriorWorkDir = cs.WorkDir.String
-				}
-				if prior, err := h.Queries.GetLastChatTaskSession(r.Context(), cs.ID); err == nil && prior.SessionID.Valid {
-					if resp.PriorSessionID == "" && prior.RuntimeID == task.RuntimeID {
-						resp.PriorSessionID = prior.SessionID.String
-					}
-					if prior.WorkDir.Valid && resp.PriorWorkDir == "" {
-						resp.PriorWorkDir = prior.WorkDir.String
-					}
+		}
+		// Build the chat prompt from EVERY user message that has arrived
+		// since the agent's last reply — not just the most recent one. A
+		// short-window debounce (MUL-2968) can land several user messages
+		// before a single run fires; the agent resumes its prior session
+		// and only learns of new input through resp.ChatMessage, so
+		// delivering just the latest message would silently drop the
+		// earlier ones (e.g. "看上海天气" then "还有青岛" → only Qingdao
+		// answered). The unanswered set is the trailing run of user
+		// messages after the last assistant message (every completed or
+		// failed run writes an assistant row, so that anchor advances each
+		// turn). Attachments are collected from each included message so
+		// the agent can `multica attachment download <id>` — the markdown
+		// URL alone is signed and 30-min expiring on the private CDN.
+		msgs, err := h.Queries.ListChatMessages(r.Context(), cs.ID)
+		if err != nil {
+			h.writeClaimResponseBuildError(w, task.ID, runtimeID, "chat messages", err)
+			outcome = "error_build"
+			return
+		}
+		if len(msgs) == 0 {
+			h.writeClaimResponseBuildError(w, task.ID, runtimeID, "chat messages", errors.New("chat session has no messages"))
+			outcome = "error_build"
+			return
+		}
+		unanswered := trailingUserMessages(msgs)
+		if len(unanswered) == 0 {
+			h.writeClaimResponseBuildError(w, task.ID, runtimeID, "chat messages", errors.New("chat session has no unanswered user messages"))
+			outcome = "error_build"
+			return
+		}
+		parts := make([]string, 0, len(unanswered))
+		for _, m := range unanswered {
+			if strings.TrimSpace(m.Content) != "" {
+				parts = append(parts, m.Content)
+			}
+			atts, err := h.Queries.ListAttachmentsByChatMessage(r.Context(), db.ListAttachmentsByChatMessageParams{
+				ChatMessageID: m.ID,
+				WorkspaceID:   parseUUID(resp.WorkspaceID),
+			})
+			if err != nil {
+				h.writeClaimResponseBuildError(w, task.ID, runtimeID, "chat message attachments", err)
+				outcome = "error_build"
+				return
+			}
+			if len(atts) > 0 {
+				for _, a := range atts {
+					resp.ChatMessageAttachments = append(resp.ChatMessageAttachments, ChatAttachmentMeta{
+						ID:          uuidToString(a.ID),
+						Filename:    a.Filename,
+						ContentType: a.ContentType,
+					})
 				}
 			}
-			// Build the chat prompt from EVERY user message that has arrived
-			// since the agent's last reply — not just the most recent one. A
-			// short-window debounce (MUL-2968) can land several user messages
-			// before a single run fires; the agent resumes its prior session
-			// and only learns of new input through resp.ChatMessage, so
-			// delivering just the latest message would silently drop the
-			// earlier ones (e.g. "看上海天气" then "还有青岛" → only Qingdao
-			// answered). The unanswered set is the trailing run of user
-			// messages after the last assistant message (every completed or
-			// failed run writes an assistant row, so that anchor advances each
-			// turn). Attachments are collected from each included message so
-			// the agent can `multica attachment download <id>` — the markdown
-			// URL alone is signed and 30-min expiring on the private CDN.
-			if msgs, err := h.Queries.ListChatMessages(r.Context(), cs.ID); err == nil && len(msgs) > 0 {
-				unanswered := trailingUserMessages(msgs)
-				parts := make([]string, 0, len(unanswered))
-				for _, m := range unanswered {
-					if strings.TrimSpace(m.Content) != "" {
-						parts = append(parts, m.Content)
-					}
-					if atts, attErr := h.Queries.ListAttachmentsByChatMessage(r.Context(), db.ListAttachmentsByChatMessageParams{
-						ChatMessageID: m.ID,
-						WorkspaceID:   parseUUID(resp.WorkspaceID),
-					}); attErr == nil && len(atts) > 0 {
-						for _, a := range atts {
-							resp.ChatMessageAttachments = append(resp.ChatMessageAttachments, ChatAttachmentMeta{
-								ID:          uuidToString(a.ID),
-								Filename:    a.Filename,
-								ContentType: a.ContentType,
-							})
-						}
-					}
-				}
-				resp.ChatMessage = strings.Join(parts, "\n\n")
-				if strings.TrimSpace(resp.ThreadName) == "" {
-					resp.ThreadName = resp.ChatMessage
-				}
-			}
+		}
+		resp.ChatMessage = strings.Join(parts, "\n\n")
+		if strings.TrimSpace(resp.ThreadName) == "" {
+			resp.ThreadName = resp.ChatMessage
 		}
 	}
 
@@ -497,30 +522,30 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 	// autopilot, and include the autopilot instructions because there is no
 	// issue for the agent to fetch.
 	if task.AutopilotRunID.Valid {
-		if run, err := h.Queries.GetAutopilotRun(r.Context(), task.AutopilotRunID); err == nil {
-			resp.AutopilotID = uuidToString(run.AutopilotID)
-			resp.AutopilotSource = run.Source
-			if run.TriggerPayload != nil {
-				resp.AutopilotTriggerPayload = json.RawMessage(run.TriggerPayload)
-			}
-			if ap, err := h.Queries.GetAutopilot(r.Context(), run.AutopilotID); err == nil {
-				resp.AutopilotTitle = ap.Title
-				resp.ThreadName = ap.Title
-				if ap.Description.Valid {
-					resp.AutopilotDescription = ap.Description.String
-				}
-				if resp.WorkspaceID == "" {
-					resp.WorkspaceID = uuidToString(ap.WorkspaceID)
-				}
-				if len(resp.Repos) == 0 {
-					if ws, err := h.Queries.GetWorkspace(r.Context(), ap.WorkspaceID); err == nil && ws.Repos != nil {
-						var repos []RepoData
-						if json.Unmarshal(ws.Repos, &repos) == nil && len(repos) > 0 {
-							resp.Repos = repos
-						}
-					}
-				}
-			}
+		run, err := h.Queries.GetAutopilotRun(r.Context(), task.AutopilotRunID)
+		if err != nil {
+			h.writeClaimResponseBuildError(w, task.ID, runtimeID, "autopilot run", err)
+			outcome = "error_build"
+			return
+		}
+		resp.AutopilotID = uuidToString(run.AutopilotID)
+		resp.AutopilotSource = run.Source
+		if run.TriggerPayload != nil {
+			resp.AutopilotTriggerPayload = json.RawMessage(run.TriggerPayload)
+		}
+		ap, err := h.Queries.GetAutopilot(r.Context(), run.AutopilotID)
+		if err != nil {
+			h.writeClaimResponseBuildError(w, task.ID, runtimeID, "autopilot", err)
+			outcome = "error_build"
+			return
+		}
+		resp.AutopilotTitle = ap.Title
+		resp.ThreadName = ap.Title
+		if ap.Description.Valid {
+			resp.AutopilotDescription = ap.Description.String
+		}
+		if resp.WorkspaceID == "" {
+			resp.WorkspaceID = uuidToString(ap.WorkspaceID)
 		}
 	}
 
@@ -551,60 +576,68 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			var projectRepos []RepoData
 			if qc.ProjectID != "" {
 				projectUUID, err := util.ParseUUID(qc.ProjectID)
-				if err == nil {
-					resp.ProjectID = qc.ProjectID
-					if proj, err := h.Queries.GetProject(r.Context(), projectUUID); err == nil {
-						resp.ProjectTitle = proj.Title
-					}
-					if rows := h.listProjectResourcesForProject(r.Context(), projectUUID); len(rows) > 0 {
-						out := make([]ProjectResourceData, 0, len(rows))
-						for _, row := range rows {
-							label := ""
-							if row.Label.Valid {
-								label = row.Label.String
+				if err != nil {
+					h.writeClaimResponseBuildError(w, task.ID, runtimeID, "quick-create project id", err)
+					outcome = "error_build"
+					return
+				}
+				resp.ProjectID = qc.ProjectID
+				proj, err := h.Queries.GetProject(r.Context(), projectUUID)
+				if err != nil {
+					h.writeClaimResponseBuildError(w, task.ID, runtimeID, "quick-create project", err)
+					outcome = "error_build"
+					return
+				}
+				resp.ProjectTitle = proj.Title
+				rows, err := h.Queries.ListProjectResources(r.Context(), projectUUID)
+				if err != nil {
+					h.writeClaimResponseBuildError(w, task.ID, runtimeID, "quick-create project resources", err)
+					outcome = "error_build"
+					return
+				}
+				if len(rows) > 0 {
+					out := make([]ProjectResourceData, 0, len(rows))
+					for _, row := range rows {
+						label := ""
+						if row.Label.Valid {
+							label = row.Label.String
+						}
+						ref := json.RawMessage(row.ResourceRef)
+						if len(ref) == 0 {
+							ref = json.RawMessage("{}")
+						}
+						out = append(out, ProjectResourceData{
+							ID:           uuidToString(row.ID),
+							ResourceType: row.ResourceType,
+							ResourceRef:  ref,
+							Label:        label,
+						})
+						switch row.ResourceType {
+						case "github_repo":
+							var payload struct {
+								URL string `json:"url"`
 							}
-							ref := json.RawMessage(row.ResourceRef)
-							if len(ref) == 0 {
-								ref = json.RawMessage("{}")
+							if json.Unmarshal(row.ResourceRef, &payload) == nil && payload.URL != "" {
+								projectRepos = append(projectRepos, RepoData{URL: payload.URL})
 							}
-							out = append(out, ProjectResourceData{
-								ID:           uuidToString(row.ID),
-								ResourceType: row.ResourceType,
-								ResourceRef:  ref,
-								Label:        label,
-							})
-							switch row.ResourceType {
-							case "github_repo":
-								var payload struct {
-									URL string `json:"url"`
-								}
-								if json.Unmarshal(row.ResourceRef, &payload) == nil && payload.URL != "" {
-									projectRepos = append(projectRepos, RepoData{URL: payload.URL})
-								}
-							case "gongfeng_repo":
-								var payload struct {
-									URL         string `json:"url"`
-									ProjectPath string `json:"project_path"`
-								}
-								if json.Unmarshal(row.ResourceRef, &payload) == nil {
-									if cloneURL := canonicalGongfengCloneURL(payload.URL, payload.ProjectPath); cloneURL != "" {
-										projectRepos = append(projectRepos, RepoData{URL: cloneURL})
-									}
+						case "gongfeng_repo":
+							var payload struct {
+								URL         string `json:"url"`
+								ProjectPath string `json:"project_path"`
+							}
+							if json.Unmarshal(row.ResourceRef, &payload) == nil {
+								if cloneURL := canonicalGongfengCloneURL(payload.URL, payload.ProjectPath); cloneURL != "" {
+									projectRepos = append(projectRepos, RepoData{URL: cloneURL})
 								}
 							}
 						}
-						resp.ProjectResources = out
 					}
+					resp.ProjectResources = out
 				}
 			}
 
 			if len(projectRepos) > 0 {
 				resp.Repos = projectRepos
-			} else if ws, err := h.Queries.GetWorkspace(r.Context(), parseUUID(qc.WorkspaceID)); err == nil && ws.Repos != nil {
-				var repos []RepoData
-				if json.Unmarshal(ws.Repos, &repos) == nil && len(repos) > 0 {
-					resp.Repos = repos
-				}
 			}
 
 			// Parent-issue resolution for quick-create tasks opened from
@@ -703,16 +736,23 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 	// quick-create) so every agent running in the workspace sees the same
 	// shared context. Empty string when the owner hasn't set one; the daemon
 	// skips rendering the heading in that case.
-	if ws, err := h.Queries.GetWorkspace(r.Context(), parseUUID(resp.WorkspaceID)); err == nil {
-		if ws.Context.Valid {
-			resp.WorkspaceContext = ws.Context.String
+	workspace, err := h.Queries.GetWorkspace(r.Context(), parseUUID(resp.WorkspaceID))
+	if err != nil {
+		h.writeClaimResponseBuildError(w, task.ID, runtimeID, "workspace", err)
+		outcome = "error_build"
+		return
+	}
+	if workspace.Context.Valid {
+		resp.WorkspaceContext = workspace.Context.String
+	}
+	if len(resp.Repos) == 0 && !suppressIssueReposForRole && workspace.Repos != nil {
+		var repos []RepoData
+		if err := json.Unmarshal(workspace.Repos, &repos); err != nil {
+			h.writeClaimResponseBuildError(w, task.ID, runtimeID, "workspace repos", err)
+			outcome = "error_build"
+			return
 		}
-	} else {
-		slog.Warn("task claim: failed to load workspace for context injection",
-			"task_id", uuidToString(task.ID),
-			"workspace_id", resp.WorkspaceID,
-			"error", err,
-		)
+		resp.Repos = repos
 	}
 
 	// Mint a task-scoped `mat_` token bound to (agent, task, workspace,

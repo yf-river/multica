@@ -1310,16 +1310,3 @@ func parseUUIDLoose(s string) (pgtype.UUID, error) {
 	}
 	return u, nil
 }
-
-// listProjectResourcesForProject is a small helper used by the daemon claim
-// handler to attach project resources to outgoing tasks.
-func (h *Handler) listProjectResourcesForProject(ctx context.Context, projectID pgtype.UUID) []db.ProjectResource {
-	if !projectID.Valid {
-		return nil
-	}
-	rows, err := h.Queries.ListProjectResources(ctx, projectID)
-	if err != nil {
-		return nil
-	}
-	return rows
-}

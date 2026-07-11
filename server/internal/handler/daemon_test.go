@@ -205,6 +205,16 @@ func createDispatchedClaimFixtureTask(t *testing.T, ctx context.Context, agentID
 	return taskID
 }
 
+func insertChatUserMessageFixture(t *testing.T, ctx context.Context, sessionID, content string) {
+	t.Helper()
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO chat_message (chat_session_id, role, content)
+		VALUES ($1, 'user', $2)
+	`, sessionID, content); err != nil {
+		t.Fatalf("setup: insert chat user message: %v", err)
+	}
+}
+
 func TestTaskExecutionPolicyForSOPRoles(t *testing.T) {
 	pm := taskExecutionPolicyForRole("pm", true)
 	if pm.RoleKey != "pm" || pm.CanAccessRepo || pm.CanEditRepo || pm.ProjectSkillMode != "none" {
@@ -3589,6 +3599,7 @@ func TestClaimTask_ChatPriorSessionRuntimeGuard(t *testing.T) {
 		t.Fatalf("setup: create skip chat session: %v", err)
 	}
 	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM chat_session WHERE id = $1`, skipSessionID) })
+	insertChatUserMessageFixture(t, ctx, skipSessionID, "runtime guard skip")
 
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO agent_task_queue (
@@ -3637,6 +3648,7 @@ func TestClaimTask_ChatPriorSessionRuntimeGuard(t *testing.T) {
 		t.Fatalf("setup: create resume chat session: %v", err)
 	}
 	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM chat_session WHERE id = $1`, resumeSessionID) })
+	insertChatUserMessageFixture(t, ctx, resumeSessionID, "runtime guard resume")
 
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO agent_task_queue (
@@ -3734,6 +3746,51 @@ func TestClaimTask_ChatDeliversAllUnansweredUserMessages(t *testing.T) {
 	task = claimTaskForRuntimeGuard(t, runtimeID, daemonID)
 	if task.ChatMessage != "深圳呢" {
 		t.Fatalf("after a reply, only the new user message must be delivered; got %q", task.ChatMessage)
+	}
+}
+
+func TestClaimTask_ChatWithoutMessagesRemainsRecoverable(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	agentID, runtimeID, daemonID := createRuntimeGuardAgent(t, ctx)
+
+	var sessionID, taskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO chat_session (workspace_id, agent_id, creator_id, title)
+		VALUES ($1, $2, $3, 'empty claim chat')
+		RETURNING id
+	`, testWorkspaceID, agentID, testUserID).Scan(&sessionID); err != nil {
+		t.Fatalf("setup: create chat session: %v", err)
+	}
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, chat_session_id, status, priority)
+		VALUES ($1, $2, $3, 'queued', 2)
+		RETURNING id
+	`, agentID, runtimeID, sessionID).Scan(&taskID); err != nil {
+		t.Fatalf("setup: create empty chat task: %v", err)
+	}
+	t.Cleanup(func() {
+		mustExec(t, ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+		mustExec(t, ctx, `DELETE FROM chat_session WHERE id = $1`, sessionID)
+	})
+
+	w := httptest.NewRecorder()
+	req := newDaemonTokenRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/tasks/claim", nil, testWorkspaceID, daemonID)
+	req = withURLParam(req, "runtimeId", runtimeID)
+	testHandler.ClaimTaskByRuntime(w, req)
+
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("ClaimTaskByRuntime: expected 500, got %d: %s", w.Code, w.Body.String())
+	}
+	var status string
+	if err := testPool.QueryRow(ctx, `SELECT status FROM agent_task_queue WHERE id = $1`, taskID).Scan(&status); err != nil {
+		t.Fatalf("read empty chat task: %v", err)
+	}
+	if status != "dispatched" {
+		t.Fatalf("empty chat task status = %q, want recoverable dispatched", status)
 	}
 }
 
@@ -3868,6 +3925,7 @@ func TestClaimTask_ChatForceFreshSessionSkipsPriorSession(t *testing.T) {
 		t.Fatalf("setup: create chat session: %v", err)
 	}
 	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM chat_session WHERE id = $1`, chatSessionID) })
+	insertChatUserMessageFixture(t, ctx, chatSessionID, "force fresh")
 
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO agent_task_queue (
@@ -3923,6 +3981,7 @@ func TestClaimTask_ChatLegacyNullRuntimeFallsBackToTaskRow(t *testing.T) {
 		t.Fatalf("setup: create legacy chat session: %v", err)
 	}
 	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM chat_session WHERE id = $1`, legacySessionID) })
+	insertChatUserMessageFixture(t, ctx, legacySessionID, "legacy runtime fallback")
 
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO agent_task_queue (
