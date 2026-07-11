@@ -127,6 +127,7 @@ vi.mock("@multica/core/chat", () => {
     setInputDraftAttachments: vi.fn(),
     addInputDraftAttachment: vi.fn(),
     clearInputDraft: vi.fn(),
+    clearInputDraftForWorkspace: vi.fn(),
   };
   return {
     DRAFT_NEW_SESSION: "__draft_new__",
@@ -141,6 +142,7 @@ vi.mock("@multica/core/chat", () => {
 
 import { ChatInput } from "./chat-input";
 import { useChatStore } from "@multica/core/chat";
+import { setCurrentWorkspace } from "@multica/core/platform";
 
 type ChatInputOnSend = React.ComponentProps<typeof ChatInput>["onSend"];
 type ChatInputCommit = Parameters<ChatInputOnSend>[2];
@@ -156,6 +158,7 @@ beforeEach(() => {
     inputDrafts: Record<string, string>;
     setInputDraft: ReturnType<typeof vi.fn>;
     clearInputDraft: ReturnType<typeof vi.fn>;
+    clearInputDraftForWorkspace: ReturnType<typeof vi.fn>;
     inputDraftAttachments: Record<string, UploadResult[]>;
     setInputDraftAttachments: ReturnType<typeof vi.fn>;
     addInputDraftAttachment: ReturnType<typeof vi.fn>;
@@ -185,6 +188,8 @@ beforeEach(() => {
     delete state.inputDrafts[key];
     delete state.inputDraftAttachments[key];
   });
+  state.clearInputDraftForWorkspace.mockClear();
+  setCurrentWorkspace(null, null);
 });
 
 function renderInput(props: Partial<React.ComponentProps<typeof ChatInput>> = {}) {
@@ -614,5 +619,22 @@ describe("ChatInput commit handoff", () => {
     expect(editorState.blurred).toBe(0);
     // …but the sent session's persisted draft is cleared regardless.
     expect(useChatStore.getState().clearInputDraft).toHaveBeenCalledWith("__draft_new__:agent-1");
+  });
+
+  it("clears the workspace captured at send even if navigation changes before commit", async () => {
+    setCurrentWorkspace("team-a", "ws-a");
+    const onSend = vi.fn<ChatInputOnSend>((_content, _ids, commitInput) => {
+      setCurrentWorkspace("team-b", "ws-b");
+      commitInput({ clearEditor: false });
+      return true;
+    });
+
+    await typeAndSend(onSend);
+
+    expect(useChatStore.getState().clearInputDraftForWorkspace).toHaveBeenCalledWith(
+      "team-a",
+      "__draft_new__:agent-1",
+    );
+    expect(useChatStore.getState().clearInputDraft).not.toHaveBeenCalled();
   });
 });

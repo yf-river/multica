@@ -2412,6 +2412,50 @@ func (q *Queries) ListWorkspaceAgentTaskSnapshot(ctx context.Context, workspaceI
 	return items, nil
 }
 
+const lockAgentInWorkspaceForChat = `-- name: LockAgentInWorkspaceForChat :one
+SELECT id, workspace_id, name, avatar_url, runtime_mode, runtime_config, scope, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level FROM agent
+WHERE id = $1 AND workspace_id = $2
+FOR SHARE
+`
+
+type LockAgentInWorkspaceForChatParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+// Chat create/send takes the agent lock before the session lock. This keeps
+// archive/delete and send on one lock order and prevents a task from being
+// queued after the destination agent becomes unusable.
+func (q *Queries) LockAgentInWorkspaceForChat(ctx context.Context, arg LockAgentInWorkspaceForChatParams) (Agent, error) {
+	row := q.db.QueryRow(ctx, lockAgentInWorkspaceForChat, arg.ID, arg.WorkspaceID)
+	var i Agent
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Name,
+		&i.AvatarUrl,
+		&i.RuntimeMode,
+		&i.RuntimeConfig,
+		&i.Scope,
+		&i.Status,
+		&i.MaxConcurrentTasks,
+		&i.OwnerID,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Description,
+		&i.RuntimeID,
+		&i.Instructions,
+		&i.ArchivedAt,
+		&i.ArchivedBy,
+		&i.CustomEnv,
+		&i.CustomArgs,
+		&i.McpConfig,
+		&i.Model,
+		&i.ThinkingLevel,
+	)
+	return i, err
+}
+
 const lockAgentTaskForRetry = `-- name: LockAgentTaskForRetry :one
 SELECT id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id FROM agent_task_queue
 WHERE id = $1

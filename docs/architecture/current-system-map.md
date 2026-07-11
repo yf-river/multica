@@ -21,17 +21,17 @@ evidence reviewable by humans.
 | Next.js route handlers | 1 |
 | Next.js rewrites | 6 |
 | Desktop route literals | 29 |
-| Database tables | 85 |
+| Database tables | 86 |
 | Database functions | 9 |
 | Database triggers | 4 |
 | Database indexes | 185 |
-| Migration files (up + down) | 12 |
-| sqlc modules | 52 |
-| sqlc queries | 565 |
+| Migration files (up + down) | 14 |
+| sqlc modules | 53 |
+| sqlc queries | 572 |
 | Go WebSocket events | 81 |
 | TypeScript WebSocket events | 71 |
-| Zustand store definitions | 28 |
-| React Query consumer files | 171 |
+| Zustand store definitions | 29 |
+| React Query consumer files | 172 |
 | Environment variable names | 220 |
 | Manually identified external systems | 12 |
 
@@ -507,6 +507,8 @@ intentionally platform-specific.
 | 5 | domain_event_dead_letter | up | — | 0 | 0 | 3 | `server/migrations/005_domain_event_dead_letter.up.sql` |
 | 6 | squad_terminal_projection_atomicity | down | — | 0 | 0 | 0 | `server/migrations/006_squad_terminal_projection_atomicity.down.sql` |
 | 6 | squad_terminal_projection_atomicity | up | — | 0 | 0 | 1 | `server/migrations/006_squad_terminal_projection_atomicity.up.sql` |
+| 7 | chat_request_idempotency | down | — | 0 | 0 | 0 | `server/migrations/007_chat_request_idempotency.down.sql` |
+| 7 | chat_request_idempotency | up | chat_idempotency_record | 0 | 0 | 0 | `server/migrations/007_chat_request_idempotency.up.sql` |
 
 ### Current tables discovered from up migrations
 
@@ -525,6 +527,7 @@ intentionally platform-specific.
 - `autopilot_run` — `server/migrations/001_current_schema.up.sql#autopilot_run`
 - `autopilot_subscriber` — `server/migrations/001_current_schema.up.sql#autopilot_subscriber`
 - `autopilot_trigger` — `server/migrations/001_current_schema.up.sql#autopilot_trigger`
+- `chat_idempotency_record` — `server/migrations/007_chat_request_idempotency.up.sql#chat_idempotency_record`
 - `chat_message` — `server/migrations/001_current_schema.up.sql#chat_message`
 - `chat_session` — `server/migrations/001_current_schema.up.sql#chat_session`
 - `comment` — `server/migrations/001_current_schema.up.sql#comment`
@@ -610,16 +613,17 @@ intentionally platform-specific.
 
 ### sqlc modules
 
-All 565 query names, commands, and stable source anchors are stored in the JSON companion.
+All 572 query names, commands, and stable source anchors are stored in the JSON companion.
 
 | Module | Queries | SQL source | Generated source |
 | --- | --- | --- | --- |
 | activity | 5 | `server/pkg/db/queries/activity.sql` | `server/pkg/db/generated/activity.sql.go` |
-| agent | 59 | `server/pkg/db/queries/agent.sql` | `server/pkg/db/generated/agent.sql.go` |
+| agent | 60 | `server/pkg/db/queries/agent.sql` | `server/pkg/db/generated/agent.sql.go` |
 | agent_playground | 17 | `server/pkg/db/queries/agent_playground.sql` | `server/pkg/db/generated/agent_playground.sql.go` |
-| attachment | 16 | `server/pkg/db/queries/attachment.sql` | `server/pkg/db/generated/attachment.sql.go` |
+| attachment | 17 | `server/pkg/db/queries/attachment.sql` | `server/pkg/db/generated/attachment.sql.go` |
 | autopilot | 37 | `server/pkg/db/queries/autopilot.sql` | `server/pkg/db/generated/autopilot.sql.go` |
-| chat | 23 | `server/pkg/db/queries/chat.sql` | `server/pkg/db/generated/chat.sql.go` |
+| chat | 25 | `server/pkg/db/queries/chat.sql` | `server/pkg/db/generated/chat.sql.go` |
+| chat_idempotency | 3 | `server/pkg/db/queries/chat_idempotency.sql` | `server/pkg/db/generated/chat_idempotency.sql.go` |
 | comment | 22 | `server/pkg/db/queries/comment.sql` | `server/pkg/db/generated/comment.sql.go` |
 | daemon_token | 4 | `server/pkg/db/queries/daemon_token.sql` | `server/pkg/db/generated/daemon_token.sql.go` |
 | domain_event_outbox | 9 | `server/pkg/db/queries/domain_event_outbox.sql` | `server/pkg/db/generated/domain_event_outbox.sql.go` |
@@ -695,6 +699,7 @@ still include daemon-only/backend projection events and possible frontend gaps.
 | packages/core | `packages/core/agents/stores/view-store.ts` | `useAgentsViewStore` | yes |
 | packages/core | `packages/core/auth/store.ts` | `createAuthStore` | no |
 | packages/core | `packages/core/autopilots/stores/view-store.ts` | `useAutopilotsViewStore` | yes |
+| packages/core | `packages/core/chat/pending-operation-store.ts` | `usePendingChatOperationStore` | yes |
 | packages/core | `packages/core/chat/recent-context-store.ts` | `useRecentContextStore` | yes |
 | packages/core | `packages/core/chat/store.ts` | `createChatStore` | no |
 | packages/core | `packages/core/config/index.ts` | `configStore`, `useConfigStore` | no |
@@ -725,7 +730,7 @@ still include daemon-only/backend projection events and possible frontend gaps.
 | apps/desktop | 12 |
 | apps/web | 3 |
 | packages/core | 45 |
-| packages/views | 111 |
+| packages/views | 112 |
 
 Operation counts: `useQuery` 274, `useInfiniteQuery` 1, `useMutation` 96, `queryOptions` 67, `infiniteQueryOptions` 1.
 The JSON companion lists every consumer file and every discovered exported
@@ -974,7 +979,7 @@ written to the generated outputs.
 | filesystem | 45 | `server/cmd/migrate/main.go`, `server/cmd/multica/cmd_agent.go`, `server/cmd/multica/cmd_attachment.go`, `server/cmd/multica/cmd_daemon_windows.go`, `server/cmd/multica/cmd_daemon.go`, `server/cmd/multica/cmd_issue_comments.go`, `server/cmd/multica/cmd_issue_pull_request.go`, `server/cmd/multica/cmd_issue.go` |
 | object-storage | 1 | `server/internal/storage/s3.go` |
 | outbound-http | 17 | `server/cmd/multica/cmd_daemon.go`, `server/cmd/multica/cmd_setup.go`, `server/internal/analytics/posthog.go`, `server/internal/auth/cloud_pat.go`, `server/internal/cli/client.go`, `server/internal/cli/update.go`, `server/internal/daemon/client.go`, `server/internal/daemon/task_artifacts.go` |
-| postgresql | 125 | `server/cmd/backfill_codex_usage_cache/main.go`, `server/cmd/migrate/main.go`, `server/cmd/server/activity_listeners.go`, `server/cmd/server/autopilot_failure_monitor.go`, `server/cmd/server/autopilot_scheduler.go`, `server/cmd/server/chat_projection.go`, `server/cmd/server/comment_projection.go`, `server/cmd/server/dbstats.go` |
+| postgresql | 126 | `server/cmd/backfill_codex_usage_cache/main.go`, `server/cmd/migrate/main.go`, `server/cmd/server/activity_listeners.go`, `server/cmd/server/autopilot_failure_monitor.go`, `server/cmd/server/autopilot_scheduler.go`, `server/cmd/server/chat_projection.go`, `server/cmd/server/comment_projection.go`, `server/cmd/server/dbstats.go` |
 | redis | 15 | `server/cmd/server/main.go`, `server/cmd/server/router.go`, `server/internal/auth/cloud_pat.go`, `server/internal/auth/daemon_token_cache.go`, `server/internal/auth/membership_cache.go`, `server/internal/auth/pat_cache.go`, `server/internal/handler/runtime_liveness_store.go`, `server/internal/handler/runtime_local_skills_redis_store.go` |
 | subprocess | 31 | `server/cmd/multica/cmd_auth.go`, `server/cmd/multica/cmd_daemon_unix.go`, `server/cmd/multica/cmd_daemon.go`, `server/internal/cli/update.go`, `server/internal/daemon/config.go`, `server/internal/daemon/execenv/codex_home_link_windows.go`, `server/internal/daemon/execenv/git.go`, `server/internal/daemon/execenv/openclaw_config.go` |
 | websocket | 4 | `server/internal/daemon/wakeup.go`, `server/internal/daemonws/hub.go`, `server/internal/integrations/lark/ws_connector.go`, `server/internal/realtime/hub.go` |

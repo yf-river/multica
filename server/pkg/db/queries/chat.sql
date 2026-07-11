@@ -58,6 +58,14 @@ SELECT id FROM chat_session
 WHERE id = $1
 FOR UPDATE;
 
+-- name: LockChatSessionForSend :one
+-- Serialize sends within one session and conflict with hard delete. The agent
+-- row is always locked first by callers, so archive/delete cannot introduce a
+-- reverse lock order.
+SELECT * FROM chat_session
+WHERE id = $1 AND workspace_id = $2 AND creator_id = $3
+FOR NO KEY UPDATE;
+
 -- name: DeleteChatSession :exec
 -- Hard delete. chat_message rows cascade via FK ON DELETE CASCADE; the
 -- chat_session_id on agent_task_queue is set NULL by FK so completed/failed
@@ -106,6 +114,12 @@ LIMIT $2;
 -- name: GetChatMessage :one
 SELECT * FROM chat_message
 WHERE id = $1;
+
+-- name: GetUserChatMessageByTask :one
+SELECT * FROM chat_message
+WHERE task_id = $1 AND role = 'user'
+ORDER BY created_at ASC, id ASC
+LIMIT 1;
 
 -- name: CreateChatTask :one
 INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, chat_session_id, initiator_user_id)

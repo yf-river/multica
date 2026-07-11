@@ -101,4 +101,23 @@ describe("chat store — workspace lifecycle", () => {
     await flush();
     expect(store.getState().inputDrafts).toEqual({ "draft-a": "from A" });
   });
+
+  it("clears the captured workspace without mutating the workspace now on screen", async () => {
+    const storage = memStorage();
+    setCurrentWorkspace("team-a", "ws-a");
+    const store = createChatStore({ storage });
+    store.getState().setInputDraft("draft-1", "from A");
+
+    setCurrentWorkspace("team-b", "ws-b");
+    await flush();
+    store.getState().setInputDraft("draft-1", "from B");
+
+    store.getState().clearInputDraftForWorkspace("team-a", "draft-1");
+
+    expect(store.getState().inputDrafts).toEqual({ "draft-1": "from B" });
+    expect(storage.getItem("multica:chat:drafts:team-a")).toBeNull();
+    expect(storage.getItem("multica:chat:drafts:team-b")).toBe(
+      JSON.stringify({ "draft-1": "from B" }),
+    );
+  });
 });

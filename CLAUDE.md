@@ -113,6 +113,9 @@ The drift-checked current-system inventory is
 When routes, persistence, state ownership, environment inputs, WebSocket
 contracts, or external I/O change, run `pnpm generate:current-system-map`; CI
 enforces the generated result with `pnpm check:current-system-map`.
+Maintained domain-flow documentation currently includes the
+[`Chat send durable flow`](docs/architecture/chat-send-flow.md), which connects
+client state and recovery through HTTP, transaction, task and event boundaries.
 
 What lives where for sharing purposes is documented in *Sharing Principles* below — read it once.
 

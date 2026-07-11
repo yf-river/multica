@@ -244,6 +244,18 @@ type AutopilotTrigger struct {
 	EventFilters   []byte             `json:"event_filters"`
 }
 
+type ChatIdempotencyRecord struct {
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	ActorType      string             `json:"actor_type"`
+	ActorID        pgtype.UUID        `json:"actor_id"`
+	Operation      string             `json:"operation"`
+	IdempotencyKey pgtype.UUID        `json:"idempotency_key"`
+	RequestHash    string             `json:"request_hash"`
+	ResponseStatus pgtype.Int4        `json:"response_status"`
+	ResponseBody   []byte             `json:"response_body"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
 type ChatMessage struct {
 	ID            pgtype.UUID        `json:"id"`
 	ChatSessionID pgtype.UUID        `json:"chat_session_id"`

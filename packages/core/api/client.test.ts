@@ -1,6 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiClient, ApiError } from "./client";
 
+const CHAT_IDEMPOTENCY_KEY = "11111111-1111-4111-8111-111111111111";
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
@@ -31,6 +33,42 @@ describe("ApiClient", () => {
       code: "api_response_contract_invalid",
       mayHaveCommitted: true,
     });
+  });
+
+  it("classifies transport failures by whether the request may have committed", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("connection reset")));
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.listAgents()).rejects.toMatchObject({
+      name: "ApiTransportError",
+      mayHaveCommitted: false,
+    });
+    await expect(client.createChatSession(
+      { agent_id: "agent-1", title: "hello" },
+      CHAT_IDEMPOTENCY_KEY,
+    )).rejects.toMatchObject({
+      name: "ApiTransportError",
+      mayHaveCommitted: true,
+    });
+  });
+
+  it("sends the required idempotency key when creating a chat session", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      id: "session-1",
+      workspace_id: "ws-1",
+      agent_id: "agent-1",
+      creator_id: "user-1",
+    }), { status: 201, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+
+    await client.createChatSession(
+      { agent_id: "agent-1", title: "hello" },
+      CHAT_IDEMPOTENCY_KEY,
+    );
+
+    expect((fetchMock.mock.calls[0]![1]?.headers as Record<string, string>)["Idempotency-Key"])
+      .toBe(CHAT_IDEMPOTENCY_KEY);
   });
 
   it("keeps void 204 mutations successful", async () => {
@@ -102,7 +140,7 @@ describe("ApiClient", () => {
     ));
     const client = new ApiClient("https://api.example.test");
 
-    await expect(client.sendChatMessage("session-1", "hello")).rejects.toMatchObject({
+    await expect(client.sendChatMessage("session-1", "hello", CHAT_IDEMPOTENCY_KEY)).rejects.toMatchObject({
       code: "api_response_contract_invalid",
       mayHaveCommitted: true,
     });
@@ -985,13 +1023,15 @@ describe("ApiClient", () => {
       vi.stubGlobal("fetch", fetchMock);
 
       const client = new ApiClient("https://api.example.test");
-      await client.sendChatMessage("session-1", "hello", ["att-1", "att-2"]);
+      await client.sendChatMessage("session-1", "hello", CHAT_IDEMPOTENCY_KEY, ["att-1", "att-2"]);
 
       const [, init] = fetchMock.mock.calls[0]!;
       expect(JSON.parse(init?.body as string)).toEqual({
         content: "hello",
         attachment_ids: ["att-1", "att-2"],
       });
+      expect((init?.headers as Record<string, string>)["Idempotency-Key"])
+        .toBe(CHAT_IDEMPOTENCY_KEY);
     });
 
     it("sendChatMessage omits attachment_ids when the list is empty or undefined", async () => {
@@ -1010,8 +1050,13 @@ describe("ApiClient", () => {
       vi.stubGlobal("fetch", fetchMock);
 
       const client = new ApiClient("https://api.example.test");
-      await client.sendChatMessage("session-1", "hello");
-      await client.sendChatMessage("session-1", "again", []);
+      await client.sendChatMessage("session-1", "hello", CHAT_IDEMPOTENCY_KEY);
+      await client.sendChatMessage(
+        "session-1",
+        "again",
+        "22222222-2222-4222-8222-222222222222",
+        [],
+      );
 
       expect(JSON.parse(fetchMock.mock.calls[0]![1]?.body as string)).toEqual({ content: "hello" });
       expect(JSON.parse(fetchMock.mock.calls[1]![1]?.body as string)).toEqual({ content: "again" });

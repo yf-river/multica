@@ -5,9 +5,11 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -39,6 +41,10 @@ func (h *Handler) CreateChatSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	workspaceID := ctxWorkspaceID(r.Context())
+	idempotencyKey, ok := requireChatIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
 
 	var req CreateChatSessionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -47,6 +53,10 @@ func (h *Handler) CreateChatSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.AgentID == "" {
 		writeError(w, http.StatusBadRequest, "agent_id is required")
+		return
+	}
+	if utf8.RuneCountInString(req.Title) > chatSessionTitleMaxLen {
+		writeError(w, http.StatusBadRequest, "title must be at most 200 characters")
 		return
 	}
 	agentID, ok := parseUUIDOrBadRequest(w, req.AgentID, "agent_id")
@@ -58,8 +68,45 @@ func (h *Handler) CreateChatSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify agent exists in workspace.
-	agent, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
+	actorType, actorID := h.resolveActor(r, userID, workspaceID)
+	scope, err := newChatIdempotencyScope(
+		workspaceUUID,
+		actorType,
+		parseUUID(actorID),
+		chatCreateSessionOperation,
+		idempotencyKey,
+		createChatSessionRequestFingerprint{Version: 1, AgentID: req.AgentID, Title: req.Title},
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to prepare chat session request")
+		return
+	}
+
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	record, created, err := reserveChatIdempotencyRecord(r.Context(), qtx, scope)
+	if err != nil {
+		writeChatIdempotencyFailure(w, err)
+		return
+	}
+	if !created {
+		response, status, err := decodeChatIdempotencyResponse[ChatSessionResponse](record)
+		if err != nil {
+			slog.Error("decode create-chat-session replay failed", "error", err)
+			writeChatIdempotencyFailure(w, err)
+			return
+		}
+		w.Header().Set("Idempotency-Replayed", "true")
+		writeJSON(w, status, response)
+		return
+	}
+
+	lockedAgent, err := qtx.LockAgentInWorkspaceForChat(r.Context(), db.LockAgentInWorkspaceForChatParams{
 		ID:          agentID,
 		WorkspaceID: workspaceUUID,
 	})
@@ -67,20 +114,15 @@ func (h *Handler) CreateChatSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "agent not found")
 		return
 	}
-	if agent.ArchivedAt.Valid {
+	if lockedAgent.ArchivedAt.Valid {
 		writeError(w, http.StatusBadRequest, "agent is archived")
 		return
 	}
-	// Private-agent gate: members must be in allowed_principals to start
-	// a chat with a personal agent. Agent-to-agent chat sessions bypass
-	// the gate so A2A collaboration still works.
-	actorType, actorID := h.resolveActor(r, userID, workspaceID)
-	if !h.canAccessPersonalAgent(r.Context(), agent, actorType, actorID, workspaceID) {
+	if !h.canAccessPersonalAgent(r.Context(), lockedAgent, actorType, actorID, workspaceID) {
 		writeError(w, http.StatusForbidden, "you do not have access to this agent")
 		return
 	}
-
-	session, err := h.Queries.CreateChatSession(r.Context(), db.CreateChatSessionParams{
+	session, err := qtx.CreateChatSession(r.Context(), db.CreateChatSessionParams{
 		WorkspaceID: workspaceUUID,
 		AgentID:     agentID,
 		CreatorID:   parseUUID(userID),
@@ -90,8 +132,17 @@ func (h *Handler) CreateChatSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to create chat session")
 		return
 	}
-
-	writeJSON(w, http.StatusCreated, chatSessionToResponse(session))
+	response := chatSessionToResponse(session)
+	if err := completeChatIdempotencyRecord(r.Context(), qtx, scope, http.StatusCreated, response); err != nil {
+		slog.Error("persist create-chat-session response failed", "error", err)
+		writeChatIdempotencyFailure(w, err)
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit chat session")
+		return
+	}
+	writeJSON(w, http.StatusCreated, response)
 }
 
 func (h *Handler) ListChatSessions(w http.ResponseWriter, r *http.Request) {
@@ -425,6 +476,10 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	workspaceID := ctxWorkspaceID(r.Context())
 	sessionID := chi.URLParam(r, "sessionId")
+	idempotencyKey, ok := requireChatIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
 
 	var req SendChatMessageRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -444,27 +499,131 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Load chat session and re-check the personal-agent gate on every send.
-	// The session's creator passed the gate at create time, but their
-	// workspace role (or the agent's owner) may have changed since — keep
-	// stale sessions from being a back-door into a personal agent the user
-	// can no longer reach. Agent senders bypass to preserve A2A collaboration.
-	session, ok := h.gateChatSessionForUser(w, r, userID, workspaceID, sessionID)
+	sessionUUID, ok := parseUUIDOrBadRequest(w, sessionID, "chat session id")
 	if !ok {
 		return
 	}
-	// New archive flow doesn't exist anymore, but legacy rows with
-	// status='archived' may still be in the DB from before the feature
-	// was removed. Refuse to enqueue new agent work for them — frontend
-	// surfaces these as read-only.
-	if session.Status != "active" {
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
+	if !ok {
+		return
+	}
+
+	actorType, actorID := h.resolveActor(r, userID, workspaceID)
+	scope, err := newChatIdempotencyScope(
+		workspaceUUID,
+		actorType,
+		parseUUID(actorID),
+		chatSendMessageOperation,
+		idempotencyKey,
+		sendChatMessageRequestFingerprint{
+			Version:       1,
+			SessionID:     sessionID,
+			Content:       req.Content,
+			AttachmentIDs: canonicalAttachmentIDs(attachmentIDs),
+		},
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to prepare chat message request")
+		return
+	}
+
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	record, created, err := reserveChatIdempotencyRecord(r.Context(), qtx, scope)
+	if err != nil {
+		writeChatIdempotencyFailure(w, err)
+		return
+	}
+	if !created {
+		response, status, err := decodeChatIdempotencyResponse[SendChatMessageResponse](record)
+		if err != nil {
+			slog.Error("decode send-chat-message replay failed", "error", err)
+			writeChatIdempotencyFailure(w, err)
+			return
+		}
+		_ = tx.Rollback(r.Context())
+		h.TaskService.WakeChatTaskIfQueued(r.Context(), response.TaskID)
+		w.Header().Set("Idempotency-Replayed", "true")
+		writeJSON(w, status, response)
+		return
+	}
+
+	// Mutable business preconditions run only for a new operation. A replay
+	// must return the committed response even if the session or agent changed
+	// after the original 201 was lost.
+	session, err := qtx.GetChatSessionInWorkspace(r.Context(), db.GetChatSessionInWorkspaceParams{
+		ID:          sessionUUID,
+		WorkspaceID: workspaceUUID,
+	})
+	if err != nil {
+		writeError(w, http.StatusNotFound, "chat session not found")
+		return
+	}
+	if uuidToString(session.CreatorID) != userID {
+		writeError(w, http.StatusForbidden, "not your chat session")
+		return
+	}
+
+	lockedAgent, err := qtx.LockAgentInWorkspaceForChat(r.Context(), db.LockAgentInWorkspaceForChatParams{
+		ID:          session.AgentID,
+		WorkspaceID: session.WorkspaceID,
+	})
+	if err != nil {
+		writeError(w, http.StatusNotFound, "agent not found")
+		return
+	}
+	if lockedAgent.ArchivedAt.Valid {
+		writeError(w, http.StatusBadRequest, "agent is archived")
+		return
+	}
+	if !lockedAgent.RuntimeID.Valid {
+		writeError(w, http.StatusBadRequest, "agent has no runtime")
+		return
+	}
+	if !h.canAccessPersonalAgent(r.Context(), lockedAgent, actorType, actorID, workspaceID) {
+		writeError(w, http.StatusForbidden, "you do not have access to this agent")
+		return
+	}
+	// New archive flow no longer exists, but retained current data may still
+	// contain archived rows. They remain readable and cannot enqueue new work.
+	lockedSession, err := qtx.LockChatSessionForSend(r.Context(), db.LockChatSessionForSendParams{
+		ID:          session.ID,
+		WorkspaceID: session.WorkspaceID,
+		CreatorID:   session.CreatorID,
+	})
+	if err != nil {
+		writeError(w, http.StatusNotFound, "chat session not found")
+		return
+	}
+	if lockedSession.AgentID != lockedAgent.ID {
+		writeError(w, http.StatusConflict, "chat session agent changed")
+		return
+	}
+	if lockedSession.Status != "active" {
 		writeError(w, http.StatusBadRequest, "chat session is archived")
 		return
 	}
 
-	// Create the user message first so the daemon can always find it.
-	msg, err := h.Queries.CreateChatMessage(r.Context(), db.CreateChatMessageParams{
-		ChatSessionID: session.ID,
+	if len(attachmentIDs) > 0 {
+		if _, err := qtx.LockAttachmentsForChatMessage(r.Context(), db.LockAttachmentsForChatMessageParams{
+			WorkspaceID:   lockedSession.WorkspaceID,
+			ChatSessionID: lockedSession.ID,
+			UploaderType:  actorType,
+			UploaderID:    parseUUID(actorID),
+			AttachmentIds: attachmentIDs,
+		}); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to lock chat attachments")
+			return
+		}
+	}
+
+	msg, err := qtx.CreateChatMessage(r.Context(), db.CreateChatMessageParams{
+		ChatSessionID: lockedSession.ID,
 		Role:          "user",
 		Content:       req.Content,
 	})
@@ -473,74 +632,81 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Back-fill chat_message_id on attachments the sender uploaded while
-	// composing. New clients upload workspace-scoped unattached rows and bind
-	// them here; older clients may still upload against the chat_session_id.
-	// The query accepts both shapes, but only for this workspace, this actor,
-	// and rows that are not already linked to an issue/comment/message.
-	var boundAttachmentIDs []string
+	boundAttachmentIDs := make([]string, 0, len(attachmentIDs))
 	if len(attachmentIDs) > 0 {
-		actorType, actorID := h.resolveActor(r, userID, workspaceID)
-		bound, err := h.Queries.LinkAttachmentsToChatMessage(r.Context(), db.LinkAttachmentsToChatMessageParams{
+		bound, err := qtx.LinkAttachmentsToChatMessage(r.Context(), db.LinkAttachmentsToChatMessageParams{
 			ChatMessageID: msg.ID,
-			ChatSessionID: session.ID,
-			WorkspaceID:   session.WorkspaceID,
+			ChatSessionID: lockedSession.ID,
+			WorkspaceID:   lockedSession.WorkspaceID,
 			UploaderType:  actorType,
 			UploaderID:    parseUUID(actorID),
 			AttachmentIds: attachmentIDs,
 		})
 		if err != nil {
-			// Don't fail the send — the message content is already saved and
-			// the attachments remain on the session (still downloadable).
-			slog.Warn("link chat attachments failed", "error", err, "message_id", uuidToString(msg.ID))
+			writeError(w, http.StatusInternalServerError, "failed to link chat attachments")
+			return
 		}
-		boundAttachmentIDs = make([]string, 0, len(bound))
 		for _, id := range bound {
 			boundAttachmentIDs = append(boundAttachmentIDs, uuidToString(id))
 		}
+		sort.Strings(boundAttachmentIDs)
 	}
 
-	// Enqueue a chat task after the message exists. For web chat the sender is
-	// the authenticated request user (sessions are creator-only), so they are
-	// the task initiator — surfaced to the agent under `## Task Initiator`.
-	task, err := h.TaskService.EnqueueChatTask(r.Context(), session, parseUUID(userID))
+	task, err := h.TaskService.CreateChatTaskInTx(
+		r.Context(),
+		qtx,
+		lockedSession,
+		lockedAgent,
+		parseUUID(userID),
+	)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to enqueue chat task: "+err.Error())
+		slog.Error("create transactional chat task failed", "session_id", sessionID, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to enqueue chat task")
 		return
 	}
-	if err := h.Queries.LinkChatMessageToTask(r.Context(), db.LinkChatMessageToTaskParams{
+	if err := qtx.LinkChatMessageToTask(r.Context(), db.LinkChatMessageToTaskParams{
 		ID:     msg.ID,
 		TaskID: task.ID,
 	}); err != nil {
-		// Don't fail the send: the task already exists and the user message
-		// is persisted. The link is only needed for precise empty-cancel
-		// cleanup; older/unlinked rows simply keep the historical behavior.
-		slog.Warn("link user chat message to task failed",
-			"message_id", uuidToString(msg.ID),
-			"task_id", uuidToString(task.ID),
-			"error", err,
-		)
+		writeError(w, http.StatusInternalServerError, "failed to link chat message to task")
+		return
+	}
+	if err := qtx.TouchChatSession(r.Context(), lockedSession.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update chat session")
+		return
+	}
+	response := SendChatMessageResponse{
+		MessageID:     uuidToString(msg.ID),
+		TaskID:        uuidToString(task.ID),
+		CreatedAt:     timestampToString(task.CreatedAt),
+		AttachmentIDs: boundAttachmentIDs,
+	}
+	if err := completeChatIdempotencyRecord(r.Context(), qtx, scope, http.StatusCreated, response); err != nil {
+		slog.Error("persist send-chat-message response failed", "error", err)
+		writeChatIdempotencyFailure(w, err)
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit chat message")
+		return
 	}
 
-	// Touch session updated_at.
-	if err := h.Queries.TouchChatSession(r.Context(), session.ID); err != nil {
-		slog.Warn("failed to touch chat session", "session_id", sessionID, "error", err)
-	}
+	h.TaskService.PublishChatTaskEnqueued(r.Context(), task)
 	taskContext := h.TaskService.AnalyticsContextForTask(r.Context(), task)
 	platform, _, _ := middleware.ClientMetadataFromContext(r.Context())
 	obsmetrics.RecordEvent(h.Analytics, h.Metrics, analytics.ChatMessageSent(
 		userID,
 		workspaceID,
-		uuidToString(session.ID),
+		uuidToString(lockedSession.ID),
 		uuidToString(task.ID),
-		uuidToString(session.AgentID),
+		uuidToString(lockedSession.AgentID),
 		taskContext.RuntimeMode,
 		taskContext.Provider,
 		platform,
 	))
 
 	// Broadcast the user message.
-	resolvedSessionID := uuidToString(session.ID)
+	resolvedSessionID := uuidToString(lockedSession.ID)
 	h.publishChat(protocol.EventChatMessage, workspaceID, "member", userID, resolvedSessionID, protocol.ChatMessagePayload{
 		ChatSessionID: resolvedSessionID,
 		MessageID:     uuidToString(msg.ID),
@@ -550,12 +716,7 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:     timestampToString(msg.CreatedAt),
 	})
 
-	writeJSON(w, http.StatusCreated, SendChatMessageResponse{
-		MessageID:     uuidToString(msg.ID),
-		TaskID:        uuidToString(task.ID),
-		CreatedAt:     timestampToString(task.CreatedAt),
-		AttachmentIDs: boundAttachmentIDs,
-	})
+	writeJSON(w, http.StatusCreated, response)
 }
 
 type ChatMessagesCursorResponse struct {

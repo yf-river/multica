@@ -297,6 +297,7 @@ func TestCreateChatSession_PrivateAgentForbidsPlainMember(t *testing.T) {
 	}
 	w := httptest.NewRecorder()
 	req := newRequestAs(memberID, "POST", "/api/chat/sessions", body)
+	req.Header.Set("Idempotency-Key", "10000000-0000-4000-8000-000000000001")
 	req = req.WithContext(middleware.SetMemberContext(req.Context(), testWorkspaceID, memberRow))
 	testHandler.CreateChatSession(w, req)
 	if w.Code != http.StatusForbidden {

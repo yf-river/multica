@@ -16,6 +16,14 @@ WHERE id = $1;
 SELECT * FROM agent
 WHERE id = $1 AND workspace_id = $2;
 
+-- name: LockAgentInWorkspaceForChat :one
+-- Chat create/send takes the agent lock before the session lock. This keeps
+-- archive/delete and send on one lock order and prevents a task from being
+-- queued after the destination agent becomes unusable.
+SELECT * FROM agent
+WHERE id = $1 AND workspace_id = $2
+FOR SHARE;
+
 -- name: CreateAgent :one
 INSERT INTO agent (
     workspace_id, name, description, avatar_url, runtime_mode,

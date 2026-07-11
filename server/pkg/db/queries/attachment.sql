@@ -84,6 +84,25 @@ WHERE workspace_id = sqlc.arg(workspace_id)
   AND id = ANY(sqlc.arg(attachment_ids)::uuid[])
 RETURNING id;
 
+-- name: LockAttachmentsForChatMessage :many
+-- Lock eligible rows in a stable order before the message/task transaction
+-- binds them. Overlapping sends then converge without lock-order deadlocks;
+-- missing/ineligible ids retain the current partial-bind response semantics.
+SELECT id FROM attachment
+WHERE workspace_id = sqlc.arg(workspace_id)
+  AND issue_id IS NULL
+  AND comment_id IS NULL
+  AND chat_message_id IS NULL
+  AND (
+    chat_session_id IS NULL
+    OR chat_session_id = sqlc.arg(chat_session_id)
+  )
+  AND uploader_type = sqlc.arg(uploader_type)
+  AND uploader_id = sqlc.arg(uploader_id)
+  AND id = ANY(sqlc.arg(attachment_ids)::uuid[])
+ORDER BY id
+FOR UPDATE;
+
 -- name: DetachAttachmentsFromUserChatMessageByTask :many
 -- When an empty chat task is cancelled, its user message is deleted. The
 -- attachment FK is ON DELETE CASCADE, so without this the bound rows would be

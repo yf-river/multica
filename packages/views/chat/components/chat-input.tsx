@@ -13,7 +13,7 @@ import { FileUploadButton } from "@multica/ui/components/common/file-upload-butt
 import { SubmitButton } from "@multica/ui/components/common/submit-button";
 import { useChatStore, newSessionDraftKey } from "@multica/core/chat";
 import { createLogger } from "@multica/core/logger";
-import { enterKey, formatShortcut, modKey } from "@multica/core/platform";
+import { enterKey, formatShortcut, getCurrentSlug, modKey } from "@multica/core/platform";
 import type { UploadResult } from "@multica/core/hooks/use-file-upload";
 import type { MentionItem } from "../../editor/extensions/mention-suggestion";
 import type { Attachment } from "@multica/core/types";
@@ -132,6 +132,7 @@ export function ChatInput({
   const setInputDraftAttachments = useChatStore((s) => s.setInputDraftAttachments);
   const addInputDraftAttachment = useChatStore((s) => s.addInputDraftAttachment);
   const clearInputDraft = useChatStore((s) => s.clearInputDraft);
+  const clearInputDraftForWorkspace = useChatStore((s) => s.clearInputDraftForWorkspace);
   const [isEmpty, setIsEmpty] = useState(!inputDraft.trim());
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [editorRestore, setEditorRestore] = useState<{
@@ -268,6 +269,7 @@ export function ChatInput({
     // activeSessionId synchronously, so reading it after onSend would point
     // at the new session and leave the old draft orphaned.
     const keyAtSend = draftKey;
+    const workspaceSlugAtSend = getCurrentSlug();
     let committed = false;
     const commitInput = (options?: { extraDraftKeys?: string[]; clearEditor?: boolean }) => {
       if (committed) return;
@@ -292,9 +294,13 @@ export function ChatInput({
       }
       // The sent draft's data is cleared regardless — the message is on its
       // way, so its persisted draft must not resurface.
-      clearInputDraft(keyAtSend);
+      const clearCapturedDraft = (key: string) => {
+        if (workspaceSlugAtSend) clearInputDraftForWorkspace(workspaceSlugAtSend, key);
+        else clearInputDraft(key);
+      };
+      clearCapturedDraft(keyAtSend);
       for (const key of options?.extraDraftKeys ?? []) {
-        if (key !== keyAtSend) clearInputDraft(key);
+        if (key !== keyAtSend) clearCapturedDraft(key);
       }
       uploadMapRef.current.clear();
       setIsSubmitting(false);

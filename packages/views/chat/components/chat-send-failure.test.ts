@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { ApiResponseValidationError } from "@multica/core/api";
+import { ApiError, ApiResponseValidationError, ApiTransportError } from "@multica/core/api";
 import { reconcileChatSendFailure } from "./chat-send-failure";
 
 describe("reconcileChatSendFailure", () => {
@@ -27,5 +27,31 @@ describe("reconcileChatSendFailure", () => {
 
     expect(rollbackOptimisticState).toHaveBeenCalledOnce();
     expect(refreshServerState).not.toHaveBeenCalled();
+  });
+
+  it("keeps intent for a mutation transport failure", () => {
+    const refreshServerState = vi.fn();
+    const rollbackOptimisticState = vi.fn();
+
+    expect(reconcileChatSendFailure(
+      new ApiTransportError("POST /api/chat/sessions/:id/messages", true, new TypeError("fetch failed")),
+      { refreshServerState, rollbackOptimisticState },
+    )).toBe("outcome-unknown");
+
+    expect(refreshServerState).toHaveBeenCalledOnce();
+    expect(rollbackOptimisticState).not.toHaveBeenCalled();
+  });
+
+  it("keeps the same idempotent intent for a gateway or server 5xx", () => {
+    const refreshServerState = vi.fn();
+    const rollbackOptimisticState = vi.fn();
+
+    expect(reconcileChatSendFailure(
+      new ApiError("bad gateway", 502, "Bad Gateway"),
+      { refreshServerState, rollbackOptimisticState },
+    )).toBe("outcome-unknown");
+
+    expect(refreshServerState).toHaveBeenCalledOnce();
+    expect(rollbackOptimisticState).not.toHaveBeenCalled();
   });
 });

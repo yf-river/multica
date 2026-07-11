@@ -1,6 +1,18 @@
-import { ApiResponseValidationError } from "@multica/core/api";
+import {
+  ApiError,
+  ApiResponseValidationError,
+  ApiTransportError,
+} from "@multica/core/api";
 
 export type ChatSendFailureDisposition = "failed" | "outcome-unknown";
+
+export function isOutcomeUnknownMutationError(error: unknown): boolean {
+  return (
+    (error instanceof ApiError && error.status >= 500) ||
+    ((error instanceof ApiResponseValidationError || error instanceof ApiTransportError) &&
+      error.mayHaveCommitted)
+  );
+}
 
 /**
  * A malformed 2xx mutation response does not prove that the mutation failed.
@@ -14,7 +26,7 @@ export function reconcileChatSendFailure(
     rollbackOptimisticState: () => void;
   },
 ): ChatSendFailureDisposition {
-  if (error instanceof ApiResponseValidationError && error.mayHaveCommitted) {
+  if (isOutcomeUnknownMutationError(error)) {
     actions.refreshServerState();
     return "outcome-unknown";
   }

@@ -555,10 +555,49 @@ var ErrChatTaskAgentNoRuntime = errors.New("chat task: agent has no runtime")
 // latest message in the silence window. Stored on the task so the daemon brief
 // can attribute the run to the right person. See MUL-2645.
 func (s *TaskService) EnqueueChatTask(ctx context.Context, chatSession db.ChatSession, initiatorUserID pgtype.UUID) (db.AgentTaskQueue, error) {
-	agent, err := s.Queries.GetAgent(ctx, chatSession.AgentID)
+	var task db.AgentTaskQueue
+	err := s.runInTx(ctx, func(queries *db.Queries) error {
+		agent, err := queries.LockAgentInWorkspaceForChat(ctx, db.LockAgentInWorkspaceForChatParams{
+			ID:          chatSession.AgentID,
+			WorkspaceID: chatSession.WorkspaceID,
+		})
+		if err != nil {
+			return fmt.Errorf("lock chat agent: %w", err)
+		}
+		lockedSession, err := queries.LockChatSessionForSend(ctx, db.LockChatSessionForSendParams{
+			ID:          chatSession.ID,
+			WorkspaceID: chatSession.WorkspaceID,
+			CreatorID:   chatSession.CreatorID,
+		})
+		if err != nil {
+			return fmt.Errorf("lock chat session: %w", err)
+		}
+		if lockedSession.Status != "active" {
+			return errors.New("chat task: session is not active")
+		}
+		task, err = s.CreateChatTaskInTx(ctx, queries, lockedSession, agent, initiatorUserID)
+		return err
+	})
 	if err != nil {
-		slog.Error("chat task enqueue failed", "chat_session_id", util.UUIDToString(chatSession.ID), "error", err)
-		return db.AgentTaskQueue{}, fmt.Errorf("load agent: %w", err)
+		return db.AgentTaskQueue{}, err
+	}
+	s.PublishChatTaskEnqueued(ctx, task)
+	return task, nil
+}
+
+// CreateChatTaskInTx performs only the database reads and task insert. Callers
+// that already own a transaction can compose the task with its triggering
+// message and idempotency record, then invoke PublishChatTaskEnqueued exactly
+// once after commit.
+func (s *TaskService) CreateChatTaskInTx(
+	ctx context.Context,
+	queries *db.Queries,
+	chatSession db.ChatSession,
+	agent db.Agent,
+	initiatorUserID pgtype.UUID,
+) (db.AgentTaskQueue, error) {
+	if agent.ID != chatSession.AgentID || agent.WorkspaceID != chatSession.WorkspaceID {
+		return db.AgentTaskQueue{}, errors.New("chat task: locked agent does not match session")
 	}
 	if agent.ArchivedAt.Valid {
 		return db.AgentTaskQueue{}, ErrChatTaskAgentArchived
@@ -567,7 +606,7 @@ func (s *TaskService) EnqueueChatTask(ctx context.Context, chatSession db.ChatSe
 		return db.AgentTaskQueue{}, ErrChatTaskAgentNoRuntime
 	}
 
-	task, err := s.Queries.CreateChatTask(ctx, db.CreateChatTaskParams{
+	task, err := queries.CreateChatTask(ctx, db.CreateChatTaskParams{
 		AgentID:         chatSession.AgentID,
 		RuntimeID:       agent.RuntimeID,
 		Priority:        2, // medium priority for chat
@@ -579,11 +618,32 @@ func (s *TaskService) EnqueueChatTask(ctx context.Context, chatSession db.ChatSe
 		return db.AgentTaskQueue{}, fmt.Errorf("create chat task: %w", err)
 	}
 
-	slog.Info("chat task enqueued", "task_id", util.UUIDToString(task.ID), "chat_session_id", util.UUIDToString(chatSession.ID), "agent_id", util.UUIDToString(chatSession.AgentID))
+	return task, nil
+}
+
+// PublishChatTaskEnqueued emits post-commit observability and wakeups for a
+// task already durably inserted by CreateChatTaskInTx.
+func (s *TaskService) PublishChatTaskEnqueued(ctx context.Context, task db.AgentTaskQueue) {
+	slog.Info("chat task enqueued", "task_id", util.UUIDToString(task.ID), "chat_session_id", util.UUIDToString(task.ChatSessionID), "agent_id", util.UUIDToString(task.AgentID))
 	// See EnqueueTaskForIssue for ordering rationale.
 	s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, task)
 	s.NotifyTaskEnqueued(ctx, task)
-	return task, nil
+}
+
+// WakeChatTaskIfQueued is the only replay side effect for a committed chat
+// request. It repairs the narrow crash window between transaction commit and
+// the original daemon wakeup without duplicating task/chat events, traces,
+// metrics, or analytics.
+func (s *TaskService) WakeChatTaskIfQueued(ctx context.Context, taskID string) {
+	parsed, err := util.ParseUUID(taskID)
+	if err != nil {
+		return
+	}
+	task, err := s.Queries.GetAgentTask(ctx, parsed)
+	if err != nil || task.Status != "queued" {
+		return
+	}
+	s.notifyTaskAvailable(task)
 }
 
 // CancelTasksForIssue cancels every active task on the issue, reconciles each

@@ -164,7 +164,14 @@ func (s *TaskService) buildChatUserInputMetadata(ctx context.Context, task db.Ag
 		return s.buildDirectUserInputMetadata(task)
 	}
 
-	message, err := s.Queries.GetMostRecentUserChatMessage(ctx, task.ChatSessionID)
+	message, err := s.Queries.GetUserChatMessageByTask(ctx, task.ID)
+	if err != nil {
+		// Lark's silence-window dispatcher intentionally batches multiple
+		// inbound messages into one task and therefore has no single linked
+		// message. Web sends link task_id atomically and always take the exact
+		// path above; the latest-message fallback is only for that batched flow.
+		message, err = s.Queries.GetMostRecentUserChatMessage(ctx, task.ChatSessionID)
+	}
 	content := session.Title
 	sourceID := session.ID
 	messageID := ""

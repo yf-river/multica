@@ -387,6 +387,7 @@ export interface ApiClientOptions {
 
 type JsonRequestInit = RequestInit & {
   responseMayHaveCommitted?: boolean;
+  extraHeaders?: Record<string, string>;
 };
 
 export interface LoginResponse {
@@ -408,6 +409,26 @@ export class ApiError extends Error {
     this.status = status;
     this.statusText = statusText;
     this.body = body;
+  }
+}
+
+/**
+ * The client did not receive an HTTP response, so a mutation's outcome is
+ * unknown: the request may have reached the server before the connection was
+ * interrupted. Callers with an idempotency key can safely retry the same
+ * logical operation; callers without one must reconcile authoritative state.
+ */
+export class ApiTransportError extends Error {
+  readonly endpoint: string;
+  readonly mayHaveCommitted: boolean;
+  readonly cause: unknown;
+
+  constructor(endpoint: string, mayHaveCommitted: boolean, cause: unknown) {
+    super(`API transport failed: ${endpoint}`);
+    this.name = "ApiTransportError";
+    this.endpoint = endpoint;
+    this.mayHaveCommitted = mayHaveCommitted;
+    this.cause = cause;
   }
 }
 
@@ -553,11 +574,22 @@ export class ApiClient {
 
     this.logger.info(`→ ${method} ${path}`, { rid });
 
-    const res = await fetch(`${this.baseUrl}${path}`, {
-      ...init,
-      headers,
-      credentials: "include",
-    });
+    let res: Response;
+    try {
+      res = await fetch(`${this.baseUrl}${path}`, {
+        ...init,
+        headers,
+        credentials: "include",
+      });
+    } catch (error) {
+      const mayHaveCommitted = !["GET", "HEAD", "OPTIONS"].includes(method.toUpperCase());
+      this.logger.warn(`← transport error ${path}`, {
+        rid,
+        duration: `${Date.now() - start}ms`,
+        mayHaveCommitted,
+      });
+      throw new ApiTransportError(`${method.toUpperCase()} ${path}`, mayHaveCommitted, error);
+    }
 
     if (!res.ok) {
       if (res.status === 401) this.handleUnauthorized();
@@ -588,11 +620,11 @@ export class ApiClient {
   }
 
   private async fetch<T>(path: string, init?: JsonRequestInit): Promise<T> {
-    const { responseMayHaveCommitted, ...requestInit } = init ?? {};
+    const { responseMayHaveCommitted, extraHeaders, ...requestInit } = init ?? {};
     const method = (requestInit.method ?? "GET").toUpperCase();
     const res = await this.fetchRaw(path, {
       ...requestInit,
-      extraHeaders: { "Content-Type": "application/json" },
+      extraHeaders: { "Content-Type": "application/json", ...extraHeaders },
     });
     // Handle 204 No Content
     if (res.status === 204) {
@@ -1807,9 +1839,13 @@ export class ApiClient {
     return parseWithFallback(raw, ChatSessionSchema, EMPTY_CHAT_SESSION, { endpoint: "GET /api/chat/sessions/:id" });
   }
 
-  async createChatSession(data: { agent_id: string; title?: string }): Promise<ChatSession> {
+  async createChatSession(
+    data: { agent_id: string; title?: string },
+    idempotencyKey: string,
+  ): Promise<ChatSession> {
     const raw = await this.fetch<unknown>("/api/chat/sessions", {
       method: "POST",
+      extraHeaders: { "Idempotency-Key": idempotencyKey },
       body: JSON.stringify(data),
     });
     return parseOrThrow(raw, ChatSessionSchema, EMPTY_CHAT_SESSION, { endpoint: "POST /api/chat/sessions" });
@@ -1848,6 +1884,7 @@ export class ApiClient {
   async sendChatMessage(
     sessionId: string,
     content: string,
+    idempotencyKey: string,
     attachmentIds?: string[],
   ): Promise<SendChatMessageResponse> {
     const body: { content: string; attachment_ids?: string[] } = { content };
@@ -1856,6 +1893,7 @@ export class ApiClient {
     }
     const raw = await this.fetch<unknown>(`/api/chat/sessions/${sessionId}/messages`, {
       method: "POST",
+      extraHeaders: { "Idempotency-Key": idempotencyKey },
       body: JSON.stringify(body),
     });
     return parseOrThrow(raw, SendChatMessageResponseSchema, EMPTY_SEND_CHAT_MESSAGE_RESPONSE, {

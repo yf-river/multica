@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 // CancelTaskByUser (POST /api/tasks/{taskId}/cancel) used to key cancellation
@@ -615,6 +617,7 @@ func TestCancelTaskByUser_ChatTaskWithBoundAttachment_SurvivesCancelAndRebinds(t
 		"content":        userContent,
 		"attachment_ids": []string{attachmentID},
 	})
+	sendReq.Header.Set("Idempotency-Key", uuid.NewString())
 	sendReq = withURLParam(sendReq, "sessionId", sessionID)
 	sendReq = withChatTestWorkspaceCtx(t, sendReq)
 	sendW := httptest.NewRecorder()

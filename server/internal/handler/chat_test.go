@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -68,6 +69,7 @@ func sendChatMessageForTest(t *testing.T, sessionID string, body map[string]any)
 	t.Helper()
 
 	req := newRequest("POST", "/api/chat-sessions/"+sessionID+"/messages", body)
+	req.Header.Set("Idempotency-Key", uuid.NewString())
 	req = withURLParam(req, "sessionId", sessionID)
 	req = withChatTestWorkspaceCtx(t, req)
 	w := httptest.NewRecorder()
@@ -244,6 +246,7 @@ func TestSendChatMessage_InvalidAttachmentIDs(t *testing.T) {
 		"content":        "hi",
 		"attachment_ids": []string{"not-a-uuid"},
 	})
+	req.Header.Set("Idempotency-Key", uuid.NewString())
 	req = withURLParam(req, "sessionId", sessionID)
 	req = withChatTestWorkspaceCtx(t, req)
 	w := httptest.NewRecorder()

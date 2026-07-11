@@ -35,6 +35,7 @@ const WORKSPACE_LOCAL_KEYS = [
 const ACCOUNT_LOCAL_KEYS = [
   "multica_recent_issues",
   "multica_recent_contexts",
+  "multica_pending_chat_operations",
   "multica_tabs",
 ] as const;
 

@@ -20,17 +20,17 @@
     "webRouteHandlers": 1,
     "webRewrites": 6,
     "desktopRouteLiterals": 29,
-    "databaseTables": 85,
+    "databaseTables": 86,
     "databaseFunctions": 9,
     "databaseTriggers": 4,
     "databaseIndexes": 185,
-    "migrations": 12,
-    "sqlcModules": 52,
-    "sqlcQueries": 565,
+    "migrations": 14,
+    "sqlcModules": 53,
+    "sqlcQueries": 572,
     "goWebsocketEvents": 81,
     "typescriptWebsocketEvents": 71,
-    "zustandStores": 28,
-    "reactQueryConsumerFiles": 171,
+    "zustandStores": 29,
+    "reactQueryConsumerFiles": 172,
     "environmentVariables": 220,
     "manualExternalSystems": 12
   },
@@ -5401,6 +5401,37 @@
           "droppedFunctions": [],
           "droppedTriggers": [],
           "droppedIndexes": []
+        },
+        {
+          "version": 7,
+          "name": "chat_request_idempotency",
+          "direction": "down",
+          "source": "server/migrations/007_chat_request_idempotency.down.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 7,
+          "name": "chat_request_idempotency",
+          "direction": "up",
+          "source": "server/migrations/007_chat_request_idempotency.up.sql",
+          "tablesCreated": [
+            {
+              "name": "chat_idempotency_record",
+              "source": "server/migrations/007_chat_request_idempotency.up.sql#chat_idempotency_record"
+            }
+          ],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
         }
       ],
       "tables": [
@@ -5463,6 +5494,10 @@
         {
           "name": "autopilot_trigger",
           "source": "server/migrations/001_current_schema.up.sql#autopilot_trigger"
+        },
+        {
+          "name": "chat_idempotency_record",
+          "source": "server/migrations/007_chat_request_idempotency.up.sql#chat_idempotency_record"
         },
         {
           "name": "chat_message",
@@ -7204,6 +7239,11 @@
               "source": "server/pkg/db/queries/agent.sql#ListWorkspaceAgentTaskSnapshot"
             },
             {
+              "name": "LockAgentInWorkspaceForChat",
+              "command": "one",
+              "source": "server/pkg/db/queries/agent.sql#LockAgentInWorkspaceForChat"
+            },
+            {
               "name": "LockAgentTaskForRetry",
               "command": "one",
               "source": "server/pkg/db/queries/agent.sql#LockAgentTaskForRetry"
@@ -7431,6 +7471,11 @@
               "name": "ListAttachmentURLsByIssueOrComments",
               "command": "many",
               "source": "server/pkg/db/queries/attachment.sql#ListAttachmentURLsByIssueOrComments"
+            },
+            {
+              "name": "LockAttachmentsForChatMessage",
+              "command": "many",
+              "source": "server/pkg/db/queries/attachment.sql#LockAttachmentsForChatMessage"
             },
             {
               "name": "ReplaceCommentAttachments",
@@ -7692,6 +7737,11 @@
               "source": "server/pkg/db/queries/chat.sql#GetPendingChatTask"
             },
             {
+              "name": "GetUserChatMessageByTask",
+              "command": "one",
+              "source": "server/pkg/db/queries/chat.sql#GetUserChatMessageByTask"
+            },
+            {
               "name": "LinkChatMessageToTask",
               "command": "exec",
               "source": "server/pkg/db/queries/chat.sql#LinkChatMessageToTask"
@@ -7727,6 +7777,11 @@
               "source": "server/pkg/db/queries/chat.sql#LockChatSessionForDelete"
             },
             {
+              "name": "LockChatSessionForSend",
+              "command": "one",
+              "source": "server/pkg/db/queries/chat.sql#LockChatSessionForSend"
+            },
+            {
               "name": "MarkChatSessionRead",
               "command": "exec",
               "source": "server/pkg/db/queries/chat.sql#MarkChatSessionRead"
@@ -7750,6 +7805,28 @@
               "name": "UpdateChatSessionTitle",
               "command": "one",
               "source": "server/pkg/db/queries/chat.sql#UpdateChatSessionTitle"
+            }
+          ]
+        },
+        {
+          "module": "chat_idempotency",
+          "source": "server/pkg/db/queries/chat_idempotency.sql",
+          "generatedSource": "server/pkg/db/generated/chat_idempotency.sql.go",
+          "queries": [
+            {
+              "name": "CompleteChatIdempotencyRecord",
+              "command": "one",
+              "source": "server/pkg/db/queries/chat_idempotency.sql#CompleteChatIdempotencyRecord"
+            },
+            {
+              "name": "LockChatIdempotencyRecord",
+              "command": "one",
+              "source": "server/pkg/db/queries/chat_idempotency.sql#LockChatIdempotencyRecord"
+            },
+            {
+              "name": "ReserveChatIdempotencyRecord",
+              "command": "one",
+              "source": "server/pkg/db/queries/chat_idempotency.sql#ReserveChatIdempotencyRecord"
             }
           ]
         },
@@ -11792,6 +11869,14 @@
         "persisted": true
       },
       {
+        "source": "packages/core/chat/pending-operation-store.ts",
+        "scope": "packages/core",
+        "exports": [
+          "usePendingChatOperationStore"
+        ],
+        "persisted": true
+      },
+      {
         "source": "packages/core/chat/recent-context-store.ts",
         "scope": "packages/core",
         "exports": [
@@ -13059,6 +13144,17 @@
           }
         },
         {
+          "source": "packages/views/chat/components/use-chat-operation-recovery.ts",
+          "scope": "packages/views",
+          "operations": {
+            "useQuery": 0,
+            "useInfiniteQuery": 0,
+            "useMutation": 0,
+            "queryOptions": 0,
+            "infiniteQueryOptions": 0
+          }
+        },
+        {
           "source": "packages/views/common/actor-issues-panel.tsx",
           "scope": "packages/views",
           "operations": {
@@ -13969,7 +14065,7 @@
       },
       {
         "scope": "packages/core",
-        "count": 26
+        "count": 27
       }
     ],
     "reactQueryByScope": [
@@ -13987,7 +14083,7 @@
       },
       {
         "scope": "packages/views",
-        "count": 111
+        "count": 112
       }
     ]
   },
@@ -17056,6 +17152,7 @@
           "server/internal/handler/autopilot_triggers.go",
           "server/internal/handler/autopilot_webhook.go",
           "server/internal/handler/autopilot.go",
+          "server/internal/handler/chat_idempotency.go",
           "server/internal/handler/chat.go",
           "server/internal/handler/comment_list.go",
           "server/internal/handler/comment_triggers.go",

@@ -2,6 +2,17 @@ export { createChatStore, CHAT_MIN_W, CHAT_MIN_H, CHAT_DEFAULT_W, CHAT_DEFAULT_H
 export type { ChatStoreOptions, ChatState, ChatTimelineItem } from "./store";
 export { useRecentContextStore, selectRecentContexts } from "./recent-context-store";
 export type { RecentContextEntry, RecentContextType } from "./recent-context-store";
+export {
+  claimPendingChatOperation,
+  releasePendingChatOperation,
+  usePendingChatOperationStore,
+} from "./pending-operation-store";
+export type {
+  PendingChatOperation,
+  PendingChatOperationStage,
+} from "./pending-operation-store";
+export { replayPendingChatOperation } from "./pending-operation";
+export type { PendingChatOperationClient } from "./pending-operation";
 
 import type { createChatStore as CreateChatStoreFn } from "./store";
 

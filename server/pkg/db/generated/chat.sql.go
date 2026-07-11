@@ -351,6 +351,29 @@ func (q *Queries) GetPendingChatTask(ctx context.Context, chatSessionID pgtype.U
 	return i, err
 }
 
+const getUserChatMessageByTask = `-- name: GetUserChatMessageByTask :one
+SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms FROM chat_message
+WHERE task_id = $1 AND role = 'user'
+ORDER BY created_at ASC, id ASC
+LIMIT 1
+`
+
+func (q *Queries) GetUserChatMessageByTask(ctx context.Context, taskID pgtype.UUID) (ChatMessage, error) {
+	row := q.db.QueryRow(ctx, getUserChatMessageByTask, taskID)
+	var i ChatMessage
+	err := row.Scan(
+		&i.ID,
+		&i.ChatSessionID,
+		&i.Role,
+		&i.Content,
+		&i.TaskID,
+		&i.CreatedAt,
+		&i.FailureReason,
+		&i.ElapsedMs,
+	)
+	return i, err
+}
+
 const linkChatMessageToTask = `-- name: LinkChatMessageToTask :exec
 UPDATE chat_message
 SET task_id = $2
@@ -645,6 +668,41 @@ func (q *Queries) LockChatSessionForDelete(ctx context.Context, id pgtype.UUID) 
 	var id_2 pgtype.UUID
 	err := row.Scan(&id_2)
 	return id_2, err
+}
+
+const lockChatSessionForSend = `-- name: LockChatSessionForSend :one
+SELECT id, workspace_id, agent_id, creator_id, title, session_id, work_dir, status, created_at, updated_at, unread_since, runtime_id FROM chat_session
+WHERE id = $1 AND workspace_id = $2 AND creator_id = $3
+FOR NO KEY UPDATE
+`
+
+type LockChatSessionForSendParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	CreatorID   pgtype.UUID `json:"creator_id"`
+}
+
+// Serialize sends within one session and conflict with hard delete. The agent
+// row is always locked first by callers, so archive/delete cannot introduce a
+// reverse lock order.
+func (q *Queries) LockChatSessionForSend(ctx context.Context, arg LockChatSessionForSendParams) (ChatSession, error) {
+	row := q.db.QueryRow(ctx, lockChatSessionForSend, arg.ID, arg.WorkspaceID, arg.CreatorID)
+	var i ChatSession
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AgentID,
+		&i.CreatorID,
+		&i.Title,
+		&i.SessionID,
+		&i.WorkDir,
+		&i.Status,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.UnreadSince,
+		&i.RuntimeID,
+	)
+	return i, err
 }
 
 const markChatSessionRead = `-- name: MarkChatSessionRead :exec

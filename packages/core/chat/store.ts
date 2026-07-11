@@ -3,6 +3,7 @@ import type { StorageAdapter } from "../types";
 import type { Attachment } from "../types/attachment";
 import {
   createWorkspaceAwareStorage,
+  getCurrentSlug,
   registerWorkspaceStoreLifecycle,
 } from "../platform/workspace-storage";
 import { createLogger } from "../logger";
@@ -147,6 +148,8 @@ export interface ChatState {
   setInputDraftAttachments: (sessionId: string, attachments: Attachment[]) => void;
   addInputDraftAttachment: (sessionId: string, attachment: Attachment) => void;
   clearInputDraft: (sessionId: string) => void;
+  /** Clear a captured workspace's draft without following a later route switch. */
+  clearInputDraftForWorkspace: (workspaceSlug: string, sessionId: string) => void;
   /** Persist raw size and auto-exit expanded mode. */
   setChatSize: (width: number, height: number) => void;
   setExpanded: (expanded: boolean) => void;
@@ -248,6 +251,22 @@ export function createChatStore(options: ChatStoreOptions) {
         nextAttachments,
       );
       set({ inputDrafts: nextDrafts, inputDraftAttachments: nextAttachments });
+    },
+    clearInputDraftForWorkspace: (workspaceSlug, sessionId) => {
+      const draftsKey = `${DRAFTS_KEY}:${workspaceSlug}`;
+      const attachmentsKey = `${DRAFT_ATTACHMENTS_KEY}:${workspaceSlug}`;
+      const nextDrafts = readDrafts(storage, draftsKey);
+      const nextAttachments = readDraftAttachments(storage, attachmentsKey);
+      delete nextDrafts[sessionId];
+      delete nextAttachments[sessionId];
+      writeDrafts(storage, draftsKey, nextDrafts);
+      writeDraftAttachments(storage, attachmentsKey, nextAttachments);
+
+      // Only update the mounted editor store if it still represents the same
+      // workspace. A late request from workspace A must never mutate B's UI.
+      if (getCurrentSlug() === workspaceSlug) {
+        set({ inputDrafts: nextDrafts, inputDraftAttachments: nextAttachments });
+      }
     },
     setChatSize: (w, h) => {
       logger.debug("setChatSize", { w, h });

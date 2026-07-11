@@ -18,6 +18,8 @@ import { useAuthStore } from "@multica/core/auth";
 import { agentListOptions, memberListOptions } from "@multica/core/workspace/queries";
 import { canAssignAgent } from "@multica/views/issues/components";
 import { api } from "@multica/core/api";
+import { getCurrentSlug } from "@multica/core/platform";
+import { createSafeId } from "@multica/core/utils";
 import { useAgentPresenceDetail, useWorkspaceAgentAvailability } from "@multica/core/agents";
 import { useFileUpload } from "@multica/core/hooks/use-file-upload";
 import { ActorAvatar } from "../../common/actor-avatar";
@@ -39,15 +41,24 @@ import {
   isTaskMessageTaskId,
 } from "@multica/core/chat/queries";
 import {
+  claimPendingChatOperation,
+  releasePendingChatOperation,
+  useChatStore,
+  usePendingChatOperationStore,
+} from "@multica/core/chat";
+import {
   useCreateChatSession,
   useDeleteChatSession,
   useMarkChatSessionRead,
   useUpdateChatSession,
 } from "@multica/core/chat/mutations";
-import { useChatStore } from "@multica/core/chat";
 import { ChatMessageList, ChatMessageSkeleton } from "./chat-message-list";
 import { ChatInput } from "./chat-input";
-import { reconcileChatSendFailure } from "./chat-send-failure";
+import {
+  isOutcomeUnknownMutationError,
+  reconcileChatSendFailure,
+} from "./chat-send-failure";
+import { useChatOperationRecovery } from "./use-chat-operation-recovery";
 import { ChatResizeHandles } from "./chat-resize-handles";
 import { useChatContextItems } from "./use-chat-context-items";
 import { useChatResize } from "./use-chat-resize";
@@ -173,6 +184,7 @@ export function ChatWindow() {
   const setActiveSession = useChatStore((s) => s.setActiveSession);
   const setSelectedAgentId = useChatStore((s) => s.setSelectedAgentId);
   const user = useAuthStore((s) => s.user);
+  useChatOperationRecovery(wsId);
   const { data: agents = [] } = useQuery({
     ...agentListOptions(wsId),
     enabled: isOpen,
@@ -225,6 +237,7 @@ export function ChatWindow() {
   });
   const pendingTaskId = pendingTask?.task_id ?? null;
   const stopRequestedBeforeTaskRef = useRef(false);
+  const activeOperationIdRef = useRef<string | null>(null);
   const [restoreDraftRequest, setRestoreDraftRequest] = useState<{
     id: string;
     content: string;
@@ -368,7 +381,7 @@ export function ChatWindow() {
   // subscription does not flash a loading skeleton.
   const sessionPromiseRef = useRef<Promise<string | null> | null>(null);
   const ensureSession = useCallback(
-    async (titleSeed: string): Promise<string | null> => {
+    async (titleSeed: string, idempotencyKey: string): Promise<string | null> => {
       if (activeSessionId) return activeSessionId;
       if (!activeAgent) return null;
       if (sessionPromiseRef.current) return sessionPromiseRef.current;
@@ -378,6 +391,7 @@ export function ChatWindow() {
           const session = await createSession.mutateAsync({
             agent_id: activeAgent.id,
             title: titleSeed.slice(0, 50),
+            idempotencyKey,
           });
           return session.id;
         } finally {
@@ -458,12 +472,45 @@ export function ChatWindow() {
       commitInput?: (options?: { extraDraftKeys?: string[]; clearEditor?: boolean }) => void,
       draftAttachments: Attachment[] = [],
     ): Promise<boolean> => {
-      if (!activeAgent) {
-        apiLogger.warn("sendChatMessage skipped: no active agent");
+      const workspaceSlug = getCurrentSlug();
+      if (!activeAgent || !user || !wsId || !workspaceSlug) {
+        apiLogger.warn("sendChatMessage skipped: missing active scope");
         return false;
       }
 
       const finalContent = content;
+      const requestedAttachmentIds = [...new Set(attachmentIds ?? [])].sort();
+      const operationId = createSafeId();
+      if (!claimPendingChatOperation(operationId)) return false;
+      activeOperationIdRef.current = operationId;
+      const now = Date.now();
+      usePendingChatOperationStore.getState().start({
+        id: operationId,
+        accountId: user.id,
+        workspaceId: wsId,
+        workspaceSlug,
+        agentId: activeAgent.id,
+        sourceSessionId: activeSessionId,
+        sessionId: activeSessionId,
+        title: finalContent.slice(0, 50),
+        content: finalContent,
+        attachmentIds: requestedAttachmentIds,
+        attachments: draftAttachments,
+        stage: activeSessionId ? "sending-message" : "creating-session",
+        cancelRequested: false,
+        createdAt: now,
+        updatedAt: now,
+      });
+      const finishOperation = (remove: boolean) => {
+        if (remove) usePendingChatOperationStore.getState().remove(operationId);
+        releasePendingChatOperation(operationId);
+        if (activeOperationIdRef.current === operationId) {
+          activeOperationIdRef.current = null;
+        }
+      };
+      const operationStillOwnedByCurrentAccount = () =>
+        usePendingChatOperationStore.getState().operations[operationId]?.accountId ===
+        useAuthStore.getState().user?.id;
 
       const isNewSession = !activeSessionId;
 
@@ -472,21 +519,48 @@ export function ChatWindow() {
         isNewSession,
         agentId: activeAgent.id,
         contentLength: finalContent.length,
-        attachmentCount: attachmentIds?.length ?? 0,
+        operationId,
+        attachmentCount: requestedAttachmentIds.length,
       });
 
       let sessionId: string | null = null;
       try {
-        sessionId = await ensureSession(finalContent);
+        sessionId = await ensureSession(finalContent, operationId);
       } catch (err) {
         apiLogger.error("sendChatMessage.ensureSession.error", err);
+        if (isOutcomeUnknownMutationError(err)) {
+          if (!operationStillOwnedByCurrentAccount()) {
+            finishOperation(false);
+            return true;
+          }
+          const live = useChatStore.getState();
+          const stillOnSourceSession =
+            live.activeSessionId === activeSessionId &&
+            (activeSessionId !== null || live.selectedAgentId === selectedAgentId);
+          commitInput?.({ clearEditor: stillOnSourceSession });
+          finishOperation(false);
+          toast.warning(t(($) => $.input.send_status_unknown_toast));
+          return true;
+        }
+        finishOperation(true);
         toast.error(t(($) => $.input.send_failed_toast));
         return false;
       }
       if (!sessionId) {
+        finishOperation(true);
         apiLogger.warn("sendChatMessage aborted: ensureSession returned null");
         return false;
       }
+      if (!operationStillOwnedByCurrentAccount()) {
+        // Logout/account cleanup won the race with session creation. Do not
+        // issue the message request or repopulate the cleared query cache.
+        finishOperation(false);
+        return true;
+      }
+      usePendingChatOperationStore.getState().update(operationId, {
+        sessionId,
+        stage: "sending-message",
+      });
 
       // Optimistic burst — everything that gives the user "I sent a message
       // and the agent is now working" feedback fires BEFORE the HTTP roundtrip.
@@ -495,7 +569,7 @@ export function ChatWindow() {
       // user's message — small but visible "did it actually send?" gap.
       const sentAt = new Date().toISOString();
       const optimistic: ChatMessage = {
-        id: `optimistic-${Date.now()}`,
+        id: `optimistic-chat:${operationId}`,
         chat_session_id: sessionId,
         role: "user",
         content: finalContent,
@@ -540,8 +614,17 @@ export function ChatWindow() {
 
       let result;
       try {
-        result = await api.sendChatMessage(sessionId, finalContent, attachmentIds);
+        result = await api.sendChatMessage(
+          sessionId,
+          finalContent,
+          operationId,
+          requestedAttachmentIds,
+        );
       } catch (err) {
+        if (!operationStillOwnedByCurrentAccount()) {
+          finishOperation(false);
+          return true;
+        }
         const disposition = reconcileChatSendFailure(err, {
           refreshServerState: () => {
             qc.invalidateQueries({ queryKey: chatKeys.messagesPage(sessionId) });
@@ -562,8 +645,10 @@ export function ChatWindow() {
             err,
           });
           toast.warning(t(($) => $.input.send_status_unknown_toast));
+          finishOperation(false);
           return true;
         }
+        finishOperation(true);
         apiLogger.error("sendChatMessage.error.rollback", { sessionId, optimisticId: optimistic.id, err });
         setRestoreDraftRequest({
           id: `send-failed-${optimistic.id}`,
@@ -576,6 +661,10 @@ export function ChatWindow() {
         });
         toast.error(t(($) => $.input.send_failed_toast));
         return false;
+      }
+      if (!operationStillOwnedByCurrentAccount()) {
+        finishOperation(false);
+        return true;
       }
       apiLogger.info("sendChatMessage.success", {
         sessionId,
@@ -591,8 +680,12 @@ export function ChatWindow() {
         status: "queued",
         created_at: result.created_at,
       });
-      if (stopRequestedBeforeTaskRef.current) {
+      const cancelRequested =
+        stopRequestedBeforeTaskRef.current ||
+        usePendingChatOperationStore.getState().operations[operationId]?.cancelRequested;
+      if (cancelRequested) {
         stopRequestedBeforeTaskRef.current = false;
+        finishOperation(true);
         await cancelChatTask(result.task_id, sessionId, {
           restoreDraftToInput: true,
           source: "deferred-send",
@@ -603,9 +696,9 @@ export function ChatWindow() {
       // against what we requested so a silent bind failure surfaces to the
       // user — no extra fetch. Skip the check on servers that predate the
       // field (attachment_ids undefined) rather than false-alarm.
-      if (attachmentIds && attachmentIds.length > 0 && result.attachment_ids) {
+      if (requestedAttachmentIds.length > 0 && result.attachment_ids) {
         const boundIds = new Set(result.attachment_ids);
-        const missing = attachmentIds.filter((id) => !boundIds.has(id));
+        const missing = requestedAttachmentIds.filter((id) => !boundIds.has(id));
         if (missing.length > 0) {
           apiLogger.warn("sendChatMessage.attachments missing after send", {
             sessionId,
@@ -616,6 +709,7 @@ export function ChatWindow() {
         }
       }
       qc.invalidateQueries({ queryKey: chatKeys.messagesPage(sessionId) });
+      finishOperation(true);
       return true;
     },
     [
@@ -627,6 +721,7 @@ export function ChatWindow() {
       qc,
       setActiveSession,
       t,
+      user,
       wsId,
     ],
   );
@@ -649,9 +744,14 @@ export function ChatWindow() {
     }
     if (!isTaskMessageTaskId(pendingTaskId)) {
       stopRequestedBeforeTaskRef.current = true;
+      const operationId = activeOperationIdRef.current;
+      if (operationId) {
+        usePendingChatOperationStore.getState().requestCancel(operationId);
+      }
       apiLogger.info("cancelTask.deferred until server task id", {
         taskId: pendingTaskId,
         sessionId: activeSessionId,
+        operationId,
       });
       return;
     }

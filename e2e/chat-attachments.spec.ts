@@ -86,6 +86,7 @@ test.describe("Chat attachments", () => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        "Idempotency-Key": crypto.randomUUID(),
         "X-Workspace-Slug": ws.slug,
       },
       body: JSON.stringify({ agent_id: agent.id, title: "E2E Chat Attachment Session" }),
@@ -118,6 +119,7 @@ test.describe("Chat attachments", () => {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        "Idempotency-Key": crypto.randomUUID(),
         "X-Workspace-Slug": ws.slug,
       },
       body: JSON.stringify({

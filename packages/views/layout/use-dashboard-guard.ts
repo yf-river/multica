@@ -11,7 +11,10 @@ import {
 } from "@multica/core/paths";
 import { workspaceListOptions } from "@multica/core/workspace";
 import { useRecentIssuesStore } from "@multica/core/issues/stores";
-import { useRecentContextStore } from "@multica/core/chat";
+import {
+  usePendingChatOperationStore,
+  useRecentContextStore,
+} from "@multica/core/chat";
 import { useNavigation } from "../navigation";
 
 /**
@@ -64,6 +67,9 @@ export function useDashboardGuard() {
       .getState()
       .pruneWorkspaces(workspaces.map((w) => w.id));
     useRecentContextStore
+      .getState()
+      .pruneWorkspaces(workspaces.map((w) => w.id));
+    usePendingChatOperationStore
       .getState()
       .pruneWorkspaces(workspaces.map((w) => w.id));
   }, [workspaceListFetched, workspaces]);
