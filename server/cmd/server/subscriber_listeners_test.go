@@ -90,15 +90,11 @@ func publishSubscriberProjection(t *testing.T, queries *db.Queries, bus *events.
 	)
 	switch event.Type {
 	case protocol.EventIssueCreated:
-		emitted, err = consumeIssueCreatedSubscribers(context.Background(), queries, event)
+		emitted, err = consumeIssueCreatedAudience(context.Background(), queries, event)
 	case protocol.EventIssueUpdated:
-		emitted, err = consumeIssueUpdatedSubscribers(context.Background(), queries, event)
+		emitted, err = consumeIssueUpdatedAudience(context.Background(), queries, event)
 	case protocol.EventCommentCreated:
-		payload, ok := decodeCommentEvent(event)
-		if !ok {
-			t.Fatalf("decode comment subscriber test event")
-		}
-		emitted, err = projectCommentCreatedSubscriber(context.Background(), queries, event, payload)
+		emitted, err = consumeCommentCreatedAudience(context.Background(), queries, event)
 	default:
 		bus.Publish(event)
 		return
@@ -106,7 +102,13 @@ func publishSubscriberProjection(t *testing.T, queries *db.Queries, bus *events.
 	if err != nil {
 		t.Fatalf("project %s subscribers: %v", event.Type, err)
 	}
-	publishProjectedEvents(bus, emitted)
+	publishEventsForTest(bus, emitted)
+}
+
+func publishEventsForTest(bus *events.Bus, emitted []events.Event) {
+	for _, event := range emitted {
+		bus.Publish(event)
+	}
 }
 
 func TestSubscriberIssueCreated_CreatorSubscribed(t *testing.T) {

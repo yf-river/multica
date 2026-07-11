@@ -72,14 +72,6 @@ func consumeCommentCreatedAudience(ctx context.Context, queries *db.Queries, eve
 	return append(subscriberEvents, notificationEvents...), nil
 }
 
-func consumeIssueCreatedSubscribers(ctx context.Context, queries *db.Queries, event events.Event) ([]events.Event, error) {
-	payload, exists, err := loadIssueProjection(ctx, queries, event, "issue-created")
-	if err != nil || !exists {
-		return nil, err
-	}
-	return projectIssueCreatedSubscribers(ctx, queries, event, payload)
-}
-
 func projectIssueCreatedSubscribers(ctx context.Context, queries *db.Queries, event events.Event, payload issueEventPayload) ([]events.Event, error) {
 	issue := payload.Issue
 	emitted := make([]events.Event, 0, 4)
@@ -110,14 +102,6 @@ func projectIssueCreatedSubscribers(ctx context.Context, queries *db.Queries, ev
 		}
 	}
 	return emitted, nil
-}
-
-func consumeIssueUpdatedSubscribers(ctx context.Context, queries *db.Queries, event events.Event) ([]events.Event, error) {
-	payload, exists, err := loadIssueProjection(ctx, queries, event, "issue-updated")
-	if err != nil || !exists {
-		return nil, err
-	}
-	return projectIssueUpdatedSubscribers(ctx, queries, event, payload)
 }
 
 func projectIssueUpdatedSubscribers(ctx context.Context, queries *db.Queries, event events.Event, payload issueEventPayload) ([]events.Event, error) {
@@ -211,10 +195,4 @@ func addSubscriber(
 			"reason":    reason,
 		},
 	}, true, nil
-}
-
-func publishProjectedEvents(bus *events.Bus, emitted []events.Event) {
-	for _, event := range emitted {
-		bus.Publish(event)
-	}
 }

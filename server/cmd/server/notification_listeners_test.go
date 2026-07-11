@@ -95,23 +95,7 @@ func newNotificationBus(t *testing.T, queries *db.Queries) *events.Bus {
 		projectDurableEventForTest(t, queries, bus, event, consumeIssueUpdatedAudience)
 	})
 	bus.Subscribe(protocol.EventCommentCreated, func(event events.Event) {
-		payload, ok := decodeCommentEvent(event)
-		if !ok {
-			t.Fatalf("decode comment audience test event")
-		}
-		if payload.Comment.AuthorType == "system" {
-			return
-		}
-		emitted, err := projectCommentCreatedSubscriber(context.Background(), queries, event, payload)
-		if err != nil {
-			t.Fatalf("project comment subscriber test event: %v", err)
-		}
-		publishProjectedEvents(bus, emitted)
-		emitted, err = projectCommentCreatedNotifications(context.Background(), queries, event, payload)
-		if err != nil {
-			t.Fatalf("project comment notification test event: %v", err)
-		}
-		publishProjectedEvents(bus, emitted)
+		projectDurableEventForTest(t, queries, bus, event, consumeCommentCreatedAudience)
 	})
 	bus.Subscribe(protocol.EventTaskFailed, func(event events.Event) {
 		payload, ok := decodeTaskEvent(event)
@@ -122,7 +106,7 @@ func newNotificationBus(t *testing.T, queries *db.Queries) *events.Bus {
 		if err != nil {
 			t.Fatalf("project task failure notification test event: %v", err)
 		}
-		publishProjectedEvents(bus, emitted)
+		publishEventsForTest(bus, emitted)
 	})
 	return bus
 }
@@ -140,7 +124,7 @@ func projectDurableEventForTest(
 		if err != nil {
 			t.Fatalf("project durable %s event: %v", event.Type, err)
 		}
-		publishProjectedEvents(bus, emitted)
+		publishEventsForTest(bus, emitted)
 	}
 }
 
