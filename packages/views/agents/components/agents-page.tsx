@@ -29,7 +29,6 @@ import {
 import {
   useAgentsViewStore,
   AGENT_DEFAULT_HIDDEN_COLUMNS,
-  AGENT_SCOPES,
   type AgentColumnKey,
   type AgentsScope,
   type AgentSortField,
@@ -745,8 +744,7 @@ export function AgentsPage() {
     new Set(),
   );
 
-  const rawScope = useAgentsViewStore((s) => s.scope);
-  const scope = AGENT_SCOPES.includes(rawScope) ? rawScope : "mine";
+  const scope = useAgentsViewStore((s) => s.scope);
   const setScope = useAgentsViewStore((s) => s.setScope);
   const sortField = useAgentsViewStore((s) => s.sortField);
   const sortDirection = useAgentsViewStore((s) => s.sortDirection);

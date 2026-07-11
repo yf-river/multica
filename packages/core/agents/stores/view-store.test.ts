@@ -101,6 +101,19 @@ describe("useAgentsViewStore", () => {
     expect(localStorage.getItem("multica_agents_view:acme")).not.toBeNull();
   });
 
+  it("normalizes an invalid persisted scope at rehydration", async () => {
+    localStorage.setItem(
+      "multica_agents_view:acme",
+      JSON.stringify({ state: { scope: "active" }, version: 0 }),
+    );
+
+    setCurrentWorkspace("acme", "ws_a");
+    await flush();
+    await flush();
+
+    expect(useAgentsViewStore.getState().scope).toBe("mine");
+  });
+
   it("backfills new filter dimensions when rehydrating a pre-owners payload", async () => {
     // A payload persisted before the `owners` filter existed must not drop
     // the key to undefined (the agents list filter predicate reads
