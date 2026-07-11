@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useInfiniteQuery, useQuery, useQueryClient, type InfiniteData } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "motion/react";
 import { Minus, Maximize2, Minimize2, ChevronDown, Plus, Check, Trash2, Pencil, Loader2, Square } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
@@ -16,20 +16,12 @@ import { toast } from "sonner";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useAuthStore } from "@multica/core/auth";
 import { agentListOptions, memberListOptions } from "@multica/core/workspace/queries";
-import { canAssignAgent } from "@multica/views/issues/components";
 import { api } from "@multica/core/api";
 import { getCurrentSlug } from "@multica/core/platform";
 import { createSafeId } from "@multica/core/utils";
 import { useAgentPresenceDetail, useWorkspaceAgentAvailability } from "@multica/core/agents";
 import { useFileUpload } from "@multica/core/hooks/use-file-upload";
 import { ActorAvatar } from "../../common/actor-avatar";
-import {
-  PickerEmpty,
-  PickerItem,
-  PickerSection,
-  PropertyPicker,
-} from "../../issues/components/pickers/property-picker";
-import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 import { OfflineBanner } from "./offline-banner";
 import { NoAgentBanner } from "./no-agent-banner";
 import {
@@ -63,116 +55,21 @@ import { ChatResizeHandles } from "./chat-resize-handles";
 import { useChatContextItems } from "./use-chat-context-items";
 import { useChatResize } from "./use-chat-resize";
 import { createLogger } from "@multica/core/logger";
-import type { Agent, Attachment, ChatMessage, ChatMessagesPage, ChatPendingTask, ChatSession, PendingChatTasksResponse } from "@multica/core/types";
+import type { Agent, Attachment, ChatMessage, ChatPendingTask, ChatSession, PendingChatTasksResponse } from "@multica/core/types";
 import { useT } from "../../i18n";
+import { AgentDropdown } from "./chat-agent-dropdown";
+import { ChatEmptyState } from "./chat-empty-state";
+import {
+  appendChatMessageToLatestPageCache,
+  getVisibleChatAgents,
+  removeChatMessageFromCaches,
+  replaceOptimisticChatMessageId,
+} from "./chat-window-model";
 
 const uiLogger = createLogger("chat.ui");
 const apiLogger = createLogger("chat.api");
 const CHAT_VIRTUOSO_INITIAL_FIRST_ITEM_INDEX = 1_000_000;
 
-export function getVisibleChatAgents(
-  agents: Agent[],
-  userId: string | undefined,
-  memberRole: string | undefined,
-): Agent[] {
-  return agents.filter(
-    (agent) =>
-      !agent.archived_at &&
-      canAssignAgent(agent, userId, memberRole),
-  );
-}
-
-function appendChatMessageToLatestPageCache(
-  qc: ReturnType<typeof useQueryClient>,
-  sessionId: string,
-  message: ChatMessage,
-) {
-  qc.setQueryData<InfiniteData<ChatMessagesPage>>(
-    chatKeys.messagesPage(sessionId),
-    (old) => {
-      if (!old) {
-        return {
-          pages: [{
-            messages: [message],
-            limit: 50,
-            has_more: false,
-            next_cursor: null,
-          }],
-          pageParams: [null],
-        };
-      }
-      if (old.pages.some((page) => page.messages.some((m) => m.id === message.id))) {
-        return old;
-      }
-      return {
-        ...old,
-        pages: old.pages.map((page, index) =>
-          index === 0 ? { ...page, messages: [...page.messages, message] } : page,
-        ),
-      };
-    },
-  );
-}
-
-function removeChatMessageFromPageCache(
-  qc: ReturnType<typeof useQueryClient>,
-  sessionId: string,
-  messageId: string,
-) {
-  qc.setQueryData<InfiniteData<ChatMessagesPage> | undefined>(
-    chatKeys.messagesPage(sessionId),
-    (old) => {
-      if (!old) return old;
-      return {
-        ...old,
-        pages: old.pages.map((page) => ({
-          ...page,
-          messages: page.messages.filter((m) => m.id !== messageId),
-        })),
-      };
-    },
-  );
-}
-
-function removeChatMessageFromCaches(
-  qc: ReturnType<typeof useQueryClient>,
-  sessionId: string,
-  messageId: string,
-) {
-  removeChatMessageFromPageCache(qc, sessionId, messageId);
-}
-
-function replaceOptimisticChatMessageId(
-  qc: ReturnType<typeof useQueryClient>,
-  sessionId: string,
-  optimisticId: string,
-  messageId: string,
-  taskId: string,
-) {
-  const replace = (messages: ChatMessage[] | undefined) => {
-    if (!messages) return messages;
-    if (messages.some((m) => m.id === messageId)) {
-      return messages.filter((m) => m.id !== optimisticId);
-    }
-    return messages.map((m) =>
-      m.id === optimisticId ? { ...m, id: messageId, task_id: taskId } : m,
-    );
-  };
-
-  qc.setQueryData<InfiniteData<ChatMessagesPage> | undefined>(
-    chatKeys.messagesPage(sessionId),
-    (old) => {
-      if (!old) return old;
-      return {
-        ...old,
-        pages: old.pages.map((page) => ({
-          ...page,
-          messages: replace(page.messages) ?? page.messages,
-        })),
-      };
-    },
-  );
-}
 
 export function ChatWindow() {
   const { t } = useT("chat");
@@ -931,7 +828,7 @@ export function ChatWindow() {
           onLoadOlderMessages={() => void fetchOlderMessages()}
         />
       ) : (
-        <EmptyState
+        <ChatEmptyState
           hasSessions={sessions.length > 0}
           agentName={activeAgent?.name}
           onPickPrompt={(text) => handleSend(text)}
@@ -984,136 +881,6 @@ export function ChatWindow() {
  * different agent = switch agent + start a fresh chat (session=null).
  * The current agent is marked with a check and not clickable.
  */
-export function AgentDropdown({
-  agents,
-  activeAgent,
-  userId,
-  onSelect,
-}: {
-  agents: Agent[];
-  activeAgent: Agent | null;
-  userId: string | undefined;
-  onSelect: (agent: Agent) => void;
-}) {
-  const { t } = useT("chat");
-  const [open, setOpen] = useState(false);
-  const [filter, setFilter] = useState("");
-  // Split into the user's own agents and everyone else so the menu groups
-  // them — matches the old AgentSelector layout.
-  const { mine, others } = useMemo(() => {
-    const mine: Agent[] = [];
-    const others: Agent[] = [];
-    for (const a of agents) {
-      if (a.owner_id === userId) mine.push(a);
-      else others.push(a);
-    }
-    return { mine, others };
-  }, [agents, userId]);
-
-  const query = filter.trim().toLowerCase();
-  const matches = (name: string) =>
-    !query || name.toLowerCase().includes(query) || matchesPinyin(name, query);
-  const filteredMine = mine.filter((agent) => matches(agent.name));
-  const filteredOthers = others.filter((agent) => matches(agent.name));
-
-  const handlePick = (agent: Agent) => {
-    onSelect(agent);
-    setOpen(false);
-  };
-
-  if (!activeAgent) {
-    return <span className="text-xs text-muted-foreground">{t(($) => $.window.no_agents)}</span>;
-  }
-
-  return (
-    <PropertyPicker
-      open={open}
-      onOpenChange={setOpen}
-      width="w-64"
-      align="start"
-      side="top"
-      searchable
-      searchPlaceholder={t(($) => $.window.agent_filter_placeholder)}
-      onSearchChange={setFilter}
-      triggerRender={
-        <button
-          type="button"
-          className="flex items-center gap-1.5 rounded-md px-1.5 py-1 -ml-1 cursor-pointer outline-none transition-colors hover:bg-accent aria-expanded:bg-accent"
-        />
-      }
-      trigger={
-        <>
-          <ActorAvatar
-            actorType="agent"
-            actorId={activeAgent.id}
-            size={24}
-            enableHoverCard
-            showStatusDot
-          />
-          <span className="text-xs font-medium max-w-28 truncate">{activeAgent.name}</span>
-          <ChevronDown className="size-3 text-muted-foreground shrink-0" />
-        </>
-      }
-    >
-      {filteredMine.length === 0 && filteredOthers.length === 0 ? (
-        <PickerEmpty />
-      ) : (
-        <>
-          {filteredMine.length > 0 && (
-            <PickerSection label={t(($) => $.window.my_agents)}>
-              {filteredMine.map((agent) => (
-                <AgentPickerItem
-                  key={agent.id}
-                  agent={agent}
-                  isCurrent={agent.id === activeAgent.id}
-                  onSelect={handlePick}
-                />
-              ))}
-            </PickerSection>
-          )}
-          {filteredOthers.length > 0 && (
-            <PickerSection label={t(($) => $.window.others)}>
-              {filteredOthers.map((agent) => (
-                <AgentPickerItem
-                  key={agent.id}
-                  agent={agent}
-                  isCurrent={agent.id === activeAgent.id}
-                  onSelect={handlePick}
-                />
-              ))}
-            </PickerSection>
-          )}
-        </>
-      )}
-    </PropertyPicker>
-  );
-}
-
-function AgentPickerItem({
-  agent,
-  isCurrent,
-  onSelect,
-}: {
-  agent: Agent;
-  isCurrent: boolean;
-  onSelect: (agent: Agent) => void;
-}) {
-  return (
-    <PickerItem
-      selected={isCurrent}
-      onClick={() => onSelect(agent)}
-    >
-      <ActorAvatar
-        actorType="agent"
-        actorId={agent.id}
-        size={24}
-        enableHoverCard
-        showStatusDot
-      />
-      <span className="truncate flex-1">{agent.name}</span>
-    </PickerItem>
-  );
-}
 
 /**
  * Session dropdown: a flat "Chat history" list of all non-archived
@@ -1708,81 +1475,3 @@ function useFormatTimeAgo(): (dateStr: string) => string {
 // Three starter prompts shown on the empty state. Each is keyed into the
 // chat namespace so labels translate per locale; the icon stays raw since
 // emojis are locale-neutral.
-const STARTER_KEYS: ("list_open" | "summarize_today" | "plan_next")[] = [
-  "list_open",
-  "summarize_today",
-  "plan_next",
-];
-const STARTER_ICONS: Record<(typeof STARTER_KEYS)[number], string> = {
-  list_open: "📋",
-  summarize_today: "📝",
-  plan_next: "💡",
-};
-
-function EmptyState({
-  hasSessions,
-  agentName,
-  onPickPrompt,
-}: {
-  hasSessions: boolean;
-  agentName?: string;
-  onPickPrompt: (text: string) => void;
-}) {
-  const { t } = useT("chat");
-  // First-time experience: the user has never started a chat in this
-  // workspace. Educate before suggesting actions — starter prompts
-  // presume the user already knows what chat is for.
-  if (!hasSessions) {
-    return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 py-8">
-        <div className="text-center space-y-3">
-          <h3 className="text-base font-semibold">
-            {t(($) => $.empty_state.first_time_title)}
-          </h3>
-          <p className="text-sm text-muted-foreground">
-            {t(($) => $.empty_state.first_time_intro)}{" "}
-            <span className="font-medium text-foreground">
-              {t(($) => $.empty_state.first_time_pillars)}
-            </span>
-            {t(($) => $.empty_state.first_time_pillars_suffix)}
-          </p>
-          <p className="text-sm text-muted-foreground">
-            {t(($) => $.empty_state.first_time_actions)}
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  // Returning user: starter prompts are the fastest path back to action.
-  return (
-    <div className="flex flex-1 flex-col items-center justify-center gap-5 px-6 py-8">
-      <div className="text-center space-y-1">
-        <h3 className="text-base font-semibold">
-          {agentName
-            ? t(($) => $.empty_state.returning_title_named, { name: agentName })
-            : t(($) => $.empty_state.returning_title_default)}
-        </h3>
-        <p className="text-sm text-muted-foreground">
-          {t(($) => $.empty_state.returning_subtitle)}
-        </p>
-      </div>
-      <div className="w-full max-w-xs space-y-2">
-        {STARTER_KEYS.map((key) => {
-          const text = t(($) => $.starter_prompts[key]);
-          return (
-            <button
-              key={key}
-              type="button"
-              onClick={() => onPickPrompt(text)}
-              className="w-full rounded-lg border border-border bg-card px-3 py-2 text-left text-sm text-foreground transition-colors hover:bg-accent hover:border-brand/40"
-            >
-              <span className="mr-2">{STARTER_ICONS[key]}</span>
-              {text}
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}

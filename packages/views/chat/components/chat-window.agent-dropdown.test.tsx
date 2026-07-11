@@ -11,7 +11,8 @@ vi.mock("../../common/actor-avatar", () => ({
   ),
 }));
 
-import { AgentDropdown, getVisibleChatAgents } from "./chat-window";
+import { AgentDropdown } from "./chat-agent-dropdown";
+import { getVisibleChatAgents } from "./chat-window-model";
 
 const TEST_RESOURCES = { "zh-Hans": { chat: enChat, issues: enIssues } };
 
