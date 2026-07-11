@@ -89,6 +89,41 @@ func runAgentPlaygroundFixture(t *testing.T, fixture agentPlaygroundRunFixture) 
 	return w
 }
 
+func syncAgentPlaygroundFixture(t *testing.T, fixture agentPlaygroundRunFixture) *httptest.ResponseRecorder {
+	t.Helper()
+	w := httptest.NewRecorder()
+	req := newRequest(http.MethodPost, "/api/agent-playground/experiments/"+fixture.experimentID+"/sync?workspace_id="+testWorkspaceID, nil)
+	req = withURLParam(req, "id", fixture.experimentID)
+	testHandler.SyncAgentPlaygroundExperiment(w, req)
+	return w
+}
+
+func installAgentPlaygroundCompletionFailure(t *testing.T, experimentID string) {
+	t.Helper()
+	ctx := context.Background()
+	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
+	functionName := "test_playground_completion_failure_" + suffix
+	triggerName := "test_playground_completion_failure_trigger_" + suffix
+	if _, err := testPool.Exec(ctx, fmt.Sprintf(`
+		CREATE FUNCTION %s() RETURNS trigger AS $$
+		BEGIN
+			IF NEW.id = '%s'::uuid AND NEW.status = 'completed' THEN
+				RAISE EXCEPTION 'forced playground completion failure';
+			END IF;
+			RETURN NEW;
+		END;
+		$$ LANGUAGE plpgsql;
+		CREATE TRIGGER %s BEFORE UPDATE ON agent_playground_experiment
+		FOR EACH ROW EXECUTE FUNCTION %s();
+	`, functionName, experimentID, triggerName, functionName)); err != nil {
+		t.Fatalf("install playground completion failure: %v", err)
+	}
+	t.Cleanup(func() {
+		mustExec(t, ctx, fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON agent_playground_experiment`, triggerName))
+		mustExec(t, ctx, fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, functionName))
+	})
+}
+
 func TestRunAgentPlaygroundRollsBackWholeMatrixWhenResultLinkFails(t *testing.T) {
 	fixture := newAgentPlaygroundRunFixture(t, 2)
 	installAgentPlaygroundStartFailure(t, fixture.experimentID)
@@ -139,5 +174,67 @@ func TestRunAgentPlaygroundCommitsCompleteMatrix(t *testing.T) {
 	}
 	if linkedResults != 2 || sessions != 2 || status != "running" {
 		t.Fatalf("playground matrix = results:%d sessions:%d status:%q, want 2/2/running", linkedResults, sessions, status)
+	}
+}
+
+func TestSyncAgentPlaygroundRollsBackResultWhenCompletionFails(t *testing.T) {
+	fixture := newAgentPlaygroundRunFixture(t, 1)
+	w := runAgentPlaygroundFixture(t, fixture)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("run playground: expected 202, got %d: %s", w.Code, w.Body.String())
+	}
+
+	ctx := context.Background()
+	var resultID, taskID, initialStatus string
+	if err := testPool.QueryRow(ctx, `
+		SELECT id, task_id, status FROM agent_playground_result WHERE experiment_id = $1
+	`, fixture.experimentID).Scan(&resultID, &taskID, &initialStatus); err != nil {
+		t.Fatalf("load playground result: %v", err)
+	}
+	mustExec(t, ctx, `UPDATE agent_task_queue SET status = 'completed', completed_at = now() WHERE id = $1`, taskID)
+	installAgentPlaygroundCompletionFailure(t, fixture.experimentID)
+
+	w = syncAgentPlaygroundFixture(t, fixture)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", w.Code, w.Body.String())
+	}
+	var resultStatus, experimentStatus string
+	if err := testPool.QueryRow(ctx, `SELECT status FROM agent_playground_result WHERE id = $1`, resultID).Scan(&resultStatus); err != nil {
+		t.Fatalf("load result status: %v", err)
+	}
+	if err := testPool.QueryRow(ctx, `SELECT status FROM agent_playground_experiment WHERE id = $1`, fixture.experimentID).Scan(&experimentStatus); err != nil {
+		t.Fatalf("load experiment status: %v", err)
+	}
+	if resultStatus != initialStatus || experimentStatus != "running" {
+		t.Fatalf("partial sync survived rollback: result=%q (want %q), experiment=%q", resultStatus, initialStatus, experimentStatus)
+	}
+}
+
+func TestSyncAgentPlaygroundCompletesFailedResultWithoutTask(t *testing.T) {
+	fixture := newAgentPlaygroundRunFixture(t, 1)
+	ctx := context.Background()
+	mustExec(t, ctx, `UPDATE agent SET archived_at = now() WHERE id = $1`, fixture.agentID)
+	w := runAgentPlaygroundFixture(t, fixture)
+	if w.Code != http.StatusAccepted {
+		t.Fatalf("run playground: expected 202, got %d: %s", w.Code, w.Body.String())
+	}
+
+	w = syncAgentPlaygroundFixture(t, fixture)
+	if w.Code != http.StatusOK {
+		t.Fatalf("sync playground: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resultStatus, experimentStatus string
+	var taskCount int
+	if err := testPool.QueryRow(ctx, `SELECT status FROM agent_playground_result WHERE experiment_id = $1`, fixture.experimentID).Scan(&resultStatus); err != nil {
+		t.Fatalf("load result status: %v", err)
+	}
+	if err := testPool.QueryRow(ctx, `SELECT status FROM agent_playground_experiment WHERE id = $1`, fixture.experimentID).Scan(&experimentStatus); err != nil {
+		t.Fatalf("load experiment status: %v", err)
+	}
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM agent_task_queue WHERE agent_id = $1 AND chat_session_id IS NOT NULL`, fixture.agentID).Scan(&taskCount); err != nil {
+		t.Fatalf("count playground tasks: %v", err)
+	}
+	if resultStatus != "failed" || experimentStatus != "completed" || taskCount != 0 {
+		t.Fatalf("failed no-task result not completed: result=%q experiment=%q tasks=%d", resultStatus, experimentStatus, taskCount)
 	}
 }

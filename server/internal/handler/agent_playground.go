@@ -655,7 +655,14 @@ func loadAgentPlaygroundDetailWithQueries(ctx context.Context, queries *db.Queri
 }
 
 func (h *Handler) syncAgentPlaygroundExperiment(r *http.Request, experimentID, workspaceID pgtype.UUID) (AgentPlaygroundDetailResponse, error) {
-	results, err := h.Queries.ListAgentPlaygroundResults(r.Context(), db.ListAgentPlaygroundResultsParams{ExperimentID: experimentID, WorkspaceID: workspaceID})
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		return AgentPlaygroundDetailResponse{}, fmt.Errorf("start playground sync: %w", err)
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	queries := h.Queries.WithTx(tx)
+
+	results, err := queries.ListAgentPlaygroundResults(r.Context(), db.ListAgentPlaygroundResultsParams{ExperimentID: experimentID, WorkspaceID: workspaceID})
 	if err != nil {
 		return AgentPlaygroundDetailResponse{}, err
 	}
@@ -663,11 +670,14 @@ func (h *Handler) syncAgentPlaygroundExperiment(r *http.Request, experimentID, w
 	totalResults := len(results)
 	for _, result := range results {
 		if !result.TaskID.Valid {
+			if isAgentPlaygroundTerminalStatus(result.Status) {
+				completedResults++
+			}
 			continue
 		}
-		task, err := h.Queries.GetAgentTask(r.Context(), result.TaskID)
+		task, err := queries.GetAgentTask(r.Context(), result.TaskID)
 		if err != nil {
-			continue
+			return AgentPlaygroundDetailResponse{}, fmt.Errorf("load playground result task: %w", err)
 		}
 		status := task.Status
 		output := pgtype.Text{}
@@ -680,22 +690,28 @@ func (h *Handler) syncAgentPlaygroundExperiment(r *http.Request, experimentID, w
 				errText = task.Error
 			}
 			if result.ChatSessionID.Valid {
-				if assistant := h.latestAssistantMessage(r, result.ChatSessionID); assistant != "" {
+				assistant, err := latestAssistantMessage(r.Context(), queries, result.ChatSessionID)
+				if err != nil {
+					return AgentPlaygroundDetailResponse{}, fmt.Errorf("load playground result output: %w", err)
+				}
+				if assistant != "" {
 					output = pgtype.Text{String: assistant, Valid: true}
 				}
 			}
 		}
-		_, _ = h.Queries.SyncAgentPlaygroundResult(r.Context(), db.SyncAgentPlaygroundResultParams{
+		if _, err := queries.SyncAgentPlaygroundResult(r.Context(), db.SyncAgentPlaygroundResultParams{
 			ID:          result.ID,
 			WorkspaceID: workspaceID,
 			Status:      status,
 			Output:      output,
 			Error:       errText,
 			CompletedAt: completedAt,
-		})
+		}); err != nil {
+			return AgentPlaygroundDetailResponse{}, fmt.Errorf("sync playground result: %w", err)
+		}
 	}
 
-	judgements, err := h.Queries.ListAgentPlaygroundJudgements(r.Context(), db.ListAgentPlaygroundJudgementsParams{ExperimentID: experimentID, WorkspaceID: workspaceID})
+	judgements, err := queries.ListAgentPlaygroundJudgements(r.Context(), db.ListAgentPlaygroundJudgementsParams{ExperimentID: experimentID, WorkspaceID: workspaceID})
 	if err != nil {
 		return AgentPlaygroundDetailResponse{}, err
 	}
@@ -703,41 +719,56 @@ func (h *Handler) syncAgentPlaygroundExperiment(r *http.Request, experimentID, w
 		if !judgement.TaskID.Valid {
 			continue
 		}
-		task, err := h.Queries.GetAgentTask(r.Context(), judgement.TaskID)
+		task, err := queries.GetAgentTask(r.Context(), judgement.TaskID)
 		if err != nil {
-			continue
+			return AgentPlaygroundDetailResponse{}, fmt.Errorf("load playground judgement task: %w", err)
 		}
 		output := pgtype.Text{}
 		if isAgentPlaygroundTerminalStatus(task.Status) && judgement.ChatSessionID.Valid {
-			if assistant := h.latestAssistantMessage(r, judgement.ChatSessionID); assistant != "" {
+			assistant, err := latestAssistantMessage(r.Context(), queries, judgement.ChatSessionID)
+			if err != nil {
+				return AgentPlaygroundDetailResponse{}, fmt.Errorf("load playground judgement output: %w", err)
+			}
+			if assistant != "" {
 				output = pgtype.Text{String: assistant, Valid: true}
 			}
 		}
-		_, _ = h.Queries.SyncAgentPlaygroundJudgement(r.Context(), db.SyncAgentPlaygroundJudgementParams{
+		if _, err := queries.SyncAgentPlaygroundJudgement(r.Context(), db.SyncAgentPlaygroundJudgementParams{
 			ID:          judgement.ID,
 			WorkspaceID: workspaceID,
 			Status:      task.Status,
 			Output:      output,
-		})
+		}); err != nil {
+			return AgentPlaygroundDetailResponse{}, fmt.Errorf("sync playground judgement: %w", err)
+		}
 	}
 
 	if totalResults > 0 && completedResults >= totalResults {
-		_, _ = h.Queries.UpdateAgentPlaygroundExperimentStatus(r.Context(), db.UpdateAgentPlaygroundExperimentStatusParams{ID: experimentID, WorkspaceID: workspaceID, Status: "completed"})
+		if _, err := queries.UpdateAgentPlaygroundExperimentStatus(r.Context(), db.UpdateAgentPlaygroundExperimentStatusParams{ID: experimentID, WorkspaceID: workspaceID, Status: "completed"}); err != nil {
+			return AgentPlaygroundDetailResponse{}, fmt.Errorf("complete playground experiment: %w", err)
+		}
 	}
-	return h.loadAgentPlaygroundDetail(r.Context(), experimentID, workspaceID)
+	detail, err := loadAgentPlaygroundDetailWithQueries(r.Context(), queries, experimentID, workspaceID)
+	if err != nil {
+		return AgentPlaygroundDetailResponse{}, err
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		return AgentPlaygroundDetailResponse{}, fmt.Errorf("commit playground sync: %w", err)
+	}
+	return detail, nil
 }
 
-func (h *Handler) latestAssistantMessage(r *http.Request, chatSessionID pgtype.UUID) string {
-	messages, err := h.Queries.ListChatMessages(r.Context(), chatSessionID)
+func latestAssistantMessage(ctx context.Context, queries *db.Queries, chatSessionID pgtype.UUID) (string, error) {
+	messages, err := queries.ListChatMessages(ctx, chatSessionID)
 	if err != nil {
-		return ""
+		return "", err
 	}
 	for i := len(messages) - 1; i >= 0; i-- {
 		if messages[i].Role == "assistant" {
-			return messages[i].Content
+			return messages[i].Content, nil
 		}
 	}
-	return ""
+	return "", nil
 }
 
 func agentPlaygroundExperimentRowToResponse(row db.ListAgentPlaygroundExperimentsRow) AgentPlaygroundExperimentResponse {
