@@ -1,12 +1,9 @@
-import { useCallback, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Archive, Loader2, Plus, RefreshCw } from "lucide-react";
-import { toast } from "sonner";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import type {
   PromptEvaluationEvidenceSnapshot,
-  PromptEvaluationOptimizationCandidate,
   PromptEvaluationRunEvidence,
 } from "@multica/core/types";
 import { Badge } from "@multica/ui/components/ui/badge";
@@ -17,12 +14,10 @@ import { promptLibraryKeys } from "./prompt-library-query-keys";
 import type { EvidenceFocus } from "./run-model";
 import {
   candidateSkillWorkflowEvidence,
-  defaultSkillCandidateWorkflowDraft,
-  type SkillCandidateWorkflowAction,
-  type SkillCandidateWorkflowDraft,
   type SkillResourceOption,
 } from "./skill-candidate-model";
 import { SkillCandidateWorkflowPanel } from "./skill-candidate-workflow";
+import { useSkillCandidateWorkflowActions } from "./use-skill-candidate-workflow-actions";
 
 export type RunOptimizationActions = {
   canGenerate: boolean;
@@ -56,11 +51,14 @@ export function RunEvidencePanel({
 }) {
   const { t } = useT("prompt-library");
   const workspaceId = useWorkspaceId();
-  const queryClient = useQueryClient();
   const run = evidence?.run ?? null;
   const runId = run?.id ?? "";
-  const [skillDrafts, setSkillDrafts] = useState<Record<string, SkillCandidateWorkflowDraft>>({});
-  const [skillAction, setSkillAction] = useState<{ candidateId: string; action: SkillCandidateWorkflowAction } | null>(null);
+  const {
+    setDrafts: setSkillDrafts,
+    activeAction: skillAction,
+    runAction: runSkillWorkflowAction,
+    draftFor: skillDraftFor,
+  } = useSkillCandidateWorkflowActions(workspaceId ?? "", runId);
   const candidatesQuery = useQuery({
     queryKey: promptLibraryKeys.runCandidates(workspaceId ?? "", runId),
     queryFn: () => api.listPromptEvaluationOptimizationCandidates({ run_id: runId, limit: 5 }),
@@ -68,62 +66,6 @@ export function RunEvidencePanel({
   });
   const candidates = candidatesQuery.data?.items ?? [];
   const candidate = candidates[0] ?? null;
-  const invalidateRunCandidates = useCallback(() => {
-    if (!workspaceId || !runId) return;
-    queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runCandidates(workspaceId, runId) });
-    queryClient.invalidateQueries({ queryKey: promptLibraryKeys.candidates(workspaceId) });
-    queryClient.invalidateQueries({ queryKey: promptLibraryKeys.assets(workspaceId) });
-    queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runs(workspaceId) });
-  }, [queryClient, runId, workspaceId]);
-  const runSkillWorkflowAction = useCallback(
-    async (item: PromptEvaluationOptimizationCandidate, action: SkillCandidateWorkflowAction) => {
-      const draft = skillDrafts[item.id] ?? defaultSkillCandidateWorkflowDraft(item);
-      setSkillAction({ candidateId: item.id, action });
-      try {
-        if (action === "freshness") {
-          const result = await api.checkPromptEvaluationSkillCandidateFreshness(item.id, {
-            source_resource_id: draft.sourceResourceId || undefined,
-            repo_path: draft.repoPath.trim() || undefined,
-            target_branch: draft.targetBranch.trim() || undefined,
-            skill_path: draft.skillPath.trim() || undefined,
-          });
-          toast.success(t(($) => $.run_evidence.toast.skill_freshness, { status: result.status, patch: result.patch_check }));
-        } else if (action === "apply") {
-          const result = await api.applyPromptEvaluationSkillCandidate(item.id, {
-            source_resource_id: draft.sourceResourceId || undefined,
-            repo_path: draft.repoPath.trim() || undefined,
-            target_branch: draft.targetBranch.trim() || undefined,
-            skill_path: draft.skillPath.trim() || undefined,
-            changelog_path: draft.changelogPath.trim() || undefined,
-            allow_dirty: draft.allowDirty,
-            skip_changelog: draft.skipChangelog,
-          });
-          toast.success(t(($) => $.run_evidence.toast.skill_apply, { status: result.apply.status }));
-        } else if (action === "prepare-re-eval") {
-          const result = await api.preparePromptEvaluationSkillReEvalAsset(item.id, {
-            source_resource_id: draft.sourceResourceId || undefined,
-            repo_path: draft.repoPath.trim() || undefined,
-            target_branch: draft.targetBranch.trim() || undefined,
-            skill_path: draft.skillPath.trim() || undefined,
-            include_draft: draft.includeDraft,
-          });
-          setSkillDrafts((current) => ({ ...current, [item.id]: { ...draft, reEvalAssetId: result.asset.id } }));
-          toast.success(t(($) => $.run_evidence.toast.re_eval_ready, { count: result.case_count }));
-        } else {
-          const result = await api.runPromptEvaluationSkillReEval(item.id, {
-            asset_id: draft.reEvalAssetId.trim() || undefined,
-          });
-          toast.success(t(($) => $.run_evidence.toast.re_eval_run, { status: result.run.status }));
-        }
-        invalidateRunCandidates();
-      } catch (cause) {
-        toast.error(cause instanceof Error ? cause.message : t(($) => $.run_evidence.toast.workflow_failed));
-      } finally {
-        setSkillAction(null);
-      }
-    },
-    [invalidateRunCandidates, skillDrafts, t],
-  );
 
   if (loading) {
     return (
@@ -290,7 +232,7 @@ export function RunEvidencePanel({
           </div>
           <SkillCandidateWorkflowPanel
             candidate={candidate}
-            draft={skillDrafts[candidate.id] ?? defaultSkillCandidateWorkflowDraft(candidate)}
+            draft={skillDraftFor(candidate)}
             evidence={candidateSkillWorkflowEvidence(candidate)}
             resources={skillResources}
             pendingAction={skillAction?.candidateId === candidate.id ? skillAction.action : null}
