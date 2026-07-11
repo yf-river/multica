@@ -154,7 +154,7 @@ The Usage and Runtime dashboards read from `task_usage_hourly`, a derived table 
 
 ### How the in-process scheduler works
 
-Every backend replica ticks every 30 seconds and tries to claim the current 5-minute UTC plan in `sys_cron_executions`. The unique key `(job_name, scope_kind, scope_id, plan_time)` makes the claim a single-winner contest across all replicas, so multi-instance deployments do not double-write. The handler then calls `SELECT rollup_task_usage_hourly()`; the SQL function holds advisory lock `4246` internally, so a stray `pg_cron` job or manual call can run alongside the scheduler without ever colliding on the rollup itself. Inspect the audit table for steady-state operation:
+Every backend replica ticks every 30 seconds and tries to claim the current 5-minute UTC plan in `sys_cron_executions`. The unique key `(job_name, scope_kind, scope_id, plan_time)` makes the claim a single-winner contest across all replicas, so multi-instance deployments do not double-write. The handler then calls `SELECT rollup_task_usage_hourly()`; the SQL function holds advisory lock `4246` internally so manual calls cannot race the scheduler. Inspect the audit table for steady-state operation:
 
 ```sql
 SELECT plan_time, status, attempt, runner_id,
@@ -164,47 +164,6 @@ SELECT plan_time, status, attempt, runner_id,
  ORDER BY plan_time DESC
  LIMIT 20;
 ```
-
-### Compatibility — existing `pg_cron` registrations
-
-If you previously registered the rollup as a `pg_cron` job (`SELECT cron.schedule('rollup_task_usage_hourly', '*/5 * * * *', …)`), it is safe to leave it in place: advisory lock 4246 prevents double-writes, and the loser path no-ops cleanly. To drop the redundant entry once the in-process scheduler is up:
-
-```sql
-SELECT cron.unschedule('rollup_task_usage_hourly')
-  FROM cron.job WHERE jobname = 'rollup_task_usage_hourly';
-```
-
-External cron / systemd / Kubernetes `CronJob` setups that call `SELECT rollup_task_usage_hourly()` directly are also still valid — they were the only option before MUL-2957 and remain a supported compatibility path. They are no longer the recommended setup; new deployments should rely on the in-process scheduler.
-
-### Standalone backfill command
-
-`rollup_task_usage_hourly()` only processes new buckets after it starts running. If you already have `task_usage` rows from before the rollup was claimed for the first time — most commonly when upgrading from `v0.3.4` to `v0.3.5+` on a database that already has months of usage — you can run `backfill_task_usage_hourly` to seed historical buckets:
-
-```bash
-# Docker Compose
-docker compose -f docker-compose.selfhost.yml exec backend \
-  ./backfill_task_usage_hourly --sleep-between-slices=2s
-
-# Kubernetes
-kubectl -n multica exec deploy/multica-backend -- \
-  ./backfill_task_usage_hourly --sleep-between-slices=2s
-```
-
-The command walks `task_usage`'s full time range in monthly slices and calls the same idempotent primitive the in-process scheduler uses, so it's safe to re-run, to interrupt with Ctrl-C, and to run concurrently with the scheduler (advisory lock 4246 serialises them). Flags:
-
-| Flag | Description |
-|---|---|
-| `--sleep-between-slices` | Pause between monthly slices to throttle read pressure on busy databases (e.g. `2s`). Recommended on production DBs with years of history. |
-| `--months-back N` | Only backfill the last N months. **Requires `--force-partial`** because the watermark still advances past the skipped older buckets — those are permanently abandoned. |
-| `--dry-run` | Log slices that would be processed without writing anything. |
-
-After backfill completes, the rollup-state watermark is stamped to `now() - 5 minutes`, so the first scheduled tick after backfill does not redo history.
-
-### `v0.3.4 → v0.3.5+` upgrade order
-
-Migration `103` adds a fail-closed guard that refuses to drop the legacy daily rollups until `task_usage_hourly` has caught up. As of MUL-2957 the migrate command runs an idempotent monthly-slice backfill (under advisory lock 4246) **automatically** immediately before applying migration `103`, so v0.3.4 → v0.3.5+ upgrades complete in a single `migrate up` invocation — no operator step is required.
-
-If you are upgrading from a binary that pre-dates MUL-2957 (or the auto-hook fails for an environmental reason), recovery is the manual path: run `backfill_task_usage_hourly` against the database, then re-run `migrate up` (or restart the backend container — migrations run automatically on startup). **Fresh installs are exempt** — the guard short-circuits when `task_usage` is empty, and the in-process scheduler picks up new buckets from the first tick.
 
 ## Manual Setup (Without Docker Compose)
 

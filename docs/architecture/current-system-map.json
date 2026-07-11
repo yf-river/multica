@@ -15152,10 +15152,6 @@
             "kind": "node-runtime"
           },
           {
-            "source": "server/cmd/backfill_codex_usage_cache/main.go",
-            "kind": "go-runtime"
-          },
-          {
             "source": "server/cmd/migrate/main.go",
             "kind": "go-runtime"
           },
@@ -17634,7 +17630,6 @@
       {
         "kind": "postgresql",
         "sources": [
-          "server/cmd/backfill_codex_usage_cache/main.go",
           "server/cmd/migrate/main.go",
           "server/cmd/server/activity_listeners.go",
           "server/cmd/server/autopilot_failure_monitor.go",

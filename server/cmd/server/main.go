@@ -364,9 +364,8 @@ func main() {
 	// MUL-2957: DB-backed execution scheduler. The scheduler turns the
 	// `sys_cron_executions` table into the distributed lease + audit
 	// log for internal periodic jobs. The first job is
-	// `rollup_task_usage_hourly`, which replaces the previously
-	// operator-registered `pg_cron` entry (still safe to run
-	// concurrently — the SQL function holds advisory lock 4246).
+	// `rollup_task_usage_hourly`; the SQL function also holds advisory lock
+	// 4246 so manual invocations cannot race the scheduler.
 	//
 	// A failure to register the job is treated as fatal here only at
 	// the registration step (a duplicate name is the only realistic

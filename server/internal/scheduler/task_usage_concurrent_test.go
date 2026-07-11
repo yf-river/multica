@@ -9,19 +9,13 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// TestPgCronConcurrentNoDoubleWrite covers张大彪's blocker #4:
-//
-//	"`pg_cron` 并跑那条覆盖要真打——scheduler handler 跟直接
-//	 `SELECT rollup_task_usage_hourly()` / 旧 cron 入口并发，验证
-//	 advisory lock 4246 下不双写。"
-//
 // The test seeds historical `task_usage` rows under a freshly created
 // agent / runtime / agent_task_queue fixture, advances the rollup
 // watermark backwards so a single tick has real work to do, then
 // invokes `rollup_task_usage_hourly()` directly from N concurrent
 // goroutines. This is the same SQL entrypoint the in-process
-// scheduler handler calls AND the same one any leftover `pg_cron`
-// job or operator would call by hand. Advisory lock 4246 inside the
+// scheduler handler calls and the same one an operator can invoke for
+// recovery. Advisory lock 4246 inside the
 // SQL function must serialise them: exactly one caller advances the
 // watermark and recomputes the buckets, every other caller returns 0
 // rows immediately.
@@ -35,7 +29,7 @@ import (
 //     multiple of it.
 //   - The post-rollup `task_usage_hourly` rows match what we expect
 //     from the seeded `task_usage` data (token sums + bucket count).
-func TestPgCronConcurrentNoDoubleWrite(t *testing.T) {
+func TestTaskUsageRollupConcurrentNoDoubleWrite(t *testing.T) {
 	pool := integrationPool(t)
 	ctx := context.Background()
 
@@ -137,7 +131,7 @@ func TestPgCronConcurrentNoDoubleWrite(t *testing.T) {
 	// per-(provider, model) aggregation. Running the rollup again
 	// (under no contention) must not change the row count or sums —
 	// that's the SQL function's idempotency contract, and it is what
-	// makes pg_cron + scheduler concurrent execution safe.
+	// makes scheduler and manual recovery execution safe.
 	expectedHourlyRows := rowsToSeed // one per distinct model
 	hourlyRows := countHourlyRowsForWorkspace(t, pool, ws)
 	if hourlyRows != expectedHourlyRows {

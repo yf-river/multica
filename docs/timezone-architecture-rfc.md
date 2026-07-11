@@ -266,7 +266,7 @@ ORDER BY agent_id, model;
 - 源数据扫描不变（仍然扫 `task_usage` 增量 + 失效队列）。`bucket_hour` 用 `task_usage_hour_bucket(tu.created_at)`（UTC 整点截断）。
 - Upsert 目标从两张 daily 表改为一张 `task_usage_hourly`。
 - 失效队列维度由 `(bucket_date, …)` 改为 `(bucket_hour, …)`（`task_usage_hourly_dirty`），由 `task_usage` / `agent_task_queue` / `issue` 上的触发器写入。**必须配 TTL（保留 7 天）**，否则脏行在密集工况下无界增长——这是整个设计最容易漏的正确性要求（hourly 粒度把脏面比 daily 放大了 ~24×）。
-- 调度入口 `rollup_task_usage_hourly()` 由 pg_cron 周期触发：取 advisory lock → 从 `task_usage_hourly_rollup_state` 读 watermark → 调 `rollup_task_usage_hourly_window(from, to)` 重算脏 bucket → 推进 watermark → 释放锁后跑 `prune_task_usage_hourly_dirty()`。单 tick 窗口上限 1 天，watermark 落后时分多次 tick 追平，不会一条语句锁表重算多周。
+- 调度入口 `rollup_task_usage_hourly()` 由内置 DB-backed scheduler 周期触发：取 advisory lock → 从 `task_usage_hourly_rollup_state` 读 watermark → 调 `rollup_task_usage_hourly_window(from, to)` 重算脏 bucket → 推进 watermark → 释放锁后跑 `prune_task_usage_hourly_dirty()`。单 tick 窗口上限 1 天，watermark 落后时分多次 tick 追平，不会一条语句锁表重算多周。
 
 源表扫描是 worker 的主要开销，目标表换粒度只让单 tick 多几十 ms upsert，不会成倍增长。
 
@@ -326,7 +326,6 @@ ORDER BY agent_id, model;
 | `"user".timezone` | 用户 viewing timezone（nullable） |
 | `task_usage_hourly` | UTC hourly grain 用量汇总表 |
 | hourly rollup pipeline | 失效触发器、`rollup_task_usage_hourly_window` 窗口函数、`prune_task_usage_hourly_dirty()` 失效队列 TTL、带单日 cap 与 prune 的 `rollup_task_usage_hourly()` 入口 |
-| legacy daily rollups | 已删除 `task_usage_daily` / `task_usage_dashboard_daily` 两条旧管线 |
 | `agent_runtime.timezone` | 已删除，Operational 层移除（见 §2.1） |
 
 配套的代码侧改动：

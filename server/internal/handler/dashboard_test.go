@@ -415,10 +415,8 @@ func TestDashboardRunTimeDailyBucketsByViewerTimezone(t *testing.T) {
 }
 
 // TestRollupTaskUsageHourlyIdempotentAndWatermark covers two pipeline
-// invariants the deleted runtime_rollup_test.go used to guard for the
-// legacy daily rollup: (1) re-running the window function over the same
-// range produces identical totals, and (2) the cron entry point advances
-// the rollup-state watermark and clears last_error.
+// invariants: re-running a window produces identical totals, and the
+// scheduled entry point advances the watermark and clears last_error.
 func TestRollupTaskUsageHourlyIdempotentAndWatermark(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")

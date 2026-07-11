@@ -6,19 +6,10 @@ import (
 	"testing"
 )
 
-// TestConcurrentClaimsSingleWinner covers RFC §14:
-//
-//	"pg_cron 并跑 | app scheduler 与 pg_cron 同时调用函数,
-//	 无重复窗口写入"
-//
-// The legacy `pg_cron` tick and the in-process scheduler both call
-// `rollup_task_usage_hourly()`, so the SQL function's advisory lock
-// 4246 prevents double-writes of the rollup itself. The scheduler adds
-// a second layer via `sys_cron_executions`: even if multiple ticks (a
-// scheduler in a second replica, a manual SQL call, a leftover
-// `pg_cron` job) arrive at the same plan_time, only one row exists per
-// (job, scope, plan_time) and only one runner gets Won=true. The rest
-// fall through the conflict path and no-op.
+// TestConcurrentClaimsSingleWinner verifies that scheduler replicas
+// competing for the same plan produce exactly one winner. The
+// `sys_cron_executions` uniqueness key admits one row per
+// (job, scope, plan_time); every other runner follows the conflict path.
 //
 // We simulate this by firing N concurrent claims at the same plan_time
 // from distinct runner ids and asserting the table contract:
@@ -28,11 +19,6 @@ import (
 //   - sys_cron_executions has exactly one row for the plan.
 //   - The row's runner_id matches the winner.
 //
-// This is the same single-winner property the SQL advisory lock 4246
-// gives at the function-execution layer; the `sys_cron_executions`
-// uniqueness key gives it at the scheduler layer, so a `pg_cron` tick
-// running alongside the in-process scheduler cannot produce a duplicate
-// SUCCESS audit row.
 func TestConcurrentClaimsSingleWinner(t *testing.T) {
 	pool := integrationPool(t)
 	job := newTestJobSpec(uniqueJobName(t, "concurrent_claim"))

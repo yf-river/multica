@@ -809,7 +809,7 @@ written to the generated outputs.
 | `CORS_ALLOWED_ORIGINS` | runtime | 6 | `.env.example` (example-declaration), `apps/web/next.config.ts` (node-runtime), `docker-compose.mutica.yml` (template-reference) |
 | `DATABASE_MAX_CONNS` | runtime | 2 | `.env.example` (example-declaration), `server/cmd/server/dbstats.go` (go-env-helper) |
 | `DATABASE_MIN_CONNS` | runtime | 2 | `.env.example` (example-declaration), `server/cmd/server/dbstats.go` (go-env-helper) |
-| `DATABASE_URL` | runtime | 6 | `.env.example` (example-declaration), `docker-compose.mutica.yml` (template-reference), `scripts/goal-test-playwright.mjs` (node-runtime) |
+| `DATABASE_URL` | runtime | 5 | `.env.example` (example-declaration), `docker-compose.mutica.yml` (template-reference), `scripts/goal-test-playwright.mjs` (node-runtime) |
 | `DATE` | deployment | 1 | `docker-compose.selfhost.build.yml` (template-reference) |
 | `DESKTOP_APP_SUFFIX` | runtime | 1 | `apps/desktop/src/main/index.ts` (node-runtime) |
 | `DESKTOP_RENDERER_PORT` | runtime | 1 | `apps/desktop/electron.vite.config.ts` (node-runtime) |
@@ -1012,7 +1012,7 @@ written to the generated outputs.
 | filesystem | 43 | `server/cmd/migrate/main.go`, `server/cmd/multica/cmd_agent.go`, `server/cmd/multica/cmd_attachment.go`, `server/cmd/multica/cmd_daemon_windows.go`, `server/cmd/multica/cmd_daemon.go`, `server/cmd/multica/cmd_issue_comments.go`, `server/cmd/multica/cmd_issue_pull_request.go`, `server/cmd/multica/cmd_issue.go` |
 | object-storage | 1 | `server/internal/storage/s3.go` |
 | outbound-http | 17 | `server/cmd/multica/cmd_daemon.go`, `server/cmd/multica/cmd_setup.go`, `server/internal/analytics/posthog.go`, `server/internal/auth/cloud_pat.go`, `server/internal/cli/client.go`, `server/internal/cli/update.go`, `server/internal/daemon/client.go`, `server/internal/daemon/task_artifacts.go` |
-| postgresql | 126 | `server/cmd/backfill_codex_usage_cache/main.go`, `server/cmd/migrate/main.go`, `server/cmd/server/activity_listeners.go`, `server/cmd/server/autopilot_failure_monitor.go`, `server/cmd/server/autopilot_scheduler.go`, `server/cmd/server/chat_projection.go`, `server/cmd/server/comment_projection.go`, `server/cmd/server/dbstats.go` |
+| postgresql | 125 | `server/cmd/migrate/main.go`, `server/cmd/server/activity_listeners.go`, `server/cmd/server/autopilot_failure_monitor.go`, `server/cmd/server/autopilot_scheduler.go`, `server/cmd/server/chat_projection.go`, `server/cmd/server/comment_projection.go`, `server/cmd/server/dbstats.go`, `server/cmd/server/health.go` |
 | redis | 14 | `server/cmd/server/main.go`, `server/cmd/server/router.go`, `server/internal/auth/cloud_pat.go`, `server/internal/auth/membership_cache.go`, `server/internal/auth/pat_cache.go`, `server/internal/handler/runtime_liveness_store.go`, `server/internal/handler/runtime_local_skills_redis_store.go`, `server/internal/handler/runtime_models_redis_store.go` |
 | subprocess | 29 | `server/cmd/multica/cmd_auth.go`, `server/cmd/multica/cmd_daemon_unix.go`, `server/cmd/multica/cmd_daemon.go`, `server/internal/cli/update.go`, `server/internal/daemon/config.go`, `server/internal/daemon/execenv/codex_home_link_windows.go`, `server/internal/daemon/execenv/openclaw_config.go`, `server/internal/daemon/gc.go` |
 | websocket | 4 | `server/internal/daemon/wakeup.go`, `server/internal/daemonws/hub.go`, `server/internal/integrations/lark/ws_connector.go`, `server/internal/realtime/hub.go` |
