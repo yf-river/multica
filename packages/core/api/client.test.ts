@@ -214,6 +214,25 @@ describe("ApiClient", () => {
       .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
   });
 
+  it("validates Project and Skill reads and mutations", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(() => Promise.resolve(
+      new Response(JSON.stringify({ id: 42 }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    )));
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.listProjects()).resolves.toMatchObject({ projects: [], total: 0 });
+    await expect(client.getProject("project-1")).resolves.toMatchObject({ id: "" });
+    await expect(client.listSkills()).resolves.toEqual([]);
+    await expect(client.getSkill("skill-1")).resolves.toMatchObject({ id: "", files: [] });
+    await expect(client.createProject({ title: "Project" }))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
+    await expect(client.createSkill({ name: "Skill" }))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
+  });
+
   it("whitelists external credential responses without exposing secret fields", async () => {
     const profile = {
       id: "profile-1",

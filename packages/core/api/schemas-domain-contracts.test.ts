@@ -63,6 +63,11 @@ import {
   GitHubPullRequestListResponseSchema,
 } from "./schemas-github";
 import {
+  EMPTY_PROJECT_LIST_RESPONSE,
+  ListProjectsResponseSchema,
+} from "./schemas-projects";
+import { EMPTY_SKILL, SkillSchema } from "./schemas-skills";
+import {
   AgentTaskListSchema,
   EMPTY_ISSUE_EXECUTION_TREE,
   IssueExecutionTreeResponseSchema,
@@ -253,6 +258,21 @@ describe("domain response schema fallbacks", () => {
       EMPTY_ISSUE_EXECUTION_TREE,
       { endpoint: "GET /api/issues/:id/execution-tree" },
     )).toBe(EMPTY_ISSUE_EXECUTION_TREE);
+  });
+
+  it("rejects malformed Project and Skill identities", () => {
+    expect(parseWithFallback(
+      { projects: [{ id: 42 }], total: 1 },
+      ListProjectsResponseSchema,
+      EMPTY_PROJECT_LIST_RESPONSE,
+      { endpoint: "GET /api/projects" },
+    )).toBe(EMPTY_PROJECT_LIST_RESPONSE);
+    expect(parseWithFallback(
+      { id: "skill-1", workspace_id: "workspace-1", files: "invalid" },
+      SkillSchema,
+      EMPTY_SKILL,
+      { endpoint: "GET /api/skills/:id" },
+    )).toBe(EMPTY_SKILL);
   });
 
   it("accepts the current task execution response and preserves additive fields", () => {

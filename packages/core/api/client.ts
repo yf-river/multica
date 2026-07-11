@@ -376,6 +376,16 @@ import {
   PendingChatTasksResponseSchema,
   ProjectResourceSchema,
   ProjectResourceListResponseSchema,
+  ProjectSchema,
+  ListProjectsResponseSchema,
+  SearchProjectsResponseSchema,
+  SkillSchema,
+  SkillSummaryListSchema,
+  EMPTY_PROJECT,
+  EMPTY_PROJECT_LIST_RESPONSE,
+  EMPTY_SEARCH_PROJECTS_RESPONSE,
+  EMPTY_SKILL,
+  EMPTY_SKILL_SUMMARIES,
   ExternalCredentialProfileSchema,
   ExternalCredentialProfileListResponseSchema,
   TestExternalCredentialProfileResponseSchema,
@@ -771,7 +781,16 @@ export class ApiClient {
     if (params.limit !== undefined) search.set("limit", String(params.limit));
     if (params.offset !== undefined) search.set("offset", String(params.offset));
     if (params.include_closed) search.set("include_closed", "true");
-    return this.fetch(`/api/projects/search?${search}`, params.signal ? { signal: params.signal } : undefined);
+    const raw = await this.fetch<unknown>(
+      `/api/projects/search?${search}`,
+      params.signal ? { signal: params.signal } : undefined,
+    );
+    return parseWithFallback(
+      raw,
+      SearchProjectsResponseSchema,
+      EMPTY_SEARCH_PROJECTS_RESPONSE,
+      { endpoint: "GET /api/projects/search" },
+    );
   }
 
   async getIssue(id: string): Promise<Issue> {
@@ -1803,24 +1822,38 @@ export class ApiClient {
 
   // Skills
   async listSkills(): Promise<SkillSummary[]> {
-    return this.fetch("/api/skills");
+    const raw = await this.fetch<unknown>("/api/skills");
+    return parseWithFallback(raw, SkillSummaryListSchema, EMPTY_SKILL_SUMMARIES, {
+      endpoint: "GET /api/skills",
+    });
   }
 
   async getSkill(id: string): Promise<Skill> {
-    return this.fetch(`/api/skills/${id}`);
+    const raw = await this.fetch<unknown>(`/api/skills/${id}`);
+    return parseWithFallback(raw, SkillSchema, EMPTY_SKILL, {
+      endpoint: "GET /api/skills/:id",
+    });
   }
 
   async createSkill(data: CreateSkillRequest): Promise<Skill> {
-    return this.fetch("/api/skills", {
+    const raw = await this.fetch<unknown>("/api/skills", {
       method: "POST",
       body: JSON.stringify(data),
+    });
+    return parseOrThrow(raw, SkillSchema, EMPTY_SKILL, {
+      endpoint: "POST /api/skills",
+      mayHaveCommitted: true,
     });
   }
 
   async updateSkill(id: string, data: UpdateSkillRequest): Promise<Skill> {
-    return this.fetch(`/api/skills/${id}`, {
+    const raw = await this.fetch<unknown>(`/api/skills/${id}`, {
       method: "PUT",
       body: JSON.stringify(data),
+    });
+    return parseOrThrow(raw, SkillSchema, EMPTY_SKILL, {
+      endpoint: "PUT /api/skills/:id",
+      mayHaveCommitted: true,
     });
   }
 
@@ -1829,9 +1862,13 @@ export class ApiClient {
   }
 
   async importSkill(data: { url: string }): Promise<Skill> {
-    return this.fetch("/api/skills/import", {
+    const raw = await this.fetch<unknown>("/api/skills/import", {
       method: "POST",
       body: JSON.stringify(data),
+    });
+    return parseOrThrow(raw, SkillSchema, EMPTY_SKILL, {
+      endpoint: "POST /api/skills/import",
+      mayHaveCommitted: true,
     });
   }
 
@@ -2043,24 +2080,38 @@ export class ApiClient {
   async listProjects(params?: { status?: string }): Promise<ListProjectsResponse> {
     const search = new URLSearchParams();
     if (params?.status) search.set("status", params.status);
-    return this.fetch(`/api/projects?${search}`);
+    const raw = await this.fetch<unknown>(`/api/projects?${search}`);
+    return parseWithFallback(raw, ListProjectsResponseSchema, EMPTY_PROJECT_LIST_RESPONSE, {
+      endpoint: "GET /api/projects",
+    });
   }
 
   async getProject(id: string): Promise<Project> {
-    return this.fetch(`/api/projects/${id}`);
+    const raw = await this.fetch<unknown>(`/api/projects/${id}`);
+    return parseWithFallback(raw, ProjectSchema, EMPTY_PROJECT, {
+      endpoint: "GET /api/projects/:id",
+    });
   }
 
   async createProject(data: CreateProjectRequest): Promise<Project> {
-    return this.fetch("/api/projects", {
+    const raw = await this.fetch<unknown>("/api/projects", {
       method: "POST",
       body: JSON.stringify(data),
+    });
+    return parseOrThrow(raw, ProjectSchema, EMPTY_PROJECT, {
+      endpoint: "POST /api/projects",
+      mayHaveCommitted: true,
     });
   }
 
   async updateProject(id: string, data: UpdateProjectRequest): Promise<Project> {
-    return this.fetch(`/api/projects/${id}`, {
+    const raw = await this.fetch<unknown>(`/api/projects/${id}`, {
       method: "PUT",
       body: JSON.stringify(data),
+    });
+    return parseOrThrow(raw, ProjectSchema, EMPTY_PROJECT, {
+      endpoint: "PUT /api/projects/:id",
+      mayHaveCommitted: true,
     });
   }
 
