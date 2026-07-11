@@ -403,6 +403,15 @@ func (c *codexClient) request(ctx context.Context, method string, params any) (j
 
 	select {
 	case res := <-pr.ch:
+		// Process exit wakes pending RPCs through pr.ch. If cancellation
+		// happened concurrently, preserve the caller's stronger context
+		// contract instead of returning a scheduler-dependent transport
+		// error. Successful replies still win over a simultaneous cancel.
+		if res.err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return nil, ctxErr
+			}
+		}
 		return res.result, res.err
 	case <-processDone:
 		c.mu.Lock()
