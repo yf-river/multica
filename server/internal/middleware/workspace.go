@@ -162,12 +162,6 @@ func RequireWorkspaceMember(queries *db.Queries) func(http.Handler) http.Handler
 	return buildMiddleware(queries, resolveWorkspaceUUID(queries), nil)
 }
 
-// RequireWorkspaceRole is like RequireWorkspaceMember but additionally checks
-// that the member has one of the specified roles.
-func RequireWorkspaceRole(queries *db.Queries, roles ...string) func(http.Handler) http.Handler {
-	return buildMiddleware(queries, resolveWorkspaceUUID(queries), roles)
-}
-
 // RequireWorkspaceMemberFromURL resolves the workspace ID from a chi URL
 // parameter, validates membership, and injects into context.
 func RequireWorkspaceMemberFromURL(queries *db.Queries, param string) func(http.Handler) http.Handler {
