@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/eventoutbox"
 	"github.com/multica-ai/multica/server/internal/logger"
+	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -284,6 +285,8 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		assigneeChanged := (batchTouchedType || batchTouchedID) &&
 			(prevIssue.AssigneeType.String != issue.AssigneeType.String || uuidToString(prevIssue.AssigneeID) != uuidToString(issue.AssigneeID))
 		statusChanged := req.Updates.Status != nil && prevIssue.Status != issue.Status
+		_, batchTouchedProject := rawUpdates["project_id"]
+		projectChanged := batchTouchedProject && prevIssue.ProjectID != issue.ProjectID
 		priorityChanged := req.Updates.Priority != nil && prevIssue.Priority != issue.Priority
 		_, touchedStartDate := rawUpdates["start_date"]
 		_, touchedDueDate := rawUpdates["due_date"]
@@ -298,13 +301,25 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		}
 		skipBacklogEnqueue := statusChanged && !assigneeChanged && prevIssue.Status == "backlog" &&
 			h.isAssignedAgentRunningOnIssue(r.Context(), r, actorType, actorID, issue)
-		taskProjection, err := h.reconcileIssueUpdateTasksInTx(r.Context(), qtx, prevIssue, issue, assigneeChanged, statusChanged, skipBacklogEnqueue, actorType, actorID)
+		taskProjection, err := h.reconcileIssueUpdateTasksInTx(r.Context(), qtx, prevIssue, issue, assigneeChanged, statusChanged, projectChanged, skipBacklogEnqueue, actorType, actorID)
 		if err != nil {
 			_ = tx.Rollback(r.Context())
 			slog.Warn("batch project issue update tasks failed", "issue_id", issueID, "error", err)
 			recordFailure(issueID, "task_projection_failed")
 			continue
 		}
+		approvalProjection := service.IssueApprovalProjection{}
+		if statusChanged || projectChanged {
+			approvalProjection, err = h.IssueService.ReconcileProjectOwnerApprovalInTx(r.Context(), qtx, issue, actorType, actorID)
+			if err != nil {
+				_ = tx.Rollback(r.Context())
+				slog.Warn("batch project owner approval projection failed", "issue_id", issueID, "error", err)
+				recordFailure(issueID, "approval_projection_failed")
+				continue
+			}
+		}
+		issue = approvalProjection.CurrentIssue(issue)
+		resp = issueToResponse(issue, prefix)
 		updatedEvent := buildIssueUpdatedEvent(workspaceID, actorType, actorID, prevIssue, resp, changes)
 		updatedEvent, err = eventoutbox.Enqueue(r.Context(), qtx, updatedEvent)
 		if err != nil {
@@ -320,6 +335,7 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		}
 		h.publishEvent(updatedEvent)
 		h.publishIssueUpdateTaskProjection(r.Context(), taskProjection)
+		h.IssueService.PublishIssueApprovalProjection(r.Context(), approvalProjection, actorType, actorID)
 		if statusChanged {
 			h.notifyParentOfChildDone(r.Context(), prevIssue, issue, actorType, actorID)
 		}

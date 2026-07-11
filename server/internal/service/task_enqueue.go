@@ -116,24 +116,6 @@ func (s *TaskService) EnqueueTaskForSquadLeader(ctx context.Context, issue db.Is
 	return s.enqueueMentionTask(ctx, issue, leaderID, triggerCommentID, true, true)
 }
 
-// EnqueueProjectOwnerApprovalTask asks a project lead agent to review a
-// backlog child issue before the issue's assigned SOP squad is allowed to run.
-// It deliberately does not use is_leader_task: the agent is acting as project
-// owner/reviewer, not as the issue assignee or squad leader.
-func (s *TaskService) EnqueueProjectOwnerApprovalTask(ctx context.Context, issue db.Issue, project db.Project) (db.AgentTaskQueue, error) {
-	var task db.AgentTaskQueue
-	err := s.runInTx(ctx, func(queries *db.Queries) error {
-		var err error
-		task, err = s.CreateProjectOwnerApprovalTaskInTx(ctx, queries, issue, project)
-		return err
-	})
-	if err != nil {
-		return db.AgentTaskQueue{}, err
-	}
-	s.PublishProjectOwnerApprovalTaskEnqueued(ctx, task, project)
-	return task, nil
-}
-
 // CreateProjectOwnerApprovalTaskInTx inserts the review task using the
 // caller's transaction. The caller publishes and wakes the daemon only after
 // that transaction commits.

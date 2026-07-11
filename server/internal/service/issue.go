@@ -143,6 +143,29 @@ type issueCreateProjection struct {
 	approvalIssueStatus  string
 }
 
+// IssueApprovalProjection contains durable approval state created inside an
+// issue-update transaction. Its fields stay private so callers can only emit
+// the corresponding side effects through PublishIssueApprovalProjection after
+// a successful commit.
+type IssueApprovalProjection struct {
+	task               *db.AgentTaskQueue
+	project            db.Project
+	issue              *db.Issue
+	inbox              *db.InboxItem
+	inboxIssueStatus   string
+	archivedRecipients []db.ArchiveInboxByIssueAndTypeRow
+	metadataChanged    bool
+}
+
+// CurrentIssue returns the issue row after approval metadata reconciliation.
+// A zero projection leaves the caller's transaction result unchanged.
+func (p IssueApprovalProjection) CurrentIssue(fallback db.Issue) db.Issue {
+	if p.issue == nil {
+		return fallback
+	}
+	return *p.issue
+}
+
 // Create runs the full issue-creation pipeline atomically end-to-end:
 //
 //  1. Begin transaction.
@@ -311,12 +334,6 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 	if actorID == "" {
 		actorID = util.UUIDToString(issue.CreatorID)
 	}
-	createdEvent := s.buildIssueCreatedEvent(issue, attachments, p.CreatorType, actorID, opts)
-	createdEvent, err = eventoutbox.Enqueue(ctx, qtx, createdEvent)
-	if err != nil {
-		return IssueCreateResult{}, fmt.Errorf("enqueue issue-created event: %w", err)
-	}
-
 	projection, err := s.createIssueProjectionInTx(
 		ctx,
 		qtx,
@@ -330,6 +347,15 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 	)
 	if err != nil {
 		return IssueCreateResult{}, fmt.Errorf("create issue projection: %w", err)
+	}
+	if projection.approvalIssue != nil {
+		issue = *projection.approvalIssue
+	}
+
+	createdEvent := s.buildIssueCreatedEvent(issue, attachments, p.CreatorType, actorID, opts)
+	createdEvent, err = eventoutbox.Enqueue(ctx, qtx, createdEvent)
+	if err != nil {
+		return IssueCreateResult{}, fmt.Errorf("enqueue issue-created event: %w", err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
@@ -489,40 +515,87 @@ func (s *IssueService) EnqueueOnAssignForIssue(ctx context.Context, issue db.Iss
 	s.maybeEnqueueOnAssign(ctx, issue, actorType, actorID)
 }
 
-// EnsureProjectOwnerApprovalForBacklog reconciles the approval gate when an
-// existing issue is moved or corrected into backlog. Create already handles
-// status=backlog, but agent handoffs can create an issue as todo and then fix
-// project/status/assignee in a follow-up update; that path must not bypass the
-// project owner gate.
-func (s *IssueService) EnsureProjectOwnerApprovalForBacklog(ctx context.Context, issue db.Issue, actorType, actorID string) {
-	if issue.Status != "backlog" || !issue.ProjectID.Valid {
-		return
+var projectOwnerApprovalMetadataKeys = []string{
+	"project_owner_approval_status",
+	"project_owner_approval_mode",
+	"project_owner_reviewer_type",
+	"project_owner_reviewer_id",
+	"project_owner_review_task_id",
+}
+
+// ReconcileProjectOwnerApprovalInTx replaces every durable approval surface
+// for an issue transition. Call it only when status or project changed, using
+// the same transaction that updated the issue.
+func (s *IssueService) ReconcileProjectOwnerApprovalInTx(
+	ctx context.Context,
+	queries *db.Queries,
+	issue db.Issue,
+	actorType string,
+	actorID string,
+) (IssueApprovalProjection, error) {
+	projection := IssueApprovalProjection{}
+	archived, err := queries.ArchiveInboxByIssueAndType(ctx, db.ArchiveInboxByIssueAndTypeParams{
+		WorkspaceID: issue.WorkspaceID,
+		IssueID:     issue.ID,
+		Type:        "project_issue_approval_requested",
+	})
+	if err != nil {
+		return projection, fmt.Errorf("archive prior project approval inbox: %w", err)
 	}
-	project, err := s.Queries.GetProjectInWorkspace(ctx, db.GetProjectInWorkspaceParams{
+	projection.archivedRecipients = archived
+
+	var metadata map[string]json.RawMessage
+	if len(issue.Metadata) > 0 {
+		if err := json.Unmarshal(issue.Metadata, &metadata); err != nil {
+			return projection, fmt.Errorf("decode project approval metadata: %w", err)
+		}
+	}
+	for _, key := range projectOwnerApprovalMetadataKeys {
+		if _, exists := metadata[key]; !exists {
+			continue
+		}
+		issue, err = queries.DeleteIssueMetadataKey(ctx, db.DeleteIssueMetadataKeyParams{
+			ID:          issue.ID,
+			WorkspaceID: issue.WorkspaceID,
+			Key:         key,
+		})
+		if err != nil {
+			return projection, fmt.Errorf("delete project approval metadata %q: %w", key, err)
+		}
+		projection.metadataChanged = true
+	}
+	if issue.Status != "backlog" || !issue.ProjectID.Valid {
+		projection.issue = &issue
+		return projection, nil
+	}
+
+	project, err := queries.GetProjectInWorkspace(ctx, db.GetProjectInWorkspaceParams{
 		ID:          issue.ProjectID,
 		WorkspaceID: issue.WorkspaceID,
 	})
 	if err != nil {
-		slog.Warn("project owner approval reconcile skipped: project lookup failed",
-			"issue_id", util.UUIDToString(issue.ID),
-			"project_id", util.UUIDToString(issue.ProjectID),
-			"error", err)
-		return
+		return projection, fmt.Errorf("load project for owner approval: %w", err)
 	}
 	if !project.LeadType.Valid || !project.LeadID.Valid {
-		return
+		projection.issue = &issue
+		return projection, nil
 	}
+
 	switch project.LeadType.String {
 	case "agent":
-		if issueMetadataString(issue.Metadata, "project_owner_approval_status") == "pending" {
-			return
+		if s.TaskService == nil {
+			return projection, errors.New("task service is required for project owner approval")
 		}
-		leadAgent, err := s.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
+		leadAgent, err := queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
 			ID:          project.LeadID,
 			WorkspaceID: project.WorkspaceID,
 		})
-		if err != nil || leadAgent.ArchivedAt.Valid {
-			return
+		if err != nil {
+			return projection, fmt.Errorf("load project lead agent: %w", err)
+		}
+		if leadAgent.ArchivedAt.Valid {
+			projection.issue = &issue
+			return projection, nil
 		}
 		for key, value := range map[string]string{
 			"project_owner_approval_status": "pending",
@@ -530,68 +603,82 @@ func (s *IssueService) EnsureProjectOwnerApprovalForBacklog(ctx context.Context,
 			"project_owner_reviewer_type":   "agent",
 			"project_owner_reviewer_id":     util.UUIDToString(project.LeadID),
 		} {
-			if _, err := s.Queries.SetIssueMetadataKey(ctx, db.SetIssueMetadataKeyParams{
+			issue, err = queries.SetIssueMetadataKey(ctx, db.SetIssueMetadataKeyParams{
 				ID:          issue.ID,
 				WorkspaceID: issue.WorkspaceID,
 				Key:         key,
 				Value:       mustJSONStringBytes(value),
-			}); err != nil {
-				slog.Warn("project owner approval metadata reconcile failed",
-					"issue_id", util.UUIDToString(issue.ID),
-					"project_id", util.UUIDToString(project.ID),
-					"key", key,
-					"error", err)
-				return
+			})
+			if err != nil {
+				return projection, fmt.Errorf("set project approval metadata %q: %w", key, err)
 			}
+			projection.metadataChanged = true
 		}
-		s.enqueueProjectOwnerApprovalTask(ctx, issue, project)
+		task, err := s.TaskService.CreateProjectOwnerApprovalTaskInTx(ctx, queries, issue, project)
+		if err != nil {
+			return projection, err
+		}
+		issue, err = queries.SetIssueMetadataKey(ctx, db.SetIssueMetadataKeyParams{
+			ID:          issue.ID,
+			WorkspaceID: issue.WorkspaceID,
+			Key:         "project_owner_review_task_id",
+			Value:       mustJSONStringBytes(util.UUIDToString(task.ID)),
+		})
+		if err != nil {
+			return projection, fmt.Errorf("set project owner review task metadata: %w", err)
+		}
+		projection.task = &task
+		projection.project = project
+		projection.issue = &issue
 	case "member":
-		if s.hasOpenProjectLeadApprovalInbox(ctx, project, issue) {
-			return
+		item, err := createProjectLeadApprovalInbox(ctx, queries, project, issue, actorType, actorID)
+		if err != nil {
+			return projection, err
 		}
-		s.notifyProjectLeadApprovalRequested(ctx, project, issue, actorType, actorID)
+		projection.inbox = &item
+		projection.inboxIssueStatus = issue.Status
+		projection.issue = &issue
+	default:
+		projection.issue = &issue
 	}
+	return projection, nil
 }
 
-func (s *IssueService) enqueueProjectOwnerApprovalTask(ctx context.Context, issue db.Issue, project db.Project) {
-	if s.TaskService == nil {
-		return
+// PublishIssueApprovalProjection emits only post-commit events and wakeups.
+func (s *IssueService) PublishIssueApprovalProjection(ctx context.Context, projection IssueApprovalProjection, actorType, actorID string) {
+	if projection.task != nil {
+		s.TaskService.PublishProjectOwnerApprovalTaskEnqueued(ctx, *projection.task, projection.project)
 	}
-	task, err := s.TaskService.EnqueueProjectOwnerApprovalTask(ctx, issue, project)
-	if err != nil {
-		slog.Warn("project owner approval task enqueue failed",
-			"project_id", util.UUIDToString(project.ID),
-			"issue_id", util.UUIDToString(issue.ID),
-			"lead_id", util.UUIDToString(project.LeadID),
-			"error", err)
-		return
-	}
-	updated, err := s.Queries.SetIssueMetadataKey(ctx, db.SetIssueMetadataKeyParams{
-		ID:          issue.ID,
-		WorkspaceID: issue.WorkspaceID,
-		Key:         "project_owner_review_task_id",
-		Value:       mustJSONStringBytes(util.UUIDToString(task.ID)),
-	})
-	if err != nil {
-		slog.Warn("project owner approval task metadata write failed",
-			"project_id", util.UUIDToString(project.ID),
-			"issue_id", util.UUIDToString(issue.ID),
-			"task_id", util.UUIDToString(task.ID),
-			"error", err)
-		return
-	}
-	if s.Bus != nil {
+	if projection.metadataChanged && projection.issue != nil && s.Bus != nil {
 		s.Bus.Publish(events.Event{
 			Type:        protocol.EventIssueMetadataChanged,
-			WorkspaceID: util.UUIDToString(issue.WorkspaceID),
+			WorkspaceID: util.UUIDToString(projection.issue.WorkspaceID),
 			ActorType:   "system",
-			ActorID:     "",
 			Payload: map[string]any{
-				"issue_id": util.UUIDToString(issue.ID),
-				"issue":    updated,
-				"metadata": map[string]any{"project_owner_review_task_id": util.UUIDToString(task.ID)},
+				"issue_id": util.UUIDToString(projection.issue.ID),
+				"metadata": json.RawMessage(projection.issue.Metadata),
 			},
 		})
+	}
+	for _, recipient := range projection.archivedRecipients {
+		if s.Bus == nil {
+			break
+		}
+		s.Bus.Publish(events.Event{
+			Type:        protocol.EventInboxBatchArchived,
+			WorkspaceID: util.UUIDToString(projection.issue.WorkspaceID),
+			ActorType:   actorType,
+			ActorID:     actorID,
+			Payload: map[string]any{
+				"recipient_type": recipient.RecipientType,
+				"recipient_id":   util.UUIDToString(recipient.RecipientID),
+				"issue_id":       util.UUIDToString(projection.issue.ID),
+				"count":          1,
+			},
+		})
+	}
+	if projection.inbox != nil {
+		s.publishProjectLeadApprovalInbox(*projection.inbox, projection.inboxIssueStatus, actorType, actorID)
 	}
 }
 
@@ -622,45 +709,6 @@ func issueMetadataString(metadata []byte, key string) string {
 func mustJSONStringBytes(value string) []byte {
 	raw, _ := json.Marshal(value)
 	return raw
-}
-
-func (s *IssueService) hasOpenProjectLeadApprovalInbox(ctx context.Context, project db.Project, issue db.Issue) bool {
-	if !project.LeadID.Valid {
-		return false
-	}
-	items, err := s.Queries.ListInboxItems(ctx, db.ListInboxItemsParams{
-		WorkspaceID:   issue.WorkspaceID,
-		RecipientType: "member",
-		RecipientID:   project.LeadID,
-	})
-	if err != nil {
-		slog.Warn("project owner approval inbox lookup failed",
-			"issue_id", util.UUIDToString(issue.ID),
-			"project_id", util.UUIDToString(project.ID),
-			"recipient_id", util.UUIDToString(project.LeadID),
-			"error", err)
-		return false
-	}
-	for _, item := range items {
-		if item.IssueID.Valid && item.IssueID == issue.ID && item.Type == "project_issue_approval_requested" {
-			return true
-		}
-	}
-	return false
-}
-
-func (s *IssueService) notifyProjectLeadApprovalRequested(ctx context.Context, project db.Project, issue db.Issue, actorType, actorID string) {
-	item, err := createProjectLeadApprovalInbox(ctx, s.Queries, project, issue, actorType, actorID)
-	if err != nil {
-		slog.Error("project lead approval inbox write failed",
-			"project_id", util.UUIDToString(project.ID),
-			"issue_id", util.UUIDToString(issue.ID),
-			"recipient_id", util.UUIDToString(project.LeadID),
-			"error", err,
-		)
-		return
-	}
-	s.publishProjectLeadApprovalInbox(item, issue.Status, actorType, actorID)
 }
 
 func createProjectLeadApprovalInbox(

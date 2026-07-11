@@ -1348,6 +1348,9 @@ func TestProjectLeadMemberBacklogIssueRequiresApprovalBeforeSquadRuns(t *testing
 	if got := countQueuedOrDispatched(t, leaderAgentID, issue.ID); got != 1 {
 		t.Fatalf("squad leader tasks after approval = %d, want 1", got)
 	}
+	if got := countActiveApprovalInbox(t, issue.ID, testUserID); got != 0 {
+		t.Fatalf("approval inbox remained active after approval: %d", got)
+	}
 }
 
 func TestProjectLeadMemberIssueMovedToBacklogRequestsApproval(t *testing.T) {
@@ -1535,6 +1538,21 @@ func TestProjectLeadAgentBacklogIssueCreatesReviewTaskBeforeSquadRuns(t *testing
 	}
 	if got := countQueuedOrDispatched(t, leaderAgentID, issue.ID); got != 1 {
 		t.Fatalf("squad leader tasks after agent review approval = %d, want 1", got)
+	}
+	var staleApprovalMetadata bool
+	if err := testPool.QueryRow(ctx, `
+		SELECT metadata ?| ARRAY[
+			'project_owner_approval_status',
+			'project_owner_approval_mode',
+			'project_owner_reviewer_type',
+			'project_owner_reviewer_id',
+			'project_owner_review_task_id'
+		] FROM issue WHERE id = $1
+	`, issue.ID).Scan(&staleApprovalMetadata); err != nil {
+		t.Fatalf("check approval metadata cleanup: %v", err)
+	}
+	if staleApprovalMetadata {
+		t.Fatal("project owner approval metadata remained after approval")
 	}
 }
 

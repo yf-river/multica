@@ -1175,12 +1175,23 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	}
 	skipBacklogEnqueue := statusChanged && !assigneeChanged && prevIssue.Status == "backlog" &&
 		h.isAssignedAgentRunningOnIssue(r.Context(), r, actorType, actorID, issue)
-	taskProjection, err := h.reconcileIssueUpdateTasksInTx(r.Context(), qtx, prevIssue, issue, assigneeChanged, statusChanged, skipBacklogEnqueue, actorType, actorID)
+	taskProjection, err := h.reconcileIssueUpdateTasksInTx(r.Context(), qtx, prevIssue, issue, assigneeChanged, statusChanged, projectChanged, skipBacklogEnqueue, actorType, actorID)
 	if err != nil {
 		slog.Warn("project issue update tasks failed", append(logger.RequestAttrs(r), "error", err, "issue_id", id, "workspace_id", workspaceID)...)
 		writeError(w, http.StatusInternalServerError, "failed to reconcile issue tasks")
 		return
 	}
+	approvalProjection := service.IssueApprovalProjection{}
+	if statusChanged || projectChanged {
+		approvalProjection, err = h.IssueService.ReconcileProjectOwnerApprovalInTx(r.Context(), qtx, issue, actorType, actorID)
+		if err != nil {
+			slog.Warn("project owner approval projection failed", append(logger.RequestAttrs(r), "error", err, "issue_id", id, "workspace_id", workspaceID)...)
+			writeError(w, http.StatusInternalServerError, "failed to reconcile project owner approval")
+			return
+		}
+	}
+	issue = approvalProjection.CurrentIssue(issue)
+	resp = issueToResponse(issue, prefix)
 	updatedEvent := buildIssueUpdatedEvent(workspaceID, actorType, actorID, prevIssue, resp, changes)
 	updatedEvent, err = eventoutbox.Enqueue(r.Context(), qtx, updatedEvent)
 	if err != nil {
@@ -1204,13 +1215,10 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	slog.Info("issue updated", append(logger.RequestAttrs(r), "issue_id", id, "workspace_id", workspaceID)...)
 
 	h.publishIssueUpdateTaskProjection(r.Context(), taskProjection)
+	h.IssueService.PublishIssueApprovalProjection(r.Context(), approvalProjection, actorType, actorID)
 	if statusChanged {
 		h.notifyParentOfChildDone(r.Context(), prevIssue, issue, actorType, actorID)
 	}
-	if issue.Status == "backlog" && (statusChanged || projectChanged || assigneeChanged) {
-		h.IssueService.EnsureProjectOwnerApprovalForBacklog(r.Context(), issue, actorType, actorID)
-	}
-
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -1276,12 +1284,16 @@ func (h *Handler) reconcileIssueUpdateTasksInTx(
 	issue db.Issue,
 	assigneeChanged bool,
 	statusChanged bool,
+	projectChanged bool,
 	skipBacklogEnqueue bool,
 	actorType string,
 	actorID string,
 ) (issueUpdateTaskProjection, error) {
 	projection := issueUpdateTaskProjection{}
-	if assigneeChanged || statusChanged && issue.Status == "cancelled" {
+	shouldCancelTasks := assigneeChanged ||
+		statusChanged && (issue.Status == "cancelled" || issue.Status == "backlog") ||
+		projectChanged && issue.Status == "backlog"
+	if shouldCancelTasks {
 		cancelled, persistedEvents, err := h.TaskService.CancelTasksForIssueInTx(ctx, queries, issue.ID)
 		if err != nil {
 			return projection, fmt.Errorf("cancel issue tasks: %w", err)
