@@ -42,6 +42,8 @@ import { DeleteRuntimeProfileDialog } from "./delete-runtime-profile-dialog";
 import {
   PROTOCOL_FAMILIES,
   buildRuntimeCatalog,
+  formatFixedArgsInput,
+  parseFixedArgsInput,
   validateProfileForm,
   type ProfileFormErrorField,
   type ProfileFormValues,
@@ -501,6 +503,21 @@ function DetailPanel({
           <DetailRow label={t(($) => $.profiles.detail.command)}>
             <span className="font-mono text-xs">{profile.command_name}</span>
           </DetailRow>
+          <DetailRow label={t(($) => $.profiles.detail.fixed_args)}>
+            {profile.fixed_args.length > 0 ? (
+              <div className="flex flex-wrap gap-1.5">
+                {profile.fixed_args.map((arg, index) => (
+                  <code key={`${index}-${arg}`} className="rounded bg-muted px-1.5 py-0.5 text-xs">
+                    {arg}
+                  </code>
+                ))}
+              </div>
+            ) : (
+              <span className="text-muted-foreground">
+                {t(($) => $.profiles.detail.no_fixed_args)}
+              </span>
+            )}
+          </DetailRow>
           <DetailRow label={t(($) => $.profiles.detail.description)}>
             {profile.description ? (
               <span>{profile.description}</span>
@@ -675,6 +692,7 @@ function ProfileDetailsForm({
     displayName: profile?.display_name ?? "",
     commandName: profile?.command_name ?? "",
     description: profile?.description ?? "",
+    fixedArgs: formatFixedArgsInput(profile?.fixed_args ?? []),
   });
   const [errors, setErrors] = useState<ProfileFormErrorField[]>([]);
   // Server-side error surfaced under the display-name field (duplicate) or
@@ -696,6 +714,7 @@ function ProfileDetailsForm({
     if (validationErrors.length > 0) return;
 
     const description = values.description.trim();
+    const fixedArgs = parseFixedArgsInput(values.fixedArgs);
 
     try {
       if (mode === "create") {
@@ -704,6 +723,7 @@ function ProfileDetailsForm({
           protocol_family: family,
           command_name: values.commandName.trim(),
           ...(description ? { description } : {}),
+          ...(fixedArgs.length > 0 ? { fixed_args: fixedArgs } : {}),
         });
         toast.success(t(($) => $.profiles.form.toast_created));
         onSaved(created);
@@ -714,6 +734,7 @@ function ProfileDetailsForm({
             display_name: values.displayName.trim(),
             command_name: values.commandName.trim(),
             description: description ? description : null,
+            fixed_args: fixedArgs,
           },
         });
         toast.success(t(($) => $.profiles.form.toast_updated));
@@ -841,11 +862,24 @@ function ProfileDetailsForm({
           />
         </div>
 
-        {/* NOTE: a `fixed_args` input is intentionally omitted in v1 — the
-            daemon does not yet pass these args to the agent launch command, so
-            exposing the field would promise admins a no-op. Re-add only once
-            it's wired end-to-end. See TODO(MUL-3284) in
-            server/internal/daemon/daemon.go. */}
+        <div className="space-y-1.5">
+          <Label
+            htmlFor={`${idPrefix}-fixed-args`}
+            className="text-xs text-muted-foreground"
+          >
+            {t(($) => $.profiles.form.fixed_args_label)}
+          </Label>
+          <Textarea
+            id={`${idPrefix}-fixed-args`}
+            value={values.fixedArgs}
+            onChange={(e) => setField("fixedArgs", e.target.value)}
+            placeholder={t(($) => $.profiles.form.fixed_args_placeholder)}
+            className="min-h-20 font-mono text-xs"
+          />
+          <p className="text-[11px] text-muted-foreground">
+            {t(($) => $.profiles.form.fixed_args_hint)}
+          </p>
+        </div>
 
         {/* NOTE: a visibility control is intentionally omitted in v1. The
             server forces every profile to 'workspace' because the read paths

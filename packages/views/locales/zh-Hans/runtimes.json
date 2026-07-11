@@ -246,6 +246,8 @@
     "detail": {
       "base_family": "基础协议类型",
       "command": "命令",
+      "fixed_args": "固定启动参数",
+      "no_fixed_args": "无",
       "description": "描述",
       "no_description": "无描述",
       "edit": "编辑",
@@ -267,6 +269,9 @@
       "command_name_placeholder": "claude",
       "description_label": "描述",
       "description_placeholder": "可选 — 此运行时的用途",
+      "fixed_args_label": "固定启动参数",
+      "fixed_args_placeholder": "--profile-mode\nteam",
+      "fixed_args_hint": "每行一个参数。此运行时上的每个智能体都会继承这些参数。",
       "error_display_name_required": "显示名称为必填项。",
       "error_command_required": "命令为必填项。",
       "back": "返回",

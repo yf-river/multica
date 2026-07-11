@@ -96,7 +96,7 @@ describe("RuntimeProfilesDialog", () => {
   });
 
   it("在折叠的内置参考区之前渲染自定义 profile", () => {
-    queryState.profiles = [profile()];
+    queryState.profiles = [profile({ fixed_args: ["--profile-mode", "team"] })];
 
     renderDialog();
 
@@ -113,6 +113,10 @@ describe("RuntimeProfilesDialog", () => {
         Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
     expect(screen.queryByText("claude")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("option", { name: /Team Codex/i }));
+    expect(screen.getByText("固定启动参数")).toBeInTheDocument();
+    expect(screen.getByText("--profile-mode")).toBeInTheDocument();
 
     fireEvent.click(builtinsToggle);
 
