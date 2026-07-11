@@ -43,6 +43,7 @@ export function AssigneePicker({
   onUpdate,
   trigger: customTrigger,
   triggerRender,
+  triggerNativeButton,
   open: controlledOpen,
   onOpenChange: controlledOnOpenChange,
   align,
@@ -52,6 +53,7 @@ export function AssigneePicker({
   onUpdate: (updates: Partial<UpdateIssueRequest>) => void;
   trigger?: React.ReactNode;
   triggerRender?: React.ReactElement;
+  triggerNativeButton?: boolean;
   open?: boolean;
   onOpenChange?: (v: boolean) => void;
   align?: "start" | "center" | "end";
@@ -133,6 +135,7 @@ export function AssigneePicker({
       searchPlaceholder={t(($) => $.pickers.assignee.search_placeholder)}
       onSearchChange={setFilter}
       triggerRender={triggerRender}
+      triggerNativeButton={triggerNativeButton}
       trigger={
         customTrigger ? customTrigger : assigneeType && assigneeId ? (
           <>

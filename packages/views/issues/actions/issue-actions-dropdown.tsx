@@ -60,6 +60,7 @@ export function IssueActionsDropdown({
           onUpdate={actions.updateField}
           open={assigneeOpen}
           onOpenChange={setAssigneeOpen}
+          triggerNativeButton={false}
           triggerRender={
             <span
               aria-hidden

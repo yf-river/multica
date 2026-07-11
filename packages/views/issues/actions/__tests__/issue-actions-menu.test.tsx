@@ -194,4 +194,25 @@ describe("IssueActionsContextMenu", () => {
     expect(await screen.findByText("状态")).toBeInTheDocument();
     expect(screen.getByText("删除任务")).toBeInTheDocument();
   });
+
+  it("anchors the shared AssigneePicker at the context-menu position", async () => {
+    render(
+      wrapIssueActionsMenu(
+        <IssueActionsContextMenu issue={mockIssue}>
+          <div data-testid="row">Row</div>
+        </IssueActionsContextMenu>,
+      ),
+    );
+
+    fireEvent.contextMenu(screen.getByTestId("row"), {
+      clientX: 120,
+      clientY: 80,
+    });
+    fireEvent.click(await screen.findByText("负责人"));
+
+    expect(
+      await screen.findByPlaceholderText("分配给..."),
+    ).toBeInTheDocument();
+    expect(await screen.findByText("Test User")).toBeInTheDocument();
+  });
 });
