@@ -1,4 +1,5 @@
 import { expect, type Page } from "@playwright/test";
+import { createHmac, randomBytes } from "node:crypto";
 import { TestApiClient } from "./fixtures";
 import {
   DEFAULT_E2E_ACCOUNT,
@@ -48,17 +49,35 @@ export async function waitForPageText(page: Page, text: string, timeout = 30000)
   );
 }
 
-export async function authenticateBrowserSession(page: Page, token: string, workspaceSlug?: string) {
-  await page.addInitScript((value) => {
-    localStorage.setItem("multica_token", value);
+export async function authenticateBrowserSession(
+  page: Page,
+  token: string,
+  workspaceSlug?: string,
+) {
+  await page.addInitScript(() => {
     localStorage.setItem("multica:chat:isOpen", "false");
-  }, token);
+  });
 
   const baseURL =
     process.env.PLAYWRIGHT_BASE_URL ??
     process.env.FRONTEND_ORIGIN ??
     "http://localhost:3000";
+  const csrfNonce = randomBytes(16);
+  const csrfToken = `${csrfNonce.toString("hex")}.${createHmac("sha256", token).update(csrfNonce).digest("hex")}`;
   const cookies = [
+    {
+      name: "multica_auth",
+      value: token,
+      url: baseURL,
+      httpOnly: true,
+      sameSite: "Strict" as const,
+    },
+    {
+      name: "multica_csrf",
+      value: csrfToken,
+      url: baseURL,
+      sameSite: "Strict" as const,
+    },
     {
       name: "multica_logged_in",
       value: "1",
