@@ -32,7 +32,7 @@ evidence reviewable by humans.
 | TypeScript WebSocket events | 70 |
 | Zustand store definitions | 31 |
 | React Query consumer files | 175 |
-| Environment variable names | 219 |
+| Environment variable names | 217 |
 | Manually identified external systems | 12 |
 
 ## Backend HTTP surface
@@ -434,10 +434,10 @@ read by the generator.
 
 | Lane | Source | Destination | Environment | Evidence |
 | --- | --- | --- | --- | --- |
-| afterFiles | `/api/:path*` | `{remoteApiUrl}/api/:path*` | `GOAL_TEST_REMOTE_API_URL`, `REMOTE_API_URL`, `NEXT_PUBLIC_API_URL`, `BACKEND_PORT`, `API_PORT`, `SERVER_PORT`, `PORT` | `apps/web/next.config.ts`; `apps/web/config/runtime-urls.ts` |
-| afterFiles | `/auth/:path*` | `{remoteApiUrl}/auth/:path*` | `GOAL_TEST_REMOTE_API_URL`, `REMOTE_API_URL`, `NEXT_PUBLIC_API_URL`, `BACKEND_PORT`, `API_PORT`, `SERVER_PORT`, `PORT` | `apps/web/next.config.ts`; `apps/web/config/runtime-urls.ts` |
-| afterFiles | `/uploads/:path*` | `{remoteApiUrl}/uploads/:path*` | `GOAL_TEST_REMOTE_API_URL`, `REMOTE_API_URL`, `NEXT_PUBLIC_API_URL`, `BACKEND_PORT`, `API_PORT`, `SERVER_PORT`, `PORT` | `apps/web/next.config.ts`; `apps/web/config/runtime-urls.ts` |
-| afterFiles | `/ws` | `{remoteApiUrl}/ws` | `GOAL_TEST_REMOTE_API_URL`, `REMOTE_API_URL`, `NEXT_PUBLIC_API_URL`, `BACKEND_PORT`, `API_PORT`, `SERVER_PORT`, `PORT` | `apps/web/next.config.ts`; `apps/web/config/runtime-urls.ts` |
+| afterFiles | `/api/:path*` | `{remoteApiUrl}/api/:path*` | `GOAL_TEST_REMOTE_API_URL`, `REMOTE_API_URL`, `NEXT_PUBLIC_API_URL`, `BACKEND_PORT`, `PORT` | `apps/web/next.config.ts`; `apps/web/config/runtime-urls.ts` |
+| afterFiles | `/auth/:path*` | `{remoteApiUrl}/auth/:path*` | `GOAL_TEST_REMOTE_API_URL`, `REMOTE_API_URL`, `NEXT_PUBLIC_API_URL`, `BACKEND_PORT`, `PORT` | `apps/web/next.config.ts`; `apps/web/config/runtime-urls.ts` |
+| afterFiles | `/uploads/:path*` | `{remoteApiUrl}/uploads/:path*` | `GOAL_TEST_REMOTE_API_URL`, `REMOTE_API_URL`, `NEXT_PUBLIC_API_URL`, `BACKEND_PORT`, `PORT` | `apps/web/next.config.ts`; `apps/web/config/runtime-urls.ts` |
+| afterFiles | `/ws` | `{remoteApiUrl}/ws` | `GOAL_TEST_REMOTE_API_URL`, `REMOTE_API_URL`, `NEXT_PUBLIC_API_URL`, `BACKEND_PORT`, `PORT` | `apps/web/next.config.ts`; `apps/web/config/runtime-urls.ts` |
 | beforeFiles | `/docs` | `{docsUrl}/docs` | `DOCS_URL` | `apps/web/next.config.ts`; `apps/web/next.config.ts` |
 | beforeFiles | `/docs/:path*` | `{docsUrl}/docs/:path*` | `DOCS_URL` | `apps/web/next.config.ts`; `apps/web/next.config.ts` |
 
@@ -786,7 +786,6 @@ written to the generated outputs.
 | `ALPINE_BASE_IMAGE` | deployment | 1 | `docker-compose.mutica.yml` (template-reference) |
 | `ANALYTICS_DISABLED` | runtime | 3 | `.env.example` (example-declaration), `server/internal/analytics/client.go` (go-runtime), `server/internal/handler/config.go` (go-runtime) |
 | `ANALYTICS_ENVIRONMENT` | runtime | 2 | `.env.example` (example-declaration), `server/internal/analytics/client.go` (go-runtime) |
-| `API_PORT` | example-only | 1 | `.env.example` (example-declaration) |
 | `APP_ENV` | runtime | 5 | `.env.example` (example-declaration), `docker-compose.mutica.yml` (template-reference), `docker-compose.selfhost.yml` (template-reference) |
 | `APPLE_TEAM_ID` | runtime | 1 | `apps/desktop/scripts/package.mjs` (node-runtime) |
 | `ARGS` | tooling-or-test | 1 | `scripts/goal-test-playwright.mjs` (node-runtime) |
@@ -989,7 +988,6 @@ written to the generated outputs.
 | `REMOTE_API_URL` | example-only | 1 | `.env.example` (example-declaration) |
 | `S3_BUCKET` | runtime | 3 | `.env.example` (example-declaration), `docker-compose.selfhost.yml` (template-reference), `server/internal/storage/s3.go` (go-runtime) |
 | `S3_REGION` | runtime | 3 | `.env.example` (example-declaration), `docker-compose.selfhost.yml` (template-reference), `server/internal/storage/s3.go` (go-runtime) |
-| `SERVER_PORT` | example-only | 1 | `.env.example` (example-declaration) |
 | `SHELL` | runtime | 1 | `server/internal/daemon/config.go` (go-runtime) |
 | `SPEC` | tooling-or-test | 1 | `scripts/goal-test-playwright.mjs` (node-runtime) |
 | `STANDALONE` | runtime | 1 | `apps/web/next.config.ts` (node-runtime) |

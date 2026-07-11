@@ -67,7 +67,7 @@ env_file_value() {
 selfhost_backend_port() {
   local file="${1:-.env}"
   local value
-  for key in BACKEND_PORT API_PORT SERVER_PORT PORT; do
+  for key in BACKEND_PORT PORT; do
     value="$(env_file_value "$file" "$key" "")"
     if [ -n "$value" ]; then
       printf "%s" "$value"

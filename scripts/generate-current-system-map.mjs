@@ -314,7 +314,7 @@ function parseWebRewrites() {
       environment: usesDocs
         ? ["DOCS_URL"]
         : usesRemoteAPI
-          ? ["GOAL_TEST_REMOTE_API_URL", "REMOTE_API_URL", "NEXT_PUBLIC_API_URL", "BACKEND_PORT", "API_PORT", "SERVER_PORT", "PORT"]
+          ? ["GOAL_TEST_REMOTE_API_URL", "REMOTE_API_URL", "NEXT_PUBLIC_API_URL", "BACKEND_PORT", "PORT"]
           : [],
       sourceFile: configFile,
       resolverSource: usesRemoteAPI ? resolverFile : configFile,

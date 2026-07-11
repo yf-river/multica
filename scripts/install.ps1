@@ -70,7 +70,7 @@ function Get-EnvFileValue {
 }
 
 function Get-SelfHostBackendPort {
-    foreach ($name in @("BACKEND_PORT", "API_PORT", "SERVER_PORT", "PORT")) {
+    foreach ($name in @("BACKEND_PORT", "PORT")) {
         $value = Get-EnvFileValue -Path (Join-Path $InstallDir ".env") -Name $name -Default ""
         if (-not [string]::IsNullOrWhiteSpace($value)) {
             return $value

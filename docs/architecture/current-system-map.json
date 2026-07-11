@@ -31,7 +31,7 @@
     "typescriptWebsocketEvents": 70,
     "zustandStores": 31,
     "reactQueryConsumerFiles": 175,
-    "environmentVariables": 219,
+    "environmentVariables": 217,
     "manualExternalSystems": 12
   },
   "backend": {
@@ -3157,8 +3157,6 @@
           "REMOTE_API_URL",
           "NEXT_PUBLIC_API_URL",
           "BACKEND_PORT",
-          "API_PORT",
-          "SERVER_PORT",
           "PORT"
         ],
         "sourceFile": "apps/web/next.config.ts",
@@ -3173,8 +3171,6 @@
           "REMOTE_API_URL",
           "NEXT_PUBLIC_API_URL",
           "BACKEND_PORT",
-          "API_PORT",
-          "SERVER_PORT",
           "PORT"
         ],
         "sourceFile": "apps/web/next.config.ts",
@@ -3189,8 +3185,6 @@
           "REMOTE_API_URL",
           "NEXT_PUBLIC_API_URL",
           "BACKEND_PORT",
-          "API_PORT",
-          "SERVER_PORT",
           "PORT"
         ],
         "sourceFile": "apps/web/next.config.ts",
@@ -3205,8 +3199,6 @@
           "REMOTE_API_URL",
           "NEXT_PUBLIC_API_URL",
           "BACKEND_PORT",
-          "API_PORT",
-          "SERVER_PORT",
           "PORT"
         ],
         "sourceFile": "apps/web/next.config.ts",
@@ -14746,16 +14738,6 @@
         "classification": "runtime"
       },
       {
-        "name": "API_PORT",
-        "references": [
-          {
-            "source": ".env.example",
-            "kind": "example-declaration"
-          }
-        ],
-        "classification": "example-only"
-      },
-      {
         "name": "APP_ENV",
         "references": [
           {
@@ -17462,16 +17444,6 @@
           }
         ],
         "classification": "runtime"
-      },
-      {
-        "name": "SERVER_PORT",
-        "references": [
-          {
-            "source": ".env.example",
-            "kind": "example-declaration"
-          }
-        ],
-        "classification": "example-only"
       },
       {
         "name": "SHELL",
