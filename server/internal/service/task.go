@@ -259,27 +259,6 @@ func (s *TaskService) CancelTasksForAgent(ctx context.Context, agentID pgtype.UU
 	return cancelled, nil
 }
 
-// CancelTasksByTriggerComment cancels active tasks whose trigger is the given
-// comment. Called from DeleteComment so an agent does not run with the
-// now-deleted content already embedded in its prompt. Must be invoked BEFORE
-// the comment row is deleted because the FK ON DELETE SET NULL would
-// otherwise nullify trigger_comment_id and we'd lose the ability to find
-// the affected tasks.
-func (s *TaskService) CancelTasksByTriggerComment(ctx context.Context, commentID pgtype.UUID) error {
-	var cancelled []db.AgentTaskQueue
-	var persistedEvents []events.Event
-	err := s.runInTx(ctx, func(queries *db.Queries) error {
-		var err error
-		cancelled, persistedEvents, err = s.CancelTasksByTriggerCommentInTx(ctx, queries, commentID)
-		return err
-	})
-	if err != nil {
-		return err
-	}
-	s.PublishCancelledTasks(ctx, cancelled, persistedEvents)
-	return nil
-}
-
 // CancelTasksByTriggerCommentInTx cancels tasks and persists their terminal
 // events in the caller's transaction. The caller publishes only after commit.
 func (s *TaskService) CancelTasksByTriggerCommentInTx(

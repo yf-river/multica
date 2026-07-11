@@ -108,3 +108,63 @@ func TestUpdateCommentCommitsDurableEvent(t *testing.T) {
 		t.Fatalf("durable comment update events = %d, want 1", eventCount)
 	}
 }
+
+func TestDeleteCommentRollsBackCancellationWhenEventFails(t *testing.T) {
+	agentID := createHandlerTestAgent(t, "atomic-comment-delete-agent-"+uuid.NewString(), nil)
+	issue := createHandlerAssignedCommentIssueFixture(t, "atomic comment delete "+uuid.NewString(), agentID)
+	w, comment := issue.postComment(t, map[string]any{"content": "actionable delete rollback"}, nil)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create comment: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var taskID string
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT id::text FROM agent_task_queue
+		WHERE trigger_comment_id = $1 AND status = 'queued'
+	`, comment.ID).Scan(&taskID); err != nil {
+		t.Fatalf("load comment task: %v", err)
+	}
+	installOutboxStreamFailure(t, "issue:"+issue.ID)
+
+	w = httptest.NewRecorder()
+	req := withURLParam(newRequest(http.MethodDelete, "/api/comments/"+comment.ID, nil), "commentId", comment.ID)
+	testHandler.DeleteComment(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", w.Code, w.Body.String())
+	}
+	var commentCount int
+	var taskStatus string
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM comment WHERE id = $1`, comment.ID).Scan(&commentCount); err != nil {
+		t.Fatalf("count comment after rollback: %v", err)
+	}
+	if err := testPool.QueryRow(context.Background(), `SELECT status FROM agent_task_queue WHERE id = $1`, taskID).Scan(&taskStatus); err != nil {
+		t.Fatalf("load task after rollback: %v", err)
+	}
+	if commentCount != 1 || taskStatus != "queued" {
+		t.Fatalf("partial delete committed: comments=%d task_status=%q", commentCount, taskStatus)
+	}
+}
+
+func TestDeleteCommentCommitsDurableEvent(t *testing.T) {
+	issue := createHandlerCommentIssueFixture(t, "durable comment delete "+uuid.NewString())
+	w, comment := issue.postComment(t, map[string]any{"content": "durable delete"}, nil)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create comment: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	w = httptest.NewRecorder()
+	req := withURLParam(newRequest(http.MethodDelete, "/api/comments/"+comment.ID, nil), "commentId", comment.ID)
+	testHandler.DeleteComment(w, req)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("delete comment: expected 204, got %d: %s", w.Code, w.Body.String())
+	}
+	var eventCount int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT count(*) FROM domain_event_outbox
+		WHERE event_type = $1 AND stream_key = 'issue:' || $2
+		  AND payload->>'comment_id' = $3
+	`, protocol.EventCommentDeleted, issue.ID, comment.ID).Scan(&eventCount); err != nil {
+		t.Fatalf("count durable comment delete events: %v", err)
+	}
+	if eventCount != 1 {
+		t.Fatalf("durable comment delete events = %d, want 1", eventCount)
+	}
+}
