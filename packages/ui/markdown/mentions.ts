@@ -6,11 +6,8 @@
  * serialization format. This function normalises them so downstream parsers
  * (Tiptap @tiptap/markdown, react-markdown) only need to handle one syntax.
  *
- * SYNCED COPY — KEEP IDENTICAL TO packages/core/markdown/mention-shortcodes.ts.
- * packages/ui/ cannot import from packages/core/ (Package Boundary Rules in
- * root CLAUDE.md). If you change the regex / behavior here, change core's copy
- * too — otherwise clients will render legacy mentions differently and the
- * "Counts must agree" parity rule breaks.
+ * Kept in UI because both the generic Markdown renderer and the shared editor
+ * preprocessing pipeline consume it.
  */
 export function preprocessMentionShortcodes(text: string): string {
   if (!text.includes("[@ ")) return text;
