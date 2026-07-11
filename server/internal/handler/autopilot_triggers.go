@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -29,123 +30,16 @@ func (h *Handler) CreateAutopilotTrigger(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if req.Kind == "" {
-		writeError(w, http.StatusBadRequest, "kind is required")
+	prepared, ok := prepareAutopilotTrigger(w, req)
+	if !ok {
 		return
 	}
-	if req.Kind != "schedule" && req.Kind != "webhook" {
-		// "api" kind is deprecated: it was reserved-but-inert (no scheduler,
-		// no ingress route), and the only way to actually fire one was via
-		// the manual /trigger endpoint — which already works regardless of
-		// trigger kind. Surface stragglers with 400 so callers move to
-		// schedule or webhook.
-		writeError(w, http.StatusBadRequest, "kind must be schedule or webhook")
-		return
-	}
-	if req.Kind == "schedule" && (req.CronExpression == nil || *req.CronExpression == "") {
-		writeError(w, http.StatusBadRequest, "cron_expression is required for schedule triggers")
-		return
-	}
-	if req.Kind == "webhook" && req.Timezone != nil && *req.Timezone != "" {
-		// Webhook triggers fire on demand from external POSTs — they have no
-		// next_run_at to compute, so a timezone is meaningless. Reject loudly
-		// instead of silently dropping the field.
-		writeError(w, http.StatusBadRequest, "timezone is not valid for webhook triggers")
-		return
-	}
-	if req.Kind != "webhook" && len(req.EventFilters) > 0 {
-		// event_filters narrows webhook ingress — it has no meaning for a
-		// schedule trigger and would otherwise be silently dropped.
-		writeError(w, http.StatusBadRequest, "event_filters is only valid for webhook triggers")
-		return
-	}
-	if err := validateWebhookEventFilters(req.EventFilters); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	// Provider only applies to webhook triggers and the value space is
-	// closed — reject unknowns early so a typo on create doesn't quietly
-	// degrade into a "generic" trigger that bypasses provider-specific
-	// dedupe / signature behaviour.
-	provider := "generic"
-	if req.Provider != nil && *req.Provider != "" {
-		if req.Kind != "webhook" {
-			writeError(w, http.StatusBadRequest, "provider is only valid for webhook triggers")
-			return
-		}
-		if !isAllowedWebhookProvider(*req.Provider) {
-			writeError(w, http.StatusBadRequest, "provider must be generic or github")
-			return
-		}
-		provider = *req.Provider
-	}
-
-	if req.Timezone != nil && *req.Timezone != "" {
-		if err := service.ValidateTimezone(*req.Timezone); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-	}
-
-	// kind-specific normalization. Webhook triggers ignore cron/timezone/
-	// next_run_at — they're fired on demand.
-	var (
-		nextRunAt    pgtype.Timestamptz
-		cronText     pgtype.Text
-		tzText       pgtype.Text
-		webhookToken pgtype.Text
+	trigger, err := createPreparedAutopilotTrigger(
+		r.Context(),
+		h.Queries,
+		ap.ID,
+		prepared,
 	)
-	switch req.Kind {
-	case "schedule":
-		cronText = ptrToText(req.CronExpression)
-		tzText = ptrToText(req.Timezone)
-		tz := "UTC"
-		if req.Timezone != nil && *req.Timezone != "" {
-			tz = *req.Timezone
-		}
-		t, err := computeNextRun(*req.CronExpression, tz)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		nextRunAt = pgtype.Timestamptz{Time: t, Valid: true}
-	case "webhook":
-		// Mint the token BEFORE the INSERT so the row never exists in a
-		// half-written kind=webhook + webhook_token=NULL state. If the
-		// random token happens to collide with an existing unique-index
-		// entry (vanishingly unlikely with 256 bits but the retry keeps
-		// the failure mode obvious if RNG is degraded), we re-generate
-		// and re-INSERT — never UPDATE.
-		eventFiltersBytes, err := encodeWebhookEventFilters(req.EventFilters)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to encode event_filters")
-			return
-		}
-		trigger, err := h.createWebhookTriggerWithMintedToken(r, ap.ID, ptrToText(req.Label), provider, eventFiltersBytes)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to create trigger")
-			return
-		}
-		resp := h.triggerToResponse(trigger)
-		userID, _ := requireUserID(w, r)
-		h.publish(protocol.EventAutopilotUpdated, workspaceID, "member", userID, map[string]any{
-			"autopilot_id": uuidToString(ap.ID),
-			"trigger":      resp,
-		})
-		writeJSON(w, http.StatusCreated, resp)
-		return
-	}
-
-	trigger, err := h.Queries.CreateAutopilotTrigger(r.Context(), db.CreateAutopilotTriggerParams{
-		AutopilotID:    ap.ID,
-		Kind:           req.Kind,
-		Enabled:        true,
-		CronExpression: cronText,
-		Timezone:       tzText,
-		NextRunAt:      nextRunAt,
-		Label:          ptrToText(req.Label),
-		WebhookToken:   webhookToken,
-	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create trigger")
 		return
@@ -160,6 +54,128 @@ func (h *Handler) CreateAutopilotTrigger(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusCreated, resp)
 }
 
+type preparedAutopilotTrigger struct {
+	kind           string
+	cronExpression pgtype.Text
+	timezone       pgtype.Text
+	nextRunAt      pgtype.Timestamptz
+	label          pgtype.Text
+	provider       string
+	eventFilters   []byte
+}
+
+func prepareAutopilotTrigger(
+	w http.ResponseWriter,
+	req CreateAutopilotTriggerRequest,
+) (preparedAutopilotTrigger, bool) {
+	if req.Kind == "" {
+		writeError(w, http.StatusBadRequest, "kind is required")
+		return preparedAutopilotTrigger{}, false
+	}
+	if req.Kind != "schedule" && req.Kind != "webhook" {
+		// "api" kind is deprecated: it was reserved-but-inert (no scheduler,
+		// no ingress route), and the only way to actually fire one was via
+		// the manual /trigger endpoint — which already works regardless of
+		// trigger kind. Surface stragglers with 400 so callers move to
+		// schedule or webhook.
+		writeError(w, http.StatusBadRequest, "kind must be schedule or webhook")
+		return preparedAutopilotTrigger{}, false
+	}
+	if req.Kind == "schedule" && (req.CronExpression == nil || *req.CronExpression == "") {
+		writeError(w, http.StatusBadRequest, "cron_expression is required for schedule triggers")
+		return preparedAutopilotTrigger{}, false
+	}
+	if req.Kind == "webhook" && req.Timezone != nil && *req.Timezone != "" {
+		// Webhook triggers fire on demand from external POSTs — they have no
+		// next_run_at to compute, so a timezone is meaningless. Reject loudly
+		// instead of silently dropping the field.
+		writeError(w, http.StatusBadRequest, "timezone is not valid for webhook triggers")
+		return preparedAutopilotTrigger{}, false
+	}
+	if req.Kind != "webhook" && len(req.EventFilters) > 0 {
+		// event_filters narrows webhook ingress — it has no meaning for a
+		// schedule trigger and would otherwise be silently dropped.
+		writeError(w, http.StatusBadRequest, "event_filters is only valid for webhook triggers")
+		return preparedAutopilotTrigger{}, false
+	}
+	if err := validateWebhookEventFilters(req.EventFilters); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return preparedAutopilotTrigger{}, false
+	}
+	// Provider only applies to webhook triggers and the value space is
+	// closed — reject unknowns early so a typo on create doesn't quietly
+	// degrade into a "generic" trigger that bypasses provider-specific
+	// dedupe / signature behaviour.
+	provider := "generic"
+	if req.Provider != nil && *req.Provider != "" {
+		if req.Kind != "webhook" {
+			writeError(w, http.StatusBadRequest, "provider is only valid for webhook triggers")
+			return preparedAutopilotTrigger{}, false
+		}
+		if !isAllowedWebhookProvider(*req.Provider) {
+			writeError(w, http.StatusBadRequest, "provider must be generic or github")
+			return preparedAutopilotTrigger{}, false
+		}
+		provider = *req.Provider
+	}
+
+	if req.Timezone != nil && *req.Timezone != "" {
+		if err := service.ValidateTimezone(*req.Timezone); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return preparedAutopilotTrigger{}, false
+		}
+	}
+
+	prepared := preparedAutopilotTrigger{
+		kind:     req.Kind,
+		label:    ptrToText(req.Label),
+		provider: provider,
+	}
+	switch req.Kind {
+	case "schedule":
+		prepared.cronExpression = ptrToText(req.CronExpression)
+		prepared.timezone = ptrToText(req.Timezone)
+		tz := "UTC"
+		if req.Timezone != nil && *req.Timezone != "" {
+			tz = *req.Timezone
+		}
+		t, err := computeNextRun(*req.CronExpression, tz)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return preparedAutopilotTrigger{}, false
+		}
+		prepared.nextRunAt = pgtype.Timestamptz{Time: t, Valid: true}
+	case "webhook":
+		eventFiltersBytes, err := encodeWebhookEventFilters(req.EventFilters)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to encode event_filters")
+			return preparedAutopilotTrigger{}, false
+		}
+		prepared.eventFilters = eventFiltersBytes
+	}
+	return prepared, true
+}
+
+func createPreparedAutopilotTrigger(
+	ctx context.Context,
+	queries *db.Queries,
+	autopilotID pgtype.UUID,
+	prepared preparedAutopilotTrigger,
+) (db.AutopilotTrigger, error) {
+	if prepared.kind == "webhook" {
+		return createWebhookTriggerWithMintedToken(ctx, queries, autopilotID, prepared)
+	}
+	return queries.CreateAutopilotTrigger(ctx, db.CreateAutopilotTriggerParams{
+		AutopilotID:    autopilotID,
+		Kind:           prepared.kind,
+		Enabled:        true,
+		CronExpression: prepared.cronExpression,
+		Timezone:       prepared.timezone,
+		NextRunAt:      prepared.nextRunAt,
+		Label:          prepared.label,
+	})
+}
+
 // createWebhookTriggerWithMintedToken atomically creates a webhook trigger
 // with a freshly minted bearer token in the same INSERT. Avoids the older
 // two-step (INSERT then UPDATE webhook_token) pattern which could leave a
@@ -168,26 +184,25 @@ func (h *Handler) CreateAutopilotTrigger(w http.ResponseWriter, r *http.Request)
 //
 // Retries on the unique-index collision case so a vanishingly-rare RNG
 // collision turns into a clean retry rather than a 500.
-func (h *Handler) createWebhookTriggerWithMintedToken(
-	r *http.Request,
+func createWebhookTriggerWithMintedToken(
+	ctx context.Context,
+	queries *db.Queries,
 	autopilotID pgtype.UUID,
-	label pgtype.Text,
-	provider string,
-	eventFilters []byte,
+	prepared preparedAutopilotTrigger,
 ) (db.AutopilotTrigger, error) {
 	for attempt := 0; attempt < 3; attempt++ {
 		token, err := generateWebhookToken()
 		if err != nil {
 			return db.AutopilotTrigger{}, err
 		}
-		trigger, err := h.Queries.CreateAutopilotTrigger(r.Context(), db.CreateAutopilotTriggerParams{
+		trigger, err := queries.CreateAutopilotTrigger(ctx, db.CreateAutopilotTriggerParams{
 			AutopilotID:  autopilotID,
 			Kind:         "webhook",
 			Enabled:      true,
-			Label:        label,
+			Label:        prepared.label,
 			WebhookToken: pgtype.Text{String: token, Valid: true},
-			Provider:     pgtype.Text{String: provider, Valid: provider != ""},
-			EventFilters: eventFilters,
+			Provider:     pgtype.Text{String: prepared.provider, Valid: prepared.provider != ""},
+			EventFilters: prepared.eventFilters,
 		})
 		if err == nil {
 			return trigger, nil
