@@ -224,6 +224,7 @@ export function SearchCommand() {
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<SearchResults>({ issues: [], projects: [] });
   const [isLoading, setIsLoading] = useState(false);
+  const [searchFailed, setSearchFailed] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -433,9 +434,14 @@ export function SearchCommand() {
   // Reset state when dialog closes
   useEffect(() => {
     if (!open) {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      abortRef.current?.abort();
+      debounceRef.current = null;
+      abortRef.current = null;
       setQuery("");
       setResults({ issues: [], projects: [] });
       setIsLoading(false);
+      setSearchFailed(false);
     }
   }, [open]);
 
@@ -446,10 +452,12 @@ export function SearchCommand() {
     if (!q.trim()) {
       setResults({ issues: [], projects: [] });
       setIsLoading(false);
+      setSearchFailed(false);
       return;
     }
 
     setIsLoading(true);
+    setSearchFailed(false);
     debounceRef.current = setTimeout(async () => {
       const controller = new AbortController();
       abortRef.current = controller;
@@ -474,10 +482,13 @@ export function SearchCommand() {
             projects: projectRes.projects,
           });
           setIsLoading(false);
+          setSearchFailed(false);
         }
       } catch {
         if (!controller.signal.aborted) {
+          setResults({ issues: [], projects: [] });
           setIsLoading(false);
+          setSearchFailed(true);
         }
       }
     }, 300);
@@ -635,7 +646,14 @@ export function SearchCommand() {
               </div>
             )}
 
+            {!isLoading && searchFailed && (
+              <div role="alert" className="px-4 py-8 text-center text-sm text-destructive">
+                {t(($) => $.error.search_failed)}
+              </div>
+            )}
+
             {!isLoading &&
+              !searchFailed &&
               query.trim() &&
               !hasResults &&
               filteredPages.length === 0 &&

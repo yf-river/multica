@@ -688,6 +688,21 @@ describe("SearchCommand", () => {
     expect(screen.queryByText("审核中")).not.toBeInTheDocument();
   });
 
+  it("搜索接口失败时清空旧结果并显示可诊断错误", async () => {
+    const user = userEvent.setup();
+    mockSearchIssues.mockRejectedValue(new Error("service unavailable"));
+
+    renderSearch();
+
+    const input = screen.getByPlaceholderText("输入命令或关键词搜索...");
+    await user.type(input, "unavailable");
+
+    expect(
+      await screen.findByRole("alert", undefined, { timeout: 2000 }),
+    ).toHaveTextContent("搜索服务暂时不可用，请稍后重试。");
+    expect(screen.queryByText("未找到结果。")).not.toBeInTheDocument();
+  });
+
   it("最近访问 issue 显示负责人头像而不是状态文本", () => {
     mockRecentItems.current = [{ id: "issue-1", visitedAt: 1000 }];
     mockAgents.current = [{ id: "agent-1", name: "Niko", avatar_url: null }];

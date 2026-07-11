@@ -51,6 +51,9 @@
     "no_results": "未找到结果。",
     "type_to_search": "输入关键词搜索任务和项目"
   },
+  "error": {
+    "search_failed": "搜索服务暂时不可用，请稍后重试。"
+  },
   "trigger": {
     "label": "搜索..."
   }
