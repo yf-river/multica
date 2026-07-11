@@ -306,7 +306,7 @@ describe("ProjectsPage compact row navigation", () => {
       button: 1,
       cancelable: true,
     });
-    row.dispatchEvent(middleClick);
+    fireEvent(row, middleClick);
 
     expect(middleClick.defaultPrevented).toBe(true);
     expect(openInNewTab).toHaveBeenCalledTimes(3);
@@ -328,7 +328,7 @@ describe("ProjectsPage compact row navigation", () => {
       button: 1,
       cancelable: true,
     });
-    row.dispatchEvent(middleClick);
+    fireEvent(row, middleClick);
 
     expect(middleClick.defaultPrevented).toBe(true);
     expect(push).toHaveBeenCalledTimes(3);

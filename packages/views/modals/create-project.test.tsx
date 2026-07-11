@@ -1,6 +1,6 @@
 import React from "react";
 import { describe, expect, it, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithI18n } from "../test/i18n";
 
@@ -179,7 +179,7 @@ import { CreateProjectModal } from "./create-project";
 
 describe("CreateProjectModal", () => {
   it("shows repository names in the picker and keeps full URLs in the tooltip", () => {
-    render(<CreateProjectModal onClose={vi.fn()} />);
+    renderWithI18n(<CreateProjectModal onClose={vi.fn()} />);
 
     expect(screen.getByTitle(`user-center · ${userCenterRepoUrl}`)).toHaveTextContent("user-center");
     expect(screen.getByTitle(`gateway · ${gatewayRepoUrl}`)).toHaveTextContent("gateway");

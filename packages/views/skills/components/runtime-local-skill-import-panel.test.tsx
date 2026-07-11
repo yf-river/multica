@@ -3,7 +3,7 @@
 import type { ReactNode } from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../../locales/zh-Hans/common.json";
 import enSkills from "../../locales/zh-Hans/skills.json";
@@ -177,7 +177,9 @@ async function waitForReviewHelper() {
 async function clickEnabledButton(name: RegExp) {
   const button = screen.getByRole("button", { name });
   await waitFor(() => expect(button).not.toBeDisabled(), { timeout: 5000 });
-  fireEvent.click(button);
+  await act(async () => {
+    fireEvent.click(button);
+  });
 }
 
 async function selectReviewHelperAndImport() {

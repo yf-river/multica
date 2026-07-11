@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { fireEvent, render, waitFor } from "@testing-library/react";
+import { fireEvent, waitFor } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { readFileSync } from "node:fs";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { renderWithI18n } from "../test/i18n";
 
 const { getAttachmentTextContentMock } = vi.hoisted(() => ({
   getAttachmentTextContentMock: vi.fn(),
@@ -89,7 +90,7 @@ describe("ReadonlyContent memoization", () => {
 
 describe("ReadonlyContent math rendering", () => {
   it("renders inline and block LaTeX with KaTeX markup", () => {
-    const { container } = render(
+    const { container } = renderWithI18n(
       <ReadonlyContent
         content={[
           "Inline math: $$E = mc^2$$",
@@ -116,19 +117,23 @@ describe("ReadonlyContent line breaks", () => {
   // visible break. remark-breaks must remain wired into ReadonlyContent's
   // remark plugin chain or comments lose their formatting again.
   it("converts a single newline into a <br>", () => {
-    const { container } = render(<ReadonlyContent content={"line one\nline two"} />);
+    const { container } = renderWithI18n(
+      <ReadonlyContent content={"line one\nline two"} />,
+    );
     expect(container.querySelector("br")).not.toBeNull();
   });
 
   it("renders a blank-line gap as separate paragraphs", () => {
-    const { container } = render(<ReadonlyContent content={"para one\n\npara two"} />);
+    const { container } = renderWithI18n(
+      <ReadonlyContent content={"para one\n\npara two"} />,
+    );
     expect(container.querySelectorAll("p").length).toBeGreaterThanOrEqual(2);
   });
 });
 
 describe("ReadonlyContent task lists", () => {
   it("renders `- [ ]` / `- [x]` as checkboxes and preserves the checked state", () => {
-    const { container } = render(
+    const { container } = renderWithI18n(
       <ReadonlyContent content={"- [ ] todo\n- [x] done"} />,
     );
 
@@ -144,7 +149,7 @@ describe("ReadonlyContent task lists", () => {
   });
 
   it("nests a child task list inside its parent item (not as a sibling)", () => {
-    const { container } = render(
+    const { container } = renderWithI18n(
       <ReadonlyContent content={"- [ ] parent\n  - [x] child\n  - [ ] child2"} />,
     );
 
@@ -177,19 +182,25 @@ describe("ReadonlyContent highlight Markdown", () => {
   // it into an element and the sanitize schema must whitelist <mark> or it gets
   // stripped. These guard both halves of that contract.
   it("renders ==text== as a <mark> element", () => {
-    const { container } = render(<ReadonlyContent content={"a ==hi== b"} />);
+    const { container } = renderWithI18n(
+      <ReadonlyContent content={"a ==hi== b"} />,
+    );
     const mark = container.querySelector("mark");
     expect(mark).not.toBeNull();
     expect(mark?.textContent).toBe("hi");
   });
 
   it("keeps inner Markdown formatting inside a highlight", () => {
-    const { container } = render(<ReadonlyContent content={"==**bold**=="} />);
+    const { container } = renderWithI18n(
+      <ReadonlyContent content={"==**bold**=="} />,
+    );
     expect(container.querySelector("mark strong")).not.toBeNull();
   });
 
   it("does not highlight == inside inline code", () => {
-    const { container } = render(<ReadonlyContent content={"`a ==b== c`"} />);
+    const { container } = renderWithI18n(
+      <ReadonlyContent content={"`a ==b== c`"} />,
+    );
     expect(container.querySelector("mark")).toBeNull();
     expect(container.querySelector("code")?.textContent).toBe("a ==b== c");
   });
@@ -197,7 +208,9 @@ describe("ReadonlyContent highlight Markdown", () => {
   // Boundary regressions (Emacs review, PR #3661).
 
   it("wraps the whole span when an inner == lives in inline code", () => {
-    const { container } = render(<ReadonlyContent content={"==a `b==c` d=="} />);
+    const { container } = renderWithI18n(
+      <ReadonlyContent content={"==a `b==c` d=="} />,
+    );
     const mark = container.querySelector("mark");
     expect(mark).not.toBeNull();
     // inner `==` stays inside the code, not consumed as the closing fence
@@ -206,14 +219,16 @@ describe("ReadonlyContent highlight Markdown", () => {
   });
 
   it("does not highlight across a blank line", () => {
-    const { container } = render(<ReadonlyContent content={"==a\n\nb=="} />);
+    const { container } = renderWithI18n(
+      <ReadonlyContent content={"==a\n\nb=="} />,
+    );
     expect(container.querySelector("mark")).toBeNull();
   });
 });
 
 describe("ReadonlyContent issue mention Markdown", () => {
   it("renders an issue mention inside a task list as an issue mention card", () => {
-    const { container, getByTestId } = render(
+    const { container, getByTestId } = renderWithI18n(
       <ReadonlyContent content="- [ ] [MUL-123](mention://issue/issue-123)" />,
     );
 
@@ -222,7 +237,7 @@ describe("ReadonlyContent issue mention Markdown", () => {
   });
 
   it("documents the CommonMark quoted-emphasis edge case before Korean particles", () => {
-    const unsafe = render(
+    const unsafe = renderWithI18n(
       <ReadonlyContent content={'**"무엇을 먼저 정해두고 시작할지"**가'} />,
     );
 
@@ -231,7 +246,7 @@ describe("ReadonlyContent issue mention Markdown", () => {
       '**"무엇을 먼저 정해두고 시작할지"**가',
     );
 
-    const safe = render(
+    const safe = renderWithI18n(
       <ReadonlyContent content={'"**무엇을 먼저 정해두고 시작할지**"가'} />,
     );
 
@@ -246,7 +261,7 @@ describe("ReadonlyContent code styling", () => {
   const literalCode = "uv run --extra dev pytest -q";
 
   it("renders inline and fenced code through rich-text-editor code selectors", () => {
-    const { container } = render(
+    const { container } = renderWithI18n(
       <ReadonlyContent
         content={[
           `<code>${literalCode}</code>`,
@@ -269,7 +284,7 @@ describe("ReadonlyContent code styling", () => {
 
   it("renders code blocks without a language tag (lowlight highlightAuto fallback)", () => {
     const token = "mul_407ec1e4464b580304362ed749f821901fd7d310";
-    const { container } = render(
+    const { container } = renderWithI18n(
       <ReadonlyContent content={["```", token, "```"].join("\n")} />,
     );
     const blockCode = container.querySelector("pre code");
@@ -297,7 +312,7 @@ describe("ReadonlyContent Mermaid rendering", () => {
       return originalGetComputedStyle.call(window, element, pseudoElt);
     });
 
-    const { container } = render(
+    const { container } = renderWithI18n(
       <ReadonlyContent
         content={["```mermaid", "graph LR", "  A[Start] --> B[Done]", "```"].join("\n")}
       />,
@@ -334,7 +349,7 @@ describe("ReadonlyContent Mermaid rendering", () => {
     // someone tightens the `pre` check to a single component, the other
     // one quietly regresses into a `<pre>`-wrapped DOM. This test pins the
     // contract.
-    const { container } = render(
+    const { container } = renderWithI18n(
       <ReadonlyContent
         content={["```mermaid", "graph LR", "  A --> B", "```"].join("\n")}
       />,
@@ -342,10 +357,15 @@ describe("ReadonlyContent Mermaid rendering", () => {
     expect(container.querySelector(".mermaid-diagram")).not.toBeNull();
     // No outer <pre> envelope.
     expect(container.querySelector("pre")).toBeNull();
+    await waitFor(() => {
+      expect(
+        container.querySelector(".mermaid-diagram-frame"),
+      ).not.toBeNull();
+    });
   });
 
   it("opens a fullscreen lightbox when the toolbar button is clicked", async () => {
-    const { container } = render(
+    const { container } = renderWithI18n(
       <ReadonlyContent
         content={["```mermaid", "graph LR", "  A[Start] --> B[Done]", "```"].join("\n")}
       />,
@@ -385,7 +405,7 @@ describe("ReadonlyContent HTML block rendering", () => {
   // clamp the iframe with monospace / overflow styles. The two-layer
   // code+pre unwrap mirror's Mermaid's pattern.
   it("renders an iframe with sandbox='allow-scripts' for ```html and skips the outer <pre>", () => {
-    const { container } = render(
+    const { container } = renderWithI18n(
       <ReadonlyContent
         content={["```html", '<h1 id="x">hi</h1>', "```"].join("\n")}
       />,
@@ -402,7 +422,7 @@ describe("ReadonlyContent HTML block rendering", () => {
     // matched `language-htmlbars` too, so an htmlbars fence lost its outer
     // <pre> envelope and rendered as bare lowlight-highlighted spans. The
     // unwrap rule must match the exact class token, not a prefix.
-    const { container } = render(
+    const { container } = renderWithI18n(
       <ReadonlyContent
         content={[
           "```htmlbars",
@@ -438,7 +458,9 @@ describe("ReadonlyContent file-card → AttachmentBlock HTML routing", () => {
     const qc = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
+    return renderWithI18n(
+      <QueryClientProvider client={qc}>{ui}</QueryClientProvider>,
+    );
   }
 
   it("renders the !file[](url) HTML attachment as an iframe (no file-card chrome)", async () => {
@@ -499,7 +521,7 @@ describe("ReadonlyContent file-card → AttachmentBlock HTML routing", () => {
 
 describe("ReadonlyContent slash command rendering", () => {
   it("renders slash skill links as slash command pills", () => {
-    const { container } = render(
+    const { container } = renderWithI18n(
       <ReadonlyContent content="[/deploy](slash://skill/abc-123)" />,
     );
 
@@ -509,7 +531,7 @@ describe("ReadonlyContent slash command rendering", () => {
   });
 
   it("does not affect regular links", () => {
-    const { container } = render(
+    const { container } = renderWithI18n(
       <ReadonlyContent content="[docs](https://example.com)" />,
     );
 

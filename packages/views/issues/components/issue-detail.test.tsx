@@ -378,9 +378,21 @@ vi.mock("sonner", () => ({
 
 // Mock react-resizable-panels (used by @multica/ui/components/ui/resizable)
 vi.mock("react-resizable-panels", () => ({
-  Group: ({ children, ...props }: any) => <div data-testid="panel-group" {...props}>{children}</div>,
-  Panel: ({ children, ...props }: any) => <div data-testid="panel" {...props}>{children}</div>,
-  Separator: ({ children, ...props }: any) => <div data-testid="panel-handle" {...props}>{children}</div>,
+  Group: ({ children, className }: any) => (
+    <div data-testid="panel-group" className={className}>
+      {children}
+    </div>
+  ),
+  Panel: ({ children, className }: any) => (
+    <div data-testid="panel" className={className}>
+      {children}
+    </div>
+  ),
+  Separator: ({ children, className }: any) => (
+    <div data-testid="panel-handle" className={className}>
+      {children}
+    </div>
+  ),
   useDefaultLayout: () => ({ defaultLayout: undefined, onLayoutChanged: vi.fn() }),
   usePanelRef: () => ({ current: { isCollapsed: () => false, expand: vi.fn(), collapse: vi.fn() } }),
 }));

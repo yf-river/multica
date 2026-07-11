@@ -1,5 +1,5 @@
 import React from "react";
-import { fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -268,7 +268,7 @@ describe("case library editor", () => {
     expect(screen.getByRole("button", { name: "保存用例" })).toBeDisabled();
   });
 
-  it("creates a case only inside the selected dataset", () => {
+  it("creates a case only inside the selected dataset", async () => {
     const onCreateCase = vi.fn().mockResolvedValue(undefined);
     renderCaseLibrary({
       draft: {
@@ -281,7 +281,9 @@ describe("case library editor", () => {
     });
 
     fireEvent.click(screen.getByRole("button", { name: "新增用例" }));
-    fireEvent.click(screen.getByRole("button", { name: "保存用例" }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "保存用例" }));
+    });
 
     expect(onCreateCase).toHaveBeenCalledWith(
       baseAsset,
@@ -289,13 +291,15 @@ describe("case library editor", () => {
     );
   });
 
-  it("opens dataset editing controls", () => {
+  it("opens dataset editing controls", async () => {
     const onUpdateDataset = vi.fn().mockResolvedValue(undefined);
     renderCaseLibrary({ onUpdateDataset });
 
     fireEvent.click(screen.getByTestId("edit-case-library-dataset-asset-1"));
     fireEvent.change(screen.getByDisplayValue("账号系统评估集"), { target: { value: "账号回归评估集" } });
-    fireEvent.click(screen.getByRole("button", { name: "保存数据集" }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "保存数据集" }));
+    });
 
     expect(onUpdateDataset).toHaveBeenCalledWith(baseAsset, expect.objectContaining({
       name: "账号回归评估集",
@@ -313,13 +317,15 @@ describe("case library editor", () => {
     expect(onDeleteDataset).toHaveBeenCalledWith(baseAsset);
   });
 
-  it("creates dataset versions with a version note", () => {
+  it("creates dataset versions with a version note", async () => {
     const onCreateDatasetVersion = vi.fn().mockResolvedValue(undefined);
     renderCaseLibrary({ onCreateDatasetVersion });
 
     fireEvent.click(screen.getByRole("button", { name: "创建版本" }));
     fireEvent.change(screen.getByPlaceholderText("例如：补充登录失败边界用例"), { target: { value: "补充登录失败边界用例" } });
-    fireEvent.click(screen.getByRole("button", { name: "保存版本" }));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "保存版本" }));
+    });
 
     expect(onCreateDatasetVersion).toHaveBeenCalledWith(baseAsset, "补充登录失败边界用例");
   });

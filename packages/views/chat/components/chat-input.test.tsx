@@ -233,6 +233,13 @@ async function waitForSendButton(state: "enabled" | "disabled") {
   return sendButton!;
 }
 
+async function clickEnabledSendButton() {
+  const button = await waitForSendButton("enabled");
+  await act(async () => {
+    fireEvent.click(button);
+  });
+}
+
 describe("ChatInput @ context wiring", () => {
   it("configures chat @ with current/recent issue/project context", () => {
     const contextItems = [
@@ -272,7 +279,7 @@ describe("ChatInput attachment wiring", () => {
     // Wait for the submit button to become enabled (onUpdate has fired and
     // React has re-rendered). SubmitButton has no aria-label, so we pick
     // the last action button on the bar (FileUploadButton, SubmitButton).
-    fireEvent.click(await waitForSendButton("enabled"));
+    await clickEnabledSendButton();
 
     expect(onSend).toHaveBeenCalledTimes(1);
     const [, ids] = onSend.mock.calls[0]!;
@@ -308,7 +315,7 @@ describe("ChatInput attachment wiring", () => {
     const file = new File(["x"], "foo.png", { type: "image/png" });
     await dropFile(file);
 
-    fireEvent.click(await waitForSendButton("enabled"));
+    await clickEnabledSendButton();
 
     expect(onSend).toHaveBeenCalledTimes(1);
     const [content, ids] = onSend.mock.calls[0]!;
@@ -349,7 +356,7 @@ describe("ChatInput attachment wiring", () => {
       await Promise.resolve();
     });
 
-    fireEvent.click(await waitForSendButton("enabled"));
+    await clickEnabledSendButton();
     expect(onSend).toHaveBeenCalledTimes(1);
     const [, ids] = onSend.mock.calls[0]!;
     expect(ids).toEqual(["att-slow"]);
