@@ -164,6 +164,17 @@ test("maintained domain flows stay anchored to current routes, tables and source
         "server/internal/service/autopilot.go",
       ],
     },
+    {
+      file: "squad-create-flow.md",
+      routes: ["POST /api/squads"],
+      tables: ["squad", "squad_create_request", "squad_member"],
+      sources: [
+        "server/internal/handler/squad.go",
+        "server/pkg/db/queries/squad_create_request.sql",
+        "packages/core/squads/mutations.ts",
+        "packages/core/squads/mutations.test.tsx",
+      ],
+    },
   ];
 
   const index = fs.readFileSync(

@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -78,6 +79,16 @@ func requireIdempotencyKey(w http.ResponseWriter, r *http.Request) (pgtype.UUID,
 		return pgtype.UUID{}, false
 	}
 	return key, true
+}
+
+// optionalIdempotencyKey keeps existing external create clients valid while
+// allowing current first-party clients to recover safely from unknown results.
+// Callers that omit the header receive a one-shot server-generated identity.
+func optionalIdempotencyKey(w http.ResponseWriter, r *http.Request) (pgtype.UUID, bool) {
+	if len(r.Header.Values("Idempotency-Key")) == 0 {
+		return parseUUID(uuid.NewString()), true
+	}
+	return requireIdempotencyKey(w, r)
 }
 
 func newChatIdempotencyScope(

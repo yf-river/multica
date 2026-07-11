@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"text/tabwriter"
 
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
 	"github.com/multica-ai/multica/server/internal/cli"
@@ -149,7 +150,9 @@ func runSquadCreate(cmd *cobra.Command, _ []string) error {
 	}
 
 	var result map[string]any
-	if err := client.PostJSON(ctx, "/api/squads", body, &result); err != nil {
+	if err := client.PostJSONWithIdempotencyKey(
+		ctx, "/api/squads", body, uuid.NewString(), &result,
+	); err != nil {
 		return fmt.Errorf("create squad: %w", err)
 	}
 

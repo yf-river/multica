@@ -12,7 +12,6 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/logger"
@@ -319,7 +318,7 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to create project")
 		return
 	}
-	idempotencyKey, ok := projectCreateIdempotencyKey(w, r)
+	idempotencyKey, ok := optionalIdempotencyKey(w, r)
 	if !ok {
 		return
 	}
@@ -467,16 +466,6 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 }
 
 var errProjectCreateIdempotencyConflict = errors.New("project create idempotency conflict")
-
-func projectCreateIdempotencyKey(w http.ResponseWriter, r *http.Request) (pgtype.UUID, bool) {
-	if len(r.Header.Values("Idempotency-Key")) == 0 {
-		// The current public contract keeps the header optional for external
-		// clients; first-party clients always send a stable UUIDv4 so they can
-		// safely recover an unknown outcome.
-		return parseUUID(uuid.NewString()), true
-	}
-	return requireIdempotencyKey(w, r)
-}
 
 func (h *Handler) loadProjectCreateReplay(
 	ctx context.Context,

@@ -1,16 +1,15 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, UserPlus, X } from "lucide-react";
-import { api } from "@multica/core/api";
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
+import { useCreateSquad } from "@multica/core/squads";
 import {
   agentListOptions,
   memberListOptions,
-  workspaceKeys,
 } from "@multica/core/workspace/queries";
 import { AGENT_DESCRIPTION_MAX_LENGTH } from "@multica/core/agents";
 import { isImeComposing } from "@multica/core/utils";
@@ -59,7 +58,7 @@ export function CreateSquadModal({ onClose }: { onClose: () => void }) {
   const router = useNavigation();
   const wsPaths = useWorkspacePaths();
   const wsId = useWorkspaceId();
-  const queryClient = useQueryClient();
+  const createSquad = useCreateSquad();
   const currentUser = useAuthStore((s) => s.user);
   const currentUserId = currentUser?.id ?? null;
 
@@ -77,7 +76,6 @@ export function CreateSquadModal({ onClose }: { onClose: () => void }) {
   const [scope, setScope] = useState<SquadScope>("workspace");
   const [leaderId, setLeaderId] = useState("");
   const [selectedMembers, setSelectedMembers] = useState<SelectedMember[]>([]);
-  const [creating, setCreating] = useState(false);
 
   // Promoting an agent to leader must actually drop it from selectedMembers,
   // not merely hide it. Otherwise switching leader away later resurrects the
@@ -91,13 +89,12 @@ export function CreateSquadModal({ onClose }: { onClose: () => void }) {
     }
   };
 
-  const canSubmit = !!name.trim() && !!leaderId && !creating;
+  const canSubmit = !!name.trim() && !!leaderId && !createSquad.isPending;
 
   const handleSubmit = async () => {
     if (!canSubmit) return;
-    setCreating(true);
     try {
-      const squad = await api.createSquad({
+      const squad = await createSquad.mutateAsync({
         name: name.trim(),
         description: description.trim() || undefined,
         leader_id: leaderId,
@@ -108,8 +105,6 @@ export function CreateSquadModal({ onClose }: { onClose: () => void }) {
           member_id: member.id,
         })),
       });
-      queryClient.invalidateQueries({ queryKey: workspaceKeys.squads(wsId) });
-
       onClose();
       toast.success(t(($) => $.create_squad.toast_created));
       router.push(wsPaths.squadDetail(squad.id));
@@ -119,7 +114,6 @@ export function CreateSquadModal({ onClose }: { onClose: () => void }) {
           ? err.message
           : t(($) => $.create_squad.toast_failed),
       );
-      setCreating(false);
     }
   };
 
@@ -210,7 +204,7 @@ export function CreateSquadModal({ onClose }: { onClose: () => void }) {
             {t(($) => $.create_squad.cancel)}
           </Button>
           <Button onClick={() => void handleSubmit()} disabled={!canSubmit}>
-            {creating
+            {createSquad.isPending
               ? t(($) => $.create_squad.submitting)
               : t(($) => $.create_squad.submit)}
           </Button>

@@ -4,6 +4,7 @@ import { ApiClient, ApiError } from "./client";
 const CHAT_IDEMPOTENCY_KEY = "11111111-1111-4111-8111-111111111111";
 const AUTOPILOT_IDEMPOTENCY_KEY = "22222222-2222-4222-8222-222222222222";
 const PROJECT_IDEMPOTENCY_KEY = "33333333-3333-4333-8333-333333333333";
+const SQUAD_IDEMPOTENCY_KEY = "44444444-4444-4444-8444-444444444444";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -108,6 +109,46 @@ describe("ApiClient", () => {
     for (const call of fetchMock.mock.calls) {
       expect((call[1]?.headers as Record<string, string>)["Idempotency-Key"])
         .toBe(PROJECT_IDEMPOTENCY_KEY);
+    }
+  });
+
+  it("retries an unknown squad create with the same idempotency key", async () => {
+    const squad = {
+      id: "squad-1",
+      workspace_id: "workspace-1",
+      name: "Platform",
+      description: "",
+      instructions: "",
+      sop_profile: {},
+      avatar_url: null,
+      scope: "workspace",
+      leader_id: "agent-1",
+      creator_id: "user-1",
+      created_at: "2026-07-11T00:00:00Z",
+      updated_at: "2026-07-11T00:00:00Z",
+      archived_at: null,
+      archived_by: null,
+      member_count: 1,
+      member_preview: [],
+    };
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("connection reset"))
+      .mockResolvedValueOnce(new Response(JSON.stringify(squad), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.createSquad(
+      { name: "Platform", leader_id: "agent-1" },
+      SQUAD_IDEMPOTENCY_KEY,
+    )).resolves.toMatchObject({ id: "squad-1" });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    for (const call of fetchMock.mock.calls) {
+      expect((call[1]?.headers as Record<string, string>)["Idempotency-Key"])
+        .toBe(SQUAD_IDEMPOTENCY_KEY);
     }
   });
 

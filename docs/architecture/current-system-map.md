@@ -21,17 +21,17 @@ evidence reviewable by humans.
 | Next.js route handlers | 1 |
 | Next.js rewrites | 6 |
 | Desktop route literals | 29 |
-| Database tables | 87 |
+| Database tables | 88 |
 | Database functions | 9 |
 | Database triggers | 4 |
 | Database indexes | 187 |
-| Migration files (up + down) | 22 |
-| sqlc modules | 54 |
-| sqlc queries | 578 |
+| Migration files (up + down) | 24 |
+| sqlc modules | 55 |
+| sqlc queries | 581 |
 | Go WebSocket events | 81 |
 | TypeScript WebSocket events | 71 |
-| Zustand store definitions | 30 |
-| React Query consumer files | 172 |
+| Zustand store definitions | 31 |
+| React Query consumer files | 173 |
 | Environment variable names | 220 |
 | Manually identified external systems | 12 |
 
@@ -517,6 +517,8 @@ intentionally platform-specific.
 | 10 | remove_inert_autopilot_api_kind | up | — | 0 | 0 | 0 | `server/migrations/010_remove_inert_autopilot_api_kind.up.sql` |
 | 11 | project_create_idempotency | down | — | 0 | 0 | 0 | `server/migrations/011_project_create_idempotency.down.sql` |
 | 11 | project_create_idempotency | up | project_create_request | 0 | 0 | 0 | `server/migrations/011_project_create_idempotency.up.sql` |
+| 12 | squad_create_idempotency | down | — | 0 | 0 | 0 | `server/migrations/012_squad_create_idempotency.down.sql` |
+| 12 | squad_create_idempotency | up | squad_create_request | 0 | 0 | 0 | `server/migrations/012_squad_create_idempotency.up.sql` |
 
 ### Current tables discovered from up migrations
 
@@ -593,6 +595,7 @@ intentionally platform-specific.
 - `skill` — `server/migrations/001_current_schema.up.sql#skill`
 - `skill_file` — `server/migrations/001_current_schema.up.sql#skill_file`
 - `squad` — `server/migrations/001_current_schema.up.sql#squad`
+- `squad_create_request` — `server/migrations/012_squad_create_idempotency.up.sql#squad_create_request`
 - `squad_member` — `server/migrations/001_current_schema.up.sql#squad_member`
 - `squad_sop_run` — `server/migrations/001_current_schema.up.sql#squad_sop_run`
 - `squad_sop_step_event` — `server/migrations/001_current_schema.up.sql#squad_sop_step_event`
@@ -622,7 +625,7 @@ intentionally platform-specific.
 
 ### sqlc modules
 
-All 578 query names, commands, and stable source anchors are stored in the JSON companion.
+All 581 query names, commands, and stable source anchors are stored in the JSON companion.
 
 | Module | Queries | SQL source | Generated source |
 | --- | --- | --- | --- |
@@ -671,6 +674,7 @@ All 578 query names, commands, and stable source anchors are stored in the JSON 
 | runtime_usage | 5 | `server/pkg/db/queries/runtime_usage.sql` | `server/pkg/db/generated/runtime_usage.sql.go` |
 | skill | 19 | `server/pkg/db/queries/skill.sql` | `server/pkg/db/generated/skill.sql.go` |
 | squad | 22 | `server/pkg/db/queries/squad.sql` | `server/pkg/db/generated/squad.sql.go` |
+| squad_create_request | 3 | `server/pkg/db/queries/squad_create_request.sql` | `server/pkg/db/generated/squad_create_request.sql.go` |
 | squad_sop_run | 16 | `server/pkg/db/queries/squad_sop_run.sql` | `server/pkg/db/generated/squad_sop_run.sql.go` |
 | subscriber | 4 | `server/pkg/db/queries/subscriber.sql` | `server/pkg/db/generated/subscriber.sql.go` |
 | task_message | 4 | `server/pkg/db/queries/task_message.sql` | `server/pkg/db/generated/task_message.sql.go` |
@@ -732,6 +736,7 @@ still include daemon-only/backend projection events and possible frontend gaps.
 | packages/core | `packages/core/projects/stores/view-store.ts` | `useProjectViewStore` | yes |
 | packages/core | `packages/core/search/store.ts` | `useSearchStore` | no |
 | packages/core | `packages/core/skills/stores/view-store.ts` | `useSkillsViewStore` | yes |
+| packages/core | `packages/core/squads/pending-operation-store.ts` | `useSquadPendingOperationStore` | yes |
 | packages/core | `packages/core/squads/stores/view-store.ts` | `useSquadsViewStore` | yes |
 
 ### React Query usage
@@ -740,10 +745,10 @@ still include daemon-only/backend projection events and possible frontend gaps.
 | --- | --- |
 | apps/desktop | 12 |
 | apps/web | 3 |
-| packages/core | 45 |
+| packages/core | 46 |
 | packages/views | 112 |
 
-Operation counts: `useQuery` 274, `useInfiniteQuery` 1, `useMutation` 96, `queryOptions` 67, `infiniteQueryOptions` 1.
+Operation counts: `useQuery` 274, `useInfiniteQuery` 1, `useMutation` 97, `queryOptions` 67, `infiniteQueryOptions` 1.
 The JSON companion lists every consumer file and every discovered exported
 `*Keys` query-key factory.
 

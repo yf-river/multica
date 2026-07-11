@@ -1068,6 +1068,17 @@ type Squad struct {
 	Scope        string             `json:"scope"`
 }
 
+type SquadCreateRequest struct {
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	ActorID        pgtype.UUID        `json:"actor_id"`
+	IdempotencyKey pgtype.UUID        `json:"idempotency_key"`
+	RequestHash    string             `json:"request_hash"`
+	SquadID        pgtype.UUID        `json:"squad_id"`
+	ResponseBody   []byte             `json:"response_body"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	CompletedAt    pgtype.Timestamptz `json:"completed_at"`
+}
+
 type SquadMember struct {
 	ID         pgtype.UUID        `json:"id"`
 	SquadID    pgtype.UUID        `json:"squad_id"`

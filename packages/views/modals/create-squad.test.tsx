@@ -48,10 +48,11 @@ vi.mock("@multica/core/workspace/queries", () => ({
   workspaceKeys: { squads: (id: string) => ["squads", id] },
 }));
 
-vi.mock("@multica/core/api", () => ({
-  api: {
-    createSquad: (...args: unknown[]) => mocks.createSquad(...args),
-  },
+vi.mock("@multica/core/squads", () => ({
+  useCreateSquad: () => ({
+    mutateAsync: (...args: unknown[]) => mocks.createSquad(...args),
+    isPending: false,
+  }),
 }));
 
 vi.mock("@multica/core/auth", () => ({

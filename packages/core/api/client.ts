@@ -2846,11 +2846,22 @@ export class ApiClient {
     }) as Squad;
   }
 
-  async createSquad(data: CreateSquadRequest): Promise<Squad> {
-    const raw = await this.fetch<unknown>("/api/squads", { method: "POST", body: JSON.stringify(data) });
-    return parseOrThrow(raw, SquadSchema, EMPTY_SQUAD, {
-      endpoint: "POST /api/squads",
-    }) as Squad;
+  async createSquad(
+    data: CreateSquadRequest,
+    idempotencyKey = generateUUID(),
+  ): Promise<Squad> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>("/api/squads", {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow(raw, SquadSchema, EMPTY_SQUAD, {
+        endpoint: "POST /api/squads",
+        mayHaveCommitted: true,
+      }) as Squad;
+    };
+    return retryUnknownMutationOnce(attempt);
   }
 
   async ensureInternalSquadTemplate(template: InternalSquadTemplateKey | EnsureInternalSquadTemplateRequest): Promise<InternalSquadTemplateResponse> {

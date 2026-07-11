@@ -20,17 +20,17 @@
     "webRouteHandlers": 1,
     "webRewrites": 6,
     "desktopRouteLiterals": 29,
-    "databaseTables": 87,
+    "databaseTables": 88,
     "databaseFunctions": 9,
     "databaseTriggers": 4,
     "databaseIndexes": 187,
-    "migrations": 22,
-    "sqlcModules": 54,
-    "sqlcQueries": 578,
+    "migrations": 24,
+    "sqlcModules": 55,
+    "sqlcQueries": 581,
     "goWebsocketEvents": 81,
     "typescriptWebsocketEvents": 71,
-    "zustandStores": 30,
-    "reactQueryConsumerFiles": 172,
+    "zustandStores": 31,
+    "reactQueryConsumerFiles": 173,
     "environmentVariables": 220,
     "manualExternalSystems": 12
   },
@@ -5559,6 +5559,37 @@
           "droppedFunctions": [],
           "droppedTriggers": [],
           "droppedIndexes": []
+        },
+        {
+          "version": 12,
+          "name": "squad_create_idempotency",
+          "direction": "down",
+          "source": "server/migrations/012_squad_create_idempotency.down.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 12,
+          "name": "squad_create_idempotency",
+          "direction": "up",
+          "source": "server/migrations/012_squad_create_idempotency.up.sql",
+          "tablesCreated": [
+            {
+              "name": "squad_create_request",
+              "source": "server/migrations/012_squad_create_idempotency.up.sql#squad_create_request"
+            }
+          ],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
         }
       ],
       "tables": [
@@ -5853,6 +5884,10 @@
         {
           "name": "squad",
           "source": "server/migrations/001_current_schema.up.sql#squad"
+        },
+        {
+          "name": "squad_create_request",
+          "source": "server/migrations/012_squad_create_idempotency.up.sql#squad_create_request"
         },
         {
           "name": "squad_member",
@@ -10015,6 +10050,28 @@
           ]
         },
         {
+          "module": "squad_create_request",
+          "source": "server/pkg/db/queries/squad_create_request.sql",
+          "generatedSource": "server/pkg/db/generated/squad_create_request.sql.go",
+          "queries": [
+            {
+              "name": "CompleteSquadCreateRequest",
+              "command": "one",
+              "source": "server/pkg/db/queries/squad_create_request.sql#CompleteSquadCreateRequest"
+            },
+            {
+              "name": "GetSquadCreateRequest",
+              "command": "one",
+              "source": "server/pkg/db/queries/squad_create_request.sql#GetSquadCreateRequest"
+            },
+            {
+              "name": "ReserveSquadCreateRequest",
+              "command": "one",
+              "source": "server/pkg/db/queries/squad_create_request.sql#ReserveSquadCreateRequest"
+            }
+          ]
+        },
+        {
           "module": "squad_sop_run",
           "source": "server/pkg/db/queries/squad_sop_run.sql",
           "generatedSource": "server/pkg/db/generated/squad_sop_run.sql.go",
@@ -12237,6 +12294,14 @@
         "persisted": true
       },
       {
+        "source": "packages/core/squads/pending-operation-store.ts",
+        "scope": "packages/core",
+        "exports": [
+          "useSquadPendingOperationStore"
+        ],
+        "persisted": true
+      },
+      {
         "source": "packages/core/squads/stores/view-store.ts",
         "scope": "packages/core",
         "exports": [
@@ -12249,7 +12314,7 @@
       "operationTotals": {
         "useQuery": 274,
         "useInfiniteQuery": 1,
-        "useMutation": 96,
+        "useMutation": 97,
         "queryOptions": 67,
         "infiniteQueryOptions": 1
       },
@@ -12975,6 +13040,17 @@
             "useQuery": 1,
             "useInfiniteQuery": 0,
             "useMutation": 0,
+            "queryOptions": 0,
+            "infiniteQueryOptions": 0
+          }
+        },
+        {
+          "source": "packages/core/squads/mutations.ts",
+          "scope": "packages/core",
+          "operations": {
+            "useQuery": 0,
+            "useInfiniteQuery": 0,
+            "useMutation": 1,
             "queryOptions": 0,
             "infiniteQueryOptions": 0
           }
@@ -14253,7 +14329,7 @@
       },
       {
         "scope": "packages/core",
-        "count": 28
+        "count": 29
       }
     ],
     "reactQueryByScope": [
@@ -14267,7 +14343,7 @@
       },
       {
         "scope": "packages/core",
-        "count": 45
+        "count": 46
       },
       {
         "scope": "packages/views",
