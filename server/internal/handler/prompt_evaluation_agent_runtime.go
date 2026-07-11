@@ -123,43 +123,8 @@ func (h *Handler) ensurePromptEvaluationAgent(w http.ResponseWriter, r *http.Req
 }
 
 func (h *Handler) findSOPPromptEvaluationAgent(ctx context.Context, workspaceID pgtype.UUID, member db.Member, agents []db.Agent) (db.Agent, db.AgentRuntime, bool) {
-	required := map[string]bool{
-		"PM":            false,
-		"01-clarify":    false,
-		"02-design":     false,
-		"03-task-split": false,
-		"04-implement":  false,
-		"05-verify":     false,
-	}
-	aliases := map[string]string{
-		"PM-项目经理": "PM",
-		"pm":      "PM",
-		"01-需求澄清": "01-clarify",
-		"02-方案设计": "02-design",
-		"03-任务拆分": "03-task-split",
-		"04-开发":   "04-implement",
-		"05-验证测试": "05-verify",
-		"05-测试":   "05-verify",
-	}
-	var verifier *db.Agent
-	for i := range agents {
-		key := agents[i].Name
-		if alias, ok := aliases[key]; ok {
-			key = alias
-		}
-		if _, ok := required[key]; ok {
-			required[key] = true
-		}
-		if key == "05-verify" {
-			verifier = &agents[i]
-		}
-	}
-	for _, present := range required {
-		if !present {
-			return db.Agent{}, db.AgentRuntime{}, false
-		}
-	}
-	if verifier == nil {
+	verifier, ok := promptEvaluationSOPVerifier(agents)
+	if !ok {
 		return db.Agent{}, db.AgentRuntime{}, false
 	}
 	runtime, err := h.Queries.GetAgentRuntimeForWorkspace(ctx, db.GetAgentRuntimeForWorkspaceParams{
@@ -172,7 +137,36 @@ func (h *Handler) findSOPPromptEvaluationAgent(ctx context.Context, workspaceID 
 	if !runtime.LastSeenAt.Valid || time.Since(runtime.LastSeenAt.Time) > promptEvaluationRuntimeFreshTTL {
 		return db.Agent{}, db.AgentRuntime{}, false
 	}
-	return *verifier, runtime, true
+	return verifier, runtime, true
+}
+
+func promptEvaluationSOPVerifier(agents []db.Agent) (db.Agent, bool) {
+	required := map[string]bool{
+		"pm":            false,
+		"01-clarify":    false,
+		"02-design":     false,
+		"03-task-split": false,
+		"04-implement":  false,
+		"05-verify":     false,
+	}
+	var verifier db.Agent
+	verifierFound := false
+	for i := range agents {
+		key := normalizeSOPRoleMentionKey(roleKeyFromAgentRuntimeConfig(agents[i]))
+		if _, ok := required[key]; ok {
+			required[key] = true
+		}
+		if key == "05-verify" {
+			verifier = agents[i]
+			verifierFound = true
+		}
+	}
+	for _, present := range required {
+		if !present {
+			return db.Agent{}, false
+		}
+	}
+	return verifier, verifierFound
 }
 
 func (h *Handler) selectPromptEvaluationExecutionAgent(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID, ownerID pgtype.UUID, member db.Member, payload map[string]any) (db.Agent, db.AgentRuntime, bool) {
