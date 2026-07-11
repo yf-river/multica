@@ -42,6 +42,7 @@ import { useFileUpload } from "@multica/core/hooks/use-file-upload";
 import { issueDetailOptions } from "@multica/core/issues/queries";
 import type { CreateIssueSeed } from "@multica/core/issues";
 import { formatShortcut, modKey, enterKey } from "@multica/core/platform";
+import { canAssignAgentToIssue } from "@multica/core/permissions";
 import {
   contentReferencesAttachment,
   type Agent,
@@ -53,7 +54,6 @@ import {
 import { ActorAvatar } from "../common/actor-avatar";
 import { PillButton } from "../common/pill-button";
 import { ProjectPicker } from "../projects/components/project-picker";
-import { canAssignAgent } from "../issues/components/pickers/assignee-picker";
 import { DueDatePicker, PriorityPicker, StartDatePicker, StatusPicker } from "../issues/components";
 import {
   PropertyPicker,
@@ -119,7 +119,12 @@ export function AgentCreatePanel({
   const visibleAgents = useMemo(
     () =>
       agents.filter(
-        (a) => !a.archived_at && canAssignAgent(a, userId, memberRole),
+        (a) =>
+          !a.archived_at &&
+          canAssignAgentToIssue(a, {
+            userId: userId ?? null,
+            role: memberRole ?? null,
+          }).allowed,
       ),
     [agents, userId, memberRole],
   );

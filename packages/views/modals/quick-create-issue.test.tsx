@@ -121,10 +121,6 @@ vi.mock("@multica/core/hooks/use-file-upload", () => ({
   useFileUpload: () => ({ uploadWithToast: mockUploadWithToast, uploading: false }),
 }));
 
-vi.mock("../issues/components/pickers/assignee-picker", () => ({
-  canAssignAgent: () => true,
-}));
-
 vi.mock("../common/actor-avatar", () => ({
   ActorAvatar: () => <span data-testid="actor-avatar" />,
 }));

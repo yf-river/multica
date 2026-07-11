@@ -1,17 +1,20 @@
 import { type InfiniteData, type QueryClient } from "@tanstack/react-query";
-import type { Agent, ChatMessage, ChatMessagesPage } from "@multica/core/types";
+import type { Agent, ChatMessage, ChatMessagesPage, MemberRole } from "@multica/core/types";
 import { chatKeys } from "@multica/core/chat/queries";
-import { canAssignAgent } from "@multica/views/issues/components";
+import { canAssignAgentToIssue } from "@multica/core/permissions";
 
 export function getVisibleChatAgents(
   agents: Agent[],
   userId: string | undefined,
-  memberRole: string | undefined,
+  memberRole: MemberRole | undefined,
 ): Agent[] {
   return agents.filter(
     (agent) =>
       !agent.archived_at &&
-      canAssignAgent(agent, userId, memberRole),
+      canAssignAgentToIssue(agent, {
+        userId: userId ?? null,
+        role: memberRole ?? null,
+      }).allowed,
   );
 }
 export function appendChatMessageToLatestPageCache(
