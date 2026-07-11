@@ -22,11 +22,9 @@ const mocks = vi.hoisted(() => ({
   agents: [] as Agent[],
   members: [] as MemberWithUser[],
   createSquad: vi.fn(),
-  addSquadMember: vi.fn(),
   navigationPush: vi.fn(),
   toastSuccess: vi.fn(),
   toastError: vi.fn(),
-  toastWarning: vi.fn(),
   invalidate: vi.fn(),
 }));
 
@@ -53,7 +51,6 @@ vi.mock("@multica/core/workspace/queries", () => ({
 vi.mock("@multica/core/api", () => ({
   api: {
     createSquad: (...args: unknown[]) => mocks.createSquad(...args),
-    addSquadMember: (...args: unknown[]) => mocks.addSquadMember(...args),
   },
 }));
 
@@ -187,7 +184,6 @@ vi.mock("sonner", () => ({
   toast: {
     success: (...args: unknown[]) => mocks.toastSuccess(...args),
     error: (...args: unknown[]) => mocks.toastError(...args),
-    warning: (...args: unknown[]) => mocks.toastWarning(...args),
   },
 }));
 
@@ -345,8 +341,7 @@ describe("CreateSquadModal", () => {
     // Promote MineAgentTwo to leader by clicking the first occurrence.
     fireEvent.click(firstMatch("MineAgentTwo"));
 
-    // Wire up the rest of the submit path so we can verify the sanitized
-    // payload sent to addSquadMember (none — leader was the only pick).
+    // Submit to verify the promoted leader is absent from initial members.
     mocks.createSquad.mockResolvedValue(makeSquad({ leader_id: "agent-mine-2" }));
     fireEvent.change(screen.getByPlaceholderText(/例如 前端团队/i), {
       target: { value: "Platform" },
@@ -356,8 +351,9 @@ describe("CreateSquadModal", () => {
     await waitFor(() => {
       expect(mocks.createSquad).toHaveBeenCalledTimes(1);
     });
-    // addSquadMember must NOT be called for the agent we promoted to leader.
-    expect(mocks.addSquadMember).not.toHaveBeenCalled();
+    expect(mocks.createSquad).toHaveBeenCalledWith(
+      expect.objectContaining({ members: [] }),
+    );
   });
 
   it("removes a member promoted to leader from selectedMembers so switching leader away does not resurrect it", async () => {
@@ -392,9 +388,9 @@ describe("CreateSquadModal", () => {
         leader_id: "agent-mine-1",
         avatar_url: undefined,
         scope: "workspace",
+        members: [],
       });
     });
-    expect(mocks.addSquadMember).not.toHaveBeenCalled();
   });
 
   it("on success with no additional members fires exactly one success toast and navigates", async () => {
@@ -416,17 +412,16 @@ describe("CreateSquadModal", () => {
         leader_id: "agent-mine-1",
         avatar_url: undefined,
         scope: "workspace",
+        members: [],
       });
     });
     await waitFor(() => {
       expect(mocks.toastSuccess).toHaveBeenCalledTimes(1);
     });
-    expect(mocks.addSquadMember).not.toHaveBeenCalled();
-    expect(mocks.toastWarning).not.toHaveBeenCalled();
     expect(mocks.navigationPush).toHaveBeenCalledWith("/test-ws/squads/sq-1");
   });
 
-  it("on success with partial member failure shows success + warning toasts and still navigates", async () => {
+  it("creates the squad and all initial members with one request", async () => {
     renderModal();
     fireEvent.change(screen.getByPlaceholderText(/例如 前端团队/i), {
       target: { value: "Mixed Squad" },
@@ -439,22 +434,25 @@ describe("CreateSquadModal", () => {
     fireEvent.click(lastMatch("Workspace Pal"));
 
     mocks.createSquad.mockResolvedValue(makeSquad({ id: "sq-2", leader_id: "agent-mine-1" }));
-    mocks.addSquadMember
-      .mockResolvedValueOnce({}) // first call succeeds
-      .mockRejectedValueOnce(new Error("boom")); // second fails
 
     fireEvent.click(getSubmitButton());
 
     await waitFor(() => {
-      expect(mocks.createSquad).toHaveBeenCalledTimes(1);
-    });
-    await waitFor(() => {
-      expect(mocks.addSquadMember).toHaveBeenCalledTimes(2);
+      expect(mocks.createSquad).toHaveBeenCalledWith({
+        name: "Mixed Squad",
+        description: undefined,
+        leader_id: "agent-mine-1",
+        avatar_url: undefined,
+        scope: "workspace",
+        members: [
+          { member_type: "agent", member_id: "agent-other-1" },
+          { member_type: "member", member_id: "user-other" },
+        ],
+      });
     });
     await waitFor(() => {
       expect(mocks.toastSuccess).toHaveBeenCalledTimes(1);
     });
-    expect(mocks.toastWarning).toHaveBeenCalledTimes(1);
     expect(mocks.navigationPush).toHaveBeenCalledWith("/test-ws/squads/sq-2");
   });
 
@@ -476,6 +474,7 @@ describe("CreateSquadModal", () => {
         leader_id: "agent-mine-1",
         avatar_url: undefined,
         scope: "personal",
+        members: [],
       });
     });
   });

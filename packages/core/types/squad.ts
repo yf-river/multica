@@ -55,6 +55,11 @@ export interface CreateSquadRequest {
   avatar_url?: string;
   scope?: SquadScope;
   sop_profile?: Record<string, unknown>;
+  members?: Array<{
+    member_type: "agent" | "member";
+    member_id: string;
+    role?: string;
+  }>;
 }
 
 export type InternalSquadTemplateKey = "user-center" | "multica-coding";

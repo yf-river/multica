@@ -86,8 +86,7 @@
     "submit": "创建小队",
     "submitting": "创建中...",
     "toast_created": "小队已创建",
-    "toast_failed": "创建小队 失败",
-    "toast_member_add_failed": "添加 {{name}} 失败：{{error}}"
+    "toast_failed": "创建小队 失败"
   },
   "create_project": {
     "title": "新建项目",

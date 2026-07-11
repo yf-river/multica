@@ -103,32 +103,12 @@ export function CreateSquadModal({ onClose }: { onClose: () => void }) {
         leader_id: leaderId,
         avatar_url: avatarUrl ?? undefined,
         scope,
+        members: selectedMembers.map((member) => ({
+          member_type: member.type,
+          member_id: member.id,
+        })),
       });
       queryClient.invalidateQueries({ queryKey: workspaceKeys.squads(wsId) });
-
-      if (selectedMembers.length > 0) {
-        await Promise.allSettled(
-          selectedMembers.map(async (m) => {
-            try {
-              await api.addSquadMember(squad.id, {
-                member_type: m.type,
-                member_id: m.id,
-              });
-            } catch (err) {
-              toast.warning(
-                t(($) => $.create_squad.toast_member_add_failed, {
-                  name: m.name,
-                  error:
-                    err instanceof Error ? err.message : "unknown error",
-                }),
-              );
-            }
-          }),
-        );
-        queryClient.invalidateQueries({
-          queryKey: [...workspaceKeys.squads(wsId), squad.id, "members"],
-        });
-      }
 
       onClose();
       toast.success(t(($) => $.create_squad.toast_created));

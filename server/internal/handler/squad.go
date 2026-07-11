@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -55,6 +56,18 @@ type SquadMemberResponse struct {
 	MemberID   string `json:"member_id"`
 	Role       string `json:"role"`
 	CreatedAt  string `json:"created_at"`
+}
+
+type createSquadMemberInput struct {
+	MemberType string `json:"member_type"`
+	MemberID   string `json:"member_id"`
+	Role       string `json:"role"`
+}
+
+type preparedSquadMember struct {
+	memberType string
+	memberID   pgtype.UUID
+	role       string
 }
 
 type InternalSquadTemplateResponse struct {
@@ -736,12 +749,13 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Name        string          `json:"name"`
-		Description string          `json:"description"`
-		LeaderID    string          `json:"leader_id"`
-		AvatarURL   *string         `json:"avatar_url"`
-		Scope       string          `json:"scope"`
-		SOPProfile  json.RawMessage `json:"sop_profile"`
+		Name        string                   `json:"name"`
+		Description string                   `json:"description"`
+		LeaderID    string                   `json:"leader_id"`
+		AvatarURL   *string                  `json:"avatar_url"`
+		Scope       string                   `json:"scope"`
+		SOPProfile  json.RawMessage          `json:"sop_profile"`
+		Members     []createSquadMemberInput `json:"members"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -786,6 +800,52 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 	if err := validateSquadLeaderScope(scope, member.UserID, leader); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
+	}
+
+	preparedMembers := make([]preparedSquadMember, 0, len(req.Members))
+	seenMembers := map[string]struct{}{"agent:" + uuidToString(leaderUUID): {}}
+	for i, input := range req.Members {
+		if input.MemberType != "agent" && input.MemberType != "member" {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("members[%d].member_type must be 'agent' or 'member'", i))
+			return
+		}
+		memberUUID, ok := parseUUIDOrBadRequest(w, input.MemberID, fmt.Sprintf("members[%d].member_id", i))
+		if !ok {
+			return
+		}
+		identity := input.MemberType + ":" + uuidToString(memberUUID)
+		if _, duplicate := seenMembers[identity]; duplicate {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("members[%d] duplicates the leader or another member", i))
+			return
+		}
+		seenMembers[identity] = struct{}{}
+		if input.MemberType == "agent" {
+			agentMember, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
+				ID: memberUUID, WorkspaceID: wsUUID,
+			})
+			if err != nil {
+				writeError(w, http.StatusBadRequest, fmt.Sprintf("members[%d] agent not found in this workspace", i))
+				return
+			}
+			if !h.canAccessPersonalAgent(r.Context(), agentMember, "member", uuidToString(member.UserID), workspaceID) {
+				writeError(w, http.StatusForbidden, fmt.Sprintf("cannot add members[%d] personal agent", i))
+				return
+			}
+			if err := validateSquadLeaderScope(scope, member.UserID, agentMember); err != nil {
+				writeError(w, http.StatusBadRequest, fmt.Sprintf("members[%d]: %s", i, err))
+				return
+			}
+		} else if _, err := h.Queries.GetMemberByUserAndWorkspace(r.Context(), db.GetMemberByUserAndWorkspaceParams{
+			UserID: memberUUID, WorkspaceID: wsUUID,
+		}); err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("members[%d] member not found in this workspace", i))
+			return
+		}
+		preparedMembers = append(preparedMembers, preparedSquadMember{
+			memberType: input.MemberType,
+			memberID:   memberUUID,
+			role:       input.Role,
+		})
 	}
 
 	avatarURL := pgtype.Text{}
@@ -835,24 +895,35 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to add squad leader")
 		return
 	}
+	for i, squadMember := range preparedMembers {
+		if _, err := qtx.AddSquadMember(r.Context(), db.AddSquadMemberParams{
+			SquadID:    squad.ID,
+			MemberType: squadMember.memberType,
+			MemberID:   squadMember.memberID,
+			Role:       squadMember.role,
+		}); err != nil {
+			writeError(w, http.StatusInternalServerError, fmt.Sprintf("failed to add initial squad member at index %d", i))
+			return
+		}
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit squad create")
 		return
 	}
 
 	resp := squadToResponse(squad)
-	resp.MemberCount = 1
-	resp.MemberPreview = []SquadMemberPreviewResponse{{
-		MemberType: "agent",
-		MemberID:   uuidToString(leaderUUID),
-		Role:       "leader",
-	}}
+	summary := &squadMemberSummary{}
+	addSquadMemberPreview(summary, "agent", leaderUUID, "leader")
+	for _, squadMember := range preparedMembers {
+		addSquadMemberPreview(summary, squadMember.memberType, squadMember.memberID, squadMember.role)
+	}
+	applySquadMemberSummary(&resp, summary)
 	h.publish(protocol.EventSquadCreated, workspaceID, "member", uuidToString(member.UserID), map[string]any{"squad": resp})
 	obsmetrics.RecordEvent(h.Analytics, h.Metrics, analytics.SquadCreated(
 		uuidToString(member.UserID),
 		workspaceID,
 		uuidToString(squad.ID),
-		1,
+		resp.MemberCount,
 	))
 	writeJSON(w, http.StatusCreated, resp)
 }
