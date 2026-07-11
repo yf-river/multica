@@ -358,6 +358,7 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		authorType,
 		authorID,
 		suppressAgentIDs,
+		pgtype.UUID{},
 	)
 	if err != nil {
 		slog.Warn("create comment task projection failed", append(logger.RequestAttrs(r), "error", err, "issue_id", issueID)...)
@@ -460,7 +461,8 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 
 	// NOTE: See CreateComment — Markdown is sanitized at render/edit time, not here.
 
-	oldContent := existing.Content
+	contentChanged := existing.Content != req.Content
+	groupedReactions := h.groupReactions(r, []pgtype.UUID{existing.ID})
 
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
@@ -496,39 +498,68 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to update comment")
 		return
 	}
+
+	issue, err := qtx.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
+		ID:          existing.IssueID,
+		WorkspaceID: wsUUID,
+	})
+	if err != nil {
+		slog.Warn("load issue for comment update failed", append(logger.RequestAttrs(r), "error", err, "issue_id", uuidToString(existing.IssueID))...)
+		writeError(w, http.StatusInternalServerError, "failed to update comment")
+		return
+	}
+
+	var cancelledTasks []db.AgentTaskQueue
+	var cancelledEvents []events.Event
+	taskProjection := commentTaskProjection{}
+	if contentChanged {
+		cancelledTasks, cancelledEvents, err = h.TaskService.CancelTasksByTriggerCommentInTx(r.Context(), qtx, existing.ID)
+		if err != nil {
+			slog.Warn("cancel tasks for edited comment failed", append(logger.RequestAttrs(r), "comment_id", commentId, "error", err)...)
+			writeError(w, http.StatusInternalServerError, "failed to update comment")
+			return
+		}
+
+		var parentComment *db.Comment
+		if existing.ParentID.Valid {
+			parent, err := qtx.GetCommentInWorkspace(r.Context(), db.GetCommentInWorkspaceParams{
+				ID:          existing.ParentID,
+				WorkspaceID: wsUUID,
+			})
+			if err != nil {
+				slog.Warn("load parent comment for edit failed", append(logger.RequestAttrs(r), "comment_id", commentId, "error", err)...)
+				writeError(w, http.StatusInternalServerError, "failed to update comment")
+				return
+			}
+			parentComment = &parent
+		}
+		taskProjection, err = h.createCommentTaskProjectionInTx(r.Context(), qtx, issue, comment, parentComment, actorType, actorID, suppressAgentIDs, existing.ID)
+		if err != nil {
+			slog.Warn("create edited comment task projection failed", append(logger.RequestAttrs(r), "comment_id", commentId, "error", err)...)
+			writeError(w, http.StatusInternalServerError, "failed to update comment")
+			return
+		}
+	}
+
+	cid := uuidToString(comment.ID)
+	resp := commentToResponse(comment, groupedReactions[cid], h.attachmentsToResponses(attachments))
+	updatedEvent := buildCommentUpdatedEvent(issue, resp, actorType, actorID)
+	updatedEvent, err = eventoutbox.Enqueue(r.Context(), qtx, updatedEvent)
+	if err != nil {
+		slog.Warn("enqueue comment-updated event failed", append(logger.RequestAttrs(r), "comment_id", commentId, "error", err)...)
+		writeError(w, http.StatusInternalServerError, "failed to update comment")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		slog.Warn("commit update comment transaction failed", append(logger.RequestAttrs(r), "error", err, "comment_id", commentId)...)
 		writeError(w, http.StatusInternalServerError, "failed to update comment")
 		return
 	}
 
-	// Reactions are independent derived state and can be read after commit.
-	grouped := h.groupReactions(r, []pgtype.UUID{comment.ID})
-	cid := uuidToString(comment.ID)
-	resp := commentToResponse(comment, grouped[cid], h.attachmentsToResponses(attachments))
 	slog.Info("comment updated", append(logger.RequestAttrs(r), "comment_id", commentId)...)
-	h.publish(protocol.EventCommentUpdated, workspaceID, actorType, actorID, map[string]any{"comment": resp})
-
-	if oldContent != comment.Content {
-		if err := h.TaskService.CancelTasksByTriggerComment(r.Context(), existing.ID); err != nil {
-			slog.Warn("cancel tasks for edited comment failed", "comment_id", uuidToString(existing.ID), "error", err)
-		}
-
-		issue, err := h.Queries.GetIssue(r.Context(), existing.IssueID)
-		if err != nil {
-			slog.Warn("load issue for edit post-processing failed", "issue_id", uuidToString(existing.IssueID), "error", err)
-		} else {
-			var parentComment *db.Comment
-			if existing.ParentID.Valid {
-				parent, err := h.Queries.GetComment(r.Context(), existing.ParentID)
-				if err == nil {
-					parentComment = &parent
-				}
-			}
-
-			h.triggerTasksForComment(r.Context(), issue, comment, parentComment, actorType, actorID, suppressAgentIDs)
-		}
-	}
+	h.publishEvent(updatedEvent)
+	h.TaskService.PublishCancelledTasks(r.Context(), cancelledTasks, cancelledEvents)
+	h.publishCommentTaskProjection(r.Context(), taskProjection)
 
 	writeJSON(w, http.StatusOK, resp)
 }

@@ -54,6 +54,7 @@ func (h *Handler) triggerTasksForComment(ctx context.Context, issue db.Issue, co
 		actorType,
 		actorID,
 		suppressAgentIDs,
+		pgtype.UUID{},
 	)
 	if err != nil {
 		slog.Warn("persist comment task projection failed", "issue_id", uuidToString(issue.ID), "comment_id", uuidToString(comment.ID), "error", err)
@@ -89,6 +90,7 @@ func (h *Handler) createCommentTaskProjectionInTx(
 	actorType string,
 	actorID string,
 	suppressAgentIDs []pgtype.UUID,
+	excludeTriggerCommentID pgtype.UUID,
 ) (commentTaskProjection, error) {
 	projection := commentTaskProjection{}
 	if isNoteComment(comment.Content) {
@@ -96,6 +98,7 @@ func (h *Handler) createCommentTaskProjectionInTx(
 	}
 	opts := commentTriggerComputeOptions{
 		SuppressAssignedSquadLeader: h.isSquadSOPWorkerStageComment(ctx, issue, comment),
+		ExcludeTriggerCommentID:     excludeTriggerCommentID,
 	}
 	triggers := h.computeCommentAgentTriggers(ctx, issue, comment.Content, parentComment, actorType, actorID, opts)
 	triggers = filterSuppressedCommentAgentTriggers(triggers, suppressAgentIDs)

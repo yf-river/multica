@@ -17,3 +17,11 @@ func buildCommentCreatedEvent(issue db.Issue, comment CommentResponse, actorType
 	event.StreamKey = "issue:" + uuidToString(issue.ID)
 	return event
 }
+
+func buildCommentUpdatedEvent(issue db.Issue, comment CommentResponse, actorType, actorID string) events.Event {
+	event := domainEvent(protocol.EventCommentUpdated, uuidToString(issue.WorkspaceID), actorType, actorID, map[string]any{
+		"comment": comment,
+	})
+	event.StreamKey = "issue:" + uuidToString(issue.ID)
+	return event
+}

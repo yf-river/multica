@@ -266,14 +266,36 @@ func (s *TaskService) CancelTasksForAgent(ctx context.Context, agentID pgtype.UU
 // otherwise nullify trigger_comment_id and we'd lose the ability to find
 // the affected tasks.
 func (s *TaskService) CancelTasksByTriggerComment(ctx context.Context, commentID pgtype.UUID) error {
-	cancelled, persistedEvents, err := s.cancelTasksDurably(ctx, func(queries *db.Queries) ([]db.AgentTaskQueue, error) {
-		return queries.CancelAgentTasksByTriggerComment(ctx, commentID)
+	var cancelled []db.AgentTaskQueue
+	var persistedEvents []events.Event
+	err := s.runInTx(ctx, func(queries *db.Queries) error {
+		var err error
+		cancelled, persistedEvents, err = s.CancelTasksByTriggerCommentInTx(ctx, queries, commentID)
+		return err
 	})
 	if err != nil {
 		return err
 	}
 	s.PublishCancelledTasks(ctx, cancelled, persistedEvents)
 	return nil
+}
+
+// CancelTasksByTriggerCommentInTx cancels tasks and persists their terminal
+// events in the caller's transaction. The caller publishes only after commit.
+func (s *TaskService) CancelTasksByTriggerCommentInTx(
+	ctx context.Context,
+	queries *db.Queries,
+	commentID pgtype.UUID,
+) ([]db.AgentTaskQueue, []events.Event, error) {
+	cancelled, err := queries.CancelAgentTasksByTriggerComment(ctx, commentID)
+	if err != nil {
+		return nil, nil, err
+	}
+	persistedEvents, err := s.EnqueueCancelledTaskEvents(ctx, queries, cancelled)
+	if err != nil {
+		return nil, nil, err
+	}
+	return cancelled, persistedEvents, nil
 }
 
 func (s *TaskService) CancelTasksForIssueAndAgent(ctx context.Context, issueID, agentID pgtype.UUID) ([]db.AgentTaskQueue, error) {
