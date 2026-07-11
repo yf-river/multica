@@ -26,7 +26,7 @@ func TestCollectTaskMarkdownArtifactsScansArtifactsTree(t *testing.T) {
 	writeArtifactTestFile(t, filepath.Join(workDir, "artifacts", "multica", "empty.md"), "")
 	writeArtifactTestFile(t, filepath.Join(workDir, "artifacts", "multica", "note.txt"), "ignore")
 
-	got, err := collectTaskMarkdownArtifacts(workDir)
+	got, err := collectTaskMarkdownArtifactsSince(workDir, time.Time{})
 	if err != nil {
 		t.Fatalf("collectTaskMarkdownArtifacts: %v", err)
 	}
@@ -48,7 +48,7 @@ func TestCollectTaskMarkdownArtifactsFromDirsIncludesIssueArtifactDir(t *testing
 	writeArtifactTestFile(t, filepath.Join(workDir, "artifacts", "multica", "02-design.md"), "# design")
 	writeArtifactTestFile(t, filepath.Join(artifactDir, "05-verify.md"), "# verify")
 
-	got, err := collectTaskMarkdownArtifactsFromDirs(workDir, artifactDir)
+	got, err := collectTaskMarkdownArtifactsFromDirsSince(workDir, artifactDir, time.Time{})
 	if err != nil {
 		t.Fatalf("collectTaskMarkdownArtifactsFromDirs: %v", err)
 	}
