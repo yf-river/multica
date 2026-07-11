@@ -319,11 +319,20 @@ func (h *Handler) RunAgentPlaygroundExperiment(w http.ResponseWriter, r *http.Re
 	}
 	workspaceID := parseUUID(detail.Experiment.WorkspaceID)
 	experimentID := parseUUID(detail.Experiment.ID)
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start agent playground run")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	queuedTasks := make([]db.AgentTaskQueue, 0, len(detail.Inputs)*len(detail.Agents))
+	lockedAgents := make(map[string]db.Agent, len(detail.Agents))
 
 	for _, input := range detail.Inputs {
 		for _, experimentAgent := range detail.Agents {
 			rendered := input.Input
-			result, err := h.Queries.CreateAgentPlaygroundResult(r.Context(), db.CreateAgentPlaygroundResultParams{
+			result, err := qtx.CreateAgentPlaygroundResult(r.Context(), db.CreateAgentPlaygroundResultParams{
 				ExperimentID:      experimentID,
 				InputID:           parseUUID(input.ID),
 				ExperimentAgentID: parseUUID(experimentAgent.ID),
@@ -338,7 +347,38 @@ func (h *Handler) RunAgentPlaygroundExperiment(w http.ResponseWriter, r *http.Re
 			if result.TaskID.Valid {
 				continue
 			}
-			session, err := h.Queries.CreateChatSession(r.Context(), db.CreateChatSessionParams{
+
+			agentID := experimentAgent.AgentID
+			agent, exists := lockedAgents[agentID]
+			if !exists {
+				agent, err = qtx.LockAgentInWorkspaceForChat(r.Context(), db.LockAgentInWorkspaceForChatParams{
+					ID:          parseUUID(agentID),
+					WorkspaceID: workspaceID,
+				})
+				if err != nil {
+					writeError(w, http.StatusInternalServerError, "failed to load experiment agent")
+					return
+				}
+				lockedAgents[agentID] = agent
+			}
+			if agent.ArchivedAt.Valid || !agent.RuntimeID.Valid {
+				reason := "agent is archived"
+				if !agent.RuntimeID.Valid {
+					reason = "agent has no runtime"
+				}
+				if _, err := qtx.SyncAgentPlaygroundResult(r.Context(), db.SyncAgentPlaygroundResultParams{
+					ID:          result.ID,
+					WorkspaceID: workspaceID,
+					Status:      "failed",
+					Error:       pgtype.Text{String: reason, Valid: true},
+				}); err != nil {
+					writeError(w, http.StatusInternalServerError, "failed to record unavailable experiment agent")
+					return
+				}
+				continue
+			}
+
+			session, err := qtx.CreateChatSession(r.Context(), db.CreateChatSessionParams{
 				WorkspaceID: workspaceID,
 				AgentID:     parseUUID(experimentAgent.AgentID),
 				CreatorID:   parseUUID(userID),
@@ -348,7 +388,7 @@ func (h *Handler) RunAgentPlaygroundExperiment(w http.ResponseWriter, r *http.Re
 				writeError(w, http.StatusInternalServerError, "failed to create playground chat session")
 				return
 			}
-			msg, err := h.Queries.CreateChatMessage(r.Context(), db.CreateChatMessageParams{
+			msg, err := qtx.CreateChatMessage(r.Context(), db.CreateChatMessageParams{
 				ChatSessionID: session.ID,
 				Role:          "user",
 				Content:       rendered,
@@ -357,18 +397,16 @@ func (h *Handler) RunAgentPlaygroundExperiment(w http.ResponseWriter, r *http.Re
 				writeError(w, http.StatusInternalServerError, "failed to create playground chat message")
 				return
 			}
-			task, err := h.TaskService.EnqueueChatTask(r.Context(), session, parseUUID(userID))
+			task, err := h.TaskService.CreateChatTaskInTx(r.Context(), qtx, session, agent, parseUUID(userID))
 			if err != nil {
-				_, _ = h.Queries.SyncAgentPlaygroundResult(r.Context(), db.SyncAgentPlaygroundResultParams{
-					ID:          result.ID,
-					WorkspaceID: workspaceID,
-					Status:      "failed",
-					Error:       pgtype.Text{String: err.Error(), Valid: true},
-				})
-				continue
+				writeError(w, http.StatusInternalServerError, "failed to create experiment task")
+				return
 			}
-			_ = h.Queries.LinkChatMessageToTask(r.Context(), db.LinkChatMessageToTaskParams{ID: msg.ID, TaskID: task.ID})
-			if _, err := h.Queries.StartAgentPlaygroundResult(r.Context(), db.StartAgentPlaygroundResultParams{
+			if err := qtx.LinkChatMessageToTask(r.Context(), db.LinkChatMessageToTaskParams{ID: msg.ID, TaskID: task.ID}); err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to link experiment message")
+				return
+			}
+			if _, err := qtx.StartAgentPlaygroundResult(r.Context(), db.StartAgentPlaygroundResultParams{
 				ID:            result.ID,
 				WorkspaceID:   workspaceID,
 				ChatSessionID: session.ID,
@@ -378,17 +416,28 @@ func (h *Handler) RunAgentPlaygroundExperiment(w http.ResponseWriter, r *http.Re
 				writeError(w, http.StatusInternalServerError, "failed to update experiment result")
 				return
 			}
+			queuedTasks = append(queuedTasks, task)
 		}
 	}
-	_, _ = h.Queries.UpdateAgentPlaygroundExperimentStatus(r.Context(), db.UpdateAgentPlaygroundExperimentStatusParams{
+	if _, err := qtx.UpdateAgentPlaygroundExperimentStatus(r.Context(), db.UpdateAgentPlaygroundExperimentStatusParams{
 		ID:          experimentID,
 		WorkspaceID: workspaceID,
 		Status:      "running",
-	})
-	refreshed, err := h.syncAgentPlaygroundExperiment(r, experimentID, workspaceID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to sync agent playground experiment")
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update experiment status")
 		return
+	}
+	refreshed, err := loadAgentPlaygroundDetailWithQueries(r.Context(), qtx, experimentID, workspaceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load committed playground run")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit agent playground run")
+		return
+	}
+	for _, task := range queuedTasks {
+		h.TaskService.PublishChatTaskEnqueued(r.Context(), task)
 	}
 	writeJSON(w, http.StatusAccepted, refreshed)
 }
@@ -555,23 +604,27 @@ func (h *Handler) agentPlaygroundDetail(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *Handler) loadAgentPlaygroundDetail(ctx context.Context, experimentID, workspaceID pgtype.UUID) (AgentPlaygroundDetailResponse, error) {
-	experiment, err := h.Queries.GetAgentPlaygroundExperiment(ctx, db.GetAgentPlaygroundExperimentParams{ID: experimentID, WorkspaceID: workspaceID})
+	return loadAgentPlaygroundDetailWithQueries(ctx, h.Queries, experimentID, workspaceID)
+}
+
+func loadAgentPlaygroundDetailWithQueries(ctx context.Context, queries *db.Queries, experimentID, workspaceID pgtype.UUID) (AgentPlaygroundDetailResponse, error) {
+	experiment, err := queries.GetAgentPlaygroundExperiment(ctx, db.GetAgentPlaygroundExperimentParams{ID: experimentID, WorkspaceID: workspaceID})
 	if err != nil {
 		return AgentPlaygroundDetailResponse{}, err
 	}
-	inputs, err := h.Queries.ListAgentPlaygroundInputs(ctx, db.ListAgentPlaygroundInputsParams{ExperimentID: experimentID, WorkspaceID: workspaceID})
+	inputs, err := queries.ListAgentPlaygroundInputs(ctx, db.ListAgentPlaygroundInputsParams{ExperimentID: experimentID, WorkspaceID: workspaceID})
 	if err != nil {
 		return AgentPlaygroundDetailResponse{}, err
 	}
-	agents, err := h.Queries.ListAgentPlaygroundAgents(ctx, db.ListAgentPlaygroundAgentsParams{ExperimentID: experimentID, WorkspaceID: workspaceID})
+	agents, err := queries.ListAgentPlaygroundAgents(ctx, db.ListAgentPlaygroundAgentsParams{ExperimentID: experimentID, WorkspaceID: workspaceID})
 	if err != nil {
 		return AgentPlaygroundDetailResponse{}, err
 	}
-	results, err := h.Queries.ListAgentPlaygroundResults(ctx, db.ListAgentPlaygroundResultsParams{ExperimentID: experimentID, WorkspaceID: workspaceID})
+	results, err := queries.ListAgentPlaygroundResults(ctx, db.ListAgentPlaygroundResultsParams{ExperimentID: experimentID, WorkspaceID: workspaceID})
 	if err != nil {
 		return AgentPlaygroundDetailResponse{}, err
 	}
-	judgements, err := h.Queries.ListAgentPlaygroundJudgements(ctx, db.ListAgentPlaygroundJudgementsParams{ExperimentID: experimentID, WorkspaceID: workspaceID})
+	judgements, err := queries.ListAgentPlaygroundJudgements(ctx, db.ListAgentPlaygroundJudgementsParams{ExperimentID: experimentID, WorkspaceID: workspaceID})
 	if err != nil {
 		return AgentPlaygroundDetailResponse{}, err
 	}
