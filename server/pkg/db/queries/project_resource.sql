@@ -29,6 +29,14 @@ INSERT INTO project_resource (
     $1, $2, $3, $4, $5, $6, $7
 ) RETURNING *;
 
+-- name: LockProjectForResourcePosition :one
+SELECT id FROM project WHERE id = $1 FOR UPDATE;
+
+-- name: NextProjectResourcePosition :one
+SELECT (COALESCE(MAX(position), -1) + 1)::int
+FROM project_resource
+WHERE project_id = $1;
+
 -- name: UpdateProjectResource :one
 UPDATE project_resource
 SET resource_ref = $2,
@@ -39,9 +47,6 @@ RETURNING *;
 
 -- name: DeleteProjectResource :exec
 DELETE FROM project_resource WHERE id = $1;
-
--- name: CountProjectResources :one
-SELECT count(*) FROM project_resource WHERE project_id = $1;
 
 -- name: GetProjectResourceCounts :many
 SELECT project_id, count(*)::bigint AS resource_count

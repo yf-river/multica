@@ -149,6 +149,60 @@ func TestProjectResourceLifecycle(t *testing.T) {
 	}
 }
 
+func TestProjectResourceImplicitPositionAppendsAtomically(t *testing.T) {
+	project := createProjectResourceTestProject(t, "Atomic resource ordering project")
+	explicitPosition := 10
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/projects/"+project.ID+"/resources", map[string]any{
+		"resource_type": "github_repo",
+		"resource_ref":  map[string]any{"url": "https://github.com/multica-ai/atomic-explicit"},
+		"position":      explicitPosition,
+	})
+	req = withURLParam(req, "id", project.ID)
+	testHandler.CreateProjectResource(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create explicit-position resource: %d %s", w.Code, w.Body.String())
+	}
+
+	const concurrentCreates = 8
+	results := make(chan string, concurrentCreates)
+	for i := range concurrentCreates {
+		go func() {
+			w := httptest.NewRecorder()
+			req := newRequest("POST", "/api/projects/"+project.ID+"/resources", map[string]any{
+				"resource_type": "github_repo",
+				"resource_ref":  map[string]any{"url": fmt.Sprintf("https://github.com/multica-ai/atomic-%d", i)},
+			})
+			req = withURLParam(req, "id", project.ID)
+			testHandler.CreateProjectResource(w, req)
+			if w.Code != http.StatusCreated {
+				results <- fmt.Sprintf("status=%d body=%s", w.Code, w.Body.String())
+				return
+			}
+			results <- ""
+		}()
+	}
+	for range concurrentCreates {
+		if failure := <-results; failure != "" {
+			t.Fatalf("concurrent implicit-position create failed: %s", failure)
+		}
+	}
+
+	resources, err := testHandler.Queries.ListProjectResources(context.Background(), parseUUID(project.ID))
+	if err != nil {
+		t.Fatalf("list project resources: %v", err)
+	}
+	if len(resources) != concurrentCreates+1 {
+		t.Fatalf("resource count = %d, want %d", len(resources), concurrentCreates+1)
+	}
+	for i, resource := range resources {
+		want := int32(explicitPosition + i)
+		if resource.Position != want {
+			t.Fatalf("resource position[%d] = %d, want %d; resources=%+v", i, resource.Position, want, resources)
+		}
+	}
+}
+
 // TestProjectResourceAcceptsSSHRepoURLs covers GitHub issue #2484: SSH and
 // scp-like git URLs must be accepted alongside https URLs, because workspace
 // repos configured with an SSH remote previously got rejected when attached

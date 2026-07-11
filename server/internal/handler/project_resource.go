@@ -563,25 +563,22 @@ func (h *Handler) CreateProjectResource(w http.ResponseWriter, r *http.Request) 
 	if req.Label != nil && strings.TrimSpace(*req.Label) != "" {
 		label = pgtype.Text{String: strings.TrimSpace(*req.Label), Valid: true}
 	}
-	var position int32
-	if req.Position != nil {
-		position = *req.Position
-	} else {
-		// Append after existing resources.
-		count, _ := h.Queries.CountProjectResources(r.Context(), project.ID)
-		position = int32(count)
-	}
-
 	creator, _ := h.parseUserUUIDOrZero(userID)
-	resource, err := h.Queries.CreateProjectResource(r.Context(), db.CreateProjectResourceParams{
+	params := db.CreateProjectResourceParams{
 		ProjectID:    project.ID,
 		WorkspaceID:  project.WorkspaceID,
 		ResourceType: req.ResourceType,
 		ResourceRef:  normalizedRef,
 		Label:        label,
-		Position:     position,
 		CreatedBy:    creator,
-	})
+	}
+	var resource db.ProjectResource
+	if req.Position == nil {
+		resource, err = h.createProjectResourceAtEnd(r.Context(), params)
+	} else {
+		params.Position = *req.Position
+		resource, err = h.Queries.CreateProjectResource(r.Context(), params)
+	}
 	if err != nil {
 		if isUniqueViolation(err) {
 			writeError(w, http.StatusConflict, "this resource is already attached to the project")
@@ -600,6 +597,32 @@ func (h *Handler) CreateProjectResource(w http.ResponseWriter, r *http.Request) 
 		map[string]any{"resource": resp, "project_id": uuidToString(project.ID)},
 	)
 	writeJSON(w, http.StatusCreated, resp)
+}
+
+func (h *Handler) createProjectResourceAtEnd(ctx context.Context, params db.CreateProjectResourceParams) (db.ProjectResource, error) {
+	tx, err := h.TxStarter.Begin(ctx)
+	if err != nil {
+		return db.ProjectResource{}, fmt.Errorf("begin project resource append: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	queries := h.Queries.WithTx(tx)
+	if _, err := queries.LockProjectForResourcePosition(ctx, params.ProjectID); err != nil {
+		return db.ProjectResource{}, fmt.Errorf("lock project resource order: %w", err)
+	}
+	position, err := queries.NextProjectResourcePosition(ctx, params.ProjectID)
+	if err != nil {
+		return db.ProjectResource{}, fmt.Errorf("calculate project resource position: %w", err)
+	}
+	params.Position = position
+	resource, err := queries.CreateProjectResource(ctx, params)
+	if err != nil {
+		return db.ProjectResource{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return db.ProjectResource{}, fmt.Errorf("commit project resource append: %w", err)
+	}
+	return resource, nil
 }
 
 // UpdateProjectResource edits an existing resource's ref/label/position.
