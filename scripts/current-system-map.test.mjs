@@ -191,6 +191,33 @@ test("maintained domain flows stay anchored to current routes, tables and source
         "server/internal/eventoutbox/outbox.go",
       ],
     },
+    {
+      file: "issue-task-lifecycle-flow.md",
+      routes: [
+        "POST /api/issues",
+        "PUT /api/issues/{id}",
+        "POST /api/issues/{id}/comments",
+        "POST /api/daemon/tasks/{taskId}/start",
+        "POST /api/daemon/tasks/{taskId}/complete",
+        "POST /api/daemon/tasks/{taskId}/fail",
+      ],
+      tables: [
+        "agent_task_queue",
+        "comment",
+        "domain_event_delivery",
+        "domain_event_outbox",
+        "issue",
+        "task_token",
+      ],
+      sources: [
+        "server/internal/handler/issue.go",
+        "server/internal/handler/comment.go",
+        "server/internal/service/task_claim.go",
+        "server/internal/service/task_complete.go",
+        "server/internal/service/task_fail.go",
+        "server/cmd/server/task_projection.go",
+      ],
+    },
   ];
 
   const index = fs.readFileSync(
