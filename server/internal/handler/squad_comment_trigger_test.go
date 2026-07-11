@@ -1452,7 +1452,7 @@ func TestEnqueueCommentAgentTriggers_AllowsCrossProjectChildWithoutFurtherChildr
 
 // TestCreateRetryTask_InheritsIsLeaderTask locks the retry-clone contract for
 // MUL-2218: auto-retry of a leader-role task must produce a child task that is
-// also is_leader_task=true. Without this, MaybeRetryFailedTask silently
+// also is_leader_task=true. Without this, the automatic retry silently
 // demotes a retried leader task to a worker task, and the self-trigger guard
 // in computeAssignedSquadLeaderCommentTrigger / comment.go stops recognising the
 // retried leader's own comments — re-opening the bug this issue fixes.

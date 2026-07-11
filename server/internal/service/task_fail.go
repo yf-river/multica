@@ -239,29 +239,6 @@ func resumeUnsafeFailureReason(reason string) bool {
 	}
 }
 
-// MaybeRetryFailedTask ensures a fresh queued attempt exists for a recently
-// failed task when the failure is infrastructure-shaped and the attempt budget
-// remains. It returns an existing child when another current path already
-// materialized the retry, so callers observe one authoritative decision.
-//
-// Autopilot tasks are NOT auto-retried here; the autopilot scheduler owns
-// its own re-run cadence and we don't want to double-fire it.
-func (s *TaskService) MaybeRetryFailedTask(ctx context.Context, parent db.AgentTaskQueue) (*db.AgentTaskQueue, error) {
-	var child *db.AgentTaskQueue
-	var created bool
-	if err := s.runInTx(ctx, func(queries *db.Queries) error {
-		var err error
-		child, created, err = s.materializeRetryTask(ctx, queries, parent)
-		return err
-	}); err != nil {
-		return nil, err
-	}
-	if created {
-		s.publishRetryTask(ctx, *child)
-	}
-	return child, nil
-}
-
 func (s *TaskService) materializeRetryTask(
 	ctx context.Context,
 	queries *db.Queries,
@@ -359,8 +336,8 @@ func (s *TaskService) publishRetryTask(ctx context.Context, child db.AgentTaskQu
 // clean agent session instead of resuming the prior (agent_id, issue_id)
 // session. A user clicking rerun has just judged the prior output bad —
 // resuming the same conversation would replay the same poisoned state.
-// Auto-retry of an orphaned mid-flight failure (HandleFailedTasks →
-// MaybeRetryFailedTask → CreateRetryTask) does NOT take this path, so
+// Auto-retry of an orphaned mid-flight failure (failTasksDurably →
+// CreateRetryTask) does NOT take this path, so
 // MUL-1128's mid-flight resume contract is preserved.
 //
 // Only tasks belonging to the target agent on this issue are cancelled.
@@ -448,24 +425,17 @@ func (s *TaskService) enqueueRerunTask(ctx context.Context, issue db.Issue, agen
 	return s.enqueueMentionTask(ctx, issue, agentID, triggerCommentID, isLeader, true)
 }
 
-// HandleFailedTasks publishes post-commit traces/retries and reconciles agents
-// for a batch whose terminal state, retry decision and Issue projection were
-// already committed by failTasksDurably.
-func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTaskQueue) int {
+// HandleFailedTasks publishes post-commit traces and reconciles agents for a
+// batch whose terminal state, retry decision and Issue projection were already
+// committed by failTasksDurably.
+func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTaskQueue) {
 	if len(tasks) == 0 {
-		return 0
+		return
 	}
 
 	affectedAgents := make(map[string]pgtype.UUID)
-	retried := 0
 
 	for _, t := range tasks {
-		// Auto-retry first so the issue stays in_progress rather than
-		// flapping todo → in_progress within a tick.
-		if child, _ := s.MaybeRetryFailedTask(ctx, t); child != nil {
-			retried++
-		}
-
 		s.captureTaskFailed(ctx, t)
 		affectedAgents[util.UUIDToString(t.AgentID)] = t.AgentID
 	}
@@ -475,7 +445,6 @@ func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTas
 			slog.Warn("reconcile bulk-failed agent status failed", "agent_id", util.UUIDToString(agentID), "error", err)
 		}
 	}
-	return retried
 }
 
 // runInTx executes fn inside a single DB transaction. If TxStarter is nil

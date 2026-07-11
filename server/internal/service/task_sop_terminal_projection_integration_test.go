@@ -423,15 +423,15 @@ func TestFailStaleTasksCommitsSquadTerminalProjection(t *testing.T) {
 	fixture := seedSquadTerminalProjectionFixture(t, pool, "running", time.Now().Add(-2*time.Hour), 1, 1)
 
 	service := NewTaskService(db.New(pool), pool, nil, events.New())
-	failed, err := service.FailStaleTasks(context.Background(), db.FailStaleTasksParams{
+	batch, err := service.FailStaleTasks(context.Background(), db.FailStaleTasksParams{
 		DispatchTimeoutSecs: 60,
 		RunningTimeoutSecs:  60,
 	})
 	if err != nil {
 		t.Fatalf("sweep stale Squad worker task: %v", err)
 	}
-	if len(failed) != 1 || failed[0].ID != fixture.taskID {
-		t.Fatalf("failed tasks = %+v, want only %s", failed, uuid.UUID(fixture.taskID.Bytes))
+	if len(batch.Tasks) != 1 || batch.Tasks[0].ID != fixture.taskID {
+		t.Fatalf("failed tasks = %+v, want only %s", batch.Tasks, uuid.UUID(fixture.taskID.Bytes))
 	}
 	assertSquadTerminalProjectionCommitted(t, pool, fixture, "已失败", "blocked", "步骤失败")
 }
@@ -552,15 +552,15 @@ func TestFailStaleTaskWithDeliveryAndRetryLeavesSquadRunOpen(t *testing.T) {
 	}
 
 	service := NewTaskService(db.New(pool), pool, nil, events.New())
-	failed, err := service.FailStaleTasks(ctx, db.FailStaleTasksParams{
+	batch, err := service.FailStaleTasks(ctx, db.FailStaleTasksParams{
 		DispatchTimeoutSecs: 60,
 		RunningTimeoutSecs:  60,
 	})
 	if err != nil {
 		t.Fatalf("sweep retryable stale Squad worker task: %v", err)
 	}
-	if len(failed) != 1 || failed[0].ID != fixture.taskID {
-		t.Fatalf("failed tasks = %+v, want only %s", failed, uuid.UUID(fixture.taskID.Bytes))
+	if len(batch.Tasks) != 1 || batch.Tasks[0].ID != fixture.taskID {
+		t.Fatalf("failed tasks = %+v, want only %s", batch.Tasks, uuid.UUID(fixture.taskID.Bytes))
 	}
 
 	var runStatus, issueStatus string

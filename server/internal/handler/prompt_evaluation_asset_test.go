@@ -2834,19 +2834,25 @@ func TestRunPromptEvaluationAssetAgentRetryReassignsRunTask(t *testing.T) {
 	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "真实智能体重试实验", "运行时离线")
 	markPromptEvaluationTaskRunning(t, resp.TaskID)
 
-	failed, err := testHandler.Queries.FailAgentTask(context.Background(), db.FailAgentTaskParams{
-		ID:            parseUUID(resp.TaskID),
-		Error:         pgtype.Text{String: "运行时离线，自动重试", Valid: true},
-		FailureReason: pgtype.Text{String: "runtime_offline", Valid: true},
+	ctx := context.Background()
+	if _, err := testPool.Exec(ctx, `
+		UPDATE agent_task_queue SET started_at = now() - interval '2 hours'
+		WHERE id = $1
+	`, resp.TaskID); err != nil {
+		t.Fatalf("age prompt evaluation task: %v", err)
+	}
+	batch, err := testHandler.TaskService.FailStaleTasks(ctx, db.FailStaleTasksParams{
+		DispatchTimeoutSecs: 24 * 60 * 60,
+		RunningTimeoutSecs:  60 * 60,
 	})
 	if err != nil {
-		t.Fatalf("fail task row: %v", err)
+		t.Fatalf("fail stale prompt evaluation task: %v", err)
 	}
-	retried := testHandler.TaskService.HandleFailedTasks(context.Background(), []db.AgentTaskQueue{failed})
-	if retried != 1 {
-		t.Fatalf("expected one retry, got %d", retried)
+	if len(batch.Tasks) != 1 || batch.Retried != 1 {
+		t.Fatalf("failed task batch = %+v, want one task and one retry", batch)
 	}
-	if _, err := projectPromptEvaluationTerminalTask(context.Background(), resp.TaskID); err != nil {
+	testHandler.TaskService.HandleFailedTasks(ctx, batch.Tasks)
+	if _, err := projectPromptEvaluationTerminalTask(ctx, resp.TaskID); err != nil {
 		t.Fatalf("project retrying evaluation task: %v", err)
 	}
 

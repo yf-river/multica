@@ -105,10 +105,18 @@ func (s *TaskService) buildTaskEvent(
 	}, nil
 }
 
+// FailedTaskBatch is the complete committed result of one failure sweep.
+// Retried counts tasks whose single authoritative retry child exists, whether
+// created by this sweep or observed under the parent lock.
+type FailedTaskBatch struct {
+	Tasks   []db.AgentTaskQueue
+	Retried int
+}
+
 func (s *TaskService) failTasksDurably(
 	ctx context.Context,
 	mutate func(*db.Queries) ([]db.AgentTaskQueue, error),
-) ([]db.AgentTaskQueue, error) {
+) (FailedTaskBatch, error) {
 	var failed []db.AgentTaskQueue
 	var persistedEvents []events.Event
 	var createdRetries []db.AgentTaskQueue
@@ -195,7 +203,7 @@ func (s *TaskService) failTasksDurably(
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return FailedTaskBatch{}, err
 	}
 	s.publishTaskEvents(persistedEvents)
 	for _, projection := range sourceSummaries {
@@ -210,7 +218,7 @@ func (s *TaskService) failTasksDurably(
 	for _, retry := range createdRetries {
 		s.publishRetryTask(ctx, retry)
 	}
-	return failed, nil
+	return FailedTaskBatch{Tasks: failed, Retried: len(retriedTasks)}, nil
 }
 
 func (s *TaskService) cancelTasksDurably(
@@ -256,25 +264,25 @@ func (s *TaskService) reconcileCancelledTaskAgents(ctx context.Context, cancelle
 	}
 }
 
-func (s *TaskService) FailTasksForOfflineRuntimes(ctx context.Context) ([]db.AgentTaskQueue, error) {
+func (s *TaskService) FailTasksForOfflineRuntimes(ctx context.Context) (FailedTaskBatch, error) {
 	return s.failTasksDurably(ctx, func(queries *db.Queries) ([]db.AgentTaskQueue, error) {
 		return queries.FailTasksForOfflineRuntimes(ctx)
 	})
 }
 
-func (s *TaskService) FailStaleTasks(ctx context.Context, params db.FailStaleTasksParams) ([]db.AgentTaskQueue, error) {
+func (s *TaskService) FailStaleTasks(ctx context.Context, params db.FailStaleTasksParams) (FailedTaskBatch, error) {
 	return s.failTasksDurably(ctx, func(queries *db.Queries) ([]db.AgentTaskQueue, error) {
 		return queries.FailStaleTasks(ctx, params)
 	})
 }
 
-func (s *TaskService) ExpireStaleQueuedTasks(ctx context.Context, params db.ExpireStaleQueuedTasksParams) ([]db.AgentTaskQueue, error) {
+func (s *TaskService) ExpireStaleQueuedTasks(ctx context.Context, params db.ExpireStaleQueuedTasksParams) (FailedTaskBatch, error) {
 	return s.failTasksDurably(ctx, func(queries *db.Queries) ([]db.AgentTaskQueue, error) {
 		return queries.ExpireStaleQueuedTasks(ctx, params)
 	})
 }
 
-func (s *TaskService) RecoverOrphanedTasksForRuntime(ctx context.Context, runtimeID pgtype.UUID) ([]db.AgentTaskQueue, error) {
+func (s *TaskService) RecoverOrphanedTasksForRuntime(ctx context.Context, runtimeID pgtype.UUID) (FailedTaskBatch, error) {
 	return s.failTasksDurably(ctx, func(queries *db.Queries) ([]db.AgentTaskQueue, error) {
 		return queries.RecoverOrphanedTasksForRuntime(ctx, runtimeID)
 	})

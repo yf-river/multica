@@ -13,9 +13,8 @@ import (
 
 // RecoverOrphanedTasks is called by the daemon at startup for each runtime
 // it owns. It atomically fails any dispatched/running tasks the server still
-// believes belong to that runtime — those are the tasks the previous daemon
-// process was running when it died — and triggers MaybeRetryFailedTask for
-// each so the user sees a fresh attempt instead of a permanently stuck row.
+// believes belong to that runtime and materializes each eligible retry in the
+// same transaction, so the user sees a fresh attempt instead of a stuck row.
 //
 // This is the targeted fix for "issue stuck at in_progress when daemon
 // restarts mid-task": the runtime heartbeat sweeper takes up to 75s + the
@@ -27,7 +26,7 @@ func (h *Handler) RecoverOrphanedTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := h.TaskService.RecoverOrphanedTasksForRuntime(r.Context(), parseUUID(runtimeID))
+	batch, err := h.TaskService.RecoverOrphanedTasksForRuntime(r.Context(), parseUUID(runtimeID))
 	if err != nil {
 		slog.Warn("recover-orphans failed", "runtime_id", runtimeID, "error", err)
 		writeError(w, http.StatusInternalServerError, "recover orphans failed")
@@ -39,19 +38,19 @@ func (h *Handler) RecoverOrphanedTasks(w http.ResponseWriter, r *http.Request) {
 	// behaviour as the runtime sweeper. This was previously a fast-path
 	// that bypassed those side effects, leaving the UI stale when no retry
 	// was created (max_attempts exhausted, autopilot, non-retryable reason).
-	retried := h.TaskService.HandleFailedTasks(r.Context(), rows)
+	h.TaskService.HandleFailedTasks(r.Context(), batch.Tasks)
 
-	if len(rows) > 0 {
+	if len(batch.Tasks) > 0 {
 		slog.Info("recover-orphans completed",
 			"runtime_id", runtimeID,
-			"orphaned", len(rows),
-			"retried", retried,
+			"orphaned", len(batch.Tasks),
+			"retried", batch.Retried,
 		)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"orphaned": len(rows),
-		"retried":  retried,
+		"orphaned": len(batch.Tasks),
+		"retried":  batch.Retried,
 	})
 }
 

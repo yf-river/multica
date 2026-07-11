@@ -613,17 +613,17 @@ func TestIssueSourceSummaryFailureCommitsFallbackAndNextTaskAtomically(t *testin
 	`, batchTask.ID); err != nil {
 		t.Fatalf("age batch source summary task: %v", err)
 	}
-	failed, err := testHandler.TaskService.FailStaleTasks(ctx, db.FailStaleTasksParams{
+	batch, err := testHandler.TaskService.FailStaleTasks(ctx, db.FailStaleTasksParams{
 		DispatchTimeoutSecs: 100 * 365 * 24 * 60 * 60,
 		RunningTimeoutSecs:  100 * 365 * 24 * 60 * 60,
 	})
 	if err != nil {
 		t.Fatalf("fail stale source summary task: %v", err)
 	}
-	if len(failed) != 1 || failed[0].ID != batchTask.ID {
-		t.Fatalf("failed stale source summary tasks = %+v, want only %s", failed, uuidToString(batchTask.ID))
+	if len(batch.Tasks) != 1 || batch.Tasks[0].ID != batchTask.ID {
+		t.Fatalf("failed stale source summary tasks = %+v, want only %s", batch.Tasks, uuidToString(batchTask.ID))
 	}
-	testHandler.TaskService.HandleFailedTasks(ctx, failed)
+	testHandler.TaskService.HandleFailedTasks(ctx, batch.Tasks)
 	issue, err = testHandler.Queries.GetIssue(ctx, parseUUID(issueID))
 	if err != nil {
 		t.Fatalf("reload issue after batch failure: %v", err)

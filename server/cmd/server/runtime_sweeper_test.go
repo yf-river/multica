@@ -83,12 +83,12 @@ func cleanupSweeperFixture(t *testing.T, issueID, agentID string) {
 func failStaleTasksForTest(t *testing.T, queries *db.Queries, bus *events.Bus, params db.FailStaleTasksParams) []db.AgentTaskQueue {
 	t.Helper()
 	taskService := service.NewTaskService(queries, testPool, nil, bus)
-	failed, err := taskService.FailStaleTasks(context.Background(), params)
+	batch, err := taskService.FailStaleTasks(context.Background(), params)
 	if err != nil {
 		t.Fatalf("FailStaleTasks: %v", err)
 	}
-	taskService.HandleFailedTasks(context.Background(), failed)
-	return failed
+	taskService.HandleFailedTasks(context.Background(), batch.Tasks)
+	return batch.Tasks
 }
 
 func setupStaleRunningIssueFixture(t *testing.T, issueStatus, title string) (string, string) {
@@ -623,19 +623,19 @@ func TestExpireStaleQueuedTasks(t *testing.T) {
 
 	queries := db.New(testPool)
 	taskService := service.NewTaskService(queries, testPool, nil, events.New())
-	failed, err := taskService.ExpireStaleQueuedTasks(ctx, db.ExpireStaleQueuedTasksParams{
+	batch, err := taskService.ExpireStaleQueuedTasks(ctx, db.ExpireStaleQueuedTasksParams{
 		TtlSecs:    3600.0, // 1h TTL — old task is 5h, fresh task is 0s
 		MaxPerTick: 100,
 	})
 	if err != nil {
 		t.Fatalf("ExpireStaleQueuedTasks failed: %v", err)
 	}
-	if len(failed) != 1 {
-		t.Fatalf("expected exactly 1 expired task, got %d", len(failed))
+	if len(batch.Tasks) != 1 {
+		t.Fatalf("expected exactly 1 expired task, got %d", len(batch.Tasks))
 	}
-	taskService.HandleFailedTasks(ctx, failed)
-	if failed[0].ID.Bytes != parseUUIDBytes(oldTaskID) {
-		t.Fatalf("expired the wrong task: got %x", failed[0].ID.Bytes)
+	taskService.HandleFailedTasks(ctx, batch.Tasks)
+	if batch.Tasks[0].ID.Bytes != parseUUIDBytes(oldTaskID) {
+		t.Fatalf("expired the wrong task: got %x", batch.Tasks[0].ID.Bytes)
 	}
 
 	// DB assertions: old → failed/queued_expired, fresh → still queued.
@@ -722,17 +722,17 @@ func TestExpireStaleQueuedTasksRespectsBatchLimit(t *testing.T) {
 
 	queries := db.New(testPool)
 	taskService := service.NewTaskService(queries, testPool, nil, events.New())
-	failed, err := taskService.ExpireStaleQueuedTasks(ctx, db.ExpireStaleQueuedTasksParams{
+	batch, err := taskService.ExpireStaleQueuedTasks(ctx, db.ExpireStaleQueuedTasksParams{
 		TtlSecs:    3600.0,
 		MaxPerTick: 2, // cap below the backlog
 	})
 	if err != nil {
 		t.Fatalf("ExpireStaleQueuedTasks failed: %v", err)
 	}
-	if len(failed) != 2 {
-		t.Fatalf("expected batch cap of 2, got %d", len(failed))
+	if len(batch.Tasks) != 2 {
+		t.Fatalf("expected batch cap of 2, got %d", len(batch.Tasks))
 	}
-	taskService.HandleFailedTasks(ctx, failed)
+	taskService.HandleFailedTasks(ctx, batch.Tasks)
 
 	var remaining int
 	if err := testPool.QueryRow(ctx, `

@@ -167,16 +167,16 @@ func sweepStaleRuntimes(ctx context.Context, queries *db.Queries, liveness handl
 // changed state during that tick. If the task+event transaction fails after a
 // runtime was already marked offline, the next tick therefore retries it.
 func sweepOfflineRuntimeTasks(ctx context.Context, taskSvc *service.TaskService) {
-	failedTasks, err := taskSvc.FailTasksForOfflineRuntimes(ctx)
+	batch, err := taskSvc.FailTasksForOfflineRuntimes(ctx)
 	if err != nil {
 		slog.Warn("runtime sweeper: failed to clean up offline-runtime tasks", "error", err)
 		return
 	}
-	if len(failedTasks) == 0 {
+	if len(batch.Tasks) == 0 {
 		return
 	}
-	slog.Info("runtime sweeper: failed orphaned tasks", "count", len(failedTasks))
-	taskSvc.HandleFailedTasks(ctx, failedTasks)
+	slog.Info("runtime sweeper: failed orphaned tasks", "count", len(batch.Tasks), "retried", batch.Retried)
+	taskSvc.HandleFailedTasks(ctx, batch.Tasks)
 }
 
 // filterStaleRuntimesByLiveness narrows a SELECT-of-stale-candidates down to
@@ -251,7 +251,7 @@ func gcRuntimes(ctx context.Context, queries *db.Queries, bus *events.Bus) {
 // - The daemon failed to report task completion/failure
 // - A server restart left tasks in a non-terminal state
 func sweepStaleTasks(ctx context.Context, taskSvc *service.TaskService) {
-	failedTasks, err := taskSvc.FailStaleTasks(ctx, db.FailStaleTasksParams{
+	batch, err := taskSvc.FailStaleTasks(ctx, db.FailStaleTasksParams{
 		DispatchTimeoutSecs: dispatchTimeoutSeconds,
 		RunningTimeoutSecs:  runningTimeoutSeconds,
 	})
@@ -259,13 +259,13 @@ func sweepStaleTasks(ctx context.Context, taskSvc *service.TaskService) {
 		slog.Warn("task sweeper: failed to clean up stale tasks", "error", err)
 		return
 	}
-	if len(failedTasks) == 0 {
+	if len(batch.Tasks) == 0 {
 		return
 	}
 
-	slog.Info("task sweeper: failed stale tasks", "count", len(failedTasks))
-	taskSvc.CaptureLeaseExpiredTasks(ctx, failedTasks)
-	taskSvc.HandleFailedTasks(ctx, failedTasks)
+	slog.Info("task sweeper: failed stale tasks", "count", len(batch.Tasks), "retried", batch.Retried)
+	taskSvc.CaptureLeaseExpiredTasks(ctx, batch.Tasks)
+	taskSvc.HandleFailedTasks(ctx, batch.Tasks)
 }
 
 // sweepExpiredQueuedTasks fails tasks that have been sitting in 'queued' for
@@ -275,7 +275,7 @@ func sweepStaleTasks(ctx context.Context, taskSvc *service.TaskService) {
 // a task is already queued. Capped to queuedExpireBatchSize per tick so a
 // big backlog can't monopolise the DB.
 func sweepExpiredQueuedTasks(ctx context.Context, taskSvc *service.TaskService) {
-	failedTasks, err := taskSvc.ExpireStaleQueuedTasks(ctx, db.ExpireStaleQueuedTasksParams{
+	batch, err := taskSvc.ExpireStaleQueuedTasks(ctx, db.ExpireStaleQueuedTasksParams{
 		TtlSecs:    queuedTTLSeconds,
 		MaxPerTick: queuedExpireBatchSize,
 	})
@@ -283,11 +283,11 @@ func sweepExpiredQueuedTasks(ctx context.Context, taskSvc *service.TaskService) 
 		slog.Warn("task sweeper: failed to expire stale queued tasks", "error", err)
 		return
 	}
-	if len(failedTasks) == 0 {
+	if len(batch.Tasks) == 0 {
 		return
 	}
 
-	slog.Info("task sweeper: expired stale queued tasks", "count", len(failedTasks))
-	taskSvc.CaptureQueuedExpiredTasks(ctx, failedTasks)
-	taskSvc.HandleFailedTasks(ctx, failedTasks)
+	slog.Info("task sweeper: expired stale queued tasks", "count", len(batch.Tasks), "retried", batch.Retried)
+	taskSvc.CaptureQueuedExpiredTasks(ctx, batch.Tasks)
+	taskSvc.HandleFailedTasks(ctx, batch.Tasks)
 }

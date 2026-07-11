@@ -264,7 +264,7 @@ type AgentTaskResponse struct {
 	CompletedAt         *string                  `json:"completed_at"`
 	Result              any                      `json:"result"`
 	Error               *string                  `json:"error"`
-	FailureReason       string                   `json:"failure_reason,omitempty"` // see TaskService.MaybeRetryFailedTask
+	FailureReason       string                   `json:"failure_reason,omitempty"` // drives the task auto-retry policy
 	Attempt             int32                    `json:"attempt"`
 	MaxAttempts         int32                    `json:"max_attempts"`
 	ParentTaskID        *string                  `json:"parent_task_id,omitempty"`

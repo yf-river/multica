@@ -50,21 +50,12 @@ func TestFailTaskMaterializesOneRetryWithTerminalEvent(t *testing.T) {
 	if _, err := testPool.Exec(ctx, `UPDATE agent_task_queue SET max_attempts = 2 WHERE id = $1`, fixture.task.ID); err != nil {
 		t.Fatalf("increase retry budget: %v", err)
 	}
-	failed, err := fixture.taskService.FailTask(ctx, fixture.task.ID, "task timed out", "", "", "timeout")
-	if err != nil {
+	if _, err := fixture.taskService.FailTask(ctx, fixture.task.ID, "task timed out", "", "", "timeout"); err != nil {
 		t.Fatalf("FailTask: %v", err)
 	}
 
-	firstChild, err := fixture.queries.GetRetryTaskForParent(ctx, fixture.task.ID)
-	if err != nil {
+	if _, err := fixture.queries.GetRetryTaskForParent(ctx, fixture.task.ID); err != nil {
 		t.Fatalf("GetRetryTaskForParent: %v", err)
-	}
-	secondChild, err := fixture.taskService.MaybeRetryFailedTask(ctx, *failed)
-	if err != nil {
-		t.Fatalf("MaybeRetryFailedTask: %v", err)
-	}
-	if secondChild == nil || util.UUIDToString(secondChild.ID) != util.UUIDToString(firstChild.ID) {
-		t.Fatalf("retry decision changed: first=%s second=%v", util.UUIDToString(firstChild.ID), secondChild)
 	}
 	var retryCount, eventCount int
 	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM agent_task_queue WHERE parent_task_id = $1`, fixture.task.ID).Scan(&retryCount); err != nil {
@@ -81,44 +72,41 @@ func TestFailTaskMaterializesOneRetryWithTerminalEvent(t *testing.T) {
 	}
 }
 
-func TestMaybeRetryFailedTaskSerializesConcurrentCallers(t *testing.T) {
+func TestFailStaleTasksSerializesConcurrentSweepers(t *testing.T) {
 	ctx := context.Background()
 	fixture := setupChatCompletionFixture(t, ctx)
-	if _, err := testPool.Exec(ctx, `UPDATE agent_task_queue SET max_attempts = 2 WHERE id = $1`, fixture.task.ID); err != nil {
-		t.Fatalf("increase retry budget: %v", err)
-	}
-	failed, err := fixture.queries.FailAgentTask(ctx, db.FailAgentTaskParams{
-		ID:            fixture.task.ID,
-		Error:         pgtype.Text{String: "task timed out", Valid: true},
-		FailureReason: pgtype.Text{String: "timeout", Valid: true},
-	})
-	if err != nil {
-		t.Fatalf("FailAgentTask: %v", err)
+	if _, err := testPool.Exec(ctx, `
+		UPDATE agent_task_queue
+		SET max_attempts = 2, started_at = now() - interval '2 hours'
+		WHERE id = $1
+	`, fixture.task.ID); err != nil {
+		t.Fatalf("age retryable task: %v", err)
 	}
 
-	type retryResult struct {
-		child *db.AgentTaskQueue
-		err   error
+	type sweepResult struct {
+		tasks   int
+		retried int
+		err     error
 	}
-	results := make(chan retryResult, 2)
+	results := make(chan sweepResult, 2)
 	for range 2 {
 		go func() {
-			child, err := fixture.taskService.MaybeRetryFailedTask(ctx, failed)
-			results <- retryResult{child: child, err: err}
+			batch, err := fixture.taskService.FailStaleTasks(ctx, db.FailStaleTasksParams{
+				DispatchTimeoutSecs: 24 * 60 * 60,
+				RunningTimeoutSecs:  60 * 60,
+			})
+			results <- sweepResult{tasks: len(batch.Tasks), retried: batch.Retried, err: err}
 		}()
 	}
 	first := <-results
 	second := <-results
-	for _, result := range []retryResult{first, second} {
+	for _, result := range []sweepResult{first, second} {
 		if result.err != nil {
-			t.Fatalf("MaybeRetryFailedTask: %v", result.err)
-		}
-		if result.child == nil {
-			t.Fatal("concurrent retry caller received nil child")
+			t.Fatalf("FailStaleTasks: %v", result.err)
 		}
 	}
-	if util.UUIDToString(first.child.ID) != util.UUIDToString(second.child.ID) {
-		t.Fatalf("concurrent retries diverged: %s vs %s", util.UUIDToString(first.child.ID), util.UUIDToString(second.child.ID))
+	if first.tasks+second.tasks != 1 || first.retried+second.retried != 1 {
+		t.Fatalf("concurrent sweep outcomes = %+v %+v, want one failed task and one retry", first, second)
 	}
 	var retryCount int
 	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM agent_task_queue WHERE parent_task_id = $1`, fixture.task.ID).Scan(&retryCount); err != nil {
@@ -126,6 +114,35 @@ func TestMaybeRetryFailedTaskSerializesConcurrentCallers(t *testing.T) {
 	}
 	if retryCount != 1 {
 		t.Fatalf("concurrent retry callers created %d children, want 1", retryCount)
+	}
+}
+
+func TestFailStaleTasksReportsDurableRetryCount(t *testing.T) {
+	ctx := context.Background()
+	fixture := setupChatCompletionFixture(t, ctx)
+	if _, err := testPool.Exec(ctx, `
+		UPDATE agent_task_queue
+		SET max_attempts = 2, started_at = now() - interval '2 hours'
+		WHERE id = $1
+	`, fixture.task.ID); err != nil {
+		t.Fatalf("age retryable task: %v", err)
+	}
+
+	batch, err := fixture.taskService.FailStaleTasks(ctx, db.FailStaleTasksParams{
+		DispatchTimeoutSecs: 24 * 60 * 60,
+		RunningTimeoutSecs:  60 * 60,
+	})
+	if err != nil {
+		t.Fatalf("FailStaleTasks: %v", err)
+	}
+	if len(batch.Tasks) != 1 || batch.Tasks[0].ID != fixture.task.ID {
+		t.Fatalf("failed tasks = %+v, want only %s", batch.Tasks, util.UUIDToString(fixture.task.ID))
+	}
+	if batch.Retried != 1 {
+		t.Fatalf("durable retry count = %d, want 1", batch.Retried)
+	}
+	if _, err := fixture.queries.GetRetryTaskForParent(ctx, fixture.task.ID); err != nil {
+		t.Fatalf("load durable retry child: %v", err)
 	}
 }
 
