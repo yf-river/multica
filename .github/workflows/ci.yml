@@ -41,6 +41,9 @@ jobs:
           pnpm generate:reserved-slugs
           git diff --exit-code -- packages/core/paths/reserved-slugs.ts
 
+      - name: Verify attachment preview types are up to date
+        run: pnpm check:attachment-preview-types
+
       - name: Verify current system map is up to date
         run: pnpm check:current-system-map && pnpm test:current-system-map
 

@@ -35,6 +35,9 @@ describe("getPreviewKind", () => {
     // Build files without extension
     ["application/octet-stream", "Dockerfile", "text"],
     ["application/octet-stream", "Makefile", "text"],
+    ["application/octet-stream", ".env", "text"],
+    ["application/octet-stream", ".gitignore", "text"],
+    ["application/octet-stream", "service.dockerfile", "text"],
 
     // Out of scope
     ["application/vnd.openxmlformats-officedocument.wordprocessingml.document", "report.docx", null],

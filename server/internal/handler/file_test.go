@@ -1032,6 +1032,9 @@ func TestIsTextPreviewable(t *testing.T) {
 		{"typescript", "application/octet-stream", "index.ts", true},
 		{"html", "text/html", "page.html", true},
 		{"dockerfile no ext", "application/octet-stream", "Dockerfile", true},
+		{"env basename", "application/octet-stream", ".env", true},
+		{"gitignore extension", "application/octet-stream", ".gitignore", true},
+		{"dockerfile extension", "application/octet-stream", "service.dockerfile", true},
 
 		{"pdf rejected", "application/pdf", "doc.pdf", false},
 		{"png rejected", "image/png", "shot.png", false},
