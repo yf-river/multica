@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/service"
 )
 
 func installApprovalInboxFailureTrigger(t *testing.T) {
@@ -61,6 +63,32 @@ func assertIssueTitleAbsent(t *testing.T, title string) {
 	if count != 0 {
 		t.Fatalf("issue %q committed despite projection failure", title)
 	}
+}
+
+func installIssueMetadataFailureForTitle(t *testing.T, title string) {
+	t.Helper()
+	ctx := context.Background()
+	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
+	functionName := "test_issue_metadata_failure_" + suffix
+	triggerName := "test_issue_metadata_failure_trigger_" + suffix
+	if _, err := testPool.Exec(ctx, fmt.Sprintf(`
+		CREATE FUNCTION %s() RETURNS trigger AS $$
+		BEGIN
+			IF NEW.title = '%s' THEN
+				RAISE EXCEPTION 'forced issue metadata projection failure';
+			END IF;
+			RETURN NEW;
+		END;
+		$$ LANGUAGE plpgsql;
+		CREATE TRIGGER %s BEFORE UPDATE ON issue
+		FOR EACH ROW EXECUTE FUNCTION %s();
+	`, functionName, strings.ReplaceAll(title, "'", "''"), triggerName, functionName)); err != nil {
+		t.Fatalf("install issue metadata failure trigger: %v", err)
+	}
+	t.Cleanup(func() {
+		mustExec(t, ctx, fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON issue`, triggerName))
+		mustExec(t, ctx, fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, functionName))
+	})
 }
 
 func TestCreateIssueRollsBackWhenAssignedAgentTaskFails(t *testing.T) {
@@ -116,4 +144,46 @@ func TestCreateIssueRollsBackWhenAgentApprovalTaskFails(t *testing.T) {
 		t.Fatalf("expected 500, got %d: %s", w.Code, w.Body.String())
 	}
 	assertIssueTitleAbsent(t, title)
+}
+
+func TestCreateIssueRollsBackSourceSummaryTaskWhenMetadataFails(t *testing.T) {
+	agentID := createHandlerTestAgent(t, "atomic-source-summary-agent-"+uuid.NewString(), nil)
+	title := "atomic source summary metadata " + uuid.NewString()
+	installIssueMetadataFailureForTitle(t, title)
+	ctx := context.Background()
+	var tasksBefore int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*) FROM agent_task_queue
+		WHERE agent_id = $1 AND context->>'type' = 'issue_source_summary'
+	`, agentID).Scan(&tasksBefore); err != nil {
+		t.Fatalf("count source summary tasks before: %v", err)
+	}
+
+	_, err := testHandler.IssueService.Create(ctx, service.IssueCreateParams{
+		WorkspaceID:  parseUUID(testWorkspaceID),
+		Title:        title,
+		Status:       "todo",
+		Priority:     "none",
+		AssigneeType: pgtype.Text{String: "agent", Valid: true},
+		AssigneeID:   parseUUID(agentID),
+		CreatorType:  "member",
+		CreatorID:    parseUUID(testUserID),
+	}, service.IssueCreateOpts{
+		SuppressAutoEnqueue:  true,
+		SourceSummaryAgentID: parseUUID(agentID),
+	})
+	if err == nil {
+		t.Fatal("issue create succeeded despite source summary metadata failure")
+	}
+	assertIssueTitleAbsent(t, title)
+	var tasksAfter int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*) FROM agent_task_queue
+		WHERE agent_id = $1 AND context->>'type' = 'issue_source_summary'
+	`, agentID).Scan(&tasksAfter); err != nil {
+		t.Fatalf("count source summary tasks after: %v", err)
+	}
+	if tasksAfter != tasksBefore {
+		t.Fatalf("source summary task survived rollback: before=%d after=%d", tasksBefore, tasksAfter)
+	}
 }

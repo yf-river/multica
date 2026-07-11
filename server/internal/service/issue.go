@@ -102,11 +102,15 @@ type IssueCreateOpts struct {
 	// metadata at the handler layer.
 	Platform string
 
-	// SuppressAutoEnqueue lets callers create the issue and finish
-	// platform-side preparation before the assignee starts. TAPD quick-create
-	// uses this to fetch source content first so the squad PM sees a fetched
-	// source_context on its first task.
+	// SuppressAutoEnqueue keeps the formal assignee parked. TAPD quick-create
+	// uses it while the source-summary stage is pending and for blocked issues
+	// whose source fetch failed.
 	SuppressAutoEnqueue bool
+
+	// SourceSummaryAgentID requests the current TAPD source-summary stage.
+	// Its task and task-id metadata are committed with the issue; normal
+	// assignee execution remains suppressed until that stage completes.
+	SourceSummaryAgentID pgtype.UUID
 }
 
 // ErrParentIssueNotFound signals that the supplied ParentIssueID does
@@ -141,6 +145,8 @@ type issueCreateProjection struct {
 	approvalIssue        *db.Issue
 	approvalInbox        *db.InboxItem
 	approvalIssueStatus  string
+	sourceSummaryTask    *db.AgentTaskQueue
+	sourceSummaryIssue   *db.Issue
 }
 
 // IssueApprovalProjection contains durable approval state created inside an
@@ -344,12 +350,15 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 		p.CreatorType,
 		actorID,
 		opts.SuppressAutoEnqueue,
+		opts.SourceSummaryAgentID,
 	)
 	if err != nil {
 		return IssueCreateResult{}, fmt.Errorf("create issue projection: %w", err)
 	}
 	if projection.approvalIssue != nil {
 		issue = *projection.approvalIssue
+	} else if projection.sourceSummaryIssue != nil {
+		issue = *projection.sourceSummaryIssue
 	}
 
 	createdEvent := s.buildIssueCreatedEvent(issue, attachments, p.CreatorType, actorID, opts)
@@ -382,8 +391,30 @@ func (s *IssueService) createIssueProjectionInTx(
 	actorType string,
 	actorID string,
 	suppressAutoEnqueue bool,
+	sourceSummaryAgentID pgtype.UUID,
 ) (issueCreateProjection, error) {
 	projection := issueCreateProjection{}
+	if sourceSummaryAgentID.Valid {
+		if s.TaskService == nil {
+			return projection, errors.New("task service is required for source summary")
+		}
+		task, err := s.TaskService.CreateIssueSourceSummaryTaskInTx(ctx, queries, issue, sourceSummaryAgentID)
+		if err != nil {
+			return projection, err
+		}
+		updated, err := queries.SetIssueMetadataKey(ctx, db.SetIssueMetadataKeyParams{
+			ID:          issue.ID,
+			WorkspaceID: issue.WorkspaceID,
+			Key:         "source_summary_task_id",
+			Value:       mustJSONStringBytes(util.UUIDToString(task.ID)),
+		})
+		if err != nil {
+			return projection, fmt.Errorf("set source summary task metadata: %w", err)
+		}
+		issue = updated
+		projection.sourceSummaryTask = &task
+		projection.sourceSummaryIssue = &updated
+	}
 	if issue.Status == "backlog" && hasProject {
 		switch {
 		case agentLeadReviewRequested:
@@ -484,6 +515,9 @@ func (s *IssueService) publishIssueCreateProjection(ctx context.Context, project
 	if projection.approvalTask != nil {
 		s.TaskService.PublishProjectOwnerApprovalTaskEnqueued(ctx, *projection.approvalTask, projection.approvalProject)
 	}
+	if projection.sourceSummaryTask != nil {
+		s.TaskService.PublishIssueSourceSummaryTaskEnqueued(ctx, *projection.sourceSummaryTask)
+	}
 	if projection.approvalIssue != nil && s.Bus != nil {
 		s.Bus.Publish(events.Event{
 			Type:        protocol.EventIssueMetadataChanged,
@@ -507,12 +541,6 @@ func (s *IssueService) publishIssueCreateProjection(ctx context.Context, project
 	} else {
 		s.TaskService.PublishIssueTaskEnqueued(ctx, *projection.assignmentTask)
 	}
-}
-
-// EnqueueOnAssignForIssue triggers the same create-time assignee behavior
-// after a caller deliberately suppressed auto-enqueue during Create.
-func (s *IssueService) EnqueueOnAssignForIssue(ctx context.Context, issue db.Issue, actorType, actorID string) {
-	s.maybeEnqueueOnAssign(ctx, issue, actorType, actorID)
 }
 
 var projectOwnerApprovalMetadataKeys = []string{
@@ -939,97 +967,5 @@ func classifyOrigin(issue db.Issue, opts IssueCreateOpts) (source, taskID, autop
 			"issue_id", util.UUIDToString(issue.ID),
 		)
 		return analytics.SourceManual, "", ""
-	}
-}
-
-func (s *IssueService) maybeEnqueueOnAssign(ctx context.Context, issue db.Issue, creatorType, actorID string) {
-	if !issue.AssigneeType.Valid || !issue.AssigneeID.Valid {
-		return
-	}
-	if s.shouldEnqueueAgentTask(ctx, issue) {
-		if _, err := s.TaskService.EnqueueTaskForIssue(ctx, issue); err != nil {
-			slog.Warn("enqueue agent task on create failed",
-				"issue_id", util.UUIDToString(issue.ID),
-				"error", err)
-		}
-	}
-	if s.shouldEnqueueSquadLeaderOnAssign(ctx, issue) {
-		s.enqueueSquadLeaderTask(ctx, issue, pgtype.UUID{}, creatorType, actorID)
-	}
-}
-
-// shouldEnqueueAgentTask returns true when an issue create or assignment
-// should trigger the assigned agent. Backlog issues are skipped — backlog
-// acts as a parking lot for pre-assigning without immediate execution.
-// Mirrors handler.shouldEnqueueAgentTask; kept here to make the service
-// self-contained, since both code paths must move together.
-func (s *IssueService) shouldEnqueueAgentTask(ctx context.Context, issue db.Issue) bool {
-	if issue.Status == "backlog" {
-		return false
-	}
-	return s.isAgentAssigneeReady(ctx, issue)
-}
-
-func (s *IssueService) isAgentAssigneeReady(ctx context.Context, issue db.Issue) bool {
-	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "agent" || !issue.AssigneeID.Valid {
-		return false
-	}
-	agent, err := s.Queries.GetAgent(ctx, issue.AssigneeID)
-	if err != nil || !agent.RuntimeID.Valid || agent.ArchivedAt.Valid {
-		return false
-	}
-	return true
-}
-
-func (s *IssueService) shouldEnqueueSquadLeaderOnAssign(ctx context.Context, issue db.Issue) bool {
-	if issue.Status == "backlog" {
-		return false
-	}
-	return s.isSquadLeaderReady(ctx, issue)
-}
-
-func (s *IssueService) isSquadLeaderReady(ctx context.Context, issue db.Issue) bool {
-	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "squad" || !issue.AssigneeID.Valid {
-		return false
-	}
-	squad, err := s.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
-		ID:          issue.AssigneeID,
-		WorkspaceID: issue.WorkspaceID,
-	})
-	if err != nil {
-		return false
-	}
-	agent, err := s.Queries.GetAgent(ctx, squad.LeaderID)
-	if err != nil {
-		return false
-	}
-	ready, _, err := AgentReadiness(ctx, s.Queries, agent)
-	if err != nil {
-		return false
-	}
-	return ready
-}
-
-func (s *IssueService) enqueueSquadLeaderTask(ctx context.Context, issue db.Issue, triggerCommentID pgtype.UUID, authorType, authorID string) {
-	squad, err := s.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
-		ID:          issue.AssigneeID,
-		WorkspaceID: issue.WorkspaceID,
-	})
-	if err != nil {
-		return
-	}
-	hasPending, err := s.Queries.HasPendingTaskForIssueAndAgent(ctx, db.HasPendingTaskForIssueAndAgentParams{
-		IssueID: issue.ID,
-		AgentID: squad.LeaderID,
-	})
-	if err != nil || hasPending {
-		return
-	}
-	if _, err := s.TaskService.EnqueueTaskForSquadLeader(ctx, issue, squad.LeaderID, triggerCommentID); err != nil {
-		slog.Warn("enqueue squad leader task on create failed",
-			"issue_id", util.UUIDToString(issue.ID),
-			"squad_id", util.UUIDToString(squad.ID),
-			"leader_id", util.UUIDToString(squad.LeaderID),
-			"error", err)
 	}
 }

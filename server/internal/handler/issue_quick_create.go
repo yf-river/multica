@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/multica-ai/multica/server/internal/eventoutbox"
 	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -378,6 +377,10 @@ func (h *Handler) quickCreateTAPDSourceIssue(ctx context.Context, w http.Respons
 		}
 		dueDate = parsed
 	}
+	sourceSummaryAgentID := pgtype.UUID{}
+	if fetchErr == nil {
+		sourceSummaryAgentID = p.AgentID
+	}
 
 	prefix := h.getIssuePrefix(ctx, p.WorkspaceID)
 	buildAttachmentResponses := func(atts []db.Attachment) []AttachmentResponse {
@@ -407,9 +410,10 @@ func (h *Handler) quickCreateTAPDSourceIssue(ctx context.Context, w http.Respons
 		AttachmentIDs: p.AttachmentIDs,
 		Metadata:      validatedMetadata,
 	}, service.IssueCreateOpts{
-		ActorID:             p.RequesterIDRaw,
-		Platform:            "web",
-		SuppressAutoEnqueue: true,
+		ActorID:              p.RequesterIDRaw,
+		Platform:             "web",
+		SuppressAutoEnqueue:  true,
+		SourceSummaryAgentID: sourceSummaryAgentID,
 		BroadcastPayload: func(issue db.Issue, atts []db.Attachment) map[string]any {
 			payload := issueToResponse(issue, prefix)
 			payload.Attachments = buildAttachmentResponses(atts)
@@ -433,39 +437,6 @@ func (h *Handler) quickCreateTAPDSourceIssue(ctx context.Context, w http.Respons
 		writeError(w, http.StatusInternalServerError, "failed to create TAPD issue: "+err.Error())
 		return QuickCreateIssueResponse{}, false
 	}
-	if fetchErr == nil {
-		if h.TaskService == nil {
-			h.applyQuickCreateTAPDSourceSummaryFallback(ctx, res.Issue, fetched, errors.New("task service unavailable"))
-			h.IssueService.EnqueueOnAssignForIssue(ctx, res.Issue, "member", p.RequesterIDRaw)
-			return QuickCreateIssueResponse{
-				IssueID:           uuidToString(res.Issue.ID),
-				Identifier:        issueToResponse(res.Issue, prefix).Identifier,
-				SourceFetchStatus: fetched.Status,
-			}, true
-		}
-		task, err := h.TaskService.EnqueueIssueSourceSummaryTask(ctx, res.Issue, p.AgentID)
-		if err != nil {
-			slog.Warn("quick-create TAPD source summary task enqueue failed",
-				"issue_id", uuidToString(res.Issue.ID),
-				"agent_id", uuidToString(p.AgentID),
-				"error", err,
-			)
-			h.applyQuickCreateTAPDSourceSummaryFallback(ctx, res.Issue, fetched, err)
-			h.IssueService.EnqueueOnAssignForIssue(ctx, res.Issue, "member", p.RequesterIDRaw)
-		} else if _, err := h.Queries.SetIssueMetadataKey(ctx, db.SetIssueMetadataKeyParams{
-			ID:          res.Issue.ID,
-			WorkspaceID: res.Issue.WorkspaceID,
-			Key:         "source_summary_task_id",
-			Value:       jsonStringBytes(uuidToString(task.ID)),
-		}); err != nil {
-			slog.Warn("quick-create TAPD source summary task metadata write failed",
-				"issue_id", uuidToString(res.Issue.ID),
-				"task_id", uuidToString(task.ID),
-				"error", err,
-			)
-		}
-	}
-
 	return QuickCreateIssueResponse{
 		IssueID:           uuidToString(res.Issue.ID),
 		Identifier:        issueToResponse(res.Issue, prefix).Identifier,
@@ -491,104 +462,6 @@ func buildQuickCreateTAPDSummaryPendingDescription() string {
 	return strings.TrimSpace(b.String())
 }
 
-func buildQuickCreateTAPDLocalSummaryDescription(fetched RecordIssueSourceFetchRequest) string {
-	body := strings.TrimSpace(firstNonEmpty(fetched.BodyExcerpt, fetched.Summary))
-	if len([]rune(body)) > 900 {
-		body = string([]rune(body)[:900]) + "..."
-	}
-	var b strings.Builder
-	b.WriteString("## 需求摘要\n")
-	if fetched.Title != "" {
-		b.WriteString(fetched.Title)
-		if body != "" && body != fetched.Title {
-			b.WriteString("\n\n")
-			b.WriteString(body)
-		}
-	} else if body != "" {
-		b.WriteString(body)
-	} else {
-		b.WriteString("TAPD 来源未返回可用于摘要的正文。")
-	}
-	return strings.TrimSpace(b.String())
-}
-
-func (h *Handler) applyQuickCreateTAPDSourceSummaryFallback(ctx context.Context, issue db.Issue, fetched RecordIssueSourceFetchRequest, cause error) {
-	description := buildQuickCreateTAPDLocalSummaryDescription(fetched)
-	tx, err := h.TxStarter.Begin(ctx)
-	if err != nil {
-		slog.Warn("quick-create TAPD source summary fallback transaction failed", "issue_id", uuidToString(issue.ID), "error", err)
-		return
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-	queries := h.Queries.WithTx(tx)
-	_, err = queries.UpdateIssue(ctx, db.UpdateIssueParams{
-		ID:            issue.ID,
-		Description:   pgtype.Text{String: description, Valid: true},
-		AssigneeType:  issue.AssigneeType,
-		AssigneeID:    issue.AssigneeID,
-		StartDate:     issue.StartDate,
-		DueDate:       issue.DueDate,
-		ParentIssueID: issue.ParentIssueID,
-		ProjectID:     issue.ProjectID,
-	})
-	if err != nil {
-		slog.Warn("quick-create TAPD source summary fallback update failed",
-			"issue_id", uuidToString(issue.ID),
-			"error", err,
-		)
-		return
-	}
-	updated, err := queries.SetIssueMetadataKey(ctx, db.SetIssueMetadataKeyParams{
-		ID:          issue.ID,
-		WorkspaceID: issue.WorkspaceID,
-		Key:         "source_summary_status",
-		Value:       jsonStringBytes("failed"),
-	})
-	if err != nil {
-		slog.Warn("quick-create TAPD source summary fallback metadata failed",
-			"issue_id", uuidToString(issue.ID),
-			"key", "source_summary_status",
-			"error", err,
-		)
-		return
-	}
-	if cause != nil {
-		updated, err = queries.SetIssueMetadataKey(ctx, db.SetIssueMetadataKeyParams{
-			ID:          issue.ID,
-			WorkspaceID: issue.WorkspaceID,
-			Key:         "source_summary_error",
-			Value:       jsonStringBytes(cause.Error()),
-		})
-		if err != nil {
-			slog.Warn("quick-create TAPD source summary fallback metadata failed",
-				"issue_id", uuidToString(issue.ID),
-				"key", "source_summary_error",
-				"error", err,
-			)
-			return
-		}
-	}
-	prefix := h.getIssuePrefix(ctx, issue.WorkspaceID)
-	updatedEvent := buildIssueUpdatedEvent(
-		uuidToString(issue.WorkspaceID),
-		"system",
-		"",
-		issue,
-		issueToResponse(updated, prefix),
-		issueUpdateChanges{Description: true},
-	)
-	updatedEvent, err = eventoutbox.Enqueue(ctx, queries, updatedEvent)
-	if err != nil {
-		slog.Warn("quick-create TAPD source summary fallback event failed", "issue_id", uuidToString(issue.ID), "error", err)
-		return
-	}
-	if err := tx.Commit(ctx); err != nil {
-		slog.Warn("quick-create TAPD source summary fallback commit failed", "issue_id", uuidToString(issue.ID), "error", err)
-		return
-	}
-	h.publishEvent(updatedEvent)
-}
-
 func tapdSourceReadFailureTitle(ref tapdSourceRef) string {
 	switch ref.ResourceType {
 	case "story":
@@ -603,11 +476,6 @@ func tapdSourceReadFailureTitle(ref tapdSourceRef) string {
 func setRawMetadataString(metadata map[string]json.RawMessage, key, value string) {
 	raw, _ := json.Marshal(value)
 	metadata[key] = raw
-}
-
-func jsonStringBytes(value string) []byte {
-	raw, _ := json.Marshal(value)
-	return raw
 }
 
 // writeAgentUnavailable returns 422 with a stable error code so the modal

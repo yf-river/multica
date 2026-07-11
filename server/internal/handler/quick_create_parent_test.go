@@ -493,6 +493,24 @@ func installSourceSummaryIssueUpdateFailure(t *testing.T, issueID string) func()
 	return remove
 }
 
+func createSourceSummaryTaskForTest(t *testing.T, ctx context.Context, issue db.Issue, agentID string) db.AgentTaskQueue {
+	t.Helper()
+	tx, err := testHandler.TxStarter.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin source summary task transaction: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	task, err := testHandler.TaskService.CreateIssueSourceSummaryTaskInTx(ctx, testHandler.Queries.WithTx(tx), issue, parseUUID(agentID))
+	if err != nil {
+		t.Fatalf("create source summary task: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit source summary task: %v", err)
+	}
+	testHandler.TaskService.PublishIssueSourceSummaryTaskEnqueued(ctx, task)
+	return task
+}
+
 func TestIssueSourceSummaryFailureCommitsFallbackAndNextTaskAtomically(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
@@ -523,10 +541,7 @@ func TestIssueSourceSummaryFailureCommitsFallbackAndNextTaskAtomically(t *testin
 	if err != nil {
 		t.Fatalf("load source summary issue: %v", err)
 	}
-	summaryTask, err := testHandler.TaskService.EnqueueIssueSourceSummaryTask(ctx, issue, parseUUID(agentID))
-	if err != nil {
-		t.Fatalf("enqueue source summary task: %v", err)
-	}
+	summaryTask := createSourceSummaryTaskForTest(t, ctx, issue, agentID)
 	if _, err := testPool.Exec(ctx, `
 		UPDATE agent_task_queue SET status = 'running', started_at = now() WHERE id = $1
 	`, summaryTask.ID); err != nil {
@@ -592,10 +607,7 @@ func TestIssueSourceSummaryFailureCommitsFallbackAndNextTaskAtomically(t *testin
 	if err != nil {
 		t.Fatalf("reload issue before batch failure: %v", err)
 	}
-	batchTask, err := testHandler.TaskService.EnqueueIssueSourceSummaryTask(ctx, issue, parseUUID(agentID))
-	if err != nil {
-		t.Fatalf("enqueue batch source summary task: %v", err)
-	}
+	batchTask := createSourceSummaryTaskForTest(t, ctx, issue, agentID)
 	if _, err := testPool.Exec(ctx, `
 		UPDATE agent_task_queue SET status = 'running', started_at = '1900-01-01T00:00:00Z' WHERE id = $1
 	`, batchTask.ID); err != nil {

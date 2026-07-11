@@ -507,11 +507,13 @@ func (s *TaskService) EnqueueQuickCreateTask(ctx context.Context, p EnqueueQuick
 	return task, nil
 }
 
-func (s *TaskService) EnqueueIssueSourceSummaryTask(ctx context.Context, issue db.Issue, agentID pgtype.UUID) (db.AgentTaskQueue, error) {
+// CreateIssueSourceSummaryTaskInTx inserts the TAPD source-summary task in the
+// caller's transaction. The caller publishes only after commit.
+func (s *TaskService) CreateIssueSourceSummaryTaskInTx(ctx context.Context, queries *db.Queries, issue db.Issue, agentID pgtype.UUID) (db.AgentTaskQueue, error) {
 	if !agentID.Valid {
 		return db.AgentTaskQueue{}, fmt.Errorf("source summary agent is required")
 	}
-	agent, err := s.Queries.GetAgent(ctx, agentID)
+	agent, err := queries.GetAgent(ctx, agentID)
 	if err != nil {
 		return db.AgentTaskQueue{}, fmt.Errorf("load source summary agent: %w", err)
 	}
@@ -532,7 +534,7 @@ func (s *TaskService) EnqueueIssueSourceSummaryTask(ctx context.Context, issue d
 	if err != nil {
 		return db.AgentTaskQueue{}, fmt.Errorf("marshal source summary context: %w", err)
 	}
-	task, err := s.Queries.CreateAgentTask(ctx, db.CreateAgentTaskParams{
+	task, err := queries.CreateAgentTask(ctx, db.CreateAgentTaskParams{
 		AgentID:           agent.ID,
 		RuntimeID:         agent.RuntimeID,
 		IssueID:           issue.ID,
@@ -544,14 +546,19 @@ func (s *TaskService) EnqueueIssueSourceSummaryTask(ctx context.Context, issue d
 	if err != nil {
 		return db.AgentTaskQueue{}, fmt.Errorf("create source summary task: %w", err)
 	}
+	return task, nil
+}
+
+// PublishIssueSourceSummaryTaskEnqueued emits the source-summary task's
+// post-commit event and daemon wakeup.
+func (s *TaskService) PublishIssueSourceSummaryTaskEnqueued(ctx context.Context, task db.AgentTaskQueue) {
 	slog.Info("issue source summary task enqueued",
 		"task_id", util.UUIDToString(task.ID),
-		"issue_id", util.UUIDToString(issue.ID),
-		"agent_id", util.UUIDToString(agent.ID),
+		"issue_id", util.UUIDToString(task.IssueID),
+		"agent_id", util.UUIDToString(task.AgentID),
 	)
 	s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, task)
 	s.NotifyTaskEnqueued(ctx, task)
-	return task, nil
 }
 
 // ErrChatTaskAgentArchived signals that EnqueueChatTask refused to
