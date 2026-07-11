@@ -46,7 +46,7 @@ type sendChatMessageRequestFingerprint struct {
 	AttachmentIDs []string `json:"attachment_ids"`
 }
 
-func requireChatIdempotencyKey(w http.ResponseWriter, r *http.Request) (pgtype.UUID, bool) {
+func requireIdempotencyKey(w http.ResponseWriter, r *http.Request) (pgtype.UUID, bool) {
 	values := r.Header.Values("Idempotency-Key")
 	if len(values) == 0 || strings.TrimSpace(values[0]) == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{

@@ -187,11 +187,18 @@ RETURNING *;
 -- agent_id on agent_task_queue still records who actually ran the work
 -- (the squad leader); squad_id lets reports group by squad without a join.
 INSERT INTO autopilot_run (
-    autopilot_id, trigger_id, source, status, trigger_payload, squad_id
+    autopilot_id, trigger_id, source, status, trigger_payload, squad_id,
+    request_key
 ) VALUES (
     $1, sqlc.narg('trigger_id'), $2, $3, sqlc.narg('trigger_payload'),
-    sqlc.narg('squad_id')
+    sqlc.narg('squad_id'), sqlc.narg('request_key')
 ) RETURNING *;
+
+-- name: GetAutopilotRunByRequestKey :one
+SELECT * FROM autopilot_run
+WHERE autopilot_id = $1
+  AND source = $2
+  AND request_key = $3;
 
 -- name: GetAutopilotRun :one
 SELECT * FROM autopilot_run

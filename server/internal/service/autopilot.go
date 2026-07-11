@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/eventoutbox"
@@ -64,8 +65,44 @@ func (s *AutopilotService) DispatchAutopilot(
 	source string,
 	payload []byte,
 ) (*db.AutopilotRun, error) {
+	return s.dispatchAutopilot(ctx, autopilot, triggerID, source, payload, pgtype.UUID{})
+}
+
+// DispatchAutopilotOnce binds a caller-owned request key to one run. It is
+// used by interactive/API triggers where a lost HTTP response must be safe to
+// retry. Scheduled and webhook dispatch already have trigger/delivery
+// identities and continue through DispatchAutopilot.
+func (s *AutopilotService) DispatchAutopilotOnce(
+	ctx context.Context,
+	autopilot db.Autopilot,
+	triggerID pgtype.UUID,
+	source string,
+	payload []byte,
+	requestKey pgtype.UUID,
+) (*db.AutopilotRun, error) {
+	if !requestKey.Valid {
+		return nil, errors.New("autopilot dispatch request key is required")
+	}
+	return s.dispatchAutopilot(ctx, autopilot, triggerID, source, payload, requestKey)
+}
+
+func (s *AutopilotService) dispatchAutopilot(
+	ctx context.Context,
+	autopilot db.Autopilot,
+	triggerID pgtype.UUID,
+	source string,
+	payload []byte,
+	requestKey pgtype.UUID,
+) (*db.AutopilotRun, error) {
+	if requestKey.Valid {
+		if replay, err := s.awaitAutopilotRunReplay(ctx, autopilot, source, requestKey); err == nil {
+			return &replay, nil
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("load autopilot dispatch replay: %w", err)
+		}
+	}
 	if reason, skip := s.shouldSkipDispatch(ctx, autopilot); skip {
-		return s.recordSkippedRun(ctx, autopilot, triggerID, source, payload, reason)
+		return s.recordSkippedRun(ctx, autopilot, triggerID, source, payload, requestKey, reason)
 	}
 
 	// Determine initial status based on execution mode.
@@ -81,8 +118,16 @@ func (s *AutopilotService) DispatchAutopilot(
 		Status:         initialStatus,
 		TriggerPayload: payload,
 		SquadID:        autopilotSquadAttribution(autopilot),
+		RequestKey:     requestKey,
 	})
 	if err != nil {
+		if requestKey.Valid && isAutopilotRequestKeyConflict(err) {
+			replay, replayErr := s.awaitAutopilotRunReplay(ctx, autopilot, source, requestKey)
+			if replayErr != nil {
+				return nil, fmt.Errorf("load concurrent autopilot dispatch replay: %w", replayErr)
+			}
+			return &replay, nil
+		}
 		return nil, fmt.Errorf("create run: %w", err)
 	}
 	s.captureAutopilotRunStarted(autopilot, run, source)
@@ -736,6 +781,7 @@ func (s *AutopilotService) recordSkippedRun(
 	triggerID pgtype.UUID,
 	source string,
 	payload []byte,
+	requestKey pgtype.UUID,
 	reason string,
 ) (*db.AutopilotRun, error) {
 	tx, err := s.TxStarter.Begin(ctx)
@@ -751,8 +797,17 @@ func (s *AutopilotService) recordSkippedRun(
 		Status:         "skipped",
 		TriggerPayload: payload,
 		SquadID:        autopilotSquadAttribution(autopilot),
+		RequestKey:     requestKey,
 	})
 	if err != nil {
+		if requestKey.Valid && isAutopilotRequestKeyConflict(err) {
+			_ = tx.Rollback(ctx)
+			replay, replayErr := s.awaitAutopilotRunReplay(ctx, autopilot, source, requestKey)
+			if replayErr != nil {
+				return nil, fmt.Errorf("load concurrent skipped dispatch replay: %w", replayErr)
+			}
+			return &replay, nil
+		}
 		return nil, fmt.Errorf("create skipped run: %w", err)
 	}
 
@@ -780,6 +835,76 @@ func (s *AutopilotService) recordSkippedRun(
 
 	s.publishRunDone(util.UUIDToString(autopilot.WorkspaceID), run, "skipped")
 	return &run, nil
+}
+
+func (s *AutopilotService) loadAutopilotRunReplay(
+	ctx context.Context,
+	autopilotID pgtype.UUID,
+	source string,
+	requestKey pgtype.UUID,
+) (db.AutopilotRun, error) {
+	return s.Queries.GetAutopilotRunByRequestKey(ctx, db.GetAutopilotRunByRequestKeyParams{
+		AutopilotID: autopilotID,
+		Source:      source,
+		RequestKey:  requestKey,
+	})
+}
+
+func (s *AutopilotService) awaitAutopilotRunReplay(
+	ctx context.Context,
+	autopilot db.Autopilot,
+	source string,
+	requestKey pgtype.UUID,
+) (db.AutopilotRun, error) {
+	run, err := s.loadAutopilotRunReplay(ctx, autopilot.ID, source, requestKey)
+	if err != nil || autopilotRunMaterialized(autopilot, run) {
+		return run, err
+	}
+
+	ticker := time.NewTicker(20 * time.Millisecond)
+	defer ticker.Stop()
+	timeout := time.NewTimer(3 * time.Second)
+	defer timeout.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return db.AutopilotRun{}, ctx.Err()
+		case <-timeout.C:
+			// The unique run remains the authoritative outcome even if the
+			// original process died between reservation and dispatch. Returning
+			// it is safer than creating a second Issue or task.
+			return run, nil
+		case <-ticker.C:
+			run, err = s.loadAutopilotRunReplay(ctx, autopilot.ID, source, requestKey)
+			if err != nil {
+				return db.AutopilotRun{}, err
+			}
+			if autopilotRunMaterialized(autopilot, run) {
+				return run, nil
+			}
+		}
+	}
+}
+
+func autopilotRunMaterialized(autopilot db.Autopilot, run db.AutopilotRun) bool {
+	switch run.Status {
+	case "completed", "failed", "skipped":
+		return true
+	}
+	if autopilot.ExecutionMode == "create_issue" {
+		return run.IssueID.Valid
+	}
+	if autopilot.ExecutionMode == "run_only" {
+		return run.TaskID.Valid
+	}
+	return true
+}
+
+func isAutopilotRequestKeyConflict(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) &&
+		pgErr.Code == "23505" &&
+		pgErr.ConstraintName == "autopilot_run_request_key_unique"
 }
 
 func (s *AutopilotService) publishRunDone(workspaceID string, run db.AutopilotRun, status string) {

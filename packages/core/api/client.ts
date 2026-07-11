@@ -180,7 +180,7 @@ import type {
   TestExternalCredentialProfileResponse,
 } from "../types";
 import { type Logger, noopLogger } from "../logger";
-import { createRequestId } from "../utils";
+import { createRequestId, generateUUID } from "../utils";
 import { getCurrentSlug } from "../platform/workspace-storage";
 import { ApiResponseValidationError, parseOrThrow, parseWithFallback } from "./schema";
 import {
@@ -2951,12 +2951,31 @@ export class ApiClient {
     await this.fetch(`/api/autopilots/${id}`, { method: "DELETE" });
   }
 
-  async triggerAutopilot(id: string): Promise<AutopilotRun> {
-    const raw = await this.fetch<unknown>(`/api/autopilots/${id}/trigger`, { method: "POST" });
-    return parseOrThrow(raw, AutopilotRunSchema, EMPTY_AUTOPILOT_RUN, {
-      endpoint: "POST /api/autopilots/:id/trigger",
-      mayHaveCommitted: true,
-    });
+  async triggerAutopilot(
+    id: string,
+    idempotencyKey = generateUUID(),
+  ): Promise<AutopilotRun> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/autopilots/${id}/trigger`, {
+        method: "POST",
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow(raw, AutopilotRunSchema, EMPTY_AUTOPILOT_RUN, {
+        endpoint: "POST /api/autopilots/:id/trigger",
+        mayHaveCommitted: true,
+      });
+    };
+
+    try {
+      return await attempt();
+    } catch (error) {
+      const outcomeUnknown =
+        (error instanceof ApiTransportError ||
+          error instanceof ApiResponseValidationError) &&
+        error.mayHaveCommitted;
+      if (!outcomeUnknown) throw error;
+      return attempt();
+    }
   }
 
   async listAutopilotRuns(id: string, params?: { limit?: number; offset?: number }): Promise<ListAutopilotRunsResponse> {

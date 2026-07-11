@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -1656,13 +1657,14 @@ func TestCreateIssueAllowsDuplicateAfterDone(t *testing.T) {
 	}
 }
 
-func TestTriggerAutopilotCreatesSameTitleIssue(t *testing.T) {
+func TestTriggerAutopilotCreatesSameTitleIssueAndReplaysRequest(t *testing.T) {
 	ctx := context.Background()
 	title := fmt.Sprintf("Autopilot duplicate issue %d", time.Now().UnixNano())
 	fixture := createSameTitleAutopilotFixture(t, ctx, title, "Duplicate title autopilot")
 
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/autopilots/"+fixture.autopilotID+"/trigger?workspace_id="+testWorkspaceID, nil)
+	req.Header.Set("Idempotency-Key", "10000000-0000-4000-8000-000000000101")
 	req = withURLParam(req, "id", fixture.autopilotID)
 	testHandler.TriggerAutopilot(w, req)
 	if w.Code != http.StatusOK {
@@ -1691,6 +1693,86 @@ func TestTriggerAutopilotCreatesSameTitleIssue(t *testing.T) {
 	}
 	if count != 2 {
 		t.Fatalf("autopilot should create a new same-title issue, got %d matching issues", count)
+	}
+
+	replayWriter := httptest.NewRecorder()
+	replayRequest := newRequest("POST", "/api/autopilots/"+fixture.autopilotID+"/trigger?workspace_id="+testWorkspaceID, nil)
+	replayRequest.Header.Set("Idempotency-Key", "10000000-0000-4000-8000-000000000101")
+	replayRequest = withURLParam(replayRequest, "id", fixture.autopilotID)
+	testHandler.TriggerAutopilot(replayWriter, replayRequest)
+	if replayWriter.Code != http.StatusOK {
+		t.Fatalf("TriggerAutopilot replay: expected 200, got %d: %s", replayWriter.Code, replayWriter.Body.String())
+	}
+	var replay AutopilotRunResponse
+	if err := json.NewDecoder(replayWriter.Body).Decode(&replay); err != nil {
+		t.Fatalf("decode replayed autopilot run: %v", err)
+	}
+	if replay.ID != run.ID || replay.IssueID == nil || *replay.IssueID != *run.IssueID {
+		t.Fatalf("replay run = %+v, want original run %s and issue %s", replay, run.ID, *run.IssueID)
+	}
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM autopilot_run WHERE autopilot_id = $1`, fixture.autopilotID).Scan(&count); err != nil {
+		t.Fatalf("count autopilot runs: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("idempotent replay created %d runs, want 1", count)
+	}
+}
+
+func TestTriggerAutopilotConcurrentReplayCreatesOneRun(t *testing.T) {
+	ctx := context.Background()
+	title := fmt.Sprintf("Concurrent autopilot replay %d", time.Now().UnixNano())
+	fixture := createSameTitleAutopilotFixture(t, ctx, title, "Concurrent replay autopilot")
+	const key = "10000000-0000-4000-8000-000000000105"
+
+	type result struct {
+		status int
+		run    AutopilotRunResponse
+		body   string
+	}
+	start := make(chan struct{})
+	results := make(chan result, 2)
+	var workers sync.WaitGroup
+	for range 2 {
+		workers.Add(1)
+		go func() {
+			defer workers.Done()
+			<-start
+			w := httptest.NewRecorder()
+			req := newRequest("POST", "/api/autopilots/"+fixture.autopilotID+"/trigger?workspace_id="+testWorkspaceID, nil)
+			req.Header.Set("Idempotency-Key", key)
+			req = withURLParam(req, "id", fixture.autopilotID)
+			testHandler.TriggerAutopilot(w, req)
+			var run AutopilotRunResponse
+			_ = json.NewDecoder(w.Body).Decode(&run)
+			results <- result{status: w.Code, run: run, body: w.Body.String()}
+		}()
+	}
+	close(start)
+	workers.Wait()
+	close(results)
+
+	responses := make([]result, 0, 2)
+	for response := range results {
+		responses = append(responses, response)
+	}
+	for _, response := range responses {
+		if response.status != http.StatusOK {
+			t.Fatalf("concurrent trigger status = %d: %s", response.status, response.body)
+		}
+		if response.run.IssueID == nil {
+			t.Fatalf("concurrent replay returned an unmaterialized run: %+v", response.run)
+		}
+	}
+	if responses[0].run.ID != responses[1].run.ID || *responses[0].run.IssueID != *responses[1].run.IssueID {
+		t.Fatalf("concurrent responses differ: %+v vs %+v", responses[0].run, responses[1].run)
+	}
+
+	var runCount int
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM autopilot_run WHERE autopilot_id = $1`, fixture.autopilotID).Scan(&runCount); err != nil {
+		t.Fatalf("count autopilot runs: %v", err)
+	}
+	if runCount != 1 {
+		t.Fatalf("concurrent replay created %d runs, want 1", runCount)
 	}
 }
 

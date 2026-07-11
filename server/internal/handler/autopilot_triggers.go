@@ -676,6 +676,10 @@ func (h *Handler) GetAutopilotRun(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) TriggerAutopilot(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	workspaceID := h.resolveWorkspaceID(r)
+	idempotencyKey, ok := requireIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
 
 	autopilot, ok := h.loadAutopilotInWorkspace(w, r, id, workspaceID)
 	if !ok {
@@ -686,7 +690,14 @@ func (h *Handler) TriggerAutopilot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	run, err := h.AutopilotService.DispatchAutopilot(r.Context(), autopilot, pgtype.UUID{}, "manual", nil)
+	run, err := h.AutopilotService.DispatchAutopilotOnce(
+		r.Context(),
+		autopilot,
+		pgtype.UUID{},
+		"manual",
+		nil,
+		idempotencyKey,
+	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to trigger autopilot: "+err.Error())
 		return

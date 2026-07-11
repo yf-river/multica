@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ApiClient, ApiError } from "./client";
 
 const CHAT_IDEMPOTENCY_KEY = "11111111-1111-4111-8111-111111111111";
+const AUTOPILOT_IDEMPOTENCY_KEY = "22222222-2222-4222-8222-222222222222";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -686,7 +687,7 @@ describe("ApiClient", () => {
     });
     await client.updateAutopilot("ap-1", { status: "paused", project_id: null });
     await client.deleteAutopilot("ap-1");
-    await client.triggerAutopilot("ap-1");
+    await client.triggerAutopilot("ap-1", AUTOPILOT_IDEMPOTENCY_KEY);
     await client.listAutopilotRuns("ap-1", { limit: 10, offset: 20 });
     await client.createAutopilotTrigger("ap-1", {
       kind: "schedule",
@@ -701,6 +702,7 @@ describe("ApiClient", () => {
       url,
       method: init?.method ?? "GET",
       body: init?.body,
+      headers: init?.headers,
     }));
 
     expect(calls).toMatchObject([
@@ -722,7 +724,13 @@ describe("ApiClient", () => {
         body: JSON.stringify({ status: "paused", project_id: null }),
       },
       { url: "https://api.example.test/api/autopilots/ap-1", method: "DELETE" },
-      { url: "https://api.example.test/api/autopilots/ap-1/trigger", method: "POST" },
+      {
+        url: "https://api.example.test/api/autopilots/ap-1/trigger",
+        method: "POST",
+        headers: expect.objectContaining({
+          "Idempotency-Key": AUTOPILOT_IDEMPOTENCY_KEY,
+        }),
+      },
       { url: "https://api.example.test/api/autopilots/ap-1/runs?limit=10&offset=20", method: "GET" },
       {
         url: "https://api.example.test/api/autopilots/ap-1/triggers",
@@ -744,6 +752,45 @@ describe("ApiClient", () => {
         method: "POST",
       },
     ]);
+  });
+
+  it("retries an unknown autopilot trigger outcome with the same key", async () => {
+    const run = {
+      id: "run-1",
+      autopilot_id: "ap-1",
+      trigger_id: null,
+      source: "manual",
+      status: "running",
+      issue_id: null,
+      task_id: "task-1",
+      triggered_at: "2026-07-11T00:00:00Z",
+      completed_at: null,
+      failure_reason: null,
+      trigger_payload: null,
+      result: null,
+      created_at: "2026-07-11T00:00:00Z",
+    };
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("response connection reset"))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(run), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(
+      client.triggerAutopilot("ap-1", AUTOPILOT_IDEMPOTENCY_KEY),
+    ).resolves.toMatchObject({ id: "run-1", task_id: "task-1" });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    for (const [, init] of fetchMock.mock.calls) {
+      expect((init?.headers as Record<string, string>)["Idempotency-Key"])
+        .toBe(AUTOPILOT_IDEMPOTENCY_KEY);
+    }
   });
 
   it("sends offset when listing prompt evaluation runs", async () => {

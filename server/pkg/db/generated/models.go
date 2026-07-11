@@ -217,6 +217,7 @@ type AutopilotRun struct {
 	Result         []byte             `json:"result"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 	SquadID        pgtype.UUID        `json:"squad_id"`
+	RequestKey     pgtype.UUID        `json:"request_key"`
 }
 
 type AutopilotSubscriber struct {

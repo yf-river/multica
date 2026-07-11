@@ -194,6 +194,7 @@ func TestTriggerAutopilot_SquadPrivateLeader_OwnerCanDispatch(t *testing.T) {
 	// Trigger — should succeed since owner created it.
 	w = httptest.NewRecorder()
 	r = newRequest("POST", "/api/autopilots/"+ap.ID+"/trigger?workspace_id="+testWorkspaceID, nil)
+	r.Header.Set("Idempotency-Key", "10000000-0000-4000-8000-000000000102")
 	r = withURLParam(r, "id", ap.ID)
 	testHandler.TriggerAutopilot(w, r)
 	if w.Code != http.StatusOK {
@@ -273,6 +274,7 @@ func TestTriggerAutopilot_SquadPrivateLeader_PlainMemberCreator_Blocked(t *testi
 	// autopilot's creator (plain member) cannot access the personal leader.
 	w := httptest.NewRecorder()
 	r := newRequest("POST", "/api/autopilots/"+apID+"/trigger?workspace_id="+testWorkspaceID, nil)
+	r.Header.Set("Idempotency-Key", "10000000-0000-4000-8000-000000000103")
 	r = withURLParam(r, "id", apID)
 	testHandler.TriggerAutopilot(w, r)
 	// Dispatch returns 200 with status=skipped (or failed) — the run is created
@@ -331,6 +333,7 @@ func TestTriggerAutopilot_RunOnly_SquadPrivateLeader_PlainMemberCreator_Blocked(
 
 	w := httptest.NewRecorder()
 	r := newRequest("POST", "/api/autopilots/"+apID+"/trigger?workspace_id="+testWorkspaceID, nil)
+	r.Header.Set("Idempotency-Key", "10000000-0000-4000-8000-000000000104")
 	r = withURLParam(r, "id", apID)
 	testHandler.TriggerAutopilot(w, r)
 	if w.Code != http.StatusOK {
