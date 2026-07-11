@@ -40,9 +40,9 @@ func TestRunConfigSetPersistsValues(t *testing.T) {
 		t.Fatalf("runConfigSet(workspace_id) error = %v", err)
 	}
 
-	cfg, err := cli.LoadCLIConfig()
+	cfg, err := cli.LoadCLIConfigForProfile("")
 	if err != nil {
-		t.Fatalf("LoadCLIConfig() error = %v", err)
+		t.Fatalf("LoadCLIConfigForProfile default profile error = %v", err)
 	}
 	if cfg.ServerURL != "http://example.com" {
 		t.Fatalf("ServerURL = %q, want %q", cfg.ServerURL, "http://example.com")

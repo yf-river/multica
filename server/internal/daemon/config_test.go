@@ -751,7 +751,7 @@ func TestLoadConfig_AppliesBackendOverridesFromConfigFile(t *testing.T) {
 			},
 		},
 	}
-	if err := cli.SaveCLIConfig(cfg); err != nil {
+	if err := cli.SaveCLIConfigForProfile(cfg, ""); err != nil {
 		t.Fatalf("save cli config: %v", err)
 	}
 

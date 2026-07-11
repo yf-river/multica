@@ -279,7 +279,7 @@ func TestRunRuntimeProfileSetAndUnsetPath(t *testing.T) {
 		t.Fatalf("runRuntimeProfileSetPath: %v", err)
 	}
 
-	cfg, err := cli.LoadCLIConfig()
+	cfg, err := cli.LoadCLIConfigForProfile("")
 	if err != nil {
 		t.Fatalf("LoadCLIConfig: %v", err)
 	}
@@ -292,7 +292,7 @@ func TestRunRuntimeProfileSetAndUnsetPath(t *testing.T) {
 	if err := runRuntimeProfileUnsetPath(unsetCmd, []string{"prof-1"}); err != nil {
 		t.Fatalf("runRuntimeProfileUnsetPath: %v", err)
 	}
-	cfg, err = cli.LoadCLIConfig()
+	cfg, err = cli.LoadCLIConfigForProfile("")
 	if err != nil {
 		t.Fatalf("LoadCLIConfig after unset: %v", err)
 	}
@@ -316,7 +316,7 @@ func TestRunRuntimeProfileSetPathPreservesExistingConfig(t *testing.T) {
 
 	// Seed an existing config with unrelated fields.
 	seed := cli.CLIConfig{ServerURL: "https://api.multica.ai", WorkspaceID: "ws-123", Token: "mul_xyz"}
-	if err := cli.SaveCLIConfig(seed); err != nil {
+	if err := cli.SaveCLIConfigForProfile(seed, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -326,7 +326,7 @@ func TestRunRuntimeProfileSetPathPreservesExistingConfig(t *testing.T) {
 		t.Fatalf("runRuntimeProfileSetPath: %v", err)
 	}
 
-	cfg, err := cli.LoadCLIConfig()
+	cfg, err := cli.LoadCLIConfigForProfile("")
 	if err != nil {
 		t.Fatal(err)
 	}

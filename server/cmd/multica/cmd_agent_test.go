@@ -46,7 +46,7 @@ func TestResolveWorkspaceID_AgentContextSkipsConfig(t *testing.T) {
 
 	// Seed the global CLI config with a workspace_id that must NOT be
 	// picked up while running inside an agent task.
-	if err := cli.SaveCLIConfig(cli.CLIConfig{WorkspaceID: "config-file-ws"}); err != nil {
+	if err := cli.SaveCLIConfigForProfile(cli.CLIConfig{WorkspaceID: "config-file-ws"}, ""); err != nil {
 		t.Fatalf("seed config: %v", err)
 	}
 
@@ -111,7 +111,7 @@ func TestResolveWorkspaceID_AgentContextSkipsConfig(t *testing.T) {
 func TestResolveToken_AgentContextSkipsConfig(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 
-	if err := cli.SaveCLIConfig(cli.CLIConfig{Token: "mul_profile_token"}); err != nil {
+	if err := cli.SaveCLIConfigForProfile(cli.CLIConfig{Token: "mul_profile_token"}, ""); err != nil {
 		t.Fatalf("seed config: %v", err)
 	}
 

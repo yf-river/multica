@@ -81,11 +81,6 @@ type OpenClawOverride struct {
 	StateDir   string `json:"state_dir,omitempty"`
 }
 
-// CLIConfigPath returns the default path for the CLI config file.
-func CLIConfigPath() (string, error) {
-	return CLIConfigPathForProfile("")
-}
-
 // CLIConfigPathForProfile returns the config file path for the given profile.
 // An empty profile returns the default path (~/.multica/config.json).
 // A named profile returns ~/.multica/profiles/<name>/config.json.
@@ -113,11 +108,6 @@ func ProfileDir(profile string) (string, error) {
 	return filepath.Join(home, ".multica", "profiles", profile), nil
 }
 
-// LoadCLIConfig reads the CLI config from disk (default profile).
-func LoadCLIConfig() (CLIConfig, error) {
-	return LoadCLIConfigForProfile("")
-}
-
 // LoadCLIConfigForProfile reads the CLI config for the given profile.
 func LoadCLIConfigForProfile(profile string) (CLIConfig, error) {
 	path, err := CLIConfigPathForProfile(profile)
@@ -136,11 +126,6 @@ func LoadCLIConfigForProfile(profile string) (CLIConfig, error) {
 		return CLIConfig{}, fmt.Errorf("parse CLI config: %w", err)
 	}
 	return cfg, nil
-}
-
-// SaveCLIConfig writes the CLI config to disk atomically (default profile).
-func SaveCLIConfig(cfg CLIConfig) error {
-	return SaveCLIConfigForProfile(cfg, "")
 }
 
 // SaveCLIConfigForProfile writes the CLI config for the given profile.
