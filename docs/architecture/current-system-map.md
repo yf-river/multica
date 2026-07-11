@@ -24,8 +24,8 @@ evidence reviewable by humans.
 | Database tables | 88 |
 | Database functions | 9 |
 | Database triggers | 4 |
-| Database indexes | 188 |
-| Migration files (up + down) | 34 |
+| Database indexes | 187 |
+| Migration files (up + down) | 36 |
 | sqlc modules | 55 |
 | sqlc queries | 579 |
 | Go WebSocket events | 81 |
@@ -495,7 +495,7 @@ intentionally platform-specific.
 | Version | Name | Direction | Tables | Functions | Triggers | Indexes | Source |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 1 | current_schema | down | — | 0 | 0 | 0 | `server/migrations/001_current_schema.down.sql` |
-| 1 | current_schema | up | activity_log, agent, agent_runtime, agent_skill, agent_task_queue, attachment, autopilot, autopilot_run, autopilot_subscriber, autopilot_trigger, chat_message, chat_session, comment, comment_reaction, daemon_connection, daemon_token, external_credential_profile, feedback, github_installation, github_pending_check_suite, github_pending_installation, github_pull_request, github_pull_request_check_suite, inbox_item, issue, issue_dependency, issue_label, issue_pull_request, issue_reaction, issue_subscriber, issue_to_label, lark_binding_token, lark_chat_session_binding, lark_inbound_audit, lark_inbound_message_dedup, lark_installation, lark_outbound_card_message, lark_user_binding, member, notification_preference, personal_access_token, pinned_item, project, project_resource, prompt_evaluation_asset, prompt_evaluation_case, prompt_evaluation_case_assertion, prompt_evaluation_case_operation, prompt_evaluation_dataset_row, prompt_evaluation_dataset_version, prompt_evaluation_dataset_version_row, prompt_evaluation_dimension_score, prompt_evaluation_evidence_snapshot, prompt_evaluation_optimization_candidate, prompt_evaluation_run, prompt_evaluation_test_suite_case, prompt_evaluation_trial, prompt_library_item, prompt_library_version, prompt_library_trial, agent_playground_experiment, agent_playground_input, agent_playground_agent, agent_playground_result, agent_playground_judgement, runtime_profile, skill, skill_file, squad, squad_member, squad_sop_run, squad_sop_step_event, sys_cron_executions, task_message, task_token, task_trace_event, task_usage, task_usage_hourly, task_usage_hourly_dirty, task_usage_hourly_rollup_state, user, webhook_delivery, workspace | 9 | 4 | 181 | `server/migrations/001_current_schema.up.sql` |
+| 1 | current_schema | up | activity_log, agent, agent_runtime, agent_skill, agent_task_queue, attachment, autopilot, autopilot_run, autopilot_subscriber, autopilot_trigger, chat_message, chat_session, comment, comment_reaction, daemon_connection, daemon_token, external_credential_profile, feedback, github_installation, github_pending_check_suite, github_pending_installation, github_pull_request, github_pull_request_check_suite, inbox_item, issue, issue_dependency, issue_label, issue_pull_request, issue_reaction, issue_subscriber, issue_to_label, lark_binding_token, lark_chat_session_binding, lark_inbound_audit, lark_inbound_message_dedup, lark_installation, lark_outbound_card_message, lark_user_binding, member, notification_preference, personal_access_token, pinned_item, project, project_resource, prompt_evaluation_asset, prompt_evaluation_case, prompt_evaluation_case_assertion, prompt_evaluation_case_operation, prompt_evaluation_dataset_row, prompt_evaluation_dataset_version, prompt_evaluation_dataset_version_row, prompt_evaluation_dimension_score, prompt_evaluation_evidence_snapshot, prompt_evaluation_optimization_candidate, prompt_evaluation_run, prompt_evaluation_test_suite_case, prompt_evaluation_trial, prompt_library_item, prompt_library_version, prompt_library_trial, agent_playground_experiment, agent_playground_input, agent_playground_agent, agent_playground_result, agent_playground_judgement, runtime_profile, skill, skill_file, squad, squad_member, squad_sop_run, squad_sop_step_event, sys_cron_executions, task_message, task_token, task_trace_event, task_usage, task_usage_hourly, task_usage_hourly_dirty, task_usage_hourly_rollup_state, user, webhook_delivery, workspace | 9 | 4 | 180 | `server/migrations/001_current_schema.up.sql` |
 | 2 | agent_playground | down | — | 0 | 0 | 0 | `server/migrations/002_agent_playground.down.sql` |
 | 2 | agent_playground | up | agent_playground_experiment, agent_playground_input, agent_playground_agent, agent_playground_result, agent_playground_judgement | 0 | 0 | 5 | `server/migrations/002_agent_playground.up.sql` |
 | 3 | domain_event_outbox | down | — | 0 | 0 | 0 | `server/migrations/003_domain_event_outbox.down.sql` |
@@ -528,6 +528,8 @@ intentionally platform-specific.
 | 16 | backfill_sop_agent_role_keys | up | — | 0 | 0 | 0 | `server/migrations/016_backfill_sop_agent_role_keys.up.sql` |
 | 17 | unify_prompt_evaluation_agent_name | down | — | 0 | 0 | 0 | `server/migrations/017_unify_prompt_evaluation_agent_name.down.sql` |
 | 17 | unify_prompt_evaluation_agent_name | up | — | 0 | 0 | 0 | `server/migrations/017_unify_prompt_evaluation_agent_name.up.sql` |
+| 18 | require_task_usage_updated_at | down | — | 0 | 0 | 0 | `server/migrations/018_require_task_usage_updated_at.down.sql` |
+| 18 | require_task_usage_updated_at | up | — | 2 | 0 | 0 | `server/migrations/018_require_task_usage_updated_at.up.sql` |
 
 ### Current tables discovered from up migrations
 
@@ -630,7 +632,7 @@ intentionally platform-specific.
 | `trg_tu_dirty_hourly` | `public.task_usage` | `public.enqueue_task_usage_hourly_dirty_for_tu` | `server/migrations/001_current_schema.up.sql#trg_tu_dirty_hourly` |
 
 - Functions: `public.enqueue_task_usage_hourly_dirty_for_atq`, `public.enqueue_task_usage_hourly_dirty_for_issue_delete`, `public.enqueue_task_usage_hourly_dirty_for_issue_project`, `public.enqueue_task_usage_hourly_dirty_for_tu`, `public.prune_task_usage_hourly_dirty`, `public.rollup_task_usage_hourly`, `public.rollup_task_usage_hourly_window`, `public.task_usage_hour_bucket`, `public.task_usage_hourly_rollup_lag_seconds`
-- Indexes: 188 current definitions; full name/table/uniqueness evidence is in the JSON companion.
+- Indexes: 187 current definitions; full name/table/uniqueness evidence is in the JSON companion.
 
 ### sqlc modules
 

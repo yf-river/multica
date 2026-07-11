@@ -23,8 +23,8 @@
     "databaseTables": 88,
     "databaseFunctions": 9,
     "databaseTriggers": 4,
-    "databaseIndexes": 188,
-    "migrations": 34,
+    "databaseIndexes": 187,
+    "migrations": 36,
     "sqlcModules": 55,
     "sqlcQueries": 579,
     "goWebsocketEvents": 81,
@@ -3481,7 +3481,6 @@
             "public.idx_task_usage_hourly_workspace_agent_time",
             "public.idx_task_usage_hourly_runtime_time",
             "public.idx_task_usage_hourly_dirty_enqueued_at",
-            "public.idx_task_usage_created_at_legacy",
             "public.idx_task_usage_created_at",
             "public.idx_task_trace_event_workspace_created",
             "public.idx_task_trace_event_task_created",
@@ -5032,12 +5031,6 @@
               "source": "server/migrations/001_current_schema.up.sql#idx_task_usage_created_at"
             },
             {
-              "name": "idx_task_usage_created_at_legacy",
-              "table": "public.task_usage",
-              "unique": false,
-              "source": "server/migrations/001_current_schema.up.sql#idx_task_usage_created_at_legacy"
-            },
-            {
               "name": "idx_task_usage_hourly_dirty_enqueued_at",
               "table": "public.task_usage_hourly_dirty",
               "unique": false,
@@ -5720,6 +5713,43 @@
           "droppedFunctions": [],
           "droppedTriggers": [],
           "droppedIndexes": []
+        },
+        {
+          "version": 18,
+          "name": "require_task_usage_updated_at",
+          "direction": "down",
+          "source": "server/migrations/018_require_task_usage_updated_at.down.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 18,
+          "name": "require_task_usage_updated_at",
+          "direction": "up",
+          "source": "server/migrations/018_require_task_usage_updated_at.up.sql",
+          "tablesCreated": [],
+          "functionsCreated": [
+            {
+              "name": "public.rollup_task_usage_hourly",
+              "source": "server/migrations/018_require_task_usage_updated_at.up.sql#public.rollup_task_usage_hourly"
+            },
+            {
+              "name": "public.rollup_task_usage_hourly_window",
+              "source": "server/migrations/018_require_task_usage_updated_at.up.sql#public.rollup_task_usage_hourly_window"
+            }
+          ],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": [
+            "idx_task_usage_created_at_legacy"
+          ]
         }
       ],
       "tables": [
@@ -6099,11 +6129,11 @@
         },
         {
           "name": "public.rollup_task_usage_hourly",
-          "source": "server/migrations/001_current_schema.up.sql#public.rollup_task_usage_hourly"
+          "source": "server/migrations/018_require_task_usage_updated_at.up.sql#public.rollup_task_usage_hourly"
         },
         {
           "name": "public.rollup_task_usage_hourly_window",
-          "source": "server/migrations/001_current_schema.up.sql#public.rollup_task_usage_hourly_window"
+          "source": "server/migrations/018_require_task_usage_updated_at.up.sql#public.rollup_task_usage_hourly_window"
         },
         {
           "name": "public.task_usage_hour_bucket",
@@ -7160,12 +7190,6 @@
           "table": "public.task_usage",
           "unique": false,
           "source": "server/migrations/001_current_schema.up.sql#idx_task_usage_created_at"
-        },
-        {
-          "name": "idx_task_usage_created_at_legacy",
-          "table": "public.task_usage",
-          "unique": false,
-          "source": "server/migrations/001_current_schema.up.sql#idx_task_usage_created_at_legacy"
         },
         {
           "name": "idx_task_usage_hourly_dirty_enqueued_at",

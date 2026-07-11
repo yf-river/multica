@@ -249,14 +249,6 @@ BEGIN
                        AND tu.updated_at >= v_from
                        AND tu.updated_at <  v_upper
                     UNION ALL
-                    SELECT tu.created_at AS candidate_at
-                      FROM task_usage tu
-                      JOIN agent_task_queue atq ON atq.id = tu.task_id
-                     WHERE atq.runtime_id IS NOT NULL
-                       AND tu.updated_at IS NULL
-                       AND tu.created_at >= v_from
-                       AND tu.created_at <  v_upper
-                    UNION ALL
                     SELECT GREATEST(enqueued_at, v_from) AS candidate_at
                       FROM task_usage_hourly_dirty
                      WHERE enqueued_at < v_upper
@@ -341,13 +333,8 @@ BEGIN
           JOIN agent            a   ON a.id        = atq.agent_id
           LEFT JOIN issue       i   ON i.id        = atq.issue_id
          WHERE atq.runtime_id IS NOT NULL
-           AND (
-                (tu.updated_at >= p_from AND tu.updated_at < p_to)
-                -- Legacy updated_at-NULL rows; partial index from 078.
-                OR (tu.updated_at IS NULL
-                    AND tu.created_at >= p_from
-                    AND tu.created_at <  p_to)
-           )
+           AND tu.updated_at >= p_from
+           AND tu.updated_at < p_to
     ),
     dirty_from_queue AS (
         SELECT bucket_hour, workspace_id, runtime_id, agent_id,
@@ -1691,7 +1678,7 @@ CREATE TABLE public.task_usage (
     cache_read_tokens bigint DEFAULT 0 NOT NULL,
     cache_write_tokens bigint DEFAULT 0 NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now()
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 CREATE TABLE public.task_usage_hourly (
@@ -2489,8 +2476,6 @@ CREATE INDEX idx_task_trace_event_task_created ON public.task_trace_event USING 
 CREATE INDEX idx_task_trace_event_workspace_created ON public.task_trace_event USING btree (workspace_id, created_at DESC);
 
 CREATE INDEX idx_task_usage_created_at ON public.task_usage USING btree (created_at);
-
-CREATE INDEX idx_task_usage_created_at_legacy ON public.task_usage USING btree (created_at) WHERE (updated_at IS NULL);
 
 CREATE INDEX idx_task_usage_hourly_dirty_enqueued_at ON public.task_usage_hourly_dirty USING btree (enqueued_at);
 

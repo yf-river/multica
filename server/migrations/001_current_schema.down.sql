@@ -225,7 +225,6 @@ DROP INDEX IF EXISTS public.idx_task_usage_hourly_workspace_project_time;
 DROP INDEX IF EXISTS public.idx_task_usage_hourly_workspace_agent_time;
 DROP INDEX IF EXISTS public.idx_task_usage_hourly_runtime_time;
 DROP INDEX IF EXISTS public.idx_task_usage_hourly_dirty_enqueued_at;
-DROP INDEX IF EXISTS public.idx_task_usage_created_at_legacy;
 DROP INDEX IF EXISTS public.idx_task_usage_created_at;
 DROP INDEX IF EXISTS public.idx_task_trace_event_workspace_created;
 DROP INDEX IF EXISTS public.idx_task_trace_event_task_created;

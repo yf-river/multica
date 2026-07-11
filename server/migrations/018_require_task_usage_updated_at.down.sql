@@ -1,0 +1,2 @@
+-- Intentional one-way normalization: current task_usage writers require an
+-- updated_at value, and the rollup no longer supports nullable historical rows.
