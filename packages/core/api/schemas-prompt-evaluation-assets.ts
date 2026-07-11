@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { PromptEvaluationCaseSchema } from "./schemas-prompt-evaluation-cases";
+import { PromptEvaluationCaseSchema } from "./schemas-prompt-evaluation-case-model";
 import { NonEmptyStringSchema } from "./schemas-internal";
 
 // Runtime response contracts for prompt evaluation assets.
@@ -133,5 +133,5 @@ export const RestorePromptEvaluationDatasetVersionResponseSchema = z.object({
   asset: PromptEvaluationAssetSchema,
   restored_from: PromptEvaluationDatasetVersionSchema,
   restored_version: PromptEvaluationDatasetVersionSchema,
-  restored_cases: z.array(z.lazy(() => PromptEvaluationCaseSchema)).default([]),
+  restored_cases: z.array(PromptEvaluationCaseSchema).default([]),
 }).loose();
