@@ -39,8 +39,8 @@ func seedIsolatedRuntime(t *testing.T, name string) string {
 	t.Cleanup(func() {
 		// Best-effort cascading cleanup; ignore errors because the handler
 		// may have already removed the row in the happy path.
-		testPool.Exec(ctx, `DELETE FROM agent WHERE runtime_id = $1`, runtimeID)
-		testPool.Exec(ctx, `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
+		mustExec(t, ctx, `DELETE FROM agent WHERE runtime_id = $1`, runtimeID)
+		mustExec(t, ctx, `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
 	})
 	return runtimeID
 }
@@ -73,8 +73,8 @@ func seedAgentOnRuntime(t *testing.T, runtimeID, name string, archived bool) str
 		// Squad rows referencing this agent could block a plain DELETE; nuke
 		// them first. Tests that complete through the handler will already
 		// have done this.
-		testPool.Exec(ctx, `DELETE FROM squad WHERE leader_id = $1`, agentID)
-		testPool.Exec(ctx, `DELETE FROM agent WHERE id = $1`, agentID)
+		mustExec(t, ctx, `DELETE FROM squad WHERE leader_id = $1`, agentID)
+		mustExec(t, ctx, `DELETE FROM agent WHERE id = $1`, agentID)
 	})
 	return agentID
 }
@@ -103,7 +103,7 @@ func seedSquad(t *testing.T, leaderID, name string, archived bool) string {
 		}
 	}
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM squad WHERE id = $1`, squadID)
+		mustExec(t, ctx, `DELETE FROM squad WHERE id = $1`, squadID)
 	})
 	return squadID
 }

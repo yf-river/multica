@@ -205,7 +205,7 @@ func detectOutboundIP(serverURL string) net.IP {
 	if err != nil {
 		return nil
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	local, ok := conn.LocalAddr().(*net.UDPAddr)
 	if !ok || local.IP == nil {
 		return nil
@@ -233,7 +233,7 @@ func runAuthLoginBrowser(cmd *cobra.Command) error {
 	if err != nil {
 		return fmt.Errorf("could not start the local login callback server (used to receive the browser sign-in); a firewall or another process may be blocking local ports: %w", err)
 	}
-	defer listener.Close()
+	defer func() { _ = listener.Close() }()
 
 	port := listener.Addr().(*net.TCPAddr).Port
 	callbackURL := fmt.Sprintf("http://%s:%d/callback", callbackHost, port)
@@ -264,7 +264,7 @@ func runAuthLoginBrowser(cmd *cobra.Command) error {
 			return
 		}
 		w.Header().Set("Content-Type", "text/html")
-		w.Write([]byte(callbackSuccessHTML))
+		_, _ = w.Write([]byte(callbackSuccessHTML))
 		jwtCh <- token
 	})
 
@@ -274,7 +274,7 @@ func runAuthLoginBrowser(cmd *cobra.Command) error {
 			errCh <- err
 		}
 	}()
-	defer srv.Close()
+	defer func() { _ = srv.Close() }()
 
 	// Open the browser.
 	fmt.Fprintln(os.Stderr, "Opening browser to authenticate...")

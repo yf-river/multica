@@ -42,10 +42,16 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 
 	// Detect which fields in "updates" were explicitly set (including null).
 	var rawTop map[string]json.RawMessage
-	json.Unmarshal(bodyBytes, &rawTop)
+	if err := json.Unmarshal(bodyBytes, &rawTop); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
 	var rawUpdates map[string]json.RawMessage
 	if raw, exists := rawTop["updates"]; exists {
-		json.Unmarshal(raw, &rawUpdates)
+		if err := json.Unmarshal(raw, &rawUpdates); err != nil {
+			writeError(w, http.StatusBadRequest, "updates must be an object")
+			return
+		}
 	}
 
 	// Short-circuit when no mutation field is present in `updates`. Without
@@ -305,7 +311,9 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		}
 		h.publishEvent(updatedEvent)
 
-		h.reconcileIssueUpdateSideEffects(r.Context(), r, prevIssue, issue, assigneeChanged, statusChanged, actorType, actorID)
+		if err := h.reconcileIssueUpdateSideEffects(r.Context(), r, prevIssue, issue, assigneeChanged, statusChanged, actorType, actorID); err != nil {
+			slog.Error("reconcile batch issue update side effects failed", "issue_id", issueID, "error", err)
+		}
 
 		updated++
 	}

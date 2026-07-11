@@ -26,7 +26,7 @@ func TestReportModelListResult_RetriesOn500AndEventuallySucceeds(t *testing.T) {
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"ok"}`))
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
 
 	d.reportModelListResult(context.Background(), Runtime{ID: "rt-1"}, "req-1", map[string]any{"status": "completed"})
@@ -63,7 +63,7 @@ func TestReportModelListResult_SendsCorrectPath(t *testing.T) {
 	d, _ := reportResultDaemon(t, func(w http.ResponseWriter, r *http.Request) {
 		path = r.URL.Path
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"ok"}`))
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
 
 	d.reportModelListResult(context.Background(), Runtime{ID: "rt-a"}, "req-1", map[string]any{"status": "completed"})

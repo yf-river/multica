@@ -1164,7 +1164,7 @@ func parseCodexSessionFile(path string) *codexSessionUsage {
 	if err != nil {
 		return nil
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var result codexSessionUsage
 	found := false

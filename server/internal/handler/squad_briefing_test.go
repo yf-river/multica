@@ -147,7 +147,7 @@ func seedSquadForBriefing(t *testing.T, leaderID string, name, instructions stri
 		t.Fatalf("create squad: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM squad WHERE id = $1`, squadID)
+		mustExec(t, ctx, `DELETE FROM squad WHERE id = $1`, squadID)
 	})
 
 	uuid := util.MustParseUUID(squadID)
@@ -1779,7 +1779,7 @@ RETURNING id
 `, testWorkspaceID, testUserID, squadID, issueNumber).Scan(&issueID); err != nil {
 		t.Fatalf("create squad-assigned issue: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID) })
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, issueID) })
 
 	if err := testPool.QueryRow(ctx, `
 INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority)
@@ -1788,7 +1788,7 @@ RETURNING id
 `, agentID, runtimeID, issueID).Scan(&taskID); err != nil {
 		t.Fatalf("queue task: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
 	return
 }
 

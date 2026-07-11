@@ -243,22 +243,6 @@ const sopVerificationImplementationMRRule = `## 05-verify 功能 MR 门禁
 - 当前只有 docs-only MR、MR 未关联到当前 issue，或 child issue 的 MR 只关联到父 issue 时，05 必须 BLOCKED/退回，不能 PASS。
 - 纯文档需求例外时，05 必须核对阶段评论中已明确说明需求本身就是文档变更。`
 
-const sopRecursiveChildRule = `## 递归 child issue 规则
-
-- 任何 child issue 只要 assignee_type=squad 且分配给 PM 小队，就必须像父 issue 一样独立按 PM -> 01 -> 02 -> 03 -> 04 -> 05 -> PM 收口执行。
-- PM 必须通过平台评论 @mention 对应阶段 Agent 来触发新的平台 agent_task_queue 任务。
-- 禁止在 PM 单个任务里使用任何运行时或模型原生的内部任务、todo/plan、子代理、并行代理、内部委派或状态记录工具来代跑或模拟 01-05。
-- 工具名在不同 provider 中可能表现为 TaskCreate、TaskUpdate、Agent、subagent、plan/todo 或其它等价能力；这些都不算平台阶段任务。
-- 只有平台评论 mention 触发出的独立 agent_task_queue 任务，且由对应阶段 Agent 产生评论和阶段产物，才算阶段完成。
-- 禁止 PM 自己读取或执行 01/02/03/04/05 阶段 skill。
-- 01/02/03/04/05 必须分别产生独立 task、评论和阶段产物。
-- child issue 的实现 MR 必须关联到 child issue 本身；父 issue 只能汇总引用 child issue 和 child MR。
-- 创建或确认跨项目 child issue 前必须先回读已有 children。
-- 同一 parent 下同一目标项目、同一工作意图或同一验收范围已有 child 时，必须复用已有 child，不得新建替代 child。
-- 如发现重复 child，必须报告阻断并请求人工处理，不能继续创建更多 child。
-- 除非用户或拆分计划明确写出执行顺序，多个 child issue 语义上可并行；存在明确依赖时按依赖顺序推进。
-- 父 issue 最终收口前必须回读 child issue 列表；任何 child issue 未完成时，父 issue 必须等待，不能设置为 done。`
-
 const sopTaskSplitCrossProjectRule = `## 03-task-split 跨项目依赖契约
 
 - 03 只负责识别跨项目依赖、拆分边界和 handoff 输入材料，不创建 child issue，不 @mention 目标项目，不把父 issue 推进到下一阶段。
@@ -891,7 +875,7 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to start squad create")
 		return
 	}
-	defer tx.Rollback(r.Context())
+	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 	_, err = qtx.ReserveSquadCreateRequest(r.Context(), db.ReserveSquadCreateRequestParams{
 		WorkspaceID:    wsUUID,
@@ -1139,13 +1123,20 @@ func (h *Handler) UpdateSquad(w http.ResponseWriter, r *http.Request) {
 		nextLeader = leader
 		haveNextLeader = true
 		// Ensure new leader is a squad member; auto-add if not.
-		isMember, _ := h.Queries.IsSquadMember(r.Context(), db.IsSquadMemberParams{
+		isMember, err := h.Queries.IsSquadMember(r.Context(), db.IsSquadMemberParams{
 			SquadID: squad.ID, MemberType: "agent", MemberID: lid,
 		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to check squad membership")
+			return
+		}
 		if !isMember {
-			h.Queries.AddSquadMember(r.Context(), db.AddSquadMemberParams{
+			if _, err := h.Queries.AddSquadMember(r.Context(), db.AddSquadMemberParams{
 				SquadID: squad.ID, MemberType: "agent", MemberID: lid, Role: "leader",
-			})
+			}); err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to add squad leader membership")
+				return
+			}
 		}
 		params.LeaderID = lid
 		nextLeaderID = lid

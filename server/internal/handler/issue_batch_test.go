@@ -66,7 +66,9 @@ func TestBatchUpdateNoMutationReturnsZero(t *testing.T) {
 			var resp struct {
 				Updated int `json:"updated"`
 			}
-			json.NewDecoder(w.Body).Decode(&resp)
+			if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+				t.Fatalf("decode batch response: %v", err)
+			}
 			if resp.Updated != 0 {
 				t.Errorf("expected updated=0 when no mutation field present, got %d", resp.Updated)
 			}
@@ -78,7 +80,9 @@ func TestBatchUpdateNoMutationReturnsZero(t *testing.T) {
 				gr = withURLParam(gr, "id", id)
 				testHandler.GetIssue(gw, gr)
 				var got IssueResponse
-				json.NewDecoder(gw.Body).Decode(&got)
+				if err := json.NewDecoder(gw.Body).Decode(&got); err != nil {
+					t.Fatalf("decode issue response: %v", err)
+				}
 				if got.Status != "todo" {
 					t.Errorf("issue %s: status changed to %q despite no-mutation request", id, got.Status)
 				}
@@ -107,7 +111,9 @@ func TestBatchUpdateValidUpdatesPersistAndCount(t *testing.T) {
 	var resp struct {
 		Updated int `json:"updated"`
 	}
-	json.NewDecoder(w.Body).Decode(&resp)
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode batch response: %v", err)
+	}
 	if resp.Updated != 2 {
 		t.Errorf("expected updated=2, got %d", resp.Updated)
 	}
@@ -117,7 +123,9 @@ func TestBatchUpdateValidUpdatesPersistAndCount(t *testing.T) {
 		gr = withURLParam(gr, "id", id)
 		testHandler.GetIssue(gw, gr)
 		var got IssueResponse
-		json.NewDecoder(gw.Body).Decode(&got)
+		if err := json.NewDecoder(gw.Body).Decode(&got); err != nil {
+			t.Fatalf("decode issue response: %v", err)
+		}
 		if got.Status != "in_progress" {
 			t.Errorf("issue %s: expected status=in_progress, got %q", id, got.Status)
 		}
@@ -188,7 +196,9 @@ func createTestIssue(t *testing.T, title, status, priority string) string {
 		t.Fatalf("CreateIssue %q: expected 201, got %d: %s", title, w.Code, w.Body.String())
 	}
 	var issue IssueResponse
-	json.NewDecoder(w.Body).Decode(&issue)
+	if err := json.NewDecoder(w.Body).Decode(&issue); err != nil {
+		t.Fatalf("decode issue response: %v", err)
+	}
 	return issue.ID
 }
 
@@ -198,5 +208,5 @@ func deleteTestIssue(t *testing.T, id string) {
 	req := newRequest("DELETE", "/api/issues/"+id, nil)
 	req = withURLParam(req, "id", id)
 	testHandler.DeleteIssue(w, req)
-	testPool.Exec(context.Background(), `DELETE FROM domain_event_outbox WHERE stream_key = 'issue:' || $1`, id)
+	mustExec(t, context.Background(), `DELETE FROM domain_event_outbox WHERE stream_key = 'issue:' || $1`, id)
 }

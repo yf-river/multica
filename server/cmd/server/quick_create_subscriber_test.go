@@ -140,7 +140,7 @@ func runQuickCreateProjection(ctx context.Context, queries *db.Queries, event ev
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	emitted, err := consumeQuickCreateTerminalProjection(ctx, queries.WithTx(tx), event)
 	if err != nil {
 		return nil, err
@@ -246,7 +246,7 @@ func setupDispatchedQuickCreateTask(t *testing.T, ctx context.Context, prompt st
 		t.Fatalf("EnqueueQuickCreateTask: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, task.ID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, task.ID)
 	})
 
 	if _, err := testPool.Exec(ctx,

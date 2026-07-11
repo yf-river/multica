@@ -14,7 +14,9 @@ import (
 func newRequestAsUser(userID, method, path string, body any) *http.Request {
 	var buf bytes.Buffer
 	if body != nil {
-		json.NewEncoder(&buf).Encode(body)
+		if err := json.NewEncoder(&buf).Encode(body); err != nil {
+			panic(fmt.Sprintf("encode request body: %v", err))
+		}
 	}
 	req := httptest.NewRequest(method, path, &buf)
 	req.Header.Set("Content-Type", "application/json")
@@ -41,7 +43,7 @@ func createRuntimeLocalSkillTestRuntime(t *testing.T, ownerID string) string {
 	}
 
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
+		mustExec(t, context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
 	})
 
 	return runtimeID
@@ -70,7 +72,7 @@ func createRuntimeLocalSkillTestMember(t *testing.T, role string) string {
 	}
 
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, userID)
+		mustExec(t, context.Background(), `DELETE FROM "user" WHERE id = $1`, userID)
 	})
 
 	return userID

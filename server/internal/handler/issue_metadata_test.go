@@ -80,7 +80,9 @@ func TestIssueMetadataSetGetDelete(t *testing.T) {
 	var afterDelete struct {
 		Metadata map[string]any `json:"metadata"`
 	}
-	json.NewDecoder(w.Body).Decode(&afterDelete)
+	if err := json.NewDecoder(w.Body).Decode(&afterDelete); err != nil {
+		t.Fatalf("decode delete response: %v", err)
+	}
 	if _, present := afterDelete.Metadata["pipeline_status"]; present {
 		t.Errorf("after delete, pipeline_status should be gone; got %+v", afterDelete.Metadata)
 	}
@@ -198,7 +200,9 @@ func TestListIssuesMetadataFilter(t *testing.T) {
 	var listResp struct {
 		Issues []IssueResponse `json:"issues"`
 	}
-	json.NewDecoder(w.Body).Decode(&listResp)
+	if err := json.NewDecoder(w.Body).Decode(&listResp); err != nil {
+		t.Fatalf("decode metadata list response: %v", err)
+	}
 
 	foundWaiting := false
 	for _, iss := range listResp.Issues {
@@ -238,7 +242,9 @@ func TestNewIssueDefaultsToEmptyMetadata(t *testing.T) {
 		t.Fatalf("GetIssue: %d %s", w.Code, w.Body.String())
 	}
 	var got IssueResponse
-	json.NewDecoder(w.Body).Decode(&got)
+	if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+		t.Fatalf("decode metadata response: %v", err)
+	}
 	if got.Metadata == nil {
 		t.Fatalf("Metadata is nil on a fresh issue; expected empty object")
 	}

@@ -408,7 +408,9 @@ func sanitizeTaskMessageValue(value any) any {
 func taskMessageToPayload(m db.TaskMessage, taskID, issueID string) protocol.TaskMessagePayload {
 	var input map[string]any
 	if m.Input != nil {
-		json.Unmarshal(m.Input, &input)
+		if err := json.Unmarshal(m.Input, &input); err != nil {
+			slog.Warn("decode task message input failed", "task_id", taskID, "error", err)
+		}
 	}
 	createdAt := ""
 	if m.CreatedAt.Valid {

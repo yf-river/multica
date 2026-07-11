@@ -75,13 +75,13 @@ func TestFetchFromSkillsSh_UsesEntryURLForNestedDirectories(t *testing.T) {
 		case "raw.githubusercontent.com":
 			switch r.URL.Path {
 			case "/acme/skills/main/skills/pptx/SKILL.md":
-				w.Write([]byte("---\nname: PPTX\n---\ncontent"))
+				_, _ = w.Write([]byte("---\nname: PPTX\n---\ncontent"))
 			case "/acme/skills/main/skills/pptx/editing.md":
-				w.Write([]byte("editing"))
+				_, _ = w.Write([]byte("editing"))
 			case "/acme/skills/main/skills/pptx/scripts/add_slide.py":
-				w.Write([]byte("print('slide')"))
+				_, _ = w.Write([]byte("print('slide')"))
 			case "/acme/skills/main/skills/pptx/scripts/office/foo.py":
-				w.Write([]byte("print('office')"))
+				_, _ = w.Write([]byte("print('office')"))
 			default:
 				http.NotFound(w, r)
 			}
@@ -141,9 +141,9 @@ func TestFetchFromSkillsSh_FallbackDoesNotDoubleEscapeDirectoryNames(t *testing.
 		case "raw.githubusercontent.com":
 			switch r.URL.Path {
 			case "/acme/skills/main/skills/pptx/SKILL.md":
-				w.Write([]byte("---\nname: PPTX\n---\ncontent"))
+				_, _ = w.Write([]byte("---\nname: PPTX\n---\ncontent"))
 			case "/acme/skills/main/skills/pptx/my dir/note.md":
-				w.Write([]byte("note"))
+				_, _ = w.Write([]byte("note"))
 			default:
 				http.NotFound(w, r)
 			}
@@ -196,7 +196,7 @@ func TestFetchFromSkillsSh_LogsSubdirectoryFailures(t *testing.T) {
 		case "raw.githubusercontent.com":
 			switch r.URL.Path {
 			case "/acme/skills/main/skills/pptx/SKILL.md":
-				w.Write([]byte("---\nname: PPTX\n---\ncontent"))
+				_, _ = w.Write([]byte("---\nname: PPTX\n---\ncontent"))
 			default:
 				http.NotFound(w, r)
 			}
@@ -267,11 +267,11 @@ func TestFetchFromSkillsSh_ResolvesAliasedSkillNamesViaFrontmatter(t *testing.T)
 		case "raw.githubusercontent.com":
 			switch r.URL.Path {
 			case "/vercel-labs/agent-skills/main/skills/composition-patterns/SKILL.md":
-				w.Write([]byte("---\nname: vercel-composition-patterns\ndescription: aliased skill\n---\ncontent"))
+				_, _ = w.Write([]byte("---\nname: vercel-composition-patterns\ndescription: aliased skill\n---\ncontent"))
 			case "/vercel-labs/agent-skills/main/skills/react-best-practices/SKILL.md":
-				w.Write([]byte("---\nname: vercel-react-best-practices\n---\ncontent"))
+				_, _ = w.Write([]byte("---\nname: vercel-react-best-practices\n---\ncontent"))
 			case "/vercel-labs/agent-skills/main/skills/composition-patterns/rules.md":
-				w.Write([]byte("rules"))
+				_, _ = w.Write([]byte("rules"))
 			default:
 				http.NotFound(w, r)
 			}
@@ -361,11 +361,11 @@ func TestFetchFromSkillsSh_ResolvesRootLevelSkillMd(t *testing.T) {
 		case "raw.githubusercontent.com":
 			switch r.URL.Path {
 			case "/alchaincyf/huashu-design/master/SKILL.md":
-				w.Write([]byte("---\nname: huashu-design\ndescription: hi-fi HTML prototypes\n---\nbody"))
+				_, _ = w.Write([]byte("---\nname: huashu-design\ndescription: hi-fi HTML prototypes\n---\nbody"))
 			case "/alchaincyf/huashu-design/master/README.md":
-				w.Write([]byte("# Readme"))
+				_, _ = w.Write([]byte("# Readme"))
 			case "/alchaincyf/huashu-design/master/assets/logo.png":
-				w.Write([]byte("PNGBYTES"))
+				_, _ = w.Write([]byte("PNGBYTES"))
 			default:
 				http.NotFound(w, r)
 			}
@@ -431,11 +431,11 @@ func TestFetchFromSkillsSh_RootSkillMdFastPathSkipsFrontmatterMismatch(t *testin
 		case "raw.githubusercontent.com":
 			switch r.URL.Path {
 			case "/acme/multi/main/SKILL.md":
-				w.Write([]byte("---\nname: other\n---\ncontent"))
+				_, _ = w.Write([]byte("---\nname: other\n---\ncontent"))
 			case "/acme/multi/main/extras/wanted/SKILL.md":
-				w.Write([]byte("---\nname: wanted\ndescription: the right one\n---\ncontent"))
+				_, _ = w.Write([]byte("---\nname: wanted\ndescription: the right one\n---\ncontent"))
 			case "/acme/multi/main/extras/wanted/ref.md":
-				w.Write([]byte("ref"))
+				_, _ = w.Write([]byte("ref"))
 			default:
 				http.NotFound(w, r)
 			}
@@ -500,7 +500,7 @@ func TestFetchFromSkillsSh_ReturnsActionableErrorForTruncatedTrees(t *testing.T)
 		case "raw.githubusercontent.com":
 			switch r.URL.Path {
 			case "/acme/skills/main/skills/deploy-to-vercel/SKILL.md":
-				w.Write([]byte("---\nname: deploy-to-vercel\n---\ncontent"))
+				_, _ = w.Write([]byte("---\nname: deploy-to-vercel\n---\ncontent"))
 			default:
 				http.NotFound(w, r)
 			}
@@ -640,7 +640,7 @@ func TestFetchFromGitHub_TreeURLImportsSkillDirectory(t *testing.T) {
 		case "api.github.com":
 			switch r.URL.Path {
 			case "/repos/anthropics/skills/commits/main":
-				w.Write([]byte("deadbeef"))
+				_, _ = w.Write([]byte("deadbeef"))
 			case "/repos/anthropics/skills/contents/document-skills/pptx":
 				if got := r.URL.Query().Get("ref"); got != "main" {
 					t.Fatalf("contents ref = %q, want main", got)
@@ -674,11 +674,11 @@ func TestFetchFromGitHub_TreeURLImportsSkillDirectory(t *testing.T) {
 		case "raw.githubusercontent.com":
 			switch r.URL.Path {
 			case "/anthropics/skills/main/document-skills/pptx/SKILL.md":
-				w.Write([]byte("---\nname: pptx\ndescription: presentation tools\n---\nbody"))
+				_, _ = w.Write([]byte("---\nname: pptx\ndescription: presentation tools\n---\nbody"))
 			case "/anthropics/skills/main/document-skills/pptx/editing.md":
-				w.Write([]byte("editing"))
+				_, _ = w.Write([]byte("editing"))
 			case "/anthropics/skills/main/document-skills/pptx/scripts/add_slide.py":
-				w.Write([]byte("print('slide')"))
+				_, _ = w.Write([]byte("print('slide')"))
 			default:
 				http.NotFound(w, r)
 			}
@@ -746,9 +746,9 @@ func TestFetchFromGitHub_RepoRootResolvesDefaultBranch(t *testing.T) {
 		case "raw.githubusercontent.com":
 			switch r.URL.Path {
 			case "/alice/single-skill/master/SKILL.md":
-				w.Write([]byte("---\nname: single-skill\n---\nbody"))
+				_, _ = w.Write([]byte("---\nname: single-skill\n---\nbody"))
 			case "/alice/single-skill/master/README.md":
-				w.Write([]byte("readme"))
+				_, _ = w.Write([]byte("readme"))
 			default:
 				http.NotFound(w, r)
 			}
@@ -804,7 +804,7 @@ func TestFetchFromGitHub_BlobURLImportsSpecificSkill(t *testing.T) {
 		case "api.github.com":
 			switch r.URL.Path {
 			case "/repos/acme/skills/commits/main":
-				w.Write([]byte("deadbeef"))
+				_, _ = w.Write([]byte("deadbeef"))
 			case "/repos/acme/skills/contents/skills/foo":
 				writeJSON(w, http.StatusOK, []githubContentEntry{})
 			default:
@@ -812,7 +812,7 @@ func TestFetchFromGitHub_BlobURLImportsSpecificSkill(t *testing.T) {
 			}
 		case "raw.githubusercontent.com":
 			if r.URL.Path == "/acme/skills/main/skills/foo/SKILL.md" {
-				w.Write([]byte("---\nname: foo\n---\nbody"))
+				_, _ = w.Write([]byte("---\nname: foo\n---\nbody"))
 				return
 			}
 			http.NotFound(w, r)
@@ -837,7 +837,7 @@ func TestFetchFromGitHub_BlobURLImportsSpecificSkill(t *testing.T) {
 
 func TestFetchRawFile_ReturnsErrorOnOversizedFile(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write(bytes.Repeat([]byte("a"), maxImportFileSize+1024))
+		_, _ = w.Write(bytes.Repeat([]byte("a"), maxImportFileSize+1024))
 	}))
 	t.Cleanup(server.Close)
 
@@ -895,7 +895,7 @@ func TestFetchFromGitHub_OversizedSupportingFileFailsImport(t *testing.T) {
 		case "api.github.com":
 			switch r.URL.Path {
 			case "/repos/acme/skills/commits/main":
-				w.Write([]byte("deadbeef"))
+				_, _ = w.Write([]byte("deadbeef"))
 			case "/repos/acme/skills/contents/foo":
 				writeJSON(w, http.StatusOK, []githubContentEntry{
 					{
@@ -911,9 +911,9 @@ func TestFetchFromGitHub_OversizedSupportingFileFailsImport(t *testing.T) {
 		case "raw.githubusercontent.com":
 			switch r.URL.Path {
 			case "/acme/skills/main/foo/SKILL.md":
-				w.Write([]byte("---\nname: foo\n---\nbody"))
+				_, _ = w.Write([]byte("---\nname: foo\n---\nbody"))
 			case "/acme/skills/main/foo/huge.bin":
-				w.Write(bytes.Repeat([]byte("z"), maxImportFileSize+512))
+				_, _ = w.Write(bytes.Repeat([]byte("z"), maxImportFileSize+512))
 			default:
 				http.NotFound(w, r)
 			}
@@ -954,9 +954,9 @@ func TestFetchFromSkillsSh_OversizedSupportingFileFailsImport(t *testing.T) {
 		case "raw.githubusercontent.com":
 			switch r.URL.Path {
 			case "/acme/skills/main/skills/foo/SKILL.md":
-				w.Write([]byte("---\nname: foo\n---\nbody"))
+				_, _ = w.Write([]byte("---\nname: foo\n---\nbody"))
 			case "/acme/skills/main/skills/foo/huge.bin":
-				w.Write(bytes.Repeat([]byte("z"), maxImportFileSize+512))
+				_, _ = w.Write(bytes.Repeat([]byte("z"), maxImportFileSize+512))
 			default:
 				http.NotFound(w, r)
 			}
@@ -986,7 +986,7 @@ func TestFetchFromGitHub_ResolvesSlashRefAgainstAPI(t *testing.T) {
 				"/repos/acme/skills/commits/release/v2/skills":
 				http.NotFound(w, r)
 			case "/repos/acme/skills/commits/release/v2":
-				w.Write([]byte("deadbeef"))
+				_, _ = w.Write([]byte("deadbeef"))
 			case "/repos/acme/skills/contents/skills/foo":
 				if got := r.URL.Query().Get("ref"); got != "release/v2" {
 					t.Fatalf("contents called with ref=%q, want release/v2", got)
@@ -998,7 +998,7 @@ func TestFetchFromGitHub_ResolvesSlashRefAgainstAPI(t *testing.T) {
 		case "raw.githubusercontent.com":
 			switch r.URL.Path {
 			case "/acme/skills/release/v2/skills/foo/SKILL.md":
-				w.Write([]byte("---\nname: foo\n---\nbody"))
+				_, _ = w.Write([]byte("---\nname: foo\n---\nbody"))
 			default:
 				http.NotFound(w, r)
 			}
@@ -1069,7 +1069,7 @@ func TestFetchFromGitHub_FallsBackOnAPIBlocked(t *testing.T) {
 		case "raw.githubusercontent.com":
 			switch r.URL.Path {
 			case "/anthropics/skills/main/skills/pptx/SKILL.md":
-				w.Write([]byte("---\nname: pptx\ndescription: PowerPoint skill\n---\nbody"))
+				_, _ = w.Write([]byte("---\nname: pptx\ndescription: PowerPoint skill\n---\nbody"))
 			default:
 				http.NotFound(w, r)
 			}
@@ -1114,7 +1114,7 @@ func TestFetchFromGitHub_SendsAuthHeaderWhenTokenSet(t *testing.T) {
 				"/repos/acme/skills/commits/main/skills":
 				http.NotFound(w, r)
 			case "/repos/acme/skills/commits/main":
-				w.Write([]byte("deadbeef"))
+				_, _ = w.Write([]byte("deadbeef"))
 			case "/repos/acme/skills/contents/skills/foo":
 				writeJSON(w, http.StatusOK, []githubContentEntry{})
 			default:
@@ -1123,7 +1123,7 @@ func TestFetchFromGitHub_SendsAuthHeaderWhenTokenSet(t *testing.T) {
 		case "raw.githubusercontent.com":
 			switch r.URL.Path {
 			case "/acme/skills/main/skills/foo/SKILL.md":
-				w.Write([]byte("---\nname: foo\n---\nbody"))
+				_, _ = w.Write([]byte("---\nname: foo\n---\nbody"))
 			default:
 				http.NotFound(w, r)
 			}

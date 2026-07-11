@@ -34,7 +34,7 @@ func TestExternalCredentialProfileSecretRefRedactedAndListed(t *testing.T) {
 		t.Fatalf("decode create response: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM external_credential_profile WHERE id = $1`, created.ID)
+		mustExec(t, context.Background(), `DELETE FROM external_credential_profile WHERE id = $1`, created.ID)
 	})
 	if created.Scope != "account" {
 		t.Fatalf("scope = %q, want account", created.Scope)
@@ -208,7 +208,7 @@ func TestExternalCredentialProfileSupportsGongfengProvider(t *testing.T) {
 		t.Fatalf("decode create response: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM external_credential_profile WHERE id = $1`, created.ID)
+		mustExec(t, context.Background(), `DELETE FROM external_credential_profile WHERE id = $1`, created.ID)
 	})
 	if created.Provider != "gongfeng" || created.Scope != "account" {
 		t.Fatalf("created profile = %+v", created)
@@ -242,7 +242,7 @@ func TestExternalCredentialProfileVerifyMissingEnvSecretRef(t *testing.T) {
 		t.Fatalf("decode create response: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM external_credential_profile WHERE id = $1`, created.ID)
+		mustExec(t, context.Background(), `DELETE FROM external_credential_profile WHERE id = $1`, created.ID)
 	})
 	if created.Status != "failed" {
 		t.Fatalf("status = %q, want failed; response=%+v", created.Status, created)
@@ -347,7 +347,7 @@ func TestCreateTapdIssueInheritsAccountCredentialProfile(t *testing.T) {
 		t.Fatalf("decode profile response: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM external_credential_profile WHERE id = $1`, profile.ID)
+		mustExec(t, context.Background(), `DELETE FROM external_credential_profile WHERE id = $1`, profile.ID)
 	})
 
 	w = httptest.NewRecorder()
@@ -447,7 +447,7 @@ func TestClaimTaskIncludesTapdSourceContextWithAccountCredential(t *testing.T) {
 	}`).Scan(&agentID); err != nil {
 		t.Fatalf("create agent: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, agentID) })
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM agent WHERE id = $1`, agentID) })
 
 	profileName := fmt.Sprintf("tapd-claim-%d", time.Now().UnixNano())
 	w := httptest.NewRecorder()
@@ -465,7 +465,7 @@ func TestClaimTaskIncludesTapdSourceContextWithAccountCredential(t *testing.T) {
 		t.Fatalf("decode profile response: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM external_credential_profile WHERE id = $1`, profile.ID)
+		mustExec(t, context.Background(), `DELETE FROM external_credential_profile WHERE id = $1`, profile.ID)
 	})
 
 	w = httptest.NewRecorder()

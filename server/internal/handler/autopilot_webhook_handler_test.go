@@ -35,7 +35,7 @@ func createWebhookTestAgent(t *testing.T, name string) string {
 		t.Fatalf("create agent: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, agentID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, agentID)
 	})
 	return agentID
 }
@@ -53,7 +53,7 @@ func createWebhookTestAutopilot(t *testing.T, agentID, status, mode string) stri
 		t.Fatalf("create autopilot: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM autopilot WHERE id = $1`, apID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM autopilot WHERE id = $1`, apID)
 	})
 	return apID
 }
@@ -536,7 +536,7 @@ func TestWebhookHandler_DisabledTriggerReturnsIgnored(t *testing.T) {
 		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
 	}
 	var resp map[string]any
-	json.Unmarshal(w.Body.Bytes(), &resp)
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
 	if resp["status"] != "ignored" {
 		t.Fatalf("status: %v", resp["status"])
 	}
@@ -555,7 +555,7 @@ func TestWebhookHandler_PausedAutopilotReturnsIgnored(t *testing.T) {
 		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
 	}
 	var resp map[string]any
-	json.Unmarshal(w.Body.Bytes(), &resp)
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
 	if resp["reason"] != "autopilot_paused" {
 		t.Fatalf("reason: %v", resp["reason"])
 	}
@@ -635,7 +635,7 @@ func TestWebhookHandler_GitHubHeaderInferredEvent(t *testing.T) {
 		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
 	}
 	var resp map[string]any
-	json.Unmarshal(w.Body.Bytes(), &resp)
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
 	runID := resp["run_id"].(string)
 	run, err := testHandler.Queries.GetAutopilotRun(context.Background(), parseUUID(runID))
 	if err != nil {
@@ -644,7 +644,7 @@ func TestWebhookHandler_GitHubHeaderInferredEvent(t *testing.T) {
 	var env struct {
 		Event string `json:"event"`
 	}
-	json.Unmarshal(run.TriggerPayload, &env)
+	_ = json.Unmarshal(run.TriggerPayload, &env)
 	if env.Event != "github.pull_request.opened" {
 		t.Fatalf("event inference: got %q", env.Event)
 	}
@@ -685,7 +685,7 @@ func TestRotateWebhookToken_ReplacesOldToken(t *testing.T) {
 		t.Fatalf("rotate: expected 200, got %d body=%s", w.Code, w.Body.String())
 	}
 	var rotated AutopilotTriggerResponse
-	json.Unmarshal(w.Body.Bytes(), &rotated)
+	_ = json.Unmarshal(w.Body.Bytes(), &rotated)
 	if rotated.WebhookToken == nil || *rotated.WebhookToken == oldToken {
 		t.Fatalf("rotate did not change token: old=%q new=%v", oldToken, rotated.WebhookToken)
 	}
@@ -730,7 +730,7 @@ func TestWebhookHandler_ArchivedAutopilotReturnsIgnored(t *testing.T) {
 		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
 	}
 	var resp map[string]any
-	json.Unmarshal(w.Body.Bytes(), &resp)
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
 	if resp["status"] != "ignored" || resp["reason"] != "autopilot_archived" {
 		t.Fatalf("expected ignored/autopilot_archived, got %#v", resp)
 	}
@@ -934,7 +934,7 @@ func TestGetAutopilotRun_ReturnsFullPayload(t *testing.T) {
 		t.Fatalf("seed webhook: %d body=%s", post.Code, post.Body.String())
 	}
 	var seedResp map[string]any
-	json.Unmarshal(post.Body.Bytes(), &seedResp)
+	_ = json.Unmarshal(post.Body.Bytes(), &seedResp)
 	runID := seedResp["run_id"].(string)
 
 	// LIST: trigger_payload should be omitted (slim response).

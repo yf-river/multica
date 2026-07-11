@@ -23,7 +23,7 @@ func TestCreateAgent_ThinkingLevel_ValidationConsistency(t *testing.T) {
 	claudeRuntimeID := createClaudeProviderRuntime(t)
 
 	t.Cleanup(func() {
-		testPool.Exec(ctx,
+		_, _ = testPool.Exec(ctx,
 			`DELETE FROM agent WHERE workspace_id = $1 AND name LIKE 'thinking-test-%'`,
 			testWorkspaceID,
 		)
@@ -117,7 +117,7 @@ func TestUpdateAgent_ThinkingLevel_TriState(t *testing.T) {
 	agentID := createAgentOnRuntime(t, "thinking-update-test", claudeRuntimeID, "high")
 
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM agent WHERE id = $1`, agentID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent WHERE id = $1`, agentID)
 	})
 
 	// 1. Omitted field — name-only update must NOT touch thinking_level.
@@ -211,7 +211,7 @@ func TestUpdateAgent_RuntimeSwitch_PreservesValidValueRejectsInvalid(t *testing.
 	codexRuntimeID := createCodexProviderRuntime(t)
 
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM agent WHERE workspace_id = $1 AND name LIKE 'runtime-switch-%'`, testWorkspaceID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent WHERE workspace_id = $1 AND name LIKE 'runtime-switch-%'`, testWorkspaceID)
 	})
 
 	t.Run("existing value still valid for new runtime is kept", func(t *testing.T) {
@@ -311,7 +311,7 @@ func TestUpdateAgent_RuntimeSwitch_ClearsKnownIncompatibleModel(t *testing.T) {
 	codexRuntimeID := createCodexProviderRuntime(t)
 
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM agent WHERE workspace_id = $1 AND name LIKE 'runtime-model-switch-%'`, testWorkspaceID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent WHERE workspace_id = $1 AND name LIKE 'runtime-model-switch-%'`, testWorkspaceID)
 	})
 
 	t.Run("runtime-only switch clears known foreign model", func(t *testing.T) {
@@ -424,7 +424,7 @@ func createCodexProviderRuntime(t *testing.T) string {
 		t.Fatalf("create codex runtime: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
 	})
 	return runtimeID
 }
@@ -448,7 +448,7 @@ func createClaudeProviderRuntime(t *testing.T) string {
 		t.Fatalf("create claude runtime: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
 	})
 	return runtimeID
 }
@@ -477,7 +477,7 @@ func createAgentOnRuntime(t *testing.T, name, runtimeID, level string) string {
 		t.Fatalf("create agent on runtime %s: %v", runtimeID, err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, agentID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, agentID)
 	})
 	return agentID
 }
@@ -498,7 +498,7 @@ func createAgentOnRuntimeWithModel(t *testing.T, name, runtimeID, model string) 
 		t.Fatalf("create agent on runtime %s with model %s: %v", runtimeID, model, err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, agentID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, agentID)
 	})
 	return agentID
 }

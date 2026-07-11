@@ -464,7 +464,7 @@ func fetchInstallationAccount(ctx context.Context, installationID int64) (login,
 	if err != nil {
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return
 	}
@@ -778,7 +778,7 @@ func (h *Handler) recordIssuePullRequest(
 	if err != nil {
 		return db.GithubPullRequest{}, fmt.Errorf("begin pull request link transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	queries := h.Queries.WithTx(tx)
 	created, err := queries.UpsertGitHubPullRequest(ctx, pullRequest)
@@ -1059,7 +1059,7 @@ func createGongfengMergeRequestForProject(ctx context.Context, token, projectID 
 	if err != nil {
 		return gongfengMergeRequestResponse{}, fmt.Errorf("create gongfeng merge request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return gongfengMergeRequestResponse{}, fmt.Errorf("gongfeng create merge request returned %d: %s", resp.StatusCode, redactGongfengError(respBody))
@@ -1140,7 +1140,7 @@ func findOpenGongfengMergeRequest(
 	if err != nil {
 		return gongfengMergeRequestResponse{}, false, fmt.Errorf("lookup gongfeng merge request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return gongfengMergeRequestResponse{}, false, fmt.Errorf("gongfeng merge request lookup returned %d: %s", resp.StatusCode, redactGongfengError(body))
@@ -1188,7 +1188,7 @@ func resolveGongfengProjectAPIID(ctx context.Context, token, projectPath string)
 	if err != nil {
 		return "", fmt.Errorf("search gongfeng project: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return "", fmt.Errorf("gongfeng project search returned %d: %s", resp.StatusCode, redactGongfengError(body))
@@ -1222,7 +1222,7 @@ func fetchGongfengProjectByID(ctx context.Context, token, projectID string) (gon
 	if err != nil {
 		return gongfengProjectResponse{}, false, fmt.Errorf("fetch gongfeng project: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	switch {
 	case resp.StatusCode >= 200 && resp.StatusCode < 300:

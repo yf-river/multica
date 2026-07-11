@@ -394,7 +394,7 @@ func (h *Handler) PublishPromptEvaluationOptimizationCandidate(w http.ResponseWr
 		writeError(w, http.StatusInternalServerError, "failed to start optimization candidate publish transaction")
 		return
 	}
-	defer tx.Rollback(r.Context())
+	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 	publishedPrompt, err := qtx.CreatePromptLibraryItemVersion(r.Context(), db.CreatePromptLibraryItemVersionParams{
 		WorkspaceID: workspaceUUID,
@@ -842,7 +842,7 @@ func (h *Handler) ImportPromptEvaluationDataset(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusInternalServerError, "failed to start prompt evaluation dataset import transaction")
 		return
 	}
-	defer tx.Rollback(r.Context())
+	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 	asset, err := qtx.CreatePromptEvaluationAsset(r.Context(), db.CreatePromptEvaluationAssetParams{
 		WorkspaceID:              workspaceUUID,

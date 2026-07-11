@@ -357,7 +357,7 @@ func TestRunMigrationsAdvisoryLockSerializes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("side connect: %v", err)
 	}
-	defer holder.Close(context.Background())
+	defer func() { _ = holder.Close(context.Background()) }()
 	if _, err := holder.Exec(ctx, "SELECT pg_advisory_lock($1)", f.lockKey); err != nil {
 		t.Fatalf("side acquire lock: %v", err)
 	}

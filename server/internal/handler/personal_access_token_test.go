@@ -164,7 +164,7 @@ func insertTestPAT(t *testing.T, expiresAt time.Time) (string, string) {
 	}
 	patID := uuidToString(pat.ID)
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM personal_access_token WHERE id = $1`, parseUUID(patID))
+		mustExec(t, context.Background(), `DELETE FROM personal_access_token WHERE id = $1`, parseUUID(patID))
 	})
 	return raw, patID
 }
@@ -457,7 +457,7 @@ func TestRenewPAT_RejectsTokenBelongingToDifferentUser(t *testing.T) {
 		t.Fatalf("create other user: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM "user" WHERE id = $1`, parseUUID(otherUserID))
+		mustExec(t, ctx, `DELETE FROM "user" WHERE id = $1`, parseUUID(otherUserID))
 	})
 
 	raw, err := auth.GeneratePATToken()
@@ -479,7 +479,7 @@ func TestRenewPAT_RejectsTokenBelongingToDifferentUser(t *testing.T) {
 		t.Fatalf("create other pat: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM personal_access_token WHERE id = $1`, pat.ID)
+		mustExec(t, ctx, `DELETE FROM personal_access_token WHERE id = $1`, pat.ID)
 	})
 
 	w := httptest.NewRecorder()

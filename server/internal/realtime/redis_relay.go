@@ -345,10 +345,7 @@ func (r *RedisRelay) runConsumer(ctx context.Context, c *scopeConsumer, scopeTyp
 	r.writeRDB.ZAdd(regCtx, NodesKey(scopeType, scopeID), redis.Z{Score: float64(time.Now().Add(heartbeatTTL).Unix()), Member: r.nodeID})
 	regCancel()
 
-	for {
-		if ctx.Err() != nil {
-			break
-		}
+	for ctx.Err() == nil {
 		readCtx, readCancel := context.WithTimeout(ctx, 6*time.Second)
 		res, err := r.readRDB.XReadGroup(readCtx, &redis.XReadGroupArgs{
 			Group:    group,

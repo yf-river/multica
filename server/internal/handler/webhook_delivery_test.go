@@ -78,7 +78,7 @@ func TestWebhookHandler_PersistsDeliveryOnAccept(t *testing.T) {
 		t.Fatalf("status: %d body=%s", w.Code, w.Body.String())
 	}
 	var resp map[string]any
-	json.Unmarshal(w.Body.Bytes(), &resp)
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
 	if resp["delivery_id"] == nil {
 		t.Fatal("response should include delivery_id")
 	}
@@ -115,7 +115,7 @@ func TestWebhookHandler_DedupeViaIdempotencyKey(t *testing.T) {
 		t.Fatalf("first: %d body=%s", w1.Code, w1.Body.String())
 	}
 	var r1 map[string]any
-	json.Unmarshal(w1.Body.Bytes(), &r1)
+	_ = json.Unmarshal(w1.Body.Bytes(), &r1)
 	if r1["status"] != "accepted" {
 		t.Fatalf("first status: %v", r1["status"])
 	}
@@ -128,7 +128,7 @@ func TestWebhookHandler_DedupeViaIdempotencyKey(t *testing.T) {
 		t.Fatalf("second: %d body=%s", w2.Code, w2.Body.String())
 	}
 	var r2 map[string]any
-	json.Unmarshal(w2.Body.Bytes(), &r2)
+	_ = json.Unmarshal(w2.Body.Bytes(), &r2)
 	if r2["status"] != "duplicate" {
 		t.Fatalf("expected duplicate, got %v body=%s", r2["status"], w2.Body.String())
 	}
@@ -166,14 +166,16 @@ func TestWebhookHandler_DedupeViaGitHubDelivery(t *testing.T) {
 		t.Fatalf("first: %d", w1.Code)
 	}
 	var r1 map[string]any
-	json.Unmarshal(w1.Body.Bytes(), &r1)
+	_ = json.Unmarshal(w1.Body.Bytes(), &r1)
 	if r1["status"] != "accepted" {
 		t.Fatalf("first status: %v", r1["status"])
 	}
 
 	w2 := postWebhook(t, *trig.WebhookToken, body, headers)
 	var r2 map[string]any
-	json.Unmarshal(w2.Body.Bytes(), &r2)
+	if err := json.Unmarshal(w2.Body.Bytes(), &r2); err != nil {
+		t.Fatalf("decode second delivery response: %v", err)
+	}
 	if r2["status"] != "duplicate" {
 		t.Fatalf("expected duplicate, got %v", r2["status"])
 	}
@@ -201,7 +203,9 @@ func TestWebhookHandler_InvalidSignatureReturns401AndPersistsRejected(t *testing
 		t.Fatalf("expected 401, got %d body=%s", w.Code, w.Body.String())
 	}
 	var resp map[string]any
-	json.Unmarshal(w.Body.Bytes(), &resp)
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode delivery response: %v", err)
+	}
 	if resp["status"] != "rejected" {
 		t.Fatalf("status: %v", resp["status"])
 	}
@@ -235,7 +239,9 @@ func TestWebhookHandler_MissingSignatureReturns401WhenSecretSet(t *testing.T) {
 		t.Fatalf("expected 401, got %d body=%s", w.Code, w.Body.String())
 	}
 	var resp map[string]any
-	json.Unmarshal(w.Body.Bytes(), &resp)
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode delivery response: %v", err)
+	}
 	if resp["reason"] != "missing_signature" {
 		t.Fatalf("reason: %v", resp["reason"])
 	}
@@ -261,7 +267,9 @@ func TestWebhookHandler_ValidSignatureDispatches(t *testing.T) {
 		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
 	}
 	var resp map[string]any
-	json.Unmarshal(w.Body.Bytes(), &resp)
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode delivery response: %v", err)
+	}
 	if resp["status"] != "accepted" {
 		t.Fatalf("status: %v", resp["status"])
 	}
@@ -351,7 +359,9 @@ func TestReplay_CreatesNewDeliveryAndDispatchesRun(t *testing.T) {
 		t.Fatalf("original: %d body=%s", w.Code, w.Body.String())
 	}
 	var orig map[string]any
-	json.Unmarshal(w.Body.Bytes(), &orig)
+	if err := json.Unmarshal(w.Body.Bytes(), &orig); err != nil {
+		t.Fatalf("decode original delivery response: %v", err)
+	}
 	originalID := orig["delivery_id"].(string)
 	originalRunID := orig["run_id"].(string)
 
@@ -364,7 +374,9 @@ func TestReplay_CreatesNewDeliveryAndDispatchesRun(t *testing.T) {
 		t.Fatalf("replay: %d body=%s", wr.Code, wr.Body.String())
 	}
 	var replay map[string]any
-	json.Unmarshal(wr.Body.Bytes(), &replay)
+	if err := json.Unmarshal(wr.Body.Bytes(), &replay); err != nil {
+		t.Fatalf("decode replayed delivery response: %v", err)
+	}
 	if replay["id"] == originalID {
 		t.Fatal("replay should create a NEW delivery, not return the original")
 	}
@@ -398,7 +410,9 @@ func TestReplay_RejectsInvalidSignatureDelivery(t *testing.T) {
 		t.Fatalf("setup: expected 401, got %d", w.Code)
 	}
 	var rej map[string]any
-	json.Unmarshal(w.Body.Bytes(), &rej)
+	if err := json.Unmarshal(w.Body.Bytes(), &rej); err != nil {
+		t.Fatalf("decode rejected delivery response: %v", err)
+	}
 	rejectedID := rej["delivery_id"].(string)
 
 	// Replay the rejected delivery → 400.
@@ -421,7 +435,9 @@ func TestGetDelivery_ReturnsFullPayload(t *testing.T) {
 		t.Fatalf("seed: %d", w.Code)
 	}
 	var seed map[string]any
-	json.Unmarshal(w.Body.Bytes(), &seed)
+	if err := json.Unmarshal(w.Body.Bytes(), &seed); err != nil {
+		t.Fatalf("decode seeded delivery response: %v", err)
+	}
 	deliveryID := seed["delivery_id"].(string)
 
 	// List response should NOT include raw_body / selected_headers.
@@ -475,7 +491,9 @@ func TestGetDelivery_CrossAutopilotReturns404(t *testing.T) {
 
 	w := postWebhook(t, *trig.WebhookToken, map[string]any{"x": 1}, nil)
 	var seed map[string]any
-	json.Unmarshal(w.Body.Bytes(), &seed)
+	if err := json.Unmarshal(w.Body.Bytes(), &seed); err != nil {
+		t.Fatalf("decode seeded delivery response: %v", err)
+	}
 	deliveryID := seed["delivery_id"].(string)
 
 	// Try reading via the OTHER autopilot's URL.
@@ -519,7 +537,9 @@ func TestCreateAutopilotTrigger_AcceptsGitHubProvider(t *testing.T) {
 		t.Fatalf("expected 201, got %d body=%s", w.Code, w.Body.String())
 	}
 	var resp AutopilotTriggerResponse
-	json.Unmarshal(w.Body.Bytes(), &resp)
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode delivery response: %v", err)
+	}
 	if resp.Provider == nil || *resp.Provider != "github" {
 		t.Fatalf("provider: %v", resp.Provider)
 	}

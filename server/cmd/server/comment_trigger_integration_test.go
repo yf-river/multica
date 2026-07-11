@@ -129,7 +129,7 @@ func createSecondAgent(t *testing.T) string {
 	})
 	if resp.StatusCode != 201 {
 		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		t.Fatalf("CreateAgent: expected 201, got %d: %s", resp.StatusCode, body)
 	}
 	var agent map[string]any
@@ -162,7 +162,7 @@ func createIssue(t *testing.T, title string) string {
 	})
 	if resp.StatusCode != 201 {
 		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		t.Fatalf("CreateIssue: expected 201, got %d: %s", resp.StatusCode, body)
 	}
 	var issue map[string]any
@@ -183,7 +183,7 @@ func postComment(t *testing.T, issueID, content string, parentID *string) string
 	resp := authRequest(t, "POST", "/api/issues/"+issueID+"/comments", body)
 	if resp.StatusCode != 201 {
 		b, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		t.Fatalf("postComment: expected 201, got %d: %s", resp.StatusCode, b)
 	}
 	var comment map[string]any
@@ -204,7 +204,7 @@ func postCommentAsAgent(t *testing.T, issueID, content, agentID string, parentID
 	resp := authRequestWithAgent(t, "POST", "/api/issues/"+issueID+"/comments", body, agentID)
 	if resp.StatusCode != 201 {
 		b, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		t.Fatalf("postCommentAsAgent: expected 201, got %d: %s", resp.StatusCode, b)
 	}
 	var comment map[string]any
@@ -226,7 +226,7 @@ func TestCommentTriggerOnComment(t *testing.T) {
 	t.Cleanup(func() {
 		clearTasks(t, issueID)
 		resp := authRequest(t, "DELETE", "/api/issues/"+issueID, nil)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	})
 
 	t.Run("top-level comment without mentions triggers agent", func(t *testing.T) {
@@ -321,15 +321,6 @@ func TestCommentTriggerOnComment(t *testing.T) {
 		// Reply mentioning the assignee agent.
 		content := fmt.Sprintf("[@Agent](mention://agent/%s) can you help with this?", agentID)
 		postComment(t, issueID, content, strPtr(threadID))
-		if n := countPendingTasks(t, issueID); n != 0 {
-			// The mention of the assignee agent unblocks on_comment but
-			// the assignee-mention path in on_mention skips the assignee.
-			// Either 0 or 1 is acceptable depending on the on_comment logic.
-			// With our implementation: isReplyToMemberThread returns false
-			// (assignee mentioned), and commentMentionsOthersButNotAssignee
-			// returns false (assignee is mentioned). So on_comment triggers.
-			// Let's re-check.
-		}
 		if n := countPendingTasks(t, issueID); n != 1 {
 			t.Errorf("expected 1 pending task (assignee mentioned in member thread), got %d", n)
 		}
@@ -358,7 +349,7 @@ func TestCommentTriggerAtAllSuppression(t *testing.T) {
 	t.Cleanup(func() {
 		clearTasks(t, issueID)
 		resp := authRequest(t, "DELETE", "/api/issues/"+issueID, nil)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	})
 
 	t.Run("top-level @all comment suppresses on_comment", func(t *testing.T) {
@@ -389,12 +380,12 @@ func TestCommentTriggerOnAssignNoStatusGate(t *testing.T) {
 	resp := authRequest(t, "PUT", "/api/issues/"+issueID, map[string]any{
 		"status": "in_progress",
 	})
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	t.Cleanup(func() {
 		clearTasks(t, issueID)
 		resp := authRequest(t, "DELETE", "/api/issues/"+issueID, nil)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	})
 
 	// Assign the agent — should trigger despite non-todo status.
@@ -404,10 +395,10 @@ func TestCommentTriggerOnAssignNoStatusGate(t *testing.T) {
 	})
 	if resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		t.Fatalf("assign agent: expected 200, got %d: %s", resp.StatusCode, body)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	if n := countPendingTasks(t, issueID); n != 1 {
 		t.Errorf("expected 1 pending task after assigning to in_progress issue, got %d", n)
@@ -424,12 +415,12 @@ func TestCommentTriggerOnMentionNoStatusGate(t *testing.T) {
 	resp := authRequest(t, "PUT", "/api/issues/"+issueID, map[string]any{
 		"status": "done",
 	})
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	t.Cleanup(func() {
 		clearTasks(t, issueID)
 		resp := authRequest(t, "DELETE", "/api/issues/"+issueID, nil)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	})
 
 	// @mention the agent on a done issue — should still trigger.
@@ -452,7 +443,7 @@ func TestCommentTriggerThreadInheritedMention(t *testing.T) {
 	t.Cleanup(func() {
 		clearTasks(t, issueID)
 		resp := authRequest(t, "DELETE", "/api/issues/"+issueID, nil)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	})
 
 	t.Run("reply in thread inherits parent mention", func(t *testing.T) {
@@ -543,7 +534,7 @@ func TestDeleteCommentCancelsTriggeredTasks(t *testing.T) {
 	t.Cleanup(func() {
 		clearTasks(t, issueID)
 		resp := authRequest(t, "DELETE", "/api/issues/"+issueID, nil)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	})
 
 	t.Run("deleting trigger comment cancels its queued task", func(t *testing.T) {
@@ -554,7 +545,7 @@ func TestDeleteCommentCancelsTriggeredTasks(t *testing.T) {
 		}
 
 		resp := authRequest(t, "DELETE", "/api/comments/"+commentID, nil)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if resp.StatusCode != http.StatusNoContent {
 			t.Fatalf("DeleteComment: expected 204, got %d", resp.StatusCode)
 		}
@@ -573,7 +564,7 @@ func TestCommentTriggerCoalescing(t *testing.T) {
 	t.Cleanup(func() {
 		clearTasks(t, issueID)
 		resp := authRequest(t, "DELETE", "/api/issues/"+issueID, nil)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	})
 
 	// Post two comments rapidly — only 1 task should be created (coalescing).
@@ -598,12 +589,12 @@ func TestCommentTriggerMentionAssigneeDoneIssue(t *testing.T) {
 	resp := authRequest(t, "PUT", "/api/issues/"+issueID, map[string]any{
 		"status": "done",
 	})
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	t.Cleanup(func() {
 		clearTasks(t, issueID)
 		resp := authRequest(t, "DELETE", "/api/issues/"+issueID, nil)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	})
 
 	// @mention the assigned agent on the done issue — should trigger.

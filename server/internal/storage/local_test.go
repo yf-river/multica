@@ -13,7 +13,7 @@ import (
 func TestLocalStorage_Upload(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("LOCAL_UPLOAD_DIR", tmpDir)
-	os.Unsetenv("LOCAL_UPLOAD_BASE_URL")
+	_ = os.Unsetenv("LOCAL_UPLOAD_BASE_URL")
 	// No LOCAL_UPLOAD_BASE_URL set - should return relative path
 
 	store := NewLocalStorageFromEnv()
@@ -104,7 +104,7 @@ func TestLocalStorage_Delete(t *testing.T) {
 		t.Fatalf("file should exist: %v", err)
 	}
 
-	store.Delete(ctx, "delete-me.txt")
+	_ = store.Delete(ctx, "delete-me.txt")
 
 	if _, err := os.ReadFile(filePath); !os.IsNotExist(err) {
 		t.Errorf("file should be deleted")
@@ -369,7 +369,7 @@ func TestLocalStorage_ServeFile_RejectsPathTraversal(t *testing.T) {
 		t.Fatalf("seed leaked sidecar failed: %v", err)
 	}
 	t.Cleanup(func() {
-		os.Remove(leakedBase + metaSuffix)
+		_ = os.Remove(leakedBase + metaSuffix)
 	})
 
 	traversal := "../" + filepath.Base(leakedBase)
@@ -431,7 +431,7 @@ func TestLocalStorage_Delete_RemovesSidecar(t *testing.T) {
 		t.Fatalf("sidecar should exist after Upload: %v", err)
 	}
 
-	store.Delete(ctx, key)
+	_ = store.Delete(ctx, key)
 
 	if _, err := os.Stat(sidecar); !os.IsNotExist(err) {
 		t.Errorf("sidecar should be removed after Delete, got err=%v", err)
@@ -459,7 +459,7 @@ func TestLocalStorage_GetReader_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetReader: %v", err)
 	}
-	defer rc.Close()
+	defer func() { _ = rc.Close() }()
 	got, err := io.ReadAll(rc)
 	if err != nil {
 		t.Fatalf("io.ReadAll: %v", err)
@@ -480,7 +480,7 @@ func TestLocalStorage_GetReader_RejectsTraversal(t *testing.T) {
 	}
 
 	if rc, err := store.GetReader(context.Background(), "../../../etc/passwd"); err == nil {
-		rc.Close()
+		_ = rc.Close()
 		t.Fatal("GetReader should refuse traversal keys")
 	}
 }
@@ -498,7 +498,7 @@ func TestLocalStorage_GetReader_RejectsSidecarSuffix(t *testing.T) {
 	}
 
 	if rc, err := store.GetReader(context.Background(), "some-key.txt"+metaSuffix); err == nil {
-		rc.Close()
+		_ = rc.Close()
 		t.Fatal("GetReader should refuse sidecar keys")
 	}
 }
@@ -514,7 +514,7 @@ func TestLocalStorage_GetReader_MissingKey(t *testing.T) {
 	}
 
 	if rc, err := store.GetReader(context.Background(), "nonexistent.txt"); err == nil {
-		rc.Close()
+		_ = rc.Close()
 		t.Fatal("GetReader should error on missing key")
 	}
 }

@@ -88,7 +88,7 @@ func TestWebhookLimiterLuaScript_StructureGuard(t *testing.T) {
 
 func TestRedisWebhookRateLimiter_RejectsAboveLimit(t *testing.T) {
 	rdb := newRedisTestClient(t)
-	defer rdb.Close()
+	defer func() { _ = rdb.Close() }()
 
 	l := NewRedisWebhookRateLimiter(rdb, WebhookRateLimit{Limit: 3, Window: time.Minute})
 	ctx := context.Background()
@@ -112,7 +112,7 @@ func TestRedisWebhookIPRateLimiter_HasSeparateBudgetFromTokenLimiter(t *testing.
 	// regression-protect by exhausting per-token then proving per-IP is
 	// untouched against the same Redis instance.
 	rdb := newRedisTestClient(t)
-	defer rdb.Close()
+	defer func() { _ = rdb.Close() }()
 
 	tok := NewRedisWebhookRateLimiter(rdb, WebhookRateLimit{Limit: 1, Window: time.Minute})
 	ip := NewRedisWebhookIPRateLimiter(rdb, WebhookRateLimit{Limit: 2, Window: time.Minute})

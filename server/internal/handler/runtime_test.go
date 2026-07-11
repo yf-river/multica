@@ -150,7 +150,7 @@ func TestGetRuntimeUsage_BucketsByUsageTime(t *testing.T) {
 		t.Fatalf("create issue: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID)
+		mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, issueID)
 	})
 
 	// enqueued yesterday 23:58 UTC, finished today 00:05 UTC — tokens belong to today.
@@ -178,7 +178,7 @@ func TestGetRuntimeUsage_BucketsByUsageTime(t *testing.T) {
 			t.Fatalf("insert task_usage: %v", err)
 		}
 		t.Cleanup(func() {
-			testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+			mustExec(t, ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
 		})
 		return taskID
 	}
@@ -199,7 +199,7 @@ func TestGetRuntimeUsage_BucketsByUsageTime(t *testing.T) {
 		// Hourly buckets touched by this test cover the two calendar
 		// days in fixture data (today and yesterday in UTC, which is
 		// what the test uses for `today` / `yesterday` mocks).
-		testPool.Exec(ctx, `
+		mustExec(t, ctx, `
 			DELETE FROM task_usage_hourly
 			 WHERE runtime_id = $1
 			   AND DATE(bucket_hour AT TIME ZONE 'UTC') IN ($2::date, $3::date)
@@ -271,7 +271,7 @@ func TestListRuntimeUsageByAgent_MergesMixedCaseProvider(t *testing.T) {
 	`, testWorkspaceID, testUserID).Scan(&issueID); err != nil {
 		t.Fatalf("create issue: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID) })
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, issueID) })
 
 	now := time.Now().UTC()
 	// Two tasks for the same agent/model under this runtime, reporting the
@@ -291,7 +291,7 @@ func TestListRuntimeUsageByAgent_MergesMixedCaseProvider(t *testing.T) {
 		`, taskID, provider, input, now); err != nil {
 			t.Fatalf("insert task_usage: %v", err)
 		}
-		t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+		t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
 	}
 	insert("Cursor", 1000)
 	insert("cursor", 500)
@@ -344,7 +344,7 @@ func TestGetRuntimeUsageByTask_GroupsByTaskAndModel(t *testing.T) {
 	`, testWorkspaceID, testUserID, issueNumber).Scan(&issueID); err != nil {
 		t.Fatalf("create issue: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID) })
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, issueID) })
 
 	now := time.Now().UTC()
 	var taskID string
@@ -429,7 +429,7 @@ func TestListRuntimeUsageBucketsByViewerTimezone(t *testing.T) {
 	extraDate := cutoff.AddDate(0, 0, -1).Format("2006-01-02")
 
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM task_usage_hourly WHERE runtime_id = $1 AND provider = 'cutoff-test'`, runtimeID)
+		mustExec(t, ctx, `DELETE FROM task_usage_hourly WHERE runtime_id = $1 AND provider = 'cutoff-test'`, runtimeID)
 	})
 
 	// Seed task_usage_hourly directly with one bucket per Shanghai calendar
@@ -499,7 +499,7 @@ func TestResolveViewingTZ(t *testing.T) {
 	).Scan(&userID); err != nil {
 		t.Fatalf("insert user: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM "user" WHERE id = $1`, userID) })
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM "user" WHERE id = $1`, userID) })
 
 	// Explicit ?tz= wins over the stored preference.
 	req := newRequest("GET", "/api/dashboard/usage/daily?tz=America/New_York", nil)
@@ -530,7 +530,7 @@ func TestResolveViewingTZ(t *testing.T) {
 	).Scan(&bareUserID); err != nil {
 		t.Fatalf("insert bare user: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM "user" WHERE id = $1`, bareUserID) })
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM "user" WHERE id = $1`, bareUserID) })
 	req = newRequest("GET", "/api/dashboard/usage/daily", nil)
 	req.Header.Set("X-User-ID", bareUserID)
 	if got := testHandler.resolveViewingTZ(req); got != "UTC" {
@@ -548,7 +548,7 @@ func TestResolveViewingTZ(t *testing.T) {
 	).Scan(&badTZUserID); err != nil {
 		t.Fatalf("insert bad-tz user: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM "user" WHERE id = $1`, badTZUserID) })
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM "user" WHERE id = $1`, badTZUserID) })
 	req = newRequest("GET", "/api/dashboard/usage/daily", nil)
 	req.Header.Set("X-User-ID", badTZUserID)
 	if got := testHandler.resolveViewingTZ(req); got != "UTC" {

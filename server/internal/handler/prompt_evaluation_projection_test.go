@@ -111,7 +111,7 @@ func projectPromptEvaluationTerminalTask(ctx context.Context, taskID string) (bo
 	if err != nil {
 		return false, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	queries := testHandler.Queries.WithTx(tx)
 	task, err := queries.GetAgentTask(ctx, parseUUID(taskID))
 	if err != nil {

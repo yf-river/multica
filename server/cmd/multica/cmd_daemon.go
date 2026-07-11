@@ -220,19 +220,23 @@ func runDaemonBackground(cmd *cobra.Command) error {
 			child.Stderr = logFile
 			child.SysProcAttr = daemonSysProcAttr(false)
 			if err := child.Start(); err != nil {
-				logFile.Close()
+				_ = logFile.Close()
 				return fmt.Errorf("start daemon (no breakaway): %w", err)
 			}
 		} else {
-			logFile.Close()
+			_ = logFile.Close()
 			return fmt.Errorf("start daemon: %w", err)
 		}
 	}
-	logFile.Close()
+	if err := logFile.Close(); err != nil {
+		return fmt.Errorf("close daemon log: %w", err)
+	}
 	pid := child.Process.Pid
 
 	// Detach: we don't Wait() on the child — it runs independently.
-	child.Process.Release()
+	if err := child.Process.Release(); err != nil {
+		return fmt.Errorf("release daemon process: %w", err)
+	}
 
 	// Write PID file.
 	pidPath := daemonPIDPathForProfile(profile)
@@ -377,10 +381,14 @@ func runDaemonForeground(cmd *cobra.Command) error {
 
 	// Write PID file so "daemon stop" can find us.
 	if dir := daemonDirForProfile(profile); dir != "" {
-		os.MkdirAll(dir, 0o755)
-		os.WriteFile(daemonPIDPathForProfile(profile), []byte(strconv.Itoa(os.Getpid())), 0o644)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return fmt.Errorf("create daemon state directory: %w", err)
+		}
+		if err := os.WriteFile(daemonPIDPathForProfile(profile), []byte(strconv.Itoa(os.Getpid())), 0o644); err != nil {
+			return fmt.Errorf("write daemon PID file: %w", err)
+		}
 	}
-	defer os.Remove(daemonPIDPathForProfile(profile))
+	defer func() { _ = os.Remove(daemonPIDPathForProfile(profile)) }()
 
 	if err := d.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		return err
@@ -477,7 +485,7 @@ func runDaemonStop(cmd *cobra.Command, _ []string) error {
 		h := checkDaemonHealthOnPort(ctx2, healthPort)
 		cancel2()
 		if !daemonAlive(h) {
-			os.Remove(daemonPIDPathForProfile(profile))
+			_ = os.Remove(daemonPIDPathForProfile(profile))
 			fmt.Fprintln(os.Stderr, "Daemon stopped.")
 			return nil
 		}
@@ -501,7 +509,7 @@ func requestDaemonShutdown(healthPort int) error {
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("unexpected status %d", resp.StatusCode)
 	}
@@ -532,12 +540,14 @@ func runDaemonStatus(cmd *cobra.Command, _ []string) error {
 	switch health["status"] {
 	case "running":
 		printDaemonStatusReport(os.Stdout, label, health)
+		return nil
 	case "starting":
-		fmt.Fprintf(os.Stdout, "%s: starting (pid %v)\n", label, health["pid"])
+		_, err := fmt.Fprintf(os.Stdout, "%s: starting (pid %v)\n", label, health["pid"])
+		return err
 	default:
-		fmt.Fprintf(os.Stdout, "%s: stopped\n", label)
+		_, err := fmt.Fprintf(os.Stdout, "%s: stopped\n", label)
+		return err
 	}
-	return nil
 }
 
 // printDaemonStatusReport renders a key/value summary of the daemon health
@@ -569,7 +579,7 @@ func printDaemonStatusReport(w io.Writer, label string, health map[string]any) {
 		}
 	}
 	for _, r := range rows {
-		fmt.Fprintf(w, "%-*s  %s\n", keyWidth+1, r.key+":", r.value)
+		_, _ = fmt.Fprintf(w, "%-*s  %s\n", keyWidth+1, r.key+":", r.value)
 	}
 }
 
@@ -615,7 +625,7 @@ func checkDaemonHealthOnPort(ctx context.Context, port int) map[string]any {
 	if err != nil {
 		return map[string]any{"status": "stopped"}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var result map[string]any
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
@@ -772,29 +782,29 @@ func enumerateDiskUsageRoots() ([]daemon.DiskUsageRoot, error) {
 }
 
 func printAggregateDiskUsage(w io.Writer, agg daemon.AggregateDiskUsageReport, byWorkspace bool) {
-	fmt.Fprintf(w, "Scanned %d workspace root(s).\n", len(agg.Roots))
+	_, _ = fmt.Fprintf(w, "Scanned %d workspace root(s).\n", len(agg.Roots))
 	for _, root := range agg.Roots {
-		fmt.Fprintln(w)
+		_, _ = fmt.Fprintln(w)
 		label := "default"
 		if root.Profile != "" {
 			label = root.Profile
 		}
-		fmt.Fprintf(w, "[%s]\n", label)
+		_, _ = fmt.Fprintf(w, "[%s]\n", label)
 		if byWorkspace {
 			printDiskUsageWorkspaceTable(w, root.Report)
 		} else {
 			printDiskUsageTaskTable(w, root.Report)
 		}
 	}
-	fmt.Fprintf(w, "\nGrand total: %s across %d task(s) in %d root(s); %s reclaimable as artifacts (%.1f%%).\n",
+	_, _ = fmt.Fprintf(w, "\nGrand total: %s across %d task(s) in %d root(s); %s reclaimable as artifacts (%.1f%%).\n",
 		formatBytes(agg.TotalSizeBytes), agg.TotalTaskCount, len(agg.Roots),
 		formatBytes(agg.TotalArtifactSizeBytes), agg.TotalArtifactRatio*100)
 }
 
 func printDiskUsageTaskTable(w io.Writer, report daemon.DiskUsageReport) {
-	fmt.Fprintf(w, "Workspaces root: %s\n", report.WorkspacesRoot)
+	_, _ = fmt.Fprintf(w, "Workspaces root: %s\n", report.WorkspacesRoot)
 	if report.TotalTaskCount == 0 {
-		fmt.Fprintln(w, "(no task directories)")
+		_, _ = fmt.Fprintln(w, "(no task directories)")
 		return
 	}
 	rows := make([][]string, 0, len(report.Tasks))
@@ -817,22 +827,22 @@ func printDiskUsageTaskTable(w io.Writer, report daemon.DiskUsageReport) {
 		// Report-wide totals stay anchored to the full scan; the displayed
 		// row is what the user is currently looking at. Calling these out
 		// separately keeps `--top N` from misleading at-a-glance triage.
-		fmt.Fprintf(w, "\nShowing top %d of %d task(s). Displayed: %s (%s artifacts). Scan total: %s (%s artifacts, %.1f%% reclaimable).\n",
+		_, _ = fmt.Fprintf(w, "\nShowing top %d of %d task(s). Displayed: %s (%s artifacts). Scan total: %s (%s artifacts, %.1f%% reclaimable).\n",
 			len(report.Tasks), report.TotalTaskCount,
 			formatBytes(displayedSize), formatBytes(displayedArtifact),
 			formatBytes(report.TotalSizeBytes), formatBytes(report.TotalArtifactSizeBytes),
 			report.TotalArtifactRatio*100)
 		return
 	}
-	fmt.Fprintf(w, "\nTotal: %s across %d task(s); %s reclaimable as artifacts (%.1f%%).\n",
+	_, _ = fmt.Fprintf(w, "\nTotal: %s across %d task(s); %s reclaimable as artifacts (%.1f%%).\n",
 		formatBytes(report.TotalSizeBytes), report.TotalTaskCount,
 		formatBytes(report.TotalArtifactSizeBytes), report.TotalArtifactRatio*100)
 }
 
 func printDiskUsageWorkspaceTable(w io.Writer, report daemon.DiskUsageReport) {
-	fmt.Fprintf(w, "Workspaces root: %s\n", report.WorkspacesRoot)
+	_, _ = fmt.Fprintf(w, "Workspaces root: %s\n", report.WorkspacesRoot)
 	if report.TotalWorkspaceCount == 0 {
-		fmt.Fprintln(w, "(no workspaces)")
+		_, _ = fmt.Fprintln(w, "(no workspaces)")
 		return
 	}
 	rows := make([][]string, 0, len(report.Workspaces))
@@ -852,14 +862,14 @@ func printDiskUsageWorkspaceTable(w io.Writer, report daemon.DiskUsageReport) {
 	cli.PrintTable(w, []string{"WORKSPACE", "TASKS", "SIZE", "ARTIFACTS", "ARTIFACT %", "OLDEST"}, rows)
 
 	if len(report.Workspaces) < report.TotalWorkspaceCount {
-		fmt.Fprintf(w, "\nShowing top %d of %d workspace(s). Displayed: %s (%s artifacts). Scan total: %s (%s artifacts, %.1f%% reclaimable).\n",
+		_, _ = fmt.Fprintf(w, "\nShowing top %d of %d workspace(s). Displayed: %s (%s artifacts). Scan total: %s (%s artifacts, %.1f%% reclaimable).\n",
 			len(report.Workspaces), report.TotalWorkspaceCount,
 			formatBytes(displayedSize), formatBytes(displayedArtifact),
 			formatBytes(report.TotalSizeBytes), formatBytes(report.TotalArtifactSizeBytes),
 			report.TotalArtifactRatio*100)
 		return
 	}
-	fmt.Fprintf(w, "\nTotal: %s across %d workspace(s); %s reclaimable as artifacts (%.1f%%).\n",
+	_, _ = fmt.Fprintf(w, "\nTotal: %s across %d workspace(s); %s reclaimable as artifacts (%.1f%%).\n",
 		formatBytes(report.TotalSizeBytes), report.TotalWorkspaceCount,
 		formatBytes(report.TotalArtifactSizeBytes), report.TotalArtifactRatio*100)
 }
@@ -877,13 +887,13 @@ func printDiskUsageOtherRootsHint(w io.Writer, report daemon.DiskUsageReport, pr
 	if len(suggestions) == 0 {
 		return
 	}
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Other workspace roots contain task directories:")
+	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "Other workspace roots contain task directories:")
 	for _, s := range suggestions {
-		fmt.Fprintf(w, "  %s  # %s (%d task%s)\n",
+		_, _ = fmt.Fprintf(w, "  %s  # %s (%d task%s)\n",
 			s.Command, s.Root, s.TaskCount, pluralS(s.TaskCount))
 	}
-	fmt.Fprintln(w, "Run 'multica daemon disk-usage --all-profiles' for a combined total across all roots.")
+	_, _ = fmt.Fprintln(w, "Run 'multica daemon disk-usage --all-profiles' for a combined total across all roots.")
 }
 
 type diskUsageProfileSuggestion struct {
@@ -957,10 +967,10 @@ func shellQuoteArg(s string) string {
 		return "''"
 	}
 	if strings.IndexFunc(s, func(r rune) bool {
-		return !(r == '-' || r == '_' || r == '.' || r == '/' ||
-			r >= '0' && r <= '9' ||
-			r >= 'A' && r <= 'Z' ||
-			r >= 'a' && r <= 'z')
+		return r != '-' && r != '_' && r != '.' && r != '/' &&
+			(r < '0' || r > '9') &&
+			(r < 'A' || r > 'Z') &&
+			(r < 'a' || r > 'z')
 	}) == -1 {
 		return s
 	}

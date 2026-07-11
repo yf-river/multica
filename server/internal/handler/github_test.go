@@ -53,9 +53,9 @@ func TestLinkPullRequestToIssue_GongfengURL(t *testing.T) {
 		t.Fatalf("decode issue: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM issue_pull_request WHERE issue_id = $1`, created.ID)
-		testPool.Exec(ctx, `DELETE FROM github_pull_request WHERE workspace_id = $1 AND repo_owner = $2 AND repo_name = $3 AND pr_number = $4`, testWorkspaceID, "ChainWeaver/ida", "user-center", 61234)
-		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, created.ID)
+		mustExec(t, ctx, `DELETE FROM issue_pull_request WHERE issue_id = $1`, created.ID)
+		mustExec(t, ctx, `DELETE FROM github_pull_request WHERE workspace_id = $1 AND repo_owner = $2 AND repo_name = $3 AND pr_number = $4`, testWorkspaceID, "ChainWeaver/ida", "user-center", 61234)
+		mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, created.ID)
 	})
 
 	w = httptest.NewRecorder()
@@ -169,9 +169,9 @@ func TestLinkPullRequestToIssue_NormalizesGongfengDashMergeRequestURL(t *testing
 		t.Fatalf("decode issue: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM issue_pull_request WHERE issue_id = $1`, created.ID)
-		testPool.Exec(ctx, `DELETE FROM github_pull_request WHERE workspace_id = $1 AND repo_owner = $2 AND repo_name = $3 AND pr_number = $4`, testWorkspaceID, "ChainWeaver/ida", "ida-deployment", 61235)
-		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, created.ID)
+		mustExec(t, ctx, `DELETE FROM issue_pull_request WHERE issue_id = $1`, created.ID)
+		mustExec(t, ctx, `DELETE FROM github_pull_request WHERE workspace_id = $1 AND repo_owner = $2 AND repo_name = $3 AND pr_number = $4`, testWorkspaceID, "ChainWeaver/ida", "ida-deployment", 61235)
+		mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, created.ID)
 	})
 
 	w = httptest.NewRecorder()
@@ -239,8 +239,8 @@ func TestLinkPullRequestToIssue_RequiresRepositoryAndNumber(t *testing.T) {
 		t.Fatalf("decode issue: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM issue_pull_request WHERE issue_id = $1`, created.ID)
-		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, created.ID)
+		mustExec(t, ctx, `DELETE FROM issue_pull_request WHERE issue_id = $1`, created.ID)
+		mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, created.ID)
 	})
 
 	w = httptest.NewRecorder()
@@ -678,17 +678,17 @@ func setupPRTestIssue(t *testing.T, ctx context.Context, secret string) (IssueRe
 		t.Fatalf("CreateIssue: %d %s", w.Code, w.Body.String())
 	}
 	var created IssueResponse
-	json.NewDecoder(w.Body).Decode(&created)
+	_ = json.NewDecoder(w.Body).Decode(&created)
 
 	installationID := int64(33445566) + int64(time.Now().UnixNano()%1000000)
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM github_pull_request_check_suite WHERE pr_id IN (SELECT id FROM github_pull_request WHERE workspace_id = $1)`, testWorkspaceID)
-		testPool.Exec(ctx, `DELETE FROM github_pending_check_suite WHERE workspace_id = $1`, testWorkspaceID)
-		testPool.Exec(ctx, `DELETE FROM issue_pull_request WHERE issue_id = $1`, created.ID)
-		testPool.Exec(ctx, `DELETE FROM github_pull_request WHERE workspace_id = $1`, testWorkspaceID)
-		testPool.Exec(ctx, `DELETE FROM github_installation WHERE installation_id = $1`, installationID)
-		testPool.Exec(ctx, `DELETE FROM activity_log WHERE issue_id = $1`, created.ID)
-		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, created.ID)
+		mustExec(t, ctx, `DELETE FROM github_pull_request_check_suite WHERE pr_id IN (SELECT id FROM github_pull_request WHERE workspace_id = $1)`, testWorkspaceID)
+		mustExec(t, ctx, `DELETE FROM github_pending_check_suite WHERE workspace_id = $1`, testWorkspaceID)
+		mustExec(t, ctx, `DELETE FROM issue_pull_request WHERE issue_id = $1`, created.ID)
+		mustExec(t, ctx, `DELETE FROM github_pull_request WHERE workspace_id = $1`, testWorkspaceID)
+		mustExec(t, ctx, `DELETE FROM github_installation WHERE installation_id = $1`, installationID)
+		mustExec(t, ctx, `DELETE FROM activity_log WHERE issue_id = $1`, created.ID)
+		mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, created.ID)
 	})
 	if _, err := testHandler.Queries.CreateGitHubInstallation(ctx, db.CreateGitHubInstallationParams{
 		WorkspaceID:    parseUUID(testWorkspaceID),
@@ -1052,7 +1052,7 @@ func TestListGitHubInstallations_RoleGating(t *testing.T) {
 		t.Fatalf("CreateGitHubInstallation: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM github_installation WHERE workspace_id = $1`, testWorkspaceID)
+		mustExec(t, ctx, `DELETE FROM github_installation WHERE workspace_id = $1`, testWorkspaceID)
 	})
 
 	call := func(t *testing.T, role string) map[string]any {
@@ -1566,7 +1566,7 @@ func TestWebhook_InstallationCreatedRefreshesUnknownLogin(t *testing.T) {
 
 	const installationID int64 = 71717171
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM github_installation WHERE installation_id = $1`, installationID)
+		mustExec(t, ctx, `DELETE FROM github_installation WHERE installation_id = $1`, installationID)
 	})
 
 	// Seed the row the way the setup callback does today when App JWT
@@ -1678,8 +1678,8 @@ func TestSetupCallback_ConsumesPendingInstallationCreated(t *testing.T) {
 
 	const installationID int64 = 81818181
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM github_installation WHERE installation_id = $1`, installationID)
-		testPool.Exec(ctx, `DELETE FROM github_pending_installation WHERE installation_id = $1`, installationID)
+		mustExec(t, ctx, `DELETE FROM github_installation WHERE installation_id = $1`, installationID)
+		mustExec(t, ctx, `DELETE FROM github_pending_installation WHERE installation_id = $1`, installationID)
 	})
 
 	// Force fetchInstallationAccount to take its degraded path. This pins that

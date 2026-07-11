@@ -493,13 +493,6 @@ func TestBuildClaudeArgsFiltersBlockedCustomArgs(t *testing.T) {
 		CustomArgs: []string{"--output-format", "text", "--model", "o3"},
 	}, slog.Default())
 
-	// --output-format text should be stripped
-	for _, a := range args[len(args)-2:] {
-		if a == "text" {
-			// "text" should not be in the last args since --output-format was blocked
-			// The actual --output-format stream-json is earlier in the list
-		}
-	}
 	// --model o3 should pass through
 	foundModel := false
 	for i, a := range args {

@@ -25,7 +25,7 @@ func TestUpdateIssueRollsBackFieldsWhenAttachmentCannotBeLinked(t *testing.T) {
 		t.Fatalf("insert available attachment: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM attachment WHERE id = $1`, availableAttachmentID)
+		mustExec(t, context.Background(), `DELETE FROM attachment WHERE id = $1`, availableAttachmentID)
 	})
 	missingAttachmentID := "019f4b33-1451-7489-851d-f2670810a642"
 

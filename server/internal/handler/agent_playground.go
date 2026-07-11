@@ -251,7 +251,7 @@ func (h *Handler) CreateAgentPlaygroundExperiment(w http.ResponseWriter, r *http
 		writeError(w, http.StatusInternalServerError, "failed to start agent playground transaction")
 		return
 	}
-	defer tx.Rollback(r.Context())
+	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 
 	experiment, err := qtx.CreateAgentPlaygroundExperiment(r.Context(), db.CreateAgentPlaygroundExperimentParams{

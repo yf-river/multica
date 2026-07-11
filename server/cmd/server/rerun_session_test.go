@@ -51,8 +51,8 @@ func setupRerunTestFixture(t *testing.T) (string, string, string) {
 func cleanupRerunFixture(t *testing.T, issueID string) {
 	t.Helper()
 	ctx := context.Background()
-	testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
-	testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID)
+	_, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
+	_, _ = testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID)
 }
 
 type rerunTestFixture struct {
@@ -427,8 +427,8 @@ func TestRerunIssueTargetsSourceTaskAgent(t *testing.T) {
 		t.Fatalf("create secondary agent: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(f.ctx, `DELETE FROM agent_task_queue WHERE agent_id = $1`, secondaryAgentID)
-		testPool.Exec(f.ctx, `DELETE FROM agent WHERE id = $1`, secondaryAgentID)
+		_, _ = testPool.Exec(f.ctx, `DELETE FROM agent_task_queue WHERE agent_id = $1`, secondaryAgentID)
+		_, _ = testPool.Exec(f.ctx, `DELETE FROM agent WHERE id = $1`, secondaryAgentID)
 	})
 
 	// Insert a failed past task on this issue under the secondary agent —
@@ -523,7 +523,7 @@ func TestRerunIssueInheritsTriggerCommentFromSourceTask(t *testing.T) {
 		t.Fatalf("insert trigger comment: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(f.ctx, `DELETE FROM comment WHERE id = $1`, triggerCommentID)
+		_, _ = testPool.Exec(f.ctx, `DELETE FROM comment WHERE id = $1`, triggerCommentID)
 	})
 
 	// Source task carries the trigger_comment_id — this is the row whose

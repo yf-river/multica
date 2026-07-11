@@ -815,7 +815,9 @@ func printAgentSkillsMutationResult(cmd *cobra.Command, agentID string, result j
 	output, _ := cmd.Flags().GetString("output")
 	if output == "json" {
 		var pretty any
-		json.Unmarshal(result, &pretty)
+		if err := json.Unmarshal(result, &pretty); err != nil {
+			return fmt.Errorf("decode avatar update response: %w", err)
+		}
 		return cli.PrintJSON(os.Stdout, pretty)
 	}
 

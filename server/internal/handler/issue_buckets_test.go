@@ -23,8 +23,8 @@ func TestListIssueBucketsReturnsFirstPagePerStatus(t *testing.T) {
 		t.Fatalf("create project: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE project_id = $1`, projectID)
-		testPool.Exec(context.Background(), `DELETE FROM project WHERE id = $1`, projectID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE project_id = $1`, projectID)
+		mustExec(t, context.Background(), `DELETE FROM project WHERE id = $1`, projectID)
 	})
 
 	insertIssue := func(title, status string, position int, assignee bool) string {

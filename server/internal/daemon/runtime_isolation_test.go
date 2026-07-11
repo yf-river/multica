@@ -71,7 +71,7 @@ func newClaimCountingRuntimeDaemon(t *testing.T, pollInterval time.Duration) (*D
 			claimAttempts.Add(1)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"task":null}`))
+		_, _ = w.Write([]byte(`{"task":null}`))
 	}))
 	t.Cleanup(srv.Close)
 
@@ -114,11 +114,11 @@ func TestRunRuntimePollerIsolatesSlowRuntime(t *testing.T) {
 			case <-r.Context().Done():
 			}
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{"task":null}`))
+			_, _ = w.Write([]byte(`{"task":null}`))
 		case strings.HasSuffix(path, "/runtimes/runtime-fast/tasks/claim"):
 			fastClaims.Add(1)
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{"task":null}`))
+			_, _ = w.Write([]byte(`{"task":null}`))
 		default:
 			http.Error(w, "unexpected path: "+path, http.StatusNotFound)
 		}
@@ -255,20 +255,20 @@ func TestPollLoopShutdownWaitsForPollersBeforeTaskWG(t *testing.T) {
 			select {
 			case <-releaseClaim:
 			case <-r.Context().Done():
-				w.Write([]byte(`{"task":null}`))
+				_, _ = w.Write([]byte(`{"task":null}`))
 				return
 			}
-			w.Write([]byte(`{"task":{"id":"` + taskID + `","runtime_id":"runtime-1","issue_id":"issue-1","agent":{"name":"test"}}}`))
+			_, _ = w.Write([]byte(`{"task":{"id":"` + taskID + `","runtime_id":"runtime-1","issue_id":"issue-1","agent":{"name":"test"}}}`))
 		case strings.HasSuffix(path, "/start"):
-			w.Write([]byte(`{}`))
+			_, _ = w.Write([]byte(`{}`))
 		case strings.HasSuffix(path, "/fail"):
-			w.Write([]byte(`{}`))
+			_, _ = w.Write([]byte(`{}`))
 		case strings.HasSuffix(path, "/complete"):
-			w.Write([]byte(`{}`))
+			_, _ = w.Write([]byte(`{}`))
 		case strings.HasSuffix(path, "/progress"):
-			w.Write([]byte(`{}`))
+			_, _ = w.Write([]byte(`{}`))
 		default:
-			w.Write([]byte(`{}`))
+			_, _ = w.Write([]byte(`{}`))
 		}
 	}))
 	defer srv.Close()
@@ -322,7 +322,7 @@ func TestPollLoopTargetsRuntimeWakeup(t *testing.T) {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"task":null}`))
+		_, _ = w.Write([]byte(`{"task":null}`))
 	}))
 	defer srv.Close()
 
@@ -407,11 +407,11 @@ func TestRunRuntimeHeartbeatIsolatesSlowRuntime(t *testing.T) {
 			case <-r.Context().Done():
 			}
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{}`))
+			_, _ = w.Write([]byte(`{}`))
 		case strings.Contains(payload, `"runtime-fast"`):
 			fastBeats.Add(1)
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{}`))
+			_, _ = w.Write([]byte(`{}`))
 		default:
 			http.Error(w, "unexpected payload", http.StatusBadRequest)
 		}

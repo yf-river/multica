@@ -23,7 +23,7 @@ func insertListTestAutopilot(t *testing.T, agentID, title string) string {
 		t.Fatalf("failed to insert test autopilot: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM autopilot WHERE id = $1`, id)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM autopilot WHERE id = $1`, id)
 	})
 	return id
 }

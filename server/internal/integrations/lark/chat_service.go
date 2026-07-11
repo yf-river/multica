@@ -130,7 +130,7 @@ func (s *chatSessionService) createSessionAndBinding(ctx context.Context, p Ensu
 	if err != nil {
 		return pgtype.UUID{}, fmt.Errorf("begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	qtx := s.queries.WithTx(tx)
 
 	session, err := qtx.CreateChatSession(ctx, db.CreateChatSessionParams{
@@ -195,7 +195,7 @@ func (s *chatSessionService) AppendUserMessage(ctx context.Context, p AppendUser
 	if err != nil {
 		return AppendResult{}, fmt.Errorf("begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	qtx := s.queries.WithTx(tx)
 
 	// Parse the command from the user's OWN typed text (CommandBody),

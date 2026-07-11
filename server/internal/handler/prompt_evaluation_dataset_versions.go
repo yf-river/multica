@@ -62,7 +62,7 @@ func (h *Handler) CreatePromptEvaluationDatasetFromTraces(w http.ResponseWriter,
 		writeError(w, http.StatusInternalServerError, "failed to start trace dataset import transaction")
 		return
 	}
-	defer tx.Rollback(r.Context())
+	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 	cases := make([]PromptEvaluationCaseResponse, 0, len(traceEvents))
 	traceResp := make([]TaskTraceEventResponse, 0, len(traceEvents))
@@ -242,7 +242,7 @@ func (h *Handler) CreatePromptEvaluationDatasetVersion(w http.ResponseWriter, r 
 		writeError(w, http.StatusInternalServerError, "failed to start dataset version transaction")
 		return
 	}
-	defer tx.Rollback(r.Context())
+	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 	version, err := h.createPromptEvaluationDatasetVersionFromCurrent(r.Context(), qtx, asset, parseUUID(userID), strings.TrimSpace(req.VersionLabel), metadata)
 	if errors.Is(err, errPromptEvaluationDatasetVersionNoRows) {
@@ -474,7 +474,7 @@ func (h *Handler) RestorePromptEvaluationDatasetVersion(w http.ResponseWriter, r
 		writeError(w, http.StatusInternalServerError, "failed to start dataset version restore transaction")
 		return
 	}
-	defer tx.Rollback(r.Context())
+	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 	if err := qtx.DeletePromptEvaluationCasesByAsset(r.Context(), db.DeletePromptEvaluationCasesByAssetParams{
 		WorkspaceID: asset.WorkspaceID,
@@ -699,4 +699,3 @@ func promptEvaluationTraceExpected(event db.TaskTraceEvent, expectedContains []s
 		"状态":   event.Status,
 	}
 }
-

@@ -19,40 +19,6 @@ type mention struct {
 	ID   string // user_id, agent_id, issue_id, or "all"
 }
 
-// statusLabels maps DB status values to human-readable labels for notifications.
-var statusLabels = map[string]string{
-	"backlog":     "Backlog",
-	"todo":        "Todo",
-	"in_progress": "In Progress",
-	"in_review":   "In Review",
-	"done":        "Done",
-	"blocked":     "Blocked",
-	"cancelled":   "Cancelled",
-}
-
-// priorityLabels maps DB priority values to human-readable labels for notifications.
-var priorityLabels = map[string]string{
-	"urgent": "Urgent",
-	"high":   "High",
-	"medium": "Medium",
-	"low":    "Low",
-	"none":   "No priority",
-}
-
-func statusLabel(s string) string {
-	if l, ok := statusLabels[s]; ok {
-		return l
-	}
-	return s
-}
-
-func priorityLabel(p string) string {
-	if l, ok := priorityLabels[p]; ok {
-		return l
-	}
-	return p
-}
-
 var emptyDetails = []byte("{}")
 
 // parseMentions extracts mentions from markdown content.
@@ -563,14 +529,6 @@ func newNotificationEventCollector() *notificationEventCollector {
 	return collector
 }
 
-func consumeIssueCreatedNotifications(ctx context.Context, queries *db.Queries, event events.Event) ([]events.Event, error) {
-	payload, exists, err := loadIssueProjection(ctx, queries, event, "issue-created")
-	if err != nil || !exists {
-		return nil, err
-	}
-	return projectIssueCreatedNotifications(ctx, queries, event, payload)
-}
-
 func projectIssueCreatedNotifications(ctx context.Context, queries *db.Queries, event events.Event, payload issueEventPayload) ([]events.Event, error) {
 	issue := payload.Issue
 	collector := newNotificationEventCollector()
@@ -592,14 +550,6 @@ func projectIssueCreatedNotifications(ctx context.Context, queries *db.Queries, 
 		}
 	}
 	return collector.events, nil
-}
-
-func consumeIssueUpdatedNotifications(ctx context.Context, queries *db.Queries, event events.Event) ([]events.Event, error) {
-	payload, exists, err := loadIssueProjection(ctx, queries, event, "issue-updated")
-	if err != nil || !exists {
-		return nil, err
-	}
-	return projectIssueUpdatedNotifications(ctx, queries, event, payload)
 }
 
 func projectIssueUpdatedNotifications(ctx context.Context, queries *db.Queries, event events.Event, payload issueEventPayload) ([]events.Event, error) {
@@ -698,17 +648,6 @@ func projectIssueUpdatedNotifications(ctx context.Context, queries *db.Queries, 
 		}
 	}
 	return collector.events, nil
-}
-
-func consumeCommentCreatedNotifications(ctx context.Context, queries *db.Queries, event events.Event) ([]events.Event, error) {
-	payload, exists, err := loadCommentProjection(ctx, queries, event)
-	if err != nil || !exists {
-		return nil, err
-	}
-	if payload.Comment.AuthorType == "system" {
-		return nil, nil
-	}
-	return projectCommentCreatedNotifications(ctx, queries, event, payload)
 }
 
 func projectCommentCreatedNotifications(ctx context.Context, queries *db.Queries, event events.Event, payload commentEventPayload) ([]events.Event, error) {

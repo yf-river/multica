@@ -279,8 +279,8 @@ func createCascadeFixtureRuntime(t *testing.T, ctx context.Context, name string)
 		// Best-effort cleanup. The cascade endpoint deletes the runtime;
 		// these statements only matter when the test failed before the
 		// cascade ran.
-		testPool.Exec(context.Background(), `DELETE FROM agent WHERE runtime_id = $1`, runtimeID)
-		testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
+		mustExec(t, context.Background(), `DELETE FROM agent WHERE runtime_id = $1`, runtimeID)
+		mustExec(t, context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
 	})
 	return runtimeID
 }
@@ -299,7 +299,7 @@ func createCascadeFixtureAgent(t *testing.T, ctx context.Context, runtimeID, nam
 		t.Fatalf("insert cascade fixture agent: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, agentID)
+		mustExec(t, context.Background(), `DELETE FROM agent WHERE id = $1`, agentID)
 	})
 	return agentID
 }

@@ -71,7 +71,9 @@ func TestEnsureDirSymlink_ReplacesWrongTarget(t *testing.T) {
 	newSrc := filepath.Join(dir, "new")
 	dst := filepath.Join(dir, "link")
 
-	os.MkdirAll(oldSrc, 0o755)
+	if err := os.MkdirAll(oldSrc, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Symlink(oldSrc, dst); err != nil {
 		if runtime.GOOS == "windows" {
 			t.Skipf("directory symlink unavailable on this Windows session: %v", err)
@@ -92,7 +94,9 @@ func TestEnsureDirSymlink_SkipsExistingRegularDir(t *testing.T) {
 
 	src := filepath.Join(dir, "shared")
 	dst := filepath.Join(dir, "existing")
-	os.MkdirAll(dst, 0o755)
+	if err := os.MkdirAll(dst, 0o755); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := ensureDirSymlink(src, dst); err != nil {
 		t.Fatalf("ensureDirSymlink: %v", err)
@@ -127,8 +131,12 @@ func TestEnsureSymlink_ReplacesStaleRegularFile(t *testing.T) {
 
 	src := filepath.Join(dir, "source.json")
 	dst := filepath.Join(dir, "existing.json")
-	os.WriteFile(src, []byte("new"), 0o644)
-	os.WriteFile(dst, []byte("old"), 0o644)
+	if err := os.WriteFile(src, []byte("new"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(dst, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	// Regression for issue #2081: a regular file at dst (e.g. left over from
 	// the Windows copy fallback in createFileLink) must be replaced so the
@@ -155,13 +163,17 @@ func TestEnsureSymlink_RefreshesAfterCopyFallbackThenSrcChange(t *testing.T) {
 	dst := filepath.Join(dir, "task-auth.json")
 
 	// Simulate the Windows copy fallback: first link is a copy of v1.
-	os.WriteFile(src, []byte(`{"refresh_token":"v1"}`), 0o644)
+	if err := os.WriteFile(src, []byte(`{"refresh_token":"v1"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if err := copyFile(src, dst); err != nil {
 		t.Fatalf("seed copy fallback: %v", err)
 	}
 
 	// Shared source rotates to v2 (e.g. Codex Desktop refreshed the token).
-	os.WriteFile(src, []byte(`{"refresh_token":"v2"}`), 0o644)
+	if err := os.WriteFile(src, []byte(`{"refresh_token":"v2"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	// Reuse path runs ensureSymlink again — expected to refresh dst from src.
 	if err := ensureSymlink(src, dst); err != nil {
@@ -183,8 +195,12 @@ func TestCreateDirLink(t *testing.T) {
 
 	src := filepath.Join(dir, "src")
 	dst := filepath.Join(dir, "dst")
-	os.MkdirAll(src, 0o755)
-	os.WriteFile(filepath.Join(src, "test.txt"), []byte("hello"), 0o644)
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "test.txt"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := createDirLink(src, dst); err != nil {
 		t.Fatalf("createDirLink: %v", err)
@@ -206,7 +222,9 @@ func TestCreateFileLink(t *testing.T) {
 
 	src := filepath.Join(dir, "source.json")
 	dst := filepath.Join(dir, "link.json")
-	os.WriteFile(src, []byte(`{"key":"value"}`), 0o644)
+	if err := os.WriteFile(src, []byte(`{"key":"value"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := createFileLink(src, dst); err != nil {
 		t.Fatalf("createFileLink: %v", err)
@@ -227,7 +245,9 @@ func TestCopyFile(t *testing.T) {
 
 	src := filepath.Join(dir, "src.txt")
 	dst := filepath.Join(dir, "dst.txt")
-	os.WriteFile(src, []byte("content"), 0o644)
+	if err := os.WriteFile(src, []byte("content"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := copyFile(src, dst); err != nil {
 		t.Fatalf("copyFile: %v", err)

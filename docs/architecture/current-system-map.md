@@ -994,12 +994,12 @@ written to the generated outputs.
 
 | Kind | Source count | Representative evidence |
 | --- | --- | --- |
-| filesystem | 45 | `server/cmd/migrate/main.go`, `server/cmd/multica/cmd_agent.go`, `server/cmd/multica/cmd_attachment.go`, `server/cmd/multica/cmd_daemon_windows.go`, `server/cmd/multica/cmd_daemon.go`, `server/cmd/multica/cmd_issue_comments.go`, `server/cmd/multica/cmd_issue_pull_request.go`, `server/cmd/multica/cmd_issue.go` |
+| filesystem | 44 | `server/cmd/migrate/main.go`, `server/cmd/multica/cmd_agent.go`, `server/cmd/multica/cmd_attachment.go`, `server/cmd/multica/cmd_daemon_windows.go`, `server/cmd/multica/cmd_daemon.go`, `server/cmd/multica/cmd_issue_comments.go`, `server/cmd/multica/cmd_issue_pull_request.go`, `server/cmd/multica/cmd_issue.go` |
 | object-storage | 1 | `server/internal/storage/s3.go` |
 | outbound-http | 17 | `server/cmd/multica/cmd_daemon.go`, `server/cmd/multica/cmd_setup.go`, `server/internal/analytics/posthog.go`, `server/internal/auth/cloud_pat.go`, `server/internal/cli/client.go`, `server/internal/cli/update.go`, `server/internal/daemon/client.go`, `server/internal/daemon/task_artifacts.go` |
 | postgresql | 126 | `server/cmd/backfill_codex_usage_cache/main.go`, `server/cmd/migrate/main.go`, `server/cmd/server/activity_listeners.go`, `server/cmd/server/autopilot_failure_monitor.go`, `server/cmd/server/autopilot_scheduler.go`, `server/cmd/server/chat_projection.go`, `server/cmd/server/comment_projection.go`, `server/cmd/server/dbstats.go` |
 | redis | 15 | `server/cmd/server/main.go`, `server/cmd/server/router.go`, `server/internal/auth/cloud_pat.go`, `server/internal/auth/daemon_token_cache.go`, `server/internal/auth/membership_cache.go`, `server/internal/auth/pat_cache.go`, `server/internal/handler/runtime_liveness_store.go`, `server/internal/handler/runtime_local_skills_redis_store.go` |
-| subprocess | 31 | `server/cmd/multica/cmd_auth.go`, `server/cmd/multica/cmd_daemon_unix.go`, `server/cmd/multica/cmd_daemon.go`, `server/internal/cli/update.go`, `server/internal/daemon/config.go`, `server/internal/daemon/execenv/codex_home_link_windows.go`, `server/internal/daemon/execenv/git.go`, `server/internal/daemon/execenv/openclaw_config.go` |
+| subprocess | 29 | `server/cmd/multica/cmd_auth.go`, `server/cmd/multica/cmd_daemon_unix.go`, `server/cmd/multica/cmd_daemon.go`, `server/internal/cli/update.go`, `server/internal/daemon/config.go`, `server/internal/daemon/execenv/codex_home_link_windows.go`, `server/internal/daemon/execenv/openclaw_config.go`, `server/internal/daemon/gc.go` |
 | websocket | 4 | `server/internal/daemon/wakeup.go`, `server/internal/daemonws/hub.go`, `server/internal/integrations/lark/ws_connector.go`, `server/internal/realtime/hub.go` |
 
 ### Manually identified external systems
@@ -1017,7 +1017,7 @@ written to the generated outputs.
 | public-skill-registries | ClawHub and skills.sh REST/file APIs | — | `server/internal/handler/skill_import_clawhub.go`, `server/internal/handler/skill_import.go` | Skill search/import accepts current ClawHub and skills.sh sources and downloads their metadata and files. |
 | redis | realtime relay, coordination, rate limiting, and caches | `REALTIME_RELAY_MODE`, `REDIS_URL` | `server/cmd/server/main.go`, `server/internal/realtime/redis_relay.go`, `server/internal/realtime/sharded_stream_relay.go` | Redis is optional for some single-process behavior but required for coordinated multi-instance relay and shared limits. |
 | tapd | REST API | `TAPD_ACCESS_TOKEN`, `TAPD_API_BASE_URL` | `server/internal/handler/external_credential_profile.go`, `server/internal/handler/issue_source_fetch.go` | TAPD issue source reads use credential profiles or the current deployment environment boundary. |
-| user-git-remotes | git subprocess network and local worktrees | — | `server/internal/daemon/execenv/git.go`, `server/internal/daemon/repocache/cache.go`, `server/internal/handler/prompt_evaluation_skill_build.go` | Daemon repository caches and exec environments fetch user-configured remotes; evaluation skill workflows run git only against validated local worktrees. |
+| user-git-remotes | git subprocess network and local worktrees | — | `server/internal/daemon/repocache/cache.go`, `server/internal/handler/prompt_evaluation_skill_build.go` | Daemon repository caches fetch user-configured remotes; evaluation skill workflows run git only against validated local worktrees. |
 
 ## Static-analysis limits and manual review points
 

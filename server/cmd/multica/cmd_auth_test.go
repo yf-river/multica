@@ -10,9 +10,9 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	os.Unsetenv("MULTICA_AGENT_ID")
-	os.Unsetenv("MULTICA_TASK_ID")
-	os.Unsetenv("MULTICA_TOKEN")
+	_ = os.Unsetenv("MULTICA_AGENT_ID")
+	_ = os.Unsetenv("MULTICA_TASK_ID")
+	_ = os.Unsetenv("MULTICA_TOKEN")
 	os.Exit(m.Run())
 }
 

@@ -26,7 +26,7 @@ func TestSquadPersonalVisibility_IsCreatorOnlyForPlainMembers(t *testing.T) {
 		t.Fatalf("create personal squad: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
+		mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
 	})
 
 	listW := httptest.NewRecorder()
@@ -94,6 +94,6 @@ func TestCreateSquad_MemberCanCreatePersonalSquad(t *testing.T) {
 		t.Fatalf("created scope = %q, want personal", created.Scope)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, created.ID)
+		mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, created.ID)
 	})
 }

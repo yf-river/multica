@@ -502,9 +502,10 @@ func (s *RegistrationService) runPolling(sess *registrationSession) {
 			return
 		case res.Err != nil:
 			reason := RegistrationReasonProtocol
-			if res.Err.Code == "access_denied" {
+			switch res.Err.Code {
+			case "access_denied":
 				reason = RegistrationReasonAccessDenied
-			} else if res.Err.Code == "expired_token" {
+			case "expired_token":
 				reason = RegistrationReasonExpired
 			}
 			s.cfg.Logger.Info("lark registration: terminal error",
@@ -560,7 +561,7 @@ func (s *RegistrationService) finishSuccess(ctx context.Context, sess *registrat
 		sess.markError(RegistrationReasonInternalError, err.Error(), s.gcDeadline())
 		return
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	qtx := s.queries.WithTx(tx)
 
 	inst, err := qtx.UpsertLarkInstallation(ctx, db.UpsertLarkInstallationParams{

@@ -275,7 +275,7 @@ func (d *Dispatcher) deliver(ctx context.Context, eventID pgtype.UUID, event eve
 	if err != nil {
 		return fmt.Errorf("begin consumer transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	queries := d.queries.WithTx(tx)
 
 	delivered, err := queries.HasDomainEventDelivery(ctx, db.HasDomainEventDeliveryParams{

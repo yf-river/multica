@@ -76,7 +76,7 @@ func (h *Handler) createSkillWithFiles(ctx context.Context, input skillCreateInp
 	if err != nil {
 		return SkillWithFilesResponse{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	qtx := h.Queries.WithTx(tx)
 
@@ -143,7 +143,7 @@ func (h *Handler) overwriteSkillWithFiles(ctx context.Context, input skillOverwr
 	if err != nil {
 		return SkillWithFilesResponse{}, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	qtx := h.Queries.WithTx(tx)
 

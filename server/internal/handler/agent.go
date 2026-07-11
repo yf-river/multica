@@ -79,7 +79,9 @@ const runtimeConfigGatewayTokenMask = "***"
 func agentToResponse(a db.Agent) AgentResponse {
 	var rc any
 	if a.RuntimeConfig != nil {
-		json.Unmarshal(a.RuntimeConfig, &rc)
+		if err := json.Unmarshal(a.RuntimeConfig, &rc); err != nil {
+			slog.Warn("decode agent runtime config failed", "agent_id", uuidToString(a.ID), "error", err)
+		}
 	}
 	if rc == nil {
 		rc = map[string]any{}
@@ -431,7 +433,9 @@ type TaskAgentData struct {
 func taskToResponse(t db.AgentTaskQueue, workspaceID string) AgentTaskResponse {
 	var result any
 	if t.Result != nil {
-		json.Unmarshal(t.Result, &result)
+		if err := json.Unmarshal(t.Result, &result); err != nil {
+			slog.Warn("decode agent task result failed", "task_id", uuidToString(t.ID), "error", err)
+		}
 	}
 	failureReason := ""
 	if t.FailureReason.Valid {
@@ -1379,7 +1383,7 @@ func (h *Handler) ArchiveAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to archive agent")
 		return
 	}
-	defer tx.Rollback(r.Context())
+	defer func() { _ = tx.Rollback(r.Context()) }()
 	queries := h.Queries.WithTx(tx)
 	archived, err := queries.ArchiveAgent(r.Context(), db.ArchiveAgentParams{
 		ID:         agent.ID,

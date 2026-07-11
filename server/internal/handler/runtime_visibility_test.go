@@ -80,7 +80,7 @@ func runtimeVisibilityFixture(t *testing.T) (runtimeID, runtimeOwnerID, plainMem
 		t.Fatalf("create runtime owner user: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(),
+		mustExec(t, context.Background(),
 			`DELETE FROM "user" WHERE account = 'runtime-owner@multica.test'`)
 	})
 
@@ -99,7 +99,7 @@ func runtimeVisibilityFixture(t *testing.T) (runtimeID, runtimeOwnerID, plainMem
 		t.Fatalf("create plain member user: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(),
+		mustExec(t, context.Background(),
 			`DELETE FROM "user" WHERE account = 'plain-runtime-member@multica.test'`)
 	})
 
@@ -121,7 +121,7 @@ func runtimeVisibilityFixture(t *testing.T) (runtimeID, runtimeOwnerID, plainMem
 		t.Fatalf("create runtime: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(),
+		mustExec(t, context.Background(),
 			`DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
 	})
 
@@ -141,7 +141,7 @@ func TestCreateAgent_RequiresPersonalRuntimeOwnerMatch(t *testing.T) {
 	runtimeID, runtimeOwnerID, plainMemberID := runtimeVisibilityFixture(t)
 
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(),
+		mustExec(t, context.Background(),
 			`DELETE FROM agent WHERE workspace_id = $1 AND name LIKE 'runtime-scope-test-%'`,
 			testWorkspaceID)
 	})
@@ -196,7 +196,7 @@ func TestCreateAgent_AllowsWorkspaceRuntimeForPlainMember(t *testing.T) {
 	}
 
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(),
+		mustExec(t, context.Background(),
 			`DELETE FROM agent WHERE workspace_id = $1 AND name = 'runtime-scope-test-workspace-runtime'`,
 			testWorkspaceID)
 	})
@@ -241,7 +241,7 @@ func TestUpdateAgent_RejectsRebindToPersonalRuntime(t *testing.T) {
 		t.Fatalf("create workspace runtime: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, workspaceRuntimeID)
+		mustExec(t, context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, workspaceRuntimeID)
 	})
 
 	var agentID string
@@ -258,7 +258,7 @@ func TestUpdateAgent_RejectsRebindToPersonalRuntime(t *testing.T) {
 		t.Fatalf("create agent on workspace runtime: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, agentID)
+		mustExec(t, context.Background(), `DELETE FROM agent WHERE id = $1`, agentID)
 	})
 
 	body := map[string]any{

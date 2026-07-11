@@ -21,7 +21,7 @@ func fetchTimeline(t *testing.T, issueID string) ([]TimelineEntry, int) {
 	testHandler.ListTimeline(w, req)
 	var entries []TimelineEntry
 	if w.Code == http.StatusOK {
-		json.NewDecoder(w.Body).Decode(&entries)
+		_ = json.NewDecoder(w.Body).Decode(&entries)
 	}
 	return entries, w.Code
 }
@@ -40,12 +40,12 @@ func createIssueForTimeline(t *testing.T, title string) string {
 		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	var issue IssueResponse
-	json.NewDecoder(w.Body).Decode(&issue)
+	_ = json.NewDecoder(w.Body).Decode(&issue)
 	t.Cleanup(func() {
 		ctx := context.Background()
-		testPool.Exec(ctx, `DELETE FROM activity_log WHERE issue_id = $1`, issue.ID)
-		testPool.Exec(ctx, `DELETE FROM comment WHERE issue_id = $1`, issue.ID)
-		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issue.ID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM activity_log WHERE issue_id = $1`, issue.ID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM comment WHERE issue_id = $1`, issue.ID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issue.ID)
 	})
 	return issue.ID
 }
@@ -147,7 +147,7 @@ func fetchTimelineWrapped(t *testing.T, issueID, query string) (timelinePaginate
 	testHandler.ListTimeline(w, req)
 	var resp timelinePaginatedResponse
 	if w.Code == http.StatusOK {
-		json.NewDecoder(w.Body).Decode(&resp)
+		_ = json.NewDecoder(w.Body).Decode(&resp)
 	}
 	return resp, w.Code
 }

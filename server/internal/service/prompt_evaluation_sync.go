@@ -841,11 +841,12 @@ func promptEvaluationAgentVerdictFromMap(row map[string]any, fallbackIndex int32
 	}
 	failureReason := firstNonEmptyString(row, "失败原因", "failure_reason", "reason", "error", "问题")
 	if failureReason == "" {
-		if status == "通过" {
+		switch status {
+		case "通过":
 			failureReason = "无"
-		} else if status == "需人工复核" {
+		case "需人工复核":
 			failureReason = "Agent 未给出明确通过/未通过结论"
-		} else {
+		default:
 			failureReason = "Agent 判定未通过"
 		}
 	}

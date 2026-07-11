@@ -36,7 +36,7 @@ func TestCreateIssueAssignedToSquadEnqueuesLeader(t *testing.T) {
 	`, testWorkspaceID, "Trigger Test Squad", leaderID, testUserID).Scan(&squadID); err != nil {
 		t.Fatalf("create squad: %v", err)
 	}
-	defer testPool.Exec(ctx, `DELETE FROM squad WHERE id = $1`, squadID)
+	defer mustExec(t, ctx, `DELETE FROM squad WHERE id = $1`, squadID)
 
 	// Create an issue assigned to the squad.
 	w := httptest.NewRecorder()
@@ -338,7 +338,7 @@ func createStartedSquadSOPRunFixture(t *testing.T, ctx context.Context, opts sta
 	`, testWorkspaceID, opts.agentDescription, testRuntimeID, testUserID).Scan(&agentID); err != nil {
 		t.Fatalf("create agent: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, agentID) })
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM agent WHERE id = $1`, agentID) })
 
 	profile, err := json.Marshal(map[string]any{
 		"profile_key": opts.profileKey,
@@ -359,7 +359,7 @@ func createStartedSquadSOPRunFixture(t *testing.T, ctx context.Context, opts sta
 	`, testWorkspaceID, opts.squadName, agentID, testUserID, string(profile)).Scan(&squadID); err != nil {
 		t.Fatalf("create squad: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID) })
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, squadID) })
 
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
@@ -487,7 +487,7 @@ func TestFailTaskDoesNotCloseSquadSOPRunWhenIssueHasActiveContinuation(t *testin
 		t.Fatalf("create continuation task: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, continuationTaskID)
+		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, continuationTaskID)
 	})
 
 	failW := httptest.NewRecorder()
@@ -734,7 +734,7 @@ func TestWorkspaceObservabilitySummaryFiltersSOPByProject(t *testing.T) {
 	`, testWorkspaceID, "Project Filter Squad", leaderID, testUserID).Scan(&squadID); err != nil {
 		t.Fatalf("create squad: %v", err)
 	}
-	defer testPool.Exec(ctx, `DELETE FROM squad WHERE id = $1`, squadID)
+	defer mustExec(t, ctx, `DELETE FROM squad WHERE id = $1`, squadID)
 
 	var projectA string
 	if err := testPool.QueryRow(ctx, `
@@ -742,7 +742,7 @@ func TestWorkspaceObservabilitySummaryFiltersSOPByProject(t *testing.T) {
 	`, testWorkspaceID, "观测项目 A").Scan(&projectA); err != nil {
 		t.Fatalf("create project A: %v", err)
 	}
-	defer testPool.Exec(ctx, `DELETE FROM project WHERE id = $1`, projectA)
+	defer mustExec(t, ctx, `DELETE FROM project WHERE id = $1`, projectA)
 
 	var projectB string
 	if err := testPool.QueryRow(ctx, `
@@ -750,7 +750,7 @@ func TestWorkspaceObservabilitySummaryFiltersSOPByProject(t *testing.T) {
 	`, testWorkspaceID, "观测项目 B").Scan(&projectB); err != nil {
 		t.Fatalf("create project B: %v", err)
 	}
-	defer testPool.Exec(ctx, `DELETE FROM project WHERE id = $1`, projectB)
+	defer mustExec(t, ctx, `DELETE FROM project WHERE id = $1`, projectB)
 
 	createProjectIssue := func(title, projectID string) string {
 		t.Helper()

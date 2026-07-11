@@ -33,7 +33,7 @@ func inboxItemsForRecipient(t *testing.T, queries *db.Queries, recipientID strin
 // cleanupInboxForIssue deletes all inbox items related to a given issue.
 func cleanupInboxForIssue(t *testing.T, issueID string) {
 	t.Helper()
-	testPool.Exec(context.Background(), `DELETE FROM inbox_item WHERE issue_id = $1`, issueID)
+	_, _ = testPool.Exec(context.Background(), `DELETE FROM inbox_item WHERE issue_id = $1`, issueID)
 }
 
 func inboxItemCountForIssue(t *testing.T, issueID string) int {

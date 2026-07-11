@@ -11,7 +11,7 @@ func TestEditCommentTriggers(t *testing.T) {
 	t.Cleanup(func() {
 		clearTasks(t, issueID)
 		resp := authRequest(t, "DELETE", "/api/issues/"+issueID, nil)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	})
 
 	t.Run("edit adds agent mention enqueues task", func(t *testing.T) {
@@ -73,7 +73,7 @@ func TestEditCommentTriggers(t *testing.T) {
 		t.Cleanup(func() {
 			clearTasks(t, assignedIssue)
 			resp := authRequest(t, "DELETE", "/api/issues/"+assignedIssue, nil)
-			resp.Body.Close()
+			_ = resp.Body.Close()
 		})
 		clearTasks(t, assignedIssue)
 

@@ -41,7 +41,7 @@ func TestPostJSON(t *testing.T) {
 			}
 
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(respBody{ID: "123"})
+			_ = json.NewEncoder(w).Encode(respBody{ID: "123"})
 		}))
 		defer srv.Close()
 
@@ -91,7 +91,7 @@ func TestPostJSON(t *testing.T) {
 	t.Run("error status", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusBadRequest)
-			io.WriteString(w, "bad request")
+			_, _ = io.WriteString(w, "bad request")
 		}))
 		defer srv.Close()
 
@@ -130,7 +130,7 @@ func TestPostJSON(t *testing.T) {
 				t.Errorf("expected X-Task-ID task-456, got %s", task)
 			}
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(respBody{ID: "456"})
+			_ = json.NewEncoder(w).Encode(respBody{ID: "456"})
 		}))
 		defer srv.Close()
 
@@ -204,7 +204,7 @@ func TestDownloadFile(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			gotPath = r.URL.Path
 			gotAuth = r.Header.Get("Authorization")
-			w.Write([]byte("hello"))
+			_, _ = w.Write([]byte("hello"))
 		}))
 		defer srv.Close()
 
@@ -228,7 +228,7 @@ func TestDownloadFile(t *testing.T) {
 		var gotAuth string
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			gotAuth = r.Header.Get("Authorization")
-			w.Write([]byte("signed-payload"))
+			_, _ = w.Write([]byte("signed-payload"))
 		}))
 		defer srv.Close()
 
@@ -256,7 +256,7 @@ func TestDownloadFile(t *testing.T) {
 	t.Run("non-2xx status returns an error with the response body", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNotFound)
-			io.WriteString(w, "not found")
+			_, _ = io.WriteString(w, "not found")
 		}))
 		defer srv.Close()
 
@@ -282,7 +282,7 @@ func TestUploadFileWithURL(t *testing.T) {
 			if err != nil {
 				t.Fatalf("missing file field: %v", err)
 			}
-			defer file.Close()
+			defer func() { _ = file.Close() }()
 
 			data, _ := io.ReadAll(file)
 			if string(data) != "hello" {
@@ -301,7 +301,7 @@ func TestUploadFileWithURL(t *testing.T) {
 			}
 
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(AttachmentResponse{
+			_ = json.NewEncoder(w).Encode(AttachmentResponse{
 				ID:        "att-123",
 				URL:       "https://cdn.example.com/file.txt",
 				Filename:  "test.txt",
@@ -326,7 +326,7 @@ func TestUploadFileWithURL(t *testing.T) {
 	t.Run("error status", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusBadRequest)
-			io.WriteString(w, "bad request")
+			_, _ = io.WriteString(w, "bad request")
 		}))
 		defer srv.Close()
 
@@ -347,7 +347,7 @@ func TestUploadFileWithURL(t *testing.T) {
 	t.Run("missing id in response succeeds (fallback path)", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]string{"url": "https://example.com"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"url": "https://example.com"})
 		}))
 		defer srv.Close()
 
@@ -369,7 +369,7 @@ func TestUploadFileWithURL(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			gotWorkspace = r.Header.Get("X-Workspace-ID")
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(AttachmentResponse{ID: "att-1", URL: "https://example.com"})
+			_ = json.NewEncoder(w).Encode(AttachmentResponse{ID: "att-1", URL: "https://example.com"})
 		}))
 		defer srv.Close()
 
@@ -386,7 +386,7 @@ func TestUploadFileWithURL(t *testing.T) {
 	t.Run("missing url in response", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(AttachmentResponse{ID: "att-123"})
+			_ = json.NewEncoder(w).Encode(AttachmentResponse{ID: "att-123"})
 		}))
 		defer srv.Close()
 

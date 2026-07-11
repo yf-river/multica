@@ -20,8 +20,8 @@ func installAutopilotSubscriberInsertFailure(t *testing.T) {
 	functionName := fmt.Sprintf("autopilot_subscriber_fail_fn_%d", suffix)
 	triggerName := fmt.Sprintf("autopilot_subscriber_fail_%d", suffix)
 	t.Cleanup(func() {
-		testPool.Exec(ctx, fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON autopilot_subscriber`, triggerName))
-		testPool.Exec(ctx, fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, functionName))
+		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON autopilot_subscriber`, triggerName))
+		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, functionName))
 	})
 
 	if _, err := testPool.Exec(ctx, fmt.Sprintf(`
@@ -75,7 +75,7 @@ func createDispatchedAutopilotIssue(t *testing.T, ctx context.Context, autopilot
 		t.Fatalf("decode autopilot: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM autopilot WHERE id = $1`, autopilot.ID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM autopilot WHERE id = $1`, autopilot.ID)
 	})
 
 	queries := db.New(testPool)
@@ -105,9 +105,9 @@ func createDispatchedAutopilotIssue(t *testing.T, ctx context.Context, autopilot
 		t.Fatalf("autopilot durable issue-created events = %d, want 1", durableEventCount)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM inbox_item WHERE issue_id = $1`, issueID)
-		testPool.Exec(context.Background(), `DELETE FROM domain_event_outbox WHERE stream_key = 'issue:' || $1`, issueID)
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM inbox_item WHERE issue_id = $1`, issueID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM domain_event_outbox WHERE stream_key = 'issue:' || $1`, issueID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
 	})
 
 	return dispatchedAutopilotIssueFixture{
@@ -124,7 +124,7 @@ func TestCreateAutopilotPersistsMemberSubscribers(t *testing.T) {
 	var autopilotID string
 	defer func() {
 		if autopilotID != "" {
-			testPool.Exec(ctx, `DELETE FROM autopilot WHERE id = $1`, autopilotID)
+			_, _ = testPool.Exec(ctx, `DELETE FROM autopilot WHERE id = $1`, autopilotID)
 		}
 	}()
 
@@ -266,7 +266,7 @@ func TestUpdateAutopilotFullReplaceSubscribers(t *testing.T) {
 	var autopilotID string
 	defer func() {
 		if autopilotID != "" {
-			testPool.Exec(ctx, `DELETE FROM autopilot WHERE id = $1`, autopilotID)
+			_, _ = testPool.Exec(ctx, `DELETE FROM autopilot WHERE id = $1`, autopilotID)
 		}
 	}()
 
@@ -328,7 +328,7 @@ func TestUpdateAutopilotRollsBackWhenSubscriberInsertFails(t *testing.T) {
 	var autopilotID string
 	defer func() {
 		if autopilotID != "" {
-			testPool.Exec(ctx, `DELETE FROM autopilot WHERE id = $1`, autopilotID)
+			_, _ = testPool.Exec(ctx, `DELETE FROM autopilot WHERE id = $1`, autopilotID)
 		}
 	}()
 
@@ -396,7 +396,7 @@ func TestUpdateAutopilotPreservesSubscribersWhenOmitted(t *testing.T) {
 	var autopilotID string
 	defer func() {
 		if autopilotID != "" {
-			testPool.Exec(ctx, `DELETE FROM autopilot WHERE id = $1`, autopilotID)
+			_, _ = testPool.Exec(ctx, `DELETE FROM autopilot WHERE id = $1`, autopilotID)
 		}
 	}()
 
@@ -543,8 +543,8 @@ func TestDeleteAutopilotRemovesSubscribers(t *testing.T) {
 	var autopilotID string
 	defer func() {
 		if autopilotID != "" {
-			testPool.Exec(ctx, `DELETE FROM autopilot_subscriber WHERE autopilot_id = $1`, autopilotID)
-			testPool.Exec(ctx, `DELETE FROM autopilot WHERE id = $1`, autopilotID)
+			_, _ = testPool.Exec(ctx, `DELETE FROM autopilot_subscriber WHERE autopilot_id = $1`, autopilotID)
+			_, _ = testPool.Exec(ctx, `DELETE FROM autopilot WHERE id = $1`, autopilotID)
 		}
 	}()
 

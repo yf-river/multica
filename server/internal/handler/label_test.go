@@ -22,7 +22,9 @@ func TestLabelCRUD(t *testing.T) {
 		t.Fatalf("CreateLabel: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	var created LabelResponse
-	json.NewDecoder(w.Body).Decode(&created)
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode created label response: %v", err)
+	}
 	if created.Name != "bug" || created.Color != "#ef4444" {
 		t.Fatalf("CreateLabel: unexpected payload: %+v", created)
 	}
@@ -68,7 +70,9 @@ func TestLabelCRUD(t *testing.T) {
 		Labels []LabelResponse `json:"labels"`
 		Total  int             `json:"total"`
 	}
-	json.NewDecoder(w.Body).Decode(&listResp)
+	if err := json.NewDecoder(w.Body).Decode(&listResp); err != nil {
+		t.Fatalf("decode label list response: %v", err)
+	}
 	if listResp.Total < 1 {
 		t.Fatalf("ListLabels: expected >= 1 label, got %d", listResp.Total)
 	}
@@ -94,7 +98,9 @@ func TestLabelCRUD(t *testing.T) {
 		t.Fatalf("UpdateLabel: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 	var updated LabelResponse
-	json.NewDecoder(w.Body).Decode(&updated)
+	if err := json.NewDecoder(w.Body).Decode(&updated); err != nil {
+		t.Fatalf("decode updated label response: %v", err)
+	}
 	if updated.Name != "Bug (P0)" || updated.Color != "#b91c1c" {
 		t.Fatalf("UpdateLabel: unexpected payload: %+v", updated)
 	}
@@ -114,7 +120,9 @@ func TestIssueLabelAttachDetach(t *testing.T) {
 		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	var issue IssueResponse
-	json.NewDecoder(w.Body).Decode(&issue)
+	if err := json.NewDecoder(w.Body).Decode(&issue); err != nil {
+		t.Fatalf("decode issue response: %v", err)
+	}
 	issueID := issue.ID
 
 	// Create label
@@ -125,7 +133,9 @@ func TestIssueLabelAttachDetach(t *testing.T) {
 	})
 	testHandler.CreateLabel(w, req)
 	var label LabelResponse
-	json.NewDecoder(w.Body).Decode(&label)
+	if err := json.NewDecoder(w.Body).Decode(&label); err != nil {
+		t.Fatalf("decode label response: %v", err)
+	}
 	labelID := label.ID
 
 	t.Cleanup(func() {
@@ -168,7 +178,9 @@ func TestIssueLabelAttachDetach(t *testing.T) {
 	var issueLabels struct {
 		Labels []LabelResponse `json:"labels"`
 	}
-	json.NewDecoder(w.Body).Decode(&issueLabels)
+	if err := json.NewDecoder(w.Body).Decode(&issueLabels); err != nil {
+		t.Fatalf("decode issue labels response: %v", err)
+	}
 	if len(issueLabels.Labels) != 1 {
 		t.Fatalf("ListLabelsForIssue: expected 1 label, got %d", len(issueLabels.Labels))
 	}
@@ -190,7 +202,9 @@ func TestIssueLabelAttachDetach(t *testing.T) {
 	req = newRequest("GET", "/api/issues/"+issueID+"/labels", nil)
 	req = withURLParam(req, "id", issueID)
 	testHandler.ListLabelsForIssue(w, req)
-	json.NewDecoder(w.Body).Decode(&issueLabels)
+	if err := json.NewDecoder(w.Body).Decode(&issueLabels); err != nil {
+		t.Fatalf("decode issue labels response: %v", err)
+	}
 	if len(issueLabels.Labels) != 0 {
 		t.Fatalf("after Detach: expected 0 labels, got %d", len(issueLabels.Labels))
 	}
@@ -209,7 +223,9 @@ func TestLabelNotFoundAcrossWorkspaces(t *testing.T) {
 		t.Fatalf("CreateLabel: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	var label LabelResponse
-	json.NewDecoder(w.Body).Decode(&label)
+	if err := json.NewDecoder(w.Body).Decode(&label); err != nil {
+		t.Fatalf("decode label response: %v", err)
+	}
 	labelID := label.ID
 
 	t.Cleanup(func() {
@@ -245,7 +261,9 @@ func TestUpdateLabelCrossWorkspace(t *testing.T) {
 		t.Fatalf("CreateLabel: expected 201, got %d", w.Code)
 	}
 	var label LabelResponse
-	json.NewDecoder(w.Body).Decode(&label)
+	if err := json.NewDecoder(w.Body).Decode(&label); err != nil {
+		t.Fatalf("decode label response: %v", err)
+	}
 	labelID := label.ID
 
 	t.Cleanup(func() {
@@ -274,7 +292,9 @@ func TestUpdateLabelCrossWorkspace(t *testing.T) {
 		t.Fatalf("GetLabel after failed cross-workspace PUT: expected 200, got %d", w.Code)
 	}
 	var after LabelResponse
-	json.NewDecoder(w.Body).Decode(&after)
+	if err := json.NewDecoder(w.Body).Decode(&after); err != nil {
+		t.Fatalf("decode updated issue response: %v", err)
+	}
 	if after.Name != "cross-ws-update-test" {
 		t.Fatalf("label name changed despite cross-workspace PUT: got %q", after.Name)
 	}
@@ -297,7 +317,9 @@ func TestAttachLabelCrossWorkspaceLabel(t *testing.T) {
 		t.Fatalf("CreateIssue: expected 201, got %d", w.Code)
 	}
 	var issue IssueResponse
-	json.NewDecoder(w.Body).Decode(&issue)
+	if err := json.NewDecoder(w.Body).Decode(&issue); err != nil {
+		t.Fatalf("decode issue response: %v", err)
+	}
 
 	// Label in a second workspace — insert directly via the pool to avoid
 	// the public API (which would require creating a full second workspace
@@ -333,7 +355,9 @@ func TestAttachLabelCrossWorkspaceLabel(t *testing.T) {
 	var list struct {
 		Labels []LabelResponse `json:"labels"`
 	}
-	json.NewDecoder(w.Body).Decode(&list)
+	if err := json.NewDecoder(w.Body).Decode(&list); err != nil {
+		t.Fatalf("decode label list response: %v", err)
+	}
 	if len(list.Labels) != 0 {
 		t.Fatalf("expected 0 labels on issue, got %d", len(list.Labels))
 	}
@@ -364,7 +388,9 @@ func TestLabelNameTooLong(t *testing.T) {
 		t.Fatalf("CreateLabel 64-char name: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	var created LabelResponse
-	json.NewDecoder(w.Body).Decode(&created)
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode created label response: %v", err)
+	}
 	t.Cleanup(func() {
 		w := httptest.NewRecorder()
 		req := newRequest("DELETE", "/api/labels/"+created.ID, nil)
@@ -399,7 +425,9 @@ func TestColorCaseNormalization(t *testing.T) {
 			t.Fatalf("CreateLabel %q: expected 201, got %d: %s", tc.input, w.Code, w.Body.String())
 		}
 		var got LabelResponse
-		json.NewDecoder(w.Body).Decode(&got)
+		if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
+			t.Fatalf("decode label response: %v", err)
+		}
 		if got.Color != tc.want {
 			t.Errorf("color normalization %q: got %q, want %q", tc.input, got.Color, tc.want)
 		}
@@ -432,7 +460,7 @@ func createOtherTestWorkspace(t *testing.T) string {
 		t.Fatalf("add member to other workspace: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM workspace WHERE id = $1`, wsID)
+		mustExec(t, context.Background(), `DELETE FROM workspace WHERE id = $1`, wsID)
 	})
 	return wsID
 }

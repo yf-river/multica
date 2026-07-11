@@ -83,7 +83,7 @@ func TestQuickCreateIssueParentTrustBoundary(t *testing.T) {
 		t.Fatalf("create local parent issue: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, localParentID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, localParentID)
 	})
 
 	// Foreign-workspace parent — must be rejected.
@@ -94,7 +94,7 @@ func TestQuickCreateIssueParentTrustBoundary(t *testing.T) {
 		t.Fatalf("create foreign user: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, foreignUserID)
+		mustExec(t, context.Background(), `DELETE FROM "user" WHERE id = $1`, foreignUserID)
 	})
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO workspace (name, slug, description, issue_prefix)
@@ -103,7 +103,7 @@ func TestQuickCreateIssueParentTrustBoundary(t *testing.T) {
 		t.Fatalf("create foreign workspace: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM workspace WHERE id = $1`, foreignWorkspaceID)
+		mustExec(t, context.Background(), `DELETE FROM workspace WHERE id = $1`, foreignWorkspaceID)
 	})
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO issue (workspace_id, title, creator_id, creator_type, number)
@@ -116,7 +116,7 @@ func TestQuickCreateIssueParentTrustBoundary(t *testing.T) {
 	// The foreign workspace cleanup above cascades, but the issue row also
 	// needs a direct cleanup in case workspace deletion ordering changes.
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, foreignParentID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, foreignParentID)
 	})
 
 	// Helper for the "must not enqueue" assertions. Each rejection subtest
@@ -153,7 +153,7 @@ func TestQuickCreateIssueParentTrustBoundary(t *testing.T) {
 			t.Fatalf("decode response: %v", err)
 		}
 		t.Cleanup(func() {
-			testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, resp.TaskID)
+			mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, resp.TaskID)
 		})
 
 		// QuickCreateContext.ParentIssueID must contain the resolved UUID —
@@ -315,8 +315,8 @@ func TestQuickCreateIssueTapdWikiCreatesFetchedIssueDirectly(t *testing.T) {
 		t.Fatalf("unexpected response: %+v", resp)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, resp.IssueID)
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, resp.IssueID)
+		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, resp.IssueID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, resp.IssueID)
 	})
 
 	var quickTasksAfter int
@@ -703,8 +703,8 @@ func TestQuickCreateIssueTapdStoryPreviewCreatesFetchedIssueDirectly(t *testing.
 			t.Fatalf("unexpected response: %+v", resp)
 		}
 		t.Cleanup(func() {
-			testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, resp.IssueID)
-			testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, resp.IssueID)
+			mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, resp.IssueID)
+			mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, resp.IssueID)
 		})
 		return resp
 	}

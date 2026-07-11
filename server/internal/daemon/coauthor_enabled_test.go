@@ -18,10 +18,10 @@ import (
 // their historical behavior.
 func TestWorkspaceCoAuthoredByEnabled(t *testing.T) {
 	cases := []struct {
-		name       string
-		register   bool
-		settings   string
-		want       bool
+		name     string
+		register bool
+		settings string
+		want     bool
 	}{
 		{"unknown workspace defaults on", false, "", true},
 		{"registered workspace, nil settings defaults on", true, "", true},
@@ -79,10 +79,10 @@ func TestSyncWorkspacesRefreshesSettingsOnExistingWorkspace(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/workspaces":
-			json.NewEncoder(w).Encode([]WorkspaceInfo{{ID: workspaceID, Name: "ws"}})
+			_ = json.NewEncoder(w).Encode([]WorkspaceInfo{{ID: workspaceID, Name: "ws"}})
 		case "/api/daemon/workspaces/" + workspaceID + "/repos":
 			raw, _ := settingsPayload.Load().(json.RawMessage)
-			json.NewEncoder(w).Encode(WorkspaceReposResponse{
+			_ = json.NewEncoder(w).Encode(WorkspaceReposResponse{
 				WorkspaceID:  workspaceID,
 				Repos:        []RepoData{},
 				ReposVersion: "v1",

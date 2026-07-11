@@ -422,7 +422,7 @@ func (c *RegistrationClient) doForm(ctx context.Context, domain string, form url
 	if err != nil {
 		return fmt.Errorf("registration: http do: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("registration: read body: %w", err)

@@ -41,9 +41,9 @@ func consumeAutopilotRunProjection(ctx context.Context, queries *db.Queries, eve
 		if err := validateIssueProjectionScope(event, payload.Issue); err != nil {
 			return nil, err
 		}
-		issue, exists, err := getIssueForProjection(ctx, queries, payload.Issue)
-		if err != nil || !exists {
-			return nil, err
+		issue, exists, loadErr := getIssueForProjection(ctx, queries, payload.Issue)
+		if loadErr != nil || !exists {
+			return nil, loadErr
 		}
 		// The event snapshot is authoritative for this ordered stream entry;
 		// the row may already have advanced to a later status by delivery time.

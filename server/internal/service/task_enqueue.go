@@ -236,15 +236,6 @@ func (s *TaskService) createSquadSOPRunForLeaderTask(ctx context.Context, querie
 	return nil
 }
 
-func firstSOPStringField(obj map[string]any, keys ...string) string {
-	for _, key := range keys {
-		if v, ok := obj[key].(string); ok && strings.TrimSpace(v) != "" {
-			return strings.TrimSpace(v)
-		}
-	}
-	return ""
-}
-
 func normalizeSquadSOPProfile(raw []byte) []byte {
 	if len(raw) == 0 || string(raw) == "null" {
 		return []byte(`{}`)

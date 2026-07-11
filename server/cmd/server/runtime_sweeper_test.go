@@ -74,10 +74,10 @@ func setupSweeperTestFixture(t *testing.T, taskStatus string) (string, string, s
 func cleanupSweeperFixture(t *testing.T, issueID, agentID string) {
 	t.Helper()
 	ctx := context.Background()
-	testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
-	testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID)
-	testPool.Exec(ctx, `DELETE FROM domain_event_outbox WHERE stream_key = 'issue:' || $1`, issueID)
-	testPool.Exec(ctx, `UPDATE agent SET status = 'idle' WHERE id = $1`, agentID)
+	_, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
+	_, _ = testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID)
+	_, _ = testPool.Exec(ctx, `DELETE FROM domain_event_outbox WHERE stream_key = 'issue:' || $1`, issueID)
+	_, _ = testPool.Exec(ctx, `UPDATE agent SET status = 'idle' WHERE id = $1`, agentID)
 }
 
 func failStaleTasksForTest(t *testing.T, queries *db.Queries, bus *events.Bus, params db.FailStaleTasksParams) []db.AgentTaskQueue {
@@ -118,9 +118,9 @@ func setupStaleRunningIssueFixture(t *testing.T, issueStatus, title string) (str
 		t.Fatalf("failed to create test issue: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
-		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID)
-		testPool.Exec(ctx, `DELETE FROM domain_event_outbox WHERE stream_key = 'issue:' || $1`, issueID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM domain_event_outbox WHERE stream_key = 'issue:' || $1`, issueID)
 	})
 
 	var taskID string
@@ -429,10 +429,10 @@ func TestOfflineRuntimeTaskSweepRetriesAfterRuntimeAlreadyOffline(t *testing.T) 
 		t.Fatalf("create offline-runtime task: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
-		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID)
-		testPool.Exec(ctx, `DELETE FROM domain_event_outbox WHERE stream_key = 'issue:' || $1`, issueID)
-		testPool.Exec(ctx, `DELETE FROM agent WHERE id = $1`, agentID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM domain_event_outbox WHERE stream_key = 'issue:' || $1`, issueID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent WHERE id = $1`, agentID)
 	})
 
 	bus := events.New()
@@ -600,9 +600,9 @@ func TestExpireStaleQueuedTasks(t *testing.T) {
 	oldIssueID := mkIssue("Queued TTL test (old)")
 	freshIssueID := mkIssue("Queued TTL test (fresh)")
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE issue_id IN ($1, $2)`, oldIssueID, freshIssueID)
-		testPool.Exec(ctx, `DELETE FROM issue WHERE id IN ($1, $2)`, oldIssueID, freshIssueID)
-		testPool.Exec(ctx, `DELETE FROM domain_event_outbox WHERE stream_key IN ('issue:' || $1, 'issue:' || $2)`, oldIssueID, freshIssueID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE issue_id IN ($1, $2)`, oldIssueID, freshIssueID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM issue WHERE id IN ($1, $2)`, oldIssueID, freshIssueID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM domain_event_outbox WHERE stream_key IN ('issue:' || $1, 'issue:' || $2)`, oldIssueID, freshIssueID)
 	})
 
 	var oldTaskID, freshTaskID string
@@ -692,9 +692,9 @@ func TestExpireStaleQueuedTasksRespectsBatchLimit(t *testing.T) {
 	var issueIDs []string
 	t.Cleanup(func() {
 		for _, id := range issueIDs {
-			testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, id)
-			testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, id)
-			testPool.Exec(ctx, `DELETE FROM domain_event_outbox WHERE stream_key = 'issue:' || $1`, id)
+			_, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, id)
+			mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, id)
+			mustExec(t, ctx, `DELETE FROM domain_event_outbox WHERE stream_key = 'issue:' || $1`, id)
 		}
 	})
 	for i := 0; i < 5; i++ {

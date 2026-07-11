@@ -26,7 +26,7 @@ var redisTestDatabases = map[int]string{
 func redisTestOptions(rawURL string, database int) (*redis.Options, error) {
 	owner, ok := redisTestDatabases[database]
 	if !ok {
-		return nil, fmt.Errorf("Redis test DB %d is not reserved for a package", database)
+		return nil, fmt.Errorf("redis test DB %d is not reserved for a package", database)
 	}
 	opts, err := redis.ParseURL(rawURL)
 	if err != nil {
@@ -56,7 +56,7 @@ func NewRedisTestClient(t testing.TB, database int) *redis.Client {
 	}
 	t.Cleanup(func() {
 		rdb.FlushDB(context.Background())
-		rdb.Close()
+		_ = rdb.Close()
 	})
 	return rdb
 }

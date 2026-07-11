@@ -26,7 +26,7 @@ func TestListIssues_ScheduledFilter(t *testing.T) {
 	`, testWorkspaceID, fmt.Sprintf("Gantt Scheduled %d", suffix)).Scan(&projectID); err != nil {
 		t.Fatalf("create project: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM project WHERE id = $1`, projectID) })
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM project WHERE id = $1`, projectID) })
 
 	insertIssue := func(title string, startDate, dueDate *time.Time) string {
 		var number int
@@ -44,7 +44,7 @@ func TestListIssues_ScheduledFilter(t *testing.T) {
 		`, testWorkspaceID, title, testUserID, number, projectID, startDate, dueDate).Scan(&id); err != nil {
 			t.Fatalf("create issue %q: %v", title, err)
 		}
-		t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, id) })
+		t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, id) })
 		return id
 	}
 

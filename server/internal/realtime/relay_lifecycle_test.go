@@ -89,7 +89,7 @@ func (r *recordingManagedRelay) BroadcastToWorkspace(string, []byte) {}
 func (r *recordingManagedRelay) Broadcast([]byte)                    {}
 
 func (r *recordingManagedRelay) BroadcastToScope(scopeType, scopeID string, frame []byte) {
-	r.PublishWithID(scopeType, scopeID, "", frame, "")
+	_ = r.PublishWithID(scopeType, scopeID, "", frame, "")
 }
 
 func (r *recordingManagedRelay) SendToUser(userID string, frame []byte, excludeWorkspace ...string) {
@@ -97,7 +97,7 @@ func (r *recordingManagedRelay) SendToUser(userID string, frame []byte, excludeW
 	if len(excludeWorkspace) > 0 {
 		exclude = excludeWorkspace[0]
 	}
-	r.PublishWithID(ScopeUser, userID, exclude, frame, "")
+	_ = r.PublishWithID(ScopeUser, userID, exclude, frame, "")
 }
 
 func (r *recordingManagedRelay) PublishWithID(scopeType, scopeID, exclude string, frame []byte, id string) error {

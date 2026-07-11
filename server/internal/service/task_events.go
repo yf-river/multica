@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
 
 	"github.com/jackc/pgx/v5"
@@ -249,7 +250,9 @@ func (s *TaskService) reconcileCancelledTaskAgents(ctx context.Context, cancelle
 		agents[util.UUIDToString(task.AgentID)] = task.AgentID
 	}
 	for _, agentID := range agents {
-		s.ReconcileAgentStatus(ctx, agentID)
+		if _, err := s.ReconcileAgentStatus(ctx, agentID); err != nil {
+			slog.Warn("reconcile cancelled agent status failed", "agent_id", util.UUIDToString(agentID), "error", err)
+		}
 	}
 }
 

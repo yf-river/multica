@@ -77,8 +77,8 @@ func newOutboxFixture(t *testing.T) outboxFixture {
 		t.Fatalf("insert issue: %v", err)
 	}
 	t.Cleanup(func() {
-		outboxTestPool.Exec(context.Background(), `DELETE FROM workspace WHERE id = $1`, workspaceID)
-		outboxTestPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, userID)
+		_, _ = outboxTestPool.Exec(context.Background(), `DELETE FROM workspace WHERE id = $1`, workspaceID)
+		_, _ = outboxTestPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, userID)
 	})
 	return outboxFixture{
 		queries:     db.New(outboxTestPool),

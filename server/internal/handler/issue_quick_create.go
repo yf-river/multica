@@ -519,9 +519,9 @@ func (h *Handler) applyQuickCreateTAPDSourceSummaryFallback(ctx context.Context,
 		slog.Warn("quick-create TAPD source summary fallback transaction failed", "issue_id", uuidToString(issue.ID), "error", err)
 		return
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	queries := h.Queries.WithTx(tx)
-	updated, err := queries.UpdateIssue(ctx, db.UpdateIssueParams{
+	_, err = queries.UpdateIssue(ctx, db.UpdateIssueParams{
 		ID:            issue.ID,
 		Description:   pgtype.Text{String: description, Valid: true},
 		AssigneeType:  issue.AssigneeType,
@@ -538,7 +538,7 @@ func (h *Handler) applyQuickCreateTAPDSourceSummaryFallback(ctx context.Context,
 		)
 		return
 	}
-	updated, err = queries.SetIssueMetadataKey(ctx, db.SetIssueMetadataKeyParams{
+	updated, err := queries.SetIssueMetadataKey(ctx, db.SetIssueMetadataKeyParams{
 		ID:          issue.ID,
 		WorkspaceID: issue.WorkspaceID,
 		Key:         "source_summary_status",
@@ -613,9 +613,7 @@ func jsonStringBytes(value string) []byte {
 // writeAgentUnavailable returns 422 with a stable error code so the modal
 // can show a "switch agent" hint without parsing the human-readable reason.
 func writeAgentUnavailable(w http.ResponseWriter, reason string) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusUnprocessableEntity)
-	json.NewEncoder(w).Encode(map[string]any{
+	writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
 		"code":   "agent_unavailable",
 		"reason": reason,
 	})

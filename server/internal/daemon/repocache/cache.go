@@ -258,7 +258,9 @@ func gitCloneBare(url, dest string) error {
 
 	if out, err := cmd.CombinedOutput(); err != nil {
 		// Clean up partial clone.
-		os.RemoveAll(dest)
+		if cleanupErr := os.RemoveAll(dest); cleanupErr != nil {
+			return fmt.Errorf("git clone --bare: %s; cleanup partial clone: %v: %w", strings.TrimSpace(string(out)), cleanupErr, err)
+		}
 		return fmt.Errorf("git clone --bare: %s: %w", strings.TrimSpace(string(out)), err)
 	}
 	// `git clone --bare` populates refs/heads/* as a snapshot and defaults to
@@ -266,7 +268,9 @@ func gitCloneBare(url, dest string) error {
 	// remote-tracking layout immediately so subsequent fetches write to
 	// refs/remotes/origin/* and can't conflict with worktree-locked heads.
 	if err := ensureRemoteTrackingLayout(dest); err != nil {
-		os.RemoveAll(dest)
+		if cleanupErr := os.RemoveAll(dest); cleanupErr != nil {
+			return fmt.Errorf("configure fetch refspec: %w; cleanup partial clone: %v", err, cleanupErr)
+		}
 		return fmt.Errorf("configure fetch refspec: %w", err)
 	}
 	return nil
@@ -994,7 +998,7 @@ func excludeFromGit(worktreePath, pattern string) error {
 	if err != nil {
 		return fmt.Errorf("open exclude file: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	if _, err := fmt.Fprintf(f, "\n%s\n", pattern); err != nil {
 		return fmt.Errorf("write exclude pattern: %w", err)

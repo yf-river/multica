@@ -17407,7 +17407,6 @@
           "server/internal/daemon/execenv/codex_user_skills.go",
           "server/internal/daemon/execenv/cursor_mcp.go",
           "server/internal/daemon/execenv/execenv.go",
-          "server/internal/daemon/execenv/git.go",
           "server/internal/daemon/execenv/openclaw_config.go",
           "server/internal/daemon/execenv/runtime_config.go",
           "server/internal/daemon/execenv/sidecar_manifest.go",
@@ -17618,10 +17617,8 @@
           "server/internal/cli/update.go",
           "server/internal/daemon/config.go",
           "server/internal/daemon/execenv/codex_home_link_windows.go",
-          "server/internal/daemon/execenv/git.go",
           "server/internal/daemon/execenv/openclaw_config.go",
           "server/internal/daemon/gc.go",
-          "server/internal/daemon/local_directory.go",
           "server/internal/daemon/repocache/cache.go",
           "server/internal/daemon/task_stream.go",
           "server/internal/handler/prompt_evaluation_skill_build.go",
@@ -17828,11 +17825,10 @@
         "kind": "git subprocess network and local worktrees",
         "environment": [],
         "sources": [
-          "server/internal/daemon/execenv/git.go",
           "server/internal/daemon/repocache/cache.go",
           "server/internal/handler/prompt_evaluation_skill_build.go"
         ],
-        "notes": "Daemon repository caches and exec environments fetch user-configured remotes; evaluation skill workflows run git only against validated local worktrees."
+        "notes": "Daemon repository caches fetch user-configured remotes; evaluation skill workflows run git only against validated local worktrees."
       }
     ]
   },

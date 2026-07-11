@@ -28,7 +28,7 @@ func listActivitiesForIssue(t *testing.T, queries *db.Queries, issueID string) [
 
 func cleanupActivities(t *testing.T, issueID string) {
 	t.Helper()
-	testPool.Exec(context.Background(), `DELETE FROM activity_log WHERE issue_id = $1`, issueID)
+	_, _ = testPool.Exec(context.Background(), `DELETE FROM activity_log WHERE issue_id = $1`, issueID)
 }
 
 type activityIssueTestFixture struct {
@@ -394,7 +394,7 @@ func TestDurableTaskFailedProjectsActivityAndInboxTogether(t *testing.T) {
 		t.Fatalf("insert failed task: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
 	})
 
 	event := events.Event{
@@ -447,7 +447,7 @@ func TestDurableTaskProjectionRejectsStatusMismatch(t *testing.T) {
 		t.Fatalf("insert completed task: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
 	})
 
 	_, err := consumeTaskTerminalIssueProjection(context.Background(), queries, events.Event{

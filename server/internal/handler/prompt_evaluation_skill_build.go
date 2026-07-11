@@ -1023,8 +1023,6 @@ func appendJSONList(existing any, values ...any) []any {
 	if raw, ok := existing.([]any); ok {
 		items = append(items, raw...)
 	}
-	for _, value := range values {
-		items = append(items, value)
-	}
+	items = append(items, values...)
 	return items
 }

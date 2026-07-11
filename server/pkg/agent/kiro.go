@@ -162,7 +162,7 @@ func (b *kiroBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 		defer close(msgCh)
 		defer close(resCh)
 		defer func() {
-			stdin.Close()
+			_ = stdin.Close()
 			_ = cmd.Wait()
 		}()
 

@@ -209,7 +209,7 @@ func createForeignProjectForIssueValidation(t *testing.T, slugSuffix string) (st
 		t.Fatalf("insert foreign workspace: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM workspace WHERE id = $1`, workspaceID)
+		mustExec(t, context.Background(), `DELETE FROM workspace WHERE id = $1`, workspaceID)
 	})
 
 	var projectID string
@@ -243,7 +243,7 @@ func createIssueChainForValidationTest(t *testing.T, count int) []string {
 	}
 	t.Cleanup(func() {
 		for i := len(ids) - 1; i >= 0; i-- {
-			testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, ids[i])
+			mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, ids[i])
 		}
 	})
 	return ids

@@ -47,7 +47,7 @@ func (h *Handler) revokeAndRemoveMember(ctx context.Context, workspaceID, userID
 	if err != nil {
 		return empty, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	qtx := h.Queries.WithTx(tx)
 

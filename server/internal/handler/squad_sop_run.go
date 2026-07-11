@@ -430,7 +430,7 @@ func (h *Handler) RecordSOPStepEvent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to start SOP event transaction")
 		return
 	}
-	defer tx.Rollback(r.Context())
+	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 	run, err = qtx.LockSquadSOPRunInWorkspace(r.Context(), db.LockSquadSOPRunInWorkspaceParams{
 		ID:          runID,

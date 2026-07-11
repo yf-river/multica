@@ -70,6 +70,6 @@ func clearFeedbackForTestUser(t *testing.T) {
 		t.Fatalf("clear feedback: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM feedback WHERE user_id = $1`, parseUUID(testUserID))
+		mustExec(t, context.Background(), `DELETE FROM feedback WHERE user_id = $1`, parseUUID(testUserID))
 	})
 }

@@ -28,7 +28,7 @@ func TestCreateIssue_SquadPrivateLeader_PlainMemberBlocked(t *testing.T) {
 		t.Fatalf("create squad: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
+		mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
 	})
 
 	w := httptest.NewRecorder()
@@ -62,7 +62,7 @@ func TestUpdateIssue_SquadPrivateLeader_PlainMemberBlocked(t *testing.T) {
 		t.Fatalf("create squad: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
+		mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
 	})
 
 	// Create an unassigned issue as workspace owner.
@@ -75,7 +75,7 @@ func TestUpdateIssue_SquadPrivateLeader_PlainMemberBlocked(t *testing.T) {
 		t.Fatalf("create issue: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
 	})
 
 	w := httptest.NewRecorder()
@@ -109,7 +109,7 @@ func TestCreateIssue_SquadPrivateLeader_OwnerAllowed(t *testing.T) {
 		t.Fatalf("create squad: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
+		mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
 	})
 
 	// testUserID is workspace owner — should succeed.
@@ -129,8 +129,8 @@ func TestCreateIssue_SquadPrivateLeader_OwnerAllowed(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, created.ID)
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, created.ID)
+		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, created.ID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, created.ID)
 	})
 }
 
@@ -154,7 +154,7 @@ func TestComment_SquadPrivateLeader_PlainMemberNoEnqueue(t *testing.T) {
 		t.Fatalf("create squad: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
+		mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
 	})
 
 	// Create issue assigned to the squad as workspace owner.
@@ -167,9 +167,9 @@ func TestComment_SquadPrivateLeader_PlainMemberNoEnqueue(t *testing.T) {
 		t.Fatalf("create issue: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
-		testPool.Exec(context.Background(), `DELETE FROM comment WHERE issue_id = $1`, issueID)
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
+		mustExec(t, context.Background(), `DELETE FROM comment WHERE issue_id = $1`, issueID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
 	})
 
 	// Plain member posts a plain comment (not a @mention).
@@ -216,7 +216,7 @@ func TestChildDone_SquadPrivateLeader_PlainMemberNoEnqueue(t *testing.T) {
 		t.Fatalf("create squad: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
+		mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
 	})
 
 	// Create parent issue assigned to the squad (as workspace owner).
@@ -235,14 +235,14 @@ func TestChildDone_SquadPrivateLeader_PlainMemberNoEnqueue(t *testing.T) {
 		t.Fatalf("decode parent: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, parent.ID)
-		testPool.Exec(context.Background(), `DELETE FROM comment WHERE issue_id = $1`, parent.ID)
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE parent_issue_id = $1`, parent.ID)
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, parent.ID)
+		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, parent.ID)
+		mustExec(t, context.Background(), `DELETE FROM comment WHERE issue_id = $1`, parent.ID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE parent_issue_id = $1`, parent.ID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, parent.ID)
 	})
 
 	// Clear any tasks enqueued by the create.
-	testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, parent.ID)
+	mustExec(t, ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, parent.ID)
 
 	// Create a child issue via API (as workspace owner, with member assignee).
 	w = httptest.NewRecorder()
@@ -262,7 +262,7 @@ func TestChildDone_SquadPrivateLeader_PlainMemberNoEnqueue(t *testing.T) {
 		t.Fatalf("decode child: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, child.ID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, child.ID)
 	})
 
 	// Plain member moves child to done.
@@ -310,7 +310,7 @@ func TestComment_SquadPrivateLeader_SquadMemberAgentAllowed(t *testing.T) {
 		t.Fatalf("create squad: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
+		mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
 	})
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO squad_member (squad_id, member_type, member_id, role)
@@ -330,9 +330,9 @@ func TestComment_SquadPrivateLeader_SquadMemberAgentAllowed(t *testing.T) {
 		t.Fatalf("create issue: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
-		testPool.Exec(context.Background(), `DELETE FROM comment WHERE issue_id = $1`, issueID)
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
+		mustExec(t, context.Background(), `DELETE FROM comment WHERE issue_id = $1`, issueID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
 	})
 
 	// Use a completed task to authenticate the agent without classifying this
@@ -347,7 +347,7 @@ func TestComment_SquadPrivateLeader_SquadMemberAgentAllowed(t *testing.T) {
 		t.Fatalf("create agent task: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
 	})
 
 	// Agent posts a comment.

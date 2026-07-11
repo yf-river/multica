@@ -144,9 +144,15 @@ func (d *Daemon) gcWorkspace(ctx context.Context, wsDir string, stats *gcStats) 
 
 	// Remove the workspace directory itself if it's now empty.
 	if cleanedHere > 0 {
-		remaining, _ := os.ReadDir(wsDir)
+		remaining, err := os.ReadDir(wsDir)
+		if err != nil {
+			d.logger.Warn("gc: read workspace directory after cleanup failed", "path", wsDir, "error", err)
+			return
+		}
 		if len(remaining) == 0 {
-			os.Remove(wsDir)
+			if err := os.Remove(wsDir); err != nil {
+				d.logger.Warn("gc: remove empty workspace directory failed", "path", wsDir, "error", err)
+			}
 		}
 	}
 }

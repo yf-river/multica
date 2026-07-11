@@ -31,6 +31,13 @@ var (
 	testWorkspaceID string
 )
 
+func mustExec(t testing.TB, ctx context.Context, query string, args ...any) {
+	t.Helper()
+	if _, err := testPool.Exec(ctx, query, args...); err != nil {
+		t.Fatalf("execute test SQL: %v", err)
+	}
+}
+
 // jwtSecret is resolved at runtime via auth.JWTSecret() so it respects
 // the JWT_SECRET env var (set in .env) and stays in sync with the server.
 
@@ -192,7 +199,7 @@ func authRequestWithHeaders(t *testing.T, method, path string, body any, extraHe
 
 func readJSON(t *testing.T, resp *http.Response, v any) {
 	t.Helper()
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if err := json.NewDecoder(resp.Body).Decode(v); err != nil {
 		t.Fatalf("failed to decode response: %v", err)
 	}
@@ -216,14 +223,16 @@ func TestHealth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("health check failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != 200 {
 		t.Fatalf("expected 200, got %d", resp.StatusCode)
 	}
 
 	var result map[string]string
-	json.NewDecoder(resp.Body).Decode(&result)
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		t.Fatalf("decode health response: %v", err)
+	}
 	if result["status"] != "ok" {
 		t.Fatalf("expected status ok, got %s", result["status"])
 	}
@@ -236,7 +245,7 @@ func TestReadinessEndpoints(t *testing.T) {
 			if err != nil {
 				t.Fatalf("readiness check failed: %v", err)
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			if resp.StatusCode != http.StatusOK {
 				t.Fatalf("expected 200, got %d", resp.StatusCode)
@@ -269,7 +278,7 @@ func TestConfigRouteIsPublic(t *testing.T) {
 	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		t.Fatalf("expected 200, got %d: %s", resp.StatusCode, body)
 	}
 
@@ -298,12 +307,12 @@ func TestAccountPasswordLogin(t *testing.T) {
 				for rows.Next() {
 					var wsID string
 					if rows.Scan(&wsID) == nil {
-						testPool.Exec(ctx, `DELETE FROM workspace WHERE id = $1`, wsID)
+						_, _ = testPool.Exec(ctx, `DELETE FROM workspace WHERE id = $1`, wsID)
 					}
 				}
 			}
 		}
-		testPool.Exec(ctx, `DELETE FROM "user" WHERE account = $1`, account)
+		_, _ = testPool.Exec(ctx, `DELETE FROM "user" WHERE account = $1`, account)
 	})
 
 	body, _ := json.Marshal(map[string]string{"account": account, "password": password})
@@ -313,7 +322,7 @@ func TestAccountPasswordLogin(t *testing.T) {
 	}
 	if resp.StatusCode != 200 {
 		respBody, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		t.Fatalf("login: expected 200, got %d: %s", resp.StatusCode, respBody)
 	}
 
@@ -342,7 +351,7 @@ func TestAccountPasswordLogin(t *testing.T) {
 	if meResp.StatusCode != 200 {
 		t.Fatalf("getMe: expected 200, got %d", meResp.StatusCode)
 	}
-	meResp.Body.Close()
+	_ = meResp.Body.Close()
 }
 
 func TestAccountPasswordLoginNewUserHasNoWorkspace(t *testing.T) {
@@ -350,10 +359,10 @@ func TestAccountPasswordLoginNewUserHasNoWorkspace(t *testing.T) {
 	ctx := context.Background()
 
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM "user" WHERE account = $1`, account)
+		_, _ = testPool.Exec(ctx, `DELETE FROM "user" WHERE account = $1`, account)
 	})
 
-	testPool.Exec(ctx, `DELETE FROM "user" WHERE account = $1`, account)
+	_, _ = testPool.Exec(ctx, `DELETE FROM "user" WHERE account = $1`, account)
 
 	body, _ := json.Marshal(map[string]string{"account": account, "password": "CorrectPass1!"})
 	resp, err := http.Post(testServer.URL+"/auth/login", "application/json", bytes.NewReader(body))
@@ -376,7 +385,7 @@ func TestAccountPasswordLoginNewUserHasNoWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listWorkspaces failed: %v", err)
 	}
-	defer workspacesResp.Body.Close()
+	defer func() { _ = workspacesResp.Body.Close() }()
 
 	if workspacesResp.StatusCode != http.StatusOK {
 		t.Fatalf("expected 200, got %d", workspacesResp.StatusCode)
@@ -401,7 +410,7 @@ func TestProtectedRoutesRequireAuth(t *testing.T) {
 		if err != nil {
 			t.Fatalf("request to %s failed: %v", path, err)
 		}
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		if resp.StatusCode != 401 {
 			t.Fatalf("%s: expected 401, got %d", path, resp.StatusCode)
 		}
@@ -437,7 +446,7 @@ func TestInvalidJWT(t *testing.T) {
 			if err != nil {
 				t.Fatalf("request failed: %v", err)
 			}
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			if resp.StatusCode != 401 {
 				t.Fatalf("expected 401, got %d", resp.StatusCode)
 			}
@@ -456,7 +465,7 @@ func TestIssuesCRUDThroughRouter(t *testing.T) {
 	})
 	if resp.StatusCode != 201 {
 		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		t.Fatalf("CreateIssue: expected 201, got %d: %s", resp.StatusCode, body)
 	}
 
@@ -524,14 +533,14 @@ func TestIssuesCRUDThroughRouter(t *testing.T) {
 
 	// Delete
 	resp = authRequest(t, "DELETE", "/api/issues/"+issueID, nil)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != 204 {
 		t.Fatalf("DeleteIssue: expected 204, got %d", resp.StatusCode)
 	}
 
 	// Verify deleted
 	resp = authRequest(t, "GET", "/api/issues/"+issueID, nil)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != 404 {
 		t.Fatalf("GetIssue after delete: expected 404, got %d", resp.StatusCode)
 	}
@@ -555,7 +564,7 @@ func TestCommentsThroughRouter(t *testing.T) {
 	})
 	if resp.StatusCode != 201 {
 		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		t.Fatalf("CreateComment: expected 201, got %d: %s", resp.StatusCode, body)
 	}
 	var comment map[string]any
@@ -569,7 +578,7 @@ func TestCommentsThroughRouter(t *testing.T) {
 		"content": "Second comment",
 		"type":    "comment",
 	})
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
 	// List comments
 	resp = authRequest(t, "GET", "/api/issues/"+issueID+"/comments", nil)
@@ -584,7 +593,7 @@ func TestCommentsThroughRouter(t *testing.T) {
 
 	// Cleanup
 	resp = authRequest(t, "DELETE", "/api/issues/"+issueID, nil)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 }
 
 // ---- Agents through full router ----
@@ -735,7 +744,7 @@ func TestDeleteWorkspaceRequiresOwner(t *testing.T) {
 	if err != nil {
 		t.Fatalf("request failed: %v", err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("expected 403 for non-owner DELETE, got %d", resp.StatusCode)
 	}
@@ -781,7 +790,7 @@ func TestNonExistentResources(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			resp := authRequest(t, "GET", tc.path, nil)
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			if resp.StatusCode != 404 {
 				t.Fatalf("expected 404, got %d", resp.StatusCode)
 			}
@@ -793,7 +802,7 @@ func TestNonExistentResources(t *testing.T) {
 
 func TestInvalidRequestBodies(t *testing.T) {
 	resp := authRequest(t, "POST", "/api/issues?workspace_id="+testWorkspaceID, nil)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	// Sending nil body should fail with 400
 	if resp.StatusCode != 400 {
 		// Some handlers may return 500 for nil body, that's acceptable too
@@ -812,7 +821,7 @@ func TestWebSocketIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("WebSocket connection failed: %v", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	// First-message auth
 	authMsg, _ := json.Marshal(map[string]any{
@@ -824,7 +833,9 @@ func TestWebSocketIntegration(t *testing.T) {
 	}
 
 	// Read auth_ack
-	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	if err := conn.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
 	_, ack, err := conn.ReadMessage()
 	if err != nil {
 		t.Fatalf("failed to read auth_ack: %v", err)
@@ -832,7 +843,9 @@ func TestWebSocketIntegration(t *testing.T) {
 	if !strings.Contains(string(ack), "auth_ack") {
 		t.Fatalf("expected auth_ack, got %s", ack)
 	}
-	conn.SetReadDeadline(time.Time{})
+	if err := conn.SetReadDeadline(time.Time{}); err != nil {
+		t.Fatal(err)
+	}
 
 	// Allow Hub goroutine to process the register and add client to room
 	time.Sleep(100 * time.Millisecond)
@@ -847,7 +860,9 @@ func TestWebSocketIntegration(t *testing.T) {
 	issueID := issue["id"].(string)
 
 	// Read the WebSocket message
-	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	if err := conn.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
 	_, msg, err := conn.ReadMessage()
 	if err != nil {
 		t.Fatalf("WebSocket read error: %v", err)
@@ -866,30 +881,38 @@ func TestWebSocketIntegration(t *testing.T) {
 	resp = authRequest(t, "PUT", "/api/issues/"+issueID, map[string]any{
 		"status": "in_progress",
 	})
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
-	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	if err := conn.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
 	_, msg, err = conn.ReadMessage()
 	if err != nil {
 		t.Fatalf("WebSocket read error on update: %v", err)
 	}
 	var updateMsg map[string]any
-	json.Unmarshal(msg, &updateMsg)
+	if err := json.Unmarshal(msg, &updateMsg); err != nil {
+		t.Fatalf("decode update message: %v", err)
+	}
 	if updateMsg["type"] != "issue:updated" {
 		t.Fatalf("expected type 'issue:updated', got '%s'", updateMsg["type"])
 	}
 
 	// Delete the issue — should trigger another broadcast
 	resp = authRequest(t, "DELETE", "/api/issues/"+issueID, nil)
-	resp.Body.Close()
+	_ = resp.Body.Close()
 
-	conn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	if err := conn.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
 	_, msg, err = conn.ReadMessage()
 	if err != nil {
 		t.Fatalf("WebSocket read error on delete: %v", err)
 	}
 	var deleteMsg map[string]any
-	json.Unmarshal(msg, &deleteMsg)
+	if err := json.Unmarshal(msg, &deleteMsg); err != nil {
+		t.Fatalf("decode delete message: %v", err)
+	}
 	if deleteMsg["type"] != "issue:deleted" {
 		t.Fatalf("expected type 'issue:deleted', got '%s'", deleteMsg["type"])
 	}

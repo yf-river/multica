@@ -348,7 +348,9 @@ func (s *TaskService) CancelTaskWithResult(ctx context.Context, taskID pgtype.UU
 
 	slog.Info("task cancelled", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID))
 	s.captureTaskCancelled(ctx, task)
-	s.ReconcileAgentStatus(ctx, task.AgentID)
+	if _, err := s.ReconcileAgentStatus(ctx, task.AgentID); err != nil {
+		slog.Warn("reconcile agent after task cancellation failed", "agent_id", util.UUIDToString(task.AgentID), "error", err)
+	}
 	s.Bus.Publish(persistedEvent)
 
 	return &CancelTaskResult{
@@ -607,7 +609,9 @@ func ParseIssueSourceSummaryContext(task db.AgentTaskQueue) (IssueSourceSummaryC
 func agentToMap(a db.Agent) map[string]any {
 	var rc any
 	if a.RuntimeConfig != nil {
-		json.Unmarshal(a.RuntimeConfig, &rc)
+		if err := json.Unmarshal(a.RuntimeConfig, &rc); err != nil {
+			slog.Warn("decode agent runtime config failed", "agent_id", util.UUIDToString(a.ID), "error", err)
+		}
 	}
 	return map[string]any{
 		"id":                   util.UUIDToString(a.ID),

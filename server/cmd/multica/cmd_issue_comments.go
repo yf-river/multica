@@ -76,7 +76,7 @@ func runIssueCommentList(cmd *cobra.Command, args []string) error {
 	if (before == "") != (beforeID == "") {
 		return fmt.Errorf("--before and --before-id must be set together (composite cursor for stable pagination)")
 	}
-	if before != "" && !recentSet && !(thread != "" && tailSet) {
+	if before != "" && !recentSet && (thread == "" || !tailSet) {
 		return fmt.Errorf("--before / --before-id require --recent (thread cursor) or --thread + --tail (reply cursor)")
 	}
 
@@ -406,7 +406,10 @@ func runIssueRerun(cmd *cobra.Command, args []string) error {
 		return cli.PrintJSON(os.Stdout, task)
 	}
 	agent := loadActorDisplayLookup(ctx, client).agent(strVal(task, "agent_id"))
-	fmt.Fprintf(os.Stdout, "Re-enqueued task %s on agent %s\n", strVal(task, "id"), agent)
+	_, err = fmt.Fprintf(os.Stdout, "Re-enqueued task %s on agent %s\n", strVal(task, "id"), agent)
+	if err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -451,8 +454,8 @@ func runIssueCancelTask(cmd *cobra.Command, args []string) error {
 	if status == "" {
 		status = "cancelled"
 	}
-	fmt.Fprintf(os.Stdout, "Task %s -> status=%s\n", taskRef.ID, status)
-	return nil
+	_, err = fmt.Fprintf(os.Stdout, "Task %s -> status=%s\n", taskRef.ID, status)
+	return err
 }
 
 func runIssueSearch(cmd *cobra.Command, args []string) error {
@@ -667,4 +670,3 @@ func (k assigneeKinds) describe() string {
 		return strings.Join(parts[:len(parts)-1], ", ") + ", or " + parts[len(parts)-1]
 	}
 }
-

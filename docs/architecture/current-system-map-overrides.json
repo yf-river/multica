@@ -107,10 +107,9 @@
       "environment": [],
       "sources": [
         "server/internal/daemon/repocache/cache.go",
-        "server/internal/daemon/execenv/git.go",
         "server/internal/handler/prompt_evaluation_skill_build.go"
       ],
-      "notes": "Daemon repository caches and exec environments fetch user-configured remotes; evaluation skill workflows run git only against validated local worktrees."
+      "notes": "Daemon repository caches fetch user-configured remotes; evaluation skill workflows run git only against validated local worktrees."
     },
     {
       "id": "gongfeng",

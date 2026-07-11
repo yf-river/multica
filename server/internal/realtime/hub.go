@@ -623,7 +623,7 @@ func (h *Hub) evictSlow(slow []*Client) {
 				delete(room, c)
 				if len(room) == 0 {
 					delete(h.rooms, key)
-					drainedRooms = append(drainedRooms, emptied{key.Type, key.ID})
+					drainedRooms = append(drainedRooms, emptied(key))
 				}
 			}
 		}
@@ -699,8 +699,10 @@ func authenticateToken(tokenStr string, pr PATResolver, ctx context.Context) (st
 
 // firstMessageAuth reads the first WebSocket message expecting an auth payload.
 func firstMessageAuth(conn *websocket.Conn) (string, string) {
-	conn.SetReadDeadline(time.Now().Add(10 * time.Second))
-	defer conn.SetReadDeadline(time.Time{})
+	if err := conn.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		return "", `{"error":"auth read deadline failed"}`
+	}
+	defer func() { _ = conn.SetReadDeadline(time.Time{}) }()
 
 	_, raw, err := conn.ReadMessage()
 	if err != nil {
@@ -735,7 +737,7 @@ func writeWSAuthFrame(conn wsMessageWriter, payload []byte, frame string, attrs 
 
 func writeWSAuthErrorAndClose(conn *websocket.Conn, payload []byte, attrs ...any) {
 	writeWSAuthFrame(conn, payload, "auth_error", attrs...)
-	conn.Close()
+	_ = conn.Close()
 }
 
 // HandleWebSocket upgrades an HTTP connection to WebSocket with cookie or
@@ -806,7 +808,7 @@ func HandleWebSocket(hub *Hub, mc MembershipChecker, pr PATResolver, resolveSlug
 			"workspace_id", workspaceID,
 			"user_id", userID,
 		) {
-			conn.Close()
+			_ = conn.Close()
 			return
 		}
 	}
@@ -854,13 +856,15 @@ type subPayload struct {
 func (c *Client) readPump() {
 	defer func() {
 		c.hub.unregister <- c
-		c.conn.Close()
+		_ = c.conn.Close()
 	}()
 
-	c.conn.SetReadDeadline(time.Now().Add(pongWait))
+	if err := c.conn.SetReadDeadline(time.Now().Add(pongWait)); err != nil {
+		slog.Debug("websocket read deadline failed", "error", err, "user_id", c.userID, "workspace_id", c.workspaceID)
+		return
+	}
 	c.conn.SetPongHandler(func(string) error {
-		c.conn.SetReadDeadline(time.Now().Add(pongWait))
-		return nil
+		return c.conn.SetReadDeadline(time.Now().Add(pongWait))
 	})
 
 	for {
@@ -992,15 +996,18 @@ func (c *Client) writePump() {
 	ticker := time.NewTicker(pingPeriod)
 	defer func() {
 		ticker.Stop()
-		c.conn.Close()
+		_ = c.conn.Close()
 	}()
 
 	for {
 		select {
 		case message, ok := <-c.send:
-			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			if err := c.conn.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
+				slog.Debug("websocket write deadline failed", "error", err, "user_id", c.userID, "workspace_id", c.workspaceID)
+				return
+			}
 			if !ok {
-				c.conn.WriteMessage(websocket.CloseMessage, []byte{})
+				_ = c.conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
 			if err := c.conn.WriteMessage(websocket.TextMessage, message); err != nil {
@@ -1008,7 +1015,10 @@ func (c *Client) writePump() {
 				return
 			}
 		case <-ticker.C:
-			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+			if err := c.conn.SetWriteDeadline(time.Now().Add(writeWait)); err != nil {
+				slog.Debug("websocket ping deadline failed", "error", err, "user_id", c.userID, "workspace_id", c.workspaceID)
+				return
+			}
 			if err := c.conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				return
 			}

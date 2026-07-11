@@ -54,7 +54,7 @@ func TestReportLocalSkillListResult_RetriesOn500AndEventuallySucceeds(t *testing
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"ok"}`))
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
 
 	d.reportLocalSkillListResult(context.Background(), Runtime{ID: "rt-1"}, "req-1", map[string]any{"status": "completed"})
@@ -91,7 +91,7 @@ func TestReportLocalSkillImportResult_RetriesOn500AndEventuallySucceeds(t *testi
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"ok"}`))
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
 
 	d.reportLocalSkillImportResult(context.Background(), Runtime{ID: "rt-1"}, "req-1", map[string]any{"status": "completed"})
@@ -155,7 +155,7 @@ func TestReportLocalSkillResult_SendsCorrectPath(t *testing.T) {
 			listPath = r.URL.Path
 		}
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte(`{"status":"ok"}`))
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
 	})
 
 	ctx := context.Background()

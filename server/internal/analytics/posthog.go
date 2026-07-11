@@ -213,7 +213,7 @@ func (c *PostHogClient) send(batch []Event) {
 		slog.Warn("analytics: send batch failed", "error", err, "events", len(batch))
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		c.failed.Add(uint64(len(batch)))
 		slog.Warn("analytics: posthog rejected batch", "status", resp.StatusCode, "events", len(batch))

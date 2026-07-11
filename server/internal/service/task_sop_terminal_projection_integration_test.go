@@ -716,7 +716,7 @@ func seedSquadTerminalProjectionFixture(
 	if err != nil {
 		t.Fatalf("begin fixture transaction: %v", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	mustExec := func(query string, args ...any) {
 		t.Helper()
 		if _, err := tx.Exec(ctx, query, args...); err != nil {

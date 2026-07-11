@@ -260,7 +260,7 @@ func runChatProjection(
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	emitted, err := project(ctx, queries.WithTx(tx), event)
 	if err != nil {
 		return nil, err

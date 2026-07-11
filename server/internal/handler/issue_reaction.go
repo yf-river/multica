@@ -89,7 +89,7 @@ func (h *Handler) AddIssueReaction(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to add reaction")
 		return
 	}
-	defer tx.Rollback(r.Context())
+	defer func() { _ = tx.Rollback(r.Context()) }()
 	queries := h.Queries.WithTx(tx)
 	reaction, err := queries.AddIssueReaction(r.Context(), db.AddIssueReactionParams{
 		IssueID:     reactionReq.issue.ID,

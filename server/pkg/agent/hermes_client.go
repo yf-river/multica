@@ -44,7 +44,9 @@ func finishACPBackendResult(params acpBackendResultParams) Result {
 		"duration", duration.Round(time.Millisecond).String(),
 	)
 
-	params.Stdin.Close()
+	if err := params.Stdin.Close(); err != nil {
+		params.Logger.Debug(params.Provider+" stdin close failed", "error", err)
+	}
 	params.Cancel()
 
 	<-params.ReaderDone
@@ -1328,7 +1330,7 @@ func (s *acpProviderErrorSniffer) Write(p []byte) (int, error) {
 		if line == "" {
 			continue
 		}
-		if !(acpErrorHeaderRe.MatchString(line) || acpErrorDetailRe.MatchString(line)) {
+		if !acpErrorHeaderRe.MatchString(line) && !acpErrorDetailRe.MatchString(line) {
 			continue
 		}
 		if acpTerminalErrorRe.MatchString(line) {

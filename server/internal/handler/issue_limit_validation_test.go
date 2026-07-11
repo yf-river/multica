@@ -36,8 +36,8 @@ func TestListIssues_LimitValidation(t *testing.T) {
 		t.Fatalf("create project: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE project_id = $1`, projectID)
-		testPool.Exec(context.Background(), `DELETE FROM project WHERE id = $1`, projectID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE project_id = $1`, projectID)
+		mustExec(t, context.Background(), `DELETE FROM project WHERE id = $1`, projectID)
 	})
 
 	insertIssue := func(title string) string {
@@ -157,8 +157,8 @@ func TestListIssues_LimitClamp(t *testing.T) {
 		t.Fatalf("create project: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE project_id = $1`, projectID)
-		testPool.Exec(context.Background(), `DELETE FROM project WHERE id = $1`, projectID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE project_id = $1`, projectID)
+		mustExec(t, context.Background(), `DELETE FROM project WHERE id = $1`, projectID)
 	})
 
 	// Seed 101 issues. Each row is inserted individually so the workspace's

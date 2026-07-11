@@ -605,7 +605,7 @@ func (h *Handler) executePromptEvaluationCaseBulkTags(ctx context.Context, job p
 	if err != nil {
 		return promptEvaluationCaseBulkTagsResult{}, fmt.Errorf("start prompt evaluation case bulk transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	qtx := h.Queries.WithTx(tx)
 	changed := make([]db.PromptEvaluationCase, 0, len(matched))
 	sampleIDs := make([]string, 0, 20)
@@ -983,7 +983,7 @@ func (h *Handler) CreatePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, "failed to start prompt evaluation case transaction")
 		return
 	}
-	defer tx.Rollback(r.Context())
+	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 	created, err := qtx.CreatePromptEvaluationCase(r.Context(), db.CreatePromptEvaluationCaseParams{
 		WorkspaceID:      workspaceUUID,
@@ -1237,7 +1237,7 @@ func (h *Handler) UpdatePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, "failed to start prompt evaluation case transaction")
 		return
 	}
-	defer tx.Rollback(r.Context())
+	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 	updated, err := qtx.UpdatePromptEvaluationCase(r.Context(), db.UpdatePromptEvaluationCaseParams{
 		ID:               current.ID,
@@ -1301,7 +1301,7 @@ func (h *Handler) DeletePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, "failed to start prompt evaluation case transaction")
 		return
 	}
-	defer tx.Rollback(r.Context())
+	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 	if err := deletePromptEvaluationDatasetRowsForCase(r.Context(), qtx, workspaceUUID, caseID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete prompt evaluation dataset row")

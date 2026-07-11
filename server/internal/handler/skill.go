@@ -242,10 +242,7 @@ func validateFilePath(p string) bool {
 		return false
 	}
 	cleaned := filepath.Clean(p)
-	if strings.HasPrefix(cleaned, "..") {
-		return false
-	}
-	return true
+	return !strings.HasPrefix(cleaned, "..")
 }
 
 func (h *Handler) loadSkillForUser(w http.ResponseWriter, r *http.Request, id string) (db.Skill, bool) {
@@ -443,7 +440,7 @@ func (h *Handler) UpdateSkill(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to start transaction")
 		return
 	}
-	defer tx.Rollback(r.Context())
+	defer func() { _ = tx.Rollback(r.Context()) }()
 
 	qtx := h.Queries.WithTx(tx)
 
@@ -558,4 +555,3 @@ const (
 )
 
 const maxImportRenameAttempts = 50
-

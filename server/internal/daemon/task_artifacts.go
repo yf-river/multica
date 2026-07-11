@@ -205,10 +205,7 @@ func shouldPersistFinalOutputAsArtifact(task Task, result TaskResult, output str
 		return true
 	}
 	runes := []rune(output)
-	if len(runes) >= 700 {
-		return true
-	}
-	return false
+	return len(runes) >= 700
 }
 
 func finalOutputArtifactFilename(task Task) string {
@@ -651,7 +648,7 @@ func (c *Client) UploadTaskArtifact(ctx context.Context, token, workspaceID, age
 	if err != nil {
 		return uploadedTaskArtifact{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return uploadedTaskArtifact{}, &requestError{Method: http.MethodPost, Path: "/api/upload-file", StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(data))}
@@ -687,12 +684,12 @@ func (c *Client) CreateTaskArtifactComment(ctx context.Context, token, workspace
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 400 {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return &requestError{Method: http.MethodPost, Path: path, StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(data))}
 	}
-	io.Copy(io.Discard, resp.Body)
+	_, _ = io.Copy(io.Discard, resp.Body)
 	return nil
 }
 

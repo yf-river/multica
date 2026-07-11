@@ -46,10 +46,10 @@ func seedAutopilot(t *testing.T, queries *db.Queries, title, creatorType string,
 	}
 	t.Cleanup(func() {
 		// inbox_item has no FK to autopilot, so clean both up explicitly.
-		testPool.Exec(context.Background(),
+		_, _ = testPool.Exec(context.Background(),
 			`DELETE FROM inbox_item WHERE workspace_id = $1 AND details->>'autopilot_id' = $2`,
 			testWorkspaceID, util.UUIDToString(ap.ID))
-		testPool.Exec(context.Background(), `DELETE FROM autopilot WHERE id = $1`, ap.ID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM autopilot WHERE id = $1`, ap.ID)
 	})
 	return ap
 }

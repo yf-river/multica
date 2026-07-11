@@ -51,9 +51,9 @@ func runSquadList(cmd *cobra.Command, _ []string) error {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "ID\tNAME\tLEADER ID\tMEMBERS")
+	_, _ = fmt.Fprintln(w, "ID\tNAME\tLEADER ID\tMEMBERS")
 	for _, s := range squads {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n",
 			strVal(s, "id"), strVal(s, "name"), strVal(s, "leader_id"),
 			memberCountDisplay(s))
 	}
@@ -281,9 +281,9 @@ func runSquadMemberList(cmd *cobra.Command, args []string) error {
 	}
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "MEMBER ID\tTYPE\tROLE")
+	_, _ = fmt.Fprintln(w, "MEMBER ID\tTYPE\tROLE")
 	for _, m := range members {
-		fmt.Fprintf(w, "%s\t%s\t%s\n",
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\n",
 			strVal(m, "member_id"), strVal(m, "member_type"), strVal(m, "role"))
 	}
 	return w.Flush()

@@ -91,7 +91,7 @@ func projectTaskTerminalEvent(t *testing.T, queries *db.Queries, taskID pgtype.U
 	if err != nil {
 		t.Fatalf("begin autopilot projection: %v", err)
 	}
-	defer tx.Rollback(context.Background())
+	defer func() { _ = tx.Rollback(context.Background()) }()
 	emitted, err := consumeAutopilotRunProjection(context.Background(), queries.WithTx(tx), latestTaskTerminalEvent(t, taskID))
 	if err != nil {
 		t.Fatalf("project terminal task: %v", err)
@@ -530,7 +530,7 @@ func TestAutopilotIssueTerminalEventsProjectRun(t *testing.T) {
 			if err != nil {
 				t.Fatalf("begin issue projection: %v", err)
 			}
-			defer tx.Rollback(context.Background())
+			defer func() { _ = tx.Rollback(context.Background()) }()
 			emitted, err := consumeAutopilotRunProjection(context.Background(), f.queries.WithTx(tx), event)
 			if err != nil {
 				t.Fatalf("project terminal issue: %v", err)
@@ -589,16 +589,16 @@ func TestAutopilotTaskProjectionReturnsTransientDatabaseFailure(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin blocker: %v", err)
 	}
-	defer blocker.Rollback(context.Background())
+	defer func() { _ = blocker.Rollback(context.Background()) }()
 	if _, err := blocker.Exec(ctx, `SELECT 1 FROM autopilot_run WHERE id = $1 FOR UPDATE`, run.ID); err != nil {
-		blocker.Rollback(ctx)
+		_ = blocker.Rollback(ctx)
 		t.Fatalf("lock autopilot run: %v", err)
 	}
 	timeoutCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
 	defer cancel()
 	_, projectionErr := consumeAutopilotRunProjection(timeoutCtx, f.queries, latestTaskTerminalEvent(t, run.TaskID))
 	if projectionErr == nil {
-		blocker.Rollback(ctx)
+		_ = blocker.Rollback(ctx)
 		t.Fatal("locked run update returned nil error; event would be falsely acknowledged")
 	}
 	if err := blocker.Rollback(ctx); err != nil {

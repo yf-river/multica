@@ -196,7 +196,9 @@ func TestIsBareRepo(t *testing.T) {
 
 	// A directory with a HEAD file should be detected as bare.
 	dir := t.TempDir()
-	os.WriteFile(filepath.Join(dir, "HEAD"), []byte("ref: refs/heads/main\n"), 0o644)
+	if err := os.WriteFile(filepath.Join(dir, "HEAD"), []byte("ref: refs/heads/main\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	if !isBareRepo(dir) {
 		t.Error("expected bare repo to be detected")
 	}
@@ -446,7 +448,7 @@ func TestWorktreeFromCache(t *testing.T) {
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("worktree add failed: %s: %v", out, err)
 	}
-	defer exec.Command("git", "-C", barePath, "worktree", "remove", "--force", worktreeDir).Run()
+	defer func() { _ = exec.Command("git", "-C", barePath, "worktree", "remove", "--force", worktreeDir).Run() }()
 
 	// Verify worktree exists and is on the right branch.
 	cmd = exec.Command("git", "-C", worktreeDir, "branch", "--show-current")

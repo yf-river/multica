@@ -591,7 +591,7 @@ func codexTOMLBasicString(s string) string {
 			sb.WriteString(`\r`)
 		default:
 			if r < 0x20 || r == 0x7f {
-				sb.WriteString(fmt.Sprintf(`\u%04x`, r))
+				fmt.Fprintf(&sb, `\u%04x`, r)
 			} else {
 				sb.WriteRune(r)
 			}
@@ -624,4 +624,3 @@ func isCodexBareTomlKey(s string) bool {
 	}
 	return true
 }
-

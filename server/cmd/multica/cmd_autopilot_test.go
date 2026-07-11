@@ -49,7 +49,7 @@ func TestResolveAgent(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/agents" {
-			json.NewEncoder(w).Encode(agentsResp)
+			_ = json.NewEncoder(w).Encode(agentsResp)
 			return
 		}
 		http.NotFound(w, r)
@@ -146,11 +146,13 @@ func TestRunAutopilotCreateSendsProjectID(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Errorf("decode body: %v", err)
 		}
-		json.NewEncoder(w).Encode(map[string]any{
+		if err := json.NewEncoder(w).Encode(map[string]any{
 			"id":         "autopilot-1",
 			"title":      "Daily planner",
 			"project_id": body["project_id"],
-		})
+		}); err != nil {
+			t.Errorf("encode response: %v", err)
+		}
 	}))
 	defer srv.Close()
 
@@ -192,11 +194,13 @@ func TestRunAutopilotUpdateSendsProjectIDChanges(t *testing.T) {
 			t.Errorf("decode body: %v", err)
 		}
 		bodies = append(bodies, body)
-		json.NewEncoder(w).Encode(map[string]any{
+		if err := json.NewEncoder(w).Encode(map[string]any{
 			"id":         autopilotID,
 			"title":      "Daily planner",
 			"project_id": body["project_id"],
-		})
+		}); err != nil {
+			t.Errorf("encode response: %v", err)
+		}
 	}))
 	defer srv.Close()
 

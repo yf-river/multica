@@ -25,7 +25,9 @@ func TestSubscriberAPI(t *testing.T) {
 			t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
 		}
 		var issue IssueResponse
-		json.NewDecoder(w.Body).Decode(&issue)
+		if err := json.NewDecoder(w.Body).Decode(&issue); err != nil {
+			t.Fatalf("decode issue response: %v", err)
+		}
 		return issue.ID
 	}
 
@@ -51,7 +53,9 @@ func TestSubscriberAPI(t *testing.T) {
 		}
 
 		var resp map[string]bool
-		json.NewDecoder(w.Body).Decode(&resp)
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode subscriber response: %v", err)
+		}
 		if !resp["subscribed"] {
 			t.Fatal("SubscribeToIssue: expected subscribed=true")
 		}
@@ -93,6 +97,30 @@ func TestSubscriberAPI(t *testing.T) {
 		}
 	})
 
+	t.Run("RejectMalformedRequestBodies", func(t *testing.T) {
+		issueID := createIssue(t)
+		defer deleteIssue(t, issueID)
+
+		for _, action := range []struct {
+			name   string
+			path   string
+			handle func(http.ResponseWriter, *http.Request)
+		}{
+			{name: "subscribe", path: "/subscribe", handle: testHandler.SubscribeToIssue},
+			{name: "unsubscribe", path: "/unsubscribe", handle: testHandler.UnsubscribeFromIssue},
+		} {
+			t.Run(action.name, func(t *testing.T) {
+				w := httptest.NewRecorder()
+				req := newRequest("POST", "/api/issues/"+issueID+action.path, json.RawMessage(`{"user_id":`))
+				req = withURLParam(req, "id", issueID)
+				action.handle(w, req)
+				if w.Code != http.StatusBadRequest {
+					t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+				}
+			})
+		}
+	})
+
 	t.Run("ListSubscribers", func(t *testing.T) {
 		issueID := createIssue(t)
 		defer deleteIssue(t, issueID)
@@ -116,7 +144,9 @@ func TestSubscriberAPI(t *testing.T) {
 		}
 
 		var subscribers []SubscriberResponse
-		json.NewDecoder(w.Body).Decode(&subscribers)
+		if err := json.NewDecoder(w.Body).Decode(&subscribers); err != nil {
+			t.Fatalf("decode subscribers response: %v", err)
+		}
 		if len(subscribers) == 0 {
 			t.Fatal("ListIssueSubscribers: expected at least 1 subscriber")
 		}
@@ -155,7 +185,9 @@ func TestSubscriberAPI(t *testing.T) {
 		}
 
 		var resp map[string]bool
-		json.NewDecoder(w.Body).Decode(&resp)
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode subscriber response: %v", err)
+		}
 		if resp["subscribed"] {
 			t.Fatal("UnsubscribeFromIssue: expected subscribed=false")
 		}
@@ -325,7 +357,9 @@ func TestSubscriberAPI(t *testing.T) {
 		}
 
 		var subscribers []SubscriberResponse
-		json.NewDecoder(w.Body).Decode(&subscribers)
+		if err := json.NewDecoder(w.Body).Decode(&subscribers); err != nil {
+			t.Fatalf("decode subscribers response: %v", err)
+		}
 		if len(subscribers) != 0 {
 			t.Fatalf("ListIssueSubscribers: expected 0 subscribers after unsubscribe, got %d", len(subscribers))
 		}

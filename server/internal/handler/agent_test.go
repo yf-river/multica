@@ -81,7 +81,7 @@ func TestListWorkspaceAgentTaskSnapshot(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		for _, id := range insertedIDs {
-			testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, id)
+			_, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, id)
 		}
 	})
 
@@ -151,7 +151,7 @@ func TestCreateAgent_RejectsDuplicateName(t *testing.T) {
 
 	// Clean up any agents created by this test.
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(),
+		_, _ = testPool.Exec(context.Background(),
 			`DELETE FROM agent WHERE workspace_id = $1 AND name = $2`,
 			testWorkspaceID, "duplicate-name-test-agent",
 		)
@@ -197,7 +197,7 @@ func TestCreateAgent_DefaultsMaxConcurrentTasksToTwenty(t *testing.T) {
 
 	const agentName = "default-concurrency-test-agent"
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(),
+		_, _ = testPool.Exec(context.Background(),
 			`DELETE FROM agent WHERE workspace_id = $1 AND name = $2`,
 			testWorkspaceID, agentName,
 		)
@@ -989,7 +989,7 @@ func insertHandlerTestTask(t *testing.T, agentID string) string {
 		t.Fatalf("insert test task: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
 	})
 	return taskID
 }

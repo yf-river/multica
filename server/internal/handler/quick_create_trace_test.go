@@ -33,7 +33,7 @@ func TestQuickCreateSquadTaskTraceCarriesSquadAndProject(t *testing.T) {
 		t.Fatalf("create squad: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
+		mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
 	})
 
 	var projectID string
@@ -45,7 +45,7 @@ func TestQuickCreateSquadTaskTraceCarriesSquadAndProject(t *testing.T) {
 		t.Fatalf("create project: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM project WHERE id = $1`, projectID)
+		mustExec(t, context.Background(), `DELETE FROM project WHERE id = $1`, projectID)
 	})
 
 	task, err := testHandler.TaskService.EnqueueQuickCreateTask(ctx, service.EnqueueQuickCreateTaskParams{
@@ -60,7 +60,7 @@ func TestQuickCreateSquadTaskTraceCarriesSquadAndProject(t *testing.T) {
 		t.Fatalf("enqueue quick-create task: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, uuidToString(task.ID))
+		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, uuidToString(task.ID))
 	})
 
 	var inputKind, inputSummary, inputSnapshot, contentSHA string
@@ -120,8 +120,8 @@ func TestIssueTaskUserInputTraceCapturesOriginalIssue(t *testing.T) {
 		t.Fatalf("create issue task: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM task_trace_event WHERE task_id = $1`, uuidToString(task.ID))
-		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, uuidToString(task.ID))
+		mustExec(t, context.Background(), `DELETE FROM task_trace_event WHERE task_id = $1`, uuidToString(task.ID))
+		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, uuidToString(task.ID))
 	})
 
 	testHandler.TaskService.NotifyTaskEnqueued(ctx, task)

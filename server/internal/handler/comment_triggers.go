@@ -351,7 +351,7 @@ func (h *Handler) recordBlockedParentSOPStageTriggerComment(ctx context.Context,
 		slog.Warn("begin sop cross-project child gate comment transaction failed", "issue_id", uuidToString(issue.ID), "stage", stageName, "error", err)
 		return
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	queries := h.Queries.WithTx(tx)
 	comment, err := queries.CreateComment(ctx, db.CreateCommentParams{
 		IssueID:     issue.ID,

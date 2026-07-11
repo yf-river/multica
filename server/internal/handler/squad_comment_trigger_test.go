@@ -88,7 +88,7 @@ func newSquadCommentTriggerFixture(t *testing.T) squadCommentTriggerFixture {
 		t.Fatalf("create squad: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
+		mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
 	})
 
 	var issueID string
@@ -101,7 +101,7 @@ func newSquadCommentTriggerFixture(t *testing.T) squadCommentTriggerFixture {
 		t.Fatalf("create issue: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
 	})
 
 	issue, err := testHandler.Queries.GetIssue(ctx, util.MustParseUUID(issueID))
@@ -129,7 +129,7 @@ func TestEnqueueTaskForSquadLeaderForcesFreshSession(t *testing.T) {
 		t.Fatalf("EnqueueTaskForSquadLeader: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, task.ID)
+		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, task.ID)
 	})
 
 	var forceFresh bool
@@ -164,7 +164,7 @@ func TestCreateComment_SquadSOPRoleKeyMentionTriggersStageAgent(t *testing.T) {
 		t.Fatalf("create squad: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
+		mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
 	})
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO squad_member (squad_id, member_type, member_id, role)
@@ -182,7 +182,7 @@ func TestCreateComment_SquadSOPRoleKeyMentionTriggersStageAgent(t *testing.T) {
 		t.Fatalf("create issue: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
 	})
 
 	w := httptest.NewRecorder()
@@ -321,7 +321,7 @@ func TestShouldEnqueueSquadLeaderOnComment_LeaderSelfTriggerByRole(t *testing.T)
 	issueID := uuidToString(fx.Issue.ID)
 
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
+		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
 	})
 
 	clearTasks := func() {
@@ -409,7 +409,7 @@ func TestCompleteTask_WorkerStageCompletionEnqueuesSquadLeader(t *testing.T) {
 		t.Fatalf("create squad: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
+		mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
 	})
 
 	var issueID string
@@ -422,7 +422,7 @@ func TestCompleteTask_WorkerStageCompletionEnqueuesSquadLeader(t *testing.T) {
 		t.Fatalf("create issue: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
 	})
 
 	if _, err := testHandler.Queries.CreateSquadSOPRun(ctx, db.CreateSquadSOPRunParams{
@@ -541,7 +541,7 @@ func TestCompleteTask_FinalSOPStepAutoClosesIssueWithoutPullRequest(t *testing.T
 		t.Fatalf("create squad: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
+		mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
 	})
 
 	var issueID string
@@ -554,7 +554,7 @@ func TestCompleteTask_FinalSOPStepAutoClosesIssueWithoutPullRequest(t *testing.T
 		t.Fatalf("create issue: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
 	})
 
 	if _, err := testHandler.Queries.CreateSquadSOPRun(ctx, db.CreateSquadSOPRunParams{
@@ -636,7 +636,7 @@ func TestCompleteTask_FinalSOPStepBlockedOutputDoesNotAutoCloseIssue(t *testing.
 		t.Fatalf("create squad: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
+		mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
 	})
 
 	var issueID string
@@ -649,7 +649,7 @@ func TestCompleteTask_FinalSOPStepBlockedOutputDoesNotAutoCloseIssue(t *testing.
 		t.Fatalf("create issue: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
 	})
 
 	var runID string
@@ -734,7 +734,7 @@ func TestCompleteTask_FinalSOPStepBlocksGongfengIssueWithoutPullRequestAndCommen
 		t.Fatalf("create project: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM project WHERE id = $1`, project.ID)
+		mustExec(t, context.Background(), `DELETE FROM project WHERE id = $1`, project.ID)
 	})
 	if _, err := testHandler.Queries.CreateProjectResource(ctx, db.CreateProjectResourceParams{
 		ProjectID:    project.ID,
@@ -763,7 +763,7 @@ func TestCompleteTask_FinalSOPStepBlocksGongfengIssueWithoutPullRequestAndCommen
 		t.Fatalf("create squad: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
+		mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
 	})
 
 	var issueID string
@@ -776,7 +776,7 @@ func TestCompleteTask_FinalSOPStepBlocksGongfengIssueWithoutPullRequestAndCommen
 		t.Fatalf("create issue: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
 	})
 
 	if _, err := testHandler.Queries.CreateSquadSOPRun(ctx, db.CreateSquadSOPRunParams{
@@ -858,7 +858,7 @@ func TestCompleteTask_FinalSOPStepClosesIssueAlreadyInReview(t *testing.T) {
 		t.Fatalf("create squad: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
+		mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
 	})
 
 	var issueID string
@@ -871,7 +871,7 @@ func TestCompleteTask_FinalSOPStepClosesIssueAlreadyInReview(t *testing.T) {
 		t.Fatalf("create issue: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
 	})
 
 	if _, err := testHandler.Queries.CreateSquadSOPRun(ctx, db.CreateSquadSOPRunParams{
@@ -932,7 +932,7 @@ func TestCompleteTask_AutoClosedChildIssueWakesParentSquad(t *testing.T) {
 		t.Fatalf("create project: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM project WHERE id = $1`, project.ID)
+		mustExec(t, context.Background(), `DELETE FROM project WHERE id = $1`, project.ID)
 	})
 	if _, err := testHandler.Queries.CreateProjectResource(ctx, db.CreateProjectResourceParams{
 		ProjectID:    project.ID,
@@ -963,8 +963,8 @@ func TestCompleteTask_AutoClosedChildIssueWakesParentSquad(t *testing.T) {
 		t.Fatalf("create child issue: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE issue_id IN ($1, $2)`, parentID, childID)
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id IN ($1, $2)`, childID, parentID)
+		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE issue_id IN ($1, $2)`, parentID, childID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE id IN ($1, $2)`, childID, parentID)
 	})
 
 	now := time.Now()
@@ -988,7 +988,7 @@ func TestCompleteTask_AutoClosedChildIssueWakesParentSquad(t *testing.T) {
 		t.Fatalf("upsert PR: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM github_pull_request WHERE id = $1`, pr.ID)
+		mustExec(t, context.Background(), `DELETE FROM github_pull_request WHERE id = $1`, pr.ID)
 	})
 	if err := testHandler.Queries.LinkIssueToPullRequest(ctx, db.LinkIssueToPullRequestParams{
 		IssueID:             util.MustParseUUID(childID),
@@ -1070,8 +1070,8 @@ func TestCreateComment_SquadLeaderSkipOnlyInspectsCurrentMention(t *testing.T) {
 	issueID := uuidToString(fx.Issue.ID)
 
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
-		testPool.Exec(context.Background(), `DELETE FROM comment WHERE issue_id = $1`, issueID)
+		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
+		mustExec(t, context.Background(), `DELETE FROM comment WHERE issue_id = $1`, issueID)
 	})
 
 	countQueued := func(agentID string) int {
@@ -1144,8 +1144,8 @@ func TestCreateComment_ActiveWorkerCommentDoesNotWakeLeader(t *testing.T) {
 	issueID := uuidToString(fx.Issue.ID)
 
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
-		testPool.Exec(context.Background(), `DELETE FROM comment WHERE issue_id = $1`, issueID)
+		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
+		mustExec(t, context.Background(), `DELETE FROM comment WHERE issue_id = $1`, issueID)
 	})
 
 	// Seed a worker task for the leader agent on this issue so the guard
@@ -1228,7 +1228,7 @@ func newCrossProjectGateSOPFixture(t *testing.T, childDone bool) crossProjectGat
 		t.Fatalf("create squad: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
+		mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
 	})
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO squad_member (squad_id, member_type, member_id, role)
@@ -1247,10 +1247,10 @@ func newCrossProjectGateSOPFixture(t *testing.T, childDone bool) crossProjectGat
 		t.Fatalf("create issue: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
-		testPool.Exec(context.Background(), `DELETE FROM comment WHERE issue_id = $1`, issueID)
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE parent_issue_id = $1`, issueID)
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
+		mustExec(t, context.Background(), `DELETE FROM comment WHERE issue_id = $1`, issueID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE parent_issue_id = $1`, issueID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
 	})
 	if childDone {
 		childNumber := nextHandlerTestIssueNumber(t)
@@ -1386,7 +1386,7 @@ func TestEnqueueCommentAgentTriggers_AllowsCrossProjectChildWithoutFurtherChildr
 		t.Fatalf("create parent issue: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, parentID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, parentID)
 	})
 	if _, err := testPool.Exec(ctx, `
 		UPDATE issue SET parent_issue_id = $1 WHERE id = $2
@@ -1433,7 +1433,7 @@ func TestCreateRetryTask_InheritsIsLeaderTask(t *testing.T) {
 	issueID := uuidToString(fx.Issue.ID)
 
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
+		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
 	})
 
 	var runtimeID string
@@ -1459,7 +1459,7 @@ func TestCreateRetryTask_InheritsIsLeaderTask(t *testing.T) {
 				t.Fatalf("seed parent task: %v", err)
 			}
 			t.Cleanup(func() {
-				testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1 OR parent_task_id = $1`, parentID)
+				mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE id = $1 OR parent_task_id = $1`, parentID)
 			})
 
 			child, err := testHandler.Queries.CreateRetryTask(ctx, util.MustParseUUID(parentID))
@@ -1498,7 +1498,7 @@ func TestCreateComment_SquadMentionPrivateLeaderBlocksPlainMember(t *testing.T) 
 		t.Fatalf("create squad: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
+		mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
 	})
 
 	// Create an issue.
@@ -1511,9 +1511,9 @@ func TestCreateComment_SquadMentionPrivateLeaderBlocksPlainMember(t *testing.T) 
 		t.Fatalf("create issue: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
-		testPool.Exec(context.Background(), `DELETE FROM comment WHERE issue_id = $1`, issueID)
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
+		mustExec(t, context.Background(), `DELETE FROM comment WHERE issue_id = $1`, issueID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
 	})
 
 	// Plain member posts a comment mentioning the squad.
@@ -1566,7 +1566,7 @@ func TestCreateComment_SquadMentionTriggersLeader(t *testing.T) {
 		t.Fatalf("create squad: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
+		mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
 	})
 
 	// Create an issue NOT assigned to the squad (assigned to nobody).
@@ -1579,9 +1579,9 @@ func TestCreateComment_SquadMentionTriggersLeader(t *testing.T) {
 		t.Fatalf("create issue: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
-		testPool.Exec(context.Background(), `DELETE FROM comment WHERE issue_id = $1`, issueID)
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
+		mustExec(t, context.Background(), `DELETE FROM comment WHERE issue_id = $1`, issueID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
 	})
 
 	countQueued := func(agentID string) int {
@@ -1628,7 +1628,7 @@ func TestCreateComment_MentionAssignedSquadLeaderCreatesLeaderRoleTask(t *testin
 		t.Fatalf("create squad: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
+		mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
 	})
 
 	var issueID string
@@ -1640,9 +1640,9 @@ func TestCreateComment_MentionAssignedSquadLeaderCreatesLeaderRoleTask(t *testin
 		t.Fatalf("create issue: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
-		testPool.Exec(context.Background(), `DELETE FROM comment WHERE issue_id = $1`, issueID)
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
+		mustExec(t, context.Background(), `DELETE FROM comment WHERE issue_id = $1`, issueID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
 	})
 
 	w := httptest.NewRecorder()

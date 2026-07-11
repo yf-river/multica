@@ -32,7 +32,7 @@ func newTerminalTaskFixture(t *testing.T, title string) terminalTaskFixture {
 		t.Fatalf("create running terminal task: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
 	})
 	return terminalTaskFixture{IssueID: issue.ID, TaskID: taskID}
 }

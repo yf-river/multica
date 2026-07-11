@@ -171,7 +171,9 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 	}
 	if sourceSummary != nil {
 		s.publishIssueSourceSummaryProjection(ctx, *sourceSummary)
-		s.ReconcileAgentStatus(ctx, task.AgentID)
+		if _, err := s.ReconcileAgentStatus(ctx, task.AgentID); err != nil {
+			slog.Warn("reconcile failed source-summary agent status failed", "agent_id", util.UUIDToString(task.AgentID), "error", err)
+		}
 		s.Bus.Publish(failedEvent)
 		return &task, nil
 	}
@@ -188,7 +190,9 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 	s.publishAgentCommentProjection(ctx, failureComment)
 
 	// Reconcile agent status
-	s.ReconcileAgentStatus(ctx, task.AgentID)
+	if _, err := s.ReconcileAgentStatus(ctx, task.AgentID); err != nil {
+		slog.Warn("reconcile failed agent status failed", "agent_id", util.UUIDToString(task.AgentID), "error", err)
+	}
 
 	// Broadcast
 	s.Bus.Publish(failedEvent)
@@ -467,7 +471,9 @@ func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTas
 	}
 
 	for _, agentID := range affectedAgents {
-		s.ReconcileAgentStatus(ctx, agentID)
+		if _, err := s.ReconcileAgentStatus(ctx, agentID); err != nil {
+			slog.Warn("reconcile bulk-failed agent status failed", "agent_id", util.UUIDToString(agentID), "error", err)
+		}
 	}
 	return retried
 }
@@ -483,7 +489,7 @@ func (s *TaskService) runInTx(ctx context.Context, fn func(*db.Queries) error) e
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	if err := fn(s.Queries.WithTx(tx)); err != nil {
 		return err
 	}
@@ -641,7 +647,9 @@ func (s *TaskService) notifyTaskAvailable(task db.AgentTaskQueue) {
 func (s *TaskService) broadcastTaskDispatch(ctx context.Context, task db.AgentTaskQueue) {
 	var payload map[string]any
 	if task.Context != nil {
-		json.Unmarshal(task.Context, &payload)
+		if err := json.Unmarshal(task.Context, &payload); err != nil {
+			slog.Warn("decode task dispatch context failed", "task_id", util.UUIDToString(task.ID), "error", err)
+		}
 	}
 	if payload == nil {
 		payload = map[string]any{}
@@ -694,28 +702,6 @@ func (s *TaskService) ResolveTaskWorkspaceID(ctx context.Context, task db.AgentT
 type taskIssueUpdateChanges struct {
 	Status      bool
 	Description bool
-}
-
-func (s *TaskService) persistIssueUpdate(
-	ctx context.Context,
-	previous db.Issue,
-	changes taskIssueUpdateChanges,
-	update func(*db.Queries) (db.Issue, error),
-) (db.Issue, error) {
-	var updated db.Issue
-	var event events.Event
-	err := s.runInTx(ctx, func(queries *db.Queries) error {
-		var err error
-		updated, event, err = s.persistIssueUpdateInTx(ctx, queries, previous, changes, update)
-		return err
-	})
-	if err != nil {
-		return db.Issue{}, err
-	}
-	if s.Bus != nil {
-		s.Bus.Publish(event)
-	}
-	return updated, nil
 }
 
 func (s *TaskService) persistIssueUpdateInTx(

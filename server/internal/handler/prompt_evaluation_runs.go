@@ -324,7 +324,7 @@ func (h *Handler) ReviewPromptEvaluationRun(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusInternalServerError, "failed to start prompt evaluation review transaction")
 		return
 	}
-	defer tx.Rollback(r.Context())
+	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 	reviewed, err := qtx.ReviewPromptEvaluationRun(r.Context(), db.ReviewPromptEvaluationRunParams{
 		ID:          run.ID,

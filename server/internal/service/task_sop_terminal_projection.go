@@ -210,7 +210,7 @@ func (s *TaskService) projectSquadSOPTerminalWithPolicy(
 		if ignoreFormerAssignment {
 			return nil, nil
 		}
-		return nil, errors.New("Squad SOP run does not match the locked issue assignment")
+		return nil, errors.New("squad SOP run does not match the locked issue assignment")
 	}
 
 	agent, err := queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{

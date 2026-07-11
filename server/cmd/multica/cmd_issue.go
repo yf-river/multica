@@ -1057,7 +1057,7 @@ func runIssueUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(body) == 0 {
-		return fmt.Errorf("no fields to update; use flags like --title, --status, --priority, --assignee, etc.")
+		return fmt.Errorf("no fields to update; use flags like --title, --status, --priority, --assignee, etc")
 	}
 
 	var result map[string]any
@@ -1168,4 +1168,3 @@ func runIssueStatus(cmd *cobra.Command, args []string) error {
 // ---------------------------------------------------------------------------
 // Comment commands
 // ---------------------------------------------------------------------------
-

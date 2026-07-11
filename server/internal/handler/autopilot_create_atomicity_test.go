@@ -49,7 +49,7 @@ func TestCreateAutopilotConcurrentReplayCommitsOneAutopilotAndTrigger(t *testing
 		"execution_mode": "run_only",
 	})
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM autopilot WHERE workspace_id = $1 AND title = $2`, testWorkspaceID, title)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM autopilot WHERE workspace_id = $1 AND title = $2`, testWorkspaceID, title)
 	})
 
 	type result struct {
@@ -166,8 +166,8 @@ func installAutopilotTriggerInsertFailure(t *testing.T) {
 	functionName := fmt.Sprintf("autopilot_trigger_fail_fn_%d", suffix)
 	triggerName := fmt.Sprintf("autopilot_trigger_fail_%d", suffix)
 	t.Cleanup(func() {
-		testPool.Exec(ctx, fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON autopilot_trigger`, triggerName))
-		testPool.Exec(ctx, fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, functionName))
+		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON autopilot_trigger`, triggerName))
+		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, functionName))
 	})
 	if _, err := testPool.Exec(ctx, fmt.Sprintf(`
 CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$

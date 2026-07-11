@@ -9,8 +9,19 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
+
+// shortID returns the first eight characters of an identifier after removing
+// UUID separators. Task directories use it only as a readable path segment.
+func shortID(id string) string {
+	compact := strings.ReplaceAll(id, "-", "")
+	if len(compact) > 8 {
+		return compact[:8]
+	}
+	return compact
+}
 
 // RepoContextForEnv describes a workspace repo available for checkout.
 type RepoContextForEnv struct {

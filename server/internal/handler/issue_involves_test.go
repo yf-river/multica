@@ -48,7 +48,7 @@ func setupInvolvesFixture(t *testing.T) *involvesFixture {
 	`, "Involves Other User", fmt.Sprintf("involves-other-%d@multica.ai", suffix)).Scan(&otherUserID); err != nil {
 		t.Fatalf("create other user: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, otherUserID) })
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM "user" WHERE id = $1`, otherUserID) })
 	fx.otherID = otherUserID
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, 'member')
@@ -106,7 +106,7 @@ func setupInvolvesFixture(t *testing.T) *involvesFixture {
 	`, fmt.Sprintf("InvolvesOtherWs-%d", suffix), fmt.Sprintf("involves-other-ws-%d", suffix)).Scan(&otherWsID); err != nil {
 		t.Fatalf("create other workspace: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM workspace WHERE id = $1`, otherWsID) })
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM workspace WHERE id = $1`, otherWsID) })
 	fx.otherWsID = otherWsID
 
 	// Membership in other workspace (so the user could legitimately be assigned
@@ -171,7 +171,7 @@ func insertAgent(t *testing.T, ctx context.Context, workspaceID, runtimeID, owne
 	`, workspaceID, name, runtimeID, ownerID).Scan(&id); err != nil {
 		t.Fatalf("create agent %q: %v", name, err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, id) })
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM agent WHERE id = $1`, id) })
 	return id
 }
 
@@ -186,7 +186,7 @@ func insertSquad(t *testing.T, ctx context.Context, workspaceID, leaderAgentID, 
 	`, workspaceID, name, leaderAgentID, testUserID).Scan(&id); err != nil {
 		t.Fatalf("create squad %q: %v", name, err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, id) })
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, id) })
 	return id
 }
 
@@ -219,7 +219,7 @@ func insertIssueTo(t *testing.T, ctx context.Context, workspaceID, title, assign
 	`, workspaceID, title, assigneeType, assigneeID, testUserID, number).Scan(&id); err != nil {
 		t.Fatalf("create issue %q: %v", title, err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, id) })
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, id) })
 	return id
 }
 

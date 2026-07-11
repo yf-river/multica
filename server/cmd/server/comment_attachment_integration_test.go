@@ -20,7 +20,7 @@ func createTestAttachment(t *testing.T, issueID string) string {
 		t.Fatalf("createTestAttachment: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM attachment WHERE id = $1::uuid`, id)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM attachment WHERE id = $1::uuid`, id)
 	})
 	return id
 }
@@ -55,7 +55,7 @@ func createCommentWithAttachments(t *testing.T, issueID, content string, attachm
 	})
 	if resp.StatusCode != 201 {
 		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		t.Fatalf("CreateComment: expected 201, got %d: %s", resp.StatusCode, body)
 	}
 	var comment map[string]any
@@ -67,7 +67,7 @@ func updateComment(t *testing.T, commentID string, payload map[string]any) {
 	t.Helper()
 
 	resp := authRequest(t, "PUT", "/api/comments/"+commentID, payload)
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != 200 {
 		body, _ := io.ReadAll(resp.Body)
 		t.Fatalf("UpdateComment: expected 200, got %d: %s", resp.StatusCode, body)
@@ -78,7 +78,7 @@ func TestUpdateCommentAttachments(t *testing.T) {
 	issueID := createIssue(t, "Attachment edit integration test")
 	t.Cleanup(func() {
 		resp := authRequest(t, "DELETE", "/api/issues/"+issueID, nil)
-		resp.Body.Close()
+		_ = resp.Body.Close()
 	})
 
 	t.Run("edit to remove some attachments keeps the rest", func(t *testing.T) {

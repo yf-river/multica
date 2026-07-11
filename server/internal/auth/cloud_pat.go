@@ -343,7 +343,7 @@ func (v *CloudPATVerifier) fetch(ctx context.Context, token string) (CloudPATIde
 		slog.Warn("cloud_pat: verify request failed", "error", err)
 		return CloudPATIdentity{}, ErrCloudPATUnavailable
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		// Per the Cloud doc, 400 means our request was malformed and

@@ -130,7 +130,9 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 	s.captureTaskCompleted(ctx, task)
 	if sourceSummary != nil {
 		s.publishIssueSourceSummaryProjection(ctx, *sourceSummary)
-		s.ReconcileAgentStatus(ctx, task.AgentID)
+		if _, err := s.ReconcileAgentStatus(ctx, task.AgentID); err != nil {
+			slog.Warn("reconcile source-summary agent status failed", "agent_id", util.UUIDToString(task.AgentID), "error", err)
+		}
 		s.Bus.Publish(completedEvent)
 		return &task, nil
 	}
@@ -140,7 +142,9 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 	s.publishAgentCommentProjection(ctx, completionComment)
 
 	// Reconcile agent status
-	s.ReconcileAgentStatus(ctx, task.AgentID)
+	if _, err := s.ReconcileAgentStatus(ctx, task.AgentID); err != nil {
+		slog.Warn("reconcile completed agent status failed", "agent_id", util.UUIDToString(task.AgentID), "error", err)
+	}
 
 	// Broadcast
 	s.Bus.Publish(completedEvent)
@@ -461,9 +465,8 @@ func (s *TaskService) createIssueTaskAfterSourceSummary(
 }
 
 var (
-	gongfengMRURLRe     = regexp.MustCompile(`https://git\.code\.tencent\.com/([A-Za-z0-9_.~%+/\-]+?)/(?:-/)?merge_requests/([0-9]+)`)
-	gongfengMRBranchRe  = regexp.MustCompile(`(?im)(?:源分支|source\s+branch|source_branch)\s*(?:[：:]|\|)\s*` + "`?" + `([A-Za-z0-9._/\-]+)` + "`?")
-	gongfengMRTitleLine = regexp.MustCompile(`(?m)(?:MR\s*(?:已创建|created)?|merge\s+request)\s*[：:]\s*(.+)$`)
+	gongfengMRURLRe    = regexp.MustCompile(`https://git\.code\.tencent\.com/([A-Za-z0-9_.~%+/\-]+?)/(?:-/)?merge_requests/([0-9]+)`)
+	gongfengMRBranchRe = regexp.MustCompile(`(?im)(?:源分支|source\s+branch|source_branch)\s*(?:[：:]|\|)\s*` + "`?" + `([A-Za-z0-9._/\-]+)` + "`?")
 )
 
 type gongfengMRCommentRef struct {

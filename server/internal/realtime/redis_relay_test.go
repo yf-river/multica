@@ -14,8 +14,8 @@ func TestNewRedisRelayWithClientsSeparatesBlockingReadPool(t *testing.T) {
 	writeClient := redis.NewClient(&redis.Options{Addr: "127.0.0.1:0"})
 	readClient := redis.NewClient(&redis.Options{Addr: "127.0.0.1:0"})
 	t.Cleanup(func() {
-		writeClient.Close()
-		readClient.Close()
+		_ = writeClient.Close()
+		_ = readClient.Close()
 	})
 
 	relay := NewRedisRelayWithClients(hub, writeClient, readClient)
@@ -31,7 +31,7 @@ func TestNewRedisRelayWithClientsSeparatesBlockingReadPool(t *testing.T) {
 func TestRedisRelayStopPreventsNewConsumers(t *testing.T) {
 	hub := NewHub()
 	client := redis.NewClient(&redis.Options{Addr: "127.0.0.1:0"})
-	t.Cleanup(func() { client.Close() })
+	t.Cleanup(func() { _ = client.Close() })
 
 	relay := NewRedisRelay(hub, client)
 	relay.Stop()

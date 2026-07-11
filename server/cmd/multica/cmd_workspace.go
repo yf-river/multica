@@ -140,13 +140,13 @@ func runWorkspaceList(cmd *cobra.Command, _ []string) error {
 	currentID := resolveWorkspaceID(cmd)
 	fullID, _ := cmd.Flags().GetBool("full-id")
 	w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(w, "\tID\tNAME\tSLUG")
+	_, _ = fmt.Fprintln(w, "\tID\tNAME\tSLUG")
 	for _, ws := range workspaces {
 		marker := " "
 		if ws.ID == currentID {
 			marker = "*"
 		}
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", marker, displayID(ws.ID, fullID), ws.Name, ws.Slug)
+		_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", marker, displayID(ws.ID, fullID), ws.Name, ws.Slug)
 	}
 	if err := w.Flush(); err != nil {
 		return err
@@ -259,7 +259,9 @@ func runWorkspaceSwitch(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Fprintf(os.Stdout, "Switched to workspace: %s (%s)\n", ws.Name, ws.ID)
+	if _, err := fmt.Fprintf(os.Stdout, "Switched to workspace: %s (%s)\n", ws.Name, ws.ID); err != nil {
+		return fmt.Errorf("print switched workspace: %w", err)
+	}
 	return nil
 }
 

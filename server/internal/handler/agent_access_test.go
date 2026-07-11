@@ -67,7 +67,7 @@ func personalAgentTestFixture(t *testing.T) (agentID, ownerID, memberID string) 
 		t.Fatalf("create owner user: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(),
+		_, _ = testPool.Exec(context.Background(),
 			`DELETE FROM "user" WHERE account = 'personal-agent-owner@multica.test'`)
 	})
 
@@ -86,7 +86,7 @@ func personalAgentTestFixture(t *testing.T) (agentID, ownerID, memberID string) 
 		t.Fatalf("create plain member user: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(),
+		_, _ = testPool.Exec(context.Background(),
 			`DELETE FROM "user" WHERE account = 'plain-member@multica.test'`)
 	})
 
@@ -110,7 +110,7 @@ func personalAgentTestFixture(t *testing.T) (agentID, ownerID, memberID string) 
 		t.Fatalf("create personal agent: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(),
+		_, _ = testPool.Exec(context.Background(),
 			`DELETE FROM agent WHERE id = $1`, agentID)
 	})
 
@@ -358,7 +358,7 @@ func TestListChatMessages_PrivateAgentForbidsAfterAccessRevoked(t *testing.T) {
 		t.Fatalf("seed chat session: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM chat_session WHERE id = $1`, sessionID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM chat_session WHERE id = $1`, sessionID)
 	})
 
 	memberRow, err := testHandler.Queries.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{
@@ -402,7 +402,7 @@ func TestMentionAgent_RejectsCrossWorkspaceAgentUUID(t *testing.T) {
 		t.Fatalf("create foreign user: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(),
+		_, _ = testPool.Exec(context.Background(),
 			`DELETE FROM "user" WHERE account = 'cross-ws-foreign@multica.test'`)
 	})
 
@@ -414,7 +414,7 @@ func TestMentionAgent_RejectsCrossWorkspaceAgentUUID(t *testing.T) {
 		t.Fatalf("create foreign workspace: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(),
+		_, _ = testPool.Exec(context.Background(),
 			`DELETE FROM workspace WHERE slug = 'cross-ws-foreign'`)
 	})
 	if _, err := testPool.Exec(ctx, `
@@ -452,7 +452,7 @@ func TestMentionAgent_RejectsCrossWorkspaceAgentUUID(t *testing.T) {
 		t.Fatalf("create test issue: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
 	})
 
 	// Multica's mention format is markdown-linked: [@Name](mention://agent/<uuid>).
@@ -465,7 +465,7 @@ func TestMentionAgent_RejectsCrossWorkspaceAgentUUID(t *testing.T) {
 		t.Fatalf("create test comment: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM comment WHERE id = $1`, commentID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM comment WHERE id = $1`, commentID)
 	})
 
 	issue, err := testHandler.Queries.GetIssue(ctx, util.MustParseUUID(issueID))
@@ -538,7 +538,7 @@ func TestShouldEnqueueOnComment_PrivateAgentGate(t *testing.T) {
 		t.Fatalf("create issue assigned to personal agent: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
 	})
 
 	issue, err := testHandler.Queries.GetIssue(ctx, util.MustParseUUID(issueID))

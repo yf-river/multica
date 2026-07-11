@@ -106,7 +106,9 @@ func (d *Daemon) healthHandler(startedAt time.Time) http.HandlerFunc {
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(resp)
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
+			d.logger.Debug("encode health response failed", "error", err)
+		}
 	}
 }
 
@@ -123,7 +125,9 @@ func (d *Daemon) shutdownHandler() http.HandlerFunc {
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"status": "shutting down"})
+		if err := json.NewEncoder(w).Encode(map[string]string{"status": "shutting down"}); err != nil {
+			d.logger.Debug("encode shutdown response failed", "error", err)
+		}
 		if d.cancelFunc != nil {
 			// Cancel asynchronously so the response flushes first; otherwise
 			// srv.Close() races with the writer.
@@ -194,14 +198,18 @@ func (d *Daemon) serveHealth(ctx context.Context, ln net.Listener, startedAt tim
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(result)
+		if err := json.NewEncoder(w).Encode(result); err != nil {
+			d.logger.Debug("encode repo checkout response failed", "error", err)
+		}
 	})
 
 	srv := &http.Server{Handler: mux}
 
 	go func() {
 		<-ctx.Done()
-		srv.Close()
+		if err := srv.Close(); err != nil && err != http.ErrServerClosed {
+			d.logger.Debug("close health server failed", "error", err)
+		}
 	}()
 
 	d.logger.Info("health server listening", "addr", ln.Addr().String())

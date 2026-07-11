@@ -921,7 +921,10 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 
 	// Track which fields were explicitly present in JSON (even if null)
 	var rawFields map[string]json.RawMessage
-	json.Unmarshal(bodyBytes, &rawFields)
+	if err := json.Unmarshal(bodyBytes, &rawFields); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
 
 	// Pre-fill nullable fields (bare sqlc.narg) with current values
 	params := db.UpdateIssueParams{
@@ -1104,7 +1107,7 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to update issue")
 		return
 	}
-	defer tx.Rollback(r.Context())
+	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 
 	issue, err := qtx.UpdateIssue(r.Context(), params)
@@ -1192,7 +1195,9 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	h.publishEvent(updatedEvent)
 	slog.Info("issue updated", append(logger.RequestAttrs(r), "issue_id", id, "workspace_id", workspaceID)...)
 
-	h.reconcileIssueUpdateSideEffects(r.Context(), r, prevIssue, issue, assigneeChanged, statusChanged, actorType, actorID)
+	if err := h.reconcileIssueUpdateSideEffects(r.Context(), r, prevIssue, issue, assigneeChanged, statusChanged, actorType, actorID); err != nil {
+		slog.Error("reconcile issue update side effects failed", append(logger.RequestAttrs(r), "issue_id", id, "error", err)...)
+	}
 	if issue.Status == "backlog" && (statusChanged || projectChanged || assigneeChanged) {
 		h.IssueService.EnsureProjectOwnerApprovalForBacklog(r.Context(), issue, actorType, actorID)
 	}
@@ -1249,12 +1254,16 @@ func buildIssueUpdatedEvent(
 	return event
 }
 
-func (h *Handler) reconcileIssueUpdateSideEffects(ctx context.Context, r *http.Request, prevIssue db.Issue, issue db.Issue, assigneeChanged bool, statusChanged bool, actorType string, actorID string) {
+func (h *Handler) reconcileIssueUpdateSideEffects(ctx context.Context, r *http.Request, prevIssue db.Issue, issue db.Issue, assigneeChanged bool, statusChanged bool, actorType string, actorID string) error {
 	// Reconcile task queue when assignee changes.
 	if assigneeChanged {
-		h.TaskService.CancelTasksForIssue(ctx, issue.ID)
+		if err := h.TaskService.CancelTasksForIssue(ctx, issue.ID); err != nil {
+			return fmt.Errorf("cancel tasks after assignee change: %w", err)
+		}
 		if h.shouldEnqueueAgentTask(ctx, issue) {
-			h.TaskService.EnqueueTaskForIssue(ctx, issue)
+			if _, err := h.TaskService.EnqueueTaskForIssue(ctx, issue); err != nil {
+				return fmt.Errorf("enqueue task after assignee change: %w", err)
+			}
 		}
 		if h.shouldEnqueueSquadLeaderOnAssign(ctx, issue) {
 			h.enqueueSquadLeaderTask(ctx, issue, pgtype.UUID{}, actorType, actorID)
@@ -1268,7 +1277,9 @@ func (h *Handler) reconcileIssueUpdateSideEffects(ctx context.Context, r *http.R
 		prevIssue.Status == "backlog" && issue.Status != "done" && issue.Status != "cancelled" &&
 		!h.isAssignedAgentRunningOnIssue(ctx, r, actorType, actorID, issue) {
 		if h.isAgentAssigneeReady(ctx, issue) {
-			h.TaskService.EnqueueTaskForIssue(ctx, issue)
+			if _, err := h.TaskService.EnqueueTaskForIssue(ctx, issue); err != nil {
+				return fmt.Errorf("enqueue task after backlog transition: %w", err)
+			}
 		}
 		if h.isSquadLeaderReady(ctx, issue) {
 			h.enqueueSquadLeaderTask(ctx, issue, pgtype.UUID{}, actorType, actorID)
@@ -1277,13 +1288,16 @@ func (h *Handler) reconcileIssueUpdateSideEffects(ctx context.Context, r *http.R
 
 	// Cancellation is a user-initiated terminal action that should stop execution.
 	if statusChanged && issue.Status == "cancelled" {
-		h.TaskService.CancelTasksForIssue(ctx, issue.ID)
+		if err := h.TaskService.CancelTasksForIssue(ctx, issue.ID); err != nil {
+			return fmt.Errorf("cancel tasks after issue cancellation: %w", err)
+		}
 	}
 
 	// Best-effort parent notification for child done transitions.
 	if statusChanged {
 		h.notifyParentOfChildDone(ctx, prevIssue, issue, actorType, actorID)
 	}
+	return nil
 }
 
 // validateAssigneePair verifies the (assignee_type, assignee_id) pair refers
@@ -1522,7 +1536,7 @@ func (h *Handler) deleteIssueAtomically(ctx context.Context, issue db.Issue) (is
 	if err != nil {
 		return issueDeletionResult{}, fmt.Errorf("begin issue delete: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	queries := h.Queries.WithTx(tx)
 	cancelledTasks, cancelledEvents, err := h.TaskService.CancelTasksForIssueInTx(ctx, queries, issue.ID)
 	if err != nil {

@@ -1113,7 +1113,7 @@ func TestProjectResourceCountBreadcrumb(t *testing.T) {
 		t.Fatalf("create project issue: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
 	})
 
 	// UpdateProject must preserve the breadcrumb. A title-only PUT used to

@@ -81,7 +81,7 @@ func TestHelperStatusErrorsAreClassified(t *testing.T) {
 			w.WriteHeader(sc.status)
 			// Validation responses carry a server message that FormatError
 			// should surface verbatim; other statuses ignore the body.
-			io.WriteString(w, `{"error":"title is required"}`)
+			_, _ = io.WriteString(w, `{"error":"title is required"}`)
 		}))
 
 		for _, h := range helpers {
@@ -138,7 +138,7 @@ func TestCommandContextNotTruncatedBelowHTTPTimeout(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			time.Sleep(120 * time.Millisecond) // < 400ms transport timeout
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(map[string]string{"ok": "true"})
+			_ = json.NewEncoder(w).Encode(map[string]string{"ok": "true"})
 		}))
 		defer srv.Close()
 

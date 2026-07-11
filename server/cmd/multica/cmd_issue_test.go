@@ -107,14 +107,20 @@ func newAssigneeResolverTestServer(
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/workspaces/ws-1/members":
-			json.NewEncoder(w).Encode(membersResp)
+			if err := json.NewEncoder(w).Encode(membersResp); err != nil {
+				t.Errorf("encode members response: %v", err)
+			}
 		case "/api/agents":
-			json.NewEncoder(w).Encode(agentsResp)
+			if err := json.NewEncoder(w).Encode(agentsResp); err != nil {
+				t.Errorf("encode agents response: %v", err)
+			}
 		case "/api/squads":
 			if onSquads != nil {
 				onSquads()
 			}
-			json.NewEncoder(w).Encode(squadsResp)
+			if err := json.NewEncoder(w).Encode(squadsResp); err != nil {
+				t.Errorf("encode squads response: %v", err)
+			}
 		default:
 			http.NotFound(w, r)
 		}
@@ -134,10 +140,12 @@ func newIssueCommentListQueryTestServer(
 	fixture := &issueCommentListQueryTestServer{}
 	fixture.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/issues/") && !strings.Contains(r.URL.Path, "/comments") {
-			json.NewEncoder(w).Encode(map[string]any{
+			if err := json.NewEncoder(w).Encode(map[string]any{
 				"id":         "issue-1",
 				"identifier": "MUL-1",
-			})
+			}); err != nil {
+				t.Errorf("encode issue response: %v", err)
+			}
 			return
 		}
 		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/comments") {
@@ -146,7 +154,7 @@ func newIssueCommentListQueryTestServer(
 				onComments(w, r)
 				return
 			}
-			w.Write([]byte("[]"))
+			_, _ = w.Write([]byte("[]"))
 			return
 		}
 		t.Errorf("unexpected request: %s %s", r.Method, r.URL.String())
@@ -389,13 +397,15 @@ func TestRunIssueCreateSendsExistingAttachmentIDs(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Errorf("decode body: %v", err)
 		}
-		json.NewEncoder(w).Encode(map[string]any{
+		if err := json.NewEncoder(w).Encode(map[string]any{
 			"id":         "issue-1",
 			"identifier": "MUL-1",
 			"title":      "With attachments",
 			"status":     "todo",
 			"priority":   "none",
-		})
+		}); err != nil {
+			t.Errorf("encode issue response: %v", err)
+		}
 	}))
 	defer srv.Close()
 
@@ -478,13 +488,15 @@ func TestRunIssuePullRequestsListsLinkedPRsAsJSON(t *testing.T) {
 		gotPaths = append(gotPaths, r.URL.Path)
 		switch r.URL.Path {
 		case "/api/issues/MUL-2818":
-			json.NewEncoder(w).Encode(map[string]any{
+			if err := json.NewEncoder(w).Encode(map[string]any{
 				"id":         "issue-uuid",
 				"identifier": "MUL-2818",
 				"title":      "CLI PR lookup",
-			})
+			}); err != nil {
+				t.Errorf("encode issue response: %v", err)
+			}
 		case "/api/issues/issue-uuid/pull-requests":
-			json.NewEncoder(w).Encode(map[string]any{
+			if err := json.NewEncoder(w).Encode(map[string]any{
 				"pull_requests": []map[string]any{
 					{
 						"url":    "https://github.com/multica-ai/multica/pull/42",
@@ -493,7 +505,9 @@ func TestRunIssuePullRequestsListsLinkedPRsAsJSON(t *testing.T) {
 						"title":  "MUL-2818 add issue PR CLI",
 					},
 				},
-			})
+			}); err != nil {
+				t.Errorf("encode pull requests response: %v", err)
+			}
 		default:
 			http.NotFound(w, r)
 		}
@@ -564,7 +578,7 @@ func TestRunIssuePullRequestLinkPostsGongfengMR(t *testing.T) {
 		gotPaths = append(gotPaths, r.URL.Path)
 		switch r.URL.Path {
 		case "/api/issues/GOA-61234":
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id":         "issue-uuid",
 				"identifier": "GOA-61234",
 				"title":      "CLI MR link",
@@ -576,7 +590,7 @@ func TestRunIssuePullRequestLinkPostsGongfengMR(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
 				t.Fatalf("decode posted body: %v", err)
 			}
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"pull_request": map[string]any{
 					"html_url": "https://git.code.tencent.com/ChainWeaver/ida/user-center/merge_requests/61234",
 					"number":   float64(61234),
@@ -646,7 +660,7 @@ func TestRunIssueMRCreatePostsPlatformCreate(t *testing.T) {
 		gotPaths = append(gotPaths, r.URL.Path)
 		switch r.URL.Path {
 		case "/api/issues/GOA-61235":
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id":         "issue-uuid",
 				"identifier": "GOA-61235",
 				"title":      "CLI MR create",
@@ -658,7 +672,7 @@ func TestRunIssueMRCreatePostsPlatformCreate(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
 				t.Fatalf("decode posted body: %v", err)
 			}
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"linked": true,
 				"pull_request": map[string]any{
 					"html_url": "https://git.code.tencent.com/ChainWeaver/ida/user-center/merge_requests/61235",
@@ -734,14 +748,14 @@ func TestRunIssueChildrenParsesEnvelopeResponse(t *testing.T) {
 		gotPaths = append(gotPaths, r.URL.Path)
 		switch r.URL.Path {
 		case "/api/issues/GOA-520":
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id":         "issue-uuid",
 				"identifier": "GOA-520",
 				"title":      "Parent",
 				"status":     "done",
 			})
 		case "/api/issues/issue-uuid/children":
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"issues": []map[string]any{},
 			})
 		default:
@@ -842,10 +856,10 @@ func TestActorDisplayLookupLazyLoads(t *testing.T) {
 		switch r.URL.Path {
 		case "/api/workspaces/ws-1/members":
 			memberCalls++
-			json.NewEncoder(w).Encode([]map[string]any{{"user_id": "user-1", "name": "Alice"}})
+			_ = json.NewEncoder(w).Encode([]map[string]any{{"user_id": "user-1", "name": "Alice"}})
 		case "/api/agents":
 			agentCalls++
-			json.NewEncoder(w).Encode([]map[string]any{{"id": "agent-1", "name": "CodeBot"}})
+			_ = json.NewEncoder(w).Encode([]map[string]any{{"id": "agent-1", "name": "CodeBot"}})
 		default:
 			http.NotFound(w, r)
 		}
@@ -945,7 +959,7 @@ func TestResolveIssueRef(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			switch r.URL.Path {
 			case "/api/issues/MUL-1852":
-				json.NewEncoder(w).Encode(issue)
+				_ = json.NewEncoder(w).Encode(issue)
 			case "/api/issues":
 				listCalled = true
 				http.Error(w, "should not list", http.StatusTeapot)
@@ -983,7 +997,7 @@ func TestResolveIssueRef(t *testing.T) {
 			if got := r.URL.Query().Get("limit"); got != strconv.Itoa(resolverListPageLimit) {
 				t.Errorf("limit = %q, want %d", got, resolverListPageLimit)
 			}
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"issues": []map[string]any{issue},
 				"total":  1,
 			})
@@ -1006,7 +1020,7 @@ func TestResolveIssueRef(t *testing.T) {
 				http.NotFound(w, r)
 				return
 			}
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"issues": []map[string]any{{
 					"id":         "aaaaaaaa-4bb6-4602-944b-f40ce4192fe6",
 					"identifier": "MUL-1852",
@@ -1059,12 +1073,12 @@ func TestFetchAutopilotCandidatesPaginates(t *testing.T) {
 		offsets = append(offsets, offset)
 		switch offset {
 		case "":
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"autopilots": page1,
 				"total":      resolverListPageLimit + 1,
 			})
 		case strconv.Itoa(resolverListPageLimit):
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"autopilots": page2,
 				"total":      resolverListPageLimit + 1,
 			})
@@ -1097,7 +1111,7 @@ func TestResolveTaskRunID(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/issues/" + issueID + "/task-runs":
-			json.NewEncoder(w).Encode([]map[string]any{{
+			_ = json.NewEncoder(w).Encode([]map[string]any{{
 				"id":       taskID,
 				"agent_id": "agent-1",
 				"status":   "completed",
@@ -1131,15 +1145,15 @@ func TestRunIssueRunMessagesResolvesShortTaskPrefix(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/issues/MUL-1852":
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id":         issueID,
 				"identifier": "MUL-1852",
 			})
 		case "/api/issues/" + issueID + "/task-runs":
-			json.NewEncoder(w).Encode([]map[string]any{{"id": taskID}})
+			_ = json.NewEncoder(w).Encode([]map[string]any{{"id": taskID}})
 		case "/api/tasks/" + taskID + "/messages":
 			messagePath = r.URL.Path
-			json.NewEncoder(w).Encode([]map[string]any{{
+			_ = json.NewEncoder(w).Encode([]map[string]any{{
 				"seq":     1,
 				"type":    "text",
 				"content": "done",
@@ -1606,11 +1620,11 @@ func TestPickAssigneeFromFlags(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/workspaces/ws-1/members":
-			json.NewEncoder(w).Encode(membersResp)
+			_ = json.NewEncoder(w).Encode(membersResp)
 		case "/api/agents":
-			json.NewEncoder(w).Encode(agentsResp)
+			_ = json.NewEncoder(w).Encode(agentsResp)
 		case "/api/squads":
-			json.NewEncoder(w).Encode([]map[string]any{})
+			_ = json.NewEncoder(w).Encode([]map[string]any{})
 		default:
 			http.NotFound(w, r)
 		}
@@ -1736,12 +1750,12 @@ func TestPickAssigneeFromFlagsMemberOrAgentKinds(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/workspaces/ws-1/members":
-			json.NewEncoder(w).Encode(membersResp)
+			_ = json.NewEncoder(w).Encode(membersResp)
 		case "/api/agents":
-			json.NewEncoder(w).Encode(agentsResp)
+			_ = json.NewEncoder(w).Encode(agentsResp)
 		case "/api/squads":
 			squadsHits++
-			json.NewEncoder(w).Encode(squadsResp)
+			_ = json.NewEncoder(w).Encode(squadsResp)
 		default:
 			http.NotFound(w, r)
 		}
@@ -1829,7 +1843,7 @@ func TestIssueSubscriberList(t *testing.T) {
 		if r.Method != http.MethodGet {
 			t.Errorf("expected GET, got %s", r.Method)
 		}
-		json.NewEncoder(w).Encode(subscribersResp)
+		_ = json.NewEncoder(w).Encode(subscribersResp)
 	}))
 	defer srv.Close()
 
@@ -1900,21 +1914,21 @@ func TestIssueSubscriberMutationBody(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
 				case "/api/workspaces/ws-1/members":
-					json.NewEncoder(w).Encode(tt.members)
+					_ = json.NewEncoder(w).Encode(tt.members)
 					return
 				case "/api/agents":
-					json.NewEncoder(w).Encode(tt.agents)
+					_ = json.NewEncoder(w).Encode(tt.agents)
 					return
 				case "/api/squads":
-					json.NewEncoder(w).Encode([]map[string]any{})
+					_ = json.NewEncoder(w).Encode([]map[string]any{})
 					return
 				}
 				gotPath = r.URL.Path
 				if r.Method != http.MethodPost {
 					t.Errorf("expected POST, got %s", r.Method)
 				}
-				json.NewDecoder(r.Body).Decode(&gotBody)
-				json.NewEncoder(w).Encode(map[string]bool{"subscribed": tt.action == "subscribe"})
+				_ = json.NewDecoder(r.Body).Decode(&gotBody)
+				_ = json.NewEncoder(w).Encode(map[string]bool{"subscribed": tt.action == "subscribe"})
 			}))
 			defer srv.Close()
 
@@ -1991,7 +2005,7 @@ func TestRunIssueCommentListFlagGuards(t *testing.T) {
 		// resolveIssueRef hits GET /api/issues/<ref>; everything else means
 		// the guard let an invalid combination through to the wire.
 		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/issues/") && !strings.Contains(r.URL.Path, "/comments") {
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id":         "issue-1",
 				"identifier": "MUL-1",
 			})
@@ -2191,7 +2205,7 @@ func TestRunIssueCommentList_ThreadTailPassesThroughAndPrintsReplyCursor(t *test
 		// when the call was a --thread + --tail combo.
 		w.Header().Set("X-Multica-Next-Before", "2026-01-01T00:00:00.000000001Z")
 		w.Header().Set("X-Multica-Next-Before-Id", "00000000-0000-0000-0000-000000000999")
-		w.Write([]byte("[]"))
+		_, _ = w.Write([]byte("[]"))
 	})
 	defer srv.close()
 
@@ -2233,7 +2247,7 @@ func TestRunIssueCommentList_ThreadTailPassesThroughAndPrintsReplyCursor(t *test
 func TestRunIssueCommentList_RecentStillLabelsCursorAsThread(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/issues/") && !strings.Contains(r.URL.Path, "/comments") {
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id":         "issue-1",
 				"identifier": "MUL-1",
 			})
@@ -2241,7 +2255,7 @@ func TestRunIssueCommentList_RecentStillLabelsCursorAsThread(t *testing.T) {
 		}
 		w.Header().Set("X-Multica-Next-Before", "2026-01-01T00:00:00.000000001Z")
 		w.Header().Set("X-Multica-Next-Before-Id", "00000000-0000-0000-0000-000000000777")
-		w.Write([]byte("[]"))
+		_, _ = w.Write([]byte("[]"))
 	}))
 	defer srv.Close()
 
@@ -2274,13 +2288,13 @@ func TestRunIssueCommentList_RecentStillLabelsCursorAsThread(t *testing.T) {
 func TestRunIssueCommentList_DoesNotPrintShowingPreamble(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/issues/") && !strings.Contains(r.URL.Path, "/comments") {
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id":         "issue-1",
 				"identifier": "MUL-1",
 			})
 			return
 		}
-		w.Write([]byte(`[{"id":"c1"},{"id":"c2"}]`))
+		_, _ = w.Write([]byte(`[{"id":"c1"},{"id":"c2"}]`))
 	}))
 	defer srv.Close()
 

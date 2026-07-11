@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -232,11 +233,15 @@ func webhookPathForToken(token string) string {
 func runToResponse(r db.AutopilotRun) AutopilotRunResponse {
 	var payload any
 	if r.TriggerPayload != nil {
-		json.Unmarshal(r.TriggerPayload, &payload)
+		if err := json.Unmarshal(r.TriggerPayload, &payload); err != nil {
+			slog.Warn("decode autopilot trigger payload failed", "run_id", uuidToString(r.ID), "error", err)
+		}
 	}
 	var result any
 	if r.Result != nil {
-		json.Unmarshal(r.Result, &result)
+		if err := json.Unmarshal(r.Result, &result); err != nil {
+			slog.Warn("decode autopilot result failed", "run_id", uuidToString(r.ID), "error", err)
+		}
 	}
 	return AutopilotRunResponse{
 		ID:             uuidToString(r.ID),
@@ -525,7 +530,7 @@ func (h *Handler) CreateAutopilot(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to create autopilot")
 		return
 	}
-	defer tx.Rollback(r.Context())
+	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 
 	autopilot, err := qtx.CreateAutopilot(r.Context(), db.CreateAutopilotParams{
@@ -735,7 +740,10 @@ func (h *Handler) UpdateAutopilot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var rawFields map[string]json.RawMessage
-	json.Unmarshal(bodyBytes, &rawFields)
+	if err := json.Unmarshal(bodyBytes, &rawFields); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
 
 	params := db.UpdateAutopilotParams{
 		ID:                 prev.ID,
@@ -838,7 +846,7 @@ func (h *Handler) UpdateAutopilot(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to update autopilot")
 		return
 	}
-	defer tx.Rollback(r.Context())
+	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 
 	autopilot, err := qtx.UpdateAutopilot(r.Context(), params)
@@ -936,7 +944,7 @@ func (h *Handler) DeleteAutopilot(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to delete autopilot")
 		return
 	}
-	defer tx.Rollback(r.Context())
+	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 
 	if err := qtx.DeleteAutopilotSubscribersForAutopilot(r.Context(), idUUID); err != nil {

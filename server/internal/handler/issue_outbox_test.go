@@ -28,8 +28,8 @@ func TestIssueCreateAndUpdateCommitDurableEvents(t *testing.T) {
 		t.Fatalf("decode created issue: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM domain_event_outbox WHERE payload #>> '{issue,id}' = $1`, created.ID)
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, created.ID)
+		mustExec(t, context.Background(), `DELETE FROM domain_event_outbox WHERE payload #>> '{issue,id}' = $1`, created.ID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, created.ID)
 	})
 
 	assertDurableIssueEvent(t, ctx, protocol.EventIssueCreated, created.ID, "Durable issue event")
@@ -134,8 +134,8 @@ func installOutboxStreamFailure(t *testing.T, streamKey string) {
 	triggerName := "outbox_fail_" + suffix
 	ctx := context.Background()
 	t.Cleanup(func() {
-		testPool.Exec(ctx, fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON domain_event_outbox`, triggerName))
-		testPool.Exec(ctx, fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, functionName))
+		mustExec(t, ctx, fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON domain_event_outbox`, triggerName))
+		mustExec(t, ctx, fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, functionName))
 	})
 	if _, err := testPool.Exec(ctx, fmt.Sprintf(`
 		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -165,8 +165,8 @@ func createIssueForUpdateEvent(t *testing.T, body map[string]any) IssueResponse 
 		t.Fatalf("decode created issue: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM domain_event_outbox WHERE payload #>> '{issue,id}' = $1`, created.ID)
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, created.ID)
+		mustExec(t, context.Background(), `DELETE FROM domain_event_outbox WHERE payload #>> '{issue,id}' = $1`, created.ID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, created.ID)
 	})
 	return created
 }

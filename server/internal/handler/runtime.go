@@ -42,7 +42,9 @@ type AgentRuntimeResponse struct {
 func runtimeToResponse(rt db.AgentRuntime) AgentRuntimeResponse {
 	var metadata any
 	if rt.Metadata != nil {
-		json.Unmarshal(rt.Metadata, &metadata)
+		if err := json.Unmarshal(rt.Metadata, &metadata); err != nil {
+			slog.Warn("decode runtime metadata failed", "runtime_id", uuidToString(rt.ID), "error", err)
+		}
 	}
 	if metadata == nil {
 		metadata = map[string]any{}
@@ -750,7 +752,7 @@ func (h *Handler) DeleteAgentRuntime(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to delete runtime")
 		return
 	}
-	defer tx.Rollback(r.Context())
+	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 
 	// Pause autopilots pointing at the archived agents BEFORE we delete
@@ -902,7 +904,7 @@ func (h *Handler) ArchiveAgentsAndDeleteRuntime(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusInternalServerError, "failed to start transaction")
 		return
 	}
-	defer tx.Rollback(r.Context())
+	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 
 	// Lock the runtime row first. PostgreSQL's FK validation on

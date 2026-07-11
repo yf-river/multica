@@ -128,7 +128,7 @@ func TestCollectAndPostTaskArtifactsUploadsAndLinksCommentAsTask(t *testing.T) {
 			if err != nil {
 				t.Fatalf("FormFile: %v", err)
 			}
-			defer file.Close()
+			defer func() { _ = file.Close() }()
 			if header.Filename != "05-verify.md" {
 				t.Errorf("filename = %q", header.Filename)
 			}
@@ -137,7 +137,7 @@ func TestCollectAndPostTaskArtifactsUploadsAndLinksCommentAsTask(t *testing.T) {
 				t.Errorf("file content = %q", data)
 			}
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(uploadedTaskArtifact{
+			_ = json.NewEncoder(w).Encode(uploadedTaskArtifact{
 				ID:          "att-1",
 				Filename:    "05-verify.md",
 				MarkdownURL: "/api/attachments/att-1/download",
@@ -161,7 +161,7 @@ func TestCollectAndPostTaskArtifactsUploadsAndLinksCommentAsTask(t *testing.T) {
 				t.Errorf("attachment_ids = %#v", body["attachment_ids"])
 			}
 			w.WriteHeader(http.StatusCreated)
-			w.Write([]byte(`{}`))
+			_, _ = w.Write([]byte(`{}`))
 		default:
 			t.Fatalf("unexpected path %s", r.URL.Path)
 		}

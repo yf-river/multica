@@ -467,7 +467,7 @@ func discoverACPModels(ctx context.Context, executablePath string, p acpDiscover
 	}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		stdin.Close()
+		_ = stdin.Close()
 		return []Model{}, nil
 	}
 	// Discard stderr; noisy logs here don't help us and we don't
@@ -515,7 +515,7 @@ func discoverACPModels(ctx context.Context, executablePath string, p acpDiscover
 	if err != nil {
 		return []Model{}, nil
 	}
-	defer os.RemoveAll(tmp)
+	defer func() { _ = os.RemoveAll(tmp) }()
 
 	if err := writeACP(2, "session/new", map[string]any{
 		"cwd":        tmp,
@@ -953,7 +953,7 @@ func isOpenclawIdentifier(s string) bool {
 		return false
 	}
 	first := s[0]
-	if !((first >= 'a' && first <= 'z') || (first >= 'A' && first <= 'Z')) {
+	if (first < 'a' || first > 'z') && (first < 'A' || first > 'Z') {
 		return false
 	}
 	for _, r := range s {

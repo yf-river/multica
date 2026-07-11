@@ -28,7 +28,7 @@ func TestCreateAutopilot_SquadPrivateLeader_PlainMemberBlocked(t *testing.T) {
 		t.Fatalf("create squad: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
 	})
 
 	w := httptest.NewRecorder()
@@ -66,7 +66,7 @@ func TestUpdateAutopilot_SquadPrivateLeader_PlainMemberBlocked(t *testing.T) {
 		t.Fatalf("create squad: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
 	})
 
 	// Create autopilot as workspace owner assigned to the public agent.
@@ -85,7 +85,7 @@ func TestUpdateAutopilot_SquadPrivateLeader_PlainMemberBlocked(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM autopilot WHERE id = $1`, ap.ID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM autopilot WHERE id = $1`, ap.ID)
 	})
 
 	// Plain member tries to update to the personal-leader squad.
@@ -121,7 +121,7 @@ func TestCreateAutopilot_SquadPrivateLeader_OwnerAllowed(t *testing.T) {
 		t.Fatalf("create squad: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
 	})
 
 	// testUserID is workspace owner — should succeed.
@@ -141,7 +141,7 @@ func TestCreateAutopilot_SquadPrivateLeader_OwnerAllowed(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM autopilot WHERE id = $1`, ap.ID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM autopilot WHERE id = $1`, ap.ID)
 	})
 }
 
@@ -165,7 +165,7 @@ func TestTriggerAutopilot_SquadPrivateLeader_OwnerCanDispatch(t *testing.T) {
 		t.Fatalf("create squad: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
 	})
 
 	// Create autopilot as owner.
@@ -185,10 +185,10 @@ func TestTriggerAutopilot_SquadPrivateLeader_OwnerCanDispatch(t *testing.T) {
 		t.Fatalf("decode: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM autopilot_run WHERE autopilot_id = $1`, ap.ID)
-		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE issue_id IN (SELECT id FROM issue WHERE workspace_id = $1 AND title LIKE 'dispatch test personal leader squad%')`, testWorkspaceID)
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE workspace_id = $1 AND title LIKE 'dispatch test personal leader squad%'`, testWorkspaceID)
-		testPool.Exec(context.Background(), `DELETE FROM autopilot WHERE id = $1`, ap.ID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM autopilot_run WHERE autopilot_id = $1`, ap.ID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE issue_id IN (SELECT id FROM issue WHERE workspace_id = $1 AND title LIKE 'dispatch test personal leader squad%')`, testWorkspaceID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE workspace_id = $1 AND title LIKE 'dispatch test personal leader squad%'`, testWorkspaceID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM autopilot WHERE id = $1`, ap.ID)
 	})
 
 	// Trigger — should succeed since owner created it.
@@ -251,7 +251,7 @@ func TestTriggerAutopilot_SquadPrivateLeader_PlainMemberCreator_Blocked(t *testi
 		t.Fatalf("create squad: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
 	})
 
 	// Directly insert an autopilot with the plain member as creator
@@ -266,8 +266,8 @@ func TestTriggerAutopilot_SquadPrivateLeader_PlainMemberCreator_Blocked(t *testi
 		t.Fatalf("create autopilot: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM autopilot_run WHERE autopilot_id = $1`, apID)
-		testPool.Exec(context.Background(), `DELETE FROM autopilot WHERE id = $1`, apID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM autopilot_run WHERE autopilot_id = $1`, apID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM autopilot WHERE id = $1`, apID)
 	})
 
 	// Trigger as workspace owner — the dispatch should fail because the
@@ -313,7 +313,7 @@ func TestTriggerAutopilot_RunOnly_SquadPrivateLeader_PlainMemberCreator_Blocked(
 		t.Fatalf("create squad: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
 	})
 
 	// Legacy autopilot: run_only mode, plain member creator, personal-leader squad.
@@ -327,8 +327,8 @@ func TestTriggerAutopilot_RunOnly_SquadPrivateLeader_PlainMemberCreator_Blocked(
 		t.Fatalf("create autopilot: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM autopilot_run WHERE autopilot_id = $1`, apID)
-		testPool.Exec(context.Background(), `DELETE FROM autopilot WHERE id = $1`, apID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM autopilot_run WHERE autopilot_id = $1`, apID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM autopilot WHERE id = $1`, apID)
 	})
 
 	w := httptest.NewRecorder()

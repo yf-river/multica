@@ -41,7 +41,7 @@ func createHandlerTestChatSession(t *testing.T, agentID string) string {
 		t.Fatalf("failed to create handler test chat session: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM chat_session WHERE id = $1`, sessionID)
+		mustExec(t, context.Background(), `DELETE FROM chat_session WHERE id = $1`, sessionID)
 	})
 	return sessionID
 }
@@ -192,8 +192,8 @@ func TestUploadFileForeignWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	part.Write([]byte("hello world"))
-	writer.Close()
+	_, _ = part.Write([]byte("hello world"))
+	_ = writer.Close()
 
 	foreignWorkspaceID := "00000000-0000-0000-0000-000000000099"
 	req := httptest.NewRequest("POST", "/api/upload-file", &body)
@@ -227,8 +227,8 @@ func TestUploadFileResolvesWorkspaceViaSlugHeader(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	part.Write([]byte("hello via slug"))
-	writer.Close()
+	_, _ = part.Write([]byte("hello via slug"))
+	_ = writer.Close()
 
 	req := httptest.NewRequest("POST", "/api/upload-file", &body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
@@ -295,8 +295,8 @@ func TestUploadFileResolvesWorkspaceViaIDHeaderStill(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	part.Write([]byte("hello via uuid"))
-	writer.Close()
+	_, _ = part.Write([]byte("hello via uuid"))
+	_ = writer.Close()
 
 	req := httptest.NewRequest("POST", "/api/upload-file", &body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
@@ -338,11 +338,11 @@ func TestUploadFile_AttachesToChatSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Minimal PNG signature so content-type sniffs as image/png.
-	part.Write([]byte("\x89PNG\r\n\x1a\nrest-of-bytes"))
+	_, _ = part.Write([]byte("\x89PNG\r\n\x1a\nrest-of-bytes"))
 	if err := writer.WriteField("chat_session_id", sessionID); err != nil {
 		t.Fatal(err)
 	}
-	writer.Close()
+	_ = writer.Close()
 
 	req := httptest.NewRequest("POST", "/api/upload-file", &body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
@@ -389,7 +389,7 @@ func TestUploadFile_AttachesToChatSession(t *testing.T) {
 	}
 
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM attachment WHERE id = $1`, resp.ID)
+		mustExec(t, context.Background(), `DELETE FROM attachment WHERE id = $1`, resp.ID)
 	})
 }
 
@@ -404,10 +404,10 @@ func TestUploadFile_RejectsForeignChatSession(t *testing.T) {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	part, _ := writer.CreateFormFile("file", "evil.txt")
-	part.Write([]byte("payload"))
+	_, _ = part.Write([]byte("payload"))
 	// Random non-existent UUID.
-	writer.WriteField("chat_session_id", "00000000-0000-0000-0000-0000deadbeef")
-	writer.Close()
+	_ = writer.WriteField("chat_session_id", "00000000-0000-0000-0000-0000deadbeef")
+	_ = writer.Close()
 
 	req := httptest.NewRequest("POST", "/api/upload-file", &body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
@@ -445,7 +445,7 @@ func seedPreviewAttachment(t *testing.T, store *mockStorage, key, filename, cont
 		t.Fatalf("seed attachment row: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM attachment WHERE id = $1`, id)
+		mustExec(t, context.Background(), `DELETE FROM attachment WHERE id = $1`, id)
 	})
 	return id
 }
@@ -461,7 +461,7 @@ func seedAttachmentURL(t *testing.T, rawURL, filename, contentType string, sizeB
 		t.Fatalf("seed attachment row: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM attachment WHERE id = $1`, id)
+		mustExec(t, context.Background(), `DELETE FROM attachment WHERE id = $1`, id)
 	})
 	return id
 }
@@ -695,7 +695,7 @@ func TestDownloadAttachment_BareNavigationDeniesNonMemberWith404(t *testing.T) {
 	`).Scan(&foreignWorkspaceID); err != nil {
 		t.Fatalf("seed foreign workspace: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM workspace WHERE id = $1`, foreignWorkspaceID) })
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM workspace WHERE id = $1`, foreignWorkspaceID) })
 
 	key := "downloads/bare-nav-foreign.txt"
 	store.put(key, []byte("foreign-body"))
@@ -707,7 +707,7 @@ func TestDownloadAttachment_BareNavigationDeniesNonMemberWith404(t *testing.T) {
 	`, foreignWorkspaceID, testUserID, "foreign.txt", "https://s3.example.com/test-bucket/"+key, "text/plain", 12).Scan(&id); err != nil {
 		t.Fatalf("seed foreign attachment: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM attachment WHERE id = $1`, id) })
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM attachment WHERE id = $1`, id) })
 
 	req := httptest.NewRequest("GET", "/api/attachments/"+id+"/download", nil)
 	req.Header.Set("X-User-ID", testUserID)

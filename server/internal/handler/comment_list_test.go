@@ -63,7 +63,7 @@ func newSeededCommentIssue(t *testing.T, title string) seededCommentIssue {
 		t.Fatalf("create issue: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
 	})
 
 	return seededCommentIssue{
@@ -316,7 +316,7 @@ func TestListComments_SummaryClipsContent(t *testing.T) {
 		t.Fatalf("create issue: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
 	})
 
 	base := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
@@ -408,7 +408,7 @@ func TestListComments_RootsOnlySummaryComposes(t *testing.T) {
 		t.Fatalf("create issue: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
 	})
 
 	base := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
@@ -555,7 +555,7 @@ func TestListComments_RecentRanksStaleThreadAheadIfRecentlyReplied(t *testing.T)
 		t.Fatalf("create issue: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
 	})
 
 	base := time.Now().UTC().Add(-1 * time.Hour).Truncate(time.Second)
@@ -682,7 +682,7 @@ func TestListComments_ThreadCursorStableUnderSameLastActivity(t *testing.T) {
 		t.Fatalf("create issue: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
 	})
 
 	ts := time.Now().UTC().Add(-30 * time.Minute).Truncate(time.Millisecond)
@@ -1321,19 +1321,6 @@ func TestListComments_ThreadTailNotFoundReturns404(t *testing.T) {
 	_ = fx
 }
 
-// resolveCommentRow marks a comment resolved directly in the DB (test helper —
-// the public path goes through ResolveComment, but for list-filter tests we
-// just need the column set).
-func resolveCommentRow(t *testing.T, commentID string) {
-	t.Helper()
-	if _, err := testPool.Exec(context.Background(),
-		`UPDATE comment SET resolved_at = now(), resolved_by_type = 'member', resolved_by_id = $2 WHERE id = $1`,
-		commentID, testUserID,
-	); err != nil {
-		t.Fatalf("resolve comment row: %v", err)
-	}
-}
-
 // TestCountNewCommentsSince_IssueWideExcludesAgentOwnAndTrigger pins the
 // claim-side count query: it counts comments created after the given anchor
 // ACROSS THE WHOLE ISSUE (every thread, not just the triggering one), excludes
@@ -1409,7 +1396,7 @@ func TestCreateCommentPreservesDirectParent(t *testing.T) {
 		t.Fatalf("create issue: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
 	})
 
 	create := func(parentID, body string) CommentResponse {

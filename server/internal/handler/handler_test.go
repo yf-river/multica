@@ -31,6 +31,13 @@ var testUserID string
 var testWorkspaceID string
 var testRuntimeID string
 
+func mustExec(t testing.TB, ctx context.Context, query string, args ...any) {
+	t.Helper()
+	if _, err := testPool.Exec(ctx, query, args...); err != nil {
+		t.Fatalf("execute test SQL: %v", err)
+	}
+}
+
 func currentAutopilotCreateBody(body map[string]any) map[string]any {
 	copy := make(map[string]any, len(body)+2)
 	for key, value := range body {
@@ -194,7 +201,11 @@ func cleanupHandlerTestFixture(ctx context.Context, pool *pgxpool.Pool) error {
 func newRequest(method, path string, body any) *http.Request {
 	var buf bytes.Buffer
 	if body != nil {
-		json.NewEncoder(&buf).Encode(body)
+		if raw, ok := body.(json.RawMessage); ok {
+			_, _ = buf.Write(raw)
+		} else if err := json.NewEncoder(&buf).Encode(body); err != nil {
+			panic(fmt.Sprintf("encode request body: %v", err))
+		}
 	}
 	req := httptest.NewRequest(method, path, &buf)
 	req.Header.Set("Content-Type", "application/json")
@@ -235,7 +246,7 @@ func setWorkspaceIssuePrefixForTest(t *testing.T, prefix string) {
 		t.Fatalf("set workspace prefix: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `UPDATE workspace SET issue_prefix = $1 WHERE id = $2`, previous, testWorkspaceID)
+		mustExec(t, context.Background(), `UPDATE workspace SET issue_prefix = $1 WHERE id = $2`, previous, testWorkspaceID)
 	})
 }
 
@@ -282,7 +293,7 @@ func createHandlerTestAgent(t *testing.T, name string, mcpConfig []byte) string 
 	}
 
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, agentID)
+		mustExec(t, context.Background(), `DELETE FROM agent WHERE id = $1`, agentID)
 	})
 
 	return agentID
@@ -343,7 +354,7 @@ func createHandlerTestTaskForAgentOnIssue(t *testing.T, agentID, issueID string)
 		t.Fatalf("failed to create handler test task: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
 	})
 	return taskID
 }
@@ -372,9 +383,9 @@ func createHandlerCommentIssueFixture(t *testing.T, title string) handlerComment
 	}
 
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, issue.ID)
-		testPool.Exec(ctx, `DELETE FROM comment WHERE issue_id = $1`, issue.ID)
-		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issue.ID)
+		mustExec(t, ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, issue.ID)
+		mustExec(t, ctx, `DELETE FROM comment WHERE issue_id = $1`, issue.ID)
+		mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, issue.ID)
 	})
 
 	return handlerCommentIssueFixture{ID: issue.ID}
@@ -403,9 +414,9 @@ func createHandlerAssignedCommentIssueFixture(t *testing.T, title, assigneeAgent
 	}
 
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
-		testPool.Exec(context.Background(), `DELETE FROM comment WHERE issue_id = $1`, issueID)
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
+		mustExec(t, context.Background(), `DELETE FROM comment WHERE issue_id = $1`, issueID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
 	})
 
 	return handlerCommentIssueFixture{ID: issueID}
@@ -474,9 +485,9 @@ func createSameTitleAutopilotFixture(t *testing.T, ctx context.Context, issueTit
 	var autopilotID string
 	t.Cleanup(func() {
 		if autopilotID != "" {
-			testPool.Exec(context.Background(), `DELETE FROM autopilot WHERE id = $1`, autopilotID)
+			mustExec(t, context.Background(), `DELETE FROM autopilot WHERE id = $1`, autopilotID)
 		}
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE workspace_id = $1 AND title = $2`, testWorkspaceID, issueTitle)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE workspace_id = $1 AND title = $2`, testWorkspaceID, issueTitle)
 	})
 
 	var agentID string
@@ -573,7 +584,7 @@ func TestIssueCRUD(t *testing.T) {
 	}
 
 	var created IssueResponse
-	json.NewDecoder(w.Body).Decode(&created)
+	_ = json.NewDecoder(w.Body).Decode(&created)
 	if created.Title != "Test issue from Go test" {
 		t.Fatalf("CreateIssue: expected title 'Test issue from Go test', got '%s'", created.Title)
 	}
@@ -592,7 +603,7 @@ func TestIssueCRUD(t *testing.T) {
 	}
 
 	var fetched IssueResponse
-	json.NewDecoder(w.Body).Decode(&fetched)
+	_ = json.NewDecoder(w.Body).Decode(&fetched)
 	if fetched.ID != issueID {
 		t.Fatalf("GetIssue: expected id '%s', got '%s'", issueID, fetched.ID)
 	}
@@ -610,7 +621,7 @@ func TestIssueCRUD(t *testing.T) {
 	}
 
 	var updated IssueResponse
-	json.NewDecoder(w.Body).Decode(&updated)
+	_ = json.NewDecoder(w.Body).Decode(&updated)
 	if updated.Status != "in_progress" {
 		t.Fatalf("UpdateIssue: expected status 'in_progress', got '%s'", updated.Status)
 	}
@@ -630,7 +641,7 @@ func TestIssueCRUD(t *testing.T) {
 	}
 
 	var listResp map[string]any
-	json.NewDecoder(w.Body).Decode(&listResp)
+	_ = json.NewDecoder(w.Body).Decode(&listResp)
 	issues := listResp["issues"].([]any)
 	if len(issues) == 0 {
 		t.Fatal("ListIssues: expected at least 1 issue")
@@ -676,7 +687,7 @@ func TestDeleteIssueByIdentifier(t *testing.T) {
 		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	var created IssueResponse
-	json.NewDecoder(w.Body).Decode(&created)
+	_ = json.NewDecoder(w.Body).Decode(&created)
 	if created.Identifier == "" {
 		t.Fatalf("CreateIssue: expected identifier to be populated, got empty")
 	}
@@ -755,7 +766,7 @@ func TestCreateIssueDefaultStatusIsTodo(t *testing.T) {
 	}
 
 	var created IssueResponse
-	json.NewDecoder(w.Body).Decode(&created)
+	_ = json.NewDecoder(w.Body).Decode(&created)
 	if created.Status != "todo" {
 		t.Fatalf("CreateIssue: expected default status 'todo', got '%s'", created.Status)
 	}
@@ -780,7 +791,7 @@ func TestCreateIssueExplicitBacklogPreserved(t *testing.T) {
 	}
 
 	var created IssueResponse
-	json.NewDecoder(w.Body).Decode(&created)
+	_ = json.NewDecoder(w.Body).Decode(&created)
 	if created.Status != "backlog" {
 		t.Fatalf("CreateIssue: expected explicit 'backlog' to be preserved, got '%s'", created.Status)
 	}
@@ -810,7 +821,7 @@ func TestCreateIssueRejectsCrossWorkspaceParent(t *testing.T) {
 		t.Fatalf("insert foreign workspace: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM workspace WHERE id = $1`, otherWorkspaceID)
+		mustExec(t, ctx, `DELETE FROM workspace WHERE id = $1`, otherWorkspaceID)
 	})
 
 	var foreignParentID string
@@ -863,7 +874,7 @@ func TestCreateIssueRejectsCrossWorkspaceProject(t *testing.T) {
 		t.Fatalf("insert foreign workspace: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM workspace WHERE id = $1`, otherWorkspaceID)
+		mustExec(t, ctx, `DELETE FROM workspace WHERE id = $1`, otherWorkspaceID)
 	})
 
 	var foreignProjectID string
@@ -927,7 +938,7 @@ func TestCreateSubIssueInheritsParentProject(t *testing.T) {
 		t.Fatalf("CreateProject: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	var project ProjectResponse
-	json.NewDecoder(w.Body).Decode(&project)
+	_ = json.NewDecoder(w.Body).Decode(&project)
 	projectID = project.ID
 
 	w = httptest.NewRecorder()
@@ -940,7 +951,7 @@ func TestCreateSubIssueInheritsParentProject(t *testing.T) {
 		t.Fatalf("CreateIssue parent: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	var parent IssueResponse
-	json.NewDecoder(w.Body).Decode(&parent)
+	_ = json.NewDecoder(w.Body).Decode(&parent)
 	parentID = parent.ID
 	if parent.ProjectID == nil || *parent.ProjectID != projectID {
 		t.Fatalf("CreateIssue parent: expected project_id %q, got %v", projectID, parent.ProjectID)
@@ -956,7 +967,7 @@ func TestCreateSubIssueInheritsParentProject(t *testing.T) {
 		t.Fatalf("CreateIssue child: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	var child IssueResponse
-	json.NewDecoder(w.Body).Decode(&child)
+	_ = json.NewDecoder(w.Body).Decode(&child)
 	childID = child.ID
 
 	if child.ParentIssueID == nil || *child.ParentIssueID != parentID {
@@ -997,7 +1008,7 @@ func TestCreateSubIssueUsesExplicitProjectOverParentProject(t *testing.T) {
 		t.Fatalf("CreateProject parent: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	var parentProject ProjectResponse
-	json.NewDecoder(w.Body).Decode(&parentProject)
+	_ = json.NewDecoder(w.Body).Decode(&parentProject)
 	parentProjectID = parentProject.ID
 
 	w = httptest.NewRecorder()
@@ -1009,7 +1020,7 @@ func TestCreateSubIssueUsesExplicitProjectOverParentProject(t *testing.T) {
 		t.Fatalf("CreateProject child: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	var childProject ProjectResponse
-	json.NewDecoder(w.Body).Decode(&childProject)
+	_ = json.NewDecoder(w.Body).Decode(&childProject)
 	childProjectID = childProject.ID
 
 	w = httptest.NewRecorder()
@@ -1022,7 +1033,7 @@ func TestCreateSubIssueUsesExplicitProjectOverParentProject(t *testing.T) {
 		t.Fatalf("CreateIssue parent: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	var parent IssueResponse
-	json.NewDecoder(w.Body).Decode(&parent)
+	_ = json.NewDecoder(w.Body).Decode(&parent)
 	parentID = parent.ID
 	if parent.ProjectID == nil || *parent.ProjectID != parentProjectID {
 		t.Fatalf("CreateIssue parent: expected project_id %q, got %v", parentProjectID, parent.ProjectID)
@@ -1039,7 +1050,9 @@ func TestCreateSubIssueUsesExplicitProjectOverParentProject(t *testing.T) {
 		t.Fatalf("CreateIssue child: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	var child IssueResponse
-	json.NewDecoder(w.Body).Decode(&child)
+	if err := json.NewDecoder(w.Body).Decode(&child); err != nil {
+		t.Fatalf("decode child response: %v", err)
+	}
 	childID = child.ID
 
 	if child.ParentIssueID == nil || *child.ParentIssueID != parentID {
@@ -1054,7 +1067,7 @@ func TestCreateIssueAllowsDuplicateOpenChild(t *testing.T) {
 	var projectID, parentID, childID, duplicateID string
 	defer func() {
 		if parentID != "" {
-			testPool.Exec(context.Background(), `DELETE FROM issue WHERE parent_issue_id = $1 OR id = $1`, parentID)
+			mustExec(t, context.Background(), `DELETE FROM issue WHERE parent_issue_id = $1 OR id = $1`, parentID)
 		}
 		if projectID != "" {
 			req := newRequest("DELETE", "/api/projects/"+projectID, nil)
@@ -1077,7 +1090,9 @@ func TestCreateIssueAllowsDuplicateOpenChild(t *testing.T) {
 		t.Fatalf("CreateProject: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	var project ProjectResponse
-	json.NewDecoder(w.Body).Decode(&project)
+	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
+		t.Fatalf("decode project response: %v", err)
+	}
 	projectID = project.ID
 
 	w = httptest.NewRecorder()
@@ -1089,7 +1104,9 @@ func TestCreateIssueAllowsDuplicateOpenChild(t *testing.T) {
 		t.Fatalf("CreateIssue parent: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	var parent IssueResponse
-	json.NewDecoder(w.Body).Decode(&parent)
+	if err := json.NewDecoder(w.Body).Decode(&parent); err != nil {
+		t.Fatalf("decode parent response: %v", err)
+	}
 	parentID = parent.ID
 
 	body := map[string]any{
@@ -1106,7 +1123,9 @@ func TestCreateIssueAllowsDuplicateOpenChild(t *testing.T) {
 		t.Fatalf("CreateIssue child: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	var child IssueResponse
-	json.NewDecoder(w.Body).Decode(&child)
+	if err := json.NewDecoder(w.Body).Decode(&child); err != nil {
+		t.Fatalf("decode child response: %v", err)
+	}
 	childID = child.ID
 
 	w = httptest.NewRecorder()
@@ -1116,7 +1135,9 @@ func TestCreateIssueAllowsDuplicateOpenChild(t *testing.T) {
 		t.Fatalf("CreateIssue duplicate child: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	var duplicate IssueResponse
-	json.NewDecoder(w.Body).Decode(&duplicate)
+	if err := json.NewDecoder(w.Body).Decode(&duplicate); err != nil {
+		t.Fatalf("decode duplicate response: %v", err)
+	}
 	duplicateID = duplicate.ID
 	if duplicateID == childID {
 		t.Fatalf("duplicate child reused existing issue id %s", duplicateID)
@@ -1137,7 +1158,7 @@ func TestCreateIssueAllowsDuplicateOpenChild(t *testing.T) {
 func TestCreateIssueReusesQuickCreateOrigin(t *testing.T) {
 	originID := fmt.Sprintf("00000000-0000-4000-8000-%012x", time.Now().UnixNano()&0xffffffffffff)
 	defer func() {
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE workspace_id = $1 AND origin_type = 'quick_create' AND origin_id = $2`, testWorkspaceID, originID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE workspace_id = $1 AND origin_type = 'quick_create' AND origin_id = $2`, testWorkspaceID, originID)
 	}()
 
 	body := map[string]any{
@@ -1209,7 +1230,9 @@ func TestCreateIssueDefaultsToProjectLeadAgentAndEnqueues(t *testing.T) {
 		t.Fatalf("CreateProject: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	var project ProjectResponse
-	json.NewDecoder(w.Body).Decode(&project)
+	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
+		t.Fatalf("decode project response: %v", err)
+	}
 	projectID = project.ID
 
 	w = httptest.NewRecorder()
@@ -1223,7 +1246,9 @@ func TestCreateIssueDefaultsToProjectLeadAgentAndEnqueues(t *testing.T) {
 		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	var issue IssueResponse
-	json.NewDecoder(w.Body).Decode(&issue)
+	if err := json.NewDecoder(w.Body).Decode(&issue); err != nil {
+		t.Fatalf("decode issue response: %v", err)
+	}
 	issueID = issue.ID
 
 	if issue.AssigneeType == nil || *issue.AssigneeType != "agent" {
@@ -1252,7 +1277,7 @@ func TestProjectLeadMemberBacklogIssueRequiresApprovalBeforeSquadRuns(t *testing
 	`, testWorkspaceID, "Project Approval Squad "+fmt.Sprint(time.Now().UnixNano()), leaderAgentID, testUserID).Scan(&squadID); err != nil {
 		t.Fatalf("create squad: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID) })
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, squadID) })
 
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
@@ -1265,9 +1290,11 @@ func TestProjectLeadMemberBacklogIssueRequiresApprovalBeforeSquadRuns(t *testing
 		t.Fatalf("CreateProject: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	var project ProjectResponse
-	json.NewDecoder(w.Body).Decode(&project)
+	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
+		t.Fatalf("decode project response: %v", err)
+	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM project WHERE id = $1`, project.ID)
+		mustExec(t, context.Background(), `DELETE FROM project WHERE id = $1`, project.ID)
 	})
 
 	w = httptest.NewRecorder()
@@ -1283,11 +1310,13 @@ func TestProjectLeadMemberBacklogIssueRequiresApprovalBeforeSquadRuns(t *testing
 		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	var issue IssueResponse
-	json.NewDecoder(w.Body).Decode(&issue)
+	if err := json.NewDecoder(w.Body).Decode(&issue); err != nil {
+		t.Fatalf("decode issue response: %v", err)
+	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM inbox_item WHERE issue_id = $1`, issue.ID)
-		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issue.ID)
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issue.ID)
+		mustExec(t, context.Background(), `DELETE FROM inbox_item WHERE issue_id = $1`, issue.ID)
+		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issue.ID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issue.ID)
 	})
 	if issue.Status != "backlog" {
 		t.Fatalf("member-led issue status = %q, want backlog", issue.Status)
@@ -1336,7 +1365,7 @@ func TestProjectLeadMemberIssueMovedToBacklogRequestsApproval(t *testing.T) {
 	`, testWorkspaceID, "Project Approval Update Squad "+fmt.Sprint(time.Now().UnixNano()), leaderAgentID, testUserID).Scan(&squadID); err != nil {
 		t.Fatalf("create squad: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID) })
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, squadID) })
 
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
@@ -1349,9 +1378,11 @@ func TestProjectLeadMemberIssueMovedToBacklogRequestsApproval(t *testing.T) {
 		t.Fatalf("CreateProject: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	var project ProjectResponse
-	json.NewDecoder(w.Body).Decode(&project)
+	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
+		t.Fatalf("decode project response: %v", err)
+	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM project WHERE id = $1`, project.ID)
+		mustExec(t, context.Background(), `DELETE FROM project WHERE id = $1`, project.ID)
 	})
 
 	w = httptest.NewRecorder()
@@ -1367,11 +1398,13 @@ func TestProjectLeadMemberIssueMovedToBacklogRequestsApproval(t *testing.T) {
 		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	var issue IssueResponse
-	json.NewDecoder(w.Body).Decode(&issue)
+	if err := json.NewDecoder(w.Body).Decode(&issue); err != nil {
+		t.Fatalf("decode issue response: %v", err)
+	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM inbox_item WHERE issue_id = $1`, issue.ID)
-		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issue.ID)
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issue.ID)
+		mustExec(t, context.Background(), `DELETE FROM inbox_item WHERE issue_id = $1`, issue.ID)
+		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issue.ID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issue.ID)
 	})
 
 	w = httptest.NewRecorder()
@@ -1413,7 +1446,7 @@ func TestProjectLeadAgentBacklogIssueCreatesReviewTaskBeforeSquadRuns(t *testing
 	`, testWorkspaceID, "Project Review Approval Squad "+fmt.Sprint(time.Now().UnixNano()), leaderAgentID, testUserID).Scan(&squadID); err != nil {
 		t.Fatalf("create squad: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID) })
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, squadID) })
 
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
@@ -1426,9 +1459,11 @@ func TestProjectLeadAgentBacklogIssueCreatesReviewTaskBeforeSquadRuns(t *testing
 		t.Fatalf("CreateProject: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	var project ProjectResponse
-	json.NewDecoder(w.Body).Decode(&project)
+	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
+		t.Fatalf("decode project response: %v", err)
+	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM project WHERE id = $1`, project.ID)
+		mustExec(t, context.Background(), `DELETE FROM project WHERE id = $1`, project.ID)
 	})
 
 	w = httptest.NewRecorder()
@@ -1444,11 +1479,13 @@ func TestProjectLeadAgentBacklogIssueCreatesReviewTaskBeforeSquadRuns(t *testing
 		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	var issue IssueResponse
-	json.NewDecoder(w.Body).Decode(&issue)
+	if err := json.NewDecoder(w.Body).Decode(&issue); err != nil {
+		t.Fatalf("decode issue response: %v", err)
+	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM inbox_item WHERE issue_id = $1`, issue.ID)
-		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issue.ID)
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issue.ID)
+		mustExec(t, context.Background(), `DELETE FROM inbox_item WHERE issue_id = $1`, issue.ID)
+		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issue.ID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issue.ID)
 	})
 	if issue.Status != "backlog" {
 		t.Fatalf("agent-led issue status = %q, want backlog", issue.Status)
@@ -1508,11 +1545,11 @@ func TestCreateIssueAllowsActiveDuplicate(t *testing.T) {
 	defer func() {
 		for _, id := range []string{thirdID, duplicateID, issueID, parentID} {
 			if id != "" {
-				testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, id)
+				mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, id)
 			}
 		}
 		if projectID != "" {
-			testPool.Exec(ctx, `DELETE FROM project WHERE id = $1`, projectID)
+			mustExec(t, ctx, `DELETE FROM project WHERE id = $1`, projectID)
 		}
 	}()
 
@@ -1605,7 +1642,7 @@ func TestCreateIssueAllowsDuplicateAfterCancelled(t *testing.T) {
 	defer func() {
 		for _, id := range []string{secondID, firstID} {
 			if id != "" {
-				testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, id)
+				mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, id)
 			}
 		}
 	}()
@@ -1650,7 +1687,7 @@ func TestCreateIssueAllowsDuplicateAfterDone(t *testing.T) {
 	defer func() {
 		for _, id := range []string{secondID, firstID} {
 			if id != "" {
-				testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, id)
+				mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, id)
 			}
 		}
 	}()
@@ -1855,10 +1892,10 @@ func TestAutopilotCreatedIssueCreatorIsAssigneeAgent(t *testing.T) {
 	var autopilotID, issueID string
 	defer func() {
 		if issueID != "" {
-			testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID)
+			mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, issueID)
 		}
 		if autopilotID != "" {
-			testPool.Exec(ctx, `DELETE FROM autopilot WHERE id = $1`, autopilotID)
+			mustExec(t, ctx, `DELETE FROM autopilot WHERE id = $1`, autopilotID)
 		}
 	}()
 
@@ -1944,13 +1981,13 @@ func TestAutopilotCreateIssueAssociatesConfiguredProject(t *testing.T) {
 	var autopilotID, issueID, projectID string
 	defer func() {
 		if issueID != "" {
-			testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID)
+			mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, issueID)
 		}
 		if autopilotID != "" {
-			testPool.Exec(ctx, `DELETE FROM autopilot WHERE id = $1`, autopilotID)
+			mustExec(t, ctx, `DELETE FROM autopilot WHERE id = $1`, autopilotID)
 		}
 		if projectID != "" {
-			testPool.Exec(ctx, `DELETE FROM project WHERE id = $1`, projectID)
+			mustExec(t, ctx, `DELETE FROM project WHERE id = $1`, projectID)
 		}
 	}()
 
@@ -2020,10 +2057,10 @@ func TestUpdateAutopilotCanSetAndClearProject(t *testing.T) {
 	var autopilotID, projectID string
 	defer func() {
 		if autopilotID != "" {
-			testPool.Exec(ctx, `DELETE FROM autopilot WHERE id = $1`, autopilotID)
+			mustExec(t, ctx, `DELETE FROM autopilot WHERE id = $1`, autopilotID)
 		}
 		if projectID != "" {
-			testPool.Exec(ctx, `DELETE FROM project WHERE id = $1`, projectID)
+			mustExec(t, ctx, `DELETE FROM project WHERE id = $1`, projectID)
 		}
 	}()
 
@@ -2184,7 +2221,9 @@ func TestCreateIssueAcceptsValidMemberAssignee(t *testing.T) {
 	}
 
 	var created IssueResponse
-	json.NewDecoder(w.Body).Decode(&created)
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode created response: %v", err)
+	}
 	cleanupReq := newRequest("DELETE", "/api/issues/"+created.ID, nil)
 	cleanupReq = withURLParam(cleanupReq, "id", created.ID)
 	testHandler.DeleteIssue(httptest.NewRecorder(), cleanupReq)
@@ -2246,7 +2285,7 @@ func TestCreateIssueRollsBackWhenAttachmentCannotBeLinked(t *testing.T) {
 		t.Fatalf("insert available attachment: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM attachment WHERE id = $1`, availableAttachmentID)
+		mustExec(t, context.Background(), `DELETE FROM attachment WHERE id = $1`, availableAttachmentID)
 	})
 
 	w := httptest.NewRecorder()
@@ -2308,7 +2347,7 @@ func TestCreateIssueCommitsAttachmentWithIssue(t *testing.T) {
 		t.Fatalf("insert attachment: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM attachment WHERE id = $1`, attachmentID)
+		mustExec(t, context.Background(), `DELETE FROM attachment WHERE id = $1`, attachmentID)
 	})
 
 	w := httptest.NewRecorder()
@@ -2356,7 +2395,9 @@ func TestUpdateIssueRejectsMalformedAssigneeID(t *testing.T) {
 		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	var created IssueResponse
-	json.NewDecoder(w.Body).Decode(&created)
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode created response: %v", err)
+	}
 	defer func() {
 		cleanupReq := newRequest("DELETE", "/api/issues/"+created.ID, nil)
 		cleanupReq = withURLParam(cleanupReq, "id", created.ID)
@@ -2386,7 +2427,9 @@ func TestUpdateIssueRejectsNonexistentMemberAssignee(t *testing.T) {
 		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	var created IssueResponse
-	json.NewDecoder(w.Body).Decode(&created)
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode created response: %v", err)
+	}
 	defer func() {
 		cleanupReq := newRequest("DELETE", "/api/issues/"+created.ID, nil)
 		cleanupReq = withURLParam(cleanupReq, "id", created.ID)
@@ -2420,7 +2463,9 @@ func TestUpdateIssueAllowsExplicitUnassign(t *testing.T) {
 		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	var created IssueResponse
-	json.NewDecoder(w.Body).Decode(&created)
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode created response: %v", err)
+	}
 	defer func() {
 		cleanupReq := newRequest("DELETE", "/api/issues/"+created.ID, nil)
 		cleanupReq = withURLParam(cleanupReq, "id", created.ID)
@@ -2438,7 +2483,9 @@ func TestUpdateIssueAllowsExplicitUnassign(t *testing.T) {
 		t.Fatalf("UpdateIssue: expected 200 for unassign, got %d: %s", w.Code, w.Body.String())
 	}
 	var updated IssueResponse
-	json.NewDecoder(w.Body).Decode(&updated)
+	if err := json.NewDecoder(w.Body).Decode(&updated); err != nil {
+		t.Fatalf("decode updated response: %v", err)
+	}
 	if updated.AssigneeType != nil || updated.AssigneeID != nil {
 		t.Fatalf("UpdateIssue: expected assignee cleared, got type=%v id=%v", updated.AssigneeType, updated.AssigneeID)
 	}
@@ -2452,7 +2499,9 @@ func TestCommentCRUD(t *testing.T) {
 	})
 	testHandler.CreateIssue(w, req)
 	var issue IssueResponse
-	json.NewDecoder(w.Body).Decode(&issue)
+	if err := json.NewDecoder(w.Body).Decode(&issue); err != nil {
+		t.Fatalf("decode issue response: %v", err)
+	}
 	issueID := issue.ID
 
 	// Create comment
@@ -2476,7 +2525,9 @@ func TestCommentCRUD(t *testing.T) {
 	}
 
 	var comments []CommentResponse
-	json.NewDecoder(w.Body).Decode(&comments)
+	if err := json.NewDecoder(w.Body).Decode(&comments); err != nil {
+		t.Fatalf("decode comments response: %v", err)
+	}
 	if len(comments) != 1 {
 		t.Fatalf("ListComments: expected 1 comment, got %d", len(comments))
 	}
@@ -2508,7 +2559,7 @@ func TestCommentWritePathsPreserveIssueIdentifiers(t *testing.T) {
 		t.Fatalf("create issue fixture: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
 	})
 
 	explicitMention := fmt.Sprintf("[MUL-3310](mention://issue/%s)", issueID)
@@ -2573,7 +2624,9 @@ func TestCreateCommentRejectsMalformedParentID(t *testing.T) {
 		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	var issue IssueResponse
-	json.NewDecoder(w.Body).Decode(&issue)
+	if err := json.NewDecoder(w.Body).Decode(&issue); err != nil {
+		t.Fatalf("decode issue response: %v", err)
+	}
 
 	w = httptest.NewRecorder()
 	req = newRequest("POST", "/api/issues/"+issue.ID+"/comments", map[string]any{
@@ -2904,7 +2957,7 @@ func insertHandlerTestSkillInForeignWorkspace(t *testing.T, namePrefix, content 
 		t.Fatalf("insert foreign workspace: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM workspace WHERE id = $1`, workspaceID)
+		mustExec(t, context.Background(), `DELETE FROM workspace WHERE id = $1`, workspaceID)
 	})
 
 	name := namePrefix + "-" + t.Name()
@@ -2917,7 +2970,7 @@ func insertHandlerTestSkillInForeignWorkspace(t *testing.T, namePrefix, content 
 		t.Fatalf("insert foreign skill: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM skill WHERE id = $1`, skillID)
+		mustExec(t, context.Background(), `DELETE FROM skill WHERE id = $1`, skillID)
 	})
 	return skillID
 }
@@ -2959,7 +3012,9 @@ func TestAgentCRUD(t *testing.T) {
 	}
 
 	var agents []AgentResponse
-	json.NewDecoder(w.Body).Decode(&agents)
+	if err := json.NewDecoder(w.Body).Decode(&agents); err != nil {
+		t.Fatalf("decode agents response: %v", err)
+	}
 	if len(agents) == 0 {
 		t.Fatal("ListAgents: expected at least 1 agent")
 	}
@@ -2977,7 +3032,9 @@ func TestAgentCRUD(t *testing.T) {
 	}
 
 	var updated AgentResponse
-	json.NewDecoder(w.Body).Decode(&updated)
+	if err := json.NewDecoder(w.Body).Decode(&updated); err != nil {
+		t.Fatalf("decode updated response: %v", err)
+	}
 	if updated.Status != "idle" {
 		t.Fatalf("UpdateAgent: expected status 'idle', got '%s'", updated.Status)
 	}
@@ -3070,7 +3127,7 @@ func TestCreateAgentMcpConfigNullStoresSQLNull(t *testing.T) {
 		t.Fatalf("CreateAgent: decode response: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, created.ID)
+		mustExec(t, context.Background(), `DELETE FROM agent WHERE id = $1`, created.ID)
 	})
 
 	assertJSONEqual(t, created.McpConfig, `null`)
@@ -3089,7 +3146,9 @@ func TestWorkspaceCRUD(t *testing.T) {
 	}
 
 	var workspaces []WorkspaceResponse
-	json.NewDecoder(w.Body).Decode(&workspaces)
+	if err := json.NewDecoder(w.Body).Decode(&workspaces); err != nil {
+		t.Fatalf("decode workspaces response: %v", err)
+	}
 	if len(workspaces) == 0 {
 		t.Fatal("ListWorkspaces: expected at least 1 workspace")
 	}
@@ -3110,7 +3169,7 @@ func TestCreateWorkspaceUsesRequestedSlug(t *testing.T) {
 	ctx := context.Background()
 
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM workspace WHERE slug = $1`, slug)
+		mustExec(t, ctx, `DELETE FROM workspace WHERE slug = $1`, slug)
 	})
 
 	w := httptest.NewRecorder()
@@ -3137,7 +3196,7 @@ func TestCreateWorkspaceSlugConflictReturnsConflict(t *testing.T) {
 	retriedSlug := handlerTestWorkspaceSlug + "-2"
 
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM workspace WHERE slug = $1`, retriedSlug)
+		mustExec(t, ctx, `DELETE FROM workspace WHERE slug = $1`, retriedSlug)
 	})
 
 	w := httptest.NewRecorder()
@@ -3177,12 +3236,14 @@ func TestAccountPasswordLogin(t *testing.T) {
 	ctx := context.Background()
 
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM "user" WHERE account = $1`, account)
+		mustExec(t, ctx, `DELETE FROM "user" WHERE account = $1`, account)
 	})
 
 	w := httptest.NewRecorder()
 	var buf bytes.Buffer
-	json.NewEncoder(&buf).Encode(map[string]string{"account": account, "password": password})
+	if err := json.NewEncoder(&buf).Encode(map[string]string{"account": account, "password": password}); err != nil {
+		t.Fatalf("encode login request: %v", err)
+	}
 	req := httptest.NewRequest("POST", "/auth/login", &buf)
 	req.Header.Set("Content-Type", "application/json")
 	testHandler.AccountPasswordLogin(w, req)
@@ -3214,7 +3275,9 @@ func TestAccountPasswordLogin(t *testing.T) {
 
 	w = httptest.NewRecorder()
 	buf.Reset()
-	json.NewEncoder(&buf).Encode(map[string]string{"account": account, "password": "WrongPass2@"})
+	if err := json.NewEncoder(&buf).Encode(map[string]string{"account": account, "password": "WrongPass2@"}); err != nil {
+		t.Fatalf("encode login request: %v", err)
+	}
 	req = httptest.NewRequest("POST", "/auth/login", &buf)
 	req.Header.Set("Content-Type", "application/json")
 	testHandler.AccountPasswordLogin(w, req)
@@ -3237,7 +3300,7 @@ func TestAccountPasswordLoginAllowsExistingWeakPassword(t *testing.T) {
 	ctx := context.Background()
 
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM "user" WHERE account = $1`, account)
+		mustExec(t, ctx, `DELETE FROM "user" WHERE account = $1`, account)
 	})
 
 	user, err := testHandler.Queries.CreateUser(ctx, db.CreateUserParams{
@@ -3257,7 +3320,9 @@ func TestAccountPasswordLoginAllowsExistingWeakPassword(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	var buf bytes.Buffer
-	json.NewEncoder(&buf).Encode(map[string]string{"account": account, "password": password})
+	if err := json.NewEncoder(&buf).Encode(map[string]string{"account": account, "password": password}); err != nil {
+		t.Fatalf("encode login request: %v", err)
+	}
 	req := httptest.NewRequest("POST", "/auth/login", &buf)
 	req.Header.Set("Content-Type", "application/json")
 	testHandler.AccountPasswordLogin(w, req)
@@ -3308,8 +3373,8 @@ func TestResolveActor(t *testing.T) {
 	}
 
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
-		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID)
+		mustExec(t, ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+		mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, issueID)
 	})
 
 	tests := []struct {
@@ -3408,7 +3473,9 @@ func TestBacklogNoTriggerOnCreate(t *testing.T) {
 	}
 
 	var created IssueResponse
-	json.NewDecoder(w.Body).Decode(&created)
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode created response: %v", err)
+	}
 
 	var taskCount int
 	err = testPool.QueryRow(ctx,
@@ -3457,7 +3524,9 @@ func TestBacklogToTodoTriggersAgent(t *testing.T) {
 	}
 
 	var created IssueResponse
-	json.NewDecoder(w.Body).Decode(&created)
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode created response: %v", err)
+	}
 
 	// Move the issue from backlog to todo — should trigger.
 	w = httptest.NewRecorder()
@@ -3484,7 +3553,7 @@ func TestBacklogToTodoTriggersAgent(t *testing.T) {
 	}
 
 	// Cleanup
-	testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, created.ID)
+	mustExec(t, ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, created.ID)
 	cleanupReq := newRequest("DELETE", "/api/issues/"+created.ID, nil)
 	cleanupReq = withURLParam(cleanupReq, "id", created.ID)
 	testHandler.DeleteIssue(httptest.NewRecorder(), cleanupReq)
@@ -3521,10 +3590,12 @@ func TestBacklogToTodoByAgentTriggersDifferentAssignee(t *testing.T) {
 		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	var created IssueResponse
-	json.NewDecoder(w.Body).Decode(&created)
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode created response: %v", err)
+	}
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, created.ID)
-		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, created.ID)
+		mustExec(t, ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, created.ID)
+		mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, created.ID)
 	})
 
 	// Parent agent promotes backlog → todo on behalf of the X-Task it is
@@ -3582,10 +3653,12 @@ func TestBacklogToTodoByAgentSameIssueDoesNotSelfTrigger(t *testing.T) {
 		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	var created IssueResponse
-	json.NewDecoder(w.Body).Decode(&created)
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode created response: %v", err)
+	}
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, created.ID)
-		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, created.ID)
+		mustExec(t, ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, created.ID)
+		mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, created.ID)
 	})
 
 	// Task bound to the SAME issue being promoted — true self-loop.
@@ -3640,10 +3713,12 @@ func TestBacklogToTodoByAgentSameAgentDifferentIssue(t *testing.T) {
 		t.Fatalf("CreateIssue step1: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	var step1 IssueResponse
-	json.NewDecoder(w.Body).Decode(&step1)
+	if err := json.NewDecoder(w.Body).Decode(&step1); err != nil {
+		t.Fatalf("decode first step response: %v", err)
+	}
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, step1.ID)
-		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, step1.ID)
+		mustExec(t, ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, step1.ID)
+		mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, step1.ID)
 	})
 
 	// Step 2 issue — backlog, also assigned to the same agent.
@@ -3659,10 +3734,12 @@ func TestBacklogToTodoByAgentSameAgentDifferentIssue(t *testing.T) {
 		t.Fatalf("CreateIssue step2: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	var step2 IssueResponse
-	json.NewDecoder(w.Body).Decode(&step2)
+	if err := json.NewDecoder(w.Body).Decode(&step2); err != nil {
+		t.Fatalf("decode second step response: %v", err)
+	}
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, step2.ID)
-		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, step2.ID)
+		mustExec(t, ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, step2.ID)
+		mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, step2.ID)
 	})
 
 	// Task is running on step1 — promoting step2 is NOT a self-loop.
@@ -3717,10 +3794,12 @@ func TestBatchBacklogToTodoByAgentTriggersAssignee(t *testing.T) {
 		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	var created IssueResponse
-	json.NewDecoder(w.Body).Decode(&created)
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode created response: %v", err)
+	}
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, created.ID)
-		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, created.ID)
+		mustExec(t, ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, created.ID)
+		mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, created.ID)
 	})
 
 	// Drive the batch endpoint with the same agent identity headers.
@@ -3772,7 +3851,7 @@ func TestBacklogToTodoByAgentTriggersSquadLeader(t *testing.T) {
 	`, testWorkspaceID, "Backlog Trigger Squad", leaderAgent, testUserID).Scan(&squadID); err != nil {
 		t.Fatalf("create squad: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM squad WHERE id = $1`, squadID) })
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM squad WHERE id = $1`, squadID) })
 
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
@@ -3786,10 +3865,12 @@ func TestBacklogToTodoByAgentTriggersSquadLeader(t *testing.T) {
 		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	var created IssueResponse
-	json.NewDecoder(w.Body).Decode(&created)
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode created response: %v", err)
+	}
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, created.ID)
-		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, created.ID)
+		mustExec(t, ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, created.ID)
+		mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, created.ID)
 	})
 
 	// Driver agent (not the leader, task is on no specific issue) promotes

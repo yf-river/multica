@@ -124,7 +124,9 @@ func setHandlerTestWorkspaceRepos(t *testing.T, repos []map[string]string) {
 func newDaemonTokenRequest(method, path string, body any, workspaceID, daemonID string) *http.Request {
 	var buf bytes.Buffer
 	if body != nil {
-		json.NewEncoder(&buf).Encode(body)
+		if err := json.NewEncoder(&buf).Encode(body); err != nil {
+			panic(fmt.Sprintf("encode request body: %v", err))
+		}
 	}
 	req := httptest.NewRequest(method, path, &buf)
 	req.Header.Set("Content-Type", "application/json")
@@ -147,7 +149,7 @@ func createClaimReclaimRuntime(t *testing.T, ctx context.Context, name string) s
 	`, testWorkspaceID, name, testUserID).Scan(&runtimeID); err != nil {
 		t.Fatalf("setup: create runtime: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_runtime WHERE id = $1`, runtimeID) })
+	t.Cleanup(func() { _, _ = testPool.Exec(ctx, `DELETE FROM agent_runtime WHERE id = $1`, runtimeID) })
 
 	return runtimeID
 }
@@ -166,7 +168,7 @@ func createClaimReclaimAgentAndIssue(t *testing.T, ctx context.Context, runtimeI
 	`, testWorkspaceID, name, runtimeID, testUserID).Scan(&agentID); err != nil {
 		t.Fatalf("setup: create agent: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent WHERE id = $1`, agentID) })
+	t.Cleanup(func() { _, _ = testPool.Exec(ctx, `DELETE FROM agent WHERE id = $1`, agentID) })
 
 	var issueID string
 	if err := testPool.QueryRow(ctx, `
@@ -180,7 +182,7 @@ func createClaimReclaimAgentAndIssue(t *testing.T, ctx context.Context, runtimeI
 	`, testWorkspaceID, name+" issue", testUserID).Scan(&issueID); err != nil {
 		t.Fatalf("setup: create issue: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID) })
+	t.Cleanup(func() { _, _ = testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID) })
 
 	return agentID, issueID
 }
@@ -198,7 +200,7 @@ func createDispatchedClaimFixtureTask(t *testing.T, ctx context.Context, agentID
 	`, agentID, runtimeID, issueID, dispatchedAge, started).Scan(&taskID); err != nil {
 		t.Fatalf("setup: create dispatched task: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+	t.Cleanup(func() { _, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
 
 	return taskID
 }
@@ -418,9 +420,9 @@ func TestClaimTaskByRuntime_PopulatesWorkspaceContext(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		if prior == "" {
-			testPool.Exec(ctx, `UPDATE workspace SET context = NULL WHERE id = $1`, testWorkspaceID)
+			_, _ = testPool.Exec(ctx, `UPDATE workspace SET context = NULL WHERE id = $1`, testWorkspaceID)
 		} else {
-			testPool.Exec(ctx, `UPDATE workspace SET context = $1 WHERE id = $2`, prior, testWorkspaceID)
+			_, _ = testPool.Exec(ctx, `UPDATE workspace SET context = $1 WHERE id = $2`, prior, testWorkspaceID)
 		}
 	})
 
@@ -477,9 +479,9 @@ func TestClaimTaskByRuntime_WorkspaceContextEmptyWhenUnset(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		if prior == "" {
-			testPool.Exec(ctx, `UPDATE workspace SET context = NULL WHERE id = $1`, testWorkspaceID)
+			mustExec(t, ctx, `UPDATE workspace SET context = NULL WHERE id = $1`, testWorkspaceID)
 		} else {
-			testPool.Exec(ctx, `UPDATE workspace SET context = $1 WHERE id = $2`, prior, testWorkspaceID)
+			mustExec(t, ctx, `UPDATE workspace SET context = $1 WHERE id = $2`, prior, testWorkspaceID)
 		}
 	})
 
@@ -530,7 +532,7 @@ func TestClaimTaskByRuntime_MissingRuntimeOwnerCancelsAndRejects(t *testing.T) {
 	`, testWorkspaceID).Scan(&runtimeID); err != nil {
 		t.Fatalf("setup: create runtime: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_runtime WHERE id = $1`, runtimeID) })
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM agent_runtime WHERE id = $1`, runtimeID) })
 
 	agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, "Missing owner claim agent")
 	taskID := createDispatchedClaimFixtureTask(t, ctx, agentID, runtimeID, issueID, "120 seconds", false)
@@ -577,7 +579,7 @@ func TestDaemonRegister_WithDaemonToken(t *testing.T) {
 	}
 
 	var resp map[string]any
-	json.NewDecoder(w.Body).Decode(&resp)
+	_ = json.NewDecoder(w.Body).Decode(&resp)
 	runtimes, ok := resp["runtimes"].([]any)
 	if !ok || len(runtimes) == 0 {
 		t.Fatalf("DaemonRegister: expected runtimes in response, got %v", resp)
@@ -589,7 +591,7 @@ func TestDaemonRegister_WithDaemonToken(t *testing.T) {
 	// Clean up: deregister the runtime.
 	rt := runtimes[0].(map[string]any)
 	runtimeID := rt["id"].(string)
-	testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
+	mustExec(t, context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
 }
 
 func TestDaemonRegister_DefaultsRuntimeScopeToWorkspace(t *testing.T) {
@@ -623,7 +625,7 @@ func TestDaemonRegister_DefaultsRuntimeScopeToWorkspace(t *testing.T) {
 		t.Fatalf("expected 1 runtime, got %+v", resp.Runtimes)
 	}
 	runtimeID := resp.Runtimes[0].ID
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, runtimeID) })
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, runtimeID) })
 	if resp.Runtimes[0].Scope != scopeWorkspace {
 		t.Fatalf("response scope = %q, want %q", resp.Runtimes[0].Scope, scopeWorkspace)
 	}
@@ -679,10 +681,10 @@ func TestDaemonHeartbeat_WithDaemonToken_CrossWorkspace(t *testing.T) {
 		t.Fatalf("Setup: DaemonRegister failed: %d: %s", w.Code, w.Body.String())
 	}
 	var regResp map[string]any
-	json.NewDecoder(w.Body).Decode(&regResp)
+	_ = json.NewDecoder(w.Body).Decode(&regResp)
 	runtimes := regResp["runtimes"].([]any)
 	runtimeID := runtimes[0].(map[string]any)["id"].(string)
-	defer testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
+	defer mustExec(t, context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
 
 	// Try heartbeat with a daemon token from a DIFFERENT workspace — should fail.
 	w = httptest.NewRecorder()
@@ -745,7 +747,7 @@ func TestHandleDaemonWSHeartbeat_AllowsAnyAuthorizedWorkspace(t *testing.T) {
 		t.Fatalf("setup: create workspace: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM workspace WHERE id = $1`, workspaceID)
+		mustExec(t, ctx, `DELETE FROM workspace WHERE id = $1`, workspaceID)
 	})
 
 	var runtimeID string
@@ -760,7 +762,7 @@ func TestHandleDaemonWSHeartbeat_AllowsAnyAuthorizedWorkspace(t *testing.T) {
 		t.Fatalf("setup: create runtime: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
+		mustExec(t, ctx, `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
 	})
 
 	ack, err := testHandler.HandleDaemonWSHeartbeat(ctx,
@@ -939,7 +941,7 @@ func TestGetTaskStatus_WithDaemonToken_CrossWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("setup: create issue: %v", err)
 	}
-	defer testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+	defer mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
 
 	// Get an agent and runtime from the test workspace.
 	var agentID, runtimeID string
@@ -958,7 +960,7 @@ func TestGetTaskStatus_WithDaemonToken_CrossWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("setup: create task: %v", err)
 	}
-	defer testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+	defer mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
 
 	// Try GetTaskStatus with a daemon token from a DIFFERENT workspace — should fail.
 	w := httptest.NewRecorder()
@@ -1047,7 +1049,7 @@ func TestGetIssueGCCheck_WithDaemonToken_CrossWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("setup: create issue: %v", err)
 	}
-	defer testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+	defer mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
 
 	// Cross-workspace daemon token must be rejected with 404 — same status
 	// code as "issue not found" so there is no UUID enumeration oracle.
@@ -1192,7 +1194,7 @@ func setupForeignWorkspaceFixture(t *testing.T) (string, string) {
 		t.Fatalf("setup: create foreign workspace: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM workspace WHERE id = $1`, foreignWorkspaceID)
+		mustExec(t, context.Background(), `DELETE FROM workspace WHERE id = $1`, foreignWorkspaceID)
 	})
 
 	var runtimeID string
@@ -1318,7 +1320,7 @@ func TestCancelTask_TaskBelongsToDifferentIssue_Returns404(t *testing.T) {
 	`, testWorkspaceID, testUserID).Scan(&issueXID); err != nil {
 		t.Fatalf("setup: create issue X: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueXID) })
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueXID) })
 
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO agent_task_queue (agent_id, issue_id, status, runtime_id)
@@ -1327,7 +1329,7 @@ func TestCancelTask_TaskBelongsToDifferentIssue_Returns404(t *testing.T) {
 	`, agentID, issueXID, runtimeID).Scan(&taskID); err != nil {
 		t.Fatalf("setup: create task: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
 
 	// Issue Y — a sibling in the same workspace, used only as the URL cover.
 	var issueYID string
@@ -1338,7 +1340,7 @@ func TestCancelTask_TaskBelongsToDifferentIssue_Returns404(t *testing.T) {
 	`, testWorkspaceID, testUserID).Scan(&issueYID); err != nil {
 		t.Fatalf("setup: create issue Y: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueYID) })
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueYID) })
 
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/issues/"+issueYID+"/tasks/"+taskID+"/cancel", nil)
@@ -1385,7 +1387,7 @@ func TestCancelTask_SameIssue_Succeeds(t *testing.T) {
 	`, testWorkspaceID, testUserID).Scan(&issueID); err != nil {
 		t.Fatalf("setup: create issue: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID) })
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID) })
 
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO agent_task_queue (agent_id, issue_id, status, runtime_id)
@@ -1394,7 +1396,7 @@ func TestCancelTask_SameIssue_Succeeds(t *testing.T) {
 	`, agentID, issueID, runtimeID).Scan(&taskID); err != nil {
 		t.Fatalf("setup: create task: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
 
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/issues/"+issueID+"/tasks/"+taskID+"/cancel", nil)
@@ -1901,7 +1903,7 @@ func TestDaemonRegister_MergesLegacyDaemonIDRuntime(t *testing.T) {
 		t.Fatalf("seed legacy runtime: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, legacyRuntimeID)
+		mustExec(t, context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, legacyRuntimeID)
 	})
 
 	// An agent bound to the legacy runtime.
@@ -1914,7 +1916,7 @@ func TestDaemonRegister_MergesLegacyDaemonIDRuntime(t *testing.T) {
 		t.Fatalf("seed legacy agent: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, legacyAgentID)
+		mustExec(t, context.Background(), `DELETE FROM agent WHERE id = $1`, legacyAgentID)
 	})
 
 	// An issue + task also bound to the legacy runtime (tasks have ON DELETE
@@ -1928,7 +1930,7 @@ func TestDaemonRegister_MergesLegacyDaemonIDRuntime(t *testing.T) {
 	`, testWorkspaceID, testUserID).Scan(&legacyIssueID); err != nil {
 		t.Fatalf("seed legacy issue: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, legacyIssueID) })
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, legacyIssueID) })
 
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO agent_task_queue (agent_id, issue_id, status, runtime_id)
@@ -1938,7 +1940,7 @@ func TestDaemonRegister_MergesLegacyDaemonIDRuntime(t *testing.T) {
 		t.Fatalf("seed legacy task: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, legacyTaskID)
+		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, legacyTaskID)
 	})
 
 	// Register under the new stable UUID, declaring the prior hostname-derived
@@ -2011,10 +2013,18 @@ func registerDaemonRuntimeForTest(t *testing.T, daemonID string, legacyDaemonIDs
 	}
 	newRuntimeID := resp["runtimes"].([]any)[0].(map[string]any)["id"].(string)
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, newRuntimeID)
+		cleanupAgentRuntime(t, newRuntimeID)
 	})
 
 	return newRuntimeID
+}
+
+func cleanupAgentRuntime(t testing.TB, runtimeID string) {
+	t.Helper()
+	ctx := context.Background()
+	mustExec(t, ctx, `DELETE FROM agent_task_queue WHERE runtime_id = $1`, runtimeID)
+	mustExec(t, ctx, `DELETE FROM agent WHERE runtime_id = $1`, runtimeID)
+	mustExec(t, ctx, `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
 }
 
 func seedLegacyDaemonRuntimeForTest(t *testing.T, ctx context.Context, daemonID string, runtimeName string) string {
@@ -2029,7 +2039,7 @@ func seedLegacyDaemonRuntimeForTest(t *testing.T, ctx context.Context, daemonID 
 		t.Fatalf("seed legacy runtime: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, legacyRuntimeID)
+		mustExec(t, context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, legacyRuntimeID)
 	})
 
 	return legacyRuntimeID
@@ -2124,7 +2134,7 @@ func TestDaemonRegister_MergesAllCaseDuplicateLegacyRuntimes(t *testing.T) {
 	`, testWorkspaceID, storedUpperID, testUserID).Scan(&legacyUpperID); err != nil {
 		t.Fatalf("seed upper-case legacy runtime: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, legacyUpperID) })
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, legacyUpperID) })
 
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, last_seen_at)
@@ -2133,7 +2143,7 @@ func TestDaemonRegister_MergesAllCaseDuplicateLegacyRuntimes(t *testing.T) {
 	`, testWorkspaceID, storedLowerID, testUserID).Scan(&legacyLowerID); err != nil {
 		t.Fatalf("seed lower-case legacy runtime: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, legacyLowerID) })
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, legacyLowerID) })
 
 	// Bind one agent to each legacy row to verify both sides get reassigned.
 	var upperAgentID, lowerAgentID string
@@ -2144,7 +2154,7 @@ func TestDaemonRegister_MergesAllCaseDuplicateLegacyRuntimes(t *testing.T) {
 	`, testWorkspaceID, legacyUpperID).Scan(&upperAgentID); err != nil {
 		t.Fatalf("seed upper agent: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, upperAgentID) })
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM agent WHERE id = $1`, upperAgentID) })
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO agent (workspace_id, name, runtime_mode, runtime_config, runtime_id, scope, max_concurrent_tasks)
 		VALUES ($1, 'dup-agent-lower', 'local', '{}'::jsonb, $2, 'workspace', 1)
@@ -2152,7 +2162,7 @@ func TestDaemonRegister_MergesAllCaseDuplicateLegacyRuntimes(t *testing.T) {
 	`, testWorkspaceID, legacyLowerID).Scan(&lowerAgentID); err != nil {
 		t.Fatalf("seed lower agent: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, lowerAgentID) })
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM agent WHERE id = $1`, lowerAgentID) })
 
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/daemon/register", map[string]any{
@@ -2170,10 +2180,10 @@ func TestDaemonRegister_MergesAllCaseDuplicateLegacyRuntimes(t *testing.T) {
 	}
 
 	var resp map[string]any
-	json.NewDecoder(w.Body).Decode(&resp)
+	_ = json.NewDecoder(w.Body).Decode(&resp)
 	newRuntimeID := resp["runtimes"].([]any)[0].(map[string]any)["id"].(string)
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, newRuntimeID)
+		cleanupAgentRuntime(t, newRuntimeID)
 	})
 
 	// Both case-duplicate legacy rows must be gone — not just one.
@@ -2256,7 +2266,7 @@ func TestStartTask_AutopilotRunOnlyTask_ResolvesWorkspace(t *testing.T) {
 	`, testWorkspaceID, agentID, testUserID).Scan(&autopilotID); err != nil {
 		t.Fatalf("setup: create autopilot: %v", err)
 	}
-	defer testPool.Exec(ctx, `DELETE FROM autopilot WHERE id = $1`, autopilotID)
+	defer mustExec(t, ctx, `DELETE FROM autopilot WHERE id = $1`, autopilotID)
 
 	var runID string
 	if err := testPool.QueryRow(ctx, `
@@ -2278,7 +2288,7 @@ func TestStartTask_AutopilotRunOnlyTask_ResolvesWorkspace(t *testing.T) {
 	`, agentID, runtimeID, runID).Scan(&taskID); err != nil {
 		t.Fatalf("setup: create autopilot task: %v", err)
 	}
-	defer testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+	defer mustExec(t, ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
 
 	// Cross-workspace daemon token must still 404.
 	w := httptest.NewRecorder()
@@ -2338,7 +2348,7 @@ func TestClaimTask_ProjectGithubReposOverrideWorkspaceRepos(t *testing.T) {
 	`, testWorkspaceID, "Claim project repo override").Scan(&projectID); err != nil {
 		t.Fatalf("create project: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM project WHERE id = $1`, projectID) })
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM project WHERE id = $1`, projectID) })
 
 	const projectRepoURL = "https://github.com/example/project-only-repo"
 	if _, err := testPool.Exec(ctx, `
@@ -2381,7 +2391,7 @@ func TestClaimTask_ProjectGithubReposOverrideWorkspaceRepos(t *testing.T) {
 	`, testWorkspaceID, projectID, testUserID).Scan(&issueID); err != nil {
 		t.Fatalf("create issue: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID) })
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID) })
 
 	var taskID string
 	if err := testPool.QueryRow(ctx, `
@@ -2392,7 +2402,7 @@ func TestClaimTask_ProjectGithubReposOverrideWorkspaceRepos(t *testing.T) {
 	`, agentID, runtimeID, issueID).Scan(&taskID); err != nil {
 		t.Fatalf("create task: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
 
 	w := httptest.NewRecorder()
 	req := newDaemonTokenRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/claim", nil, testWorkspaceID, "test-claim-project-repos")
@@ -2490,7 +2500,7 @@ func TestClaimTask_SquadLeaderDoesNotReceiveIssueRepos(t *testing.T) {
 	`, testWorkspaceID, "Squad leader repo suppression").Scan(&projectID); err != nil {
 		t.Fatalf("create project: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM project WHERE id = $1`, projectID) })
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM project WHERE id = $1`, projectID) })
 
 	const projectRepoURL = "https://github.com/example/squad-leader-should-not-see"
 	if _, err := testPool.Exec(ctx, `
@@ -2517,7 +2527,7 @@ func TestClaimTask_SquadLeaderDoesNotReceiveIssueRepos(t *testing.T) {
 	`, testWorkspaceID, leaderID, testUserID).Scan(&squadID); err != nil {
 		t.Fatalf("create squad: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID) })
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, squadID) })
 
 	var issueID string
 	issueNumber := nextHandlerTestIssueNumber(t)
@@ -2531,7 +2541,7 @@ func TestClaimTask_SquadLeaderDoesNotReceiveIssueRepos(t *testing.T) {
 	`, testWorkspaceID, projectID, testUserID, squadID, issueNumber).Scan(&issueID); err != nil {
 		t.Fatalf("create issue: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID) })
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID) })
 
 	var taskID string
 	if err := testPool.QueryRow(ctx, `
@@ -2542,7 +2552,7 @@ func TestClaimTask_SquadLeaderDoesNotReceiveIssueRepos(t *testing.T) {
 	`, leaderID, runtimeID, issueID).Scan(&taskID); err != nil {
 		t.Fatalf("create task: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
 
 	w := httptest.NewRecorder()
 	req := newDaemonTokenRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/claim", nil, testWorkspaceID, "test-claim-leader-no-repos")
@@ -2608,7 +2618,7 @@ func TestClaimTask_ProjectGongfengRepoIsCheckoutRepo(t *testing.T) {
 	`, testWorkspaceID, "Claim gongfeng project repo").Scan(&projectID); err != nil {
 		t.Fatalf("create project: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM project WHERE id = $1`, projectID) })
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM project WHERE id = $1`, projectID) })
 
 	const pageURL = "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev"
 	const cloneURL = "https://git.code.tencent.com/ChainWeaver/ida/user-center.git"
@@ -2637,7 +2647,7 @@ func TestClaimTask_ProjectGongfengRepoIsCheckoutRepo(t *testing.T) {
 	`, testWorkspaceID, projectID, testUserID).Scan(&issueID); err != nil {
 		t.Fatalf("create issue: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID) })
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID) })
 
 	var taskID string
 	if err := testPool.QueryRow(ctx, `
@@ -2648,7 +2658,7 @@ func TestClaimTask_ProjectGongfengRepoIsCheckoutRepo(t *testing.T) {
 	`, agentID, runtimeID, issueID).Scan(&taskID); err != nil {
 		t.Fatalf("create task: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
 
 	w := httptest.NewRecorder()
 	req := newDaemonTokenRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/claim", nil, testWorkspaceID, "test-claim-gongfeng-project-repos")
@@ -2704,7 +2714,7 @@ func TestClaimTask_ProjectWithoutRepos_FallsBackToWorkspaceRepos(t *testing.T) {
 	`, testWorkspaceID, "Claim project without repos").Scan(&projectID); err != nil {
 		t.Fatalf("create project: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM project WHERE id = $1`, projectID) })
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM project WHERE id = $1`, projectID) })
 
 	var agentID, runtimeID string
 	if err := testPool.QueryRow(ctx,
@@ -2723,7 +2733,7 @@ func TestClaimTask_ProjectWithoutRepos_FallsBackToWorkspaceRepos(t *testing.T) {
 	`, testWorkspaceID, projectID, testUserID).Scan(&issueID); err != nil {
 		t.Fatalf("create issue: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID) })
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID) })
 
 	var taskID string
 	if err := testPool.QueryRow(ctx, `
@@ -2734,7 +2744,7 @@ func TestClaimTask_ProjectWithoutRepos_FallsBackToWorkspaceRepos(t *testing.T) {
 	`, agentID, runtimeID, issueID).Scan(&taskID); err != nil {
 		t.Fatalf("create task: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
 
 	w := httptest.NewRecorder()
 	req := newDaemonTokenRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/claim", nil, testWorkspaceID, "test-claim-fallback")
@@ -2790,7 +2800,7 @@ func TestClaimTask_AutopilotRunOnly_PopulatesWorkspaceID(t *testing.T) {
 	`, testWorkspaceID, agentID, testUserID).Scan(&autopilotID); err != nil {
 		t.Fatalf("setup: create autopilot: %v", err)
 	}
-	defer testPool.Exec(ctx, `DELETE FROM autopilot WHERE id = $1`, autopilotID)
+	defer mustExec(t, ctx, `DELETE FROM autopilot WHERE id = $1`, autopilotID)
 
 	var runID string
 	if err := testPool.QueryRow(ctx, `
@@ -2812,7 +2822,7 @@ func TestClaimTask_AutopilotRunOnly_PopulatesWorkspaceID(t *testing.T) {
 	`, agentID, runtimeID, runID).Scan(&taskID); err != nil {
 		t.Fatalf("setup: create autopilot task: %v", err)
 	}
-	defer testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+	defer mustExec(t, ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
 
 	w := httptest.NewRecorder()
 	req := newDaemonTokenRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/claim", nil,
@@ -2882,7 +2892,7 @@ func TestClaimTaskByRuntime_TaskWorkspaceMismatch_CancelsAndRejects(t *testing.T
 	`, "Mismatch Foreign", "mismatch-foreign-claim", "", "MFC").Scan(&foreignWorkspaceID); err != nil {
 		t.Fatalf("setup: create foreign workspace: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM workspace WHERE id = $1`, foreignWorkspaceID) })
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM workspace WHERE id = $1`, foreignWorkspaceID) })
 
 	var foreignIssueID string
 	if err := testPool.QueryRow(ctx, `
@@ -2904,7 +2914,7 @@ func TestClaimTaskByRuntime_TaskWorkspaceMismatch_CancelsAndRejects(t *testing.T
 	`, localAgentID, localRuntimeID, foreignIssueID).Scan(&taskID); err != nil {
 		t.Fatalf("setup: create mismatched task: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
 
 	w := httptest.NewRecorder()
 	req := newDaemonTokenRequest("POST", "/api/daemon/runtimes/"+localRuntimeID+"/claim", nil,
@@ -2956,7 +2966,7 @@ func createRunningCommentTriggeredCompleteTask(t *testing.T, ctx context.Context
 	`, testWorkspaceID, issueTitle, testUserID, issueNumber).Scan(&fixture.IssueID); err != nil {
 		t.Fatalf("setup: create issue: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, fixture.IssueID) })
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, fixture.IssueID) })
 
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO comment (issue_id, workspace_id, author_type, author_id, content, type)
@@ -2976,7 +2986,7 @@ func createRunningCommentTriggeredCompleteTask(t *testing.T, ctx context.Context
 	`, fixture.AgentID, fixture.RuntimeID, fixture.IssueID, fixture.TriggerCommentID).Scan(&fixture.TaskID); err != nil {
 		t.Fatalf("setup: create comment-triggered task: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, fixture.TaskID) })
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM agent_task_queue WHERE id = $1`, fixture.TaskID) })
 
 	return fixture
 }
@@ -2998,7 +3008,7 @@ func createRunningAssignmentCompleteTask(t *testing.T, ctx context.Context, issu
 	`, testWorkspaceID, issueTitle, testUserID, issueNumber).Scan(&fixture.IssueID); err != nil {
 		t.Fatalf("setup: create issue: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, fixture.IssueID) })
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, fixture.IssueID) })
 
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO agent_task_queue (
@@ -3010,7 +3020,7 @@ func createRunningAssignmentCompleteTask(t *testing.T, ctx context.Context, issu
 	`, fixture.AgentID, fixture.RuntimeID, fixture.IssueID).Scan(&fixture.TaskID); err != nil {
 		t.Fatalf("setup: create assignment-triggered task: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, fixture.TaskID) })
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM agent_task_queue WHERE id = $1`, fixture.TaskID) })
 
 	return fixture
 }
@@ -3029,7 +3039,7 @@ func createHandlerTestMentionTargetAgent(t *testing.T, name string) string {
 	`, testWorkspaceID, name, testRuntimeID, testUserID).Scan(&agentID); err != nil {
 		t.Fatalf("setup: create mention target agent: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, agentID) })
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM agent WHERE id = $1`, agentID) })
 	return agentID
 }
 
@@ -3491,7 +3501,7 @@ func createRuntimeGuardAgent(t *testing.T, ctx context.Context) (agentID, runtim
 		t.Fatalf("setup: expected registered runtime, got %v", resp)
 	}
 	runtimeID = runtimes[0].(map[string]any)["id"].(string)
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_runtime WHERE id = $1`, runtimeID) })
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM agent_runtime WHERE id = $1`, runtimeID) })
 	if _, err := testPool.Exec(ctx, `UPDATE agent_runtime SET owner_id = $1 WHERE id = $2`, testUserID, runtimeID); err != nil {
 		t.Fatalf("setup: set runtime owner: %v", err)
 	}
@@ -3506,7 +3516,7 @@ func createRuntimeGuardAgent(t *testing.T, ctx context.Context) (agentID, runtim
 	`, testWorkspaceID, "Runtime Guard Agent "+t.Name(), runtimeID).Scan(&agentID); err != nil {
 		t.Fatalf("setup: create runtime guard agent: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent WHERE id = $1`, agentID) })
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM agent WHERE id = $1`, agentID) })
 
 	return agentID, runtimeID, daemonID
 }
@@ -3526,7 +3536,7 @@ func createRuntimeGuardRuntime(t *testing.T, ctx context.Context, provider strin
 	`, testWorkspaceID, provider, testUserID).Scan(&runtimeID); err != nil {
 		t.Fatalf("setup: create runtime: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_runtime WHERE id = $1`, runtimeID) })
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM agent_runtime WHERE id = $1`, runtimeID) })
 	return runtimeID
 }
 
@@ -3540,7 +3550,7 @@ func TestChatSessionRuntimeBackfillRequiresMatchingSessionID(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin tx: %v", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	if _, err := tx.Exec(ctx, `
 		CREATE TEMP TABLE chat_session (
@@ -3656,7 +3666,7 @@ func TestClaimTask_IssuePriorSessionRuntimeGuard(t *testing.T) {
 	`, testWorkspaceID, testUserID).Scan(&skipIssueID); err != nil {
 		t.Fatalf("setup: create skip issue: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, skipIssueID) })
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, skipIssueID) })
 
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO agent_task_queue (
@@ -3704,7 +3714,7 @@ func TestClaimTask_IssuePriorSessionRuntimeGuard(t *testing.T) {
 	`, testWorkspaceID, testUserID).Scan(&resumeIssueID); err != nil {
 		t.Fatalf("setup: create resume issue: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, resumeIssueID) })
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, resumeIssueID) })
 
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO agent_task_queue (
@@ -3742,7 +3752,7 @@ func TestClaimTask_IssuePriorSessionRuntimeGuard(t *testing.T) {
 	`, testWorkspaceID, testUserID).Scan(&commentIssueID); err != nil {
 		t.Fatalf("setup: create comment-triggered issue: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, commentIssueID) })
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, commentIssueID) })
 
 	var triggerCommentID string
 	if err := testPool.QueryRow(ctx, `
@@ -3797,7 +3807,7 @@ func TestClaimTask_IssuePriorSessionRuntimeGuard(t *testing.T) {
 	`, testWorkspaceID, testUserID).Scan(&freshIssueID); err != nil {
 		t.Fatalf("setup: create force-fresh issue: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, freshIssueID) })
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, freshIssueID) })
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO agent_task_queue (
 			agent_id, runtime_id, issue_id,
@@ -3844,7 +3854,7 @@ func TestClaimTask_IssueSourceSummarySessionNotResumed(t *testing.T) {
 	`, testWorkspaceID, testUserID).Scan(&issueID); err != nil {
 		t.Fatalf("setup: create issue: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID) })
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, issueID) })
 
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO agent_task_queue (
@@ -3898,7 +3908,7 @@ func TestClaimTask_ChatPriorSessionRuntimeGuard(t *testing.T) {
 	`, testWorkspaceID, agentID, testUserID, oldRuntimeID).Scan(&skipSessionID); err != nil {
 		t.Fatalf("setup: create skip chat session: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM chat_session WHERE id = $1`, skipSessionID) })
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM chat_session WHERE id = $1`, skipSessionID) })
 
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO agent_task_queue (
@@ -3946,7 +3956,7 @@ func TestClaimTask_ChatPriorSessionRuntimeGuard(t *testing.T) {
 	`, testWorkspaceID, agentID, testUserID, runtimeID).Scan(&resumeSessionID); err != nil {
 		t.Fatalf("setup: create resume chat session: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM chat_session WHERE id = $1`, resumeSessionID) })
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM chat_session WHERE id = $1`, resumeSessionID) })
 
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO agent_task_queue (
@@ -3988,7 +3998,7 @@ func TestClaimTask_ChatDeliversAllUnansweredUserMessages(t *testing.T) {
 	`, testWorkspaceID, agentID, testUserID).Scan(&sessionID); err != nil {
 		t.Fatalf("setup: create chat session: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM chat_session WHERE id = $1`, sessionID) })
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM chat_session WHERE id = $1`, sessionID) })
 
 	// Two user messages debounced into one run (explicit created_at so the
 	// ASC ordering is deterministic).
@@ -4069,7 +4079,7 @@ func TestClaimTask_ChatPopulatesInitiator(t *testing.T) {
 	`).Scan(&installerID); err != nil {
 		t.Fatalf("setup: create installer user: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM "user" WHERE id = $1`, installerID) })
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM "user" WHERE id = $1`, installerID) })
 
 	var sessionID string
 	if err := testPool.QueryRow(ctx, `
@@ -4079,7 +4089,7 @@ func TestClaimTask_ChatPopulatesInitiator(t *testing.T) {
 	`, testWorkspaceID, agentID, installerID).Scan(&sessionID); err != nil {
 		t.Fatalf("setup: create chat session: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM chat_session WHERE id = $1`, sessionID) })
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM chat_session WHERE id = $1`, sessionID) })
 
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO chat_message (chat_session_id, role, content) VALUES ($1, 'user', 'hi there')
@@ -4177,7 +4187,7 @@ func TestClaimTask_ChatForceFreshSessionSkipsPriorSession(t *testing.T) {
 	`, testWorkspaceID, agentID, testUserID, runtimeID).Scan(&chatSessionID); err != nil {
 		t.Fatalf("setup: create chat session: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM chat_session WHERE id = $1`, chatSessionID) })
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM chat_session WHERE id = $1`, chatSessionID) })
 
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO agent_task_queue (
@@ -4232,7 +4242,7 @@ func TestClaimTask_ChatLegacyNullRuntimeFallsBackToTaskRow(t *testing.T) {
 	`, testWorkspaceID, agentID, testUserID).Scan(&legacySessionID); err != nil {
 		t.Fatalf("setup: create legacy chat session: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM chat_session WHERE id = $1`, legacySessionID) })
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM chat_session WHERE id = $1`, legacySessionID) })
 
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO agent_task_queue (
@@ -4286,7 +4296,7 @@ func TestGetChatSessionGCCheck(t *testing.T) {
 	`, testWorkspaceID, agentID, testUserID).Scan(&sessionID); err != nil {
 		t.Fatalf("setup: create chat session: %v", err)
 	}
-	defer testPool.Exec(ctx, `DELETE FROM chat_session WHERE id = $1`, sessionID)
+	defer mustExec(t, ctx, `DELETE FROM chat_session WHERE id = $1`, sessionID)
 
 	// Cross-workspace daemon token must 404 with no oracle.
 	w := httptest.NewRecorder()
@@ -4361,7 +4371,7 @@ func TestGetAutopilotRunGCCheck(t *testing.T) {
 	`, testWorkspaceID, agentID, testUserID).Scan(&autopilotID); err != nil {
 		t.Fatalf("setup: create autopilot: %v", err)
 	}
-	defer testPool.Exec(ctx, `DELETE FROM autopilot WHERE id = $1`, autopilotID)
+	defer mustExec(t, ctx, `DELETE FROM autopilot WHERE id = $1`, autopilotID)
 
 	var runID string
 	if err := testPool.QueryRow(ctx, `
@@ -4441,7 +4451,7 @@ func TestGetTaskGCCheck(t *testing.T) {
 	`, agentID, runtimeID, quickContext).Scan(&taskID); err != nil {
 		t.Fatalf("setup: create quick-create task: %v", err)
 	}
-	defer testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+	defer mustExec(t, ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
 
 	// Cross-workspace probe.
 	w := httptest.NewRecorder()
@@ -4514,7 +4524,7 @@ func createEphemeralUser(t *testing.T, label string) string {
 		t.Fatalf("create ephemeral user: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, userID)
+		mustExec(t, context.Background(), `DELETE FROM "user" WHERE id = $1`, userID)
 	})
 	return userID
 }
@@ -4532,7 +4542,7 @@ func createEphemeralMember(t *testing.T, workspaceID, label, role string) (strin
 		t.Fatalf("create ephemeral member: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM member WHERE id = $1`, memberID)
+		mustExec(t, context.Background(), `DELETE FROM member WHERE id = $1`, memberID)
 	})
 	return userID, memberID
 }
@@ -4704,7 +4714,7 @@ func TestMembershipCache_InvalidatedOnDeleteWorkspace(t *testing.T) {
 		t.Fatalf("create workspace: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM workspace WHERE id = $1`, wsID)
+		mustExec(t, context.Background(), `DELETE FROM workspace WHERE id = $1`, wsID)
 	})
 
 	// testUser must be an owner of the isolated workspace to call
@@ -4749,7 +4759,7 @@ func createCommentTriggeredClaimTask(t *testing.T, ctx context.Context, agentID,
 	`, issueID, testWorkspaceID, testUserID, parentID).Scan(&commentID); err != nil {
 		t.Fatalf("insert trigger comment: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM comment WHERE id = $1`, commentID) })
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM comment WHERE id = $1`, commentID) })
 
 	var taskID string
 	if err := testPool.QueryRow(ctx, `
@@ -4759,7 +4769,7 @@ func createCommentTriggeredClaimTask(t *testing.T, ctx context.Context, agentID,
 	`, agentID, runtimeID, issueID, commentID).Scan(&taskID); err != nil {
 		t.Fatalf("insert comment-triggered task: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
 	return taskID, commentID
 }
 
@@ -4815,7 +4825,7 @@ func TestClaimTaskByRuntime_CommentTaskPopulatesNewCommentCount(t *testing.T) {
 	`, agentID, runtimeID, issueID).Scan(&priorTaskID); err != nil {
 		t.Fatalf("insert prior task: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, priorTaskID) })
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM agent_task_queue WHERE id = $1`, priorTaskID) })
 
 	var threadRootID string
 	if err := testPool.QueryRow(ctx, `
@@ -4825,7 +4835,7 @@ func TestClaimTaskByRuntime_CommentTaskPopulatesNewCommentCount(t *testing.T) {
 	`, issueID, testWorkspaceID, testUserID).Scan(&threadRootID); err != nil {
 		t.Fatalf("insert trigger thread root: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM comment WHERE id = $1`, threadRootID) })
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM comment WHERE id = $1`, threadRootID) })
 
 	var unrelatedRootID string
 	if err := testPool.QueryRow(ctx, `
@@ -4835,7 +4845,7 @@ func TestClaimTaskByRuntime_CommentTaskPopulatesNewCommentCount(t *testing.T) {
 	`, issueID, testWorkspaceID, testUserID).Scan(&unrelatedRootID); err != nil {
 		t.Fatalf("insert unrelated thread root: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM comment WHERE id = $1`, unrelatedRootID) })
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM comment WHERE id = $1`, unrelatedRootID) })
 
 	var agentOwnID string
 	if err := testPool.QueryRow(ctx, `
@@ -4845,7 +4855,7 @@ func TestClaimTaskByRuntime_CommentTaskPopulatesNewCommentCount(t *testing.T) {
 	`, issueID, testWorkspaceID, agentID, threadRootID).Scan(&agentOwnID); err != nil {
 		t.Fatalf("insert agent self reply: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM comment WHERE id = $1`, agentOwnID) })
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM comment WHERE id = $1`, agentOwnID) })
 
 	// The trigger comment (member-authored, created now) lands after the anchor
 	// but is injected into the prompt, so it should not be counted.
@@ -4931,7 +4941,7 @@ func TestClaimTaskByRuntime_CommentTaskOmitsDeltaWhenOnlyTriggerIsNew(t *testing
 	`, agentID, runtimeID, issueID).Scan(&priorTaskID); err != nil {
 		t.Fatalf("insert prior task: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, priorTaskID) })
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM agent_task_queue WHERE id = $1`, priorTaskID) })
 
 	_, triggerID := createCommentTriggeredClaimTask(t, ctx, agentID, runtimeID, issueID, nil)
 
@@ -4968,7 +4978,7 @@ func TestClaimTaskByRuntime_CommentResumeDefaultOn(t *testing.T) {
 	`, agentID, runtimeID, issueID, priorSession).Scan(&priorTaskID); err != nil {
 		t.Fatalf("insert prior completed task: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, priorTaskID) })
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM agent_task_queue WHERE id = $1`, priorTaskID) })
 
 	createCommentTriggeredClaimTask(t, ctx, agentID, runtimeID, issueID, nil)
 

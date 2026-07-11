@@ -334,7 +334,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				h.LarkAPIClient = larkClient
 				patcher := lark.NewPatcher(queries, installSvc, larkClient, lark.PatcherConfig{})
 				if opts.EventDispatcher == nil {
-					return nil, nil, errors.New("Lark integration requires the durable event dispatcher")
+					return nil, nil, errors.New("lark integration requires the durable event dispatcher")
 				}
 				if err := patcher.RegisterDurable(opts.EventDispatcher); err != nil {
 					return nil, nil, fmt.Errorf("register durable Lark delivery: %w", err)
@@ -1233,7 +1233,11 @@ func (pr *patResolver) ResolveToken(ctx context.Context, token string) (string, 
 
 	// Cache miss = first WS auth in this TTL window. Refresh last_used_at;
 	// subsequent connects within the window skip the write.
-	go pr.queries.UpdatePersonalAccessTokenLastUsed(context.Background(), pat.ID)
+	go func() {
+		if err := pr.queries.UpdatePersonalAccessTokenLastUsed(context.Background(), pat.ID); err != nil {
+			slog.Warn("update websocket PAT last-used timestamp failed", "error", err)
+		}
+	}()
 
 	return userID, true
 }

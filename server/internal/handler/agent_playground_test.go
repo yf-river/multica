@@ -53,7 +53,7 @@ func createAgentPlaygroundDatasetSnapshot(t *testing.T, suffix int64) (assetID, 
 		t.Fatalf("create prompt evaluation asset: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM prompt_evaluation_asset WHERE id = $1`, assetID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_evaluation_asset WHERE id = $1`, assetID)
 	})
 
 	if err := testPool.QueryRow(ctx, `

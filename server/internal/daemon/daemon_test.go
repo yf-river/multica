@@ -1103,7 +1103,7 @@ func newRepoReadyResponseTestDaemon(t *testing.T, response WorkspaceReposRespons
 			return
 		}
 		refreshCalls.Add(1)
-		json.NewEncoder(w).Encode(response)
+		_ = json.NewEncoder(w).Encode(response)
 	})
 	return d, refreshCalls
 }
@@ -1757,7 +1757,7 @@ func TestRegisterTaskReposAllowsProjectOnlyURL(t *testing.T) {
 		refreshCalls.Add(1)
 		// If the workspace endpoint is hit it returns an empty list — the
 		// project-only URL must NOT depend on this for allowlist membership.
-		json.NewEncoder(w).Encode(WorkspaceReposResponse{
+		_ = json.NewEncoder(w).Encode(WorkspaceReposResponse{
 			WorkspaceID:  "ws-1",
 			Repos:        []RepoData{},
 			ReposVersion: "v1",
@@ -1807,7 +1807,7 @@ func TestRegisterTaskReposSurvivesWorkspaceRefresh(t *testing.T) {
 
 	sourceRepo := createDaemonTestRepo(t)
 	d := newRepoReadyTestDaemon(t, func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(WorkspaceReposResponse{
+		_ = json.NewEncoder(w).Encode(WorkspaceReposResponse{
 			WorkspaceID:  "ws-1",
 			Repos:        []RepoData{},
 			ReposVersion: "v2",
@@ -1835,7 +1835,7 @@ func TestEnsureRepoReadyReturnsNotConfigured(t *testing.T) {
 	t.Parallel()
 
 	d := newRepoReadyTestDaemon(t, func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(WorkspaceReposResponse{
+		_ = json.NewEncoder(w).Encode(WorkspaceReposResponse{
 			WorkspaceID:  "ws-1",
 			Repos:        []RepoData{},
 			ReposVersion: "v1",
@@ -1854,7 +1854,7 @@ func TestEnsureRepoReadyReportsSyncFailure(t *testing.T) {
 
 	missingRepo := filepath.Join(t.TempDir(), "missing-repo")
 	d := newRepoReadyTestDaemon(t, func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(WorkspaceReposResponse{
+		_ = json.NewEncoder(w).Encode(WorkspaceReposResponse{
 			WorkspaceID:  "ws-1",
 			Repos:        []RepoData{{URL: missingRepo}},
 			ReposVersion: "v1",

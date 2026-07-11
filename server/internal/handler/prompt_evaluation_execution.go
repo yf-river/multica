@@ -281,14 +281,6 @@ func (h *Handler) promptEvaluationCasesForAsset(w http.ResponseWriter, r *http.R
 	return cases, true
 }
 
-func promptEvaluationPassRate(passed int32, failed int32) float64 {
-	total := passed + failed
-	if total == 0 {
-		return 0
-	}
-	return float64(passed) / float64(total)
-}
-
 func validPromptEvaluationOptimizationCandidateStatus(status string) bool {
 	return status == "待确认" || status == "已发布" || status == "已拒绝"
 }
@@ -689,60 +681,6 @@ func promptEvaluationJSONValues(source string) []any {
 	return values
 }
 
-func buildPromptEvaluationOptimizationAgentPayload(prompt db.PromptLibraryItem, run db.PromptEvaluationRun, sourceSummary map[string]any) map[string]any {
-	failedCases, _ := sourceSummary["失败用例"].([]map[string]any)
-	cases := make([]map[string]any, 0, len(failedCases))
-	for index, failedCase := range failedCases {
-		name := stringFromAny(failedCase["用例名称"])
-		if name == "" {
-			name = "失败用例 " + strconv.Itoa(index+1)
-		}
-		expected := firstValue(failedCase, "期望", "期望包含")
-		cases = append(cases, map[string]any{
-			"名称":   name,
-			"变量":   firstValue(failedCase, "输入", "变量"),
-			"期望包含": expected,
-			"失败原因": firstValue(failedCase, "失败原因", "状态"),
-		})
-	}
-	if len(cases) == 0 {
-		cases = append(cases, map[string]any{
-			"名称":   "失败运行整体优化",
-			"变量":   map[string]any{"source_run_id": uuidToString(run.ID)},
-			"期望包含": []string{"优化候选", "失败原因", "验收条件", "trace/task id"},
-			"失败原因": run.FailureReason,
-		})
-	}
-	return map[string]any{
-		"schema_version": 1,
-		"语义版本":           "multica.training_evaluation.optimization_agent.v1",
-		"任务类型":           "智能体优化运行",
-		"来源运行":           uuidToString(run.ID),
-		"来源资产":           uuidToString(run.AssetID),
-		"来源提示词":          uuidToString(prompt.ID),
-		"提示词名称":          prompt.Name,
-		"原始提示词内容":        prompt.Content,
-		"失败摘要":           sourceSummary,
-		"cases":          cases,
-		"优化目标": []string{
-			"基于失败用例和真实智能体 task 证据生成候选提示词正文。",
-			"候选必须继续保持中文语义、可观测字段、验收条件和失败处理要求。",
-			"不要自动发布；输出必须便于验收者人工确认后再发布。",
-		},
-		"输出格式": []string{
-			"优化候选名称",
-			"候选提示词正文",
-			"逐条修改依据",
-			"可能影响的通过用例",
-			"人工验收清单",
-		},
-	}
-}
-
-func buildPromptEvaluationOptimizationAgentAssetName(prompt db.PromptLibraryItem, run db.PromptEvaluationRun) string {
-	return prompt.Name + " 智能体优化运行 " + run.CreatedAt.Time.Format("20060102") + "-" + strconv.FormatInt(time.Now().UnixNano(), 10)
-}
-
 func buildPromptEvaluationCandidateName(prompt db.PromptLibraryItem, run db.PromptEvaluationRun) string {
 	return prompt.Name + " 优化候选 " + run.CreatedAt.Time.Format("20060102") + "-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 }
@@ -797,4 +735,3 @@ func truncatePromptEvaluationEvidence(value string, maxRunes int) string {
 	}
 	return string(runes[:maxRunes]) + "..."
 }
-

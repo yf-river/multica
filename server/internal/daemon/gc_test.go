@@ -45,7 +45,7 @@ func newGCTestDaemonWithIssueGCStatus(t *testing.T, issueID, status string, upda
 	mux := http.NewServeMux()
 	mux.HandleFunc(fmt.Sprintf("/api/daemon/issues/%s/gc-check", issueID), func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"status":     status,
 			"updated_at": updatedAt,
 		})
@@ -192,7 +192,7 @@ func TestShouldCleanTaskDir_Issue404OldOrphan(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc(fmt.Sprintf("/api/daemon/issues/%s/gc-check", issueID), func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte(`{"error":"issue not found"}`))
+		_, _ = w.Write([]byte(`{"error":"issue not found"}`))
 	})
 
 	d := newGCTestDaemon(t, mux)
@@ -220,7 +220,7 @@ func TestShouldCleanTaskDir_Issue404RecentSkipped(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc(fmt.Sprintf("/api/daemon/issues/%s/gc-check", issueID), func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte(`{"error":"not found"}`))
+		_, _ = w.Write([]byte(`{"error":"not found"}`))
 	})
 
 	d := newGCTestDaemon(t, mux)
@@ -335,7 +335,7 @@ func TestShouldCleanTaskDir_ActiveEnvRootSkipsFullCleanup(t *testing.T) {
 		// gcActionClean. But the env root is in use (e.g. follow-up comment
 		// dispatched a task that reuses the prior workdir), and CreateComment
 		// does not bump issue.updated_at. Active-root guard must override.
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"status":     "done",
 			"updated_at": time.Now().Add(-30 * 24 * time.Hour),
 		})
@@ -363,7 +363,7 @@ func TestShouldCleanTaskDir_ActiveEnvRootSkipsOrphan404(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc(fmt.Sprintf("/api/daemon/issues/%s/gc-check", issueID), func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
-		w.Write([]byte(`{"error":"not found"}`))
+		_, _ = w.Write([]byte(`{"error":"not found"}`))
 	})
 
 	d := newGCTestDaemon(t, mux)
@@ -404,7 +404,7 @@ func TestShouldCleanTaskDir_ArtifactTTLDisabled(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc(fmt.Sprintf("/api/daemon/issues/%s/gc-check", issueID), func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"status":     "in_progress",
 			"updated_at": time.Now(),
 		})
@@ -575,8 +575,12 @@ func TestIsBareRepo(t *testing.T) {
 
 	t.Run("valid bare repo", func(t *testing.T) {
 		dir := t.TempDir()
-		os.WriteFile(filepath.Join(dir, "HEAD"), []byte("ref: refs/heads/main"), 0o644)
-		os.MkdirAll(filepath.Join(dir, "objects"), 0o755)
+		if err := os.WriteFile(filepath.Join(dir, "HEAD"), []byte("ref: refs/heads/main"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(filepath.Join(dir, "objects"), 0o755); err != nil {
+			t.Fatal(err)
+		}
 		if !isBareRepo(dir) {
 			t.Fatal("expected isBareRepo=true for dir with HEAD + objects/")
 		}
@@ -584,7 +588,9 @@ func TestIsBareRepo(t *testing.T) {
 
 	t.Run("HEAD only", func(t *testing.T) {
 		dir := t.TempDir()
-		os.WriteFile(filepath.Join(dir, "HEAD"), []byte("ref: refs/heads/main"), 0o644)
+		if err := os.WriteFile(filepath.Join(dir, "HEAD"), []byte("ref: refs/heads/main"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 		if isBareRepo(dir) {
 			t.Fatal("expected isBareRepo=false for dir with only HEAD")
 		}

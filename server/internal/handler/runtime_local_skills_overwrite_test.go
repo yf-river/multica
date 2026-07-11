@@ -32,7 +32,7 @@ func createImportTargetSkill(t *testing.T, name, ownerID string, files map[strin
 		}
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM skill WHERE id = $1`, skillID)
+		mustExec(t, context.Background(), `DELETE FROM skill WHERE id = $1`, skillID)
 	})
 	return skillID
 }
@@ -61,7 +61,7 @@ func bindAgentToSkill(t *testing.T, skillID string) string {
 		t.Fatalf("bind agent skill: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, agentID)
+		mustExec(t, context.Background(), `DELETE FROM agent WHERE id = $1`, agentID)
 	})
 	return agentID
 }

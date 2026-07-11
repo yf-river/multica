@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -70,7 +71,10 @@ func (h *Handler) SubscribeToIssue(w http.ResponseWriter, r *http.Request) {
 		UserType *string `json:"user_type"`
 	}
 	if r.Body != nil {
-		json.NewDecoder(r.Body).Decode(&req)
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+			writeError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
 	}
 	if req.UserID != nil && *req.UserID != "" {
 		targetUserID = *req.UserID
@@ -125,7 +129,10 @@ func (h *Handler) UnsubscribeFromIssue(w http.ResponseWriter, r *http.Request) {
 		UserType *string `json:"user_type"`
 	}
 	if r.Body != nil {
-		json.NewDecoder(r.Body).Decode(&req)
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+			writeError(w, http.StatusBadRequest, "invalid request body")
+			return
+		}
 	}
 	if req.UserID != nil && *req.UserID != "" {
 		targetUserID = *req.UserID

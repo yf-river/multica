@@ -27,7 +27,7 @@ func TestClient_IdentityHeaders_PostJSON(t *testing.T) {
 			t.Errorf("expected Authorization Bearer tok, got %q", got)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"ok": "1"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"ok": "1"})
 	}))
 	defer srv.Close()
 
@@ -52,7 +52,7 @@ func TestClient_IdentityHeaders_GetJSON(t *testing.T) {
 			t.Errorf("expected X-Client-OS to be set")
 		}
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{}`))
+		_, _ = w.Write([]byte(`{}`))
 	}))
 	defer srv.Close()
 

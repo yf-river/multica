@@ -343,14 +343,14 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "file too large or invalid multipart form")
 		return
 	}
-	defer r.MultipartForm.RemoveAll()
+	defer func() { _ = r.MultipartForm.RemoveAll() }()
 
 	file, header, err := r.FormFile("file")
 	if err != nil {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("missing file field: %v", err))
 		return
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	// Sniff actual content type from file bytes instead of trusting the client header.
 	buf := make([]byte, 512)
@@ -754,7 +754,7 @@ func (h *Handler) proxyAttachmentDownload(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusNotFound, "attachment object not found")
 		return
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	if att.ContentType != "" {
 		w.Header().Set("Content-Type", att.ContentType)
@@ -810,7 +810,7 @@ func (h *Handler) GetAttachmentContent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "attachment object not found")
 		return
 	}
-	defer reader.Close()
+	defer func() { _ = reader.Close() }()
 
 	// LimitReader to maxPreviewTextSize+1 so we can detect "exactly at the
 	// limit" vs "exceeds the limit" by checking the returned length.

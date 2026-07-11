@@ -70,7 +70,9 @@ func (s *TaskService) ClaimTask(ctx context.Context, agentID pgtype.UUID) (*db.A
 	// Refresh agent status from active tasks. This avoids a stale unconditional
 	// working write racing after a just-cancelled claim.
 	t0 = time.Now()
-	s.ReconcileAgentStatus(ctx, agentID)
+	if _, err := s.ReconcileAgentStatus(ctx, agentID); err != nil {
+		slog.Warn("reconcile claimed agent status failed", "agent_id", util.UUIDToString(agentID), "error", err)
+	}
 	updateStatusMs = time.Since(t0).Milliseconds()
 
 	// Broadcast task:dispatch. ResolveTaskWorkspaceID inside this path can
@@ -229,7 +231,7 @@ func (s *TaskService) StartTask(ctx context.Context, taskID pgtype.UUID) (*db.Ag
 	if err != nil {
 		return nil, fmt.Errorf("start task transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	queries := s.Queries.WithTx(tx)
 
 	task, err := queries.StartAgentTask(ctx, taskID)

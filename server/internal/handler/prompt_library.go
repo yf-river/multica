@@ -419,7 +419,7 @@ func (h *Handler) CreatePromptLibraryItem(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "failed to start prompt library transaction")
 		return
 	}
-	defer tx.Rollback(r.Context())
+	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 
 	item, err := qtx.CreatePromptLibraryItem(r.Context(), db.CreatePromptLibraryItemParams{
@@ -497,7 +497,7 @@ func (h *Handler) UpdatePromptLibraryItem(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "failed to start prompt library transaction")
 		return
 	}
-	defer tx.Rollback(r.Context())
+	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 
 	item, err := qtx.UpdatePromptLibraryItem(r.Context(), db.UpdatePromptLibraryItemParams{
@@ -555,7 +555,7 @@ func (h *Handler) CreatePromptLibraryVersion(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, "failed to start prompt library transaction")
 		return
 	}
-	defer tx.Rollback(r.Context())
+	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 
 	item, err := qtx.UpdatePromptLibraryItemLatestVersion(r.Context(), db.UpdatePromptLibraryItemLatestVersionParams{

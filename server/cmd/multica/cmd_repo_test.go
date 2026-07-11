@@ -35,7 +35,7 @@ func newRepoRegistryTestServer(t *testing.T, initialRepos []workspaceRepo) *repo
 	fixture.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/workspaces/ws-1":
-			json.NewEncoder(w).Encode(repoWorkspaceResponse{ID: "ws-1", Repos: initialRepos})
+			_ = json.NewEncoder(w).Encode(repoWorkspaceResponse{ID: "ws-1", Repos: initialRepos})
 		case r.Method == http.MethodPatch && r.URL.Path == "/api/workspaces/ws-1":
 			fixture.patchCount++
 			var body struct {
@@ -45,7 +45,7 @@ func newRepoRegistryTestServer(t *testing.T, initialRepos []workspaceRepo) *repo
 				t.Fatalf("decode patch body: %v", err)
 			}
 			fixture.patched = body.Repos
-			json.NewEncoder(w).Encode(repoWorkspaceResponse{ID: "ws-1", Repos: body.Repos})
+			_ = json.NewEncoder(w).Encode(repoWorkspaceResponse{ID: "ws-1", Repos: body.Repos})
 		default:
 			http.NotFound(w, r)
 		}

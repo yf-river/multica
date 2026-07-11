@@ -127,46 +127,6 @@ func TestPredictRootDir(t *testing.T) {
 	}
 }
 
-func TestSanitizeName(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		input, want string
-	}{
-		{"Code Reviewer", "code-reviewer"},
-		{"my_agent!@#v2", "my-agent-v2"},
-		{"  spaces  ", "spaces"},
-		{"UPPERCASE", "uppercase"},
-		{"a-very-long-name-that-exceeds-thirty-characters-total", "a-very-long-name-that-exceeds"},
-		{"", "agent"},
-		{"---", "agent"},
-		{"中文测试", "agent"},
-	}
-	for _, tt := range tests {
-		if got := sanitizeName(tt.input); got != tt.want {
-			t.Errorf("sanitizeName(%q) = %q, want %q", tt.input, got, tt.want)
-		}
-	}
-}
-
-func TestRepoNameFromURL(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		input, want string
-	}{
-		{"https://github.com/org/my-repo.git", "my-repo"},
-		{"https://github.com/org/my-repo", "my-repo"},
-		{"git@github.com:org/my-repo.git", "my-repo"},
-		{"https://github.com/org/repo/", "repo"},
-		{"my-repo", "my-repo"},
-		{"", "repo"},
-	}
-	for _, tt := range tests {
-		if got := repoNameFromURL(tt.input); got != tt.want {
-			t.Errorf("repoNameFromURL(%q) = %q, want %q", tt.input, got, tt.want)
-		}
-	}
-}
-
 func TestPrepareDirectoryMode(t *testing.T) {
 	t.Parallel()
 	workspacesRoot := t.TempDir()
@@ -186,7 +146,7 @@ func TestPrepareDirectoryMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer env.Cleanup(true)
+	defer func() { _ = env.Cleanup(true) }()
 
 	// Verify directory structure.
 	for _, sub := range []string{"workdir", "output", "logs"} {
@@ -244,7 +204,7 @@ func TestPrepareWithProjectResources(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer env.Cleanup(true)
+	defer func() { _ = env.Cleanup(true) }()
 
 	// resources.json should exist and decode back to what we wrote.
 	resourcesPath := filepath.Join(env.WorkDir, ".multica", "project", "resources.json")
@@ -410,7 +370,7 @@ func TestPrepareWithRepoContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer env.Cleanup(true)
+	defer func() { _ = env.Cleanup(true) }()
 
 	// Inject runtime config (done separately in daemon, replicate here).
 	if _, err := InjectRuntimeConfig(env.WorkDir, "claude", taskCtx); err != nil {
@@ -651,7 +611,7 @@ func TestReuseRefreshesSkillsWithoutDuplicating(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer env.Cleanup(true)
+	defer func() { _ = env.Cleanup(true) }()
 
 	skillsDir := filepath.Join(env.WorkDir, ".claude", "skills")
 
@@ -717,7 +677,7 @@ func TestReuseReclaimsManagedSkillDirWithStrayAgentFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer env.Cleanup(true)
+	defer func() { _ = env.Cleanup(true) }()
 
 	skillsDir := filepath.Join(env.WorkDir, ".claude", "skills")
 
@@ -855,7 +815,9 @@ func TestCleanupPreservesLogs(t *testing.T) {
 	}
 
 	// Write something to logs/.
-	os.WriteFile(filepath.Join(env.RootDir, "logs", "test.log"), []byte("log data"), 0o644)
+	if err := os.WriteFile(filepath.Join(env.RootDir, "logs", "test.log"), []byte("log data"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	// Cleanup with removeAll=false.
 	if err := env.Cleanup(false); err != nil {
@@ -1454,7 +1416,7 @@ func TestPrepareWithRepoContextOpencode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer env.Cleanup(true)
+	defer func() { _ = env.Cleanup(true) }()
 
 	if _, err := InjectRuntimeConfig(env.WorkDir, "opencode", taskCtx); err != nil {
 		t.Fatalf("InjectRuntimeConfig failed: %v", err)
@@ -1898,10 +1860,18 @@ func TestPrepareCodexHomeSeedsFromShared(t *testing.T) {
 
 	// Create a fake shared codex home.
 	sharedHome := t.TempDir()
-	os.WriteFile(filepath.Join(sharedHome, "auth.json"), []byte(`{"token":"secret"}`), 0o644)
-	os.WriteFile(filepath.Join(sharedHome, "config.json"), []byte(`{"model":"o3"}`), 0o644)
-	os.WriteFile(filepath.Join(sharedHome, "config.toml"), []byte(`model = "o3"`), 0o644)
-	os.WriteFile(filepath.Join(sharedHome, "instructions.md"), []byte("Be helpful."), 0o644)
+	if err := os.WriteFile(filepath.Join(sharedHome, "auth.json"), []byte(`{"token":"secret"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sharedHome, "config.json"), []byte(`{"model":"o3"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sharedHome, "config.toml"), []byte(`model = "o3"`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sharedHome, "instructions.md"), []byte("Be helpful."), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	sharedPluginCache := filepath.Join(sharedHome, "plugins", "cache")
 	if err := os.MkdirAll(filepath.Join(sharedPluginCache, "superpowers"), 0o755); err != nil {
 		t.Fatalf("create shared plugin cache: %v", err)
@@ -2092,7 +2062,9 @@ func TestPrepareCodexHome_RefreshesStaleAuthCopyOnReuse(t *testing.T) {
 	// Cannot use t.Parallel() with t.Setenv.
 
 	sharedHome := t.TempDir()
-	os.WriteFile(filepath.Join(sharedHome, "auth.json"), []byte(`{"refresh_token":"v1"}`), 0o644)
+	if err := os.WriteFile(filepath.Join(sharedHome, "auth.json"), []byte(`{"refresh_token":"v1"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	t.Setenv("CODEX_HOME", sharedHome)
 
 	codexHome := filepath.Join(t.TempDir(), "codex-home")
@@ -2109,7 +2081,9 @@ func TestPrepareCodexHome_RefreshesStaleAuthCopyOnReuse(t *testing.T) {
 	}
 
 	// Shared source rotates to v2 while the per-task copy is still stuck on v0.
-	os.WriteFile(filepath.Join(sharedHome, "auth.json"), []byte(`{"refresh_token":"v2"}`), 0o644)
+	if err := os.WriteFile(filepath.Join(sharedHome, "auth.json"), []byte(`{"refresh_token":"v2"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	if err := prepareCodexHome(codexHome, testLogger()); err != nil {
 		t.Fatalf("prepareCodexHome failed: %v", err)
@@ -2346,7 +2320,9 @@ func TestEnsureCodexSandboxConfigPreservesUserContent(t *testing.T) {
 	existing := `model = "o3"
 approval_policy = "on-failure"
 `
-	os.WriteFile(configPath, []byte(existing), 0o644)
+	if err := os.WriteFile(configPath, []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	policy := codexSandboxPolicyFor("linux", "0.121.0")
 	if err := ensureCodexSandboxConfig(configPath, policy, "0.121.0", testLogger()); err != nil {
@@ -2381,7 +2357,9 @@ sandbox_mode = "workspace-write"
 [sandbox_workspace_write]
 network_access = true
 `
-	os.WriteFile(configPath, []byte(existing), 0o644)
+	if err := os.WriteFile(configPath, []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	policy := codexSandboxPolicyFor("darwin", "0.121.0")
 	if err := ensureCodexSandboxConfig(configPath, policy, "0.121.0", testLogger()); err != nil {
@@ -2420,7 +2398,9 @@ func TestEnsureCodexSandboxConfigHoistsAboveUserTables(t *testing.T) {
 [permissions.multica]
 trust = "always"
 `
-	os.WriteFile(configPath, []byte(existing), 0o644)
+	if err := os.WriteFile(configPath, []byte(existing), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	policy := codexSandboxPolicyFor("linux", "0.121.0")
 	if err := ensureCodexSandboxConfig(configPath, policy, "0.121.0", testLogger()); err != nil {
@@ -2439,7 +2419,7 @@ trust = "always"
 	// The entire managed block must sit before the user's table header so
 	// that sandbox_mode and sandbox_workspace_write.network_access are
 	// parsed at the TOML root.
-	if !(beginIdx < endIdx && endIdx < tableIdx) {
+	if beginIdx >= endIdx || endIdx >= tableIdx {
 		t.Errorf("managed block must be hoisted above [permissions.multica]; got begin=%d end=%d table=%d:\n%s", beginIdx, endIdx, tableIdx, s)
 	}
 	// User content must be preserved verbatim.
@@ -2485,7 +2465,9 @@ sandbox_mode = "workspace-write"
 network_access = true
 ` + multicaManagedEndMarker + `
 `
-	os.WriteFile(configPath, []byte(legacy), 0o644)
+	if err := os.WriteFile(configPath, []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	policy := codexSandboxPolicyFor("linux", "0.121.0")
 	if err := ensureCodexSandboxConfig(configPath, policy, "0.121.0", testLogger()); err != nil {
@@ -2586,7 +2568,7 @@ func TestReuseRestoresCodexHome(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer env.Cleanup(true)
+	defer func() { _ = env.Cleanup(true) }()
 
 	if env.CodexHome == "" {
 		t.Fatal("expected CodexHome to be set after Prepare")
@@ -2629,7 +2611,7 @@ func TestPrepareCodexHomeTrustsTaskWorkDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer env.Cleanup(true)
+	defer func() { _ = env.Cleanup(true) }()
 
 	data, err := os.ReadFile(filepath.Join(env.CodexHome, "config.toml"))
 	if err != nil {
@@ -2670,7 +2652,7 @@ func TestReuseRestoresCodexPluginCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer env.Cleanup(true)
+	defer func() { _ = env.Cleanup(true) }()
 
 	if err := os.RemoveAll(filepath.Join(env.CodexHome, "plugins")); err != nil {
 		t.Fatalf("remove codex plugins dir: %v", err)
@@ -2708,7 +2690,7 @@ func TestReuseWritesMissingCodexWorkspaceSkills(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer env.Cleanup(true)
+	defer func() { _ = env.Cleanup(true) }()
 
 	if err := os.RemoveAll(filepath.Join(env.CodexHome, "skills")); err != nil {
 		t.Fatalf("remove codex skills dir: %v", err)
@@ -2771,7 +2753,7 @@ func TestReuseUpdatesCodexWorkspaceSkills(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer env.Cleanup(true)
+	defer func() { _ = env.Cleanup(true) }()
 
 	reused := Reuse(ReuseParams{WorkDir: env.WorkDir, Provider: "codex", Task: TaskContextForEnv{
 		IssueID: "reuse-skill-update-test",
@@ -2846,7 +2828,7 @@ func TestPrepareCodexSeedsUserSkills(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer env.Cleanup(true)
+	defer func() { _ = env.Cleanup(true) }()
 
 	if data, err := os.ReadFile(filepath.Join(env.CodexHome, "skills", "summarize", "SKILL.md")); err != nil {
 		t.Fatalf("user skill SKILL.md not seeded: %v", err)
@@ -2905,7 +2887,7 @@ func TestPrepareCodexWorkspaceSkillBeatsUserSkillOnConflict(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer env.Cleanup(true)
+	defer func() { _ = env.Cleanup(true) }()
 
 	data, err := os.ReadFile(filepath.Join(env.CodexHome, "skills", "writing", "SKILL.md"))
 	if err != nil {
@@ -2941,7 +2923,7 @@ func TestPrepareCodexNoUserSkillsDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer env.Cleanup(true)
+	defer func() { _ = env.Cleanup(true) }()
 	if _, err := os.Stat(filepath.Join(env.CodexHome, "skills")); !os.IsNotExist(err) {
 		t.Errorf("skills dir should not exist when neither user nor workspace skills are present, err=%v", err)
 	}
@@ -2987,7 +2969,7 @@ func TestPrepareCodexResolvesUserSkillSymlinks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer env.Cleanup(true)
+	defer func() { _ = env.Cleanup(true) }()
 
 	dst := filepath.Join(env.CodexHome, "skills", "lark-mail")
 	fi, err := os.Lstat(dst)
@@ -3038,7 +3020,7 @@ func TestPrepareCodexSkipsStaleUserSkillSymlink(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer env.Cleanup(true)
+	defer func() { _ = env.Cleanup(true) }()
 
 	if _, err := os.Stat(filepath.Join(env.CodexHome, "skills", "removed-skill")); !os.IsNotExist(err) {
 		t.Errorf("stale user skill should not be seeded, err=%v", err)
@@ -3073,7 +3055,7 @@ func TestReuseSeedsUserSkillUpdates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer env.Cleanup(true)
+	defer func() { _ = env.Cleanup(true) }()
 
 	if err := os.WriteFile(filepath.Join(userSkill, "SKILL.md"), []byte("v2"), 0o644); err != nil {
 		t.Fatalf("update user SKILL.md: %v", err)
@@ -3127,7 +3109,7 @@ func TestReuseClearsUserSkillResidueOnWorkspaceConflict(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer env.Cleanup(true)
+	defer func() { _ = env.Cleanup(true) }()
 
 	// Round 1 had no workspace skill, so the user version should be present.
 	if _, err := os.Stat(filepath.Join(env.CodexHome, "skills", "writing", "drafts", "stale.md")); err != nil {
@@ -3185,7 +3167,7 @@ func TestReuseClearsRemovedUserSkill(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer env.Cleanup(true)
+	defer func() { _ = env.Cleanup(true) }()
 
 	if _, err := os.Stat(filepath.Join(env.CodexHome, "skills", "deprecated", "SKILL.md")); err != nil {
 		t.Fatalf("user skill should be seeded in round 1: %v", err)
@@ -3214,7 +3196,9 @@ func TestEnsureSymlinkRepairsBrokenLink(t *testing.T) {
 	src := filepath.Join(dir, "source.json")
 	dst := filepath.Join(dir, "link.json")
 
-	os.WriteFile(src, []byte("real"), 0o644)
+	if err := os.WriteFile(src, []byte("real"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	// Create a broken symlink pointing to a non-existent file.
 	if err := os.Symlink(filepath.Join(dir, "old-source.json"), dst); err != nil {
@@ -3518,7 +3502,7 @@ func TestBuildMetaSkillContentEmitsRequestingUser(t *testing.T) {
 	identityIdx := strings.Index(content, "## Agent Identity")
 	requestingIdx := strings.Index(content, "## Requesting User")
 	commandsIdx := strings.Index(content, "## Available Commands")
-	if !(identityIdx >= 0 && identityIdx < requestingIdx && requestingIdx < commandsIdx) {
+	if identityIdx < 0 || identityIdx >= requestingIdx || requestingIdx >= commandsIdx {
 		t.Errorf("section order wrong: identity=%d requesting=%d commands=%d", identityIdx, requestingIdx, commandsIdx)
 	}
 }
@@ -3705,7 +3689,7 @@ func TestBuildMetaSkillContentEmitsTaskInitiatorMember(t *testing.T) {
 	// agent reads "who am I" → "whose context" → "who is asking now" → commands.
 	initiatorIdx := strings.Index(content, "## Task Initiator")
 	commandsIdx := strings.Index(content, "## Available Commands")
-	if !(initiatorIdx >= 0 && initiatorIdx < commandsIdx) {
+	if initiatorIdx < 0 || initiatorIdx >= commandsIdx {
 		t.Errorf("section order wrong: initiator=%d commands=%d", initiatorIdx, commandsIdx)
 	}
 }
@@ -4254,7 +4238,7 @@ func TestPrepareLocalWorkDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Prepare failed: %v", err)
 	}
-	defer env.Cleanup(true)
+	defer func() { _ = env.Cleanup(true) }()
 
 	if !env.LocalDirectory {
 		t.Fatal("expected env.LocalDirectory to be true")

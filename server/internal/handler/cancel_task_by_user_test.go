@@ -53,7 +53,7 @@ func createAutopilotRunOnlyTask(t *testing.T, agentID string) string {
 	`, workspaceID, agentID, testUserID).Scan(&autopilotID); err != nil {
 		t.Fatalf("create autopilot: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM autopilot WHERE id = $1`, autopilotID) })
+	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM autopilot WHERE id = $1`, autopilotID) })
 
 	var runID string
 	if err := testPool.QueryRow(ctx, `
@@ -73,8 +73,8 @@ func createAutopilotRunOnlyTask(t *testing.T, agentID string) string {
 		t.Fatalf("create run_only task: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
-		testPool.Exec(context.Background(), `DELETE FROM domain_event_outbox WHERE stream_key = 'task:' || $1`, taskID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM domain_event_outbox WHERE stream_key = 'task:' || $1`, taskID)
 	})
 	return taskID
 }
@@ -93,7 +93,7 @@ func createForeignWorkspaceAgent(t *testing.T) string {
 	`).Scan(&workspaceID); err != nil {
 		t.Fatalf("create foreign workspace: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM workspace WHERE id = $1`, workspaceID) })
+	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM workspace WHERE id = $1`, workspaceID) })
 
 	var runtimeID string
 	if err := testPool.QueryRow(ctx, `
@@ -128,7 +128,7 @@ func createWorkspaceMemberUser(t *testing.T, name, account string) string {
 	).Scan(&userID); err != nil {
 		t.Fatalf("create user %s: %v", account, err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, userID) })
+	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, userID) })
 
 	if _, err := testPool.Exec(ctx,
 		`INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, 'member')`, testWorkspaceID, userID,
@@ -207,8 +207,8 @@ func TestCancelTaskByUser_QuickCreate_Succeeds(t *testing.T) {
 		t.Fatalf("create quick_create task: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
-		testPool.Exec(context.Background(), `DELETE FROM domain_event_outbox WHERE stream_key = 'task:' || $1`, taskID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM domain_event_outbox WHERE stream_key = 'task:' || $1`, taskID)
 	})
 
 	w := httptest.NewRecorder()
@@ -241,7 +241,7 @@ func TestCancelTaskByUser_RetryClone_Autopilot_Succeeds(t *testing.T) {
 	`, parentID).Scan(&cloneID); err != nil {
 		t.Fatalf("create retry clone: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, cloneID) })
+	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, cloneID) })
 
 	w := httptest.NewRecorder()
 	testHandler.CancelTaskByUser(w, cancelTaskByUserRequest(t, testUserID, cloneID))
@@ -270,7 +270,7 @@ func TestCancelTaskByUser_IssueTask_Succeeds(t *testing.T) {
 	`, testWorkspaceID, testUserID).Scan(&issueID); err != nil {
 		t.Fatalf("create issue: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID) })
+	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID) })
 
 	if err := testPool.QueryRow(context.Background(), `
 		INSERT INTO agent_task_queue (agent_id, runtime_id, status, priority, issue_id)
@@ -279,7 +279,7 @@ func TestCancelTaskByUser_IssueTask_Succeeds(t *testing.T) {
 	`, agentID, issueID).Scan(&taskID); err != nil {
 		t.Fatalf("create issue task: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
 
 	w := httptest.NewRecorder()
 	testHandler.CancelTaskByUser(w, cancelTaskByUserRequest(t, testUserID, taskID))
@@ -310,7 +310,7 @@ func TestCancelTaskByUser_ChatTask_NonCreator_Returns403(t *testing.T) {
 	`, agentID, sessionID).Scan(&taskID); err != nil {
 		t.Fatalf("create chat task: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
 
 	w := httptest.NewRecorder()
 	testHandler.CancelTaskByUser(w, cancelTaskByUserRequest(t, otherUserID, taskID))
@@ -338,7 +338,7 @@ func TestCancelTaskByUser_ChatTaskWithTranscript_PersistsAssistantSnapshot(t *te
 	`, agentID, sessionID).Scan(&taskID); err != nil {
 		t.Fatalf("create chat task: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
 
 	if _, err := testPool.Exec(context.Background(), `
 		INSERT INTO chat_message (chat_session_id, role, content, task_id)
@@ -398,7 +398,7 @@ func TestCancelTaskByUser_ChatTaskWithoutTranscript_RestoresUserDraft(t *testing
 	`, agentID, sessionID).Scan(&taskID); err != nil {
 		t.Fatalf("create chat task: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
 
 	var userMessageID string
 	const userContent = "keep this prompt"
@@ -465,8 +465,8 @@ func TestCancelChatTaskRollsBackDraftRestoreWhenEventInsertFails(t *testing.T) {
 		t.Fatalf("create rollback chat task: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
-		testPool.Exec(context.Background(), `DELETE FROM domain_event_outbox WHERE stream_key = 'task:' || $1`, taskID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM domain_event_outbox WHERE stream_key = 'task:' || $1`, taskID)
 	})
 
 	var userMessageID string
@@ -526,7 +526,7 @@ func TestCancelTaskByUser_ChatTaskWithBoundAttachment_SurvivesCancelAndRebinds(t
 	`, agentID, sessionID).Scan(&taskID); err != nil {
 		t.Fatalf("create chat task: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
 
 	var userMessageID string
 	const userContent = "look at this attachment"
@@ -549,7 +549,7 @@ func TestCancelTaskByUser_ChatTaskWithBoundAttachment_SurvivesCancelAndRebinds(t
 	`, testWorkspaceID, testUserID, sessionID, userMessageID).Scan(&attachmentID); err != nil {
 		t.Fatalf("seed bound attachment: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM attachment WHERE id = $1`, attachmentID) })
+	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM attachment WHERE id = $1`, attachmentID) })
 
 	// Cancel the empty chat task (no transcript) — this deletes the user message.
 	w := httptest.NewRecorder()
@@ -630,7 +630,7 @@ func TestCancelTaskByUser_ChatTaskWithBoundAttachment_SurvivesCancelAndRebinds(t
 		t.Fatalf("decode resend response: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, sendResp.TaskID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, sendResp.TaskID)
 	})
 
 	rebound := false

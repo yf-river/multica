@@ -187,12 +187,12 @@ func ModelKnownIncompatibleWithProvider(providerType, model string) bool {
 }
 
 func acceptedModelIDsForProvider(providerType string) (map[string]bool, bool) {
-	switch {
-	case providerType == "claude":
+	switch providerType {
+	case "claude":
 		return modelIDSet(claudeStaticModels()), true
-	case providerType == "codex":
+	case "codex":
 		return modelIDSet(codexStaticModels()), true
-	case providerType == "gemini":
+	case "gemini":
 		return modelIDSet(geminiStaticModels()), true
 	default:
 		return nil, false

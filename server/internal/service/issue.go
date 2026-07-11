@@ -158,7 +158,7 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 	if err != nil {
 		return IssueCreateResult{}, fmt.Errorf("begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	qtx := s.Queries.WithTx(tx)
 
 	// Resolve and validate parent / project before touching the issue

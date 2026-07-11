@@ -53,7 +53,7 @@ func newRunningSquadLeaderTaskFixture(t *testing.T) runningSquadLeaderTaskFixtur
 		t.Fatalf("create running squad leader task: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
 	})
 
 	return runningSquadLeaderTaskFixture{

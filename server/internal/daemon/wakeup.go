@@ -97,7 +97,7 @@ func (d *Daemon) runTaskWakeupConnection(ctx context.Context, runtimeIDs []strin
 	if err != nil {
 		return err
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 	// HTTP heartbeats resume the moment WS detaches so the freshness window
 	// from a previous connection cannot keep them silenced past disconnect.
 	defer d.clearWSHeartbeatAcks()
@@ -165,10 +165,16 @@ func (d *Daemon) runTaskWakeupConnection(ctx context.Context, runtimeIDs []strin
 func (d *Daemon) runWSWriter(conn *websocket.Conn, writes <-chan []byte, done chan<- struct{}) {
 	defer close(done)
 	for frame := range writes {
-		conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+		if err := conn.SetWriteDeadline(time.Now().Add(10 * time.Second)); err != nil {
+			d.logger.Debug("task wakeup websocket deadline failed", "error", err)
+			_ = conn.Close()
+			for range writes {
+			}
+			return
+		}
 		if err := conn.WriteMessage(websocket.TextMessage, frame); err != nil {
 			d.logger.Debug("task wakeup websocket write failed", "error", err)
-			conn.Close()
+			_ = conn.Close()
 			// Drain remaining frames so the producers don't block forever
 			// while waiting for runTaskWakeupConnection to close the channel.
 			for range writes {

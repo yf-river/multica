@@ -147,7 +147,7 @@ func TestCreateCommentReopensResolvedThreadInSameCommit(t *testing.T) {
 func cleanupCommentOutboxForIssue(t *testing.T, issueID string) {
 	t.Helper()
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM domain_event_outbox WHERE stream_key = 'issue:' || $1`, issueID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM domain_event_outbox WHERE stream_key = 'issue:' || $1`, issueID)
 	})
 }
 
@@ -158,8 +158,8 @@ func installCommentUnresolveFailure(t *testing.T, commentID string) {
 	triggerName := "comment_unresolve_fail_" + suffix
 	ctx := context.Background()
 	t.Cleanup(func() {
-		testPool.Exec(ctx, fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON comment`, triggerName))
-		testPool.Exec(ctx, fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, functionName))
+		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON comment`, triggerName))
+		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, functionName))
 	})
 	if _, err := testPool.Exec(ctx, fmt.Sprintf(`
 		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$

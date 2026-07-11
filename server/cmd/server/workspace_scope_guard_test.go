@@ -35,7 +35,7 @@ func TestWorkspaceScopeGuard(t *testing.T) {
 
 	t.Run("DeleteIssue", func(t *testing.T) {
 		id := seedIssue(t, ctx)
-		t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, util.UUIDToString(id)) })
+		t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, util.UUIDToString(id)) })
 
 		if err := queries.DeleteIssue(ctx, db.DeleteIssueParams{ID: id, WorkspaceID: wsB}); err != nil {
 			t.Fatalf("cross-workspace DeleteIssue: expected nil error (no-op), got %v", err)
@@ -45,9 +45,9 @@ func TestWorkspaceScopeGuard(t *testing.T) {
 
 	t.Run("DeleteComment", func(t *testing.T) {
 		issueID := seedIssue(t, ctx)
-		t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, util.UUIDToString(issueID)) })
+		t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, util.UUIDToString(issueID)) })
 		id := seedComment(t, ctx, issueID)
-		t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM comment WHERE id = $1`, util.UUIDToString(id)) })
+		t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM comment WHERE id = $1`, util.UUIDToString(id)) })
 
 		if err := queries.DeleteComment(ctx, db.DeleteCommentParams{ID: id, WorkspaceID: wsB}); err != nil {
 			t.Fatalf("cross-workspace DeleteComment: expected nil error (no-op), got %v", err)
@@ -57,7 +57,7 @@ func TestWorkspaceScopeGuard(t *testing.T) {
 
 	t.Run("DeleteProject", func(t *testing.T) {
 		id := seedProject(t, ctx)
-		t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM project WHERE id = $1`, util.UUIDToString(id)) })
+		t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM project WHERE id = $1`, util.UUIDToString(id)) })
 
 		if err := queries.DeleteProject(ctx, db.DeleteProjectParams{ID: id, WorkspaceID: wsB}); err != nil {
 			t.Fatalf("cross-workspace DeleteProject: expected nil error (no-op), got %v", err)
@@ -67,7 +67,7 @@ func TestWorkspaceScopeGuard(t *testing.T) {
 
 	t.Run("DeleteSkill", func(t *testing.T) {
 		id := seedSkill(t, ctx)
-		t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM skill WHERE id = $1`, util.UUIDToString(id)) })
+		t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM skill WHERE id = $1`, util.UUIDToString(id)) })
 
 		if err := queries.DeleteSkill(ctx, db.DeleteSkillParams{ID: id, WorkspaceID: wsB}); err != nil {
 			t.Fatalf("cross-workspace DeleteSkill: expected nil error (no-op), got %v", err)
@@ -77,7 +77,7 @@ func TestWorkspaceScopeGuard(t *testing.T) {
 
 	t.Run("DeleteChatSession", func(t *testing.T) {
 		id := seedChatSession(t, ctx)
-		t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM chat_session WHERE id = $1`, util.UUIDToString(id)) })
+		t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM chat_session WHERE id = $1`, util.UUIDToString(id)) })
 
 		if err := queries.DeleteChatSession(ctx, db.DeleteChatSessionParams{ID: id, WorkspaceID: wsB}); err != nil {
 			t.Fatalf("cross-workspace DeleteChatSession: expected nil error (no-op), got %v", err)
@@ -87,7 +87,7 @@ func TestWorkspaceScopeGuard(t *testing.T) {
 
 	t.Run("UpdateIssueStatus", func(t *testing.T) {
 		id := seedIssue(t, ctx)
-		t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, util.UUIDToString(id)) })
+		t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, util.UUIDToString(id)) })
 
 		_, err := queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
 			ID:          id,
@@ -113,7 +113,7 @@ func TestWorkspaceScopeGuard(t *testing.T) {
 	// proves the in-workspace path still mutates.
 	t.Run("InWorkspaceCallsStillWork", func(t *testing.T) {
 		id := seedIssue(t, ctx)
-		t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, util.UUIDToString(id)) })
+		t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, util.UUIDToString(id)) })
 
 		if err := queries.DeleteIssue(ctx, db.DeleteIssueParams{ID: id, WorkspaceID: wsA}); err != nil {
 			t.Fatalf("in-workspace DeleteIssue: %v", err)

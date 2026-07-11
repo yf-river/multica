@@ -375,7 +375,7 @@ func main() {
 	// handler. Both the heartbeat write path (handler) and the sweeper read
 	// path (here) must agree on the same Redis-or-Noop choice; if they
 	// disagree, online runtimes get falsely marked offline.
-	var liveness handler.LivenessStore = handler.NewNoopLivenessStore()
+	liveness := handler.NewNoopLivenessStore()
 	if storeRedis != nil {
 		liveness = handler.NewRedisLivenessStore(storeRedis)
 	}

@@ -358,7 +358,7 @@ func (h *Handler) verifyGongfengCredentialConnection(ctx context.Context, secret
 	if err != nil {
 		return "failed", now, pgtype.Text{String: "无法连接工蜂 API；请检查网络或 GONGFENG_API_BASE。", Valid: true}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return "verified", now, pgtype.Text{}
 	}
@@ -400,7 +400,7 @@ func (h *Handler) verifyTAPDCredentialConnection(ctx context.Context, secretRef 
 	if err != nil {
 		return "failed", now, pgtype.Text{String: "无法连接 TAPD API；请检查网络或 TAPD_API_BASE_URL。", Valid: true}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return "verified", now, pgtype.Text{}
 	}

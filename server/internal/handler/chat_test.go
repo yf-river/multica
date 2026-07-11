@@ -39,11 +39,11 @@ func uploadChatAttachmentForTest(t *testing.T, filename, sessionID string) Attac
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	part, _ := writer.CreateFormFile("file", filename)
-	part.Write([]byte("\x89PNG\r\n\x1a\nbytes"))
+	_, _ = part.Write([]byte("\x89PNG\r\n\x1a\nbytes"))
 	if sessionID != "" {
-		writer.WriteField("chat_session_id", sessionID)
+		_ = writer.WriteField("chat_session_id", sessionID)
 	}
-	writer.Close()
+	_ = writer.Close()
 
 	req := httptest.NewRequest("POST", "/api/upload-file", &body)
 	req.Header.Set("Content-Type", writer.FormDataContentType())
@@ -60,7 +60,7 @@ func uploadChatAttachmentForTest(t *testing.T, filename, sessionID string) Attac
 		t.Fatalf("decode upload: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM attachment WHERE id = $1`, resp.ID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM attachment WHERE id = $1`, resp.ID)
 	})
 	return resp
 }
@@ -446,8 +446,8 @@ func TestDeleteChatSession_RecordsCancelTraceWithSessionFK(t *testing.T) {
 		t.Fatalf("seed chat task: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM task_trace_event WHERE task_id = $1`, taskID)
-		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM task_trace_event WHERE task_id = $1`, taskID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
 	})
 
 	req := newRequest("DELETE", "/api/chat/sessions/"+sessionID, nil)

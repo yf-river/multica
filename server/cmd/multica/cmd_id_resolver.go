@@ -62,7 +62,7 @@ func normalizeUUIDPrefix(input string) (string, error) {
 		return "", fmt.Errorf("expected a full UUID or at least %d hex characters, got %q", minShortIDPrefixLen, input)
 	}
 	for _, r := range prefix {
-		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f')) {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
 			return "", fmt.Errorf("expected a UUID prefix containing only hex characters, got %q", input)
 		}
 	}
@@ -167,7 +167,7 @@ func looksLikeIssueIdentifier(input string) bool {
 	}
 	prefix := input[:dash]
 	for _, r := range prefix {
-		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')) {
+		if (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') && (r < '0' || r > '9') {
 			return false
 		}
 	}

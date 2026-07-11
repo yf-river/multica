@@ -97,7 +97,7 @@ func projectIssueCreatedSubscribers(ctx context.Context, queries *db.Queries, ev
 		return nil, err
 	}
 	if issue.AssigneeType != nil && issue.AssigneeID != nil &&
-		!(*issue.AssigneeType == issue.CreatorType && *issue.AssigneeID == issue.CreatorID) {
+		(*issue.AssigneeType != issue.CreatorType || *issue.AssigneeID != issue.CreatorID) {
 		if err := appendSubscriber(*issue.AssigneeType, *issue.AssigneeID, "assignee"); err != nil {
 			return nil, err
 		}
@@ -155,14 +155,6 @@ func projectIssueUpdatedSubscribers(ctx context.Context, queries *db.Queries, ev
 		}
 	}
 	return emitted, nil
-}
-
-func consumeCommentCreatedSubscriber(ctx context.Context, queries *db.Queries, event events.Event) ([]events.Event, error) {
-	payload, exists, err := loadCommentProjection(ctx, queries, event)
-	if err != nil || !exists {
-		return nil, err
-	}
-	return projectCommentCreatedSubscriber(ctx, queries, event, payload)
 }
 
 func projectCommentCreatedSubscriber(ctx context.Context, queries *db.Queries, event events.Event, payload commentEventPayload) ([]events.Event, error) {

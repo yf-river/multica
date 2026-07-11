@@ -937,7 +937,7 @@ func TestParseHermesSessionNewModelsMissingField(t *testing.T) {
 	// failed _build_model_state — should yield nil so the caller
 	// can distinguish "no catalog" from "empty catalog".
 	raw := []byte(`{"sessionId": "ses_123"}`)
-	if got := parseACPSessionNewModels(raw); got != nil && len(got) != 0 {
+	if got := parseACPSessionNewModels(raw); len(got) != 0 {
 		t.Errorf("expected nil/empty, got %+v", got)
 	}
 }

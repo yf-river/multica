@@ -181,7 +181,7 @@ func TestEnrichMergeForwardSortsByCreateTime(t *testing.T) {
 	first := strings.Index(out.Body, "first")
 	second := strings.Index(out.Body, "second")
 	third := strings.Index(out.Body, "third")
-	if !(first < second && second < third) {
+	if first >= second || second >= third {
 		t.Errorf("children not chronologically ordered: %q", out.Body)
 	}
 }

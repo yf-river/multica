@@ -23,7 +23,7 @@ func createHandlerIssueAttachment(t *testing.T, issueID, filename string) string
 		t.Fatalf("insert issue attachment: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM attachment WHERE id = $1`, attachmentID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM attachment WHERE id = $1`, attachmentID)
 	})
 	return attachmentID
 }

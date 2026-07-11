@@ -99,7 +99,7 @@ func (h *Handler) notifyParentOfChildDone(ctx context.Context, prev, issue db.Is
 		slog.Warn("child done: begin system comment transaction failed", "error", err, "child_id", childID, "parent_id", uuidToString(parent.ID))
 		return
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	queries := h.Queries.WithTx(tx)
 	comment, err := queries.CreateComment(ctx, db.CreateCommentParams{
 		IssueID:     parent.ID,

@@ -243,7 +243,7 @@ func checkOpenclawVersion(ctx context.Context, execPath string) error {
 		return fmt.Errorf("could not parse openclaw version from output: %q", strings.TrimSpace(string(out)))
 	}
 	if compareOpenclawVersion(detected, minOpenclawVersion) < 0 {
-		return fmt.Errorf("openclaw %s is below the minimum supported version %s. Run `openclaw update` to upgrade and try again.", detected, minOpenclawVersion)
+		return fmt.Errorf("openclaw %s is below the minimum supported version %s; run `openclaw update` to upgrade and try again", detected, minOpenclawVersion)
 	}
 	return nil
 }

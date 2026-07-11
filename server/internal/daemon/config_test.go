@@ -176,7 +176,7 @@ func TestBuildLoginShellResolveScript_ShapeAndContent(t *testing.T) {
 	if idxUnalias < 0 || idxUnsetFn < 0 || idxLookup < 0 {
 		t.Fatalf("script missing unalias/unset -f/command -v steps:\n%s", got)
 	}
-	if !(idxUnalias < idxLookup && idxUnsetFn < idxLookup) {
+	if idxUnalias >= idxLookup || idxUnsetFn >= idxLookup {
 		t.Errorf("unalias/unset -f must precede command -v:\n%s", got)
 	}
 	// Must canonicalise via `cd ... && pwd -P` to break out of symlinked
@@ -602,18 +602,6 @@ func pinNonCodexAgentsToMissingPaths(t *testing.T) {
 // CLI config Backends.OpenClaw overrides (issue #3875)
 // =============================================================================
 
-// writeCLIConfigForProfile is a minimal helper for the override tests:
-// stages a HOME, writes a config.json under the given profile (empty profile
-// = default), and returns the resolved path so tests can assert against it.
-func writeCLIConfigForProfile(t *testing.T, profile string, cfg cli.CLIConfig) {
-	t.Helper()
-	tmp := t.TempDir()
-	t.Setenv("HOME", tmp)
-	if err := cli.SaveCLIConfigForProfile(cfg, profile); err != nil {
-		t.Fatalf("write cli config: %v", err)
-	}
-}
-
 // TestApplyOpenclawOverride_DoesNothingWhenNil verifies the early-return
 // path. A daemon started with no override should not Setenv anything; the
 // existing probe / spawn flow remains undisturbed.
@@ -638,11 +626,11 @@ func TestApplyOpenclawOverride_DoesNothingWhenNil(t *testing.T) {
 func TestApplyOpenclawOverride_SetsBothWhenEnvUnset(t *testing.T) {
 	t.Setenv("MULTICA_OPENCLAW_PATH", "")
 	t.Setenv("OPENCLAW_STATE_DIR", "")
-	os.Unsetenv("MULTICA_OPENCLAW_PATH")
-	os.Unsetenv("OPENCLAW_STATE_DIR")
+	_ = os.Unsetenv("MULTICA_OPENCLAW_PATH")
+	_ = os.Unsetenv("OPENCLAW_STATE_DIR")
 	t.Cleanup(func() {
-		os.Unsetenv("MULTICA_OPENCLAW_PATH")
-		os.Unsetenv("OPENCLAW_STATE_DIR")
+		_ = os.Unsetenv("MULTICA_OPENCLAW_PATH")
+		_ = os.Unsetenv("OPENCLAW_STATE_DIR")
 	})
 
 	applyOpenclawOverride(&cli.OpenClawOverride{
@@ -688,11 +676,11 @@ func TestApplyOpenclawOverride_EnvWinsOverConfig(t *testing.T) {
 // must not have their MULTICA_OPENCLAW_PATH discovery path forcibly
 // short-circuited to an empty string.
 func TestApplyOpenclawOverride_PartialFields_OnlySetsConfigured(t *testing.T) {
-	os.Unsetenv("MULTICA_OPENCLAW_PATH")
-	os.Unsetenv("OPENCLAW_STATE_DIR")
+	_ = os.Unsetenv("MULTICA_OPENCLAW_PATH")
+	_ = os.Unsetenv("OPENCLAW_STATE_DIR")
 	t.Cleanup(func() {
-		os.Unsetenv("MULTICA_OPENCLAW_PATH")
-		os.Unsetenv("OPENCLAW_STATE_DIR")
+		_ = os.Unsetenv("MULTICA_OPENCLAW_PATH")
+		_ = os.Unsetenv("OPENCLAW_STATE_DIR")
 	})
 
 	applyOpenclawOverride(&cli.OpenClawOverride{
@@ -743,11 +731,11 @@ func TestLoadConfig_AppliesBackendOverridesFromConfigFile(t *testing.T) {
 	}
 
 	// Make sure no env-var override is leaking in from the test runner.
-	os.Unsetenv("MULTICA_OPENCLAW_PATH")
-	os.Unsetenv("OPENCLAW_STATE_DIR")
+	_ = os.Unsetenv("MULTICA_OPENCLAW_PATH")
+	_ = os.Unsetenv("OPENCLAW_STATE_DIR")
 	t.Cleanup(func() {
-		os.Unsetenv("MULTICA_OPENCLAW_PATH")
-		os.Unsetenv("OPENCLAW_STATE_DIR")
+		_ = os.Unsetenv("MULTICA_OPENCLAW_PATH")
+		_ = os.Unsetenv("OPENCLAW_STATE_DIR")
 	})
 
 	// Drop a CLI config under the user's HOME (already pointed at TempDir
@@ -796,11 +784,11 @@ func TestLoadConfig_BackendOverrides_BackwardCompat_NoConfigFile(t *testing.T) {
 
 	// Point HOME at an empty dir — no config.json present.
 	t.Setenv("HOME", t.TempDir())
-	os.Unsetenv("MULTICA_OPENCLAW_PATH")
-	os.Unsetenv("OPENCLAW_STATE_DIR")
+	_ = os.Unsetenv("MULTICA_OPENCLAW_PATH")
+	_ = os.Unsetenv("OPENCLAW_STATE_DIR")
 	t.Cleanup(func() {
-		os.Unsetenv("MULTICA_OPENCLAW_PATH")
-		os.Unsetenv("OPENCLAW_STATE_DIR")
+		_ = os.Unsetenv("MULTICA_OPENCLAW_PATH")
+		_ = os.Unsetenv("OPENCLAW_STATE_DIR")
 	})
 
 	_, err := LoadConfig(Overrides{

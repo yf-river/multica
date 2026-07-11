@@ -878,7 +878,7 @@ func probeGongfengURL(ctx context.Context, rawURL string) gongfengProbeResult {
 	if err != nil {
 		return gongfengProbeResult{ConnectionStatus: "unreachable", TestStatus: "failed"}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	location := resp.Header.Get("Location")
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden ||
 		(resp.StatusCode >= 300 && resp.StatusCode < 400 && strings.Contains(location, "/users/sign_in")) {
@@ -916,7 +916,7 @@ func probeGongfengWithCredential(ctx context.Context, ref gongfengRepoRef, token
 	if err != nil {
 		return gongfengCredentialProbeResult{ConnectionStatus: "credential_probe_unreachable", TestStatus: "failed", Target: target}
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	status := fmt.Sprintf("%d", resp.StatusCode)
 	location := resp.Header.Get("Location")
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
@@ -983,7 +983,7 @@ func fetchGongfengDefaultBranch(ctx context.Context, projectPath string, token s
 	if err != nil {
 		return "", fmt.Errorf("gongfeng default branch lookup failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		return "", errors.New("gongfeng credential cannot access this repository")
 	}
@@ -1051,25 +1051,25 @@ func fetchGongfengBranches(ctx context.Context, projectPath string, token string
 			return nil, fmt.Errorf("gongfeng branch list lookup failed: %w", err)
 		}
 		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return nil, errors.New("gongfeng credential cannot access this repository")
 		}
 		if resp.StatusCode == http.StatusNotFound {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return nil, errors.New("gongfeng repository not found or no access")
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			status := resp.StatusCode
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return nil, fmt.Errorf("gongfeng branch list lookup returned HTTP %d", status)
 		}
 		var payload []gongfengBranchListItem
 		if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return nil, fmt.Errorf("invalid gongfeng branch list response: %w", err)
 		}
 		nextPage := strings.TrimSpace(resp.Header.Get("X-Next-Page"))
-		resp.Body.Close()
+		_ = resp.Body.Close()
 		for _, item := range payload {
 			name := strings.TrimSpace(item.Name)
 			if name == "" {
@@ -1165,7 +1165,7 @@ func fetchGongfengBranchHeadCommit(ctx context.Context, projectPath string, bran
 	if err != nil {
 		return "", fmt.Errorf("gongfeng branch head lookup failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
 		return "", errors.New("gongfeng credential cannot access this branch")
 	}

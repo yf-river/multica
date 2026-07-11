@@ -241,7 +241,7 @@ func ensureDirSymlink(src, dst string) error {
 			if err == nil && target == src {
 				return nil // already correct
 			}
-			os.Remove(dst)
+			_ = os.Remove(dst)
 		} else {
 			// Regular file/dir exists — don't overwrite.
 			return nil
@@ -363,16 +363,19 @@ func copyFile(src, dst string) error {
 	if err != nil {
 		return fmt.Errorf("open %s: %w", src, err)
 	}
-	defer in.Close()
+	defer func() { _ = in.Close() }()
 
 	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		return fmt.Errorf("create %s: %w", dst, err)
 	}
-	defer out.Close()
 
 	if _, err := io.Copy(out, in); err != nil {
+		_ = out.Close()
 		return fmt.Errorf("copy %s → %s: %w", src, dst, err)
+	}
+	if err := out.Close(); err != nil {
+		return fmt.Errorf("close %s: %w", dst, err)
 	}
 	return nil
 }

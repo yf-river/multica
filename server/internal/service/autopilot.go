@@ -207,7 +207,7 @@ func (s *AutopilotService) dispatchCreateIssue(ctx context.Context, ap db.Autopi
 	if err != nil {
 		return fmt.Errorf("begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 
 	qtx := s.Queries.WithTx(tx)
 
@@ -474,7 +474,7 @@ func (s *AutopilotService) dispatchRunOnly(ctx context.Context, ap db.Autopilot,
 	if err != nil {
 		return fmt.Errorf("begin run-only dispatch: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	queries := s.Queries.WithTx(tx)
 	task, err := queries.CreateAutopilotTask(ctx, db.CreateAutopilotTaskParams{
 		AgentID:        agent.ID,
@@ -543,7 +543,7 @@ func (s *AutopilotService) handleDispatchSkip(ctx context.Context, ap db.Autopil
 	if txErr != nil {
 		return true, fmt.Errorf("begin skipped dispatch: %w", txErr)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	queries := s.Queries.WithTx(tx)
 	updated, txErr := queries.UpdateAutopilotRunSkipped(ctx, db.UpdateAutopilotRunSkippedParams{
 		ID:            run.ID,
@@ -573,7 +573,7 @@ func (s *AutopilotService) failDispatchRun(ctx context.Context, ap db.Autopilot,
 	if err != nil {
 		return errors.Join(cause, fmt.Errorf("begin failed dispatch: %w", err))
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	queries := s.Queries.WithTx(tx)
 	updated, err := queries.UpdateAutopilotRunFailed(ctx, db.UpdateAutopilotRunFailedParams{
 		ID:            run.ID,
@@ -788,7 +788,7 @@ func (s *AutopilotService) recordSkippedRun(
 	if err != nil {
 		return nil, fmt.Errorf("begin skipped run: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	queries := s.Queries.WithTx(tx)
 	run, err := queries.CreateAutopilotRun(ctx, db.CreateAutopilotRunParams{
 		AutopilotID:    autopilot.ID,

@@ -21,7 +21,7 @@ func insertRuntimeProfileFixture(t *testing.T, ctx context.Context, displayName,
 		t.Fatalf("insert runtime_profile fixture: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM runtime_profile WHERE id = $1`, profileID)
+		mustExec(t, context.Background(), `DELETE FROM runtime_profile WHERE id = $1`, profileID)
 	})
 	return profileID
 }
@@ -42,8 +42,8 @@ func insertProfileRuntimeFixture(t *testing.T, ctx context.Context, profileID, n
 		t.Fatalf("insert profile runtime fixture: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent WHERE runtime_id = $1`, runtimeID)
-		testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
+		mustExec(t, context.Background(), `DELETE FROM agent WHERE runtime_id = $1`, runtimeID)
+		mustExec(t, context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
 	})
 	return runtimeID
 }
@@ -169,7 +169,7 @@ func TestCreateRuntimeProfile_ForcesWorkspaceVisibility(t *testing.T) {
 		t.Fatalf("decode response: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM runtime_profile WHERE id = $1`, resp.ID)
+		mustExec(t, context.Background(), `DELETE FROM runtime_profile WHERE id = $1`, resp.ID)
 	})
 
 	if resp.Visibility != "workspace" {

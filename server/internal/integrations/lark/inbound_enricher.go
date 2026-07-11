@@ -313,8 +313,8 @@ func (e *inboundEnricher) renderRecentContextBlock(kept []LarkMessage, names map
 	for _, m := range kept {
 		label := labeler.label(m)
 		var text string
-		switch {
-		case m.MessageType == larkMsgTypeMergeForward:
+		switch m.MessageType {
+		case larkMsgTypeMergeForward:
 			text = "[merge_forward, expand manually]"
 		default:
 			text = e.flattenMessage(m)
@@ -405,8 +405,8 @@ func (e *inboundEnricher) renderForwardedItems(items []LarkMessage, forwardID st
 	for _, c := range children {
 		label := labeler.label(c)
 		var text string
-		switch {
-		case c.MessageType == larkMsgTypeMergeForward:
+		switch c.MessageType {
+		case larkMsgTypeMergeForward:
 			text = "[nested merge_forward, expand manually]"
 		default:
 			text = e.flattenMessage(c)

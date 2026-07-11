@@ -360,7 +360,7 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to start transaction")
 		return
 	}
-	defer tx.Rollback(r.Context())
+	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 
 	_, err = qtx.ReserveProjectCreateRequest(r.Context(), db.ReserveProjectCreateRequestParams{
@@ -401,7 +401,7 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		if res.Label != nil && strings.TrimSpace(*res.Label) != "" {
 			label = pgtype.Text{String: strings.TrimSpace(*res.Label), Valid: true}
 		}
-		var position int32 = int32(i)
+		position := int32(i)
 		if res.Position != nil {
 			position = *res.Position
 		}
@@ -545,7 +545,10 @@ func (h *Handler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var rawFields map[string]json.RawMessage
-	json.Unmarshal(bodyBytes, &rawFields)
+	if err := json.Unmarshal(bodyBytes, &rawFields); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
 
 	params := db.UpdateProjectParams{
 		ID:          prevProject.ID,

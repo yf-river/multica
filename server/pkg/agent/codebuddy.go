@@ -106,7 +106,7 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 			return nil, err
 		}
 		mcpConfigPath = path
-		mcpFileCleanup = func() { os.Remove(mcpConfigPath) }
+		mcpFileCleanup = func() { _ = os.Remove(mcpConfigPath) }
 		args = append(args, "--mcp-config", mcpConfigPath)
 	}
 	// Clean up the temp file if we return before the goroutine takes ownership.
@@ -174,7 +174,7 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 		defer close(msgCh)
 		defer close(resCh)
 		if mcpConfigPath != "" {
-			defer os.Remove(mcpConfigPath)
+			defer func() { _ = os.Remove(mcpConfigPath) }()
 		}
 
 		startTime := time.Now()

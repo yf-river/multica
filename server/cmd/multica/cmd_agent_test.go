@@ -802,7 +802,7 @@ func TestAgentSkillsAddCallsAdditiveEndpoint(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
 			t.Errorf("decode request body: %v", err)
 		}
-		json.NewEncoder(w).Encode([]map[string]any{
+		_ = json.NewEncoder(w).Encode([]map[string]any{
 			{"id": "skill-a", "name": "Skill A", "description": ""},
 			{"id": "skill-b", "name": "Skill B", "description": ""},
 		})
@@ -891,30 +891,31 @@ func TestAgentAvatarHappyPath(t *testing.T) {
 		gotPaths = append(gotPaths, r.URL.Path)
 		switch r.URL.Path {
 		case "/api/agents/agent-123":
-			if r.Method == http.MethodGet {
-				json.NewEncoder(w).Encode(map[string]any{
+			switch r.Method {
+			case http.MethodGet:
+				_ = json.NewEncoder(w).Encode(map[string]any{
 					"id":   "agent-123",
 					"name": "TestAgent",
 				})
-			} else if r.Method == http.MethodPut {
+			case http.MethodPut:
 				var body map[string]any
-				json.NewDecoder(r.Body).Decode(&body)
+				_ = json.NewDecoder(r.Body).Decode(&body)
 				if body["avatar_url"] != "https://cdn.example.com/avatars/agent-123.png" {
 					t.Errorf("unexpected avatar_url: %v", body["avatar_url"])
 				}
-				json.NewEncoder(w).Encode(map[string]any{
+				_ = json.NewEncoder(w).Encode(map[string]any{
 					"id":         "agent-123",
 					"name":       "TestAgent",
 					"avatar_url": "https://cdn.example.com/avatars/agent-123.png",
 				})
-			} else {
+			default:
 				t.Errorf("unexpected method: %s", r.Method)
 			}
 		case "/api/upload-file":
 			if r.Method != http.MethodPost {
 				t.Errorf("expected POST, got %s", r.Method)
 			}
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id":  "att-456",
 				"url": "https://cdn.example.com/avatars/agent-123.png",
 			})
@@ -976,7 +977,7 @@ func TestAgentAvatarMissingAgent(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/agents/missing-agent" {
 			w.WriteHeader(http.StatusNotFound)
-			io.WriteString(w, "agent not found")
+			_, _ = io.WriteString(w, "agent not found")
 			return
 		}
 		http.NotFound(w, r)
@@ -1003,10 +1004,10 @@ func TestAgentAvatarUploadFailure(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/agents/agent-123":
-			json.NewEncoder(w).Encode(map[string]any{"id": "agent-123", "name": "TestAgent"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "agent-123", "name": "TestAgent"})
 		case "/api/upload-file":
 			w.WriteHeader(http.StatusInternalServerError)
-			io.WriteString(w, "upload failed")
+			_, _ = io.WriteString(w, "upload failed")
 		default:
 			http.NotFound(w, r)
 		}
@@ -1035,12 +1036,12 @@ func TestAgentAvatarUpdateFailure(t *testing.T) {
 		case "/api/agents/agent-123":
 			if r.Method == http.MethodPut {
 				w.WriteHeader(http.StatusForbidden)
-				io.WriteString(w, "forbidden")
+				_, _ = io.WriteString(w, "forbidden")
 				return
 			}
-			json.NewEncoder(w).Encode(map[string]any{"id": "agent-123", "name": "TestAgent"})
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": "agent-123", "name": "TestAgent"})
 		case "/api/upload-file":
-			json.NewEncoder(w).Encode(map[string]any{
+			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id":  "att-456",
 				"url": "https://cdn.example.com/avatars/agent-123.png",
 			})
@@ -1149,7 +1150,7 @@ func TestAgentGetTableIncludesAvatarURL(t *testing.T) {
 		if r.URL.Path != "/api/agents/agent-123" {
 			t.Errorf("unexpected path: %s", r.URL.Path)
 		}
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"id":           "agent-123",
 			"name":         "TestAgent",
 			"status":       "active",
@@ -1176,7 +1177,7 @@ func TestAgentGetTableIncludesAvatarURL(t *testing.T) {
 
 	err := runAgentGet(cmd, []string{"agent-123"})
 
-	w.Close()
+	_ = w.Close()
 	os.Stdout = old
 	out, _ := io.ReadAll(r)
 
@@ -1250,7 +1251,7 @@ func TestAgentCreateSendsThinkingLevel(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
 			t.Errorf("decode request body: %v", err)
 		}
-		json.NewEncoder(w).Encode(map[string]any{"id": "agent-123", "name": "TestAgent", "thinking_level": "high"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "agent-123", "name": "TestAgent", "thinking_level": "high"})
 	}))
 	defer srv.Close()
 
@@ -1281,7 +1282,7 @@ func TestAgentCreateOmitsThinkingLevelWhenUnset(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
 			t.Errorf("decode request body: %v", err)
 		}
-		json.NewEncoder(w).Encode(map[string]any{"id": "agent-123", "name": "TestAgent"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"id": "agent-123", "name": "TestAgent"})
 	}))
 	defer srv.Close()
 
@@ -1320,7 +1321,7 @@ func TestAgentUpdateSendsThinkingLevel(t *testing.T) {
 				if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
 					t.Errorf("decode request body: %v", err)
 				}
-				json.NewEncoder(w).Encode(map[string]any{"id": "agent-123", "name": "TestAgent", "thinking_level": tc.value})
+				_ = json.NewEncoder(w).Encode(map[string]any{"id": "agent-123", "name": "TestAgent", "thinking_level": tc.value})
 			}))
 			defer srv.Close()
 
@@ -1368,7 +1369,7 @@ func TestAgentCreateAndUpdateExposeThinkingLevelFlag(t *testing.T) {
 func TestAgentCreateThinkingLevelServerRejectionSurfaces(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
-		io.WriteString(w, `{"error":"thinking_level \"max\" is not a recognised value for runtime \"gemini\""}`)
+		_, _ = io.WriteString(w, `{"error":"thinking_level \"max\" is not a recognised value for runtime \"gemini\""}`)
 	}))
 	defer srv.Close()
 

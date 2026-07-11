@@ -80,9 +80,9 @@ func newSelfMentionFixture(t *testing.T) selfMentionFixture {
 			t.Fatalf("create issue %q: %v", title, err)
 		}
 		t.Cleanup(func() {
-			testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, id)
-			testPool.Exec(context.Background(), `DELETE FROM comment WHERE issue_id = $1`, id)
-			testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, id)
+			mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, id)
+			mustExec(t, context.Background(), `DELETE FROM comment WHERE issue_id = $1`, id)
+			mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, id)
 		})
 		return id
 	}

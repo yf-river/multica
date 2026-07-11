@@ -177,10 +177,10 @@ func allocateCollisionFreeSkillDir(skillsParent, baseSlug string) (slug, dir str
 	const maxAttempts = 64
 	for i := 0; i < maxAttempts; i++ {
 		var candidate string
-		switch {
-		case i == 0:
+		switch i {
+		case 0:
 			candidate = baseSlug
-		case i == 1:
+		case 1:
 			candidate = baseSlug + "-multica"
 		default:
 			candidate = fmt.Sprintf("%s-multica-%d", baseSlug, i)

@@ -219,7 +219,11 @@ func DaemonAuth(queries *db.Queries, patCache *auth.PATCache, daemonCache *auth.
 
 				// Cache miss = first request in this TTL window. Refresh
 				// last_used_at; subsequent hits skip the write entirely.
-				go queries.UpdatePersonalAccessTokenLastUsed(context.Background(), pat.ID)
+				go func() {
+					if err := queries.UpdatePersonalAccessTokenLastUsed(context.Background(), pat.ID); err != nil {
+						slog.Warn("update daemon PAT last-used timestamp failed", "error", err)
+					}
+				}()
 
 				ctx := context.WithValue(r.Context(), ctxKeyDaemonAuthPath, DaemonAuthPathPAT)
 				next.ServeHTTP(w, r.WithContext(ctx))

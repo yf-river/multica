@@ -142,7 +142,7 @@ func insertHandlerTestSkill(t *testing.T, namePrefix, content string) string {
 		t.Fatalf("insert skill: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM skill WHERE id = $1`, id)
+		mustExec(t, context.Background(), `DELETE FROM skill WHERE id = $1`, id)
 	})
 	return id
 }

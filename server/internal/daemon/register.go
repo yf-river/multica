@@ -711,7 +711,7 @@ func profileSetSignature(profiles []RuntimeProfile) string {
 	// Field separator chosen to never appear in a UUID, slug, or arg.
 	const sep = "\x1f"
 	for _, p := range sorted {
-		fmt.Fprintf(h, "%s%s%t%s%s%s%s%s%s%s",
+		_, _ = fmt.Fprintf(h, "%s%s%t%s%s%s%s%s%s%s",
 			p.ID, sep,
 			p.Enabled, sep,
 			p.ProtocolFamily, sep,
@@ -719,10 +719,10 @@ func profileSetSignature(profiles []RuntimeProfile) string {
 			p.Visibility, sep,
 		)
 		for _, a := range p.FixedArgs {
-			fmt.Fprintf(h, "%s%s", a, sep)
+			_, _ = fmt.Fprintf(h, "%s%s", a, sep)
 		}
 		// Record list end so [a,b] and [ab] hash differently.
-		h.Write([]byte("\x1e"))
+		_, _ = h.Write([]byte("\x1e"))
 	}
 	return strconv.FormatUint(h.Sum64(), 16)
 }

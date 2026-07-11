@@ -41,9 +41,9 @@ func createCommentTriggerPreviewIssue(t *testing.T, title string, assigneeType, 
 	}
 
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
-		testPool.Exec(context.Background(), `DELETE FROM comment WHERE issue_id = $1`, issueID)
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM comment WHERE issue_id = $1`, issueID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
 	})
 
 	return issueID
@@ -136,7 +136,7 @@ func createCommentTriggerPreviewSquad(t *testing.T, name, leaderID string) strin
 		t.Fatalf("create squad: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
 	})
 	return squadID
 }
@@ -504,7 +504,7 @@ func TestPreviewCommentTriggers_AssignedSquadLeaderAndSuppress(t *testing.T) {
 		t.Fatalf("create squad: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
 	})
 
 	issueID := createCommentTriggerPreviewIssue(t, "comment trigger squad assignee", "squad", squadID)
@@ -546,7 +546,7 @@ func TestPreviewCommentTriggers_MentionedSquadLeaderAndSuppress(t *testing.T) {
 		t.Fatalf("create squad: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
 	})
 
 	issueID := createCommentTriggerPreviewIssue(t, "comment trigger mentioned squad", "", "")

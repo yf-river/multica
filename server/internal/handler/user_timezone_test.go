@@ -21,7 +21,7 @@ func newTimezoneTestUser(t *testing.T, account string) string {
 		t.Fatalf("insert test user: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM "user" WHERE id = $1`, userID)
+		mustExec(t, ctx, `DELETE FROM "user" WHERE id = $1`, userID)
 	})
 	return userID
 }

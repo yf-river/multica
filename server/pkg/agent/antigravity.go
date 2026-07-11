@@ -106,7 +106,7 @@ func (b *antigravityBackend) Execute(ctx context.Context, prompt string, opts Ex
 		defer cancel()
 		defer close(msgCh)
 		defer close(resCh)
-		defer os.Remove(logPath)
+		defer func() { _ = os.Remove(logPath) }()
 
 		startTime := time.Now()
 		var output strings.Builder

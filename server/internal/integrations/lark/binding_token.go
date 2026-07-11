@@ -150,7 +150,7 @@ func (s *BindingTokenService) RedeemAndBind(ctx context.Context, raw string, mul
 	if err != nil {
 		return RedeemedBindingToken{}, fmt.Errorf("begin tx: %w", err)
 	}
-	defer tx.Rollback(ctx)
+	defer func() { _ = tx.Rollback(ctx) }()
 	qtx := s.queries.WithTx(tx)
 
 	row, err := qtx.ConsumeLarkBindingToken(ctx, hashToken(raw))

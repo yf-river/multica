@@ -52,12 +52,12 @@ func createTestUser(t *testing.T, account string) string {
 
 func cleanupTestIssue(t *testing.T, issueID string) {
 	t.Helper()
-	testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+	mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
 }
 
 func cleanupTestUser(t *testing.T, account string) {
 	t.Helper()
-	testPool.Exec(context.Background(), `DELETE FROM "user" WHERE account = $1`, account)
+	mustExec(t, context.Background(), `DELETE FROM "user" WHERE account = $1`, account)
 }
 
 func isSubscribed(t *testing.T, queries *db.Queries, issueID, userType, userID string) bool {

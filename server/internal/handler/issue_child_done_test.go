@@ -53,8 +53,8 @@ func newChildDoneFixture(t *testing.T, parentStatus string) childDoneFixture {
 	t.Cleanup(func() {
 		ctx := context.Background()
 		// Cascades through comment.
-		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, child.ID)
-		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, parent.ID)
+		mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, child.ID)
+		mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, parent.ID)
 	})
 
 	return childDoneFixture{parent: parent, child: child}
@@ -109,7 +109,7 @@ func TestAgentCannotMarkGongfengIssueDoneWithoutLinkedMR(t *testing.T) {
 		t.Fatalf("decode project: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM project WHERE id = $1`, project.ID)
+		mustExec(t, context.Background(), `DELETE FROM project WHERE id = $1`, project.ID)
 	})
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO project_resource (project_id, workspace_id, resource_type, resource_ref, label, created_by)
@@ -133,7 +133,7 @@ func TestAgentCannotMarkGongfengIssueDoneWithoutLinkedMR(t *testing.T) {
 		t.Fatalf("decode issue: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issue.ID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issue.ID)
 	})
 
 	agentID := createHandlerTestAgent(t, "Agent Done MR Gate "+randomID()[:8], nil)
@@ -370,7 +370,7 @@ func TestChildDoneWaitsForAllSiblingChildren(t *testing.T) {
 		t.Fatalf("decode sibling: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, sibling.ID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, sibling.ID)
 	})
 
 	updateChildStatus(t, fx.child.ID, "done")
@@ -436,9 +436,11 @@ func TestChildDoneSkippedWhenNoParent(t *testing.T) {
 		t.Fatalf("create orphan: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	var orphan IssueResponse
-	json.NewDecoder(w.Body).Decode(&orphan)
+	if err := json.NewDecoder(w.Body).Decode(&orphan); err != nil {
+		t.Fatalf("decode orphan response: %v", err)
+	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, orphan.ID)
+		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, orphan.ID)
 	})
 
 	// Sanity baseline — there should be zero system comments anywhere in
@@ -521,7 +523,7 @@ func TestChildDoneMentionsParentAssignee_Agent(t *testing.T) {
 	}
 	setIssueAssigneeDirect(t, fx.parent.ID, "agent", agentID)
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(),
+		mustExec(t, context.Background(),
 			`DELETE FROM agent_task_queue WHERE issue_id = $1`, fx.parent.ID)
 	})
 
@@ -559,7 +561,7 @@ func TestChildDoneSkippedWhenParentMember(t *testing.T) {
 	}
 	setIssueAssigneeDirect(t, fx.parent.ID, "member", userID)
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(),
+		mustExec(t, context.Background(),
 			`DELETE FROM inbox_item WHERE issue_id = $1`, fx.parent.ID)
 	})
 
@@ -583,7 +585,7 @@ func TestChildDoneMentionsParentAssignee_Squad(t *testing.T) {
 
 	setIssueAssigneeDirect(t, fx.parent.ID, "squad", sq.SquadID)
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(),
+		mustExec(t, context.Background(),
 			`DELETE FROM agent_task_queue WHERE issue_id = $1`, fx.parent.ID)
 	})
 
@@ -611,7 +613,7 @@ func TestChildDoneTriggersParentSquadWhenSameSquadOwnsChild(t *testing.T) {
 	setIssueAssigneeDirect(t, fx.parent.ID, "squad", sq.SquadID)
 	setIssueAssigneeDirect(t, fx.child.ID, "squad", sq.SquadID)
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(),
+		mustExec(t, context.Background(),
 			`DELETE FROM agent_task_queue WHERE issue_id IN ($1, $2)`,
 			fx.parent.ID, fx.child.ID)
 	})
@@ -640,12 +642,12 @@ func TestCrossProjectChildrenWakeUserCenterParentSquad(t *testing.T) {
 	defer func() {
 		for _, issueID := range []string{gatewayChildID, configChildID, parentID} {
 			if issueID != "" {
-				testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID)
+				mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, issueID)
 			}
 		}
 		for _, projectID := range []string{configProjectID, gatewayProjectID, usercenterProjectID} {
 			if projectID != "" {
-				testPool.Exec(ctx, `DELETE FROM project WHERE id = $1`, projectID)
+				mustExec(t, ctx, `DELETE FROM project WHERE id = $1`, projectID)
 			}
 		}
 	}()
@@ -783,7 +785,7 @@ func TestChildDoneTriggersParentAgentWhenSameAgentOwnsChild(t *testing.T) {
 	setIssueAssigneeDirect(t, fx.parent.ID, "agent", agentID)
 	setIssueAssigneeDirect(t, fx.child.ID, "agent", agentID)
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(),
+		mustExec(t, context.Background(),
 			`DELETE FROM agent_task_queue WHERE issue_id IN ($1, $2)`,
 			fx.parent.ID, fx.child.ID)
 	})
@@ -815,7 +817,7 @@ func TestChildDoneTriggersParentAgentWhenChildSquadSharesLeader(t *testing.T) {
 	setIssueAssigneeDirect(t, fx.parent.ID, "agent", sq.LeaderID)
 	setIssueAssigneeDirect(t, fx.child.ID, "squad", sq.SquadID)
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(),
+		mustExec(t, context.Background(),
 			`DELETE FROM agent_task_queue WHERE issue_id IN ($1, $2)`,
 			fx.parent.ID, fx.child.ID)
 	})
@@ -853,13 +855,13 @@ func TestChildDoneSelfTriggerGuard_SquadParentDifferentSquadSameLeader(t *testin
 		t.Fatalf("create second squad: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, childSquadID)
+		mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, childSquadID)
 	})
 
 	setIssueAssigneeDirect(t, fx.parent.ID, "squad", parentSquad.SquadID)
 	setIssueAssigneeDirect(t, fx.child.ID, "squad", childSquadID)
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(),
+		mustExec(t, context.Background(),
 			`DELETE FROM agent_task_queue WHERE issue_id IN ($1, $2)`,
 			fx.parent.ID, fx.child.ID)
 	})

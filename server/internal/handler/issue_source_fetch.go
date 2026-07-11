@@ -83,11 +83,6 @@ func (h *Handler) RecordIssueSourceFetch(w http.ResponseWriter, r *http.Request)
 			newKeyCount++
 		}
 	}
-	if normalized.Status == "fetched" {
-		if _, present := existing["source_fetch_error"]; present {
-			// Deleting an existing stale error does not add a key.
-		}
-	}
 	if len(existing)+newKeyCount > maxIssueMetadataKeys {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("metadata cannot exceed %d keys", maxIssueMetadataKeys))
 		return
@@ -98,10 +93,10 @@ func (h *Handler) RecordIssueSourceFetch(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "failed to begin source fetch transaction")
 		return
 	}
-	defer tx.Rollback(r.Context())
+	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 
-	var updated db.Issue = issue
+	updated := issue
 	for key, value := range metadataUpdates {
 		buf, err := json.Marshal(value)
 		if err != nil {
@@ -124,12 +119,16 @@ func (h *Handler) RecordIssueSourceFetch(w http.ResponseWriter, r *http.Request)
 			ID:          issue.ID,
 			WorkspaceID: issue.WorkspaceID,
 			Key:         "source_fetch_error",
-		}); err == nil {
-			latest, _ := qtx.GetIssue(r.Context(), issue.ID)
-			if latest.ID.Valid {
-				updated = latest
-			}
+		}); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to clear source fetch error")
+			return
 		}
+		latest, err := qtx.GetIssue(r.Context(), issue.ID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to reload source fetch metadata")
+			return
+		}
+		updated = latest
 	}
 
 	traceResponse := map[string]any(nil)
@@ -432,7 +431,7 @@ func fetchTAPDSourceDocument(ctx context.Context, token, workspaceID, resourceTy
 	if err != nil {
 		return tapdSourceDocument{}, fmt.Errorf("TAPD auto_fetch request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		switch resp.StatusCode {

@@ -228,7 +228,8 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 						// Lift git-backed project resources into the daemon's repo list
 						// so `multica repo checkout` and the meta-skill render
 						// them as the issue's repos.
-						if row.ResourceType == "github_repo" {
+						switch row.ResourceType {
+						case "github_repo":
 							var payload struct {
 								URL               string `json:"url"`
 								DefaultBranchHint string `json:"default_branch_hint"`
@@ -239,7 +240,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 									projectRepoRef = strings.TrimSpace(payload.DefaultBranchHint)
 								}
 							}
-						} else if row.ResourceType == "gongfeng_repo" {
+						case "gongfeng_repo":
 							var payload struct {
 								URL         string `json:"url"`
 								ProjectPath string `json:"project_path"`
@@ -559,14 +560,15 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 								ResourceRef:  ref,
 								Label:        label,
 							})
-							if row.ResourceType == "github_repo" {
+							switch row.ResourceType {
+							case "github_repo":
 								var payload struct {
 									URL string `json:"url"`
 								}
 								if json.Unmarshal(row.ResourceRef, &payload) == nil && payload.URL != "" {
 									projectRepos = append(projectRepos, RepoData{URL: payload.URL})
 								}
-							} else if row.ResourceType == "gongfeng_repo" {
+							case "gongfeng_repo":
 								var payload struct {
 									URL         string `json:"url"`
 									ProjectPath string `json:"project_path"`

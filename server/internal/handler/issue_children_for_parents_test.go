@@ -55,7 +55,7 @@ func newChildrenBatchFixture(t *testing.T) childrenBatchFixture {
 	t.Cleanup(func() {
 		ctx := context.Background()
 		for _, id := range []string{a1.ID, a2.ID, b1.ID, parentA.ID, parentB.ID} {
-			testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, id)
+			mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, id)
 		}
 	})
 
@@ -182,9 +182,9 @@ func TestListChildrenByParents_IgnoresForeignWorkspaceParents(t *testing.T) {
 		t.Fatalf("setup: create foreign workspace: %v", err)
 	}
 	t.Cleanup(func() {
-		testPool.Exec(context.Background(),
+		mustExec(t, context.Background(),
 			`DELETE FROM issue WHERE workspace_id = $1`, foreignWorkspaceID)
-		testPool.Exec(context.Background(),
+		mustExec(t, context.Background(),
 			`DELETE FROM workspace WHERE id = $1`, foreignWorkspaceID)
 	})
 

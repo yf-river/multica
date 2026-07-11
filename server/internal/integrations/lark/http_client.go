@@ -894,7 +894,7 @@ func (c *httpAPIClient) doJSON(ctx context.Context, baseURL, method, path, token
 	if err != nil {
 		return fmt.Errorf("http do: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	rawBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("read body: %w", err)

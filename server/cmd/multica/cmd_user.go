@@ -82,8 +82,7 @@ func runUserProfileGet(cmd *cobra.Command, _ []string) error {
 		return cli.PrintJSON(os.Stdout, me)
 	}
 
-	printUserProfileTable(os.Stdout, me)
-	return nil
+	return printUserProfileTable(os.Stdout, me)
 }
 
 func runUserProfileUpdate(cmd *cobra.Command, _ []string) error {
@@ -128,20 +127,19 @@ func runUserProfileUpdate(cmd *cobra.Command, _ []string) error {
 		return cli.PrintJSON(os.Stdout, me)
 	}
 
-	printUserProfileTable(os.Stdout, me)
-	return nil
+	return printUserProfileTable(os.Stdout, me)
 }
 
-func printUserProfileTable(out *os.File, me map[string]any) {
+func printUserProfileTable(out *os.File, me map[string]any) error {
 	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
-	defer w.Flush()
 
-	fmt.Fprintf(w, "ID\t%s\n", strVal(me, "id"))
-	fmt.Fprintf(w, "NAME\t%s\n", strVal(me, "name"))
-	fmt.Fprintf(w, "ACCOUNT\t%s\n", strVal(me, "account"))
+	_, _ = fmt.Fprintf(w, "ID\t%s\n", strVal(me, "id"))
+	_, _ = fmt.Fprintf(w, "NAME\t%s\n", strVal(me, "name"))
+	_, _ = fmt.Fprintf(w, "ACCOUNT\t%s\n", strVal(me, "account"))
 	desc := strVal(me, "profile_description")
 	if desc == "" {
 		desc = "(not set)"
 	}
-	fmt.Fprintf(w, "PROFILE DESCRIPTION\t%s\n", desc)
+	_, _ = fmt.Fprintf(w, "PROFILE DESCRIPTION\t%s\n", desc)
+	return w.Flush()
 }

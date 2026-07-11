@@ -186,7 +186,9 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		defer close(msgCh)
 		defer close(resCh)
 		defer func() {
-			stdin.Close()
+			if err := stdin.Close(); err != nil {
+				b.cfg.Logger.Debug("hermes stdin close failed", "error", err)
+			}
 			_ = cmd.Wait()
 		}()
 
@@ -404,4 +406,3 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 }
 
 // ── hermesClient: ACP JSON-RPC 2.0 transport ──
-

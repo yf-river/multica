@@ -9,7 +9,6 @@ import (
 	"net/url"
 	"path/filepath"
 	"strings"
-
 )
 
 func validImportOnConflict(strategy string) bool {
@@ -192,11 +191,11 @@ func fetchGitHubDefaultBranch(httpClient *http.Client, owner, repo string) strin
 	resp, err := doGitHubAPIGet(httpClient, apiURL)
 	if err != nil || resp.StatusCode != http.StatusOK {
 		if resp != nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 		}
 		return "main"
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var info githubRepoInfo
 	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil || info.DefaultBranch == "" {
@@ -235,12 +234,12 @@ func detectImportSource(raw string) (importSource, string, error) {
 	}
 
 	host := strings.ToLower(parsed.Hostname())
-	switch {
-	case host == "skills.sh" || host == "www.skills.sh":
+	switch host {
+	case "skills.sh", "www.skills.sh":
 		return sourceSkillsSh, normalized, nil
-	case host == "clawhub.ai" || host == "www.clawhub.ai":
+	case "clawhub.ai", "www.clawhub.ai":
 		return sourceClawHub, normalized, nil
-	case host == "github.com" || host == "www.github.com":
+	case "github.com", "www.github.com":
 		return sourceGitHub, normalized, nil
 	default:
 		// If no host (bare slug), default to clawhub

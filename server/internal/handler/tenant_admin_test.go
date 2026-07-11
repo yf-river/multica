@@ -156,7 +156,9 @@ func TestGetTenantInitialAdminStatus(t *testing.T) {
 
 			if tt.wantError != "" {
 				var body map[string]string
-				json.NewDecoder(rec.Body).Decode(&body)
+				if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+					t.Fatalf("decode error response: %v", err)
+				}
 				if body["error"] != tt.wantError {
 					t.Errorf("error = %q; want %q", body["error"], tt.wantError)
 				}
@@ -165,7 +167,9 @@ func TestGetTenantInitialAdminStatus(t *testing.T) {
 
 			if tt.wantExists != nil {
 				var resp GetTenantInitialAdminStatusResponse
-				json.NewDecoder(rec.Body).Decode(&resp)
+				if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+					t.Fatalf("decode tenant response: %v", err)
+				}
 				if resp.Exists != *tt.wantExists {
 					t.Errorf("exists = %v; want %v", resp.Exists, *tt.wantExists)
 				}
