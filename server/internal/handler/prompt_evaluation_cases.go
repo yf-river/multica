@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -20,6 +21,38 @@ import (
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
+
+type promptEvaluationDimensionFilters struct {
+	assetID  pgtype.UUID
+	promptID pgtype.UUID
+	status   pgtype.Text
+}
+
+func parsePromptEvaluationDimensionFilters(w http.ResponseWriter, values url.Values) (promptEvaluationDimensionFilters, bool) {
+	var filters promptEvaluationDimensionFilters
+	if value := values.Get("asset_id"); value != "" {
+		parsed, ok := parseUUIDOrBadRequest(w, value, "asset_id")
+		if !ok {
+			return filters, false
+		}
+		filters.assetID = parsed
+	}
+	if value := values.Get("prompt_id"); value != "" {
+		parsed, ok := parseUUIDOrBadRequest(w, value, "prompt_id")
+		if !ok {
+			return filters, false
+		}
+		filters.promptID = parsed
+	}
+	if value := values.Get("status"); value != "" {
+		if !validPromptEvaluationDimensionScoreStatus(value) {
+			writeError(w, http.StatusBadRequest, "status must be 待执行, 已评分 or 无用例")
+			return filters, false
+		}
+		filters.status = pgtype.Text{String: value, Valid: true}
+	}
+	return filters, true
+}
 
 func (h *Handler) ListPromptEvaluationCases(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
@@ -771,36 +804,16 @@ func (h *Handler) ListPromptEvaluationDimensionScores(w http.ResponseWriter, r *
 		}
 		runID = parsed
 	}
-	var assetID pgtype.UUID
-	if value := r.URL.Query().Get("asset_id"); value != "" {
-		parsed, ok := parseUUIDOrBadRequest(w, value, "asset_id")
-		if !ok {
-			return
-		}
-		assetID = parsed
-	}
-	var promptID pgtype.UUID
-	if value := r.URL.Query().Get("prompt_id"); value != "" {
-		parsed, ok := parseUUIDOrBadRequest(w, value, "prompt_id")
-		if !ok {
-			return
-		}
-		promptID = parsed
-	}
-	var status pgtype.Text
-	if value := r.URL.Query().Get("status"); value != "" {
-		if !validPromptEvaluationDimensionScoreStatus(value) {
-			writeError(w, http.StatusBadRequest, "status must be 待执行, 已评分 or 无用例")
-			return
-		}
-		status = pgtype.Text{String: value, Valid: true}
+	filters, ok := parsePromptEvaluationDimensionFilters(w, r.URL.Query())
+	if !ok {
+		return
 	}
 	items, err := h.Queries.ListPromptEvaluationDimensionScores(r.Context(), db.ListPromptEvaluationDimensionScoresParams{
 		WorkspaceID: workspaceUUID,
 		RunID:       runID,
-		AssetID:     assetID,
-		PromptID:    promptID,
-		Status:      status,
+		AssetID:     filters.assetID,
+		PromptID:    filters.promptID,
+		Status:      filters.status,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list prompt evaluation dimension scores")
@@ -819,35 +832,15 @@ func (h *Handler) ListPromptEvaluationDimensionScoreSummaries(w http.ResponseWri
 	if !ok {
 		return
 	}
-	var assetID pgtype.UUID
-	if value := r.URL.Query().Get("asset_id"); value != "" {
-		parsed, ok := parseUUIDOrBadRequest(w, value, "asset_id")
-		if !ok {
-			return
-		}
-		assetID = parsed
-	}
-	var promptID pgtype.UUID
-	if value := r.URL.Query().Get("prompt_id"); value != "" {
-		parsed, ok := parseUUIDOrBadRequest(w, value, "prompt_id")
-		if !ok {
-			return
-		}
-		promptID = parsed
-	}
-	var status pgtype.Text
-	if value := r.URL.Query().Get("status"); value != "" {
-		if !validPromptEvaluationDimensionScoreStatus(value) {
-			writeError(w, http.StatusBadRequest, "status must be 待执行, 已评分 or 无用例")
-			return
-		}
-		status = pgtype.Text{String: value, Valid: true}
+	filters, ok := parsePromptEvaluationDimensionFilters(w, r.URL.Query())
+	if !ok {
+		return
 	}
 	items, err := h.Queries.ListPromptEvaluationDimensionScoreSummaries(r.Context(), db.ListPromptEvaluationDimensionScoreSummariesParams{
 		WorkspaceID: workspaceUUID,
-		AssetID:     assetID,
-		PromptID:    promptID,
-		Status:      status,
+		AssetID:     filters.assetID,
+		PromptID:    filters.promptID,
+		Status:      filters.status,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list prompt evaluation dimension score summaries")
@@ -866,29 +859,9 @@ func (h *Handler) ListPromptEvaluationDimensionScoreTrends(w http.ResponseWriter
 	if !ok {
 		return
 	}
-	var assetID pgtype.UUID
-	if value := r.URL.Query().Get("asset_id"); value != "" {
-		parsed, ok := parseUUIDOrBadRequest(w, value, "asset_id")
-		if !ok {
-			return
-		}
-		assetID = parsed
-	}
-	var promptID pgtype.UUID
-	if value := r.URL.Query().Get("prompt_id"); value != "" {
-		parsed, ok := parseUUIDOrBadRequest(w, value, "prompt_id")
-		if !ok {
-			return
-		}
-		promptID = parsed
-	}
-	var status pgtype.Text
-	if value := r.URL.Query().Get("status"); value != "" {
-		if !validPromptEvaluationDimensionScoreStatus(value) {
-			writeError(w, http.StatusBadRequest, "status must be 待执行, 已评分 or 无用例")
-			return
-		}
-		status = pgtype.Text{String: value, Valid: true}
+	filters, ok := parsePromptEvaluationDimensionFilters(w, r.URL.Query())
+	if !ok {
+		return
 	}
 	var since pgtype.Timestamptz
 	if value := r.URL.Query().Get("since"); value != "" {
@@ -901,9 +874,9 @@ func (h *Handler) ListPromptEvaluationDimensionScoreTrends(w http.ResponseWriter
 	}
 	items, err := h.Queries.ListPromptEvaluationDimensionScoreTrends(r.Context(), db.ListPromptEvaluationDimensionScoreTrendsParams{
 		WorkspaceID: workspaceUUID,
-		AssetID:     assetID,
-		PromptID:    promptID,
-		Status:      status,
+		AssetID:     filters.assetID,
+		PromptID:    filters.promptID,
+		Status:      filters.status,
 		Since:       since,
 	})
 	if err != nil {
