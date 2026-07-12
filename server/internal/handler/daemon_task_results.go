@@ -551,7 +551,11 @@ func (h *Handler) GetActiveTaskForIssue(w http.ResponseWriter, r *http.Request) 
 
 	tasks, err := h.Queries.ListActiveTasksByIssue(r.Context(), issue.ID)
 	if err != nil {
-		tasks = nil
+		if writeClientClosedIfCanceled(w, err) {
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to list active tasks")
+		return
 	}
 
 	workspaceID := uuidToString(issue.WorkspaceID)
