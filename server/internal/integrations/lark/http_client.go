@@ -226,6 +226,52 @@ func (c *httpAPIClient) invalidateToken(appID string) {
 	c.mu.Unlock()
 }
 
+type sendMessageResponse struct {
+	Code int    `json:"code"`
+	Msg  string `json:"msg"`
+	Data struct {
+		MessageID string `json:"message_id"`
+	} `json:"data"`
+}
+
+func (c *httpAPIClient) sendMessage(
+	ctx context.Context,
+	installation InstallationCredentials,
+	chatID ChatID,
+	messageType string,
+	content string,
+	operation string,
+) (string, error) {
+	token, err := c.tenantAccessToken(ctx, installation)
+	if err != nil {
+		return "", err
+	}
+	body := map[string]string{
+		"receive_id": string(chatID),
+		"msg_type":   messageType,
+		"content":    content,
+	}
+	var response sendMessageResponse
+	if err := c.doJSON(
+		ctx,
+		c.resolveBaseURL(installation),
+		http.MethodPost,
+		"/open-apis/im/v1/messages?receive_id_type=chat_id",
+		token,
+		body,
+		&response,
+	); err != nil {
+		return "", fmt.Errorf("lark http client: %s: %w", operation, err)
+	}
+	if response.Code != 0 || response.Data.MessageID == "" {
+		if isTokenError(response.Code) {
+			c.invalidateToken(installation.AppID)
+		}
+		return "", fmt.Errorf("lark http client: %s: code=%d msg=%q", operation, response.Code, response.Msg)
+	}
+	return response.Data.MessageID, nil
+}
+
 // SendInteractiveCard posts a fresh interactive card into a chat and
 // returns Lark's message_id so the Patcher can target subsequent
 // patches at the same card.
@@ -236,35 +282,7 @@ func (c *httpAPIClient) SendInteractiveCard(ctx context.Context, p SendCardParam
 	if p.CardJSON == "" {
 		return "", errors.New("lark http client: missing card json")
 	}
-	token, err := c.tenantAccessToken(ctx, p.InstallationID)
-	if err != nil {
-		return "", err
-	}
-	q := url.Values{}
-	q.Set("receive_id_type", "chat_id")
-	body := map[string]string{
-		"receive_id": string(p.ChatID),
-		"msg_type":   "interactive",
-		"content":    p.CardJSON,
-	}
-	var resp struct {
-		Code int    `json:"code"`
-		Msg  string `json:"msg"`
-		Data struct {
-			MessageID string `json:"message_id"`
-		} `json:"data"`
-	}
-	path := "/open-apis/im/v1/messages?" + q.Encode()
-	if err := c.doJSON(ctx, c.resolveBaseURL(p.InstallationID), http.MethodPost, path, token, body, &resp); err != nil {
-		return "", fmt.Errorf("lark http client: send interactive card: %w", err)
-	}
-	if resp.Code != 0 || resp.Data.MessageID == "" {
-		if isTokenError(resp.Code) {
-			c.invalidateToken(p.InstallationID.AppID)
-		}
-		return "", fmt.Errorf("lark http client: send interactive card: code=%d msg=%q", resp.Code, resp.Msg)
-	}
-	return resp.Data.MessageID, nil
+	return c.sendMessage(ctx, p.InstallationID, p.ChatID, "interactive", p.CardJSON, "send interactive card")
 }
 
 // SendTextMessage posts a plain text IM message into a Lark chat.
@@ -280,10 +298,6 @@ func (c *httpAPIClient) SendTextMessage(ctx context.Context, p SendTextParams) (
 	if p.Text == "" {
 		return "", errors.New("lark http client: missing text")
 	}
-	token, err := c.tenantAccessToken(ctx, p.InstallationID)
-	if err != nil {
-		return "", err
-	}
 	// Lark's `text` msg_type expects content = JSON-encoded {"text": "..."}.
 	// json.Marshal handles the escape of newlines / quotes / unicode so
 	// the agent's reply round-trips intact.
@@ -291,31 +305,7 @@ func (c *httpAPIClient) SendTextMessage(ctx context.Context, p SendTextParams) (
 	if err != nil {
 		return "", fmt.Errorf("lark http client: encode text content: %w", err)
 	}
-	q := url.Values{}
-	q.Set("receive_id_type", "chat_id")
-	body := map[string]string{
-		"receive_id": string(p.ChatID),
-		"msg_type":   "text",
-		"content":    string(contentBytes),
-	}
-	var resp struct {
-		Code int    `json:"code"`
-		Msg  string `json:"msg"`
-		Data struct {
-			MessageID string `json:"message_id"`
-		} `json:"data"`
-	}
-	path := "/open-apis/im/v1/messages?" + q.Encode()
-	if err := c.doJSON(ctx, c.resolveBaseURL(p.InstallationID), http.MethodPost, path, token, body, &resp); err != nil {
-		return "", fmt.Errorf("lark http client: send text message: %w", err)
-	}
-	if resp.Code != 0 || resp.Data.MessageID == "" {
-		if isTokenError(resp.Code) {
-			c.invalidateToken(p.InstallationID.AppID)
-		}
-		return "", fmt.Errorf("lark http client: send text message: code=%d msg=%q", resp.Code, resp.Msg)
-	}
-	return resp.Data.MessageID, nil
+	return c.sendMessage(ctx, p.InstallationID, p.ChatID, "text", string(contentBytes), "send text message")
 }
 
 // SendMarkdownCard posts the agent's reply as an interactive card
@@ -340,10 +330,6 @@ func (c *httpAPIClient) SendMarkdownCard(ctx context.Context, p SendMarkdownCard
 	if p.Markdown == "" {
 		return "", errors.New("lark http client: missing markdown body")
 	}
-	token, err := c.tenantAccessToken(ctx, p.InstallationID)
-	if err != nil {
-		return "", err
-	}
 	card := map[string]any{
 		"schema": "2.0",
 		"body": map[string]any{
@@ -361,31 +347,7 @@ func (c *httpAPIClient) SendMarkdownCard(ctx context.Context, p SendMarkdownCard
 	if err != nil {
 		return "", fmt.Errorf("lark http client: encode markdown card: %w", err)
 	}
-	q := url.Values{}
-	q.Set("receive_id_type", "chat_id")
-	body := map[string]string{
-		"receive_id": string(p.ChatID),
-		"msg_type":   "interactive",
-		"content":    string(cardBytes),
-	}
-	var resp struct {
-		Code int    `json:"code"`
-		Msg  string `json:"msg"`
-		Data struct {
-			MessageID string `json:"message_id"`
-		} `json:"data"`
-	}
-	path := "/open-apis/im/v1/messages?" + q.Encode()
-	if err := c.doJSON(ctx, c.resolveBaseURL(p.InstallationID), http.MethodPost, path, token, body, &resp); err != nil {
-		return "", fmt.Errorf("lark http client: send markdown card: %w", err)
-	}
-	if resp.Code != 0 || resp.Data.MessageID == "" {
-		if isTokenError(resp.Code) {
-			c.invalidateToken(p.InstallationID.AppID)
-		}
-		return "", fmt.Errorf("lark http client: send markdown card: code=%d msg=%q", resp.Code, resp.Msg)
-	}
-	return resp.Data.MessageID, nil
+	return c.sendMessage(ctx, p.InstallationID, p.ChatID, "interactive", string(cardBytes), "send markdown card")
 }
 
 // PatchInteractiveCard updates an existing card's body. Lark's
