@@ -23,8 +23,8 @@
     "databaseTables": 84,
     "databaseFunctions": 9,
     "databaseTriggers": 4,
-    "databaseIndexes": 185,
-    "migrations": 106,
+    "databaseIndexes": 187,
+    "migrations": 108,
     "sqlcModules": 53,
     "sqlcQueries": 571,
     "goWebsocketEvents": 80,
@@ -6787,6 +6787,45 @@
           "droppedFunctions": [],
           "droppedTriggers": [],
           "droppedIndexes": []
+        },
+        {
+          "version": 54,
+          "name": "index_resource_create_request_retention",
+          "direction": "down",
+          "source": "server/migrations/054_index_resource_create_request_retention.down.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 54,
+          "name": "index_resource_create_request_retention",
+          "direction": "up",
+          "source": "server/migrations/054_index_resource_create_request_retention.up.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [
+            {
+              "name": "idx_resource_create_request_completed_at",
+              "table": "resource_create_request",
+              "unique": false,
+              "source": "server/migrations/054_index_resource_create_request_retention.up.sql#idx_resource_create_request_completed_at"
+            },
+            {
+              "name": "idx_resource_create_request_incomplete_created_at",
+              "table": "resource_create_request",
+              "unique": false,
+              "source": "server/migrations/054_index_resource_create_request_retention.up.sql#idx_resource_create_request_incomplete_created_at"
+            }
+          ],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
         }
       ],
       "tables": [
@@ -8031,6 +8070,18 @@
           "table": "public.prompt_library_version",
           "unique": false,
           "source": "server/migrations/001_current_schema.up.sql#idx_prompt_library_version_workspace_created"
+        },
+        {
+          "name": "idx_resource_create_request_completed_at",
+          "table": "resource_create_request",
+          "unique": false,
+          "source": "server/migrations/054_index_resource_create_request_retention.up.sql#idx_resource_create_request_completed_at"
+        },
+        {
+          "name": "idx_resource_create_request_incomplete_created_at",
+          "table": "resource_create_request",
+          "unique": false,
+          "source": "server/migrations/054_index_resource_create_request_retention.up.sql#idx_resource_create_request_incomplete_created_at"
         },
         {
           "name": "idx_runtime_profile_workspace",
@@ -18596,6 +18647,7 @@
           "server/internal/middleware/auth.go",
           "server/internal/middleware/owner_lookup.go",
           "server/internal/scheduler/db_ops.go",
+          "server/internal/scheduler/jobs_resource_create_retention.go",
           "server/internal/scheduler/jobs_task_usage.go",
           "server/internal/scheduler/manager.go",
           "server/internal/service/autopilot_projection.go",

@@ -5,6 +5,9 @@ flows. The generated [current system map](./current-system-map.md) inventories
 surfaces; these documents explain ownership, transaction boundaries, recovery,
 and the one supported path through those surfaces.
 
+Shared create identity, exact replay and bounded DB retention are defined once
+in [durable resource-create recovery](./resource-create-recovery.md).
+
 | Flow | Why it is maintained | Document |
 | --- | --- | --- |
 | Chat create and send | Two-step persisted intent, task enqueue, attachments and unknown outcomes | [Chat send](./chat-send-flow.md) |

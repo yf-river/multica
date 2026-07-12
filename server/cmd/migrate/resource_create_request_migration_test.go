@@ -223,3 +223,36 @@ func TestCommentCreateRequestMigrationExtendsCurrentResourceContract(t *testing.
 		t.Fatalf("comment request type rejected: %v", err)
 	}
 }
+
+func TestResourceCreateRetentionMigrationAddsPartialIndexes(t *testing.T) {
+	pool := openTestPool(t)
+	ctx := context.Background()
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `
+		DROP INDEX IF EXISTS idx_resource_create_request_completed_at;
+		DROP INDEX IF EXISTS idx_resource_create_request_incomplete_created_at;
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, readMigrationFile(t, "054_index_resource_create_request_retention.up.sql")); err != nil {
+		t.Fatal(err)
+	}
+	var indexes int
+	if err := tx.QueryRow(ctx, `
+		SELECT count(*) FROM pg_indexes
+		WHERE schemaname = current_schema()
+		  AND indexname IN (
+			'idx_resource_create_request_completed_at',
+			'idx_resource_create_request_incomplete_created_at'
+		  )
+	`).Scan(&indexes); err != nil {
+		t.Fatal(err)
+	}
+	if indexes != 2 {
+		t.Fatalf("retention indexes = %d, want 2", indexes)
+	}
+}

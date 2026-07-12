@@ -363,21 +363,29 @@ func main() {
 
 	// MUL-2957: DB-backed execution scheduler. The scheduler turns the
 	// `sys_cron_executions` table into the distributed lease + audit
-	// log for internal periodic jobs. The first job is
-	// `rollup_task_usage_hourly`; the SQL function also holds advisory lock
-	// 4246 so manual invocations cannot race the scheduler.
+	// log for internal periodic jobs. Usage rollup and durable request retention
+	// share this one scheduling boundary; the rollup SQL additionally holds
+	// advisory lock 4246 so manual invocations cannot race the scheduler.
 	//
-	// A failure to register the job is treated as fatal here only at
-	// the registration step (a duplicate name is the only realistic
-	// cause and indicates a code bug). Once running, the manager
+	// Registration failures identify the job by name and do not disable other
+	// valid jobs. Once running, the manager
 	// surfaces transient errors — DB unreachable, sys_cron_executions
 	// missing because of an unusual partial-migration state — by
 	// logging them on the tick that fails and retrying on the next
 	// cycle, so a temporary outage does not crash the server.
 	schedulerMgr := scheduler.NewManager(pool, scheduler.Options{})
-	if err := schedulerMgr.Register(scheduler.TaskUsageHourlyJob(pool)); err != nil {
-		slog.Warn("scheduler: failed to register task_usage_hourly rollup job", "error", err)
-	} else {
+	registeredJobs := 0
+	for _, job := range []scheduler.JobSpec{
+		scheduler.TaskUsageHourlyJob(pool),
+		scheduler.ResourceCreateRequestRetentionJob(pool),
+	} {
+		if err := schedulerMgr.Register(job); err != nil {
+			slog.Error("scheduler: failed to register job", "job", job.Name, "error", err)
+			continue
+		}
+		registeredJobs++
+	}
+	if registeredJobs > 0 {
 		go func() {
 			_ = schedulerMgr.Run(sweepCtx)
 		}()
