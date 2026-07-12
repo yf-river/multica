@@ -215,6 +215,22 @@ func TestIsReplyToMemberThread(t *testing.T) {
 	}
 }
 
+func TestReplyToMemberThreadPreservesParticipationLookupFailure(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	issue := db.Issue{AssigneeID: util.MustParseUUID(agentAssigneeID)}
+	parent := &db.Comment{
+		ID:         util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
+		AuthorType: "member",
+		Content:    "plain member thread",
+	}
+
+	suppressed, err := testHandler.isReplyToMemberThread(ctx, parent, "continue", issue)
+	if suppressed || err == nil {
+		t.Fatalf("isReplyToMemberThread() suppressed=%t err=%v, want false with participation lookup error", suppressed, err)
+	}
+}
+
 // -------------------------------------------------------------------
 // shouldInheritParentMentions
 // -------------------------------------------------------------------
