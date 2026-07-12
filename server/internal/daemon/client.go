@@ -579,7 +579,7 @@ func (c *Client) postJSONWithRetry(ctx context.Context, path string, reqBody any
 	}
 }
 
-func (c *Client) postJSON(ctx context.Context, path string, reqBody any, respBody any) error {
+func (c *Client) doJSON(ctx context.Context, method, path string, reqBody any, respBody any) error {
 	var body io.Reader
 	if reqBody != nil {
 		data, err := json.Marshal(reqBody)
@@ -589,11 +589,13 @@ func (c *Client) postJSON(ctx context.Context, path string, reqBody any, respBod
 		body = bytes.NewReader(data)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+path, body)
+	req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, body)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/json")
+	if method == http.MethodPost {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
@@ -607,7 +609,7 @@ func (c *Client) postJSON(ctx context.Context, path string, reqBody any, respBod
 
 	if resp.StatusCode >= 400 {
 		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return &requestError{Method: http.MethodPost, Path: path, StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(data))}
+		return &requestError{Method: method, Path: path, StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(data))}
 	}
 	if respBody == nil {
 		_, _ = io.Copy(io.Discard, resp.Body)
@@ -616,29 +618,10 @@ func (c *Client) postJSON(ctx context.Context, path string, reqBody any, respBod
 	return json.NewDecoder(resp.Body).Decode(respBody)
 }
 
+func (c *Client) postJSON(ctx context.Context, path string, reqBody any, respBody any) error {
+	return c.doJSON(ctx, http.MethodPost, path, reqBody, respBody)
+}
+
 func (c *Client) getJSON(ctx context.Context, path string, respBody any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+path, nil)
-	if err != nil {
-		return err
-	}
-	if c.token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.token)
-	}
-	c.setIdentityHeaders(req)
-
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode >= 400 {
-		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return &requestError{Method: http.MethodGet, Path: path, StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(data))}
-	}
-	if respBody == nil {
-		_, _ = io.Copy(io.Discard, resp.Body)
-		return nil
-	}
-	return json.NewDecoder(resp.Body).Decode(respBody)
+	return c.doJSON(ctx, http.MethodGet, path, nil, respBody)
 }
