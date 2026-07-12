@@ -153,8 +153,8 @@ export class WSClient {
       for (const cb of this.onReconnectCallbacks) {
         try {
           cb();
-        } catch {
-          // ignore reconnect callback errors
+        } catch (error) {
+          this.logger.error("ws: reconnect callback failed", error);
         }
       }
     }
