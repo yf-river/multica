@@ -1375,7 +1375,7 @@ CREATE TABLE public.prompt_library_version (
     change_note text DEFAULT ''::text NOT NULL,
     created_by uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT prompt_library_version_source_check CHECK ((source = ANY (ARRAY['手动创建'::text, '手动更新'::text, '优化候选发布'::text, '历史回填'::text]))),
+    CONSTRAINT prompt_library_version_source_check CHECK ((source = ANY (ARRAY['手动创建'::text, '手动更新'::text, '优化候选发布'::text]))),
     CONSTRAINT prompt_library_version_version_check CHECK ((version > 0))
 );
 

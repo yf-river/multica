@@ -48,6 +48,7 @@ import {
 import {
   EMPTY_PROMPT_LIBRARY_LIST_RESPONSE,
   PromptLibraryItemListResponseSchema,
+  PromptLibraryVersionSchema,
 } from "./schemas-prompt-library";
 import {
   EMPTY_RUNTIME_PROFILE_LIST_RESPONSE,
@@ -83,6 +84,20 @@ import {
 } from "./schemas-tasks";
 
 describe("domain response schema fallbacks", () => {
+  it("maps unknown prompt version sources to the current creation source", () => {
+    const parsed = PromptLibraryVersionSchema.parse({
+      id: "version-1",
+      prompt_id: "prompt-1",
+      workspace_id: "workspace-1",
+      version: 1,
+      name: "Current prompt",
+      content: "Current content",
+      source: "removed-source",
+      created_at: "2026-07-12T00:00:00Z",
+    });
+    expect(parsed.source).toBe("手动创建");
+  });
+
   it("keeps app configuration usable when the response is not an object", () => {
     expect(parseWithFallback(null, AppConfigSchema, EMPTY_APP_CONFIG, {
       endpoint: "GET /api/config",

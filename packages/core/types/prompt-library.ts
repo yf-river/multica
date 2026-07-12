@@ -37,7 +37,7 @@ export interface PromptLibraryVersion {
   content: string;
   variables: PromptLibraryVariable[];
   tags: string[];
-  source: "手动创建" | "手动更新" | "优化候选发布" | "历史回填";
+  source: "手动创建" | "手动更新" | "优化候选发布";
   source_candidate_id: string | null;
   change_note: string;
   created_by: string | null;
