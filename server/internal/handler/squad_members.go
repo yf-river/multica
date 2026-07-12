@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/eventoutbox"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -494,20 +495,44 @@ func (h *Handler) RecordSquadLeaderEvaluation(w http.ResponseWriter, r *http.Req
 	}
 	details, _ := json.Marshal(detailMap)
 
-	activity, err := h.Queries.CreateActivity(r.Context(), db.CreateActivityParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record evaluation")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	activity, err := qtx.CreateSquadLeaderEvaluation(r.Context(), db.CreateSquadLeaderEvaluationParams{
 		WorkspaceID: issue.WorkspaceID,
 		IssueID:     issue.ID,
-		ActorType:   pgtype.Text{String: "agent", Valid: true},
 		ActorID:     squad.LeaderID,
-		Action:      "squad_leader_evaluated",
 		Details:     details,
 	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		_ = tx.Rollback(r.Context())
+		existing, loadErr := h.Queries.GetSquadLeaderEvaluationForTask(r.Context(), db.GetSquadLeaderEvaluationForTaskParams{
+			IssueID: issue.ID,
+			AgentID: squad.LeaderID,
+			TaskID:  util.UUIDToString(taskUUID),
+		})
+		if loadErr != nil {
+			writeError(w, http.StatusInternalServerError, "failed to replay evaluation")
+			return
+		}
+		var existingDetails map[string]string
+		if json.Unmarshal(existing.Details, &existingDetails) != nil || !sameSquadLeaderEvaluation(existingDetails, detailMap) {
+			writeError(w, http.StatusConflict, "task already has a different squad leader evaluation")
+			return
+		}
+		writeJSON(w, http.StatusCreated, squadLeaderEvaluationResponse(existing))
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to record evaluation")
 		return
 	}
 
-	h.publish(protocol.EventActivityCreated, uuidToString(issue.WorkspaceID), "agent", actorID, map[string]any{
+	event := domainEvent(protocol.EventActivityCreated, uuidToString(issue.WorkspaceID), "agent", actorID, map[string]any{
 		"issue_id": uuidToString(issue.ID),
 		"entry": map[string]any{
 			"type":       "activity",
@@ -519,12 +544,39 @@ func (h *Handler) RecordSquadLeaderEvaluation(w http.ResponseWriter, r *http.Req
 			"created_at": timestampToString(activity.CreatedAt),
 		},
 	})
+	event.TaskID = util.UUIDToString(taskUUID)
+	event, err = eventoutbox.Enqueue(r.Context(), qtx, event)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record evaluation")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record evaluation")
+		return
+	}
+	h.publishEvent(event)
 
-	writeJSON(w, http.StatusCreated, map[string]string{
+	writeJSON(w, http.StatusCreated, squadLeaderEvaluationResponse(activity))
+}
+
+func sameSquadLeaderEvaluation(left, right map[string]string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for key, value := range left {
+		if right[key] != value {
+			return false
+		}
+	}
+	return true
+}
+
+func squadLeaderEvaluationResponse(activity db.ActivityLog) map[string]string {
+	return map[string]string{
 		"id":         uuidToString(activity.ID),
 		"action":     activity.Action,
 		"created_at": timestampToString(activity.CreatedAt),
-	})
+	}
 }
 
 // ── Squad Trigger Logic ─────────────────────────────────────────────────────

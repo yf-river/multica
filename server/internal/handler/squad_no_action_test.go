@@ -69,7 +69,7 @@ func recordSquadLeaderEvaluationForTask(t *testing.T, fx runningSquadLeaderTaskF
 	recordSquadLeaderEvaluationForTaskWithHeader(t, fx, outcome, fx.TaskID)
 }
 
-func recordSquadLeaderEvaluationForTaskWithHeader(t *testing.T, fx runningSquadLeaderTaskFixture, outcome, taskIDHeader string) {
+func recordSquadLeaderEvaluationForTaskWithHeader(t *testing.T, fx runningSquadLeaderTaskFixture, outcome, taskIDHeader string) map[string]string {
 	t.Helper()
 
 	w := httptest.NewRecorder()
@@ -84,6 +84,67 @@ func recordSquadLeaderEvaluationForTaskWithHeader(t *testing.T, fx runningSquadL
 	testHandler.RecordSquadLeaderEvaluation(w, r)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("RecordSquadLeaderEvaluation: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var response map[string]string
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("decode evaluation response: %v", err)
+	}
+	return response
+}
+
+func TestRecordSquadLeaderEvaluation_RetryReplaysSingleActivity(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+
+	fx := newRunningSquadLeaderTaskFixture(t)
+	first := recordSquadLeaderEvaluationForTaskWithHeader(t, fx, "no_action", fx.TaskID)
+	second := recordSquadLeaderEvaluationForTaskWithHeader(t, fx, "no_action", fx.TaskID)
+
+	if first["id"] != second["id"] {
+		t.Fatalf("retry created a different activity: first=%s second=%s", first["id"], second["id"])
+	}
+	var count int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT count(*) FROM activity_log
+		WHERE action = 'squad_leader_evaluated' AND details->>'task_id' = $1
+	`, fx.TaskID).Scan(&count); err != nil {
+		t.Fatalf("count squad leader evaluations: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("retry must preserve one evaluation activity, got %d", count)
+	}
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT count(*) FROM domain_event_outbox
+		WHERE event_type = 'activity:created' AND task_id = $1
+	`, fx.TaskID).Scan(&count); err != nil {
+		t.Fatalf("count squad leader evaluation events: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("retry must preserve one durable activity event, got %d", count)
+	}
+}
+
+func TestRecordSquadLeaderEvaluation_RejectsDifferentRetry(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+
+	fx := newRunningSquadLeaderTaskFixture(t)
+	recordSquadLeaderEvaluationForTaskWithHeader(t, fx, "no_action", fx.TaskID)
+
+	w := httptest.NewRecorder()
+	r := newRequest("POST", "/api/issues/"+fx.IssueID+"/squad-evaluated", map[string]any{
+		"outcome": "action",
+		"reason":  "changed after an ambiguous response",
+	})
+	r = withURLParam(r, "id", fx.IssueID)
+	r.Header.Set("X-Agent-ID", fx.LeaderID)
+	r.Header.Set("X-Task-ID", fx.TaskID)
+	testHandler.RecordSquadLeaderEvaluation(w, r)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("different retry: expected 409, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

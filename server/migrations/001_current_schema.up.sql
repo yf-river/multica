@@ -2116,7 +2116,7 @@ CREATE INDEX comment_issue_resolved_at_idx ON public.comment USING btree (issue_
 
 CREATE INDEX idx_activity_log_issue_keyset ON public.activity_log USING btree (issue_id, created_at DESC, id DESC);
 
-CREATE INDEX idx_activity_log_squad_no_action_task ON public.activity_log USING btree (issue_id, actor_id, ((details ->> 'task_id'::text))) WHERE ((actor_type = 'agent'::text) AND (action = 'squad_leader_evaluated'::text) AND ((details ->> 'outcome'::text) = 'no_action'::text));
+CREATE UNIQUE INDEX activity_log_squad_evaluation_task_unique ON public.activity_log USING btree (issue_id, actor_id, ((details ->> 'task_id'::text))) WHERE ((actor_type = 'agent'::text) AND (action = 'squad_leader_evaluated'::text));
 
 CREATE INDEX idx_agent_runtime_last_seen_at ON public.agent_runtime USING btree (last_seen_at);
 
