@@ -255,10 +255,9 @@ INSERT INTO lark_user_binding (
     $1, $2, $3, $4, $5
 )
 ON CONFLICT (installation_id, lark_open_id) DO UPDATE SET
-    union_id = COALESCE(EXCLUDED.union_id, lark_user_binding.union_id),
-    bound_at = now()
+    union_id = COALESCE(EXCLUDED.union_id, lark_user_binding.union_id)
 WHERE lark_user_binding.multica_user_id = EXCLUDED.multica_user_id
-RETURNING id, workspace_id, multica_user_id, installation_id, lark_open_id, union_id, bound_at
+RETURNING id, workspace_id, multica_user_id, installation_id, lark_open_id, union_id
 `
 
 type CreateLarkUserBindingParams struct {
@@ -287,9 +286,8 @@ type CreateLarkUserBindingParams struct {
 //     caller (lark.BindingTokenService.RedeemAndBind) translates
 //     that into ErrBindingAlreadyAssigned.
 //
-// The same-user case still updates metadata (union_id refresh,
-// bound_at bump) so an idempotent re-bind by the original user
-// continues to work; only a cross-user re-assignment is rejected.
+// The same-user case still refreshes union_id so an idempotent re-bind by the
+// original user continues to work; only a cross-user re-assignment is rejected.
 // True account changes must go through an explicit unbind flow, not
 // through a binding token.
 func (q *Queries) CreateLarkUserBinding(ctx context.Context, arg CreateLarkUserBindingParams) (LarkUserBinding, error) {
@@ -308,7 +306,6 @@ func (q *Queries) CreateLarkUserBinding(ctx context.Context, arg CreateLarkUserB
 		&i.InstallationID,
 		&i.LarkOpenID,
 		&i.UnionID,
-		&i.BoundAt,
 	)
 	return i, err
 }
@@ -480,7 +477,7 @@ func (q *Queries) GetLarkOutboundCardByTask(ctx context.Context, taskID pgtype.U
 }
 
 const getLarkUserBindingByOpenID = `-- name: GetLarkUserBindingByOpenID :one
-SELECT id, workspace_id, multica_user_id, installation_id, lark_open_id, union_id, bound_at FROM lark_user_binding
+SELECT id, workspace_id, multica_user_id, installation_id, lark_open_id, union_id FROM lark_user_binding
 WHERE installation_id = $1 AND lark_open_id = $2
 `
 
@@ -503,7 +500,6 @@ func (q *Queries) GetLarkUserBindingByOpenID(ctx context.Context, arg GetLarkUse
 		&i.InstallationID,
 		&i.LarkOpenID,
 		&i.UnionID,
-		&i.BoundAt,
 	)
 	return i, err
 }

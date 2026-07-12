@@ -970,8 +970,7 @@ CREATE TABLE public.lark_user_binding (
     multica_user_id uuid NOT NULL,
     installation_id uuid NOT NULL,
     lark_open_id text NOT NULL,
-    union_id text,
-    bound_at timestamp with time zone DEFAULT now() NOT NULL
+    union_id text
 );
 
 CREATE TABLE public.member (
