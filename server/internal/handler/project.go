@@ -809,23 +809,7 @@ func (h *Handler) SearchProjects(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit := 20
-	offset := 0
-	if l := r.URL.Query().Get("limit"); l != "" {
-		if v, err := strconv.Atoi(l); err == nil && v > 0 {
-			limit = v
-		}
-	}
-	if limit > 50 {
-		limit = 50
-	}
-	if o := r.URL.Query().Get("offset"); o != "" {
-		if v, err := strconv.Atoi(o); err == nil && v >= 0 {
-			offset = v
-		}
-	}
-
-	includeClosed := r.URL.Query().Get("include_closed") == "true"
+	options := parseSearchQueryOptions(r.URL.Query())
 
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
 	if !ok {
@@ -833,10 +817,10 @@ func (h *Handler) SearchProjects(w http.ResponseWriter, r *http.Request) {
 	}
 	terms := splitSearchTerms(q)
 
-	sqlQuery, args := buildProjectSearchQuery(q, terms, includeClosed)
+	sqlQuery, args := buildProjectSearchQuery(q, terms, options.includeClosed)
 	args[1] = wsUUID
-	args[len(args)-2] = limit
-	args[len(args)-1] = offset
+	args[len(args)-2] = options.limit
+	args[len(args)-1] = options.offset
 
 	rows, err := h.DB.Query(ctx, sqlQuery, args...)
 	if err != nil {
