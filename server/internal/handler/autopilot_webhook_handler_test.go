@@ -79,6 +79,148 @@ func createWebhookTriggerViaHandler(t *testing.T, autopilotID string) AutopilotT
 	return resp
 }
 
+func TestCreateAutopilotTrigger_ReplaysCommittedCreate(t *testing.T) {
+	agentID := createWebhookTestAgent(t, "WebhookCreateReplay Agent")
+	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
+	requestKey := uuid.NewString()
+	create := func() AutopilotTriggerResponse {
+		t.Helper()
+		w := httptest.NewRecorder()
+		req := newRequest("POST", "/api/autopilots/"+apID+"/triggers", map[string]any{"kind": "webhook"})
+		req = withURLParams(req, "id", apID)
+		req.Header.Set("Idempotency-Key", requestKey)
+		testHandler.CreateAutopilotTrigger(w, req)
+		if w.Code != http.StatusCreated {
+			t.Fatalf("create trigger status = %d: %s", w.Code, w.Body.String())
+		}
+		var response AutopilotTriggerResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		return response
+	}
+
+	first := create()
+	replay := create()
+	if !reflect.DeepEqual(replay, first) {
+		t.Fatalf("replayed trigger create = %#v, want exact %#v", replay, first)
+	}
+	conflict := httptest.NewRecorder()
+	conflictReq := newRequest("POST", "/api/autopilots/"+apID+"/triggers", map[string]any{
+		"kind": "schedule", "cron_expression": "0 9 * * *", "timezone": "UTC",
+	})
+	conflictReq = withURLParams(conflictReq, "id", apID)
+	conflictReq.Header.Set("Idempotency-Key", requestKey)
+	testHandler.CreateAutopilotTrigger(conflict, conflictReq)
+	if conflict.Code != http.StatusConflict {
+		t.Fatalf("changed trigger create with same key = %d %s, want 409", conflict.Code, conflict.Body.String())
+	}
+}
+
+func TestCreateAutopilotTrigger_ConcurrentReplayCreatesOnce(t *testing.T) {
+	agentID := createWebhookTestAgent(t, "WebhookCreateConcurrent Agent")
+	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
+	requestKey := uuid.NewString()
+
+	const workers = 8
+	responses := make(chan AutopilotTriggerResponse, workers)
+	statuses := make(chan int, workers)
+	var start sync.WaitGroup
+	start.Add(1)
+	var done sync.WaitGroup
+	done.Add(workers)
+	for range workers {
+		go func() {
+			defer done.Done()
+			start.Wait()
+			w := httptest.NewRecorder()
+			req := newRequest("POST", "/api/autopilots/"+apID+"/triggers", map[string]any{"kind": "webhook"})
+			req = withURLParams(req, "id", apID)
+			req.Header.Set("Idempotency-Key", requestKey)
+			testHandler.CreateAutopilotTrigger(w, req)
+			var response AutopilotTriggerResponse
+			_ = json.Unmarshal(w.Body.Bytes(), &response)
+			statuses <- w.Code
+			responses <- response
+		}()
+	}
+	start.Done()
+	done.Wait()
+	close(statuses)
+	close(responses)
+
+	for status := range statuses {
+		if status != http.StatusCreated {
+			t.Fatalf("concurrent trigger create status = %d, want 201", status)
+		}
+	}
+	var first AutopilotTriggerResponse
+	for response := range responses {
+		if first.ID == "" {
+			first = response
+		} else if !reflect.DeepEqual(response, first) {
+			t.Fatalf("concurrent trigger create responses differ: %#v and %#v", first, response)
+		}
+	}
+	var triggers, requests int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT
+			(SELECT count(*) FROM autopilot_trigger WHERE autopilot_id = $1),
+			(SELECT count(*) FROM resource_create_request WHERE resource_type = 'autopilot_trigger' AND idempotency_key = $2)
+	`, apID, requestKey).Scan(&triggers, &requests); err != nil {
+		t.Fatal(err)
+	}
+	if triggers != 1 || requests != 1 {
+		t.Fatalf("concurrent trigger create left triggers=%d requests=%d, want 1/1", triggers, requests)
+	}
+}
+
+func TestCreateAutopilotTrigger_CompletionFailureRollsBackCreate(t *testing.T) {
+	agentID := createWebhookTestAgent(t, "WebhookCreateRollback Agent")
+	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
+	requestKey := uuid.NewString()
+	suffix := uuid.NewString()
+	functionName := quoteIdentifier("fail_trigger_create_completion_" + suffix)
+	triggerName := quoteIdentifier("fail_trigger_create_completion_trigger_" + suffix)
+	if _, err := testPool.Exec(context.Background(), fmt.Sprintf(`
+		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF NEW.resource_type = 'autopilot_trigger' AND NEW.idempotency_key = %s::uuid THEN
+				RAISE EXCEPTION 'forced trigger create completion failure';
+			END IF;
+			RETURN NEW;
+		END $$;
+		CREATE TRIGGER %s BEFORE UPDATE ON resource_create_request
+		FOR EACH ROW EXECUTE FUNCTION %s();
+	`, functionName, quoteSQLLiteral(requestKey), triggerName, functionName)); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON resource_create_request`, triggerName))
+		_, _ = testPool.Exec(context.Background(), fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, functionName))
+	})
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/autopilots/"+apID+"/triggers", map[string]any{"kind": "webhook"})
+	req = withURLParams(req, "id", apID)
+	req.Header.Set("Idempotency-Key", requestKey)
+	testHandler.CreateAutopilotTrigger(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("forced trigger create completion failure = %d %s, want 500", w.Code, w.Body.String())
+	}
+	var triggers, requests int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT
+			(SELECT count(*) FROM autopilot_trigger WHERE autopilot_id = $1),
+			(SELECT count(*) FROM resource_create_request WHERE resource_type = 'autopilot_trigger' AND idempotency_key = $2)
+	`, apID, requestKey).Scan(&triggers, &requests); err != nil {
+		t.Fatal(err)
+	}
+	if triggers != 0 || requests != 0 {
+		t.Fatalf("failed trigger create left triggers=%d requests=%d, want 0/0", triggers, requests)
+	}
+}
+
 // createWebhookTriggerWithFilters builds the request body with a real JSON
 // array — the same shape the frontend sends. Earlier revisions of this
 // helper marshaled the filters separately and assigned the resulting

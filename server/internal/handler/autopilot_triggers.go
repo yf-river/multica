@@ -36,9 +36,73 @@ func (h *Handler) CreateAutopilotTrigger(w http.ResponseWriter, r *http.Request)
 	if !ok {
 		return
 	}
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return
+	}
+	actorUUID := parseUUID(userID)
+	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	requestHash, err := hashRequestFingerprint(req)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to fingerprint trigger create")
+		return
+	}
+	loadReplay := func() (AutopilotTriggerResponse, bool, error) {
+		return loadResourceCreateReplay(
+			r.Context(), h.Queries, workspaceUUID, actorUUID, resourceTypeAutopilotTrigger,
+			idempotencyKey, requestHash,
+			func(response AutopilotTriggerResponse) bool { return response.ID != "" },
+		)
+	}
+	if replay, found, replayErr := loadReplay(); replayErr != nil {
+		if errors.Is(replayErr, errResourceCreateIdempotencyConflict) {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "Idempotency-Key was already used with a different request", "code": "idempotency_conflict"})
+		} else {
+			writeError(w, http.StatusInternalServerError, "failed to replay trigger create")
+		}
+		return
+	} else if found {
+		w.Header().Set("Idempotency-Replayed", "true")
+		writeJSON(w, http.StatusCreated, replay)
+		return
+	}
+
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start trigger create transaction")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	_, err = qtx.ReserveResourceCreateRequest(r.Context(), db.ReserveResourceCreateRequestParams{
+		WorkspaceID: workspaceUUID, ActorID: actorUUID, ResourceType: resourceTypeAutopilotTrigger,
+		IdempotencyKey: idempotencyKey, RequestHash: requestHash,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		_ = tx.Rollback(r.Context())
+		replay, found, replayErr := loadReplay()
+		if replayErr != nil || !found {
+			writeError(w, http.StatusInternalServerError, "trigger create replay disappeared after conflict")
+			return
+		}
+		w.Header().Set("Idempotency-Replayed", "true")
+		writeJSON(w, http.StatusCreated, replay)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reserve trigger create request")
+		return
+	}
 	trigger, err := createPreparedAutopilotTrigger(
 		r.Context(),
-		h.Queries,
+		qtx,
 		ap.ID,
 		prepared,
 	)
@@ -48,7 +112,17 @@ func (h *Handler) CreateAutopilotTrigger(w http.ResponseWriter, r *http.Request)
 	}
 
 	resp := h.triggerToResponse(trigger)
-	userID, _ := requireUserID(w, r)
+	if err := completeResourceCreateRequest(
+		r.Context(), qtx, workspaceUUID, actorUUID, resourceTypeAutopilotTrigger,
+		idempotencyKey, requestHash, trigger.ID, resp,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to complete trigger create request")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit trigger create")
+		return
+	}
 	h.publish(protocol.EventAutopilotUpdated, workspaceID, "member", userID, map[string]any{
 		"autopilot_id": uuidToString(ap.ID),
 		"trigger":      resp,

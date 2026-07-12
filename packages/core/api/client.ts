@@ -2945,15 +2945,19 @@ export class ApiClient extends ApiTransport {
     });
   }
 
-  async createAutopilotTrigger(autopilotId: string, data: CreateAutopilotTriggerRequest): Promise<AutopilotTrigger> {
-    const raw = await this.fetch<unknown>(`/api/autopilots/${autopilotId}/triggers`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseOrThrow(raw, AutopilotTriggerSchema, EMPTY_AUTOPILOT_TRIGGER, {
-      endpoint: "POST /api/autopilots/:id/triggers",
-      mayHaveCommitted: true,
-    });
+  async createAutopilotTrigger(autopilotId: string, data: CreateAutopilotTriggerRequest, idempotencyKey = generateUUID()): Promise<AutopilotTrigger> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/autopilots/${autopilotId}/triggers`, {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow(raw, AutopilotTriggerSchema, EMPTY_AUTOPILOT_TRIGGER, {
+        endpoint: "POST /api/autopilots/:id/triggers",
+        mayHaveCommitted: true,
+      });
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async updateAutopilotTrigger(autopilotId: string, triggerId: string, data: UpdateAutopilotTriggerRequest): Promise<AutopilotTrigger> {

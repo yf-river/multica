@@ -543,7 +543,7 @@ func runAutopilotTriggerAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	var result map[string]any
-	if err := client.PostJSON(ctx, "/api/autopilots/"+autopilotRef.ID+"/triggers", body, &result); err != nil {
+	if err := client.PostJSONWithIdempotencyKey(ctx, "/api/autopilots/"+autopilotRef.ID+"/triggers", body, uuid.NewString(), &result); err != nil {
 		return fmt.Errorf("create trigger: %w", err)
 	}
 

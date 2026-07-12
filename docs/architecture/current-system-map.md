@@ -25,7 +25,7 @@ evidence reviewable by humans.
 | Database functions | 9 |
 | Database triggers | 4 |
 | Database indexes | 194 |
-| Migration files (up + down) | 138 |
+| Migration files (up + down) | 140 |
 | sqlc modules | 55 |
 | sqlc queries | 589 |
 | Go WebSocket events | 80 |
@@ -630,6 +630,8 @@ intentionally platform-specific.
 | 68 | add_skill_import_request | up | skill_import_request | 0 | 0 | 2 | `server/migrations/068_add_skill_import_request.up.sql` |
 | 69 | add_autopilot_trigger_rotation_request | down | — | 0 | 0 | 0 | `server/migrations/069_add_autopilot_trigger_rotation_request.down.sql` |
 | 69 | add_autopilot_trigger_rotation_request | up | autopilot_trigger_rotation_request | 0 | 0 | 2 | `server/migrations/069_add_autopilot_trigger_rotation_request.up.sql` |
+| 70 | add_autopilot_trigger_create_request | down | — | 0 | 0 | 0 | `server/migrations/070_add_autopilot_trigger_create_request.down.sql` |
+| 70 | add_autopilot_trigger_create_request | up | — | 0 | 0 | 0 | `server/migrations/070_add_autopilot_trigger_create_request.up.sql` |
 
 ### Current tables discovered from up migrations
 

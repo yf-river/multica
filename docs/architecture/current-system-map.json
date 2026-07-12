@@ -24,7 +24,7 @@
     "databaseFunctions": 9,
     "databaseTriggers": 4,
     "databaseIndexes": 194,
-    "migrations": 138,
+    "migrations": 140,
     "sqlcModules": 55,
     "sqlcQueries": 589,
     "goWebsocketEvents": 80,
@@ -7271,6 +7271,32 @@
               "source": "server/migrations/069_add_autopilot_trigger_rotation_request.up.sql#idx_autopilot_trigger_rotation_request_incomplete_created_at"
             }
           ],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 70,
+          "name": "add_autopilot_trigger_create_request",
+          "direction": "down",
+          "source": "server/migrations/070_add_autopilot_trigger_create_request.down.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 70,
+          "name": "add_autopilot_trigger_create_request",
+          "direction": "up",
+          "source": "server/migrations/070_add_autopilot_trigger_create_request.up.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
           "droppedFunctions": [],
           "droppedTriggers": [],
           "droppedIndexes": []
