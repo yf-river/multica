@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -105,19 +106,24 @@ func memberCanUseSquad(squad db.Squad, member db.Member) bool {
 }
 
 func (h *Handler) canUseSquad(ctx context.Context, squad db.Squad, actorType, actorID, workspaceID string) bool {
+	allowed, _ := h.squadAccess(ctx, squad, actorType, actorID, workspaceID)
+	return allowed
+}
+
+func (h *Handler) squadAccess(ctx context.Context, squad db.Squad, actorType, actorID, workspaceID string) (bool, error) {
 	if squad.Scope != scopePersonal {
-		return true
+		return true, nil
 	}
 	if actorType == "agent" {
 		if actorID == uuidToString(squad.LeaderID) {
-			return true
+			return true, nil
 		}
 		if h.DB == nil {
-			return false
+			return false, errors.New("squad access database is not configured")
 		}
 		agentID, err := util.ParseUUID(actorID)
 		if err != nil {
-			return false
+			return false, nil
 		}
 		var ok bool
 		if err := h.DB.QueryRow(ctx, `
@@ -129,18 +135,18 @@ func (h *Handler) canUseSquad(ctx context.Context, squad db.Squad, actorType, ac
 				   AND member_id = $2
 			)
 		`, squad.ID, agentID).Scan(&ok); err != nil {
-			return false
+			return false, fmt.Errorf("check squad agent membership: %w", err)
 		}
-		return ok
+		return ok, nil
 	}
 	if actorType != "member" {
-		return false
+		return false, nil
 	}
 	member, err := h.getWorkspaceMember(ctx, actorID, workspaceID)
 	if err != nil {
-		return false
+		return false, err
 	}
-	return memberCanManageSquad(squad, member)
+	return memberCanManageSquad(squad, member), nil
 }
 
 // accessibleAgentIDs returns the set of agent IDs in the workspace the actor

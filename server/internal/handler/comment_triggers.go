@@ -3,11 +3,13 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
 	"unicode"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/eventoutbox"
 	"github.com/multica-ai/multica/server/internal/events"
@@ -477,7 +479,11 @@ func (h *Handler) computeCommentAgentTriggers(ctx context.Context, issue db.Issu
 		}
 	}
 
-	if trigger, ok := h.computeAssignedSquadLeaderCommentTrigger(ctx, issue, content, actorType, actorID, opts); ok {
+	trigger, ok, err := h.computeAssignedSquadLeaderCommentTrigger(ctx, issue, content, actorType, actorID, opts)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
 		add(trigger)
 	}
 
@@ -488,45 +494,65 @@ func (h *Handler) computeCommentAgentTriggers(ctx context.Context, issue db.Issu
 	return triggers, nil
 }
 
-func (h *Handler) computeAssignedSquadLeaderCommentTrigger(ctx context.Context, issue db.Issue, content, authorType, authorID string, opts commentTriggerComputeOptions) (commentAgentTrigger, bool) {
+func (h *Handler) computeAssignedSquadLeaderCommentTrigger(ctx context.Context, issue db.Issue, content, authorType, authorID string, opts commentTriggerComputeOptions) (commentAgentTrigger, bool, error) {
 	if opts.SuppressAssignedSquadLeader {
-		return commentAgentTrigger{}, false
+		return commentAgentTrigger{}, false, nil
 	}
 	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "squad" || !issue.AssigneeID.Valid {
-		return commentAgentTrigger{}, false
+		return commentAgentTrigger{}, false, nil
 	}
 	squad, err := h.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
 		ID:          issue.AssigneeID,
 		WorkspaceID: issue.WorkspaceID,
 	})
 	if err != nil {
-		return commentAgentTrigger{}, false
+		if errors.Is(err, pgx.ErrNoRows) {
+			return commentAgentTrigger{}, false, nil
+		}
+		return commentAgentTrigger{}, false, fmt.Errorf("load assigned squad for comment trigger: %w", err)
 	}
-	if !h.canUseSquad(ctx, squad, authorType, authorID, uuidToString(issue.WorkspaceID)) {
-		return commentAgentTrigger{}, false
+	allowed, err := h.squadAccess(ctx, squad, authorType, authorID, uuidToString(issue.WorkspaceID))
+	if err != nil {
+		return commentAgentTrigger{}, false, fmt.Errorf("authorize assigned squad for comment trigger: %w", err)
+	}
+	if !allowed {
+		return commentAgentTrigger{}, false, nil
 	}
 	if authorType == "agent" && authorID == uuidToString(squad.LeaderID) &&
 		h.lastTaskWasLeader(ctx, issue.ID, squad.LeaderID) {
-		return commentAgentTrigger{}, false
+		return commentAgentTrigger{}, false, nil
 	}
 	if authorType == "member" && commentMentionsAnyone(content) {
-		return commentAgentTrigger{}, false
+		return commentAgentTrigger{}, false, nil
 	}
 	agent, err := h.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
 		ID:          squad.LeaderID,
 		WorkspaceID: issue.WorkspaceID,
 	})
-	if err != nil || !agent.RuntimeID.Valid || agent.ArchivedAt.Valid {
-		return commentAgentTrigger{}, false
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return commentAgentTrigger{}, false, nil
+		}
+		return commentAgentTrigger{}, false, fmt.Errorf("load assigned squad leader for comment trigger: %w", err)
 	}
-	if !h.canAccessPersonalAgent(ctx, agent, authorType, authorID, uuidToString(issue.WorkspaceID)) {
-		return commentAgentTrigger{}, false
+	if !agent.RuntimeID.Valid || agent.ArchivedAt.Valid {
+		return commentAgentTrigger{}, false, nil
+	}
+	allowed, err = h.personalAgentAccess(ctx, agent, authorType, authorID, uuidToString(issue.WorkspaceID))
+	if err != nil {
+		return commentAgentTrigger{}, false, fmt.Errorf("authorize assigned squad leader for comment trigger: %w", err)
+	}
+	if !allowed {
+		return commentAgentTrigger{}, false, nil
 	}
 	hasPending, err := h.hasPendingTaskForIssueAndAgent(ctx, issue.ID, squad.LeaderID, opts)
-	if err != nil || hasPending {
-		return commentAgentTrigger{}, false
+	if err != nil {
+		return commentAgentTrigger{}, false, fmt.Errorf("check pending squad-leader comment task: %w", err)
 	}
-	return commentAgentTrigger{Agent: agent, Source: commentTriggerSourceIssueAssignee, Squad: &squad}, true
+	if hasPending {
+		return commentAgentTrigger{}, false, nil
+	}
+	return commentAgentTrigger{Agent: agent, Source: commentTriggerSourceIssueAssignee, Squad: &squad}, true, nil
 }
 
 func (h *Handler) hasPendingTaskForIssueAndAgent(ctx context.Context, issueID, agentID pgtype.UUID, opts commentTriggerComputeOptions) (bool, error) {

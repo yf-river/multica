@@ -49,7 +49,10 @@ func TestCommentMentionsAnyone(t *testing.T) {
 // trigger computation would wake the issue's assigned squad leader — the
 // boolean view these integration tests assert on.
 func shouldEnqueueSquadLeaderOnCommentForTest(ctx context.Context, issue db.Issue, content, authorType, authorID string) bool {
-	_, ok := testHandler.computeAssignedSquadLeaderCommentTrigger(ctx, issue, content, authorType, authorID, commentTriggerComputeOptions{})
+	_, ok, err := testHandler.computeAssignedSquadLeaderCommentTrigger(ctx, issue, content, authorType, authorID, commentTriggerComputeOptions{})
+	if err != nil {
+		return false
+	}
 	return ok
 }
 
