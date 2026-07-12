@@ -1006,7 +1006,7 @@ func (h *Handler) CancelTaskByUser(w http.ResponseWriter, r *http.Request) {
 		WorkspaceID: wsUUID,
 	})
 	if err != nil {
-		writeError(w, http.StatusNotFound, "task not found")
+		writeEntityLoadError(w, r, err, "task", "task_id", taskID)
 		return
 	}
 
@@ -1018,7 +1018,7 @@ func (h *Handler) CancelTaskByUser(w http.ResponseWriter, r *http.Request) {
 			WorkspaceID: wsUUID,
 		})
 		if err != nil {
-			writeError(w, http.StatusNotFound, "task not found")
+			writeEntityLoadError(w, r, err, "task", "task_id", taskID, "chat_session_id", uuidToString(task.ChatSessionID))
 			return
 		}
 		if uuidToString(cs.CreatorID) != userID {
@@ -1034,7 +1034,7 @@ func (h *Handler) CancelTaskByUser(w http.ResponseWriter, r *http.Request) {
 			WorkspaceID: wsUUID,
 		})
 		if err != nil {
-			writeError(w, http.StatusNotFound, "task not found")
+			writeEntityLoadError(w, r, err, "task", "task_id", taskID, "agent_id", uuidToString(task.AgentID))
 			return
 		}
 		actorType, actorID := h.resolveActor(r, userID, workspaceID)
