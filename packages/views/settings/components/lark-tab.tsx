@@ -43,15 +43,6 @@ import type { LarkInstallation, LarkInstallStatusResponse } from "@multica/core/
 import { ActorAvatar } from "../../common/actor-avatar";
 import { useT } from "../../i18n";
 
-// MUL-3083: the Lark (international, open.larksuite.com) "connect a Bot"
-// entry is temporarily hidden while its install → inbound pipeline is
-// stabilized — some Lark installs complete on Lark's side but never land a
-// `lark_installation` row, so the Bot silently can't receive messages.
-// Mainland Feishu is unaffected and keeps its bind entry. Existing
-// installations (either cloud) stay fully manageable. Flip this back to
-// `true` to restore the "Bind to Lark" CTA; nothing else needs to change.
-const LARK_INTL_CONNECT_ENABLED: boolean = false;
-
 // LarkTab is the workspace settings panel for Lark Bot installations.
 // Listing is member-visible; the disconnect action is admin-only (the
 // backend enforces it; the UI hides the button for non-admins to match).
@@ -295,15 +286,7 @@ export function LarkAgentBindButton({
   const { t } = useT("settings");
   const wsId = useWorkspaceId();
   const user = useAuthStore((s) => s.user);
-  // dialogRegion carries two pieces of state in one variable: which
-  // cloud the dialog should target (drives the device-flow `begin`
-  // host and the dialog copy), AND whether the dialog is open at all
-  // (null = closed). A separate boolean would have to be kept in sync
-  // with the region — collapsing them prevents an "open but with no
-  // region picked" intermediate state from existing.
-  const [dialogRegion, setDialogRegion] = useState<"feishu" | "lark" | null>(
-    null,
-  );
+  const [installDialogOpen, setInstallDialogOpen] = useState(false);
 
   const { data: listing } = useQuery({
     ...larkInstallationsOptions(wsId),
@@ -347,17 +330,9 @@ export function LarkAgentBindButton({
   // a fresh scan would fail at the post-poll bot-info step, so hide the CTA.
   if (!installSupported) return null;
 
-  // Two CTAs, one per cloud — Feishu (mainland) on the left, Lark
-  // (international) on the right. We deliberately render two explicit
-  // entry points instead of one auto-detect QR because Lark only emits
-  // tenant_brand="lark" mid-poll AFTER the user has authorized; until
-  // then a Lark user has to scan a QR served from accounts.feishu.cn,
-  // which has surfaced as confusing for international users (MUL-3083
-  // follow-up). Each button passes its region to the install dialog,
-  // which threads it to the backend so the device-flow `begin` POSTs
-  // directly against the matching accounts host. The mid-poll
-  // tenant-brand auto-switch in RegistrationService is preserved as a
-  // safety net for users who pick the wrong entry.
+  // New installations currently enter through Feishu. Existing Lark-region
+  // installations remain listed and manageable, and the backend keeps the
+  // region-aware protocol for those current external contracts.
   return (
     <>
       <div
@@ -367,7 +342,7 @@ export function LarkAgentBindButton({
         <Button
           variant="outline"
           size="sm"
-          onClick={() => setDialogRegion("feishu")}
+          onClick={() => setInstallDialogOpen(true)}
           disabled={!agentId}
           title={
             agentName
@@ -379,34 +354,13 @@ export function LarkAgentBindButton({
           <ExternalLink className="h-3 w-3" />
           {t(($) => $.lark.bind_button_feishu)}
         </Button>
-        {/* MUL-3083: Lark (international) bind entry is temporarily hidden —
-            see LARK_INTL_CONNECT_ENABLED. Mainland Feishu (above) is
-            unaffected. */}
-        {LARK_INTL_CONNECT_ENABLED && (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => setDialogRegion("lark")}
-            disabled={!agentId}
-            title={
-              agentName
-                ? t(($) => $.lark.bind_button_lark_title, { agent: agentName })
-                : undefined
-            }
-            data-testid="lark-agent-bind-lark"
-          >
-            <ExternalLink className="h-3 w-3" />
-            {t(($) => $.lark.bind_button_lark)}
-          </Button>
-        )}
       </div>
-      {dialogRegion && (
+      {installDialogOpen && (
         <LarkInstallDialog
           wsId={wsId}
           agentId={agentId}
           agentName={agentName}
-          region={dialogRegion}
-          onClose={() => setDialogRegion(null)}
+          onClose={() => setInstallDialogOpen(false)}
         />
       )}
     </>
@@ -635,22 +589,15 @@ function LarkAgentBotConnectedBadge({
 // single-use and a re-render of the same QR after an error would just
 // fail again at the next poll.
 //
-// region is a required prop so the begin POST hits the right cloud
-// (accounts.feishu.cn vs accounts.larksuite.com) and the dialog copy
-// (title, scan hint, link fallback) reflects the cloud the user
-// picked. Defaulting it would silently route Lark users to a Feishu QR
-// — exactly the confusion this split-CTA refactor is meant to remove.
 function LarkInstallDialog({
   wsId,
   agentId,
   agentName,
-  region,
   onClose,
 }: {
   wsId: string;
   agentId: string;
   agentName?: string;
-  region: "feishu" | "lark";
   onClose: () => void;
 }) {
   const { t } = useT("settings");
@@ -684,7 +631,7 @@ function LarkInstallDialog({
     setErrorMessage(null);
     setSession(null);
     try {
-      const res = await api.beginLarkInstall(wsId, agentId, region);
+      const res = await api.beginLarkInstall(wsId, agentId, "feishu");
       if (closedRef.current) return;
       setSession({
         sessionId: res.session_id,
@@ -741,11 +688,7 @@ function LarkInstallDialog({
         setStatus(res.status);
         if (res.status === "success") {
           await qc.invalidateQueries({ queryKey: larkKeys.installations(wsId) });
-          toast.success(
-            region === "lark"
-              ? t(($) => $.lark.install_success_toast_lark)
-              : t(($) => $.lark.install_success_toast_feishu),
-          );
+          toast.success(t(($) => $.lark.install_success_toast_feishu));
           // Close after a tiny beat so the user sees the success state
           // briefly before the dialog disappears.
           setTimeout(() => {
@@ -816,19 +759,11 @@ function LarkInstallDialog({
     >
       <DialogContent className="max-w-sm">
         <DialogHeader>
-          <DialogTitle>
-            {region === "lark"
-              ? t(($) => $.lark.install_dialog_title_lark)
-              : t(($) => $.lark.install_dialog_title_feishu)}
-          </DialogTitle>
+          <DialogTitle>{t(($) => $.lark.install_dialog_title_feishu)}</DialogTitle>
           <DialogDescription>
-            {region === "lark"
-              ? agentName
-                ? t(($) => $.lark.install_dialog_description_for_agent_lark, { agent: agentName })
-                : t(($) => $.lark.install_dialog_description_lark)
-              : agentName
-                ? t(($) => $.lark.install_dialog_description_for_agent_feishu, { agent: agentName })
-                : t(($) => $.lark.install_dialog_description_feishu)}
+            {agentName
+              ? t(($) => $.lark.install_dialog_description_for_agent_feishu, { agent: agentName })
+              : t(($) => $.lark.install_dialog_description_feishu)}
           </DialogDescription>
         </DialogHeader>
 
@@ -845,9 +780,7 @@ function LarkInstallDialog({
                 <QRCode value={session.qrCodeURL} size={192} />
               </div>
               <p className="text-center text-xs text-muted-foreground">
-                {region === "lark"
-                  ? t(($) => $.lark.install_scan_hint_lark)
-                  : t(($) => $.lark.install_scan_hint_feishu)}
+                {t(($) => $.lark.install_scan_hint_feishu)}
               </p>
               <a
                 href={session.qrCodeURL}
@@ -855,9 +788,7 @@ function LarkInstallDialog({
                 rel="noopener noreferrer"
                 className="text-xs underline text-muted-foreground"
               >
-                {region === "lark"
-                  ? t(($) => $.lark.install_open_link_fallback_lark)
-                  : t(($) => $.lark.install_open_link_fallback_feishu)}
+                {t(($) => $.lark.install_open_link_fallback_feishu)}
               </a>
             </>
           )}

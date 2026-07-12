@@ -225,8 +225,7 @@ function renderAgentBindButton() {
 }
 
 function expectNoBindCtas() {
-  expect(screen.queryByRole("button", { name: /绑定飞书/i })).toBeNull();
-  expect(screen.queryByRole("button", { name: /绑定 Lark/i })).toBeNull();
+  expect(screen.queryByTestId("lark-agent-bind-feishu")).toBeNull();
 }
 
 function expectFeishuConnectedBadge(appId = "cli_existing_app") {
@@ -242,27 +241,22 @@ function expectFeishuConnectedBadge(appId = "cli_existing_app") {
 describe("LarkAgentBindButton (CTA gate)", () => {
   beforeEach(resetFixtures);
 
-  it("shows the 飞书 bind CTA but hides the Lark CTA for an owner (MUL-3083)", () => {
-    // Mainland 飞书 binding stays available; the Lark (international)
-    // entry is temporarily hidden via LARK_INTL_CONNECT_ENABLED while its
-    // install→inbound pipeline is stabilized (MUL-3083).
+  it("shows the current 飞书 bind CTA for an owner", () => {
     render(<LarkAgentBindButton agentId="agent-1" agentName="Bot" />, {
       wrapper: I18nWrapper,
     });
     expect(screen.getByRole("button", { name: /绑定飞书/i })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /绑定 Lark/i })).toBeNull();
   });
 
-  it("shows the 飞书 bind CTA but hides the Lark CTA for an admin (MUL-3083)", () => {
+  it("shows the current 飞书 bind CTA for an admin", () => {
     membersRef.current = [{ user_id: "user-1", role: "admin" }];
     render(<LarkAgentBindButton agentId="agent-1" agentName="Bot" />, {
       wrapper: I18nWrapper,
     });
     expect(screen.getByRole("button", { name: /绑定飞书/i })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /绑定 Lark/i })).toBeNull();
   });
 
-  it("hides both bind CTAs for a non-admin agent owner (matches backend admin gate)", () => {
+  it("hides the bind CTA for a non-admin agent owner (matches backend admin gate)", () => {
     membersRef.current = [{ user_id: "user-1", role: "member" }];
     const { container } = render(
       <LarkAgentBindButton agentId="agent-1" agentName="Bot" />,
@@ -271,7 +265,7 @@ describe("LarkAgentBindButton (CTA gate)", () => {
     expect(container.querySelector("button")).toBeNull();
   });
 
-  it("hides both bind CTAs when the device-flow install path is not wired on the server", () => {
+  it("hides the bind CTA when the device-flow install path is not wired on the server", () => {
     installationsRef.current.install_supported = false;
     const { container } = render(
       <LarkAgentBindButton agentId="agent-1" agentName="Bot" />,
@@ -281,8 +275,8 @@ describe("LarkAgentBindButton (CTA gate)", () => {
   });
 
   it("clicking 绑定飞书 begins an install with region='feishu'", async () => {
-    // Pin the routing wire-up: each split CTA must pass its own region
-    // string to the API client (which threads it onto the
+    // Pin the current CTA's explicit region through the API client (which
+    // threads it onto the
     // /lark/install/begin?region=… query param), so the device-flow
     // begins on the matching accounts host. A regression here would
     // silently send Lark users to a 飞书 QR — the exact bug this
@@ -309,13 +303,6 @@ describe("LarkAgentBindButton (CTA gate)", () => {
     );
   });
 
-  // NOTE (MUL-3083): the "clicking 绑定 Lark begins an install with
-  // region='lark'" test was removed alongside the temporarily-hidden Lark
-  // (international) CTA — there is no Lark button to click while
-  // LARK_INTL_CONNECT_ENABLED is false. The 飞书 region routing is still
-  // pinned by the "clicking 绑定飞书 …" test above; restore the Lark
-  // case when the entry is re-enabled.
-
   it("swaps the bind CTAs for a 'Connected + 在 Lark 中管理' badge when this agent already has an active installation", () => {
     // Anti-zombie guard: re-scanning the same agent upserts the row
     // and orphans the previously-created Lark PersonalAgent. The badge
@@ -324,7 +311,7 @@ describe("LarkAgentBindButton (CTA gate)", () => {
     // permissions are actually managed.
     setInstallations(larkInstallation());
     renderAgentBindButton();
-    // Both Bind CTAs must be gone — re-scanning would orphan the
+    // The Bind CTA must be gone — re-scanning would orphan the
     // PersonalAgent (see badge comment in lark-tab.tsx).
     expectNoBindCtas();
     // The fixture omits `region`, which the listings DTO defaults to
