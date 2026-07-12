@@ -75,7 +75,11 @@ import {
   ListProjectsResponseSchema,
 } from "./schemas-projects";
 import { EMPTY_SKILL, SkillSchema } from "./schemas-skills";
-import { EMPTY_LABEL_LIST_RESPONSE, ListLabelsResponseSchema } from "./schemas-labels";
+import {
+  EMPTY_LABEL_LIST_RESPONSE,
+  IssueLabelsResponseSchema,
+  ListLabelsResponseSchema,
+} from "./schemas-labels";
 import { EMPTY_PINNED_ITEM_LIST, PinnedItemListSchema } from "./schemas-pins";
 import {
   AgentTaskListSchema,
@@ -84,6 +88,9 @@ import {
 } from "./schemas-tasks";
 
 describe("domain response schema fallbacks", () => {
+  it("rejects incomplete issue-label mutation responses", () => {
+    expect(IssueLabelsResponseSchema.safeParse({}).success).toBe(false);
+  });
   it("maps unknown prompt version sources to the current creation source", () => {
     const parsed = PromptLibraryVersionSchema.parse({
       id: "version-1",
