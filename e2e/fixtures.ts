@@ -46,6 +46,17 @@ interface PromptLibraryVersion {
   change_note?: string;
 }
 
+interface PromptLibraryTrial {
+  id: string;
+  prompt_id: string;
+  version_id: string;
+  agent_id: string;
+  task_id: string | null;
+  rendered_message: string;
+  variables: Record<string, unknown>;
+  status: string;
+}
+
 interface PromptEvaluationAsset {
   id: string;
   prompt_id: string | null;
@@ -1366,6 +1377,32 @@ export class TestApiClient {
       throw new Error(`create prompt library version failed: ${res.status} ${await res.text()}`);
     }
     return res.json();
+  }
+
+  async createPromptLibraryTrial(
+    promptId: string,
+    versionId: string,
+    data: Record<string, unknown>,
+    idempotencyKey?: string,
+  ): Promise<PromptLibraryTrial> {
+    const res = await this.authedFetch(`/api/prompt-library/${promptId}/versions/${versionId}/trials`, {
+      method: "POST",
+      body: JSON.stringify(data),
+      headers: idempotencyKey ? { "Idempotency-Key": idempotencyKey } : undefined,
+    });
+    if (!res.ok) {
+      throw new Error(`create prompt library trial failed: ${res.status} ${await res.text()}`);
+    }
+    return res.json();
+  }
+
+  async listPromptLibraryTrials(promptId: string): Promise<PromptLibraryTrial[]> {
+    const res = await this.authedFetch(`/api/prompt-library/${promptId}/trials`);
+    if (!res.ok) {
+      throw new Error(`list prompt library trials failed: ${res.status} ${await res.text()}`);
+    }
+    const data = await res.json();
+    return data.items ?? [];
   }
 
   async updatePromptLibraryItem(id: string, data: Record<string, unknown>): Promise<PromptLibraryItem> {

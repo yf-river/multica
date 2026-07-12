@@ -49,6 +49,32 @@ test("Prompt Library item and version survive exact replay and render in the cur
       change_note: versionRequest.change_note,
     });
 
+    const { runtime } = await api.registerDaemonCodeBuddyRuntime(`${prefix} Runtime`);
+    const agent = await api.createAgent({
+      name: `${prefix} Agent`,
+      runtime_id: runtime.id,
+      instructions: "只处理当前隔离的 Prompt Library 试跑任务。",
+      scope: "workspace",
+    });
+    const trialRequest = {
+      agent_id: agent.id,
+      variables: { issue_title: "登录失败" },
+    };
+    const trialKey = randomUUID();
+    const trial = await api.createPromptLibraryTrial(created.id, version.version.id, trialRequest, trialKey);
+    const trialReplay = await api.createPromptLibraryTrial(created.id, version.version.id, trialRequest, trialKey);
+    expect(trialReplay).toEqual(trial);
+    expect(trial).toMatchObject({
+      prompt_id: created.id,
+      version_id: version.version.id,
+      agent_id: agent.id,
+      status: "queued",
+      variables: trialRequest.variables,
+    });
+    expect(trial.task_id).toBeTruthy();
+    expect(trial.rendered_message).toContain("登录失败");
+    expect(await api.listPromptLibraryTrials(created.id)).toHaveLength(1);
+
     const token = api.getToken();
     expect(token).toBeTruthy();
     await authenticateBrowserSession(page, token!, workspace.slug);
@@ -57,6 +83,8 @@ test("Prompt Library item and version survive exact replay and render in the cur
     await page.getByRole("button", { name: new RegExp(created.name) }).click();
     await expect(page.getByTestId("prompt-version-history")).toContainText("v2");
     await expect(page.getByTestId("prompt-library-editor")).toContainText(versionRequest.content);
+    await expect(page.getByTestId("prompt-library-editor")).toContainText(`${prefix} Agent`);
+    await expect(page.getByTestId("prompt-library-editor")).toContainText("登录失败");
   } finally {
     await api.cleanupPromptArtifactsByPrefix(prefix);
     await api.cleanup();
