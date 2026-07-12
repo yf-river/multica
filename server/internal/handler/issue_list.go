@@ -444,49 +444,9 @@ func (h *Handler) ListIssueBuckets(w http.ResponseWriter, r *http.Request) {
 	if p := r.URL.Query().Get("priority"); p != "" {
 		where = append(where, fmt.Sprintf("i.priority = %s", addArg(p)))
 	}
-	if raw := r.URL.Query().Get("assignee_id"); raw != "" {
-		id, ok := parseUUIDOrBadRequest(w, raw, "assignee_id")
-		if !ok {
-			return
-		}
-		where = append(where, fmt.Sprintf("i.assignee_id = %s::uuid", addArg(id)))
-	}
-	if raw := r.URL.Query().Get("assignee_ids"); raw != "" {
-		ids, ok := parseUUIDParamList(w, raw, "assignee_ids")
-		if !ok {
-			return
-		}
-		if len(ids) > 0 {
-			where = append(where, fmt.Sprintf("i.assignee_id = ANY(%s::uuid[])", addArg(ids)))
-		}
-	}
-	if raw := r.URL.Query().Get("creator_id"); raw != "" {
-		id, ok := parseUUIDOrBadRequest(w, raw, "creator_id")
-		if !ok {
-			return
-		}
-		where = append(where, fmt.Sprintf("i.creator_id = %s::uuid", addArg(id)))
-	}
-	if raw := r.URL.Query().Get("project_id"); raw != "" {
-		id, ok := parseUUIDOrBadRequest(w, raw, "project_id")
-		if !ok {
-			return
-		}
-		where = append(where, fmt.Sprintf("i.project_id = %s::uuid", addArg(id)))
-	}
-	if raw := r.URL.Query().Get("involves_user_id"); raw != "" {
-		id, ok := parseUUIDOrBadRequest(w, raw, "involves_user_id")
-		if !ok {
-			return
-		}
-		where = appendIssueInvolvesUserFilter(where, addArg, id)
-	}
-	metadataFilter, ok := parseMetadataFilterParam(w, r.URL.Query().Get("metadata"))
+	where, ok = appendCommonIssueListFilters(w, r.URL.Query(), where, addArg)
 	if !ok {
 		return
-	}
-	if metadataFilter != nil {
-		where = append(where, fmt.Sprintf("i.metadata @> %s::jsonb", addArg(string(metadataFilter))))
 	}
 	dateFilter, ok := parseIssueDateFilter(w, r.URL.Query())
 	if !ok {
@@ -668,6 +628,59 @@ func appendIssueInvolvesUserFilter(where []string, addArg func(any) string, user
           AND a.owner_id     = %[1]s::uuid
     ))
 )`, ref))
+}
+
+func appendCommonIssueListFilters(
+	w http.ResponseWriter,
+	values url.Values,
+	where []string,
+	addArg func(any) string,
+) ([]string, bool) {
+	if raw := values.Get("assignee_id"); raw != "" {
+		id, ok := parseUUIDOrBadRequest(w, raw, "assignee_id")
+		if !ok {
+			return where, false
+		}
+		where = append(where, fmt.Sprintf("i.assignee_id = %s::uuid", addArg(id)))
+	}
+	if raw := values.Get("assignee_ids"); raw != "" {
+		ids, ok := parseUUIDParamList(w, raw, "assignee_ids")
+		if !ok {
+			return where, false
+		}
+		if len(ids) > 0 {
+			where = append(where, fmt.Sprintf("i.assignee_id = ANY(%s::uuid[])", addArg(ids)))
+		}
+	}
+	if raw := values.Get("creator_id"); raw != "" {
+		id, ok := parseUUIDOrBadRequest(w, raw, "creator_id")
+		if !ok {
+			return where, false
+		}
+		where = append(where, fmt.Sprintf("i.creator_id = %s::uuid", addArg(id)))
+	}
+	if raw := values.Get("project_id"); raw != "" {
+		id, ok := parseUUIDOrBadRequest(w, raw, "project_id")
+		if !ok {
+			return where, false
+		}
+		where = append(where, fmt.Sprintf("i.project_id = %s::uuid", addArg(id)))
+	}
+	if raw := values.Get("involves_user_id"); raw != "" {
+		id, ok := parseUUIDOrBadRequest(w, raw, "involves_user_id")
+		if !ok {
+			return where, false
+		}
+		where = appendIssueInvolvesUserFilter(where, addArg, id)
+	}
+	metadata, ok := parseMetadataFilterParam(w, values.Get("metadata"))
+	if !ok {
+		return where, false
+	}
+	if metadata != nil {
+		where = append(where, fmt.Sprintf("i.metadata @> %s::jsonb", addArg(string(metadata))))
+	}
+	return where, true
 }
 
 func parseIssueDateFilter(w http.ResponseWriter, values url.Values) (*issueDateFilter, bool) {
@@ -856,53 +869,9 @@ func (h *Handler) ListGroupedIssues(w http.ResponseWriter, r *http.Request) {
 		where = append(where, fmt.Sprintf("i.assignee_type = ANY(%s::text[])", addArg(assigneeTypes)))
 	}
 
-	if raw := r.URL.Query().Get("assignee_id"); raw != "" {
-		id, ok := parseUUIDOrBadRequest(w, raw, "assignee_id")
-		if !ok {
-			return
-		}
-		where = append(where, fmt.Sprintf("i.assignee_id = %s::uuid", addArg(id)))
-	}
-	if raw := r.URL.Query().Get("assignee_ids"); raw != "" {
-		ids, ok := parseUUIDParamList(w, raw, "assignee_ids")
-		if !ok {
-			return
-		}
-		if len(ids) > 0 {
-			where = append(where, fmt.Sprintf("i.assignee_id = ANY(%s::uuid[])", addArg(ids)))
-		}
-	}
-	if raw := r.URL.Query().Get("creator_id"); raw != "" {
-		id, ok := parseUUIDOrBadRequest(w, raw, "creator_id")
-		if !ok {
-			return
-		}
-		where = append(where, fmt.Sprintf("i.creator_id = %s::uuid", addArg(id)))
-	}
-	if raw := r.URL.Query().Get("project_id"); raw != "" {
-		id, ok := parseUUIDOrBadRequest(w, raw, "project_id")
-		if !ok {
-			return
-		}
-		where = append(where, fmt.Sprintf("i.project_id = %s::uuid", addArg(id)))
-	}
-	if filter, ok := parseMetadataFilterParam(w, r.URL.Query().Get("metadata")); !ok {
+	where, ok = appendCommonIssueListFilters(w, r.URL.Query(), where, addArg)
+	if !ok {
 		return
-	} else if filter != nil {
-		where = append(where, fmt.Sprintf("i.metadata @> %s::jsonb", addArg(string(filter))))
-	}
-	// Mirror the involves_user_id 4-branch UNION from sqlc's ListIssues /
-	// ListOpenIssues / CountIssues. ListGroupedIssues is a hand-written dynamic
-	// SQL builder that does not share parameters with sqlc, so the fragment is
-	// re-implemented here in lock-step. Member-direct assignment is excluded by
-	// design: that semantics belongs to tab 1 (`assignee_id`), and tab 3 must
-	// stay disjoint from tab 1.
-	if raw := r.URL.Query().Get("involves_user_id"); raw != "" {
-		id, ok := parseUUIDOrBadRequest(w, raw, "involves_user_id")
-		if !ok {
-			return
-		}
-		where = appendIssueInvolvesUserFilter(where, addArg, id)
 	}
 
 	assigneeFilters, ok := parseActorFilterList(w, r.URL.Query().Get("assignee_filters"), "assignee_filters")
