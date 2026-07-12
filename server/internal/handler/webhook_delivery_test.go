@@ -368,6 +368,7 @@ func TestReplay_CreatesNewDeliveryAndDispatchesRun(t *testing.T) {
 	// Replay the original.
 	wr := httptest.NewRecorder()
 	req := newRequest("POST", fmt.Sprintf("/api/autopilots/%s/deliveries/%s/replay", apID, originalID), nil)
+	req.Header.Set("Idempotency-Key", "8cc9cd55-1140-4d7e-8aaf-5b744e0398ae")
 	req = withURLParams(req, "id", apID, "deliveryId", originalID)
 	testHandler.ReplayAutopilotDelivery(wr, req)
 	if wr.Code != http.StatusCreated {
@@ -388,6 +389,24 @@ func TestReplay_CreatesNewDeliveryAndDispatchesRun(t *testing.T) {
 	}
 	if replay["autopilot_run_id"] == originalRunID {
 		t.Fatal("replay should produce a NEW run, not reuse the original")
+	}
+
+	// A response-lost retry is the same replay operation, not another explicit
+	// operator action. It must recover the first delivery and run exactly.
+	retryRecorder := httptest.NewRecorder()
+	retry := newRequest("POST", fmt.Sprintf("/api/autopilots/%s/deliveries/%s/replay", apID, originalID), nil)
+	retry.Header.Set("Idempotency-Key", "8cc9cd55-1140-4d7e-8aaf-5b744e0398ae")
+	retry = withURLParams(retry, "id", apID, "deliveryId", originalID)
+	testHandler.ReplayAutopilotDelivery(retryRecorder, retry)
+	if retryRecorder.Code != http.StatusCreated {
+		t.Fatalf("replay retry: %d body=%s", retryRecorder.Code, retryRecorder.Body.String())
+	}
+	var recovered map[string]any
+	if err := json.Unmarshal(retryRecorder.Body.Bytes(), &recovered); err != nil {
+		t.Fatalf("decode recovered replay: %v", err)
+	}
+	if recovered["id"] != replay["id"] || recovered["autopilot_run_id"] != replay["autopilot_run_id"] {
+		t.Fatalf("recovered replay = id %v run %v, want id %v run %v", recovered["id"], recovered["autopilot_run_id"], replay["id"], replay["autopilot_run_id"])
 	}
 
 	deliveries := listDeliveries(t, apID)
@@ -418,6 +437,7 @@ func TestReplay_RejectsInvalidSignatureDelivery(t *testing.T) {
 	// Replay the rejected delivery → 400.
 	wr := httptest.NewRecorder()
 	req := newRequest("POST", fmt.Sprintf("/api/autopilots/%s/deliveries/%s/replay", apID, rejectedID), nil)
+	req.Header.Set("Idempotency-Key", "015d2c65-1ce0-4a31-985a-67207858f728")
 	req = withURLParams(req, "id", apID, "deliveryId", rejectedID)
 	testHandler.ReplayAutopilotDelivery(wr, req)
 	if wr.Code != http.StatusBadRequest {

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -217,6 +218,11 @@ func (h *Handler) ReplayAutopilotDelivery(w http.ResponseWriter, r *http.Request
 	autopilotID := chi.URLParam(r, "id")
 	deliveryID := chi.URLParam(r, "deliveryId")
 	workspaceID := h.resolveWorkspaceID(r)
+	requestKey, ok := requireIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	actorID := parseUUID(requestUserID(r))
 
 	autopilot, ok := h.loadAutopilotInWorkspace(w, r, autopilotID, workspaceID)
 	if !ok {
@@ -224,6 +230,19 @@ func (h *Handler) ReplayAutopilotDelivery(w http.ResponseWriter, r *http.Request
 	}
 	original, ok := h.loadDeliveryForAutopilot(w, r, autopilot, deliveryID)
 	if !ok {
+		return
+	}
+	requestHash, err := hashRequestFingerprint(struct {
+		AutopilotID string `json:"autopilot_id"`
+		DeliveryID  string `json:"delivery_id"`
+	}{autopilotID, deliveryID})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to fingerprint replay request")
+		return
+	}
+	existing, replayFound, err := h.loadWebhookReplayRequest(r.Context(), autopilot.WorkspaceID, actorID, requestKey, requestHash)
+	if err != nil {
+		writeWebhookReplayRequestError(w, err)
 		return
 	}
 	if original.Status == deliveryStatusRejected || original.SignatureStatus == sigStatusInvalid {
@@ -269,34 +288,55 @@ func (h *Handler) ReplayAutopilotDelivery(w http.ResponseWriter, r *http.Request
 	if original.ContentType.Valid {
 		contentType = original.ContentType.String
 	}
-	replay, err := h.Queries.CreateWebhookDelivery(r.Context(), db.CreateWebhookDeliveryParams{
-		WorkspaceID:            autopilot.WorkspaceID,
-		AutopilotID:            autopilot.ID,
-		TriggerID:              original.TriggerID,
-		Provider:               original.Provider,
-		Event:                  envelope.Event,
-		SignatureStatus:        sigStatusNotRequired,
-		Status:                 deliveryStatusQueued,
-		SelectedHeaders:        original.SelectedHeaders,
-		ContentType:            pgtype.Text{String: contentType, Valid: contentType != ""},
-		RawBody:                original.RawBody,
-		ReplayedFromDeliveryID: original.ID,
-	})
+	replay := existing
+	if !replayFound {
+		replay, err = h.Queries.CreateWebhookDelivery(r.Context(), db.CreateWebhookDeliveryParams{
+			WorkspaceID:            autopilot.WorkspaceID,
+			AutopilotID:            autopilot.ID,
+			TriggerID:              original.TriggerID,
+			Provider:               original.Provider,
+			Event:                  envelope.Event,
+			SignatureStatus:        sigStatusNotRequired,
+			Status:                 deliveryStatusQueued,
+			SelectedHeaders:        original.SelectedHeaders,
+			ContentType:            pgtype.Text{String: contentType, Valid: contentType != ""},
+			RawBody:                original.RawBody,
+			ReplayedFromDeliveryID: original.ID,
+			ReplayActorID:          actorID,
+			ReplayRequestKey:       requestKey,
+			ReplayRequestHash:      pgtype.Text{String: requestHash, Valid: true},
+		})
+	}
 	if err != nil {
-		slog.Error("replay: insert delivery failed",
-			"error", err,
-			"original_delivery_id", uuidToString(original.ID),
-		)
-		writeError(w, http.StatusInternalServerError, "failed to create replay delivery")
+		if isUniqueViolation(err) {
+			replay, replayFound, err = h.loadWebhookReplayRequest(
+				r.Context(), autopilot.WorkspaceID, actorID, requestKey, requestHash,
+			)
+			if err != nil || !replayFound {
+				writeWebhookReplayRequestError(w, err)
+				return
+			}
+		} else {
+			slog.Error("replay: insert delivery failed",
+				"error", err,
+				"original_delivery_id", uuidToString(original.ID),
+			)
+			writeError(w, http.StatusInternalServerError, "failed to create replay delivery")
+			return
+		}
+	}
+	if replay.Status != deliveryStatusQueued {
+		writeWebhookReplayResponse(w, replay)
 		return
 	}
 
-	run, dispatchErr := h.AutopilotService.DispatchAutopilot(
+	run, dispatchErr := h.AutopilotService.DispatchAutopilotOnce(
 		r.Context(),
 		autopilot,
 		trigRow.ID,
 		"webhook",
 		envelopeBytes,
+		requestKey,
 	)
 	if dispatchErr != nil {
 		respBody := map[string]any{"error": "failed to dispatch autopilot"}
@@ -341,6 +381,50 @@ func (h *Handler) ReplayAutopilotDelivery(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusCreated, deliveryToResponse(final, true))
+}
+
+var errWebhookReplayConflict = errors.New("webhook replay idempotency conflict")
+
+func (h *Handler) loadWebhookReplayRequest(ctx context.Context, workspaceID, actorID, key pgtype.UUID, requestHash string) (db.WebhookDelivery, bool, error) {
+	delivery, err := h.Queries.GetWebhookReplayByRequest(ctx, db.GetWebhookReplayByRequestParams{
+		WorkspaceID:      workspaceID,
+		ReplayActorID:    actorID,
+		ReplayRequestKey: key,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return db.WebhookDelivery{}, false, nil
+	}
+	if err != nil {
+		return db.WebhookDelivery{}, false, err
+	}
+	if !delivery.ReplayRequestHash.Valid || delivery.ReplayRequestHash.String != requestHash {
+		return db.WebhookDelivery{}, false, errWebhookReplayConflict
+	}
+	return delivery, true, nil
+}
+
+func writeWebhookReplayRequestError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errWebhookReplayConflict) {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error": "Idempotency-Key was already used with a different request",
+			"code":  "idempotency_conflict",
+		})
+		return
+	}
+	writeError(w, http.StatusInternalServerError, "failed to load replay request")
+}
+
+func writeWebhookReplayResponse(w http.ResponseWriter, delivery db.WebhookDelivery) {
+	w.Header().Set("Idempotency-Replayed", "true")
+	if delivery.ResponseStatus.Valid && delivery.ResponseStatus.Int32 >= http.StatusBadRequest {
+		message := "failed to replay delivery"
+		if delivery.Error.Valid && delivery.Error.String != "" {
+			message = delivery.Error.String
+		}
+		writeError(w, int(delivery.ResponseStatus.Int32), message)
+		return
+	}
+	writeJSON(w, http.StatusCreated, deliveryToResponse(delivery, true))
 }
 
 // loadDeliveryForAutopilot returns the delivery row when it exists in the

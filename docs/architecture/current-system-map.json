@@ -23,10 +23,10 @@
     "databaseTables": 84,
     "databaseFunctions": 9,
     "databaseTriggers": 4,
-    "databaseIndexes": 189,
-    "migrations": 132,
+    "databaseIndexes": 190,
+    "migrations": 134,
     "sqlcModules": 53,
-    "sqlcQueries": 580,
+    "sqlcQueries": 581,
     "goWebsocketEvents": 80,
     "typescriptWebsocketEvents": 70,
     "zustandStores": 43,
@@ -7154,6 +7154,41 @@
           "droppedFunctions": [],
           "droppedTriggers": [],
           "droppedIndexes": []
+        },
+        {
+          "version": 67,
+          "name": "add_webhook_replay_request",
+          "direction": "down",
+          "source": "server/migrations/067_add_webhook_replay_request.down.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": [
+            "webhook_delivery_replay_request_unique"
+          ]
+        },
+        {
+          "version": 67,
+          "name": "add_webhook_replay_request",
+          "direction": "up",
+          "source": "server/migrations/067_add_webhook_replay_request.up.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [
+            {
+              "name": "webhook_delivery_replay_request_unique",
+              "table": "webhook_delivery",
+              "unique": true,
+              "source": "server/migrations/067_add_webhook_replay_request.up.sql#webhook_delivery_replay_request_unique"
+            }
+          ],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
         }
       ],
       "tables": [
@@ -8692,6 +8727,12 @@
           "table": "public.prompt_library_item",
           "unique": false,
           "source": "server/migrations/001_current_schema.up.sql#prompt_library_item_workspace_type_idx"
+        },
+        {
+          "name": "webhook_delivery_replay_request_unique",
+          "table": "webhook_delivery",
+          "unique": true,
+          "source": "server/migrations/067_add_webhook_replay_request.up.sql#webhook_delivery_replay_request_unique"
         }
       ]
     },
@@ -11905,6 +11946,11 @@
               "name": "GetWebhookDeliveryInWorkspace",
               "command": "one",
               "source": "server/pkg/db/queries/webhook_delivery.sql#GetWebhookDeliveryInWorkspace"
+            },
+            {
+              "name": "GetWebhookReplayByRequest",
+              "command": "one",
+              "source": "server/pkg/db/queries/webhook_delivery.sql#GetWebhookReplayByRequest"
             },
             {
               "name": "ListWebhookDeliveriesByAutopilot",

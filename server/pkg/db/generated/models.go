@@ -1258,6 +1258,9 @@ type WebhookDelivery struct {
 	ReceivedAt             pgtype.Timestamptz `json:"received_at"`
 	LastAttemptAt          pgtype.Timestamptz `json:"last_attempt_at"`
 	CreatedAt              pgtype.Timestamptz `json:"created_at"`
+	ReplayActorID          pgtype.UUID        `json:"replay_actor_id"`
+	ReplayRequestKey       pgtype.UUID        `json:"replay_request_key"`
+	ReplayRequestHash      pgtype.Text        `json:"replay_request_hash"`
 }
 
 type Workspace struct {

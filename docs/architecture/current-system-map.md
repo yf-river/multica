@@ -24,10 +24,10 @@ evidence reviewable by humans.
 | Database tables | 84 |
 | Database functions | 9 |
 | Database triggers | 4 |
-| Database indexes | 189 |
-| Migration files (up + down) | 132 |
+| Database indexes | 190 |
+| Migration files (up + down) | 134 |
 | sqlc modules | 53 |
-| sqlc queries | 580 |
+| sqlc queries | 581 |
 | Go WebSocket events | 80 |
 | TypeScript WebSocket events | 70 |
 | Zustand store definitions | 43 |
@@ -625,6 +625,8 @@ intentionally platform-specific.
 | 65 | add_prompt_evaluation_candidate_publish_request | up | — | 0 | 0 | 0 | `server/migrations/065_add_prompt_evaluation_candidate_publish_request.up.sql` |
 | 66 | add_feedback_create_request | down | — | 0 | 0 | 0 | `server/migrations/066_add_feedback_create_request.down.sql` |
 | 66 | add_feedback_create_request | up | — | 0 | 0 | 1 | `server/migrations/066_add_feedback_create_request.up.sql` |
+| 67 | add_webhook_replay_request | down | — | 0 | 0 | 0 | `server/migrations/067_add_webhook_replay_request.down.sql` |
+| 67 | add_webhook_replay_request | up | — | 0 | 0 | 1 | `server/migrations/067_add_webhook_replay_request.up.sql` |
 
 ### Current tables discovered from up migrations
 
@@ -723,11 +725,11 @@ intentionally platform-specific.
 | `trg_tu_dirty_hourly` | `public.task_usage` | `public.enqueue_task_usage_hourly_dirty_for_tu` | `server/migrations/001_current_schema.up.sql#trg_tu_dirty_hourly` |
 
 - Functions: `public.enqueue_task_usage_hourly_dirty_for_atq`, `public.enqueue_task_usage_hourly_dirty_for_issue_delete`, `public.enqueue_task_usage_hourly_dirty_for_issue_project`, `public.enqueue_task_usage_hourly_dirty_for_tu`, `public.prune_task_usage_hourly_dirty`, `public.rollup_task_usage_hourly`, `public.rollup_task_usage_hourly_window`, `public.task_usage_hour_bucket`, `public.task_usage_hourly_rollup_lag_seconds`
-- Indexes: 189 current definitions; full name/table/uniqueness evidence is in the JSON companion.
+- Indexes: 190 current definitions; full name/table/uniqueness evidence is in the JSON companion.
 
 ### sqlc modules
 
-All 580 query names, commands, and stable source anchors are stored in the JSON companion.
+All 581 query names, commands, and stable source anchors are stored in the JSON companion.
 
 | Module | Queries | SQL source | Generated source |
 | --- | --- | --- | --- |
@@ -782,7 +784,7 @@ All 580 query names, commands, and stable source anchors are stored in the JSON 
 | task_trace_event | 4 | `server/pkg/db/queries/task_trace_event.sql` | `server/pkg/db/generated/task_trace_event.sql.go` |
 | task_usage | 7 | `server/pkg/db/queries/task_usage.sql` | `server/pkg/db/generated/task_usage.sql.go` |
 | user | 5 | `server/pkg/db/queries/user.sql` | `server/pkg/db/generated/user.sql.go` |
-| webhook_delivery | 8 | `server/pkg/db/queries/webhook_delivery.sql` | `server/pkg/db/generated/webhook_delivery.sql.go` |
+| webhook_delivery | 9 | `server/pkg/db/queries/webhook_delivery.sql` | `server/pkg/db/generated/webhook_delivery.sql.go` |
 | workspace | 8 | `server/pkg/db/queries/workspace.sql` | `server/pkg/db/generated/workspace.sql.go` |
 
 ## WebSocket protocol

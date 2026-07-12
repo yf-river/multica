@@ -33,6 +33,7 @@ func TestReplayAutopilotDeliveryPreservesTriggerReadFailures(t *testing.T) {
 	h.Queries = db.New(failNamedQueryDB{DBTX: testPool, queryName: "GetAutopilotTrigger"})
 	w := httptest.NewRecorder()
 	req := newRequest(http.MethodPost, fmt.Sprintf("/api/autopilots/%s/deliveries/%s/replay", autopilotID, response.DeliveryID), nil)
+	req.Header.Set("Idempotency-Key", "410a4d59-950d-428b-9255-4c39ef02e77b")
 	req = withURLParams(req, "id", autopilotID, "deliveryId", response.DeliveryID)
 
 	h.ReplayAutopilotDelivery(w, req)

@@ -3014,17 +3014,21 @@ export class ApiClient extends ApiTransport {
   async replayAutopilotDelivery(
     autopilotId: string,
     deliveryId: string,
+    idempotencyKey = generateUUID(),
   ): Promise<WebhookDelivery> {
-    const raw = await this.fetch<unknown>(
-      `/api/autopilots/${autopilotId}/deliveries/${deliveryId}/replay`,
-      { method: "POST" },
-    );
-    return parseOrThrow(
-      raw,
-      WebhookDeliveryResponseSchema,
-      { ...EMPTY_WEBHOOK_DELIVERY, autopilot_id: autopilotId },
-      { endpoint: "POST /api/autopilots/:id/deliveries/:deliveryId/replay" },
-    );
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(
+        `/api/autopilots/${autopilotId}/deliveries/${deliveryId}/replay`,
+        { method: "POST", extraHeaders: { "Idempotency-Key": idempotencyKey } },
+      );
+      return parseOrThrow(
+        raw,
+        WebhookDeliveryResponseSchema,
+        { ...EMPTY_WEBHOOK_DELIVERY, autopilot_id: autopilotId },
+        { endpoint: "POST /api/autopilots/:id/deliveries/:deliveryId/replay", mayHaveCommitted: true },
+      );
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   // GitHub integration
