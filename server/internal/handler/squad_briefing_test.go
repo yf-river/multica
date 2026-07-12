@@ -1800,14 +1800,7 @@ func TestClaimTask_LeaderGetsBriefing(t *testing.T) {
 		t.Skip("database not available")
 	}
 	ctx := context.Background()
-
-	var leaderID, runtimeID string
-	if err := testPool.QueryRow(ctx,
-		`SELECT id, runtime_id FROM agent WHERE workspace_id = $1 ORDER BY created_at ASC LIMIT 1`,
-		testWorkspaceID,
-	).Scan(&leaderID, &runtimeID); err != nil {
-		t.Fatalf("get leader agent: %v", err)
-	}
+	leaderID, runtimeID, _ := createRuntimeGuardAgent(t, ctx)
 
 	squad := seedSquadForBriefing(t, leaderID, "Briefing Claim Squad", "Be terse.")
 
@@ -1838,27 +1831,14 @@ func TestClaimTask_NonLeaderGetsNoBriefing(t *testing.T) {
 		t.Skip("database not available")
 	}
 	ctx := context.Background()
-
-	var leaderID string
-	if err := testPool.QueryRow(ctx,
-		`SELECT id FROM agent WHERE workspace_id = $1 ORDER BY created_at ASC LIMIT 1`,
-		testWorkspaceID,
-	).Scan(&leaderID); err != nil {
-		t.Fatalf("get leader agent: %v", err)
-	}
+	leaderID := createHandlerTestAgent(t, "Non Leader Squad Leader", []byte("[]"))
 
 	squad := seedSquadForBriefing(t, leaderID, "Non-Leader Squad", "Squad guidance.")
 
-	// Create a second agent (NOT the leader) with its own runtime so the
-	// claim path picks its task without ambiguity.
-	helperID := createHandlerTestAgent(t, "Non Leader Helper", []byte("[]"))
+	// Create a second agent (NOT the leader) with a dedicated runtime so the
+	// claim path cannot pick a queued task left by another test fixture.
+	helperID, helperRuntime, _ := createRuntimeGuardAgent(t, ctx)
 	addAgentMember(t, squad.ID, helperID, "")
-	var helperRuntime string
-	if err := testPool.QueryRow(ctx,
-		`SELECT runtime_id FROM agent WHERE id = $1`, helperID,
-	).Scan(&helperRuntime); err != nil {
-		t.Fatalf("get helper runtime: %v", err)
-	}
 
 	queueSquadIssueTaskFor(t, util.UUIDToString(squad.ID), helperID, helperRuntime, 95002)
 
