@@ -204,4 +204,31 @@ describe("WSClient", () => {
       "user",
     );
   });
+
+  it("logs reconnect callback failures and continues remaining callbacks", () => {
+    const logger = {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+    };
+    const ws = new WSClient("ws://example.test/ws", { logger, cookieAuth: true });
+    const failure = new Error("reconnect refresh failed");
+    const laterCallback = vi.fn();
+    ws.onReconnect(() => {
+      throw failure;
+    });
+    ws.onReconnect(laterCallback);
+
+    ws.connect();
+    FakeWebSocket.lastInstance!.onopen?.();
+    ws.connect();
+    FakeWebSocket.lastInstance!.onopen?.();
+
+    expect(laterCallback).toHaveBeenCalledOnce();
+    expect(logger.error).toHaveBeenCalledWith(
+      "ws: reconnect callback failed",
+      failure,
+    );
+  });
 });
