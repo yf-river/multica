@@ -62,7 +62,8 @@ const desktopAPI = {
   getLastFreeze: (): FreezeBreadcrumb | null => {
     try {
       return ipcRenderer.sendSync("freeze:get-last") as FreezeBreadcrumb | null;
-    } catch {
+    } catch (error) {
+      console.error("[diagnostics] failed to read last freeze breadcrumb", error);
       return null;
     }
   },
