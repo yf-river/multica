@@ -598,8 +598,28 @@ func (h *Handler) loadIssueForUser(w http.ResponseWriter, r *http.Request, issue
 		return db.Issue{}, false
 	}
 
-	// Try identifier format first (e.g., "JIA-42"). Non-identifier strings
-	// fall through to the UUID path; matched identifiers preserve lookup errors.
+	// UUIDs take precedence over human-readable identifiers. A UUID's final
+	// segment may contain only digits, which must not be mistaken for the
+	// numeric suffix in an identifier such as "JIA-42".
+	if issueUUID, err := util.ParseUUID(issueID); err == nil {
+		wsUUID, err := util.ParseUUID(workspaceID)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid workspace_id")
+			return db.Issue{}, false
+		}
+		issue, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
+			ID:          issueUUID,
+			WorkspaceID: wsUUID,
+		})
+		if err != nil {
+			writeEntityLoadError(w, r, err, "issue", "issue_id", issueID)
+			return db.Issue{}, false
+		}
+		return issue, true
+	}
+
+	// Try identifier format (e.g., "JIA-42"). Matched identifiers preserve
+	// lookup errors instead of falling through to a misleading not-found result.
 	if issue, matched, err := h.resolveIssueByIdentifier(r.Context(), issueID, workspaceID); matched {
 		if err != nil {
 			writeEntityLoadError(w, r, err, "issue", "issue_id", issueID)
@@ -608,27 +628,8 @@ func (h *Handler) loadIssueForUser(w http.ResponseWriter, r *http.Request, issue
 		return issue, true
 	}
 
-	issueUUID, err := util.ParseUUID(issueID)
-	if err != nil {
-		// Not a valid UUID and didn't match identifier format → 404 (consistent
-		// with previous silent-zero behavior, which would also have produced 404).
-		writeError(w, http.StatusNotFound, "issue not found")
-		return db.Issue{}, false
-	}
-	wsUUID, err := util.ParseUUID(workspaceID)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid workspace_id")
-		return db.Issue{}, false
-	}
-	issue, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
-		ID:          issueUUID,
-		WorkspaceID: wsUUID,
-	})
-	if err != nil {
-		writeEntityLoadError(w, r, err, "issue", "issue_id", issueID)
-		return db.Issue{}, false
-	}
-	return issue, true
+	writeError(w, http.StatusNotFound, "issue not found")
+	return db.Issue{}, false
 }
 
 // resolveIssueByIdentifier tries to look up an issue by "PREFIX-NUMBER" format.
