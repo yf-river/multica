@@ -35,20 +35,25 @@ func normalizeSquadScope(value string) (string, bool) {
 // allowed_principals is not exposed in v1; future work can extend this set
 // without changing call sites.
 func (h *Handler) canAccessPersonalAgent(ctx context.Context, agent db.Agent, actorType, actorID, workspaceID string) bool {
+	allowed, _ := h.personalAgentAccess(ctx, agent, actorType, actorID, workspaceID)
+	return allowed
+}
+
+func (h *Handler) personalAgentAccess(ctx context.Context, agent db.Agent, actorType, actorID, workspaceID string) (bool, error) {
 	if agent.Scope != scopePersonal {
-		return true
+		return true, nil
 	}
 	if actorType == "agent" {
-		return true
+		return true, nil
 	}
 	if uuidToString(agent.OwnerID) == actorID {
-		return true
+		return true, nil
 	}
 	member, err := h.getWorkspaceMember(ctx, actorID, workspaceID)
 	if err != nil {
-		return false
+		return false, err
 	}
-	return roleAllowed(member.Role, "owner", "admin")
+	return roleAllowed(member.Role, "owner", "admin"), nil
 }
 
 // memberAllowedForPersonalAgent is the pure predicate used by both
