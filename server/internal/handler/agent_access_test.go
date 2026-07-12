@@ -104,6 +104,16 @@ func TestValidateAssigneePairPreservesAgentLookupFailure(t *testing.T) {
 	}
 }
 
+func TestWorkspaceEntityPreservesLookupFailure(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	exists, err := testHandler.workspaceEntity(ctx, "member", testUserID, testWorkspaceID)
+	if exists || err == nil {
+		t.Fatalf("workspaceEntity() exists=%t err=%v, want false with membership lookup error", exists, err)
+	}
+}
+
 // personalAgentTestFixture sets up a personal agent owned by a freshly created
 // user, plus a second non-admin member in the workspace. Returns the agent
 // id, the owner's user id, and the unrelated member's user id. The caller's
