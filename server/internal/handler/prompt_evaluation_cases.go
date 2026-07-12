@@ -28,6 +28,34 @@ type promptEvaluationDimensionFilters struct {
 	status   pgtype.Text
 }
 
+type promptEvaluationCaseFilters struct {
+	status  pgtype.Text
+	source  pgtype.Text
+	keyword pgtype.Text
+}
+
+func parsePromptEvaluationCaseFilters(w http.ResponseWriter, values url.Values) (promptEvaluationCaseFilters, bool) {
+	var filters promptEvaluationCaseFilters
+	if value := values.Get("status"); value != "" {
+		if !validPromptEvaluationCaseStatus(value) {
+			writeError(w, http.StatusBadRequest, promptEvaluationCaseStatusError())
+			return filters, false
+		}
+		filters.status = pgtype.Text{String: value, Valid: true}
+	}
+	if value := strings.TrimSpace(values.Get("source")); value != "" {
+		if value != "manual" && value != "trace" && value != "payload" {
+			writeError(w, http.StatusBadRequest, "source must be manual, trace, or payload")
+			return filters, false
+		}
+		filters.source = pgtype.Text{String: value, Valid: true}
+	}
+	if value := strings.TrimSpace(values.Get("keyword")); value != "" {
+		filters.keyword = pgtype.Text{String: value, Valid: true}
+	}
+	return filters, true
+}
+
 func parsePromptEvaluationDimensionFilters(w http.ResponseWriter, values url.Values) (promptEvaluationDimensionFilters, bool) {
 	var filters promptEvaluationDimensionFilters
 	if value := values.Get("asset_id"); value != "" {
@@ -68,29 +96,13 @@ func (h *Handler) ListPromptEvaluationCases(w http.ResponseWriter, r *http.Reque
 		}
 		assetID = parsed
 	}
-	var status pgtype.Text
-	if value := r.URL.Query().Get("status"); value != "" {
-		if !validPromptEvaluationCaseStatus(value) {
-			writeError(w, http.StatusBadRequest, promptEvaluationCaseStatusError())
-			return
-		}
-		status = pgtype.Text{String: value, Valid: true}
-	}
-	var source pgtype.Text
-	if value := strings.TrimSpace(r.URL.Query().Get("source")); value != "" {
-		if value != "manual" && value != "trace" && value != "payload" {
-			writeError(w, http.StatusBadRequest, "source must be manual, trace, or payload")
-			return
-		}
-		source = pgtype.Text{String: value, Valid: true}
+	filters, ok := parsePromptEvaluationCaseFilters(w, r.URL.Query())
+	if !ok {
+		return
 	}
 	var tag pgtype.Text
 	if value := strings.TrimSpace(r.URL.Query().Get("tag")); value != "" {
 		tag = pgtype.Text{String: value, Valid: true}
-	}
-	var keyword pgtype.Text
-	if value := strings.TrimSpace(r.URL.Query().Get("keyword")); value != "" {
-		keyword = pgtype.Text{String: value, Valid: true}
 	}
 	var limit pgtype.Int4
 	effectiveLimit := int32(5000)
@@ -168,10 +180,10 @@ func (h *Handler) ListPromptEvaluationCases(w http.ResponseWriter, r *http.Reque
 	totalCount, err := h.Queries.CountPromptEvaluationCases(r.Context(), db.CountPromptEvaluationCasesParams{
 		WorkspaceID: workspaceUUID,
 		AssetID:     assetID,
-		Status:      status,
-		Source:      source,
+		Status:      filters.status,
+		Source:      filters.source,
 		Tag:         tag,
-		Keyword:     keyword,
+		Keyword:     filters.keyword,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to count prompt evaluation cases")
@@ -180,10 +192,10 @@ func (h *Handler) ListPromptEvaluationCases(w http.ResponseWriter, r *http.Reque
 	cases, err := h.Queries.ListPromptEvaluationCases(r.Context(), db.ListPromptEvaluationCasesParams{
 		WorkspaceID:     workspaceUUID,
 		AssetID:         assetID,
-		Status:          status,
-		Source:          source,
+		Status:          filters.status,
+		Source:          filters.source,
 		Tag:             tag,
-		Keyword:         keyword,
+		Keyword:         filters.keyword,
 		CursorID:        cursorID,
 		Limit:           limit,
 		SortBy:          pgtype.Text{String: sortByValue, Valid: true},
@@ -201,7 +213,7 @@ func (h *Handler) ListPromptEvaluationCases(w http.ResponseWriter, r *http.Reque
 	assertions, err := h.Queries.ListPromptEvaluationCaseAssertions(r.Context(), db.ListPromptEvaluationCaseAssertionsParams{
 		WorkspaceID: workspaceUUID,
 		AssetID:     assetID,
-		Status:      status,
+		Status:      filters.status,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list prompt evaluation case assertions")
@@ -246,25 +258,9 @@ func (h *Handler) ListPromptEvaluationCaseTagSummaries(w http.ResponseWriter, r 
 		}
 		assetID = parsed
 	}
-	var status pgtype.Text
-	if value := r.URL.Query().Get("status"); value != "" {
-		if !validPromptEvaluationCaseStatus(value) {
-			writeError(w, http.StatusBadRequest, promptEvaluationCaseStatusError())
-			return
-		}
-		status = pgtype.Text{String: value, Valid: true}
-	}
-	var source pgtype.Text
-	if value := strings.TrimSpace(r.URL.Query().Get("source")); value != "" {
-		if value != "manual" && value != "trace" && value != "payload" {
-			writeError(w, http.StatusBadRequest, "source must be manual, trace, or payload")
-			return
-		}
-		source = pgtype.Text{String: value, Valid: true}
-	}
-	var keyword pgtype.Text
-	if value := strings.TrimSpace(r.URL.Query().Get("keyword")); value != "" {
-		keyword = pgtype.Text{String: value, Valid: true}
+	filters, ok := parsePromptEvaluationCaseFilters(w, r.URL.Query())
+	if !ok {
+		return
 	}
 	limit := pgtype.Int4{Int32: 50, Valid: true}
 	if value := strings.TrimSpace(r.URL.Query().Get("limit")); value != "" {
@@ -278,9 +274,9 @@ func (h *Handler) ListPromptEvaluationCaseTagSummaries(w http.ResponseWriter, r 
 	rows, err := h.Queries.ListPromptEvaluationCaseTagSummaries(r.Context(), db.ListPromptEvaluationCaseTagSummariesParams{
 		WorkspaceID: workspaceUUID,
 		AssetID:     assetID,
-		Status:      status,
-		Source:      source,
-		Keyword:     keyword,
+		Status:      filters.status,
+		Source:      filters.source,
+		Keyword:     filters.keyword,
 		Limit:       limit,
 	})
 	if err != nil {
@@ -306,25 +302,9 @@ func (h *Handler) ListPromptEvaluationCaseTagDatasetSummaries(w http.ResponseWri
 	if !ok {
 		return
 	}
-	var status pgtype.Text
-	if value := r.URL.Query().Get("status"); value != "" {
-		if !validPromptEvaluationCaseStatus(value) {
-			writeError(w, http.StatusBadRequest, promptEvaluationCaseStatusError())
-			return
-		}
-		status = pgtype.Text{String: value, Valid: true}
-	}
-	var source pgtype.Text
-	if value := strings.TrimSpace(r.URL.Query().Get("source")); value != "" {
-		if value != "manual" && value != "trace" && value != "payload" {
-			writeError(w, http.StatusBadRequest, "source must be manual, trace, or payload")
-			return
-		}
-		source = pgtype.Text{String: value, Valid: true}
-	}
-	var keyword pgtype.Text
-	if value := strings.TrimSpace(r.URL.Query().Get("keyword")); value != "" {
-		keyword = pgtype.Text{String: value, Valid: true}
+	filters, ok := parsePromptEvaluationCaseFilters(w, r.URL.Query())
+	if !ok {
+		return
 	}
 	limit := pgtype.Int4{Int32: 20, Valid: true}
 	if value := strings.TrimSpace(r.URL.Query().Get("limit")); value != "" {
@@ -346,9 +326,9 @@ func (h *Handler) ListPromptEvaluationCaseTagDatasetSummaries(w http.ResponseWri
 	}
 	rows, err := h.Queries.ListPromptEvaluationCaseTagDatasetSummaries(r.Context(), db.ListPromptEvaluationCaseTagDatasetSummariesParams{
 		WorkspaceID:     workspaceUUID,
-		Status:          status,
-		Source:          source,
-		Keyword:         keyword,
+		Status:          filters.status,
+		Source:          filters.source,
+		Keyword:         filters.keyword,
 		Limit:           limit,
 		TopDatasetLimit: topDatasetLimit,
 	})
