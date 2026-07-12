@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/service"
@@ -116,14 +117,27 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 		WorkspaceID: wsUUID,
 	})
 	if err != nil {
-		writeError(w, http.StatusNotFound, "agent not found")
+		writeEntityLoadError(w, r, err, "agent", "agent_id", uuidToString(agentUUID))
 		return
 	}
 	if !agent.RuntimeID.Valid {
 		writeAgentUnavailable(w, "agent has no runtime")
 		return
 	}
-	if !h.isRuntimeOnline(r.Context(), agent.RuntimeID) {
+	online, err := h.runtimeOnline(r.Context(), agent.RuntimeID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeAgentUnavailable(w, "agent's runtime is offline")
+			return
+		}
+		if writeClientClosedIfCanceled(w, err) {
+			return
+		}
+		slog.Error("quick-create runtime readiness lookup failed", append(logger.RequestAttrs(r), "runtime_id", uuidToString(agent.RuntimeID), "error", err)...)
+		writeError(w, http.StatusInternalServerError, "failed to verify agent runtime availability")
+		return
+	}
+	if !online {
 		writeAgentUnavailable(w, "agent's runtime is offline")
 		return
 	}
@@ -502,16 +516,16 @@ func isDateOnly(value string) bool {
 	return err == nil
 }
 
-// isRuntimeOnline returns true when the given runtime is currently
+// runtimeOnline reports whether the given runtime is currently
 // reachable (status == "online"). Quick-create rejects submissions whose
 // agent's runtime is offline so the user gets immediate feedback in the
 // modal instead of an inbox failure twenty seconds later.
-func (h *Handler) isRuntimeOnline(ctx context.Context, runtimeID pgtype.UUID) bool {
+func (h *Handler) runtimeOnline(ctx context.Context, runtimeID pgtype.UUID) (bool, error) {
 	rt, err := h.Queries.GetAgentRuntime(ctx, runtimeID)
 	if err != nil {
-		return false
+		return false, err
 	}
-	return rt.Status == "online"
+	return rt.Status == "online", nil
 }
 
 // checkQuickCreateDaemonVersion enforces MinQuickCreateCLIVersion against the
