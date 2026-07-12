@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"sort"
 	"testing"
+
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 func TestCreateWorkspace_RejectsReservedSlug(t *testing.T) {
@@ -41,25 +43,34 @@ func TestRemovedGlobalRouteSlugIsNotReserved(t *testing.T) {
 	}
 }
 
-func TestWorkspaceReposForResponse_NormalizesNonArray(t *testing.T) {
+func TestWorkspaceToResponse_RejectsNonArrayRepos(t *testing.T) {
 	tests := []struct {
 		name string
 		raw  []byte
-		want int
 	}{
-		{name: "nil", raw: nil, want: 0},
-		{name: "object", raw: []byte(`{}`), want: 0},
-		{name: "invalid", raw: []byte(`not-json`), want: 0},
-		{name: "array", raw: []byte(`[{"url":"https://git.example.com/repo.git"}]`), want: 1},
+		{name: "nil", raw: nil},
+		{name: "object", raw: []byte(`{}`)},
+		{name: "invalid", raw: []byte(`not-json`)},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := workspaceReposForResponse(tc.raw)
-			if len(got) != tc.want {
-				t.Fatalf("workspaceReposForResponse(%s) len = %d, want %d", tc.raw, len(got), tc.want)
+			workspace := db.Workspace{Repos: tc.raw}
+			if _, err := workspaceToResponse(workspace); err == nil {
+				t.Fatalf("workspaceToResponse(%s) expected an error", tc.raw)
 			}
 		})
+	}
+}
+
+func TestWorkspaceToResponse_AcceptsRepositoryArray(t *testing.T) {
+	workspace := db.Workspace{Repos: []byte(`[{"url":"https://git.example.com/repo.git"}]`)}
+	response, err := workspaceToResponse(workspace)
+	if err != nil {
+		t.Fatalf("workspaceToResponse: %v", err)
+	}
+	if repos, ok := response.Repos.([]any); !ok || len(repos) != 1 {
+		t.Fatalf("workspaceToResponse repos = %#v, want one repository", response.Repos)
 	}
 }
 
