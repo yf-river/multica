@@ -274,32 +274,9 @@ func (h *Handler) attachmentDownloadURLTTL() time.Duration {
 	return defaultAttachmentDownloadURLTTL
 }
 
-// groupAttachments loads attachments for multiple comments and groups them by comment ID.
-func (h *Handler) groupAttachments(r *http.Request, commentIDs []pgtype.UUID) map[string][]AttachmentResponse {
-	if len(commentIDs) == 0 {
-		return nil
-	}
-	workspaceID := h.resolveWorkspaceID(r)
-	attachments, err := h.Queries.ListAttachmentsByCommentIDs(r.Context(), db.ListAttachmentsByCommentIDsParams{
-		Column1:     commentIDs,
-		WorkspaceID: parseUUID(workspaceID),
-	})
-	if err != nil {
-		slog.Error("failed to load attachments for comments", "error", err)
-		return nil
-	}
-	grouped := make(map[string][]AttachmentResponse, len(commentIDs))
-	for _, a := range attachments {
-		cid := uuidToString(a.CommentID)
-		grouped[cid] = append(grouped[cid], h.attachmentToResponse(a))
-	}
-	return grouped
-}
-
 // groupChatMessageAttachments loads attachments for multiple chat messages
-// and groups them by chat_message_id. Mirrors groupAttachments — used so the
-// chat message list can surface attachment metadata to the UI bubble (file
-// cards, click-through download) without an N+1 query per message.
+// and groups them by chat_message_id so the chat message list can surface file
+// cards and download metadata without an N+1 query per message.
 func (h *Handler) groupChatMessageAttachments(ctx context.Context, workspaceID string, messageIDs []pgtype.UUID) map[string][]AttachmentResponse {
 	if len(messageIDs) == 0 {
 		return nil

@@ -446,7 +446,12 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 	// NOTE: See CreateComment — Markdown is sanitized at render/edit time, not here.
 
 	contentChanged := existing.Content != req.Content
-	groupedReactions := h.groupReactions(r, []pgtype.UUID{existing.ID})
+	groupedReactions, err := loadCommentReactions(r.Context(), h.Queries, []pgtype.UUID{existing.ID})
+	if err != nil {
+		slog.Warn("load reactions for comment update failed", append(logger.RequestAttrs(r), "error", err, "comment_id", commentID)...)
+		writeError(w, http.StatusInternalServerError, "failed to update comment")
+		return
+	}
 
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
@@ -716,6 +721,24 @@ func (h *Handler) ResolveComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	enrichmentIDs := make([]pgtype.UUID, 0, len(cleared)+1)
+	enrichmentIDs = append(enrichmentIDs, updated.ID)
+	for _, clearedComment := range cleared {
+		enrichmentIDs = append(enrichmentIDs, clearedComment.ID)
+	}
+	groupedReactions, err := loadCommentReactions(r.Context(), qtx, enrichmentIDs)
+	if err != nil {
+		slog.Warn("load reactions for resolved comments failed", append(logger.RequestAttrs(r), "error", err, "comment_id", uuidToString(comment.ID))...)
+		writeError(w, http.StatusInternalServerError, "failed to resolve comment")
+		return
+	}
+	groupedAttachments, err := h.loadCommentAttachments(r.Context(), qtx, comment.WorkspaceID, enrichmentIDs)
+	if err != nil {
+		slog.Warn("load attachments for resolved comments failed", append(logger.RequestAttrs(r), "error", err, "comment_id", uuidToString(comment.ID))...)
+		writeError(w, http.StatusInternalServerError, "failed to resolve comment")
+		return
+	}
+
 	if err := tx.Commit(r.Context()); err != nil {
 		slog.Warn("resolve comment commit failed", append(logger.RequestAttrs(r), "error", err, "comment_id", uuidToString(comment.ID))...)
 		writeError(w, http.StatusInternalServerError, "failed to resolve comment")
@@ -728,17 +751,13 @@ func (h *Handler) ResolveComment(w http.ResponseWriter, r *http.Request) {
 	// describes an uncommitted state.
 	for _, c := range cleared {
 		clearedID := uuidToString(c.ID)
-		clearedReactions := h.groupReactions(r, []pgtype.UUID{c.ID})
-		clearedAtt := h.groupAttachments(r, []pgtype.UUID{c.ID})
-		clearedResp := commentToResponse(c, clearedReactions[clearedID], clearedAtt[clearedID])
+		clearedResp := commentToResponse(c, groupedReactions[clearedID], groupedAttachments[clearedID])
 		slog.Info("comment unresolved (replaced)", append(logger.RequestAttrs(r), "comment_id", clearedID)...)
 		h.publish(protocol.EventCommentUnresolved, workspaceID, actorType, actorID, map[string]any{"comment": clearedResp})
 	}
 
-	grouped := h.groupReactions(r, []pgtype.UUID{updated.ID})
-	groupedAtt := h.groupAttachments(r, []pgtype.UUID{updated.ID})
 	cid := uuidToString(updated.ID)
-	resp := commentToResponse(updated, grouped[cid], groupedAtt[cid])
+	resp := commentToResponse(updated, groupedReactions[cid], groupedAttachments[cid])
 
 	// Suppress the target event on a re-resolve no-op so consumers do not
 	// re-process an unchanged thread (notifications, log spam). Cleared siblings
@@ -757,6 +776,19 @@ func (h *Handler) UnresolveComment(w http.ResponseWriter, r *http.Request) {
 	}
 	wasResolved := comment.ResolvedAt.Valid
 
+	groupedReactions, err := loadCommentReactions(r.Context(), h.Queries, []pgtype.UUID{comment.ID})
+	if err != nil {
+		slog.Warn("load reactions for comment unresolve failed", append(logger.RequestAttrs(r), "error", err, "comment_id", uuidToString(comment.ID))...)
+		writeError(w, http.StatusInternalServerError, "failed to unresolve comment")
+		return
+	}
+	groupedAttachments, err := h.loadCommentAttachments(r.Context(), h.Queries, comment.WorkspaceID, []pgtype.UUID{comment.ID})
+	if err != nil {
+		slog.Warn("load attachments for comment unresolve failed", append(logger.RequestAttrs(r), "error", err, "comment_id", uuidToString(comment.ID))...)
+		writeError(w, http.StatusInternalServerError, "failed to unresolve comment")
+		return
+	}
+
 	updated, err := h.Queries.UnresolveComment(r.Context(), comment.ID)
 	if err != nil {
 		slog.Warn("unresolve comment failed", append(logger.RequestAttrs(r), "error", err, "comment_id", uuidToString(comment.ID))...)
@@ -764,10 +796,8 @@ func (h *Handler) UnresolveComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	grouped := h.groupReactions(r, []pgtype.UUID{updated.ID})
-	groupedAtt := h.groupAttachments(r, []pgtype.UUID{updated.ID})
 	cid := uuidToString(updated.ID)
-	resp := commentToResponse(updated, grouped[cid], groupedAtt[cid])
+	resp := commentToResponse(updated, groupedReactions[cid], groupedAttachments[cid])
 
 	if wasResolved {
 		slog.Info("comment unresolved", append(logger.RequestAttrs(r), "comment_id", cid)...)

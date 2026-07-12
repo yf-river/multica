@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -206,8 +208,18 @@ func (h *Handler) ListComments(w http.ResponseWriter, r *http.Request) {
 	for i, c := range result.Comments {
 		commentIDs[i] = c.ID
 	}
-	grouped := h.groupReactions(r, commentIDs)
-	groupedAtt := h.groupAttachments(r, commentIDs)
+	grouped, err := loadCommentReactions(r.Context(), h.Queries, commentIDs)
+	if err != nil {
+		slog.Error("load comment reactions failed", append(logger.RequestAttrs(r), "error", err, "issue_id", issueID)...)
+		writeError(w, http.StatusInternalServerError, "failed to list comments")
+		return
+	}
+	groupedAtt, err := h.loadCommentAttachments(r.Context(), h.Queries, issue.WorkspaceID, commentIDs)
+	if err != nil {
+		slog.Error("load comment attachments failed", append(logger.RequestAttrs(r), "error", err, "issue_id", issueID)...)
+		writeError(w, http.StatusInternalServerError, "failed to list comments")
+		return
+	}
 
 	resp := make([]CommentResponse, len(result.Comments))
 	for i, c := range result.Comments {
@@ -758,4 +770,3 @@ func (h *Handler) PreviewCommentTriggers(w http.ResponseWriter, r *http.Request)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
-
