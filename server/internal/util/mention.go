@@ -15,28 +15,6 @@ type Mention struct {
 // enough to prevent over-matching.
 var MentionRe = regexp.MustCompile(`\[@?(.+?)\]\(mention://(member|agent|squad|issue|all)/([0-9a-fA-F-]+|all)\)`)
 
-// BareAgentUUIDMentionRe is a compatibility fallback for agent-authored
-// routing comments that accidentally emit "@<agent-uuid>" instead of the rich
-// markdown mention. It intentionally only supports agent UUIDs.
-var BareAgentUUIDMentionRe = regexp.MustCompile(`(?:^|[^\w])@([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})(?:\b|$)`)
-
-// AgentIDParenMentionRe accepts natural-language fallback mentions such as
-// "@01-需求澄清(agent_id=<uuid>)" or "@01-需求澄清 (agent:<uuid>)" emitted by
-// some model runtimes.
-var AgentIDParenMentionRe = regexp.MustCompile(`@[^()\r\n]{1,80}[ \t]*\((?:agent_id=|agent:)([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\)`)
-
-// AgentUUIDParenMentionRe accepts natural-language fallback mentions such as
-// "@01-需求澄清 (<uuid>)" or "@01-需求澄清（<uuid>）" emitted by some model runtimes.
-var AgentUUIDParenMentionRe = regexp.MustCompile(`@[^()\r\n（）]{1,80}[ \t]*[（(]([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})[）)]`)
-
-// AgentSchemeMentionRe accepts shorthand markdown links such as
-// "[01-需求澄清](agent://<uuid>)" or "[01-需求澄清](agent:<uuid>)".
-var AgentSchemeMentionRe = regexp.MustCompile(`\[[^\]\r\n]{1,120}\]\(agent:(?://)?([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\)`)
-
-// BareMarkdownUUIDMentionRe accepts simplified markdown such as
-// "@[01-需求澄清](<uuid>)".
-var BareMarkdownUUIDMentionRe = regexp.MustCompile(`@?\[[^\]\r\n]{1,120}\]\(([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})\)`)
-
 // IsMentionAll returns true if the mention is an @all mention.
 func (m Mention) IsMentionAll() bool {
 	return m.Type == "all"
@@ -66,21 +44,6 @@ func ParseMentions(content string) []Mention {
 	}
 	for _, m := range matches {
 		add(m[2], m[3])
-	}
-	for _, m := range BareAgentUUIDMentionRe.FindAllStringSubmatch(content, -1) {
-		add("agent", m[1])
-	}
-	for _, m := range AgentIDParenMentionRe.FindAllStringSubmatch(content, -1) {
-		add("agent", m[1])
-	}
-	for _, m := range AgentUUIDParenMentionRe.FindAllStringSubmatch(content, -1) {
-		add("agent", m[1])
-	}
-	for _, m := range AgentSchemeMentionRe.FindAllStringSubmatch(content, -1) {
-		add("agent", m[1])
-	}
-	for _, m := range BareMarkdownUUIDMentionRe.FindAllStringSubmatch(content, -1) {
-		add("agent", m[1])
 	}
 	return result
 }
