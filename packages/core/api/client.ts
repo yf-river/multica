@@ -180,10 +180,19 @@ import type {
   TestExternalCredentialProfileRequest,
   TestExternalCredentialProfileResponse,
 } from "../types";
-import { type Logger, noopLogger } from "../logger";
 import { createRequestId, generateUUID } from "../utils";
-import { getCurrentSlug } from "../platform/workspace-storage";
-import { ApiResponseValidationError, parseOrThrow, parseWithFallback } from "./schema";
+import { parseOrThrow, parseWithFallback } from "./schema";
+import {
+  ApiError,
+  ApiTransport,
+} from "./transport";
+export {
+  ApiError,
+  ApiTransportError,
+  isMutationOutcomeUnknown,
+  type ApiClientIdentity,
+  type ApiClientOptions,
+} from "./transport";
 import {
   AgentTemplateSchema,
   AgentSchema,
@@ -438,90 +447,9 @@ import {
   WebhookDeliveryResponseSchema,
 } from "./schemas";
 
-/** Identifies the calling client to the server.
- *  Sent on every HTTP request as X-Client-Platform / X-Client-Version /
- *  X-Client-OS so the backend can log, gate, or split metrics by client.
- *  See server/internal/middleware/client.go for the receiving end. */
-export interface ApiClientIdentity {
-  /** Logical client kind. Server expects: "web" | "desktop" | "cli" | "daemon". */
-  platform?: string;
-  /** Client/app version string (e.g. "0.1.0", git tag, commit). */
-  version?: string;
-  /** Operating system the client is running on: "macos" | "windows" | "linux". */
-  os?: string;
-}
-
-export interface ApiClientOptions {
-  logger?: Logger;
-  onUnauthorized?: () => void;
-  /** Identifies the client to the server. Sent as X-Client-* headers. */
-  identity?: ApiClientIdentity;
-}
-
-type JsonRequestInit = RequestInit & {
-  responseMayHaveCommitted?: boolean;
-  extraHeaders?: Record<string, string>;
-};
-
 export interface LoginResponse {
   token: string;
   user: User;
-}
-
-export class ApiError extends Error {
-  readonly status: number;
-  readonly statusText: string;
-  // Raw decoded JSON body (when the server returned one). Carries structured
-  // error fields like `code` so callers can branch on machine-readable
-  // identifiers instead of pattern-matching the human-readable message.
-  readonly body?: unknown;
-
-  constructor(message: string, status: number, statusText: string, body?: unknown) {
-    super(message);
-    this.name = "ApiError";
-    this.status = status;
-    this.statusText = statusText;
-    this.body = body;
-  }
-}
-
-/**
- * The client did not receive an HTTP response, so a mutation's outcome is
- * unknown: the request may have reached the server before the connection was
- * interrupted. Callers with an idempotency key can safely retry the same
- * logical operation; callers without one must reconcile authoritative state.
- */
-export class ApiTransportError extends Error {
-  readonly endpoint: string;
-  readonly mayHaveCommitted: boolean;
-  readonly cause: unknown;
-
-  constructor(endpoint: string, mayHaveCommitted: boolean, cause: unknown) {
-    super(`API transport failed: ${endpoint}`);
-    this.name = "ApiTransportError";
-    this.endpoint = endpoint;
-    this.mayHaveCommitted = mayHaveCommitted;
-    this.cause = cause;
-  }
-}
-
-export function isMutationOutcomeUnknown(error: unknown): boolean {
-  return (
-    (error instanceof ApiTransportError ||
-      error instanceof ApiResponseValidationError) &&
-    error.mayHaveCommitted
-  );
-}
-
-async function retryUnknownMutationOnce<T>(
-  attempt: () => Promise<T>,
-): Promise<T> {
-  try {
-    return await attempt();
-  } catch (error) {
-    if (!isMutationOutcomeUnknown(error)) throw error;
-    return attempt();
-  }
 }
 
 // Thrown by getAttachmentTextContent when the server refuses to inline a
@@ -570,163 +498,10 @@ function issueSearchParams(params?: ListIssuesParams) {
   return search;
 }
 
-export class ApiClient {
-  private baseUrl: string;
-  private token: string | null = null;
-  private logger: Logger;
-  private options: ApiClientOptions;
-
-  constructor(baseUrl: string, options?: ApiClientOptions) {
-    this.baseUrl = baseUrl;
-    this.options = options ?? {};
-    this.logger = options?.logger ?? noopLogger;
-  }
-
-  getBaseUrl(): string {
-    return this.baseUrl;
-  }
-
-  setToken(token: string | null) {
-    this.token = token;
-  }
-
-  private readCsrfToken(): string | null {
-    if (typeof document === "undefined") return null;
-    const match = document.cookie
-      .split("; ")
-      .find((c) => c.startsWith("multica_csrf="));
-    return match ? match.split("=")[1] ?? null : null;
-  }
-
-  private authHeaders(): Record<string, string> {
-    const headers: Record<string, string> = {};
-    if (this.token) headers["Authorization"] = `Bearer ${this.token}`;
-    const slug = getCurrentSlug();
-    if (slug) headers["X-Workspace-Slug"] = slug;
-    const csrf = this.readCsrfToken();
-    if (csrf) headers["X-CSRF-Token"] = csrf;
-    const id = this.options.identity;
-    if (id?.platform) headers["X-Client-Platform"] = id.platform;
-    if (id?.version) headers["X-Client-Version"] = id.version;
-    if (id?.os) headers["X-Client-OS"] = id.os;
-    return headers;
-  }
-
-  private handleUnauthorized() {
-    this.token = null;
-    // Workspace id is owned by the URL-driven workspace-storage singleton
-    // (set by [workspaceSlug]/layout.tsx). On 401, the auth flow navigates
-    // to /login which leaves the workspace route, and the next workspace
-    // entry will overwrite the id. No clear needed here.
-    this.options.onUnauthorized?.();
-  }
-
-  private async parseErrorMessage(res: Response, fallback: string): Promise<string> {
-    try {
-      const data = await res.json() as { error?: string };
-      if (typeof data.error === "string" && data.error) return data.error;
-    } catch {
-      // Ignore non-JSON error bodies.
-    }
-    return fallback;
-  }
-
-  // Reads the response body once for both human-readable error message and
-  // structured fields. The Response stream can only be consumed once, so
-  // both pieces have to come from a single read.
-  private async parseErrorBody(res: Response, fallback: string): Promise<{ message: string; body: unknown }> {
-    try {
-      const data = await res.json() as { error?: string };
-      const message = typeof data.error === "string" && data.error ? data.error : fallback;
-      return { message, body: data };
-    } catch {
-      return { message: fallback, body: undefined };
-    }
-  }
-
-  // Sends the request with the standard headers (auth, CSRF, request id,
-  // client identity) and runs the shared error path (401 → handleUnauthorized,
-  // structured ApiError, status-aware log level). Returns the raw Response so
-  // callers can decide how to decode the body — JSON for the typed `fetch<T>`
-  // path, plain text for the attachment-preview proxy, etc.
-  private async fetchRaw(
-    path: string,
-    init?: RequestInit & { extraHeaders?: Record<string, string> },
-  ): Promise<Response> {
-    const rid = createRequestId();
-    const start = Date.now();
-    const method = init?.method ?? "GET";
-
-    const headers: Record<string, string> = {
-      "X-Request-ID": rid,
-      ...this.authHeaders(),
-      ...(init?.extraHeaders ?? {}),
-      ...((init?.headers as Record<string, string>) ?? {}),
-    };
-
-    this.logger.info(`→ ${method} ${path}`, { rid });
-
-    let res: Response;
-    try {
-      res = await fetch(`${this.baseUrl}${path}`, {
-        ...init,
-        headers,
-        credentials: "include",
-      });
-    } catch (error) {
-      const mayHaveCommitted = !["GET", "HEAD", "OPTIONS"].includes(method.toUpperCase());
-      this.logger.warn(`← transport error ${path}`, {
-        rid,
-        duration: `${Date.now() - start}ms`,
-        mayHaveCommitted,
-      });
-      throw new ApiTransportError(`${method.toUpperCase()} ${path}`, mayHaveCommitted, error);
-    }
-
-    if (!res.ok) {
-      if (res.status === 401) this.handleUnauthorized();
-      const { message, body } = await this.parseErrorBody(res, `API error: ${res.status} ${res.statusText}`);
-      const logLevel = res.status >= 500 ? "error" : "warn";
-      this.logger[logLevel](`← ${res.status} ${path}`, { rid, duration: `${Date.now() - start}ms`, error: message });
-      throw new ApiError(message, res.status, res.statusText, body);
-    }
-
-    this.logger.info(`← ${res.status} ${path}`, { rid, duration: `${Date.now() - start}ms` });
-    return res;
-  }
-
-  private async parseSuccessJson<T>(
-    res: Response,
-    endpoint: string,
-    mayHaveCommitted: boolean,
-  ): Promise<T> {
-    try {
-      return await res.json() as T;
-    } catch {
-      this.logger.warn("API response body is not valid JSON", {
-        endpoint,
-        status: res.status,
-      });
-      throw new ApiResponseValidationError(endpoint, mayHaveCommitted);
-    }
-  }
-
-  private async fetch<T>(path: string, init?: JsonRequestInit): Promise<T> {
-    const { responseMayHaveCommitted, extraHeaders, ...requestInit } = init ?? {};
-    const method = (requestInit.method ?? "GET").toUpperCase();
-    const res = await this.fetchRaw(path, {
-      ...requestInit,
-      extraHeaders: { "Content-Type": "application/json", ...extraHeaders },
-    });
-    // Handle 204 No Content
-    if (res.status === 204) {
-      return undefined as T;
-    }
-    const mayHaveCommitted = responseMayHaveCommitted
-      ?? !["GET", "HEAD", "OPTIONS"].includes(method);
-    return this.parseSuccessJson<T>(res, `${method} ${path}`, mayHaveCommitted);
-  }
-
+// Flat endpoint registry. Transport/auth/error semantics live in transport.ts;
+// the reviewed reason this method surface remains flat is documented in
+// docs/architecture/api-client.md.
+export class ApiClient extends ApiTransport {
   // Auth
   async login(account: string, password: string): Promise<LoginResponse> {
     const raw = await this.fetch<unknown>("/auth/login", {
@@ -2196,7 +1971,7 @@ export class ApiClient {
         mayHaveCommitted: true,
       });
     };
-    return retryUnknownMutationOnce(attempt);
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async updateProject(id: string, data: UpdateProjectRequest): Promise<Project> {
@@ -2860,7 +2635,7 @@ export class ApiClient {
         mayHaveCommitted: true,
       }) as Squad;
     };
-    return retryUnknownMutationOnce(attempt);
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async ensureInternalSquadTemplate(template: InternalSquadTemplateKey | EnsureInternalSquadTemplateRequest): Promise<InternalSquadTemplateResponse> {
@@ -2984,7 +2759,7 @@ export class ApiClient {
       );
     };
 
-    return retryUnknownMutationOnce(attempt);
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async updateAutopilot(id: string, data: UpdateAutopilotRequest): Promise<Autopilot> {
@@ -3017,7 +2792,7 @@ export class ApiClient {
       });
     };
 
-    return retryUnknownMutationOnce(attempt);
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async listAutopilotRuns(id: string, params?: { limit?: number; offset?: number }): Promise<ListAutopilotRunsResponse> {
