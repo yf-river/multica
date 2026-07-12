@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -2322,6 +2323,22 @@ func TestRunPromptEvaluationAssetAgentCompletedWithoutStructuredVerdictNeedsRevi
 	if reviewed.Status != "通过" || reviewed.ReviewDecision != "通过" || reviewed.ReviewNote != "人工确认可作为通过样例" || reviewed.ReviewedBy == nil || *reviewed.ReviewedBy != testUserID || reviewed.ReviewedAt == "" {
 		t.Fatalf("reviewed run = %+v", reviewed)
 	}
+	replayW := httptest.NewRecorder()
+	testHandler.ReviewPromptEvaluationRun(replayW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/review", map[string]any{
+		"decision": "通过",
+		"note":     "人工确认可作为通过样例",
+	}), "id", resp.Run.ID))
+	if replayW.Code != http.StatusOK || replayW.Body.String() != reviewW.Body.String() {
+		t.Fatalf("review replay = %d %s, want exact %s", replayW.Code, replayW.Body.String(), reviewW.Body.String())
+	}
+	changedReviewW := httptest.NewRecorder()
+	testHandler.ReviewPromptEvaluationRun(changedReviewW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/review", map[string]any{
+		"decision": "通过",
+		"note":     "不同的复核说明",
+	}), "id", resp.Run.ID))
+	if changedReviewW.Code != http.StatusConflict {
+		t.Fatalf("changed review replay = %d %s, want 409", changedReviewW.Code, changedReviewW.Body.String())
+	}
 	reviewedEvidenceW := httptest.NewRecorder()
 	testHandler.GetPromptEvaluationRunEvidence(reviewedEvidenceW, withURLParam(newRequest(http.MethodGet, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/evidence", nil), "id", resp.Run.ID))
 	if reviewedEvidenceW.Code != http.StatusOK {
@@ -2811,6 +2828,11 @@ func TestCancelPromptEvaluationRunCancelsTaskAndRun(t *testing.T) {
 	if cancelled.Status != "已取消" || cancelled.TaskID == nil || *cancelled.TaskID != resp.TaskID {
 		t.Fatalf("cancelled run response = %+v", cancelled)
 	}
+	replayW := httptest.NewRecorder()
+	testHandler.CancelPromptEvaluationRun(replayW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/cancel", nil), "id", resp.Run.ID))
+	if replayW.Code != http.StatusOK || replayW.Body.String() != cancelW.Body.String() {
+		t.Fatalf("cancel replay = %d %s, want exact %s", replayW.Code, replayW.Body.String(), cancelW.Body.String())
+	}
 	var taskStatus, runStatus, trialStatus string
 	if err := testPool.QueryRow(context.Background(), `
 		SELECT q.status, r.status, t.status
@@ -2824,6 +2846,67 @@ func TestCancelPromptEvaluationRunCancelsTaskAndRun(t *testing.T) {
 	}
 	if taskStatus != "cancelled" || runStatus != "已取消" || trialStatus != "已跳过" {
 		t.Fatalf("cancel state mismatch: task=%s run=%s trial=%s", taskStatus, runStatus, trialStatus)
+	}
+}
+
+func TestCancelPromptEvaluationRunRecoversAfterRunPersistenceFailure(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler test fixture not initialized")
+	}
+	cleanupPromptEvaluationAgentRunTest(t)
+	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "取消事务恢复实验", "取消事务恢复")
+	suffix := strings.ReplaceAll(uuid.NewString(), "-", "_")
+	functionName := "fail_eval_cancel_" + suffix
+	triggerName := "fail_eval_cancel_" + suffix
+	if _, err := testPool.Exec(context.Background(), fmt.Sprintf(`
+		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN RAISE EXCEPTION 'injected run cancellation failure'; END $$;
+		CREATE TRIGGER %s BEFORE UPDATE ON prompt_evaluation_run
+		FOR EACH ROW WHEN (OLD.id = '%s'::uuid AND NEW.status = '已取消')
+		EXECUTE FUNCTION %s()
+	`, functionName, triggerName, resp.Run.ID, functionName)); err != nil {
+		t.Fatal(err)
+	}
+	dropFailureWitness := func() {
+		_, _ = testPool.Exec(context.Background(), fmt.Sprintf(
+			`DROP TRIGGER IF EXISTS %s ON prompt_evaluation_run; DROP FUNCTION IF EXISTS %s()`,
+			triggerName, functionName,
+		))
+	}
+	t.Cleanup(dropFailureWitness)
+	cancel := func() *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		testHandler.CancelPromptEvaluationRun(w, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/cancel", nil), "id", resp.Run.ID))
+		return w
+	}
+	failed := cancel()
+	dropFailureWitness()
+	if failed.Code != http.StatusInternalServerError {
+		t.Fatalf("injected cancellation failure = %d %s, want 500", failed.Code, failed.Body.String())
+	}
+	var taskStatus, runStatus, trialStatus string
+	loadState := func() {
+		if err := testPool.QueryRow(context.Background(), `
+			SELECT q.status, r.status, t.status
+			FROM prompt_evaluation_run r
+			JOIN agent_task_queue q ON q.id = r.task_id
+			JOIN prompt_evaluation_trial t ON t.run_id = r.id
+			WHERE r.id = $1 LIMIT 1
+		`, resp.Run.ID).Scan(&taskStatus, &runStatus, &trialStatus); err != nil {
+			t.Fatal(err)
+		}
+	}
+	loadState()
+	if taskStatus != "cancelled" || runStatus != "已入队" || trialStatus != "待执行" {
+		t.Fatalf("failed cancellation state: task=%s run=%s trial=%s", taskStatus, runStatus, trialStatus)
+	}
+	recovered := cancel()
+	if recovered.Code != http.StatusOK {
+		t.Fatalf("cancel recovery = %d %s", recovered.Code, recovered.Body.String())
+	}
+	loadState()
+	if taskStatus != "cancelled" || runStatus != "已取消" || trialStatus != "已跳过" {
+		t.Fatalf("recovered cancellation state: task=%s run=%s trial=%s", taskStatus, runStatus, trialStatus)
 	}
 }
 

@@ -253,14 +253,21 @@ func (h *Handler) CancelPromptEvaluationRun(w http.ResponseWriter, r *http.Reque
 			return
 		}
 	}
-	if err := h.Queries.MarkPromptEvaluationTrialsSkippedByRun(r.Context(), db.MarkPromptEvaluationTrialsSkippedByRunParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start prompt evaluation cancellation transaction")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	if err := qtx.MarkPromptEvaluationTrialsSkippedByRun(r.Context(), db.MarkPromptEvaluationTrialsSkippedByRunParams{
 		RunID:       run.ID,
 		WorkspaceID: workspaceUUID,
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to mark prompt evaluation trials skipped")
 		return
 	}
-	cancelled, err := h.Queries.CancelPromptEvaluationRun(r.Context(), db.CancelPromptEvaluationRunParams{
+	cancelled, err := qtx.CancelPromptEvaluationRun(r.Context(), db.CancelPromptEvaluationRunParams{
 		ID:          run.ID,
 		WorkspaceID: workspaceUUID,
 	})
@@ -275,6 +282,10 @@ func (h *Handler) CancelPromptEvaluationRun(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "failed to cancel prompt evaluation run")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit prompt evaluation cancellation")
 		return
 	}
 	writeJSON(w, http.StatusOK, promptEvaluationRunToResponse(cancelled))
@@ -314,6 +325,10 @@ func (h *Handler) ReviewPromptEvaluationRun(w http.ResponseWriter, r *http.Reque
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "failed to load prompt evaluation run")
+		return
+	}
+	if run.Status == decision && run.ReviewDecision == decision && run.ReviewNote == note && uuidToString(run.ReviewedBy) == userID {
+		writeJSON(w, http.StatusOK, promptEvaluationRunToResponse(run))
 		return
 	}
 	if run.Status != "需人工复核" {

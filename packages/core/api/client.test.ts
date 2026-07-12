@@ -1011,6 +1011,34 @@ describe("ApiClient", () => {
     expect(second["Idempotency-Key"]).toBe(requestId);
   });
 
+  it("retries a run review after an unknown response", async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({}), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(new ApiClient("https://api.example.test").reviewPromptEvaluationRun(
+      "run-1", { decision: "通过", note: "verified" },
+    )).rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[0]?.[1]?.body).toBe(fetchMock.mock.calls[1]?.[1]?.body);
+  });
+
+  it("retries a run cancellation after an unknown response", async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({}), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(new ApiClient("https://api.example.test").cancelPromptEvaluationRun("run-1"))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("retries optimization candidate creation with the same explicit identity", async () => {
     const fetchMock = vi.fn()
       .mockRejectedValueOnce(new TypeError("response lost"))

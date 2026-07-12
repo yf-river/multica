@@ -2395,20 +2395,28 @@ export class ApiClient extends ApiTransport {
   }
 
   async cancelPromptEvaluationRun(runId: string): Promise<PromptEvaluationRun> {
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/cancel`, { method: "POST" });
-    return parseOrThrow(raw, PromptEvaluationRunSchema, EMPTY_PROMPT_EVALUATION_RUN, {
-      endpoint: "POST /api/prompt-evaluation-runs/:id/cancel",
-    }) as PromptEvaluationRun;
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/cancel`, { method: "POST" });
+      return parseOrThrow(raw, PromptEvaluationRunSchema, EMPTY_PROMPT_EVALUATION_RUN, {
+        endpoint: "POST /api/prompt-evaluation-runs/:id/cancel",
+        mayHaveCommitted: true,
+      }) as PromptEvaluationRun;
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async reviewPromptEvaluationRun(runId: string, data: ReviewPromptEvaluationRunRequest): Promise<PromptEvaluationRun> {
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/review`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseOrThrow(raw, PromptEvaluationRunSchema, EMPTY_PROMPT_EVALUATION_RUN, {
-      endpoint: "POST /api/prompt-evaluation-runs/:id/review",
-    }) as PromptEvaluationRun;
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/review`, {
+        method: "POST",
+        body: JSON.stringify(data),
+      });
+      return parseOrThrow(raw, PromptEvaluationRunSchema, EMPTY_PROMPT_EVALUATION_RUN, {
+        endpoint: "POST /api/prompt-evaluation-runs/:id/review",
+        mayHaveCommitted: true,
+      }) as PromptEvaluationRun;
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async listPromptEvaluationOptimizationCandidates(params?: ListPromptEvaluationOptimizationCandidatesParams): Promise<ListPromptEvaluationOptimizationCandidatesResponse> {
