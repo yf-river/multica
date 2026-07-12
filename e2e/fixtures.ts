@@ -1982,15 +1982,26 @@ export class TestApiClient {
     return res.json();
   }
 
-  async preparePromptEvaluationSkillReEvalAsset(candidateId: string, data: Record<string, unknown>) {
-    const res = await this.authedFetch(`/api/prompt-evaluation-optimization-candidates/${candidateId}/skill-re-eval-asset`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    if (!res.ok) {
-      throw new Error(`prepare skill re-eval asset failed: ${res.status} ${await res.text()}`);
+  async preparePromptEvaluationSkillReEvalAsset(
+    candidateId: string,
+    data: Record<string, unknown>,
+    requestId = crypto.randomUUID(),
+  ) {
+    const attempt = async () => {
+      const res = await this.authedFetch(`/api/prompt-evaluation-optimization-candidates/${candidateId}/skill-re-eval-asset`, {
+        method: "POST",
+        body: JSON.stringify(data),
+        headers: { "Idempotency-Key": requestId },
+      });
+      if (!res.ok) throw new Error(`prepare skill re-eval asset failed: ${res.status} ${await res.text()}`);
+      return res.json();
+    };
+    try {
+      return await attempt();
+    } catch (error) {
+      if (!(error instanceof TypeError)) throw error;
+      return attempt();
     }
-    return res.json();
   }
 
   async runPromptEvaluationSkillReEval(

@@ -2390,14 +2390,20 @@ export class ApiClient extends ApiTransport {
   async preparePromptEvaluationSkillReEvalAsset(
     candidateId: string,
     data: PreparePromptEvaluationSkillReEvalRequest = {},
+    requestId = generateUUID(),
   ): Promise<PromptEvaluationSkillReEvalAssetResponse> {
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-optimization-candidates/${candidateId}/skill-re-eval-asset`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseOrThrow(raw, PromptEvaluationSkillReEvalAssetResponseSchema, EMPTY_PROMPT_EVALUATION_SKILL_RE_EVAL_ASSET_RESPONSE, {
-      endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/skill-re-eval-asset",
-    }) as PromptEvaluationSkillReEvalAssetResponse;
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/prompt-evaluation-optimization-candidates/${candidateId}/skill-re-eval-asset`, {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": requestId },
+      });
+      return parseOrThrow(raw, PromptEvaluationSkillReEvalAssetResponseSchema, EMPTY_PROMPT_EVALUATION_SKILL_RE_EVAL_ASSET_RESPONSE, {
+        endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/skill-re-eval-asset",
+        mayHaveCommitted: true,
+      }) as PromptEvaluationSkillReEvalAssetResponse;
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async runPromptEvaluationSkillReEval(

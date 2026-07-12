@@ -4,7 +4,10 @@ import { useCallback, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
-import { runPromptEvaluationSkillReEvalWithRecovery } from "@multica/core/prompt-library";
+import {
+  preparePromptEvaluationSkillReEvalAssetWithRecovery,
+  runPromptEvaluationSkillReEvalWithRecovery,
+} from "@multica/core/prompt-library";
 import type { PromptEvaluationOptimizationCandidate } from "@multica/core/types";
 import { useT } from "../../i18n/use-t";
 import { promptLibraryKeys } from "./prompt-library-query-keys";
@@ -59,7 +62,7 @@ export function useSkillCandidateWorkflowActions(workspaceId: string, runId: str
           });
           toast.success(t(($) => $.run_evidence.toast.skill_apply, { status: result.apply.status }));
         } else if (action === "prepare-re-eval") {
-          const result = await api.preparePromptEvaluationSkillReEvalAsset(candidate.id, {
+          const result = await preparePromptEvaluationSkillReEvalAssetWithRecovery(candidate.id, {
             source_resource_id: draft.sourceResourceId || undefined,
             repo_path: draft.repoPath.trim() || undefined,
             target_branch: draft.targetBranch.trim() || undefined,

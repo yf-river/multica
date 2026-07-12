@@ -439,3 +439,27 @@ func TestPromptEvaluationLocalRunRequestMigrationExtendsCurrentResourceContract(
 		t.Fatalf("prompt_evaluation_local_run request type rejected: %v", err)
 	}
 }
+
+func TestPromptEvaluationReEvalAssetRequestMigrationExtendsCurrentResourceContract(t *testing.T) {
+	pool := openTestPool(t)
+	ctx := context.Background()
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	isolateResourceCreateRequestMigration(t, ctx, tx)
+	if _, err := tx.Exec(ctx, readMigrationFile(t, "063_add_prompt_evaluation_re_eval_asset_request.up.sql")); err != nil {
+		t.Fatal(err)
+	}
+	var workspaceID string
+	if err := tx.QueryRow(ctx, `INSERT INTO workspace (name, slug) VALUES ('Re-eval Asset Request Migration', $1) RETURNING id`, "re-eval-asset-request-"+uuid.NewString()).Scan(&workspaceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO resource_create_request (workspace_id, actor_id, resource_type, idempotency_key, request_hash)
+		VALUES ($1, $2, 'prompt_evaluation_re_eval_asset', $3, $4)
+	`, workspaceID, uuid.NewString(), uuid.NewString(), "1212121212121212121212121212121212121212121212121212121212121212"); err != nil {
+		t.Fatalf("prompt_evaluation_re_eval_asset request type rejected: %v", err)
+	}
+}

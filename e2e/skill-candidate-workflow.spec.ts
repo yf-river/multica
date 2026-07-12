@@ -87,9 +87,9 @@ test.describe("Skill candidate workflow", () => {
       payload: {
         cases: [
           {
-            名称: "缺少 skill 发布证据",
-            变量: { issue_title: "登录失败" },
-            期望包含: ["skill snapshot hash", "re-eval run id"],
+            case_name: "缺少 skill 发布证据",
+            variables: { issue_title: "登录失败" },
+            expected_contains: ["skill snapshot hash", "re-eval run id"],
           },
         ],
       },
@@ -170,9 +170,9 @@ test.describe("Skill candidate workflow", () => {
       payload: {
         cases: [
           {
-            名称: "force optimizer candidate",
-            变量: { issue_title: "登录失败" },
-            期望包含: ["__missing_goal_d_marker__"],
+            case_name: "force optimizer candidate",
+            variables: { issue_title: "登录失败" },
+            expected_contains: ["__missing_goal_d_marker__"],
           },
         ],
       },
@@ -291,12 +291,20 @@ test.describe("Skill candidate workflow", () => {
     expect(apply.apply.changed_files.some((item: string) => item.includes(skillPath))).toBeTruthy();
     expect(apply.apply.changed_files.some((item: string) => item.includes(changelogPath))).toBeTruthy();
 
-    const reEvalAsset = await api.preparePromptEvaluationSkillReEvalAsset(candidate.id, {
+    const reEvalAssetRequestId = crypto.randomUUID();
+    const reEvalAssetRequest = {
       source_resource_id: resource.id,
       repo_path: tempRepoPath,
       snapshot,
       include_draft: false,
-    });
+    };
+    const reEvalAsset = await api.preparePromptEvaluationSkillReEvalAsset(
+      candidate.id, reEvalAssetRequest, reEvalAssetRequestId,
+    );
+    const recoveredReEvalAsset = await api.preparePromptEvaluationSkillReEvalAsset(
+      candidate.id, reEvalAssetRequest, reEvalAssetRequestId,
+    );
+    expect(recoveredReEvalAsset).toEqual(reEvalAsset);
     expect(reEvalAsset.case_count).toBeGreaterThanOrEqual(1);
     expect(reEvalAsset.re_eval_snapshot.skill_hash).toBe(apply.apply.skill_hash_after);
 

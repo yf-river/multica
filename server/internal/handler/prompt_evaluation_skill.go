@@ -524,6 +524,33 @@ func (h *Handler) PreparePromptEvaluationSkillReEvalAsset(w http.ResponseWriter,
 	if !ok {
 		return
 	}
+	var req PreparePromptEvaluationSkillReEvalRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err.Error() != "EOF" {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	requestHash, err := hashRequestFingerprint(promptEvaluationReEvalAssetFingerprint{
+		CandidateID: uuidToString(candidateID),
+		Request:     req,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to fingerprint skill re-eval asset request")
+		return
+	}
+	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	requestActorID := parseUUID(userID)
+	if replay, found, err := h.loadPromptEvaluationReEvalAssetReplay(
+		r.Context(), workspaceUUID, requestActorID, idempotencyKey, requestHash,
+	); err != nil {
+		writePromptEvaluationReEvalAssetReplayError(w, err)
+		return
+	} else if found {
+		writeJSON(w, http.StatusCreated, replay)
+		return
+	}
 	candidate, ok := loadPromptEvaluationOptimizationCandidate(w, r, h.Queries, workspaceUUID, candidateID)
 	if !ok {
 		return
@@ -538,11 +565,6 @@ func (h *Handler) PreparePromptEvaluationSkillReEvalAsset(w http.ResponseWriter,
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "failed to load source prompt evaluation asset")
-		return
-	}
-	var req PreparePromptEvaluationSkillReEvalRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err.Error() != "EOF" {
-		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 	skillPatch := skillPatchFromCandidate(candidate)
@@ -621,7 +643,31 @@ func (h *Handler) PreparePromptEvaluationSkillReEvalAsset(w http.ResponseWriter,
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
-	asset, err := qtx.CreatePromptEvaluationAsset(r.Context(), db.CreatePromptEvaluationAssetParams{
+	_, err = qtx.ReserveResourceCreateRequest(r.Context(), db.ReserveResourceCreateRequestParams{
+		WorkspaceID: workspaceUUID, ActorID: requestActorID, ResourceType: resourceTypePromptReEvalAsset,
+		IdempotencyKey: idempotencyKey, RequestHash: requestHash,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		_ = tx.Rollback(r.Context())
+		replay, found, replayErr := h.loadPromptEvaluationReEvalAssetReplay(
+			r.Context(), workspaceUUID, requestActorID, idempotencyKey, requestHash,
+		)
+		if replayErr != nil || !found {
+			if replayErr == nil {
+				replayErr = errors.New("skill re-eval asset replay disappeared after conflict")
+			}
+			writePromptEvaluationReEvalAssetReplayError(w, replayErr)
+			return
+		}
+		writeJSON(w, http.StatusCreated, replay)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reserve skill re-eval asset request")
+		return
+	}
+	asset, err := qtx.CreatePromptEvaluationAssetWithID(r.Context(), db.CreatePromptEvaluationAssetWithIDParams{
+		ID:                       idempotencyKey,
 		WorkspaceID:              workspaceUUID,
 		PromptID:                 candidate.PromptID,
 		Name:                     name,
@@ -629,7 +675,7 @@ func (h *Handler) PreparePromptEvaluationSkillReEvalAsset(w http.ResponseWriter,
 		AssetType:                promptEvaluationAssetTestSuite,
 		Payload:                  mustJSONBytes(payload),
 		Status:                   "启用",
-		CreatedBy:                parseUUID(userID),
+		CreatedBy:                requestActorID,
 		StructureSchema:          profile.StructureSchema,
 		StructuredCaseCount:      profile.StructuredCaseCount,
 		StructuredVariableCount:  profile.StructuredVariableCount,
@@ -647,7 +693,7 @@ func (h *Handler) PreparePromptEvaluationSkillReEvalAsset(w http.ResponseWriter,
 		writeError(w, http.StatusInternalServerError, "failed to create skill re-eval asset")
 		return
 	}
-	if ok := h.syncPromptEvaluationCasesFromPayload(w, r, qtx, asset, parseUUID(userID)); !ok {
+	if ok := h.syncPromptEvaluationCasesFromPayload(w, r, qtx, asset, requestActorID); !ok {
 		return
 	}
 	reEvalPlan := map[string]any{
@@ -669,11 +715,7 @@ func (h *Handler) PreparePromptEvaluationSkillReEvalAsset(w http.ResponseWriter,
 		writeError(w, http.StatusInternalServerError, "failed to persist skill re-eval evidence")
 		return
 	}
-	if err := tx.Commit(r.Context()); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to commit skill re-eval asset")
-		return
-	}
-	writeJSON(w, http.StatusCreated, PromptEvaluationSkillReEvalAssetResponse{
+	response := PromptEvaluationSkillReEvalAssetResponse{
 		Candidate:      promptEvaluationOptimizationCandidateToResponse(updatedCandidate),
 		Asset:          promptEvaluationAssetToResponse(asset),
 		SourceSnapshot: *sourceSnapshot,
@@ -681,7 +723,28 @@ func (h *Handler) PreparePromptEvaluationSkillReEvalAsset(w http.ResponseWriter,
 		CaseCount:      len(cases),
 		Cases:          cases,
 		ReEvalPlan:     reEvalPlan,
-	})
+	}
+	responseBody, err := json.Marshal(response)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to encode skill re-eval asset response")
+		return
+	}
+	if err := json.Unmarshal(responseBody, &response); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to normalize skill re-eval asset response")
+		return
+	}
+	if err := completeResourceCreateRequest(
+		r.Context(), qtx, workspaceUUID, requestActorID, resourceTypePromptReEvalAsset,
+		idempotencyKey, requestHash, asset.ID, response,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to complete skill re-eval asset request")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit skill re-eval asset")
+		return
+	}
+	writeJSON(w, http.StatusCreated, response)
 }
 
 func (h *Handler) RunPromptEvaluationSkillReEval(w http.ResponseWriter, r *http.Request) {
