@@ -62,7 +62,7 @@ function isGongfengURL(url: string): boolean {
   try {
     return new URL(url).hostname === "git.code.tencent.com";
   } catch {
-    return url.includes("git.code.tencent.com");
+    return false;
   }
 }
 
