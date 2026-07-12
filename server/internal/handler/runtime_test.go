@@ -13,6 +13,21 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
+func TestRuntimeToResponseRejectsNonObjectMetadata(t *testing.T) {
+	for _, raw := range [][]byte{nil, []byte(`null`), []byte(`[]`), []byte(`"string"`)} {
+		if _, err := runtimeToResponse(db.AgentRuntime{Metadata: raw}); err == nil {
+			t.Fatalf("runtimeToResponse metadata=%s expected an error", raw)
+		}
+	}
+	response, err := runtimeToResponse(db.AgentRuntime{Metadata: []byte(`{"version":"1.2.3"}`)})
+	if err != nil {
+		t.Fatalf("runtimeToResponse object metadata: %v", err)
+	}
+	if response.Metadata["version"] != "1.2.3" {
+		t.Fatalf("metadata = %#v", response.Metadata)
+	}
+}
+
 func TestRuntimeHandlersRejectMalformedRuntimeID(t *testing.T) {
 	tests := []struct {
 		name   string
