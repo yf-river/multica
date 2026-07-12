@@ -190,7 +190,7 @@ func (h *Handler) CreateAgentPlaygroundExperiment(w http.ResponseWriter, r *http
 		}
 		agent, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{ID: agentID, WorkspaceID: workspaceUUID})
 		if err != nil {
-			writeError(w, http.StatusNotFound, "agent not found")
+			writeEntityLoadError(w, r, err, "agent", "agent_id", canonicalAgentID)
 			return
 		}
 		if agent.ArchivedAt.Valid {
@@ -233,7 +233,7 @@ func (h *Handler) CreateAgentPlaygroundExperiment(w http.ResponseWriter, r *http
 		DatasetAssetID: parsedAssetID,
 		ID:             parsedVersionID,
 	}); err != nil {
-		writeError(w, http.StatusNotFound, "dataset version not found")
+		writeEntityLoadError(w, r, err, "dataset version", "dataset_asset_id", req.DatasetAssetID, "dataset_version_id", req.DatasetVersionID)
 		return
 	}
 	rows, err := h.Queries.ListPromptEvaluationDatasetVersionRows(r.Context(), db.ListPromptEvaluationDatasetVersionRowsParams{
@@ -263,7 +263,7 @@ func (h *Handler) CreateAgentPlaygroundExperiment(w http.ResponseWriter, r *http
 		}
 		judgeAgent, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{ID: parsedJudgeID, WorkspaceID: workspaceUUID})
 		if err != nil {
-			writeError(w, http.StatusNotFound, "judge agent not found")
+			writeEntityLoadError(w, r, err, "judge agent", "agent_id", req.JudgeAgentID)
 			return
 		}
 		if !h.canAccessPersonalAgent(r.Context(), judgeAgent, actorType, actorID, workspaceID) {
