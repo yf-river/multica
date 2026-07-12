@@ -88,15 +88,9 @@ func (s *LocalStorage) KeyFromURL(rawURL string) string {
 // components) and refuses the sidecar suffix so /content can't be coaxed
 // into leaking the .meta.json blob.
 func (s *LocalStorage) GetReader(ctx context.Context, key string) (io.ReadCloser, error) {
-	if key == "" {
-		return nil, fmt.Errorf("local GetReader: empty key")
-	}
-	if strings.HasSuffix(key, metaSuffix) {
-		return nil, fmt.Errorf("local GetReader: refusing to serve sidecar key %q", key)
-	}
-	filePath := filepath.Join(s.uploadDir, key)
-	if !isUnder(s.uploadDir, filePath) {
-		return nil, fmt.Errorf("local GetReader: key escapes upload dir: %q", key)
+	filePath, err := s.objectPath(key)
+	if err != nil {
+		return nil, fmt.Errorf("local GetReader: %w", err)
 	}
 	f, err := os.Open(filePath)
 	if err != nil {
@@ -109,8 +103,11 @@ func (s *LocalStorage) Delete(ctx context.Context, key string) error {
 	if key == "" {
 		return nil
 	}
+	filePath, err := s.objectPath(key)
+	if err != nil {
+		return fmt.Errorf("local Delete: %w", err)
+	}
 	var deleteErr error
-	filePath := filepath.Join(s.uploadDir, key)
 	if err := os.Remove(filePath); err != nil {
 		if !os.IsNotExist(err) {
 			deleteErr = fmt.Errorf("remove object: %w", err)
@@ -131,23 +128,31 @@ func (s *LocalStorage) DeleteKeys(ctx context.Context, keys []string) {
 }
 
 func (s *LocalStorage) Upload(ctx context.Context, key string, data []byte, contentType string, filename string) (string, error) {
-	dest := filepath.Join(s.uploadDir, key)
+	dest, err := s.objectPath(key)
+	if err != nil {
+		return "", fmt.Errorf("local Upload: %w", err)
+	}
 	if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
 		return "", fmt.Errorf("local storage MkdirAll: %w", err)
+	}
+	// Revalidate after creating nested directories so a pre-existing symlinked
+	// parent cannot redirect the write outside uploadDir.
+	dest, err = s.objectPath(key)
+	if err != nil {
+		return "", fmt.Errorf("local Upload: %w", err)
 	}
 	if err := os.WriteFile(dest, data, 0644); err != nil {
 		return "", fmt.Errorf("local storage WriteFile: %w", err)
 	}
-	// Best-effort sidecar so ServeFile can restore the original filename in
-	// Content-Disposition. A failure here is logged but does not fail the
-	// upload — the file is still usable, just without the human-readable
-	// download name. Skip when there's no filename to preserve: a sidecar
-	// without a filename is dead weight, since ServeFile only reads it for
-	// that field.
+	// The sidecar and object form one upload result. If metadata cannot be
+	// persisted, remove the just-written object and fail instead of returning a
+	// URL whose download name/content type no longer matches the request. Skip
+	// the sidecar only when there is no filename to preserve.
 	if filename != "" {
 		body, _ := json.Marshal(localMeta{Filename: filename, ContentType: contentType})
 		if err := os.WriteFile(dest+metaSuffix, body, 0644); err != nil {
-			slog.Error("local storage meta write failed", "key", key, "error", err)
+			cleanupErr := os.Remove(dest)
+			return "", errors.Join(fmt.Errorf("local storage metadata WriteFile: %w", err), cleanupErr)
 		}
 	}
 
@@ -155,10 +160,6 @@ func (s *LocalStorage) Upload(ctx context.Context, key string, data []byte, cont
 		return fmt.Sprintf("%s/uploads/%s", s.baseURL, key), nil
 	}
 	return fmt.Sprintf("/uploads/%s", key), nil
-}
-
-func (s *LocalStorage) GetFilePath(key string) string {
-	return filepath.Join(s.uploadDir, key)
 }
 
 func (s *LocalStorage) ServeFile(w http.ResponseWriter, r *http.Request, filename string) {
@@ -171,13 +172,13 @@ func (s *LocalStorage) ServeFile(w http.ResponseWriter, r *http.Request, filenam
 		return
 	}
 
-	filePath := filepath.Join(s.uploadDir, filename)
+	filePath, err := s.objectPath(filename)
 	// filepath.Join cleans the path but doesn't enforce containment, so a
 	// caller passing "../etc/passwd" lands outside uploadDir. http.ServeFile
 	// rejects such requests on r.URL.Path, but readLocalMeta runs first —
 	// without this guard a crafted path could trigger a stray disk read on
 	// an arbitrary <some-path>.meta.json before the 400 lands.
-	if !isUnder(s.uploadDir, filePath) {
+	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
@@ -196,6 +197,42 @@ func (s *LocalStorage) ServeFile(w http.ResponseWriter, r *http.Request, filenam
 	// Use http.ServeFile which has built-in path traversal protection
 	// It sanitizes the path and prevents access outside the directory
 	http.ServeFile(w, r, filePath)
+}
+
+// objectPath is the single key-to-filesystem boundary for local storage.
+// Object keys may contain nested directories but must never address the
+// metadata sidecar or escape uploadDir.
+func (s *LocalStorage) objectPath(key string) (string, error) {
+	if strings.TrimSpace(key) == "" {
+		return "", errors.New("empty key")
+	}
+	if strings.HasSuffix(key, metaSuffix) {
+		return "", fmt.Errorf("refusing sidecar key %q", key)
+	}
+	filePath := filepath.Join(s.uploadDir, key)
+	if filepath.IsAbs(key) || !isUnder(s.uploadDir, filePath) {
+		return "", fmt.Errorf("key escapes upload dir: %q", key)
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(s.uploadDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve upload dir: %w", err)
+	}
+	resolvedParent, err := filepath.EvalSymlinks(filepath.Dir(filePath))
+	if err == nil {
+		if !isUnder(resolvedRoot, resolvedParent) {
+			return "", fmt.Errorf("key traverses symlink outside upload dir: %q", key)
+		}
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("resolve key parent: %w", err)
+	}
+	if info, err := os.Lstat(filePath); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("refusing symlink object key %q", key)
+		}
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("inspect key: %w", err)
+	}
+	return filePath, nil
 }
 
 // isUnder reports whether target resolves to a path inside dir (or equal to

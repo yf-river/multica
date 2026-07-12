@@ -111,6 +111,86 @@ func TestLocalStorage_Delete(t *testing.T) {
 	}
 }
 
+func TestLocalStorage_WriteAndDeleteRejectTraversal(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("LOCAL_UPLOAD_DIR", tmpDir)
+	store := NewLocalStorageFromEnv()
+	if store == nil {
+		t.Fatal("NewLocalStorageFromEnv returned nil")
+	}
+	outside := filepath.Join(filepath.Dir(tmpDir), "outside-"+filepath.Base(tmpDir)+".txt")
+	t.Cleanup(func() { _ = os.Remove(outside) })
+	if _, err := store.Upload(context.Background(), "../"+filepath.Base(outside), []byte("leak"), "text/plain", "leak.txt"); err == nil {
+		t.Fatal("traversal upload was accepted")
+	}
+	if _, err := os.Stat(outside); !os.IsNotExist(err) {
+		t.Fatalf("traversal upload touched %s: %v", outside, err)
+	}
+	if err := os.WriteFile(outside, []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Delete(context.Background(), "../"+filepath.Base(outside)); err == nil {
+		t.Fatal("traversal delete was accepted")
+	}
+	if body, err := os.ReadFile(outside); err != nil || string(body) != "keep" {
+		t.Fatalf("outside file changed: body=%q err=%v", body, err)
+	}
+}
+
+func TestLocalStorage_UploadRollsBackWhenMetadataWriteFails(t *testing.T) {
+	tmpDir := t.TempDir()
+	t.Setenv("LOCAL_UPLOAD_DIR", tmpDir)
+	store := NewLocalStorageFromEnv()
+	if store == nil {
+		t.Fatal("NewLocalStorageFromEnv returned nil")
+	}
+	key := "metadata-failure.txt"
+	if err := os.Mkdir(filepath.Join(tmpDir, key+metaSuffix), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Upload(context.Background(), key, []byte("body"), "text/plain", "report.txt"); err == nil {
+		t.Fatal("metadata failure returned upload success")
+	}
+	if _, err := os.Stat(filepath.Join(tmpDir, key)); !os.IsNotExist(err) {
+		t.Fatalf("object was not rolled back: %v", err)
+	}
+}
+
+func TestLocalStorage_RejectsSymlinkEscape(t *testing.T) {
+	uploadDir := t.TempDir()
+	outsideDir := t.TempDir()
+	t.Setenv("LOCAL_UPLOAD_DIR", uploadDir)
+	store := NewLocalStorageFromEnv()
+	if store == nil {
+		t.Fatal("NewLocalStorageFromEnv returned nil")
+	}
+	if err := os.Symlink(outsideDir, filepath.Join(uploadDir, "escape")); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, err := store.Upload(context.Background(), "escape/leak.txt", []byte("leak"), "text/plain", "leak.txt"); err == nil {
+		t.Fatal("symlinked-parent upload was accepted")
+	}
+	if _, err := os.Stat(filepath.Join(outsideDir, "leak.txt")); !os.IsNotExist(err) {
+		t.Fatalf("symlink upload touched outside path: %v", err)
+	}
+	outsideFile := filepath.Join(outsideDir, "secret.txt")
+	if err := os.WriteFile(outsideFile, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outsideFile, filepath.Join(uploadDir, "secret-link")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.GetReader(context.Background(), "secret-link"); err == nil {
+		t.Fatal("symlink object read was accepted")
+	}
+	if err := store.Delete(context.Background(), "secret-link"); err == nil {
+		t.Fatal("symlink object delete was accepted")
+	}
+	if body, err := os.ReadFile(outsideFile); err != nil || string(body) != "secret" {
+		t.Fatalf("outside target changed: body=%q err=%v", body, err)
+	}
+}
+
 func TestLocalStorage_KeyFromURL(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("LOCAL_UPLOAD_DIR", tmpDir)
