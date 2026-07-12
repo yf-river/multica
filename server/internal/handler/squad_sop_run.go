@@ -61,7 +61,7 @@ type SquadSOPEventResponse struct {
 	Metrics       map[string]any `json:"metrics"`
 }
 
-type SOPStageMetricResponse struct {
+type sopStageMetricResponse struct {
 	StepKey          string `json:"step_key"`
 	StepName         string `json:"step_name"`
 	RoleKey          string `json:"role_key"`
@@ -151,9 +151,9 @@ func (h *Handler) squadSOPRunToResponseWithStageMetrics(ctx context.Context, run
 	return resp, nil
 }
 
-func (h *Handler) buildSOPStageMetrics(ctx context.Context, profile []byte, events []SquadSOPEventResponse) ([]SOPStageMetricResponse, error) {
+func (h *Handler) buildSOPStageMetrics(ctx context.Context, profile []byte, events []SquadSOPEventResponse) ([]sopStageMetricResponse, error) {
 	type stageAccumulator struct {
-		metric SOPStageMetricResponse
+		metric sopStageMetricResponse
 		tasks  map[string]struct{}
 	}
 	steps := sopProfileStepsForHandler(profile)
@@ -170,7 +170,7 @@ func (h *Handler) buildSOPStageMetrics(ctx context.Context, profile []byte, even
 			return acc
 		}
 		acc := &stageAccumulator{
-			metric: SOPStageMetricResponse{
+			metric: sopStageMetricResponse{
 				StepKey:  stepKey,
 				StepName: stepName,
 				RoleKey:  roleKey,
@@ -230,7 +230,7 @@ func (h *Handler) buildSOPStageMetrics(ctx context.Context, profile []byte, even
 			}
 		}
 	}
-	out := make([]SOPStageMetricResponse, 0, len(accs))
+	out := make([]sopStageMetricResponse, 0, len(accs))
 	for _, acc := range accs {
 		out = append(out, acc.metric)
 	}
@@ -566,23 +566,6 @@ type observabilityUsageBreakdown struct {
 	HasPrice         bool
 }
 
-type observabilitySOPStageMetric struct {
-	StepKey          string `json:"step_key"`
-	StepName         string `json:"step_name"`
-	RoleKey          string `json:"role_key"`
-	Status           string `json:"status"`
-	DurationMs       int64  `json:"duration_ms"`
-	EventCount       int    `json:"event_count"`
-	EvidenceCount    int    `json:"evidence_count"`
-	TaskCount        int    `json:"task_count"`
-	MessageCount     int    `json:"message_count"`
-	AgentTurnCount   int    `json:"agent_turn_count"`
-	InputTokens      int64  `json:"input_tokens"`
-	OutputTokens     int64  `json:"output_tokens"`
-	CacheReadTokens  int64  `json:"cache_read_tokens"`
-	CacheWriteTokens int64  `json:"cache_write_tokens"`
-}
-
 func buildObservabilitySummary(
 	runs []db.SquadSopRun,
 	events []db.SquadSopStepEvent,
@@ -750,9 +733,9 @@ func buildObservabilitySOPStageBreakdown(
 	events []db.SquadSopStepEvent,
 	usageTracesByTask map[string][]db.TaskTraceEvent,
 	taskMessages map[string][]db.TaskMessage,
-) []observabilitySOPStageMetric {
+) []sopStageMetricResponse {
 	type stageAccumulator struct {
-		metric observabilitySOPStageMetric
+		metric sopStageMetricResponse
 		tasks  map[string]struct{}
 	}
 	accs := make([]*stageAccumulator, 0)
@@ -772,7 +755,7 @@ func buildObservabilitySOPStageBreakdown(
 			return existing
 		}
 		acc := &stageAccumulator{
-			metric: observabilitySOPStageMetric{
+			metric: sopStageMetricResponse{
 				StepKey:  stepKey,
 				StepName: strings.TrimSpace(stepName),
 				RoleKey:  strings.TrimSpace(roleKey),
@@ -821,7 +804,7 @@ func buildObservabilitySOPStageBreakdown(
 			}
 		}
 	}
-	result := make([]observabilitySOPStageMetric, 0, len(accs))
+	result := make([]sopStageMetricResponse, 0, len(accs))
 	for _, acc := range accs {
 		result = append(result, acc.metric)
 	}
