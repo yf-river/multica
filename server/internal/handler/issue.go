@@ -653,8 +653,13 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		assigneeID = id
 	}
 
-	if status, msg := h.validateAssigneePair(r.Context(), r, workspaceID, assigneeType, assigneeID); status != 0 {
-		writeError(w, status, msg)
+	assigneeStatus, msg, err := h.validateAssigneePair(r.Context(), r, workspaceID, assigneeType, assigneeID)
+	if err != nil {
+		writeAssigneeValidationError(w, r, err)
+		return
+	}
+	if assigneeStatus != 0 {
+		writeError(w, assigneeStatus, msg)
 		return
 	}
 
@@ -1042,7 +1047,12 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	_, touchedType := rawFields["assignee_type"]
 	_, touchedID := rawFields["assignee_id"]
 	if touchedType || touchedID {
-		if status, msg := h.validateAssigneePair(r.Context(), r, workspaceID, params.AssigneeType, params.AssigneeID); status != 0 {
+		status, msg, err := h.validateAssigneePair(r.Context(), r, workspaceID, params.AssigneeType, params.AssigneeID)
+		if err != nil {
+			writeAssigneeValidationError(w, r, err)
+			return
+		}
+		if status != 0 {
 			writeError(w, status, msg)
 			return
 		}
@@ -1359,19 +1369,28 @@ func (h *Handler) publishIssueUpdateTaskProjection(ctx context.Context, projecti
 //
 // Returns (statusCode, errorMessage). statusCode == 0 means the pair is valid;
 // callers should treat any non-zero status as a rejection and surface it back
-// to the client.
-func (h *Handler) validateAssigneePair(ctx context.Context, r *http.Request, workspaceID string, assigneeType pgtype.Text, assigneeID pgtype.UUID) (int, string) {
+// to the client. A non-nil error is an infrastructure failure, not invalid
+// user input.
+func writeAssigneeValidationError(w http.ResponseWriter, r *http.Request, err error) {
+	if writeClientClosedIfCanceled(w, err) {
+		return
+	}
+	slog.Error("assignee validation failed", append(logger.RequestAttrs(r), "error", err)...)
+	writeError(w, http.StatusInternalServerError, "failed to validate assignee")
+}
+
+func (h *Handler) validateAssigneePair(ctx context.Context, r *http.Request, workspaceID string, assigneeType pgtype.Text, assigneeID pgtype.UUID) (int, string, error) {
 	// Both unset → unassigned issue, valid.
 	if !assigneeType.Valid && !assigneeID.Valid {
-		return 0, ""
+		return 0, "", nil
 	}
 	// Exactly one of type/id provided → callers must always pair them.
 	if assigneeType.Valid != assigneeID.Valid {
-		return http.StatusBadRequest, "assignee_type and assignee_id must be provided together"
+		return http.StatusBadRequest, "assignee_type and assignee_id must be provided together", nil
 	}
 	wsUUID, err := util.ParseUUID(workspaceID)
 	if err != nil {
-		return http.StatusBadRequest, "invalid workspace_id"
+		return http.StatusBadRequest, "invalid workspace_id", nil
 	}
 	switch assigneeType.String {
 	case "member":
@@ -1379,50 +1398,77 @@ func (h *Handler) validateAssigneePair(ctx context.Context, r *http.Request, wor
 			UserID:      assigneeID,
 			WorkspaceID: wsUUID,
 		}); err != nil {
-			return http.StatusBadRequest, "assignee_id does not refer to a member of this workspace"
+			if errors.Is(err, pgx.ErrNoRows) {
+				return http.StatusBadRequest, "assignee_id does not refer to a member of this workspace", nil
+			}
+			return 0, "", fmt.Errorf("validate member assignee: %w", err)
 		}
-		return 0, ""
+		return 0, "", nil
 	case "agent":
 		agent, err := h.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
 			ID:          assigneeID,
 			WorkspaceID: wsUUID,
 		})
 		if err != nil {
-			return http.StatusBadRequest, "assignee_id does not refer to an agent of this workspace"
+			if errors.Is(err, pgx.ErrNoRows) {
+				return http.StatusBadRequest, "assignee_id does not refer to an agent of this workspace", nil
+			}
+			return 0, "", fmt.Errorf("validate agent assignee: %w", err)
 		}
 		if agent.ArchivedAt.Valid {
-			return http.StatusBadRequest, "cannot assign to archived agent"
+			return http.StatusBadRequest, "cannot assign to archived agent", nil
 		}
 		actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
-		if !h.canAccessPersonalAgent(ctx, agent, actorType, actorID, workspaceID) {
-			return http.StatusForbidden, "cannot assign to personal agent"
+		allowed, err := h.personalAgentAccess(ctx, agent, actorType, actorID, workspaceID)
+		if err != nil {
+			return 0, "", fmt.Errorf("authorize agent assignee: %w", err)
 		}
-		return 0, ""
+		if !allowed {
+			return http.StatusForbidden, "cannot assign to personal agent", nil
+		}
+		return 0, "", nil
 	case "squad":
 		squad, err := h.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
 			ID:          assigneeID,
 			WorkspaceID: wsUUID,
 		})
 		if err != nil {
-			return http.StatusBadRequest, "assignee_id does not refer to a squad in this workspace"
+			if errors.Is(err, pgx.ErrNoRows) {
+				return http.StatusBadRequest, "assignee_id does not refer to a squad in this workspace", nil
+			}
+			return 0, "", fmt.Errorf("validate squad assignee: %w", err)
 		}
 		if squad.ArchivedAt.Valid {
-			return http.StatusBadRequest, "cannot assign to an archived squad"
+			return http.StatusBadRequest, "cannot assign to an archived squad", nil
 		}
 		actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
-		if !h.canUseSquad(ctx, squad, actorType, actorID, workspaceID) {
-			return http.StatusForbidden, "cannot assign to personal squad"
+		allowed, err := h.squadAccess(ctx, squad, actorType, actorID, workspaceID)
+		if err != nil {
+			return 0, "", fmt.Errorf("authorize squad assignee: %w", err)
+		}
+		if !allowed {
+			return http.StatusForbidden, "cannot assign to personal squad", nil
 		}
 		leader, err := h.Queries.GetAgent(ctx, squad.LeaderID)
-		if err != nil || leader.ArchivedAt.Valid {
-			return http.StatusBadRequest, "squad leader is archived; cannot assign to this squad"
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return http.StatusBadRequest, "squad leader is archived; cannot assign to this squad", nil
+			}
+			return 0, "", fmt.Errorf("validate squad leader assignee: %w", err)
 		}
-		if !h.canAccessPersonalAgent(ctx, leader, actorType, actorID, workspaceID) {
-			return http.StatusForbidden, "cannot assign to squad with personal leader"
+		if leader.ArchivedAt.Valid {
+			return http.StatusBadRequest, "squad leader is archived; cannot assign to this squad", nil
 		}
-		return 0, ""
+		allowed, err = h.personalAgentAccess(ctx, leader, actorType, actorID, workspaceID)
+		if err != nil {
+			return 0, "", fmt.Errorf("authorize squad leader assignee: %w", err)
+		}
+		if !allowed {
+			return http.StatusForbidden, "cannot assign to squad with personal leader", nil
+		}
+		return 0, "", nil
 	default:
-		return http.StatusBadRequest, "assignee_type must be 'member', 'agent', or 'squad'"
+		return http.StatusBadRequest, "assignee_type must be 'member', 'agent', or 'squad'", nil
 	}
 }
 

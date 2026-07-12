@@ -39,11 +39,6 @@ func normalizeSquadScope(value string) (string, bool) {
 // {agent.owner_id} ∪ workspace owner/admin members. Manual configuration of
 // allowed_principals is not exposed in v1; future work can extend this set
 // without changing call sites.
-func (h *Handler) canAccessPersonalAgent(ctx context.Context, agent db.Agent, actorType, actorID, workspaceID string) bool {
-	allowed, _ := h.personalAgentAccess(ctx, agent, actorType, actorID, workspaceID)
-	return allowed
-}
-
 func (h *Handler) personalAgentAccess(ctx context.Context, agent db.Agent, actorType, actorID, workspaceID string) (bool, error) {
 	if agent.Scope != scopePersonal {
 		return true, nil
@@ -82,7 +77,7 @@ func (h *Handler) requirePersonalAgentAccess(w http.ResponseWriter, r *http.Requ
 }
 
 // memberAllowedForPersonalAgent is the pure predicate used by both
-// canAccessPersonalAgent and the ListAgents filter loop. Caller must have
+// personalAgentAccess and the ListAgents filter loop. Caller must have
 // already confirmed agent.Scope == "personal".
 func memberAllowedForPersonalAgent(agent db.Agent, userID, role string) bool {
 	if roleAllowed(role, "owner", "admin") {
@@ -103,11 +98,6 @@ func memberCanUseSquad(squad db.Squad, member db.Member) bool {
 		return true
 	}
 	return memberCanManageSquad(squad, member)
-}
-
-func (h *Handler) canUseSquad(ctx context.Context, squad db.Squad, actorType, actorID, workspaceID string) bool {
-	allowed, _ := h.squadAccess(ctx, squad, actorType, actorID, workspaceID)
-	return allowed
 }
 
 func (h *Handler) squadAccess(ctx context.Context, squad db.Squad, actorType, actorID, workspaceID string) (bool, error) {
@@ -149,6 +139,26 @@ func (h *Handler) squadAccess(ctx context.Context, squad db.Squad, actorType, ac
 	return memberCanManageSquad(squad, member), nil
 }
 
+func (h *Handler) requireSquadAccess(w http.ResponseWriter, r *http.Request, squad db.Squad, actorType, actorID, workspaceID string, deniedStatus int, deniedMessage string) bool {
+	allowed, err := h.squadAccess(r.Context(), squad, actorType, actorID, workspaceID)
+	if err == nil {
+		if !allowed {
+			writeError(w, deniedStatus, deniedMessage)
+		}
+		return allowed
+	}
+	if writeClientClosedIfCanceled(w, err) {
+		return false
+	}
+	if errors.Is(err, pgx.ErrNoRows) || errors.Is(err, errInvalidWorkspaceMemberIdentity) {
+		writeError(w, deniedStatus, deniedMessage)
+		return false
+	}
+	slog.Error("squad access lookup failed", "squad_id", uuidToString(squad.ID), "workspace_id", workspaceID, "actor_type", actorType, "actor_id", actorID, "error", err)
+	writeError(w, http.StatusInternalServerError, "failed to verify squad access")
+	return false
+}
+
 // accessibleAgentIDs returns the set of agent IDs in the workspace the actor
 // is allowed to see, for use by workspace-wide aggregation endpoints
 // (run counts, activity histograms, task snapshots) that need to filter out
@@ -176,15 +186,18 @@ func (h *Handler) accessibleAgentIDs(ctx context.Context, workspaceID, actorType
 
 // canEnqueueSquadLeader returns true when the given actor is allowed to
 // trigger the squad's personal leader. It loads the leader agent and delegates
-// to canAccessPersonalAgent. Workspace leaders always pass. System-initiated
+// to personalAgentAccess. Workspace leaders always pass. System-initiated
 // triggers (e.g. github webhooks) pass by treating "system" like "agent".
-func (h *Handler) canEnqueueSquadLeader(ctx context.Context, leaderID pgtype.UUID, actorType, actorID, workspaceID string) bool {
+func (h *Handler) canEnqueueSquadLeader(ctx context.Context, leaderID pgtype.UUID, actorType, actorID, workspaceID string) (bool, error) {
 	agent, err := h.Queries.GetAgent(ctx, leaderID)
 	if err != nil {
-		return false
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("load squad leader for enqueue access: %w", err)
 	}
 	if actorType == "system" {
 		actorType = "agent"
 	}
-	return h.canAccessPersonalAgent(ctx, agent, actorType, actorID, workspaceID)
+	return h.personalAgentAccess(ctx, agent, actorType, actorID, workspaceID)
 }

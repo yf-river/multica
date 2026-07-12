@@ -290,8 +290,7 @@ func (h *Handler) validateAutopilotAssignee(w http.ResponseWriter, r *http.Reque
 			return false
 		}
 		actorType, actorID := h.resolveActor(r, requestUserID(r), util.UUIDToString(workspaceID))
-		if !h.canUseSquad(r.Context(), squad, actorType, actorID, util.UUIDToString(workspaceID)) {
-			writeError(w, http.StatusForbidden, "cannot assign autopilot to personal squad")
+		if !h.requireSquadAccess(w, r, squad, actorType, actorID, util.UUIDToString(workspaceID), http.StatusForbidden, "cannot assign autopilot to personal squad") {
 			return false
 		}
 		leader, err := h.Queries.GetAgent(r.Context(), squad.LeaderID)

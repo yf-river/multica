@@ -94,12 +94,17 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 	// picks reach this with the resolved leader agent; the same rules
 	// apply — a personal leader behind a squad the user can't reach
 	// should still be rejected.
-	if status, msg := h.validateAssigneePair(
+	assigneeStatus, msg, err := h.validateAssigneePair(
 		r.Context(), r, workspaceID,
 		pgtype.Text{String: "agent", Valid: true},
 		agentUUID,
-	); status != 0 {
-		writeError(w, status, msg)
+	)
+	if err != nil {
+		writeAssigneeValidationError(w, r, err)
+		return
+	}
+	if assigneeStatus != 0 {
+		writeError(w, assigneeStatus, msg)
 		return
 	}
 
@@ -209,7 +214,12 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return
 		}
-		if statusCode, msg := h.validateAssigneePair(r.Context(), r, workspaceID, pgtype.Text{String: assigneeType, Valid: true}, parsed); statusCode != 0 {
+		statusCode, msg, err := h.validateAssigneePair(r.Context(), r, workspaceID, pgtype.Text{String: assigneeType, Valid: true}, parsed)
+		if err != nil {
+			writeAssigneeValidationError(w, r, err)
+			return
+		}
+		if statusCode != 0 {
 			writeError(w, statusCode, msg)
 			return
 		}

@@ -238,7 +238,12 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		_, batchTouchedType := rawUpdates["assignee_type"]
 		_, batchTouchedID := rawUpdates["assignee_id"]
 		if batchTouchedType || batchTouchedID {
-			if status, _ := h.validateAssigneePair(r.Context(), r, workspaceID, params.AssigneeType, params.AssigneeID); status != 0 {
+			status, _, err := h.validateAssigneePair(r.Context(), r, workspaceID, params.AssigneeType, params.AssigneeID)
+			if err != nil {
+				writeAssigneeValidationError(w, r, err)
+				return
+			}
+			if status != 0 {
 				recordFailure(issueID, "invalid_assignee")
 				continue
 			}
