@@ -392,31 +392,15 @@ const noteCommentPrefix = "/note"
 // "/note check expiry", "  /NOTE", and "/note" all match, while "/notes",
 // "/ note", and "see foo/note" do not.
 func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
-	commentId := chi.URLParam(r, "commentId")
-
 	userID, ok := requireUserID(w, r)
 	if !ok {
 		return
 	}
-	commentUUID, ok := parseUUIDOrBadRequest(w, commentId, "comment id")
+	existing, workspaceID, wsUUID, ok := h.loadCommentForRequest(w, r)
 	if !ok {
 		return
 	}
-
-	// Load comment scoped to current workspace.
-	workspaceID := h.resolveWorkspaceID(r)
-	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
-	if !ok {
-		return
-	}
-	existing, err := h.Queries.GetCommentInWorkspace(r.Context(), db.GetCommentInWorkspaceParams{
-		ID:          commentUUID,
-		WorkspaceID: wsUUID,
-	})
-	if err != nil {
-		writeError(w, http.StatusNotFound, "comment not found")
-		return
-	}
+	commentID := uuidToString(existing.ID)
 
 	member, ok := h.workspaceMember(w, r, workspaceID)
 	if !ok {
@@ -466,7 +450,7 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
-		slog.Warn("begin update comment transaction failed", append(logger.RequestAttrs(r), "error", err, "comment_id", commentId)...)
+		slog.Warn("begin update comment transaction failed", append(logger.RequestAttrs(r), "error", err, "comment_id", commentID)...)
 		writeError(w, http.StatusInternalServerError, "failed to update comment")
 		return
 	}
@@ -474,11 +458,11 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 	qtx := h.Queries.WithTx(tx)
 
 	comment, err := qtx.UpdateComment(r.Context(), db.UpdateCommentParams{
-		ID:      commentUUID,
+		ID:      existing.ID,
 		Content: req.Content,
 	})
 	if err != nil {
-		slog.Warn("update comment failed", append(logger.RequestAttrs(r), "error", err, "comment_id", commentId)...)
+		slog.Warn("update comment failed", append(logger.RequestAttrs(r), "error", err, "comment_id", commentID)...)
 		writeError(w, http.StatusInternalServerError, "failed to update comment")
 		return
 	}
@@ -494,7 +478,7 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		slog.Warn("update comment attachments failed", append(logger.RequestAttrs(r), "error", err, "comment_id", commentId)...)
+		slog.Warn("update comment attachments failed", append(logger.RequestAttrs(r), "error", err, "comment_id", commentID)...)
 		writeError(w, http.StatusInternalServerError, "failed to update comment")
 		return
 	}
@@ -515,7 +499,7 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 	if contentChanged {
 		cancelledTasks, cancelledEvents, err = h.TaskService.CancelTasksByTriggerCommentInTx(r.Context(), qtx, existing.ID)
 		if err != nil {
-			slog.Warn("cancel tasks for edited comment failed", append(logger.RequestAttrs(r), "comment_id", commentId, "error", err)...)
+			slog.Warn("cancel tasks for edited comment failed", append(logger.RequestAttrs(r), "comment_id", commentID, "error", err)...)
 			writeError(w, http.StatusInternalServerError, "failed to update comment")
 			return
 		}
@@ -527,7 +511,7 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 				WorkspaceID: wsUUID,
 			})
 			if err != nil {
-				slog.Warn("load parent comment for edit failed", append(logger.RequestAttrs(r), "comment_id", commentId, "error", err)...)
+				slog.Warn("load parent comment for edit failed", append(logger.RequestAttrs(r), "comment_id", commentID, "error", err)...)
 				writeError(w, http.StatusInternalServerError, "failed to update comment")
 				return
 			}
@@ -535,7 +519,7 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 		}
 		taskProjection, err = h.createCommentTaskProjectionInTx(r.Context(), qtx, issue, comment, parentComment, actorType, actorID, suppressAgentIDs, existing.ID)
 		if err != nil {
-			slog.Warn("create edited comment task projection failed", append(logger.RequestAttrs(r), "comment_id", commentId, "error", err)...)
+			slog.Warn("create edited comment task projection failed", append(logger.RequestAttrs(r), "comment_id", commentID, "error", err)...)
 			writeError(w, http.StatusInternalServerError, "failed to update comment")
 			return
 		}
@@ -546,17 +530,17 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 	updatedEvent := buildCommentUpdatedEvent(issue, resp, actorType, actorID)
 	updatedEvent, err = eventoutbox.Enqueue(r.Context(), qtx, updatedEvent)
 	if err != nil {
-		slog.Warn("enqueue comment-updated event failed", append(logger.RequestAttrs(r), "comment_id", commentId, "error", err)...)
+		slog.Warn("enqueue comment-updated event failed", append(logger.RequestAttrs(r), "comment_id", commentID, "error", err)...)
 		writeError(w, http.StatusInternalServerError, "failed to update comment")
 		return
 	}
 	if err := tx.Commit(r.Context()); err != nil {
-		slog.Warn("commit update comment transaction failed", append(logger.RequestAttrs(r), "error", err, "comment_id", commentId)...)
+		slog.Warn("commit update comment transaction failed", append(logger.RequestAttrs(r), "error", err, "comment_id", commentID)...)
 		writeError(w, http.StatusInternalServerError, "failed to update comment")
 		return
 	}
 
-	slog.Info("comment updated", append(logger.RequestAttrs(r), "comment_id", commentId)...)
+	slog.Info("comment updated", append(logger.RequestAttrs(r), "comment_id", commentID)...)
 	h.publishEvent(updatedEvent)
 	h.TaskService.PublishCancelledTasks(r.Context(), cancelledTasks, cancelledEvents)
 	h.publishCommentTaskProjection(r.Context(), taskProjection)
@@ -565,32 +549,15 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) DeleteComment(w http.ResponseWriter, r *http.Request) {
-	commentId := chi.URLParam(r, "commentId")
-
 	userID, ok := requireUserID(w, r)
 	if !ok {
 		return
 	}
-
-	commentUUID, ok := parseUUIDOrBadRequest(w, commentId, "comment id")
+	comment, workspaceID, _, ok := h.loadCommentForRequest(w, r)
 	if !ok {
 		return
 	}
-
-	// Load comment scoped to current workspace.
-	workspaceID := h.resolveWorkspaceID(r)
-	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
-	if !ok {
-		return
-	}
-	comment, err := h.Queries.GetCommentInWorkspace(r.Context(), db.GetCommentInWorkspaceParams{
-		ID:          commentUUID,
-		WorkspaceID: wsUUID,
-	})
-	if err != nil {
-		writeError(w, http.StatusNotFound, "comment not found")
-		return
-	}
+	commentID := uuidToString(comment.ID)
 
 	member, ok := h.workspaceMember(w, r, workspaceID)
 	if !ok {
@@ -608,14 +575,14 @@ func (h *Handler) DeleteComment(w http.ResponseWriter, r *http.Request) {
 	// Collect attachment URLs before CASCADE delete removes them.
 	attachmentURLs, err := h.Queries.ListAttachmentURLsByCommentID(r.Context(), comment.ID)
 	if err != nil {
-		slog.Warn("list deleted comment attachments failed", append(logger.RequestAttrs(r), "error", err, "comment_id", commentId)...)
+		slog.Warn("list deleted comment attachments failed", append(logger.RequestAttrs(r), "error", err, "comment_id", commentID)...)
 		writeError(w, http.StatusInternalServerError, "failed to delete comment")
 		return
 	}
 
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
-		slog.Warn("begin delete comment transaction failed", append(logger.RequestAttrs(r), "error", err, "comment_id", commentId)...)
+		slog.Warn("begin delete comment transaction failed", append(logger.RequestAttrs(r), "error", err, "comment_id", commentID)...)
 		writeError(w, http.StatusInternalServerError, "failed to delete comment")
 		return
 	}
@@ -624,7 +591,7 @@ func (h *Handler) DeleteComment(w http.ResponseWriter, r *http.Request) {
 
 	cancelledTasks, cancelledEvents, err := h.TaskService.CancelTasksByTriggerCommentInTx(r.Context(), qtx, comment.ID)
 	if err != nil {
-		slog.Warn("cancel tasks for deleted trigger comment failed", append(logger.RequestAttrs(r), "error", err, "comment_id", commentId)...)
+		slog.Warn("cancel tasks for deleted trigger comment failed", append(logger.RequestAttrs(r), "error", err, "comment_id", commentID)...)
 		writeError(w, http.StatusInternalServerError, "failed to delete comment")
 		return
 	}
@@ -633,28 +600,50 @@ func (h *Handler) DeleteComment(w http.ResponseWriter, r *http.Request) {
 		ID:          comment.ID,
 		WorkspaceID: comment.WorkspaceID,
 	}); err != nil {
-		slog.Warn("delete comment failed", append(logger.RequestAttrs(r), "error", err, "comment_id", commentId)...)
+		slog.Warn("delete comment failed", append(logger.RequestAttrs(r), "error", err, "comment_id", commentID)...)
 		writeError(w, http.StatusInternalServerError, "failed to delete comment")
 		return
 	}
 	deletedEvent := buildCommentDeletedEvent(comment, actorType, actorID)
 	deletedEvent, err = eventoutbox.Enqueue(r.Context(), qtx, deletedEvent)
 	if err != nil {
-		slog.Warn("enqueue comment-deleted event failed", append(logger.RequestAttrs(r), "error", err, "comment_id", commentId)...)
+		slog.Warn("enqueue comment-deleted event failed", append(logger.RequestAttrs(r), "error", err, "comment_id", commentID)...)
 		writeError(w, http.StatusInternalServerError, "failed to delete comment")
 		return
 	}
 	if err := tx.Commit(r.Context()); err != nil {
-		slog.Warn("commit delete comment transaction failed", append(logger.RequestAttrs(r), "error", err, "comment_id", commentId)...)
+		slog.Warn("commit delete comment transaction failed", append(logger.RequestAttrs(r), "error", err, "comment_id", commentID)...)
 		writeError(w, http.StatusInternalServerError, "failed to delete comment")
 		return
 	}
 
 	h.deleteStorageObjects(r.Context(), attachmentURLs)
-	slog.Info("comment deleted", append(logger.RequestAttrs(r), "comment_id", commentId, "issue_id", uuidToString(comment.IssueID))...)
+	slog.Info("comment deleted", append(logger.RequestAttrs(r), "comment_id", commentID, "issue_id", uuidToString(comment.IssueID))...)
 	h.TaskService.PublishCancelledTasks(r.Context(), cancelledTasks, cancelledEvents)
 	h.publishEvent(deletedEvent)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) loadCommentForRequest(w http.ResponseWriter, r *http.Request) (db.Comment, string, pgtype.UUID, bool) {
+	commentID := chi.URLParam(r, "commentId")
+	commentUUID, ok := parseUUIDOrBadRequest(w, commentID, "comment id")
+	if !ok {
+		return db.Comment{}, "", pgtype.UUID{}, false
+	}
+	workspaceID := h.resolveWorkspaceID(r)
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
+	if !ok {
+		return db.Comment{}, "", pgtype.UUID{}, false
+	}
+	comment, err := h.Queries.GetCommentInWorkspace(r.Context(), db.GetCommentInWorkspaceParams{
+		ID:          commentUUID,
+		WorkspaceID: workspaceUUID,
+	})
+	if err != nil {
+		writeEntityLoadError(w, r, err, "comment", "comment_id", commentID)
+		return db.Comment{}, "", pgtype.UUID{}, false
+	}
+	return comment, workspaceID, workspaceUUID, true
 }
 
 // loadCommentForActor resolves a {commentId} URL param to a comment in the
@@ -665,29 +654,15 @@ func (h *Handler) DeleteComment(w http.ResponseWriter, r *http.Request) {
 // a reply marks it as the thread's resolution. Which one is the thread's
 // resolution is a pure frontend derivation, so the backend stays a plain setter.
 func (h *Handler) loadCommentForActor(w http.ResponseWriter, r *http.Request) (db.Comment, string, string, string, bool) {
-	commentId := chi.URLParam(r, "commentId")
 	userID, ok := requireUserID(w, r)
 	if !ok {
 		return db.Comment{}, "", "", "", false
 	}
-	commentUUID, ok := parseUUIDOrBadRequest(w, commentId, "comment id")
-	if !ok {
-		return db.Comment{}, "", "", "", false
-	}
-	workspaceID := h.resolveWorkspaceID(r)
-	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
+	comment, workspaceID, _, ok := h.loadCommentForRequest(w, r)
 	if !ok {
 		return db.Comment{}, "", "", "", false
 	}
 	if _, ok := h.workspaceMember(w, r, workspaceID); !ok {
-		return db.Comment{}, "", "", "", false
-	}
-	comment, err := h.Queries.GetCommentInWorkspace(r.Context(), db.GetCommentInWorkspaceParams{
-		ID:          commentUUID,
-		WorkspaceID: wsUUID,
-	})
-	if err != nil {
-		writeError(w, http.StatusNotFound, "comment not found")
 		return db.Comment{}, "", "", "", false
 	}
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
