@@ -116,6 +116,11 @@ ORDER BY
   id ASC
 LIMIT COALESCE(sqlc.narg('limit')::int, 5000);
 
+-- name: NextPromptEvaluationCaseIndex :one
+SELECT (COALESCE(MAX(case_index), -1) + 1)::int
+FROM prompt_evaluation_case
+WHERE workspace_id = $1 AND asset_id = $2;
+
 -- name: CountPromptEvaluationCases :one
 SELECT count(*) FROM prompt_evaluation_case
 WHERE workspace_id = $1

@@ -38,6 +38,7 @@ const (
 	resourceTypeLabel                = "label"
 	resourceTypeProjectResource      = "project_resource"
 	resourceTypePromptEvalAsset      = "prompt_evaluation_asset"
+	resourceTypePromptEvalCase       = "prompt_evaluation_case"
 )
 
 var errResourceCreateIdempotencyConflict = errors.New("resource create idempotency conflict")

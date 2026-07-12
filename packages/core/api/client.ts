@@ -2265,14 +2265,22 @@ export class ApiClient extends ApiTransport {
     }) as ListPromptEvaluationCasesResponse;
   }
 
-  async createPromptEvaluationCase(data: CreatePromptEvaluationCaseRequest): Promise<PromptEvaluationStructuredCase> {
-    const raw = await this.fetch<unknown>("/api/prompt-evaluation-cases", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseOrThrow(raw, PromptEvaluationCaseSchema, EMPTY_PROMPT_EVALUATION_CASE, {
-      endpoint: "POST /api/prompt-evaluation-cases",
-    }) as PromptEvaluationStructuredCase;
+  async createPromptEvaluationCase(
+    data: CreatePromptEvaluationCaseRequest,
+    idempotencyKey = generateUUID(),
+  ): Promise<PromptEvaluationStructuredCase> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>("/api/prompt-evaluation-cases", {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow(raw, PromptEvaluationCaseSchema, EMPTY_PROMPT_EVALUATION_CASE, {
+        endpoint: "POST /api/prompt-evaluation-cases",
+        mayHaveCommitted: true,
+      }) as PromptEvaluationStructuredCase;
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async updatePromptEvaluationCase(id: string, data: UpdatePromptEvaluationCaseRequest): Promise<PromptEvaluationStructuredCase> {

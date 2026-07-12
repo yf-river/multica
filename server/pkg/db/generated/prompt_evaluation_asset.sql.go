@@ -322,6 +322,24 @@ func (q *Queries) ListPromptEvaluationAssets(ctx context.Context, arg ListPrompt
 	return items, nil
 }
 
+const lockPromptEvaluationAssetForCaseCreate = `-- name: LockPromptEvaluationAssetForCaseCreate :one
+SELECT id FROM prompt_evaluation_asset
+WHERE id = $1 AND workspace_id = $2
+FOR UPDATE
+`
+
+type LockPromptEvaluationAssetForCaseCreateParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) LockPromptEvaluationAssetForCaseCreate(ctx context.Context, arg LockPromptEvaluationAssetForCaseCreateParams) (pgtype.UUID, error) {
+	row := q.db.QueryRow(ctx, lockPromptEvaluationAssetForCaseCreate, arg.ID, arg.WorkspaceID)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const updatePromptEvaluationAsset = `-- name: UpdatePromptEvaluationAsset :one
 UPDATE prompt_evaluation_asset SET
     prompt_id = $3,

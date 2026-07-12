@@ -920,18 +920,7 @@ func (h *Handler) CreatePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	caseIndex := int32(0)
-	if req.CaseIndex != nil {
-		caseIndex = *req.CaseIndex
-	} else {
-		existing, err := h.Queries.ListPromptEvaluationCases(r.Context(), db.ListPromptEvaluationCasesParams{WorkspaceID: workspaceUUID, AssetID: asset.ID})
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to allocate prompt evaluation case index")
-			return
-		}
-		caseIndex = int32(len(existing))
-	}
-	if caseIndex < 0 {
+	if req.CaseIndex != nil && *req.CaseIndex < 0 {
 		writeError(w, http.StatusBadRequest, "case_index must be greater than or equal to 0")
 		return
 	}
@@ -943,6 +932,8 @@ func (h *Handler) CreatePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, promptEvaluationCaseStatusError())
 		return
 	}
+	req.Status = status
+	req.CaseName = strings.TrimSpace(req.CaseName)
 	variables, ok := jsonObjectBytesOrDefault(w, req.Variables, "variables", []byte("{}"))
 	if !ok {
 		return
@@ -963,6 +954,29 @@ func (h *Handler) CreatePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
+	actorID := parseUUID(userID)
+	requestHash, err := hashRequestFingerprint(req)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to fingerprint prompt evaluation case request")
+		return
+	}
+	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	replay, found, replayErr := loadResourceCreateReplay(
+		r.Context(), h.Queries, workspaceUUID, actorID, resourceTypePromptEvalCase,
+		idempotencyKey, requestHash,
+		func(response PromptEvaluationCaseResponse) bool { return response.ID != "" },
+	)
+	if replayErr != nil {
+		writePromptEvaluationCaseCreateReplayError(w, replayErr)
+		return
+	}
+	if found {
+		writeJSON(w, http.StatusCreated, replay)
+		return
+	}
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start prompt evaluation case transaction")
@@ -970,12 +984,55 @@ func (h *Handler) CreatePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
+	_, err = qtx.ReserveResourceCreateRequest(r.Context(), db.ReserveResourceCreateRequestParams{
+		WorkspaceID: workspaceUUID, ActorID: actorID, ResourceType: resourceTypePromptEvalCase,
+		IdempotencyKey: idempotencyKey, RequestHash: requestHash,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		_ = tx.Rollback(r.Context())
+		replay, found, replayErr = loadResourceCreateReplay(
+			r.Context(), h.Queries, workspaceUUID, actorID, resourceTypePromptEvalCase,
+			idempotencyKey, requestHash,
+			func(response PromptEvaluationCaseResponse) bool { return response.ID != "" },
+		)
+		if replayErr != nil || !found {
+			if replayErr == nil {
+				replayErr = errors.New("prompt evaluation case replay disappeared after conflict")
+			}
+			writePromptEvaluationCaseCreateReplayError(w, replayErr)
+			return
+		}
+		writeJSON(w, http.StatusCreated, replay)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reserve prompt evaluation case request")
+		return
+	}
+	if _, err := qtx.LockPromptEvaluationAssetForCaseCreate(r.Context(), db.LockPromptEvaluationAssetForCaseCreateParams{
+		ID: asset.ID, WorkspaceID: workspaceUUID,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to lock prompt evaluation asset")
+		return
+	}
+	caseIndex := int32(0)
+	if req.CaseIndex != nil {
+		caseIndex = *req.CaseIndex
+	} else {
+		caseIndex, err = qtx.NextPromptEvaluationCaseIndex(r.Context(), db.NextPromptEvaluationCaseIndexParams{
+			WorkspaceID: workspaceUUID, AssetID: asset.ID,
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to allocate prompt evaluation case index")
+			return
+		}
+	}
 	created, err := qtx.CreatePromptEvaluationCase(r.Context(), db.CreatePromptEvaluationCaseParams{
 		WorkspaceID:      workspaceUUID,
 		AssetID:          asset.ID,
 		PromptID:         promptID,
 		CaseIndex:        caseIndex,
-		CaseName:         strings.TrimSpace(req.CaseName),
+		CaseName:         req.CaseName,
 		Variables:        variables,
 		ExpectedContains: expectedContains,
 		Input:            input,
@@ -983,7 +1040,7 @@ func (h *Handler) CreatePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 		Tags:             tags,
 		Status:           status,
 		Source:           "manual",
-		CreatedBy:        parseUUID(userID),
+		CreatedBy:        actorID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create prompt evaluation case")
@@ -1002,11 +1059,30 @@ func (h *Handler) CreatePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, "failed to sync prompt evaluation test suite case")
 		return
 	}
+	response := promptEvaluationCaseToResponse(created, assertions)
+	if err := completeResourceCreateRequest(
+		r.Context(), qtx, workspaceUUID, actorID, resourceTypePromptEvalCase,
+		idempotencyKey, requestHash, created.ID, response,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to complete prompt evaluation case request")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit prompt evaluation case")
 		return
 	}
-	writeJSON(w, http.StatusCreated, promptEvaluationCaseToResponse(created, assertions))
+	writeJSON(w, http.StatusCreated, response)
+}
+
+func writePromptEvaluationCaseCreateReplayError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errResourceCreateIdempotencyConflict) {
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": "Idempotency-Key was already used with a different prompt evaluation case request",
+			"code":  "idempotency_conflict",
+		})
+		return
+	}
+	writeError(w, http.StatusInternalServerError, "failed to recover prompt evaluation case request")
 }
 
 func validPromptEvaluationCaseSortBy(value string) bool {
