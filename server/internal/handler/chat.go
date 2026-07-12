@@ -779,7 +779,12 @@ func (h *Handler) ListChatMessagesPage(w http.ResponseWriter, r *http.Request) {
 	for i, m := range messages {
 		messageIDs[i] = m.ID
 	}
-	groupedAtt := h.groupChatMessageAttachments(r.Context(), workspaceID, messageIDs)
+	groupedAtt, err := h.loadChatMessageAttachments(r.Context(), workspaceID, messageIDs)
+	if err != nil {
+		slog.Error("load chat message attachments failed", "error", err, "session_id", sessionID, "workspace_id", workspaceID)
+		writeError(w, http.StatusInternalServerError, "failed to list chat messages")
+		return
+	}
 
 	resp := make([]ChatMessageResponse, len(messages))
 	for i, m := range messages {
