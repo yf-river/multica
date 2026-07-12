@@ -135,3 +135,42 @@ func TestCreateSquad_MemberCanCreatePersonalSquad(t *testing.T) {
 		mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, created.ID)
 	})
 }
+
+func TestUpdateSquadValidationFailureDoesNotAddLeaderMembership(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	personalLeaderID := createHandlerTestAgent(t, "Atomic Squad Personal Leader", nil)
+	workspaceLeaderID := createHandlerTestAgent(t, "Atomic Squad Workspace Leader", nil)
+	mustExec(t, context.Background(), `UPDATE agent SET scope = 'workspace', owner_id = NULL WHERE id = $1`, workspaceLeaderID)
+
+	createW := httptest.NewRecorder()
+	createReq := withURLParam(newRequest(http.MethodPost, "/api/squads", map[string]any{
+		"name": "Atomic Squad Update", "leader_id": personalLeaderID, "scope": "personal",
+	}), "workspaceId", testWorkspaceID)
+	testHandler.CreateSquad(createW, createReq)
+	if createW.Code != http.StatusCreated {
+		t.Fatalf("create squad: %d %s", createW.Code, createW.Body.String())
+	}
+	var squad SquadResponse
+	if err := json.NewDecoder(createW.Body).Decode(&squad); err != nil {
+		t.Fatalf("decode squad: %v", err)
+	}
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, squad.ID) })
+
+	updateW := httptest.NewRecorder()
+	updateReq := withURLParams(newRequest(http.MethodPatch, "/api/squads/"+squad.ID, map[string]any{
+		"leader_id": workspaceLeaderID,
+	}), "workspaceId", testWorkspaceID, "id", squad.ID)
+	testHandler.UpdateSquad(updateW, updateReq)
+	if updateW.Code != http.StatusBadRequest {
+		t.Fatalf("update squad: expected 400, got %d: %s", updateW.Code, updateW.Body.String())
+	}
+	var membershipCount int
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*)::int FROM squad_member WHERE squad_id = $1 AND member_type = 'agent' AND member_id = $2`, squad.ID, workspaceLeaderID).Scan(&membershipCount); err != nil {
+		t.Fatalf("count rejected leader membership: %v", err)
+	}
+	if membershipCount != 0 {
+		t.Fatalf("validation failure left %d rejected leader memberships, want 0", membershipCount)
+	}
+}
