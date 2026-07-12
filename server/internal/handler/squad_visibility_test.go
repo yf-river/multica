@@ -3,10 +3,33 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
+
+func TestCreateSquadRejectsNonObjectSOPProfile(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	leaderID, memberID, _ := personalAgentTestFixture(t)
+	for i, profile := range []any{nil, []any{"stage"}, "profile"} {
+		name := fmt.Sprintf("invalid-sop-profile-%d-%d", time.Now().UnixNano(), i)
+		t.Cleanup(func() {
+			mustExec(t, context.Background(), `DELETE FROM squad WHERE workspace_id = $1 AND name = $2`, testWorkspaceID, name)
+		})
+		w := httptest.NewRecorder()
+		req := withURLParam(newRequestAs(memberID, http.MethodPost, "/api/squads", map[string]any{
+			"name": name, "leader_id": leaderID, "scope": "personal", "sop_profile": profile,
+		}), "workspaceId", testWorkspaceID)
+		testHandler.CreateSquad(w, req)
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("sop_profile=%#v: expected 400, got %d: %s", profile, w.Code, w.Body.String())
+		}
+	}
+}
 
 func TestSquadPersonalVisibility_IsCreatorOnlyForPlainMembers(t *testing.T) {
 	if testHandler == nil || testPool == nil {
