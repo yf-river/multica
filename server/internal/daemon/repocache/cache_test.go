@@ -1,12 +1,16 @@
 package repocache
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func testLogger() *slog.Logger {
@@ -59,6 +63,55 @@ func TestGitEnv(t *testing.T) {
 	}
 	if !envHas(env, "GIT_CONFIG_VALUE_0=*") {
 		t.Error("gitEnv() must include GIT_CONFIG_VALUE_0=*")
+	}
+}
+
+func TestRemoteGitCommandHonorsCancellation(t *testing.T) {
+	binDir := t.TempDir()
+	gitPath := filepath.Join(binDir, "git")
+	if err := os.WriteFile(gitPath, []byte("#!/bin/sh\nexec /bin/sleep 10\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	_, err := runRemoteGitContext(ctx, "fetch", "origin")
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("error=%v; want deadline exceeded", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("cancelled git command returned after %s", elapsed)
+	}
+}
+
+func TestSyncFailsWhenRemoteDefaultBranchRefreshFails(t *testing.T) {
+	realGit, err := exec.LookPath("git")
+	if err != nil {
+		t.Fatal(err)
+	}
+	binDir := t.TempDir()
+	gitPath := filepath.Join(binDir, "git")
+	wrapper := fmt.Sprintf(`#!/bin/sh
+case "$*" in
+  *"remote set-head origin --auto"*) echo "set-head blocked" >&2; exit 42 ;;
+esac
+exec %q "$@"
+`, realGit)
+	if err := os.WriteFile(gitPath, []byte(wrapper), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	sourceRepo := createTestRepo(t)
+	cache := New(t.TempDir(), testLogger())
+	err = cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}})
+	if err == nil || !strings.Contains(err.Error(), "refresh remote default branch") {
+		t.Fatalf("Sync error=%v; want explicit default-branch refresh failure", err)
+	}
+	if cached := cache.Lookup("ws-1", sourceRepo); cached != "" {
+		t.Fatalf("failed clone remained visible in cache: %s", cached)
 	}
 }
 

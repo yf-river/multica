@@ -3,6 +3,7 @@
 package repocache
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"net/url"
@@ -51,6 +52,12 @@ func gitEnv() []string {
 }
 
 var agentGitExcludePatterns = []string{".agent_context", "CLAUDE.md", "AGENTS.md", ".claude", ".opencode", "artifacts"}
+
+const (
+	gitCloneTimeout    = 10 * time.Minute
+	gitFetchTimeout    = 5 * time.Minute
+	gitMetadataTimeout = time.Minute
+)
 
 // RepoInfo describes a repository to cache.
 type RepoInfo struct {
@@ -276,10 +283,8 @@ func isBareRepo(path string) bool {
 const modernFetchRefspec = "+refs/heads/*:refs/remotes/origin/*"
 
 func gitCloneBare(url, dest string) error {
-	cmd := exec.Command("git", "clone", "--bare", url, dest)
-	cmd.Env = gitEnv()
-
-	if out, err := cmd.CombinedOutput(); err != nil {
+	out, err := runRemoteGit(gitCloneTimeout, "clone", "--bare", url, dest)
+	if err != nil {
 		// Clean up partial clone.
 		if cleanupErr := os.RemoveAll(dest); cleanupErr != nil {
 			return fmt.Errorf("git clone --bare: %s; cleanup partial clone: %v: %w", strings.TrimSpace(string(out)), cleanupErr, err)
@@ -315,29 +320,44 @@ func gitFetch(barePath string) error {
 	if err := runGitFetch(barePath); err != nil {
 		return err
 	}
-	// Refresh refs/remotes/origin/HEAD after every successful fetch.
-	// set-head --auto is lightweight (a single ls-remote HEAD round-trip)
-	// and non-fatal: if it fails we still have the step 2-5 fallbacks in
-	// getRemoteDefaultBranch, but the modern-cache default-branch-change
-	// path (the only path that can't be recovered any other way) relies
-	// on this call.
-	cmd := exec.Command("git", "-C", barePath, "remote", "set-head", "origin", "--auto")
-	cmd.Env = gitEnv()
-
-	_ = cmd.Run()
-	return nil
+	// Refreshing origin/HEAD is part of the fetch result. Ignoring this failure
+	// can keep a valid but stale symref after the remote changes its default
+	// branch, making the checkout silently select old code.
+	return refreshRemoteHead(barePath)
 }
 
 // runGitFetch is the raw `git fetch origin` wrapper. Callers should go through
 // gitFetch, which migrates legacy caches first.
 func runGitFetch(barePath string) error {
-	cmd := exec.Command("git", "-C", barePath, "fetch", "origin")
-	cmd.Env = gitEnv()
-
-	if out, err := cmd.CombinedOutput(); err != nil {
+	out, err := runRemoteGit(gitFetchTimeout, "-C", barePath, "fetch", "origin")
+	if err != nil {
 		return fmt.Errorf("git fetch: %s: %w", strings.TrimSpace(string(out)), err)
 	}
 	return nil
+}
+
+func refreshRemoteHead(barePath string) error {
+	out, err := runRemoteGit(gitMetadataTimeout, "-C", barePath, "remote", "set-head", "origin", "--auto")
+	if err != nil {
+		return fmt.Errorf("refresh remote default branch: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+	return nil
+}
+
+func runRemoteGit(timeout time.Duration, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return runRemoteGitContext(ctx, args...)
+}
+
+func runRemoteGitContext(ctx context.Context, args ...string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Env = gitEnv()
+	out, err := cmd.CombinedOutput()
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return out, fmt.Errorf("git remote command cancelled: %w", ctxErr)
+	}
+	return out, err
 }
 
 // ensureRemoteTrackingLayout upgrades a bare repo from the legacy mirror
@@ -364,13 +384,10 @@ func ensureRemoteTrackingLayout(barePath string) error {
 	if err := runGitFetch(barePath); err != nil {
 		return fmt.Errorf("backfill fetch after refspec migration: %w", err)
 	}
-	// Set refs/remotes/origin/HEAD so getRemoteDefaultBranch can read it.
-	// Non-fatal: if this fails we fall back to origin/main, origin/master.
-	cmd := exec.Command("git", "-C", barePath, "remote", "set-head", "origin", "--auto")
-	cmd.Env = gitEnv()
-
-	_ = cmd.Run()
-	return nil
+	// Set refs/remotes/origin/HEAD so getRemoteDefaultBranch can read it. This
+	// must succeed before the migrated cache is considered ready; otherwise a
+	// previous symref can survive and select the wrong branch.
+	return refreshRemoteHead(barePath)
 }
 
 // readFetchRefspec returns the current remote.origin.fetch config value, or
