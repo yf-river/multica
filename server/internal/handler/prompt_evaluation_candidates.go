@@ -109,7 +109,7 @@ func (h *Handler) CreatePromptEvaluationOptimizationCandidate(w http.ResponseWri
 	}
 	prompt, err := h.Queries.GetPromptLibraryItemInWorkspace(r.Context(), db.GetPromptLibraryItemInWorkspaceParams{ID: run.PromptID, WorkspaceID: workspaceUUID})
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "prompt_id does not belong to this workspace")
+		writeValidationLookupError(w, r, err, "prompt_id does not belong to this workspace", "prompt", "prompt_id", uuidToString(run.PromptID))
 		return
 	}
 	trials, err := h.Queries.ListPromptEvaluationTrialsByRun(r.Context(), db.ListPromptEvaluationTrialsByRunParams{RunID: run.ID, WorkspaceID: workspaceUUID})
@@ -386,7 +386,7 @@ func (h *Handler) PublishPromptEvaluationOptimizationCandidate(w http.ResponseWr
 		WorkspaceID: workspaceUUID,
 	})
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "source prompt not found in this workspace")
+		writeValidationLookupError(w, r, err, "source prompt not found in this workspace", "source prompt", "prompt_id", uuidToString(candidate.PromptID))
 		return
 	}
 	tx, err := h.TxStarter.Begin(r.Context())

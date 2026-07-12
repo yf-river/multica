@@ -587,6 +587,31 @@ func writeEntityLoadError(w http.ResponseWriter, r *http.Request, err error, ent
 	writeError(w, http.StatusInternalServerError, "failed to load "+entity)
 }
 
+// writeValidationLookupError keeps the three outcomes of a relationship
+// lookup distinct: an absent row means the submitted relationship is invalid,
+// a cancelled request remains a client-closed response, and a real database
+// failure is observable as a server error. Collapsing all three into 400 makes
+// storage outages look like bad user input and can cause clients to discard a
+// request that would have succeeded on retry.
+func writeValidationLookupError(
+	w http.ResponseWriter,
+	r *http.Request,
+	err error,
+	invalidMessage string,
+	entity string,
+	attrs ...any,
+) {
+	if writeClientClosedIfCanceled(w, err) {
+		return
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusBadRequest, invalidMessage)
+		return
+	}
+	slog.Error("validate "+entity+" failed", append(attrs, "error", err)...)
+	writeError(w, http.StatusInternalServerError, "failed to validate "+entity)
+}
+
 func (h *Handler) loadIssueForUser(w http.ResponseWriter, r *http.Request, issueID string) (db.Issue, bool) {
 	if _, ok := requireUserID(w, r); !ok {
 		return db.Issue{}, false
