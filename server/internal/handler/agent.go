@@ -360,49 +360,10 @@ type AgentTaskResponse struct {
 	AuthToken string `json:"auth_token,omitempty"`
 }
 
-type TaskSourceContext struct {
-	Provider            string                                   `json:"provider,omitempty"`
-	URL                 string                                   `json:"url,omitempty"`
-	TAPD                *TAPDTaskSourceContext                   `json:"tapd,omitempty"`
-	ExternalCredentials map[string]TaskExternalCredentialContext `json:"external_credentials,omitempty"`
-}
-
-type TAPDTaskSourceContext struct {
-	WorkspaceID   string `json:"workspace_id,omitempty"`
-	ResourceType  string `json:"resource_type,omitempty"`
-	ResourceID    string `json:"resource_id,omitempty"`
-	FetchProvider string `json:"fetch_provider,omitempty"`
-	FetchStatus   string `json:"fetch_status,omitempty"`
-	FetchError    string `json:"fetch_error,omitempty"`
-	Title         string `json:"title,omitempty"`
-	Summary       string `json:"summary,omitempty"`
-	BodyExcerpt   string `json:"body_excerpt,omitempty"`
-	Version       string `json:"version,omitempty"`
-}
-
-type TaskExternalCredentialContext struct {
-	Provider      string `json:"provider"`
-	Scope         string `json:"scope"`
-	Inheritance   string `json:"inheritance"`
-	UserID        string `json:"user_id,omitempty"`
-	ProfileID     string `json:"profile_id,omitempty"`
-	ProfileName   string `json:"profile_name,omitempty"`
-	ProfileStatus string `json:"profile_status,omitempty"`
-	MCPServer     string `json:"mcp_server,omitempty"`
-	Configured    bool   `json:"configured"`
-}
-
-// ChatAttachmentMeta is the structured attachment metadata embedded in
-// claim responses for chat tasks. The agent uses these to run
-// `multica attachment download <id>` rather than guessing from the
-// markdown URL (which is signed and 30-min expiring on private CDN).
-// The mirror struct on the daemon side lives in internal/daemon/types.go
-// and uses the same JSON field names.
-type ChatAttachmentMeta struct {
-	ID          string `json:"id"`
-	Filename    string `json:"filename"`
-	ContentType string `json:"content_type,omitempty"`
-}
+type TaskSourceContext = protocol.TaskSourceContext
+type TAPDTaskSourceContext = protocol.TAPDTaskSourceContext
+type TaskExternalCredentialContext = protocol.TaskExternalCredentialContext
+type ChatAttachmentMeta = protocol.ChatAttachmentMeta
 
 // TaskAgentData holds agent info included in claim responses so the daemon
 // can set up the execution environment (branch naming, skill files, instructions).
