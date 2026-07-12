@@ -434,19 +434,19 @@ func TestVerifyWebhookSignature(t *testing.T) {
 	mac.Write(body)
 	good := "sha256=" + hex.EncodeToString(mac.Sum(nil))
 
-	if !verifyWebhookSignature(secret, good, body) {
+	if !verifyWebhookHMACSignature(secret, good, body) {
 		t.Error("expected valid signature to verify")
 	}
-	if verifyWebhookSignature(secret, "sha256=deadbeef", body) {
+	if verifyWebhookHMACSignature(secret, "sha256=deadbeef", body) {
 		t.Error("expected bad hex to fail")
 	}
-	if verifyWebhookSignature(secret, "", body) {
+	if verifyWebhookHMACSignature(secret, "", body) {
 		t.Error("expected empty header to fail")
 	}
-	if verifyWebhookSignature(secret, "sha1=whatever", body) {
+	if verifyWebhookHMACSignature(secret, "sha1=whatever", body) {
 		t.Error("expected non-sha256 prefix to fail")
 	}
-	if verifyWebhookSignature("other-secret", good, body) {
+	if verifyWebhookHMACSignature("other-secret", good, body) {
 		t.Error("expected wrong secret to fail")
 	}
 }

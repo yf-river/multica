@@ -2,9 +2,6 @@ package handler
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
@@ -33,7 +30,7 @@ func (h *Handler) HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sigHeader := r.Header.Get("X-Hub-Signature-256")
-	if !verifyWebhookSignature(secret, sigHeader, body) {
+	if !verifyWebhookHMACSignature(secret, sigHeader, body) {
 		writeError(w, http.StatusUnauthorized, "invalid signature")
 		return
 	}
@@ -54,20 +51,6 @@ func (h *Handler) HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 		// but ignore types we don't model.
 	}
 	w.WriteHeader(http.StatusAccepted)
-}
-
-func verifyWebhookSignature(secret, header string, body []byte) bool {
-	const prefix = "sha256="
-	if !strings.HasPrefix(header, prefix) {
-		return false
-	}
-	want, err := hex.DecodeString(strings.TrimPrefix(header, prefix))
-	if err != nil {
-		return false
-	}
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write(body)
-	return hmac.Equal(mac.Sum(nil), want)
 }
 
 type ghInstallationPayload struct {
