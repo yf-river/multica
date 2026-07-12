@@ -74,7 +74,7 @@ func (h *Handler) persistPromptEvaluationLocalRun(w http.ResponseWriter, r *http
 		writeError(w, http.StatusInternalServerError, "failed to create prompt evaluation run")
 		return db.PromptEvaluationRun{}, false
 	}
-	if err := h.persistPromptEvaluationDimensionScores(r.Context(), run, result.DimensionScores, "local_run"); err != nil {
+	if err := h.persistPromptEvaluationDimensionScores(r.Context(), h.Queries, run, result.DimensionScores, "local_run"); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to persist prompt evaluation dimension scores")
 		return db.PromptEvaluationRun{}, false
 	}
@@ -107,13 +107,13 @@ func (h *Handler) persistPromptEvaluationLocalRun(w http.ResponseWriter, r *http
 	return run, true
 }
 
-func (h *Handler) persistPromptEvaluationQueuedAgentRun(w http.ResponseWriter, r *http.Request, asset db.PromptEvaluationAsset, prompt db.PromptLibraryItem, agent db.Agent, runtime db.AgentRuntime, taskID pgtype.UUID, chatSessionID pgtype.UUID, createdBy pgtype.UUID, triggerSource string, payload map[string]any, cases []map[string]any) (db.PromptEvaluationRun, bool) {
+func (h *Handler) persistPromptEvaluationQueuedAgentRun(w http.ResponseWriter, r *http.Request, queries *db.Queries, asset db.PromptEvaluationAsset, prompt db.PromptLibraryItem, agent db.Agent, runtime db.AgentRuntime, taskID pgtype.UUID, chatSessionID pgtype.UUID, createdBy pgtype.UUID, triggerSource string, payload map[string]any, cases []map[string]any) (db.PromptEvaluationRun, bool) {
 	datasetVersionBindings, ok := h.promptEvaluationDatasetVersionBindings(w, r, asset.WorkspaceID, payload)
 	if !ok {
 		return db.PromptEvaluationRun{}, false
 	}
 	dimensionScores := pendingPromptEvaluationExperimentDimensionScores(promptEvaluationExperimentDimensionsForAsset(asset.AssetType, payload), len(cases))
-	run, err := h.Queries.CreatePromptEvaluationRun(r.Context(), db.CreatePromptEvaluationRunParams{
+	run, err := queries.CreatePromptEvaluationRun(r.Context(), db.CreatePromptEvaluationRunParams{
 		WorkspaceID:       asset.WorkspaceID,
 		AssetID:           asset.ID,
 		PromptID:          asset.PromptID,
@@ -167,7 +167,7 @@ func (h *Handler) persistPromptEvaluationQueuedAgentRun(w http.ResponseWriter, r
 		writeError(w, http.StatusInternalServerError, "failed to create queued prompt evaluation run")
 		return db.PromptEvaluationRun{}, false
 	}
-	if err := h.persistPromptEvaluationDimensionScores(r.Context(), run, dimensionScores, "run_metrics"); err != nil {
+	if err := h.persistPromptEvaluationDimensionScores(r.Context(), queries, run, dimensionScores, "run_metrics"); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to persist queued prompt evaluation dimension scores")
 		return db.PromptEvaluationRun{}, false
 	}
@@ -176,7 +176,7 @@ func (h *Handler) persistPromptEvaluationQueuedAgentRun(w http.ResponseWriter, r
 		if name == "" {
 			name = "用例 " + strconv.Itoa(idx+1)
 		}
-		if _, err := h.Queries.CreatePromptEvaluationTrial(r.Context(), db.CreatePromptEvaluationTrialParams{
+		if _, err := queries.CreatePromptEvaluationTrial(r.Context(), db.CreatePromptEvaluationTrialParams{
 			RunID:         run.ID,
 			WorkspaceID:   asset.WorkspaceID,
 			AssetID:       asset.ID,
@@ -196,11 +196,11 @@ func (h *Handler) persistPromptEvaluationQueuedAgentRun(w http.ResponseWriter, r
 	return run, true
 }
 
-func (h *Handler) persistPromptEvaluationDimensionScores(ctx context.Context, run db.PromptEvaluationRun, scores []promptEvaluationExperimentDimensionScore, source string) error {
+func (h *Handler) persistPromptEvaluationDimensionScores(ctx context.Context, queries *db.Queries, run db.PromptEvaluationRun, scores []promptEvaluationExperimentDimensionScore, source string) error {
 	if len(scores) == 0 {
 		return nil
 	}
-	if err := h.Queries.DeletePromptEvaluationDimensionScoresByRun(ctx, db.DeletePromptEvaluationDimensionScoresByRunParams{
+	if err := queries.DeletePromptEvaluationDimensionScoresByRun(ctx, db.DeletePromptEvaluationDimensionScoresByRunParams{
 		WorkspaceID: run.WorkspaceID,
 		RunID:       run.ID,
 	}); err != nil {
@@ -211,7 +211,7 @@ func (h *Handler) persistPromptEvaluationDimensionScores(ctx context.Context, ru
 		if dimensionName == "" {
 			dimensionName = "维度 " + strconv.Itoa(int(score.DimensionIndex)+1)
 		}
-		if _, err := h.Queries.UpsertPromptEvaluationDimensionScore(ctx, db.UpsertPromptEvaluationDimensionScoreParams{
+		if _, err := queries.UpsertPromptEvaluationDimensionScore(ctx, db.UpsertPromptEvaluationDimensionScoreParams{
 			WorkspaceID:    run.WorkspaceID,
 			RunID:          run.ID,
 			AssetID:        run.AssetID,

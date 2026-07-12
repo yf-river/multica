@@ -1115,7 +1115,21 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	session, err := h.Queries.CreateChatSession(r.Context(), db.CreateChatSessionParams{
+	cases, ok := h.promptEvaluationCasesForAsset(w, r, asset)
+	if !ok {
+		return
+	}
+	messageText := buildPromptEvaluationAgentMessage(asset, prompt, promptEvaluationPayloadWithCases(payload, cases))
+
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start training evaluation transaction")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+
+	session, err := qtx.CreateChatSession(r.Context(), db.CreateChatSessionParams{
 		WorkspaceID: asset.WorkspaceID,
 		AgentID:     agentRow.ID,
 		CreatorID:   parseUUID(userID),
@@ -1125,12 +1139,7 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusInternalServerError, "failed to create training evaluation chat session")
 		return
 	}
-	cases, ok := h.promptEvaluationCasesForAsset(w, r, asset)
-	if !ok {
-		return
-	}
-	messageText := buildPromptEvaluationAgentMessage(asset, prompt, promptEvaluationPayloadWithCases(payload, cases))
-	msg, err := h.Queries.CreateChatMessage(r.Context(), db.CreateChatMessageParams{
+	msg, err := qtx.CreateChatMessage(r.Context(), db.CreateChatMessageParams{
 		ChatSessionID: session.ID,
 		Role:          "user",
 		Content:       messageText,
@@ -1139,12 +1148,12 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusInternalServerError, "failed to create training evaluation chat message")
 		return
 	}
-	task, err := h.TaskService.EnqueueChatTask(r.Context(), session, parseUUID(userID))
+	task, err := h.TaskService.CreateChatTaskInTx(r.Context(), qtx, session, agentRow, parseUUID(userID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to enqueue training evaluation agent task: "+err.Error())
 		return
 	}
-	if err := h.Queries.LinkChatMessageToTask(r.Context(), db.LinkChatMessageToTaskParams{ID: msg.ID, TaskID: task.ID}); err != nil {
+	if err := qtx.LinkChatMessageToTask(r.Context(), db.LinkChatMessageToTaskParams{ID: msg.ID, TaskID: task.ID}); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to link training evaluation message to task")
 		return
 	}
@@ -1157,7 +1166,7 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 			triggerSource = "优化运行"
 		}
 	}
-	run, ok := h.persistPromptEvaluationQueuedAgentRun(w, r, asset, prompt, agentRow, runtimeRow, task.ID, session.ID, parseUUID(userID), triggerSource, payload, cases)
+	run, ok := h.persistPromptEvaluationQueuedAgentRun(w, r, qtx, asset, prompt, agentRow, runtimeRow, task.ID, session.ID, parseUUID(userID), triggerSource, payload, cases)
 	if !ok {
 		return
 	}
@@ -1203,7 +1212,7 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusInternalServerError, "failed to encode training evaluation agent run")
 		return
 	}
-	updated, err := h.Queries.UpdatePromptEvaluationAsset(r.Context(), db.UpdatePromptEvaluationAssetParams{
+	updated, err := qtx.UpdatePromptEvaluationAsset(r.Context(), db.UpdatePromptEvaluationAssetParams{
 		ID:          asset.ID,
 		WorkspaceID: asset.WorkspaceID,
 		PromptID:    asset.PromptID,
@@ -1213,6 +1222,11 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusInternalServerError, "failed to save training evaluation agent run")
 		return
 	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit training evaluation agent run")
+		return
+	}
+	h.TaskService.PublishChatTaskEnqueued(r.Context(), task)
 	writeJSON(w, http.StatusAccepted, PromptEvaluationAgentRunResponse{
 		Asset:         promptEvaluationAssetToResponse(updated),
 		Run:           promptEvaluationRunToResponse(run),
