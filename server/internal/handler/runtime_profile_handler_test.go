@@ -47,6 +47,23 @@ func insertProfileRuntimeFixture(t *testing.T, ctx context.Context, profileID, n
 	return runtimeID
 }
 
+func TestGetRuntimeProfileRejectsCorruptFixedArgs(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	profileID := insertRuntimeProfileFixture(t, ctx, "Corrupt Fixed Args", "codex", "codex")
+	if _, err := testPool.Exec(ctx, `UPDATE runtime_profile SET fixed_args='null'::jsonb WHERE id=$1`, profileID); err != nil {
+		t.Fatalf("corrupt fixed_args: %v", err)
+	}
+	w := httptest.NewRecorder()
+	req := withURLParams(newRequest(http.MethodGet, "/api/workspaces/"+testWorkspaceID+"/runtime-profiles/"+profileID, nil), "id", testWorkspaceID, "profileId", profileID)
+	testHandler.GetRuntimeProfile(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("get corrupt runtime profile: expected 500, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 // TestDeleteRuntimeProfile_ArchivedAgentCascade is the regression guard for the
 // FK-RESTRICT 500: a profile whose only remaining agent is ARCHIVED must still
 // delete cleanly. agent.runtime_id is ON DELETE RESTRICT, so without the
