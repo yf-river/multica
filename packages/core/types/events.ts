@@ -1,10 +1,8 @@
 import type { Issue, IssueMetadata, IssueReaction } from "./issue";
-import type { Agent } from "./agent";
 import type { InboxItem } from "./inbox";
 import type { Comment, Reaction } from "./comment";
 import type { TimelineEntry } from "./activity";
 import type { Workspace, MemberWithUser } from "./workspace";
-import type { Project, ProjectResource } from "./project";
 import type { Label } from "./label";
 
 // WebSocket event types (matching Go server protocol/events.go)
@@ -109,44 +107,8 @@ export interface IssueMetadataChangedPayload {
   metadata: IssueMetadata;
 }
 
-export interface AgentStatusPayload {
-  agent: Agent;
-}
-
-export interface AgentCreatedPayload {
-  agent: Agent;
-}
-
-export interface AgentArchivedPayload {
-  agent: Agent;
-}
-
-export interface AgentRestoredPayload {
-  agent: Agent;
-}
-
 export interface InboxNewPayload {
   item: InboxItem;
-}
-
-export interface InboxReadPayload {
-  item_id: string;
-  recipient_id: string;
-}
-
-export interface InboxArchivedPayload {
-  item_id: string;
-  recipient_id: string;
-}
-
-export interface InboxBatchReadPayload {
-  recipient_id: string;
-  count: number;
-}
-
-export interface InboxBatchArchivedPayload {
-  recipient_id: string;
-  count: number;
 }
 
 export interface CommentCreatedPayload {
@@ -176,10 +138,6 @@ export interface WorkspaceUpdatedPayload {
 
 export interface WorkspaceDeletedPayload {
   workspace_id: string;
-}
-
-export interface MemberUpdatedPayload {
-  member: MemberWithUser;
 }
 
 export interface MemberAddedPayload {
@@ -298,15 +256,6 @@ export interface IssueReactionRemovedPayload {
   actor_id: string;
 }
 
-export interface ChatMessageEventPayload {
-  chat_session_id: string;
-  message_id: string;
-  role: "user" | "assistant";
-  content: string;
-  task_id?: string;
-  created_at: string;
-}
-
 export interface ChatDonePayload {
   chat_session_id: string;
   task_id: string;
@@ -321,130 +270,3 @@ export interface ChatDonePayload {
   elapsed_ms?: number;
   created_at?: string;
 }
-
-export interface ChatSessionReadPayload {
-  chat_session_id: string;
-}
-
-export interface ChatSessionDeletedPayload {
-  chat_session_id: string;
-}
-
-export interface ProjectCreatedPayload {
-  project: Project;
-}
-
-export interface ProjectUpdatedPayload {
-  project: Project;
-}
-
-export interface ProjectDeletedPayload {
-  project_id: string;
-}
-
-export interface ProjectResourceChangedPayload {
-  project_id: string;
-  resource: ProjectResource;
-  action?: string;
-}
-
-export interface ProjectResourceDeletedPayload {
-  project_id: string;
-  resource_id: string;
-}
-
-/**
- * Maps every WSEventType to its payload interface. Events whose payload
- * shape isn't formally typed (server emits an object the client doesn't
- * meaningfully consume yet) fall back to `unknown` — callers must narrow
- * before access.
- *
- * Use via `WSEventPayload<E>` rather than indexing the map directly:
- *   const handler = (payload: WSEventPayload<"issue:created">) => { ... };
- *
- * Adding a new event: extend WSEventType first (above), then append a key
- * here. TS will compile-error every WSClient.on("new:event", …) site that
- * forgets the payload shape — that's the whole point.
- */
-export interface WSEventPayloadMap {
-  "issue:created": IssueCreatedPayload;
-  "issue:updated": IssueUpdatedPayload;
-  "issue:deleted": IssueDeletedPayload;
-  "issue_labels:changed": IssueLabelsChangedPayload;
-  "issue_reaction:added": IssueReactionAddedPayload;
-  "issue_reaction:removed": IssueReactionRemovedPayload;
-  "comment:created": CommentCreatedPayload;
-  "comment:updated": CommentUpdatedPayload;
-  "comment:deleted": CommentDeletedPayload;
-  "comment:resolved": CommentResolvedPayload;
-  "comment:unresolved": CommentUnresolvedPayload;
-  "reaction:added": ReactionAddedPayload;
-  "reaction:removed": ReactionRemovedPayload;
-  "agent:status": AgentStatusPayload;
-  "agent:created": AgentCreatedPayload;
-  "agent:archived": AgentArchivedPayload;
-  "agent:restored": AgentRestoredPayload;
-  "task:queued": TaskQueuedPayload;
-  "task:dispatch": TaskDispatchPayload;
-  "task:running": TaskRunningPayload;
-  "task:completed": TaskCompletedPayload;
-  "task:failed": TaskFailedPayload;
-  "task:message": TaskMessagePayload;
-  "task:cancelled": TaskCancelledPayload;
-  "task:progress": unknown;
-  "inbox:new": InboxNewPayload;
-  "inbox:read": InboxReadPayload;
-  "inbox:archived": InboxArchivedPayload;
-  "inbox:batch-read": InboxBatchReadPayload;
-  "inbox:batch-archived": InboxBatchArchivedPayload;
-  "workspace:updated": WorkspaceUpdatedPayload;
-  "workspace:deleted": WorkspaceDeletedPayload;
-  "member:added": MemberAddedPayload;
-  "member:updated": MemberUpdatedPayload;
-  "member:removed": MemberRemovedPayload;
-  "subscriber:added": SubscriberAddedPayload;
-  "subscriber:removed": SubscriberRemovedPayload;
-  "activity:created": ActivityCreatedPayload;
-  "chat:message": ChatMessageEventPayload;
-  "chat:done": ChatDonePayload;
-  "chat:session_read": ChatSessionReadPayload;
-  "chat:session_deleted": ChatSessionDeletedPayload;
-  "chat:session_updated": unknown;
-  "project:created": ProjectCreatedPayload;
-  "project:updated": ProjectUpdatedPayload;
-  "project:deleted": ProjectDeletedPayload;
-  "project_resource:created": ProjectResourceChangedPayload;
-  "project_resource:updated": ProjectResourceChangedPayload;
-  "project_resource:deleted": ProjectResourceDeletedPayload;
-  // No formal payload interfaces yet — server emits domain objects clients
-  // currently consume as opaque triggers (refetch on receipt).
-  "daemon:heartbeat": unknown;
-  "daemon:register": unknown;
-  "skill:created": unknown;
-  "skill:updated": unknown;
-  "skill:deleted": unknown;
-  "squad:created": unknown;
-  "squad:updated": unknown;
-  "squad:deleted": unknown;
-  "squad:restored": unknown;
-  "label:created": unknown;
-  "label:updated": unknown;
-  "label:deleted": unknown;
-  "pin:created": unknown;
-  "pin:deleted": unknown;
-  "pin:reordered": unknown;
-  "github_installation:created": unknown;
-  "github_installation:deleted": unknown;
-  "pull_request:linked": unknown;
-  "pull_request:updated": unknown;
-  "pull_request:unlinked": unknown;
-}
-
-/**
- * Payload type for a given event. Lookup against WSEventPayloadMap with
- * `unknown` as the safety net — if a future WSEventType is added without
- * a map entry, callers see `unknown` (forced narrow) rather than `any`
- * (silent unsafe access).
- */
-export type WSEventPayload<E extends WSEventType> =
-  E extends keyof WSEventPayloadMap ? WSEventPayloadMap[E] : unknown;
