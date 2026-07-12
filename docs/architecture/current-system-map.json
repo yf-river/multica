@@ -24,7 +24,7 @@
     "databaseFunctions": 9,
     "databaseTriggers": 4,
     "databaseIndexes": 194,
-    "migrations": 156,
+    "migrations": 158,
     "sqlcModules": 55,
     "sqlcQueries": 560,
     "goWebsocketEvents": 79,
@@ -7472,6 +7472,32 @@
           "droppedFunctions": [],
           "droppedTriggers": [],
           "droppedIndexes": []
+        },
+        {
+          "version": 79,
+          "name": "add_prompt_evaluation_dataset_version_request",
+          "direction": "down",
+          "source": "server/migrations/079_add_prompt_evaluation_dataset_version_request.down.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 79,
+          "name": "add_prompt_evaluation_dataset_version_request",
+          "direction": "up",
+          "source": "server/migrations/079_add_prompt_evaluation_dataset_version_request.up.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
         }
       ],
       "tables": [
@@ -10894,9 +10920,9 @@
               "source": "server/pkg/db/queries/prompt_evaluation_asset.sql#ListPromptEvaluationAssets"
             },
             {
-              "name": "LockPromptEvaluationAssetForCaseCreate",
+              "name": "LockPromptEvaluationAsset",
               "command": "one",
-              "source": "server/pkg/db/queries/prompt_evaluation_asset.sql#LockPromptEvaluationAssetForCaseCreate"
+              "source": "server/pkg/db/queries/prompt_evaluation_asset.sql#LockPromptEvaluationAsset"
             },
             {
               "name": "UpdatePromptEvaluationAsset",

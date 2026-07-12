@@ -10,8 +10,8 @@ ORDER BY updated_at DESC, created_at DESC;
 SELECT * FROM prompt_evaluation_asset
 WHERE id = $1 AND workspace_id = $2;
 
--- name: LockPromptEvaluationAssetForCaseCreate :one
-SELECT id FROM prompt_evaluation_asset
+-- name: LockPromptEvaluationAsset :one
+SELECT * FROM prompt_evaluation_asset
 WHERE id = $1 AND workspace_id = $2
 FOR UPDATE;
 

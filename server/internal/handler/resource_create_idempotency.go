@@ -40,6 +40,7 @@ const (
 	resourceTypePromptEvalAsset      = "prompt_evaluation_asset"
 	resourceTypePromptEvalCase       = "prompt_evaluation_case"
 	resourceTypePromptTraceImport    = "prompt_evaluation_trace_import"
+	resourceTypePromptDatasetVersion = "prompt_evaluation_dataset_version"
 )
 
 var errResourceCreateIdempotencyConflict = errors.New("resource create idempotency conflict")

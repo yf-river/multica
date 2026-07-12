@@ -322,22 +322,44 @@ func (q *Queries) ListPromptEvaluationAssets(ctx context.Context, arg ListPrompt
 	return items, nil
 }
 
-const lockPromptEvaluationAssetForCaseCreate = `-- name: LockPromptEvaluationAssetForCaseCreate :one
-SELECT id FROM prompt_evaluation_asset
+const lockPromptEvaluationAsset = `-- name: LockPromptEvaluationAsset :one
+SELECT id, workspace_id, prompt_id, name, description, asset_type, payload, status, created_by, created_at, updated_at, structure_schema, structured_case_count, structured_variable_count, structured_assertion_count, linked_dataset_count, linked_prompt_count, evaluation_dimension_count, dataset_row_count, test_suite_case_count, experiment_dimension_count FROM prompt_evaluation_asset
 WHERE id = $1 AND workspace_id = $2
 FOR UPDATE
 `
 
-type LockPromptEvaluationAssetForCaseCreateParams struct {
+type LockPromptEvaluationAssetParams struct {
 	ID          pgtype.UUID `json:"id"`
 	WorkspaceID pgtype.UUID `json:"workspace_id"`
 }
 
-func (q *Queries) LockPromptEvaluationAssetForCaseCreate(ctx context.Context, arg LockPromptEvaluationAssetForCaseCreateParams) (pgtype.UUID, error) {
-	row := q.db.QueryRow(ctx, lockPromptEvaluationAssetForCaseCreate, arg.ID, arg.WorkspaceID)
-	var id pgtype.UUID
-	err := row.Scan(&id)
-	return id, err
+func (q *Queries) LockPromptEvaluationAsset(ctx context.Context, arg LockPromptEvaluationAssetParams) (PromptEvaluationAsset, error) {
+	row := q.db.QueryRow(ctx, lockPromptEvaluationAsset, arg.ID, arg.WorkspaceID)
+	var i PromptEvaluationAsset
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.PromptID,
+		&i.Name,
+		&i.Description,
+		&i.AssetType,
+		&i.Payload,
+		&i.Status,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.StructureSchema,
+		&i.StructuredCaseCount,
+		&i.StructuredVariableCount,
+		&i.StructuredAssertionCount,
+		&i.LinkedDatasetCount,
+		&i.LinkedPromptCount,
+		&i.EvaluationDimensionCount,
+		&i.DatasetRowCount,
+		&i.TestSuiteCaseCount,
+		&i.ExperimentDimensionCount,
+	)
+	return i, err
 }
 
 const updatePromptEvaluationAsset = `-- name: UpdatePromptEvaluationAsset :one

@@ -111,12 +111,14 @@ func (h *Handler) CreatePromptEvaluationDatasetFromTraces(w http.ResponseWriter,
 		writeError(w, http.StatusInternalServerError, "failed to reserve trace dataset import")
 		return
 	}
-	if _, err := qtx.LockPromptEvaluationAssetForCaseCreate(r.Context(), db.LockPromptEvaluationAssetForCaseCreateParams{
+	lockedAsset, err := qtx.LockPromptEvaluationAsset(r.Context(), db.LockPromptEvaluationAssetParams{
 		ID: asset.ID, WorkspaceID: asset.WorkspaceID,
-	}); err != nil {
+	})
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to lock trace dataset asset")
 		return
 	}
+	asset = lockedAsset
 	nextCaseIndex, err := qtx.NextPromptEvaluationCaseIndex(r.Context(), db.NextPromptEvaluationCaseIndexParams{
 		WorkspaceID: asset.WorkspaceID, AssetID: asset.ID,
 	})
@@ -316,6 +318,33 @@ func (h *Handler) CreatePromptEvaluationDatasetVersion(w http.ResponseWriter, r 
 	if metadata == nil {
 		metadata = mustJSONBytes(map[string]any{})
 	}
+	req.VersionLabel = strings.TrimSpace(req.VersionLabel)
+	actorID := parseUUID(userID)
+	requestHash, err := hashRequestFingerprint(struct {
+		AssetID string                                      `json:"asset_id"`
+		Request CreatePromptEvaluationDatasetVersionRequest `json:"request"`
+	}{AssetID: uuidToString(asset.ID), Request: req})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to fingerprint dataset version request")
+		return
+	}
+	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	replay, found, replayErr := loadResourceCreateReplay(
+		r.Context(), h.Queries, asset.WorkspaceID, actorID, resourceTypePromptDatasetVersion,
+		idempotencyKey, requestHash,
+		func(response PromptEvaluationDatasetVersionResponse) bool { return response.ID != "" },
+	)
+	if replayErr != nil {
+		writePromptEvaluationDatasetVersionReplayError(w, replayErr)
+		return
+	}
+	if found {
+		writeJSON(w, http.StatusCreated, replay)
+		return
+	}
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start dataset version transaction")
@@ -323,7 +352,40 @@ func (h *Handler) CreatePromptEvaluationDatasetVersion(w http.ResponseWriter, r 
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
-	version, err := h.createPromptEvaluationDatasetVersionFromCurrent(r.Context(), qtx, asset, parseUUID(userID), strings.TrimSpace(req.VersionLabel), metadata)
+	_, err = qtx.ReserveResourceCreateRequest(r.Context(), db.ReserveResourceCreateRequestParams{
+		WorkspaceID: asset.WorkspaceID, ActorID: actorID, ResourceType: resourceTypePromptDatasetVersion,
+		IdempotencyKey: idempotencyKey, RequestHash: requestHash,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		_ = tx.Rollback(r.Context())
+		replay, found, replayErr = loadResourceCreateReplay(
+			r.Context(), h.Queries, asset.WorkspaceID, actorID, resourceTypePromptDatasetVersion,
+			idempotencyKey, requestHash,
+			func(response PromptEvaluationDatasetVersionResponse) bool { return response.ID != "" },
+		)
+		if replayErr != nil || !found {
+			if replayErr == nil {
+				replayErr = errors.New("dataset version replay disappeared after conflict")
+			}
+			writePromptEvaluationDatasetVersionReplayError(w, replayErr)
+			return
+		}
+		writeJSON(w, http.StatusCreated, replay)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reserve dataset version request")
+		return
+	}
+	lockedAsset, err := qtx.LockPromptEvaluationAsset(r.Context(), db.LockPromptEvaluationAssetParams{
+		ID: asset.ID, WorkspaceID: asset.WorkspaceID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to lock dataset asset")
+		return
+	}
+	asset = lockedAsset
+	version, err := h.createPromptEvaluationDatasetVersionFromCurrent(r.Context(), qtx, asset, actorID, req.VersionLabel, metadata)
 	if errors.Is(err, errPromptEvaluationDatasetVersionNoRows) {
 		writeError(w, http.StatusBadRequest, "dataset version requires at least one enabled row")
 		return
@@ -332,11 +394,30 @@ func (h *Handler) CreatePromptEvaluationDatasetVersion(w http.ResponseWriter, r 
 		writeError(w, http.StatusInternalServerError, "failed to create dataset version")
 		return
 	}
+	response := promptEvaluationDatasetVersionToResponse(version)
+	if err := completeResourceCreateRequest(
+		r.Context(), qtx, asset.WorkspaceID, actorID, resourceTypePromptDatasetVersion,
+		idempotencyKey, requestHash, version.ID, response,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to complete dataset version request")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit dataset version")
 		return
 	}
-	writeJSON(w, http.StatusCreated, promptEvaluationDatasetVersionToResponse(version))
+	writeJSON(w, http.StatusCreated, response)
+}
+
+func writePromptEvaluationDatasetVersionReplayError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errResourceCreateIdempotencyConflict) {
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": "Idempotency-Key was already used with a different dataset version request",
+			"code":  "idempotency_conflict",
+		})
+		return
+	}
+	writeError(w, http.StatusInternalServerError, "failed to recover dataset version request")
 }
 
 func (h *Handler) createPromptEvaluationDatasetVersionFromCurrent(ctx context.Context, qtx *db.Queries, asset db.PromptEvaluationAsset, createdBy pgtype.UUID, versionLabel string, metadata []byte) (db.PromptEvaluationDatasetVersion, error) {

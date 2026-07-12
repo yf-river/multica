@@ -1009,11 +1009,16 @@ func (h *Handler) CreatePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, "failed to reserve prompt evaluation case request")
 		return
 	}
-	if _, err := qtx.LockPromptEvaluationAssetForCaseCreate(r.Context(), db.LockPromptEvaluationAssetForCaseCreateParams{
+	lockedAsset, err := qtx.LockPromptEvaluationAsset(r.Context(), db.LockPromptEvaluationAssetParams{
 		ID: asset.ID, WorkspaceID: workspaceUUID,
-	}); err != nil {
+	})
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to lock prompt evaluation asset")
 		return
+	}
+	asset = lockedAsset
+	if len(req.PromptID) == 0 {
+		promptID = asset.PromptID
 	}
 	caseIndex := int32(0)
 	if req.CaseIndex != nil {

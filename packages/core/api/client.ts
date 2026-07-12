@@ -2232,25 +2232,31 @@ export class ApiClient extends ApiTransport {
   async createPromptEvaluationDatasetVersion(
     id: string,
     data: CreatePromptEvaluationDatasetVersionRequest = {},
+    idempotencyKey = generateUUID(),
   ): Promise<PromptEvaluationDatasetVersion> {
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/dataset-versions`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseOrThrow(raw, PromptEvaluationDatasetVersionSchema, {
-      id: "",
-      workspace_id: "",
-      dataset_asset_id: id,
-      version: 0,
-      version_label: "",
-      row_count: 0,
-      row_fingerprint: "",
-      metadata: {},
-      created_by: null,
-      created_at: "",
-    }, {
-      endpoint: "POST /api/prompt-evaluation-assets/:id/dataset-versions",
-    }) as PromptEvaluationDatasetVersion;
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/dataset-versions`, {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow(raw, PromptEvaluationDatasetVersionSchema, {
+        id: "",
+        workspace_id: "",
+        dataset_asset_id: id,
+        version: 0,
+        version_label: "",
+        row_count: 0,
+        row_fingerprint: "",
+        metadata: {},
+        created_by: null,
+        created_at: "",
+      }, {
+        endpoint: "POST /api/prompt-evaluation-assets/:id/dataset-versions",
+        mayHaveCommitted: true,
+      }) as PromptEvaluationDatasetVersion;
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async listPromptEvaluationCases(params?: ListPromptEvaluationCasesParams): Promise<ListPromptEvaluationCasesResponse> {
