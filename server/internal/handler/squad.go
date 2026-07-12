@@ -655,8 +655,8 @@ func (h *Handler) requireSquadManager(w http.ResponseWriter, r *http.Request, sq
 	return member, true
 }
 
-func (h *Handler) loadSquadMemberSummary(ctx context.Context, squadID pgtype.UUID) (*squadMemberSummary, error) {
-	rows, err := h.Queries.ListSquadMemberPreviewRowsBySquad(ctx, squadID)
+func loadSquadMemberSummary(ctx context.Context, queries *db.Queries, squadID pgtype.UUID) (*squadMemberSummary, error) {
+	rows, err := queries.ListSquadMemberPreviewRowsBySquad(ctx, squadID)
 	if err != nil {
 		return nil, err
 	}
@@ -667,12 +667,12 @@ func (h *Handler) loadSquadMemberSummary(ctx context.Context, squadID pgtype.UUI
 	return summary, nil
 }
 
-func (h *Handler) squadToResponseWithPreview(ctx context.Context, squad db.Squad) (SquadResponse, error) {
+func squadToResponseWithPreview(ctx context.Context, queries *db.Queries, squad db.Squad) (SquadResponse, error) {
 	resp, err := squadToResponse(squad)
 	if err != nil {
 		return SquadResponse{}, err
 	}
-	summary, err := h.loadSquadMemberSummary(ctx, squad.ID)
+	summary, err := loadSquadMemberSummary(ctx, queries, squad.ID)
 	if err != nil {
 		return resp, fmt.Errorf("load squad member preview: %w", err)
 	}
@@ -1050,7 +1050,7 @@ func (h *Handler) GetSquad(w http.ResponseWriter, r *http.Request) {
 	if !h.requireSquadVisible(w, r, squad, workspaceID) {
 		return
 	}
-	resp, err := h.squadToResponseWithPreview(r.Context(), squad)
+	resp, err := squadToResponseWithPreview(r.Context(), h.Queries, squad)
 	if err != nil {
 		slog.Error("build squad response failed", append(logger.RequestAttrs(r), "squad_id", uuidToString(squad.ID), "error", err)...)
 		writeError(w, http.StatusInternalServerError, "failed to load squad")
@@ -1140,22 +1140,6 @@ func (h *Handler) UpdateSquad(w http.ResponseWriter, r *http.Request) {
 		}
 		nextLeader = leader
 		haveNextLeader = true
-		// Ensure new leader is a squad member; auto-add if not.
-		isMember, err := h.Queries.IsSquadMember(r.Context(), db.IsSquadMemberParams{
-			SquadID: squad.ID, MemberType: "agent", MemberID: lid,
-		})
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to check squad membership")
-			return
-		}
-		if !isMember {
-			if _, err := h.Queries.AddSquadMember(r.Context(), db.AddSquadMemberParams{
-				SquadID: squad.ID, MemberType: "agent", MemberID: lid, Role: "leader",
-			}); err != nil {
-				writeError(w, http.StatusInternalServerError, "failed to add squad leader membership")
-				return
-			}
-		}
 		params.LeaderID = lid
 		nextLeaderID = lid
 	}
@@ -1176,16 +1160,45 @@ func (h *Handler) UpdateSquad(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	updated, err := h.Queries.UpdateSquad(r.Context(), params)
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to begin squad update")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	if req.LeaderID != nil {
+		isMember, err := qtx.IsSquadMember(r.Context(), db.IsSquadMemberParams{
+			SquadID: squad.ID, MemberType: "agent", MemberID: params.LeaderID,
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to check squad membership")
+			return
+		}
+		if !isMember {
+			if _, err := qtx.AddSquadMember(r.Context(), db.AddSquadMemberParams{
+				SquadID: squad.ID, MemberType: "agent", MemberID: params.LeaderID, Role: "leader",
+			}); err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to add squad leader membership")
+				return
+			}
+		}
+	}
+
+	updated, err := qtx.UpdateSquad(r.Context(), params)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update squad")
 		return
 	}
 
-	resp, err := h.squadToResponseWithPreview(r.Context(), updated)
+	resp, err := squadToResponseWithPreview(r.Context(), qtx, updated)
 	if err != nil {
 		slog.Error("build squad response failed", append(logger.RequestAttrs(r), "squad_id", uuidToString(updated.ID), "error", err)...)
 		writeError(w, http.StatusInternalServerError, "failed to load squad")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit squad update")
 		return
 	}
 	h.publish(protocol.EventSquadUpdated, workspaceID, "member", requestUserID(r), map[string]any{"squad": resp})
@@ -1266,7 +1279,7 @@ func (h *Handler) RestoreSquad(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to restore squad")
 		return
 	}
-	resp, err := h.squadToResponseWithPreview(r.Context(), restored)
+	resp, err := squadToResponseWithPreview(r.Context(), h.Queries, restored)
 	if err != nil {
 		slog.Error("build squad response failed", append(logger.RequestAttrs(r), "squad_id", uuidToString(restored.ID), "error", err)...)
 		writeError(w, http.StatusInternalServerError, "failed to load squad")

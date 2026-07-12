@@ -86,7 +86,7 @@ func (h *Handler) EnsureInternalSquadTemplate(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusInternalServerError, "failed to create internal squad")
 		return
 	}
-	resp, err := h.squadToResponseWithPreview(r.Context(), squad)
+	resp, err := squadToResponseWithPreview(r.Context(), h.Queries, squad)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load internal squad")
 		return
