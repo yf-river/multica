@@ -83,7 +83,7 @@ describe("DesktopRouteErrorPage", () => {
     );
   });
 
-  it("documents the structured kind/context follow-up debt in the report template", () => {
+  it("formats route diagnostics without internal implementation notes", () => {
     const report = formatRouteErrorReport({
       error: new Error("bad route"),
       url: "app://desktop/acme/issues",
@@ -93,6 +93,8 @@ describe("DesktopRouteErrorPage", () => {
 
     expect(report).toContain("kind: desktop_route_error");
     expect(report).toContain("trigger: route-errorElement");
-    expect(report).toContain("TODO: promote kind/context to structured feedback fields");
+    expect(report).toContain("app_version: 1.2.3");
+    expect(report).toContain("runtime_os: macos");
+    expect(report).not.toContain("TODO");
   });
 });
