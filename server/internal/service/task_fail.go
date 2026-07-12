@@ -43,7 +43,7 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 		t, err := qtx.FailAgentTask(ctx, db.FailAgentTaskParams{
 			ID:            taskID,
 			Error:         pgtype.Text{String: errMsg, Valid: true},
-			FailureReason: pgtype.Text{String: failureReason, Valid: failureReason != ""},
+			FailureReason: failureReason,
 			SessionID:     pgtype.Text{String: sessionID, Valid: sessionID != ""},
 			WorkDir:       pgtype.Text{String: workDir, Valid: workDir != ""},
 		})

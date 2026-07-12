@@ -1101,7 +1101,7 @@ UPDATE agent_task_queue
 SET status = 'failed',
     completed_at = now(),
     error = $2,
-    failure_reason = COALESCE($3, 'agent_error'),
+    failure_reason = $3::text,
     session_id = COALESCE($4, session_id),
     work_dir = COALESCE($5, work_dir)
 WHERE id = $1 AND status IN ('dispatched', 'running')
@@ -1111,7 +1111,7 @@ RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, c
 type FailAgentTaskParams struct {
 	ID            pgtype.UUID `json:"id"`
 	Error         pgtype.Text `json:"error"`
-	FailureReason pgtype.Text `json:"failure_reason"`
+	FailureReason string      `json:"failure_reason"`
 	SessionID     pgtype.Text `json:"session_id"`
 	WorkDir       pgtype.Text `json:"work_dir"`
 }
@@ -1123,8 +1123,8 @@ type FailAgentTaskParams struct {
 // back to GetLastChatTaskSession and continue the conversation instead of
 // silently starting over.
 //
-// failure_reason is a coarse classifier consumed by the auto-retry path;
-// 'agent_error' is the safe default when the daemon doesn't supply one.
+// failure_reason is classified by TaskService before this write. Keep it a
+// required argument so new callers cannot silently create coarse failures.
 func (q *Queries) FailAgentTask(ctx context.Context, arg FailAgentTaskParams) (AgentTaskQueue, error) {
 	row := q.db.QueryRow(ctx, failAgentTask,
 		arg.ID,

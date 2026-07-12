@@ -408,13 +408,13 @@ LIMIT 1;
 -- back to GetLastChatTaskSession and continue the conversation instead of
 -- silently starting over.
 --
--- failure_reason is a coarse classifier consumed by the auto-retry path;
--- 'agent_error' is the safe default when the daemon doesn't supply one.
+-- failure_reason is classified by TaskService before this write. Keep it a
+-- required argument so new callers cannot silently create coarse failures.
 UPDATE agent_task_queue
 SET status = 'failed',
     completed_at = now(),
     error = $2,
-    failure_reason = COALESCE(sqlc.narg('failure_reason'), 'agent_error'),
+    failure_reason = sqlc.arg('failure_reason')::text,
     session_id = COALESCE(sqlc.narg('session_id'), session_id),
     work_dir = COALESCE(sqlc.narg('work_dir'), work_dir)
 WHERE id = $1 AND status IN ('dispatched', 'running')

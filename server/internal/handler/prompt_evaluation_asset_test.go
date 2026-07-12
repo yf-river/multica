@@ -2828,7 +2828,7 @@ func TestRunPromptEvaluationAssetAgentBatchFailureAutoSyncsTask(t *testing.T) {
 	failed, err := testHandler.Queries.FailAgentTask(context.Background(), db.FailAgentTaskParams{
 		ID:            parseUUID(resp.TaskID),
 		Error:         pgtype.Text{String: "后台扫描判定任务失败", Valid: true},
-		FailureReason: pgtype.Text{String: "agent_error", Valid: true},
+		FailureReason: "agent_error.unknown",
 	})
 	if err != nil {
 		t.Fatalf("fail task row: %v", err)
