@@ -1387,7 +1387,6 @@ CREATE TABLE public.prompt_library_trial (
     agent_id uuid NOT NULL,
     chat_session_id uuid,
     task_id uuid,
-    input text DEFAULT ''::text NOT NULL,
     rendered_message text DEFAULT ''::text NOT NULL,
     variables jsonb DEFAULT '{}'::jsonb NOT NULL,
     status text DEFAULT 'queued'::text NOT NULL,

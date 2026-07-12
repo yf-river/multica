@@ -9,8 +9,8 @@ import (
 	"testing"
 )
 
-func TestRenderPromptLibraryTrialMessageWithoutInput(t *testing.T) {
-	rendered := renderPromptLibraryTrialMessage("请围绕 {{任务标题}} 澄清。背景：{{ 项目背景 }}", "", map[string]string{
+func TestRenderPromptLibraryTrialMessageUsesCurrentVariables(t *testing.T) {
+	rendered := renderPromptLibraryTrialMessage("请围绕 {{任务标题}} 澄清。背景：{{ 项目背景 }}", map[string]string{
 		"任务标题": "登录失败",
 		"项目背景": "账号系统",
 	})
@@ -19,13 +19,6 @@ func TestRenderPromptLibraryTrialMessageWithoutInput(t *testing.T) {
 	}
 	if strings.Contains(rendered, "<用户输入>") {
 		t.Fatalf("rendered message should omit empty user input: %s", rendered)
-	}
-}
-
-func TestRenderPromptLibraryTrialMessageKeepsLegacyInput(t *testing.T) {
-	rendered := renderPromptLibraryTrialMessage("请总结。", "补充上下文", nil)
-	if !strings.Contains(rendered, "<用户输入>\n补充上下文\n</用户输入>") {
-		t.Fatalf("rendered message should include legacy user input: %s", rendered)
 	}
 }
 

@@ -52,7 +52,6 @@ export interface PromptLibraryTrial {
   agent_id: string;
   chat_session_id: string | null;
   task_id: string | null;
-  input: string;
   rendered_message: string;
   variables: Record<string, unknown>;
   status: string;
@@ -119,6 +118,5 @@ export interface CreatePromptLibraryVersionResponse {
 
 export interface CreatePromptLibraryTrialRequest {
   agent_id: string;
-  input?: string;
   variables?: Record<string, string>;
 }

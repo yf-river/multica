@@ -19,7 +19,6 @@ INSERT INTO prompt_library_trial (
     agent_id,
     chat_session_id,
     task_id,
-    input,
     rendered_message,
     variables,
     status,
@@ -29,15 +28,14 @@ INSERT INTO prompt_library_trial (
     $2,
     $3,
     $4,
-    $7,
-    $8,
-    $5,
     $6,
-    COALESCE($9::jsonb, '{}'::jsonb),
-    COALESCE($10, 'queued'),
-    $11
+    $7,
+    $5,
+    COALESCE($8::jsonb, '{}'::jsonb),
+    COALESCE($9, 'queued'),
+    $10
 )
-RETURNING id, workspace_id, prompt_id, version_id, agent_id, chat_session_id, task_id, input, rendered_message, variables, status, output_preview, created_by, created_at, updated_at
+RETURNING id, workspace_id, prompt_id, version_id, agent_id, chat_session_id, task_id, rendered_message, variables, status, output_preview, created_by, created_at, updated_at
 `
 
 type CreatePromptLibraryTrialParams struct {
@@ -45,7 +43,6 @@ type CreatePromptLibraryTrialParams struct {
 	PromptID        pgtype.UUID `json:"prompt_id"`
 	VersionID       pgtype.UUID `json:"version_id"`
 	AgentID         pgtype.UUID `json:"agent_id"`
-	Input           string      `json:"input"`
 	RenderedMessage string      `json:"rendered_message"`
 	ChatSessionID   pgtype.UUID `json:"chat_session_id"`
 	TaskID          pgtype.UUID `json:"task_id"`
@@ -60,7 +57,6 @@ func (q *Queries) CreatePromptLibraryTrial(ctx context.Context, arg CreatePrompt
 		arg.PromptID,
 		arg.VersionID,
 		arg.AgentID,
-		arg.Input,
 		arg.RenderedMessage,
 		arg.ChatSessionID,
 		arg.TaskID,
@@ -77,7 +73,6 @@ func (q *Queries) CreatePromptLibraryTrial(ctx context.Context, arg CreatePrompt
 		&i.AgentID,
 		&i.ChatSessionID,
 		&i.TaskID,
-		&i.Input,
 		&i.RenderedMessage,
 		&i.Variables,
 		&i.Status,
@@ -98,7 +93,6 @@ SELECT
     plt.agent_id,
     plt.chat_session_id,
     plt.task_id,
-    plt.input,
     plt.rendered_message,
     plt.variables,
     COALESCE(atq.status, plt.status) AS status,
@@ -136,7 +130,6 @@ type ListPromptLibraryTrialsRow struct {
 	AgentID         pgtype.UUID        `json:"agent_id"`
 	ChatSessionID   pgtype.UUID        `json:"chat_session_id"`
 	TaskID          pgtype.UUID        `json:"task_id"`
-	Input           string             `json:"input"`
 	RenderedMessage string             `json:"rendered_message"`
 	Variables       []byte             `json:"variables"`
 	Status          string             `json:"status"`
@@ -163,7 +156,6 @@ func (q *Queries) ListPromptLibraryTrials(ctx context.Context, arg ListPromptLib
 			&i.AgentID,
 			&i.ChatSessionID,
 			&i.TaskID,
-			&i.Input,
 			&i.RenderedMessage,
 			&i.Variables,
 			&i.Status,

@@ -6,7 +6,6 @@ INSERT INTO prompt_library_trial (
     agent_id,
     chat_session_id,
     task_id,
-    input,
     rendered_message,
     variables,
     status,
@@ -19,7 +18,6 @@ INSERT INTO prompt_library_trial (
     sqlc.narg('chat_session_id'),
     sqlc.narg('task_id'),
     $5,
-    $6,
     COALESCE(sqlc.narg('variables')::jsonb, '{}'::jsonb),
     COALESCE(sqlc.narg('status'), 'queued'),
     sqlc.narg('created_by')
@@ -35,7 +33,6 @@ SELECT
     plt.agent_id,
     plt.chat_session_id,
     plt.task_id,
-    plt.input,
     plt.rendered_message,
     plt.variables,
     COALESCE(atq.status, plt.status) AS status,

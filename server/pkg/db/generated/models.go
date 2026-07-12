@@ -976,7 +976,6 @@ type PromptLibraryTrial struct {
 	AgentID         pgtype.UUID        `json:"agent_id"`
 	ChatSessionID   pgtype.UUID        `json:"chat_session_id"`
 	TaskID          pgtype.UUID        `json:"task_id"`
-	Input           string             `json:"input"`
 	RenderedMessage string             `json:"rendered_message"`
 	Variables       []byte             `json:"variables"`
 	Status          string             `json:"status"`

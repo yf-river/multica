@@ -53,7 +53,6 @@ function trial(number: number): PromptLibraryTrial {
     agent_id: number === 1 ? "agent-1" : "missing-agent",
     chat_session_id: null,
     task_id: null,
-    input: "",
     rendered_message: "",
     variables: number === 1 ? { issue: "登录失败" } : {},
     status: "completed",

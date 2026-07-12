@@ -73,7 +73,6 @@ type PromptLibraryTrialResponse struct {
 	AgentID         string         `json:"agent_id"`
 	ChatSessionID   *string        `json:"chat_session_id"`
 	TaskID          *string        `json:"task_id"`
-	Input           string         `json:"input"`
 	RenderedMessage string         `json:"rendered_message"`
 	Variables       map[string]any `json:"variables"`
 	Status          string         `json:"status"`
@@ -114,7 +113,6 @@ type UpdatePromptLibraryItemRequest struct {
 
 type CreatePromptLibraryTrialRequest struct {
 	AgentID   string            `json:"agent_id"`
-	Input     string            `json:"input"`
 	Variables map[string]string `json:"variables"`
 }
 
@@ -190,7 +188,6 @@ func promptLibraryTrialToResponse(trial db.PromptLibraryTrial) PromptLibraryTria
 		AgentID:         uuidToString(trial.AgentID),
 		ChatSessionID:   uuidToPtr(trial.ChatSessionID),
 		TaskID:          uuidToPtr(trial.TaskID),
-		Input:           trial.Input,
 		RenderedMessage: trial.RenderedMessage,
 		Variables:       variables,
 		Status:          trial.Status,
@@ -214,7 +211,6 @@ func promptLibraryTrialRowToResponse(trial db.ListPromptLibraryTrialsRow) Prompt
 		AgentID:         uuidToString(trial.AgentID),
 		ChatSessionID:   uuidToPtr(trial.ChatSessionID),
 		TaskID:          uuidToPtr(trial.TaskID),
-		Input:           trial.Input,
 		RenderedMessage: trial.RenderedMessage,
 		Variables:       variables,
 		Status:          trial.Status,
@@ -610,7 +606,7 @@ func (h *Handler) DeletePromptLibraryItem(w http.ResponseWriter, r *http.Request
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func renderPromptLibraryTrialMessage(content string, input string, variables map[string]string) string {
+func renderPromptLibraryTrialMessage(content string, variables map[string]string) string {
 	renderedPrompt := promptLibraryVariablePattern.ReplaceAllStringFunc(content, func(match string) string {
 		parts := promptLibraryVariablePattern.FindStringSubmatch(match)
 		if len(parts) < 2 {
@@ -622,11 +618,7 @@ func renderPromptLibraryTrialMessage(content string, input string, variables map
 		}
 		return match
 	})
-	input = strings.TrimSpace(input)
-	if input == "" {
-		return fmt.Sprintf("请严格按照下面的提示词执行。\n\n<提示词版本>\n%s\n</提示词版本>", renderedPrompt)
-	}
-	return fmt.Sprintf("请严格按照下面的提示词执行。\n\n<提示词版本>\n%s\n</提示词版本>\n\n<用户输入>\n%s\n</用户输入>", renderedPrompt, input)
+	return fmt.Sprintf("请严格按照下面的提示词执行。\n\n<提示词版本>\n%s\n</提示词版本>", renderedPrompt)
 }
 
 func missingPromptLibraryTrialVariables(content string, variables map[string]string) []string {
@@ -711,7 +703,7 @@ func (h *Handler) CreatePromptLibraryTrial(w http.ResponseWriter, r *http.Reques
 	}
 	workspaceID := uuidToString(item.WorkspaceID)
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
-	renderedMessage := renderPromptLibraryTrialMessage(version.Content, strings.TrimSpace(req.Input), req.Variables)
+	renderedMessage := renderPromptLibraryTrialMessage(version.Content, req.Variables)
 	variablesJSON, _ := json.Marshal(req.Variables)
 	if len(variablesJSON) == 0 || string(variablesJSON) == "null" {
 		variablesJSON = []byte(`{}`)
@@ -777,7 +769,6 @@ func (h *Handler) CreatePromptLibraryTrial(w http.ResponseWriter, r *http.Reques
 		AgentID:         agent.ID,
 		ChatSessionID:   session.ID,
 		TaskID:          task.ID,
-		Input:           strings.TrimSpace(req.Input),
 		RenderedMessage: renderedMessage,
 		Variables:       variablesJSON,
 		Status:          task.Status,
