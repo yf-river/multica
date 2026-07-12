@@ -357,12 +357,14 @@ type ExternalCredentialProfile struct {
 }
 
 type Feedback struct {
-	ID          pgtype.UUID        `json:"id"`
-	UserID      pgtype.UUID        `json:"user_id"`
-	WorkspaceID pgtype.UUID        `json:"workspace_id"`
-	Message     string             `json:"message"`
-	Metadata    []byte             `json:"metadata"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	ID             pgtype.UUID        `json:"id"`
+	UserID         pgtype.UUID        `json:"user_id"`
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	Message        string             `json:"message"`
+	Metadata       []byte             `json:"metadata"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	IdempotencyKey pgtype.UUID        `json:"idempotency_key"`
+	RequestHash    pgtype.Text        `json:"request_hash"`
 }
 
 type GithubInstallation struct {

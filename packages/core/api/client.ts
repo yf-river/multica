@@ -681,15 +681,19 @@ export class ApiClient extends ApiTransport {
     kind: "bug" | "feature" | "general" | "praise";
     url?: string;
     workspace_id?: string;
-  }): Promise<FeedbackResponse> {
-    const raw = await this.fetch<unknown>("/api/feedback", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseOrThrow(raw, FeedbackResponseSchema, EMPTY_FEEDBACK_RESPONSE, {
-      endpoint: "POST /api/feedback",
-      mayHaveCommitted: true,
-    });
+  }, idempotencyKey = generateUUID()): Promise<FeedbackResponse> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>("/api/feedback", {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow(raw, FeedbackResponseSchema, EMPTY_FEEDBACK_RESPONSE, {
+        endpoint: "POST /api/feedback",
+        mayHaveCommitted: true,
+      });
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async updateIssue(id: string, data: UpdateIssueRequest): Promise<Issue> {

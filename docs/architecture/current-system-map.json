@@ -23,14 +23,14 @@
     "databaseTables": 84,
     "databaseFunctions": 9,
     "databaseTriggers": 4,
-    "databaseIndexes": 188,
-    "migrations": 124,
+    "databaseIndexes": 189,
+    "migrations": 132,
     "sqlcModules": 53,
-    "sqlcQueries": 577,
+    "sqlcQueries": 580,
     "goWebsocketEvents": 80,
     "typescriptWebsocketEvents": 70,
-    "zustandStores": 40,
-    "reactQueryConsumerFiles": 175,
+    "zustandStores": 43,
+    "reactQueryConsumerFiles": 176,
     "environmentVariables": 217,
     "manualExternalSystems": 12
   },
@@ -7041,6 +7041,119 @@
           "droppedFunctions": [],
           "droppedTriggers": [],
           "droppedIndexes": []
+        },
+        {
+          "version": 63,
+          "name": "add_prompt_evaluation_re_eval_asset_request",
+          "direction": "down",
+          "source": "server/migrations/063_add_prompt_evaluation_re_eval_asset_request.down.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 63,
+          "name": "add_prompt_evaluation_re_eval_asset_request",
+          "direction": "up",
+          "source": "server/migrations/063_add_prompt_evaluation_re_eval_asset_request.up.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 64,
+          "name": "add_prompt_evaluation_candidate_request",
+          "direction": "down",
+          "source": "server/migrations/064_add_prompt_evaluation_candidate_request.down.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 64,
+          "name": "add_prompt_evaluation_candidate_request",
+          "direction": "up",
+          "source": "server/migrations/064_add_prompt_evaluation_candidate_request.up.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 65,
+          "name": "add_prompt_evaluation_candidate_publish_request",
+          "direction": "down",
+          "source": "server/migrations/065_add_prompt_evaluation_candidate_publish_request.down.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 65,
+          "name": "add_prompt_evaluation_candidate_publish_request",
+          "direction": "up",
+          "source": "server/migrations/065_add_prompt_evaluation_candidate_publish_request.up.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 66,
+          "name": "add_feedback_create_request",
+          "direction": "down",
+          "source": "server/migrations/066_add_feedback_create_request.down.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": [
+            "feedback_user_idempotency_key_idx"
+          ]
+        },
+        {
+          "version": 66,
+          "name": "add_feedback_create_request",
+          "direction": "up",
+          "source": "server/migrations/066_add_feedback_create_request.up.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [
+            {
+              "name": "feedback_user_idempotency_key_idx",
+              "table": "feedback",
+              "unique": true,
+              "source": "server/migrations/066_add_feedback_create_request.up.sql#feedback_user_idempotency_key_idx"
+            }
+          ],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
         }
       ],
       "tables": [
@@ -7499,6 +7612,12 @@
           "table": "external_credential_profile",
           "unique": true,
           "source": "server/migrations/058_add_external_credential_create_request.up.sql#external_credential_profile_create_request_unique"
+        },
+        {
+          "name": "feedback_user_idempotency_key_idx",
+          "table": "feedback",
+          "unique": true,
+          "source": "server/migrations/066_add_feedback_create_request.up.sql#feedback_user_idempotency_key_idx"
         },
         {
           "name": "idx_activity_log_issue_keyset",
@@ -9679,6 +9798,11 @@
               "name": "CreateFeedback",
               "command": "one",
               "source": "server/pkg/db/queries/feedback.sql#CreateFeedback"
+            },
+            {
+              "name": "GetFeedbackByCreateRequest",
+              "command": "one",
+              "source": "server/pkg/db/queries/feedback.sql#GetFeedbackByCreateRequest"
             }
           ]
         },
@@ -10457,6 +10581,11 @@
               "source": "server/pkg/db/queries/prompt_evaluation_asset.sql#CreatePromptEvaluationAsset"
             },
             {
+              "name": "CreatePromptEvaluationAssetWithID",
+              "command": "one",
+              "source": "server/pkg/db/queries/prompt_evaluation_asset.sql#CreatePromptEvaluationAssetWithID"
+            },
+            {
               "name": "DeletePromptEvaluationAsset",
               "command": "exec",
               "source": "server/pkg/db/queries/prompt_evaluation_asset.sql#DeletePromptEvaluationAsset"
@@ -10728,9 +10857,9 @@
           "generatedSource": "server/pkg/db/generated/prompt_evaluation_optimization_candidate.sql.go",
           "queries": [
             {
-              "name": "CreatePromptEvaluationOptimizationCandidate",
+              "name": "CreatePromptEvaluationOptimizationCandidateWithID",
               "command": "one",
-              "source": "server/pkg/db/queries/prompt_evaluation_optimization_candidate.sql#CreatePromptEvaluationOptimizationCandidate"
+              "source": "server/pkg/db/queries/prompt_evaluation_optimization_candidate.sql#CreatePromptEvaluationOptimizationCandidateWithID"
             },
             {
               "name": "GetPromptEvaluationOptimizationCandidateInWorkspace",
@@ -10887,6 +11016,11 @@
               "name": "CreatePromptLibraryItemVersion",
               "command": "one",
               "source": "server/pkg/db/queries/prompt_library.sql#CreatePromptLibraryItemVersion"
+            },
+            {
+              "name": "CreatePromptLibraryItemVersionWithID",
+              "command": "one",
+              "source": "server/pkg/db/queries/prompt_library.sql#CreatePromptLibraryItemVersionWithID"
             },
             {
               "name": "DeletePromptLibraryItem",
@@ -13698,6 +13832,30 @@
         "persisted": true
       },
       {
+        "source": "packages/core/prompt-library/candidate-create.ts",
+        "scope": "packages/core",
+        "exports": [
+          "useCandidateCreateStore"
+        ],
+        "persisted": true
+      },
+      {
+        "source": "packages/core/prompt-library/candidate-decision.ts",
+        "scope": "packages/core",
+        "exports": [
+          "useCandidateDecisionStore"
+        ],
+        "persisted": true
+      },
+      {
+        "source": "packages/core/prompt-library/skill-re-eval-asset.ts",
+        "scope": "packages/core",
+        "exports": [
+          "useSkillReEvalAssetStore"
+        ],
+        "persisted": true
+      },
+      {
         "source": "packages/core/prompt-library/skill-re-eval-run.ts",
         "scope": "packages/core",
         "exports": [
@@ -15480,6 +15638,17 @@
           }
         },
         {
+          "source": "packages/views/prompt-library/components/use-candidate-decision-actions.ts",
+          "scope": "packages/views",
+          "operations": {
+            "useQuery": 0,
+            "useInfiniteQuery": 0,
+            "useMutation": 0,
+            "queryOptions": 0,
+            "infiniteQueryOptions": 0
+          }
+        },
+        {
           "source": "packages/views/prompt-library/components/use-prompt-library-mutations.ts",
           "scope": "packages/views",
           "operations": {
@@ -15807,7 +15976,7 @@
       },
       {
         "scope": "packages/core",
-        "count": 38
+        "count": 41
       }
     ],
     "reactQueryByScope": [
@@ -15825,7 +15994,7 @@
       },
       {
         "scope": "packages/views",
-        "count": 114
+        "count": 115
       }
     ]
   },
@@ -18898,6 +19067,8 @@
           "server/internal/handler/prompt_evaluation_agent_runtime.go",
           "server/internal/handler/prompt_evaluation_asset_mappers.go",
           "server/internal/handler/prompt_evaluation_asset.go",
+          "server/internal/handler/prompt_evaluation_candidate_create_idempotency.go",
+          "server/internal/handler/prompt_evaluation_candidate_publish_idempotency.go",
           "server/internal/handler/prompt_evaluation_candidates.go",
           "server/internal/handler/prompt_evaluation_case_operation_consumer.go",
           "server/internal/handler/prompt_evaluation_cases.go",
@@ -18905,6 +19076,7 @@
           "server/internal/handler/prompt_evaluation_evidence.go",
           "server/internal/handler/prompt_evaluation_execution.go",
           "server/internal/handler/prompt_evaluation_local_run_idempotency.go",
+          "server/internal/handler/prompt_evaluation_re_eval_asset_idempotency.go",
           "server/internal/handler/prompt_evaluation_runs.go",
           "server/internal/handler/prompt_evaluation_skill.go",
           "server/internal/handler/prompt_library_create_idempotency.go",

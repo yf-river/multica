@@ -24,14 +24,14 @@ evidence reviewable by humans.
 | Database tables | 84 |
 | Database functions | 9 |
 | Database triggers | 4 |
-| Database indexes | 188 |
-| Migration files (up + down) | 124 |
+| Database indexes | 189 |
+| Migration files (up + down) | 132 |
 | sqlc modules | 53 |
-| sqlc queries | 577 |
+| sqlc queries | 580 |
 | Go WebSocket events | 80 |
 | TypeScript WebSocket events | 70 |
-| Zustand store definitions | 40 |
-| React Query consumer files | 175 |
+| Zustand store definitions | 43 |
+| React Query consumer files | 176 |
 | Environment variable names | 217 |
 | Manually identified external systems | 12 |
 
@@ -617,6 +617,14 @@ intentionally platform-specific.
 | 61 | add_prompt_evaluation_agent_run_request | up | — | 0 | 0 | 0 | `server/migrations/061_add_prompt_evaluation_agent_run_request.up.sql` |
 | 62 | add_prompt_evaluation_local_run_request | down | — | 0 | 0 | 0 | `server/migrations/062_add_prompt_evaluation_local_run_request.down.sql` |
 | 62 | add_prompt_evaluation_local_run_request | up | — | 0 | 0 | 0 | `server/migrations/062_add_prompt_evaluation_local_run_request.up.sql` |
+| 63 | add_prompt_evaluation_re_eval_asset_request | down | — | 0 | 0 | 0 | `server/migrations/063_add_prompt_evaluation_re_eval_asset_request.down.sql` |
+| 63 | add_prompt_evaluation_re_eval_asset_request | up | — | 0 | 0 | 0 | `server/migrations/063_add_prompt_evaluation_re_eval_asset_request.up.sql` |
+| 64 | add_prompt_evaluation_candidate_request | down | — | 0 | 0 | 0 | `server/migrations/064_add_prompt_evaluation_candidate_request.down.sql` |
+| 64 | add_prompt_evaluation_candidate_request | up | — | 0 | 0 | 0 | `server/migrations/064_add_prompt_evaluation_candidate_request.up.sql` |
+| 65 | add_prompt_evaluation_candidate_publish_request | down | — | 0 | 0 | 0 | `server/migrations/065_add_prompt_evaluation_candidate_publish_request.down.sql` |
+| 65 | add_prompt_evaluation_candidate_publish_request | up | — | 0 | 0 | 0 | `server/migrations/065_add_prompt_evaluation_candidate_publish_request.up.sql` |
+| 66 | add_feedback_create_request | down | — | 0 | 0 | 0 | `server/migrations/066_add_feedback_create_request.down.sql` |
+| 66 | add_feedback_create_request | up | — | 0 | 0 | 1 | `server/migrations/066_add_feedback_create_request.up.sql` |
 
 ### Current tables discovered from up migrations
 
@@ -715,11 +723,11 @@ intentionally platform-specific.
 | `trg_tu_dirty_hourly` | `public.task_usage` | `public.enqueue_task_usage_hourly_dirty_for_tu` | `server/migrations/001_current_schema.up.sql#trg_tu_dirty_hourly` |
 
 - Functions: `public.enqueue_task_usage_hourly_dirty_for_atq`, `public.enqueue_task_usage_hourly_dirty_for_issue_delete`, `public.enqueue_task_usage_hourly_dirty_for_issue_project`, `public.enqueue_task_usage_hourly_dirty_for_tu`, `public.prune_task_usage_hourly_dirty`, `public.rollup_task_usage_hourly`, `public.rollup_task_usage_hourly_window`, `public.task_usage_hour_bucket`, `public.task_usage_hourly_rollup_lag_seconds`
-- Indexes: 188 current definitions; full name/table/uniqueness evidence is in the JSON companion.
+- Indexes: 189 current definitions; full name/table/uniqueness evidence is in the JSON companion.
 
 ### sqlc modules
 
-All 577 query names, commands, and stable source anchors are stored in the JSON companion.
+All 580 query names, commands, and stable source anchors are stored in the JSON companion.
 
 | Module | Queries | SQL source | Generated source |
 | --- | --- | --- | --- |
@@ -733,7 +741,7 @@ All 577 query names, commands, and stable source anchors are stored in the JSON 
 | comment | 22 | `server/pkg/db/queries/comment.sql` | `server/pkg/db/generated/comment.sql.go` |
 | domain_event_outbox | 9 | `server/pkg/db/queries/domain_event_outbox.sql` | `server/pkg/db/generated/domain_event_outbox.sql.go` |
 | external_credential_profile | 7 | `server/pkg/db/queries/external_credential_profile.sql` | `server/pkg/db/generated/external_credential_profile.sql.go` |
-| feedback | 2 | `server/pkg/db/queries/feedback.sql` | `server/pkg/db/generated/feedback.sql.go` |
+| feedback | 3 | `server/pkg/db/queries/feedback.sql` | `server/pkg/db/generated/feedback.sql.go` |
 | github | 19 | `server/pkg/db/queries/github.sql` | `server/pkg/db/generated/github.sql.go` |
 | inbox | 13 | `server/pkg/db/queries/inbox.sql` | `server/pkg/db/generated/inbox.sql.go` |
 | issue | 20 | `server/pkg/db/queries/issue.sql` | `server/pkg/db/generated/issue.sql.go` |
@@ -746,7 +754,7 @@ All 577 query names, commands, and stable source anchors are stored in the JSON 
 | pinned_item | 6 | `server/pkg/db/queries/pinned_item.sql` | `server/pkg/db/generated/pinned_item.sql.go` |
 | project | 8 | `server/pkg/db/queries/project.sql` | `server/pkg/db/generated/project.sql.go` |
 | project_resource | 11 | `server/pkg/db/queries/project_resource.sql` | `server/pkg/db/generated/project_resource.sql.go` |
-| prompt_evaluation_asset | 5 | `server/pkg/db/queries/prompt_evaluation_asset.sql` | `server/pkg/db/generated/prompt_evaluation_asset.sql.go` |
+| prompt_evaluation_asset | 6 | `server/pkg/db/queries/prompt_evaluation_asset.sql` | `server/pkg/db/generated/prompt_evaluation_asset.sql.go` |
 | prompt_evaluation_case | 10 | `server/pkg/db/queries/prompt_evaluation_case.sql` | `server/pkg/db/generated/prompt_evaluation_case.sql.go` |
 | prompt_evaluation_case_assertion | 3 | `server/pkg/db/queries/prompt_evaluation_case_assertion.sql` | `server/pkg/db/generated/prompt_evaluation_case_assertion.sql.go` |
 | prompt_evaluation_case_operation | 6 | `server/pkg/db/queries/prompt_evaluation_case_operation.sql` | `server/pkg/db/generated/prompt_evaluation_case_operation.sql.go` |
@@ -757,7 +765,7 @@ All 577 query names, commands, and stable source anchors are stored in the JSON 
 | prompt_evaluation_optimization_candidate | 6 | `server/pkg/db/queries/prompt_evaluation_optimization_candidate.sql` | `server/pkg/db/generated/prompt_evaluation_optimization_candidate.sql.go` |
 | prompt_evaluation_run | 16 | `server/pkg/db/queries/prompt_evaluation_run.sql` | `server/pkg/db/generated/prompt_evaluation_run.sql.go` |
 | prompt_evaluation_test_suite_case | 4 | `server/pkg/db/queries/prompt_evaluation_test_suite_case.sql` | `server/pkg/db/generated/prompt_evaluation_test_suite_case.sql.go` |
-| prompt_library | 7 | `server/pkg/db/queries/prompt_library.sql` | `server/pkg/db/generated/prompt_library.sql.go` |
+| prompt_library | 8 | `server/pkg/db/queries/prompt_library.sql` | `server/pkg/db/generated/prompt_library.sql.go` |
 | prompt_library_trial | 2 | `server/pkg/db/queries/prompt_library_trial.sql` | `server/pkg/db/generated/prompt_library_trial.sql.go` |
 | prompt_library_version | 4 | `server/pkg/db/queries/prompt_library_version.sql` | `server/pkg/db/generated/prompt_library_version.sql.go` |
 | reaction | 3 | `server/pkg/db/queries/reaction.sql` | `server/pkg/db/generated/reaction.sql.go` |
@@ -830,6 +838,9 @@ still include daemon-only/backend projection events and possible frontend gaps.
 | packages/core | `packages/core/navigation/store.ts` | `useNavigationStore` | yes |
 | packages/core | `packages/core/projects/draft-store.ts` | `useProjectDraftStore` | yes |
 | packages/core | `packages/core/projects/stores/view-store.ts` | `useProjectViewStore` | yes |
+| packages/core | `packages/core/prompt-library/candidate-create.ts` | `useCandidateCreateStore` | yes |
+| packages/core | `packages/core/prompt-library/candidate-decision.ts` | `useCandidateDecisionStore` | yes |
+| packages/core | `packages/core/prompt-library/skill-re-eval-asset.ts` | `useSkillReEvalAssetStore` | yes |
 | packages/core | `packages/core/prompt-library/skill-re-eval-run.ts` | `useSkillReEvalRunStore` | yes |
 | packages/core | `packages/core/prompt-library/trial-create.ts` | `usePromptLibraryCreateStore` | yes |
 | packages/core | `packages/core/search/store.ts` | `useSearchStore` | no |
@@ -847,7 +858,7 @@ still include daemon-only/backend projection events and possible frontend gaps.
 | apps/desktop | 12 |
 | apps/web | 3 |
 | packages/core | 46 |
-| packages/views | 114 |
+| packages/views | 115 |
 
 Operation counts: `useQuery` 274, `useInfiniteQuery` 1, `useMutation` 97, `queryOptions` 65, `infiniteQueryOptions` 1.
 The JSON companion lists every consumer file and every discovered exported
@@ -1093,7 +1104,7 @@ written to the generated outputs.
 | filesystem | 43 | `server/cmd/migrate/main.go`, `server/cmd/multica/cmd_agent.go`, `server/cmd/multica/cmd_attachment.go`, `server/cmd/multica/cmd_daemon_windows.go`, `server/cmd/multica/cmd_daemon.go`, `server/cmd/multica/cmd_issue_comments.go`, `server/cmd/multica/cmd_issue_pull_request.go`, `server/cmd/multica/cmd_issue.go` |
 | object-storage | 1 | `server/internal/storage/s3.go` |
 | outbound-http | 17 | `server/cmd/multica/cmd_daemon.go`, `server/cmd/multica/cmd_setup.go`, `server/internal/analytics/posthog.go`, `server/internal/auth/cloud_pat.go`, `server/internal/cli/client.go`, `server/internal/cli/update.go`, `server/internal/daemon/client.go`, `server/internal/daemon/task_artifacts.go` |
-| postgresql | 141 | `server/cmd/migrate/main.go`, `server/cmd/server/activity_listeners.go`, `server/cmd/server/autopilot_failure_monitor.go`, `server/cmd/server/autopilot_scheduler.go`, `server/cmd/server/chat_projection.go`, `server/cmd/server/comment_projection.go`, `server/cmd/server/dbstats.go`, `server/cmd/server/health.go` |
+| postgresql | 144 | `server/cmd/migrate/main.go`, `server/cmd/server/activity_listeners.go`, `server/cmd/server/autopilot_failure_monitor.go`, `server/cmd/server/autopilot_scheduler.go`, `server/cmd/server/chat_projection.go`, `server/cmd/server/comment_projection.go`, `server/cmd/server/dbstats.go`, `server/cmd/server/health.go` |
 | redis | 14 | `server/cmd/server/main.go`, `server/cmd/server/router.go`, `server/internal/auth/cloud_pat.go`, `server/internal/auth/membership_cache.go`, `server/internal/auth/pat_cache.go`, `server/internal/handler/runtime_liveness_store.go`, `server/internal/handler/runtime_local_skills_redis_store.go`, `server/internal/handler/runtime_models_redis_store.go` |
 | subprocess | 29 | `server/cmd/multica/cmd_auth.go`, `server/cmd/multica/cmd_daemon_unix.go`, `server/cmd/multica/cmd_daemon.go`, `server/internal/cli/update.go`, `server/internal/daemon/config.go`, `server/internal/daemon/execenv/codex_home_link_windows.go`, `server/internal/daemon/execenv/openclaw_config.go`, `server/internal/daemon/gc.go` |
 | websocket | 4 | `server/internal/daemon/wakeup.go`, `server/internal/daemonws/hub.go`, `server/internal/integrations/lark/ws_connector.go`, `server/internal/realtime/hub.go` |

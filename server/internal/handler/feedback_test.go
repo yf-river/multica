@@ -7,12 +7,20 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"testing"
+
+	"github.com/google/uuid"
 )
+
+func newFeedbackRequest(body CreateFeedbackRequest) *http.Request {
+	req := newRequest("POST", "/api/feedback", body)
+	req.Header.Set("Idempotency-Key", uuid.NewString())
+	return req
+}
 
 func TestCreateFeedbackHappyPath(t *testing.T) {
 	clearFeedbackForTestUser(t)
 
-	req := newRequest("POST", "/api/feedback", CreateFeedbackRequest{
+	req := newFeedbackRequest(CreateFeedbackRequest{
 		Message: "Love the product, dark mode flashes on startup",
 		Kind:    "general",
 	})
@@ -52,7 +60,7 @@ func TestCreateFeedbackRejectsWorkspaceOutsideCallerMembership(t *testing.T) {
 	}
 	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM workspace WHERE id = $1`, workspaceID) })
 
-	req := newRequest("POST", "/api/feedback", CreateFeedbackRequest{
+	req := newFeedbackRequest(CreateFeedbackRequest{
 		Message:     "must not be attributed across tenants",
 		Kind:        "bug",
 		WorkspaceID: &workspaceID,
@@ -74,8 +82,55 @@ func TestCreateFeedbackRejectsWorkspaceOutsideCallerMembership(t *testing.T) {
 	}
 }
 
+func TestCreateFeedbackReplaysCommittedResponse(t *testing.T) {
+	clearFeedbackForTestUser(t)
+	key := "d2b7cb04-1c8f-4e67-8587-e420e4141de2"
+	create := func() FeedbackResponse {
+		req := newRequest("POST", "/api/feedback", CreateFeedbackRequest{
+			Message: "same submission after an unknown response",
+			Kind:    "general",
+		})
+		req.Header.Set("Idempotency-Key", key)
+		w := httptest.NewRecorder()
+		testHandler.CreateFeedback(w, req)
+		if w.Code != http.StatusCreated {
+			t.Fatalf("create feedback: got %d: %s", w.Code, w.Body.String())
+		}
+		var response FeedbackResponse
+		if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+			t.Fatalf("decode feedback response: %v", err)
+		}
+		return response
+	}
+
+	first, replay := create(), create()
+	if replay != first {
+		t.Fatalf("replayed response = %+v, want exact %+v", replay, first)
+	}
+	var count int
+	if err := testPool.QueryRow(context.Background(),
+		`SELECT count(*) FROM feedback WHERE user_id = $1 AND message = $2`,
+		parseUUID(testUserID), "same submission after an unknown response").Scan(&count); err != nil {
+		t.Fatalf("count replayed feedback: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("same request persisted %d feedback rows, want 1", count)
+	}
+
+	changed := newRequest("POST", "/api/feedback", CreateFeedbackRequest{
+		Message: "same submission after an unknown response",
+		Kind:    "bug",
+	})
+	changed.Header.Set("Idempotency-Key", key)
+	w := httptest.NewRecorder()
+	testHandler.CreateFeedback(w, changed)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("changed request with reused key: got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestCreateFeedbackEmptyMessage(t *testing.T) {
-	req := newRequest("POST", "/api/feedback", CreateFeedbackRequest{Message: "   "})
+	req := newFeedbackRequest(CreateFeedbackRequest{Message: "   "})
 	w := httptest.NewRecorder()
 	testHandler.CreateFeedback(w, req)
 	if w.Code != http.StatusBadRequest {
@@ -85,7 +140,7 @@ func TestCreateFeedbackEmptyMessage(t *testing.T) {
 
 func TestCreateFeedbackRequiresCurrentKind(t *testing.T) {
 	clearFeedbackForTestUser(t)
-	req := newRequest("POST", "/api/feedback", CreateFeedbackRequest{Message: "missing current kind"})
+	req := newFeedbackRequest(CreateFeedbackRequest{Message: "missing current kind"})
 	w := httptest.NewRecorder()
 
 	testHandler.CreateFeedback(w, req)
@@ -106,7 +161,7 @@ func TestCreateFeedbackRateLimit(t *testing.T) {
 	clearFeedbackForTestUser(t)
 
 	for i := 0; i < feedbackHourlyRateLimit; i++ {
-		req := newRequest("POST", "/api/feedback", CreateFeedbackRequest{
+		req := newFeedbackRequest(CreateFeedbackRequest{
 			Message: "feedback #" + strconv.Itoa(i),
 			Kind:    "general",
 		})
@@ -116,7 +171,7 @@ func TestCreateFeedbackRateLimit(t *testing.T) {
 			t.Fatalf("iteration %d: expected 201, got %d: %s", i, w.Code, w.Body.String())
 		}
 	}
-	req := newRequest("POST", "/api/feedback", CreateFeedbackRequest{Message: "one too many", Kind: "general"})
+	req := newFeedbackRequest(CreateFeedbackRequest{Message: "one too many", Kind: "general"})
 	w := httptest.NewRecorder()
 	testHandler.CreateFeedback(w, req)
 	if w.Code != http.StatusTooManyRequests {

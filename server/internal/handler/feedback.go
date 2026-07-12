@@ -2,11 +2,13 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"regexp"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/logger"
@@ -46,6 +48,10 @@ type FeedbackResponse struct {
 
 func (h *Handler) CreateFeedback(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	idempotencyKey, ok := requireIdempotencyKey(w, r)
 	if !ok {
 		return
 	}
@@ -115,14 +121,44 @@ func (h *Handler) CreateFeedback(w http.ResponseWriter, r *http.Request) {
 		}
 		workspaceID = ws
 	}
+	requestHash, err := hashRequestFingerprint(struct {
+		Message     string      `json:"message"`
+		Kind        string      `json:"kind"`
+		URL         string      `json:"url"`
+		WorkspaceID pgtype.UUID `json:"workspace_id"`
+	}{message, kind, req.URL, workspaceID})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to fingerprint feedback")
+		return
+	}
+	if existing, err := h.Queries.GetFeedbackByCreateRequest(r.Context(), db.GetFeedbackByCreateRequestParams{
+		UserID: parseUUID(userID), IdempotencyKey: idempotencyKey,
+	}); err == nil {
+		h.writeFeedbackReplay(w, existing, requestHash)
+		return
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusInternalServerError, "failed to load feedback request")
+		return
+	}
 
 	fb, err := h.Queries.CreateFeedback(r.Context(), db.CreateFeedbackParams{
-		UserID:      parseUUID(userID),
-		Message:     message,
-		Metadata:    metaBytes,
-		WorkspaceID: workspaceID,
+		UserID:         parseUUID(userID),
+		Message:        message,
+		Metadata:       metaBytes,
+		WorkspaceID:    workspaceID,
+		IdempotencyKey: idempotencyKey,
+		RequestHash:    pgtype.Text{String: requestHash, Valid: true},
 	})
 	if err != nil {
+		if isUniqueViolation(err) {
+			existing, replayErr := h.Queries.GetFeedbackByCreateRequest(r.Context(), db.GetFeedbackByCreateRequestParams{
+				UserID: parseUUID(userID), IdempotencyKey: idempotencyKey,
+			})
+			if replayErr == nil {
+				h.writeFeedbackReplay(w, existing, requestHash)
+				return
+			}
+		}
 		slog.Warn("create feedback failed", append(logger.RequestAttrs(r), "error", err)...)
 		writeError(w, http.StatusInternalServerError, "failed to submit feedback")
 		return
@@ -143,5 +179,19 @@ func (h *Handler) CreateFeedback(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, FeedbackResponse{
 		ID:        uuidToString(fb.ID),
 		CreatedAt: timestampToString(fb.CreatedAt),
+	})
+}
+
+func (h *Handler) writeFeedbackReplay(w http.ResponseWriter, feedback db.Feedback, requestHash string) {
+	if !feedback.RequestHash.Valid || feedback.RequestHash.String != requestHash {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"error": "Idempotency-Key was already used with a different request",
+			"code":  "idempotency_conflict",
+		})
+		return
+	}
+	w.Header().Set("Idempotency-Replayed", "true")
+	writeJSON(w, http.StatusCreated, FeedbackResponse{
+		ID: uuidToString(feedback.ID), CreatedAt: timestampToString(feedback.CreatedAt),
 	})
 }
