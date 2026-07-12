@@ -299,6 +299,37 @@ func TestRequireWorkspaceMemberInvalidWorkspaceRemainsNotFound(t *testing.T) {
 	}
 }
 
+func TestEntityLoadersClientCanceledReturn499(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	const entityID = "11111111-1111-4111-8111-111111111111"
+	tests := []struct {
+		name string
+		load func(http.ResponseWriter, *http.Request)
+	}{
+		{"issue UUID", func(w http.ResponseWriter, r *http.Request) { _, _ = testHandler.loadIssueForUser(w, r, entityID) }},
+		{"issue identifier", func(w http.ResponseWriter, r *http.Request) { _, _ = testHandler.loadIssueForUser(w, r, "MUL-1") }},
+		{"agent", func(w http.ResponseWriter, r *http.Request) { _, _ = testHandler.loadAgentForUser(w, r, entityID) }},
+		{"inbox item", func(w http.ResponseWriter, r *http.Request) { _, _ = testHandler.loadInboxItemForUser(w, r, entityID) }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := newRequest(http.MethodGet, "/api/entity?workspace_id="+testWorkspaceID, nil)
+			ctx, cancel := context.WithCancel(req.Context())
+			cancel()
+			req = req.WithContext(ctx)
+			w := httptest.NewRecorder()
+			tt.load(w, req)
+			if w.Code != 499 {
+				t.Fatalf("expected 499 for canceled entity read, got %d: %s", w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
 func setupHandlerTestFixture(ctx context.Context, pool *pgxpool.Pool) (string, string, error) {
 	if err := cleanupHandlerTestFixture(ctx, pool); err != nil {
 		return "", "", err
