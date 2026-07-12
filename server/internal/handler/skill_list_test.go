@@ -3,10 +3,41 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/google/uuid"
 )
+
+func TestCreateSkillRejectsNonObjectConfig(t *testing.T) {
+	name := "invalid-config-" + uuid.NewString()
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM skill WHERE name = $1`, name)
+	})
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/skills?workspace_id="+testWorkspaceID, map[string]any{
+		"name":    name,
+		"content": "# Invalid config fixture",
+		"config":  []any{"not", "an", "object"},
+	})
+	testHandler.CreateSkill(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("CreateSkill non-object config: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var count int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT count(*)::int FROM skill WHERE workspace_id = $1 AND name = $2
+	`, testWorkspaceID, name).Scan(&count); err != nil {
+		t.Fatalf("count invalid-config skill: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("CreateSkill persisted %d invalid-config rows", count)
+	}
+}
 
 // TestListSkills_OmitsContent guards the fix for GH multica-ai/multica#2174:
 // the workspace skill list endpoint must not ship the SKILL.md `content`
