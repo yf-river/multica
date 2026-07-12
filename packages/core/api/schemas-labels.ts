@@ -17,7 +17,7 @@ export const ListLabelsResponseSchema = z.object({
 }).loose();
 
 export const IssueLabelsResponseSchema = z.object({
-  labels: z.array(LabelSchema).default([]),
+  labels: z.array(LabelSchema),
 }).loose();
 
 export const EMPTY_LABEL: Label = {

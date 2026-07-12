@@ -287,24 +287,6 @@ type AttachLabelRequest struct {
 	LabelID string `json:"label_id"`
 }
 
-// listLabelsForIssueSafe reads the attached-label list and handles the error
-// by logging + returning nil. Callers use this after a successful attach/detach
-// mutation: if the read fails, the mutation is already committed, so returning
-// nil → clients refetch via query invalidation, and we skip broadcasting an
-// empty list that would incorrectly overwrite every subscriber's optimistic
-// state.
-func (h *Handler) listLabelsForIssueSafe(r *http.Request, issueID, workspaceID pgtype.UUID) ([]db.IssueLabel, bool) {
-	labels, err := h.Queries.ListLabelsByIssue(r.Context(), db.ListLabelsByIssueParams{
-		IssueID:     issueID,
-		WorkspaceID: workspaceID,
-	})
-	if err != nil {
-		slog.Warn("ListLabelsByIssue failed after mutation", append(logger.RequestAttrs(r), "error", err, "issue_id", uuidToString(issueID))...)
-		return nil, false
-	}
-	return labels, true
-}
-
 // ListLabelsForIssue returns the labels currently attached to an issue.
 func (h *Handler) ListLabelsForIssue(w http.ResponseWriter, r *http.Request) {
 	issueID := chi.URLParam(r, "id")
@@ -365,7 +347,14 @@ func (h *Handler) AttachLabel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.Queries.AttachLabelToIssue(r.Context(), db.AttachLabelToIssueParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to begin label attachment")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	if err := qtx.AttachLabelToIssue(r.Context(), db.AttachLabelToIssueParams{
 		IssueID:     issue.ID,
 		LabelID:     labelID,
 		WorkspaceID: issue.WorkspaceID,
@@ -375,13 +364,16 @@ func (h *Handler) AttachLabel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Read the updated label list; on read failure, the attach is already
-	// committed — return success without a labels body (clients refetch via
-	// query invalidation) and skip the broadcast so we don't overwrite every
-	// subscriber's optimistic state with an incorrect empty list.
-	labels, ok2 := h.listLabelsForIssueSafe(r, issue.ID, issue.WorkspaceID)
-	if !ok2 {
-		writeJSON(w, http.StatusOK, map[string]any{})
+	labels, err := qtx.ListLabelsByIssue(r.Context(), db.ListLabelsByIssueParams{
+		IssueID: issue.ID, WorkspaceID: issue.WorkspaceID,
+	})
+	if err != nil {
+		slog.Warn("ListLabelsByIssue failed after attach", append(logger.RequestAttrs(r), "error", err, "issue_id", uuidToString(issue.ID))...)
+		writeError(w, http.StatusInternalServerError, "failed to attach label")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit label attachment")
 		return
 	}
 	resp := labelsToResponse(labels)
@@ -425,7 +417,14 @@ func (h *Handler) DetachLabel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.Queries.DetachLabelFromIssue(r.Context(), db.DetachLabelFromIssueParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to begin label detachment")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	if err := qtx.DetachLabelFromIssue(r.Context(), db.DetachLabelFromIssueParams{
 		IssueID:     issue.ID,
 		LabelID:     labelUUID,
 		WorkspaceID: issue.WorkspaceID,
@@ -435,9 +434,16 @@ func (h *Handler) DetachLabel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	labels, ok2 := h.listLabelsForIssueSafe(r, issue.ID, issue.WorkspaceID)
-	if !ok2 {
-		writeJSON(w, http.StatusOK, map[string]any{})
+	labels, err := qtx.ListLabelsByIssue(r.Context(), db.ListLabelsByIssueParams{
+		IssueID: issue.ID, WorkspaceID: issue.WorkspaceID,
+	})
+	if err != nil {
+		slog.Warn("ListLabelsByIssue failed after detach", append(logger.RequestAttrs(r), "error", err, "issue_id", uuidToString(issue.ID))...)
+		writeError(w, http.StatusInternalServerError, "failed to detach label")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit label detachment")
 		return
 	}
 	resp := labelsToResponse(labels)

@@ -126,14 +126,8 @@ export function useAttachLabel(issueId: string) {
       }
     },
     onSuccess: (data: IssueLabelsResponse) => {
-      // Backend may return an empty object when the post-mutation read fails
-      // (it logs a warning and skips the broadcast). Only apply the list
-      // when the backend gave us one — otherwise the optimistic patch from
-      // onMutate stands until onSettled's invalidation refetches.
-      if (data && Array.isArray(data.labels)) {
-        qc.setQueryData<IssueLabelsResponse>(labelKeys.byIssue(wsId, issueId), data);
-        onIssueLabelsChanged(qc, wsId, issueId, data.labels);
-      }
+      qc.setQueryData<IssueLabelsResponse>(labelKeys.byIssue(wsId, issueId), data);
+      onIssueLabelsChanged(qc, wsId, issueId, data.labels);
     },
     onSettled: () => {
       qc.invalidateQueries({ queryKey: labelKeys.byIssue(wsId, issueId) });
