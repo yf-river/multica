@@ -539,51 +539,47 @@ func skillPatchFromCandidate(candidate db.PromptEvaluationOptimizationCandidate)
 	return &patch
 }
 
-func applySkillPatchFreshnessDefaults(req *CheckPromptEvaluationSkillFreshnessRequest, patch *PromptEvaluationSkillPatch) {
+func applySkillPatchCandidateDefaults(
+	candidateIntent, candidatePatch, sourceResourceID, repoPath, targetBranch, skillPath *string,
+	patch *PromptEvaluationSkillPatch,
+) {
 	if patch == nil {
 		return
 	}
-	if req.CandidateIntent == "" {
-		req.CandidateIntent = patch.CandidateIntent
+	if *candidateIntent == "" {
+		*candidateIntent = patch.CandidateIntent
 	}
-	if req.CandidatePatch == "" {
-		req.CandidatePatch = patch.Patch
+	if *candidatePatch == "" {
+		*candidatePatch = patch.Patch
 	}
-	if req.SourceResourceID == "" {
-		req.SourceResourceID = patch.SourceResourceID
+	if *sourceResourceID == "" {
+		*sourceResourceID = patch.SourceResourceID
 	}
-	if req.RepoPath == "" {
-		req.RepoPath = patch.RepoPath
+	if *repoPath == "" {
+		*repoPath = patch.RepoPath
 	}
-	if req.TargetBranch == "" {
-		req.TargetBranch = patch.TargetBranch
+	if *targetBranch == "" {
+		*targetBranch = patch.TargetBranch
 	}
-	if req.SkillPath == "" {
-		req.SkillPath = patch.SkillPath
+	if *skillPath == "" {
+		*skillPath = patch.SkillPath
 	}
 }
 
+func applySkillPatchFreshnessDefaults(req *CheckPromptEvaluationSkillFreshnessRequest, patch *PromptEvaluationSkillPatch) {
+	applySkillPatchCandidateDefaults(
+		&req.CandidateIntent, &req.CandidatePatch, &req.SourceResourceID,
+		&req.RepoPath, &req.TargetBranch, &req.SkillPath, patch,
+	)
+}
+
 func applySkillPatchApplyDefaults(req *ApplyPromptEvaluationSkillCandidateRequest, patch *PromptEvaluationSkillPatch) {
+	applySkillPatchCandidateDefaults(
+		&req.CandidateIntent, &req.CandidatePatch, &req.SourceResourceID,
+		&req.RepoPath, &req.TargetBranch, &req.SkillPath, patch,
+	)
 	if patch == nil {
 		return
-	}
-	if req.CandidateIntent == "" {
-		req.CandidateIntent = patch.CandidateIntent
-	}
-	if req.CandidatePatch == "" {
-		req.CandidatePatch = patch.Patch
-	}
-	if req.SourceResourceID == "" {
-		req.SourceResourceID = patch.SourceResourceID
-	}
-	if req.RepoPath == "" {
-		req.RepoPath = patch.RepoPath
-	}
-	if req.TargetBranch == "" {
-		req.TargetBranch = patch.TargetBranch
-	}
-	if req.SkillPath == "" {
-		req.SkillPath = patch.SkillPath
 	}
 	if req.ChangelogPath == "" {
 		req.ChangelogPath = patch.ChangelogPath
@@ -594,6 +590,25 @@ func applySkillPatchApplyDefaults(req *ApplyPromptEvaluationSkillCandidateReques
 	if req.VerificationResult == "" {
 		req.VerificationResult = patch.VerificationPlan
 	}
+}
+
+func resolvePromptEvaluationSkillCandidateSnapshot(
+	candidate db.PromptEvaluationOptimizationCandidate,
+	patch *PromptEvaluationSkillPatch,
+	requested *PromptEvaluationSkillSnapshotResponse,
+	sourceResourceID string,
+) *PromptEvaluationSkillSnapshotResponse {
+	snapshot := requested
+	if snapshot == nil && patch != nil {
+		snapshot = patch.SourceSnapshot
+	}
+	if snapshot == nil {
+		snapshot = skillSnapshotFromCandidate(candidate)
+	}
+	if snapshot != nil && sourceResourceID != "" && snapshot.SourceResourceID == "" {
+		snapshot.SourceResourceID = sourceResourceID
+	}
+	return snapshot
 }
 
 func applySkillPatchReEvalDefaults(req *PreparePromptEvaluationSkillReEvalRequest, patch *PromptEvaluationSkillPatch) {

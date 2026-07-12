@@ -487,6 +487,32 @@ func TestPromptEvaluationSkillPatchDefaultsRequests(t *testing.T) {
 	}
 }
 
+func TestResolvePromptEvaluationSkillCandidateSnapshotPrecedence(t *testing.T) {
+	requested := &PromptEvaluationSkillSnapshotResponse{SourceResourceID: "requested"}
+	fromPatch := &PromptEvaluationSkillSnapshotResponse{}
+	patch := &PromptEvaluationSkillPatch{SourceSnapshot: fromPatch}
+
+	got := resolvePromptEvaluationSkillCandidateSnapshot(
+		db.PromptEvaluationOptimizationCandidate{}, patch, requested, "request-resource",
+	)
+	if got != requested || got.SourceResourceID != "requested" {
+		t.Fatalf("requested snapshot must win without being overwritten: %+v", got)
+	}
+
+	got = resolvePromptEvaluationSkillCandidateSnapshot(
+		db.PromptEvaluationOptimizationCandidate{}, patch, nil, "request-resource",
+	)
+	if got != fromPatch || got.SourceResourceID != "request-resource" {
+		t.Fatalf("patch snapshot should receive the resolved source resource: %+v", got)
+	}
+
+	if got := resolvePromptEvaluationSkillCandidateSnapshot(
+		db.PromptEvaluationOptimizationCandidate{}, nil, nil, "request-resource",
+	); got != nil {
+		t.Fatalf("missing snapshot sources should stay missing: %+v", got)
+	}
+}
+
 func TestPromptEvaluationSkillApplyBlocksDirtyWorktreeByDefault(t *testing.T) {
 	repoPath := t.TempDir()
 	runSkillTestGit(t, repoPath, "init")

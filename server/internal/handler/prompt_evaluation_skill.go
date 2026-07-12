@@ -405,19 +405,10 @@ func (h *Handler) CheckPromptEvaluationSkillCandidateFreshness(w http.ResponseWr
 	if ok := h.applyPromptEvaluationSkillSourceResourceDefaults(w, r, &provider, &repo, &req.RepoPath, &req.TargetBranch, &req.SourceResourceID); !ok {
 		return
 	}
-	snapshot := req.Snapshot
-	if snapshot == nil && skillPatch != nil {
-		snapshot = skillPatch.SourceSnapshot
-	}
-	if snapshot == nil {
-		snapshot = skillSnapshotFromCandidate(candidate)
-	}
+	snapshot := resolvePromptEvaluationSkillCandidateSnapshot(candidate, skillPatch, req.Snapshot, req.SourceResourceID)
 	if snapshot == nil {
 		writeError(w, http.StatusBadRequest, "skill snapshot is required")
 		return
-	}
-	if req.SourceResourceID != "" && snapshot.SourceResourceID == "" {
-		snapshot.SourceResourceID = req.SourceResourceID
 	}
 	if req.CandidatePatch == "" {
 		req.CandidatePatch = candidate.CandidateContent
@@ -469,19 +460,10 @@ func (h *Handler) ApplyPromptEvaluationSkillCandidate(w http.ResponseWriter, r *
 	if ok := h.applyPromptEvaluationSkillSourceResourceDefaults(w, r, &provider, &repo, &req.RepoPath, &req.TargetBranch, &req.SourceResourceID); !ok {
 		return
 	}
-	snapshot := req.Snapshot
-	if snapshot == nil && skillPatch != nil {
-		snapshot = skillPatch.SourceSnapshot
-	}
-	if snapshot == nil {
-		snapshot = skillSnapshotFromCandidate(candidate)
-	}
+	snapshot := resolvePromptEvaluationSkillCandidateSnapshot(candidate, skillPatch, req.Snapshot, req.SourceResourceID)
 	if snapshot == nil {
 		writeError(w, http.StatusBadRequest, "skill snapshot is required")
 		return
-	}
-	if req.SourceResourceID != "" && snapshot.SourceResourceID == "" {
-		snapshot.SourceResourceID = req.SourceResourceID
 	}
 	if req.CandidatePatch == "" {
 		req.CandidatePatch = candidate.CandidateContent
