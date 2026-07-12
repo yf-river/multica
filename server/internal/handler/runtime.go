@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/pkg/agent"
@@ -20,18 +21,18 @@ import (
 )
 
 type AgentRuntimeResponse struct {
-	ID           string  `json:"id"`
-	WorkspaceID  string  `json:"workspace_id"`
-	DaemonID     *string `json:"daemon_id"`
-	Name         string  `json:"name"`
-	RuntimeMode  string  `json:"runtime_mode"`
-	Provider     string  `json:"provider"`
-	LaunchHeader string  `json:"launch_header"`
-	Status       string  `json:"status"`
-	DeviceInfo   string  `json:"device_info"`
-	Metadata     any     `json:"metadata"`
-	OwnerID      *string `json:"owner_id"`
-	Scope        string  `json:"scope"`
+	ID           string         `json:"id"`
+	WorkspaceID  string         `json:"workspace_id"`
+	DaemonID     *string        `json:"daemon_id"`
+	Name         string         `json:"name"`
+	RuntimeMode  string         `json:"runtime_mode"`
+	Provider     string         `json:"provider"`
+	LaunchHeader string         `json:"launch_header"`
+	Status       string         `json:"status"`
+	DeviceInfo   string         `json:"device_info"`
+	Metadata     map[string]any `json:"metadata"`
+	OwnerID      *string        `json:"owner_id"`
+	Scope        string         `json:"scope"`
 	// ProfileID is set when this runtime is an instance of a custom
 	// runtime_profile (MUL-3284); null for built-in runtimes.
 	ProfileID  *string `json:"profile_id"`
@@ -40,15 +41,13 @@ type AgentRuntimeResponse struct {
 	UpdatedAt  string  `json:"updated_at"`
 }
 
-func runtimeToResponse(rt db.AgentRuntime) AgentRuntimeResponse {
-	var metadata any
-	if rt.Metadata != nil {
-		if err := json.Unmarshal(rt.Metadata, &metadata); err != nil {
-			slog.Warn("decode runtime metadata failed", "runtime_id", uuidToString(rt.ID), "error", err)
-		}
+func runtimeToResponse(rt db.AgentRuntime) (AgentRuntimeResponse, error) {
+	var metadata map[string]any
+	if err := json.Unmarshal(rt.Metadata, &metadata); err != nil {
+		return AgentRuntimeResponse{}, fmt.Errorf("decode runtime metadata: %w", err)
 	}
 	if metadata == nil {
-		metadata = map[string]any{}
+		return AgentRuntimeResponse{}, fmt.Errorf("decode runtime metadata: expected JSON object")
 	}
 
 	return AgentRuntimeResponse{
@@ -68,7 +67,12 @@ func runtimeToResponse(rt db.AgentRuntime) AgentRuntimeResponse {
 		LastSeenAt:   timestampToPtr(rt.LastSeenAt),
 		CreatedAt:    timestampToString(rt.CreatedAt),
 		UpdatedAt:    timestampToString(rt.UpdatedAt),
-	}
+	}, nil
+}
+
+func writeRuntimeResponseDecodeError(w http.ResponseWriter, r *http.Request, runtimeID string, err error) {
+	slog.Error("decode runtime response failed", append(logger.RequestAttrs(r), "runtime_id", runtimeID, "error", err)...)
+	writeError(w, http.StatusInternalServerError, "failed to decode runtime metadata")
 }
 
 // ---------------------------------------------------------------------------
@@ -569,7 +573,12 @@ func (h *Handler) UpdateAgentRuntime(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	writeJSON(w, http.StatusOK, runtimeToResponse(rt))
+	resp, err := runtimeToResponse(rt)
+	if err != nil {
+		writeRuntimeResponseDecodeError(w, r, runtimeID, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func canEditRuntime(member db.Member, rt db.AgentRuntime) bool {
@@ -632,7 +641,11 @@ func (h *Handler) ListAgentRuntimes(w http.ResponseWriter, r *http.Request) {
 
 	resp := make([]AgentRuntimeResponse, len(runtimes))
 	for i, rt := range runtimes {
-		resp[i] = runtimeToResponse(rt)
+		resp[i], err = runtimeToResponse(rt)
+		if err != nil {
+			writeRuntimeResponseDecodeError(w, r, uuidToString(rt.ID), err)
+			return
+		}
 	}
 
 	writeJSON(w, http.StatusOK, resp)

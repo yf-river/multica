@@ -294,7 +294,10 @@ func (h *Handler) promptEvaluationRuntimeReadiness(ctx context.Context, workspac
 		return promptEvaluationRuntimeReadinessResponse("缺失", providerName+" 缺失", "当前工作区未发现 "+providerName+" 运行时，评测运行不能执行 "+promptEvaluationAgentModel()+"。", "安装并配置 "+provider+"，启动 multica 守护进程，等待 /api/runtimes 出现 provider="+provider+" 且 status=online 的运行时。", nil, checkedAt), nil
 	}
 	ageSeconds := promptEvaluationRuntimeAgeSeconds(*best, checkedAt)
-	respRuntime := runtimeToResponse(*best)
+	respRuntime, err := runtimeToResponse(*best)
+	if err != nil {
+		return PromptEvaluationRuntimeReadinessResponse{}, err
+	}
 	if best.Status != "online" {
 		return promptEvaluationRuntimeReadinessResponse("离线", providerName+" 离线", "已注册 "+providerName+" runtime「"+best.Name+"」，但当前状态是离线，不能创建真实智能体任务。", "启动 multica daemon，并确认 "+provider+" 可执行文件在 PATH 中，或设置对应 MULTICA_<PROVIDER>_PATH 后重启 daemon。", &respRuntime, checkedAt), nil
 	}

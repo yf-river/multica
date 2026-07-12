@@ -250,7 +250,12 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		resp = append(resp, runtimeToResponse(registered))
+		runtimeResp, err := runtimeToResponse(registered)
+		if err != nil {
+			writeRuntimeResponseDecodeError(w, r, uuidToString(registered.ID), err)
+			return
+		}
+		resp = append(resp, runtimeResp)
 	}
 
 	slog.Info("daemon registered", "workspace_id", req.WorkspaceID, "daemon_id", req.DaemonID, "runtimes_count", len(resp))
