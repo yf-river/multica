@@ -1430,7 +1430,7 @@ func TestCreateIssueReusesQuickCreateOrigin(t *testing.T) {
 }
 
 func TestCreateIssueDefaultsToProjectLeadAgentAndEnqueues(t *testing.T) {
-	leadAgentID := createHandlerTestAgent(t, "Project Lead Agent", []byte("[]"))
+	leadAgentID := createHandlerTestAgent(t, "Project Lead Agent", nil)
 	var projectID, issueID string
 	defer func() {
 		if issueID != "" {

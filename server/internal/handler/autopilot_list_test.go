@@ -40,7 +40,7 @@ func TestListAutopilots_DerivedFields(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	agentID := createHandlerTestAgent(t, "autopilot-list-derived-agent", []byte(`[]`))
+	agentID := createHandlerTestAgent(t, "autopilot-list-derived-agent", nil)
 	withData := insertListTestAutopilot(t, agentID, "list-derived-with-data")
 	bare := insertListTestAutopilot(t, agentID, "list-derived-bare")
 

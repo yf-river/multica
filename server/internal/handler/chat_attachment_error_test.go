@@ -14,7 +14,7 @@ func TestListChatMessagesPreservesAttachmentFailures(t *testing.T) {
 		t.Skip("database not available")
 	}
 
-	agentID := createHandlerTestAgent(t, "chat attachment failure agent", []byte("[]"))
+	agentID := createHandlerTestAgent(t, "chat attachment failure agent", nil)
 	sessionID := createHandlerTestChatSession(t, agentID)
 	if _, err := testPool.Exec(context.Background(), `
 		INSERT INTO chat_message (chat_session_id, role, content)

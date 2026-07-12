@@ -53,7 +53,7 @@ func TestCreatePromptLibraryTrialRollsBackEveryWrite(t *testing.T) {
 		t.Fatalf("decode versions: err=%v response=%+v", err, versions)
 	}
 
-	agentID := createHandlerTestAgent(t, "atomic-prompt-trial-"+suffix, []byte(`[]`))
+	agentID := createHandlerTestAgent(t, "atomic-prompt-trial-"+suffix, nil)
 	titlePattern := "提示词试跑 · " + item.Name + "%"
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(), `

@@ -93,7 +93,7 @@ func TestSendChatMessage_LinksAttachments(t *testing.T) {
 	testHandler.Storage = &mockStorage{}
 	defer func() { testHandler.Storage = origStorage }()
 
-	agentID := createHandlerTestAgent(t, "ChatSendAttachAgent", []byte("[]"))
+	agentID := createHandlerTestAgent(t, "ChatSendAttachAgent", nil)
 	sessionID := createHandlerTestChatSession(t, agentID)
 
 	uploadResp := uploadChatAttachmentForTest(t, "send-link.png", sessionID)
@@ -147,7 +147,7 @@ func TestSendChatMessage_LinksUnattachedAttachments(t *testing.T) {
 	testHandler.Storage = &mockStorage{}
 	defer func() { testHandler.Storage = origStorage }()
 
-	agentID := createHandlerTestAgent(t, "ChatSendUnattachedAttachAgent", []byte("[]"))
+	agentID := createHandlerTestAgent(t, "ChatSendUnattachedAttachAgent", nil)
 	sessionID := createHandlerTestChatSession(t, agentID)
 
 	uploadResp := uploadChatAttachmentForTest(t, "send-unattached.png", "")
@@ -183,7 +183,7 @@ func TestSendChatMessage_LinksUnattachedAttachments(t *testing.T) {
 // TestUpdateChatSession_RenamesTitle confirms PATCH writes the new title,
 // returns the updated row, and the server-side row reflects it.
 func TestUpdateChatSession_RenamesTitle(t *testing.T) {
-	agentID := createHandlerTestAgent(t, "ChatRenameAgent", []byte("[]"))
+	agentID := createHandlerTestAgent(t, "ChatRenameAgent", nil)
 	sessionID := createHandlerTestChatSession(t, agentID)
 
 	req := newRequest("PATCH", "/api/chat/sessions/"+sessionID, map[string]any{
@@ -219,7 +219,7 @@ func TestUpdateChatSession_RenamesTitle(t *testing.T) {
 }
 
 func TestListChatSessionsReturnsCurrentActiveContract(t *testing.T) {
-	agentID := createHandlerTestAgent(t, "ChatListCurrentAgent", []byte("[]"))
+	agentID := createHandlerTestAgent(t, "ChatListCurrentAgent", nil)
 	sessionID := createHandlerTestChatSession(t, agentID)
 
 	req := newRequest(http.MethodGet, "/api/chat/sessions", nil)
@@ -250,7 +250,7 @@ func TestGetChatSessionClientCanceledReturns499(t *testing.T) {
 		t.Skip("database not available")
 	}
 
-	agentID := createHandlerTestAgent(t, "ChatCanceledReadAgent", []byte("[]"))
+	agentID := createHandlerTestAgent(t, "ChatCanceledReadAgent", nil)
 	sessionID := createHandlerTestChatSession(t, agentID)
 	req := newRequest(http.MethodGet, "/api/chat/sessions/"+sessionID, nil)
 	req = withChatTestWorkspaceCtx(t, req)
@@ -271,7 +271,7 @@ func TestGetPendingChatTaskWithoutTaskReturnsEmptyObject(t *testing.T) {
 		t.Skip("database not available")
 	}
 
-	agentID := createHandlerTestAgent(t, "ChatNoPendingTaskAgent", []byte("[]"))
+	agentID := createHandlerTestAgent(t, "ChatNoPendingTaskAgent", nil)
 	sessionID := createHandlerTestChatSession(t, agentID)
 	req := newRequest(http.MethodGet, "/api/chat/sessions/"+sessionID+"/pending-task", nil)
 	req = withChatTestWorkspaceCtx(t, req)
@@ -294,7 +294,7 @@ func TestGetPendingChatTaskWithoutTaskReturnsEmptyObject(t *testing.T) {
 // TestUpdateChatSession_RejectsBlank refuses an empty/whitespace title with 400.
 // (Untitled is a render-side fallback, not a stored value.)
 func TestUpdateChatSession_RejectsBlank(t *testing.T) {
-	agentID := createHandlerTestAgent(t, "ChatRenameBlankAgent", []byte("[]"))
+	agentID := createHandlerTestAgent(t, "ChatRenameBlankAgent", nil)
 	sessionID := createHandlerTestChatSession(t, agentID)
 
 	req := newRequest("PATCH", "/api/chat/sessions/"+sessionID, map[string]any{
@@ -312,7 +312,7 @@ func TestUpdateChatSession_RejectsBlank(t *testing.T) {
 // TestSendChatMessage_InvalidAttachmentIDs rejects malformed UUIDs in
 // attachment_ids with 400 before any side effects (no message row created).
 func TestSendChatMessage_InvalidAttachmentIDs(t *testing.T) {
-	agentID := createHandlerTestAgent(t, "ChatBadAttachAgent", []byte("[]"))
+	agentID := createHandlerTestAgent(t, "ChatBadAttachAgent", nil)
 	sessionID := createHandlerTestChatSession(t, agentID)
 
 	req := newRequest("POST", "/api/chat-sessions/"+sessionID+"/messages", map[string]any{
@@ -365,7 +365,7 @@ func fetchChatMessagesPageForTest(t *testing.T, sessionID string, params url.Val
 }
 
 func TestListChatMessagesPage_UsesCursor(t *testing.T) {
-	agentID := createHandlerTestAgent(t, "ChatCursorPaginationAgent", []byte("[]"))
+	agentID := createHandlerTestAgent(t, "ChatCursorPaginationAgent", nil)
 	sessionID := createHandlerTestChatSession(t, agentID)
 
 	for i, content := range []string{"oldest", "middle", "newest"} {
@@ -404,7 +404,7 @@ func TestListChatMessagesPage_UsesCursor(t *testing.T) {
 }
 
 func TestListChatMessagesPage_CursorTieBreaksSameTimestampWithoutDupesOrGaps(t *testing.T) {
-	agentID := createHandlerTestAgent(t, "ChatCursorTieBreakAgent", []byte("[]"))
+	agentID := createHandlerTestAgent(t, "ChatCursorTieBreakAgent", nil)
 	sessionID := createHandlerTestChatSession(t, agentID)
 
 	contents := []string{"a", "b", "c", "d", "e"}
@@ -470,7 +470,7 @@ func TestListChatMessagesPage_CursorTieBreaksSameTimestampWithoutDupesOrGaps(t *
 }
 
 func TestListChatMessagesPage_RejectsInvalidLimit(t *testing.T) {
-	agentID := createHandlerTestAgent(t, "ChatPaginationBadLimitAgent", []byte("[]"))
+	agentID := createHandlerTestAgent(t, "ChatPaginationBadLimitAgent", nil)
 	sessionID := createHandlerTestChatSession(t, agentID)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/chat/sessions/"+sessionID+"/messages/page?limit=0", nil)
@@ -490,7 +490,7 @@ func TestListChatMessagesPage_RejectsInvalidLimit(t *testing.T) {
 // so CreateTaskTraceEvent failed on task_trace_event_chat_session_id_fkey and
 // silently dropped cancel evidence while the API still returned 204.
 func TestDeleteChatSession_RecordsCancelTraceWithSessionFK(t *testing.T) {
-	agentID := createHandlerTestAgent(t, "ChatDeleteCancelTraceAgent", []byte("[]"))
+	agentID := createHandlerTestAgent(t, "ChatDeleteCancelTraceAgent", nil)
 	sessionID := createHandlerTestChatSession(t, agentID)
 
 	var taskID string

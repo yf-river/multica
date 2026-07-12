@@ -113,7 +113,10 @@ func (h *Handler) injectSourceCredentialMCPEnv(ctx context.Context, mcpConfig js
 	if source == nil || len(source.ExternalCredentials) == 0 {
 		return mcpConfig, nil
 	}
-	config := normalizeMCPConfigForInjection(mcpConfig)
+	config, err := normalizeMCPConfigForInjection(mcpConfig)
+	if err != nil {
+		return nil, err
+	}
 	changed := false
 	for provider, credential := range source.ExternalCredentials {
 		if !credential.Configured || credential.MCPServer == "" || credential.UserID == "" {
@@ -154,10 +157,12 @@ func (h *Handler) injectSourceCredentialMCPEnv(ctx context.Context, mcpConfig js
 	return json.RawMessage(out), nil
 }
 
-func normalizeMCPConfigForInjection(raw json.RawMessage) map[string]any {
+func normalizeMCPConfigForInjection(raw json.RawMessage) (map[string]any, error) {
 	var config map[string]any
 	if len(raw) > 0 {
-		_ = json.Unmarshal(raw, &config)
+		if err := json.Unmarshal(raw, &config); err != nil || config == nil {
+			return nil, errors.New("agent MCP config must be a JSON object")
+		}
 	}
 	if config == nil {
 		config = map[string]any{}
@@ -167,7 +172,7 @@ func normalizeMCPConfigForInjection(raw json.RawMessage) map[string]any {
 		servers = map[string]any{}
 		config["mcpServers"] = servers
 	}
-	return config
+	return config, nil
 }
 
 func mergeMCPServerEnv(config map[string]any, serverName string, env map[string]string) bool {

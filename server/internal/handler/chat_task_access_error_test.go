@@ -13,7 +13,7 @@ func TestCancelTaskByUserPreservesTaskReadFailures(t *testing.T) {
 		t.Skip("database not available")
 	}
 
-	agentID := createHandlerTestAgent(t, "ChatCancelTaskReadFailure", []byte("[]"))
+	agentID := createHandlerTestAgent(t, "ChatCancelTaskReadFailure", nil)
 	sessionID := createHandlerTestChatSession(t, agentID)
 	sent := sendChatMessageForTest(t, sessionID, map[string]any{"content": "cancel task read failure"})
 	h := *testHandler

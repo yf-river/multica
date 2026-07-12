@@ -25,6 +25,17 @@ func TestAgentToResponseAcceptsObjectRuntimeConfig(t *testing.T) {
 	}
 }
 
+func TestAgentToResponseRejectsNonObjectMCPConfig(t *testing.T) {
+	if _, err := agentToResponse(db.Agent{
+		RuntimeConfig: []byte(`{}`),
+		CustomEnv:     []byte(`{}`),
+		CustomArgs:    []byte(`[]`),
+		McpConfig:     []byte(`[]`),
+	}); err == nil {
+		t.Fatal("agentToResponse expected non-object mcp_config error")
+	}
+}
+
 func TestAgentToResponseRejectsInvalidCustomState(t *testing.T) {
 	for _, agent := range []db.Agent{
 		{RuntimeConfig: []byte(`{}`), CustomEnv: []byte(`[]`), CustomArgs: []byte(`[]`)},

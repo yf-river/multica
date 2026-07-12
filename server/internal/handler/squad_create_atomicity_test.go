@@ -12,8 +12,8 @@ import (
 )
 
 func TestCreateSquad_CreatesInitialMembersAtomically(t *testing.T) {
-	leaderID := createHandlerTestAgent(t, "squad initial leader "+uuid.NewString(), []byte(`[]`))
-	memberID := createHandlerTestAgent(t, "squad initial member "+uuid.NewString(), []byte(`[]`))
+	leaderID := createHandlerTestAgent(t, "squad initial leader "+uuid.NewString(), nil)
+	memberID := createHandlerTestAgent(t, "squad initial member "+uuid.NewString(), nil)
 	title := "squad initial members " + uuid.NewString()
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM squad WHERE workspace_id = $1 AND name = $2`, testWorkspaceID, title)
@@ -61,7 +61,7 @@ func TestCreateSquad_LeaderMembershipFailureRollsBackSquad(t *testing.T) {
 	leaderID := createHandlerTestAgent(
 		t,
 		"squad atomic leader "+uuid.NewString(),
-		[]byte(`[]`),
+		nil,
 	)
 	title := "squad atomic failure " + uuid.NewString()
 	suffix := uuid.NewString()
@@ -107,8 +107,8 @@ func TestCreateSquad_LeaderMembershipFailureRollsBackSquad(t *testing.T) {
 }
 
 func TestCreateSquad_InitialMemberFailureRollsBackSquadAndLeader(t *testing.T) {
-	leaderID := createHandlerTestAgent(t, "squad rollback leader "+uuid.NewString(), []byte(`[]`))
-	memberID := createHandlerTestAgent(t, "squad rollback member "+uuid.NewString(), []byte(`[]`))
+	leaderID := createHandlerTestAgent(t, "squad rollback leader "+uuid.NewString(), nil)
+	memberID := createHandlerTestAgent(t, "squad rollback member "+uuid.NewString(), nil)
 	title := "squad initial member failure " + uuid.NewString()
 	suffix := uuid.NewString()
 	functionName := quoteIdentifier("fail_squad_initial_member_" + suffix)

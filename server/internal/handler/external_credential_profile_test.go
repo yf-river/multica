@@ -314,7 +314,10 @@ func TestExternalCredentialProfileTestReportsTAPDUnauthorized(t *testing.T) {
 }
 
 func TestMergeMCPServerEnvCreatesDefaultServerEntry(t *testing.T) {
-	config := normalizeMCPConfigForInjection(nil)
+	config, err := normalizeMCPConfigForInjection(nil)
+	if err != nil {
+		t.Fatalf("normalize MCP config: %v", err)
+	}
 	changed := mergeMCPServerEnv(config, tapdMCPServerName, map[string]string{"TAPD_ACCESS_TOKEN": "tapd-secret"})
 	if !changed {
 		t.Fatal("mergeMCPServerEnv should report a change")
@@ -331,6 +334,14 @@ func TestMergeMCPServerEnvCreatesDefaultServerEntry(t *testing.T) {
 	env := entry["env"].(map[string]any)
 	if env["TAPD_ACCESS_TOKEN"] != "tapd-secret" {
 		t.Fatalf("TAPD_ACCESS_TOKEN = %v, want injected token", env["TAPD_ACCESS_TOKEN"])
+	}
+}
+
+func TestNormalizeMCPConfigForInjectionRejectsNonObject(t *testing.T) {
+	for _, raw := range []json.RawMessage{json.RawMessage(`[]`), json.RawMessage(`null`), json.RawMessage(`"value"`)} {
+		if _, err := normalizeMCPConfigForInjection(raw); err == nil {
+			t.Fatalf("normalizeMCPConfigForInjection(%s) expected an error", raw)
+		}
 	}
 }
 

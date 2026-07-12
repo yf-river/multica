@@ -112,6 +112,10 @@ func agentToResponse(a db.Agent) (AgentResponse, error) {
 
 	var mcpConfig json.RawMessage
 	if a.McpConfig != nil {
+		var object map[string]any
+		if err := json.Unmarshal(a.McpConfig, &object); err != nil || object == nil {
+			return AgentResponse{}, fmt.Errorf("decode agent MCP config: expected JSON object")
+		}
 		mcpConfig = json.RawMessage(a.McpConfig)
 	}
 
@@ -838,7 +842,11 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 
 	var mc []byte
 	if rawMcpConfig, ok := rawFields["mcp_config"]; ok && !bytes.Equal(bytes.TrimSpace(rawMcpConfig), []byte("null")) {
-		mc = append([]byte(nil), rawMcpConfig...)
+		var valid bool
+		mc, valid = jsonObjectField(w, rawMcpConfig, "mcp_config")
+		if !valid {
+			return
+		}
 	}
 	requestHash, err := hashRequestFingerprint(req)
 	if err != nil {
@@ -1201,7 +1209,11 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	rawMcpConfig, hasMcpConfig := rawFields["mcp_config"]
 	shouldClearMcpConfig := hasMcpConfig && bytes.Equal(bytes.TrimSpace(rawMcpConfig), []byte("null"))
 	if hasMcpConfig && !shouldClearMcpConfig {
-		params.McpConfig = append([]byte(nil), rawMcpConfig...)
+		var valid bool
+		params.McpConfig, valid = jsonObjectField(w, rawMcpConfig, "mcp_config")
+		if !valid {
+			return
+		}
 	}
 
 	// Resolve the runtime that will be in force after this update so the

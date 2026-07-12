@@ -13,7 +13,7 @@ func TestGetChatSessionPreservesAgentReadFailures(t *testing.T) {
 		t.Skip("database not available")
 	}
 
-	agentID := createHandlerTestAgent(t, "ChatAgentReadFailure", []byte("[]"))
+	agentID := createHandlerTestAgent(t, "ChatAgentReadFailure", nil)
 	sessionID := createHandlerTestChatSession(t, agentID)
 	h := *testHandler
 	h.Queries = db.New(failNamedQueryDB{DBTX: testPool, queryName: "GetAgent"})

@@ -153,7 +153,7 @@ func TestCancelTaskByUser_RunOnlyAutopilot_Succeeds(t *testing.T) {
 		t.Skip("database not available")
 	}
 
-	agentID := createHandlerTestAgent(t, "CancelRunOnlyAgent", []byte("[]"))
+	agentID := createHandlerTestAgent(t, "CancelRunOnlyAgent", nil)
 	taskID := createAutopilotRunOnlyTask(t, agentID)
 
 	w := httptest.NewRecorder()
@@ -195,7 +195,7 @@ func TestCancelTaskByUser_QuickCreate_Succeeds(t *testing.T) {
 		t.Skip("database not available")
 	}
 
-	agentID := createHandlerTestAgent(t, "CancelQuickCreateAgent", []byte("[]"))
+	agentID := createHandlerTestAgent(t, "CancelQuickCreateAgent", nil)
 
 	var taskID string
 	if err := testPool.QueryRow(context.Background(), `
@@ -229,7 +229,7 @@ func TestCancelTaskByUser_RetryClone_Autopilot_Succeeds(t *testing.T) {
 		t.Skip("database not available")
 	}
 
-	agentID := createHandlerTestAgent(t, "CancelRetryCloneAgent", []byte("[]"))
+	agentID := createHandlerTestAgent(t, "CancelRetryCloneAgent", nil)
 	parentID := createAutopilotRunOnlyTask(t, agentID)
 
 	var cloneID string
@@ -260,7 +260,7 @@ func TestCancelTaskByUser_IssueTask_Succeeds(t *testing.T) {
 		t.Skip("database not available")
 	}
 
-	agentID := createHandlerTestAgent(t, "CancelIssueTaskAgent", []byte("[]"))
+	agentID := createHandlerTestAgent(t, "CancelIssueTaskAgent", nil)
 
 	var issueID, taskID string
 	if err := testPool.QueryRow(context.Background(), `
@@ -298,7 +298,7 @@ func TestCancelTaskByUser_ChatTask_NonCreator_Returns403(t *testing.T) {
 		t.Skip("database not available")
 	}
 
-	agentID := createHandlerTestAgent(t, "CancelChatAgent", []byte("[]"))
+	agentID := createHandlerTestAgent(t, "CancelChatAgent", nil)
 	sessionID := createHandlerTestChatSession(t, agentID) // creator = testUserID
 	otherUserID := createWorkspaceMemberUser(t, "Chat Bystander", "cancel-chat-bystander@multica.test")
 
@@ -327,7 +327,7 @@ func TestCancelTaskByUser_ChatTaskWithTranscript_PersistsAssistantSnapshot(t *te
 		t.Skip("database not available")
 	}
 
-	agentID := createHandlerTestAgent(t, "CancelChatTranscriptAgent", []byte("[]"))
+	agentID := createHandlerTestAgent(t, "CancelChatTranscriptAgent", nil)
 	sessionID := createHandlerTestChatSession(t, agentID)
 
 	var taskID string
@@ -387,7 +387,7 @@ func TestCancelTaskByUser_ChatTaskWithoutTranscript_RestoresUserDraft(t *testing
 		t.Skip("database not available")
 	}
 
-	agentID := createHandlerTestAgent(t, "CancelChatNoTranscriptAgent", []byte("[]"))
+	agentID := createHandlerTestAgent(t, "CancelChatNoTranscriptAgent", nil)
 	sessionID := createHandlerTestChatSession(t, agentID)
 
 	var taskID string
@@ -454,7 +454,7 @@ func TestCancelChatTaskRollsBackDraftRestoreWhenEventInsertFails(t *testing.T) {
 		t.Skip("database not available")
 	}
 
-	agentID := createHandlerTestAgent(t, "CancelChatRollbackAgent", []byte("[]"))
+	agentID := createHandlerTestAgent(t, "CancelChatRollbackAgent", nil)
 	sessionID := createHandlerTestChatSession(t, agentID)
 	var taskID string
 	if err := testPool.QueryRow(context.Background(), `
@@ -515,7 +515,7 @@ func TestCancelTaskByUser_ChatTaskWithBoundAttachment_SurvivesCancelAndRebinds(t
 		t.Skip("database not available")
 	}
 
-	agentID := createHandlerTestAgent(t, "CancelChatAttachAgent", []byte("[]"))
+	agentID := createHandlerTestAgent(t, "CancelChatAttachAgent", nil)
 	sessionID := createHandlerTestChatSession(t, agentID)
 
 	var taskID string

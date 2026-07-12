@@ -32,8 +32,8 @@ func cleanupSquadCreateRequest(t *testing.T, key, name string) {
 
 func TestCreateSquad_IdempotentReplayConflictAndDurableRecord(t *testing.T) {
 	key := uuid.NewString()
-	leaderID := createHandlerTestAgent(t, "squad idempotent leader "+uuid.NewString(), []byte(`[]`))
-	memberID := createHandlerTestAgent(t, "squad idempotent member "+uuid.NewString(), []byte(`[]`))
+	leaderID := createHandlerTestAgent(t, "squad idempotent leader "+uuid.NewString(), nil)
+	memberID := createHandlerTestAgent(t, "squad idempotent member "+uuid.NewString(), nil)
 	name := "idempotent squad " + uuid.NewString()
 	cleanupSquadCreateRequest(t, key, name)
 	body := map[string]any{
@@ -85,7 +85,7 @@ func TestCreateSquad_IdempotentReplayConflictAndDurableRecord(t *testing.T) {
 
 func TestCreateSquad_ConcurrentReplayCreatesOneSquad(t *testing.T) {
 	key := uuid.NewString()
-	leaderID := createHandlerTestAgent(t, "squad concurrent leader "+uuid.NewString(), []byte(`[]`))
+	leaderID := createHandlerTestAgent(t, "squad concurrent leader "+uuid.NewString(), nil)
 	name := "concurrent squad " + uuid.NewString()
 	cleanupSquadCreateRequest(t, key, name)
 	body := map[string]any{"name": name, "leader_id": leaderID, "scope": "personal"}
@@ -126,7 +126,7 @@ func TestCreateSquad_ConcurrentReplayCreatesOneSquad(t *testing.T) {
 
 func TestCreateSquad_FailedResponseCompletionRollsBackEverything(t *testing.T) {
 	key := uuid.NewString()
-	leaderID := createHandlerTestAgent(t, "squad completion leader "+uuid.NewString(), []byte(`[]`))
+	leaderID := createHandlerTestAgent(t, "squad completion leader "+uuid.NewString(), nil)
 	name := "forced squad completion " + uuid.NewString()
 	cleanupSquadCreateRequest(t, key, name)
 	suffix := uuid.NewString()

@@ -250,8 +250,8 @@ func TestBuildSquadLeaderBriefing_FullSquad(t *testing.T) {
 		"archive_policy":"06-archive 不作为必跑阶段；最终结论、证据摘要和 handoff 状态由 05-verify 输出。"
 	}`)
 
-	helper1 := createHandlerTestAgent(t, "Helper One", []byte("[]"))
-	helper2 := createHandlerTestAgent(t, "Helper Two", []byte("[]"))
+	helper1 := createHandlerTestAgent(t, "Helper One", nil)
+	helper2 := createHandlerTestAgent(t, "Helper Two", nil)
 	addAgentMember(t, squad.ID, helper1, "implementer")
 	addAgentMember(t, squad.ID, helper2, "")
 
@@ -1703,7 +1703,7 @@ func TestBuildSquadLeaderBriefing_SkipsArchivedAgent(t *testing.T) {
 	leaderID, _ := seededLeaderAgent(t)
 	squad := seedSquadForBriefing(t, leaderID, "Archive Squad", "")
 
-	archived := createHandlerTestAgent(t, "Retired Bot", []byte("[]"))
+	archived := createHandlerTestAgent(t, "Retired Bot", nil)
 	addAgentMember(t, squad.ID, archived, "")
 	if _, err := testPool.Exec(ctx,
 		`UPDATE agent SET archived_at = now(), archived_by = $1 WHERE id = $2`,
@@ -1733,7 +1733,7 @@ func TestBuildSquadLeaderBriefing_MentionsRoundTrip(t *testing.T) {
 	leaderID, _ := seededLeaderAgent(t)
 	squad := seedSquadForBriefing(t, leaderID, "Mention Round Trip", "")
 
-	helper := createHandlerTestAgent(t, "Round Trip Bot", []byte("[]"))
+	helper := createHandlerTestAgent(t, "Round Trip Bot", nil)
 	addAgentMember(t, squad.ID, helper, "")
 
 	memberRowID, userID, _ := seededHumanMember(t)
@@ -1827,7 +1827,7 @@ func TestClaimTask_LeaderGetsBriefing(t *testing.T) {
 
 	squad := seedSquadForBriefing(t, leaderID, "Briefing Claim Squad", "Be terse.")
 
-	helper := createHandlerTestAgent(t, "Briefing Helper", []byte("[]"))
+	helper := createHandlerTestAgent(t, "Briefing Helper", nil)
 	addAgentMember(t, squad.ID, helper, "implementer")
 
 	queueSquadIssueTaskFor(t, util.UUIDToString(squad.ID), leaderID, runtimeID, 95001)
@@ -1854,7 +1854,7 @@ func TestClaimTask_NonLeaderGetsNoBriefing(t *testing.T) {
 		t.Skip("database not available")
 	}
 	ctx := context.Background()
-	leaderID := createHandlerTestAgent(t, "Non Leader Squad Leader", []byte("[]"))
+	leaderID := createHandlerTestAgent(t, "Non Leader Squad Leader", nil)
 
 	squad := seedSquadForBriefing(t, leaderID, "Non-Leader Squad", "Squad guidance.")
 

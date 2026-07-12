@@ -15,8 +15,8 @@ func TestUpdateSquadMemberRolePreservesDatabaseFailure(t *testing.T) {
 		t.Skip("database not available")
 	}
 
-	leaderID := createHandlerTestAgent(t, "role-read-leader-"+randomID()[:8], []byte(`[]`))
-	memberID := createHandlerTestAgent(t, "role-read-member-"+randomID()[:8], []byte(`[]`))
+	leaderID := createHandlerTestAgent(t, "role-read-leader-"+randomID()[:8], nil)
+	memberID := createHandlerTestAgent(t, "role-read-member-"+randomID()[:8], nil)
 	createW := httptest.NewRecorder()
 	createReq := newRequest(http.MethodPost, "/api/squads", map[string]any{
 		"name":      "role read failure " + randomID()[:8],
