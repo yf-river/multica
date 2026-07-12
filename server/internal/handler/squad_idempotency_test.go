@@ -26,11 +26,11 @@ func cleanupSquadCreateRequest(t *testing.T, key, name string) {
 	t.Cleanup(func() {
 		ctx := context.Background()
 		_, _ = testPool.Exec(ctx, `DELETE FROM squad WHERE workspace_id = $1 AND name = $2`, testWorkspaceID, name)
-		_, _ = testPool.Exec(ctx, `DELETE FROM squad_create_request WHERE workspace_id = $1 AND idempotency_key = $2`, testWorkspaceID, key)
+		_, _ = testPool.Exec(ctx, `DELETE FROM resource_create_request WHERE workspace_id = $1 AND resource_type = 'squad' AND idempotency_key = $2`, testWorkspaceID, key)
 	})
 }
 
-func TestCreateSquad_IdempotentReplayConflictAndCascade(t *testing.T) {
+func TestCreateSquad_IdempotentReplayConflictAndDurableRecord(t *testing.T) {
 	key := uuid.NewString()
 	leaderID := createHandlerTestAgent(t, "squad idempotent leader "+uuid.NewString(), []byte(`[]`))
 	memberID := createHandlerTestAgent(t, "squad idempotent member "+uuid.NewString(), []byte(`[]`))
@@ -70,16 +70,16 @@ func TestCreateSquad_IdempotentReplayConflictAndCascade(t *testing.T) {
 	var squads, members, requests int
 	_ = testPool.QueryRow(context.Background(), `SELECT count(*) FROM squad WHERE id = $1`, squad.ID).Scan(&squads)
 	_ = testPool.QueryRow(context.Background(), `SELECT count(*) FROM squad_member WHERE squad_id = $1`, squad.ID).Scan(&members)
-	_ = testPool.QueryRow(context.Background(), `SELECT count(*) FROM squad_create_request WHERE workspace_id = $1 AND idempotency_key = $2`, testWorkspaceID, key).Scan(&requests)
+	_ = testPool.QueryRow(context.Background(), `SELECT count(*) FROM resource_create_request WHERE workspace_id = $1 AND resource_type = 'squad' AND idempotency_key = $2`, testWorkspaceID, key).Scan(&requests)
 	if squads != 1 || members != 2 || requests != 1 {
 		t.Fatalf("squads=%d members=%d requests=%d, want 1/2/1", squads, members, requests)
 	}
 	if _, err := testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squad.ID); err != nil {
 		t.Fatalf("delete squad: %v", err)
 	}
-	_ = testPool.QueryRow(context.Background(), `SELECT count(*) FROM squad_create_request WHERE workspace_id = $1 AND idempotency_key = $2`, testWorkspaceID, key).Scan(&requests)
-	if requests != 0 {
-		t.Fatalf("request rows after squad delete = %d, want 0", requests)
+	_ = testPool.QueryRow(context.Background(), `SELECT count(*) FROM resource_create_request WHERE workspace_id = $1 AND resource_type = 'squad' AND idempotency_key = $2`, testWorkspaceID, key).Scan(&requests)
+	if requests != 1 {
+		t.Fatalf("durable request rows after squad delete = %d, want 1", requests)
 	}
 }
 
@@ -136,18 +136,18 @@ func TestCreateSquad_FailedResponseCompletionRollsBackEverything(t *testing.T) {
 	if _, err := testPool.Exec(ctx, fmt.Sprintf(`
 		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
 		BEGIN
-			IF NEW.idempotency_key = %s::uuid AND NEW.response_body IS NOT NULL THEN
+			IF NEW.resource_type = 'squad' AND NEW.idempotency_key = %s::uuid AND NEW.response_body IS NOT NULL THEN
 				RAISE EXCEPTION 'forced squad request completion failure';
 			END IF;
 			RETURN NEW;
 		END $$;
-		CREATE TRIGGER %s BEFORE UPDATE ON squad_create_request
+		CREATE TRIGGER %s BEFORE UPDATE ON resource_create_request
 		FOR EACH ROW EXECUTE FUNCTION %s();
 	`, functionName, quoteSQLLiteral(key), triggerName, functionName)); err != nil {
 		t.Fatalf("install failure trigger: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON squad_create_request`, triggerName))
+		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON resource_create_request`, triggerName))
 		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, functionName))
 	})
 
@@ -160,7 +160,7 @@ func TestCreateSquad_FailedResponseCompletionRollsBackEverything(t *testing.T) {
 	var squads, members, requests int
 	_ = testPool.QueryRow(ctx, `SELECT count(*) FROM squad WHERE workspace_id = $1 AND name = $2`, testWorkspaceID, name).Scan(&squads)
 	_ = testPool.QueryRow(ctx, `SELECT count(*) FROM squad_member sm JOIN squad s ON s.id = sm.squad_id WHERE s.workspace_id = $1 AND s.name = $2`, testWorkspaceID, name).Scan(&members)
-	_ = testPool.QueryRow(ctx, `SELECT count(*) FROM squad_create_request WHERE workspace_id = $1 AND idempotency_key = $2`, testWorkspaceID, key).Scan(&requests)
+	_ = testPool.QueryRow(ctx, `SELECT count(*) FROM resource_create_request WHERE workspace_id = $1 AND resource_type = 'squad' AND idempotency_key = $2`, testWorkspaceID, key).Scan(&requests)
 	if squads != 0 || members != 0 || requests != 0 {
 		t.Fatalf("failed create left squads=%d members=%d requests=%d", squads, members, requests)
 	}

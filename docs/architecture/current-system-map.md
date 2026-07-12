@@ -21,16 +21,16 @@ evidence reviewable by humans.
 | Next.js route handlers | 1 |
 | Next.js rewrites | 6 |
 | Desktop route literals | 29 |
-| Database tables | 85 |
+| Database tables | 84 |
 | Database functions | 9 |
 | Database triggers | 4 |
 | Database indexes | 185 |
-| Migration files (up + down) | 96 |
-| sqlc modules | 54 |
-| sqlc queries | 574 |
+| Migration files (up + down) | 98 |
+| sqlc modules | 53 |
+| sqlc queries | 571 |
 | Go WebSocket events | 80 |
 | TypeScript WebSocket events | 70 |
-| Zustand store definitions | 31 |
+| Zustand store definitions | 32 |
 | React Query consumer files | 175 |
 | Environment variable names | 217 |
 | Manually identified external systems | 12 |
@@ -589,16 +589,18 @@ intentionally platform-specific.
 | 47 | normalize_prompt_evaluation_experiment_context | up | — | 0 | 0 | 0 | `server/migrations/047_normalize_prompt_evaluation_experiment_context.up.sql` |
 | 48 | normalize_prompt_evaluation_agent_selection | down | — | 0 | 0 | 0 | `server/migrations/048_normalize_prompt_evaluation_agent_selection.down.sql` |
 | 48 | normalize_prompt_evaluation_agent_selection | up | — | 0 | 0 | 0 | `server/migrations/048_normalize_prompt_evaluation_agent_selection.up.sql` |
+| 49 | unify_resource_create_requests | down | — | 0 | 0 | 0 | `server/migrations/049_unify_resource_create_requests.down.sql` |
+| 49 | unify_resource_create_requests | up | resource_create_request | 0 | 0 | 0 | `server/migrations/049_unify_resource_create_requests.up.sql` |
 
 ### Current tables discovered from up migrations
 
 - `activity_log` — `server/migrations/001_current_schema.up.sql#activity_log`
 - `agent` — `server/migrations/001_current_schema.up.sql#agent`
-- `agent_playground_agent` — `server/migrations/001_current_schema.up.sql#agent_playground_agent`
-- `agent_playground_experiment` — `server/migrations/001_current_schema.up.sql#agent_playground_experiment`
-- `agent_playground_input` — `server/migrations/001_current_schema.up.sql#agent_playground_input`
-- `agent_playground_judgement` — `server/migrations/001_current_schema.up.sql#agent_playground_judgement`
-- `agent_playground_result` — `server/migrations/001_current_schema.up.sql#agent_playground_result`
+- `agent_playground_agent` — `server/migrations/002_agent_playground.up.sql#agent_playground_agent`
+- `agent_playground_experiment` — `server/migrations/002_agent_playground.up.sql#agent_playground_experiment`
+- `agent_playground_input` — `server/migrations/002_agent_playground.up.sql#agent_playground_input`
+- `agent_playground_judgement` — `server/migrations/002_agent_playground.up.sql#agent_playground_judgement`
+- `agent_playground_result` — `server/migrations/002_agent_playground.up.sql#agent_playground_result`
 - `agent_runtime` — `server/migrations/001_current_schema.up.sql#agent_runtime`
 - `agent_skill` — `server/migrations/001_current_schema.up.sql#agent_skill`
 - `agent_task_queue` — `server/migrations/001_current_schema.up.sql#agent_task_queue`
@@ -640,7 +642,6 @@ intentionally platform-specific.
 - `personal_access_token` — `server/migrations/001_current_schema.up.sql#personal_access_token`
 - `pinned_item` — `server/migrations/001_current_schema.up.sql#pinned_item`
 - `project` — `server/migrations/001_current_schema.up.sql#project`
-- `project_create_request` — `server/migrations/011_project_create_idempotency.up.sql#project_create_request`
 - `project_resource` — `server/migrations/001_current_schema.up.sql#project_resource`
 - `prompt_evaluation_asset` — `server/migrations/001_current_schema.up.sql#prompt_evaluation_asset`
 - `prompt_evaluation_case` — `server/migrations/001_current_schema.up.sql#prompt_evaluation_case`
@@ -658,11 +659,11 @@ intentionally platform-specific.
 - `prompt_library_item` — `server/migrations/001_current_schema.up.sql#prompt_library_item`
 - `prompt_library_trial` — `server/migrations/001_current_schema.up.sql#prompt_library_trial`
 - `prompt_library_version` — `server/migrations/001_current_schema.up.sql#prompt_library_version`
+- `resource_create_request` — `server/migrations/049_unify_resource_create_requests.up.sql#resource_create_request`
 - `runtime_profile` — `server/migrations/001_current_schema.up.sql#runtime_profile`
 - `skill` — `server/migrations/001_current_schema.up.sql#skill`
 - `skill_file` — `server/migrations/001_current_schema.up.sql#skill_file`
 - `squad` — `server/migrations/001_current_schema.up.sql#squad`
-- `squad_create_request` — `server/migrations/012_squad_create_idempotency.up.sql#squad_create_request`
 - `squad_member` — `server/migrations/001_current_schema.up.sql#squad_member`
 - `squad_sop_run` — `server/migrations/001_current_schema.up.sql#squad_sop_run`
 - `squad_sop_step_event` — `server/migrations/001_current_schema.up.sql#squad_sop_step_event`
@@ -692,7 +693,7 @@ intentionally platform-specific.
 
 ### sqlc modules
 
-All 574 query names, commands, and stable source anchors are stored in the JSON companion.
+All 571 query names, commands, and stable source anchors are stored in the JSON companion.
 
 | Module | Queries | SQL source | Generated source |
 | --- | --- | --- | --- |
@@ -718,7 +719,6 @@ All 574 query names, commands, and stable source anchors are stored in the JSON 
 | personal_access_token | 7 | `server/pkg/db/queries/personal_access_token.sql` | `server/pkg/db/generated/personal_access_token.sql.go` |
 | pinned_item | 6 | `server/pkg/db/queries/pinned_item.sql` | `server/pkg/db/generated/pinned_item.sql.go` |
 | project | 8 | `server/pkg/db/queries/project.sql` | `server/pkg/db/generated/project.sql.go` |
-| project_create_request | 3 | `server/pkg/db/queries/project_create_request.sql` | `server/pkg/db/generated/project_create_request.sql.go` |
 | project_resource | 11 | `server/pkg/db/queries/project_resource.sql` | `server/pkg/db/generated/project_resource.sql.go` |
 | prompt_evaluation_asset | 5 | `server/pkg/db/queries/prompt_evaluation_asset.sql` | `server/pkg/db/generated/prompt_evaluation_asset.sql.go` |
 | prompt_evaluation_case | 10 | `server/pkg/db/queries/prompt_evaluation_case.sql` | `server/pkg/db/generated/prompt_evaluation_case.sql.go` |
@@ -735,12 +735,12 @@ All 574 query names, commands, and stable source anchors are stored in the JSON 
 | prompt_library_trial | 2 | `server/pkg/db/queries/prompt_library_trial.sql` | `server/pkg/db/generated/prompt_library_trial.sql.go` |
 | prompt_library_version | 4 | `server/pkg/db/queries/prompt_library_version.sql` | `server/pkg/db/generated/prompt_library_version.sql.go` |
 | reaction | 3 | `server/pkg/db/queries/reaction.sql` | `server/pkg/db/generated/reaction.sql.go` |
+| resource_create_request | 3 | `server/pkg/db/queries/resource_create_request.sql` | `server/pkg/db/generated/resource_create_request.sql.go` |
 | runtime | 28 | `server/pkg/db/queries/runtime.sql` | `server/pkg/db/generated/runtime.sql.go` |
 | runtime_profile | 10 | `server/pkg/db/queries/runtime_profile.sql` | `server/pkg/db/generated/runtime_profile.sql.go` |
 | runtime_usage | 5 | `server/pkg/db/queries/runtime_usage.sql` | `server/pkg/db/generated/runtime_usage.sql.go` |
 | skill | 19 | `server/pkg/db/queries/skill.sql` | `server/pkg/db/generated/skill.sql.go` |
 | squad | 22 | `server/pkg/db/queries/squad.sql` | `server/pkg/db/generated/squad.sql.go` |
-| squad_create_request | 3 | `server/pkg/db/queries/squad_create_request.sql` | `server/pkg/db/generated/squad_create_request.sql.go` |
 | squad_sop_run | 17 | `server/pkg/db/queries/squad_sop_run.sql` | `server/pkg/db/generated/squad_sop_run.sql.go` |
 | subscriber | 5 | `server/pkg/db/queries/subscriber.sql` | `server/pkg/db/generated/subscriber.sql.go` |
 | task_message | 5 | `server/pkg/db/queries/task_message.sql` | `server/pkg/db/generated/task_message.sql.go` |
@@ -801,6 +801,7 @@ still include daemon-only/backend projection events and possible frontend gaps.
 | packages/core | `packages/core/projects/draft-store.ts` | `useProjectDraftStore` | yes |
 | packages/core | `packages/core/projects/stores/view-store.ts` | `useProjectViewStore` | yes |
 | packages/core | `packages/core/search/store.ts` | `useSearchStore` | no |
+| packages/core | `packages/core/skills/pending-operation-store.ts` | `useSkillPendingOperationStore` | yes |
 | packages/core | `packages/core/skills/stores/view-store.ts` | `useSkillsViewStore` | yes |
 | packages/core | `packages/core/squads/pending-operation-store.ts` | `useSquadPendingOperationStore` | yes |
 | packages/core | `packages/core/squads/stores/view-store.ts` | `useSquadsViewStore` | yes |
@@ -1058,7 +1059,7 @@ written to the generated outputs.
 | filesystem | 43 | `server/cmd/migrate/main.go`, `server/cmd/multica/cmd_agent.go`, `server/cmd/multica/cmd_attachment.go`, `server/cmd/multica/cmd_daemon_windows.go`, `server/cmd/multica/cmd_daemon.go`, `server/cmd/multica/cmd_issue_comments.go`, `server/cmd/multica/cmd_issue_pull_request.go`, `server/cmd/multica/cmd_issue.go` |
 | object-storage | 1 | `server/internal/storage/s3.go` |
 | outbound-http | 17 | `server/cmd/multica/cmd_daemon.go`, `server/cmd/multica/cmd_setup.go`, `server/internal/analytics/posthog.go`, `server/internal/auth/cloud_pat.go`, `server/internal/cli/client.go`, `server/internal/cli/update.go`, `server/internal/daemon/client.go`, `server/internal/daemon/task_artifacts.go` |
-| postgresql | 129 | `server/cmd/migrate/main.go`, `server/cmd/server/activity_listeners.go`, `server/cmd/server/autopilot_failure_monitor.go`, `server/cmd/server/autopilot_scheduler.go`, `server/cmd/server/chat_projection.go`, `server/cmd/server/comment_projection.go`, `server/cmd/server/dbstats.go`, `server/cmd/server/health.go` |
+| postgresql | 130 | `server/cmd/migrate/main.go`, `server/cmd/server/activity_listeners.go`, `server/cmd/server/autopilot_failure_monitor.go`, `server/cmd/server/autopilot_scheduler.go`, `server/cmd/server/chat_projection.go`, `server/cmd/server/comment_projection.go`, `server/cmd/server/dbstats.go`, `server/cmd/server/health.go` |
 | redis | 14 | `server/cmd/server/main.go`, `server/cmd/server/router.go`, `server/internal/auth/cloud_pat.go`, `server/internal/auth/membership_cache.go`, `server/internal/auth/pat_cache.go`, `server/internal/handler/runtime_liveness_store.go`, `server/internal/handler/runtime_local_skills_redis_store.go`, `server/internal/handler/runtime_models_redis_store.go` |
 | subprocess | 29 | `server/cmd/multica/cmd_auth.go`, `server/cmd/multica/cmd_daemon_unix.go`, `server/cmd/multica/cmd_daemon.go`, `server/internal/cli/update.go`, `server/internal/daemon/config.go`, `server/internal/daemon/execenv/codex_home_link_windows.go`, `server/internal/daemon/execenv/openclaw_config.go`, `server/internal/daemon/gc.go` |
 | websocket | 4 | `server/internal/daemon/wakeup.go`, `server/internal/daemonws/hub.go`, `server/internal/integrations/lark/ws_connector.go`, `server/internal/realtime/hub.go` |

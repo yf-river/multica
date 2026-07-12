@@ -32,6 +32,7 @@ describe("clearWorkspaceStorage", () => {
       "multica_projects_view",
       "multica_agents_view",
       "multica_skills_view",
+      "multica_skill_pending_operations",
       "multica_squads_view",
       "multica_squad_pending_operations",
       "multica_autopilots_view",

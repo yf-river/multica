@@ -31,7 +31,7 @@ func cleanupProjectCreateRequest(t *testing.T, key, title string) {
 	t.Cleanup(func() {
 		ctx := context.Background()
 		_, _ = testPool.Exec(ctx, `DELETE FROM project WHERE workspace_id = $1 AND title = $2`, testWorkspaceID, title)
-		_, _ = testPool.Exec(ctx, `DELETE FROM project_create_request WHERE workspace_id = $1 AND idempotency_key = $2`, testWorkspaceID, key)
+		_, _ = testPool.Exec(ctx, `DELETE FROM resource_create_request WHERE workspace_id = $1 AND resource_type = 'project' AND idempotency_key = $2`, testWorkspaceID, key)
 	})
 }
 
@@ -61,7 +61,7 @@ func TestCreateProject_IdempotentReplayAndConflict(t *testing.T) {
 	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM project WHERE id = $1`, project.ID).Scan(&projects); err != nil {
 		t.Fatalf("count projects: %v", err)
 	}
-	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM project_create_request WHERE workspace_id = $1 AND idempotency_key = $2`, testWorkspaceID, key).Scan(&requests); err != nil {
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM resource_create_request WHERE workspace_id = $1 AND resource_type = 'project' AND idempotency_key = $2`, testWorkspaceID, key).Scan(&requests); err != nil {
 		t.Fatalf("count requests: %v", err)
 	}
 	if projects != 1 || requests != 1 {
@@ -78,11 +78,11 @@ func TestCreateProject_IdempotentReplayAndConflict(t *testing.T) {
 	if _, err := testPool.Exec(context.Background(), `DELETE FROM project WHERE id = $1`, project.ID); err != nil {
 		t.Fatalf("delete project: %v", err)
 	}
-	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM project_create_request WHERE workspace_id = $1 AND idempotency_key = $2`, testWorkspaceID, key).Scan(&requests); err != nil {
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM resource_create_request WHERE workspace_id = $1 AND resource_type = 'project' AND idempotency_key = $2`, testWorkspaceID, key).Scan(&requests); err != nil {
 		t.Fatalf("count requests after project delete: %v", err)
 	}
-	if requests != 0 {
-		t.Fatalf("request rows after project delete = %d, want 0", requests)
+	if requests != 1 {
+		t.Fatalf("durable request rows after project delete = %d, want 1", requests)
 	}
 }
 
@@ -175,18 +175,18 @@ func TestCreateProject_FailedResponseCompletionRollsBackProject(t *testing.T) {
 	if _, err := testPool.Exec(ctx, fmt.Sprintf(`
 		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
 		BEGIN
-			IF NEW.idempotency_key = %s::uuid AND NEW.response_body IS NOT NULL THEN
+			IF NEW.resource_type = 'project' AND NEW.idempotency_key = %s::uuid AND NEW.response_body IS NOT NULL THEN
 				RAISE EXCEPTION 'forced project request completion failure';
 			END IF;
 			RETURN NEW;
 		END $$;
-		CREATE TRIGGER %s BEFORE UPDATE ON project_create_request
+		CREATE TRIGGER %s BEFORE UPDATE ON resource_create_request
 		FOR EACH ROW EXECUTE FUNCTION %s();
 	`, quoteIdentifier(functionName), quoteSQLLiteral(key), quoteIdentifier(triggerName), quoteIdentifier(functionName))); err != nil {
 		t.Fatalf("install failure trigger: %v", err)
 	}
 	t.Cleanup(func() {
-		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON project_create_request`, quoteIdentifier(triggerName)))
+		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON resource_create_request`, quoteIdentifier(triggerName)))
 		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, quoteIdentifier(functionName)))
 	})
 
@@ -196,7 +196,7 @@ func TestCreateProject_FailedResponseCompletionRollsBackProject(t *testing.T) {
 	}
 	var projects, requests int
 	_ = testPool.QueryRow(ctx, `SELECT count(*) FROM project WHERE workspace_id = $1 AND title = $2`, testWorkspaceID, title).Scan(&projects)
-	_ = testPool.QueryRow(ctx, `SELECT count(*) FROM project_create_request WHERE workspace_id = $1 AND idempotency_key = $2`, testWorkspaceID, key).Scan(&requests)
+	_ = testPool.QueryRow(ctx, `SELECT count(*) FROM resource_create_request WHERE workspace_id = $1 AND resource_type = 'project' AND idempotency_key = $2`, testWorkspaceID, key).Scan(&requests)
 	if projects != 0 || requests != 0 {
 		t.Fatalf("failed create left projects=%d requests=%d", projects, requests)
 	}

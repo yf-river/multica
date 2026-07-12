@@ -20,16 +20,16 @@
     "webRouteHandlers": 1,
     "webRewrites": 6,
     "desktopRouteLiterals": 29,
-    "databaseTables": 85,
+    "databaseTables": 84,
     "databaseFunctions": 9,
     "databaseTriggers": 4,
     "databaseIndexes": 185,
-    "migrations": 96,
-    "sqlcModules": 54,
-    "sqlcQueries": 574,
+    "migrations": 98,
+    "sqlcModules": 53,
+    "sqlcQueries": 571,
     "goWebsocketEvents": 80,
     "typescriptWebsocketEvents": 70,
-    "zustandStores": 31,
+    "zustandStores": 32,
     "reactQueryConsumerFiles": 175,
     "environmentVariables": 217,
     "manualExternalSystems": 12
@@ -3427,6 +3427,88 @@
           "direction": "down",
           "source": "server/migrations/001_current_schema.down.sql",
           "tablesCreated": [],
+          "droppedTables": [
+            "workspace",
+            "webhook_delivery",
+            "user",
+            "task_usage_hourly_rollup_state",
+            "task_usage_hourly_dirty",
+            "task_usage_hourly",
+            "task_usage",
+            "task_trace_event",
+            "task_token",
+            "task_message",
+            "sys_cron_executions",
+            "squad_sop_step_event",
+            "squad_sop_run",
+            "squad_member",
+            "squad",
+            "skill_file",
+            "skill",
+            "runtime_profile",
+            "agent_playground_judgement",
+            "agent_playground_result",
+            "agent_playground_agent",
+            "agent_playground_input",
+            "agent_playground_experiment",
+            "prompt_library_trial",
+            "prompt_library_version",
+            "prompt_library_item",
+            "prompt_evaluation_trial",
+            "prompt_evaluation_test_suite_case",
+            "prompt_evaluation_run",
+            "prompt_evaluation_optimization_candidate",
+            "prompt_evaluation_evidence_snapshot",
+            "prompt_evaluation_dimension_score",
+            "prompt_evaluation_dataset_version_row",
+            "prompt_evaluation_dataset_version",
+            "prompt_evaluation_dataset_row",
+            "prompt_evaluation_case_operation",
+            "prompt_evaluation_case_assertion",
+            "prompt_evaluation_case",
+            "prompt_evaluation_asset",
+            "project_resource",
+            "project",
+            "pinned_item",
+            "personal_access_token",
+            "notification_preference",
+            "member",
+            "lark_user_binding",
+            "lark_outbound_card_message",
+            "lark_installation",
+            "lark_inbound_message_dedup",
+            "lark_inbound_audit",
+            "lark_chat_session_binding",
+            "lark_binding_token",
+            "issue_to_label",
+            "issue_subscriber",
+            "issue_reaction",
+            "issue_pull_request",
+            "issue_label",
+            "issue",
+            "inbox_item",
+            "github_pull_request_check_suite",
+            "github_pull_request",
+            "github_pending_installation",
+            "github_pending_check_suite",
+            "github_installation",
+            "feedback",
+            "external_credential_profile",
+            "comment_reaction",
+            "comment",
+            "chat_session",
+            "chat_message",
+            "autopilot_trigger",
+            "autopilot_subscriber",
+            "autopilot_run",
+            "autopilot",
+            "attachment",
+            "agent_task_queue",
+            "agent_skill",
+            "agent_runtime",
+            "agent",
+            "activity_log"
+          ],
           "functionsCreated": [],
           "triggersCreated": [],
           "indexesCreated": [],
@@ -5094,6 +5176,13 @@
           "direction": "down",
           "source": "server/migrations/002_agent_playground.down.sql",
           "tablesCreated": [],
+          "droppedTables": [
+            "agent_playground_judgement",
+            "agent_playground_result",
+            "agent_playground_agent",
+            "agent_playground_input",
+            "agent_playground_experiment"
+          ],
           "functionsCreated": [],
           "triggersCreated": [],
           "indexesCreated": [],
@@ -5172,6 +5261,10 @@
           "direction": "down",
           "source": "server/migrations/003_domain_event_outbox.down.sql",
           "tablesCreated": [],
+          "droppedTables": [
+            "domain_event_delivery",
+            "domain_event_outbox"
+          ],
           "functionsCreated": [],
           "triggersCreated": [],
           "indexesCreated": [],
@@ -5349,6 +5442,9 @@
           "direction": "down",
           "source": "server/migrations/007_chat_request_idempotency.down.sql",
           "tablesCreated": [],
+          "droppedTables": [
+            "chat_idempotency_record"
+          ],
           "functionsCreated": [],
           "triggersCreated": [],
           "indexesCreated": [],
@@ -5476,6 +5572,9 @@
           "direction": "down",
           "source": "server/migrations/011_project_create_idempotency.down.sql",
           "tablesCreated": [],
+          "droppedTables": [
+            "project_create_request"
+          ],
           "functionsCreated": [],
           "triggersCreated": [],
           "indexesCreated": [],
@@ -5507,6 +5606,9 @@
           "direction": "down",
           "source": "server/migrations/012_squad_create_idempotency.down.sql",
           "tablesCreated": [],
+          "droppedTables": [
+            "squad_create_request"
+          ],
           "functionsCreated": [],
           "triggersCreated": [],
           "indexesCreated": [],
@@ -5771,6 +5873,9 @@
           "direction": "up",
           "source": "server/migrations/020_remove_unused_daemon_tokens.up.sql",
           "tablesCreated": [],
+          "droppedTables": [
+            "daemon_token"
+          ],
           "functionsCreated": [],
           "triggersCreated": [],
           "indexesCreated": [],
@@ -6049,6 +6154,10 @@
           "direction": "up",
           "source": "server/migrations/030_remove_unused_relations.up.sql",
           "tablesCreated": [],
+          "droppedTables": [
+            "daemon_connection",
+            "issue_dependency"
+          ],
           "functionsCreated": [],
           "triggersCreated": [],
           "indexesCreated": [],
@@ -6530,6 +6639,41 @@
           "droppedFunctions": [],
           "droppedTriggers": [],
           "droppedIndexes": []
+        },
+        {
+          "version": 49,
+          "name": "unify_resource_create_requests",
+          "direction": "down",
+          "source": "server/migrations/049_unify_resource_create_requests.down.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 49,
+          "name": "unify_resource_create_requests",
+          "direction": "up",
+          "source": "server/migrations/049_unify_resource_create_requests.up.sql",
+          "tablesCreated": [
+            {
+              "name": "resource_create_request",
+              "source": "server/migrations/049_unify_resource_create_requests.up.sql#resource_create_request"
+            }
+          ],
+          "droppedTables": [
+            "project_create_request",
+            "squad_create_request"
+          ],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
         }
       ],
       "tables": [
@@ -6543,23 +6687,23 @@
         },
         {
           "name": "agent_playground_agent",
-          "source": "server/migrations/001_current_schema.up.sql#agent_playground_agent"
+          "source": "server/migrations/002_agent_playground.up.sql#agent_playground_agent"
         },
         {
           "name": "agent_playground_experiment",
-          "source": "server/migrations/001_current_schema.up.sql#agent_playground_experiment"
+          "source": "server/migrations/002_agent_playground.up.sql#agent_playground_experiment"
         },
         {
           "name": "agent_playground_input",
-          "source": "server/migrations/001_current_schema.up.sql#agent_playground_input"
+          "source": "server/migrations/002_agent_playground.up.sql#agent_playground_input"
         },
         {
           "name": "agent_playground_judgement",
-          "source": "server/migrations/001_current_schema.up.sql#agent_playground_judgement"
+          "source": "server/migrations/002_agent_playground.up.sql#agent_playground_judgement"
         },
         {
           "name": "agent_playground_result",
-          "source": "server/migrations/001_current_schema.up.sql#agent_playground_result"
+          "source": "server/migrations/002_agent_playground.up.sql#agent_playground_result"
         },
         {
           "name": "agent_runtime",
@@ -6726,10 +6870,6 @@
           "source": "server/migrations/001_current_schema.up.sql#project"
         },
         {
-          "name": "project_create_request",
-          "source": "server/migrations/011_project_create_idempotency.up.sql#project_create_request"
-        },
-        {
           "name": "project_resource",
           "source": "server/migrations/001_current_schema.up.sql#project_resource"
         },
@@ -6798,6 +6938,10 @@
           "source": "server/migrations/001_current_schema.up.sql#prompt_library_version"
         },
         {
+          "name": "resource_create_request",
+          "source": "server/migrations/049_unify_resource_create_requests.up.sql#resource_create_request"
+        },
+        {
           "name": "runtime_profile",
           "source": "server/migrations/001_current_schema.up.sql#runtime_profile"
         },
@@ -6812,10 +6956,6 @@
         {
           "name": "squad",
           "source": "server/migrations/001_current_schema.up.sql#squad"
-        },
-        {
-          "name": "squad_create_request",
-          "source": "server/migrations/012_squad_create_idempotency.up.sql#squad_create_request"
         },
         {
           "name": "squad_member",
@@ -9840,28 +9980,6 @@
           ]
         },
         {
-          "module": "project_create_request",
-          "source": "server/pkg/db/queries/project_create_request.sql",
-          "generatedSource": "server/pkg/db/generated/project_create_request.sql.go",
-          "queries": [
-            {
-              "name": "CompleteProjectCreateRequest",
-              "command": "one",
-              "source": "server/pkg/db/queries/project_create_request.sql#CompleteProjectCreateRequest"
-            },
-            {
-              "name": "GetProjectCreateRequest",
-              "command": "one",
-              "source": "server/pkg/db/queries/project_create_request.sql#GetProjectCreateRequest"
-            },
-            {
-              "name": "ReserveProjectCreateRequest",
-              "command": "one",
-              "source": "server/pkg/db/queries/project_create_request.sql#ReserveProjectCreateRequest"
-            }
-          ]
-        },
-        {
           "module": "project_resource",
           "source": "server/pkg/db/queries/project_resource.sql",
           "generatedSource": "server/pkg/db/generated/project_resource.sql.go",
@@ -10454,6 +10572,28 @@
           ]
         },
         {
+          "module": "resource_create_request",
+          "source": "server/pkg/db/queries/resource_create_request.sql",
+          "generatedSource": "server/pkg/db/generated/resource_create_request.sql.go",
+          "queries": [
+            {
+              "name": "CompleteResourceCreateRequest",
+              "command": "one",
+              "source": "server/pkg/db/queries/resource_create_request.sql#CompleteResourceCreateRequest"
+            },
+            {
+              "name": "GetResourceCreateRequest",
+              "command": "one",
+              "source": "server/pkg/db/queries/resource_create_request.sql#GetResourceCreateRequest"
+            },
+            {
+              "name": "ReserveResourceCreateRequest",
+              "command": "one",
+              "source": "server/pkg/db/queries/resource_create_request.sql#ReserveResourceCreateRequest"
+            }
+          ]
+        },
+        {
           "module": "runtime",
           "source": "server/pkg/db/queries/runtime.sql",
           "generatedSource": "server/pkg/db/generated/runtime.sql.go",
@@ -10905,28 +11045,6 @@
               "name": "UpdateSquadMemberRole",
               "command": "one",
               "source": "server/pkg/db/queries/squad.sql#UpdateSquadMemberRole"
-            }
-          ]
-        },
-        {
-          "module": "squad_create_request",
-          "source": "server/pkg/db/queries/squad_create_request.sql",
-          "generatedSource": "server/pkg/db/generated/squad_create_request.sql.go",
-          "queries": [
-            {
-              "name": "CompleteSquadCreateRequest",
-              "command": "one",
-              "source": "server/pkg/db/queries/squad_create_request.sql#CompleteSquadCreateRequest"
-            },
-            {
-              "name": "GetSquadCreateRequest",
-              "command": "one",
-              "source": "server/pkg/db/queries/squad_create_request.sql#GetSquadCreateRequest"
-            },
-            {
-              "name": "ReserveSquadCreateRequest",
-              "command": "one",
-              "source": "server/pkg/db/queries/squad_create_request.sql#ReserveSquadCreateRequest"
             }
           ]
         },
@@ -13141,6 +13259,14 @@
         "persisted": false
       },
       {
+        "source": "packages/core/skills/pending-operation-store.ts",
+        "scope": "packages/core",
+        "exports": [
+          "useSkillPendingOperationStore"
+        ],
+        "persisted": true
+      },
+      {
         "source": "packages/core/skills/stores/view-store.ts",
         "scope": "packages/core",
         "exports": [
@@ -15206,7 +15332,7 @@
       },
       {
         "scope": "packages/core",
-        "count": 29
+        "count": 30
       }
     ],
     "reactQueryByScope": [
@@ -18303,6 +18429,7 @@
           "server/internal/handler/prompt_evaluation_skill.go",
           "server/internal/handler/prompt_library.go",
           "server/internal/handler/reaction.go",
+          "server/internal/handler/resource_create_idempotency.go",
           "server/internal/handler/runtime_local_skills.go",
           "server/internal/handler/runtime_profile.go",
           "server/internal/handler/runtime.go",

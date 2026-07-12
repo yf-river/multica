@@ -368,6 +368,7 @@ function parseDatabase() {
     if (!match) throw new Error(`Unexpected migration filename: ${file}`);
     const content = read(file);
     const tablesCreated = [];
+    const tableOperations = [];
     const functionsCreated = [];
     const functionOperations = [];
     const triggersCreated = [];
@@ -375,8 +376,19 @@ function parseDatabase() {
     const tablePattern = /\bCREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?\s+([A-Za-z0-9_".]+)/gi;
     for (const tableMatch of content.matchAll(tablePattern)) {
       const table = tableMatch[1].replaceAll('"', "").split(".").at(-1);
-      tablesCreated.push({ name: table, source: source(file, table) });
+      const created = { name: table, source: source(file, table) };
+      tablesCreated.push(created);
+      tableOperations.push({ kind: "create", index: tableMatch.index, value: created });
     }
+    const droppedTables = [...content.matchAll(/\bDROP\s+TABLE(?:\s+IF\s+EXISTS)?\s+([A-Za-z0-9_".]+)/gi)];
+    for (const dropped of droppedTables) {
+      tableOperations.push({
+        kind: "drop",
+        index: dropped.index,
+        value: dropped[1].replaceAll('"', "").split(".").at(-1),
+      });
+    }
+    tableOperations.sort((a, b) => a.index - b.index);
     for (const functionMatch of content.matchAll(/\bCREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+([A-Za-z0-9_".]+)\s*\(/gi)) {
       const name = functionMatch[1].replaceAll('"', "");
       const created = { name, source: source(file, name) };
@@ -419,6 +431,9 @@ function parseDatabase() {
       direction: match[3],
       source: file,
       tablesCreated,
+      ...(droppedTables.length > 0
+        ? { droppedTables: droppedTables.map((item) => item[1].replaceAll('"', "").split(".").at(-1)) }
+        : {}),
       functionsCreated,
       triggersCreated,
       indexesCreated,
@@ -428,6 +443,7 @@ function parseDatabase() {
       droppedIndexes: [...content.matchAll(/\bDROP\s+INDEX(?:\s+IF\s+EXISTS)?\s+([A-Za-z0-9_".]+)/gi)]
         .map((item) => item[1].replaceAll('"', "")),
       functionOperations,
+      tableOperations,
     };
   }).sort((a, b) => a.version - b.version || compareText(a.direction, b.direction));
 
@@ -436,8 +452,9 @@ function parseDatabase() {
   const triggerByName = new Map();
   const indexByName = new Map();
   for (const migration of migrations.filter((item) => item.direction === "up")) {
-    for (const table of migration.tablesCreated) {
-      if (!tableByName.has(table.name)) tableByName.set(table.name, table);
+    for (const operation of migration.tableOperations) {
+      if (operation.kind === "drop") tableByName.delete(operation.value);
+      else tableByName.set(operation.value.name, operation.value);
     }
     for (const operation of migration.functionOperations) {
       if (operation.kind === "drop") functionByName.delete(operation.value);
@@ -450,7 +467,7 @@ function parseDatabase() {
   }
 
   return {
-    migrations: migrations.map(({ functionOperations: _functionOperations, ...migration }) => migration),
+    migrations: migrations.map(({ functionOperations: _functionOperations, tableOperations: _tableOperations, ...migration }) => migration),
     tables: [...tableByName.values()].sort((a, b) => compareText(a.name, b.name)),
     functions: [...functionByName.values()].sort((a, b) => compareText(a.name, b.name)),
     triggers: [...triggerByName.values()].sort((a, b) => compareText(a.name, b.name)),

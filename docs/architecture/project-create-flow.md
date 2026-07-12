@@ -15,7 +15,7 @@ repository resources.
 | Web/Desktop form orchestration | Shared create modal | `packages/views/modals/create-project.tsx` |
 | CLI request identity | CLI Project command and HTTP client | `server/cmd/multica/cmd_project.go`, `server/internal/cli/client.go` |
 | Validation, transaction and replay | Project handler | `server/internal/handler/project.go` |
-| Durable request/result | PostgreSQL query module | `server/pkg/db/queries/project_create_request.sql` |
+| Durable request/result | Shared resource-create query module | `server/pkg/db/queries/resource_create_request.sql` |
 
 ```text
 CreateProjectModal
@@ -24,7 +24,7 @@ CreateProjectModal
   -> handler validates and normalizes current fields/resources
   -> replay same workspace + actor + key + request hash, if committed
   -> otherwise one transaction:
-       reserve project_create_request
+       reserve resource_create_request[type=project]
        create Project
        create every bundled ProjectResource
        persist exact 201 response + Project link
@@ -56,11 +56,9 @@ is not durable Project state; clients also invalidate the authoritative list
 after mutation settlement. A replay returns the stored response and does not
 publish a second create event.
 
-`project_create_request.project_id` references the created Project with
-`ON DELETE CASCADE`. Deleting a Project therefore removes its replay record and
-prevents an unbounded orphan tombstone table. While the Project exists, deleting
-the record would be unsafe because a delayed offline retry could create a
-duplicate.
+The completed `resource_create_request` remains durable after Project deletion.
+An old delayed request key therefore cannot recreate a deleted Project or reuse
+the same operation identity for different data.
 
 ## Failure and recovery semantics
 
@@ -72,7 +70,7 @@ duplicate.
 | Concurrent same-key calls | All callers receive one Project id | Primary-key conflict waits for the winning transaction |
 | Same key, changed payload | Surface 409 | Original Project remains authoritative |
 | Resource or response-record failure | Surface 5xx | Project, resources and request record all roll back |
-| Project deletion | Normal target-addressed delete | Replay record is removed by foreign-key cascade |
+| Project deletion | Normal target-addressed delete | Original operation identity remains a durable tombstone |
 
 ## Verification anchors
 
@@ -84,5 +82,6 @@ duplicate.
   `packages/core/projects/mutations.test.tsx`.
 - Core and CLI same-key transport retry: `packages/core/api/client.test.ts` and
   `server/internal/cli/client_test.go`.
-- Schema and typed queries: `server/migrations/011_project_create_idempotency.up.sql`
-  and `server/pkg/db/queries/project_create_request.sql`.
+- One-way convergence and typed queries:
+  `server/migrations/049_unify_resource_create_requests.up.sql` and
+  `server/pkg/db/queries/resource_create_request.sql`.

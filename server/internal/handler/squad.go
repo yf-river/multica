@@ -890,9 +890,10 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
-	_, err = qtx.ReserveSquadCreateRequest(r.Context(), db.ReserveSquadCreateRequestParams{
+	_, err = qtx.ReserveResourceCreateRequest(r.Context(), db.ReserveResourceCreateRequestParams{
 		WorkspaceID:    wsUUID,
 		ActorID:        member.UserID,
+		ResourceType:   resourceTypeSquad,
 		IdempotencyKey: idempotencyKey,
 		RequestHash:    requestHash,
 	})
@@ -969,12 +970,13 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to encode squad response")
 		return
 	}
-	if _, err := qtx.CompleteSquadCreateRequest(r.Context(), db.CompleteSquadCreateRequestParams{
+	if _, err := qtx.CompleteResourceCreateRequest(r.Context(), db.CompleteResourceCreateRequestParams{
 		WorkspaceID:    wsUUID,
 		ActorID:        member.UserID,
+		ResourceType:   resourceTypeSquad,
 		IdempotencyKey: idempotencyKey,
 		RequestHash:    requestHash,
-		SquadID:        squad.ID,
+		ResourceID:     squad.ID,
 		ResponseBody:   responseBody,
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to complete squad request")
@@ -995,8 +997,6 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, resp)
 }
 
-var errSquadCreateIdempotencyConflict = errors.New("squad create idempotency conflict")
-
 func (h *Handler) loadSquadCreateReplay(
 	ctx context.Context,
 	workspaceID pgtype.UUID,
@@ -1004,35 +1004,15 @@ func (h *Handler) loadSquadCreateReplay(
 	idempotencyKey pgtype.UUID,
 	requestHash string,
 ) (SquadResponse, bool, error) {
-	record, err := h.Queries.GetSquadCreateRequest(ctx, db.GetSquadCreateRequestParams{
-		WorkspaceID:    workspaceID,
-		ActorID:        actorID,
-		IdempotencyKey: idempotencyKey,
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return SquadResponse{}, false, nil
-	}
-	if err != nil {
-		return SquadResponse{}, false, err
-	}
-	if record.RequestHash != requestHash {
-		return SquadResponse{}, false, errSquadCreateIdempotencyConflict
-	}
-	if len(record.ResponseBody) == 0 || !record.CompletedAt.Valid {
-		return SquadResponse{}, false, errors.New("squad create request is incomplete")
-	}
-	var response SquadResponse
-	if err := json.Unmarshal(record.ResponseBody, &response); err != nil {
-		return SquadResponse{}, false, fmt.Errorf("decode squad create replay: %w", err)
-	}
-	if response.ID == "" {
-		return SquadResponse{}, false, errors.New("squad create replay has no squad id")
-	}
-	return response, true, nil
+	return loadResourceCreateReplay(
+		ctx, h.Queries, workspaceID, actorID, resourceTypeSquad,
+		idempotencyKey, requestHash,
+		func(response SquadResponse) bool { return response.ID != "" },
+	)
 }
 
 func (h *Handler) writeSquadCreateReplayError(w http.ResponseWriter, err error) {
-	if errors.Is(err, errSquadCreateIdempotencyConflict) {
+	if errors.Is(err, errResourceCreateIdempotencyConflict) {
 		writeJSON(w, http.StatusConflict, map[string]string{
 			"error": "Idempotency-Key was already used with a different request",
 			"code":  "idempotency_conflict",

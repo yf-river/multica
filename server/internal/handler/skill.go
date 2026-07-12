@@ -383,8 +383,60 @@ func (h *Handler) CreateSkill(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	requestHash, err := hashRequestFingerprint(req)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create skill")
+		return
+	}
+	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	if replayed, found, err := h.loadSkillCreateReplay(
+		r.Context(), workspaceUUID, creatorUUID, idempotencyKey, requestHash,
+	); err != nil {
+		h.writeSkillCreateReplayError(w, err)
+		return
+	} else if found {
+		writeJSON(w, http.StatusCreated, replayed)
+		return
+	}
 
-	resp, err := h.createSkillWithFiles(r.Context(), skillCreateInput{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start skill create")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	_, err = qtx.ReserveResourceCreateRequest(r.Context(), db.ReserveResourceCreateRequestParams{
+		WorkspaceID:    workspaceUUID,
+		ActorID:        creatorUUID,
+		ResourceType:   resourceTypeSkill,
+		IdempotencyKey: idempotencyKey,
+		RequestHash:    requestHash,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		_ = tx.Rollback(r.Context())
+		replayed, found, replayErr := h.loadSkillCreateReplay(
+			r.Context(), workspaceUUID, creatorUUID, idempotencyKey, requestHash,
+		)
+		if replayErr != nil || !found {
+			if replayErr == nil {
+				replayErr = errors.New("skill create replay disappeared after conflict")
+			}
+			h.writeSkillCreateReplayError(w, replayErr)
+			return
+		}
+		writeJSON(w, http.StatusCreated, replayed)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reserve skill request")
+		return
+	}
+
+	resp, err := createSkillWithFilesInTx(r.Context(), qtx, skillCreateInput{
 		WorkspaceID: workspaceUUID,
 		CreatorID:   creatorUUID,
 		Name:        req.Name,
@@ -401,9 +453,55 @@ func (h *Handler) CreateSkill(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to create skill: "+err.Error())
 		return
 	}
+	responseBody, err := json.Marshal(resp)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to encode skill response")
+		return
+	}
+	if _, err := qtx.CompleteResourceCreateRequest(r.Context(), db.CompleteResourceCreateRequestParams{
+		WorkspaceID:    workspaceUUID,
+		ActorID:        creatorUUID,
+		ResourceType:   resourceTypeSkill,
+		IdempotencyKey: idempotencyKey,
+		RequestHash:    requestHash,
+		ResourceID:     parseUUID(resp.ID),
+		ResponseBody:   responseBody,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to complete skill request")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit skill create")
+		return
+	}
 	actorType, actorID := h.resolveActor(r, creatorID, workspaceID)
 	h.publish(protocol.EventSkillCreated, workspaceID, actorType, actorID, map[string]any{"skill": resp})
 	writeJSON(w, http.StatusCreated, resp)
+}
+
+func (h *Handler) loadSkillCreateReplay(
+	ctx context.Context,
+	workspaceID pgtype.UUID,
+	actorID pgtype.UUID,
+	idempotencyKey pgtype.UUID,
+	requestHash string,
+) (SkillWithFilesResponse, bool, error) {
+	return loadResourceCreateReplay(
+		ctx, h.Queries, workspaceID, actorID, resourceTypeSkill,
+		idempotencyKey, requestHash,
+		func(response SkillWithFilesResponse) bool { return response.ID != "" },
+	)
+}
+
+func (h *Handler) writeSkillCreateReplayError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errResourceCreateIdempotencyConflict) {
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": "Idempotency-Key was already used with a different request",
+			"code":  "idempotency_conflict",
+		})
+		return
+	}
+	writeError(w, http.StatusInternalServerError, "failed to replay skill create")
 }
 
 // canManageSkill checks whether the current user can update or delete a skill.

@@ -15,7 +15,8 @@ import {
 import { toast } from "sonner";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
-import type { Skill } from "@multica/core/types";
+import { createSkillWithRecovery } from "@multica/core/skills";
+import type { CreateSkillRequest, Skill } from "@multica/core/types";
 import { useWorkspaceId } from "@multica/core/paths";
 import { isImeComposing } from "@multica/core/utils";
 import {
@@ -123,11 +124,12 @@ function ManualForm({
     if (!trimmed) return;
     setLoading(true);
     setError("");
+    const request: CreateSkillRequest = {
+      name: trimmed,
+      description: description.trim(),
+    };
     try {
-      const skill = await api.createSkill({
-        name: trimmed,
-        description: description.trim(),
-      });
+      const skill = await createSkillWithRecovery(request);
       seedAfterCreate(qc, wsId, skill);
       toast.success(t(($) => $.create.manual.toast_created));
       onCreated(skill);

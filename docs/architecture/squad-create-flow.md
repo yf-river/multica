@@ -16,14 +16,14 @@ first-party path.
 
 `CreateSquad` validates workspace membership, scope, leader access and every
 initial member before writing. One database transaction then reserves the
-`squad_create_request` identity, creates the `squad`, inserts the mandatory
+shared `resource_create_request[type=squad]` identity, creates the `squad`, inserts the mandatory
 leader membership and every initial membership, and stores the exact response.
 Any failure rolls back all of those rows.
 
-The replay scope is `(workspace_id, actor_id, idempotency_key)`. Reusing a key
+The replay scope is `(workspace_id, actor_id, resource_type, idempotency_key)`. Reusing a key
 with the same normalized request returns the stored `201` response; reusing it
 with a different request returns `409 idempotency_conflict`. Deleting the Squad
-cascades its completed replay row.
+does not release its operation identity, so a delayed retry cannot resurrect it.
 
 ## Outcome recovery
 
@@ -39,8 +39,8 @@ system of record. Replays do not emit them again.
 ## Verification anchors
 
 - Route and transaction: `server/internal/handler/squad.go`
-- Replay table and queries: `server/migrations/012_squad_create_idempotency.up.sql`
-  and `server/pkg/db/queries/squad_create_request.sql`
+- Replay table and queries: `server/migrations/049_unify_resource_create_requests.up.sql`
+  and `server/pkg/db/queries/resource_create_request.sql`
 - Concurrency, rollback and exact replay: `server/internal/handler/squad_idempotency_test.go`
 - Reload recovery: `packages/core/squads/mutations.ts` and
   `packages/core/squads/mutations.test.tsx`

@@ -393,9 +393,10 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 
-	_, err = qtx.ReserveProjectCreateRequest(r.Context(), db.ReserveProjectCreateRequestParams{
+	_, err = qtx.ReserveResourceCreateRequest(r.Context(), db.ReserveResourceCreateRequestParams{
 		WorkspaceID:    wsUUID,
 		ActorID:        actorID,
+		ResourceType:   resourceTypeProject,
 		IdempotencyKey: idempotencyKey,
 		RequestHash:    requestHash,
 	})
@@ -469,12 +470,13 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to encode project response")
 		return
 	}
-	if _, err := qtx.CompleteProjectCreateRequest(r.Context(), db.CompleteProjectCreateRequestParams{
+	if _, err := qtx.CompleteResourceCreateRequest(r.Context(), db.CompleteResourceCreateRequestParams{
 		WorkspaceID:    wsUUID,
 		ActorID:        actorID,
+		ResourceType:   resourceTypeProject,
 		IdempotencyKey: idempotencyKey,
 		RequestHash:    requestHash,
-		ProjectID:      project.ID,
+		ResourceID:     project.ID,
 		ResponseBody:   responseBody,
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to complete project request")
@@ -495,8 +497,6 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, createResp)
 }
 
-var errProjectCreateIdempotencyConflict = errors.New("project create idempotency conflict")
-
 func (h *Handler) loadProjectCreateReplay(
 	ctx context.Context,
 	workspaceID pgtype.UUID,
@@ -504,35 +504,15 @@ func (h *Handler) loadProjectCreateReplay(
 	idempotencyKey pgtype.UUID,
 	requestHash string,
 ) (CreateProjectResponse, bool, error) {
-	record, err := h.Queries.GetProjectCreateRequest(ctx, db.GetProjectCreateRequestParams{
-		WorkspaceID:    workspaceID,
-		ActorID:        actorID,
-		IdempotencyKey: idempotencyKey,
-	})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return CreateProjectResponse{}, false, nil
-	}
-	if err != nil {
-		return CreateProjectResponse{}, false, err
-	}
-	if record.RequestHash != requestHash {
-		return CreateProjectResponse{}, false, errProjectCreateIdempotencyConflict
-	}
-	if len(record.ResponseBody) == 0 || !record.CompletedAt.Valid {
-		return CreateProjectResponse{}, false, errors.New("project create request is incomplete")
-	}
-	var response CreateProjectResponse
-	if err := json.Unmarshal(record.ResponseBody, &response); err != nil {
-		return CreateProjectResponse{}, false, fmt.Errorf("decode project create replay: %w", err)
-	}
-	if response.ID == "" {
-		return CreateProjectResponse{}, false, errors.New("project create replay has no project id")
-	}
-	return response, true, nil
+	return loadResourceCreateReplay(
+		ctx, h.Queries, workspaceID, actorID, resourceTypeProject,
+		idempotencyKey, requestHash,
+		func(response CreateProjectResponse) bool { return response.ID != "" },
+	)
 }
 
 func (h *Handler) writeProjectCreateReplayError(w http.ResponseWriter, err error) {
-	if errors.Is(err, errProjectCreateIdempotencyConflict) {
+	if errors.Is(err, errResourceCreateIdempotencyConflict) {
 		writeJSON(w, http.StatusConflict, map[string]string{
 			"error": "Idempotency-Key was already used with a different request",
 			"code":  "idempotency_conflict",

@@ -659,17 +659,6 @@ type Project struct {
 	OwnerID     pgtype.UUID        `json:"owner_id"`
 }
 
-type ProjectCreateRequest struct {
-	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
-	ActorID        pgtype.UUID        `json:"actor_id"`
-	IdempotencyKey pgtype.UUID        `json:"idempotency_key"`
-	RequestHash    string             `json:"request_hash"`
-	ProjectID      pgtype.UUID        `json:"project_id"`
-	ResponseBody   []byte             `json:"response_body"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	CompletedAt    pgtype.Timestamptz `json:"completed_at"`
-}
-
 type ProjectResource struct {
 	ID           pgtype.UUID        `json:"id"`
 	ProjectID    pgtype.UUID        `json:"project_id"`
@@ -986,6 +975,18 @@ type PromptLibraryVersion struct {
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 }
 
+type ResourceCreateRequest struct {
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	ActorID        pgtype.UUID        `json:"actor_id"`
+	ResourceType   string             `json:"resource_type"`
+	IdempotencyKey pgtype.UUID        `json:"idempotency_key"`
+	RequestHash    string             `json:"request_hash"`
+	ResourceID     pgtype.UUID        `json:"resource_id"`
+	ResponseBody   []byte             `json:"response_body"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	CompletedAt    pgtype.Timestamptz `json:"completed_at"`
+}
+
 type RuntimeProfile struct {
 	ID             pgtype.UUID        `json:"id"`
 	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
@@ -1036,17 +1037,6 @@ type Squad struct {
 	Instructions string             `json:"instructions"`
 	SopProfile   []byte             `json:"sop_profile"`
 	Scope        string             `json:"scope"`
-}
-
-type SquadCreateRequest struct {
-	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
-	ActorID        pgtype.UUID        `json:"actor_id"`
-	IdempotencyKey pgtype.UUID        `json:"idempotency_key"`
-	RequestHash    string             `json:"request_hash"`
-	SquadID        pgtype.UUID        `json:"squad_id"`
-	ResponseBody   []byte             `json:"response_body"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	CompletedAt    pgtype.Timestamptz `json:"completed_at"`
 }
 
 type SquadMember struct {
