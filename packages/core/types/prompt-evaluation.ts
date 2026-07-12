@@ -398,65 +398,6 @@ export interface PromptEvaluationCaseAssertion {
   created_at: string;
 }
 
-export type PromptEvaluationDimensionScoreStatus = "待执行" | "已评分" | "无用例";
-
-export interface PromptEvaluationDimensionScore {
-  id: string;
-  workspace_id: string;
-  run_id: string;
-  asset_id: string;
-  prompt_id: string | null;
-  dimension_index: number;
-  dimension_name: string;
-  score: number;
-  passed_cases: number;
-  total_cases: number;
-  status: PromptEvaluationDimensionScoreStatus;
-  rule: string;
-  evidence: string;
-  source: string;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface PromptEvaluationDimensionScoreSummary {
-  workspace_id: string;
-  asset_id: string;
-  prompt_id: string | null;
-  dimension_index: number;
-  dimension_name: string;
-  run_count: number;
-  scored_run_count: number;
-  passed_cases: number;
-  total_cases: number;
-  score: number;
-  latest_status: PromptEvaluationDimensionScoreStatus;
-  latest_rule: string;
-  latest_evidence: string;
-  latest_source: string;
-  latest_scored_at: string;
-}
-
-export interface PromptEvaluationDimensionScoreTrend {
-  workspace_id: string;
-  asset_id: string;
-  prompt_id: string | null;
-  dimension_index: number;
-  dimension_name: string;
-  period: string;
-  prompt_version: number;
-  run_count: number;
-  scored_run_count: number;
-  passed_cases: number;
-  total_cases: number;
-  score: number;
-  latest_status: PromptEvaluationDimensionScoreStatus;
-  latest_rule: string;
-  latest_evidence: string;
-  latest_source: string;
-  latest_scored_at: string;
-}
-
 export interface PromptEvaluationAgentRunResponse {
   asset: PromptEvaluationAsset;
   run: PromptEvaluationRun;
@@ -852,21 +793,6 @@ export interface BulkUpdatePromptEvaluationCaseTagsResponse {
   skipped_count: number;
 }
 
-export interface ListPromptEvaluationDimensionScoresResponse {
-  items: PromptEvaluationDimensionScore[];
-  total: number;
-}
-
-export interface ListPromptEvaluationDimensionScoreSummariesResponse {
-  items: PromptEvaluationDimensionScoreSummary[];
-  total: number;
-}
-
-export interface ListPromptEvaluationDimensionScoreTrendsResponse {
-  items: PromptEvaluationDimensionScoreTrend[];
-  total: number;
-}
-
 export interface ListPromptEvaluationOptimizationCandidatesResponse {
   items: PromptEvaluationOptimizationCandidate[];
   total: number;
@@ -926,26 +852,6 @@ export interface ListPromptEvaluationCaseTagDatasetSummariesParams {
 export interface ListPromptEvaluationDatasetVersionTagTrendsParams {
   version_limit?: number;
   limit?: number;
-}
-
-export interface ListPromptEvaluationDimensionScoresParams {
-  run_id?: string;
-  asset_id?: string;
-  prompt_id?: string;
-  status?: PromptEvaluationDimensionScoreStatus;
-}
-
-export interface ListPromptEvaluationDimensionScoreSummariesParams {
-  asset_id?: string;
-  prompt_id?: string;
-  status?: PromptEvaluationDimensionScoreStatus;
-}
-
-export interface ListPromptEvaluationDimensionScoreTrendsParams {
-  asset_id?: string;
-  prompt_id?: string;
-  status?: PromptEvaluationDimensionScoreStatus;
-  since?: string | null;
 }
 
 export interface CreatePromptEvaluationCaseRequest {

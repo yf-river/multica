@@ -18,12 +18,6 @@ import type {
   PromptEvaluationDatasetVersion,
   PromptEvaluationRun,
   RestorePromptEvaluationDatasetVersionResponse,
-  PromptEvaluationDimensionScore,
-  ListPromptEvaluationDimensionScoresResponse,
-  PromptEvaluationDimensionScoreSummary,
-  ListPromptEvaluationDimensionScoreSummariesResponse,
-  PromptEvaluationDimensionScoreTrend,
-  ListPromptEvaluationDimensionScoreTrendsResponse,
   PromptEvaluationOptimizationCandidate,
   PromptEvaluationSkillApplyCandidateResponse,
   PromptEvaluationSkillApplyResult,
@@ -260,78 +254,6 @@ export const EMPTY_BULK_PROMPT_EVALUATION_CASE_TAGS_RESPONSE: BulkUpdatePromptEv
   cases: [],
   changed_count: 0,
   skipped_count: 0,
-};
-
-export const EMPTY_PROMPT_EVALUATION_DIMENSION_SCORE_LIST_RESPONSE: ListPromptEvaluationDimensionScoresResponse = {
-  items: [],
-  total: 0,
-};
-
-export const EMPTY_PROMPT_EVALUATION_DIMENSION_SCORE_SUMMARY_LIST_RESPONSE: ListPromptEvaluationDimensionScoreSummariesResponse = {
-  items: [],
-  total: 0,
-};
-
-export const EMPTY_PROMPT_EVALUATION_DIMENSION_SCORE_TREND_LIST_RESPONSE: ListPromptEvaluationDimensionScoreTrendsResponse = {
-  items: [],
-  total: 0,
-};
-
-export const EMPTY_PROMPT_EVALUATION_DIMENSION_SCORE: PromptEvaluationDimensionScore = {
-  id: "",
-  workspace_id: "",
-  run_id: "",
-  asset_id: "",
-  prompt_id: null,
-  dimension_index: 0,
-  dimension_name: "",
-  score: 0,
-  passed_cases: 0,
-  total_cases: 0,
-  status: "待执行",
-  rule: "",
-  evidence: "",
-  source: "",
-  created_at: "",
-  updated_at: "",
-};
-
-export const EMPTY_PROMPT_EVALUATION_DIMENSION_SCORE_SUMMARY: PromptEvaluationDimensionScoreSummary = {
-  workspace_id: "",
-  asset_id: "",
-  prompt_id: null,
-  dimension_index: 0,
-  dimension_name: "",
-  run_count: 0,
-  scored_run_count: 0,
-  passed_cases: 0,
-  total_cases: 0,
-  score: 0,
-  latest_status: "待执行",
-  latest_rule: "",
-  latest_evidence: "",
-  latest_source: "",
-  latest_scored_at: "",
-};
-
-export const EMPTY_PROMPT_EVALUATION_DIMENSION_SCORE_TREND: PromptEvaluationDimensionScoreTrend = {
-  workspace_id: "",
-  asset_id: "",
-  prompt_id: null,
-  dimension_index: 0,
-  dimension_name: "",
-  period: "",
-  prompt_version: 0,
-  run_count: 0,
-  scored_run_count: 0,
-  passed_cases: 0,
-  total_cases: 0,
-  score: 0,
-  latest_status: "待执行",
-  latest_rule: "",
-  latest_evidence: "",
-  latest_source: "",
-  latest_scored_at: "",
 };
 
 export const EMPTY_PROMPT_EVALUATION_CASE: PromptEvaluationStructuredCase = {
