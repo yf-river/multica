@@ -5,16 +5,16 @@ export interface AppConfigResponse {
   cdn_domain: string;
   // True when the CDN domain serves private content via time-bounded signed
   // URLs (CloudFront signing) — raw storage URLs on that domain are NOT
-  // publicly fetchable and must not be used as native media sources
-  // (MUL-3254). Older servers omit the field; treat that as false.
-  cdn_signed?: boolean;
+  // publicly fetchable and must not be used as native media sources.
+  // Runtime parsing still treats a missing field as false for Desktop drift.
+  cdn_signed: boolean;
   allow_signup: boolean;
   posthog_key?: string;
   posthog_host?: string;
   analytics_environment?: string;
   daemon_server_url?: string;
   daemon_app_url?: string;
-  workspace_creation_disabled?: boolean;
+  workspace_creation_disabled: boolean;
 }
 
 const OptionalStringSchema = z.preprocess(
@@ -37,7 +37,7 @@ export const AppConfigSchema = z.object({
   analytics_environment: OptionalStringSchema,
   daemon_server_url: OptionalStringSchema,
   daemon_app_url: OptionalStringSchema,
-  workspace_creation_disabled: BooleanWithDefaultSchema(false).optional(),
+  workspace_creation_disabled: BooleanWithDefaultSchema(false),
 }).loose();
 
 export const EMPTY_APP_CONFIG: AppConfigResponse = {
