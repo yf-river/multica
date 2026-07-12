@@ -193,27 +193,9 @@ func (h *Handler) CreateAgentFromTemplate(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	// Runtime validation reproduces the gating done by CreateAgent
-	// (handler/agent.go) — keep the two paths in sync. Done before fetch so
-	// we don't waste GitHub API calls for a request that's going to 403.
-	runtime, err := h.Queries.GetAgentRuntimeForWorkspace(r.Context(), db.GetAgentRuntimeForWorkspaceParams{
-		ID:          runtimeUUID,
-		WorkspaceID: wsUUID,
-	})
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid runtime_id")
-		return
-	}
-	member, ok := h.workspaceMember(w, r, workspaceID)
+	// Reject inaccessible runtimes before external Skill fetches.
+	runtime, ok := h.authorizeAgentCreationRuntime(w, r, workspaceID, wsUUID, ownerID, runtimeUUID, req.Scope)
 	if !ok {
-		return
-	}
-	if !canAccessRuntime(member, runtime) {
-		writeError(w, http.StatusForbidden, "this runtime is personal; only its owner or a workspace admin can create agents on it")
-		return
-	}
-	if err := validateAgentRuntimeScope(req.Scope, parseUUID(ownerID), runtime); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	extraSkillIDs := make([]pgtype.UUID, 0, len(req.ExtraSkillIDs))

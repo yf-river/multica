@@ -780,25 +780,8 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	runtime, err := h.Queries.GetAgentRuntimeForWorkspace(r.Context(), db.GetAgentRuntimeForWorkspaceParams{
-		ID:          runtimeUUID,
-		WorkspaceID: wsUUID,
-	})
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid runtime_id")
-		return
-	}
-
-	member, ok := h.workspaceMember(w, r, workspaceID)
+	runtime, ok := h.authorizeAgentCreationRuntime(w, r, workspaceID, wsUUID, ownerID, runtimeUUID, req.Scope)
 	if !ok {
-		return
-	}
-	if !canAccessRuntime(member, runtime) {
-		writeError(w, http.StatusForbidden, "this runtime is personal; only its owner or a workspace admin can create agents on it")
-		return
-	}
-	if err := validateAgentRuntimeScope(req.Scope, parseUUID(ownerID), runtime); err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
