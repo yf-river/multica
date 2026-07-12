@@ -117,6 +117,29 @@ wait_for_port() {
   echo "    $name ready (${elapsed}s)"
 }
 
+require_fresh_check_service() {
+  local name=$1 port=$2 path=$3
+  if ! curl -sf "http://localhost:${port}${path}" > /dev/null 2>&1; then
+    return
+  fi
+
+  if [ "${CHECK_ALLOW_EXISTING_SERVICES:-0}" = "1" ]; then
+    echo "==> Reusing existing $name on :$port (explicit CHECK_ALLOW_EXISTING_SERVICES=1)"
+    return
+  fi
+
+  echo "ERROR: $name port :$port already serves HTTP." >&2
+  echo "Stop that service before running the verification gate, or explicitly set CHECK_ALLOW_EXISTING_SERVICES=1 for a non-isolated developer run." >&2
+  EXIT_CODE=1
+  exit 1
+}
+
+# A verification run must exercise binaries built from the current checkout.
+# Silently accepting any healthy process on these ports can validate an old
+# build or a development server while reporting production acceptance.
+require_fresh_check_service "Backend" "$PORT" "/health"
+require_fresh_check_service "Frontend" "$FRONTEND_PORT" "/"
+
 # --------------------------------------------------------------------------
 # Step 0: Ensure DB
 # --------------------------------------------------------------------------
