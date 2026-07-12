@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
 	"github.com/multica-ai/multica/server/internal/cli"
@@ -58,7 +59,7 @@ func runIssueSourceFetch(cmd *cobra.Command, args []string) error {
 		"auto_fetch":     autoFetch,
 	}
 	var result map[string]any
-	if err := client.PostJSON(ctx, "/api/issues/"+issueRef.ID+"/source-fetch", body, &result); err != nil {
+	if err := client.PostJSONWithIdempotencyKey(ctx, "/api/issues/"+issueRef.ID+"/source-fetch", body, uuid.NewString(), &result); err != nil {
 		return fmt.Errorf("record source fetch: %w", err)
 	}
 

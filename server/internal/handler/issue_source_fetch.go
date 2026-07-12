@@ -53,6 +53,7 @@ func (h *Handler) RecordIssueSourceFetch(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	requestFingerprint := req
 	if req.AutoFetch {
 		fetched, err := h.autoFetchIssueSource(r.Context(), userID, issue, req)
 		if err != nil {
@@ -133,6 +134,10 @@ func (h *Handler) RecordIssueSourceFetch(w http.ResponseWriter, r *http.Request)
 
 	traceResponse := map[string]any(nil)
 	if taskID := strings.TrimSpace(r.Header.Get("X-Task-ID")); taskID != "" {
+		idempotencyKey, ok := optionalIdempotencyKey(w, r)
+		if !ok {
+			return
+		}
 		taskUUID, err := util.ParseUUID(taskID)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "X-Task-ID must be a UUID")
@@ -143,7 +148,13 @@ func (h *Handler) RecordIssueSourceFetch(w http.ResponseWriter, r *http.Request)
 			writeError(w, http.StatusBadRequest, "X-Task-ID must belong to this issue")
 			return
 		}
+		requestHash, err := hashRequestFingerprint(requestFingerprint)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to fingerprint source fetch request")
+			return
+		}
 		traceMeta, _ := json.Marshal(map[string]any{
+			"request_hash":   requestHash,
 			"provider":       normalized.Provider,
 			"fetch_provider": normalized.FetchProvider,
 			"workspace_id":   normalized.WorkspaceID,
@@ -167,6 +178,7 @@ func (h *Handler) RecordIssueSourceFetch(w http.ResponseWriter, r *http.Request)
 			errorType = "source_fetch_failed"
 		}
 		ev, err := qtx.CreateTaskTraceEvent(r.Context(), db.CreateTaskTraceEventParams{
+			ID:            idempotencyKey,
 			WorkspaceID:   issue.WorkspaceID,
 			TaskID:        task.ID,
 			IssueID:       issue.ID,
@@ -184,6 +196,10 @@ func (h *Handler) RecordIssueSourceFetch(w http.ResponseWriter, r *http.Request)
 			Metadata:      traceMeta,
 		})
 		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				writeError(w, http.StatusConflict, "idempotency key already used for a different source fetch")
+				return
+			}
 			writeError(w, http.StatusInternalServerError, "failed to record source fetch trace")
 			return
 		}

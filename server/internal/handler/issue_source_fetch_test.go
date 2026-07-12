@@ -88,8 +88,7 @@ func TestRecordIssueSourceFetchWritesMetadataAndTrace(t *testing.T) {
 	agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, "Source fetch agent")
 	taskID := createDispatchedClaimFixtureTask(t, ctx, agentID, runtimeID, issueID, "1 second", true)
 
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/issues/"+issueID+"/source-fetch", map[string]any{
+	body := map[string]any{
 		"provider":      "tapd",
 		"status":        "fetched",
 		"workspace_id":  "47654106",
@@ -100,12 +99,20 @@ func TestRecordIssueSourceFetchWritesMetadataAndTrace(t *testing.T) {
 		"body_excerpt":  "快捷入口属于当前登录用户，不同用户之间互不影响。",
 		"version":       "2026-06-18 07:39:03",
 		"duration_ms":   1234,
-	})
-	req.Header.Set("X-Agent-ID", agentID)
-	req.Header.Set("X-Task-ID", taskID)
-	req = withURLParam(req, "id", issueID)
+	}
+	requestID := "10000000-0000-4000-8000-000000000020"
+	call := func() *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		req := newRequest("POST", "/api/issues/"+issueID+"/source-fetch", body)
+		req.Header.Set("X-Agent-ID", agentID)
+		req.Header.Set("X-Task-ID", taskID)
+		req.Header.Set("Idempotency-Key", requestID)
+		req = withURLParam(req, "id", issueID)
+		testHandler.RecordIssueSourceFetch(w, req)
+		return w
+	}
 
-	testHandler.RecordIssueSourceFetch(w, req)
+	w := call()
 	if w.Code != http.StatusOK {
 		t.Fatalf("RecordIssueSourceFetch: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
@@ -129,15 +136,41 @@ func TestRecordIssueSourceFetchWritesMetadataAndTrace(t *testing.T) {
 	if resp.TraceEvent["event_type"] != "source.fetch" {
 		t.Fatalf("trace event = %+v", resp.TraceEvent)
 	}
+	replay := call()
+	if replay.Code != http.StatusOK {
+		t.Fatalf("source-fetch replay = %d %s, want 200", replay.Code, replay.Body.String())
+	}
+	var replayResp struct {
+		TraceEvent map[string]any `json:"trace_event"`
+	}
+	if err := json.Unmarshal(replay.Body.Bytes(), &replayResp); err != nil {
+		t.Fatalf("decode replay response: %v", err)
+	}
+	if replayResp.TraceEvent["id"] != resp.TraceEvent["id"] {
+		t.Fatalf("replay trace = %+v, want original %+v", replayResp.TraceEvent, resp.TraceEvent)
+	}
+
+	body["title"] = "changed request"
+	conflict := call()
+	if conflict.Code != http.StatusConflict {
+		t.Fatalf("changed source-fetch replay = %d %s, want 409", conflict.Code, conflict.Body.String())
+	}
+	persistedIssue, err := testHandler.Queries.GetIssue(ctx, parseUUID(issueID))
+	if err != nil {
+		t.Fatalf("load issue after conflict: %v", err)
+	}
+	if got := parseIssueMetadata(persistedIssue.Metadata)["source_fetch_title"]; got != "用户快捷入口需求" {
+		t.Fatalf("conflicting replay changed metadata title to %v", got)
+	}
 
 	events, err := testHandler.Queries.ListIssueTaskTraceEvents(ctx, parseUUID(issueID))
 	if err != nil {
 		t.Fatalf("ListIssueTaskTraceEvents: %v", err)
 	}
-	found := false
+	found := 0
 	for _, ev := range events {
 		if ev.EventType == "source.fetch" && ev.TaskID == parseUUID(taskID) {
-			found = true
+			found++
 			if ev.Status != "fetched" {
 				t.Fatalf("source.fetch status = %q", ev.Status)
 			}
@@ -146,8 +179,8 @@ func TestRecordIssueSourceFetchWritesMetadataAndTrace(t *testing.T) {
 			}
 		}
 	}
-	if !found {
-		t.Fatalf("source.fetch trace event not found: %+v", events)
+	if found != 1 {
+		t.Fatalf("source.fetch trace event count = %d, want 1: %+v", found, events)
 	}
 }
 
