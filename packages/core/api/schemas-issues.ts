@@ -148,8 +148,6 @@ export const CommentSchema = z.object({
   source_task_id: z.string().nullable().optional(),
 }).loose();
 
-export const CommentsListSchema = z.array(CommentSchema);
-
 export const EMPTY_COMMENT: Comment = {
   id: "",
   issue_id: "",

@@ -7,7 +7,6 @@ import type {
   ObservabilitySummary,
   Squad,
   SquadMember,
-  SquadSOPRun,
 } from "../types";
 import { NonEmptyStringSchema } from "./schemas-internal";
 
@@ -204,25 +203,6 @@ export const IssueSOPRunsResponseSchema = z.object({
   items: z.array(SquadSOPRunSchema).default([]),
   total: z.number().default(0),
 }).loose();
-
-export const EMPTY_SQUAD_SOP_RUN: SquadSOPRun = {
-  id: "",
-  workspace_id: "",
-  issue_id: "",
-  squad_id: "",
-  leader_task_id: null,
-  profile_key: "",
-  profile: {},
-  status: "进行中",
-  current_step_key: "",
-  started_at: "",
-  completed_at: null,
-  total_duration_ms: null,
-  metrics: {},
-  events: [],
-  created_at: "",
-  updated_at: "",
-};
 
 export const EMPTY_ISSUE_SOP_RUNS_RESPONSE: ListIssueSOPRunsResponse = {
   items: [],
