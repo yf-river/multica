@@ -112,3 +112,61 @@ func TestCreatePromptEvaluationDatasetVersion_ConcurrentRequestsGetUniqueVersion
 		t.Fatalf("versions = %v, want %d unique numbers", versions, callers)
 	}
 }
+
+func TestRestorePromptEvaluationDatasetVersion_IdempotentReplay(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	asset := setupDatasetForVersionCreate(t)
+	versionRecorder := createPromptEvaluationDatasetVersionWithKey(t, asset.ID, uuid.NewString(), map[string]any{
+		"version_label": "source snapshot",
+	})
+	if versionRecorder.Code != http.StatusCreated {
+		t.Fatalf("create source version = %d %s", versionRecorder.Code, versionRecorder.Body.String())
+	}
+	var sourceVersion PromptEvaluationDatasetVersionResponse
+	if err := json.Unmarshal(versionRecorder.Body.Bytes(), &sourceVersion); err != nil {
+		t.Fatalf("decode source version: %v", err)
+	}
+	extraCase := createPromptEvaluationCaseWithKey(t, uuid.NewString(), map[string]any{
+		"asset_id": asset.ID, "case_name": "must be removed by restore", "status": "启用",
+	})
+	if extraCase.Code != http.StatusCreated {
+		t.Fatalf("create extra case = %d %s", extraCase.Code, extraCase.Body.String())
+	}
+
+	key := uuid.NewString()
+	restore := func(label string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		req := withURLParams(newRequest(http.MethodPost,
+			"/api/prompt-evaluation-assets/"+asset.ID+"/dataset-versions/"+sourceVersion.ID+"/restore",
+			map[string]any{"version_label": label}),
+			"id", asset.ID, "versionId", sourceVersion.ID,
+		)
+		req.Header.Set("Idempotency-Key", key)
+		testHandler.RestorePromptEvaluationDatasetVersion(w, req)
+		return w
+	}
+	first := restore("restored once")
+	if first.Code != http.StatusOK {
+		t.Fatalf("first restore = %d %s", first.Code, first.Body.String())
+	}
+	replay := restore("restored once")
+	if replay.Code != http.StatusOK || replay.Body.String() != first.Body.String() {
+		t.Fatalf("restore replay = %d %s, want exact %s", replay.Code, replay.Body.String(), first.Body.String())
+	}
+	conflict := restore("changed restore")
+	if conflict.Code != http.StatusConflict {
+		t.Fatalf("changed restore replay = %d %s, want 409", conflict.Code, conflict.Body.String())
+	}
+	var versions, cases int
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM prompt_evaluation_dataset_version WHERE dataset_asset_id = $1`, asset.ID).Scan(&versions); err != nil {
+		t.Fatalf("count versions: %v", err)
+	}
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM prompt_evaluation_case WHERE asset_id = $1`, asset.ID).Scan(&cases); err != nil {
+		t.Fatalf("count restored cases: %v", err)
+	}
+	if versions != 2 || cases != 1 {
+		t.Fatalf("restore state versions=%d cases=%d, want 2/1", versions, cases)
+	}
+}

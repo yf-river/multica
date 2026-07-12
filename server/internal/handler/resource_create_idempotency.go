@@ -43,6 +43,7 @@ const (
 	resourceTypePromptDatasetVersion   = "prompt_evaluation_dataset_version"
 	resourceTypePromptEvidenceSnapshot = "prompt_evaluation_evidence_snapshot"
 	resourceTypePromptEvidenceBatch    = "prompt_evaluation_evidence_batch"
+	resourceTypePromptDatasetRestore   = "prompt_evaluation_dataset_restore"
 )
 
 var errResourceCreateIdempotencyConflict = errors.New("resource create idempotency conflict")
