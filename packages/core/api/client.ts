@@ -2359,12 +2359,24 @@ export class ApiClient extends ApiTransport {
     return this.retryUnknownMutationOnce(attempt);
   }
 
-  async createPromptEvaluationAssetEvidenceSnapshots(assetId: string, snapshotType: PromptEvaluationEvidenceSnapshotType = "验收归档", limit = 20): Promise<PromptEvaluationAssetEvidenceSnapshotResponse> {
+  async createPromptEvaluationAssetEvidenceSnapshots(
+    assetId: string,
+    snapshotType: PromptEvaluationEvidenceSnapshotType = "验收归档",
+    limit = 20,
+    idempotencyKey = generateUUID(),
+  ): Promise<PromptEvaluationAssetEvidenceSnapshotResponse> {
     const search = new URLSearchParams({ snapshot_type: snapshotType, limit: String(limit) });
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${assetId}/evidence-snapshots?${search.toString()}`, { method: "POST" });
-    return parseOrThrow(raw, PromptEvaluationAssetEvidenceSnapshotResponseSchema, EMPTY_PROMPT_EVALUATION_ASSET_EVIDENCE_SNAPSHOT_RESPONSE, {
-      endpoint: "POST /api/prompt-evaluation-assets/:id/evidence-snapshots",
-    }) as PromptEvaluationAssetEvidenceSnapshotResponse;
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${assetId}/evidence-snapshots?${search.toString()}`, {
+        method: "POST",
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow(raw, PromptEvaluationAssetEvidenceSnapshotResponseSchema, EMPTY_PROMPT_EVALUATION_ASSET_EVIDENCE_SNAPSHOT_RESPONSE, {
+        endpoint: "POST /api/prompt-evaluation-assets/:id/evidence-snapshots",
+        mayHaveCommitted: true,
+      }) as PromptEvaluationAssetEvidenceSnapshotResponse;
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async getPromptEvaluationAssetEvidenceArchivePackage(assetId: string, snapshotType: PromptEvaluationEvidenceSnapshotType = "验收归档", limit = 20): Promise<PromptEvaluationAssetEvidenceArchivePackage> {

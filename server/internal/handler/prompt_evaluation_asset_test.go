@@ -2533,8 +2533,11 @@ func TestPromptEvaluationAssetEvidenceSnapshotsArchiveRecentRuns(t *testing.T) {
 	cleanupPromptEvaluationAgentRunTest(t)
 	created, resp, _ := createPromptEvaluationAgentRunFixture(t, "资产级证据快照实验", "需要批量归档")
 
+	requestKey := uuid.NewString()
 	createW := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationAssetEvidenceSnapshots(createW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+created.ID+"/evidence-snapshots?snapshot_type=验收归档", nil), "id", created.ID))
+	createReq := withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+created.ID+"/evidence-snapshots?snapshot_type=验收归档", nil), "id", created.ID)
+	createReq.Header.Set("Idempotency-Key", requestKey)
+	testHandler.CreatePromptEvaluationAssetEvidenceSnapshots(createW, createReq)
 	if createW.Code != http.StatusCreated {
 		t.Fatalf("asset snapshot status = %d, body = %s", createW.Code, createW.Body.String())
 	}
@@ -2550,12 +2553,25 @@ func TestPromptEvaluationAssetEvidenceSnapshotsArchiveRecentRuns(t *testing.T) {
 	}
 
 	retryW := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationAssetEvidenceSnapshots(retryW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+created.ID+"/evidence-snapshots?snapshot_type=验收归档", nil), "id", created.ID))
+	retryReq := withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+created.ID+"/evidence-snapshots?snapshot_type=验收归档", nil), "id", created.ID)
+	retryReq.Header.Set("Idempotency-Key", requestKey)
+	testHandler.CreatePromptEvaluationAssetEvidenceSnapshots(retryW, retryReq)
 	if retryW.Code != http.StatusCreated {
 		t.Fatalf("asset snapshot retry status = %d, body = %s", retryW.Code, retryW.Body.String())
 	}
+	if retryW.Body.String() != createW.Body.String() {
+		t.Fatalf("asset snapshot same-key retry = %s, want exact %s", retryW.Body.String(), createW.Body.String())
+	}
+
+	distinctW := httptest.NewRecorder()
+	distinctReq := withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+created.ID+"/evidence-snapshots?snapshot_type=验收归档", nil), "id", created.ID)
+	distinctReq.Header.Set("Idempotency-Key", uuid.NewString())
+	testHandler.CreatePromptEvaluationAssetEvidenceSnapshots(distinctW, distinctReq)
+	if distinctW.Code != http.StatusCreated {
+		t.Fatalf("asset snapshot distinct retry status = %d, body = %s", distinctW.Code, distinctW.Body.String())
+	}
 	var retry PromptEvaluationAssetEvidenceSnapshotResponse
-	if err := json.Unmarshal(retryW.Body.Bytes(), &retry); err != nil {
+	if err := json.Unmarshal(distinctW.Body.Bytes(), &retry); err != nil {
 		t.Fatalf("decode asset snapshot retry response: %v", err)
 	}
 	if retry.CreatedCount != 0 || retry.SkippedCount != 1 || len(retry.Skipped) != 1 || retry.Skipped[0].RunID != resp.Run.ID {
@@ -2586,6 +2602,54 @@ func TestPromptEvaluationAssetEvidenceSnapshotsArchiveRecentRuns(t *testing.T) {
 	evidence, ok := archivePackage.Items[0].Snapshots[0].Evidence.(map[string]any)
 	if !ok || evidence["服务端解释快照"] == nil {
 		t.Fatalf("asset snapshot export evidence missing insight: %#v", archivePackage.Items[0].Snapshots[0].Evidence)
+	}
+}
+
+func TestPromptEvaluationAssetEvidenceSnapshotsRollbackWholeBatch(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler test fixture not initialized")
+	}
+	cleanupPromptEvaluationAgentRunTest(t)
+	created, resp, _ := createPromptEvaluationAgentRunFixture(t, "资产证据批量回滚实验", "第一条不得残留")
+	var secondRunID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO prompt_evaluation_run (
+			id, workspace_id, asset_id, prompt_id, run_kind, status, trigger_source,
+			agent_id, runtime_id, task_id, chat_session_id, model, runtime_provider,
+			total_cases, passed_cases, failed_cases, pass_rate, total_duration_ms,
+			average_duration_ms, input_tokens, output_tokens, estimated_cost,
+			failure_reason, conclusion, metrics, evidence, started_at, completed_at, created_by
+		)
+		SELECT gen_random_uuid(), workspace_id, asset_id, prompt_id, run_kind, status, trigger_source,
+			agent_id, runtime_id, task_id, chat_session_id, model, runtime_provider,
+			total_cases, passed_cases, failed_cases, pass_rate, total_duration_ms,
+			average_duration_ms, input_tokens, output_tokens, estimated_cost,
+			failure_reason, conclusion, metrics, evidence, started_at, completed_at, created_by
+		FROM prompt_evaluation_run WHERE id = $1
+		RETURNING id::text
+	`, resp.Run.ID).Scan(&secondRunID); err != nil {
+		t.Fatalf("clone prompt evaluation run: %v", err)
+	}
+
+	h := *testHandler
+	h.TxStarter = failEvidenceSnapshotTxStarter{pool: testPool, failAt: 2}
+	w := httptest.NewRecorder()
+	req := withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+created.ID+"/evidence-snapshots?snapshot_type=验收归档", nil), "id", created.ID)
+	requestKey := uuid.NewString()
+	req.Header.Set("Idempotency-Key", requestKey)
+	h.CreatePromptEvaluationAssetEvidenceSnapshots(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("batch failure status = %d %s, want 500", w.Code, w.Body.String())
+	}
+	var snapshots, requests int
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM prompt_evaluation_evidence_snapshot WHERE run_id IN ($1, $2)`, resp.Run.ID, secondRunID).Scan(&snapshots); err != nil {
+		t.Fatalf("count rolled-back snapshots: %v", err)
+	}
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM resource_create_request WHERE resource_type = 'prompt_evaluation_evidence_batch' AND idempotency_key = $1`, requestKey).Scan(&requests); err != nil {
+		t.Fatalf("count rolled-back batch requests: %v", err)
+	}
+	if snapshots != 0 || requests != 0 {
+		t.Fatalf("partial batch state snapshots=%d requests=%d, want 0/0", snapshots, requests)
 	}
 }
 

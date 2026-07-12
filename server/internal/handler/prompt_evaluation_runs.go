@@ -659,6 +659,33 @@ func (h *Handler) CreatePromptEvaluationAssetEvidenceSnapshots(w http.ResponseWr
 	if !ok {
 		return
 	}
+	actorID := parseUUID(userID)
+	requestHash, err := hashRequestFingerprint(struct {
+		AssetID      string `json:"asset_id"`
+		SnapshotType string `json:"snapshot_type"`
+		Limit        int32  `json:"limit"`
+	}{AssetID: uuidToString(asset.ID), SnapshotType: snapshotType, Limit: limit})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to fingerprint asset evidence snapshot request")
+		return
+	}
+	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	replay, found, replayErr := loadResourceCreateReplay(
+		r.Context(), h.Queries, asset.WorkspaceID, actorID, resourceTypePromptEvidenceBatch,
+		idempotencyKey, requestHash,
+		func(response PromptEvaluationAssetEvidenceSnapshotResponse) bool { return response.AssetID != "" },
+	)
+	if replayErr != nil {
+		writePromptEvaluationEvidenceBatchReplayError(w, replayErr)
+		return
+	}
+	if found {
+		writeJSON(w, http.StatusCreated, replay)
+		return
+	}
 	runs, err := h.Queries.ListPromptEvaluationRuns(r.Context(), db.ListPromptEvaluationRunsParams{
 		WorkspaceID: asset.WorkspaceID,
 		Limit:       limit,
@@ -668,6 +695,66 @@ func (h *Handler) CreatePromptEvaluationAssetEvidenceSnapshots(w http.ResponseWr
 		writeError(w, http.StatusInternalServerError, "failed to list prompt evaluation runs for asset")
 		return
 	}
+	createdBy := actorID
+	paramsByRun := make(map[pgtype.UUID]db.CreatePromptEvaluationEvidenceSnapshotParams, len(runs))
+	for _, run := range runs {
+		existing, err := h.Queries.ListPromptEvaluationEvidenceSnapshotsByRun(r.Context(), db.ListPromptEvaluationEvidenceSnapshotsByRunParams{
+			WorkspaceID: asset.WorkspaceID,
+			RunID:       run.ID,
+			Limit:       100,
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to list existing prompt evaluation evidence snapshots")
+			return
+		}
+		if hasPromptEvaluationSnapshotType(existing, snapshotType) {
+			continue
+		}
+		params, err := h.buildPromptEvaluationEvidenceSnapshotRecord(r.Context(), asset.WorkspaceID, run.ID, snapshotType, createdBy)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to build prompt evaluation evidence snapshot")
+			return
+		}
+		paramsByRun[run.ID] = params
+	}
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start asset evidence snapshot transaction")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	_, err = qtx.ReserveResourceCreateRequest(r.Context(), db.ReserveResourceCreateRequestParams{
+		WorkspaceID: asset.WorkspaceID, ActorID: actorID, ResourceType: resourceTypePromptEvidenceBatch,
+		IdempotencyKey: idempotencyKey, RequestHash: requestHash,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		_ = tx.Rollback(r.Context())
+		replay, found, replayErr = loadResourceCreateReplay(
+			r.Context(), h.Queries, asset.WorkspaceID, actorID, resourceTypePromptEvidenceBatch,
+			idempotencyKey, requestHash,
+			func(response PromptEvaluationAssetEvidenceSnapshotResponse) bool { return response.AssetID != "" },
+		)
+		if replayErr != nil || !found {
+			if replayErr == nil {
+				replayErr = errors.New("asset evidence snapshot replay disappeared after conflict")
+			}
+			writePromptEvaluationEvidenceBatchReplayError(w, replayErr)
+			return
+		}
+		writeJSON(w, http.StatusCreated, replay)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reserve asset evidence snapshot request")
+		return
+	}
+	if _, err := qtx.LockPromptEvaluationAsset(r.Context(), db.LockPromptEvaluationAssetParams{
+		ID: asset.ID, WorkspaceID: asset.WorkspaceID,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to lock evidence snapshot asset")
+		return
+	}
 	resp := PromptEvaluationAssetEvidenceSnapshotResponse{
 		AssetID:      uuidToString(asset.ID),
 		SnapshotType: snapshotType,
@@ -675,10 +762,9 @@ func (h *Handler) CreatePromptEvaluationAssetEvidenceSnapshots(w http.ResponseWr
 		Items:        []PromptEvaluationEvidenceSnapshotResponse{},
 		Skipped:      []PromptEvaluationAssetEvidenceSnapshotSkip{},
 	}
-	createdBy := parseUUID(userID)
 	for _, run := range runs {
 		runID := run.ID
-		existing, err := h.Queries.ListPromptEvaluationEvidenceSnapshotsByRun(r.Context(), db.ListPromptEvaluationEvidenceSnapshotsByRunParams{
+		existing, err := qtx.ListPromptEvaluationEvidenceSnapshotsByRun(r.Context(), db.ListPromptEvaluationEvidenceSnapshotsByRunParams{
 			WorkspaceID: asset.WorkspaceID,
 			RunID:       runID,
 			Limit:       100,
@@ -687,14 +773,7 @@ func (h *Handler) CreatePromptEvaluationAssetEvidenceSnapshots(w http.ResponseWr
 			writeError(w, http.StatusInternalServerError, "failed to list existing prompt evaluation evidence snapshots")
 			return
 		}
-		alreadyArchived := false
-		for _, item := range existing {
-			if item.SnapshotType == snapshotType {
-				alreadyArchived = true
-				break
-			}
-		}
-		if alreadyArchived {
+		if hasPromptEvaluationSnapshotType(existing, snapshotType) {
 			resp.SkippedCount++
 			resp.Skipped = append(resp.Skipped, PromptEvaluationAssetEvidenceSnapshotSkip{
 				RunID:  uuidToString(runID),
@@ -702,7 +781,7 @@ func (h *Handler) CreatePromptEvaluationAssetEvidenceSnapshots(w http.ResponseWr
 			})
 			continue
 		}
-		item, err := h.createPromptEvaluationEvidenceSnapshotRecord(r.Context(), asset.WorkspaceID, runID, snapshotType, createdBy)
+		item, err := qtx.CreatePromptEvaluationEvidenceSnapshot(r.Context(), paramsByRun[runID])
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to create prompt evaluation evidence snapshot")
 			return
@@ -710,7 +789,38 @@ func (h *Handler) CreatePromptEvaluationAssetEvidenceSnapshots(w http.ResponseWr
 		resp.CreatedCount++
 		resp.Items = append(resp.Items, promptEvaluationEvidenceSnapshotToResponse(item, false))
 	}
+	if err := completeResourceCreateRequest(
+		r.Context(), qtx, asset.WorkspaceID, actorID, resourceTypePromptEvidenceBatch,
+		idempotencyKey, requestHash, asset.ID, resp,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to complete asset evidence snapshot request")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit asset evidence snapshots")
+		return
+	}
 	writeJSON(w, http.StatusCreated, resp)
+}
+
+func hasPromptEvaluationSnapshotType(items []db.ListPromptEvaluationEvidenceSnapshotsByRunRow, snapshotType string) bool {
+	for _, item := range items {
+		if item.SnapshotType == snapshotType {
+			return true
+		}
+	}
+	return false
+}
+
+func writePromptEvaluationEvidenceBatchReplayError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errResourceCreateIdempotencyConflict) {
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": "Idempotency-Key was already used with a different asset evidence snapshot request",
+			"code":  "idempotency_conflict",
+		})
+		return
+	}
+	writeError(w, http.StatusInternalServerError, "failed to recover asset evidence snapshot request")
 }
 
 func (h *Handler) GetPromptEvaluationAssetEvidenceSnapshotPackage(w http.ResponseWriter, r *http.Request) {
@@ -813,14 +923,6 @@ func parsePromptEvaluationAssetSnapshotQuery(w http.ResponseWriter, values url.V
 		limit = int32(parsed)
 	}
 	return snapshotType, limit, true
-}
-
-func (h *Handler) createPromptEvaluationEvidenceSnapshotRecord(ctx context.Context, workspaceUUID pgtype.UUID, runID pgtype.UUID, snapshotType string, createdBy pgtype.UUID) (db.PromptEvaluationEvidenceSnapshot, error) {
-	params, err := h.buildPromptEvaluationEvidenceSnapshotRecord(ctx, workspaceUUID, runID, snapshotType, createdBy)
-	if err != nil {
-		return db.PromptEvaluationEvidenceSnapshot{}, err
-	}
-	return h.Queries.CreatePromptEvaluationEvidenceSnapshot(ctx, params)
 }
 
 func (h *Handler) buildPromptEvaluationEvidenceSnapshotRecord(ctx context.Context, workspaceUUID pgtype.UUID, runID pgtype.UUID, snapshotType string, createdBy pgtype.UUID) (db.CreatePromptEvaluationEvidenceSnapshotParams, error) {
