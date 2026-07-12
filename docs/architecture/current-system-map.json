@@ -19521,6 +19521,7 @@
           "server/internal/handler/skill.go",
           "server/internal/handler/squad_internal.go",
           "server/internal/handler/squad_members.go",
+          "server/internal/handler/squad_relationships.go",
           "server/internal/handler/squad_sop_run.go",
           "server/internal/handler/squad.go",
           "server/internal/handler/task_lifecycle.go",

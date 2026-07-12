@@ -790,13 +790,8 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Validate leader is an agent in this workspace.
-	leader, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
-		ID:          leaderUUID,
-		WorkspaceID: wsUUID,
-	})
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "leader must be a valid agent in this workspace")
+	leader, ok := loadSquadAgent(w, r, h.Queries, wsUUID, leaderUUID, "leader must be a valid agent in this workspace")
+	if !ok {
 		return
 	}
 	if !h.requirePersonalAgentAccess(w, r, leader, "member", uuidToString(member.UserID), workspaceID, "cannot use personal leader agent") {
@@ -826,11 +821,8 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 		seenMembers[identity] = struct{}{}
 		req.Members[i].MemberID = uuidToString(memberUUID)
 		if input.MemberType == "agent" {
-			agentMember, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
-				ID: memberUUID, WorkspaceID: wsUUID,
-			})
-			if err != nil {
-				writeError(w, http.StatusBadRequest, fmt.Sprintf("members[%d] agent not found in this workspace", i))
+			agentMember, ok := loadSquadAgent(w, r, h.Queries, wsUUID, memberUUID, fmt.Sprintf("members[%d] agent not found in this workspace", i))
+			if !ok {
 				return
 			}
 			if !h.requirePersonalAgentAccess(w, r, agentMember, "member", uuidToString(member.UserID), workspaceID, fmt.Sprintf("cannot add members[%d] personal agent", i)) {
@@ -840,11 +832,10 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusBadRequest, fmt.Sprintf("members[%d]: %s", i, err))
 				return
 			}
-		} else if _, err := h.Queries.GetMemberByUserAndWorkspace(r.Context(), db.GetMemberByUserAndWorkspaceParams{
-			UserID: memberUUID, WorkspaceID: wsUUID,
-		}); err != nil {
-			writeError(w, http.StatusBadRequest, fmt.Sprintf("members[%d] member not found in this workspace", i))
-			return
+		} else {
+			if _, ok := loadSquadMember(w, r, h.Queries, wsUUID, memberUUID, fmt.Sprintf("members[%d] member not found in this workspace", i)); !ok {
+				return
+			}
 		}
 		preparedMembers = append(preparedMembers, preparedSquadMember{
 			memberType: input.MemberType,
@@ -1107,12 +1098,8 @@ func (h *Handler) UpdateSquad(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return
 		}
-		// Validate new leader is an agent in workspace.
-		leader, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
-			ID: lid, WorkspaceID: wsUUID,
-		})
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "leader must be a valid agent in this workspace")
+		leader, ok := loadSquadAgent(w, r, h.Queries, wsUUID, lid, "leader must be a valid agent in this workspace")
+		if !ok {
 			return
 		}
 		if !h.requirePersonalAgentAccess(w, r, leader, "member", uuidToString(member.UserID), workspaceID, "cannot use personal leader agent") {
@@ -1125,11 +1112,8 @@ func (h *Handler) UpdateSquad(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Scope != nil || req.LeaderID != nil {
 		if !haveNextLeader {
-			leader, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
-				ID: nextLeaderID, WorkspaceID: wsUUID,
-			})
-			if err != nil {
-				writeError(w, http.StatusBadRequest, "leader must be a valid agent in this workspace")
+			leader, ok := loadSquadAgent(w, r, h.Queries, wsUUID, nextLeaderID, "leader must be a valid agent in this workspace")
+			if !ok {
 				return
 			}
 			nextLeader = leader

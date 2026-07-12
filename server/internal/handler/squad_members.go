@@ -271,11 +271,8 @@ func (h *Handler) AddSquadMember(w http.ResponseWriter, r *http.Request) {
 
 	// Validate the member belongs to this workspace.
 	if req.MemberType == "agent" {
-		agent, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
-			ID: memberUUID, WorkspaceID: wsUUID,
-		})
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "agent not found in this workspace")
+		agent, ok := loadSquadAgent(w, r, h.Queries, wsUUID, memberUUID, "agent not found in this workspace")
+		if !ok {
 			return
 		}
 		if !h.requirePersonalAgentAccess(w, r, agent, "member", uuidToString(member.UserID), workspaceID, "cannot add personal agent") {
@@ -286,10 +283,7 @@ func (h *Handler) AddSquadMember(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		if _, err := h.Queries.GetMemberByUserAndWorkspace(r.Context(), db.GetMemberByUserAndWorkspaceParams{
-			UserID: memberUUID, WorkspaceID: wsUUID,
-		}); err != nil {
-			writeError(w, http.StatusBadRequest, "member not found in this workspace")
+		if _, ok := loadSquadMember(w, r, h.Queries, wsUUID, memberUUID, "member not found in this workspace"); !ok {
 			return
 		}
 	}
