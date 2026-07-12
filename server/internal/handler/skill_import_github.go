@@ -45,7 +45,10 @@ func fetchFromSkillsSh(httpClient *http.Client, rawURL string) (*importedSkill, 
 	//   plugin/skills/{name}/SKILL.md   (e.g. microsoft repos)
 	//   {name}/SKILL.md                 (e.g. anthropics/skills layout)
 	//   SKILL.md                        (single-skill repo: the repo is the skill)
-	defaultBranch := fetchGitHubDefaultBranch(httpClient, owner, repo)
+	defaultBranch, err := fetchGitHubDefaultBranch(httpClient, owner, repo)
+	if err != nil {
+		return nil, err
+	}
 	rawPrefix := fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/%s",
 		url.PathEscape(owner), url.PathEscape(repo), url.PathEscape(defaultBranch))
 
@@ -629,7 +632,10 @@ func fetchFromGitHub(httpClient *http.Client, rawURL string) (*importedSkill, er
 		}
 	}
 	if spec.ref == "" {
-		spec.ref = fetchGitHubDefaultBranch(httpClient, spec.owner, spec.repo)
+		spec.ref, err = fetchGitHubDefaultBranch(httpClient, spec.owner, spec.repo)
+		if err != nil {
+			return nil, err
+		}
 	}
 	rawPrefix := fmt.Sprintf("https://raw.githubusercontent.com/%s/%s/%s",
 		url.PathEscape(spec.owner), url.PathEscape(spec.repo), escapeRefPath(spec.ref))

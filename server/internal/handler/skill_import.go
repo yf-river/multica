@@ -183,25 +183,31 @@ type githubTreeEntry struct {
 	Type string `json:"type"` // "blob" or "tree"
 }
 
-// fetchGitHubDefaultBranch returns the default branch of a GitHub repository.
-// Falls back to "main" if the API call fails.
-func fetchGitHubDefaultBranch(httpClient *http.Client, owner, repo string) string {
+// fetchGitHubDefaultBranch resolves the repository's current default branch.
+// Import must stop when this boundary is indeterminate: guessing "main" can
+// download from the wrong ref and turn an upstream failure into a false
+// "SKILL.md not found" result.
+func fetchGitHubDefaultBranch(httpClient *http.Client, owner, repo string) (string, error) {
 	apiURL := fmt.Sprintf("https://api.github.com/repos/%s/%s",
 		url.PathEscape(owner), url.PathEscape(repo))
 	resp, err := doGitHubAPIGet(httpClient, apiURL)
-	if err != nil || resp.StatusCode != http.StatusOK {
-		if resp != nil {
-			_ = resp.Body.Close()
-		}
-		return "main"
+	if err != nil {
+		return "", fmt.Errorf("resolve GitHub default branch for %s/%s: %w", owner, repo, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("resolve GitHub default branch for %s/%s: status %d", owner, repo, resp.StatusCode)
+	}
 
 	var info githubRepoInfo
-	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil || info.DefaultBranch == "" {
-		return "main"
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		return "", fmt.Errorf("resolve GitHub default branch for %s/%s: decode response: %w", owner, repo, err)
 	}
-	return info.DefaultBranch
+	info.DefaultBranch = strings.TrimSpace(info.DefaultBranch)
+	if info.DefaultBranch == "" {
+		return "", fmt.Errorf("resolve GitHub default branch for %s/%s: empty default_branch", owner, repo)
+	}
+	return info.DefaultBranch, nil
 }
 
 // --- URL detection ---

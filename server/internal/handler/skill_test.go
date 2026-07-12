@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,56 @@ import (
 	"testing"
 	"time"
 )
+
+type failingGitHubTransport struct{ err error }
+
+func (t failingGitHubTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, t.err
+}
+
+func TestFetchGitHubDefaultBranchFailsInsteadOfGuessingMain(t *testing.T) {
+	tests := []struct {
+		name       string
+		status     int
+		body       string
+		wantBranch string
+		wantError  string
+	}{
+		{name: "current branch", status: http.StatusOK, body: `{"default_branch":"trunk"}`, wantBranch: "trunk"},
+		{name: "rate limited", status: http.StatusForbidden, body: `{"message":"rate limit"}`, wantError: "status 403"},
+		{name: "malformed response", status: http.StatusOK, body: `{`, wantError: "decode response"},
+		{name: "missing branch", status: http.StatusOK, body: `{}`, wantError: "empty default_branch"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			client, _ := newGitHubFixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
+				if r.Header.Get("X-Test-Original-Host") != "api.github.com" || r.URL.Path != "/repos/acme/skills" {
+					t.Fatalf("unexpected request: host=%s path=%s", r.Header.Get("X-Test-Original-Host"), r.URL.Path)
+				}
+				w.WriteHeader(tc.status)
+				_, _ = w.Write([]byte(tc.body))
+			})
+			branch, err := fetchGitHubDefaultBranch(client, "acme", "skills")
+			if tc.wantError == "" {
+				if err != nil || branch != tc.wantBranch {
+					t.Fatalf("branch=%q err=%v", branch, err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantError) || branch != "" {
+				t.Fatalf("branch=%q err=%v, want error containing %q", branch, err, tc.wantError)
+			}
+		})
+	}
+}
+
+func TestFetchGitHubDefaultBranchPreservesTransportFailure(t *testing.T) {
+	client := &http.Client{Transport: failingGitHubTransport{err: errors.New("network unavailable")}}
+	branch, err := fetchGitHubDefaultBranch(client, "acme", "skills")
+	if err == nil || !strings.Contains(err.Error(), "network unavailable") || branch != "" {
+		t.Fatalf("branch=%q err=%v", branch, err)
+	}
+}
 
 func TestFetchFromSkillsSh_UsesEntryURLForNestedDirectories(t *testing.T) {
 	client, requests := newGitHubFixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
