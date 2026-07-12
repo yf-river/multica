@@ -5,6 +5,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -94,9 +95,7 @@ func (h *Handler) PinTaskSession(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// RerunIssueRequest is the optional body of POST /api/issues/{id}/rerun.
-// All fields are optional; an empty body keeps the legacy "rerun the issue's
-// current assignee" behaviour used by the CLI.
+// RerunIssueRequest selects exactly one explicit rerun target.
 type RerunIssueRequest struct {
 	// TaskID identifies the execution-log row the user clicked retry on.
 	// When set, the rerun targets the agent that ran that specific task
@@ -104,12 +103,14 @@ type RerunIssueRequest struct {
 	// assignee — so clicking retry on row that belonged to a now-displaced
 	// agent re-fires that same agent, not the new assignee.
 	TaskID string `json:"task_id,omitempty"`
+	// Target is current_assignee for a CLI-level issue rerun that does not
+	// originate from a specific execution-log row.
+	Target string `json:"target,omitempty"`
 }
 
-// RerunIssue manually re-enqueues an agent run for the issue. By default it
-// targets the issue's current assignee (agent or squad leader); if the
-// request body carries task_id, the rerun targets the agent that ran that
-// specific past task instead. The new task is flagged force_fresh_session=true:
+// RerunIssue manually re-enqueues an agent run for the issue. The request must
+// explicitly select the current assignee or the agent that ran a specific past
+// task. The new task is flagged force_fresh_session=true:
 // the daemon claim handler skips the (agent_id, issue_id) session-resume
 // lookup so the agent starts a clean session. A user clicking rerun has just
 // judged the prior output bad — replaying the same conversation would replay
@@ -123,14 +124,24 @@ func (h *Handler) RerunIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Body is optional. A zero-length body or `{}` keeps the legacy
-	// assignee-driven rerun behaviour the CLI relies on.
 	var req RerunIssueRequest
-	if r.ContentLength != 0 {
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
-			writeError(w, http.StatusBadRequest, "invalid request body")
-			return
-		}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	req.TaskID = strings.TrimSpace(req.TaskID)
+	req.Target = strings.TrimSpace(req.Target)
+	if req.TaskID == "" && req.Target == "" {
+		writeError(w, http.StatusBadRequest, "rerun target is required")
+		return
+	}
+	if req.TaskID != "" && req.Target != "" {
+		writeError(w, http.StatusBadRequest, "task_id and target are mutually exclusive")
+		return
+	}
+	if req.Target != "" && req.Target != "current_assignee" {
+		writeError(w, http.StatusBadRequest, "target must be current_assignee")
+		return
 	}
 
 	var sourceTaskID pgtype.UUID

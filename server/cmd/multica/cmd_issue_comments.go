@@ -397,7 +397,7 @@ func runIssueRerun(cmd *cobra.Command, args []string) error {
 	}
 
 	var task map[string]any
-	if err := client.PostJSON(ctx, "/api/issues/"+issueRef.ID+"/rerun", map[string]any{}, &task); err != nil {
+	if err := client.PostJSON(ctx, "/api/issues/"+issueRef.ID+"/rerun", map[string]any{"target": "current_assignee"}, &task); err != nil {
 		return fmt.Errorf("rerun issue: %w", err)
 	}
 
