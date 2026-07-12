@@ -2079,14 +2079,22 @@ export class ApiClient extends ApiTransport {
     }) as AgentPlaygroundDetail;
   }
 
-  async createAgentPlaygroundExperiment(data: CreateAgentPlaygroundExperimentRequest): Promise<AgentPlaygroundDetail> {
-    const raw = await this.fetch<unknown>("/api/agent-playground-experiments", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseOrThrow(raw, AgentPlaygroundDetailSchema, EMPTY_AGENT_PLAYGROUND_DETAIL, {
-      endpoint: "POST /api/agent-playground-experiments",
-    }) as AgentPlaygroundDetail;
+  async createAgentPlaygroundExperiment(
+    data: CreateAgentPlaygroundExperimentRequest,
+    idempotencyKey = generateUUID(),
+  ): Promise<AgentPlaygroundDetail> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>("/api/agent-playground-experiments", {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow(raw, AgentPlaygroundDetailSchema, EMPTY_AGENT_PLAYGROUND_DETAIL, {
+        endpoint: "POST /api/agent-playground-experiments",
+        mayHaveCommitted: true,
+      }) as AgentPlaygroundDetail;
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async runAgentPlaygroundExperiment(id: string): Promise<AgentPlaygroundDetail> {

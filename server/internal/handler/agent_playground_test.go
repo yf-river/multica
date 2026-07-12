@@ -7,9 +7,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -18,6 +20,136 @@ func TestAgentPlaygroundInputToResponseRejectsCorruptVariables(t *testing.T) {
 		if _, err := agentPlaygroundInputToResponse(db.AgentPlaygroundInput{Variables: raw}); err == nil {
 			t.Fatalf("variables=%s expected an error", raw)
 		}
+	}
+}
+
+func TestCreateAgentPlaygroundExperimentRecoversExactCompoundResult(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	suffix := time.Now().UnixNano()
+	name := fmt.Sprintf("agent playground replay %d", suffix)
+	key := uuid.NewString()
+	agentID := createHandlerTestAgent(t, fmt.Sprintf("agent-playground-replay-%d", suffix), nil)
+	assetID, versionID := createAgentPlaygroundDatasetSnapshot(t, suffix)
+	body := map[string]any{
+		"name": name, "dataset_asset_id": assetID, "dataset_version_id": versionID,
+		"agent_ids": []string{agentID},
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM resource_create_request WHERE resource_type='agent_playground_experiment' AND idempotency_key=$1`, key)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_playground_experiment WHERE name=$1`, name)
+	})
+	create := func(payload map[string]any) *httptest.ResponseRecorder {
+		req := newRequest(http.MethodPost, "/api/agent-playground-experiments", payload)
+		req.Header.Set("Idempotency-Key", key)
+		w := httptest.NewRecorder()
+		testHandler.CreateAgentPlaygroundExperiment(w, req)
+		return w
+	}
+	first := create(body)
+	replay := create(body)
+	if first.Code != http.StatusCreated {
+		t.Fatalf("first create = %d %s", first.Code, first.Body.String())
+	}
+	if replay.Code != http.StatusCreated || replay.Body.String() != first.Body.String() {
+		t.Fatalf("playground replay = %d %s, want exact %s", replay.Code, replay.Body.String(), first.Body.String())
+	}
+	responses := make(chan *httptest.ResponseRecorder, 8)
+	var wait sync.WaitGroup
+	for range 8 {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			responses <- create(body)
+		}()
+	}
+	wait.Wait()
+	close(responses)
+	for response := range responses {
+		if response.Code != http.StatusCreated || response.Body.String() != first.Body.String() {
+			t.Fatalf("concurrent playground replay = %d %s, want exact", response.Code, response.Body.String())
+		}
+	}
+	if _, err := testPool.Exec(context.Background(), `UPDATE agent SET archived_at=now() WHERE id=$1`, agentID); err != nil {
+		t.Fatal(err)
+	}
+	afterSourceChange := create(body)
+	if afterSourceChange.Code != http.StatusCreated || afterSourceChange.Body.String() != first.Body.String() {
+		t.Fatalf("playground replay after source archive = %d %s, want exact", afterSourceChange.Code, afterSourceChange.Body.String())
+	}
+	changed := create(map[string]any{
+		"name": name + " changed", "dataset_asset_id": assetID,
+		"dataset_version_id": versionID, "agent_ids": []string{agentID},
+	})
+	if changed.Code != http.StatusConflict {
+		t.Fatalf("changed replay = %d %s, want 409", changed.Code, changed.Body.String())
+	}
+	var experiments, agents, inputs int
+	if err := testPool.QueryRow(context.Background(), `SELECT
+		(SELECT count(*) FROM agent_playground_experiment WHERE name=$1),
+		(SELECT count(*) FROM agent_playground_agent a JOIN agent_playground_experiment e ON e.id=a.experiment_id WHERE e.name=$1),
+		(SELECT count(*) FROM agent_playground_input i JOIN agent_playground_experiment e ON e.id=i.experiment_id WHERE e.name=$1)
+	`, name).Scan(&experiments, &agents, &inputs); err != nil {
+		t.Fatal(err)
+	}
+	if experiments != 1 || agents != 1 || inputs != 1 {
+		t.Fatalf("compound writes = experiments:%d agents:%d inputs:%d, want 1/1/1", experiments, agents, inputs)
+	}
+}
+
+func TestCreateAgentPlaygroundExperimentCompletionFailureRollsBackCompoundRows(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	suffix := time.Now().UnixNano()
+	name := fmt.Sprintf("agent playground rollback %d", suffix)
+	key := uuid.NewString()
+	agentID := createHandlerTestAgent(t, fmt.Sprintf("agent-playground-rollback-%d", suffix), nil)
+	assetID, versionID := createAgentPlaygroundDatasetSnapshot(t, suffix)
+	functionName := fmt.Sprintf("playground_completion_fail_fn_%d", suffix)
+	triggerName := fmt.Sprintf("playground_completion_fail_%d", suffix)
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON resource_create_request; DROP FUNCTION IF EXISTS %s()`, triggerName, functionName))
+		_, _ = testPool.Exec(ctx, `DELETE FROM resource_create_request WHERE resource_type='agent_playground_experiment' AND idempotency_key=$1`, key)
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent_playground_experiment WHERE name=$1`, name)
+	})
+	if _, err := testPool.Exec(ctx, fmt.Sprintf(`
+		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF NEW.resource_type='agent_playground_experiment' AND NEW.idempotency_key='%s'::uuid AND NEW.response_body IS NOT NULL THEN
+				RAISE EXCEPTION 'forced playground completion failure';
+			END IF;
+			RETURN NEW;
+		END;
+		$$;
+		CREATE TRIGGER %s BEFORE UPDATE ON resource_create_request
+		FOR EACH ROW EXECUTE FUNCTION %s();
+	`, functionName, key, triggerName, functionName)); err != nil {
+		t.Fatal(err)
+	}
+	req := newRequest(http.MethodPost, "/api/agent-playground-experiments", map[string]any{
+		"name": name, "dataset_asset_id": assetID, "dataset_version_id": versionID,
+		"agent_ids": []string{agentID},
+	})
+	req.Header.Set("Idempotency-Key", key)
+	w := httptest.NewRecorder()
+	testHandler.CreateAgentPlaygroundExperiment(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("completion failure = %d %s, want 500", w.Code, w.Body.String())
+	}
+	var experiments, agents, inputs, requests int
+	if err := testPool.QueryRow(ctx, `SELECT
+		(SELECT count(*) FROM agent_playground_experiment WHERE name=$1),
+		(SELECT count(*) FROM agent_playground_agent a JOIN agent_playground_experiment e ON e.id=a.experiment_id WHERE e.name=$1),
+		(SELECT count(*) FROM agent_playground_input i JOIN agent_playground_experiment e ON e.id=i.experiment_id WHERE e.name=$1),
+		(SELECT count(*) FROM resource_create_request WHERE resource_type='agent_playground_experiment' AND idempotency_key=$2)
+	`, name, key).Scan(&experiments, &agents, &inputs, &requests); err != nil {
+		t.Fatal(err)
+	}
+	if experiments != 0 || agents != 0 || inputs != 0 || requests != 0 {
+		t.Fatalf("failed compound create left experiment:%d agents:%d inputs:%d requests:%d", experiments, agents, inputs, requests)
 	}
 }
 

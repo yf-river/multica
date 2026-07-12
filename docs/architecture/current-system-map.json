@@ -24,12 +24,12 @@
     "databaseFunctions": 9,
     "databaseTriggers": 4,
     "databaseIndexes": 188,
-    "migrations": 118,
+    "migrations": 120,
     "sqlcModules": 53,
-    "sqlcQueries": 574,
+    "sqlcQueries": 575,
     "goWebsocketEvents": 80,
     "typescriptWebsocketEvents": 70,
-    "zustandStores": 38,
+    "zustandStores": 39,
     "reactQueryConsumerFiles": 175,
     "environmentVariables": 217,
     "manualExternalSystems": 12
@@ -6963,6 +6963,32 @@
           "droppedFunctions": [],
           "droppedTriggers": [],
           "droppedIndexes": []
+        },
+        {
+          "version": 60,
+          "name": "add_agent_playground_create_request",
+          "direction": "down",
+          "source": "server/migrations/060_add_agent_playground_create_request.down.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 60,
+          "name": "add_agent_playground_create_request",
+          "direction": "up",
+          "source": "server/migrations/060_add_agent_playground_create_request.up.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
         }
       ],
       "tables": [
@@ -8840,6 +8866,11 @@
               "name": "CreateAgentPlaygroundExperiment",
               "command": "one",
               "source": "server/pkg/db/queries/agent_playground.sql#CreateAgentPlaygroundExperiment"
+            },
+            {
+              "name": "CreateAgentPlaygroundExperimentWithID",
+              "command": "one",
+              "source": "server/pkg/db/queries/agent_playground.sql#CreateAgentPlaygroundExperimentWithID"
             },
             {
               "name": "CreateAgentPlaygroundInput",
@@ -13369,6 +13400,14 @@
         "persisted": false
       },
       {
+        "source": "packages/core/agent-playground/create-operation.ts",
+        "scope": "packages/core",
+        "exports": [
+          "useAgentPlaygroundCreateStore"
+        ],
+        "persisted": true
+      },
+      {
         "source": "packages/core/agents/pending-operation-store.ts",
         "scope": "packages/core",
         "exports": [
@@ -15698,7 +15737,7 @@
       },
       {
         "scope": "packages/core",
-        "count": 36
+        "count": 37
       }
     ],
     "reactQueryByScope": [
@@ -18741,6 +18780,7 @@
           "server/internal/handler/activity.go",
           "server/internal/handler/agent_access.go",
           "server/internal/handler/agent_env.go",
+          "server/internal/handler/agent_playground_idempotency.go",
           "server/internal/handler/agent_playground.go",
           "server/internal/handler/agent_template.go",
           "server/internal/handler/agent.go",

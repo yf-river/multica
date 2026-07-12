@@ -25,12 +25,12 @@ evidence reviewable by humans.
 | Database functions | 9 |
 | Database triggers | 4 |
 | Database indexes | 188 |
-| Migration files (up + down) | 118 |
+| Migration files (up + down) | 120 |
 | sqlc modules | 53 |
-| sqlc queries | 574 |
+| sqlc queries | 575 |
 | Go WebSocket events | 80 |
 | TypeScript WebSocket events | 70 |
-| Zustand store definitions | 38 |
+| Zustand store definitions | 39 |
 | React Query consumer files | 175 |
 | Environment variable names | 217 |
 | Manually identified external systems | 12 |
@@ -611,6 +611,8 @@ intentionally platform-specific.
 | 58 | add_external_credential_create_request | up | — | 0 | 0 | 1 | `server/migrations/058_add_external_credential_create_request.up.sql` |
 | 59 | add_workspace_member_create_request | down | — | 0 | 0 | 0 | `server/migrations/059_add_workspace_member_create_request.down.sql` |
 | 59 | add_workspace_member_create_request | up | — | 0 | 0 | 0 | `server/migrations/059_add_workspace_member_create_request.up.sql` |
+| 60 | add_agent_playground_create_request | down | — | 0 | 0 | 0 | `server/migrations/060_add_agent_playground_create_request.down.sql` |
+| 60 | add_agent_playground_create_request | up | — | 0 | 0 | 0 | `server/migrations/060_add_agent_playground_create_request.up.sql` |
 
 ### Current tables discovered from up migrations
 
@@ -713,13 +715,13 @@ intentionally platform-specific.
 
 ### sqlc modules
 
-All 574 query names, commands, and stable source anchors are stored in the JSON companion.
+All 575 query names, commands, and stable source anchors are stored in the JSON companion.
 
 | Module | Queries | SQL source | Generated source |
 | --- | --- | --- | --- |
 | activity | 5 | `server/pkg/db/queries/activity.sql` | `server/pkg/db/generated/activity.sql.go` |
 | agent | 57 | `server/pkg/db/queries/agent.sql` | `server/pkg/db/generated/agent.sql.go` |
-| agent_playground | 17 | `server/pkg/db/queries/agent_playground.sql` | `server/pkg/db/generated/agent_playground.sql.go` |
+| agent_playground | 18 | `server/pkg/db/queries/agent_playground.sql` | `server/pkg/db/generated/agent_playground.sql.go` |
 | attachment | 17 | `server/pkg/db/queries/attachment.sql` | `server/pkg/db/generated/attachment.sql.go` |
 | autopilot | 40 | `server/pkg/db/queries/autopilot.sql` | `server/pkg/db/generated/autopilot.sql.go` |
 | chat | 24 | `server/pkg/db/queries/chat.sql` | `server/pkg/db/generated/chat.sql.go` |
@@ -795,6 +797,7 @@ still include daemon-only/backend projection events and possible frontend gaps.
 | --- | --- | --- | --- |
 | apps/desktop | `apps/desktop/src/renderer/src/stores/tab-store.ts` | `useTabStore` | yes |
 | apps/desktop | `apps/desktop/src/renderer/src/stores/workspace-creation-overlay-store.ts` | `useWorkspaceCreationOverlayStore` | no |
+| packages/core | `packages/core/agent-playground/create-operation.ts` | `useAgentPlaygroundCreateStore` | yes |
 | packages/core | `packages/core/agents/pending-operation-store.ts` | `useAgentPendingOperationStore` | yes |
 | packages/core | `packages/core/agents/stores/transcript-view-store.ts` | `useTranscriptViewStore` | yes |
 | packages/core | `packages/core/agents/stores/view-store.ts` | `useAgentsViewStore` | yes |
@@ -1085,7 +1088,7 @@ written to the generated outputs.
 | filesystem | 43 | `server/cmd/migrate/main.go`, `server/cmd/multica/cmd_agent.go`, `server/cmd/multica/cmd_attachment.go`, `server/cmd/multica/cmd_daemon_windows.go`, `server/cmd/multica/cmd_daemon.go`, `server/cmd/multica/cmd_issue_comments.go`, `server/cmd/multica/cmd_issue_pull_request.go`, `server/cmd/multica/cmd_issue.go` |
 | object-storage | 1 | `server/internal/storage/s3.go` |
 | outbound-http | 17 | `server/cmd/multica/cmd_daemon.go`, `server/cmd/multica/cmd_setup.go`, `server/internal/analytics/posthog.go`, `server/internal/auth/cloud_pat.go`, `server/internal/cli/client.go`, `server/internal/cli/update.go`, `server/internal/daemon/client.go`, `server/internal/daemon/task_artifacts.go` |
-| postgresql | 138 | `server/cmd/migrate/main.go`, `server/cmd/server/activity_listeners.go`, `server/cmd/server/autopilot_failure_monitor.go`, `server/cmd/server/autopilot_scheduler.go`, `server/cmd/server/chat_projection.go`, `server/cmd/server/comment_projection.go`, `server/cmd/server/dbstats.go`, `server/cmd/server/health.go` |
+| postgresql | 139 | `server/cmd/migrate/main.go`, `server/cmd/server/activity_listeners.go`, `server/cmd/server/autopilot_failure_monitor.go`, `server/cmd/server/autopilot_scheduler.go`, `server/cmd/server/chat_projection.go`, `server/cmd/server/comment_projection.go`, `server/cmd/server/dbstats.go`, `server/cmd/server/health.go` |
 | redis | 14 | `server/cmd/server/main.go`, `server/cmd/server/router.go`, `server/internal/auth/cloud_pat.go`, `server/internal/auth/membership_cache.go`, `server/internal/auth/pat_cache.go`, `server/internal/handler/runtime_liveness_store.go`, `server/internal/handler/runtime_local_skills_redis_store.go`, `server/internal/handler/runtime_models_redis_store.go` |
 | subprocess | 29 | `server/cmd/multica/cmd_auth.go`, `server/cmd/multica/cmd_daemon_unix.go`, `server/cmd/multica/cmd_daemon.go`, `server/internal/cli/update.go`, `server/internal/daemon/config.go`, `server/internal/daemon/execenv/codex_home_link_windows.go`, `server/internal/daemon/execenv/openclaw_config.go`, `server/internal/daemon/gc.go` |
 | websocket | 4 | `server/internal/daemon/wakeup.go`, `server/internal/daemonws/hub.go`, `server/internal/integrations/lark/ws_connector.go`, `server/internal/realtime/hub.go` |

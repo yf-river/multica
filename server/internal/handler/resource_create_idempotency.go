@@ -25,6 +25,7 @@ const (
 	resourceTypePromptLibraryVersion = "prompt_library_version"
 	resourceTypePromptLibraryTrial   = "prompt_library_trial"
 	resourceTypeWorkspaceMember     = "workspace_member"
+	resourceTypeAgentPlayground     = "agent_playground_experiment"
 )
 
 var errResourceCreateIdempotencyConflict = errors.New("resource create idempotency conflict")

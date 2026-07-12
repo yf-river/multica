@@ -29,6 +29,13 @@ an initial password, browser storage keeps only the UUID, a fingerprint of the
 non-secret intent and whether a password was supplied; it never stores the
 password or a password-derived value.
 
+Agent Playground Experiment creation snapshots one Experiment, its selected
+Agent bindings and up to twenty Dataset inputs. Those rows, the exact Detail
+response and the request witness commit in one transaction, with the request
+UUID serving as the Experiment UUID. Core owns one workspace-scoped pending
+request, so a lost response replays the complete prior snapshot before a
+different experiment can start; it cannot silently create a second matrix.
+
 External credential profiles use an account-scoped variant because they are
 not workspace resources and their request may contain a secret. The request
 UUID is also the profile UUID, while the profile row stores only the UUID and a

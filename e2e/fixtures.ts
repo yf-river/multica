@@ -1581,6 +1581,49 @@ export class TestApiClient {
     return data.items ?? [];
   }
 
+  async listAgentPlaygroundExperiments(): Promise<Array<{
+    id: string;
+    name: string;
+    input_count: number;
+    agent_count: number;
+  }>> {
+    const res = await this.authedFetch("/api/agent-playground-experiments");
+    if (!res.ok) {
+      throw new Error(`list agent playground experiments failed: ${res.status} ${await res.text()}`);
+    }
+    const data = await res.json();
+    return data.items ?? [];
+  }
+
+  async cleanupAgentPlaygroundFixture(options: {
+    experimentId?: string;
+    requestKey?: string;
+    agentId?: string;
+    assetId?: string;
+  }): Promise<void> {
+    const client = new pg.Client(DATABASE_URL);
+    await client.connect();
+    try {
+      if (options.requestKey) {
+        await client.query(
+          `DELETE FROM resource_create_request WHERE resource_type='agent_playground_experiment' AND idempotency_key=$1`,
+          [options.requestKey],
+        );
+      }
+      if (options.experimentId) {
+        await client.query(`DELETE FROM agent_playground_experiment WHERE id=$1`, [options.experimentId]);
+      }
+      if (options.agentId) {
+        await client.query(`DELETE FROM agent WHERE id=$1`, [options.agentId]);
+      }
+      if (options.assetId) {
+        await client.query(`DELETE FROM prompt_evaluation_asset WHERE id=$1`, [options.assetId]);
+      }
+    } finally {
+      await client.end();
+    }
+  }
+
   async diffPromptEvaluationDatasetVersion(id: string, baseVersionId: string, targetVersionId: string): Promise<PromptEvaluationDatasetVersionDiff> {
     const search = new URLSearchParams({ target_version_id: targetVersionId });
     const res = await this.authedFetch(`/api/prompt-evaluation-assets/${id}/dataset-versions/${baseVersionId}/diff?${search}`);

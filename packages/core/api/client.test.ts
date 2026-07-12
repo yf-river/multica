@@ -649,6 +649,33 @@ describe("ApiClient", () => {
     expect(second["Idempotency-Key"]).toBe(first["Idempotency-Key"]);
   });
 
+  it("retries agent-playground create unknown outcomes with one request identity", async () => {
+    const detail = {
+      experiment: {
+        id: "experiment-1", workspace_id: "workspace-1", name: "Current", description: "",
+        dataset_asset_id: "asset-1", dataset_version_id: "version-1", judge_agent_id: null,
+        status: "ready", created_by: "user-1", created_at: "now", updated_at: "now",
+        input_count: 1, agent_count: 1,
+      },
+      inputs: [], agents: [], results: [], judgements: [],
+    };
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify(detail), {
+        status: 201, headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.createAgentPlaygroundExperiment({
+      name: "Current", dataset_asset_id: "asset-1", dataset_version_id: "version-1",
+      agent_ids: ["agent-1"],
+    })).resolves.toMatchObject({ experiment: { id: "experiment-1" } });
+    const first = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    const second = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
+    expect(first["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(second["Idempotency-Key"]).toBe(first["Idempotency-Key"]);
+  });
+
   it("validates Lark installation state without exposing installation secrets", async () => {
     const installation = {
       id: "installation-1",

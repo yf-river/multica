@@ -9,6 +9,7 @@ import { useWorkspaceId } from "@multica/core/paths";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { useWSEvent, useWSReconnect } from "@multica/core/realtime";
 import type { Agent, AgentPlaygroundDetail, CreateAgentPlaygroundExperimentRequest, PromptEvaluationAsset, PromptEvaluationDatasetVersion } from "@multica/core/types";
+import { createAgentPlaygroundExperimentWithRecovery } from "@multica/core/agent-playground";
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
 import { Badge } from "@multica/ui/components/ui/badge";
@@ -86,7 +87,7 @@ export function AgentPlaygroundPage() {
   const autoSyncActive = hasActiveAgentPlaygroundWork(detail);
 
   const createMutation = useMutation({
-    mutationFn: (data: CreateAgentPlaygroundExperimentRequest) => api.createAgentPlaygroundExperiment(data),
+    mutationFn: (data: CreateAgentPlaygroundExperimentRequest) => createAgentPlaygroundExperimentWithRecovery(data),
     onSuccess: (created) => {
       toast.success(t(($) => $.toast.created));
       setSelectedId(created.experiment.id);

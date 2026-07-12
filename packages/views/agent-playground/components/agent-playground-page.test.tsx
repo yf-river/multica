@@ -144,14 +144,19 @@ describe("AgentPlaygroundPage", () => {
     fireEvent.click(createButton);
 
     await waitFor(() => {
-      expect(mockApi.createExperiment).toHaveBeenCalledWith({
-        name: "Agent 对比实验",
-        description: "",
-        dataset_asset_id: dataset.id,
-        dataset_version_id: version.id,
-        judge_agent_id: undefined,
-        agent_ids: [agent.id],
-      });
+      expect(mockApi.createExperiment).toHaveBeenCalledWith(
+        {
+          name: "Agent 对比实验",
+          description: "",
+          dataset_asset_id: dataset.id,
+          dataset_version_id: version.id,
+          judge_agent_id: undefined,
+          agent_ids: [agent.id],
+        },
+        expect.stringMatching(
+          /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+        ),
+      );
     });
   });
 });
