@@ -128,11 +128,19 @@ export class WSClient {
       const eventHandlers = this.handlers.get(msg.type);
       if (eventHandlers) {
         for (const handler of eventHandlers) {
-          handler(msg.payload, msg.actor_id, msg.actor_type);
+          try {
+            handler(msg.payload, msg.actor_id, msg.actor_type);
+          } catch (error) {
+            this.logger.error("ws: event handler failed", msg.type, error);
+          }
         }
       }
       for (const handler of this.anyHandlers) {
-        handler(msg);
+        try {
+          handler(msg);
+        } catch (error) {
+          this.logger.error("ws: any-event handler failed", msg.type, error);
+        }
       }
     };
 
