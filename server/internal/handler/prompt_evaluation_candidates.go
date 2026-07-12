@@ -452,13 +452,18 @@ func (h *Handler) PublishPromptEvaluationOptimizationCandidate(w http.ResponseWr
 		writeError(w, http.StatusInternalServerError, "failed to mark optimization candidate as published")
 		return
 	}
+	promptResponse, err := promptLibraryItemToResponse(publishedPrompt)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to prepare published prompt response")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit optimization candidate publish")
 		return
 	}
 	writeJSON(w, http.StatusOK, PublishPromptEvaluationOptimizationCandidateResponse{
 		Candidate: promptEvaluationOptimizationCandidateToResponse(updatedCandidate),
-		Prompt:    promptLibraryItemToResponse(publishedPrompt),
+		Prompt:    promptResponse,
 	})
 }
 

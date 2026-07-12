@@ -1,0 +1,10 @@
+ALTER TABLE prompt_library_trial
+DROP CONSTRAINT IF EXISTS prompt_library_trial_variables_object;
+
+ALTER TABLE prompt_library_version
+DROP CONSTRAINT IF EXISTS prompt_library_version_variables_array,
+DROP CONSTRAINT IF EXISTS prompt_library_version_tags_array;
+
+ALTER TABLE prompt_library_item
+DROP CONSTRAINT IF EXISTS prompt_library_item_variables_array,
+DROP CONSTRAINT IF EXISTS prompt_library_item_tags_array;
