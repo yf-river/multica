@@ -120,6 +120,7 @@ describe("installRendererRecoveryHandlers", () => {
     vi.useFakeTimers();
     const fixture = makeWindow();
     const showReloadPrompt = vi.fn(async () => "dismiss" as const);
+    const log = vi.fn();
 
     installRendererRecoveryHandlers(fixture.window, {
       isDev: false,
@@ -127,6 +128,7 @@ describe("installRendererRecoveryHandlers", () => {
       getDiagnosticContext: () => {
         throw new Error("diagnostics unavailable");
       },
+      log,
       unresponsivePromptDelayMs: 100,
     });
 
@@ -134,6 +136,10 @@ describe("installRendererRecoveryHandlers", () => {
     await vi.advanceTimersByTimeAsync(100);
 
     expect(showReloadPrompt).toHaveBeenCalledWith({ kind: "unresponsive", context: {} });
+    expect(log).toHaveBeenCalledWith(
+      "diagnostic-context-error",
+      expect.stringContaining("diagnostics unavailable"),
+    );
   });
 
   it("keeps dev diagnostics non-prompting", async () => {
