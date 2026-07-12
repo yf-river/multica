@@ -277,8 +277,7 @@ func (h *Handler) AddSquadMember(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "agent not found in this workspace")
 			return
 		}
-		if !h.canAccessPersonalAgent(r.Context(), agent, "member", uuidToString(member.UserID), workspaceID) {
-			writeError(w, http.StatusForbidden, "cannot add personal agent")
+		if !h.requirePersonalAgentAccess(w, r, agent, "member", uuidToString(member.UserID), workspaceID, "cannot add personal agent") {
 			return
 		}
 		if err := validateSquadLeaderScope(squad.Scope, squad.CreatorID, agent); err != nil {

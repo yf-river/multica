@@ -404,8 +404,7 @@ func (h *Handler) canCancelPromptEvaluationTask(w http.ResponseWriter, r *http.R
 		return false
 	}
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
-	if !h.canAccessPersonalAgent(r.Context(), agent, actorType, actorID, workspaceID) {
-		writeError(w, http.StatusForbidden, "you do not have access to this agent")
+	if !h.requirePersonalAgentAccess(w, r, agent, actorType, actorID, workspaceID, "you do not have access to this agent") {
 		return false
 	}
 	return true

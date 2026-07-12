@@ -305,8 +305,7 @@ func (h *Handler) validateAutopilotAssignee(w http.ResponseWriter, r *http.Reque
 		}
 		// Private-leader gate: the member configuring the autopilot must have
 		// access to the personal leader, same as validateAssigneePair.
-		if !h.canAccessPersonalAgent(r.Context(), leader, actorType, actorID, util.UUIDToString(workspaceID)) {
-			writeError(w, http.StatusForbidden, "cannot assign autopilot to squad with personal leader")
+		if !h.requirePersonalAgentAccess(w, r, leader, actorType, actorID, util.UUIDToString(workspaceID), "cannot assign autopilot to squad with personal leader") {
 			return false
 		}
 		return true

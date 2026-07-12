@@ -118,8 +118,7 @@ func (h *Handler) CreateChatSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "agent is archived")
 		return
 	}
-	if !h.canAccessPersonalAgent(r.Context(), lockedAgent, actorType, actorID, workspaceID) {
-		writeError(w, http.StatusForbidden, "you do not have access to this agent")
+	if !h.requirePersonalAgentAccess(w, r, lockedAgent, actorType, actorID, workspaceID, "you do not have access to this agent") {
 		return
 	}
 	session, err := qtx.CreateChatSession(r.Context(), db.CreateChatSessionParams{
@@ -247,8 +246,7 @@ func (h *Handler) gateChatSessionForUser(w http.ResponseWriter, r *http.Request,
 		return db.ChatSession{}, false
 	}
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
-	if !h.canAccessPersonalAgent(r.Context(), agent, actorType, actorID, workspaceID) {
-		writeError(w, http.StatusForbidden, "you do not have access to this agent")
+	if !h.requirePersonalAgentAccess(w, r, agent, actorType, actorID, workspaceID, "you do not have access to this agent") {
 		return db.ChatSession{}, false
 	}
 	return session, true
@@ -559,8 +557,7 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "agent has no runtime")
 		return
 	}
-	if !h.canAccessPersonalAgent(r.Context(), lockedAgent, actorType, actorID, workspaceID) {
-		writeError(w, http.StatusForbidden, "you do not have access to this agent")
+	if !h.requirePersonalAgentAccess(w, r, lockedAgent, actorType, actorID, workspaceID, "you do not have access to this agent") {
 		return
 	}
 	lockedSession, err := qtx.LockChatSessionForSend(r.Context(), db.LockChatSessionForSendParams{
@@ -1038,8 +1035,7 @@ func (h *Handler) CancelTaskByUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		actorType, actorID := h.resolveActor(r, userID, workspaceID)
-		if !h.canAccessPersonalAgent(r.Context(), agent, actorType, actorID, workspaceID) {
-			writeError(w, http.StatusForbidden, "you do not have access to this agent")
+		if !h.requirePersonalAgentAccess(w, r, agent, actorType, actorID, workspaceID, "you do not have access to this agent") {
 			return
 		}
 	}

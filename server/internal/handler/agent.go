@@ -655,8 +655,7 @@ func (h *Handler) GetAgent(w http.ResponseWriter, r *http.Request) {
 	// agent-detail-page.tsx.
 	workspaceID := uuidToString(agent.WorkspaceID)
 	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
-	if !h.canAccessPersonalAgent(r.Context(), agent, actorType, actorID, workspaceID) {
-		writeError(w, http.StatusForbidden, "you do not have access to this agent")
+	if !h.requirePersonalAgentAccess(w, r, agent, actorType, actorID, workspaceID, "you do not have access to this agent") {
 		return
 	}
 	resp := agentToResponse(agent)

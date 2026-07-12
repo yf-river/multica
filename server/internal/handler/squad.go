@@ -781,8 +781,7 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "leader must be a valid agent in this workspace")
 		return
 	}
-	if !h.canAccessPersonalAgent(r.Context(), leader, "member", uuidToString(member.UserID), workspaceID) {
-		writeError(w, http.StatusForbidden, "cannot use personal leader agent")
+	if !h.requirePersonalAgentAccess(w, r, leader, "member", uuidToString(member.UserID), workspaceID, "cannot use personal leader agent") {
 		return
 	}
 	if err := validateSquadLeaderScope(scope, member.UserID, leader); err != nil {
@@ -816,8 +815,7 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusBadRequest, fmt.Sprintf("members[%d] agent not found in this workspace", i))
 				return
 			}
-			if !h.canAccessPersonalAgent(r.Context(), agentMember, "member", uuidToString(member.UserID), workspaceID) {
-				writeError(w, http.StatusForbidden, fmt.Sprintf("cannot add members[%d] personal agent", i))
+			if !h.requirePersonalAgentAccess(w, r, agentMember, "member", uuidToString(member.UserID), workspaceID, fmt.Sprintf("cannot add members[%d] personal agent", i)) {
 				return
 			}
 			if err := validateSquadLeaderScope(scope, member.UserID, agentMember); err != nil {
@@ -1116,8 +1114,7 @@ func (h *Handler) UpdateSquad(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "leader must be a valid agent in this workspace")
 			return
 		}
-		if !h.canAccessPersonalAgent(r.Context(), leader, "member", uuidToString(member.UserID), workspaceID) {
-			writeError(w, http.StatusForbidden, "cannot use personal leader agent")
+		if !h.requirePersonalAgentAccess(w, r, leader, "member", uuidToString(member.UserID), workspaceID, "cannot use personal leader agent") {
 			return
 		}
 		nextLeader = leader

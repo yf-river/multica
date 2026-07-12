@@ -197,8 +197,7 @@ func (h *Handler) CreateAgentPlaygroundExperiment(w http.ResponseWriter, r *http
 			writeError(w, http.StatusBadRequest, "agent is archived")
 			return
 		}
-		if !h.canAccessPersonalAgent(r.Context(), agent, actorType, actorID, workspaceID) {
-			writeError(w, http.StatusForbidden, "you do not have access to this agent")
+		if !h.requirePersonalAgentAccess(w, r, agent, actorType, actorID, workspaceID, "you do not have access to this agent") {
 			return
 		}
 		seenAgents[canonicalAgentID] = true
@@ -266,8 +265,7 @@ func (h *Handler) CreateAgentPlaygroundExperiment(w http.ResponseWriter, r *http
 			writeEntityLoadError(w, r, err, "judge agent", "agent_id", req.JudgeAgentID)
 			return
 		}
-		if !h.canAccessPersonalAgent(r.Context(), judgeAgent, actorType, actorID, workspaceID) {
-			writeError(w, http.StatusForbidden, "you do not have access to the judge agent")
+		if !h.requirePersonalAgentAccess(w, r, judgeAgent, actorType, actorID, workspaceID, "you do not have access to the judge agent") {
 			return
 		}
 		judgeAgentID = parsedJudgeID
@@ -388,8 +386,7 @@ func (h *Handler) RunAgentPlaygroundExperiment(w http.ResponseWriter, r *http.Re
 				}
 				lockedAgents[agentID] = agent
 			}
-			if !h.canAccessPersonalAgent(r.Context(), agent, actorType, actorID, detail.Experiment.WorkspaceID) {
-				writeError(w, http.StatusForbidden, "you do not have access to an experiment agent")
+			if !h.requirePersonalAgentAccess(w, r, agent, actorType, actorID, detail.Experiment.WorkspaceID, "you do not have access to an experiment agent") {
 				return
 			}
 			if reason, unavailable := agentPlaygroundUnavailableReason(agent); unavailable {
@@ -568,8 +565,7 @@ func (h *Handler) JudgeAgentPlaygroundExperiment(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusInternalServerError, "failed to load judge agent")
 		return
 	}
-	if !h.canAccessPersonalAgent(r.Context(), judgeAgent, actorType, actorID, uuidToString(experiment.WorkspaceID)) {
-		writeError(w, http.StatusForbidden, "you do not have access to the judge agent")
+	if !h.requirePersonalAgentAccess(w, r, judgeAgent, actorType, actorID, uuidToString(experiment.WorkspaceID), "you do not have access to the judge agent") {
 		return
 	}
 	queuedTasks := make([]db.AgentTaskQueue, 0, len(synced.Inputs))

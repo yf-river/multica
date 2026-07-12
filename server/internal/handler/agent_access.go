@@ -2,8 +2,12 @@ package handler
 
 import (
 	"context"
+	"errors"
+	"log/slog"
+	"net/http"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -54,6 +58,26 @@ func (h *Handler) personalAgentAccess(ctx context.Context, agent db.Agent, actor
 		return false, err
 	}
 	return roleAllowed(member.Role, "owner", "admin"), nil
+}
+
+func (h *Handler) requirePersonalAgentAccess(w http.ResponseWriter, r *http.Request, agent db.Agent, actorType, actorID, workspaceID, deniedMessage string) bool {
+	allowed, err := h.personalAgentAccess(r.Context(), agent, actorType, actorID, workspaceID)
+	if err == nil {
+		if !allowed {
+			writeError(w, http.StatusForbidden, deniedMessage)
+		}
+		return allowed
+	}
+	if writeClientClosedIfCanceled(w, err) {
+		return false
+	}
+	if errors.Is(err, pgx.ErrNoRows) || errors.Is(err, errInvalidWorkspaceMemberIdentity) {
+		writeError(w, http.StatusForbidden, deniedMessage)
+		return false
+	}
+	slog.Error("personal agent access lookup failed", "agent_id", uuidToString(agent.ID), "workspace_id", workspaceID, "actor_type", actorType, "actor_id", actorID, "error", err)
+	writeError(w, http.StatusInternalServerError, "failed to verify agent access")
+	return false
 }
 
 // memberAllowedForPersonalAgent is the pure predicate used by both
