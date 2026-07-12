@@ -19,6 +19,13 @@ type SubscriberResponse struct {
 	CreatedAt string `json:"created_at"`
 }
 
+type subscriberTarget struct {
+	callerType string
+	callerID   string
+	userType   string
+	userID     string
+}
+
 func subscriberToResponse(s db.IssueSubscriber) SubscriberResponse {
 	return SubscriberResponse{
 		IssueID:   uuidToString(s.IssueID),
@@ -27,6 +34,37 @@ func subscriberToResponse(s db.IssueSubscriber) SubscriberResponse {
 		Reason:    s.Reason,
 		CreatedAt: timestampToString(s.CreatedAt),
 	}
+}
+
+func (h *Handler) resolveSubscriberTarget(w http.ResponseWriter, r *http.Request, workspaceID string) (subscriberTarget, bool) {
+	callerType, callerID := h.resolveActor(r, requestUserID(r), workspaceID)
+	target := subscriberTarget{
+		callerType: callerType,
+		callerID:   callerID,
+		userType:   callerType,
+		userID:     callerID,
+	}
+	var req struct {
+		UserID   *string `json:"user_id"`
+		UserType *string `json:"user_type"`
+	}
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
+			writeError(w, http.StatusBadRequest, "invalid request body")
+			return subscriberTarget{}, false
+		}
+	}
+	if req.UserID != nil && *req.UserID != "" {
+		target.userID = *req.UserID
+	}
+	if req.UserType != nil && *req.UserType != "" {
+		target.userType = *req.UserType
+	}
+	if !h.isWorkspaceEntity(r.Context(), target.userType, target.userID, workspaceID) {
+		writeError(w, http.StatusForbidden, "target user is not a member of this workspace")
+		return subscriberTarget{}, false
+	}
+	return target, true
 }
 
 // ListIssueSubscribers returns all subscribers for an issue.
@@ -61,37 +99,15 @@ func (h *Handler) SubscribeToIssue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	workspaceID := uuidToString(issue.WorkspaceID)
-	// Default target: the caller, derived via resolveActor so an agent caller
-	// (X-Agent-ID set) subscribes itself rather than the underlying member.
-	callerActorType, callerActorID := h.resolveActor(r, requestUserID(r), workspaceID)
-	targetUserType := callerActorType
-	targetUserID := callerActorID
-	var req struct {
-		UserID   *string `json:"user_id"`
-		UserType *string `json:"user_type"`
-	}
-	if r.Body != nil {
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
-			writeError(w, http.StatusBadRequest, "invalid request body")
-			return
-		}
-	}
-	if req.UserID != nil && *req.UserID != "" {
-		targetUserID = *req.UserID
-	}
-	if req.UserType != nil && *req.UserType != "" {
-		targetUserType = *req.UserType
-	}
-
-	if !h.isWorkspaceEntity(r.Context(), targetUserType, targetUserID, workspaceID) {
-		writeError(w, http.StatusForbidden, "target user is not a member of this workspace")
+	target, ok := h.resolveSubscriberTarget(w, r, workspaceID)
+	if !ok {
 		return
 	}
 
 	err := h.Queries.AddIssueSubscriber(r.Context(), db.AddIssueSubscriberParams{
 		IssueID:  issue.ID,
-		UserType: targetUserType,
-		UserID:   parseUUID(targetUserID),
+		UserType: target.userType,
+		UserID:   parseUUID(target.userID),
 		Reason:   "manual",
 	})
 	if err != nil {
@@ -99,10 +115,10 @@ func (h *Handler) SubscribeToIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.publish(protocol.EventSubscriberAdded, workspaceID, callerActorType, callerActorID, map[string]any{
+	h.publish(protocol.EventSubscriberAdded, workspaceID, target.callerType, target.callerID, map[string]any{
 		"issue_id":  issueID,
-		"user_type": targetUserType,
-		"user_id":   targetUserID,
+		"user_type": target.userType,
+		"user_id":   target.userID,
 		"reason":    "manual",
 	})
 
@@ -119,47 +135,25 @@ func (h *Handler) UnsubscribeFromIssue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	workspaceID := uuidToString(issue.WorkspaceID)
-	// Default target: the caller, derived via resolveActor so an agent caller
-	// (X-Agent-ID set) unsubscribes itself rather than the underlying member.
-	callerActorType, callerActorID := h.resolveActor(r, requestUserID(r), workspaceID)
-	targetUserType := callerActorType
-	targetUserID := callerActorID
-	var req struct {
-		UserID   *string `json:"user_id"`
-		UserType *string `json:"user_type"`
-	}
-	if r.Body != nil {
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err != io.EOF {
-			writeError(w, http.StatusBadRequest, "invalid request body")
-			return
-		}
-	}
-	if req.UserID != nil && *req.UserID != "" {
-		targetUserID = *req.UserID
-	}
-	if req.UserType != nil && *req.UserType != "" {
-		targetUserType = *req.UserType
-	}
-
-	if !h.isWorkspaceEntity(r.Context(), targetUserType, targetUserID, workspaceID) {
-		writeError(w, http.StatusForbidden, "target user is not a member of this workspace")
+	target, ok := h.resolveSubscriberTarget(w, r, workspaceID)
+	if !ok {
 		return
 	}
 
 	err := h.Queries.RemoveIssueSubscriber(r.Context(), db.RemoveIssueSubscriberParams{
 		IssueID:  issue.ID,
-		UserType: targetUserType,
-		UserID:   parseUUID(targetUserID),
+		UserType: target.userType,
+		UserID:   parseUUID(target.userID),
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to unsubscribe")
 		return
 	}
 
-	h.publish(protocol.EventSubscriberRemoved, workspaceID, callerActorType, callerActorID, map[string]any{
+	h.publish(protocol.EventSubscriberRemoved, workspaceID, target.callerType, target.callerID, map[string]any{
 		"issue_id":  issueID,
-		"user_type": targetUserType,
-		"user_id":   targetUserID,
+		"user_type": target.userType,
+		"user_id":   target.userID,
 	})
 
 	writeJSON(w, http.StatusOK, map[string]bool{"subscribed": false})
