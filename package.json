@@ -10,7 +10,7 @@
     "dev:desktop:staging": "turbo dev:staging --filter=@multica/desktop",
     "build": "turbo build",
     "typecheck": "turbo typecheck && pnpm typecheck:e2e",
-    "typecheck:e2e": "tsc -p e2e/tsconfig.json",
+    "typecheck:e2e": "tsc -p e2e/tsconfig.json && node --test scripts/e2e-fixture-surface.test.mjs",
     "test": "turbo test",
     "lint": "turbo lint",
     "code-health:audit": "mkdir -p artifacts/code-health/one-time-cleanup && pnpm code-health:knip && pnpm code-health:jscpd && pnpm code-health:go",
