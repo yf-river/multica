@@ -1113,21 +1113,10 @@ func promptEvaluationPayloadCasesFromCaseRows(rows []db.PromptEvaluationCase) []
 			continue
 		}
 		cases = append(cases, map[string]any{
-			"name":              row.CaseName,
 			"case_name":         row.CaseName,
-			"名称":                row.CaseName,
 			"variables":         decodeJSONDefault(row.Variables, map[string]any{}),
-			"变量":                decodeJSONDefault(row.Variables, map[string]any{}),
 			"expected_contains": decodeJSONDefault(row.ExpectedContains, []any{}),
-			"期望包含":              decodeJSONDefault(row.ExpectedContains, []any{}),
-			"input":             decodeJSONDefault(row.Input, map[string]any{}),
-			"输入":                decodeJSONDefault(row.Input, map[string]any{}),
-			"expected":          decodeJSONDefault(row.Expected, map[string]any{}),
-			"期望":                decodeJSONDefault(row.Expected, map[string]any{}),
 			"tags":              decodeJSONDefault(row.Tags, []any{}),
-			"标签":                decodeJSONDefault(row.Tags, []any{}),
-			"status":            row.Status,
-			"状态":                row.Status,
 		})
 	}
 	return cases

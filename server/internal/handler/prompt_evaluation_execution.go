@@ -172,7 +172,7 @@ func (h *Handler) persistPromptEvaluationQueuedAgentRun(w http.ResponseWriter, r
 		return db.PromptEvaluationRun{}, false
 	}
 	for idx, c := range cases {
-		name := stringFromAny(firstValue(c, "name", "名称"))
+		name := stringFromAny(c["case_name"])
 		if name == "" {
 			name = "用例 " + strconv.Itoa(idx+1)
 		}
@@ -183,8 +183,8 @@ func (h *Handler) persistPromptEvaluationQueuedAgentRun(w http.ResponseWriter, r
 			CaseIndex:     int32(idx),
 			CaseName:      name,
 			Status:        "待执行",
-			Input:         mustJSONBytes(map[string]any{"变量": firstValue(c, "variables", "变量", "输入变量")}),
-			Expected:      mustJSONBytes(map[string]any{"期望包含": firstValue(c, "expected_contains", "期望包含", "期望")}),
+			Input:         mustJSONBytes(map[string]any{"变量": c["variables"]}),
+			Expected:      mustJSONBytes(map[string]any{"期望包含": c["expected_contains"]}),
 			Output:        mustJSONBytes(map[string]any{}),
 			FailureReason: "等待智能体执行完成",
 			Evidence:      mustJSONBytes(map[string]any{"run_id": uuidToString(run.ID), "task_id": uuidToString(taskID)}),
@@ -271,11 +271,10 @@ func (h *Handler) promptEvaluationCasesForAsset(w http.ResponseWriter, r *http.R
 	cases := make([]map[string]any, 0, len(executableRows))
 	for _, row := range executableRows {
 		cases = append(cases, map[string]any{
-			"名称":   row.CaseName,
-			"变量":   decodeJSONDefault(row.Variables, map[string]any{}),
-			"期望包含": promptEvaluationExpectedContainsFromAssertions(row.ExpectedContains, assertionsByCase[uuidToString(row.ID)]),
-			"输入":   decodeJSONDefault(row.Input, map[string]any{}),
-			"期望":   decodeJSONDefault(row.Expected, map[string]any{}),
+			"case_name":         row.CaseName,
+			"variables":         decodeJSONDefault(row.Variables, map[string]any{}),
+			"expected_contains": promptEvaluationExpectedContainsFromAssertions(row.ExpectedContains, assertionsByCase[uuidToString(row.ID)]),
+			"tags":              decodeJSONDefault(row.Tags, []any{}),
 		})
 	}
 	return cases, true

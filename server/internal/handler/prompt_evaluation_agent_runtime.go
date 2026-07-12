@@ -468,12 +468,12 @@ func buildPromptEvaluationRunResult(asset db.PromptEvaluationAsset, prompt db.Pr
 	inputTokens := 0
 	outputTokens := 0
 	for idx, c := range cases {
-		name := stringFromAny(firstValue(c, "name", "名称"))
+		name := stringFromAny(c["case_name"])
 		if name == "" {
 			name = "用例 " + strconv.Itoa(idx+1)
 		}
-		variables := stringMapFromAny(firstValue(c, "variables", "变量", "输入变量"))
-		expected := stringListFromAny(firstValue(c, "expected_contains", "期望包含", "期望"))
+		variables := stringMapFromAny(c["variables"])
+		expected := stringListFromAny(c["expected_contains"])
 		rendered, used, missing := renderPromptContent(prompt.Content, prompt.Variables, variables)
 		inputTokens += estimatePromptEvaluationTokens(prompt.Content)
 		outputTokens += estimatePromptEvaluationTokens(rendered)
@@ -1054,17 +1054,10 @@ func promptEvaluationPayloadCasesFromDatasetVersionRows(rows []db.PromptEvaluati
 	cases := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
 		cases = append(cases, map[string]any{
-			"name":              row.RowName,
 			"case_name":         row.RowName,
-			"名称":                row.RowName,
 			"variables":         decodeJSONDefault(row.Variables, map[string]any{}),
-			"变量":                decodeJSONDefault(row.Variables, map[string]any{}),
 			"expected_contains": decodeJSONDefault(row.ExpectedContains, []any{}),
-			"期望包含":              decodeJSONDefault(row.ExpectedContains, []any{}),
-			"expected":          decodeJSONDefault(row.Expected, map[string]any{}),
-			"期望":                decodeJSONDefault(row.Expected, map[string]any{}),
 			"tags":              decodeJSONDefault(row.Tags, []any{}),
-			"标签":                decodeJSONDefault(row.Tags, []any{}),
 		})
 	}
 	return cases
