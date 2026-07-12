@@ -19,9 +19,16 @@ type failNamedQueryDB struct {
 
 func (f failNamedQueryDB) Query(ctx context.Context, sql string, args ...interface{}) (pgx.Rows, error) {
 	if strings.Contains(sql, "-- name: "+f.queryName+" ") {
-		return nil, errors.New("injected comment enrichment failure")
+		return nil, errors.New("injected named query failure")
 	}
 	return f.DBTX.Query(ctx, sql, args...)
+}
+
+func (f failNamedQueryDB) QueryRow(ctx context.Context, sql string, args ...interface{}) pgx.Row {
+	if strings.Contains(sql, "-- name: "+f.queryName+" ") {
+		return errorRow{err: errors.New("injected named query failure")}
+	}
+	return f.DBTX.QueryRow(ctx, sql, args...)
 }
 
 func TestListCommentsPreservesEnrichmentFailures(t *testing.T) {
