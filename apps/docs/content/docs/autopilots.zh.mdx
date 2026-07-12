@@ -270,13 +270,6 @@ curl -X POST "$MULTICA_WEBHOOK_URL" \
 
 不自动重试的理由：Autopilot 本身是周期性的，系统层再加自动重试容易和下一次调度叠加，产生重复执行。调度权完全交给 cron 最干净。
 
-## 暂不可用的能力
-
-**API 类型触发器尚未接入。** 触发器 schema 里保留了 `api` 类型但没有
-入站路由会触发它；UI 会给已有的此类记录打 Deprecated 标签，也不显示
-copy / rotate 操作。Per-trigger HMAC 签名校验、IP allowlist、按提供方
-的事件预设是后续工作；v1 URL 仅 bearer。
-
 ## 下一步
 
 - [**分配 issue 给智能体**](/assigning-issues) —— 一次性把 issue 指派给智能体
