@@ -366,7 +366,7 @@ func (h *Handler) canCancelPromptEvaluationTask(w http.ResponseWriter, r *http.R
 		WorkspaceID: workspaceUUID,
 	})
 	if err != nil {
-		writeError(w, http.StatusNotFound, "task not found")
+		writeEntityLoadError(w, r, err, "task", "task_id", uuidToString(taskID))
 		return false
 	}
 	if task.ChatSessionID.Valid {
@@ -375,7 +375,12 @@ func (h *Handler) canCancelPromptEvaluationTask(w http.ResponseWriter, r *http.R
 			WorkspaceID: workspaceUUID,
 		})
 		if err != nil {
-			writeError(w, http.StatusNotFound, "task not found")
+			writeEntityLoadError(
+				w, r, err, "task",
+				"task_id", uuidToString(taskID),
+				"dependency", "chat_session",
+				"chat_session_id", uuidToString(task.ChatSessionID),
+			)
 			return false
 		}
 		if uuidToString(cs.CreatorID) != userID {
@@ -389,7 +394,12 @@ func (h *Handler) canCancelPromptEvaluationTask(w http.ResponseWriter, r *http.R
 		WorkspaceID: workspaceUUID,
 	})
 	if err != nil {
-		writeError(w, http.StatusNotFound, "task not found")
+		writeEntityLoadError(
+			w, r, err, "task",
+			"task_id", uuidToString(taskID),
+			"dependency", "agent",
+			"agent_id", uuidToString(task.AgentID),
+		)
 		return false
 	}
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
