@@ -245,6 +245,27 @@ func TestListChatSessionsReturnsCurrentActiveContract(t *testing.T) {
 	t.Fatalf("created session %s missing from list", sessionID)
 }
 
+func TestGetChatSessionClientCanceledReturns499(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	agentID := createHandlerTestAgent(t, "ChatCanceledReadAgent", []byte("[]"))
+	sessionID := createHandlerTestChatSession(t, agentID)
+	req := newRequest(http.MethodGet, "/api/chat/sessions/"+sessionID, nil)
+	req = withChatTestWorkspaceCtx(t, req)
+	ctx, cancel := context.WithCancel(req.Context())
+	cancel()
+	req = req.WithContext(ctx)
+	req = withURLParam(req, "sessionId", sessionID)
+
+	w := httptest.NewRecorder()
+	testHandler.GetChatSession(w, req)
+	if w.Code != 499 {
+		t.Fatalf("expected 499 for canceled chat-session read, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 // TestUpdateChatSession_RejectsBlank refuses an empty/whitespace title with 400.
 // (Untitled is a render-side fallback, not a stored value.)
 func TestUpdateChatSession_RejectsBlank(t *testing.T) {
