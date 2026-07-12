@@ -12,6 +12,34 @@ import (
 	"github.com/google/uuid"
 )
 
+func TestParseSearchQueryOptions(t *testing.T) {
+	tests := []struct {
+		name              string
+		query             string
+		wantLimit         int
+		wantOffset        int
+		wantIncludeClosed bool
+	}{
+		{name: "defaults", wantLimit: 20},
+		{name: "current values", query: "limit=12&offset=3&include_closed=true", wantLimit: 12, wantOffset: 3, wantIncludeClosed: true},
+		{name: "limit is capped", query: "limit=200", wantLimit: 50},
+		{name: "invalid values keep defaults", query: "limit=bad&offset=-1&include_closed=TRUE", wantLimit: 20},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			values, err := url.ParseQuery(tt.query)
+			if err != nil {
+				t.Fatalf("ParseQuery() error = %v", err)
+			}
+			got := parseSearchQueryOptions(values)
+			if got.limit != tt.wantLimit || got.offset != tt.wantOffset || got.includeClosed != tt.wantIncludeClosed {
+				t.Fatalf("parseSearchQueryOptions() = %+v, want limit=%d offset=%d includeClosed=%t", got, tt.wantLimit, tt.wantOffset, tt.wantIncludeClosed)
+			}
+		})
+	}
+}
+
 func TestSearchIssuesReturnsOnlyCurrentCommentSnippetField(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("handler test fixture not initialized")
