@@ -266,6 +266,25 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
+func TestRequireWorkspaceMemberClientCanceledReturns499(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	req := newRequest(http.MethodGet, "/api/workspace-boundary", nil)
+	ctx, cancel := context.WithCancel(req.Context())
+	cancel()
+	req = req.WithContext(ctx)
+	w := httptest.NewRecorder()
+
+	if _, ok := testHandler.requireWorkspaceMember(w, req, testWorkspaceID, "workspace not found"); ok {
+		t.Fatal("canceled membership lookup unexpectedly succeeded")
+	}
+	if w.Code != 499 {
+		t.Fatalf("expected 499 for canceled membership lookup, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func setupHandlerTestFixture(ctx context.Context, pool *pgxpool.Pool) (string, string, error) {
 	if err := cleanupHandlerTestFixture(ctx, pool); err != nil {
 		return "", "", err
