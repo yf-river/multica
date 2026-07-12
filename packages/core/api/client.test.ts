@@ -6,6 +6,7 @@ const AUTOPILOT_IDEMPOTENCY_KEY = "22222222-2222-4222-8222-222222222222";
 const PROJECT_IDEMPOTENCY_KEY = "33333333-3333-4333-8333-333333333333";
 const SQUAD_IDEMPOTENCY_KEY = "44444444-4444-4444-8444-444444444444";
 const SKILL_IDEMPOTENCY_KEY = "55555555-5555-4555-8555-555555555555";
+const AGENT_IDEMPOTENCY_KEY = "66666666-6666-4666-8666-666666666666";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -186,6 +187,33 @@ describe("ApiClient", () => {
     for (const call of fetchMock.mock.calls) {
       expect((call[1]?.headers as Record<string, string>)["Idempotency-Key"])
         .toBe(SKILL_IDEMPOTENCY_KEY);
+    }
+  });
+
+  it("retries an unknown agent create with the same idempotency key", async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("connection reset"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        id: "agent-1",
+        workspace_id: "workspace-1",
+        runtime_id: "runtime-1",
+        name: "Reviewer",
+      }), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.createAgent(
+      { name: "Reviewer", runtime_id: "runtime-1" },
+      AGENT_IDEMPOTENCY_KEY,
+    )).resolves.toMatchObject({ id: "agent-1" });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    for (const call of fetchMock.mock.calls) {
+      expect((call[1]?.headers as Record<string, string>)["Idempotency-Key"])
+        .toBe(AGENT_IDEMPOTENCY_KEY);
     }
   });
 

@@ -29,7 +29,7 @@
     "sqlcQueries": 571,
     "goWebsocketEvents": 80,
     "typescriptWebsocketEvents": 70,
-    "zustandStores": 32,
+    "zustandStores": 33,
     "reactQueryConsumerFiles": 175,
     "environmentVariables": 217,
     "manualExternalSystems": 12
@@ -13047,6 +13047,14 @@
         "persisted": false
       },
       {
+        "source": "packages/core/agents/pending-operation-store.ts",
+        "scope": "packages/core",
+        "exports": [
+          "useAgentPendingOperationStore"
+        ],
+        "persisted": true
+      },
+      {
         "source": "packages/core/agents/stores/transcript-view-store.ts",
         "scope": "packages/core",
         "exports": [
@@ -15332,7 +15340,7 @@
       },
       {
         "scope": "packages/core",
-        "count": 30
+        "count": 31
       }
     ],
     "reactQueryByScope": [

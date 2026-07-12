@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -13,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/logger"
@@ -849,13 +851,67 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	model := agentModelForRuntime(runtime.Provider, req.Model)
+	req.Model = model
 
 	var mc []byte
 	if rawMcpConfig, ok := rawFields["mcp_config"]; ok && !bytes.Equal(bytes.TrimSpace(rawMcpConfig), []byte("null")) {
 		mc = append([]byte(nil), rawMcpConfig...)
 	}
+	requestHash, err := hashRequestFingerprint(req)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create agent")
+		return
+	}
+	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	operationActorID := parseUUID(ownerID)
+	if replayed, found, err := h.loadAgentCreateReplay(
+		r.Context(), wsUUID, operationActorID, idempotencyKey, requestHash,
+	); err != nil {
+		h.writeAgentCreateReplayError(w, err)
+		return
+	} else if found {
+		writeJSON(w, http.StatusCreated, replayed)
+		return
+	}
 
-	created, err := h.Queries.CreateAgent(r.Context(), db.CreateAgentParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start agent create")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	_, err = qtx.ReserveResourceCreateRequest(r.Context(), db.ReserveResourceCreateRequestParams{
+		WorkspaceID:    wsUUID,
+		ActorID:        operationActorID,
+		ResourceType:   resourceTypeAgent,
+		IdempotencyKey: idempotencyKey,
+		RequestHash:    requestHash,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		_ = tx.Rollback(r.Context())
+		replayed, found, replayErr := h.loadAgentCreateReplay(
+			r.Context(), wsUUID, operationActorID, idempotencyKey, requestHash,
+		)
+		if replayErr != nil || !found {
+			if replayErr == nil {
+				replayErr = errors.New("agent create replay disappeared after conflict")
+			}
+			h.writeAgentCreateReplayError(w, replayErr)
+			return
+		}
+		writeJSON(w, http.StatusCreated, replayed)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reserve agent request")
+		return
+	}
+
+	created, err := qtx.CreateAgent(r.Context(), db.CreateAgentParams{
 		WorkspaceID:        wsUUID,
 		Name:               req.Name,
 		Description:        req.Description,
@@ -884,12 +940,12 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to create agent: "+err.Error())
 		return
 	}
-	slog.Info("agent created", append(logger.RequestAttrs(r), "agent_id", uuidToString(created.ID), "name", created.Name, "workspace_id", workspaceID)...)
 
 	if runtime.Status == "online" {
-		refreshed, err := h.TaskService.ReconcileAgentStatus(r.Context(), created.ID)
-		if err == nil {
-			created = refreshed
+		created, err = qtx.RefreshAgentStatusFromTasks(r.Context(), created.ID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to initialize agent status")
+			return
 		}
 	}
 
@@ -899,6 +955,31 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actorType, actorID := h.resolveActor(r, ownerID, workspaceID)
+	replayResponse := resp
+	redactAgentResponseForActor(&replayResponse, actorType)
+	responseBody, err := json.Marshal(replayResponse)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to encode agent response")
+		return
+	}
+	if _, err := qtx.CompleteResourceCreateRequest(r.Context(), db.CompleteResourceCreateRequestParams{
+		WorkspaceID:    wsUUID,
+		ActorID:        operationActorID,
+		ResourceType:   resourceTypeAgent,
+		IdempotencyKey: idempotencyKey,
+		RequestHash:    requestHash,
+		ResourceID:     created.ID,
+		ResponseBody:   responseBody,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to complete agent request")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit agent create")
+		return
+	}
+
+	slog.Info("agent created", append(logger.RequestAttrs(r), "agent_id", uuidToString(created.ID), "name", created.Name, "workspace_id", workspaceID)...)
 	h.publish(protocol.EventAgentCreated, workspaceID, actorType, actorID, map[string]any{"agent": broadcastAgentResponse(resp)})
 
 	obsmetrics.RecordEvent(h.Analytics, h.Metrics, analytics.AgentCreated(
@@ -911,8 +992,32 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		isFirstAgent,
 	))
 
-	redactAgentResponseForActor(&resp, actorType)
-	writeJSON(w, http.StatusCreated, resp)
+	writeJSON(w, http.StatusCreated, replayResponse)
+}
+
+func (h *Handler) loadAgentCreateReplay(
+	ctx context.Context,
+	workspaceID pgtype.UUID,
+	actorID pgtype.UUID,
+	idempotencyKey pgtype.UUID,
+	requestHash string,
+) (AgentResponse, bool, error) {
+	return loadResourceCreateReplay(
+		ctx, h.Queries, workspaceID, actorID, resourceTypeAgent,
+		idempotencyKey, requestHash,
+		func(response AgentResponse) bool { return response.ID != "" },
+	)
+}
+
+func (h *Handler) writeAgentCreateReplayError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errResourceCreateIdempotencyConflict) {
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": "Idempotency-Key was already used with a different request",
+			"code":  "idempotency_conflict",
+		})
+		return
+	}
+	writeError(w, http.StatusInternalServerError, "failed to replay agent create")
 }
 
 type UpdateAgentRequest struct {

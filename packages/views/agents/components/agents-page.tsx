@@ -22,6 +22,7 @@ import type {
 import {
   type AgentActivity,
   agentRunCounts30dOptions,
+  createAgentWithRecovery,
   useWorkspaceActivityMap,
   useWorkspacePresenceMap,
   type AgentPresenceDetail,
@@ -928,7 +929,7 @@ export function AgentsPage() {
   });
 
   const handleCreate = async (data: CreateAgentRequest): Promise<Agent> => {
-    const agent = await api.createAgent(data);
+    const agent = await createAgentWithRecovery(data);
     qc.setQueryData<Agent[]>(workspaceKeys.agents(wsId), (current = []) => {
       const exists = current.some((a) => a.id === agent.id);
       return exists

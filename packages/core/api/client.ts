@@ -916,12 +916,22 @@ export class ApiClient extends ApiTransport {
     return parseWithFallback(raw, AgentSchema, EMPTY_AGENT, { endpoint: "GET /api/agents/:id" });
   }
 
-  async createAgent(data: CreateAgentRequest): Promise<Agent> {
-    const raw = await this.fetch<unknown>("/api/agents", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseOrThrow(raw, AgentSchema, EMPTY_AGENT, { endpoint: "POST /api/agents" });
+  async createAgent(
+    data: CreateAgentRequest,
+    idempotencyKey = generateUUID(),
+  ): Promise<Agent> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>("/api/agents", {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow(raw, AgentSchema, EMPTY_AGENT, {
+        endpoint: "POST /api/agents",
+        mayHaveCommitted: true,
+      });
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async listAgentTemplates(): Promise<AgentTemplateSummary[]> {

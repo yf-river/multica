@@ -3,7 +3,7 @@
 Manual Skill creation has one recoverable path. The shared dialog delegates the
 operation state machine to `packages/core/skills/create.ts`; Core persists the
 exact request and UUIDv4 key in workspace-scoped storage before calling
-`POST /api/skills`.
+`POST /api/skills` through `packages/core/skills/pending-operation-store.ts`.
 
 The API validates all supporting-file paths before opening a transaction. That
 transaction reserves `resource_create_request[type=skill]`, creates the Skill
@@ -18,6 +18,8 @@ stored Skill and file list and do not publish a second `skill:created` event.
 
 Verification anchors:
 
+- HTTP orchestration: `server/internal/handler/skill.go`.
+- Shared replay validation: `server/internal/handler/resource_create_idempotency.go`.
 - Transaction, concurrency, conflict and rollback:
   `server/internal/handler/skill_idempotency_test.go`.
 - Cross-resource migration:

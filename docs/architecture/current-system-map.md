@@ -30,7 +30,7 @@ evidence reviewable by humans.
 | sqlc queries | 571 |
 | Go WebSocket events | 80 |
 | TypeScript WebSocket events | 70 |
-| Zustand store definitions | 32 |
+| Zustand store definitions | 33 |
 | React Query consumer files | 175 |
 | Environment variable names | 217 |
 | Manually identified external systems | 12 |
@@ -775,6 +775,7 @@ still include daemon-only/backend projection events and possible frontend gaps.
 | --- | --- | --- | --- |
 | apps/desktop | `apps/desktop/src/renderer/src/stores/tab-store.ts` | `useTabStore` | yes |
 | apps/desktop | `apps/desktop/src/renderer/src/stores/workspace-creation-overlay-store.ts` | `useWorkspaceCreationOverlayStore` | no |
+| packages/core | `packages/core/agents/pending-operation-store.ts` | `useAgentPendingOperationStore` | yes |
 | packages/core | `packages/core/agents/stores/transcript-view-store.ts` | `useTranscriptViewStore` | yes |
 | packages/core | `packages/core/agents/stores/view-store.ts` | `useAgentsViewStore` | yes |
 | packages/core | `packages/core/auth/store.ts` | `createAuthStore` | no |

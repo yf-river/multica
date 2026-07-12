@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
+import { createAgentWithRecovery } from "@multica/core/agents";
 import { useAuthStore } from "@multica/core/auth";
 import { useCurrentWorkspace, useWorkspacePaths } from "@multica/core/paths";
 import { useWorkspaceId } from "@multica/core/paths";
@@ -209,7 +210,7 @@ export function SquadDetailPage() {
   // verify the new agent appeared. Cache-update keeps the agents list
   // fresh for any pickers that read from it.
   const handleCreateAgent = async (data: CreateAgentRequest): Promise<Agent> => {
-    const agent = await api.createAgent(data);
+    const agent = await createAgentWithRecovery(data);
     queryClient.setQueryData<Agent[]>(workspaceKeys.agents(wsId), (current = []) => {
       const exists = current.some((a) => a.id === agent.id);
       return exists ? current.map((a) => (a.id === agent.id ? agent : a)) : [...current, agent];

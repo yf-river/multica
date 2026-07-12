@@ -146,12 +146,12 @@ test("maintained domain flows stay anchored to current routes, tables and source
     {
       file: "project-create-flow.md",
       routes: ["POST /api/projects"],
-      tables: ["project", "project_create_request", "project_resource"],
+      tables: ["project", "project_resource", "resource_create_request"],
       sources: [
         "packages/core/projects/mutations.ts",
         "packages/views/modals/create-project.tsx",
         "server/internal/handler/project.go",
-        "server/pkg/db/queries/project_create_request.sql",
+        "server/pkg/db/queries/resource_create_request.sql",
       ],
     },
     {
@@ -173,12 +173,34 @@ test("maintained domain flows stay anchored to current routes, tables and source
     {
       file: "squad-create-flow.md",
       routes: ["POST /api/squads"],
-      tables: ["squad", "squad_create_request", "squad_member"],
+      tables: ["resource_create_request", "squad", "squad_member"],
       sources: [
         "server/internal/handler/squad.go",
-        "server/pkg/db/queries/squad_create_request.sql",
+        "server/pkg/db/queries/resource_create_request.sql",
         "packages/core/squads/mutations.ts",
         "packages/core/squads/mutations.test.tsx",
+      ],
+    },
+    {
+      file: "agent-create-flow.md",
+      routes: ["POST /api/agents"],
+      tables: ["agent", "resource_create_request"],
+      sources: [
+        "packages/core/agents/create.ts",
+        "packages/core/agents/pending-operation-store.ts",
+        "server/internal/handler/agent.go",
+        "server/internal/handler/resource_create_idempotency.go",
+      ],
+    },
+    {
+      file: "skill-create-flow.md",
+      routes: ["POST /api/skills"],
+      tables: ["resource_create_request", "skill", "skill_file"],
+      sources: [
+        "packages/core/skills/create.ts",
+        "packages/core/skills/pending-operation-store.ts",
+        "server/internal/handler/skill.go",
+        "server/internal/handler/resource_create_idempotency.go",
       ],
     },
     {

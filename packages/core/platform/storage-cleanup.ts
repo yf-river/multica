@@ -20,6 +20,7 @@ const WORKSPACE_LOCAL_KEYS = [
   "multica_project_draft",
   "multica_projects_view",
   "multica_agents_view",
+  "multica_agent_pending_operations",
   "multica_skills_view",
   "multica_skill_pending_operations",
   "multica_squads_view",
