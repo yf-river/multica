@@ -6,15 +6,22 @@ actor and resource type; the SHA-256 request fingerprint rejects key reuse with
 different input. A completed row stores the resource ID and exact response.
 
 The current resource types are Project, Squad, Agent, Skill, Attachment, Quick
-Create, Issue, Comment and Prompt Library Trial. Each handler either commits the request row in the
+Create, Issue, Comment, Prompt Library Item, Prompt Library Version and Prompt
+Library Trial. Each handler either commits the request row in the
 same transaction as the resource or uses a deterministic resource identity and
 an explicit recovery path when an external/object operation prevents one DB
 transaction. Core retries unknown outcomes with the same key and persists the
 exact pending request in workspace/account-scoped storage.
 
-Prompt Library Trial uses the same contract for its compound execution create:
+Prompt Library Item atomically commits the item, initial version and exact `201`
+response. Prompt Library Version atomically updates the current item, inserts
+one version and records the exact `201` response. Prompt Library Trial uses the
+same contract for its compound execution create:
 Chat Session, user Message, Agent Task, Trial row and exact `202` response commit
-together; only the winning request publishes the post-commit task wake-up.
+together; only the winning request publishes the post-commit task wake-up. Core
+persists pending Item, Version and Trial intents in one workspace/account-scoped
+Prompt Library create store and always recovers the older intent before sending
+a changed one.
 
 ## Retention contract
 

@@ -454,6 +454,27 @@ func (h *Handler) CreatePromptLibraryItem(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "status must be 启用 or 归档")
 		return
 	}
+	req.PromptType = promptType
+	req.Status = status
+	actorID := parseUUID(userID)
+	requestHash, err := hashRequestFingerprint(req)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to fingerprint prompt library item request")
+		return
+	}
+	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	replay, found, replayErr := h.loadPromptLibraryItemCreateReplay(r.Context(), workspaceUUID, actorID, idempotencyKey, requestHash)
+	if replayErr != nil {
+		writePromptLibraryCreateReplayError(w, "prompt library item", replayErr)
+		return
+	}
+	if found {
+		writeJSON(w, http.StatusCreated, replay)
+		return
+	}
 	projectID, ok := h.promptLibraryProjectID(w, r, workspaceUUID, req.ProjectID, pgtype.UUID{})
 	if !ok {
 		return
@@ -474,6 +495,27 @@ func (h *Handler) CreatePromptLibraryItem(w http.ResponseWriter, r *http.Request
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
+	_, err = qtx.ReserveResourceCreateRequest(r.Context(), db.ReserveResourceCreateRequestParams{
+		WorkspaceID: workspaceUUID, ActorID: actorID, ResourceType: resourceTypePromptLibraryItem,
+		IdempotencyKey: idempotencyKey, RequestHash: requestHash,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		_ = tx.Rollback(r.Context())
+		replay, found, replayErr := h.loadPromptLibraryItemCreateReplay(r.Context(), workspaceUUID, actorID, idempotencyKey, requestHash)
+		if replayErr != nil || !found {
+			if replayErr == nil {
+				replayErr = errors.New("prompt library item replay disappeared after conflict")
+			}
+			writePromptLibraryCreateReplayError(w, "prompt library item", replayErr)
+			return
+		}
+		writeJSON(w, http.StatusCreated, replay)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reserve prompt library item request")
+		return
+	}
 
 	item, err := qtx.CreatePromptLibraryItem(r.Context(), db.CreatePromptLibraryItemParams{
 		WorkspaceID: workspaceUUID,
@@ -506,6 +548,10 @@ func (h *Handler) CreatePromptLibraryItem(w http.ResponseWriter, r *http.Request
 	resp, err := promptLibraryItemToResponse(item)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to prepare prompt library item response")
+		return
+	}
+	if err := completePromptLibraryCreateRequest(r.Context(), qtx, workspaceUUID, actorID, resourceTypePromptLibraryItem, idempotencyKey, requestHash, item.ID, resp); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to complete prompt library item request")
 		return
 	}
 	if err := tx.Commit(r.Context()); err != nil {
@@ -599,7 +645,11 @@ func (h *Handler) UpdatePromptLibraryItem(w http.ResponseWriter, r *http.Request
 }
 
 func (h *Handler) CreatePromptLibraryVersion(w http.ResponseWriter, r *http.Request) {
-	existing, ok := h.loadPromptLibraryItem(w, r)
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, h.resolveWorkspaceID(r), "workspace_id")
+	if !ok {
+		return
+	}
+	promptID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "prompt id")
 	if !ok {
 		return
 	}
@@ -612,6 +662,44 @@ func (h *Handler) CreatePromptLibraryVersion(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "content is required")
 		return
 	}
+	req.ChangeNote = strings.TrimSpace(req.ChangeNote)
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	actorID := parseUUID(userID)
+	requestHash, err := hashRequestFingerprint(struct {
+		PromptID string                            `json:"prompt_id"`
+		Request  CreatePromptLibraryVersionRequest `json:"request"`
+	}{PromptID: uuidToString(promptID), Request: req})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to fingerprint prompt library version request")
+		return
+	}
+	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	replay, found, replayErr := h.loadPromptLibraryVersionCreateReplay(r.Context(), workspaceUUID, actorID, idempotencyKey, requestHash)
+	if replayErr != nil {
+		writePromptLibraryCreateReplayError(w, "prompt library version", replayErr)
+		return
+	}
+	if found {
+		writeJSON(w, http.StatusCreated, replay)
+		return
+	}
+	existing, err := h.Queries.GetPromptLibraryItemInWorkspace(r.Context(), db.GetPromptLibraryItemInWorkspaceParams{
+		ID: promptID, WorkspaceID: workspaceUUID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "prompt library item not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load prompt library item")
+		return
+	}
 
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
@@ -620,6 +708,27 @@ func (h *Handler) CreatePromptLibraryVersion(w http.ResponseWriter, r *http.Requ
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
+	_, err = qtx.ReserveResourceCreateRequest(r.Context(), db.ReserveResourceCreateRequestParams{
+		WorkspaceID: existing.WorkspaceID, ActorID: actorID, ResourceType: resourceTypePromptLibraryVersion,
+		IdempotencyKey: idempotencyKey, RequestHash: requestHash,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		_ = tx.Rollback(r.Context())
+		replay, found, replayErr := h.loadPromptLibraryVersionCreateReplay(r.Context(), existing.WorkspaceID, actorID, idempotencyKey, requestHash)
+		if replayErr != nil || !found {
+			if replayErr == nil {
+				replayErr = errors.New("prompt library version replay disappeared after conflict")
+			}
+			writePromptLibraryCreateReplayError(w, "prompt library version", replayErr)
+			return
+		}
+		writeJSON(w, http.StatusCreated, replay)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reserve prompt library version request")
+		return
+	}
 
 	item, err := qtx.UpdatePromptLibraryItemLatestVersion(r.Context(), db.UpdatePromptLibraryItemLatestVersionParams{
 		ID:          existing.ID,
@@ -652,14 +761,16 @@ func (h *Handler) CreatePromptLibraryVersion(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, "failed to prepare prompt library version response")
 		return
 	}
+	response := CreatePromptLibraryVersionResponse{Item: itemResp, Version: versionResp}
+	if err := completePromptLibraryCreateRequest(r.Context(), qtx, existing.WorkspaceID, actorID, resourceTypePromptLibraryVersion, idempotencyKey, requestHash, version.ID, response); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to complete prompt library version request")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit prompt library version")
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{
-		"item":    itemResp,
-		"version": versionResp,
-	})
+	writeJSON(w, http.StatusCreated, response)
 }
 
 func (h *Handler) DeletePromptLibraryItem(w http.ResponseWriter, r *http.Request) {

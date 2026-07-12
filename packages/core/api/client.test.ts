@@ -515,6 +515,37 @@ describe("ApiClient", () => {
     expect(second["Idempotency-Key"]).toBe(first["Idempotency-Key"]);
   });
 
+  it("retries prompt item and version unknown outcomes with stable request identities", async () => {
+    const item = {
+      id: "prompt-1", workspace_id: "workspace-1", project_id: null, name: "Prompt",
+      description: "", prompt_type: "text", content: "hello", variables: [], tags: [],
+      status: "启用", version: 1, created_by: "user-1", created_at: "now", updated_at: "now",
+    };
+    const version = {
+      id: "version-2", prompt_id: "prompt-1", workspace_id: "workspace-1", version: 2,
+      name: "Prompt", description: "", prompt_type: "text", content: "updated",
+      variables: [], tags: [], source: "手动更新", source_candidate_id: null,
+      change_note: "change", created_by: "user-1", created_at: "now",
+    };
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("item response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify(item), { status: 201, headers: { "Content-Type": "application/json" } }))
+      .mockRejectedValueOnce(new TypeError("version response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ item: { ...item, content: "updated", version: 2 }, version }), { status: 201, headers: { "Content-Type": "application/json" } }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+
+    await expect(client.createPromptLibraryItem({ name: "Prompt", content: "hello" })).resolves.toMatchObject({ id: "prompt-1" });
+    await expect(client.createPromptLibraryVersion("prompt-1", { content: "updated", change_note: "change" })).resolves.toMatchObject({ version: { id: "version-2" } });
+
+    for (const [firstIndex, secondIndex] of [[0, 1], [2, 3]] as const) {
+      const first = fetchMock.mock.calls[firstIndex]?.[1]?.headers as Record<string, string>;
+      const second = fetchMock.mock.calls[secondIndex]?.[1]?.headers as Record<string, string>;
+      expect(first["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/);
+      expect(second["Idempotency-Key"]).toBe(first["Idempotency-Key"]);
+    }
+  });
+
   it("whitelists external credential responses without exposing secret fields", async () => {
     const profile = {
       id: "profile-1",

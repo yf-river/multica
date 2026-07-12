@@ -22,6 +22,12 @@ vi.mock("@multica/core/api", () => ({
   },
 }));
 
+vi.mock("@multica/core/prompt-library", () => ({
+	createPromptLibraryItemWithRecovery: mocks.createPromptLibraryItem,
+	createPromptLibraryVersionWithRecovery: vi.fn(),
+	createPromptLibraryTrialWithRecovery: vi.fn(),
+}));
+
 vi.mock("sonner", () => ({
   toast: {
     success: mocks.toastSuccess,

@@ -279,3 +279,28 @@ func TestPromptLibraryTrialCreateRequestMigrationExtendsCurrentResourceContract(
 		t.Fatalf("prompt trial request type rejected: %v", err)
 	}
 }
+
+func TestPromptLibraryCreateRequestMigrationExtendsCurrentResourceContract(t *testing.T) {
+	pool := openTestPool(t)
+	ctx := context.Background()
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, readMigrationFile(t, "056_add_prompt_library_create_requests.up.sql")); err != nil {
+		t.Fatal(err)
+	}
+	var workspaceID string
+	if err := tx.QueryRow(ctx, `INSERT INTO workspace (name, slug) VALUES ('Prompt Create Migration', $1) RETURNING id`, "prompt-create-"+uuid.NewString()).Scan(&workspaceID); err != nil {
+		t.Fatal(err)
+	}
+	for _, resourceType := range []string{"prompt_library_item", "prompt_library_version"} {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO resource_create_request (workspace_id, actor_id, resource_type, idempotency_key, request_hash)
+			VALUES ($1, $2, $3, $4, $5)
+		`, workspaceID, uuid.NewString(), resourceType, uuid.NewString(), "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"); err != nil {
+			t.Fatalf("%s request type rejected: %v", resourceType, err)
+		}
+	}
+}

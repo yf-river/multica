@@ -3,10 +3,14 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 func TestRenderPromptLibraryTrialMessageUsesCurrentVariables(t *testing.T) {
@@ -53,7 +57,10 @@ func TestPromptLibraryCRUD(t *testing.T) {
 	}
 
 	createW := httptest.NewRecorder()
-	testHandler.CreatePromptLibraryItem(createW, newRequest(http.MethodPost, "/api/prompt-library", createBody))
+	itemKey := uuid.NewString()
+	createReq := newRequest(http.MethodPost, "/api/prompt-library", createBody)
+	createReq.Header.Set("Idempotency-Key", itemKey)
+	testHandler.CreatePromptLibraryItem(createW, createReq)
 	if createW.Code != http.StatusCreated {
 		t.Fatalf("create status = %d, body = %s", createW.Code, createW.Body.String())
 	}
@@ -66,6 +73,22 @@ func TestPromptLibraryCRUD(t *testing.T) {
 	}
 	if created.PromptType != "需求澄清" || created.Status != "启用" || created.Version != 1 {
 		t.Fatalf("unexpected created prompt: %+v", created)
+	}
+	replayReq := newRequest(http.MethodPost, "/api/prompt-library", createBody)
+	replayReq.Header.Set("Idempotency-Key", itemKey)
+	replayW := httptest.NewRecorder()
+	testHandler.CreatePromptLibraryItem(replayW, replayReq)
+	if replayW.Code != http.StatusCreated || replayW.Body.String() != createW.Body.String() {
+		t.Fatalf("item replay = %d %s, want exact %s", replayW.Code, replayW.Body.String(), createW.Body.String())
+	}
+	changedItemBody := maps.Clone(createBody)
+	changedItemBody["content"] = "changed content"
+	changedItemReq := newRequest(http.MethodPost, "/api/prompt-library", changedItemBody)
+	changedItemReq.Header.Set("Idempotency-Key", itemKey)
+	changedItemW := httptest.NewRecorder()
+	testHandler.CreatePromptLibraryItem(changedItemW, changedItemReq)
+	if changedItemW.Code != http.StatusConflict {
+		t.Fatalf("changed item replay = %d %s, want 409", changedItemW.Code, changedItemW.Body.String())
 	}
 
 	listW := httptest.NewRecorder()
@@ -103,6 +126,48 @@ func TestPromptLibraryCRUD(t *testing.T) {
 	if updated.ProjectID == nil || *updated.ProjectID != projectID {
 		t.Fatalf("project_id after update = %v, want preserved %s", updated.ProjectID, projectID)
 	}
+	versionBody := map[string]any{
+		"content":     "请输出可直接验收的澄清结论。",
+		"change_note": "收敛验收输出",
+	}
+	versionKey := uuid.NewString()
+	createVersion := func() *httptest.ResponseRecorder {
+		req := withURLParam(newRequest(http.MethodPost, "/api/prompt-library/"+created.ID+"/versions", versionBody), "id", created.ID)
+		req.Header.Set("Idempotency-Key", versionKey)
+		w := httptest.NewRecorder()
+		testHandler.CreatePromptLibraryVersion(w, req)
+		return w
+	}
+	versionW := createVersion()
+	versionReplayW := createVersion()
+	if versionW.Code != http.StatusCreated || versionReplayW.Code != http.StatusCreated || versionReplayW.Body.String() != versionW.Body.String() {
+		t.Fatalf("version replay differs: first=%d %s replay=%d %s", versionW.Code, versionW.Body.String(), versionReplayW.Code, versionReplayW.Body.String())
+	}
+	responses := make(chan *httptest.ResponseRecorder, 8)
+	var wait sync.WaitGroup
+	for range 8 {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			responses <- createVersion()
+		}()
+	}
+	wait.Wait()
+	close(responses)
+	for response := range responses {
+		if response.Code != http.StatusCreated || response.Body.String() != versionW.Body.String() {
+			t.Fatalf("concurrent version replay = %d %s, want exact", response.Code, response.Body.String())
+		}
+	}
+	changedVersionReq := withURLParam(newRequest(http.MethodPost, "/api/prompt-library/"+created.ID+"/versions", map[string]any{
+		"content": "changed version content", "change_note": "different intent",
+	}), "id", created.ID)
+	changedVersionReq.Header.Set("Idempotency-Key", versionKey)
+	changedVersionW := httptest.NewRecorder()
+	testHandler.CreatePromptLibraryVersion(changedVersionW, changedVersionReq)
+	if changedVersionW.Code != http.StatusConflict {
+		t.Fatalf("changed version replay = %d %s, want 409", changedVersionW.Code, changedVersionW.Body.String())
+	}
 
 	versionsW := httptest.NewRecorder()
 	testHandler.ListPromptLibraryVersions(versionsW, withURLParam(newRequest(http.MethodGet, "/api/prompt-library/"+created.ID+"/versions", nil), "id", created.ID))
@@ -116,20 +181,34 @@ func TestPromptLibraryCRUD(t *testing.T) {
 	if err := json.Unmarshal(versionsW.Body.Bytes(), &versionsResp); err != nil {
 		t.Fatalf("decode versions response: %v", err)
 	}
-	if versionsResp.Total != 2 || len(versionsResp.Items) != 2 {
-		t.Fatalf("versions response = %+v, want two versions", versionsResp)
+	if versionsResp.Total != 3 || len(versionsResp.Items) != 3 {
+		t.Fatalf("versions response = %+v, want three versions", versionsResp)
 	}
-	if versionsResp.Items[0].Version != 2 || versionsResp.Items[0].Source != "手动更新" || versionsResp.Items[0].Content != updated.Content {
-		t.Fatalf("latest version = %+v, want updated v2", versionsResp.Items[0])
+	if versionsResp.Items[0].Version != 3 || versionsResp.Items[0].Content != versionBody["content"] {
+		t.Fatalf("latest version = %+v, want explicit v3", versionsResp.Items[0])
 	}
-	if versionsResp.Items[1].Version != 1 || versionsResp.Items[1].Source != "手动创建" || versionsResp.Items[1].Content != created.Content {
-		t.Fatalf("initial version = %+v, want created v1", versionsResp.Items[1])
+	if versionsResp.Items[1].Version != 2 || versionsResp.Items[1].Source != "手动更新" || versionsResp.Items[1].Content != updated.Content {
+		t.Fatalf("updated version = %+v, want v2", versionsResp.Items[1])
+	}
+	if versionsResp.Items[2].Version != 1 || versionsResp.Items[2].Source != "手动创建" || versionsResp.Items[2].Content != created.Content {
+		t.Fatalf("initial version = %+v, want created v1", versionsResp.Items[2])
 	}
 
 	deleteW := httptest.NewRecorder()
 	testHandler.DeletePromptLibraryItem(deleteW, withURLParam(newRequest(http.MethodDelete, "/api/prompt-library/"+created.ID, nil), "id", created.ID))
 	if deleteW.Code != http.StatusNoContent {
 		t.Fatalf("delete status = %d, body = %s", deleteW.Code, deleteW.Body.String())
+	}
+	deletedItemReplay := httptest.NewRecorder()
+	deletedItemReq := newRequest(http.MethodPost, "/api/prompt-library", createBody)
+	deletedItemReq.Header.Set("Idempotency-Key", itemKey)
+	testHandler.CreatePromptLibraryItem(deletedItemReplay, deletedItemReq)
+	if deletedItemReplay.Code != http.StatusCreated || deletedItemReplay.Body.String() != createW.Body.String() {
+		t.Fatalf("deleted item replay = %d %s, want durable exact response", deletedItemReplay.Code, deletedItemReplay.Body.String())
+	}
+	deletedVersionReplay := createVersion()
+	if deletedVersionReplay.Code != http.StatusCreated || deletedVersionReplay.Body.String() != versionW.Body.String() {
+		t.Fatalf("deleted version replay = %d %s, want durable exact response", deletedVersionReplay.Code, deletedVersionReplay.Body.String())
 	}
 }
 

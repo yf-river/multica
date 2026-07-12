@@ -4,7 +4,14 @@ import {
   registerWorkspacePersistStore,
 } from "../platform/workspace-storage";
 import { defaultStorage } from "../platform/storage";
-import type { CreatePromptLibraryTrialRequest, PromptLibraryTrial } from "../types";
+import type {
+  CreatePromptLibraryItemRequest,
+  CreatePromptLibraryTrialRequest,
+  CreatePromptLibraryVersionRequest,
+  CreatePromptLibraryVersionResponse,
+  PromptLibraryItem,
+  PromptLibraryTrial,
+} from "../types";
 import { generateUUID } from "../utils";
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
@@ -17,35 +24,64 @@ interface PendingTrialCreate {
   createdAt: number;
 }
 
-interface TrialCreateState {
-  pending: Record<string, PendingTrialCreate>;
-  setPending: (scope: string, operation?: PendingTrialCreate) => void;
+interface PendingItemCreate {
+  request: CreatePromptLibraryItemRequest;
+  requestKey: string;
+  createdAt: number;
 }
 
-export const usePromptLibraryTrialCreateStore = create<TrialCreateState>()(
+interface PendingVersionCreate {
+  promptId: string;
+  request: CreatePromptLibraryVersionRequest;
+  requestKey: string;
+  createdAt: number;
+}
+
+interface PromptLibraryCreateState {
+  pending: Record<string, PendingTrialCreate>;
+  item?: PendingItemCreate;
+  versions: Record<string, PendingVersionCreate>;
+  setPending: (scope: string, operation?: PendingTrialCreate) => void;
+  setItem: (operation?: PendingItemCreate) => void;
+  setVersion: (promptId: string, operation?: PendingVersionCreate) => void;
+}
+
+export const usePromptLibraryCreateStore = create<PromptLibraryCreateState>()(
   persist((set) => ({
     pending: {},
+    versions: {},
     setPending: (scope, operation) => set((state) => {
       const pending = { ...state.pending };
       if (operation) pending[scope] = operation;
       else delete pending[scope];
       return { pending };
     }),
+    setItem: (item) => set({ item }),
+    setVersion: (promptId, operation) => set((state) => {
+      const versions = { ...state.versions };
+      if (operation) versions[promptId] = operation;
+      else delete versions[promptId];
+      return { versions };
+    }),
   }), {
     name: "multica_prompt_library_trial_create",
     storage: createJSONStorage(() => createWorkspaceAwareStorage(defaultStorage)),
-    partialize: ({ pending }) => ({ pending }),
+    partialize: ({ pending, item, versions }) => ({ pending, item, versions }),
     onRehydrateStorage: () => (state) => {
       if (!state) return;
       const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
       state.pending = Object.fromEntries(
         Object.entries(state.pending).filter(([, operation]) => operation.createdAt >= cutoff),
       );
+      if (state.item && state.item.createdAt < cutoff) state.item = undefined;
+      state.versions = Object.fromEntries(
+        Object.entries(state.versions ?? {}).filter(([, operation]) => operation.createdAt >= cutoff),
+      );
     },
   },
 ));
 
-registerWorkspacePersistStore(usePromptLibraryTrialCreateStore);
+registerWorkspacePersistStore(usePromptLibraryCreateStore);
 
 export interface PromptLibraryTrialCreateClient {
   createPromptLibraryTrial(
@@ -54,6 +90,15 @@ export interface PromptLibraryTrialCreateClient {
     request: CreatePromptLibraryTrialRequest,
     requestKey: string,
   ): Promise<PromptLibraryTrial>;
+}
+
+export interface PromptLibraryCreateClient extends PromptLibraryTrialCreateClient {
+  createPromptLibraryItem(request: CreatePromptLibraryItemRequest, requestKey: string): Promise<PromptLibraryItem>;
+  createPromptLibraryVersion(
+    promptId: string,
+    request: CreatePromptLibraryVersionRequest,
+    requestKey: string,
+  ): Promise<CreatePromptLibraryVersionResponse>;
 }
 
 const scopeFor = (promptId: string, versionId: string, request: CreatePromptLibraryTrialRequest) =>
@@ -71,11 +116,11 @@ async function execute(
       operation.request,
       operation.requestKey,
     );
-    usePromptLibraryTrialCreateStore.getState().setPending(scope);
+    usePromptLibraryCreateStore.getState().setPending(scope);
     return trial;
   } catch (error) {
     if (!isMutationOutcomeUnknown(error)) {
-      usePromptLibraryTrialCreateStore.getState().setPending(scope);
+      usePromptLibraryCreateStore.getState().setPending(scope);
     }
     throw error;
   }
@@ -88,7 +133,7 @@ export async function createPromptLibraryTrialWithRecovery(
   client: PromptLibraryTrialCreateClient = api,
 ): Promise<PromptLibraryTrial> {
   const scope = scopeFor(promptId, versionId, request);
-  const pending = usePromptLibraryTrialCreateStore.getState().pending[scope];
+  const pending = usePromptLibraryCreateStore.getState().pending[scope];
   if (pending) {
     const recovered = await execute(client, scope, pending);
     if (JSON.stringify(pending.request) === JSON.stringify(request)) return recovered;
@@ -100,6 +145,63 @@ export async function createPromptLibraryTrialWithRecovery(
     requestKey: generateUUID(),
     createdAt: Date.now(),
   };
-  usePromptLibraryTrialCreateStore.getState().setPending(scope, operation);
+  usePromptLibraryCreateStore.getState().setPending(scope, operation);
   return execute(client, scope, operation);
+}
+
+async function executeItem(
+  client: Pick<PromptLibraryCreateClient, "createPromptLibraryItem">,
+  operation: PendingItemCreate,
+) {
+  try {
+    const item = await client.createPromptLibraryItem(operation.request, operation.requestKey);
+    usePromptLibraryCreateStore.getState().setItem();
+    return item;
+  } catch (error) {
+    if (!isMutationOutcomeUnknown(error)) usePromptLibraryCreateStore.getState().setItem();
+    throw error;
+  }
+}
+
+export async function createPromptLibraryItemWithRecovery(
+  request: CreatePromptLibraryItemRequest,
+  client: Pick<PromptLibraryCreateClient, "createPromptLibraryItem"> = api,
+): Promise<PromptLibraryItem> {
+  const pending = usePromptLibraryCreateStore.getState().item;
+  if (pending) {
+    const recovered = await executeItem(client, pending);
+    if (JSON.stringify(pending.request) === JSON.stringify(request)) return recovered;
+  }
+  const operation = { request, requestKey: generateUUID(), createdAt: Date.now() };
+  usePromptLibraryCreateStore.getState().setItem(operation);
+  return executeItem(client, operation);
+}
+
+async function executeVersion(
+  client: Pick<PromptLibraryCreateClient, "createPromptLibraryVersion">,
+  operation: PendingVersionCreate,
+) {
+  try {
+    const result = await client.createPromptLibraryVersion(operation.promptId, operation.request, operation.requestKey);
+    usePromptLibraryCreateStore.getState().setVersion(operation.promptId);
+    return result;
+  } catch (error) {
+    if (!isMutationOutcomeUnknown(error)) usePromptLibraryCreateStore.getState().setVersion(operation.promptId);
+    throw error;
+  }
+}
+
+export async function createPromptLibraryVersionWithRecovery(
+  promptId: string,
+  request: CreatePromptLibraryVersionRequest,
+  client: Pick<PromptLibraryCreateClient, "createPromptLibraryVersion"> = api,
+): Promise<CreatePromptLibraryVersionResponse> {
+  const pending = usePromptLibraryCreateStore.getState().versions[promptId];
+  if (pending) {
+    const recovered = await executeVersion(client, pending);
+    if (JSON.stringify(pending.request) === JSON.stringify(request)) return recovered;
+  }
+  const operation = { promptId, request, requestKey: generateUUID(), createdAt: Date.now() };
+  usePromptLibraryCreateStore.getState().setVersion(promptId, operation);
+  return executeVersion(client, operation);
 }

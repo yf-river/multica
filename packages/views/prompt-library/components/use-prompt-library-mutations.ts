@@ -3,7 +3,11 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
-import { createPromptLibraryTrialWithRecovery } from "@multica/core/prompt-library";
+import {
+  createPromptLibraryItemWithRecovery,
+  createPromptLibraryTrialWithRecovery,
+  createPromptLibraryVersionWithRecovery,
+} from "@multica/core/prompt-library";
 import type {
   CreatePromptLibraryItemRequest,
   CreatePromptLibraryTrialRequest,
@@ -73,7 +77,7 @@ export function usePromptLibraryMutations({
   };
 
   const createPrompt = useMutation({
-    mutationFn: (data: CreatePromptLibraryItemRequest) => api.createPromptLibraryItem(data),
+    mutationFn: (data: CreatePromptLibraryItemRequest) => createPromptLibraryItemWithRecovery(data),
     onSuccess: (item) => {
       invalidateItems();
       invalidateVersions(item.id);
@@ -85,7 +89,7 @@ export function usePromptLibraryMutations({
 
   const createPromptVersion = useMutation({
     mutationFn: ({ id, data }: { id: string; data: CreatePromptLibraryVersionRequest }) =>
-      api.createPromptLibraryVersion(id, data),
+      createPromptLibraryVersionWithRecovery(id, data),
     onSuccess: (result) => {
       invalidateItems();
       invalidateVersions(result.item.id);

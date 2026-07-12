@@ -1999,27 +1999,36 @@ export class ApiClient extends ApiTransport {
     }) as ListPromptLibraryTrialsResponse;
   }
 
-  async createPromptLibraryItem(data: CreatePromptLibraryItemRequest): Promise<PromptLibraryItem> {
-    const raw = await this.fetch<unknown>("/api/prompt-library", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseOrThrow(raw, PromptLibraryItemSchema, EMPTY_PROMPT_LIBRARY_ITEM, {
-      endpoint: "POST /api/prompt-library",
-    }) as PromptLibraryItem;
+  async createPromptLibraryItem(data: CreatePromptLibraryItemRequest, idempotencyKey = generateUUID()): Promise<PromptLibraryItem> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>("/api/prompt-library", {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow(raw, PromptLibraryItemSchema, EMPTY_PROMPT_LIBRARY_ITEM, {
+        endpoint: "POST /api/prompt-library",
+        mayHaveCommitted: true,
+      }) as PromptLibraryItem;
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
-  async createPromptLibraryVersion(id: string, data: CreatePromptLibraryVersionRequest): Promise<CreatePromptLibraryVersionResponse> {
-    const raw = await this.fetch<unknown>(`/api/prompt-library/${id}/versions`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseOrThrow(
-      raw,
-      CreatePromptLibraryVersionResponseSchema,
-      { item: EMPTY_PROMPT_LIBRARY_ITEM, version: EMPTY_PROMPT_LIBRARY_VERSION },
-      { endpoint: "POST /api/prompt-library/:id/versions" },
-    ) as CreatePromptLibraryVersionResponse;
+  async createPromptLibraryVersion(id: string, data: CreatePromptLibraryVersionRequest, idempotencyKey = generateUUID()): Promise<CreatePromptLibraryVersionResponse> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/prompt-library/${id}/versions`, {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow(
+        raw,
+        CreatePromptLibraryVersionResponseSchema,
+        { item: EMPTY_PROMPT_LIBRARY_ITEM, version: EMPTY_PROMPT_LIBRARY_VERSION },
+        { endpoint: "POST /api/prompt-library/:id/versions", mayHaveCommitted: true },
+      ) as CreatePromptLibraryVersionResponse;
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async createPromptLibraryTrial(id: string, versionId: string, data: CreatePromptLibraryTrialRequest, idempotencyKey = generateUUID()): Promise<PromptLibraryTrial> {

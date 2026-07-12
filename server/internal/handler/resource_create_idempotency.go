@@ -12,15 +12,17 @@ import (
 )
 
 const (
-	resourceTypeProject            = "project"
-	resourceTypeSquad              = "squad"
-	resourceTypeAgent              = "agent"
-	resourceTypeSkill              = "skill"
-	resourceTypeAttachment         = "attachment"
-	resourceTypeQuickCreate        = "quick_create"
-	resourceTypeIssue              = "issue"
-	resourceTypeComment            = "comment"
-	resourceTypePromptLibraryTrial = "prompt_library_trial"
+	resourceTypeProject              = "project"
+	resourceTypeSquad                = "squad"
+	resourceTypeAgent                = "agent"
+	resourceTypeSkill                = "skill"
+	resourceTypeAttachment           = "attachment"
+	resourceTypeQuickCreate          = "quick_create"
+	resourceTypeIssue                = "issue"
+	resourceTypeComment              = "comment"
+	resourceTypePromptLibraryItem    = "prompt_library_item"
+	resourceTypePromptLibraryVersion = "prompt_library_version"
+	resourceTypePromptLibraryTrial   = "prompt_library_trial"
 )
 
 var errResourceCreateIdempotencyConflict = errors.New("resource create idempotency conflict")

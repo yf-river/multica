@@ -24,7 +24,7 @@
     "databaseFunctions": 9,
     "databaseTriggers": 4,
     "databaseIndexes": 187,
-    "migrations": 110,
+    "migrations": 112,
     "sqlcModules": 53,
     "sqlcQueries": 571,
     "goWebsocketEvents": 80,
@@ -6852,6 +6852,32 @@
           "droppedFunctions": [],
           "droppedTriggers": [],
           "droppedIndexes": []
+        },
+        {
+          "version": 56,
+          "name": "add_prompt_library_create_requests",
+          "direction": "down",
+          "source": "server/migrations/056_add_prompt_library_create_requests.down.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 56,
+          "name": "add_prompt_library_create_requests",
+          "direction": "up",
+          "source": "server/migrations/056_add_prompt_library_create_requests.up.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
         }
       ],
       "tables": [
@@ -13460,7 +13486,7 @@
         "source": "packages/core/prompt-library/trial-create.ts",
         "scope": "packages/core",
         "exports": [
-          "usePromptLibraryTrialCreateStore"
+          "usePromptLibraryCreateStore"
         ],
         "persisted": true
       },
@@ -18639,6 +18665,7 @@
           "server/internal/handler/prompt_evaluation_execution.go",
           "server/internal/handler/prompt_evaluation_runs.go",
           "server/internal/handler/prompt_evaluation_skill.go",
+          "server/internal/handler/prompt_library_create_idempotency.go",
           "server/internal/handler/prompt_library_trial_idempotency.go",
           "server/internal/handler/prompt_library.go",
           "server/internal/handler/quick_create_idempotency.go",
