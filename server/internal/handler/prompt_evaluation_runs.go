@@ -548,7 +548,33 @@ func (h *Handler) CreatePromptEvaluationEvidenceSnapshot(w http.ResponseWriter, 
 		writeError(w, http.StatusBadRequest, "snapshot_type must be 手动归档, 验收归档 or 自动归档")
 		return
 	}
-	item, err := h.createPromptEvaluationEvidenceSnapshotRecord(r.Context(), workspaceUUID, runID, snapshotType, parseUUID(userID))
+	actorID := parseUUID(userID)
+	requestHash, err := hashRequestFingerprint(struct {
+		RunID        string `json:"run_id"`
+		SnapshotType string `json:"snapshot_type"`
+	}{RunID: uuidToString(runID), SnapshotType: snapshotType})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to fingerprint prompt evaluation evidence snapshot")
+		return
+	}
+	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	replay, found, replayErr := loadResourceCreateReplay(
+		r.Context(), h.Queries, workspaceUUID, actorID, resourceTypePromptEvidenceSnapshot,
+		idempotencyKey, requestHash,
+		func(response PromptEvaluationEvidenceSnapshotResponse) bool { return response.ID != "" },
+	)
+	if replayErr != nil {
+		writePromptEvaluationEvidenceSnapshotReplayError(w, replayErr)
+		return
+	}
+	if found {
+		writeJSON(w, http.StatusCreated, replay)
+		return
+	}
+	params, err := h.buildPromptEvaluationEvidenceSnapshotRecord(r.Context(), workspaceUUID, runID, snapshotType, actorID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "prompt evaluation run not found")
@@ -557,7 +583,67 @@ func (h *Handler) CreatePromptEvaluationEvidenceSnapshot(w http.ResponseWriter, 
 		writeError(w, http.StatusInternalServerError, "failed to create prompt evaluation evidence snapshot")
 		return
 	}
-	writeJSON(w, http.StatusCreated, promptEvaluationEvidenceSnapshotToResponse(item, true))
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start prompt evaluation evidence snapshot transaction")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	_, err = qtx.ReserveResourceCreateRequest(r.Context(), db.ReserveResourceCreateRequestParams{
+		WorkspaceID: workspaceUUID, ActorID: actorID, ResourceType: resourceTypePromptEvidenceSnapshot,
+		IdempotencyKey: idempotencyKey, RequestHash: requestHash,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		_ = tx.Rollback(r.Context())
+		replay, found, replayErr = loadResourceCreateReplay(
+			r.Context(), h.Queries, workspaceUUID, actorID, resourceTypePromptEvidenceSnapshot,
+			idempotencyKey, requestHash,
+			func(response PromptEvaluationEvidenceSnapshotResponse) bool { return response.ID != "" },
+		)
+		if replayErr != nil || !found {
+			if replayErr == nil {
+				replayErr = errors.New("prompt evaluation evidence snapshot replay disappeared after conflict")
+			}
+			writePromptEvaluationEvidenceSnapshotReplayError(w, replayErr)
+			return
+		}
+		writeJSON(w, http.StatusCreated, replay)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reserve prompt evaluation evidence snapshot request")
+		return
+	}
+	item, err := qtx.CreatePromptEvaluationEvidenceSnapshot(r.Context(), params)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create prompt evaluation evidence snapshot")
+		return
+	}
+	response := promptEvaluationEvidenceSnapshotToResponse(item, true)
+	if err := completeResourceCreateRequest(
+		r.Context(), qtx, workspaceUUID, actorID, resourceTypePromptEvidenceSnapshot,
+		idempotencyKey, requestHash, item.ID, response,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to complete prompt evaluation evidence snapshot request")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit prompt evaluation evidence snapshot")
+		return
+	}
+	writeJSON(w, http.StatusCreated, response)
+}
+
+func writePromptEvaluationEvidenceSnapshotReplayError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errResourceCreateIdempotencyConflict) {
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": "Idempotency-Key was already used with a different evidence snapshot request",
+			"code":  "idempotency_conflict",
+		})
+		return
+	}
+	writeError(w, http.StatusInternalServerError, "failed to recover prompt evaluation evidence snapshot request")
 }
 
 func (h *Handler) CreatePromptEvaluationAssetEvidenceSnapshots(w http.ResponseWriter, r *http.Request) {
@@ -730,13 +816,21 @@ func parsePromptEvaluationAssetSnapshotQuery(w http.ResponseWriter, values url.V
 }
 
 func (h *Handler) createPromptEvaluationEvidenceSnapshotRecord(ctx context.Context, workspaceUUID pgtype.UUID, runID pgtype.UUID, snapshotType string, createdBy pgtype.UUID) (db.PromptEvaluationEvidenceSnapshot, error) {
-	evidence, err := h.buildPromptEvaluationRunEvidenceResponse(ctx, workspaceUUID, runID)
+	params, err := h.buildPromptEvaluationEvidenceSnapshotRecord(ctx, workspaceUUID, runID, snapshotType, createdBy)
 	if err != nil {
 		return db.PromptEvaluationEvidenceSnapshot{}, err
 	}
+	return h.Queries.CreatePromptEvaluationEvidenceSnapshot(ctx, params)
+}
+
+func (h *Handler) buildPromptEvaluationEvidenceSnapshotRecord(ctx context.Context, workspaceUUID pgtype.UUID, runID pgtype.UUID, snapshotType string, createdBy pgtype.UUID) (db.CreatePromptEvaluationEvidenceSnapshotParams, error) {
+	evidence, err := h.buildPromptEvaluationRunEvidenceResponse(ctx, workspaceUUID, runID)
+	if err != nil {
+		return db.CreatePromptEvaluationEvidenceSnapshotParams{}, err
+	}
 	insight, err := h.buildPromptEvaluationEvidenceSnapshotInsight(ctx, workspaceUUID, evidence)
 	if err != nil {
-		return db.PromptEvaluationEvidenceSnapshot{}, err
+		return db.CreatePromptEvaluationEvidenceSnapshotParams{}, err
 	}
 	now := time.Now().UTC()
 	payload := map[string]any{
@@ -746,7 +840,7 @@ func (h *Handler) createPromptEvaluationEvidenceSnapshotRecord(ctx context.Conte
 		"运行证据":    evidence,
 		"服务端解释快照": insight,
 	}
-	return h.Queries.CreatePromptEvaluationEvidenceSnapshot(ctx, db.CreatePromptEvaluationEvidenceSnapshotParams{
+	return db.CreatePromptEvaluationEvidenceSnapshotParams{
 		WorkspaceID:   workspaceUUID,
 		RunID:         runID,
 		SnapshotType:  snapshotType,
@@ -754,7 +848,7 @@ func (h *Handler) createPromptEvaluationEvidenceSnapshotRecord(ctx context.Conte
 		Summary:       mustJSONBytes(buildPromptEvaluationEvidenceSnapshotSummary(evidence, now, insight)),
 		Evidence:      mustJSONBytes(payload),
 		CreatedBy:     createdBy,
-	})
+	}, nil
 }
 
 func (h *Handler) GetPromptEvaluationEvidenceSnapshot(w http.ResponseWriter, r *http.Request) {

@@ -2418,7 +2418,10 @@ func TestPromptEvaluationEvidenceSnapshotArchivesRunEvidence(t *testing.T) {
 	}
 
 	createSnapshotW := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationEvidenceSnapshot(createSnapshotW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/evidence-snapshots?snapshot_type=验收归档", nil), "id", resp.Run.ID))
+	requestKey := uuid.NewString()
+	createSnapshotReq := withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/evidence-snapshots?snapshot_type=验收归档", nil), "id", resp.Run.ID)
+	createSnapshotReq.Header.Set("Idempotency-Key", requestKey)
+	testHandler.CreatePromptEvaluationEvidenceSnapshot(createSnapshotW, createSnapshotReq)
 	if createSnapshotW.Code != http.StatusCreated {
 		t.Fatalf("create snapshot status = %d, body = %s", createSnapshotW.Code, createSnapshotW.Body.String())
 	}
@@ -2447,6 +2450,20 @@ func TestPromptEvaluationEvidenceSnapshotArchivesRunEvidence(t *testing.T) {
 	}
 	if scores, ok := insight["维度评分摘要"].([]any); !ok || len(scores) < 1 {
 		t.Fatalf("snapshot insight missing dimension summaries: %#v", insight)
+	}
+	replayW := httptest.NewRecorder()
+	replayReq := withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/evidence-snapshots?snapshot_type=验收归档", nil), "id", resp.Run.ID)
+	replayReq.Header.Set("Idempotency-Key", requestKey)
+	testHandler.CreatePromptEvaluationEvidenceSnapshot(replayW, replayReq)
+	if replayW.Code != http.StatusCreated || replayW.Body.String() != createSnapshotW.Body.String() {
+		t.Fatalf("snapshot replay = %d %s, want exact %s", replayW.Code, replayW.Body.String(), createSnapshotW.Body.String())
+	}
+	conflictW := httptest.NewRecorder()
+	conflictReq := withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/evidence-snapshots?snapshot_type=手动归档", nil), "id", resp.Run.ID)
+	conflictReq.Header.Set("Idempotency-Key", requestKey)
+	testHandler.CreatePromptEvaluationEvidenceSnapshot(conflictW, conflictReq)
+	if conflictW.Code != http.StatusConflict {
+		t.Fatalf("changed snapshot replay = %d %s, want 409", conflictW.Code, conflictW.Body.String())
 	}
 
 	listW := httptest.NewRecorder()
