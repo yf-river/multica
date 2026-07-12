@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/realtime"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -16,25 +17,48 @@ type fakeScopeQuerier struct {
 	tasks    map[[16]byte]db.AgentTaskQueue
 	issues   map[[16]byte]db.Issue
 	sessions map[[16]byte]db.ChatSession
+	err      error
 }
 
 func (f *fakeScopeQuerier) GetAgentTask(_ context.Context, id pgtype.UUID) (db.AgentTaskQueue, error) {
+	if f.err != nil {
+		return db.AgentTaskQueue{}, f.err
+	}
 	if t, ok := f.tasks[id.Bytes]; ok {
 		return t, nil
 	}
-	return db.AgentTaskQueue{}, errors.New("not found")
+	return db.AgentTaskQueue{}, pgx.ErrNoRows
 }
 func (f *fakeScopeQuerier) GetIssue(_ context.Context, id pgtype.UUID) (db.Issue, error) {
+	if f.err != nil {
+		return db.Issue{}, f.err
+	}
 	if i, ok := f.issues[id.Bytes]; ok {
 		return i, nil
 	}
-	return db.Issue{}, errors.New("not found")
+	return db.Issue{}, pgx.ErrNoRows
 }
 func (f *fakeScopeQuerier) GetChatSession(_ context.Context, id pgtype.UUID) (db.ChatSession, error) {
+	if f.err != nil {
+		return db.ChatSession{}, f.err
+	}
 	if s, ok := f.sessions[id.Bytes]; ok {
 		return s, nil
 	}
-	return db.ChatSession{}, errors.New("not found")
+	return db.ChatSession{}, pgx.ErrNoRows
+}
+
+func TestScopeAuthorizerPropagatesStorageFailure(t *testing.T) {
+	workspaceID, _ := mustUUID(t)
+	userID, _ := mustUUID(t)
+	taskID, _ := mustUUID(t)
+	wantErr := errors.New("database unavailable")
+	a := newScopeAuthorizer(&fakeScopeQuerier{err: wantErr})
+
+	ok, err := a.AuthorizeScope(context.Background(), userID, workspaceID, realtime.ScopeTask, taskID)
+	if ok || !errors.Is(err, wantErr) {
+		t.Fatalf("AuthorizeScope() ok=%t err=%v, want false and wrapped %v", ok, err, wantErr)
+	}
 }
 
 func mustUUID(t *testing.T) (string, pgtype.UUID) {
