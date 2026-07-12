@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 )
@@ -90,6 +91,38 @@ func recordSquadLeaderEvaluationForTaskWithHeader(t *testing.T, fx runningSquadL
 		t.Fatalf("decode evaluation response: %v", err)
 	}
 	return response
+}
+
+func TestRecordSquadLeaderEvaluationPreservesCanceledSquadLookup(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	fx := newRunningSquadLeaderTaskFixture(t)
+	tx, err := testPool.Begin(context.Background())
+	if err != nil {
+		t.Fatalf("begin blocker: %v", err)
+	}
+	t.Cleanup(func() { _ = tx.Rollback(context.Background()) })
+	if _, err := tx.Exec(context.Background(), `LOCK TABLE squad IN ACCESS EXCLUSIVE MODE`); err != nil {
+		t.Fatalf("lock squad table: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	time.AfterFunc(100*time.Millisecond, cancel)
+	r := newRequest(http.MethodPost, "/api/issues/"+fx.IssueID+"/squad-evaluated", map[string]any{
+		"outcome": "no_action",
+		"reason":  "cancel test",
+	}).WithContext(ctx)
+	r = withURLParam(r, "id", fx.IssueID)
+	r.Header.Set("X-Agent-ID", fx.LeaderID)
+	r.Header.Set("X-Task-ID", fx.TaskID)
+	w := httptest.NewRecorder()
+	testHandler.RecordSquadLeaderEvaluation(w, r)
+
+	if w.Code != 499 {
+		t.Fatalf("canceled squad lookup = %d %s, want 499 instead of false not-found", w.Code, w.Body.String())
+	}
 }
 
 func TestRecordSquadLeaderEvaluation_RetryReplaysSingleActivity(t *testing.T) {

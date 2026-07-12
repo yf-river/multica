@@ -451,7 +451,7 @@ func (h *Handler) RecordSquadLeaderEvaluation(w http.ResponseWriter, r *http.Req
 		WorkspaceID: issue.WorkspaceID,
 	})
 	if err != nil {
-		writeError(w, http.StatusNotFound, "squad not found")
+		writeEntityLoadError(w, r, err, "squad", "squad_id", uuidToString(issue.AssigneeID))
 		return
 	}
 
@@ -470,7 +470,11 @@ func (h *Handler) RecordSquadLeaderEvaluation(w http.ResponseWriter, r *http.Req
 		return
 	}
 	task, err := h.Queries.GetAgentTask(r.Context(), taskUUID)
-	if err != nil || !task.IssueID.Valid || uuidToString(task.IssueID) != uuidToString(issue.ID) ||
+	if err != nil {
+		writeValidationLookupError(w, r, err, "task is not this issue's squad leader task", "squad leader task", "task_id", taskID)
+		return
+	}
+	if !task.IssueID.Valid || uuidToString(task.IssueID) != uuidToString(issue.ID) ||
 		uuidToString(task.AgentID) != actorID || !task.IsLeaderTask {
 		writeError(w, http.StatusBadRequest, "task is not this issue's squad leader task")
 		return
