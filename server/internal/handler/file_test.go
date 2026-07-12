@@ -757,6 +757,25 @@ func TestDownloadAttachment_BareNavigationDeniesNonMemberWith404(t *testing.T) {
 	}
 }
 
+func TestDownloadAttachmentClientCanceledReturns499(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	attachmentID := "11111111-1111-4111-8111-111111111111"
+	req := newRequest(http.MethodGet, "/api/attachments/"+attachmentID+"/download", nil)
+	ctx, cancel := context.WithCancel(req.Context())
+	cancel()
+	req = req.WithContext(ctx)
+	req = withURLParam(req, "id", attachmentID)
+
+	w := httptest.NewRecorder()
+	testHandler.DownloadAttachment(w, req)
+	if w.Code != 499 {
+		t.Fatalf("expected 499 for canceled attachment read, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestDownloadAttachment_AutoInternalEndpointProxies(t *testing.T) {
 	store := &mockStorage{}
 	origStorage := testHandler.Storage
