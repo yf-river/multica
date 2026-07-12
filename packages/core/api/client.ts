@@ -1630,14 +1630,23 @@ export class ApiClient extends ApiTransport {
     });
   }
 
-  async createMember(workspaceId: string, data: CreateMemberRequest): Promise<MemberWithUser> {
-    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/members`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseOrThrow(raw, MemberWithUserSchema, EMPTY_MEMBER_WITH_USER, {
-      endpoint: "POST /api/workspaces/:workspaceId/members",
-    });
+  async createMember(
+    workspaceId: string,
+    data: CreateMemberRequest,
+    idempotencyKey = generateUUID(),
+  ): Promise<MemberWithUser> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/members`, {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow(raw, MemberWithUserSchema, EMPTY_MEMBER_WITH_USER, {
+        endpoint: "POST /api/workspaces/:workspaceId/members",
+        mayHaveCommitted: true,
+      });
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async updateMember(workspaceId: string, memberId: string, data: UpdateMemberRequest): Promise<MemberWithUser> {

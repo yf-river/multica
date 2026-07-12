@@ -25,12 +25,12 @@ evidence reviewable by humans.
 | Database functions | 9 |
 | Database triggers | 4 |
 | Database indexes | 188 |
-| Migration files (up + down) | 116 |
+| Migration files (up + down) | 118 |
 | sqlc modules | 53 |
-| sqlc queries | 572 |
+| sqlc queries | 574 |
 | Go WebSocket events | 80 |
 | TypeScript WebSocket events | 70 |
-| Zustand store definitions | 37 |
+| Zustand store definitions | 38 |
 | React Query consumer files | 175 |
 | Environment variable names | 217 |
 | Manually identified external systems | 12 |
@@ -609,6 +609,8 @@ intentionally platform-specific.
 | 57 | add_workspace_create_request | up | — | 0 | 0 | 0 | `server/migrations/057_add_workspace_create_request.up.sql` |
 | 58 | add_external_credential_create_request | down | — | 0 | 0 | 0 | `server/migrations/058_add_external_credential_create_request.down.sql` |
 | 58 | add_external_credential_create_request | up | — | 0 | 0 | 1 | `server/migrations/058_add_external_credential_create_request.up.sql` |
+| 59 | add_workspace_member_create_request | down | — | 0 | 0 | 0 | `server/migrations/059_add_workspace_member_create_request.down.sql` |
+| 59 | add_workspace_member_create_request | up | — | 0 | 0 | 0 | `server/migrations/059_add_workspace_member_create_request.up.sql` |
 
 ### Current tables discovered from up migrations
 
@@ -711,7 +713,7 @@ intentionally platform-specific.
 
 ### sqlc modules
 
-All 572 query names, commands, and stable source anchors are stored in the JSON companion.
+All 574 query names, commands, and stable source anchors are stored in the JSON companion.
 
 | Module | Queries | SQL source | Generated source |
 | --- | --- | --- | --- |
@@ -732,7 +734,7 @@ All 572 query names, commands, and stable source anchors are stored in the JSON 
 | issue_label | 9 | `server/pkg/db/queries/issue_label.sql` | `server/pkg/db/generated/issue_label.sql.go` |
 | issue_reaction | 3 | `server/pkg/db/queries/issue_reaction.sql` | `server/pkg/db/generated/issue_reaction.sql.go` |
 | lark | 29 | `server/pkg/db/queries/lark.sql` | `server/pkg/db/generated/lark.sql.go` |
-| member | 7 | `server/pkg/db/queries/member.sql` | `server/pkg/db/generated/member.sql.go` |
+| member | 8 | `server/pkg/db/queries/member.sql` | `server/pkg/db/generated/member.sql.go` |
 | notification_preference | 3 | `server/pkg/db/queries/notification_preference.sql` | `server/pkg/db/generated/notification_preference.sql.go` |
 | personal_access_token | 7 | `server/pkg/db/queries/personal_access_token.sql` | `server/pkg/db/generated/personal_access_token.sql.go` |
 | pinned_item | 6 | `server/pkg/db/queries/pinned_item.sql` | `server/pkg/db/generated/pinned_item.sql.go` |
@@ -765,7 +767,7 @@ All 572 query names, commands, and stable source anchors are stored in the JSON 
 | task_token | 4 | `server/pkg/db/queries/task_token.sql` | `server/pkg/db/generated/task_token.sql.go` |
 | task_trace_event | 4 | `server/pkg/db/queries/task_trace_event.sql` | `server/pkg/db/generated/task_trace_event.sql.go` |
 | task_usage | 7 | `server/pkg/db/queries/task_usage.sql` | `server/pkg/db/generated/task_usage.sql.go` |
-| user | 4 | `server/pkg/db/queries/user.sql` | `server/pkg/db/generated/user.sql.go` |
+| user | 5 | `server/pkg/db/queries/user.sql` | `server/pkg/db/generated/user.sql.go` |
 | webhook_delivery | 8 | `server/pkg/db/queries/webhook_delivery.sql` | `server/pkg/db/generated/webhook_delivery.sql.go` |
 | workspace | 8 | `server/pkg/db/queries/workspace.sql` | `server/pkg/db/generated/workspace.sql.go` |
 
@@ -828,6 +830,7 @@ still include daemon-only/backend projection events and possible frontend gaps.
 | packages/core | `packages/core/squads/pending-operation-store.ts` | `useSquadPendingOperationStore` | yes |
 | packages/core | `packages/core/squads/stores/view-store.ts` | `useSquadsViewStore` | yes |
 | packages/core | `packages/core/workspace/create-operation.ts` | `useWorkspaceCreateOperationStore` | yes |
+| packages/core | `packages/core/workspace/member-create-operation.ts` | `useMemberCreateOperationStore` | yes |
 
 ### React Query usage
 
@@ -1082,7 +1085,7 @@ written to the generated outputs.
 | filesystem | 43 | `server/cmd/migrate/main.go`, `server/cmd/multica/cmd_agent.go`, `server/cmd/multica/cmd_attachment.go`, `server/cmd/multica/cmd_daemon_windows.go`, `server/cmd/multica/cmd_daemon.go`, `server/cmd/multica/cmd_issue_comments.go`, `server/cmd/multica/cmd_issue_pull_request.go`, `server/cmd/multica/cmd_issue.go` |
 | object-storage | 1 | `server/internal/storage/s3.go` |
 | outbound-http | 17 | `server/cmd/multica/cmd_daemon.go`, `server/cmd/multica/cmd_setup.go`, `server/internal/analytics/posthog.go`, `server/internal/auth/cloud_pat.go`, `server/internal/cli/client.go`, `server/internal/cli/update.go`, `server/internal/daemon/client.go`, `server/internal/daemon/task_artifacts.go` |
-| postgresql | 137 | `server/cmd/migrate/main.go`, `server/cmd/server/activity_listeners.go`, `server/cmd/server/autopilot_failure_monitor.go`, `server/cmd/server/autopilot_scheduler.go`, `server/cmd/server/chat_projection.go`, `server/cmd/server/comment_projection.go`, `server/cmd/server/dbstats.go`, `server/cmd/server/health.go` |
+| postgresql | 138 | `server/cmd/migrate/main.go`, `server/cmd/server/activity_listeners.go`, `server/cmd/server/autopilot_failure_monitor.go`, `server/cmd/server/autopilot_scheduler.go`, `server/cmd/server/chat_projection.go`, `server/cmd/server/comment_projection.go`, `server/cmd/server/dbstats.go`, `server/cmd/server/health.go` |
 | redis | 14 | `server/cmd/server/main.go`, `server/cmd/server/router.go`, `server/internal/auth/cloud_pat.go`, `server/internal/auth/membership_cache.go`, `server/internal/auth/pat_cache.go`, `server/internal/handler/runtime_liveness_store.go`, `server/internal/handler/runtime_local_skills_redis_store.go`, `server/internal/handler/runtime_models_redis_store.go` |
 | subprocess | 29 | `server/cmd/multica/cmd_auth.go`, `server/cmd/multica/cmd_daemon_unix.go`, `server/cmd/multica/cmd_daemon.go`, `server/internal/cli/update.go`, `server/internal/daemon/config.go`, `server/internal/daemon/execenv/codex_home_link_windows.go`, `server/internal/daemon/execenv/openclaw_config.go`, `server/internal/daemon/gc.go` |
 | websocket | 4 | `server/internal/daemon/wakeup.go`, `server/internal/daemonws/hub.go`, `server/internal/integrations/lark/ws_connector.go`, `server/internal/realtime/hub.go` |

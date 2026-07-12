@@ -628,6 +628,27 @@ describe("ApiClient", () => {
     expect(second["Idempotency-Key"]).toBe(first["Idempotency-Key"]);
   });
 
+  it("retries member-create unknown outcomes without changing request identity", async () => {
+    const member = {
+      id: "member-1", workspace_id: "workspace-1", user_id: "user-2", role: "member",
+      created_at: "now", name: "Ada", account: "ada", avatar_url: null,
+    };
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify(member), {
+        status: 201, headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.createMember("workspace-1", {
+      account: "ada", password: "MemberPassword1!", role: "member",
+    })).resolves.toMatchObject({ id: "member-1" });
+    const first = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    const second = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
+    expect(first["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(second["Idempotency-Key"]).toBe(first["Idempotency-Key"]);
+  });
+
   it("validates Lark installation state without exposing installation secrets", async () => {
     const installation = {
       id: "installation-1",

@@ -11,6 +11,11 @@ INSERT INTO "user" (name, account, avatar_url)
 VALUES ($1, $2, $3)
 RETURNING *;
 
+-- name: CreateUserWithPassword :one
+INSERT INTO "user" (name, account, password_hash)
+VALUES ($1, $2, $3)
+RETURNING *;
+
 -- name: UpdateUser :one
 -- Patches the user-controlled profile fields. Each parameter follows
 -- COALESCE-on-NULL semantics so the handler can omit any field it

@@ -981,6 +981,22 @@ export class TestApiClient {
     }
   }
 
+  async cleanupWorkspaceMemberFixture(account: string, requestKey?: string): Promise<void> {
+    const client = new pg.Client(DATABASE_URL);
+    await client.connect();
+    try {
+      if (requestKey) {
+        await client.query(
+          `DELETE FROM resource_create_request WHERE resource_type='workspace_member' AND idempotency_key=$1`,
+          [requestKey],
+        );
+      }
+      await client.query(`DELETE FROM "user" WHERE account=$1`, [account]);
+    } finally {
+      await client.end();
+    }
+  }
+
   async getProject(projectId: string) {
     const res = await this.authedFetch(`/api/projects/${projectId}`);
     if (!res.ok) {

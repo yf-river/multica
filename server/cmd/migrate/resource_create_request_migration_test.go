@@ -343,3 +343,27 @@ func TestWorkspaceCreateRequestMigrationExtendsCurrentResourceContract(t *testin
 		t.Fatalf("workspace request type rejected: %v", err)
 	}
 }
+
+func TestWorkspaceMemberCreateRequestMigrationExtendsCurrentResourceContract(t *testing.T) {
+	pool := openTestPool(t)
+	ctx := context.Background()
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	isolateResourceCreateRequestMigration(t, ctx, tx)
+	if _, err := tx.Exec(ctx, readMigrationFile(t, "059_add_workspace_member_create_request.up.sql")); err != nil {
+		t.Fatal(err)
+	}
+	var workspaceID string
+	if err := tx.QueryRow(ctx, `INSERT INTO workspace (name, slug) VALUES ('Member Request Migration', $1) RETURNING id`, "member-request-"+uuid.NewString()).Scan(&workspaceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO resource_create_request (workspace_id, actor_id, resource_type, idempotency_key, request_hash)
+		VALUES ($1, $2, 'workspace_member', $3, $4)
+	`, workspaceID, uuid.NewString(), uuid.NewString(), "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"); err != nil {
+		t.Fatalf("workspace_member request type rejected: %v", err)
+	}
+}

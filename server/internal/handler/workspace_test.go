@@ -132,6 +132,176 @@ func TestCreateWorkspaceCompletionFailureRollsBackWorkspaceOwnerAndRequest(t *te
 	}
 }
 
+func TestCreateMemberRecoversTheExactCommittedResult(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	key := uuid.NewString()
+	account := "member-replay-" + strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
+	body := map[string]any{
+		"account": account, "name": "Replay Member", "password": "ReplayMember1!", "role": "member",
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(ctx, `DELETE FROM resource_create_request WHERE workspace_id=$1 AND actor_id=$2 AND resource_type='workspace_member' AND idempotency_key=$3`, testWorkspaceID, testUserID, key)
+		_, _ = testPool.Exec(ctx, `DELETE FROM "user" WHERE account = $1`, account)
+	})
+	create := func(payload map[string]any) *httptest.ResponseRecorder {
+		req := newRequest(http.MethodPost, "/api/workspaces/"+testWorkspaceID+"/members", payload)
+		req.Header.Set("X-Workspace-ID", testWorkspaceID)
+		req.Header.Set("Idempotency-Key", key)
+		req = withURLParam(req, "id", testWorkspaceID)
+		w := httptest.NewRecorder()
+		testHandler.CreateMember(w, req)
+		return w
+	}
+	first := create(body)
+	replay := create(body)
+	if first.Code != http.StatusCreated {
+		t.Fatalf("first create = %d %s", first.Code, first.Body.String())
+	}
+	if replay.Code != http.StatusCreated || replay.Body.String() != first.Body.String() {
+		t.Fatalf("member replay = %d %s, want exact %s", replay.Code, replay.Body.String(), first.Body.String())
+	}
+	responses := make(chan *httptest.ResponseRecorder, 8)
+	var wait sync.WaitGroup
+	for range 8 {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			responses <- create(body)
+		}()
+	}
+	wait.Wait()
+	close(responses)
+	for response := range responses {
+		if response.Code != http.StatusCreated || response.Body.String() != first.Body.String() {
+			t.Fatalf("concurrent member replay = %d %s, want exact", response.Code, response.Body.String())
+		}
+	}
+	changed := create(map[string]any{
+		"account": account, "name": "Changed Member", "password": "ReplayMember1!", "role": "admin",
+	})
+	if changed.Code != http.StatusConflict {
+		t.Fatalf("changed replay = %d %s, want 409", changed.Code, changed.Body.String())
+	}
+	var users, members int
+	var requestHash string
+	var responseBody []byte
+	if err := testPool.QueryRow(ctx, `SELECT
+		(SELECT count(*) FROM "user" WHERE account=$1),
+		(SELECT count(*) FROM member m JOIN "user" u ON u.id=m.user_id WHERE u.account=$1 AND m.workspace_id=$2),
+		r.request_hash, r.response_body
+		FROM resource_create_request r
+		WHERE r.workspace_id=$2 AND r.actor_id=$3 AND r.resource_type='workspace_member' AND r.idempotency_key=$4
+	`, account, testWorkspaceID, testUserID, key).Scan(&users, &members, &requestHash, &responseBody); err != nil {
+		t.Fatal(err)
+	}
+	if users != 1 || members != 1 {
+		t.Fatalf("member writes = %d users, %d members; want 1/1", users, members)
+	}
+	if len(requestHash) != 64 || strings.Contains(string(responseBody), "ReplayMember1!") {
+		t.Fatalf("member request persisted sensitive input: hash_len=%d response=%s", len(requestHash), responseBody)
+	}
+}
+
+func TestCreateMemberFailureDoesNotLeaveLoginCapableOrphanUser(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	account := "member-rollback-" + strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
+	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
+	functionName := "member_create_fail_fn_" + suffix
+	triggerName := "member_create_fail_" + suffix
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON member; DROP FUNCTION IF EXISTS %s()`, triggerName, functionName))
+		_, _ = testPool.Exec(ctx, `DELETE FROM "user" WHERE account = $1`, account)
+	})
+	if _, err := testPool.Exec(ctx, fmt.Sprintf(`
+		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF EXISTS (SELECT 1 FROM "user" WHERE id=NEW.user_id AND account='%s') THEN
+				RAISE EXCEPTION 'forced member insert failure';
+			END IF;
+			RETURN NEW;
+		END;
+		$$;
+		CREATE TRIGGER %s BEFORE INSERT ON member
+		FOR EACH ROW EXECUTE FUNCTION %s();
+	`, functionName, account, triggerName, functionName)); err != nil {
+		t.Fatal(err)
+	}
+
+	req := newRequest(http.MethodPost, "/api/workspaces/"+testWorkspaceID+"/members", map[string]any{
+		"account": account, "name": "Rollback Member", "password": "RollbackMember1!", "role": "member",
+	})
+	req.Header.Set("X-Workspace-ID", testWorkspaceID)
+	req.Header.Set("Idempotency-Key", uuid.NewString())
+	req = withURLParam(req, "id", testWorkspaceID)
+	w := httptest.NewRecorder()
+	testHandler.CreateMember(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("member failure = %d %s, want 500", w.Code, w.Body.String())
+	}
+	var users, loginCapable int
+	if err := testPool.QueryRow(ctx, `SELECT
+		count(*), count(*) FILTER (WHERE password_hash IS NOT NULL AND password_hash <> '')
+		FROM "user" WHERE account=$1
+	`, account).Scan(&users, &loginCapable); err != nil {
+		t.Fatal(err)
+	}
+	if users != 0 || loginCapable != 0 {
+		t.Fatalf("failed member create left users=%d login_capable=%d; want 0/0", users, loginCapable)
+	}
+}
+
+func TestCreateMemberRejectsPlainWorkspaceMember(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
+	requesterAccount := "plain-requester-" + suffix
+	targetAccount := "plain-created-admin-" + suffix
+	requestKey := uuid.NewString()
+	var requesterID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO "user" (name, account) VALUES ('Plain Requester', $1) RETURNING id
+	`, requesterAccount).Scan(&requesterID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, 'member')
+	`, testWorkspaceID, requesterID); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(ctx, `DELETE FROM resource_create_request WHERE resource_type='workspace_member' AND idempotency_key=$1`, requestKey)
+		_, _ = testPool.Exec(ctx, `DELETE FROM "user" WHERE account IN ($1, $2)`, requesterAccount, targetAccount)
+	})
+
+	req := newRequest(http.MethodPost, "/api/workspaces/"+testWorkspaceID+"/members", map[string]any{
+		"account": targetAccount, "name": "Unauthorized Admin", "password": "UnauthorizedAdmin1!", "role": "admin",
+	})
+	req.Header.Set("X-User-ID", requesterID)
+	req.Header.Set("X-Workspace-ID", testWorkspaceID)
+	req.Header.Set("Idempotency-Key", requestKey)
+	req = withURLParam(req, "id", testWorkspaceID)
+	w := httptest.NewRecorder()
+	testHandler.CreateMember(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("plain member create = %d %s, want 403", w.Code, w.Body.String())
+	}
+	var targetUsers int
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM "user" WHERE account=$1`, targetAccount).Scan(&targetUsers); err != nil {
+		t.Fatal(err)
+	}
+	if targetUsers != 0 {
+		t.Fatalf("unauthorized member create wrote %d target users", targetUsers)
+	}
+}
+
 func TestCreateWorkspace_RejectsReservedSlug(t *testing.T) {
 	// Drive the test off the actual reservedSlugs map so the test can never
 	// drift from the source of truth. New entries are covered automatically.

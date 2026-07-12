@@ -36,6 +36,37 @@ func (q *Queries) CreateMember(ctx context.Context, arg CreateMemberParams) (Mem
 	return i, err
 }
 
+const createMemberWithID = `-- name: CreateMemberWithID :one
+INSERT INTO member (id, workspace_id, user_id, role)
+VALUES ($1, $2, $3, $4)
+RETURNING id, workspace_id, user_id, role, created_at
+`
+
+type CreateMemberWithIDParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	UserID      pgtype.UUID `json:"user_id"`
+	Role        string      `json:"role"`
+}
+
+func (q *Queries) CreateMemberWithID(ctx context.Context, arg CreateMemberWithIDParams) (Member, error) {
+	row := q.db.QueryRow(ctx, createMemberWithID,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.UserID,
+		arg.Role,
+	)
+	var i Member
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.UserID,
+		&i.Role,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const deleteMember = `-- name: DeleteMember :exec
 DELETE FROM member WHERE id = $1
 `

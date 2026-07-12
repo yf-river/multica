@@ -24,6 +24,7 @@ const (
 	resourceTypePromptLibraryItem    = "prompt_library_item"
 	resourceTypePromptLibraryVersion = "prompt_library_version"
 	resourceTypePromptLibraryTrial   = "prompt_library_trial"
+	resourceTypeWorkspaceMember     = "workspace_member"
 )
 
 var errResourceCreateIdempotencyConflict = errors.New("resource create idempotency conflict")

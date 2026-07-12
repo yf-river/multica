@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/logger"
@@ -709,6 +711,10 @@ func (h *Handler) CreateMember(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	if requester.Role != "owner" && requester.Role != "admin" {
+		writeError(w, http.StatusForbidden, "insufficient permissions")
+		return
+	}
 
 	var req CreateMemberRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -734,41 +740,85 @@ func (h *Handler) CreateMember(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "insufficient permissions")
 		return
 	}
-
-	user, err := h.Queries.GetUserByAccount(r.Context(), account)
+	requestHash, err := hashRequestFingerprint(struct {
+		Account          string `json:"account"`
+		Name             string `json:"name"`
+		Role             string `json:"role"`
+		PasswordProvided bool   `json:"password_provided"`
+	}{Account: account, Name: name, Role: role, PasswordProvided: req.Password != ""})
 	if err != nil {
-		if isNotFound(err) {
-			if msg := validatePassword(req.Password); msg != "" {
-				writeError(w, http.StatusBadRequest, msg)
-				return
-			}
-			passwordHash, err := hashPassword(req.Password)
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, "failed to hash password")
-				return
-			}
-			user, err = h.Queries.CreateUser(r.Context(), db.CreateUserParams{
-				Name:    name,
-				Account: account,
-			})
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, "failed to create user")
-				return
-			}
-			if _, err := h.DB.Exec(r.Context(), `UPDATE "user" SET password_hash = $2, updated_at = now() WHERE id = $1`, user.ID, passwordHash); err != nil {
-				writeError(w, http.StatusInternalServerError, "failed to save password")
-				return
-			}
-		} else {
-			writeError(w, http.StatusInternalServerError, "failed to load user")
-			return
-		}
+		writeError(w, http.StatusInternalServerError, "failed to fingerprint workspace member request")
+		return
+	}
+	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	actorID := requester.UserID
+	if replay, found, err := h.loadWorkspaceMemberCreateReplay(
+		r.Context(), requester.WorkspaceID, actorID, idempotencyKey, requestHash,
+	); err != nil {
+		writeWorkspaceMemberCreateReplayError(w, err)
+		return
+	} else if found {
+		writeJSON(w, http.StatusCreated, replay)
+		return
 	}
 
-	member, err := h.Queries.CreateMember(r.Context(), db.CreateMemberParams{
-		WorkspaceID: requester.WorkspaceID,
-		UserID:      user.ID,
-		Role:        role,
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start member transaction")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	_, err = qtx.ReserveResourceCreateRequest(r.Context(), db.ReserveResourceCreateRequestParams{
+		WorkspaceID: requester.WorkspaceID, ActorID: actorID, ResourceType: resourceTypeWorkspaceMember,
+		IdempotencyKey: idempotencyKey, RequestHash: requestHash,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		_ = tx.Rollback(r.Context())
+		replay, found, replayErr := h.loadWorkspaceMemberCreateReplay(
+			r.Context(), requester.WorkspaceID, actorID, idempotencyKey, requestHash,
+		)
+		if replayErr != nil || !found {
+			if replayErr == nil {
+				replayErr = errors.New("workspace member create replay disappeared after conflict")
+			}
+			writeWorkspaceMemberCreateReplayError(w, replayErr)
+			return
+		}
+		writeJSON(w, http.StatusCreated, replay)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reserve workspace member request")
+		return
+	}
+
+	user, err := qtx.GetUserByAccount(r.Context(), account)
+	if errors.Is(err, pgx.ErrNoRows) {
+		if msg := validatePassword(req.Password); msg != "" {
+			writeError(w, http.StatusBadRequest, msg)
+			return
+		}
+		passwordHash, hashErr := hashPassword(req.Password)
+		if hashErr != nil {
+			writeError(w, http.StatusInternalServerError, "failed to hash password")
+			return
+		}
+		user, err = qtx.CreateUserWithPassword(r.Context(), db.CreateUserWithPasswordParams{
+			Name: name, Account: account,
+			PasswordHash: pgtype.Text{String: passwordHash, Valid: true},
+		})
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create or load user")
+		return
+	}
+
+	member, err := qtx.CreateMemberWithID(r.Context(), db.CreateMemberWithIDParams{
+		ID: idempotencyKey, WorkspaceID: requester.WorkspaceID, UserID: user.ID, Role: role,
 	})
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -779,16 +829,28 @@ func (h *Handler) CreateMember(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to create member")
 		return
 	}
+	response := memberWithUserResponse(member, user)
+	if err := completeResourceCreateRequest(
+		r.Context(), qtx, requester.WorkspaceID, actorID, resourceTypeWorkspaceMember,
+		idempotencyKey, requestHash, member.ID, response,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to complete workspace member request")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create member")
+		return
+	}
 
 	slog.Info("member added", append(logger.RequestAttrs(r), "member_id", uuidToString(member.ID), "workspace_id", workspaceID, "account", account, "role", role)...)
 	userID := requestUserID(r)
-	eventPayload := map[string]any{"member": memberWithUserResponse(member, user)}
+	eventPayload := map[string]any{"member": response}
 	if ws, err := h.Queries.GetWorkspace(r.Context(), requester.WorkspaceID); err == nil {
 		eventPayload["workspace_name"] = ws.Name
 	}
 	h.publish(protocol.EventMemberAdded, uuidToString(requester.WorkspaceID), "member", userID, eventPayload)
 
-	writeJSON(w, http.StatusCreated, memberWithUserResponse(member, user))
+	writeJSON(w, http.StatusCreated, response)
 }
 
 type UpdateMemberRequest struct {

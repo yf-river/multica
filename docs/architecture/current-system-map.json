@@ -24,12 +24,12 @@
     "databaseFunctions": 9,
     "databaseTriggers": 4,
     "databaseIndexes": 188,
-    "migrations": 116,
+    "migrations": 118,
     "sqlcModules": 53,
-    "sqlcQueries": 572,
+    "sqlcQueries": 574,
     "goWebsocketEvents": 80,
     "typescriptWebsocketEvents": 70,
-    "zustandStores": 37,
+    "zustandStores": 38,
     "reactQueryConsumerFiles": 175,
     "environmentVariables": 217,
     "manualExternalSystems": 12
@@ -6937,6 +6937,32 @@
           "droppedFunctions": [],
           "droppedTriggers": [],
           "droppedIndexes": []
+        },
+        {
+          "version": 59,
+          "name": "add_workspace_member_create_request",
+          "direction": "down",
+          "source": "server/migrations/059_add_workspace_member_create_request.down.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 59,
+          "name": "add_workspace_member_create_request",
+          "direction": "up",
+          "source": "server/migrations/059_add_workspace_member_create_request.up.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
         }
       ],
       "tables": [
@@ -10086,6 +10112,11 @@
               "source": "server/pkg/db/queries/member.sql#CreateMember"
             },
             {
+              "name": "CreateMemberWithID",
+              "command": "one",
+              "source": "server/pkg/db/queries/member.sql#CreateMemberWithID"
+            },
+            {
               "name": "DeleteMember",
               "command": "exec",
               "source": "server/pkg/db/queries/member.sql#DeleteMember"
@@ -11595,6 +11626,11 @@
               "name": "CreateUser",
               "command": "one",
               "source": "server/pkg/db/queries/user.sql#CreateUser"
+            },
+            {
+              "name": "CreateUserWithPassword",
+              "command": "one",
+              "source": "server/pkg/db/queries/user.sql#CreateUserWithPassword"
             },
             {
               "name": "GetUser",
@@ -13613,6 +13649,14 @@
         "scope": "packages/core",
         "exports": [
           "useWorkspaceCreateOperationStore"
+        ],
+        "persisted": true
+      },
+      {
+        "source": "packages/core/workspace/member-create-operation.ts",
+        "scope": "packages/core",
+        "exports": [
+          "useMemberCreateOperationStore"
         ],
         "persisted": true
       }
@@ -15654,7 +15698,7 @@
       },
       {
         "scope": "packages/core",
-        "count": 35
+        "count": 36
       }
     ],
     "reactQueryByScope": [
@@ -18773,6 +18817,7 @@
           "server/internal/handler/tenant_admin.go",
           "server/internal/handler/webhook_delivery.go",
           "server/internal/handler/workspace_idempotency.go",
+          "server/internal/handler/workspace_member_idempotency.go",
           "server/internal/handler/workspace_revoke.go",
           "server/internal/handler/workspace.go",
           "server/internal/integrations/lark/audit.go",

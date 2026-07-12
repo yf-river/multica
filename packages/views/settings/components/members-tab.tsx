@@ -42,6 +42,7 @@ import { useWorkspaceId } from "@multica/core/paths";
 import { useCurrentWorkspace } from "@multica/core/paths";
 import { memberListOptions, workspaceKeys } from "@multica/core/workspace/queries";
 import { api } from "@multica/core/api";
+import { createMemberWithRecovery } from "@multica/core/workspace";
 import { useT } from "../../i18n";
 
 const ROLE_ICONS: Record<MemberRole, typeof Crown> = {
@@ -221,7 +222,7 @@ export function MembersTab() {
 
     setCreateLoading(true);
     try {
-      await api.createMember(workspace.id, {
+      await createMemberWithRecovery(workspace.id, {
         account: newAccount,
         name: newName || undefined,
         password: newPassword || undefined,

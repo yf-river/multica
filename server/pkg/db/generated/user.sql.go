@@ -43,6 +43,38 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 	return i, err
 }
 
+const createUserWithPassword = `-- name: CreateUserWithPassword :one
+INSERT INTO "user" (name, account, password_hash)
+VALUES ($1, $2, $3)
+RETURNING id, name, account, avatar_url, created_at, updated_at, onboarded_at, onboarding_questionnaire, starter_content_state, profile_description, timezone, password_hash
+`
+
+type CreateUserWithPasswordParams struct {
+	Name         string      `json:"name"`
+	Account      string      `json:"account"`
+	PasswordHash pgtype.Text `json:"password_hash"`
+}
+
+func (q *Queries) CreateUserWithPassword(ctx context.Context, arg CreateUserWithPasswordParams) (User, error) {
+	row := q.db.QueryRow(ctx, createUserWithPassword, arg.Name, arg.Account, arg.PasswordHash)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Account,
+		&i.AvatarUrl,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.OnboardedAt,
+		&i.OnboardingQuestionnaire,
+		&i.StarterContentState,
+		&i.ProfileDescription,
+		&i.Timezone,
+		&i.PasswordHash,
+	)
+	return i, err
+}
+
 const getUser = `-- name: GetUser :one
 SELECT id, name, account, avatar_url, created_at, updated_at, onboarded_at, onboarding_questionnaire, starter_content_state, profile_description, timezone, password_hash FROM "user"
 WHERE id = $1
