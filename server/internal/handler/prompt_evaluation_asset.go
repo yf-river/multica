@@ -12,6 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/prompteval"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -1342,7 +1343,7 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 		"评估结论":            "等待智能体执行完成",
 	}
 	payload["最近Agent运行"] = runIndex
-	payload["Agent运行记录"] = appendPromptEvaluationAgentRunHistory(payload["Agent运行记录"], runIndex)
+	payload["Agent运行记录"] = prompteval.PrependAgentRunHistory(payload["Agent运行记录"], runIndex)
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to encode training evaluation agent run")

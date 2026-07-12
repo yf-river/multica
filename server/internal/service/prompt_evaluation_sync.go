@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/metrics"
+	"github.com/multica-ai/multica/server/internal/prompteval"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -302,7 +303,7 @@ func syncPromptEvaluationAssetAgentRunSnapshot(ctx context.Context, q *db.Querie
 		"评估结论":            conclusion,
 	}
 	payload["最近Agent运行"] = record
-	payload["Agent运行记录"] = appendPromptEvaluationAgentRunHistory(payload["Agent运行记录"], record)
+	payload["Agent运行记录"] = prompteval.PrependAgentRunHistory(payload["Agent运行记录"], record)
 	_, err = q.UpdatePromptEvaluationAsset(ctx, db.UpdatePromptEvaluationAssetParams{
 		ID:          asset.ID,
 		WorkspaceID: asset.WorkspaceID,
@@ -990,24 +991,6 @@ func promptEvaluationPerCaseUsage(totalCases int32, inputTokens int32, outputTok
 		return 0, 0
 	}
 	return inputTokens / totalCases, outputTokens / totalCases
-}
-
-func appendPromptEvaluationAgentRunHistory(raw any, result map[string]any) []any {
-	history, _ := raw.([]any)
-	runID := stringFromAny(result["run_id"])
-	next := []any{result}
-	for _, item := range history {
-		if runID != "" {
-			if existing, ok := item.(map[string]any); ok && stringFromAny(existing["run_id"]) == runID {
-				continue
-			}
-		}
-		next = append(next, item)
-	}
-	if len(next) > 20 {
-		next = next[:20]
-	}
-	return next
 }
 
 func decodePayloadObject(raw []byte) map[string]any {

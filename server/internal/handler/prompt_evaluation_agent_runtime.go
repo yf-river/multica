@@ -767,24 +767,6 @@ func appendPromptEvaluationRunHistory(raw any, result promptEvaluationRunResult)
 	return next
 }
 
-func appendPromptEvaluationAgentRunHistory(raw any, result map[string]any) []any {
-	history, _ := raw.([]any)
-	runID := stringFromAny(result["run_id"])
-	next := []any{result}
-	for _, item := range history {
-		if runID != "" {
-			if existing, ok := item.(map[string]any); ok && stringFromAny(existing["run_id"]) == runID {
-				continue
-			}
-		}
-		next = append(next, item)
-	}
-	if len(next) > 20 {
-		next = next[:20]
-	}
-	return next
-}
-
 func floatFromAny(value any) float64 {
 	switch typed := value.(type) {
 	case float64:
