@@ -579,8 +579,16 @@ func (h *Handler) CancelTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	taskID := chi.URLParam(r, "taskId")
-	existing, err := h.Queries.GetAgentTask(r.Context(), parseUUID(taskID))
-	if err != nil || uuidToString(existing.IssueID) != uuidToString(issue.ID) {
+	taskUUID, ok := parseUUIDOrBadRequest(w, taskID, "task_id")
+	if !ok {
+		return
+	}
+	existing, err := h.Queries.GetAgentTask(r.Context(), taskUUID)
+	if err != nil {
+		writeEntityLoadError(w, r, err, "task", "task_id", taskID)
+		return
+	}
+	if uuidToString(existing.IssueID) != uuidToString(issue.ID) {
 		writeError(w, http.StatusNotFound, "task not found")
 		return
 	}
@@ -631,7 +639,7 @@ func (h *Handler) ListTaskMessagesByUser(w http.ResponseWriter, r *http.Request)
 
 	task, err := h.Queries.GetAgentTask(r.Context(), taskUUID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "task not found")
+		writeEntityLoadError(w, r, err, "task", "task_id", taskID)
 		return
 	}
 
@@ -660,6 +668,9 @@ func (h *Handler) ListTaskMessagesByUser(w http.ResponseWriter, r *http.Request)
 		messages, queryErr = h.Queries.ListTaskMessages(r.Context(), taskUUID)
 	}
 	if queryErr != nil {
+		if writeClientClosedIfCanceled(w, queryErr) {
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "failed to list task messages")
 		return
 	}
