@@ -114,6 +114,16 @@ func TestWorkspaceEntityPreservesLookupFailure(t *testing.T) {
 	}
 }
 
+func TestRuntimeOnlinePreservesLookupFailure(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	online, err := testHandler.runtimeOnline(ctx, util.MustParseUUID("11111111-1111-1111-1111-111111111111"))
+	if online || err == nil {
+		t.Fatalf("runtimeOnline() online=%t err=%v, want false with runtime lookup error", online, err)
+	}
+}
+
 // personalAgentTestFixture sets up a personal agent owned by a freshly created
 // user, plus a second non-admin member in the workspace. Returns the agent
 // id, the owner's user id, and the unrelated member's user id. The caller's
