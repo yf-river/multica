@@ -20,11 +20,11 @@
     "webRouteHandlers": 1,
     "webRewrites": 6,
     "desktopRouteLiterals": 29,
-    "databaseTables": 87,
+    "databaseTables": 85,
     "databaseFunctions": 9,
     "databaseTriggers": 4,
     "databaseIndexes": 185,
-    "migrations": 58,
+    "migrations": 60,
     "sqlcModules": 54,
     "sqlcQueries": 576,
     "goWebsocketEvents": 80,
@@ -3686,10 +3686,6 @@
               "source": "server/migrations/001_current_schema.up.sql#comment_reaction"
             },
             {
-              "name": "daemon_connection",
-              "source": "server/migrations/001_current_schema.up.sql#daemon_connection"
-            },
-            {
               "name": "external_credential_profile",
               "source": "server/migrations/001_current_schema.up.sql#external_credential_profile"
             },
@@ -3724,10 +3720,6 @@
             {
               "name": "issue",
               "source": "server/migrations/001_current_schema.up.sql#issue"
-            },
-            {
-              "name": "issue_dependency",
-              "source": "server/migrations/001_current_schema.up.sql#issue_dependency"
             },
             {
               "name": "issue_label",
@@ -6037,6 +6029,32 @@
           "droppedFunctions": [],
           "droppedTriggers": [],
           "droppedIndexes": []
+        },
+        {
+          "version": 30,
+          "name": "remove_unused_relations",
+          "direction": "down",
+          "source": "server/migrations/030_remove_unused_relations.down.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 30,
+          "name": "remove_unused_relations",
+          "direction": "up",
+          "source": "server/migrations/030_remove_unused_relations.up.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
         }
       ],
       "tables": [
@@ -6121,10 +6139,6 @@
           "source": "server/migrations/001_current_schema.up.sql#comment_reaction"
         },
         {
-          "name": "daemon_connection",
-          "source": "server/migrations/001_current_schema.up.sql#daemon_connection"
-        },
-        {
           "name": "domain_event_delivery",
           "source": "server/migrations/003_domain_event_outbox.up.sql#domain_event_delivery"
         },
@@ -6167,10 +6181,6 @@
         {
           "name": "issue",
           "source": "server/migrations/001_current_schema.up.sql#issue"
-        },
-        {
-          "name": "issue_dependency",
-          "source": "server/migrations/001_current_schema.up.sql#issue_dependency"
         },
         {
           "name": "issue_label",
