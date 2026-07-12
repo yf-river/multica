@@ -65,7 +65,7 @@ import {
   ExternalCredentialProfileSchema,
   TestExternalCredentialProfileResponseSchema,
 } from "./schemas-external-credentials";
-import { LarkInstallStatusResponseSchema } from "./schemas-lark";
+import { LarkInstallationListResponseSchema, LarkInstallStatusResponseSchema } from "./schemas-lark";
 import {
   GitHubConnectResponseSchema,
   GitHubPullRequestListResponseSchema,
@@ -96,6 +96,23 @@ describe("domain response schema fallbacks", () => {
       created_at: "2026-07-12T00:00:00Z",
     });
     expect(parsed.source).toBe("手动创建");
+  });
+
+  it("normalizes missing Lark booleans and region before exposing the current model", () => {
+    const parsed = LarkInstallationListResponseSchema.parse({
+      configured: true,
+      installations: [{
+        id: "installation-1",
+        workspace_id: "workspace-1",
+        agent_id: "agent-1",
+        app_id: "app-1",
+        bot_open_id: "bot-1",
+        installer_user_id: "user-1",
+        status: "active",
+      }],
+    });
+    expect(parsed.install_supported).toBe(false);
+    expect(parsed.installations[0]?.region).toBe("feishu");
   });
 
   it("keeps app configuration usable when the response is not an object", () => {
