@@ -41,8 +41,18 @@ export interface PromptEvaluationStructuredPayload extends Record<string, unknow
   payload_contract?: Record<string, unknown>;
   metric_contract?: string[];
   指标口径?: string[];
+  linked_dataset_ids?: string[];
+  linked_dataset_versions?: PromptEvaluationDatasetVersionBinding[];
   最近运行?: PromptEvaluationMetricSummary;
   运行记录?: PromptEvaluationMetricSummary[];
+}
+
+export interface PromptEvaluationDatasetVersionBinding extends Record<string, unknown> {
+  dataset_version_id: string;
+  dataset_asset_id?: string;
+  dataset_name?: string;
+  version?: number;
+  row_fingerprint?: string;
 }
 
 export interface PromptEvaluationAsset {

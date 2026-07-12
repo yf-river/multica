@@ -82,3 +82,27 @@ func TestPromptEvaluationCaseNormalizerDoesNotReadRetiredAliases(t *testing.T) {
 		t.Fatalf("canonical fields were not preserved: %#v", current)
 	}
 }
+
+func TestPromptEvaluationDatasetLinksUseCanonicalFieldsOnly(t *testing.T) {
+	payload := map[string]any{
+		"linked_dataset_ids": []any{"dataset-1"},
+		"linked_dataset_versions": []any{map[string]any{
+			"dataset_version_id": "version-1",
+			"dataset_asset_id":   "dataset-2",
+			"dataset_name":       "Current Dataset",
+		}},
+		"数据集版本":   []any{map[string]any{"数据集版本ID": "retired-version"}},
+		"关联数据集ID": "retired-dataset",
+	}
+	refs := promptEvaluationExplicitDatasetVersionRefs(payload)
+	if len(refs) != 1 || refs[0].DatasetVersionID != "version-1" || refs[0].DatasetAssetID != "dataset-2" || refs[0].DatasetName != "Current Dataset" {
+		t.Fatalf("canonical refs = %#v", refs)
+	}
+	ids := promptEvaluationLinkedDatasetIDs(payload)
+	if len(ids) != 2 || ids[0] != "dataset-1" || ids[1] != "dataset-2" {
+		t.Fatalf("canonical ids = %#v", ids)
+	}
+	if refs := promptEvaluationExplicitDatasetVersionRefs(map[string]any{"数据集版本": payload["数据集版本"]}); len(refs) != 0 {
+		t.Fatalf("retired top-level alias was still consumed: %#v", refs)
+	}
+}

@@ -360,16 +360,16 @@ export function summarizeDatasetVersion(asset: PromptEvaluationAsset): string | 
 
 export function summarizeLinkedDatasetVersions(asset: PromptEvaluationAsset): string | null {
   const payload = asset.payload ?? {};
-  const raw = payload["linked_dataset_versions"] ?? payload["数据集版本"] ?? payload["关联数据集版本"];
+  const raw = payload["linked_dataset_versions"];
   if (!Array.isArray(raw) || raw.length === 0) return null;
   const parts = raw
     .map((item) => {
       if (!item || typeof item !== "object" || Array.isArray(item)) return "";
       const record = item as Record<string, unknown>;
-      const datasetName = stringFromRecord(record, "dataset_name") || stringFromRecord(record, "数据集名称") || stringFromRecord(record, "name") || stringFromRecord(record, "名称");
-      const version = stringFromRecord(record, "version") || stringFromRecord(record, "版本");
-      const fingerprint = stringFromRecord(record, "row_fingerprint") || stringFromRecord(record, "行指纹");
-      const versionId = stringFromRecord(record, "dataset_version_id") || stringFromRecord(record, "数据集版本ID");
+      const datasetName = stringFromRecord(record, "dataset_name");
+      const version = stringFromRecord(record, "version");
+      const fingerprint = stringFromRecord(record, "row_fingerprint");
+      const versionId = stringFromRecord(record, "dataset_version_id");
       const label = datasetName || "用例库";
       const versionLabel = version ? `v${version}` : versionId ? `版本 ${versionId.slice(0, 8)}` : "未声明版本";
       return `${label} ${versionLabel}${fingerprint ? ` · 指纹 ${fingerprint.slice(0, 10)}` : ""}`;

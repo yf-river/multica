@@ -1175,7 +1175,7 @@ type promptEvaluationDatasetVersionRef struct {
 }
 
 func promptEvaluationExplicitDatasetVersionRefs(payload map[string]any) []promptEvaluationDatasetVersionRef {
-	raw := firstValue(payload, "linked_dataset_versions", "数据集版本", "关联数据集版本")
+	raw := payload["linked_dataset_versions"]
 	items, ok := raw.([]any)
 	if !ok {
 		return nil
@@ -1186,11 +1186,11 @@ func promptEvaluationExplicitDatasetVersionRefs(payload map[string]any) []prompt
 		if !ok {
 			continue
 		}
-		versionID := strings.TrimSpace(stringFromAny(firstValue(m, "dataset_version_id", "version_id", "数据集版本ID")))
+		versionID := strings.TrimSpace(stringFromAny(m["dataset_version_id"]))
 		if versionID == "" {
 			continue
 		}
-		datasetID := strings.TrimSpace(stringFromAny(firstValue(m, "dataset_id", "dataset_asset_id", "数据集ID")))
+		datasetID := strings.TrimSpace(stringFromAny(m["dataset_asset_id"]))
 		if datasetID == "" {
 			result = append(result, promptEvaluationDatasetVersionRef{DatasetVersionID: versionID})
 			continue
@@ -1198,20 +1198,18 @@ func promptEvaluationExplicitDatasetVersionRefs(payload map[string]any) []prompt
 		result = append(result, promptEvaluationDatasetVersionRef{
 			DatasetAssetID:   datasetID,
 			DatasetVersionID: versionID,
-			DatasetName:      strings.TrimSpace(stringFromAny(firstValue(m, "dataset_name", "数据集名称", "name", "名称"))),
+			DatasetName:      strings.TrimSpace(stringFromAny(m["dataset_name"])),
 		})
 	}
 	return result
 }
 
 func promptEvaluationLinkedDatasetIDs(payload map[string]any) []string {
-	values := []any{
-		firstValue(payload, "linked_dataset_ids", "dataset_ids", "数据集ID", "关联数据集ID"),
-	}
-	if nested, ok := firstValue(payload, "linked_dataset_versions", "数据集版本", "关联数据集版本").([]any); ok {
+	values := []any{payload["linked_dataset_ids"]}
+	if nested, ok := payload["linked_dataset_versions"].([]any); ok {
 		for _, item := range nested {
 			if m, ok := item.(map[string]any); ok {
-				values = append(values, firstValue(m, "dataset_id", "dataset_asset_id", "数据集ID"))
+				values = append(values, m["dataset_asset_id"])
 			}
 		}
 	}
