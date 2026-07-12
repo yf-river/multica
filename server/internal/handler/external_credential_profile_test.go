@@ -11,6 +11,38 @@ import (
 	"time"
 )
 
+func TestCreateExternalCredentialProfileRejectsNullCapabilities(t *testing.T) {
+	name := fmt.Sprintf("null-capabilities-%d", time.Now().UnixNano())
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `
+			DELETE FROM external_credential_profile WHERE user_id = $1 AND name = $2
+		`, testUserID, name)
+	})
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/external-credential-profiles", map[string]any{
+		"provider":     "tapd",
+		"name":         name,
+		"secret_ref":   "env:TAPD_TOKEN",
+		"capabilities": nil,
+	})
+	testHandler.CreateExternalCredentialProfile(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("CreateExternalCredentialProfile null capabilities: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var count int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT count(*)::int FROM external_credential_profile
+		WHERE user_id = $1 AND name = $2
+	`, testUserID, name).Scan(&count); err != nil {
+		t.Fatalf("count null-capabilities profiles: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("CreateExternalCredentialProfile persisted %d null-capabilities rows", count)
+	}
+}
+
 func TestExternalCredentialProfileSecretRefRedactedAndListed(t *testing.T) {
 	name := fmt.Sprintf("tapd-profile-%d", time.Now().UnixNano())
 
