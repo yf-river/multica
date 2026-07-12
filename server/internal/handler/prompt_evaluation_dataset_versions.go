@@ -525,7 +525,7 @@ func (h *Handler) RestorePromptEvaluationDatasetVersion(w http.ResponseWriter, r
 		"restored_at":        time.Now().Format(time.RFC3339),
 	}
 	payloadBytes := mustJSONBytes(payload)
-	profile := promptEvaluationAssetProfileFromPayload(payloadBytes, asset.PromptID, asset.AssetType)
+	profile := promptEvaluationAssetProfileFromPayload(payloadBytes, asset.PromptID)
 	updatedAsset, err := qtx.UpdatePromptEvaluationAsset(r.Context(), db.UpdatePromptEvaluationAssetParams{
 		ID:                       asset.ID,
 		WorkspaceID:              asset.WorkspaceID,

@@ -714,7 +714,7 @@ func executePromptEvaluationCaseBulkTagsInTx(ctx context.Context, queries *db.Qu
 			"created_at":     time.Now().Format(time.RFC3339),
 		}
 		payloadBytes := mustJSONBytes(payload)
-		profile := promptEvaluationAssetProfileFromPayload(payloadBytes, job.Asset.PromptID, job.Asset.AssetType)
+		profile := promptEvaluationAssetProfileFromPayload(payloadBytes, job.Asset.PromptID)
 		if _, err = queries.UpdatePromptEvaluationAsset(ctx, db.UpdatePromptEvaluationAssetParams{
 			ID:                       job.Asset.ID,
 			WorkspaceID:              job.Asset.WorkspaceID,

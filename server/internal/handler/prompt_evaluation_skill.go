@@ -605,7 +605,7 @@ func (h *Handler) PreparePromptEvaluationSkillReEvalAsset(w http.ResponseWriter,
 		return
 	}
 	payload := buildPromptEvaluationSkillReEvalPayload(sourceAsset, candidate, *sourceSnapshot, reEvalSnapshot, cases)
-	profile := promptEvaluationAssetProfileFromPayload(mustJSONBytes(payload), candidate.PromptID, promptEvaluationAssetTestSuite)
+	profile := promptEvaluationAssetProfileFromPayload(mustJSONBytes(payload), candidate.PromptID)
 	name := strings.TrimSpace(req.Name)
 	if name == "" {
 		name = "Skill re-eval " + shortPromptEvaluationID(uuidToString(candidate.ID)) + " " + time.Now().UTC().Format("20060102-150405")
@@ -946,7 +946,7 @@ RETURNING id, workspace_id, asset_id, run_id, prompt_id, candidate_name, candida
 }
 
 func (h *Handler) updatePromptEvaluationAssetPayload(w http.ResponseWriter, r *http.Request, asset db.PromptEvaluationAsset, payload map[string]any) (db.PromptEvaluationAsset, bool) {
-	profile := promptEvaluationAssetProfileFromPayload(mustJSONBytes(payload), asset.PromptID, asset.AssetType)
+	profile := promptEvaluationAssetProfileFromPayload(mustJSONBytes(payload), asset.PromptID)
 	updated, err := h.Queries.UpdatePromptEvaluationAsset(r.Context(), db.UpdatePromptEvaluationAssetParams{
 		ID:                       asset.ID,
 		WorkspaceID:              asset.WorkspaceID,

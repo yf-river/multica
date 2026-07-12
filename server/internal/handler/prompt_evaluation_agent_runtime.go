@@ -497,7 +497,7 @@ func buildPromptEvaluationRunResult(asset db.PromptEvaluationAsset, prompt db.Pr
 		failureReason = "存在缺失变量或期望内容未命中"
 		conclusion = "未通过"
 	}
-	dimensionScores := buildPromptEvaluationExperimentDimensionScores(promptEvaluationExperimentDimensionsForAsset(asset.AssetType, payload), results)
+	dimensionScores := buildPromptEvaluationExperimentDimensionScores(promptEvaluationExperimentDimensions(payload), results)
 	return promptEvaluationRunResult{
 		RunAt:             time.Now().UTC().Format(time.RFC3339),
 		AssetType:         asset.AssetType,
@@ -785,130 +785,6 @@ func appendPromptEvaluationAgentRunHistory(raw any, result map[string]any) []any
 	return next
 }
 
-func applyPromptEvaluationOptimizationRunContract(payload map[string]any, assetID string, sourceRunID string, runIndex map[string]any, eventName string) {
-	if payload == nil {
-		return
-	}
-	now := time.Now().UTC().Format(time.RFC3339)
-	rounds := promptEvaluationAnyList(payload["优化轮次"])
-	roundIndex := intFromAny(runIndex["轮次"])
-	if roundIndex <= 0 {
-		roundIndex = len(rounds) + 1
-		runIndex["轮次"] = roundIndex
-	}
-	retryIndex := intFromAny(runIndex["重试序号"])
-	round := map[string]any{
-		"轮次":              roundIndex,
-		"重试序号":            retryIndex,
-		"运行ID":            stringFromAny(runIndex["run_id"]),
-		"来源运行":            sourceRunID,
-		"状态":              stringFromAny(runIndex["状态"]),
-		"执行Agent":         stringFromAny(runIndex["执行Agent"]),
-		"模型":              stringFromAny(runIndex["模型"]),
-		"runtime":         stringFromAny(runIndex["runtime"]),
-		"runtime_id":      stringFromAny(runIndex["runtime_id"]),
-		"trace/task id":   stringFromAny(runIndex["trace/task id"]),
-		"chat_session_id": stringFromAny(runIndex["chat_session_id"]),
-		"创建时间":            now,
-		"验收口径": []string{
-			"必须保留中文语义",
-			"必须给出优化候选正文和逐条修改依据",
-			"必须能回读 task、trace、消息、用量和人工确认状态",
-		},
-	}
-	rounds = append([]any{round}, rounds...)
-	if len(rounds) > 20 {
-		rounds = rounds[:20]
-	}
-	logs := promptEvaluationAnyList(payload["日志流"])
-	logs = append(logs, map[string]any{
-		"seq":   len(logs) + 1,
-		"事件":    eventName,
-		"状态":    stringFromAny(runIndex["状态"]),
-		"轮次":    roundIndex,
-		"运行ID":  stringFromAny(runIndex["run_id"]),
-		"任务ID":  stringFromAny(runIndex["trace/task id"]),
-		"消息":    eventName + "已入队，等待智能体输出候选并回写证据",
-		"记录时间":  now,
-		"可回读证据": []string{"运行历史", "运行证据", "task messages", "trace 事件", "task usage"},
-	})
-	if len(logs) > 50 {
-		logs = logs[len(logs)-50:]
-	}
-	payload["schema"] = "multica.training_evaluation.optimization_run.v2"
-	payload["语义版本"] = "multica.training_evaluation.optimization_run.v2"
-	payload["优化运行契约"] = map[string]any{
-		"schema": "multica.training_evaluation.optimization_run.v2",
-		"资产ID":   assetID,
-		"来源运行":   sourceRunID,
-		"轮次字段":   "优化轮次",
-		"日志字段":   "日志流",
-		"重试入口":   "/api/prompt-evaluation-assets/" + assetID + "/agent-run",
-		"候选发布入口": "/api/prompt-evaluation-optimization-candidates/{candidate_id}/publish",
-		"人工确认要求": "优化运行只产生候选和证据；发布新版本必须经过人工确认。",
-		"数据回读要求": []string{"资产详情", "运行历史", "运行证据", "优化候选", "提示词版本历史"},
-	}
-	payload["优化轮次"] = rounds
-	payload["日志流"] = logs
-	currentRetryCount := retryIndex
-	if currentRetryCount < promptEvaluationOptimizationRetryCount(payload) {
-		currentRetryCount = promptEvaluationOptimizationRetryCount(payload)
-	}
-	payload["重试策略"] = map[string]any{
-		"允许重试":   true,
-		"当前重试次数": currentRetryCount,
-		"重试入口":   "/api/prompt-evaluation-assets/" + assetID + "/agent-run",
-		"重试说明":   "重试会创建新的真实智能体任务和运行记录，不覆盖已有轮次。",
-	}
-}
-
-func promptEvaluationOptimizationRoundCount(payload map[string]any) int {
-	return len(promptEvaluationAnyList(payload["优化轮次"]))
-}
-
-func promptEvaluationOptimizationRetryCount(payload map[string]any) int {
-	count := 0
-	for _, item := range promptEvaluationAnyList(payload["优化轮次"]) {
-		record, ok := item.(map[string]any)
-		if !ok {
-			continue
-		}
-		retry := intFromAny(record["重试序号"])
-		if retry > count {
-			count = retry
-		}
-	}
-	return count
-}
-
-func promptEvaluationAnyList(raw any) []any {
-	if values, ok := raw.([]any); ok {
-		return values
-	}
-	return nil
-}
-
-func intFromAny(value any) int {
-	switch typed := value.(type) {
-	case int:
-		return typed
-	case int32:
-		return int(typed)
-	case int64:
-		return int(typed)
-	case float64:
-		return int(typed)
-	case json.Number:
-		parsed, _ := typed.Int64()
-		return int(parsed)
-	case string:
-		parsed, _ := strconv.Atoi(strings.TrimSpace(typed))
-		return parsed
-	default:
-		return 0
-	}
-}
-
 func floatFromAny(value any) float64 {
 	switch typed := value.(type) {
 	case float64:
@@ -932,10 +808,7 @@ func floatFromAny(value any) float64 {
 	}
 }
 
-func promptEvaluationAgentRunMessage(assetType string) string {
-	if assetType == promptEvaluationAssetOptimize {
-		return "优化运行重试已入队；请通过运行历史、日志流和证据面板追踪新轮次。"
-	}
+func promptEvaluationAgentRunMessage() string {
 	return "真实智能体任务已入队；请通过 task messages、usage 和运行历史追踪结果。"
 }
 
@@ -1255,15 +1128,6 @@ func firstNonEmptyPromptEvaluationString(values ...string) string {
 	for _, value := range values {
 		if trimmed := strings.TrimSpace(value); trimmed != "" {
 			return trimmed
-		}
-	}
-	return ""
-}
-
-func firstNonEmptyPromptEvaluationField(row map[string]any, keys ...string) string {
-	for _, key := range keys {
-		if value := strings.TrimSpace(stringFromAny(row[key])); value != "" {
-			return value
 		}
 	}
 	return ""

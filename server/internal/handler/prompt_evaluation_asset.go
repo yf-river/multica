@@ -17,8 +17,6 @@ import (
 const (
 	promptEvaluationAssetDataset         = "数据集"
 	promptEvaluationAssetTestSuite       = "测试套件"
-	promptEvaluationAssetExperiment      = "实验"
-	promptEvaluationAssetOptimize        = "优化运行"
 	promptEvaluationAssetProfileV1       = "multica.training_evaluation.asset_profile.v1"
 	promptEvaluationDatasetExportV1      = "multica.prompt_evaluation.dataset_export.v1"
 	promptEvaluationDatasetImportV1      = "multica.prompt_evaluation.dataset_import.v1"
@@ -869,7 +867,7 @@ func (h *Handler) CreatePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	profile := promptEvaluationAssetProfileFromPayload(payload, promptID, req.AssetType)
+	profile := promptEvaluationAssetProfileFromPayload(payload, promptID)
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start prompt evaluation transaction")
@@ -958,7 +956,7 @@ func (h *Handler) UpdatePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 	}
 	var profile *promptEvaluationAssetProfile
 	if payload != nil {
-		next := promptEvaluationAssetProfileFromPayload(payload, promptID, existing.AssetType)
+		next := promptEvaluationAssetProfileFromPayload(payload, promptID)
 		profile = &next
 	}
 	tx, err := h.TxStarter.Begin(r.Context())
@@ -1169,26 +1167,9 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	triggerSource := "评测运行"
-	if asset.AssetType == promptEvaluationAssetOptimize {
-		if promptEvaluationOptimizationRoundCount(payload) > 0 {
-			triggerSource = "优化运行重试"
-		} else {
-			triggerSource = "优化运行"
-		}
-	}
-	run, ok := h.persistPromptEvaluationQueuedAgentRun(w, r, qtx, asset, prompt, agentRow, runtimeRow, task.ID, session.ID, parseUUID(userID), triggerSource, payload, cases)
+	run, ok := h.persistPromptEvaluationQueuedAgentRun(w, r, qtx, asset, prompt, agentRow, runtimeRow, task.ID, session.ID, parseUUID(userID), "评测运行", payload, cases)
 	if !ok {
 		return
-	}
-	optimizationRound := 0
-	optimizationRetry := 0
-	if asset.AssetType == promptEvaluationAssetOptimize {
-		existingRounds := promptEvaluationOptimizationRoundCount(payload)
-		optimizationRound = existingRounds + 1
-		if existingRounds > 0 {
-			optimizationRetry = promptEvaluationOptimizationRetryCount(payload) + 1
-		}
 	}
 	runIndex := map[string]any{
 		"运行时间":            time.Now().UTC().Format(time.RFC3339),
@@ -1204,20 +1185,8 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 		"失败原因":            "无",
 		"评估结论":            "等待智能体执行完成",
 	}
-	if asset.AssetType == promptEvaluationAssetOptimize {
-		runIndex["轮次"] = optimizationRound
-		runIndex["重试序号"] = optimizationRetry
-	}
 	payload["最近Agent运行"] = runIndex
 	payload["Agent运行记录"] = appendPromptEvaluationAgentRunHistory(payload["Agent运行记录"], runIndex)
-	if asset.AssetType == promptEvaluationAssetOptimize {
-		sourceRunID := stringFromAny(payload["来源运行"])
-		eventName := "创建优化运行"
-		if optimizationRetry > 0 {
-			eventName = "重试优化运行"
-		}
-		applyPromptEvaluationOptimizationRunContract(payload, uuidToString(asset.ID), sourceRunID, runIndex, eventName)
-	}
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to encode training evaluation agent run")
@@ -1247,6 +1216,6 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 		RuntimeID:     uuidToString(runtimeRow.ID),
 		Model:         promptEvaluationModelForAgent(agentRow),
 		Status:        "已入队",
-		Message:       promptEvaluationAgentRunMessage(asset.AssetType),
+		Message:       promptEvaluationAgentRunMessage(),
 	})
 }

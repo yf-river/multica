@@ -561,8 +561,6 @@ func promptEvaluationSummaryToResponse(workspaceID pgtype.UUID, row db.GetPrompt
 			"启用资产数":   row.ActiveAssets,
 			"数据集":     row.DatasetAssets,
 			"测试套件":    row.TestSuiteAssets,
-			"实验":      row.ExperimentAssets,
-			"优化运行":    row.OptimizationAssets,
 			"结构化用例":   row.TotalCases,
 			"启用用例":    row.ActiveCases,
 			"画像用例数":   row.AssetProfileCases,
@@ -639,7 +637,7 @@ func promptEvaluationPayloadField(w http.ResponseWriter, raw json.RawMessage, fi
 	return mustJSONBytes(normalizePromptEvaluationPayloadObject(obj)), true
 }
 
-func promptEvaluationAssetProfileFromPayload(raw []byte, promptID pgtype.UUID, assetType string) promptEvaluationAssetProfile {
+func promptEvaluationAssetProfileFromPayload(raw []byte, promptID pgtype.UUID) promptEvaluationAssetProfile {
 	payload := decodePayloadObject(raw)
 	cases := promptEvaluationCases(payload)
 	variableCount := 0
@@ -654,9 +652,6 @@ func promptEvaluationAssetProfileFromPayload(raw []byte, promptID pgtype.UUID, a
 		linkedPromptCount++
 	}
 	experimentDimensions := promptEvaluationExperimentDimensions(payload)
-	if assetType == promptEvaluationAssetExperiment && len(experimentDimensions) == 0 {
-		experimentDimensions = promptEvaluationDefaultExperimentDimensions()
-	}
 	return promptEvaluationAssetProfile{
 		StructureSchema:          promptEvaluationAssetProfileV1,
 		StructuredCaseCount:      int32(len(cases)),
@@ -722,14 +717,6 @@ func promptEvaluationExperimentDimensions(payload map[string]any) []normalizedPr
 		})
 	}
 	return result
-}
-
-func promptEvaluationExperimentDimensionsForAsset(assetType string, payload map[string]any) []normalizedPromptEvaluationExperimentDimension {
-	dimensions := promptEvaluationExperimentDimensions(payload)
-	if len(dimensions) == 0 && assetType == promptEvaluationAssetExperiment {
-		return promptEvaluationDefaultExperimentDimensions()
-	}
-	return dimensions
 }
 
 func promptEvaluationDefaultExperimentDimensions() []normalizedPromptEvaluationExperimentDimension {

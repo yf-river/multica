@@ -450,8 +450,6 @@ asset_summary AS (
         COUNT(*) FILTER (WHERE status = '启用')::bigint AS active_assets,
         COUNT(*) FILTER (WHERE asset_type = '数据集')::bigint AS dataset_assets,
         COUNT(*) FILTER (WHERE asset_type = '测试套件')::bigint AS test_suite_assets,
-        COUNT(*) FILTER (WHERE asset_type = '实验')::bigint AS experiment_assets,
-        COUNT(*) FILTER (WHERE asset_type = '优化运行')::bigint AS optimization_assets,
         COALESCE(SUM(structured_case_count), 0)::bigint AS asset_profile_cases,
         COALESCE(SUM(structured_variable_count), 0)::bigint AS asset_profile_variables,
         COALESCE(SUM(structured_assertion_count), 0)::bigint AS asset_profile_assertions,
@@ -524,8 +522,6 @@ SELECT
     a.active_assets,
     a.dataset_assets,
     a.test_suite_assets,
-    a.experiment_assets,
-    a.optimization_assets,
     a.asset_profile_cases,
     a.asset_profile_variables,
     a.asset_profile_assertions,
@@ -584,8 +580,6 @@ type GetPromptEvaluationSummaryRow struct {
 	ActiveAssets               int64              `json:"active_assets"`
 	DatasetAssets              int64              `json:"dataset_assets"`
 	TestSuiteAssets            int64              `json:"test_suite_assets"`
-	ExperimentAssets           int64              `json:"experiment_assets"`
-	OptimizationAssets         int64              `json:"optimization_assets"`
 	AssetProfileCases          int64              `json:"asset_profile_cases"`
 	AssetProfileVariables      int64              `json:"asset_profile_variables"`
 	AssetProfileAssertions     int64              `json:"asset_profile_assertions"`
@@ -633,8 +627,6 @@ func (q *Queries) GetPromptEvaluationSummary(ctx context.Context, arg GetPromptE
 		&i.ActiveAssets,
 		&i.DatasetAssets,
 		&i.TestSuiteAssets,
-		&i.ExperimentAssets,
-		&i.OptimizationAssets,
 		&i.AssetProfileCases,
 		&i.AssetProfileVariables,
 		&i.AssetProfileAssertions,

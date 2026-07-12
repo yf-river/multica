@@ -131,7 +131,7 @@ func TestPromptEvaluationMetricsAndExperimentDimensionsHaveDistinctContracts(t *
 	if len(dimensions) != 2 || dimensions[0].Name != "命中率" || dimensions[1].Name != "中文一致性" {
 		t.Fatalf("canonical experiment dimensions = %#v", dimensions)
 	}
-	profile := promptEvaluationAssetProfileFromPayload(mustJSONBytes(payload), pgtype.UUID{}, promptEvaluationAssetTestSuite)
+	profile := promptEvaluationAssetProfileFromPayload(mustJSONBytes(payload), pgtype.UUID{})
 	if profile.EvaluationDimensionCount != 2 || profile.ExperimentDimensionCount != 2 {
 		t.Fatalf("profile metric=%d experiment=%d", profile.EvaluationDimensionCount, profile.ExperimentDimensionCount)
 	}
@@ -173,6 +173,17 @@ func TestPromptEvaluationPayloadRejectsMalformedAgentSelection(t *testing.T) {
 		}
 		if w.Code != http.StatusBadRequest {
 			t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+		}
+	}
+}
+
+func TestPromptEvaluationAssetTypesHaveNoHistoricalVariants(t *testing.T) {
+	if !validPromptEvaluationAssetType(promptEvaluationAssetDataset) || !validPromptEvaluationAssetType(promptEvaluationAssetTestSuite) {
+		t.Fatal("current asset types were rejected")
+	}
+	for _, retired := range []string{"实验", "优化运行"} {
+		if validPromptEvaluationAssetType(retired) {
+			t.Fatalf("retired asset type %q was accepted", retired)
 		}
 	}
 }

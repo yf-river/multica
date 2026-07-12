@@ -971,6 +971,12 @@ func TestRunPromptEvaluationAssetWritesChineseResult(t *testing.T) {
 	if _, ok := summary.Assets["评估维度数"]; !ok {
 		t.Fatalf("summary missing evaluation dimension metric: %#v", summary.Assets)
 	}
+	if _, exists := summary.Assets["实验"]; exists {
+		t.Fatalf("summary retained impossible experiment asset metric: %#v", summary.Assets)
+	}
+	if _, exists := summary.Assets["优化运行"]; exists {
+		t.Fatalf("summary retained impossible optimization asset metric: %#v", summary.Assets)
+	}
 
 	futureSince := url.QueryEscape(time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339))
 	windowW := httptest.NewRecorder()
