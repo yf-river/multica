@@ -72,19 +72,29 @@ func consumeCommentCreatedAudience(ctx context.Context, queries *db.Queries, eve
 	return append(subscriberEvents, notificationEvents...), nil
 }
 
-func projectIssueCreatedSubscribers(ctx context.Context, queries *db.Queries, event events.Event, payload issueEventPayload) ([]events.Event, error) {
-	issue := payload.Issue
-	emitted := make([]events.Event, 0, 4)
-	appendSubscriber := func(userType, userID, reason string) error {
-		created, ok, err := addSubscriber(ctx, queries, issue.WorkspaceID, issue.ID, userType, userID, reason)
+func subscriberEventAppender(
+	ctx context.Context,
+	queries *db.Queries,
+	workspaceID string,
+	issueID string,
+	emitted *[]events.Event,
+) func(userType, userID, reason string) error {
+	return func(userType, userID, reason string) error {
+		created, ok, err := addSubscriber(ctx, queries, workspaceID, issueID, userType, userID, reason)
 		if err != nil {
 			return err
 		}
 		if ok {
-			emitted = append(emitted, created)
+			*emitted = append(*emitted, created)
 		}
 		return nil
 	}
+}
+
+func projectIssueCreatedSubscribers(ctx context.Context, queries *db.Queries, event events.Event, payload issueEventPayload) ([]events.Event, error) {
+	issue := payload.Issue
+	emitted := make([]events.Event, 0, 4)
+	appendSubscriber := subscriberEventAppender(ctx, queries, issue.WorkspaceID, issue.ID, &emitted)
 	if err := appendSubscriber(issue.CreatorType, issue.CreatorID, "creator"); err != nil {
 		return nil, err
 	}
@@ -107,16 +117,7 @@ func projectIssueCreatedSubscribers(ctx context.Context, queries *db.Queries, ev
 func projectIssueUpdatedSubscribers(ctx context.Context, queries *db.Queries, event events.Event, payload issueEventPayload) ([]events.Event, error) {
 	issue := payload.Issue
 	emitted := make([]events.Event, 0, 4)
-	appendSubscriber := func(userType, userID, reason string) error {
-		created, ok, err := addSubscriber(ctx, queries, issue.WorkspaceID, issue.ID, userType, userID, reason)
-		if err != nil {
-			return err
-		}
-		if ok {
-			emitted = append(emitted, created)
-		}
-		return nil
-	}
+	appendSubscriber := subscriberEventAppender(ctx, queries, issue.WorkspaceID, issue.ID, &emitted)
 	if payload.AssigneeChanged && issue.AssigneeType != nil && issue.AssigneeID != nil {
 		if err := appendSubscriber(*issue.AssigneeType, *issue.AssigneeID, "assignee"); err != nil {
 			return nil, err
