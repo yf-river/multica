@@ -64,6 +64,24 @@ type preparedAutopilotTrigger struct {
 	eventFilters   []byte
 }
 
+func (h *Handler) loadAutopilotTriggerFromRoute(w http.ResponseWriter, r *http.Request) (string, db.Autopilot, db.AutopilotTrigger, bool) {
+	workspaceID := h.resolveWorkspaceID(r)
+	ap, ok := h.loadAutopilotInWorkspace(w, r, chi.URLParam(r, "id"), workspaceID)
+	if !ok {
+		return "", db.Autopilot{}, db.AutopilotTrigger{}, false
+	}
+	triggerID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "triggerId"), "trigger id")
+	if !ok {
+		return "", db.Autopilot{}, db.AutopilotTrigger{}, false
+	}
+	trigger, err := h.Queries.GetAutopilotTrigger(r.Context(), triggerID)
+	if err != nil || uuidToString(trigger.AutopilotID) != uuidToString(ap.ID) {
+		writeError(w, http.StatusNotFound, "trigger not found")
+		return "", db.Autopilot{}, db.AutopilotTrigger{}, false
+	}
+	return workspaceID, ap, trigger, true
+}
+
 func prepareAutopilotTrigger(
 	w http.ResponseWriter,
 	req CreateAutopilotTriggerRequest,
@@ -295,23 +313,8 @@ func (h *Handler) validateAutopilotAssignee(w http.ResponseWriter, r *http.Reque
 }
 
 func (h *Handler) UpdateAutopilotTrigger(w http.ResponseWriter, r *http.Request) {
-	autopilotID := chi.URLParam(r, "id")
-	triggerID := chi.URLParam(r, "triggerId")
-	workspaceID := h.resolveWorkspaceID(r)
-
-	ap, ok := h.loadAutopilotInWorkspace(w, r, autopilotID, workspaceID)
+	workspaceID, ap, prev, ok := h.loadAutopilotTriggerFromRoute(w, r)
 	if !ok {
-		return
-	}
-
-	triggerUUID, ok := parseUUIDOrBadRequest(w, triggerID, "trigger id")
-	if !ok {
-		return
-	}
-
-	prev, err := h.Queries.GetAutopilotTrigger(r.Context(), triggerUUID)
-	if err != nil || uuidToString(prev.AutopilotID) != uuidToString(ap.ID) {
-		writeError(w, http.StatusNotFound, "trigger not found")
 		return
 	}
 
@@ -421,34 +424,8 @@ func (h *Handler) UpdateAutopilotTrigger(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *Handler) DeleteAutopilotTrigger(w http.ResponseWriter, r *http.Request) {
-	autopilotID := chi.URLParam(r, "id")
-	triggerID := chi.URLParam(r, "triggerId")
-	workspaceID := h.resolveWorkspaceID(r)
-
-	autopilotUUID, ok := parseUUIDOrBadRequest(w, autopilotID, "autopilot id")
+	workspaceID, ap, trigger, ok := h.loadAutopilotTriggerFromRoute(w, r)
 	if !ok {
-		return
-	}
-	triggerUUID, ok := parseUUIDOrBadRequest(w, triggerID, "trigger id")
-	if !ok {
-		return
-	}
-	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
-	if !ok {
-		return
-	}
-
-	if _, err := h.Queries.GetAutopilotInWorkspace(r.Context(), db.GetAutopilotInWorkspaceParams{
-		ID:          autopilotUUID,
-		WorkspaceID: wsUUID,
-	}); err != nil {
-		writeError(w, http.StatusNotFound, "autopilot not found")
-		return
-	}
-
-	trigger, err := h.Queries.GetAutopilotTrigger(r.Context(), triggerUUID)
-	if err != nil || uuidToString(trigger.AutopilotID) != uuidToString(autopilotUUID) {
-		writeError(w, http.StatusNotFound, "trigger not found")
 		return
 	}
 
@@ -457,14 +434,14 @@ func (h *Handler) DeleteAutopilotTrigger(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if err := h.Queries.DeleteAutopilotTrigger(r.Context(), triggerUUID); err != nil {
+	if err := h.Queries.DeleteAutopilotTrigger(r.Context(), trigger.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete trigger")
 		return
 	}
 
 	h.publish(protocol.EventAutopilotUpdated, workspaceID, "member", userID, map[string]any{
-		"autopilot_id": uuidToString(autopilotUUID),
-		"trigger_id":   uuidToString(triggerUUID),
+		"autopilot_id": uuidToString(ap.ID),
+		"trigger_id":   uuidToString(trigger.ID),
 	})
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -474,22 +451,8 @@ func (h *Handler) DeleteAutopilotTrigger(w http.ResponseWriter, r *http.Request)
 // the unique-index lookup in the public ingress route is keyed on the
 // current row value.
 func (h *Handler) RotateAutopilotTriggerWebhookToken(w http.ResponseWriter, r *http.Request) {
-	autopilotID := chi.URLParam(r, "id")
-	triggerID := chi.URLParam(r, "triggerId")
-	workspaceID := h.resolveWorkspaceID(r)
-
-	ap, ok := h.loadAutopilotInWorkspace(w, r, autopilotID, workspaceID)
+	workspaceID, ap, prev, ok := h.loadAutopilotTriggerFromRoute(w, r)
 	if !ok {
-		return
-	}
-
-	triggerUUID, ok := parseUUIDOrBadRequest(w, triggerID, "trigger id")
-	if !ok {
-		return
-	}
-	prev, err := h.Queries.GetAutopilotTrigger(r.Context(), triggerUUID)
-	if err != nil || uuidToString(prev.AutopilotID) != uuidToString(ap.ID) {
-		writeError(w, http.StatusNotFound, "trigger not found")
 		return
 	}
 	if prev.Kind != "webhook" {
@@ -498,6 +461,7 @@ func (h *Handler) RotateAutopilotTriggerWebhookToken(w http.ResponseWriter, r *h
 	}
 
 	var rotated db.AutopilotTrigger
+	var err error
 	for attempt := 0; attempt < 3; attempt++ {
 		token, terr := generateWebhookToken()
 		if terr != nil {
@@ -505,7 +469,7 @@ func (h *Handler) RotateAutopilotTriggerWebhookToken(w http.ResponseWriter, r *h
 			return
 		}
 		rotated, err = h.Queries.RotateAutopilotTriggerWebhookToken(r.Context(), db.RotateAutopilotTriggerWebhookTokenParams{
-			ID:           triggerUUID,
+			ID:           prev.ID,
 			WebhookToken: pgtype.Text{String: token, Valid: true},
 		})
 		if err == nil {
@@ -540,21 +504,8 @@ func (h *Handler) RotateAutopilotTriggerWebhookToken(w http.ResponseWriter, r *h
 // `has_signing_secret` + `signing_secret_hint`; the secret itself is never
 // echoed back, matching the GitHub / Stripe industry pattern.
 func (h *Handler) SetAutopilotTriggerSigningSecret(w http.ResponseWriter, r *http.Request) {
-	autopilotID := chi.URLParam(r, "id")
-	triggerID := chi.URLParam(r, "triggerId")
-	workspaceID := h.resolveWorkspaceID(r)
-
-	ap, ok := h.loadAutopilotInWorkspace(w, r, autopilotID, workspaceID)
+	workspaceID, ap, prev, ok := h.loadAutopilotTriggerFromRoute(w, r)
 	if !ok {
-		return
-	}
-	triggerUUID, ok := parseUUIDOrBadRequest(w, triggerID, "trigger id")
-	if !ok {
-		return
-	}
-	prev, err := h.Queries.GetAutopilotTrigger(r.Context(), triggerUUID)
-	if err != nil || uuidToString(prev.AutopilotID) != uuidToString(ap.ID) {
-		writeError(w, http.StatusNotFound, "trigger not found")
 		return
 	}
 	if prev.Kind != "webhook" {
@@ -576,7 +527,7 @@ func (h *Handler) SetAutopilotTriggerSigningSecret(w http.ResponseWriter, r *htt
 		return
 	}
 
-	param := db.SetAutopilotTriggerSigningSecretParams{ID: triggerUUID}
+	param := db.SetAutopilotTriggerSigningSecretParams{ID: prev.ID}
 	if secret != "" {
 		param.SigningSecret = pgtype.Text{String: secret, Valid: true}
 	}
