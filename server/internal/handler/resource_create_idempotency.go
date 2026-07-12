@@ -37,6 +37,7 @@ const (
 	resourceTypeRuntimeProfile       = "runtime_profile"
 	resourceTypeLabel                = "label"
 	resourceTypeProjectResource      = "project_resource"
+	resourceTypePromptEvalAsset      = "prompt_evaluation_asset"
 )
 
 var errResourceCreateIdempotencyConflict = errors.New("resource create idempotency conflict")

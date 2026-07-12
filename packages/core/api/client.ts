@@ -2161,14 +2161,22 @@ export class ApiClient extends ApiTransport {
     }) as ListPromptEvaluationAssetsResponse;
   }
 
-  async createPromptEvaluationAsset(data: CreatePromptEvaluationAssetRequest): Promise<PromptEvaluationAsset> {
-    const raw = await this.fetch<unknown>("/api/prompt-evaluation-assets", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseOrThrow(raw, PromptEvaluationAssetSchema, EMPTY_PROMPT_EVALUATION_ASSET, {
-      endpoint: "POST /api/prompt-evaluation-assets",
-    }) as PromptEvaluationAsset;
+  async createPromptEvaluationAsset(
+    data: CreatePromptEvaluationAssetRequest,
+    idempotencyKey = generateUUID(),
+  ): Promise<PromptEvaluationAsset> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>("/api/prompt-evaluation-assets", {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow(raw, PromptEvaluationAssetSchema, EMPTY_PROMPT_EVALUATION_ASSET, {
+        endpoint: "POST /api/prompt-evaluation-assets",
+        mayHaveCommitted: true,
+      }) as PromptEvaluationAsset;
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async updatePromptEvaluationAsset(id: string, data: UpdatePromptEvaluationAssetRequest): Promise<PromptEvaluationAsset> {

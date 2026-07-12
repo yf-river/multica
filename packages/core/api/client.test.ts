@@ -853,6 +853,26 @@ describe("ApiClient", () => {
     expect(second["Idempotency-Key"]).toBe(requestId);
   });
 
+  it("retries prompt evaluation asset creation with the same explicit identity", async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({}), {
+        status: 201, headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const requestId = "10000000-0000-4000-8000-000000000015";
+
+    await expect(new ApiClient("https://api.example.test").createPromptEvaluationAsset({
+      name: "Current dataset", asset_type: "数据集", payload: {},
+    }, requestId)).rejects.toMatchObject({
+      code: "api_response_contract_invalid", mayHaveCommitted: true,
+    });
+    const first = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    const second = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
+    expect(first["Idempotency-Key"]).toBe(requestId);
+    expect(second["Idempotency-Key"]).toBe(requestId);
+  });
+
   it("retries a skill re-eval asset prepare with the same explicit identity", async () => {
     const fetchMock = vi.fn()
       .mockRejectedValueOnce(new TypeError("response lost"))

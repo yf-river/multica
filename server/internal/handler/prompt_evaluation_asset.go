@@ -861,6 +861,30 @@ func (h *Handler) CreatePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusBadRequest, "status must be 启用 or 归档")
 		return
 	}
+	req.Status = status
+	actorID := parseUUID(userID)
+	requestHash, err := hashRequestFingerprint(req)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to fingerprint prompt evaluation asset request")
+		return
+	}
+	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	replay, found, replayErr := loadResourceCreateReplay(
+		r.Context(), h.Queries, workspaceUUID, actorID, resourceTypePromptEvalAsset,
+		idempotencyKey, requestHash,
+		func(response PromptEvaluationAssetResponse) bool { return response.ID != "" },
+	)
+	if replayErr != nil {
+		writePromptEvaluationAssetCreateReplayError(w, replayErr)
+		return
+	}
+	if found {
+		writeJSON(w, http.StatusCreated, replay)
+		return
+	}
 	promptID, ok := h.promptEvaluationPromptID(w, r, workspaceUUID, req.PromptID, pgtype.UUID{})
 	if !ok {
 		return
@@ -877,12 +901,37 @@ func (h *Handler) CreatePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
+	_, err = qtx.ReserveResourceCreateRequest(r.Context(), db.ReserveResourceCreateRequestParams{
+		WorkspaceID: workspaceUUID, ActorID: actorID, ResourceType: resourceTypePromptEvalAsset,
+		IdempotencyKey: idempotencyKey, RequestHash: requestHash,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		_ = tx.Rollback(r.Context())
+		replay, found, replayErr = loadResourceCreateReplay(
+			r.Context(), h.Queries, workspaceUUID, actorID, resourceTypePromptEvalAsset,
+			idempotencyKey, requestHash,
+			func(response PromptEvaluationAssetResponse) bool { return response.ID != "" },
+		)
+		if replayErr != nil || !found {
+			if replayErr == nil {
+				replayErr = errors.New("prompt evaluation asset replay disappeared after conflict")
+			}
+			writePromptEvaluationAssetCreateReplayError(w, replayErr)
+			return
+		}
+		writeJSON(w, http.StatusCreated, replay)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reserve prompt evaluation asset request")
+		return
+	}
 	asset, err := qtx.CreatePromptEvaluationAsset(r.Context(), db.CreatePromptEvaluationAssetParams{
 		WorkspaceID:              workspaceUUID,
 		Name:                     req.Name,
 		Description:              req.Description,
 		AssetType:                req.AssetType,
-		CreatedBy:                parseUUID(userID),
+		CreatedBy:                actorID,
 		PromptID:                 promptID,
 		Payload:                  payload,
 		Status:                   status,
@@ -907,23 +956,42 @@ func (h *Handler) CreatePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusInternalServerError, "failed to create prompt evaluation asset")
 		return
 	}
-	if ok := h.syncPromptEvaluationCasesFromPayload(w, r, qtx, asset, parseUUID(userID)); !ok {
+	if ok := h.syncPromptEvaluationCasesFromPayload(w, r, qtx, asset, actorID); !ok {
 		return
 	}
-	if err := syncPromptEvaluationExperimentDimensions(r.Context(), qtx, asset, parseUUID(userID)); err != nil {
+	if err := syncPromptEvaluationExperimentDimensions(r.Context(), qtx, asset, actorID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to sync prompt evaluation experiment dimensions")
+		return
+	}
+	createdAsset, err := qtx.GetPromptEvaluationAssetInWorkspace(r.Context(), db.GetPromptEvaluationAssetInWorkspaceParams{ID: asset.ID, WorkspaceID: asset.WorkspaceID})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reload prompt evaluation asset")
+		return
+	}
+	response := promptEvaluationAssetToResponse(createdAsset)
+	if err := completeResourceCreateRequest(
+		r.Context(), qtx, workspaceUUID, actorID, resourceTypePromptEvalAsset,
+		idempotencyKey, requestHash, asset.ID, response,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to complete prompt evaluation asset request")
 		return
 	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit prompt evaluation asset")
 		return
 	}
-	createdAsset, err := h.Queries.GetPromptEvaluationAssetInWorkspace(r.Context(), db.GetPromptEvaluationAssetInWorkspaceParams{ID: asset.ID, WorkspaceID: asset.WorkspaceID})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to reload prompt evaluation asset")
+	writeJSON(w, http.StatusCreated, response)
+}
+
+func writePromptEvaluationAssetCreateReplayError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errResourceCreateIdempotencyConflict) {
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": "Idempotency-Key was already used with a different prompt evaluation asset request",
+			"code":  "idempotency_conflict",
+		})
 		return
 	}
-	writeJSON(w, http.StatusCreated, promptEvaluationAssetToResponse(createdAsset))
+	writeError(w, http.StatusInternalServerError, "failed to recover prompt evaluation asset request")
 }
 
 func (h *Handler) UpdatePromptEvaluationAsset(w http.ResponseWriter, r *http.Request) {
