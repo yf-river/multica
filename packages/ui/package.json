@@ -13,7 +13,6 @@
     "./markdown": "./markdown/index.ts",
     "./markdown/*": "./markdown/*.tsx",
     "./markdown/linkify": "./markdown/linkify.ts",
-    "./markdown/mentions": "./markdown/mentions.ts",
     "./hooks/*": "./hooks/*.ts",
     "./lib/utils": "./lib/utils.ts",
     "./lib/data-table": "./lib/data-table.ts",

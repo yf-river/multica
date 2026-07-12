@@ -12,7 +12,6 @@ import { CODE_LIGATURE_CLASS } from '@multica/ui/lib/code-style'
 import { CodeBlock, InlineCode } from './CodeBlock'
 import { isAllowedFileCardHref, preprocessFileCards } from './file-cards'
 import { preprocessLinks } from './linkify'
-import { preprocessMentionShortcodes } from './mentions'
 import 'katex/dist/katex.min.css'
 import './markdown.css'
 
@@ -419,10 +418,10 @@ export function Markdown({
     [mode, onUrlClick, onFileClick, renderMention, renderImage, renderFileCard]
   )
 
-  // Preprocess: convert mention shortcodes, raw URLs, and file cards to renderable content
+  // Normalize raw URLs and file cards before rendering.
   const processedContent = React.useMemo(
     () => {
-      let result = preprocessMentionShortcodes(children)
+      let result = children
       result = preprocessLinks(result)
       result = preprocessFileCards(result, cdnDomain ?? '')
       return result

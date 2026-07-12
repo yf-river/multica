@@ -23,7 +23,7 @@
  *    (v3.21.0+) handles table cell <p> wrapping and custom mention tokenizers
  *    natively, eliminating the need for the HTML detour.
  *
- * 3. PREPROCESSING is minimal: only legacy mention shortcode migration and
+ * 3. PREPROCESSING is minimal: link and file-card normalization plus
  *    URL linkification (preprocessMarkdown). No HTML conversion.
  *
  * Tech: Tiptap v3.22.1 (ProseMirror wrapper), @tiptap/markdown for

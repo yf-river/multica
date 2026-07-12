@@ -25,7 +25,7 @@ evidence reviewable by humans.
 | Database functions | 9 |
 | Database triggers | 4 |
 | Database indexes | 185 |
-| Migration files (up + down) | 60 |
+| Migration files (up + down) | 62 |
 | sqlc modules | 54 |
 | sqlc queries | 576 |
 | Go WebSocket events | 80 |
@@ -553,6 +553,8 @@ intentionally platform-specific.
 | 29 | normalize_prompt_library_version_source | up | — | 0 | 0 | 0 | `server/migrations/029_normalize_prompt_library_version_source.up.sql` |
 | 30 | remove_unused_relations | down | — | 0 | 0 | 0 | `server/migrations/030_remove_unused_relations.down.sql` |
 | 30 | remove_unused_relations | up | — | 0 | 0 | 0 | `server/migrations/030_remove_unused_relations.up.sql` |
+| 31 | normalize_mention_markdown | down | — | 0 | 0 | 0 | `server/migrations/031_normalize_mention_markdown.down.sql` |
+| 31 | normalize_mention_markdown | up | — | 1 | 0 | 0 | `server/migrations/031_normalize_mention_markdown.up.sql` |
 
 ### Current tables discovered from up migrations
 

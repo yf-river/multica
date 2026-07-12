@@ -369,6 +369,7 @@ function parseDatabase() {
     const content = read(file);
     const tablesCreated = [];
     const functionsCreated = [];
+    const functionOperations = [];
     const triggersCreated = [];
     const indexesCreated = [];
     const tablePattern = /\bCREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?\s+([A-Za-z0-9_".]+)/gi;
@@ -378,7 +379,9 @@ function parseDatabase() {
     }
     for (const functionMatch of content.matchAll(/\bCREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+([A-Za-z0-9_".]+)\s*\(/gi)) {
       const name = functionMatch[1].replaceAll('"', "");
-      functionsCreated.push({ name, source: source(file, name) });
+      const created = { name, source: source(file, name) };
+      functionsCreated.push(created);
+      functionOperations.push({ kind: "create", index: functionMatch.index, value: created });
     }
     for (const triggerMatch of content.matchAll(/\bCREATE\s+TRIGGER\s+([A-Za-z0-9_"]+)\s+([\s\S]*?);/gi)) {
       const name = triggerMatch[1].replaceAll('"', "");
@@ -401,6 +404,15 @@ function parseDatabase() {
         source: source(file, name),
       });
     }
+    const droppedFunctions = [...content.matchAll(/\bDROP\s+FUNCTION(?:\s+IF\s+EXISTS)?\s+([A-Za-z0-9_".]+)/gi)];
+    for (const dropped of droppedFunctions) {
+      functionOperations.push({
+        kind: "drop",
+        index: dropped.index,
+        value: dropped[1].replaceAll('"', ""),
+      });
+    }
+    functionOperations.sort((a, b) => a.index - b.index);
     return {
       version: Number(match[1]),
       name: match[2],
@@ -410,12 +422,12 @@ function parseDatabase() {
       functionsCreated,
       triggersCreated,
       indexesCreated,
-      droppedFunctions: [...content.matchAll(/\bDROP\s+FUNCTION(?:\s+IF\s+EXISTS)?\s+([A-Za-z0-9_".]+)/gi)]
-        .map((item) => item[1].replaceAll('"', "")),
+      droppedFunctions: droppedFunctions.map((item) => item[1].replaceAll('"', "")),
       droppedTriggers: [...content.matchAll(/\bDROP\s+TRIGGER(?:\s+IF\s+EXISTS)?\s+([A-Za-z0-9_"]+)/gi)]
         .map((item) => item[1].replaceAll('"', "")),
       droppedIndexes: [...content.matchAll(/\bDROP\s+INDEX(?:\s+IF\s+EXISTS)?\s+([A-Za-z0-9_".]+)/gi)]
         .map((item) => item[1].replaceAll('"', "")),
+      functionOperations,
     };
   }).sort((a, b) => a.version - b.version || compareText(a.direction, b.direction));
 
@@ -427,16 +439,18 @@ function parseDatabase() {
     for (const table of migration.tablesCreated) {
       if (!tableByName.has(table.name)) tableByName.set(table.name, table);
     }
-    for (const name of migration.droppedFunctions) functionByName.delete(name);
+    for (const operation of migration.functionOperations) {
+      if (operation.kind === "drop") functionByName.delete(operation.value);
+      else functionByName.set(operation.value.name, operation.value);
+    }
     for (const name of migration.droppedTriggers) triggerByName.delete(name);
     for (const name of migration.droppedIndexes) indexByName.delete(name);
-    for (const item of migration.functionsCreated) functionByName.set(item.name, item);
     for (const item of migration.triggersCreated) triggerByName.set(item.name, item);
     for (const item of migration.indexesCreated) indexByName.set(item.name, item);
   }
 
   return {
-    migrations,
+    migrations: migrations.map(({ functionOperations: _functionOperations, ...migration }) => migration),
     tables: [...tableByName.values()].sort((a, b) => compareText(a.name, b.name)),
     functions: [...functionByName.values()].sort((a, b) => compareText(a.name, b.name)),
     triggers: [...triggerByName.values()].sort((a, b) => compareText(a.name, b.name)),

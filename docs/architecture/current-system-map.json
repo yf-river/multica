@@ -24,7 +24,7 @@
     "databaseFunctions": 9,
     "databaseTriggers": 4,
     "databaseIndexes": 185,
-    "migrations": 60,
+    "migrations": 62,
     "sqlcModules": 54,
     "sqlcQueries": 576,
     "goWebsocketEvents": 80,
@@ -6053,6 +6053,39 @@
           "triggersCreated": [],
           "indexesCreated": [],
           "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 31,
+          "name": "normalize_mention_markdown",
+          "direction": "down",
+          "source": "server/migrations/031_normalize_mention_markdown.down.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 31,
+          "name": "normalize_mention_markdown",
+          "direction": "up",
+          "source": "server/migrations/031_normalize_mention_markdown.up.sql",
+          "tablesCreated": [],
+          "functionsCreated": [
+            {
+              "name": "normalize_legacy_mention_markdown",
+              "source": "server/migrations/031_normalize_mention_markdown.up.sql#normalize_legacy_mention_markdown"
+            }
+          ],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [
+            "normalize_legacy_mention_markdown"
+          ],
           "droppedTriggers": [],
           "droppedIndexes": []
         }
