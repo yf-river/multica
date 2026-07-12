@@ -139,6 +139,25 @@ func TestListAgentRuntimes_HidesOtherMembersPersonalRuntime(t *testing.T) {
 	}
 }
 
+func TestRuntimeAccessClientCanceledReturns499(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	runtimeID, _, _ := runtimeVisibilityFixture(t)
+	req := newRequest(http.MethodGet, "/api/runtimes/"+runtimeID+"/usage", nil)
+	ctx, cancel := context.WithCancel(req.Context())
+	cancel()
+	req = req.WithContext(ctx)
+	req = withURLParam(req, "runtimeId", runtimeID)
+
+	w := httptest.NewRecorder()
+	testHandler.GetRuntimeUsage(w, req)
+	if w.Code != 499 {
+		t.Fatalf("expected 499 for canceled runtime read, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 // runtimeVisibilityFixture builds the three-actor world the gate needs to
 // exercise: a personal runtime owned by a non-admin member, a separate plain
 // member in the same workspace, and the workspace owner (testUserID). The
