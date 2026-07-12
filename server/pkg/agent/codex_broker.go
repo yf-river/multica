@@ -414,7 +414,10 @@ func startCodexBrokerProcess(ctx context.Context, cfg Config, execPath string, a
 		proc.close("initialize failed")
 		return nil, fmt.Errorf("codex initialize failed: %s", codexFailureError(err.Error(), proc.stderrTail()))
 	}
-	c.notify("initialized")
+	if err := c.notify("initialized"); err != nil {
+		proc.close("initialize notification failed")
+		return nil, fmt.Errorf("codex initialize notification failed: %s", codexFailureError(err.Error(), proc.stderrTail()))
+	}
 	return proc, nil
 }
 

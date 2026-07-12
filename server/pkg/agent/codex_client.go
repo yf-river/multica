@@ -305,6 +305,7 @@ type codexClient struct {
 	cfg                Config
 	stdin              interface{ Write([]byte) (int, error) }
 	mu                 sync.Mutex
+	writeMu            sync.Mutex
 	nextID             int
 	pending            map[int]*pendingRPC
 	processDone        chan struct{}
@@ -379,15 +380,7 @@ func (c *codexClient) request(ctx context.Context, method string, params any) (j
 		"method":  method,
 		"params":  params,
 	}
-	data, err := json.Marshal(msg)
-	if err != nil {
-		c.mu.Lock()
-		delete(c.pending, id)
-		c.mu.Unlock()
-		return nil, err
-	}
-	data = append(data, '\n')
-	if _, err := c.stdin.Write(data); err != nil {
+	if err := c.writeJSONRPC(msg); err != nil {
 		c.mu.Lock()
 		delete(c.pending, id)
 		c.mu.Unlock()
@@ -433,28 +426,41 @@ func (c *codexClient) request(ctx context.Context, method string, params any) (j
 	}
 }
 
-func (c *codexClient) notify(method string) {
+func (c *codexClient) writeJSONRPC(message any) error {
+	data, err := json.Marshal(message)
+	if err != nil {
+		return fmt.Errorf("marshal JSON-RPC message: %w", err)
+	}
+	data = append(data, '\n')
+	c.writeMu.Lock()
+	defer c.writeMu.Unlock()
+	if _, err := c.stdin.Write(data); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (c *codexClient) notify(method string) error {
 	msg := map[string]any{
 		"jsonrpc": "2.0",
 		"method":  method,
 	}
-	data, _ := json.Marshal(msg)
-	data = append(data, '\n')
-	_, _ = c.stdin.Write(data)
+	if err := c.writeJSONRPC(msg); err != nil {
+		return fmt.Errorf("write notification %s: %w", method, err)
+	}
+	return nil
 }
 
-func (c *codexClient) respond(id int, result any) {
+func (c *codexClient) respond(id int, result any) error {
 	msg := map[string]any{
 		"jsonrpc": "2.0",
 		"id":      id,
 		"result":  result,
 	}
-	data, _ := json.Marshal(msg)
-	data = append(data, '\n')
-	_, _ = c.stdin.Write(data)
+	return c.writeJSONRPC(msg)
 }
 
-func (c *codexClient) respondError(id int, code int, message string) {
+func (c *codexClient) respondError(id int, code int, message string) error {
 	msg := map[string]any{
 		"jsonrpc": "2.0",
 		"id":      id,
@@ -463,9 +469,7 @@ func (c *codexClient) respondError(id int, code int, message string) {
 			"message": message,
 		},
 	}
-	data, _ := json.Marshal(msg)
-	data = append(data, '\n')
-	_, _ = c.stdin.Write(data)
+	return c.writeJSONRPC(msg)
 }
 
 func (c *codexClient) markProcessExited(err error) {
@@ -567,17 +571,21 @@ func (c *codexClient) handleServerRequest(raw map[string]json.RawMessage) {
 	var method string
 	_ = json.Unmarshal(raw["method"], &method)
 
-	// Auto-approve all exec/patch requests in daemon mode
+	// Auto-approve all exec/patch requests in daemon mode.
+	var writeErr error
 	switch method {
 	case "item/commandExecution/requestApproval", "execCommandApproval":
-		c.respond(id, map[string]any{"decision": "accept"})
+		writeErr = c.respond(id, map[string]any{"decision": "accept"})
 	case "item/fileChange/requestApproval", "applyPatchApproval":
-		c.respond(id, map[string]any{"decision": "accept"})
+		writeErr = c.respond(id, map[string]any{"decision": "accept"})
 	case "mcpServer/elicitation/request":
-		c.respond(id, map[string]any{"action": "accept", "content": nil, "_meta": nil})
+		writeErr = c.respond(id, map[string]any{"action": "accept", "content": nil, "_meta": nil})
 	default:
 		c.cfg.Logger.Warn("codex: unhandled server request", "method", method, "id", id)
-		c.respondError(id, -32601, fmt.Sprintf("unhandled server request: %s", method))
+		writeErr = c.respondError(id, -32601, fmt.Sprintf("unhandled server request: %s", method))
+	}
+	if writeErr != nil {
+		c.markProcessExited(fmt.Errorf("write response for %s: %w", method, writeErr))
 	}
 }
 

@@ -292,7 +292,13 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 			resCh <- Result{Status: finalStatus, Error: finalError, DurationMs: time.Since(startTime).Milliseconds()}
 			return
 		}
-		c.notify("initialized")
+		if err := c.notify("initialized"); err != nil {
+			drainAndWait()
+			finalStatus = "failed"
+			finalError = codexFailureError(fmt.Sprintf("codex initialize notification failed: %v", err), stderrBuf.Tail())
+			resCh <- Result{Status: finalStatus, Error: finalError, DurationMs: time.Since(startTime).Milliseconds()}
+			return
+		}
 
 		// 2. Start a new thread, or resume the prior one for this issue. When
 		// resume fails (thread GCed on the server, schema drift, etc.) we fall
