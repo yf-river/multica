@@ -100,60 +100,6 @@ export interface PromptEvaluationDatasetVersion {
   created_at: string;
 }
 
-export interface PromptEvaluationDatasetVersionRow {
-  id: string;
-  workspace_id: string;
-  dataset_version_id: string;
-  dataset_asset_id: string;
-  source_row_id: string | null;
-  case_id: string | null;
-  row_index: number;
-  row_name: string;
-  variables: Record<string, unknown>;
-  expected_contains: unknown[];
-  expected: Record<string, unknown>;
-  tags: unknown[];
-  source: string;
-  created_at: string;
-}
-
-export interface PromptEvaluationDatasetVersionTagTrend {
-  dataset_version_id: string;
-  version: number;
-  version_label: string;
-  created_at: string;
-  tag: string;
-  case_count: number;
-}
-
-export interface PromptEvaluationDatasetVersionChangedRow {
-  row_index: number;
-  base: PromptEvaluationDatasetVersionRow;
-  target: PromptEvaluationDatasetVersionRow;
-}
-
-export interface PromptEvaluationDatasetVersionDiff {
-  base_version: PromptEvaluationDatasetVersion;
-  target_version: PromptEvaluationDatasetVersion;
-  summary: Record<string, number>;
-  added: PromptEvaluationDatasetVersionRow[];
-  removed: PromptEvaluationDatasetVersionRow[];
-  changed: PromptEvaluationDatasetVersionChangedRow[];
-  unchanged: PromptEvaluationDatasetVersionRow[];
-}
-
-export interface RestorePromptEvaluationDatasetVersionRequest {
-  version_label?: string;
-  metadata?: Record<string, unknown>;
-}
-
-export interface RestorePromptEvaluationDatasetVersionResponse {
-  asset: PromptEvaluationAsset;
-  restored_from: PromptEvaluationDatasetVersion;
-  restored_version: PromptEvaluationDatasetVersion;
-  restored_cases: PromptEvaluationStructuredCase[];
-}
-
 export interface PromptEvaluationRun {
   id: string;
   workspace_id: string;
@@ -721,16 +667,6 @@ export interface ListPromptEvaluationDatasetVersionsResponse {
   total: number;
 }
 
-export interface ListPromptEvaluationDatasetVersionRowsResponse {
-  items: PromptEvaluationDatasetVersionRow[];
-  total: number;
-}
-
-export interface ListPromptEvaluationDatasetVersionTagTrendsResponse {
-  items: PromptEvaluationDatasetVersionTagTrend[];
-  total: number;
-}
-
 export interface ListPromptEvaluationRunsResponse {
   items: PromptEvaluationRun[];
   total: number;
@@ -847,11 +783,6 @@ export interface ListPromptEvaluationCaseTagDatasetSummariesParams {
   keyword?: string;
   limit?: number;
   top_dataset_limit?: number;
-}
-
-export interface ListPromptEvaluationDatasetVersionTagTrendsParams {
-  version_limit?: number;
-  limit?: number;
 }
 
 export interface CreatePromptEvaluationCaseRequest {

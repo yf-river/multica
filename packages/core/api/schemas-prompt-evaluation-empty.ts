@@ -1,7 +1,5 @@
 import type {
   ListPromptEvaluationAssetsResponse,
-  ListPromptEvaluationDatasetVersionRowsResponse,
-  ListPromptEvaluationDatasetVersionTagTrendsResponse,
   ListPromptEvaluationDatasetVersionsResponse,
   ListPromptEvaluationOptimizationCandidatesResponse,
   ListPromptEvaluationCaseTagSummariesResponse,
@@ -14,10 +12,7 @@ import type {
   PromptEvaluationStructuredCase,
   PromptEvaluationCaseOperation,
   BulkUpdatePromptEvaluationCaseTagsResponse,
-  PromptEvaluationDatasetVersionDiff,
-  PromptEvaluationDatasetVersion,
   PromptEvaluationRun,
-  RestorePromptEvaluationDatasetVersionResponse,
   PromptEvaluationOptimizationCandidate,
   PromptEvaluationSkillApplyCandidateResponse,
   PromptEvaluationSkillApplyResult,
@@ -67,39 +62,6 @@ export const EMPTY_PROMPT_EVALUATION_ASSET_LIST_RESPONSE: ListPromptEvaluationAs
 export const EMPTY_PROMPT_EVALUATION_DATASET_VERSION_LIST_RESPONSE: ListPromptEvaluationDatasetVersionsResponse = {
   items: [],
   total: 0,
-};
-
-export const EMPTY_PROMPT_EVALUATION_DATASET_VERSION_ROW_LIST_RESPONSE: ListPromptEvaluationDatasetVersionRowsResponse = {
-  items: [],
-  total: 0,
-};
-
-export const EMPTY_PROMPT_EVALUATION_DATASET_VERSION_TAG_TREND_LIST_RESPONSE: ListPromptEvaluationDatasetVersionTagTrendsResponse = {
-  items: [],
-  total: 0,
-};
-
-const EMPTY_PROMPT_EVALUATION_DATASET_VERSION: PromptEvaluationDatasetVersion = {
-  id: "",
-  workspace_id: "",
-  dataset_asset_id: "",
-  version: 0,
-  version_label: "",
-  row_count: 0,
-  row_fingerprint: "",
-  metadata: {},
-  created_by: null,
-  created_at: "",
-};
-
-export const EMPTY_PROMPT_EVALUATION_DATASET_VERSION_DIFF: PromptEvaluationDatasetVersionDiff = {
-  base_version: EMPTY_PROMPT_EVALUATION_DATASET_VERSION,
-  target_version: EMPTY_PROMPT_EVALUATION_DATASET_VERSION,
-  summary: {},
-  added: [],
-  removed: [],
-  changed: [],
-  unchanged: [],
 };
 
 export const EMPTY_PROMPT_EVALUATION_RUN: PromptEvaluationRun = {
@@ -274,13 +236,6 @@ export const EMPTY_PROMPT_EVALUATION_CASE: PromptEvaluationStructuredCase = {
   created_by: null,
   created_at: "",
   updated_at: "",
-};
-
-export const EMPTY_RESTORE_PROMPT_EVALUATION_DATASET_VERSION_RESPONSE: RestorePromptEvaluationDatasetVersionResponse = {
-  asset: EMPTY_PROMPT_EVALUATION_ASSET,
-  restored_from: EMPTY_PROMPT_EVALUATION_DATASET_VERSION_DIFF.base_version,
-  restored_version: EMPTY_PROMPT_EVALUATION_DATASET_VERSION_DIFF.target_version,
-  restored_cases: [],
 };
 
 export const EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE: PromptEvaluationOptimizationCandidate = {

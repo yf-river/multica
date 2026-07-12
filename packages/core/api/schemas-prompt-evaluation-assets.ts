@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { PromptEvaluationCaseSchema } from "./schemas-prompt-evaluation-case-model";
 import { NonEmptyStringSchema } from "./schemas-internal";
 
 // Runtime response contracts for prompt evaluation assets.
@@ -80,66 +79,7 @@ export const PromptEvaluationDatasetVersionSchema = z.object({
   created_at: z.string().default(""),
 }).loose();
 
-export const PromptEvaluationDatasetVersionRowSchema = z.object({
-  id: z.string(),
-  workspace_id: z.string(),
-  dataset_version_id: z.string(),
-  dataset_asset_id: z.string(),
-  source_row_id: z.string().nullable().optional().transform((v) => v ?? null),
-  case_id: z.string().nullable().optional().transform((v) => v ?? null),
-  row_index: z.number().default(0),
-  row_name: z.string().default(""),
-  variables: z.record(z.string(), z.unknown()).default({}),
-  expected_contains: z.array(z.unknown()).default([]),
-  expected: z.record(z.string(), z.unknown()).default({}),
-  tags: z.array(z.unknown()).default([]),
-  source: z.string().default("payload"),
-  created_at: z.string().default(""),
-}).loose();
-
-export const PromptEvaluationDatasetVersionTagTrendSchema = z.object({
-  dataset_version_id: z.string(),
-  version: z.number().default(0),
-  version_label: z.string().default(""),
-  created_at: z.string().default(""),
-  tag: z.string().default(""),
-  case_count: z.number().default(0),
-}).loose();
-
-export const PromptEvaluationDatasetVersionChangedRowSchema = z.object({
-  row_index: z.number().default(0),
-  base: PromptEvaluationDatasetVersionRowSchema,
-  target: PromptEvaluationDatasetVersionRowSchema,
-}).loose();
-
-export const PromptEvaluationDatasetVersionDiffSchema = z.object({
-  base_version: PromptEvaluationDatasetVersionSchema,
-  target_version: PromptEvaluationDatasetVersionSchema,
-  summary: z.record(z.string(), z.number()).default({}),
-  added: z.array(PromptEvaluationDatasetVersionRowSchema).default([]),
-  removed: z.array(PromptEvaluationDatasetVersionRowSchema).default([]),
-  changed: z.array(PromptEvaluationDatasetVersionChangedRowSchema).default([]),
-  unchanged: z.array(PromptEvaluationDatasetVersionRowSchema).default([]),
-}).loose();
-
 export const PromptEvaluationDatasetVersionListResponseSchema = z.object({
   items: z.array(PromptEvaluationDatasetVersionSchema).default([]),
   total: z.number().default(0),
-}).loose();
-
-export const PromptEvaluationDatasetVersionRowListResponseSchema = z.object({
-  items: z.array(PromptEvaluationDatasetVersionRowSchema).default([]),
-  total: z.number().default(0),
-}).loose();
-
-export const PromptEvaluationDatasetVersionTagTrendListResponseSchema = z.object({
-  items: z.array(PromptEvaluationDatasetVersionTagTrendSchema).default([]),
-  total: z.number().default(0),
-}).loose();
-
-export const RestorePromptEvaluationDatasetVersionResponseSchema = z.object({
-  asset: PromptEvaluationAssetSchema,
-  restored_from: PromptEvaluationDatasetVersionSchema,
-  restored_version: PromptEvaluationDatasetVersionSchema,
-  restored_cases: z.array(PromptEvaluationCaseSchema).default([]),
 }).loose();

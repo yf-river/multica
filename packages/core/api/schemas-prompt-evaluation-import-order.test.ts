@@ -15,7 +15,7 @@ describe("prompt evaluation schema module boundaries", () => {
     const assets = await import("./schemas-prompt-evaluation-assets");
     const cases = await import("./schemas-prompt-evaluation-cases");
 
-    expect(assets.RestorePromptEvaluationDatasetVersionResponseSchema).toBeDefined();
+    expect(assets.PromptEvaluationDatasetVersionSchema).toBeDefined();
     expect(cases.PromptEvaluationCaseSchema).toBeDefined();
   });
 });
