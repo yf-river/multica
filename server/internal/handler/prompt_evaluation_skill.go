@@ -450,16 +450,8 @@ func (h *Handler) ApplyPromptEvaluationSkillCandidate(w http.ResponseWriter, r *
 	if !ok {
 		return
 	}
-	candidate, err := h.Queries.GetPromptEvaluationOptimizationCandidateInWorkspace(r.Context(), db.GetPromptEvaluationOptimizationCandidateInWorkspaceParams{
-		ID:          candidateID,
-		WorkspaceID: workspaceUUID,
-	})
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusNotFound, "prompt evaluation optimization candidate not found")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "failed to load prompt evaluation optimization candidate")
+	candidate, ok := loadPromptEvaluationOptimizationCandidate(w, r, h.Queries, workspaceUUID, candidateID)
+	if !ok {
 		return
 	}
 	if candidate.Status != "待确认" {
@@ -532,16 +524,8 @@ func (h *Handler) PreparePromptEvaluationSkillReEvalAsset(w http.ResponseWriter,
 	if !ok {
 		return
 	}
-	candidate, err := h.Queries.GetPromptEvaluationOptimizationCandidateInWorkspace(r.Context(), db.GetPromptEvaluationOptimizationCandidateInWorkspaceParams{
-		ID:          candidateID,
-		WorkspaceID: workspaceUUID,
-	})
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusNotFound, "prompt evaluation optimization candidate not found")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "failed to load prompt evaluation optimization candidate")
+	candidate, ok := loadPromptEvaluationOptimizationCandidate(w, r, h.Queries, workspaceUUID, candidateID)
+	if !ok {
 		return
 	}
 	sourceAsset, err := h.Queries.GetPromptEvaluationAssetInWorkspace(r.Context(), db.GetPromptEvaluationAssetInWorkspaceParams{
@@ -714,16 +698,8 @@ func (h *Handler) RunPromptEvaluationSkillReEval(w http.ResponseWriter, r *http.
 	if !ok {
 		return
 	}
-	candidate, err := h.Queries.GetPromptEvaluationOptimizationCandidateInWorkspace(r.Context(), db.GetPromptEvaluationOptimizationCandidateInWorkspaceParams{
-		ID:          candidateID,
-		WorkspaceID: workspaceUUID,
-	})
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusNotFound, "prompt evaluation optimization candidate not found")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "failed to load prompt evaluation optimization candidate")
+	candidate, ok := loadPromptEvaluationOptimizationCandidate(w, r, h.Queries, workspaceUUID, candidateID)
+	if !ok {
 		return
 	}
 	var req RunPromptEvaluationSkillReEvalRequest

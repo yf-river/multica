@@ -19,6 +19,32 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
+type promptEvaluationOptimizationCandidateReader interface {
+	GetPromptEvaluationOptimizationCandidateInWorkspace(context.Context, db.GetPromptEvaluationOptimizationCandidateInWorkspaceParams) (db.PromptEvaluationOptimizationCandidate, error)
+}
+
+func loadPromptEvaluationOptimizationCandidate(
+	w http.ResponseWriter,
+	r *http.Request,
+	reader promptEvaluationOptimizationCandidateReader,
+	workspaceID pgtype.UUID,
+	candidateID pgtype.UUID,
+) (db.PromptEvaluationOptimizationCandidate, bool) {
+	candidate, err := reader.GetPromptEvaluationOptimizationCandidateInWorkspace(r.Context(), db.GetPromptEvaluationOptimizationCandidateInWorkspaceParams{
+		ID:          candidateID,
+		WorkspaceID: workspaceID,
+	})
+	if err == nil {
+		return candidate, true
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "prompt evaluation optimization candidate not found")
+		return db.PromptEvaluationOptimizationCandidate{}, false
+	}
+	writeError(w, http.StatusInternalServerError, "failed to load prompt evaluation optimization candidate")
+	return db.PromptEvaluationOptimizationCandidate{}, false
+}
+
 func (h *Handler) ListPromptEvaluationOptimizationCandidates(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
@@ -365,16 +391,8 @@ func (h *Handler) PublishPromptEvaluationOptimizationCandidate(w http.ResponseWr
 	if !ok {
 		return
 	}
-	candidate, err := h.Queries.GetPromptEvaluationOptimizationCandidateInWorkspace(r.Context(), db.GetPromptEvaluationOptimizationCandidateInWorkspaceParams{
-		ID:          candidateID,
-		WorkspaceID: workspaceUUID,
-	})
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusNotFound, "prompt evaluation optimization candidate not found")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "failed to load prompt evaluation optimization candidate")
+	candidate, ok := loadPromptEvaluationOptimizationCandidate(w, r, h.Queries, workspaceUUID, candidateID)
+	if !ok {
 		return
 	}
 	if candidate.Status != "待确认" {
@@ -475,16 +493,8 @@ func (h *Handler) UpdatePromptEvaluationOptimizationCandidate(w http.ResponseWri
 		writeError(w, http.StatusBadRequest, "candidate_content is required")
 		return
 	}
-	candidate, err := h.Queries.GetPromptEvaluationOptimizationCandidateInWorkspace(r.Context(), db.GetPromptEvaluationOptimizationCandidateInWorkspaceParams{
-		ID:          candidateID,
-		WorkspaceID: workspaceUUID,
-	})
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusNotFound, "prompt evaluation optimization candidate not found")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "failed to load prompt evaluation optimization candidate")
+	candidate, ok := loadPromptEvaluationOptimizationCandidate(w, r, h.Queries, workspaceUUID, candidateID)
+	if !ok {
 		return
 	}
 	if candidate.Status != "待确认" {
@@ -548,16 +558,8 @@ func (h *Handler) RejectPromptEvaluationOptimizationCandidate(w http.ResponseWri
 	if reason == "" {
 		reason = "验收者人工判定该优化候选暂不采纳。"
 	}
-	candidate, err := h.Queries.GetPromptEvaluationOptimizationCandidateInWorkspace(r.Context(), db.GetPromptEvaluationOptimizationCandidateInWorkspaceParams{
-		ID:          candidateID,
-		WorkspaceID: workspaceUUID,
-	})
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusNotFound, "prompt evaluation optimization candidate not found")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "failed to load prompt evaluation optimization candidate")
+	candidate, ok := loadPromptEvaluationOptimizationCandidate(w, r, h.Queries, workspaceUUID, candidateID)
+	if !ok {
 		return
 	}
 	if candidate.Status != "待确认" {
