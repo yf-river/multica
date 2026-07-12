@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"sync"
 	"time"
 )
 
@@ -34,67 +33,12 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 
 	args := buildClaudeArgs(opts, b.cfg.Logger)
 
-	// If the caller provided an MCP config, write it to a temp file and pass
-	// --mcp-config <path> so the agent uses a controlled set of MCP servers
-	// instead of inheriting from the outer Claude Code session.
-	var mcpConfigPath string
-	var mcpFileCleanup func() // non-nil while this function owns the temp file
-	if len(opts.McpConfig) > 0 {
-		path, err := writeMcpConfigToTemp(opts.McpConfig)
-		if err != nil {
-			cancel()
-			return nil, err
-		}
-		mcpConfigPath = path
-		mcpFileCleanup = func() { _ = os.Remove(mcpConfigPath) }
-		args = append(args, "--mcp-config", mcpConfigPath)
-	}
-	// Clean up the temp file if we return before the goroutine takes ownership.
-	defer func() {
-		if mcpFileCleanup != nil {
-			mcpFileCleanup()
-		}
-	}()
-
-	cmd := exec.CommandContext(runCtx, execPath, args...)
-	hideAgentWindow(cmd)
-	b.cfg.Logger.Info("agent command", "exec", execPath, "args", args)
-	cmd.WaitDelay = 10 * time.Second
-	if opts.Cwd != "" {
-		cmd.Dir = opts.Cwd
-	}
-	cmd.Env = buildEnv(b.cfg.Env)
-
-	stdout, err := cmd.StdoutPipe()
+	process, err := startClaudeProtocolProcess(runCtx, cancel, b.cfg, opts, execPath, args, "claude")
 	if err != nil {
-		cancel()
-		return nil, fmt.Errorf("claude stdout pipe: %w", err)
+		return nil, err
 	}
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		cancel()
-		return nil, fmt.Errorf("claude stdin pipe: %w", err)
-	}
-	var closeStdinOnce sync.Once
-	closeStdin := func() { closeStdinOnce.Do(func() { _ = stdin.Close() }) }
-	// Capture stderr into both the daemon log (as before) and a bounded tail
-	// buffer so we can include the last few KB in Result.Error when claude
-	// exits unexpectedly. Without the tail, an exit-code-only failure looks
-	// like "claude exited with error: exit status 3" — which is useless for
-	// root-causing V8 aborts, Bun panics, or any other CLI-side crash.
-	stderrBuf := newStderrTail(newLogWriter(b.cfg.Logger, "[claude:stderr] "), agentStderrTailBytes)
-	cmd.Stderr = stderrBuf
-
-	if err := cmd.Start(); err != nil {
-		closeStdin()
-		cancel()
-		return nil, fmt.Errorf("start claude: %w", err)
-	}
-
-	b.cfg.Logger.Info("claude started", "pid", cmd.Process.Pid, "cwd", opts.Cwd, "model", opts.Model)
-
-	// cmd.Start() succeeded — transfer temp file ownership to the goroutine.
-	mcpFileCleanup = nil
+	cmd, stdout, stdin := process.cmd, process.stdout, process.stdin
+	closeStdin, stderrBuf := process.closeStdin, process.stderr
 
 	msgCh := make(chan Message, 256)
 	resCh := make(chan Result, 1)
@@ -126,9 +70,7 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		defer cancel()
 		defer close(msgCh)
 		defer close(resCh)
-		if mcpConfigPath != "" {
-			defer func() { _ = os.Remove(mcpConfigPath) }()
-		}
+		defer process.mcpConfigCleanup()
 
 		startTime := time.Now()
 		var output strings.Builder
