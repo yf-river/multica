@@ -3,10 +3,12 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/logger"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -73,16 +75,20 @@ func inboxRowToResponse(r db.ListInboxItemsRow) InboxItemResponse {
 	}
 }
 
-func (h *Handler) enrichInboxResponse(ctx context.Context, resp InboxItemResponse, issueID pgtype.UUID) InboxItemResponse {
+func enrichInboxResponse(ctx context.Context, queries *db.Queries, resp InboxItemResponse, issueID pgtype.UUID) (InboxItemResponse, error) {
 	if !issueID.Valid {
-		return resp
+		return resp, nil
 	}
-	issue, err := h.Queries.GetIssue(ctx, issueID)
-	if err == nil {
-		s := issue.Status
-		resp.IssueStatus = &s
+	issue, err := queries.GetIssue(ctx, issueID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return resp, nil
 	}
-	return resp
+	if err != nil {
+		return InboxItemResponse{}, err
+	}
+	s := issue.Status
+	resp.IssueStatus = &s
+	return resp, nil
 }
 
 func (h *Handler) ListInbox(w http.ResponseWriter, r *http.Request) {
@@ -120,20 +126,34 @@ func (h *Handler) MarkInboxRead(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	item, err := h.Queries.MarkInboxRead(r.Context(), prev.ID)
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to begin mark read")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	queries := h.Queries.WithTx(tx)
+	item, err := queries.MarkInboxRead(r.Context(), prev.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to mark read")
 		return
 	}
 
+	resp, err := enrichInboxResponse(r.Context(), queries, inboxToResponse(item), item.IssueID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load inbox issue")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit mark read")
+		return
+	}
 	userID := requestUserID(r)
 	workspaceID := uuidToString(item.WorkspaceID)
 	h.publish(protocol.EventInboxRead, workspaceID, "member", userID, map[string]any{
 		"item_id":      uuidToString(item.ID),
 		"recipient_id": uuidToString(item.RecipientID),
 	})
-
-	resp := h.enrichInboxResponse(r.Context(), inboxToResponse(item), item.IssueID)
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -143,7 +163,14 @@ func (h *Handler) ArchiveInboxItem(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	item, err := h.Queries.ArchiveInboxItem(r.Context(), prev.ID)
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to begin archive")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	queries := h.Queries.WithTx(tx)
+	item, err := queries.ArchiveInboxItem(r.Context(), prev.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to archive")
 		return
@@ -151,7 +178,7 @@ func (h *Handler) ArchiveInboxItem(w http.ResponseWriter, r *http.Request) {
 
 	// Archive all sibling inbox items for the same issue (issue-level archive)
 	if item.IssueID.Valid {
-		if _, err := h.Queries.ArchiveInboxByIssue(r.Context(), db.ArchiveInboxByIssueParams{
+		if _, err := queries.ArchiveInboxByIssue(r.Context(), db.ArchiveInboxByIssueParams{
 			WorkspaceID:   item.WorkspaceID,
 			RecipientType: item.RecipientType,
 			RecipientID:   item.RecipientID,
@@ -162,6 +189,15 @@ func (h *Handler) ArchiveInboxItem(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	resp, err := enrichInboxResponse(r.Context(), queries, inboxToResponse(item), item.IssueID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load inbox issue")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit archive")
+		return
+	}
 	userID := requestUserID(r)
 	workspaceID := uuidToString(item.WorkspaceID)
 	h.publish(protocol.EventInboxArchived, workspaceID, "member", userID, map[string]any{
@@ -169,8 +205,6 @@ func (h *Handler) ArchiveInboxItem(w http.ResponseWriter, r *http.Request) {
 		"issue_id":     uuidToPtr(item.IssueID),
 		"recipient_id": uuidToString(item.RecipientID),
 	})
-
-	resp := h.enrichInboxResponse(r.Context(), inboxToResponse(item), item.IssueID)
 	writeJSON(w, http.StatusOK, resp)
 }
 
