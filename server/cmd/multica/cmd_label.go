@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
 	"github.com/multica-ai/multica/server/internal/cli"
@@ -182,7 +183,7 @@ func runLabelCreate(cmd *cobra.Command, _ []string) error {
 
 	body := map[string]any{"name": name, "color": color}
 	var result map[string]any
-	if err := client.PostJSON(ctx, "/api/labels", body, &result); err != nil {
+	if err := client.PostJSONWithIdempotencyKey(ctx, "/api/labels", body, uuid.NewString(), &result); err != nil {
 		return fmt.Errorf("create label: %w", err)
 	}
 

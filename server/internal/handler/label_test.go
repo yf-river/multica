@@ -7,7 +7,37 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/google/uuid"
 )
+
+func TestCreateLabel_ReplaysCommittedResponse(t *testing.T) {
+	key := uuid.NewString()
+	create := func() (int, LabelResponse) {
+		w := httptest.NewRecorder()
+		req := newRequest("POST", "/api/labels", map[string]any{
+			"name":  "retry-" + key[:8],
+			"color": "#123456",
+		})
+		req.Header.Set("Idempotency-Key", key)
+		testHandler.CreateLabel(w, req)
+		var response LabelResponse
+		_ = json.NewDecoder(w.Body).Decode(&response)
+		return w.Code, response
+	}
+
+	firstStatus, first := create()
+	t.Cleanup(func() {
+		if first.ID != "" {
+			mustExec(t, context.Background(), `DELETE FROM issue_label WHERE id = $1`, first.ID)
+		}
+		mustExec(t, context.Background(), `DELETE FROM resource_create_request WHERE resource_type = 'label' AND idempotency_key = $1`, key)
+	})
+	secondStatus, second := create()
+	if firstStatus != http.StatusCreated || secondStatus != http.StatusCreated || first.ID != second.ID {
+		t.Fatalf("label replay = (%d, %s) then (%d, %s), want same 201 response", firstStatus, first.ID, secondStatus, second.ID)
+	}
+}
 
 // TestLabelCRUD exercises label create/list/get/update/delete.
 func TestLabelCRUD(t *testing.T) {

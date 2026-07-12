@@ -50,6 +50,14 @@ func labelsToResponse(list []db.IssueLabel) []LabelResponse {
 	return out
 }
 
+func writeLabelCreateReplayError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errResourceCreateIdempotencyConflict) {
+		writeError(w, http.StatusConflict, "Idempotency-Key was already used with a different label request")
+		return
+	}
+	writeError(w, http.StatusInternalServerError, "failed to replay label create")
+}
+
 type CreateLabelRequest struct {
 	Name  string `json:"name"`
 	Color string `json:"color"`
@@ -161,9 +169,62 @@ func (h *Handler) CreateLabel(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	workspaceUUID := parseUUID(workspaceID)
+	actorID := parseUUID(userID)
+	requestHash, err := hashRequestFingerprint(CreateLabelRequest{Name: name, Color: color})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create label")
+		return
+	}
+	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	loadReplay := func() (LabelResponse, bool, error) {
+		return loadResourceCreateReplay(
+			r.Context(), h.Queries, workspaceUUID, actorID, resourceTypeLabel,
+			idempotencyKey, requestHash, func(response LabelResponse) bool { return response.ID != "" },
+		)
+	}
+	if replay, found, replayErr := loadReplay(); replayErr != nil {
+		writeLabelCreateReplayError(w, replayErr)
+		return
+	} else if found {
+		writeJSON(w, http.StatusCreated, replay)
+		return
+	}
 
-	label, err := h.Queries.CreateLabel(r.Context(), db.CreateLabelParams{
-		WorkspaceID: parseUUID(workspaceID),
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create label")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	_, err = qtx.ReserveResourceCreateRequest(r.Context(), db.ReserveResourceCreateRequestParams{
+		WorkspaceID: workspaceUUID, ActorID: actorID, ResourceType: resourceTypeLabel,
+		IdempotencyKey: idempotencyKey, RequestHash: requestHash,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		_ = tx.Rollback(r.Context())
+		replay, found, replayErr := loadReplay()
+		if replayErr != nil || !found {
+			if replayErr == nil {
+				replayErr = errors.New("label create replay disappeared after conflict")
+			}
+			writeLabelCreateReplayError(w, replayErr)
+			return
+		}
+		writeJSON(w, http.StatusCreated, replay)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create label")
+		return
+	}
+
+	label, err := qtx.CreateLabel(r.Context(), db.CreateLabelParams{
+		WorkspaceID: workspaceUUID,
 		Name:        name,
 		Color:       color,
 	})
@@ -177,6 +238,17 @@ func (h *Handler) CreateLabel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := labelToResponse(label)
+	if err := completeResourceCreateRequest(
+		r.Context(), qtx, workspaceUUID, actorID, resourceTypeLabel,
+		idempotencyKey, requestHash, label.ID, resp,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create label")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create label")
+		return
+	}
 	h.publish(protocol.EventLabelCreated, workspaceID, "member", userID, map[string]any{"label": resp})
 	writeJSON(w, http.StatusCreated, resp)
 }
