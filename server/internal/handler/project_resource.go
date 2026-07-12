@@ -482,30 +482,34 @@ func isValidGitRepoURL(s string) bool {
 	return true
 }
 
-// loadProjectForResource resolves the project, enforces workspace ownership,
-// and returns its DB row. Used by all project_resource handlers.
-func (h *Handler) loadProjectForResource(w http.ResponseWriter, r *http.Request, projectIDParam string) (db.Project, bool) {
-	projectUUID, ok := parseUUIDOrBadRequest(w, projectIDParam, "project id")
+func (h *Handler) loadProjectResourceForMutation(w http.ResponseWriter, r *http.Request, project db.Project) (db.ProjectResource, string, bool) {
+	resourceID := chi.URLParam(r, "resourceId")
+	resourceUUID, ok := parseUUIDOrBadRequest(w, resourceID, "resource id")
 	if !ok {
-		return db.Project{}, false
+		return db.ProjectResource{}, "", false
 	}
-	wsUUID, ok := parseUUIDOrBadRequest(w, h.resolveWorkspaceID(r), "workspace id")
+	userID, ok := requireUserID(w, r)
 	if !ok {
-		return db.Project{}, false
+		return db.ProjectResource{}, "", false
 	}
-	project, err := h.Queries.GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{
-		ID: projectUUID, WorkspaceID: wsUUID,
+	resource, err := h.Queries.GetProjectResourceInWorkspace(r.Context(), db.GetProjectResourceInWorkspaceParams{
+		ID:          resourceUUID,
+		WorkspaceID: project.WorkspaceID,
 	})
 	if err != nil {
-		writeError(w, http.StatusNotFound, "project not found")
-		return db.Project{}, false
+		writeEntityLoadError(w, r, err, "project resource", "resource_id", resourceID, "project_id", uuidToString(project.ID))
+		return db.ProjectResource{}, "", false
 	}
-	return project, true
+	if uuidToString(resource.ProjectID) != uuidToString(project.ID) {
+		writeError(w, http.StatusNotFound, "project resource not found")
+		return db.ProjectResource{}, "", false
+	}
+	return resource, userID, true
 }
 
 // ListProjectResources returns the resources attached to a project.
 func (h *Handler) ListProjectResources(w http.ResponseWriter, r *http.Request) {
-	project, ok := h.loadProjectForResource(w, r, chi.URLParam(r, "id"))
+	project, ok := h.loadProjectForRequest(w, r, chi.URLParam(r, "id"), h.resolveWorkspaceID(r))
 	if !ok {
 		return
 	}
@@ -523,7 +527,7 @@ func (h *Handler) ListProjectResources(w http.ResponseWriter, r *http.Request) {
 
 // CreateProjectResource attaches a new resource to a project.
 func (h *Handler) CreateProjectResource(w http.ResponseWriter, r *http.Request) {
-	project, ok := h.loadProjectForResource(w, r, chi.URLParam(r, "id"))
+	project, ok := h.loadProjectForRequest(w, r, chi.URLParam(r, "id"), h.resolveWorkspaceID(r))
 	if !ok {
 		return
 	}
@@ -632,28 +636,12 @@ func (h *Handler) createProjectResourceAtEnd(ctx context.Context, params db.Crea
 // `label` JSON null vs. missing distinction (missing = keep, explicit "" =
 // clear).
 func (h *Handler) UpdateProjectResource(w http.ResponseWriter, r *http.Request) {
-	project, ok := h.loadProjectForResource(w, r, chi.URLParam(r, "id"))
+	project, ok := h.loadProjectForRequest(w, r, chi.URLParam(r, "id"), h.resolveWorkspaceID(r))
 	if !ok {
 		return
 	}
-	resourceUUID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "resourceId"), "resource id")
+	existing, userID, ok := h.loadProjectResourceForMutation(w, r, project)
 	if !ok {
-		return
-	}
-	userID, ok := requireUserID(w, r)
-	if !ok {
-		return
-	}
-
-	existing, err := h.Queries.GetProjectResourceInWorkspace(r.Context(), db.GetProjectResourceInWorkspaceParams{
-		ID: resourceUUID, WorkspaceID: project.WorkspaceID,
-	})
-	if err != nil {
-		writeError(w, http.StatusNotFound, "project resource not found")
-		return
-	}
-	if uuidToString(existing.ProjectID) != uuidToString(project.ID) {
-		writeError(w, http.StatusNotFound, "project resource not found")
 		return
 	}
 
@@ -744,23 +732,12 @@ func (h *Handler) UpdateProjectResource(w http.ResponseWriter, r *http.Request) 
 // commit discovery requires a bound Gongfeng profile; until then this action
 // records that the resource was refreshed without inventing a commit SHA.
 func (h *Handler) SyncProjectResource(w http.ResponseWriter, r *http.Request) {
-	project, ok := h.loadProjectForResource(w, r, chi.URLParam(r, "id"))
+	project, ok := h.loadProjectForRequest(w, r, chi.URLParam(r, "id"), h.resolveWorkspaceID(r))
 	if !ok {
 		return
 	}
-	resourceUUID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "resourceId"), "resource id")
+	existing, userID, ok := h.loadProjectResourceForMutation(w, r, project)
 	if !ok {
-		return
-	}
-	userID, ok := requireUserID(w, r)
-	if !ok {
-		return
-	}
-	existing, err := h.Queries.GetProjectResourceInWorkspace(r.Context(), db.GetProjectResourceInWorkspaceParams{
-		ID: resourceUUID, WorkspaceID: project.WorkspaceID,
-	})
-	if err != nil || uuidToString(existing.ProjectID) != uuidToString(project.ID) {
-		writeError(w, http.StatusNotFound, "project resource not found")
 		return
 	}
 	if existing.ResourceType != "gongfeng_repo" {
@@ -1270,27 +1247,12 @@ func (h *Handler) findLocalDirectoryConflict(ctx context.Context, projectID pgty
 
 // DeleteProjectResource removes a resource from a project.
 func (h *Handler) DeleteProjectResource(w http.ResponseWriter, r *http.Request) {
-	project, ok := h.loadProjectForResource(w, r, chi.URLParam(r, "id"))
+	project, ok := h.loadProjectForRequest(w, r, chi.URLParam(r, "id"), h.resolveWorkspaceID(r))
 	if !ok {
 		return
 	}
-	resourceUUID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "resourceId"), "resource id")
+	resource, userID, ok := h.loadProjectResourceForMutation(w, r, project)
 	if !ok {
-		return
-	}
-	userID, ok := requireUserID(w, r)
-	if !ok {
-		return
-	}
-	resource, err := h.Queries.GetProjectResourceInWorkspace(r.Context(), db.GetProjectResourceInWorkspaceParams{
-		ID: resourceUUID, WorkspaceID: project.WorkspaceID,
-	})
-	if err != nil {
-		writeError(w, http.StatusNotFound, "project resource not found")
-		return
-	}
-	if uuidToString(resource.ProjectID) != uuidToString(project.ID) {
-		writeError(w, http.StatusNotFound, "project resource not found")
 		return
 	}
 	if err := h.Queries.DeleteProjectResource(r.Context(), resource.ID); err != nil {
