@@ -7,9 +7,12 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
+	"sync"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -680,6 +683,7 @@ func TestRotateWebhookToken_ReplacesOldToken(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := newRequest("POST", fmt.Sprintf("/api/autopilots/%s/triggers/%s/rotate-webhook-token", apID, trig.ID), nil)
 	req = withURLParams(req, "id", apID, "triggerId", trig.ID)
+	req.Header.Set("Idempotency-Key", uuid.NewString())
 	testHandler.RotateAutopilotTriggerWebhookToken(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("rotate: expected 200, got %d body=%s", w.Code, w.Body.String())
@@ -699,6 +703,149 @@ func TestRotateWebhookToken_ReplacesOldToken(t *testing.T) {
 	resNew := postWebhook(t, *rotated.WebhookToken, map[string]any{"x": 1}, nil)
 	if resNew.Code != http.StatusOK {
 		t.Fatalf("new token should be 200, got %d body=%s", resNew.Code, resNew.Body.String())
+	}
+}
+
+func TestRotateWebhookToken_ReplaysCommittedRotation(t *testing.T) {
+	agentID := createWebhookTestAgent(t, "WebhookRotateReplay Agent")
+	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
+	trig := createWebhookTriggerViaHandler(t, apID)
+	requestKey := uuid.NewString()
+
+	rotate := func() AutopilotTriggerResponse {
+		t.Helper()
+		w := httptest.NewRecorder()
+		req := newRequest("POST", fmt.Sprintf("/api/autopilots/%s/triggers/%s/rotate-webhook-token", apID, trig.ID), nil)
+		req = withURLParams(req, "id", apID, "triggerId", trig.ID)
+		req.Header.Set("Idempotency-Key", requestKey)
+		testHandler.RotateAutopilotTriggerWebhookToken(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("rotate status = %d: %s", w.Code, w.Body.String())
+		}
+		var response AutopilotTriggerResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		return response
+	}
+
+	first := rotate()
+	replay := rotate()
+	if !reflect.DeepEqual(replay, first) {
+		t.Fatalf("replayed rotation = %#v, want exact %#v", replay, first)
+	}
+	other := createWebhookTriggerViaHandler(t, apID)
+	conflict := httptest.NewRecorder()
+	conflictReq := newRequest("POST", fmt.Sprintf("/api/autopilots/%s/triggers/%s/rotate-webhook-token", apID, other.ID), nil)
+	conflictReq = withURLParams(conflictReq, "id", apID, "triggerId", other.ID)
+	conflictReq.Header.Set("Idempotency-Key", requestKey)
+	testHandler.RotateAutopilotTriggerWebhookToken(conflict, conflictReq)
+	if conflict.Code != http.StatusConflict {
+		t.Fatalf("same key for another trigger = %d %s, want 409", conflict.Code, conflict.Body.String())
+	}
+}
+
+func TestRotateWebhookToken_ConcurrentReplayRotatesOnce(t *testing.T) {
+	agentID := createWebhookTestAgent(t, "WebhookRotateConcurrent Agent")
+	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
+	trig := createWebhookTriggerViaHandler(t, apID)
+	requestKey := uuid.NewString()
+
+	const workers = 8
+	responses := make(chan AutopilotTriggerResponse, workers)
+	statuses := make(chan int, workers)
+	var start sync.WaitGroup
+	start.Add(1)
+	var done sync.WaitGroup
+	done.Add(workers)
+	for range workers {
+		go func() {
+			defer done.Done()
+			start.Wait()
+			w := httptest.NewRecorder()
+			req := newRequest("POST", fmt.Sprintf("/api/autopilots/%s/triggers/%s/rotate-webhook-token", apID, trig.ID), nil)
+			req = withURLParams(req, "id", apID, "triggerId", trig.ID)
+			req.Header.Set("Idempotency-Key", requestKey)
+			testHandler.RotateAutopilotTriggerWebhookToken(w, req)
+			var response AutopilotTriggerResponse
+			_ = json.Unmarshal(w.Body.Bytes(), &response)
+			statuses <- w.Code
+			responses <- response
+		}()
+	}
+	start.Done()
+	done.Wait()
+	close(statuses)
+	close(responses)
+
+	for status := range statuses {
+		if status != http.StatusOK {
+			t.Fatalf("concurrent rotation status = %d, want 200", status)
+		}
+	}
+	var first AutopilotTriggerResponse
+	for response := range responses {
+		if first.ID == "" {
+			first = response
+		} else if !reflect.DeepEqual(response, first) {
+			t.Fatalf("concurrent rotation responses differ: %#v and %#v", first, response)
+		}
+	}
+	var requests int
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM autopilot_trigger_rotation_request WHERE idempotency_key = $1`, requestKey).Scan(&requests); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 1 {
+		t.Fatalf("rotation requests = %d, want 1", requests)
+	}
+}
+
+func TestRotateWebhookToken_CompletionFailureRollsBackToken(t *testing.T) {
+	agentID := createWebhookTestAgent(t, "WebhookRotateRollback Agent")
+	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
+	trig := createWebhookTriggerViaHandler(t, apID)
+	oldToken := *trig.WebhookToken
+	requestKey := uuid.NewString()
+	suffix := uuid.NewString()
+	functionName := quoteIdentifier("fail_webhook_rotation_completion_" + suffix)
+	triggerName := quoteIdentifier("fail_webhook_rotation_completion_trigger_" + suffix)
+	if _, err := testPool.Exec(context.Background(), fmt.Sprintf(`
+		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF NEW.idempotency_key = %s::uuid THEN
+				RAISE EXCEPTION 'forced webhook rotation completion failure';
+			END IF;
+			RETURN NEW;
+		END $$;
+		CREATE TRIGGER %s BEFORE UPDATE ON autopilot_trigger_rotation_request
+		FOR EACH ROW EXECUTE FUNCTION %s();
+	`, functionName, quoteSQLLiteral(requestKey), triggerName, functionName)); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON autopilot_trigger_rotation_request`, triggerName))
+		_, _ = testPool.Exec(context.Background(), fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, functionName))
+	})
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", fmt.Sprintf("/api/autopilots/%s/triggers/%s/rotate-webhook-token", apID, trig.ID), nil)
+	req = withURLParams(req, "id", apID, "triggerId", trig.ID)
+	req.Header.Set("Idempotency-Key", requestKey)
+	testHandler.RotateAutopilotTriggerWebhookToken(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("forced completion failure = %d %s, want 500", w.Code, w.Body.String())
+	}
+	var token string
+	var requests int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT
+			(SELECT webhook_token FROM autopilot_trigger WHERE id = $1),
+			(SELECT count(*) FROM autopilot_trigger_rotation_request WHERE idempotency_key = $2)
+	`, trig.ID, requestKey).Scan(&token, &requests); err != nil {
+		t.Fatal(err)
+	}
+	if token != oldToken || requests != 0 {
+		t.Fatalf("failed rotation left token_changed=%t requests=%d, want false/0", token != oldToken, requests)
 	}
 }
 

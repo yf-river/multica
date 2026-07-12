@@ -2974,15 +2974,19 @@ export class ApiClient extends ApiTransport {
   async rotateAutopilotTriggerWebhookToken(
     autopilotId: string,
     triggerId: string,
+    idempotencyKey = generateUUID(),
   ): Promise<AutopilotTrigger> {
-    const raw = await this.fetch<unknown>(
-      `/api/autopilots/${autopilotId}/triggers/${triggerId}/rotate-webhook-token`,
-      { method: "POST" },
-    );
-    return parseOrThrow(raw, AutopilotTriggerSchema, EMPTY_AUTOPILOT_TRIGGER, {
-      endpoint: "POST /api/autopilots/:id/triggers/:triggerId/rotate-webhook-token",
-      mayHaveCommitted: true,
-    });
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(
+        `/api/autopilots/${autopilotId}/triggers/${triggerId}/rotate-webhook-token`,
+        { method: "POST", extraHeaders: { "Idempotency-Key": idempotencyKey } },
+      );
+      return parseOrThrow(raw, AutopilotTriggerSchema, EMPTY_AUTOPILOT_TRIGGER, {
+        endpoint: "POST /api/autopilots/:id/triggers/:triggerId/rotate-webhook-token",
+        mayHaveCommitted: true,
+      });
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   // Webhook deliveries — list is slim (no raw_body / selected_headers /

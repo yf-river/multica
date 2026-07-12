@@ -40,6 +40,51 @@ func newAutopilotUpdateTestCmd() *cobra.Command {
 	return cmd
 }
 
+func newAutopilotRotateTestCmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "trigger-rotate-url"}
+	cmd.Flags().Bool("yes", true, "")
+	cmd.Flags().String("output", "json", "")
+	cmd.Flags().String("server-url", "", "")
+	cmd.Flags().String("workspace-id", "", "")
+	cmd.Flags().String("profile", "", "")
+	return cmd
+}
+
+func TestRunAutopilotTriggerRotateURLRetriesWithOneRequestIdentity(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MULTICA_TOKEN", "test-token")
+	t.Setenv("MULTICA_WORKSPACE_ID", "workspace-123")
+	const autopilotID = "11111111-1111-4111-8111-111111111111"
+	const triggerID = "22222222-2222-4222-8222-222222222222"
+	var keys []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/autopilots/"+autopilotID+"/triggers/"+triggerID+"/rotate-webhook-token" {
+			t.Fatalf("path = %q", r.URL.Path)
+		}
+		keys = append(keys, r.Header.Get("Idempotency-Key"))
+		w.Header().Set("Content-Type", "application/json")
+		if len(keys) == 1 {
+			_, _ = w.Write([]byte(`{"id":`))
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"id": triggerID, "webhook_token": "rotated-token",
+		})
+	}))
+	defer srv.Close()
+	t.Setenv("MULTICA_SERVER_URL", srv.URL)
+
+	cmd := newAutopilotRotateTestCmd()
+	if _, err := captureStdout(t, func() error {
+		return runAutopilotTriggerRotateURL(cmd, []string{autopilotID, triggerID})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 2 || len(keys[0]) != 36 || keys[1] != keys[0] {
+		t.Fatalf("rotation request keys = %#v, want two matching UUIDs", keys)
+	}
+}
+
 func TestResolveAgent(t *testing.T) {
 	agentsResp := []map[string]any{
 		{"id": "11111111-1111-1111-1111-111111111111", "name": "Lambda"},

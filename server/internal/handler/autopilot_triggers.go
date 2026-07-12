@@ -3,12 +3,14 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -461,16 +463,72 @@ func (h *Handler) RotateAutopilotTriggerWebhookToken(w http.ResponseWriter, r *h
 		writeError(w, http.StatusBadRequest, "trigger is not a webhook trigger")
 		return
 	}
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return
+	}
+	actorUUID := parseUUID(userID)
+	requestKey, ok := requireIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	requestHash, err := hashRequestFingerprint(struct {
+		TriggerID string `json:"trigger_id"`
+	}{TriggerID: uuidToString(prev.ID)})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to fingerprint webhook token rotation")
+		return
+	}
+	if replay, found, replayErr := loadAutopilotTriggerRotationReplay(r.Context(), h.Queries, workspaceUUID, actorUUID, requestKey, requestHash); replayErr != nil {
+		if errors.Is(replayErr, errAutopilotTriggerRotationIdempotencyConflict) {
+			writeJSON(w, http.StatusConflict, map[string]any{"error": "Idempotency-Key was already used with a different request", "code": "idempotency_conflict"})
+		} else {
+			writeError(w, http.StatusInternalServerError, "failed to load webhook token rotation request")
+		}
+		return
+	} else if found {
+		writeAutopilotTriggerRotationReplay(w, replay)
+		return
+	}
+
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start webhook token rotation transaction")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	_, err = qtx.ReserveAutopilotTriggerRotationRequest(r.Context(), db.ReserveAutopilotTriggerRotationRequestParams{
+		WorkspaceID: workspaceUUID, ActorID: actorUUID, IdempotencyKey: requestKey,
+		TriggerID: prev.ID, RequestHash: requestHash,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		_ = tx.Rollback(r.Context())
+		replay, found, replayErr := loadAutopilotTriggerRotationReplay(r.Context(), h.Queries, workspaceUUID, actorUUID, requestKey, requestHash)
+		if replayErr != nil || !found {
+			writeError(w, http.StatusInternalServerError, "webhook token rotation replay disappeared after conflict")
+			return
+		}
+		writeAutopilotTriggerRotationReplay(w, replay)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reserve webhook token rotation request")
+		return
+	}
 
 	var rotated db.AutopilotTrigger
-	var err error
 	for attempt := 0; attempt < 3; attempt++ {
 		token, terr := generateWebhookToken()
 		if terr != nil {
 			writeError(w, http.StatusInternalServerError, "failed to generate webhook token")
 			return
 		}
-		rotated, err = h.Queries.RotateAutopilotTriggerWebhookToken(r.Context(), db.RotateAutopilotTriggerWebhookTokenParams{
+		rotated, err = qtx.RotateAutopilotTriggerWebhookToken(r.Context(), db.RotateAutopilotTriggerWebhookTokenParams{
 			ID:           prev.ID,
 			WebhookToken: pgtype.Text{String: token, Valid: true},
 		})
@@ -488,7 +546,14 @@ func (h *Handler) RotateAutopilotTriggerWebhookToken(w http.ResponseWriter, r *h
 	}
 
 	resp := h.triggerToResponse(rotated)
-	userID, _ := requireUserID(w, r)
+	if err := completeAutopilotTriggerRotationRequest(r.Context(), qtx, workspaceUUID, actorUUID, requestKey, prev.ID, requestHash, http.StatusOK, resp); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to complete webhook token rotation request")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit webhook token rotation")
+		return
+	}
 	h.publish(protocol.EventAutopilotUpdated, workspaceID, "member", userID, map[string]any{
 		"autopilot_id": uuidToString(ap.ID),
 		"trigger":      resp,

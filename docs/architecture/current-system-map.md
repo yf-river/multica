@@ -21,13 +21,13 @@ evidence reviewable by humans.
 | Next.js route handlers | 1 |
 | Next.js rewrites | 6 |
 | Desktop route literals | 29 |
-| Database tables | 85 |
+| Database tables | 86 |
 | Database functions | 9 |
 | Database triggers | 4 |
-| Database indexes | 192 |
-| Migration files (up + down) | 136 |
-| sqlc modules | 54 |
-| sqlc queries | 586 |
+| Database indexes | 194 |
+| Migration files (up + down) | 138 |
+| sqlc modules | 55 |
+| sqlc queries | 589 |
 | Go WebSocket events | 80 |
 | TypeScript WebSocket events | 70 |
 | Zustand store definitions | 43 |
@@ -628,6 +628,8 @@ intentionally platform-specific.
 | 67 | add_webhook_replay_request | up | — | 0 | 0 | 1 | `server/migrations/067_add_webhook_replay_request.up.sql` |
 | 68 | add_skill_import_request | down | — | 0 | 0 | 0 | `server/migrations/068_add_skill_import_request.down.sql` |
 | 68 | add_skill_import_request | up | skill_import_request | 0 | 0 | 2 | `server/migrations/068_add_skill_import_request.up.sql` |
+| 69 | add_autopilot_trigger_rotation_request | down | — | 0 | 0 | 0 | `server/migrations/069_add_autopilot_trigger_rotation_request.down.sql` |
+| 69 | add_autopilot_trigger_rotation_request | up | autopilot_trigger_rotation_request | 0 | 0 | 2 | `server/migrations/069_add_autopilot_trigger_rotation_request.up.sql` |
 
 ### Current tables discovered from up migrations
 
@@ -646,6 +648,7 @@ intentionally platform-specific.
 - `autopilot_run` — `server/migrations/001_current_schema.up.sql#autopilot_run`
 - `autopilot_subscriber` — `server/migrations/001_current_schema.up.sql#autopilot_subscriber`
 - `autopilot_trigger` — `server/migrations/001_current_schema.up.sql#autopilot_trigger`
+- `autopilot_trigger_rotation_request` — `server/migrations/069_add_autopilot_trigger_rotation_request.up.sql#autopilot_trigger_rotation_request`
 - `chat_idempotency_record` — `server/migrations/007_chat_request_idempotency.up.sql#chat_idempotency_record`
 - `chat_message` — `server/migrations/001_current_schema.up.sql#chat_message`
 - `chat_session` — `server/migrations/001_current_schema.up.sql#chat_session`
@@ -727,11 +730,11 @@ intentionally platform-specific.
 | `trg_tu_dirty_hourly` | `public.task_usage` | `public.enqueue_task_usage_hourly_dirty_for_tu` | `server/migrations/001_current_schema.up.sql#trg_tu_dirty_hourly` |
 
 - Functions: `public.enqueue_task_usage_hourly_dirty_for_atq`, `public.enqueue_task_usage_hourly_dirty_for_issue_delete`, `public.enqueue_task_usage_hourly_dirty_for_issue_project`, `public.enqueue_task_usage_hourly_dirty_for_tu`, `public.prune_task_usage_hourly_dirty`, `public.rollup_task_usage_hourly`, `public.rollup_task_usage_hourly_window`, `public.task_usage_hour_bucket`, `public.task_usage_hourly_rollup_lag_seconds`
-- Indexes: 192 current definitions; full name/table/uniqueness evidence is in the JSON companion.
+- Indexes: 194 current definitions; full name/table/uniqueness evidence is in the JSON companion.
 
 ### sqlc modules
 
-All 586 query names, commands, and stable source anchors are stored in the JSON companion.
+All 589 query names, commands, and stable source anchors are stored in the JSON companion.
 
 | Module | Queries | SQL source | Generated source |
 | --- | --- | --- | --- |
@@ -740,6 +743,7 @@ All 586 query names, commands, and stable source anchors are stored in the JSON 
 | agent_playground | 19 | `server/pkg/db/queries/agent_playground.sql` | `server/pkg/db/generated/agent_playground.sql.go` |
 | attachment | 17 | `server/pkg/db/queries/attachment.sql` | `server/pkg/db/generated/attachment.sql.go` |
 | autopilot | 40 | `server/pkg/db/queries/autopilot.sql` | `server/pkg/db/generated/autopilot.sql.go` |
+| autopilot_trigger_rotation_request | 3 | `server/pkg/db/queries/autopilot_trigger_rotation_request.sql` | `server/pkg/db/generated/autopilot_trigger_rotation_request.sql.go` |
 | chat | 24 | `server/pkg/db/queries/chat.sql` | `server/pkg/db/generated/chat.sql.go` |
 | chat_idempotency | 3 | `server/pkg/db/queries/chat_idempotency.sql` | `server/pkg/db/generated/chat_idempotency.sql.go` |
 | comment | 22 | `server/pkg/db/queries/comment.sql` | `server/pkg/db/generated/comment.sql.go` |
@@ -1109,7 +1113,7 @@ written to the generated outputs.
 | filesystem | 43 | `server/cmd/migrate/main.go`, `server/cmd/multica/cmd_agent.go`, `server/cmd/multica/cmd_attachment.go`, `server/cmd/multica/cmd_daemon_windows.go`, `server/cmd/multica/cmd_daemon.go`, `server/cmd/multica/cmd_issue_comments.go`, `server/cmd/multica/cmd_issue_pull_request.go`, `server/cmd/multica/cmd_issue.go` |
 | object-storage | 1 | `server/internal/storage/s3.go` |
 | outbound-http | 17 | `server/cmd/multica/cmd_daemon.go`, `server/cmd/multica/cmd_setup.go`, `server/internal/analytics/posthog.go`, `server/internal/auth/cloud_pat.go`, `server/internal/cli/client.go`, `server/internal/cli/update.go`, `server/internal/daemon/client.go`, `server/internal/daemon/task_artifacts.go` |
-| postgresql | 145 | `server/cmd/migrate/main.go`, `server/cmd/server/activity_listeners.go`, `server/cmd/server/autopilot_failure_monitor.go`, `server/cmd/server/autopilot_scheduler.go`, `server/cmd/server/chat_projection.go`, `server/cmd/server/comment_projection.go`, `server/cmd/server/dbstats.go`, `server/cmd/server/health.go` |
+| postgresql | 146 | `server/cmd/migrate/main.go`, `server/cmd/server/activity_listeners.go`, `server/cmd/server/autopilot_failure_monitor.go`, `server/cmd/server/autopilot_scheduler.go`, `server/cmd/server/chat_projection.go`, `server/cmd/server/comment_projection.go`, `server/cmd/server/dbstats.go`, `server/cmd/server/health.go` |
 | redis | 14 | `server/cmd/server/main.go`, `server/cmd/server/router.go`, `server/internal/auth/cloud_pat.go`, `server/internal/auth/membership_cache.go`, `server/internal/auth/pat_cache.go`, `server/internal/handler/runtime_liveness_store.go`, `server/internal/handler/runtime_local_skills_redis_store.go`, `server/internal/handler/runtime_models_redis_store.go` |
 | subprocess | 29 | `server/cmd/multica/cmd_auth.go`, `server/cmd/multica/cmd_daemon_unix.go`, `server/cmd/multica/cmd_daemon.go`, `server/internal/cli/update.go`, `server/internal/daemon/config.go`, `server/internal/daemon/execenv/codex_home_link_windows.go`, `server/internal/daemon/execenv/openclaw_config.go`, `server/internal/daemon/gc.go` |
 | websocket | 4 | `server/internal/daemon/wakeup.go`, `server/internal/daemonws/hub.go`, `server/internal/integrations/lark/ws_connector.go`, `server/internal/realtime/hub.go` |

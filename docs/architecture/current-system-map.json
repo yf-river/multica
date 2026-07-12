@@ -20,13 +20,13 @@
     "webRouteHandlers": 1,
     "webRewrites": 6,
     "desktopRouteLiterals": 29,
-    "databaseTables": 85,
+    "databaseTables": 86,
     "databaseFunctions": 9,
     "databaseTriggers": 4,
-    "databaseIndexes": 192,
-    "migrations": 136,
-    "sqlcModules": 54,
-    "sqlcQueries": 586,
+    "databaseIndexes": 194,
+    "migrations": 138,
+    "sqlcModules": 55,
+    "sqlcQueries": 589,
     "goWebsocketEvents": 80,
     "typescriptWebsocketEvents": 70,
     "zustandStores": 43,
@@ -7227,6 +7227,53 @@
           "droppedFunctions": [],
           "droppedTriggers": [],
           "droppedIndexes": []
+        },
+        {
+          "version": 69,
+          "name": "add_autopilot_trigger_rotation_request",
+          "direction": "down",
+          "source": "server/migrations/069_add_autopilot_trigger_rotation_request.down.sql",
+          "tablesCreated": [],
+          "droppedTables": [
+            "autopilot_trigger_rotation_request"
+          ],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 69,
+          "name": "add_autopilot_trigger_rotation_request",
+          "direction": "up",
+          "source": "server/migrations/069_add_autopilot_trigger_rotation_request.up.sql",
+          "tablesCreated": [
+            {
+              "name": "autopilot_trigger_rotation_request",
+              "source": "server/migrations/069_add_autopilot_trigger_rotation_request.up.sql#autopilot_trigger_rotation_request"
+            }
+          ],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [
+            {
+              "name": "idx_autopilot_trigger_rotation_request_completed_at",
+              "table": "autopilot_trigger_rotation_request",
+              "unique": false,
+              "source": "server/migrations/069_add_autopilot_trigger_rotation_request.up.sql#idx_autopilot_trigger_rotation_request_completed_at"
+            },
+            {
+              "name": "idx_autopilot_trigger_rotation_request_incomplete_created_at",
+              "table": "autopilot_trigger_rotation_request",
+              "unique": false,
+              "source": "server/migrations/069_add_autopilot_trigger_rotation_request.up.sql#idx_autopilot_trigger_rotation_request_incomplete_created_at"
+            }
+          ],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
         }
       ],
       "tables": [
@@ -7289,6 +7336,10 @@
         {
           "name": "autopilot_trigger",
           "source": "server/migrations/001_current_schema.up.sql#autopilot_trigger"
+        },
+        {
+          "name": "autopilot_trigger_rotation_request",
+          "source": "server/migrations/069_add_autopilot_trigger_rotation_request.up.sql#autopilot_trigger_rotation_request"
         },
         {
           "name": "chat_idempotency_record",
@@ -7923,6 +7974,18 @@
           "table": "public.autopilot_trigger",
           "unique": false,
           "source": "server/migrations/001_current_schema.up.sql#idx_autopilot_trigger_next_run"
+        },
+        {
+          "name": "idx_autopilot_trigger_rotation_request_completed_at",
+          "table": "autopilot_trigger_rotation_request",
+          "unique": false,
+          "source": "server/migrations/069_add_autopilot_trigger_rotation_request.up.sql#idx_autopilot_trigger_rotation_request_completed_at"
+        },
+        {
+          "name": "idx_autopilot_trigger_rotation_request_incomplete_created_at",
+          "table": "autopilot_trigger_rotation_request",
+          "unique": false,
+          "source": "server/migrations/069_add_autopilot_trigger_rotation_request.up.sql#idx_autopilot_trigger_rotation_request_incomplete_created_at"
         },
         {
           "name": "idx_autopilot_trigger_webhook_token",
@@ -9516,6 +9579,28 @@
               "name": "UpdateAutopilotTrigger",
               "command": "one",
               "source": "server/pkg/db/queries/autopilot.sql#UpdateAutopilotTrigger"
+            }
+          ]
+        },
+        {
+          "module": "autopilot_trigger_rotation_request",
+          "source": "server/pkg/db/queries/autopilot_trigger_rotation_request.sql",
+          "generatedSource": "server/pkg/db/generated/autopilot_trigger_rotation_request.sql.go",
+          "queries": [
+            {
+              "name": "CompleteAutopilotTriggerRotationRequest",
+              "command": "one",
+              "source": "server/pkg/db/queries/autopilot_trigger_rotation_request.sql#CompleteAutopilotTriggerRotationRequest"
+            },
+            {
+              "name": "GetAutopilotTriggerRotationRequest",
+              "command": "one",
+              "source": "server/pkg/db/queries/autopilot_trigger_rotation_request.sql#GetAutopilotTriggerRotationRequest"
+            },
+            {
+              "name": "ReserveAutopilotTriggerRotationRequest",
+              "command": "one",
+              "source": "server/pkg/db/queries/autopilot_trigger_rotation_request.sql#ReserveAutopilotTriggerRotationRequest"
             }
           ]
         },
@@ -19156,6 +19241,7 @@
           "server/internal/handler/agent_template.go",
           "server/internal/handler/agent.go",
           "server/internal/handler/auth.go",
+          "server/internal/handler/autopilot_trigger_rotation_idempotency.go",
           "server/internal/handler/autopilot_triggers.go",
           "server/internal/handler/autopilot_webhook.go",
           "server/internal/handler/autopilot.go",

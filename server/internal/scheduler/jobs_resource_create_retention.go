@@ -40,7 +40,11 @@ func ResourceCreateRequestRetentionJob(pool *pgxpool.Pool) JobSpec {
 
 func makeResourceCreateRequestRetentionHandler(pool *pgxpool.Pool) Handler {
 	return func(ctx context.Context, in HandlerInput) (HandlerResult, error) {
-		tables := []string{"resource_create_request", "skill_import_request"}
+		tables := []string{
+			"resource_create_request",
+			"skill_import_request",
+			"autopilot_trigger_rotation_request",
+		}
 		deletedByTable := make(map[string]int64, len(tables))
 		staleByTable := make(map[string]int64, len(tables))
 		var totalDeleted int64
@@ -99,10 +103,12 @@ func makeResourceCreateRequestRetentionHandler(pool *pgxpool.Pool) Handler {
 		return HandlerResult{
 			RowsAffected: totalDeleted,
 			Result: map[string]any{
-				"retention_days":      31,
-				"deleted_by_table":    deletedByTable,
-				"stale_by_table":      staleByTable,
-				"stale_incomplete":    staleByTable["resource_create_request"] + staleByTable["skill_import_request"],
+				"retention_days":   31,
+				"deleted_by_table": deletedByTable,
+				"stale_by_table":   staleByTable,
+				"stale_incomplete": staleByTable["resource_create_request"] +
+					staleByTable["skill_import_request"] +
+					staleByTable["autopilot_trigger_rotation_request"],
 				"batch_limit_reached": batchLimitReached,
 			},
 		}, nil

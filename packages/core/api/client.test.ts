@@ -485,6 +485,29 @@ describe("ApiClient", () => {
     expect(second["Idempotency-Key"]).toBe(first["Idempotency-Key"]);
   });
 
+  it("retries webhook token rotation unknown outcomes with one request identity", async () => {
+    const response = {
+      id: "trigger-1", autopilot_id: "autopilot-1", kind: "webhook", enabled: true,
+      cron_expression: null, timezone: null, next_run_at: null, webhook_token: "secret-token",
+      webhook_path: "/api/webhooks/autopilots/secret-token", webhook_url: null,
+      provider: "generic", has_signing_secret: false, signing_secret_hint: null,
+      label: null, event_filters: null, last_fired_at: null, created_at: "now", updated_at: "now",
+    };
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify(response), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(new ApiClient("https://api.example.test")
+      .rotateAutopilotTriggerWebhookToken("autopilot-1", "trigger-1"))
+      .resolves.toMatchObject({ webhook_token: "secret-token" });
+    const first = fetchMock.mock.calls[0]![1]!.headers as Record<string, string>;
+    const second = fetchMock.mock.calls[1]![1]!.headers as Record<string, string>;
+    expect(first["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(second["Idempotency-Key"]).toBe(first["Idempotency-Key"]);
+  });
+
   it("retries webhook replay unknown outcomes with one request identity", async () => {
     const response = {
       id: "delivery-replay-1", workspace_id: "workspace-1", autopilot_id: "autopilot-1",

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
 	"github.com/multica-ai/multica/server/internal/cli"
@@ -603,7 +604,7 @@ func runAutopilotTriggerRotateURL(cmd *cobra.Command, args []string) error {
 
 	var result map[string]any
 	path := "/api/autopilots/" + autopilotRef.ID + "/triggers/" + triggerRef.ID + "/rotate-webhook-token"
-	if err := client.PostJSON(ctx, path, nil, &result); err != nil {
+	if err := client.PostJSONWithIdempotencyKey(ctx, path, nil, uuid.NewString(), &result); err != nil {
 		return fmt.Errorf("rotate webhook url: %w", err)
 	}
 
