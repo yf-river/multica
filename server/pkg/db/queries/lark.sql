@@ -307,12 +307,16 @@ INSERT INTO lark_binding_token (
 )
 RETURNING *;
 
--- name: ConsumeLarkBindingToken :one
--- Atomic redemption. Returns the row only if (a) the hash exists, (b)
--- it has not been consumed, and (c) it has not expired. The UPDATE +
--- RETURNING pattern guarantees that two simultaneous redemptions of
--- the same token cannot both succeed — exactly one row update wins,
--- the other sees zero rows.
+-- name: LockLarkBindingToken :one
+-- Serialize first redemption and committed-response replay. The service
+-- distinguishes an unused token from one already consumed by the same
+-- authenticated Multica user; callers never receive the hash or row.
+SELECT * FROM lark_binding_token
+WHERE token_hash = $1
+FOR UPDATE;
+
+-- name: MarkLarkBindingTokenConsumed :one
+-- First redemption remains constrained by both single-use and expiry.
 UPDATE lark_binding_token
 SET consumed_at = now()
 WHERE token_hash = $1

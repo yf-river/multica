@@ -946,6 +946,11 @@ describe("ApiClient", () => {
         workspace_id: "",
         installation_id: "",
         lark_open_id: "",
+      }), { status: 200, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        workspace_id: "",
+        installation_id: "",
+        lark_open_id: "",
       }), { status: 200, headers: { "Content-Type": "application/json" } }));
     vi.stubGlobal("fetch", fetchMock);
     const client = new ApiClient("https://api.example.test");
@@ -967,6 +972,29 @@ describe("ApiClient", () => {
         code: "api_response_contract_invalid",
         mayHaveCommitted: true,
       });
+  });
+
+  it("retries an unknown Lark binding redemption with one request identity", async () => {
+    const response = {
+      workspace_id: "workspace-1",
+      installation_id: "installation-1",
+      lark_open_id: "open-id-1",
+    };
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify(response), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const requestID = "10000000-0000-4000-8000-000000000019";
+    await expect(new ApiClient("https://api.example.test").redeemLarkBindingToken("binding-token", requestID))
+      .resolves.toEqual(response);
+    const first = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    const second = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
+    expect(first["Idempotency-Key"]).toBe(requestID);
+    expect(second["Idempotency-Key"]).toBe(requestID);
   });
 
   it("fails closed on unsafe GitHub navigation and strips installation internals", async () => {

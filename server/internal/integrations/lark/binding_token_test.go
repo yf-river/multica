@@ -11,10 +11,9 @@ import (
 
 // These tests cover the pure-Go halves of BindingTokenService — token
 // generation entropy/encoding, deterministic hashing — without
-// touching the database. DB-backed mint/redeem invariants (single use,
-// expiry) are covered by the DB CHECK on lark_binding_token plus the
-// ConsumeLarkBindingToken query, which require an integration test
-// against a real Postgres and are added in a follow-up.
+// touching the database. The handler package's real-Postgres redemption
+// regression covers first consume and same-user committed-response replay;
+// expiry remains enforced by the DB CHECK and conditional consume query.
 
 func TestRandomTokenIsUnique(t *testing.T) {
 	seen := map[string]struct{}{}

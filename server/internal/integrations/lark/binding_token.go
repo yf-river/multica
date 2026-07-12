@@ -124,9 +124,10 @@ func (s *BindingTokenService) Mint(ctx context.Context, workspaceID, installatio
 //
 // Failure modes are returned as typed errors:
 //
-//   - ErrBindingTokenInvalid: token doesn't exist / already consumed /
-//     expired. Same opaque error for all three to avoid a timing
-//     oracle for replay races.
+//   - ErrBindingTokenInvalid: token doesn't exist, expired before its first
+//     redemption, or was already consumed by a different user. A retry by the
+//     same authenticated user replays the committed binding result so response
+//     loss cannot turn a successful bind into a false "expired" error.
 //
 //   - ErrBindingAlreadyAssigned: a binding already exists for this
 //     (installation, open_id), pointing at a DIFFERENT Multica user.
@@ -153,7 +154,28 @@ func (s *BindingTokenService) RedeemAndBind(ctx context.Context, raw string, mul
 	defer func() { _ = tx.Rollback(ctx) }()
 	qtx := s.queries.WithTx(tx)
 
-	row, err := qtx.ConsumeLarkBindingToken(ctx, hashToken(raw))
+	row, err := qtx.LockLarkBindingToken(ctx, hashToken(raw))
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return RedeemedBindingToken{}, ErrBindingTokenInvalid
+		}
+		return RedeemedBindingToken{}, fmt.Errorf("lock token: %w", err)
+	}
+	if row.ConsumedAt.Valid {
+		binding, err := qtx.GetLarkUserBindingByOpenID(ctx, db.GetLarkUserBindingByOpenIDParams{
+			InstallationID: row.InstallationID,
+			LarkOpenID:     row.LarkOpenID,
+		})
+		if errors.Is(err, pgx.ErrNoRows) || (err == nil && !uuidEqual(binding.MulticaUserID, multicaUserID)) {
+			return RedeemedBindingToken{}, ErrBindingTokenInvalid
+		}
+		if err != nil {
+			return RedeemedBindingToken{}, fmt.Errorf("load committed binding: %w", err)
+		}
+		return redeemedBindingToken(row), nil
+	}
+
+	row, err = qtx.MarkLarkBindingTokenConsumed(ctx, row.TokenHash)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return RedeemedBindingToken{}, ErrBindingTokenInvalid
@@ -189,11 +211,15 @@ func (s *BindingTokenService) RedeemAndBind(ctx context.Context, raw string, mul
 	if err := tx.Commit(ctx); err != nil {
 		return RedeemedBindingToken{}, fmt.Errorf("commit: %w", err)
 	}
+	return redeemedBindingToken(row), nil
+}
+
+func redeemedBindingToken(row db.LarkBindingToken) RedeemedBindingToken {
 	return RedeemedBindingToken{
 		WorkspaceID:    row.WorkspaceID,
 		InstallationID: row.InstallationID,
 		LarkOpenID:     OpenID(row.LarkOpenID),
-	}, nil
+	}
 }
 
 // BindInstallerTx is the auto-binding path for the device-flow

@@ -27,11 +27,11 @@ evidence reviewable by humans.
 | Database indexes | 194 |
 | Migration files (up + down) | 150 |
 | sqlc modules | 55 |
-| sqlc queries | 557 |
+| sqlc queries | 558 |
 | Go WebSocket events | 79 |
 | TypeScript WebSocket events | 69 |
 | Zustand store definitions | 43 |
-| React Query consumer files | 176 |
+| React Query consumer files | 177 |
 | Environment variable names | 217 |
 | Manually identified external systems | 12 |
 
@@ -742,7 +742,7 @@ intentionally platform-specific.
 
 ### sqlc modules
 
-All 557 query names, commands, and stable source anchors are stored in the JSON companion.
+All 558 query names, commands, and stable source anchors are stored in the JSON companion.
 
 | Module | Queries | SQL source | Generated source |
 | --- | --- | --- | --- |
@@ -763,7 +763,7 @@ All 557 query names, commands, and stable source anchors are stored in the JSON 
 | issue | 20 | `server/pkg/db/queries/issue.sql` | `server/pkg/db/generated/issue.sql.go` |
 | issue_label | 9 | `server/pkg/db/queries/issue_label.sql` | `server/pkg/db/generated/issue_label.sql.go` |
 | issue_reaction | 3 | `server/pkg/db/queries/issue_reaction.sql` | `server/pkg/db/generated/issue_reaction.sql.go` |
-| lark | 23 | `server/pkg/db/queries/lark.sql` | `server/pkg/db/generated/lark.sql.go` |
+| lark | 24 | `server/pkg/db/queries/lark.sql` | `server/pkg/db/generated/lark.sql.go` |
 | member | 8 | `server/pkg/db/queries/member.sql` | `server/pkg/db/generated/member.sql.go` |
 | notification_preference | 3 | `server/pkg/db/queries/notification_preference.sql` | `server/pkg/db/generated/notification_preference.sql.go` |
 | personal_access_token | 7 | `server/pkg/db/queries/personal_access_token.sql` | `server/pkg/db/generated/personal_access_token.sql.go` |
@@ -875,9 +875,9 @@ still include daemon-only/backend projection events and possible frontend gaps.
 | apps/desktop | 12 |
 | apps/web | 3 |
 | packages/core | 46 |
-| packages/views | 115 |
+| packages/views | 116 |
 
-Operation counts: `useQuery` 274, `useInfiniteQuery` 1, `useMutation` 97, `queryOptions` 65, `infiniteQueryOptions` 1.
+Operation counts: `useQuery` 273, `useInfiniteQuery` 1, `useMutation` 97, `queryOptions` 65, `infiniteQueryOptions` 1.
 The JSON companion lists every consumer file and every discovered exported
 `*Keys` query-key factory.
 

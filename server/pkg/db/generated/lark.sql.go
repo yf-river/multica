@@ -126,35 +126,6 @@ func (q *Queries) ClaimLarkInboundDedup(ctx context.Context, arg ClaimLarkInboun
 	return i, err
 }
 
-const consumeLarkBindingToken = `-- name: ConsumeLarkBindingToken :one
-UPDATE lark_binding_token
-SET consumed_at = now()
-WHERE token_hash = $1
-  AND consumed_at IS NULL
-  AND expires_at > now()
-RETURNING token_hash, workspace_id, installation_id, lark_open_id, expires_at, consumed_at, created_at
-`
-
-// Atomic redemption. Returns the row only if (a) the hash exists, (b)
-// it has not been consumed, and (c) it has not expired. The UPDATE +
-// RETURNING pattern guarantees that two simultaneous redemptions of
-// the same token cannot both succeed — exactly one row update wins,
-// the other sees zero rows.
-func (q *Queries) ConsumeLarkBindingToken(ctx context.Context, tokenHash string) (LarkBindingToken, error) {
-	row := q.db.QueryRow(ctx, consumeLarkBindingToken, tokenHash)
-	var i LarkBindingToken
-	err := row.Scan(
-		&i.TokenHash,
-		&i.WorkspaceID,
-		&i.InstallationID,
-		&i.LarkOpenID,
-		&i.ExpiresAt,
-		&i.ConsumedAt,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
 const createLarkBindingToken = `-- name: CreateLarkBindingToken :one
 
 INSERT INTO lark_binding_token (
@@ -626,6 +597,55 @@ func (q *Queries) ListLarkInstallationsByWorkspace(ctx context.Context, workspac
 		return nil, err
 	}
 	return items, nil
+}
+
+const lockLarkBindingToken = `-- name: LockLarkBindingToken :one
+SELECT token_hash, workspace_id, installation_id, lark_open_id, expires_at, consumed_at, created_at FROM lark_binding_token
+WHERE token_hash = $1
+FOR UPDATE
+`
+
+// Serialize first redemption and committed-response replay. The service
+// distinguishes an unused token from one already consumed by the same
+// authenticated Multica user; callers never receive the hash or row.
+func (q *Queries) LockLarkBindingToken(ctx context.Context, tokenHash string) (LarkBindingToken, error) {
+	row := q.db.QueryRow(ctx, lockLarkBindingToken, tokenHash)
+	var i LarkBindingToken
+	err := row.Scan(
+		&i.TokenHash,
+		&i.WorkspaceID,
+		&i.InstallationID,
+		&i.LarkOpenID,
+		&i.ExpiresAt,
+		&i.ConsumedAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const markLarkBindingTokenConsumed = `-- name: MarkLarkBindingTokenConsumed :one
+UPDATE lark_binding_token
+SET consumed_at = now()
+WHERE token_hash = $1
+  AND consumed_at IS NULL
+  AND expires_at > now()
+RETURNING token_hash, workspace_id, installation_id, lark_open_id, expires_at, consumed_at, created_at
+`
+
+// First redemption remains constrained by both single-use and expiry.
+func (q *Queries) MarkLarkBindingTokenConsumed(ctx context.Context, tokenHash string) (LarkBindingToken, error) {
+	row := q.db.QueryRow(ctx, markLarkBindingTokenConsumed, tokenHash)
+	var i LarkBindingToken
+	err := row.Scan(
+		&i.TokenHash,
+		&i.WorkspaceID,
+		&i.InstallationID,
+		&i.LarkOpenID,
+		&i.ExpiresAt,
+		&i.ConsumedAt,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const markLarkInboundDedupProcessed = `-- name: MarkLarkInboundDedupProcessed :execrows

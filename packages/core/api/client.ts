@@ -3131,16 +3131,23 @@ export class ApiClient extends ApiTransport {
     });
   }
 
-  async redeemLarkBindingToken(token: string): Promise<RedeemLarkBindingTokenResponse> {
-    const raw = await this.fetch<unknown>(`/api/lark/binding/redeem`, {
-      method: "POST",
-      body: JSON.stringify({ token }),
-    });
-    return parseOrThrow(
-      raw,
-      RedeemLarkBindingTokenResponseSchema,
-      EMPTY_REDEEM_LARK_BINDING_TOKEN_RESPONSE,
-      { endpoint: "POST /api/lark/binding/redeem" },
-    );
+  async redeemLarkBindingToken(
+    token: string,
+    idempotencyKey = generateUUID(),
+  ): Promise<RedeemLarkBindingTokenResponse> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/lark/binding/redeem`, {
+        method: "POST",
+        body: JSON.stringify({ token }),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow(
+        raw,
+        RedeemLarkBindingTokenResponseSchema,
+        EMPTY_REDEEM_LARK_BINDING_TOKEN_RESPONSE,
+        { endpoint: "POST /api/lark/binding/redeem", mayHaveCommitted: true },
+      );
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 }

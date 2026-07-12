@@ -26,11 +26,11 @@
     "databaseIndexes": 194,
     "migrations": 150,
     "sqlcModules": 55,
-    "sqlcQueries": 557,
+    "sqlcQueries": 558,
     "goWebsocketEvents": 79,
     "typescriptWebsocketEvents": 69,
     "zustandStores": 43,
-    "reactQueryConsumerFiles": 176,
+    "reactQueryConsumerFiles": 177,
     "environmentVariables": 217,
     "manualExternalSystems": 12
   },
@@ -10455,11 +10455,6 @@
               "source": "server/pkg/db/queries/lark.sql#ClaimLarkInboundDedup"
             },
             {
-              "name": "ConsumeLarkBindingToken",
-              "command": "one",
-              "source": "server/pkg/db/queries/lark.sql#ConsumeLarkBindingToken"
-            },
-            {
               "name": "CreateLarkBindingToken",
               "command": "one",
               "source": "server/pkg/db/queries/lark.sql#CreateLarkBindingToken"
@@ -10523,6 +10518,16 @@
               "name": "ListLarkInstallationsByWorkspace",
               "command": "many",
               "source": "server/pkg/db/queries/lark.sql#ListLarkInstallationsByWorkspace"
+            },
+            {
+              "name": "LockLarkBindingToken",
+              "command": "one",
+              "source": "server/pkg/db/queries/lark.sql#LockLarkBindingToken"
+            },
+            {
+              "name": "MarkLarkBindingTokenConsumed",
+              "command": "one",
+              "source": "server/pkg/db/queries/lark.sql#MarkLarkBindingTokenConsumed"
             },
             {
               "name": "MarkLarkInboundDedupProcessed",
@@ -14106,7 +14111,7 @@
     ],
     "reactQuery": {
       "operationTotals": {
-        "useQuery": 274,
+        "useQuery": 273,
         "useInfiniteQuery": 1,
         "useMutation": 97,
         "queryOptions": 65,
@@ -15454,7 +15459,7 @@
           "source": "packages/views/issues/components/issues-page.tsx",
           "scope": "packages/views",
           "operations": {
-            "useQuery": 4,
+            "useQuery": 3,
             "useInfiniteQuery": 0,
             "useMutation": 0,
             "queryOptions": 0,
@@ -15583,6 +15588,17 @@
           }
         },
         {
+          "source": "packages/views/issues/hooks/use-running-issue-ids.ts",
+          "scope": "packages/views",
+          "operations": {
+            "useQuery": 1,
+            "useInfiniteQuery": 0,
+            "useMutation": 0,
+            "queryOptions": 0,
+            "infiniteQueryOptions": 0
+          }
+        },
+        {
           "source": "packages/views/layout/app-sidebar.tsx",
           "scope": "packages/views",
           "operations": {
@@ -15685,7 +15701,7 @@
           "source": "packages/views/my-issues/components/my-issues-page.tsx",
           "scope": "packages/views",
           "operations": {
-            "useQuery": 4,
+            "useQuery": 3,
             "useInfiniteQuery": 0,
             "useMutation": 0,
             "queryOptions": 0,
@@ -16170,7 +16186,7 @@
       },
       {
         "scope": "packages/views",
-        "count": 115
+        "count": 116
       }
     ]
   },

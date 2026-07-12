@@ -3,12 +3,16 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/multica-ai/multica/server/internal/integrations/lark"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 // Lark-handler unit tests focus on the no-config short-circuits —
@@ -36,6 +40,119 @@ func TestRedeemLarkBindingToken_NotConfigured(t *testing.T) {
 	h.RedeemLarkBindingToken(w, req)
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503, got %d", w.Code)
+	}
+}
+
+func TestLarkBindingTokenReplayReturnsCommittedBinding(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	agentID := createHandlerTestAgent(t, "lark binding replay agent", nil)
+	installation, err := testHandler.Queries.UpsertLarkInstallation(ctx, db.UpsertLarkInstallationParams{
+		WorkspaceID:        parseUUID(testWorkspaceID),
+		AgentID:            parseUUID(agentID),
+		AppID:              "binding-replay-" + time.Now().UTC().Format("20060102150405.000000000"),
+		AppSecretEncrypted: []byte("test-encrypted-secret"),
+		BotOpenID:          "binding-replay-bot",
+		InstallerUserID:    parseUUID(testUserID),
+		Region:             "feishu",
+	})
+	if err != nil {
+		t.Fatalf("create Lark installation: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM lark_installation WHERE id = $1`, installation.ID)
+	})
+
+	service := lark.NewBindingTokenService(testHandler.Queries, testPool)
+	token, err := service.Mint(ctx, installation.WorkspaceID, installation.ID, lark.OpenID("binding-replay-user"))
+	if err != nil {
+		t.Fatalf("mint binding token: %v", err)
+	}
+	first, err := service.RedeemAndBind(ctx, token.Raw, parseUUID(testUserID))
+	if err != nil {
+		t.Fatalf("first redemption: %v", err)
+	}
+	second, err := service.RedeemAndBind(ctx, token.Raw, parseUUID(testUserID))
+	if err != nil {
+		t.Fatalf("retry after committed response loss: %v", err)
+	}
+	if second != first {
+		t.Fatalf("retry response = %+v, want exact committed result %+v", second, first)
+	}
+
+	otherUserID := createWorkspaceMemberUser(
+		t, "Lark binding replay attacker", "lark-binding-replay-attacker@multica.test",
+	)
+	if _, err := service.RedeemAndBind(ctx, token.Raw, parseUUID(otherUserID)); !errors.Is(err, lark.ErrBindingTokenInvalid) {
+		t.Fatalf("different user replay error = %v, want opaque invalid token", err)
+	}
+
+	concurrentToken, err := service.Mint(
+		ctx, installation.WorkspaceID, installation.ID, lark.OpenID("binding-concurrent-user"),
+	)
+	if err != nil {
+		t.Fatalf("mint concurrent binding token: %v", err)
+	}
+	const callers = 8
+	results := make(chan lark.RedeemedBindingToken, callers)
+	errs := make(chan error, callers)
+	var wg sync.WaitGroup
+	for range callers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			result, err := service.RedeemAndBind(ctx, concurrentToken.Raw, parseUUID(testUserID))
+			results <- result
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(results)
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent redemption: %v", err)
+		}
+	}
+	var concurrentResult *lark.RedeemedBindingToken
+	for result := range results {
+		if concurrentResult == nil {
+			concurrentResult = &result
+			continue
+		}
+		if result != *concurrentResult {
+			t.Fatalf("concurrent replay result = %+v, want %+v", result, *concurrentResult)
+		}
+	}
+
+	expiredToken, err := service.Mint(
+		ctx, installation.WorkspaceID, installation.ID, lark.OpenID("binding-expired-user"),
+	)
+	if err != nil {
+		t.Fatalf("mint expiring binding token: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+UPDATE lark_binding_token
+SET expires_at = now() - interval '1 second'
+WHERE installation_id = $1 AND lark_open_id = 'binding-expired-user'
+`, installation.ID); err != nil {
+		t.Fatalf("expire binding token: %v", err)
+	}
+	if _, err := service.RedeemAndBind(ctx, expiredToken.Raw, parseUUID(testUserID)); !errors.Is(err, lark.ErrBindingTokenInvalid) {
+		t.Fatalf("expired first redemption error = %v, want invalid token", err)
+	}
+	var consumed bool
+	if err := testPool.QueryRow(ctx, `
+SELECT consumed_at IS NOT NULL
+FROM lark_binding_token
+WHERE installation_id = $1 AND lark_open_id = 'binding-expired-user'
+`, installation.ID).Scan(&consumed); err != nil {
+		t.Fatalf("read expired binding token: %v", err)
+	}
+	if consumed {
+		t.Fatal("expired token must remain unconsumed")
 	}
 }
 
