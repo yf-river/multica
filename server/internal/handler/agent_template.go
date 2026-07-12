@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,7 +18,6 @@ import (
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
-	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -216,6 +216,33 @@ func (h *Handler) CreateAgentFromTemplate(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	extraSkillIDs := make([]pgtype.UUID, 0, len(req.ExtraSkillIDs))
+	for _, raw := range req.ExtraSkillIDs {
+		extraID, ok := parseUUIDOrBadRequest(w, raw, "extra_skill_id")
+		if !ok {
+			return
+		}
+		extraSkillIDs = append(extraSkillIDs, extraID)
+	}
+	requestHash, err := hashRequestFingerprint(req)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create agent from template")
+		return
+	}
+	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	operationActorID := parseUUID(ownerID)
+	if replayed, found, err := h.loadAgentTemplateCreateReplay(
+		r.Context(), wsUUID, operationActorID, idempotencyKey, requestHash,
+	); err != nil {
+		h.writeAgentCreateReplayError(w, err)
+		return
+	} else if found {
+		writeJSON(w, http.StatusCreated, replayed)
+		return
+	}
 
 	slog.Info("agent-template create: request received",
 		append(logger.RequestAttrs(r),
@@ -306,6 +333,32 @@ func (h *Handler) CreateAgentFromTemplate(w http.ResponseWriter, r *http.Request
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
+	_, err = qtx.ReserveResourceCreateRequest(r.Context(), db.ReserveResourceCreateRequestParams{
+		WorkspaceID:    wsUUID,
+		ActorID:        operationActorID,
+		ResourceType:   resourceTypeAgent,
+		IdempotencyKey: idempotencyKey,
+		RequestHash:    requestHash,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		_ = tx.Rollback(r.Context())
+		replayed, found, replayErr := h.loadAgentTemplateCreateReplay(
+			r.Context(), wsUUID, operationActorID, idempotencyKey, requestHash,
+		)
+		if replayErr != nil || !found {
+			if replayErr == nil {
+				replayErr = errors.New("agent template create replay disappeared after conflict")
+			}
+			h.writeAgentCreateReplayError(w, replayErr)
+			return
+		}
+		writeJSON(w, http.StatusCreated, replayed)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reserve agent template request")
+		return
+	}
 
 	importedIDs := make([]string, 0, len(tmpl.Skills))
 	reusedIDs := make([]string, 0, len(tmpl.Skills))
@@ -500,32 +553,27 @@ func (h *Handler) CreateAgentFromTemplate(w http.ResponseWriter, r *http.Request
 	// Attach user-supplied extra skills (selected in the create dialog
 	// alongside the template). AddAgentSkill uses ON CONFLICT DO NOTHING,
 	// so duplicates with template-imported skills are harmless.
-	for _, raw := range req.ExtraSkillIDs {
-		extraUUID, perr := util.ParseUUID(raw)
-		if perr != nil {
-			// Skip malformed IDs but don't fail the whole create — the agent
-			// is otherwise valid. Logged so the bad ID can be traced.
-			slog.Warn("agent-template create: skipping malformed extra_skill_id",
-				append(logger.RequestAttrs(r), "raw", raw, "error", perr)...)
-			continue
-		}
+	for _, extraUUID := range extraSkillIDs {
 		// Verify the skill belongs to this workspace before attaching;
 		// otherwise a malicious client could attach a skill from another
 		// workspace by guessing UUIDs.
 		owned, qerr := qtx.GetSkillInWorkspace(r.Context(), db.GetSkillInWorkspaceParams{
 			ID: extraUUID, WorkspaceID: wsUUID,
 		})
+		if errors.Is(qerr, pgx.ErrNoRows) {
+			writeError(w, http.StatusBadRequest, "extra_skill_id does not belong to this workspace")
+			return
+		}
 		if qerr != nil {
-			slog.Warn("agent-template create: skipping cross-workspace extra_skill_id",
-				append(logger.RequestAttrs(r), "skill_id", raw, "error", qerr)...)
-			continue
+			writeError(w, http.StatusInternalServerError, "failed to validate extra_skill_id")
+			return
 		}
 		if err := qtx.AddAgentSkill(r.Context(), db.AddAgentSkillParams{
 			AgentID: agent.ID,
 			SkillID: owned.ID,
 		}); err != nil {
 			slog.Error("agent-template create: failed to attach extra skill",
-				append(logger.RequestAttrs(r), "skill_id", raw, "error", err)...)
+				append(logger.RequestAttrs(r), "skill_id", uuidToString(extraUUID), "error", err)...)
 			writeError(w, http.StatusInternalServerError, "failed to attach skill: "+err.Error())
 			return
 		}
@@ -538,20 +586,12 @@ func (h *Handler) CreateAgentFromTemplate(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "failed to load agent skills")
 		return
 	}
-	if err := tx.Commit(r.Context()); err != nil {
-		slog.Error("agent-template create: commit failed",
-			append(logger.RequestAttrs(r),
-				"agent_id", uuidToString(agent.ID),
-				"error", err,
-			)...)
-		writeError(w, http.StatusInternalServerError, "commit failed: "+err.Error())
-		return
-	}
 
 	if runtime.Status == "online" {
-		refreshed, err := h.TaskService.ReconcileAgentStatus(r.Context(), agent.ID)
-		if err == nil {
-			agent = refreshed
+		agent, err = qtx.RefreshAgentStatusFromTasks(r.Context(), agent.ID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to initialize agent status")
+			return
 		}
 	}
 
@@ -562,6 +602,37 @@ func (h *Handler) CreateAgentFromTemplate(w http.ResponseWriter, r *http.Request
 	}
 	resp.Skills = skills
 	actorType, actorID := h.resolveActor(r, ownerID, workspaceID)
+	replayResponse := CreateAgentFromTemplateResponse{
+		Agent:            resp,
+		ImportedSkillIDs: importedIDs,
+		ReusedSkillIDs:   reusedIDs,
+	}
+	responseBody, err := json.Marshal(replayResponse)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to encode agent template response")
+		return
+	}
+	if _, err := qtx.CompleteResourceCreateRequest(r.Context(), db.CompleteResourceCreateRequestParams{
+		WorkspaceID:    wsUUID,
+		ActorID:        operationActorID,
+		ResourceType:   resourceTypeAgent,
+		IdempotencyKey: idempotencyKey,
+		RequestHash:    requestHash,
+		ResourceID:     agent.ID,
+		ResponseBody:   responseBody,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to complete agent template request")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		slog.Error("agent-template create: commit failed",
+			append(logger.RequestAttrs(r),
+				"agent_id", uuidToString(agent.ID),
+				"error", err,
+			)...)
+		writeError(w, http.StatusInternalServerError, "commit failed: "+err.Error())
+		return
+	}
 	h.publish(protocol.EventAgentCreated, workspaceID, actorType, actorID, map[string]any{"agent": resp})
 
 	obsmetrics.RecordEvent(h.Analytics, h.Metrics, analytics.AgentCreated(
@@ -582,11 +653,21 @@ func (h *Handler) CreateAgentFromTemplate(w http.ResponseWriter, r *http.Request
 			"reused_skill_count", len(reusedIDs),
 		)...)
 
-	writeJSON(w, http.StatusCreated, CreateAgentFromTemplateResponse{
-		Agent:            resp,
-		ImportedSkillIDs: importedIDs,
-		ReusedSkillIDs:   reusedIDs,
-	})
+	writeJSON(w, http.StatusCreated, replayResponse)
+}
+
+func (h *Handler) loadAgentTemplateCreateReplay(
+	ctx context.Context,
+	workspaceID pgtype.UUID,
+	actorID pgtype.UUID,
+	idempotencyKey pgtype.UUID,
+	requestHash string,
+) (CreateAgentFromTemplateResponse, bool, error) {
+	return loadResourceCreateReplay(
+		ctx, h.Queries, workspaceID, actorID, resourceTypeAgent,
+		idempotencyKey, requestHash,
+		func(response CreateAgentFromTemplateResponse) bool { return response.Agent.ID != "" },
+	)
 }
 
 // --- Parallel skill fetch ---
