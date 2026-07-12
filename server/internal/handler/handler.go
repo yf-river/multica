@@ -492,14 +492,16 @@ func countOwners(members []db.Member) int {
 	return owners
 }
 
+var errInvalidWorkspaceMemberIdentity = errors.New("invalid workspace member identity")
+
 func (h *Handler) getWorkspaceMember(ctx context.Context, userID, workspaceID string) (db.Member, error) {
 	userUUID, err := util.ParseUUID(userID)
 	if err != nil {
-		return db.Member{}, err
+		return db.Member{}, errInvalidWorkspaceMemberIdentity
 	}
 	wsUUID, err := util.ParseUUID(workspaceID)
 	if err != nil {
-		return db.Member{}, err
+		return db.Member{}, errInvalidWorkspaceMemberIdentity
 	}
 	return h.Queries.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{
 		UserID:      userUUID,
@@ -520,7 +522,15 @@ func (h *Handler) requireWorkspaceMember(w http.ResponseWriter, r *http.Request,
 
 	member, err := h.getWorkspaceMember(r.Context(), userID, workspaceID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, notFoundMsg)
+		if writeClientClosedIfCanceled(w, err) {
+			return db.Member{}, false
+		}
+		if errors.Is(err, pgx.ErrNoRows) || errors.Is(err, errInvalidWorkspaceMemberIdentity) {
+			writeError(w, http.StatusNotFound, notFoundMsg)
+		} else {
+			slog.Error("workspace membership lookup failed", "workspace_id", workspaceID, "user_id", userID, "error", err)
+			writeError(w, http.StatusInternalServerError, "failed to verify workspace membership")
+		}
 		return db.Member{}, false
 	}
 

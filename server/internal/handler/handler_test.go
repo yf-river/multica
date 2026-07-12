@@ -285,6 +285,20 @@ func TestRequireWorkspaceMemberClientCanceledReturns499(t *testing.T) {
 	}
 }
 
+func TestRequireWorkspaceMemberInvalidWorkspaceRemainsNotFound(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	w := httptest.NewRecorder()
+	if _, ok := testHandler.requireWorkspaceMember(w, newRequest(http.MethodGet, "/api/workspace-boundary", nil), "not-a-uuid", "workspace not found"); ok {
+		t.Fatal("invalid workspace membership lookup unexpectedly succeeded")
+	}
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for invalid workspace identity, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func setupHandlerTestFixture(ctx context.Context, pool *pgxpool.Pool) (string, string, error) {
 	if err := cleanupHandlerTestFixture(ctx, pool); err != nil {
 		return "", "", err
