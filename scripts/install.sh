@@ -7,7 +7,7 @@
 # Install CLI + provision self-host server:
 #   curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash -s -- --with-server
 #
-# After installation, run `multica setup` to configure your environment.
+# After installation, run `multica setup self-host` to configure your environment.
 #
 set -euo pipefail
 
@@ -547,7 +547,7 @@ main() {
         echo "  MULTICA_SELFHOST_REF  Git ref to check out for self-host assets"
         echo "                        (default: latest release tag, falling back to main)"
         echo ""
-        echo "After installation, run 'multica setup' to configure your environment."
+        echo "After installation, run 'multica setup self-host' to configure your environment."
         exit 0
         ;;
       *) warn "Unknown option: $1" ;;

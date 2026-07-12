@@ -94,7 +94,7 @@ func resolveAppURL(cmd *cobra.Command) (string, error) {
 		return "", fmt.Errorf("load CLI config: %w", err)
 	}
 	if cfg.AppURL == "" {
-		return "", fmt.Errorf("app URL not set: use MULTICA_APP_URL or run 'multica setup'")
+		return "", fmt.Errorf("app URL not set: use MULTICA_APP_URL or run 'multica setup cloud' or 'multica setup self-host'")
 	}
 	return strings.TrimRight(cfg.AppURL, "/"), nil
 }

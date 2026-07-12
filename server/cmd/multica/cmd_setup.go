@@ -21,23 +21,18 @@ var setupCmd = &cobra.Command{
 	Short: "配置 CLI、登录并启动 daemon",
 	Long: `配置 CLI、通过浏览器登录，并启动本机 Agent daemon。
 
-如果已有配置，命令会在覆盖前确认。
-
-团队内部或自部署环境请使用 'multica setup self-host'。
-不带子命令的 'multica setup' 保留为托管服务兼容入口。
+请选择当前部署类型：托管服务使用 'multica setup cloud'，
+团队内部或自部署环境使用 'multica setup self-host'。
 
 使用 --profile 可以为不同环境创建隔离配置：
   multica setup self-host --profile staging --server-url https://api-staging.co`,
-	RunE: runSetupCloud,
 }
 
 var setupCloudCmd = &cobra.Command{
 	Use:   "cloud",
 	Short: "配置 CLI 连接托管 Multica 服务",
-	Long: `显式配置 CLI 连接托管 Multica 服务。
-
-这等同于运行不带子命令的 'multica setup'。团队内部或自部署环境请使用 'multica setup self-host'。`,
-	RunE: runSetupCloud,
+	Long:  `配置 CLI 连接托管 Multica 服务。团队内部或自部署环境请使用 'multica setup self-host'。`,
+	RunE:  runSetupCloud,
 }
 
 var setupSelfHostCmd = &cobra.Command{

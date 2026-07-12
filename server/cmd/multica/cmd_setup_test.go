@@ -8,6 +8,18 @@ import (
 	"github.com/multica-ai/multica/server/internal/cli"
 )
 
+func TestSetupRequiresExplicitDeploymentTarget(t *testing.T) {
+	if setupCmd.Run != nil || setupCmd.RunE != nil {
+		t.Fatal("bare setup must not execute a deployment-specific setup path")
+	}
+	for _, name := range []string{"cloud", "self-host"} {
+		command, _, err := setupCmd.Find([]string{name})
+		if err != nil || command == setupCmd {
+			t.Fatalf("setup %s command is not registered: %v", name, err)
+		}
+	}
+}
+
 // TestPersistSelfHostConfigIfReachable verifies the fix for the
 // setup-wipes-token bug: a failed reachability probe must leave the existing
 // config (and its auth token) untouched, instead of overwriting it before the
