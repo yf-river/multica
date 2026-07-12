@@ -25,13 +25,18 @@ func TestMain(m *testing.M) {
 	ctx := context.Background()
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
-		fmt.Println("event outbox integration tests skipped: DATABASE_URL is not set")
-		os.Exit(0)
+		fmt.Fprintln(os.Stderr, "event outbox test database is required: DATABASE_URL is not set")
+		os.Exit(1)
 	}
 	pool, err := pgxpool.New(ctx, dbURL)
-	if err != nil || pool.Ping(ctx) != nil {
-		fmt.Println("event outbox integration tests skipped: database unavailable")
-		os.Exit(0)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "event outbox test database configuration failed: %v\n", err)
+		os.Exit(1)
+	}
+	if err := pool.Ping(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "event outbox test database is required but not reachable: %v\n", err)
+		pool.Close()
+		os.Exit(1)
 	}
 	outboxTestPool = pool
 	code := m.Run()
