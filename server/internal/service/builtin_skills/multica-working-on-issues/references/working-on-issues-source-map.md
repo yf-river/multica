@@ -33,10 +33,10 @@ closed, draft or open. checks_conclusion and check counts report CI state.
 
 | Contract | Current source |
 |---|---|
-| CreateIssue boundary | server/internal/handler/issue.go:593 |
-| Current assignee pair validation | server/internal/handler/issue.go:1298 |
-| Agent non-backlog enqueue decision | server/internal/handler/issue.go:1369 |
-| UpdateIssue and backlog promotion | server/internal/handler/issue.go:899,1267 |
+| CreateIssue boundary | server/internal/handler/issue.go:567 |
+| Current assignee pair validation | server/internal/handler/issue_validation.go:62 |
+| Agent non-backlog enqueue decision | server/internal/handler/issue_update_projection.go:18-32 |
+| UpdateIssue and backlog promotion | server/internal/handler/issue.go:878,1159-1161 |
 | Batch update equivalent | server/internal/handler/issue_batch.go:18-357 |
 | Child done parent notification/dispatch | server/internal/handler/issue_child_done.go:51-397 |
 

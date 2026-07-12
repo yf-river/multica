@@ -47,8 +47,8 @@ Only the leader task receives the squad operating briefing.
 
 | Contract | Current source |
 |---|---|
-| Create/update assignee validation | server/internal/handler/issue.go:653,1035,1212-1273 |
-| Backlog promotion and assign hooks | server/internal/handler/issue.go:1160-1195 |
+| Create/update assignee validation | server/internal/handler/issue.go:629,1023; server/internal/handler/issue_validation.go:62 |
+| Backlog promotion and assign hooks | server/internal/handler/issue.go:1159-1161; server/internal/handler/issue_update_projection.go:18-32 |
 | Readiness decision | server/internal/handler/squad_members.go:560 |
 | Leader enqueue and private-agent gate | server/internal/handler/squad_members.go:600; agent_access.go:142 |
 | Leader-specific task service method | server/internal/service/task_enqueue.go:94 |
