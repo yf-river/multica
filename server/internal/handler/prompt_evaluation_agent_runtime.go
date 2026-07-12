@@ -434,7 +434,7 @@ func promptEvaluationPayloadWithCases(payload map[string]any, cases []map[string
 		result[key] = value
 	}
 	result["cases"] = cases
-	result["用例"] = cases
+	delete(result, "用例")
 	return result
 }
 
@@ -673,6 +673,7 @@ func normalizePromptEvaluationPayloadObject(payload map[string]any) map[string]a
 	for key, value := range payload {
 		normalized[key] = value
 	}
+	delete(normalized, "用例")
 	normalized["schema_version"] = 1
 	normalized["schema"] = "multica.training_evaluation.payload.v1"
 	normalized["语义版本"] = "multica.training_evaluation.v1"

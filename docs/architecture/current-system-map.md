@@ -25,7 +25,7 @@ evidence reviewable by humans.
 | Database functions | 9 |
 | Database triggers | 4 |
 | Database indexes | 185 |
-| Migration files (up + down) | 84 |
+| Migration files (up + down) | 86 |
 | sqlc modules | 54 |
 | sqlc queries | 574 |
 | Go WebSocket events | 80 |
@@ -577,6 +577,8 @@ intentionally platform-specific.
 | 41 | require_playground_variables_object | up | — | 0 | 0 | 0 | `server/migrations/041_require_playground_variables_object.up.sql` |
 | 42 | require_prompt_library_json_shapes | down | — | 0 | 0 | 0 | `server/migrations/042_require_prompt_library_json_shapes.down.sql` |
 | 42 | require_prompt_library_json_shapes | up | — | 0 | 0 | 0 | `server/migrations/042_require_prompt_library_json_shapes.up.sql` |
+| 43 | remove_prompt_evaluation_case_alias | down | — | 0 | 0 | 0 | `server/migrations/043_remove_prompt_evaluation_case_alias.down.sql` |
+| 43 | remove_prompt_evaluation_case_alias | up | — | 0 | 0 | 0 | `server/migrations/043_remove_prompt_evaluation_case_alias.up.sql` |
 
 ### Current tables discovered from up migrations
 
