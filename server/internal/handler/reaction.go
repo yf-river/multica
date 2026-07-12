@@ -5,7 +5,6 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/eventoutbox"
 	"github.com/multica-ai/multica/server/internal/logger"
@@ -44,26 +43,12 @@ type reactionRequest struct {
 }
 
 func (h *Handler) loadReactionRequest(w http.ResponseWriter, r *http.Request) (reactionRequest, bool) {
-	commentID := chi.URLParam(r, "commentId")
 	userID, ok := requireUserID(w, r)
 	if !ok {
 		return reactionRequest{}, false
 	}
-	workspaceID := h.resolveWorkspaceID(r)
-	commentUUID, ok := parseUUIDOrBadRequest(w, commentID, "comment id")
+	comment, workspaceID, workspaceUUID, ok := h.loadCommentForRequest(w, r)
 	if !ok {
-		return reactionRequest{}, false
-	}
-	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
-	if !ok {
-		return reactionRequest{}, false
-	}
-	comment, err := h.Queries.GetCommentInWorkspace(r.Context(), db.GetCommentInWorkspaceParams{
-		ID:          commentUUID,
-		WorkspaceID: wsUUID,
-	})
-	if err != nil {
-		writeError(w, http.StatusNotFound, "comment not found")
 		return reactionRequest{}, false
 	}
 	var req struct {
@@ -79,9 +64,9 @@ func (h *Handler) loadReactionRequest(w http.ResponseWriter, r *http.Request) (r
 	}
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
 	return reactionRequest{
-		commentID:   commentID,
+		commentID:   uuidToString(comment.ID),
 		workspaceID: workspaceID,
-		workspace:   wsUUID,
+		workspace:   workspaceUUID,
 		comment:     comment,
 		emoji:       req.Emoji,
 		actorType:   actorType,
