@@ -42,6 +42,26 @@ func TestCreateAgentPlaygroundExperiment_AllowsMoreThanThreeAgents(t *testing.T)
 	}
 }
 
+func TestCreateAgentPlaygroundExperimentRejectsCorruptDatasetVariables(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	suffix := time.Now().UnixNano()
+	assetID, versionID := createAgentPlaygroundDatasetSnapshot(t, suffix)
+	if _, err := testPool.Exec(context.Background(), `UPDATE prompt_evaluation_dataset_version_row SET variables='null'::jsonb WHERE dataset_version_id=$1`, versionID); err != nil {
+		t.Fatalf("corrupt dataset variables: %v", err)
+	}
+	agentID := createHandlerTestAgent(t, fmt.Sprintf("agent-playground-corrupt-%d", suffix), nil)
+	w := httptest.NewRecorder()
+	testHandler.CreateAgentPlaygroundExperiment(w, newRequest(http.MethodPost, "/api/agent-playground-experiments", map[string]any{
+		"name": fmt.Sprintf("corrupt variables %d", suffix), "dataset_asset_id": assetID,
+		"dataset_version_id": versionID, "agent_ids": []string{agentID},
+	}))
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("CreateAgentPlaygroundExperiment: expected 500, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestCreateAgentPlaygroundExperimentCanonicalizesDuplicateAgentIDs(t *testing.T) {
 	suffix := time.Now().UnixNano()
 	agentID := createHandlerTestAgent(t, fmt.Sprintf("agent-playground-canonical-%d", suffix), nil)
