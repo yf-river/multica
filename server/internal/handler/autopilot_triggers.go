@@ -75,7 +75,11 @@ func (h *Handler) loadAutopilotTriggerFromRoute(w http.ResponseWriter, r *http.R
 		return "", db.Autopilot{}, db.AutopilotTrigger{}, false
 	}
 	trigger, err := h.Queries.GetAutopilotTrigger(r.Context(), triggerID)
-	if err != nil || uuidToString(trigger.AutopilotID) != uuidToString(ap.ID) {
+	if err != nil {
+		writeEntityLoadError(w, r, err, "trigger", "trigger_id", chi.URLParam(r, "triggerId"), "autopilot_id", uuidToString(ap.ID))
+		return "", db.Autopilot{}, db.AutopilotTrigger{}, false
+	}
+	if uuidToString(trigger.AutopilotID) != uuidToString(ap.ID) {
 		writeError(w, http.StatusNotFound, "trigger not found")
 		return "", db.Autopilot{}, db.AutopilotTrigger{}, false
 	}
