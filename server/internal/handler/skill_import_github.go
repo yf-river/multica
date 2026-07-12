@@ -112,25 +112,27 @@ func fetchFromSkillsSh(httpClient *http.Client, rawURL string) (*importedSkill, 
 	// 2. List supporting files via GitHub API
 	apiURL := buildGitHubContentsURL(owner, repo, skillDir, defaultBranch)
 	dirResp, err := doGitHubAPIGet(httpClient, apiURL)
-	if err != nil || dirResp.StatusCode != http.StatusOK {
-		// Can't list files — return what we have (SKILL.md only)
-		if dirResp != nil {
-			_ = dirResp.Body.Close()
-		}
-		return result, nil
+	if err != nil {
+		return nil, fmt.Errorf("github import: list supporting files at %s: %w", apiURL, err)
+	}
+	if dirResp.StatusCode != http.StatusOK {
+		status := dirResp.StatusCode
+		_ = dirResp.Body.Close()
+		return nil, fmt.Errorf("github import: list supporting files at %s: status %d", apiURL, status)
 	}
 	defer func() { _ = dirResp.Body.Close() }()
 
 	var entries []githubContentEntry
 	if err := json.NewDecoder(dirResp.Body).Decode(&entries); err != nil {
-		slog.Warn("github import: failed to decode top-level directory listing", "url", apiURL, "error", err)
-		return result, nil
+		return nil, fmt.Errorf("github import: decode supporting files at %s: %w", apiURL, err)
 	}
 
 	// 3. Recursively collect files (excluding SKILL.md and LICENSE)
 	var allFiles []githubContentEntry
 	slog.Info("github import: collecting supporting files", "skill", skillName, "top_level_entries", len(entries))
-	collectGitHubFiles(httpClient, entries, &allFiles, apiURL)
+	if err := collectGitHubFiles(httpClient, entries, &allFiles, apiURL); err != nil {
+		return nil, err
+	}
 	slog.Info("github import: collected supporting files", "skill", skillName, "files", len(allFiles))
 
 	// 4. Download each file
@@ -140,15 +142,11 @@ func fetchFromSkillsSh(httpClient *http.Client, rawURL string) (*importedSkill, 
 	}
 	for _, entry := range allFiles {
 		if entry.DownloadURL == "" {
-			continue
+			return nil, fmt.Errorf("github import: file %s has no download URL", entry.Path)
 		}
 		body, err := fetchRawFile(httpClient, entry.DownloadURL)
 		if err != nil {
-			if isCapError(err) {
-				return nil, fmt.Errorf("github import: %s: %w", entry.Path, err)
-			}
-			slog.Warn("github import: file download failed", "path", entry.Path, "error", err)
-			continue
+			return nil, fmt.Errorf("github import: %s: %w", entry.Path, err)
 		}
 		// Convert absolute GitHub path to relative path within skill
 		relPath := strings.TrimPrefix(entry.Path, basePath)
@@ -197,7 +195,7 @@ func resolveGitHubSkillDirByName(httpClient *http.Client, owner, repo, defaultBr
 }
 
 // collectGitHubFiles recursively collects file entries from a GitHub directory listing.
-func collectGitHubFiles(httpClient *http.Client, entries []githubContentEntry, out *[]githubContentEntry, parentURL string) {
+func collectGitHubFiles(httpClient *http.Client, entries []githubContentEntry, out *[]githubContentEntry, parentURL string) error {
 	for _, entry := range entries {
 		lower := strings.ToLower(entry.Name)
 		if lower == "skill.md" || lower == "license" || lower == "license.txt" || lower == "license.md" {
@@ -211,35 +209,32 @@ func collectGitHubFiles(httpClient *http.Client, entries []githubContentEntry, o
 			if subURL == "" {
 				parsed, err := url.Parse(parentURL)
 				if err != nil {
-					slog.Warn("github import: invalid parent directory url", "url", parentURL, "error", err)
-					continue
+					return fmt.Errorf("github import: invalid parent directory URL %q: %w", parentURL, err)
 				}
 				parsed.Path = strings.TrimSuffix(parsed.Path, "/") + "/" + entry.Name
 				subURL = parsed.String()
 			}
 			subResp, err := doGitHubAPIGet(httpClient, subURL)
-			if err != nil || subResp.StatusCode != http.StatusOK {
-				attrs := []any{"url", subURL}
-				if subResp != nil {
-					attrs = append(attrs, "status", subResp.StatusCode)
-					_ = subResp.Body.Close()
-				}
-				if err != nil {
-					attrs = append(attrs, "error", err)
-				}
-				slog.Warn("github import: failed to list subdirectory", attrs...)
-				continue
+			if err != nil {
+				return fmt.Errorf("github import: list subdirectory %s: %w", subURL, err)
+			}
+			if subResp.StatusCode != http.StatusOK {
+				status := subResp.StatusCode
+				_ = subResp.Body.Close()
+				return fmt.Errorf("github import: list subdirectory %s: status %d", subURL, status)
 			}
 			var subEntries []githubContentEntry
 			if err := json.NewDecoder(subResp.Body).Decode(&subEntries); err != nil {
 				_ = subResp.Body.Close()
-				slog.Warn("github import: failed to decode subdirectory listing", "url", subURL, "error", err)
-				continue
+				return fmt.Errorf("github import: decode subdirectory %s: %w", subURL, err)
 			}
 			_ = subResp.Body.Close()
-			collectGitHubFiles(httpClient, subEntries, out, subURL)
+			if err := collectGitHubFiles(httpClient, subEntries, out, subURL); err != nil {
+				return err
+			}
 		}
 	}
+	return nil
 }
 
 func findSkillDirFromConventionalPrefixes(httpClient *http.Client, owner, repo, defaultBranch, rawPrefix, skillName string) (string, []byte, bool) {
@@ -679,25 +674,25 @@ func fetchFromGitHub(httpClient *http.Client, rawURL string) (*importedSkill, er
 
 	apiURL := buildGitHubContentsURL(spec.owner, spec.repo, spec.skillDir, spec.ref)
 	dirResp, err := doGitHubAPIGet(httpClient, apiURL)
-	if err != nil || dirResp.StatusCode != http.StatusOK {
-		// Cannot list the directory — return what we have (SKILL.md only).
-		// Keep this lenient: a private rate-limited request shouldn't fail
-		// an import that has already produced a valid SKILL.md.
-		if dirResp != nil {
-			_ = dirResp.Body.Close()
-		}
-		return result, nil
+	if err != nil {
+		return nil, fmt.Errorf("github import: list supporting files at %s: %w", apiURL, err)
+	}
+	if dirResp.StatusCode != http.StatusOK {
+		status := dirResp.StatusCode
+		_ = dirResp.Body.Close()
+		return nil, fmt.Errorf("github import: list supporting files at %s: status %d", apiURL, status)
 	}
 	defer func() { _ = dirResp.Body.Close() }()
 
 	var entries []githubContentEntry
 	if err := json.NewDecoder(dirResp.Body).Decode(&entries); err != nil {
-		slog.Warn("github import: failed to decode top-level directory listing", "url", apiURL, "error", err)
-		return result, nil
+		return nil, fmt.Errorf("github import: decode supporting files at %s: %w", apiURL, err)
 	}
 
 	var allFiles []githubContentEntry
-	collectGitHubFiles(httpClient, entries, &allFiles, apiURL)
+	if err := collectGitHubFiles(httpClient, entries, &allFiles, apiURL); err != nil {
+		return nil, err
+	}
 
 	basePath := ""
 	if spec.skillDir != "" {
@@ -705,15 +700,11 @@ func fetchFromGitHub(httpClient *http.Client, rawURL string) (*importedSkill, er
 	}
 	for _, entry := range allFiles {
 		if entry.DownloadURL == "" {
-			continue
+			return nil, fmt.Errorf("github import: file %s has no download URL", entry.Path)
 		}
 		body, err := fetchRawFile(httpClient, entry.DownloadURL)
 		if err != nil {
-			if isCapError(err) {
-				return nil, fmt.Errorf("github import: %s: %w", entry.Path, err)
-			}
-			slog.Warn("github import: file download failed", "path", entry.Path, "error", err)
-			continue
+			return nil, fmt.Errorf("github import: %s: %w", entry.Path, err)
 		}
 		relPath := strings.TrimPrefix(entry.Path, basePath)
 		if err := result.addFile(relPath, string(body)); err != nil {

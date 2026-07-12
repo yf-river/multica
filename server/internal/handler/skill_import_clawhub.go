@@ -173,14 +173,7 @@ func fetchFromClawHub(httpClient *http.Client, rawURL string) (*importedSkill, e
 		}
 		body, err := fetchRawFile(httpClient, fileURL)
 		if err != nil {
-			// Cap violations must abort: silently dropping a file would
-			// produce an incomplete bundle that looks valid. SKILL.md is
-			// load-bearing, so any failure on it is fatal too.
-			if isCapError(err) || fp == "SKILL.md" {
-				return nil, fmt.Errorf("clawhub import: %s: %w", fp, err)
-			}
-			slog.Warn("clawhub import: file download failed", "path", fp, "error", err)
-			continue
+			return nil, fmt.Errorf("clawhub import: %s: %w", fp, err)
 		}
 		if fp == "SKILL.md" {
 			result.content = string(body)

@@ -3,7 +3,6 @@ package handler
 import (
 	"bytes"
 	"errors"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -62,6 +61,47 @@ func TestFetchGitHubDefaultBranchPreservesTransportFailure(t *testing.T) {
 	branch, err := fetchGitHubDefaultBranch(client, "acme", "skills")
 	if err == nil || !strings.Contains(err.Error(), "network unavailable") || branch != "" {
 		t.Fatalf("branch=%q err=%v", branch, err)
+	}
+}
+
+func TestFetchFromClawHubFailsWhenDeclaredBundleIsIncomplete(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/skills/review-helper":
+			writeJSON(w, http.StatusOK, map[string]any{
+				"skill": map[string]any{
+					"slug": "review-helper", "displayName": "Review Helper",
+					"tags": map[string]string{"latest": "1.0.0"},
+				},
+			})
+		case "/skills/review-helper/versions/1.0.0":
+			writeJSON(w, http.StatusOK, map[string]any{
+				"version": map[string]any{
+					"version": "1.0.0",
+					"files":   []map[string]any{{"path": "SKILL.md"}, {"path": "scripts/check.sh"}},
+				},
+			})
+		case "/skills/review-helper/file":
+			if r.URL.Query().Get("path") == "SKILL.md" {
+				_, _ = w.Write([]byte("---\nname: review-helper\n---\nbody"))
+				return
+			}
+			http.Error(w, "upstream failed", http.StatusBadGateway)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	previous := clawHubAPIBase
+	clawHubAPIBase = server.URL
+	defer func() { clawHubAPIBase = previous }()
+
+	result, err := fetchFromClawHub(server.Client(), "https://clawhub.ai/acme/review-helper")
+	if err == nil || result != nil {
+		t.Fatalf("result=%#v err=%v, want atomic import failure", result, err)
+	}
+	if !strings.Contains(err.Error(), "scripts/check.sh") || !strings.Contains(err.Error(), "HTTP 502") {
+		t.Fatalf("error lacks failed bundle member: %v", err)
 	}
 }
 
@@ -223,7 +263,7 @@ func TestFetchFromSkillsSh_FallbackDoesNotDoubleEscapeDirectoryNames(t *testing.
 	}
 }
 
-func TestFetchFromSkillsSh_LogsSubdirectoryFailures(t *testing.T) {
+func TestFetchFromSkillsSh_FailsOnSubdirectoryFailure(t *testing.T) {
 	client, _ := newGitHubFixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.Header.Get("X-Test-Original-Host") {
 		case "api.github.com":
@@ -256,30 +296,12 @@ func TestFetchFromSkillsSh_LogsSubdirectoryFailures(t *testing.T) {
 		}
 	})
 
-	var logs bytes.Buffer
-	prev := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo})))
-	t.Cleanup(func() {
-		slog.SetDefault(prev)
-	})
-
 	result, err := fetchFromSkillsSh(client, "https://skills.sh/acme/skills/pptx")
-	if err != nil {
-		t.Fatalf("fetchFromSkillsSh: %v", err)
+	if err == nil || result != nil {
+		t.Fatalf("result=%#v err=%v, want atomic import failure", result, err)
 	}
-	if len(result.files) != 0 {
-		t.Fatalf("expected no files when subdirectory listing fails, got %v", importedFilePaths(result.files))
-	}
-
-	logOutput := logs.String()
-	if !strings.Contains(logOutput, "github import: failed to list subdirectory") {
-		t.Fatalf("expected warning log, got %q", logOutput)
-	}
-	if !strings.Contains(logOutput, "status=404") {
-		t.Fatalf("expected status in warning log, got %q", logOutput)
-	}
-	if !strings.Contains(logOutput, "skills/pptx/scripts?ref=main") {
-		t.Fatalf("expected subdirectory URL in warning log, got %q", logOutput)
+	if !strings.Contains(err.Error(), "status 404") || !strings.Contains(err.Error(), "skills/pptx/scripts?ref=main") {
+		t.Fatalf("error lacks failing boundary: %v", err)
 	}
 }
 
@@ -899,7 +921,7 @@ func TestFetchRawFile_ReturnsErrorOnOversizedFile(t *testing.T) {
 	if !strings.Contains(err.Error(), "byte limit") {
 		t.Fatalf("error = %q, want byte limit message", err.Error())
 	}
-	if !isCapError(err) {
+	if !errors.Is(err, errImportCapExceeded) {
 		t.Fatalf("error %q must be classified as a cap error so callers fail-fast", err.Error())
 	}
 }
@@ -916,7 +938,7 @@ func TestImportedSkill_AddFileEnforcesBundleLimits(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected file count cap error")
 		}
-		if !isCapError(err) {
+		if !errors.Is(err, errImportCapExceeded) {
 			t.Fatalf("error %q must be a cap error", err.Error())
 		}
 	})
@@ -930,7 +952,7 @@ func TestImportedSkill_AddFileEnforcesBundleLimits(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected total bytes cap error")
 		}
-		if !isCapError(err) {
+		if !errors.Is(err, errImportCapExceeded) {
 			t.Fatalf("error %q must be a cap error", err.Error())
 		}
 	})
@@ -1097,13 +1119,10 @@ func TestFetchFromGitHub_UnresolvableRefFailsLoudly(t *testing.T) {
 	}
 }
 
-// When the GitHub API responds 403 (rate-limited or auth-blocked) on the
-// ref-resolution probe, the import should NOT fail outright. The optimistic
-// single-segment split (ref = first segment, rest = path) is correct for
-// the overwhelming majority of URLs, so we fall back to it and let the raw
-// SKILL.md fetch be the source of truth. This covers the common case of
-// self-hosted servers hitting GitHub's 60-req/hour unauthenticated limit.
-func TestFetchFromGitHub_FallsBackOnAPIBlocked(t *testing.T) {
+// Ref disambiguation may use the explicit URL split when GitHub's API is
+// blocked, but the import must still fail if the supporting-file inventory
+// cannot be proven complete.
+func TestFetchFromGitHub_RejectsPartialImportOnAPIBlocked(t *testing.T) {
 	client, _ := newGitHubFixtureClient(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.Header.Get("X-Test-Original-Host") {
 		case "api.github.com":
@@ -1129,17 +1148,11 @@ func TestFetchFromGitHub_FallsBackOnAPIBlocked(t *testing.T) {
 		}
 	})
 	result, err := fetchFromGitHub(client, "https://github.com/anthropics/skills/tree/main/skills/pptx")
-	if err != nil {
-		t.Fatalf("fetchFromGitHub: %v", err)
+	if err == nil || result != nil {
+		t.Fatalf("result=%#v err=%v, want atomic import failure", result, err)
 	}
-	if result.origin["ref"] != "main" {
-		t.Fatalf("origin ref = %v, want main (optimistic fallback)", result.origin["ref"])
-	}
-	if result.origin["path"] != "skills/pptx" {
-		t.Fatalf("origin path = %v, want skills/pptx (optimistic fallback)", result.origin["path"])
-	}
-	if result.name != "pptx" {
-		t.Fatalf("name = %q, want pptx", result.name)
+	if !strings.Contains(err.Error(), "status 403") || !strings.Contains(err.Error(), "contents/skills/pptx") {
+		t.Fatalf("error lacks failing supporting-file boundary: %v", err)
 	}
 }
 

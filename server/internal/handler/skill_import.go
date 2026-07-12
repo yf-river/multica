@@ -49,11 +49,6 @@ type importedFile struct {
 // produce an incomplete skill that looks valid to the user.
 var errImportCapExceeded = errors.New("import cap exceeded")
 
-// isCapError reports whether err is (or wraps) errImportCapExceeded.
-func isCapError(err error) bool {
-	return errors.Is(err, errImportCapExceeded)
-}
-
 // addFile appends a supporting file while enforcing the per-bundle caps. It
 // returns an error when either the file count or aggregate byte budget would
 // be exceeded so the caller fails the import instead of silently truncating.
