@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -49,6 +49,18 @@ describe("freeze breadcrumb round-trip", () => {
     writeFreezeBreadcrumb(file, sample);
     clearFreezeBreadcrumb(file);
     expect(readAndClearFreezeBreadcrumb(file)).toBeNull();
+  });
+
+  it("reports persistence failures without throwing", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const file = join(tempFile(), "missing-parent", "breadcrumb.json");
+
+    expect(() => writeFreezeBreadcrumb(file, sample)).not.toThrow();
+    expect(warn).toHaveBeenCalledWith(
+      "[freeze-breadcrumb] write failed",
+      file,
+      expect.any(Error),
+    );
   });
 });
 
