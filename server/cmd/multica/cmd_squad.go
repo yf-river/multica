@@ -487,7 +487,9 @@ func runSquadActivity(cmd *cobra.Command, args []string) error {
 		body["wait_summary"] = waitSummary
 	}
 	var result map[string]any
-	if err := client.PostJSON(ctx, "/api/issues/"+issueRef.ID+"/squad-evaluated", body, &result); err != nil {
+	if err := client.PostJSONWithIdempotencyKey(
+		ctx, "/api/issues/"+issueRef.ID+"/squad-evaluated", body, uuid.NewString(), &result,
+	); err != nil {
 		return fmt.Errorf("record evaluation: %w", err)
 	}
 

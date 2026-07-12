@@ -227,7 +227,7 @@ func runIssueCommentAdd(cmd *cobra.Command, args []string) error {
 		body["attachment_ids"] = attachmentIDs
 	}
 	var result map[string]any
-	if err := client.PostJSON(ctx, "/api/issues/"+issueID+"/comments", body, &result); err != nil {
+	if err := client.PostJSONWithIdempotencyKey(ctx, "/api/issues/"+issueID+"/comments", body, uuid.NewString(), &result); err != nil {
 		return fmt.Errorf("add comment: %w", err)
 	}
 

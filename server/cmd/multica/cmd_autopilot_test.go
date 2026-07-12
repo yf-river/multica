@@ -235,6 +235,9 @@ func TestRunAutopilotCreateSendsProjectID(t *testing.T) {
 		if r.Method != http.MethodPost {
 			t.Errorf("method = %s, want POST", r.Method)
 		}
+		if key := r.Header.Get("Idempotency-Key"); len(key) != 36 {
+			t.Errorf("Idempotency-Key = %q, want generated UUID", key)
+		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Errorf("decode body: %v", err)
 		}

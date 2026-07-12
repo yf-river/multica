@@ -249,6 +249,11 @@ func newSkillBodyCaptureServer(t *testing.T, wantMethod, wantPath string, body *
 		if r.URL.Path != wantPath {
 			t.Fatalf("path = %q, want %q", r.URL.Path, wantPath)
 		}
+		if wantMethod == http.MethodPost && wantPath == "/api/skills" {
+			if key := r.Header.Get("Idempotency-Key"); len(key) != 36 {
+				t.Fatalf("Idempotency-Key = %q, want generated UUID", key)
+			}
+		}
 		if err := json.NewDecoder(r.Body).Decode(body); err != nil {
 			t.Fatalf("decode body: %v", err)
 		}

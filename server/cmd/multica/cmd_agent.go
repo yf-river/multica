@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
 	"github.com/multica-ai/multica/server/internal/cli"
@@ -461,7 +462,7 @@ func runAgentCreate(cmd *cobra.Command, _ []string) error {
 	defer cancel()
 
 	var result map[string]any
-	if err := client.PostJSON(ctx, "/api/agents", body, &result); err != nil {
+	if err := client.PostJSONWithIdempotencyKey(ctx, "/api/agents", body, uuid.NewString(), &result); err != nil {
 		return fmt.Errorf("create agent: %w", err)
 	}
 

@@ -1266,6 +1266,9 @@ func TestAgentCreateSendsThinkingLevel(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotMethod = r.Method
 		gotPath = r.URL.Path
+		if key := r.Header.Get("Idempotency-Key"); len(key) != 36 {
+			t.Errorf("Idempotency-Key = %q, want generated UUID", key)
+		}
 		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
 			t.Errorf("decode request body: %v", err)
 		}

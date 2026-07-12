@@ -316,7 +316,7 @@ func runSkillCreate(cmd *cobra.Command, _ []string) error {
 	defer cancel()
 
 	var result map[string]any
-	if err := client.PostJSON(ctx, "/api/skills", body, &result); err != nil {
+	if err := client.PostJSONWithIdempotencyKey(ctx, "/api/skills", body, uuid.NewString(), &result); err != nil {
 		return fmt.Errorf("create skill: %w", err)
 	}
 

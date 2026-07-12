@@ -316,7 +316,7 @@ func runAutopilotCreate(cmd *cobra.Command, _ []string) error {
 	}
 
 	var result map[string]any
-	if err := client.PostJSON(ctx, "/api/autopilots", body, &result); err != nil {
+	if err := client.PostJSONWithIdempotencyKey(ctx, "/api/autopilots", body, uuid.NewString(), &result); err != nil {
 		return fmt.Errorf("create autopilot: %w", err)
 	}
 

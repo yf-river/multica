@@ -394,6 +394,9 @@ func TestRunIssueCreateSendsExistingAttachmentIDs(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
+		if key := r.Header.Get("Idempotency-Key"); len(key) != 36 {
+			t.Errorf("Idempotency-Key = %q, want generated UUID", key)
+		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			t.Errorf("decode body: %v", err)
 		}
