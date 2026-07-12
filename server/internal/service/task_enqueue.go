@@ -372,6 +372,7 @@ type QuickCreateContext struct {
 	// pass `--parent <uuid>` so the sub-issue relationship is preserved
 	// across the manual→agent mode flip.
 	ParentIssueID string `json:"parent_issue_id,omitempty"`
+	RequestHash   string `json:"request_hash,omitempty"`
 }
 
 // QuickCreateContextType marks a task as a quick-create job.
@@ -388,6 +389,8 @@ type IssueSourceSummaryContext struct {
 }
 
 type EnqueueQuickCreateTaskParams struct {
+	RequestID     pgtype.UUID
+	RequestHash   string
 	WorkspaceID   pgtype.UUID
 	RequesterID   pgtype.UUID
 	AgentID       pgtype.UUID
@@ -424,6 +427,12 @@ type EnqueueQuickCreateTaskParams struct {
 // open the modal from "Add sub issue"). The handler is responsible for
 // validating it belongs to the same workspace before passing it in.
 func (s *TaskService) EnqueueQuickCreateTask(ctx context.Context, p EnqueueQuickCreateTaskParams) (db.AgentTaskQueue, error) {
+	if !p.RequestID.Valid {
+		return db.AgentTaskQueue{}, fmt.Errorf("quick-create request id is required")
+	}
+	if strings.TrimSpace(p.RequestHash) == "" {
+		return db.AgentTaskQueue{}, fmt.Errorf("quick-create request hash is required")
+	}
 	agent, err := s.Queries.GetAgent(ctx, p.AgentID)
 	if err != nil {
 		return db.AgentTaskQueue{}, fmt.Errorf("load agent: %w", err)
@@ -440,6 +449,7 @@ func (s *TaskService) EnqueueQuickCreateTask(ctx context.Context, p EnqueueQuick
 		Prompt:      p.Prompt,
 		RequesterID: util.UUIDToString(p.RequesterID),
 		WorkspaceID: util.UUIDToString(p.WorkspaceID),
+		RequestHash: p.RequestHash,
 	}
 	if p.ProjectID.Valid {
 		payload.ProjectID = util.UUIDToString(p.ProjectID)
@@ -480,6 +490,7 @@ func (s *TaskService) EnqueueQuickCreateTask(ctx context.Context, p EnqueueQuick
 	}
 
 	task, err := s.Queries.CreateQuickCreateTask(ctx, db.CreateQuickCreateTaskParams{
+		ID:        p.RequestID,
 		AgentID:   p.AgentID,
 		RuntimeID: agent.RuntimeID,
 		Priority:  priorityToInt("high"),

@@ -127,3 +127,49 @@ func TestAttachmentCreateRequestMigrationExtendsCurrentResourceContract(t *testi
 		t.Fatal(err)
 	}
 }
+
+func TestQuickCreateIdentityMigrationEnforcesBothRequestAndIssueIdentity(t *testing.T) {
+	pool := openTestPool(t)
+	ctx := context.Background()
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx, readMigrationFile(t, "051_require_unique_quick_create_identity.up.sql")); err != nil {
+		t.Fatal(err)
+	}
+	var workspaceID string
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO workspace (name, slug) VALUES ('Quick Create Identity', $1) RETURNING id
+	`, "quick-create-identity-"+uuid.NewString()).Scan(&workspaceID); err != nil {
+		t.Fatal(err)
+	}
+	originID := uuid.NewString()
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO issue (workspace_id, title, creator_type, creator_id, number, origin_type, origin_id)
+		VALUES ($1, 'Quick Create Identity', 'member', $2, 1, 'quick_create', $3)
+	`, workspaceID, uuid.NewString(), originID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `SAVEPOINT duplicate_origin`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO issue (workspace_id, title, creator_type, creator_id, number, origin_type, origin_id)
+		VALUES ($1, 'Duplicate Quick Create', 'member', $2, 2, 'quick_create', $3)
+	`, workspaceID, uuid.NewString(), originID); err == nil {
+		t.Fatal("duplicate quick-create origin unexpectedly accepted")
+	}
+	if _, err := tx.Exec(ctx, `ROLLBACK TO SAVEPOINT duplicate_origin`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO resource_create_request (
+			workspace_id, actor_id, resource_type, idempotency_key, request_hash
+		) VALUES ($1, $2, 'quick_create', $3, $4)
+	`, workspaceID, uuid.NewString(), uuid.NewString(), "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"); err != nil {
+		t.Fatalf("quick-create request type rejected: %v", err)
+	}
+}

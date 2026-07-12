@@ -241,6 +241,8 @@ func setupDispatchedQuickCreateTask(t *testing.T, ctx context.Context, prompt st
 		RequesterID: parseUUID(testUserID),
 		AgentID:     parseUUID(agentID),
 		Prompt:      prompt,
+		RequestID:   parseUUID(uuid.NewString()),
+		RequestHash: "subscriber-test:" + prompt,
 	})
 	if err != nil {
 		t.Fatalf("EnqueueQuickCreateTask: %v", err)

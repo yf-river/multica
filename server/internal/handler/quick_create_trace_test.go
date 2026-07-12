@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -49,6 +50,8 @@ func TestQuickCreateSquadTaskTraceCarriesSquadAndProject(t *testing.T) {
 	})
 
 	task, err := testHandler.TaskService.EnqueueQuickCreateTask(ctx, service.EnqueueQuickCreateTaskParams{
+		RequestID:   parseUUID(uuid.NewString()),
+		RequestHash: "trace-test",
 		WorkspaceID: parseUUID(testWorkspaceID),
 		RequesterID: parseUUID(testUserID),
 		AgentID:     parseUUID(agentID),

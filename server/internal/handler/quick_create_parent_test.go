@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/pkg/agent"
@@ -249,7 +250,9 @@ func TestQuickCreateIssueTapdWikiCreatesFetchedIssueDirectly(t *testing.T) {
 
 	title := fmt.Sprintf("TAPD 直建测试 %d", time.Now().UnixNano())
 	var sawAuth bool
+	var tapdCalls int
 	tapdAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		tapdCalls++
 		if r.URL.Path != "/tapd_wikis" {
 			t.Fatalf("unexpected TAPD path: %s", r.URL.Path)
 		}
@@ -292,11 +295,14 @@ func TestQuickCreateIssueTapdWikiCreatesFetchedIssueDirectly(t *testing.T) {
 		t.Fatalf("count quick-create tasks before: %v", err)
 	}
 
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/issues/quick-create", map[string]any{
+	quickCreateKey := uuid.NewString()
+	quickCreateBody := map[string]any{
 		"agent_id": agentID,
 		"prompt":   "根据 TAPD Wiki 文档创建需求：https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004223",
-	})
+	}
+	w = httptest.NewRecorder()
+	req = newRequest("POST", "/api/issues/quick-create", quickCreateBody)
+	req.Header.Set("Idempotency-Key", quickCreateKey)
 	testHandler.QuickCreateIssue(w, req)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("QuickCreateIssue TAPD: expected 201, got %d: %s", w.Code, w.Body.String())
@@ -317,7 +323,23 @@ func TestQuickCreateIssueTapdWikiCreatesFetchedIssueDirectly(t *testing.T) {
 	t.Cleanup(func() {
 		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, resp.IssueID)
 		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, resp.IssueID)
+		mustExec(t, context.Background(), `DELETE FROM resource_create_request WHERE resource_type = 'quick_create' AND idempotency_key = $1`, quickCreateKey)
 	})
+
+	replayWriter := httptest.NewRecorder()
+	replayRequest := newRequest("POST", "/api/issues/quick-create", quickCreateBody)
+	replayRequest.Header.Set("Idempotency-Key", quickCreateKey)
+	testHandler.QuickCreateIssue(replayWriter, replayRequest)
+	if replayWriter.Code != http.StatusCreated {
+		t.Fatalf("TAPD replay: expected 201, got %d: %s", replayWriter.Code, replayWriter.Body.String())
+	}
+	var replay QuickCreateIssueResponse
+	if err := json.NewDecoder(replayWriter.Body).Decode(&replay); err != nil {
+		t.Fatalf("decode TAPD replay: %v", err)
+	}
+	if replay.IssueID != resp.IssueID || tapdCalls != 1 {
+		t.Fatalf("TAPD replay diverged: first=%s replay=%s provider_calls=%d", resp.IssueID, replay.IssueID, tapdCalls)
+	}
 
 	var quickTasksAfter int
 	if err := testPool.QueryRow(ctx,

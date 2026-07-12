@@ -4,6 +4,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { createWorkspaceAwareStorage, registerWorkspacePersistStore } from "../../platform/workspace-storage";
 import { defaultStorage } from "../../platform/storage";
+import type { QuickCreateIssueRequest } from "../../types";
 
 export type QuickCreateActorType = "agent" | "squad";
 
@@ -27,6 +28,9 @@ interface QuickCreateState {
   clearPrompt: () => void;
   keepOpen: boolean;
   setKeepOpen: (v: boolean) => void;
+  pendingOperation: { request: QuickCreateIssueRequest; idempotencyKey: string } | null;
+  setPendingOperation: (operation: QuickCreateState["pendingOperation"]) => void;
+  clearPendingOperation: (idempotencyKey: string) => void;
 }
 
 export const useQuickCreateStore = create<QuickCreateState>()(
@@ -42,6 +46,13 @@ export const useQuickCreateStore = create<QuickCreateState>()(
       clearPrompt: () => set({ prompt: "" }),
       keepOpen: false,
       setKeepOpen: (v) => set({ keepOpen: v }),
+      pendingOperation: null,
+      setPendingOperation: (pendingOperation) => set({ pendingOperation }),
+      clearPendingOperation: (idempotencyKey) => set((state) => (
+        state.pendingOperation?.idempotencyKey === idempotencyKey
+          ? { pendingOperation: null }
+          : state
+      )),
     }),
     {
       name: "multica_quick_create",

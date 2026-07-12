@@ -204,6 +204,20 @@ test("maintained domain flows stay anchored to current routes, tables and source
       ],
     },
     {
+      file: "quick-create-flow.md",
+      routes: ["POST /api/issues/quick-create"],
+      tables: ["agent_task_queue", "issue", "resource_create_request"],
+      sources: [
+        "packages/core/issues/quick-create.ts",
+        "packages/core/issues/stores/quick-create-store.ts",
+        "server/internal/handler/issue_quick_create.go",
+        "server/internal/handler/quick_create_idempotency.go",
+        "server/internal/service/task_enqueue.go",
+        "server/pkg/db/queries/agent.sql",
+        "server/migrations/051_require_unique_quick_create_identity.up.sql",
+      ],
+    },
+    {
       file: "skill-create-flow.md",
       routes: ["POST /api/skills"],
       tables: ["resource_create_request", "skill", "skill_file"],

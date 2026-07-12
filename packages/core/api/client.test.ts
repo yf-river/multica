@@ -425,6 +425,25 @@ describe("ApiClient", () => {
       .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
   });
 
+  it("retries quick-create unknown outcomes with one request identity", async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ task_id: "task-1" }), {
+        status: 202,
+        headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.quickCreateIssue({ prompt: "Create issue", agent_id: "agent-1" }))
+      .resolves.toEqual({ task_id: "task-1" });
+
+    const first = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    const second = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
+    expect(first["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(second["Idempotency-Key"]).toBe(first["Idempotency-Key"]);
+  });
+
   it("whitelists external credential responses without exposing secret fields", async () => {
     const profile = {
       id: "profile-1",

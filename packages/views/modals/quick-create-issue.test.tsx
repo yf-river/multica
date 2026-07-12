@@ -23,6 +23,9 @@ const mockQuickCreateStore = {
   clearPrompt: mockClearPrompt,
   keepOpen: false,
   setKeepOpen: mockSetKeepOpen,
+  pendingOperation: null as { request: Record<string, unknown>; idempotencyKey: string } | null,
+  setPendingOperation: vi.fn((operation) => { mockQuickCreateStore.pendingOperation = operation; }),
+  clearPendingOperation: vi.fn(() => { mockQuickCreateStore.pendingOperation = null; }),
 };
 
 // Per-test override for the projects query, so tests can swap between
@@ -66,11 +69,12 @@ vi.mock("@tanstack/react-query", () => ({
 
 vi.mock("@multica/core/api", () => ({
   api: {
-    quickCreateIssue: mockQuickCreateIssue,
+    quickCreateIssue: (request: unknown) => mockQuickCreateIssue(request),
   },
   ApiError: class ApiError extends Error {
     body?: unknown;
   },
+  isMutationOutcomeUnknown: () => false,
 }));
 
 vi.mock("@multica/core/paths", () => ({
@@ -97,10 +101,14 @@ vi.mock("@multica/core/issues/queries", () => ({
   }),
 }));
 
-vi.mock("@multica/core/issues/stores/quick-create-store", () => ({
-  useQuickCreateStore: (selector?: (state: typeof mockQuickCreateStore) => unknown) =>
-    (selector ? selector(mockQuickCreateStore) : mockQuickCreateStore),
-}));
+vi.mock("@multica/core/issues/stores/quick-create-store", () => {
+  const useQuickCreateStore = Object.assign(
+    (selector?: (state: typeof mockQuickCreateStore) => unknown) =>
+      (selector ? selector(mockQuickCreateStore) : mockQuickCreateStore),
+    { getState: () => mockQuickCreateStore },
+  );
+  return { useQuickCreateStore };
+});
 
 vi.mock("@multica/core/auth", () => ({
   useAuthStore: (selector?: (state: { user: { id: string } }) => unknown) =>
@@ -302,6 +310,7 @@ describe("AgentCreatePanel", () => {
     mockQuickCreateStore.lastProjectId = null;
     mockQuickCreateStore.prompt = "Persisted draft prompt";
     mockQuickCreateStore.keepOpen = false;
+    mockQuickCreateStore.pendingOperation = null;
     mockProjectsQuery.data = [];
     mockProjectsQuery.isSuccess = true;
     mockSquadsData.list = [];

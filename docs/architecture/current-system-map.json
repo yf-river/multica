@@ -24,7 +24,7 @@
     "databaseFunctions": 9,
     "databaseTriggers": 4,
     "databaseIndexes": 185,
-    "migrations": 100,
+    "migrations": 102,
     "sqlcModules": 53,
     "sqlcQueries": 571,
     "goWebsocketEvents": 80,
@@ -6700,6 +6700,41 @@
           "droppedFunctions": [],
           "droppedTriggers": [],
           "droppedIndexes": []
+        },
+        {
+          "version": 51,
+          "name": "require_unique_quick_create_identity",
+          "direction": "down",
+          "source": "server/migrations/051_require_unique_quick_create_identity.down.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 51,
+          "name": "require_unique_quick_create_identity",
+          "direction": "up",
+          "source": "server/migrations/051_require_unique_quick_create_identity.up.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [
+            {
+              "name": "idx_issue_origin",
+              "table": "issue",
+              "unique": true,
+              "source": "server/migrations/051_require_unique_quick_create_identity.up.sql#idx_issue_origin"
+            }
+          ],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": [
+            "idx_issue_origin"
+          ]
         }
       ],
       "tables": [
@@ -7503,9 +7538,9 @@
         },
         {
           "name": "idx_issue_origin",
-          "table": "public.issue",
-          "unique": false,
-          "source": "server/migrations/001_current_schema.up.sql#idx_issue_origin"
+          "table": "issue",
+          "unique": true,
+          "source": "server/migrations/051_require_unique_quick_create_identity.up.sql#idx_issue_origin"
         },
         {
           "name": "idx_issue_parent",
@@ -18458,6 +18493,7 @@
           "server/internal/handler/prompt_evaluation_runs.go",
           "server/internal/handler/prompt_evaluation_skill.go",
           "server/internal/handler/prompt_library.go",
+          "server/internal/handler/quick_create_idempotency.go",
           "server/internal/handler/reaction.go",
           "server/internal/handler/resource_create_idempotency.go",
           "server/internal/handler/runtime_local_skills.go",

@@ -9,6 +9,7 @@ import type {
   SearchIssuesResponse,
   SearchProjectsResponse,
   QuickCreateIssueResponse,
+  QuickCreateIssueRequest,
   FeedbackResponse,
   ChildIssueProgressResponse,
   BatchUpdateIssuesResponse,
@@ -642,28 +643,24 @@ export class ApiClient extends ApiTransport {
     });
   }
 
-  async quickCreateIssue(data: {
-    agent_id?: string;
-    squad_id?: string;
-    prompt: string;
-    project_id?: string | null;
-    parent_issue_id?: string | null;
-    status?: string;
-    priority?: string;
-    start_date?: string | null;
-    due_date?: string | null;
-    attachment_ids?: string[];
-  }): Promise<QuickCreateIssueResponse> {
-    const raw = await this.fetch<unknown>("/api/issues/quick-create", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseOrThrow(
-      raw,
-      QuickCreateIssueResponseSchema,
-      EMPTY_QUICK_CREATE_ISSUE_RESPONSE,
-      { endpoint: "POST /api/issues/quick-create", mayHaveCommitted: true },
-    );
+  async quickCreateIssue(
+    data: QuickCreateIssueRequest,
+    idempotencyKey = generateUUID(),
+  ): Promise<QuickCreateIssueResponse> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>("/api/issues/quick-create", {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow(
+        raw,
+        QuickCreateIssueResponseSchema,
+        EMPTY_QUICK_CREATE_ISSUE_RESPONSE,
+        { endpoint: "POST /api/issues/quick-create", mayHaveCommitted: true },
+      );
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async createFeedback(data: {

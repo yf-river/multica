@@ -40,7 +40,7 @@ import {
 } from "@multica/core/runtimes";
 import { useFileUpload } from "@multica/core/hooks/use-file-upload";
 import { issueDetailOptions } from "@multica/core/issues/queries";
-import type { CreateIssueSeed } from "@multica/core/issues";
+import { quickCreateIssueWithRecovery, type CreateIssueSeed } from "@multica/core/issues";
 import { formatShortcut, modKey, enterKey } from "@multica/core/platform";
 import { canAssignAgentToIssue } from "@multica/core/permissions";
 import {
@@ -366,7 +366,7 @@ export function AgentCreatePanel({
     setSubmitting(true);
     setError(null);
     try {
-      await api.quickCreateIssue({
+      await quickCreateIssueWithRecovery(api, {
         ...(actor.type === "agent"
           ? { agent_id: actor.id }
           : { squad_id: actor.id }),

@@ -249,6 +249,76 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid due_date")
 		return
 	}
+	req.Prompt = prompt
+	requestHash, err := hashRequestFingerprint(req)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to fingerprint quick-create request")
+		return
+	}
+	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	if replayed, found, err := h.loadQuickCreateReplay(
+		r.Context(), wsUUID, requesterUUID, idempotencyKey, requestHash,
+	); err != nil {
+		writeQuickCreateReplayError(w, err)
+		return
+	} else if found {
+		writeJSON(w, quickCreateResponseStatus(replayed), replayed)
+		return
+	}
+
+	requestTx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start quick-create request")
+		return
+	}
+	defer func() { _ = requestTx.Rollback(r.Context()) }()
+	requestQueries := h.Queries.WithTx(requestTx)
+	_, err = requestQueries.ReserveResourceCreateRequest(r.Context(), db.ReserveResourceCreateRequestParams{
+		WorkspaceID:    wsUUID,
+		ActorID:        requesterUUID,
+		ResourceType:   resourceTypeQuickCreate,
+		IdempotencyKey: idempotencyKey,
+		RequestHash:    requestHash,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		_ = requestTx.Rollback(r.Context())
+		replayed, found, replayErr := h.loadQuickCreateReplay(
+			r.Context(), wsUUID, requesterUUID, idempotencyKey, requestHash,
+		)
+		if replayErr != nil || !found {
+			if replayErr == nil {
+				replayErr = errors.New("quick-create replay disappeared after conflict")
+			}
+			writeQuickCreateReplayError(w, replayErr)
+			return
+		}
+		writeJSON(w, quickCreateResponseStatus(replayed), replayed)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reserve quick-create request")
+		return
+	}
+	if recovered, found, err := h.recoverQuickCreateResource(
+		r.Context(), wsUUID, requesterUUID, idempotencyKey, requestHash,
+	); err != nil {
+		writeQuickCreateReplayError(w, err)
+		return
+	} else if found {
+		if err := completeQuickCreateRequest(r.Context(), requestQueries, wsUUID, requesterUUID, idempotencyKey, requestHash, recovered); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to complete recovered quick-create request")
+			return
+		}
+		if err := requestTx.Commit(r.Context()); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to commit recovered quick-create request")
+			return
+		}
+		writeJSON(w, quickCreateResponseStatus(recovered), recovered)
+		return
+	}
 
 	if ref, ok := parseTAPDSourceURL(prompt); ok {
 		resp, handled := h.quickCreateTAPDSourceIssue(r.Context(), w, quickCreateTAPDSourceIssueParams{
@@ -269,8 +339,18 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 			AssigneeID:     assigneeUUID,
 			StartDate:      startDate,
 			DueDate:        dueDate,
+			RequestID:      idempotencyKey,
+			RequestHash:    requestHash,
 		})
 		if !handled {
+			return
+		}
+		if err := completeQuickCreateRequest(r.Context(), requestQueries, wsUUID, requesterUUID, idempotencyKey, requestHash, resp); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to complete quick-create request")
+			return
+		}
+		if err := requestTx.Commit(r.Context()); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to commit quick-create request")
 			return
 		}
 		writeJSON(w, http.StatusCreated, resp)
@@ -278,6 +358,8 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	task, err := h.TaskService.EnqueueQuickCreateTask(r.Context(), service.EnqueueQuickCreateTaskParams{
+		RequestID:     idempotencyKey,
+		RequestHash:   requestHash,
 		WorkspaceID:   wsUUID,
 		RequesterID:   requesterUUID,
 		AgentID:       agentUUID,
@@ -298,11 +380,21 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to enqueue quick-create task")
 		return
 	}
-
-	writeJSON(w, http.StatusAccepted, QuickCreateIssueResponse{TaskID: uuidToString(task.ID)})
+	response := QuickCreateIssueResponse{TaskID: uuidToString(task.ID)}
+	if err := completeQuickCreateRequest(r.Context(), requestQueries, wsUUID, requesterUUID, idempotencyKey, requestHash, response); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to complete quick-create request")
+		return
+	}
+	if err := requestTx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit quick-create request")
+		return
+	}
+	writeJSON(w, http.StatusAccepted, response)
 }
 
 type quickCreateTAPDSourceIssueParams struct {
+	RequestID      pgtype.UUID
+	RequestHash    string
 	Prompt         string
 	Ref            tapdSourceRef
 	WorkspaceID    pgtype.UUID
@@ -340,6 +432,7 @@ func (h *Handler) quickCreateTAPDSourceIssue(ctx context.Context, w http.Respons
 	}
 
 	metadata := map[string]json.RawMessage{}
+	setRawMetadataString(metadata, "quick_create_request_hash", p.RequestHash)
 	setRawMetadataString(metadata, "source_provider", externalCredentialProviderTAPD)
 	setRawMetadataString(metadata, "source_url", p.Ref.URL)
 	setRawMetadataString(metadata, "tapd_workspace_id", p.Ref.WorkspaceID)
@@ -433,6 +526,8 @@ func (h *Handler) quickCreateTAPDSourceIssue(ctx context.Context, w http.Respons
 		DueDate:       dueDate,
 		AttachmentIDs: p.AttachmentIDs,
 		Metadata:      validatedMetadata,
+		OriginType:    pgtype.Text{String: "quick_create", Valid: true},
+		OriginID:      p.RequestID,
 	}, service.IssueCreateOpts{
 		ActorID:              p.RequesterIDRaw,
 		Platform:             "web",

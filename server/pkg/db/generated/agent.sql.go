@@ -801,12 +801,13 @@ func (q *Queries) CreateAgentTask(ctx context.Context, arg CreateAgentTaskParams
 }
 
 const createQuickCreateTask = `-- name: CreateQuickCreateTask :one
-INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, context)
-VALUES ($1, $2, NULL, 'queued', $3, $4)
+INSERT INTO agent_task_queue (id, agent_id, runtime_id, issue_id, status, priority, context)
+VALUES ($1, $2, $3, NULL, 'queued', $4, $5)
 RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, initiator_user_id
 `
 
 type CreateQuickCreateTaskParams struct {
+	ID        pgtype.UUID `json:"id"`
 	AgentID   pgtype.UUID `json:"agent_id"`
 	RuntimeID pgtype.UUID `json:"runtime_id"`
 	Priority  int32       `json:"priority"`
@@ -818,6 +819,7 @@ type CreateQuickCreateTaskParams struct {
 // daemon detects this variant via context.type == "quick_create".
 func (q *Queries) CreateQuickCreateTask(ctx context.Context, arg CreateQuickCreateTaskParams) (AgentTaskQueue, error) {
 	row := q.db.QueryRow(ctx, createQuickCreateTask,
+		arg.ID,
 		arg.AgentID,
 		arg.RuntimeID,
 		arg.Priority,

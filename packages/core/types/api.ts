@@ -175,6 +175,19 @@ export interface QuickCreateIssueResponse {
   source_fetch_status?: string;
 }
 
+export interface QuickCreateIssueRequest {
+  agent_id?: string;
+  squad_id?: string;
+  prompt: string;
+  project_id?: string | null;
+  parent_issue_id?: string | null;
+  status?: string;
+  priority?: string;
+  start_date?: string | null;
+  due_date?: string | null;
+  attachment_ids?: string[];
+}
+
 export interface FeedbackResponse {
   id: string;
   created_at: string;

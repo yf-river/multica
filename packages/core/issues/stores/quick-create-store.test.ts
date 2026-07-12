@@ -7,6 +7,7 @@ const RESET_STATE = {
   lastProjectId: null,
   prompt: "",
   keepOpen: false,
+  pendingOperation: null,
 };
 
 describe("quick create store", () => {
@@ -50,5 +51,19 @@ describe("quick create store", () => {
     setLastActor(null, null);
     expect(useQuickCreateStore.getState().lastActorType).toBeNull();
     expect(useQuickCreateStore.getState().lastActorId).toBeNull();
+  });
+
+  it("clears only the pending operation owned by the completed request", () => {
+    const { setPendingOperation, clearPendingOperation } = useQuickCreateStore.getState();
+    setPendingOperation({
+      request: { prompt: "Create one issue", agent_id: "agent-1" },
+      idempotencyKey: "key-1",
+    });
+
+    clearPendingOperation("another-key");
+    expect(useQuickCreateStore.getState().pendingOperation?.idempotencyKey).toBe("key-1");
+
+    clearPendingOperation("key-1");
+    expect(useQuickCreateStore.getState().pendingOperation).toBeNull();
   });
 });

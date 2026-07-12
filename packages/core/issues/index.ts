@@ -5,3 +5,4 @@ export * from "./ws-updaters";
 export * from "./config";
 export * from "./stores";
 export * from "./create-issue";
+export * from "./quick-create";

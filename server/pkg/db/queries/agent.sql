@@ -152,8 +152,8 @@ RETURNING *;
 -- Quick-create tasks have no issue / chat / autopilot link; the entire job
 -- description (prompt, requester, workspace) lives in context JSONB. The
 -- daemon detects this variant via context.type == "quick_create".
-INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, context)
-VALUES ($1, $2, NULL, 'queued', $3, $4)
+INSERT INTO agent_task_queue (id, agent_id, runtime_id, issue_id, status, priority, context)
+VALUES ($1, $2, $3, NULL, 'queued', $4, $5)
 RETURNING *;
 
 -- name: LinkTaskToIssue :exec
