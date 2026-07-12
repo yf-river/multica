@@ -263,45 +263,7 @@ func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 }
 
 func (b *claudeBackend) handleAssistant(msg claudeSDKMessage, ch chan<- Message, output *strings.Builder, usage map[string]TokenUsage) {
-	var content claudeMessageContent
-	if err := json.Unmarshal(msg.Message, &content); err != nil {
-		return
-	}
-
-	// Accumulate token usage per model.
-	if content.Usage != nil && content.Model != "" {
-		u := usage[content.Model]
-		u.InputTokens += content.Usage.InputTokens
-		u.OutputTokens += content.Usage.OutputTokens
-		u.CacheReadTokens += content.Usage.CacheReadInputTokens
-		u.CacheWriteTokens += content.Usage.CacheCreationInputTokens
-		usage[content.Model] = u
-	}
-
-	for _, block := range content.Content {
-		switch block.Type {
-		case "text":
-			if block.Text != "" {
-				output.WriteString(block.Text)
-				trySend(ch, Message{Type: MessageText, Content: block.Text})
-			}
-		case "thinking":
-			if block.Text != "" {
-				trySend(ch, Message{Type: MessageThinking, Content: block.Text})
-			}
-		case "tool_use":
-			var input map[string]any
-			if block.Input != nil {
-				_ = json.Unmarshal(block.Input, &input)
-			}
-			trySend(ch, Message{
-				Type:   MessageToolUse,
-				Tool:   block.Name,
-				CallID: block.ID,
-				Input:  input,
-			})
-		}
-	}
+	handleClaudeStreamAssistant(msg, ch, output, usage)
 }
 
 func (b *claudeBackend) handleUser(msg claudeSDKMessage, ch chan<- Message) bool {

@@ -1,6 +1,9 @@
 package agent
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // Claude and CodeBuddy currently expose the same stream-json wire protocol.
 // Process lifecycle and provider-specific control behavior stay in each
@@ -110,4 +113,50 @@ func claudeStreamResultUsage(msg claudeStreamMessage, fallbackModel string) map[
 
 func claudeStreamUsageHasTokens(input, output, cacheRead, cacheWrite int64) bool {
 	return input > 0 || output > 0 || cacheRead > 0 || cacheWrite > 0
+}
+
+func handleClaudeStreamAssistant(
+	msg claudeStreamMessage,
+	ch chan<- Message,
+	output *strings.Builder,
+	usage map[string]TokenUsage,
+) {
+	var content claudeStreamMessageContent
+	if err := json.Unmarshal(msg.Message, &content); err != nil {
+		return
+	}
+
+	if content.Usage != nil && content.Model != "" {
+		current := usage[content.Model]
+		current.InputTokens += content.Usage.InputTokens
+		current.OutputTokens += content.Usage.OutputTokens
+		current.CacheReadTokens += content.Usage.CacheReadInputTokens
+		current.CacheWriteTokens += content.Usage.CacheCreationInputTokens
+		usage[content.Model] = current
+	}
+
+	for _, block := range content.Content {
+		switch block.Type {
+		case "text":
+			if block.Text != "" {
+				output.WriteString(block.Text)
+				trySend(ch, Message{Type: MessageText, Content: block.Text})
+			}
+		case "thinking":
+			if block.Text != "" {
+				trySend(ch, Message{Type: MessageThinking, Content: block.Text})
+			}
+		case "tool_use":
+			var input map[string]any
+			if block.Input != nil {
+				_ = json.Unmarshal(block.Input, &input)
+			}
+			trySend(ch, Message{
+				Type:   MessageToolUse,
+				Tool:   block.Name,
+				CallID: block.ID,
+				Input:  input,
+			})
+		}
+	}
 }
