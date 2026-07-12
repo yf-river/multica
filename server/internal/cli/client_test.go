@@ -416,7 +416,7 @@ func TestUploadFileWithURL(t *testing.T) {
 		}
 	})
 
-	t.Run("missing id in response succeeds (fallback path)", func(t *testing.T) {
+	t.Run("missing id in response", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(map[string]string{"url": "https://example.com"})
@@ -424,15 +424,12 @@ func TestUploadFileWithURL(t *testing.T) {
 		defer srv.Close()
 
 		client := NewAPIClient(srv.URL, "", "")
-		id, url, err := client.UploadFileWithURL(context.Background(), []byte("x"), "x.txt")
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
+		_, _, err := client.UploadFileWithURL(context.Background(), []byte("x"), "x.txt")
+		if err == nil {
+			t.Fatal("expected error, got nil")
 		}
-		if id != "" {
-			t.Errorf("expected empty id, got %s", id)
-		}
-		if url != "https://example.com" {
-			t.Errorf("expected url https://example.com, got %s", url)
+		if !strings.Contains(err.Error(), "missing attachment id") {
+			t.Errorf("unexpected error message: %s", err.Error())
 		}
 	})
 
