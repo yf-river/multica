@@ -14,7 +14,6 @@ import { filterIssues } from "../utils/filter";
 import { BOARD_STATUSES } from "@multica/core/issues/config";
 import { useWorkspaceId } from "@multica/core/paths";
 import { issueAssigneeGroupsOptions, issueListOptions, childIssueProgressOptions, type AssigneeGroupedIssuesFilter } from "@multica/core/issues/queries";
-import { agentTaskSnapshotOptions } from "@multica/core/agents";
 import { useUpdateIssue } from "@multica/core/issues/mutations";
 import { useIssueSelectionStore } from "@multica/core/issues/stores/selection-store";
 import { PageHeader } from "../../layout/page-header";
@@ -25,6 +24,7 @@ import { SwimLaneView } from "./swimlane-view";
 import { BatchActionToolbar } from "./batch-action-toolbar";
 import type { ChildProgress } from "./list-row";
 import { useT } from "../../i18n";
+import { useRunningIssueIds } from "../hooks/use-running-issue-ids";
 
 const EMPTY_CHILD_PROGRESS = new Map<string, ChildProgress>();
 
@@ -39,18 +39,6 @@ function childProgressMapFromIssues(issues: Issue[]): Map<string, ChildProgress>
 
 function hasCompleteChildProgressSummaries(issues: Issue[]) {
   return issues.every((issue) => issue.child_progress !== undefined);
-}
-
-function runningIssueIdsFromAgentActivitySummaries(issues: Issue[]): Set<string> {
-  const ids = new Set<string>();
-  for (const issue of issues) {
-    if ((issue.agent_activity?.running_count ?? 0) > 0) ids.add(issue.id);
-  }
-  return ids;
-}
-
-function hasCompleteAgentActivitySummaries(issues: Issue[]) {
-  return issues.every((issue) => issue.agent_activity !== undefined);
 }
 
 function issueDateFilterToApiParams(filter: IssueDateFilter | null) {
@@ -167,26 +155,10 @@ export function IssuesPage() {
     return visibleAllIssues;
   }, [visibleAllIssues, scope]);
 
-  const headerIssues = usesAssigneeBoard ? visibleAssigneeIssues : scopedIssues;
+	const headerIssues = usesAssigneeBoard ? visibleAssigneeIssues : scopedIssues;
 
-  const agentActivitySourceIssues = usesAssigneeBoard ? visibleAssigneeIssues : visibleAllIssues;
-  const hasListAgentActivity = hasCompleteAgentActivitySummaries(agentActivitySourceIssues);
-  const listRunningIssueIds = useMemo(
-    () => runningIssueIdsFromAgentActivitySummaries(agentActivitySourceIssues),
-    [agentActivitySourceIssues],
-  );
-  const { data: fallbackSnapshot = [] } = useQuery({
-    ...agentTaskSnapshotOptions(wsId),
-    enabled: !hasListAgentActivity,
-  });
-  const fallbackRunningIssueIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const t of fallbackSnapshot) {
-      if (t.status === "running" && t.issue_id) ids.add(t.issue_id);
-    }
-    return ids;
-  }, [fallbackSnapshot]);
-  const runningIssueIds = hasListAgentActivity ? listRunningIssueIds : fallbackRunningIssueIds;
+	const agentActivitySourceIssues = usesAssigneeBoard ? visibleAssigneeIssues : visibleAllIssues;
+	const runningIssueIds = useRunningIssueIds(agentActivitySourceIssues, wsId);
 
   const issues = useMemo(
     () => filterIssues(scopedIssues, { statusFilters, priorityFilters, assigneeFilters, includeNoAssignee, creatorFilters, projectFilters, includeNoProject, labelFilters, agentRunningFilter, runningIssueIds }),

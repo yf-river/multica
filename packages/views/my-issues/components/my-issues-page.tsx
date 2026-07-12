@@ -19,24 +19,12 @@ import { BatchActionToolbar } from "../../issues/components/batch-action-toolbar
 import { useClearFiltersOnWorkspaceChange } from "@multica/core/issues/stores/view-store";
 import { useWorkspaceId } from "@multica/core/paths";
 import { myIssueAssigneeGroupsOptions, myIssueListOptions, childIssueProgressOptions, type AssigneeGroupedIssuesFilter, type MyIssuesFilter } from "@multica/core/issues/queries";
-import { agentTaskSnapshotOptions } from "@multica/core/agents";
 import { useUpdateIssue } from "@multica/core/issues/mutations";
 import { myIssuesViewStore } from "@multica/core/issues/stores/my-issues-view-store";
 import { PageHeader } from "../../layout/page-header";
 import { useT } from "../../i18n";
 import { MyIssuesHeader } from "./my-issues-header";
-
-function runningIssueIdsFromAgentActivitySummaries(issues: { id: string; agent_activity?: { running_count: number } }[]): Set<string> {
-  const ids = new Set<string>();
-  for (const issue of issues) {
-    if ((issue.agent_activity?.running_count ?? 0) > 0) ids.add(issue.id);
-  }
-  return ids;
-}
-
-function hasCompleteAgentActivitySummaries(issues: { agent_activity?: unknown }[]) {
-  return issues.every((issue) => issue.agent_activity !== undefined);
-}
+import { useRunningIssueIds } from "../../issues/hooks/use-running-issue-ids";
 
 export function MyIssuesPage() {
   const { t } = useT("my-issues");
@@ -126,23 +114,7 @@ export function MyIssuesPage() {
     ? assigneeGroupsQuery.isLoading
     : statusIssuesQuery.isLoading;
 
-  const hasListAgentActivity = hasCompleteAgentActivitySummaries(myIssues);
-  const listRunningIssueIds = useMemo(
-    () => runningIssueIdsFromAgentActivitySummaries(myIssues),
-    [myIssues],
-  );
-  const { data: fallbackSnapshot = [] } = useQuery({
-    ...agentTaskSnapshotOptions(wsId),
-    enabled: !hasListAgentActivity,
-  });
-  const fallbackRunningIssueIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const t of fallbackSnapshot) {
-      if (t.status === "running" && t.issue_id) ids.add(t.issue_id);
-    }
-    return ids;
-  }, [fallbackSnapshot]);
-  const runningIssueIds = hasListAgentActivity ? listRunningIssueIds : fallbackRunningIssueIds;
+	const runningIssueIds = useRunningIssueIds(myIssues, wsId);
 
   // Apply status/priority/agent-running filters from view store
   const issues = useMemo(
