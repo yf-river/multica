@@ -26,7 +26,7 @@ type chatCompletionFixture struct {
 func TestChatCompletionLeavesMessageProjectionToOutbox(t *testing.T) {
 	ctx := context.Background()
 	fixture := setupChatCompletionFixture(t, ctx)
-	installAssistantMessageFailure(t)
+	installAssistantMessageFailure(t, fixture.session.ID)
 
 	if _, err := fixture.taskService.CompleteTask(ctx, fixture.task.ID, []byte(`{"output":"hello\\nworld"}`), "", ""); err != nil {
 		t.Fatalf("CompleteTask: %v", err)
@@ -51,7 +51,7 @@ func TestChatCompletionProjectionRollsBackAndRetries(t *testing.T) {
 		t.Fatalf("CompleteTask: %v", err)
 	}
 	event := latestTaskTerminalEvent(t, fixture.task.ID)
-	removeFailure := installAssistantMessageFailure(t)
+	removeFailure := installAssistantMessageFailure(t, fixture.session.ID)
 
 	if _, err := runChatProjection(ctx, fixture.queries, event, consumeChatCompletionProjection); err == nil {
 		t.Fatal("chat completion projection succeeded despite forced message failure")
@@ -334,7 +334,7 @@ func setupChatCompletionFixture(t *testing.T, ctx context.Context) *chatCompleti
 	return fixture
 }
 
-func installAssistantMessageFailure(t *testing.T) func() {
+func installAssistantMessageFailure(t *testing.T, sessionID pgtype.UUID) func() {
 	t.Helper()
 	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
 	functionName := "assistant_message_fail_fn_" + suffix
@@ -348,7 +348,7 @@ func installAssistantMessageFailure(t *testing.T) func() {
 	if _, err := testPool.Exec(ctx, fmt.Sprintf(`
 		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
 		BEGIN
-			IF NEW.role = 'assistant' THEN
+			IF NEW.role = 'assistant' AND NEW.chat_session_id = '%s'::uuid THEN
 				RAISE EXCEPTION 'forced assistant message failure';
 			END IF;
 			RETURN NEW;
@@ -357,7 +357,7 @@ func installAssistantMessageFailure(t *testing.T) func() {
 		CREATE TRIGGER %s
 		BEFORE INSERT ON chat_message
 		FOR EACH ROW EXECUTE FUNCTION %s();
-	`, functionName, triggerName, functionName)); err != nil {
+	`, functionName, util.UUIDToString(sessionID), triggerName, functionName)); err != nil {
 		t.Fatalf("install assistant message failure: %v", err)
 	}
 	return remove
