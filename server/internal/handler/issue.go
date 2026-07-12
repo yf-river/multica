@@ -226,21 +226,19 @@ func (h *Handler) validateProjectInWorkspace(ctx context.Context, workspaceID, p
 // issueListRowToResponse converts a list-query row (no description) to an IssueResponse.
 
 // labelsByIssue bulk-loads labels for the given issue IDs and returns a map
-// keyed by issue UUID string. On error or empty input, returns an empty map —
-// label rendering is non-critical and we'd rather serve issues without labels
-// than fail the whole list call.
-func (h *Handler) labelsByIssue(ctx context.Context, wsUUID pgtype.UUID, issueIDs []pgtype.UUID) map[string][]LabelResponse {
+// keyed by issue UUID string. Labels are part of the current Issue response;
+// callers must not turn a storage failure into a false empty-label success.
+func (h *Handler) labelsByIssue(ctx context.Context, wsUUID pgtype.UUID, issueIDs []pgtype.UUID) (map[string][]LabelResponse, error) {
 	out := map[string][]LabelResponse{}
 	if len(issueIDs) == 0 {
-		return out
+		return out, nil
 	}
 	rows, err := h.Queries.ListLabelsForIssues(ctx, db.ListLabelsForIssuesParams{
 		IssueIds:    issueIDs,
 		WorkspaceID: wsUUID,
 	})
 	if err != nil {
-		slog.Warn("ListLabelsForIssues failed", "error", err)
-		return out
+		return nil, err
 	}
 	for _, r := range rows {
 		issueID := uuidToString(r.IssueID)
@@ -253,7 +251,7 @@ func (h *Handler) labelsByIssue(ctx context.Context, wsUUID pgtype.UUID, issueID
 			UpdatedAt:   timestampToString(r.UpdatedAt),
 		})
 	}
-	return out
+	return out, nil
 }
 
 type IssueAssigneeGroupResponse struct {
@@ -392,7 +390,13 @@ func (h *Handler) GetIssue(w http.ResponseWriter, r *http.Request) {
 	}
 	prefix := h.getIssuePrefix(r.Context(), issue.WorkspaceID)
 	resp := issueToResponse(issue, prefix)
-	detailLabels := h.labelsByIssue(r.Context(), issue.WorkspaceID, []pgtype.UUID{issue.ID})[uuidToString(issue.ID)]
+	labelsByIssue, err := h.labelsByIssue(r.Context(), issue.WorkspaceID, []pgtype.UUID{issue.ID})
+	if err != nil {
+		slog.Error("load issue labels failed", append(logger.RequestAttrs(r), "issue_id", id, "error", err)...)
+		writeError(w, http.StatusInternalServerError, "failed to load issue labels")
+		return
+	}
+	detailLabels := labelsByIssue[uuidToString(issue.ID)]
 	if detailLabels == nil {
 		detailLabels = []LabelResponse{}
 	}
@@ -400,7 +404,12 @@ func (h *Handler) GetIssue(w http.ResponseWriter, r *http.Request) {
 
 	// Fetch issue reactions.
 	reactions, err := h.Queries.ListIssueReactions(r.Context(), issue.ID)
-	if err == nil && len(reactions) > 0 {
+	if err != nil {
+		slog.Error("load issue reactions failed", append(logger.RequestAttrs(r), "issue_id", id, "error", err)...)
+		writeError(w, http.StatusInternalServerError, "failed to load issue reactions")
+		return
+	}
+	if len(reactions) > 0 {
 		resp.Reactions = make([]IssueReactionResponse, len(reactions))
 		for i, rx := range reactions {
 			resp.Reactions[i] = issueReactionToResponse(rx)
@@ -412,7 +421,12 @@ func (h *Handler) GetIssue(w http.ResponseWriter, r *http.Request) {
 		IssueID:     issue.ID,
 		WorkspaceID: issue.WorkspaceID,
 	})
-	if err == nil && len(attachments) > 0 {
+	if err != nil {
+		slog.Error("load issue attachments failed", append(logger.RequestAttrs(r), "issue_id", id, "error", err)...)
+		writeError(w, http.StatusInternalServerError, "failed to load issue attachments")
+		return
+	}
+	if len(attachments) > 0 {
 		resp.Attachments = make([]AttachmentResponse, len(attachments))
 		for i, a := range attachments {
 			resp.Attachments[i] = h.attachmentToResponse(a)

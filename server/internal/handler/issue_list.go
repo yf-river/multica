@@ -218,7 +218,11 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 		for i, issue := range issues {
 			ids[i] = issue.ID
 		}
-		labelsMap := h.labelsByIssue(ctx, wsUUID, ids)
+		labelsMap, err := h.labelsByIssue(ctx, wsUUID, ids)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to load issue labels")
+			return
+		}
 		resp := make([]IssueResponse, len(issues))
 		for i, issue := range issues {
 			resp[i] = openIssueRowToResponse(issue, prefix)
@@ -353,7 +357,9 @@ LIMIT %s OFFSET %s`, issueListSelectSQL, issueListJoinSQL(visibleAgentIDsRef), w
 	countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM issue i WHERE %s`, whereSql)
 	var total int64
 	if err := h.DB.QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
-		total = int64(len(issues))
+		slog.Error("count issues failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to count issues")
+		return
 	}
 
 	prefix := h.getIssuePrefix(ctx, wsUUID)
@@ -361,7 +367,11 @@ LIMIT %s OFFSET %s`, issueListSelectSQL, issueListJoinSQL(visibleAgentIDsRef), w
 	for i, issue := range issues {
 		ids[i] = issue.ID
 	}
-	labelsMap := h.labelsByIssue(ctx, wsUUID, ids)
+	labelsMap, err := h.labelsByIssue(ctx, wsUUID, ids)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load issue labels")
+		return
+	}
 	resp := make([]IssueResponse, len(issues))
 	for i, issue := range issues {
 		resp[i] = issueListRowWithSummaryToResponse(issue, prefix)
@@ -502,7 +512,11 @@ SELECT id, workspace_id, title, description, status, priority,
 		ids[i] = row.ID
 	}
 	prefix := h.getIssuePrefix(ctx, wsUUID)
-	labelsMap := h.labelsByIssue(ctx, wsUUID, ids)
+	labelsMap, err := h.labelsByIssue(ctx, wsUUID, ids)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load issue labels")
+		return
+	}
 	byStatus := make(map[string]IssueStatusBucketResponse, len(statuses))
 	for _, status := range statuses {
 		byStatus[status] = IssueStatusBucketResponse{Issues: []IssueResponse{}, Total: 0}
@@ -1029,7 +1043,11 @@ ORDER BY
 	for i, row := range groupedRows {
 		ids[i] = row.ID
 	}
-	labelsMap := h.labelsByIssue(ctx, wsUUID, ids)
+	labelsMap, err := h.labelsByIssue(ctx, wsUUID, ids)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load issue labels")
+		return
+	}
 	prefix := h.getIssuePrefix(ctx, wsUUID)
 
 	groups := []IssueAssigneeGroupResponse{}
