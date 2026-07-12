@@ -29,7 +29,7 @@ func TestRunPromptEvaluationAssetRollsBackPartialRun(t *testing.T) {
 		"name":       "atomic local evaluation " + suffix,
 		"asset_type": "测试套件",
 		"payload": map[string]any{
-			"对比维度": []string{"命中率"},
+			"experiment_dimensions": []string{"命中率"},
 			"cases": []map[string]any{{
 				"case_name":         "atomic local case",
 				"variables":         map[string]any{"issue_title": "atomic"},

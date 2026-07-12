@@ -319,6 +319,9 @@ describe("PromptEvaluationAssetSchema", () => {
         schema: "multica.training_evaluation.payload.v1",
         语义版本: "multica.training_evaluation.v1",
         cases: [{ case_name: "登录失败澄清", variables: { issue_title: "登录失败" }, expected_contains: ["验收条件"] }],
+        metric_contract: ["pass_rate"],
+        metric_notes: ["仅统计当前快照"],
+        experiment_dimensions: [{ name: "中文一致性", weight: 2 }],
       },
       status: "启用",
       structure_schema: "multica.training_evaluation.asset_profile.v1",
@@ -335,6 +338,11 @@ describe("PromptEvaluationAssetSchema", () => {
 
     expect(parsed.asset_type).toBe("数据集");
     expect(parsed.payload).toMatchObject({ cases: [{ case_name: "登录失败澄清" }] });
+    expect(parsed.payload).toMatchObject({
+      metric_contract: ["pass_rate"],
+      metric_notes: ["仅统计当前快照"],
+      experiment_dimensions: [{ name: "中文一致性", weight: 2 }],
+    });
     expect(parsed.structured_case_count).toBe(1);
     expect(parsed.evaluation_dimension_count).toBe(2);
   });
@@ -355,6 +363,30 @@ describe("PromptEvaluationAssetSchema", () => {
         updated_at: "2026-06-21T00:00:00Z",
       }).success,
     ).toBe(false);
+  });
+
+  it("rejects malformed current metric and experiment contracts", () => {
+    const base = {
+      id: "asset-invalid-contract",
+      workspace_id: "ws-1",
+      name: "坏维度契约",
+      asset_type: "测试套件",
+      payload: {
+        schema_version: 1,
+        schema: "multica.training_evaluation.payload.v1",
+        cases: [],
+      },
+      created_at: "2026-06-21T00:00:00Z",
+      updated_at: "2026-06-21T00:00:00Z",
+    };
+    expect(PromptEvaluationAssetSchema.safeParse({
+      ...base,
+      payload: { ...base.payload, metric_notes: "not-an-array" },
+    }).success).toBe(false);
+    expect(PromptEvaluationAssetSchema.safeParse({
+      ...base,
+      payload: { ...base.payload, experiment_dimensions: [{ weight: 2 }] },
+    }).success).toBe(false);
   });
 
   it("defaults evaluation asset list response shape", () => {

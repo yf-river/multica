@@ -3,6 +3,7 @@ package handler
 import (
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -104,5 +105,29 @@ func TestPromptEvaluationDatasetLinksUseCanonicalFieldsOnly(t *testing.T) {
 	}
 	if refs := promptEvaluationExplicitDatasetVersionRefs(map[string]any{"数据集版本": payload["数据集版本"]}); len(refs) != 0 {
 		t.Fatalf("retired top-level alias was still consumed: %#v", refs)
+	}
+}
+
+func TestPromptEvaluationMetricsAndExperimentDimensionsHaveDistinctContracts(t *testing.T) {
+	payload := map[string]any{
+		"metric_contract":       []any{"case_count", "pass_rate"},
+		"metric_notes":          []any{"按当前快照统计"},
+		"experiment_dimensions": []any{"命中率", map[string]any{"name": "中文一致性", "weight": 2}},
+		"实验维度":                  []any{"retired"},
+		"指标口径":                  []any{"retired"},
+	}
+	dimensions := promptEvaluationExperimentDimensions(payload)
+	if len(dimensions) != 2 || dimensions[0].Name != "命中率" || dimensions[1].Name != "中文一致性" {
+		t.Fatalf("canonical experiment dimensions = %#v", dimensions)
+	}
+	profile := promptEvaluationAssetProfileFromPayload(mustJSONBytes(payload), pgtype.UUID{}, promptEvaluationAssetTestSuite)
+	if profile.EvaluationDimensionCount != 2 || profile.ExperimentDimensionCount != 2 {
+		t.Fatalf("profile metric=%d experiment=%d", profile.EvaluationDimensionCount, profile.ExperimentDimensionCount)
+	}
+	if legacy := promptEvaluationExperimentDimensions(map[string]any{
+		"实验维度":            []any{"retired"},
+		"metric_contract": []any{"must-not-be-a-score"},
+	}); len(legacy) != 0 {
+		t.Fatalf("retired or metric fields became experiment dimensions: %#v", legacy)
 	}
 }

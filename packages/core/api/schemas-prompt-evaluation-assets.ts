@@ -17,6 +17,11 @@ export const PromptEvaluationStrictPayloadSchema = z.object({
   cases: z.array(PromptEvaluationPayloadCaseSchema).default([]),
   payload_contract: z.record(z.string(), z.unknown()).optional(),
   metric_contract: z.array(z.string()).optional(),
+  metric_notes: z.array(z.string()).optional(),
+  experiment_dimensions: z.array(z.union([
+    z.string(),
+    z.object({ name: z.string().min(1) }).loose(),
+  ])).optional(),
 }).loose();
 
 export const PromptEvaluationPayloadSchema = z.record(z.string(), z.unknown()).default({}).superRefine((payload, ctx) => {

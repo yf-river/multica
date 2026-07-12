@@ -539,7 +539,7 @@ func TestPromptEvaluationAssetExperimentDimensionsDoNotBlockCreateOrUpdate(t *te
 				"variables":         map[string]any{"issue_title": "登录失败"},
 				"expected_contains": []string{"边界"},
 			}},
-			"实验维度": []string{"命中率", "中文一致性"},
+			"experiment_dimensions": []string{"命中率", "中文一致性"},
 		},
 		"status": "启用",
 	}))
@@ -562,7 +562,7 @@ func TestPromptEvaluationAssetExperimentDimensionsDoNotBlockCreateOrUpdate(t *te
 				"variables":         map[string]any{"issue_title": "登录失败"},
 				"expected_contains": []string{"边界"},
 			}},
-			"实验维度": []string{"命中率", "缺失变量", "中文一致性"},
+			"experiment_dimensions": []string{"命中率", "缺失变量", "中文一致性"},
 		},
 	}), "id", created.ID))
 	if updateW.Code != http.StatusOK {
@@ -806,7 +806,7 @@ func TestRunPromptEvaluationAssetWritesChineseResult(t *testing.T) {
 		"name":       "澄清渲染测试套件",
 		"asset_type": "测试套件",
 		"payload": map[string]any{
-			"对比维度": []string{"命中率", "中文一致性"},
+			"experiment_dimensions": []string{"命中率", "中文一致性"},
 			"cases": []map[string]any{
 				{
 					"case_name":         "登录失败澄清",
@@ -3103,7 +3103,7 @@ func createPromptEvaluationAgentRunFixture(t *testing.T, assetName string, caseN
 		"name":       assetName,
 		"asset_type": "测试套件",
 		"payload": map[string]any{
-			"对比维度":  []string{"命中率", "缺失变量", "中文一致性"},
+			"experiment_dimensions": []string{"命中率", "缺失变量", "中文一致性"},
 			"cases": []map[string]any{{"case_name": caseName, "variables": map[string]any{"issue_title": caseName}, "expected_contains": []string{caseName}}},
 		},
 	}))

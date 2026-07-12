@@ -657,7 +657,7 @@ func promptEvaluationAssetProfileFromPayload(raw []byte, promptID pgtype.UUID, a
 		StructuredAssertionCount: int32(assertionCount),
 		LinkedDatasetCount:       int32(countPromptEvaluationProfileValues(payload, "dataset_ids", "数据集ID", "关联数据集", "包含数据集", "linked_dataset_ids")),
 		LinkedPromptCount:        int32(linkedPromptCount),
-		EvaluationDimensionCount: int32(countPromptEvaluationProfileValues(payload, "evaluation_dimensions", "评估维度", "指标", "指标口径", "metric_contract")),
+		EvaluationDimensionCount: int32(countPromptEvaluationProfileValues(payload, "metric_contract")),
 		ExperimentDimensionCount: int32(len(experimentDimensions)),
 	}
 }
@@ -699,7 +699,7 @@ func collectPromptEvaluationProfileValues(seen map[string]bool, value any) {
 func promptEvaluationExperimentDimensions(payload map[string]any) []normalizedPromptEvaluationExperimentDimension {
 	target := stringFromAny(firstValue(payload, "实验对象", "experiment_target", "target", "对象"))
 	baseline := stringFromAny(firstValue(payload, "基线输出", "baseline_output", "baseline", "baseline_result"))
-	raw := firstValue(payload, "对比维度", "实验维度", "evaluation_dimensions", "评估维度", "指标", "metric_contract")
+	raw := payload["experiment_dimensions"]
 	values := promptEvaluationDimensionValues(raw)
 	result := make([]normalizedPromptEvaluationExperimentDimension, 0, len(values))
 	for _, value := range values {
@@ -757,7 +757,7 @@ func promptEvaluationDimensionValues(value any) []promptEvaluationDimensionValue
 		}
 		return result
 	case map[string]any:
-		if name := strings.TrimSpace(stringFromAny(firstValue(v, "name", "名称", "dimension", "维度"))); name != "" {
+		if name := strings.TrimSpace(stringFromAny(v["name"])); name != "" {
 			payload := make(map[string]any, len(v))
 			for key, item := range v {
 				payload[key] = item

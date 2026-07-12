@@ -825,7 +825,7 @@ func buildPromptEvaluationSkillReEvalPayload(sourceAsset db.PromptEvaluationAsse
 		"re_eval_reason":         "Old Eval evidence only proves the source snapshot; this asset evaluates the post-apply skill snapshot.",
 		"cases":                  payloadCases,
 		"metric_contract":        []string{"case_count", "pass_rate", "failed_cases", "skill_snapshot", "source_commit"},
-		"指标口径":                   []string{"按 skill 历史 case draft 转换为可运行评测用例", "运行结果只证明 re_eval_snapshot，不反推 source_snapshot"},
+		"metric_notes":           []string{"按 skill 历史 case draft 转换为可运行评测用例", "运行结果只证明 re_eval_snapshot，不反推 source_snapshot"},
 	})
 }
 
