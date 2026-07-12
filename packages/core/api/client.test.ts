@@ -354,7 +354,7 @@ describe("ApiClient", () => {
     await expect(client.listAttachments("issue-1")).resolves.toEqual([]);
     await expect(client.quickCreateIssue({ prompt: "Create issue", agent_id: "agent-1" }))
       .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
-    await expect(client.createFeedback({ message: "Broken" }))
+    await expect(client.createFeedback({ message: "Broken", kind: "general" }))
       .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
     await expect(client.batchUpdateIssues(["issue-1"], { status: "done" }))
       .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });

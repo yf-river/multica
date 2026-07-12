@@ -899,6 +899,7 @@ export class ApiClient {
 
   async createFeedback(data: {
     message: string;
+    kind: "bug" | "feature" | "general" | "praise";
     url?: string;
     workspace_id?: string;
   }): Promise<FeedbackResponse> {

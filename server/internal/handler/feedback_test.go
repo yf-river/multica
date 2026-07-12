@@ -14,6 +14,7 @@ func TestCreateFeedbackHappyPath(t *testing.T) {
 
 	req := newRequest("POST", "/api/feedback", CreateFeedbackRequest{
 		Message: "Love the product, dark mode flashes on startup",
+		Kind:    "general",
 	})
 	w := httptest.NewRecorder()
 	testHandler.CreateFeedback(w, req)
@@ -64,6 +65,7 @@ func TestCreateFeedbackRateLimit(t *testing.T) {
 	for i := 0; i < feedbackHourlyRateLimit; i++ {
 		req := newRequest("POST", "/api/feedback", CreateFeedbackRequest{
 			Message: "feedback #" + strconv.Itoa(i),
+			Kind:    "general",
 		})
 		w := httptest.NewRecorder()
 		testHandler.CreateFeedback(w, req)
@@ -71,7 +73,7 @@ func TestCreateFeedbackRateLimit(t *testing.T) {
 			t.Fatalf("iteration %d: expected 201, got %d: %s", i, w.Code, w.Body.String())
 		}
 	}
-	req := newRequest("POST", "/api/feedback", CreateFeedbackRequest{Message: "one too many"})
+	req := newRequest("POST", "/api/feedback", CreateFeedbackRequest{Message: "one too many", Kind: "general"})
 	w := httptest.NewRecorder()
 	testHandler.CreateFeedback(w, req)
 	if w.Code != http.StatusTooManyRequests {

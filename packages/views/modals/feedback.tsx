@@ -97,6 +97,7 @@ export function FeedbackModal({
     try {
       await mutation.mutateAsync({
         message: latest,
+        kind: "general",
         url: typeof window !== "undefined" ? window.location.href : undefined,
         workspace_id: workspace?.id,
       });
