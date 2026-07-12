@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // createImportTargetSkill inserts a skill (owned by ownerID) plus the given
@@ -117,6 +119,7 @@ func initiateLocalSkillImport(t *testing.T, runtimeID string, body map[string]an
 		newRequestAsUser(testUserID, http.MethodPost, "/api/runtimes/"+runtimeID+"/local-skills/import", body),
 		"runtimeId", runtimeID,
 	)
+	req.Header.Set("Idempotency-Key", uuid.NewString())
 	testHandler.InitiateImportLocalSkill(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("InitiateImportLocalSkill: expected 200, got %d: %s", w.Code, w.Body.String())
@@ -137,6 +140,7 @@ func reportLocalSkillImport(t *testing.T, runtimeID, requestID string, body map[
 		"runtimeId", runtimeID,
 		"requestId", requestID,
 	)
+	req.Header.Set("Idempotency-Key", uuid.NewString())
 	testHandler.ReportLocalSkillImportResult(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("ReportLocalSkillImportResult: expected 200, got %d: %s", w.Code, w.Body.String())

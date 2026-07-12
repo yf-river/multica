@@ -95,6 +95,8 @@ type LocalSkillListStore interface {
 // LocalSkillImportRequestInput carries the fields needed to enqueue a
 // runtime-local-skill import.
 type LocalSkillImportRequestInput struct {
+	RequestID     string
+	RequestHash   string
 	RuntimeID     string
 	CreatorID     string
 	SkillKey      string
@@ -207,8 +209,11 @@ type RuntimeLocalSkillImportRequest struct {
 	CreatedAt     time.Time                      `json:"created_at"`
 	UpdatedAt     time.Time                      `json:"updated_at"`
 	CreatorID     string                         `json:"-"`
+	RequestHash   string                         `json:"-"`
 	RunStartedAt  *time.Time                     `json:"-"`
 }
+
+var errLocalSkillImportRequestConflict = errors.New("local skill import request conflict")
 
 // InMemoryLocalSkillListStore is the single-node implementation — good enough
 // for local dev and the in-process test suite. Production (multi-node) must
@@ -340,8 +345,14 @@ func (s *InMemoryLocalSkillImportStore) Create(_ context.Context, input LocalSki
 		}
 	}
 
+	if existing := s.requests[input.RequestID]; existing != nil {
+		if existing.RequestHash != input.RequestHash {
+			return nil, errLocalSkillImportRequestConflict
+		}
+		return existing, nil
+	}
 	req := &RuntimeLocalSkillImportRequest{
-		ID:            randomID(),
+		ID:            input.RequestID,
 		RuntimeID:     input.RuntimeID,
 		SkillKey:      input.SkillKey,
 		Name:          input.Name,
@@ -352,6 +363,7 @@ func (s *InMemoryLocalSkillImportStore) Create(_ context.Context, input LocalSki
 		CreatedAt:     time.Now(),
 		UpdatedAt:     time.Now(),
 		CreatorID:     input.CreatorID,
+		RequestHash:   input.RequestHash,
 	}
 	s.requests[req.ID] = req
 	return req, nil
@@ -570,6 +582,10 @@ func (h *Handler) InitiateImportLocalSkill(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
+	requestID, ok := requireIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
 
 	var req CreateRuntimeLocalSkillImportRequest
 	decoder := json.NewDecoder(r.Body)
@@ -601,7 +617,8 @@ func (h *Handler) InitiateImportLocalSkill(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	importReq, err := h.LocalSkillImportStore.Create(r.Context(), LocalSkillImportRequestInput{
+	input := LocalSkillImportRequestInput{
+		RequestID:     uuidToString(requestID),
 		RuntimeID:     rt.runtimeID,
 		CreatorID:     creatorID,
 		SkillKey:      strings.TrimSpace(req.SkillKey),
@@ -609,8 +626,22 @@ func (h *Handler) InitiateImportLocalSkill(w http.ResponseWriter, r *http.Reques
 		Description:   cleanOptionalString(req.Description),
 		Action:        req.Action,
 		TargetSkillID: targetSkillID,
-	})
+	}
+	requestHash, err := hashRequestFingerprint(input)
 	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to fingerprint local skill import")
+		return
+	}
+	input.RequestHash = requestHash
+	importReq, err := h.LocalSkillImportStore.Create(r.Context(), input)
+	if err != nil {
+		if errors.Is(err, errLocalSkillImportRequestConflict) {
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"error": "Idempotency-Key was already used with a different request",
+				"code":  "idempotency_conflict",
+			})
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "failed to enqueue local skill import: "+err.Error())
 		return
 	}

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"testing"
@@ -211,6 +212,7 @@ func TestRedisLocalSkillImportStore_PreservesCreatorID(t *testing.T) {
 	name := "Review Helper"
 	desc := "Desc"
 	req, err := store.Create(ctx, LocalSkillImportRequestInput{
+		RequestID: randomID(), RequestHash: randomID(),
 		RuntimeID:     "runtime-1",
 		CreatorID:     "user-42",
 		SkillKey:      "review-helper",
@@ -252,12 +254,42 @@ func TestRedisLocalSkillImportStore_PreservesCreatorID(t *testing.T) {
 	}
 }
 
+func TestRedisLocalSkillImportStore_ReplaysOnePendingRequest(t *testing.T) {
+	rdb := newRedisTestClient(t)
+	store := NewRedisLocalSkillImportStore(rdb)
+	ctx := context.Background()
+	input := LocalSkillImportRequestInput{
+		RequestID: "redis-import-replay", RequestHash: "hash-a",
+		RuntimeID: "runtime-replay", CreatorID: "creator-replay", SkillKey: "review-helper",
+	}
+	first, err := store.Create(ctx, input)
+	if err != nil {
+		t.Fatalf("create import request: %v", err)
+	}
+	replay, err := store.Create(ctx, input)
+	if err != nil {
+		t.Fatalf("replay import request: %v", err)
+	}
+	if replay.ID != first.ID || !replay.CreatedAt.Equal(first.CreatedAt) {
+		t.Fatalf("replay = id %s created %s, want id %s created %s", replay.ID, replay.CreatedAt, first.ID, first.CreatedAt)
+	}
+	if got := rdb.ZCard(ctx, localSkillImportPendingKey(input.RuntimeID)).Val(); got != 1 {
+		t.Fatalf("pending request count = %d, want 1", got)
+	}
+	changed := input
+	changed.RequestHash = "hash-b"
+	if _, err := store.Create(ctx, changed); !errors.Is(err, errLocalSkillImportRequestConflict) {
+		t.Fatalf("changed replay error = %v, want conflict", err)
+	}
+}
+
 func TestRedisLocalSkillImportStore_PreservesConflict(t *testing.T) {
 	rdb := newRedisTestClient(t)
 	ctx := context.Background()
 	store := NewRedisLocalSkillImportStore(rdb)
 
 	req, err := store.Create(ctx, LocalSkillImportRequestInput{
+		RequestID: randomID(), RequestHash: randomID(),
 		RuntimeID: "runtime-1",
 		CreatorID: "user-1",
 		SkillKey:  "review-helper",
@@ -293,6 +325,7 @@ func TestRedisLocalSkillImportStore_PopPendingAcrossInstances(t *testing.T) {
 	nodeB := NewRedisLocalSkillImportStore(rdb)
 
 	req, err := nodeA.Create(ctx, LocalSkillImportRequestInput{
+		RequestID: randomID(), RequestHash: randomID(),
 		RuntimeID: "runtime-import",
 		CreatorID: "user-1",
 		SkillKey:  "review-helper",
@@ -408,6 +441,7 @@ func TestRedisLocalSkillImportStore_PopPendingBatch(t *testing.T) {
 	ids := make([]string, 5)
 	for i := range ids {
 		req, err := store.Create(ctx, LocalSkillImportRequestInput{
+			RequestID: randomID(), RequestHash: randomID(),
 			RuntimeID: "runtime-batch",
 			CreatorID: "user-1",
 			SkillKey:  fmt.Sprintf("skill-%d", i),

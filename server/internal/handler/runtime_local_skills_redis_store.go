@@ -58,6 +58,18 @@ redis.call('SET', KEYS[2], ARGV[2], 'EX', tonumber(ARGV[3]))
 return 1
 `)
 
+// createPendingScript atomically creates one request record and enqueues its
+// ID. Retrying the same caller-owned ID returns 0 without refreshing state.
+var createPendingScript = redis.NewScript(`
+if redis.call('EXISTS', KEYS[1]) == 1 then
+    return 0
+end
+redis.call('SET', KEYS[1], ARGV[1], 'EX', tonumber(ARGV[3]))
+redis.call('ZADD', KEYS[2], ARGV[2], ARGV[4])
+redis.call('EXPIRE', KEYS[2], tonumber(ARGV[5]))
+return 1
+`)
+
 func localSkillListKey(id string) string { return localSkillListKeyPrefix + id }
 func localSkillListPendingKey(runtimeID string) string {
 	return localSkillListPendingPrefix + runtimeID
@@ -265,7 +277,7 @@ func NewRedisLocalSkillImportStore(rdb *redis.Client) *RedisLocalSkillImportStor
 func (s *RedisLocalSkillImportStore) Create(ctx context.Context, input LocalSkillImportRequestInput) (*RuntimeLocalSkillImportRequest, error) {
 	now := time.Now()
 	req := &RuntimeLocalSkillImportRequest{
-		ID:            randomID(),
+		ID:            input.RequestID,
 		RuntimeID:     input.RuntimeID,
 		SkillKey:      input.SkillKey,
 		Name:          input.Name,
@@ -276,21 +288,36 @@ func (s *RedisLocalSkillImportStore) Create(ctx context.Context, input LocalSkil
 		CreatedAt:     now,
 		UpdatedAt:     now,
 		CreatorID:     input.CreatorID,
+		RequestHash:   input.RequestHash,
 	}
 	data, err := s.marshalImport(req)
 	if err != nil {
 		return nil, err
 	}
 
-	pipe := s.rdb.TxPipeline()
-	pipe.Set(ctx, localSkillImportKey(req.ID), data, runtimeLocalSkillStoreRetention)
-	pipe.ZAdd(ctx, localSkillImportPendingKey(input.RuntimeID), redis.Z{
-		Score:  float64(now.UnixNano()),
-		Member: req.ID,
-	})
-	pipe.Expire(ctx, localSkillImportPendingKey(input.RuntimeID), runtimeLocalSkillStoreRetention*2)
-	if _, err := pipe.Exec(ctx); err != nil {
+	created, err := createPendingScript.Run(ctx, s.rdb,
+		[]string{localSkillImportKey(req.ID), localSkillImportPendingKey(input.RuntimeID)},
+		data,
+		now.UnixNano(),
+		int(runtimeLocalSkillStoreRetention/time.Second),
+		req.ID,
+		int((runtimeLocalSkillStoreRetention*2)/time.Second),
+	).Int()
+	if err != nil {
 		return nil, fmt.Errorf("persist import request: %w", err)
+	}
+	if created == 0 {
+		existing, err := s.loadImportRequest(ctx, req.ID)
+		if err != nil {
+			return nil, err
+		}
+		if existing == nil {
+			return nil, errors.New("local skill import request disappeared")
+		}
+		if existing.RequestHash != input.RequestHash {
+			return nil, errLocalSkillImportRequestConflict
+		}
+		return existing, nil
 	}
 	return req, nil
 }
@@ -338,6 +365,7 @@ func (s *RedisLocalSkillImportStore) persistImportRequest(ctx context.Context, r
 type redisImportEnvelope struct {
 	Public       *RuntimeLocalSkillImportRequest `json:"r"`
 	CreatorID    string                          `json:"c"`
+	RequestHash  string                          `json:"h"`
 	RunStartedAt *time.Time                      `json:"s"`
 }
 
@@ -345,6 +373,7 @@ func (s *RedisLocalSkillImportStore) marshalImport(req *RuntimeLocalSkillImportR
 	env := redisImportEnvelope{
 		Public:       req,
 		CreatorID:    req.CreatorID,
+		RequestHash:  req.RequestHash,
 		RunStartedAt: req.RunStartedAt,
 	}
 	data, err := json.Marshal(env)
@@ -363,6 +392,7 @@ func (s *RedisLocalSkillImportStore) unmarshalImport(raw []byte) (*RuntimeLocalS
 		return nil, fmt.Errorf("decode import request: missing payload")
 	}
 	env.Public.CreatorID = env.CreatorID
+	env.Public.RequestHash = env.RequestHash
 	env.Public.RunStartedAt = env.RunStartedAt
 	return env.Public, nil
 }

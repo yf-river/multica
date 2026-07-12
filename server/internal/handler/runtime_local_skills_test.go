@@ -9,6 +9,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 func newRequestAsUser(userID, method, path string, body any) *http.Request {
@@ -196,6 +198,7 @@ func TestInMemoryLocalSkillImportStore_TimesOutRunningRequests(t *testing.T) {
 	ctx := context.Background()
 	store := NewInMemoryLocalSkillImportStore()
 	req, err := store.Create(ctx, LocalSkillImportRequestInput{
+		RequestID: randomID(), RequestHash: randomID(),
 		RuntimeID: "runtime-xyz",
 		CreatorID: "user-1",
 		SkillKey:  "review-helper",
@@ -245,6 +248,7 @@ func TestGetLocalSkillImportRequest_RequiresRuntimeOwner(t *testing.T) {
 	runtimeID := createRuntimeLocalSkillTestRuntime(t, testUserID)
 	adminUserID := createRuntimeLocalSkillTestMember(t, "admin")
 	importReq, err := testHandler.LocalSkillImportStore.Create(context.Background(), LocalSkillImportRequestInput{
+		RequestID: randomID(), RequestHash: randomID(),
 		RuntimeID: runtimeID,
 		CreatorID: testUserID,
 		SkillKey:  "review-helper",
@@ -282,6 +286,8 @@ func TestRuntimeLocalSkillImportFlow_EndToEnd(t *testing.T) {
 		}),
 		"runtimeId", runtimeID,
 	)
+	const importRequestKey = "06b8badb-6b33-4891-9351-c0da65721c1d"
+	initReq.Header.Set("Idempotency-Key", importRequestKey)
 	testHandler.InitiateImportLocalSkill(w, initReq)
 	if w.Code != http.StatusOK {
 		t.Fatalf("InitiateImportLocalSkill: expected 200, got %d: %s", w.Code, w.Body.String())
@@ -290,6 +296,26 @@ func TestRuntimeLocalSkillImportFlow_EndToEnd(t *testing.T) {
 	var importReq RuntimeLocalSkillImportRequest
 	if err := json.NewDecoder(w.Body).Decode(&importReq); err != nil {
 		t.Fatalf("decode import request: %v", err)
+	}
+
+	replayRecorder := httptest.NewRecorder()
+	replayRequest := withURLParams(
+		newRequestAsUser(testUserID, http.MethodPost, "/api/runtimes/"+runtimeID+"/local-skills/import", map[string]any{
+			"skill_key": "review-helper", "name": "Imported Review Helper", "description": "Imported description",
+		}),
+		"runtimeId", runtimeID,
+	)
+	replayRequest.Header.Set("Idempotency-Key", importRequestKey)
+	testHandler.InitiateImportLocalSkill(replayRecorder, replayRequest)
+	if replayRecorder.Code != http.StatusOK {
+		t.Fatalf("replay import request: expected 200, got %d: %s", replayRecorder.Code, replayRecorder.Body.String())
+	}
+	var replayed RuntimeLocalSkillImportRequest
+	if err := json.NewDecoder(replayRecorder.Body).Decode(&replayed); err != nil {
+		t.Fatalf("decode replayed import request: %v", err)
+	}
+	if replayed.ID != importReq.ID {
+		t.Fatalf("replayed request id = %s, want %s", replayed.ID, importReq.ID)
 	}
 
 	w = httptest.NewRecorder()
@@ -399,6 +425,7 @@ func TestBatchImportViaHeartbeat(t *testing.T) {
 			}),
 			"runtimeId", runtimeID,
 		)
+		req.Header.Set("Idempotency-Key", uuid.NewString())
 		testHandler.InitiateImportLocalSkill(w, req)
 		if w.Code != http.StatusOK {
 			t.Fatalf("InitiateImportLocalSkill(%s): expected 200, got %d: %s", key, w.Code, w.Body.String())
@@ -476,6 +503,7 @@ func TestReportLocalSkillImportResult_IgnoresTimedOutRequests(t *testing.T) {
 	runtimeID := createRuntimeLocalSkillTestRuntime(t, testUserID)
 	ctx := context.Background()
 	importReq, err := testHandler.LocalSkillImportStore.Create(ctx, LocalSkillImportRequestInput{
+		RequestID: randomID(), RequestHash: randomID(),
 		RuntimeID:   runtimeID,
 		CreatorID:   testUserID,
 		SkillKey:    "review-helper",
@@ -532,6 +560,7 @@ func TestReportLocalSkillImportResult_RejectsCrossWorkspaceDaemonUser(t *testing
 
 	runtimeID := createRuntimeLocalSkillTestRuntime(t, testUserID)
 	importReq, err := testHandler.LocalSkillImportStore.Create(context.Background(), LocalSkillImportRequestInput{
+		RequestID: randomID(), RequestHash: randomID(),
 		RuntimeID: runtimeID,
 		CreatorID: testUserID,
 		SkillKey:  "review-helper",

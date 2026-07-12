@@ -1073,6 +1073,27 @@ describe("ApiClient", () => {
       .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: false });
   });
 
+  it("retries local skill import unknown outcomes with one request identity", async () => {
+    const response = {
+      id: "request-1", runtime_id: "runtime-1", skill_key: "review-helper",
+      status: "pending", created_at: "2026-07-13T00:00:00Z", updated_at: "2026-07-13T00:00:00Z",
+    };
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify(response), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.initiateImportLocalSkill("runtime-1", { skill_key: "review-helper" }))
+      .resolves.toEqual(response);
+    const first = fetchMock.mock.calls[0]![1]!.headers as Record<string, string>;
+    const second = fetchMock.mock.calls[1]![1]!.headers as Record<string, string>;
+    expect(first["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(second["Idempotency-Key"]).toBe(first["Idempotency-Key"]);
+  });
+
   it("preserves HTTP status on failed requests", async () => {
     vi.stubGlobal(
       "fetch",

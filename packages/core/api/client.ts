@@ -1344,20 +1344,25 @@ export class ApiClient extends ApiTransport {
   async initiateImportLocalSkill(
     runtimeId: string,
     data: CreateRuntimeLocalSkillImportRequest,
+    idempotencyKey = generateUUID(),
   ): Promise<RuntimeLocalSkillImportRequest> {
-    const raw = await this.fetch<unknown>(`/api/runtimes/${runtimeId}/local-skills/import`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseOrThrow(
-      raw,
-      RuntimeLocalSkillImportRequestSchema.refine((request) => request.runtime_id === runtimeId, {
-        path: ["runtime_id"],
-        message: "runtime id does not match request",
-      }),
-      EMPTY_RUNTIME_LOCAL_SKILL_IMPORT_REQUEST,
-      { endpoint: "POST /api/runtimes/:id/local-skills/import" },
-    ) as RuntimeLocalSkillImportRequest;
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/runtimes/${runtimeId}/local-skills/import`, {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow(
+        raw,
+        RuntimeLocalSkillImportRequestSchema.refine((request) => request.runtime_id === runtimeId, {
+          path: ["runtime_id"],
+          message: "runtime id does not match request",
+        }),
+        EMPTY_RUNTIME_LOCAL_SKILL_IMPORT_REQUEST,
+        { endpoint: "POST /api/runtimes/:id/local-skills/import", mayHaveCommitted: true },
+      ) as RuntimeLocalSkillImportRequest;
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async getImportLocalSkillResult(
