@@ -99,7 +99,9 @@ jobs:
         run: cd server && go run ./cmd/migrate up
 
       - name: Test
-        run: cd server && go test -race ./...
+        # Migration and application packages share the job database. Package
+        # serialization prevents transactional DDL from blocking other suites.
+        run: cd server && go test -p 1 -race ./...
 
   installer:
     # Stub-driven shell tests for scripts/install.sh. Kept off the heavy

@@ -439,7 +439,10 @@ test: ## Run Go tests after ensuring the target DB exists and migrations are app
 	@bash scripts/ensure-postgres.sh "$(ENV_FILE)"
 	@bash scripts/ensure-test-redis.sh "$(ENV_FILE)"
 	cd server && go run ./cmd/migrate up
-	cd server && go test -race ./...
+	# Database-backed packages share this worktree's test database. Serialize
+	# packages so migration DDL cannot block handler/service queries; package
+	# tests still retain their own t.Parallel concurrency and race coverage.
+	cd server && go test -p 1 -race ./...
 
 # Database
 ##@ Database
