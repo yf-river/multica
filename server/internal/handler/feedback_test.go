@@ -39,6 +39,25 @@ func TestCreateFeedbackEmptyMessage(t *testing.T) {
 	}
 }
 
+func TestCreateFeedbackRequiresCurrentKind(t *testing.T) {
+	clearFeedbackForTestUser(t)
+	req := newRequest("POST", "/api/feedback", CreateFeedbackRequest{Message: "missing current kind"})
+	w := httptest.NewRecorder()
+
+	testHandler.CreateFeedback(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("missing kind: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+	var count int
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM feedback WHERE user_id = $1`, parseUUID(testUserID)).Scan(&count); err != nil {
+		t.Fatalf("count invalid feedback writes: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("missing kind persisted %d feedback rows", count)
+	}
+}
+
 func TestCreateFeedbackRateLimit(t *testing.T) {
 	clearFeedbackForTestUser(t)
 
