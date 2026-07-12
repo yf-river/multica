@@ -158,17 +158,8 @@ func (h *Handler) ListChatSessions(w http.ResponseWriter, r *http.Request) {
 	// (and transcripts via ListChatMessages) for any personal agent they
 	// previously had access to. Falls back to the user's role from the
 	// workspace member context.
-	member, ok := h.workspaceMember(w, r, workspaceID)
+	allowed, ok := h.chatAccessibleAgentIDs(w, r, userID, workspaceID)
 	if !ok {
-		return
-	}
-	actorType, actorID := h.resolveActor(r, userID, workspaceID)
-	allowed, err := h.accessibleAgentIDs(r.Context(), workspaceID, actorType, actorID, member.Role)
-	if err != nil {
-		if writeClientClosedIfCanceled(w, err) {
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "failed to resolve agent access")
 		return
 	}
 
@@ -198,6 +189,22 @@ func (h *Handler) ListChatSessions(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *Handler) chatAccessibleAgentIDs(w http.ResponseWriter, r *http.Request, userID, workspaceID string) (map[string]struct{}, bool) {
+	member, ok := h.workspaceMember(w, r, workspaceID)
+	if !ok {
+		return nil, false
+	}
+	actorType, actorID := h.resolveActor(r, userID, workspaceID)
+	allowed, err := h.accessibleAgentIDs(r.Context(), workspaceID, actorType, actorID, member.Role)
+	if err != nil {
+		if !writeClientClosedIfCanceled(w, err) {
+			writeError(w, http.StatusInternalServerError, "failed to resolve agent access")
+		}
+		return nil, false
+	}
+	return allowed, true
 }
 
 func (h *Handler) loadChatSessionForUser(w http.ResponseWriter, r *http.Request, userID, workspaceID, sessionID string) (db.ChatSession, bool) {
@@ -862,17 +869,8 @@ func (h *Handler) ListPendingChatTasks(w http.ResponseWriter, r *http.Request) {
 	}
 	workspaceID := ctxWorkspaceID(r.Context())
 
-	member, ok := h.workspaceMember(w, r, workspaceID)
+	allowed, ok := h.chatAccessibleAgentIDs(w, r, userID, workspaceID)
 	if !ok {
-		return
-	}
-	actorType, actorID := h.resolveActor(r, userID, workspaceID)
-	allowed, err := h.accessibleAgentIDs(r.Context(), workspaceID, actorType, actorID, member.Role)
-	if err != nil {
-		if writeClientClosedIfCanceled(w, err) {
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "failed to resolve agent access")
 		return
 	}
 
