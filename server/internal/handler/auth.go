@@ -18,6 +18,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/auth"
@@ -367,13 +368,29 @@ func (h *Handler) GetMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.Queries.GetUser(r.Context(), parseUUID(userID))
-	if err != nil {
-		writeError(w, http.StatusNotFound, "user not found")
+	user, ok := h.loadCurrentUser(w, r, userID)
+	if !ok {
 		return
 	}
 
 	writeJSON(w, http.StatusOK, userToResponse(user))
+}
+
+func (h *Handler) loadCurrentUser(w http.ResponseWriter, r *http.Request, userID string) (db.User, bool) {
+	user, err := h.Queries.GetUser(r.Context(), parseUUID(userID))
+	if err == nil {
+		return user, true
+	}
+	if writeClientClosedIfCanceled(w, err) {
+		return db.User{}, false
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "user not found")
+	} else {
+		slog.Error("load current user failed", "user_id", userID, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to load user")
+	}
+	return db.User{}, false
 }
 
 type UpdateMeRequest struct {
@@ -393,9 +410,8 @@ func (h *Handler) IssueCliToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.Queries.GetUser(r.Context(), parseUUID(userID))
-	if err != nil {
-		writeError(w, http.StatusNotFound, "user not found")
+	user, ok := h.loadCurrentUser(w, r, userID)
+	if !ok {
 		return
 	}
 
@@ -426,9 +442,8 @@ func (h *Handler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	currentUser, err := h.Queries.GetUser(r.Context(), parseUUID(userID))
-	if err != nil {
-		writeError(w, http.StatusNotFound, "user not found")
+	currentUser, ok := h.loadCurrentUser(w, r, userID)
+	if !ok {
 		return
 	}
 
