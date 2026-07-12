@@ -464,18 +464,17 @@ func (h *Handler) computeCommentAgentTriggers(ctx context.Context, issue db.Issu
 		triggers = append(triggers, trigger)
 	}
 
-	shouldEnqueue, err := h.shouldEnqueueOnComment(ctx, issue, actorType, actorID, opts)
+	assignedAgent, shouldEnqueue, err := h.assignedAgentForCommentTrigger(ctx, issue, actorType, actorID, opts)
 	if err != nil {
 		return nil, err
 	}
-	if actorType == "member" && shouldEnqueue &&
-		!h.commentMentionsOthersButNotAssignee(content, issue) &&
-		!h.isReplyToMemberThread(ctx, parentComment, content, issue) {
-		if agent, err := h.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
-			ID:          issue.AssigneeID,
-			WorkspaceID: issue.WorkspaceID,
-		}); err == nil {
-			add(commentAgentTrigger{Agent: agent, Source: commentTriggerSourceIssueAssignee})
+	if actorType == "member" && shouldEnqueue && !h.commentMentionsOthersButNotAssignee(content, issue) {
+		replyToMemberThread, err := h.isReplyToMemberThread(ctx, parentComment, content, issue)
+		if err != nil {
+			return nil, err
+		}
+		if !replyToMemberThread {
+			add(commentAgentTrigger{Agent: assignedAgent, Source: commentTriggerSourceIssueAssignee})
 		}
 	}
 
@@ -623,31 +622,31 @@ func (h *Handler) commentMentionsOthersButNotAssignee(content string, issue db.I
 // considered a conversation with the agent, so replies are allowed to trigger.
 // If the assigned agent has already replied in the thread, the member is
 // conversing with the agent, so replies are allowed to trigger.
-func (h *Handler) isReplyToMemberThread(ctx context.Context, parent *db.Comment, content string, issue db.Issue) bool {
+func (h *Handler) isReplyToMemberThread(ctx context.Context, parent *db.Comment, content string, issue db.Issue) (bool, error) {
 	if parent == nil {
-		return false // Not a reply — normal top-level comment
+		return false, nil // Not a reply — normal top-level comment
 	}
 	if parent.AuthorType != "member" {
-		return false // Thread started by an agent — allow trigger
+		return false, nil // Thread started by an agent — allow trigger
 	}
 	// Thread was started by a member. Suppress on_comment unless the reply
 	// or the parent explicitly @mentions the assignee agent, or the agent
 	// has already participated in this thread.
 	if !issue.AssigneeID.Valid {
-		return true // No assignee to mention
+		return true, nil // No assignee to mention
 	}
 	assigneeID := uuidToString(issue.AssigneeID)
 	// Check current comment mentions.
 	for _, m := range util.ParseMentions(content) {
 		if m.ID == assigneeID {
-			return false // Assignee explicitly mentioned in reply — allow trigger
+			return false, nil // Assignee explicitly mentioned in reply — allow trigger
 		}
 	}
 	// Check parent (thread root) mentions — if the thread was started by
 	// mentioning the assignee, replies continue that conversation.
 	for _, m := range util.ParseMentions(parent.Content) {
 		if m.ID == assigneeID {
-			return false // Assignee mentioned in thread root — allow trigger
+			return false, nil // Assignee mentioned in thread root — allow trigger
 		}
 	}
 	// Check if the assigned agent has already replied in this thread —
@@ -657,11 +656,14 @@ func (h *Handler) isReplyToMemberThread(ctx context.Context, parent *db.Comment,
 			ParentID: parent.ID,
 			AgentID:  issue.AssigneeID,
 		})
-		if err == nil && hasReplied {
-			return false // Agent participated in thread — allow trigger
+		if err != nil {
+			return false, fmt.Errorf("check agent participation in comment thread: %w", err)
+		}
+		if hasReplied {
+			return false, nil // Agent participated in thread — allow trigger
 		}
 	}
-	return true // Reply to member thread without agent participation — suppress
+	return true, nil // Reply to member thread without agent participation — suppress
 }
 
 // shouldInheritParentMentions decides whether a reply with no explicit

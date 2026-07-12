@@ -207,7 +207,10 @@ func TestIsReplyToMemberThread(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := h.isReplyToMemberThread(context.Background(), tt.parent, tt.content, issue)
+			got, err := h.isReplyToMemberThread(context.Background(), tt.parent, tt.content, issue)
+			if err != nil {
+				t.Fatalf("isReplyToMemberThread() error = %v", err)
+			}
 			if got != tt.want {
 				t.Errorf("isReplyToMemberThread() = %v, want %v", got, tt.want)
 			}
@@ -297,8 +300,11 @@ func TestOnCommentTriggerDecision(t *testing.T) {
 	// Simulates the combined check from CreateComment:
 	//   !commentMentionsOthersButNotAssignee && !isReplyToMemberThread
 	shouldTrigger := func(parent *db.Comment, content string) bool {
-		return !h.commentMentionsOthersButNotAssignee(content, issue) &&
-			!h.isReplyToMemberThread(context.Background(), parent, content, issue)
+		replyToMemberThread, err := h.isReplyToMemberThread(context.Background(), parent, content, issue)
+		if err != nil {
+			t.Fatalf("isReplyToMemberThread() error = %v", err)
+		}
+		return !h.commentMentionsOthersButNotAssignee(content, issue) && !replyToMemberThread
 	}
 
 	tests := []struct {

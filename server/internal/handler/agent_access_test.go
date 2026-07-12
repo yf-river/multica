@@ -81,7 +81,7 @@ func TestShouldEnqueueOnCommentPreservesAgentLookupFailure(t *testing.T) {
 		AssigneeID:   util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
 	}
 
-	enqueue, err := testHandler.shouldEnqueueOnComment(ctx, issue, "member", testUserID, commentTriggerComputeOptions{})
+	_, enqueue, err := testHandler.assignedAgentForCommentTrigger(ctx, issue, "member", testUserID, commentTriggerComputeOptions{})
 	if enqueue || err == nil {
 		t.Fatalf("shouldEnqueueOnComment() enqueue=%t err=%v, want false with agent lookup error", enqueue, err)
 	}
@@ -639,7 +639,7 @@ func TestShouldEnqueueOnComment_PrivateAgentGate(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := testHandler.shouldEnqueueOnComment(ctx, issue, tc.actorType, tc.actorID, commentTriggerComputeOptions{})
+			_, got, err := testHandler.assignedAgentForCommentTrigger(ctx, issue, tc.actorType, tc.actorID, commentTriggerComputeOptions{})
 			if err != nil {
 				t.Fatalf("%s\n  unexpected error: %v", tc.reason, err)
 			}
