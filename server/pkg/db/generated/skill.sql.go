@@ -66,6 +66,46 @@ func (q *Queries) CreateSkill(ctx context.Context, arg CreateSkillParams) (Skill
 	return i, err
 }
 
+const createSkillIfNameAvailable = `-- name: CreateSkillIfNameAvailable :one
+INSERT INTO skill (workspace_id, name, description, content, config, created_by)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (workspace_id, name) DO NOTHING
+RETURNING id, workspace_id, name, description, content, config, created_by, created_at, updated_at
+`
+
+type CreateSkillIfNameAvailableParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	Name        string      `json:"name"`
+	Description string      `json:"description"`
+	Content     string      `json:"content"`
+	Config      []byte      `json:"config"`
+	CreatedBy   pgtype.UUID `json:"created_by"`
+}
+
+func (q *Queries) CreateSkillIfNameAvailable(ctx context.Context, arg CreateSkillIfNameAvailableParams) (Skill, error) {
+	row := q.db.QueryRow(ctx, createSkillIfNameAvailable,
+		arg.WorkspaceID,
+		arg.Name,
+		arg.Description,
+		arg.Content,
+		arg.Config,
+		arg.CreatedBy,
+	)
+	var i Skill
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Name,
+		&i.Description,
+		&i.Content,
+		&i.Config,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const deleteSkill = `-- name: DeleteSkill :exec
 DELETE FROM skill WHERE id = $1 AND workspace_id = $2
 `

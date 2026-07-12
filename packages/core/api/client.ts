@@ -1745,15 +1745,19 @@ export class ApiClient extends ApiTransport {
     await this.fetch(`/api/skills/${id}`, { method: "DELETE" });
   }
 
-  async importSkill(data: { url: string }): Promise<Skill> {
-    const raw = await this.fetch<unknown>("/api/skills/import", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseOrThrow(raw, SkillSchema, EMPTY_SKILL, {
-      endpoint: "POST /api/skills/import",
-      mayHaveCommitted: true,
-    });
+  async importSkill(data: { url: string }, idempotencyKey = generateUUID()): Promise<Skill> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>("/api/skills/import", {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow(raw, SkillSchema, EMPTY_SKILL, {
+        endpoint: "POST /api/skills/import",
+        mayHaveCommitted: true,
+      });
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async setAgentSkills(agentId: string, data: SetAgentSkillsRequest): Promise<void> {

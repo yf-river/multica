@@ -17,7 +17,7 @@ const (
 	resourceCreateMaxBatches        = 20
 )
 
-// ResourceCreateRequestRetentionJob bounds durable response storage while
+// ResourceCreateRequestRetentionJob bounds durable mutation-response storage while
 // preserving one day beyond the first-party 30-day recovery window. Incomplete
 // records are evidence of an interrupted operation and are reported, not
 // deleted automatically.
@@ -40,58 +40,69 @@ func ResourceCreateRequestRetentionJob(pool *pgxpool.Pool) JobSpec {
 
 func makeResourceCreateRequestRetentionHandler(pool *pgxpool.Pool) Handler {
 	return func(ctx context.Context, in HandlerInput) (HandlerResult, error) {
-		var deleted int64
-		batchLimitReached := true
-		for range resourceCreateMaxBatches {
-			command, err := pool.Exec(ctx, `
+		tables := []string{"resource_create_request", "skill_import_request"}
+		deletedByTable := make(map[string]int64, len(tables))
+		staleByTable := make(map[string]int64, len(tables))
+		var totalDeleted int64
+		batchLimitReached := false
+		for _, table := range tables {
+			tableLimitReached := true
+			for range resourceCreateMaxBatches {
+				command, err := pool.Exec(ctx, fmt.Sprintf(`
 				WITH expired AS (
 					SELECT ctid
-					FROM resource_create_request
+					FROM %s
 					WHERE completed_at < now() - $1::interval
 					ORDER BY completed_at
 					LIMIT $2
 					FOR UPDATE SKIP LOCKED
 				)
-				DELETE FROM resource_create_request AS request
+				DELETE FROM %s AS request
 				USING expired
 				WHERE request.ctid = expired.ctid
-			`, resourceCreateRetentionInterval, resourceCreateBatchSize)
-			if err != nil {
-				return HandlerResult{}, fmt.Errorf("delete completed resource create requests: %w", err)
-			}
-			rows := command.RowsAffected()
-			deleted += rows
-			if rows < resourceCreateBatchSize {
-				batchLimitReached = false
-				break
-			}
-			if in.Heartbeat != nil {
-				if err := in.Heartbeat(ctx); err != nil {
-					return HandlerResult{}, err
+			`, table, table), resourceCreateRetentionInterval, resourceCreateBatchSize)
+				if err != nil {
+					return HandlerResult{}, fmt.Errorf("delete completed requests from %s: %w", table, err)
+				}
+				rows := command.RowsAffected()
+				deletedByTable[table] += rows
+				totalDeleted += rows
+				if rows < resourceCreateBatchSize {
+					tableLimitReached = false
+					break
+				}
+				if in.Heartbeat != nil {
+					if err := in.Heartbeat(ctx); err != nil {
+						return HandlerResult{}, err
+					}
 				}
 			}
-		}
+			if tableLimitReached {
+				batchLimitReached = true
+				slog.Warn("request retention reached per-table delete limit", "table", table, "deleted", deletedByTable[table])
+			}
 
-		var staleIncomplete int64
-		if err := pool.QueryRow(ctx, `
+			var staleIncomplete int64
+			if err := pool.QueryRow(ctx, fmt.Sprintf(`
 			SELECT count(*)
-			FROM resource_create_request
+			FROM %s
 			WHERE completed_at IS NULL
 			  AND created_at < now() - $1::interval
-		`, resourceCreateRetentionInterval).Scan(&staleIncomplete); err != nil {
-			return HandlerResult{}, fmt.Errorf("count stale incomplete resource create requests: %w", err)
-		}
-		if staleIncomplete > 0 {
-			slog.Warn("resource create retention found stale incomplete requests", "count", staleIncomplete)
-		}
-		if batchLimitReached {
-			slog.Warn("resource create retention reached per-run delete limit", "deleted", deleted)
+		`, table), resourceCreateRetentionInterval).Scan(&staleIncomplete); err != nil {
+				return HandlerResult{}, fmt.Errorf("count stale incomplete requests in %s: %w", table, err)
+			}
+			staleByTable[table] = staleIncomplete
+			if staleIncomplete > 0 {
+				slog.Warn("request retention found stale incomplete requests", "table", table, "count", staleIncomplete)
+			}
 		}
 		return HandlerResult{
-			RowsAffected: deleted,
+			RowsAffected: totalDeleted,
 			Result: map[string]any{
 				"retention_days":      31,
-				"stale_incomplete":    staleIncomplete,
+				"deleted_by_table":    deletedByTable,
+				"stale_by_table":      staleByTable,
+				"stale_incomplete":    staleByTable["resource_create_request"] + staleByTable["skill_import_request"],
 				"batch_limit_reached": batchLimitReached,
 			},
 		}, nil

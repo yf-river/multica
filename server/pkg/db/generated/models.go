@@ -1026,6 +1026,17 @@ type SkillFile struct {
 	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
+type SkillImportRequest struct {
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	ActorID        pgtype.UUID        `json:"actor_id"`
+	IdempotencyKey pgtype.UUID        `json:"idempotency_key"`
+	RequestHash    string             `json:"request_hash"`
+	ResponseStatus pgtype.Int4        `json:"response_status"`
+	ResponseBody   []byte             `json:"response_body"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	CompletedAt    pgtype.Timestamptz `json:"completed_at"`
+}
+
 type Squad struct {
 	ID           pgtype.UUID        `json:"id"`
 	WorkspaceID  pgtype.UUID        `json:"workspace_id"`

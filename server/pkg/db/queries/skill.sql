@@ -36,6 +36,12 @@ INSERT INTO skill (workspace_id, name, description, content, config, created_by)
 VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING *;
 
+-- name: CreateSkillIfNameAvailable :one
+INSERT INTO skill (workspace_id, name, description, content, config, created_by)
+VALUES ($1, $2, $3, $4, $5, $6)
+ON CONFLICT (workspace_id, name) DO NOTHING
+RETURNING *;
+
 -- name: UpdateSkill :one
 UPDATE skill SET
     name = COALESCE(sqlc.narg('name'), name),

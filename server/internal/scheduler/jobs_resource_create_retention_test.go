@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -53,25 +54,59 @@ func TestResourceCreateRequestRetentionDeletesOnlyExpiredCompletedRows(t *testin
 	expiredCompleted := insert(true, 40*24*time.Hour)
 	freshCompleted := insert(true, 24*time.Hour)
 	expiredIncomplete := insert(false, 40*24*time.Hour)
+	insertSkillImport := func(completed bool, age time.Duration) string {
+		t.Helper()
+		key := uuid.NewString()
+		if completed {
+			_, err := pool.Exec(ctx, `
+				INSERT INTO skill_import_request (
+					workspace_id, actor_id, idempotency_key, request_hash,
+					response_status, response_body, created_at, completed_at
+				) VALUES ($1, $2, $3, $4, 201, '{}'::jsonb,
+					now() - ($5 * interval '1 second'), now() - ($5 * interval '1 second'))
+			`, workspaceID, uuid.NewString(), key, "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", int64(age.Seconds()))
+			if err != nil {
+				t.Fatal(err)
+			}
+		} else {
+			_, err := pool.Exec(ctx, `
+				INSERT INTO skill_import_request (
+					workspace_id, actor_id, idempotency_key, request_hash, created_at
+				) VALUES ($1, $2, $3, $4, now() - ($5 * interval '1 second'))
+			`, workspaceID, uuid.NewString(), key, "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", int64(age.Seconds()))
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		return key
+	}
+	skillExpiredCompleted := insertSkillImport(true, 40*24*time.Hour)
+	skillFreshCompleted := insertSkillImport(true, 24*time.Hour)
+	skillExpiredIncomplete := insertSkillImport(false, 40*24*time.Hour)
 
 	result, err := job.Handler(ctx, HandlerInput{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.RowsAffected != 1 || result.Result["stale_incomplete"] != int64(1) {
-		t.Fatalf("result = %#v, want deleted=1 stale_incomplete=1", result)
+	if result.RowsAffected != 2 || result.Result["stale_incomplete"] != int64(2) {
+		t.Fatalf("result = %#v, want deleted=2 stale_incomplete=2", result)
 	}
-	for key, want := range map[string]int64{
-		expiredCompleted:  0,
-		freshCompleted:    1,
-		expiredIncomplete: 1,
+	for table, records := range map[string]map[string]int64{
+		"resource_create_request": {
+			expiredCompleted: 0, freshCompleted: 1, expiredIncomplete: 1,
+		},
+		"skill_import_request": {
+			skillExpiredCompleted: 0, skillFreshCompleted: 1, skillExpiredIncomplete: 1,
+		},
 	} {
-		var count int64
-		if err := pool.QueryRow(ctx, `SELECT count(*) FROM resource_create_request WHERE idempotency_key = $1`, key).Scan(&count); err != nil {
-			t.Fatal(err)
-		}
-		if count != want {
-			t.Fatalf("request %s count=%d, want %d", key, count, want)
+		for key, want := range records {
+			var count int64
+			if err := pool.QueryRow(ctx, fmt.Sprintf(`SELECT count(*) FROM %s WHERE idempotency_key = $1`, table), key).Scan(&count); err != nil {
+				t.Fatal(err)
+			}
+			if count != want {
+				t.Fatalf("%s request %s count=%d, want %d", table, key, count, want)
+			}
 		}
 	}
 }

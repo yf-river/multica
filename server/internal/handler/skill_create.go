@@ -19,6 +19,10 @@ type skillCreateInput struct {
 	Content     string
 	Config      map[string]any
 	Files       []CreateSkillFileRequest
+	// AllowNameConflict returns pgx.ErrNoRows without aborting the transaction
+	// when another skill owns the name. Rename import uses this to try the next
+	// deterministic suffix inside one transaction.
+	AllowNameConflict bool
 }
 
 // createSkillWithFilesInTx writes a skill plus its supporting files using the
@@ -35,14 +39,20 @@ func createSkillWithFilesInTx(ctx context.Context, qtx *db.Queries, input skillC
 		config = []byte("{}")
 	}
 
-	skill, err := qtx.CreateSkill(ctx, db.CreateSkillParams{
+	params := db.CreateSkillParams{
 		WorkspaceID: input.WorkspaceID,
 		Name:        sanitizePostgresText(input.Name),
 		Description: sanitizePostgresText(input.Description),
 		Content:     sanitizePostgresText(input.Content),
 		Config:      config,
 		CreatedBy:   input.CreatorID,
-	})
+	}
+	var skill db.Skill
+	if input.AllowNameConflict {
+		skill, err = qtx.CreateSkillIfNameAvailable(ctx, db.CreateSkillIfNameAvailableParams(params))
+	} else {
+		skill, err = qtx.CreateSkill(ctx, params)
+	}
 	if err != nil {
 		return SkillWithFilesResponse{}, err
 	}
@@ -134,7 +144,7 @@ type skillOverwriteInput struct {
 // content, config (origin), and the full file set — files absent from the new
 // bundle are pruned via DeleteSkillFilesBySkill. On any error the tx rolls back,
 // leaving the original skill unchanged.
-func (h *Handler) overwriteSkillWithFiles(ctx context.Context, input skillOverwriteInput) (SkillWithFilesResponse, error) {
+func overwriteSkillWithFilesInTx(ctx context.Context, qtx *db.Queries, input skillOverwriteInput) (SkillWithFilesResponse, error) {
 	config, err := json.Marshal(input.Config)
 	if err != nil {
 		return SkillWithFilesResponse{}, err
@@ -142,14 +152,6 @@ func (h *Handler) overwriteSkillWithFiles(ctx context.Context, input skillOverwr
 	if input.Config == nil {
 		config = []byte("{}")
 	}
-
-	tx, err := h.TxStarter.Begin(ctx)
-	if err != nil {
-		return SkillWithFilesResponse{}, err
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	qtx := h.Queries.WithTx(tx)
 
 	existing, err := qtx.GetSkillInWorkspace(ctx, db.GetSkillInWorkspaceParams{
 		ID:          input.TargetSkillID,
@@ -209,10 +211,6 @@ func (h *Handler) overwriteSkillWithFiles(ctx context.Context, input skillOverwr
 		fileResps = append(fileResps, skillFileToResponse(sf))
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return SkillWithFilesResponse{}, err
-	}
-
 	skillResp, err := skillToResponse(skill)
 	if err != nil {
 		return SkillWithFilesResponse{}, err
@@ -221,4 +219,21 @@ func (h *Handler) overwriteSkillWithFiles(ctx context.Context, input skillOverwr
 		SkillResponse: skillResp,
 		Files:         fileResps,
 	}, nil
+}
+
+func (h *Handler) overwriteSkillWithFiles(ctx context.Context, input skillOverwriteInput) (SkillWithFilesResponse, error) {
+	tx, err := h.TxStarter.Begin(ctx)
+	if err != nil {
+		return SkillWithFilesResponse{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	result, err := overwriteSkillWithFilesInTx(ctx, h.Queries.WithTx(tx), input)
+	if err != nil {
+		return SkillWithFilesResponse{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return SkillWithFilesResponse{}, err
+	}
+	return result, nil
 }

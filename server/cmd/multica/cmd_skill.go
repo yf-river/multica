@@ -13,6 +13,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
 	"github.com/multica-ai/multica/server/internal/cli"
@@ -421,7 +422,7 @@ func runSkillImport(cmd *cobra.Command, _ []string) error {
 	defer cancel()
 
 	var result map[string]any
-	if err := client.PostJSON(ctx, "/api/skills/import", body, &result); err != nil {
+	if err := client.PostJSONWithIdempotencyKey(ctx, "/api/skills/import", body, uuid.NewString(), &result); err != nil {
 		if handledErr := handleSkillImportError(cmd, err); handledErr != nil {
 			return handledErr
 		}

@@ -17,12 +17,15 @@ symbols, not old line numbers, are authoritative.
 | POST /api/skills/import route | server/cmd/server/router.go:970 |
 | Request and response data types | server/internal/handler/skill.go:36-114,548-563 |
 | Import handler | server/internal/handler/skill_import_github.go:904 |
+| Mandatory request identity and exact replay | server/internal/handler/skill_import_idempotency.go; handler use in skill_import_github.go#ImportSkill |
 | on_conflict validation | server/internal/handler/skill_import.go:15; handler use at skill_import_github.go:922 |
 | Source detection and URL normalization | server/internal/handler/skill_import.go:221 |
 | GitHub tree/blob parsing | server/internal/handler/skill_import_github.go:472 |
 | Provenance stored in config.origin | server/internal/handler/skill_import_github.go:959-967 |
 | Create skill and files transaction | server/internal/handler/skill_create.go:29-77 |
 | Import create wrapper | server/internal/handler/skill_import_github.go:796 |
+| Same-name import serialization | server/pkg/db/queries/skill_import_request.sql#LockSkillImportName |
+| Atomic request + skill/files commit | server/internal/handler/skill_import_github.go#ImportSkill |
 
 The handler currently distinguishes callers that send on_conflict from callers
 that omit it at skill_import_github.go:926-1011. Current CLI calls always send
@@ -38,7 +41,7 @@ contract decision and must update this map and its tests together.
 | skip -> existing skill unchanged | server/internal/handler/skill_import_github.go:838-844 |
 | overwrite -> creator gate and transactional replacement | server/internal/handler/skill_import_github.go:845-874; server/internal/handler/skill_create.go:133 |
 | rename -> bounded suffixed create | server/internal/handler/skill_import_github.go:806-820,875-891 |
-| Unique-race resolution | server/internal/handler/skill_import_github.go:987-1003 |
+| Unique-race resolution | server/internal/handler/skill_import_github.go#executeSkillImportInTx |
 
 ## CLI
 
@@ -46,7 +49,7 @@ contract decision and must update this map and its tests together.
 |---|---|
 | skill import command and flags | server/cmd/multica/cmd_skill.go:60-64,142-144 |
 | runSkillImport | server/cmd/multica/cmd_skill.go:400 |
-| Request POST and structured error/result handling | server/cmd/multica/cmd_skill.go:416-485 |
+| Request POST, stable idempotency key retry, and structured result handling | server/cmd/multica/cmd_skill.go#runSkillImport; server/internal/cli/client.go#PostJSONWithIdempotencyKey |
 
 ## Agent skill assignment
 

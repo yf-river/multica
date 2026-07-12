@@ -20,13 +20,13 @@
     "webRouteHandlers": 1,
     "webRewrites": 6,
     "desktopRouteLiterals": 29,
-    "databaseTables": 84,
+    "databaseTables": 85,
     "databaseFunctions": 9,
     "databaseTriggers": 4,
-    "databaseIndexes": 190,
-    "migrations": 134,
-    "sqlcModules": 53,
-    "sqlcQueries": 581,
+    "databaseIndexes": 192,
+    "migrations": 136,
+    "sqlcModules": 54,
+    "sqlcQueries": 586,
     "goWebsocketEvents": 80,
     "typescriptWebsocketEvents": 70,
     "zustandStores": 43,
@@ -7180,6 +7180,53 @@
           "droppedFunctions": [],
           "droppedTriggers": [],
           "droppedIndexes": []
+        },
+        {
+          "version": 68,
+          "name": "add_skill_import_request",
+          "direction": "down",
+          "source": "server/migrations/068_add_skill_import_request.down.sql",
+          "tablesCreated": [],
+          "droppedTables": [
+            "skill_import_request"
+          ],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 68,
+          "name": "add_skill_import_request",
+          "direction": "up",
+          "source": "server/migrations/068_add_skill_import_request.up.sql",
+          "tablesCreated": [
+            {
+              "name": "skill_import_request",
+              "source": "server/migrations/068_add_skill_import_request.up.sql#skill_import_request"
+            }
+          ],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [
+            {
+              "name": "idx_skill_import_request_completed_at",
+              "table": "skill_import_request",
+              "unique": false,
+              "source": "server/migrations/068_add_skill_import_request.up.sql#idx_skill_import_request_completed_at"
+            },
+            {
+              "name": "idx_skill_import_request_incomplete_created_at",
+              "table": "skill_import_request",
+              "unique": false,
+              "source": "server/migrations/068_add_skill_import_request.up.sql#idx_skill_import_request_incomplete_created_at"
+            }
+          ],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
         }
       ],
       "tables": [
@@ -7458,6 +7505,10 @@
         {
           "name": "skill_file",
           "source": "server/migrations/001_current_schema.up.sql#skill_file"
+        },
+        {
+          "name": "skill_import_request",
+          "source": "server/migrations/068_add_skill_import_request.up.sql#skill_import_request"
         },
         {
           "name": "squad",
@@ -8460,6 +8511,18 @@
           "table": "public.skill_file",
           "unique": false,
           "source": "server/migrations/001_current_schema.up.sql#idx_skill_file_skill"
+        },
+        {
+          "name": "idx_skill_import_request_completed_at",
+          "table": "skill_import_request",
+          "unique": false,
+          "source": "server/migrations/068_add_skill_import_request.up.sql#idx_skill_import_request_completed_at"
+        },
+        {
+          "name": "idx_skill_import_request_incomplete_created_at",
+          "table": "skill_import_request",
+          "unique": false,
+          "source": "server/migrations/068_add_skill_import_request.up.sql#idx_skill_import_request_incomplete_created_at"
         },
         {
           "name": "idx_skill_workspace",
@@ -11421,6 +11484,11 @@
               "source": "server/pkg/db/queries/skill.sql#CreateSkill"
             },
             {
+              "name": "CreateSkillIfNameAvailable",
+              "command": "one",
+              "source": "server/pkg/db/queries/skill.sql#CreateSkillIfNameAvailable"
+            },
+            {
               "name": "DeleteSkill",
               "command": "exec",
               "source": "server/pkg/db/queries/skill.sql#DeleteSkill"
@@ -11504,6 +11572,33 @@
               "name": "UpsertSkillFile",
               "command": "one",
               "source": "server/pkg/db/queries/skill.sql#UpsertSkillFile"
+            }
+          ]
+        },
+        {
+          "module": "skill_import_request",
+          "source": "server/pkg/db/queries/skill_import_request.sql",
+          "generatedSource": "server/pkg/db/generated/skill_import_request.sql.go",
+          "queries": [
+            {
+              "name": "CompleteSkillImportRequest",
+              "command": "one",
+              "source": "server/pkg/db/queries/skill_import_request.sql#CompleteSkillImportRequest"
+            },
+            {
+              "name": "GetSkillImportRequest",
+              "command": "one",
+              "source": "server/pkg/db/queries/skill_import_request.sql#GetSkillImportRequest"
+            },
+            {
+              "name": "LockSkillImportName",
+              "command": "exec",
+              "source": "server/pkg/db/queries/skill_import_request.sql#LockSkillImportName"
+            },
+            {
+              "name": "ReserveSkillImportRequest",
+              "command": "one",
+              "source": "server/pkg/db/queries/skill_import_request.sql#ReserveSkillImportRequest"
             }
           ]
         },
@@ -19128,6 +19223,7 @@
           "server/internal/handler/scope.go",
           "server/internal/handler/skill_create.go",
           "server/internal/handler/skill_import_github.go",
+          "server/internal/handler/skill_import_idempotency.go",
           "server/internal/handler/skill.go",
           "server/internal/handler/squad_internal.go",
           "server/internal/handler/squad_members.go",
