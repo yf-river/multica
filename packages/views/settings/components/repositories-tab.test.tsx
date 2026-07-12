@@ -283,6 +283,23 @@ describe("RepositoriesTab", () => {
     );
   });
 
+  it("不把仅包含工蜂域名文本的畸形仓库地址识别为工蜂仓库", () => {
+    workspaceRef.current = {
+      ...workspaceRef.current,
+      repos: [
+        {
+          ...workspaceRef.current.repos[0],
+          url: "not-a-url/git.code.tencent.com/ChainWeaver/ida/user-center",
+        },
+      ],
+    };
+    resourcesRef.current = [];
+
+    render(<RepositoriesTab />, { wrapper: I18nWrapper });
+
+    expect(screen.queryByTestId("settings-gongfeng-repository-row")).toBeNull();
+  });
+
   it("添加工蜂仓库时先快捷填充并检测分支，再按选中默认分支更新 workspace.repos", async () => {
     const user = userEvent.setup();
     render(<RepositoriesTab />, { wrapper: I18nWrapper });
