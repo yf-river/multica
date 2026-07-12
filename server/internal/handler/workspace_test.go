@@ -55,7 +55,7 @@ func TestWorkspaceToResponse_RejectsNonArrayRepos(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			workspace := db.Workspace{Repos: tc.raw}
+			workspace := db.Workspace{Settings: []byte(`{}`), Repos: tc.raw}
 			if _, err := workspaceToResponse(workspace); err == nil {
 				t.Fatalf("workspaceToResponse(%s) expected an error", tc.raw)
 			}
@@ -64,13 +64,23 @@ func TestWorkspaceToResponse_RejectsNonArrayRepos(t *testing.T) {
 }
 
 func TestWorkspaceToResponse_AcceptsRepositoryArray(t *testing.T) {
-	workspace := db.Workspace{Repos: []byte(`[{"url":"https://git.example.com/repo.git"}]`)}
+	workspace := db.Workspace{
+		Settings: []byte(`{}`),
+		Repos:    []byte(`[{"url":"https://git.example.com/repo.git"}]`),
+	}
 	response, err := workspaceToResponse(workspace)
 	if err != nil {
 		t.Fatalf("workspaceToResponse: %v", err)
 	}
-	if repos, ok := response.Repos.([]any); !ok || len(repos) != 1 {
+	if len(response.Repos) != 1 {
 		t.Fatalf("workspaceToResponse repos = %#v, want one repository", response.Repos)
+	}
+}
+
+func TestWorkspaceToResponse_RejectsNonObjectSettings(t *testing.T) {
+	workspace := db.Workspace{Settings: []byte(`[]`), Repos: []byte(`[]`)}
+	if _, err := workspaceToResponse(workspace); err == nil {
+		t.Fatal("workspaceToResponse expected an error for array settings")
 	}
 }
 

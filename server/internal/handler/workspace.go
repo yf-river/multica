@@ -36,28 +36,26 @@ func generateIssuePrefix(name string) string {
 }
 
 type WorkspaceResponse struct {
-	ID          string  `json:"id"`
-	Name        string  `json:"name"`
-	Slug        string  `json:"slug"`
-	Description *string `json:"description"`
-	Context     *string `json:"context"`
-	Settings    any     `json:"settings"`
-	Repos       any     `json:"repos"`
-	IssuePrefix string  `json:"issue_prefix"`
-	AvatarURL   *string `json:"avatar_url"`
-	CreatedAt   string  `json:"created_at"`
-	UpdatedAt   string  `json:"updated_at"`
+	ID          string         `json:"id"`
+	Name        string         `json:"name"`
+	Slug        string         `json:"slug"`
+	Description *string        `json:"description"`
+	Context     *string        `json:"context"`
+	Settings    map[string]any `json:"settings"`
+	Repos       []any          `json:"repos"`
+	IssuePrefix string         `json:"issue_prefix"`
+	AvatarURL   *string        `json:"avatar_url"`
+	CreatedAt   string         `json:"created_at"`
+	UpdatedAt   string         `json:"updated_at"`
 }
 
 func workspaceToResponse(w db.Workspace) (WorkspaceResponse, error) {
-	var settings any
-	if w.Settings != nil {
-		if err := json.Unmarshal(w.Settings, &settings); err != nil {
-			slog.Warn("decode workspace settings failed", "workspace_id", uuidToString(w.ID), "error", err)
-		}
+	var settings map[string]any
+	if err := json.Unmarshal(w.Settings, &settings); err != nil {
+		return WorkspaceResponse{}, fmt.Errorf("decode workspace settings: %w", err)
 	}
 	if settings == nil {
-		settings = map[string]any{}
+		return WorkspaceResponse{}, fmt.Errorf("decode workspace settings: expected JSON object")
 	}
 	var repos []any
 	if err := json.Unmarshal(w.Repos, &repos); err != nil {
@@ -235,13 +233,13 @@ func (h *Handler) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 }
 
 type UpdateWorkspaceRequest struct {
-	Name        *string `json:"name"`
-	Description *string `json:"description"`
-	Context     *string `json:"context"`
-	Settings    any     `json:"settings"`
-	Repos       any     `json:"repos"`
-	IssuePrefix *string `json:"issue_prefix"`
-	AvatarURL   *string `json:"avatar_url"`
+	Name        *string         `json:"name"`
+	Description *string         `json:"description"`
+	Context     *string         `json:"context"`
+	Settings    *map[string]any `json:"settings"`
+	Repos       any             `json:"repos"`
+	IssuePrefix *string         `json:"issue_prefix"`
+	AvatarURL   *string         `json:"avatar_url"`
 }
 
 type workspaceRepoRef struct {
@@ -529,7 +527,11 @@ func (h *Handler) UpdateWorkspace(w http.ResponseWriter, r *http.Request) {
 		params.Context = pgtype.Text{String: *req.Context, Valid: true}
 	}
 	if req.Settings != nil {
-		s, _ := json.Marshal(req.Settings)
+		s, err := json.Marshal(*req.Settings)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "settings must be a JSON object")
+			return
+		}
 		params.Settings = s
 	}
 	if req.Repos != nil {

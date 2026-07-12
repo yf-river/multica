@@ -25,7 +25,7 @@ evidence reviewable by humans.
 | Database functions | 9 |
 | Database triggers | 4 |
 | Database indexes | 185 |
-| Migration files (up + down) | 64 |
+| Migration files (up + down) | 66 |
 | sqlc modules | 54 |
 | sqlc queries | 576 |
 | Go WebSocket events | 80 |
@@ -557,6 +557,8 @@ intentionally platform-specific.
 | 31 | normalize_mention_markdown | up | — | 1 | 0 | 0 | `server/migrations/031_normalize_mention_markdown.up.sql` |
 | 32 | require_workspace_repos_array | down | — | 0 | 0 | 0 | `server/migrations/032_require_workspace_repos_array.down.sql` |
 | 32 | require_workspace_repos_array | up | — | 0 | 0 | 0 | `server/migrations/032_require_workspace_repos_array.up.sql` |
+| 33 | require_workspace_settings_object | down | — | 0 | 0 | 0 | `server/migrations/033_require_workspace_settings_object.down.sql` |
+| 33 | require_workspace_settings_object | up | — | 0 | 0 | 0 | `server/migrations/033_require_workspace_settings_object.up.sql` |
 
 ### Current tables discovered from up migrations
 
