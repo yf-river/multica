@@ -732,7 +732,11 @@ func (h *Handler) workspaceMemberTarget(w http.ResponseWriter, r *http.Request, 
 		return db.Member{}, false
 	}
 	target, err := h.Queries.GetMember(r.Context(), memberUUID)
-	if err != nil || uuidToString(target.WorkspaceID) != uuidToString(requester.WorkspaceID) {
+	if err != nil {
+		writeEntityLoadError(w, r, err, "member", "member_id", memberID)
+		return db.Member{}, false
+	}
+	if uuidToString(target.WorkspaceID) != uuidToString(requester.WorkspaceID) {
 		writeError(w, http.StatusNotFound, "member not found")
 		return db.Member{}, false
 	}
