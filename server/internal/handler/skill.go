@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -12,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/logger"
 	skillpkg "github.com/multica-ai/multica/server/internal/skill"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -31,15 +34,15 @@ func sanitizePostgresText(s string) string {
 // --- Response structs ---
 
 type SkillResponse struct {
-	ID          string  `json:"id"`
-	WorkspaceID string  `json:"workspace_id"`
-	Name        string  `json:"name"`
-	Description string  `json:"description"`
-	Content     string  `json:"content"`
-	Config      any     `json:"config"`
-	CreatedBy   *string `json:"created_by"`
-	CreatedAt   string  `json:"created_at"`
-	UpdatedAt   string  `json:"updated_at"`
+	ID          string         `json:"id"`
+	WorkspaceID string         `json:"workspace_id"`
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Content     string         `json:"content"`
+	Config      map[string]any `json:"config"`
+	CreatedBy   *string        `json:"created_by"`
+	CreatedAt   string         `json:"created_at"`
+	UpdatedAt   string         `json:"updated_at"`
 }
 
 // SkillSummaryResponse is the list-endpoint shape: everything SkillResponse
@@ -48,14 +51,14 @@ type SkillResponse struct {
 // links (GH multica-ai/multica#2174). Detail endpoints still return the full
 // SkillResponse with content.
 type SkillSummaryResponse struct {
-	ID          string  `json:"id"`
-	WorkspaceID string  `json:"workspace_id"`
-	Name        string  `json:"name"`
-	Description string  `json:"description"`
-	Config      any     `json:"config"`
-	CreatedBy   *string `json:"created_by"`
-	CreatedAt   string  `json:"created_at"`
-	UpdatedAt   string  `json:"updated_at"`
+	ID          string         `json:"id"`
+	WorkspaceID string         `json:"workspace_id"`
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Config      map[string]any `json:"config"`
+	CreatedBy   *string        `json:"created_by"`
+	CreatedAt   string         `json:"created_at"`
+	UpdatedAt   string         `json:"updated_at"`
 }
 
 // AgentSkillSummary is the still-narrower shape used for skills embedded in
@@ -114,18 +117,22 @@ func writeSkillImportDuplicateConflict(w http.ResponseWriter, existing ExistingS
 	})
 }
 
-func skillToResponse(s db.Skill) SkillResponse {
+func skillToResponse(s db.Skill) (SkillResponse, error) {
+	config, err := decodeSkillConfig(s.Config)
+	if err != nil {
+		return SkillResponse{}, err
+	}
 	return SkillResponse{
 		ID:          uuidToString(s.ID),
 		WorkspaceID: uuidToString(s.WorkspaceID),
 		Name:        s.Name,
 		Description: s.Description,
 		Content:     s.Content,
-		Config:      decodeSkillConfig(s.Config),
+		Config:      config,
 		CreatedBy:   uuidToPtr(s.CreatedBy),
 		CreatedAt:   timestampToString(s.CreatedAt),
 		UpdatedAt:   timestampToString(s.UpdatedAt),
-	}
+	}, nil
 }
 
 func (h *Handler) existingSkillIdentityByName(ctx context.Context, workspaceID pgtype.UUID, name string) (ExistingSkillIdentity, bool, error) {
@@ -154,17 +161,20 @@ func existingSkillIdentity(skill db.Skill, userID string) ExistingSkillIdentity 
 	return identity
 }
 
-// decodeSkillConfig decodes a JSONB skill.config blob, defaulting to {} when
-// missing or unparseable so the API surface always returns a JSON object.
-func decodeSkillConfig(raw []byte) any {
-	var config any
-	if raw != nil {
-		_ = json.Unmarshal(raw, &config)
+func decodeSkillConfig(raw []byte) (map[string]any, error) {
+	var config map[string]any
+	if err := json.Unmarshal(raw, &config); err != nil {
+		return nil, fmt.Errorf("decode skill config: %w", err)
 	}
 	if config == nil {
-		return map[string]any{}
+		return nil, fmt.Errorf("decode skill config: expected JSON object")
 	}
-	return config
+	return config, nil
+}
+
+func writeSkillConfigDecodeError(w http.ResponseWriter, r *http.Request, skillID string, err error) {
+	slog.Error("decode skill config failed", append(logger.RequestAttrs(r), "skill_id", skillID, "error", err)...)
+	writeError(w, http.StatusInternalServerError, "failed to decode skill config")
 }
 
 func skillSummaryToResponse(
@@ -173,17 +183,21 @@ func skillSummaryToResponse(
 	config []byte,
 	createdBy pgtype.UUID,
 	createdAt, updatedAt pgtype.Timestamptz,
-) SkillSummaryResponse {
+) (SkillSummaryResponse, error) {
+	decodedConfig, err := decodeSkillConfig(config)
+	if err != nil {
+		return SkillSummaryResponse{}, err
+	}
 	return SkillSummaryResponse{
 		ID:          uuidToString(id),
 		WorkspaceID: uuidToString(workspaceID),
 		Name:        name,
 		Description: description,
-		Config:      decodeSkillConfig(config),
+		Config:      decodedConfig,
 		CreatedBy:   uuidToPtr(createdBy),
 		CreatedAt:   timestampToString(createdAt),
 		UpdatedAt:   timestampToString(updatedAt),
-	}
+	}, nil
 }
 
 func skillFileToResponse(f db.SkillFile) SkillFileResponse {
@@ -203,7 +217,7 @@ type CreateSkillRequest struct {
 	Name        string                   `json:"name"`
 	Description string                   `json:"description"`
 	Content     string                   `json:"content"`
-	Config      any                      `json:"config"`
+	Config      map[string]any           `json:"config"`
 	Files       []CreateSkillFileRequest `json:"files,omitempty"`
 }
 
@@ -216,7 +230,7 @@ type UpdateSkillRequest struct {
 	Name        *string                  `json:"name"`
 	Description *string                  `json:"description"`
 	Content     *string                  `json:"content"`
-	Config      any                      `json:"config"`
+	Config      *map[string]any          `json:"config"`
 	Files       []CreateSkillFileRequest `json:"files,omitempty"`
 }
 
@@ -278,10 +292,14 @@ func (h *Handler) ListSkills(w http.ResponseWriter, r *http.Request) {
 
 	resp := make([]SkillSummaryResponse, len(skills))
 	for i, s := range skills {
-		resp[i] = skillSummaryToResponse(
+		resp[i], err = skillSummaryToResponse(
 			s.ID, s.WorkspaceID, s.Name, s.Description, s.Config,
 			s.CreatedBy, s.CreatedAt, s.UpdatedAt,
 		)
+		if err != nil {
+			writeSkillConfigDecodeError(w, r, uuidToString(s.ID), err)
+			return
+		}
 	}
 
 	writeJSON(w, http.StatusOK, resp)
@@ -324,8 +342,13 @@ func (h *Handler) GetSkill(w http.ResponseWriter, r *http.Request) {
 		fileResps[i] = skillFileToResponse(f)
 	}
 
+	skillResp, err := skillToResponse(skill)
+	if err != nil {
+		writeSkillConfigDecodeError(w, r, id, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, SkillWithFilesResponse{
-		SkillResponse: skillToResponse(skill),
+		SkillResponse: skillResp,
 		Files:         fileResps,
 	})
 }
@@ -454,7 +477,11 @@ func (h *Handler) UpdateSkill(w http.ResponseWriter, r *http.Request) {
 		params.Content = pgtype.Text{String: sanitizePostgresText(*req.Content), Valid: true}
 	}
 	if req.Config != nil {
-		config, _ := json.Marshal(req.Config)
+		config, err := json.Marshal(*req.Config)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "config must be a JSON object")
+			return
+		}
 		params.Config = config
 	}
 
@@ -504,13 +531,18 @@ func (h *Handler) UpdateSkill(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	skillResp, err := skillToResponse(skill)
+	if err != nil {
+		writeSkillConfigDecodeError(w, r, id, err)
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit")
 		return
 	}
 
 	resp := SkillWithFilesResponse{
-		SkillResponse: skillToResponse(skill),
+		SkillResponse: skillResp,
 		Files:         fileResps,
 	}
 	wsID := h.resolveWorkspaceID(r)

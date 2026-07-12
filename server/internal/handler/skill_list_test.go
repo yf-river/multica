@@ -39,6 +39,43 @@ func TestCreateSkillRejectsNonObjectConfig(t *testing.T) {
 	}
 }
 
+func TestUpdateSkillRejectsNonObjectConfig(t *testing.T) {
+	skillID := insertHandlerTestSkill(t, "update-invalid-config", "# Existing skill")
+	w := httptest.NewRecorder()
+	req := newRequest("PATCH", "/api/skills/"+skillID+"?workspace_id="+testWorkspaceID, map[string]any{
+		"config": []any{"not", "an", "object"},
+	})
+	req = withURLParam(req, "id", skillID)
+	testHandler.UpdateSkill(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("UpdateSkill non-object config: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var config string
+	if err := testPool.QueryRow(context.Background(), `SELECT config::text FROM skill WHERE id = $1`, skillID).Scan(&config); err != nil {
+		t.Fatalf("read skill config: %v", err)
+	}
+	if config != "{}" {
+		t.Fatalf("UpdateSkill changed config to %s", config)
+	}
+}
+
+func TestDecodeSkillConfigRejectsNonObjectValues(t *testing.T) {
+	for _, raw := range [][]byte{nil, []byte(`null`), []byte(`[]`), []byte(`"string"`)} {
+		if _, err := decodeSkillConfig(raw); err == nil {
+			t.Fatalf("decodeSkillConfig(%s) expected an error", raw)
+		}
+	}
+	config, err := decodeSkillConfig([]byte(`{"origin":{"type":"manual"}}`))
+	if err != nil {
+		t.Fatalf("decode object config: %v", err)
+	}
+	if _, ok := config["origin"]; !ok {
+		t.Fatalf("decoded config = %#v, want origin", config)
+	}
+}
+
 // TestListSkills_OmitsContent guards the fix for GH multica-ai/multica#2174:
 // the workspace skill list endpoint must not ship the SKILL.md `content`
 // blob, which used to bloat the payload past CLI timeouts on workspaces with

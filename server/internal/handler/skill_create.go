@@ -17,7 +17,7 @@ type skillCreateInput struct {
 	Name        string
 	Description string
 	Content     string
-	Config      any
+	Config      map[string]any
 	Files       []CreateSkillFileRequest
 }
 
@@ -65,8 +65,12 @@ func createSkillWithFilesInTx(ctx context.Context, qtx *db.Queries, input skillC
 		fileResps = append(fileResps, skillFileToResponse(sf))
 	}
 
+	skillResp, err := skillToResponse(skill)
+	if err != nil {
+		return SkillWithFilesResponse{}, err
+	}
 	return SkillWithFilesResponse{
-		SkillResponse: skillToResponse(skill),
+		SkillResponse: skillResp,
 		Files:         fileResps,
 	}, nil
 }
@@ -114,7 +118,7 @@ type skillOverwriteInput struct {
 	ExpectedName string
 	Description  string
 	Content      string
-	Config       any
+	Config       map[string]any
 	Files        []CreateSkillFileRequest
 }
 
@@ -209,8 +213,12 @@ func (h *Handler) overwriteSkillWithFiles(ctx context.Context, input skillOverwr
 		return SkillWithFilesResponse{}, err
 	}
 
+	skillResp, err := skillToResponse(skill)
+	if err != nil {
+		return SkillWithFilesResponse{}, err
+	}
 	return SkillWithFilesResponse{
-		SkillResponse: skillToResponse(skill),
+		SkillResponse: skillResp,
 		Files:         fileResps,
 	}, nil
 }

@@ -1117,10 +1117,14 @@ func (h *Handler) ListAgentSkills(w http.ResponseWriter, r *http.Request) {
 
 	resp := make([]SkillSummaryResponse, len(skills))
 	for i, s := range skills {
-		resp[i] = skillSummaryToResponse(
+		resp[i], err = skillSummaryToResponse(
 			s.ID, s.WorkspaceID, s.Name, s.Description, s.Config,
 			s.CreatedBy, s.CreatedAt, s.UpdatedAt,
 		)
+		if err != nil {
+			writeSkillConfigDecodeError(w, r, uuidToString(s.ID), err)
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -1257,10 +1261,14 @@ func (h *Handler) writeUpdatedAgentSkills(w http.ResponseWriter, r *http.Request
 
 	resp := make([]SkillSummaryResponse, len(skills))
 	for i, s := range skills {
-		resp[i] = skillSummaryToResponse(
+		resp[i], err = skillSummaryToResponse(
 			s.ID, s.WorkspaceID, s.Name, s.Description, s.Config,
 			s.CreatedBy, s.CreatedAt, s.UpdatedAt,
 		)
+		if err != nil {
+			writeSkillConfigDecodeError(w, r, uuidToString(s.ID), err)
+			return
+		}
 	}
 	actorType, actorID := h.resolveActor(r, requestUserID(r), uuidToString(agent.WorkspaceID))
 	h.publish(protocol.EventAgentStatus, uuidToString(agent.WorkspaceID), actorType, actorID, map[string]any{"agent_id": uuidToString(agent.ID), "skills": resp})
