@@ -11,40 +11,24 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const createPromptEvaluationOptimizationCandidate = `-- name: CreatePromptEvaluationOptimizationCandidate :one
+const createPromptEvaluationOptimizationCandidateWithID = `-- name: CreatePromptEvaluationOptimizationCandidateWithID :one
 INSERT INTO prompt_evaluation_optimization_candidate (
-    workspace_id,
-    asset_id,
-    run_id,
-    prompt_id,
-    candidate_name,
-    candidate_content,
-    rationale,
-    failed_case_count,
-    source_failure_summary,
-    source_prompt_snapshot,
-    metrics,
-    status,
-    created_by
+    id, workspace_id, asset_id, run_id, prompt_id, candidate_name,
+    candidate_content, rationale, failed_case_count, source_failure_summary,
+    source_prompt_snapshot, metrics, status, created_by
 ) VALUES (
-    $1,
-    $2,
-    $3,
-    $4,
-    $5,
-    $6,
-    COALESCE($8, ''),
-    $7,
-    COALESCE($9::jsonb, '{}'::jsonb),
+    $1, $2, $3, $4, $5, $6, $7,
+    COALESCE($9, ''), $8,
     COALESCE($10::jsonb, '{}'::jsonb),
     COALESCE($11::jsonb, '{}'::jsonb),
-    COALESCE($12, '待确认'),
-    $13
+    COALESCE($12::jsonb, '{}'::jsonb),
+    COALESCE($13, '待确认'), $14
 )
 RETURNING id, workspace_id, asset_id, run_id, prompt_id, candidate_name, candidate_content, rationale, failed_case_count, source_failure_summary, source_prompt_snapshot, metrics, status, published_prompt_id, published_at, created_by, created_at, updated_at
 `
 
-type CreatePromptEvaluationOptimizationCandidateParams struct {
+type CreatePromptEvaluationOptimizationCandidateWithIDParams struct {
+	ID                   pgtype.UUID `json:"id"`
 	WorkspaceID          pgtype.UUID `json:"workspace_id"`
 	AssetID              pgtype.UUID `json:"asset_id"`
 	RunID                pgtype.UUID `json:"run_id"`
@@ -60,8 +44,9 @@ type CreatePromptEvaluationOptimizationCandidateParams struct {
 	CreatedBy            pgtype.UUID `json:"created_by"`
 }
 
-func (q *Queries) CreatePromptEvaluationOptimizationCandidate(ctx context.Context, arg CreatePromptEvaluationOptimizationCandidateParams) (PromptEvaluationOptimizationCandidate, error) {
-	row := q.db.QueryRow(ctx, createPromptEvaluationOptimizationCandidate,
+func (q *Queries) CreatePromptEvaluationOptimizationCandidateWithID(ctx context.Context, arg CreatePromptEvaluationOptimizationCandidateWithIDParams) (PromptEvaluationOptimizationCandidate, error) {
+	row := q.db.QueryRow(ctx, createPromptEvaluationOptimizationCandidateWithID,
+		arg.ID,
 		arg.WorkspaceID,
 		arg.AssetID,
 		arg.RunID,

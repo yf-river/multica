@@ -4,6 +4,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
 import {
+  createPromptEvaluationOptimizationCandidateWithRecovery,
   createPromptLibraryItemWithRecovery,
   createPromptLibraryTrialWithRecovery,
   createPromptLibraryVersionWithRecovery,
@@ -304,7 +305,7 @@ export function usePromptLibraryMutations({
   });
 
   const createCandidate = useMutation({
-    mutationFn: (runId: string) => api.createPromptEvaluationOptimizationCandidate(runId),
+    mutationFn: (runId: string) => createPromptEvaluationOptimizationCandidateWithRecovery(runId),
     onSuccess: () => {
       invalidateCandidates();
       toast.success(t(($) => $.page.toast.candidate_created));

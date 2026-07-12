@@ -1941,12 +1941,26 @@ export class TestApiClient {
     return data.items ?? [];
   }
 
-  async createPromptEvaluationOptimizationCandidate(runId: string): Promise<PromptEvaluationOptimizationCandidate> {
-    const res = await this.authedFetch(`/api/prompt-evaluation-runs/${runId}/optimization-candidates`, { method: "POST" });
-    if (!res.ok) {
-      throw new Error(`create prompt evaluation optimization candidate failed: ${res.status} ${await res.text()}`);
+  async createPromptEvaluationOptimizationCandidate(
+    runId: string,
+    requestId = crypto.randomUUID(),
+  ): Promise<PromptEvaluationOptimizationCandidate> {
+    const attempt = async () => {
+      const res = await this.authedFetch(`/api/prompt-evaluation-runs/${runId}/optimization-candidates`, {
+        method: "POST",
+        headers: { "Idempotency-Key": requestId },
+      });
+      if (!res.ok) {
+        throw new Error(`create prompt evaluation optimization candidate failed: ${res.status} ${await res.text()}`);
+      }
+      return res.json();
+    };
+    try {
+      return await attempt();
+    } catch (error) {
+      if (!(error instanceof TypeError)) throw error;
+      return attempt();
     }
-    return res.json();
   }
 
   async updatePromptEvaluationOptimizationCandidate(candidateId: string, data: Record<string, unknown>): Promise<PromptEvaluationOptimizationCandidate> {

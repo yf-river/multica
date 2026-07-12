@@ -115,6 +115,27 @@ func (h *Handler) CreatePromptEvaluationOptimizationCandidate(w http.ResponseWri
 	if !ok {
 		return
 	}
+	requestHash, err := hashRequestFingerprint(promptEvaluationCandidateCreateFingerprint{
+		RunID: uuidToString(runID),
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to fingerprint optimization candidate request")
+		return
+	}
+	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	requestActorID := parseUUID(userID)
+	if replay, found, err := h.loadPromptEvaluationCandidateCreateReplay(
+		r.Context(), workspaceUUID, requestActorID, idempotencyKey, requestHash,
+	); err != nil {
+		writePromptEvaluationCandidateCreateReplayError(w, err)
+		return
+	} else if found {
+		writeJSON(w, http.StatusCreated, replay)
+		return
+	}
 	run, err := h.Queries.GetPromptEvaluationRunInWorkspace(r.Context(), db.GetPromptEvaluationRunInWorkspaceParams{ID: runID, WorkspaceID: workspaceUUID})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -177,7 +198,38 @@ func (h *Handler) CreatePromptEvaluationOptimizationCandidate(w http.ResponseWri
 		candidateMetrics["候选优先级依据"] = "基于实验维度评分摘要自动计算，待执行或低分维度优先处理。"
 	}
 	candidateContent, rationale := buildPromptEvaluationCandidateContent(prompt, run, sourceSummary)
-	item, err := h.Queries.CreatePromptEvaluationOptimizationCandidate(r.Context(), db.CreatePromptEvaluationOptimizationCandidateParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start optimization candidate transaction")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	_, err = qtx.ReserveResourceCreateRequest(r.Context(), db.ReserveResourceCreateRequestParams{
+		WorkspaceID: workspaceUUID, ActorID: requestActorID, ResourceType: resourceTypePromptCandidate,
+		IdempotencyKey: idempotencyKey, RequestHash: requestHash,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		_ = tx.Rollback(r.Context())
+		replay, found, replayErr := h.loadPromptEvaluationCandidateCreateReplay(
+			r.Context(), workspaceUUID, requestActorID, idempotencyKey, requestHash,
+		)
+		if replayErr != nil || !found {
+			if replayErr == nil {
+				replayErr = errors.New("optimization candidate replay disappeared after conflict")
+			}
+			writePromptEvaluationCandidateCreateReplayError(w, replayErr)
+			return
+		}
+		writeJSON(w, http.StatusCreated, replay)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reserve optimization candidate request")
+		return
+	}
+	item, err := qtx.CreatePromptEvaluationOptimizationCandidateWithID(r.Context(), db.CreatePromptEvaluationOptimizationCandidateWithIDParams{
+		ID:                   idempotencyKey,
 		WorkspaceID:          workspaceUUID,
 		AssetID:              run.AssetID,
 		RunID:                run.ID,
@@ -190,13 +242,25 @@ func (h *Handler) CreatePromptEvaluationOptimizationCandidate(w http.ResponseWri
 		SourcePromptSnapshot: mustJSONBytes(buildPromptEvaluationSourcePromptSnapshot(prompt)),
 		Metrics:              mustJSONBytes(candidateMetrics),
 		Status:               "待确认",
-		CreatedBy:            parseUUID(userID),
+		CreatedBy:            requestActorID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create prompt evaluation optimization candidate")
 		return
 	}
-	writeJSON(w, http.StatusCreated, promptEvaluationOptimizationCandidateToResponse(item))
+	response := promptEvaluationOptimizationCandidateToResponse(item)
+	if err := completeResourceCreateRequest(
+		r.Context(), qtx, workspaceUUID, requestActorID, resourceTypePromptCandidate,
+		idempotencyKey, requestHash, item.ID, response,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to complete optimization candidate request")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit optimization candidate")
+		return
+	}
+	writeJSON(w, http.StatusCreated, response)
 }
 
 func (h *Handler) promptEvaluationCandidateRuntimeEvidence(ctx context.Context, run db.PromptEvaluationRun) (map[string]any, error) {

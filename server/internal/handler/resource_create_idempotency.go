@@ -29,6 +29,7 @@ const (
 	resourceTypePromptEvaluationRun  = "prompt_evaluation_agent_run"
 	resourceTypePromptLocalRun       = "prompt_evaluation_local_run"
 	resourceTypePromptReEvalAsset    = "prompt_evaluation_re_eval_asset"
+	resourceTypePromptCandidate      = "prompt_evaluation_candidate"
 )
 
 var errResourceCreateIdempotencyConflict = errors.New("resource create idempotency conflict")

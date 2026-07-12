@@ -8,7 +8,7 @@ different input. A completed row stores the resource ID and exact response.
 The current resource types cover Workspace, Workspace Member, Project, Squad,
 Agent, Skill, Attachment, Quick Create, Issue, Comment, Prompt Library creates,
 Agent Playground experiments, Prompt Evaluation agent/local runs and Skill
-re-evaluation asset preparation. Each handler either commits the request row in
+re-evaluation asset preparation plus optimization Candidate generation. Each handler either commits the request row in
 the same transaction as the resource or uses a deterministic resource identity
 and an explicit recovery path when an external/object operation prevents one DB
 transaction. Core retries unknown outcomes with the same key and persists the
@@ -67,6 +67,14 @@ rolls all of them back. The Prompt Library UI keeps the pending Candidate,
 request body and request UUID in workspace-scoped storage, recovers that exact
 preparation after reload or response loss, and only then accepts a changed
 operation.
+
+Generating a Prompt Evaluation optimization Candidate uses
+`prompt_evaluation_candidate`. The request UUID is the Candidate UUID, and the
+Run-derived content, evidence snapshot and exact `201` response commit with the
+request witness. Concurrent clicks or a lost response cannot create multiple
+draft Candidates with timestamp-derived names. The Prompt Library controller
+persists the active Run/key per workspace and recovers it before accepting a
+different Run.
 
 External credential profiles use an account-scoped variant because they are
 not workspace resources and their request may contain a secret. The request

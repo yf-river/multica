@@ -2354,11 +2354,21 @@ export class ApiClient extends ApiTransport {
     }) as ListPromptEvaluationOptimizationCandidatesResponse;
   }
 
-  async createPromptEvaluationOptimizationCandidate(runId: string): Promise<PromptEvaluationOptimizationCandidate> {
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/optimization-candidates`, { method: "POST" });
-    return parseOrThrow(raw, PromptEvaluationOptimizationCandidateSchema, EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE, {
-      endpoint: "POST /api/prompt-evaluation-runs/:id/optimization-candidates",
-    }) as PromptEvaluationOptimizationCandidate;
+  async createPromptEvaluationOptimizationCandidate(
+    runId: string,
+    requestId = generateUUID(),
+  ): Promise<PromptEvaluationOptimizationCandidate> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/optimization-candidates`, {
+        method: "POST",
+        extraHeaders: { "Idempotency-Key": requestId },
+      });
+      return parseOrThrow(raw, PromptEvaluationOptimizationCandidateSchema, EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE, {
+        endpoint: "POST /api/prompt-evaluation-runs/:id/optimization-candidates",
+        mayHaveCommitted: true,
+      }) as PromptEvaluationOptimizationCandidate;
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async checkPromptEvaluationSkillCandidateFreshness(
