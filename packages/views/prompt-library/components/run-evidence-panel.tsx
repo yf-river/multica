@@ -1,5 +1,6 @@
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Archive, Loader2, Plus, RefreshCw } from "lucide-react";
+import { Archive, Check, Loader2, Plus, RefreshCw, X } from "lucide-react";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/paths";
 import type {
@@ -8,6 +9,16 @@ import type {
 } from "@multica/core/types";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@multica/ui/components/ui/alert-dialog";
 import { useT } from "../../i18n/use-t";
 import { asRecord, stringFromUnknown } from "./record-utils";
 import { promptLibraryKeys } from "./prompt-library-query-keys";
@@ -18,6 +29,7 @@ import {
 } from "./skill-candidate-model";
 import { SkillCandidateWorkflowPanel } from "./skill-candidate-workflow";
 import { useSkillCandidateWorkflowActions } from "./use-skill-candidate-workflow-actions";
+import { useCandidateDecisionActions } from "./use-candidate-decision-actions";
 
 export type RunOptimizationActions = {
   canGenerate: boolean;
@@ -51,6 +63,7 @@ export function RunEvidencePanel({
 }) {
   const { t } = useT("prompt-library");
   const workspaceId = useWorkspaceId();
+  const [decision, setDecision] = useState<"publish" | "reject" | null>(null);
   const run = evidence?.run ?? null;
   const runId = run?.id ?? "";
   const {
@@ -59,6 +72,7 @@ export function RunEvidencePanel({
     runAction: runSkillWorkflowAction,
     draftFor: skillDraftFor,
   } = useSkillCandidateWorkflowActions(workspaceId ?? "", runId);
+  const candidateDecision = useCandidateDecisionActions(workspaceId ?? "", runId);
   const candidatesQuery = useQuery({
     queryKey: promptLibraryKeys.runCandidates(workspaceId ?? "", runId),
     queryFn: () => api.listPromptEvaluationOptimizationCandidates({ run_id: runId, limit: 5 }),
@@ -107,6 +121,7 @@ export function RunEvidencePanel({
   };
 
   return (
+    <>
     <section className="grid gap-3 rounded-md border bg-muted/10 p-3 md:col-span-2" data-testid="run-evidence-panel">
       <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_auto]">
         <div className="min-w-0">
@@ -230,6 +245,18 @@ export function RunEvidencePanel({
           <div className="text-muted-foreground">
             {candidate.rationale || t(($) => $.run_evidence.candidate_rationale)}
           </div>
+          {candidate.status === "待确认" && (
+            <div className="flex flex-wrap gap-2" data-testid="candidate-decision-actions">
+              <Button size="sm" onClick={() => setDecision("publish")} disabled={candidateDecision.activeDecision !== null}>
+                {candidateDecision.activeDecision === "publish" ? <Loader2 className="size-3.5 animate-spin" /> : <Check className="size-3.5" />}
+                {t(($) => $.run_evidence.publish_candidate)}
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setDecision("reject")} disabled={candidateDecision.activeDecision !== null}>
+                {candidateDecision.activeDecision === "reject" ? <Loader2 className="size-3.5 animate-spin" /> : <X className="size-3.5" />}
+                {t(($) => $.run_evidence.reject_candidate)}
+              </Button>
+            </div>
+          )}
           <SkillCandidateWorkflowPanel
             candidate={candidate}
             draft={skillDraftFor(candidate)}
@@ -252,6 +279,41 @@ export function RunEvidencePanel({
         </pre>
       </details>
     </section>
+    <AlertDialog open={decision !== null} onOpenChange={(open) => { if (!open) setDecision(null); }}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>
+            {decision === "publish"
+              ? t(($) => $.run_evidence.publish_confirm_title)
+              : t(($) => $.run_evidence.reject_confirm_title)}
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            {decision === "publish"
+              ? t(($) => $.run_evidence.publish_confirm_description)
+              : t(($) => $.run_evidence.reject_confirm_description)}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>{t(($) => $.run_evidence.decision_cancel)}</AlertDialogCancel>
+          <AlertDialogAction
+            className={decision === "reject" ? "bg-destructive text-white hover:bg-destructive/90" : undefined}
+            onClick={() => {
+              if (!candidate || !decision) return;
+              const action = decision === "publish"
+                ? candidateDecision.publish(candidate.id)
+                : candidateDecision.reject(candidate.id);
+              setDecision(null);
+              void action;
+            }}
+          >
+            {decision === "publish"
+              ? t(($) => $.run_evidence.publish_candidate)
+              : t(($) => $.run_evidence.reject_candidate)}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+    </>
   );
 }
 

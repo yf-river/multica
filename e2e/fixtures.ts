@@ -1974,6 +1974,45 @@ export class TestApiClient {
     return res.json();
   }
 
+  async publishPromptEvaluationOptimizationCandidate(candidateId: string, requestId = crypto.randomUUID()) {
+    const attempt = async () => {
+      const res = await this.authedFetch(`/api/prompt-evaluation-optimization-candidates/${candidateId}/publish`, {
+        method: "POST",
+        headers: { "Idempotency-Key": requestId },
+      });
+      if (!res.ok) throw new Error(`publish optimization candidate failed: ${res.status} ${await res.text()}`);
+      return res.json();
+    };
+    try {
+      return await attempt();
+    } catch (error) {
+      if (!(error instanceof TypeError)) throw error;
+      return attempt();
+    }
+  }
+
+  async rejectPromptEvaluationOptimizationCandidate(
+    candidateId: string,
+    reason: string,
+    requestId = crypto.randomUUID(),
+  ) {
+    const attempt = async () => {
+      const res = await this.authedFetch(`/api/prompt-evaluation-optimization-candidates/${candidateId}/reject`, {
+        method: "POST",
+        body: JSON.stringify({ reason }),
+        headers: { "Idempotency-Key": requestId },
+      });
+      if (!res.ok) throw new Error(`reject optimization candidate failed: ${res.status} ${await res.text()}`);
+      return res.json();
+    };
+    try {
+      return await attempt();
+    } catch (error) {
+      if (!(error instanceof TypeError)) throw error;
+      return attempt();
+    }
+  }
+
   async checkPromptEvaluationSkillCandidateFreshness(candidateId: string, data: Record<string, unknown>) {
     const res = await this.authedFetch(`/api/prompt-evaluation-optimization-candidates/${candidateId}/skill-freshness`, {
       method: "POST",

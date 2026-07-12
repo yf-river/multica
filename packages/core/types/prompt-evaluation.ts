@@ -766,6 +766,10 @@ export interface PublishPromptEvaluationOptimizationCandidateResponse {
   prompt: PromptLibraryItem;
 }
 
+export interface RejectPromptEvaluationOptimizationCandidateRequest {
+  reason?: string;
+}
+
 export interface ListPromptEvaluationAssetsResponse {
   items: PromptEvaluationAsset[];
   total: number;

@@ -133,8 +133,29 @@ test.describe("Skill candidate workflow", () => {
       path: path.join(artifactDir, `goal-d-skill-ui-workflow-playwright-${Date.now()}.png`),
     });
 
+    const decisionActions = runRow.getByTestId("candidate-decision-actions");
+    await expect(decisionActions.getByRole("button", { name: "发布为新提示词" })).toBeEnabled();
+    await expect(decisionActions.getByRole("button", { name: "拒绝候选" })).toBeEnabled();
+    let publishRequests = 0;
+    await page.route("**/api/prompt-evaluation-optimization-candidates/*/publish", async (route) => {
+      publishRequests += 1;
+      if (publishRequests === 1) {
+        await route.fetch();
+        await route.abort("connectionfailed");
+        return;
+      }
+      await route.continue();
+    });
+    await decisionActions.getByRole("button", { name: "发布为新提示词" }).click();
+    const publishDialog = page.getByRole("alertdialog");
+    await expect(publishDialog).toContainText("确认发布这个优化候选");
+    await publishDialog.getByRole("button", { name: "发布为新提示词" }).click();
+    await expect(runRow.getByTestId("run-evidence-candidate")).toContainText("已发布", { timeout: 15_000 });
+    await expect(runRow.getByTestId("candidate-decision-actions")).toHaveCount(0);
+    expect(publishRequests).toBe(2);
+
     expect(pageErrors).toEqual([]);
-    expect(consoleErrors).toEqual([]);
+    expect(consoleErrors.filter((message) => !message.includes("ERR_CONNECTION_FAILED"))).toEqual([]);
   });
 
   test("runs the Gongfeng worktree skill API chain through apply changelog and re-eval", async () => {

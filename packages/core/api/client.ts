@@ -137,6 +137,8 @@ import type {
   PromptEvaluationDatasetFromTracesResponse,
   PromptEvaluationDatasetVersion,
   PromptEvaluationOptimizationCandidate,
+  PublishPromptEvaluationOptimizationCandidateResponse,
+  RejectPromptEvaluationOptimizationCandidateRequest,
   ApplyPromptEvaluationSkillCandidateRequest,
   CheckPromptEvaluationSkillFreshnessRequest,
   PreparePromptEvaluationSkillReEvalRequest,
@@ -301,6 +303,7 @@ import {
   EMPTY_PROMPT_EVALUATION_CASE_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE,
   EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE_LIST_RESPONSE,
+  EMPTY_PUBLISH_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE_RESPONSE,
   EMPTY_PROMPT_EVALUATION_SKILL_APPLY_CANDIDATE_RESPONSE,
   EMPTY_PROMPT_EVALUATION_SKILL_FRESHNESS_RESULT,
   EMPTY_PROMPT_EVALUATION_SKILL_RE_EVAL_ASSET_RESPONSE,
@@ -364,6 +367,7 @@ import {
   PromptEvaluationCaseListResponseSchema,
   PromptEvaluationOptimizationCandidateSchema,
   PromptEvaluationOptimizationCandidateListResponseSchema,
+  PublishPromptEvaluationOptimizationCandidateResponseSchema,
   PromptEvaluationSkillApplyCandidateResponseSchema,
   PromptEvaluationSkillFreshnessResultSchema,
   PromptEvaluationSkillReEvalAssetResponseSchema,
@@ -2365,6 +2369,47 @@ export class ApiClient extends ApiTransport {
       });
       return parseOrThrow(raw, PromptEvaluationOptimizationCandidateSchema, EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE, {
         endpoint: "POST /api/prompt-evaluation-runs/:id/optimization-candidates",
+        mayHaveCommitted: true,
+      }) as PromptEvaluationOptimizationCandidate;
+    };
+    return this.retryUnknownMutationOnce(attempt);
+  }
+
+  async publishPromptEvaluationOptimizationCandidate(
+    candidateId: string,
+    requestId = generateUUID(),
+  ): Promise<PublishPromptEvaluationOptimizationCandidateResponse> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/prompt-evaluation-optimization-candidates/${candidateId}/publish`, {
+        method: "POST",
+        extraHeaders: { "Idempotency-Key": requestId },
+      });
+      return parseOrThrow(
+        raw,
+        PublishPromptEvaluationOptimizationCandidateResponseSchema,
+        EMPTY_PUBLISH_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE_RESPONSE,
+        {
+          endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/publish",
+          mayHaveCommitted: true,
+        },
+      ) as PublishPromptEvaluationOptimizationCandidateResponse;
+    };
+    return this.retryUnknownMutationOnce(attempt);
+  }
+
+  async rejectPromptEvaluationOptimizationCandidate(
+    candidateId: string,
+    data: RejectPromptEvaluationOptimizationCandidateRequest = {},
+    requestId = generateUUID(),
+  ): Promise<PromptEvaluationOptimizationCandidate> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/prompt-evaluation-optimization-candidates/${candidateId}/reject`, {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": requestId },
+      });
+      return parseOrThrow(raw, PromptEvaluationOptimizationCandidateSchema, EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE, {
+        endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/reject",
         mayHaveCommitted: true,
       }) as PromptEvaluationOptimizationCandidate;
     };

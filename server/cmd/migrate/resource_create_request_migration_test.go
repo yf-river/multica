@@ -487,3 +487,33 @@ func TestPromptEvaluationCandidateRequestMigrationExtendsCurrentResourceContract
 		t.Fatalf("prompt_evaluation_candidate request type rejected: %v", err)
 	}
 }
+
+func TestPromptEvaluationCandidatePublishRequestMigrationExtendsCurrentResourceContract(t *testing.T) {
+	pool := openTestPool(t)
+	ctx := context.Background()
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	isolateResourceCreateRequestMigration(t, ctx, tx)
+	if _, err := tx.Exec(ctx, readMigrationFile(t, "065_add_prompt_evaluation_candidate_publish_request.up.sql")); err != nil {
+		t.Fatal(err)
+	}
+	var workspaceID string
+	if err := tx.QueryRow(ctx, `INSERT INTO workspace (name, slug) VALUES ('Candidate Publish Request Migration', $1) RETURNING id`, "candidate-publish-request-"+uuid.NewString()).Scan(&workspaceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO resource_create_request (workspace_id, actor_id, resource_type, idempotency_key, request_hash)
+		VALUES ($1, $2, 'prompt_evaluation_candidate_publish', $3, $4)
+	`, workspaceID, uuid.NewString(), uuid.NewString(), "5656565656565656565656565656565656565656565656565656565656565656"); err != nil {
+		t.Fatalf("prompt_evaluation_candidate_publish request type rejected: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO resource_create_request (workspace_id, actor_id, resource_type, idempotency_key, request_hash)
+		VALUES ($1, $2, 'prompt_evaluation_candidate_reject', $3, $4)
+	`, workspaceID, uuid.NewString(), uuid.NewString(), "7878787878787878787878787878787878787878787878787878787878787878"); err != nil {
+		t.Fatalf("prompt_evaluation_candidate_reject request type rejected: %v", err)
+	}
+}

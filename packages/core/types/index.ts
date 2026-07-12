@@ -208,6 +208,7 @@ export type {
   PromptEvaluationCaseTagDatasetSummaryDataset,
   UpdatePromptEvaluationOptimizationCandidateRequest,
   PublishPromptEvaluationOptimizationCandidateResponse,
+  RejectPromptEvaluationOptimizationCandidateRequest,
   PromptEvaluationAssetType,
   PromptEvaluationAssetStatus,
   PromptEvaluationCaseStatus,

@@ -76,6 +76,16 @@ draft Candidates with timestamp-derived names. The Prompt Library controller
 persists the active Run/key per workspace and recovers it before accepting a
 different Run.
 
+Human Candidate decisions are also durable. Publishing uses
+`prompt_evaluation_candidate_publish`; its request UUID is the new Prompt UUID,
+and Prompt, immutable Version, Candidate status and exact response commit in one
+transaction. Rejection uses `prompt_evaluation_candidate_reject` and commits the
+reason/status with its response witness. One workspace-scoped Core decision
+intent recovers either operation before accepting another decision. The UI
+requires confirmation, states that publishing creates a new Prompt rather than
+overwriting the source, and keeps decision controls available only while the
+Candidate is pending.
+
 External credential profiles use an account-scoped variant because they are
 not workspace resources and their request may contain a secret. The request
 UUID is also the profile UUID, while the profile row stores only the UUID and a

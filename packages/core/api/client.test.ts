@@ -759,6 +759,28 @@ describe("ApiClient", () => {
     expect(second["Idempotency-Key"]).toBe(requestId);
   });
 
+  it.each([
+    ["publish", (client: ApiClient, key: string) => client.publishPromptEvaluationOptimizationCandidate("candidate-1", key)],
+    ["reject", (client: ApiClient, key: string) => client.rejectPromptEvaluationOptimizationCandidate(
+      "candidate-1", { reason: "insufficient evidence" }, key,
+    )],
+  ])("retries optimization candidate %s with one identity", async (_operation, invoke) => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({}), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const requestId = "10000000-0000-4000-8000-000000000018";
+
+    await expect(invoke(new ApiClient("https://api.example.test"), requestId))
+      .rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
+    const first = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    const second = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
+    expect(first["Idempotency-Key"]).toBe(requestId);
+    expect(second["Idempotency-Key"]).toBe(requestId);
+  });
+
   it("validates Lark installation state without exposing installation secrets", async () => {
     const installation = {
       id: "installation-1",

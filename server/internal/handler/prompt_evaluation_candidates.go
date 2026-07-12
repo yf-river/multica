@@ -355,6 +355,27 @@ func (h *Handler) PublishPromptEvaluationOptimizationCandidate(w http.ResponseWr
 	if !ok {
 		return
 	}
+	requestHash, err := hashRequestFingerprint(promptEvaluationCandidatePublishFingerprint{
+		CandidateID: uuidToString(candidateID),
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to fingerprint optimization candidate publish request")
+		return
+	}
+	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	requestActorID := parseUUID(userID)
+	if replay, found, err := h.loadPromptEvaluationCandidatePublishReplay(
+		r.Context(), workspaceUUID, requestActorID, idempotencyKey, requestHash,
+	); err != nil {
+		writePromptEvaluationCandidatePublishReplayError(w, err)
+		return
+	} else if found {
+		writeJSON(w, http.StatusOK, replay)
+		return
+	}
 	candidate, ok := loadPromptEvaluationOptimizationCandidate(w, r, h.Queries, workspaceUUID, candidateID)
 	if !ok {
 		return
@@ -378,14 +399,38 @@ func (h *Handler) PublishPromptEvaluationOptimizationCandidate(w http.ResponseWr
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
-	publishedPrompt, err := qtx.CreatePromptLibraryItemVersion(r.Context(), db.CreatePromptLibraryItemVersionParams{
+	_, err = qtx.ReserveResourceCreateRequest(r.Context(), db.ReserveResourceCreateRequestParams{
+		WorkspaceID: workspaceUUID, ActorID: requestActorID, ResourceType: resourceTypePromptPublish,
+		IdempotencyKey: idempotencyKey, RequestHash: requestHash,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		_ = tx.Rollback(r.Context())
+		replay, found, replayErr := h.loadPromptEvaluationCandidatePublishReplay(
+			r.Context(), workspaceUUID, requestActorID, idempotencyKey, requestHash,
+		)
+		if replayErr != nil || !found {
+			if replayErr == nil {
+				replayErr = errors.New("optimization candidate publish replay disappeared after conflict")
+			}
+			writePromptEvaluationCandidatePublishReplayError(w, replayErr)
+			return
+		}
+		writeJSON(w, http.StatusOK, replay)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reserve optimization candidate publish request")
+		return
+	}
+	publishedPrompt, err := qtx.CreatePromptLibraryItemVersionWithID(r.Context(), db.CreatePromptLibraryItemVersionWithIDParams{
+		ID:          idempotencyKey,
 		WorkspaceID: workspaceUUID,
 		Name:        buildPromptEvaluationPublishedPromptName(sourcePrompt),
 		Description: buildPromptEvaluationPublishedPromptDescription(candidate, sourcePrompt),
 		PromptType:  sourcePrompt.PromptType,
 		Content:     candidate.CandidateContent,
 		Version:     sourcePrompt.Version + 1,
-		CreatedBy:   parseUUID(userID),
+		CreatedBy:   requestActorID,
 		ProjectID:   sourcePrompt.ProjectID,
 		Variables:   sourcePrompt.Variables,
 		Tags:        buildPromptEvaluationPublishedPromptTags(sourcePrompt.Tags),
@@ -421,14 +466,22 @@ func (h *Handler) PublishPromptEvaluationOptimizationCandidate(w http.ResponseWr
 		writeError(w, http.StatusInternalServerError, "failed to prepare published prompt response")
 		return
 	}
+	response := PublishPromptEvaluationOptimizationCandidateResponse{
+		Candidate: promptEvaluationOptimizationCandidateToResponse(updatedCandidate),
+		Prompt:    promptResponse,
+	}
+	if err := completeResourceCreateRequest(
+		r.Context(), qtx, workspaceUUID, requestActorID, resourceTypePromptPublish,
+		idempotencyKey, requestHash, publishedPrompt.ID, response,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to complete optimization candidate publish request")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit optimization candidate publish")
 		return
 	}
-	writeJSON(w, http.StatusOK, PublishPromptEvaluationOptimizationCandidateResponse{
-		Candidate: promptEvaluationOptimizationCandidateToResponse(updatedCandidate),
-		Prompt:    promptResponse,
-	})
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (h *Handler) UpdatePromptEvaluationOptimizationCandidate(w http.ResponseWriter, r *http.Request) {
@@ -527,6 +580,28 @@ func (h *Handler) RejectPromptEvaluationOptimizationCandidate(w http.ResponseWri
 	if reason == "" {
 		reason = "验收者人工判定该优化候选暂不采纳。"
 	}
+	requestHash, err := hashRequestFingerprint(promptEvaluationCandidateRejectFingerprint{
+		CandidateID: uuidToString(candidateID),
+		Reason:      reason,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to fingerprint optimization candidate reject request")
+		return
+	}
+	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	requestActorID := parseUUID(userID)
+	if replay, found, err := h.loadPromptEvaluationCandidateRejectReplay(
+		r.Context(), workspaceUUID, requestActorID, idempotencyKey, requestHash,
+	); err != nil {
+		writePromptEvaluationCandidateRejectReplayError(w, err)
+		return
+	} else if found {
+		writeJSON(w, http.StatusOK, replay)
+		return
+	}
 	candidate, ok := loadPromptEvaluationOptimizationCandidate(w, r, h.Queries, workspaceUUID, candidateID)
 	if !ok {
 		return
@@ -535,11 +610,41 @@ func (h *Handler) RejectPromptEvaluationOptimizationCandidate(w http.ResponseWri
 		writeError(w, http.StatusConflict, "only 待确认 optimization candidates can be rejected")
 		return
 	}
-	updatedCandidate, err := h.Queries.RejectPromptEvaluationOptimizationCandidate(r.Context(), db.RejectPromptEvaluationOptimizationCandidateParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start optimization candidate reject transaction")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	_, err = qtx.ReserveResourceCreateRequest(r.Context(), db.ReserveResourceCreateRequestParams{
+		WorkspaceID: workspaceUUID, ActorID: requestActorID, ResourceType: resourceTypePromptReject,
+		IdempotencyKey: idempotencyKey, RequestHash: requestHash,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		_ = tx.Rollback(r.Context())
+		replay, found, replayErr := h.loadPromptEvaluationCandidateRejectReplay(
+			r.Context(), workspaceUUID, requestActorID, idempotencyKey, requestHash,
+		)
+		if replayErr != nil || !found {
+			if replayErr == nil {
+				replayErr = errors.New("optimization candidate reject replay disappeared after conflict")
+			}
+			writePromptEvaluationCandidateRejectReplayError(w, replayErr)
+			return
+		}
+		writeJSON(w, http.StatusOK, replay)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reserve optimization candidate reject request")
+		return
+	}
+	updatedCandidate, err := qtx.RejectPromptEvaluationOptimizationCandidate(r.Context(), db.RejectPromptEvaluationOptimizationCandidateParams{
 		ID:          candidateID,
 		WorkspaceID: workspaceUUID,
 		Reason:      reason,
-		HandledBy:   parseUUID(userID),
+		HandledBy:   requestActorID,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -549,7 +654,19 @@ func (h *Handler) RejectPromptEvaluationOptimizationCandidate(w http.ResponseWri
 		writeError(w, http.StatusInternalServerError, "failed to reject optimization candidate")
 		return
 	}
-	writeJSON(w, http.StatusOK, promptEvaluationOptimizationCandidateToResponse(updatedCandidate))
+	response := promptEvaluationOptimizationCandidateToResponse(updatedCandidate)
+	if err := completeResourceCreateRequest(
+		r.Context(), qtx, workspaceUUID, requestActorID, resourceTypePromptReject,
+		idempotencyKey, requestHash, candidateID, response,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to complete optimization candidate reject request")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit optimization candidate rejection")
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (h *Handler) SyncPromptEvaluationRunFromTask(w http.ResponseWriter, r *http.Request) {
