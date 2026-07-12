@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -572,22 +573,9 @@ func (h *Handler) CreatePromptEvaluationAssetEvidenceSnapshots(w http.ResponseWr
 	if !ok {
 		return
 	}
-	snapshotType := strings.TrimSpace(r.URL.Query().Get("snapshot_type"))
-	if snapshotType == "" {
-		snapshotType = "验收归档"
-	}
-	if !validPromptEvaluationEvidenceSnapshotType(snapshotType) {
-		writeError(w, http.StatusBadRequest, "snapshot_type must be 手动归档, 验收归档 or 自动归档")
+	snapshotType, limit, ok := parsePromptEvaluationAssetSnapshotQuery(w, r.URL.Query())
+	if !ok {
 		return
-	}
-	limit := int32(20)
-	if value := r.URL.Query().Get("limit"); value != "" {
-		parsed, err := strconv.Atoi(value)
-		if err != nil || parsed < 1 || parsed > 100 {
-			writeError(w, http.StatusBadRequest, "limit must be between 1 and 100")
-			return
-		}
-		limit = int32(parsed)
 	}
 	runs, err := h.Queries.ListPromptEvaluationRuns(r.Context(), db.ListPromptEvaluationRunsParams{
 		WorkspaceID: asset.WorkspaceID,
@@ -648,22 +636,9 @@ func (h *Handler) GetPromptEvaluationAssetEvidenceSnapshotPackage(w http.Respons
 	if !ok {
 		return
 	}
-	snapshotType := strings.TrimSpace(r.URL.Query().Get("snapshot_type"))
-	if snapshotType == "" {
-		snapshotType = "验收归档"
-	}
-	if !validPromptEvaluationEvidenceSnapshotType(snapshotType) {
-		writeError(w, http.StatusBadRequest, "snapshot_type must be 手动归档, 验收归档 or 自动归档")
+	snapshotType, limit, ok := parsePromptEvaluationAssetSnapshotQuery(w, r.URL.Query())
+	if !ok {
 		return
-	}
-	limit := int32(20)
-	if value := r.URL.Query().Get("limit"); value != "" {
-		parsed, err := strconv.Atoi(value)
-		if err != nil || parsed < 1 || parsed > 100 {
-			writeError(w, http.StatusBadRequest, "limit must be between 1 and 100")
-			return
-		}
-		limit = int32(parsed)
 	}
 	runs, err := h.Queries.ListPromptEvaluationRuns(r.Context(), db.ListPromptEvaluationRunsParams{
 		WorkspaceID: asset.WorkspaceID,
@@ -734,6 +709,28 @@ func (h *Handler) GetPromptEvaluationAssetEvidenceSnapshotPackage(w http.Respons
 		},
 	}
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func parsePromptEvaluationAssetSnapshotQuery(w http.ResponseWriter, values url.Values) (string, int32, bool) {
+	snapshotType := strings.TrimSpace(values.Get("snapshot_type"))
+	if snapshotType == "" {
+		snapshotType = "验收归档"
+	}
+	if !validPromptEvaluationEvidenceSnapshotType(snapshotType) {
+		writeError(w, http.StatusBadRequest, "snapshot_type must be 手动归档, 验收归档 or 自动归档")
+		return "", 0, false
+	}
+
+	limit := int32(20)
+	if value := values.Get("limit"); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 1 || parsed > 100 {
+			writeError(w, http.StatusBadRequest, "limit must be between 1 and 100")
+			return "", 0, false
+		}
+		limit = int32(parsed)
+	}
+	return snapshotType, limit, true
 }
 
 func (h *Handler) createPromptEvaluationEvidenceSnapshotRecord(ctx context.Context, workspaceUUID pgtype.UUID, runID pgtype.UUID, snapshotType string, createdBy pgtype.UUID) (db.PromptEvaluationEvidenceSnapshot, error) {
