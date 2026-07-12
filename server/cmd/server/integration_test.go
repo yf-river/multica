@@ -58,13 +58,13 @@ func TestMain(m *testing.M) {
 
 	pool, err := pgxpool.New(ctx, dbURL)
 	if err != nil {
-		fmt.Printf("Skipping integration tests: could not connect to database: %v\n", err)
-		os.Exit(0)
+		fmt.Fprintf(os.Stderr, "server test database configuration failed: %v\n", err)
+		os.Exit(1)
 	}
 	if err := pool.Ping(ctx); err != nil {
-		fmt.Printf("Skipping integration tests: database not reachable: %v\n", err)
+		fmt.Fprintf(os.Stderr, "server test database is required but not reachable: %v\n", err)
 		pool.Close()
-		os.Exit(0)
+		os.Exit(1)
 	}
 
 	testPool = pool
