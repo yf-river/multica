@@ -12,12 +12,12 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-type failCommentEnrichmentDB struct {
+type failNamedQueryDB struct {
 	db.DBTX
 	queryName string
 }
 
-func (f failCommentEnrichmentDB) Query(ctx context.Context, sql string, args ...interface{}) (pgx.Rows, error) {
+func (f failNamedQueryDB) Query(ctx context.Context, sql string, args ...interface{}) (pgx.Rows, error) {
 	if strings.Contains(sql, "-- name: "+f.queryName+" ") {
 		return nil, errors.New("injected comment enrichment failure")
 	}
@@ -35,7 +35,7 @@ func TestListCommentsPreservesEnrichmentFailures(t *testing.T) {
 	for _, queryName := range []string{"ListReactionsByCommentIDs", "ListAttachmentsByCommentIDs"} {
 		t.Run(queryName, func(t *testing.T) {
 			h := *testHandler
-			h.Queries = db.New(failCommentEnrichmentDB{DBTX: testPool, queryName: queryName})
+			h.Queries = db.New(failNamedQueryDB{DBTX: testPool, queryName: queryName})
 			req := newRequest(http.MethodGet, "/api/issues/"+fixture.IssueID+"/comments", nil)
 			req = withURLParam(req, "id", fixture.IssueID)
 			w := httptest.NewRecorder()
