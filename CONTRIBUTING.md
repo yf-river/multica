@@ -250,7 +250,7 @@ make check
 make dev
 make test
 make migrate-up
-make migrate-down
+make migrate-down # rolls back one applied migration
 ```
 
 These generic targets require a valid env file in the current directory.
@@ -266,7 +266,8 @@ The following commands all ensure the target database exists before they continu
 - `make dev`
 - `make test`
 - `make migrate-up`
-- `make migrate-down`
+- `make migrate-down` rolls back only the latest applied migration. Full rollback is
+  intentionally explicit: `make migrate-down-all CONFIRM=yes`.
 - `make check`
 
 That logic lives in `scripts/ensure-postgres.sh`.

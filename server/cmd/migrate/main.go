@@ -48,19 +48,38 @@ type runOptions struct {
 	// concurrent test workers do not block on the production migration
 	// runner if it happens to share the database.
 	AdvisoryLockKey int64
+	// MaxApplied limits how many matching migrations may be changed. Zero
+	// means no limit. The CLI uses one for `down`, making the ordinary
+	// rollback command safe even when the newest files were never applied.
+	MaxApplied int
+}
+
+type migrationCommand struct {
+	Direction  string
+	MaxApplied int
+}
+
+const migrateUsage = "Usage: go run ./cmd/migrate <up|down|down-all --confirm>"
+
+func parseMigrationCommand(args []string) (migrationCommand, error) {
+	switch {
+	case len(args) == 1 && args[0] == "up":
+		return migrationCommand{Direction: "up"}, nil
+	case len(args) == 1 && args[0] == "down":
+		return migrationCommand{Direction: "down", MaxApplied: 1}, nil
+	case len(args) == 2 && args[0] == "down-all" && args[1] == "--confirm":
+		return migrationCommand{Direction: "down"}, nil
+	default:
+		return migrationCommand{}, fmt.Errorf("invalid migration command")
+	}
 }
 
 func main() {
 	logger.Init()
 
-	if len(os.Args) < 2 {
-		fmt.Println("Usage: go run ./cmd/migrate <up|down>")
-		os.Exit(1)
-	}
-
-	direction := os.Args[1]
-	if direction != "up" && direction != "down" {
-		fmt.Println("Usage: go run ./cmd/migrate <up|down>")
+	command, err := parseMigrationCommand(os.Args[1:])
+	if err != nil {
+		fmt.Println(migrateUsage)
 		os.Exit(1)
 	}
 
@@ -82,15 +101,16 @@ func main() {
 		os.Exit(1)
 	}
 
-	files, err := migrations.Files(direction)
+	files, err := migrations.Files(command.Direction)
 	if err != nil {
 		slog.Error("failed to find migration files", "error", err)
 		os.Exit(1)
 	}
 
 	if err := runMigrations(ctx, pool, runOptions{
-		Direction: direction,
-		Files:     files,
+		Direction:  command.Direction,
+		Files:      files,
+		MaxApplied: command.MaxApplied,
 	}); err != nil {
 		slog.Error("migration run failed", "error", err)
 		os.Exit(1)
@@ -216,6 +236,12 @@ func runMigrations(ctx context.Context, pool *pgxpool.Pool, opts runOptions) err
 		}
 
 		fmt.Printf("  %s  %s\n", opts.Direction, version)
+		if opts.MaxApplied > 0 {
+			opts.MaxApplied--
+			if opts.MaxApplied == 0 {
+				break
+			}
+		}
 	}
 
 	return nil

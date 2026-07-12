@@ -185,7 +185,8 @@ make cli ARGS="..."   # Run multica CLI (e.g. make cli ARGS="config")
 make test             # Go tests
 make sqlc             # Regenerate sqlc code after editing SQL in server/pkg/db/queries/
 make migrate-up       # Run database migrations
-make migrate-down     # Rollback migrations
+make migrate-down     # Roll back the latest applied migration
+make migrate-down-all CONFIRM=yes # Destructively roll back every migration
 
 # Run a single TS test (works for any package with a test script)
 pnpm --filter @multica/views exec vitest run auth/login-page.test.tsx

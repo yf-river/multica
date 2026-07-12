@@ -497,3 +497,80 @@ func TestRunMigrationsRejectsInvalidDirection(t *testing.T) {
 		}
 	}
 }
+
+func TestParseMigrationCommand(t *testing.T) {
+	tests := []struct {
+		name       string
+		args       []string
+		direction  string
+		maxApplied int
+		wantErr    bool
+	}{
+		{name: "apply all pending", args: []string{"up"}, direction: "up"},
+		{name: "rollback one", args: []string{"down"}, direction: "down", maxApplied: 1},
+		{name: "confirmed rollback all", args: []string{"down-all", "--confirm"}, direction: "down"},
+		{name: "reject unconfirmed rollback all", args: []string{"down-all"}, wantErr: true},
+		{name: "reject misplaced confirmation", args: []string{"down", "--confirm"}, wantErr: true},
+		{name: "reject extra arguments", args: []string{"up", "unexpected"}, wantErr: true},
+		{name: "reject empty command", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := parseMigrationCommand(tt.args)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("parseMigrationCommand(%q) succeeded: %+v", tt.args, got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("parseMigrationCommand(%q): %v", tt.args, err)
+			}
+			if got.Direction != tt.direction || got.MaxApplied != tt.maxApplied {
+				t.Fatalf("parseMigrationCommand(%q) = %+v, want direction=%q maxApplied=%d", tt.args, got, tt.direction, tt.maxApplied)
+			}
+		})
+	}
+}
+
+func TestRunMigrationsDownLimitCountsAppliedMigrations(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	if err := runMigrations(ctx, f.pool, f.opts()); err != nil {
+		t.Fatalf("apply fixture migrations: %v", err)
+	}
+
+	// Put a never-applied migration first to prove the limit counts actual
+	// rollbacks, not merely inspected files.
+	dir := t.TempDir()
+	missing := filepath.Join(dir, "999_never_applied.down.sql")
+	if err := os.WriteFile(missing, []byte("SELECT 1;\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	downFiles := []string{missing}
+	for i := len(f.versions) - 1; i >= 0; i-- {
+		path := filepath.Join(dir, f.versions[i]+".down.sql")
+		body := fmt.Sprintf("DROP TABLE %s.%s;\n",
+			pgx.Identifier{f.schema}.Sanitize(),
+			pgx.Identifier{f.tableNames[i]}.Sanitize())
+		if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		downFiles = append(downFiles, path)
+	}
+
+	err := runMigrations(ctx, f.pool, runOptions{
+		Direction:             "down",
+		Files:                 downFiles,
+		SchemaMigrationsTable: f.tableFQN,
+		AdvisoryLockKey:       f.lockKey,
+		MaxApplied:            1,
+	})
+	if err != nil {
+		t.Fatalf("roll back one migration: %v", err)
+	}
+	if got, want := f.appliedVersions(t), f.versions[:len(f.versions)-1]; !equalStrings(got, want) {
+		t.Fatalf("applied versions after one rollback = %v, want %v", got, want)
+	}
+}
