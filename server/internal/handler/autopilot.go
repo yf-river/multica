@@ -592,18 +592,18 @@ func (h *Handler) CreateAutopilot(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to link autopilot trigger")
 		return
 	}
+	subs, err := qtx.ListAutopilotSubscribers(r.Context(), autopilot.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to prepare autopilot subscribers")
+		return
+	}
+	resp := autopilotToResponse(autopilot, subs)
+	initialTrigger := h.triggerToResponse(trigger)
+	resp.InitialTrigger = &initialTrigger
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create autopilot")
 		return
 	}
-	subs, err := h.Queries.ListAutopilotSubscribers(r.Context(), autopilot.ID)
-	if err != nil {
-		subs = nil
-	}
-
-	resp := autopilotToResponse(autopilot, subs)
-	initialTrigger := h.triggerToResponse(trigger)
-	resp.InitialTrigger = &initialTrigger
 	h.publish(protocol.EventAutopilotCreated, workspaceID, "member", userID, map[string]any{"autopilot": resp})
 	obsmetrics.RecordEvent(h.Analytics, h.Metrics, analytics.AutopilotCreated(
 		userID,
@@ -878,17 +878,18 @@ func (h *Handler) UpdateAutopilot(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	subs, err := qtx.ListAutopilotSubscribers(r.Context(), autopilot.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to prepare autopilot subscribers")
+		return
+	}
+	resp := autopilotToResponse(autopilot, subs)
 
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update autopilot")
 		return
 	}
 
-	subs, err := h.Queries.ListAutopilotSubscribers(r.Context(), autopilot.ID)
-	if err != nil {
-		subs = nil
-	}
-	resp := autopilotToResponse(autopilot, subs)
 	h.publish(protocol.EventAutopilotUpdated, workspaceID, "member", userID, map[string]any{"autopilot": resp})
 	writeJSON(w, http.StatusOK, resp)
 }

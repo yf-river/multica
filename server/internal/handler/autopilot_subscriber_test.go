@@ -3,15 +3,44 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
+
+type namedQueryFailingTxStarter struct {
+	pool      *pgxpool.Pool
+	queryName string
+}
+
+func (s namedQueryFailingTxStarter) Begin(ctx context.Context) (pgx.Tx, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return namedQueryFailingTx{Tx: tx, queryName: s.queryName}, nil
+}
+
+type namedQueryFailingTx struct {
+	pgx.Tx
+	queryName string
+}
+
+func (tx namedQueryFailingTx) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+	if strings.Contains(sql, "-- name: "+tx.queryName+" ") {
+		return nil, errors.New("injected " + tx.queryName + " failure")
+	}
+	return tx.Tx.Query(ctx, sql, args...)
+}
 
 func installAutopilotSubscriberInsertFailure(t *testing.T) {
 	t.Helper()
@@ -168,6 +197,94 @@ func TestCreateAutopilotPersistsMemberSubscribers(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("autopilot_subscriber rows = %d, want 1", count)
+	}
+}
+
+func TestCreateAutopilotRollsBackWhenSubscriberResponseCannotBePrepared(t *testing.T) {
+	ctx := context.Background()
+	var agentID string
+	if err := testPool.QueryRow(ctx, `SELECT id FROM agent WHERE workspace_id = $1 LIMIT 1`, testWorkspaceID).Scan(&agentID); err != nil {
+		t.Fatalf("load test agent: %v", err)
+	}
+	title := "subscriber-response-failure-" + randomID()[:8]
+	h := *testHandler
+	h.Queries = db.New(failNamedQueryDB{DBTX: testPool, queryName: "ListAutopilotSubscribers"})
+	h.TxStarter = namedQueryFailingTxStarter{pool: testPool, queryName: "ListAutopilotSubscribers"}
+
+	w := httptest.NewRecorder()
+	req := newAutopilotCreateRequest("/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
+		"title":          title,
+		"assignee_id":    agentID,
+		"execution_mode": "create_issue",
+		"subscribers": []map[string]any{
+			{"user_type": "member", "user_id": testUserID},
+		},
+	})
+	h.CreateAutopilot(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("subscriber response failure = %d %s, want 500", w.Code, w.Body.String())
+	}
+	var count int
+	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM autopilot WHERE title = $1`, title).Scan(&count); err != nil {
+		t.Fatalf("count autopilots: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("committed autopilots = %d, want rollback", count)
+	}
+}
+
+func TestUpdateAutopilotRollsBackWhenSubscriberResponseCannotBePrepared(t *testing.T) {
+	ctx := context.Background()
+	var agentID string
+	if err := testPool.QueryRow(ctx, `SELECT id FROM agent WHERE workspace_id = $1 LIMIT 1`, testWorkspaceID).Scan(&agentID); err != nil {
+		t.Fatalf("load test agent: %v", err)
+	}
+	w := httptest.NewRecorder()
+	req := newAutopilotCreateRequest("/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
+		"title":          "subscriber-update-original-" + randomID()[:8],
+		"assignee_id":    agentID,
+		"execution_mode": "create_issue",
+		"subscribers": []map[string]any{
+			{"user_type": "member", "user_id": testUserID},
+		},
+	})
+	testHandler.CreateAutopilot(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create autopilot: %d %s", w.Code, w.Body.String())
+	}
+	var created AutopilotResponse
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode created autopilot: %v", err)
+	}
+	t.Cleanup(func() { _, _ = testPool.Exec(context.Background(), `DELETE FROM autopilot WHERE id = $1`, created.ID) })
+
+	h := *testHandler
+	h.Queries = db.New(failNamedQueryDB{DBTX: testPool, queryName: "ListAutopilotSubscribers"})
+	h.TxStarter = namedQueryFailingTxStarter{pool: testPool, queryName: "ListAutopilotSubscribers"}
+	w = httptest.NewRecorder()
+	req = newRequest(http.MethodPatch, "/api/autopilots/"+created.ID+"?workspace_id="+testWorkspaceID, map[string]any{
+		"title":       "subscriber-update-should-rollback",
+		"subscribers": []map[string]any{},
+	})
+	req = withURLParam(req, "id", created.ID)
+	h.UpdateAutopilot(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("subscriber response failure = %d %s, want 500", w.Code, w.Body.String())
+	}
+
+	var title string
+	var subscribers int
+	if err := testPool.QueryRow(ctx, `
+		SELECT a.title, count(s.user_id)
+		FROM autopilot a
+		LEFT JOIN autopilot_subscriber s ON s.autopilot_id = a.id
+		WHERE a.id = $1
+		GROUP BY a.id
+	`, created.ID).Scan(&title, &subscribers); err != nil {
+		t.Fatalf("load rolled-back autopilot: %v", err)
+	}
+	if title != created.Title || subscribers != 1 {
+		t.Fatalf("autopilot after failure = title %q subscribers %d, want %q/1", title, subscribers, created.Title)
 	}
 }
 
