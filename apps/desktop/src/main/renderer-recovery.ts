@@ -54,7 +54,7 @@ export function installRendererRecoveryHandlers(
   // `responsive` clears it; only a hang that never returns survives to report.
   let unresponsiveBreadcrumbWritten = false;
   const mergeDiagnosticContext = (context: Record<string, unknown>) => ({
-    ...readDiagnosticContext(getDiagnosticContext),
+    ...readDiagnosticContext(getDiagnosticContext, log),
     ...context,
   });
   const maybePromptReload = (payload: ReloadPromptPayload) => {
@@ -192,11 +192,13 @@ function defaultDevLog(tag: string, ...args: unknown[]) {
 
 function readDiagnosticContext(
   getDiagnosticContext: (() => Record<string, unknown>) | undefined,
+  log: (tag: string, ...args: unknown[]) => void,
 ) {
   if (!getDiagnosticContext) return {};
   try {
     return getDiagnosticContext();
-  } catch {
+  } catch (error) {
+    log("diagnostic-context-error", formatError(error));
     return {};
   }
 }
