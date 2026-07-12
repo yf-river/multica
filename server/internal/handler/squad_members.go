@@ -3,12 +3,15 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -394,7 +397,15 @@ func (h *Handler) UpdateSquadMemberRole(w http.ResponseWriter, r *http.Request) 
 		Role:       req.Role,
 	})
 	if err != nil {
-		writeError(w, http.StatusNotFound, "squad member not found")
+		if writeClientClosedIfCanceled(w, err) {
+			return
+		}
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "squad member not found")
+			return
+		}
+		slog.Error("update squad member role failed", "error", err, "squad_id", uuidToString(squad.ID), "member_id", req.MemberID)
+		writeError(w, http.StatusInternalServerError, "failed to update squad member role")
 		return
 	}
 
