@@ -24,9 +24,9 @@
     "databaseFunctions": 9,
     "databaseTriggers": 4,
     "databaseIndexes": 188,
-    "migrations": 120,
+    "migrations": 122,
     "sqlcModules": 53,
-    "sqlcQueries": 576,
+    "sqlcQueries": 577,
     "goWebsocketEvents": 80,
     "typescriptWebsocketEvents": 70,
     "zustandStores": 39,
@@ -6989,6 +6989,32 @@
           "droppedFunctions": [],
           "droppedTriggers": [],
           "droppedIndexes": []
+        },
+        {
+          "version": 61,
+          "name": "add_prompt_evaluation_agent_run_request",
+          "direction": "down",
+          "source": "server/migrations/061_add_prompt_evaluation_agent_run_request.down.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 61,
+          "name": "add_prompt_evaluation_agent_run_request",
+          "direction": "up",
+          "source": "server/migrations/061_add_prompt_evaluation_agent_run_request.up.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
         }
       ],
       "tables": [
@@ -10721,6 +10747,11 @@
               "name": "CreatePromptEvaluationRun",
               "command": "one",
               "source": "server/pkg/db/queries/prompt_evaluation_run.sql#CreatePromptEvaluationRun"
+            },
+            {
+              "name": "CreatePromptEvaluationRunWithID",
+              "command": "one",
+              "source": "server/pkg/db/queries/prompt_evaluation_run.sql#CreatePromptEvaluationRunWithID"
             },
             {
               "name": "CreatePromptEvaluationTrial",
@@ -18829,6 +18860,7 @@
           "server/internal/handler/personal_access_token.go",
           "server/internal/handler/project_resource.go",
           "server/internal/handler/project.go",
+          "server/internal/handler/prompt_evaluation_agent_run_idempotency.go",
           "server/internal/handler/prompt_evaluation_agent_runtime.go",
           "server/internal/handler/prompt_evaluation_asset_mappers.go",
           "server/internal/handler/prompt_evaluation_asset.go",

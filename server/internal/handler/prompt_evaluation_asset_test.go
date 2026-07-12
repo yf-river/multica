@@ -3076,6 +3076,22 @@ func TestRunPromptEvaluationAssetAgentUsesRequestedAgent(t *testing.T) {
 
 func createPromptEvaluationAgentRunFixture(t *testing.T, assetName string, caseName string) (PromptEvaluationAssetResponse, PromptEvaluationAgentRunResponse, string) {
 	t.Helper()
+	created, runtimeID := createPromptEvaluationAgentRunAssetFixture(t, assetName, caseName)
+
+	runW := httptest.NewRecorder()
+	testHandler.RunPromptEvaluationAssetAgent(runW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+created.ID+"/agent-run", nil), "id", created.ID))
+	if runW.Code != http.StatusAccepted {
+		t.Fatalf("agent run status = %d, body = %s", runW.Code, runW.Body.String())
+	}
+	var resp PromptEvaluationAgentRunResponse
+	if err := json.Unmarshal(runW.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode agent run response: %v", err)
+	}
+	return created, resp, runtimeID
+}
+
+func createPromptEvaluationAgentRunAssetFixture(t *testing.T, assetName string, caseName string) (PromptEvaluationAssetResponse, string) {
+	t.Helper()
 	var runtimeID string
 	if err := testPool.QueryRow(context.Background(), `
 		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, scope, last_seen_at)
@@ -3109,17 +3125,7 @@ func createPromptEvaluationAgentRunFixture(t *testing.T, assetName string, caseN
 	if err := json.Unmarshal(createW.Body.Bytes(), &created); err != nil {
 		t.Fatalf("decode create response: %v", err)
 	}
-
-	runW := httptest.NewRecorder()
-	testHandler.RunPromptEvaluationAssetAgent(runW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+created.ID+"/agent-run", nil), "id", created.ID))
-	if runW.Code != http.StatusAccepted {
-		t.Fatalf("agent run status = %d, body = %s", runW.Code, runW.Body.String())
-	}
-	var resp PromptEvaluationAgentRunResponse
-	if err := json.Unmarshal(runW.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode agent run response: %v", err)
-	}
-	return created, resp, runtimeID
+	return created, runtimeID
 }
 
 func TestPromptEvaluationOptimizationCandidatePublishKeepsSourcePrompt(t *testing.T) {

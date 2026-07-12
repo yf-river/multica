@@ -49,7 +49,11 @@ test.describe("训练与评估 daemon 协议闭环", () => {
       status: "启用",
     });
 
-    const queued = await api.runPromptEvaluationAssetAgent(asset.id);
+    const requestId = crypto.randomUUID();
+    const queued = await api.runPromptEvaluationAssetAgent(asset.id, requestId);
+    const recovered = await api.runPromptEvaluationAssetAgent(asset.id, requestId);
+    expect(recovered).toEqual(queued);
+    expect(queued.run.id).toBe(requestId);
     expect(queued.runtime_id).toBe(runtime.id);
 
     const claimed = await api.claimDaemonTask(runtime.id);

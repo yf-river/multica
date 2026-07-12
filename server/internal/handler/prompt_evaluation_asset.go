@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -1094,16 +1096,44 @@ func (h *Handler) RunPromptEvaluationAsset(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	workspaceID, ok := parseUUIDOrBadRequest(w, h.resolveWorkspaceID(r), "workspace_id")
+	if !ok {
+		return
+	}
+	assetID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "prompt evaluation asset id")
+	if !ok {
+		return
+	}
+	requestHash, err := hashRequestFingerprint(promptEvaluationAgentRunFingerprint{AssetID: uuidToString(assetID)})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to fingerprint prompt evaluation agent run")
+		return
+	}
+	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	requestActorID := parseUUID(userID)
+	if replay, found, err := h.loadPromptEvaluationAgentRunReplay(
+		r.Context(), workspaceID, requestActorID, idempotencyKey, requestHash,
+	); err != nil {
+		writePromptEvaluationAgentRunReplayError(w, err)
+		return
+	} else if found {
+		writeJSON(w, http.StatusAccepted, replay)
+		return
+	}
+
 	asset, ok := h.loadPromptEvaluationAsset(w, r)
 	if !ok {
 		return
 	}
 	if !asset.PromptID.Valid {
 		writeError(w, http.StatusBadRequest, "prompt_id is required to run an evaluation asset with an agent")
-		return
-	}
-	userID, ok := requireUserID(w, r)
-	if !ok {
 		return
 	}
 	prompt, err := h.Queries.GetPromptLibraryItemInWorkspace(r.Context(), db.GetPromptLibraryItemInWorkspaceParams{
@@ -1137,6 +1167,29 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
+	_, err = qtx.ReserveResourceCreateRequest(r.Context(), db.ReserveResourceCreateRequestParams{
+		WorkspaceID: workspaceID, ActorID: requestActorID, ResourceType: resourceTypePromptEvaluationRun,
+		IdempotencyKey: idempotencyKey, RequestHash: requestHash,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		_ = tx.Rollback(r.Context())
+		replay, found, replayErr := h.loadPromptEvaluationAgentRunReplay(
+			r.Context(), workspaceID, requestActorID, idempotencyKey, requestHash,
+		)
+		if replayErr != nil || !found {
+			if replayErr == nil {
+				replayErr = errors.New("prompt evaluation agent run replay disappeared after conflict")
+			}
+			writePromptEvaluationAgentRunReplayError(w, replayErr)
+			return
+		}
+		writeJSON(w, http.StatusAccepted, replay)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reserve prompt evaluation agent run")
+		return
+	}
 
 	session, err := qtx.CreateChatSession(r.Context(), db.CreateChatSessionParams{
 		WorkspaceID: asset.WorkspaceID,
@@ -1167,7 +1220,7 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	run, ok := h.persistPromptEvaluationQueuedAgentRun(w, r, qtx, asset, prompt, agentRow, runtimeRow, task.ID, session.ID, parseUUID(userID), "评测运行", payload, cases)
+	run, ok := h.persistPromptEvaluationQueuedAgentRun(w, r, qtx, idempotencyKey, asset, prompt, agentRow, runtimeRow, task.ID, session.ID, requestActorID, "评测运行", payload, cases)
 	if !ok {
 		return
 	}
@@ -1202,12 +1255,7 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusInternalServerError, "failed to save training evaluation agent run")
 		return
 	}
-	if err := tx.Commit(r.Context()); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to commit training evaluation agent run")
-		return
-	}
-	h.TaskService.PublishChatTaskEnqueued(r.Context(), task)
-	writeJSON(w, http.StatusAccepted, PromptEvaluationAgentRunResponse{
+	response := PromptEvaluationAgentRunResponse{
 		Asset:         promptEvaluationAssetToResponse(updated),
 		Run:           promptEvaluationRunToResponse(run),
 		TaskID:        uuidToString(task.ID),
@@ -1217,5 +1265,18 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 		Model:         promptEvaluationModelForAgent(agentRow),
 		Status:        "已入队",
 		Message:       promptEvaluationAgentRunMessage(),
-	})
+	}
+	if err := completeResourceCreateRequest(
+		r.Context(), qtx, workspaceID, requestActorID, resourceTypePromptEvaluationRun,
+		idempotencyKey, requestHash, run.ID, response,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to complete prompt evaluation agent run")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit training evaluation agent run")
+		return
+	}
+	h.TaskService.PublishChatTaskEnqueued(r.Context(), task)
+	writeJSON(w, http.StatusAccepted, response)
 }

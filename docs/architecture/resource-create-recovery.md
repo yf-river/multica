@@ -43,6 +43,13 @@ active returns `409 agent_playground_judgement_active` instead of detaching a
 still-running task. A different judge may be selected after the prior judgement
 has reached a terminal state and been synchronized.
 
+Prompt Evaluation Agent Run treats one external invocation as a compound
+resource. Its Chat Session, user Message, Agent Task, structured Run and Trial
+rows, Asset history update and exact `202` response witness commit together.
+The request UUID is the Run UUID. Concurrent or response-loss retries return
+the stored response and never append a second Asset history entry or publish a
+second task wake-up; reusing that key for another Asset is rejected.
+
 External credential profiles use an account-scoped variant because they are
 not workspace resources and their request may contain a secret. The request
 UUID is also the profile UUID, while the profile row stores only the UUID and a

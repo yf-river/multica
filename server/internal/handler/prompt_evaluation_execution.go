@@ -106,13 +106,14 @@ func (h *Handler) persistPromptEvaluationLocalRun(w http.ResponseWriter, r *http
 	return run, true
 }
 
-func (h *Handler) persistPromptEvaluationQueuedAgentRun(w http.ResponseWriter, r *http.Request, queries *db.Queries, asset db.PromptEvaluationAsset, prompt db.PromptLibraryItem, agent db.Agent, runtime db.AgentRuntime, taskID pgtype.UUID, chatSessionID pgtype.UUID, createdBy pgtype.UUID, triggerSource string, payload map[string]any, cases []map[string]any) (db.PromptEvaluationRun, bool) {
+func (h *Handler) persistPromptEvaluationQueuedAgentRun(w http.ResponseWriter, r *http.Request, queries *db.Queries, runID pgtype.UUID, asset db.PromptEvaluationAsset, prompt db.PromptLibraryItem, agent db.Agent, runtime db.AgentRuntime, taskID pgtype.UUID, chatSessionID pgtype.UUID, createdBy pgtype.UUID, triggerSource string, payload map[string]any, cases []map[string]any) (db.PromptEvaluationRun, bool) {
 	datasetVersionBindings, ok := h.promptEvaluationDatasetVersionBindings(w, r, asset.WorkspaceID, payload)
 	if !ok {
 		return db.PromptEvaluationRun{}, false
 	}
 	dimensionScores := pendingPromptEvaluationExperimentDimensionScores(promptEvaluationExperimentDimensions(payload), len(cases))
-	run, err := queries.CreatePromptEvaluationRun(r.Context(), db.CreatePromptEvaluationRunParams{
+	run, err := queries.CreatePromptEvaluationRunWithID(r.Context(), db.CreatePromptEvaluationRunWithIDParams{
+		ID:                runID,
 		WorkspaceID:       asset.WorkspaceID,
 		AssetID:           asset.ID,
 		PromptID:          asset.PromptID,

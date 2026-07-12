@@ -60,6 +60,28 @@ INSERT INTO prompt_evaluation_run (
 )
 RETURNING *;
 
+-- name: CreatePromptEvaluationRunWithID :one
+INSERT INTO prompt_evaluation_run (
+    id, workspace_id, asset_id, prompt_id, run_kind, status, trigger_source,
+    agent_id, runtime_id, task_id, chat_session_id, model, runtime_provider,
+    total_cases, passed_cases, failed_cases, pass_rate, total_duration_ms,
+    average_duration_ms, input_tokens, output_tokens, estimated_cost,
+    failure_reason, conclusion, metrics, evidence, started_at, completed_at,
+    created_by
+) VALUES (
+    $1, $2, $3, sqlc.narg('prompt_id'), $4, $5,
+    COALESCE(sqlc.narg('trigger_source'), '手动'), sqlc.narg('agent_id'),
+    sqlc.narg('runtime_id'), sqlc.narg('task_id'), sqlc.narg('chat_session_id'),
+    COALESCE(sqlc.narg('model'), ''), COALESCE(sqlc.narg('runtime_provider'), ''),
+    $6, $7, $8, $9, $10, $11, $12, $13, $14,
+    COALESCE(sqlc.narg('failure_reason'), ''), COALESCE(sqlc.narg('conclusion'), ''),
+    COALESCE(sqlc.narg('metrics')::jsonb, '{}'::jsonb),
+    COALESCE(sqlc.narg('evidence')::jsonb, '{}'::jsonb),
+    COALESCE(sqlc.narg('started_at'), now()), sqlc.narg('completed_at'),
+    sqlc.narg('created_by')
+)
+RETURNING *;
+
 -- name: ListPromptEvaluationRuns :many
 SELECT * FROM prompt_evaluation_run
 WHERE workspace_id = $1

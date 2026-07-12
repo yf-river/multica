@@ -240,6 +240,134 @@ func (q *Queries) CreatePromptEvaluationRun(ctx context.Context, arg CreatePromp
 	return i, err
 }
 
+const createPromptEvaluationRunWithID = `-- name: CreatePromptEvaluationRunWithID :one
+INSERT INTO prompt_evaluation_run (
+    id, workspace_id, asset_id, prompt_id, run_kind, status, trigger_source,
+    agent_id, runtime_id, task_id, chat_session_id, model, runtime_provider,
+    total_cases, passed_cases, failed_cases, pass_rate, total_duration_ms,
+    average_duration_ms, input_tokens, output_tokens, estimated_cost,
+    failure_reason, conclusion, metrics, evidence, started_at, completed_at,
+    created_by
+) VALUES (
+    $1, $2, $3, $15, $4, $5,
+    COALESCE($16, '手动'), $17,
+    $18, $19, $20,
+    COALESCE($21, ''), COALESCE($22, ''),
+    $6, $7, $8, $9, $10, $11, $12, $13, $14,
+    COALESCE($23, ''), COALESCE($24, ''),
+    COALESCE($25::jsonb, '{}'::jsonb),
+    COALESCE($26::jsonb, '{}'::jsonb),
+    COALESCE($27, now()), $28,
+    $29
+)
+RETURNING id, workspace_id, asset_id, prompt_id, run_kind, status, trigger_source, agent_id, runtime_id, task_id, chat_session_id, model, runtime_provider, total_cases, passed_cases, failed_cases, pass_rate, total_duration_ms, average_duration_ms, input_tokens, output_tokens, estimated_cost, failure_reason, conclusion, metrics, evidence, started_at, completed_at, created_by, created_at, updated_at, review_decision, review_note, reviewed_by, reviewed_at
+`
+
+type CreatePromptEvaluationRunWithIDParams struct {
+	ID                pgtype.UUID        `json:"id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	AssetID           pgtype.UUID        `json:"asset_id"`
+	RunKind           string             `json:"run_kind"`
+	Status            string             `json:"status"`
+	TotalCases        int32              `json:"total_cases"`
+	PassedCases       int32              `json:"passed_cases"`
+	FailedCases       int32              `json:"failed_cases"`
+	PassRate          float64            `json:"pass_rate"`
+	TotalDurationMs   int64              `json:"total_duration_ms"`
+	AverageDurationMs int64              `json:"average_duration_ms"`
+	InputTokens       int32              `json:"input_tokens"`
+	OutputTokens      int32              `json:"output_tokens"`
+	EstimatedCost     float64            `json:"estimated_cost"`
+	PromptID          pgtype.UUID        `json:"prompt_id"`
+	TriggerSource     interface{}        `json:"trigger_source"`
+	AgentID           pgtype.UUID        `json:"agent_id"`
+	RuntimeID         pgtype.UUID        `json:"runtime_id"`
+	TaskID            pgtype.UUID        `json:"task_id"`
+	ChatSessionID     pgtype.UUID        `json:"chat_session_id"`
+	Model             interface{}        `json:"model"`
+	RuntimeProvider   interface{}        `json:"runtime_provider"`
+	FailureReason     interface{}        `json:"failure_reason"`
+	Conclusion        interface{}        `json:"conclusion"`
+	Metrics           []byte             `json:"metrics"`
+	Evidence          []byte             `json:"evidence"`
+	StartedAt         interface{}        `json:"started_at"`
+	CompletedAt       pgtype.Timestamptz `json:"completed_at"`
+	CreatedBy         pgtype.UUID        `json:"created_by"`
+}
+
+func (q *Queries) CreatePromptEvaluationRunWithID(ctx context.Context, arg CreatePromptEvaluationRunWithIDParams) (PromptEvaluationRun, error) {
+	row := q.db.QueryRow(ctx, createPromptEvaluationRunWithID,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.AssetID,
+		arg.RunKind,
+		arg.Status,
+		arg.TotalCases,
+		arg.PassedCases,
+		arg.FailedCases,
+		arg.PassRate,
+		arg.TotalDurationMs,
+		arg.AverageDurationMs,
+		arg.InputTokens,
+		arg.OutputTokens,
+		arg.EstimatedCost,
+		arg.PromptID,
+		arg.TriggerSource,
+		arg.AgentID,
+		arg.RuntimeID,
+		arg.TaskID,
+		arg.ChatSessionID,
+		arg.Model,
+		arg.RuntimeProvider,
+		arg.FailureReason,
+		arg.Conclusion,
+		arg.Metrics,
+		arg.Evidence,
+		arg.StartedAt,
+		arg.CompletedAt,
+		arg.CreatedBy,
+	)
+	var i PromptEvaluationRun
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AssetID,
+		&i.PromptID,
+		&i.RunKind,
+		&i.Status,
+		&i.TriggerSource,
+		&i.AgentID,
+		&i.RuntimeID,
+		&i.TaskID,
+		&i.ChatSessionID,
+		&i.Model,
+		&i.RuntimeProvider,
+		&i.TotalCases,
+		&i.PassedCases,
+		&i.FailedCases,
+		&i.PassRate,
+		&i.TotalDurationMs,
+		&i.AverageDurationMs,
+		&i.InputTokens,
+		&i.OutputTokens,
+		&i.EstimatedCost,
+		&i.FailureReason,
+		&i.Conclusion,
+		&i.Metrics,
+		&i.Evidence,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ReviewDecision,
+		&i.ReviewNote,
+		&i.ReviewedBy,
+		&i.ReviewedAt,
+	)
+	return i, err
+}
+
 const createPromptEvaluationTrial = `-- name: CreatePromptEvaluationTrial :one
 INSERT INTO prompt_evaluation_trial (
     run_id,

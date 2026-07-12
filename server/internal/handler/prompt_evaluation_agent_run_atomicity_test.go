@@ -6,9 +6,84 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
+
+func TestRunPromptEvaluationAssetAgentRecoversExactCompoundResult(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	cleanupPromptEvaluationAgentRunTest(t)
+	assetName := "recoverable agent evaluation " + uuid.NewString()
+	asset, _ := createPromptEvaluationAgentRunAssetFixture(t, assetName, "response loss")
+	key := uuid.NewString()
+	run := func() *httptest.ResponseRecorder {
+		req := withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+asset.ID+"/agent-run", nil), "id", asset.ID)
+		req.Header.Set("Idempotency-Key", key)
+		w := httptest.NewRecorder()
+		testHandler.RunPromptEvaluationAssetAgent(w, req)
+		return w
+	}
+	first := run()
+	replay := run()
+	if first.Code != http.StatusAccepted {
+		t.Fatalf("first agent run = %d %s", first.Code, first.Body.String())
+	}
+	if replay.Code != http.StatusAccepted || replay.Body.String() != first.Body.String() {
+		t.Fatalf("agent run replay = %d %s, want exact %s", replay.Code, replay.Body.String(), first.Body.String())
+	}
+	var firstResponse PromptEvaluationAgentRunResponse
+	if err := json.Unmarshal(first.Body.Bytes(), &firstResponse); err != nil {
+		t.Fatal(err)
+	}
+	if firstResponse.Run.ID != key {
+		t.Fatalf("run id = %s, want request identity %s", firstResponse.Run.ID, key)
+	}
+	responses := make(chan *httptest.ResponseRecorder, 8)
+	var wait sync.WaitGroup
+	for range 8 {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			responses <- run()
+		}()
+	}
+	wait.Wait()
+	close(responses)
+	for response := range responses {
+		if response.Code != http.StatusAccepted || response.Body.String() != first.Body.String() {
+			t.Fatalf("concurrent agent run replay = %d %s, want exact", response.Code, response.Body.String())
+		}
+	}
+	otherAsset, _ := createPromptEvaluationAgentRunAssetFixture(t, "different agent evaluation "+uuid.NewString(), "different")
+	conflictReq := withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+otherAsset.ID+"/agent-run", nil), "id", otherAsset.ID)
+	conflictReq.Header.Set("Idempotency-Key", key)
+	conflict := httptest.NewRecorder()
+	testHandler.RunPromptEvaluationAssetAgent(conflict, conflictReq)
+	if conflict.Code != http.StatusConflict {
+		t.Fatalf("changed asset replay = %d %s, want 409", conflict.Code, conflict.Body.String())
+	}
+
+	var sessions, tasks, runs, trials int
+	if err := testPool.QueryRow(context.Background(), `SELECT
+		(SELECT count(*) FROM chat_session WHERE workspace_id=$1 AND title=$2),
+		(SELECT count(*) FROM agent_task_queue WHERE chat_session_id IN (
+			SELECT id FROM chat_session WHERE workspace_id=$1 AND title=$2
+		)),
+		(SELECT count(*) FROM prompt_evaluation_run WHERE asset_id=$3),
+		(SELECT count(*) FROM prompt_evaluation_trial WHERE asset_id=$3)
+	`, testWorkspaceID, "训练评估："+assetName, asset.ID).Scan(&sessions, &tasks, &runs, &trials); err != nil {
+		t.Fatal(err)
+	}
+	if sessions != 1 || tasks != 1 || runs != 1 || trials != 1 {
+		t.Fatalf("agent run compound writes = sessions:%d tasks:%d runs:%d trials:%d, want 1/1/1/1", sessions, tasks, runs, trials)
+	}
+}
 
 func TestRunPromptEvaluationAssetAgentRollsBackEveryWrite(t *testing.T) {
 	if testHandler == nil || testPool == nil {
@@ -73,16 +148,19 @@ func TestRunPromptEvaluationAssetAgentRollsBackEveryWrite(t *testing.T) {
 	}
 
 	runW := httptest.NewRecorder()
-	testHandler.RunPromptEvaluationAssetAgent(runW, withURLParam(
+	runKey := uuid.NewString()
+	runReq := withURLParam(
 		newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+asset.ID+"/agent-run", nil),
 		"id",
 		asset.ID,
-	))
+	)
+	runReq.Header.Set("Idempotency-Key", runKey)
+	testHandler.RunPromptEvaluationAssetAgent(runW, runReq)
 	if runW.Code != http.StatusInternalServerError {
 		t.Fatalf("forced agent run failure: expected 500, got %d: %s", runW.Code, runW.Body.String())
 	}
 
-	var sessions, messages, tasks, runs, trials int
+	var sessions, messages, tasks, runs, trials, requests int
 	title := "训练评估：" + assetName
 	if err := testPool.QueryRow(context.Background(), `
 		SELECT
@@ -90,11 +168,62 @@ func TestRunPromptEvaluationAssetAgentRollsBackEveryWrite(t *testing.T) {
 			(SELECT count(*) FROM chat_message WHERE chat_session_id IN (SELECT id FROM chat_session WHERE workspace_id = $1 AND title = $2)),
 			(SELECT count(*) FROM agent_task_queue WHERE chat_session_id IN (SELECT id FROM chat_session WHERE workspace_id = $1 AND title = $2)),
 			(SELECT count(*) FROM prompt_evaluation_run WHERE asset_id = $3),
-			(SELECT count(*) FROM prompt_evaluation_trial WHERE asset_id = $3)
-	`, testWorkspaceID, title, asset.ID).Scan(&sessions, &messages, &tasks, &runs, &trials); err != nil {
+			(SELECT count(*) FROM prompt_evaluation_trial WHERE asset_id = $3),
+			(SELECT count(*) FROM resource_create_request WHERE resource_type='prompt_evaluation_agent_run' AND idempotency_key=$4)
+	`, testWorkspaceID, title, asset.ID, runKey).Scan(&sessions, &messages, &tasks, &runs, &trials, &requests); err != nil {
 		t.Fatalf("count agent run writes: %v", err)
 	}
-	if sessions != 0 || messages != 0 || tasks != 0 || runs != 0 || trials != 0 {
-		t.Fatalf("failed agent run left writes: sessions=%d messages=%d tasks=%d runs=%d trials=%d", sessions, messages, tasks, runs, trials)
+	if sessions != 0 || messages != 0 || tasks != 0 || runs != 0 || trials != 0 || requests != 0 {
+		t.Fatalf("failed agent run left writes: sessions=%d messages=%d tasks=%d runs=%d trials=%d requests=%d", sessions, messages, tasks, runs, trials, requests)
+	}
+}
+
+func TestRunPromptEvaluationAssetAgentCompletionFailureRollsBackEveryWrite(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	cleanupPromptEvaluationAgentRunTest(t)
+	assetName := "agent run completion rollback " + uuid.NewString()
+	asset, _ := createPromptEvaluationAgentRunAssetFixture(t, assetName, "completion failure")
+	key := uuid.NewString()
+	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
+	functionName := "prompt_eval_completion_fail_fn_" + suffix
+	triggerName := "prompt_eval_completion_fail_" + suffix
+	if _, err := testPool.Exec(context.Background(), fmt.Sprintf(`
+		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF NEW.resource_type='prompt_evaluation_agent_run' AND NEW.idempotency_key='%s'::uuid AND NEW.response_body IS NOT NULL THEN
+				RAISE EXCEPTION 'forced agent run completion failure';
+			END IF;
+			RETURN NEW;
+		END;
+		$$;
+		CREATE TRIGGER %s BEFORE UPDATE ON resource_create_request
+		FOR EACH ROW EXECUTE FUNCTION %s();
+	`, functionName, key, triggerName, functionName)); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON resource_create_request; DROP FUNCTION IF EXISTS %s()`, triggerName, functionName))
+	})
+	req := withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+asset.ID+"/agent-run", nil), "id", asset.ID)
+	req.Header.Set("Idempotency-Key", key)
+	w := httptest.NewRecorder()
+	testHandler.RunPromptEvaluationAssetAgent(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("completion failure = %d %s, want 500", w.Code, w.Body.String())
+	}
+	var sessions, tasks, runs, trials, requests int
+	if err := testPool.QueryRow(context.Background(), `SELECT
+		(SELECT count(*) FROM chat_session WHERE workspace_id=$1 AND title=$2),
+		(SELECT count(*) FROM agent_task_queue WHERE chat_session_id IN (SELECT id FROM chat_session WHERE workspace_id=$1 AND title=$2)),
+		(SELECT count(*) FROM prompt_evaluation_run WHERE asset_id=$3),
+		(SELECT count(*) FROM prompt_evaluation_trial WHERE asset_id=$3),
+		(SELECT count(*) FROM resource_create_request WHERE resource_type='prompt_evaluation_agent_run' AND idempotency_key=$4)
+	`, testWorkspaceID, "训练评估："+assetName, asset.ID, key).Scan(&sessions, &tasks, &runs, &trials, &requests); err != nil {
+		t.Fatal(err)
+	}
+	if sessions != 0 || tasks != 0 || runs != 0 || trials != 0 || requests != 0 {
+		t.Fatalf("completion failure left sessions:%d tasks:%d runs:%d trials:%d requests:%d", sessions, tasks, runs, trials, requests)
 	}
 }

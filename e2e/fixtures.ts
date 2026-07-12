@@ -1787,12 +1787,23 @@ export class TestApiClient {
     return res.json();
   }
 
-  async runPromptEvaluationAssetAgent(id: string): Promise<PromptEvaluationAgentRunResponse> {
-    const res = await this.authedFetch(`/api/prompt-evaluation-assets/${id}/agent-run`, { method: "POST" });
-    if (!res.ok) {
-      throw new Error(`run prompt evaluation asset agent failed: ${res.status} ${await res.text()}`);
+  async runPromptEvaluationAssetAgent(id: string, requestId = crypto.randomUUID()): Promise<PromptEvaluationAgentRunResponse> {
+    const attempt = async () => {
+      const res = await this.authedFetch(`/api/prompt-evaluation-assets/${id}/agent-run`, {
+        method: "POST",
+        headers: { "Idempotency-Key": requestId },
+      });
+      if (!res.ok) {
+        throw new Error(`run prompt evaluation asset agent failed: ${res.status} ${await res.text()}`);
+      }
+      return res.json();
+    };
+    try {
+      return await attempt();
+    } catch (error) {
+      if (!(error instanceof TypeError)) throw error;
+      return attempt();
     }
-    return res.json();
   }
 
   async syncPromptEvaluationRun(runId: string): Promise<PromptEvaluationRun> {

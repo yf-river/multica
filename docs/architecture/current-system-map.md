@@ -25,9 +25,9 @@ evidence reviewable by humans.
 | Database functions | 9 |
 | Database triggers | 4 |
 | Database indexes | 188 |
-| Migration files (up + down) | 120 |
+| Migration files (up + down) | 122 |
 | sqlc modules | 53 |
-| sqlc queries | 576 |
+| sqlc queries | 577 |
 | Go WebSocket events | 80 |
 | TypeScript WebSocket events | 70 |
 | Zustand store definitions | 39 |
@@ -613,6 +613,8 @@ intentionally platform-specific.
 | 59 | add_workspace_member_create_request | up | — | 0 | 0 | 0 | `server/migrations/059_add_workspace_member_create_request.up.sql` |
 | 60 | add_agent_playground_create_request | down | — | 0 | 0 | 0 | `server/migrations/060_add_agent_playground_create_request.down.sql` |
 | 60 | add_agent_playground_create_request | up | — | 0 | 0 | 0 | `server/migrations/060_add_agent_playground_create_request.up.sql` |
+| 61 | add_prompt_evaluation_agent_run_request | down | — | 0 | 0 | 0 | `server/migrations/061_add_prompt_evaluation_agent_run_request.down.sql` |
+| 61 | add_prompt_evaluation_agent_run_request | up | — | 0 | 0 | 0 | `server/migrations/061_add_prompt_evaluation_agent_run_request.up.sql` |
 
 ### Current tables discovered from up migrations
 
@@ -715,7 +717,7 @@ intentionally platform-specific.
 
 ### sqlc modules
 
-All 576 query names, commands, and stable source anchors are stored in the JSON companion.
+All 577 query names, commands, and stable source anchors are stored in the JSON companion.
 
 | Module | Queries | SQL source | Generated source |
 | --- | --- | --- | --- |
@@ -751,7 +753,7 @@ All 576 query names, commands, and stable source anchors are stored in the JSON 
 | prompt_evaluation_dimension_score | 5 | `server/pkg/db/queries/prompt_evaluation_dimension_score.sql` | `server/pkg/db/generated/prompt_evaluation_dimension_score.sql.go` |
 | prompt_evaluation_evidence_snapshot | 3 | `server/pkg/db/queries/prompt_evaluation_evidence_snapshot.sql` | `server/pkg/db/generated/prompt_evaluation_evidence_snapshot.sql.go` |
 | prompt_evaluation_optimization_candidate | 6 | `server/pkg/db/queries/prompt_evaluation_optimization_candidate.sql` | `server/pkg/db/generated/prompt_evaluation_optimization_candidate.sql.go` |
-| prompt_evaluation_run | 15 | `server/pkg/db/queries/prompt_evaluation_run.sql` | `server/pkg/db/generated/prompt_evaluation_run.sql.go` |
+| prompt_evaluation_run | 16 | `server/pkg/db/queries/prompt_evaluation_run.sql` | `server/pkg/db/generated/prompt_evaluation_run.sql.go` |
 | prompt_evaluation_test_suite_case | 4 | `server/pkg/db/queries/prompt_evaluation_test_suite_case.sql` | `server/pkg/db/generated/prompt_evaluation_test_suite_case.sql.go` |
 | prompt_library | 7 | `server/pkg/db/queries/prompt_library.sql` | `server/pkg/db/generated/prompt_library.sql.go` |
 | prompt_library_trial | 2 | `server/pkg/db/queries/prompt_library_trial.sql` | `server/pkg/db/generated/prompt_library_trial.sql.go` |
@@ -1088,7 +1090,7 @@ written to the generated outputs.
 | filesystem | 43 | `server/cmd/migrate/main.go`, `server/cmd/multica/cmd_agent.go`, `server/cmd/multica/cmd_attachment.go`, `server/cmd/multica/cmd_daemon_windows.go`, `server/cmd/multica/cmd_daemon.go`, `server/cmd/multica/cmd_issue_comments.go`, `server/cmd/multica/cmd_issue_pull_request.go`, `server/cmd/multica/cmd_issue.go` |
 | object-storage | 1 | `server/internal/storage/s3.go` |
 | outbound-http | 17 | `server/cmd/multica/cmd_daemon.go`, `server/cmd/multica/cmd_setup.go`, `server/internal/analytics/posthog.go`, `server/internal/auth/cloud_pat.go`, `server/internal/cli/client.go`, `server/internal/cli/update.go`, `server/internal/daemon/client.go`, `server/internal/daemon/task_artifacts.go` |
-| postgresql | 139 | `server/cmd/migrate/main.go`, `server/cmd/server/activity_listeners.go`, `server/cmd/server/autopilot_failure_monitor.go`, `server/cmd/server/autopilot_scheduler.go`, `server/cmd/server/chat_projection.go`, `server/cmd/server/comment_projection.go`, `server/cmd/server/dbstats.go`, `server/cmd/server/health.go` |
+| postgresql | 140 | `server/cmd/migrate/main.go`, `server/cmd/server/activity_listeners.go`, `server/cmd/server/autopilot_failure_monitor.go`, `server/cmd/server/autopilot_scheduler.go`, `server/cmd/server/chat_projection.go`, `server/cmd/server/comment_projection.go`, `server/cmd/server/dbstats.go`, `server/cmd/server/health.go` |
 | redis | 14 | `server/cmd/server/main.go`, `server/cmd/server/router.go`, `server/internal/auth/cloud_pat.go`, `server/internal/auth/membership_cache.go`, `server/internal/auth/pat_cache.go`, `server/internal/handler/runtime_liveness_store.go`, `server/internal/handler/runtime_local_skills_redis_store.go`, `server/internal/handler/runtime_models_redis_store.go` |
 | subprocess | 29 | `server/cmd/multica/cmd_auth.go`, `server/cmd/multica/cmd_daemon_unix.go`, `server/cmd/multica/cmd_daemon.go`, `server/internal/cli/update.go`, `server/internal/daemon/config.go`, `server/internal/daemon/execenv/codex_home_link_windows.go`, `server/internal/daemon/execenv/openclaw_config.go`, `server/internal/daemon/gc.go` |
 | websocket | 4 | `server/internal/daemon/wakeup.go`, `server/internal/daemonws/hub.go`, `server/internal/integrations/lark/ws_connector.go`, `server/internal/realtime/hub.go` |
