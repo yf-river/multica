@@ -243,7 +243,7 @@ func (h *Handler) gateChatSessionForUser(w http.ResponseWriter, r *http.Request,
 	}
 	agent, err := h.Queries.GetAgent(r.Context(), session.AgentID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "agent not found")
+		writeEntityLoadError(w, r, err, "agent", "agent_id", uuidToString(session.AgentID))
 		return db.ChatSession{}, false
 	}
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
