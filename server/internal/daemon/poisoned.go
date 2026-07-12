@@ -29,15 +29,12 @@ import (
 // MUL-2946: ReasonIterationLimit and ReasonAPIInvalidRequest are aliased
 // to the canonical taskfailure values so the daemon and the in-flight
 // classifier (used by every other failure path) share a single source
-// of truth. agent_fallback_message and codex_semantic_inactivity are
-// pre-existing operational reasons not in the canonical 21 — kept as
-// string literals here until a follow-up PR migrates them or extends
-// the taxonomy.
+// of truth.
 const (
 	FailureReasonIterationLimit          = string(taskfailure.ReasonIterationLimit)
-	FailureReasonAgentFallbackMsg        = "agent_fallback_message"
+	FailureReasonAgentFallbackMsg        = string(taskfailure.ReasonAgentFallbackMessage)
 	FailureReasonAPIInvalidRequest       = string(taskfailure.ReasonAPIInvalidRequest)
-	FailureReasonCodexSemanticInactivity = "codex_semantic_inactivity"
+	FailureReasonCodexSemanticInactivity = string(taskfailure.ReasonCodexSemanticInactivity)
 )
 
 // poisonedOutputMaxLen caps how long an output can be and still be

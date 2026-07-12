@@ -12,19 +12,20 @@
 // This package lifts that classifier into the in-flight write path so the
 // stored failure_reason is already refined when the row is first
 // persisted, and so server / daemon / cloud share a single source of
-// truth for the canonical 21 values. PR1 of the Grafana board plan
+// truth for the canonical 23 values. PR1 of the Grafana board plan
 // ([MUL-2946](https://multica/issues/MUL-2946)). Subsequent PRs use
 // AllReasons() to pre-warm the Prometheus failure_reason label set.
 //
-// The 21 canonical values fall into two groups:
+// The 23 canonical values fall into two groups:
 //
-//   - 7 platform-side values (no `agent_error.` prefix) emitted by the
+//   - 9 platform-side values (no `agent_error.` prefix) emitted by the
 //     server-side sweepers and daemon classifiers when the failure is
 //     attributable to the platform/scheduler/runtime layer rather than
 //     anything the agent process did:
 //
 //     queued_expired, runtime_offline, runtime_recovery, timeout,
-//     iteration_limit, agent_blocked, api_invalid_request
+//     iteration_limit, agent_fallback_message, codex_semantic_inactivity,
+//     agent_blocked, api_invalid_request
 //
 //   - 14 agent-side values (with `agent_error.` prefix) produced by
 //     Classify(rawError) when the agent process surfaced an error string.
@@ -45,7 +46,7 @@ type Reason string
 
 // agentErrorPrefix marks the 14 sub-reasons that originate inside the
 // agent process (provider error, runner crash, context overflow, etc.)
-// as opposed to the 7 platform-side reasons (queue expiry, runtime
+// as opposed to the 9 platform-side reasons (queue expiry, runtime
 // offline, sweeper timeout, etc.).
 const agentErrorPrefix = "agent_error."
 
@@ -82,6 +83,16 @@ const (
 	// message. Treated as platform-side because it is a Multica-imposed
 	// budget rather than an external API rejection.
 	ReasonIterationLimit Reason = "iteration_limit"
+
+	// ReasonAgentFallbackMessage: a backend completed with a short known
+	// fallback marker instead of a usable result. The recorded session must
+	// not be resumed.
+	ReasonAgentFallbackMessage Reason = "agent_fallback_message"
+
+	// ReasonCodexSemanticInactivity: Codex established a session but made no
+	// semantic progress before its provider-specific watchdog fired. Retrying
+	// is allowed, but only from a fresh session.
+	ReasonCodexSemanticInactivity Reason = "codex_semantic_inactivity"
 
 	// ReasonAgentBlocked: the agent intentionally entered the
 	// 'blocked' workflow state (e.g. requesting human input). Not a
@@ -186,6 +197,8 @@ var allReasons = []Reason{
 	ReasonRuntimeRecovery,
 	ReasonTimeout,
 	ReasonIterationLimit,
+	ReasonAgentFallbackMessage,
+	ReasonCodexSemanticInactivity,
 	ReasonAgentBlocked,
 	ReasonAPIInvalidRequest,
 
@@ -214,7 +227,7 @@ var allReasons = []Reason{
 // failure_reason column and exposed as a Prometheus label value.
 func (r Reason) String() string { return string(r) }
 
-// AllReasons returns the canonical 21 reasons in a stable order. The
+// AllReasons returns the canonical 23 reasons in a stable order. The
 // caller MUST NOT mutate the returned slice; a copy is returned so
 // concurrent callers can append to their local copy without corrupting
 // the package-level fixture.
@@ -227,4 +240,18 @@ func AllReasons() []Reason {
 	out := make([]Reason, len(allReasons))
 	copy(out, allReasons)
 	return out
+}
+
+// IsResumeUnsafe reports whether reusing the recorded provider session would
+// deterministically repeat the same terminal failure.
+func IsResumeUnsafe(reason string) bool {
+	switch Reason(reason) {
+	case ReasonIterationLimit,
+		ReasonAgentFallbackMessage,
+		ReasonAPIInvalidRequest,
+		ReasonCodexSemanticInactivity:
+		return true
+	default:
+		return false
+	}
 }

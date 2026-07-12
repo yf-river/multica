@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/events"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/taskfailure"
 )
 
 func TestSquadSOPTaskStepMatchingAndState(t *testing.T) {
@@ -200,7 +201,7 @@ func TestTaskFailureClassifiers(t *testing.T) {
 			if got := taskErrorType(tc.reason); got != tc.wantType {
 				t.Fatalf("taskErrorType(%q) = %q, want %q", tc.reason, got, tc.wantType)
 			}
-			if got := !resumeUnsafeFailureReason(tc.reason); got != tc.wantResumeOK {
+			if got := !taskfailure.IsResumeUnsafe(tc.reason); got != tc.wantResumeOK {
 				t.Fatalf("resume-safe(%q) = %v, want %v", tc.reason, got, tc.wantResumeOK)
 			}
 			if got := retryableReasons[tc.reason]; got != tc.wantRetry {

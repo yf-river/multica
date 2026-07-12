@@ -13,6 +13,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/taskfailure"
 )
 
 func (s *TaskService) captureTaskQueued(ctx context.Context, task db.AgentTaskQueue) {
@@ -964,9 +965,9 @@ func taskErrorType(reason string) string {
 	switch reason {
 	case "runtime_offline", "runtime_recovery":
 		return "runtime"
-	case "timeout", "codex_semantic_inactivity":
+	case "timeout", string(taskfailure.ReasonCodexSemanticInactivity):
 		return "timeout"
-	case "iteration_limit", "agent_fallback_message":
+	case string(taskfailure.ReasonIterationLimit), string(taskfailure.ReasonAgentFallbackMessage):
 		return "agent_output"
 	case "cancelled", "user_cancelled":
 		return "cancelled"

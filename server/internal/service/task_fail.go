@@ -55,7 +55,7 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 
 		// Keep resume-unsafe sessions on the task row for observability, but
 		// do not promote them to the chat-level resume pointer.
-		if t.ChatSessionID.Valid && !resumeUnsafeFailureReason(failureReason) {
+		if t.ChatSessionID.Valid && !taskfailure.IsResumeUnsafe(failureReason) {
 			// Pin the chat_session's runtime_id alongside the session_id so the
 			// next claim can apply the runtime-guard. Both fields move together:
 			// when there's no session_id to record, leave runtime_id untouched
@@ -212,7 +212,7 @@ var retryableReasons = map[string]bool{
 	taskfailure.ReasonRuntimeOffline.String():                   true,
 	taskfailure.ReasonRuntimeRecovery.String():                  true,
 	taskfailure.ReasonTimeout.String():                          true,
-	"codex_semantic_inactivity":                                 true,
+	taskfailure.ReasonCodexSemanticInactivity.String():          true,
 	taskfailure.ReasonAgentProviderCapacityOrRateLimit.String(): true,
 	taskfailure.ReasonAgentProviderServerError.String():         true,
 	taskfailure.ReasonAgentProviderNetwork.String():             true,
@@ -226,17 +226,6 @@ func taskRetryBudget(reason string, maxAttempts int32) int32 {
 		return maxAttempts + providerNetworkExtraRetryBudget
 	}
 	return maxAttempts
-}
-
-func resumeUnsafeFailureReason(reason string) bool {
-	switch reason {
-	// Keep in sync with GetLastTaskSession / GetLastChatTaskSession and
-	// CreateRetryTask's fresh-session CASE WHEN.
-	case "iteration_limit", "agent_fallback_message", "api_invalid_request", "codex_semantic_inactivity":
-		return true
-	default:
-		return false
-	}
 }
 
 func (s *TaskService) materializeRetryTask(
