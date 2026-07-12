@@ -41,18 +41,6 @@ export const PromptEvaluationRunSchema = z.object({
   reviewed_at: z.string().default(""),
 }).loose();
 
-export const PromptEvaluationAgentRunResponseSchema = z.object({
-  asset: PromptEvaluationAssetSchema,
-  run: PromptEvaluationRunSchema,
-  task_id: NonEmptyStringSchema,
-  chat_session_id: NonEmptyStringSchema,
-  agent_id: NonEmptyStringSchema,
-  runtime_id: NonEmptyStringSchema,
-  model: z.string(),
-  status: z.string(),
-  message: z.string(),
-}).loose();
-
 export const PromptEvaluationTrialSchema = z.object({
   id: z.string(),
   run_id: z.string(),
@@ -216,10 +204,5 @@ export const PromptEvaluationAssetEvidenceArchivePackageSchema = z.object({
 
 export const PromptEvaluationRunListResponseSchema = z.object({
   items: z.array(PromptEvaluationRunSchema).default([]),
-  total: z.number().default(0),
-}).loose();
-
-export const PromptEvaluationTrialListResponseSchema = z.object({
-  items: z.array(PromptEvaluationTrialSchema).default([]),
   total: z.number().default(0),
 }).loose();

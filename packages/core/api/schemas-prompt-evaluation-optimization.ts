@@ -55,37 +55,6 @@ export const PromptEvaluationOptimizationCandidateListResponseSchema = z.object(
   total: z.number().default(0),
 }).loose();
 
-export const PromptEvaluationSkillInventoryItemSchema = z.object({
-  skill_path: z.string().default(""),
-  skill_name: z.string().default(""),
-  skill_hash: z.string().default(""),
-  last_commit: z.string().optional(),
-  last_commit_subject: z.string().optional(),
-  last_updated_at: z.string().optional(),
-  changelog_path: z.string().optional(),
-  has_changelog: z.boolean().default(false),
-  tracked: z.boolean().default(false),
-}).loose();
-
-export const PromptEvaluationSkillInventoryResultSchema = z.object({
-  schema_version: z.string().default("multica.skill.inventory.v1"),
-  provider: z.string().default("gongfeng"),
-  repo: z.string().default(""),
-  repo_path: z.string().optional(),
-  branch: z.string().default(""),
-  head_commit: z.string().default(""),
-  skill_root: z.string().default(".codebuddy/skills"),
-  items: z.array(PromptEvaluationSkillInventoryItemSchema).default([]),
-  discovered_count: z.number().default(0),
-  snapshot_time: z.string().default(""),
-  source_resource_id: z.string().optional(),
-}).loose();
-
-export const PromptEvaluationSkillInventoryResponseSchema = z.object({
-  asset: PromptEvaluationAssetSchema,
-  inventory: PromptEvaluationSkillInventoryResultSchema,
-}).loose();
-
 export const PromptEvaluationSkillSnapshotSchema = z.object({
   schema_version: z.string().default("multica.skill.snapshot.v1"),
   provider: z.string().default("gongfeng"),
@@ -97,33 +66,6 @@ export const PromptEvaluationSkillSnapshotSchema = z.object({
   skill_hash: z.string().default(""),
   snapshot_time: z.string().default(""),
   source_resource_id: z.string().optional(),
-}).loose();
-
-export const PromptEvaluationSkillSnapshotResultSchema = z.object({
-  asset: PromptEvaluationAssetSchema,
-  snapshot: PromptEvaluationSkillSnapshotSchema,
-}).loose();
-
-export const PromptEvaluationSkillCaseDraftSchema = z.object({
-  schema_version: z.string().default("multica.skill.case_draft.v1"),
-  status: z.string().default("draft"),
-  input: z.string().default(""),
-  expected_behavior: z.string().default(""),
-  verification: z.string().default(""),
-  evidence_source: z.string().default(""),
-  applicable_skill_hash: z.string().optional(),
-  applicable_scope: z.string().default(""),
-  source_commit: z.string().default(""),
-  commit_subject: z.string().default(""),
-  skill_path: z.string().default(""),
-  before_hash: z.string().optional(),
-  after_hash: z.string().optional(),
-}).loose();
-
-export const PromptEvaluationSkillCaseDraftsResultSchema = z.object({
-  asset: PromptEvaluationAssetSchema,
-  drafts: z.array(PromptEvaluationSkillCaseDraftSchema).default([]),
-  created_count: z.number().default(0),
 }).loose();
 
 export const PromptEvaluationSkillFreshnessResultSchema = z.object({

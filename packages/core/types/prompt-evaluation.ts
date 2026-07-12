@@ -325,18 +325,6 @@ export interface PromptEvaluationCaseAssertion {
   created_at: string;
 }
 
-export interface PromptEvaluationAgentRunResponse {
-  asset: PromptEvaluationAsset;
-  run: PromptEvaluationRun;
-  task_id: string;
-  chat_session_id: string;
-  agent_id: string;
-  runtime_id: string;
-  model: string;
-  status: string;
-  message: string;
-}
-
 export interface CreatePromptEvaluationDatasetFromTracesRequest {
   task_ids?: string[];
   event_type?: string;
@@ -399,55 +387,6 @@ export interface PromptEvaluationSkillPatch {
   updated_at?: string;
 }
 
-export interface CreatePromptEvaluationSkillInventoryRequest {
-  provider?: string;
-  repo?: string;
-  repo_path: string;
-  branch?: string;
-  skill_root?: string;
-  source_resource_id?: string;
-}
-
-export interface PromptEvaluationSkillInventoryItem {
-  skill_path: string;
-  skill_name: string;
-  skill_hash: string;
-  last_commit?: string;
-  last_commit_subject?: string;
-  last_updated_at?: string;
-  changelog_path?: string;
-  has_changelog: boolean;
-  tracked: boolean;
-}
-
-export interface PromptEvaluationSkillInventoryResult {
-  schema_version: "multica.skill.inventory.v1" | string;
-  provider: string;
-  repo: string;
-  repo_path?: string;
-  branch: string;
-  head_commit: string;
-  skill_root: string;
-  items: PromptEvaluationSkillInventoryItem[];
-  discovered_count: number;
-  snapshot_time: string;
-  source_resource_id?: string;
-}
-
-export interface PromptEvaluationSkillInventoryResponse {
-  asset: PromptEvaluationAsset;
-  inventory: PromptEvaluationSkillInventoryResult;
-}
-
-export interface CreatePromptEvaluationSkillSnapshotRequest {
-  provider?: string;
-  repo?: string;
-  repo_path: string;
-  branch?: string;
-  skill_path: string;
-  source_resource_id?: string;
-}
-
 export interface PromptEvaluationSkillSnapshot {
   schema_version: "multica.skill.snapshot.v1" | string;
   provider: string;
@@ -459,40 +398,6 @@ export interface PromptEvaluationSkillSnapshot {
   skill_hash: string;
   snapshot_time: string;
   source_resource_id?: string;
-}
-
-export interface PromptEvaluationSkillSnapshotResult {
-  asset: PromptEvaluationAsset;
-  snapshot: PromptEvaluationSkillSnapshot;
-}
-
-export interface CreatePromptEvaluationSkillCaseDraftsRequest {
-  repo_path: string;
-  skill_path: string;
-  limit?: number;
-  auto_approve?: boolean;
-}
-
-export interface PromptEvaluationSkillCaseDraft {
-  schema_version: "multica.skill.case_draft.v1" | string;
-  status: "draft" | "approved" | string;
-  input: string;
-  expected_behavior: string;
-  verification: string;
-  evidence_source: string;
-  applicable_skill_hash?: string;
-  applicable_scope: string;
-  source_commit: string;
-  commit_subject: string;
-  skill_path: string;
-  before_hash?: string;
-  after_hash?: string;
-}
-
-export interface PromptEvaluationSkillCaseDraftsResult {
-  asset: PromptEvaluationAsset;
-  drafts: PromptEvaluationSkillCaseDraft[];
-  created_count: number;
 }
 
 export type PromptEvaluationSkillFreshnessStatus =
@@ -650,11 +555,6 @@ export interface ListPromptEvaluationDatasetVersionsResponse {
 
 export interface ListPromptEvaluationRunsResponse {
   items: PromptEvaluationRun[];
-  total: number;
-}
-
-export interface ListPromptEvaluationTrialsResponse {
-  items: PromptEvaluationTrial[];
   total: number;
 }
 

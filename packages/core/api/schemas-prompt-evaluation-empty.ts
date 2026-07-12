@@ -11,13 +11,10 @@ import type {
   PromptEvaluationOptimizationCandidate,
   PromptEvaluationSkillApplyCandidateResponse,
   PromptEvaluationSkillApplyResult,
-  PromptEvaluationSkillCaseDraftsResult,
   PromptEvaluationSkillFreshnessResult,
-  PromptEvaluationSkillInventoryResponse,
-  PromptEvaluationSkillInventoryResult,
   PromptEvaluationSkillReEvalAssetResponse,
   PromptEvaluationSkillReEvalRunResponse,
-  PromptEvaluationSkillSnapshotResult,
+  PromptEvaluationSkillSnapshot,
   ListPromptEvaluationEvidenceSnapshotsResponse,
   PromptEvaluationAssetEvidenceArchivePackage,
   PublishPromptEvaluationOptimizationCandidateResponse,
@@ -98,11 +95,6 @@ export const EMPTY_PROMPT_EVALUATION_RUN: PromptEvaluationRun = {
 };
 
 export const EMPTY_PROMPT_EVALUATION_RUN_LIST_RESPONSE = {
-  items: [],
-  total: 0,
-};
-
-export const EMPTY_PROMPT_EVALUATION_TRIAL_LIST_RESPONSE = {
   items: [],
   total: 0,
 };
@@ -219,41 +211,15 @@ export const EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE_LIST_RESPONSE: ListP
   total: 0,
 };
 
-export const EMPTY_PROMPT_EVALUATION_SKILL_INVENTORY_RESULT: PromptEvaluationSkillInventoryResult = {
-  schema_version: "multica.skill.inventory.v1",
+const EMPTY_PROMPT_EVALUATION_SKILL_SNAPSHOT: PromptEvaluationSkillSnapshot = {
+  schema_version: "multica.skill.snapshot.v1",
   provider: "gongfeng",
   repo: "",
   branch: "",
-  head_commit: "",
-  skill_root: ".codebuddy/skills",
-  items: [],
-  discovered_count: 0,
+  base_commit: "",
+  skill_path: "",
+  skill_hash: "",
   snapshot_time: "",
-};
-
-export const EMPTY_PROMPT_EVALUATION_SKILL_INVENTORY_RESPONSE: PromptEvaluationSkillInventoryResponse = {
-  asset: EMPTY_PROMPT_EVALUATION_ASSET,
-  inventory: EMPTY_PROMPT_EVALUATION_SKILL_INVENTORY_RESULT,
-};
-
-export const EMPTY_PROMPT_EVALUATION_SKILL_SNAPSHOT_RESULT: PromptEvaluationSkillSnapshotResult = {
-  asset: EMPTY_PROMPT_EVALUATION_ASSET,
-  snapshot: {
-    schema_version: "multica.skill.snapshot.v1",
-    provider: "gongfeng",
-    repo: "",
-    branch: "",
-    base_commit: "",
-    skill_path: "",
-    skill_hash: "",
-    snapshot_time: "",
-  },
-};
-
-export const EMPTY_PROMPT_EVALUATION_SKILL_CASE_DRAFTS_RESULT: PromptEvaluationSkillCaseDraftsResult = {
-  asset: EMPTY_PROMPT_EVALUATION_ASSET,
-  drafts: [],
-  created_count: 0,
 };
 
 export const EMPTY_PROMPT_EVALUATION_SKILL_FRESHNESS_RESULT: PromptEvaluationSkillFreshnessResult = {
@@ -268,7 +234,7 @@ export const EMPTY_PROMPT_EVALUATION_SKILL_FRESHNESS_RESULT: PromptEvaluationSki
   current_skill_hash: "",
   patch_check: "not_needed",
   checked_at: "",
-  snapshot: EMPTY_PROMPT_EVALUATION_SKILL_SNAPSHOT_RESULT.snapshot,
+  snapshot: EMPTY_PROMPT_EVALUATION_SKILL_SNAPSHOT,
 };
 
 export const EMPTY_PROMPT_EVALUATION_SKILL_APPLY_RESULT: PromptEvaluationSkillApplyResult = {
@@ -287,7 +253,7 @@ export const EMPTY_PROMPT_EVALUATION_SKILL_APPLY_RESULT: PromptEvaluationSkillAp
   re_eval_required: true,
   re_eval_plan: {},
   checked_at: "",
-  snapshot: EMPTY_PROMPT_EVALUATION_SKILL_SNAPSHOT_RESULT.snapshot,
+  snapshot: EMPTY_PROMPT_EVALUATION_SKILL_SNAPSHOT,
 };
 
 export const EMPTY_PROMPT_EVALUATION_SKILL_APPLY_CANDIDATE_RESPONSE: PromptEvaluationSkillApplyCandidateResponse = {
@@ -298,8 +264,8 @@ export const EMPTY_PROMPT_EVALUATION_SKILL_APPLY_CANDIDATE_RESPONSE: PromptEvalu
 export const EMPTY_PROMPT_EVALUATION_SKILL_RE_EVAL_ASSET_RESPONSE: PromptEvaluationSkillReEvalAssetResponse = {
   candidate: EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE,
   asset: EMPTY_PROMPT_EVALUATION_ASSET,
-  source_snapshot: EMPTY_PROMPT_EVALUATION_SKILL_SNAPSHOT_RESULT.snapshot,
-  re_eval_snapshot: EMPTY_PROMPT_EVALUATION_SKILL_SNAPSHOT_RESULT.snapshot,
+  source_snapshot: EMPTY_PROMPT_EVALUATION_SKILL_SNAPSHOT,
+  re_eval_snapshot: EMPTY_PROMPT_EVALUATION_SKILL_SNAPSHOT,
   case_count: 0,
   cases: [],
   re_eval_plan: {},
@@ -309,8 +275,8 @@ export const EMPTY_PROMPT_EVALUATION_SKILL_RE_EVAL_RUN_RESPONSE: PromptEvaluatio
   candidate: EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE,
   asset: EMPTY_PROMPT_EVALUATION_ASSET,
   run: EMPTY_PROMPT_EVALUATION_RUN,
-  source_snapshot: EMPTY_PROMPT_EVALUATION_SKILL_SNAPSHOT_RESULT.snapshot,
-  re_eval_snapshot: EMPTY_PROMPT_EVALUATION_SKILL_SNAPSHOT_RESULT.snapshot,
+  source_snapshot: EMPTY_PROMPT_EVALUATION_SKILL_SNAPSHOT,
+  re_eval_snapshot: EMPTY_PROMPT_EVALUATION_SKILL_SNAPSHOT,
   case_count: 0,
   proof_scope: "local_prompt_evaluation_run",
   re_eval_run: {},
