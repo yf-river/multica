@@ -1437,7 +1437,14 @@ func (h *Handler) RestoreAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	restored, err := h.Queries.RestoreAgent(r.Context(), agent.ID)
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to begin agent restore")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	queries := h.Queries.WithTx(tx)
+	restored, err := queries.RestoreAgent(r.Context(), agent.ID)
 	if err != nil {
 		slog.Warn("restore agent failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 		writeError(w, http.StatusInternalServerError, "failed to restore agent")
@@ -1451,9 +1458,13 @@ func (h *Handler) RestoreAgent(w http.ResponseWriter, r *http.Request) {
 		writeAgentResponseDecodeError(w, r, id, err)
 		return
 	}
-	if err := attachAgentSkills(r.Context(), h.Queries, &resp, restored.ID); err != nil {
+	if err := attachAgentSkills(r.Context(), queries, &resp, restored.ID); err != nil {
 		slog.Warn("load agent skills after restore failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 		writeError(w, http.StatusInternalServerError, "failed to load agent skills")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit agent restore")
 		return
 	}
 	userID := requestUserID(r)
