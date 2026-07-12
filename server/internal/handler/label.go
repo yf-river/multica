@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -87,12 +89,12 @@ func validateLabelName(raw string) (string, error) {
 	if name == "" {
 		return "", errors.New("name is required")
 	}
-	if len(name) > maxLabelNameLen {
+	if strings.IndexFunc(name, unicode.IsControl) >= 0 {
+		return "", errors.New("name must not contain control characters")
+	}
+	if utf8.RuneCountInString(name) > maxLabelNameLen {
 		return "", errors.New("name must be 32 characters or fewer")
 	}
-	// TODO(labels): consider restricting to a charset that excludes newlines,
-	// tabs, and control characters. Emoji are left allowed — users can pick
-	// `🐛 bug` if they want. Tracked as a follow-up so we don't gate this PR.
 	return name, nil
 }
 

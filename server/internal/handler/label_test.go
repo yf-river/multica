@@ -363,7 +363,7 @@ func TestAttachLabelCrossWorkspaceLabel(t *testing.T) {
 	}
 }
 
-// TestLabelNameTooLong — names longer than 64 chars must return 400.
+// TestLabelNameTooLong — names longer than 32 characters must return 400.
 func TestLabelNameTooLong(t *testing.T) {
 	longName := strings.Repeat("a", 33)
 	w := httptest.NewRecorder()
@@ -385,7 +385,7 @@ func TestLabelNameTooLong(t *testing.T) {
 	})
 	testHandler.CreateLabel(w, req)
 	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateLabel 64-char name: expected 201, got %d: %s", w.Code, w.Body.String())
+		t.Fatalf("CreateLabel 32-character name: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	var created LabelResponse
 	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
@@ -397,6 +397,19 @@ func TestLabelNameTooLong(t *testing.T) {
 		req = withURLParam(req, "id", created.ID)
 		testHandler.DeleteLabel(w, req)
 	})
+}
+
+func TestValidateLabelNameRejectsControlCharactersAndCountsUnicodeCharacters(t *testing.T) {
+	for _, input := range []string{"line\nbreak", "tab\tname", "nul\x00name"} {
+		if _, err := validateLabelName(input); err == nil {
+			t.Errorf("validateLabelName(%q) accepted a control character", input)
+		}
+	}
+
+	name := strings.Repeat("🐛", maxLabelNameLen)
+	if got, err := validateLabelName(name); err != nil || got != name {
+		t.Fatalf("validateLabelName rejected %d Unicode characters: got=%q err=%v", maxLabelNameLen, got, err)
+	}
 }
 
 // TestColorCaseNormalization — input `#ABCDEF` must be stored as `#abcdef`
