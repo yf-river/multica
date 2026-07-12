@@ -53,6 +53,21 @@ func shouldEnqueueSquadLeaderOnCommentForTest(ctx context.Context, issue db.Issu
 	return ok
 }
 
+func TestAssignedSquadCommentTriggerPreservesSquadLookupFailure(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	issue := db.Issue{
+		WorkspaceID:  util.MustParseUUID(testWorkspaceID),
+		AssigneeType: pgtype.Text{String: "squad", Valid: true},
+		AssigneeID:   util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
+	}
+
+	_, ok, err := testHandler.computeAssignedSquadLeaderCommentTrigger(ctx, issue, "continue", "member", testUserID, commentTriggerComputeOptions{})
+	if ok || err == nil {
+		t.Fatalf("computeAssignedSquadLeaderCommentTrigger() ok=%t err=%v, want false with squad lookup error", ok, err)
+	}
+}
+
 // squadCommentTriggerFixture wires a squad assigned to a fresh issue and
 // returns the loaded db.Issue plus the leader agent UUID for use in
 // computeAssignedSquadLeaderCommentTrigger integration tests.
