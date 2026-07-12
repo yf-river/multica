@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"regexp"
 	"strings"
@@ -289,7 +290,15 @@ func (h *Handler) promptLibraryProjectID(w http.ResponseWriter, r *http.Request,
 		return pgtype.UUID{}, false
 	}
 	if _, err := h.Queries.GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{ID: projectUUID, WorkspaceID: workspaceID}); err != nil {
-		writeError(w, http.StatusBadRequest, "project_id does not belong to this workspace")
+		if writeClientClosedIfCanceled(w, err) {
+			return pgtype.UUID{}, false
+		}
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusBadRequest, "project_id does not belong to this workspace")
+			return pgtype.UUID{}, false
+		}
+		slog.Error("load prompt library project failed", "workspace_id", uuidToString(workspaceID), "project_id", projectID, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to load project")
 		return pgtype.UUID{}, false
 	}
 	return projectUUID, true
