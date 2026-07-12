@@ -4,10 +4,6 @@ WHERE workspace_id = $1
   AND prompt_id = $2
 ORDER BY version DESC, created_at DESC;
 
--- name: GetPromptLibraryVersionInWorkspace :one
-SELECT * FROM prompt_library_version
-WHERE id = $1 AND workspace_id = $2;
-
 -- name: GetPromptLibraryVersionForPrompt :one
 SELECT * FROM prompt_library_version
 WHERE id = $1 AND workspace_id = $2 AND prompt_id = $3;

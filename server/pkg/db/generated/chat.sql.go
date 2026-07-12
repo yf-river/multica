@@ -184,27 +184,6 @@ func (q *Queries) DeleteUserChatMessageByTask(ctx context.Context, taskID pgtype
 	return i, err
 }
 
-const getChatMessage = `-- name: GetChatMessage :one
-SELECT id, chat_session_id, role, content, task_id, created_at, failure_reason, elapsed_ms FROM chat_message
-WHERE id = $1
-`
-
-func (q *Queries) GetChatMessage(ctx context.Context, id pgtype.UUID) (ChatMessage, error) {
-	row := q.db.QueryRow(ctx, getChatMessage, id)
-	var i ChatMessage
-	err := row.Scan(
-		&i.ID,
-		&i.ChatSessionID,
-		&i.Role,
-		&i.Content,
-		&i.TaskID,
-		&i.CreatedAt,
-		&i.FailureReason,
-		&i.ElapsedMs,
-	)
-	return i, err
-}
-
 const getChatSession = `-- name: GetChatSession :one
 SELECT id, workspace_id, agent_id, creator_id, title, session_id, work_dir, created_at, updated_at, unread_since, runtime_id FROM chat_session
 WHERE id = $1

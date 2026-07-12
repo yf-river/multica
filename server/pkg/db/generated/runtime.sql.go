@@ -85,17 +85,6 @@ func (q *Queries) CancelAgentTasksByRuntimeOrAgent(ctx context.Context, arg Canc
 	return items, nil
 }
 
-const countActiveAgentsByRuntime = `-- name: CountActiveAgentsByRuntime :one
-SELECT count(*) FROM agent WHERE runtime_id = $1 AND archived_at IS NULL
-`
-
-func (q *Queries) CountActiveAgentsByRuntime(ctx context.Context, runtimeID pgtype.UUID) (int64, error) {
-	row := q.db.QueryRow(ctx, countActiveAgentsByRuntime, runtimeID)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
 const countActiveSquadsWithArchivedLeadersByRuntime = `-- name: CountActiveSquadsWithArchivedLeadersByRuntime :one
 SELECT count(*)
 FROM squad

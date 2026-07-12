@@ -49,15 +49,6 @@ func (q *Queries) CreateTaskToken(ctx context.Context, arg CreateTaskTokenParams
 	return i, err
 }
 
-const deleteExpiredTaskTokens = `-- name: DeleteExpiredTaskTokens :exec
-DELETE FROM task_token WHERE expires_at <= now()
-`
-
-func (q *Queries) DeleteExpiredTaskTokens(ctx context.Context) error {
-	_, err := q.db.Exec(ctx, deleteExpiredTaskTokens)
-	return err
-}
-
 const deleteTaskTokensByTask = `-- name: DeleteTaskTokensByTask :exec
 DELETE FROM task_token WHERE task_id = $1
 `

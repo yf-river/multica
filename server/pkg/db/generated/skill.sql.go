@@ -403,6 +403,7 @@ func (q *Queries) ListSkillFiles(ctx context.Context, skillID pgtype.UUID) ([]Sk
 }
 
 const listSkillSummariesByWorkspace = `-- name: ListSkillSummariesByWorkspace :many
+
 SELECT id, workspace_id, name, description, config, created_by, created_at, updated_at
 FROM skill
 WHERE workspace_id = $1
@@ -420,8 +421,9 @@ type ListSkillSummariesByWorkspaceRow struct {
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
-// Same as ListSkillsByWorkspace but omits the SKILL.md `content` column. Used
-// by list endpoints (CLI table, web list page) where the body is never read;
+// Skill CRUD
+// Omits the SKILL.md `content` column for list endpoints (CLI table, web list
+// page) where the body is never read;
 // shipping it everywhere blew up payload size on workspaces with many skills
 // and caused 15s CLI timeouts from high-latency regions (GH multica-ai/multica#2174).
 func (q *Queries) ListSkillSummariesByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]ListSkillSummariesByWorkspaceRow, error) {
@@ -451,59 +453,6 @@ func (q *Queries) ListSkillSummariesByWorkspace(ctx context.Context, workspaceID
 		return nil, err
 	}
 	return items, nil
-}
-
-const listSkillsByWorkspace = `-- name: ListSkillsByWorkspace :many
-
-SELECT id, workspace_id, name, description, content, config, created_by, created_at, updated_at FROM skill
-WHERE workspace_id = $1
-ORDER BY name ASC
-`
-
-// Skill CRUD
-func (q *Queries) ListSkillsByWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]Skill, error) {
-	rows, err := q.db.Query(ctx, listSkillsByWorkspace, workspaceID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []Skill{}
-	for rows.Next() {
-		var i Skill
-		if err := rows.Scan(
-			&i.ID,
-			&i.WorkspaceID,
-			&i.Name,
-			&i.Description,
-			&i.Content,
-			&i.Config,
-			&i.CreatedBy,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const removeAgentSkill = `-- name: RemoveAgentSkill :exec
-DELETE FROM agent_skill
-WHERE agent_id = $1 AND skill_id = $2
-`
-
-type RemoveAgentSkillParams struct {
-	AgentID pgtype.UUID `json:"agent_id"`
-	SkillID pgtype.UUID `json:"skill_id"`
-}
-
-func (q *Queries) RemoveAgentSkill(ctx context.Context, arg RemoveAgentSkillParams) error {
-	_, err := q.db.Exec(ctx, removeAgentSkill, arg.AgentID, arg.SkillID)
-	return err
 }
 
 const removeAllAgentSkills = `-- name: RemoveAllAgentSkills :exec

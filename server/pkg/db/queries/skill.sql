@@ -1,13 +1,8 @@
 -- Skill CRUD
 
--- name: ListSkillsByWorkspace :many
-SELECT * FROM skill
-WHERE workspace_id = $1
-ORDER BY name ASC;
-
 -- name: ListSkillSummariesByWorkspace :many
--- Same as ListSkillsByWorkspace but omits the SKILL.md `content` column. Used
--- by list endpoints (CLI table, web list page) where the body is never read;
+-- Omits the SKILL.md `content` column for list endpoints (CLI table, web list
+-- page) where the body is never read;
 -- shipping it everywhere blew up payload size on workspaces with many skills
 -- and caused 15s CLI timeouts from high-latency regions (GH multica-ai/multica#2174).
 SELECT id, workspace_id, name, description, config, created_by, created_at, updated_at
@@ -102,10 +97,6 @@ ORDER BY s.name ASC;
 INSERT INTO agent_skill (agent_id, skill_id)
 VALUES ($1, $2)
 ON CONFLICT DO NOTHING;
-
--- name: RemoveAgentSkill :exec
-DELETE FROM agent_skill
-WHERE agent_id = $1 AND skill_id = $2;
 
 -- name: RemoveAllAgentSkills :exec
 DELETE FROM agent_skill WHERE agent_id = $1;

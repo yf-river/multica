@@ -165,18 +165,6 @@ WHERE id = $1
   AND kind = 'webhook'
 RETURNING *;
 
--- name: SetAutopilotTriggerWebhookToken :one
--- Sets the webhook token at creation time. CreateAutopilotTrigger inserts the
--- row first (using its full 8-arg signature), then this query attaches the
--- token. Splitting the create + token-set keeps the existing CreateAutopilotTrigger
--- query usable by the schedule path without forcing every caller to think
--- about webhook_token.
-UPDATE autopilot_trigger
-SET webhook_token = $2,
-    updated_at = now()
-WHERE id = $1
-RETURNING *;
-
 -- name: SetAutopilotTriggerSigningSecret :one
 -- Writes the signing secret for a webhook trigger. Kept as a dedicated query
 -- (not a field on UpdateAutopilotTrigger) so the request body for the
@@ -260,19 +248,6 @@ UPDATE autopilot_run
 SET status = 'skipped', completed_at = now(), failure_reason = $2
 WHERE id = $1
 RETURNING *;
-
--- name: UpdateAutopilotRunSkippedWithResult :one
-UPDATE autopilot_run
-SET status = 'skipped',
-    completed_at = now(),
-    failure_reason = $2,
-    result = sqlc.narg('result')
-WHERE id = $1
-RETURNING *;
-
--- =====================
--- Scheduler Queries
--- =====================
 
 -- name: ClaimDueScheduleTriggers :many
 -- Atomically claim all due schedule triggers to prevent concurrent execution.

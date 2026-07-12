@@ -28,25 +28,6 @@ INSERT INTO prompt_library_item (
 )
 RETURNING *;
 
--- name: CreatePromptLibraryItemVersion :one
-INSERT INTO prompt_library_item (
-    workspace_id, project_id, name, description, prompt_type,
-    content, variables, tags, status, version, created_by
-) VALUES (
-    $1,
-    sqlc.narg('project_id'),
-    $2,
-    $3,
-    $4,
-    $5,
-    COALESCE(sqlc.narg('variables')::jsonb, '[]'::jsonb),
-    COALESCE(sqlc.narg('tags')::jsonb, '[]'::jsonb),
-    COALESCE(sqlc.narg('status'), '启用'),
-    $6,
-    $7
-)
-RETURNING *;
-
 -- name: CreatePromptLibraryItemVersionWithID :one
 INSERT INTO prompt_library_item (
     id, workspace_id, project_id, name, description, prompt_type,

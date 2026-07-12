@@ -530,14 +530,6 @@ WHERE parent_task_id = $1
 ORDER BY created_at, id
 LIMIT 1;
 
--- name: HasPendingTaskForIssue :one
--- Returns true if there is a queued or dispatched (but not yet running) task for the issue.
--- Used by the coalescing queue: allow enqueue when a task is running (so
--- the agent picks up new comments on the next cycle) but skip if a pending
--- task already exists (natural dedup).
-SELECT count(*) > 0 AS has_pending FROM agent_task_queue
-WHERE issue_id = $1 AND status IN ('queued', 'dispatched');
-
 -- name: HasPendingTaskForIssueAndAgent :one
 -- Returns true if a specific agent already has a queued or dispatched task
 -- for the given issue. Used by @mention trigger dedup.
@@ -690,11 +682,6 @@ WHERE a.workspace_id = $1
   AND atq.completed_at >= $3
 ORDER BY atq.completed_at DESC NULLS LAST
 LIMIT 1;
-
--- name: UpdateAgentStatus :one
-UPDATE agent SET status = $2, updated_at = now()
-WHERE id = $1
-RETURNING *;
 
 -- name: RefreshAgentStatusFromTasks :one
 UPDATE agent AS a

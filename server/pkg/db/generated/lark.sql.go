@@ -204,7 +204,6 @@ func (q *Queries) CreateLarkBindingToken(ctx context.Context, arg CreateLarkBind
 }
 
 const createLarkChatSessionBinding = `-- name: CreateLarkChatSessionBinding :one
-
 INSERT INTO lark_chat_session_binding (
     chat_session_id, installation_id, lark_chat_id, lark_chat_type
 ) VALUES (
@@ -220,9 +219,6 @@ type CreateLarkChatSessionBindingParams struct {
 	LarkChatType   string      `json:"lark_chat_type"`
 }
 
-// =====================
-// lark_chat_session_binding
-// =====================
 func (q *Queries) CreateLarkChatSessionBinding(ctx context.Context, arg CreateLarkChatSessionBindingParams) (LarkChatSessionBinding, error) {
 	row := q.db.QueryRow(ctx, createLarkChatSessionBinding,
 		arg.ChatSessionID,
@@ -243,7 +239,6 @@ func (q *Queries) CreateLarkChatSessionBinding(ctx context.Context, arg CreateLa
 }
 
 const createLarkOutboundCardMessage = `-- name: CreateLarkOutboundCardMessage :one
-
 INSERT INTO lark_outbound_card_message (
     chat_session_id, task_id, lark_chat_id, lark_card_message_id, status
 ) VALUES (
@@ -260,9 +255,6 @@ type CreateLarkOutboundCardMessageParams struct {
 	TaskID            pgtype.UUID `json:"task_id"`
 }
 
-// =====================
-// lark_outbound_card_message
-// =====================
 func (q *Queries) CreateLarkOutboundCardMessage(ctx context.Context, arg CreateLarkOutboundCardMessageParams) (LarkOutboundCardMessage, error) {
 	row := q.db.QueryRow(ctx, createLarkOutboundCardMessage,
 		arg.ChatSessionID,
@@ -351,15 +343,6 @@ func (q *Queries) CreateLarkUserBinding(ctx context.Context, arg CreateLarkUserB
 	return i, err
 }
 
-const deleteLarkUserBinding = `-- name: DeleteLarkUserBinding :exec
-DELETE FROM lark_user_binding WHERE id = $1
-`
-
-func (q *Queries) DeleteLarkUserBinding(ctx context.Context, id pgtype.UUID) error {
-	_, err := q.db.Exec(ctx, deleteLarkUserBinding, id)
-	return err
-}
-
 const getLarkChatSessionBinding = `-- name: GetLarkChatSessionBinding :one
 SELECT id, chat_session_id, installation_id, lark_chat_id, lark_chat_type, created_at FROM lark_chat_session_binding
 WHERE installation_id = $1 AND lark_chat_id = $2
@@ -416,40 +399,6 @@ SELECT id, workspace_id, agent_id, app_id, app_secret_encrypted, tenant_key, bot
 
 func (q *Queries) GetLarkInstallation(ctx context.Context, id pgtype.UUID) (LarkInstallation, error) {
 	row := q.db.QueryRow(ctx, getLarkInstallation, id)
-	var i LarkInstallation
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.AgentID,
-		&i.AppID,
-		&i.AppSecretEncrypted,
-		&i.TenantKey,
-		&i.BotOpenID,
-		&i.InstallerUserID,
-		&i.Status,
-		&i.WsLeaseToken,
-		&i.WsLeaseExpiresAt,
-		&i.InstalledAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.BotUnionID,
-		&i.Region,
-	)
-	return i, err
-}
-
-const getLarkInstallationByAgent = `-- name: GetLarkInstallationByAgent :one
-SELECT id, workspace_id, agent_id, app_id, app_secret_encrypted, tenant_key, bot_open_id, installer_user_id, status, ws_lease_token, ws_lease_expires_at, installed_at, created_at, updated_at, bot_union_id, region FROM lark_installation
-WHERE workspace_id = $1 AND agent_id = $2
-`
-
-type GetLarkInstallationByAgentParams struct {
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	AgentID     pgtype.UUID `json:"agent_id"`
-}
-
-func (q *Queries) GetLarkInstallationByAgent(ctx context.Context, arg GetLarkInstallationByAgentParams) (LarkInstallation, error) {
-	row := q.db.QueryRow(ctx, getLarkInstallationByAgent, arg.WorkspaceID, arg.AgentID)
 	var i LarkInstallation
 	err := row.Scan(
 		&i.ID,
@@ -636,49 +585,6 @@ func (q *Queries) ListActiveLarkInstallations(ctx context.Context) ([]LarkInstal
 	return items, nil
 }
 
-const listLarkInboundAuditByInstallation = `-- name: ListLarkInboundAuditByInstallation :many
-SELECT id, installation_id, lark_chat_id, event_type, lark_event_id, lark_message_id, drop_reason, received_at FROM lark_inbound_audit
-WHERE installation_id = $1
-ORDER BY received_at DESC
-LIMIT $2 OFFSET $3
-`
-
-type ListLarkInboundAuditByInstallationParams struct {
-	InstallationID pgtype.UUID `json:"installation_id"`
-	Limit          int32       `json:"limit"`
-	Offset         int32       `json:"offset"`
-}
-
-// Ops debugging view; paged via the (installation_id, received_at) idx.
-func (q *Queries) ListLarkInboundAuditByInstallation(ctx context.Context, arg ListLarkInboundAuditByInstallationParams) ([]LarkInboundAudit, error) {
-	rows, err := q.db.Query(ctx, listLarkInboundAuditByInstallation, arg.InstallationID, arg.Limit, arg.Offset)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []LarkInboundAudit{}
-	for rows.Next() {
-		var i LarkInboundAudit
-		if err := rows.Scan(
-			&i.ID,
-			&i.InstallationID,
-			&i.LarkChatID,
-			&i.EventType,
-			&i.LarkEventID,
-			&i.LarkMessageID,
-			&i.DropReason,
-			&i.ReceivedAt,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listLarkInstallationsByWorkspace = `-- name: ListLarkInstallationsByWorkspace :many
 SELECT id, workspace_id, agent_id, app_id, app_secret_encrypted, tenant_key, bot_open_id, installer_user_id, status, ws_lease_token, ws_lease_expires_at, installed_at, created_at, updated_at, bot_union_id, region FROM lark_installation
 WHERE workspace_id = $1
@@ -711,40 +617,6 @@ func (q *Queries) ListLarkInstallationsByWorkspace(ctx context.Context, workspac
 			&i.UpdatedAt,
 			&i.BotUnionID,
 			&i.Region,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const listLarkUserBindingsByInstallation = `-- name: ListLarkUserBindingsByInstallation :many
-SELECT id, workspace_id, multica_user_id, installation_id, lark_open_id, union_id, bound_at FROM lark_user_binding
-WHERE installation_id = $1
-ORDER BY bound_at DESC
-`
-
-func (q *Queries) ListLarkUserBindingsByInstallation(ctx context.Context, installationID pgtype.UUID) ([]LarkUserBinding, error) {
-	rows, err := q.db.Query(ctx, listLarkUserBindingsByInstallation, installationID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	items := []LarkUserBinding{}
-	for rows.Next() {
-		var i LarkUserBinding
-		if err := rows.Scan(
-			&i.ID,
-			&i.WorkspaceID,
-			&i.MulticaUserID,
-			&i.InstallationID,
-			&i.LarkOpenID,
-			&i.UnionID,
-			&i.BoundAt,
 		); err != nil {
 			return nil, err
 		}
@@ -798,33 +670,7 @@ func (q *Queries) MarkLarkInboundDedupProcessed(ctx context.Context, arg MarkLar
 	return result.RowsAffected(), nil
 }
 
-const purgeExpiredLarkBindingTokens = `-- name: PurgeExpiredLarkBindingTokens :exec
-DELETE FROM lark_binding_token
-WHERE expires_at < $1
-`
-
-// Tokens are tiny but unbounded over time. The same vacuum cron that
-// handles dedup can sweep these too.
-func (q *Queries) PurgeExpiredLarkBindingTokens(ctx context.Context, expiresAt pgtype.Timestamptz) error {
-	_, err := q.db.Exec(ctx, purgeExpiredLarkBindingTokens, expiresAt)
-	return err
-}
-
-const purgeLarkInboundDedup = `-- name: PurgeLarkInboundDedup :exec
-DELETE FROM lark_inbound_message_dedup
-WHERE received_at < $1
-`
-
-// Removes dedup rows older than the supplied cutoff. The vacuum job
-// (separate cron) calls this with cutoff = now() - INTERVAL '24h'.
-// Sweeps both processed and (very old) abandoned in-flight rows.
-func (q *Queries) PurgeLarkInboundDedup(ctx context.Context, receivedAt pgtype.Timestamptz) error {
-	_, err := q.db.Exec(ctx, purgeLarkInboundDedup, receivedAt)
-	return err
-}
-
 const recordLarkInboundDrop = `-- name: RecordLarkInboundDrop :exec
-
 INSERT INTO lark_inbound_audit (
     installation_id, lark_chat_id, event_type,
     lark_event_id, lark_message_id, drop_reason
@@ -847,9 +693,6 @@ type RecordLarkInboundDropParams struct {
 	LarkMessageID  pgtype.Text `json:"lark_message_id"`
 }
 
-// =====================
-// lark_inbound_audit
-// =====================
 // The ONLY write path for events that fail identity check or the
 // group-mention filter. Deliberately accepts no body column — the
 // AuditLogger interface in internal/integrations/lark mirrors that

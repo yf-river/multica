@@ -11,18 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const countIssuesByProject = `-- name: CountIssuesByProject :one
-SELECT count(*) FROM issue
-WHERE project_id = $1
-`
-
-func (q *Queries) CountIssuesByProject(ctx context.Context, projectID pgtype.UUID) (int64, error) {
-	row := q.db.QueryRow(ctx, countIssuesByProject, projectID)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
 const createProject = `-- name: CreateProject :one
 INSERT INTO project (
     workspace_id, title, description, icon, status,

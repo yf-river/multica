@@ -1633,22 +1633,6 @@ func (q *Queries) HasActiveTaskForIssue(ctx context.Context, issueID pgtype.UUID
 	return has_active, err
 }
 
-const hasPendingTaskForIssue = `-- name: HasPendingTaskForIssue :one
-SELECT count(*) > 0 AS has_pending FROM agent_task_queue
-WHERE issue_id = $1 AND status IN ('queued', 'dispatched')
-`
-
-// Returns true if there is a queued or dispatched (but not yet running) task for the issue.
-// Used by the coalescing queue: allow enqueue when a task is running (so
-// the agent picks up new comments on the next cycle) but skip if a pending
-// task already exists (natural dedup).
-func (q *Queries) HasPendingTaskForIssue(ctx context.Context, issueID pgtype.UUID) (bool, error) {
-	row := q.db.QueryRow(ctx, hasPendingTaskForIssue, issueID)
-	var has_pending bool
-	err := row.Scan(&has_pending)
-	return has_pending, err
-}
-
 const hasPendingTaskForIssueAndAgent = `-- name: HasPendingTaskForIssueAndAgent :one
 SELECT count(*) > 0 AS has_pending FROM agent_task_queue
 WHERE issue_id = $1 AND agent_id = $2 AND status IN ('queued', 'dispatched')
@@ -2761,47 +2745,6 @@ type UpdateAgentCustomEnvParams struct {
 // handler's audit-log + **** sentinel guard.
 func (q *Queries) UpdateAgentCustomEnv(ctx context.Context, arg UpdateAgentCustomEnvParams) (Agent, error) {
 	row := q.db.QueryRow(ctx, updateAgentCustomEnv, arg.ID, arg.CustomEnv)
-	var i Agent
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.Name,
-		&i.AvatarUrl,
-		&i.RuntimeMode,
-		&i.RuntimeConfig,
-		&i.Scope,
-		&i.Status,
-		&i.MaxConcurrentTasks,
-		&i.OwnerID,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.Description,
-		&i.RuntimeID,
-		&i.Instructions,
-		&i.ArchivedAt,
-		&i.ArchivedBy,
-		&i.CustomEnv,
-		&i.CustomArgs,
-		&i.McpConfig,
-		&i.Model,
-		&i.ThinkingLevel,
-	)
-	return i, err
-}
-
-const updateAgentStatus = `-- name: UpdateAgentStatus :one
-UPDATE agent SET status = $2, updated_at = now()
-WHERE id = $1
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, scope, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level
-`
-
-type UpdateAgentStatusParams struct {
-	ID     pgtype.UUID `json:"id"`
-	Status string      `json:"status"`
-}
-
-func (q *Queries) UpdateAgentStatus(ctx context.Context, arg UpdateAgentStatusParams) (Agent, error) {
-	row := q.db.QueryRow(ctx, updateAgentStatus, arg.ID, arg.Status)
 	var i Agent
 	err := row.Scan(
 		&i.ID,

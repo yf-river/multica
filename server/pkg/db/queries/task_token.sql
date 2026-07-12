@@ -9,6 +9,3 @@ WHERE token_hash = $1 AND expires_at > now();
 
 -- name: DeleteTaskTokensByTask :exec
 DELETE FROM task_token WHERE task_id = $1;
-
--- name: DeleteExpiredTaskTokens :exec
-DELETE FROM task_token WHERE expires_at <= now();

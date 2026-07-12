@@ -104,10 +104,6 @@ WHERE chat_session_id = $1
 ORDER BY created_at DESC, id DESC
 LIMIT $2;
 
--- name: GetChatMessage :one
-SELECT * FROM chat_message
-WHERE id = $1;
-
 -- name: GetUserChatMessageByTask :one
 SELECT * FROM chat_message
 WHERE task_id = $1 AND role = 'user'

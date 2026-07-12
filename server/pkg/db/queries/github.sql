@@ -11,10 +11,6 @@ ORDER BY created_at ASC;
 SELECT * FROM github_installation
 WHERE installation_id = $1;
 
--- name: GetGitHubInstallationByID :one
-SELECT * FROM github_installation
-WHERE id = $1;
-
 -- name: CreateGitHubInstallation :one
 INSERT INTO github_installation (
     workspace_id, installation_id, account_login, account_type, account_avatar_url, connected_by_id
@@ -171,26 +167,6 @@ ORDER BY pr.pr_created_at DESC;
 SELECT issue_id FROM issue_pull_request
 WHERE pull_request_id = $1;
 
--- name: GetIssuePullRequestCloseAggregate :one
--- Aggregates the issue's linked PRs into the two counts that gate
--- auto-advance: how many are still in flight (`open` or `draft`) and how
--- many merged PRs declared explicit closing intent on the link row. The
--- webhook auto-advances the issue when open_count = 0 AND
--- merged_with_close_intent_count > 0. Both the PR state and the link row
--- (with close_intent) are persisted before this query runs, so the result
--- is event-agnostic — a link-only sibling closing after a closing-keyword
--- PR has already merged still resolves the issue.
-SELECT
-    COALESCE(SUM(CASE WHEN pr.state IN ('open', 'draft') THEN 1 ELSE 0 END), 0)::bigint AS open_count,
-    COALESCE(SUM(CASE WHEN pr.state = 'merged' AND ipr.close_intent THEN 1 ELSE 0 END), 0)::bigint AS merged_with_close_intent_count
-FROM github_pull_request pr
-JOIN issue_pull_request ipr ON ipr.pull_request_id = pr.id
-WHERE ipr.issue_id = $1;
-
--- =====================
--- GitHub PR check suite
--- =====================
-
 -- name: UpsertPullRequestCheckSuite :exec
 -- Upserts a single check_suite row keyed by (pr_id, suite_id). The WHERE
 -- clause on the DO UPDATE branch prevents a late-arriving older event from
@@ -272,7 +248,3 @@ ON CONFLICT (issue_id, pull_request_id) DO UPDATE SET
         WHEN sqlc.arg('preserve_close_intent') THEN issue_pull_request.close_intent
         ELSE EXCLUDED.close_intent
     END;
-
--- name: UnlinkIssueFromPullRequest :exec
-DELETE FROM issue_pull_request
-WHERE issue_id = $1 AND pull_request_id = $2;

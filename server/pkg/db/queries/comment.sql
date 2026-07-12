@@ -292,10 +292,6 @@ JOIN membership m ON m.root_id = p.root_id
 JOIN comment c ON c.id = m.id
 ORDER BY p.last_activity_at ASC, p.root_id ASC, c.created_at ASC, c.id ASC;
 
--- name: CountComments :one
-SELECT count(*) FROM comment
-WHERE issue_id = $1 AND workspace_id = $2;
-
 -- name: CountNewCommentsSince :one
 -- Counts comments on an issue created strictly after @since, ACROSS THE WHOLE
 -- ISSUE (every thread, not just the triggering one). Excludes the triggering

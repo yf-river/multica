@@ -1,10 +1,3 @@
--- name: ListPromptEvaluationTestSuiteCases :many
-SELECT * FROM prompt_evaluation_test_suite_case
-WHERE workspace_id = $1
-  AND (sqlc.narg('test_suite_asset_id')::uuid IS NULL OR test_suite_asset_id = sqlc.narg('test_suite_asset_id'))
-  AND (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status'))
-ORDER BY test_suite_asset_id, case_index ASC, created_at ASC;
-
 -- name: CreatePromptEvaluationTestSuiteCase :one
 INSERT INTO prompt_evaluation_test_suite_case (
     workspace_id,

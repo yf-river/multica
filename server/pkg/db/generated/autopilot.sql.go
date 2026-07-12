@@ -47,7 +47,6 @@ func (q *Queries) AdvanceTriggerNextRun(ctx context.Context, arg AdvanceTriggerN
 }
 
 const claimDueScheduleTriggers = `-- name: ClaimDueScheduleTriggers :many
-
 UPDATE autopilot_trigger t
 SET next_run_at = NULL
 FROM autopilot a
@@ -79,9 +78,6 @@ type ClaimDueScheduleTriggersRow struct {
 	AutopilotWorkspaceID pgtype.UUID        `json:"autopilot_workspace_id"`
 }
 
-// =====================
-// Scheduler Queries
-// =====================
 // Atomically claim all due schedule triggers to prevent concurrent execution.
 // Joins the autopilot table to ensure only active autopilots are fired.
 func (q *Queries) ClaimDueScheduleTriggers(ctx context.Context) ([]ClaimDueScheduleTriggersRow, error) {
@@ -1199,47 +1195,6 @@ func (q *Queries) SetAutopilotTriggerSigningSecret(ctx context.Context, arg SetA
 	return i, err
 }
 
-const setAutopilotTriggerWebhookToken = `-- name: SetAutopilotTriggerWebhookToken :one
-UPDATE autopilot_trigger
-SET webhook_token = $2,
-    updated_at = now()
-WHERE id = $1
-RETURNING id, autopilot_id, kind, enabled, cron_expression, timezone, next_run_at, webhook_token, label, last_fired_at, created_at, updated_at, provider, signing_secret, event_filters
-`
-
-type SetAutopilotTriggerWebhookTokenParams struct {
-	ID           pgtype.UUID `json:"id"`
-	WebhookToken pgtype.Text `json:"webhook_token"`
-}
-
-// Sets the webhook token at creation time. CreateAutopilotTrigger inserts the
-// row first (using its full 8-arg signature), then this query attaches the
-// token. Splitting the create + token-set keeps the existing CreateAutopilotTrigger
-// query usable by the schedule path without forcing every caller to think
-// about webhook_token.
-func (q *Queries) SetAutopilotTriggerWebhookToken(ctx context.Context, arg SetAutopilotTriggerWebhookTokenParams) (AutopilotTrigger, error) {
-	row := q.db.QueryRow(ctx, setAutopilotTriggerWebhookToken, arg.ID, arg.WebhookToken)
-	var i AutopilotTrigger
-	err := row.Scan(
-		&i.ID,
-		&i.AutopilotID,
-		&i.Kind,
-		&i.Enabled,
-		&i.CronExpression,
-		&i.Timezone,
-		&i.NextRunAt,
-		&i.WebhookToken,
-		&i.Label,
-		&i.LastFiredAt,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.Provider,
-		&i.SigningSecret,
-		&i.EventFilters,
-	)
-	return i, err
-}
-
 const systemPauseAutopilot = `-- name: SystemPauseAutopilot :one
 UPDATE autopilot
 SET status = 'paused', updated_at = now()
@@ -1528,45 +1483,6 @@ type UpdateAutopilotRunSkippedParams struct {
 // a paper trail without polluting the failure ratio.
 func (q *Queries) UpdateAutopilotRunSkipped(ctx context.Context, arg UpdateAutopilotRunSkippedParams) (AutopilotRun, error) {
 	row := q.db.QueryRow(ctx, updateAutopilotRunSkipped, arg.ID, arg.FailureReason)
-	var i AutopilotRun
-	err := row.Scan(
-		&i.ID,
-		&i.AutopilotID,
-		&i.TriggerID,
-		&i.Source,
-		&i.Status,
-		&i.IssueID,
-		&i.TaskID,
-		&i.TriggeredAt,
-		&i.CompletedAt,
-		&i.FailureReason,
-		&i.TriggerPayload,
-		&i.Result,
-		&i.CreatedAt,
-		&i.SquadID,
-		&i.RequestKey,
-	)
-	return i, err
-}
-
-const updateAutopilotRunSkippedWithResult = `-- name: UpdateAutopilotRunSkippedWithResult :one
-UPDATE autopilot_run
-SET status = 'skipped',
-    completed_at = now(),
-    failure_reason = $2,
-    result = $3
-WHERE id = $1
-RETURNING id, autopilot_id, trigger_id, source, status, issue_id, task_id, triggered_at, completed_at, failure_reason, trigger_payload, result, created_at, squad_id, request_key
-`
-
-type UpdateAutopilotRunSkippedWithResultParams struct {
-	ID            pgtype.UUID `json:"id"`
-	FailureReason pgtype.Text `json:"failure_reason"`
-	Result        []byte      `json:"result"`
-}
-
-func (q *Queries) UpdateAutopilotRunSkippedWithResult(ctx context.Context, arg UpdateAutopilotRunSkippedWithResultParams) (AutopilotRun, error) {
-	row := q.db.QueryRow(ctx, updateAutopilotRunSkippedWithResult, arg.ID, arg.FailureReason, arg.Result)
 	var i AutopilotRun
 	err := row.Scan(
 		&i.ID,

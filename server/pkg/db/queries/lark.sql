@@ -37,17 +37,12 @@ ON CONFLICT (workspace_id, agent_id) DO UPDATE SET
     installed_at         = now(),
     updated_at           = now()
 RETURNING *;
-
 -- name: GetLarkInstallation :one
 SELECT * FROM lark_installation WHERE id = $1;
 
 -- name: GetLarkInstallationInWorkspace :one
 SELECT * FROM lark_installation
 WHERE id = $1 AND workspace_id = $2;
-
--- name: GetLarkInstallationByAgent :one
-SELECT * FROM lark_installation
-WHERE workspace_id = $1 AND agent_id = $2;
 
 -- name: GetLarkInstallationByAppID :one
 -- Used by the OAuth callback to detect re-install vs first-install,
@@ -145,18 +140,6 @@ RETURNING *;
 -- existence is itself the membership proof).
 SELECT * FROM lark_user_binding
 WHERE installation_id = $1 AND lark_open_id = $2;
-
--- name: ListLarkUserBindingsByInstallation :many
-SELECT * FROM lark_user_binding
-WHERE installation_id = $1
-ORDER BY bound_at DESC;
-
--- name: DeleteLarkUserBinding :exec
-DELETE FROM lark_user_binding WHERE id = $1;
-
--- =====================
--- lark_chat_session_binding
--- =====================
 
 -- name: CreateLarkChatSessionBinding :one
 INSERT INTO lark_chat_session_binding (
@@ -268,17 +251,6 @@ WHERE installation_id = $1
   AND claim_token = $3
   AND processed_at IS NULL;
 
--- name: PurgeLarkInboundDedup :exec
--- Removes dedup rows older than the supplied cutoff. The vacuum job
--- (separate cron) calls this with cutoff = now() - INTERVAL '24h'.
--- Sweeps both processed and (very old) abandoned in-flight rows.
-DELETE FROM lark_inbound_message_dedup
-WHERE received_at < $1;
-
--- =====================
--- lark_inbound_audit
--- =====================
-
 -- name: RecordLarkInboundDrop :exec
 -- The ONLY write path for events that fail identity check or the
 -- group-mention filter. Deliberately accepts no body column — the
@@ -295,17 +267,6 @@ INSERT INTO lark_inbound_audit (
     sqlc.narg('lark_message_id'),
     $2
 );
-
--- name: ListLarkInboundAuditByInstallation :many
--- Ops debugging view; paged via the (installation_id, received_at) idx.
-SELECT * FROM lark_inbound_audit
-WHERE installation_id = $1
-ORDER BY received_at DESC
-LIMIT $2 OFFSET $3;
-
--- =====================
--- lark_outbound_card_message
--- =====================
 
 -- name: CreateLarkOutboundCardMessage :one
 INSERT INTO lark_outbound_card_message (
@@ -358,9 +319,3 @@ WHERE token_hash = $1
   AND consumed_at IS NULL
   AND expires_at > now()
 RETURNING *;
-
--- name: PurgeExpiredLarkBindingTokens :exec
--- Tokens are tiny but unbounded over time. The same vacuum cron that
--- handles dedup can sweep these too.
-DELETE FROM lark_binding_token
-WHERE expires_at < $1;

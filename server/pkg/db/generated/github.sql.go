@@ -161,28 +161,6 @@ func (q *Queries) DrainPendingCheckSuitesForPR(ctx context.Context, arg DrainPen
 	return items, nil
 }
 
-const getGitHubInstallationByID = `-- name: GetGitHubInstallationByID :one
-SELECT id, workspace_id, installation_id, account_login, account_type, account_avatar_url, connected_by_id, created_at, updated_at FROM github_installation
-WHERE id = $1
-`
-
-func (q *Queries) GetGitHubInstallationByID(ctx context.Context, id pgtype.UUID) (GithubInstallation, error) {
-	row := q.db.QueryRow(ctx, getGitHubInstallationByID, id)
-	var i GithubInstallation
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.InstallationID,
-		&i.AccountLogin,
-		&i.AccountType,
-		&i.AccountAvatarUrl,
-		&i.ConnectedByID,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
 const getGitHubInstallationByInstallationID = `-- name: GetGitHubInstallationByInstallationID :one
 SELECT id, workspace_id, installation_id, account_login, account_type, account_avatar_url, connected_by_id, created_at, updated_at FROM github_installation
 WHERE installation_id = $1
@@ -250,35 +228,6 @@ func (q *Queries) GetGitHubPullRequest(ctx context.Context, arg GetGitHubPullReq
 		&i.Deletions,
 		&i.ChangedFiles,
 	)
-	return i, err
-}
-
-const getIssuePullRequestCloseAggregate = `-- name: GetIssuePullRequestCloseAggregate :one
-SELECT
-    COALESCE(SUM(CASE WHEN pr.state IN ('open', 'draft') THEN 1 ELSE 0 END), 0)::bigint AS open_count,
-    COALESCE(SUM(CASE WHEN pr.state = 'merged' AND ipr.close_intent THEN 1 ELSE 0 END), 0)::bigint AS merged_with_close_intent_count
-FROM github_pull_request pr
-JOIN issue_pull_request ipr ON ipr.pull_request_id = pr.id
-WHERE ipr.issue_id = $1
-`
-
-type GetIssuePullRequestCloseAggregateRow struct {
-	OpenCount                  int64 `json:"open_count"`
-	MergedWithCloseIntentCount int64 `json:"merged_with_close_intent_count"`
-}
-
-// Aggregates the issue's linked PRs into the two counts that gate
-// auto-advance: how many are still in flight (`open` or `draft`) and how
-// many merged PRs declared explicit closing intent on the link row. The
-// webhook auto-advances the issue when open_count = 0 AND
-// merged_with_close_intent_count > 0. Both the PR state and the link row
-// (with close_intent) are persisted before this query runs, so the result
-// is event-agnostic — a link-only sibling closing after a closing-keyword
-// PR has already merged still resolves the issue.
-func (q *Queries) GetIssuePullRequestCloseAggregate(ctx context.Context, issueID pgtype.UUID) (GetIssuePullRequestCloseAggregateRow, error) {
-	row := q.db.QueryRow(ctx, getIssuePullRequestCloseAggregate, issueID)
-	var i GetIssuePullRequestCloseAggregateRow
-	err := row.Scan(&i.OpenCount, &i.MergedWithCloseIntentCount)
 	return i, err
 }
 
@@ -543,21 +492,6 @@ func (q *Queries) ListPullRequestsByIssue(ctx context.Context, issueID pgtype.UU
 	return items, nil
 }
 
-const unlinkIssueFromPullRequest = `-- name: UnlinkIssueFromPullRequest :exec
-DELETE FROM issue_pull_request
-WHERE issue_id = $1 AND pull_request_id = $2
-`
-
-type UnlinkIssueFromPullRequestParams struct {
-	IssueID       pgtype.UUID `json:"issue_id"`
-	PullRequestID pgtype.UUID `json:"pull_request_id"`
-}
-
-func (q *Queries) UnlinkIssueFromPullRequest(ctx context.Context, arg UnlinkIssueFromPullRequestParams) error {
-	_, err := q.db.Exec(ctx, unlinkIssueFromPullRequest, arg.IssueID, arg.PullRequestID)
-	return err
-}
-
 const upsertGitHubPullRequest = `-- name: UpsertGitHubPullRequest :one
 
 INSERT INTO github_pull_request (
@@ -789,7 +723,6 @@ func (q *Queries) UpsertPendingGitHubInstallation(ctx context.Context, arg Upser
 }
 
 const upsertPullRequestCheckSuite = `-- name: UpsertPullRequestCheckSuite :exec
-
 INSERT INTO github_pull_request_check_suite (
     pr_id, suite_id, head_sha, app_id, conclusion, status, updated_at
 ) VALUES (
@@ -814,9 +747,6 @@ type UpsertPullRequestCheckSuiteParams struct {
 	Conclusion pgtype.Text        `json:"conclusion"`
 }
 
-// =====================
-// GitHub PR check suite
-// =====================
 // Upserts a single check_suite row keyed by (pr_id, suite_id). The WHERE
 // clause on the DO UPDATE branch prevents a late-arriving older event from
 // overwriting a newer one — same-PR/same-suite ordering protection. Late
