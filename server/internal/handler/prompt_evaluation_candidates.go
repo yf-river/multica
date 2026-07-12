@@ -514,15 +514,42 @@ func (h *Handler) UpdatePromptEvaluationOptimizationCandidate(w http.ResponseWri
 		writeError(w, http.StatusBadRequest, "candidate_content is required")
 		return
 	}
-	candidate, ok := loadPromptEvaluationOptimizationCandidate(w, r, h.Queries, workspaceUUID, candidateID)
-	if !ok {
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start optimization candidate update transaction")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	if _, err := tx.Exec(r.Context(), `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, uuidToString(candidateID)); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to lock optimization candidate")
+		return
+	}
+	qtx := h.Queries.WithTx(tx)
+	candidate, err := qtx.GetPromptEvaluationOptimizationCandidateInWorkspace(r.Context(), db.GetPromptEvaluationOptimizationCandidateInWorkspaceParams{
+		ID: candidateID, WorkspaceID: workspaceUUID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "prompt evaluation optimization candidate not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to load prompt evaluation optimization candidate")
 		return
 	}
 	if candidate.Status != "待确认" {
 		writeError(w, http.StatusConflict, "only 待确认 optimization candidates can be edited")
 		return
 	}
-	updatedCandidate, err := h.Queries.UpdatePromptEvaluationOptimizationCandidateDraft(r.Context(), db.UpdatePromptEvaluationOptimizationCandidateDraftParams{
+	var normalizedPatch *PromptEvaluationSkillPatch
+	if req.SkillPatch != nil {
+		patch, err := normalizePromptEvaluationSkillPatch(*req.SkillPatch, candidate, time.Now().UTC())
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		normalizedPatch = &patch
+	}
+	updatedCandidate, err := qtx.UpdatePromptEvaluationOptimizationCandidateDraft(r.Context(), db.UpdatePromptEvaluationOptimizationCandidateDraftParams{
 		ID:               candidateID,
 		WorkspaceID:      workspaceUUID,
 		CandidateName:    name,
@@ -539,19 +566,18 @@ func (h *Handler) UpdatePromptEvaluationOptimizationCandidate(w http.ResponseWri
 		writeError(w, http.StatusInternalServerError, "failed to update optimization candidate")
 		return
 	}
-	if req.SkillPatch != nil {
-		normalizedPatch, err := normalizePromptEvaluationSkillPatch(*req.SkillPatch, candidate, time.Now().UTC())
-		if err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		updatedCandidate, err = h.mergePromptEvaluationOptimizationCandidateMetrics(r.Context(), workspaceUUID, candidateID, map[string]any{
-			"skill_patch": normalizedPatch,
+	if normalizedPatch != nil {
+		updatedCandidate, err = mergePromptEvaluationOptimizationCandidateMetricsRow(r.Context(), tx, workspaceUUID, candidateID, map[string]any{
+			"skill_patch": *normalizedPatch,
 		})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to persist skill patch candidate")
 			return
 		}
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit optimization candidate update")
+		return
 	}
 	writeJSON(w, http.StatusOK, promptEvaluationOptimizationCandidateToResponse(updatedCandidate))
 }
