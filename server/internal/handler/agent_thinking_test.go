@@ -3,10 +3,55 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 )
+
+func TestUpdateAgentRollsBackPrimaryFieldsWhenThinkingClearFails(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	runtimeID := createClaudeProviderRuntime(t)
+	agentID := createAgentOnRuntime(t, "atomic-agent-update-original", runtimeID, "high")
+	const functionName = "test_fail_atomic_agent_thinking_clear"
+	const triggerName = "test_fail_atomic_agent_thinking_clear_trigger"
+	if _, err := testPool.Exec(ctx, fmt.Sprintf(`
+		CREATE OR REPLACE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF OLD.id = %s::uuid AND NEW.thinking_level IS NULL THEN
+				RAISE EXCEPTION 'injected thinking clear failure';
+			END IF;
+			RETURN NEW;
+		END $$;
+		DROP TRIGGER IF EXISTS %s ON agent;
+		CREATE TRIGGER %s BEFORE UPDATE ON agent FOR EACH ROW EXECUTE FUNCTION %s()
+	`, functionName, quoteSQLLiteral(agentID), triggerName, triggerName, functionName)); err != nil {
+		t.Fatalf("install thinking clear fault: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON agent; DROP FUNCTION IF EXISTS %s()`, triggerName, functionName))
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent WHERE id=$1`, agentID)
+	})
+
+	w := httptest.NewRecorder()
+	req := withURLParam(newRequest(http.MethodPatch, "/api/agents/"+agentID, map[string]any{
+		"name": "atomic-agent-update-changed", "thinking_level": "",
+	}), "id", agentID)
+	testHandler.UpdateAgent(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("update agent: expected 500, got %d: %s", w.Code, w.Body.String())
+	}
+	var name, thinking string
+	if err := testPool.QueryRow(ctx, `SELECT name, thinking_level FROM agent WHERE id=$1`, agentID).Scan(&name, &thinking); err != nil {
+		t.Fatalf("read agent after failed update: %v", err)
+	}
+	if name != "atomic-agent-update-original" || thinking != "high" {
+		t.Fatalf("failed update left name=%q thinking=%q", name, thinking)
+	}
+}
 
 // TestCreateAgent_ThinkingLevel_ValidationConsistency exercises the
 // MUL-2339 invariant: when an HTTP caller sends a literal-invalid
