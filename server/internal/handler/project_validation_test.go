@@ -1,12 +1,32 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 )
+
+func TestGetProjectClientCanceledReturns499(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	projectID := "11111111-1111-4111-8111-111111111111"
+	req := newRequest(http.MethodGet, "/api/projects/"+projectID+"?workspace_id="+testWorkspaceID, nil)
+	ctx, cancel := context.WithCancel(req.Context())
+	cancel()
+	req = req.WithContext(ctx)
+	req = withURLParam(req, "id", projectID)
+	w := httptest.NewRecorder()
+
+	testHandler.GetProject(w, req)
+	if w.Code != 499 {
+		t.Fatalf("expected 499 for canceled project read, got %d: %s", w.Code, w.Body.String())
+	}
+}
 
 // An unknown project status must fail fast with a 400 and the valid list, not
 // surface the DB CHECK violation as a 500 (#3925: `--status active`).
