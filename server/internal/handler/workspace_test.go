@@ -337,6 +337,27 @@ VALUES ($1, $2, 'owner')
 		t.Fatalf("create owner member: %v", err)
 	}
 
+	t.Run("rejects non-object settings without persisting", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		req := newRequest("PATCH", "/api/workspaces/"+wsID, map[string]any{
+			"settings": []any{"not", "an", "object"},
+		})
+		req = withURLParam(req, "id", wsID)
+		testHandler.UpdateWorkspace(w, req)
+
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 from non-object settings update, got %d: %s", w.Code, w.Body.String())
+		}
+
+		var raw []byte
+		if err := testPool.QueryRow(ctx, `SELECT settings FROM workspace WHERE id = $1`, wsID).Scan(&raw); err != nil {
+			t.Fatalf("read settings: %v", err)
+		}
+		if string(raw) != "{}" {
+			t.Fatalf("invalid settings update should not persist, got %s", raw)
+		}
+	})
+
 	t.Run("rejects invalid repo URLs without persisting", func(t *testing.T) {
 		w := httptest.NewRecorder()
 		req := newRequest("PATCH", "/api/workspaces/"+wsID, map[string]any{
