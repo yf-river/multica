@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"sync"
@@ -125,7 +126,7 @@ const (
 // implementation can honour the heartbeat-side timeout that gates a
 // slow shared store from stalling the rest of the heartbeat.
 type ModelListStore interface {
-	Create(ctx context.Context, runtimeID string) (*ModelListRequest, error)
+	Create(ctx context.Context, runtimeID, requestID string) (*ModelListRequest, error)
 	Get(ctx context.Context, id string) (*ModelListRequest, error)
 	// HasPending is a cheap read-only probe used by the heartbeat hot path
 	// to gate the side-effecting PopPending. A spurious "true" is fine —
@@ -175,7 +176,7 @@ func NewInMemoryModelListStore() *InMemoryModelListStore {
 	return &InMemoryModelListStore{requests: make(map[string]*ModelListRequest)}
 }
 
-func (s *InMemoryModelListStore) Create(_ context.Context, runtimeID string) (*ModelListRequest, error) {
+func (s *InMemoryModelListStore) Create(_ context.Context, runtimeID, requestID string) (*ModelListRequest, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -187,8 +188,14 @@ func (s *InMemoryModelListStore) Create(_ context.Context, runtimeID string) (*M
 	}
 
 	now := time.Now()
+	if existing := s.requests[requestID]; existing != nil {
+		if existing.RuntimeID != runtimeID {
+			return nil, errRuntimeAsyncRequestConflict
+		}
+		return existing, nil
+	}
 	req := &ModelListRequest{
-		ID:        randomID(),
+		ID:        requestID,
 		RuntimeID: runtimeID,
 		Status:    ModelListPending,
 		// Default to true; the daemon overrides this in the report
@@ -312,9 +319,17 @@ func (h *Handler) InitiateListModels(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusServiceUnavailable, "runtime is offline")
 		return
 	}
+	requestID, ok := requireIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
 
-	req, err := h.ModelListStore.Create(r.Context(), rt.runtimeID)
+	req, err := h.ModelListStore.Create(r.Context(), rt.runtimeID, uuidToString(requestID))
 	if err != nil {
+		if errors.Is(err, errRuntimeAsyncRequestConflict) {
+			writeJSON(w, http.StatusConflict, map[string]any{"error": "Idempotency-Key was already used for another runtime", "code": "idempotency_conflict"})
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "failed to enqueue model list request: "+err.Error())
 		return
 	}

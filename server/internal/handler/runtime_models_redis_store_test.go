@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 )
@@ -55,7 +56,7 @@ func TestRedisModelListStore_CreateGetComplete(t *testing.T) {
 	ctx := context.Background()
 	store := NewRedisModelListStore(rdb)
 
-	req, err := store.Create(ctx, "runtime-1")
+	req, err := store.Create(ctx, "runtime-1", randomID())
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -97,6 +98,30 @@ func TestRedisModelListStore_CreateGetComplete(t *testing.T) {
 	}
 }
 
+func TestRedisModelListStore_ReplaysOnePendingRequest(t *testing.T) {
+	rdb := newRedisTestClient(t)
+	store := NewRedisModelListStore(rdb)
+	ctx := context.Background()
+	const requestID = "model-list-replay"
+	first, err := store.Create(ctx, "runtime-replay", requestID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay, err := store.Create(ctx, "runtime-replay", requestID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replay.ID != first.ID || !replay.CreatedAt.Equal(first.CreatedAt) {
+		t.Fatalf("replay = %+v, want %+v", replay, first)
+	}
+	if got := rdb.ZCard(ctx, modelListPendingKey("runtime-replay")).Val(); got != 1 {
+		t.Fatalf("pending count = %d, want 1", got)
+	}
+	if _, err := store.Create(ctx, "runtime-changed", requestID); !errors.Is(err, errRuntimeAsyncRequestConflict) {
+		t.Fatalf("changed runtime error = %v, want conflict", err)
+	}
+}
+
 // TestRedisModelListStore_PopPendingAcrossInstances is the regression test
 // for the exact bug this PR fixes: two API replicas share one Redis, one
 // receives the POST that creates the request, the other receives the daemon
@@ -110,7 +135,7 @@ func TestRedisModelListStore_PopPendingAcrossInstances(t *testing.T) {
 	nodeA := NewRedisModelListStore(rdb)
 	nodeB := NewRedisModelListStore(rdb)
 
-	req, err := nodeA.Create(ctx, "runtime-cross")
+	req, err := nodeA.Create(ctx, "runtime-cross", randomID())
 	if err != nil {
 		t.Fatalf("node A create: %v", err)
 	}
@@ -150,7 +175,7 @@ func TestRedisModelListStore_PopPendingConcurrent(t *testing.T) {
 	ctx := context.Background()
 	store := NewRedisModelListStore(rdb)
 
-	req, err := store.Create(ctx, "runtime-race")
+	req, err := store.Create(ctx, "runtime-race", randomID())
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -171,7 +196,7 @@ func TestRedisModelListStore_PendingTimeout(t *testing.T) {
 	ctx := context.Background()
 	store := NewRedisModelListStore(rdb)
 
-	req, err := store.Create(ctx, "runtime-timeout")
+	req, err := store.Create(ctx, "runtime-timeout", randomID())
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -210,7 +235,7 @@ func TestRedisModelListStore_RunningTimeout(t *testing.T) {
 	ctx := context.Background()
 	store := NewRedisModelListStore(rdb)
 
-	req, err := store.Create(ctx, "runtime-running-timeout")
+	req, err := store.Create(ctx, "runtime-running-timeout", randomID())
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -249,7 +274,7 @@ func TestRedisModelListStore_HasPending(t *testing.T) {
 		t.Fatalf("empty store should not report pending: has=%v err=%v", has, err)
 	}
 
-	if _, err := store.Create(ctx, "rt-1"); err != nil {
+	if _, err := store.Create(ctx, "rt-1", randomID()); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	if has, err := store.HasPending(ctx, "rt-1"); err != nil || !has {

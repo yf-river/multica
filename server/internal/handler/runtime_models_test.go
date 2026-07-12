@@ -20,7 +20,7 @@ import (
 func TestModelListStore_RunningRequestTimesOut(t *testing.T) {
 	ctx := context.Background()
 	store := NewInMemoryModelListStore()
-	req, err := store.Create(ctx, "runtime-xyz")
+	req, err := store.Create(ctx, "runtime-xyz", randomID())
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -66,7 +66,7 @@ func TestModelListStore_RunningRequestTimesOut(t *testing.T) {
 func TestReportModelListResult_PreservesDefault(t *testing.T) {
 	ctx := context.Background()
 	store := NewInMemoryModelListStore()
-	req, err := store.Create(ctx, "runtime-xyz")
+	req, err := store.Create(ctx, "runtime-xyz", randomID())
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -179,7 +179,7 @@ func TestGetModelListRequestRejectsCrossWorkspaceRequest(t *testing.T) {
 	}
 
 	store := NewInMemoryModelListStore()
-	request, err := store.Create(ctx, runtimeID)
+	request, err := store.Create(ctx, runtimeID, randomID())
 	if err != nil {
 		t.Fatalf("create model request: %v", err)
 	}
@@ -210,7 +210,7 @@ func TestInMemoryModelListStore_HasPending(t *testing.T) {
 		t.Fatalf("empty store should not report pending: has=%v err=%v", has, err)
 	}
 
-	if _, err := store.Create(ctx, "rt-1"); err != nil {
+	if _, err := store.Create(ctx, "rt-1", randomID()); err != nil {
 		t.Fatalf("create: %v", err)
 	}
 	if has, err := store.HasPending(ctx, "rt-1"); err != nil || !has {
@@ -236,11 +236,11 @@ func TestInMemoryModelListStore_PopPendingPicksOldest(t *testing.T) {
 	ctx := context.Background()
 	store := NewInMemoryModelListStore()
 
-	first, _ := store.Create(ctx, "rt-1")
+	first, _ := store.Create(ctx, "rt-1", randomID())
 	// Force a measurable gap so the FIFO comparison isn't on equal
 	// CreatedAt values (possible on platforms with coarse clocks).
 	time.Sleep(2 * time.Millisecond)
-	second, _ := store.Create(ctx, "rt-1")
+	second, _ := store.Create(ctx, "rt-1", randomID())
 
 	got, err := store.PopPending(ctx, "rt-1")
 	if err != nil {

@@ -1094,6 +1094,25 @@ describe("ApiClient", () => {
     expect(second["Idempotency-Key"]).toBe(first["Idempotency-Key"]);
   });
 
+  it.each([
+    ["model discovery", { id: "model-request", runtime_id: "runtime-1", status: "pending", models: [], supported: true, created_at: "now", updated_at: "now" },
+      (client: ApiClient) => client.initiateListModels("runtime-1")],
+    ["local skill discovery", { id: "skill-request", runtime_id: "runtime-1", status: "pending", skills: [], supported: true, created_at: "now", updated_at: "now" },
+      (client: ApiClient) => client.initiateListLocalSkills("runtime-1")],
+  ])("retries %s unknown outcomes with one request identity", async (_name, response, initiate) => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify(response), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    await expect(initiate(new ApiClient("https://api.example.test"))).resolves.toEqual(response);
+    const first = fetchMock.mock.calls[0]![1]!.headers as Record<string, string>;
+    const second = fetchMock.mock.calls[1]![1]!.headers as Record<string, string>;
+    expect(first["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(second["Idempotency-Key"]).toBe(first["Idempotency-Key"]);
+  });
+
   it("preserves HTTP status on failed requests", async () => {
     vi.stubGlobal(
       "fetch",

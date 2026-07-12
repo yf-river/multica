@@ -124,7 +124,7 @@ func assertRuntimeLocalSkillTimeout(t *testing.T, status RuntimeLocalSkillReques
 func TestInMemoryLocalSkillListStore_PreservesSummaries(t *testing.T) {
 	ctx := context.Background()
 	store := NewInMemoryLocalSkillListStore()
-	req, err := store.Create(ctx, "runtime-xyz")
+	req, err := store.Create(ctx, "runtime-xyz", randomID())
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -176,7 +176,7 @@ func TestInMemoryLocalSkillListStore_PreservesSummaries(t *testing.T) {
 func TestInMemoryLocalSkillListStore_TimesOutRunningRequests(t *testing.T) {
 	ctx := context.Background()
 	store := NewInMemoryLocalSkillListStore()
-	req, err := store.Create(ctx, "runtime-xyz")
+	req, err := store.Create(ctx, "runtime-xyz", randomID())
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}

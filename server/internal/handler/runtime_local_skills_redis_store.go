@@ -89,10 +89,10 @@ func NewRedisLocalSkillListStore(rdb *redis.Client) *RedisLocalSkillListStore {
 	return &RedisLocalSkillListStore{rdb: rdb}
 }
 
-func (s *RedisLocalSkillListStore) Create(ctx context.Context, runtimeID string) (*RuntimeLocalSkillListRequest, error) {
+func (s *RedisLocalSkillListStore) Create(ctx context.Context, runtimeID, requestID string) (*RuntimeLocalSkillListRequest, error) {
 	now := time.Now()
 	req := &RuntimeLocalSkillListRequest{
-		ID:        randomID(),
+		ID:        requestID,
 		RuntimeID: runtimeID,
 		Status:    RuntimeLocalSkillPending,
 		Supported: true,
@@ -104,18 +104,26 @@ func (s *RedisLocalSkillListStore) Create(ctx context.Context, runtimeID string)
 		return nil, fmt.Errorf("marshal list request: %w", err)
 	}
 
-	pipe := s.rdb.TxPipeline()
-	pipe.Set(ctx, localSkillListKey(req.ID), data, runtimeLocalSkillStoreRetention)
-	pipe.ZAdd(ctx, localSkillListPendingKey(runtimeID), redis.Z{
-		Score:  float64(now.UnixNano()),
-		Member: req.ID,
-	})
-	// Keep the pending ZSET alive a bit longer than the individual request
-	// so stale members still in the zset can be swept lazily on PopPending
-	// without blocking the create path on deletion.
-	pipe.Expire(ctx, localSkillListPendingKey(runtimeID), runtimeLocalSkillStoreRetention*2)
-	if _, err := pipe.Exec(ctx); err != nil {
+	created, err := createPendingScript.Run(ctx, s.rdb,
+		[]string{localSkillListKey(req.ID), localSkillListPendingKey(runtimeID)},
+		data, now.UnixNano(), int(runtimeLocalSkillStoreRetention/time.Second), req.ID,
+		int((runtimeLocalSkillStoreRetention*2)/time.Second),
+	).Int()
+	if err != nil {
 		return nil, fmt.Errorf("persist list request: %w", err)
+	}
+	if created == 0 {
+		existing, err := s.loadListRequest(ctx, req.ID)
+		if err != nil {
+			return nil, err
+		}
+		if existing == nil {
+			return nil, errors.New("local skill list request disappeared")
+		}
+		if existing.RuntimeID != runtimeID {
+			return nil, errRuntimeAsyncRequestConflict
+		}
+		return existing, nil
 	}
 	return req, nil
 }

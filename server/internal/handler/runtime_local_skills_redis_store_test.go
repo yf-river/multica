@@ -63,7 +63,7 @@ func TestRedisLocalSkillListStore_CreateGetComplete(t *testing.T) {
 	ctx := context.Background()
 	store := NewRedisLocalSkillListStore(rdb)
 
-	req, err := store.Create(ctx, "runtime-1")
+	req, err := store.Create(ctx, "runtime-1", randomID())
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -105,6 +105,30 @@ func TestRedisLocalSkillListStore_CreateGetComplete(t *testing.T) {
 	}
 }
 
+func TestRedisLocalSkillListStore_ReplaysOnePendingRequest(t *testing.T) {
+	rdb := newRedisTestClient(t)
+	store := NewRedisLocalSkillListStore(rdb)
+	ctx := context.Background()
+	const requestID = "local-skill-list-replay"
+	first, err := store.Create(ctx, "runtime-replay", requestID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay, err := store.Create(ctx, "runtime-replay", requestID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replay.ID != first.ID || !replay.CreatedAt.Equal(first.CreatedAt) {
+		t.Fatalf("replay = %+v, want %+v", replay, first)
+	}
+	if got := rdb.ZCard(ctx, localSkillListPendingKey("runtime-replay")).Val(); got != 1 {
+		t.Fatalf("pending count = %d, want 1", got)
+	}
+	if _, err := store.Create(ctx, "runtime-changed", requestID); !errors.Is(err, errRuntimeAsyncRequestConflict) {
+		t.Fatalf("changed runtime error = %v, want conflict", err)
+	}
+}
+
 // TestRedisLocalSkillListStore_PopPendingAcrossInstances is the regression
 // test for the exact bug this change fixes: two distinct *store* instances
 // (i.e. two API nodes) share one Redis, one creates a pending request, the
@@ -117,7 +141,7 @@ func TestRedisLocalSkillListStore_PopPendingAcrossInstances(t *testing.T) {
 	nodeA := NewRedisLocalSkillListStore(rdb)
 	nodeB := NewRedisLocalSkillListStore(rdb)
 
-	req, err := nodeA.Create(ctx, "runtime-cross")
+	req, err := nodeA.Create(ctx, "runtime-cross", randomID())
 	if err != nil {
 		t.Fatalf("node A create: %v", err)
 	}
@@ -157,7 +181,7 @@ func TestRedisLocalSkillListStore_PopPendingConcurrent(t *testing.T) {
 	ctx := context.Background()
 	store := NewRedisLocalSkillListStore(rdb)
 
-	req, err := store.Create(ctx, "runtime-race")
+	req, err := store.Create(ctx, "runtime-race", randomID())
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -174,7 +198,7 @@ func TestRedisLocalSkillListStore_PendingTimeout(t *testing.T) {
 	ctx := context.Background()
 	store := NewRedisLocalSkillListStore(rdb)
 
-	req, err := store.Create(ctx, "runtime-timeout")
+	req, err := store.Create(ctx, "runtime-timeout", randomID())
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -360,10 +384,10 @@ func TestRedisLocalSkillListStore_PerRuntimeIsolation(t *testing.T) {
 	ctx := context.Background()
 	store := NewRedisLocalSkillListStore(rdb)
 
-	if _, err := store.Create(ctx, "runtime-A"); err != nil {
+	if _, err := store.Create(ctx, "runtime-A", randomID()); err != nil {
 		t.Fatalf("create A: %v", err)
 	}
-	reqB, err := store.Create(ctx, "runtime-B")
+	reqB, err := store.Create(ctx, "runtime-B", randomID())
 	if err != nil {
 		t.Fatalf("create B: %v", err)
 	}
@@ -400,7 +424,7 @@ func TestRedisLocalSkillListStore_PopPendingAtomicClaim(t *testing.T) {
 	ctx := context.Background()
 	store := NewRedisLocalSkillListStore(rdb)
 
-	req, err := store.Create(ctx, "runtime-atomic")
+	req, err := store.Create(ctx, "runtime-atomic", randomID())
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}

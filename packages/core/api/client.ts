@@ -1273,17 +1273,21 @@ export class ApiClient extends ApiTransport {
     );
   }
 
-  async initiateListModels(runtimeId: string): Promise<RuntimeModelListRequest> {
-    const raw = await this.fetch<unknown>(`/api/runtimes/${runtimeId}/models`, { method: "POST" });
-    return parseOrThrow(
-      raw,
-      RuntimeModelListRequestSchema.refine((request) => request.runtime_id === runtimeId, {
-        path: ["runtime_id"],
-        message: "runtime id does not match request",
-      }),
-      EMPTY_RUNTIME_MODEL_LIST_REQUEST,
-      { endpoint: "POST /api/runtimes/:id/models" },
-    ) as RuntimeModelListRequest;
+  async initiateListModels(runtimeId: string, idempotencyKey = generateUUID()): Promise<RuntimeModelListRequest> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/runtimes/${runtimeId}/models`, {
+        method: "POST", extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow(
+        raw,
+        RuntimeModelListRequestSchema.refine((request) => request.runtime_id === runtimeId, {
+          path: ["runtime_id"], message: "runtime id does not match request",
+        }),
+        EMPTY_RUNTIME_MODEL_LIST_REQUEST,
+        { endpoint: "POST /api/runtimes/:id/models", mayHaveCommitted: true },
+      ) as RuntimeModelListRequest;
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async getListModelsResult(
@@ -1307,19 +1311,22 @@ export class ApiClient extends ApiTransport {
 
   async initiateListLocalSkills(
     runtimeId: string,
+    idempotencyKey = generateUUID(),
   ): Promise<RuntimeLocalSkillListRequest> {
-    const raw = await this.fetch<unknown>(`/api/runtimes/${runtimeId}/local-skills`, {
-      method: "POST",
-    });
-    return parseOrThrow(
-      raw,
-      RuntimeLocalSkillListRequestSchema.refine((request) => request.runtime_id === runtimeId, {
-        path: ["runtime_id"],
-        message: "runtime id does not match request",
-      }),
-      EMPTY_RUNTIME_LOCAL_SKILL_LIST_REQUEST,
-      { endpoint: "POST /api/runtimes/:id/local-skills" },
-    ) as RuntimeLocalSkillListRequest;
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/runtimes/${runtimeId}/local-skills`, {
+        method: "POST", extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow(
+        raw,
+        RuntimeLocalSkillListRequestSchema.refine((request) => request.runtime_id === runtimeId, {
+          path: ["runtime_id"], message: "runtime id does not match request",
+        }),
+        EMPTY_RUNTIME_LOCAL_SKILL_LIST_REQUEST,
+        { endpoint: "POST /api/runtimes/:id/local-skills", mayHaveCommitted: true },
+      ) as RuntimeLocalSkillListRequest;
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async getListLocalSkillsResult(

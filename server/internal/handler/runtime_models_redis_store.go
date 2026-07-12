@@ -49,10 +49,10 @@ func NewRedisModelListStore(rdb *redis.Client) *RedisModelListStore {
 	return &RedisModelListStore{rdb: rdb}
 }
 
-func (s *RedisModelListStore) Create(ctx context.Context, runtimeID string) (*ModelListRequest, error) {
+func (s *RedisModelListStore) Create(ctx context.Context, runtimeID, requestID string) (*ModelListRequest, error) {
 	now := time.Now()
 	req := &ModelListRequest{
-		ID:        randomID(),
+		ID:        requestID,
 		RuntimeID: runtimeID,
 		Status:    ModelListPending,
 		Supported: true,
@@ -64,17 +64,26 @@ func (s *RedisModelListStore) Create(ctx context.Context, runtimeID string) (*Mo
 		return nil, err
 	}
 
-	pipe := s.rdb.TxPipeline()
-	pipe.Set(ctx, modelListKey(req.ID), data, modelListStoreRetention)
-	pipe.ZAdd(ctx, modelListPendingKey(runtimeID), redis.Z{
-		Score:  float64(now.UnixNano()),
-		Member: req.ID,
-	})
-	// Keep the pending zset alive past the per-record retention so stale
-	// members can be lazily swept on PopPending.
-	pipe.Expire(ctx, modelListPendingKey(runtimeID), modelListStoreRetention*2)
-	if _, err := pipe.Exec(ctx); err != nil {
+	created, err := createPendingScript.Run(ctx, s.rdb,
+		[]string{modelListKey(req.ID), modelListPendingKey(runtimeID)},
+		data, now.UnixNano(), int(modelListStoreRetention/time.Second), req.ID,
+		int((modelListStoreRetention*2)/time.Second),
+	).Int()
+	if err != nil {
 		return nil, fmt.Errorf("persist model list request: %w", err)
+	}
+	if created == 0 {
+		existing, err := s.loadRequest(ctx, req.ID)
+		if err != nil {
+			return nil, err
+		}
+		if existing == nil {
+			return nil, errors.New("model list request disappeared")
+		}
+		if existing.RuntimeID != runtimeID {
+			return nil, errRuntimeAsyncRequestConflict
+		}
+		return existing, nil
 	}
 	return req, nil
 }

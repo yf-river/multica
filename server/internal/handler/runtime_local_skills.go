@@ -80,7 +80,7 @@ const (
 // can have POST, heartbeat and poll land on different nodes and still agree
 // on the request's state.
 type LocalSkillListStore interface {
-	Create(ctx context.Context, runtimeID string) (*RuntimeLocalSkillListRequest, error)
+	Create(ctx context.Context, runtimeID, requestID string) (*RuntimeLocalSkillListRequest, error)
 	Get(ctx context.Context, id string) (*RuntimeLocalSkillListRequest, error)
 	// HasPending is a cheap read-only probe that reports whether the runtime
 	// has at least one pending request. Callers on the hot path (e.g. the
@@ -214,6 +214,7 @@ type RuntimeLocalSkillImportRequest struct {
 }
 
 var errLocalSkillImportRequestConflict = errors.New("local skill import request conflict")
+var errRuntimeAsyncRequestConflict = errors.New("runtime async request conflict")
 
 // InMemoryLocalSkillListStore is the single-node implementation — good enough
 // for local dev and the in-process test suite. Production (multi-node) must
@@ -228,7 +229,7 @@ func NewInMemoryLocalSkillListStore() *InMemoryLocalSkillListStore {
 	return &InMemoryLocalSkillListStore{requests: make(map[string]*RuntimeLocalSkillListRequest)}
 }
 
-func (s *InMemoryLocalSkillListStore) Create(_ context.Context, runtimeID string) (*RuntimeLocalSkillListRequest, error) {
+func (s *InMemoryLocalSkillListStore) Create(_ context.Context, runtimeID, requestID string) (*RuntimeLocalSkillListRequest, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -238,8 +239,14 @@ func (s *InMemoryLocalSkillListStore) Create(_ context.Context, runtimeID string
 		}
 	}
 
+	if existing := s.requests[requestID]; existing != nil {
+		if existing.RuntimeID != runtimeID {
+			return nil, errRuntimeAsyncRequestConflict
+		}
+		return existing, nil
+	}
 	req := &RuntimeLocalSkillListRequest{
-		ID:        randomID(),
+		ID:        requestID,
 		RuntimeID: runtimeID,
 		Status:    RuntimeLocalSkillPending,
 		Supported: true,
@@ -537,9 +544,17 @@ func (h *Handler) InitiateListLocalSkills(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusServiceUnavailable, "runtime is offline")
 		return
 	}
+	requestID, ok := requireIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
 
-	req, err := h.LocalSkillListStore.Create(r.Context(), rt.runtimeID)
+	req, err := h.LocalSkillListStore.Create(r.Context(), rt.runtimeID, uuidToString(requestID))
 	if err != nil {
+		if errors.Is(err, errRuntimeAsyncRequestConflict) {
+			writeJSON(w, http.StatusConflict, map[string]any{"error": "Idempotency-Key was already used for another runtime", "code": "idempotency_conflict"})
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "failed to enqueue local skills request: "+err.Error())
 		return
 	}
