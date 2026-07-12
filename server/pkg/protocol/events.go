@@ -118,7 +118,6 @@ const (
 	EventGitHubInstallationDeleted = "github_installation:deleted"
 	EventPullRequestLinked         = "pull_request:linked"
 	EventPullRequestUpdated        = "pull_request:updated"
-	EventPullRequestUnlinked       = "pull_request:unlinked"
 
 	// Lark integration events. `created` covers both first-install
 	// (UNIQUE on (workspace_id, agent_id) means at most one row per

@@ -78,9 +78,7 @@ test("implicit database and websocket contracts are visible", () => {
   );
   assert.equal(inventory.persistence.database.triggers.length, 4);
   assert.ok(inventory.persistence.database.indexes.length >= 180);
-  assert.deepEqual(inventory.websocket.goWithoutProductionReference, [
-    "pull_request:unlinked",
-  ]);
+  assert.deepEqual(inventory.websocket.goWithoutProductionReference, []);
 });
 
 test("external and non-page HTTP surfaces are present without Once.Do false positives", () => {

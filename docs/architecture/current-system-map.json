@@ -27,8 +27,8 @@
     "migrations": 142,
     "sqlcModules": 55,
     "sqlcQueries": 590,
-    "goWebsocketEvents": 80,
-    "typescriptWebsocketEvents": 70,
+    "goWebsocketEvents": 79,
+    "typescriptWebsocketEvents": 69,
     "zustandStores": 43,
     "reactQueryConsumerFiles": 176,
     "environmentVariables": 217,
@@ -12868,14 +12868,6 @@
         "staticReferenceMissing": false
       },
       {
-        "name": "pull_request:unlinked",
-        "constant": "EventPullRequestUnlinked",
-        "source": "server/pkg/protocol/events.go#EventPullRequestUnlinked",
-        "origin": "static",
-        "referenceSources": [],
-        "staticReferenceMissing": true
-      },
-      {
         "name": "pull_request:updated",
         "constant": "EventPullRequestUpdated",
         "source": "server/pkg/protocol/events.go#EventPullRequestUpdated",
@@ -13516,13 +13508,6 @@
         "staticReferenceMissing": true
       },
       {
-        "name": "pull_request:unlinked",
-        "source": "packages/core/types/events.ts#pull_request:unlinked",
-        "origin": "static",
-        "referenceSources": [],
-        "staticReferenceMissing": true
-      },
-      {
         "name": "pull_request:updated",
         "source": "packages/core/types/events.ts#pull_request:updated",
         "origin": "static",
@@ -13765,7 +13750,6 @@
       "project:deleted",
       "project:updated",
       "pull_request:linked",
-      "pull_request:unlinked",
       "pull_request:updated",
       "reaction:added",
       "reaction:removed",
@@ -13802,9 +13786,7 @@
       "lark_installation:revoked"
     ],
     "typescriptOnly": [],
-    "goWithoutProductionReference": [
-      "pull_request:unlinked"
-    ],
+    "goWithoutProductionReference": [],
     "typescriptWithoutLiteralReference": [
       "agent:archived",
       "agent:created",
@@ -13830,7 +13812,6 @@
       "project:deleted",
       "project:updated",
       "pull_request:linked",
-      "pull_request:unlinked",
       "pull_request:updated",
       "skill:created",
       "skill:deleted",
