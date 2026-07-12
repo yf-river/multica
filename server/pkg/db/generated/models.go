@@ -310,17 +310,6 @@ type CommentReaction struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
-type DaemonConnection struct {
-	ID              pgtype.UUID        `json:"id"`
-	AgentID         pgtype.UUID        `json:"agent_id"`
-	DaemonID        string             `json:"daemon_id"`
-	Status          string             `json:"status"`
-	LastHeartbeatAt pgtype.Timestamptz `json:"last_heartbeat_at"`
-	RuntimeInfo     []byte             `json:"runtime_info"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
-}
-
 type DomainEventDelivery struct {
 	EventID     pgtype.UUID        `json:"event_id"`
 	Consumer    string             `json:"consumer"`
@@ -493,13 +482,6 @@ type Issue struct {
 	OwnerID            pgtype.UUID        `json:"owner_id"`
 	WorkStartedAt      pgtype.Timestamptz `json:"work_started_at"`
 	WorkCompletedAt    pgtype.Timestamptz `json:"work_completed_at"`
-}
-
-type IssueDependency struct {
-	ID               pgtype.UUID `json:"id"`
-	IssueID          pgtype.UUID `json:"issue_id"`
-	DependsOnIssueID pgtype.UUID `json:"depends_on_issue_id"`
-	Type             string      `json:"type"`
 }
 
 type IssueLabel struct {
