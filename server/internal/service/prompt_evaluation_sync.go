@@ -412,27 +412,7 @@ func promptEvaluationTaskDurationMs(task db.AgentTaskQueue, run db.PromptEvaluat
 }
 
 func promptEvaluationTaskEvidence(run db.PromptEvaluationRun, task db.AgentTaskQueue, usages []db.TaskUsage, messages []db.TaskMessage) map[string]any {
-	usageRows := make([]map[string]any, 0, len(usages))
-	for _, usage := range usages {
-		breakdown, priced := metrics.EstimateUsageCostBreakdownUSD(
-			usage.Provider,
-			usage.Model,
-			usage.InputTokens,
-			usage.OutputTokens,
-			usage.CacheReadTokens,
-			usage.CacheWriteTokens,
-		)
-		usageRows = append(usageRows, map[string]any{
-			"provider":           usage.Provider,
-			"model":              usage.Model,
-			"input_tokens":       usage.InputTokens,
-			"output_tokens":      usage.OutputTokens,
-			"cache_read_tokens":  usage.CacheReadTokens,
-			"cache_write_tokens": usage.CacheWriteTokens,
-			"estimated_cost":     breakdown.TotalCostUSD,
-			"priced":             priced,
-		})
-	}
+	usageRows := prompteval.UsageEvidenceRows(usages)
 	messageSummary := make([]map[string]any, 0, len(messages))
 	for _, message := range messages {
 		messageSummary = append(messageSummary, map[string]any{

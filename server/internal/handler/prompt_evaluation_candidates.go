@@ -12,7 +12,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/multica-ai/multica/server/internal/metrics"
+	"github.com/multica-ai/multica/server/internal/prompteval"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -278,27 +278,7 @@ func (h *Handler) promptEvaluationCandidateRuntimeEvidence(ctx context.Context, 
 	if err != nil {
 		return nil, err
 	}
-	usageRows := make([]map[string]any, 0, len(usages))
-	for _, usage := range usages {
-		breakdown, priced := metrics.EstimateUsageCostBreakdownUSD(
-			usage.Provider,
-			usage.Model,
-			usage.InputTokens,
-			usage.OutputTokens,
-			usage.CacheReadTokens,
-			usage.CacheWriteTokens,
-		)
-		usageRows = append(usageRows, map[string]any{
-			"provider":           usage.Provider,
-			"model":              usage.Model,
-			"input_tokens":       usage.InputTokens,
-			"output_tokens":      usage.OutputTokens,
-			"cache_read_tokens":  usage.CacheReadTokens,
-			"cache_write_tokens": usage.CacheWriteTokens,
-			"estimated_cost":     metrics.RoundCostUSD(breakdown.TotalCostUSD),
-			"priced":             priced,
-		})
-	}
+	usageRows := prompteval.UsageEvidenceRows(usages)
 	messageRows := make([]map[string]any, 0, len(messages))
 	for _, message := range messages {
 		messageRows = append(messageRows, map[string]any{
