@@ -92,9 +92,28 @@ func TestRunPromptEvaluationSkillReEvalRollsBackWhenCandidateEvidenceFails(t *te
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_library_item WHERE id = $1`, promptID)
 	})
 
-	var originalPayload string
-	if err := testPool.QueryRow(ctx, `SELECT payload::text FROM prompt_evaluation_asset WHERE id = $1`, reEvalAsset.ID).Scan(&originalPayload); err != nil {
-		t.Fatalf("load original re-eval payload: %v", err)
+	successW := httptest.NewRecorder()
+	successReq := newRequest(http.MethodPost, "/api/prompt-evaluation-optimization-candidates/"+candidateID+"/skill-re-eval/run", map[string]any{
+		"asset_id": reEvalAsset.ID,
+	})
+	testHandler.RunPromptEvaluationSkillReEval(successW, withURLParam(successReq, "id", candidateID))
+	if successW.Code != http.StatusOK {
+		t.Fatalf("successful skill re-eval: expected 200, got %d: %s", successW.Code, successW.Body.String())
+	}
+
+	var baselineRuns, baselineTrials, baselineScores int
+	var baselinePayload string
+	if err := testPool.QueryRow(ctx, `
+		SELECT
+			(SELECT count(*) FROM prompt_evaluation_run WHERE asset_id = $1),
+			(SELECT count(*) FROM prompt_evaluation_trial WHERE asset_id = $1),
+			(SELECT count(*) FROM prompt_evaluation_dimension_score WHERE asset_id = $1),
+			(SELECT payload::text FROM prompt_evaluation_asset WHERE id = $1)
+	`, reEvalAsset.ID).Scan(&baselineRuns, &baselineTrials, &baselineScores, &baselinePayload); err != nil {
+		t.Fatalf("load successful re-eval writes: %v", err)
+	}
+	if baselineRuns != 1 || baselineTrials != 1 {
+		t.Fatalf("successful skill re-eval writes: runs=%d trials=%d scores=%d", baselineRuns, baselineTrials, baselineScores)
 	}
 
 	functionName := "test_skill_re_eval_candidate_failure_" + suffix
@@ -138,13 +157,16 @@ func TestRunPromptEvaluationSkillReEvalRollsBackWhenCandidateEvidenceFails(t *te
 	`, reEvalAsset.ID).Scan(&runs, &trials, &scores, &currentPayload); err != nil {
 		t.Fatalf("load failed re-eval writes: %v", err)
 	}
-	if runs != 0 || trials != 0 || scores != 0 || currentPayload != originalPayload {
+	if runs != baselineRuns || trials != baselineTrials || scores != baselineScores || currentPayload != baselinePayload {
 		t.Fatalf(
-			"failed skill re-eval left partial writes: runs=%d trials=%d scores=%d payload_changed=%t",
+			"failed skill re-eval changed committed state: runs=%d/%d trials=%d/%d scores=%d/%d payload_changed=%t",
 			runs,
+			baselineRuns,
 			trials,
+			baselineTrials,
 			scores,
-			currentPayload != originalPayload,
+			baselineScores,
+			currentPayload != baselinePayload,
 		)
 	}
 }

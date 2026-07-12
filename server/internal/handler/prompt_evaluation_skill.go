@@ -777,7 +777,14 @@ func (h *Handler) RunPromptEvaluationSkillReEval(w http.ResponseWriter, r *http.
 		return
 	}
 	result := buildPromptEvaluationRunResult(asset, prompt, payload, cases)
-	run, ok := h.persistPromptEvaluationLocalRun(w, r, h.Queries, asset, result, parseUUID(userID))
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start skill re-eval run")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	run, ok := h.persistPromptEvaluationLocalRun(w, r, qtx, asset, result, parseUUID(userID))
 	if !ok {
 		return
 	}
@@ -785,7 +792,7 @@ func (h *Handler) RunPromptEvaluationSkillReEval(w http.ResponseWriter, r *http.
 	payload["最近运行"] = result
 	payload["运行记录"] = appendPromptEvaluationRunHistory(payload["运行记录"], result)
 	payload["skill_re_eval_run"] = reEvalRun
-	updatedAsset, err := h.Queries.UpdatePromptEvaluationAsset(r.Context(), db.UpdatePromptEvaluationAssetParams{
+	updatedAsset, err := qtx.UpdatePromptEvaluationAsset(r.Context(), db.UpdatePromptEvaluationAssetParams{
 		ID:          asset.ID,
 		WorkspaceID: asset.WorkspaceID,
 		PromptID:    asset.PromptID,
@@ -795,11 +802,15 @@ func (h *Handler) RunPromptEvaluationSkillReEval(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusInternalServerError, "failed to save skill re-eval run")
 		return
 	}
-	updatedCandidate, err := h.mergePromptEvaluationOptimizationCandidateMetrics(r.Context(), workspaceUUID, candidate.ID, map[string]any{
+	updatedCandidate, err := mergePromptEvaluationOptimizationCandidateMetricsRow(r.Context(), tx, workspaceUUID, candidate.ID, map[string]any{
 		"skill_re_eval_run": reEvalRun,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to persist skill re-eval run evidence")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit skill re-eval run")
 		return
 	}
 	sourceSnapshot, reEvalSnapshot := skillSnapshotsFromReEvalPayload(payload)
