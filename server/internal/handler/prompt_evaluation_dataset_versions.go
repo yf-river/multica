@@ -44,17 +44,39 @@ func (h *Handler) CreatePromptEvaluationDatasetFromTraces(w http.ResponseWriter,
 	if limit > 100 {
 		limit = 100
 	}
+	req.Limit = limit
+	actorID := parseUUID(userID)
+	requestHash, err := hashRequestFingerprint(struct {
+		AssetID string                                         `json:"asset_id"`
+		Request CreatePromptEvaluationDatasetFromTracesRequest `json:"request"`
+	}{AssetID: uuidToString(asset.ID), Request: req})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to fingerprint trace dataset import")
+		return
+	}
+	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	replay, found, replayErr := loadResourceCreateReplay(
+		r.Context(), h.Queries, asset.WorkspaceID, actorID, resourceTypePromptTraceImport,
+		idempotencyKey, requestHash,
+		func(response PromptEvaluationDatasetFromTracesResponse) bool { return response.Asset.ID != "" },
+	)
+	if replayErr != nil {
+		writePromptEvaluationTraceImportReplayError(w, replayErr)
+		return
+	}
+	if found {
+		writeJSON(w, http.StatusCreated, replay)
+		return
+	}
 	traceEvents, ok := h.promptEvaluationTraceEventsForDataset(w, r, asset.WorkspaceID, req, limit)
 	if !ok {
 		return
 	}
 	if len(traceEvents) == 0 {
 		writeError(w, http.StatusBadRequest, "no trace events found for dataset import")
-		return
-	}
-	existing, err := h.Queries.ListPromptEvaluationCases(r.Context(), db.ListPromptEvaluationCasesParams{WorkspaceID: asset.WorkspaceID, AssetID: asset.ID})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to allocate trace dataset case indexes")
 		return
 	}
 	tx, err := h.TxStarter.Begin(r.Context())
@@ -64,10 +86,48 @@ func (h *Handler) CreatePromptEvaluationDatasetFromTraces(w http.ResponseWriter,
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
+	_, err = qtx.ReserveResourceCreateRequest(r.Context(), db.ReserveResourceCreateRequestParams{
+		WorkspaceID: asset.WorkspaceID, ActorID: actorID, ResourceType: resourceTypePromptTraceImport,
+		IdempotencyKey: idempotencyKey, RequestHash: requestHash,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		_ = tx.Rollback(r.Context())
+		replay, found, replayErr = loadResourceCreateReplay(
+			r.Context(), h.Queries, asset.WorkspaceID, actorID, resourceTypePromptTraceImport,
+			idempotencyKey, requestHash,
+			func(response PromptEvaluationDatasetFromTracesResponse) bool { return response.Asset.ID != "" },
+		)
+		if replayErr != nil || !found {
+			if replayErr == nil {
+				replayErr = errors.New("trace dataset import replay disappeared after conflict")
+			}
+			writePromptEvaluationTraceImportReplayError(w, replayErr)
+			return
+		}
+		writeJSON(w, http.StatusCreated, replay)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reserve trace dataset import")
+		return
+	}
+	if _, err := qtx.LockPromptEvaluationAssetForCaseCreate(r.Context(), db.LockPromptEvaluationAssetForCaseCreateParams{
+		ID: asset.ID, WorkspaceID: asset.WorkspaceID,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to lock trace dataset asset")
+		return
+	}
+	nextCaseIndex, err := qtx.NextPromptEvaluationCaseIndex(r.Context(), db.NextPromptEvaluationCaseIndexParams{
+		WorkspaceID: asset.WorkspaceID, AssetID: asset.ID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to allocate trace dataset case indexes")
+		return
+	}
 	cases := make([]PromptEvaluationCaseResponse, 0, len(traceEvents))
 	traceResp := make([]TaskTraceEventResponse, 0, len(traceEvents))
 	for index, event := range traceEvents {
-		caseIndex := int32(len(existing) + index)
+		caseIndex := nextCaseIndex + int32(index)
 		expectedContains := promptEvaluationTraceExpectedContains(event, req.ExpectedContains)
 		created, err := qtx.CreatePromptEvaluationCase(r.Context(), db.CreatePromptEvaluationCaseParams{
 			WorkspaceID:      asset.WorkspaceID,
@@ -82,7 +142,7 @@ func (h *Handler) CreatePromptEvaluationDatasetFromTraces(w http.ResponseWriter,
 			Tags:             mustJSONBytes(promptEvaluationTraceTags(event, req.Tags)),
 			Status:           "启用",
 			Source:           "trace",
-			CreatedBy:        parseUUID(userID),
+			CreatedBy:        actorID,
 		})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to create trace dataset case")
@@ -100,23 +160,42 @@ func (h *Handler) CreatePromptEvaluationDatasetFromTraces(w http.ResponseWriter,
 		cases = append(cases, promptEvaluationCaseToResponse(created, assertions))
 		traceResp = append(traceResp, taskTraceEventToResponse(event))
 	}
-	if err := tx.Commit(r.Context()); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to commit trace dataset import")
-		return
-	}
-	updatedAsset, err := h.Queries.GetPromptEvaluationAssetInWorkspace(r.Context(), db.GetPromptEvaluationAssetInWorkspaceParams{ID: asset.ID, WorkspaceID: asset.WorkspaceID})
+	updatedAsset, err := qtx.GetPromptEvaluationAssetInWorkspace(r.Context(), db.GetPromptEvaluationAssetInWorkspaceParams{ID: asset.ID, WorkspaceID: asset.WorkspaceID})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to reload trace dataset asset")
 		return
 	}
-	writeJSON(w, http.StatusCreated, PromptEvaluationDatasetFromTracesResponse{
+	response := PromptEvaluationDatasetFromTracesResponse{
 		Asset:        promptEvaluationAssetToResponse(updatedAsset),
 		Cases:        cases,
 		TraceEvents:  traceResp,
 		CreatedCount: len(cases),
 		SkippedCount: 0,
 		Source:       "trace",
-	})
+	}
+	if err := completeResourceCreateRequest(
+		r.Context(), qtx, asset.WorkspaceID, actorID, resourceTypePromptTraceImport,
+		idempotencyKey, requestHash, asset.ID, response,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to complete trace dataset import")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit trace dataset import")
+		return
+	}
+	writeJSON(w, http.StatusCreated, response)
+}
+
+func writePromptEvaluationTraceImportReplayError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errResourceCreateIdempotencyConflict) {
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": "Idempotency-Key was already used with a different trace dataset import",
+			"code":  "idempotency_conflict",
+		})
+		return
+	}
+	writeError(w, http.StatusInternalServerError, "failed to recover trace dataset import")
 }
 
 func (h *Handler) ListPromptEvaluationDatasetVersions(w http.ResponseWriter, r *http.Request) {

@@ -2196,21 +2196,27 @@ export class ApiClient extends ApiTransport {
   async createPromptEvaluationDatasetFromTraces(
     id: string,
     data: CreatePromptEvaluationDatasetFromTracesRequest = {},
+    idempotencyKey = generateUUID(),
   ): Promise<PromptEvaluationDatasetFromTracesResponse> {
-    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/dataset-from-traces`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseOrThrow(raw, PromptEvaluationDatasetFromTracesResponseSchema, {
-      asset: EMPTY_PROMPT_EVALUATION_ASSET,
-      cases: [],
-      trace_events: [],
-      created_count: 0,
-      skipped_count: 0,
-      source: "trace",
-    }, {
-      endpoint: "POST /api/prompt-evaluation-assets/:id/dataset-from-traces",
-    }) as PromptEvaluationDatasetFromTracesResponse;
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/dataset-from-traces`, {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow(raw, PromptEvaluationDatasetFromTracesResponseSchema, {
+        asset: EMPTY_PROMPT_EVALUATION_ASSET,
+        cases: [],
+        trace_events: [],
+        created_count: 0,
+        skipped_count: 0,
+        source: "trace",
+      }, {
+        endpoint: "POST /api/prompt-evaluation-assets/:id/dataset-from-traces",
+        mayHaveCommitted: true,
+      }) as PromptEvaluationDatasetFromTracesResponse;
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async listPromptEvaluationDatasetVersions(id: string, limit?: number): Promise<ListPromptEvaluationDatasetVersionsResponse> {

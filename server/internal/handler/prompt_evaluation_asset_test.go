@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/events"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -628,13 +629,17 @@ func TestPromptEvaluationDatasetFromTraces(t *testing.T) {
 		t.Fatalf("create trace event: %v", err)
 	}
 
-	importW := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationDatasetFromTraces(importW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+asset.ID+"/dataset-from-traces", map[string]any{
+	requestKey := uuid.NewString()
+	importBody := map[string]any{
 		"task_ids":          []string{taskID},
 		"event_type":        "tool.result",
 		"expected_contains": []string{"接口验收完成", "completed"},
 		"tags":              []string{"usercenter", "trace样本"},
-	}), "id", asset.ID))
+	}
+	importW := httptest.NewRecorder()
+	importReq := withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+asset.ID+"/dataset-from-traces", importBody), "id", asset.ID)
+	importReq.Header.Set("Idempotency-Key", requestKey)
+	testHandler.CreatePromptEvaluationDatasetFromTraces(importW, importReq)
 	if importW.Code != http.StatusCreated {
 		t.Fatalf("import status = %d, body = %s", importW.Code, importW.Body.String())
 	}
@@ -650,6 +655,29 @@ func TestPromptEvaluationDatasetFromTraces(t *testing.T) {
 	}
 	if imported.TraceEvents[0].ID != uuidToString(trace.ID) || imported.TraceEvents[0].TaskID != taskID {
 		t.Fatalf("imported trace event = %+v, trace=%s task=%s", imported.TraceEvents[0], uuidToString(trace.ID), taskID)
+	}
+	replayW := httptest.NewRecorder()
+	replayReq := withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+asset.ID+"/dataset-from-traces", importBody), "id", asset.ID)
+	replayReq.Header.Set("Idempotency-Key", requestKey)
+	testHandler.CreatePromptEvaluationDatasetFromTraces(replayW, replayReq)
+	if replayW.Code != http.StatusCreated || replayW.Body.String() != importW.Body.String() {
+		t.Fatalf("trace import replay = %d %s, want exact %s", replayW.Code, replayW.Body.String(), importW.Body.String())
+	}
+	conflictW := httptest.NewRecorder()
+	conflictReq := withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+asset.ID+"/dataset-from-traces", map[string]any{
+		"task_ids": []string{taskID}, "event_type": "tool.result", "tags": []string{"changed"},
+	}), "id", asset.ID)
+	conflictReq.Header.Set("Idempotency-Key", requestKey)
+	testHandler.CreatePromptEvaluationDatasetFromTraces(conflictW, conflictReq)
+	if conflictW.Code != http.StatusConflict {
+		t.Fatalf("changed trace import replay = %d %s, want 409", conflictW.Code, conflictW.Body.String())
+	}
+	var caseCount int
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM prompt_evaluation_case WHERE asset_id = $1 AND source = 'trace'`, asset.ID).Scan(&caseCount); err != nil {
+		t.Fatalf("count trace cases: %v", err)
+	}
+	if caseCount != 1 {
+		t.Fatalf("trace cases after replay = %d, want 1", caseCount)
 	}
 	assertPromptEvaluationDatasetRowsContain(t, asset.ID, []string{imported.Cases[0].CaseName})
 }
