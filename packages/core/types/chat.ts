@@ -57,7 +57,7 @@ export interface ChatMessage {
   elapsed_ms?: number | null;
 }
 
-export interface ChatMessagesCursor {
+interface ChatMessagesCursor {
   created_at: string;
   id: string;
 }

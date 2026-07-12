@@ -64,7 +64,7 @@ export const ListProjectsResponseSchema = z.object({
   total: z.number().default(0),
 }).loose();
 
-export const SearchProjectSchema = ProjectSchema.extend({
+const SearchProjectSchema = ProjectSchema.extend({
   match_source: z.string(),
   matched_snippet: z.string().optional(),
 }).loose();

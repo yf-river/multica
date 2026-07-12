@@ -237,7 +237,7 @@ export const EMPTY_PROMPT_EVALUATION_SKILL_FRESHNESS_RESULT: PromptEvaluationSki
   snapshot: EMPTY_PROMPT_EVALUATION_SKILL_SNAPSHOT,
 };
 
-export const EMPTY_PROMPT_EVALUATION_SKILL_APPLY_RESULT: PromptEvaluationSkillApplyResult = {
+const EMPTY_PROMPT_EVALUATION_SKILL_APPLY_RESULT: PromptEvaluationSkillApplyResult = {
   schema_version: "multica.skill.apply.v1",
   status: "blocked",
   reason: "",

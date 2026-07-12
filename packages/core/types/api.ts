@@ -80,7 +80,7 @@ export interface ListIssuesParams {
   sort_direction?: "asc" | "desc";
 }
 
-export interface IssueActorRef {
+interface IssueActorRef {
   type: IssueAssigneeType;
   id: string;
 }

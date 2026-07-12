@@ -2,14 +2,14 @@ import { z } from "zod";
 import { NonEmptyStringSchema } from "./schemas-internal";
 
 // Runtime response contracts for prompt evaluation assets.
-export const PromptEvaluationPayloadCaseSchema = z.object({
+const PromptEvaluationPayloadCaseSchema = z.object({
   case_name: z.string().min(1),
   variables: z.record(z.string(), z.unknown()).default({}),
   expected_contains: z.array(z.string()).default([]),
   tags: z.array(z.string()).default([]),
 }).loose();
 
-export const PromptEvaluationStrictPayloadSchema = z.object({
+const PromptEvaluationStrictPayloadSchema = z.object({
   schema_version: z.literal(1),
   schema: z.literal("multica.training_evaluation.payload.v1"),
   语义版本: z.literal("multica.training_evaluation.v1").optional(),
@@ -26,7 +26,7 @@ export const PromptEvaluationStrictPayloadSchema = z.object({
   agent_id: z.string().min(1).optional(),
 }).loose();
 
-export const PromptEvaluationPayloadSchema = z.record(z.string(), z.unknown()).default({}).superRefine((payload, ctx) => {
+const PromptEvaluationPayloadSchema = z.record(z.string(), z.unknown()).default({}).superRefine((payload, ctx) => {
   if (payload.schema !== "multica.training_evaluation.payload.v1") return;
   const parsed = PromptEvaluationStrictPayloadSchema.safeParse(payload);
   if (!parsed.success) {

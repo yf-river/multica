@@ -17,7 +17,7 @@ export const ChatSessionSchema = z.object({
 }).loose();
 export const ChatSessionListSchema = z.array(ChatSessionSchema);
 
-export const ChatMessageSchema = z.object({
+const ChatMessageSchema = z.object({
   id: NonEmptyStringSchema, chat_session_id: NonEmptyStringSchema,
   role: z.string(), content: z.string().default(""),
   task_id: z.string().nullable().optional().transform((value) => value ?? null),

@@ -5,7 +5,7 @@ import { PromptLibraryItemSchema } from "./schemas-prompt-library";
 import { NonEmptyStringSchema } from "./schemas-internal";
 
 // Runtime response contracts for prompt evaluation optimization.
-export const PromptEvaluationSkillPatchSchema = z.object({
+const PromptEvaluationSkillPatchSchema = z.object({
   schema_version: z.string().default("multica.skill.patch.v1"),
   patch: z.string().default(""),
   patch_hash: z.string().default(""),
@@ -55,7 +55,7 @@ export const PromptEvaluationOptimizationCandidateListResponseSchema = z.object(
   total: z.number().default(0),
 }).loose();
 
-export const PromptEvaluationSkillSnapshotSchema = z.object({
+const PromptEvaluationSkillSnapshotSchema = z.object({
   schema_version: z.string().default("multica.skill.snapshot.v1"),
   provider: z.string().default("gongfeng"),
   repo: z.string().default(""),
@@ -83,7 +83,7 @@ export const PromptEvaluationSkillFreshnessResultSchema = z.object({
   snapshot: PromptEvaluationSkillSnapshotSchema,
 }).loose();
 
-export const PromptEvaluationSkillApplyResultSchema = z.object({
+const PromptEvaluationSkillApplyResultSchema = z.object({
   schema_version: z.string().default("multica.skill.apply.v1"),
   status: z.enum(["dry_run", "applied", "blocked", "conflict"]).default("blocked"),
   reason: z.string().default(""),
@@ -109,7 +109,7 @@ export const PromptEvaluationSkillApplyCandidateResponseSchema = z.object({
   apply: PromptEvaluationSkillApplyResultSchema,
 }).loose();
 
-export const PromptEvaluationSkillReEvalCaseSchema = z.object({
+const PromptEvaluationSkillReEvalCaseSchema = z.object({
   name: z.string().default(""),
   variables: z.record(z.string(), z.unknown()).default({}),
   expected_contains: z.array(z.string()).default([]),

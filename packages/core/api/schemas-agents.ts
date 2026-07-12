@@ -180,7 +180,7 @@ const SOPStepEventSchema = z.object({
   metrics: z.record(z.string(), z.unknown()).default({}),
 }).loose();
 
-export const SquadSOPRunSchema = z.object({
+const SquadSOPRunSchema = z.object({
   id: z.string(),
   workspace_id: z.string(),
   issue_id: z.string(),

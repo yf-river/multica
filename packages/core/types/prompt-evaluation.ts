@@ -15,7 +15,7 @@ export interface PromptEvaluationCase {
   tags?: string[];
 }
 
-export interface PromptEvaluationMetricSummary {
+interface PromptEvaluationMetricSummary {
   总用例数: number;
   通过数: number;
   失败数: number;
@@ -33,7 +33,7 @@ export interface PromptEvaluationMetricSummary {
   评估结论: string;
 }
 
-export interface PromptEvaluationStructuredPayload extends Record<string, unknown> {
+interface PromptEvaluationStructuredPayload extends Record<string, unknown> {
   schema_version: 1;
   schema: "multica.training_evaluation.payload.v1";
   语义版本: "multica.training_evaluation.v1";
@@ -51,11 +51,11 @@ export interface PromptEvaluationStructuredPayload extends Record<string, unknow
   运行记录?: PromptEvaluationMetricSummary[];
 }
 
-export interface PromptEvaluationExperimentDimension extends Record<string, unknown> {
+interface PromptEvaluationExperimentDimension extends Record<string, unknown> {
   name: string;
 }
 
-export interface PromptEvaluationDatasetVersionBinding extends Record<string, unknown> {
+interface PromptEvaluationDatasetVersionBinding extends Record<string, unknown> {
   dataset_version_id: string;
   dataset_asset_id?: string;
   dataset_name?: string;
@@ -173,7 +173,7 @@ export interface PromptEvaluationTaskUsage {
   updated_at: string;
 }
 
-export interface PromptEvaluationExecutionSpan {
+interface PromptEvaluationExecutionSpan {
   id: string;
   parent_id?: string;
   span_kind: string;

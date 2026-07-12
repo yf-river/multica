@@ -102,7 +102,7 @@ export interface ObservabilitySummary {
   sop_stage_breakdown: ObservabilitySOPStageBreakdown[];
 }
 
-export interface ObservabilityUsageBreakdown {
+interface ObservabilityUsageBreakdown {
   "名称": string;
   provider: string;
   model: string;
@@ -116,7 +116,7 @@ export interface ObservabilityUsageBreakdown {
   "价格已知": boolean;
 }
 
-export interface ObservabilitySOPStageBreakdown {
+interface ObservabilitySOPStageBreakdown {
   step_key: string;
   step_name: string;
   role_key: string;

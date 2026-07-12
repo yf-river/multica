@@ -252,7 +252,7 @@ export const EMPTY_ISSUE: Issue = {
   updated_at: "",
 };
 
-export const SearchIssueSchema = IssueSchema.extend({
+const SearchIssueSchema = IssueSchema.extend({
   match_source: z.string(),
   matched_description_snippet: z.string().optional(),
   matched_comment_snippet: z.string().optional(),

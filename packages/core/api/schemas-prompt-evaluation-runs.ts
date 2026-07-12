@@ -41,7 +41,7 @@ export const PromptEvaluationRunSchema = z.object({
   reviewed_at: z.string().default(""),
 }).loose();
 
-export const PromptEvaluationTrialSchema = z.object({
+const PromptEvaluationTrialSchema = z.object({
   id: z.string(),
   run_id: z.string(),
   workspace_id: z.string(),

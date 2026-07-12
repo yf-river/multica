@@ -161,7 +161,7 @@ export const EMPTY_PROMPT_LIBRARY_TRIAL_LIST_RESPONSE: ListPromptLibraryTrialsRe
   total: 0,
 };
 
-export const AgentPlaygroundExperimentSchema = z.object({
+const AgentPlaygroundExperimentSchema = z.object({
   id: z.string(),
   workspace_id: z.string(),
   name: z.string(),
@@ -177,7 +177,7 @@ export const AgentPlaygroundExperimentSchema = z.object({
   agent_count: z.number().default(0),
 }).loose();
 
-export const AgentPlaygroundInputSchema = z.object({
+const AgentPlaygroundInputSchema = z.object({
   id: z.string(),
   row_index: z.number().default(0),
   name: z.string().default(""),
@@ -188,7 +188,7 @@ export const AgentPlaygroundInputSchema = z.object({
   created_at: z.string().default(""),
 }).loose();
 
-export const AgentPlaygroundAgentSchema = z.object({
+const AgentPlaygroundAgentSchema = z.object({
   id: z.string(),
   agent_id: z.string(),
   agent_name: z.string().default(""),
@@ -196,7 +196,7 @@ export const AgentPlaygroundAgentSchema = z.object({
   display_order: z.number().default(0),
 }).loose();
 
-export const AgentPlaygroundResultSchema = z.object({
+const AgentPlaygroundResultSchema = z.object({
   id: z.string(),
   input_id: z.string(),
   experiment_agent_id: z.string(),
@@ -212,7 +212,7 @@ export const AgentPlaygroundResultSchema = z.object({
   updated_at: z.string().default(""),
 }).loose();
 
-export const AgentPlaygroundJudgementSchema = z.object({
+const AgentPlaygroundJudgementSchema = z.object({
   id: z.string(),
   input_id: z.string(),
   judge_agent_id: z.string(),
@@ -236,7 +236,7 @@ export const AgentPlaygroundExperimentListResponseSchema = z.object({
   total: z.number().default(0),
 }).loose();
 
-export const EMPTY_AGENT_PLAYGROUND_EXPERIMENT: AgentPlaygroundExperiment = {
+const EMPTY_AGENT_PLAYGROUND_EXPERIMENT: AgentPlaygroundExperiment = {
   id: "",
   workspace_id: "",
   name: "",
