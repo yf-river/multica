@@ -10,6 +10,15 @@ import type { FreezeBreadcrumb } from "../shared/freeze-breadcrumb";
 
 export type { FreezeBreadcrumb };
 
+function isMissingFile(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as NodeJS.ErrnoException).code === "ENOENT"
+  );
+}
+
 /**
  * Best-effort write. A breadcrumb we can't persist is lost, never fatal.
  *
@@ -22,8 +31,8 @@ export type { FreezeBreadcrumb };
 export function writeFreezeBreadcrumb(filePath: string, breadcrumb: FreezeBreadcrumb): void {
   try {
     writeFileSync(filePath, JSON.stringify(breadcrumb), "utf8");
-  } catch {
-    // Disk full / permissions — drop silently.
+  } catch (error) {
+    console.warn("[freeze-breadcrumb] write failed", filePath, error);
   }
 }
 
@@ -38,8 +47,8 @@ export function writeFreezeBreadcrumb(filePath: string, breadcrumb: FreezeBreadc
 export function clearFreezeBreadcrumb(filePath: string): void {
   try {
     rmSync(filePath, { force: true });
-  } catch {
-    // Nothing to clear / permissions — ignore.
+  } catch (error) {
+    console.warn("[freeze-breadcrumb] clear failed", filePath, error);
   }
 }
 
@@ -52,13 +61,16 @@ export function readAndClearFreezeBreadcrumb(filePath: string): FreezeBreadcrumb
   let raw: string;
   try {
     raw = readFileSync(filePath, "utf8");
-  } catch {
+  } catch (error) {
+    if (!isMissingFile(error)) {
+      console.warn("[freeze-breadcrumb] read failed", filePath, error);
+    }
     return null;
   }
   try {
     rmSync(filePath, { force: true });
-  } catch {
-    // If we can't delete it we'd re-report next launch; acceptable over throwing.
+  } catch (error) {
+    console.warn("[freeze-breadcrumb] delete-after-read failed", filePath, error);
   }
   try {
     const parsed: unknown = JSON.parse(raw);
@@ -69,8 +81,8 @@ export function readAndClearFreezeBreadcrumb(filePath: string): FreezeBreadcrumb
     ) {
       return parsed as FreezeBreadcrumb;
     }
-  } catch {
-    // Corrupt JSON — drop.
+  } catch (error) {
+    console.warn("[freeze-breadcrumb] invalid JSON", filePath, error);
   }
   return null;
 }
