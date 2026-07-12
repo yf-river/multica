@@ -31,6 +31,21 @@ func TestCreateSquadRejectsNonObjectSOPProfile(t *testing.T) {
 	}
 }
 
+func TestDecodeSquadSOPProfileRejectsInvalidPersistence(t *testing.T) {
+	for _, raw := range [][]byte{nil, []byte(`null`), []byte(`[]`), []byte(`"profile"`)} {
+		if _, err := decodeSquadSOPProfile(raw); err == nil {
+			t.Fatalf("sop_profile=%s expected an error", raw)
+		}
+	}
+	profile, err := decodeSquadSOPProfile([]byte(`{"mode":"stage_chain"}`))
+	if err != nil {
+		t.Fatalf("decode object profile: %v", err)
+	}
+	if profile["mode"] != "stage_chain" {
+		t.Fatalf("decoded profile = %#v", profile)
+	}
+}
+
 func TestSquadPersonalVisibility_IsCreatorOnlyForPlainMembers(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")

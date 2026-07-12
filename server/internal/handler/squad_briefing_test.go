@@ -92,7 +92,7 @@ func TestEnsureInternalSquadTemplateCreatesCodingSquadIdempotently(t *testing.T)
 	if first.Squad.Name != "Multica 编码小队" || first.Squad.MemberCount != 6 || len(first.Agents) != 6 {
 		t.Fatalf("first internal squad response = %+v", first)
 	}
-	if stringFromAny(first.Squad.SOPProfile.(map[string]any)["profile_key"]) != "multica-coding" {
+	if stringFromAny(first.Squad.SOPProfile["profile_key"]) != "multica-coding" {
 		t.Fatalf("sop profile = %#v", first.Squad.SOPProfile)
 	}
 	second := create()

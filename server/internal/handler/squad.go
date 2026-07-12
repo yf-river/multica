@@ -27,7 +27,7 @@ type SquadResponse struct {
 	Name          string                       `json:"name"`
 	Description   string                       `json:"description"`
 	Instructions  string                       `json:"instructions"`
-	SOPProfile    any                          `json:"sop_profile"`
+	SOPProfile    map[string]any               `json:"sop_profile"`
 	AvatarURL     *string                      `json:"avatar_url"`
 	Scope         string                       `json:"scope"`
 	LeaderID      string                       `json:"leader_id"`
@@ -537,14 +537,18 @@ func userCenterSOPMCPConfig() []byte {
 
 // ── Converters ──────────────────────────────────────────────────────────────
 
-func squadToResponse(s db.Squad) SquadResponse {
+func squadToResponse(s db.Squad) (SquadResponse, error) {
+	profile, err := decodeSquadSOPProfile(s.SopProfile)
+	if err != nil {
+		return SquadResponse{}, err
+	}
 	return SquadResponse{
 		ID:            uuidToString(s.ID),
 		WorkspaceID:   uuidToString(s.WorkspaceID),
 		Name:          s.Name,
 		Description:   s.Description,
 		Instructions:  s.Instructions,
-		SOPProfile:    decodeSquadSOPProfile(s.SopProfile),
+		SOPProfile:    profile,
 		AvatarURL:     textToPtr(s.AvatarUrl),
 		Scope:         s.Scope,
 		LeaderID:      uuidToString(s.LeaderID),
@@ -554,18 +558,28 @@ func squadToResponse(s db.Squad) SquadResponse {
 		ArchivedAt:    timestampToPtr(s.ArchivedAt),
 		ArchivedBy:    uuidToPtr(s.ArchivedBy),
 		MemberPreview: []SquadMemberPreviewResponse{},
-	}
+	}, nil
 }
 
-func decodeSquadSOPProfile(raw []byte) any {
-	var profile any
-	if len(raw) > 0 {
-		_ = json.Unmarshal(raw, &profile)
+func decodeSquadSOPProfile(raw []byte) (map[string]any, error) {
+	var profile map[string]any
+	if err := json.Unmarshal(raw, &profile); err != nil {
+		return nil, fmt.Errorf("decode squad SOP profile: %w", err)
 	}
 	if profile == nil {
-		return map[string]any{}
+		return nil, errors.New("decode squad SOP profile: expected JSON object")
 	}
-	return profile
+	return profile, nil
+}
+
+func normalizeSquadSOPProfile(raw json.RawMessage) ([]byte, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	if _, err := decodeSquadSOPProfile(raw); err != nil {
+		return nil, errors.New("sop_profile must be a JSON object")
+	}
+	return raw, nil
 }
 
 func squadMemberToResponse(m db.SquadMember) SquadMemberResponse {
@@ -654,10 +668,13 @@ func (h *Handler) loadSquadMemberSummary(ctx context.Context, squadID pgtype.UUI
 }
 
 func (h *Handler) squadToResponseWithPreview(ctx context.Context, squad db.Squad) (SquadResponse, error) {
-	resp := squadToResponse(squad)
+	resp, err := squadToResponse(squad)
+	if err != nil {
+		return SquadResponse{}, err
+	}
 	summary, err := h.loadSquadMemberSummary(ctx, squad.ID)
 	if err != nil {
-		return resp, err
+		return resp, fmt.Errorf("load squad member preview: %w", err)
 	}
 	applySquadMemberSummary(&resp, summary)
 	return resp, nil
@@ -726,7 +743,12 @@ func (h *Handler) ListSquads(w http.ResponseWriter, r *http.Request) {
 		if !memberCanUseSquad(s, member) {
 			continue
 		}
-		item := squadToResponse(s)
+		item, err := squadToResponse(s)
+		if err != nil {
+			slog.Error("decode squad SOP profile failed", append(logger.RequestAttrs(r), "squad_id", uuidToString(s.ID), "error", err)...)
+			writeError(w, http.StatusInternalServerError, "failed to decode squad SOP profile")
+			return
+		}
 		applySquadMemberSummary(&item, summaries[uuidToString(s.ID)])
 		resp = append(resp, item)
 	}
@@ -835,13 +857,10 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 	if req.AvatarURL != nil {
 		avatarURL = pgtype.Text{String: *req.AvatarURL, Valid: true}
 	}
-	var sopProfile []byte
-	if len(req.SOPProfile) > 0 {
-		if !json.Valid(req.SOPProfile) {
-			writeError(w, http.StatusBadRequest, "sop_profile must be valid JSON")
-			return
-		}
-		sopProfile = req.SOPProfile
+	sopProfile, err := normalizeSquadSOPProfile(req.SOPProfile)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 	req.LeaderID = uuidToString(leaderUUID)
 	req.Scope = scope
@@ -934,7 +953,11 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	resp := squadToResponse(squad)
+	resp, err := squadToResponse(squad)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to decode squad SOP profile")
+		return
+	}
 	summary := &squadMemberSummary{}
 	addSquadMemberPreview(summary, "agent", leaderUUID, "leader")
 	for _, squadMember := range preparedMembers {
@@ -1029,7 +1052,8 @@ func (h *Handler) GetSquad(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, err := h.squadToResponseWithPreview(r.Context(), squad)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to load squad member preview")
+		slog.Error("build squad response failed", append(logger.RequestAttrs(r), "squad_id", uuidToString(squad.ID), "error", err)...)
+		writeError(w, http.StatusInternalServerError, "failed to load squad")
 		return
 	}
 	writeJSON(w, http.StatusOK, resp)
@@ -1088,11 +1112,12 @@ func (h *Handler) UpdateSquad(w http.ResponseWriter, r *http.Request) {
 		params.Scope = pgtype.Text{String: scope, Valid: true}
 	}
 	if len(req.SOPProfile) > 0 {
-		if !json.Valid(req.SOPProfile) {
-			writeError(w, http.StatusBadRequest, "sop_profile must be valid JSON")
+		sopProfile, err := normalizeSquadSOPProfile(req.SOPProfile)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		params.SopProfile = req.SOPProfile
+		params.SopProfile = sopProfile
 	}
 	nextLeaderID := squad.LeaderID
 	var nextLeader db.Agent
@@ -1159,7 +1184,8 @@ func (h *Handler) UpdateSquad(w http.ResponseWriter, r *http.Request) {
 
 	resp, err := h.squadToResponseWithPreview(r.Context(), updated)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to load squad member preview")
+		slog.Error("build squad response failed", append(logger.RequestAttrs(r), "squad_id", uuidToString(updated.ID), "error", err)...)
+		writeError(w, http.StatusInternalServerError, "failed to load squad")
 		return
 	}
 	h.publish(protocol.EventSquadUpdated, workspaceID, "member", requestUserID(r), map[string]any{"squad": resp})
@@ -1242,7 +1268,8 @@ func (h *Handler) RestoreSquad(w http.ResponseWriter, r *http.Request) {
 	}
 	resp, err := h.squadToResponseWithPreview(r.Context(), restored)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to load squad member preview")
+		slog.Error("build squad response failed", append(logger.RequestAttrs(r), "squad_id", uuidToString(restored.ID), "error", err)...)
+		writeError(w, http.StatusInternalServerError, "failed to load squad")
 		return
 	}
 	userID := requestUserID(r)
