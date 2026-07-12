@@ -312,25 +312,6 @@ export interface PromptEvaluationStructuredCase {
   updated_at: string;
 }
 
-export interface PromptEvaluationCaseOperation {
-  id: string;
-  workspace_id: string;
-  asset_id: string;
-  operation_type: string;
-  filter: Record<string, unknown>;
-  input: Record<string, unknown>;
-  changed_count: number;
-  skipped_count: number;
-  sample_case_ids: unknown[];
-  created_by: string | null;
-  created_at: string;
-  status: "已入队" | "运行中" | "已完成" | "失败";
-  error_message: string;
-  started_at: string | null;
-  completed_at: string | null;
-  updated_at: string;
-}
-
 export interface PromptEvaluationCaseAssertion {
   id: string;
   workspace_id: string;
@@ -689,46 +670,6 @@ export interface ListPromptEvaluationCasesResponse {
   sort_direction: "asc" | "desc";
 }
 
-export interface PromptEvaluationCaseTagSummary {
-  tag: string;
-  case_count: number;
-}
-
-export interface ListPromptEvaluationCaseTagSummariesResponse {
-  items: PromptEvaluationCaseTagSummary[];
-  total: number;
-}
-
-export interface PromptEvaluationCaseTagDatasetSummaryDataset {
-  asset_id: string;
-  asset_name: string;
-  case_count: number;
-}
-
-export interface PromptEvaluationCaseTagDatasetSummary {
-  tag: string;
-  case_count: number;
-  dataset_count: number;
-  top_datasets: PromptEvaluationCaseTagDatasetSummaryDataset[];
-}
-
-export interface ListPromptEvaluationCaseTagDatasetSummariesResponse {
-  items: PromptEvaluationCaseTagDatasetSummary[];
-  total: number;
-}
-
-export interface ListPromptEvaluationCaseOperationsResponse {
-  items: PromptEvaluationCaseOperation[];
-  total: number;
-}
-
-export interface BulkUpdatePromptEvaluationCaseTagsResponse {
-  operation: PromptEvaluationCaseOperation;
-  cases: PromptEvaluationStructuredCase[];
-  changed_count: number;
-  skipped_count: number;
-}
-
 export interface ListPromptEvaluationOptimizationCandidatesResponse {
   items: PromptEvaluationOptimizationCandidate[];
   total: number;
@@ -765,26 +706,6 @@ export interface ListPromptEvaluationCasesParams {
   sort_direction?: "asc" | "desc";
 }
 
-export interface ListPromptEvaluationCaseOperationsParams {
-  limit?: number;
-}
-
-export interface ListPromptEvaluationCaseTagSummariesParams {
-  asset_id?: string;
-  status?: PromptEvaluationCaseStatus;
-  source?: "manual" | "trace" | "payload";
-  keyword?: string;
-  limit?: number;
-}
-
-export interface ListPromptEvaluationCaseTagDatasetSummariesParams {
-  status?: PromptEvaluationCaseStatus;
-  source?: "manual" | "trace" | "payload";
-  keyword?: string;
-  limit?: number;
-  top_dataset_limit?: number;
-}
-
 export interface CreatePromptEvaluationCaseRequest {
   asset_id: string;
   prompt_id?: string | null;
@@ -811,20 +732,6 @@ export interface UpdatePromptEvaluationCaseRequest {
   status?: PromptEvaluationCaseStatus;
 }
 
-export interface BulkUpdatePromptEvaluationCaseTagsRequest {
-  asset_id: string;
-  source?: "manual" | "trace" | "payload";
-  tag?: string;
-  keyword?: string;
-  status?: PromptEvaluationCaseStatus;
-  tags?: string[];
-  source_tag?: string;
-  target_tag?: string;
-  mode: "追加" | "移除" | "重命名";
-  execution_mode?: "同步" | "后台";
-  limit?: number;
-}
-
 export interface ListPromptEvaluationOptimizationCandidatesParams {
   run_id?: string;
   prompt_id?: string;
@@ -848,31 +755,6 @@ export interface UpdatePromptEvaluationAssetRequest {
   asset_type?: PromptEvaluationAssetType;
   payload?: Record<string, unknown>;
   status?: PromptEvaluationAssetStatus;
-}
-
-export interface PromptEvaluationDatasetExportResponse {
-  schema: "multica.prompt_evaluation.dataset_export.v1";
-  exported_at: string;
-  source_asset_id: string;
-  asset: PromptEvaluationAsset;
-  case_count: number;
-  cases: PromptEvaluationStructuredCase[];
-  payload: Record<string, unknown>;
-}
-
-export interface ImportPromptEvaluationDatasetRequest {
-  name?: string;
-  description?: string;
-  prompt_id?: string | null;
-  status?: PromptEvaluationAssetStatus;
-  export: PromptEvaluationDatasetExportResponse;
-}
-
-export interface ImportPromptEvaluationDatasetResponse {
-  asset: PromptEvaluationAsset;
-  source_asset_id: string;
-  case_count: number;
-  cases: PromptEvaluationStructuredCase[];
 }
 
 export interface CreatePromptEvaluationDatasetVersionRequest {

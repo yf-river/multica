@@ -2,16 +2,11 @@ import type {
   ListPromptEvaluationAssetsResponse,
   ListPromptEvaluationDatasetVersionsResponse,
   ListPromptEvaluationOptimizationCandidatesResponse,
-  ListPromptEvaluationCaseTagSummariesResponse,
-  ListPromptEvaluationCaseTagDatasetSummariesResponse,
-  ListPromptEvaluationCaseOperationsResponse,
   PromptEvaluationAsset,
   PromptEvaluationAssetEvidenceSnapshotResponse,
   PromptEvaluationEvidenceSnapshot,
   PromptEvaluationRunEvidence,
   PromptEvaluationStructuredCase,
-  PromptEvaluationCaseOperation,
-  BulkUpdatePromptEvaluationCaseTagsResponse,
   PromptEvaluationRun,
   PromptEvaluationOptimizationCandidate,
   PromptEvaluationSkillApplyCandidateResponse,
@@ -175,47 +170,6 @@ export const EMPTY_PROMPT_EVALUATION_CASE_LIST_RESPONSE = {
   next_cursor: null,
   sort_by: "case_index",
   sort_direction: "asc",
-};
-
-export const EMPTY_PROMPT_EVALUATION_CASE_TAG_SUMMARY_LIST_RESPONSE: ListPromptEvaluationCaseTagSummariesResponse = {
-  items: [],
-  total: 0,
-};
-
-export const EMPTY_PROMPT_EVALUATION_CASE_TAG_DATASET_SUMMARY_LIST_RESPONSE: ListPromptEvaluationCaseTagDatasetSummariesResponse = {
-  items: [],
-  total: 0,
-};
-
-export const EMPTY_PROMPT_EVALUATION_CASE_OPERATION: PromptEvaluationCaseOperation = {
-  id: "",
-  workspace_id: "",
-  asset_id: "",
-  operation_type: "",
-  filter: {},
-  input: {},
-  changed_count: 0,
-  skipped_count: 0,
-  sample_case_ids: [],
-  created_by: null,
-  created_at: "",
-  status: "已完成",
-  error_message: "",
-  started_at: null,
-  completed_at: null,
-  updated_at: "",
-};
-
-export const EMPTY_PROMPT_EVALUATION_CASE_OPERATION_LIST_RESPONSE: ListPromptEvaluationCaseOperationsResponse = {
-  items: [],
-  total: 0,
-};
-
-export const EMPTY_BULK_PROMPT_EVALUATION_CASE_TAGS_RESPONSE: BulkUpdatePromptEvaluationCaseTagsResponse = {
-  operation: EMPTY_PROMPT_EVALUATION_CASE_OPERATION,
-  cases: [],
-  changed_count: 0,
-  skipped_count: 0,
 };
 
 export const EMPTY_PROMPT_EVALUATION_CASE: PromptEvaluationStructuredCase = {
