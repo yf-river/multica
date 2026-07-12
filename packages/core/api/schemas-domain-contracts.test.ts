@@ -4,9 +4,7 @@ import { AppConfigSchema, EMPTY_APP_CONFIG } from "./schemas-app-config";
 import {
   AgentEnvResponseSchema,
   AgentSchema,
-  AgentTemplateSummaryListSchema,
   EMPTY_AGENT,
-  EMPTY_AGENT_TEMPLATE_SUMMARY_LIST,
   EMPTY_INTERNAL_SQUAD_TEMPLATE_RESPONSE,
   InternalSquadTemplateResponseSchema,
 } from "./schemas-agents";
@@ -146,15 +144,6 @@ describe("domain response schema fallbacks", () => {
     )).toBe(EMPTY_SEARCH_ISSUES_RESPONSE);
     expect(QuickCreateIssueResponseSchema.safeParse({}).success).toBe(false);
     expect(QuickCreateIssueResponseSchema.safeParse({ task_id: "task-1" }).success).toBe(true);
-  });
-
-  it("rejects a malformed agent template collection", () => {
-    expect(parseWithFallback(
-      { templates: "not-an-array" },
-      AgentTemplateSummaryListSchema,
-      EMPTY_AGENT_TEMPLATE_SUMMARY_LIST,
-      { endpoint: "GET /api/agent-templates" },
-    )).toBe(EMPTY_AGENT_TEMPLATE_SUMMARY_LIST);
   });
 
   it("rejects malformed Prompt Library items", () => {

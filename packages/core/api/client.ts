@@ -20,8 +20,6 @@ import type {
   ListGroupedIssuesParams,
   Agent,
   CreateAgentRequest,
-  AgentTemplate,
-  AgentTemplateSummary,
   UpdateAgentRequest,
   AgentEnvResponse,
   UpdateAgentEnvRequest,
@@ -194,7 +192,6 @@ export {
   type ApiClientOptions,
 } from "./transport";
 import {
-  AgentTemplateSchema,
   AgentSchema,
   AgentListSchema,
   AgentEnvResponseSchema,
@@ -215,7 +212,6 @@ import {
   BatchDeleteIssuesResponseSchema,
   AssigneeFrequencyListSchema,
   AttachmentListSchema,
-  AgentTemplateSummaryListSchema,
   AttachmentResponseSchema,
   CancelTaskResponseSchema,
   ChildIssuesResponseSchema,
@@ -224,10 +220,8 @@ import {
   DashboardRunTimeDailyListSchema,
   DashboardUsageByAgentListSchema,
   DashboardUsageDailyListSchema,
-  EMPTY_AGENT_TEMPLATE_DETAIL,
   EMPTY_AGENT,
   EMPTY_AGENT_ENV_RESPONSE,
-  EMPTY_AGENT_TEMPLATE_SUMMARY_LIST,
   EMPTY_AGENT_TASK,
   EMPTY_AGENT_ACTIVITY_BUCKETS,
   EMPTY_AGENT_RUN_COUNTS,
@@ -932,31 +926,6 @@ export class ApiClient extends ApiTransport {
       });
     };
     return this.retryUnknownMutationOnce(attempt);
-  }
-
-  async listAgentTemplates(): Promise<AgentTemplateSummary[]> {
-    const raw = await this.fetch<unknown>("/api/agent-templates");
-    return parseWithFallback(
-      raw,
-      AgentTemplateSummaryListSchema,
-      EMPTY_AGENT_TEMPLATE_SUMMARY_LIST,
-      { endpoint: "GET /api/agent-templates" },
-    );
-  }
-
-  async getAgentTemplate(slug: string): Promise<AgentTemplate> {
-    const raw = await this.fetch<unknown>(
-      `/api/agent-templates/${encodeURIComponent(slug)}`,
-    );
-    // Round-trip the requested slug into the fallback so a malformed
-    // detail response still produces a navigable record matching the URL
-    // the user clicked.
-    return parseWithFallback(
-      raw,
-      AgentTemplateSchema,
-      { ...EMPTY_AGENT_TEMPLATE_DETAIL, slug },
-      { endpoint: "GET /api/agent-templates/:slug" },
-    );
   }
 
   async updateAgent(id: string, data: UpdateAgentRequest): Promise<Agent> {
