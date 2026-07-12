@@ -47,6 +47,15 @@ func TestNewRouterWithOptionsRejectsMalformedLarkSecret(t *testing.T) {
 	}
 }
 
+func TestNewRouterWithOptionsRequiresHeartbeatScheduler(t *testing.T) {
+	clearStartupConfig(t)
+
+	_, _, err := NewRouterWithOptions(nil, realtime.NewHub(), events.New(), analytics.NoopClient{}, nil, RouterOptions{})
+	if err == nil || !strings.Contains(err.Error(), "heartbeat scheduler is required") {
+		t.Fatalf("NewRouterWithOptions error = %v, want missing heartbeat scheduler error", err)
+	}
+}
+
 func TestValidateAttachmentDeliveryRejectsImpossibleModes(t *testing.T) {
 	clearStartupConfig(t)
 	local := storage.NewLocalStorageFromEnv()
