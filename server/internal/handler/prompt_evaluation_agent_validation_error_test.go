@@ -14,22 +14,37 @@ func TestRunPromptEvaluationAssetAgentPreservesAgentReadFailures(t *testing.T) {
 		t.Skip("database not available")
 	}
 
-	asset, run, _ := createPromptEvaluationAgentRunFixture(t, "agent lookup failure experiment", "agent lookup failure case")
-	if _, err := testPool.Exec(context.Background(), `
-		UPDATE prompt_evaluation_asset
-		SET payload = jsonb_set(payload, '{agent_id}', to_jsonb($2::text), true)
-		WHERE id = $1
-	`, asset.ID, run.AgentID); err != nil {
-		t.Fatalf("pin requested agent: %v", err)
+	var agentID string
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT id FROM agent WHERE workspace_id = $1 ORDER BY created_at LIMIT 1
+	`, testWorkspaceID).Scan(&agentID); err != nil {
+		t.Fatalf("load existing agent: %v", err)
 	}
+	member, err := testHandler.Queries.GetMemberByUserAndWorkspace(context.Background(), db.GetMemberByUserAndWorkspaceParams{
+		UserID:      parseUUID(testUserID),
+		WorkspaceID: parseUUID(testWorkspaceID),
+	})
+	if err != nil {
+		t.Fatalf("load test member: %v", err)
+	}
+
 	h := *testHandler
 	h.Queries = db.New(failNamedQueryDB{DBTX: testPool, queryName: "GetAgentInWorkspace"})
 	w := httptest.NewRecorder()
-	r := newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+asset.ID+"/agent-run", nil)
-	r = withURLParam(r, "id", asset.ID)
+	r := newRequest(http.MethodPost, "/api/prompt-evaluation-assets/agent-run", nil)
 
-	h.RunPromptEvaluationAssetAgent(w, r)
+	_, _, ok := h.selectPromptEvaluationExecutionAgent(
+		w,
+		r,
+		parseUUID(testWorkspaceID),
+		parseUUID(testUserID),
+		member,
+		map[string]any{"agent_id": agentID},
+	)
 
+	if ok {
+		t.Fatal("agent lookup failure unexpectedly selected an agent")
+	}
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("agent lookup failure: expected 500, got %d: %s", w.Code, w.Body.String())
 	}

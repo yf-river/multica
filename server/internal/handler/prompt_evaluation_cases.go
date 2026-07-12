@@ -960,7 +960,7 @@ func (h *Handler) CreatePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 	}
 	asset, err := h.Queries.GetPromptEvaluationAssetInWorkspace(r.Context(), db.GetPromptEvaluationAssetInWorkspaceParams{ID: assetID, WorkspaceID: workspaceUUID})
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "asset_id does not belong to this workspace")
+		writeValidationLookupError(w, r, err, "asset_id does not belong to this workspace", "evaluation asset", "asset_id", uuidToString(assetID))
 		return
 	}
 	promptID, ok := h.promptEvaluationPromptID(w, r, workspaceUUID, req.PromptID, asset.PromptID)
@@ -1214,7 +1214,7 @@ func (h *Handler) UpdatePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 	}
 	asset, err := h.Queries.GetPromptEvaluationAssetInWorkspace(r.Context(), db.GetPromptEvaluationAssetInWorkspaceParams{ID: assetID, WorkspaceID: workspaceUUID})
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "asset_id does not belong to this workspace")
+		writeValidationLookupError(w, r, err, "asset_id does not belong to this workspace", "evaluation asset", "asset_id", uuidToString(assetID))
 		return
 	}
 	promptID, ok := h.promptEvaluationPromptID(w, r, workspaceUUID, req.PromptID, current.PromptID)
