@@ -238,26 +238,26 @@ func (h *Handler) UpdateAgentEnv(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := tx.Commit(r.Context()); err != nil {
-		slog.Error("agent_env update: tx commit failed",
-			append(logger.RequestAttrs(r), "error", err, "agent_id", uuidToString(agent.ID))...)
-		writeError(w, http.StatusInternalServerError, "failed to update env")
-		return
-	}
-
 	// Broadcast an agent:status update so connected clients refresh the
 	// "N variables configured" indicator. Payload is the redacted
-	// AgentResponse — no env values are sent. Skills are reloaded so the
+	// AgentResponse — no env values are sent. Build it before commit so a
+	// projection failure rolls the env and audit writes back. Skills are reloaded so the
 	// broadcast doesn't tell subscribers the agent has no skills (#3459).
 	resp, err := agentToResponse(updated)
 	if err != nil {
 		writeAgentResponseDecodeError(w, r, uuidToString(updated.ID), err)
 		return
 	}
-	if err := attachAgentSkills(r.Context(), h.Queries, &resp, updated.ID); err != nil {
+	if err := attachAgentSkills(r.Context(), qtx, &resp, updated.ID); err != nil {
 		slog.Warn("load agent skills after env update failed",
 			append(logger.RequestAttrs(r), "error", err, "agent_id", uuidToString(updated.ID))...)
 		writeError(w, http.StatusInternalServerError, "failed to load agent skills")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		slog.Error("agent_env update: tx commit failed",
+			append(logger.RequestAttrs(r), "error", err, "agent_id", uuidToString(agent.ID))...)
+		writeError(w, http.StatusInternalServerError, "failed to update env")
 		return
 	}
 	workspaceID := uuidToString(updated.WorkspaceID)

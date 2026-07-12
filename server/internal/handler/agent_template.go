@@ -531,6 +531,13 @@ func (h *Handler) CreateAgentFromTemplate(w http.ResponseWriter, r *http.Request
 		}
 	}
 
+	skills, err := loadAgentSkillSummaries(r.Context(), qtx, agent.ID)
+	if err != nil {
+		slog.Error("agent-template create: failed to load attached skills",
+			append(logger.RequestAttrs(r), "error", err, "agent_id", uuidToString(agent.ID))...)
+		writeError(w, http.StatusInternalServerError, "failed to load agent skills")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		slog.Error("agent-template create: commit failed",
 			append(logger.RequestAttrs(r),
@@ -553,16 +560,7 @@ func (h *Handler) CreateAgentFromTemplate(w http.ResponseWriter, r *http.Request
 		writeAgentResponseDecodeError(w, r, uuidToString(agent.ID), err)
 		return
 	}
-	// Templates attach skills via AddAgentSkill above, so the freshly built
-	// AgentResponse must reload them — otherwise the create response (and
-	// the agent:created broadcast) would tell clients the agent has no
-	// skills despite the template having just imported them (#3459).
-	if err := attachAgentSkills(r.Context(), h.Queries, &resp, agent.ID); err != nil {
-		slog.Warn("load agent skills after template create failed",
-			append(logger.RequestAttrs(r), "error", err, "agent_id", uuidToString(agent.ID))...)
-		writeError(w, http.StatusInternalServerError, "failed to load agent skills")
-		return
-	}
+	resp.Skills = skills
 	actorType, actorID := h.resolveActor(r, ownerID, workspaceID)
 	h.publish(protocol.EventAgentCreated, workspaceID, actorType, actorID, map[string]any{"agent": resp})
 

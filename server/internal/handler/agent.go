@@ -1311,12 +1311,21 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 // handlers that don't refresh it would otherwise serve a misleading
 // empty array on every successful response (#3459).
 func attachAgentSkills(ctx context.Context, queries *db.Queries, resp *AgentResponse, agentID pgtype.UUID) error {
-	skills, err := queries.ListAgentSkillSummaries(ctx, agentID)
+	skilled, err := loadAgentSkillSummaries(ctx, queries, agentID)
 	if err != nil {
 		return err
 	}
+	resp.Skills = skilled
+	return nil
+}
+
+func loadAgentSkillSummaries(ctx context.Context, queries *db.Queries, agentID pgtype.UUID) ([]AgentSkillSummary, error) {
+	skills, err := queries.ListAgentSkillSummaries(ctx, agentID)
+	if err != nil {
+		return nil, err
+	}
 	if len(skills) == 0 {
-		return nil
+		return []AgentSkillSummary{}, nil
 	}
 	out := make([]AgentSkillSummary, len(skills))
 	for i, s := range skills {
@@ -1326,8 +1335,7 @@ func attachAgentSkills(ctx context.Context, queries *db.Queries, resp *AgentResp
 			Description: s.Description,
 		}
 	}
-	resp.Skills = out
-	return nil
+	return out, nil
 }
 
 // resolveAgentProvider returns the provider name for the runtime that
