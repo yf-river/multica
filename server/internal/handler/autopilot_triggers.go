@@ -622,7 +622,7 @@ func (h *Handler) GetAutopilotRun(w http.ResponseWriter, r *http.Request) {
 
 	run, err := h.Queries.GetAutopilotRun(r.Context(), runUUID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "run not found")
+		writeEntityLoadError(w, r, err, "run", "run_id", runID, "autopilot_id", uuidToString(autopilot.ID))
 		return
 	}
 	if uuidToString(run.AutopilotID) != uuidToString(autopilot.ID) {
