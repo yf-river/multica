@@ -15,7 +15,7 @@
     "manualOverrides": "docs/architecture/current-system-map-overrides.json"
   },
   "summary": {
-    "chiRoutes": 323,
+    "chiRoutes": 322,
     "webPages": 31,
     "webRouteHandlers": 1,
     "webRewrites": 6,
@@ -1248,15 +1248,6 @@
         "handler": "h.ListIssueSOPRuns",
         "implementation": "server/internal/handler/squad_sop_run.go#ListIssueSOPRuns",
         "registration": "server/cmd/server/router.go#GET /api/issues/{id}/sop-runs",
-        "middlewareWrapper": false,
-        "origin": "static"
-      },
-      {
-        "method": "POST",
-        "path": "/api/issues/{id}/sop-runs",
-        "handler": "h.CreateIssueSOPRun",
-        "implementation": "server/internal/handler/squad_sop_run.go#CreateIssueSOPRun",
-        "registration": "server/cmd/server/router.go#POST /api/issues/{id}/sop-runs",
         "middlewareWrapper": false,
         "origin": "static"
       },

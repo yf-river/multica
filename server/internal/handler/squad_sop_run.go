@@ -101,12 +101,6 @@ type SOPStageMetricResponse struct {
 	CacheWriteTokens int64  `json:"cache_write_tokens"`
 }
 
-type CreateSOPRunRequest struct {
-	Status         string          `json:"status"`
-	CurrentStepKey string          `json:"current_step_key"`
-	Profile        json.RawMessage `json:"profile"`
-}
-
 type CreateSOPStepEventRequest struct {
 	EventType     string          `json:"event_type"`
 	Status        string          `json:"status"`
@@ -330,57 +324,6 @@ func (h *Handler) ListIssueSOPRuns(w http.ResponseWriter, r *http.Request) {
 		resp = append(resp, runResp)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": resp, "total": len(resp)})
-}
-
-func (h *Handler) CreateIssueSOPRun(w http.ResponseWriter, r *http.Request) {
-	issue, ok := h.loadSOPIssue(w, r)
-	if !ok {
-		return
-	}
-	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "squad" || !issue.AssigneeID.Valid {
-		writeError(w, http.StatusBadRequest, "issue must be assigned to a squad")
-		return
-	}
-	squad, err := h.Queries.GetSquadInWorkspace(r.Context(), db.GetSquadInWorkspaceParams{
-		ID:          issue.AssigneeID,
-		WorkspaceID: issue.WorkspaceID,
-	})
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "assignee squad does not belong to this workspace")
-		return
-	}
-	var req CreateSOPRunRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err.Error() != "EOF" {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-	status := req.Status
-	if status == "" {
-		status = sopStatusRunning
-	}
-	if !validSOPStatuses[status] {
-		writeError(w, http.StatusBadRequest, "status must be 待开始, 进行中, 已完成, 已失败 or 已阻塞")
-		return
-	}
-	profile := normalizeSOPProfileForHandler(squad.SopProfile, req.Profile)
-	profileKey, currentStepKey, _, _ := sopProfileSummaryForHandler(profile)
-	if req.CurrentStepKey != "" {
-		currentStepKey = strings.TrimSpace(req.CurrentStepKey)
-	}
-	run, err := h.Queries.CreateSquadSOPRun(r.Context(), db.CreateSquadSOPRunParams{
-		WorkspaceID:    issue.WorkspaceID,
-		IssueID:        issue.ID,
-		SquadID:        squad.ID,
-		ProfileKey:     profileKey,
-		Profile:        profile,
-		Status:         status,
-		CurrentStepKey: currentStepKey,
-	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to create SOP run")
-		return
-	}
-	writeJSON(w, http.StatusCreated, squadSOPRunToResponse(run, nil))
 }
 
 func (h *Handler) RecordSOPStepEvent(w http.ResponseWriter, r *http.Request) {
@@ -790,26 +733,6 @@ func (h *Handler) loadSOPIssue(w http.ResponseWriter, r *http.Request) (db.Issue
 func (h *Handler) sopEventActor(r *http.Request) (string, pgtype.UUID) {
 	actorType, actorID := h.resolveActor(r, requestUserID(r), h.resolveWorkspaceID(r))
 	return actorType, pgUUIDFromString(actorID)
-}
-
-func normalizeSOPProfileForHandler(fallback []byte, override json.RawMessage) []byte {
-	if len(override) > 0 && strings.TrimSpace(string(override)) != "" && strings.TrimSpace(string(override)) != "null" {
-		var obj map[string]any
-		if json.Unmarshal(override, &obj) == nil && obj != nil {
-			normalized, err := json.Marshal(obj)
-			if err == nil {
-				return normalized
-			}
-		}
-	}
-	var obj map[string]any
-	if json.Unmarshal(fallback, &obj) == nil && obj != nil {
-		normalized, err := json.Marshal(obj)
-		if err == nil {
-			return normalized
-		}
-	}
-	return []byte(`{}`)
 }
 
 func sopProfileSummaryForHandler(profile []byte) (profileKey, currentStepKey, currentStepName, roleKey string) {

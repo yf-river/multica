@@ -54,12 +54,6 @@ export interface ListIssueSOPRunsResponse {
   total: number;
 }
 
-export interface CreateSOPRunRequest {
-  status?: SOPRunStatus;
-  current_step_key?: string;
-  profile?: Record<string, unknown>;
-}
-
 export interface CreateSOPStepEventRequest {
   event_type?: SOPStepEventType;
   status?: SOPRunStatus;

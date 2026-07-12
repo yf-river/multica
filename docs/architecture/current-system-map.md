@@ -16,7 +16,7 @@ evidence reviewable by humans.
 
 | Surface | Count |
 | --- | --- |
-| Go Chi routes | 323 |
+| Go Chi routes | 322 |
 | Next.js pages | 31 |
 | Next.js route handlers | 1 |
 | Next.js rewrites | 6 |
@@ -178,7 +178,6 @@ closures intentionally remain unresolved.
 | POST | `/api/issues/{id}/reactions` | `h.AddIssueReaction` | `server/internal/handler/issue_reaction.go#AddIssueReaction` | `server/cmd/server/router.go#POST /api/issues/{id}/reactions` |
 | POST | `/api/issues/{id}/rerun` | `h.RerunIssue` | `server/internal/handler/task_lifecycle.go#RerunIssue` | `server/cmd/server/router.go#POST /api/issues/{id}/rerun` |
 | GET | `/api/issues/{id}/sop-runs` | `h.ListIssueSOPRuns` | `server/internal/handler/squad_sop_run.go#ListIssueSOPRuns` | `server/cmd/server/router.go#GET /api/issues/{id}/sop-runs` |
-| POST | `/api/issues/{id}/sop-runs` | `h.CreateIssueSOPRun` | `server/internal/handler/squad_sop_run.go#CreateIssueSOPRun` | `server/cmd/server/router.go#POST /api/issues/{id}/sop-runs` |
 | POST | `/api/issues/{id}/source-fetch` | `h.RecordIssueSourceFetch` | `server/internal/handler/issue_source_fetch.go#RecordIssueSourceFetch` | `server/cmd/server/router.go#POST /api/issues/{id}/source-fetch` |
 | POST | `/api/issues/{id}/squad-evaluated` | `h.RecordSquadLeaderEvaluation` | `server/internal/handler/squad_members.go#RecordSquadLeaderEvaluation` | `server/cmd/server/router.go#POST /api/issues/{id}/squad-evaluated` |
 | POST | `/api/issues/{id}/subscribe` | `h.SubscribeToIssue` | `server/internal/handler/subscriber.go#SubscribeToIssue` | `server/cmd/server/router.go#POST /api/issues/{id}/subscribe` |

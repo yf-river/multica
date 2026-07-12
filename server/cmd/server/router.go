@@ -747,7 +747,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/trace", h.ListIssueTaskTraceEvents)
 					r.Get("/execution-tree", h.GetIssueExecutionTree)
 					r.Get("/sop-runs", h.ListIssueSOPRuns)
-					r.Post("/sop-runs", h.CreateIssueSOPRun)
 					r.Post("/reactions", h.AddIssueReaction)
 					r.Delete("/reactions", h.RemoveIssueReaction)
 					r.Get("/attachments", h.ListAttachments)
