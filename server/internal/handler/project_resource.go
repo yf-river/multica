@@ -50,6 +50,14 @@ func projectResourceToResponse(r db.ProjectResource) ProjectResourceResponse {
 	}
 }
 
+func writeProjectResourceCreateReplayError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errResourceCreateIdempotencyConflict) {
+		writeError(w, http.StatusConflict, "Idempotency-Key was already used with a different project resource request")
+		return
+	}
+	writeError(w, http.StatusInternalServerError, "failed to replay project resource create")
+}
+
 // CreateProjectResourceRequest is the body for POST /api/projects/{id}/resources.
 type CreateProjectResourceRequest struct {
 	ResourceType string          `json:"resource_type"`
@@ -550,6 +558,39 @@ func (h *Handler) CreateProjectResource(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	var label pgtype.Text
+	if req.Label != nil && strings.TrimSpace(*req.Label) != "" {
+		label = pgtype.Text{String: strings.TrimSpace(*req.Label), Valid: true}
+	}
+	creator, _ := h.parseUserUUIDOrZero(userID)
+	requestHash, err := hashRequestFingerprint(struct {
+		ProjectID    string          `json:"project_id"`
+		ResourceType string          `json:"resource_type"`
+		ResourceRef  json.RawMessage `json:"resource_ref"`
+		Label        *string         `json:"label"`
+		Position     *int32          `json:"position"`
+	}{uuidToString(project.ID), req.ResourceType, normalizedRef, textToPtr(label), req.Position})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create project resource")
+		return
+	}
+	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	loadReplay := func() (ProjectResourceResponse, bool, error) {
+		return loadResourceCreateReplay(
+			r.Context(), h.Queries, project.WorkspaceID, creator, resourceTypeProjectResource,
+			idempotencyKey, requestHash, func(response ProjectResourceResponse) bool { return response.ID != "" },
+		)
+	}
+	if replay, found, replayErr := loadReplay(); replayErr != nil {
+		writeProjectResourceCreateReplayError(w, replayErr)
+		return
+	} else if found {
+		writeJSON(w, http.StatusCreated, replay)
+		return
+	}
 	if err := h.ensureGongfengProjectPathRegistered(r.Context(), project.WorkspaceID, req.ResourceType, normalizedRef); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -563,11 +604,6 @@ func (h *Handler) CreateProjectResource(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	var label pgtype.Text
-	if req.Label != nil && strings.TrimSpace(*req.Label) != "" {
-		label = pgtype.Text{String: strings.TrimSpace(*req.Label), Valid: true}
-	}
-	creator, _ := h.parseUserUUIDOrZero(userID)
 	params := db.CreateProjectResourceParams{
 		ProjectID:    project.ID,
 		WorkspaceID:  project.WorkspaceID,
@@ -576,12 +612,46 @@ func (h *Handler) CreateProjectResource(w http.ResponseWriter, r *http.Request) 
 		Label:        label,
 		CreatedBy:    creator,
 	}
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create project resource")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	_, err = qtx.ReserveResourceCreateRequest(r.Context(), db.ReserveResourceCreateRequestParams{
+		WorkspaceID: project.WorkspaceID, ActorID: creator, ResourceType: resourceTypeProjectResource,
+		IdempotencyKey: idempotencyKey, RequestHash: requestHash,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		_ = tx.Rollback(r.Context())
+		replay, found, replayErr := loadReplay()
+		if replayErr != nil || !found {
+			if replayErr == nil {
+				replayErr = errors.New("project resource create replay disappeared after conflict")
+			}
+			writeProjectResourceCreateReplayError(w, replayErr)
+			return
+		}
+		writeJSON(w, http.StatusCreated, replay)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create project resource")
+		return
+	}
+
 	var resource db.ProjectResource
 	if req.Position == nil {
-		resource, err = h.createProjectResourceAtEnd(r.Context(), params)
+		if _, err = qtx.LockProjectForResourcePosition(r.Context(), params.ProjectID); err == nil {
+			params.Position, err = qtx.NextProjectResourcePosition(r.Context(), params.ProjectID)
+		}
+		if err == nil {
+			resource, err = qtx.CreateProjectResource(r.Context(), params)
+		}
 	} else {
 		params.Position = *req.Position
-		resource, err = h.Queries.CreateProjectResource(r.Context(), params)
+		resource, err = qtx.CreateProjectResource(r.Context(), params)
 	}
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -593,6 +663,17 @@ func (h *Handler) CreateProjectResource(w http.ResponseWriter, r *http.Request) 
 	}
 
 	resp := projectResourceToResponse(resource)
+	if err := completeResourceCreateRequest(
+		r.Context(), qtx, project.WorkspaceID, creator, resourceTypeProjectResource,
+		idempotencyKey, requestHash, resource.ID, resp,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create project resource")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create project resource")
+		return
+	}
 	h.publish(
 		protocol.EventProjectResourceCreated,
 		uuidToString(project.WorkspaceID),
@@ -601,32 +682,6 @@ func (h *Handler) CreateProjectResource(w http.ResponseWriter, r *http.Request) 
 		map[string]any{"resource": resp, "project_id": uuidToString(project.ID)},
 	)
 	writeJSON(w, http.StatusCreated, resp)
-}
-
-func (h *Handler) createProjectResourceAtEnd(ctx context.Context, params db.CreateProjectResourceParams) (db.ProjectResource, error) {
-	tx, err := h.TxStarter.Begin(ctx)
-	if err != nil {
-		return db.ProjectResource{}, fmt.Errorf("begin project resource append: %w", err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	queries := h.Queries.WithTx(tx)
-	if _, err := queries.LockProjectForResourcePosition(ctx, params.ProjectID); err != nil {
-		return db.ProjectResource{}, fmt.Errorf("lock project resource order: %w", err)
-	}
-	position, err := queries.NextProjectResourcePosition(ctx, params.ProjectID)
-	if err != nil {
-		return db.ProjectResource{}, fmt.Errorf("calculate project resource position: %w", err)
-	}
-	params.Position = position
-	resource, err := queries.CreateProjectResource(ctx, params)
-	if err != nil {
-		return db.ProjectResource{}, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return db.ProjectResource{}, fmt.Errorf("commit project resource append: %w", err)
-	}
-	return resource, nil
 }
 
 // UpdateProjectResource edits an existing resource's ref/label/position.

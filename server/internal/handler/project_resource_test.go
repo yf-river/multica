@@ -9,9 +9,37 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
+
+func TestCreateProjectResource_ReplaysCommittedResponse(t *testing.T) {
+	project := createProjectResourceTestProject(t, "Resource retry project")
+	key := uuid.NewString()
+	create := func() (int, ProjectResourceResponse) {
+		w := httptest.NewRecorder()
+		req := newRequest("POST", "/api/projects/"+project.ID+"/resources", map[string]any{
+			"resource_type": "github_repo",
+			"resource_ref":  map[string]any{"url": "https://github.com/example/retry-" + key[:8]},
+		})
+		req = withURLParam(req, "id", project.ID)
+		req.Header.Set("Idempotency-Key", key)
+		testHandler.CreateProjectResource(w, req)
+		var response ProjectResourceResponse
+		_ = json.NewDecoder(w.Body).Decode(&response)
+		return w.Code, response
+	}
+	t.Cleanup(func() {
+		mustExec(t, context.Background(), `DELETE FROM resource_create_request WHERE resource_type = 'project_resource' AND idempotency_key = $1`, key)
+	})
+
+	firstStatus, first := create()
+	secondStatus, second := create()
+	if firstStatus != http.StatusCreated || secondStatus != http.StatusCreated || first.ID != second.ID {
+		t.Fatalf("resource replay = (%d, %s) then (%d, %s), want same 201 response", firstStatus, first.ID, secondStatus, second.ID)
+	}
+}
 
 func createProjectResourceTestProject(t *testing.T, title string) ProjectResponse {
 	t.Helper()

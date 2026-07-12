@@ -612,7 +612,9 @@ func runProjectResourceAdd(cmd *cobra.Command, args []string) error {
 	}
 
 	var result map[string]any
-	if err := client.PostJSON(ctx, "/api/projects/"+projectRef.ID+"/resources", body, &result); err != nil {
+	if err := client.PostJSONWithIdempotencyKey(
+		ctx, "/api/projects/"+projectRef.ID+"/resources", body, uuid.NewString(), &result,
+	); err != nil {
 		return fmt.Errorf("add project resource: %w", err)
 	}
 
