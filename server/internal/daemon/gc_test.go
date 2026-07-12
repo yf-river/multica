@@ -769,11 +769,15 @@ func TestPruneWorktree_SerializesWithCreateWorktree(t *testing.T) {
 	}
 
 	createDone := make(chan error, 1)
+	workDir := filepath.Join(d.cfg.WorkspacesRoot, "ws1", "task-lock-test")
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	go func() {
 		_, err := blockingCache.CreateWorktree(repocache.WorktreeParams{
 			WorkspaceID: "ws1",
 			RepoURL:     sourceRepo,
-			WorkDir:     t.TempDir(),
+			WorkDir:     workDir,
 			AgentName:   "tester",
 			TaskID:      "11111111-1111-1111-1111-111111111111",
 		})

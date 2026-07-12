@@ -100,7 +100,10 @@ func (c *Cache) lockForRepo(barePath string) *sync.Mutex {
 // but concurrent Sync calls (different workspaces, or the same workspace
 // re-synced while checkouts are running) do not block each other.
 func (c *Cache) Sync(workspaceID string, repos []RepoInfo) error {
-	wsDir := filepath.Join(c.root, workspaceID)
+	wsDir, err := c.workspaceCacheDir(workspaceID)
+	if err != nil {
+		return err
+	}
 	if err := os.MkdirAll(wsDir, 0o755); err != nil {
 		return fmt.Errorf("create workspace cache dir: %w", err)
 	}
@@ -141,11 +144,31 @@ func (c *Cache) Sync(workspaceID string, repos []RepoInfo) error {
 // Lookup returns the local bare clone path for a repo URL within a workspace.
 // Returns "" if not cached.
 func (c *Cache) Lookup(workspaceID, url string) string {
-	barePath := filepath.Join(c.root, workspaceID, bareDirName(url))
+	wsDir, err := c.workspaceCacheDir(workspaceID)
+	if err != nil {
+		return ""
+	}
+	barePath := filepath.Join(wsDir, bareDirName(url))
 	if isBareRepo(barePath) {
 		return barePath
 	}
 	return ""
+}
+
+func (c *Cache) workspaceCacheDir(workspaceID string) (string, error) {
+	workspaceID = strings.TrimSpace(workspaceID)
+	if workspaceID == "" || workspaceID == "." || workspaceID == ".." || filepath.Base(workspaceID) != workspaceID {
+		return "", fmt.Errorf("invalid workspace cache segment %q", workspaceID)
+	}
+	root, err := filepath.Abs(c.root)
+	if err != nil {
+		return "", fmt.Errorf("resolve repo cache root: %w", err)
+	}
+	result := filepath.Join(root, workspaceID)
+	if !pathWithin(root, result) {
+		return "", fmt.Errorf("workspace cache path escapes root: %q", workspaceID)
+	}
+	return result, nil
 }
 
 // WithRepoLock serializes caller-supplied mutations on a bare repo against all
@@ -400,6 +423,10 @@ type WorktreeResult struct {
 // at the target path (reused environment), it updates the existing worktree to
 // the latest remote default branch instead of failing.
 func (c *Cache) CreateWorktree(params WorktreeParams) (*WorktreeResult, error) {
+	worktreePath, err := c.managedWorktreePath(params.WorkDir, params.RepoURL)
+	if err != nil {
+		return nil, err
+	}
 	barePath := c.Lookup(params.WorkspaceID, params.RepoURL)
 	if barePath == "" {
 		return nil, fmt.Errorf("repo not found in cache: %s (workspace: %s)", params.RepoURL, params.WorkspaceID)
@@ -417,13 +444,7 @@ func (c *Cache) CreateWorktree(params WorktreeParams) (*WorktreeResult, error) {
 	// never collide with the refs/heads/agent/* branches that worktree creation
 	// locks in this same bare repo.
 	if err := gitFetch(barePath); err != nil {
-		// Non-fatal: preserve cached state and continue, but make the warning
-		// loud enough that it's findable in the daemon log. The agent will
-		// receive an older snapshot than the remote head.
-		c.logger.Warn("repo checkout: fetch failed, agent will see possibly stale code",
-			"url", params.RepoURL,
-			"error", err,
-		)
+		return nil, fmt.Errorf("fetch repo before checkout: %w", err)
 	}
 
 	// Determine the ref to base the worktree on. By default this is the remote's
@@ -454,10 +475,6 @@ func (c *Cache) CreateWorktree(params WorktreeParams) (*WorktreeResult, error) {
 	if branchName == "" {
 		branchName = fmt.Sprintf("agent/%s/%s", sanitizeName(params.AgentName), shortID(params.TaskID))
 	}
-
-	// Derive directory name from repo URL.
-	dirName := repoNameFromURL(params.RepoURL)
-	worktreePath := filepath.Join(params.WorkDir, dirName)
 
 	// If worktree already exists (reused environment from a prior task),
 	// update it to the latest remote code instead of creating a new one.
@@ -570,6 +587,54 @@ func (c *Cache) CreateWorktree(params WorktreeParams) (*WorktreeResult, error) {
 		Path:       worktreePath,
 		BranchName: actualBranch,
 	}, nil
+}
+
+// managedWorktreePath confines daemon-owned checkouts to the workspaces root,
+// which is the parent of the .repos cache. This protects reset/clean reuse from
+// ever targeting an arbitrary user-supplied Git worktree through the localhost
+// checkout endpoint.
+func (c *Cache) managedWorktreePath(workDir, repoURL string) (string, error) {
+	cacheRoot, err := filepath.Abs(c.root)
+	if err != nil {
+		return "", fmt.Errorf("resolve repo cache root: %w", err)
+	}
+	managedRoot := filepath.Dir(cacheRoot)
+	managedRoot, err = filepath.Abs(managedRoot)
+	if err != nil {
+		return "", fmt.Errorf("resolve managed workspaces root: %w", err)
+	}
+	workDir, err = filepath.Abs(strings.TrimSpace(workDir))
+	if err != nil {
+		return "", fmt.Errorf("resolve worktree parent: %w", err)
+	}
+	if !pathWithin(managedRoot, workDir) || pathWithin(cacheRoot, workDir) {
+		return "", fmt.Errorf("worktree parent must be inside managed workspaces root and outside repo cache: %s", workDir)
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(managedRoot)
+	if err != nil {
+		return "", fmt.Errorf("resolve managed workspaces root symlinks: %w", err)
+	}
+	resolvedWorkDir, err := filepath.EvalSymlinks(workDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve worktree parent symlinks: %w", err)
+	}
+	if !pathWithin(resolvedRoot, resolvedWorkDir) {
+		return "", fmt.Errorf("worktree parent escapes managed root through symlink: %s", workDir)
+	}
+	dirName := repoNameFromURL(repoURL)
+	if dirName == "" || dirName == "." || dirName == ".." || filepath.Base(dirName) != dirName {
+		return "", fmt.Errorf("cannot derive safe worktree directory from repo URL %q", repoURL)
+	}
+	result := filepath.Join(workDir, dirName)
+	if !pathWithin(workDir, result) {
+		return "", fmt.Errorf("derived worktree path escapes parent: %s", result)
+	}
+	return result, nil
+}
+
+func pathWithin(root, target string) bool {
+	rel, err := filepath.Rel(filepath.Clean(root), filepath.Clean(target))
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func resolveBaseRef(barePath, requestedRef string) (string, error) {

@@ -504,6 +504,85 @@ func TestCreateWorktree(t *testing.T) {
 	}
 }
 
+func TestCreateWorktreeFailsWhenRemoteCannotBeRefreshed(t *testing.T) {
+	sourceRepo := createTestRepo(t)
+	cacheRoot := t.TempDir()
+	cache := New(cacheRoot, testLogger())
+	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
+		t.Fatalf("sync failed: %v", err)
+	}
+	offlinePath := sourceRepo + "-offline"
+	if err := os.Rename(sourceRepo, offlinePath); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Rename(offlinePath, sourceRepo) })
+	workDir := t.TempDir()
+	result, err := cache.CreateWorktree(WorktreeParams{
+		WorkspaceID: "ws-1",
+		RepoURL:     sourceRepo,
+		WorkDir:     workDir,
+		AgentName:   "Reviewer",
+		TaskID:      "task-fetch-failure",
+	})
+	if err == nil || result != nil || !strings.Contains(err.Error(), "fetch repo before checkout") {
+		t.Fatalf("result=%#v err=%v", result, err)
+	}
+	entries, readErr := os.ReadDir(workDir)
+	if readErr != nil || len(entries) != 0 {
+		t.Fatalf("failed checkout left worktree entries=%v err=%v", entries, readErr)
+	}
+}
+
+func TestManagedWorktreePathRejectsOutsideAndSymlinkParents(t *testing.T) {
+	managedRoot := t.TempDir()
+	cacheRoot := filepath.Join(managedRoot, ".repos")
+	if err := os.MkdirAll(cacheRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	cache := New(cacheRoot, testLogger())
+	workDir := filepath.Join(managedRoot, "workspace", "task")
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path, err := cache.managedWorktreePath(workDir, "https://github.com/acme/repo.git")
+	if err != nil || path != filepath.Join(workDir, "repo") {
+		t.Fatalf("path=%q err=%v", path, err)
+	}
+	if _, err := cache.managedWorktreePath(t.TempDir(), "https://github.com/acme/repo.git"); err == nil {
+		t.Fatal("outside worktree parent was accepted")
+	}
+	if _, err := cache.managedWorktreePath(filepath.Join(cacheRoot, "work"), "https://github.com/acme/repo.git"); err == nil {
+		t.Fatal("repo-cache child was accepted as worktree parent")
+	}
+	outside := t.TempDir()
+	symlinkParent := filepath.Join(managedRoot, "symlink-parent")
+	if err := os.Symlink(outside, symlinkParent); err == nil {
+		if _, err := cache.managedWorktreePath(symlinkParent, "https://github.com/acme/repo.git"); err == nil {
+			t.Fatal("symlinked outside parent was accepted")
+		}
+	}
+	if _, err := cache.managedWorktreePath(workDir, "https://github.com/acme/.."); err == nil {
+		t.Fatal("unsafe derived repository directory was accepted")
+	}
+}
+
+func TestWorkspaceCacheDirRejectsTraversal(t *testing.T) {
+	root := t.TempDir()
+	cache := New(root, testLogger())
+	path, err := cache.workspaceCacheDir("workspace-1")
+	if err != nil || path != filepath.Join(root, "workspace-1") {
+		t.Fatalf("path=%q err=%v", path, err)
+	}
+	for _, invalid := range []string{"", ".", "..", "../outside", "nested/workspace"} {
+		if _, err := cache.workspaceCacheDir(invalid); err == nil {
+			t.Fatalf("invalid workspace segment %q was accepted", invalid)
+		}
+		if got := cache.Lookup(invalid, "https://github.com/acme/repo.git"); got != "" {
+			t.Fatalf("Lookup(%q) escaped cache: %q", invalid, got)
+		}
+	}
+}
+
 func TestCreateWorktreePreserveExistingKeepsIssueWorktreeChanges(t *testing.T) {
 	t.Parallel()
 	sourceRepo := createTestRepo(t)
