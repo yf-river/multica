@@ -18,6 +18,63 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
+// projectResourcesForClaim converts the persisted project resource model into
+// the two daemon-facing views used by every task source: the complete resource
+// inventory and the subset that can be checked out as repositories. The first
+// repository branch/ref hint is returned separately for issue execution-space
+// setup; callers that do not create an execution space can ignore it.
+func projectResourcesForClaim(rows []db.ProjectResource) ([]ProjectResourceData, []RepoData, string) {
+	resources := make([]ProjectResourceData, 0, len(rows))
+	repos := make([]RepoData, 0, len(rows))
+	repoRef := ""
+	for _, row := range rows {
+		label := ""
+		if row.Label.Valid {
+			label = row.Label.String
+		}
+		ref := json.RawMessage(row.ResourceRef)
+		if len(ref) == 0 {
+			ref = json.RawMessage("{}")
+		}
+		resources = append(resources, ProjectResourceData{
+			ID:           uuidToString(row.ID),
+			ResourceType: row.ResourceType,
+			ResourceRef:  ref,
+			Label:        label,
+		})
+
+		switch row.ResourceType {
+		case "github_repo":
+			var payload struct {
+				URL               string `json:"url"`
+				DefaultBranchHint string `json:"default_branch_hint"`
+			}
+			if json.Unmarshal(row.ResourceRef, &payload) == nil && payload.URL != "" {
+				repos = append(repos, RepoData{URL: payload.URL})
+				if repoRef == "" {
+					repoRef = strings.TrimSpace(payload.DefaultBranchHint)
+				}
+			}
+		case "gongfeng_repo":
+			var payload struct {
+				URL         string `json:"url"`
+				ProjectPath string `json:"project_path"`
+				Ref         string `json:"ref"`
+				Branch      string `json:"branch"`
+			}
+			if json.Unmarshal(row.ResourceRef, &payload) == nil {
+				if cloneURL := canonicalGongfengCloneURL(payload.URL, payload.ProjectPath); cloneURL != "" {
+					repos = append(repos, RepoData{URL: cloneURL})
+					if repoRef == "" {
+						repoRef = firstNonEmpty(strings.TrimSpace(payload.Branch), strings.TrimSpace(payload.Ref))
+					}
+				}
+			}
+		}
+	}
+	return resources, repos, repoRef
+}
+
 func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 	runtimeID := chi.URLParam(r, "runtimeId")
 	start := time.Now()
@@ -233,55 +290,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if len(rows) > 0 && !suppressIssueReposForRole {
-				out := make([]ProjectResourceData, 0, len(rows))
-				for _, row := range rows {
-					label := ""
-					if row.Label.Valid {
-						label = row.Label.String
-					}
-					ref := json.RawMessage(row.ResourceRef)
-					if len(ref) == 0 {
-						ref = json.RawMessage("{}")
-					}
-					out = append(out, ProjectResourceData{
-						ID:           uuidToString(row.ID),
-						ResourceType: row.ResourceType,
-						ResourceRef:  ref,
-						Label:        label,
-					})
-					// Lift git-backed project resources into the daemon's repo list
-					// so `multica repo checkout` and the meta-skill render
-					// them as the issue's repos.
-					switch row.ResourceType {
-					case "github_repo":
-						var payload struct {
-							URL               string `json:"url"`
-							DefaultBranchHint string `json:"default_branch_hint"`
-						}
-						if json.Unmarshal(row.ResourceRef, &payload) == nil && payload.URL != "" {
-							projectRepos = append(projectRepos, RepoData{URL: payload.URL})
-							if projectRepoRef == "" {
-								projectRepoRef = strings.TrimSpace(payload.DefaultBranchHint)
-							}
-						}
-					case "gongfeng_repo":
-						var payload struct {
-							URL         string `json:"url"`
-							ProjectPath string `json:"project_path"`
-							Ref         string `json:"ref"`
-							Branch      string `json:"branch"`
-						}
-						if json.Unmarshal(row.ResourceRef, &payload) == nil {
-							if cloneURL := canonicalGongfengCloneURL(payload.URL, payload.ProjectPath); cloneURL != "" {
-								projectRepos = append(projectRepos, RepoData{URL: cloneURL})
-								if projectRepoRef == "" {
-									projectRepoRef = firstNonEmpty(strings.TrimSpace(payload.Branch), strings.TrimSpace(payload.Ref))
-								}
-							}
-						}
-					}
-				}
-				resp.ProjectResources = out
+				resp.ProjectResources, projectRepos, projectRepoRef = projectResourcesForClaim(rows)
 			}
 		}
 
@@ -596,43 +605,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				if len(rows) > 0 {
-					out := make([]ProjectResourceData, 0, len(rows))
-					for _, row := range rows {
-						label := ""
-						if row.Label.Valid {
-							label = row.Label.String
-						}
-						ref := json.RawMessage(row.ResourceRef)
-						if len(ref) == 0 {
-							ref = json.RawMessage("{}")
-						}
-						out = append(out, ProjectResourceData{
-							ID:           uuidToString(row.ID),
-							ResourceType: row.ResourceType,
-							ResourceRef:  ref,
-							Label:        label,
-						})
-						switch row.ResourceType {
-						case "github_repo":
-							var payload struct {
-								URL string `json:"url"`
-							}
-							if json.Unmarshal(row.ResourceRef, &payload) == nil && payload.URL != "" {
-								projectRepos = append(projectRepos, RepoData{URL: payload.URL})
-							}
-						case "gongfeng_repo":
-							var payload struct {
-								URL         string `json:"url"`
-								ProjectPath string `json:"project_path"`
-							}
-							if json.Unmarshal(row.ResourceRef, &payload) == nil {
-								if cloneURL := canonicalGongfengCloneURL(payload.URL, payload.ProjectPath); cloneURL != "" {
-									projectRepos = append(projectRepos, RepoData{URL: cloneURL})
-								}
-							}
-						}
-					}
-					resp.ProjectResources = out
+					resp.ProjectResources, projectRepos, _ = projectResourcesForClaim(rows)
 				}
 			}
 

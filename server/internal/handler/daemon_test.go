@@ -3259,11 +3259,15 @@ func TestCompleteTask_AssignmentTriggered_DoesNotSuppressTrivialDoneOutput(t *te
 }
 
 type claimRuntimeGuardTask struct {
-	PriorSessionID           string   `json:"prior_session_id"`
-	PriorWorkDir             string   `json:"prior_work_dir"`
-	ChatMessage              string   `json:"chat_message"`
-	ThreadName               string   `json:"thread_name"`
-	QuickCreateAttachmentIDs []string `json:"quick_create_attachment_ids"`
+	PriorSessionID           string                `json:"prior_session_id"`
+	PriorWorkDir             string                `json:"prior_work_dir"`
+	ChatMessage              string                `json:"chat_message"`
+	ThreadName               string                `json:"thread_name"`
+	QuickCreateAttachmentIDs []string              `json:"quick_create_attachment_ids"`
+	ProjectID                string                `json:"project_id"`
+	ProjectTitle             string                `json:"project_title"`
+	ProjectResources         []ProjectResourceData `json:"project_resources"`
+	Repos                    []RepoData            `json:"repos"`
 }
 
 func claimTaskForRuntimeGuard(t *testing.T, runtimeID, daemonID string) *claimRuntimeGuardTask {
@@ -4006,6 +4010,23 @@ func TestClaimTask_QuickCreatePopulatesThreadName(t *testing.T) {
 
 	ctx := context.Background()
 	agentID, runtimeID, daemonID := createRuntimeGuardAgent(t, ctx)
+	var projectID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO project (workspace_id, title)
+		VALUES ($1, 'Quick create project context')
+		RETURNING id
+	`, testWorkspaceID).Scan(&projectID); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM project WHERE id = $1`, projectID) })
+	const projectRepoURL = "https://github.com/example/quick-create-project"
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO project_resource (
+			project_id, workspace_id, resource_type, resource_ref, label, position
+		) VALUES ($1, $2, 'github_repo', $3::jsonb, 'quick repo', 0)
+	`, projectID, testWorkspaceID, `{"url":"`+projectRepoURL+`","default_branch_hint":"main"}`); err != nil {
+		t.Fatalf("create project resource: %v", err)
+	}
 
 	quickPrompt := "create a follow-up issue for Codex session titles"
 	attachmentID := "019ec09d-6222-722b-bdfa-427b105d80be"
@@ -4014,6 +4035,7 @@ func TestClaimTask_QuickCreatePopulatesThreadName(t *testing.T) {
 		"prompt":         quickPrompt,
 		"requester_id":   testUserID,
 		"workspace_id":   testWorkspaceID,
+		"project_id":     projectID,
 		"attachment_ids": []string{attachmentID},
 	})
 
@@ -4030,6 +4052,15 @@ func TestClaimTask_QuickCreatePopulatesThreadName(t *testing.T) {
 	}
 	if len(task.QuickCreateAttachmentIDs) != 1 || task.QuickCreateAttachmentIDs[0] != attachmentID {
 		t.Fatalf("quick-create attachment ids = %#v, want [%q]", task.QuickCreateAttachmentIDs, attachmentID)
+	}
+	if task.ProjectID != projectID || task.ProjectTitle != "Quick create project context" {
+		t.Fatalf("quick-create project = {%q %q}, want {%q %q}", task.ProjectID, task.ProjectTitle, projectID, "Quick create project context")
+	}
+	if len(task.ProjectResources) != 1 || task.ProjectResources[0].ResourceType != "github_repo" {
+		t.Fatalf("quick-create project resources = %+v", task.ProjectResources)
+	}
+	if len(task.Repos) != 1 || task.Repos[0].URL != projectRepoURL {
+		t.Fatalf("quick-create repos = %+v, want %s", task.Repos, projectRepoURL)
 	}
 }
 
