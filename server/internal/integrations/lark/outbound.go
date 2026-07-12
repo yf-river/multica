@@ -376,26 +376,7 @@ func (p *Patcher) sendChatReply(ctx context.Context, creds InstallationCredentia
 }
 
 func (p *Patcher) installationCredentials(inst db.LarkInstallation) (InstallationCredentials, error) {
-	if p.credentials == nil {
-		return InstallationCredentials{}, errors.New("lark patcher: credentials resolver missing")
-	}
-	secret, err := p.credentials.DecryptAppSecret(inst)
-	if err != nil {
-		return InstallationCredentials{}, fmt.Errorf("decrypt app_secret: %w", err)
-	}
-	region, err := ParseRegion(inst.Region)
-	if err != nil {
-		return InstallationCredentials{}, err
-	}
-	creds := InstallationCredentials{
-		AppID:     inst.AppID,
-		AppSecret: secret,
-		Region:    region,
-	}
-	if inst.TenantKey.Valid {
-		creds.TenantKey = inst.TenantKey.String
-	}
-	return creds, nil
+	return resolveInstallationCredentials(p.credentials, inst)
 }
 
 // fail surfaces a short error card on task failure. Unlike the

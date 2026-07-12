@@ -296,23 +296,7 @@ func (r *LarkOutcomeReplier) sendChatNotice(ctx context.Context, inst db.LarkIns
 }
 
 func (r *LarkOutcomeReplier) installationCredentials(inst db.LarkInstallation) (InstallationCredentials, error) {
-	secret, err := r.credentials.DecryptAppSecret(inst)
-	if err != nil {
-		return InstallationCredentials{}, fmt.Errorf("decrypt app_secret: %w", err)
-	}
-	region, err := ParseRegion(inst.Region)
-	if err != nil {
-		return InstallationCredentials{}, err
-	}
-	creds := InstallationCredentials{
-		AppID:     inst.AppID,
-		AppSecret: secret,
-		Region:    region,
-	}
-	if inst.TenantKey.Valid {
-		creds.TenantKey = inst.TenantKey.String
-	}
-	return creds, nil
+	return resolveInstallationCredentials(r.credentials, inst)
 }
 
 // renderNoticeCard produces a minimal text-only interactive card for

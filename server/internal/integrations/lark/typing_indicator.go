@@ -204,21 +204,5 @@ func isMessageTooOld(createTime string) bool {
 }
 
 func (m *TypingIndicatorManager) resolveCredentials(inst db.LarkInstallation) (InstallationCredentials, error) {
-	secret, err := m.credentials.DecryptAppSecret(inst)
-	if err != nil {
-		return InstallationCredentials{}, err
-	}
-	region, err := ParseRegion(inst.Region)
-	if err != nil {
-		return InstallationCredentials{}, err
-	}
-	creds := InstallationCredentials{
-		AppID:     inst.AppID,
-		AppSecret: secret,
-		Region:    region,
-	}
-	if inst.TenantKey.Valid {
-		creds.TenantKey = inst.TenantKey.String
-	}
-	return creds, nil
+	return resolveInstallationCredentials(m.credentials, inst)
 }
