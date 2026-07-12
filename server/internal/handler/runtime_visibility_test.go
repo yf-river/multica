@@ -62,6 +62,44 @@ func TestCanUseRuntimeForAgent_Pure(t *testing.T) {
 	}
 }
 
+// TestRuntimeReadEndpoints_RejectOtherMembersPersonalRuntime proves that
+// personal-runtime visibility is an API boundary, not merely a frontend
+// filter. Cost reports expose task and agent activity, while model discovery
+// can trigger work on the owner's daemon; neither is available to an unrelated
+// plain member of the same workspace.
+func TestRuntimeReadEndpoints_RejectOtherMembersPersonalRuntime(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	runtimeID, _, plainMemberID := runtimeVisibilityFixture(t)
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		handle func(http.ResponseWriter, *http.Request)
+	}{
+		{"usage", http.MethodGet, "/api/runtimes/" + runtimeID + "/usage", testHandler.GetRuntimeUsage},
+		{"task activity", http.MethodGet, "/api/runtimes/" + runtimeID + "/activity", testHandler.GetRuntimeTaskActivity},
+		{"usage by agent", http.MethodGet, "/api/runtimes/" + runtimeID + "/usage/by-agent", testHandler.GetRuntimeUsageByAgent},
+		{"usage by task", http.MethodGet, "/api/runtimes/" + runtimeID + "/usage/by-task", testHandler.GetRuntimeUsageByTask},
+		{"usage by hour", http.MethodGet, "/api/runtimes/" + runtimeID + "/usage/by-hour", testHandler.GetRuntimeUsageByHour},
+		{"model discovery", http.MethodPost, "/api/runtimes/" + runtimeID + "/models", testHandler.InitiateListModels},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			req := newRequestAs(plainMemberID, tt.method, tt.path, nil)
+			req = withURLParam(req, "runtimeId", runtimeID)
+			tt.handle(w, req)
+			if w.Code != http.StatusForbidden {
+				t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
 // runtimeVisibilityFixture builds the three-actor world the gate needs to
 // exercise: a personal runtime owned by a non-admin member, a separate plain
 // member in the same workspace, and the workspace owner (testUserID). The
