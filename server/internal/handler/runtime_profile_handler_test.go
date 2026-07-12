@@ -2,12 +2,64 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
+	"github.com/google/uuid"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
+
+func TestCreateRuntimeProfile_ReplaysCommittedResponse(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+
+	key := uuid.NewString()
+	create := func() (int, map[string]any) {
+		w := httptest.NewRecorder()
+		req := newRequest("POST", "/api/workspaces/"+testWorkspaceID+"/runtime-profiles", map[string]any{
+			"display_name":    "Idempotent Runtime " + key,
+			"protocol_family": "codex",
+			"command_name":    "idempotent-codex",
+		})
+		req = withURLParam(req, "id", testWorkspaceID)
+		req.Header.Set("Idempotency-Key", key)
+		testHandler.CreateRuntimeProfile(w, req)
+		var body map[string]any
+		if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+			t.Fatalf("decode create response: %v", err)
+		}
+		return w.Code, body
+	}
+
+	firstStatus, first := create()
+	t.Cleanup(func() {
+		mustExec(t, context.Background(), `DELETE FROM runtime_profile WHERE id = $1`, first["id"])
+		mustExec(t, context.Background(), `DELETE FROM resource_create_request WHERE resource_type = 'runtime_profile' AND idempotency_key = $1`, key)
+	})
+	secondStatus, second := create()
+	if firstStatus != http.StatusCreated || secondStatus != http.StatusCreated {
+		t.Fatalf("create statuses = (%d, %d), want (201, 201); second=%v", firstStatus, secondStatus, second)
+	}
+	if first["id"] != second["id"] {
+		t.Fatalf("replay IDs differ: first=%v second=%v", first["id"], second["id"])
+	}
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/workspaces/"+testWorkspaceID+"/runtime-profiles", map[string]any{
+		"display_name":    "Different Runtime " + key,
+		"protocol_family": "codex",
+		"command_name":    "different-codex",
+	})
+	req = withURLParam(req, "id", testWorkspaceID)
+	req.Header.Set("Idempotency-Key", key)
+	testHandler.CreateRuntimeProfile(w, req)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("different replay: expected 409, got %d: %s", w.Code, w.Body.String())
+	}
+}
 
 // insertRuntimeProfileFixture creates a runtime_profile in testWorkspaceID and
 // returns its id, registering cleanup.

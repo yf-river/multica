@@ -139,6 +139,9 @@ func TestRunRuntimeProfileList(t *testing.T) {
 
 func TestRunRuntimeProfileCreate(t *testing.T) {
 	got := setupRuntimeProfileAPITest(t, func(w http.ResponseWriter, r *http.Request, got *runtimeProfileRequest) {
+		if key := r.Header.Get("Idempotency-Key"); len(key) != 36 {
+			t.Fatalf("Idempotency-Key = %q, want generated UUID", key)
+		}
 		_ = json.NewDecoder(r.Body).Decode(&got.body)
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(map[string]any{"id": "prof-1", "display_name": "Company Codex"})

@@ -74,6 +74,14 @@ func writeRuntimeProfileDecodeError(w http.ResponseWriter, r *http.Request, prof
 	writeError(w, http.StatusInternalServerError, "failed to decode runtime profile")
 }
 
+func writeRuntimeProfileCreateReplayError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errResourceCreateIdempotencyConflict) {
+		writeError(w, http.StatusConflict, "Idempotency-Key was already used with a different runtime profile request")
+		return
+	}
+	writeError(w, http.StatusInternalServerError, "failed to replay runtime profile create")
+}
+
 // marshalFixedArgs validates and JSON-encodes the fixed_args list. Each entry
 // must be a non-empty string; the column defaults to an empty array.
 func marshalFixedArgs(args []string) ([]byte, error) {
@@ -147,8 +155,66 @@ func (h *Handler) CreateRuntimeProfile(w http.ResponseWriter, r *http.Request) {
 	if req.Enabled != nil {
 		enabled = *req.Enabled
 	}
+	requestHash, err := hashRequestFingerprint(struct {
+		DisplayName    string   `json:"display_name"`
+		ProtocolFamily string   `json:"protocol_family"`
+		CommandName    string   `json:"command_name"`
+		Description    *string  `json:"description"`
+		FixedArgs      []string `json:"fixed_args"`
+		Enabled        bool     `json:"enabled"`
+	}{req.DisplayName, req.ProtocolFamily, req.CommandName, req.Description, req.FixedArgs, enabled})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create runtime profile")
+		return
+	}
+	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	if replay, found, replayErr := loadResourceCreateReplay(
+		r.Context(), h.Queries, wsUUID, member.UserID, resourceTypeRuntimeProfile,
+		idempotencyKey, requestHash, func(response RuntimeProfileResponse) bool { return response.ID != "" },
+	); replayErr != nil {
+		writeRuntimeProfileCreateReplayError(w, replayErr)
+		return
+	} else if found {
+		writeJSON(w, http.StatusCreated, replay)
+		return
+	}
 
-	profile, err := h.Queries.CreateRuntimeProfile(r.Context(), db.CreateRuntimeProfileParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create runtime profile")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	_, err = qtx.ReserveResourceCreateRequest(r.Context(), db.ReserveResourceCreateRequestParams{
+		WorkspaceID: wsUUID, ActorID: member.UserID, ResourceType: resourceTypeRuntimeProfile,
+		IdempotencyKey: idempotencyKey, RequestHash: requestHash,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		_ = tx.Rollback(r.Context())
+		replay, found, replayErr := loadResourceCreateReplay(
+			r.Context(), h.Queries, wsUUID, member.UserID, resourceTypeRuntimeProfile,
+			idempotencyKey, requestHash, func(response RuntimeProfileResponse) bool { return response.ID != "" },
+		)
+		if replayErr != nil || !found {
+			if replayErr == nil {
+				replayErr = errors.New("runtime profile create replay disappeared after conflict")
+			}
+			writeRuntimeProfileCreateReplayError(w, replayErr)
+			return
+		}
+		writeJSON(w, http.StatusCreated, replay)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create runtime profile")
+		return
+	}
+
+	profile, err := qtx.CreateRuntimeProfile(r.Context(), db.CreateRuntimeProfileParams{
 		WorkspaceID:    wsUUID,
 		DisplayName:    req.DisplayName,
 		ProtocolFamily: req.ProtocolFamily,
@@ -169,16 +235,26 @@ func (h *Handler) CreateRuntimeProfile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	profileID := uuidToString(profile.ID)
-	h.requestDaemonRuntimeProfileRefresh(wsID, profileID)
-	h.publish(protocol.EventDaemonRegister, wsID, "member", uuidToString(member.UserID), map[string]any{
-		"runtime_profile_id": profileID,
-	})
-
 	resp, err := runtimeProfileToResponse(profile)
 	if err != nil {
 		writeRuntimeProfileDecodeError(w, r, profileID, err)
 		return
 	}
+	if err := completeResourceCreateRequest(
+		r.Context(), qtx, wsUUID, member.UserID, resourceTypeRuntimeProfile,
+		idempotencyKey, requestHash, profile.ID, resp,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create runtime profile")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create runtime profile")
+		return
+	}
+	h.requestDaemonRuntimeProfileRefresh(wsID, profileID)
+	h.publish(protocol.EventDaemonRegister, wsID, "member", uuidToString(member.UserID), map[string]any{
+		"runtime_profile_id": profileID,
+	})
 	writeJSON(w, http.StatusCreated, resp)
 }
 

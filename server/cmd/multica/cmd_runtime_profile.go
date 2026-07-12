@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
 	"github.com/multica-ai/multica/server/internal/cli"
@@ -203,7 +204,9 @@ func runRuntimeProfileCreate(cmd *cobra.Command, _ []string) error {
 	defer cancel()
 
 	var profile map[string]any
-	if err := client.PostJSON(ctx, runtimeProfilesPath(workspaceID), body, &profile); err != nil {
+	if err := client.PostJSONWithIdempotencyKey(
+		ctx, runtimeProfilesPath(workspaceID), body, uuid.NewString(), &profile,
+	); err != nil {
 		return fmt.Errorf("create runtime profile: %w", err)
 	}
 	return outputRuntimeProfile(cmd, profile)

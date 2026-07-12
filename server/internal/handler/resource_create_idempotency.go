@@ -34,6 +34,7 @@ const (
 	resourceTypePromptCandidate      = "prompt_evaluation_candidate"
 	resourceTypePromptPublish        = "prompt_evaluation_candidate_publish"
 	resourceTypePromptReject         = "prompt_evaluation_candidate_reject"
+	resourceTypeRuntimeProfile       = "runtime_profile"
 )
 
 var errResourceCreateIdempotencyConflict = errors.New("resource create idempotency conflict")
