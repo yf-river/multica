@@ -87,6 +87,23 @@ func TestShouldEnqueueOnCommentPreservesAgentLookupFailure(t *testing.T) {
 	}
 }
 
+func TestValidateAssigneePairPreservesAgentLookupFailure(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req := httptest.NewRequest(http.MethodPost, "/", nil).WithContext(ctx)
+
+	status, message, err := testHandler.validateAssigneePair(
+		ctx,
+		req,
+		testWorkspaceID,
+		pgtype.Text{String: "agent", Valid: true},
+		util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
+	)
+	if status != 0 || message != "" || err == nil {
+		t.Fatalf("validateAssigneePair() status=%d message=%q err=%v, want no business rejection and lookup error", status, message, err)
+	}
+}
+
 // personalAgentTestFixture sets up a personal agent owned by a freshly created
 // user, plus a second non-admin member in the workspace. Returns the agent
 // id, the owner's user id, and the unrelated member's user id. The caller's
