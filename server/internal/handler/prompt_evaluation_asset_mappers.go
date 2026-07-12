@@ -697,8 +697,8 @@ func collectPromptEvaluationProfileValues(seen map[string]bool, value any) {
 }
 
 func promptEvaluationExperimentDimensions(payload map[string]any) []normalizedPromptEvaluationExperimentDimension {
-	target := stringFromAny(firstValue(payload, "实验对象", "experiment_target", "target", "对象"))
-	baseline := stringFromAny(firstValue(payload, "基线输出", "baseline_output", "baseline", "baseline_result"))
+	target := stringFromAny(payload["experiment_target"])
+	baseline := stringFromAny(payload["baseline_output"])
 	raw := payload["experiment_dimensions"]
 	values := promptEvaluationDimensionValues(raw)
 	result := make([]normalizedPromptEvaluationExperimentDimension, 0, len(values))

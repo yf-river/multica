@@ -131,3 +131,25 @@ func TestPromptEvaluationMetricsAndExperimentDimensionsHaveDistinctContracts(t *
 		t.Fatalf("retired or metric fields became experiment dimensions: %#v", legacy)
 	}
 }
+
+func TestPromptEvaluationExperimentContextUsesCanonicalFieldsOnly(t *testing.T) {
+	payload := map[string]any{
+		"experiment_target":     "current target",
+		"baseline_output":       "current baseline",
+		"experiment_dimensions": []any{"命中率"},
+		"实验对象":                  "retired target",
+		"基线输出":                  "retired baseline",
+	}
+	dimensions := promptEvaluationExperimentDimensions(payload)
+	if len(dimensions) != 1 || dimensions[0].ExperimentTarget != "current target" || dimensions[0].BaselineOutput != "current baseline" {
+		t.Fatalf("canonical context = %#v", dimensions)
+	}
+	legacy := promptEvaluationExperimentDimensions(map[string]any{
+		"experiment_dimensions": []any{"命中率"},
+		"实验对象":                  "retired target",
+		"基线输出":                  "retired baseline",
+	})
+	if len(legacy) != 1 || legacy[0].ExperimentTarget != "" || legacy[0].BaselineOutput != "" {
+		t.Fatalf("retired context aliases were consumed: %#v", legacy)
+	}
+}

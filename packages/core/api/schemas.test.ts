@@ -322,6 +322,8 @@ describe("PromptEvaluationAssetSchema", () => {
         metric_contract: ["pass_rate"],
         metric_notes: ["仅统计当前快照"],
         experiment_dimensions: [{ name: "中文一致性", weight: 2 }],
+        experiment_target: "current prompt",
+        baseline_output: "current output",
       },
       status: "启用",
       structure_schema: "multica.training_evaluation.asset_profile.v1",
@@ -342,6 +344,8 @@ describe("PromptEvaluationAssetSchema", () => {
       metric_contract: ["pass_rate"],
       metric_notes: ["仅统计当前快照"],
       experiment_dimensions: [{ name: "中文一致性", weight: 2 }],
+      experiment_target: "current prompt",
+      baseline_output: "current output",
     });
     expect(parsed.structured_case_count).toBe(1);
     expect(parsed.evaluation_dimension_count).toBe(2);
@@ -386,6 +390,10 @@ describe("PromptEvaluationAssetSchema", () => {
     expect(PromptEvaluationAssetSchema.safeParse({
       ...base,
       payload: { ...base.payload, experiment_dimensions: [{ weight: 2 }] },
+    }).success).toBe(false);
+    expect(PromptEvaluationAssetSchema.safeParse({
+      ...base,
+      payload: { ...base.payload, baseline_output: { text: "not-a-string" } },
     }).success).toBe(false);
   });
 
