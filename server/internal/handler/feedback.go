@@ -91,6 +91,7 @@ func (h *Handler) CreateFeedback(w http.ResponseWriter, r *http.Request) {
 	platform, version, clientOS := middleware.ClientMetadataFromContext(r.Context())
 	metadata := map[string]any{
 		"url":        req.URL,
+		"kind":       kind,
 		"platform":   platform,
 		"version":    version,
 		"os":         clientOS,
@@ -98,16 +99,18 @@ func (h *Handler) CreateFeedback(w http.ResponseWriter, r *http.Request) {
 	}
 	metaBytes, err := json.Marshal(metadata)
 	if err != nil {
-		// Impossible in practice — map[string]any with primitive values never
-		// fails to marshal — but fall through with an empty object rather than
-		// 500ing on a non-critical field.
-		metaBytes = []byte("{}")
+		slog.Error("encode feedback metadata failed", append(logger.RequestAttrs(r), "error", err)...)
+		writeError(w, http.StatusInternalServerError, "failed to prepare feedback")
+		return
 	}
 
 	var workspaceID pgtype.UUID
 	if req.WorkspaceID != nil && *req.WorkspaceID != "" {
 		ws, ok := parseUUIDOrBadRequest(w, *req.WorkspaceID, "workspace_id")
 		if !ok {
+			return
+		}
+		if _, ok := h.requireWorkspaceMember(w, r, *req.WorkspaceID, "workspace not found"); !ok {
 			return
 		}
 		workspaceID = ws

@@ -29,6 +29,49 @@ func TestCreateFeedbackHappyPath(t *testing.T) {
 	if resp.ID == "" {
 		t.Fatal("expected feedback id in response")
 	}
+	var kind string
+	if err := testPool.QueryRow(context.Background(),
+		`SELECT metadata->>'kind' FROM feedback WHERE id = $1`, resp.ID).Scan(&kind); err != nil {
+		t.Fatalf("read persisted feedback kind: %v", err)
+	}
+	if kind != "general" {
+		t.Fatalf("persisted feedback kind = %q, want general", kind)
+	}
+}
+
+func TestCreateFeedbackRejectsWorkspaceOutsideCallerMembership(t *testing.T) {
+	clearFeedbackForTestUser(t)
+	ctx := context.Background()
+	var workspaceID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO workspace (name, slug, description, issue_prefix)
+		VALUES ('Feedback ACL', 'feedback-acl-' || gen_random_uuid(), '', 'FBA')
+		RETURNING id
+	`).Scan(&workspaceID); err != nil {
+		t.Fatalf("create inaccessible workspace: %v", err)
+	}
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM workspace WHERE id = $1`, workspaceID) })
+
+	req := newRequest("POST", "/api/feedback", CreateFeedbackRequest{
+		Message:     "must not be attributed across tenants",
+		Kind:        "bug",
+		WorkspaceID: &workspaceID,
+	})
+	w := httptest.NewRecorder()
+	testHandler.CreateFeedback(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected inaccessible workspace to return 404, got %d: %s", w.Code, w.Body.String())
+	}
+	var count int
+	if err := testPool.QueryRow(ctx,
+		`SELECT count(*) FROM feedback WHERE user_id = $1 AND workspace_id = $2`,
+		parseUUID(testUserID), workspaceID).Scan(&count); err != nil {
+		t.Fatalf("count cross-workspace feedback: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("cross-workspace request persisted %d feedback rows", count)
+	}
 }
 
 func TestCreateFeedbackEmptyMessage(t *testing.T) {
