@@ -135,20 +135,6 @@ func skillToResponse(s db.Skill) (SkillResponse, error) {
 	}, nil
 }
 
-func (h *Handler) existingSkillIdentityByName(ctx context.Context, workspaceID pgtype.UUID, name string) (ExistingSkillIdentity, bool, error) {
-	skill, err := h.Queries.GetSkillByWorkspaceAndName(ctx, db.GetSkillByWorkspaceAndNameParams{
-		WorkspaceID: workspaceID,
-		Name:        name,
-	})
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ExistingSkillIdentity{}, false, nil
-		}
-		return ExistingSkillIdentity{}, false, err
-	}
-	return existingSkillIdentity(skill, ""), true, nil
-}
-
 func existingSkillIdentity(skill db.Skill, userID string) ExistingSkillIdentity {
 	identity := ExistingSkillIdentity{
 		ID:           uuidToString(skill.ID),

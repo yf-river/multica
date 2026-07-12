@@ -38,23 +38,6 @@ func assertSkillImportReplay(t *testing.T, key string, request map[string]any, s
 	}
 }
 
-func TestExistingSkillIdentityByNameReturnsIDAndName(t *testing.T) {
-	namePrefix := "duplicate-import-identity"
-	name := namePrefix + "-" + t.Name()
-	skillID := insertHandlerTestSkill(t, namePrefix, "# Duplicate import identity")
-
-	existing, ok, err := testHandler.existingSkillIdentityByName(context.Background(), parseUUID(testWorkspaceID), name)
-	if err != nil {
-		t.Fatalf("existingSkillIdentityByName: %v", err)
-	}
-	if !ok {
-		t.Fatal("expected existing skill identity to be found")
-	}
-	if existing.ID != skillID || existing.Name != name {
-		t.Fatalf("existing skill = %#v, want id %s name %s", existing, skillID, name)
-	}
-}
-
 func TestWriteSkillImportDuplicateConflictIncludesExistingSkill(t *testing.T) {
 	w := httptest.NewRecorder()
 	writeSkillImportDuplicateConflict(w, ExistingSkillIdentity{ID: "skill-123", Name: "review-helper"})
