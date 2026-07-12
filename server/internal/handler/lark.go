@@ -3,11 +3,13 @@ package handler
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/integrations/lark"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -288,7 +290,15 @@ func (h *Handler) BeginLarkInstall(w http.ResponseWriter, r *http.Request) {
 		ID:          agentUUID,
 		WorkspaceID: wsUUID,
 	}); err != nil {
-		writeError(w, http.StatusNotFound, "agent not found in this workspace")
+		if writeClientClosedIfCanceled(w, err) {
+			return
+		}
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "agent not found in this workspace")
+			return
+		}
+		slog.Error("load Lark installation agent failed", "workspace_id", uuidToString(wsUUID), "agent_id", uuidToString(agentUUID), "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to load agent")
 		return
 	}
 	initiatorUUID, ok := parseUUIDOrBadRequest(w, userID, "user id")
