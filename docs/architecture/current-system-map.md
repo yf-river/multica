@@ -25,7 +25,7 @@ evidence reviewable by humans.
 | Database functions | 9 |
 | Database triggers | 4 |
 | Database indexes | 185 |
-| Migration files (up + down) | 80 |
+| Migration files (up + down) | 82 |
 | sqlc modules | 54 |
 | sqlc queries | 574 |
 | Go WebSocket events | 80 |
@@ -573,6 +573,8 @@ intentionally platform-specific.
 | 39 | require_squad_sop_profile_object | up | — | 0 | 0 | 0 | `server/migrations/039_require_squad_sop_profile_object.up.sql` |
 | 40 | require_runtime_profile_fixed_args_array | down | — | 0 | 0 | 0 | `server/migrations/040_require_runtime_profile_fixed_args_array.down.sql` |
 | 40 | require_runtime_profile_fixed_args_array | up | — | 0 | 0 | 0 | `server/migrations/040_require_runtime_profile_fixed_args_array.up.sql` |
+| 41 | require_playground_variables_object | down | — | 0 | 0 | 0 | `server/migrations/041_require_playground_variables_object.down.sql` |
+| 41 | require_playground_variables_object | up | — | 0 | 0 | 0 | `server/migrations/041_require_playground_variables_object.up.sql` |
 
 ### Current tables discovered from up migrations
 

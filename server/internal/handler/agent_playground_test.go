@@ -9,7 +9,17 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
+
+func TestAgentPlaygroundInputToResponseRejectsCorruptVariables(t *testing.T) {
+	for _, raw := range [][]byte{nil, []byte(`null`), []byte(`[]`), []byte(`"variables"`)} {
+		if _, err := agentPlaygroundInputToResponse(db.AgentPlaygroundInput{Variables: raw}); err == nil {
+			t.Fatalf("variables=%s expected an error", raw)
+		}
+	}
+}
 
 func TestCreateAgentPlaygroundExperiment_AllowsMoreThanThreeAgents(t *testing.T) {
 	agentIDs := make([]string, 0, 4)

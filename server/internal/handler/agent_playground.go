@@ -305,15 +305,19 @@ func (h *Handler) CreateAgentPlaygroundExperiment(w http.ResponseWriter, r *http
 		}
 	}
 	for i, row := range datasetRows {
-		vars := jsonObjectBytes(row.Variables)
+		variables, err := decodeAgentPlaygroundVariables(row.Variables)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to decode dataset variables")
+			return
+		}
 		if _, err := qtx.CreateAgentPlaygroundInput(r.Context(), db.CreateAgentPlaygroundInputParams{
 			ExperimentID: experiment.ID,
 			WorkspaceID:  workspaceUUID,
 			RowIndex:     int32(i),
-			Input:        datasetRowInput(row),
+			Input:        datasetRowInput(row, variables),
 			DatasetRowID: row.ID,
 			Name:         row.RowName,
-			Variables:    vars,
+			Variables:    row.Variables,
 			Expected:     expectedJSONText(row.Expected),
 		}); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to create experiment inputs")
@@ -791,7 +795,11 @@ func loadAgentPlaygroundDetailWithQueries(ctx context.Context, queries *db.Queri
 
 	inputResp := make([]AgentPlaygroundInputResponse, 0, len(inputs))
 	for _, input := range inputs {
-		inputResp = append(inputResp, agentPlaygroundInputToResponse(input))
+		item, err := agentPlaygroundInputToResponse(input)
+		if err != nil {
+			return AgentPlaygroundDetailResponse{}, err
+		}
+		inputResp = append(inputResp, item)
 	}
 	agentResp := make([]AgentPlaygroundAgentResponse, 0, len(agents))
 	for _, agent := range agents {
@@ -967,11 +975,10 @@ func agentPlaygroundExperimentToResponse(experiment db.AgentPlaygroundExperiment
 	}
 }
 
-func agentPlaygroundInputToResponse(input db.AgentPlaygroundInput) AgentPlaygroundInputResponse {
-	var variables map[string]any
-	_ = json.Unmarshal(input.Variables, &variables)
-	if variables == nil {
-		variables = map[string]any{}
+func agentPlaygroundInputToResponse(input db.AgentPlaygroundInput) (AgentPlaygroundInputResponse, error) {
+	variables, err := decodeAgentPlaygroundVariables(input.Variables)
+	if err != nil {
+		return AgentPlaygroundInputResponse{}, fmt.Errorf("decode playground input variables: %w", err)
 	}
 	return AgentPlaygroundInputResponse{
 		ID:           uuidToString(input.ID),
@@ -982,7 +989,7 @@ func agentPlaygroundInputToResponse(input db.AgentPlaygroundInput) AgentPlaygrou
 		Expected:     input.Expected,
 		DatasetRowID: uuidToPtr(input.DatasetRowID),
 		CreatedAt:    timestampToString(input.CreatedAt),
-	}
+	}, nil
 }
 
 func agentPlaygroundAgentToResponse(agent db.ListAgentPlaygroundAgentsRow) AgentPlaygroundAgentResponse {
@@ -1034,20 +1041,18 @@ func timeToPtr(value pgtype.Timestamptz) *string {
 	return &v
 }
 
-func jsonObjectBytes(raw []byte) []byte {
-	if len(raw) == 0 {
-		return []byte(`{}`)
-	}
+func decodeAgentPlaygroundVariables(raw []byte) (map[string]any, error) {
 	var obj map[string]any
-	if err := json.Unmarshal(raw, &obj); err == nil && obj != nil {
-		return raw
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return nil, err
 	}
-	return []byte(`{}`)
+	if obj == nil {
+		return nil, errors.New("expected JSON object")
+	}
+	return obj, nil
 }
 
-func datasetRowInput(row db.PromptEvaluationDatasetVersionRow) string {
-	var variables map[string]any
-	_ = json.Unmarshal(row.Variables, &variables)
+func datasetRowInput(row db.PromptEvaluationDatasetVersionRow, variables map[string]any) string {
 	for _, key := range []string{"input", "用户输入", "需求", "question", "content", "text"} {
 		if value, ok := variables[key]; ok {
 			if text := strings.TrimSpace(fmt.Sprint(value)); text != "" {
