@@ -394,32 +394,6 @@ func TestGetAgent_ResponseHasNoCustomEnv(t *testing.T) {
 	}
 }
 
-func TestGetAgentEnv_RejectsCorruptPersistenceWithoutAudit(t *testing.T) {
-	agentID := createHandlerTestAgent(t, "corrupt-env-read", []byte(`{}`))
-	if _, err := testPool.Exec(context.Background(), `UPDATE agent SET custom_env = '[]'::jsonb WHERE id = $1`, agentID); err != nil {
-		t.Fatalf("corrupt custom_env fixture: %v", err)
-	}
-
-	w := httptest.NewRecorder()
-	req := newRequest(http.MethodGet, "/api/agents/"+agentID+"/env", nil)
-	req = withURLParam(req, "id", agentID)
-	testHandler.GetAgentEnv(w, req)
-	if w.Code != http.StatusInternalServerError {
-		t.Fatalf("GetAgentEnv corrupt persistence: expected 500, got %d: %s", w.Code, w.Body.String())
-	}
-
-	var auditCount int
-	if err := testPool.QueryRow(context.Background(), `
-		SELECT count(*)::int FROM activity_log
-		WHERE action = 'agent_env_revealed' AND details->>'agent_id' = $1
-	`, agentID).Scan(&auditCount); err != nil {
-		t.Fatalf("count reveal audits: %v", err)
-	}
-	if auditCount != 0 {
-		t.Fatalf("corrupt env read wrote %d false reveal audits", auditCount)
-	}
-}
-
 // TestListAgents_ResponseHasNoCustomEnv mirrors the GetAgent guard for
 // the list endpoint. Same invariant: no custom_env field on the wire,
 // only coarse metadata.

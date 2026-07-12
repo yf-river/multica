@@ -91,23 +91,21 @@ func agentToResponse(a db.Agent) (AgentResponse, error) {
 	// has_custom_env / key_count is what the UI gets — to read the values
 	// the caller must hit GET /api/agents/{id}/env (owner/admin only,
 	// audited).
-	envKeyCount := 0
-	if a.CustomEnv != nil {
-		var customEnv map[string]string
-		if err := json.Unmarshal(a.CustomEnv, &customEnv); err != nil {
-			slog.Warn("failed to unmarshal agent custom_env", "agent_id", uuidToString(a.ID), "error", err)
-		}
-		envKeyCount = len(customEnv)
+	var customEnv map[string]string
+	if err := json.Unmarshal(a.CustomEnv, &customEnv); err != nil {
+		return AgentResponse{}, fmt.Errorf("decode agent custom env: %w", err)
 	}
+	if customEnv == nil {
+		return AgentResponse{}, fmt.Errorf("decode agent custom env: expected JSON object")
+	}
+	envKeyCount := len(customEnv)
 
 	var customArgs []string
-	if a.CustomArgs != nil {
-		if err := json.Unmarshal(a.CustomArgs, &customArgs); err != nil {
-			slog.Warn("failed to unmarshal agent custom_args", "agent_id", uuidToString(a.ID), "error", err)
-		}
+	if err := json.Unmarshal(a.CustomArgs, &customArgs); err != nil {
+		return AgentResponse{}, fmt.Errorf("decode agent custom args: %w", err)
 	}
 	if customArgs == nil {
-		customArgs = []string{}
+		return AgentResponse{}, fmt.Errorf("decode agent custom args: expected JSON array")
 	}
 
 	var mcpConfig json.RawMessage
