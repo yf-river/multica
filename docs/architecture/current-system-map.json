@@ -24,9 +24,9 @@
     "databaseFunctions": 9,
     "databaseTriggers": 4,
     "databaseIndexes": 185,
-    "migrations": 78,
+    "migrations": 80,
     "sqlcModules": 54,
-    "sqlcQueries": 576,
+    "sqlcQueries": 574,
     "goWebsocketEvents": 80,
     "typescriptWebsocketEvents": 70,
     "zustandStores": 31,
@@ -6296,6 +6296,32 @@
           "droppedFunctions": [],
           "droppedTriggers": [],
           "droppedIndexes": []
+        },
+        {
+          "version": 40,
+          "name": "require_runtime_profile_fixed_args_array",
+          "direction": "down",
+          "source": "server/migrations/040_require_runtime_profile_fixed_args_array.down.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 40,
+          "name": "require_runtime_profile_fixed_args_array",
+          "direction": "up",
+          "source": "server/migrations/040_require_runtime_profile_fixed_args_array.up.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
         }
       ],
       "tables": [
@@ -7907,16 +7933,6 @@
               "name": "ClaimAgentTask",
               "command": "one",
               "source": "server/pkg/db/queries/agent.sql#ClaimAgentTask"
-            },
-            {
-              "name": "ClearAgentMcpConfig",
-              "command": "one",
-              "source": "server/pkg/db/queries/agent.sql#ClearAgentMcpConfig"
-            },
-            {
-              "name": "ClearAgentThinkingLevel",
-              "command": "one",
-              "source": "server/pkg/db/queries/agent.sql#ClearAgentThinkingLevel"
             },
             {
               "name": "CompleteAgentTask",

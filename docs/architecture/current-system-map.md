@@ -25,9 +25,9 @@ evidence reviewable by humans.
 | Database functions | 9 |
 | Database triggers | 4 |
 | Database indexes | 185 |
-| Migration files (up + down) | 78 |
+| Migration files (up + down) | 80 |
 | sqlc modules | 54 |
-| sqlc queries | 576 |
+| sqlc queries | 574 |
 | Go WebSocket events | 80 |
 | TypeScript WebSocket events | 70 |
 | Zustand store definitions | 31 |
@@ -571,6 +571,8 @@ intentionally platform-specific.
 | 38 | require_credential_capabilities_object | up | — | 0 | 0 | 0 | `server/migrations/038_require_credential_capabilities_object.up.sql` |
 | 39 | require_squad_sop_profile_object | down | — | 0 | 0 | 0 | `server/migrations/039_require_squad_sop_profile_object.down.sql` |
 | 39 | require_squad_sop_profile_object | up | — | 0 | 0 | 0 | `server/migrations/039_require_squad_sop_profile_object.up.sql` |
+| 40 | require_runtime_profile_fixed_args_array | down | — | 0 | 0 | 0 | `server/migrations/040_require_runtime_profile_fixed_args_array.down.sql` |
+| 40 | require_runtime_profile_fixed_args_array | up | — | 0 | 0 | 0 | `server/migrations/040_require_runtime_profile_fixed_args_array.up.sql` |
 
 ### Current tables discovered from up migrations
 
@@ -674,12 +676,12 @@ intentionally platform-specific.
 
 ### sqlc modules
 
-All 576 query names, commands, and stable source anchors are stored in the JSON companion.
+All 574 query names, commands, and stable source anchors are stored in the JSON companion.
 
 | Module | Queries | SQL source | Generated source |
 | --- | --- | --- | --- |
 | activity | 5 | `server/pkg/db/queries/activity.sql` | `server/pkg/db/generated/activity.sql.go` |
-| agent | 59 | `server/pkg/db/queries/agent.sql` | `server/pkg/db/generated/agent.sql.go` |
+| agent | 57 | `server/pkg/db/queries/agent.sql` | `server/pkg/db/generated/agent.sql.go` |
 | agent_playground | 17 | `server/pkg/db/queries/agent_playground.sql` | `server/pkg/db/generated/agent_playground.sql.go` |
 | attachment | 17 | `server/pkg/db/queries/attachment.sql` | `server/pkg/db/generated/attachment.sql.go` |
 | autopilot | 40 | `server/pkg/db/queries/autopilot.sql` | `server/pkg/db/generated/autopilot.sql.go` |

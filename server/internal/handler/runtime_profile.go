@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/pkg/agent"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -44,13 +46,13 @@ type RuntimeProfileResponse struct {
 	UpdatedAt      string   `json:"updated_at"`
 }
 
-func runtimeProfileToResponse(p db.RuntimeProfile) RuntimeProfileResponse {
-	args := []string{}
-	if len(p.FixedArgs) > 0 {
-		_ = json.Unmarshal(p.FixedArgs, &args)
-		if args == nil {
-			args = []string{}
-		}
+func runtimeProfileToResponse(p db.RuntimeProfile) (RuntimeProfileResponse, error) {
+	var args []string
+	if err := json.Unmarshal(p.FixedArgs, &args); err != nil {
+		return RuntimeProfileResponse{}, fmt.Errorf("decode runtime profile fixed_args: %w", err)
+	}
+	if args == nil {
+		return RuntimeProfileResponse{}, errors.New("decode runtime profile fixed_args: expected JSON array")
 	}
 	return RuntimeProfileResponse{
 		ID:             uuidToString(p.ID),
@@ -64,7 +66,12 @@ func runtimeProfileToResponse(p db.RuntimeProfile) RuntimeProfileResponse {
 		Enabled:        p.Enabled,
 		CreatedAt:      timestampToString(p.CreatedAt),
 		UpdatedAt:      timestampToString(p.UpdatedAt),
-	}
+	}, nil
+}
+
+func writeRuntimeProfileDecodeError(w http.ResponseWriter, r *http.Request, profileID string, err error) {
+	slog.Error("decode runtime profile failed", append(logger.RequestAttrs(r), "profile_id", profileID, "error", err)...)
+	writeError(w, http.StatusInternalServerError, "failed to decode runtime profile")
 }
 
 // marshalFixedArgs validates and JSON-encodes the fixed_args list. Each entry
@@ -167,7 +174,12 @@ func (h *Handler) CreateRuntimeProfile(w http.ResponseWriter, r *http.Request) {
 		"runtime_profile_id": profileID,
 	})
 
-	writeJSON(w, http.StatusCreated, runtimeProfileToResponse(profile))
+	resp, err := runtimeProfileToResponse(profile)
+	if err != nil {
+		writeRuntimeProfileDecodeError(w, r, profileID, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, resp)
 }
 
 // ListRuntimeProfiles returns every runtime profile in the workspace.
@@ -189,7 +201,11 @@ func (h *Handler) ListRuntimeProfiles(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := make([]RuntimeProfileResponse, len(profiles))
 	for i, p := range profiles {
-		resp[i] = runtimeProfileToResponse(p)
+		resp[i], err = runtimeProfileToResponse(p)
+		if err != nil {
+			writeRuntimeProfileDecodeError(w, r, uuidToString(p.ID), err)
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"runtime_profiles": resp})
 }
@@ -217,7 +233,12 @@ func (h *Handler) GetRuntimeProfile(w http.ResponseWriter, r *http.Request) {
 		writeEntityLoadError(w, r, err, "runtime profile", "profile_id", chi.URLParam(r, "profileId"), "workspace_id", wsID)
 		return
 	}
-	writeJSON(w, http.StatusOK, runtimeProfileToResponse(profile))
+	resp, err := runtimeProfileToResponse(profile)
+	if err != nil {
+		writeRuntimeProfileDecodeError(w, r, uuidToString(profile.ID), err)
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 type updateRuntimeProfileRequest struct {
@@ -307,7 +328,12 @@ func (h *Handler) UpdateRuntimeProfile(w http.ResponseWriter, r *http.Request) {
 		"runtime_profile_id": profileID,
 	})
 
-	writeJSON(w, http.StatusOK, runtimeProfileToResponse(profile))
+	resp, err := runtimeProfileToResponse(profile)
+	if err != nil {
+		writeRuntimeProfileDecodeError(w, r, profileID, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // DeleteRuntimeProfile removes a profile and, in the same transaction, the
@@ -465,7 +491,11 @@ func (h *Handler) DaemonListRuntimeProfiles(w http.ResponseWriter, r *http.Reque
 	}
 	resp := make([]RuntimeProfileResponse, len(profiles))
 	for i, p := range profiles {
-		resp[i] = runtimeProfileToResponse(p)
+		resp[i], err = runtimeProfileToResponse(p)
+		if err != nil {
+			writeRuntimeProfileDecodeError(w, r, uuidToString(p.ID), err)
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"workspace_id":     workspaceID,
