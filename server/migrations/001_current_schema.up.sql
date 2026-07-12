@@ -824,8 +824,6 @@ CREATE TABLE public.issue (
     creator_type text NOT NULL,
     creator_id uuid NOT NULL,
     parent_issue_id uuid,
-    acceptance_criteria jsonb DEFAULT '[]'::jsonb NOT NULL,
-    context_refs jsonb DEFAULT '[]'::jsonb NOT NULL,
     "position" double precision DEFAULT 0 NOT NULL,
     due_date date,
     created_at timestamp with time zone DEFAULT now() NOT NULL,

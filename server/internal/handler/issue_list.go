@@ -62,8 +62,6 @@ func (h *Handler) SearchIssues(w http.ResponseWriter, r *http.Request) {
 			&sr.issue.CreatorType,
 			&sr.issue.CreatorID,
 			&sr.issue.ParentIssueID,
-			&sr.issue.AcceptanceCriteria,
-			&sr.issue.ContextRefs,
 			&sr.issue.Position,
 			&sr.issue.StartDate,
 			&sr.issue.DueDate,
