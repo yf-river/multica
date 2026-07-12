@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -249,51 +248,5 @@ func TestCLIConfig_ProfileCommandOverrides_OmittedWhenEmpty(t *testing.T) {
 	}
 	if _, ok := raw["profile_command_overrides"]; ok {
 		t.Errorf("profile_command_overrides should be omitted when empty, got: %s", string(data))
-	}
-}
-
-// TestCLIConfig_UnknownFieldsArePreserved verifies forward-compat: a future
-// daemon that adds, say, a `backends.codex` key should not have its data
-// destroyed when an older daemon (without knowledge of that key) reads and
-// re-saves the file. Today Go's encoding/json silently DROPS unknown fields
-// on round-trip. This test documents the gap so future maintainers know.
-//
-// Skipped today (encoding/json does not preserve unknown fields), but the
-// test is written so a future change to a preserve-unknown encoder
-// (json.RawMessage, mapstructure, etc.) will pick it up.
-func TestCLIConfig_UnknownFieldsArePreserved(t *testing.T) {
-	t.Skip("documenting known limitation: encoding/json drops unknown fields on round-trip; future PR can switch to a preserving encoder")
-
-	tmp := t.TempDir()
-	t.Setenv("HOME", tmp)
-
-	cfgDir := filepath.Join(tmp, ".multica")
-	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	withFutureField := `{
-  "server_url": "https://api.multica.ai",
-  "token": "mul_xyz",
-  "backends": {
-    "openclaw": {"state_dir": "/x"},
-    "future_backend_xyz": {"some_setting": "preserve me"}
-  }
-}`
-	if err := os.WriteFile(filepath.Join(cfgDir, "config.json"), []byte(withFutureField), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	cfg, err := LoadCLIConfigForProfile("")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := SaveCLIConfigForProfile(cfg, ""); err != nil {
-		t.Fatal(err)
-	}
-
-	// After round-trip, future_backend_xyz should still be in the file.
-	data, _ := os.ReadFile(filepath.Join(cfgDir, "config.json"))
-	if !strings.Contains(string(data), "future_backend_xyz") {
-		t.Error("unknown field future_backend_xyz was dropped on round-trip")
 	}
 }

@@ -2956,64 +2956,6 @@ func markPromptEvaluationTaskRunning(t *testing.T, taskID string) {
 	}
 }
 
-func TestRunPromptEvaluationAssetAgentDefaultsExperimentDimensions(t *testing.T) {
-	t.Skip("experiment assets were removed from training evaluation")
-	if testHandler == nil || testPool == nil {
-		t.Skip("handler test fixture not initialized")
-	}
-	cleanupPromptEvaluationAgentRunTest(t)
-	var runtimeID string
-	if err := testPool.QueryRow(context.Background(), `
-		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, scope, last_seen_at)
-		VALUES ($1, $2, $3, 'local', 'codebuddy', 'online', 'CodeBuddy 默认维度运行时', '{}'::jsonb, $4, 'personal', now())
-		RETURNING id
-	`, testWorkspaceID, "prompt-eval-default-dimension-daemon-"+randomID()[:8], "prompt-eval-default-dimension-"+randomID()[:8], testUserID).Scan(&runtimeID); err != nil {
-		t.Fatalf("create codebuddy runtime: %v", err)
-	}
-	promptID := createPromptEvaluationTestPromptWithContent(
-		t,
-		testWorkspaceID,
-		"默认维度提示词",
-		"请评估 {{issue_title}}，输出中文结论。",
-		`[]`,
-	)
-	createW := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
-		"prompt_id":  promptID,
-		"name":       "默认维度实验",
-		"asset_type": "测试套件",
-		"payload": map[string]any{
-			"cases": []map[string]any{{"名称": "默认维度用例", "变量": map[string]any{"issue_title": "默认维度"}, "期望包含": []string{"中文结论"}}},
-		},
-	}))
-	if createW.Code != http.StatusCreated {
-		t.Fatalf("create status = %d, body = %s", createW.Code, createW.Body.String())
-	}
-	var created PromptEvaluationAssetResponse
-	if err := json.Unmarshal(createW.Body.Bytes(), &created); err != nil {
-		t.Fatalf("decode create response: %v", err)
-	}
-	if created.ExperimentDimensionCount != 3 {
-		t.Fatalf("experiment dimension count = %d, want 3", created.ExperimentDimensionCount)
-	}
-	assertPromptEvaluationExperimentDimensions(t, created.ID, []string{"命中率", "缺失变量", "中文一致性"})
-
-	runW := httptest.NewRecorder()
-	testHandler.RunPromptEvaluationAssetAgent(runW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+created.ID+"/agent-run", nil), "id", created.ID))
-	if runW.Code != http.StatusAccepted {
-		t.Fatalf("agent run status = %d, body = %s", runW.Code, runW.Body.String())
-	}
-	var resp PromptEvaluationAgentRunResponse
-	if err := json.Unmarshal(runW.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode agent run response: %v", err)
-	}
-	assertPromptEvaluationDimensionScores(t, resp.Run.ID, []expectedPromptEvaluationDimensionScore{
-		{name: "命中率", status: "待执行", source: "run_metrics", passed: 0, total: 1},
-		{name: "缺失变量", status: "待执行", source: "run_metrics", passed: 0, total: 1},
-		{name: "中文一致性", status: "待执行", source: "run_metrics", passed: 0, total: 1},
-	})
-}
-
 func TestRunPromptEvaluationAssetAgentUsesRequestedAgent(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("handler test fixture not initialized")
