@@ -92,20 +92,6 @@ test.describe("Multica 编码小队页面证据", () => {
           (event) => event.step_key === "receive" && event.event_type === "步骤完成" && event.status === "已完成",
         ),
       ).toBe(true);
-      await api.recordSOPStepEvent(run!.id, "design_review", {
-        event_type: "人工确认",
-        status: "进行中",
-        role_key: "designer",
-        reason: "方案设计者已提交方案，等待人工确认后再开发",
-        duration_ms: 1800,
-        evidence: {
-          角色: "方案设计者",
-          方案状态: "待人工确认",
-          开发门禁: "未确认前不允许开发者开始实现",
-          测试方案: "覆盖前端、后端、E2E 和日志门禁",
-        },
-      });
-
       await page.goto(`/${workspaceSlug}/issues/${issue.id}`, { waitUntil: "domcontentloaded" });
       await expect(page.getByRole("link", { name: new RegExp(`${issue.identifier}.*${issue.title}`) })).toBeVisible({
         timeout: 15_000,

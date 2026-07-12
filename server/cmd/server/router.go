@@ -916,7 +916,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 			// Squad leader evaluation (writes to activity_log)
 			r.Post("/api/issues/{id}/squad-evaluated", h.RecordSquadLeaderEvaluation)
-			r.Post("/api/sop-runs/{runId}/steps/{stepId}/events", h.RecordSOPStepEvent)
 
 			// Autopilots
 			r.Route("/api/autopilots", func(r chi.Router) {

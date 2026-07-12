@@ -1130,21 +1130,6 @@ export class TestApiClient {
     return res.json();
   }
 
-  async recordSOPStepEvent(
-    runId: string,
-    stepId: string,
-    data: Record<string, unknown>,
-  ): Promise<SquadSOPRun["events"][number]> {
-    const res = await this.authedFetch(`/api/sop-runs/${runId}/steps/${encodeURIComponent(stepId)}/events`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    if (!res.ok) {
-      throw new Error(`record SOP step event failed: ${res.status} ${await res.text()}`);
-    }
-    return res.json();
-  }
-
   async getWorkspaceObservabilitySummary(params?: { squad_id?: string; project_id?: string }): Promise<ObservabilitySummary> {
     if (!this.workspaceId) {
       throw new Error("Cannot get observability summary before workspace is selected");

@@ -15,7 +15,7 @@
     "manualOverrides": "docs/architecture/current-system-map-overrides.json"
   },
   "summary": {
-    "chiRoutes": 322,
+    "chiRoutes": 321,
     "webPages": 31,
     "webRouteHandlers": 1,
     "webRewrites": 6,
@@ -2409,15 +2409,6 @@
         "handler": "h.SearchSkills",
         "implementation": "server/internal/handler/skill.go#SearchSkills",
         "registration": "server/cmd/server/router.go#GET /api/skills/search",
-        "middlewareWrapper": false,
-        "origin": "static"
-      },
-      {
-        "method": "POST",
-        "path": "/api/sop-runs/{runId}/steps/{stepId}/events",
-        "handler": "h.RecordSOPStepEvent",
-        "implementation": "server/internal/handler/squad_sop_run.go#RecordSOPStepEvent",
-        "registration": "server/cmd/server/router.go#POST /api/sop-runs/{runId}/steps/{stepId}/events",
         "middlewareWrapper": false,
         "origin": "static"
       },

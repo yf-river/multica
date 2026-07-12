@@ -54,20 +54,6 @@ export interface ListIssueSOPRunsResponse {
   total: number;
 }
 
-export interface CreateSOPStepEventRequest {
-  event_type?: SOPStepEventType;
-  status?: SOPRunStatus;
-  step_name?: string;
-  role_key?: string;
-  evidence?: Record<string, unknown>;
-  reason?: string;
-  duration_ms?: number;
-  created_by_type?: string;
-  created_by_id?: string;
-  task_id?: string;
-  update_run?: boolean;
-}
-
 export interface ObservabilitySummary {
   指标: {
     "SOP 执行数"?: number;

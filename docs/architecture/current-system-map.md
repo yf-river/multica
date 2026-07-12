@@ -16,7 +16,7 @@ evidence reviewable by humans.
 
 | Surface | Count |
 | --- | --- |
-| Go Chi routes | 322 |
+| Go Chi routes | 321 |
 | Next.js pages | 31 |
 | Next.js route handlers | 1 |
 | Next.js rewrites | 6 |
@@ -307,7 +307,6 @@ closures intentionally remain unresolved.
 | DELETE | `/api/skills/{id}/files/{fileId}` | `h.DeleteSkillFile` | `server/internal/handler/skill_import_github.go#DeleteSkillFile` | `server/cmd/server/router.go#DELETE /api/skills/{id}/files/{fileId}` |
 | POST | `/api/skills/import` | `h.ImportSkill` | `server/internal/handler/skill_import_github.go#ImportSkill` | `server/cmd/server/router.go#POST /api/skills/import` |
 | GET | `/api/skills/search` | `h.SearchSkills` | `server/internal/handler/skill.go#SearchSkills` | `server/cmd/server/router.go#GET /api/skills/search` |
-| POST | `/api/sop-runs/{runId}/steps/{stepId}/events` | `h.RecordSOPStepEvent` | `server/internal/handler/squad_sop_run.go#RecordSOPStepEvent` | `server/cmd/server/router.go#POST /api/sop-runs/{runId}/steps/{stepId}/events` |
 | GET | `/api/squads` | `h.ListSquads` | `server/internal/handler/squad.go#ListSquads` | `server/cmd/server/router.go#GET /api/squads` |
 | POST | `/api/squads` | `h.CreateSquad` | `server/internal/handler/squad.go#CreateSquad` | `server/cmd/server/router.go#POST /api/squads` |
 | DELETE | `/api/squads/{id}` | `h.DeleteSquad` | `server/internal/handler/squad.go#DeleteSquad` | `server/cmd/server/router.go#DELETE /api/squads/{id}` |

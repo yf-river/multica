@@ -256,7 +256,6 @@ export type {
   SquadSOPRun,
   SquadSOPStepEvent,
   ListIssueSOPRunsResponse,
-  CreateSOPStepEventRequest,
   ObservabilitySummary,
 } from "./sop";
 export type {

@@ -108,71 +108,6 @@ func TestCreateIssueAssignedToSquadEnqueuesLeader(t *testing.T) {
 		t.Fatalf("ListIssueSOPRuns: expected 200, got %d: %s", listW.Code, listW.Body.String())
 	}
 
-	completeStepReq := newRequest("POST", "/api/sop-runs/"+runID+"/steps/clarify/events?workspace_id="+testWorkspaceID, map[string]any{
-		"event_type": "步骤完成",
-		"evidence":   map[string]any{"阶段产物": "需求已澄清"},
-		"reason":     "进入验收阶段",
-	})
-	completeStepReq = withURLParams(completeStepReq, "runId", runID, "stepId", "clarify")
-	completeStepW := httptest.NewRecorder()
-	testHandler.RecordSOPStepEvent(completeStepW, completeStepReq)
-	if completeStepW.Code != http.StatusCreated {
-		t.Fatalf("RecordSOPStepEvent(clarify complete): expected 201, got %d: %s", completeStepW.Code, completeStepW.Body.String())
-	}
-	var currentStep, runStatus string
-	if err := testPool.QueryRow(ctx, `
-		SELECT current_step_key, status FROM squad_sop_run WHERE id = $1
-	`, runID).Scan(&currentStep, &runStatus); err != nil {
-		t.Fatalf("load progressed SOP run: %v", err)
-	}
-	if currentStep != "acceptance" || runStatus != "进行中" {
-		t.Fatalf("SOP run after clarify completion: step=%s status=%s, want acceptance/进行中", currentStep, runStatus)
-	}
-
-	unknownStepReq := newRequest("POST", "/api/sop-runs/"+runID+"/steps/deploy/events?workspace_id="+testWorkspaceID, map[string]any{
-		"event_type": "追加证据",
-		"evidence":   map[string]any{"结果": "不应接受"},
-	})
-	unknownStepReq = withURLParams(unknownStepReq, "runId", runID, "stepId", "deploy")
-	unknownStepW := httptest.NewRecorder()
-	testHandler.RecordSOPStepEvent(unknownStepW, unknownStepReq)
-	if unknownStepW.Code != http.StatusBadRequest {
-		t.Fatalf("RecordSOPStepEvent(unknown step): expected 400, got %d: %s", unknownStepW.Code, unknownStepW.Body.String())
-	}
-
-	eventReq := newRequest("POST", "/api/sop-runs/"+runID+"/steps/acceptance/events?workspace_id="+testWorkspaceID, map[string]any{
-		"event_type":      "测试结果",
-		"status":          "进行中",
-		"step_name":       "验收",
-		"role_key":        "acceptor",
-		"evidence":        map[string]any{"测试命令": "go test ./internal/handler", "结果": "通过"},
-		"reason":          "补充测试证据",
-		"duration_ms":     123,
-		"created_by_type": "agent",
-		"created_by_id":   leaderID,
-		"task_id":         taskID,
-	})
-	eventReq = withURLParams(eventReq, "runId", runID, "stepId", "acceptance")
-	eventW := httptest.NewRecorder()
-	testHandler.RecordSOPStepEvent(eventW, eventReq)
-	if eventW.Code != http.StatusCreated {
-		t.Fatalf("RecordSOPStepEvent: expected 201, got %d: %s", eventW.Code, eventW.Body.String())
-	}
-	var recordedEvent SquadSOPEventResponse
-	if err := json.NewDecoder(eventW.Body).Decode(&recordedEvent); err != nil {
-		t.Fatalf("decode SOP event: %v", err)
-	}
-	if recordedEvent.CreatedByType == "agent" {
-		t.Fatalf("SOP event actor trusted spoofed request payload: %#v", recordedEvent)
-	}
-	if err := testPool.QueryRow(ctx, `
-		SELECT current_step_key, status FROM squad_sop_run WHERE id = $1
-	`, runID).Scan(&currentStep, &runStatus); err != nil {
-		t.Fatalf("load SOP run after evidence event: %v", err)
-	}
-	if currentStep != "acceptance" || runStatus != "进行中" {
-		t.Fatalf("SOP run changed after 测试结果 evidence: step=%s status=%s, want acceptance/进行中", currentStep, runStatus)
-	}
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO task_usage (task_id, provider, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens)
 		VALUES ($1, 'codex', 'gpt-5.3-codex-spark', 120, 45, 9, 3)
@@ -214,28 +149,25 @@ func TestCreateIssueAssignedToSquadEnqueuesLeader(t *testing.T) {
 	if len(stageMetrics) == 0 {
 		t.Fatalf("missing 阶段指标 in SOP metrics: %+v", metricsResp.Items[0].Metrics)
 	}
-	var acceptance map[string]any
+	var clarify map[string]any
 	for _, raw := range stageMetrics {
 		stage, _ := raw.(map[string]any)
-		if stage["step_key"] == "acceptance" {
-			acceptance = stage
+		if stage["step_key"] == "clarify" {
+			clarify = stage
 			break
 		}
 	}
-	if acceptance == nil {
-		t.Fatalf("acceptance stage metrics missing: %+v", stageMetrics)
+	if clarify == nil {
+		t.Fatalf("clarify stage metrics missing: %+v", stageMetrics)
 	}
-	if got := acceptance["duration_ms"]; got != float64(123) {
-		t.Fatalf("acceptance duration_ms = %v, want 123", got)
+	if got := clarify["input_tokens"]; got != float64(120) {
+		t.Fatalf("clarify input_tokens = %v, want 120", got)
 	}
-	if got := acceptance["input_tokens"]; got != float64(120) {
-		t.Fatalf("acceptance input_tokens = %v, want 120", got)
+	if got := clarify["output_tokens"]; got != float64(45) {
+		t.Fatalf("clarify output_tokens = %v, want 45", got)
 	}
-	if got := acceptance["output_tokens"]; got != float64(45) {
-		t.Fatalf("acceptance output_tokens = %v, want 45", got)
-	}
-	if got := acceptance["agent_turn_count"]; got != float64(2) {
-		t.Fatalf("acceptance agent_turn_count = %v, want 2", got)
+	if got := clarify["agent_turn_count"]; got != float64(2) {
+		t.Fatalf("clarify agent_turn_count = %v, want 2", got)
 	}
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO task_trace_event (
@@ -284,25 +216,22 @@ func TestCreateIssueAssignedToSquadEnqueuesLeader(t *testing.T) {
 	if len(stageRows) == 0 {
 		t.Fatalf("agent summary missing sop_stage_breakdown: %#v", agentSummary)
 	}
-	var summaryAcceptance map[string]any
+	var summaryClarify map[string]any
 	for _, raw := range stageRows {
 		row, _ := raw.(map[string]any)
-		if row["step_key"] == "acceptance" {
-			summaryAcceptance = row
+		if row["step_key"] == "clarify" {
+			summaryClarify = row
 			break
 		}
 	}
-	if summaryAcceptance == nil {
-		t.Fatalf("acceptance stage missing from sop_stage_breakdown: %#v", stageRows)
+	if summaryClarify == nil {
+		t.Fatalf("clarify stage missing from sop_stage_breakdown: %#v", stageRows)
 	}
-	if got := summaryAcceptance["duration_ms"]; got != float64(123) {
-		t.Fatalf("summary acceptance duration_ms = %v, want 123", got)
+	if got := summaryClarify["input_tokens"]; got != float64(36) {
+		t.Fatalf("summary clarify input_tokens = %v, want 36", got)
 	}
-	if got := summaryAcceptance["input_tokens"]; got != float64(36) {
-		t.Fatalf("summary acceptance input_tokens = %v, want 36", got)
-	}
-	if got := summaryAcceptance["agent_turn_count"]; got != float64(2) {
-		t.Fatalf("summary acceptance agent_turn_count = %v, want 2", got)
+	if got := summaryClarify["agent_turn_count"]; got != float64(2) {
+		t.Fatalf("summary clarify agent_turn_count = %v, want 2", got)
 	}
 }
 
