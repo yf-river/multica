@@ -221,7 +221,7 @@ func (b *codebuddyBackend) Execute(ctx context.Context, prompt string, opts Exec
 					output.Reset()
 					output.WriteString(msg.ResultText)
 				}
-				if resultUsage := codebuddyResultUsage(msg, opts.Model); len(resultUsage) > 0 {
+				if resultUsage := claudeStreamResultUsage(msg, opts.Model); len(resultUsage) > 0 {
 					usage = resultUsage
 				}
 				if msg.IsError {
@@ -424,112 +424,7 @@ func writeCodebuddyInput(w io.Writer, prompt string) error {
 
 // ── Codebuddy SDK JSON types ──
 
-type codebuddySDKMessage struct {
-	Type      string          `json:"type"`
-	Message   json.RawMessage `json:"message,omitempty"`
-	Subtype   string          `json:"subtype,omitempty"`
-	SessionID string          `json:"session_id,omitempty"`
-	Model     string          `json:"model,omitempty"`
-
-	// result fields
-	ResultText string                               `json:"result,omitempty"`
-	IsError    bool                                 `json:"is_error,omitempty"`
-	DurationMs float64                              `json:"duration_ms,omitempty"`
-	NumTurns   int                                  `json:"num_turns,omitempty"`
-	Usage      *codebuddyUsage                      `json:"usage,omitempty"`
-	ModelUsage map[string]codebuddyResultModelUsage `json:"modelUsage,omitempty"`
-
-	// log fields
-	Log *codebuddyLogEntry `json:"log,omitempty"`
-
-	// control request fields
-	RequestID string          `json:"request_id,omitempty"`
-	Request   json.RawMessage `json:"request,omitempty"`
-}
-
-type codebuddyLogEntry struct {
-	Level   string `json:"level"`
-	Message string `json:"message"`
-}
-
-type codebuddyMessageContent struct {
-	Role    string                  `json:"role"`
-	Model   string                  `json:"model"`
-	Content []codebuddyContentBlock `json:"content"`
-	Usage   *codebuddyUsage         `json:"usage,omitempty"`
-}
-
-type codebuddyUsage struct {
-	InputTokens              int64 `json:"input_tokens"`
-	OutputTokens             int64 `json:"output_tokens"`
-	CacheReadInputTokens     int64 `json:"cache_read_input_tokens"`
-	CacheCreationInputTokens int64 `json:"cache_creation_input_tokens"`
-}
-
-type codebuddyResultModelUsage struct {
-	InputTokens              int64 `json:"inputTokens"`
-	OutputTokens             int64 `json:"outputTokens"`
-	CacheReadInputTokens     int64 `json:"cacheReadInputTokens"`
-	CacheCreationInputTokens int64 `json:"cacheCreationInputTokens"`
-}
-
-type codebuddyContentBlock struct {
-	Type      string          `json:"type"`
-	Text      string          `json:"text,omitempty"`
-	ID        string          `json:"id,omitempty"`
-	Name      string          `json:"name,omitempty"`
-	Input     json.RawMessage `json:"input,omitempty"`
-	ToolUseID string          `json:"tool_use_id,omitempty"`
-	Content   json.RawMessage `json:"content,omitempty"`
-}
-
-type codebuddyControlRequestPayload struct {
-	Subtype  string          `json:"subtype"`
-	ToolName string          `json:"tool_name,omitempty"`
-	Input    json.RawMessage `json:"input,omitempty"`
-}
-
-func codebuddyResultUsage(msg codebuddySDKMessage, fallbackModel string) map[string]TokenUsage {
-	if len(msg.ModelUsage) > 0 {
-		usage := make(map[string]TokenUsage, len(msg.ModelUsage))
-		for model, u := range msg.ModelUsage {
-			if model == "" || !codebuddyUsageHasTokens(u.InputTokens, u.OutputTokens, u.CacheReadInputTokens, u.CacheCreationInputTokens) {
-				continue
-			}
-			usage[model] = TokenUsage{
-				InputTokens:      u.InputTokens,
-				OutputTokens:     u.OutputTokens,
-				CacheReadTokens:  u.CacheReadInputTokens,
-				CacheWriteTokens: u.CacheCreationInputTokens,
-			}
-		}
-		if len(usage) > 0 {
-			return usage
-		}
-	}
-
-	model := msg.Model
-	if model == "" {
-		model = fallbackModel
-	}
-	if msg.Usage == nil || model == "" || !codebuddyUsageHasTokens(
-		msg.Usage.InputTokens,
-		msg.Usage.OutputTokens,
-		msg.Usage.CacheReadInputTokens,
-		msg.Usage.CacheCreationInputTokens,
-	) {
-		return nil
-	}
-	return map[string]TokenUsage{
-		model: {
-			InputTokens:      msg.Usage.InputTokens,
-			OutputTokens:     msg.Usage.OutputTokens,
-			CacheReadTokens:  msg.Usage.CacheReadInputTokens,
-			CacheWriteTokens: msg.Usage.CacheCreationInputTokens,
-		},
-	}
-}
-
-func codebuddyUsageHasTokens(input, output, cacheRead, cacheWrite int64) bool {
-	return input > 0 || output > 0 || cacheRead > 0 || cacheWrite > 0
-}
+type codebuddySDKMessage = claudeStreamMessage
+type codebuddyMessageContent = claudeStreamMessageContent
+type codebuddyContentBlock = claudeStreamContentBlock
+type codebuddyControlRequestPayload = claudeStreamControlRequest
