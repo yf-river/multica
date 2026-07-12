@@ -26,7 +26,7 @@
     "databaseIndexes": 194,
     "migrations": 168,
     "sqlcModules": 55,
-    "sqlcQueries": 560,
+    "sqlcQueries": 561,
     "goWebsocketEvents": 79,
     "typescriptWebsocketEvents": 69,
     "zustandStores": 43,
@@ -11391,6 +11391,11 @@
               "name": "ListPromptEvaluationTrialsByRun",
               "command": "many",
               "source": "server/pkg/db/queries/prompt_evaluation_run.sql#ListPromptEvaluationTrialsByRun"
+            },
+            {
+              "name": "LockPromptEvaluationRun",
+              "command": "one",
+              "source": "server/pkg/db/queries/prompt_evaluation_run.sql#LockPromptEvaluationRun"
             },
             {
               "name": "MarkPromptEvaluationReviewTrialsByRun",

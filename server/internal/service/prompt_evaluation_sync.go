@@ -72,6 +72,13 @@ func SyncPromptEvaluationRunFromTask(ctx context.Context, q *db.Queries, run db.
 }
 
 func syncPromptEvaluationRunWithTask(ctx context.Context, q *db.Queries, run db.PromptEvaluationRun, task db.AgentTaskQueue) (db.PromptEvaluationRun, error) {
+	lockedRun, err := q.LockPromptEvaluationRun(ctx, db.LockPromptEvaluationRunParams{
+		ID: run.ID, WorkspaceID: run.WorkspaceID,
+	})
+	if err != nil {
+		return db.PromptEvaluationRun{}, err
+	}
+	run = lockedRun
 	usages, err := q.GetTaskUsage(ctx, task.ID)
 	if err != nil {
 		return db.PromptEvaluationRun{}, err
@@ -264,7 +271,7 @@ func truncatePromptEvaluationReason(value string, limit int) string {
 }
 
 func syncPromptEvaluationAssetAgentRunSnapshot(ctx context.Context, q *db.Queries, run db.PromptEvaluationRun, task db.AgentTaskQueue, agentName string, status string, conclusion string, failureReason string) error {
-	asset, err := q.GetPromptEvaluationAssetInWorkspace(ctx, db.GetPromptEvaluationAssetInWorkspaceParams{
+	asset, err := q.LockPromptEvaluationAsset(ctx, db.LockPromptEvaluationAssetParams{
 		ID:          run.AssetID,
 		WorkspaceID: run.WorkspaceID,
 	})

@@ -358,3 +358,7 @@ RETURNING *;
 SELECT * FROM prompt_evaluation_trial
 WHERE run_id = $1 AND workspace_id = $2
 ORDER BY case_index ASC, created_at ASC;
+-- name: LockPromptEvaluationRun :one
+SELECT * FROM prompt_evaluation_run
+WHERE id = $1 AND workspace_id = $2
+FOR UPDATE;

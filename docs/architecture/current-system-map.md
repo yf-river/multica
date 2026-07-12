@@ -27,7 +27,7 @@ evidence reviewable by humans.
 | Database indexes | 194 |
 | Migration files (up + down) | 168 |
 | sqlc modules | 55 |
-| sqlc queries | 560 |
+| sqlc queries | 561 |
 | Go WebSocket events | 79 |
 | TypeScript WebSocket events | 69 |
 | Zustand store definitions | 43 |
@@ -758,7 +758,7 @@ intentionally platform-specific.
 
 ### sqlc modules
 
-All 560 query names, commands, and stable source anchors are stored in the JSON companion.
+All 561 query names, commands, and stable source anchors are stored in the JSON companion.
 
 | Module | Queries | SQL source | Generated source |
 | --- | --- | --- | --- |
@@ -795,7 +795,7 @@ All 560 query names, commands, and stable source anchors are stored in the JSON 
 | prompt_evaluation_dimension_score | 5 | `server/pkg/db/queries/prompt_evaluation_dimension_score.sql` | `server/pkg/db/generated/prompt_evaluation_dimension_score.sql.go` |
 | prompt_evaluation_evidence_snapshot | 3 | `server/pkg/db/queries/prompt_evaluation_evidence_snapshot.sql` | `server/pkg/db/generated/prompt_evaluation_evidence_snapshot.sql.go` |
 | prompt_evaluation_optimization_candidate | 6 | `server/pkg/db/queries/prompt_evaluation_optimization_candidate.sql` | `server/pkg/db/generated/prompt_evaluation_optimization_candidate.sql.go` |
-| prompt_evaluation_run | 15 | `server/pkg/db/queries/prompt_evaluation_run.sql` | `server/pkg/db/generated/prompt_evaluation_run.sql.go` |
+| prompt_evaluation_run | 16 | `server/pkg/db/queries/prompt_evaluation_run.sql` | `server/pkg/db/generated/prompt_evaluation_run.sql.go` |
 | prompt_evaluation_test_suite_case | 3 | `server/pkg/db/queries/prompt_evaluation_test_suite_case.sql` | `server/pkg/db/generated/prompt_evaluation_test_suite_case.sql.go` |
 | prompt_library | 7 | `server/pkg/db/queries/prompt_library.sql` | `server/pkg/db/generated/prompt_library.sql.go` |
 | prompt_library_trial | 2 | `server/pkg/db/queries/prompt_library_trial.sql` | `server/pkg/db/generated/prompt_library_trial.sql.go` |

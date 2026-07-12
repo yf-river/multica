@@ -704,7 +704,14 @@ func (h *Handler) SyncPromptEvaluationRunFromTask(w http.ResponseWriter, r *http
 	if !ok {
 		return
 	}
-	run, err := h.Queries.GetPromptEvaluationRunInWorkspace(r.Context(), db.GetPromptEvaluationRunInWorkspaceParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start prompt evaluation run sync transaction")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	run, err := qtx.GetPromptEvaluationRunInWorkspace(r.Context(), db.GetPromptEvaluationRunInWorkspaceParams{
 		ID:          runID,
 		WorkspaceID: workspaceUUID,
 	})
@@ -720,9 +727,13 @@ func (h *Handler) SyncPromptEvaluationRunFromTask(w http.ResponseWriter, r *http
 		writeError(w, http.StatusBadRequest, "prompt evaluation run is not linked to an agent task")
 		return
 	}
-	updated, err := service.SyncPromptEvaluationRunFromTask(r.Context(), h.Queries, run)
+	updated, err := service.SyncPromptEvaluationRunFromTask(r.Context(), qtx, run)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to sync prompt evaluation run from task")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit prompt evaluation run sync")
 		return
 	}
 	writeJSON(w, http.StatusOK, promptEvaluationRunToResponse(updated))

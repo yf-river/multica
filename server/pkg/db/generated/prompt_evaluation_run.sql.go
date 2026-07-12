@@ -761,6 +761,60 @@ func (q *Queries) ListPromptEvaluationTrialsByRun(ctx context.Context, arg ListP
 	return items, nil
 }
 
+const lockPromptEvaluationRun = `-- name: LockPromptEvaluationRun :one
+SELECT id, workspace_id, asset_id, prompt_id, run_kind, status, trigger_source, agent_id, runtime_id, task_id, chat_session_id, model, runtime_provider, total_cases, passed_cases, failed_cases, pass_rate, total_duration_ms, average_duration_ms, input_tokens, output_tokens, estimated_cost, failure_reason, conclusion, metrics, evidence, started_at, completed_at, created_by, created_at, updated_at, review_decision, review_note, reviewed_by, reviewed_at FROM prompt_evaluation_run
+WHERE id = $1 AND workspace_id = $2
+FOR UPDATE
+`
+
+type LockPromptEvaluationRunParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) LockPromptEvaluationRun(ctx context.Context, arg LockPromptEvaluationRunParams) (PromptEvaluationRun, error) {
+	row := q.db.QueryRow(ctx, lockPromptEvaluationRun, arg.ID, arg.WorkspaceID)
+	var i PromptEvaluationRun
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AssetID,
+		&i.PromptID,
+		&i.RunKind,
+		&i.Status,
+		&i.TriggerSource,
+		&i.AgentID,
+		&i.RuntimeID,
+		&i.TaskID,
+		&i.ChatSessionID,
+		&i.Model,
+		&i.RuntimeProvider,
+		&i.TotalCases,
+		&i.PassedCases,
+		&i.FailedCases,
+		&i.PassRate,
+		&i.TotalDurationMs,
+		&i.AverageDurationMs,
+		&i.InputTokens,
+		&i.OutputTokens,
+		&i.EstimatedCost,
+		&i.FailureReason,
+		&i.Conclusion,
+		&i.Metrics,
+		&i.Evidence,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ReviewDecision,
+		&i.ReviewNote,
+		&i.ReviewedBy,
+		&i.ReviewedAt,
+	)
+	return i, err
+}
+
 const markPromptEvaluationReviewTrialsByRun = `-- name: MarkPromptEvaluationReviewTrialsByRun :exec
 UPDATE prompt_evaluation_trial SET
     status = $3,
