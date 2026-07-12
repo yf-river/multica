@@ -1242,9 +1242,10 @@ export class TestApiClient {
     return res.json();
   }
 
-  async createPromptEvaluationSkillInventory(assetId: string, data: Record<string, unknown>) {
+  async createPromptEvaluationSkillInventory(assetId: string, data: Record<string, unknown>, requestId = crypto.randomUUID()) {
     const res = await this.authedFetch(`/api/prompt-evaluation-assets/${assetId}/skill-inventory`, {
       method: "POST",
+      headers: { "Idempotency-Key": requestId },
       body: JSON.stringify(data),
     });
     if (!res.ok) {
@@ -1253,9 +1254,10 @@ export class TestApiClient {
     return res.json();
   }
 
-  async createPromptEvaluationSkillSnapshot(assetId: string, data: Record<string, unknown>) {
+  async createPromptEvaluationSkillSnapshot(assetId: string, data: Record<string, unknown>, requestId = crypto.randomUUID()) {
     const res = await this.authedFetch(`/api/prompt-evaluation-assets/${assetId}/skill-snapshot`, {
       method: "POST",
+      headers: { "Idempotency-Key": requestId },
       body: JSON.stringify(data),
     });
     if (!res.ok) {
@@ -1264,9 +1266,10 @@ export class TestApiClient {
     return res.json();
   }
 
-  async createPromptEvaluationSkillCaseDrafts(assetId: string, data: Record<string, unknown>) {
+  async createPromptEvaluationSkillCaseDrafts(assetId: string, data: Record<string, unknown>, requestId = crypto.randomUUID()) {
     const res = await this.authedFetch(`/api/prompt-evaluation-assets/${assetId}/skill-case-drafts`, {
       method: "POST",
+      headers: { "Idempotency-Key": requestId },
       body: JSON.stringify(data),
     });
     if (!res.ok) {

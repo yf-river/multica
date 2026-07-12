@@ -44,6 +44,9 @@ const (
 	resourceTypePromptEvidenceSnapshot = "prompt_evaluation_evidence_snapshot"
 	resourceTypePromptEvidenceBatch    = "prompt_evaluation_evidence_batch"
 	resourceTypePromptDatasetRestore   = "prompt_evaluation_dataset_restore"
+	resourceTypePromptSkillInventory   = "prompt_evaluation_skill_inventory"
+	resourceTypePromptSkillSnapshot    = "prompt_evaluation_skill_snapshot"
+	resourceTypePromptSkillCaseDrafts  = "prompt_evaluation_skill_case_drafts"
 )
 
 var errResourceCreateIdempotencyConflict = errors.New("resource create idempotency conflict")

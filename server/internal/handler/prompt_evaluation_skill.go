@@ -290,24 +290,22 @@ func (h *Handler) CreatePromptEvaluationSkillInventory(w http.ResponseWriter, r 
 	if ok := h.applyPromptEvaluationSkillSourceResourceDefaults(w, r, &req.Provider, &req.Repo, &req.RepoPath, &req.Branch, &req.SourceResourceID); !ok {
 		return
 	}
-	inventory, err := buildPromptEvaluationSkillInventory(req, time.Now().UTC())
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	payload := decodePayloadObject(asset.Payload)
-	payload["optimization_target"] = "skill"
-	payload["skill_inventory"] = inventory
-	payload["skill_inventory_contract"] = promptEvaluationSkillInventorySchema
-	payload["skill_inventories"] = appendJSONList(payload["skill_inventories"], inventory)
-	updated, ok := h.updatePromptEvaluationAssetPayload(w, r, asset, payload)
-	if !ok {
-		return
-	}
-	writeJSON(w, http.StatusCreated, PromptEvaluationSkillInventoryResponse{
-		Asset:     promptEvaluationAssetToResponse(updated),
-		Inventory: inventory,
-	})
+	executePromptEvaluationSkillAssetMutation(
+		w, r, h, asset, resourceTypePromptSkillInventory, "skill inventory", req,
+		func(response PromptEvaluationSkillInventoryResponse) bool { return response.Asset.ID != "" },
+		func() (PromptEvaluationSkillInventoryResult, error) {
+			return buildPromptEvaluationSkillInventory(req, time.Now().UTC())
+		},
+		func(payload map[string]any, inventory PromptEvaluationSkillInventoryResult) {
+			payload["optimization_target"] = "skill"
+			payload["skill_inventory"] = inventory
+			payload["skill_inventory_contract"] = promptEvaluationSkillInventorySchema
+			payload["skill_inventories"] = appendJSONList(payload["skill_inventories"], inventory)
+		},
+		func(updated db.PromptEvaluationAsset, inventory PromptEvaluationSkillInventoryResult) PromptEvaluationSkillInventoryResponse {
+			return PromptEvaluationSkillInventoryResponse{Asset: promptEvaluationAssetToResponse(updated), Inventory: inventory}
+		},
+	)
 }
 
 func (h *Handler) CreatePromptEvaluationSkillSnapshot(w http.ResponseWriter, r *http.Request) {
@@ -323,24 +321,22 @@ func (h *Handler) CreatePromptEvaluationSkillSnapshot(w http.ResponseWriter, r *
 	if ok := h.applyPromptEvaluationSkillSourceResourceDefaults(w, r, &req.Provider, &req.Repo, &req.RepoPath, &req.Branch, &req.SourceResourceID); !ok {
 		return
 	}
-	snapshot, err := buildPromptEvaluationSkillSnapshot(req, time.Now().UTC())
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	payload := decodePayloadObject(asset.Payload)
-	payload["optimization_target"] = "skill"
-	payload["skill_snapshot"] = snapshot
-	payload["skill_snapshot_contract"] = promptEvaluationSkillSnapshotSchema
-	payload["skill_snapshots"] = appendJSONList(payload["skill_snapshots"], snapshot)
-	updated, ok := h.updatePromptEvaluationAssetPayload(w, r, asset, payload)
-	if !ok {
-		return
-	}
-	writeJSON(w, http.StatusCreated, PromptEvaluationSkillSnapshotResult{
-		Asset:    promptEvaluationAssetToResponse(updated),
-		Snapshot: snapshot,
-	})
+	executePromptEvaluationSkillAssetMutation(
+		w, r, h, asset, resourceTypePromptSkillSnapshot, "skill snapshot", req,
+		func(response PromptEvaluationSkillSnapshotResult) bool { return response.Asset.ID != "" },
+		func() (PromptEvaluationSkillSnapshotResponse, error) {
+			return buildPromptEvaluationSkillSnapshot(req, time.Now().UTC())
+		},
+		func(payload map[string]any, snapshot PromptEvaluationSkillSnapshotResponse) {
+			payload["optimization_target"] = "skill"
+			payload["skill_snapshot"] = snapshot
+			payload["skill_snapshot_contract"] = promptEvaluationSkillSnapshotSchema
+			payload["skill_snapshots"] = appendJSONList(payload["skill_snapshots"], snapshot)
+		},
+		func(updated db.PromptEvaluationAsset, snapshot PromptEvaluationSkillSnapshotResponse) PromptEvaluationSkillSnapshotResult {
+			return PromptEvaluationSkillSnapshotResult{Asset: promptEvaluationAssetToResponse(updated), Snapshot: snapshot}
+		},
+	)
 }
 
 func (h *Handler) CreatePromptEvaluationSkillCaseDrafts(w http.ResponseWriter, r *http.Request) {
@@ -353,23 +349,20 @@ func (h *Handler) CreatePromptEvaluationSkillCaseDrafts(w http.ResponseWriter, r
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	drafts, err := buildPromptEvaluationSkillCaseDrafts(req)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	payload := decodePayloadObject(asset.Payload)
-	payload["skill_case_draft_contract"] = promptEvaluationSkillCaseDraftSchema
-	payload["skill_case_drafts"] = appendJSONList(payload["skill_case_drafts"], skillCaseDraftsAsAny(drafts)...)
-	updated, ok := h.updatePromptEvaluationAssetPayload(w, r, asset, payload)
-	if !ok {
-		return
-	}
-	writeJSON(w, http.StatusCreated, PromptEvaluationSkillCaseDraftsResult{
-		Asset:        promptEvaluationAssetToResponse(updated),
-		Drafts:       drafts,
-		CreatedCount: len(drafts),
-	})
+	executePromptEvaluationSkillAssetMutation(
+		w, r, h, asset, resourceTypePromptSkillCaseDrafts, "skill case drafts", req,
+		func(response PromptEvaluationSkillCaseDraftsResult) bool { return response.Asset.ID != "" },
+		func() ([]PromptEvaluationSkillCaseDraft, error) { return buildPromptEvaluationSkillCaseDrafts(req) },
+		func(payload map[string]any, drafts []PromptEvaluationSkillCaseDraft) {
+			payload["skill_case_draft_contract"] = promptEvaluationSkillCaseDraftSchema
+			payload["skill_case_drafts"] = appendJSONList(payload["skill_case_drafts"], skillCaseDraftsAsAny(drafts)...)
+		},
+		func(updated db.PromptEvaluationAsset, drafts []PromptEvaluationSkillCaseDraft) PromptEvaluationSkillCaseDraftsResult {
+			return PromptEvaluationSkillCaseDraftsResult{
+				Asset: promptEvaluationAssetToResponse(updated), Drafts: drafts, CreatedCount: len(drafts),
+			}
+		},
+	)
 }
 
 func (h *Handler) CheckPromptEvaluationSkillCandidateFreshness(w http.ResponseWriter, r *http.Request) {
@@ -1042,31 +1035,4 @@ RETURNING id, workspace_id, asset_id, run_id, prompt_id, candidate_name, candida
 		&item.UpdatedAt,
 	)
 	return item, err
-}
-
-func (h *Handler) updatePromptEvaluationAssetPayload(w http.ResponseWriter, r *http.Request, asset db.PromptEvaluationAsset, payload map[string]any) (db.PromptEvaluationAsset, bool) {
-	profile := promptEvaluationAssetProfileFromPayload(mustJSONBytes(payload), asset.PromptID)
-	updated, err := h.Queries.UpdatePromptEvaluationAsset(r.Context(), db.UpdatePromptEvaluationAssetParams{
-		ID:                       asset.ID,
-		WorkspaceID:              asset.WorkspaceID,
-		PromptID:                 asset.PromptID,
-		Name:                     pgtype.Text{String: asset.Name, Valid: true},
-		Description:              pgtype.Text{String: asset.Description, Valid: true},
-		AssetType:                pgtype.Text{String: asset.AssetType, Valid: true},
-		Payload:                  mustJSONBytes(payload),
-		Status:                   pgtype.Text{String: asset.Status, Valid: true},
-		StructureSchema:          pgtype.Text{String: profile.StructureSchema, Valid: true},
-		StructuredCaseCount:      pgtype.Int4{Int32: profile.StructuredCaseCount, Valid: true},
-		StructuredVariableCount:  pgtype.Int4{Int32: profile.StructuredVariableCount, Valid: true},
-		StructuredAssertionCount: pgtype.Int4{Int32: profile.StructuredAssertionCount, Valid: true},
-		LinkedDatasetCount:       pgtype.Int4{Int32: profile.LinkedDatasetCount, Valid: true},
-		LinkedPromptCount:        pgtype.Int4{Int32: profile.LinkedPromptCount, Valid: true},
-		EvaluationDimensionCount: pgtype.Int4{Int32: profile.EvaluationDimensionCount, Valid: true},
-		ExperimentDimensionCount: pgtype.Int4{Int32: profile.ExperimentDimensionCount, Valid: true},
-	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to update prompt evaluation asset payload")
-		return db.PromptEvaluationAsset{}, false
-	}
-	return updated, true
 }
