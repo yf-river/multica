@@ -826,7 +826,7 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if !canUseRuntimeForAgent(member, runtime) {
+	if !canAccessRuntime(member, runtime) {
 		writeError(w, http.StatusForbidden, "this runtime is personal; only its owner or a workspace admin can create agents on it")
 		return
 	}
@@ -1155,7 +1155,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return
 		}
-		if !canUseRuntimeForAgent(member, runtime) {
+		if !canAccessRuntime(member, runtime) {
 			writeError(w, http.StatusForbidden, "this runtime is personal; only its owner or a workspace admin can move agents onto it")
 			return
 		}

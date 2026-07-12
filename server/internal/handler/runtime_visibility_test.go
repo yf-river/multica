@@ -15,7 +15,7 @@ import (
 // shared by CreateAgent and UpdateAgent. Scope compatibility is a separate
 // invariant: a personal agent and its personal runtime must have the same
 // owner even when a workspace owner or admin can administer that runtime.
-func TestCanUseRuntimeForAgent_Pure(t *testing.T) {
+func TestCanAccessRuntime_Pure(t *testing.T) {
 	ownerUserID := "11111111-1111-1111-1111-111111111111"
 	otherUserID := "22222222-2222-2222-2222-222222222222"
 
@@ -53,9 +53,9 @@ func TestCanUseRuntimeForAgent_Pure(t *testing.T) {
 				UserID: util.MustParseUUID(tc.userID),
 				Role:   tc.role,
 			}
-			got := canUseRuntimeForAgent(member, tc.rt)
+			got := canAccessRuntime(member, tc.rt)
 			if got != tc.want {
-				t.Fatalf("canUseRuntimeForAgent(role=%s, scope=%s, owner=%s, caller=%s) = %v; want %v",
+				t.Fatalf("canAccessRuntime(role=%s, scope=%s, owner=%s, caller=%s) = %v; want %v",
 					tc.role, tc.rt.Scope, ownerUserID, tc.userID, got, tc.want)
 			}
 		})
@@ -97,6 +97,45 @@ func TestRuntimeReadEndpoints_RejectOtherMembersPersonalRuntime(t *testing.T) {
 				t.Fatalf("expected 403, got %d: %s", w.Code, w.Body.String())
 			}
 		})
+	}
+}
+
+func TestListAgentRuntimes_HidesOtherMembersPersonalRuntime(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	runtimeID, runtimeOwnerID, plainMemberID := runtimeVisibilityFixture(t)
+	list := func(actorID string) []AgentRuntimeResponse {
+		t.Helper()
+		w := httptest.NewRecorder()
+		testHandler.ListAgentRuntimes(w, newRequestAs(actorID, http.MethodGet, "/api/runtimes?workspace_id="+testWorkspaceID, nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("list runtimes as %s: got %d: %s", actorID, w.Code, w.Body.String())
+		}
+		var runtimes []AgentRuntimeResponse
+		if err := json.NewDecoder(w.Body).Decode(&runtimes); err != nil {
+			t.Fatalf("decode runtime list: %v", err)
+		}
+		return runtimes
+	}
+	contains := func(runtimes []AgentRuntimeResponse) bool {
+		for _, runtime := range runtimes {
+			if runtime.ID == runtimeID {
+				return true
+			}
+		}
+		return false
+	}
+
+	if contains(list(plainMemberID)) {
+		t.Fatal("plain member can enumerate another member's personal runtime")
+	}
+	if !contains(list(runtimeOwnerID)) {
+		t.Fatal("runtime owner cannot see their own personal runtime")
+	}
+	if !contains(list(testUserID)) {
+		t.Fatal("workspace owner cannot administer a member's personal runtime")
 	}
 }
 

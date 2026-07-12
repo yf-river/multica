@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/middleware"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -81,7 +82,11 @@ func TestListAgentRuntimesClientCanceledReturns499(t *testing.T) {
 		t.Skip("database not available")
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
+	member, err := testHandler.getWorkspaceMember(context.Background(), testUserID, testWorkspaceID)
+	if err != nil {
+		t.Fatalf("load workspace member: %v", err)
+	}
+	ctx, cancel := context.WithCancel(middleware.SetMemberContext(context.Background(), testWorkspaceID, member))
 	cancel()
 	w := httptest.NewRecorder()
 	req := newRequest(http.MethodGet, "/api/runtimes?workspace_id="+testWorkspaceID, nil).WithContext(ctx)

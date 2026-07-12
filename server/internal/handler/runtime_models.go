@@ -289,17 +289,8 @@ type runtimeModelAccess struct {
 }
 
 func (h *Handler) requireRuntimeModelAccess(w http.ResponseWriter, r *http.Request, runtimeID string) (runtimeModelAccess, bool) {
-	runtimeUUID, ok := parseUUIDOrBadRequest(w, runtimeID, "runtime_id")
+	rt, _, ok := h.requireRuntimeAccess(w, r, runtimeID)
 	if !ok {
-		return runtimeModelAccess{}, false
-	}
-
-	rt, err := h.Queries.GetAgentRuntime(r.Context(), runtimeUUID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "runtime not found")
-		return runtimeModelAccess{}, false
-	}
-	if _, ok := h.requireWorkspaceMember(w, r, uuidToString(rt.WorkspaceID), "runtime not found"); !ok {
 		return runtimeModelAccess{}, false
 	}
 

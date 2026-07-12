@@ -132,7 +132,7 @@ func (h *Handler) findSOPPromptEvaluationAgent(ctx context.Context, workspaceID 
 		ID:          verifier.RuntimeID,
 		WorkspaceID: workspaceID,
 	})
-	if err != nil || runtime.Status != "online" || !canUseRuntimeForAgent(member, runtime) {
+	if err != nil || runtime.Status != "online" || !canAccessRuntime(member, runtime) {
 		return db.Agent{}, db.AgentRuntime{}, false
 	}
 	if !runtime.LastSeenAt.Valid || time.Since(runtime.LastSeenAt.Time) > promptEvaluationRuntimeFreshTTL {
@@ -200,7 +200,7 @@ func (h *Handler) selectPromptEvaluationExecutionAgent(w http.ResponseWriter, r 
 		writeError(w, http.StatusBadRequest, "执行智能体绑定的运行时不可用")
 		return db.Agent{}, db.AgentRuntime{}, false
 	}
-	if !canUseRuntimeForAgent(member, runtime) {
+	if !canAccessRuntime(member, runtime) {
 		writeError(w, http.StatusForbidden, "当前成员不能使用该执行智能体绑定的运行时")
 		return db.Agent{}, db.AgentRuntime{}, false
 	}
@@ -279,7 +279,7 @@ func (h *Handler) promptEvaluationRuntimeReadiness(ctx context.Context, workspac
 		if !strings.EqualFold(runtime.Provider, provider) {
 			continue
 		}
-		if !canUseRuntimeForAgent(member, runtime) {
+		if !canAccessRuntime(member, runtime) {
 			inaccessibleRuntime++
 			continue
 		}

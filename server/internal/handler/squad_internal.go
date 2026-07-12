@@ -112,7 +112,7 @@ func (h *Handler) selectInternalSquadRuntime(w http.ResponseWriter, r *http.Requ
 	var best *db.AgentRuntime
 	for i := range runtimes {
 		runtime := runtimes[i]
-		if !strings.EqualFold(runtime.Provider, provider) || !canUseRuntimeForAgent(member, runtime) {
+		if !strings.EqualFold(runtime.Provider, provider) || !canAccessRuntime(member, runtime) {
 			continue
 		}
 		if !agentRuntimeScopeCompatible(agentScope, member.UserID, runtime) {

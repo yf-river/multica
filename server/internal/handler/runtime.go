@@ -118,18 +118,8 @@ func usageCostResponse(provider, model string, inputTokens, outputTokens, cacheR
 // same tool).
 func (h *Handler) GetRuntimeUsage(w http.ResponseWriter, r *http.Request) {
 	runtimeID := chi.URLParam(r, "runtimeId")
-	runtimeUUID, ok := parseUUIDOrBadRequest(w, runtimeID, "runtime_id")
+	rt, _, ok := h.requireRuntimeAccess(w, r, runtimeID)
 	if !ok {
-		return
-	}
-
-	rt, err := h.Queries.GetAgentRuntime(r.Context(), runtimeUUID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "runtime not found")
-		return
-	}
-
-	if _, ok := h.requireWorkspaceMember(w, r, uuidToString(rt.WorkspaceID), "runtime not found"); !ok {
 		return
 	}
 
@@ -185,18 +175,8 @@ func (h *Handler) listRuntimeUsage(ctx context.Context, runtimeID pgtype.UUID, t
 // GetRuntimeTaskActivity returns hourly task activity distribution for a runtime.
 func (h *Handler) GetRuntimeTaskActivity(w http.ResponseWriter, r *http.Request) {
 	runtimeID := chi.URLParam(r, "runtimeId")
-	runtimeUUID, ok := parseUUIDOrBadRequest(w, runtimeID, "runtime_id")
+	rt, _, ok := h.requireRuntimeAccess(w, r, runtimeID)
 	if !ok {
-		return
-	}
-
-	rt, err := h.Queries.GetAgentRuntime(r.Context(), runtimeUUID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "runtime not found")
-		return
-	}
-
-	if _, ok := h.requireWorkspaceMember(w, r, uuidToString(rt.WorkspaceID), "runtime not found"); !ok {
 		return
 	}
 
@@ -264,18 +244,8 @@ type RuntimeUsageByTaskResponse struct {
 // since the cutoff window. Drives the runtime-detail "Cost by agent" tab.
 func (h *Handler) GetRuntimeUsageByAgent(w http.ResponseWriter, r *http.Request) {
 	runtimeID := chi.URLParam(r, "runtimeId")
-	runtimeUUID, ok := parseUUIDOrBadRequest(w, runtimeID, "runtime_id")
+	rt, _, ok := h.requireRuntimeAccess(w, r, runtimeID)
 	if !ok {
-		return
-	}
-
-	rt, err := h.Queries.GetAgentRuntime(r.Context(), runtimeUUID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "runtime not found")
-		return
-	}
-
-	if _, ok := h.requireWorkspaceMember(w, r, uuidToString(rt.WorkspaceID), "runtime not found"); !ok {
 		return
 	}
 
@@ -322,18 +292,8 @@ func (h *Handler) GetRuntimeUsageByAgent(w http.ResponseWriter, r *http.Request)
 // the cutoff window. Drives the runtime-detail "Cost by task" tab.
 func (h *Handler) GetRuntimeUsageByTask(w http.ResponseWriter, r *http.Request) {
 	runtimeID := chi.URLParam(r, "runtimeId")
-	runtimeUUID, ok := parseUUIDOrBadRequest(w, runtimeID, "runtime_id")
+	rt, _, ok := h.requireRuntimeAccess(w, r, runtimeID)
 	if !ok {
-		return
-	}
-
-	rt, err := h.Queries.GetAgentRuntime(r.Context(), runtimeUUID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "runtime not found")
-		return
-	}
-
-	if _, ok := h.requireWorkspaceMember(w, r, uuidToString(rt.WorkspaceID), "runtime not found"); !ok {
 		return
 	}
 
@@ -403,18 +363,8 @@ type RuntimeUsageByHourResponse struct {
 // `?tz=` param or the authenticated user's stored user.timezone.
 func (h *Handler) GetRuntimeUsageByHour(w http.ResponseWriter, r *http.Request) {
 	runtimeID := chi.URLParam(r, "runtimeId")
-	runtimeUUID, ok := parseUUIDOrBadRequest(w, runtimeID, "runtime_id")
+	rt, _, ok := h.requireRuntimeAccess(w, r, runtimeID)
 	if !ok {
-		return
-	}
-
-	rt, err := h.Queries.GetAgentRuntime(r.Context(), runtimeUUID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "runtime not found")
-		return
-	}
-
-	if _, ok := h.requireWorkspaceMember(w, r, uuidToString(rt.WorkspaceID), "runtime not found"); !ok {
 		return
 	}
 
@@ -548,18 +498,7 @@ type UpdateAgentRuntimeRequest struct {
 // Workspace-membership-checked; write access is gated by canEditRuntime.
 func (h *Handler) UpdateAgentRuntime(w http.ResponseWriter, r *http.Request) {
 	runtimeID := chi.URLParam(r, "runtimeId")
-	runtimeUUID, ok := parseUUIDOrBadRequest(w, runtimeID, "runtime_id")
-	if !ok {
-		return
-	}
-
-	rt, err := h.Queries.GetAgentRuntime(r.Context(), runtimeUUID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "runtime not found")
-		return
-	}
-
-	member, ok := h.requireWorkspaceMember(w, r, uuidToString(rt.WorkspaceID), "runtime not found")
+	rt, member, ok := h.requireRuntimeAccess(w, r, runtimeID)
 	if !ok {
 		return
 	}
@@ -590,7 +529,7 @@ func (h *Handler) UpdateAgentRuntime(w http.ResponseWriter, r *http.Request) {
 
 	if needScope {
 		if newScope == scopePersonal {
-			count, err := h.Queries.CountWorkspaceAgentsByRuntime(r.Context(), runtimeUUID)
+			count, err := h.Queries.CountWorkspaceAgentsByRuntime(r.Context(), rt.ID)
 			if err != nil {
 				slog.Error("CountWorkspaceAgentsByRuntime failed", "error", err, "runtime_id", runtimeID)
 				writeError(w, http.StatusInternalServerError, "failed to inspect runtime dependencies")
@@ -602,7 +541,7 @@ func (h *Handler) UpdateAgentRuntime(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		updated, err := h.Queries.UpdateAgentRuntimeScope(r.Context(), db.UpdateAgentRuntimeScopeParams{
-			ID:    runtimeUUID,
+			ID:    rt.ID,
 			Scope: newScope,
 		})
 		if err != nil {
@@ -613,7 +552,7 @@ func (h *Handler) UpdateAgentRuntime(w http.ResponseWriter, r *http.Request) {
 		rt = updated
 		if newScope == scopeWorkspace && rt.OwnerID.Valid {
 			if _, err := h.Queries.OpenPersonalAgentsByRuntimeOwner(r.Context(), db.OpenPersonalAgentsByRuntimeOwnerParams{
-				RuntimeID: runtimeUUID,
+				RuntimeID: rt.ID,
 				OwnerID:   rt.OwnerID,
 			}); err != nil {
 				slog.Error("OpenPersonalAgentsByRuntimeOwner failed", "error", err, "runtime_id", runtimeID)
@@ -639,10 +578,10 @@ func canEditRuntime(member db.Member, rt db.AgentRuntime) bool {
 	return rt.OwnerID.Valid && uuidToString(rt.OwnerID) == uuidToString(member.UserID)
 }
 
-// canUseRuntimeForAgent reports whether a workspace member can see/use the
-// runtime at all. Agent-specific scope compatibility is checked separately by
+// canAccessRuntime reports whether a workspace member can see or use the
+// runtime. Agent-specific scope compatibility is checked separately by
 // validateAgentRuntimeScope.
-func canUseRuntimeForAgent(member db.Member, rt db.AgentRuntime) bool {
+func canAccessRuntime(member db.Member, rt db.AgentRuntime) bool {
 	if roleAllowed(member.Role, "owner", "admin") {
 		return true
 	}
@@ -654,6 +593,10 @@ func canUseRuntimeForAgent(member db.Member, rt db.AgentRuntime) bool {
 
 func (h *Handler) ListAgentRuntimes(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
+	member, ok := h.workspaceMember(w, r, workspaceID)
+	if !ok {
+		return
+	}
 
 	var runtimes []db.AgentRuntime
 	var err error
@@ -678,6 +621,13 @@ func (h *Handler) ListAgentRuntimes(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to list runtimes")
 		return
 	}
+	visible := make([]db.AgentRuntime, 0, len(runtimes))
+	for _, runtime := range runtimes {
+		if canAccessRuntime(member, runtime) {
+			visible = append(visible, runtime)
+		}
+	}
+	runtimes = visible
 
 	resp := make([]AgentRuntimeResponse, len(runtimes))
 	for i, rt := range runtimes {
@@ -697,22 +647,11 @@ func (h *Handler) ListAgentRuntimes(w http.ResponseWriter, r *http.Request) {
 // below) and runs the multi-write teardown inside a single transaction.
 func (h *Handler) DeleteAgentRuntime(w http.ResponseWriter, r *http.Request) {
 	runtimeID := chi.URLParam(r, "runtimeId")
-	runtimeUUID, ok := parseUUIDOrBadRequest(w, runtimeID, "runtime_id")
+	rt, member, ok := h.requireRuntimeAccess(w, r, runtimeID)
 	if !ok {
 		return
 	}
-
-	rt, err := h.Queries.GetAgentRuntime(r.Context(), runtimeUUID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "runtime not found")
-		return
-	}
-
 	wsID := uuidToString(rt.WorkspaceID)
-	member, ok := h.requireWorkspaceMember(w, r, wsID, "runtime not found")
-	if !ok {
-		return
-	}
 
 	// Permission: owner/admin can delete any runtime; members can only delete their own.
 	if !canEditRuntime(member, rt) {
@@ -866,10 +805,6 @@ type archiveAgentsAndDeleteRuntimeRequest struct {
 // a stale plan.
 func (h *Handler) ArchiveAgentsAndDeleteRuntime(w http.ResponseWriter, r *http.Request) {
 	runtimeID := chi.URLParam(r, "runtimeId")
-	runtimeUUID, ok := parseUUIDOrBadRequest(w, runtimeID, "runtime_id")
-	if !ok {
-		return
-	}
 
 	var req archiveAgentsAndDeleteRuntimeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -882,17 +817,11 @@ func (h *Handler) ArchiveAgentsAndDeleteRuntime(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	rt, err := h.Queries.GetAgentRuntime(r.Context(), runtimeUUID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "runtime not found")
-		return
-	}
-
-	wsID := uuidToString(rt.WorkspaceID)
-	member, ok := h.requireWorkspaceMember(w, r, wsID, "runtime not found")
+	rt, member, ok := h.requireRuntimeAccess(w, r, runtimeID)
 	if !ok {
 		return
 	}
+	wsID := uuidToString(rt.WorkspaceID)
 	if !canEditRuntime(member, rt) {
 		writeError(w, http.StatusForbidden, "you can only delete your own runtimes")
 		return
