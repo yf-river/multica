@@ -42,6 +42,38 @@ type fakeStdin struct {
 	data []byte
 }
 
+type failingStdin struct{ err error }
+
+func (f failingStdin) Write([]byte) (int, error) { return 0, f.err }
+
+func TestCodexNotifyReturnsWriteFailure(t *testing.T) {
+	wantErr := errors.New("stdin closed")
+	c := &codexClient{stdin: failingStdin{err: wantErr}}
+
+	if err := c.notify("initialized"); !errors.Is(err, wantErr) {
+		t.Fatalf("notify() error = %v, want %v", err, wantErr)
+	}
+}
+
+func TestCodexServerResponseWriteFailureMarksProcessExited(t *testing.T) {
+	wantErr := errors.New("stdin closed")
+	c := &codexClient{
+		cfg:         Config{Logger: slog.Default()},
+		stdin:       failingStdin{err: wantErr},
+		pending:     make(map[int]*pendingRPC),
+		processDone: make(chan struct{}),
+	}
+
+	c.handleLine(`{"jsonrpc":"2.0","id":7,"method":"execCommandApproval"}`)
+
+	c.mu.Lock()
+	gotErr := c.processErr
+	c.mu.Unlock()
+	if !errors.Is(gotErr, wantErr) {
+		t.Fatalf("process error = %v, want wrapped %v", gotErr, wantErr)
+	}
+}
+
 func (f *fakeStdin) Write(p []byte) (int, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
