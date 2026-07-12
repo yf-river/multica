@@ -86,7 +86,7 @@ const GONGFENG_REPO_PRESETS = [
 const BRANCH_PICKER_RENDER_LIMIT = 100;
 
 function workspaceRepoList(workspace: Workspace | null | undefined): WorkspaceRepo[] {
-  return Array.isArray(workspace?.repos) ? workspace.repos : [];
+  return workspace?.repos ?? [];
 }
 
 export function ProjectGongfengRepositories() {

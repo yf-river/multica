@@ -49,7 +49,7 @@ type WorkspaceResponse struct {
 	UpdatedAt   string  `json:"updated_at"`
 }
 
-func workspaceToResponse(w db.Workspace) WorkspaceResponse {
+func workspaceToResponse(w db.Workspace) (WorkspaceResponse, error) {
 	var settings any
 	if w.Settings != nil {
 		if err := json.Unmarshal(w.Settings, &settings); err != nil {
@@ -59,7 +59,13 @@ func workspaceToResponse(w db.Workspace) WorkspaceResponse {
 	if settings == nil {
 		settings = map[string]any{}
 	}
-	repos := workspaceReposForResponse(w.Repos)
+	var repos []any
+	if err := json.Unmarshal(w.Repos, &repos); err != nil {
+		return WorkspaceResponse{}, fmt.Errorf("decode workspace repos: %w", err)
+	}
+	if repos == nil {
+		return WorkspaceResponse{}, fmt.Errorf("decode workspace repos: expected JSON array")
+	}
 	return WorkspaceResponse{
 		ID:          uuidToString(w.ID),
 		Name:        w.Name,
@@ -72,21 +78,7 @@ func workspaceToResponse(w db.Workspace) WorkspaceResponse {
 		AvatarURL:   textToPtr(w.AvatarUrl),
 		CreatedAt:   timestampToString(w.CreatedAt),
 		UpdatedAt:   timestampToString(w.UpdatedAt),
-	}
-}
-
-func workspaceReposForResponse(raw []byte) []any {
-	if raw == nil {
-		return []any{}
-	}
-	var repos []any
-	if err := json.Unmarshal(raw, &repos); err != nil {
-		return []any{}
-	}
-	if repos == nil {
-		return []any{}
-	}
-	return repos
+	}, nil
 }
 
 func (h *Handler) ListWorkspaces(w http.ResponseWriter, r *http.Request) {
@@ -103,7 +95,12 @@ func (h *Handler) ListWorkspaces(w http.ResponseWriter, r *http.Request) {
 
 	resp := make([]WorkspaceResponse, len(workspaces))
 	for i, ws := range workspaces {
-		resp[i] = workspaceToResponse(ws)
+		resp[i], err = workspaceToResponse(ws)
+		if err != nil {
+			slog.Error("encode workspace response failed", append(logger.RequestAttrs(r), "workspace_id", uuidToString(ws.ID), "error", err)...)
+			writeError(w, http.StatusInternalServerError, "failed to list workspaces")
+			return
+		}
 	}
 
 	writeJSON(w, http.StatusOK, resp)
@@ -121,7 +118,13 @@ func (h *Handler) GetWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeEntityLoadError(w, r, err, "workspace", "workspace_id", id)
 		return
 	}
-	writeJSON(w, http.StatusOK, workspaceToResponse(ws))
+	resp, err := workspaceToResponse(ws)
+	if err != nil {
+		slog.Error("encode workspace response failed", append(logger.RequestAttrs(r), "workspace_id", id, "error", err)...)
+		writeError(w, http.StatusInternalServerError, "failed to load workspace")
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 type CreateWorkspaceRequest struct {
@@ -214,6 +217,12 @@ func (h *Handler) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wsID := uuidToString(ws.ID)
+	resp, err := workspaceToResponse(ws)
+	if err != nil {
+		slog.Error("encode created workspace response failed", append(logger.RequestAttrs(r), "workspace_id", wsID, "error", err)...)
+		writeError(w, http.StatusInternalServerError, "failed to load created workspace")
+		return
+	}
 
 	// "Is this the user's first workspace?" is derived in PostHog by looking
 	// at whether they have a prior workspace_created event, not stamped at
@@ -222,7 +231,7 @@ func (h *Handler) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 	obsmetrics.RecordEvent(h.Analytics, h.Metrics, analytics.WorkspaceCreated(userID, wsID))
 
 	slog.Info("workspace created", append(logger.RequestAttrs(r), "workspace_id", wsID, "name", ws.Name, "slug", ws.Slug)...)
-	writeJSON(w, http.StatusCreated, workspaceToResponse(ws))
+	writeJSON(w, http.StatusCreated, resp)
 }
 
 type UpdateWorkspaceRequest struct {
@@ -553,10 +562,16 @@ func (h *Handler) UpdateWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("workspace updated", append(logger.RequestAttrs(r), "workspace_id", id)...)
+	resp, err := workspaceToResponse(ws)
+	if err != nil {
+		slog.Error("encode updated workspace response failed", append(logger.RequestAttrs(r), "workspace_id", id, "error", err)...)
+		writeError(w, http.StatusInternalServerError, "failed to load updated workspace")
+		return
+	}
 	userID := requestUserID(r)
-	h.publish(protocol.EventWorkspaceUpdated, uuidToString(ws.ID), "member", userID, map[string]any{"workspace": workspaceToResponse(ws)})
+	h.publish(protocol.EventWorkspaceUpdated, uuidToString(ws.ID), "member", userID, map[string]any{"workspace": resp})
 
-	writeJSON(w, http.StatusOK, workspaceToResponse(ws))
+	writeJSON(w, http.StatusOK, resp)
 }
 
 type MemberWithUserResponse struct {
