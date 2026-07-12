@@ -444,6 +444,32 @@ describe("ApiClient", () => {
     expect(second["Idempotency-Key"]).toBe(first["Idempotency-Key"]);
   });
 
+  it("retries issue-create unknown outcomes with one request identity", async () => {
+    const issue = {
+      id: "issue-1", workspace_id: "workspace-1", number: 1, identifier: "ISS-1",
+      title: "Child", description: null, status: "todo", priority: "none",
+      assignee_type: null, assignee_id: null, creator_type: "member", creator_id: "user-1",
+      parent_issue_id: "parent-1", project_id: null, position: -1,
+      start_date: null, due_date: null, metadata: {}, created_at: "now", updated_at: "now",
+    };
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify(issue), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.createIssue({ title: "Child", parent_issue_id: "parent-1" }))
+      .resolves.toMatchObject({ id: "issue-1", identifier: "ISS-1" });
+
+    const first = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    const second = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
+    expect(first["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(second["Idempotency-Key"]).toBe(first["Idempotency-Key"]);
+  });
+
   it("whitelists external credential responses without exposing secret fields", async () => {
     const profile = {
       id: "profile-1",

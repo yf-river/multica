@@ -596,6 +596,35 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	if priority == "" {
 		priority = "none"
 	}
+	req.Status = status
+	req.Priority = priority
+	requestHash, err := hashRequestFingerprint(req)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to fingerprint issue request")
+		return
+	}
+	// Resolve the operation owner before mutable relationship validation. A
+	// completed replay must not depend on an assignee, project or credential
+	// still having the same state it had when the Issue committed.
+	creatorType, actualCreatorID := h.resolveActor(r, creatorID, workspaceID)
+	var issueRequestKey pgtype.UUID
+	if req.OriginType == nil && req.OriginID == nil {
+		issueRequestKey, ok = optionalIdempotencyKey(w, r)
+		if !ok {
+			return
+		}
+		replay, found, replayErr := h.loadIssueCreateReplay(
+			r.Context(), wsUUID, parseUUID(actualCreatorID), issueRequestKey, requestHash,
+		)
+		if replayErr != nil {
+			writeIssueCreateReplayError(w, replayErr)
+			return
+		}
+		if found {
+			writeJSON(w, http.StatusCreated, replay)
+			return
+		}
+	}
 	if !validateIssueEnum(w, "status", status, validIssueStatuses) {
 		return
 	}
@@ -682,9 +711,6 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		dueDate = d
 	}
 
-	// Determine creator identity: agent (via X-Agent-ID header) or member.
-	creatorType, actualCreatorID := h.resolveActor(r, creatorID, workspaceID)
-
 	// Optional origin stamping (quick-create / autopilot). Only the
 	// allowed origin types are accepted; anything else is rejected so a
 	// rogue caller can't mint arbitrary origin labels. Both fields must
@@ -710,7 +736,6 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		originType = pgtype.Text{String: *req.OriginType, Valid: true}
 		originID = oid
 	}
-
 	// Prefix is workspace-level; pre-compute once so both the broadcast
 	// payload builder and the HTTP response share the same value.
 	prefix := h.getIssuePrefix(r.Context(), wsUUID)
@@ -760,7 +785,7 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		return out
 	}
 
-	res, err := h.IssueService.Create(r.Context(), service.IssueCreateParams{
+	createParams := service.IssueCreateParams{
 		WorkspaceID:   wsUUID,
 		Title:         req.Title,
 		Description:   ptrToText(req.Description),
@@ -778,7 +803,8 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		OriginID:      originID,
 		AttachmentIDs: attachmentIDs,
 		Metadata:      metadata,
-	}, service.IssueCreateOpts{
+	}
+	createOpts := service.IssueCreateOpts{
 		ActorID:          actualCreatorID,
 		AnalyticsAgentID: analyticsAgentID,
 		Platform:         func() string { p, _, _ := middleware.ClientMetadataFromContext(r.Context()); return p }(),
@@ -787,7 +813,22 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 			payload.Attachments = buildAttachmentResponses(atts)
 			return map[string]any{"issue": payload}
 		},
-	})
+	}
+
+	var res service.IssueCreateResult
+	if originType.Valid {
+		res, err = h.IssueService.Create(r.Context(), createParams, createOpts)
+	} else {
+		var replay *IssueResponse
+		res, replay, err = h.createIssueWithRecovery(
+			r.Context(), wsUUID, parseUUID(actualCreatorID), issueRequestKey, requestHash,
+			createParams, createOpts, prefix, buildAttachmentResponses,
+		)
+		if replay != nil {
+			writeJSON(w, http.StatusCreated, *replay)
+			return
+		}
+	}
 
 	if errors.Is(err, service.ErrParentIssueNotFound) {
 		writeError(w, http.StatusBadRequest, "parent issue not found in this workspace")

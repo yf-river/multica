@@ -6,9 +6,13 @@ HTTP validation and response assembly live in the Issue and Comment handlers.
 The database is the source of truth; React Query owns the corresponding client
 state and realtime events only invalidate or reconcile that cache.
 
-- `POST /api/issues` and `PUT /api/issues/{id}` validate workspace-scoped
-  assignees, dates, parent/project references and attachment claims before the
-  mutation commits.
+- `POST /api/issues` carries one UUIDv4 request identity from the Core pending
+  operation through the HTTP boundary. The Issue row, attachment claims,
+  assignment/approval projection, outbox event and exact `201` response are
+  prepared and committed with the shared `resource_create_request` row. A lost
+  response is replayed byte-for-byte; changed input under the same key is 409.
+  `PUT /api/issues/{id}` retains its resource-identity idempotence. Both paths
+  validate workspace-scoped assignees, dates and parent/project references.
 - `POST /api/issues/{id}/comments` commits the comment, attachment claims,
   thread reopening and `comment:created` outbox event together.
 - Batch update is intentionally per-item, not all-or-nothing. Every item is
@@ -41,6 +45,9 @@ rather than an endless foreign-key retry.
 ## Verification anchors
 
 - Issue writes and shared atomic delete: `server/internal/handler/issue.go`
+- Issue request/result recovery and transaction boundary:
+  `server/internal/handler/issue_idempotency.go` and
+  `server/internal/service/issue.go`
 - Per-item batch results: `server/internal/handler/issue_batch.go`
 - Comment transaction: `server/internal/handler/comment.go`
 - Task start/terminal services: `server/internal/service/task_claim.go`,

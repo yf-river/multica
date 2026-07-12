@@ -24,12 +24,12 @@
     "databaseFunctions": 9,
     "databaseTriggers": 4,
     "databaseIndexes": 185,
-    "migrations": 102,
+    "migrations": 104,
     "sqlcModules": 53,
     "sqlcQueries": 571,
     "goWebsocketEvents": 80,
     "typescriptWebsocketEvents": 70,
-    "zustandStores": 33,
+    "zustandStores": 34,
     "reactQueryConsumerFiles": 175,
     "environmentVariables": 217,
     "manualExternalSystems": 12
@@ -6735,6 +6735,32 @@
           "droppedIndexes": [
             "idx_issue_origin"
           ]
+        },
+        {
+          "version": 52,
+          "name": "add_issue_create_request",
+          "direction": "down",
+          "source": "server/migrations/052_add_issue_create_request.down.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 52,
+          "name": "add_issue_create_request",
+          "direction": "up",
+          "source": "server/migrations/052_add_issue_create_request.up.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
         }
       ],
       "tables": [
@@ -13197,6 +13223,14 @@
         "persisted": true
       },
       {
+        "source": "packages/core/issues/issue-create-pending-store.ts",
+        "scope": "packages/core",
+        "exports": [
+          "useIssueCreatePendingStore"
+        ],
+        "persisted": true
+      },
+      {
         "source": "packages/core/issues/store.ts",
         "scope": "packages/core",
         "exports": [
@@ -15397,7 +15431,7 @@
       },
       {
         "scope": "packages/core",
-        "count": 31
+        "count": 32
       }
     ],
     "reactQueryByScope": [
@@ -18467,6 +18501,7 @@
           "server/internal/handler/issue_batch.go",
           "server/internal/handler/issue_child_done.go",
           "server/internal/handler/issue_execution_tree.go",
+          "server/internal/handler/issue_idempotency.go",
           "server/internal/handler/issue_list.go",
           "server/internal/handler/issue_metadata.go",
           "server/internal/handler/issue_quick_create.go",

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/eventoutbox"
@@ -137,6 +138,18 @@ type IssueCreateResult struct {
 	Attachments []db.Attachment
 }
 
+// PreparedIssueCreate is durable issue state assembled inside a caller-owned
+// transaction. Publish must be called only after that transaction commits.
+// The private fields prevent handlers from emitting projections early.
+type PreparedIssueCreate struct {
+	Result       IssueCreateResult
+	projection   issueCreateProjection
+	createdEvent events.Event
+	creatorType  string
+	actorID      string
+	opts         IssueCreateOpts
+}
+
 type issueCreateProjection struct {
 	assignmentTask       *db.AgentTaskQueue
 	assignmentLeaderTask bool
@@ -190,13 +203,35 @@ func (p IssueApprovalProjection) CurrentIssue(fallback db.Issue) db.Issue {
 // Caller-owned validation is limited to transport-shaped checks: title
 // required, RFC3339 date format, assignee pair sanity.
 func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts IssueCreateOpts) (IssueCreateResult, error) {
-	requestedStatus := p.Status
 	tx, err := s.TxStarter.Begin(ctx)
 	if err != nil {
 		return IssueCreateResult{}, fmt.Errorf("begin tx: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	qtx := s.Queries.WithTx(tx)
+	prepared, err := s.PrepareCreateInTx(ctx, tx, qtx, p, opts)
+	if err != nil {
+		return IssueCreateResult{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return IssueCreateResult{}, fmt.Errorf("commit: %w", err)
+	}
+	s.PublishPreparedCreate(ctx, prepared)
+	return prepared.Result, nil
+}
+
+// PrepareCreateInTx performs every durable part of Issue creation without
+// committing or publishing. It lets an HTTP boundary atomically add its own
+// request/result record while all non-HTTP callers retain Create's simpler
+// transaction-owning API.
+func (s *IssueService) PrepareCreateInTx(
+	ctx context.Context,
+	tx pgx.Tx,
+	qtx *db.Queries,
+	p IssueCreateParams,
+	opts IssueCreateOpts,
+) (PreparedIssueCreate, error) {
+	requestedStatus := p.Status
 
 	// Resolve and validate parent / project before touching the issue
 	// counter. Both checks scope by WorkspaceID — there is no path from
@@ -210,7 +245,7 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 			WorkspaceID: p.WorkspaceID,
 		})
 		if err != nil || !parent.ID.Valid {
-			return IssueCreateResult{}, ErrParentIssueNotFound
+			return PreparedIssueCreate{}, ErrParentIssueNotFound
 		}
 		// Back-fill project from parent when the caller did not pin
 		// one explicitly. Matches the long-standing HTTP behavior: a
@@ -226,7 +261,7 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 			WorkspaceID: p.WorkspaceID,
 		})
 		if err != nil {
-			return IssueCreateResult{}, ErrProjectNotFound
+			return PreparedIssueCreate{}, ErrProjectNotFound
 		}
 		hasProject = true
 	}
@@ -243,7 +278,7 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 			WorkspaceID: project.WorkspaceID,
 		})
 		if err != nil {
-			return IssueCreateResult{}, fmt.Errorf("load project lead agent: %w", err)
+			return PreparedIssueCreate{}, fmt.Errorf("load project lead agent: %w", err)
 		}
 		if !leadAgent.ArchivedAt.Valid {
 			agentLeadReviewRequested = true
@@ -259,7 +294,7 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 
 	issueNumber, err := qtx.IncrementIssueCounter(ctx, p.WorkspaceID)
 	if err != nil {
-		return IssueCreateResult{}, fmt.Errorf("increment counter: %w", err)
+		return PreparedIssueCreate{}, fmt.Errorf("increment counter: %w", err)
 	}
 
 	// New issues sort to the top of their (workspace, status) column for
@@ -273,7 +308,7 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 	// to the secondary ORDER BY key.
 	newPosition, err := issueposition.NextTopPosition(ctx, tx, p.WorkspaceID, p.Status)
 	if err != nil {
-		return IssueCreateResult{}, fmt.Errorf("next top position: %w", err)
+		return PreparedIssueCreate{}, fmt.Errorf("next top position: %w", err)
 	}
 
 	var issue db.Issue
@@ -317,7 +352,7 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 		})
 	}
 	if err != nil {
-		return IssueCreateResult{}, fmt.Errorf("create issue: %w", err)
+		return PreparedIssueCreate{}, fmt.Errorf("create issue: %w", err)
 	}
 	for key, value := range p.Metadata {
 		issue, err = qtx.SetIssueMetadataKey(ctx, db.SetIssueMetadataKeyParams{
@@ -327,13 +362,13 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 			Value:       value,
 		})
 		if err != nil {
-			return IssueCreateResult{}, fmt.Errorf("set issue metadata %q: %w", key, err)
+			return PreparedIssueCreate{}, fmt.Errorf("set issue metadata %q: %w", key, err)
 		}
 	}
 
 	attachments, err := linkAttachmentsForNewIssue(ctx, qtx, issue, p.AttachmentIDs)
 	if err != nil {
-		return IssueCreateResult{}, err
+		return PreparedIssueCreate{}, err
 	}
 
 	actorID := opts.ActorID
@@ -353,7 +388,7 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 		opts.SourceSummaryAgentID,
 	)
 	if err != nil {
-		return IssueCreateResult{}, fmt.Errorf("create issue projection: %w", err)
+		return PreparedIssueCreate{}, fmt.Errorf("create issue projection: %w", err)
 	}
 	if projection.approvalIssue != nil {
 		issue = *projection.approvalIssue
@@ -364,21 +399,25 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 	createdEvent := s.buildIssueCreatedEvent(issue, attachments, p.CreatorType, actorID, opts)
 	createdEvent, err = eventoutbox.Enqueue(ctx, qtx, createdEvent)
 	if err != nil {
-		return IssueCreateResult{}, fmt.Errorf("enqueue issue-created event: %w", err)
+		return PreparedIssueCreate{}, fmt.Errorf("enqueue issue-created event: %w", err)
 	}
+	return PreparedIssueCreate{
+		Result:       IssueCreateResult{Issue: issue, Attachments: attachments},
+		projection:   projection,
+		createdEvent: createdEvent,
+		creatorType:  p.CreatorType,
+		actorID:      actorID,
+		opts:         opts,
+	}, nil
+}
 
-	if err := tx.Commit(ctx); err != nil {
-		return IssueCreateResult{}, fmt.Errorf("commit: %w", err)
-	}
-
+// PublishPreparedCreate emits only post-commit effects for a prepared create.
+func (s *IssueService) PublishPreparedCreate(ctx context.Context, prepared PreparedIssueCreate) {
 	if s.Bus != nil {
-		s.Bus.Publish(createdEvent)
+		s.Bus.Publish(prepared.createdEvent)
 	}
-
-	s.captureCreatedAnalytics(issue, p.CreatorType, actorID, opts)
-	s.publishIssueCreateProjection(ctx, projection, p.CreatorType, actorID)
-
-	return IssueCreateResult{Issue: issue, Attachments: attachments}, nil
+	s.captureCreatedAnalytics(prepared.Result.Issue, prepared.creatorType, prepared.actorID, prepared.opts)
+	s.publishIssueCreateProjection(ctx, prepared.projection, prepared.creatorType, prepared.actorID)
 }
 
 func (s *IssueService) createIssueProjectionInTx(

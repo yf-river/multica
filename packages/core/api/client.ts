@@ -633,14 +633,22 @@ export class ApiClient extends ApiTransport {
     });
   }
 
-  async createIssue(data: CreateIssueRequest): Promise<Issue> {
-    const raw = await this.fetch<unknown>("/api/issues", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseOrThrow(raw, IssueSchema, EMPTY_ISSUE, {
-      endpoint: "POST /api/issues",
-    });
+  async createIssue(
+    data: CreateIssueRequest,
+    idempotencyKey = generateUUID(),
+  ): Promise<Issue> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>("/api/issues", {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow(raw, IssueSchema, EMPTY_ISSUE, {
+        endpoint: "POST /api/issues",
+        mayHaveCommitted: true,
+      });
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async quickCreateIssue(
