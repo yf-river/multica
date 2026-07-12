@@ -15,6 +15,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/storage"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -580,10 +581,18 @@ func (h *Handler) loadAttachmentForDownload(w http.ResponseWriter, r *http.Reque
 	}
 	att, err := h.Queries.GetAttachmentByIDOnly(r.Context(), attUUID)
 	if err != nil {
-		// 404 (not 403/401) so non-member and non-existent look identical
-		// to outside callers. Same shape as ServeLocalUpload's
-		// canReadWorkspaceUpload deny path.
-		writeError(w, http.StatusNotFound, "attachment not found")
+		if writeClientClosedIfCanceled(w, err) {
+			return db.Attachment{}, false
+		}
+		if errors.Is(err, pgx.ErrNoRows) {
+			// 404 (not 403/401) so non-member and non-existent look identical
+			// to outside callers. Same shape as ServeLocalUpload's
+			// canReadWorkspaceUpload deny path.
+			writeError(w, http.StatusNotFound, "attachment not found")
+		} else {
+			slog.Error("load attachment for download failed", "attachment_id", attachmentID, "error", err)
+			writeError(w, http.StatusInternalServerError, "failed to load attachment")
+		}
 		return db.Attachment{}, false
 	}
 
@@ -600,8 +609,7 @@ func (h *Handler) loadAttachmentForDownload(w http.ResponseWriter, r *http.Reque
 	if h.MembershipCache.Get(r.Context(), userID, workspaceID) {
 		return att, true
 	}
-	if _, err := h.getWorkspaceMember(r.Context(), userID, workspaceID); err != nil {
-		writeError(w, http.StatusNotFound, "attachment not found")
+	if _, ok := h.requireWorkspaceMember(w, r, workspaceID, "attachment not found"); !ok {
 		return db.Attachment{}, false
 	}
 	h.MembershipCache.Set(r.Context(), userID, workspaceID)
