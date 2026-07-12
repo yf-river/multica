@@ -1781,11 +1781,6 @@ export class ApiClient extends ApiTransport {
     });
   }
 
-  // Personal Access Tokens
-  async revokePersonalAccessToken(id: string): Promise<void> {
-    await this.fetch(`/api/tokens/${id}`, { method: "DELETE" });
-  }
-
   // File Upload & Attachments
   async uploadFile(
     file: File,
@@ -1926,10 +1921,6 @@ export class ApiClient extends ApiTransport {
     return parseWithFallback(raw, AttachmentResponseSchema, EMPTY_ATTACHMENT, {
       endpoint: "GET /api/attachments/{id}",
     });
-  }
-
-  async deleteAttachment(id: string): Promise<void> {
-    await this.fetch(`/api/attachments/${id}`, { method: "DELETE" });
   }
 
   // Fetches the raw bytes of a text-previewable attachment.
