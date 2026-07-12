@@ -679,7 +679,7 @@ func (h *Handler) CreatePromptLibraryTrial(w http.ResponseWriter, r *http.Reques
 		PromptID:    item.ID,
 	})
 	if err != nil {
-		writeError(w, http.StatusNotFound, "prompt version not found")
+		writeEntityLoadError(w, r, err, "prompt version", "version_id", chi.URLParam(r, "versionId"), "prompt_id", uuidToString(item.ID))
 		return
 	}
 
@@ -700,27 +700,40 @@ func (h *Handler) CreatePromptLibraryTrial(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	agent, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
+	workspaceID := uuidToString(item.WorkspaceID)
+	actorType, actorID := h.resolveActor(r, userID, workspaceID)
+	renderedMessage := renderPromptLibraryTrialMessage(version.Content, strings.TrimSpace(req.Input), req.Variables)
+	variablesJSON, _ := json.Marshal(req.Variables)
+	if len(variablesJSON) == 0 || string(variablesJSON) == "null" {
+		variablesJSON = []byte(`{}`)
+	}
+
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start prompt trial transaction")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+
+	agent, err := qtx.LockAgentInWorkspaceForChat(r.Context(), db.LockAgentInWorkspaceForChatParams{
 		ID:          agentID,
 		WorkspaceID: item.WorkspaceID,
 	})
 	if err != nil {
-		writeError(w, http.StatusNotFound, "agent not found")
+		writeEntityLoadError(w, r, err, "agent", "agent_id", req.AgentID)
 		return
 	}
 	if agent.ArchivedAt.Valid {
 		writeError(w, http.StatusBadRequest, "agent is archived")
 		return
 	}
-	workspaceID := uuidToString(item.WorkspaceID)
-	actorType, actorID := h.resolveActor(r, userID, workspaceID)
 	if !h.canAccessPersonalAgent(r.Context(), agent, actorType, actorID, workspaceID) {
 		writeError(w, http.StatusForbidden, "you do not have access to this agent")
 		return
 	}
 
-	renderedMessage := renderPromptLibraryTrialMessage(version.Content, strings.TrimSpace(req.Input), req.Variables)
-	session, err := h.Queries.CreateChatSession(r.Context(), db.CreateChatSessionParams{
+	session, err := qtx.CreateChatSession(r.Context(), db.CreateChatSessionParams{
 		WorkspaceID: item.WorkspaceID,
 		AgentID:     agent.ID,
 		CreatorID:   parseUUID(userID),
@@ -730,7 +743,7 @@ func (h *Handler) CreatePromptLibraryTrial(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "failed to create prompt trial chat session")
 		return
 	}
-	msg, err := h.Queries.CreateChatMessage(r.Context(), db.CreateChatMessageParams{
+	msg, err := qtx.CreateChatMessage(r.Context(), db.CreateChatMessageParams{
 		ChatSessionID: session.ID,
 		Role:          "user",
 		Content:       renderedMessage,
@@ -739,20 +752,16 @@ func (h *Handler) CreatePromptLibraryTrial(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "failed to create prompt trial message")
 		return
 	}
-	task, err := h.TaskService.EnqueueChatTask(r.Context(), session, parseUUID(userID))
+	task, err := h.TaskService.CreateChatTaskInTx(r.Context(), qtx, session, agent, parseUUID(userID))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to enqueue prompt trial task: "+err.Error())
 		return
 	}
-	if err := h.Queries.LinkChatMessageToTask(r.Context(), db.LinkChatMessageToTaskParams{ID: msg.ID, TaskID: task.ID}); err != nil {
+	if err := qtx.LinkChatMessageToTask(r.Context(), db.LinkChatMessageToTaskParams{ID: msg.ID, TaskID: task.ID}); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to link prompt trial message")
 		return
 	}
-	variablesJSON, _ := json.Marshal(req.Variables)
-	if len(variablesJSON) == 0 || string(variablesJSON) == "null" {
-		variablesJSON = []byte(`{}`)
-	}
-	trial, err := h.Queries.CreatePromptLibraryTrial(r.Context(), db.CreatePromptLibraryTrialParams{
+	trial, err := qtx.CreatePromptLibraryTrial(r.Context(), db.CreatePromptLibraryTrialParams{
 		WorkspaceID:     item.WorkspaceID,
 		PromptID:        item.ID,
 		VersionID:       version.ID,
@@ -769,6 +778,11 @@ func (h *Handler) CreatePromptLibraryTrial(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "failed to create prompt library trial")
 		return
 	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit prompt library trial")
+		return
+	}
+	h.TaskService.PublishChatTaskEnqueued(r.Context(), task)
 	writeJSON(w, http.StatusAccepted, promptLibraryTrialToResponse(trial))
 }
 
