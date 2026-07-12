@@ -797,16 +797,10 @@ func buildPromptEvaluationSkillReEvalPayload(sourceAsset db.PromptEvaluationAsse
 	payloadCases := make([]map[string]any, 0, len(cases))
 	for _, item := range cases {
 		payloadCases = append(payloadCases, map[string]any{
-			"name":              item.Name,
 			"case_name":         item.Name,
 			"variables":         item.Variables,
 			"expected_contains": item.ExpectedContains,
-			"input":             item.Input,
-			"expected":          item.Expected,
 			"tags":              item.Tags,
-			"source_commit":     item.SourceCommit,
-			"evidence_source":   item.EvidenceSource,
-			"status":            item.Status,
 		})
 	}
 	return normalizePromptEvaluationPayloadObject(map[string]any{

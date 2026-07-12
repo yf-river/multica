@@ -714,12 +714,10 @@ func normalizePromptEvaluationCase(index int, item map[string]any) normalizedPro
 	variables := stringMapFromAny(item["variables"])
 	expectedContains := stringListFromAny(item["expected_contains"])
 	input := map[string]any{
-		"变量":   variables,
-		"原始输入": firstValue(item, "input", "输入"),
+		"变量": variables,
 	}
 	expected := map[string]any{
 		"期望包含": expectedContains,
-		"原始期望": firstValue(item, "expected", "期望"),
 	}
 	return normalizedPromptEvaluationCase{
 		Name:             name,

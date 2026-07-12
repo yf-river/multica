@@ -64,13 +64,21 @@ func TestPromptEvaluationCaseProjectionsUseCanonicalFieldsOnly(t *testing.T) {
 
 func TestPromptEvaluationCaseNormalizerDoesNotReadRetiredAliases(t *testing.T) {
 	retired := normalizePromptEvaluationCase(0, map[string]any{
-		"名称":   "retired name",
-		"变量":   map[string]any{"title": "retired"},
-		"期望包含": []any{"retired"},
-		"标签":   []any{"retired"},
+		"名称":       "retired name",
+		"变量":       map[string]any{"title": "retired"},
+		"期望包含":     []any{"retired"},
+		"标签":       []any{"retired"},
+		"input":    map[string]any{"retired": true},
+		"expected": map[string]any{"retired": true},
 	})
 	if retired.Name != "用例 1" || len(retired.Variables) != 0 || len(retired.ExpectedContains) != 0 || len(retired.Tags) != 0 {
 		t.Fatalf("retired aliases were still consumed: %#v", retired)
+	}
+	if _, exists := retired.Input["原始输入"]; exists {
+		t.Fatalf("retired input survived normalization: %#v", retired.Input)
+	}
+	if _, exists := retired.Expected["原始期望"]; exists {
+		t.Fatalf("retired expected value survived normalization: %#v", retired.Expected)
 	}
 
 	current := normalizePromptEvaluationCase(0, map[string]any{

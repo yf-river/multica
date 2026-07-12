@@ -597,6 +597,9 @@ func TestPromptEvaluationSkillReEvalPayloadUsesApprovedDraftsAndSnapshot(t *test
 	if !ok || len(payloadCases) != 1 {
 		t.Fatalf("payload cases = %#v", payload["cases"])
 	}
+	if len(payloadCases[0]) != 4 || payloadCases[0]["case_name"] == "" || payloadCases[0]["variables"] == nil || payloadCases[0]["expected_contains"] == nil || payloadCases[0]["tags"] == nil {
+		t.Fatalf("payload case is not canonical: %#v", payloadCases[0])
+	}
 }
 
 func TestPromptEvaluationSkillReEvalRunHelpersValidateAssetAndEvidence(t *testing.T) {
