@@ -215,7 +215,7 @@ INSERT INTO lark_outbound_card_message (
 ) VALUES (
     $1, $5, $2, $3, $4
 )
-RETURNING id, chat_session_id, task_id, lark_chat_id, lark_card_message_id, status, last_patched_at, created_at
+RETURNING id, chat_session_id, task_id, lark_chat_id, lark_card_message_id, status, created_at
 `
 
 type CreateLarkOutboundCardMessageParams struct {
@@ -242,7 +242,6 @@ func (q *Queries) CreateLarkOutboundCardMessage(ctx context.Context, arg CreateL
 		&i.LarkChatID,
 		&i.LarkCardMessageID,
 		&i.Status,
-		&i.LastPatchedAt,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -458,7 +457,7 @@ func (q *Queries) GetLarkInstallationInWorkspace(ctx context.Context, arg GetLar
 }
 
 const getLarkOutboundCardByTask = `-- name: GetLarkOutboundCardByTask :one
-SELECT id, chat_session_id, task_id, lark_chat_id, lark_card_message_id, status, last_patched_at, created_at FROM lark_outbound_card_message
+SELECT id, chat_session_id, task_id, lark_chat_id, lark_card_message_id, status, created_at FROM lark_outbound_card_message
 WHERE task_id = $1
 `
 
@@ -475,7 +474,6 @@ func (q *Queries) GetLarkOutboundCardByTask(ctx context.Context, taskID pgtype.U
 		&i.LarkChatID,
 		&i.LarkCardMessageID,
 		&i.Status,
-		&i.LastPatchedAt,
 		&i.CreatedAt,
 	)
 	return i, err
@@ -798,8 +796,7 @@ func (q *Queries) SetLarkInstallationStatus(ctx context.Context, arg SetLarkInst
 
 const updateLarkOutboundCardStatus = `-- name: UpdateLarkOutboundCardStatus :exec
 UPDATE lark_outbound_card_message
-SET status = $2,
-    last_patched_at = now()
+SET status = $2
 WHERE id = $1
 `
 

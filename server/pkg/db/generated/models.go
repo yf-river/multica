@@ -508,12 +508,11 @@ type IssueLabel struct {
 }
 
 type IssuePullRequest struct {
-	IssueID       pgtype.UUID        `json:"issue_id"`
-	PullRequestID pgtype.UUID        `json:"pull_request_id"`
-	LinkedByType  pgtype.Text        `json:"linked_by_type"`
-	LinkedByID    pgtype.UUID        `json:"linked_by_id"`
-	LinkedAt      pgtype.Timestamptz `json:"linked_at"`
-	CloseIntent   bool               `json:"close_intent"`
+	IssueID       pgtype.UUID `json:"issue_id"`
+	PullRequestID pgtype.UUID `json:"pull_request_id"`
+	LinkedByType  pgtype.Text `json:"linked_by_type"`
+	LinkedByID    pgtype.UUID `json:"linked_by_id"`
+	CloseIntent   bool        `json:"close_intent"`
 }
 
 type IssueReaction struct {
@@ -603,7 +602,6 @@ type LarkOutboundCardMessage struct {
 	LarkChatID        string             `json:"lark_chat_id"`
 	LarkCardMessageID string             `json:"lark_card_message_id"`
 	Status            string             `json:"status"`
-	LastPatchedAt     pgtype.Timestamptz `json:"last_patched_at"`
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 }
 

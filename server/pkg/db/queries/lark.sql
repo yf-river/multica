@@ -285,8 +285,7 @@ WHERE task_id = $1;
 
 -- name: UpdateLarkOutboundCardStatus :exec
 UPDATE lark_outbound_card_message
-SET status = $2,
-    last_patched_at = now()
+SET status = $2
 WHERE id = $1;
 
 -- =====================

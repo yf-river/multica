@@ -25,7 +25,7 @@ evidence reviewable by humans.
 | Database functions | 9 |
 | Database triggers | 4 |
 | Database indexes | 194 |
-| Migration files (up + down) | 172 |
+| Migration files (up + down) | 174 |
 | sqlc modules | 55 |
 | sqlc queries | 561 |
 | Go WebSocket events | 79 |
@@ -658,6 +658,8 @@ intentionally platform-specific.
 | 85 | require_agent_mcp_config_object | up | — | 0 | 0 | 0 | `server/migrations/085_require_agent_mcp_config_object.up.sql` |
 | 86 | remove_unused_issue_json_fields | down | — | 0 | 0 | 0 | `server/migrations/086_remove_unused_issue_json_fields.down.sql` |
 | 86 | remove_unused_issue_json_fields | up | — | 0 | 0 | 0 | `server/migrations/086_remove_unused_issue_json_fields.up.sql` |
+| 87 | remove_unused_write_only_timestamps | down | — | 0 | 0 | 0 | `server/migrations/087_remove_unused_write_only_timestamps.down.sql` |
+| 87 | remove_unused_write_only_timestamps | up | — | 0 | 0 | 0 | `server/migrations/087_remove_unused_write_only_timestamps.up.sql` |
 
 ### Current tables discovered from up migrations
 

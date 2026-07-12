@@ -863,7 +863,6 @@ CREATE TABLE public.issue_pull_request (
     pull_request_id uuid NOT NULL,
     linked_by_type text,
     linked_by_id uuid,
-    linked_at timestamp with time zone DEFAULT now() NOT NULL,
     close_intent boolean DEFAULT false NOT NULL
 );
 
@@ -961,7 +960,6 @@ CREATE TABLE public.lark_outbound_card_message (
     lark_chat_id text NOT NULL,
     lark_card_message_id text NOT NULL,
     status text DEFAULT 'pending'::text NOT NULL,
-    last_patched_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT lark_outbound_card_message_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'streaming'::text, 'final'::text, 'error'::text])))
 );
