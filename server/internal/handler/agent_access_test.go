@@ -50,6 +50,24 @@ func TestMemberAllowedForPrivateAgent_Pure(t *testing.T) {
 	}
 }
 
+func TestPersonalAgentAccessPreservesMembershipLookupFailure(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("handler test fixture not initialized")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	agent := db.Agent{
+		Scope:       scopePersonal,
+		OwnerID:     util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
+		WorkspaceID: util.MustParseUUID(testWorkspaceID),
+	}
+
+	allowed, err := testHandler.personalAgentAccess(ctx, agent, "member", "22222222-2222-2222-2222-222222222222", testWorkspaceID)
+	if allowed || err == nil {
+		t.Fatalf("personalAgentAccess() allowed=%t err=%v, want denied with membership lookup error", allowed, err)
+	}
+}
+
 // personalAgentTestFixture sets up a personal agent owned by a freshly created
 // user, plus a second non-admin member in the workspace. Returns the agent
 // id, the owner's user id, and the unrelated member's user id. The caller's
