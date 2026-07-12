@@ -37,9 +37,9 @@ changing the leader field.
 
 | Contract | Current source |
 |---|---|
-| Build leader briefing and roster | server/internal/handler/squad_briefing.go:69-218 |
-| Claim-time briefing injection | server/internal/handler/daemon_tasks.go:184,635 |
-| Archived roster agents skipped | server/internal/handler/squad_briefing.go:169-190 |
+| Build leader briefing and roster | server/internal/handler/squad_briefing.go:70-168 |
+| Claim-time briefing injection and fail-closed response build | server/internal/handler/daemon_tasks.go:251-280,658-696 |
+| Archived roster agents skipped; roster read failures propagated | server/internal/handler/squad_briefing.go:108-166 |
 
 Only the leader task receives the squad operating briefing.
 

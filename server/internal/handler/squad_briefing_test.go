@@ -259,7 +259,10 @@ func TestBuildSquadLeaderBriefing_FullSquad(t *testing.T) {
 	_ = memberRowID
 	addHumanMember(t, squad.ID, userID, "reviewer")
 
-	out := buildSquadLeaderBriefing(ctx, testHandler.Queries, squad)
+	out, err := buildSquadLeaderBriefing(ctx, testHandler.Queries, squad)
+	if err != nil {
+		t.Fatalf("build briefing: %v", err)
+	}
 
 	for _, want := range []string{
 		"## 小队负责人操作协议",
@@ -1671,13 +1674,27 @@ func TestBuildSquadLeaderBriefing_OnlyLeader(t *testing.T) {
 	leaderID, _ := seededLeaderAgent(t)
 	squad := seedSquadForBriefing(t, leaderID, "Solo Squad", "")
 
-	out := buildSquadLeaderBriefing(ctx, testHandler.Queries, squad)
+	out, err := buildSquadLeaderBriefing(ctx, testHandler.Queries, squad)
+	if err != nil {
+		t.Fatalf("build briefing: %v", err)
+	}
 	if !strings.Contains(out, "成员：（无；你是这个 squad 的唯一成员）") {
 		t.Errorf("expected lone-leader fallback line, got:\n%s", out)
 	}
 	// No user instructions → no squad instructions section.
 	if strings.Contains(out, "## 小队说明") {
 		t.Errorf("expected no squad instructions section when empty, got:\n%s", out)
+	}
+}
+
+func TestBuildSquadLeaderBriefingPreservesRosterReadFailure(t *testing.T) {
+	ctx := context.Background()
+	leaderID, _ := seededLeaderAgent(t)
+	squad := seedSquadForBriefing(t, leaderID, "Roster Failure Squad", "")
+	queries := db.New(failNamedQueryDB{DBTX: testPool, queryName: "ListSquadMembers"})
+
+	if _, err := buildSquadLeaderBriefing(ctx, queries, squad); err == nil || !strings.Contains(err.Error(), "list squad members") {
+		t.Fatalf("briefing error = %v, want roster read failure", err)
 	}
 }
 
@@ -1695,7 +1712,10 @@ func TestBuildSquadLeaderBriefing_SkipsArchivedAgent(t *testing.T) {
 		t.Fatalf("archive agent: %v", err)
 	}
 
-	out := buildSquadLeaderBriefing(ctx, testHandler.Queries, squad)
+	out, err := buildSquadLeaderBriefing(ctx, testHandler.Queries, squad)
+	if err != nil {
+		t.Fatalf("build briefing: %v", err)
+	}
 	if strings.Contains(out, "Retired Bot") {
 		t.Errorf("archived agent should not appear in roster:\n%s", out)
 	}
@@ -1720,7 +1740,10 @@ func TestBuildSquadLeaderBriefing_MentionsRoundTrip(t *testing.T) {
 	_ = memberRowID
 	addHumanMember(t, squad.ID, userID, "")
 
-	out := buildSquadLeaderBriefing(ctx, testHandler.Queries, squad)
+	out, err := buildSquadLeaderBriefing(ctx, testHandler.Queries, squad)
+	if err != nil {
+		t.Fatalf("build briefing: %v", err)
+	}
 	mentions := util.ParseMentions(out)
 
 	wantIDs := map[string]string{

@@ -64,7 +64,7 @@ by the guards in comment_triggers.go:622-680.
 | member | workspace member list user_id, server/cmd/multica/cmd_workspace.go |
 | agent | agent list id, server/cmd/multica/cmd_agent.go |
 | squad | squad list id, server/cmd/multica/cmd_squad.go |
-| formatted roster mention | server/internal/handler/squad_briefing.go:189-218 |
+| formatted roster mention | server/internal/handler/squad_briefing.go:187-191 |
 
 There is no member-notification delivery claim in this skill. The verified Go
 path only turns agent and squad mentions into runs.

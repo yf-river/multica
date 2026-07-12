@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -251,8 +252,17 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			if squad, err := h.Queries.GetSquadInWorkspace(r.Context(), db.GetSquadInWorkspaceParams{
 				ID:          issue.AssigneeID,
 				WorkspaceID: issue.WorkspaceID,
-			}); err == nil && uuidToString(squad.LeaderID) == resp.Agent.ID {
-				briefing := buildSquadLeaderBriefing(r.Context(), h.Queries, squad)
+			}); err != nil {
+				h.writeClaimResponseBuildError(w, task.ID, runtimeID, "squad", err)
+				outcome = "error_build"
+				return
+			} else if uuidToString(squad.LeaderID) == resp.Agent.ID {
+				briefing, err := buildSquadLeaderBriefing(r.Context(), h.Queries, squad)
+				if err != nil {
+					h.writeClaimResponseBuildError(w, task.ID, runtimeID, "squad briefing", err)
+					outcome = "error_build"
+					return
+				}
 				if strings.TrimSpace(resp.Agent.Instructions) == "" {
 					resp.Agent.Instructions = briefing
 				} else {
@@ -648,28 +658,40 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			if resp.Agent != nil && qc.SquadID != "" {
 				wsUUID, wsErr := util.ParseUUID(qc.WorkspaceID)
 				squadUUID, sqErr := util.ParseUUID(qc.SquadID)
-				if wsErr == nil && sqErr == nil {
-					if squad, err := h.Queries.GetSquadInWorkspace(r.Context(), db.GetSquadInWorkspaceParams{
-						ID:          squadUUID,
-						WorkspaceID: wsUUID,
-					}); err == nil && uuidToString(squad.LeaderID) == resp.Agent.ID {
-						briefing := buildSquadLeaderBriefing(r.Context(), h.Queries, squad)
-						if strings.TrimSpace(resp.Agent.Instructions) == "" {
-							resp.Agent.Instructions = briefing
-						} else {
-							resp.Agent.Instructions = resp.Agent.Instructions + "\n\n" + briefing
-						}
-						// Surface the squad identity to the daemon so the
-						// quick-create prompt defaults the new issue's
-						// assignee to the squad, not the leader agent.
-						resp.SquadID = uuidToString(squad.ID)
-						resp.SquadName = squad.Name
-						slog.Debug("injected squad leader briefing for quick-create",
-							"squad_id", uuidToString(squad.ID),
-							"squad_name", squad.Name,
-							"leader_agent_id", resp.Agent.ID,
-						)
+				if wsErr != nil || sqErr != nil {
+					h.writeClaimResponseBuildError(w, task.ID, runtimeID, "quick-create squad identity", fmt.Errorf("workspace: %v; squad: %v", wsErr, sqErr))
+					outcome = "error_build"
+					return
+				}
+				if squad, err := h.Queries.GetSquadInWorkspace(r.Context(), db.GetSquadInWorkspaceParams{
+					ID:          squadUUID,
+					WorkspaceID: wsUUID,
+				}); err != nil {
+					h.writeClaimResponseBuildError(w, task.ID, runtimeID, "quick-create squad", err)
+					outcome = "error_build"
+					return
+				} else if uuidToString(squad.LeaderID) == resp.Agent.ID {
+					briefing, err := buildSquadLeaderBriefing(r.Context(), h.Queries, squad)
+					if err != nil {
+						h.writeClaimResponseBuildError(w, task.ID, runtimeID, "quick-create squad briefing", err)
+						outcome = "error_build"
+						return
 					}
+					if strings.TrimSpace(resp.Agent.Instructions) == "" {
+						resp.Agent.Instructions = briefing
+					} else {
+						resp.Agent.Instructions = resp.Agent.Instructions + "\n\n" + briefing
+					}
+					// Surface the squad identity to the daemon so the
+					// quick-create prompt defaults the new issue's
+					// assignee to the squad, not the leader agent.
+					resp.SquadID = uuidToString(squad.ID)
+					resp.SquadName = squad.Name
+					slog.Debug("injected squad leader briefing for quick-create",
+						"squad_id", uuidToString(squad.ID),
+						"squad_name", squad.Name,
+						"leader_agent_id", resp.Agent.ID,
+					)
 				}
 			}
 		}
