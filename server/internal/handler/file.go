@@ -523,7 +523,7 @@ func (h *Handler) loadAttachmentForRequest(w http.ResponseWriter, r *http.Reques
 		WorkspaceID: wsUUID,
 	})
 	if err != nil {
-		writeError(w, http.StatusNotFound, "attachment not found")
+		writeEntityLoadError(w, r, err, "attachment", "attachment_id", attachmentID)
 		return db.Attachment{}, false
 	}
 
@@ -831,7 +831,6 @@ func isTextPreviewable(contentType, filename string) bool {
 // ---------------------------------------------------------------------------
 
 func (h *Handler) DeleteAttachment(w http.ResponseWriter, r *http.Request) {
-	attachmentID := chi.URLParam(r, "id")
 	workspaceID := h.resolveWorkspaceID(r)
 	if workspaceID == "" {
 		writeError(w, http.StatusBadRequest, "workspace_id is required")
@@ -843,21 +842,8 @@ func (h *Handler) DeleteAttachment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	attUUID, ok := parseUUIDOrBadRequest(w, attachmentID, "attachment id")
+	att, ok := h.loadAttachmentForRequest(w, r)
 	if !ok {
-		return
-	}
-	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
-	if !ok {
-		return
-	}
-
-	att, err := h.Queries.GetAttachment(r.Context(), db.GetAttachmentParams{
-		ID:          attUUID,
-		WorkspaceID: wsUUID,
-	})
-	if err != nil {
-		writeError(w, http.StatusNotFound, "attachment not found")
 		return
 	}
 
