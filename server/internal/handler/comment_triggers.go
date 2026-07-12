@@ -487,7 +487,11 @@ func (h *Handler) computeCommentAgentTriggers(ctx context.Context, issue db.Issu
 		add(trigger)
 	}
 
-	for _, trigger := range h.computeMentionedAgentCommentTriggers(ctx, issue, content, parentComment, actorType, actorID, opts) {
+	mentionedTriggers, err := h.computeMentionedAgentCommentTriggers(ctx, issue, content, parentComment, actorType, actorID, opts)
+	if err != nil {
+		return nil, err
+	}
+	for _, trigger := range mentionedTriggers {
 		add(trigger)
 	}
 
@@ -518,9 +522,14 @@ func (h *Handler) computeAssignedSquadLeaderCommentTrigger(ctx context.Context, 
 	if !allowed {
 		return commentAgentTrigger{}, false, nil
 	}
-	if authorType == "agent" && authorID == uuidToString(squad.LeaderID) &&
-		h.lastTaskWasLeader(ctx, issue.ID, squad.LeaderID) {
-		return commentAgentTrigger{}, false, nil
+	if authorType == "agent" && authorID == uuidToString(squad.LeaderID) {
+		wasLeader, err := h.lastTaskWasLeader(ctx, issue.ID, squad.LeaderID)
+		if err != nil {
+			return commentAgentTrigger{}, false, fmt.Errorf("load latest squad-leader task role: %w", err)
+		}
+		if wasLeader {
+			return commentAgentTrigger{}, false, nil
+		}
 	}
 	if authorType == "member" && commentMentionsAnyone(content) {
 		return commentAgentTrigger{}, false, nil
@@ -704,13 +713,17 @@ func shouldInheritParentMentions(parentComment *db.Comment, replyMentions []util
 // dedupe and the natural queued/dispatched coalescing of the task queue.
 // Note: no status gate here — @mention is an explicit action and should work
 // even on done/cancelled issues (the agent can reopen the issue if needed).
-func (h *Handler) computeMentionedAgentCommentTriggers(ctx context.Context, issue db.Issue, content string, parentComment *db.Comment, authorType, authorID string, opts commentTriggerComputeOptions) []commentAgentTrigger {
+func (h *Handler) computeMentionedAgentCommentTriggers(ctx context.Context, issue db.Issue, content string, parentComment *db.Comment, authorType, authorID string, opts commentTriggerComputeOptions) ([]commentAgentTrigger, error) {
 	wsID := uuidToString(issue.WorkspaceID)
 	mentions := util.ParseMentions(content)
 	if shouldInheritParentMentions(parentComment, mentions, authorType) {
 		mentions = util.ParseMentions(parentComment.Content)
 	}
-	mentions = append(mentions, h.parseSquadSOPRoleKeyMentions(ctx, issue, content)...)
+	roleMentions, err := h.parseSquadSOPRoleKeyMentions(ctx, issue, content)
+	if err != nil {
+		return nil, err
+	}
+	mentions = append(mentions, roleMentions...)
 	triggers := make([]commentAgentTrigger, 0, len(mentions))
 	seen := make(map[string]struct{}, len(mentions))
 	add := func(trigger commentAgentTrigger) {
@@ -730,9 +743,16 @@ func (h *Handler) computeMentionedAgentCommentTriggers(ctx context.Context, issu
 				WorkspaceID: issue.WorkspaceID,
 			})
 			if err != nil {
-				continue
+				if errors.Is(err, pgx.ErrNoRows) {
+					continue
+				}
+				return nil, fmt.Errorf("load mentioned squad: %w", err)
 			}
-			if !h.canUseSquad(ctx, squad, authorType, authorID, wsID) {
+			allowed, err := h.squadAccess(ctx, squad, authorType, authorID, wsID)
+			if err != nil {
+				return nil, fmt.Errorf("authorize mentioned squad: %w", err)
+			}
+			if !allowed {
 				continue
 			}
 			leaderID := squad.LeaderID
@@ -740,25 +760,43 @@ func (h *Handler) computeMentionedAgentCommentTriggers(ctx context.Context, issu
 			// issue was itself a leader task. An agent that holds both the
 			// leader and a worker role in the squad must still wake its
 			// leader role after posting a comment from its worker task.
-			if authorType == "agent" && authorID == uuidToString(leaderID) &&
-				h.lastTaskWasLeader(ctx, issue.ID, leaderID) {
-				continue
+			if authorType == "agent" && authorID == uuidToString(leaderID) {
+				wasLeader, err := h.lastTaskWasLeader(ctx, issue.ID, leaderID)
+				if err != nil {
+					return nil, fmt.Errorf("load mentioned squad leader task role: %w", err)
+				}
+				if wasLeader {
+					continue
+				}
 			}
 			// Verify leader agent is ready (has runtime, not archived).
 			agent, err := h.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
 				ID:          leaderID,
 				WorkspaceID: issue.WorkspaceID,
 			})
-			if err != nil || !agent.RuntimeID.Valid || agent.ArchivedAt.Valid {
+			if err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					continue
+				}
+				return nil, fmt.Errorf("load mentioned squad leader: %w", err)
+			}
+			if !agent.RuntimeID.Valid || agent.ArchivedAt.Valid {
 				continue
 			}
 			// Private-agent gate: prevent triggering a personal leader via squad mention.
-			if !h.canAccessPersonalAgent(ctx, agent, authorType, authorID, wsID) {
+			allowed, err = h.personalAgentAccess(ctx, agent, authorType, authorID, wsID)
+			if err != nil {
+				return nil, fmt.Errorf("authorize mentioned squad leader: %w", err)
+			}
+			if !allowed {
 				continue
 			}
 			// Dedup: skip if leader already has a pending task for this issue.
 			hasPending, err := h.hasPendingTaskForIssueAndAgent(ctx, issue.ID, leaderID, opts)
-			if err != nil || hasPending {
+			if err != nil {
+				return nil, fmt.Errorf("check pending mentioned squad-leader task: %w", err)
+			}
+			if hasPending {
 				continue
 			}
 			add(commentAgentTrigger{Agent: agent, Source: commentTriggerSourceMentionSquadLeader, Squad: &squad})
@@ -778,17 +816,30 @@ func (h *Handler) computeMentionedAgentCommentTriggers(ctx context.Context, issu
 			ID:          agentUUID,
 			WorkspaceID: issue.WorkspaceID,
 		})
-		if err != nil || !agent.RuntimeID.Valid || agent.ArchivedAt.Valid {
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				continue
+			}
+			return nil, fmt.Errorf("load mentioned agent: %w", err)
+		}
+		if !agent.RuntimeID.Valid || agent.ArchivedAt.Valid {
 			continue
 		}
 		// Private-agent gate (member→private requires allowed_principals;
 		// agent→agent always passes).
-		if !h.canAccessPersonalAgent(ctx, agent, authorType, authorID, wsID) {
+		allowed, err := h.personalAgentAccess(ctx, agent, authorType, authorID, wsID)
+		if err != nil {
+			return nil, fmt.Errorf("authorize mentioned agent: %w", err)
+		}
+		if !allowed {
 			continue
 		}
 		// Dedup: skip if this agent already has a pending task for this issue.
 		hasPending, err := h.hasPendingTaskForIssueAndAgent(ctx, issue.ID, agentUUID, opts)
-		if err != nil || hasPending {
+		if err != nil {
+			return nil, fmt.Errorf("check pending mentioned-agent task: %w", err)
+		}
+		if hasPending {
 			continue
 		}
 		if issue.AssigneeType.Valid && issue.AssigneeType.String == "squad" && issue.AssigneeID.Valid {
@@ -796,6 +847,9 @@ func (h *Handler) computeMentionedAgentCommentTriggers(ctx context.Context, issu
 				ID:          issue.AssigneeID,
 				WorkspaceID: issue.WorkspaceID,
 			})
+			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return nil, fmt.Errorf("load assigned squad for mentioned leader classification: %w", err)
+			}
 			if err == nil && uuidToString(squad.LeaderID) == uuidToString(agentUUID) {
 				add(commentAgentTrigger{Agent: agent, Source: commentTriggerSourceMentionSquadLeader, Squad: &squad})
 				continue
@@ -803,16 +857,16 @@ func (h *Handler) computeMentionedAgentCommentTriggers(ctx context.Context, issu
 		}
 		add(commentAgentTrigger{Agent: agent, Source: commentTriggerSourceMentionAgent})
 	}
-	return triggers
+	return triggers, nil
 }
 
-func (h *Handler) parseSquadSOPRoleKeyMentions(ctx context.Context, issue db.Issue, content string) []util.Mention {
+func (h *Handler) parseSquadSOPRoleKeyMentions(ctx context.Context, issue db.Issue, content string) ([]util.Mention, error) {
 	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "squad" || !issue.AssigneeID.Valid {
-		return nil
+		return nil, nil
 	}
 	matches := sopRoleKeyMentionRe.FindAllStringSubmatch(content, -1)
 	if len(matches) == 0 {
-		return nil
+		return nil, nil
 	}
 	wantedRoles := map[string]struct{}{}
 	for _, match := range matches {
@@ -824,18 +878,21 @@ func (h *Handler) parseSquadSOPRoleKeyMentions(ctx context.Context, issue db.Iss
 		}
 	}
 	if len(wantedRoles) == 0 {
-		return nil
+		return nil, nil
 	}
 	squad, err := h.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
 		ID:          issue.AssigneeID,
 		WorkspaceID: issue.WorkspaceID,
 	})
 	if err != nil {
-		return nil
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("load assigned squad for SOP role mention: %w", err)
 	}
 	members, err := h.Queries.ListSquadMembers(ctx, squad.ID)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("list squad members for SOP role mention: %w", err)
 	}
 	memberIDs := map[string]struct{}{uuidToString(squad.LeaderID): {}}
 	for _, member := range members {
@@ -845,7 +902,7 @@ func (h *Handler) parseSquadSOPRoleKeyMentions(ctx context.Context, issue db.Iss
 	}
 	agents, err := h.Queries.ListAgents(ctx, issue.WorkspaceID)
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("list agents for SOP role mention: %w", err)
 	}
 	out := make([]util.Mention, 0, len(wantedRoles))
 	seen := map[string]struct{}{}
@@ -864,7 +921,7 @@ func (h *Handler) parseSquadSOPRoleKeyMentions(ctx context.Context, issue db.Iss
 		seen[id] = struct{}{}
 		out = append(out, util.Mention{Type: "agent", ID: id})
 	}
-	return out
+	return out, nil
 }
 
 func normalizeSOPRoleAlias(value string) (string, bool) {

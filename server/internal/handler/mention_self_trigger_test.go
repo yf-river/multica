@@ -14,7 +14,10 @@ import (
 // without preserving a production wrapper that nothing else calls.
 func enqueueMentionedAgentTasksForTest(t *testing.T, ctx context.Context, issue db.Issue, comment db.Comment, parentComment *db.Comment, authorType, authorID string) {
 	t.Helper()
-	triggers := testHandler.computeMentionedAgentCommentTriggers(ctx, issue, comment.Content, parentComment, authorType, authorID, commentTriggerComputeOptions{})
+	triggers, err := testHandler.computeMentionedAgentCommentTriggers(ctx, issue, comment.Content, parentComment, authorType, authorID, commentTriggerComputeOptions{})
+	if err != nil {
+		t.Fatalf("compute mention triggers: %v", err)
+	}
 	tx, err := testHandler.TxStarter.Begin(ctx)
 	if err != nil {
 		t.Fatalf("begin mention task transaction: %v", err)
@@ -53,6 +56,25 @@ type selfMentionFixture struct {
 	CommentA   db.Comment
 	CommentBID string // a comment on IssueB authored by J — used as the trigger
 	CommentB   db.Comment
+}
+
+func TestMentionTriggerPreservesAgentLookupFailure(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	issue := db.Issue{WorkspaceID: util.MustParseUUID(testWorkspaceID)}
+
+	triggers, err := testHandler.computeMentionedAgentCommentTriggers(
+		ctx,
+		issue,
+		"[@Agent](mention://agent/11111111-1111-1111-1111-111111111111)",
+		nil,
+		"member",
+		testUserID,
+		commentTriggerComputeOptions{},
+	)
+	if len(triggers) != 0 || err == nil {
+		t.Fatalf("computeMentionedAgentCommentTriggers() triggers=%v err=%v, want no triggers with lookup error", triggers, err)
+	}
 }
 
 func newSelfMentionFixture(t *testing.T) selfMentionFixture {

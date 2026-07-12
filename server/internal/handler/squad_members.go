@@ -536,15 +536,18 @@ func (h *Handler) RecordSquadLeaderEvaluation(w http.ResponseWriter, r *http.Req
 // skip). When the agent has no prior task on this issue the role is
 // undetermined and we treat it as non-leader so a brand-new external
 // trigger can still reach the leader.
-func (h *Handler) lastTaskWasLeader(ctx context.Context, issueID, agentID pgtype.UUID) bool {
+func (h *Handler) lastTaskWasLeader(ctx context.Context, issueID, agentID pgtype.UUID) (bool, error) {
 	flag, err := h.Queries.GetLatestTaskIsLeaderForIssueAndAgent(ctx, db.GetLatestTaskIsLeaderForIssueAndAgentParams{
 		IssueID: issueID,
 		AgentID: agentID,
 	})
 	if err != nil {
-		return false
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
 	}
-	return flag
+	return flag, nil
 }
 
 // commentMentionsAnyone returns true when the comment body contains at least
