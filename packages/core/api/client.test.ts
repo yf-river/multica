@@ -879,6 +879,27 @@ describe("ApiClient", () => {
     }
   });
 
+  it("retries workspace-create unknown outcomes with one request identity", async () => {
+    const workspace = {
+      id: "workspace-1", name: "Current", slug: "current", description: null,
+      context: null, settings: {}, repos: [], issue_prefix: "CUR", avatar_url: null,
+      created_at: "now", updated_at: "now",
+    };
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify(workspace), {
+        status: 201, headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.createWorkspace({ name: "Current", slug: "current" }))
+      .resolves.toMatchObject({ id: "workspace-1" });
+    const first = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    const second = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
+    expect(first["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(second["Idempotency-Key"]).toBe(first["Idempotency-Key"]);
+  });
+
   it("uses the expected HTTP contract for autopilot endpoints", async () => {
     const autopilot = {
       id: "ap-1",

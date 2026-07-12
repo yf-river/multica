@@ -169,6 +169,39 @@ func (h *Handler) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "slug is reserved")
 		return
 	}
+	issuePrefix := generateIssuePrefix(req.Name)
+	if req.IssuePrefix != nil && strings.TrimSpace(*req.IssuePrefix) != "" {
+		issuePrefix = strings.ToUpper(strings.TrimSpace(*req.IssuePrefix))
+	}
+	actorID := parseUUID(userID)
+	requestHash, err := hashRequestFingerprint(struct {
+		Name        string  `json:"name"`
+		Slug        string  `json:"slug"`
+		Description *string `json:"description"`
+		Context     *string `json:"context"`
+		IssuePrefix string  `json:"issue_prefix"`
+	}{
+		Name: req.Name, Slug: req.Slug, Description: req.Description,
+		Context: req.Context, IssuePrefix: issuePrefix,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to fingerprint workspace request")
+		return
+	}
+	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	workspaceRequestID := idempotencyKey
+	replay, found, replayErr := h.loadWorkspaceCreateReplay(r.Context(), workspaceRequestID, actorID, idempotencyKey, requestHash)
+	if replayErr != nil {
+		writeWorkspaceCreateReplayError(w, replayErr)
+		return
+	}
+	if found {
+		h.writeWorkspaceCreateReplay(w, r.Context(), workspaceRequestID, actorID, replay)
+		return
+	}
 
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
@@ -177,13 +210,9 @@ func (h *Handler) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 
-	issuePrefix := generateIssuePrefix(req.Name)
-	if req.IssuePrefix != nil && strings.TrimSpace(*req.IssuePrefix) != "" {
-		issuePrefix = strings.ToUpper(strings.TrimSpace(*req.IssuePrefix))
-	}
-
 	qtx := h.Queries.WithTx(tx)
 	ws, err := qtx.CreateWorkspace(r.Context(), db.CreateWorkspaceParams{
+		ID:          workspaceRequestID,
 		Name:        req.Name,
 		Slug:        req.Slug,
 		Description: ptrToText(req.Description),
@@ -192,10 +221,21 @@ func (h *Handler) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		if isUniqueViolation(err) {
+			_ = tx.Rollback(r.Context())
+			replay, found, replayErr := h.loadWorkspaceCreateReplay(r.Context(), workspaceRequestID, actorID, idempotencyKey, requestHash)
+			if replayErr != nil {
+				writeWorkspaceCreateReplayError(w, replayErr)
+				return
+			}
+			if found {
+				h.writeWorkspaceCreateReplay(w, r.Context(), workspaceRequestID, actorID, replay)
+				return
+			}
 			writeError(w, http.StatusConflict, "workspace slug already exists")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "failed to create workspace: "+err.Error())
+		slog.Error("create workspace failed", append(logger.RequestAttrs(r), "slug", req.Slug, "error", err)...)
+		writeError(w, http.StatusInternalServerError, "failed to create workspace")
 		return
 	}
 
@@ -205,12 +245,16 @@ func (h *Handler) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 		Role:        "owner",
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to add owner: "+err.Error())
+		slog.Error("create workspace owner failed", append(logger.RequestAttrs(r), "workspace_id", uuidToString(ws.ID), "error", err)...)
+		writeError(w, http.StatusInternalServerError, "failed to add workspace owner")
 		return
 	}
-
-	if err := tx.Commit(r.Context()); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to create workspace")
+	_, err = qtx.ReserveResourceCreateRequest(r.Context(), db.ReserveResourceCreateRequestParams{
+		WorkspaceID: workspaceRequestID, ActorID: actorID, ResourceType: resourceTypeWorkspace,
+		IdempotencyKey: idempotencyKey, RequestHash: requestHash,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reserve workspace request")
 		return
 	}
 
@@ -219,6 +263,14 @@ func (h *Handler) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		slog.Error("encode created workspace response failed", append(logger.RequestAttrs(r), "workspace_id", wsID, "error", err)...)
 		writeError(w, http.StatusInternalServerError, "failed to load created workspace")
+		return
+	}
+	if err := completeResourceCreateRequest(r.Context(), qtx, workspaceRequestID, actorID, resourceTypeWorkspace, idempotencyKey, requestHash, ws.ID, resp); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to complete workspace request")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create workspace")
 		return
 	}
 

@@ -7,10 +7,130 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sort"
+	"strings"
+	"sync"
 	"testing"
 
+	"github.com/google/uuid"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
+
+func TestCreateWorkspaceRecoversTheExactCommittedResult(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	slug := "workspace-replay-" + uuid.NewString()[:8]
+	key := uuid.NewString()
+	body := map[string]any{"name": "Workspace Replay", "slug": slug, "description": "current request"}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM workspace WHERE slug = $1`, slug)
+	})
+	create := func() *httptest.ResponseRecorder {
+		req := newRequest(http.MethodPost, "/api/workspaces", body)
+		req.Header.Set("Idempotency-Key", key)
+		w := httptest.NewRecorder()
+		testHandler.CreateWorkspace(w, req)
+		return w
+	}
+	first := create()
+	replay := create()
+	if first.Code != http.StatusCreated {
+		t.Fatalf("first create = %d %s", first.Code, first.Body.String())
+	}
+	if replay.Code != http.StatusCreated || replay.Body.String() != first.Body.String() {
+		t.Fatalf("workspace replay = %d %s, want exact %s", replay.Code, replay.Body.String(), first.Body.String())
+	}
+	responses := make(chan *httptest.ResponseRecorder, 8)
+	var wait sync.WaitGroup
+	for range 8 {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			responses <- create()
+		}()
+	}
+	wait.Wait()
+	close(responses)
+	for response := range responses {
+		if response.Code != http.StatusCreated || response.Body.String() != first.Body.String() {
+			t.Fatalf("concurrent replay = %d %s, want exact", response.Code, response.Body.String())
+		}
+	}
+	changedReq := newRequest(http.MethodPost, "/api/workspaces", map[string]any{
+		"name": "Changed Workspace", "slug": slug,
+	})
+	changedReq.Header.Set("Idempotency-Key", key)
+	changed := httptest.NewRecorder()
+	testHandler.CreateWorkspace(changed, changedReq)
+	if changed.Code != http.StatusConflict {
+		t.Fatalf("changed replay = %d %s, want 409", changed.Code, changed.Body.String())
+	}
+	var workspaces, owners int
+	if err := testPool.QueryRow(context.Background(), `SELECT
+		(SELECT count(*) FROM workspace WHERE slug = $1),
+		(SELECT count(*) FROM member m JOIN workspace w ON w.id=m.workspace_id WHERE w.slug=$1 AND m.role='owner')
+	`, slug).Scan(&workspaces, &owners); err != nil {
+		t.Fatal(err)
+	}
+	if workspaces != 1 || owners != 1 {
+		t.Fatalf("workspace writes = %d workspaces, %d owners; want 1/1", workspaces, owners)
+	}
+	if _, err := testPool.Exec(context.Background(), `DELETE FROM member WHERE workspace_id=(SELECT id FROM workspace WHERE slug=$1)`, slug); err != nil {
+		t.Fatal(err)
+	}
+	denied := create()
+	if denied.Code != http.StatusForbidden {
+		t.Fatalf("replay after access removal = %d %s, want 403", denied.Code, denied.Body.String())
+	}
+}
+
+func TestCreateWorkspaceCompletionFailureRollsBackWorkspaceOwnerAndRequest(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	key := uuid.NewString()
+	slug := "workspace-rollback-" + uuid.NewString()[:8]
+	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
+	functionName := "workspace_completion_fail_fn_" + suffix
+	triggerName := "workspace_completion_fail_" + suffix
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON resource_create_request; DROP FUNCTION IF EXISTS %s()`, triggerName, functionName))
+		_, _ = testPool.Exec(ctx, `DELETE FROM workspace WHERE slug = $1`, slug)
+	})
+	if _, err := testPool.Exec(ctx, fmt.Sprintf(`
+		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF NEW.resource_type = 'workspace' AND NEW.idempotency_key = '%s'::uuid AND NEW.response_body IS NOT NULL THEN
+				RAISE EXCEPTION 'forced workspace completion failure';
+			END IF;
+			RETURN NEW;
+		END;
+		$$;
+		CREATE TRIGGER %s BEFORE UPDATE ON resource_create_request
+		FOR EACH ROW EXECUTE FUNCTION %s();
+	`, functionName, key, triggerName, functionName)); err != nil {
+		t.Fatal(err)
+	}
+	req := newRequest(http.MethodPost, "/api/workspaces", map[string]any{"name": "Rollback Workspace", "slug": slug})
+	req.Header.Set("Idempotency-Key", key)
+	w := httptest.NewRecorder()
+	testHandler.CreateWorkspace(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("completion failure = %d %s, want 500", w.Code, w.Body.String())
+	}
+	var workspaces, members, requests int
+	if err := testPool.QueryRow(ctx, `SELECT
+		(SELECT count(*) FROM workspace WHERE slug=$1),
+		(SELECT count(*) FROM member WHERE workspace_id=$2),
+		(SELECT count(*) FROM resource_create_request WHERE resource_type='workspace' AND idempotency_key=$2)
+	`, slug, key).Scan(&workspaces, &members, &requests); err != nil {
+		t.Fatal(err)
+	}
+	if workspaces != 0 || members != 0 || requests != 0 {
+		t.Fatalf("failed create left writes: workspaces=%d members=%d requests=%d", workspaces, members, requests)
+	}
+}
 
 func TestCreateWorkspace_RejectsReservedSlug(t *testing.T) {
 	// Drive the test off the actual reservedSlugs map so the test can never

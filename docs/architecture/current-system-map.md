@@ -25,12 +25,12 @@ evidence reviewable by humans.
 | Database functions | 9 |
 | Database triggers | 4 |
 | Database indexes | 187 |
-| Migration files (up + down) | 112 |
+| Migration files (up + down) | 114 |
 | sqlc modules | 53 |
 | sqlc queries | 571 |
 | Go WebSocket events | 80 |
 | TypeScript WebSocket events | 70 |
-| Zustand store definitions | 35 |
+| Zustand store definitions | 36 |
 | React Query consumer files | 175 |
 | Environment variable names | 217 |
 | Manually identified external systems | 12 |
@@ -605,6 +605,8 @@ intentionally platform-specific.
 | 55 | add_prompt_library_trial_create_request | up | — | 0 | 0 | 0 | `server/migrations/055_add_prompt_library_trial_create_request.up.sql` |
 | 56 | add_prompt_library_create_requests | down | — | 0 | 0 | 0 | `server/migrations/056_add_prompt_library_create_requests.down.sql` |
 | 56 | add_prompt_library_create_requests | up | — | 0 | 0 | 0 | `server/migrations/056_add_prompt_library_create_requests.up.sql` |
+| 57 | add_workspace_create_request | down | — | 0 | 0 | 0 | `server/migrations/057_add_workspace_create_request.down.sql` |
+| 57 | add_workspace_create_request | up | — | 0 | 0 | 0 | `server/migrations/057_add_workspace_create_request.up.sql` |
 
 ### Current tables discovered from up migrations
 
@@ -822,6 +824,7 @@ still include daemon-only/backend projection events and possible frontend gaps.
 | packages/core | `packages/core/skills/stores/view-store.ts` | `useSkillsViewStore` | yes |
 | packages/core | `packages/core/squads/pending-operation-store.ts` | `useSquadPendingOperationStore` | yes |
 | packages/core | `packages/core/squads/stores/view-store.ts` | `useSquadsViewStore` | yes |
+| packages/core | `packages/core/workspace/create-operation.ts` | `useWorkspaceCreateOperationStore` | yes |
 
 ### React Query usage
 
@@ -1076,7 +1079,7 @@ written to the generated outputs.
 | filesystem | 43 | `server/cmd/migrate/main.go`, `server/cmd/multica/cmd_agent.go`, `server/cmd/multica/cmd_attachment.go`, `server/cmd/multica/cmd_daemon_windows.go`, `server/cmd/multica/cmd_daemon.go`, `server/cmd/multica/cmd_issue_comments.go`, `server/cmd/multica/cmd_issue_pull_request.go`, `server/cmd/multica/cmd_issue.go` |
 | object-storage | 1 | `server/internal/storage/s3.go` |
 | outbound-http | 17 | `server/cmd/multica/cmd_daemon.go`, `server/cmd/multica/cmd_setup.go`, `server/internal/analytics/posthog.go`, `server/internal/auth/cloud_pat.go`, `server/internal/cli/client.go`, `server/internal/cli/update.go`, `server/internal/daemon/client.go`, `server/internal/daemon/task_artifacts.go` |
-| postgresql | 136 | `server/cmd/migrate/main.go`, `server/cmd/server/activity_listeners.go`, `server/cmd/server/autopilot_failure_monitor.go`, `server/cmd/server/autopilot_scheduler.go`, `server/cmd/server/chat_projection.go`, `server/cmd/server/comment_projection.go`, `server/cmd/server/dbstats.go`, `server/cmd/server/health.go` |
+| postgresql | 137 | `server/cmd/migrate/main.go`, `server/cmd/server/activity_listeners.go`, `server/cmd/server/autopilot_failure_monitor.go`, `server/cmd/server/autopilot_scheduler.go`, `server/cmd/server/chat_projection.go`, `server/cmd/server/comment_projection.go`, `server/cmd/server/dbstats.go`, `server/cmd/server/health.go` |
 | redis | 14 | `server/cmd/server/main.go`, `server/cmd/server/router.go`, `server/internal/auth/cloud_pat.go`, `server/internal/auth/membership_cache.go`, `server/internal/auth/pat_cache.go`, `server/internal/handler/runtime_liveness_store.go`, `server/internal/handler/runtime_local_skills_redis_store.go`, `server/internal/handler/runtime_models_redis_store.go` |
 | subprocess | 29 | `server/cmd/multica/cmd_auth.go`, `server/cmd/multica/cmd_daemon_unix.go`, `server/cmd/multica/cmd_daemon.go`, `server/internal/cli/update.go`, `server/internal/daemon/config.go`, `server/internal/daemon/execenv/codex_home_link_windows.go`, `server/internal/daemon/execenv/openclaw_config.go`, `server/internal/daemon/gc.go` |
 | websocket | 4 | `server/internal/daemon/wakeup.go`, `server/internal/daemonws/hub.go`, `server/internal/integrations/lark/ws_connector.go`, `server/internal/realtime/hub.go` |

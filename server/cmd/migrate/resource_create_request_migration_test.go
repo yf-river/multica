@@ -5,7 +5,15 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
+
+func isolateResourceCreateRequestMigration(t *testing.T, ctx context.Context, tx pgx.Tx) {
+	t.Helper()
+	if _, err := tx.Exec(ctx, `DELETE FROM resource_create_request`); err != nil {
+		t.Fatalf("isolate resource create request migration: %v", err)
+	}
+}
 
 func TestResourceCreateRequestMigrationPreservesCurrentOperations(t *testing.T) {
 	pool := openTestPool(t)
@@ -95,6 +103,7 @@ func TestAttachmentCreateRequestMigrationExtendsCurrentResourceContract(t *testi
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	isolateResourceCreateRequestMigration(t, ctx, tx)
 
 	if _, err := tx.Exec(ctx, readMigrationFile(t, "050_add_attachment_create_requests.up.sql")); err != nil {
 		t.Fatal(err)
@@ -136,6 +145,7 @@ func TestQuickCreateIdentityMigrationEnforcesBothRequestAndIssueIdentity(t *test
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	isolateResourceCreateRequestMigration(t, ctx, tx)
 
 	if _, err := tx.Exec(ctx, readMigrationFile(t, "051_require_unique_quick_create_identity.up.sql")); err != nil {
 		t.Fatal(err)
@@ -182,6 +192,7 @@ func TestIssueCreateRequestMigrationExtendsCurrentResourceContract(t *testing.T)
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	isolateResourceCreateRequestMigration(t, ctx, tx)
 
 	if _, err := tx.Exec(ctx, readMigrationFile(t, "052_add_issue_create_request.up.sql")); err != nil {
 		t.Fatal(err)
@@ -209,6 +220,7 @@ func TestCommentCreateRequestMigrationExtendsCurrentResourceContract(t *testing.
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	isolateResourceCreateRequestMigration(t, ctx, tx)
 	if _, err := tx.Exec(ctx, readMigrationFile(t, "053_add_comment_create_request.up.sql")); err != nil {
 		t.Fatal(err)
 	}
@@ -232,6 +244,7 @@ func TestResourceCreateRetentionMigrationAddsPartialIndexes(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	isolateResourceCreateRequestMigration(t, ctx, tx)
 	if _, err := tx.Exec(ctx, `
 		DROP INDEX IF EXISTS idx_resource_create_request_completed_at;
 		DROP INDEX IF EXISTS idx_resource_create_request_incomplete_created_at;
@@ -265,6 +278,7 @@ func TestPromptLibraryTrialCreateRequestMigrationExtendsCurrentResourceContract(
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	isolateResourceCreateRequestMigration(t, ctx, tx)
 	if _, err := tx.Exec(ctx, readMigrationFile(t, "055_add_prompt_library_trial_create_request.up.sql")); err != nil {
 		t.Fatal(err)
 	}
@@ -288,6 +302,7 @@ func TestPromptLibraryCreateRequestMigrationExtendsCurrentResourceContract(t *te
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
+	isolateResourceCreateRequestMigration(t, ctx, tx)
 	if _, err := tx.Exec(ctx, readMigrationFile(t, "056_add_prompt_library_create_requests.up.sql")); err != nil {
 		t.Fatal(err)
 	}
@@ -302,5 +317,29 @@ func TestPromptLibraryCreateRequestMigrationExtendsCurrentResourceContract(t *te
 		`, workspaceID, uuid.NewString(), resourceType, uuid.NewString(), "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"); err != nil {
 			t.Fatalf("%s request type rejected: %v", resourceType, err)
 		}
+	}
+}
+
+func TestWorkspaceCreateRequestMigrationExtendsCurrentResourceContract(t *testing.T) {
+	pool := openTestPool(t)
+	ctx := context.Background()
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	isolateResourceCreateRequestMigration(t, ctx, tx)
+	if _, err := tx.Exec(ctx, readMigrationFile(t, "057_add_workspace_create_request.up.sql")); err != nil {
+		t.Fatal(err)
+	}
+	workspaceID := uuid.NewString()
+	if _, err := tx.Exec(ctx, `INSERT INTO workspace (id, name, slug) VALUES ($1, 'Workspace Request Migration', $2)`, workspaceID, "workspace-request-"+uuid.NewString()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO resource_create_request (workspace_id, actor_id, resource_type, idempotency_key, request_hash)
+		VALUES ($1, $2, 'workspace', $1, $3)
+	`, workspaceID, uuid.NewString(), "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"); err != nil {
+		t.Fatalf("workspace request type rejected: %v", err)
 	}
 }

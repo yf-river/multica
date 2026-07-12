@@ -20,6 +20,7 @@ const (
 	resourceTypeQuickCreate          = "quick_create"
 	resourceTypeIssue                = "issue"
 	resourceTypeComment              = "comment"
+	resourceTypeWorkspace            = "workspace"
 	resourceTypePromptLibraryItem    = "prompt_library_item"
 	resourceTypePromptLibraryVersion = "prompt_library_version"
 	resourceTypePromptLibraryTrial   = "prompt_library_trial"
@@ -63,4 +64,30 @@ func loadResourceCreateReplay[T any](
 		return response, false, fmt.Errorf("%s create replay has no resource id", resourceType)
 	}
 	return response, true, nil
+}
+
+func completeResourceCreateRequest(
+	ctx context.Context,
+	queries *db.Queries,
+	workspaceID pgtype.UUID,
+	actorID pgtype.UUID,
+	resourceType string,
+	idempotencyKey pgtype.UUID,
+	requestHash string,
+	resourceID pgtype.UUID,
+	response any,
+) error {
+	body, err := json.Marshal(response)
+	if err != nil {
+		return fmt.Errorf("encode %s response: %w", resourceType, err)
+	}
+	_, err = queries.CompleteResourceCreateRequest(ctx, db.CompleteResourceCreateRequestParams{
+		WorkspaceID: workspaceID, ActorID: actorID, ResourceType: resourceType,
+		IdempotencyKey: idempotencyKey, RequestHash: requestHash,
+		ResourceID: resourceID, ResponseBody: body,
+	})
+	if err != nil {
+		return fmt.Errorf("complete %s request: %w", resourceType, err)
+	}
+	return nil
 }

@@ -550,7 +550,7 @@ func (h *Handler) CreatePromptLibraryItem(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "failed to prepare prompt library item response")
 		return
 	}
-	if err := completePromptLibraryCreateRequest(r.Context(), qtx, workspaceUUID, actorID, resourceTypePromptLibraryItem, idempotencyKey, requestHash, item.ID, resp); err != nil {
+	if err := completeResourceCreateRequest(r.Context(), qtx, workspaceUUID, actorID, resourceTypePromptLibraryItem, idempotencyKey, requestHash, item.ID, resp); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to complete prompt library item request")
 		return
 	}
@@ -762,7 +762,7 @@ func (h *Handler) CreatePromptLibraryVersion(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	response := CreatePromptLibraryVersionResponse{Item: itemResp, Version: versionResp}
-	if err := completePromptLibraryCreateRequest(r.Context(), qtx, existing.WorkspaceID, actorID, resourceTypePromptLibraryVersion, idempotencyKey, requestHash, version.ID, response); err != nil {
+	if err := completeResourceCreateRequest(r.Context(), qtx, existing.WorkspaceID, actorID, resourceTypePromptLibraryVersion, idempotencyKey, requestHash, version.ID, response); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to complete prompt library version request")
 		return
 	}

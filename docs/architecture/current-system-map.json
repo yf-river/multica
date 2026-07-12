@@ -24,12 +24,12 @@
     "databaseFunctions": 9,
     "databaseTriggers": 4,
     "databaseIndexes": 187,
-    "migrations": 112,
+    "migrations": 114,
     "sqlcModules": 53,
     "sqlcQueries": 571,
     "goWebsocketEvents": 80,
     "typescriptWebsocketEvents": 70,
-    "zustandStores": 35,
+    "zustandStores": 36,
     "reactQueryConsumerFiles": 175,
     "environmentVariables": 217,
     "manualExternalSystems": 12
@@ -6878,6 +6878,32 @@
           "droppedFunctions": [],
           "droppedTriggers": [],
           "droppedIndexes": []
+        },
+        {
+          "version": 57,
+          "name": "add_workspace_create_request",
+          "direction": "down",
+          "source": "server/migrations/057_add_workspace_create_request.down.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 57,
+          "name": "add_workspace_create_request",
+          "direction": "up",
+          "source": "server/migrations/057_add_workspace_create_request.up.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
         }
       ],
       "tables": [
@@ -13529,6 +13555,14 @@
           "useSquadsViewStore"
         ],
         "persisted": true
+      },
+      {
+        "source": "packages/core/workspace/create-operation.ts",
+        "scope": "packages/core",
+        "exports": [
+          "useWorkspaceCreateOperationStore"
+        ],
+        "persisted": true
       }
     ],
     "reactQuery": {
@@ -15568,7 +15602,7 @@
       },
       {
         "scope": "packages/core",
-        "count": 33
+        "count": 34
       }
     ],
     "reactQueryByScope": [
@@ -18686,6 +18720,7 @@
           "server/internal/handler/task_source_context.go",
           "server/internal/handler/tenant_admin.go",
           "server/internal/handler/webhook_delivery.go",
+          "server/internal/handler/workspace_idempotency.go",
           "server/internal/handler/workspace_revoke.go",
           "server/internal/handler/workspace.go",
           "server/internal/integrations/lark/audit.go",

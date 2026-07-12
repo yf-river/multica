@@ -5,13 +5,19 @@ shared `resource_create_request` state machine. The key is scoped by workspace,
 actor and resource type; the SHA-256 request fingerprint rejects key reuse with
 different input. A completed row stores the resource ID and exact response.
 
-The current resource types are Project, Squad, Agent, Skill, Attachment, Quick
-Create, Issue, Comment, Prompt Library Item, Prompt Library Version and Prompt
-Library Trial. Each handler either commits the request row in the
+The current resource types are Workspace, Project, Squad, Agent, Skill,
+Attachment, Quick Create, Issue, Comment, Prompt Library Item, Prompt Library
+Version and Prompt Library Trial. Each handler either commits the request row in the
 same transaction as the resource or uses a deterministic resource identity and
 an explicit recovery path when an external/object operation prevents one DB
 transaction. Core retries unknown outcomes with the same key and persists the
 exact pending request in workspace/account-scoped storage.
+
+Workspace creation happens before a workspace scope exists. Its request UUID is
+therefore also the new Workspace UUID; Workspace, owner membership, request row
+and exact `201` response commit together. The account-scoped Core intent
+survives reload without leaking into workspace-scoped storage. Deleting the
+Workspace cascades its recovery witness, matching the resource lifecycle.
 
 Prompt Library Item atomically commits the item, initial version and exact `201`
 response. Prompt Library Version atomically updates the current item, inserts

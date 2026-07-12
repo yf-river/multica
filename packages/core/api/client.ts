@@ -1568,14 +1568,19 @@ export class ApiClient extends ApiTransport {
     }) as ObservabilitySummary;
   }
 
-  async createWorkspace(data: { name: string; slug: string; description?: string; context?: string }): Promise<Workspace> {
-    const raw = await this.fetch<unknown>("/api/workspaces", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseOrThrow(raw, WorkspaceSchema, EMPTY_WORKSPACE, {
-      endpoint: "POST /api/workspaces",
-    });
+  async createWorkspace(data: { name: string; slug: string; description?: string; context?: string }, idempotencyKey = generateUUID()): Promise<Workspace> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>("/api/workspaces", {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow(raw, WorkspaceSchema, EMPTY_WORKSPACE, {
+        endpoint: "POST /api/workspaces",
+        mayHaveCommitted: true,
+      });
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async updateWorkspace(id: string, data: { name?: string; description?: string; context?: string; settings?: Record<string, unknown>; repos?: WorkspaceRepo[]; issue_prefix?: string; avatar_url?: string }): Promise<Workspace> {

@@ -12,12 +12,13 @@ import (
 )
 
 const createWorkspace = `-- name: CreateWorkspace :one
-INSERT INTO workspace (name, slug, description, context, issue_prefix)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO workspace (id, name, slug, description, context, issue_prefix)
+VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING id, name, slug, description, settings, created_at, updated_at, context, repos, issue_prefix, issue_counter, avatar_url
 `
 
 type CreateWorkspaceParams struct {
+	ID          pgtype.UUID `json:"id"`
 	Name        string      `json:"name"`
 	Slug        string      `json:"slug"`
 	Description pgtype.Text `json:"description"`
@@ -27,6 +28,7 @@ type CreateWorkspaceParams struct {
 
 func (q *Queries) CreateWorkspace(ctx context.Context, arg CreateWorkspaceParams) (Workspace, error) {
 	row := q.db.QueryRow(ctx, createWorkspace,
+		arg.ID,
 		arg.Name,
 		arg.Slug,
 		arg.Description,
