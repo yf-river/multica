@@ -493,6 +493,28 @@ describe("ApiClient", () => {
     expect(second["Idempotency-Key"]).toBe(first["Idempotency-Key"]);
   });
 
+  it("retries prompt trial unknown outcomes with one request identity", async () => {
+    const trial = {
+      id: "trial-1", workspace_id: "workspace-1", prompt_id: "prompt-1",
+      version_id: "version-1", agent_id: "agent-1", chat_session_id: "session-1",
+      task_id: "task-1", rendered_message: "hello", variables: {}, status: "queued",
+      output_preview: "", created_by: "user-1", created_at: "now", updated_at: "now",
+    };
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify(trial), {
+        status: 202, headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.createPromptLibraryTrial("prompt-1", "version-1", { agent_id: "agent-1", variables: {} }))
+      .resolves.toMatchObject({ id: "trial-1", task_id: "task-1" });
+    const first = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    const second = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
+    expect(first["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(second["Idempotency-Key"]).toBe(first["Idempotency-Key"]);
+  });
+
   it("whitelists external credential responses without exposing secret fields", async () => {
     const profile = {
       id: "profile-1",

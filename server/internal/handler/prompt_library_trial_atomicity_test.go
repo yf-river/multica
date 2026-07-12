@@ -7,8 +7,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 func TestCreatePromptLibraryTrialRollsBackEveryWrite(t *testing.T) {
@@ -83,7 +86,6 @@ func TestCreatePromptLibraryTrialRollsBackEveryWrite(t *testing.T) {
 	versionID := versions.Items[0].ID
 	req := newRequest(http.MethodPost, "/api/prompt-library/"+item.ID+"/versions/"+versionID+"/trials", map[string]any{
 		"agent_id": agentID,
-		"input":    "atomic input",
 	})
 	req = withURLParams(req, "id", item.ID, "versionId", versionID)
 	w := httptest.NewRecorder()
@@ -116,15 +118,89 @@ func TestCreatePromptLibraryTrialRollsBackEveryWrite(t *testing.T) {
 		t.Fatalf("remove prompt trial failure function: %v", err)
 	}
 
+	completionKey := uuid.NewString()
+	completionFunction := "prompt_trial_completion_fail_fn_" + suffix
+	completionTrigger := "prompt_trial_completion_fail_" + suffix
+	if _, err := testPool.Exec(context.Background(), fmt.Sprintf(`
+		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF NEW.resource_type = 'prompt_library_trial' AND NEW.idempotency_key = '%s'::uuid AND NEW.response_body IS NOT NULL THEN
+				RAISE EXCEPTION 'forced prompt trial request completion failure';
+			END IF;
+			RETURN NEW;
+		END;
+		$$;
+		CREATE TRIGGER %s BEFORE UPDATE ON resource_create_request
+		FOR EACH ROW EXECUTE FUNCTION %s();
+	`, completionFunction, completionKey, completionTrigger, completionFunction)); err != nil {
+		t.Fatalf("install completion failure: %v", err)
+	}
+	completionReq := newRequest(http.MethodPost, "/api/prompt-library/"+item.ID+"/versions/"+versionID+"/trials", map[string]any{
+		"agent_id": agentID,
+	})
+	completionReq.Header.Set("Idempotency-Key", completionKey)
+	completionReq = withURLParams(completionReq, "id", item.ID, "versionId", versionID)
+	completionW := httptest.NewRecorder()
+	testHandler.CreatePromptLibraryTrial(completionW, completionReq)
+	if completionW.Code != http.StatusInternalServerError {
+		t.Fatalf("completion failure = %d %s, want 500", completionW.Code, completionW.Body.String())
+	}
+	if _, err := testPool.Exec(context.Background(), fmt.Sprintf(`DROP TRIGGER %s ON resource_create_request; DROP FUNCTION %s()`, completionTrigger, completionFunction)); err != nil {
+		t.Fatalf("remove completion failure: %v", err)
+	}
+
 	successReq := newRequest(http.MethodPost, "/api/prompt-library/"+item.ID+"/versions/"+versionID+"/trials", map[string]any{
 		"agent_id": agentID,
-		"input":    "committed input",
 	})
+	trialRequestKey := uuid.NewString()
+	successReq.Header.Set("Idempotency-Key", trialRequestKey)
 	successReq = withURLParams(successReq, "id", item.ID, "versionId", versionID)
 	successW := httptest.NewRecorder()
 	testHandler.CreatePromptLibraryTrial(successW, successReq)
 	if successW.Code != http.StatusAccepted {
 		t.Fatalf("successful trial: expected 202, got %d: %s", successW.Code, successW.Body.String())
+	}
+	replayReq := newRequest(http.MethodPost, "/api/prompt-library/"+item.ID+"/versions/"+versionID+"/trials", map[string]any{
+		"agent_id": agentID,
+	})
+	replayReq.Header.Set("Idempotency-Key", trialRequestKey)
+	replayReq = withURLParams(replayReq, "id", item.ID, "versionId", versionID)
+	replayW := httptest.NewRecorder()
+	testHandler.CreatePromptLibraryTrial(replayW, replayReq)
+	if replayW.Code != http.StatusAccepted || replayW.Body.String() != successW.Body.String() {
+		t.Fatalf("trial replay = %d %s, want exact %s", replayW.Code, replayW.Body.String(), successW.Body.String())
+	}
+	responses := make(chan *httptest.ResponseRecorder, 8)
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			req := newRequest(http.MethodPost, "/api/prompt-library/"+item.ID+"/versions/"+versionID+"/trials", map[string]any{"agent_id": agentID})
+			req.Header.Set("Idempotency-Key", trialRequestKey)
+			req = withURLParams(req, "id", item.ID, "versionId", versionID)
+			w := httptest.NewRecorder()
+			testHandler.CreatePromptLibraryTrial(w, req)
+			responses <- w
+		}()
+	}
+	wg.Wait()
+	close(responses)
+	for response := range responses {
+		if response.Code != http.StatusAccepted || response.Body.String() != successW.Body.String() {
+			t.Fatalf("concurrent replay = %d %s, want exact", response.Code, response.Body.String())
+		}
+	}
+	conflictReq := newRequest(http.MethodPost, "/api/prompt-library/"+item.ID+"/versions/"+versionID+"/trials", map[string]any{
+		"agent_id":  agentID,
+		"variables": map[string]string{"unused": "changed"},
+	})
+	conflictReq.Header.Set("Idempotency-Key", trialRequestKey)
+	conflictReq = withURLParams(conflictReq, "id", item.ID, "versionId", versionID)
+	conflictW := httptest.NewRecorder()
+	testHandler.CreatePromptLibraryTrial(conflictW, conflictReq)
+	if conflictW.Code != http.StatusConflict {
+		t.Fatalf("changed replay = %d %s, want 409", conflictW.Code, conflictW.Body.String())
 	}
 	if err := testPool.QueryRow(context.Background(), `
 		SELECT

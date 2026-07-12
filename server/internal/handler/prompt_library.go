@@ -766,6 +766,30 @@ func (h *Handler) CreatePromptLibraryTrial(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, "agent_id is required")
 		return
 	}
+	workspaceID := uuidToString(item.WorkspaceID)
+	actorType, actorID := h.resolveActor(r, userID, workspaceID)
+	requestHash, err := hashRequestFingerprint(struct {
+		PromptID  string                          `json:"prompt_id"`
+		VersionID string                          `json:"version_id"`
+		Request   CreatePromptLibraryTrialRequest `json:"request"`
+	}{PromptID: uuidToString(item.ID), VersionID: uuidToString(version.ID), Request: req})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to fingerprint prompt trial request")
+		return
+	}
+	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	replay, found, replayErr := h.loadPromptLibraryTrialReplay(r.Context(), item.WorkspaceID, parseUUID(actorID), idempotencyKey, requestHash)
+	if replayErr != nil {
+		writePromptLibraryTrialReplayError(w, replayErr)
+		return
+	}
+	if found {
+		writeJSON(w, http.StatusAccepted, replay)
+		return
+	}
 	if missingVariables := missingPromptLibraryTrialVariables(version.Content, req.Variables); len(missingVariables) > 0 {
 		writeError(w, http.StatusBadRequest, "missing prompt variables: "+strings.Join(missingVariables, ", "))
 		return
@@ -774,8 +798,6 @@ func (h *Handler) CreatePromptLibraryTrial(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	workspaceID := uuidToString(item.WorkspaceID)
-	actorType, actorID := h.resolveActor(r, userID, workspaceID)
 	renderedMessage := renderPromptLibraryTrialMessage(version.Content, req.Variables)
 	variablesJSON, _ := json.Marshal(req.Variables)
 	if len(variablesJSON) == 0 || string(variablesJSON) == "null" {
@@ -789,6 +811,30 @@ func (h *Handler) CreatePromptLibraryTrial(w http.ResponseWriter, r *http.Reques
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
+	_, err = qtx.ReserveResourceCreateRequest(r.Context(), db.ReserveResourceCreateRequestParams{
+		WorkspaceID:    item.WorkspaceID,
+		ActorID:        parseUUID(actorID),
+		ResourceType:   resourceTypePromptLibraryTrial,
+		IdempotencyKey: idempotencyKey,
+		RequestHash:    requestHash,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		_ = tx.Rollback(r.Context())
+		replay, found, replayErr := h.loadPromptLibraryTrialReplay(r.Context(), item.WorkspaceID, parseUUID(actorID), idempotencyKey, requestHash)
+		if replayErr != nil || !found {
+			if replayErr == nil {
+				replayErr = errors.New("prompt library trial replay disappeared after conflict")
+			}
+			writePromptLibraryTrialReplayError(w, replayErr)
+			return
+		}
+		writeJSON(w, http.StatusAccepted, replay)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reserve prompt library trial request")
+		return
+	}
 
 	agent, err := qtx.LockAgentInWorkspaceForChat(r.Context(), db.LockAgentInWorkspaceForChatParams{
 		ID:          agentID,
@@ -853,6 +899,10 @@ func (h *Handler) CreatePromptLibraryTrial(w http.ResponseWriter, r *http.Reques
 	resp, err := promptLibraryTrialToResponse(trial)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to prepare prompt library trial response")
+		return
+	}
+	if err := completePromptLibraryTrialRequest(r.Context(), qtx, item.WorkspaceID, parseUUID(actorID), idempotencyKey, requestHash, resp); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to complete prompt library trial request")
 		return
 	}
 	if err := tx.Commit(r.Context()); err != nil {

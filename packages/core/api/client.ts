@@ -2022,14 +2022,19 @@ export class ApiClient extends ApiTransport {
     ) as CreatePromptLibraryVersionResponse;
   }
 
-  async createPromptLibraryTrial(id: string, versionId: string, data: CreatePromptLibraryTrialRequest): Promise<PromptLibraryTrial> {
-    const raw = await this.fetch<unknown>(`/api/prompt-library/${id}/versions/${versionId}/trials`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseOrThrow(raw, PromptLibraryTrialSchema, EMPTY_PROMPT_LIBRARY_TRIAL, {
-      endpoint: "POST /api/prompt-library/:id/versions/:versionId/trials",
-    }) as PromptLibraryTrial;
+  async createPromptLibraryTrial(id: string, versionId: string, data: CreatePromptLibraryTrialRequest, idempotencyKey = generateUUID()): Promise<PromptLibraryTrial> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/prompt-library/${id}/versions/${versionId}/trials`, {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow(raw, PromptLibraryTrialSchema, EMPTY_PROMPT_LIBRARY_TRIAL, {
+        endpoint: "POST /api/prompt-library/:id/versions/:versionId/trials",
+        mayHaveCommitted: true,
+      }) as PromptLibraryTrial;
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async deletePromptLibraryItem(id: string): Promise<void> {

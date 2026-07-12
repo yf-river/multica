@@ -256,3 +256,26 @@ func TestResourceCreateRetentionMigrationAddsPartialIndexes(t *testing.T) {
 		t.Fatalf("retention indexes = %d, want 2", indexes)
 	}
 }
+
+func TestPromptLibraryTrialCreateRequestMigrationExtendsCurrentResourceContract(t *testing.T) {
+	pool := openTestPool(t)
+	ctx := context.Background()
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, readMigrationFile(t, "055_add_prompt_library_trial_create_request.up.sql")); err != nil {
+		t.Fatal(err)
+	}
+	var workspaceID string
+	if err := tx.QueryRow(ctx, `INSERT INTO workspace (name, slug) VALUES ('Trial Request Migration', $1) RETURNING id`, "trial-request-"+uuid.NewString()).Scan(&workspaceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO resource_create_request (workspace_id, actor_id, resource_type, idempotency_key, request_hash)
+		VALUES ($1, $2, 'prompt_library_trial', $3, $4)
+	`, workspaceID, uuid.NewString(), uuid.NewString(), "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"); err != nil {
+		t.Fatalf("prompt trial request type rejected: %v", err)
+	}
+}
