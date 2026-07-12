@@ -476,8 +476,9 @@ func (h *Handler) RecordSquadLeaderEvaluation(w http.ResponseWriter, r *http.Req
 		return
 	}
 	task, err := h.Queries.GetAgentTask(r.Context(), taskUUID)
-	if err != nil || !task.IssueID.Valid || uuidToString(task.IssueID) != uuidToString(issue.ID) {
-		writeError(w, http.StatusBadRequest, "task does not belong to issue")
+	if err != nil || !task.IssueID.Valid || uuidToString(task.IssueID) != uuidToString(issue.ID) ||
+		uuidToString(task.AgentID) != actorID || !task.IsLeaderTask {
+		writeError(w, http.StatusBadRequest, "task is not this issue's squad leader task")
 		return
 	}
 

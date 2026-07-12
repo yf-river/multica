@@ -45,9 +45,9 @@ func newRunningSquadLeaderTaskFixture(t *testing.T) runningSquadLeaderTaskFixtur
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO agent_task_queue (
 			agent_id, runtime_id, issue_id, trigger_comment_id,
-			status, priority, started_at
+			status, priority, started_at, is_leader_task
 		)
-		VALUES ($1, $2, $3, $4, 'running', 0, now())
+		VALUES ($1, $2, $3, $4, 'running', 0, now(), true)
 		RETURNING id
 	`, fx.LeaderID, runtimeID, issueID, triggerCommentID).Scan(&taskID); err != nil {
 		t.Fatalf("create running squad leader task: %v", err)
@@ -145,6 +145,31 @@ func TestRecordSquadLeaderEvaluation_RejectsDifferentRetry(t *testing.T) {
 
 	if w.Code != http.StatusConflict {
 		t.Fatalf("different retry: expected 409, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestRecordSquadLeaderEvaluation_RejectsNonLeaderTask(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+
+	fx := newRunningSquadLeaderTaskFixture(t)
+	mustExec(t, context.Background(), `
+		UPDATE agent_task_queue SET is_leader_task = false WHERE id = $1
+	`, fx.TaskID)
+
+	w := httptest.NewRecorder()
+	r := newRequest("POST", "/api/issues/"+fx.IssueID+"/squad-evaluated", map[string]any{
+		"outcome": "no_action",
+		"reason":  "ordinary task must not project a leader decision",
+	})
+	r = withURLParam(r, "id", fx.IssueID)
+	r.Header.Set("X-Agent-ID", fx.LeaderID)
+	r.Header.Set("X-Task-ID", fx.TaskID)
+	testHandler.RecordSquadLeaderEvaluation(w, r)
+
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("non-leader task: expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
