@@ -202,9 +202,10 @@ func collectGitHubFiles(httpClient *http.Client, entries []githubContentEntry, o
 		if lower == "skill.md" || lower == "license" || lower == "license.txt" || lower == "license.md" {
 			continue
 		}
-		if entry.Type == "file" {
+		switch entry.Type {
+		case "file":
 			*out = append(*out, entry)
-		} else if entry.Type == "dir" {
+		case "dir":
 			// Fetch subdirectory contents
 			subURL := entry.URL
 			if subURL == "" {

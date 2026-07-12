@@ -843,7 +843,7 @@ func (h *Handler) RunPromptEvaluationSkillReEval(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusInternalServerError, "failed to start skill re-eval run")
 		return
 	}
-	defer tx.Rollback(r.Context())
+	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 	_, err = qtx.ReserveResourceCreateRequest(r.Context(), db.ReserveResourceCreateRequestParams{
 		WorkspaceID: workspaceUUID, ActorID: requestActorID, ResourceType: resourceTypePromptLocalRun,

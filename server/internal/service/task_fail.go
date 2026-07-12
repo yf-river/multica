@@ -399,8 +399,9 @@ func (s *TaskService) RerunIssueInTx(ctx context.Context, queries *db.Queries, i
 		return RerunIssueResult{}, fmt.Errorf("cancel prior tasks before rerun: %w", err)
 	}
 
-	mentionPath := !(issue.AssigneeType.String == "agent" && issue.AssigneeID.Valid &&
-		util.UUIDToString(issue.AssigneeID) == util.UUIDToString(agentID))
+	isDirectAssignee := issue.AssigneeType.String == "agent" && issue.AssigneeID.Valid &&
+		util.UUIDToString(issue.AssigneeID) == util.UUIDToString(agentID)
+	mentionPath := !isDirectAssignee
 	var task db.AgentTaskQueue
 	if mentionPath {
 		task, err = s.CreateMentionTaskInTx(ctx, queries, issue, agentID, triggerCommentID, isLeader, true)

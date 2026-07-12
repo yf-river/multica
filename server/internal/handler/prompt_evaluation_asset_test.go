@@ -3544,39 +3544,6 @@ func loadPromptEvaluationTestSuiteCases(t *testing.T, assetID string) []string {
 	return actual
 }
 
-func assertPromptEvaluationExperimentDimensions(t *testing.T, assetID string, expected []string) {
-	t.Helper()
-	rows, err := testPool.Query(context.Background(), `
-		SELECT dimension_name
-		FROM prompt_evaluation_experiment_dimension
-		WHERE experiment_asset_id = $1
-		ORDER BY dimension_index ASC
-	`, assetID)
-	if err != nil {
-		t.Fatalf("query experiment dimensions: %v", err)
-	}
-	defer rows.Close()
-	actual := []string{}
-	for rows.Next() {
-		var value string
-		if err := rows.Scan(&value); err != nil {
-			t.Fatalf("scan experiment dimension: %v", err)
-		}
-		actual = append(actual, value)
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("iterate experiment dimensions: %v", err)
-	}
-	if len(actual) != len(expected) {
-		t.Fatalf("experiment dimensions = %#v, want %#v", actual, expected)
-	}
-	for idx := range expected {
-		if actual[idx] != expected[idx] {
-			t.Fatalf("experiment dimensions = %#v, want %#v", actual, expected)
-		}
-	}
-}
-
 type expectedPromptEvaluationDimensionScore struct {
 	name   string
 	status string

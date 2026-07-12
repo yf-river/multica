@@ -12,7 +12,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/metrics"
-	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -474,29 +473,6 @@ func (h *Handler) loadSOPIssue(w http.ResponseWriter, r *http.Request) (db.Issue
 	return issue, true
 }
 
-func sopProfileSummaryForHandler(profile []byte) (profileKey, currentStepKey, currentStepName, roleKey string) {
-	profileKey = "custom"
-	var obj map[string]any
-	if json.Unmarshal(profile, &obj) != nil || obj == nil {
-		return profileKey, "", "", ""
-	}
-	if v, ok := obj["profile_key"].(string); ok && strings.TrimSpace(v) != "" {
-		profileKey = strings.TrimSpace(v)
-	}
-	steps, _ := obj["steps"].([]any)
-	if len(steps) == 0 {
-		return profileKey, "", "", ""
-	}
-	step, _ := steps[0].(map[string]any)
-	if step == nil {
-		return profileKey, "", "", ""
-	}
-	currentStepKey = firstStringField(step, "key", "step_key", "id")
-	currentStepName = firstStringField(step, "name", "title", "label")
-	roleKey = firstStringField(step, "role_key", "role")
-	return profileKey, currentStepKey, currentStepName, roleKey
-}
-
 func firstStringField(obj map[string]any, keys ...string) string {
 	for _, key := range keys {
 		if v, ok := obj[key].(string); ok && strings.TrimSpace(v) != "" {
@@ -515,17 +491,6 @@ func optionalUUIDParam(w http.ResponseWriter, raw string, field string) (pgtype.
 		return pgtype.UUID{}, false
 	}
 	return parsed, true
-}
-
-func pgUUIDFromString(raw string) pgtype.UUID {
-	if strings.TrimSpace(raw) == "" {
-		return pgtype.UUID{}
-	}
-	id, err := util.ParseUUID(raw)
-	if err != nil {
-		return pgtype.UUID{}
-	}
-	return id
 }
 
 func int64Value(value pgtype.Int8) any {
