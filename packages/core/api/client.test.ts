@@ -940,6 +940,12 @@ describe("ApiClient", () => {
         poll_interval_seconds: 0,
       }), { status: 200, headers: { "Content-Type": "application/json" } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({
+        session_id: "",
+        qr_code_url: "",
+        expires_in_seconds: 0,
+        poll_interval_seconds: 0,
+      }), { status: 200, headers: { "Content-Type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
         status: "success",
       }), { status: 200, headers: { "Content-Type": "application/json" } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({
@@ -995,6 +1001,28 @@ describe("ApiClient", () => {
     const second = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
     expect(first["Idempotency-Key"]).toBe(requestID);
     expect(second["Idempotency-Key"]).toBe(requestID);
+  });
+
+  it("recovers an unknown Lark install begin response", async () => {
+    const response = {
+      session_id: "session-1",
+      qr_code_url: "https://accounts.feishu.cn/oauth/v1/qrcode?code=one",
+      expires_in_seconds: 600,
+      poll_interval_seconds: 3,
+    };
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify(response), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(new ApiClient("https://api.example.test").beginLarkInstall(
+      "workspace-1", "agent-1", "feishu",
+    )).resolves.toEqual(response);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(fetchMock.mock.calls[0]?.[0]);
   });
 
   it("fails closed on unsafe GitHub navigation and strips installation internals", async () => {

@@ -121,6 +121,20 @@ type RegistrationService struct {
 
 	mu       sync.Mutex
 	sessions map[string]*registrationSession
+	begins   map[beginInstallIdentity]*beginInstallCall
+}
+
+type beginInstallIdentity struct {
+	workspaceID [16]byte
+	agentID     [16]byte
+	initiatorID [16]byte
+	region      Region
+}
+
+type beginInstallCall struct {
+	done   chan struct{}
+	result BeginInstallResult
+	err    error
 }
 
 // authQueriesAdapter is the minimal lookup surface the service needs
@@ -173,6 +187,7 @@ func NewRegistrationService(
 		binder:      binder,
 		authQueries: queries,
 		sessions:    make(map[string]*registrationSession),
+		begins:      make(map[beginInstallIdentity]*beginInstallCall),
 	}, nil
 }
 
@@ -309,10 +324,12 @@ type BeginInstallResult struct {
 	PollIntervalSeconds int
 }
 
-// BeginInstall opens a fresh device-flow session and kicks off the
-// background polling goroutine. The returned payload feeds the QR-code
-// dialog on the frontend; the polling goroutine runs until success,
-// terminal failure, or device_code expiry.
+// BeginInstall returns the current pending session for the same
+// workspace/agent/initiator/region, or opens one device-flow session and kicks
+// off its polling goroutine. This makes StrictMode duplicate mounts and an
+// unknown HTTP response recover the same QR instead of creating parallel
+// external sessions. A terminal session is never replayed; an explicit retry
+// starts fresh.
 //
 // The session_id is the only opaque token returned to the browser —
 // the device_code is server-side only (Lark would honor a poll from
@@ -340,8 +357,29 @@ func (s *RegistrationService) BeginInstall(ctx context.Context, p BeginInstallPa
 	if err != nil {
 		return BeginInstallResult{}, fmt.Errorf("lark registration: agent not in workspace: %w", err)
 	}
+	beginKey := beginInstallIdentity{
+		workspaceID: p.WorkspaceID.Bytes,
+		agentID:     p.AgentID.Bytes,
+		initiatorID: p.InitiatorID.Bytes,
+		region:      p.Region,
+	}
+	call, owner := s.reservePendingBegin(beginKey)
+	if !owner {
+		select {
+		case <-ctx.Done():
+			return BeginInstallResult{}, ctx.Err()
+		case <-call.done:
+			return call.result, call.err
+		}
+	}
 
-	begin, err := s.client.Begin(ctx, botNamePreset(agent.Name), p.Region)
+	result, err := s.openRegistrationSession(ctx, p, agent.Name)
+	s.completePendingBegin(beginKey, call, result, err)
+	return result, err
+}
+
+func (s *RegistrationService) openRegistrationSession(ctx context.Context, p BeginInstallParams, agentName string) (BeginInstallResult, error) {
+	begin, err := s.client.Begin(ctx, botNamePreset(agentName), p.Region)
 	if err != nil {
 		return BeginInstallResult{}, fmt.Errorf("lark registration: begin: %w", err)
 	}
@@ -381,6 +419,41 @@ func (s *RegistrationService) BeginInstall(ctx context.Context, p BeginInstallPa
 		ExpiresInSeconds:    int(begin.ExpiresIn / time.Second),
 		PollIntervalSeconds: int(begin.Interval / time.Second),
 	}, nil
+}
+
+func (s *RegistrationService) reservePendingBegin(key beginInstallIdentity) (*beginInstallCall, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.begins == nil {
+		s.begins = make(map[beginInstallIdentity]*beginInstallCall)
+	}
+	if existing := s.begins[key]; existing != nil {
+		select {
+		case <-existing.done:
+			if existing.err == nil {
+				if session := s.sessions[existing.result.SessionID]; session != nil && session.snapshot().Status == RegistrationStatusPending {
+					return existing, false
+				}
+			}
+			delete(s.begins, key)
+		default:
+			return existing, false
+		}
+	}
+	call := &beginInstallCall{done: make(chan struct{})}
+	s.begins[key] = call
+	return call, true
+}
+
+func (s *RegistrationService) completePendingBegin(key beginInstallIdentity, call *beginInstallCall, result BeginInstallResult, err error) {
+	s.mu.Lock()
+	call.result = result
+	call.err = err
+	close(call.done)
+	if err != nil {
+		delete(s.begins, key)
+	}
+	s.mu.Unlock()
 }
 
 // GetSession returns the current state of an in-flight or recently-
@@ -620,6 +693,15 @@ func (s *RegistrationService) gcExpiredLocked() {
 		sess.mu.Unlock()
 		if drop {
 			delete(s.sessions, id)
+		}
+	}
+	for key, call := range s.begins {
+		select {
+		case <-call.done:
+			if call.err != nil || s.sessions[call.result.SessionID] == nil {
+				delete(s.begins, key)
+			}
+		default:
 		}
 	}
 }

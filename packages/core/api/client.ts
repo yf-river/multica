@@ -3107,12 +3107,16 @@ export class ApiClient extends ApiTransport {
     // cloud up front. Region is required across the full request chain so
     // every call site makes a deliberate choice.
     const search = new URLSearchParams({ agent_id: agentId, region });
-    const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/lark/install/begin?${search.toString()}`, {
-      method: "POST",
-    });
-    return parseOrThrow(raw, BeginLarkInstallResponseSchema, EMPTY_BEGIN_LARK_INSTALL_RESPONSE, {
-      endpoint: "POST /api/workspaces/:id/lark/install/begin",
-    });
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/lark/install/begin?${search.toString()}`, {
+        method: "POST",
+      });
+      return parseOrThrow(raw, BeginLarkInstallResponseSchema, EMPTY_BEGIN_LARK_INSTALL_RESPONSE, {
+        endpoint: "POST /api/workspaces/:id/lark/install/begin",
+        mayHaveCommitted: true,
+      });
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async getLarkInstallStatus(workspaceId: string, sessionId: string): Promise<LarkInstallStatusResponse> {

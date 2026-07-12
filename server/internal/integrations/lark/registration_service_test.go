@@ -29,6 +29,112 @@ func TestRegistrationServiceBeginInstallRejectsMissingRegionBeforeDatabaseAccess
 	}
 }
 
+type registrationAuthStub struct {
+	agent db.Agent
+}
+
+func (s registrationAuthStub) GetAgentInWorkspace(context.Context, db.GetAgentInWorkspaceParams) (db.Agent, error) {
+	return s.agent, nil
+}
+
+func TestRegistrationServiceBeginInstallReplaysPendingSession(t *testing.T) {
+	fake := newRegistrationFake(t)
+	fake.stubBegin(map[string]any{
+		"device_code":               "dedup-device-code",
+		"verification_uri_complete": "https://accounts.feishu.cn/oauth/v1/qrcode?code=dedup",
+		"interval":                  60,
+		"expire_in":                 1,
+	})
+	service := &RegistrationService{
+		cfg:         RegistrationServiceConfig{}.withDefaults(),
+		client:      NewRegistrationClient(RegistrationConfig{Domain: fake.URL()}),
+		authQueries: registrationAuthStub{agent: db.Agent{Name: "Replay Bot"}},
+		sessions:    make(map[string]*registrationSession),
+	}
+	id := uuidFromStringSvc(t, "11111111-1111-1111-1111-111111111111")
+	params := BeginInstallParams{
+		WorkspaceID: id,
+		AgentID:     id,
+		InitiatorID: id,
+		Region:      RegionFeishu,
+	}
+
+	first, err := service.BeginInstall(context.Background(), params)
+	if err != nil {
+		t.Fatalf("first begin: %v", err)
+	}
+	second, err := service.BeginInstall(context.Background(), params)
+	if err != nil {
+		t.Fatalf("replayed begin: %v", err)
+	}
+	if second != first {
+		t.Fatalf("replayed begin = %+v, want exact pending session %+v", second, first)
+	}
+	if got := fake.beginN.Load(); got != 1 {
+		t.Fatalf("external begin calls = %d, want 1", got)
+	}
+
+	const callers = 8
+	results := make(chan BeginInstallResult, callers)
+	errs := make(chan error, callers)
+	var wg sync.WaitGroup
+	for range callers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			result, err := service.BeginInstall(context.Background(), params)
+			results <- result
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(results)
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("concurrent begin: %v", err)
+		}
+	}
+	for result := range results {
+		if result != first {
+			t.Fatalf("concurrent begin = %+v, want %+v", result, first)
+		}
+	}
+	if got := fake.beginN.Load(); got != 1 {
+		t.Fatalf("external begin calls after concurrency = %d, want 1", got)
+	}
+	otherUserParams := params
+	otherUserParams.InitiatorID = uuidFromStringSvc(t, "22222222-2222-2222-2222-222222222222")
+	otherUserResult, err := service.BeginInstall(context.Background(), otherUserParams)
+	if err != nil {
+		t.Fatalf("other-user begin: %v", err)
+	}
+	if otherUserResult.SessionID == first.SessionID {
+		t.Fatalf("pending session leaked across initiating users: %+v", otherUserResult)
+	}
+	if got := fake.beginN.Load(); got != 2 {
+		t.Fatalf("external begin calls after other user = %d, want 2", got)
+	}
+
+	service.mu.Lock()
+	firstSession := service.sessions[first.SessionID]
+	service.mu.Unlock()
+	if firstSession == nil {
+		t.Fatalf("pending session %q not stored", first.SessionID)
+	}
+	firstSession.markError(RegistrationReasonAccessDenied, "user denied", service.gcDeadline())
+	restarted, err := service.BeginInstall(context.Background(), params)
+	if err != nil {
+		t.Fatalf("restart after terminal session: %v", err)
+	}
+	if restarted.SessionID == first.SessionID {
+		t.Fatalf("terminal session was replayed instead of restarted: %+v", restarted)
+	}
+	if got := fake.beginN.Load(); got != 3 {
+		t.Fatalf("external begin calls after explicit restart = %d, want 3", got)
+	}
+}
+
 // These tests cover the pure-Go halves of RegistrationService —
 // constructor validation, session-id security boundary, status code
 // mapping — without touching the database. The polling goroutine's
