@@ -333,10 +333,22 @@ func (s *TaskService) publishRetryTask(ctx context.Context, child db.AgentTaskQu
 // Tasks owned by other agents on the same issue (e.g. a parallel
 // @-mention agent) are left alone — rerun must not collateral-cancel
 // them.
-func (s *TaskService) RerunIssue(ctx context.Context, issueID pgtype.UUID, sourceTaskID pgtype.UUID, triggerCommentID pgtype.UUID) (*db.AgentTaskQueue, error) {
-	issue, err := s.Queries.GetIssue(ctx, issueID)
+type RerunIssueResult struct {
+	Task            db.AgentTaskQueue
+	Cancelled       []db.AgentTaskQueue
+	CancelledEvents []events.Event
+	SourceTaskID    pgtype.UUID
+	mentionPath     bool
+}
+
+// RerunIssueInTx performs the entire rerun state transition in the caller's
+// transaction. Request reservation/completion lives at the HTTP boundary;
+// cancellation, durable cancellation events, fresh task and optional SOP
+// projection live here as one domain mutation.
+func (s *TaskService) RerunIssueInTx(ctx context.Context, queries *db.Queries, issueID pgtype.UUID, sourceTaskID pgtype.UUID, triggerCommentID pgtype.UUID) (RerunIssueResult, error) {
+	issue, err := queries.GetIssue(ctx, issueID)
 	if err != nil {
-		return nil, fmt.Errorf("load issue: %w", err)
+		return RerunIssueResult{}, fmt.Errorf("load issue: %w", err)
 	}
 
 	// Determine the target agent for the rerun.
@@ -345,12 +357,12 @@ func (s *TaskService) RerunIssue(ctx context.Context, issueID pgtype.UUID, sourc
 		isLeader bool
 	)
 	if sourceTaskID.Valid {
-		sourceTask, err := s.Queries.GetAgentTask(ctx, sourceTaskID)
+		sourceTask, err := queries.GetAgentTask(ctx, sourceTaskID)
 		if err != nil {
-			return nil, fmt.Errorf("load source task: %w", err)
+			return RerunIssueResult{}, fmt.Errorf("load source task: %w", err)
 		}
 		if !sourceTask.IssueID.Valid || util.UUIDToString(sourceTask.IssueID) != util.UUIDToString(issueID) {
-			return nil, fmt.Errorf("source task does not belong to this issue")
+			return RerunIssueResult{}, fmt.Errorf("source task does not belong to this issue")
 		}
 		agentID = sourceTask.AgentID
 		isLeader = sourceTask.IsLeaderTask
@@ -368,50 +380,56 @@ func (s *TaskService) RerunIssue(ctx context.Context, issueID pgtype.UUID, sourc
 		case issue.AssigneeType.String == "agent" && issue.AssigneeID.Valid:
 			agentID = issue.AssigneeID
 		case issue.AssigneeType.String == "squad" && issue.AssigneeID.Valid:
-			squad, err := s.Queries.GetSquad(ctx, issue.AssigneeID)
+			squad, err := queries.GetSquad(ctx, issue.AssigneeID)
 			if err != nil {
-				return nil, fmt.Errorf("issue is assigned to a squad but squad not found")
+				return RerunIssueResult{}, fmt.Errorf("issue is assigned to a squad but squad not found")
 			}
 			agentID = squad.LeaderID
 			isLeader = true
 		default:
-			return nil, fmt.Errorf("issue is not assigned to an agent or squad")
+			return RerunIssueResult{}, fmt.Errorf("issue is not assigned to an agent or squad")
 		}
 	}
 
-	// Cancel only the target agent's active/queued tasks on this issue.
-	cancelled, err := s.CancelTasksForIssueAndAgent(ctx, issueID, agentID)
+	if err := queries.LockIssueAgentRerun(ctx, db.LockIssueAgentRerunParams{IssueID: issueID, AgentID: agentID}); err != nil {
+		return RerunIssueResult{}, fmt.Errorf("lock issue rerun: %w", err)
+	}
+	cancelled, cancelledEvents, err := s.CancelTasksForIssueAndAgentInTx(ctx, queries, issueID, agentID)
 	if err != nil {
-		return nil, fmt.Errorf("cancel prior tasks before rerun: %w", err)
+		return RerunIssueResult{}, fmt.Errorf("cancel prior tasks before rerun: %w", err)
 	}
 
-	task, err := s.enqueueRerunTask(ctx, issue, agentID, triggerCommentID, isLeader)
-	if err != nil {
-		return nil, err
+	mentionPath := !(issue.AssigneeType.String == "agent" && issue.AssigneeID.Valid &&
+		util.UUIDToString(issue.AssigneeID) == util.UUIDToString(agentID))
+	var task db.AgentTaskQueue
+	if mentionPath {
+		task, err = s.CreateMentionTaskInTx(ctx, queries, issue, agentID, triggerCommentID, isLeader, true)
+	} else {
+		task, err = s.CreateIssueTaskInTx(ctx, queries, issue, triggerCommentID, true)
 	}
-	slog.Info("issue rerun enqueued",
-		"task_id", util.UUIDToString(task.ID),
-		"issue_id", util.UUIDToString(issueID),
-		"agent_id", util.UUIDToString(agentID),
-		"source_task_id", util.UUIDToString(sourceTaskID),
-		"is_leader", isLeader,
-		"cancelled_prior", len(cancelled),
-	)
-	return &task, nil
+	if err != nil {
+		return RerunIssueResult{}, err
+	}
+	return RerunIssueResult{Task: task, Cancelled: cancelled, CancelledEvents: cancelledEvents, SourceTaskID: sourceTaskID, mentionPath: mentionPath}, nil
 }
 
-// enqueueRerunTask enqueues a fresh task for the given agent on the issue.
-// When the target agent is the issue's single-agent assignee we use the
-// assignee-driven path (enqueueIssueTask) so the issue-assignee bookkeeping
-// stays in sync; otherwise (squad member, prior assignee that has since been
-// reassigned, mention agent) we use the mention path with the same
-// force_fresh_session=true contract.
-func (s *TaskService) enqueueRerunTask(ctx context.Context, issue db.Issue, agentID pgtype.UUID, triggerCommentID pgtype.UUID, isLeader bool) (db.AgentTaskQueue, error) {
-	if issue.AssigneeType.String == "agent" && issue.AssigneeID.Valid &&
-		util.UUIDToString(issue.AssigneeID) == util.UUIDToString(agentID) {
-		return s.enqueueIssueTask(ctx, issue, triggerCommentID, true)
+// PublishRerunIssue emits post-commit effects for the exact rows committed by
+// RerunIssueInTx. Replays never call this method.
+func (s *TaskService) PublishRerunIssue(ctx context.Context, result RerunIssueResult) {
+	s.PublishCancelledTasks(ctx, result.Cancelled, result.CancelledEvents)
+	if result.mentionPath {
+		s.PublishMentionTaskEnqueued(ctx, result.Task)
+	} else {
+		s.PublishIssueTaskEnqueued(ctx, result.Task)
 	}
-	return s.enqueueMentionTask(ctx, issue, agentID, triggerCommentID, isLeader, true)
+	slog.Info("issue rerun enqueued",
+		"task_id", util.UUIDToString(result.Task.ID),
+		"issue_id", util.UUIDToString(result.Task.IssueID),
+		"agent_id", util.UUIDToString(result.Task.AgentID),
+		"source_task_id", util.UUIDToString(result.SourceTaskID),
+		"is_leader", result.Task.IsLeaderTask,
+		"cancelled_prior", len(result.Cancelled),
+	)
 }
 
 // HandleFailedTasks publishes post-commit traces and reconciles agents for a

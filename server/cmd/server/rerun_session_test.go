@@ -124,8 +124,9 @@ func (f rerunTestFixture) taskService() *service.TaskService {
 func (f rerunTestFixture) rerunSourceTask(t *testing.T, sourceTaskID string) *db.AgentTaskQueue {
 	t.Helper()
 
-	task, err := f.taskService().RerunIssue(
+	result, err := f.taskService().RerunIssueInTx(
 		f.ctx,
+		f.queries,
 		pgtype.UUID{Bytes: parseUUIDBytes(f.issueID), Valid: true},
 		pgtype.UUID{Bytes: parseUUIDBytes(sourceTaskID), Valid: true},
 		pgtype.UUID{},
@@ -133,10 +134,7 @@ func (f rerunTestFixture) rerunSourceTask(t *testing.T, sourceTaskID string) *db
 	if err != nil {
 		t.Fatalf("RerunIssue failed: %v", err)
 	}
-	if task == nil {
-		t.Fatal("RerunIssue returned nil task")
-	}
-	return task
+	return &result.Task
 }
 
 // TestGetLastTaskSessionExcludesPoisonedFailures asserts that the
@@ -329,14 +327,11 @@ func TestGetLastTaskSessionKeepsBenignAgentErrorWithSession(t *testing.T) {
 func TestRerunIssueSetsForceFreshSession(t *testing.T) {
 	f := setupRerunSessionTest(t)
 
-	task, err := f.taskService().RerunIssue(f.ctx, pgtype.UUID{Bytes: parseUUIDBytes(f.issueID), Valid: true}, pgtype.UUID{}, pgtype.UUID{})
+	result, err := f.taskService().RerunIssueInTx(f.ctx, f.queries, pgtype.UUID{Bytes: parseUUIDBytes(f.issueID), Valid: true}, pgtype.UUID{}, pgtype.UUID{})
 	if err != nil {
 		t.Fatalf("RerunIssue failed: %v", err)
 	}
-	if task == nil {
-		t.Fatal("RerunIssue returned nil task")
-	}
-	if !task.ForceFreshSession {
+	if !result.Task.ForceFreshSession {
 		t.Fatal("expected manual rerun to set force_fresh_session=true")
 	}
 }
@@ -433,8 +428,9 @@ func TestRerunIssueRejectsCrossIssueTask(t *testing.T) {
 		t.Fatalf("insert cross task: %v", err)
 	}
 
-	_, err := f.taskService().RerunIssue(
+	_, err := f.taskService().RerunIssueInTx(
 		f.ctx,
+		f.queries,
 		pgtype.UUID{Bytes: parseUUIDBytes(f.issueID), Valid: true},
 		pgtype.UUID{Bytes: parseUUIDBytes(crossTaskID), Valid: true},
 		pgtype.UUID{},

@@ -24,9 +24,9 @@
     "databaseFunctions": 9,
     "databaseTriggers": 4,
     "databaseIndexes": 194,
-    "migrations": 140,
+    "migrations": 142,
     "sqlcModules": 55,
-    "sqlcQueries": 589,
+    "sqlcQueries": 590,
     "goWebsocketEvents": 80,
     "typescriptWebsocketEvents": 70,
     "zustandStores": 43,
@@ -7300,6 +7300,32 @@
           "droppedFunctions": [],
           "droppedTriggers": [],
           "droppedIndexes": []
+        },
+        {
+          "version": 71,
+          "name": "add_issue_rerun_request",
+          "direction": "down",
+          "source": "server/migrations/071_add_issue_rerun_request.down.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 71,
+          "name": "add_issue_rerun_request",
+          "direction": "up",
+          "source": "server/migrations/071_add_issue_rerun_request.up.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
         }
       ],
       "tables": [
@@ -9159,6 +9185,11 @@
               "name": "LockAgentTaskForRetry",
               "command": "one",
               "source": "server/pkg/db/queries/agent.sql#LockAgentTaskForRetry"
+            },
+            {
+              "name": "LockIssueAgentRerun",
+              "command": "exec",
+              "source": "server/pkg/db/queries/agent.sql#LockIssueAgentRerun"
             },
             {
               "name": "ReclaimStaleDispatchedTaskForRuntime",

@@ -1487,15 +1487,19 @@ export class ApiClient extends ApiTransport {
     });
   }
 
-  async rerunIssue(issueId: string, taskId: string): Promise<AgentTask> {
-    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/rerun`, {
-      method: "POST",
-      body: JSON.stringify({ task_id: taskId }),
-    });
-    return parseOrThrow(raw, AgentTaskSchema, EMPTY_AGENT_TASK, {
-      endpoint: "POST /api/issues/:id/rerun",
-      mayHaveCommitted: true,
-    });
+  async rerunIssue(issueId: string, taskId: string, idempotencyKey = generateUUID()): Promise<AgentTask> {
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/issues/${issueId}/rerun`, {
+        method: "POST",
+        body: JSON.stringify({ task_id: taskId }),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow(raw, AgentTaskSchema, EMPTY_AGENT_TASK, {
+        endpoint: "POST /api/issues/:id/rerun",
+        mayHaveCommitted: true,
+      });
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   // Inbox

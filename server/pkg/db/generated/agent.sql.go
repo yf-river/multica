@@ -2386,6 +2386,25 @@ func (q *Queries) LockAgentTaskForRetry(ctx context.Context, id pgtype.UUID) (Ag
 	return i, err
 }
 
+const lockIssueAgentRerun = `-- name: LockIssueAgentRerun :exec
+SELECT pg_advisory_xact_lock(
+    hashtextextended($1::uuid::text || ':' || $2::uuid::text, 0)
+)
+`
+
+type LockIssueAgentRerunParams struct {
+	IssueID pgtype.UUID `json:"issue_id"`
+	AgentID pgtype.UUID `json:"agent_id"`
+}
+
+// Serializes intentional reruns for one issue/agent pair. Different request
+// identities then cancel/replace in order instead of both observing no active
+// task and leaving two queued executions.
+func (q *Queries) LockIssueAgentRerun(ctx context.Context, arg LockIssueAgentRerunParams) error {
+	_, err := q.db.Exec(ctx, lockIssueAgentRerun, arg.IssueID, arg.AgentID)
+	return err
+}
+
 const reclaimStaleDispatchedTaskForRuntime = `-- name: ReclaimStaleDispatchedTaskForRuntime :one
 UPDATE agent_task_queue
 SET dispatched_at = now()

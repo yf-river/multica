@@ -222,6 +222,14 @@ SET status = 'cancelled', completed_at = now()
 WHERE issue_id = $1 AND agent_id = $2 AND status IN ('queued', 'dispatched', 'running')
 RETURNING *;
 
+-- name: LockIssueAgentRerun :exec
+-- Serializes intentional reruns for one issue/agent pair. Different request
+-- identities then cancel/replace in order instead of both observing no active
+-- task and leaving two queued executions.
+SELECT pg_advisory_xact_lock(
+    hashtextextended(sqlc.arg(issue_id)::uuid::text || ':' || sqlc.arg(agent_id)::uuid::text, 0)
+);
+
 -- name: CancelAgentTasksByAgent :many
 -- Bulk-cancel every active (queued/dispatched/running) task for an agent.
 -- Returns the affected rows so callers can broadcast task:cancelled events.

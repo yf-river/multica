@@ -9,6 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
 	"github.com/spf13/cobra"
 
 	"github.com/multica-ai/multica/server/internal/cli"
@@ -397,7 +398,7 @@ func runIssueRerun(cmd *cobra.Command, args []string) error {
 	}
 
 	var task map[string]any
-	if err := client.PostJSON(ctx, "/api/issues/"+issueRef.ID+"/rerun", map[string]any{"target": "current_assignee"}, &task); err != nil {
+	if err := client.PostJSONWithIdempotencyKey(ctx, "/api/issues/"+issueRef.ID+"/rerun", map[string]any{"target": "current_assignee"}, uuid.NewString(), &task); err != nil {
 		return fmt.Errorf("rerun issue: %w", err)
 	}
 

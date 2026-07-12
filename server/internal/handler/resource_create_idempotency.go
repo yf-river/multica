@@ -21,6 +21,7 @@ const (
 	resourceTypeIssue                = "issue"
 	resourceTypeComment              = "comment"
 	resourceTypeAutopilotTrigger     = "autopilot_trigger"
+	resourceTypeIssueRerun           = "issue_rerun"
 	resourceTypeWorkspace            = "workspace"
 	resourceTypePromptLibraryItem    = "prompt_library_item"
 	resourceTypePromptLibraryVersion = "prompt_library_version"

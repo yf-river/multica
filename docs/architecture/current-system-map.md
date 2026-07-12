@@ -25,9 +25,9 @@ evidence reviewable by humans.
 | Database functions | 9 |
 | Database triggers | 4 |
 | Database indexes | 194 |
-| Migration files (up + down) | 140 |
+| Migration files (up + down) | 142 |
 | sqlc modules | 55 |
-| sqlc queries | 589 |
+| sqlc queries | 590 |
 | Go WebSocket events | 80 |
 | TypeScript WebSocket events | 70 |
 | Zustand store definitions | 43 |
@@ -632,6 +632,8 @@ intentionally platform-specific.
 | 69 | add_autopilot_trigger_rotation_request | up | autopilot_trigger_rotation_request | 0 | 0 | 2 | `server/migrations/069_add_autopilot_trigger_rotation_request.up.sql` |
 | 70 | add_autopilot_trigger_create_request | down | — | 0 | 0 | 0 | `server/migrations/070_add_autopilot_trigger_create_request.down.sql` |
 | 70 | add_autopilot_trigger_create_request | up | — | 0 | 0 | 0 | `server/migrations/070_add_autopilot_trigger_create_request.up.sql` |
+| 71 | add_issue_rerun_request | down | — | 0 | 0 | 0 | `server/migrations/071_add_issue_rerun_request.down.sql` |
+| 71 | add_issue_rerun_request | up | — | 0 | 0 | 0 | `server/migrations/071_add_issue_rerun_request.up.sql` |
 
 ### Current tables discovered from up migrations
 
@@ -736,12 +738,12 @@ intentionally platform-specific.
 
 ### sqlc modules
 
-All 589 query names, commands, and stable source anchors are stored in the JSON companion.
+All 590 query names, commands, and stable source anchors are stored in the JSON companion.
 
 | Module | Queries | SQL source | Generated source |
 | --- | --- | --- | --- |
 | activity | 5 | `server/pkg/db/queries/activity.sql` | `server/pkg/db/generated/activity.sql.go` |
-| agent | 57 | `server/pkg/db/queries/agent.sql` | `server/pkg/db/generated/agent.sql.go` |
+| agent | 58 | `server/pkg/db/queries/agent.sql` | `server/pkg/db/generated/agent.sql.go` |
 | agent_playground | 19 | `server/pkg/db/queries/agent_playground.sql` | `server/pkg/db/generated/agent_playground.sql.go` |
 | attachment | 17 | `server/pkg/db/queries/attachment.sql` | `server/pkg/db/generated/attachment.sql.go` |
 | autopilot | 40 | `server/pkg/db/queries/autopilot.sql` | `server/pkg/db/generated/autopilot.sql.go` |

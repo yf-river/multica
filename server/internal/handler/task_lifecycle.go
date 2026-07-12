@@ -2,12 +2,14 @@ package handler
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -143,6 +145,39 @@ func (h *Handler) RerunIssue(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "target must be current_assignee")
 		return
 	}
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	actorID := parseUUID(userID)
+	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	requestHash, err := hashRequestFingerprint(req)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to fingerprint issue rerun")
+		return
+	}
+	loadReplay := func() (AgentTaskResponse, bool, error) {
+		return loadResourceCreateReplay(
+			r.Context(), h.Queries, issue.WorkspaceID, actorID, resourceTypeIssueRerun,
+			idempotencyKey, requestHash,
+			func(response AgentTaskResponse) bool { return response.ID != "" },
+		)
+	}
+	if replay, found, replayErr := loadReplay(); replayErr != nil {
+		if errors.Is(replayErr, errResourceCreateIdempotencyConflict) {
+			writeJSON(w, http.StatusConflict, map[string]string{"error": "Idempotency-Key was already used with a different request", "code": "idempotency_conflict"})
+		} else {
+			writeError(w, http.StatusInternalServerError, "failed to replay issue rerun")
+		}
+		return
+	} else if found {
+		w.Header().Set("Idempotency-Replayed", "true")
+		writeJSON(w, http.StatusAccepted, replay)
+		return
+	}
 
 	var sourceTaskID pgtype.UUID
 	if req.TaskID != "" {
@@ -153,11 +188,50 @@ func (h *Handler) RerunIssue(w http.ResponseWriter, r *http.Request) {
 		sourceTaskID = parsed
 	}
 
-	task, err := h.TaskService.RerunIssue(r.Context(), issue.ID, sourceTaskID, pgtype.UUID{})
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start issue rerun transaction")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	_, err = qtx.ReserveResourceCreateRequest(r.Context(), db.ReserveResourceCreateRequestParams{
+		WorkspaceID: issue.WorkspaceID, ActorID: actorID, ResourceType: resourceTypeIssueRerun,
+		IdempotencyKey: idempotencyKey, RequestHash: requestHash,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		_ = tx.Rollback(r.Context())
+		replay, found, replayErr := loadReplay()
+		if replayErr != nil || !found {
+			writeError(w, http.StatusInternalServerError, "issue rerun replay disappeared after conflict")
+			return
+		}
+		w.Header().Set("Idempotency-Replayed", "true")
+		writeJSON(w, http.StatusAccepted, replay)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reserve issue rerun request")
+		return
+	}
+	result, err := h.TaskService.RerunIssueInTx(r.Context(), qtx, issue.ID, sourceTaskID, pgtype.UUID{})
 	if err != nil {
 		slog.Warn("issue rerun failed", "issue_id", id, "error", err)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	writeJSON(w, http.StatusAccepted, taskToResponse(*task, uuidToString(issue.WorkspaceID)))
+	response := taskToResponse(result.Task, uuidToString(issue.WorkspaceID))
+	if err := completeResourceCreateRequest(
+		r.Context(), qtx, issue.WorkspaceID, actorID, resourceTypeIssueRerun,
+		idempotencyKey, requestHash, result.Task.ID, response,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to complete issue rerun request")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit issue rerun")
+		return
+	}
+	h.TaskService.PublishRerunIssue(r.Context(), result)
+	writeJSON(w, http.StatusAccepted, response)
 }

@@ -277,18 +277,25 @@ func (s *TaskService) CancelTasksByTriggerCommentInTx(
 	return cancelled, persistedEvents, nil
 }
 
-func (s *TaskService) CancelTasksForIssueAndAgent(ctx context.Context, issueID, agentID pgtype.UUID) ([]db.AgentTaskQueue, error) {
-	cancelled, persistedEvents, err := s.cancelTasksDurably(ctx, func(queries *db.Queries) ([]db.AgentTaskQueue, error) {
-		return queries.CancelAgentTasksByIssueAndAgent(ctx, db.CancelAgentTasksByIssueAndAgentParams{
-			IssueID: issueID,
-			AgentID: agentID,
-		})
+// CancelTasksForIssueAndAgentInTx persists cancellation state and terminal
+// events in the caller's transaction. The caller publishes only after commit.
+func (s *TaskService) CancelTasksForIssueAndAgentInTx(
+	ctx context.Context,
+	queries *db.Queries,
+	issueID, agentID pgtype.UUID,
+) ([]db.AgentTaskQueue, []events.Event, error) {
+	cancelled, err := queries.CancelAgentTasksByIssueAndAgent(ctx, db.CancelAgentTasksByIssueAndAgentParams{
+		IssueID: issueID,
+		AgentID: agentID,
 	})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	s.PublishCancelledTasks(ctx, cancelled, persistedEvents)
-	return cancelled, nil
+	persistedEvents, err := s.EnqueueCancelledTaskEvents(ctx, queries, cancelled)
+	if err != nil {
+		return nil, nil, err
+	}
+	return cancelled, persistedEvents, nil
 }
 
 type CancelledChatMessageResult struct {
