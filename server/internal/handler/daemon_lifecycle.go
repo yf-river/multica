@@ -60,7 +60,7 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 
 	ws, err := h.Queries.GetWorkspace(r.Context(), wsUUID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "workspace not found")
+		writeEntityLoadError(w, r, err, "workspace", "workspace_id", req.WorkspaceID)
 		return
 	}
 
@@ -269,7 +269,7 @@ func (h *Handler) GetDaemonWorkspaceRepos(w http.ResponseWriter, r *http.Request
 
 	ws, err := h.Queries.GetWorkspace(r.Context(), parseUUID(workspaceID))
 	if err != nil {
-		writeError(w, http.StatusNotFound, "workspace not found")
+		writeEntityLoadError(w, r, err, "workspace", "workspace_id", workspaceID)
 		return
 	}
 

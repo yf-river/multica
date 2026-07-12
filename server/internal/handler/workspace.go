@@ -118,7 +118,7 @@ func (h *Handler) GetWorkspace(w http.ResponseWriter, r *http.Request) {
 
 	ws, err := h.Queries.GetWorkspace(r.Context(), idUUID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "workspace not found")
+		writeEntityLoadError(w, r, err, "workspace", "workspace_id", id)
 		return
 	}
 	writeJSON(w, http.StatusOK, workspaceToResponse(ws))
