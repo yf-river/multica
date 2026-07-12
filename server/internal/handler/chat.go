@@ -221,7 +221,15 @@ func (h *Handler) loadChatSessionForUser(w http.ResponseWriter, r *http.Request,
 		WorkspaceID: workspaceUUID,
 	})
 	if err != nil {
-		writeError(w, http.StatusNotFound, "chat session not found")
+		if writeClientClosedIfCanceled(w, err) {
+			return db.ChatSession{}, false
+		}
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "chat session not found")
+		} else {
+			slog.Error("load chat session failed", "session_id", sessionID, "error", err)
+			writeError(w, http.StatusInternalServerError, "failed to load chat session")
+		}
 		return db.ChatSession{}, false
 	}
 	if uuidToString(session.CreatorID) != userID {
@@ -936,8 +944,16 @@ func (h *Handler) GetPendingChatTask(w http.ResponseWriter, r *http.Request) {
 
 	task, err := h.Queries.GetPendingChatTask(r.Context(), session.ID)
 	if err != nil {
-		// No in-flight task — return an empty object, not an error.
-		writeJSON(w, http.StatusOK, PendingChatTaskResponse{})
+		if errors.Is(err, pgx.ErrNoRows) {
+			// No in-flight task — return an empty object, not an error.
+			writeJSON(w, http.StatusOK, PendingChatTaskResponse{})
+			return
+		}
+		if writeClientClosedIfCanceled(w, err) {
+			return
+		}
+		slog.Error("load pending chat task failed", "session_id", sessionID, "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to load pending chat task")
 		return
 	}
 

@@ -266,6 +266,31 @@ func TestGetChatSessionClientCanceledReturns499(t *testing.T) {
 	}
 }
 
+func TestGetPendingChatTaskWithoutTaskReturnsEmptyObject(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	agentID := createHandlerTestAgent(t, "ChatNoPendingTaskAgent", []byte("[]"))
+	sessionID := createHandlerTestChatSession(t, agentID)
+	req := newRequest(http.MethodGet, "/api/chat/sessions/"+sessionID+"/pending-task", nil)
+	req = withChatTestWorkspaceCtx(t, req)
+	req = withURLParam(req, "sessionId", sessionID)
+
+	w := httptest.NewRecorder()
+	testHandler.GetPendingChatTask(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var response map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(response) != 0 {
+		t.Fatalf("pending-task response = %#v, want empty object", response)
+	}
+}
+
 // TestUpdateChatSession_RejectsBlank refuses an empty/whitespace title with 400.
 // (Untitled is a render-side fallback, not a stored value.)
 func TestUpdateChatSession_RejectsBlank(t *testing.T) {
