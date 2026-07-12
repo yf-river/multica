@@ -178,7 +178,7 @@ import type {
   TestExternalCredentialProfileRequest,
   TestExternalCredentialProfileResponse,
 } from "../types";
-import { createRequestId, generateUUID } from "../utils";
+import { generateUUID } from "../utils";
 import { parseOrThrow, parseWithFallback } from "./schema";
 import {
   ApiError,
@@ -1745,36 +1745,30 @@ export class ApiClient extends ApiTransport {
   async uploadFile(
     file: File,
     opts?: { issueId?: string; commentId?: string; chatSessionId?: string },
+    idempotencyKey = generateUUID(),
   ): Promise<Attachment> {
-    const formData = new FormData();
-    formData.append("file", file);
-    if (opts?.issueId) formData.append("issue_id", opts.issueId);
-    if (opts?.commentId) formData.append("comment_id", opts.commentId);
-    if (opts?.chatSessionId) formData.append("chat_session_id", opts.chatSessionId);
+    const attempt = async () => {
+      // Rebuild FormData for every attempt. Browsers may consume a request
+      // body stream even when the response is lost; the File itself remains
+      // reusable and the server fingerprints its bytes under one request key.
+      const formData = new FormData();
+      formData.append("file", file);
+      if (opts?.issueId) formData.append("issue_id", opts.issueId);
+      if (opts?.commentId) formData.append("comment_id", opts.commentId);
+      if (opts?.chatSessionId) formData.append("chat_session_id", opts.chatSessionId);
 
-    const rid = createRequestId();
-    const start = Date.now();
-    this.logger.info("→ POST /api/upload-file", { rid });
-
-    const res = await fetch(`${this.baseUrl}/api/upload-file`, {
-      method: "POST",
-      headers: this.authHeaders(),
-      body: formData,
-      credentials: "include",
-    });
-
-    if (!res.ok) {
-      if (res.status === 401) this.handleUnauthorized();
-      const message = await this.parseErrorMessage(res, `Upload failed: ${res.status}`);
-      this.logger.error(`← ${res.status} /api/upload-file`, { rid, duration: `${Date.now() - start}ms`, error: message });
-      throw new Error(message);
-    }
-
-    this.logger.info(`← ${res.status} /api/upload-file`, { rid, duration: `${Date.now() - start}ms` });
-    const raw = await this.parseSuccessJson<unknown>(res, "POST /api/upload-file", true);
-    return parseOrThrow(raw, AttachmentResponseSchema, EMPTY_ATTACHMENT, {
-      endpoint: "POST /api/upload-file",
-    });
+      const response = await this.fetchRaw("/api/upload-file", {
+        method: "POST",
+        body: formData,
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      const raw = await this.parseSuccessJson<unknown>(response, "POST /api/upload-file", true);
+      return parseOrThrow(raw, AttachmentResponseSchema, EMPTY_ATTACHMENT, {
+        endpoint: "POST /api/upload-file",
+        mayHaveCommitted: true,
+      });
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   // Chat Sessions

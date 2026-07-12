@@ -1420,6 +1420,42 @@ describe("ApiClient", () => {
   });
 
   describe("chat attachment wiring", () => {
+		it("uploadFile retries an unknown outcome with the same request identity", async () => {
+			const attachment = {
+				id: "att-1",
+				workspace_id: "ws-1",
+				issue_id: null,
+				comment_id: null,
+				chat_session_id: null,
+				chat_message_id: null,
+				uploader_type: "member",
+				uploader_id: "user-1",
+				url: "https://cdn/x",
+				download_url: "https://cdn/x?download=1",
+				markdown_url: "https://cdn/x",
+				filename: "hi.png",
+				content_type: "image/png",
+				size_bytes: 2,
+				created_at: "2026-07-12T00:00:00Z",
+			};
+			const fetchMock = vi.fn()
+				.mockRejectedValueOnce(new TypeError("response lost"))
+				.mockResolvedValueOnce(new Response(JSON.stringify(attachment), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				}));
+			vi.stubGlobal("fetch", fetchMock);
+
+			const client = new ApiClient("https://api.example.test");
+			await expect(client.uploadFile(new File(["hi"], "hi.png"))).resolves.toMatchObject({ id: "att-1" });
+
+			expect(fetchMock).toHaveBeenCalledTimes(2);
+			const firstHeaders = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+			const secondHeaders = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
+			expect(firstHeaders["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/);
+			expect(secondHeaders["Idempotency-Key"]).toBe(firstHeaders["Idempotency-Key"]);
+		});
+
     it("uploadFile includes chat_session_id in the FormData body", async () => {
       const fetchMock = vi.fn().mockResolvedValue(
         new Response(JSON.stringify({

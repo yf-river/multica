@@ -193,6 +193,17 @@ test("maintained domain flows stay anchored to current routes, tables and source
       ],
     },
     {
+      file: "attachment-upload-flow.md",
+      routes: ["POST /api/upload-file"],
+      tables: ["attachment", "resource_create_request"],
+      sources: [
+        "packages/core/api/client.ts",
+        "server/internal/handler/file.go",
+        "server/internal/handler/resource_create_idempotency.go",
+        "server/migrations/050_add_attachment_create_requests.up.sql",
+      ],
+    },
+    {
       file: "skill-create-flow.md",
       routes: ["POST /api/skills"],
       tables: ["resource_create_request", "skill", "skill_file"],

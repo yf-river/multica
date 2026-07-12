@@ -12,10 +12,11 @@ import (
 )
 
 const (
-	resourceTypeProject = "project"
-	resourceTypeSquad   = "squad"
-	resourceTypeAgent   = "agent"
-	resourceTypeSkill   = "skill"
+	resourceTypeProject    = "project"
+	resourceTypeSquad      = "squad"
+	resourceTypeAgent      = "agent"
+	resourceTypeSkill      = "skill"
+	resourceTypeAttachment = "attachment"
 )
 
 var errResourceCreateIdempotencyConflict = errors.New("resource create idempotency conflict")

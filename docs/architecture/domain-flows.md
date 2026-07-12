@@ -8,6 +8,7 @@ and the one supported path through those surfaces.
 | Flow | Why it is maintained | Document |
 | --- | --- | --- |
 | Chat create and send | Two-step persisted intent, task enqueue, attachments and unknown outcomes | [Chat send](./chat-send-flow.md) |
+| Attachment upload | Object storage, durable metadata, compensation and unknown outcomes | [Attachment upload](./attachment-upload-flow.md) |
 | Project create | Optional resources, exact response replay, Web reload and CLI retry | [Project create](./project-create-flow.md) |
 | Autopilot create and dispatch | Atomic initial trigger, three ingress identities and Issue/task materialization | [Autopilot lifecycle](./autopilot-flow.md) |
 | Squad create | Atomic leader and initial membership, exact replay, Web reload and CLI retry | [Squad create](./squad-create-flow.md) |

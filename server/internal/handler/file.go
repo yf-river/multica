@@ -2,6 +2,9 @@ package handler
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,7 +17,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/storage"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -356,16 +359,6 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate a UUIDv7 to use as both the attachment ID and S3 key.
-	id, err := uuid.NewV7()
-	if err != nil {
-		slog.Error("failed to generate uuid", "error", err)
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	filename := id.String() + path.Ext(header.Filename)
-	key := "workspaces/" + workspaceID + "/" + filename
-
 	if _, err := h.getWorkspaceMember(r.Context(), userID, workspaceID); err != nil {
 		writeError(w, http.StatusForbidden, "not a member of this workspace")
 		return
@@ -373,7 +366,6 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 
 	uploaderType, uploaderID := h.resolveActor(r, userID, workspaceID)
 	params := db.CreateAttachmentParams{
-		ID:           pgtype.UUID{Bytes: id, Valid: true},
 		WorkspaceID:  parseUUID(workspaceID),
 		UploaderType: uploaderType,
 		UploaderID:   parseUUID(uploaderID),
@@ -420,6 +412,81 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		params.ChatSessionID = session.ID
 	}
 
+	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	params.ID = idempotencyKey
+	digest := sha256.Sum256(data)
+	requestHash, err := hashRequestFingerprint(struct {
+		Filename      string `json:"filename"`
+		ContentSHA256 string `json:"content_sha256"`
+		ContentType   string `json:"content_type"`
+		SizeBytes     int64  `json:"size_bytes"`
+		IssueID       string `json:"issue_id,omitempty"`
+		CommentID     string `json:"comment_id,omitempty"`
+		ChatSessionID string `json:"chat_session_id,omitempty"`
+	}{
+		Filename:      header.Filename,
+		ContentSHA256: hex.EncodeToString(digest[:]),
+		ContentType:   contentType,
+		SizeBytes:     int64(len(data)),
+		IssueID:       uuidToString(params.IssueID),
+		CommentID:     uuidToString(params.CommentID),
+		ChatSessionID: uuidToString(params.ChatSessionID),
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to fingerprint upload")
+		return
+	}
+	operationActorID := parseUUID(uploaderID)
+	if replayed, found, err := h.loadAttachmentUploadReplay(
+		r.Context(), params.WorkspaceID, operationActorID, idempotencyKey, requestHash,
+	); err != nil {
+		h.writeAttachmentUploadReplayError(w, err)
+		return
+	} else if found {
+		writeJSON(w, http.StatusOK, replayed)
+		return
+	}
+
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start upload")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	_, err = qtx.ReserveResourceCreateRequest(r.Context(), db.ReserveResourceCreateRequestParams{
+		WorkspaceID:    params.WorkspaceID,
+		ActorID:        operationActorID,
+		ResourceType:   resourceTypeAttachment,
+		IdempotencyKey: idempotencyKey,
+		RequestHash:    requestHash,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		_ = tx.Rollback(r.Context())
+		replayed, found, replayErr := h.loadAttachmentUploadReplay(
+			r.Context(), params.WorkspaceID, operationActorID, idempotencyKey, requestHash,
+		)
+		if replayErr != nil || !found {
+			if replayErr == nil {
+				replayErr = errors.New("attachment upload replay disappeared after conflict")
+			}
+			h.writeAttachmentUploadReplayError(w, replayErr)
+			return
+		}
+		writeJSON(w, http.StatusOK, replayed)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reserve upload request")
+		return
+	}
+
+	filename := uuidToString(idempotencyKey) + path.Ext(header.Filename)
+	key := "workspaces/" + workspaceID + "/" + filename
+
 	link, err := h.Storage.Upload(r.Context(), key, data, contentType, header.Filename)
 	if err != nil {
 		slog.Error("file upload failed", "error", err)
@@ -427,16 +494,88 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	params.Url = link
+	objectNeedsCleanup := true
+	defer func() {
+		if objectNeedsCleanup {
+			if err := h.Storage.Delete(context.WithoutCancel(r.Context()), key); err != nil {
+				slog.Error("failed to roll back uploaded object", "key", key, "error", err)
+			}
+		}
+	}()
 
 	att, err := persistUploadedAttachment(r.Context(), h.Storage, key, func() (db.Attachment, error) {
-		return h.Queries.CreateAttachment(r.Context(), params)
+		return qtx.CreateAttachment(r.Context(), params)
 	})
 	if err != nil {
+		objectNeedsCleanup = false // persistUploadedAttachment already attempted compensation.
 		slog.Error("failed to persist uploaded attachment", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to create attachment")
 		return
 	}
-	writeJSON(w, http.StatusOK, h.attachmentToResponse(att))
+	response := h.attachmentToResponse(att)
+	responseBody, err := json.Marshal(response)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to encode upload response")
+		return
+	}
+	if _, err := qtx.CompleteResourceCreateRequest(r.Context(), db.CompleteResourceCreateRequestParams{
+		WorkspaceID:    params.WorkspaceID,
+		ActorID:        operationActorID,
+		ResourceType:   resourceTypeAttachment,
+		IdempotencyKey: idempotencyKey,
+		RequestHash:    requestHash,
+		ResourceID:     att.ID,
+		ResponseBody:   responseBody,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to complete upload request")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		// A transport-level commit error has an unknown outcome. Keep the
+		// deterministic object unless the durable record proves rollback;
+		// the same-key retry will either replay or safely overwrite it.
+		replayed, found, replayErr := h.loadAttachmentUploadReplay(
+			context.WithoutCancel(r.Context()), params.WorkspaceID, operationActorID,
+			idempotencyKey, requestHash,
+		)
+		if replayErr == nil && found {
+			objectNeedsCleanup = false
+			writeJSON(w, http.StatusOK, replayed)
+			return
+		}
+		if replayErr != nil {
+			objectNeedsCleanup = false
+		}
+		writeError(w, http.StatusInternalServerError, "failed to commit upload")
+		return
+	}
+	objectNeedsCleanup = false
+	writeJSON(w, http.StatusOK, response)
+}
+
+func (h *Handler) loadAttachmentUploadReplay(
+	ctx context.Context,
+	workspaceID pgtype.UUID,
+	actorID pgtype.UUID,
+	idempotencyKey pgtype.UUID,
+	requestHash string,
+) (AttachmentResponse, bool, error) {
+	return loadResourceCreateReplay(
+		ctx, h.Queries, workspaceID, actorID, resourceTypeAttachment,
+		idempotencyKey, requestHash,
+		func(response AttachmentResponse) bool { return response.ID != "" },
+	)
+}
+
+func (h *Handler) writeAttachmentUploadReplayError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errResourceCreateIdempotencyConflict) {
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": "Idempotency-Key was already used with a different upload",
+			"code":  "idempotency_conflict",
+		})
+		return
+	}
+	writeError(w, http.StatusInternalServerError, "failed to replay upload")
 }
 
 func persistUploadedAttachment(

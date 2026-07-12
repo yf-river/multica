@@ -86,3 +86,44 @@ func TestResourceCreateRequestMigrationPreservesCurrentOperations(t *testing.T) 
 		t.Fatalf("old request tables remain: project=%v squad=%v", oldProjectTable, oldSquadTable)
 	}
 }
+
+func TestAttachmentCreateRequestMigrationExtendsCurrentResourceContract(t *testing.T) {
+	pool := openTestPool(t)
+	ctx := context.Background()
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx, readMigrationFile(t, "050_add_attachment_create_requests.up.sql")); err != nil {
+		t.Fatal(err)
+	}
+	var workspaceID string
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO workspace (name, slug) VALUES ('Attachment Request Migration', $1) RETURNING id
+	`, "attachment-request-"+uuid.NewString()).Scan(&workspaceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO resource_create_request (
+			workspace_id, actor_id, resource_type, idempotency_key, request_hash
+		) VALUES ($1, $2, 'attachment', $3, $4)
+	`, workspaceID, uuid.NewString(), uuid.NewString(), "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"); err != nil {
+		t.Fatalf("attachment request type rejected: %v", err)
+	}
+
+	if _, err := tx.Exec(ctx, `SAVEPOINT invalid_resource_type`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO resource_create_request (
+			workspace_id, actor_id, resource_type, idempotency_key, request_hash
+		) VALUES ($1, $2, 'unknown', $3, $4)
+	`, workspaceID, uuid.NewString(), uuid.NewString(), "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"); err == nil {
+		t.Fatal("unknown resource type unexpectedly accepted")
+	}
+	if _, err := tx.Exec(ctx, `ROLLBACK TO SAVEPOINT invalid_resource_type`); err != nil {
+		t.Fatal(err)
+	}
+}

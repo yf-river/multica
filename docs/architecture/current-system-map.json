@@ -24,7 +24,7 @@
     "databaseFunctions": 9,
     "databaseTriggers": 4,
     "databaseIndexes": 185,
-    "migrations": 98,
+    "migrations": 100,
     "sqlcModules": 53,
     "sqlcQueries": 571,
     "goWebsocketEvents": 80,
@@ -6674,6 +6674,32 @@
           "droppedFunctions": [],
           "droppedTriggers": [],
           "droppedIndexes": []
+        },
+        {
+          "version": 50,
+          "name": "add_attachment_create_requests",
+          "direction": "down",
+          "source": "server/migrations/050_add_attachment_create_requests.down.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 50,
+          "name": "add_attachment_create_requests",
+          "direction": "up",
+          "source": "server/migrations/050_add_attachment_create_requests.up.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
         }
       ],
       "tables": [
@@ -13304,7 +13330,7 @@
         "useQuery": 274,
         "useInfiniteQuery": 1,
         "useMutation": 97,
-        "queryOptions": 67,
+        "queryOptions": 65,
         "infiniteQueryOptions": 1
       },
       "queryKeyFactories": [
@@ -13323,10 +13349,6 @@
         {
           "name": "agentTaskSnapshotKeys",
           "source": "packages/core/agents/queries.ts#agentTaskSnapshotKeys"
-        },
-        {
-          "name": "agentTemplateKeys",
-          "source": "packages/core/agents/queries.ts#agentTemplateKeys"
         },
         {
           "name": "autopilotKeys",
@@ -13578,7 +13600,7 @@
             "useQuery": 0,
             "useInfiniteQuery": 0,
             "useMutation": 0,
-            "queryOptions": 6,
+            "queryOptions": 4,
             "infiniteQueryOptions": 0
           }
         },

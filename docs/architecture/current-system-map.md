@@ -25,7 +25,7 @@ evidence reviewable by humans.
 | Database functions | 9 |
 | Database triggers | 4 |
 | Database indexes | 185 |
-| Migration files (up + down) | 98 |
+| Migration files (up + down) | 100 |
 | sqlc modules | 53 |
 | sqlc queries | 571 |
 | Go WebSocket events | 80 |
@@ -591,6 +591,8 @@ intentionally platform-specific.
 | 48 | normalize_prompt_evaluation_agent_selection | up | — | 0 | 0 | 0 | `server/migrations/048_normalize_prompt_evaluation_agent_selection.up.sql` |
 | 49 | unify_resource_create_requests | down | — | 0 | 0 | 0 | `server/migrations/049_unify_resource_create_requests.down.sql` |
 | 49 | unify_resource_create_requests | up | resource_create_request | 0 | 0 | 0 | `server/migrations/049_unify_resource_create_requests.up.sql` |
+| 50 | add_attachment_create_requests | down | — | 0 | 0 | 0 | `server/migrations/050_add_attachment_create_requests.down.sql` |
+| 50 | add_attachment_create_requests | up | — | 0 | 0 | 0 | `server/migrations/050_add_attachment_create_requests.up.sql` |
 
 ### Current tables discovered from up migrations
 
@@ -816,7 +818,7 @@ still include daemon-only/backend projection events and possible frontend gaps.
 | packages/core | 46 |
 | packages/views | 114 |
 
-Operation counts: `useQuery` 274, `useInfiniteQuery` 1, `useMutation` 97, `queryOptions` 67, `infiniteQueryOptions` 1.
+Operation counts: `useQuery` 274, `useInfiniteQuery` 1, `useMutation` 97, `queryOptions` 65, `infiniteQueryOptions` 1.
 The JSON companion lists every consumer file and every discovered exported
 `*Keys` query-key factory.
 

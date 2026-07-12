@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/multica-ai/multica/server/internal/auth"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -100,6 +101,28 @@ func (m *mockStorage) CdnDomain() string { return "cdn.example.com" }
 type mockStorageNoCdn struct{ mockStorage }
 
 func (m *mockStorageNoCdn) CdnDomain() string { return "" }
+
+func newIdempotentUploadRequest(t *testing.T, key, filename string, data []byte) *http.Request {
+	t.Helper()
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("file", filename)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/upload-file", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("X-User-ID", testUserID)
+	req.Header.Set("X-Workspace-ID", testWorkspaceID)
+	req.Header.Set("Idempotency-Key", key)
+	return req
+}
 func (m *mockStorage) GetReader(_ context.Context, key string) (io.ReadCloser, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -240,6 +263,139 @@ func TestUploadFileForeignWorkspace(t *testing.T) {
 	testHandler.UploadFile(w, req)
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("UploadFile with foreign workspace: expected 403, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestUploadFileReplaysCommittedAttachment(t *testing.T) {
+	origStorage := testHandler.Storage
+	store := &mockStorage{}
+	testHandler.Storage = store
+	defer func() { testHandler.Storage = origStorage }()
+
+	key := uuid.NewString()
+	call := func() (*httptest.ResponseRecorder, AttachmentResponse) {
+		w := httptest.NewRecorder()
+		testHandler.UploadFile(w, newIdempotentUploadRequest(t, key, "replay.txt", []byte("same payload")))
+		var response AttachmentResponse
+		if w.Code == http.StatusOK {
+			if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+				t.Fatalf("decode upload response: %v", err)
+			}
+		}
+		return w, response
+	}
+
+	first, created := call()
+	if first.Code != http.StatusOK {
+		t.Fatalf("first upload: expected 200, got %d: %s", first.Code, first.Body.String())
+	}
+	replayed, replayBody := call()
+	if replayed.Code != http.StatusOK {
+		t.Fatalf("replay: expected 200, got %d: %s", replayed.Code, replayed.Body.String())
+	}
+	if replayBody.ID != created.ID || created.ID != key {
+		t.Fatalf("upload identity diverged: key=%s first=%s replay=%s", key, created.ID, replayBody.ID)
+	}
+
+	store.mu.Lock()
+	objects := len(store.files)
+	store.mu.Unlock()
+	if objects != 1 {
+		t.Fatalf("expected one object after replay, got %d", objects)
+	}
+	var attachments int
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM attachment WHERE id = $1`, key).Scan(&attachments); err != nil {
+		t.Fatalf("count attachments: %v", err)
+	}
+	if attachments != 1 {
+		t.Fatalf("expected one attachment after replay, got %d", attachments)
+	}
+	t.Cleanup(func() {
+		mustExec(t, context.Background(), `DELETE FROM attachment WHERE id = $1`, key)
+		mustExec(t, context.Background(), `DELETE FROM resource_create_request WHERE resource_type = 'attachment' AND idempotency_key = $1`, key)
+	})
+}
+
+func TestUploadFileRejectsSameKeyWithDifferentContent(t *testing.T) {
+	origStorage := testHandler.Storage
+	store := &mockStorage{}
+	testHandler.Storage = store
+	defer func() { testHandler.Storage = origStorage }()
+
+	key := uuid.NewString()
+	first := httptest.NewRecorder()
+	testHandler.UploadFile(first, newIdempotentUploadRequest(t, key, "conflict.txt", []byte("original")))
+	if first.Code != http.StatusOK {
+		t.Fatalf("first upload: expected 200, got %d: %s", first.Code, first.Body.String())
+	}
+	t.Cleanup(func() {
+		mustExec(t, context.Background(), `DELETE FROM attachment WHERE id = $1`, key)
+		mustExec(t, context.Background(), `DELETE FROM resource_create_request WHERE resource_type = 'attachment' AND idempotency_key = $1`, key)
+	})
+
+	conflict := httptest.NewRecorder()
+	testHandler.UploadFile(conflict, newIdempotentUploadRequest(t, key, "conflict.txt", []byte("changed")))
+	if conflict.Code != http.StatusConflict {
+		t.Fatalf("conflicting upload: expected 409, got %d: %s", conflict.Code, conflict.Body.String())
+	}
+	objectKey := "workspaces/" + testWorkspaceID + "/" + key + ".txt"
+	store.mu.Lock()
+	stored := string(store.files[objectKey])
+	store.mu.Unlock()
+	if stored != "original" {
+		t.Fatalf("conflicting request overwrote object: %q", stored)
+	}
+}
+
+func TestUploadFileConcurrentSameKeyConverges(t *testing.T) {
+	origStorage := testHandler.Storage
+	store := &mockStorage{}
+	testHandler.Storage = store
+	defer func() { testHandler.Storage = origStorage }()
+
+	const callers = 8
+	key := uuid.NewString()
+	t.Cleanup(func() {
+		mustExec(t, context.Background(), `DELETE FROM attachment WHERE id = $1`, key)
+		mustExec(t, context.Background(), `DELETE FROM resource_create_request WHERE resource_type = 'attachment' AND idempotency_key = $1`, key)
+	})
+	type result struct {
+		code int
+		id   string
+		body string
+	}
+	results := make(chan result, callers)
+	var wg sync.WaitGroup
+	for range callers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			w := httptest.NewRecorder()
+			testHandler.UploadFile(w, newIdempotentUploadRequest(t, key, "concurrent.txt", []byte("one payload")))
+			var response AttachmentResponse
+			if w.Code == http.StatusOK {
+				_ = json.NewDecoder(w.Body).Decode(&response)
+			}
+			results <- result{code: w.Code, id: response.ID, body: w.Body.String()}
+		}()
+	}
+	wg.Wait()
+	close(results)
+
+	for got := range results {
+		if got.code != http.StatusOK || got.id != key {
+			t.Fatalf("concurrent upload diverged: code=%d id=%s body=%s", got.code, got.id, got.body)
+		}
+	}
+	var attachments int
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM attachment WHERE id = $1`, key).Scan(&attachments); err != nil {
+		t.Fatalf("count attachments: %v", err)
+	}
+	store.mu.Lock()
+	objects := len(store.files)
+	store.mu.Unlock()
+	if attachments != 1 || objects != 1 {
+		t.Fatalf("expected one attachment/object, got attachments=%d objects=%d", attachments, objects)
 	}
 }
 
