@@ -214,7 +214,7 @@ func (h *Handler) GetRuntimeProfile(w http.ResponseWriter, r *http.Request) {
 		WorkspaceID: wsUUID,
 	})
 	if err != nil {
-		writeError(w, http.StatusNotFound, "runtime profile not found")
+		writeEntityLoadError(w, r, err, "runtime profile", "profile_id", chi.URLParam(r, "profileId"), "workspace_id", wsID)
 		return
 	}
 	writeJSON(w, http.StatusOK, runtimeProfileToResponse(profile))
@@ -335,7 +335,7 @@ func (h *Handler) DeleteRuntimeProfile(w http.ResponseWriter, r *http.Request) {
 		ID:          profileUUID,
 		WorkspaceID: wsUUID,
 	}); err != nil {
-		writeError(w, http.StatusNotFound, "runtime profile not found")
+		writeEntityLoadError(w, r, err, "runtime profile", "profile_id", chi.URLParam(r, "profileId"), "workspace_id", wsID)
 		return
 	}
 

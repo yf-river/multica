@@ -121,7 +121,15 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 				WorkspaceID: wsUUID,
 			})
 			if perr != nil {
-				writeError(w, http.StatusBadRequest, "unknown runtime profile: "+runtime.ProfileID)
+				if writeClientClosedIfCanceled(w, perr) {
+					return
+				}
+				if isNotFound(perr) {
+					writeError(w, http.StatusBadRequest, "unknown runtime profile: "+runtime.ProfileID)
+					return
+				}
+				slog.Error("load runtime profile for daemon registration failed", "error", perr, "profile_id", runtime.ProfileID, "workspace_id", req.WorkspaceID, "daemon_id", req.DaemonID)
+				writeError(w, http.StatusInternalServerError, "failed to load runtime profile")
 				return
 			}
 			if !profile.Enabled {
