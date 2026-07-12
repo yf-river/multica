@@ -281,35 +281,9 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 		scheduledFilter = pgtype.Bool{Bool: true, Valid: true}
 	}
 
-	// Parse sort and direction params for dynamic ORDER BY.
-	// Manual sort (position) is always ASC — direction is ignored because
-	// the user defines order through drag-and-drop, reversing it has no
-	// product meaning.
-	sortCol := "position"
-	if s := r.URL.Query().Get("sort"); s != "" {
-		switch s {
-		case "position", "title", "created_at", "start_date", "due_date":
-			sortCol = s
-		case "priority":
-			sortCol = "CASE i.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END"
-		default:
-			writeError(w, http.StatusBadRequest, "invalid sort value")
-			return
-		}
-	}
-	sortDir := "ASC"
-	if sortCol != "position" {
-		if d := r.URL.Query().Get("direction"); d != "" {
-			switch strings.ToLower(d) {
-			case "asc":
-				sortDir = "ASC"
-			case "desc":
-				sortDir = "DESC"
-			default:
-				writeError(w, http.StatusBadRequest, "invalid direction value")
-				return
-			}
-		}
+	orderBy, ok := parseIssueOrder(w, r.URL.Query())
+	if !ok {
+		return
 	}
 
 	// Build dynamic SQL — same approach as ListGroupedIssues.
@@ -346,53 +320,11 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 	}
 	where = appendIssueDateFilter(where, addArg, dateFilter)
 	if involvesUserFilter.Valid {
-		ref := addArg(involvesUserFilter)
-		where = append(where, fmt.Sprintf(`(
-    (i.assignee_type = 'agent' AND i.assignee_id IN (
-       SELECT a.id FROM agent a
-        WHERE a.workspace_id = $1
-          AND a.owner_id     = %[1]s::uuid
-    ))
-    OR (i.assignee_type = 'squad' AND i.assignee_id IN (
-       SELECT sm.squad_id
-         FROM squad_member sm
-         JOIN squad s ON s.id = sm.squad_id
-        WHERE s.workspace_id = $1
-          AND sm.member_type = 'member'
-          AND sm.member_id   = %[1]s::uuid
-       UNION
-       SELECT s.id
-         FROM squad s
-         JOIN agent a ON a.id = s.leader_id
-        WHERE s.workspace_id = $1
-          AND a.workspace_id = $1
-          AND a.owner_id     = %[1]s::uuid
-       UNION
-       SELECT sm.squad_id
-         FROM squad_member sm
-         JOIN squad s ON s.id = sm.squad_id
-         JOIN agent a ON a.id = sm.member_id
-        WHERE s.workspace_id = $1
-          AND sm.member_type = 'agent'
-          AND a.workspace_id = $1
-          AND a.owner_id     = %[1]s::uuid
-    ))
-)`, ref))
+		where = appendIssueInvolvesUserFilter(where, addArg, involvesUserFilter)
 	}
 
 	whereSql := strings.Join(where, " AND ")
 	countArgs := append([]any(nil), args...)
-
-	// Build ORDER BY clause.
-	orderBy := sortCol
-	if !strings.HasPrefix(sortCol, "CASE") {
-		orderBy = "i." + sortCol
-	}
-	orderBy += " " + sortDir
-	if sortCol == "start_date" || sortCol == "due_date" {
-		orderBy += " NULLS LAST"
-	}
-	orderBy += ", i.created_at DESC"
 
 	visibleAgentIDs, ok := h.visibleAgentUUIDsForIssueList(w, r, workspaceID)
 	if !ok {
@@ -547,38 +479,7 @@ func (h *Handler) ListIssueBuckets(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return
 		}
-		ref := addArg(id)
-		where = append(where, fmt.Sprintf(`(
-    (i.assignee_type = 'agent' AND i.assignee_id IN (
-       SELECT a.id FROM agent a
-        WHERE a.workspace_id = $1
-          AND a.owner_id     = %[1]s::uuid
-    ))
-    OR (i.assignee_type = 'squad' AND i.assignee_id IN (
-       SELECT sm.squad_id
-         FROM squad_member sm
-         JOIN squad s ON s.id = sm.squad_id
-        WHERE s.workspace_id = $1
-          AND sm.member_type = 'member'
-          AND sm.member_id   = %[1]s::uuid
-       UNION
-       SELECT s.id
-         FROM squad s
-         JOIN agent a ON a.id = s.leader_id
-        WHERE s.workspace_id = $1
-          AND a.workspace_id = $1
-          AND a.owner_id     = %[1]s::uuid
-       UNION
-       SELECT sm.squad_id
-         FROM squad_member sm
-         JOIN squad s ON s.id = sm.squad_id
-         JOIN agent a ON a.id = sm.member_id
-        WHERE s.workspace_id = $1
-          AND sm.member_type = 'agent'
-          AND a.workspace_id = $1
-          AND a.owner_id     = %[1]s::uuid
-    ))
-)`, ref))
+		where = appendIssueInvolvesUserFilter(where, addArg, id)
 	}
 	metadataFilter, ok := parseMetadataFilterParam(w, r.URL.Query().Get("metadata"))
 	if !ok {
@@ -593,41 +494,10 @@ func (h *Handler) ListIssueBuckets(w http.ResponseWriter, r *http.Request) {
 	}
 	where = appendIssueDateFilter(where, addArg, dateFilter)
 
-	sortCol := "position"
-	if s := r.URL.Query().Get("sort"); s != "" {
-		switch s {
-		case "position", "title", "created_at", "start_date", "due_date":
-			sortCol = s
-		case "priority":
-			sortCol = "CASE i.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END"
-		default:
-			writeError(w, http.StatusBadRequest, "invalid sort value")
-			return
-		}
+	orderBy, ok := parseIssueOrder(w, r.URL.Query())
+	if !ok {
+		return
 	}
-	sortDir := "ASC"
-	if sortCol != "position" {
-		if d := r.URL.Query().Get("direction"); d != "" {
-			switch strings.ToLower(d) {
-			case "asc":
-				sortDir = "ASC"
-			case "desc":
-				sortDir = "DESC"
-			default:
-				writeError(w, http.StatusBadRequest, "invalid direction value")
-				return
-			}
-		}
-	}
-	orderBy := sortCol
-	if !strings.HasPrefix(sortCol, "CASE") {
-		orderBy = "i." + sortCol
-	}
-	orderBy += " " + sortDir
-	if sortCol == "start_date" || sortCol == "due_date" {
-		orderBy += " NULLS LAST"
-	}
-	orderBy += ", i.created_at DESC"
 
 	whereSQL := strings.Join(where, " AND ")
 	visibleAgentIDs, ok := h.visibleAgentUUIDsForIssueList(w, r, workspaceID)
@@ -722,6 +592,82 @@ type issueDateFilter struct {
 	column string
 	start  time.Time
 	end    time.Time
+}
+
+const issuePriorityOrder = "CASE i.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END"
+
+func parseIssueOrder(w http.ResponseWriter, values url.Values) (string, bool) {
+	column := values.Get("sort")
+	if column == "" {
+		column = "position"
+	}
+
+	expression := "i." + column
+	switch column {
+	case "position", "title", "created_at", "start_date", "due_date":
+	case "priority":
+		expression = issuePriorityOrder
+	default:
+		writeError(w, http.StatusBadRequest, "invalid sort value")
+		return "", false
+	}
+
+	direction := "ASC"
+	// Manual order is defined by drag-and-drop position and is never reversed.
+	if column != "position" {
+		switch strings.ToLower(values.Get("direction")) {
+		case "", "asc":
+		case "desc":
+			direction = "DESC"
+		default:
+			writeError(w, http.StatusBadRequest, "invalid direction value")
+			return "", false
+		}
+	}
+
+	order := expression + " " + direction
+	if column == "start_date" || column == "due_date" {
+		order += " NULLS LAST"
+	}
+	return order + ", i.created_at DESC", true
+}
+
+// appendIssueInvolvesUserFilter is the single SQL definition of the indirect
+// assignment lens used by every issue-list endpoint. Direct member assignment
+// deliberately stays in assignee_id so the two product tabs remain disjoint.
+func appendIssueInvolvesUserFilter(where []string, addArg func(any) string, userID pgtype.UUID) []string {
+	ref := addArg(userID)
+	return append(where, fmt.Sprintf(`(
+    (i.assignee_type = 'agent' AND i.assignee_id IN (
+       SELECT a.id FROM agent a
+        WHERE a.workspace_id = $1
+          AND a.owner_id     = %[1]s::uuid
+    ))
+    OR (i.assignee_type = 'squad' AND i.assignee_id IN (
+       SELECT sm.squad_id
+         FROM squad_member sm
+         JOIN squad s ON s.id = sm.squad_id
+        WHERE s.workspace_id = $1
+          AND sm.member_type = 'member'
+          AND sm.member_id   = %[1]s::uuid
+       UNION
+       SELECT s.id
+         FROM squad s
+         JOIN agent a ON a.id = s.leader_id
+        WHERE s.workspace_id = $1
+          AND a.workspace_id = $1
+          AND a.owner_id     = %[1]s::uuid
+       UNION
+       SELECT sm.squad_id
+         FROM squad_member sm
+         JOIN squad s ON s.id = sm.squad_id
+         JOIN agent a ON a.id = sm.member_id
+        WHERE s.workspace_id = $1
+          AND sm.member_type = 'agent'
+          AND a.workspace_id = $1
+          AND a.owner_id     = %[1]s::uuid
+    ))
+)`, ref))
 }
 
 func parseIssueDateFilter(w http.ResponseWriter, values url.Values) (*issueDateFilter, bool) {
@@ -956,38 +902,7 @@ func (h *Handler) ListGroupedIssues(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			return
 		}
-		ref := addArg(id)
-		where = append(where, fmt.Sprintf(`(
-    (i.assignee_type = 'agent' AND i.assignee_id IN (
-       SELECT a.id FROM agent a
-        WHERE a.workspace_id = $1
-          AND a.owner_id     = %[1]s::uuid
-    ))
-    OR (i.assignee_type = 'squad' AND i.assignee_id IN (
-       SELECT sm.squad_id
-         FROM squad_member sm
-         JOIN squad s ON s.id = sm.squad_id
-        WHERE s.workspace_id = $1
-          AND sm.member_type = 'member'
-          AND sm.member_id   = %[1]s::uuid
-       UNION
-       SELECT s.id
-         FROM squad s
-         JOIN agent a ON a.id = s.leader_id
-        WHERE s.workspace_id = $1
-          AND a.workspace_id = $1
-          AND a.owner_id     = %[1]s::uuid
-       UNION
-       SELECT sm.squad_id
-         FROM squad_member sm
-         JOIN squad s ON s.id = sm.squad_id
-         JOIN agent a ON a.id = sm.member_id
-        WHERE s.workspace_id = $1
-          AND sm.member_type = 'agent'
-          AND a.workspace_id = $1
-          AND a.owner_id     = %[1]s::uuid
-    ))
-)`, ref))
+		where = appendIssueInvolvesUserFilter(where, addArg, id)
 	}
 
 	assigneeFilters, ok := parseActorFilterList(w, r.URL.Query().Get("assignee_filters"), "assignee_filters")
@@ -1084,42 +999,10 @@ func (h *Handler) ListGroupedIssues(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	sortCol := "position"
-	if s := r.URL.Query().Get("sort"); s != "" {
-		switch s {
-		case "position", "title", "created_at", "start_date", "due_date":
-			sortCol = s
-		case "priority":
-			sortCol = "CASE i.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END"
-		default:
-			writeError(w, http.StatusBadRequest, "invalid sort value")
-			return
-		}
+	intraGroupOrder, ok := parseIssueOrder(w, r.URL.Query())
+	if !ok {
+		return
 	}
-	sortDir := "ASC"
-	if sortCol != "position" {
-		if d := r.URL.Query().Get("direction"); d != "" {
-			switch strings.ToLower(d) {
-			case "asc":
-				sortDir = "ASC"
-			case "desc":
-				sortDir = "DESC"
-			default:
-				writeError(w, http.StatusBadRequest, "invalid direction value")
-				return
-			}
-		}
-	}
-
-	intraGroupOrder := sortCol
-	if !strings.HasPrefix(sortCol, "CASE") {
-		intraGroupOrder = "i." + sortCol
-	}
-	intraGroupOrder += " " + sortDir
-	if sortCol == "start_date" || sortCol == "due_date" {
-		intraGroupOrder += " NULLS LAST"
-	}
-	intraGroupOrder += ", i.created_at DESC"
 
 	offsetRef := addArg(int64(offset))
 	limitRef := addArg(int64(limit))
