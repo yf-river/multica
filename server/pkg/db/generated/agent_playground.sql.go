@@ -640,6 +640,36 @@ func (q *Queries) ListAgentPlaygroundResults(ctx context.Context, arg ListAgentP
 	return items, nil
 }
 
+const lockAgentPlaygroundExperiment = `-- name: LockAgentPlaygroundExperiment :one
+SELECT id, workspace_id, name, description, dataset_asset_id, dataset_version_id, judge_agent_id, status, created_by, created_at, updated_at FROM agent_playground_experiment
+WHERE id = $1 AND workspace_id = $2
+FOR UPDATE
+`
+
+type LockAgentPlaygroundExperimentParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) LockAgentPlaygroundExperiment(ctx context.Context, arg LockAgentPlaygroundExperimentParams) (AgentPlaygroundExperiment, error) {
+	row := q.db.QueryRow(ctx, lockAgentPlaygroundExperiment, arg.ID, arg.WorkspaceID)
+	var i AgentPlaygroundExperiment
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.Name,
+		&i.Description,
+		&i.DatasetAssetID,
+		&i.DatasetVersionID,
+		&i.JudgeAgentID,
+		&i.Status,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const setAgentPlaygroundJudgeAgent = `-- name: SetAgentPlaygroundJudgeAgent :one
 UPDATE agent_playground_experiment
 SET judge_agent_id = $3, updated_at = now()

@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { createTestApi, loginAsDefault, waitForPageText } from "./helpers";
 
-test("agent playground creation recovers one compound experiment after response loss", async ({ page }) => {
+test("agent playground create and run recover exactly after response loss", async ({ page }) => {
   const api = await createTestApi();
   const workspaceSlug = await loginAsDefault(page);
   const suffix = Date.now().toString(36);
@@ -35,6 +35,7 @@ test("agent playground creation recovers one compound experiment after response 
   if (!version) throw new Error("Agent Playground fixture has no dataset version");
   let experimentId: string | undefined;
   let createCalls = 0;
+  let runCalls = 0;
   const requestKeys: string[] = [];
 
   await page.route("**/api/agent-playground-experiments", async (route) => {
@@ -73,6 +74,23 @@ test("agent playground creation recovers one compound experiment after response 
     experimentId = experiments[0]!.id;
     expect(experimentId).toBe(requestKeys[0]);
     expect(experiments[0]).toMatchObject({ input_count: 1, agent_count: 1 });
+
+    await page.route(`**/api/agent-playground-experiments/${experimentId}/run`, async (route) => {
+      runCalls += 1;
+      if (runCalls === 1) {
+        const committed = await route.fetch();
+        expect(committed.status()).toBe(202);
+        await route.abort("connectionfailed");
+        return;
+      }
+      await route.continue();
+    });
+    await page.getByRole("button", { name: "运行", exact: true }).click();
+    await expect.poll(() => runCalls, { timeout: 15_000 }).toBe(2);
+    await expect.poll(async () => {
+      const detail = await api.getAgentPlaygroundExperiment(experimentId!);
+      return detail.results.filter((result) => result.task_id && result.chat_session_id).length;
+    }).toBe(1);
   } finally {
     if (!experimentId) {
       experimentId = (await api.listAgentPlaygroundExperiments().catch(() => []))

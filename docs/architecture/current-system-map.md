@@ -27,7 +27,7 @@ evidence reviewable by humans.
 | Database indexes | 188 |
 | Migration files (up + down) | 120 |
 | sqlc modules | 53 |
-| sqlc queries | 575 |
+| sqlc queries | 576 |
 | Go WebSocket events | 80 |
 | TypeScript WebSocket events | 70 |
 | Zustand store definitions | 39 |
@@ -715,13 +715,13 @@ intentionally platform-specific.
 
 ### sqlc modules
 
-All 575 query names, commands, and stable source anchors are stored in the JSON companion.
+All 576 query names, commands, and stable source anchors are stored in the JSON companion.
 
 | Module | Queries | SQL source | Generated source |
 | --- | --- | --- | --- |
 | activity | 5 | `server/pkg/db/queries/activity.sql` | `server/pkg/db/generated/activity.sql.go` |
 | agent | 57 | `server/pkg/db/queries/agent.sql` | `server/pkg/db/generated/agent.sql.go` |
-| agent_playground | 18 | `server/pkg/db/queries/agent_playground.sql` | `server/pkg/db/generated/agent_playground.sql.go` |
+| agent_playground | 19 | `server/pkg/db/queries/agent_playground.sql` | `server/pkg/db/generated/agent_playground.sql.go` |
 | attachment | 17 | `server/pkg/db/queries/attachment.sql` | `server/pkg/db/generated/attachment.sql.go` |
 | autopilot | 40 | `server/pkg/db/queries/autopilot.sql` | `server/pkg/db/generated/autopilot.sql.go` |
 | chat | 24 | `server/pkg/db/queries/chat.sql` | `server/pkg/db/generated/chat.sql.go` |

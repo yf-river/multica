@@ -1595,6 +1595,17 @@ export class TestApiClient {
     return data.items ?? [];
   }
 
+  async getAgentPlaygroundExperiment(id: string): Promise<{
+    results: Array<{ id: string; task_id: string | null; chat_session_id: string | null }>;
+    judgements: Array<{ id: string; task_id: string | null; chat_session_id: string | null }>;
+  }> {
+    const res = await this.authedFetch(`/api/agent-playground-experiments/${id}`);
+    if (!res.ok) {
+      throw new Error(`get agent playground experiment failed: ${res.status} ${await res.text()}`);
+    }
+    return res.json();
+  }
+
   async cleanupAgentPlaygroundFixture(options: {
     experimentId?: string;
     requestKey?: string;
@@ -1611,6 +1622,20 @@ export class TestApiClient {
         );
       }
       if (options.experimentId) {
+        await client.query(`
+          DELETE FROM agent_task_queue WHERE id IN (
+            SELECT task_id FROM agent_playground_result WHERE experiment_id=$1 AND task_id IS NOT NULL
+            UNION
+            SELECT task_id FROM agent_playground_judgement WHERE experiment_id=$1 AND task_id IS NOT NULL
+          )
+        `, [options.experimentId]);
+        await client.query(`
+          DELETE FROM chat_session WHERE id IN (
+            SELECT chat_session_id FROM agent_playground_result WHERE experiment_id=$1 AND chat_session_id IS NOT NULL
+            UNION
+            SELECT chat_session_id FROM agent_playground_judgement WHERE experiment_id=$1 AND chat_session_id IS NOT NULL
+          )
+        `, [options.experimentId]);
         await client.query(`DELETE FROM agent_playground_experiment WHERE id=$1`, [options.experimentId]);
       }
       if (options.agentId) {

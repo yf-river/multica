@@ -603,13 +603,32 @@ func (h *Handler) JudgeAgentPlaygroundExperiment(w http.ResponseWriter, r *http.
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
-	experiment, err = qtx.GetAgentPlaygroundExperiment(r.Context(), db.GetAgentPlaygroundExperimentParams{
+	experiment, err = qtx.LockAgentPlaygroundExperiment(r.Context(), db.LockAgentPlaygroundExperimentParams{
 		ID:          experiment.ID,
 		WorkspaceID: experiment.WorkspaceID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to reload playground experiment")
 		return
+	}
+	if requestedJudgeID.Valid && experiment.JudgeAgentID.Valid && requestedJudgeID != experiment.JudgeAgentID {
+		judgements, err := qtx.ListAgentPlaygroundJudgements(r.Context(), db.ListAgentPlaygroundJudgementsParams{
+			ExperimentID: experiment.ID,
+			WorkspaceID:  experiment.WorkspaceID,
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to inspect active playground judgements")
+			return
+		}
+		for _, judgement := range judgements {
+			if judgement.TaskID.Valid && !isAgentPlaygroundTerminalStatus(judgement.Status) {
+				writeJSON(w, http.StatusConflict, map[string]string{
+					"error": "cannot change judge agent while judgement tasks are active",
+					"code":  "agent_playground_judgement_active",
+				})
+				return
+			}
+		}
 	}
 	if requestedJudgeID.Valid {
 		experiment, err = qtx.SetAgentPlaygroundJudgeAgent(r.Context(), db.SetAgentPlaygroundJudgeAgentParams{

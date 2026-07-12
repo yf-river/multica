@@ -57,6 +57,11 @@ LIMIT $2;
 SELECT * FROM agent_playground_experiment
 WHERE id = $1 AND workspace_id = $2;
 
+-- name: LockAgentPlaygroundExperiment :one
+SELECT * FROM agent_playground_experiment
+WHERE id = $1 AND workspace_id = $2
+FOR UPDATE;
+
 -- name: UpdateAgentPlaygroundExperimentStatus :one
 UPDATE agent_playground_experiment
 SET status = $3, updated_at = now()

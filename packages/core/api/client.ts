@@ -2098,10 +2098,14 @@ export class ApiClient extends ApiTransport {
   }
 
   async runAgentPlaygroundExperiment(id: string): Promise<AgentPlaygroundDetail> {
-    const raw = await this.fetch<unknown>(`/api/agent-playground-experiments/${id}/run`, { method: "POST" });
-    return parseOrThrow(raw, AgentPlaygroundDetailSchema, EMPTY_AGENT_PLAYGROUND_DETAIL, {
-      endpoint: "POST /api/agent-playground-experiments/:id/run",
-    }) as AgentPlaygroundDetail;
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/agent-playground-experiments/${id}/run`, { method: "POST" });
+      return parseOrThrow(raw, AgentPlaygroundDetailSchema, EMPTY_AGENT_PLAYGROUND_DETAIL, {
+        endpoint: "POST /api/agent-playground-experiments/:id/run",
+        mayHaveCommitted: true,
+      }) as AgentPlaygroundDetail;
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async syncAgentPlaygroundExperiment(id: string): Promise<AgentPlaygroundDetail> {
@@ -2112,13 +2116,17 @@ export class ApiClient extends ApiTransport {
   }
 
   async judgeAgentPlaygroundExperiment(id: string, data?: JudgeAgentPlaygroundExperimentRequest): Promise<AgentPlaygroundDetail> {
-    const raw = await this.fetch<unknown>(`/api/agent-playground-experiments/${id}/judge`, {
-      method: "POST",
-      body: JSON.stringify(data ?? {}),
-    });
-    return parseOrThrow(raw, AgentPlaygroundDetailSchema, EMPTY_AGENT_PLAYGROUND_DETAIL, {
-      endpoint: "POST /api/agent-playground-experiments/:id/judge",
-    }) as AgentPlaygroundDetail;
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/agent-playground-experiments/${id}/judge`, {
+        method: "POST",
+        body: JSON.stringify(data ?? {}),
+      });
+      return parseOrThrow(raw, AgentPlaygroundDetailSchema, EMPTY_AGENT_PLAYGROUND_DETAIL, {
+        endpoint: "POST /api/agent-playground-experiments/:id/judge",
+        mayHaveCommitted: true,
+      }) as AgentPlaygroundDetail;
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   // Prompt evaluation assets

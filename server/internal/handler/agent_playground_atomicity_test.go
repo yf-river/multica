@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/google/uuid"
@@ -256,6 +257,124 @@ func TestRunAgentPlaygroundCommitsCompleteMatrix(t *testing.T) {
 	}
 	if linkedResults != 2 || sessions != 2 || status != "running" {
 		t.Fatalf("playground matrix = results:%d sessions:%d status:%q, want 2/2/running", linkedResults, sessions, status)
+	}
+}
+
+func TestConcurrentRunCreatesOneTaskPerMatrixCell(t *testing.T) {
+	fixture := newAgentPlaygroundRunFixture(t, 1)
+	responses := make(chan *httptest.ResponseRecorder, 2)
+	var wait sync.WaitGroup
+	for range 2 {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			responses <- runAgentPlaygroundFixture(t, fixture)
+		}()
+	}
+	wait.Wait()
+	close(responses)
+	for response := range responses {
+		if response.Code != http.StatusAccepted {
+			t.Fatalf("concurrent run = %d %s, want 202", response.Code, response.Body.String())
+		}
+	}
+
+	ctx := context.Background()
+	var results, tasks, sessions int
+	if err := testPool.QueryRow(ctx, `SELECT
+		(SELECT count(*) FROM agent_playground_result WHERE experiment_id=$1),
+		(SELECT count(*) FROM agent_task_queue WHERE chat_session_id IN (
+			SELECT id FROM chat_session WHERE title LIKE $2
+		)),
+		(SELECT count(*) FROM chat_session WHERE title LIKE $2)
+	`, fixture.experimentID, "Agent 调试场 · "+fixture.titlePrefix+"%").Scan(&results, &tasks, &sessions); err != nil {
+		t.Fatal(err)
+	}
+	if results != 1 || tasks != 1 || sessions != 1 {
+		t.Fatalf("concurrent run writes = results:%d tasks:%d sessions:%d, want 1/1/1", results, tasks, sessions)
+	}
+}
+
+func TestConcurrentSameJudgeCreatesOneTaskPerInput(t *testing.T) {
+	fixture := newAgentPlaygroundRunFixture(t, 1)
+	completeAgentPlaygroundRun(t, fixture)
+	judgeID := createHandlerTestAgent(t, "playground-concurrent-judge-"+uuid.NewString(), nil)
+	responses := make(chan *httptest.ResponseRecorder, 2)
+	var wait sync.WaitGroup
+	for range 2 {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			responses <- judgeAgentPlaygroundFixture(t, fixture, judgeID)
+		}()
+	}
+	wait.Wait()
+	close(responses)
+	for response := range responses {
+		if response.Code != http.StatusAccepted {
+			t.Fatalf("concurrent same judge = %d %s, want 202", response.Code, response.Body.String())
+		}
+	}
+
+	ctx := context.Background()
+	var judgements, tasks, sessions int
+	if err := testPool.QueryRow(ctx, `SELECT
+		(SELECT count(*) FROM agent_playground_judgement WHERE experiment_id=$1),
+		(SELECT count(*) FROM agent_task_queue WHERE chat_session_id IN (
+			SELECT id FROM chat_session WHERE title LIKE $2
+		)),
+		(SELECT count(*) FROM chat_session WHERE title LIKE $2)
+	`, fixture.experimentID, "Agent 调试场裁判 · "+fixture.titlePrefix+"%").Scan(&judgements, &tasks, &sessions); err != nil {
+		t.Fatal(err)
+	}
+	if judgements != 1 || tasks != 1 || sessions != 1 {
+		t.Fatalf("concurrent judge writes = judgements:%d tasks:%d sessions:%d, want 1/1/1", judgements, tasks, sessions)
+	}
+}
+
+func TestConcurrentJudgeChangeDoesNotOrphanPlaygroundTask(t *testing.T) {
+	fixture := newAgentPlaygroundRunFixture(t, 1)
+	completeAgentPlaygroundRun(t, fixture)
+	judgeIDs := []string{
+		createHandlerTestAgent(t, "playground-judge-a-"+uuid.NewString(), nil),
+		createHandlerTestAgent(t, "playground-judge-b-"+uuid.NewString(), nil),
+	}
+
+	responses := make(chan *httptest.ResponseRecorder, len(judgeIDs))
+	var wait sync.WaitGroup
+	for _, judgeID := range judgeIDs {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			responses <- judgeAgentPlaygroundFixture(t, fixture, judgeID)
+		}()
+	}
+	wait.Wait()
+	close(responses)
+
+	statusCounts := map[int]int{}
+	for response := range responses {
+		statusCounts[response.Code]++
+	}
+	if statusCounts[http.StatusAccepted] != 1 || statusCounts[http.StatusConflict] != 1 {
+		t.Fatalf("concurrent judge statuses = %+v, want one 202 and one 409", statusCounts)
+	}
+
+	ctx := context.Background()
+	var judgementTasks, judgeSessions, linkedJudgements int
+	if err := testPool.QueryRow(ctx, `SELECT
+		(SELECT count(*) FROM agent_task_queue WHERE chat_session_id IN (
+			SELECT id FROM chat_session WHERE title LIKE $1
+		)),
+		(SELECT count(*) FROM chat_session WHERE title LIKE $1),
+		(SELECT count(*) FROM agent_playground_judgement WHERE experiment_id=$2 AND task_id IS NOT NULL)
+	`, "Agent 调试场裁判 · "+fixture.titlePrefix+"%", fixture.experimentID).Scan(
+		&judgementTasks, &judgeSessions, &linkedJudgements,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if judgementTasks != 1 || judgeSessions != 1 || linkedJudgements != 1 {
+		t.Fatalf("concurrent judge writes = tasks:%d sessions:%d linked:%d, want 1/1/1", judgementTasks, judgeSessions, linkedJudgements)
 	}
 }
 

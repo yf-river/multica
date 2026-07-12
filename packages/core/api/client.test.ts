@@ -676,6 +676,33 @@ describe("ApiClient", () => {
     expect(second["Idempotency-Key"]).toBe(first["Idempotency-Key"]);
   });
 
+  it.each([
+    ["run", (client: ApiClient) => client.runAgentPlaygroundExperiment("experiment-1")],
+    ["judge", (client: ApiClient) => client.judgeAgentPlaygroundExperiment("experiment-1", { judge_agent_id: "agent-2" })],
+  ])("retries an unknown agent-playground %s outcome once", async (_operation, invoke) => {
+    const detail = {
+      experiment: {
+        id: "experiment-1", workspace_id: "workspace-1", name: "Current", description: "",
+        dataset_asset_id: "asset-1", dataset_version_id: "version-1", judge_agent_id: "agent-2",
+        status: "running", created_by: "user-1", created_at: "now", updated_at: "now",
+        input_count: 1, agent_count: 1,
+      },
+      inputs: [], agents: [], results: [], judgements: [],
+    };
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify(detail), {
+        status: 202, headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(invoke(new ApiClient("https://api.example.test")))
+      .resolves.toMatchObject({ experiment: { id: "experiment-1" } });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock.mock.calls[1]?.[0]).toBe(fetchMock.mock.calls[0]?.[0]);
+    expect(fetchMock.mock.calls[1]?.[1]?.body).toBe(fetchMock.mock.calls[0]?.[1]?.body);
+  });
+
   it("validates Lark installation state without exposing installation secrets", async () => {
     const installation = {
       id: "installation-1",

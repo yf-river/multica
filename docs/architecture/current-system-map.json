@@ -26,7 +26,7 @@
     "databaseIndexes": 188,
     "migrations": 120,
     "sqlcModules": 53,
-    "sqlcQueries": 575,
+    "sqlcQueries": 576,
     "goWebsocketEvents": 80,
     "typescriptWebsocketEvents": 70,
     "zustandStores": 39,
@@ -8916,6 +8916,11 @@
               "name": "ListAgentPlaygroundResults",
               "command": "many",
               "source": "server/pkg/db/queries/agent_playground.sql#ListAgentPlaygroundResults"
+            },
+            {
+              "name": "LockAgentPlaygroundExperiment",
+              "command": "one",
+              "source": "server/pkg/db/queries/agent_playground.sql#LockAgentPlaygroundExperiment"
             },
             {
               "name": "SetAgentPlaygroundJudgeAgent",

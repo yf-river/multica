@@ -35,6 +35,13 @@ response and the request witness commit in one transaction, with the request
 UUID serving as the Experiment UUID. Core owns one workspace-scoped pending
 request, so a lost response replays the complete prior snapshot before a
 different experiment can start; it cannot silently create a second matrix.
+Running an existing matrix is naturally keyed by its unique input/Agent cells:
+concurrent or response-loss retries reuse the linked Chat Session and Task.
+Judging is serialized by an Experiment row lock. Repeating the same judge
+reuses each input's judgement task; changing judges while any judgement task is
+active returns `409 agent_playground_judgement_active` instead of detaching a
+still-running task. A different judge may be selected after the prior judgement
+has reached a terminal state and been synchronized.
 
 External credential profiles use an account-scoped variant because they are
 not workspace resources and their request may contain a secret. The request
