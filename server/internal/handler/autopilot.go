@@ -708,7 +708,12 @@ func (h *Handler) validateAutopilotSubscribers(
 			continue
 		}
 		seen[entry.UserID] = true
-		if !h.isWorkspaceEntity(r.Context(), entry.UserType, entry.UserID, workspaceID) {
+		exists, err := h.workspaceEntity(r.Context(), entry.UserType, entry.UserID, workspaceID)
+		if err != nil {
+			writeWorkspaceEntityLookupError(w, r, err)
+			return nil, false
+		}
+		if !exists {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("subscribers[%d] is not a member of this workspace", i))
 			return nil, false
 		}

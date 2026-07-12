@@ -549,30 +549,51 @@ func (h *Handler) requireWorkspaceRole(w http.ResponseWriter, r *http.Request, w
 	return member, true
 }
 
-// isWorkspaceEntity checks whether a user_id belongs to the given workspace,
-// as either a member or an agent depending on userType.
-func (h *Handler) isWorkspaceEntity(ctx context.Context, userType, userID, workspaceID string) bool {
+// workspaceEntity checks whether a user_id belongs to the given workspace,
+// as either a member or an agent depending on userType. Invalid identities and
+// missing rows are ordinary non-membership; storage failures remain errors.
+func (h *Handler) workspaceEntity(ctx context.Context, userType, userID, workspaceID string) (bool, error) {
 	switch userType {
 	case "member":
 		_, err := h.getWorkspaceMember(ctx, userID, workspaceID)
-		return err == nil
+		if err == nil {
+			return true, nil
+		}
+		if errors.Is(err, pgx.ErrNoRows) || errors.Is(err, errInvalidWorkspaceMemberIdentity) {
+			return false, nil
+		}
+		return false, err
 	case "agent":
 		userUUID, err := util.ParseUUID(userID)
 		if err != nil {
-			return false
+			return false, nil
 		}
 		wsUUID, err := util.ParseUUID(workspaceID)
 		if err != nil {
-			return false
+			return false, nil
 		}
 		_, err = h.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
 			ID:          userUUID,
 			WorkspaceID: wsUUID,
 		})
-		return err == nil
+		if err == nil {
+			return true, nil
+		}
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
 	default:
-		return false
+		return false, nil
 	}
+}
+
+func writeWorkspaceEntityLookupError(w http.ResponseWriter, r *http.Request, err error) {
+	if writeClientClosedIfCanceled(w, err) {
+		return
+	}
+	slog.Error("workspace entity lookup failed", "method", r.Method, "path", r.URL.Path, "error", err)
+	writeError(w, http.StatusInternalServerError, "failed to verify workspace entity")
 }
 
 func writeEntityLoadError(w http.ResponseWriter, r *http.Request, err error, entity string, attrs ...any) {

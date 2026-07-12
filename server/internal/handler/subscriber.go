@@ -60,7 +60,12 @@ func (h *Handler) resolveSubscriberTarget(w http.ResponseWriter, r *http.Request
 	if req.UserType != nil && *req.UserType != "" {
 		target.userType = *req.UserType
 	}
-	if !h.isWorkspaceEntity(r.Context(), target.userType, target.userID, workspaceID) {
+	exists, err := h.workspaceEntity(r.Context(), target.userType, target.userID, workspaceID)
+	if err != nil {
+		writeWorkspaceEntityLookupError(w, r, err)
+		return subscriberTarget{}, false
+	}
+	if !exists {
 		writeError(w, http.StatusForbidden, "target user is not a member of this workspace")
 		return subscriberTarget{}, false
 	}
