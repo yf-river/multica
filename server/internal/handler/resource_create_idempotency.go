@@ -19,6 +19,7 @@ const (
 	resourceTypeAttachment  = "attachment"
 	resourceTypeQuickCreate = "quick_create"
 	resourceTypeIssue       = "issue"
+	resourceTypeComment     = "comment"
 )
 
 var errResourceCreateIdempotencyConflict = errors.New("resource create idempotency conflict")

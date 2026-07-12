@@ -18,6 +18,14 @@ export interface CreateIssueRequest {
   metadata?: IssueMetadata;
 }
 
+export interface CreateCommentRequest {
+  content: string;
+  type?: string;
+  parent_id?: string;
+  attachment_ids?: string[];
+  suppress_agent_ids?: string[];
+}
+
 export interface UpdateIssueRequest {
   title?: string;
   description?: string;

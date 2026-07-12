@@ -13,8 +13,11 @@ state and realtime events only invalidate or reconcile that cache.
   response is replayed byte-for-byte; changed input under the same key is 409.
   `PUT /api/issues/{id}` retains its resource-identity idempotence. Both paths
   validate workspace-scoped assignees, dates and parent/project references.
-- `POST /api/issues/{id}/comments` commits the comment, attachment claims,
-  thread reopening and `comment:created` outbox event together.
+- `POST /api/issues/{id}/comments` carries a Core-persisted UUIDv4 scoped to the
+  Issue/thread composer. It commits the Comment, attachment claims, thread
+  reopening, task projection, `comment:created` outbox event and exact `201`
+  response with one `resource_create_request`. Unknown responses replay without
+  duplicating speech, mentions or notifications; changed input is 409.
 - Batch update is intentionally per-item, not all-or-nothing. Every item is
   accounted for as updated, child-blocked or failed with a stable code.
 - Single and batch delete share `deleteIssueAtomically`: active Task
@@ -50,6 +53,7 @@ rather than an endless foreign-key retry.
   `server/internal/service/issue.go`
 - Per-item batch results: `server/internal/handler/issue_batch.go`
 - Comment transaction: `server/internal/handler/comment.go`
+- Comment request/result recovery: `server/internal/handler/comment_idempotency.go`
 - Task start/terminal services: `server/internal/service/task_claim.go`,
   `server/internal/service/task_complete.go` and
   `server/internal/service/task_fail.go`

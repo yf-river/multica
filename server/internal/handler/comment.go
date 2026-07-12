@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/eventoutbox"
 	"github.com/multica-ai/multica/server/internal/events"
@@ -201,6 +202,33 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		req.Type = "comment"
 	}
 
+	// Resolve the operation owner and completed replay before mutable parent or
+	// task validation. Access to the Issue is still checked above on every call.
+	authorType, authorID := h.resolveActor(r, userID, uuidToString(issue.WorkspaceID))
+	requestHash, err := hashRequestFingerprint(struct {
+		IssueID string               `json:"issue_id"`
+		Request CreateCommentRequest `json:"request"`
+	}{IssueID: issueID, Request: req})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to fingerprint comment request")
+		return
+	}
+	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	replay, found, replayErr := h.loadCommentCreateReplay(
+		r.Context(), issue.WorkspaceID, parseUUID(authorID), idempotencyKey, requestHash,
+	)
+	if replayErr != nil {
+		writeCommentCreateReplayError(w, replayErr)
+		return
+	}
+	if found {
+		writeJSON(w, http.StatusCreated, replay)
+		return
+	}
+
 	var parentID pgtype.UUID
 	var parentComment *db.Comment
 	if req.ParentID != nil {
@@ -226,9 +254,6 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-
-	// Determine author identity: agent (via X-Agent-ID header) or member.
-	authorType, authorID := h.resolveActor(r, userID, uuidToString(issue.WorkspaceID))
 
 	// Defense against resumed-session drift: when an agent posts from inside a
 	// comment-triggered task AND the comment is being posted on that same
@@ -299,6 +324,33 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
+	_, err = qtx.ReserveResourceCreateRequest(r.Context(), db.ReserveResourceCreateRequestParams{
+		WorkspaceID:    issue.WorkspaceID,
+		ActorID:        parseUUID(authorID),
+		ResourceType:   resourceTypeComment,
+		IdempotencyKey: idempotencyKey,
+		RequestHash:    requestHash,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		_ = tx.Rollback(r.Context())
+		replay, found, replayErr := h.loadCommentCreateReplay(
+			r.Context(), issue.WorkspaceID, parseUUID(authorID), idempotencyKey, requestHash,
+		)
+		if replayErr != nil || !found {
+			if replayErr == nil {
+				replayErr = errors.New("comment replay disappeared after conflict")
+			}
+			writeCommentCreateReplayError(w, replayErr)
+			return
+		}
+		writeJSON(w, http.StatusCreated, replay)
+		return
+	}
+	if err != nil {
+		slog.Warn("reserve comment request failed", append(logger.RequestAttrs(r), "error", err, "issue_id", issueID)...)
+		writeError(w, http.StatusInternalServerError, "failed to create comment")
+		return
+	}
 
 	comment, err := qtx.CreateComment(r.Context(), db.CreateCommentParams{
 		IssueID:      issue.ID,
@@ -362,6 +414,13 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	)
 	if err != nil {
 		slog.Warn("create comment task projection failed", append(logger.RequestAttrs(r), "error", err, "issue_id", issueID)...)
+		writeError(w, http.StatusInternalServerError, "failed to create comment")
+		return
+	}
+	if err := completeCommentCreateRequest(
+		r.Context(), qtx, issue.WorkspaceID, parseUUID(authorID), idempotencyKey, requestHash, resp,
+	); err != nil {
+		slog.Warn("complete comment request failed", append(logger.RequestAttrs(r), "error", err, "issue_id", issueID)...)
 		writeError(w, http.StatusInternalServerError, "failed to create comment")
 		return
 	}

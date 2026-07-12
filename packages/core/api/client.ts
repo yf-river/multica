@@ -1,6 +1,7 @@
 import type {
   Issue,
   CreateIssueRequest,
+  CreateCommentRequest,
   UpdateIssueRequest,
   GroupedIssuesResponse,
   IssueStatus,
@@ -756,25 +757,22 @@ export class ApiClient extends ApiTransport {
   // Comments
   async createComment(
     issueId: string,
-    content: string,
-    type?: string,
-    parentId?: string,
-    attachmentIds?: string[],
-    suppressAgentIds?: string[],
+    data: CreateCommentRequest,
+    idempotencyKey = generateUUID(),
   ): Promise<Comment> {
-    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/comments`, {
-      method: "POST",
-      body: JSON.stringify({
-        content,
-        type: type ?? "comment",
-        ...(parentId ? { parent_id: parentId } : {}),
-        ...(attachmentIds?.length ? { attachment_ids: attachmentIds } : {}),
-        ...(suppressAgentIds?.length ? { suppress_agent_ids: suppressAgentIds } : {}),
-      }),
-    });
-    return parseOrThrow(raw, CommentSchema, EMPTY_COMMENT, {
-      endpoint: "POST /api/issues/:id/comments",
-    });
+    const request = { ...data, type: data.type ?? "comment" };
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>(`/api/issues/${issueId}/comments`, {
+        method: "POST",
+        body: JSON.stringify(request),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow(raw, CommentSchema, EMPTY_COMMENT, {
+        endpoint: "POST /api/issues/:id/comments",
+        mayHaveCommitted: true,
+      });
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async previewCommentTriggers(issueId: string, content: string, parentId?: string, editingCommentId?: string): Promise<CommentTriggerPreview> {

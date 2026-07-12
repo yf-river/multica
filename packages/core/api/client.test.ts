@@ -470,6 +470,29 @@ describe("ApiClient", () => {
     expect(second["Idempotency-Key"]).toBe(first["Idempotency-Key"]);
   });
 
+  it("retries comment-create unknown outcomes with one request identity", async () => {
+    const comment = {
+      id: "comment-1", issue_id: "issue-1", author_type: "member", author_id: "user-1",
+      content: "hello", type: "comment", parent_id: null, reactions: [], attachments: [],
+      created_at: "now", updated_at: "now", resolved_at: null,
+      resolved_by_type: null, resolved_by_id: null,
+    };
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify(comment), {
+        status: 201,
+        headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.createComment("issue-1", { content: "hello" }))
+      .resolves.toMatchObject({ id: "comment-1" });
+    const first = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    const second = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
+    expect(first["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(second["Idempotency-Key"]).toBe(first["Idempotency-Key"]);
+  });
+
   it("whitelists external credential responses without exposing secret fields", async () => {
     const profile = {
       id: "profile-1",
@@ -706,7 +729,7 @@ describe("ApiClient", () => {
       id: "",
       metadata: {},
     });
-    await expect(client.createComment("issue-1", "hello")).rejects.toMatchObject({ code: "api_response_contract_invalid" });
+    await expect(client.createComment("issue-1", { content: "hello" })).rejects.toMatchObject({ code: "api_response_contract_invalid" });
     await expect(client.addReaction("comment-1", "👍")).rejects.toMatchObject({ code: "api_response_contract_invalid" });
     await expect(client.addIssueReaction("issue-1", "👍")).rejects.toMatchObject({ code: "api_response_contract_invalid" });
   });
@@ -1176,11 +1199,13 @@ describe("ApiClient", () => {
     await client.previewCommentTriggers("issue-1", "hello", "parent-1", "comment-1");
     await client.createComment(
       "issue-1",
-      "hello",
-      "comment",
-      "parent-1",
-      ["attachment-1"],
-      ["agent-1"],
+      {
+        content: "hello",
+        type: "comment",
+        parent_id: "parent-1",
+        attachment_ids: ["attachment-1"],
+        suppress_agent_ids: ["agent-1"],
+      },
     );
     await client.updateComment("comment-1", "updated", ["attachment-1"], ["agent-1"]);
 

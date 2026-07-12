@@ -7,3 +7,4 @@ export * from "./stores";
 export * from "./create-issue";
 export * from "./quick-create";
 export * from "./create-operation";
+export * from "./comment-create-operation";

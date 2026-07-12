@@ -37,6 +37,7 @@ import type {
 import type { TimelineEntry, IssueSubscriber, Reaction } from "../types";
 import { sortTimelineEntriesAsc } from "./timeline-sort";
 import { createIssueWithRecovery } from "./create-operation";
+import { createCommentWithRecovery } from "./comment-create-operation";
 
 // ---------------------------------------------------------------------------
 // Shared mutation variable types — used by both mutation hooks and
@@ -606,7 +607,13 @@ export function useCreateComment(issueId: string) {
       parentId?: string;
       attachmentIds?: string[];
       suppressAgentIds?: string[];
-    }) => api.createComment(issueId, content, type, parentId, attachmentIds, suppressAgentIds),
+    }) => createCommentWithRecovery(issueId, {
+      content,
+      type,
+      ...(parentId ? { parent_id: parentId } : {}),
+      ...(attachmentIds?.length ? { attachment_ids: attachmentIds } : {}),
+      ...(suppressAgentIds?.length ? { suppress_agent_ids: suppressAgentIds } : {}),
+    }),
     onSuccess: (comment) => {
       const entry: TimelineEntry = {
         type: "comment",
