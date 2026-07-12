@@ -15,7 +15,7 @@
     "manualOverrides": "docs/architecture/current-system-map-overrides.json"
   },
   "summary": {
-    "chiRoutes": 318,
+    "chiRoutes": 316,
     "webPages": 31,
     "webRouteHandlers": 1,
     "webRewrites": 6,
@@ -24,9 +24,9 @@
     "databaseFunctions": 9,
     "databaseTriggers": 4,
     "databaseIndexes": 194,
-    "migrations": 150,
+    "migrations": 154,
     "sqlcModules": 55,
-    "sqlcQueries": 558,
+    "sqlcQueries": 560,
     "goWebsocketEvents": 79,
     "typescriptWebsocketEvents": 69,
     "zustandStores": 43,
@@ -1693,15 +1693,6 @@
         "origin": "static"
       },
       {
-        "method": "GET",
-        "path": "/api/prompt-evaluation-assets/{id}/dataset-export",
-        "handler": "h.ExportPromptEvaluationDataset",
-        "implementation": "server/internal/handler/prompt_evaluation_candidates.go#ExportPromptEvaluationDataset",
-        "registration": "server/cmd/server/router.go#GET /api/prompt-evaluation-assets/{id}/dataset-export",
-        "middlewareWrapper": false,
-        "origin": "static"
-      },
-      {
         "method": "POST",
         "path": "/api/prompt-evaluation-assets/{id}/dataset-from-traces",
         "handler": "h.CreatePromptEvaluationDatasetFromTraces",
@@ -1815,15 +1806,6 @@
         "handler": "h.CreatePromptEvaluationSkillSnapshot",
         "implementation": "server/internal/handler/prompt_evaluation_skill.go#CreatePromptEvaluationSkillSnapshot",
         "registration": "server/cmd/server/router.go#POST /api/prompt-evaluation-assets/{id}/skill-snapshot",
-        "middlewareWrapper": false,
-        "origin": "static"
-      },
-      {
-        "method": "POST",
-        "path": "/api/prompt-evaluation-assets/dataset-import",
-        "handler": "h.ImportPromptEvaluationDataset",
-        "implementation": "server/internal/handler/prompt_evaluation_candidates.go#ImportPromptEvaluationDataset",
-        "registration": "server/cmd/server/router.go#POST /api/prompt-evaluation-assets/dataset-import",
         "middlewareWrapper": false,
         "origin": "static"
       },
@@ -7412,6 +7394,58 @@
           "droppedFunctions": [],
           "droppedTriggers": [],
           "droppedIndexes": []
+        },
+        {
+          "version": 76,
+          "name": "add_prompt_evaluation_asset_create_request",
+          "direction": "down",
+          "source": "server/migrations/076_add_prompt_evaluation_asset_create_request.down.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 76,
+          "name": "add_prompt_evaluation_asset_create_request",
+          "direction": "up",
+          "source": "server/migrations/076_add_prompt_evaluation_asset_create_request.up.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 77,
+          "name": "add_prompt_evaluation_case_create_request",
+          "direction": "down",
+          "source": "server/migrations/077_add_prompt_evaluation_case_create_request.down.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 77,
+          "name": "add_prompt_evaluation_case_create_request",
+          "direction": "up",
+          "source": "server/migrations/077_add_prompt_evaluation_case_create_request.up.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
         }
       ],
       "tables": [
@@ -10834,6 +10868,11 @@
               "source": "server/pkg/db/queries/prompt_evaluation_asset.sql#ListPromptEvaluationAssets"
             },
             {
+              "name": "LockPromptEvaluationAssetForCaseCreate",
+              "command": "one",
+              "source": "server/pkg/db/queries/prompt_evaluation_asset.sql#LockPromptEvaluationAssetForCaseCreate"
+            },
+            {
               "name": "UpdatePromptEvaluationAsset",
               "command": "one",
               "source": "server/pkg/db/queries/prompt_evaluation_asset.sql#UpdatePromptEvaluationAsset"
@@ -10889,6 +10928,11 @@
               "name": "ListPromptEvaluationCaseTagSummaries",
               "command": "many",
               "source": "server/pkg/db/queries/prompt_evaluation_case.sql#ListPromptEvaluationCaseTagSummaries"
+            },
+            {
+              "name": "NextPromptEvaluationCaseIndex",
+              "command": "one",
+              "source": "server/pkg/db/queries/prompt_evaluation_case.sql#NextPromptEvaluationCaseIndex"
             },
             {
               "name": "UpdatePromptEvaluationCase",

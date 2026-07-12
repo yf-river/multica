@@ -16,7 +16,7 @@ evidence reviewable by humans.
 
 | Surface | Count |
 | --- | --- |
-| Go Chi routes | 318 |
+| Go Chi routes | 316 |
 | Next.js pages | 31 |
 | Next.js route handlers | 1 |
 | Next.js rewrites | 6 |
@@ -25,9 +25,9 @@ evidence reviewable by humans.
 | Database functions | 9 |
 | Database triggers | 4 |
 | Database indexes | 194 |
-| Migration files (up + down) | 150 |
+| Migration files (up + down) | 154 |
 | sqlc modules | 55 |
-| sqlc queries | 558 |
+| sqlc queries | 560 |
 | Go WebSocket events | 79 |
 | TypeScript WebSocket events | 69 |
 | Zustand store definitions | 43 |
@@ -227,7 +227,6 @@ closures intentionally remain unresolved.
 | PUT | `/api/prompt-evaluation-assets/{id}` | `h.UpdatePromptEvaluationAsset` | `server/internal/handler/prompt_evaluation_asset.go#UpdatePromptEvaluationAsset` | `server/cmd/server/router.go#PUT /api/prompt-evaluation-assets/{id}` |
 | POST | `/api/prompt-evaluation-assets/{id}/agent-run` | `h.RunPromptEvaluationAssetAgent` | `server/internal/handler/prompt_evaluation_asset.go#RunPromptEvaluationAssetAgent` | `server/cmd/server/router.go#POST /api/prompt-evaluation-assets/{id}/agent-run` |
 | GET | `/api/prompt-evaluation-assets/{id}/case-operations` | `h.ListPromptEvaluationCaseOperations` | `server/internal/handler/prompt_evaluation_cases.go#ListPromptEvaluationCaseOperations` | `server/cmd/server/router.go#GET /api/prompt-evaluation-assets/{id}/case-operations` |
-| GET | `/api/prompt-evaluation-assets/{id}/dataset-export` | `h.ExportPromptEvaluationDataset` | `server/internal/handler/prompt_evaluation_candidates.go#ExportPromptEvaluationDataset` | `server/cmd/server/router.go#GET /api/prompt-evaluation-assets/{id}/dataset-export` |
 | POST | `/api/prompt-evaluation-assets/{id}/dataset-from-traces` | `h.CreatePromptEvaluationDatasetFromTraces` | `server/internal/handler/prompt_evaluation_dataset_versions.go#CreatePromptEvaluationDatasetFromTraces` | `server/cmd/server/router.go#POST /api/prompt-evaluation-assets/{id}/dataset-from-traces` |
 | GET | `/api/prompt-evaluation-assets/{id}/dataset-versions` | `h.ListPromptEvaluationDatasetVersions` | `server/internal/handler/prompt_evaluation_dataset_versions.go#ListPromptEvaluationDatasetVersions` | `server/cmd/server/router.go#GET /api/prompt-evaluation-assets/{id}/dataset-versions` |
 | POST | `/api/prompt-evaluation-assets/{id}/dataset-versions` | `h.CreatePromptEvaluationDatasetVersion` | `server/internal/handler/prompt_evaluation_dataset_versions.go#CreatePromptEvaluationDatasetVersion` | `server/cmd/server/router.go#POST /api/prompt-evaluation-assets/{id}/dataset-versions` |
@@ -241,7 +240,6 @@ closures intentionally remain unresolved.
 | POST | `/api/prompt-evaluation-assets/{id}/skill-case-drafts` | `h.CreatePromptEvaluationSkillCaseDrafts` | `server/internal/handler/prompt_evaluation_skill.go#CreatePromptEvaluationSkillCaseDrafts` | `server/cmd/server/router.go#POST /api/prompt-evaluation-assets/{id}/skill-case-drafts` |
 | POST | `/api/prompt-evaluation-assets/{id}/skill-inventory` | `h.CreatePromptEvaluationSkillInventory` | `server/internal/handler/prompt_evaluation_skill.go#CreatePromptEvaluationSkillInventory` | `server/cmd/server/router.go#POST /api/prompt-evaluation-assets/{id}/skill-inventory` |
 | POST | `/api/prompt-evaluation-assets/{id}/skill-snapshot` | `h.CreatePromptEvaluationSkillSnapshot` | `server/internal/handler/prompt_evaluation_skill.go#CreatePromptEvaluationSkillSnapshot` | `server/cmd/server/router.go#POST /api/prompt-evaluation-assets/{id}/skill-snapshot` |
-| POST | `/api/prompt-evaluation-assets/dataset-import` | `h.ImportPromptEvaluationDataset` | `server/internal/handler/prompt_evaluation_candidates.go#ImportPromptEvaluationDataset` | `server/cmd/server/router.go#POST /api/prompt-evaluation-assets/dataset-import` |
 | GET | `/api/prompt-evaluation-cases` | `h.ListPromptEvaluationCases` | `server/internal/handler/prompt_evaluation_cases.go#ListPromptEvaluationCases` | `server/cmd/server/router.go#GET /api/prompt-evaluation-cases` |
 | POST | `/api/prompt-evaluation-cases` | `h.CreatePromptEvaluationCase` | `server/internal/handler/prompt_evaluation_cases.go#CreatePromptEvaluationCase` | `server/cmd/server/router.go#POST /api/prompt-evaluation-cases` |
 | DELETE | `/api/prompt-evaluation-cases/{id}` | `h.DeletePromptEvaluationCase` | `server/internal/handler/prompt_evaluation_cases.go#DeletePromptEvaluationCase` | `server/cmd/server/router.go#DELETE /api/prompt-evaluation-cases/{id}` |
@@ -638,6 +636,10 @@ intentionally platform-specific.
 | 74 | add_label_create_request | up | — | 0 | 0 | 0 | `server/migrations/074_add_label_create_request.up.sql` |
 | 75 | add_project_resource_create_request | down | — | 0 | 0 | 0 | `server/migrations/075_add_project_resource_create_request.down.sql` |
 | 75 | add_project_resource_create_request | up | — | 0 | 0 | 0 | `server/migrations/075_add_project_resource_create_request.up.sql` |
+| 76 | add_prompt_evaluation_asset_create_request | down | — | 0 | 0 | 0 | `server/migrations/076_add_prompt_evaluation_asset_create_request.down.sql` |
+| 76 | add_prompt_evaluation_asset_create_request | up | — | 0 | 0 | 0 | `server/migrations/076_add_prompt_evaluation_asset_create_request.up.sql` |
+| 77 | add_prompt_evaluation_case_create_request | down | — | 0 | 0 | 0 | `server/migrations/077_add_prompt_evaluation_case_create_request.down.sql` |
+| 77 | add_prompt_evaluation_case_create_request | up | — | 0 | 0 | 0 | `server/migrations/077_add_prompt_evaluation_case_create_request.up.sql` |
 
 ### Current tables discovered from up migrations
 
@@ -742,7 +744,7 @@ intentionally platform-specific.
 
 ### sqlc modules
 
-All 558 query names, commands, and stable source anchors are stored in the JSON companion.
+All 560 query names, commands, and stable source anchors are stored in the JSON companion.
 
 | Module | Queries | SQL source | Generated source |
 | --- | --- | --- | --- |
@@ -770,8 +772,8 @@ All 558 query names, commands, and stable source anchors are stored in the JSON 
 | pinned_item | 5 | `server/pkg/db/queries/pinned_item.sql` | `server/pkg/db/generated/pinned_item.sql.go` |
 | project | 7 | `server/pkg/db/queries/project.sql` | `server/pkg/db/generated/project.sql.go` |
 | project_resource | 9 | `server/pkg/db/queries/project_resource.sql` | `server/pkg/db/generated/project_resource.sql.go` |
-| prompt_evaluation_asset | 6 | `server/pkg/db/queries/prompt_evaluation_asset.sql` | `server/pkg/db/generated/prompt_evaluation_asset.sql.go` |
-| prompt_evaluation_case | 10 | `server/pkg/db/queries/prompt_evaluation_case.sql` | `server/pkg/db/generated/prompt_evaluation_case.sql.go` |
+| prompt_evaluation_asset | 7 | `server/pkg/db/queries/prompt_evaluation_asset.sql` | `server/pkg/db/generated/prompt_evaluation_asset.sql.go` |
+| prompt_evaluation_case | 11 | `server/pkg/db/queries/prompt_evaluation_case.sql` | `server/pkg/db/generated/prompt_evaluation_case.sql.go` |
 | prompt_evaluation_case_assertion | 3 | `server/pkg/db/queries/prompt_evaluation_case_assertion.sql` | `server/pkg/db/generated/prompt_evaluation_case_assertion.sql.go` |
 | prompt_evaluation_case_operation | 6 | `server/pkg/db/queries/prompt_evaluation_case_operation.sql` | `server/pkg/db/generated/prompt_evaluation_case_operation.sql.go` |
 | prompt_evaluation_dataset_row | 4 | `server/pkg/db/queries/prompt_evaluation_dataset_row.sql` | `server/pkg/db/generated/prompt_evaluation_dataset_row.sql.go` |

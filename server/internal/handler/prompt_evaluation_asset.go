@@ -20,8 +20,6 @@ const (
 	promptEvaluationAssetDataset         = "数据集"
 	promptEvaluationAssetTestSuite       = "测试套件"
 	promptEvaluationAssetProfileV1       = "multica.training_evaluation.asset_profile.v1"
-	promptEvaluationDatasetExportV1      = "multica.prompt_evaluation.dataset_export.v1"
-	promptEvaluationDatasetImportV1      = "multica.prompt_evaluation.dataset_import.v1"
 	promptEvaluationAgentName            = "Multica 训练评估智能体"
 	defaultPromptEvaluationAgentProvider = "codebuddy"
 	defaultPromptEvaluationAgentModel    = "deepseek-v4-pro-ioa"
@@ -89,31 +87,6 @@ type UpdatePromptEvaluationAssetRequest struct {
 	AssetType   *string         `json:"asset_type"`
 	Payload     json.RawMessage `json:"payload"`
 	Status      *string         `json:"status"`
-}
-
-type PromptEvaluationDatasetExportResponse struct {
-	Schema        string                         `json:"schema"`
-	ExportedAt    string                         `json:"exported_at"`
-	SourceAssetID string                         `json:"source_asset_id"`
-	Asset         PromptEvaluationAssetResponse  `json:"asset"`
-	CaseCount     int                            `json:"case_count"`
-	Cases         []PromptEvaluationCaseResponse `json:"cases"`
-	Payload       map[string]any                 `json:"payload"`
-}
-
-type ImportPromptEvaluationDatasetRequest struct {
-	Name        string                                `json:"name"`
-	Description string                                `json:"description"`
-	PromptID    json.RawMessage                       `json:"prompt_id"`
-	Status      string                                `json:"status"`
-	Export      PromptEvaluationDatasetExportResponse `json:"export"`
-}
-
-type ImportPromptEvaluationDatasetResponse struct {
-	Asset         PromptEvaluationAssetResponse  `json:"asset"`
-	SourceAssetID string                         `json:"source_asset_id"`
-	CaseCount     int                            `json:"case_count"`
-	Cases         []PromptEvaluationCaseResponse `json:"cases"`
 }
 
 type CreatePromptEvaluationCaseRequest struct {
