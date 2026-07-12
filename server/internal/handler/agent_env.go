@@ -254,7 +254,7 @@ func (h *Handler) UpdateAgentEnv(w http.ResponseWriter, r *http.Request) {
 		writeAgentResponseDecodeError(w, r, uuidToString(updated.ID), err)
 		return
 	}
-	if err := h.attachAgentSkills(r.Context(), &resp, updated.ID); err != nil {
+	if err := attachAgentSkills(r.Context(), h.Queries, &resp, updated.ID); err != nil {
 		slog.Warn("load agent skills after env update failed",
 			append(logger.RequestAttrs(r), "error", err, "agent_id", uuidToString(updated.ID))...)
 		writeError(w, http.StatusInternalServerError, "failed to load agent skills")

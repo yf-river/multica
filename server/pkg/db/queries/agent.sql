@@ -46,23 +46,16 @@ UPDATE agent SET
     instructions = COALESCE(sqlc.narg('instructions'), instructions),
     custom_env = COALESCE(sqlc.narg('custom_env'), custom_env),
     custom_args = COALESCE(sqlc.narg('custom_args'), custom_args),
-    mcp_config = COALESCE(sqlc.narg('mcp_config'), mcp_config),
+    mcp_config = CASE
+        WHEN sqlc.arg('clear_mcp_config')::boolean THEN NULL
+        ELSE COALESCE(sqlc.narg('mcp_config'), mcp_config)
+    END,
     model = COALESCE(sqlc.narg('model'), model),
-    thinking_level = COALESCE(sqlc.narg('thinking_level'), thinking_level),
+    thinking_level = CASE
+        WHEN sqlc.arg('clear_thinking_level')::boolean THEN NULL
+        ELSE COALESCE(sqlc.narg('thinking_level'), thinking_level)
+    END,
     updated_at = now()
-WHERE id = $1
-RETURNING *;
-
--- name: ClearAgentThinkingLevel :one
--- Explicit NULL-clear for thinking_level. COALESCE-based UpdateAgent cannot
--- set the column back to NULL, so the API layer routes "user picked Default"
--- through this dedicated query.
-UPDATE agent SET thinking_level = NULL, updated_at = now()
-WHERE id = $1
-RETURNING *;
-
--- name: ClearAgentMcpConfig :one
-UPDATE agent SET mcp_config = NULL, updated_at = now()
 WHERE id = $1
 RETURNING *;
 

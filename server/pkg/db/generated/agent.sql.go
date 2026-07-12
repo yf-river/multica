@@ -587,81 +587,6 @@ func (q *Queries) ClaimAgentTask(ctx context.Context, agentID pgtype.UUID) (Agen
 	return i, err
 }
 
-const clearAgentMcpConfig = `-- name: ClearAgentMcpConfig :one
-UPDATE agent SET mcp_config = NULL, updated_at = now()
-WHERE id = $1
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, scope, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level
-`
-
-func (q *Queries) ClearAgentMcpConfig(ctx context.Context, id pgtype.UUID) (Agent, error) {
-	row := q.db.QueryRow(ctx, clearAgentMcpConfig, id)
-	var i Agent
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.Name,
-		&i.AvatarUrl,
-		&i.RuntimeMode,
-		&i.RuntimeConfig,
-		&i.Scope,
-		&i.Status,
-		&i.MaxConcurrentTasks,
-		&i.OwnerID,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.Description,
-		&i.RuntimeID,
-		&i.Instructions,
-		&i.ArchivedAt,
-		&i.ArchivedBy,
-		&i.CustomEnv,
-		&i.CustomArgs,
-		&i.McpConfig,
-		&i.Model,
-		&i.ThinkingLevel,
-	)
-	return i, err
-}
-
-const clearAgentThinkingLevel = `-- name: ClearAgentThinkingLevel :one
-UPDATE agent SET thinking_level = NULL, updated_at = now()
-WHERE id = $1
-RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, scope, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level
-`
-
-// Explicit NULL-clear for thinking_level. COALESCE-based UpdateAgent cannot
-// set the column back to NULL, so the API layer routes "user picked Default"
-// through this dedicated query.
-func (q *Queries) ClearAgentThinkingLevel(ctx context.Context, id pgtype.UUID) (Agent, error) {
-	row := q.db.QueryRow(ctx, clearAgentThinkingLevel, id)
-	var i Agent
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.Name,
-		&i.AvatarUrl,
-		&i.RuntimeMode,
-		&i.RuntimeConfig,
-		&i.Scope,
-		&i.Status,
-		&i.MaxConcurrentTasks,
-		&i.OwnerID,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.Description,
-		&i.RuntimeID,
-		&i.Instructions,
-		&i.ArchivedAt,
-		&i.ArchivedBy,
-		&i.CustomEnv,
-		&i.CustomArgs,
-		&i.McpConfig,
-		&i.Model,
-		&i.ThinkingLevel,
-	)
-	return i, err
-}
-
 const completeAgentTask = `-- name: CompleteAgentTask :one
 UPDATE agent_task_queue
 SET status = 'completed', completed_at = now(), result = $2, session_id = $3, work_dir = $4
@@ -2712,9 +2637,15 @@ UPDATE agent SET
     instructions = COALESCE($11, instructions),
     custom_env = COALESCE($12, custom_env),
     custom_args = COALESCE($13, custom_args),
-    mcp_config = COALESCE($14, mcp_config),
-    model = COALESCE($15, model),
-    thinking_level = COALESCE($16, thinking_level),
+    mcp_config = CASE
+        WHEN $14::boolean THEN NULL
+        ELSE COALESCE($15, mcp_config)
+    END,
+    model = COALESCE($16, model),
+    thinking_level = CASE
+        WHEN $17::boolean THEN NULL
+        ELSE COALESCE($18, thinking_level)
+    END,
     updated_at = now()
 WHERE id = $1
 RETURNING id, workspace_id, name, avatar_url, runtime_mode, runtime_config, scope, status, max_concurrent_tasks, owner_id, created_at, updated_at, description, runtime_id, instructions, archived_at, archived_by, custom_env, custom_args, mcp_config, model, thinking_level
@@ -2734,8 +2665,10 @@ type UpdateAgentParams struct {
 	Instructions       pgtype.Text `json:"instructions"`
 	CustomEnv          []byte      `json:"custom_env"`
 	CustomArgs         []byte      `json:"custom_args"`
+	ClearMcpConfig     bool        `json:"clear_mcp_config"`
 	McpConfig          []byte      `json:"mcp_config"`
 	Model              pgtype.Text `json:"model"`
+	ClearThinkingLevel bool        `json:"clear_thinking_level"`
 	ThinkingLevel      pgtype.Text `json:"thinking_level"`
 }
 
@@ -2754,8 +2687,10 @@ func (q *Queries) UpdateAgent(ctx context.Context, arg UpdateAgentParams) (Agent
 		arg.Instructions,
 		arg.CustomEnv,
 		arg.CustomArgs,
+		arg.ClearMcpConfig,
 		arg.McpConfig,
 		arg.Model,
+		arg.ClearThinkingLevel,
 		arg.ThinkingLevel,
 	)
 	var i Agent

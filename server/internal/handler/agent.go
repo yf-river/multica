@@ -668,7 +668,7 @@ func (h *Handler) GetAgent(w http.ResponseWriter, r *http.Request) {
 	// AgentSkillSummary only needs id/name/description, and reading large
 	// SKILL.md bodies just to discard them is the exact regression we fixed
 	// in #2174.
-	if err := h.attachAgentSkills(r.Context(), &resp, agent.ID); err != nil {
+	if err := attachAgentSkills(r.Context(), h.Queries, &resp, agent.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load agent skills")
 		return
 	}
@@ -1262,32 +1262,21 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	params.ClearMcpConfig = shouldClearMcpConfig
+	params.ClearThinkingLevel = shouldClearThinkingLevel
 
-	updated, err := h.Queries.UpdateAgent(r.Context(), params)
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to begin agent update")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	updated, err := qtx.UpdateAgent(r.Context(), params)
 	if err != nil {
 		slog.Warn("update agent failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 		writeError(w, http.StatusInternalServerError, "failed to update agent: "+err.Error())
 		return
-	}
-
-	// mcp_config / thinking_level: null/empty in the request means explicitly
-	// clear the field. COALESCE in UpdateAgent cannot set a column to NULL,
-	// so we use dedicated clear queries.
-	if shouldClearMcpConfig {
-		updated, err = h.Queries.ClearAgentMcpConfig(r.Context(), updated.ID)
-		if err != nil {
-			slog.Warn("clear agent mcp_config failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
-			writeError(w, http.StatusInternalServerError, "failed to clear mcp_config: "+err.Error())
-			return
-		}
-	}
-	if shouldClearThinkingLevel {
-		updated, err = h.Queries.ClearAgentThinkingLevel(r.Context(), updated.ID)
-		if err != nil {
-			slog.Warn("clear agent thinking_level failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
-			writeError(w, http.StatusInternalServerError, "failed to clear thinking_level: "+err.Error())
-			return
-		}
 	}
 
 	resp, err := agentToResponse(updated)
@@ -1300,9 +1289,13 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	// response (and the broadcast that mirrors it) in sync with reality.
 	// Without this, callers see "skills": [] after every metadata-only
 	// update and assume their bindings were cleared — see #3459.
-	if err := h.attachAgentSkills(r.Context(), &resp, updated.ID); err != nil {
+	if err := attachAgentSkills(r.Context(), qtx, &resp, updated.ID); err != nil {
 		slog.Warn("load agent skills after update failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 		writeError(w, http.StatusInternalServerError, "failed to load agent skills")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit agent update")
 		return
 	}
 	slog.Info("agent updated", append(logger.RequestAttrs(r), "agent_id", id, "workspace_id", uuidToString(updated.WorkspaceID))...)
@@ -1317,8 +1310,8 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 // table for the given agent. agentToResponse zeros the field; mutation
 // handlers that don't refresh it would otherwise serve a misleading
 // empty array on every successful response (#3459).
-func (h *Handler) attachAgentSkills(ctx context.Context, resp *AgentResponse, agentID pgtype.UUID) error {
-	skills, err := h.Queries.ListAgentSkillSummaries(ctx, agentID)
+func attachAgentSkills(ctx context.Context, queries *db.Queries, resp *AgentResponse, agentID pgtype.UUID) error {
+	skills, err := queries.ListAgentSkillSummaries(ctx, agentID)
 	if err != nil {
 		return err
 	}
@@ -1403,7 +1396,7 @@ func (h *Handler) ArchiveAgent(w http.ResponseWriter, r *http.Request) {
 		writeAgentResponseDecodeError(w, r, id, err)
 		return
 	}
-	if err := h.attachAgentSkills(r.Context(), &resp, archived.ID); err != nil {
+	if err := attachAgentSkills(r.Context(), queries, &resp, archived.ID); err != nil {
 		slog.Warn("load agent skills after archive failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 		writeError(w, http.StatusInternalServerError, "failed to load agent skills")
 		return
@@ -1450,7 +1443,7 @@ func (h *Handler) RestoreAgent(w http.ResponseWriter, r *http.Request) {
 		writeAgentResponseDecodeError(w, r, id, err)
 		return
 	}
-	if err := h.attachAgentSkills(r.Context(), &resp, restored.ID); err != nil {
+	if err := attachAgentSkills(r.Context(), h.Queries, &resp, restored.ID); err != nil {
 		slog.Warn("load agent skills after restore failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 		writeError(w, http.StatusInternalServerError, "failed to load agent skills")
 		return

@@ -557,7 +557,7 @@ func (h *Handler) CreateAgentFromTemplate(w http.ResponseWriter, r *http.Request
 	// AgentResponse must reload them — otherwise the create response (and
 	// the agent:created broadcast) would tell clients the agent has no
 	// skills despite the template having just imported them (#3459).
-	if err := h.attachAgentSkills(r.Context(), &resp, agent.ID); err != nil {
+	if err := attachAgentSkills(r.Context(), h.Queries, &resp, agent.ID); err != nil {
 		slog.Warn("load agent skills after template create failed",
 			append(logger.RequestAttrs(r), "error", err, "agent_id", uuidToString(agent.ID))...)
 		writeError(w, http.StatusInternalServerError, "failed to load agent skills")
