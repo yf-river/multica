@@ -491,17 +491,8 @@ func (c *Cache) CreateWorktree(params WorktreeParams) (*WorktreeResult, error) {
 				}
 				actualBranch = switchedBranch
 			}
-			for _, pattern := range agentGitExcludePatterns {
-				_ = excludeFromGit(worktreePath, pattern)
-			}
-			if params.CoAuthoredByEnabled {
-				if err := installCoAuthoredByHook(worktreePath); err != nil {
-					c.logger.Warn("repo checkout: install co-authored-by hook failed (non-fatal)", "error", err)
-				}
-			} else {
-				if err := removeCoAuthoredByHook(worktreePath); err != nil {
-					c.logger.Warn("repo checkout: remove co-authored-by hook failed (non-fatal)", "error", err)
-				}
+			if err := configureWorktreeGit(worktreePath, params.CoAuthoredByEnabled); err != nil {
+				return nil, fmt.Errorf("configure preserved worktree: %w", err)
 			}
 			c.logger.Info("repo checkout: existing worktree preserved",
 				"url", params.RepoURL,
@@ -519,23 +510,8 @@ func (c *Cache) CreateWorktree(params WorktreeParams) (*WorktreeResult, error) {
 			return nil, fmt.Errorf("update existing worktree: %w", err)
 		}
 
-		for _, pattern := range agentGitExcludePatterns {
-			_ = excludeFromGit(worktreePath, pattern)
-		}
-
-		// Install or remove the Co-authored-by hook based on the workspace
-		// setting. The hook lives in the bare repo's shared hooks dir, so we
-		// must actively remove it when disabled — otherwise a previously
-		// installed hook keeps appending the trailer to every commit even
-		// after the user toggles the setting off.
-		if params.CoAuthoredByEnabled {
-			if err := installCoAuthoredByHook(worktreePath); err != nil {
-				c.logger.Warn("repo checkout: install co-authored-by hook failed (non-fatal)", "error", err)
-			}
-		} else {
-			if err := removeCoAuthoredByHook(worktreePath); err != nil {
-				c.logger.Warn("repo checkout: remove co-authored-by hook failed (non-fatal)", "error", err)
-			}
+		if err := configureWorktreeGit(worktreePath, params.CoAuthoredByEnabled); err != nil {
+			return nil, fmt.Errorf("configure updated worktree: %w", err)
 		}
 
 		c.logger.Info("repo checkout: existing worktree updated",
@@ -558,22 +534,11 @@ func (c *Cache) CreateWorktree(params WorktreeParams) (*WorktreeResult, error) {
 		return nil, fmt.Errorf("create worktree: %w", err)
 	}
 
-	// Exclude agent context files from git tracking.
-	for _, pattern := range agentGitExcludePatterns {
-		_ = excludeFromGit(worktreePath, pattern)
-	}
-
-	// Install or remove the Co-authored-by hook based on the workspace
-	// setting. See the existing-worktree branch above for why removal is
-	// required when the setting is disabled.
-	if params.CoAuthoredByEnabled {
-		if err := installCoAuthoredByHook(worktreePath); err != nil {
-			c.logger.Warn("repo checkout: install co-authored-by hook failed (non-fatal)", "error", err)
+	if err := configureWorktreeGit(worktreePath, params.CoAuthoredByEnabled); err != nil {
+		if cleanupErr := rollbackNewWorktree(barePath, worktreePath, actualBranch); cleanupErr != nil {
+			return nil, fmt.Errorf("configure new worktree: %w; rollback failed: %v", err, cleanupErr)
 		}
-	} else {
-		if err := removeCoAuthoredByHook(worktreePath); err != nil {
-			c.logger.Warn("repo checkout: remove co-authored-by hook failed (non-fatal)", "error", err)
-		}
+		return nil, fmt.Errorf("configure new worktree: %w", err)
 	}
 
 	c.logger.Info("repo checkout: worktree created",
@@ -587,6 +552,40 @@ func (c *Cache) CreateWorktree(params WorktreeParams) (*WorktreeResult, error) {
 		Path:       worktreePath,
 		BranchName: actualBranch,
 	}, nil
+}
+
+// configureWorktreeGit applies the repository hygiene required before an
+// Agent can safely use a checkout. These settings are part of successful
+// checkout creation, not optional decoration: context files must stay
+// untracked and the commit hook must match the workspace setting.
+func configureWorktreeGit(worktreePath string, coAuthoredByEnabled bool) error {
+	for _, pattern := range agentGitExcludePatterns {
+		if err := excludeFromGit(worktreePath, pattern); err != nil {
+			return fmt.Errorf("configure git exclude %q: %w", pattern, err)
+		}
+	}
+	if coAuthoredByEnabled {
+		if err := installCoAuthoredByHook(worktreePath); err != nil {
+			return fmt.Errorf("configure co-authored-by hook: %w", err)
+		}
+		return nil
+	}
+	if err := removeCoAuthoredByHook(worktreePath); err != nil {
+		return fmt.Errorf("configure co-authored-by hook: %w", err)
+	}
+	return nil
+}
+
+func rollbackNewWorktree(barePath, worktreePath, branchName string) error {
+	removeCmd := exec.Command("git", "-C", barePath, "worktree", "remove", "--force", worktreePath)
+	if out, err := removeCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("remove worktree: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+	branchCmd := exec.Command("git", "-C", barePath, "branch", "-D", branchName)
+	if out, err := branchCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("delete worktree branch: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+	return nil
 }
 
 // managedWorktreePath confines daemon-owned checkouts to the workspaces root,
@@ -917,19 +916,6 @@ func bareHeadBranch(barePath string) string {
 // tool. Do not change without bumping the recognition logic.
 const multicaHookMarker = "# multica:prepare-commit-msg:co-authored-by"
 
-// daemonInstalledHookSignatures lists substrings that identify a
-// prepare-commit-msg hook as one the daemon installed. removeCoAuthoredByHook
-// treats a hook as Multica-owned if its content contains ANY of these
-// substrings. The list deliberately includes the legacy comment that the
-// daemon used before multicaHookMarker existed, so disabling the toggle on
-// existing installations still cleans up old hooks seeded by previous daemon
-// versions. Add to this list — never remove from it — so future tweaks to
-// prepareCommitMsgHook keep recognizing every previously-shipped variant.
-var daemonInstalledHookSignatures = []string{
-	multicaHookMarker,
-	"# Installed by the Multica daemon.",
-}
-
 // prepareCommitMsgHook is the prepare-commit-msg hook script that appends a
 // Co-authored-by trailer for the Multica Agent to every commit message.
 const prepareCommitMsgHook = `#!/bin/sh
@@ -978,6 +964,13 @@ func installCoAuthoredByHook(worktreePath string) error {
 	}
 
 	hookPath := filepath.Join(hooksDir, "prepare-commit-msg")
+	contents, err := os.ReadFile(hookPath)
+	if err == nil && !isDaemonInstalledHook(contents) {
+		return fmt.Errorf("prepare-commit-msg hook already exists and is not managed by Multica")
+	}
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read prepare-commit-msg hook: %w", err)
+	}
 	if err := os.WriteFile(hookPath, []byte(prepareCommitMsgHook), 0o755); err != nil {
 		return fmt.Errorf("write prepare-commit-msg hook: %w", err)
 	}
@@ -985,23 +978,16 @@ func installCoAuthoredByHook(worktreePath string) error {
 }
 
 // isDaemonInstalledHook reports whether a prepare-commit-msg hook on disk was
-// installed by the Multica daemon (current or any previously released
-// version). It returns false for hooks that don't carry any known daemon
-// signature, so a user-installed hook at the same path is left alone.
+// installed by the current Multica daemon. It returns false for hooks that do
+// not carry the current marker, so user and third-party hooks are left alone.
 func isDaemonInstalledHook(contents []byte) bool {
-	body := string(contents)
-	for _, sig := range daemonInstalledHookSignatures {
-		if strings.Contains(body, sig) {
-			return true
-		}
-	}
-	return false
+	return strings.Contains(string(contents), multicaHookMarker)
 }
 
 // removeCoAuthoredByHook removes the prepare-commit-msg hook installed by
 // installCoAuthoredByHook. It only deletes the file when the content matches
-// a known daemon signature (current marker or any previously released hook
-// content), so a user-installed prepare-commit-msg hook is never touched.
+// the current daemon marker, so a user-installed prepare-commit-msg hook is
+// never touched.
 // Returns nil when no hook is present or when an unrelated hook occupies
 // the path.
 func removeCoAuthoredByHook(worktreePath string) error {
@@ -1054,8 +1040,11 @@ func excludeFromGit(worktreePath, pattern string) error {
 		return fmt.Errorf("create info dir: %w", err)
 	}
 
-	existing, _ := os.ReadFile(excludePath)
-	if strings.Contains(string(existing), pattern) {
+	existing, err := os.ReadFile(excludePath)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read exclude file: %w", err)
+	}
+	if hasGitExcludePattern(existing, pattern) {
 		return nil
 	}
 
@@ -1063,12 +1052,23 @@ func excludeFromGit(worktreePath, pattern string) error {
 	if err != nil {
 		return fmt.Errorf("open exclude file: %w", err)
 	}
-	defer func() { _ = f.Close() }()
-
 	if _, err := fmt.Fprintf(f, "\n%s\n", pattern); err != nil {
+		_ = f.Close()
 		return fmt.Errorf("write exclude pattern: %w", err)
 	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("close exclude file: %w", err)
+	}
 	return nil
+}
+
+func hasGitExcludePattern(contents []byte, pattern string) bool {
+	for _, line := range strings.Split(string(contents), "\n") {
+		if strings.TrimSpace(line) == pattern {
+			return true
+		}
+	}
+	return false
 }
 
 // repoNameFromURL extracts a short directory name from a git remote URL.
