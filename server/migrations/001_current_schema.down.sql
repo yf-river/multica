@@ -152,8 +152,6 @@ ALTER TABLE IF EXISTS ONLY public.issue DROP CONSTRAINT IF EXISTS issue_project_
 ALTER TABLE IF EXISTS ONLY public.issue DROP CONSTRAINT IF EXISTS issue_parent_issue_id_fkey;
 ALTER TABLE IF EXISTS ONLY public.issue DROP CONSTRAINT IF EXISTS issue_owner_id_fkey;
 ALTER TABLE IF EXISTS ONLY public.issue_label DROP CONSTRAINT IF EXISTS issue_label_workspace_id_fkey;
-ALTER TABLE IF EXISTS ONLY public.issue_dependency DROP CONSTRAINT IF EXISTS issue_dependency_issue_id_fkey;
-ALTER TABLE IF EXISTS ONLY public.issue_dependency DROP CONSTRAINT IF EXISTS issue_dependency_depends_on_issue_id_fkey;
 ALTER TABLE IF EXISTS ONLY public.inbox_item DROP CONSTRAINT IF EXISTS inbox_item_workspace_id_fkey;
 ALTER TABLE IF EXISTS ONLY public.inbox_item DROP CONSTRAINT IF EXISTS inbox_item_issue_id_fkey;
 ALTER TABLE IF EXISTS ONLY public.github_pull_request DROP CONSTRAINT IF EXISTS github_pull_request_workspace_id_fkey;
@@ -163,7 +161,6 @@ ALTER TABLE IF EXISTS ONLY public.github_installation DROP CONSTRAINT IF EXISTS 
 ALTER TABLE IF EXISTS ONLY public.feedback DROP CONSTRAINT IF EXISTS feedback_workspace_id_fkey;
 ALTER TABLE IF EXISTS ONLY public.feedback DROP CONSTRAINT IF EXISTS feedback_user_id_fkey;
 ALTER TABLE IF EXISTS ONLY public.external_credential_profile DROP CONSTRAINT IF EXISTS external_credential_profile_user_id_fkey;
-ALTER TABLE IF EXISTS ONLY public.daemon_connection DROP CONSTRAINT IF EXISTS daemon_connection_agent_id_fkey;
 ALTER TABLE IF EXISTS ONLY public.comment DROP CONSTRAINT IF EXISTS comment_workspace_id_fkey;
 ALTER TABLE IF EXISTS ONLY public.comment_reaction DROP CONSTRAINT IF EXISTS comment_reaction_workspace_id_fkey;
 ALTER TABLE IF EXISTS ONLY public.comment_reaction DROP CONSTRAINT IF EXISTS comment_reaction_comment_id_fkey;
@@ -390,7 +387,6 @@ ALTER TABLE IF EXISTS ONLY public.task_usage_hourly DROP CONSTRAINT IF EXISTS uq
 ALTER TABLE IF EXISTS ONLY public.task_usage_hourly_dirty DROP CONSTRAINT IF EXISTS uq_task_usage_hourly_dirty_key;
 ALTER TABLE IF EXISTS ONLY public.sys_cron_executions DROP CONSTRAINT IF EXISTS uq_sys_cron_execution;
 ALTER TABLE IF EXISTS ONLY public.issue DROP CONSTRAINT IF EXISTS uq_issue_workspace_number;
-ALTER TABLE IF EXISTS ONLY public.daemon_connection DROP CONSTRAINT IF EXISTS uq_daemon_agent;
 ALTER TABLE IF EXISTS ONLY public.task_usage DROP CONSTRAINT IF EXISTS task_usage_task_id_provider_model_key;
 ALTER TABLE IF EXISTS ONLY public.task_usage DROP CONSTRAINT IF EXISTS task_usage_pkey;
 ALTER TABLE IF EXISTS ONLY public.task_usage_hourly_rollup_state DROP CONSTRAINT IF EXISTS task_usage_hourly_rollup_state_pkey;
@@ -467,7 +463,6 @@ ALTER TABLE IF EXISTS ONLY public.issue_reaction DROP CONSTRAINT IF EXISTS issue
 ALTER TABLE IF EXISTS ONLY public.issue_pull_request DROP CONSTRAINT IF EXISTS issue_pull_request_pkey;
 ALTER TABLE IF EXISTS ONLY public.issue DROP CONSTRAINT IF EXISTS issue_pkey;
 ALTER TABLE IF EXISTS ONLY public.issue_label DROP CONSTRAINT IF EXISTS issue_label_pkey;
-ALTER TABLE IF EXISTS ONLY public.issue_dependency DROP CONSTRAINT IF EXISTS issue_dependency_pkey;
 ALTER TABLE IF EXISTS ONLY public.inbox_item DROP CONSTRAINT IF EXISTS inbox_item_pkey;
 ALTER TABLE IF EXISTS ONLY public.github_pull_request DROP CONSTRAINT IF EXISTS github_pull_request_workspace_id_repo_owner_repo_name_pr_nu_key;
 ALTER TABLE IF EXISTS ONLY public.github_pull_request DROP CONSTRAINT IF EXISTS github_pull_request_pkey;
@@ -479,7 +474,6 @@ ALTER TABLE IF EXISTS ONLY public.github_installation DROP CONSTRAINT IF EXISTS 
 ALTER TABLE IF EXISTS ONLY public.feedback DROP CONSTRAINT IF EXISTS feedback_pkey;
 ALTER TABLE IF EXISTS ONLY public.external_credential_profile DROP CONSTRAINT IF EXISTS external_credential_profile_user_id_provider_name_key;
 ALTER TABLE IF EXISTS ONLY public.external_credential_profile DROP CONSTRAINT IF EXISTS external_credential_profile_pkey;
-ALTER TABLE IF EXISTS ONLY public.daemon_connection DROP CONSTRAINT IF EXISTS daemon_connection_pkey;
 ALTER TABLE IF EXISTS ONLY public.comment_reaction DROP CONSTRAINT IF EXISTS comment_reaction_pkey;
 ALTER TABLE IF EXISTS ONLY public.comment_reaction DROP CONSTRAINT IF EXISTS comment_reaction_comment_id_actor_type_actor_id_emoji_key;
 ALTER TABLE IF EXISTS ONLY public.comment DROP CONSTRAINT IF EXISTS comment_pkey;
@@ -552,7 +546,6 @@ DROP TABLE IF EXISTS public.issue_subscriber;
 DROP TABLE IF EXISTS public.issue_reaction;
 DROP TABLE IF EXISTS public.issue_pull_request;
 DROP TABLE IF EXISTS public.issue_label;
-DROP TABLE IF EXISTS public.issue_dependency;
 DROP TABLE IF EXISTS public.issue;
 DROP TABLE IF EXISTS public.inbox_item;
 DROP TABLE IF EXISTS public.github_pull_request_check_suite;
@@ -562,7 +555,6 @@ DROP TABLE IF EXISTS public.github_pending_check_suite;
 DROP TABLE IF EXISTS public.github_installation;
 DROP TABLE IF EXISTS public.feedback;
 DROP TABLE IF EXISTS public.external_credential_profile;
-DROP TABLE IF EXISTS public.daemon_connection;
 DROP TABLE IF EXISTS public.comment_reaction;
 DROP TABLE IF EXISTS public.comment;
 DROP TABLE IF EXISTS public.chat_session;

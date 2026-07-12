@@ -688,18 +688,6 @@ CREATE TABLE public.comment_reaction (
     CONSTRAINT comment_reaction_actor_type_check CHECK ((actor_type = ANY (ARRAY['member'::text, 'agent'::text])))
 );
 
-CREATE TABLE public.daemon_connection (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    agent_id uuid NOT NULL,
-    daemon_id text NOT NULL,
-    status text DEFAULT 'disconnected'::text NOT NULL,
-    last_heartbeat_at timestamp with time zone,
-    runtime_info jsonb DEFAULT '{}'::jsonb NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT daemon_connection_status_check CHECK ((status = ANY (ARRAY['connected'::text, 'disconnected'::text])))
-);
-
 CREATE TABLE public.external_credential_profile (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     user_id uuid NOT NULL,
@@ -861,14 +849,6 @@ CREATE TABLE public.issue (
     CONSTRAINT issue_priority_check CHECK ((priority = ANY (ARRAY['urgent'::text, 'high'::text, 'medium'::text, 'low'::text, 'none'::text]))),
     CONSTRAINT issue_scope_check CHECK ((scope = ANY (ARRAY['personal'::text, 'workspace'::text]))),
     CONSTRAINT issue_status_check CHECK ((status = ANY (ARRAY['backlog'::text, 'todo'::text, 'in_progress'::text, 'in_review'::text, 'done'::text, 'blocked'::text, 'cancelled'::text])))
-);
-
-CREATE TABLE public.issue_dependency (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    issue_id uuid NOT NULL,
-    depends_on_issue_id uuid NOT NULL,
-    type text NOT NULL,
-    CONSTRAINT issue_dependency_type_check CHECK ((type = ANY (ARRAY['blocks'::text, 'blocked_by'::text, 'related'::text])))
 );
 
 CREATE TABLE public.issue_label (
@@ -1807,9 +1787,6 @@ ALTER TABLE ONLY public.comment_reaction
 ALTER TABLE ONLY public.comment_reaction
     ADD CONSTRAINT comment_reaction_pkey PRIMARY KEY (id);
 
-ALTER TABLE ONLY public.daemon_connection
-    ADD CONSTRAINT daemon_connection_pkey PRIMARY KEY (id);
-
 ALTER TABLE ONLY public.external_credential_profile
     ADD CONSTRAINT external_credential_profile_pkey PRIMARY KEY (id);
 
@@ -1842,9 +1819,6 @@ ALTER TABLE ONLY public.github_pull_request
 
 ALTER TABLE ONLY public.inbox_item
     ADD CONSTRAINT inbox_item_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.issue_dependency
-    ADD CONSTRAINT issue_dependency_pkey PRIMARY KEY (id);
 
 ALTER TABLE ONLY public.issue_label
     ADD CONSTRAINT issue_label_pkey PRIMARY KEY (id);
@@ -2100,9 +2074,6 @@ ALTER TABLE ONLY public.task_usage
 
 ALTER TABLE ONLY public.task_usage
     ADD CONSTRAINT task_usage_task_id_provider_model_key UNIQUE (task_id, provider, model);
-
-ALTER TABLE ONLY public.daemon_connection
-    ADD CONSTRAINT uq_daemon_agent UNIQUE (agent_id, daemon_id);
 
 ALTER TABLE ONLY public.issue
     ADD CONSTRAINT uq_issue_workspace_number UNIQUE (workspace_id, number);
@@ -2615,9 +2586,6 @@ ALTER TABLE ONLY public.comment_reaction
 ALTER TABLE ONLY public.comment
     ADD CONSTRAINT comment_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
 
-ALTER TABLE ONLY public.daemon_connection
-    ADD CONSTRAINT daemon_connection_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES public.agent(id) ON DELETE CASCADE;
-
 ALTER TABLE ONLY public.external_credential_profile
     ADD CONSTRAINT external_credential_profile_user_id_fkey FOREIGN KEY (user_id) REFERENCES public."user"(id) ON DELETE CASCADE;
 
@@ -2644,12 +2612,6 @@ ALTER TABLE ONLY public.inbox_item
 
 ALTER TABLE ONLY public.inbox_item
     ADD CONSTRAINT inbox_item_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.issue_dependency
-    ADD CONSTRAINT issue_dependency_depends_on_issue_id_fkey FOREIGN KEY (depends_on_issue_id) REFERENCES public.issue(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.issue_dependency
-    ADD CONSTRAINT issue_dependency_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.issue(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.issue_label
     ADD CONSTRAINT issue_label_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
