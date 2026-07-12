@@ -647,7 +647,10 @@ func containsHanRune(value string) bool {
 }
 
 func promptEvaluationCases(payload map[string]any) []map[string]any {
-	raw := payload["cases"]
+	raw, exists := payload["cases"]
+	if !exists {
+		return []map[string]any{}
+	}
 	if arr, ok := raw.([]map[string]any); ok && len(arr) > 0 {
 		cases := make([]map[string]any, len(arr))
 		copy(cases, arr)
@@ -660,11 +663,9 @@ func promptEvaluationCases(payload map[string]any) []map[string]any {
 				cases = append(cases, m)
 			}
 		}
-		if len(cases) > 0 {
-			return cases
-		}
+		return cases
 	}
-	return []map[string]any{{"名称": "默认用例", "变量": firstValue(payload, "variables", "变量", "输入变量")}}
+	return []map[string]any{}
 }
 
 func normalizePromptEvaluationPayloadObject(payload map[string]any) map[string]any {

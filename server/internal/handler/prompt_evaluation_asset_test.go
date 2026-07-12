@@ -1123,7 +1123,12 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 		"prompt_id":  promptID,
 		"name":       "评测用例 CRUD 数据集",
 		"asset_type": "数据集",
-		"payload":    map[string]any{"cases": []any{}},
+		"payload": map[string]any{"cases": []any{map[string]any{
+			"case_name":         "基准载荷用例",
+			"variables":         map[string]any{},
+			"expected_contains": []any{},
+			"tags":              []any{},
+		}}},
 	}))
 	if createAssetW.Code != http.StatusCreated {
 		t.Fatalf("create asset status = %d, body = %s", createAssetW.Code, createAssetW.Body.String())
@@ -1132,7 +1137,6 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 	if err := json.Unmarshal(createAssetW.Body.Bytes(), &asset); err != nil {
 		t.Fatalf("decode asset: %v", err)
 	}
-
 	createCaseW := httptest.NewRecorder()
 	testHandler.CreatePromptEvaluationCase(createCaseW, newRequest(http.MethodPost, "/api/prompt-evaluation-cases", map[string]any{
 		"asset_id":          asset.ID,
@@ -1215,7 +1219,6 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 	}
 	assertPromptEvaluationCaseAssertions(t, created.ID, []string{"可观测证据"})
 	assertPromptEvaluationDatasetRowsContain(t, asset.ID, []string{"登录失败需要可观测证据"})
-
 	listW := httptest.NewRecorder()
 	testHandler.ListPromptEvaluationCases(listW, newRequest(http.MethodGet, "/api/prompt-evaluation-cases?asset_id="+asset.ID, nil))
 	if listW.Code != http.StatusOK {
@@ -1639,14 +1642,19 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 		t.Fatalf("cases after delete = %+v", listed)
 	}
 	assertPromptEvaluationCaseAssertions(t, created.ID, nil)
-	assertPromptEvaluationDatasetRows(t, asset.ID, []string{"默认用例"})
+	assertPromptEvaluationDatasetRows(t, asset.ID, []string{"基准载荷用例"})
 
 	createSuiteW := httptest.NewRecorder()
 	testHandler.CreatePromptEvaluationAsset(createSuiteW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
 		"prompt_id":  promptID,
 		"name":       "评测用例 CRUD 测试套件",
 		"asset_type": "测试套件",
-		"payload":    map[string]any{"cases": []any{}},
+		"payload": map[string]any{"cases": []any{map[string]any{
+			"case_name":         "测试套件基准用例",
+			"variables":         map[string]any{},
+			"expected_contains": []any{},
+			"tags":              []any{},
+		}}},
 	}))
 	if createSuiteW.Code != http.StatusCreated {
 		t.Fatalf("create test suite status = %d, body = %s", createSuiteW.Code, createSuiteW.Body.String())
@@ -1685,7 +1693,33 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 	if deleteSuiteCaseW.Code != http.StatusNoContent {
 		t.Fatalf("delete test suite case status = %d, body = %s", deleteSuiteCaseW.Code, deleteSuiteCaseW.Body.String())
 	}
-	assertPromptEvaluationTestSuiteCases(t, testSuite.ID, []string{"默认用例"})
+	assertPromptEvaluationTestSuiteCases(t, testSuite.ID, []string{"测试套件基准用例"})
+}
+
+func TestPromptEvaluationEmptyCanonicalCasesStayEmpty(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler test fixture not initialized")
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_evaluation_asset WHERE workspace_id = $1`, testWorkspaceID)
+	})
+	w := httptest.NewRecorder()
+	testHandler.CreatePromptEvaluationAsset(w, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
+		"name":       "空 Canonical 数据集",
+		"asset_type": "数据集",
+		"payload":    map[string]any{"cases": []any{}},
+	}))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var asset PromptEvaluationAssetResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &asset); err != nil {
+		t.Fatal(err)
+	}
+	if asset.StructuredCaseCount != 0 || asset.DatasetRowCount != 0 {
+		t.Fatalf("empty canonical dataset created ghost cases: %+v", asset)
+	}
+	assertPromptEvaluationDatasetRows(t, asset.ID, nil)
 }
 
 func TestUpdatePromptEvaluationAssetPreservesManualCases(t *testing.T) {
