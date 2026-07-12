@@ -288,67 +288,9 @@ func TestCreateRetryTaskKeepsOrdinaryTimeoutSession(t *testing.T) {
 	}
 }
 
-// TestGetLastTaskSessionExcludesLegacyAPI400 is the MUL-1921 legacy
-// regression: pre-fix rows are tagged failure_reason='agent_error' even
-// though their error text contains the canonical Anthropic 400
-// invalid_request_error marker. The daemon-side classifier only fires
-// on new failures, so without a defensive ILIKE clause the resume query
-// would happily return one of those rows on the next claim and
-// re-poison every retry of an already-broken issue (e.g. MUL-1918,
-// which already has three poisoned 'agent_error' rows when this PR
-// merges). The SQL must skip the bad row on text shape alone.
-func TestGetLastTaskSessionExcludesLegacyAPI400(t *testing.T) {
-	if testPool == nil {
-		t.Skip("no database connection")
-	}
-
-	issueID, agentID, runtimeID := setupRerunTestFixture(t)
-	t.Cleanup(func() { cleanupRerunFixture(t, issueID) })
-
-	ctx := context.Background()
-
-	// Legacy poisoned row: failure_reason was the pre-fix default
-	// 'agent_error' but the error text shows it was an API 400
-	// invalid_request_error. Migration 079 backfills these to
-	// 'api_invalid_request', but the SQL filter must still exclude
-	// them via ILIKE on the off chance a row escapes the migration
-	// (deploy window, manual relabel, etc.).
-	if _, err := testPool.Exec(ctx, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, completed_at, session_id, work_dir, failure_reason, error)
-		VALUES ($1, $2, $3, 'failed', 0, now() - interval '2 minutes', now() - interval '2 minutes', 'LEGACY-POISONED', '/tmp/legacy', 'agent_error',
-		        'API Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"Could not process image"}}')
-	`, agentID, runtimeID, issueID); err != nil {
-		t.Fatalf("insert legacy poisoned task: %v", err)
-	}
-
-	// Newly classified poisoned row coexisting with the legacy one.
-	// Without the ILIKE clause, ORDER BY completed_at DESC would
-	// skip this row (failure_reason filter fires) and fall back to
-	// the legacy row (failure_reason filter MISSES) — the exact
-	// wormhole GPT-Boy flagged on PR review.
-	if _, err := testPool.Exec(ctx, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, completed_at, session_id, work_dir, failure_reason, error)
-		VALUES ($1, $2, $3, 'failed', 0, now() - interval '1 minute', now() - interval '1 minute', 'NEW-POISONED', '/tmp/new', 'api_invalid_request',
-		        'API Error: 400 {"type":"error","error":{"type":"invalid_request_error","message":"Could not process image"}}')
-	`, agentID, runtimeID, issueID); err != nil {
-		t.Fatalf("insert new poisoned task: %v", err)
-	}
-
-	queries := db.New(testPool)
-	prior, err := queries.GetLastTaskSession(ctx, db.GetLastTaskSessionParams{
-		AgentID: pgtype.UUID{Bytes: parseUUIDBytes(agentID), Valid: true},
-		IssueID: pgtype.UUID{Bytes: parseUUIDBytes(issueID), Valid: true},
-	})
-	if err == nil && prior.SessionID.Valid {
-		t.Fatalf("expected no resumable session, but query fell back to %q", prior.SessionID.String)
-	}
-}
-
 // TestGetLastTaskSessionKeepsBenignAgentErrorWithSession asserts the
-// ILIKE clause is narrow enough that ordinary 'agent_error' failures
-// (timeouts, tool errors, transient glue failures) still let the next
-// task resume the prior session. Without this guard rail, the MUL-1921
-// fix would regress MUL-1128's resume contract for everything else.
+// current generic 'agent_error' bucket remains resumable for failures that
+// do not poison the provider session.
 func TestGetLastTaskSessionKeepsBenignAgentErrorWithSession(t *testing.T) {
 	if testPool == nil {
 		t.Skip("no database connection")

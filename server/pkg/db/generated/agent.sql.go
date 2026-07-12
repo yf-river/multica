@@ -1404,7 +1404,6 @@ WHERE agent_id = $1 AND issue_id = $2
     OR (
       status = 'failed'
       AND COALESCE(failure_reason, '') NOT IN ('iteration_limit', 'agent_fallback_message', 'api_invalid_request', 'codex_semantic_inactivity')
-      AND NOT (COALESCE(error, '') ILIKE '%400%' AND COALESCE(error, '') ILIKE '%invalid_request_error%')
     )
   )
   AND session_id IS NOT NULL
@@ -1446,15 +1445,6 @@ type GetLastTaskSessionRow struct {
 // conversation history itself is unprocessable (oversized image, malformed
 // base64, etc.), or a Codex semantic inactivity timeout whose recorded
 // session may replay the same stuck state.
-//
-// The error-text ILIKE clause is defense-in-depth for the api_invalid_request
-// shape: a legacy row tagged 'agent_error' (pre-MUL-1921), a deploy-window
-// row that the old code wrote between migration and rollout, or a future
-// error format that escapes the daemon classifier all still get filtered
-// here as long as the canonical Anthropic 400 marker is present in the
-// error text. Migration 079 backfills the failure_reason column itself,
-// so observability stays accurate; this clause guarantees session resume
-// never picks up a bad session even when failure_reason hasn't caught up.
 func (q *Queries) GetLastTaskSession(ctx context.Context, arg GetLastTaskSessionParams) (GetLastTaskSessionRow, error) {
 	row := q.db.QueryRow(ctx, getLastTaskSession, arg.AgentID, arg.IssueID)
 	var i GetLastTaskSessionRow
