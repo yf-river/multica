@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -69,6 +70,33 @@ func TestBeginLarkInstall_RequiresExplicitRegion(t *testing.T) {
 	testHandler.BeginLarkInstall(w, req)
 	if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), "region must be") {
 		t.Fatalf("missing region = %d %s, want 400", w.Code, w.Body.String())
+	}
+}
+
+func TestBeginLarkInstallClientCanceledReturns499(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	original := testHandler.LarkRegistration
+	testHandler.LarkRegistration = &lark.RegistrationService{}
+	t.Cleanup(func() { testHandler.LarkRegistration = original })
+
+	agentID := createHandlerTestAgent(t, "lark canceled agent", nil)
+	req := newRequest(
+		http.MethodPost,
+		"/api/workspaces/"+testWorkspaceID+"/lark/install/begin?agent_id="+agentID+"&region=feishu",
+		nil,
+	)
+	ctx, cancel := context.WithCancel(req.Context())
+	cancel()
+	req = req.WithContext(ctx)
+	req = withURLParam(req, "id", testWorkspaceID)
+	w := httptest.NewRecorder()
+
+	testHandler.BeginLarkInstall(w, req)
+
+	if w.Code != 499 {
+		t.Fatalf("canceled Lark agent lookup: expected 499, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
