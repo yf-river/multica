@@ -676,7 +676,7 @@ func TestWorkspacesThroughRouter(t *testing.T) {
 	}
 
 	// Update
-	resp = authRequest(t, "PUT", "/api/workspaces/"+wsID, map[string]any{
+	resp = authRequest(t, "PATCH", "/api/workspaces/"+wsID, map[string]any{
 		"description": "Integration test update",
 	})
 	if resp.StatusCode != 200 {

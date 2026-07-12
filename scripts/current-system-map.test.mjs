@@ -81,6 +81,21 @@ test("implicit database and websocket contracts are visible", () => {
   assert.deepEqual(inventory.websocket.goWithoutProductionReference, []);
 });
 
+test("Handler methods have one current HTTP registration", () => {
+  const registrations = new Map();
+  for (const route of inventory.backend.chiRoutes) {
+    if (!route.handler.startsWith("h.")) continue;
+    const routes = registrations.get(route.handler) ?? [];
+    routes.push(`${route.method} ${route.path}`);
+    registrations.set(route.handler, routes);
+  }
+  const duplicates = [...registrations]
+    .filter(([, routes]) => routes.length > 1)
+    .map(([handler, routes]) => `${handler}: ${routes.join(", ")}`)
+    .sort();
+  assert.deepEqual(duplicates, [], `multiple current routes share a Handler method:\n${duplicates.join("\n")}`);
+});
+
 test("external and non-page HTTP surfaces are present without Once.Do false positives", () => {
   const systems = new Set(inventory.externalIo.externalSystems.map((item) => item.id));
   assert.ok(systems.has("public-skill-registries"));

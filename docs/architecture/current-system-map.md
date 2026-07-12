@@ -16,7 +16,7 @@ evidence reviewable by humans.
 
 | Surface | Count |
 | --- | --- |
-| Go Chi routes | 321 |
+| Go Chi routes | 318 |
 | Next.js pages | 31 |
 | Next.js route handlers | 1 |
 | Next.js rewrites | 6 |
@@ -140,7 +140,6 @@ closures intentionally remain unresolved.
 | POST | `/api/external-credential-profiles` | `h.CreateExternalCredentialProfile` | `server/internal/handler/external_credential_profile.go#CreateExternalCredentialProfile` | `server/cmd/server/router.go#POST /api/external-credential-profiles` |
 | DELETE | `/api/external-credential-profiles/{id}` | `h.DeleteExternalCredentialProfile` | `server/internal/handler/external_credential_profile.go#DeleteExternalCredentialProfile` | `server/cmd/server/router.go#DELETE /api/external-credential-profiles/{id}` |
 | GET | `/api/external-credential-profiles/{id}` | `h.GetExternalCredentialProfile` | `server/internal/handler/external_credential_profile.go#GetExternalCredentialProfile` | `server/cmd/server/router.go#GET /api/external-credential-profiles/{id}` |
-| PATCH | `/api/external-credential-profiles/{id}` | `h.UpdateExternalCredentialProfile` | `server/internal/handler/external_credential_profile.go#UpdateExternalCredentialProfile` | `server/cmd/server/router.go#PATCH /api/external-credential-profiles/{id}` |
 | PUT | `/api/external-credential-profiles/{id}` | `h.UpdateExternalCredentialProfile` | `server/internal/handler/external_credential_profile.go#UpdateExternalCredentialProfile` | `server/cmd/server/router.go#PUT /api/external-credential-profiles/{id}` |
 | POST | `/api/external-credential-profiles/test` | `h.TestExternalCredentialProfile` | `server/internal/handler/external_credential_profile.go#TestExternalCredentialProfile` | `server/cmd/server/router.go#POST /api/external-credential-profiles/test` |
 | POST | `/api/feedback` | `h.CreateFeedback` | `server/internal/handler/feedback.go#CreateFeedback` | `server/cmd/server/router.go#POST /api/feedback` |
@@ -333,7 +332,6 @@ closures intentionally remain unresolved.
 | DELETE | `/api/workspaces/{id}` | `h.DeleteWorkspace` | `server/internal/handler/workspace.go#DeleteWorkspace` | `server/cmd/server/router.go#DELETE /api/workspaces/{id}` |
 | GET | `/api/workspaces/{id}` | `h.GetWorkspace` | `server/internal/handler/workspace.go#GetWorkspace` | `server/cmd/server/router.go#GET /api/workspaces/{id}` |
 | PATCH | `/api/workspaces/{id}` | `h.UpdateWorkspace` | `server/internal/handler/workspace.go#UpdateWorkspace` | `server/cmd/server/router.go#PATCH /api/workspaces/{id}` |
-| PUT | `/api/workspaces/{id}` | `h.UpdateWorkspace` | `server/internal/handler/workspace.go#UpdateWorkspace` | `server/cmd/server/router.go#PUT /api/workspaces/{id}` |
 | GET | `/api/workspaces/{id}/github/connect` | `h.GitHubConnect` | `server/internal/handler/github.go#GitHubConnect` | `server/cmd/server/router.go#GET /api/workspaces/{id}/github/connect` |
 | GET | `/api/workspaces/{id}/github/installations` | `h.ListGitHubInstallations` | `server/internal/handler/github.go#ListGitHubInstallations` | `server/cmd/server/router.go#GET /api/workspaces/{id}/github/installations` |
 | DELETE | `/api/workspaces/{id}/github/installations/{installationId}` | `h.DeleteGitHubInstallation` | `server/internal/handler/github.go#DeleteGitHubInstallation` | `server/cmd/server/router.go#DELETE /api/workspaces/{id}/github/installations/{installationId}` |
@@ -354,7 +352,6 @@ closures intentionally remain unresolved.
 | DELETE | `/api/workspaces/{id}/runtime-profiles/{profileId}` | `h.DeleteRuntimeProfile` | `server/internal/handler/runtime_profile.go#DeleteRuntimeProfile` | `server/cmd/server/router.go#DELETE /api/workspaces/{id}/runtime-profiles/{profileId}` |
 | GET | `/api/workspaces/{id}/runtime-profiles/{profileId}` | `h.GetRuntimeProfile` | `server/internal/handler/runtime_profile.go#GetRuntimeProfile` | `server/cmd/server/router.go#GET /api/workspaces/{id}/runtime-profiles/{profileId}` |
 | PATCH | `/api/workspaces/{id}/runtime-profiles/{profileId}` | `h.UpdateRuntimeProfile` | `server/internal/handler/runtime_profile.go#UpdateRuntimeProfile` | `server/cmd/server/router.go#PATCH /api/workspaces/{id}/runtime-profiles/{profileId}` |
-| PUT | `/api/workspaces/{id}/runtime-profiles/{profileId}` | `h.UpdateRuntimeProfile` | `server/internal/handler/runtime_profile.go#UpdateRuntimeProfile` | `server/cmd/server/router.go#PUT /api/workspaces/{id}/runtime-profiles/{profileId}` |
 | GET | `/api/workspaces/{workspaceId}/initial-admin-status` | `h.GetTenantInitialAdminStatus` | `server/internal/handler/tenant_admin.go#GetTenantInitialAdminStatus` | `server/cmd/server/router.go#GET /api/workspaces/{workspaceId}/initial-admin-status` |
 | POST | `/auth/login` | `h.AccountPasswordLogin` | `server/internal/handler/auth.go#AccountPasswordLogin` | `server/cmd/server/router.go#POST /auth/login` |
 | POST | `/auth/logout` | `h.Logout` | `server/internal/handler/auth.go#Logout` | `server/cmd/server/router.go#POST /auth/logout` |

@@ -15,7 +15,7 @@
     "manualOverrides": "docs/architecture/current-system-map-overrides.json"
   },
   "summary": {
-    "chiRoutes": 321,
+    "chiRoutes": 318,
     "webPages": 31,
     "webRouteHandlers": 1,
     "webRewrites": 6,
@@ -906,15 +906,6 @@
         "handler": "h.GetExternalCredentialProfile",
         "implementation": "server/internal/handler/external_credential_profile.go#GetExternalCredentialProfile",
         "registration": "server/cmd/server/router.go#GET /api/external-credential-profiles/{id}",
-        "middlewareWrapper": false,
-        "origin": "static"
-      },
-      {
-        "method": "PATCH",
-        "path": "/api/external-credential-profiles/{id}",
-        "handler": "h.UpdateExternalCredentialProfile",
-        "implementation": "server/internal/handler/external_credential_profile.go#UpdateExternalCredentialProfile",
-        "registration": "server/cmd/server/router.go#PATCH /api/external-credential-profiles/{id}",
         "middlewareWrapper": false,
         "origin": "static"
       },
@@ -2647,15 +2638,6 @@
         "origin": "static"
       },
       {
-        "method": "PUT",
-        "path": "/api/workspaces/{id}",
-        "handler": "h.UpdateWorkspace",
-        "implementation": "server/internal/handler/workspace.go#UpdateWorkspace",
-        "registration": "server/cmd/server/router.go#PUT /api/workspaces/{id}",
-        "middlewareWrapper": false,
-        "origin": "static"
-      },
-      {
         "method": "GET",
         "path": "/api/workspaces/{id}/github/connect",
         "handler": "h.GitHubConnect",
@@ -2832,15 +2814,6 @@
         "handler": "h.UpdateRuntimeProfile",
         "implementation": "server/internal/handler/runtime_profile.go#UpdateRuntimeProfile",
         "registration": "server/cmd/server/router.go#PATCH /api/workspaces/{id}/runtime-profiles/{profileId}",
-        "middlewareWrapper": false,
-        "origin": "static"
-      },
-      {
-        "method": "PUT",
-        "path": "/api/workspaces/{id}/runtime-profiles/{profileId}",
-        "handler": "h.UpdateRuntimeProfile",
-        "implementation": "server/internal/handler/runtime_profile.go#UpdateRuntimeProfile",
-        "registration": "server/cmd/server/router.go#PUT /api/workspaces/{id}/runtime-profiles/{profileId}",
         "middlewareWrapper": false,
         "origin": "static"
       },

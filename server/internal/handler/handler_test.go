@@ -2947,7 +2947,7 @@ func TestCreatePinRejectsMalformedItemID(t *testing.T) {
 
 func TestUpdateWorkspaceRejectsMalformedID(t *testing.T) {
 	w := httptest.NewRecorder()
-	req := newRequest("PUT", "/api/workspaces/not-a-uuid", map[string]any{
+	req := newRequest("PATCH", "/api/workspaces/not-a-uuid", map[string]any{
 		"name": "Malformed workspace id",
 	})
 	req = withURLParam(req, "id", "not-a-uuid")

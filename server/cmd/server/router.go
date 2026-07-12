@@ -633,7 +633,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// Admin-level access
 				r.Group(func(r chi.Router) {
 					r.Use(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner", "admin"))
-					r.Put("/", h.UpdateWorkspace)
 					r.Patch("/", h.UpdateWorkspace)
 					r.Post("/repos/probe", h.ProbeWorkspaceRepo)
 					r.Post("/repos/resolve", h.ResolveWorkspaceRepo)
@@ -645,7 +644,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// Custom runtime profile mutations (admin-only).
 					r.Post("/runtime-profiles", h.CreateRuntimeProfile)
 					r.Patch("/runtime-profiles/{profileId}", h.UpdateRuntimeProfile)
-					r.Put("/runtime-profiles/{profileId}", h.UpdateRuntimeProfile)
 					r.Delete("/runtime-profiles/{profileId}", h.DeleteRuntimeProfile)
 				})
 				// Owner-only access
@@ -704,7 +702,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Post("/", h.CreateExternalCredentialProfile)
 			r.Post("/test", h.TestExternalCredentialProfile)
 			r.Get("/{id}", h.GetExternalCredentialProfile)
-			r.Patch("/{id}", h.UpdateExternalCredentialProfile)
 			r.Put("/{id}", h.UpdateExternalCredentialProfile)
 			r.Delete("/{id}", h.DeleteExternalCredentialProfile)
 		})
