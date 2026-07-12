@@ -217,3 +217,27 @@ func TestGetConfigExposesWorkspaceCreationDisabled(t *testing.T) {
 		t.Fatalf("workspace_creation_disabled: want true with env on, got false")
 	}
 }
+
+func TestGetConfigIncludesCurrentBooleanFieldsWhenFalse(t *testing.T) {
+	originalSigner := testHandler.CFSigner
+	testHandler.CFSigner = nil
+	t.Cleanup(func() { testHandler.CFSigner = originalSigner })
+	t.Setenv("DISABLE_WORKSPACE_CREATION", "false")
+
+	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
+	w := httptest.NewRecorder()
+	testHandler.GetConfig(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GetConfig: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode config: %v", err)
+	}
+	for _, field := range []string{"cdn_signed", "workspace_creation_disabled"} {
+		value, exists := payload[field]
+		if !exists || value != false {
+			t.Fatalf("%s: expected explicit false, got exists=%t value=%v", field, exists, value)
+		}
+	}
+}
