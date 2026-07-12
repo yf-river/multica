@@ -1,11 +1,8 @@
 package handler
 
 import (
-	"errors"
-	"log/slog"
 	"net/http"
 
-	"github.com/jackc/pgx/v5"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -21,15 +18,7 @@ func (h *Handler) requireRuntimeAccess(w http.ResponseWriter, r *http.Request, r
 
 	runtime, err := h.Queries.GetAgentRuntime(r.Context(), runtimeUUID)
 	if err != nil {
-		if writeClientClosedIfCanceled(w, err) {
-			return db.AgentRuntime{}, db.Member{}, false
-		}
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusNotFound, "runtime not found")
-		} else {
-			slog.Error("load runtime failed", "runtime_id", runtimeID, "error", err)
-			writeError(w, http.StatusInternalServerError, "failed to load runtime")
-		}
+		writeEntityLoadError(w, r, err, "runtime", "runtime_id", runtimeID)
 		return db.AgentRuntime{}, db.Member{}, false
 	}
 

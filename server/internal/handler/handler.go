@@ -598,9 +598,8 @@ func (h *Handler) loadIssueForUser(w http.ResponseWriter, r *http.Request, issue
 		return db.Issue{}, false
 	}
 
-	// Try identifier format first (e.g., "JIA-42"). resolveIssueByIdentifier
-	// silently returns false for non-identifier strings, falling through to
-	// the UUID path below.
+	// Try identifier format first (e.g., "JIA-42"). Non-identifier strings
+	// fall through to the UUID path; matched identifiers preserve lookup errors.
 	if issue, matched, err := h.resolveIssueByIdentifier(r.Context(), issueID, workspaceID); matched {
 		if err != nil {
 			writeEntityLoadError(w, r, err, "issue", "issue_id", issueID)

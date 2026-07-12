@@ -15,7 +15,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/storage"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -581,18 +580,9 @@ func (h *Handler) loadAttachmentForDownload(w http.ResponseWriter, r *http.Reque
 	}
 	att, err := h.Queries.GetAttachmentByIDOnly(r.Context(), attUUID)
 	if err != nil {
-		if writeClientClosedIfCanceled(w, err) {
-			return db.Attachment{}, false
-		}
-		if errors.Is(err, pgx.ErrNoRows) {
-			// 404 (not 403/401) so non-member and non-existent look identical
-			// to outside callers. Same shape as ServeLocalUpload's
-			// canReadWorkspaceUpload deny path.
-			writeError(w, http.StatusNotFound, "attachment not found")
-		} else {
-			slog.Error("load attachment for download failed", "attachment_id", attachmentID, "error", err)
-			writeError(w, http.StatusInternalServerError, "failed to load attachment")
-		}
+		// A true not-found remains the same 404 shape as a membership denial;
+		// operational failures are classified by the shared loader boundary.
+		writeEntityLoadError(w, r, err, "attachment", "attachment_id", attachmentID)
 		return db.Attachment{}, false
 	}
 

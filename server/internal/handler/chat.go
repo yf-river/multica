@@ -221,15 +221,7 @@ func (h *Handler) loadChatSessionForUser(w http.ResponseWriter, r *http.Request,
 		WorkspaceID: workspaceUUID,
 	})
 	if err != nil {
-		if writeClientClosedIfCanceled(w, err) {
-			return db.ChatSession{}, false
-		}
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusNotFound, "chat session not found")
-		} else {
-			slog.Error("load chat session failed", "session_id", sessionID, "error", err)
-			writeError(w, http.StatusInternalServerError, "failed to load chat session")
-		}
+		writeEntityLoadError(w, r, err, "chat session", "session_id", sessionID)
 		return db.ChatSession{}, false
 	}
 	if uuidToString(session.CreatorID) != userID {

@@ -18,7 +18,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/auth"
@@ -381,15 +380,7 @@ func (h *Handler) loadCurrentUser(w http.ResponseWriter, r *http.Request, userID
 	if err == nil {
 		return user, true
 	}
-	if writeClientClosedIfCanceled(w, err) {
-		return db.User{}, false
-	}
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, "user not found")
-	} else {
-		slog.Error("load current user failed", "user_id", userID, "error", err)
-		writeError(w, http.StatusInternalServerError, "failed to load user")
-	}
+	writeEntityLoadError(w, r, err, "user", "user_id", userID)
 	return db.User{}, false
 }
 
