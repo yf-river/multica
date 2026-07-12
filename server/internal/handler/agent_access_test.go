@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -65,6 +66,24 @@ func TestPersonalAgentAccessPreservesMembershipLookupFailure(t *testing.T) {
 	allowed, err := testHandler.personalAgentAccess(ctx, agent, "member", "22222222-2222-2222-2222-222222222222", testWorkspaceID)
 	if allowed || err == nil {
 		t.Fatalf("personalAgentAccess() allowed=%t err=%v, want denied with membership lookup error", allowed, err)
+	}
+}
+
+func TestShouldEnqueueOnCommentPreservesAgentLookupFailure(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("handler test fixture not initialized")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	issue := db.Issue{
+		WorkspaceID:  util.MustParseUUID(testWorkspaceID),
+		AssigneeType: pgtype.Text{String: "agent", Valid: true},
+		AssigneeID:   util.MustParseUUID("11111111-1111-1111-1111-111111111111"),
+	}
+
+	enqueue, err := testHandler.shouldEnqueueOnComment(ctx, issue, "member", testUserID, commentTriggerComputeOptions{})
+	if enqueue || err == nil {
+		t.Fatalf("shouldEnqueueOnComment() enqueue=%t err=%v, want false with agent lookup error", enqueue, err)
 	}
 }
 
