@@ -405,9 +405,19 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 				credentialUserID = initiatorID
 			}
 		}
-		resp.SourceContext = h.buildIssueSourceContext(r.Context(), issue, credentialUserID)
+		resp.SourceContext, err = h.buildIssueSourceContext(r.Context(), issue, credentialUserID)
+		if err != nil {
+			h.writeClaimResponseBuildError(w, task.ID, runtimeID, "source credential context", err)
+			outcome = "error_build"
+			return
+		}
 		if resp.Agent != nil {
-			resp.Agent.McpConfig = h.injectSourceCredentialMCPEnv(r.Context(), resp.Agent.McpConfig, resp.SourceContext)
+			resp.Agent.McpConfig, err = h.injectSourceCredentialMCPEnv(r.Context(), resp.Agent.McpConfig, resp.SourceContext)
+			if err != nil {
+				h.writeClaimResponseBuildError(w, task.ID, runtimeID, "source credential MCP config", err)
+				outcome = "error_build"
+				return
+			}
 		}
 		if _, ok := service.ParseIssueSourceSummaryContext(*task); ok {
 			resp.SourceSummaryPrompt = "基于任务的 TAPD 来源内容生成结构化需求摘要。"

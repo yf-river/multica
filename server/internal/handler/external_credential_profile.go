@@ -431,11 +431,14 @@ func (h *Handler) TestExternalCredentialProfile(w http.ResponseWriter, r *http.R
 
 func (h *Handler) verifyGongfengCredentialConnection(ctx context.Context, secretRef string, encrypted []byte) (string, pgtype.Timestamptz, pgtype.Text) {
 	now := pgtype.Timestamptz{Time: time.Now(), Valid: true}
-	token := h.resolveExternalCredentialToken(db.ExternalCredentialProfile{
+	token, err := h.resolveExternalCredentialToken(db.ExternalCredentialProfile{
 		Provider:        externalCredentialProviderGongfeng,
 		SecretRef:       secretRef,
 		EncryptedSecret: encrypted,
 	})
+	if err != nil {
+		return "failed", now, pgtype.Text{String: "工蜂 token 无法解密；请重新保存凭据。", Valid: true}
+	}
 	if strings.TrimSpace(token) == "" {
 		return "failed", now, pgtype.Text{String: "工蜂 token 不可用；请检查输入或服务端环境变量。", Valid: true}
 	}
@@ -472,11 +475,14 @@ func (h *Handler) verifyGongfengCredentialConnection(ctx context.Context, secret
 
 func (h *Handler) verifyTAPDCredentialConnection(ctx context.Context, secretRef string, encrypted []byte) (string, pgtype.Timestamptz, pgtype.Text) {
 	now := pgtype.Timestamptz{Time: time.Now(), Valid: true}
-	token := h.resolveExternalCredentialToken(db.ExternalCredentialProfile{
+	token, err := h.resolveExternalCredentialToken(db.ExternalCredentialProfile{
 		Provider:        externalCredentialProviderTAPD,
 		SecretRef:       secretRef,
 		EncryptedSecret: encrypted,
 	})
+	if err != nil {
+		return "failed", now, pgtype.Text{String: "TAPD token 无法解密；请重新保存凭据。", Valid: true}
+	}
 	if strings.TrimSpace(token) == "" {
 		return "failed", now, pgtype.Text{String: "TAPD token 不可用；请检查输入或服务端环境变量。", Valid: true}
 	}

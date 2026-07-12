@@ -333,7 +333,10 @@ func (h *Handler) autoFetchTAPDSource(ctx context.Context, userID string, req Re
 	if strings.EqualFold(profile.Status, "disabled") {
 		return req, fmt.Errorf("TAPD credential profile is disabled")
 	}
-	token := h.resolveExternalCredentialToken(profile)
+	token, err := h.resolveExternalCredentialToken(profile)
+	if err != nil {
+		return req, fmt.Errorf("resolve TAPD credential token: %w", err)
+	}
 	if token == "" {
 		return req, fmt.Errorf("TAPD credential profile has no resolvable token")
 	}

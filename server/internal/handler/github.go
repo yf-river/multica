@@ -698,7 +698,11 @@ func (h *Handler) CreateMergeRequestForIssue(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "gongfeng credential is required to create merge request")
 		return
 	}
-	token := h.resolveExternalCredentialToken(profile)
+	token, err := h.resolveExternalCredentialToken(profile)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to resolve gongfeng credential token")
+		return
+	}
 	if strings.TrimSpace(token) == "" {
 		writeError(w, http.StatusBadRequest, "gongfeng credential token is unavailable")
 		return

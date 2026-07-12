@@ -409,7 +409,12 @@ func (h *Handler) prepareGongfengWorkspaceRepo(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusBadRequest, missingCredentialMessage)
 		return parsedGongfengURL{}, db.ExternalCredentialProfile{}, "", false
 	}
-	return parsed, profile, h.resolveExternalCredentialToken(profile), true
+	token, err := h.resolveExternalCredentialToken(profile)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to resolve gongfeng credential token")
+		return parsedGongfengURL{}, db.ExternalCredentialProfile{}, "", false
+	}
+	return parsed, profile, token, true
 }
 
 func (h *Handler) ProbeWorkspaceRepo(w http.ResponseWriter, r *http.Request) {

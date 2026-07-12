@@ -369,7 +369,10 @@ func TestQuickCreateIssueTapdWikiCreatesFetchedIssueDirectly(t *testing.T) {
 	if strings.Contains(issue.Description.String, "真实需求正文") {
 		t.Fatalf("description should not copy fetched TAPD body before LLM summary: %s", issue.Description.String)
 	}
-	source := testHandler.buildIssueSourceContext(ctx, issue, parseUUID(testUserID))
+	source, err := testHandler.buildIssueSourceContext(ctx, issue, parseUUID(testUserID))
+	if err != nil {
+		t.Fatalf("build issue source context: %v", err)
+	}
 	if source == nil || source.TAPD == nil || source.TAPD.Title != title || !strings.Contains(source.TAPD.BodyExcerpt, "真实需求正文") {
 		t.Fatalf("source_context missing fetched fields: %+v", source)
 	}
@@ -784,7 +787,10 @@ func TestQuickCreateIssueTapdStoryPreviewCreatesFetchedIssueDirectly(t *testing.
 	if summaryTaskCount != 1 {
 		t.Fatalf("story create should enqueue one source summary task, got %d", summaryTaskCount)
 	}
-	source := testHandler.buildIssueSourceContext(ctx, issue, parseUUID(testUserID))
+	source, err := testHandler.buildIssueSourceContext(ctx, issue, parseUUID(testUserID))
+	if err != nil {
+		t.Fatalf("build issue source context: %v", err)
+	}
 	if source == nil || source.TAPD == nil || source.TAPD.ResourceType != "story" || source.TAPD.ResourceID != "1151081496001028216" {
 		t.Fatalf("source_context missing story fields: %+v", source)
 	}
