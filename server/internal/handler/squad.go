@@ -618,7 +618,7 @@ func (h *Handler) loadSquadInWorkspace(w http.ResponseWriter, r *http.Request) (
 		WorkspaceID: wsUUID,
 	})
 	if err != nil {
-		writeError(w, http.StatusNotFound, "squad not found")
+		writeEntityLoadError(w, r, err, "squad", "squad_id", squadID)
 		return db.Squad{}, "", false
 	}
 	return squad, workspaceID, true
