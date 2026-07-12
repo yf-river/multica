@@ -230,12 +230,13 @@ func createIssueChainForValidationTest(t *testing.T, count int) []string {
 	var parent any
 	for i := 0; i < count; i++ {
 		var id string
+		number := nextHandlerTestIssueNumber(t)
 		if err := testPool.QueryRow(ctx, `
 			INSERT INTO issue (
 				workspace_id, title, status, priority, creator_type, creator_id, number, position, parent_issue_id
-			) VALUES ($1, $2, 'todo', 'none', 'member', $3, 91000 + $4, $4, $5)
+			) VALUES ($1, $2, 'todo', 'none', 'member', $3, $4, $5, $6)
 			RETURNING id
-		`, testWorkspaceID, "deep parent chain", testUserID, i, parent).Scan(&id); err != nil {
+		`, testWorkspaceID, "deep parent chain", testUserID, number, i, parent).Scan(&id); err != nil {
 			t.Fatalf("insert issue chain row %d: %v", i, err)
 		}
 		ids = append(ids, id)
