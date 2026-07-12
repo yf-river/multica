@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -69,5 +70,61 @@ func TestAppendIssueInvolvesUserFilterKeepsIndirectAssignmentContract(t *testing
 	}
 	if strings.Contains(clause, "i.assignee_type = 'member'") {
 		t.Fatalf("direct member assignment must stay outside involves_user_id:\n%s", clause)
+	}
+}
+
+func TestAppendCommonIssueListFilters(t *testing.T) {
+	values := url.Values{
+		"assignee_id":      {"11111111-1111-4111-8111-111111111111"},
+		"assignee_ids":     {"22222222-2222-4222-8222-222222222222,33333333-3333-4333-8333-333333333333"},
+		"creator_id":       {"44444444-4444-4444-8444-444444444444"},
+		"project_id":       {"55555555-5555-4555-8555-555555555555"},
+		"involves_user_id": {"66666666-6666-4666-8666-666666666666"},
+		"metadata":         {`{"source_provider":"tapd"}`},
+	}
+	arguments := make([]any, 0, 6)
+	w := httptest.NewRecorder()
+	where, ok := appendCommonIssueListFilters(w, values, []string{"base"}, func(value any) string {
+		arguments = append(arguments, value)
+		return "$" + strconv.Itoa(len(arguments)+1)
+	})
+	if !ok {
+		t.Fatalf("appendCommonIssueListFilters failed: %s", w.Body.String())
+	}
+	if len(arguments) != 6 || len(where) != 7 {
+		t.Fatalf("arguments=%d clauses=%d, want 6/7: %#v", len(arguments), len(where), where)
+	}
+	joined := strings.Join(where, "\n")
+	for _, required := range []string{
+		"i.assignee_id = $2::uuid",
+		"i.assignee_id = ANY($3::uuid[])",
+		"i.creator_id = $4::uuid",
+		"i.project_id = $5::uuid",
+		"a.owner_id     = $6::uuid",
+		"i.metadata @> $7::jsonb",
+	} {
+		if !strings.Contains(joined, required) {
+			t.Fatalf("common filters missing %q:\n%s", required, joined)
+		}
+	}
+}
+
+func TestAppendCommonIssueListFiltersRejectsMalformedValues(t *testing.T) {
+	tests := []url.Values{
+		{"assignee_id": {"bad"}},
+		{"assignee_ids": {"bad"}},
+		{"creator_id": {"bad"}},
+		{"project_id": {"bad"}},
+		{"involves_user_id": {"bad"}},
+		{"metadata": {"not-json"}},
+	}
+	for _, values := range tests {
+		w := httptest.NewRecorder()
+		if _, ok := appendCommonIssueListFilters(w, values, nil, func(any) string { return "$2" }); ok {
+			t.Fatalf("malformed values accepted: %v", values)
+		}
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400 for %v", w.Code, values)
+		}
 	}
 }
