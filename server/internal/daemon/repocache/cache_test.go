@@ -1097,13 +1097,8 @@ func runGitAuthored(t *testing.T, repoPath string, args ...string) {
 	}
 }
 
-// TestCreateWorktreeFetchesDespiteAgentBranchOnRemote reproduces the original
-// stale-cache bug. Under the legacy mirror refspec (+refs/heads/*:refs/heads/*)
-// the sequence below would break on the second CreateWorktree because `git
-// fetch` tries to overwrite refs/heads/agent/... which is locked by the first
-// worktree, and the whole fetch aborts — silently discarding the main-branch
-// update too. Under the modern remote-tracking refspec, fetched heads land in
-// refs/remotes/origin/* and no longer collide with worktree-locked refs.
+// Agent branches and fetched remote branches occupy separate namespaces, so a
+// pushed Agent branch cannot block a later default-branch refresh.
 func TestCreateWorktreeFetchesDespiteAgentBranchOnRemote(t *testing.T) {
 	t.Parallel()
 	sourceRepo := createTestRepo(t)
@@ -1137,7 +1132,7 @@ func TestCreateWorktreeFetchesDespiteAgentBranchOnRemote(t *testing.T) {
 
 	// Simulate the agent pushing its branch back to origin (i.e. opening a PR).
 	// Now sourceRepo has refs/heads/agent/... matching the locked ref in the
-	// bare cache, which is the condition that triggered the legacy bug.
+	// bare cache, exercising the namespace separation invariant.
 	if err := os.WriteFile(filepath.Join(result1.Path, "hello.txt"), []byte("hi\n"), 0o644); err != nil {
 		t.Fatalf("write file: %v", err)
 	}
@@ -1152,10 +1147,7 @@ func TestCreateWorktreeFetchesDespiteAgentBranchOnRemote(t *testing.T) {
 	sourceHead := gitRefCommit(t, sourceRepo, "refs/heads/"+defaultBranch)
 	runGitAuthored(t, sourceRepo, "checkout", "--detach", "HEAD")
 
-	// Second worktree: CreateWorktree fetches first. Under the legacy refspec
-	// this fetch would fail (refusing to fetch into locked refs/heads/agent/...)
-	// and the worktree would be based on the stale snapshot. Under the modern
-	// refspec this succeeds and the new worktree sees sourceHead.
+	// Second worktree: CreateWorktree fetches first and must see sourceHead.
 	workDir2 := t.TempDir()
 	result2, err := cache.CreateWorktree(WorktreeParams{
 		WorkspaceID: "ws-1",
@@ -1188,55 +1180,27 @@ func currentBranchName(t *testing.T, repoPath string) string {
 	return name
 }
 
-// TestEnsureRemoteTrackingLayoutMigratesLegacyCache verifies that a cache
-// created with the legacy mirror refspec is migrated in place on next use:
-// the refspec is rewritten to the modern remote-tracking layout and
-// refs/remotes/origin/* gets backfilled so getRemoteDefaultBranch can resolve
-// the remote default.
-func TestEnsureRemoteTrackingLayoutMigratesLegacyCache(t *testing.T) {
+func TestValidateBareCloneLayoutRejectsNonCurrentRefspec(t *testing.T) {
 	t.Parallel()
 	sourceRepo := createTestRepo(t)
-	cacheRoot := t.TempDir()
-	cache := New(cacheRoot, testLogger())
+	cache := New(t.TempDir(), testLogger())
 	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
 		t.Fatalf("sync failed: %v", err)
 	}
 	barePath := cache.Lookup("ws-1", sourceRepo)
+	if err := validateBareCloneLayout(barePath); err != nil {
+		t.Fatalf("new clone did not establish current layout: %v", err)
+	}
 
-	// Reset to the legacy mirror refspec to simulate a cache created by an
-	// older version of the daemon.
 	if err := setFetchRefspec(barePath, "+refs/heads/*:refs/heads/*"); err != nil {
-		t.Fatalf("set legacy refspec: %v", err)
+		t.Fatalf("set non-current refspec: %v", err)
 	}
-	// Wipe any refs/remotes/origin/* that may have been populated by the initial clone.
-	_ = exec.Command("git", "-C", barePath, "update-ref", "-d", "refs/remotes/origin/HEAD").Run()
-	if err := exec.Command("sh", "-c", "rm -rf '"+filepath.Join(barePath, "refs", "remotes")+"'").Run(); err != nil {
-		t.Fatalf("wipe refs/remotes: %v", err)
+	err := validateBareCloneLayout(barePath)
+	if err == nil || !strings.Contains(err.Error(), "unsupported repo cache layout") {
+		t.Fatalf("validateBareCloneLayout error=%v", err)
 	}
-
-	// Sanity check: we've successfully forced the cache into legacy state.
-	if cur, _ := readFetchRefspec(barePath); cur != "+refs/heads/*:refs/heads/*" {
-		t.Fatalf("precondition failed: refspec is %q, want legacy mirror", cur)
-	}
-
-	// ensureRemoteTrackingLayout should migrate: rewrite refspec, backfill
-	// refs/remotes/origin/*, and set origin HEAD.
-	if err := ensureRemoteTrackingLayout(barePath); err != nil {
-		t.Fatalf("ensureRemoteTrackingLayout failed: %v", err)
-	}
-
-	cur, err := readFetchRefspec(barePath)
-	if err != nil {
-		t.Fatalf("read refspec after migration: %v", err)
-	}
-	if cur != modernFetchRefspec {
-		t.Errorf("refspec = %q, want %q", cur, modernFetchRefspec)
-	}
-
-	// getRemoteDefaultBranch should now return a refs/remotes/origin/<branch>.
-	ref := getRemoteDefaultBranch(barePath)
-	if !strings.HasPrefix(ref, "refs/remotes/origin/") {
-		t.Errorf("getRemoteDefaultBranch = %q, want refs/remotes/origin/*", ref)
+	if err := gitFetch(barePath); err == nil || !strings.Contains(err.Error(), "remove the cache and sync again") {
+		t.Fatalf("gitFetch did not reject non-current cache: %v", err)
 	}
 }
 
@@ -1289,11 +1253,9 @@ func TestCreateWorktreePathCollisionDoesNotLeakBranch(t *testing.T) {
 	}
 }
 
-// TestGetRemoteDefaultBranchScansForCustomDefault verifies fallback (3) of
-// getRemoteDefaultBranch: when the cache has refs/remotes/origin/<custom>
-// (e.g. develop, trunk) but no refs/remotes/origin/HEAD and no main/master,
-// the function picks the custom branch instead of returning empty.
-func TestGetRemoteDefaultBranchScansForCustomDefault(t *testing.T) {
+// A branch ref alone is not evidence that it is the remote default. Current
+// caches require the origin/HEAD established by a successful remote refresh.
+func TestGetRemoteDefaultBranchRequiresOriginHeadForCustomBranch(t *testing.T) {
 	t.Parallel()
 	sourceRepo := createTestRepo(t)
 	cacheRoot := t.TempDir()
@@ -1305,7 +1267,7 @@ func TestGetRemoteDefaultBranchScansForCustomDefault(t *testing.T) {
 
 	// Resolve the existing default branch's commit so we can repoint a
 	// custom-named ref at it, then wipe the standard refs to force the
-	// fallback path.
+	// missing-origin/HEAD rejection path.
 	existing := getRemoteDefaultBranch(barePath)
 	if existing == "" {
 		t.Fatalf("precondition: cache should have a default branch right after sync")
@@ -1321,21 +1283,12 @@ func TestGetRemoteDefaultBranchScansForCustomDefault(t *testing.T) {
 	_ = exec.Command("git", "-C", barePath, "update-ref", "-d", "refs/remotes/origin/main").Run()
 	_ = exec.Command("git", "-C", barePath, "update-ref", "-d", "refs/remotes/origin/master").Run()
 
-	got := getRemoteDefaultBranch(barePath)
-	if got != "refs/remotes/origin/develop" {
-		t.Fatalf("getRemoteDefaultBranch = %q, want refs/remotes/origin/develop", got)
+	if got := getRemoteDefaultBranch(barePath); got != "" {
+		t.Fatalf("getRemoteDefaultBranch = %q, want no guessed custom branch", got)
 	}
 }
 
-// TestGetRemoteDefaultBranchFallsBackToBareHead verifies fallback (5):
-// a legacy / migration-pending cache that has no refs/remotes/origin/* at all
-// but still has its bare HEAD pointing at refs/heads/<branch> (the snapshot
-// from the original mirror clone) should resolve to that local head instead
-// of failing. This protects against transient backfill-fetch failures during
-// the legacy → modern refspec migration. Gated on refs/remotes/origin/* being
-// completely empty — with any modern remote-tracking refs present, the
-// resolver refuses to reach back into the stale bare heads.
-func TestGetRemoteDefaultBranchFallsBackToBareHead(t *testing.T) {
+func TestGetRemoteDefaultBranchRejectsLocalBareHead(t *testing.T) {
 	t.Parallel()
 	sourceRepo := createTestRepo(t)
 	cacheRoot := t.TempDir()
@@ -1345,10 +1298,7 @@ func TestGetRemoteDefaultBranchFallsBackToBareHead(t *testing.T) {
 	}
 	barePath := cache.Lookup("ws-1", sourceRepo)
 
-	// Force the cache into a state that mimics "legacy mirror clone whose
-	// post-migration backfill fetch failed":
-	//   - bare HEAD still points at refs/heads/<default>
-	//   - refs/remotes/origin/* is empty
+	// Remove current remote metadata while leaving an unrelated local HEAD.
 	if err := exec.Command("sh", "-c", "rm -rf '"+filepath.Join(barePath, "refs", "remotes")+"'").Run(); err != nil {
 		t.Fatalf("wipe refs/remotes: %v", err)
 	}
@@ -1358,15 +1308,8 @@ func TestGetRemoteDefaultBranchFallsBackToBareHead(t *testing.T) {
 		t.Fatalf("precondition failed: refs/remotes/origin/* should be empty, got %s", out)
 	}
 
-	got := getRemoteDefaultBranch(barePath)
-	if !strings.HasPrefix(got, "refs/heads/") {
-		t.Fatalf("getRemoteDefaultBranch = %q, want refs/heads/* fallback", got)
-	}
-
-	// And the resolved ref must actually exist — verifying bareHeadBranch's
-	// rev-parse guard kicked in correctly.
-	if err := exec.Command("git", "-C", barePath, "rev-parse", "--verify", got).Run(); err != nil {
-		t.Fatalf("resolved ref %q does not exist: %v", got, err)
+	if got := getRemoteDefaultBranch(barePath); got != "" {
+		t.Fatalf("getRemoteDefaultBranch = %q, want no local-head guess", got)
 	}
 }
 
@@ -1425,13 +1368,7 @@ func TestGitFetchRefreshesOriginHeadAfterDefaultChange(t *testing.T) {
 	}
 }
 
-// TestGetRemoteDefaultBranchUsesBareHeadHintForCustomDefault verifies step 3
-// of the resolver: when the cache has a non-standard default branch name
-// (trunk, develop, …) and `git remote set-head origin --auto` didn't
-// populate refs/remotes/origin/HEAD, the resolver must use the bare repo's
-// own HEAD as a hint to pick refs/remotes/origin/<same name> — NOT fall
-// through to a refname-order scan that would pick the wrong branch.
-func TestGetRemoteDefaultBranchUsesBareHeadHintForCustomDefault(t *testing.T) {
+func TestGetRemoteDefaultBranchDoesNotUseBareHeadHint(t *testing.T) {
 	t.Parallel()
 	sourceRepo := createTestRepo(t)
 	cacheRoot := t.TempDir()
@@ -1460,15 +1397,13 @@ func TestGetRemoteDefaultBranchUsesBareHeadHintForCustomDefault(t *testing.T) {
 	runGitAuthored(t, barePath, "update-ref", "refs/remotes/origin/trunk", commit)
 	runGitAuthored(t, barePath, "update-ref", "refs/remotes/origin/feature-alpha", commit)
 
-	// Knock out the ahead-of-step-3 fallbacks so resolution must rely on
-	// the bare-HEAD hint.
+	// Remove origin/HEAD; local and same-name refs must not replace it.
 	_ = exec.Command("git", "-C", barePath, "symbolic-ref", "-d", "refs/remotes/origin/HEAD").Run()
 	_ = exec.Command("git", "-C", barePath, "update-ref", "-d", "refs/remotes/origin/main").Run()
 	_ = exec.Command("git", "-C", barePath, "update-ref", "-d", "refs/remotes/origin/master").Run()
 
-	got := getRemoteDefaultBranch(barePath)
-	if got != "refs/remotes/origin/trunk" {
-		t.Fatalf("getRemoteDefaultBranch = %q, want refs/remotes/origin/trunk (via bare-HEAD hint)", got)
+	if got := getRemoteDefaultBranch(barePath); got != "" {
+		t.Fatalf("getRemoteDefaultBranch = %q, want no bare-HEAD guess", got)
 	}
 }
 
@@ -1738,23 +1673,14 @@ func TestGetRemoteDefaultBranchAmbiguousOriginReturnsEmpty(t *testing.T) {
 	}
 	commit := gitRefCommit(t, barePath, existing)
 
-	// Populate two unrelated origin branches (none of which match any of
-	// the step 1-3 fallbacks).
+	// Populate two unrelated origin branches.
 	runGitAuthored(t, barePath, "update-ref", "refs/remotes/origin/feature-a", commit)
 	runGitAuthored(t, barePath, "update-ref", "refs/remotes/origin/feature-b", commit)
 
-	// Wipe every ref a step 1-3 fallback could pick up:
-	//   step 1: origin/HEAD
-	//   step 2: origin/main, origin/master
-	//   step 3: the origin/<bareHEAD-name> bridge
+	// Remove the required origin/HEAD and common branch refs.
 	_ = exec.Command("git", "-C", barePath, "symbolic-ref", "-d", "refs/remotes/origin/HEAD").Run()
 	_ = exec.Command("git", "-C", barePath, "update-ref", "-d", "refs/remotes/origin/main").Run()
 	_ = exec.Command("git", "-C", barePath, "update-ref", "-d", "refs/remotes/origin/master").Run()
-	if bareRef := bareHeadBranch(barePath); bareRef != "" {
-		sameName := strings.TrimPrefix(bareRef, "refs/heads/")
-		_ = exec.Command("git", "-C", barePath, "update-ref", "-d", "refs/remotes/origin/"+sameName).Run()
-	}
-
 	got := getRemoteDefaultBranch(barePath)
 	if got != "" {
 		t.Fatalf("getRemoteDefaultBranch = %q, want \"\" (ambiguous origin/* must not guess)", got)

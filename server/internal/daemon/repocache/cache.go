@@ -291,11 +291,9 @@ func gitCloneBare(url, dest string) error {
 		}
 		return fmt.Errorf("git clone --bare: %s: %w", strings.TrimSpace(string(out)), err)
 	}
-	// `git clone --bare` populates refs/heads/* as a snapshot and defaults to
-	// a mirror-style fetch refspec. Convert the bare repo to the standard
-	// remote-tracking layout immediately so subsequent fetches write to
-	// refs/remotes/origin/* and can't conflict with worktree-locked heads.
-	if err := ensureRemoteTrackingLayout(dest); err != nil {
+	// Establish the only cache layout supported by the current daemon before
+	// exposing this clone through Lookup.
+	if err := configureNewBareClone(dest); err != nil {
 		if cleanupErr := os.RemoveAll(dest); cleanupErr != nil {
 			return fmt.Errorf("configure fetch refspec: %w; cleanup partial clone: %v", err, cleanupErr)
 		}
@@ -304,18 +302,16 @@ func gitCloneBare(url, dest string) error {
 	return nil
 }
 
-// gitFetch runs `git fetch origin` on a bare cache, migrating its fetch
-// refspec to the remote-tracking layout first if it's still using the legacy
-// mirror-style layout from an older version of this package. After a
-// successful fetch it also refreshes refs/remotes/origin/HEAD so a remote
+// gitFetch runs `git fetch origin` on a current-layout bare cache. After a
+// successful fetch it refreshes refs/remotes/origin/HEAD so a remote
 // default-branch change (e.g. master→main on an existing repo) actually
 // takes effect in getRemoteDefaultBranch. Plain `git fetch origin` never
 // touches that symref on its own, so without this call an existing cache
 // would keep basing new worktrees on the original default branch forever
 // after the remote flipped.
 func gitFetch(barePath string) error {
-	if err := ensureRemoteTrackingLayout(barePath); err != nil {
-		return fmt.Errorf("ensure refspec: %w", err)
+	if err := validateBareCloneLayout(barePath); err != nil {
+		return err
 	}
 	if err := runGitFetch(barePath); err != nil {
 		return err
@@ -327,7 +323,7 @@ func gitFetch(barePath string) error {
 }
 
 // runGitFetch is the raw `git fetch origin` wrapper. Callers should go through
-// gitFetch, which migrates legacy caches first.
+// gitFetch unless they are establishing a new clone's current layout.
 func runGitFetch(barePath string) error {
 	out, err := runRemoteGit(gitFetchTimeout, "-C", barePath, "fetch", "origin")
 	if err != nil {
@@ -360,34 +356,25 @@ func runRemoteGitContext(ctx context.Context, args ...string) ([]byte, error) {
 	return out, err
 }
 
-// ensureRemoteTrackingLayout upgrades a bare repo from the legacy mirror
-// refspec (+refs/heads/*:refs/heads/*) to the standard remote-tracking refspec
-// (+refs/heads/*:refs/remotes/origin/*). It's idempotent: on an already-modern
-// cache it's a single `git config --get` call. On legacy caches it rewrites
-// the refspec, performs a backfill fetch to populate refs/remotes/origin/*,
-// and runs `git remote set-head origin --auto` so getRemoteDefaultBranch can
-// resolve the remote's default branch.
-func ensureRemoteTrackingLayout(barePath string) error {
-	cur, err := readFetchRefspec(barePath)
-	if err != nil {
-		return err
-	}
-	if cur == modernFetchRefspec || cur == strings.TrimPrefix(modernFetchRefspec, "+") {
-		return nil // already modern
-	}
+func configureNewBareClone(barePath string) error {
 	if err := setFetchRefspec(barePath, modernFetchRefspec); err != nil {
 		return err
 	}
-	// Backfill refs/remotes/origin/* by fetching with the new refspec. This
-	// writes to the origin/* namespace, so even worktree-locked refs/heads/*
-	// branches can't collide.
 	if err := runGitFetch(barePath); err != nil {
-		return fmt.Errorf("backfill fetch after refspec migration: %w", err)
+		return fmt.Errorf("populate remote refs: %w", err)
 	}
-	// Set refs/remotes/origin/HEAD so getRemoteDefaultBranch can read it. This
-	// must succeed before the migrated cache is considered ready; otherwise a
-	// previous symref can survive and select the wrong branch.
 	return refreshRemoteHead(barePath)
+}
+
+func validateBareCloneLayout(barePath string) error {
+	refspec, err := readFetchRefspec(barePath)
+	if err != nil {
+		return err
+	}
+	if refspec != modernFetchRefspec {
+		return fmt.Errorf("unsupported repo cache layout at %s: remote.origin.fetch is %q, want %q; remove the cache and sync again", barePath, refspec, modernFetchRefspec)
+	}
+	return nil
 }
 
 // readFetchRefspec returns the current remote.origin.fetch config value, or
@@ -464,10 +451,8 @@ func (c *Cache) CreateWorktree(params WorktreeParams) (*WorktreeResult, error) {
 		return nil, fmt.Errorf("fetch repo before checkout: %w", err)
 	}
 
-	// Determine the ref to base the worktree on. By default this is the remote's
-	// default branch (resolved internally via getRemoteDefaultBranch, which walks
-	// origin/HEAD → origin/main, origin/master → bare-HEAD hint into origin/<same>
-	// → single-entry scan of origin/* → bare HEAD when origin/* is empty).
+	// Determine the ref to base the worktree on. By default this is the verified
+	// origin/HEAD refreshed by the current cache layout.
 	// Callers may request a specific branch, tag, or commit so review/QA agents
 	// can inspect the exact revision without trying to mutate the daemon-owned
 	// worktree metadata themselves.
@@ -476,14 +461,11 @@ func (c *Cache) CreateWorktree(params WorktreeParams) (*WorktreeResult, error) {
 		return nil, err
 	}
 
-	// Empty here means params.Ref was unset and getRemoteDefaultBranch couldn't
-	// resolve a default — the cache is in a state we refuse to guess from (no
-	// origin/HEAD, no main/master, bare HEAD doesn't match any origin/* entry,
-	// and origin/* has multiple candidates). The requested-ref path returns an
-	// explicit error before reaching here, so this branch only fires for the
-	// default-branch case.
+	// The requested-ref path returns an explicit error earlier. Empty here means
+	// the cache lost its required origin/HEAD metadata, which must be repaired by
+	// a successful sync rather than guessed from branch names.
 	if baseRef == "" {
-		return nil, fmt.Errorf("cannot resolve default branch for %s: bare cache at %s has no usable refs (origin/* is empty or ambiguous and bare HEAD has no match). The cache may be corrupted; delete it and retry", params.RepoURL, barePath)
+		return nil, fmt.Errorf("cannot resolve default branch for %s: cache at %s has no valid origin/HEAD; remove the cache and sync again", params.RepoURL, barePath)
 	}
 
 	// Build branch name: agent/{sanitized-name}/{short-task-id}, unless the
@@ -778,10 +760,7 @@ func updateExistingWorktree(worktreePath, branchName, baseRef string) (string, e
 	}
 
 	// Create a new branch from the resolved default-branch ref and switch to
-	// it. baseRef is a ref path returned by getRemoteDefaultBranch — usually
-	// "refs/remotes/origin/<branch>" but may be "refs/heads/<branch>" on a
-	// legacy/migration-pending cache. Either form is valid as a checkout
-	// startpoint.
+	// it. baseRef is the verified refs/remotes/origin/<branch> target.
 	checkoutCmd := exec.Command("git", "-C", worktreePath, "checkout", "-b", branchName, baseRef)
 	out, err := checkoutCmd.CombinedOutput()
 	if err == nil {
@@ -800,119 +779,13 @@ func updateExistingWorktree(worktreePath, branchName, baseRef string) (string, e
 	return branchName, nil
 }
 
-// getRemoteDefaultBranch returns a ref path (e.g. "refs/remotes/origin/main")
-// that points at the remote's default branch in a bare cache. The return value
-// is usable directly as a `git worktree add` / `git checkout -b` startpoint.
-//
-// Resolution order:
-//  1. refs/remotes/origin/HEAD (verified; set by `git remote set-head origin --auto`)
-//  2. refs/remotes/origin/main, refs/remotes/origin/master (common defaults)
-//  3. The bare repo's own HEAD mapped into refs/remotes/origin/<same name> —
-//     `git clone --bare` sets HEAD to the remote's default, so this is a
-//     reliable hint for custom default branches (trunk, develop, …) when
-//     `git remote set-head --auto` failed to populate refs/remotes/origin/HEAD.
-//  4. Scan refs/remotes/origin/* — returns a result ONLY when exactly one
-//     non-HEAD ref exists. Multiple refs cannot be disambiguated from refname
-//     order alone (git for-each-ref sorts alphabetically), so we refuse to
-//     guess; returning a wrong default would silently base new agent work on
-//     an arbitrary feature branch.
-//  5. Legacy last-resort: the bare repo's own HEAD as a plain refs/heads/*
-//     ref, for caches that haven't populated refs/remotes/origin/* at all
-//     yet (e.g. a migration-pending cache whose backfill fetch failed).
-//     Gated on refs/remotes/origin/* being completely empty so we don't fall
-//     back to a stale snapshot when the cache has real remote-tracking refs
-//     but we just can't pick between them.
-//
-// Returns "" only when none of the above resolve — which the caller treats
-// as a hard error with a clear "cache has no usable refs" message.
+// getRemoteDefaultBranch returns the verified origin/HEAD target established
+// by every successful current clone and fetch. Missing or invalid metadata is
+// an invariant violation; guessing main, master, or a local ref can select the
+// wrong branch and is deliberately unsupported.
 func getRemoteDefaultBranch(barePath string) string {
-	// 1) Primary: refs/remotes/origin/HEAD set by `git remote set-head
-	//    origin --auto` during ensureRemoteTrackingLayout. Verify the
-	//    target actually exists — a partial set-head or a manually-broken
-	//    repo can leave a symref pointing at a deleted ref, and returning
-	//    it here would later fail in `git worktree add` with a confusing
-	//    "invalid reference" error.
 	symrefCmd := exec.Command("git", "-C", barePath, "symbolic-ref", "refs/remotes/origin/HEAD")
-	if out, err := symrefCmd.Output(); err == nil {
-		ref := strings.TrimSpace(string(out))
-		if ref != "" {
-			verifyCmd := exec.Command("git", "-C", barePath, "rev-parse", "--verify", ref)
-			if err := verifyCmd.Run(); err == nil {
-				return ref
-			}
-		}
-	}
-	// 2) Common default branch names under the origin namespace.
-	for _, candidate := range []string{"refs/remotes/origin/main", "refs/remotes/origin/master"} {
-		cmd := exec.Command("git", "-C", barePath, "rev-parse", "--verify", candidate)
-
-		if err := cmd.Run(); err == nil {
-			return candidate
-		}
-	}
-	// 3) Use the bare repo's own HEAD as a hint. `git clone --bare` sets HEAD
-	//    to the remote's default branch, so this reliably identifies custom
-	//    default branch names (trunk, develop, ...) when set-head --auto
-	//    didn't populate refs/remotes/origin/HEAD. We only return when the
-	//    matching origin/<name> exists, so we still pick up up-to-date code
-	//    rather than a stale local head.
-	bareRef := bareHeadBranch(barePath)
-	if bareRef != "" {
-		originRef := "refs/remotes/origin/" + strings.TrimPrefix(bareRef, "refs/heads/")
-		cmd := exec.Command("git", "-C", barePath, "rev-parse", "--verify", originRef)
-
-		if err := cmd.Run(); err == nil {
-			return originRef
-		}
-	}
-	// 4) Scan refs/remotes/origin/* — return a result ONLY when there's
-	//    exactly one non-HEAD candidate. Multiple candidates cannot be
-	//    disambiguated from refname order alone; returning the alphabetically-
-	//    first entry would silently base new agent work on a feature branch
-	//    instead of the real default. Count entries here so step 5 can tell
-	//    "legacy empty" apart from "ambiguous".
-	originCount := 0
-	var singleton string
-	foreachCmd := exec.Command("git", "-C", barePath, "for-each-ref", "--format=%(refname)", "refs/remotes/origin/")
-	if out, err := foreachCmd.Output(); err == nil {
-		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
-			line = strings.TrimSpace(line)
-			if line == "" || line == "refs/remotes/origin/HEAD" {
-				continue
-			}
-			originCount++
-			if singleton == "" {
-				singleton = line
-			}
-		}
-		if originCount == 1 {
-			return singleton
-		}
-	}
-	// 5) Last-resort fallback: legacy / migration-pending caches still have
-	//    refs/heads/* and a bare HEAD from the mirror-style layout. Gate this
-	//    on refs/remotes/origin/* being completely empty — if origin/* has
-	//    multiple refs but none match bare HEAD, the cache is in an
-	//    ambiguous state and returning the local head would mask the
-	//    problem with a stale snapshot. Let the caller fail loudly instead.
-	if originCount == 0 && bareRef != "" {
-		return bareRef
-	}
-	return ""
-}
-
-// bareHeadBranch returns the bare repo's local HEAD ref (e.g.
-// "refs/heads/main") if HEAD is a symbolic ref to an existing branch.
-// Returns "" if HEAD is detached, missing, or points at a non-existent ref.
-//
-// Only used by getRemoteDefaultBranch as a last-resort fallback for caches
-// that haven't successfully populated refs/remotes/origin/* yet. Healthy
-// modern caches should never reach this path because origin/* resolution
-// succeeds first.
-func bareHeadBranch(barePath string) string {
-	cmd := exec.Command("git", "-C", barePath, "symbolic-ref", "HEAD")
-
-	out, err := cmd.Output()
+	out, err := symrefCmd.Output()
 	if err != nil {
 		return ""
 	}
