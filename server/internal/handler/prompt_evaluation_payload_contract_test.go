@@ -60,3 +60,25 @@ func TestPromptEvaluationCaseProjectionsUseCanonicalFieldsOnly(t *testing.T) {
 	}
 	assertCanonical(t, fromVersion[0])
 }
+
+func TestPromptEvaluationCaseNormalizerDoesNotReadRetiredAliases(t *testing.T) {
+	retired := normalizePromptEvaluationCase(0, map[string]any{
+		"名称":   "retired name",
+		"变量":   map[string]any{"title": "retired"},
+		"期望包含": []any{"retired"},
+		"标签":   []any{"retired"},
+	})
+	if retired.Name != "用例 1" || len(retired.Variables) != 0 || len(retired.ExpectedContains) != 0 || len(retired.Tags) != 0 {
+		t.Fatalf("retired aliases were still consumed: %#v", retired)
+	}
+
+	current := normalizePromptEvaluationCase(0, map[string]any{
+		"case_name":         "current name",
+		"variables":         map[string]any{"title": "current"},
+		"expected_contains": []any{"current"},
+		"tags":              []any{"current"},
+	})
+	if current.Name != "current name" || current.Variables["title"] != "current" || len(current.ExpectedContains) != 1 || len(current.Tags) != 1 {
+		t.Fatalf("canonical fields were not preserved: %#v", current)
+	}
+}

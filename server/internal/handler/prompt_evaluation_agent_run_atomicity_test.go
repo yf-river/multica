@@ -38,9 +38,9 @@ func TestRunPromptEvaluationAssetAgentRollsBackEveryWrite(t *testing.T) {
 		"asset_type": "测试套件",
 		"payload": map[string]any{
 			"cases": []map[string]any{{
-				"名称":   "atomic case",
-				"变量":   map[string]any{"issue_title": "atomic"},
-				"期望包含": []string{"atomic"},
+				"case_name":         "atomic case",
+				"variables":         map[string]any{"issue_title": "atomic"},
+				"expected_contains": []string{"atomic"},
 			}},
 		},
 	}))

@@ -386,8 +386,10 @@ func TestPromptEvaluationAssetCRUD(t *testing.T) {
 		"name":        "user-center 澄清数据集",
 		"description": "用于验证澄清提示词",
 		"asset_type":  "数据集",
-		"payload":     map[string]any{"cases": []map[string]any{{"输入": "登录失败", "期望": "询问边界和验收"}}},
-		"status":      "启用",
+		"payload": map[string]any{"cases": []map[string]any{{
+			"case_name": "用例 1", "variables": map[string]any{}, "expected_contains": []string{"询问边界和验收"},
+		}}},
+		"status": "启用",
 	}))
 	if createW.Code != http.StatusCreated {
 		t.Fatalf("create status = %d, body = %s", createW.Code, createW.Body.String())
@@ -458,7 +460,7 @@ func TestPromptEvaluationAssetCRUD(t *testing.T) {
 	testHandler.UpdatePromptEvaluationAsset(updateW, withURLParam(newRequest(http.MethodPut, "/api/prompt-evaluation-assets/"+created.ID, map[string]any{
 		"asset_type": "测试套件",
 		"payload": map[string]any{
-			"cases": []map[string]any{{"名称": "套件用例", "变量": map[string]any{"输入": "登录失败"}, "期望包含": []string{"边界"}}},
+			"cases": []map[string]any{{"case_name": "套件用例", "variables": map[string]any{"输入": "登录失败"}, "expected_contains": []string{"边界"}}},
 			"通过标准":  []string{"变量完整", "输出中文"},
 		},
 	}), "id", created.ID))
@@ -533,9 +535,9 @@ func TestPromptEvaluationAssetExperimentDimensionsDoNotBlockCreateOrUpdate(t *te
 		"asset_type": "测试套件",
 		"payload": map[string]any{
 			"cases": []map[string]any{{
-				"名称":   "维度用例",
-				"变量":   map[string]any{"issue_title": "登录失败"},
-				"期望包含": []string{"边界"},
+				"case_name":         "维度用例",
+				"variables":         map[string]any{"issue_title": "登录失败"},
+				"expected_contains": []string{"边界"},
 			}},
 			"实验维度": []string{"命中率", "中文一致性"},
 		},
@@ -556,9 +558,9 @@ func TestPromptEvaluationAssetExperimentDimensionsDoNotBlockCreateOrUpdate(t *te
 	testHandler.UpdatePromptEvaluationAsset(updateW, withURLParam(newRequest(http.MethodPut, "/api/prompt-evaluation-assets/"+created.ID, map[string]any{
 		"payload": map[string]any{
 			"cases": []map[string]any{{
-				"名称":   "更新维度用例",
-				"变量":   map[string]any{"issue_title": "登录失败"},
-				"期望包含": []string{"边界"},
+				"case_name":         "更新维度用例",
+				"variables":         map[string]any{"issue_title": "登录失败"},
+				"expected_contains": []string{"边界"},
 			}},
 			"实验维度": []string{"命中率", "缺失变量", "中文一致性"},
 		},
@@ -807,9 +809,9 @@ func TestRunPromptEvaluationAssetWritesChineseResult(t *testing.T) {
 			"对比维度": []string{"命中率", "中文一致性"},
 			"cases": []map[string]any{
 				{
-					"名称":   "登录失败澄清",
-					"变量":   map[string]any{"issue_title": "登录失败"},
-					"期望包含": []string{"登录失败", "user-center"},
+					"case_name":         "登录失败澄清",
+					"variables":         map[string]any{"issue_title": "登录失败"},
+					"expected_contains": []string{"登录失败", "user-center"},
 				},
 			},
 		},
@@ -1002,14 +1004,14 @@ func TestGetPromptEvaluationSummaryIncludesDevelopmentFixtures(t *testing.T) {
 	var businessAssetID, acceptanceAssetID string
 	if err := testPool.QueryRow(context.Background(), `
 		INSERT INTO prompt_evaluation_asset (workspace_id, name, description, asset_type, payload, status)
-		VALUES ($1, '业务需求评估套件', '日常 usercenter 需求拆解评估', '测试套件', '{"cases":[{"名称":"业务用例"}]}'::jsonb, '启用')
+		VALUES ($1, '业务需求评估套件', '日常 usercenter 需求拆解评估', '测试套件', '{"cases":[{"case_name":"业务用例"}]}'::jsonb, '启用')
 		RETURNING id::text
 	`, testWorkspaceID).Scan(&businessAssetID); err != nil {
 		t.Fatalf("create business asset: %v", err)
 	}
 	if err := testPool.QueryRow(context.Background(), `
 		INSERT INTO prompt_evaluation_asset (workspace_id, name, description, asset_type, payload, status)
-		VALUES ($1, 'goal-test curl 端到端验收套件', '只用于页面验收和 e2e 证据', '测试套件', '{"cases":[{"名称":"验收用例"}]}'::jsonb, '启用')
+		VALUES ($1, 'goal-test curl 端到端验收套件', '只用于页面验收和 e2e 证据', '测试套件', '{"cases":[{"case_name":"验收用例"}]}'::jsonb, '启用')
 		RETURNING id::text
 	`, testWorkspaceID).Scan(&acceptanceAssetID); err != nil {
 		t.Fatalf("create acceptance asset: %v", err)
@@ -1737,7 +1739,7 @@ func TestUpdatePromptEvaluationAssetPreservesManualCases(t *testing.T) {
 		"name":       "保留人工用例数据集",
 		"asset_type": "数据集",
 		"payload": map[string]any{
-			"cases": []map[string]any{{"名称": "旧 payload 用例", "变量": map[string]any{"issue_title": "旧问题"}, "期望包含": []string{"旧 payload 断言"}}},
+			"cases": []map[string]any{{"case_name": "旧 payload 用例", "variables": map[string]any{"issue_title": "旧问题"}, "expected_contains": []string{"旧 payload 断言"}}},
 		},
 	}))
 	if createAssetW.Code != http.StatusCreated {
@@ -1767,7 +1769,7 @@ func TestUpdatePromptEvaluationAssetPreservesManualCases(t *testing.T) {
 	updateAssetW := httptest.NewRecorder()
 	testHandler.UpdatePromptEvaluationAsset(updateAssetW, withURLParam(newRequest(http.MethodPut, "/api/prompt-evaluation-assets/"+asset.ID, map[string]any{
 		"payload": map[string]any{
-			"cases": []map[string]any{{"名称": "新 payload 用例", "变量": map[string]any{"issue_title": "新问题"}, "期望包含": []string{"新 payload 断言"}}},
+			"cases": []map[string]any{{"case_name": "新 payload 用例", "variables": map[string]any{"issue_title": "新问题"}, "expected_contains": []string{"新 payload 断言"}}},
 		},
 	}), "id", asset.ID))
 	if updateAssetW.Code != http.StatusOK {
@@ -2071,7 +2073,7 @@ func TestRunPromptEvaluationAssetAgentRestoresArchivedTrainingAgent(t *testing.T
 		"name":       "恢复归档训练智能体实验",
 		"asset_type": "测试套件",
 		"payload": map[string]any{
-			"cases": []map[string]any{{"名称": "恢复归档", "变量": map[string]any{"issue_title": "恢复归档"}, "期望包含": []string{"恢复"}}},
+			"cases": []map[string]any{{"case_name": "恢复归档", "variables": map[string]any{"issue_title": "恢复归档"}, "expected_contains": []string{"恢复"}}},
 		},
 	}))
 	if createW.Code != http.StatusCreated {
@@ -2149,7 +2151,7 @@ func TestPromptEvaluationRuntimeReadinessRejectsStaleRuntime(t *testing.T) {
 		"name":       "过期 runtime Agent 实验",
 		"asset_type": "测试套件",
 		"payload": map[string]any{
-			"cases": []map[string]any{{"名称": "过期 runtime", "变量": map[string]any{"issue_title": "过期 runtime"}, "期望包含": []string{"过期"}}},
+			"cases": []map[string]any{{"case_name": "过期 runtime", "variables": map[string]any{"issue_title": "过期 runtime"}, "expected_contains": []string{"过期"}}},
 		},
 	}))
 	if createW.Code != http.StatusCreated {
@@ -2210,7 +2212,7 @@ func TestPromptEvaluationRuntimeReadinessReportsRecentCapacityFailure(t *testing
 		"name":       "容量受限 Agent 实验",
 		"asset_type": "测试套件",
 		"payload": map[string]any{
-			"cases": []map[string]any{{"名称": "容量受限", "变量": map[string]any{"issue_title": "容量受限"}, "期望包含": []string{"容量"}}},
+			"cases": []map[string]any{{"case_name": "容量受限", "variables": map[string]any{"issue_title": "容量受限"}, "expected_contains": []string{"容量"}}},
 		},
 	}))
 	if createW.Code != http.StatusCreated {
@@ -2279,7 +2281,7 @@ func TestPromptEvaluationRuntimeReadinessReportsUnavailableStates(t *testing.T) 
 		"name":       "离线 runtime Agent 实验",
 		"asset_type": "测试套件",
 		"payload": map[string]any{
-			"cases": []map[string]any{{"名称": "离线 runtime", "变量": map[string]any{"issue_title": "离线 runtime"}, "期望包含": []string{"离线"}}},
+			"cases": []map[string]any{{"case_name": "离线 runtime", "variables": map[string]any{"issue_title": "离线 runtime"}, "expected_contains": []string{"离线"}}},
 		},
 	}))
 	if createW.Code != http.StatusCreated {
@@ -3045,9 +3047,9 @@ func TestRunPromptEvaluationAssetAgentUsesRequestedAgent(t *testing.T) {
 		"payload": map[string]any{
 			"执行智能体": map[string]any{"agent_id": uuidToString(agent.ID)},
 			"cases": []map[string]any{{
-				"名称":   "指定执行智能体用例",
-				"变量":   map[string]any{"issue_title": "登录失败"},
-				"期望包含": []string{"登录失败"},
+				"case_name":         "指定执行智能体用例",
+				"variables":         map[string]any{"issue_title": "登录失败"},
+				"expected_contains": []string{"登录失败"},
 			}},
 		},
 	}))
@@ -3102,7 +3104,7 @@ func createPromptEvaluationAgentRunFixture(t *testing.T, assetName string, caseN
 		"asset_type": "测试套件",
 		"payload": map[string]any{
 			"对比维度":  []string{"命中率", "缺失变量", "中文一致性"},
-			"cases": []map[string]any{{"名称": caseName, "变量": map[string]any{"issue_title": caseName}, "期望包含": []string{caseName}}},
+			"cases": []map[string]any{{"case_name": caseName, "variables": map[string]any{"issue_title": caseName}, "expected_contains": []string{caseName}}},
 		},
 	}))
 	if createW.Code != http.StatusCreated {
@@ -3149,9 +3151,9 @@ func TestPromptEvaluationOptimizationCandidatePublishKeepsSourcePrompt(t *testin
 		"payload": map[string]any{
 			"cases": []map[string]any{
 				{
-					"名称":   "缺少验收口径",
-					"变量":   map[string]any{"issue_title": "登录失败"},
-					"期望包含": []string{"验收条件", "trace/task id"},
+					"case_name":         "缺少验收口径",
+					"variables":         map[string]any{"issue_title": "登录失败"},
+					"expected_contains": []string{"验收条件", "trace/task id"},
 				},
 			},
 		},
@@ -3297,9 +3299,9 @@ func TestPromptEvaluationOptimizationCandidateCanBeRejected(t *testing.T) {
 		"payload": map[string]any{
 			"cases": []map[string]any{
 				{
-					"名称":   "仍缺少验收口径",
-					"变量":   map[string]any{"issue_title": "权限异常"},
-					"期望包含": []string{"验收条件", "trace/task id"},
+					"case_name":         "仍缺少验收口径",
+					"variables":         map[string]any{"issue_title": "权限异常"},
+					"expected_contains": []string{"验收条件", "trace/task id"},
 				},
 			},
 		},

@@ -707,12 +707,12 @@ func normalizePromptEvaluationPayloadObject(payload map[string]any) map[string]a
 }
 
 func normalizePromptEvaluationCase(index int, item map[string]any) normalizedPromptEvaluationCase {
-	name := stringFromAny(firstValue(item, "name", "名称", "case_name", "用例名称"))
+	name := stringFromAny(item["case_name"])
 	if name == "" {
 		name = "用例 " + strconv.Itoa(index+1)
 	}
-	variables := stringMapFromAny(firstValue(item, "variables", "变量", "输入变量"))
-	expectedContains := stringListFromAny(firstValue(item, "expected_contains", "期望包含", "期望"))
+	variables := stringMapFromAny(item["variables"])
+	expectedContains := stringListFromAny(item["expected_contains"])
 	input := map[string]any{
 		"变量":   variables,
 		"原始输入": firstValue(item, "input", "输入"),
@@ -727,7 +727,7 @@ func normalizePromptEvaluationCase(index int, item map[string]any) normalizedPro
 		ExpectedContains: expectedContains,
 		Input:            input,
 		Expected:         expected,
-		Tags:             stringListFromAny(firstValue(item, "tags", "标签")),
+		Tags:             stringListFromAny(item["tags"]),
 	}
 }
 

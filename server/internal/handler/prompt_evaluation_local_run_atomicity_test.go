@@ -31,9 +31,9 @@ func TestRunPromptEvaluationAssetRollsBackPartialRun(t *testing.T) {
 		"payload": map[string]any{
 			"对比维度": []string{"命中率"},
 			"cases": []map[string]any{{
-				"名称":   "atomic local case",
-				"变量":   map[string]any{"issue_title": "atomic"},
-				"期望包含": []string{"atomic"},
+				"case_name":         "atomic local case",
+				"variables":         map[string]any{"issue_title": "atomic"},
+				"expected_contains": []string{"atomic"},
 			}},
 		},
 	}))
