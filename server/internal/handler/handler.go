@@ -575,6 +575,18 @@ func (h *Handler) isWorkspaceEntity(ctx context.Context, userType, userID, works
 	}
 }
 
+func writeEntityLoadError(w http.ResponseWriter, r *http.Request, err error, entity string, attrs ...any) {
+	if writeClientClosedIfCanceled(w, err) {
+		return
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, entity+" not found")
+		return
+	}
+	slog.Error("load "+entity+" failed", append(attrs, "error", err)...)
+	writeError(w, http.StatusInternalServerError, "failed to load "+entity)
+}
+
 func (h *Handler) loadIssueForUser(w http.ResponseWriter, r *http.Request, issueID string) (db.Issue, bool) {
 	if _, ok := requireUserID(w, r); !ok {
 		return db.Issue{}, false
@@ -589,7 +601,11 @@ func (h *Handler) loadIssueForUser(w http.ResponseWriter, r *http.Request, issue
 	// Try identifier format first (e.g., "JIA-42"). resolveIssueByIdentifier
 	// silently returns false for non-identifier strings, falling through to
 	// the UUID path below.
-	if issue, ok := h.resolveIssueByIdentifier(r.Context(), issueID, workspaceID); ok {
+	if issue, matched, err := h.resolveIssueByIdentifier(r.Context(), issueID, workspaceID); matched {
+		if err != nil {
+			writeEntityLoadError(w, r, err, "issue", "issue_id", issueID)
+			return db.Issue{}, false
+		}
 		return issue, true
 	}
 
@@ -610,33 +626,33 @@ func (h *Handler) loadIssueForUser(w http.ResponseWriter, r *http.Request, issue
 		WorkspaceID: wsUUID,
 	})
 	if err != nil {
-		writeError(w, http.StatusNotFound, "issue not found")
+		writeEntityLoadError(w, r, err, "issue", "issue_id", issueID)
 		return db.Issue{}, false
 	}
 	return issue, true
 }
 
 // resolveIssueByIdentifier tries to look up an issue by "PREFIX-NUMBER" format.
-func (h *Handler) resolveIssueByIdentifier(ctx context.Context, id, workspaceID string) (db.Issue, bool) {
+func (h *Handler) resolveIssueByIdentifier(ctx context.Context, id, workspaceID string) (db.Issue, bool, error) {
 	parts := splitIdentifier(id)
 	if parts == nil {
-		return db.Issue{}, false
+		return db.Issue{}, false, nil
 	}
 	if workspaceID == "" {
-		return db.Issue{}, false
+		return db.Issue{}, false, nil
 	}
 	wsUUID, err := util.ParseUUID(workspaceID)
 	if err != nil {
-		return db.Issue{}, false
+		return db.Issue{}, false, nil
 	}
 	issue, err := h.Queries.GetIssueByNumber(ctx, db.GetIssueByNumberParams{
 		WorkspaceID: wsUUID,
 		Number:      parts.number,
 	})
 	if err != nil {
-		return db.Issue{}, false
+		return db.Issue{}, true, err
 	}
-	return issue, true
+	return issue, true, nil
 }
 
 type identifierParts struct {
@@ -708,7 +724,7 @@ func (h *Handler) loadAgentForUser(w http.ResponseWriter, r *http.Request, agent
 		WorkspaceID: wsUUID,
 	})
 	if err != nil {
-		writeError(w, http.StatusNotFound, "agent not found")
+		writeEntityLoadError(w, r, err, "agent", "agent_id", agentID)
 		return db.Agent{}, false
 	}
 	return agent, true
@@ -740,7 +756,7 @@ func (h *Handler) loadInboxItemForUser(w http.ResponseWriter, r *http.Request, i
 		WorkspaceID: wsUUID,
 	})
 	if err != nil {
-		writeError(w, http.StatusNotFound, "inbox item not found")
+		writeEntityLoadError(w, r, err, "inbox item", "inbox_item_id", itemID)
 		return db.InboxItem{}, false
 	}
 
