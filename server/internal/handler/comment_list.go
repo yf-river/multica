@@ -763,7 +763,15 @@ func (h *Handler) PreviewCommentTriggers(w http.ResponseWriter, r *http.Request)
 	}
 
 	actorType, actorID := h.resolveActor(r, userID, uuidToString(issue.WorkspaceID))
-	triggers := h.computeCommentAgentTriggers(r.Context(), issue, content, parentComment, actorType, actorID, opts)
+	triggers, err := h.computeCommentAgentTriggers(r.Context(), issue, content, parentComment, actorType, actorID, opts)
+	if err != nil {
+		if writeClientClosedIfCanceled(w, err) {
+			return
+		}
+		slog.Error("failed to compute comment trigger preview", "issue_id", uuidToString(issue.ID), "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to compute comment triggers")
+		return
+	}
 	resp := CommentTriggerPreviewResponse{Agents: make([]CommentTriggerAgentResponse, 0, len(triggers))}
 	for _, trigger := range triggers {
 		resp.Agents = append(resp.Agents, commentAgentTriggerToResponse(trigger))

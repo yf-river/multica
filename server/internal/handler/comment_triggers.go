@@ -101,7 +101,10 @@ func (h *Handler) createCommentTaskProjectionInTx(
 		SuppressAssignedSquadLeader: h.isSquadSOPWorkerStageComment(ctx, issue, comment),
 		ExcludeTriggerCommentID:     excludeTriggerCommentID,
 	}
-	triggers := h.computeCommentAgentTriggers(ctx, issue, comment.Content, parentComment, actorType, actorID, opts)
+	triggers, err := h.computeCommentAgentTriggers(ctx, issue, comment.Content, parentComment, actorType, actorID, opts)
+	if err != nil {
+		return projection, err
+	}
 	triggers = filterSuppressedCommentAgentTriggers(triggers, suppressAgentIDs)
 	return h.createCommentAgentTriggersInTx(ctx, queries, issue, comment.ID, triggers)
 }
@@ -443,9 +446,9 @@ func createBlockedParentSOPStageCommentInTx(ctx context.Context, queries *db.Que
 	return createdEvent, nil
 }
 
-func (h *Handler) computeCommentAgentTriggers(ctx context.Context, issue db.Issue, content string, parentComment *db.Comment, actorType, actorID string, opts commentTriggerComputeOptions) []commentAgentTrigger {
+func (h *Handler) computeCommentAgentTriggers(ctx context.Context, issue db.Issue, content string, parentComment *db.Comment, actorType, actorID string, opts commentTriggerComputeOptions) ([]commentAgentTrigger, error) {
 	if isNoteComment(content) {
-		return nil
+		return nil, nil
 	}
 
 	seen := make(map[string]struct{})
@@ -459,7 +462,11 @@ func (h *Handler) computeCommentAgentTriggers(ctx context.Context, issue db.Issu
 		triggers = append(triggers, trigger)
 	}
 
-	if actorType == "member" && h.shouldEnqueueOnComment(ctx, issue, actorType, actorID, opts) &&
+	shouldEnqueue, err := h.shouldEnqueueOnComment(ctx, issue, actorType, actorID, opts)
+	if err != nil {
+		return nil, err
+	}
+	if actorType == "member" && shouldEnqueue &&
 		!h.commentMentionsOthersButNotAssignee(content, issue) &&
 		!h.isReplyToMemberThread(ctx, parentComment, content, issue) {
 		if agent, err := h.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
@@ -478,7 +485,7 @@ func (h *Handler) computeCommentAgentTriggers(ctx context.Context, issue db.Issu
 		add(trigger)
 	}
 
-	return triggers
+	return triggers, nil
 }
 
 func (h *Handler) computeAssignedSquadLeaderCommentTrigger(ctx context.Context, issue db.Issue, content, authorType, authorID string, opts commentTriggerComputeOptions) (commentAgentTrigger, bool) {

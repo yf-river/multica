@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/eventoutbox"
 	"github.com/multica-ai/multica/server/internal/events"
@@ -1435,25 +1436,35 @@ func (h *Handler) validateAssigneePair(ctx context.Context, r *http.Request, wor
 // agent's UUID is "welded" onto the issue and remains visible to every member
 // who can view it. Without this check any of those members could dispatch a new
 // task to the personal agent simply by commenting (#3300).
-func (h *Handler) shouldEnqueueOnComment(ctx context.Context, issue db.Issue, actorType, actorID string, opts commentTriggerComputeOptions) bool {
+func (h *Handler) shouldEnqueueOnComment(ctx context.Context, issue db.Issue, actorType, actorID string, opts commentTriggerComputeOptions) (bool, error) {
 	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "agent" || !issue.AssigneeID.Valid {
-		return false
+		return false, nil
 	}
 	agent, err := h.Queries.GetAgent(ctx, issue.AssigneeID)
-	if err != nil || !agent.RuntimeID.Valid || agent.ArchivedAt.Valid {
-		return false
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("load assigned agent for comment trigger: %w", err)
 	}
-	if !h.canAccessPersonalAgent(ctx, agent, actorType, actorID, uuidToString(issue.WorkspaceID)) {
-		return false
+	if !agent.RuntimeID.Valid || agent.ArchivedAt.Valid {
+		return false, nil
+	}
+	allowed, err := h.personalAgentAccess(ctx, agent, actorType, actorID, uuidToString(issue.WorkspaceID))
+	if err != nil {
+		return false, fmt.Errorf("authorize assigned agent for comment trigger: %w", err)
+	}
+	if !allowed {
+		return false, nil
 	}
 	// Coalescing queue: allow enqueue when a task is running (so the agent
 	// picks up new comments on the next cycle) but skip if this agent already
 	// has a pending task (natural dedup for rapid-fire comments).
 	hasPending, err := h.hasPendingTaskForIssueAndAgent(ctx, issue.ID, issue.AssigneeID, opts)
-	if err != nil || hasPending {
-		return false
+	if err != nil {
+		return false, fmt.Errorf("check pending assigned-agent comment task: %w", err)
 	}
-	return true
+	return !hasPending, nil
 }
 
 // isAssignedAgentRunningOnIssue reports whether the calling agent's current
