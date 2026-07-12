@@ -1,6 +1,10 @@
 package agent
 
-import "testing"
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+)
 
 func TestClaudeStreamResultUsage(t *testing.T) {
 	tests := []struct {
@@ -47,5 +51,38 @@ func TestClaudeStreamResultUsage(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestHandleClaudeStreamAssistant(t *testing.T) {
+	content, err := json.Marshal(claudeStreamMessageContent{
+		Model: "claude-current",
+		Usage: &claudeStreamUsage{InputTokens: 5, OutputTokens: 3, CacheReadInputTokens: 2},
+		Content: []claudeStreamContentBlock{
+			{Type: "text", Text: "answer"},
+			{Type: "thinking", Text: "reasoning"},
+			{Type: "tool_use", ID: "call-1", Name: "Read", Input: json.RawMessage(`{"path":"README.md"}`)},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal assistant content: %v", err)
+	}
+
+	ch := make(chan Message, 3)
+	var output strings.Builder
+	usage := map[string]TokenUsage{}
+	handleClaudeStreamAssistant(claudeStreamMessage{Type: "assistant", Message: content}, ch, &output, usage)
+
+	if output.String() != "answer" {
+		t.Fatalf("output = %q", output.String())
+	}
+	if got := usage["claude-current"]; got != (TokenUsage{InputTokens: 5, OutputTokens: 3, CacheReadTokens: 2}) {
+		t.Fatalf("usage = %#v", got)
+	}
+	wantTypes := []MessageType{MessageText, MessageThinking, MessageToolUse}
+	for _, wantType := range wantTypes {
+		if got := <-ch; got.Type != wantType {
+			t.Fatalf("message type = %q, want %q", got.Type, wantType)
+		}
 	}
 }
