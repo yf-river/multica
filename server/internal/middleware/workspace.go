@@ -55,10 +55,8 @@ var errWorkspaceNotFound = errors.New("workspace not found")
 //  1. task-token binding (X-Actor-Source == "task_token") — authoritative,
 //     server-set, cannot be re-negotiated by the client (MUL-2600)
 //  2. middleware-injected context (fast path for middleware-protected routes)
-//  3. X-Workspace-Slug header → GetWorkspaceBySlug → UUID (post-refactor frontend)
-//  4. ?workspace_slug query → GetWorkspaceBySlug → UUID
-//  5. X-Workspace-ID header (CLI/daemon compat)
-//  6. ?workspace_id query (CLI/daemon compat)
+//  3. X-Workspace-Slug header → GetWorkspaceBySlug → UUID (Web/Desktop)
+//  4. X-Workspace-ID header (CLI/daemon)
 //
 // Returns "" when no identifier was provided OR a slug was provided but
 // doesn't resolve to any workspace. Callers that need to distinguish "no
@@ -82,16 +80,12 @@ func ResolveWorkspaceIDFromRequest(r *http.Request, queries *db.Queries) string 
 		if ws, err := queries.GetWorkspaceBySlug(r.Context(), slug); err == nil {
 			return util.UUIDToString(ws.ID)
 		}
-	}
-	if slug := r.URL.Query().Get("workspace_slug"); slug != "" {
-		if ws, err := queries.GetWorkspaceBySlug(r.Context(), slug); err == nil {
-			return util.UUIDToString(ws.ID)
-		}
+		return ""
 	}
 	if id := r.Header.Get("X-Workspace-ID"); id != "" {
 		return id
 	}
-	return r.URL.Query().Get("workspace_id")
+	return ""
 }
 
 // workspaceResolver extracts a workspace UUID from the request.
@@ -106,8 +100,8 @@ type workspaceResolver func(r *http.Request) (string, error)
 //  1. task-token binding (X-Actor-Source == "task_token") — authoritative,
 //     server-set; the agent cannot widen its workspace scope by passing a
 //     different slug/id (MUL-2600)
-//  2. X-Workspace-Slug header / ?workspace_slug query → GetWorkspaceBySlug → UUID
-//  3. X-Workspace-ID header / ?workspace_id query → UUID directly (CLI/daemon compat)
+//  2. X-Workspace-Slug header → GetWorkspaceBySlug → UUID (Web/Desktop)
+//  3. X-Workspace-ID header → UUID directly (CLI/daemon)
 //
 // TODO: cache slug→UUID lookup (slug is immutable, safe to cache with short TTL)
 func resolveWorkspaceUUID(queries *db.Queries) workspaceResolver {
@@ -123,14 +117,7 @@ func resolveWorkspaceUUID(queries *db.Queries) workspaceResolver {
 			}
 			return id, nil
 		}
-		// Slug path (preferred — frontend sends this after the URL refactor)
-		if slug := r.URL.Query().Get("workspace_slug"); slug != "" {
-			ws, err := queries.GetWorkspaceBySlug(r.Context(), slug)
-			if err != nil {
-				return "", errWorkspaceNotFound
-			}
-			return util.UUIDToString(ws.ID), nil
-		}
+		// Slug path (Web/Desktop).
 		if slug := r.Header.Get("X-Workspace-Slug"); slug != "" {
 			ws, err := queries.GetWorkspaceBySlug(r.Context(), slug)
 			if err != nil {
@@ -138,10 +125,7 @@ func resolveWorkspaceUUID(queries *db.Queries) workspaceResolver {
 			}
 			return util.UUIDToString(ws.ID), nil
 		}
-		// UUID fallback (CLI, daemon, legacy clients)
-		if id := r.URL.Query().Get("workspace_id"); id != "" {
-			return id, nil
-		}
+		// UUID path (CLI and daemon).
 		if id := r.Header.Get("X-Workspace-ID"); id != "" {
 			return id, nil
 		}
@@ -155,8 +139,8 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	_, _ = w.Write([]byte(`{"error":"` + msg + `"}`))
 }
 
-// RequireWorkspaceMember resolves the workspace from slug (preferred) or UUID
-// (fallback), validates membership, and injects the member and workspace ID
+// RequireWorkspaceMember resolves the workspace from the current slug or UUID
+// header, validates membership, and injects the member and workspace ID
 // into the request context.
 func RequireWorkspaceMember(queries *db.Queries) func(http.Handler) http.Handler {
 	return buildMiddleware(queries, resolveWorkspaceUUID(queries), nil)
@@ -195,7 +179,7 @@ func buildMiddleware(queries *db.Queries, resolve workspaceResolver, roles []str
 				return
 			}
 			if workspaceID == "" {
-				writeError(w, http.StatusBadRequest, "workspace_id or workspace_slug is required")
+				writeError(w, http.StatusBadRequest, "workspace header is required")
 				return
 			}
 
