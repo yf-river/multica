@@ -25,6 +25,17 @@ func TestAgentToResponseAcceptsObjectRuntimeConfig(t *testing.T) {
 	}
 }
 
+func TestAgentToResponseRejectsInvalidCustomState(t *testing.T) {
+	for _, agent := range []db.Agent{
+		{RuntimeConfig: []byte(`{}`), CustomEnv: []byte(`[]`), CustomArgs: []byte(`[]`)},
+		{RuntimeConfig: []byte(`{}`), CustomEnv: []byte(`{}`), CustomArgs: []byte(`{}`)},
+	} {
+		if _, err := agentToResponse(agent); err == nil {
+			t.Fatalf("agentToResponse custom_env=%s custom_args=%s expected an error", agent.CustomEnv, agent.CustomArgs)
+		}
+	}
+}
+
 func TestMaskGatewayTokenReplacesNonEmpty(t *testing.T) {
 	t.Parallel()
 
