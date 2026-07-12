@@ -391,15 +391,24 @@ func (h *Handler) GetAutopilot(w http.ResponseWriter, r *http.Request) {
 
 	subs, err := h.Queries.ListAutopilotSubscribers(r.Context(), autopilot.ID)
 	if err != nil {
-		// Don't 500 the detail fetch over template metadata.
-		subs = nil
+		if writeClientClosedIfCanceled(w, err) {
+			return
+		}
+		slog.Error("load autopilot subscribers failed", "error", err, "autopilot_id", id, "workspace_id", workspaceID)
+		writeError(w, http.StatusInternalServerError, "failed to load autopilot")
+		return
 	}
 	resp := autopilotToResponse(autopilot, subs)
 
 	// Include triggers.
 	triggers, err := h.Queries.ListAutopilotTriggers(r.Context(), autopilot.ID)
 	if err != nil {
-		triggers = nil
+		if writeClientClosedIfCanceled(w, err) {
+			return
+		}
+		slog.Error("load autopilot triggers failed", "error", err, "autopilot_id", id, "workspace_id", workspaceID)
+		writeError(w, http.StatusInternalServerError, "failed to load autopilot")
+		return
 	}
 	triggerResp := make([]AutopilotTriggerResponse, len(triggers))
 	for i, t := range triggers {
@@ -427,7 +436,7 @@ func (h *Handler) loadAutopilotInWorkspace(w http.ResponseWriter, r *http.Reques
 		WorkspaceID: wsUUID,
 	})
 	if err != nil {
-		writeError(w, http.StatusNotFound, "autopilot not found")
+		writeEntityLoadError(w, r, err, "autopilot", "autopilot_id", autopilotID)
 		return db.Autopilot{}, false
 	}
 	return autopilot, true
@@ -906,22 +915,11 @@ func (h *Handler) DeleteAutopilot(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	workspaceID := h.resolveWorkspaceID(r)
 
-	idUUID, ok := parseUUIDOrBadRequest(w, id, "autopilot id")
+	autopilot, ok := h.loadAutopilotInWorkspace(w, r, id, workspaceID)
 	if !ok {
 		return
 	}
-	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
-	if !ok {
-		return
-	}
-
-	if _, err := h.Queries.GetAutopilotInWorkspace(r.Context(), db.GetAutopilotInWorkspaceParams{
-		ID:          idUUID,
-		WorkspaceID: wsUUID,
-	}); err != nil {
-		writeError(w, http.StatusNotFound, "autopilot not found")
-		return
-	}
+	idUUID := autopilot.ID
 
 	userID, ok := requireUserID(w, r)
 	if !ok {
