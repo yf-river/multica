@@ -25,9 +25,9 @@ evidence reviewable by humans.
 | Database functions | 9 |
 | Database triggers | 4 |
 | Database indexes | 194 |
-| Migration files (up + down) | 142 |
+| Migration files (up + down) | 150 |
 | sqlc modules | 55 |
-| sqlc queries | 590 |
+| sqlc queries | 557 |
 | Go WebSocket events | 79 |
 | TypeScript WebSocket events | 69 |
 | Zustand store definitions | 43 |
@@ -633,6 +633,14 @@ intentionally platform-specific.
 | 70 | add_autopilot_trigger_create_request | up | — | 0 | 0 | 0 | `server/migrations/070_add_autopilot_trigger_create_request.up.sql` |
 | 71 | add_issue_rerun_request | down | — | 0 | 0 | 0 | `server/migrations/071_add_issue_rerun_request.down.sql` |
 | 71 | add_issue_rerun_request | up | — | 0 | 0 | 0 | `server/migrations/071_add_issue_rerun_request.up.sql` |
+| 72 | deduplicate_squad_leader_evaluations | down | — | 0 | 0 | 1 | `server/migrations/072_deduplicate_squad_leader_evaluations.down.sql` |
+| 72 | deduplicate_squad_leader_evaluations | up | — | 0 | 0 | 1 | `server/migrations/072_deduplicate_squad_leader_evaluations.up.sql` |
+| 73 | add_runtime_profile_create_request | down | — | 0 | 0 | 0 | `server/migrations/073_add_runtime_profile_create_request.down.sql` |
+| 73 | add_runtime_profile_create_request | up | — | 0 | 0 | 0 | `server/migrations/073_add_runtime_profile_create_request.up.sql` |
+| 74 | add_label_create_request | down | — | 0 | 0 | 0 | `server/migrations/074_add_label_create_request.down.sql` |
+| 74 | add_label_create_request | up | — | 0 | 0 | 0 | `server/migrations/074_add_label_create_request.up.sql` |
+| 75 | add_project_resource_create_request | down | — | 0 | 0 | 0 | `server/migrations/075_add_project_resource_create_request.down.sql` |
+| 75 | add_project_resource_create_request | up | — | 0 | 0 | 0 | `server/migrations/075_add_project_resource_create_request.up.sql` |
 
 ### Current tables discovered from up migrations
 
@@ -737,34 +745,34 @@ intentionally platform-specific.
 
 ### sqlc modules
 
-All 590 query names, commands, and stable source anchors are stored in the JSON companion.
+All 557 query names, commands, and stable source anchors are stored in the JSON companion.
 
 | Module | Queries | SQL source | Generated source |
 | --- | --- | --- | --- |
-| activity | 5 | `server/pkg/db/queries/activity.sql` | `server/pkg/db/generated/activity.sql.go` |
-| agent | 58 | `server/pkg/db/queries/agent.sql` | `server/pkg/db/generated/agent.sql.go` |
+| activity | 6 | `server/pkg/db/queries/activity.sql` | `server/pkg/db/generated/activity.sql.go` |
+| agent | 56 | `server/pkg/db/queries/agent.sql` | `server/pkg/db/generated/agent.sql.go` |
 | agent_playground | 19 | `server/pkg/db/queries/agent_playground.sql` | `server/pkg/db/generated/agent_playground.sql.go` |
 | attachment | 17 | `server/pkg/db/queries/attachment.sql` | `server/pkg/db/generated/attachment.sql.go` |
-| autopilot | 40 | `server/pkg/db/queries/autopilot.sql` | `server/pkg/db/generated/autopilot.sql.go` |
+| autopilot | 38 | `server/pkg/db/queries/autopilot.sql` | `server/pkg/db/generated/autopilot.sql.go` |
 | autopilot_trigger_rotation_request | 3 | `server/pkg/db/queries/autopilot_trigger_rotation_request.sql` | `server/pkg/db/generated/autopilot_trigger_rotation_request.sql.go` |
-| chat | 24 | `server/pkg/db/queries/chat.sql` | `server/pkg/db/generated/chat.sql.go` |
+| chat | 23 | `server/pkg/db/queries/chat.sql` | `server/pkg/db/generated/chat.sql.go` |
 | chat_idempotency | 3 | `server/pkg/db/queries/chat_idempotency.sql` | `server/pkg/db/generated/chat_idempotency.sql.go` |
-| comment | 22 | `server/pkg/db/queries/comment.sql` | `server/pkg/db/generated/comment.sql.go` |
+| comment | 21 | `server/pkg/db/queries/comment.sql` | `server/pkg/db/generated/comment.sql.go` |
 | domain_event_outbox | 9 | `server/pkg/db/queries/domain_event_outbox.sql` | `server/pkg/db/generated/domain_event_outbox.sql.go` |
 | external_credential_profile | 7 | `server/pkg/db/queries/external_credential_profile.sql` | `server/pkg/db/generated/external_credential_profile.sql.go` |
 | feedback | 3 | `server/pkg/db/queries/feedback.sql` | `server/pkg/db/generated/feedback.sql.go` |
-| github | 19 | `server/pkg/db/queries/github.sql` | `server/pkg/db/generated/github.sql.go` |
-| inbox | 13 | `server/pkg/db/queries/inbox.sql` | `server/pkg/db/generated/inbox.sql.go` |
+| github | 16 | `server/pkg/db/queries/github.sql` | `server/pkg/db/generated/github.sql.go` |
+| inbox | 12 | `server/pkg/db/queries/inbox.sql` | `server/pkg/db/generated/inbox.sql.go` |
 | issue | 20 | `server/pkg/db/queries/issue.sql` | `server/pkg/db/generated/issue.sql.go` |
 | issue_label | 9 | `server/pkg/db/queries/issue_label.sql` | `server/pkg/db/generated/issue_label.sql.go` |
 | issue_reaction | 3 | `server/pkg/db/queries/issue_reaction.sql` | `server/pkg/db/generated/issue_reaction.sql.go` |
-| lark | 29 | `server/pkg/db/queries/lark.sql` | `server/pkg/db/generated/lark.sql.go` |
+| lark | 23 | `server/pkg/db/queries/lark.sql` | `server/pkg/db/generated/lark.sql.go` |
 | member | 8 | `server/pkg/db/queries/member.sql` | `server/pkg/db/generated/member.sql.go` |
 | notification_preference | 3 | `server/pkg/db/queries/notification_preference.sql` | `server/pkg/db/generated/notification_preference.sql.go` |
 | personal_access_token | 7 | `server/pkg/db/queries/personal_access_token.sql` | `server/pkg/db/generated/personal_access_token.sql.go` |
-| pinned_item | 6 | `server/pkg/db/queries/pinned_item.sql` | `server/pkg/db/generated/pinned_item.sql.go` |
-| project | 8 | `server/pkg/db/queries/project.sql` | `server/pkg/db/generated/project.sql.go` |
-| project_resource | 11 | `server/pkg/db/queries/project_resource.sql` | `server/pkg/db/generated/project_resource.sql.go` |
+| pinned_item | 5 | `server/pkg/db/queries/pinned_item.sql` | `server/pkg/db/generated/pinned_item.sql.go` |
+| project | 7 | `server/pkg/db/queries/project.sql` | `server/pkg/db/generated/project.sql.go` |
+| project_resource | 9 | `server/pkg/db/queries/project_resource.sql` | `server/pkg/db/generated/project_resource.sql.go` |
 | prompt_evaluation_asset | 6 | `server/pkg/db/queries/prompt_evaluation_asset.sql` | `server/pkg/db/generated/prompt_evaluation_asset.sql.go` |
 | prompt_evaluation_case | 10 | `server/pkg/db/queries/prompt_evaluation_case.sql` | `server/pkg/db/generated/prompt_evaluation_case.sql.go` |
 | prompt_evaluation_case_assertion | 3 | `server/pkg/db/queries/prompt_evaluation_case_assertion.sql` | `server/pkg/db/generated/prompt_evaluation_case_assertion.sql.go` |
@@ -774,23 +782,23 @@ All 590 query names, commands, and stable source anchors are stored in the JSON 
 | prompt_evaluation_dimension_score | 5 | `server/pkg/db/queries/prompt_evaluation_dimension_score.sql` | `server/pkg/db/generated/prompt_evaluation_dimension_score.sql.go` |
 | prompt_evaluation_evidence_snapshot | 3 | `server/pkg/db/queries/prompt_evaluation_evidence_snapshot.sql` | `server/pkg/db/generated/prompt_evaluation_evidence_snapshot.sql.go` |
 | prompt_evaluation_optimization_candidate | 6 | `server/pkg/db/queries/prompt_evaluation_optimization_candidate.sql` | `server/pkg/db/generated/prompt_evaluation_optimization_candidate.sql.go` |
-| prompt_evaluation_run | 16 | `server/pkg/db/queries/prompt_evaluation_run.sql` | `server/pkg/db/generated/prompt_evaluation_run.sql.go` |
-| prompt_evaluation_test_suite_case | 4 | `server/pkg/db/queries/prompt_evaluation_test_suite_case.sql` | `server/pkg/db/generated/prompt_evaluation_test_suite_case.sql.go` |
-| prompt_library | 8 | `server/pkg/db/queries/prompt_library.sql` | `server/pkg/db/generated/prompt_library.sql.go` |
+| prompt_evaluation_run | 15 | `server/pkg/db/queries/prompt_evaluation_run.sql` | `server/pkg/db/generated/prompt_evaluation_run.sql.go` |
+| prompt_evaluation_test_suite_case | 3 | `server/pkg/db/queries/prompt_evaluation_test_suite_case.sql` | `server/pkg/db/generated/prompt_evaluation_test_suite_case.sql.go` |
+| prompt_library | 7 | `server/pkg/db/queries/prompt_library.sql` | `server/pkg/db/generated/prompt_library.sql.go` |
 | prompt_library_trial | 2 | `server/pkg/db/queries/prompt_library_trial.sql` | `server/pkg/db/generated/prompt_library_trial.sql.go` |
-| prompt_library_version | 4 | `server/pkg/db/queries/prompt_library_version.sql` | `server/pkg/db/generated/prompt_library_version.sql.go` |
+| prompt_library_version | 3 | `server/pkg/db/queries/prompt_library_version.sql` | `server/pkg/db/generated/prompt_library_version.sql.go` |
 | reaction | 3 | `server/pkg/db/queries/reaction.sql` | `server/pkg/db/generated/reaction.sql.go` |
 | resource_create_request | 3 | `server/pkg/db/queries/resource_create_request.sql` | `server/pkg/db/generated/resource_create_request.sql.go` |
-| runtime | 28 | `server/pkg/db/queries/runtime.sql` | `server/pkg/db/generated/runtime.sql.go` |
+| runtime | 27 | `server/pkg/db/queries/runtime.sql` | `server/pkg/db/generated/runtime.sql.go` |
 | runtime_profile | 10 | `server/pkg/db/queries/runtime_profile.sql` | `server/pkg/db/generated/runtime_profile.sql.go` |
 | runtime_usage | 5 | `server/pkg/db/queries/runtime_usage.sql` | `server/pkg/db/generated/runtime_usage.sql.go` |
-| skill | 20 | `server/pkg/db/queries/skill.sql` | `server/pkg/db/generated/skill.sql.go` |
+| skill | 18 | `server/pkg/db/queries/skill.sql` | `server/pkg/db/generated/skill.sql.go` |
 | skill_import_request | 4 | `server/pkg/db/queries/skill_import_request.sql` | `server/pkg/db/generated/skill_import_request.sql.go` |
-| squad | 22 | `server/pkg/db/queries/squad.sql` | `server/pkg/db/generated/squad.sql.go` |
-| squad_sop_run | 17 | `server/pkg/db/queries/squad_sop_run.sql` | `server/pkg/db/generated/squad_sop_run.sql.go` |
+| squad | 19 | `server/pkg/db/queries/squad.sql` | `server/pkg/db/generated/squad.sql.go` |
+| squad_sop_run | 14 | `server/pkg/db/queries/squad_sop_run.sql` | `server/pkg/db/generated/squad_sop_run.sql.go` |
 | subscriber | 5 | `server/pkg/db/queries/subscriber.sql` | `server/pkg/db/generated/subscriber.sql.go` |
 | task_message | 5 | `server/pkg/db/queries/task_message.sql` | `server/pkg/db/generated/task_message.sql.go` |
-| task_token | 4 | `server/pkg/db/queries/task_token.sql` | `server/pkg/db/generated/task_token.sql.go` |
+| task_token | 3 | `server/pkg/db/queries/task_token.sql` | `server/pkg/db/generated/task_token.sql.go` |
 | task_trace_event | 4 | `server/pkg/db/queries/task_trace_event.sql` | `server/pkg/db/generated/task_trace_event.sql.go` |
 | task_usage | 7 | `server/pkg/db/queries/task_usage.sql` | `server/pkg/db/generated/task_usage.sql.go` |
 | user | 5 | `server/pkg/db/queries/user.sql` | `server/pkg/db/generated/user.sql.go` |

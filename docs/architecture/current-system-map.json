@@ -24,9 +24,9 @@
     "databaseFunctions": 9,
     "databaseTriggers": 4,
     "databaseIndexes": 194,
-    "migrations": 142,
+    "migrations": 150,
     "sqlcModules": 55,
-    "sqlcQueries": 590,
+    "sqlcQueries": 557,
     "goWebsocketEvents": 79,
     "typescriptWebsocketEvents": 69,
     "zustandStores": 43,
@@ -4122,10 +4122,10 @@
               "source": "server/migrations/001_current_schema.up.sql#idx_activity_log_issue_keyset"
             },
             {
-              "name": "idx_activity_log_squad_no_action_task",
+              "name": "activity_log_squad_evaluation_task_unique",
               "table": "public.activity_log",
-              "unique": false,
-              "source": "server/migrations/001_current_schema.up.sql#idx_activity_log_squad_no_action_task"
+              "unique": true,
+              "source": "server/migrations/001_current_schema.up.sql#activity_log_squad_evaluation_task_unique"
             },
             {
               "name": "idx_agent_runtime_last_seen_at",
@@ -7317,6 +7317,128 @@
           "droppedFunctions": [],
           "droppedTriggers": [],
           "droppedIndexes": []
+        },
+        {
+          "version": 72,
+          "name": "deduplicate_squad_leader_evaluations",
+          "direction": "down",
+          "source": "server/migrations/072_deduplicate_squad_leader_evaluations.down.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [
+            {
+              "name": "idx_activity_log_squad_no_action_task",
+              "table": "activity_log",
+              "unique": false,
+              "source": "server/migrations/072_deduplicate_squad_leader_evaluations.down.sql#idx_activity_log_squad_no_action_task"
+            }
+          ],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": [
+            "activity_log_squad_evaluation_task_unique"
+          ]
+        },
+        {
+          "version": 72,
+          "name": "deduplicate_squad_leader_evaluations",
+          "direction": "up",
+          "source": "server/migrations/072_deduplicate_squad_leader_evaluations.up.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [
+            {
+              "name": "activity_log_squad_evaluation_task_unique",
+              "table": "activity_log",
+              "unique": true,
+              "source": "server/migrations/072_deduplicate_squad_leader_evaluations.up.sql#activity_log_squad_evaluation_task_unique"
+            }
+          ],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": [
+            "idx_activity_log_squad_no_action_task"
+          ]
+        },
+        {
+          "version": 73,
+          "name": "add_runtime_profile_create_request",
+          "direction": "down",
+          "source": "server/migrations/073_add_runtime_profile_create_request.down.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 73,
+          "name": "add_runtime_profile_create_request",
+          "direction": "up",
+          "source": "server/migrations/073_add_runtime_profile_create_request.up.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 74,
+          "name": "add_label_create_request",
+          "direction": "down",
+          "source": "server/migrations/074_add_label_create_request.down.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 74,
+          "name": "add_label_create_request",
+          "direction": "up",
+          "source": "server/migrations/074_add_label_create_request.up.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 75,
+          "name": "add_project_resource_create_request",
+          "direction": "down",
+          "source": "server/migrations/075_add_project_resource_create_request.down.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 75,
+          "name": "add_project_resource_create_request",
+          "direction": "up",
+          "source": "server/migrations/075_add_project_resource_create_request.up.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
         }
       ],
       "tables": [
@@ -7731,6 +7853,12 @@
       ],
       "indexes": [
         {
+          "name": "activity_log_squad_evaluation_task_unique",
+          "table": "activity_log",
+          "unique": true,
+          "source": "server/migrations/072_deduplicate_squad_leader_evaluations.up.sql#activity_log_squad_evaluation_task_unique"
+        },
+        {
           "name": "agent_personal_no_owner_name_active_unique",
           "table": "public.agent",
           "unique": true,
@@ -7795,12 +7923,6 @@
           "table": "public.activity_log",
           "unique": false,
           "source": "server/migrations/001_current_schema.up.sql#idx_activity_log_issue_keyset"
-        },
-        {
-          "name": "idx_activity_log_squad_no_action_task",
-          "table": "public.activity_log",
-          "unique": false,
-          "source": "server/migrations/001_current_schema.up.sql#idx_activity_log_squad_no_action_task"
         },
         {
           "name": "idx_agent_playground_agent_experiment_order",
@@ -8916,9 +9038,14 @@
               "source": "server/pkg/db/queries/activity.sql#CreateActivity"
             },
             {
-              "name": "GetActivity",
+              "name": "CreateSquadLeaderEvaluation",
               "command": "one",
-              "source": "server/pkg/db/queries/activity.sql#GetActivity"
+              "source": "server/pkg/db/queries/activity.sql#CreateSquadLeaderEvaluation"
+            },
+            {
+              "name": "GetSquadLeaderEvaluationForTask",
+              "command": "one",
+              "source": "server/pkg/db/queries/activity.sql#GetSquadLeaderEvaluationForTask"
             },
             {
               "name": "HasSquadLeaderNoActionEvaluationForTask",
@@ -9093,11 +9220,6 @@
               "source": "server/pkg/db/queries/agent.sql#HasActiveTaskForIssue"
             },
             {
-              "name": "HasPendingTaskForIssue",
-              "command": "one",
-              "source": "server/pkg/db/queries/agent.sql#HasPendingTaskForIssue"
-            },
-            {
               "name": "HasPendingTaskForIssueAndAgent",
               "command": "one",
               "source": "server/pkg/db/queries/agent.sql#HasPendingTaskForIssueAndAgent"
@@ -9216,11 +9338,6 @@
               "name": "UpdateAgentCustomEnv",
               "command": "one",
               "source": "server/pkg/db/queries/agent.sql#UpdateAgentCustomEnv"
-            },
-            {
-              "name": "UpdateAgentStatus",
-              "command": "one",
-              "source": "server/pkg/db/queries/agent.sql#UpdateAgentStatus"
             },
             {
               "name": "UpdateAgentTaskSession",
@@ -9569,11 +9686,6 @@
               "source": "server/pkg/db/queries/autopilot.sql#SetAutopilotTriggerSigningSecret"
             },
             {
-              "name": "SetAutopilotTriggerWebhookToken",
-              "command": "one",
-              "source": "server/pkg/db/queries/autopilot.sql#SetAutopilotTriggerWebhookToken"
-            },
-            {
               "name": "SystemPauseAutopilot",
               "command": "one",
               "source": "server/pkg/db/queries/autopilot.sql#SystemPauseAutopilot"
@@ -9617,11 +9729,6 @@
               "name": "UpdateAutopilotRunSkipped",
               "command": "one",
               "source": "server/pkg/db/queries/autopilot.sql#UpdateAutopilotRunSkipped"
-            },
-            {
-              "name": "UpdateAutopilotRunSkippedWithResult",
-              "command": "one",
-              "source": "server/pkg/db/queries/autopilot.sql#UpdateAutopilotRunSkippedWithResult"
             },
             {
               "name": "UpdateAutopilotTrigger",
@@ -9681,11 +9788,6 @@
               "name": "DeleteUserChatMessageByTask",
               "command": "one",
               "source": "server/pkg/db/queries/chat.sql#DeleteUserChatMessageByTask"
-            },
-            {
-              "name": "GetChatMessage",
-              "command": "one",
-              "source": "server/pkg/db/queries/chat.sql#GetChatMessage"
             },
             {
               "name": "GetChatSession",
@@ -9810,11 +9912,6 @@
               "name": "ClearOtherThreadResolutions",
               "command": "many",
               "source": "server/pkg/db/queries/comment.sql#ClearOtherThreadResolutions"
-            },
-            {
-              "name": "CountComments",
-              "command": "one",
-              "source": "server/pkg/db/queries/comment.sql#CountComments"
             },
             {
               "name": "CountNewCommentsSince",
@@ -10065,11 +10162,6 @@
               "source": "server/pkg/db/queries/github.sql#DrainPendingCheckSuitesForPR"
             },
             {
-              "name": "GetGitHubInstallationByID",
-              "command": "one",
-              "source": "server/pkg/db/queries/github.sql#GetGitHubInstallationByID"
-            },
-            {
               "name": "GetGitHubInstallationByInstallationID",
               "command": "one",
               "source": "server/pkg/db/queries/github.sql#GetGitHubInstallationByInstallationID"
@@ -10078,11 +10170,6 @@
               "name": "GetGitHubPullRequest",
               "command": "one",
               "source": "server/pkg/db/queries/github.sql#GetGitHubPullRequest"
-            },
-            {
-              "name": "GetIssuePullRequestCloseAggregate",
-              "command": "one",
-              "source": "server/pkg/db/queries/github.sql#GetIssuePullRequestCloseAggregate"
             },
             {
               "name": "GetPendingGitHubInstallation",
@@ -10108,11 +10195,6 @@
               "name": "ListPullRequestsByIssue",
               "command": "many",
               "source": "server/pkg/db/queries/github.sql#ListPullRequestsByIssue"
-            },
-            {
-              "name": "UnlinkIssueFromPullRequest",
-              "command": "exec",
-              "source": "server/pkg/db/queries/github.sql#UnlinkIssueFromPullRequest"
             },
             {
               "name": "UpsertGitHubPullRequest",
@@ -10180,11 +10262,6 @@
               "name": "CreateInboxItem",
               "command": "one",
               "source": "server/pkg/db/queries/inbox.sql#CreateInboxItem"
-            },
-            {
-              "name": "GetInboxItem",
-              "command": "one",
-              "source": "server/pkg/db/queries/inbox.sql#GetInboxItem"
             },
             {
               "name": "GetInboxItemInWorkspace",
@@ -10430,11 +10507,6 @@
               "source": "server/pkg/db/queries/lark.sql#CreateLarkUserBinding"
             },
             {
-              "name": "DeleteLarkUserBinding",
-              "command": "exec",
-              "source": "server/pkg/db/queries/lark.sql#DeleteLarkUserBinding"
-            },
-            {
               "name": "GetLarkChatSessionBinding",
               "command": "one",
               "source": "server/pkg/db/queries/lark.sql#GetLarkChatSessionBinding"
@@ -10448,11 +10520,6 @@
               "name": "GetLarkInstallation",
               "command": "one",
               "source": "server/pkg/db/queries/lark.sql#GetLarkInstallation"
-            },
-            {
-              "name": "GetLarkInstallationByAgent",
-              "command": "one",
-              "source": "server/pkg/db/queries/lark.sql#GetLarkInstallationByAgent"
             },
             {
               "name": "GetLarkInstallationByAppID",
@@ -10480,34 +10547,14 @@
               "source": "server/pkg/db/queries/lark.sql#ListActiveLarkInstallations"
             },
             {
-              "name": "ListLarkInboundAuditByInstallation",
-              "command": "many",
-              "source": "server/pkg/db/queries/lark.sql#ListLarkInboundAuditByInstallation"
-            },
-            {
               "name": "ListLarkInstallationsByWorkspace",
               "command": "many",
               "source": "server/pkg/db/queries/lark.sql#ListLarkInstallationsByWorkspace"
             },
             {
-              "name": "ListLarkUserBindingsByInstallation",
-              "command": "many",
-              "source": "server/pkg/db/queries/lark.sql#ListLarkUserBindingsByInstallation"
-            },
-            {
               "name": "MarkLarkInboundDedupProcessed",
               "command": "execrows",
               "source": "server/pkg/db/queries/lark.sql#MarkLarkInboundDedupProcessed"
-            },
-            {
-              "name": "PurgeExpiredLarkBindingTokens",
-              "command": "exec",
-              "source": "server/pkg/db/queries/lark.sql#PurgeExpiredLarkBindingTokens"
-            },
-            {
-              "name": "PurgeLarkInboundDedup",
-              "command": "exec",
-              "source": "server/pkg/db/queries/lark.sql#PurgeLarkInboundDedup"
             },
             {
               "name": "RecordLarkInboundDrop",
@@ -10668,11 +10715,6 @@
               "source": "server/pkg/db/queries/pinned_item.sql#DeletePinnedItem"
             },
             {
-              "name": "DeletePinnedItemsByItem",
-              "command": "exec",
-              "source": "server/pkg/db/queries/pinned_item.sql#DeletePinnedItemsByItem"
-            },
-            {
               "name": "GetMaxPinnedItemPosition",
               "command": "one",
               "source": "server/pkg/db/queries/pinned_item.sql#GetMaxPinnedItemPosition"
@@ -10694,11 +10736,6 @@
           "source": "server/pkg/db/queries/project.sql",
           "generatedSource": "server/pkg/db/generated/project.sql.go",
           "queries": [
-            {
-              "name": "CountIssuesByProject",
-              "command": "one",
-              "source": "server/pkg/db/queries/project.sql#CountIssuesByProject"
-            },
             {
               "name": "CreateProject",
               "command": "one",
@@ -10752,11 +10789,6 @@
               "source": "server/pkg/db/queries/project_resource.sql#DeleteProjectResource"
             },
             {
-              "name": "GetProjectResource",
-              "command": "one",
-              "source": "server/pkg/db/queries/project_resource.sql#GetProjectResource"
-            },
-            {
               "name": "GetProjectResourceCounts",
               "command": "many",
               "source": "server/pkg/db/queries/project_resource.sql#GetProjectResourceCounts"
@@ -10775,11 +10807,6 @@
               "name": "ListProjectResources",
               "command": "many",
               "source": "server/pkg/db/queries/project_resource.sql#ListProjectResources"
-            },
-            {
-              "name": "ListProjectResourcesForProjects",
-              "command": "many",
-              "source": "server/pkg/db/queries/project_resource.sql#ListProjectResourcesForProjects"
             },
             {
               "name": "LockProjectForResourcePosition",
@@ -11127,11 +11154,6 @@
               "source": "server/pkg/db/queries/prompt_evaluation_run.sql#CancelPromptEvaluationRun"
             },
             {
-              "name": "CreatePromptEvaluationRun",
-              "command": "one",
-              "source": "server/pkg/db/queries/prompt_evaluation_run.sql#CreatePromptEvaluationRun"
-            },
-            {
               "name": "CreatePromptEvaluationRunWithID",
               "command": "one",
               "source": "server/pkg/db/queries/prompt_evaluation_run.sql#CreatePromptEvaluationRunWithID"
@@ -11219,11 +11241,6 @@
               "source": "server/pkg/db/queries/prompt_evaluation_test_suite_case.sql#DeletePromptEvaluationTestSuiteCasesByCase"
             },
             {
-              "name": "ListPromptEvaluationTestSuiteCases",
-              "command": "many",
-              "source": "server/pkg/db/queries/prompt_evaluation_test_suite_case.sql#ListPromptEvaluationTestSuiteCases"
-            },
-            {
               "name": "RefreshPromptEvaluationTestSuiteCaseCount",
               "command": "exec",
               "source": "server/pkg/db/queries/prompt_evaluation_test_suite_case.sql#RefreshPromptEvaluationTestSuiteCaseCount"
@@ -11239,11 +11256,6 @@
               "name": "CreatePromptLibraryItem",
               "command": "one",
               "source": "server/pkg/db/queries/prompt_library.sql#CreatePromptLibraryItem"
-            },
-            {
-              "name": "CreatePromptLibraryItemVersion",
-              "command": "one",
-              "source": "server/pkg/db/queries/prompt_library.sql#CreatePromptLibraryItemVersion"
             },
             {
               "name": "CreatePromptLibraryItemVersionWithID",
@@ -11310,11 +11322,6 @@
               "source": "server/pkg/db/queries/prompt_library_version.sql#GetPromptLibraryVersionForPrompt"
             },
             {
-              "name": "GetPromptLibraryVersionInWorkspace",
-              "command": "one",
-              "source": "server/pkg/db/queries/prompt_library_version.sql#GetPromptLibraryVersionInWorkspace"
-            },
-            {
               "name": "ListPromptLibraryVersions",
               "command": "many",
               "source": "server/pkg/db/queries/prompt_library_version.sql#ListPromptLibraryVersions"
@@ -11374,11 +11381,6 @@
               "name": "CancelAgentTasksByRuntimeOrAgent",
               "command": "many",
               "source": "server/pkg/db/queries/runtime.sql#CancelAgentTasksByRuntimeOrAgent"
-            },
-            {
-              "name": "CountActiveAgentsByRuntime",
-              "command": "one",
-              "source": "server/pkg/db/queries/runtime.sql#CountActiveAgentsByRuntime"
             },
             {
               "name": "CountActiveSquadsWithArchivedLeadersByRuntime",
@@ -11677,19 +11679,9 @@
               "source": "server/pkg/db/queries/skill.sql#ListSkillFiles"
             },
             {
-              "name": "ListSkillsByWorkspace",
-              "command": "many",
-              "source": "server/pkg/db/queries/skill.sql#ListSkillsByWorkspace"
-            },
-            {
               "name": "ListSkillSummariesByWorkspace",
               "command": "many",
               "source": "server/pkg/db/queries/skill.sql#ListSkillSummariesByWorkspace"
-            },
-            {
-              "name": "RemoveAgentSkill",
-              "command": "exec",
-              "source": "server/pkg/db/queries/skill.sql#RemoveAgentSkill"
             },
             {
               "name": "RemoveAllAgentSkills",
@@ -11751,11 +11743,6 @@
               "source": "server/pkg/db/queries/squad.sql#ArchiveSquad"
             },
             {
-              "name": "CountSquadMembers",
-              "command": "one",
-              "source": "server/pkg/db/queries/squad.sql#CountSquadMembers"
-            },
-            {
               "name": "CreateSquad",
               "command": "one",
               "source": "server/pkg/db/queries/squad.sql#CreateSquad"
@@ -11764,11 +11751,6 @@
               "name": "GetSquad",
               "command": "one",
               "source": "server/pkg/db/queries/squad.sql#GetSquad"
-            },
-            {
-              "name": "GetSquadByAssignee",
-              "command": "one",
-              "source": "server/pkg/db/queries/squad.sql#GetSquadByAssignee"
             },
             {
               "name": "GetSquadInWorkspace",
@@ -11816,11 +11798,6 @@
               "source": "server/pkg/db/queries/squad.sql#ListSquads"
             },
             {
-              "name": "ListSquadsByMember",
-              "command": "many",
-              "source": "server/pkg/db/queries/squad.sql#ListSquadsByMember"
-            },
-            {
               "name": "RemoveSquadMember",
               "command": "execrows",
               "source": "server/pkg/db/queries/squad.sql#RemoveSquadMember"
@@ -11857,16 +11834,6 @@
           "source": "server/pkg/db/queries/squad_sop_run.sql",
           "generatedSource": "server/pkg/db/generated/squad_sop_run.sql.go",
           "queries": [
-            {
-              "name": "AttachLeaderTaskToSquadSOPRun",
-              "command": "one",
-              "source": "server/pkg/db/queries/squad_sop_run.sql#AttachLeaderTaskToSquadSOPRun"
-            },
-            {
-              "name": "CountWorkspaceSquadSOPStepEvents",
-              "command": "one",
-              "source": "server/pkg/db/queries/squad_sop_run.sql#CountWorkspaceSquadSOPStepEvents"
-            },
             {
               "name": "CreateSquadSOPRun",
               "command": "one",
@@ -11921,11 +11888,6 @@
               "name": "LockSquadSOPRunForAutomaticTaskEvent",
               "command": "one",
               "source": "server/pkg/db/queries/squad_sop_run.sql#LockSquadSOPRunForAutomaticTaskEvent"
-            },
-            {
-              "name": "LockSquadSOPRunInWorkspace",
-              "command": "one",
-              "source": "server/pkg/db/queries/squad_sop_run.sql#LockSquadSOPRunInWorkspace"
             },
             {
               "name": "UpdateAutomaticSquadSOPTerminalEventEvidence",
@@ -12017,11 +11979,6 @@
               "name": "CreateTaskToken",
               "command": "one",
               "source": "server/pkg/db/queries/task_token.sql#CreateTaskToken"
-            },
-            {
-              "name": "DeleteExpiredTaskTokens",
-              "command": "exec",
-              "source": "server/pkg/db/queries/task_token.sql#DeleteExpiredTaskTokens"
             },
             {
               "name": "DeleteTaskTokensByTask",
