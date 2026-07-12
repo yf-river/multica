@@ -198,6 +198,78 @@ func TestPostJSON(t *testing.T) {
 	})
 }
 
+func TestJSONWriteMethodsPreserveVerbBodyAndResponse(t *testing.T) {
+	type response struct {
+		ID string `json:"id"`
+	}
+	tests := []struct {
+		name   string
+		method string
+		call   func(*APIClient, *response) error
+	}{
+		{
+			name:   "post",
+			method: http.MethodPost,
+			call: func(client *APIClient, out *response) error {
+				return client.PostJSON(context.Background(), "/resource", map[string]string{"name": "current"}, out)
+			},
+		},
+		{
+			name:   "put",
+			method: http.MethodPut,
+			call: func(client *APIClient, out *response) error {
+				return client.PutJSON(context.Background(), "/resource", map[string]string{"name": "current"}, out)
+			},
+		},
+		{
+			name:   "patch",
+			method: http.MethodPatch,
+			call: func(client *APIClient, out *response) error {
+				return client.PatchJSON(context.Background(), "/resource", map[string]string{"name": "current"}, out)
+			},
+		},
+		{
+			name:   "delete with body",
+			method: http.MethodDelete,
+			call: func(client *APIClient, _ *response) error {
+				return client.DeleteJSONWithBody(context.Background(), "/resource", map[string]string{"name": "current"})
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != tt.method {
+					t.Errorf("method = %s, want %s", r.Method, tt.method)
+				}
+				if got := r.Header.Get("Content-Type"); got != "application/json" {
+					t.Errorf("Content-Type = %q, want application/json", got)
+				}
+				var body map[string]string
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Fatalf("decode request: %v", err)
+				}
+				if body["name"] != "current" {
+					t.Errorf("body = %#v", body)
+				}
+				if tt.method != http.MethodDelete {
+					_ = json.NewEncoder(w).Encode(response{ID: "resource-1"})
+				}
+			}))
+			defer srv.Close()
+
+			var out response
+			if err := tt.call(NewAPIClient(srv.URL, "", "test-token"), &out); err != nil {
+				t.Fatalf("request failed: %v", err)
+			}
+			if tt.method != http.MethodDelete && out.ID != "resource-1" {
+				t.Fatalf("response ID = %q", out.ID)
+			}
+		})
+	}
+}
+
 func TestDownloadFile(t *testing.T) {
 	t.Run("relative URL is resolved against BaseURL and sent with auth", func(t *testing.T) {
 		var gotPath, gotAuth string

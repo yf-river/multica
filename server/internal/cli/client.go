@@ -280,28 +280,7 @@ func (c *APIClient) DeleteJSON(ctx context.Context, path string) error {
 
 // DeleteJSONWithBody performs a DELETE request with a JSON body.
 func (c *APIClient) DeleteJSONWithBody(ctx context.Context, path string, body any) error {
-	data, err := json.Marshal(body)
-	if err != nil {
-		return err
-	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, c.BaseURL+path, bytes.NewReader(data))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	c.setHeaders(req)
-
-	resp, err := c.HTTPClient.Do(req)
-	err = wrapTransport(req, err)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode >= 400 {
-		return newHTTPError(http.MethodDelete, path, resp)
-	}
-	return nil
+	return c.sendJSON(ctx, http.MethodDelete, path, body, "", nil)
 }
 
 // PostJSON performs a POST request with a JSON body.
@@ -351,12 +330,27 @@ func (c *APIClient) postJSON(
 	idempotencyKey string,
 	out any,
 ) error {
+	return c.sendJSON(ctx, http.MethodPost, path, body, idempotencyKey, out)
+}
+
+// sendJSON is the single transport path for HTTP methods that carry a JSON
+// request body. Public verb-specific helpers keep the caller-facing API small;
+// serialization, identity headers, HTTP error typing and response decoding stay
+// identical across those verbs.
+func (c *APIClient) sendJSON(
+	ctx context.Context,
+	method string,
+	path string,
+	body any,
+	idempotencyKey string,
+	out any,
+) error {
 	data, err := json.Marshal(body)
 	if err != nil {
 		return err
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+path, bytes.NewReader(data))
+	req, err := http.NewRequestWithContext(ctx, method, c.BaseURL+path, bytes.NewReader(data))
 	if err != nil {
 		return err
 	}
@@ -374,7 +368,7 @@ func (c *APIClient) postJSON(
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
-		return newHTTPError(http.MethodPost, path, resp)
+		return newHTTPError(method, path, resp)
 	}
 	if out == nil {
 		return nil
@@ -384,62 +378,12 @@ func (c *APIClient) postJSON(
 
 // PutJSON performs a PUT request with a JSON body.
 func (c *APIClient) PutJSON(ctx context.Context, path string, body any, out any) error {
-	data, err := json.Marshal(body)
-	if err != nil {
-		return err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, c.BaseURL+path, bytes.NewReader(data))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	c.setHeaders(req)
-
-	resp, err := c.HTTPClient.Do(req)
-	err = wrapTransport(req, err)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode >= 400 {
-		return newHTTPError(http.MethodPut, path, resp)
-	}
-	if out == nil {
-		return nil
-	}
-	return json.NewDecoder(resp.Body).Decode(out)
+	return c.sendJSON(ctx, http.MethodPut, path, body, "", out)
 }
 
 // PatchJSON performs a PATCH request with a JSON body.
 func (c *APIClient) PatchJSON(ctx context.Context, path string, body any, out any) error {
-	data, err := json.Marshal(body)
-	if err != nil {
-		return err
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, c.BaseURL+path, bytes.NewReader(data))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	c.setHeaders(req)
-
-	resp, err := c.HTTPClient.Do(req)
-	err = wrapTransport(req, err)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode >= 400 {
-		return newHTTPError(http.MethodPatch, path, resp)
-	}
-	if out == nil {
-		return nil
-	}
-	return json.NewDecoder(resp.Body).Decode(out)
+	return c.sendJSON(ctx, http.MethodPatch, path, body, "", out)
 }
 
 // AttachmentResponse mirrors the server's upload-file response.
