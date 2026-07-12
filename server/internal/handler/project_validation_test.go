@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -25,6 +26,19 @@ func TestGetProjectClientCanceledReturns499(t *testing.T) {
 	testHandler.GetProject(w, req)
 	if w.Code != 499 {
 		t.Fatalf("expected 499 for canceled project read, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestLoadProjectCountsPreservesCanceledQuery(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _, _, err := testHandler.loadProjectCounts(ctx, parseUUID("11111111-1111-4111-8111-111111111111"))
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("loadProjectCounts error = %v, want context.Canceled", err)
 	}
 }
 

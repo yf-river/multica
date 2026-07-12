@@ -56,20 +56,32 @@ func projectToResponse(p db.Project) ProjectResponse {
 	}
 }
 
-func (h *Handler) loadProjectIssueStats(ctx context.Context, projectID pgtype.UUID) (int64, int64) {
+func (h *Handler) loadProjectCounts(ctx context.Context, projectID pgtype.UUID) (issueCount, doneCount, resourceCount int64, err error) {
 	stats, err := h.Queries.GetProjectIssueStats(ctx, []pgtype.UUID{projectID})
-	if err != nil || len(stats) == 0 {
-		return 0, 0
+	if err != nil {
+		return 0, 0, 0, err
 	}
-	return stats[0].TotalCount, stats[0].DoneCount
+	if len(stats) > 0 {
+		issueCount = stats[0].TotalCount
+		doneCount = stats[0].DoneCount
+	}
+
+	rows, err := h.Queries.GetProjectResourceCounts(ctx, []pgtype.UUID{projectID})
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	if len(rows) > 0 {
+		resourceCount = rows[0].ResourceCount
+	}
+	return issueCount, doneCount, resourceCount, nil
 }
 
-func (h *Handler) loadProjectResourceCount(ctx context.Context, projectID pgtype.UUID) int64 {
-	rows, err := h.Queries.GetProjectResourceCounts(ctx, []pgtype.UUID{projectID})
-	if err != nil || len(rows) == 0 {
-		return 0
+func writeProjectSummaryError(w http.ResponseWriter, r *http.Request, err error) {
+	if writeClientClosedIfCanceled(w, err) {
+		return
 	}
-	return rows[0].ResourceCount
+	slog.Error("load project summary failed", append(logger.RequestAttrs(r), "error", err)...)
+	writeError(w, http.StatusInternalServerError, "failed to load project summary")
 }
 
 type CreateProjectRequest struct {
@@ -144,16 +156,20 @@ func (h *Handler) ListProjects(w http.ResponseWriter, r *http.Request) {
 			projectIDs[i] = p.ID
 		}
 		stats, err := h.Queries.GetProjectIssueStats(r.Context(), projectIDs)
-		if err == nil {
-			for _, s := range stats {
-				statsMap[uuidToString(s.ProjectID)] = s
-			}
+		if err != nil {
+			writeProjectSummaryError(w, r, err)
+			return
+		}
+		for _, s := range stats {
+			statsMap[uuidToString(s.ProjectID)] = s
 		}
 		counts, err := h.Queries.GetProjectResourceCounts(r.Context(), projectIDs)
-		if err == nil {
-			for _, c := range counts {
-				resourceCountMap[uuidToString(c.ProjectID)] = c.ResourceCount
-			}
+		if err != nil {
+			writeProjectSummaryError(w, r, err)
+			return
+		}
+		for _, c := range counts {
+			resourceCountMap[uuidToString(c.ProjectID)] = c.ResourceCount
 		}
 	}
 
@@ -172,25 +188,39 @@ func (h *Handler) ListProjects(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) GetProject(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	workspaceID := h.resolveWorkspaceID(r)
-	idUUID, ok := parseUUIDOrBadRequest(w, id, "project id")
+	project, ok := h.loadProjectForRequest(w, r, id, workspaceID)
 	if !ok {
 		return
 	}
+	issueCount, doneCount, resourceCount, err := h.loadProjectCounts(r.Context(), project.ID)
+	if err != nil {
+		writeProjectSummaryError(w, r, err)
+		return
+	}
+	resp := projectToResponse(project)
+	resp.IssueCount = issueCount
+	resp.DoneCount = doneCount
+	resp.ResourceCount = resourceCount
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *Handler) loadProjectForRequest(w http.ResponseWriter, r *http.Request, id, workspaceID string) (db.Project, bool) {
+	idUUID, ok := parseUUIDOrBadRequest(w, id, "project id")
+	if !ok {
+		return db.Project{}, false
+	}
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
 	if !ok {
-		return
+		return db.Project{}, false
 	}
 	project, err := h.Queries.GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{
 		ID: idUUID, WorkspaceID: wsUUID,
 	})
 	if err != nil {
-		writeError(w, http.StatusNotFound, "project not found")
-		return
+		writeEntityLoadError(w, r, err, "project", "project_id", id)
+		return db.Project{}, false
 	}
-	resp := projectToResponse(project)
-	resp.IssueCount, resp.DoneCount = h.loadProjectIssueStats(r.Context(), project.ID)
-	resp.ResourceCount = h.loadProjectResourceCount(r.Context(), project.ID)
-	writeJSON(w, http.StatusOK, resp)
+	return project, true
 }
 
 // validProjectStatuses / validProjectPriorities mirror the CHECK constraints on
@@ -515,19 +545,13 @@ func (h *Handler) writeProjectCreateReplayError(w http.ResponseWriter, err error
 func (h *Handler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	workspaceID := h.resolveWorkspaceID(r)
-	idUUID, ok := parseUUIDOrBadRequest(w, id, "project id")
+	prevProject, ok := h.loadProjectForRequest(w, r, id, workspaceID)
 	if !ok {
 		return
 	}
-	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
-	if !ok {
-		return
-	}
-	prevProject, err := h.Queries.GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{
-		ID: idUUID, WorkspaceID: wsUUID,
-	})
+	issueCount, doneCount, resourceCount, err := h.loadProjectCounts(r.Context(), prevProject.ID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "project not found")
+		writeProjectSummaryError(w, r, err)
 		return
 	}
 	userID, ok := requireUserID(w, r)
@@ -610,8 +634,9 @@ func (h *Handler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := projectToResponse(project)
-	resp.IssueCount, resp.DoneCount = h.loadProjectIssueStats(r.Context(), project.ID)
-	resp.ResourceCount = h.loadProjectResourceCount(r.Context(), project.ID)
+	resp.IssueCount = issueCount
+	resp.DoneCount = doneCount
+	resp.ResourceCount = resourceCount
 	h.publish(protocol.EventProjectUpdated, workspaceID, "member", userID, map[string]any{"project": resp})
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -619,19 +644,8 @@ func (h *Handler) UpdateProject(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) DeleteProject(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	workspaceID := h.resolveWorkspaceID(r)
-	idUUID, ok := parseUUIDOrBadRequest(w, id, "project id")
+	project, ok := h.loadProjectForRequest(w, r, id, workspaceID)
 	if !ok {
-		return
-	}
-	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
-	if !ok {
-		return
-	}
-	project, err := h.Queries.GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{
-		ID: idUUID, WorkspaceID: wsUUID,
-	})
-	if err != nil {
-		writeError(w, http.StatusNotFound, "project not found")
 		return
 	}
 	userID, ok := requireUserID(w, r)
