@@ -548,7 +548,11 @@ func (h *Handler) CreateAgentFromTemplate(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	resp := agentToResponse(agent)
+	resp, err := agentToResponse(agent)
+	if err != nil {
+		writeAgentResponseDecodeError(w, r, uuidToString(agent.ID), err)
+		return
+	}
 	// Templates attach skills via AddAgentSkill above, so the freshly built
 	// AgentResponse must reload them — otherwise the create response (and
 	// the agent:created broadcast) would tell clients the agent has no

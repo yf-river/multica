@@ -3,7 +3,27 @@ package handler
 import (
 	"encoding/json"
 	"testing"
+
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
+
+func TestAgentToResponseRejectsNonObjectRuntimeConfig(t *testing.T) {
+	for _, raw := range [][]byte{nil, []byte(`null`), []byte(`[]`), []byte(`"string"`)} {
+		if _, err := agentToResponse(db.Agent{RuntimeConfig: raw}); err == nil {
+			t.Fatalf("agentToResponse runtime_config=%s expected an error", raw)
+		}
+	}
+}
+
+func TestAgentToResponseAcceptsObjectRuntimeConfig(t *testing.T) {
+	response, err := agentToResponse(db.Agent{RuntimeConfig: []byte(`{"provider":"codex"}`)})
+	if err != nil {
+		t.Fatalf("agentToResponse: %v", err)
+	}
+	if response.RuntimeConfig["provider"] != "codex" {
+		t.Fatalf("runtime_config = %#v", response.RuntimeConfig)
+	}
+}
 
 func TestMaskGatewayTokenReplacesNonEmpty(t *testing.T) {
 	t.Parallel()
@@ -115,7 +135,7 @@ func TestMaskGatewayTokenRoundTripsAsJSON(t *testing.T) {
 	t.Parallel()
 
 	raw := []byte(`{"gateway":{"token":"plaintext","host":"gw"}}`)
-	var rc any
+	var rc map[string]any
 	if err := json.Unmarshal(raw, &rc); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}

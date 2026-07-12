@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -65,6 +66,13 @@ func (h *Handler) revokeAndRemoveMember(ctx context.Context, workspaceID, userID
 		if err != nil {
 			return empty, err
 		}
+		result.ArchivedAgentResponses = make([]AgentResponse, len(result.ArchivedAgents))
+		for i, archived := range result.ArchivedAgents {
+			result.ArchivedAgentResponses[i], err = agentToResponse(archived)
+			if err != nil {
+				return empty, fmt.Errorf("decode archived agent %s: %w", uuidToString(archived.ID), err)
+			}
+		}
 		// Cancel by runtime AND by archived agent. agent.runtime_id can be
 		// reassigned via UpdateAgent without rewriting the runtime_id on
 		// historical agent_task_queue rows, so an archived agent may still
@@ -113,11 +121,12 @@ func (h *Handler) revokeAndRemoveMember(ctx context.Context, workspaceID, userID
 // Publishing inside the transaction would let subscribers observe a state the
 // tx might still roll back.
 type revocationResult struct {
-	Runtimes          []db.AgentRuntime
-	ArchivedAgents    []db.Agent
-	CancelledTasks    []db.AgentTaskQueue
-	CancelledEvents   []events.Event
-	OfflineRuntimeIDs []db.ForceOfflineRuntimesByIDsRow
+	Runtimes               []db.AgentRuntime
+	ArchivedAgents         []db.Agent
+	ArchivedAgentResponses []AgentResponse
+	CancelledTasks         []db.AgentTaskQueue
+	CancelledEvents        []events.Event
+	OfflineRuntimeIDs      []db.ForceOfflineRuntimesByIDsRow
 }
 
 func (r revocationResult) isEmpty() bool {
@@ -140,9 +149,9 @@ func (h *Handler) publishRevocation(ctx context.Context, result revocationResult
 		h.TaskService.PublishCancelledTasks(ctx, result.CancelledTasks, result.CancelledEvents)
 	}
 
-	for _, agent := range result.ArchivedAgents {
+	for i := range result.ArchivedAgents {
 		h.publish(protocol.EventAgentArchived, workspaceIDStr, actorType, actorIDStr, map[string]any{
-			"agent": agentToResponse(agent),
+			"agent": result.ArchivedAgentResponses[i],
 		})
 	}
 

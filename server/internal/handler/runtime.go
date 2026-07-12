@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -670,7 +671,12 @@ func (h *Handler) DeleteAgentRuntime(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(activeAgents) > 0 {
-		writeJSON(w, http.StatusConflict, runtimeHasActiveAgentsResponse(activeAgents))
+		body, err := runtimeHasActiveAgentsResponse(activeAgents)
+		if err != nil {
+			writeAgentResponseDecodeError(w, r, "", err)
+			return
+		}
+		writeJSON(w, http.StatusConflict, body)
 		return
 	}
 
@@ -760,16 +766,20 @@ func (h *Handler) DeleteAgentRuntime(w http.ResponseWriter, r *http.Request) {
 //
 // Front-end branches on `code`. The caller picks which code to send; this
 // helper just normalises the agent serialisation and the error string.
-func runtimeHasActiveAgentsResponse(agents []db.Agent) map[string]any {
+func runtimeHasActiveAgentsResponse(agents []db.Agent) (map[string]any, error) {
 	resp := make([]AgentResponse, len(agents))
 	for i, a := range agents {
-		resp[i] = agentToResponse(a)
+		var err error
+		resp[i], err = agentToResponse(a)
+		if err != nil {
+			return nil, fmt.Errorf("decode active agent %s: %w", uuidToString(a.ID), err)
+		}
 	}
 	return map[string]any{
 		"error":         "cannot delete runtime: it has active agents bound to it. Archive or reassign the agents first.",
 		"code":          "runtime_has_active_agents",
 		"active_agents": resp,
-	}
+	}, nil
 }
 
 // archiveAgentsAndDeleteRuntimeRequest is the wire shape for the cascade
@@ -865,7 +875,11 @@ func (h *Handler) ArchiveAgentsAndDeleteRuntime(w http.ResponseWriter, r *http.R
 		// shared response helper but overrides the code to a planning
 		// signal so the dialog can distinguish "you opened from a stale
 		// page" from "the plan you confirmed just changed under you".
-		body := runtimeHasActiveAgentsResponse(currentActive)
+		body, err := runtimeHasActiveAgentsResponse(currentActive)
+		if err != nil {
+			writeAgentResponseDecodeError(w, r, "", err)
+			return
+		}
 		body["code"] = "runtime_delete_plan_changed"
 		body["error"] = "the active agent set changed; please review and confirm again."
 		writeJSON(w, http.StatusConflict, body)
@@ -895,6 +909,14 @@ func (h *Handler) ArchiveAgentsAndDeleteRuntime(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusInternalServerError, "failed to archive agents")
 		return
 	}
+	archivedResponses := make([]AgentResponse, len(archivedAgents))
+	for i, archived := range archivedAgents {
+		archivedResponses[i], err = agentToResponse(archived)
+		if err != nil {
+			writeAgentResponseDecodeError(w, r, uuidToString(archived.ID), err)
+			return
+		}
+	}
 
 	// 2. Cancel queued/dispatched/running tasks. Match by runtime_id AND
 	//    by archived agent ids: agent.runtime_id can be reassigned without
@@ -902,8 +924,8 @@ func (h *Handler) ArchiveAgentsAndDeleteRuntime(w http.ResponseWriter, r *http.R
 	//    archived may still own tasks pinned to a different runtime — and
 	//    ClaimAgentTask does not gate on agent.archived_at.
 	archivedIDs := make([]pgtype.UUID, len(archivedAgents))
-	for i, a := range archivedAgents {
-		archivedIDs[i] = a.ID
+	for i := range archivedAgents {
+		archivedIDs[i] = archivedAgents[i].ID
 	}
 	cancelledTasks, err := qtx.CancelAgentTasksByRuntimeOrAgent(r.Context(), db.CancelAgentTasksByRuntimeOrAgentParams{
 		RuntimeIds: []pgtype.UUID{rt.ID},
@@ -961,9 +983,9 @@ func (h *Handler) ArchiveAgentsAndDeleteRuntime(w http.ResponseWriter, r *http.R
 	if len(cancelledTasks) > 0 {
 		h.TaskService.PublishCancelledTasks(r.Context(), cancelledTasks, cancelledEvents)
 	}
-	for _, a := range archivedAgents {
+	for i := range archivedAgents {
 		h.publish(protocol.EventAgentArchived, wsID, "member", userID, map[string]any{
-			"agent": agentToResponse(a),
+			"agent": archivedResponses[i],
 		})
 	}
 	h.publish(protocol.EventDaemonRegister, wsID, "member", userID, map[string]any{

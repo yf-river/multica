@@ -230,7 +230,11 @@ func (h *Handler) UpdateAgentEnv(w http.ResponseWriter, r *http.Request) {
 	// "N variables configured" indicator. Payload is the redacted
 	// AgentResponse — no env values are sent. Skills are reloaded so the
 	// broadcast doesn't tell subscribers the agent has no skills (#3459).
-	resp := agentToResponse(updated)
+	resp, err := agentToResponse(updated)
+	if err != nil {
+		writeAgentResponseDecodeError(w, r, uuidToString(updated.ID), err)
+		return
+	}
 	if err := h.attachAgentSkills(r.Context(), &resp, updated.ID); err != nil {
 		slog.Warn("load agent skills after env update failed",
 			append(logger.RequestAttrs(r), "error", err, "agent_id", uuidToString(updated.ID))...)

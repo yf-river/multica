@@ -221,6 +221,27 @@ func TestCreateAgent_RejectsNonObjectRuntimeConfig(t *testing.T) {
 	}
 }
 
+func TestUpdateAgent_RejectsNonObjectRuntimeConfig(t *testing.T) {
+	agentID := createHandlerTestAgent(t, "invalid-runtime-config-update", []byte(`{}`))
+	w := httptest.NewRecorder()
+	req := newRequest(http.MethodPut, "/api/agents/"+agentID, map[string]any{
+		"runtime_config": []any{"not", "an", "object"},
+	})
+	req = withURLParam(req, "id", agentID)
+	testHandler.UpdateAgent(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("UpdateAgent non-object runtime_config: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var config string
+	if err := testPool.QueryRow(context.Background(), `SELECT runtime_config::text FROM agent WHERE id = $1`, agentID).Scan(&config); err != nil {
+		t.Fatalf("read agent runtime_config: %v", err)
+	}
+	if config != "{}" {
+		t.Fatalf("UpdateAgent changed runtime_config to %s", config)
+	}
+}
+
 func TestCreateAgent_DefaultsMaxConcurrentTasksToTwenty(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")

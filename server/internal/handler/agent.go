@@ -38,7 +38,7 @@ type AgentResponse struct {
 	Instructions  string          `json:"instructions"`
 	AvatarURL     *string         `json:"avatar_url"`
 	RuntimeMode   string          `json:"runtime_mode"`
-	RuntimeConfig any             `json:"runtime_config"`
+	RuntimeConfig map[string]any  `json:"runtime_config"`
 	CustomArgs    []string        `json:"custom_args"`
 	McpConfig     json.RawMessage `json:"mcp_config"`
 	// custom_env is intentionally NOT serialized on agent resources. The
@@ -76,15 +76,13 @@ type AgentResponse struct {
 // handler restores the persisted token instead of overwriting it.
 const runtimeConfigGatewayTokenMask = "***"
 
-func agentToResponse(a db.Agent) AgentResponse {
-	var rc any
-	if a.RuntimeConfig != nil {
-		if err := json.Unmarshal(a.RuntimeConfig, &rc); err != nil {
-			slog.Warn("decode agent runtime config failed", "agent_id", uuidToString(a.ID), "error", err)
-		}
+func agentToResponse(a db.Agent) (AgentResponse, error) {
+	var rc map[string]any
+	if err := json.Unmarshal(a.RuntimeConfig, &rc); err != nil {
+		return AgentResponse{}, fmt.Errorf("decode agent runtime config: %w", err)
 	}
 	if rc == nil {
-		rc = map[string]any{}
+		return AgentResponse{}, fmt.Errorf("decode agent runtime config: expected JSON object")
 	}
 	maskGatewayToken(rc)
 
@@ -142,18 +140,23 @@ func agentToResponse(a db.Agent) AgentResponse {
 		UpdatedAt:          timestampToString(a.UpdatedAt),
 		ArchivedAt:         timestampToPtr(a.ArchivedAt),
 		ArchivedBy:         uuidToPtr(a.ArchivedBy),
+	}, nil
+}
+
+func writeAgentResponseDecodeError(w http.ResponseWriter, r *http.Request, agentID string, err error) {
+	attrs := logger.RequestAttrs(r)
+	if agentID != "" {
+		attrs = append(attrs, "agent_id", agentID)
 	}
+	slog.Error("decode agent response failed", append(attrs, "error", err)...)
+	writeError(w, http.StatusInternalServerError, "failed to decode agent configuration")
 }
 
 // maskGatewayToken replaces runtime_config.gateway.token with the public
 // mask sentinel when a non-empty value is present. No-op for any other
 // shape so non-openclaw / non-gateway agents pass through untouched.
-func maskGatewayToken(rc any) {
-	root, ok := rc.(map[string]any)
-	if !ok {
-		return
-	}
-	gw, ok := root["gateway"].(map[string]any)
+func maskGatewayToken(rc map[string]any) {
+	gw, ok := rc["gateway"].(map[string]any)
 	if !ok {
 		return
 	}
@@ -170,12 +173,8 @@ func maskGatewayToken(rc any) {
 // after a GET would round-trip the masked sentinel into the database and
 // silently destroy the real secret. The previous value is taken from the
 // agent row the handler has just loaded for ownership / scoping checks.
-func preserveMaskedGatewayToken(incoming any, persistedRuntimeConfig []byte) {
-	root, ok := incoming.(map[string]any)
-	if !ok {
-		return
-	}
-	gw, ok := root["gateway"].(map[string]any)
+func preserveMaskedGatewayToken(incoming map[string]any, persistedRuntimeConfig []byte) {
+	gw, ok := incoming["gateway"].(map[string]any)
 	if !ok {
 		return
 	}
@@ -625,7 +624,11 @@ func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 		}
-		resp := agentToResponse(a)
+		resp, err := agentToResponse(a)
+		if err != nil {
+			writeAgentResponseDecodeError(w, r, uuidToString(a.ID), err)
+			return
+		}
 		if skills, ok := skillMap[resp.ID]; ok {
 			resp.Skills = skills
 		}
@@ -658,7 +661,11 @@ func (h *Handler) GetAgent(w http.ResponseWriter, r *http.Request) {
 	if !h.requirePersonalAgentAccess(w, r, agent, actorType, actorID, workspaceID, "you do not have access to this agent") {
 		return
 	}
-	resp := agentToResponse(agent)
+	resp, err := agentToResponse(agent)
+	if err != nil {
+		writeAgentResponseDecodeError(w, r, id, err)
+		return
+	}
 	// Use the summary query (no `content` column) — the embedded
 	// AgentSkillSummary only needs id/name/description, and reading large
 	// SKILL.md bodies just to discard them is the exact regression we fixed
@@ -696,7 +703,7 @@ type CreateAgentRequest struct {
 	Instructions       string            `json:"instructions"`
 	AvatarURL          *string           `json:"avatar_url"`
 	RuntimeID          string            `json:"runtime_id"`
-	RuntimeConfig      any               `json:"runtime_config"`
+	RuntimeConfig      map[string]any    `json:"runtime_config"`
 	CustomEnv          map[string]string `json:"custom_env"`
 	CustomArgs         []string          `json:"custom_args"`
 	McpConfig          json.RawMessage   `json:"mcp_config"`
@@ -816,17 +823,29 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	// public mask sentinel as gateway.token (e.g. replayed a masked GET body)
 	// drop it rather than persisting a literal "***" as a real bearer token.
 	preserveMaskedGatewayToken(req.RuntimeConfig, nil)
-	rc, _ := json.Marshal(req.RuntimeConfig)
+	rc, err := json.Marshal(req.RuntimeConfig)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "runtime_config must be a JSON object")
+		return
+	}
 	if req.RuntimeConfig == nil {
 		rc = []byte("{}")
 	}
 
-	ce, _ := json.Marshal(req.CustomEnv)
+	ce, err := json.Marshal(req.CustomEnv)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "custom_env must be an object of string values")
+		return
+	}
 	if req.CustomEnv == nil {
 		ce = []byte("{}")
 	}
 
-	ca, _ := json.Marshal(req.CustomArgs)
+	ca, err := json.Marshal(req.CustomArgs)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "custom_args must be an array of strings")
+		return
+	}
 	if req.CustomArgs == nil {
 		ca = []byte("[]")
 	}
@@ -876,7 +895,11 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	resp := agentToResponse(created)
+	resp, err := agentToResponse(created)
+	if err != nil {
+		writeAgentResponseDecodeError(w, r, uuidToString(created.ID), err)
+		return
+	}
 	actorType, actorID := h.resolveActor(r, ownerID, workspaceID)
 	h.publish(protocol.EventAgentCreated, workspaceID, actorType, actorID, map[string]any{"agent": broadcastAgentResponse(resp)})
 
@@ -895,12 +918,12 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 }
 
 type UpdateAgentRequest struct {
-	Name          *string `json:"name"`
-	Description   *string `json:"description"`
-	Instructions  *string `json:"instructions"`
-	AvatarURL     *string `json:"avatar_url"`
-	RuntimeID     *string `json:"runtime_id"`
-	RuntimeConfig any     `json:"runtime_config"`
+	Name          *string         `json:"name"`
+	Description   *string         `json:"description"`
+	Instructions  *string         `json:"instructions"`
+	AvatarURL     *string         `json:"avatar_url"`
+	RuntimeID     *string         `json:"runtime_id"`
+	RuntimeConfig *map[string]any `json:"runtime_config"`
 	// custom_env is intentionally NOT updatable through this endpoint.
 	// Use `PUT /api/agents/{id}/env` for env changes — that path is
 	// owner/admin-only, denies agent actors, and writes a persisted
@@ -1073,12 +1096,20 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		// public mask sentinel. Without this, a UI that GETs the agent and
 		// PATCHes the same payload back round-trips "***" into the database
 		// and silently destroys the real secret (issue #3260).
-		preserveMaskedGatewayToken(req.RuntimeConfig, existing.RuntimeConfig)
-		rc, _ := json.Marshal(req.RuntimeConfig)
+		preserveMaskedGatewayToken(*req.RuntimeConfig, existing.RuntimeConfig)
+		rc, err := json.Marshal(*req.RuntimeConfig)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "runtime_config must be a JSON object")
+			return
+		}
 		params.RuntimeConfig = rc
 	}
 	if req.CustomArgs != nil {
-		ca, _ := json.Marshal(*req.CustomArgs)
+		ca, err := json.Marshal(*req.CustomArgs)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "custom_args must be an array of strings")
+			return
+		}
 		params.CustomArgs = ca
 	}
 	rawMcpConfig, hasMcpConfig := rawFields["mcp_config"]
@@ -1261,7 +1292,11 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	resp := agentToResponse(updated)
+	resp, err := agentToResponse(updated)
+	if err != nil {
+		writeAgentResponseDecodeError(w, r, id, err)
+		return
+	}
 	// agentToResponse always initialises Skills as []; junction-table rows
 	// are untouched by the SQL update, so we reload them here to keep the
 	// response (and the broadcast that mirrors it) in sync with reality.
@@ -1365,7 +1400,11 @@ func (h *Handler) ArchiveAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wsID := uuidToString(archived.WorkspaceID)
-	resp := agentToResponse(archived)
+	resp, err := agentToResponse(archived)
+	if err != nil {
+		writeAgentResponseDecodeError(w, r, id, err)
+		return
+	}
 	if err := h.attachAgentSkills(r.Context(), &resp, archived.ID); err != nil {
 		slog.Warn("load agent skills after archive failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 		writeError(w, http.StatusInternalServerError, "failed to load agent skills")
@@ -1408,7 +1447,11 @@ func (h *Handler) RestoreAgent(w http.ResponseWriter, r *http.Request) {
 
 	wsID := uuidToString(restored.WorkspaceID)
 	slog.Info("agent restored", append(logger.RequestAttrs(r), "agent_id", id, "workspace_id", wsID)...)
-	resp := agentToResponse(restored)
+	resp, err := agentToResponse(restored)
+	if err != nil {
+		writeAgentResponseDecodeError(w, r, id, err)
+		return
+	}
 	if err := h.attachAgentSkills(r.Context(), &resp, restored.ID); err != nil {
 		slog.Warn("load agent skills after restore failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 		writeError(w, http.StatusInternalServerError, "failed to load agent skills")
