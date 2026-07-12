@@ -9,7 +9,24 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
+
+func TestExternalCredentialProfileToResponseRejectsNonObjectCapabilities(t *testing.T) {
+	for _, raw := range [][]byte{nil, []byte(`null`), []byte(`[]`), []byte(`"string"`)} {
+		if _, err := externalCredentialProfileToResponse(db.ExternalCredentialProfile{Capabilities: raw}); err == nil {
+			t.Fatalf("capabilities=%s expected an error", raw)
+		}
+	}
+	response, err := externalCredentialProfileToResponse(db.ExternalCredentialProfile{Capabilities: []byte(`{"repository_read":true}`)})
+	if err != nil {
+		t.Fatalf("object capabilities: %v", err)
+	}
+	if response.Capabilities["repository_read"] != true {
+		t.Fatalf("capabilities = %#v", response.Capabilities)
+	}
+}
 
 func TestCreateExternalCredentialProfileRejectsNullCapabilities(t *testing.T) {
 	name := fmt.Sprintf("null-capabilities-%d", time.Now().UnixNano())

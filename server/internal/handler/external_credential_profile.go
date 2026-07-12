@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -13,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/logger"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -28,7 +31,7 @@ type ExternalCredentialProfileResponse struct {
 	Provider       string         `json:"provider"`
 	Name           string         `json:"name"`
 	SecretBinding  map[string]any `json:"secret_binding"`
-	Capabilities   any            `json:"capabilities"`
+	Capabilities   map[string]any `json:"capabilities"`
 	Status         string         `json:"status"`
 	LastVerifiedAt *string        `json:"last_verified_at"`
 	LastError      string         `json:"last_error,omitempty"`
@@ -69,7 +72,14 @@ type TestExternalCredentialProfileResponse struct {
 	LastError      string         `json:"last_error,omitempty"`
 }
 
-func externalCredentialProfileToResponse(profile db.ExternalCredentialProfile) ExternalCredentialProfileResponse {
+func externalCredentialProfileToResponse(profile db.ExternalCredentialProfile) (ExternalCredentialProfileResponse, error) {
+	var capabilities map[string]any
+	if err := json.Unmarshal(profile.Capabilities, &capabilities); err != nil {
+		return ExternalCredentialProfileResponse{}, fmt.Errorf("decode credential capabilities: %w", err)
+	}
+	if capabilities == nil {
+		return ExternalCredentialProfileResponse{}, fmt.Errorf("decode credential capabilities: expected JSON object")
+	}
 	binding := map[string]any{
 		"configured": profile.SecretRef != "" || len(profile.EncryptedSecret) > 0,
 		"redacted":   true,
@@ -91,13 +101,18 @@ func externalCredentialProfileToResponse(profile db.ExternalCredentialProfile) E
 		Provider:       profile.Provider,
 		Name:           profile.Name,
 		SecretBinding:  binding,
-		Capabilities:   decodeJSONDefault(profile.Capabilities, map[string]any{}),
+		Capabilities:   capabilities,
 		Status:         profile.Status,
 		LastVerifiedAt: timestampToPtr(profile.LastVerifiedAt),
 		LastError:      profile.LastError,
 		CreatedAt:      timestampToString(profile.CreatedAt),
 		UpdatedAt:      timestampToString(profile.UpdatedAt),
-	}
+	}, nil
+}
+
+func writeCredentialCapabilitiesDecodeError(w http.ResponseWriter, r *http.Request, profileID string, err error) {
+	slog.Error("decode credential capabilities failed", append(logger.RequestAttrs(r), "profile_id", profileID, "error", err)...)
+	writeError(w, http.StatusInternalServerError, "failed to decode credential capabilities")
 }
 
 func (h *Handler) ListExternalCredentialProfiles(w http.ResponseWriter, r *http.Request) {
@@ -124,7 +139,11 @@ func (h *Handler) ListExternalCredentialProfiles(w http.ResponseWriter, r *http.
 	}
 	resp := make([]ExternalCredentialProfileResponse, len(rows))
 	for i, row := range rows {
-		resp[i] = externalCredentialProfileToResponse(row)
+		resp[i], err = externalCredentialProfileToResponse(row)
+		if err != nil {
+			writeCredentialCapabilitiesDecodeError(w, r, uuidToString(row.ID), err)
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"profiles": resp})
 }
@@ -175,7 +194,12 @@ func (h *Handler) CreateExternalCredentialProfile(w http.ResponseWriter, r *http
 		writeError(w, http.StatusInternalServerError, "failed to create credential profile")
 		return
 	}
-	writeJSON(w, http.StatusCreated, externalCredentialProfileToResponse(profile))
+	resp, err := externalCredentialProfileToResponse(profile)
+	if err != nil {
+		writeCredentialCapabilitiesDecodeError(w, r, uuidToString(profile.ID), err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, resp)
 }
 
 func (h *Handler) GetExternalCredentialProfile(w http.ResponseWriter, r *http.Request) {
@@ -183,7 +207,12 @@ func (h *Handler) GetExternalCredentialProfile(w http.ResponseWriter, r *http.Re
 	if !ok {
 		return
 	}
-	writeJSON(w, http.StatusOK, externalCredentialProfileToResponse(profile))
+	resp, err := externalCredentialProfileToResponse(profile)
+	if err != nil {
+		writeCredentialCapabilitiesDecodeError(w, r, uuidToString(profile.ID), err)
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (h *Handler) UpdateExternalCredentialProfile(w http.ResponseWriter, r *http.Request) {
@@ -275,7 +304,12 @@ func (h *Handler) UpdateExternalCredentialProfile(w http.ResponseWriter, r *http
 		writeError(w, http.StatusInternalServerError, "failed to update credential profile")
 		return
 	}
-	writeJSON(w, http.StatusOK, externalCredentialProfileToResponse(profile))
+	resp, err := externalCredentialProfileToResponse(profile)
+	if err != nil {
+		writeCredentialCapabilitiesDecodeError(w, r, uuidToString(profile.ID), err)
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (h *Handler) TestExternalCredentialProfile(w http.ResponseWriter, r *http.Request) {
@@ -478,6 +512,12 @@ func normalizeCredentialCapabilities(w http.ResponseWriter, raw json.RawMessage)
 	}
 	var obj map[string]any
 	if err := json.Unmarshal(raw, &obj); err != nil {
+		if w != nil {
+			writeError(w, http.StatusBadRequest, "capabilities must be a JSON object")
+		}
+		return nil, false
+	}
+	if obj == nil {
 		if w != nil {
 			writeError(w, http.StatusBadRequest, "capabilities must be a JSON object")
 		}

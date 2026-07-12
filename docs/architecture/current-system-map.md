@@ -25,7 +25,7 @@ evidence reviewable by humans.
 | Database functions | 9 |
 | Database triggers | 4 |
 | Database indexes | 185 |
-| Migration files (up + down) | 74 |
+| Migration files (up + down) | 76 |
 | sqlc modules | 54 |
 | sqlc queries | 576 |
 | Go WebSocket events | 80 |
@@ -567,6 +567,8 @@ intentionally platform-specific.
 | 36 | require_agent_custom_state_shapes | up | — | 0 | 0 | 0 | `server/migrations/036_require_agent_custom_state_shapes.up.sql` |
 | 37 | require_agent_runtime_metadata_object | down | — | 0 | 0 | 0 | `server/migrations/037_require_agent_runtime_metadata_object.down.sql` |
 | 37 | require_agent_runtime_metadata_object | up | — | 0 | 0 | 0 | `server/migrations/037_require_agent_runtime_metadata_object.up.sql` |
+| 38 | require_credential_capabilities_object | down | — | 0 | 0 | 0 | `server/migrations/038_require_credential_capabilities_object.down.sql` |
+| 38 | require_credential_capabilities_object | up | — | 0 | 0 | 0 | `server/migrations/038_require_credential_capabilities_object.up.sql` |
 
 ### Current tables discovered from up migrations
 
