@@ -629,6 +629,13 @@ func promptEvaluationPayloadField(w http.ResponseWriter, raw json.RawMessage, fi
 		writeError(w, http.StatusBadRequest, field+" must be a JSON object")
 		return nil, false
 	}
+	if agentID, exists := obj["agent_id"]; exists {
+		value, ok := agentID.(string)
+		if !ok || strings.TrimSpace(value) == "" {
+			writeError(w, http.StatusBadRequest, field+".agent_id must be a non-empty string")
+			return nil, false
+		}
+	}
 	return mustJSONBytes(normalizePromptEvaluationPayloadObject(obj)), true
 }
 

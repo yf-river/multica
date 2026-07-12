@@ -232,29 +232,7 @@ func (h *Handler) selectPromptEvaluationRuntime(w http.ResponseWriter, r *http.R
 }
 
 func promptEvaluationRequestedAgentID(payload map[string]any) string {
-	for _, raw := range []any{
-		payload["执行智能体"],
-		firstValue(payload, "agent_id", "execution_agent_id", "target_agent_id", "执行智能体标识", "目标智能体标识"),
-		firstValue(payload, "execution_agent", "target_agent"),
-		firstValue(asMap(payload["历史调试载荷"]), "执行智能体", "execution_agent", "agent_id", "execution_agent_id", "target_agent_id", "执行智能体标识", "目标智能体标识"),
-		firstValue(asMap(payload["运行环境"]), "执行智能体", "execution_agent", "agent_id", "execution_agent_id", "target_agent_id", "执行智能体标识", "目标智能体标识"),
-	} {
-		if id := promptEvaluationAgentIDFromAny(raw); id != "" {
-			return id
-		}
-	}
-	return ""
-}
-
-func promptEvaluationAgentIDFromAny(raw any) string {
-	switch v := raw.(type) {
-	case string:
-		return strings.TrimSpace(v)
-	case map[string]any:
-		return stringFromAny(firstValue(v, "agent_id", "id", "智能体标识", "执行智能体标识"))
-	default:
-		return ""
-	}
+	return strings.TrimSpace(stringFromAny(payload["agent_id"]))
 }
 
 func promptEvaluationModelForAgent(agent db.Agent) string {

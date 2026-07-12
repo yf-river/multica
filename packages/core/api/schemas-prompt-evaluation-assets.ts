@@ -24,6 +24,7 @@ export const PromptEvaluationStrictPayloadSchema = z.object({
   ])).optional(),
   experiment_target: z.string().optional(),
   baseline_output: z.string().optional(),
+  agent_id: z.string().min(1).optional(),
 }).loose();
 
 export const PromptEvaluationPayloadSchema = z.record(z.string(), z.unknown()).default({}).superRefine((payload, ctx) => {

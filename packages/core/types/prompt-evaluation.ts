@@ -44,6 +44,7 @@ export interface PromptEvaluationStructuredPayload extends Record<string, unknow
   experiment_dimensions?: Array<string | PromptEvaluationExperimentDimension>;
   experiment_target?: string;
   baseline_output?: string;
+  agent_id?: string;
   linked_dataset_ids?: string[];
   linked_dataset_versions?: PromptEvaluationDatasetVersionBinding[];
   最近运行?: PromptEvaluationMetricSummary;

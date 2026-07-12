@@ -2763,25 +2763,14 @@ func TestPromptEvaluationOptimizationCandidateUsesAgentEvidence(t *testing.T) {
 	}
 }
 
-func TestPromptEvaluationRequestedAgentIDIgnoresAutoModeLabel(t *testing.T) {
-	payload := map[string]any{
-		"调试包": map[string]any{
-			"执行智能体": nil,
-		},
-		"运行环境": map[string]any{
-			"目标智能体":   "自动选择训练评估智能体",
-			"目标智能体标识": nil,
-		},
-	}
+func TestPromptEvaluationRequestedAgentIDUsesCanonicalFieldOnly(t *testing.T) {
+	payload := map[string]any{"运行环境": map[string]any{"目标智能体标识": "retired"}}
 	if got := promptEvaluationRequestedAgentID(payload); got != "" {
-		t.Fatalf("requested agent id = %q, want empty auto mode", got)
+		t.Fatalf("retired requested agent id = %q", got)
 	}
 
 	explicit := "11111111-1111-4111-8111-111111111111"
-	payload["运行环境"] = map[string]any{
-		"目标智能体":   "指定执行智能体",
-		"目标智能体标识": explicit,
-	}
+	payload["agent_id"] = explicit
 	if got := promptEvaluationRequestedAgentID(payload); got != explicit {
 		t.Fatalf("requested agent id = %q, want %q", got, explicit)
 	}
@@ -3045,7 +3034,7 @@ func TestRunPromptEvaluationAssetAgentUsesRequestedAgent(t *testing.T) {
 		"name":       "指定执行智能体实验",
 		"asset_type": "测试套件",
 		"payload": map[string]any{
-			"执行智能体": map[string]any{"agent_id": uuidToString(agent.ID)},
+			"agent_id": uuidToString(agent.ID),
 			"cases": []map[string]any{{
 				"case_name":         "指定执行智能体用例",
 				"variables":         map[string]any{"issue_title": "登录失败"},
@@ -3104,7 +3093,7 @@ func createPromptEvaluationAgentRunFixture(t *testing.T, assetName string, caseN
 		"asset_type": "测试套件",
 		"payload": map[string]any{
 			"experiment_dimensions": []string{"命中率", "缺失变量", "中文一致性"},
-			"cases": []map[string]any{{"case_name": caseName, "variables": map[string]any{"issue_title": caseName}, "expected_contains": []string{caseName}}},
+			"cases":                 []map[string]any{{"case_name": caseName, "variables": map[string]any{"issue_title": caseName}, "expected_contains": []string{caseName}}},
 		},
 	}))
 	if createW.Code != http.StatusCreated {

@@ -324,6 +324,7 @@ describe("PromptEvaluationAssetSchema", () => {
         experiment_dimensions: [{ name: "中文一致性", weight: 2 }],
         experiment_target: "current prompt",
         baseline_output: "current output",
+        agent_id: "agent-1",
       },
       status: "启用",
       structure_schema: "multica.training_evaluation.asset_profile.v1",
@@ -346,6 +347,7 @@ describe("PromptEvaluationAssetSchema", () => {
       experiment_dimensions: [{ name: "中文一致性", weight: 2 }],
       experiment_target: "current prompt",
       baseline_output: "current output",
+      agent_id: "agent-1",
     });
     expect(parsed.structured_case_count).toBe(1);
     expect(parsed.evaluation_dimension_count).toBe(2);
@@ -394,6 +396,10 @@ describe("PromptEvaluationAssetSchema", () => {
     expect(PromptEvaluationAssetSchema.safeParse({
       ...base,
       payload: { ...base.payload, baseline_output: { text: "not-a-string" } },
+    }).success).toBe(false);
+    expect(PromptEvaluationAssetSchema.safeParse({
+      ...base,
+      payload: { ...base.payload, agent_id: "" },
     }).success).toBe(false);
   });
 

@@ -1,6 +1,9 @@
 package handler
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -159,5 +162,17 @@ func TestPromptEvaluationExperimentContextUsesCanonicalFieldsOnly(t *testing.T) 
 	})
 	if len(legacy) != 1 || legacy[0].ExperimentTarget != "" || legacy[0].BaselineOutput != "" {
 		t.Fatalf("retired context aliases were consumed: %#v", legacy)
+	}
+}
+
+func TestPromptEvaluationPayloadRejectsMalformedAgentSelection(t *testing.T) {
+	for _, raw := range []string{`{"agent_id":{}}`, `{"agent_id":"  "}`} {
+		w := httptest.NewRecorder()
+		if _, ok := promptEvaluationPayloadField(w, json.RawMessage(raw), "payload", false); ok {
+			t.Fatalf("malformed agent selection was accepted: %s", raw)
+		}
+		if w.Code != http.StatusBadRequest {
+			t.Fatalf("status = %d, body = %s", w.Code, w.Body.String())
+		}
 	}
 }
