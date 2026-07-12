@@ -23,13 +23,13 @@
     "databaseTables": 84,
     "databaseFunctions": 9,
     "databaseTriggers": 4,
-    "databaseIndexes": 187,
-    "migrations": 114,
+    "databaseIndexes": 188,
+    "migrations": 116,
     "sqlcModules": 53,
-    "sqlcQueries": 571,
+    "sqlcQueries": 572,
     "goWebsocketEvents": 80,
     "typescriptWebsocketEvents": 70,
-    "zustandStores": 36,
+    "zustandStores": 37,
     "reactQueryConsumerFiles": 175,
     "environmentVariables": 217,
     "manualExternalSystems": 12
@@ -6904,6 +6904,39 @@
           "droppedFunctions": [],
           "droppedTriggers": [],
           "droppedIndexes": []
+        },
+        {
+          "version": 58,
+          "name": "add_external_credential_create_request",
+          "direction": "down",
+          "source": "server/migrations/058_add_external_credential_create_request.down.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 58,
+          "name": "add_external_credential_create_request",
+          "direction": "up",
+          "source": "server/migrations/058_add_external_credential_create_request.up.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [
+            {
+              "name": "external_credential_profile_create_request_unique",
+              "table": "external_credential_profile",
+              "unique": true,
+              "source": "server/migrations/058_add_external_credential_create_request.up.sql#external_credential_profile_create_request_unique"
+            }
+          ],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
         }
       ],
       "tables": [
@@ -7356,6 +7389,12 @@
           "table": "public.comment",
           "unique": false,
           "source": "server/migrations/001_current_schema.up.sql#comment_issue_resolved_at_idx"
+        },
+        {
+          "name": "external_credential_profile_create_request_unique",
+          "table": "external_credential_profile",
+          "unique": true,
+          "source": "server/migrations/058_add_external_credential_create_request.up.sql#external_credential_profile_create_request_unique"
         },
         {
           "name": "idx_activity_log_issue_keyset",
@@ -9489,6 +9528,11 @@
               "name": "GetDefaultExternalCredentialProfileForUser",
               "command": "one",
               "source": "server/pkg/db/queries/external_credential_profile.sql#GetDefaultExternalCredentialProfileForUser"
+            },
+            {
+              "name": "GetExternalCredentialProfileByCreateRequest",
+              "command": "one",
+              "source": "server/pkg/db/queries/external_credential_profile.sql#GetExternalCredentialProfileByCreateRequest"
             },
             {
               "name": "GetExternalCredentialProfileForUser",
@@ -13370,6 +13414,14 @@
         "persisted": false
       },
       {
+        "source": "packages/core/external-credentials/create-operation.ts",
+        "scope": "packages/core",
+        "exports": [
+          "useCredentialProfileCreateStore"
+        ],
+        "persisted": true
+      },
+      {
         "source": "packages/core/feedback/draft-store.ts",
         "scope": "packages/core",
         "exports": [
@@ -15602,7 +15654,7 @@
       },
       {
         "scope": "packages/core",
-        "count": 34
+        "count": 35
       }
     ],
     "reactQueryByScope": [

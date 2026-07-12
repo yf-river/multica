@@ -605,6 +605,29 @@ describe("ApiClient", () => {
     }
   });
 
+  it("retries credential-profile unknown outcomes without changing request identity", async () => {
+    const profile = {
+      id: "profile-1", user_id: "user-1", scope: "account", provider: "tapd",
+      name: "Current", secret_binding: { configured: true, redacted: true, mode: "secret_ref" },
+      capabilities: {}, status: "unverified", last_verified_at: null,
+      created_at: "now", updated_at: "now",
+    };
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify(profile), {
+        status: 201, headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+    await expect(client.createExternalCredentialProfile({
+      provider: "tapd", secret_ref: "env:TAPD_TOKEN",
+    })).resolves.toMatchObject({ id: "profile-1" });
+    const first = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    const second = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
+    expect(first["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/);
+    expect(second["Idempotency-Key"]).toBe(first["Idempotency-Key"]);
+  });
+
   it("validates Lark installation state without exposing installation secrets", async () => {
     const installation = {
       id: "installation-1",

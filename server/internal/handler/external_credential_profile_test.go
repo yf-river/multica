@@ -7,11 +7,72 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
+
+func TestCreateExternalCredentialProfileRecoversExactResult(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	name := "credential-replay-" + uuid.NewString()
+	key := uuid.NewString()
+	body := map[string]any{
+		"provider": "tapd", "name": name, "secret_ref": "env:CURRENT_TAPD_TOKEN",
+		"capabilities": map[string]any{"repository_read": true},
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM external_credential_profile WHERE user_id=$1 AND name=$2`, testUserID, name)
+	})
+	create := func(payload map[string]any) *httptest.ResponseRecorder {
+		req := newRequest(http.MethodPost, "/api/external-credential-profiles", payload)
+		req.Header.Set("Idempotency-Key", key)
+		w := httptest.NewRecorder()
+		testHandler.CreateExternalCredentialProfile(w, req)
+		return w
+	}
+	first := create(body)
+	replay := create(body)
+	if first.Code != http.StatusCreated {
+		t.Fatalf("first create = %d %s", first.Code, first.Body.String())
+	}
+	if replay.Code != http.StatusCreated || replay.Body.String() != first.Body.String() {
+		t.Fatalf("credential replay = %d %s, want exact %s", replay.Code, replay.Body.String(), first.Body.String())
+	}
+	responses := make(chan *httptest.ResponseRecorder, 8)
+	var wait sync.WaitGroup
+	for range 8 {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			responses <- create(body)
+		}()
+	}
+	wait.Wait()
+	close(responses)
+	for response := range responses {
+		if response.Code != http.StatusCreated || response.Body.String() != first.Body.String() {
+			t.Fatalf("concurrent replay = %d %s, want exact", response.Code, response.Body.String())
+		}
+	}
+	changed := create(map[string]any{
+		"provider": "tapd", "name": name + "-changed", "secret_ref": "env:CURRENT_TAPD_TOKEN",
+	})
+	if changed.Code != http.StatusConflict {
+		t.Fatalf("changed replay = %d %s, want 409", changed.Code, changed.Body.String())
+	}
+	var count int
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM external_credential_profile WHERE user_id=$1 AND idempotency_key=$2`, testUserID, key).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("credential rows = %d, want 1", count)
+	}
+}
 
 func TestExternalCredentialProfileToResponseRejectsNonObjectCapabilities(t *testing.T) {
 	for _, raw := range [][]byte{nil, []byte(`null`), []byte(`[]`), []byte(`"string"`)} {
@@ -141,6 +202,48 @@ func TestExternalCredentialProfileRawTokenRequiresEncryption(t *testing.T) {
 	}
 	if strings.Contains(w.Body.String(), "tapd-secret-token") {
 		t.Fatalf("error response leaked raw token: %s", w.Body.String())
+	}
+}
+
+func TestExternalCredentialProfileTokenReplayDoesNotNeedSecretAgain(t *testing.T) {
+	if testHandler == nil || testHandler.ExternalCredentialBox == nil {
+		t.Skip("credential encryption fixture not available")
+	}
+	name := "credential-token-replay-" + uuid.NewString()
+	key := uuid.NewString()
+	token := "credential-plaintext-sentinel"
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM external_credential_profile WHERE user_id=$1 AND name=$2`, testUserID, name)
+	})
+	request := func() *http.Request {
+		req := newRequest(http.MethodPost, "/api/external-credential-profiles", map[string]any{
+			"provider": "gongfeng", "name": name, "token": token,
+		})
+		req.Header.Set("Idempotency-Key", key)
+		return req
+	}
+	first := httptest.NewRecorder()
+	testHandler.CreateExternalCredentialProfile(first, request())
+	if first.Code != http.StatusCreated {
+		t.Fatalf("first token create = %d %s", first.Code, first.Body.String())
+	}
+	previous := testHandler.ExternalCredentialBox
+	testHandler.ExternalCredentialBox = nil
+	replay := httptest.NewRecorder()
+	testHandler.CreateExternalCredentialProfile(replay, request())
+	testHandler.ExternalCredentialBox = previous
+	if replay.Code != http.StatusCreated || replay.Body.String() != first.Body.String() {
+		t.Fatalf("token replay = %d %s, want exact %s", replay.Code, replay.Body.String(), first.Body.String())
+	}
+	if strings.Contains(first.Body.String(), token) || strings.Contains(replay.Body.String(), token) {
+		t.Fatal("credential response leaked the plaintext token")
+	}
+	var encryptedText, requestHash string
+	if err := testPool.QueryRow(context.Background(), `SELECT encode(encrypted_secret, 'hex'), request_hash FROM external_credential_profile WHERE user_id=$1 AND idempotency_key=$2`, testUserID, key).Scan(&encryptedText, &requestHash); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(encryptedText, token) || requestHash == token || len(requestHash) != 64 {
+		t.Fatalf("unsafe persisted credential metadata: encrypted_contains_token=%t hash_length=%d", strings.Contains(encryptedText, token), len(requestHash))
 	}
 }
 

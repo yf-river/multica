@@ -558,6 +558,30 @@ export class TestApiClient {
     throw new Error(`Failed to ensure workspace ${slug}: ${res.status} ${res.statusText}`);
   }
 
+  async listExternalCredentialProfiles(provider?: "gongfeng" | "tapd"): Promise<Array<{
+    id: string;
+    provider: string;
+    name: string;
+    secret_binding?: { configured?: boolean; hint?: string; mode?: string };
+  }>> {
+    const query = provider ? `?provider=${encodeURIComponent(provider)}` : "";
+    const res = await this.authedFetch(`/api/external-credential-profiles${query}`);
+    if (!res.ok) {
+      throw new Error(`list external credential profiles failed: ${res.status} ${await res.text()}`);
+    }
+    const body = await res.json();
+    return body.profiles ?? [];
+  }
+
+  async deleteExternalCredentialProfile(id: string): Promise<void> {
+    const res = await this.authedFetch(`/api/external-credential-profiles/${id}`, {
+      method: "DELETE",
+    });
+    if (!res.ok) {
+      throw new Error(`delete external credential profile failed: ${res.status} ${await res.text()}`);
+    }
+  }
+
   async ensureOnlineRuntime(provider = "codebuddy", name = `E2E ${provider} Runtime ${Date.now()}`) {
     if (!this.workspaceId) {
       throw new Error(`Cannot seed ${provider} runtime before workspace is selected`);

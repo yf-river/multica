@@ -9,6 +9,7 @@ import type {
   TestExternalCredentialProfileResponse,
   UpdateExternalCredentialProfileRequest,
 } from "../types";
+import { createExternalCredentialProfileWithRecovery } from "./create-operation";
 
 export const externalCredentialProfileKeys = {
   all: ["external-credential-profiles"] as const,
@@ -29,7 +30,7 @@ export function useCreateExternalCredentialProfile(provider?: ExternalCredential
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (data: CreateExternalCredentialProfileRequest) =>
-      api.createExternalCredentialProfile(data),
+      createExternalCredentialProfileWithRecovery(data),
     onSuccess: (created) => {
       const keyProvider = provider ?? (created.provider as ExternalCredentialProvider);
       qc.setQueryData<ListExternalCredentialProfilesResponse>(

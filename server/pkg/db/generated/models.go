@@ -352,6 +352,8 @@ type ExternalCredentialProfile struct {
 	LastError       string             `json:"last_error"`
 	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+	IdempotencyKey  pgtype.UUID        `json:"idempotency_key"`
+	RequestHash     pgtype.Text        `json:"request_hash"`
 }
 
 type Feedback struct {

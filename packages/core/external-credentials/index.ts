@@ -6,3 +6,4 @@ export {
   useTestExternalCredentialProfile,
   useUpdateExternalCredentialProfile,
 } from "./queries";
+export * from "./create-operation";

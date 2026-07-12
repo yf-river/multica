@@ -1,15 +1,20 @@
 -- name: CreateExternalCredentialProfile :one
 INSERT INTO external_credential_profile (
-    user_id, provider, name, secret_ref, encrypted_secret, secret_hint,
-    capabilities, status, last_verified_at, last_error
+    id, user_id, provider, name, secret_ref, encrypted_secret, secret_hint,
+    capabilities, status, last_verified_at, last_error, idempotency_key, request_hash
 ) VALUES (
-    $1, $2, $3, $4, $5,
-    $6, COALESCE(sqlc.narg('capabilities')::jsonb, '{}'::jsonb),
+    $1, $2, $3, $4, $5, $6,
+    $7, COALESCE(sqlc.narg('capabilities')::jsonb, '{}'::jsonb),
     COALESCE(sqlc.narg('status')::text, 'unverified'),
     sqlc.narg('last_verified_at'),
-    COALESCE(sqlc.narg('last_error')::text, '')
+    COALESCE(sqlc.narg('last_error')::text, ''),
+    sqlc.narg('idempotency_key'), sqlc.narg('request_hash')
 )
 RETURNING *;
+
+-- name: GetExternalCredentialProfileByCreateRequest :one
+SELECT * FROM external_credential_profile
+WHERE user_id = $1 AND idempotency_key = $2;
 
 -- name: ListExternalCredentialProfilesByUser :many
 SELECT * FROM external_credential_profile

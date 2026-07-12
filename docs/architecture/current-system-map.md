@@ -24,13 +24,13 @@ evidence reviewable by humans.
 | Database tables | 84 |
 | Database functions | 9 |
 | Database triggers | 4 |
-| Database indexes | 187 |
-| Migration files (up + down) | 114 |
+| Database indexes | 188 |
+| Migration files (up + down) | 116 |
 | sqlc modules | 53 |
-| sqlc queries | 571 |
+| sqlc queries | 572 |
 | Go WebSocket events | 80 |
 | TypeScript WebSocket events | 70 |
-| Zustand store definitions | 36 |
+| Zustand store definitions | 37 |
 | React Query consumer files | 175 |
 | Environment variable names | 217 |
 | Manually identified external systems | 12 |
@@ -607,6 +607,8 @@ intentionally platform-specific.
 | 56 | add_prompt_library_create_requests | up | — | 0 | 0 | 0 | `server/migrations/056_add_prompt_library_create_requests.up.sql` |
 | 57 | add_workspace_create_request | down | — | 0 | 0 | 0 | `server/migrations/057_add_workspace_create_request.down.sql` |
 | 57 | add_workspace_create_request | up | — | 0 | 0 | 0 | `server/migrations/057_add_workspace_create_request.up.sql` |
+| 58 | add_external_credential_create_request | down | — | 0 | 0 | 0 | `server/migrations/058_add_external_credential_create_request.down.sql` |
+| 58 | add_external_credential_create_request | up | — | 0 | 0 | 1 | `server/migrations/058_add_external_credential_create_request.up.sql` |
 
 ### Current tables discovered from up migrations
 
@@ -705,11 +707,11 @@ intentionally platform-specific.
 | `trg_tu_dirty_hourly` | `public.task_usage` | `public.enqueue_task_usage_hourly_dirty_for_tu` | `server/migrations/001_current_schema.up.sql#trg_tu_dirty_hourly` |
 
 - Functions: `public.enqueue_task_usage_hourly_dirty_for_atq`, `public.enqueue_task_usage_hourly_dirty_for_issue_delete`, `public.enqueue_task_usage_hourly_dirty_for_issue_project`, `public.enqueue_task_usage_hourly_dirty_for_tu`, `public.prune_task_usage_hourly_dirty`, `public.rollup_task_usage_hourly`, `public.rollup_task_usage_hourly_window`, `public.task_usage_hour_bucket`, `public.task_usage_hourly_rollup_lag_seconds`
-- Indexes: 187 current definitions; full name/table/uniqueness evidence is in the JSON companion.
+- Indexes: 188 current definitions; full name/table/uniqueness evidence is in the JSON companion.
 
 ### sqlc modules
 
-All 571 query names, commands, and stable source anchors are stored in the JSON companion.
+All 572 query names, commands, and stable source anchors are stored in the JSON companion.
 
 | Module | Queries | SQL source | Generated source |
 | --- | --- | --- | --- |
@@ -722,7 +724,7 @@ All 571 query names, commands, and stable source anchors are stored in the JSON 
 | chat_idempotency | 3 | `server/pkg/db/queries/chat_idempotency.sql` | `server/pkg/db/generated/chat_idempotency.sql.go` |
 | comment | 22 | `server/pkg/db/queries/comment.sql` | `server/pkg/db/generated/comment.sql.go` |
 | domain_event_outbox | 9 | `server/pkg/db/queries/domain_event_outbox.sql` | `server/pkg/db/generated/domain_event_outbox.sql.go` |
-| external_credential_profile | 6 | `server/pkg/db/queries/external_credential_profile.sql` | `server/pkg/db/generated/external_credential_profile.sql.go` |
+| external_credential_profile | 7 | `server/pkg/db/queries/external_credential_profile.sql` | `server/pkg/db/generated/external_credential_profile.sql.go` |
 | feedback | 2 | `server/pkg/db/queries/feedback.sql` | `server/pkg/db/generated/feedback.sql.go` |
 | github | 19 | `server/pkg/db/queries/github.sql` | `server/pkg/db/generated/github.sql.go` |
 | inbox | 13 | `server/pkg/db/queries/inbox.sql` | `server/pkg/db/generated/inbox.sql.go` |
@@ -801,6 +803,7 @@ still include daemon-only/backend projection events and possible frontend gaps.
 | packages/core | `packages/core/chat/recent-context-store.ts` | `useRecentContextStore` | yes |
 | packages/core | `packages/core/chat/store.ts` | `createChatStore` | no |
 | packages/core | `packages/core/config/index.ts` | `configStore`, `useConfigStore` | no |
+| packages/core | `packages/core/external-credentials/create-operation.ts` | `useCredentialProfileCreateStore` | yes |
 | packages/core | `packages/core/feedback/draft-store.ts` | `useFeedbackDraftStore` | yes |
 | packages/core | `packages/core/issues/issue-create-pending-store.ts` | `useIssueCreatePendingStore` | yes |
 | packages/core | `packages/core/issues/store.ts` | `useIssueStore` | no |

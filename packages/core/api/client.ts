@@ -2466,16 +2466,29 @@ export class ApiClient extends ApiTransport {
     );
   }
 
+  async getExternalCredentialProfile(id: string): Promise<ExternalCredentialProfile> {
+    const raw = await this.fetch<unknown>(`/api/external-credential-profiles/${id}`);
+    return parseOrThrow(raw, ExternalCredentialProfileSchema, EMPTY_EXTERNAL_CREDENTIAL_PROFILE, {
+      endpoint: "GET /api/external-credential-profiles/:id",
+    });
+  }
+
   async createExternalCredentialProfile(
     data: CreateExternalCredentialProfileRequest,
+    idempotencyKey = generateUUID(),
   ): Promise<ExternalCredentialProfile> {
-    const raw = await this.fetch<unknown>("/api/external-credential-profiles", {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    return parseOrThrow(raw, ExternalCredentialProfileSchema, EMPTY_EXTERNAL_CREDENTIAL_PROFILE, {
-      endpoint: "POST /api/external-credential-profiles",
-    });
+    const attempt = async () => {
+      const raw = await this.fetch<unknown>("/api/external-credential-profiles", {
+        method: "POST",
+        body: JSON.stringify(data),
+        extraHeaders: { "Idempotency-Key": idempotencyKey },
+      });
+      return parseOrThrow(raw, ExternalCredentialProfileSchema, EMPTY_EXTERNAL_CREDENTIAL_PROFILE, {
+        endpoint: "POST /api/external-credential-profiles",
+        mayHaveCommitted: true,
+      });
+    };
+    return this.retryUnknownMutationOnce(attempt);
   }
 
   async updateExternalCredentialProfile(

@@ -19,6 +19,17 @@ and exact `201` response commit together. The account-scoped Core intent
 survives reload without leaking into workspace-scoped storage. Deleting the
 Workspace cascades its recovery witness, matching the resource lifecycle.
 
+External credential profiles use an account-scoped variant because they are
+not workspace resources and their request may contain a secret. The request
+UUID is also the profile UUID, while the profile row stores only the UUID and a
+SHA-256 request fingerprint alongside the encrypted secret or server-side
+secret reference. Core persists only that UUID, fingerprint and timestamp;
+raw tokens are never written to browser storage. After a reload, Core recovers
+the user-scoped profile by UUID before accepting another create. Exact retries
+return the same redacted `201` response, changed input with the same key is
+rejected, and concurrent retries are constrained by `(user_id,
+idempotency_key)`.
+
 Prompt Library Item atomically commits the item, initial version and exact `201`
 response. Prompt Library Version atomically updates the current item, inserts
 one version and records the exact `201` response. Prompt Library Trial uses the
