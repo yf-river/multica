@@ -1059,7 +1059,14 @@ func (h *Handler) RunPromptEvaluationAsset(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	result := buildPromptEvaluationRunResult(asset, prompt, payload, cases)
-	run, ok := h.persistPromptEvaluationLocalRun(w, r, asset, result, parseUUID(userID))
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start prompt evaluation transaction")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	run, ok := h.persistPromptEvaluationLocalRun(w, r, qtx, asset, result, parseUUID(userID))
 	if !ok {
 		return
 	}
@@ -1071,7 +1078,7 @@ func (h *Handler) RunPromptEvaluationAsset(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "failed to encode prompt evaluation result")
 		return
 	}
-	updated, err := h.Queries.UpdatePromptEvaluationAsset(r.Context(), db.UpdatePromptEvaluationAssetParams{
+	updated, err := qtx.UpdatePromptEvaluationAsset(r.Context(), db.UpdatePromptEvaluationAssetParams{
 		ID:          asset.ID,
 		WorkspaceID: asset.WorkspaceID,
 		PromptID:    asset.PromptID,
@@ -1079,6 +1086,10 @@ func (h *Handler) RunPromptEvaluationAsset(w http.ResponseWriter, r *http.Reques
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to save prompt evaluation result")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit prompt evaluation result")
 		return
 	}
 	writeJSON(w, http.StatusOK, promptEvaluationAssetToResponse(updated))

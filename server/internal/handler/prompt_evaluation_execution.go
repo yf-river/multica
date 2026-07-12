@@ -13,7 +13,7 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-func (h *Handler) persistPromptEvaluationLocalRun(w http.ResponseWriter, r *http.Request, asset db.PromptEvaluationAsset, result promptEvaluationRunResult, createdBy pgtype.UUID) (db.PromptEvaluationRun, bool) {
+func (h *Handler) persistPromptEvaluationLocalRun(w http.ResponseWriter, r *http.Request, queries *db.Queries, asset db.PromptEvaluationAsset, result promptEvaluationRunResult, createdBy pgtype.UUID) (db.PromptEvaluationRun, bool) {
 	now := time.Now()
 	status := "通过"
 	if result.FailedCases > 0 {
@@ -44,7 +44,7 @@ func (h *Handler) persistPromptEvaluationLocalRun(w http.ResponseWriter, r *http
 	if len(datasetVersionBindings) > 0 {
 		metrics["数据集版本数"] = len(datasetVersionBindings)
 	}
-	run, err := h.Queries.CreatePromptEvaluationRun(r.Context(), db.CreatePromptEvaluationRunParams{
+	run, err := queries.CreatePromptEvaluationRun(r.Context(), db.CreatePromptEvaluationRunParams{
 		WorkspaceID:       asset.WorkspaceID,
 		AssetID:           asset.ID,
 		PromptID:          asset.PromptID,
@@ -74,7 +74,7 @@ func (h *Handler) persistPromptEvaluationLocalRun(w http.ResponseWriter, r *http
 		writeError(w, http.StatusInternalServerError, "failed to create prompt evaluation run")
 		return db.PromptEvaluationRun{}, false
 	}
-	if err := h.persistPromptEvaluationDimensionScores(r.Context(), h.Queries, run, result.DimensionScores, "local_run"); err != nil {
+	if err := h.persistPromptEvaluationDimensionScores(r.Context(), queries, run, result.DimensionScores, "local_run"); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to persist prompt evaluation dimension scores")
 		return db.PromptEvaluationRun{}, false
 	}
@@ -83,7 +83,7 @@ func (h *Handler) persistPromptEvaluationLocalRun(w http.ResponseWriter, r *http
 		if caseResult.Status != "通过" {
 			failureReason = result.FailureReason
 		}
-		if _, err := h.Queries.CreatePromptEvaluationTrial(r.Context(), db.CreatePromptEvaluationTrialParams{
+		if _, err := queries.CreatePromptEvaluationTrial(r.Context(), db.CreatePromptEvaluationTrialParams{
 			RunID:          run.ID,
 			WorkspaceID:    asset.WorkspaceID,
 			AssetID:        asset.ID,

@@ -777,7 +777,7 @@ func (h *Handler) RunPromptEvaluationSkillReEval(w http.ResponseWriter, r *http.
 		return
 	}
 	result := buildPromptEvaluationRunResult(asset, prompt, payload, cases)
-	run, ok := h.persistPromptEvaluationLocalRun(w, r, asset, result, parseUUID(userID))
+	run, ok := h.persistPromptEvaluationLocalRun(w, r, h.Queries, asset, result, parseUUID(userID))
 	if !ok {
 		return
 	}
