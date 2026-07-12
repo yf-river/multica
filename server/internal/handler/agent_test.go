@@ -190,6 +190,37 @@ func TestCreateAgent_RejectsDuplicateName(t *testing.T) {
 	}
 }
 
+func TestCreateAgent_RejectsNonObjectRuntimeConfig(t *testing.T) {
+	const agentName = "invalid-runtime-config-test-agent"
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(),
+			`DELETE FROM agent WHERE workspace_id = $1 AND name = $2`,
+			testWorkspaceID, agentName,
+		)
+	})
+
+	w := httptest.NewRecorder()
+	testHandler.CreateAgent(w, newRequest(http.MethodPost, "/api/agents", map[string]any{
+		"name":           agentName,
+		"runtime_id":     testRuntimeID,
+		"scope":          "personal",
+		"runtime_config": []any{"not", "an", "object"},
+	}))
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("CreateAgent non-object runtime_config: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var count int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT count(*)::int FROM agent WHERE workspace_id = $1 AND name = $2
+	`, testWorkspaceID, agentName).Scan(&count); err != nil {
+		t.Fatalf("count invalid-runtime-config agents: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("CreateAgent persisted %d invalid-runtime-config rows", count)
+	}
+}
+
 func TestCreateAgent_DefaultsMaxConcurrentTasksToTwenty(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
