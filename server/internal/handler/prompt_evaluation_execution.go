@@ -12,7 +12,7 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-func (h *Handler) persistPromptEvaluationLocalRun(w http.ResponseWriter, r *http.Request, queries *db.Queries, asset db.PromptEvaluationAsset, result promptEvaluationRunResult, createdBy pgtype.UUID) (db.PromptEvaluationRun, bool) {
+func (h *Handler) persistPromptEvaluationLocalRun(w http.ResponseWriter, r *http.Request, queries *db.Queries, runID pgtype.UUID, asset db.PromptEvaluationAsset, result promptEvaluationRunResult, createdBy pgtype.UUID) (db.PromptEvaluationRun, bool) {
 	now := time.Now()
 	status := "通过"
 	if result.FailedCases > 0 {
@@ -43,7 +43,8 @@ func (h *Handler) persistPromptEvaluationLocalRun(w http.ResponseWriter, r *http
 	if len(datasetVersionBindings) > 0 {
 		metrics["数据集版本数"] = len(datasetVersionBindings)
 	}
-	run, err := queries.CreatePromptEvaluationRun(r.Context(), db.CreatePromptEvaluationRunParams{
+	run, err := queries.CreatePromptEvaluationRunWithID(r.Context(), db.CreatePromptEvaluationRunWithIDParams{
+		ID:                runID,
 		WorkspaceID:       asset.WorkspaceID,
 		AssetID:           asset.ID,
 		PromptID:          asset.PromptID,

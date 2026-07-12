@@ -95,7 +95,10 @@ test.describe("Skill candidate workflow", () => {
       },
       status: "启用",
     });
-    await api.runPromptEvaluationAsset(asset.id);
+    const localRunRequestId = crypto.randomUUID();
+    const localRun = await api.runPromptEvaluationAsset(asset.id, localRunRequestId);
+    const recoveredLocalRun = await api.runPromptEvaluationAsset(asset.id, localRunRequestId);
+    expect(recoveredLocalRun).toEqual(localRun);
     const failedRun = await expect
       .poll(async () => {
         const runs = await api.listPromptEvaluationRuns({ asset_id: asset.id });

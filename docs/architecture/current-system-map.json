@@ -24,12 +24,12 @@
     "databaseFunctions": 9,
     "databaseTriggers": 4,
     "databaseIndexes": 188,
-    "migrations": 122,
+    "migrations": 124,
     "sqlcModules": 53,
     "sqlcQueries": 577,
     "goWebsocketEvents": 80,
     "typescriptWebsocketEvents": 70,
-    "zustandStores": 39,
+    "zustandStores": 40,
     "reactQueryConsumerFiles": 175,
     "environmentVariables": 217,
     "manualExternalSystems": 12
@@ -7015,6 +7015,32 @@
           "droppedFunctions": [],
           "droppedTriggers": [],
           "droppedIndexes": []
+        },
+        {
+          "version": 62,
+          "name": "add_prompt_evaluation_local_run_request",
+          "direction": "down",
+          "source": "server/migrations/062_add_prompt_evaluation_local_run_request.down.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
+        },
+        {
+          "version": 62,
+          "name": "add_prompt_evaluation_local_run_request",
+          "direction": "up",
+          "source": "server/migrations/062_add_prompt_evaluation_local_run_request.up.sql",
+          "tablesCreated": [],
+          "functionsCreated": [],
+          "triggersCreated": [],
+          "indexesCreated": [],
+          "droppedFunctions": [],
+          "droppedTriggers": [],
+          "droppedIndexes": []
         }
       ],
       "tables": [
@@ -13672,6 +13698,14 @@
         "persisted": true
       },
       {
+        "source": "packages/core/prompt-library/skill-re-eval-run.ts",
+        "scope": "packages/core",
+        "exports": [
+          "useSkillReEvalRunStore"
+        ],
+        "persisted": true
+      },
+      {
         "source": "packages/core/prompt-library/trial-create.ts",
         "scope": "packages/core",
         "exports": [
@@ -15773,7 +15807,7 @@
       },
       {
         "scope": "packages/core",
-        "count": 37
+        "count": 38
       }
     ],
     "reactQueryByScope": [
@@ -18870,6 +18904,7 @@
           "server/internal/handler/prompt_evaluation_dataset_versions.go",
           "server/internal/handler/prompt_evaluation_evidence.go",
           "server/internal/handler/prompt_evaluation_execution.go",
+          "server/internal/handler/prompt_evaluation_local_run_idempotency.go",
           "server/internal/handler/prompt_evaluation_runs.go",
           "server/internal/handler/prompt_evaluation_skill.go",
           "server/internal/handler/prompt_library_create_idempotency.go",

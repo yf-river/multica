@@ -703,6 +703,25 @@ describe("ApiClient", () => {
     expect(fetchMock.mock.calls[1]?.[1]?.body).toBe(fetchMock.mock.calls[0]?.[1]?.body);
   });
 
+  it("retries a skill re-eval unknown outcome with the same explicit identity", async () => {
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new TypeError("response lost"))
+      .mockResolvedValueOnce(new Response(JSON.stringify({}), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      }));
+    vi.stubGlobal("fetch", fetchMock);
+    const client = new ApiClient("https://api.example.test");
+    const requestId = "10000000-0000-4000-8000-000000000013";
+
+    await expect(client.runPromptEvaluationSkillReEval(
+      "candidate-1", { asset_id: "asset-1" }, requestId,
+    )).rejects.toMatchObject({ code: "api_response_contract_invalid", mayHaveCommitted: true });
+    const first = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
+    const second = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
+    expect(first["Idempotency-Key"]).toBe(requestId);
+    expect(second["Idempotency-Key"]).toBe(requestId);
+  });
+
   it("validates Lark installation state without exposing installation secrets", async () => {
     const installation = {
       id: "installation-1",

@@ -96,6 +96,8 @@ func TestRunPromptEvaluationSkillReEvalRollsBackWhenCandidateEvidenceFails(t *te
 	successReq := newRequest(http.MethodPost, "/api/prompt-evaluation-optimization-candidates/"+candidateID+"/skill-re-eval/run", map[string]any{
 		"asset_id": reEvalAsset.ID,
 	})
+	requestKey := uuid.NewString()
+	successReq.Header.Set("Idempotency-Key", requestKey)
 	testHandler.RunPromptEvaluationSkillReEval(successW, withURLParam(successReq, "id", candidateID))
 	if successW.Code != http.StatusOK {
 		t.Fatalf("successful skill re-eval: expected 200, got %d: %s", successW.Code, successW.Body.String())
@@ -114,6 +116,15 @@ func TestRunPromptEvaluationSkillReEvalRollsBackWhenCandidateEvidenceFails(t *te
 	}
 	if baselineRuns != 1 || baselineTrials != 1 {
 		t.Fatalf("successful skill re-eval writes: runs=%d trials=%d scores=%d", baselineRuns, baselineTrials, baselineScores)
+	}
+	replayW := httptest.NewRecorder()
+	replayReq := newRequest(http.MethodPost, "/api/prompt-evaluation-optimization-candidates/"+candidateID+"/skill-re-eval/run", map[string]any{
+		"asset_id": reEvalAsset.ID,
+	})
+	replayReq.Header.Set("Idempotency-Key", requestKey)
+	testHandler.RunPromptEvaluationSkillReEval(replayW, withURLParam(replayReq, "id", candidateID))
+	if replayW.Code != http.StatusOK || replayW.Body.String() != successW.Body.String() {
+		t.Fatalf("skill re-eval replay = %d %s, want exact %s", replayW.Code, replayW.Body.String(), successW.Body.String())
 	}
 
 	functionName := "test_skill_re_eval_candidate_failure_" + suffix

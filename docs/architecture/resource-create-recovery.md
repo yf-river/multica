@@ -50,6 +50,14 @@ The request UUID is the Run UUID. Concurrent or response-loss retries return
 the stored response and never append a second Asset history entry or publish a
 second task wake-up; reusing that key for another Asset is rejected.
 
+Local Prompt Evaluation and Skill re-evaluation share one
+`prompt_evaluation_local_run` recovery type. The fingerprint includes the
+operation kind and its Asset/Candidate intent, while the request UUID is the
+structured Run UUID. Run, Trial and dimension scores plus Asset history—and,
+for Skill re-evaluation, Candidate evidence—commit with the exact response.
+The Prompt Library workflow persists the current Skill re-eval intent per
+workspace for 30 days and recovers it before starting a changed operation.
+
 External credential profiles use an account-scoped variant because they are
 not workspace resources and their request may contain a secret. The request
 UUID is also the profile UUID, while the profile row stores only the UUID and a

@@ -1779,12 +1779,20 @@ export class TestApiClient {
     }
   }
 
-  async runPromptEvaluationAsset(id: string): Promise<PromptEvaluationAsset> {
-    const res = await this.authedFetch(`/api/prompt-evaluation-assets/${id}/run`, { method: "POST" });
-    if (!res.ok) {
-      throw new Error(`run prompt evaluation asset failed: ${res.status} ${await res.text()}`);
+  async runPromptEvaluationAsset(id: string, requestId = crypto.randomUUID()): Promise<PromptEvaluationAsset> {
+    const attempt = async () => {
+      const res = await this.authedFetch(`/api/prompt-evaluation-assets/${id}/run`, {
+        method: "POST", headers: { "Idempotency-Key": requestId },
+      });
+      if (!res.ok) throw new Error(`run prompt evaluation asset failed: ${res.status} ${await res.text()}`);
+      return res.json();
+    };
+    try {
+      return await attempt();
+    } catch (error) {
+      if (!(error instanceof TypeError)) throw error;
+      return attempt();
     }
-    return res.json();
   }
 
   async runPromptEvaluationAssetAgent(id: string, requestId = crypto.randomUUID()): Promise<PromptEvaluationAgentRunResponse> {
@@ -1985,15 +1993,26 @@ export class TestApiClient {
     return res.json();
   }
 
-  async runPromptEvaluationSkillReEval(candidateId: string, data: Record<string, unknown> = {}) {
-    const res = await this.authedFetch(`/api/prompt-evaluation-optimization-candidates/${candidateId}/skill-re-eval-run`, {
-      method: "POST",
-      body: JSON.stringify(data),
-    });
-    if (!res.ok) {
-      throw new Error(`run skill re-eval failed: ${res.status} ${await res.text()}`);
+  async runPromptEvaluationSkillReEval(
+    candidateId: string,
+    data: Record<string, unknown> = {},
+    requestId = crypto.randomUUID(),
+  ) {
+    const attempt = async () => {
+      const res = await this.authedFetch(`/api/prompt-evaluation-optimization-candidates/${candidateId}/skill-re-eval-run`, {
+        method: "POST",
+        body: JSON.stringify(data),
+        headers: { "Idempotency-Key": requestId },
+      });
+      if (!res.ok) throw new Error(`run skill re-eval failed: ${res.status} ${await res.text()}`);
+      return res.json();
+    };
+    try {
+      return await attempt();
+    } catch (error) {
+      if (!(error instanceof TypeError)) throw error;
+      return attempt();
     }
-    return res.json();
   }
 
   async listPromptEvaluationCasesPage(params?: {

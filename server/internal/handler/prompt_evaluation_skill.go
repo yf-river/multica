@@ -698,13 +698,35 @@ func (h *Handler) RunPromptEvaluationSkillReEval(w http.ResponseWriter, r *http.
 	if !ok {
 		return
 	}
-	candidate, ok := loadPromptEvaluationOptimizationCandidate(w, r, h.Queries, workspaceUUID, candidateID)
-	if !ok {
-		return
-	}
 	var req RunPromptEvaluationSkillReEvalRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && err.Error() != "EOF" {
 		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	requestHash, err := hashRequestFingerprint(promptEvaluationLocalRunFingerprint{
+		Operation: "skill_re_eval_run", CandidateID: uuidToString(candidateID), AssetID: strings.TrimSpace(req.AssetID),
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to fingerprint skill re-eval run")
+		return
+	}
+	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	requestActorID := parseUUID(userID)
+	if replay, found, err := loadPromptEvaluationLocalRunReplay(
+		h, r.Context(), workspaceUUID, requestActorID, idempotencyKey, requestHash,
+		func(response PromptEvaluationSkillReEvalRunResponse) bool { return response.Run.ID != "" },
+	); err != nil {
+		writePromptEvaluationLocalRunReplayError(w, err)
+		return
+	} else if found {
+		writeJSON(w, http.StatusOK, replay)
+		return
+	}
+	candidate, ok := loadPromptEvaluationOptimizationCandidate(w, r, h.Queries, workspaceUUID, candidateID)
+	if !ok {
 		return
 	}
 	assetIDText := strings.TrimSpace(req.AssetID)
@@ -760,7 +782,31 @@ func (h *Handler) RunPromptEvaluationSkillReEval(w http.ResponseWriter, r *http.
 	}
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
-	run, ok := h.persistPromptEvaluationLocalRun(w, r, qtx, asset, result, parseUUID(userID))
+	_, err = qtx.ReserveResourceCreateRequest(r.Context(), db.ReserveResourceCreateRequestParams{
+		WorkspaceID: workspaceUUID, ActorID: requestActorID, ResourceType: resourceTypePromptLocalRun,
+		IdempotencyKey: idempotencyKey, RequestHash: requestHash,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		_ = tx.Rollback(r.Context())
+		replay, found, replayErr := loadPromptEvaluationLocalRunReplay(
+			h, r.Context(), workspaceUUID, requestActorID, idempotencyKey, requestHash,
+			func(response PromptEvaluationSkillReEvalRunResponse) bool { return response.Run.ID != "" },
+		)
+		if replayErr != nil || !found {
+			if replayErr == nil {
+				replayErr = errors.New("skill re-eval run replay disappeared after conflict")
+			}
+			writePromptEvaluationLocalRunReplayError(w, replayErr)
+			return
+		}
+		writeJSON(w, http.StatusOK, replay)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reserve skill re-eval run")
+		return
+	}
+	run, ok := h.persistPromptEvaluationLocalRun(w, r, qtx, idempotencyKey, asset, result, requestActorID)
 	if !ok {
 		return
 	}
@@ -785,12 +831,8 @@ func (h *Handler) RunPromptEvaluationSkillReEval(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusInternalServerError, "failed to persist skill re-eval run evidence")
 		return
 	}
-	if err := tx.Commit(r.Context()); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to commit skill re-eval run")
-		return
-	}
 	sourceSnapshot, reEvalSnapshot := skillSnapshotsFromReEvalPayload(payload)
-	writeJSON(w, http.StatusOK, PromptEvaluationSkillReEvalRunResponse{
+	response := PromptEvaluationSkillReEvalRunResponse{
 		Candidate:      promptEvaluationOptimizationCandidateToResponse(updatedCandidate),
 		Asset:          promptEvaluationAssetToResponse(updatedAsset),
 		Run:            promptEvaluationRunToResponse(run),
@@ -799,7 +841,19 @@ func (h *Handler) RunPromptEvaluationSkillReEval(w http.ResponseWriter, r *http.
 		CaseCount:      len(cases),
 		ProofScope:     "local_prompt_evaluation_run",
 		ReEvalRun:      reEvalRun,
-	})
+	}
+	if err := completeResourceCreateRequest(
+		r.Context(), qtx, workspaceUUID, requestActorID, resourceTypePromptLocalRun,
+		idempotencyKey, requestHash, run.ID, response,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to complete skill re-eval run")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit skill re-eval run")
+		return
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (h *Handler) mergePromptEvaluationOptimizationCandidateMetrics(ctx context.Context, workspaceID pgtype.UUID, candidateID pgtype.UUID, patch map[string]any) (db.PromptEvaluationOptimizationCandidate, error) {

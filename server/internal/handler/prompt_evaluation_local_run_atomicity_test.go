@@ -8,7 +8,44 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/google/uuid"
 )
+
+func TestRunPromptEvaluationAssetRecoversExactLocalRun(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	cleanupPromptEvaluationAgentRunTest(t)
+	assetName := "recoverable local evaluation " + uuid.NewString()
+	asset, _ := createPromptEvaluationAgentRunAssetFixture(t, assetName, "local response loss")
+	key := uuid.NewString()
+	run := func() *httptest.ResponseRecorder {
+		req := withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+asset.ID+"/run", nil), "id", asset.ID)
+		req.Header.Set("Idempotency-Key", key)
+		w := httptest.NewRecorder()
+		testHandler.RunPromptEvaluationAsset(w, req)
+		return w
+	}
+	first := run()
+	replay := run()
+	if first.Code != http.StatusOK {
+		t.Fatalf("first local run = %d %s", first.Code, first.Body.String())
+	}
+	if replay.Code != http.StatusOK || replay.Body.String() != first.Body.String() {
+		t.Fatalf("local run replay = %d %s, want exact %s", replay.Code, replay.Body.String(), first.Body.String())
+	}
+	var runs, trials int
+	if err := testPool.QueryRow(context.Background(), `SELECT
+		(SELECT count(*) FROM prompt_evaluation_run WHERE asset_id=$1),
+		(SELECT count(*) FROM prompt_evaluation_trial WHERE asset_id=$1)
+	`, asset.ID).Scan(&runs, &trials); err != nil {
+		t.Fatal(err)
+	}
+	if runs != 1 || trials != 1 {
+		t.Fatalf("local run writes = runs:%d trials:%d, want 1/1", runs, trials)
+	}
+}
 
 func TestRunPromptEvaluationAssetRollsBackPartialRun(t *testing.T) {
 	if testHandler == nil || testPool == nil {

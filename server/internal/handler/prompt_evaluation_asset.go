@@ -740,25 +740,25 @@ type PromptEvaluationDimensionScoreTrendResponse struct {
 }
 
 type PromptEvaluationOptimizationCandidateResponse struct {
-	ID                   string  `json:"id"`
-	WorkspaceID          string  `json:"workspace_id"`
-	AssetID              string  `json:"asset_id"`
-	RunID                string  `json:"run_id"`
-	PromptID             string  `json:"prompt_id"`
-	CandidateName        string  `json:"candidate_name"`
-	CandidateContent     string  `json:"candidate_content"`
-	Rationale            string  `json:"rationale"`
-	FailedCaseCount      int32   `json:"failed_case_count"`
-	SourceFailureSummary any     `json:"source_failure_summary"`
-	SourcePromptSnapshot any     `json:"source_prompt_snapshot"`
-	Metrics              any     `json:"metrics"`
-	SkillPatch           any     `json:"skill_patch,omitempty"`
-	Status               string  `json:"status"`
-	PublishedPromptID    *string `json:"published_prompt_id"`
-	PublishedAt          string  `json:"published_at"`
-	CreatedBy            *string `json:"created_by"`
-	CreatedAt            string  `json:"created_at"`
-	UpdatedAt            string  `json:"updated_at"`
+	ID                   string                      `json:"id"`
+	WorkspaceID          string                      `json:"workspace_id"`
+	AssetID              string                      `json:"asset_id"`
+	RunID                string                      `json:"run_id"`
+	PromptID             string                      `json:"prompt_id"`
+	CandidateName        string                      `json:"candidate_name"`
+	CandidateContent     string                      `json:"candidate_content"`
+	Rationale            string                      `json:"rationale"`
+	FailedCaseCount      int32                       `json:"failed_case_count"`
+	SourceFailureSummary any                         `json:"source_failure_summary"`
+	SourcePromptSnapshot any                         `json:"source_prompt_snapshot"`
+	Metrics              any                         `json:"metrics"`
+	SkillPatch           *PromptEvaluationSkillPatch `json:"skill_patch"`
+	Status               string                      `json:"status"`
+	PublishedPromptID    *string                     `json:"published_prompt_id"`
+	PublishedAt          string                      `json:"published_at"`
+	CreatedBy            *string                     `json:"created_by"`
+	CreatedAt            string                      `json:"created_at"`
+	UpdatedAt            string                      `json:"updated_at"`
 }
 
 type PublishPromptEvaluationOptimizationCandidateResponse struct {
@@ -1033,11 +1033,41 @@ func (h *Handler) DeletePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 }
 
 func (h *Handler) RunPromptEvaluationAsset(w http.ResponseWriter, r *http.Request) {
-	asset, ok := h.loadPromptEvaluationAsset(w, r)
+	userID, ok := requireUserID(w, r)
 	if !ok {
 		return
 	}
-	userID, ok := requireUserID(w, r)
+	workspaceID, ok := parseUUIDOrBadRequest(w, h.resolveWorkspaceID(r), "workspace_id")
+	if !ok {
+		return
+	}
+	assetID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "prompt evaluation asset id")
+	if !ok {
+		return
+	}
+	requestHash, err := hashRequestFingerprint(promptEvaluationLocalRunFingerprint{
+		Operation: "asset_run", AssetID: uuidToString(assetID),
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to fingerprint prompt evaluation local run")
+		return
+	}
+	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	requestActorID := parseUUID(userID)
+	if replay, found, err := loadPromptEvaluationLocalRunReplay(
+		h, r.Context(), workspaceID, requestActorID, idempotencyKey, requestHash,
+		func(response PromptEvaluationAssetResponse) bool { return response.ID != "" },
+	); err != nil {
+		writePromptEvaluationLocalRunReplayError(w, err)
+		return
+	} else if found {
+		writeJSON(w, http.StatusOK, replay)
+		return
+	}
+	asset, ok := h.loadPromptEvaluationAsset(w, r)
 	if !ok {
 		return
 	}
@@ -1066,7 +1096,31 @@ func (h *Handler) RunPromptEvaluationAsset(w http.ResponseWriter, r *http.Reques
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
-	run, ok := h.persistPromptEvaluationLocalRun(w, r, qtx, asset, result, parseUUID(userID))
+	_, err = qtx.ReserveResourceCreateRequest(r.Context(), db.ReserveResourceCreateRequestParams{
+		WorkspaceID: workspaceID, ActorID: requestActorID, ResourceType: resourceTypePromptLocalRun,
+		IdempotencyKey: idempotencyKey, RequestHash: requestHash,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		_ = tx.Rollback(r.Context())
+		replay, found, replayErr := loadPromptEvaluationLocalRunReplay(
+			h, r.Context(), workspaceID, requestActorID, idempotencyKey, requestHash,
+			func(response PromptEvaluationAssetResponse) bool { return response.ID != "" },
+		)
+		if replayErr != nil || !found {
+			if replayErr == nil {
+				replayErr = errors.New("prompt evaluation local run replay disappeared after conflict")
+			}
+			writePromptEvaluationLocalRunReplayError(w, replayErr)
+			return
+		}
+		writeJSON(w, http.StatusOK, replay)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reserve prompt evaluation local run")
+		return
+	}
+	run, ok := h.persistPromptEvaluationLocalRun(w, r, qtx, idempotencyKey, asset, result, requestActorID)
 	if !ok {
 		return
 	}
@@ -1088,11 +1142,19 @@ func (h *Handler) RunPromptEvaluationAsset(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "failed to save prompt evaluation result")
 		return
 	}
+	response := promptEvaluationAssetToResponse(updated)
+	if err := completeResourceCreateRequest(
+		r.Context(), qtx, workspaceID, requestActorID, resourceTypePromptLocalRun,
+		idempotencyKey, requestHash, run.ID, response,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to complete prompt evaluation local run")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit prompt evaluation result")
 		return
 	}
-	writeJSON(w, http.StatusOK, promptEvaluationAssetToResponse(updated))
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.Request) {

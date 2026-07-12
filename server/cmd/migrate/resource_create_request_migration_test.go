@@ -415,3 +415,27 @@ func TestPromptEvaluationAgentRunRequestMigrationExtendsCurrentResourceContract(
 		t.Fatalf("prompt_evaluation_agent_run request type rejected: %v", err)
 	}
 }
+
+func TestPromptEvaluationLocalRunRequestMigrationExtendsCurrentResourceContract(t *testing.T) {
+	pool := openTestPool(t)
+	ctx := context.Background()
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	isolateResourceCreateRequestMigration(t, ctx, tx)
+	if _, err := tx.Exec(ctx, readMigrationFile(t, "062_add_prompt_evaluation_local_run_request.up.sql")); err != nil {
+		t.Fatal(err)
+	}
+	var workspaceID string
+	if err := tx.QueryRow(ctx, `INSERT INTO workspace (name, slug) VALUES ('Local Run Request Migration', $1) RETURNING id`, "local-run-request-"+uuid.NewString()).Scan(&workspaceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO resource_create_request (workspace_id, actor_id, resource_type, idempotency_key, request_hash)
+		VALUES ($1, $2, 'prompt_evaluation_local_run', $3, $4)
+	`, workspaceID, uuid.NewString(), uuid.NewString(), "efefefefefefefefefefefefefefefefefefefefefefefefefefefefefefefef"); err != nil {
+		t.Fatalf("prompt_evaluation_local_run request type rejected: %v", err)
+	}
+}
