@@ -692,6 +692,24 @@ func (h *Handler) SetAutopilotTriggerSigningSecret(w http.ResponseWriter, r *htt
 
 // ── Runs ────────────────────────────────────────────────────────────────────
 
+func autopilotListPagination(r *http.Request) (limit, offset int32) {
+	limit = 20
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		if value, err := strconv.Atoi(raw); err == nil && value > 0 {
+			limit = int32(value)
+		}
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	if raw := r.URL.Query().Get("offset"); raw != "" {
+		if value, err := strconv.Atoi(raw); err == nil && value >= 0 {
+			offset = int32(value)
+		}
+	}
+	return limit, offset
+}
+
 func (h *Handler) ListAutopilotRuns(w http.ResponseWriter, r *http.Request) {
 	autopilotID := chi.URLParam(r, "id")
 	workspaceID := h.resolveWorkspaceID(r)
@@ -701,21 +719,7 @@ func (h *Handler) ListAutopilotRuns(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit := int32(20)
-	offset := int32(0)
-	if l := r.URL.Query().Get("limit"); l != "" {
-		if v, err := strconv.Atoi(l); err == nil && v > 0 {
-			limit = int32(v)
-		}
-	}
-	if limit > 100 {
-		limit = 100
-	}
-	if o := r.URL.Query().Get("offset"); o != "" {
-		if v, err := strconv.Atoi(o); err == nil && v >= 0 {
-			offset = int32(v)
-		}
-	}
+	limit, offset := autopilotListPagination(r)
 
 	runs, err := h.Queries.ListAutopilotRuns(r.Context(), db.ListAutopilotRunsParams{
 		AutopilotID: autopilot.ID,
