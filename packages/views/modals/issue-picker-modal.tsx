@@ -36,6 +36,7 @@ export function IssuePickerModal({
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<Issue[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [searchFailed, setSearchFailed] = useState(false);
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(undefined);
   const abortRef = useRef<AbortController>(undefined);
 
@@ -44,6 +45,7 @@ export function IssuePickerModal({
       setQuery("");
       setResults([]);
       setIsLoading(false);
+      setSearchFailed(false);
     }
   }, [open]);
 
@@ -55,10 +57,12 @@ export function IssuePickerModal({
       if (!q.trim()) {
         setResults([]);
         setIsLoading(false);
+        setSearchFailed(false);
         return;
       }
 
       setIsLoading(true);
+      setSearchFailed(false);
       debounceRef.current = setTimeout(async () => {
         const controller = new AbortController();
         abortRef.current = controller;
@@ -72,10 +76,13 @@ export function IssuePickerModal({
           if (!controller.signal.aborted) {
             setResults(res.issues.filter((i) => !excludeIds.includes(i.id)));
             setIsLoading(false);
+            setSearchFailed(false);
           }
         } catch {
           if (!controller.signal.aborted) {
+            setResults([]);
             setIsLoading(false);
+            setSearchFailed(true);
           }
         }
       }, 300);
@@ -105,7 +112,12 @@ export function IssuePickerModal({
               {t(($) => $.issue_picker.searching)}
             </div>
           )}
-          {!isLoading && query.trim() && results.length === 0 && (
+          {!isLoading && searchFailed && (
+            <div role="alert" className="py-6 text-center text-sm text-destructive">
+              {t(($) => $.issue_picker.search_failed)}
+            </div>
+          )}
+          {!isLoading && !searchFailed && query.trim() && results.length === 0 && (
             <CommandEmpty>{t(($) => $.issue_picker.no_results)}</CommandEmpty>
           )}
           {!isLoading && !query.trim() && (
@@ -113,7 +125,7 @@ export function IssuePickerModal({
               {t(($) => $.issue_picker.prompt_to_search)}
             </div>
           )}
-          {results.length > 0 && (
+          {!searchFailed && results.length > 0 && (
             <CommandGroup>
               {results.map((issue) => (
                 <CommandItem

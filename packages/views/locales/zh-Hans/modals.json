@@ -35,6 +35,7 @@
   "issue_picker": {
     "search_placeholder": "搜索任务...",
     "searching": "搜索中...",
+    "search_failed": "搜索任务失败，请重试。",
     "no_results": "未找到任务。",
     "prompt_to_search": "输入关键词搜索任务"
   },
