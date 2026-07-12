@@ -47,6 +47,7 @@ const (
 	resourceTypePromptSkillInventory   = "prompt_evaluation_skill_inventory"
 	resourceTypePromptSkillSnapshot    = "prompt_evaluation_skill_snapshot"
 	resourceTypePromptSkillCaseDrafts  = "prompt_evaluation_skill_case_drafts"
+	resourceTypePromptSkillApply       = "prompt_evaluation_skill_apply"
 )
 
 var errResourceCreateIdempotencyConflict = errors.New("resource create idempotency conflict")

@@ -361,6 +361,19 @@ func applyPromptEvaluationSkillCandidate(req ApplyPromptEvaluationSkillCandidate
 	if strings.TrimSpace(req.CandidatePatch) == "" {
 		return PromptEvaluationSkillApplyResult{}, errors.New("candidate_patch is required")
 	}
+	operationID, _ := reEvalContext["operation_id"].(string)
+	delete(reEvalContext, "operation_id")
+	alreadyApplied := gitApplyReverseCheck(repoPath, req.CandidatePatch) == nil
+	changelogPath := ""
+	if !req.SkipChangelog {
+		changelogPath, err = normalizePromptEvaluationChangelogPath(skillPath, req.ChangelogPath)
+		if err != nil {
+			return PromptEvaluationSkillApplyResult{}, err
+		}
+		if alreadyApplied && operationID != "" && !promptEvaluationSkillChangelogHasOperation(repoPath, changelogPath, operationID) {
+			alreadyApplied = false
+		}
+	}
 	freshness, err := checkPromptEvaluationSkillFreshness(CheckPromptEvaluationSkillFreshnessRequest{
 		RepoPath:        repoPath,
 		TargetBranch:    req.TargetBranch,
@@ -370,13 +383,6 @@ func applyPromptEvaluationSkillCandidate(req ApplyPromptEvaluationSkillCandidate
 	}, snapshot, now)
 	if err != nil {
 		return PromptEvaluationSkillApplyResult{}, err
-	}
-	changelogPath := ""
-	if !req.SkipChangelog {
-		changelogPath, err = normalizePromptEvaluationChangelogPath(skillPath, req.ChangelogPath)
-		if err != nil {
-			return PromptEvaluationSkillApplyResult{}, err
-		}
 	}
 	result := PromptEvaluationSkillApplyResult{
 		SchemaVersion:   promptEvaluationSkillApplySchema,
@@ -394,23 +400,28 @@ func applyPromptEvaluationSkillCandidate(req ApplyPromptEvaluationSkillCandidate
 		CheckedAt:       now.Format(time.RFC3339Nano),
 		Snapshot:        snapshot,
 	}
-	if freshness.Status == "stale" || freshness.Status == "conflict" {
+	if !alreadyApplied && (freshness.Status == "stale" || freshness.Status == "conflict") {
 		result.Reason = "freshness check blocked apply: " + freshness.Status
 		result.PatchCheck = freshness.PatchCheck
 		return result, nil
 	}
-	if err := gitApplyCheck(repoPath, req.CandidatePatch); err != nil {
-		result.Status = "conflict"
-		result.Reason = "candidate patch does not apply cleanly: " + err.Error()
-		result.PatchCheck = "conflict"
-		return result, nil
+	if !alreadyApplied {
+		if err := gitApplyCheck(repoPath, req.CandidatePatch); err != nil {
+			result.Status = "conflict"
+			result.Reason = "candidate patch does not apply cleanly: " + err.Error()
+			result.PatchCheck = "conflict"
+			return result, nil
+		}
+		result.PatchCheck = "applies"
+	} else {
+		result.PatchCheck = "already_applied"
+		result.SkillHashBefore = snapshot.SkillHash
 	}
-	result.PatchCheck = "applies"
 	dirtyFiles, err := gitStatusShort(repoPath)
 	if err != nil {
 		return PromptEvaluationSkillApplyResult{}, err
 	}
-	if len(dirtyFiles) > 0 && !req.AllowDirty {
+	if len(dirtyFiles) > 0 && !req.AllowDirty && !alreadyApplied {
 		result.Status = "blocked"
 		result.Reason = "worktree has uncommitted changes; set allow_dirty only for controlled development fixtures"
 		result.ChangedFiles = dirtyFiles
@@ -421,14 +432,19 @@ func applyPromptEvaluationSkillCandidate(req ApplyPromptEvaluationSkillCandidate
 		result.Reason = "candidate patch and changelog plan verified; no files were modified"
 		return result, nil
 	}
-	if err := gitApplyPatch(repoPath, req.CandidatePatch); err != nil {
-		result.Status = "conflict"
-		result.Reason = "candidate patch failed during apply: " + err.Error()
-		result.PatchCheck = "conflict"
-		return result, nil
+	if !alreadyApplied {
+		if err := gitApplyPatch(repoPath, req.CandidatePatch); err != nil {
+			result.Status = "conflict"
+			result.Reason = "candidate patch failed during apply: " + err.Error()
+			result.PatchCheck = "conflict"
+			return result, nil
+		}
 	}
 	if !req.SkipChangelog {
-		if err := appendPromptEvaluationSkillChangelog(repoPath, changelogPath, snapshot, freshness, req, now); err != nil {
+		if err := appendPromptEvaluationSkillChangelog(repoPath, changelogPath, snapshot, freshness, req, operationID, now); err != nil {
+			if !alreadyApplied {
+				_ = gitReversePatch(repoPath, req.CandidatePatch)
+			}
 			return PromptEvaluationSkillApplyResult{}, err
 		}
 	}
@@ -904,8 +920,30 @@ func gitApplyCheck(repoPath string, patch string) error {
 	return nil
 }
 
+func gitApplyReverseCheck(repoPath string, patch string) error {
+	cmd := exec.Command("git", "-C", repoPath, "apply", "--reverse", "--check", "-")
+	cmd.Stdin = strings.NewReader(patch)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	return nil
+}
+
 func gitApplyPatch(repoPath string, patch string) error {
 	cmd := exec.Command("git", "-C", repoPath, "apply", "-")
+	cmd.Stdin = strings.NewReader(patch)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("%w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	return nil
+}
+
+func gitReversePatch(repoPath string, patch string) error {
+	cmd := exec.Command("git", "-C", repoPath, "apply", "--reverse", "-")
 	cmd.Stdin = strings.NewReader(patch)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -976,7 +1014,7 @@ func normalizePromptEvaluationChangelogPath(skillPath string, requested string) 
 	return cleanPath, nil
 }
 
-func appendPromptEvaluationSkillChangelog(repoPath string, changelogPath string, snapshot PromptEvaluationSkillSnapshotResponse, freshness PromptEvaluationSkillFreshnessResult, req ApplyPromptEvaluationSkillCandidateRequest, now time.Time) error {
+func appendPromptEvaluationSkillChangelog(repoPath string, changelogPath string, snapshot PromptEvaluationSkillSnapshotResponse, freshness PromptEvaluationSkillFreshnessResult, req ApplyPromptEvaluationSkillCandidateRequest, operationID string, now time.Time) error {
 	fullPath := filepath.Join(repoPath, filepath.FromSlash(changelogPath))
 	if err := os.MkdirAll(filepath.Dir(fullPath), 0o755); err != nil {
 		return fmt.Errorf("failed to create changelog directory: %w", err)
@@ -985,10 +1023,21 @@ func appendPromptEvaluationSkillChangelog(repoPath string, changelogPath string,
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("failed to read changelog: %w", err)
 	}
+	marker := ""
+	if operationID != "" {
+		marker = "<!-- multica-skill-apply:" + operationID + " -->"
+		if bytes.Contains(existing, []byte(marker)) {
+			return nil
+		}
+	}
 	changeReason := firstNonEmpty(strings.TrimSpace(req.ChangeReason), "Skill optimization candidate applied from Eval/Trace evidence.")
 	verification := firstNonEmpty(strings.TrimSpace(req.VerificationResult), "Re-eval required before this change can be treated as validated.")
 	rollback := firstNonEmpty(strings.TrimSpace(req.RollbackPlan), "Revert the applied patch and rerun the previous snapshot eval.")
-	entry := "\n## " + now.Format(time.RFC3339) + " - Skill optimization candidate\n\n" +
+	entryPrefix := "\n"
+	if marker != "" {
+		entryPrefix += marker + "\n"
+	}
+	entry := entryPrefix + "## " + now.Format(time.RFC3339) + " - Skill optimization candidate\n\n" +
 		"- Source snapshot: " + snapshot.Repo + " " + snapshot.Branch + "@" + snapshot.BaseCommit + "\n" +
 		"- Skill path: " + snapshot.SkillPath + "\n" +
 		"- Snapshot skill hash: " + snapshot.SkillHash + "\n" +
@@ -1009,6 +1058,14 @@ func appendPromptEvaluationSkillChangelog(repoPath string, changelogPath string,
 		return fmt.Errorf("failed to write changelog: %w", err)
 	}
 	return nil
+}
+
+func promptEvaluationSkillChangelogHasOperation(repoPath, changelogPath, operationID string) bool {
+	content, err := os.ReadFile(filepath.Join(repoPath, filepath.FromSlash(changelogPath)))
+	if err != nil {
+		return false
+	}
+	return bytes.Contains(content, []byte("<!-- multica-skill-apply:"+operationID+" -->"))
 }
 
 func buildPromptEvaluationSkillReEvalPlan(snapshot PromptEvaluationSkillSnapshotResponse, freshness PromptEvaluationSkillFreshnessResult, context map[string]any) map[string]any {

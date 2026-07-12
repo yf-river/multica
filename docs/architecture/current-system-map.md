@@ -25,7 +25,7 @@ evidence reviewable by humans.
 | Database functions | 9 |
 | Database triggers | 4 |
 | Database indexes | 194 |
-| Migration files (up + down) | 166 |
+| Migration files (up + down) | 168 |
 | sqlc modules | 55 |
 | sqlc queries | 560 |
 | Go WebSocket events | 79 |
@@ -652,6 +652,8 @@ intentionally platform-specific.
 | 82 | add_prompt_evaluation_dataset_restore_request | up | — | 0 | 0 | 0 | `server/migrations/082_add_prompt_evaluation_dataset_restore_request.up.sql` |
 | 83 | add_prompt_evaluation_skill_asset_requests | down | — | 0 | 0 | 0 | `server/migrations/083_add_prompt_evaluation_skill_asset_requests.down.sql` |
 | 83 | add_prompt_evaluation_skill_asset_requests | up | — | 0 | 0 | 0 | `server/migrations/083_add_prompt_evaluation_skill_asset_requests.up.sql` |
+| 84 | add_prompt_evaluation_skill_apply_request | down | — | 0 | 0 | 0 | `server/migrations/084_add_prompt_evaluation_skill_apply_request.down.sql` |
+| 84 | add_prompt_evaluation_skill_apply_request | up | — | 0 | 0 | 0 | `server/migrations/084_add_prompt_evaluation_skill_apply_request.up.sql` |
 
 ### Current tables discovered from up migrations
 

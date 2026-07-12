@@ -323,6 +323,41 @@ func TestPromptEvaluationSkillApplyWritesChangelogAndRequiresReEval(t *testing.T
 	}
 }
 
+func TestPromptEvaluationSkillApplyRollsBackPatchWhenChangelogFails(t *testing.T) {
+	repoPath := t.TempDir()
+	skillPath := ".codebuddy/skills/verify/SKILL.md"
+	v1 := "# Verify\n\nRun focused checks.\n"
+	v2 := "# Verify\n\nRun focused checks and retain evidence.\n"
+	runSkillTestGit(t, repoPath, "init")
+	runSkillTestGit(t, repoPath, "config", "user.email", "test@example.com")
+	runSkillTestGit(t, repoPath, "config", "user.name", "Test User")
+	writeSkillTestFile(t, repoPath, skillPath, v1)
+	runSkillTestGit(t, repoPath, "add", ".")
+	runSkillTestGit(t, repoPath, "commit", "-m", "add verify skill")
+	snapshot, err := buildPromptEvaluationSkillSnapshot(CreatePromptEvaluationSkillSnapshotRequest{
+		RepoPath: repoPath, Branch: "HEAD", SkillPath: skillPath,
+	}, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeSkillTestFile(t, repoPath, skillPath, v2)
+	patch := runSkillTestGit(t, repoPath, "diff", "--", skillPath)
+	writeSkillTestFile(t, repoPath, skillPath, v1)
+	writeSkillTestFile(t, repoPath, "blocked", "not a directory")
+
+	_, err = applyPromptEvaluationSkillCandidate(ApplyPromptEvaluationSkillCandidateRequest{
+		RepoPath: repoPath, SkillPath: skillPath, CandidatePatch: patch,
+		ChangelogPath: "blocked/CHANGELOG.md", AllowDirty: true,
+	}, snapshot, map[string]any{"operation_id": "rollback-test"}, time.Now().UTC())
+	if err == nil {
+		t.Fatal("expected changelog failure")
+	}
+	content, readErr := os.ReadFile(filepath.Join(repoPath, filepath.FromSlash(skillPath)))
+	if readErr != nil || string(content) != v1 {
+		t.Fatalf("skill patch was not compensated: content=%q err=%v", content, readErr)
+	}
+}
+
 func TestPromptEvaluationSkillApplyCreatesOperationSkill(t *testing.T) {
 	repoPath := t.TempDir()
 	runSkillTestGit(t, repoPath, "init")

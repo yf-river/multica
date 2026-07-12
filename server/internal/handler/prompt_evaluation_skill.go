@@ -438,10 +438,6 @@ func (h *Handler) ApplyPromptEvaluationSkillCandidate(w http.ResponseWriter, r *
 	if !ok {
 		return
 	}
-	if candidate.Status != "待确认" {
-		writeError(w, http.StatusConflict, "only 待确认 optimization candidates can be applied")
-		return
-	}
 	var req ApplyPromptEvaluationSkillCandidateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -461,17 +457,92 @@ func (h *Handler) ApplyPromptEvaluationSkillCandidate(w http.ResponseWriter, r *
 	if req.CandidatePatch == "" {
 		req.CandidatePatch = candidate.CandidateContent
 	}
+	actorID := parseUUID(userID)
+	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	requestHash, err := hashRequestFingerprint(struct {
+		CandidateID string                                     `json:"candidate_id"`
+		Request     ApplyPromptEvaluationSkillCandidateRequest `json:"request"`
+	}{CandidateID: uuidToString(candidate.ID), Request: req})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to fingerprint skill apply request")
+		return
+	}
+	loadReplay := func() (PromptEvaluationSkillApplyCandidateResponse, bool, error) {
+		return loadResourceCreateReplay(
+			r.Context(), h.Queries, workspaceUUID, actorID, resourceTypePromptSkillApply,
+			idempotencyKey, requestHash,
+			func(response PromptEvaluationSkillApplyCandidateResponse) bool { return response.Candidate.ID != "" },
+		)
+	}
+	if replay, found, replayErr := loadReplay(); replayErr != nil {
+		writePromptEvaluationSkillApplyReplayError(w, replayErr)
+		return
+	} else if found {
+		writeJSON(w, http.StatusOK, replay)
+		return
+	}
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start skill apply transaction")
+		return
+	}
+	defer func() { _ = tx.Rollback(r.Context()) }()
+	qtx := h.Queries.WithTx(tx)
+	_, err = qtx.ReserveResourceCreateRequest(r.Context(), db.ReserveResourceCreateRequestParams{
+		WorkspaceID: workspaceUUID, ActorID: actorID, ResourceType: resourceTypePromptSkillApply,
+		IdempotencyKey: idempotencyKey, RequestHash: requestHash,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		_ = tx.Rollback(r.Context())
+		replay, found, replayErr := loadReplay()
+		if replayErr != nil || !found {
+			if replayErr == nil {
+				replayErr = errors.New("skill apply replay disappeared after reservation conflict")
+			}
+			writePromptEvaluationSkillApplyReplayError(w, replayErr)
+			return
+		}
+		writeJSON(w, http.StatusOK, replay)
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reserve skill apply request")
+		return
+	}
+	if _, err := tx.Exec(r.Context(), `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, uuidToString(candidate.ID)); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to lock skill apply candidate")
+		return
+	}
+	candidate, err = qtx.GetPromptEvaluationOptimizationCandidateInWorkspace(r.Context(), db.GetPromptEvaluationOptimizationCandidateInWorkspaceParams{
+		ID: candidate.ID, WorkspaceID: workspaceUUID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reload skill apply candidate")
+		return
+	}
+	if candidate.Status != "待确认" {
+		writeError(w, http.StatusConflict, "only 待确认 optimization candidates can be applied")
+		return
+	}
+	if previousApply := skillApplyFromCandidate(candidate); previousApply != nil && previousApply.Status == "applied" {
+		writeError(w, http.StatusConflict, "optimization candidate skill patch is already applied")
+		return
+	}
 	result, err := applyPromptEvaluationSkillCandidate(req, *snapshot, map[string]any{
 		"candidate_id": uuidToString(candidate.ID),
 		"asset_id":     uuidToString(candidate.AssetID),
 		"run_id":       uuidToString(candidate.RunID),
 		"applied_by":   userID,
+		"operation_id": uuidToString(idempotencyKey),
 	}, time.Now().UTC())
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	updated, err := h.mergePromptEvaluationOptimizationCandidateMetrics(r.Context(), workspaceUUID, candidateID, map[string]any{
+	updated, err := mergePromptEvaluationOptimizationCandidateMetricsRow(r.Context(), tx, workspaceUUID, candidateID, map[string]any{
 		"skill_apply":     result,
 		"skill_freshness": result.Freshness,
 	})
@@ -479,10 +550,38 @@ func (h *Handler) ApplyPromptEvaluationSkillCandidate(w http.ResponseWriter, r *
 		writeError(w, http.StatusInternalServerError, "failed to persist skill apply evidence")
 		return
 	}
-	writeJSON(w, http.StatusOK, PromptEvaluationSkillApplyCandidateResponse{
+	response := PromptEvaluationSkillApplyCandidateResponse{
 		Candidate: promptEvaluationOptimizationCandidateToResponse(updated),
 		Apply:     result,
-	})
+	}
+	if err := completeResourceCreateRequest(
+		r.Context(), qtx, workspaceUUID, actorID, resourceTypePromptSkillApply,
+		idempotencyKey, requestHash, candidate.ID, response,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to complete skill apply request")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit skill apply request")
+		return
+	}
+	committedResponse, found, err := loadReplay()
+	if err != nil || !found {
+		writeError(w, http.StatusInternalServerError, "failed to reload committed skill apply response")
+		return
+	}
+	writeJSON(w, http.StatusOK, committedResponse)
+}
+
+func writePromptEvaluationSkillApplyReplayError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errResourceCreateIdempotencyConflict) {
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": "Idempotency-Key was already used with a different skill apply request",
+			"code":  "idempotency_conflict",
+		})
+		return
+	}
+	writeError(w, http.StatusInternalServerError, "failed to recover skill apply request")
 }
 
 func (h *Handler) PreparePromptEvaluationSkillReEvalAsset(w http.ResponseWriter, r *http.Request) {
