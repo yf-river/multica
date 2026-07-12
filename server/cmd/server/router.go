@@ -124,10 +124,9 @@ type RouterOptions struct {
 	DaemonHub       *daemonws.Hub
 	DaemonWakeup    service.TaskWakeupNotifier
 	EventDispatcher *eventoutbox.Dispatcher
-	// HeartbeatScheduler, when non-nil, replaces the default synchronous
-	// passthrough scheduler on the constructed Handler. main.go injects a
-	// BatchedHeartbeatScheduler here so the caller can also drive Run/Stop;
-	// tests leave this nil and get the legacy synchronous behavior.
+	// HeartbeatScheduler is explicit because its lifecycle belongs to the
+	// process constructing the router. Production injects the batched scheduler;
+	// tests that need synchronous writes inject the passthrough implementation.
 	HeartbeatScheduler handler.HeartbeatScheduler
 }
 
@@ -432,9 +431,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	} else {
 		slog.Info("lark integration disabled (MULTICA_LARK_SECRET_KEY not set)")
 	}
-	if opts.HeartbeatScheduler != nil {
-		h.HeartbeatScheduler = opts.HeartbeatScheduler
+	if opts.HeartbeatScheduler == nil {
+		return nil, nil, errors.New("heartbeat scheduler is required")
 	}
+	h.HeartbeatScheduler = opts.HeartbeatScheduler
 	// The PAT cache is shared by regular and daemon authentication. Its
 	// constructor returns nil without Redis, which means "always hit DB".
 	patCache := auth.NewPATCache(rdb)
