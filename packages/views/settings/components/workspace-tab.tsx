@@ -202,7 +202,7 @@ export function WorkspaceTab() {
     try {
       const result = await upload(file);
       if (!result) return;
-      const updated = await api.updateWorkspace(workspace.id, { avatar_url: result.link });
+      const updated = await api.updateWorkspace(workspace.id, { avatar_url: result.url });
       qc.setQueryData(workspaceKeys.list(), (old: Workspace[] | undefined) =>
         old?.map((ws) => (ws.id === updated.id ? updated : ws)),
       );

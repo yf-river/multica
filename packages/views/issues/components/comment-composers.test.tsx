@@ -2,7 +2,7 @@ import { forwardRef, useImperativeHandle, useRef, type ReactNode, type Ref } fro
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { fireEvent, screen, waitFor } from "@testing-library/react";
-import type { UploadResult } from "@multica/core/hooks/use-file-upload";
+import type { Attachment } from "@multica/core/types";
 import { renderWithI18n } from "../../test/i18n";
 import { CommentInput } from "./comment-input";
 import { ReplyInput } from "./reply-input";
@@ -41,7 +41,7 @@ vi.mock("../../editor", () => ({
       defaultValue?: string;
       onUpdate?: (markdown: string) => void;
       placeholder?: string;
-      onUploadFile?: (file: File) => Promise<UploadResult | null>;
+      onUploadFile?: (file: File) => Promise<Attachment | null>;
     },
     ref: Ref<unknown>,
   ) {

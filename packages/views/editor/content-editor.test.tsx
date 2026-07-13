@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { act, fireEvent, screen } from "@testing-library/react";
 import { createRef } from "react";
 import type { Attachment } from "@multica/core/types";
-import type { UploadResult } from "@multica/core/hooks/use-file-upload";
 import { renderWithI18n as render } from "../test/i18n";
 
 const mockFocus = vi.hoisted(() => vi.fn());
@@ -398,10 +397,6 @@ function makeAttachment(id: string, overrides: Partial<Attachment> = {}): Attach
   };
 }
 
-function asUploadResult(att: Attachment): UploadResult {
-  return { ...att, link: att.url, markdownLink: `/api/attachments/${att.id}/download` };
-}
-
 // MUL-3192 — surfaces like the quick-create modal upload images through the
 // editor without a server-supplied `attachments` prop. Without in-session
 // tracking, the AttachmentDownloadProvider had nothing to resolve the
@@ -409,7 +404,7 @@ function asUploadResult(att: Attachment): UploadResult {
 // Attachment.normalize() couldn't swap it for a freshly-loadable URL — the
 // <img> rendered broken on Desktop where the renderer's origin doesn't
 // proxy /api to the API host. ContentEditor now wraps onUploadFile so the
-// successful UploadResult lands in the provider as a tracked record.
+// successful attachment response lands in the provider as a tracked record.
 describe("ContentEditor — in-session attachment tracking (MUL-3192)", () => {
   it("seeds the AttachmentDownloadProvider with the caller-supplied attachments prop", () => {
     const att = makeAttachment("seed-1");
@@ -419,12 +414,12 @@ describe("ContentEditor — in-session attachment tracking (MUL-3192)", () => {
 
   it("appends a successful upload result to the provider's attachments list", async () => {
     const onUploadFile = vi.fn(async (_file: File) =>
-      asUploadResult(makeAttachment("uploaded-1")),
+      makeAttachment("uploaded-1"),
     );
     // Capture the wrapped uploader the editor hands to uploadAndInsertFile,
     // then invoke it the same way the file-upload extension would.
     let capturedHandler:
-      | ((file: File) => Promise<UploadResult | null>)
+      | ((file: File) => Promise<Attachment | null>)
       | undefined;
     uploadAndInsertFileMock.mockImplementation(
       async (_editor: unknown, file: File, handler: typeof capturedHandler) => {
@@ -471,7 +466,7 @@ describe("ContentEditor — in-session attachment tracking (MUL-3192)", () => {
     const collision = makeAttachment("shared-1", {
       download_url: "https://cdn.example/freshly-signed.png?Signature=stale",
     });
-    const onUploadFile = vi.fn(async () => asUploadResult(collision));
+    const onUploadFile = vi.fn(async () => collision);
     uploadAndInsertFileMock.mockImplementation(
       async (_e: unknown, file: File, handler: (f: File) => Promise<unknown>) => {
         await handler(file);
@@ -507,7 +502,7 @@ describe("ContentEditor — in-session attachment tracking (MUL-3192)", () => {
     const uploaded = makeAttachment("draft-1", {
       download_url: "https://cdn.example/draft-1.png?Signature=fresh",
     });
-    const onUploadFile = vi.fn(async () => asUploadResult(uploaded));
+    const onUploadFile = vi.fn(async () => uploaded);
     uploadAndInsertFileMock.mockImplementation(
       async (_e: unknown, file: File, handler: (f: File) => Promise<unknown>) => {
         await handler(file);
@@ -536,7 +531,7 @@ describe("ContentEditor — in-session attachment tracking (MUL-3192)", () => {
   });
 
   it("does not append a duplicate when the same upload result returns twice (paste-then-drop the same blob)", async () => {
-    const result = asUploadResult(makeAttachment("dedup-1"));
+    const result = makeAttachment("dedup-1");
     const onUploadFile = vi.fn(async () => result);
     uploadAndInsertFileMock.mockImplementation(
       async (_e: unknown, file: File, handler: (f: File) => Promise<unknown>) => {

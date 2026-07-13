@@ -5,7 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 import { renderHook, act } from "@testing-library/react";
 import type { ApiClient } from "../api/client";
 import type { Attachment } from "../types";
-import { useFileUpload, type UploadResult } from "./use-file-upload";
+import { useFileUpload } from "./use-file-upload";
 
 // MUL-3192 — verifies that markdown persistence uses the server's durable URL.
 
@@ -36,9 +36,9 @@ function makeApi(att: Attachment): ApiClient {
   } as unknown as ApiClient;
 }
 
-async function runUpload(api: ApiClient): Promise<UploadResult | null> {
+async function runUpload(api: ApiClient): Promise<Attachment | null> {
   const { result } = renderHook(() => useFileUpload(api));
-  let upload: UploadResult | null = null;
+  let upload: Attachment | null = null;
   await act(async () => {
     upload = await result.current.upload(
       new File(["data"], "shot.png", { type: "image/png" }),
@@ -48,15 +48,12 @@ async function runUpload(api: ApiClient): Promise<UploadResult | null> {
 }
 
 describe("useFileUpload", () => {
-  it("uses att.markdown_url for markdown and the storage URL for avatars", async () => {
+  it("returns the canonical attachment response without URL aliases", async () => {
     const att = makeAttachment({
       markdown_url: "https://cdn.multica.test/uploads/abc.png",
     });
     const upload = await runUpload(makeApi(att));
-    expect(upload?.markdownLink).toBe("https://cdn.multica.test/uploads/abc.png");
-    // Avatar and logo fields intentionally use the storage URL rather than
-    // the authenticated attachment download endpoint.
-    expect(upload?.link).toBe(att.url);
+    expect(upload).toEqual(att);
   });
 
   it("rejects oversize files before hitting the network", async () => {

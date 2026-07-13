@@ -1,6 +1,6 @@
 import { Extension } from "@tiptap/core";
 import { Plugin, PluginKey, TextSelection } from "@tiptap/pm/state";
-import type { UploadResult } from "@multica/core/hooks/use-file-upload";
+import type { Attachment } from "@multica/core/types";
 import { createSafeId } from "@multica/core/utils";
 
 /** Find and remove a fileCard node by uploadId. */
@@ -136,7 +136,7 @@ export async function uploadAndInsertFile(
    
   editor: any,
   file: File,
-  handler: (file: File) => Promise<UploadResult | null>,
+  handler: (file: File) => Promise<Attachment | null>,
   pos?: number,
 ) {
   const isImage = file.type.startsWith("image/");
@@ -164,14 +164,9 @@ export async function uploadAndInsertFile(
         if (imagePos !== null && imageNode) {
           const tr = editor.state.tr.setNodeMarkup(imagePos, undefined, {
             ...imageNode.attrs,
-            // Persist the stable per-attachment URL into markdown so
-            // the comment doesn't capture a short-lived signed URL
-            // (MUL-3130). Falls back to `link` for the no-workspace
-            // avatar branch where there's no attachment-row id; that
-            // path is unreachable from comment/issue editors but the
-            // fallback keeps the contract consistent for any caller
-            // that drops in without an issue context.
-            src: result.markdownLink || result.link,
+            // Persist the server-selected durable attachment URL, never the
+            // short-lived storage or download URL.
+            src: result.markdown_url,
             alt: result.filename,
             uploading: false,
           });
@@ -199,7 +194,7 @@ export async function uploadAndInsertFile(
     try {
       const result = await handler(file);
       if (result) {
-        finalizeFileCard(editor, uploadId, result.markdownLink || result.link);
+        finalizeFileCard(editor, uploadId, result.markdown_url);
       } else {
         removeUploadingFileCard(editor, uploadId);
       }
@@ -222,7 +217,7 @@ function dedupFiles(files: FileList): File[] {
 }
 
 export function createFileUploadExtension(
-  onUploadFileRef: React.RefObject<((file: File) => Promise<UploadResult | null>) | undefined>,
+  onUploadFileRef: React.RefObject<((file: File) => Promise<Attachment | null>) | undefined>,
 ) {
   return Extension.create({
     name: "fileUpload",

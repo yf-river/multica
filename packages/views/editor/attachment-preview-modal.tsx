@@ -93,8 +93,7 @@ interface PreviewState {
 }
 
 function resolvePreviewMediaUrl(attachment: Attachment): string {
-  const raw =
-    attachment.download_url || attachment.markdown_url || attachment.url;
+  const raw = attachment.download_url || attachment.markdown_url;
   return resolvePublicFileUrl(raw) ?? raw;
 }
 

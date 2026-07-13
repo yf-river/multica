@@ -2,11 +2,11 @@ import { forwardRef, useRef, useImperativeHandle } from "react";
 import { beforeEach, describe, it, expect, vi } from "vitest";
 import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
-import type { UploadResult } from "@multica/core/hooks/use-file-upload";
+import type { Attachment } from "@multica/core/types";
 import enCommon from "../../locales/zh-Hans/common.json";
 import enChat from "../../locales/zh-Hans/chat.json";
 
-function makeUpload(overrides: Partial<UploadResult> & { id: string; link: string; filename: string }): UploadResult {
+function makeUpload(overrides: Partial<Attachment> & { id: string; url: string; filename: string }): Attachment {
   return {
     workspace_id: "ws-1",
     issue_id: null,
@@ -15,18 +15,13 @@ function makeUpload(overrides: Partial<UploadResult> & { id: string; link: strin
     chat_message_id: null,
     uploader_type: "member",
     uploader_id: "user-1",
-    url: overrides.link,
-    download_url: overrides.link,
-    markdown_url: overrides.link,
     content_type: "image/png",
     size_bytes: 1,
     created_at: new Date(0).toISOString(),
-    // markdownLink defaults to the same value as `link` so legacy
-    // tests assert the previous URL shape unless they pass an
-    // explicit override. Real callers always set it to the stable
-    // /api/attachments/<id>/download path via useFileUpload.
-    markdownLink: overrides.link,
     ...overrides,
+    url: overrides.url,
+    download_url: overrides.download_url ?? overrides.url,
+    markdown_url: overrides.markdown_url ?? overrides.url,
   };
 }
 
@@ -54,7 +49,7 @@ vi.mock("../../editor", () => ({
       defaultValue?: string;
       onUpdate?: (md: string) => void;
       placeholder?: string;
-      onUploadFile?: (file: File) => Promise<UploadResult | null>;
+      onUploadFile?: (file: File) => Promise<Attachment | null>;
       mentionMode?: string;
       mentionContextItems?: unknown[];
     },
@@ -86,13 +81,8 @@ vi.mock("../../editor", () => ({
           if (result) {
             // Mirror the real editor (uploadAndInsertFile in
             // packages/views/editor/extensions/file-upload.ts): the
-            // markdown body captures `markdownLink` (the stable
-            // /api/attachments/<id>/download URL) when the upload
-            // returned one, falling back to `link` for the
-            // no-workspace avatar branch. The chat input's
-            // uploadMapRef must use the same value as its key —
-            // pinning that contract is the regression below.
-            const persistedURL = result.markdownLink || result.link;
+            // The editor and chat attachment map share the durable URL.
+            const persistedURL = result.markdown_url;
             valueRef.current = `${valueRef.current}![](${persistedURL})`.trim();
             onUpdate?.(valueRef.current);
           }
@@ -122,7 +112,7 @@ vi.mock("@multica/core/chat", () => {
     activeSessionId: null as string | null,
     selectedAgentId: "agent-1",
     inputDrafts: {} as Record<string, string>,
-    inputDraftAttachments: {} as Record<string, UploadResult[]>,
+    inputDraftAttachments: {} as Record<string, Attachment[]>,
     setInputDraft: vi.fn(),
     setInputDraftAttachments: vi.fn(),
     addInputDraftAttachment: vi.fn(),
@@ -159,7 +149,7 @@ beforeEach(() => {
     setInputDraft: ReturnType<typeof vi.fn>;
     clearInputDraft: ReturnType<typeof vi.fn>;
     clearInputDraftForWorkspace: ReturnType<typeof vi.fn>;
-    inputDraftAttachments: Record<string, UploadResult[]>;
+    inputDraftAttachments: Record<string, Attachment[]>;
     setInputDraftAttachments: ReturnType<typeof vi.fn>;
     addInputDraftAttachment: ReturnType<typeof vi.fn>;
   };
@@ -172,12 +162,12 @@ beforeEach(() => {
     state.inputDrafts[key] = value;
   });
   state.setInputDraftAttachments.mockClear();
-  state.setInputDraftAttachments.mockImplementation((key: string, attachments: UploadResult[]) => {
+  state.setInputDraftAttachments.mockImplementation((key: string, attachments: Attachment[]) => {
     if (attachments.length > 0) state.inputDraftAttachments[key] = attachments;
     else delete state.inputDraftAttachments[key];
   });
   state.addInputDraftAttachment.mockClear();
-  state.addInputDraftAttachment.mockImplementation((key: string, attachment: UploadResult) => {
+  state.addInputDraftAttachment.mockImplementation((key: string, attachment: Attachment) => {
     const existing = state.inputDraftAttachments[key] ?? [];
     state.inputDraftAttachments[key] = existing.some((a) => a.id === attachment.id)
       ? existing.map((a) => (a.id === attachment.id ? attachment : a))
@@ -197,7 +187,7 @@ function renderInput(props: Partial<React.ComponentProps<typeof ChatInput>> = {}
   const onUploadFile =
     props.onUploadFile ??
     vi.fn(async (_file: File) =>
-      makeUpload({ id: "att-1", link: "https://cdn.example/att-1.png", filename: "img.png" }),
+      makeUpload({ id: "att-1", url: "https://cdn.example/att-1.png", filename: "img.png" }),
     );
   render(
     <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
@@ -266,7 +256,7 @@ describe("ChatInput attachment wiring", () => {
   it("passes attachment_ids to onSend for uploads still referenced in the content", async () => {
     const onSend = vi.fn();
     const onUploadFile = vi.fn(async (_file: File) =>
-      makeUpload({ id: "att-42", link: "https://cdn.example/att-42.png", filename: "x.png" }),
+      makeUpload({ id: "att-42", url: "https://cdn.example/att-42.png", filename: "x.png" }),
     );
     renderInput({ onSend, onUploadFile });
 
@@ -290,12 +280,12 @@ describe("ChatInput attachment wiring", () => {
     );
   });
 
-  it("binds attachment_ids when the upload's markdownLink differs from its link (MUL-3130 regression)", async () => {
-    // Pin: real LocalStorage uploads return `link` =
-    // /uploads/<key>?exp&sig (short-lived) and `markdownLink` =
+  it("binds attachment_ids when markdown_url differs from the storage URL", async () => {
+    // LocalStorage uploads return `url` = /uploads/<key>?exp&sig
+    // (short-lived) and `markdown_url` =
     // /api/attachments/<id>/download (stable). The editor persists
-    // `markdownLink` into the markdown body, so chat-input's upload
-    // map MUST key on `markdownLink` too — keying on `link` would
+    // `markdown_url` into the markdown body, so chat-input's upload
+    // map must key on `markdown_url` too — keying on `url` would
     // leave content.includes(url) false at send time and silently
     // drop the attachment binding. This is exactly the blocker
     // GPT-Boy raised in PR #3937 review.
@@ -305,8 +295,8 @@ describe("ChatInput attachment wiring", () => {
     const onUploadFile = vi.fn(async (_file: File) =>
       makeUpload({
         id: "att-99",
-        link: SHORT_LIVED_LINK,
-        markdownLink: STABLE_MARKDOWN_LINK,
+        url: SHORT_LIVED_LINK,
+        markdown_url: STABLE_MARKDOWN_LINK,
         filename: "foo.png",
       }),
     );
@@ -324,14 +314,13 @@ describe("ChatInput attachment wiring", () => {
     expect(content).toContain(STABLE_MARKDOWN_LINK);
     expect(content).not.toContain("?exp=");
     expect(content).not.toContain("?sig=");
-    // And the attachment id is bound, even though `result.link` no
-    // longer matches the URL the editor actually persisted.
+    // The attachment id is bound even though the storage URL differs.
     expect(ids).toEqual(["att-99"]);
   });
 
   it("disables send while an upload is in flight, re-enables after it resolves", async () => {
-    let resolveUpload: (v: UploadResult) => void;
-    const uploadPromise = new Promise<UploadResult>((res) => {
+    let resolveUpload: (v: Attachment) => void;
+    const uploadPromise = new Promise<Attachment>((res) => {
       resolveUpload = res;
     });
     const onSend = vi.fn();
@@ -352,7 +341,7 @@ describe("ChatInput attachment wiring", () => {
     await waitForSendButton("disabled");
 
     await act(async () => {
-      resolveUpload!(makeUpload({ id: "att-slow", link: "https://cdn.example/att-slow.png", filename: "slow.png" }));
+      resolveUpload!(makeUpload({ id: "att-slow", url: "https://cdn.example/att-slow.png", filename: "slow.png" }));
       await Promise.resolve();
     });
 
@@ -496,11 +485,11 @@ describe("ChatInput async send", () => {
   it("sends attachment ids restored from persisted draft attachments", async () => {
     const state = useChatStore.getState() as unknown as {
       inputDrafts: Record<string, string>;
-      inputDraftAttachments: Record<string, UploadResult[]>;
+      inputDraftAttachments: Record<string, Attachment[]>;
     };
     const attachment = makeUpload({
       id: "att-persisted",
-      link: "/api/attachments/att-persisted/download",
+      url: "/api/attachments/att-persisted/download",
       filename: "persisted.png",
     });
     state.inputDrafts["__draft_new__:agent-1"] = "see ![](/api/attachments/att-persisted/download)";

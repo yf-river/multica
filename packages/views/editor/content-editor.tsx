@@ -41,9 +41,8 @@ import {
 } from "react";
 import { useEditor, EditorContent, type Editor } from "@tiptap/react";
 import { cn } from "@multica/ui/lib/utils";
-import type { UploadResult } from "@multica/core/hooks/use-file-upload";
-import { useQueryClient } from "@tanstack/react-query";
 import type { Attachment } from "@multica/core/types";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   parseMarkdownChunked,
   MARKDOWN_CHUNK_THRESHOLD,
@@ -113,7 +112,7 @@ interface ContentEditorProps {
   debounceMs?: number;
   onSubmit?: () => void;
   onBlur?: () => void;
-  onUploadFile?: (file: File) => Promise<UploadResult | null>;
+  onUploadFile?: (file: File) => Promise<Attachment | null>;
   /** 选中文字时显示浮动格式工具栏，默认开启。 */
   showBubbleMenu?: boolean;
   /** 开启后直接按 Enter 提交，Mod-Enter 始终提交。 */
@@ -215,7 +214,7 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
     const onSubmitRef = useRef(onSubmit);
     const onBlurRef = useRef(onBlur);
     const onUploadFileRef = useRef<
-      ((file: File) => Promise<UploadResult | null>) | undefined
+      ((file: File) => Promise<Attachment | null>) | undefined
     >(undefined);
     const mentionContextItemsRef = useRef<MentionItem[]>(mentionContextItems ?? []);
     const lastEmittedRef = useRef<string | null>(null);
@@ -235,13 +234,9 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
     // stable across renders the way the original passthrough did.
     const wrappedOnUploadFile = useMemo(() => {
       if (!onUploadFile) return undefined;
-      return async (file: File): Promise<UploadResult | null> => {
+      return async (file: File): Promise<Attachment | null> => {
         const result = await onUploadFile(file);
-        // Only track attachments that carry a persisted id — the no-workspace
-        // avatar branch returns an id-less record that the resolver can't key
-        // off of, and tracking it would just bloat memory without helping
-        // anyone. See useFileUpload's `markdownLink` docstring for why.
-        if (result?.id) {
+        if (result) {
           setSessionUploads((prev) =>
             // Deduplicate on id so a re-upload (or a paste-then-drop of the
             // same blob) doesn't create a parallel record.

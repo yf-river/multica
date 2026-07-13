@@ -51,7 +51,7 @@ export function AvatarPicker({ value, onChange, size = 56 }: AvatarPickerProps) 
       const result = await upload(file);
       if (!result) return;
       setPreviewError(false);
-      onChange(result.link);
+      onChange(result.url);
     } catch (err) {
       toast.error(
         err instanceof Error

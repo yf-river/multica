@@ -83,7 +83,7 @@ export function useDownloadAttachment(): (attachmentId: string) => Promise<void>
           // CloudFront/presign/proxy at request time. Electron's main-side
           // `downloadURLSafely` requires `new URL()` to parse to http/https,
           // so resolve against the configured API base before we cross the
-          // bridge. Absolute URLs (legacy CloudFront / S3 presigned) pass
+          // bridge. Current CloudFront / S3 presigned absolute URLs pass
           // through unchanged.
           const downloadUrl = resolvePublicFileUrl(fresh.download_url);
           if (!downloadUrl) {

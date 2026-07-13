@@ -1113,7 +1113,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                   // editor's text/code preview keeps working past reload.
                   //
                   // Match with `contentReferencesAttachment`, NOT `md.includes(a.url)`:
-                  // the editor persists the durable `markdownLink`
+                  // the editor persists the durable `markdown_url`
                   // (`/api/attachments/<id>/download` / `markdown_url`) into the
                   // body, never the raw storage `a.url`. A bare `md.includes(a.url)`
                   // therefore never matches, so the upload is never linked via

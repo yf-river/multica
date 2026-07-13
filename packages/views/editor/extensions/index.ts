@@ -35,7 +35,7 @@ import { TaskList } from "@tiptap/extension-list";
 import { Markdown } from "@tiptap/markdown";
 import { ReactNodeViewRenderer } from "@tiptap/react";
 import type { AnyExtension } from "@tiptap/core";
-import type { UploadResult } from "@multica/core/hooks/use-file-upload";
+import type { Attachment } from "@multica/core/types";
 import { escapeMarkdownLabel } from "../utils/escape-markdown-label";
 import { BaseMentionExtension } from "./mention-extension";
 import { createMentionSuggestion, type MentionItem } from "./mention-suggestion";
@@ -148,7 +148,7 @@ export interface EditorExtensionsOptions {
   queryClient?: import("@tanstack/react-query").QueryClient;
   onSubmitRef?: RefObject<(() => void) | undefined>;
   onUploadFileRef?: RefObject<
-    ((file: File) => Promise<UploadResult | null>) | undefined
+    ((file: File) => Promise<Attachment | null>) | undefined
   >;
   /** When true, bare Enter also submits (chat-style). Default false. */
   submitOnEnter?: boolean;

@@ -67,20 +67,10 @@ describe("attachmentIdFromDownloadURL", () => {
 });
 
 describe("contentReferencesAttachment", () => {
-  const att = { id: ID, url: "/uploads/workspaces/ws/legacy.png" };
+  const att = { id: ID };
 
   it("matches when the markdown uses the stable download path", () => {
     const md = `body\n\n![file](${attachmentDownloadPath(ID)})\n`;
-    expect(contentReferencesAttachment(md, att)).toBe(true);
-  });
-
-  it("matches when the markdown uses the legacy storage URL", () => {
-    const md = `body\n\n![file](${att.url})\n`;
-    expect(contentReferencesAttachment(md, att)).toBe(true);
-  });
-
-  it("matches when both shapes are present (rollout-window mixed content)", () => {
-    const md = `before\n\n![a](${attachmentDownloadPath(ID)})\n\n![b](${att.url})\n`;
     expect(contentReferencesAttachment(md, att)).toBe(true);
   });
 
@@ -90,11 +80,6 @@ describe("contentReferencesAttachment", () => {
 
   it("returns false on empty content", () => {
     expect(contentReferencesAttachment("", att)).toBe(false);
-  });
-
-  it("does not crash when the attachment has no legacy url", () => {
-    const md = `![file](${attachmentDownloadPath(ID)})`;
-    expect(contentReferencesAttachment(md, { id: ID, url: "" })).toBe(true);
   });
 
   // Regression — issue DESCRIPTION editor binding (Desktop image render).
@@ -113,9 +98,6 @@ describe("contentReferencesAttachment", () => {
   it("matches the absolute-host markdown_url the editor actually persists", () => {
     const markdownUrl = `https://multica-api.copilothub.ai/api/attachments/${ID}/download`;
     const md = `body\n\n![pasted](${markdownUrl})\n`;
-    // The raw storage url is NOT present in the body — the old
-    // `md.includes(a.url)` check would have returned false here.
-    expect(md.includes(att.url)).toBe(false);
     expect(contentReferencesAttachment(md, att)).toBe(true);
   });
 });

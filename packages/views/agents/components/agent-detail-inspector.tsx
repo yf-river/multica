@@ -293,7 +293,7 @@ function AvatarEditor({
     try {
       const result = await upload(file);
       if (!result) return;
-      await onUpdate({ avatar_url: result.link });
+      await onUpdate({ avatar_url: result.url });
       toast.success(t(($) => $.inspector.avatar_updated_toast));
     } catch (err) {
       toast.error(err instanceof Error ? err.message : t(($) => $.inspector.avatar_upload_failed_toast));

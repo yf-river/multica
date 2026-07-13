@@ -110,12 +110,12 @@ vi.mock("./attachment-download-context", () => ({
     resolveAttachmentId: (url: string) =>
       resolverState.attachments.find((a) => {
         const id = attachmentIdFromTestDownloadURL(url);
-        return a.url === url || (id !== undefined && a.id === id);
+        return id !== undefined && a.id === id;
       })?.id,
     resolveAttachment: (url: string) =>
       resolverState.attachments.find((a) => {
         const id = attachmentIdFromTestDownloadURL(url);
-        return a.url === url || (id !== undefined && a.id === id);
+        return id !== undefined && a.id === id;
       }),
     openByUrl: openByUrlMock,
   }),
@@ -243,7 +243,9 @@ describe("Attachment — image dispatch", () => {
   });
 
   it("url-only image resolves to a record via context and uses its id for download", () => {
+    const id = "11111111-2222-4333-8444-555555555555";
     const att = makeRecord({
+      id,
       filename: "from-resolver.png",
       url: "https://cdn.example.test/from-resolver.png",
     });
@@ -252,7 +254,7 @@ describe("Attachment — image dispatch", () => {
       <Attachment
         attachment={{
           kind: "url",
-          url: att.url,
+          url: `/api/attachments/${id}/download`,
           filename: "from-resolver.png",
         }}
       />,
@@ -261,11 +263,10 @@ describe("Attachment — image dispatch", () => {
     // Once the URL resolves to a record, the rendered src swaps to
     // the record's signed download_url so the image is loadable in
     // token-mode clients that can't attach Authorization headers
-    // (MUL-3130 review). The raw stored url is the fallback for
-    // unresolved markdown only.
+    // while the persisted stable path remains the lookup key.
     expect(img?.getAttribute("src")).toBe(att.download_url);
     fireEvent.click(screen.getByTitle("Download"));
-    expect(downloadMock).toHaveBeenCalledWith("att-1");
+    expect(downloadMock).toHaveBeenCalledWith(id);
   });
 
   it("renders the configured CDN URL when description markdown stores the stable API URL", () => {
@@ -499,19 +500,6 @@ describe("Attachment — image dispatch", () => {
     expect(img?.getAttribute("src")).not.toContain("prod.s3.amazonaws.com");
   });
 
-  it("legacy backend (no markdown_url on record) still falls back to record.url", () => {
-    // A backend old enough to predate MUL-3192 omits markdown_url; the
-    // fallback chain bottoms out on record.url, preserving render
-    // behaviour for legacy attachment metadata in the cache.
-    const att = makeRecord({
-      url: "https://cdn.example.test/legacy.png",
-      markdown_url: "",
-      download_url: "/api/attachments/att-1/download",
-    });
-    renderWithQuery(<Attachment attachment={{ kind: "record", attachment: att }} />);
-    const img = document.querySelector("img");
-    expect(img?.getAttribute("src")).toBe("https://cdn.example.test/legacy.png");
-  });
 });
 
 describe("Attachment — html dispatch", () => {
@@ -627,26 +615,6 @@ describe("Attachment — absolutize site-relative URLs (MUL-3192)", () => {
     const img = document.querySelector("img");
     expect(img?.getAttribute("src")).toBe(
       "https://api.example.test/api/attachments/abc-1/download",
-    );
-  });
-
-  it("absolutizes the legacy site-relative /uploads/<key> when record.markdown_url is empty (legacy backend)", () => {
-    // Legacy compat: a backend old enough to predate MUL-3192 omits
-    // markdown_url, so pickInlineMediaURL falls through to record.url.
-    // For LocalStorage with no LOCAL_UPLOAD_BASE_URL configured that's
-    // a site-relative `/uploads/<key>` — the absolutize pass at the
-    // renderer's edge prefixes the apiBaseUrl so Desktop's file:// origin
-    // doesn't resolve it to file:///uploads/...
-    getBaseUrlMock.mockReturnValue("https://api.example.test");
-    const att = makeRecord({
-      url: "/uploads/ws-1/abc.png",
-      markdown_url: "",
-      download_url: "/api/attachments/att-1/download",
-    });
-    renderWithQuery(<Attachment attachment={{ kind: "record", attachment: att }} />);
-    const img = document.querySelector("img");
-    expect(img?.getAttribute("src")).toBe(
-      "https://api.example.test/uploads/ws-1/abc.png",
     );
   });
 

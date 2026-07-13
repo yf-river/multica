@@ -468,16 +468,20 @@ describe("ReadonlyContent file-card → AttachmentBlock HTML routing", () => {
       text: "<p>chart</p>",
       originalContentType: "text/html",
     });
+    const id = "11111111-2222-4333-8444-555555555555";
+    const href = `/api/attachments/${id}/download`;
     const attachment = {
-      id: "att-1",
+      id,
       url: "/uploads/report.html",
+      download_url: href,
+      markdown_url: href,
       filename: "report.html",
       content_type: "text/html",
       size_bytes: 0,
     } as any;
     const { container, queryByText } = renderWithQuery(
       <ReadonlyContent
-        content="!file[report.html](/uploads/report.html)"
+        content={`!file[report.html](${href})`}
         attachments={[attachment]}
       />,
     );

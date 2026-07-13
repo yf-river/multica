@@ -191,11 +191,9 @@ export function AttachmentList({
   onRemove?: (attachmentId: string) => void;
 }) {
   if (!attachments?.length) return null;
-  // Skip attachments whose URL (stable or legacy) is already referenced
-  // in the markdown content, and duplicates of the same file (same
-  // name/type/size) that are referenced. The dual-shape match is the
-  // MUL-3130 follow-through — a comment can mix the new
-  // /api/attachments/<id>/download URL and the legacy att.url shape.
+  // Skip attachments whose stable id URL is already referenced in the
+  // markdown content, and duplicates of the same file (same name/type/size)
+  // that are referenced.
   const standalone = content
     ? attachments.filter((a) => {
         if (contentReferencesAttachment(content, a)) return false;
