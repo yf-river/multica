@@ -2,7 +2,7 @@ import { deriveRuntimeHealth, type RuntimeHealth } from "@multica/core/runtimes"
 import type { AgentRuntime } from "@multica/core/types";
 import { formatDeviceInfo } from "../utils";
 
-export type RuntimeMachineSection = "local" | "remote" | "cloud";
+type RuntimeMachineSection = "local" | "remote" | "cloud";
 export type RuntimeMachineFilter = "all" | "online" | "issues";
 
 interface RuntimeWorkloadSummary {

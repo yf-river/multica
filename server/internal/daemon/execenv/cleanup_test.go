@@ -7,7 +7,7 @@ func (env *Environment) Cleanup(removeAll bool) error {
 		return nil
 	}
 	if env.LocalDirectory {
-		if removeAll && env.RootDir != "" {
+		if removeAll {
 			return os.RemoveAll(env.RootDir)
 		}
 		return nil

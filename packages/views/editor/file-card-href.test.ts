@@ -80,10 +80,8 @@ describe("FILE_CARD_URL_PATTERN", () => {
 });
 
 describe("preprocessFileCards (integration)", () => {
-  const cdn = "cdn.example.com";
-
   it("converts !file[…](/uploads/…) into a file-card div", () => {
-    const out = preprocessFileCards("!file[doc.md](/uploads/x.md)", cdn);
+    const out = preprocessFileCards("!file[doc.md](/uploads/x.md)");
     expect(out).toContain('data-type="fileCard"');
     expect(out).toContain('data-href="/uploads/x.md"');
     expect(out).toContain('data-filename="doc.md"');
@@ -92,7 +90,6 @@ describe("preprocessFileCards (integration)", () => {
   it("converts !file[…](attachment download URL) into a file-card div", () => {
     const out = preprocessFileCards(
       `!file[doc.md](${ATTACHMENT_DOWNLOAD})`,
-      cdn,
     );
     expect(out).toContain('data-type="fileCard"');
     expect(out).toContain(`data-href="${ATTACHMENT_DOWNLOAD}"`);
@@ -100,7 +97,7 @@ describe("preprocessFileCards (integration)", () => {
   });
 
   it("leaves a protocol-relative href untouched (not parsed as file-card)", () => {
-    const out = preprocessFileCards("!file[evil.txt](//evil.com/x)", cdn);
+    const out = preprocessFileCards("!file[evil.txt](//evil.com/x)");
     expect(out).not.toContain('data-type="fileCard"');
     expect(out).toBe("!file[evil.txt](//evil.com/x)");
   });
@@ -108,13 +105,12 @@ describe("preprocessFileCards (integration)", () => {
   it("leaves javascript: untouched (not parsed as file-card)", () => {
     const out = preprocessFileCards(
       "!file[evil.txt](javascript:alert(1))",
-      cdn,
     );
     expect(out).not.toContain('data-type="fileCard"');
   });
 
   it("leaves a non-/uploads relative path untouched", () => {
-    const out = preprocessFileCards("!file[name](/api/internal/x)", cdn);
+    const out = preprocessFileCards("!file[name](/api/internal/x)");
     expect(out).not.toContain('data-type="fileCard"');
   });
 });

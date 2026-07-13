@@ -409,9 +409,6 @@ func TestCleanupSidecarsNoOpWhenManifestMissing(t *testing.T) {
 	if err := CleanupSidecars(envRoot); err != nil {
 		t.Errorf("CleanupSidecars on empty envRoot returned error: %v", err)
 	}
-	if err := CleanupSidecars(""); err != nil {
-		t.Errorf("CleanupSidecars with empty envRoot returned error: %v", err)
-	}
 }
 
 // TestCleanupSidecarsLeavesUserContentInTrackedDirIntact is the

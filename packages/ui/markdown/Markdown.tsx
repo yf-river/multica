@@ -56,11 +56,6 @@ export interface MarkdownProps {
    */
   renderMention?: (props: { type: string; id: string }) => React.ReactNode
   /**
-   * CDN hostname for file card detection (e.g. "multica-static.copilothub.ai").
-   * When provided, enables file card preprocessing and rendering.
-   */
-  cdnDomain?: string
-  /**
    * Optional override for the image renderer. When provided, replaces the
    * default `<img>` with constrained sizing. The views-package wrapper uses
    * this to inject the unified `<Attachment>` component so chat messages get
@@ -410,8 +405,7 @@ export function Markdown({
   onFileClick,
   renderMention,
   renderImage,
-  renderFileCard,
-  cdnDomain
+  renderFileCard
 }: MarkdownProps): React.JSX.Element {
   const components = React.useMemo(
     () => createComponents(mode, onUrlClick, onFileClick, renderMention, renderImage, renderFileCard),
@@ -423,10 +417,10 @@ export function Markdown({
     () => {
       let result = children
       result = preprocessLinks(result)
-      result = preprocessFileCards(result, cdnDomain ?? '')
+      result = preprocessFileCards(result)
       return result
     },
-    [children, cdnDomain]
+    [children]
   )
 
   return (

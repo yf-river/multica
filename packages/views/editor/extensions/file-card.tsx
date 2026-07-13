@@ -7,11 +7,10 @@
  * Markdown serialization: `!file[filename](href)` — custom syntax that is
  * unambiguous (standard `[name](url)` is indistinguishable from regular links).
  *
- * Loading pipeline: preprocessFileCards in preprocess.ts converts both the
- * new `!file[name](url)` syntax AND legacy `[name](cdnUrl)` lines into HTML
- * divs BEFORE @tiptap/markdown parses the content. The markdownTokenizer
- * below acts as a fallback for any direct markdown parsing that bypasses
- * preprocessing.
+ * Loading pipeline: preprocessFileCards in preprocess.ts converts
+ * `!file[name](url)` into HTML before @tiptap/markdown parses the content.
+ * The markdownTokenizer below also supports direct markdown parsing that
+ * bypasses preprocessing.
  */
 
 import { Node, mergeAttributes } from "@tiptap/core";

@@ -242,7 +242,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// issue-scoped managed worktree. The work_dir path is stored in DB on
 	// task completion and passed back via PriorWorkDir on the next claim.
 	//
-	// Managed worktrees and legacy local_directory paths are cleaned on exit
+	// Managed worktrees and local-directory paths are cleaned on exit
 	// so the runtime config marker does not leak into repository files.
 	if env.LocalDirectory || env.ManagedWorktree {
 		defer func() {

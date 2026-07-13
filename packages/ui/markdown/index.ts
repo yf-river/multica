@@ -4,8 +4,6 @@ export { StreamingMarkdown, type StreamingMarkdownProps } from './StreamingMarkd
 export { preprocessLinks, detectLinks, hasLinks } from './linkify'
 export {
   preprocessFileCards,
-  isCdnUrl,
-  isFileCardUrl,
   isAllowedFileCardHref,
   FILE_CARD_URL_PATTERN,
 } from './file-cards'

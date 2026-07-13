@@ -97,11 +97,6 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 		// Treat it as an idempotent success — same pattern as CancelTask.
 		if existing, lookupErr := s.Queries.GetAgentTask(ctx, taskID); lookupErr == nil {
 			if !terminalTransitioned && errors.Is(err, pgx.ErrNoRows) && isTerminalTaskStatus(existing.Status) {
-				repaired, repairErr := s.reconcileExistingSquadSOPTerminal(ctx, existing)
-				if repairErr != nil {
-					return nil, fmt.Errorf("complete task: repair terminal Squad SOP projection: %w", repairErr)
-				}
-				s.publishSquadSOPTerminalProjection(ctx, repaired)
 				slog.Info("complete task: already finalized",
 					"task_id", util.UUIDToString(taskID),
 					"current_status", existing.Status,

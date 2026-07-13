@@ -4,11 +4,6 @@ import { describe, expect, it, vi } from "vitest";
 import { renderWithI18n as render } from "../test/i18n";
 import { Markdown } from "./markdown";
 
-vi.mock("@multica/core/config", () => ({
-  useConfigStore: (selector: (state: { cdnDomain: string }) => unknown) =>
-    selector({ cdnDomain: "" }),
-}));
-
 vi.mock("../issues/components/issue-mention-card", () => ({
   IssueMentionCard: ({ issueId }: { issueId: string }) => (
     <span data-testid="issue-mention-card">{issueId}</span>

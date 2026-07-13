@@ -1,5 +1,4 @@
 import { preprocessLinks, preprocessFileCards } from "@multica/ui/markdown";
-import { configStore } from "@multica/core/config";
 
 /**
  * Preprocess a markdown string before loading into Tiptap via contentType: 'markdown'.
@@ -10,12 +9,11 @@ import { configStore } from "@multica/core/config";
  *
  * Two string→string transforms on raw Markdown:
  * 1. Raw URLs → markdown links via linkify-it (so they render as clickable Link nodes)
- * 2. File card syntax (new !file[name](url) + legacy [name](cdnUrl)) → HTML div for
+ * 2. File card syntax (`!file[name](url)`) → HTML div for
  *    fileCard node parsing
  */
 export function preprocessMarkdown(markdown: string): string {
   if (!markdown) return "";
-  const cdnDomain = configStore.getState().cdnDomain;
   const withLinks = preprocessLinks(markdown);
-  return preprocessFileCards(withLinks, cdnDomain);
+  return preprocessFileCards(withLinks);
 }

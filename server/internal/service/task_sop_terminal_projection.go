@@ -81,56 +81,6 @@ func isTerminalTaskStatus(status string) bool {
 	}
 }
 
-// reconcileExistingSquadSOPTerminal repairs rows finalized by an older build
-// whose automatic event, run or Issue projection was only partially written.
-// It intentionally emits no second task-terminal event; only missing dependent
-// state is reconciled through the same idempotent transaction as new writes.
-func (s *TaskService) reconcileExistingSquadSOPTerminal(
-	ctx context.Context,
-	task db.AgentTaskQueue,
-) (*squadSOPTerminalProjection, error) {
-	if _, isSourceSummary := ParseIssueSourceSummaryContext(task); isSourceSummary {
-		return nil, nil
-	}
-	var projection *squadSOPTerminalProjection
-	err := s.runInTx(ctx, func(queries *db.Queries) error {
-		if err := lockIssueForTaskTerminalProjection(ctx, queries, task); err != nil {
-			return err
-		}
-		switch task.Status {
-		case "completed":
-			if err := s.linkGongfengMRsFromTaskComments(ctx, queries, task); err != nil {
-				return fmt.Errorf("repair task merge-request links: %w", err)
-			}
-			var err error
-			projection, err = s.repairSquadSOPTerminal(
-				ctx,
-				queries,
-				task,
-				completedSquadSOPOutcome(task.Result),
-			)
-			return err
-		case "failed":
-			delivered, err := squadSOPTaskHasDeliveryComment(ctx, queries, task)
-			if err != nil {
-				return fmt.Errorf("repair task delivery classification: %w", err)
-			}
-			outcome := failedSquadSOPOutcome()
-			if delivered {
-				if err := s.linkGongfengMRsFromTaskComments(ctx, queries, task); err != nil {
-					return fmt.Errorf("repair delivered task merge-request links: %w", err)
-				}
-				outcome = completedSquadSOPOutcome(nil)
-			}
-			projection, err = s.repairSquadSOPTerminal(ctx, queries, task, outcome)
-			return err
-		default:
-			return nil
-		}
-	})
-	return projection, err
-}
-
 // projectSquadSOPTerminal applies the complete automatic terminal projection
 // through the caller's transaction. The task row is already locked by its
 // terminal UPDATE; this function then locks issue -> SOP run in that order.
@@ -141,29 +91,6 @@ func (s *TaskService) projectSquadSOPTerminal(
 	queries *db.Queries,
 	task db.AgentTaskQueue,
 	outcome squadSOPTerminalOutcome,
-) (*squadSOPTerminalProjection, error) {
-	return s.projectSquadSOPTerminalWithPolicy(ctx, queries, task, outcome, false)
-}
-
-// repairSquadSOPTerminal replays only the dependent state of a task that is
-// already terminal. If its durable event belongs to a former Squad assignment,
-// that old run is no longer the current Issue projection and must not make the
-// idempotent terminal API fail after a legitimate reassignment.
-func (s *TaskService) repairSquadSOPTerminal(
-	ctx context.Context,
-	queries *db.Queries,
-	task db.AgentTaskQueue,
-	outcome squadSOPTerminalOutcome,
-) (*squadSOPTerminalProjection, error) {
-	return s.projectSquadSOPTerminalWithPolicy(ctx, queries, task, outcome, true)
-}
-
-func (s *TaskService) projectSquadSOPTerminalWithPolicy(
-	ctx context.Context,
-	queries *db.Queries,
-	task db.AgentTaskQueue,
-	outcome squadSOPTerminalOutcome,
-	ignoreFormerAssignment bool,
 ) (*squadSOPTerminalProjection, error) {
 	if !task.IssueID.Valid {
 		return nil, nil
@@ -198,7 +125,6 @@ func (s *TaskService) projectSquadSOPTerminalWithPolicy(
 		queries,
 		task,
 		outcome.eventType,
-		ignoreFormerAssignment,
 	)
 	if err != nil {
 		return nil, err
@@ -207,9 +133,6 @@ func (s *TaskService) projectSquadSOPTerminalWithPolicy(
 		return nil, nil
 	}
 	if run.IssueID != issue.ID || run.WorkspaceID != issue.WorkspaceID || run.SquadID != issue.AssigneeID {
-		if ignoreFormerAssignment {
-			return nil, nil
-		}
 		return nil, errors.New("squad SOP run does not match the locked issue assignment")
 	}
 
@@ -364,7 +287,6 @@ func lockSquadSOPRunForTerminal(
 	queries *db.Queries,
 	task db.AgentTaskQueue,
 	eventType string,
-	repairExisting bool,
 ) (db.SquadSopRun, bool, error) {
 	run, err := queries.LockSquadSOPRunForAutomaticTaskEvent(ctx, db.LockSquadSOPRunForAutomaticTaskEventParams{
 		TaskID:    task.ID,
@@ -375,24 +297,6 @@ func lockSquadSOPRunForTerminal(
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return db.SquadSopRun{}, false, fmt.Errorf("lock Squad SOP run for existing terminal event: %w", err)
-	}
-	if repairExisting {
-		// A legacy task can be terminal without its terminal event because the
-		// old projection committed each write independently. Its start event is
-		// the remaining durable task -> run provenance. Without either event,
-		// guessing the Issue's latest open run could corrupt a run created after
-		// the Issue was reassigned, so an unprovable replay is a safe no-op.
-		run, err = queries.LockSquadSOPRunForAutomaticTaskEvent(ctx, db.LockSquadSOPRunForAutomaticTaskEventParams{
-			TaskID:    task.ID,
-			EventType: squadSOPEventStarted,
-		})
-		if errors.Is(err, pgx.ErrNoRows) {
-			return db.SquadSopRun{}, false, nil
-		}
-		if err != nil {
-			return db.SquadSopRun{}, false, fmt.Errorf("lock Squad SOP run for task start event: %w", err)
-		}
-		return run, true, nil
 	}
 	run, err = queries.LockOpenSquadSOPRunByIssue(ctx, task.IssueID)
 	if errors.Is(err, pgx.ErrNoRows) {

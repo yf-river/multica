@@ -135,11 +135,6 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 	}); err != nil {
 		if existing, lookupErr := s.Queries.GetAgentTask(ctx, taskID); lookupErr == nil {
 			if !terminalTransitioned && errors.Is(err, pgx.ErrNoRows) && isTerminalTaskStatus(existing.Status) {
-				repaired, repairErr := s.reconcileExistingSquadSOPTerminal(ctx, existing)
-				if repairErr != nil {
-					return nil, fmt.Errorf("fail task: repair terminal Squad SOP projection: %w", repairErr)
-				}
-				s.publishSquadSOPTerminalProjection(ctx, repaired)
 				slog.Info("fail task: already finalized",
 					"task_id", util.UUIDToString(taskID),
 					"current_status", existing.Status,

@@ -379,15 +379,12 @@ func Reuse(params ReuseParams, logger *slog.Logger) (*Environment, error) {
 	//   2. CleanupSidecars rolls back the remaining sidecar files
 	//      (issue_context.md, project resources) and the manifest itself.
 	//
-	// No-op when RootDir is empty (legacy local_directory reuse, which the
-	// daemon skips anyway) or when no prior manifest exists (older build).
-	if env.RootDir != "" {
-		if err := removeReusedManagedSkillDirs(env.RootDir, skillsDirPath(params.WorkDir, params.Provider)); err != nil {
-			return nil, fmt.Errorf("execenv: reclaim managed skill dirs on reuse: %w", err)
-		}
-		if err := CleanupSidecars(env.RootDir); err != nil {
-			return nil, fmt.Errorf("execenv: roll back prior sidecars on reuse: %w", err)
-		}
+	// Missing manifests remain a no-op for workdirs created without sidecars.
+	if err := removeReusedManagedSkillDirs(env.RootDir, skillsDirPath(params.WorkDir, params.Provider)); err != nil {
+		return nil, fmt.Errorf("execenv: reclaim managed skill dirs on reuse: %w", err)
+	}
+	if err := CleanupSidecars(env.RootDir); err != nil {
+		return nil, fmt.Errorf("execenv: roll back prior sidecars on reuse: %w", err)
 	}
 
 	// Refresh context files (issue_context.md, skills). Reuse tracks a
@@ -395,11 +392,7 @@ func Reuse(params ReuseParams, logger *slog.Logger) (*Environment, error) {
 	// the up-to-date list of writes (an old manifest from a prior run
 	// would otherwise reference files this Reuse no longer creates). For
 	// local_directory tasks the daemon skips Reuse entirely (see
-	// daemon.runTask), but writing the manifest unconditionally keeps
-	// Prepare/Reuse symmetric so a future caller can rely on the
-	// manifest being current after either path. RootDir is empty on the
-	// legacy local_directory Reuse fallback — skip the persist in that
-	// case to avoid creating a stray manifest at the filesystem root.
+	// daemon.runTask), so every Reuse environment has a managed RootDir.
 	manifest := &sidecarManifest{}
 	if err := writeContextFiles(params.WorkDir, params.Provider, params.Task, manifest); err != nil {
 		return nil, fmt.Errorf("execenv: refresh context files: %w", err)
@@ -422,7 +415,7 @@ func Reuse(params ReuseParams, logger *slog.Logger) (*Environment, error) {
 	// Refresh Cursor's managed MCP sidecars on reuse. A newly saved agent
 	// mcp_config must replace the prior run's .cursor/mcp.json and isolated
 	// approvals before the next cursor-agent process starts.
-	if params.Provider == "cursor" && env.RootDir != "" {
+	if params.Provider == "cursor" {
 		cursorDataDir, err := prepareCursorMcpConfig(env.RootDir, params.WorkDir, params.McpConfig, manifest)
 		if err != nil {
 			return nil, fmt.Errorf("execenv: refresh cursor mcp config: %w", err)
@@ -430,10 +423,8 @@ func Reuse(params ReuseParams, logger *slog.Logger) (*Environment, error) {
 		env.CursorDataDir = cursorDataDir
 	}
 
-	if env.RootDir != "" {
-		if err := writeSidecarManifest(env.RootDir, manifest); err != nil {
-			return nil, fmt.Errorf("execenv: refresh sidecar manifest: %w", err)
-		}
+	if err := writeSidecarManifest(env.RootDir, manifest); err != nil {
+		return nil, fmt.Errorf("execenv: refresh sidecar manifest: %w", err)
 	}
 
 	// Refresh the per-task OpenClaw config on reuse — the user may have

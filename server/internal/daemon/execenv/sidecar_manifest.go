@@ -258,9 +258,6 @@ func writeSidecarManifest(envRoot string, m *sidecarManifest) error {
 // .agent_context/skills/). The two together restore the workdir to
 // byte-exact pre-task state.
 func CleanupSidecars(envRoot string) error {
-	if envRoot == "" {
-		return nil
-	}
 	manifestPath := filepath.Join(envRoot, sidecarManifestFile)
 	data, err := os.ReadFile(manifestPath)
 	if errors.Is(err, fs.ErrNotExist) {
