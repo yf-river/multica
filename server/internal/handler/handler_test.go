@@ -28,6 +28,10 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
+func randomID() string {
+	return strings.ReplaceAll(uuid.NewString(), "-", "")
+}
+
 type listSkillFilesFailingTxStarter struct {
 	pool *pgxpool.Pool
 }

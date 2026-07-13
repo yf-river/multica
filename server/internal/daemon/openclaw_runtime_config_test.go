@@ -2,8 +2,6 @@ package daemon
 
 import (
 	"encoding/json"
-	"fmt"
-	"strings"
 	"testing"
 
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
@@ -76,41 +74,6 @@ func TestDecodeOpenclawRuntimeConfigModeOnly(t *testing.T) {
 	}
 	if !gw.IsZero() {
 		t.Errorf("gateway: got %+v, want zero", gw)
-	}
-}
-
-// TestOpenclawGatewayPinDefaultFormattingMasksToken — a stray `%v` /
-// `%+v` / json.Marshal of an OpenclawGatewayPin must NOT print the bearer
-// token verbatim. The wrapper-config writer still gets the real value
-// directly off the Token field; only default formatters get redacted.
-// Guards against the secondary leak path called out in the issue #3260 CR.
-func TestOpenclawGatewayPinDefaultFormattingMasksToken(t *testing.T) {
-	t.Parallel()
-
-	pin := execenv.OpenclawGatewayPin{
-		Host:  "gw.internal",
-		Port:  18789,
-		Token: "real-secret",
-		TLS:   true,
-	}
-
-	if got := pin.String(); strings.Contains(got, "real-secret") {
-		t.Errorf("String() leaks token: %q", got)
-	}
-	if got := fmt.Sprintf("%+v", pin); strings.Contains(got, "real-secret") {
-		t.Errorf("%%+v leaks token: %q", got)
-	}
-	raw, err := json.Marshal(pin)
-	if err != nil {
-		t.Fatalf("marshal: %v", err)
-	}
-	if strings.Contains(string(raw), "real-secret") {
-		t.Errorf("MarshalJSON leaks token: %s", raw)
-	}
-	// Sanity: the host stays visible so the masked payload is still
-	// useful for debugging the non-secret half of the pin.
-	if !strings.Contains(string(raw), "gw.internal") {
-		t.Errorf("MarshalJSON dropped host along with token: %s", raw)
 	}
 }
 

@@ -110,13 +110,6 @@ type ExistingSkillIdentity struct {
 	CanOverwrite bool   `json:"can_overwrite,omitempty"`
 }
 
-func writeSkillImportDuplicateConflict(w http.ResponseWriter, existing ExistingSkillIdentity) {
-	writeJSON(w, http.StatusConflict, map[string]any{
-		"error":          "a skill with this name already exists",
-		"existing_skill": existing,
-	})
-}
-
 func skillToResponse(s db.Skill) (SkillResponse, error) {
 	config, err := decodeSkillConfig(s.Config)
 	if err != nil {

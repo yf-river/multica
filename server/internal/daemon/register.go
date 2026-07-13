@@ -94,10 +94,6 @@ func (d *Daemon) removeStaleRuntime(runtimeID string) (string, bool) {
 	delete(d.runtimeIndex, runtimeID)
 	d.mu.Unlock()
 
-	d.wsHBMu.Lock()
-	delete(d.wsHBLastAck, runtimeID)
-	d.wsHBMu.Unlock()
-
 	return workspaceID, true
 }
 
@@ -277,52 +273,6 @@ func (w *runtimeSetWatcher) notify() {
 		default:
 		}
 	}
-}
-
-// wsHeartbeatFreshness defines how long a WS heartbeat ack is considered
-// "fresh enough" to suppress the HTTP heartbeat for that runtime. The window
-// is 2× HeartbeatInterval so a single dropped WS ack still keeps HTTP
-// suppressed, but two missed acks (~30s of WS silence) re-enable HTTP — well
-// inside the server-side 45s offline threshold.
-func (d *Daemon) wsHeartbeatFreshness() time.Duration {
-	if d.cfg.HeartbeatInterval <= 0 {
-		return 30 * time.Second
-	}
-	return 2 * d.cfg.HeartbeatInterval
-}
-
-// recordWSHeartbeatAck stamps the runtime as having received a fresh WS
-// heartbeat ack from the server. Called by the WS read pump.
-func (d *Daemon) recordWSHeartbeatAck(runtimeID string) {
-	if runtimeID == "" {
-		return
-	}
-	d.wsHBMu.Lock()
-	d.wsHBLastAck[runtimeID] = time.Now()
-	d.wsHBMu.Unlock()
-}
-
-// wsHeartbeatRecentlyAcked reports whether the runtime received a WS
-// heartbeat ack inside the freshness window. The HTTP heartbeat loop uses
-// this to skip duplicate work when WS is already keeping the runtime alive.
-func (d *Daemon) wsHeartbeatRecentlyAcked(runtimeID string) bool {
-	d.wsHBMu.RLock()
-	last, ok := d.wsHBLastAck[runtimeID]
-	d.wsHBMu.RUnlock()
-	if !ok {
-		return false
-	}
-	return time.Since(last) < d.wsHeartbeatFreshness()
-}
-
-// clearWSHeartbeatAcks drops all WS heartbeat freshness records. Called on
-// WS disconnect so HTTP heartbeats resume on the next tick.
-func (d *Daemon) clearWSHeartbeatAcks() {
-	d.wsHBMu.Lock()
-	for k := range d.wsHBLastAck {
-		delete(d.wsHBLastAck, k)
-	}
-	d.wsHBMu.Unlock()
 }
 
 // Run starts the daemon: resolves auth, registers runtimes, then polls for tasks.
@@ -867,15 +817,6 @@ func (d *Daemon) registerTaskRepos(workspaceID string, repos []RepoData) {
 			d.syncWorkspaceRepos(workspaceID, toSync)
 		}()
 	}
-}
-
-// waitBackgroundSyncs blocks until every background sync started by
-// registerTaskRepos has finished. Intended for test teardown: tests that
-// hand the daemon a t.TempDir-backed repo cache must call this before
-// returning, otherwise an in-flight clone/fetch can race against TempDir
-// cleanup and surface as an unrelated "directory not empty" failure.
-func (d *Daemon) waitBackgroundSyncs() {
-	d.bgSyncs.Wait()
 }
 
 func (d *Daemon) syncWorkspaceRepos(workspaceID string, repos []RepoData) {

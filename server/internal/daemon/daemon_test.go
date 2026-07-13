@@ -24,6 +24,10 @@ import (
 	"github.com/multica-ai/multica/server/pkg/taskfailure"
 )
 
+func (d *Daemon) waitBackgroundSyncs() {
+	d.bgSyncs.Wait()
+}
+
 func createDaemonTestRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()

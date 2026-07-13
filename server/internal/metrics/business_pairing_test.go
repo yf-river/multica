@@ -327,9 +327,9 @@ func constantNameForEvent(name string) string {
 // so a leftover prewarm value from another counter cannot mask a missing
 // dispatch case.
 func dispatchIncrementsCounter(m *metrics.BusinessMetrics, ev analytics.Event) bool {
-	before := metrics.SumAllCounters(m)
+	before := sumAllCounters(m)
 	metrics.RecordEvent(analytics.NoopClient{}, m, ev)
-	after := metrics.SumAllCounters(m)
+	after := sumAllCounters(m)
 	return after > before
 }
 

@@ -2,8 +2,6 @@ package handler
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -29,14 +27,6 @@ import (
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
-
-// randomID returns a random 16-byte hex string used as a request ID for
-// in-memory stores (model list, local skills, CLI update, etc.).
-func randomID() string {
-	b := make([]byte, 16)
-	rand.Read(b)
-	return hex.EncodeToString(b)
-}
 
 type txStarter interface {
 	Begin(ctx context.Context) (pgx.Tx, error)

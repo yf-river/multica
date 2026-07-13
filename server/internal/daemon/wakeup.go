@@ -98,10 +98,6 @@ func (d *Daemon) runTaskWakeupConnection(ctx context.Context, runtimeIDs []strin
 		return err
 	}
 	defer func() { _ = conn.Close() }()
-	// HTTP heartbeats resume the moment WS detaches so the freshness window
-	// from a previous connection cannot keep them silenced past disconnect.
-	defer d.clearWSHeartbeatAcks()
-
 	d.logger.Info("task wakeup websocket connected", "runtimes", len(runtimeIDs))
 	signalTaskWakeup(taskWakeups, "")
 
@@ -248,9 +244,6 @@ func marshalRaw(v any) json.RawMessage {
 // A RuntimeGone=true ack is the WebSocket twin of an HTTP 404 "runtime not
 // found": it tells the daemon the runtime row was deleted server-side. We
 // route it through the same self-heal entry point as the HTTP path and do
-// NOT record a heartbeat freshness mark — pretending the runtime is alive
-// would let HTTP keep skipping its own heartbeat against the dead UUID.
-//
 // handleRuntimeGone uses the daemon root context for its register call, so
 // this function can safely pass any caller context here.
 func (d *Daemon) handleWSHeartbeatAck(ctx context.Context, ack *HeartbeatResponse) {
@@ -261,7 +254,6 @@ func (d *Daemon) handleWSHeartbeatAck(ctx context.Context, ack *HeartbeatRespons
 		go d.handleRuntimeGone(ack.RuntimeID)
 		return
 	}
-	d.recordWSHeartbeatAck(ack.RuntimeID)
 	d.handleHeartbeatActions(ctx, ack.RuntimeID, ack)
 }
 

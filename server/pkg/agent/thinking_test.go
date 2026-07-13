@@ -10,6 +10,12 @@ import (
 	"testing"
 )
 
+func resetThinkingCacheForTests() {
+	thinkingCacheMu.Lock()
+	thinkingCache = map[thinkingCacheKey]thinkingCacheEntry{}
+	thinkingCacheMu.Unlock()
+}
+
 // ── Claude help parsing ──────────────────────────────────────────────
 
 func TestParseClaudeEffortHelp_OldFormat(t *testing.T) {

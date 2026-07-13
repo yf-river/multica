@@ -22,12 +22,12 @@ func TestRecordEventSkipsPostHogForMetricsOnly(t *testing.T) {
 	m := metrics.NewBusinessMetrics()
 
 	// Operational event: Prometheus counter moves, PostHog gets nothing.
-	before := metrics.SumAllCounters(m)
+	before := sumAllCounters(m)
 	metrics.RecordEvent(spy, m, analytics.RuntimeOffline("user-1", "ws-1", "rt-1", "daemon-1", "claude"))
 	if len(spy.names) != 0 {
 		t.Fatalf("runtime_offline shipped %d events to PostHog, want 0: %v", len(spy.names), spy.names)
 	}
-	if metrics.SumAllCounters(m) <= before {
+	if sumAllCounters(m) <= before {
 		t.Fatalf("runtime_offline did not increment a Prometheus counter")
 	}
 
