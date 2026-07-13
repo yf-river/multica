@@ -839,17 +839,11 @@ func (h *Handler) ListGroupedIssues(w http.ResponseWriter, r *http.Request) {
 	}
 
 	statuses := splitCommaParam(r.URL.Query().Get("statuses"))
-	if len(statuses) == 0 {
-		statuses = splitCommaParam(r.URL.Query().Get("status"))
-	}
 	if len(statuses) > 0 {
 		where = append(where, fmt.Sprintf("i.status = ANY(%s::text[])", addArg(statuses)))
 	}
 
 	priorities := splitCommaParam(r.URL.Query().Get("priorities"))
-	if len(priorities) == 0 {
-		priorities = splitCommaParam(r.URL.Query().Get("priority"))
-	}
 	if len(priorities) > 0 {
 		where = append(where, fmt.Sprintf("i.priority = ANY(%s::text[])", addArg(priorities)))
 	}

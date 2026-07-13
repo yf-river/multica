@@ -199,26 +199,16 @@ func TestListComments_RootsOnlyReturnsTopLevelComments(t *testing.T) {
 	}
 	fx := newCommentListFixture(t)
 
-	for _, tc := range []struct {
-		name  string
-		query string
-	}{
-		{name: "underscore query", query: "roots_only=true"},
-		{name: "hyphenated alias", query: "roots-only=true"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			w, rows := listComments(t, fx.IssueID, tc.query)
-			eqIDs(t, ids(rows), []string{fx.Root1, fx.Root2}, tc.name)
-			for _, row := range rows {
-				if row.ParentID != nil {
-					t.Fatalf("%s: expected root comment %s to have nil parent_id, got %q", tc.name, row.ID, *row.ParentID)
-				}
-			}
-			nb, nbid := nextThreadCursor(w)
-			if nb != "" || nbid != "" {
-				t.Fatalf("%s: roots-only list should not emit cursor headers, got before=%q before_id=%q", tc.name, nb, nbid)
-			}
-		})
+	w, rows := listComments(t, fx.IssueID, "roots_only=true")
+	eqIDs(t, ids(rows), []string{fx.Root1, fx.Root2}, "roots_only")
+	for _, row := range rows {
+		if row.ParentID != nil {
+			t.Fatalf("expected root comment %s to have nil parent_id, got %q", row.ID, *row.ParentID)
+		}
+	}
+	nb, nbid := nextThreadCursor(w)
+	if nb != "" || nbid != "" {
+		t.Fatalf("roots_only list should not emit cursor headers, got before=%q before_id=%q", nb, nbid)
 	}
 }
 

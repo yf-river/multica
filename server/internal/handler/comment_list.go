@@ -29,12 +29,8 @@ func (h *Handler) ListComments(w http.ResponseWriter, r *http.Request) {
 	if v := q.Get("since"); v != "" {
 		t, err := time.Parse(time.RFC3339Nano, v)
 		if err != nil {
-			// Fall back to RFC3339 for backwards-compat with the original CLI.
-			t, err = time.Parse(time.RFC3339, v)
-			if err != nil {
-				writeError(w, http.StatusBadRequest, "invalid since parameter; expected RFC3339 format")
-				return
-			}
+			writeError(w, http.StatusBadRequest, "invalid since parameter; expected RFC3339 format")
+			return
 		}
 		sinceTime = pgtype.Timestamptz{Time: t, Valid: true}
 	}
@@ -44,16 +40,7 @@ func (h *Handler) ListComments(w http.ResponseWriter, r *http.Request) {
 	tailStr := q.Get("tail")
 	beforeTimeStr := q.Get("before")
 	beforeIDStr := q.Get("before_id")
-	if beforeIDStr == "" {
-		// Accept hyphenated alias to match CLI flag convention.
-		beforeIDStr = q.Get("before-id")
-	}
-
 	rootsOnlyStr := q.Get("roots_only")
-	if rootsOnlyStr == "" {
-		// Accept hyphenated alias to match CLI flag convention.
-		rootsOnlyStr = q.Get("roots-only")
-	}
 
 	rootsOnly := false
 	if rootsOnlyStr != "" {
