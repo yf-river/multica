@@ -355,11 +355,3 @@ export function preprocessLinks(text: string): string {
 
   return result
 }
-
-/**
- * Test if text contains any detectable links
- * Useful for optimization - skip preprocessing if no links present
- */
-export function hasLinks(text: string): boolean {
-  return linkify.pretest(text) || /[~/.]\/[\w]/.test(text)
-}
