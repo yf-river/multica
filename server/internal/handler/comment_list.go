@@ -541,27 +541,10 @@ func (h *Handler) fetchCommentsForList(ctx context.Context, args fetchCommentsAr
 		// they need reply context. Each root carries reply_count +
 		// last_activity_at so the reader can triage which thread to drill into.
 		stats := map[string]rootStat{}
-		if args.Since.Valid {
-			rows, err := h.Queries.ListRootCommentsSinceForIssue(ctx, db.ListRootCommentsSinceForIssueParams{
-				IssueID:     issue.ID,
-				WorkspaceID: issue.WorkspaceID,
-				Since:       args.Since,
-				RowLimit:    commentHardCap,
-			})
-			if err != nil {
-				return fetchCommentsResult{}, err
-			}
-			comments := make([]db.Comment, len(rows))
-			for i, r := range rows {
-				comments[i] = r.Comment
-				stats[uuidToString(r.Comment.ID)] = rootStat{ReplyCount: int(r.ReplyCount), LastActivityAt: r.LastActivityAt}
-			}
-			return fetchCommentsResult{Comments: comments, RootStats: stats}, nil
-		}
-
 		rows, err := h.Queries.ListRootCommentsForIssue(ctx, db.ListRootCommentsForIssueParams{
 			IssueID:     issue.ID,
 			WorkspaceID: issue.WorkspaceID,
+			Since:       args.Since,
 			RowLimit:    commentHardCap,
 		})
 		if err != nil {
