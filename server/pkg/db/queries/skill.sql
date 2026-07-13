@@ -10,10 +10,6 @@ FROM skill
 WHERE workspace_id = $1
 ORDER BY name ASC;
 
--- name: GetSkill :one
-SELECT * FROM skill
-WHERE id = $1;
-
 -- name: GetSkillInWorkspace :one
 SELECT * FROM skill
 WHERE id = $1 AND workspace_id = $2;

@@ -1,25 +1,3 @@
--- name: CreateAgentPlaygroundExperiment :one
-INSERT INTO agent_playground_experiment (
-    workspace_id,
-    name,
-    description,
-    dataset_asset_id,
-    dataset_version_id,
-    judge_agent_id,
-    status,
-    created_by
-) VALUES (
-    $1,
-    $2,
-    COALESCE(sqlc.narg('description'), ''),
-    sqlc.narg('dataset_asset_id'),
-    sqlc.narg('dataset_version_id'),
-    sqlc.narg('judge_agent_id'),
-    COALESCE(sqlc.narg('status'), 'ready'),
-    sqlc.narg('created_by')
-)
-RETURNING *;
-
 -- name: CreateAgentPlaygroundExperimentWithID :one
 INSERT INTO agent_playground_experiment (
     id,

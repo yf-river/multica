@@ -1775,7 +1775,7 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 ` + "```json" + `
 {"schema_version":1,"schema":"multica.training_evaluation.agent_verdict.v1","case_results":[{"case_index":0,"status":"通过","output":"登录失败：已覆盖验收条件和 trace/任务标识","failure_reason":"无","conclusion":"通过","命中":["登录失败","验收条件","trace/任务标识"],"缺失":[],"evidence":{"命中":["登录失败","验收条件","trace/任务标识"]}}],"summary":{"total_cases":1,"passed_cases":1,"failed_cases":0,"failure_reason":"无","conclusion":"Agent 已返回结构化逐用例评估"}}
 ` + "```"
-	if _, err := testHandler.Queries.CreateTaskMessage(context.Background(), db.CreateTaskMessageParams{
+	if _, err := testHandler.Queries.CreateTaskMessageIdempotent(context.Background(), db.CreateTaskMessageIdempotentParams{
 		TaskID:  parseUUID(resp.TaskID),
 		Seq:     1,
 		Type:    "text",
@@ -2257,7 +2257,7 @@ func TestRunPromptEvaluationAssetAgentCompletedWithoutStructuredVerdictNeedsRevi
 	`, resp.TaskID); err != nil {
 		t.Fatalf("start agent task: %v", err)
 	}
-	if _, err := testHandler.Queries.CreateTaskMessage(context.Background(), db.CreateTaskMessageParams{
+	if _, err := testHandler.Queries.CreateTaskMessageIdempotent(context.Background(), db.CreateTaskMessageIdempotentParams{
 		TaskID:  parseUUID(resp.TaskID),
 		Seq:     1,
 		Type:    "text",
@@ -2672,7 +2672,7 @@ func TestPromptEvaluationOptimizationCandidateUsesAgentEvidence(t *testing.T) {
 	`, resp.TaskID); err != nil {
 		t.Fatalf("insert task usage: %v", err)
 	}
-	if _, err := testHandler.Queries.CreateTaskMessage(context.Background(), db.CreateTaskMessageParams{
+	if _, err := testHandler.Queries.CreateTaskMessageIdempotent(context.Background(), db.CreateTaskMessageIdempotentParams{
 		TaskID:  parseUUID(resp.TaskID),
 		Seq:     1,
 		Type:    "text",

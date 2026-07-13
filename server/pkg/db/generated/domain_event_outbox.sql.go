@@ -268,27 +268,6 @@ func (q *Queries) RecordDomainEventDelivery(ctx context.Context, arg RecordDomai
 	return err
 }
 
-const requeueDeadLetterDomainEvent = `-- name: RequeueDeadLetterDomainEvent :execrows
-UPDATE domain_event_outbox
-SET attempts = 0,
-    available_at = now(),
-    lease_owner = NULL,
-    lease_until = NULL,
-    last_error = NULL,
-    dead_lettered_at = NULL,
-    dead_letter_reason = NULL
-WHERE id = $1
-  AND dead_lettered_at IS NOT NULL
-`
-
-func (q *Queries) RequeueDeadLetterDomainEvent(ctx context.Context, id pgtype.UUID) (int64, error) {
-	result, err := q.db.Exec(ctx, requeueDeadLetterDomainEvent, id)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const retryDomainEvent = `-- name: RetryDomainEvent :execrows
 UPDATE domain_event_outbox
 SET attempts = attempts + 1,

@@ -1125,10 +1125,6 @@ func TestReportTaskMessagesSanitizesNullBytesBeforePersisting(t *testing.T) {
 	runtimeID := createClaimReclaimRuntime(t, ctx, "Task message nul runtime")
 	agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, "Task message nul agent")
 	taskID := createDispatchedClaimFixtureTask(t, ctx, agentID, runtimeID, issueID, "1 second", true)
-	t.Cleanup(func() {
-		_ = testHandler.Queries.DeleteTaskMessages(context.Background(), parseUUID(taskID))
-	})
-
 	w := httptest.NewRecorder()
 	req := newDaemonUserRequest("POST", "/api/daemon/tasks/"+taskID+"/messages", map[string]any{
 		"messages": []map[string]any{
@@ -1199,8 +1195,6 @@ func TestReportTaskMessagesRollsBackBatchWhenOneWriteFails(t *testing.T) {
 	runtimeID := createClaimReclaimRuntime(t, ctx, "Task message rollback runtime")
 	agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, "Task message rollback agent")
 	taskID := createDispatchedClaimFixtureTask(t, ctx, agentID, runtimeID, issueID, "1 second", true)
-	t.Cleanup(func() { _ = testHandler.Queries.DeleteTaskMessages(context.Background(), parseUUID(taskID)) })
-
 	h := *testHandler
 	h.Queries = db.New(&failTaskMessageDB{DBTX: testPool, failAt: 2})
 	h.TxStarter = failTaskMessageTxStarter{pool: testPool, failAt: 2}
@@ -1235,7 +1229,6 @@ func TestReportTaskMessagesDeduplicatesRetriedSequence(t *testing.T) {
 	runtimeID := createClaimReclaimRuntime(t, ctx, "Task message retry runtime")
 	agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, "Task message retry agent")
 	taskID := createDispatchedClaimFixtureTask(t, ctx, agentID, runtimeID, issueID, "1 second", true)
-	t.Cleanup(func() { _ = testHandler.Queries.DeleteTaskMessages(context.Background(), parseUUID(taskID)) })
 	for attempt, content := range []string{"stable frame", "must not overwrite committed frame"} {
 		w := httptest.NewRecorder()
 		req := newDaemonUserRequest("POST", "/api/daemon/tasks/"+taskID+"/messages", map[string]any{

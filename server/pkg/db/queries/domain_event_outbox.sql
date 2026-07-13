@@ -86,18 +86,6 @@ WHERE id = sqlc.arg(id)
   AND processed_at IS NULL
   AND dead_lettered_at IS NULL;
 
--- name: RequeueDeadLetterDomainEvent :execrows
-UPDATE domain_event_outbox
-SET attempts = 0,
-    available_at = now(),
-    lease_owner = NULL,
-    lease_until = NULL,
-    last_error = NULL,
-    dead_lettered_at = NULL,
-    dead_letter_reason = NULL
-WHERE id = sqlc.arg(id)
-  AND dead_lettered_at IS NOT NULL;
-
 -- name: DeleteExpiredDomainEvents :execrows
 DELETE FROM domain_event_outbox AS event
 WHERE event.id IN (

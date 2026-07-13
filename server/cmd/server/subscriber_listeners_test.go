@@ -76,15 +76,17 @@ func cleanupTestUser(t *testing.T, account string) {
 
 func isSubscribed(t *testing.T, queries *db.Queries, issueID, userType, userID string) bool {
 	t.Helper()
-	subscribed, err := queries.IsIssueSubscriber(context.Background(), db.IsIssueSubscriberParams{
-		IssueID:  util.MustParseUUID(issueID),
-		UserType: userType,
-		UserID:   util.MustParseUUID(userID),
-	})
+	subscribers, err := queries.ListIssueSubscribers(context.Background(), util.MustParseUUID(issueID))
 	if err != nil {
-		t.Fatalf("IsIssueSubscriber: %v", err)
+		t.Fatalf("ListIssueSubscribers: %v", err)
 	}
-	return subscribed
+	wantUserID := util.MustParseUUID(userID)
+	for _, subscriber := range subscribers {
+		if subscriber.UserType == userType && subscriber.UserID == wantUserID {
+			return true
+		}
+	}
+	return false
 }
 
 func subscriberCount(t *testing.T, queries *db.Queries, issueID string) int {

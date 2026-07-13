@@ -44,10 +44,6 @@ ORDER BY e.created_at DESC, e.id DESC
 LIMIT 1
 FOR UPDATE OF r;
 
--- name: GetSquadSOPRunInWorkspace :one
-SELECT * FROM squad_sop_run
-WHERE id = $1 AND workspace_id = $2;
-
 -- name: ListIssueSquadSOPRuns :many
 SELECT * FROM squad_sop_run
 WHERE issue_id = $1 AND workspace_id = $2

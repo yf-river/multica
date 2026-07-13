@@ -391,8 +391,15 @@ func TestDeadLetterUnblocksStreamAndCanBeRequeued(t *testing.T) {
 	}
 
 	poisonFirst = false
-	if updated, err := fixture.queries.RequeueDeadLetterDomainEvent(ctx, util.MustParseUUID(first.ID)); err != nil || updated != 1 {
-		t.Fatalf("requeue dead letter = (%d, %v), want one row", updated, err)
+	result, err := outboxTestPool.Exec(ctx, `
+		UPDATE domain_event_outbox
+		SET attempts = 0, available_at = now(), lease_owner = NULL,
+		    lease_until = NULL, last_error = NULL, dead_lettered_at = NULL,
+		    dead_letter_reason = NULL
+		WHERE id = $1 AND dead_lettered_at IS NOT NULL
+	`, first.ID)
+	if err != nil || result.RowsAffected() != 1 {
+		t.Fatalf("requeue dead letter = (%d, %v), want one row", result.RowsAffected(), err)
 	}
 	if count, err := dispatcher.ProcessBatch(ctx); count != 1 || err != nil {
 		t.Fatalf("requeued event batch = (%d, %v)", count, err)

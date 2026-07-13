@@ -15,10 +15,6 @@ INSERT INTO runtime_profile (
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 RETURNING *;
 
--- name: GetRuntimeProfile :one
-SELECT * FROM runtime_profile
-WHERE id = $1;
-
 -- name: GetRuntimeProfileForWorkspace :one
 SELECT * FROM runtime_profile
 WHERE id = $1 AND workspace_id = $2;

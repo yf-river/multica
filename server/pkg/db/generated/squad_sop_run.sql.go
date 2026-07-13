@@ -176,38 +176,6 @@ func (q *Queries) GetOpenSquadSOPRunByIssue(ctx context.Context, issueID pgtype.
 	return i, err
 }
 
-const getSquadSOPRunInWorkspace = `-- name: GetSquadSOPRunInWorkspace :one
-SELECT id, workspace_id, issue_id, squad_id, leader_task_id, profile_key, profile, status, current_step_key, started_at, completed_at, total_duration_ms, created_at, updated_at FROM squad_sop_run
-WHERE id = $1 AND workspace_id = $2
-`
-
-type GetSquadSOPRunInWorkspaceParams struct {
-	ID          pgtype.UUID `json:"id"`
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-}
-
-func (q *Queries) GetSquadSOPRunInWorkspace(ctx context.Context, arg GetSquadSOPRunInWorkspaceParams) (SquadSopRun, error) {
-	row := q.db.QueryRow(ctx, getSquadSOPRunInWorkspace, arg.ID, arg.WorkspaceID)
-	var i SquadSopRun
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.IssueID,
-		&i.SquadID,
-		&i.LeaderTaskID,
-		&i.ProfileKey,
-		&i.Profile,
-		&i.Status,
-		&i.CurrentStepKey,
-		&i.StartedAt,
-		&i.CompletedAt,
-		&i.TotalDurationMs,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
 const listIssueSquadSOPRuns = `-- name: ListIssueSquadSOPRuns :many
 SELECT id, workspace_id, issue_id, squad_id, leader_task_id, profile_key, profile, status, current_step_key, started_at, completed_at, total_duration_ms, created_at, updated_at FROM squad_sop_run
 WHERE issue_id = $1 AND workspace_id = $2

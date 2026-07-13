@@ -33,9 +33,11 @@ function generatedQueryMethods() {
 
 test("every generated sqlc query has a Go caller", () => {
   const methods = generatedQueryMethods();
-  const sources = listGoFiles(serverRoot).map((file) => fs.readFileSync(file, "utf8"));
+  const sources = listGoFiles(serverRoot)
+    .filter((file) => !file.endsWith("_test.go"))
+    .map((file) => fs.readFileSync(file, "utf8"));
   const unused = [...methods]
-    .filter((name) => !sources.some((source) => new RegExp(`\\b${name}\\b`).test(source)))
+    .filter((name) => !sources.some((source) => new RegExp(`\\.\\s*${name}\\s*\\(`).test(source)))
     .sort();
-  assert.deepEqual(unused, [], `zero-call sqlc queries: ${unused.join(", ")}`);
+  assert.deepEqual(unused, [], `zero-production-call sqlc queries: ${unused.join(", ")}`);
 });

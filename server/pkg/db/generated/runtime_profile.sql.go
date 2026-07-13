@@ -143,30 +143,6 @@ func (q *Queries) DeleteRuntimeProfile(ctx context.Context, arg DeleteRuntimePro
 	return err
 }
 
-const getRuntimeProfile = `-- name: GetRuntimeProfile :one
-SELECT id, workspace_id, display_name, protocol_family, command_name, description, fixed_args, created_by, enabled, created_at, updated_at FROM runtime_profile
-WHERE id = $1
-`
-
-func (q *Queries) GetRuntimeProfile(ctx context.Context, id pgtype.UUID) (RuntimeProfile, error) {
-	row := q.db.QueryRow(ctx, getRuntimeProfile, id)
-	var i RuntimeProfile
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.DisplayName,
-		&i.ProtocolFamily,
-		&i.CommandName,
-		&i.Description,
-		&i.FixedArgs,
-		&i.CreatedBy,
-		&i.Enabled,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
 const getRuntimeProfileForWorkspace = `-- name: GetRuntimeProfileForWorkspace :one
 SELECT id, workspace_id, display_name, protocol_family, command_name, description, fixed_args, created_by, enabled, created_at, updated_at FROM runtime_profile
 WHERE id = $1 AND workspace_id = $2

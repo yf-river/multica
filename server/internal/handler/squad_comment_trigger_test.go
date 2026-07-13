@@ -606,19 +606,16 @@ func TestCompleteTask_FinalSOPStepAutoClosesIssueWithoutPullRequest(t *testing.T
 	if issue.Status != "done" {
 		t.Fatalf("issue status = %q, want done", issue.Status)
 	}
-	run, err := testHandler.Queries.GetSquadSOPRunInWorkspace(ctx, db.GetSquadSOPRunInWorkspaceParams{
-		ID: func() pgtype.UUID {
-			var id string
-			_ = testPool.QueryRow(ctx, `SELECT id FROM squad_sop_run WHERE issue_id = $1 ORDER BY created_at DESC LIMIT 1`, issueID).Scan(&id)
-			return util.MustParseUUID(id)
-		}(),
-		WorkspaceID: util.MustParseUUID(testWorkspaceID),
-	})
-	if err != nil {
+	var runStatus string
+	if err := testPool.QueryRow(ctx, `
+		SELECT status FROM squad_sop_run
+		WHERE issue_id = $1 AND workspace_id = $2
+		ORDER BY created_at DESC LIMIT 1
+	`, issueID, testWorkspaceID).Scan(&runStatus); err != nil {
 		t.Fatalf("load sop run: %v", err)
 	}
-	if run.Status != "已完成" {
-		t.Fatalf("sop run status = %q, want 已完成", run.Status)
+	if runStatus != "已完成" {
+		t.Fatalf("sop run status = %q, want 已完成", runStatus)
 	}
 }
 
@@ -704,15 +701,14 @@ func TestCompleteTask_FinalSOPStepBlockedOutputDoesNotAutoCloseIssue(t *testing.
 	if issue.Status != "blocked" {
 		t.Fatalf("issue status = %q, want blocked", issue.Status)
 	}
-	run, err := testHandler.Queries.GetSquadSOPRunInWorkspace(ctx, db.GetSquadSOPRunInWorkspaceParams{
-		ID:          util.MustParseUUID(runID),
-		WorkspaceID: util.MustParseUUID(testWorkspaceID),
-	})
-	if err != nil {
+	var runStatus string
+	if err := testPool.QueryRow(ctx, `
+		SELECT status FROM squad_sop_run WHERE id = $1 AND workspace_id = $2
+	`, runID, testWorkspaceID).Scan(&runStatus); err != nil {
 		t.Fatalf("load sop run: %v", err)
 	}
-	if run.Status != "已阻塞" {
-		t.Fatalf("sop run status = %q, want 已阻塞", run.Status)
+	if runStatus != "已阻塞" {
+		t.Fatalf("sop run status = %q, want 已阻塞", runStatus)
 	}
 	var queuedLeaderCount int
 	if err := testPool.QueryRow(ctx, `

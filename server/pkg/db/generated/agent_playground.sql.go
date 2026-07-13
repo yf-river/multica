@@ -47,68 +47,6 @@ func (q *Queries) CreateAgentPlaygroundAgent(ctx context.Context, arg CreateAgen
 	return i, err
 }
 
-const createAgentPlaygroundExperiment = `-- name: CreateAgentPlaygroundExperiment :one
-INSERT INTO agent_playground_experiment (
-    workspace_id,
-    name,
-    description,
-    dataset_asset_id,
-    dataset_version_id,
-    judge_agent_id,
-    status,
-    created_by
-) VALUES (
-    $1,
-    $2,
-    COALESCE($3, ''),
-    $4,
-    $5,
-    $6,
-    COALESCE($7, 'ready'),
-    $8
-)
-RETURNING id, workspace_id, name, description, dataset_asset_id, dataset_version_id, judge_agent_id, status, created_by, created_at, updated_at
-`
-
-type CreateAgentPlaygroundExperimentParams struct {
-	WorkspaceID      pgtype.UUID `json:"workspace_id"`
-	Name             string      `json:"name"`
-	Description      interface{} `json:"description"`
-	DatasetAssetID   pgtype.UUID `json:"dataset_asset_id"`
-	DatasetVersionID pgtype.UUID `json:"dataset_version_id"`
-	JudgeAgentID     pgtype.UUID `json:"judge_agent_id"`
-	Status           interface{} `json:"status"`
-	CreatedBy        pgtype.UUID `json:"created_by"`
-}
-
-func (q *Queries) CreateAgentPlaygroundExperiment(ctx context.Context, arg CreateAgentPlaygroundExperimentParams) (AgentPlaygroundExperiment, error) {
-	row := q.db.QueryRow(ctx, createAgentPlaygroundExperiment,
-		arg.WorkspaceID,
-		arg.Name,
-		arg.Description,
-		arg.DatasetAssetID,
-		arg.DatasetVersionID,
-		arg.JudgeAgentID,
-		arg.Status,
-		arg.CreatedBy,
-	)
-	var i AgentPlaygroundExperiment
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.Name,
-		&i.Description,
-		&i.DatasetAssetID,
-		&i.DatasetVersionID,
-		&i.JudgeAgentID,
-		&i.Status,
-		&i.CreatedBy,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-	)
-	return i, err
-}
-
 const createAgentPlaygroundExperimentWithID = `-- name: CreateAgentPlaygroundExperimentWithID :one
 INSERT INTO agent_playground_experiment (
     id,

@@ -11,47 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const createTaskMessage = `-- name: CreateTaskMessage :one
-INSERT INTO task_message (task_id, seq, type, tool, content, input, output)
-VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, task_id, seq, type, tool, content, input, output, created_at
-`
-
-type CreateTaskMessageParams struct {
-	TaskID  pgtype.UUID `json:"task_id"`
-	Seq     int32       `json:"seq"`
-	Type    string      `json:"type"`
-	Tool    pgtype.Text `json:"tool"`
-	Content pgtype.Text `json:"content"`
-	Input   []byte      `json:"input"`
-	Output  pgtype.Text `json:"output"`
-}
-
-func (q *Queries) CreateTaskMessage(ctx context.Context, arg CreateTaskMessageParams) (TaskMessage, error) {
-	row := q.db.QueryRow(ctx, createTaskMessage,
-		arg.TaskID,
-		arg.Seq,
-		arg.Type,
-		arg.Tool,
-		arg.Content,
-		arg.Input,
-		arg.Output,
-	)
-	var i TaskMessage
-	err := row.Scan(
-		&i.ID,
-		&i.TaskID,
-		&i.Seq,
-		&i.Type,
-		&i.Tool,
-		&i.Content,
-		&i.Input,
-		&i.Output,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
 const createTaskMessageIdempotent = `-- name: CreateTaskMessageIdempotent :one
 INSERT INTO task_message (task_id, seq, type, tool, content, input, output)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
@@ -106,16 +65,6 @@ func (q *Queries) CreateTaskMessageIdempotent(ctx context.Context, arg CreateTas
 		&i.Inserted,
 	)
 	return i, err
-}
-
-const deleteTaskMessages = `-- name: DeleteTaskMessages :exec
-DELETE FROM task_message
-WHERE task_id = $1
-`
-
-func (q *Queries) DeleteTaskMessages(ctx context.Context, taskID pgtype.UUID) error {
-	_, err := q.db.Exec(ctx, deleteTaskMessages, taskID)
-	return err
 }
 
 const listTaskMessages = `-- name: ListTaskMessages :many
