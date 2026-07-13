@@ -1,9 +1,11 @@
 # Current domain flows
 
 This index is the maintained entry point for Multica's high-risk business
-flows. The generated [current system map](./current-system-map.md) inventories
-surfaces; these documents explain ownership, transaction boundaries, recovery,
-and the one supported path through those surfaces.
+flows. The compact [current system summary](./current-system-summary.md) records
+drift-checked surface counts; expanded generated inventory is available under
+ignored `artifacts/code-health/` after `pnpm generate:current-system-map`.
+These documents explain ownership, transaction boundaries, recovery, and the
+one supported path through those surfaces.
 
 Shared create identity, exact replay and bounded DB retention are defined once
 in [durable resource-create recovery](./resource-create-recovery.md).

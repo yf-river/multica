@@ -6,8 +6,17 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const generation = spawnSync(process.execPath, ["scripts/generate-current-system-map.mjs"], {
+  cwd: root,
+  encoding: "utf8",
+});
+assert.equal(
+  generation.status,
+  0,
+  `generate current-system map failed:\n${generation.stdout}\n${generation.stderr}`,
+);
 const inventory = JSON.parse(
-  fs.readFileSync(path.join(root, "docs/architecture/current-system-map.json"), "utf8"),
+  fs.readFileSync(path.join(root, "artifacts/code-health/current-system-map.json"), "utf8"),
 );
 
 function collectEvidencePaths(value, key = "", result = new Set()) {

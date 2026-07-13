@@ -108,13 +108,14 @@ AI Studio gate applicability:
 - `packages/views/` — Shared business pages/components (zero next/* imports, zero react-router imports)
 - `packages/tsconfig/` — Shared TypeScript configuration
 
-The drift-checked current-system inventory is
-[`docs/architecture/current-system-map.md`](docs/architecture/current-system-map.md),
+The compact drift-checked current-system inventory is
+[`docs/architecture/current-system-summary.md`](docs/architecture/current-system-summary.md),
 and the maintained high-risk business flows are indexed in
 [`docs/architecture/domain-flows.md`](docs/architecture/domain-flows.md).
 When routes, persistence, state ownership, environment inputs, WebSocket
-contracts, or external I/O change, run `pnpm generate:current-system-map`; CI
-enforces the generated result with `pnpm check:current-system-map`.
+contracts, or external I/O change, run `pnpm generate:current-system-map` for
+expanded ignored evidence. CI rebuilds the inventory, checks the compact
+summary with `pnpm check:current-system-map`, and runs semantic inventory tests.
 
 What lives where for sharing purposes is documented in *Sharing Principles* below — read it once.
 

@@ -56,7 +56,7 @@ remain empty.
 workspace-scoped reads, create/update/delete boundaries and their shared
 validation. List queries, batch operations, quick-create internals, response
 conversion and execution-tree projection already live in dedicated sibling
-files. Its route ownership is checked by the generated system map and the
+files. Its route ownership is checked by the generated system inventory and the
 maintained Issue/Task lifecycle flow. Moving the remaining 57 lines merely to
 cross the threshold would fragment the lifecycle without forming a new domain.
 
@@ -92,5 +92,5 @@ test helper that can be named without importing another domain's internals.
 - Views: 153 test files, 1,267 tests pass.
 - Chat focused tests: 27 pass; Swimlane: 42 pass; Issue Detail: 34 pass.
 - Knip reports no unused or duplicate exports after the split.
-- `scripts/current-system-map.test.mjs` guards the retained Issue route/source
-  ownership.
+- `scripts/current-system-map.test.mjs` regenerates ignored expanded evidence
+  and guards the retained Issue route/source ownership.
