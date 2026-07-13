@@ -782,7 +782,7 @@ func (h *Handler) agentPlaygroundDetail(w http.ResponseWriter, r *http.Request) 
 	if !h.requireAgentPlaygroundExperimentAccess(w, r, experiment) {
 		return AgentPlaygroundDetailResponse{}, false
 	}
-	detail, err := h.loadAgentPlaygroundDetail(r.Context(), experiment.ID, experiment.WorkspaceID)
+	detail, err := loadAgentPlaygroundDetailWithQueries(r.Context(), h.Queries, experiment.ID, experiment.WorkspaceID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load agent playground detail")
 		return AgentPlaygroundDetailResponse{}, false
@@ -849,10 +849,6 @@ func (h *Handler) agentPlaygroundExperimentUsesOnlyAllowedAgents(
 		}
 	}
 	return true, nil
-}
-
-func (h *Handler) loadAgentPlaygroundDetail(ctx context.Context, experimentID, workspaceID pgtype.UUID) (AgentPlaygroundDetailResponse, error) {
-	return loadAgentPlaygroundDetailWithQueries(ctx, h.Queries, experimentID, workspaceID)
 }
 
 func loadAgentPlaygroundDetailWithQueries(ctx context.Context, queries *db.Queries, experimentID, workspaceID pgtype.UUID) (AgentPlaygroundDetailResponse, error) {

@@ -221,7 +221,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		return nil, nil, err
 	}
 
-	cloudFleetURL := cloudFleetURLFromEnv()
+	cloudFleetURL := strings.TrimSpace(os.Getenv("MULTICA_CLOUD_FLEET_URL"))
 	signupConfig := handler.Config{
 		AllowSignup:              os.Getenv("ALLOW_SIGNUP") != "false",
 		AllowedAccounts:          splitAndTrim(os.Getenv("ALLOWED_ACCOUNTS")),
@@ -1251,8 +1251,4 @@ func splitAndTrim(s string) []string {
 		}
 	}
 	return res
-}
-
-func cloudFleetURLFromEnv() string {
-	return strings.TrimSpace(os.Getenv("MULTICA_CLOUD_FLEET_URL"))
 }

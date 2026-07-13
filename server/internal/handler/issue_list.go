@@ -338,7 +338,7 @@ LIMIT %s OFFSET %s`, issueListSelectSQL, issueListJoinSQL(visibleAgentIDsRef), w
 	var issues []issueListRow
 	for rows.Next() {
 		var row issueListRow
-		if err := scanIssueListRow(rows, &row); err != nil {
+		if err := rows.Scan(issueListScanDest(&row)...); err != nil {
 			slog.Warn("ListIssues scan failed", "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to list issues")
 			return

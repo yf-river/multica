@@ -411,7 +411,7 @@ func (h *Handler) CheckPromptEvaluationSkillCandidateFreshness(w http.ResponseWr
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if _, err := h.mergePromptEvaluationOptimizationCandidateMetrics(r.Context(), workspaceUUID, candidateID, map[string]any{
+	if _, err := mergePromptEvaluationOptimizationCandidateMetricsRow(r.Context(), h.DB, workspaceUUID, candidateID, map[string]any{
 		"skill_freshness": result,
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to persist skill freshness evidence")
@@ -991,10 +991,6 @@ func (h *Handler) RunPromptEvaluationSkillReEval(w http.ResponseWriter, r *http.
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
-}
-
-func (h *Handler) mergePromptEvaluationOptimizationCandidateMetrics(ctx context.Context, workspaceID pgtype.UUID, candidateID pgtype.UUID, patch map[string]any) (db.PromptEvaluationOptimizationCandidate, error) {
-	return mergePromptEvaluationOptimizationCandidateMetricsRow(ctx, h.DB, workspaceID, candidateID, patch)
 }
 
 func (h *Handler) applyPromptEvaluationSkillSourceResourceDefaults(

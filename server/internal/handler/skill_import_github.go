@@ -142,7 +142,7 @@ func resolveGitHubSkillDirByName(httpClient *http.Client, owner, repo, defaultBr
 		if dir, body, ok := findMatchingSkillDirByFrontmatter(httpClient, rawPrefix, skillName, remaining); ok {
 			return dir, body, nil
 		}
-		return "", nil, skillMdNotFoundError(owner, repo, skillName)
+		return "", nil, fmt.Errorf("SKILL.md not found in repository %s/%s for skill %s", owner, repo, skillName)
 	}
 
 	slog.Warn("github import: repository tree listing truncated", "owner", owner, "repo", repo, "branch", defaultBranch)
@@ -747,14 +747,6 @@ func skillDirFromSkillFilePath(path string) string {
 	return strings.TrimSuffix(path, "/SKILL.md")
 }
 
-func skillMdNotFoundError(owner, repo, skillName string) error {
-	return fmt.Errorf("SKILL.md not found in repository %s/%s for skill %s", owner, repo, skillName)
-}
-
-func skillImportConflictReason() string {
-	return "a skill with this name already exists; use --on-conflict overwrite to replace it or --on-conflict rename to import a copy"
-}
-
 // --- Import handler ---
 
 type skillImportOutcome struct {
@@ -831,7 +823,7 @@ func executeSkillImportInTx(ctx context.Context, queries *db.Queries, strategy s
 			}
 			return skillImportOutcome{Status: http.StatusCreated, Response: SkillImportResult{Status: "created", Reason: "renamed to avoid an existing skill", Skill: &resp, ExistingSkill: &existingInfo}, EventType: protocol.EventSkillCreated, Skill: &resp}, nil
 		default:
-			return skillImportOutcome{Status: http.StatusConflict, Response: SkillImportResult{Status: "conflict", Reason: skillImportConflictReason(), ExistingSkill: &existingInfo}}, nil
+			return skillImportOutcome{Status: http.StatusConflict, Response: SkillImportResult{Status: "conflict", Reason: "a skill with this name already exists; use --on-conflict overwrite to replace it or --on-conflict rename to import a copy", ExistingSkill: &existingInfo}}, nil
 		}
 	}
 	if found {

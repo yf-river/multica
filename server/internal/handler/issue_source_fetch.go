@@ -55,7 +55,7 @@ func (h *Handler) RecordIssueSourceFetch(w http.ResponseWriter, r *http.Request)
 	}
 	requestFingerprint := req
 	if req.AutoFetch {
-		fetched, err := h.autoFetchIssueSource(r.Context(), userID, issue, req)
+		fetched, err := h.autoFetchTAPDSource(r.Context(), userID, req, parseIssueMetadata(issue.Metadata))
 		if err != nil {
 			req.Status = "fetch_failed"
 			req.Error = err.Error()
@@ -290,10 +290,6 @@ func normalizeSourceFetchRequest(w http.ResponseWriter, req RecordIssueSourceFet
 		return req, false
 	}
 	return req, true
-}
-
-func (h *Handler) autoFetchIssueSource(ctx context.Context, userID string, issue db.Issue, req RecordIssueSourceFetchRequest) (RecordIssueSourceFetchRequest, error) {
-	return h.autoFetchTAPDSource(ctx, userID, req, parseIssueMetadata(issue.Metadata))
 }
 
 func (h *Handler) autoFetchTAPDSource(ctx context.Context, userID string, req RecordIssueSourceFetchRequest, metadata map[string]any) (RecordIssueSourceFetchRequest, error) {

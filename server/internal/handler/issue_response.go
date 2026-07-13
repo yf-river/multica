@@ -114,9 +114,6 @@ LEFT JOIN (
 ) agent_activity
        ON agent_activity.issue_id = i.id`, visibleAgentIDsRef)
 }
-func scanIssueListRow(rows interface{ Scan(dest ...any) error }, row *issueListRow) error {
-	return rows.Scan(issueListScanDest(row)...)
-}
 func issueListScanDest(row *issueListRow) []any {
 	return []any{
 		&row.ID,
