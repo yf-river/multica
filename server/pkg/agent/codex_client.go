@@ -316,9 +316,8 @@ type codexClient struct {
 	onSemanticActivity func(description string)
 	onTurnDone         func(aborted bool)
 
-	notificationProtocol string // "unknown", "legacy", "raw"
-	turnStarted          bool
-	completedTurnIDs     map[string]bool
+	turnStarted      bool
+	completedTurnIDs map[string]bool
 
 	usageMu sync.Mutex
 	usage   TokenUsage // accumulated from turn events
@@ -598,100 +597,7 @@ func (c *codexClient) handleNotification(raw map[string]json.RawMessage) {
 		_ = json.Unmarshal(p, &params)
 	}
 
-	// Legacy codex/event notifications
-	if method == "codex/event" || strings.HasPrefix(method, "codex/event/") {
-		c.notificationProtocol = "legacy"
-		msgData, ok := params["msg"]
-		if !ok {
-			return
-		}
-		msgMap, ok := msgData.(map[string]any)
-		if !ok {
-			return
-		}
-		c.handleEvent(msgMap)
-		return
-	}
-
-	// Raw v2 notifications
-	if c.notificationProtocol != "legacy" {
-		if c.notificationProtocol == "unknown" &&
-			(method == "turn/started" || method == "turn/completed" ||
-				method == "thread/started" || strings.HasPrefix(method, "item/")) {
-			c.notificationProtocol = "raw"
-		}
-
-		if c.notificationProtocol == "raw" {
-			c.handleRawNotification(method, params)
-		}
-	}
-}
-
-func (c *codexClient) handleEvent(msg map[string]any) {
-	msgType, _ := msg["type"].(string)
-
-	switch msgType {
-	case "task_started":
-		c.turnStarted = true
-		if c.onMessage != nil {
-			c.onMessage(Message{Type: MessageStatus, Status: "running", SessionID: c.threadID})
-		}
-	case "agent_message":
-		text, _ := msg["message"].(string)
-		if text != "" && c.onMessage != nil {
-			c.onMessage(Message{Type: MessageText, Content: text})
-		}
-	case "exec_command_begin":
-		callID, _ := msg["call_id"].(string)
-		command, _ := msg["command"].(string)
-		if c.onMessage != nil {
-			c.onMessage(Message{
-				Type:   MessageToolUse,
-				Tool:   "exec_command",
-				CallID: callID,
-				Input:  map[string]any{"command": command},
-			})
-		}
-	case "exec_command_end":
-		callID, _ := msg["call_id"].(string)
-		output, _ := msg["output"].(string)
-		if c.onMessage != nil {
-			c.onMessage(Message{
-				Type:   MessageToolResult,
-				Tool:   "exec_command",
-				CallID: callID,
-				Output: output,
-			})
-		}
-	case "patch_apply_begin":
-		callID, _ := msg["call_id"].(string)
-		if c.onMessage != nil {
-			c.onMessage(Message{
-				Type:   MessageToolUse,
-				Tool:   "patch_apply",
-				CallID: callID,
-			})
-		}
-	case "patch_apply_end":
-		callID, _ := msg["call_id"].(string)
-		if c.onMessage != nil {
-			c.onMessage(Message{
-				Type:   MessageToolResult,
-				Tool:   "patch_apply",
-				CallID: callID,
-			})
-		}
-	case "task_complete":
-		// Extract usage from legacy task_complete if present.
-		c.extractUsageFromMap(msg)
-		if c.onTurnDone != nil {
-			c.onTurnDone(false)
-		}
-	case "turn_aborted":
-		if c.onTurnDone != nil {
-			c.onTurnDone(true)
-		}
-	}
+	c.handleRawNotification(method, params)
 }
 
 func (c *codexClient) handleRawNotification(method string, params map[string]any) {

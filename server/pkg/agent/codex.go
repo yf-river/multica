@@ -195,11 +195,10 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 	turnDone := make(chan bool, 1) // true = aborted
 
 	c := &codexClient{
-		cfg:                  b.cfg,
-		stdin:                stdin,
-		pending:              make(map[int]*pendingRPC),
-		processDone:          make(chan struct{}),
-		notificationProtocol: "unknown",
+		cfg:         b.cfg,
+		stdin:       stdin,
+		pending:     make(map[int]*pendingRPC),
+		processDone: make(chan struct{}),
 		onMessage: func(msg Message) {
 			logCodexAgentMessage(b.cfg.Logger, msg)
 			if msg.Type == MessageText {

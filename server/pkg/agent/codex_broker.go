@@ -383,11 +383,10 @@ func startCodexBrokerProcess(ctx context.Context, cfg Config, execPath string, a
 		readerDone: make(chan struct{}),
 	}
 	c := &codexClient{
-		cfg:                  cfg,
-		stdin:                stdin,
-		pending:              make(map[int]*pendingRPC),
-		processDone:          make(chan struct{}),
-		notificationProtocol: "unknown",
+		cfg:         cfg,
+		stdin:       stdin,
+		pending:     make(map[int]*pendingRPC),
+		processDone: make(chan struct{}),
 	}
 	proc.client = c
 	go func() {

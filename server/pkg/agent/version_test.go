@@ -123,9 +123,10 @@ func TestCheckMinVersion(t *testing.T) {
 		{"claude", "1.0.128", true},
 		{"claude", "1.9.99", true},
 		{"claude", "invalid", true},
-		{"codex", "codex-cli 0.118.0", false},
-		{"codex", "codex-cli 0.100.0", false},
-		{"codex", "codex-cli 0.99.0", true},
+		{"codex", "codex-cli 0.144.3", false},
+		{"codex", "codex-cli 0.144.0", false},
+		{"codex", "codex-cli 0.143.0", true},
+		{"codex", "codex-cli 0.100.0", true},
 		{"codex", "codex-cli 0.50.0", true},
 		{"unknown", "1.0.0", false},
 	}
