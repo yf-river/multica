@@ -46,7 +46,9 @@ const {
   mockPush: vi.fn(),
   mockSearchIssues: vi.fn(),
   mockSearchProjects: vi.fn(),
-  mockRecentItems: { current: [] as Array<{ id: string; visitedAt: number }> },
+  mockRecentItems: {
+    current: [] as Array<{ type: "issue" | "project"; id: string; visitedAt: number }>,
+  },
   mockAllIssues: { current: [] as Array<Record<string, unknown>> },
   mockSetTheme: vi.fn(),
   mockTheme: { current: "system" as "light" | "dark" | "system" },
@@ -118,10 +120,10 @@ vi.mock("../common/actor-avatar", () => ({
   },
 }));
 
-vi.mock("@multica/core/issues/stores", () => {
-  const EMPTY: Array<{ id: string; visitedAt: number }> = [];
+vi.mock("@multica/core/chat", () => {
+  const EMPTY: typeof mockRecentItems.current = [];
   return {
-    useRecentIssuesStore: (
+    useRecentContextStore: (
       selector?: (state: {
         byWorkspace: Record<string, typeof mockRecentItems.current>;
       }) => unknown,
@@ -129,7 +131,7 @@ vi.mock("@multica/core/issues/stores", () => {
       const state = { byWorkspace: { "ws-test": mockRecentItems.current } };
       return selector ? selector(state) : state;
     },
-    selectRecentIssues:
+    selectRecentContexts:
       (wsId: string | null) =>
       (state: { byWorkspace: Record<string, typeof mockRecentItems.current> }) =>
         wsId ? (state.byWorkspace[wsId] ?? EMPTY) : EMPTY,
@@ -265,8 +267,8 @@ describe("SearchCommand", () => {
       useSearchStore.setState({ open: false });
     });
     mockRecentItems.current = [
-      { id: "issue-1", visitedAt: 1000 },
-      { id: "issue-2", visitedAt: 900 },
+      { type: "issue", id: "issue-1", visitedAt: 1000 },
+      { type: "issue", id: "issue-2", visitedAt: 900 },
     ];
     mockPathname.current = "/ws-test/issues/issue-1";
 
@@ -429,8 +431,8 @@ describe("SearchCommand", () => {
 
   it("结合查询缓存和访问记录渲染最近访问的 issue", () => {
     mockRecentItems.current = [
-      { id: "issue-1", visitedAt: 1000 },
-      { id: "issue-2", visitedAt: 900 },
+      { type: "issue", id: "issue-1", visitedAt: 1000 },
+      { type: "issue", id: "issue-2", visitedAt: 900 },
     ];
     mockAllIssues.current = [
       { id: "issue-1", identifier: "MUL-1", title: "第一个 issue", status: "todo" },
@@ -611,8 +613,8 @@ describe("SearchCommand", () => {
 
   it("过滤掉查询缓存中不存在的最近访问项", () => {
     mockRecentItems.current = [
-      { id: "issue-1", visitedAt: 1000 },
-      { id: "deleted-issue", visitedAt: 900 },
+      { type: "issue", id: "issue-1", visitedAt: 1000 },
+      { type: "issue", id: "deleted-issue", visitedAt: 900 },
     ];
     mockAllIssues.current = [
       { id: "issue-1", identifier: "MUL-1", title: "现有 issue", status: "in_progress" },
@@ -704,7 +706,9 @@ describe("SearchCommand", () => {
   });
 
   it("最近访问 issue 显示负责人头像而不是状态文本", () => {
-    mockRecentItems.current = [{ id: "issue-1", visitedAt: 1000 }];
+    mockRecentItems.current = [
+      { type: "issue", id: "issue-1", visitedAt: 1000 },
+    ];
     mockAgents.current = [{ id: "agent-1", name: "Niko", avatar_url: null }];
     mockAllIssues.current = [
       {

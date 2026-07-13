@@ -265,23 +265,6 @@ vi.mock("@multica/core/issues/stores/selection-store", () => ({
   ),
 }));
 
-vi.mock("@multica/core/issues/stores/recent-issues-store", () => ({
-  useRecentIssuesStore: Object.assign(
-    (selector?: any) => {
-      const state = { byWorkspace: {}, recordVisit: vi.fn(), pruneWorkspaces: vi.fn() };
-      return selector ? selector(state) : state;
-    },
-    {
-      getState: () => ({
-        byWorkspace: {},
-        recordVisit: vi.fn(),
-        pruneWorkspaces: vi.fn(),
-      }),
-    },
-  ),
-  selectRecentIssues: () => () => [],
-}));
-
 vi.mock("@multica/core/modals", () => ({
   useModalStore: Object.assign(
     () => ({ open: vi.fn() }),

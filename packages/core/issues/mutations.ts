@@ -27,7 +27,6 @@ import {
 } from "./delete-cache";
 import { useWorkspaceId } from "../paths";
 import { useRecentContextStore } from "../chat/recent-context-store";
-import { useRecentIssuesStore } from "./stores";
 import type { GroupedIssuesResponse, Issue, IssueAssigneeGroup, IssueReaction, IssueStatus } from "../types";
 import type {
   CreateIssueRequest,
@@ -193,7 +192,13 @@ export function useCreateIssue() {
       }
       // Surface the just-created issue in cmd+k's Recent list without
       // requiring the user to open it first.
-      useRecentIssuesStore.getState().recordVisit(wsId, newIssue.id);
+      useRecentContextStore.getState().recordVisit(wsId, {
+        type: "issue",
+        id: newIssue.id,
+        label: newIssue.identifier,
+        subtitle: newIssue.title,
+        status: newIssue.status,
+      });
       // Invalidate parent's children query so sub-issues list updates immediately
       if (newIssue.parent_issue_id) {
         qc.invalidateQueries({ queryKey: issueKeys.children(wsId, newIssue.parent_issue_id) });
@@ -384,7 +389,6 @@ export function useDeleteIssue() {
       }
     },
     onSuccess: (_data, id, ctx) => {
-      useRecentContextStore.getState().forgetContext(wsId, { type: "issue", id });
       cleanupDeletedIssueCaches(qc, wsId, id, ctx?.metadata);
     },
     onSettled: (_data, _err, _id, ctx) => {
@@ -542,9 +546,7 @@ export function useBatchDeleteIssues() {
     },
     onSuccess: (data, ids, ctx) => {
       if (data.deleted === ids.length) {
-        const { forgetContext } = useRecentContextStore.getState();
         for (const id of ids) {
-          forgetContext(wsId, { type: "issue", id });
           cleanupDeletedIssueCaches(qc, wsId, id, ctx?.metadataById.get(id));
         }
         return;

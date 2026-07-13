@@ -35,9 +35,9 @@ import type {
 } from "@multica/core/types";
 import { api } from "@multica/core/api";
 import {
-  selectRecentIssues,
-  useRecentIssuesStore,
-} from "@multica/core/issues/stores";
+  selectRecentContexts,
+  useRecentContextStore,
+} from "@multica/core/chat";
 import { openCreateIssue } from "@multica/core/issues";
 import { issueDetailOptions } from "@multica/core/issues/queries";
 import { useWorkspaceId } from "@multica/core";
@@ -201,7 +201,11 @@ export function SearchCommand() {
   const open = useSearchStore((s) => s.open);
   const setOpen = useSearchStore((s) => s.setOpen);
   const wsId = useWorkspaceId();
-  const recentItems = useRecentIssuesStore(selectRecentIssues(wsId));
+  const recentContexts = useRecentContextStore(selectRecentContexts(wsId));
+  const recentItems = useMemo(
+    () => recentContexts.filter((item) => item.type === "issue"),
+    [recentContexts],
+  );
   const { theme, setTheme } = useTheme();
   const { data: members = [] } = useQuery({
     ...memberListOptions(wsId),

@@ -22,7 +22,7 @@ the expanded JSON and Markdown evidence under ignored
 | sqlc queries | 560 |
 | Go WebSocket events | 79 |
 | TypeScript WebSocket events | 69 |
-| Zustand stores | 28 |
+| Zustand stores | 27 |
 | React Query consumer files | 177 |
 | Environment variables | 215 |
 | Manually identified external systems | 12 |

@@ -3,38 +3,39 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { cleanupDeletedIssueCaches } from "./delete-cache";
 import { issueKeys } from "./queries";
-import { useRecentIssuesStore } from "./stores/recent-issues-store";
+import { useRecentContextStore } from "../chat/recent-context-store";
 
 const WS_ID = "ws-a";
 
 beforeEach(() => {
-  useRecentIssuesStore.setState({ byWorkspace: {} });
+  useRecentContextStore.setState({ byWorkspace: {} });
 });
 
-describe("cleanupDeletedIssueCaches — recent issues store", () => {
-  it("removes the deleted issue from the recent issues bucket", () => {
-    const { recordVisit } = useRecentIssuesStore.getState();
-    recordVisit(WS_ID, "issue-1");
-    recordVisit(WS_ID, "issue-2");
+describe("cleanupDeletedIssueCaches — recent context store", () => {
+  it("removes the deleted issue without removing recent projects", () => {
+    const { recordVisit } = useRecentContextStore.getState();
+    recordVisit(WS_ID, { type: "issue", id: "issue-1" });
+    recordVisit(WS_ID, { type: "issue", id: "issue-2" });
+    recordVisit(WS_ID, { type: "project", id: "project-1" });
 
     const qc = new QueryClient();
     cleanupDeletedIssueCaches(qc, WS_ID, "issue-1");
 
-    const ids = useRecentIssuesStore
+    const keys = useRecentContextStore
       .getState()
-      .byWorkspace[WS_ID]?.map((e) => e.id);
-    expect(ids).toEqual(["issue-2"]);
+      .byWorkspace[WS_ID]?.map((entry) => `${entry.type}:${entry.id}`);
+    expect(keys).toEqual(["project:project-1", "issue:issue-2"]);
   });
 
   it("does not touch the recent bucket of an unrelated workspace", () => {
-    const { recordVisit } = useRecentIssuesStore.getState();
-    recordVisit(WS_ID, "issue-1");
-    recordVisit("ws-b", "issue-1");
+    const { recordVisit } = useRecentContextStore.getState();
+    recordVisit(WS_ID, { type: "issue", id: "issue-1" });
+    recordVisit("ws-b", { type: "issue", id: "issue-1" });
 
     const qc = new QueryClient();
     cleanupDeletedIssueCaches(qc, WS_ID, "issue-1");
 
-    const state = useRecentIssuesStore.getState().byWorkspace;
+    const state = useRecentContextStore.getState().byWorkspace;
     expect(state[WS_ID]).toBeUndefined();
     expect(state["ws-b"]?.map((e) => e.id)).toEqual(["issue-1"]);
   });

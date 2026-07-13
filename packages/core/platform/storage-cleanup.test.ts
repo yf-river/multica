@@ -79,7 +79,6 @@ describe("clearAccountStorage", () => {
       "multica:chat:draft-attachments:unknown-workspace": "attachments",
       "multica:training:selected-prompt:ws-1": "prompt",
       "multica:mention-recency:ws-1": "mentions",
-      multica_recent_issues: "issues",
       multica_recent_contexts: "contexts",
       multica_tabs: "tabs",
       multica_transcript_view: "keep preference",

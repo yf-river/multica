@@ -6,10 +6,10 @@ import {
   agentTasksKeys,
 } from "../agents/queries";
 import { labelKeys } from "../labels/queries";
+import { useRecentContextStore } from "../chat/recent-context-store";
 import type { Issue, ListIssuesCache } from "../types";
 import { findIssueLocation, removeIssueFromBuckets } from "./cache-helpers";
 import { issueKeys } from "./queries";
-import { useRecentIssuesStore } from "./stores/recent-issues-store";
 
 export type DeletedIssueCacheMetadata = {
   parentIssueIds: string[];
@@ -172,9 +172,10 @@ export function cleanupDeletedIssueCaches(
   qc.invalidateQueries({ queryKey: issueKeys.projectGanttAll(wsId) });
   invalidateDeletedIssueDependentCaches(qc, wsId);
 
-  // Recent Issues store persists to localStorage and survives reloads, so a
-  // deleted id left behind keeps the Cmd+K command bar firing 404s on every
-  // open. Both the delete mutation and the WS delete event flow through here,
-  // so a single call covers self-delete and cross-client delete.
-  useRecentIssuesStore.getState().forgetIssue(wsId, issueId);
+  // Recent context persists across reloads. Both mutations and WS delete events
+  // flow through this cleanup, so Cmd+K and chat context cannot retain a
+  // deleted issue id.
+  useRecentContextStore
+    .getState()
+    .forgetContext(wsId, { type: "issue", id: issueId });
 }

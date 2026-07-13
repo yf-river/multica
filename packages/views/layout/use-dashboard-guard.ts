@@ -10,7 +10,6 @@ import {
   useCurrentWorkspace,
 } from "@multica/core/paths";
 import { workspaceListOptions } from "@multica/core/workspace";
-import { useRecentIssuesStore } from "@multica/core/issues/stores";
 import {
   usePendingChatOperationStore,
   useRecentContextStore,
@@ -63,9 +62,6 @@ export function useDashboardGuard() {
   // changes (workspace deleted, user kicked, user left).
   useEffect(() => {
     if (!workspaceListFetched) return;
-    useRecentIssuesStore
-      .getState()
-      .pruneWorkspaces(workspaces.map((w) => w.id));
     useRecentContextStore
       .getState()
       .pruneWorkspaces(workspaces.map((w) => w.id));
