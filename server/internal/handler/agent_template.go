@@ -583,7 +583,7 @@ func (h *Handler) CreateAgentFromTemplate(w http.ResponseWriter, r *http.Request
 		return
 	}
 	resp.Skills = skills
-	actorType, actorID := h.resolveActor(r, ownerID, workspaceID)
+	actorType, actorID := resolveActor(r, ownerID)
 	replayResponse := CreateAgentFromTemplateResponse{
 		Agent:            resp,
 		ImportedSkillIDs: importedIDs,

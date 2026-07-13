@@ -141,8 +141,7 @@ func TestAgentCannotMarkGongfengIssueDoneWithoutLinkedMR(t *testing.T) {
 
 	w = httptest.NewRecorder()
 	req = newRequest("PUT", "/api/issues/"+issue.ID, map[string]any{"status": "done"})
-	req.Header.Set("X-Agent-ID", agentID)
-	req.Header.Set("X-Task-ID", taskID)
+	setTaskTokenActor(req, agentID, taskID)
 	req = withURLParam(req, "id", issue.ID)
 	testHandler.UpdateIssue(w, req)
 	if w.Code != http.StatusConflict {

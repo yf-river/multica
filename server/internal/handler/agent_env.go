@@ -74,11 +74,9 @@ func (h *Handler) authorizeAgentEnv(w http.ResponseWriter, r *http.Request) (db.
 	workspaceID := uuidToString(agent.WorkspaceID)
 	userID := requestUserID(r)
 
-	// Reject agent actors before anything else. resolveActor returns
-	// "agent" iff both X-Agent-ID and a valid X-Task-ID are present and
-	// the task belongs to that agent — so this guard is precise and
-	// cannot be tricked by a member-supplied header.
-	actorType, _ := h.resolveActor(r, userID, workspaceID)
+	// Reject task-token agents before anything else. Client-supplied actor
+	// headers remain a member request because auth owns X-Actor-Source.
+	actorType, _ := resolveActor(r, userID)
 	if actorType == "agent" {
 		writeError(w, http.StatusForbidden, "agents may not access env management endpoints")
 		return db.Agent{}, db.Member{}, false

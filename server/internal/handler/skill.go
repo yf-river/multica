@@ -449,7 +449,7 @@ func (h *Handler) CreateSkill(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to commit skill create")
 		return
 	}
-	actorType, actorID := h.resolveActor(r, creatorID, workspaceID)
+	actorType, actorID := resolveActor(r, creatorID)
 	h.publish(protocol.EventSkillCreated, workspaceID, actorType, actorID, map[string]any{"skill": resp})
 	writeJSON(w, http.StatusCreated, resp)
 }
@@ -619,7 +619,7 @@ func (h *Handler) UpdateSkill(w http.ResponseWriter, r *http.Request) {
 		Files:         fileResps,
 	}
 	wsID := h.resolveWorkspaceID(r)
-	actorType, actorID := h.resolveActor(r, requestUserID(r), wsID)
+	actorType, actorID := resolveActor(r, requestUserID(r))
 	h.publish(protocol.EventSkillUpdated, wsID, actorType, actorID, map[string]any{"skill": resp})
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -641,7 +641,7 @@ func (h *Handler) DeleteSkill(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to delete skill")
 		return
 	}
-	actorType, actorID := h.resolveActor(r, requestUserID(r), uuidToString(skill.WorkspaceID))
+	actorType, actorID := resolveActor(r, requestUserID(r))
 	h.publish(protocol.EventSkillDeleted, uuidToString(skill.WorkspaceID), actorType, actorID, map[string]any{"skill_id": uuidToString(skill.ID)})
 	w.WriteHeader(http.StatusNoContent)
 }

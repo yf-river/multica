@@ -66,7 +66,7 @@ func (h *Handler) loadIssueReactionRequest(w http.ResponseWriter, r *http.Reques
 	}
 
 	workspaceID := uuidToString(issue.WorkspaceID)
-	actorType, actorID := h.resolveActor(r, userID, workspaceID)
+	actorType, actorID := resolveActor(r, userID)
 	return issueReactionRequest{
 		issueID:     issueID,
 		workspaceID: workspaceID,

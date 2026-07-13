@@ -639,7 +639,7 @@ func (h *Handler) loadSquadInWorkspace(w http.ResponseWriter, r *http.Request) (
 }
 
 func (h *Handler) requireSquadVisible(w http.ResponseWriter, r *http.Request, squad db.Squad, workspaceID string) bool {
-	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
+	actorType, actorID := resolveActor(r, requestUserID(r))
 	return h.requireSquadAccess(w, r, squad, actorType, actorID, workspaceID, http.StatusNotFound, "squad not found")
 }
 

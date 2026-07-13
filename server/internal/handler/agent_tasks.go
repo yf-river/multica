@@ -39,7 +39,7 @@ func (h *Handler) ListAgentTasks(w http.ResponseWriter, r *http.Request) {
 	// Run history is part of the personal-agent gate ("查看历史会话"). Same
 	// 403 semantics as GetAgent.
 	workspaceID := uuidToString(agent.WorkspaceID)
-	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
+	actorType, actorID := resolveActor(r, requestUserID(r))
 	if !h.requirePersonalAgentAccess(w, r, agent, actorType, actorID, workspaceID, "you do not have access to this agent") {
 		return
 	}
@@ -90,7 +90,7 @@ func (h *Handler) GetWorkspaceAgentRunCounts(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
+	actorType, actorID := resolveActor(r, requestUserID(r))
 	allowed, err := h.accessibleAgentIDs(r.Context(), workspaceID, actorType, actorID, member.Role)
 	if err != nil {
 		if writeClientClosedIfCanceled(w, err) {
@@ -134,7 +134,7 @@ func (h *Handler) GetWorkspaceAgentActivity30d(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
+	actorType, actorID := resolveActor(r, requestUserID(r))
 	allowed, err := h.accessibleAgentIDs(r.Context(), workspaceID, actorType, actorID, member.Role)
 	if err != nil {
 		if writeClientClosedIfCanceled(w, err) {
@@ -186,7 +186,7 @@ func (h *Handler) ListWorkspaceAgentTaskSnapshot(w http.ResponseWriter, r *http.
 		return
 	}
 
-	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
+	actorType, actorID := resolveActor(r, requestUserID(r))
 	allowed, err := h.accessibleAgentIDs(r.Context(), workspaceID, actorType, actorID, member.Role)
 	if err != nil {
 		if writeClientClosedIfCanceled(w, err) {

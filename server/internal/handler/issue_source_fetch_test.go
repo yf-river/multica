@@ -67,8 +67,7 @@ func recordIssueSourceAutoFetchForTest(t *testing.T, fixture issueSourceFetchFix
 		"provider":   "tapd",
 		"auto_fetch": true,
 	})
-	req.Header.Set("X-Agent-ID", fixture.AgentID)
-	req.Header.Set("X-Task-ID", fixture.TaskID)
+	setTaskTokenActor(req, fixture.AgentID, fixture.TaskID)
 	req = withURLParam(req, "id", fixture.IssueID)
 	testHandler.RecordIssueSourceFetch(w, req)
 	if w.Code != http.StatusOK {
@@ -104,8 +103,7 @@ func TestRecordIssueSourceFetchWritesMetadataAndTrace(t *testing.T) {
 	call := func() *httptest.ResponseRecorder {
 		w := httptest.NewRecorder()
 		req := newRequest("POST", "/api/issues/"+issueID+"/source-fetch", body)
-		req.Header.Set("X-Agent-ID", agentID)
-		req.Header.Set("X-Task-ID", taskID)
+		setTaskTokenActor(req, agentID, taskID)
 		req.Header.Set("Idempotency-Key", requestID)
 		req = withURLParam(req, "id", issueID)
 		testHandler.RecordIssueSourceFetch(w, req)

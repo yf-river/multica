@@ -79,8 +79,7 @@ func recordSquadLeaderEvaluationForTaskWithHeader(t *testing.T, fx runningSquadL
 		"reason":  "test reason",
 	})
 	r = withURLParam(r, "id", fx.IssueID)
-	r.Header.Set("X-Agent-ID", fx.LeaderID)
-	r.Header.Set("X-Task-ID", taskIDHeader)
+	setTaskTokenActor(r, fx.LeaderID, taskIDHeader)
 
 	testHandler.RecordSquadLeaderEvaluation(w, r)
 	if w.Code != http.StatusCreated {
@@ -115,8 +114,7 @@ func TestRecordSquadLeaderEvaluationPreservesCanceledSquadLookup(t *testing.T) {
 		"reason":  "cancel test",
 	}).WithContext(ctx)
 	r = withURLParam(r, "id", fx.IssueID)
-	r.Header.Set("X-Agent-ID", fx.LeaderID)
-	r.Header.Set("X-Task-ID", fx.TaskID)
+	setTaskTokenActor(r, fx.LeaderID, fx.TaskID)
 	w := httptest.NewRecorder()
 	testHandler.RecordSquadLeaderEvaluation(w, r)
 
@@ -172,8 +170,7 @@ func TestRecordSquadLeaderEvaluation_RejectsDifferentRetry(t *testing.T) {
 		"reason":  "changed after an ambiguous response",
 	})
 	r = withURLParam(r, "id", fx.IssueID)
-	r.Header.Set("X-Agent-ID", fx.LeaderID)
-	r.Header.Set("X-Task-ID", fx.TaskID)
+	setTaskTokenActor(r, fx.LeaderID, fx.TaskID)
 	testHandler.RecordSquadLeaderEvaluation(w, r)
 
 	if w.Code != http.StatusConflict {
@@ -197,8 +194,7 @@ func TestRecordSquadLeaderEvaluation_RejectsNonLeaderTask(t *testing.T) {
 		"reason":  "ordinary task must not project a leader decision",
 	})
 	r = withURLParam(r, "id", fx.IssueID)
-	r.Header.Set("X-Agent-ID", fx.LeaderID)
-	r.Header.Set("X-Task-ID", fx.TaskID)
+	setTaskTokenActor(r, fx.LeaderID, fx.TaskID)
 	testHandler.RecordSquadLeaderEvaluation(w, r)
 
 	if w.Code != http.StatusBadRequest {
@@ -294,8 +290,7 @@ func TestCreateComment_SquadLeaderNoActionRejectsComment(t *testing.T) {
 		"parent_id": fx.TriggerCommentID,
 	})
 	r = withURLParam(r, "id", fx.IssueID)
-	r.Header.Set("X-Agent-ID", fx.LeaderID)
-	r.Header.Set("X-Task-ID", fx.TaskID)
+	setTaskTokenActor(r, fx.LeaderID, fx.TaskID)
 
 	testHandler.CreateComment(w, r)
 	if w.Code != http.StatusConflict {
@@ -328,8 +323,7 @@ func TestCreateComment_SquadLeaderNoActionAllowsMentionDispatch(t *testing.T) {
 		"parent_id": fx.TriggerCommentID,
 	})
 	r = withURLParam(r, "id", fx.IssueID)
-	r.Header.Set("X-Agent-ID", fx.LeaderID)
-	r.Header.Set("X-Task-ID", fx.TaskID)
+	setTaskTokenActor(r, fx.LeaderID, fx.TaskID)
 
 	testHandler.CreateComment(w, r)
 	if w.Code != http.StatusCreated {
@@ -352,8 +346,7 @@ func TestCreateComment_CommentTriggeredAgentAllowsTopLevelFallback(t *testing.T)
 		"content": "Recovered with a top-level result comment after the thread reply failed.",
 	})
 	r = withURLParam(r, "id", fx.IssueID)
-	r.Header.Set("X-Agent-ID", fx.LeaderID)
-	r.Header.Set("X-Task-ID", fx.TaskID)
+	setTaskTokenActor(r, fx.LeaderID, fx.TaskID)
 
 	testHandler.CreateComment(w, r)
 	if w.Code != http.StatusCreated {
@@ -385,8 +378,7 @@ func TestCreateComment_CommentTriggeredAgentRejectsWrongParent(t *testing.T) {
 		"parent_id": otherCommentID,
 	})
 	r = withURLParam(r, "id", fx.IssueID)
-	r.Header.Set("X-Agent-ID", fx.LeaderID)
-	r.Header.Set("X-Task-ID", fx.TaskID)
+	setTaskTokenActor(r, fx.LeaderID, fx.TaskID)
 
 	testHandler.CreateComment(w, r)
 	if w.Code != http.StatusConflict {

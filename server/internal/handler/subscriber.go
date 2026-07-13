@@ -37,7 +37,7 @@ func subscriberToResponse(s db.IssueSubscriber) SubscriberResponse {
 }
 
 func (h *Handler) resolveSubscriberTarget(w http.ResponseWriter, r *http.Request, workspaceID string) (subscriberTarget, bool) {
-	callerType, callerID := h.resolveActor(r, requestUserID(r), workspaceID)
+	callerType, callerID := resolveActor(r, requestUserID(r))
 	target := subscriberTarget{
 		callerType: callerType,
 		callerID:   callerID,

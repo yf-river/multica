@@ -6,26 +6,38 @@ import (
 	"io"
 	"net/http"
 	"testing"
+
+	"github.com/multica-ai/multica/server/internal/auth"
 )
 
-// authRequestWithAgent makes an authenticated request with X-Agent-ID +
-// X-Task-ID headers, causing the server to resolve the actor as an agent
-// instead of a member. resolveActor requires both headers to grant agent
-// identity (defense against header forgery — see #2359 PR review), so we
-// seed a queued task for the agent on demand and pass its UUID as
-// X-Task-ID. The task is best-effort cleaned up via test teardown elsewhere.
+// authRequestWithAgent models auth middleware resolving a task token for the
+// agent. The task is best-effort cleaned up via test teardown elsewhere.
 func authRequestWithAgent(t *testing.T, method, path string, body any, agentID string) *http.Response {
 	t.Helper()
+	taskID := ensureAgentTask(t, agentID)
+	token, err := auth.GenerateAgentTaskToken()
+	if err != nil {
+		t.Fatalf("generate task token: %v", err)
+	}
+	tokenHash := auth.HashToken(token)
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO task_token (token_hash, task_id, agent_id, workspace_id, user_id, expires_at)
+		VALUES ($1, $2, $3, $4, $5, now() + interval '1 hour')
+	`, tokenHash, taskID, agentID, testWorkspaceID, testUserID); err != nil {
+		t.Fatalf("persist task token: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM task_token WHERE token_hash = $1`, tokenHash)
+	})
 	return authRequestWithHeaders(t, method, path, body, map[string]string{
-		"X-Agent-ID": agentID,
-		"X-Task-ID":  ensureAgentTask(t, agentID),
+		"Authorization": "Bearer " + token,
 	})
 }
 
 // ensureAgentTask returns a queued task UUID belonging to the given agent,
 // inserting one if none exists. Used by authRequestWithAgent so callers
 // can keep treating "set X-Agent-ID" as the single knob for posing as an
-// agent — resolveActor's pair-required policy is satisfied transparently.
+// agent while the helper supplies the current task-token request state.
 func ensureAgentTask(t *testing.T, agentID string) string {
 	t.Helper()
 	ctx := context.Background()

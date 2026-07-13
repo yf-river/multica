@@ -281,7 +281,7 @@ func (h *Handler) visibleAgentUUIDsForIssueList(w http.ResponseWriter, r *http.R
 	if !ok {
 		return nil, false
 	}
-	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
+	actorType, actorID := resolveActor(r, requestUserID(r))
 	allowed, err := h.accessibleAgentIDs(r.Context(), workspaceID, actorType, actorID, member.Role)
 	if err != nil {
 		if writeClientClosedIfCanceled(w, err) {
@@ -606,7 +606,7 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	// Resolve the operation owner before mutable relationship validation. A
 	// completed replay must not depend on an assignee, project or credential
 	// still having the same state it had when the Issue committed.
-	creatorType, actualCreatorID := h.resolveActor(r, creatorID, workspaceID)
+	creatorType, actualCreatorID := resolveActor(r, creatorID)
 	var issueRequestKey pgtype.UUID
 	if req.OriginType == nil && req.OriginID == nil {
 		issueRequestKey, ok = optionalIdempotencyKey(w, r)
@@ -1088,7 +1088,7 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 			h.writeIssueDoneBlockedByChildren(w, incomplete)
 			return
 		}
-		actorType, _ := h.resolveActor(r, userID, workspaceID)
+		actorType, _ := resolveActor(r, userID)
 		if actorType == "agent" {
 			blocked, err := h.issueDoneBlockedByMissingGongfengMR(r.Context(), prevIssue)
 			if err != nil {
@@ -1150,8 +1150,8 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Determine actor identity: agent (via X-Agent-ID header) or member.
-	actorType, actorID := h.resolveActor(r, userID, workspaceID)
+	// Determine the task-token agent or member identity established by auth.
+	actorType, actorID := resolveActor(r, userID)
 
 	for key, value := range metadataChanges {
 		issue, err = qtx.SetIssueMetadataKey(r.Context(), db.SetIssueMetadataKeyParams{
@@ -1413,7 +1413,7 @@ func (h *Handler) DeleteIssue(w http.ResponseWriter, r *http.Request) {
 	h.TaskService.PublishCancelledTasks(r.Context(), deleted.cancelledTasks, deleted.cancelledEvents)
 	h.deleteStorageObjects(r.Context(), deleted.attachmentURLs)
 	userID := requestUserID(r)
-	actorType, actorID := h.resolveActor(r, userID, uuidToString(issue.WorkspaceID))
+	actorType, actorID := resolveActor(r, userID)
 	// Always emit the resolved UUID — frontend caches key by UUID, so an
 	// identifier-style payload ("MUL-123") would leave stale entries on
 	// other clients after an identifier-path delete.

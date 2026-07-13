@@ -355,9 +355,7 @@ func TestComment_SquadPrivateLeader_SquadMemberAgentAllowed(t *testing.T) {
 	r := newRequest("POST", "/api/issues/"+issueID+"/comments", map[string]any{
 		"content": "agent reporting in",
 	})
-	r.Header.Set("X-Agent-ID", otherAgentID)
-	r.Header.Set("X-Task-ID", taskID)
-	r.Header.Set("X-Actor-Source", "task_token")
+	setTaskTokenActor(r, otherAgentID, taskID)
 	r = withURLParam(r, "id", issueID)
 	testHandler.CreateComment(w, r)
 	if w.Code != http.StatusCreated {

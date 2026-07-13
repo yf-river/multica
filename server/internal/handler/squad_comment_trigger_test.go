@@ -1184,14 +1184,12 @@ func TestCreateComment_ActiveWorkerCommentDoesNotWakeLeader(t *testing.T) {
 		t.Fatalf("seed worker task: %v", err)
 	}
 
-	// L posts a comment in its agent identity (X-Agent-ID + X-Task-ID, the
-	// pair required by resolveActor to trust the agent header).
+	// L posts a comment through its current task-token identity.
 	w := httptest.NewRecorder()
 	r := newRequest("POST", "/api/issues/"+issueID+"/comments", map[string]any{
 		"content": "done — pushed the change",
 	})
-	r.Header.Set("X-Agent-ID", fx.LeaderID)
-	r.Header.Set("X-Task-ID", workerTaskID)
+	setTaskTokenActor(r, fx.LeaderID, workerTaskID)
 	r = withURLParam(r, "id", issueID)
 	testHandler.CreateComment(w, r)
 	if w.Code != http.StatusCreated {

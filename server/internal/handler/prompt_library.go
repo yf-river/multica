@@ -851,7 +851,7 @@ func (h *Handler) CreatePromptLibraryTrial(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	workspaceID := uuidToString(item.WorkspaceID)
-	actorType, actorID := h.resolveActor(r, userID, workspaceID)
+	actorType, actorID := resolveActor(r, userID)
 	requestHash, err := hashRequestFingerprint(struct {
 		PromptID  string                          `json:"prompt_id"`
 		VersionID string                          `json:"version_id"`

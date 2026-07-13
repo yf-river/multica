@@ -749,7 +749,7 @@ func (h *Handler) PreviewCommentTriggers(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	actorType, actorID := h.resolveActor(r, userID, uuidToString(issue.WorkspaceID))
+	actorType, actorID := resolveActor(r, userID)
 	triggers, err := h.computeCommentAgentTriggers(r.Context(), issue, content, parentComment, actorType, actorID, opts)
 	if err != nil {
 		if writeClientClosedIfCanceled(w, err) {

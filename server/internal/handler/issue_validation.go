@@ -90,7 +90,7 @@ func (h *Handler) validateAssigneePair(ctx context.Context, r *http.Request, wor
 		if agent.ArchivedAt.Valid {
 			return http.StatusBadRequest, "cannot assign to archived agent", nil
 		}
-		actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
+		actorType, actorID := resolveActor(r, requestUserID(r))
 		allowed, err := h.personalAgentAccess(ctx, agent, actorType, actorID, workspaceID)
 		if err != nil {
 			return 0, "", fmt.Errorf("authorize agent assignee: %w", err)
@@ -110,7 +110,7 @@ func (h *Handler) validateAssigneePair(ctx context.Context, r *http.Request, wor
 		if squad.ArchivedAt.Valid {
 			return http.StatusBadRequest, "cannot assign to an archived squad", nil
 		}
-		actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
+		actorType, actorID := resolveActor(r, requestUserID(r))
 		allowed, err := h.squadAccess(ctx, squad, actorType, actorID, workspaceID)
 		if err != nil {
 			return 0, "", fmt.Errorf("authorize squad assignee: %w", err)

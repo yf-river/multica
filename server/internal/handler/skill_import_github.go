@@ -981,7 +981,7 @@ func (h *Handler) ImportSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if outcome.EventType != "" && outcome.Skill != nil {
-		actorType, actorID := h.resolveActor(r, creatorID, workspaceID)
+		actorType, actorID := resolveActor(r, creatorID)
 		h.publish(outcome.EventType, workspaceID, actorType, actorID, map[string]any{"skill": *outcome.Skill})
 	}
 	writeJSON(w, outcome.Status, outcome.Response)
@@ -1188,7 +1188,7 @@ func (h *Handler) writeAgentSkills(w http.ResponseWriter, r *http.Request, agent
 		}
 	}
 	if publish {
-		actorType, actorID := h.resolveActor(r, requestUserID(r), uuidToString(agent.WorkspaceID))
+		actorType, actorID := resolveActor(r, requestUserID(r))
 		h.publish(protocol.EventAgentStatus, uuidToString(agent.WorkspaceID), actorType, actorID, map[string]any{"agent_id": uuidToString(agent.ID), "skills": resp})
 	}
 	writeJSON(w, http.StatusOK, resp)

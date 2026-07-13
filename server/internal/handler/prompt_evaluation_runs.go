@@ -407,7 +407,7 @@ func (h *Handler) canCancelPromptEvaluationTask(w http.ResponseWriter, r *http.R
 		)
 		return false
 	}
-	actorType, actorID := h.resolveActor(r, userID, workspaceID)
+	actorType, actorID := resolveActor(r, userID)
 	return h.requirePersonalAgentAccess(w, r, agent, actorType, actorID, workspaceID, "you do not have access to this agent")
 }
 

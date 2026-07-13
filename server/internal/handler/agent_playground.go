@@ -256,7 +256,7 @@ func (h *Handler) CreateAgentPlaygroundExperiment(w http.ResponseWriter, r *http
 		return
 	}
 
-	actorType, actorID := h.resolveActor(r, userID, workspaceID)
+	actorType, actorID := resolveActor(r, userID)
 	for _, agentID := range agentIDs {
 		agent, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{ID: agentID, WorkspaceID: workspaceUUID})
 		if err != nil {
@@ -412,7 +412,7 @@ func (h *Handler) RunAgentPlaygroundExperiment(w http.ResponseWriter, r *http.Re
 	}
 	workspaceID := parseUUID(detail.Experiment.WorkspaceID)
 	experimentID := parseUUID(detail.Experiment.ID)
-	actorType, actorID := h.resolveActor(r, userID, detail.Experiment.WorkspaceID)
+	actorType, actorID := resolveActor(r, userID)
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start agent playground run")
@@ -573,7 +573,7 @@ func (h *Handler) JudgeAgentPlaygroundExperiment(w http.ResponseWriter, r *http.
 	if !h.requireAgentPlaygroundExperimentAccess(w, r, experiment) {
 		return
 	}
-	actorType, actorID := h.resolveActor(r, userID, uuidToString(experiment.WorkspaceID))
+	actorType, actorID := resolveActor(r, userID)
 	var req SetAgentPlaygroundJudgeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -814,7 +814,7 @@ func (h *Handler) requireAgentPlaygroundExperimentAccess(w http.ResponseWriter, 
 }
 
 func (h *Handler) agentPlaygroundAllowedAgentIDs(r *http.Request, userID, workspaceID string) (map[string]struct{}, error) {
-	actorType, actorID := h.resolveActor(r, userID, workspaceID)
+	actorType, actorID := resolveActor(r, userID)
 	role := ""
 	if actorType == "member" {
 		member, err := h.getWorkspaceMember(r.Context(), actorID, workspaceID)

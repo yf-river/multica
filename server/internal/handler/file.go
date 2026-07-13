@@ -364,7 +364,7 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	uploaderType, uploaderID := h.resolveActor(r, userID, workspaceID)
+	uploaderType, uploaderID := resolveActor(r, userID)
 	params := db.CreateAttachmentParams{
 		WorkspaceID:  parseUUID(workspaceID),
 		UploaderType: uploaderType,

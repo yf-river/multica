@@ -204,7 +204,7 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 
 	// Resolve the operation owner and completed replay before mutable parent or
 	// task validation. Access to the Issue is still checked above on every call.
-	authorType, authorID := h.resolveActor(r, userID, uuidToString(issue.WorkspaceID))
+	authorType, authorID := resolveActor(r, userID)
 	requestHash, err := hashRequestFingerprint(struct {
 		IssueID string               `json:"issue_id"`
 		Request CreateCommentRequest `json:"request"`
@@ -466,7 +466,7 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	actorType, actorID := h.resolveActor(r, userID, workspaceID)
+	actorType, actorID := resolveActor(r, userID)
 	isAuthor := existing.AuthorType == actorType && uuidToString(existing.AuthorID) == actorID
 	isAdmin := roleAllowed(member.Role, "owner", "admin")
 	if !isAuthor && !isAdmin {
@@ -622,7 +622,7 @@ func (h *Handler) DeleteComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	actorType, actorID := h.resolveActor(r, userID, workspaceID)
+	actorType, actorID := resolveActor(r, userID)
 	isAuthor := comment.AuthorType == actorType && uuidToString(comment.AuthorID) == actorID
 	isAdmin := roleAllowed(member.Role, "owner", "admin")
 	if !isAuthor && !isAdmin {
@@ -723,7 +723,7 @@ func (h *Handler) loadCommentForActor(w http.ResponseWriter, r *http.Request) (d
 	if _, ok := h.workspaceMember(w, r, workspaceID); !ok {
 		return db.Comment{}, "", "", "", false
 	}
-	actorType, actorID := h.resolveActor(r, userID, workspaceID)
+	actorType, actorID := resolveActor(r, userID)
 	return comment, workspaceID, actorType, actorID, true
 }
 

@@ -62,7 +62,7 @@ func (h *Handler) loadReactionRequest(w http.ResponseWriter, r *http.Request) (r
 		writeError(w, http.StatusBadRequest, "emoji is required")
 		return reactionRequest{}, false
 	}
-	actorType, actorID := h.resolveActor(r, userID, workspaceID)
+	actorType, actorID := resolveActor(r, userID)
 	return reactionRequest{
 		commentID:   uuidToString(comment.ID),
 		workspaceID: workspaceID,

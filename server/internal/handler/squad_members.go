@@ -456,9 +456,8 @@ func (h *Handler) RecordSquadLeaderEvaluation(w http.ResponseWriter, r *http.Req
 	}
 
 	// Security: only the squad leader agent can record evaluations.
-	workspaceID := uuidToString(issue.WorkspaceID)
 	userID := requestUserID(r)
-	actorType, actorID := h.resolveActor(r, userID, workspaceID)
+	actorType, actorID := resolveActor(r, userID)
 	if actorType != "agent" || actorID != uuidToString(squad.LeaderID) {
 		writeError(w, http.StatusForbidden, "only the squad leader agent can record evaluations")
 		return

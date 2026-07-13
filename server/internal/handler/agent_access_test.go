@@ -381,9 +381,8 @@ func TestCreateChatSession_PrivateAgentForbidsPlainMember(t *testing.T) {
 
 // TestGetAgent_RejectsForgedAgentIDHeader is the regression test for the
 // #2359 review finding "X-Agent-ID can be forged by a plain member to bypass
-// the personal gate". A workspace member sets X-Agent-ID to any visible
-// agent's UUID without supplying a valid X-Task-ID — resolveActor must now
-// fall back to the member identity, so the personal-agent gate stays effective.
+// the personal gate". A workspace member sets X-Agent-ID to a visible agent's
+// UUID, but without the middleware-owned task-token marker it remains a member.
 func TestGetAgent_RejectsForgedAgentIDHeader(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
@@ -393,9 +392,7 @@ func TestGetAgent_RejectsForgedAgentIDHeader(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	req := newRequestAs(memberID, "GET", "/api/agents/"+agentID, nil)
-	// Forge X-Agent-ID without X-Task-ID. Pre-fix this would have made
-	// resolveActor return ("agent", agentID) and canAccessPersonalAgent
-	// would have unconditionally allowed the read.
+	// Client-supplied identity headers cannot select the agent actor path.
 	req.Header.Set("X-Agent-ID", agentID)
 	req = withURLParam(req, "id", agentID)
 	testHandler.GetAgent(w, req)

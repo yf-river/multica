@@ -620,7 +620,7 @@ func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 	// Resolve the request actor once. Agents bypass the personal-agent gate
 	// to preserve A2A collaboration; members must be in allowed_principals
 	// (agent owner or workspace owner/admin) to see personal agents.
-	actorType, actorID := h.resolveActor(r, userID, workspaceID)
+	actorType, actorID := resolveActor(r, userID)
 	visible := make([]AgentResponse, 0, len(agents))
 	for _, a := range agents {
 		if a.Scope == scopePersonal && actorType == "member" {
@@ -661,7 +661,7 @@ func (h *Handler) GetAgent(w http.ResponseWriter, r *http.Request) {
 	// render an explicit "no access" placeholder instead of a 404 — see
 	// agent-detail-page.tsx.
 	workspaceID := uuidToString(agent.WorkspaceID)
-	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
+	actorType, actorID := resolveActor(r, requestUserID(r))
 	if !h.requirePersonalAgentAccess(w, r, agent, actorType, actorID, workspaceID, "you do not have access to this agent") {
 		return
 	}
@@ -945,7 +945,7 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		writeAgentResponseDecodeError(w, r, uuidToString(created.ID), err)
 		return
 	}
-	actorType, actorID := h.resolveActor(r, ownerID, workspaceID)
+	actorType, actorID := resolveActor(r, ownerID)
 	replayResponse := resp
 	redactAgentResponseForActor(&replayResponse, actorType)
 	responseBody, err := json.Marshal(replayResponse)
@@ -1400,7 +1400,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	}
 	slog.Info("agent updated", append(logger.RequestAttrs(r), "agent_id", id, "workspace_id", uuidToString(updated.WorkspaceID))...)
 	userID := requestUserID(r)
-	actorType, actorID := h.resolveActor(r, userID, uuidToString(updated.WorkspaceID))
+	actorType, actorID := resolveActor(r, userID)
 	h.publish(protocol.EventAgentStatus, uuidToString(updated.WorkspaceID), actorType, actorID, map[string]any{"agent": broadcastAgentResponse(resp)})
 	redactAgentResponseForActor(&resp, actorType)
 	writeJSON(w, http.StatusOK, resp)
@@ -1517,7 +1517,7 @@ func (h *Handler) ArchiveAgent(w http.ResponseWriter, r *http.Request) {
 
 	h.TaskService.PublishCancelledTasks(r.Context(), cancelled, cancelledEvents)
 	slog.Info("agent archived", append(logger.RequestAttrs(r), "agent_id", id, "workspace_id", wsID)...)
-	actorType, actorID := h.resolveActor(r, userID, wsID)
+	actorType, actorID := resolveActor(r, userID)
 	h.publish(protocol.EventAgentArchived, wsID, actorType, actorID, map[string]any{"agent": broadcastAgentResponse(resp)})
 	redactAgentResponseForActor(&resp, actorType)
 	writeJSON(w, http.StatusOK, resp)
@@ -1568,7 +1568,7 @@ func (h *Handler) RestoreAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	userID := requestUserID(r)
-	actorType, actorID := h.resolveActor(r, userID, wsID)
+	actorType, actorID := resolveActor(r, userID)
 	h.publish(protocol.EventAgentRestored, wsID, actorType, actorID, map[string]any{"agent": broadcastAgentResponse(resp)})
 	redactAgentResponseForActor(&resp, actorType)
 	writeJSON(w, http.StatusOK, resp)

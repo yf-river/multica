@@ -369,7 +369,7 @@ func (h *Handler) validateAutopilotAssignee(w http.ResponseWriter, r *http.Reque
 			writeError(w, http.StatusUnprocessableEntity, "squad is archived; pick a different squad")
 			return false
 		}
-		actorType, actorID := h.resolveActor(r, requestUserID(r), util.UUIDToString(workspaceID))
+		actorType, actorID := resolveActor(r, requestUserID(r))
 		if !h.requireSquadAccess(w, r, squad, actorType, actorID, util.UUIDToString(workspaceID), http.StatusForbidden, "cannot assign autopilot to personal squad") {
 			return false
 		}

@@ -68,7 +68,7 @@ func (h *Handler) CreateChatSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	actorType, actorID := h.resolveActor(r, userID, workspaceID)
+	actorType, actorID := resolveActor(r, userID)
 	scope, err := newChatIdempotencyScope(
 		workspaceUUID,
 		actorType,
@@ -195,7 +195,7 @@ func (h *Handler) chatAccessibleAgentIDs(w http.ResponseWriter, r *http.Request,
 	if !ok {
 		return nil, false
 	}
-	actorType, actorID := h.resolveActor(r, userID, workspaceID)
+	actorType, actorID := resolveActor(r, userID)
 	allowed, err := h.accessibleAgentIDs(r.Context(), workspaceID, actorType, actorID, member.Role)
 	if err != nil {
 		if !writeClientClosedIfCanceled(w, err) {
@@ -245,7 +245,7 @@ func (h *Handler) gateChatSessionForUser(w http.ResponseWriter, r *http.Request,
 		writeEntityLoadError(w, r, err, "agent", "agent_id", uuidToString(session.AgentID))
 		return db.ChatSession{}, false
 	}
-	actorType, actorID := h.resolveActor(r, userID, workspaceID)
+	actorType, actorID := resolveActor(r, userID)
 	if !h.requirePersonalAgentAccess(w, r, agent, actorType, actorID, workspaceID, "you do not have access to this agent") {
 		return db.ChatSession{}, false
 	}
@@ -480,7 +480,7 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	actorType, actorID := h.resolveActor(r, userID, workspaceID)
+	actorType, actorID := resolveActor(r, userID)
 	scope, err := newChatIdempotencyScope(
 		workspaceUUID,
 		actorType,
@@ -1034,7 +1034,7 @@ func (h *Handler) CancelTaskByUser(w http.ResponseWriter, r *http.Request) {
 			writeEntityLoadError(w, r, err, "task", "task_id", taskID, "agent_id", uuidToString(task.AgentID))
 			return
 		}
-		actorType, actorID := h.resolveActor(r, userID, workspaceID)
+		actorType, actorID := resolveActor(r, userID)
 		if !h.requirePersonalAgentAccess(w, r, agent, actorType, actorID, workspaceID, "you do not have access to this agent") {
 			return
 		}
