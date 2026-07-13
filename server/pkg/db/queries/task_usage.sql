@@ -44,12 +44,9 @@ WHERE atq.issue_id = $1;
 -- with DATE_TRUNC here — DATE_TRUNC operates in the session tz and would
 -- snap the cutoff back to UTC midnight, dragging in an extra partial
 -- local day for any non-UTC viewer.
--- provider is LOWER()-normalized so mixed-case historical rows (written
--- before the handler lowercased provider on write) merge with new rows
--- instead of forming a separate case-variant bucket.
 SELECT
     DATE(bucket_hour AT TIME ZONE sqlc.arg('tz')::text) AS date,
-    LOWER(provider) AS provider,
+    provider,
     model,
     SUM(input_tokens)::bigint        AS input_tokens,
     SUM(output_tokens)::bigint       AS output_tokens,
@@ -60,8 +57,8 @@ FROM task_usage_hourly
 WHERE workspace_id = $1
   AND bucket_hour >= sqlc.arg('since')::timestamptz
   AND (sqlc.narg('project_id')::uuid IS NULL OR project_id = sqlc.narg('project_id'))
-GROUP BY DATE(bucket_hour AT TIME ZONE sqlc.arg('tz')::text), LOWER(provider), model
-ORDER BY DATE(bucket_hour AT TIME ZONE sqlc.arg('tz')::text) DESC, LOWER(provider), model;
+GROUP BY DATE(bucket_hour AT TIME ZONE sqlc.arg('tz')::text), provider, model
+ORDER BY DATE(bucket_hour AT TIME ZONE sqlc.arg('tz')::text) DESC, provider, model;
 
 -- name: ListDashboardUsageByAgent :many
 -- Per-(agent, provider, model) token aggregates from `task_usage_hourly`. No
@@ -75,11 +72,9 @@ ORDER BY DATE(bucket_hour AT TIME ZONE sqlc.arg('tz')::text) DESC, LOWER(provide
 -- hour the same way the daily version over-counted by day. The
 -- frontend prefers `ListDashboardAgentRunTime` for the user-facing
 -- "tasks" column, so this stays informational only.
--- provider is LOWER()-normalized so mixed-case historical rows merge with
--- new rows (see ListDashboardUsageDaily).
 SELECT
     agent_id,
-    LOWER(provider) AS provider,
+    provider,
     model,
     SUM(input_tokens)::bigint        AS input_tokens,
     SUM(output_tokens)::bigint       AS output_tokens,
@@ -90,8 +85,8 @@ FROM task_usage_hourly
 WHERE workspace_id = $1
   AND bucket_hour >= @since::timestamptz
   AND (sqlc.narg('project_id')::uuid IS NULL OR project_id = sqlc.narg('project_id'))
-GROUP BY agent_id, LOWER(provider), model
-ORDER BY agent_id, LOWER(provider), model;
+GROUP BY agent_id, provider, model
+ORDER BY agent_id, provider, model;
 
 -- name: ListDashboardRunTimeDaily :many
 -- Daily per-date run time + task counts for the workspace, optionally
