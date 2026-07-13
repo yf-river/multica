@@ -39,7 +39,7 @@ system of record. Replays do not emit them again.
 ## Verification anchors
 
 - Route and transaction: `server/internal/handler/squad.go`
-- Replay table and queries: `server/migrations/049_unify_resource_create_requests.up.sql`
+- Replay table and queries: `server/migrations/001_current_schema.up.sql`
   and `server/pkg/db/queries/resource_create_request.sql`
 - Concurrency, rollback and exact replay: `server/internal/handler/squad_idempotency_test.go`
 - Reload recovery: `packages/core/squads/mutations.ts` and

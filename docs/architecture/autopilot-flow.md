@@ -89,6 +89,4 @@ they are not hidden by a default success value.
 - Client key retention and same-key retry:
   `packages/core/autopilots/mutations.test.tsx` and
   `packages/core/api/client.test.ts`.
-- Current schema transitions: `server/migrations/008_autopilot_manual_trigger_idempotency.up.sql`,
-  `server/migrations/009_autopilot_create_idempotency.up.sql` and
-  `server/migrations/010_remove_inert_autopilot_api_kind.up.sql`.
+- Current schema: `server/migrations/001_current_schema.up.sql`.

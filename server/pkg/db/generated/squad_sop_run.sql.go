@@ -676,7 +676,7 @@ type UpsertAutomaticSquadSOPTerminalEventParams struct {
 	DurationMs  pgtype.Int8 `json:"duration_ms"`
 }
 
-// Migration 006 guarantees one system-owned terminal event per
+// The current schema guarantees one system-owned terminal event per
 // (run, task, event type). The no-op conflict update returns the durable row
 // so replay can continue repairing run/Issue projection instead of treating
 // an existing event as proof that every downstream write succeeded.

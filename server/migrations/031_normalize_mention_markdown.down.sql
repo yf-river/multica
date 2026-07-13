@@ -1,2 +1,0 @@
--- Intentional one-way content normalization. Reintroducing the retired
--- shortcode would make persisted Markdown depend on a deleted read shim.

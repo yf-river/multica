@@ -1,9 +1,0 @@
--- Data normalization is one-way; rollback only removes shape constraints.
-ALTER TABLE prompt_evaluation_optimization_candidate
-DROP CONSTRAINT IF EXISTS prompt_evaluation_optimization_candidate_source_failure_summary_is_object,
-DROP CONSTRAINT IF EXISTS prompt_evaluation_optimization_candidate_source_prompt_snapshot_is_object,
-DROP CONSTRAINT IF EXISTS prompt_evaluation_optimization_candidate_metrics_is_object;
-
-ALTER TABLE prompt_evaluation_run
-DROP CONSTRAINT IF EXISTS prompt_evaluation_run_metrics_is_object,
-DROP CONSTRAINT IF EXISTS prompt_evaluation_run_evidence_is_object;

@@ -695,7 +695,7 @@ WHERE status = 'active'
 // Pauses every active autopilot whose agent assignee is in the supplied list.
 // Called before hard-deleting archived agents on runtime teardown so the rows
 // do not become dangling (autopilot.assignee_id no longer has an agent FK
-// since migration 096). Status='paused' makes the breakage visible in the UI
+// in the current schema). Status='paused' makes the breakage visible in the UI
 // — operators can re-point the autopilot at a live agent or delete it —
 // rather than silently piling skipped runs.
 func (q *Queries) PauseAutopilotsByAgentAssignees(ctx context.Context, assigneeIds []pgtype.UUID) error {
@@ -905,7 +905,7 @@ type UpsertAgentRuntimeRow struct {
 // that updated an existing row (false). Analytics reads this to fire
 // runtime_registered/runtime_ready only on first-time registration.
 // Built-in runtimes carry no profile_id. The arbiter is the partial unique
-// index from migration 121 (WHERE profile_id IS NULL); the predicate must be
+// current partial index (WHERE profile_id IS NULL); the predicate must be
 // spelled out so Postgres selects that partial index, not the custom-runtime
 // one on (workspace_id, daemon_id, profile_id).
 func (q *Queries) UpsertAgentRuntime(ctx context.Context, arg UpsertAgentRuntimeParams) (UpsertAgentRuntimeRow, error) {
@@ -1004,7 +1004,7 @@ type UpsertAgentRuntimeWithProfileRow struct {
 
 // Custom-runtime registration: a daemon resolved a workspace runtime_profile's
 // command_name on PATH and is registering an instance of it. The arbiter is the
-// partial unique index from migration 120 (WHERE profile_id IS NOT NULL), so a
+// current partial unique index (WHERE profile_id IS NOT NULL), so a
 // single daemon can host the built-in provider AND any number of custom
 // profiles of the same protocol family. provider stays the protocol family so
 // task routing (agent.New(provider)) is unchanged; profile_id is the stable

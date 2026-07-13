@@ -1,2 +1,0 @@
--- Intentional one-way current-model normalization. Runtime code only reads
--- always_redact_secrets, so rollback must not restore the retired alias.

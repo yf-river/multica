@@ -50,7 +50,7 @@ func TestDashboardEndpoints(t *testing.T) {
 	}
 	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM project WHERE id = $1`, projectID) })
 
-	// issue.number is `UNIQUE (workspace_id, number)` (migration 020) and
+	// issue.number is `UNIQUE (workspace_id, number)` in the current schema and
 	// defaults to 0. Two inserts into the same workspace would collide on the
 	// default; allocate `MAX(number) + 1` per row to stay sequential and
 	// avoid stepping on rows other tests have left behind in the shared
@@ -1429,8 +1429,8 @@ func TestDashboardUsageDailyCrossMidnightFullPipeline(t *testing.T) {
 
 // TestRollupTaskUsageHourlyConvergesOnTaskUsageDelete covers the
 // `trg_tu_dirty_hourly` trigger — a BEFORE DELETE trigger on task_usage.
-// Migration 102 notes it has no production callers today and exists purely
-// as defensive convergence guard, so a single minimal test is enough:
+// The trigger has no production delete callers today and exists as a defensive
+// convergence guard, so a single minimal test is enough:
 // seed a task_usage row, roll it up, DELETE the task_usage row directly,
 // roll up again, and assert the hourly bucket is recomputed down to zero.
 // Without the trigger the deleted row's bucket would never be re-enqueued.

@@ -617,7 +617,7 @@ func (s *AutopilotService) failDispatchRun(ctx context.Context, ap db.Autopilot,
 //     runs would pollute the failure-rate auto-pause monitor.
 //   - Anything else (connection drop, statement timeout, etc.) → fail-open:
 //     log + do not skip, so a transient DB hiccup never silently swallows a
-//     scheduled run. Migration 096 removed the agent FK on autopilot, so an
+//     scheduled run. The current schema has no agent FK on autopilot, so an
 //     agent assignee being missing is now a real condition the gate must
 //     handle (previously cascade-deleted).
 func (s *AutopilotService) shouldSkipDispatch(ctx context.Context, ap db.Autopilot) (string, bool) {
@@ -649,7 +649,7 @@ func (s *AutopilotService) shouldSkipDispatch(ctx context.Context, ap db.Autopil
 		case missing && squadResolved:
 			return "assignee squad cannot be resolved", true
 		case missing && !squadResolved:
-			// Agent row gone. With migration 096 the FK is gone too, so
+			// Agent row gone. The current schema intentionally has no FK, so
 			// this is the new "agent was hard-deleted under us" case. Skip
 			// rather than fail-open: we know retrying will not help.
 			return "assignee agent no longer exists", true

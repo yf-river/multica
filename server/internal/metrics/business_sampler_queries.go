@@ -143,7 +143,7 @@ func (c *BusinessSamplerCollector) queryTaskRunning(
 ) error {
 	// Keep dispatched and running in separate UNION ALL branches so
 	// Postgres can match the existing dispatched partial index and the
-	// running-only partial index from migration 114 independently.
+	// current running-only partial index independently.
 	const stmt = `
 WITH in_flight AS (
   SELECT chat_session_id, autopilot_run_id, issue_id, runtime_id

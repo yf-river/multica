@@ -92,7 +92,7 @@ INSERT INTO squad_sop_step_event (
 RETURNING *;
 
 -- name: UpsertAutomaticSquadSOPTerminalEvent :one
--- Migration 006 guarantees one system-owned terminal event per
+-- The current schema guarantees one system-owned terminal event per
 -- (run, task, event type). The no-op conflict update returns the durable row
 -- so replay can continue repairing run/Issue projection instead of treating
 -- an existing event as proof that every downstream write succeeded.

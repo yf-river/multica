@@ -114,7 +114,7 @@ scheduler runs `prune_resource_create_requests` hourly and retains completed
 responses for 31 days, leaving a one-day clock/scheduling margin. Each run uses
 `FOR UPDATE SKIP LOCKED` batches and deletes at most 20,000 completed rows, so
 normal writes are not held behind a table-wide cleanup.
-Migration 054 supplies partial indexes for the completed expiry scan and the
+The current schema supplies partial indexes for the completed expiry scan and the
 incomplete-age diagnostic; retention must not fall back to a growing full-table
 scan.
 

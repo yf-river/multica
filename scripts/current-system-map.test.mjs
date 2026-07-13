@@ -222,7 +222,7 @@ test("maintained domain flows stay anchored to current routes, tables and source
         "packages/core/api/client.ts",
         "server/internal/handler/file.go",
         "server/internal/handler/resource_create_idempotency.go",
-        "server/migrations/050_add_attachment_create_requests.up.sql",
+        "server/migrations/001_current_schema.up.sql",
       ],
     },
     {
@@ -236,7 +236,7 @@ test("maintained domain flows stay anchored to current routes, tables and source
         "server/internal/handler/quick_create_idempotency.go",
         "server/internal/service/task_enqueue.go",
         "server/pkg/db/queries/agent.sql",
-        "server/migrations/051_require_unique_quick_create_identity.up.sql",
+        "server/migrations/001_current_schema.up.sql",
       ],
     },
     {

@@ -52,7 +52,7 @@ export interface ChatMessage {
    * state (completed/failed). Set by the server on assistant messages
    * synthesized by CompleteTask/FailTask. UI renders it as "Replied in
    * 38s" / "Failed after 12s" beneath the bubble. Null on user messages
-   * and on legacy assistant messages predating migration 063.
+   * and on persisted assistant messages that do not carry the timeline.
    */
   elapsed_ms?: number | null;
 }

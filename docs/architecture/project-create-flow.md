@@ -82,6 +82,6 @@ the same operation identity for different data.
   `packages/core/projects/mutations.test.tsx`.
 - Core and CLI same-key transport retry: `packages/core/api/client.test.ts` and
   `server/internal/cli/client_test.go`.
-- One-way convergence and typed queries:
-  `server/migrations/049_unify_resource_create_requests.up.sql` and
+- Current schema and typed queries:
+  `server/migrations/001_current_schema.up.sql` and
   `server/pkg/db/queries/resource_create_request.sql`.

@@ -1,2 +1,0 @@
--- Intentional one-way current-model normalization. The removed status had no
--- production writer, so rollback must not resurrect its dead API and column.

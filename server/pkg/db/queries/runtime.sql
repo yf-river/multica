@@ -46,7 +46,7 @@ INSERT INTO agent_runtime (
     last_seen_at
 ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now())
 -- Built-in runtimes carry no profile_id. The arbiter is the partial unique
--- index from migration 121 (WHERE profile_id IS NULL); the predicate must be
+-- current partial index (WHERE profile_id IS NULL); the predicate must be
 -- spelled out so Postgres selects that partial index, not the custom-runtime
 -- one on (workspace_id, daemon_id, profile_id).
 ON CONFLICT (workspace_id, daemon_id, provider) WHERE profile_id IS NULL
@@ -64,7 +64,7 @@ RETURNING *, (xmax = 0) AS inserted;
 -- name: UpsertAgentRuntimeWithProfile :one
 -- Custom-runtime registration: a daemon resolved a workspace runtime_profile's
 -- command_name on PATH and is registering an instance of it. The arbiter is the
--- partial unique index from migration 120 (WHERE profile_id IS NOT NULL), so a
+-- current partial unique index (WHERE profile_id IS NOT NULL), so a
 -- single daemon can host the built-in provider AND any number of custom
 -- profiles of the same protocol family. provider stays the protocol family so
 -- task routing (agent.New(provider)) is unchanged; profile_id is the stable
@@ -269,7 +269,7 @@ DELETE FROM agent WHERE runtime_id = $1 AND archived_at IS NOT NULL;
 -- Pauses every active autopilot whose agent assignee is in the supplied list.
 -- Called before hard-deleting archived agents on runtime teardown so the rows
 -- do not become dangling (autopilot.assignee_id no longer has an agent FK
--- since migration 096). Status='paused' makes the breakage visible in the UI
+-- in the current schema). Status='paused' makes the breakage visible in the UI
 -- — operators can re-point the autopilot at a live agent or delete it —
 -- rather than silently piling skipped runs.
 UPDATE autopilot

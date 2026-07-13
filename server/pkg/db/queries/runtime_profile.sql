@@ -1,5 +1,5 @@
 -- Custom Runtime profiles (MUL-3284). Workspace-level definitions of a custom
--- runtime; see migration 120 for the table. Relational integrity (workspace,
+-- runtime. Relational integrity (workspace,
 -- created_by) is enforced in the application layer — there are no DB FKs.
 
 -- name: CreateRuntimeProfile :one
@@ -55,7 +55,7 @@ DELETE FROM runtime_profile
 WHERE id = $1 AND workspace_id = $2;
 
 -- name: DeleteAgentRuntimesByProfile :many
--- Application-layer cascade: migration 120 dropped the DB ON DELETE CASCADE, so
+-- Application-layer cascade: the current schema has no DB ON DELETE CASCADE, so
 -- the profile-delete path must remove the profile's registered runtime
 -- instances itself. Returns the deleted rows so the caller can broadcast /
 -- audit. Runs inside the same transaction as DeleteRuntimeProfile.

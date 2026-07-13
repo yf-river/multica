@@ -30,6 +30,6 @@ Verification anchors:
 - Replay, different-content conflict and eight-way convergence:
   `server/internal/handler/file_test.go`.
 - Durable request schema:
-  `server/migrations/050_add_attachment_create_requests.up.sql`.
+  `server/migrations/001_current_schema.up.sql`.
 - Client same-key retry:
   `packages/core/api/client.ts` and `packages/core/api/client.test.ts`.

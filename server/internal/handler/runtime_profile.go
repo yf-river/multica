@@ -413,7 +413,7 @@ func (h *Handler) UpdateRuntimeProfile(w http.ResponseWriter, r *http.Request) {
 }
 
 // DeleteRuntimeProfile removes a profile and, in the same transaction, the
-// agent_runtime instance rows registered against it. Migration 120 dropped the
+// agent_runtime instance rows registered against it. The current schema has no
 // DB ON DELETE CASCADE, so this app-layer cleanup is what prevents orphaned
 // runtime rows. Refuses (409) while active agents are still bound to the
 // profile's runtimes. Admin-gated by the router.

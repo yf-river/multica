@@ -343,7 +343,7 @@ function MessageCopyButton({
 // bubble. Reads `elapsed_ms` straight off the chat_message — server computes
 // it once at task completion, so this caption is identical across reloads
 // and devices. Skipped silently when null (legacy messages predating
-// migration 063 + user messages).
+// current schema + user messages).
 function ElapsedCaption({
   variant,
   elapsedMs,

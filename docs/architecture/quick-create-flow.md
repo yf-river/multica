@@ -32,7 +32,7 @@ Verification anchors:
   and `server/internal/handler/quick_create_idempotency.go`.
 - Deterministic task: `server/internal/service/task_enqueue.go` and
   `server/pkg/db/queries/agent.sql`.
-- Durable schema: `server/migrations/051_require_unique_quick_create_identity.up.sql`.
+- Durable schema: `server/migrations/001_current_schema.up.sql`.
 - PostgreSQL/concurrency regressions:
   `server/internal/handler/quick_create_idempotency_test.go` and
   `server/internal/handler/quick_create_parent_test.go`.

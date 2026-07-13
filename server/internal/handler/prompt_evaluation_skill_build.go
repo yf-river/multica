@@ -469,7 +469,7 @@ func applyPromptEvaluationSkillCandidate(req ApplyPromptEvaluationSkillCandidate
 func skillSnapshotFromCandidate(candidate db.PromptEvaluationOptimizationCandidate) *PromptEvaluationSkillSnapshotResponse {
 	for _, raw := range [][]byte{candidate.SourceFailureSummary, candidate.Metrics, candidate.SourcePromptSnapshot} {
 		// Zero bytes only occur on deliberately partial in-memory rows. Persisted
-		// rows are NOT NULL with object defaults and must satisfy migration 094.
+		// rows are NOT NULL with object defaults in the current schema.
 		if len(raw) == 0 {
 			continue
 		}

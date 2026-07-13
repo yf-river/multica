@@ -247,9 +247,8 @@ func TestBatchUpdateIssuesReportsParentDoneBlockedByChildren(t *testing.T) {
 }
 
 // countSystemCommentsOn returns the number of platform-generated comments on
-// the given issue. The schema CHECK was widened in migration 107 to allow
-// author_type='system'; this query is the canary that the migration applied
-// and the helper inserts with the right author identity.
+// the given issue. The current schema CHECK allows author_type='system'; this
+// query is the canary that the schema and helper agree on the author identity.
 func countSystemCommentsOn(t *testing.T, issueID string) int {
 	t.Helper()
 	var n int

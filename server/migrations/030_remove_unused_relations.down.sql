@@ -1,2 +1,0 @@
--- Intentional one-way current-model cleanup. The removed tables had no
--- production reader or writer, so rollback must not resurrect dead models.

@@ -714,7 +714,7 @@ func (h *Handler) DeleteAgentRuntime(w http.ResponseWriter, r *http.Request) {
 	qtx := h.Queries.WithTx(tx)
 
 	// Pause autopilots pointing at the archived agents BEFORE we delete
-	// them. Migration 096 dropped the autopilot.assignee_id agent FK, so a
+	// them. The current schema has no autopilot.assignee_id agent FK, so a
 	// hard-delete here would otherwise leave dangling rows that subsequent
 	// scheduler ticks would skip with "assignee agent no longer exists" —
 	// quiet, but burning a run record every tick until an operator notices.
@@ -959,7 +959,7 @@ func (h *Handler) ArchiveAgentsAndDeleteRuntime(w http.ResponseWriter, r *http.R
 	//    that were already archived before this call — because the
 	//    DeleteArchivedAgentsByRuntime below will hard-delete the lot, and
 	//    a paused autopilot is much louder in the UI than a silently-
-	//    dangling assignee_id (see migration 096 for why the FK is gone).
+	//    dangling assignee_id (the current schema intentionally has no FK).
 	allArchivedIDs, err := qtx.ListArchivedAgentIDsByRuntime(r.Context(), rt.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to enumerate archived agents")

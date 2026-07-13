@@ -174,7 +174,7 @@ type GetSkillByWorkspaceAndNameParams struct {
 // Used by agent-template materialization to implement find-or-create: when a
 // template references a skill by name that already exists in the workspace,
 // reuse the existing skill_id rather than INSERT (which would fail the
-// UNIQUE(workspace_id, name) constraint from migration 008).
+// UNIQUE(workspace_id, name) constraint from the current schema).
 func (q *Queries) GetSkillByWorkspaceAndName(ctx context.Context, arg GetSkillByWorkspaceAndNameParams) (Skill, error) {
 	row := q.db.QueryRow(ctx, getSkillByWorkspaceAndName, arg.WorkspaceID, arg.Name)
 	var i Skill

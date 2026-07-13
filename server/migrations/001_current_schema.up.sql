@@ -1,9 +1,7 @@
--- Current schema baseline generated from the old migration chain.
--- Development-phase squash: no historical database upgrade compatibility is preserved.
-
 SET statement_timeout = 0;
 SET lock_timeout = 0;
 SET idle_in_transaction_session_timeout = 0;
+SET transaction_timeout = 0;
 SET client_encoding = 'UTF8';
 SET standard_conforming_strings = on;
 SELECT pg_catalog.set_config('search_path', '', false);
@@ -11,9 +9,8 @@ SET check_function_bodies = false;
 SET xmloption = content;
 SET client_min_messages = warning;
 SET row_security = off;
-
 CREATE EXTENSION IF NOT EXISTS pgcrypto WITH SCHEMA public;
-
+COMMENT ON EXTENSION pgcrypto IS 'cryptographic functions';
 CREATE FUNCTION public.enqueue_task_usage_hourly_dirty_for_atq() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
@@ -43,7 +40,6 @@ BEGIN
                 ON CONFLICT ON CONSTRAINT uq_task_usage_hourly_dirty_key DO UPDATE
                     SET enqueued_at = GREATEST(task_usage_hourly_dirty.enqueued_at, EXCLUDED.enqueued_at);
             END IF;
-
             IF NEW.runtime_id IS NOT NULL THEN
                 INSERT INTO task_usage_hourly_dirty (
                     bucket_hour, workspace_id, runtime_id, agent_id,
@@ -92,7 +88,6 @@ BEGIN
     RETURN NULL;
 END;
 $$;
-
 CREATE FUNCTION public.enqueue_task_usage_hourly_dirty_for_issue_delete() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
@@ -118,7 +113,6 @@ BEGIN
     RETURN OLD;
 END;
 $$;
-
 CREATE FUNCTION public.enqueue_task_usage_hourly_dirty_for_issue_project() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
@@ -143,7 +137,6 @@ BEGIN
            AND atq.runtime_id IS NOT NULL
         ON CONFLICT ON CONSTRAINT uq_task_usage_hourly_dirty_key DO UPDATE
             SET enqueued_at = GREATEST(task_usage_hourly_dirty.enqueued_at, EXCLUDED.enqueued_at);
-
         -- NEW project buckets.
         INSERT INTO task_usage_hourly_dirty (
             bucket_hour, workspace_id, runtime_id, agent_id,
@@ -167,7 +160,6 @@ BEGIN
     RETURN NEW;
 END;
 $$;
-
 CREATE FUNCTION public.enqueue_task_usage_hourly_dirty_for_tu() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
@@ -194,7 +186,6 @@ BEGIN
     RETURN OLD;
 END;
 $$;
-
 CREATE FUNCTION public.prune_task_usage_hourly_dirty(p_retention interval DEFAULT '7 days'::interval) RETURNS bigint
     LANGUAGE plpgsql
     AS $$
@@ -207,7 +198,6 @@ BEGIN
     RETURN v_rows;
 END;
 $$;
-
 CREATE FUNCTION public.rollup_task_usage_hourly() RETURNS bigint
     LANGUAGE plpgsql
     AS $$
@@ -223,21 +213,13 @@ BEGIN
     IF NOT v_lock_ok THEN
         RETURN 0;
     END IF;
-
     BEGIN
         UPDATE task_usage_hourly_rollup_state
            SET last_run_started_at = now(),
                last_error          = NULL
          WHERE id = 1
         RETURNING watermark_at INTO v_from;
-
         v_upper := now() - INTERVAL '5 minutes';
-
-        -- Fresh databases used to start at 1970-01-01 and advance one
-        -- empty day every tick. Fast-forward over empty history: if no
-        -- raw usage or dirty rollup key exists before the safe upper
-        -- bound, mark the empty interval complete; otherwise jump to the
-        -- first real pending timestamp and keep the one-day cap below.
         IF v_from < v_upper THEN
             SELECT MIN(candidate_at)
               INTO v_first_pending
@@ -253,29 +235,19 @@ BEGIN
                       FROM task_usage_hourly_dirty
                      WHERE enqueued_at < v_upper
               ) pending;
-
             IF v_first_pending IS NULL THEN
                 v_to := v_upper;
             ELSE
                 IF v_first_pending > v_from + INTERVAL '1 day' THEN
                     v_from := v_first_pending;
                 END IF;
-                -- Cap each tick at a one-day window. In steady state v_from is
-                -- recent, so LEAST picks `now() - 5 min` and nothing changes. But
-                -- if the worker was paused (incident, migration freeze) the
-                -- watermark can fall far behind; without the cap a single catch-up
-                -- tick would recompute a multi-week window in one statement while
-                -- holding lock 4246, blocking every other tick. Capped, catch-up
-                -- advances in bounded one-day steps over successive ticks.
                 v_to := LEAST(v_upper, v_from + INTERVAL '1 day');
             END IF;
         ELSE
             v_to := v_from;
         END IF;
-
         IF v_from < v_to THEN
             v_rows := rollup_task_usage_hourly_window(v_from, v_to);
-
             UPDATE task_usage_hourly_rollup_state
                SET watermark_at         = v_to,
                    last_run_finished_at = now(),
@@ -288,7 +260,6 @@ BEGIN
                    last_run_rows        = 0
              WHERE id = 1;
         END IF;
-
         PERFORM pg_advisory_unlock(4246);
     EXCEPTION WHEN OTHERS THEN
         UPDATE task_usage_hourly_rollup_state
@@ -298,16 +269,10 @@ BEGIN
         PERFORM pg_advisory_unlock(4246);
         RAISE;
     END;
-
-    -- TTL prune. Runs AFTER the advisory lock is released: on a large
-    -- stale backlog the prune can be slow, and holding lock 4246 through
-    -- it would serialise every concurrent cron tick. It is a plain
-    -- bounded DELETE — idempotent and safe to run unlocked.
     PERFORM prune_task_usage_hourly_dirty();
     RETURN v_rows;
 END;
 $$;
-
 CREATE FUNCTION public.rollup_task_usage_hourly_window(p_from timestamp with time zone, p_to timestamp with time zone) RETURNS bigint
     LANGUAGE plpgsql
     AS $$
@@ -317,7 +282,6 @@ BEGIN
     IF p_from >= p_to THEN
         RETURN 0;
     END IF;
-
     WITH
     dirty_from_updates AS (
         SELECT DISTINCT
@@ -372,7 +336,7 @@ BEGIN
                                     AND tu.provider    = dk.provider
                                     AND tu.model       = dk.model
                                     AND task_usage_hour_bucket(tu.created_at) = dk.bucket_hour
-         WHERE (i.project_id IS NOT DISTINCT FROM dk.project_id)
+         WHERE i.project_id IS NOT DISTINCT FROM dk.project_id
          GROUP BY 1, 2, 3, 4, 5, 6, 7
     ),
     upserted AS (
@@ -422,19 +386,15 @@ BEGIN
     )
     SELECT (SELECT COUNT(*) FROM upserted) + (SELECT COUNT(*) FROM deleted_empty)
       INTO v_rows;
-
     DELETE FROM task_usage_hourly_dirty WHERE enqueued_at < p_to;
-
     RETURN v_rows;
 END;
 $$;
-
 CREATE FUNCTION public.task_usage_hour_bucket(ts timestamp with time zone) RETURNS timestamp with time zone
     LANGUAGE sql IMMUTABLE
     AS $$
     SELECT (date_trunc('hour', ts AT TIME ZONE 'UTC')) AT TIME ZONE 'UTC';
 $$;
-
 CREATE FUNCTION public.task_usage_hourly_rollup_lag_seconds() RETURNS double precision
     LANGUAGE sql STABLE
     AS $$
@@ -442,11 +402,8 @@ CREATE FUNCTION public.task_usage_hourly_rollup_lag_seconds() RETURNS double pre
       FROM task_usage_hourly_rollup_state
      WHERE id = 1;
 $$;
-
 SET default_tablespace = '';
-
 SET default_table_access_method = heap;
-
 CREATE TABLE public.activity_log (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     workspace_id uuid NOT NULL,
@@ -456,10 +413,9 @@ CREATE TABLE public.activity_log (
     action text NOT NULL,
     details jsonb DEFAULT '{}'::jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT activity_log_details_is_object CHECK ((jsonb_typeof(details) = 'object'::text)),
-    CONSTRAINT activity_log_actor_type_check CHECK ((actor_type = ANY (ARRAY['member'::text, 'agent'::text, 'system'::text])))
+    CONSTRAINT activity_log_actor_type_check CHECK ((actor_type = ANY (ARRAY['member'::text, 'agent'::text, 'system'::text]))),
+    CONSTRAINT activity_log_details_is_object CHECK ((jsonb_typeof(details) = 'object'::text))
 );
-
 CREATE TABLE public.agent (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     workspace_id uuid NOT NULL,
@@ -483,12 +439,83 @@ CREATE TABLE public.agent (
     mcp_config jsonb,
     model text,
     thinking_level text,
+    CONSTRAINT agent_custom_args_string_array CHECK (((jsonb_typeof(custom_args) = 'array'::text) AND (NOT jsonb_path_exists(custom_args, '$[*]?(@.type() != "string")'::jsonpath)))),
+    CONSTRAINT agent_custom_env_string_object CHECK (((jsonb_typeof(custom_env) = 'object'::text) AND (NOT jsonb_path_exists(custom_env, '$.*?(@.type() != "string")'::jsonpath)))),
     CONSTRAINT agent_description_length CHECK ((char_length(description) <= 255)),
+    CONSTRAINT agent_mcp_config_object CHECK (((mcp_config IS NULL) OR (jsonb_typeof(mcp_config) = 'object'::text))),
+    CONSTRAINT agent_runtime_config_object CHECK ((jsonb_typeof(runtime_config) = 'object'::text)),
     CONSTRAINT agent_runtime_mode_check CHECK ((runtime_mode = ANY (ARRAY['local'::text, 'cloud'::text]))),
     CONSTRAINT agent_scope_check CHECK ((scope = ANY (ARRAY['personal'::text, 'workspace'::text]))),
     CONSTRAINT agent_status_check CHECK ((status = ANY (ARRAY['idle'::text, 'working'::text, 'blocked'::text, 'error'::text, 'offline'::text])))
 );
-
+CREATE TABLE public.agent_playground_agent (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    experiment_id uuid NOT NULL,
+    workspace_id uuid NOT NULL,
+    agent_id uuid NOT NULL,
+    display_order integer DEFAULT 0 NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+CREATE TABLE public.agent_playground_experiment (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    workspace_id uuid NOT NULL,
+    name text NOT NULL,
+    description text DEFAULT ''::text NOT NULL,
+    dataset_asset_id uuid,
+    dataset_version_id uuid,
+    judge_agent_id uuid,
+    status text DEFAULT 'draft'::text NOT NULL,
+    created_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT agent_playground_experiment_status_check CHECK ((status = ANY (ARRAY['draft'::text, 'ready'::text, 'running'::text, 'completed'::text, 'failed'::text])))
+);
+CREATE TABLE public.agent_playground_input (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    experiment_id uuid NOT NULL,
+    workspace_id uuid NOT NULL,
+    dataset_row_id uuid,
+    row_index integer DEFAULT 0 NOT NULL,
+    name text DEFAULT ''::text NOT NULL,
+    input text NOT NULL,
+    variables jsonb DEFAULT '{}'::jsonb NOT NULL,
+    expected text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT agent_playground_input_variables_object CHECK ((jsonb_typeof(variables) = 'object'::text))
+);
+CREATE TABLE public.agent_playground_judgement (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    experiment_id uuid NOT NULL,
+    input_id uuid NOT NULL,
+    workspace_id uuid NOT NULL,
+    judge_agent_id uuid NOT NULL,
+    chat_session_id uuid,
+    task_id uuid,
+    status text DEFAULT 'pending'::text NOT NULL,
+    output text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT agent_playground_judgement_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'queued'::text, 'dispatched'::text, 'running'::text, 'completed'::text, 'failed'::text, 'cancelled'::text])))
+);
+CREATE TABLE public.agent_playground_result (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    experiment_id uuid NOT NULL,
+    input_id uuid NOT NULL,
+    experiment_agent_id uuid NOT NULL,
+    workspace_id uuid NOT NULL,
+    agent_id uuid NOT NULL,
+    chat_session_id uuid,
+    task_id uuid,
+    rendered_input text DEFAULT ''::text NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    output text DEFAULT ''::text NOT NULL,
+    error text DEFAULT ''::text NOT NULL,
+    started_at timestamp with time zone,
+    completed_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT agent_playground_result_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'queued'::text, 'dispatched'::text, 'running'::text, 'completed'::text, 'failed'::text, 'cancelled'::text])))
+);
 CREATE TABLE public.agent_runtime (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     workspace_id uuid NOT NULL,
@@ -505,17 +532,16 @@ CREATE TABLE public.agent_runtime (
     owner_id uuid,
     scope text DEFAULT 'workspace'::text NOT NULL,
     profile_id uuid,
+    CONSTRAINT agent_runtime_metadata_object CHECK ((jsonb_typeof(metadata) = 'object'::text)),
     CONSTRAINT agent_runtime_runtime_mode_check CHECK ((runtime_mode = ANY (ARRAY['local'::text, 'cloud'::text]))),
     CONSTRAINT agent_runtime_scope_check CHECK ((scope = ANY (ARRAY['personal'::text, 'workspace'::text]))),
     CONSTRAINT agent_runtime_status_check CHECK ((status = ANY (ARRAY['online'::text, 'offline'::text])))
 );
-
 CREATE TABLE public.agent_skill (
     agent_id uuid NOT NULL,
     skill_id uuid NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
-
 CREATE TABLE public.agent_task_queue (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     agent_id uuid NOT NULL,
@@ -545,7 +571,6 @@ CREATE TABLE public.agent_task_queue (
     initiator_user_id uuid,
     CONSTRAINT agent_task_queue_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'dispatched'::text, 'running'::text, 'completed'::text, 'failed'::text, 'cancelled'::text])))
 );
-
 CREATE TABLE public.attachment (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     workspace_id uuid NOT NULL,
@@ -562,7 +587,6 @@ CREATE TABLE public.attachment (
     chat_message_id uuid,
     CONSTRAINT attachment_uploader_type_check CHECK ((uploader_type = ANY (ARRAY['member'::text, 'agent'::text])))
 );
-
 CREATE TABLE public.autopilot (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     workspace_id uuid NOT NULL,
@@ -579,12 +603,15 @@ CREATE TABLE public.autopilot (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     assignee_type text DEFAULT 'agent'::text NOT NULL,
     project_id uuid,
+    request_key uuid,
+    request_hash text,
+    initial_trigger_id uuid,
     CONSTRAINT autopilot_assignee_type_check CHECK ((assignee_type = ANY (ARRAY['agent'::text, 'squad'::text]))),
     CONSTRAINT autopilot_created_by_type_check CHECK ((created_by_type = ANY (ARRAY['member'::text, 'agent'::text]))),
     CONSTRAINT autopilot_execution_mode_check CHECK ((execution_mode = ANY (ARRAY['create_issue'::text, 'run_only'::text]))),
+    CONSTRAINT autopilot_request_identity_complete CHECK ((((request_key IS NULL) AND (request_hash IS NULL)) OR ((request_key IS NOT NULL) AND (request_hash ~ '^[0-9a-f]{64}$'::text)))),
     CONSTRAINT autopilot_status_check CHECK ((status = ANY (ARRAY['active'::text, 'paused'::text, 'archived'::text])))
 );
-
 CREATE TABLE public.autopilot_run (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     autopilot_id uuid NOT NULL,
@@ -600,11 +627,11 @@ CREATE TABLE public.autopilot_run (
     result jsonb,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     squad_id uuid,
-    CONSTRAINT autopilot_run_trigger_payload_is_object CHECK (((trigger_payload IS NULL) OR (jsonb_typeof(trigger_payload) = 'object'::text))),
+    request_key uuid,
     CONSTRAINT autopilot_run_source_check CHECK ((source = ANY (ARRAY['schedule'::text, 'manual'::text, 'webhook'::text]))),
-    CONSTRAINT autopilot_run_status_check CHECK ((status = ANY (ARRAY['issue_created'::text, 'running'::text, 'completed'::text, 'failed'::text, 'skipped'::text])))
+    CONSTRAINT autopilot_run_status_check CHECK ((status = ANY (ARRAY['issue_created'::text, 'running'::text, 'completed'::text, 'failed'::text, 'skipped'::text]))),
+    CONSTRAINT autopilot_run_trigger_payload_is_object CHECK (((trigger_payload IS NULL) OR (jsonb_typeof(trigger_payload) = 'object'::text)))
 );
-
 CREATE TABLE public.autopilot_subscriber (
     autopilot_id uuid NOT NULL,
     user_type text NOT NULL,
@@ -612,7 +639,6 @@ CREATE TABLE public.autopilot_subscriber (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT autopilot_subscriber_user_type_check CHECK ((user_type = 'member'::text))
 );
-
 CREATE TABLE public.autopilot_trigger (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     autopilot_id uuid NOT NULL,
@@ -629,11 +655,38 @@ CREATE TABLE public.autopilot_trigger (
     provider text DEFAULT 'generic'::text NOT NULL,
     signing_secret text,
     event_filters jsonb,
-	CONSTRAINT autopilot_trigger_event_filters_array CHECK (((event_filters IS NULL) OR ((kind = 'webhook'::text) AND (jsonb_typeof(event_filters) = 'array'::text)))),
+    CONSTRAINT autopilot_trigger_event_filters_array CHECK (((event_filters IS NULL) OR ((kind = 'webhook'::text) AND (jsonb_typeof(event_filters) = 'array'::text)))),
     CONSTRAINT autopilot_trigger_kind_check CHECK ((kind = ANY (ARRAY['schedule'::text, 'webhook'::text]))),
     CONSTRAINT autopilot_trigger_provider_check CHECK ((provider = ANY (ARRAY['generic'::text, 'github'::text])))
 );
-
+CREATE TABLE public.autopilot_trigger_rotation_request (
+    workspace_id uuid NOT NULL,
+    actor_id uuid NOT NULL,
+    idempotency_key uuid NOT NULL,
+    trigger_id uuid NOT NULL,
+    request_hash text NOT NULL,
+    response_status integer,
+    response_body jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    completed_at timestamp with time zone,
+    CONSTRAINT autopilot_trigger_rotation_request_completion_check CHECK ((((response_status IS NULL) AND (response_body IS NULL) AND (completed_at IS NULL)) OR (((response_status >= 200) AND (response_status <= 599)) AND (response_body IS NOT NULL) AND (completed_at IS NOT NULL)))),
+    CONSTRAINT autopilot_trigger_rotation_request_request_hash_check CHECK ((request_hash ~ '^[0-9a-f]{64}$'::text))
+);
+CREATE TABLE public.chat_idempotency_record (
+    workspace_id uuid NOT NULL,
+    actor_type text NOT NULL,
+    actor_id uuid NOT NULL,
+    operation text NOT NULL,
+    idempotency_key uuid NOT NULL,
+    request_hash text NOT NULL,
+    response_status integer,
+    response_body jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT chat_idempotency_record_actor_type_check CHECK ((actor_type = ANY (ARRAY['member'::text, 'agent'::text]))),
+    CONSTRAINT chat_idempotency_record_operation_check CHECK ((operation = ANY (ARRAY['create_session'::text, 'send_message'::text]))),
+    CONSTRAINT chat_idempotency_record_request_hash_check CHECK ((request_hash ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT chat_idempotency_record_response_check CHECK ((((response_status IS NULL) AND (response_body IS NULL)) OR ((response_status = 201) AND (response_body IS NOT NULL))))
+);
 CREATE TABLE public.chat_message (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     chat_session_id uuid NOT NULL,
@@ -645,7 +698,6 @@ CREATE TABLE public.chat_message (
     elapsed_ms bigint,
     CONSTRAINT chat_message_role_check CHECK ((role = ANY (ARRAY['user'::text, 'assistant'::text])))
 );
-
 CREATE TABLE public.chat_session (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     workspace_id uuid NOT NULL,
@@ -659,7 +711,6 @@ CREATE TABLE public.chat_session (
     unread_since timestamp with time zone,
     runtime_id uuid
 );
-
 CREATE TABLE public.comment (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     issue_id uuid NOT NULL,
@@ -679,7 +730,6 @@ CREATE TABLE public.comment (
     CONSTRAINT comment_resolved_consistency CHECK ((((resolved_at IS NULL) AND (resolved_by_type IS NULL) AND (resolved_by_id IS NULL)) OR ((resolved_at IS NOT NULL) AND (resolved_by_type IS NOT NULL) AND (resolved_by_id IS NOT NULL)))),
     CONSTRAINT comment_type_check CHECK ((type = ANY (ARRAY['comment'::text, 'status_change'::text, 'progress_update'::text, 'system'::text])))
 );
-
 CREATE TABLE public.comment_reaction (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     comment_id uuid NOT NULL,
@@ -690,7 +740,44 @@ CREATE TABLE public.comment_reaction (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT comment_reaction_actor_type_check CHECK ((actor_type = ANY (ARRAY['member'::text, 'agent'::text])))
 );
-
+CREATE TABLE public.domain_event_delivery (
+    event_id uuid NOT NULL,
+    consumer text NOT NULL,
+    delivered_at timestamp with time zone DEFAULT now() NOT NULL
+);
+CREATE TABLE public.domain_event_outbox (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    event_type text NOT NULL,
+    workspace_id uuid,
+    actor_type text,
+    actor_id text,
+    task_id text,
+    chat_session_id text,
+    payload jsonb NOT NULL,
+    attempts integer DEFAULT 0 NOT NULL,
+    available_at timestamp with time zone DEFAULT now() NOT NULL,
+    lease_owner text,
+    lease_until timestamp with time zone,
+    last_error text,
+    processed_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    stream_key text,
+    sequence_no bigint NOT NULL,
+    dead_lettered_at timestamp with time zone,
+    dead_letter_reason text,
+    CONSTRAINT domain_event_outbox_attempts_check CHECK ((attempts >= 0)),
+    CONSTRAINT domain_event_outbox_payload_check CHECK ((jsonb_typeof(payload) = 'object'::text)),
+    CONSTRAINT domain_event_outbox_single_terminal_state CHECK (((processed_at IS NULL) OR (dead_lettered_at IS NULL))),
+    CONSTRAINT domain_event_outbox_stream_key_length CHECK (((stream_key IS NULL) OR ((char_length(stream_key) >= 1) AND (char_length(stream_key) <= 512))))
+);
+ALTER TABLE public.domain_event_outbox ALTER COLUMN sequence_no ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.domain_event_outbox_sequence_no_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
 CREATE TABLE public.external_credential_profile (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     user_id uuid NOT NULL,
@@ -705,11 +792,14 @@ CREATE TABLE public.external_credential_profile (
     last_error text DEFAULT ''::text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    idempotency_key uuid,
+    request_hash text,
+    CONSTRAINT external_credential_capabilities_object CHECK ((jsonb_typeof(capabilities) = 'object'::text)),
     CONSTRAINT external_credential_profile_check CHECK (((secret_ref <> ''::text) OR (encrypted_secret IS NOT NULL))),
     CONSTRAINT external_credential_profile_provider_check CHECK ((provider = ANY (ARRAY['tapd'::text, 'gongfeng'::text]))),
+    CONSTRAINT external_credential_profile_request_hash_check CHECK (((request_hash IS NULL) OR (request_hash ~ '^[0-9a-f]{64}$'::text))),
     CONSTRAINT external_credential_profile_status_check CHECK ((status = ANY (ARRAY['unverified'::text, 'verified'::text, 'failed'::text, 'disabled'::text])))
 );
-
 CREATE TABLE public.feedback (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     user_id uuid NOT NULL,
@@ -717,9 +807,11 @@ CREATE TABLE public.feedback (
     message text NOT NULL,
     metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    idempotency_key uuid,
+    request_hash text,
+    CONSTRAINT feedback_create_request_shape_check CHECK ((((idempotency_key IS NULL) AND (request_hash IS NULL)) OR ((idempotency_key IS NOT NULL) AND (request_hash ~ '^[0-9a-f]{64}$'::text)))),
     CONSTRAINT task_trace_event_metadata_is_object CHECK ((jsonb_typeof(metadata) = 'object'::text))
 );
-
 CREATE TABLE public.github_installation (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     workspace_id uuid NOT NULL,
@@ -732,7 +824,6 @@ CREATE TABLE public.github_installation (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT github_installation_account_type_check CHECK ((account_type = ANY (ARRAY['User'::text, 'Organization'::text])))
 );
-
 CREATE TABLE public.github_pending_check_suite (
     workspace_id uuid NOT NULL,
     installation_id bigint NOT NULL,
@@ -747,7 +838,6 @@ CREATE TABLE public.github_pending_check_suite (
     suite_updated_at timestamp with time zone NOT NULL,
     received_at timestamp with time zone DEFAULT now() NOT NULL
 );
-
 CREATE TABLE public.github_pending_installation (
     installation_id bigint NOT NULL,
     account_login text NOT NULL,
@@ -758,7 +848,6 @@ CREATE TABLE public.github_pending_installation (
     CONSTRAINT github_pending_installation_account_login_check CHECK ((account_login <> ''::text)),
     CONSTRAINT github_pending_installation_account_type_check CHECK ((account_type = ANY (ARRAY['User'::text, 'Organization'::text])))
 );
-
 CREATE TABLE public.github_pull_request (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     workspace_id uuid NOT NULL,
@@ -785,7 +874,6 @@ CREATE TABLE public.github_pull_request (
     changed_files integer DEFAULT 0 NOT NULL,
     CONSTRAINT github_pull_request_state_check CHECK ((state = ANY (ARRAY['open'::text, 'closed'::text, 'merged'::text, 'draft'::text])))
 );
-
 CREATE TABLE public.github_pull_request_check_suite (
     pr_id uuid NOT NULL,
     suite_id bigint NOT NULL,
@@ -795,7 +883,6 @@ CREATE TABLE public.github_pull_request_check_suite (
     status text NOT NULL,
     updated_at timestamp with time zone NOT NULL
 );
-
 CREATE TABLE public.inbox_item (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     workspace_id uuid NOT NULL,
@@ -815,7 +902,6 @@ CREATE TABLE public.inbox_item (
     CONSTRAINT inbox_item_recipient_type_check CHECK ((recipient_type = ANY (ARRAY['member'::text, 'agent'::text]))),
     CONSTRAINT inbox_item_severity_check CHECK ((severity = ANY (ARRAY['action_required'::text, 'attention'::text, 'info'::text])))
 );
-
 CREATE TABLE public.issue (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     workspace_id uuid NOT NULL,
@@ -852,7 +938,6 @@ CREATE TABLE public.issue (
     CONSTRAINT issue_scope_check CHECK ((scope = ANY (ARRAY['personal'::text, 'workspace'::text]))),
     CONSTRAINT issue_status_check CHECK ((status = ANY (ARRAY['backlog'::text, 'todo'::text, 'in_progress'::text, 'in_review'::text, 'done'::text, 'blocked'::text, 'cancelled'::text])))
 );
-
 CREATE TABLE public.issue_label (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     workspace_id uuid NOT NULL,
@@ -861,7 +946,6 @@ CREATE TABLE public.issue_label (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
-
 CREATE TABLE public.issue_pull_request (
     issue_id uuid NOT NULL,
     pull_request_id uuid NOT NULL,
@@ -869,7 +953,6 @@ CREATE TABLE public.issue_pull_request (
     linked_by_id uuid,
     close_intent boolean DEFAULT false NOT NULL
 );
-
 CREATE TABLE public.issue_reaction (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     issue_id uuid NOT NULL,
@@ -880,7 +963,6 @@ CREATE TABLE public.issue_reaction (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT issue_reaction_actor_type_check CHECK ((actor_type = ANY (ARRAY['member'::text, 'agent'::text])))
 );
-
 CREATE TABLE public.issue_subscriber (
     issue_id uuid NOT NULL,
     user_type text NOT NULL,
@@ -890,12 +972,10 @@ CREATE TABLE public.issue_subscriber (
     CONSTRAINT issue_subscriber_reason_check CHECK ((reason = ANY (ARRAY['creator'::text, 'assignee'::text, 'commenter'::text, 'mentioned'::text, 'manual'::text, 'autopilot'::text]))),
     CONSTRAINT issue_subscriber_user_type_check CHECK ((user_type = ANY (ARRAY['member'::text, 'agent'::text])))
 );
-
 CREATE TABLE public.issue_to_label (
     issue_id uuid NOT NULL,
     label_id uuid NOT NULL
 );
-
 CREATE TABLE public.lark_binding_token (
     token_hash text NOT NULL,
     workspace_id uuid NOT NULL,
@@ -906,7 +986,6 @@ CREATE TABLE public.lark_binding_token (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT lark_binding_token_ttl_cap CHECK ((expires_at <= (created_at + '00:15:00'::interval)))
 );
-
 CREATE TABLE public.lark_chat_session_binding (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     chat_session_id uuid NOT NULL,
@@ -916,7 +995,6 @@ CREATE TABLE public.lark_chat_session_binding (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT lark_chat_session_binding_lark_chat_type_check CHECK ((lark_chat_type = ANY (ARRAY['p2p'::text, 'group'::text])))
 );
-
 CREATE TABLE public.lark_inbound_audit (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     installation_id uuid,
@@ -927,7 +1005,6 @@ CREATE TABLE public.lark_inbound_audit (
     drop_reason text NOT NULL,
     received_at timestamp with time zone DEFAULT now() NOT NULL
 );
-
 CREATE TABLE public.lark_inbound_message_dedup (
     installation_id uuid NOT NULL,
     message_id text NOT NULL,
@@ -935,7 +1012,6 @@ CREATE TABLE public.lark_inbound_message_dedup (
     processed_at timestamp with time zone,
     claim_token uuid DEFAULT gen_random_uuid() NOT NULL
 );
-
 CREATE TABLE public.lark_installation (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     workspace_id uuid NOT NULL,
@@ -956,7 +1032,6 @@ CREATE TABLE public.lark_installation (
     CONSTRAINT lark_installation_region_check CHECK ((region = ANY (ARRAY['feishu'::text, 'lark'::text]))),
     CONSTRAINT lark_installation_status_check CHECK ((status = ANY (ARRAY['active'::text, 'revoked'::text])))
 );
-
 CREATE TABLE public.lark_outbound_card_message (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     chat_session_id uuid NOT NULL,
@@ -967,7 +1042,6 @@ CREATE TABLE public.lark_outbound_card_message (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT lark_outbound_card_message_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'streaming'::text, 'final'::text, 'error'::text])))
 );
-
 CREATE TABLE public.lark_user_binding (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     workspace_id uuid NOT NULL,
@@ -975,7 +1049,6 @@ CREATE TABLE public.lark_user_binding (
     installation_id uuid NOT NULL,
     lark_open_id text NOT NULL
 );
-
 CREATE TABLE public.member (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     workspace_id uuid NOT NULL,
@@ -984,7 +1057,6 @@ CREATE TABLE public.member (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT member_role_check CHECK ((role = ANY (ARRAY['owner'::text, 'admin'::text, 'member'::text])))
 );
-
 CREATE TABLE public.notification_preference (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     workspace_id uuid NOT NULL,
@@ -992,7 +1064,6 @@ CREATE TABLE public.notification_preference (
     preferences jsonb DEFAULT '{}'::jsonb NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
-
 CREATE TABLE public.personal_access_token (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     user_id uuid NOT NULL,
@@ -1002,9 +1073,10 @@ CREATE TABLE public.personal_access_token (
     expires_at timestamp with time zone,
     last_used_at timestamp with time zone,
     revoked boolean DEFAULT false NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    idempotency_key uuid,
+    request_hash text
 );
-
 CREATE TABLE public.pinned_item (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     workspace_id uuid NOT NULL,
@@ -1015,7 +1087,6 @@ CREATE TABLE public.pinned_item (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT pinned_item_item_type_check CHECK ((item_type = ANY (ARRAY['issue'::text, 'project'::text])))
 );
-
 CREATE TABLE public.project (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     workspace_id uuid NOT NULL,
@@ -1035,7 +1106,6 @@ CREATE TABLE public.project (
     CONSTRAINT project_scope_check CHECK ((scope = ANY (ARRAY['personal'::text, 'workspace'::text]))),
     CONSTRAINT project_status_check CHECK ((status = ANY (ARRAY['planned'::text, 'in_progress'::text, 'paused'::text, 'completed'::text, 'cancelled'::text])))
 );
-
 CREATE TABLE public.project_resource (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     project_id uuid NOT NULL,
@@ -1049,7 +1119,6 @@ CREATE TABLE public.project_resource (
     CONSTRAINT project_resource_ref_is_object CHECK ((jsonb_typeof(resource_ref) = 'object'::text)),
     CONSTRAINT project_resource_type_check CHECK ((resource_type = ANY (ARRAY['github_repo'::text, 'gongfeng_repo'::text, 'local_directory'::text])))
 );
-
 CREATE TABLE public.prompt_evaluation_asset (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     workspace_id uuid NOT NULL,
@@ -1072,11 +1141,16 @@ CREATE TABLE public.prompt_evaluation_asset (
     dataset_row_count integer DEFAULT 0 NOT NULL,
     test_suite_case_count integer DEFAULT 0 NOT NULL,
     experiment_dimension_count integer DEFAULT 0 NOT NULL,
+    CONSTRAINT prompt_evaluation_asset_agent_id_string CHECK (((NOT (payload ? 'agent_id'::text)) OR ((jsonb_typeof((payload -> 'agent_id'::text)) = 'string'::text) AND (length(btrim((payload ->> 'agent_id'::text))) > 0)))),
+    CONSTRAINT prompt_evaluation_asset_baseline_output_string CHECK (((NOT (payload ? 'baseline_output'::text)) OR (jsonb_typeof((payload -> 'baseline_output'::text)) = 'string'::text))),
+    CONSTRAINT prompt_evaluation_asset_experiment_dimensions_array CHECK (((NOT (payload ? 'experiment_dimensions'::text)) OR (jsonb_typeof((payload -> 'experiment_dimensions'::text)) = 'array'::text))),
+    CONSTRAINT prompt_evaluation_asset_experiment_target_string CHECK (((NOT (payload ? 'experiment_target'::text)) OR (jsonb_typeof((payload -> 'experiment_target'::text)) = 'string'::text))),
+    CONSTRAINT prompt_evaluation_asset_metric_contract_array CHECK (((NOT (payload ? 'metric_contract'::text)) OR (jsonb_typeof((payload -> 'metric_contract'::text)) = 'array'::text))),
+    CONSTRAINT prompt_evaluation_asset_metric_notes_array CHECK (((NOT (payload ? 'metric_notes'::text)) OR (jsonb_typeof((payload -> 'metric_notes'::text)) = 'array'::text))),
     CONSTRAINT prompt_evaluation_asset_payload_is_object CHECK ((jsonb_typeof(payload) = 'object'::text)),
     CONSTRAINT prompt_evaluation_asset_status_check CHECK ((status = ANY (ARRAY['启用'::text, '归档'::text]))),
     CONSTRAINT prompt_evaluation_asset_type_check CHECK ((asset_type = ANY (ARRAY['数据集'::text, '测试套件'::text])))
 );
-
 CREATE TABLE public.prompt_evaluation_case (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     workspace_id uuid NOT NULL,
@@ -1097,11 +1171,10 @@ CREATE TABLE public.prompt_evaluation_case (
     CONSTRAINT prompt_evaluation_case_expected_contains_is_array CHECK ((jsonb_typeof(expected_contains) = 'array'::text)),
     CONSTRAINT prompt_evaluation_case_expected_is_object CHECK ((jsonb_typeof(expected) = 'object'::text)),
     CONSTRAINT prompt_evaluation_case_input_is_object CHECK ((jsonb_typeof(input) = 'object'::text)),
+    CONSTRAINT prompt_evaluation_case_status_check CHECK ((status = ANY (ARRAY['启用'::text, '归档'::text, 'draft'::text, 'approved'::text, 'active'::text]))),
     CONSTRAINT prompt_evaluation_case_tags_is_array CHECK ((jsonb_typeof(tags) = 'array'::text)),
-    CONSTRAINT prompt_evaluation_case_variables_is_object CHECK ((jsonb_typeof(variables) = 'object'::text)),
-    CONSTRAINT prompt_evaluation_case_status_check CHECK ((status = ANY (ARRAY['启用'::text, '归档'::text, 'draft'::text, 'approved'::text, 'active'::text])))
+    CONSTRAINT prompt_evaluation_case_variables_is_object CHECK ((jsonb_typeof(variables) = 'object'::text))
 );
-
 CREATE TABLE public.prompt_evaluation_case_assertion (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     workspace_id uuid NOT NULL,
@@ -1117,7 +1190,6 @@ CREATE TABLE public.prompt_evaluation_case_assertion (
     CONSTRAINT prompt_evaluation_case_assertion_source_check CHECK ((source = 'expected_contains'::text)),
     CONSTRAINT prompt_evaluation_case_assertion_status_check CHECK ((status = ANY (ARRAY['启用'::text, '归档'::text, 'draft'::text, 'approved'::text, 'active'::text])))
 );
-
 CREATE TABLE public.prompt_evaluation_case_operation (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     workspace_id uuid NOT NULL,
@@ -1139,7 +1211,6 @@ CREATE TABLE public.prompt_evaluation_case_operation (
     CONSTRAINT prompt_evaluation_case_operation_input_is_object CHECK ((jsonb_typeof(input) = 'object'::text)),
     CONSTRAINT prompt_evaluation_case_operation_sample_case_ids_is_array CHECK ((jsonb_typeof(sample_case_ids) = 'array'::text))
 );
-
 CREATE TABLE public.prompt_evaluation_dataset_row (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     workspace_id uuid NOT NULL,
@@ -1158,12 +1229,11 @@ CREATE TABLE public.prompt_evaluation_dataset_row (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT prompt_evaluation_dataset_row_expected_contains_is_array CHECK ((jsonb_typeof(expected_contains) = 'array'::text)),
     CONSTRAINT prompt_evaluation_dataset_row_expected_is_object CHECK ((jsonb_typeof(expected) = 'object'::text)),
-    CONSTRAINT prompt_evaluation_dataset_row_tags_is_array CHECK ((jsonb_typeof(tags) = 'array'::text)),
-    CONSTRAINT prompt_evaluation_dataset_row_variables_is_object CHECK ((jsonb_typeof(variables) = 'object'::text)),
     CONSTRAINT prompt_evaluation_dataset_row_source_check CHECK ((source = ANY (ARRAY['payload'::text, 'manual'::text, 'trace'::text]))),
-    CONSTRAINT prompt_evaluation_dataset_row_status_check CHECK ((status = ANY (ARRAY['启用'::text, '归档'::text, 'draft'::text, 'approved'::text, 'active'::text])))
+    CONSTRAINT prompt_evaluation_dataset_row_status_check CHECK ((status = ANY (ARRAY['启用'::text, '归档'::text, 'draft'::text, 'approved'::text, 'active'::text]))),
+    CONSTRAINT prompt_evaluation_dataset_row_tags_is_array CHECK ((jsonb_typeof(tags) = 'array'::text)),
+    CONSTRAINT prompt_evaluation_dataset_row_variables_is_object CHECK ((jsonb_typeof(variables) = 'object'::text))
 );
-
 CREATE TABLE public.prompt_evaluation_dataset_version (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     workspace_id uuid NOT NULL,
@@ -1177,7 +1247,6 @@ CREATE TABLE public.prompt_evaluation_dataset_version (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT prompt_evaluation_dataset_version_metadata_is_object CHECK ((jsonb_typeof(metadata) = 'object'::text))
 );
-
 CREATE TABLE public.prompt_evaluation_dataset_version_row (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     workspace_id uuid NOT NULL,
@@ -1193,12 +1262,11 @@ CREATE TABLE public.prompt_evaluation_dataset_version_row (
     tags jsonb DEFAULT '[]'::jsonb NOT NULL,
     source text DEFAULT 'payload'::text NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT prompt_evaluation_dataset_version_row_expected_contains_is_array CHECK ((jsonb_typeof(expected_contains) = 'array'::text)),
+    CONSTRAINT prompt_evaluation_dataset_version_row_expected_contains_is_arra CHECK ((jsonb_typeof(expected_contains) = 'array'::text)),
     CONSTRAINT prompt_evaluation_dataset_version_row_expected_is_object CHECK ((jsonb_typeof(expected) = 'object'::text)),
     CONSTRAINT prompt_evaluation_dataset_version_row_tags_is_array CHECK ((jsonb_typeof(tags) = 'array'::text)),
     CONSTRAINT prompt_evaluation_dataset_version_row_variables_is_object CHECK ((jsonb_typeof(variables) = 'object'::text))
 );
-
 CREATE TABLE public.prompt_evaluation_dimension_score (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     workspace_id uuid NOT NULL,
@@ -1219,7 +1287,6 @@ CREATE TABLE public.prompt_evaluation_dimension_score (
     CONSTRAINT prompt_evaluation_dimension_score_source_check CHECK ((source = ANY (ARRAY['run_metrics'::text, 'agent_sync'::text, 'local_run'::text]))),
     CONSTRAINT prompt_evaluation_dimension_score_status_check CHECK ((status = ANY (ARRAY['待执行'::text, '已评分'::text, '无用例'::text])))
 );
-
 CREATE TABLE public.prompt_evaluation_evidence_snapshot (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     workspace_id uuid NOT NULL,
@@ -1234,7 +1301,6 @@ CREATE TABLE public.prompt_evaluation_evidence_snapshot (
     CONSTRAINT prompt_evaluation_evidence_snapshot_summary_is_object CHECK ((jsonb_typeof(summary) = 'object'::text)),
     CONSTRAINT prompt_evaluation_evidence_snapshot_type_check CHECK ((snapshot_type = ANY (ARRAY['手动归档'::text, '验收归档'::text, '自动归档'::text])))
 );
-
 CREATE TABLE public.prompt_evaluation_optimization_candidate (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     workspace_id uuid NOT NULL,
@@ -1255,11 +1321,10 @@ CREATE TABLE public.prompt_evaluation_optimization_candidate (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT prompt_evaluation_optimization_candidate_metrics_is_object CHECK ((jsonb_typeof(metrics) = 'object'::text)),
-    CONSTRAINT prompt_evaluation_optimization_candidate_source_failure_summary_is_object CHECK ((jsonb_typeof(source_failure_summary) = 'object'::text)),
-    CONSTRAINT prompt_evaluation_optimization_candidate_source_prompt_snapshot_is_object CHECK ((jsonb_typeof(source_prompt_snapshot) = 'object'::text)),
+    CONSTRAINT prompt_evaluation_optimization_candidate_source_failure_summary CHECK ((jsonb_typeof(source_failure_summary) = 'object'::text)),
+    CONSTRAINT prompt_evaluation_optimization_candidate_source_prompt_snapshot CHECK ((jsonb_typeof(source_prompt_snapshot) = 'object'::text)),
     CONSTRAINT prompt_evaluation_optimization_candidate_status_check CHECK ((status = ANY (ARRAY['待确认'::text, '已发布'::text, '已拒绝'::text])))
 );
-
 CREATE TABLE public.prompt_evaluation_run (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     workspace_id uuid NOT NULL,
@@ -1302,7 +1367,6 @@ CREATE TABLE public.prompt_evaluation_run (
     CONSTRAINT prompt_evaluation_run_run_kind_check CHECK ((run_kind = ANY (ARRAY['本地渲染'::text, 'Agent执行'::text]))),
     CONSTRAINT prompt_evaluation_run_status_check CHECK ((status = ANY (ARRAY['已入队'::text, '运行中'::text, '通过'::text, '未通过'::text, '失败'::text, '已取消'::text, '需人工复核'::text])))
 );
-
 CREATE TABLE public.prompt_evaluation_test_suite_case (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     workspace_id uuid NOT NULL,
@@ -1322,7 +1386,6 @@ CREATE TABLE public.prompt_evaluation_test_suite_case (
     CONSTRAINT prompt_evaluation_test_suite_case_source_check CHECK ((source = ANY (ARRAY['payload'::text, 'manual'::text]))),
     CONSTRAINT prompt_evaluation_test_suite_case_status_check CHECK ((status = ANY (ARRAY['启用'::text, '归档'::text, 'draft'::text, 'approved'::text, 'active'::text])))
 );
-
 CREATE TABLE public.prompt_evaluation_trial (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     run_id uuid NOT NULL,
@@ -1346,7 +1409,6 @@ CREATE TABLE public.prompt_evaluation_trial (
     CONSTRAINT prompt_evaluation_trial_input_is_object CHECK ((jsonb_typeof(input) = 'object'::text)),
     CONSTRAINT prompt_evaluation_trial_status_check CHECK ((status = ANY (ARRAY['待执行'::text, '通过'::text, '未通过'::text, '失败'::text, '已跳过'::text, '需人工复核'::text])))
 );
-
 CREATE TABLE public.prompt_library_item (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     workspace_id uuid NOT NULL,
@@ -1363,9 +1425,27 @@ CREATE TABLE public.prompt_library_item (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT prompt_library_item_status_check CHECK ((status = ANY (ARRAY['启用'::text, '归档'::text]))),
+    CONSTRAINT prompt_library_item_tags_array CHECK ((jsonb_typeof(tags) = 'array'::text)),
+    CONSTRAINT prompt_library_item_variables_array CHECK ((jsonb_typeof(variables) = 'array'::text)),
     CONSTRAINT prompt_library_item_version_check CHECK ((version > 0))
 );
-
+CREATE TABLE public.prompt_library_trial (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    workspace_id uuid NOT NULL,
+    prompt_id uuid NOT NULL,
+    version_id uuid NOT NULL,
+    agent_id uuid NOT NULL,
+    chat_session_id uuid,
+    task_id uuid,
+    rendered_message text DEFAULT ''::text NOT NULL,
+    variables jsonb DEFAULT '{}'::jsonb NOT NULL,
+    status text DEFAULT 'queued'::text NOT NULL,
+    output_preview text DEFAULT ''::text NOT NULL,
+    created_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT prompt_library_trial_variables_object CHECK ((jsonb_typeof(variables) = 'object'::text))
+);
 CREATE TABLE public.prompt_library_version (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     prompt_id uuid NOT NULL,
@@ -1384,98 +1464,24 @@ CREATE TABLE public.prompt_library_version (
     created_by uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT prompt_library_version_source_check CHECK ((source = ANY (ARRAY['手动创建'::text, '手动更新'::text, '优化候选发布'::text]))),
+    CONSTRAINT prompt_library_version_tags_array CHECK ((jsonb_typeof(tags) = 'array'::text)),
+    CONSTRAINT prompt_library_version_variables_array CHECK ((jsonb_typeof(variables) = 'array'::text)),
     CONSTRAINT prompt_library_version_version_check CHECK ((version > 0))
 );
-
-CREATE TABLE public.prompt_library_trial (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
+CREATE TABLE public.resource_create_request (
     workspace_id uuid NOT NULL,
-    prompt_id uuid NOT NULL,
-    version_id uuid NOT NULL,
-    agent_id uuid NOT NULL,
-    chat_session_id uuid,
-    task_id uuid,
-    rendered_message text DEFAULT ''::text NOT NULL,
-    variables jsonb DEFAULT '{}'::jsonb NOT NULL,
-    status text DEFAULT 'queued'::text NOT NULL,
-    output_preview text DEFAULT ''::text NOT NULL,
-    created_by uuid,
+    actor_id uuid NOT NULL,
+    resource_type text NOT NULL,
+    idempotency_key uuid NOT NULL,
+    request_hash text NOT NULL,
+    resource_id uuid,
+    response_body jsonb,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-CREATE TABLE public.agent_playground_experiment (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    workspace_id uuid NOT NULL,
-    name text NOT NULL,
-    description text DEFAULT ''::text NOT NULL,
-    dataset_asset_id uuid,
-    dataset_version_id uuid,
-    judge_agent_id uuid,
-    status text DEFAULT 'draft'::text NOT NULL,
-    created_by uuid,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT agent_playground_experiment_status_check CHECK ((status = ANY (ARRAY['draft'::text, 'ready'::text, 'running'::text, 'completed'::text, 'failed'::text])))
-);
-
-CREATE TABLE public.agent_playground_input (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    experiment_id uuid NOT NULL,
-    workspace_id uuid NOT NULL,
-    dataset_row_id uuid,
-    row_index integer DEFAULT 0 NOT NULL,
-    name text DEFAULT ''::text NOT NULL,
-    input text NOT NULL,
-    variables jsonb DEFAULT '{}'::jsonb NOT NULL,
-    expected text DEFAULT ''::text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-CREATE TABLE public.agent_playground_agent (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    experiment_id uuid NOT NULL,
-    workspace_id uuid NOT NULL,
-    agent_id uuid NOT NULL,
-    display_order integer DEFAULT 0 NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-CREATE TABLE public.agent_playground_result (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    experiment_id uuid NOT NULL,
-    input_id uuid NOT NULL,
-    experiment_agent_id uuid NOT NULL,
-    workspace_id uuid NOT NULL,
-    agent_id uuid NOT NULL,
-    chat_session_id uuid,
-    task_id uuid,
-    rendered_input text DEFAULT ''::text NOT NULL,
-    status text DEFAULT 'pending'::text NOT NULL,
-    output text DEFAULT ''::text NOT NULL,
-    error text DEFAULT ''::text NOT NULL,
-    started_at timestamp with time zone,
     completed_at timestamp with time zone,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT agent_playground_result_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'queued'::text, 'dispatched'::text, 'running'::text, 'completed'::text, 'failed'::text, 'cancelled'::text])))
+    CONSTRAINT resource_create_request_completion_check CHECK ((((resource_id IS NULL) AND (response_body IS NULL) AND (completed_at IS NULL)) OR ((resource_id IS NOT NULL) AND (response_body IS NOT NULL) AND (completed_at IS NOT NULL)))),
+    CONSTRAINT resource_create_request_request_hash_check CHECK ((request_hash ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT resource_create_request_resource_type_check CHECK ((resource_type = ANY (ARRAY['workspace'::text, 'workspace_member'::text, 'project'::text, 'squad'::text, 'agent'::text, 'skill'::text, 'attachment'::text, 'quick_create'::text, 'issue'::text, 'comment'::text, 'autopilot_trigger'::text, 'issue_rerun'::text, 'runtime_profile'::text, 'label'::text, 'project_resource'::text, 'prompt_library_item'::text, 'prompt_library_version'::text, 'prompt_library_trial'::text, 'agent_playground_experiment'::text, 'prompt_evaluation_agent_run'::text, 'prompt_evaluation_local_run'::text, 'prompt_evaluation_re_eval_asset'::text, 'prompt_evaluation_candidate'::text, 'prompt_evaluation_candidate_publish'::text, 'prompt_evaluation_candidate_reject'::text, 'prompt_evaluation_asset'::text, 'prompt_evaluation_case'::text, 'prompt_evaluation_trace_import'::text, 'prompt_evaluation_dataset_version'::text, 'prompt_evaluation_evidence_snapshot'::text, 'prompt_evaluation_evidence_batch'::text, 'prompt_evaluation_dataset_restore'::text, 'prompt_evaluation_skill_inventory'::text, 'prompt_evaluation_skill_snapshot'::text, 'prompt_evaluation_skill_case_drafts'::text, 'prompt_evaluation_skill_apply'::text])))
 );
-
-CREATE TABLE public.agent_playground_judgement (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    experiment_id uuid NOT NULL,
-    input_id uuid NOT NULL,
-    workspace_id uuid NOT NULL,
-    judge_agent_id uuid NOT NULL,
-    chat_session_id uuid,
-    task_id uuid,
-    status text DEFAULT 'pending'::text NOT NULL,
-    output text DEFAULT ''::text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT agent_playground_judgement_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'queued'::text, 'dispatched'::text, 'running'::text, 'completed'::text, 'failed'::text, 'cancelled'::text])))
-);
-
 CREATE TABLE public.runtime_profile (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     workspace_id uuid NOT NULL,
@@ -1488,9 +1494,9 @@ CREATE TABLE public.runtime_profile (
     enabled boolean DEFAULT true NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT runtime_profile_fixed_args_string_array CHECK (((jsonb_typeof(fixed_args) = 'array'::text) AND (NOT jsonb_path_exists(fixed_args, '$[*]?(@.type() != "string" || @ like_regex "^\\s*$")'::jsonpath)))),
     CONSTRAINT runtime_profile_protocol_family_check CHECK ((protocol_family = ANY (ARRAY['claude'::text, 'codebuddy'::text, 'codex'::text, 'copilot'::text, 'opencode'::text, 'openclaw'::text, 'hermes'::text, 'gemini'::text, 'pi'::text, 'cursor'::text, 'kimi'::text, 'kiro'::text, 'antigravity'::text])))
 );
-
 CREATE TABLE public.skill (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     workspace_id uuid NOT NULL,
@@ -1500,9 +1506,9 @@ CREATE TABLE public.skill (
     config jsonb DEFAULT '{}'::jsonb NOT NULL,
     created_by uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT skill_config_object CHECK ((jsonb_typeof(config) = 'object'::text))
 );
-
 CREATE TABLE public.skill_file (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     skill_id uuid NOT NULL,
@@ -1511,7 +1517,18 @@ CREATE TABLE public.skill_file (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
-
+CREATE TABLE public.skill_import_request (
+    workspace_id uuid NOT NULL,
+    actor_id uuid NOT NULL,
+    idempotency_key uuid NOT NULL,
+    request_hash text NOT NULL,
+    response_status integer,
+    response_body jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    completed_at timestamp with time zone,
+    CONSTRAINT skill_import_request_completion_check CHECK ((((response_status IS NULL) AND (response_body IS NULL) AND (completed_at IS NULL)) OR (((response_status >= 200) AND (response_status <= 599)) AND (response_body IS NOT NULL) AND (completed_at IS NOT NULL)))),
+    CONSTRAINT skill_import_request_request_hash_check CHECK ((request_hash ~ '^[0-9a-f]{64}$'::text))
+);
 CREATE TABLE public.squad (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     workspace_id uuid NOT NULL,
@@ -1527,10 +1544,9 @@ CREATE TABLE public.squad (
     instructions text DEFAULT ''::text NOT NULL,
     sop_profile jsonb DEFAULT '{}'::jsonb NOT NULL,
     scope text DEFAULT 'workspace'::text NOT NULL,
-    CONSTRAINT squad_sop_profile_object CHECK ((jsonb_typeof(sop_profile) = 'object'::text)),
-    CONSTRAINT squad_scope_check CHECK ((scope = ANY (ARRAY['personal'::text, 'workspace'::text])))
+    CONSTRAINT squad_scope_check CHECK ((scope = ANY (ARRAY['personal'::text, 'workspace'::text]))),
+    CONSTRAINT squad_sop_profile_object CHECK ((jsonb_typeof(sop_profile) = 'object'::text))
 );
-
 CREATE TABLE public.squad_member (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     squad_id uuid NOT NULL,
@@ -1540,7 +1556,6 @@ CREATE TABLE public.squad_member (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT squad_member_member_type_check CHECK ((member_type = ANY (ARRAY['agent'::text, 'member'::text])))
 );
-
 CREATE TABLE public.squad_sop_run (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     workspace_id uuid NOT NULL,
@@ -1558,7 +1573,6 @@ CREATE TABLE public.squad_sop_run (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT squad_sop_run_profile_is_object CHECK ((jsonb_typeof(profile) = 'object'::text))
 );
-
 CREATE TABLE public.squad_sop_step_event (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     run_id uuid NOT NULL,
@@ -1579,7 +1593,6 @@ CREATE TABLE public.squad_sop_step_event (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT squad_sop_step_event_evidence_is_object CHECK ((jsonb_typeof(evidence) = 'object'::text))
 );
-
 CREATE TABLE public.sys_cron_executions (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     job_name text NOT NULL,
@@ -1607,7 +1620,6 @@ CREATE TABLE public.sys_cron_executions (
     CONSTRAINT chk_sys_cron_duration CHECK (((duration_ms IS NULL) OR (duration_ms >= 0))),
     CONSTRAINT chk_sys_cron_status CHECK ((status = ANY (ARRAY['RUNNING'::text, 'SUCCESS'::text, 'FAILED'::text])))
 );
-
 CREATE TABLE public.task_message (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     task_id uuid NOT NULL,
@@ -1619,7 +1631,6 @@ CREATE TABLE public.task_message (
     output text,
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
-
 CREATE TABLE public.task_token (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     token_hash text NOT NULL,
@@ -1630,7 +1641,6 @@ CREATE TABLE public.task_token (
     expires_at timestamp with time zone NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
-
 CREATE TABLE public.task_trace_event (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     workspace_id uuid NOT NULL,
@@ -1661,9 +1671,9 @@ CREATE TABLE public.task_trace_event (
     autopilot_run_id uuid,
     chat_session_id uuid,
     metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT task_trace_event_metadata_is_object CHECK ((jsonb_typeof(metadata) = 'object'::text))
 );
-
 CREATE TABLE public.task_usage (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     task_id uuid NOT NULL,
@@ -1676,7 +1686,6 @@ CREATE TABLE public.task_usage (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
-
 CREATE TABLE public.task_usage_hourly (
     bucket_hour timestamp with time zone NOT NULL,
     workspace_id uuid NOT NULL,
@@ -1693,7 +1702,6 @@ CREATE TABLE public.task_usage_hourly (
     event_count bigint DEFAULT 0 NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
-
 CREATE TABLE public.task_usage_hourly_dirty (
     bucket_hour timestamp with time zone NOT NULL,
     workspace_id uuid NOT NULL,
@@ -1704,7 +1712,6 @@ CREATE TABLE public.task_usage_hourly_dirty (
     model text NOT NULL,
     enqueued_at timestamp with time zone DEFAULT now() NOT NULL
 );
-
 CREATE TABLE public.task_usage_hourly_rollup_state (
     id smallint DEFAULT 1 NOT NULL,
     watermark_at timestamp with time zone DEFAULT '1970-01-01 00:00:00+00'::timestamp with time zone NOT NULL,
@@ -1714,7 +1721,6 @@ CREATE TABLE public.task_usage_hourly_rollup_state (
     last_error text,
     CONSTRAINT task_usage_hourly_rollup_state_id_check CHECK ((id = 1))
 );
-
 CREATE TABLE public."user" (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     name text NOT NULL,
@@ -1728,7 +1734,6 @@ CREATE TABLE public."user" (
     timezone text,
     password_hash text
 );
-
 CREATE TABLE public.webhook_delivery (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     workspace_id uuid NOT NULL,
@@ -1752,11 +1757,14 @@ CREATE TABLE public.webhook_delivery (
     received_at timestamp with time zone DEFAULT now() NOT NULL,
     last_attempt_at timestamp with time zone DEFAULT now() NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    replay_actor_id uuid,
+    replay_request_key uuid,
+    replay_request_hash text,
     CONSTRAINT webhook_delivery_provider_check CHECK ((provider = ANY (ARRAY['generic'::text, 'github'::text]))),
+    CONSTRAINT webhook_delivery_replay_request_shape_check CHECK ((((replay_actor_id IS NULL) AND (replay_request_key IS NULL) AND (replay_request_hash IS NULL)) OR ((replay_actor_id IS NOT NULL) AND (replay_request_key IS NOT NULL) AND (replay_request_hash ~ '^[0-9a-f]{64}$'::text)))),
     CONSTRAINT webhook_delivery_signature_status_check CHECK ((signature_status = ANY (ARRAY['not_required'::text, 'valid'::text, 'invalid'::text, 'missing'::text]))),
     CONSTRAINT webhook_delivery_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'dispatched'::text, 'rejected'::text, 'ignored'::text, 'failed'::text])))
 );
-
 CREATE TABLE public.workspace (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     name text NOT NULL,
@@ -1769,1376 +1777,906 @@ CREATE TABLE public.workspace (
     repos jsonb DEFAULT '[]'::jsonb NOT NULL,
     issue_prefix text DEFAULT ''::text NOT NULL,
     issue_counter integer DEFAULT 0 NOT NULL,
-    avatar_url text
+    avatar_url text,
+    CONSTRAINT workspace_repos_array CHECK ((jsonb_typeof(repos) = 'array'::text)),
+    CONSTRAINT workspace_settings_object CHECK ((jsonb_typeof(settings) = 'object'::text))
 );
-
 ALTER TABLE ONLY public.activity_log
     ADD CONSTRAINT activity_log_pkey PRIMARY KEY (id);
-
 ALTER TABLE ONLY public.agent
     ADD CONSTRAINT agent_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.agent_runtime
-    ADD CONSTRAINT agent_runtime_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.agent_skill
-    ADD CONSTRAINT agent_skill_pkey PRIMARY KEY (agent_id, skill_id);
-
-ALTER TABLE ONLY public.agent_task_queue
-    ADD CONSTRAINT agent_task_queue_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.attachment
-    ADD CONSTRAINT attachment_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.autopilot
-    ADD CONSTRAINT autopilot_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.autopilot_run
-    ADD CONSTRAINT autopilot_run_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.autopilot_subscriber
-    ADD CONSTRAINT autopilot_subscriber_pkey PRIMARY KEY (autopilot_id, user_type, user_id);
-
-ALTER TABLE ONLY public.autopilot_trigger
-    ADD CONSTRAINT autopilot_trigger_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.chat_message
-    ADD CONSTRAINT chat_message_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.chat_session
-    ADD CONSTRAINT chat_session_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.comment
-    ADD CONSTRAINT comment_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.comment_reaction
-    ADD CONSTRAINT comment_reaction_comment_id_actor_type_actor_id_emoji_key UNIQUE (comment_id, actor_type, actor_id, emoji);
-
-ALTER TABLE ONLY public.comment_reaction
-    ADD CONSTRAINT comment_reaction_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.external_credential_profile
-    ADD CONSTRAINT external_credential_profile_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.external_credential_profile
-    ADD CONSTRAINT external_credential_profile_user_id_provider_name_key UNIQUE (user_id, provider, name);
-
-ALTER TABLE ONLY public.feedback
-    ADD CONSTRAINT feedback_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.github_installation
-    ADD CONSTRAINT github_installation_installation_id_key UNIQUE (installation_id);
-
-ALTER TABLE ONLY public.github_installation
-    ADD CONSTRAINT github_installation_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.github_pending_check_suite
-    ADD CONSTRAINT github_pending_check_suite_pkey PRIMARY KEY (workspace_id, repo_owner, repo_name, pr_number, suite_id);
-
-ALTER TABLE ONLY public.github_pending_installation
-    ADD CONSTRAINT github_pending_installation_pkey PRIMARY KEY (installation_id);
-
-ALTER TABLE ONLY public.github_pull_request_check_suite
-    ADD CONSTRAINT github_pull_request_check_suite_pkey PRIMARY KEY (pr_id, suite_id);
-
-ALTER TABLE ONLY public.github_pull_request
-    ADD CONSTRAINT github_pull_request_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.github_pull_request
-    ADD CONSTRAINT github_pull_request_workspace_id_repo_owner_repo_name_pr_nu_key UNIQUE (workspace_id, repo_owner, repo_name, pr_number);
-
-ALTER TABLE ONLY public.inbox_item
-    ADD CONSTRAINT inbox_item_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.issue_label
-    ADD CONSTRAINT issue_label_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.issue
-    ADD CONSTRAINT issue_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.issue_pull_request
-    ADD CONSTRAINT issue_pull_request_pkey PRIMARY KEY (issue_id, pull_request_id);
-
-ALTER TABLE ONLY public.issue_reaction
-    ADD CONSTRAINT issue_reaction_issue_id_actor_type_actor_id_emoji_key UNIQUE (issue_id, actor_type, actor_id, emoji);
-
-ALTER TABLE ONLY public.issue_reaction
-    ADD CONSTRAINT issue_reaction_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.issue_subscriber
-    ADD CONSTRAINT issue_subscriber_pkey PRIMARY KEY (issue_id, user_type, user_id);
-
-ALTER TABLE ONLY public.issue_to_label
-    ADD CONSTRAINT issue_to_label_pkey PRIMARY KEY (issue_id, label_id);
-
-ALTER TABLE ONLY public.lark_binding_token
-    ADD CONSTRAINT lark_binding_token_pkey PRIMARY KEY (token_hash);
-
-ALTER TABLE ONLY public.lark_chat_session_binding
-    ADD CONSTRAINT lark_chat_session_binding_chat_session_id_key UNIQUE (chat_session_id);
-
-ALTER TABLE ONLY public.lark_chat_session_binding
-    ADD CONSTRAINT lark_chat_session_binding_installation_id_lark_chat_id_key UNIQUE (installation_id, lark_chat_id);
-
-ALTER TABLE ONLY public.lark_chat_session_binding
-    ADD CONSTRAINT lark_chat_session_binding_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.lark_inbound_audit
-    ADD CONSTRAINT lark_inbound_audit_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.lark_inbound_message_dedup
-    ADD CONSTRAINT lark_inbound_message_dedup_pkey PRIMARY KEY (installation_id, message_id);
-
-ALTER TABLE ONLY public.lark_installation
-    ADD CONSTRAINT lark_installation_app_id_key UNIQUE (app_id);
-
-ALTER TABLE ONLY public.lark_installation
-    ADD CONSTRAINT lark_installation_id_workspace_id_key UNIQUE (id, workspace_id);
-
-ALTER TABLE ONLY public.lark_installation
-    ADD CONSTRAINT lark_installation_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.lark_installation
-    ADD CONSTRAINT lark_installation_workspace_id_agent_id_key UNIQUE (workspace_id, agent_id);
-
-ALTER TABLE ONLY public.lark_outbound_card_message
-    ADD CONSTRAINT lark_outbound_card_message_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.lark_user_binding
-    ADD CONSTRAINT lark_user_binding_installation_id_lark_open_id_key UNIQUE (installation_id, lark_open_id);
-
-ALTER TABLE ONLY public.lark_user_binding
-    ADD CONSTRAINT lark_user_binding_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.member
-    ADD CONSTRAINT member_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.member
-    ADD CONSTRAINT member_workspace_id_user_id_key UNIQUE (workspace_id, user_id);
-
-ALTER TABLE ONLY public.notification_preference
-    ADD CONSTRAINT notification_preference_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.notification_preference
-    ADD CONSTRAINT notification_preference_workspace_id_user_id_key UNIQUE (workspace_id, user_id);
-
-ALTER TABLE ONLY public.personal_access_token
-    ADD CONSTRAINT personal_access_token_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.pinned_item
-    ADD CONSTRAINT pinned_item_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.pinned_item
-    ADD CONSTRAINT pinned_item_workspace_id_user_id_item_type_item_id_key UNIQUE (workspace_id, user_id, item_type, item_id);
-
-ALTER TABLE ONLY public.project
-    ADD CONSTRAINT project_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.project_resource
-    ADD CONSTRAINT project_resource_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.project_resource
-    ADD CONSTRAINT project_resource_project_id_resource_type_resource_ref_key UNIQUE (project_id, resource_type, resource_ref);
-
-ALTER TABLE ONLY public.prompt_evaluation_asset
-    ADD CONSTRAINT prompt_evaluation_asset_name_unique UNIQUE (workspace_id, asset_type, name);
-
-ALTER TABLE ONLY public.prompt_evaluation_asset
-    ADD CONSTRAINT prompt_evaluation_asset_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.prompt_evaluation_case_assertion
-    ADD CONSTRAINT prompt_evaluation_case_assertion_case_index_unique UNIQUE (case_id, assertion_index);
-
-ALTER TABLE ONLY public.prompt_evaluation_case_assertion
-    ADD CONSTRAINT prompt_evaluation_case_assertion_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.prompt_evaluation_case
-    ADD CONSTRAINT prompt_evaluation_case_asset_index_unique UNIQUE (asset_id, case_index);
-
-ALTER TABLE ONLY public.prompt_evaluation_case_operation
-    ADD CONSTRAINT prompt_evaluation_case_operation_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.prompt_evaluation_case
-    ADD CONSTRAINT prompt_evaluation_case_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.prompt_evaluation_dataset_row
-    ADD CONSTRAINT prompt_evaluation_dataset_row_asset_index_unique UNIQUE (dataset_asset_id, row_index);
-
-ALTER TABLE ONLY public.prompt_evaluation_dataset_row
-    ADD CONSTRAINT prompt_evaluation_dataset_row_case_unique UNIQUE (case_id);
-
-ALTER TABLE ONLY public.prompt_evaluation_dataset_row
-    ADD CONSTRAINT prompt_evaluation_dataset_row_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.prompt_evaluation_dataset_version
-    ADD CONSTRAINT prompt_evaluation_dataset_version_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.prompt_evaluation_dataset_version_row
-    ADD CONSTRAINT prompt_evaluation_dataset_version_row_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.prompt_evaluation_dataset_version_row
-    ADD CONSTRAINT prompt_evaluation_dataset_version_row_unique UNIQUE (dataset_version_id, row_index);
-
-ALTER TABLE ONLY public.prompt_evaluation_dataset_version
-    ADD CONSTRAINT prompt_evaluation_dataset_version_unique UNIQUE (dataset_asset_id, version);
-
-ALTER TABLE ONLY public.prompt_evaluation_dimension_score
-    ADD CONSTRAINT prompt_evaluation_dimension_score_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.prompt_evaluation_dimension_score
-    ADD CONSTRAINT prompt_evaluation_dimension_score_run_dimension_unique UNIQUE (run_id, dimension_index, dimension_name);
-
-ALTER TABLE ONLY public.prompt_evaluation_evidence_snapshot
-    ADD CONSTRAINT prompt_evaluation_evidence_snapshot_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.prompt_evaluation_optimization_candidate
-    ADD CONSTRAINT prompt_evaluation_optimization_candidate_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.prompt_evaluation_run
-    ADD CONSTRAINT prompt_evaluation_run_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.prompt_evaluation_test_suite_case
-    ADD CONSTRAINT prompt_evaluation_test_suite_case_asset_index_unique UNIQUE (test_suite_asset_id, case_index);
-
-ALTER TABLE ONLY public.prompt_evaluation_test_suite_case
-    ADD CONSTRAINT prompt_evaluation_test_suite_case_case_unique UNIQUE (case_id);
-
-ALTER TABLE ONLY public.prompt_evaluation_test_suite_case
-    ADD CONSTRAINT prompt_evaluation_test_suite_case_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.prompt_evaluation_trial
-    ADD CONSTRAINT prompt_evaluation_trial_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.prompt_library_item
-    ADD CONSTRAINT prompt_library_item_name_unique UNIQUE (workspace_id, name);
-
-ALTER TABLE ONLY public.prompt_library_item
-    ADD CONSTRAINT prompt_library_item_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.prompt_library_trial
-    ADD CONSTRAINT prompt_library_trial_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.agent_playground_experiment
-    ADD CONSTRAINT agent_playground_experiment_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.agent_playground_input
-    ADD CONSTRAINT agent_playground_input_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.agent_playground_input
-    ADD CONSTRAINT agent_playground_input_experiment_index_key UNIQUE (experiment_id, row_index);
-
 ALTER TABLE ONLY public.agent_playground_agent
     ADD CONSTRAINT agent_playground_agent_pkey PRIMARY KEY (id);
-
 ALTER TABLE ONLY public.agent_playground_agent
     ADD CONSTRAINT agent_playground_agent_unique UNIQUE (experiment_id, agent_id);
-
-ALTER TABLE ONLY public.agent_playground_result
-    ADD CONSTRAINT agent_playground_result_pkey PRIMARY KEY (id);
-
-ALTER TABLE ONLY public.agent_playground_result
-    ADD CONSTRAINT agent_playground_result_unique UNIQUE (input_id, experiment_agent_id);
-
+ALTER TABLE ONLY public.agent_playground_experiment
+    ADD CONSTRAINT agent_playground_experiment_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.agent_playground_input
+    ADD CONSTRAINT agent_playground_input_experiment_index_key UNIQUE (experiment_id, row_index);
+ALTER TABLE ONLY public.agent_playground_input
+    ADD CONSTRAINT agent_playground_input_pkey PRIMARY KEY (id);
 ALTER TABLE ONLY public.agent_playground_judgement
     ADD CONSTRAINT agent_playground_judgement_pkey PRIMARY KEY (id);
-
 ALTER TABLE ONLY public.agent_playground_judgement
     ADD CONSTRAINT agent_playground_judgement_unique UNIQUE (input_id);
-
+ALTER TABLE ONLY public.agent_playground_result
+    ADD CONSTRAINT agent_playground_result_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.agent_playground_result
+    ADD CONSTRAINT agent_playground_result_unique UNIQUE (input_id, experiment_agent_id);
+ALTER TABLE ONLY public.agent_runtime
+    ADD CONSTRAINT agent_runtime_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.agent_skill
+    ADD CONSTRAINT agent_skill_pkey PRIMARY KEY (agent_id, skill_id);
+ALTER TABLE ONLY public.agent_task_queue
+    ADD CONSTRAINT agent_task_queue_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.attachment
+    ADD CONSTRAINT attachment_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.autopilot
+    ADD CONSTRAINT autopilot_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.autopilot_run
+    ADD CONSTRAINT autopilot_run_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.autopilot_subscriber
+    ADD CONSTRAINT autopilot_subscriber_pkey PRIMARY KEY (autopilot_id, user_type, user_id);
+ALTER TABLE ONLY public.autopilot_trigger
+    ADD CONSTRAINT autopilot_trigger_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.autopilot_trigger_rotation_request
+    ADD CONSTRAINT autopilot_trigger_rotation_request_pkey PRIMARY KEY (workspace_id, actor_id, idempotency_key);
+ALTER TABLE ONLY public.chat_idempotency_record
+    ADD CONSTRAINT chat_idempotency_record_pkey PRIMARY KEY (workspace_id, actor_type, actor_id, operation, idempotency_key);
+ALTER TABLE ONLY public.chat_message
+    ADD CONSTRAINT chat_message_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.chat_session
+    ADD CONSTRAINT chat_session_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.comment
+    ADD CONSTRAINT comment_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.comment_reaction
+    ADD CONSTRAINT comment_reaction_comment_id_actor_type_actor_id_emoji_key UNIQUE (comment_id, actor_type, actor_id, emoji);
+ALTER TABLE ONLY public.comment_reaction
+    ADD CONSTRAINT comment_reaction_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.domain_event_delivery
+    ADD CONSTRAINT domain_event_delivery_pkey PRIMARY KEY (event_id, consumer);
+ALTER TABLE ONLY public.domain_event_outbox
+    ADD CONSTRAINT domain_event_outbox_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.external_credential_profile
+    ADD CONSTRAINT external_credential_profile_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.external_credential_profile
+    ADD CONSTRAINT external_credential_profile_user_id_provider_name_key UNIQUE (user_id, provider, name);
+ALTER TABLE ONLY public.feedback
+    ADD CONSTRAINT feedback_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.github_installation
+    ADD CONSTRAINT github_installation_installation_id_key UNIQUE (installation_id);
+ALTER TABLE ONLY public.github_installation
+    ADD CONSTRAINT github_installation_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.github_pending_check_suite
+    ADD CONSTRAINT github_pending_check_suite_pkey PRIMARY KEY (workspace_id, repo_owner, repo_name, pr_number, suite_id);
+ALTER TABLE ONLY public.github_pending_installation
+    ADD CONSTRAINT github_pending_installation_pkey PRIMARY KEY (installation_id);
+ALTER TABLE ONLY public.github_pull_request_check_suite
+    ADD CONSTRAINT github_pull_request_check_suite_pkey PRIMARY KEY (pr_id, suite_id);
+ALTER TABLE ONLY public.github_pull_request
+    ADD CONSTRAINT github_pull_request_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.github_pull_request
+    ADD CONSTRAINT github_pull_request_workspace_id_repo_owner_repo_name_pr_nu_key UNIQUE (workspace_id, repo_owner, repo_name, pr_number);
+ALTER TABLE ONLY public.inbox_item
+    ADD CONSTRAINT inbox_item_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.issue_label
+    ADD CONSTRAINT issue_label_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.issue
+    ADD CONSTRAINT issue_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.issue_pull_request
+    ADD CONSTRAINT issue_pull_request_pkey PRIMARY KEY (issue_id, pull_request_id);
+ALTER TABLE ONLY public.issue_reaction
+    ADD CONSTRAINT issue_reaction_issue_id_actor_type_actor_id_emoji_key UNIQUE (issue_id, actor_type, actor_id, emoji);
+ALTER TABLE ONLY public.issue_reaction
+    ADD CONSTRAINT issue_reaction_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.issue_subscriber
+    ADD CONSTRAINT issue_subscriber_pkey PRIMARY KEY (issue_id, user_type, user_id);
+ALTER TABLE ONLY public.issue_to_label
+    ADD CONSTRAINT issue_to_label_pkey PRIMARY KEY (issue_id, label_id);
+ALTER TABLE ONLY public.lark_binding_token
+    ADD CONSTRAINT lark_binding_token_pkey PRIMARY KEY (token_hash);
+ALTER TABLE ONLY public.lark_chat_session_binding
+    ADD CONSTRAINT lark_chat_session_binding_chat_session_id_key UNIQUE (chat_session_id);
+ALTER TABLE ONLY public.lark_chat_session_binding
+    ADD CONSTRAINT lark_chat_session_binding_installation_id_lark_chat_id_key UNIQUE (installation_id, lark_chat_id);
+ALTER TABLE ONLY public.lark_chat_session_binding
+    ADD CONSTRAINT lark_chat_session_binding_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.lark_inbound_audit
+    ADD CONSTRAINT lark_inbound_audit_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.lark_inbound_message_dedup
+    ADD CONSTRAINT lark_inbound_message_dedup_pkey PRIMARY KEY (installation_id, message_id);
+ALTER TABLE ONLY public.lark_installation
+    ADD CONSTRAINT lark_installation_app_id_key UNIQUE (app_id);
+ALTER TABLE ONLY public.lark_installation
+    ADD CONSTRAINT lark_installation_id_workspace_id_key UNIQUE (id, workspace_id);
+ALTER TABLE ONLY public.lark_installation
+    ADD CONSTRAINT lark_installation_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.lark_installation
+    ADD CONSTRAINT lark_installation_workspace_id_agent_id_key UNIQUE (workspace_id, agent_id);
+ALTER TABLE ONLY public.lark_outbound_card_message
+    ADD CONSTRAINT lark_outbound_card_message_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.lark_user_binding
+    ADD CONSTRAINT lark_user_binding_installation_id_lark_open_id_key UNIQUE (installation_id, lark_open_id);
+ALTER TABLE ONLY public.lark_user_binding
+    ADD CONSTRAINT lark_user_binding_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.member
+    ADD CONSTRAINT member_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.member
+    ADD CONSTRAINT member_workspace_id_user_id_key UNIQUE (workspace_id, user_id);
+ALTER TABLE ONLY public.notification_preference
+    ADD CONSTRAINT notification_preference_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.notification_preference
+    ADD CONSTRAINT notification_preference_workspace_id_user_id_key UNIQUE (workspace_id, user_id);
+ALTER TABLE ONLY public.personal_access_token
+    ADD CONSTRAINT personal_access_token_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.pinned_item
+    ADD CONSTRAINT pinned_item_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.pinned_item
+    ADD CONSTRAINT pinned_item_workspace_id_user_id_item_type_item_id_key UNIQUE (workspace_id, user_id, item_type, item_id);
+ALTER TABLE ONLY public.project
+    ADD CONSTRAINT project_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.project_resource
+    ADD CONSTRAINT project_resource_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.project_resource
+    ADD CONSTRAINT project_resource_project_id_resource_type_resource_ref_key UNIQUE (project_id, resource_type, resource_ref);
+ALTER TABLE ONLY public.prompt_evaluation_asset
+    ADD CONSTRAINT prompt_evaluation_asset_name_unique UNIQUE (workspace_id, asset_type, name);
+ALTER TABLE ONLY public.prompt_evaluation_asset
+    ADD CONSTRAINT prompt_evaluation_asset_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.prompt_evaluation_case_assertion
+    ADD CONSTRAINT prompt_evaluation_case_assertion_case_index_unique UNIQUE (case_id, assertion_index);
+ALTER TABLE ONLY public.prompt_evaluation_case_assertion
+    ADD CONSTRAINT prompt_evaluation_case_assertion_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.prompt_evaluation_case
+    ADD CONSTRAINT prompt_evaluation_case_asset_index_unique UNIQUE (asset_id, case_index);
+ALTER TABLE ONLY public.prompt_evaluation_case_operation
+    ADD CONSTRAINT prompt_evaluation_case_operation_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.prompt_evaluation_case
+    ADD CONSTRAINT prompt_evaluation_case_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.prompt_evaluation_dataset_row
+    ADD CONSTRAINT prompt_evaluation_dataset_row_asset_index_unique UNIQUE (dataset_asset_id, row_index);
+ALTER TABLE ONLY public.prompt_evaluation_dataset_row
+    ADD CONSTRAINT prompt_evaluation_dataset_row_case_unique UNIQUE (case_id);
+ALTER TABLE ONLY public.prompt_evaluation_dataset_row
+    ADD CONSTRAINT prompt_evaluation_dataset_row_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.prompt_evaluation_dataset_version
+    ADD CONSTRAINT prompt_evaluation_dataset_version_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.prompt_evaluation_dataset_version_row
+    ADD CONSTRAINT prompt_evaluation_dataset_version_row_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.prompt_evaluation_dataset_version_row
+    ADD CONSTRAINT prompt_evaluation_dataset_version_row_unique UNIQUE (dataset_version_id, row_index);
+ALTER TABLE ONLY public.prompt_evaluation_dataset_version
+    ADD CONSTRAINT prompt_evaluation_dataset_version_unique UNIQUE (dataset_asset_id, version);
+ALTER TABLE ONLY public.prompt_evaluation_dimension_score
+    ADD CONSTRAINT prompt_evaluation_dimension_score_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.prompt_evaluation_dimension_score
+    ADD CONSTRAINT prompt_evaluation_dimension_score_run_dimension_unique UNIQUE (run_id, dimension_index, dimension_name);
+ALTER TABLE ONLY public.prompt_evaluation_evidence_snapshot
+    ADD CONSTRAINT prompt_evaluation_evidence_snapshot_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.prompt_evaluation_optimization_candidate
+    ADD CONSTRAINT prompt_evaluation_optimization_candidate_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.prompt_evaluation_run
+    ADD CONSTRAINT prompt_evaluation_run_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.prompt_evaluation_test_suite_case
+    ADD CONSTRAINT prompt_evaluation_test_suite_case_asset_index_unique UNIQUE (test_suite_asset_id, case_index);
+ALTER TABLE ONLY public.prompt_evaluation_test_suite_case
+    ADD CONSTRAINT prompt_evaluation_test_suite_case_case_unique UNIQUE (case_id);
+ALTER TABLE ONLY public.prompt_evaluation_test_suite_case
+    ADD CONSTRAINT prompt_evaluation_test_suite_case_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.prompt_evaluation_trial
+    ADD CONSTRAINT prompt_evaluation_trial_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.prompt_library_item
+    ADD CONSTRAINT prompt_library_item_name_unique UNIQUE (workspace_id, name);
+ALTER TABLE ONLY public.prompt_library_item
+    ADD CONSTRAINT prompt_library_item_pkey PRIMARY KEY (id);
+ALTER TABLE ONLY public.prompt_library_trial
+    ADD CONSTRAINT prompt_library_trial_pkey PRIMARY KEY (id);
 ALTER TABLE ONLY public.prompt_library_version
     ADD CONSTRAINT prompt_library_version_pkey PRIMARY KEY (id);
-
 ALTER TABLE ONLY public.prompt_library_version
     ADD CONSTRAINT prompt_library_version_unique UNIQUE (prompt_id, version);
-
+ALTER TABLE ONLY public.resource_create_request
+    ADD CONSTRAINT resource_create_request_pkey PRIMARY KEY (workspace_id, actor_id, resource_type, idempotency_key);
 ALTER TABLE ONLY public.runtime_profile
     ADD CONSTRAINT runtime_profile_pkey PRIMARY KEY (id);
-
 ALTER TABLE ONLY public.runtime_profile
     ADD CONSTRAINT runtime_profile_workspace_id_display_name_key UNIQUE (workspace_id, display_name);
-
 ALTER TABLE ONLY public.skill_file
     ADD CONSTRAINT skill_file_pkey PRIMARY KEY (id);
-
 ALTER TABLE ONLY public.skill_file
     ADD CONSTRAINT skill_file_skill_id_path_key UNIQUE (skill_id, path);
-
+ALTER TABLE ONLY public.skill_import_request
+    ADD CONSTRAINT skill_import_request_pkey PRIMARY KEY (workspace_id, actor_id, idempotency_key);
 ALTER TABLE ONLY public.skill
     ADD CONSTRAINT skill_pkey PRIMARY KEY (id);
-
 ALTER TABLE ONLY public.skill
     ADD CONSTRAINT skill_workspace_id_name_key UNIQUE (workspace_id, name);
-
 ALTER TABLE ONLY public.squad_member
     ADD CONSTRAINT squad_member_pkey PRIMARY KEY (id);
-
 ALTER TABLE ONLY public.squad_member
     ADD CONSTRAINT squad_member_squad_id_member_type_member_id_key UNIQUE (squad_id, member_type, member_id);
-
 ALTER TABLE ONLY public.squad
     ADD CONSTRAINT squad_pkey PRIMARY KEY (id);
-
 ALTER TABLE ONLY public.squad_sop_run
     ADD CONSTRAINT squad_sop_run_pkey PRIMARY KEY (id);
-
 ALTER TABLE ONLY public.squad_sop_step_event
     ADD CONSTRAINT squad_sop_step_event_pkey PRIMARY KEY (id);
-
 ALTER TABLE ONLY public.sys_cron_executions
     ADD CONSTRAINT sys_cron_executions_pkey PRIMARY KEY (id);
-
 ALTER TABLE ONLY public.task_message
     ADD CONSTRAINT task_message_pkey PRIMARY KEY (id);
-
 ALTER TABLE ONLY public.task_token
     ADD CONSTRAINT task_token_pkey PRIMARY KEY (id);
-
 ALTER TABLE ONLY public.task_trace_event
     ADD CONSTRAINT task_trace_event_pkey PRIMARY KEY (id);
-
 ALTER TABLE ONLY public.task_usage_hourly_rollup_state
     ADD CONSTRAINT task_usage_hourly_rollup_state_pkey PRIMARY KEY (id);
-
 ALTER TABLE ONLY public.task_usage
     ADD CONSTRAINT task_usage_pkey PRIMARY KEY (id);
-
 ALTER TABLE ONLY public.task_usage
     ADD CONSTRAINT task_usage_task_id_provider_model_key UNIQUE (task_id, provider, model);
-
 ALTER TABLE ONLY public.issue
     ADD CONSTRAINT uq_issue_workspace_number UNIQUE (workspace_id, number);
-
 ALTER TABLE ONLY public.sys_cron_executions
     ADD CONSTRAINT uq_sys_cron_execution UNIQUE (job_name, scope_kind, scope_id, plan_time);
-
 ALTER TABLE ONLY public.task_usage_hourly_dirty
     ADD CONSTRAINT uq_task_usage_hourly_dirty_key UNIQUE NULLS NOT DISTINCT (bucket_hour, workspace_id, runtime_id, agent_id, project_id, provider, model);
-
 ALTER TABLE ONLY public.task_usage_hourly
     ADD CONSTRAINT uq_task_usage_hourly_key UNIQUE NULLS NOT DISTINCT (bucket_hour, workspace_id, runtime_id, agent_id, project_id, provider, model);
-
 ALTER TABLE ONLY public."user"
     ADD CONSTRAINT user_account_key UNIQUE (account);
-
 ALTER TABLE ONLY public."user"
     ADD CONSTRAINT user_pkey PRIMARY KEY (id);
-
 ALTER TABLE ONLY public.webhook_delivery
     ADD CONSTRAINT webhook_delivery_pkey PRIMARY KEY (id);
-
 ALTER TABLE ONLY public.workspace
     ADD CONSTRAINT workspace_pkey PRIMARY KEY (id);
-
 ALTER TABLE ONLY public.workspace
     ADD CONSTRAINT workspace_slug_key UNIQUE (slug);
-
-CREATE UNIQUE INDEX agent_personal_no_owner_name_active_unique ON public.agent USING btree (workspace_id, name) WHERE ((archived_at IS NULL) AND (scope = 'personal'::text) AND (owner_id IS NULL));
-
-CREATE UNIQUE INDEX agent_personal_owner_name_active_unique ON public.agent USING btree (workspace_id, owner_id, name) WHERE ((archived_at IS NULL) AND (scope = 'personal'::text) AND (owner_id IS NOT NULL));
-
-CREATE UNIQUE INDEX agent_runtime_workspace_daemon_profile_key ON public.agent_runtime USING btree (workspace_id, daemon_id, profile_id) WHERE (profile_id IS NOT NULL);
-
-CREATE UNIQUE INDEX agent_runtime_workspace_daemon_provider_key ON public.agent_runtime USING btree (workspace_id, daemon_id, provider) WHERE (profile_id IS NULL);
-
-CREATE UNIQUE INDEX agent_workspace_name_active_unique ON public.agent USING btree (workspace_id, name) WHERE ((archived_at IS NULL) AND (scope = 'workspace'::text));
-
-CREATE INDEX comment_issue_resolved_at_idx ON public.comment USING btree (issue_id, resolved_at);
-
-CREATE INDEX idx_activity_log_issue_keyset ON public.activity_log USING btree (issue_id, created_at DESC, id DESC);
-
 CREATE UNIQUE INDEX activity_log_squad_evaluation_task_unique ON public.activity_log USING btree (issue_id, actor_id, ((details ->> 'task_id'::text))) WHERE ((actor_type = 'agent'::text) AND (action = 'squad_leader_evaluated'::text));
-
-CREATE INDEX idx_agent_runtime_last_seen_at ON public.agent_runtime USING btree (last_seen_at);
-
-CREATE INDEX idx_agent_runtime_status ON public.agent_runtime USING btree (workspace_id, status);
-
-CREATE INDEX idx_agent_runtime_workspace ON public.agent_runtime USING btree (workspace_id);
-
-CREATE INDEX idx_agent_runtime_workspace_scope ON public.agent_runtime USING btree (workspace_id, scope);
-
-CREATE INDEX idx_agent_skill_agent ON public.agent_skill USING btree (agent_id);
-
-CREATE INDEX idx_agent_skill_skill ON public.agent_skill USING btree (skill_id);
-
-CREATE INDEX idx_agent_task_queue_agent ON public.agent_task_queue USING btree (agent_id, status);
-
-CREATE INDEX idx_agent_task_queue_chat_pending ON public.agent_task_queue USING btree (chat_session_id, created_at DESC) WHERE ((chat_session_id IS NOT NULL) AND (status = ANY (ARRAY['queued'::text, 'dispatched'::text, 'running'::text])));
-
-CREATE INDEX idx_agent_task_queue_claim_candidates ON public.agent_task_queue USING btree (runtime_id, priority DESC, created_at) WHERE (status = 'queued'::text);
-
-CREATE INDEX idx_agent_task_queue_issue_id ON public.agent_task_queue USING btree (issue_id);
-
-CREATE INDEX idx_agent_task_queue_parent ON public.agent_task_queue USING btree (parent_task_id);
-
-CREATE INDEX idx_agent_task_queue_pending ON public.agent_task_queue USING btree (agent_id, priority DESC, created_at) WHERE (status = ANY (ARRAY['queued'::text, 'dispatched'::text]));
-
-CREATE INDEX idx_agent_task_queue_queued_created_at ON public.agent_task_queue USING btree (created_at) WHERE (status = 'queued'::text);
-
-CREATE INDEX idx_agent_task_queue_running_started_at ON public.agent_task_queue USING btree (started_at) WHERE (status = 'running'::text);
-
-CREATE INDEX idx_agent_task_queue_runtime_pending ON public.agent_task_queue USING btree (runtime_id, priority DESC, created_at) WHERE (status = ANY (ARRAY['queued'::text, 'dispatched'::text]));
-
-CREATE INDEX idx_agent_workspace ON public.agent USING btree (workspace_id);
-
-CREATE INDEX idx_attachment_chat_message ON public.attachment USING btree (chat_message_id) WHERE (chat_message_id IS NOT NULL);
-
-CREATE INDEX idx_attachment_chat_session ON public.attachment USING btree (chat_session_id) WHERE (chat_session_id IS NOT NULL);
-
-CREATE INDEX idx_attachment_comment ON public.attachment USING btree (comment_id) WHERE (comment_id IS NOT NULL);
-
-CREATE INDEX idx_attachment_issue ON public.attachment USING btree (issue_id) WHERE (issue_id IS NOT NULL);
-
-CREATE INDEX idx_attachment_workspace ON public.attachment USING btree (workspace_id);
-
-CREATE INDEX idx_autopilot_assignee ON public.autopilot USING btree (assignee_id);
-
-CREATE INDEX idx_autopilot_assignee_type_id ON public.autopilot USING btree (assignee_type, assignee_id);
-
-CREATE INDEX idx_autopilot_project ON public.autopilot USING btree (project_id);
-
-CREATE INDEX idx_autopilot_run_autopilot ON public.autopilot_run USING btree (autopilot_id, created_at DESC);
-
-CREATE INDEX idx_autopilot_run_issue ON public.autopilot_run USING btree (issue_id) WHERE (issue_id IS NOT NULL);
-
-CREATE INDEX idx_autopilot_run_squad_id ON public.autopilot_run USING btree (squad_id) WHERE (squad_id IS NOT NULL);
-
-CREATE INDEX idx_autopilot_run_status ON public.autopilot_run USING btree (autopilot_id, status) WHERE (status = ANY (ARRAY['issue_created'::text, 'running'::text]));
-
-CREATE INDEX idx_autopilot_subscriber_user ON public.autopilot_subscriber USING btree (user_type, user_id);
-
-CREATE INDEX idx_autopilot_trigger_autopilot ON public.autopilot_trigger USING btree (autopilot_id);
-
-CREATE INDEX idx_autopilot_trigger_next_run ON public.autopilot_trigger USING btree (next_run_at) WHERE ((enabled = true) AND (kind = 'schedule'::text));
-
-CREATE UNIQUE INDEX idx_autopilot_trigger_webhook_token ON public.autopilot_trigger USING btree (webhook_token) WHERE ((kind = 'webhook'::text) AND (webhook_token IS NOT NULL));
-
-CREATE INDEX idx_autopilot_workspace ON public.autopilot USING btree (workspace_id);
-
-CREATE INDEX idx_chat_message_session ON public.chat_message USING btree (chat_session_id, created_at);
-
-CREATE INDEX idx_chat_session_creator ON public.chat_session USING btree (creator_id, workspace_id);
-
-CREATE INDEX idx_chat_session_workspace ON public.chat_session USING btree (workspace_id);
-
-CREATE INDEX idx_comment_issue_keyset ON public.comment USING btree (issue_id, created_at DESC, id DESC);
-
-CREATE INDEX idx_comment_reaction_comment_id ON public.comment_reaction USING btree (comment_id);
-
-CREATE INDEX idx_external_credential_profile_user_provider ON public.external_credential_profile USING btree (user_id, provider, created_at DESC);
-
-CREATE INDEX idx_feedback_user_created ON public.feedback USING btree (user_id, created_at DESC);
-
-CREATE INDEX idx_github_installation_workspace ON public.github_installation USING btree (workspace_id);
-
-CREATE INDEX idx_github_pending_check_suite_received_at ON public.github_pending_check_suite USING btree (received_at);
-
-CREATE INDEX idx_github_pr_check_suite_aggregate ON public.github_pull_request_check_suite USING btree (pr_id, head_sha, app_id, updated_at DESC);
-
-CREATE INDEX idx_github_pull_request_workspace ON public.github_pull_request USING btree (workspace_id);
-
-CREATE INDEX idx_inbox_recipient ON public.inbox_item USING btree (recipient_type, recipient_id, read);
-
-CREATE INDEX idx_issue_assignee ON public.issue USING btree (assignee_type, assignee_id);
-
-CREATE INDEX idx_issue_first_executed_at ON public.issue USING btree (workspace_id, first_executed_at) WHERE (first_executed_at IS NOT NULL);
-
-CREATE INDEX idx_issue_metadata_gin ON public.issue USING gin (metadata jsonb_path_ops);
-
-CREATE INDEX idx_issue_origin ON public.issue USING btree (origin_type, origin_id) WHERE (origin_type IS NOT NULL);
-
-CREATE INDEX idx_issue_parent ON public.issue USING btree (parent_issue_id);
-
-CREATE INDEX idx_issue_project ON public.issue USING btree (project_id);
-
-CREATE INDEX idx_issue_pull_request_pr ON public.issue_pull_request USING btree (pull_request_id);
-
-CREATE INDEX idx_issue_reaction_issue_id ON public.issue_reaction USING btree (issue_id);
-
-CREATE INDEX idx_issue_status ON public.issue USING btree (workspace_id, status);
-
-CREATE INDEX idx_issue_subscriber_user ON public.issue_subscriber USING btree (user_type, user_id);
-
-CREATE INDEX idx_issue_work_completed_at ON public.issue USING btree (workspace_id, work_completed_at) WHERE (work_completed_at IS NOT NULL);
-
-CREATE INDEX idx_issue_work_started_at ON public.issue USING btree (workspace_id, work_started_at) WHERE (work_started_at IS NOT NULL);
-
-CREATE INDEX idx_issue_workspace ON public.issue USING btree (workspace_id);
-
-CREATE INDEX idx_issue_workspace_number ON public.issue USING btree (workspace_id, number);
-
-CREATE INDEX idx_issue_workspace_owner_scope ON public.issue USING btree (workspace_id, owner_id, scope);
-
-CREATE INDEX idx_issue_workspace_scope ON public.issue USING btree (workspace_id, scope);
-
-CREATE INDEX idx_lark_binding_token_installation ON public.lark_binding_token USING btree (installation_id, expires_at);
-
-CREATE INDEX idx_lark_chat_session_binding_session ON public.lark_chat_session_binding USING btree (chat_session_id);
-
-CREATE INDEX idx_lark_inbound_audit_installation ON public.lark_inbound_audit USING btree (installation_id, received_at DESC);
-
-CREATE INDEX idx_lark_inbound_audit_reason ON public.lark_inbound_audit USING btree (drop_reason, received_at DESC);
-
-CREATE INDEX idx_lark_inbound_dedup_received ON public.lark_inbound_message_dedup USING btree (received_at);
-
-CREATE INDEX idx_lark_installation_agent ON public.lark_installation USING btree (agent_id);
-
-CREATE INDEX idx_lark_installation_lease ON public.lark_installation USING btree (ws_lease_expires_at) WHERE (status = 'active'::text);
-
-CREATE INDEX idx_lark_installation_workspace ON public.lark_installation USING btree (workspace_id);
-
-CREATE INDEX idx_lark_outbound_card_session ON public.lark_outbound_card_message USING btree (chat_session_id, created_at DESC);
-
-CREATE UNIQUE INDEX idx_lark_outbound_card_task ON public.lark_outbound_card_message USING btree (task_id) WHERE (task_id IS NOT NULL);
-
-CREATE INDEX idx_lark_user_binding_user ON public.lark_user_binding USING btree (multica_user_id, workspace_id);
-
-CREATE INDEX idx_lark_user_binding_workspace_open ON public.lark_user_binding USING btree (workspace_id, lark_open_id);
-
-CREATE INDEX idx_member_user_workspace ON public.member USING btree (user_id, workspace_id);
-
-CREATE INDEX idx_member_workspace ON public.member USING btree (workspace_id);
-
-CREATE UNIQUE INDEX idx_one_pending_task_per_issue_agent ON public.agent_task_queue USING btree (issue_id, agent_id) WHERE (status = ANY (ARRAY['queued'::text, 'dispatched'::text]));
-
-CREATE UNIQUE INDEX idx_pat_token_hash ON public.personal_access_token USING btree (token_hash);
-
-CREATE INDEX idx_pat_user ON public.personal_access_token USING btree (user_id, revoked);
-
-CREATE INDEX idx_pinned_item_user_ws ON public.pinned_item USING btree (workspace_id, user_id, "position");
-
-CREATE INDEX idx_project_resource_project ON public.project_resource USING btree (project_id, "position");
-
-CREATE INDEX idx_project_resource_workspace ON public.project_resource USING btree (workspace_id);
-
-CREATE INDEX idx_project_workspace ON public.project USING btree (workspace_id);
-
-CREATE INDEX idx_project_workspace_owner_scope ON public.project USING btree (workspace_id, owner_id, scope);
-
-CREATE INDEX idx_project_workspace_scope ON public.project USING btree (workspace_id, scope);
-
-CREATE INDEX idx_prompt_evaluation_case_assertion_asset ON public.prompt_evaluation_case_assertion USING btree (asset_id, case_id, assertion_index);
-
-CREATE INDEX idx_prompt_evaluation_case_assertion_case ON public.prompt_evaluation_case_assertion USING btree (case_id, assertion_index);
-
-CREATE INDEX idx_prompt_evaluation_case_assertion_workspace ON public.prompt_evaluation_case_assertion USING btree (workspace_id, created_at DESC);
-
-CREATE INDEX idx_prompt_evaluation_case_asset_index ON public.prompt_evaluation_case USING btree (asset_id, case_index);
-
-CREATE INDEX idx_prompt_evaluation_case_operation_asset_created ON public.prompt_evaluation_case_operation USING btree (asset_id, created_at DESC);
-
-CREATE INDEX idx_prompt_evaluation_case_operation_status_created ON public.prompt_evaluation_case_operation USING btree (workspace_id, status, created_at DESC);
-
-CREATE INDEX idx_prompt_evaluation_case_operation_workspace_created ON public.prompt_evaluation_case_operation USING btree (workspace_id, created_at DESC);
-
-CREATE INDEX idx_prompt_evaluation_case_stream_created ON public.prompt_evaluation_case USING btree (workspace_id, asset_id, status, source, created_at DESC, id);
-
-CREATE INDEX idx_prompt_evaluation_case_stream_index ON public.prompt_evaluation_case USING btree (workspace_id, asset_id, status, source, case_index, id);
-
-CREATE INDEX idx_prompt_evaluation_case_stream_updated ON public.prompt_evaluation_case USING btree (workspace_id, asset_id, status, source, updated_at DESC, id);
-
-CREATE INDEX idx_prompt_evaluation_case_tags_gin ON public.prompt_evaluation_case USING gin (tags);
-
-CREATE INDEX idx_prompt_evaluation_case_workspace_created ON public.prompt_evaluation_case USING btree (workspace_id, created_at DESC);
-
-CREATE INDEX idx_prompt_evaluation_dataset_row_asset_index ON public.prompt_evaluation_dataset_row USING btree (dataset_asset_id, row_index);
-
-CREATE INDEX idx_prompt_evaluation_dataset_row_workspace_created ON public.prompt_evaluation_dataset_row USING btree (workspace_id, created_at DESC);
-
-CREATE INDEX idx_prompt_evaluation_dataset_version_asset_created ON public.prompt_evaluation_dataset_version USING btree (dataset_asset_id, created_at DESC);
-
-CREATE INDEX idx_prompt_evaluation_dataset_version_row_asset ON public.prompt_evaluation_dataset_version_row USING btree (dataset_asset_id, row_index);
-
-CREATE INDEX idx_prompt_evaluation_dataset_version_row_version_index ON public.prompt_evaluation_dataset_version_row USING btree (dataset_version_id, row_index);
-
-CREATE INDEX idx_prompt_evaluation_dataset_version_workspace_created ON public.prompt_evaluation_dataset_version USING btree (workspace_id, created_at DESC);
-
-CREATE INDEX idx_prompt_evaluation_dimension_score_asset_dimension ON public.prompt_evaluation_dimension_score USING btree (asset_id, dimension_index, created_at DESC);
-
-CREATE INDEX idx_prompt_evaluation_dimension_score_prompt_dimension ON public.prompt_evaluation_dimension_score USING btree (prompt_id, dimension_index, created_at DESC) WHERE (prompt_id IS NOT NULL);
-
-CREATE INDEX idx_prompt_evaluation_dimension_score_workspace_created ON public.prompt_evaluation_dimension_score USING btree (workspace_id, created_at DESC);
-
-CREATE INDEX idx_prompt_evaluation_evidence_snapshot_run_created ON public.prompt_evaluation_evidence_snapshot USING btree (run_id, created_at DESC);
-
-CREATE INDEX idx_prompt_evaluation_evidence_snapshot_workspace_created ON public.prompt_evaluation_evidence_snapshot USING btree (workspace_id, created_at DESC);
-
-CREATE INDEX idx_prompt_evaluation_optimization_candidate_prompt ON public.prompt_evaluation_optimization_candidate USING btree (prompt_id, created_at DESC);
-
-CREATE INDEX idx_prompt_evaluation_optimization_candidate_run ON public.prompt_evaluation_optimization_candidate USING btree (run_id, created_at DESC);
-
-CREATE INDEX idx_prompt_evaluation_optimization_candidate_workspace_created ON public.prompt_evaluation_optimization_candidate USING btree (workspace_id, created_at DESC);
-
-CREATE INDEX idx_prompt_evaluation_run_asset_created ON public.prompt_evaluation_run USING btree (asset_id, created_at DESC);
-
-CREATE INDEX idx_prompt_evaluation_run_task ON public.prompt_evaluation_run USING btree (task_id) WHERE (task_id IS NOT NULL);
-
-CREATE INDEX idx_prompt_evaluation_run_workspace_created ON public.prompt_evaluation_run USING btree (workspace_id, created_at DESC);
-
-CREATE INDEX idx_prompt_evaluation_run_workspace_reviewed ON public.prompt_evaluation_run USING btree (workspace_id, reviewed_at DESC) WHERE (reviewed_at IS NOT NULL);
-
-CREATE INDEX idx_prompt_evaluation_test_suite_case_asset_index ON public.prompt_evaluation_test_suite_case USING btree (test_suite_asset_id, case_index);
-
-CREATE INDEX idx_prompt_evaluation_test_suite_case_workspace_created ON public.prompt_evaluation_test_suite_case USING btree (workspace_id, created_at DESC);
-
-CREATE INDEX idx_prompt_evaluation_trial_asset_created ON public.prompt_evaluation_trial USING btree (asset_id, created_at DESC);
-
-CREATE INDEX idx_prompt_evaluation_trial_run_case ON public.prompt_evaluation_trial USING btree (run_id, case_index);
-
-CREATE INDEX idx_prompt_library_version_prompt_version ON public.prompt_library_version USING btree (prompt_id, version DESC);
-
-CREATE INDEX idx_prompt_library_version_workspace_created ON public.prompt_library_version USING btree (workspace_id, created_at DESC);
-
-CREATE INDEX idx_prompt_library_trial_prompt_created ON public.prompt_library_trial USING btree (prompt_id, created_at DESC);
-
-CREATE INDEX idx_prompt_library_trial_workspace_created ON public.prompt_library_trial USING btree (workspace_id, created_at DESC);
-
-CREATE INDEX idx_agent_playground_experiment_workspace_created ON public.agent_playground_experiment USING btree (workspace_id, created_at DESC);
-
-CREATE INDEX idx_agent_playground_input_experiment_index ON public.agent_playground_input USING btree (experiment_id, row_index);
-
+CREATE UNIQUE INDEX agent_personal_no_owner_name_active_unique ON public.agent USING btree (workspace_id, name) WHERE ((archived_at IS NULL) AND (scope = 'personal'::text) AND (owner_id IS NULL));
+CREATE UNIQUE INDEX agent_personal_owner_name_active_unique ON public.agent USING btree (workspace_id, owner_id, name) WHERE ((archived_at IS NULL) AND (scope = 'personal'::text) AND (owner_id IS NOT NULL));
+CREATE UNIQUE INDEX agent_runtime_workspace_daemon_profile_key ON public.agent_runtime USING btree (workspace_id, daemon_id, profile_id) WHERE (profile_id IS NOT NULL);
+CREATE UNIQUE INDEX agent_runtime_workspace_daemon_provider_key ON public.agent_runtime USING btree (workspace_id, daemon_id, provider) WHERE (profile_id IS NULL);
+CREATE UNIQUE INDEX agent_workspace_name_active_unique ON public.agent USING btree (workspace_id, name) WHERE ((archived_at IS NULL) AND (scope = 'workspace'::text));
+CREATE UNIQUE INDEX autopilot_create_request_unique ON public.autopilot USING btree (workspace_id, created_by_type, created_by_id, request_key) WHERE (request_key IS NOT NULL);
+CREATE UNIQUE INDEX autopilot_run_request_key_unique ON public.autopilot_run USING btree (autopilot_id, source, request_key) WHERE (request_key IS NOT NULL);
+CREATE INDEX comment_issue_resolved_at_idx ON public.comment USING btree (issue_id, resolved_at);
+CREATE UNIQUE INDEX external_credential_profile_create_request_unique ON public.external_credential_profile USING btree (user_id, idempotency_key) WHERE (idempotency_key IS NOT NULL);
+CREATE UNIQUE INDEX feedback_user_idempotency_key_idx ON public.feedback USING btree (user_id, idempotency_key) WHERE (idempotency_key IS NOT NULL);
+CREATE INDEX idx_activity_log_issue_keyset ON public.activity_log USING btree (issue_id, created_at DESC, id DESC);
 CREATE INDEX idx_agent_playground_agent_experiment_order ON public.agent_playground_agent USING btree (experiment_id, display_order);
-
-CREATE INDEX idx_agent_playground_result_experiment ON public.agent_playground_result USING btree (experiment_id, input_id, experiment_agent_id);
-
+CREATE INDEX idx_agent_playground_experiment_workspace_created ON public.agent_playground_experiment USING btree (workspace_id, created_at DESC);
+CREATE INDEX idx_agent_playground_input_experiment_index ON public.agent_playground_input USING btree (experiment_id, row_index);
 CREATE INDEX idx_agent_playground_judgement_experiment ON public.agent_playground_judgement USING btree (experiment_id, input_id);
-
+CREATE INDEX idx_agent_playground_result_experiment ON public.agent_playground_result USING btree (experiment_id, input_id, experiment_agent_id);
+CREATE INDEX idx_agent_runtime_last_seen_at ON public.agent_runtime USING btree (last_seen_at);
+CREATE INDEX idx_agent_runtime_status ON public.agent_runtime USING btree (workspace_id, status);
+CREATE INDEX idx_agent_runtime_workspace ON public.agent_runtime USING btree (workspace_id);
+CREATE INDEX idx_agent_runtime_workspace_scope ON public.agent_runtime USING btree (workspace_id, scope);
+CREATE INDEX idx_agent_skill_agent ON public.agent_skill USING btree (agent_id);
+CREATE INDEX idx_agent_skill_skill ON public.agent_skill USING btree (skill_id);
+CREATE INDEX idx_agent_task_queue_agent ON public.agent_task_queue USING btree (agent_id, status);
+CREATE INDEX idx_agent_task_queue_chat_pending ON public.agent_task_queue USING btree (chat_session_id, created_at DESC) WHERE ((chat_session_id IS NOT NULL) AND (status = ANY (ARRAY['queued'::text, 'dispatched'::text, 'running'::text])));
+CREATE INDEX idx_agent_task_queue_claim_candidates ON public.agent_task_queue USING btree (runtime_id, priority DESC, created_at) WHERE (status = 'queued'::text);
+CREATE INDEX idx_agent_task_queue_issue_id ON public.agent_task_queue USING btree (issue_id);
+CREATE INDEX idx_agent_task_queue_parent ON public.agent_task_queue USING btree (parent_task_id);
+CREATE INDEX idx_agent_task_queue_pending ON public.agent_task_queue USING btree (agent_id, priority DESC, created_at) WHERE (status = ANY (ARRAY['queued'::text, 'dispatched'::text]));
+CREATE INDEX idx_agent_task_queue_queued_created_at ON public.agent_task_queue USING btree (created_at) WHERE (status = 'queued'::text);
+CREATE INDEX idx_agent_task_queue_running_started_at ON public.agent_task_queue USING btree (started_at) WHERE (status = 'running'::text);
+CREATE INDEX idx_agent_task_queue_runtime_pending ON public.agent_task_queue USING btree (runtime_id, priority DESC, created_at) WHERE (status = ANY (ARRAY['queued'::text, 'dispatched'::text]));
+CREATE INDEX idx_agent_workspace ON public.agent USING btree (workspace_id);
+CREATE INDEX idx_attachment_chat_message ON public.attachment USING btree (chat_message_id) WHERE (chat_message_id IS NOT NULL);
+CREATE INDEX idx_attachment_chat_session ON public.attachment USING btree (chat_session_id) WHERE (chat_session_id IS NOT NULL);
+CREATE INDEX idx_attachment_comment ON public.attachment USING btree (comment_id) WHERE (comment_id IS NOT NULL);
+CREATE INDEX idx_attachment_issue ON public.attachment USING btree (issue_id) WHERE (issue_id IS NOT NULL);
+CREATE INDEX idx_attachment_workspace ON public.attachment USING btree (workspace_id);
+CREATE INDEX idx_autopilot_assignee ON public.autopilot USING btree (assignee_id);
+CREATE INDEX idx_autopilot_assignee_type_id ON public.autopilot USING btree (assignee_type, assignee_id);
+CREATE INDEX idx_autopilot_project ON public.autopilot USING btree (project_id);
+CREATE INDEX idx_autopilot_run_autopilot ON public.autopilot_run USING btree (autopilot_id, created_at DESC);
+CREATE INDEX idx_autopilot_run_issue ON public.autopilot_run USING btree (issue_id) WHERE (issue_id IS NOT NULL);
+CREATE INDEX idx_autopilot_run_squad_id ON public.autopilot_run USING btree (squad_id) WHERE (squad_id IS NOT NULL);
+CREATE INDEX idx_autopilot_run_status ON public.autopilot_run USING btree (autopilot_id, status) WHERE (status = ANY (ARRAY['issue_created'::text, 'running'::text]));
+CREATE INDEX idx_autopilot_subscriber_user ON public.autopilot_subscriber USING btree (user_type, user_id);
+CREATE INDEX idx_autopilot_trigger_autopilot ON public.autopilot_trigger USING btree (autopilot_id);
+CREATE INDEX idx_autopilot_trigger_next_run ON public.autopilot_trigger USING btree (next_run_at) WHERE ((enabled = true) AND (kind = 'schedule'::text));
+CREATE INDEX idx_autopilot_trigger_rotation_request_completed_at ON public.autopilot_trigger_rotation_request USING btree (completed_at) WHERE (completed_at IS NOT NULL);
+CREATE INDEX idx_autopilot_trigger_rotation_request_incomplete_created_at ON public.autopilot_trigger_rotation_request USING btree (created_at) WHERE (completed_at IS NULL);
+CREATE UNIQUE INDEX idx_autopilot_trigger_webhook_token ON public.autopilot_trigger USING btree (webhook_token) WHERE ((kind = 'webhook'::text) AND (webhook_token IS NOT NULL));
+CREATE INDEX idx_autopilot_workspace ON public.autopilot USING btree (workspace_id);
+CREATE INDEX idx_chat_message_session ON public.chat_message USING btree (chat_session_id, created_at);
+CREATE INDEX idx_chat_session_creator ON public.chat_session USING btree (creator_id, workspace_id);
+CREATE INDEX idx_chat_session_workspace ON public.chat_session USING btree (workspace_id);
+CREATE INDEX idx_comment_issue_keyset ON public.comment USING btree (issue_id, created_at DESC, id DESC);
+CREATE INDEX idx_comment_reaction_comment_id ON public.comment_reaction USING btree (comment_id);
+CREATE INDEX idx_domain_event_outbox_dead_lettered ON public.domain_event_outbox USING btree (dead_lettered_at, sequence_no) WHERE (dead_lettered_at IS NOT NULL);
+CREATE INDEX idx_domain_event_outbox_pending ON public.domain_event_outbox USING btree (available_at, sequence_no) WHERE ((processed_at IS NULL) AND (dead_lettered_at IS NULL));
+CREATE INDEX idx_domain_event_outbox_pending_stream ON public.domain_event_outbox USING btree (stream_key, sequence_no) WHERE ((processed_at IS NULL) AND (dead_lettered_at IS NULL) AND (stream_key IS NOT NULL));
+CREATE INDEX idx_external_credential_profile_user_provider ON public.external_credential_profile USING btree (user_id, provider, created_at DESC);
+CREATE INDEX idx_feedback_user_created ON public.feedback USING btree (user_id, created_at DESC);
+CREATE INDEX idx_github_installation_workspace ON public.github_installation USING btree (workspace_id);
+CREATE INDEX idx_github_pending_check_suite_received_at ON public.github_pending_check_suite USING btree (received_at);
+CREATE INDEX idx_github_pr_check_suite_aggregate ON public.github_pull_request_check_suite USING btree (pr_id, head_sha, app_id, updated_at DESC);
+CREATE INDEX idx_github_pull_request_workspace ON public.github_pull_request USING btree (workspace_id);
+CREATE INDEX idx_inbox_recipient ON public.inbox_item USING btree (recipient_type, recipient_id, read);
+CREATE INDEX idx_issue_assignee ON public.issue USING btree (assignee_type, assignee_id);
+CREATE INDEX idx_issue_first_executed_at ON public.issue USING btree (workspace_id, first_executed_at) WHERE (first_executed_at IS NOT NULL);
+CREATE INDEX idx_issue_metadata_gin ON public.issue USING gin (metadata jsonb_path_ops);
+CREATE UNIQUE INDEX idx_issue_origin ON public.issue USING btree (workspace_id, origin_type, origin_id) WHERE (origin_type IS NOT NULL);
+CREATE INDEX idx_issue_parent ON public.issue USING btree (parent_issue_id);
+CREATE INDEX idx_issue_project ON public.issue USING btree (project_id);
+CREATE INDEX idx_issue_pull_request_pr ON public.issue_pull_request USING btree (pull_request_id);
+CREATE INDEX idx_issue_reaction_issue_id ON public.issue_reaction USING btree (issue_id);
+CREATE INDEX idx_issue_status ON public.issue USING btree (workspace_id, status);
+CREATE INDEX idx_issue_subscriber_user ON public.issue_subscriber USING btree (user_type, user_id);
+CREATE INDEX idx_issue_work_completed_at ON public.issue USING btree (workspace_id, work_completed_at) WHERE (work_completed_at IS NOT NULL);
+CREATE INDEX idx_issue_work_started_at ON public.issue USING btree (workspace_id, work_started_at) WHERE (work_started_at IS NOT NULL);
+CREATE INDEX idx_issue_workspace ON public.issue USING btree (workspace_id);
+CREATE INDEX idx_issue_workspace_number ON public.issue USING btree (workspace_id, number);
+CREATE INDEX idx_issue_workspace_owner_scope ON public.issue USING btree (workspace_id, owner_id, scope);
+CREATE INDEX idx_issue_workspace_scope ON public.issue USING btree (workspace_id, scope);
+CREATE INDEX idx_lark_binding_token_installation ON public.lark_binding_token USING btree (installation_id, expires_at);
+CREATE INDEX idx_lark_chat_session_binding_session ON public.lark_chat_session_binding USING btree (chat_session_id);
+CREATE INDEX idx_lark_inbound_audit_installation ON public.lark_inbound_audit USING btree (installation_id, received_at DESC);
+CREATE INDEX idx_lark_inbound_audit_reason ON public.lark_inbound_audit USING btree (drop_reason, received_at DESC);
+CREATE INDEX idx_lark_inbound_dedup_received ON public.lark_inbound_message_dedup USING btree (received_at);
+CREATE INDEX idx_lark_installation_agent ON public.lark_installation USING btree (agent_id);
+CREATE INDEX idx_lark_installation_lease ON public.lark_installation USING btree (ws_lease_expires_at) WHERE (status = 'active'::text);
+CREATE INDEX idx_lark_installation_workspace ON public.lark_installation USING btree (workspace_id);
+CREATE INDEX idx_lark_outbound_card_session ON public.lark_outbound_card_message USING btree (chat_session_id, created_at DESC);
+CREATE UNIQUE INDEX idx_lark_outbound_card_task ON public.lark_outbound_card_message USING btree (task_id) WHERE (task_id IS NOT NULL);
+CREATE INDEX idx_lark_user_binding_user ON public.lark_user_binding USING btree (multica_user_id, workspace_id);
+CREATE INDEX idx_lark_user_binding_workspace_open ON public.lark_user_binding USING btree (workspace_id, lark_open_id);
+CREATE INDEX idx_member_user_workspace ON public.member USING btree (user_id, workspace_id);
+CREATE INDEX idx_member_workspace ON public.member USING btree (workspace_id);
+CREATE UNIQUE INDEX idx_one_pending_task_per_issue_agent ON public.agent_task_queue USING btree (issue_id, agent_id) WHERE (status = ANY (ARRAY['queued'::text, 'dispatched'::text]));
+CREATE UNIQUE INDEX idx_pat_token_hash ON public.personal_access_token USING btree (token_hash);
+CREATE INDEX idx_pat_user ON public.personal_access_token USING btree (user_id, revoked);
+CREATE INDEX idx_pinned_item_user_ws ON public.pinned_item USING btree (workspace_id, user_id, "position");
+CREATE INDEX idx_project_resource_project ON public.project_resource USING btree (project_id, "position");
+CREATE INDEX idx_project_resource_workspace ON public.project_resource USING btree (workspace_id);
+CREATE INDEX idx_project_workspace ON public.project USING btree (workspace_id);
+CREATE INDEX idx_project_workspace_owner_scope ON public.project USING btree (workspace_id, owner_id, scope);
+CREATE INDEX idx_project_workspace_scope ON public.project USING btree (workspace_id, scope);
+CREATE INDEX idx_prompt_evaluation_case_assertion_asset ON public.prompt_evaluation_case_assertion USING btree (asset_id, case_id, assertion_index);
+CREATE INDEX idx_prompt_evaluation_case_assertion_case ON public.prompt_evaluation_case_assertion USING btree (case_id, assertion_index);
+CREATE INDEX idx_prompt_evaluation_case_assertion_workspace ON public.prompt_evaluation_case_assertion USING btree (workspace_id, created_at DESC);
+CREATE INDEX idx_prompt_evaluation_case_asset_index ON public.prompt_evaluation_case USING btree (asset_id, case_index);
+CREATE INDEX idx_prompt_evaluation_case_operation_asset_created ON public.prompt_evaluation_case_operation USING btree (asset_id, created_at DESC);
+CREATE INDEX idx_prompt_evaluation_case_operation_status_created ON public.prompt_evaluation_case_operation USING btree (workspace_id, status, created_at DESC);
+CREATE INDEX idx_prompt_evaluation_case_operation_workspace_created ON public.prompt_evaluation_case_operation USING btree (workspace_id, created_at DESC);
+CREATE INDEX idx_prompt_evaluation_case_stream_created ON public.prompt_evaluation_case USING btree (workspace_id, asset_id, status, source, created_at DESC, id);
+CREATE INDEX idx_prompt_evaluation_case_stream_index ON public.prompt_evaluation_case USING btree (workspace_id, asset_id, status, source, case_index, id);
+CREATE INDEX idx_prompt_evaluation_case_stream_updated ON public.prompt_evaluation_case USING btree (workspace_id, asset_id, status, source, updated_at DESC, id);
+CREATE INDEX idx_prompt_evaluation_case_tags_gin ON public.prompt_evaluation_case USING gin (tags);
+CREATE INDEX idx_prompt_evaluation_case_workspace_created ON public.prompt_evaluation_case USING btree (workspace_id, created_at DESC);
+CREATE INDEX idx_prompt_evaluation_dataset_row_asset_index ON public.prompt_evaluation_dataset_row USING btree (dataset_asset_id, row_index);
+CREATE INDEX idx_prompt_evaluation_dataset_row_workspace_created ON public.prompt_evaluation_dataset_row USING btree (workspace_id, created_at DESC);
+CREATE INDEX idx_prompt_evaluation_dataset_version_asset_created ON public.prompt_evaluation_dataset_version USING btree (dataset_asset_id, created_at DESC);
+CREATE INDEX idx_prompt_evaluation_dataset_version_row_asset ON public.prompt_evaluation_dataset_version_row USING btree (dataset_asset_id, row_index);
+CREATE INDEX idx_prompt_evaluation_dataset_version_row_version_index ON public.prompt_evaluation_dataset_version_row USING btree (dataset_version_id, row_index);
+CREATE INDEX idx_prompt_evaluation_dataset_version_workspace_created ON public.prompt_evaluation_dataset_version USING btree (workspace_id, created_at DESC);
+CREATE INDEX idx_prompt_evaluation_dimension_score_asset_dimension ON public.prompt_evaluation_dimension_score USING btree (asset_id, dimension_index, created_at DESC);
+CREATE INDEX idx_prompt_evaluation_dimension_score_prompt_dimension ON public.prompt_evaluation_dimension_score USING btree (prompt_id, dimension_index, created_at DESC) WHERE (prompt_id IS NOT NULL);
+CREATE INDEX idx_prompt_evaluation_dimension_score_workspace_created ON public.prompt_evaluation_dimension_score USING btree (workspace_id, created_at DESC);
+CREATE INDEX idx_prompt_evaluation_evidence_snapshot_run_created ON public.prompt_evaluation_evidence_snapshot USING btree (run_id, created_at DESC);
+CREATE INDEX idx_prompt_evaluation_evidence_snapshot_workspace_created ON public.prompt_evaluation_evidence_snapshot USING btree (workspace_id, created_at DESC);
+CREATE INDEX idx_prompt_evaluation_optimization_candidate_prompt ON public.prompt_evaluation_optimization_candidate USING btree (prompt_id, created_at DESC);
+CREATE INDEX idx_prompt_evaluation_optimization_candidate_run ON public.prompt_evaluation_optimization_candidate USING btree (run_id, created_at DESC);
+CREATE INDEX idx_prompt_evaluation_optimization_candidate_workspace_created ON public.prompt_evaluation_optimization_candidate USING btree (workspace_id, created_at DESC);
+CREATE INDEX idx_prompt_evaluation_run_asset_created ON public.prompt_evaluation_run USING btree (asset_id, created_at DESC);
+CREATE INDEX idx_prompt_evaluation_run_task ON public.prompt_evaluation_run USING btree (task_id) WHERE (task_id IS NOT NULL);
+CREATE INDEX idx_prompt_evaluation_run_workspace_created ON public.prompt_evaluation_run USING btree (workspace_id, created_at DESC);
+CREATE INDEX idx_prompt_evaluation_run_workspace_reviewed ON public.prompt_evaluation_run USING btree (workspace_id, reviewed_at DESC) WHERE (reviewed_at IS NOT NULL);
+CREATE INDEX idx_prompt_evaluation_test_suite_case_asset_index ON public.prompt_evaluation_test_suite_case USING btree (test_suite_asset_id, case_index);
+CREATE INDEX idx_prompt_evaluation_test_suite_case_workspace_created ON public.prompt_evaluation_test_suite_case USING btree (workspace_id, created_at DESC);
+CREATE INDEX idx_prompt_evaluation_trial_asset_created ON public.prompt_evaluation_trial USING btree (asset_id, created_at DESC);
+CREATE INDEX idx_prompt_evaluation_trial_run_case ON public.prompt_evaluation_trial USING btree (run_id, case_index);
+CREATE INDEX idx_prompt_library_trial_prompt_created ON public.prompt_library_trial USING btree (prompt_id, created_at DESC);
+CREATE INDEX idx_prompt_library_trial_workspace_created ON public.prompt_library_trial USING btree (workspace_id, created_at DESC);
+CREATE INDEX idx_prompt_library_version_prompt_version ON public.prompt_library_version USING btree (prompt_id, version DESC);
+CREATE INDEX idx_prompt_library_version_workspace_created ON public.prompt_library_version USING btree (workspace_id, created_at DESC);
+CREATE INDEX idx_resource_create_request_completed_at ON public.resource_create_request USING btree (completed_at) WHERE (completed_at IS NOT NULL);
+CREATE INDEX idx_resource_create_request_incomplete_created_at ON public.resource_create_request USING btree (created_at) WHERE (completed_at IS NULL);
 CREATE INDEX idx_runtime_profile_workspace ON public.runtime_profile USING btree (workspace_id);
-
 CREATE INDEX idx_skill_file_skill ON public.skill_file USING btree (skill_id);
-
+CREATE INDEX idx_skill_import_request_completed_at ON public.skill_import_request USING btree (completed_at) WHERE (completed_at IS NOT NULL);
+CREATE INDEX idx_skill_import_request_incomplete_created_at ON public.skill_import_request USING btree (created_at) WHERE (completed_at IS NULL);
 CREATE INDEX idx_skill_workspace ON public.skill USING btree (workspace_id);
-
 CREATE INDEX idx_squad_member_entity ON public.squad_member USING btree (member_type, member_id);
-
 CREATE INDEX idx_squad_member_squad ON public.squad_member USING btree (squad_id);
-
 CREATE INDEX idx_squad_sop_run_issue_created ON public.squad_sop_run USING btree (issue_id, created_at DESC);
-
 CREATE UNIQUE INDEX idx_squad_sop_run_issue_open ON public.squad_sop_run USING btree (issue_id) WHERE (status = ANY (ARRAY['待开始'::text, '进行中'::text, '已阻塞'::text]));
-
 CREATE INDEX idx_squad_sop_run_squad_created ON public.squad_sop_run USING btree (squad_id, created_at DESC);
-
 CREATE INDEX idx_squad_sop_run_workspace_created ON public.squad_sop_run USING btree (workspace_id, created_at DESC);
-
 CREATE INDEX idx_squad_sop_step_event_issue_created ON public.squad_sop_step_event USING btree (issue_id, created_at DESC);
-
 CREATE INDEX idx_squad_sop_step_event_run_created ON public.squad_sop_step_event USING btree (run_id, created_at);
-
 CREATE INDEX idx_squad_sop_step_event_squad_created ON public.squad_sop_step_event USING btree (squad_id, created_at DESC);
-
+CREATE UNIQUE INDEX idx_squad_sop_terminal_event_task_unique ON public.squad_sop_step_event USING btree (run_id, task_id, event_type) WHERE ((task_id IS NOT NULL) AND (created_by_type = 'system'::text) AND (event_type = ANY (ARRAY['步骤完成'::text, '步骤失败'::text])));
 CREATE INDEX idx_squad_workspace ON public.squad USING btree (workspace_id);
-
 CREATE INDEX idx_squad_workspace_scope ON public.squad USING btree (workspace_id, scope) WHERE (archived_at IS NULL);
-
 CREATE INDEX idx_sys_cron_exec_failed_recent ON public.sys_cron_executions USING btree (job_name, plan_time DESC) WHERE (status = 'FAILED'::text);
-
 CREATE INDEX idx_sys_cron_exec_finished ON public.sys_cron_executions USING btree (finished_at) WHERE (status = ANY (ARRAY['SUCCESS'::text, 'FAILED'::text]));
-
 CREATE INDEX idx_sys_cron_exec_job_plan ON public.sys_cron_executions USING btree (job_name, scope_kind, scope_id, plan_time DESC);
-
 CREATE INDEX idx_sys_cron_exec_running_stale ON public.sys_cron_executions USING btree (stale_after) WHERE (status = 'RUNNING'::text);
-
 CREATE UNIQUE INDEX idx_task_message_task_id_seq ON public.task_message USING btree (task_id, seq);
-
 CREATE UNIQUE INDEX idx_task_token_hash ON public.task_token USING btree (token_hash);
-
 CREATE INDEX idx_task_token_task ON public.task_token USING btree (task_id);
-
 CREATE INDEX idx_task_trace_event_agent_created ON public.task_trace_event USING btree (agent_id, created_at DESC);
-
 CREATE INDEX idx_task_trace_event_issue_created ON public.task_trace_event USING btree (issue_id, created_at DESC) WHERE (issue_id IS NOT NULL);
-
 CREATE INDEX idx_task_trace_event_squad_created ON public.task_trace_event USING btree (squad_id, created_at DESC) WHERE (squad_id IS NOT NULL);
-
 CREATE INDEX idx_task_trace_event_task_created ON public.task_trace_event USING btree (task_id, created_at);
-
 CREATE INDEX idx_task_trace_event_workspace_created ON public.task_trace_event USING btree (workspace_id, created_at DESC);
-
 CREATE INDEX idx_task_usage_created_at ON public.task_usage USING btree (created_at);
-
 CREATE INDEX idx_task_usage_hourly_dirty_enqueued_at ON public.task_usage_hourly_dirty USING btree (enqueued_at);
-
 CREATE INDEX idx_task_usage_hourly_runtime_time ON public.task_usage_hourly USING btree (runtime_id, bucket_hour DESC);
-
 CREATE INDEX idx_task_usage_hourly_workspace_agent_time ON public.task_usage_hourly USING btree (workspace_id, agent_id, bucket_hour DESC);
-
 CREATE INDEX idx_task_usage_hourly_workspace_project_time ON public.task_usage_hourly USING btree (workspace_id, project_id, bucket_hour DESC) WHERE (project_id IS NOT NULL);
-
 CREATE INDEX idx_task_usage_hourly_workspace_time ON public.task_usage_hourly USING btree (workspace_id, bucket_hour DESC);
-
 CREATE INDEX idx_task_usage_task_id ON public.task_usage USING btree (task_id);
-
 CREATE INDEX idx_task_usage_updated_at ON public.task_usage USING btree (updated_at);
-
 CREATE INDEX idx_user_created_at ON public."user" USING btree (created_at);
-
 CREATE INDEX idx_webhook_delivery_autopilot ON public.webhook_delivery USING btree (autopilot_id, created_at DESC);
-
 CREATE UNIQUE INDEX idx_webhook_delivery_dedupe ON public.webhook_delivery USING btree (trigger_id, dedupe_key) WHERE ((dedupe_key IS NOT NULL) AND (status <> ALL (ARRAY['rejected'::text, 'failed'::text])));
-
 CREATE INDEX idx_webhook_delivery_run ON public.webhook_delivery USING btree (autopilot_run_id) WHERE (autopilot_run_id IS NOT NULL);
-
 CREATE UNIQUE INDEX issue_label_workspace_name_lower_idx ON public.issue_label USING btree (workspace_id, lower(name));
-
+CREATE UNIQUE INDEX personal_access_token_create_request_unique ON public.personal_access_token USING btree (user_id, idempotency_key) WHERE (idempotency_key IS NOT NULL);
 CREATE INDEX prompt_evaluation_asset_prompt_idx ON public.prompt_evaluation_asset USING btree (prompt_id);
-
 CREATE INDEX prompt_evaluation_asset_workspace_type_idx ON public.prompt_evaluation_asset USING btree (workspace_id, asset_type);
-
 CREATE INDEX prompt_library_item_workspace_project_idx ON public.prompt_library_item USING btree (workspace_id, project_id);
-
 CREATE INDEX prompt_library_item_workspace_type_idx ON public.prompt_library_item USING btree (workspace_id, prompt_type);
-
+CREATE UNIQUE INDEX webhook_delivery_replay_request_unique ON public.webhook_delivery USING btree (workspace_id, replay_actor_id, replay_request_key) WHERE (replay_request_key IS NOT NULL);
 CREATE TRIGGER trg_atq_dirty_hourly BEFORE DELETE OR UPDATE OF runtime_id, issue_id ON public.agent_task_queue FOR EACH ROW EXECUTE FUNCTION public.enqueue_task_usage_hourly_dirty_for_atq();
-
 CREATE TRIGGER trg_issue_delete_dirty_hourly BEFORE DELETE ON public.issue FOR EACH ROW EXECUTE FUNCTION public.enqueue_task_usage_hourly_dirty_for_issue_delete();
-
 CREATE TRIGGER trg_issue_project_dirty_hourly BEFORE UPDATE OF project_id ON public.issue FOR EACH ROW EXECUTE FUNCTION public.enqueue_task_usage_hourly_dirty_for_issue_project();
-
 CREATE TRIGGER trg_tu_dirty_hourly BEFORE DELETE ON public.task_usage FOR EACH ROW EXECUTE FUNCTION public.enqueue_task_usage_hourly_dirty_for_tu();
-
 ALTER TABLE ONLY public.activity_log
     ADD CONSTRAINT activity_log_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.issue(id) ON DELETE CASCADE;
-
 ALTER TABLE ONLY public.activity_log
     ADD CONSTRAINT activity_log_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
 ALTER TABLE ONLY public.agent
     ADD CONSTRAINT agent_archived_by_fkey FOREIGN KEY (archived_by) REFERENCES public."user"(id);
-
 ALTER TABLE ONLY public.agent
     ADD CONSTRAINT agent_owner_id_fkey FOREIGN KEY (owner_id) REFERENCES public."user"(id);
-
-ALTER TABLE ONLY public.agent
-    ADD CONSTRAINT agent_runtime_id_fkey FOREIGN KEY (runtime_id) REFERENCES public.agent_runtime(id) ON DELETE RESTRICT;
-
-ALTER TABLE ONLY public.agent_runtime
-    ADD CONSTRAINT agent_runtime_owner_id_fkey FOREIGN KEY (owner_id) REFERENCES public."user"(id);
-
-ALTER TABLE ONLY public.agent_runtime
-    ADD CONSTRAINT agent_runtime_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.agent_skill
-    ADD CONSTRAINT agent_skill_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES public.agent(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.agent_skill
-    ADD CONSTRAINT agent_skill_skill_id_fkey FOREIGN KEY (skill_id) REFERENCES public.skill(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.agent_task_queue
-    ADD CONSTRAINT agent_task_queue_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES public.agent(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.agent_task_queue
-    ADD CONSTRAINT agent_task_queue_autopilot_run_id_fkey FOREIGN KEY (autopilot_run_id) REFERENCES public.autopilot_run(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.agent_task_queue
-    ADD CONSTRAINT agent_task_queue_chat_session_id_fkey FOREIGN KEY (chat_session_id) REFERENCES public.chat_session(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.agent_task_queue
-    ADD CONSTRAINT agent_task_queue_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.issue(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.agent_task_queue
-    ADD CONSTRAINT agent_task_queue_parent_task_id_fkey FOREIGN KEY (parent_task_id) REFERENCES public.agent_task_queue(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.agent_task_queue
-    ADD CONSTRAINT agent_task_queue_runtime_id_fkey FOREIGN KEY (runtime_id) REFERENCES public.agent_runtime(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.agent_task_queue
-    ADD CONSTRAINT agent_task_queue_trigger_comment_id_fkey FOREIGN KEY (trigger_comment_id) REFERENCES public.comment(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.agent
-    ADD CONSTRAINT agent_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.attachment
-    ADD CONSTRAINT attachment_chat_message_id_fkey FOREIGN KEY (chat_message_id) REFERENCES public.chat_message(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.attachment
-    ADD CONSTRAINT attachment_chat_session_id_fkey FOREIGN KEY (chat_session_id) REFERENCES public.chat_session(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.attachment
-    ADD CONSTRAINT attachment_comment_id_fkey FOREIGN KEY (comment_id) REFERENCES public.comment(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.attachment
-    ADD CONSTRAINT attachment_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.issue(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.attachment
-    ADD CONSTRAINT attachment_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.autopilot
-    ADD CONSTRAINT autopilot_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.project(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.autopilot_run
-    ADD CONSTRAINT autopilot_run_autopilot_id_fkey FOREIGN KEY (autopilot_id) REFERENCES public.autopilot(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.autopilot_run
-    ADD CONSTRAINT autopilot_run_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.issue(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.autopilot_run
-    ADD CONSTRAINT autopilot_run_squad_id_fkey FOREIGN KEY (squad_id) REFERENCES public.squad(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.autopilot_run
-    ADD CONSTRAINT autopilot_run_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.agent_task_queue(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.autopilot_run
-    ADD CONSTRAINT autopilot_run_trigger_id_fkey FOREIGN KEY (trigger_id) REFERENCES public.autopilot_trigger(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.autopilot_trigger
-    ADD CONSTRAINT autopilot_trigger_autopilot_id_fkey FOREIGN KEY (autopilot_id) REFERENCES public.autopilot(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.autopilot
-    ADD CONSTRAINT autopilot_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.chat_message
-    ADD CONSTRAINT chat_message_chat_session_id_fkey FOREIGN KEY (chat_session_id) REFERENCES public.chat_session(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.chat_session
-    ADD CONSTRAINT chat_session_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES public.agent(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.chat_session
-    ADD CONSTRAINT chat_session_creator_id_fkey FOREIGN KEY (creator_id) REFERENCES public."user"(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.chat_session
-    ADD CONSTRAINT chat_session_runtime_id_fkey FOREIGN KEY (runtime_id) REFERENCES public.agent_runtime(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.chat_session
-    ADD CONSTRAINT chat_session_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.comment
-    ADD CONSTRAINT comment_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.issue(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.comment
-    ADD CONSTRAINT comment_parent_id_fkey FOREIGN KEY (parent_id) REFERENCES public.comment(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.comment_reaction
-    ADD CONSTRAINT comment_reaction_comment_id_fkey FOREIGN KEY (comment_id) REFERENCES public.comment(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.comment_reaction
-    ADD CONSTRAINT comment_reaction_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.comment
-    ADD CONSTRAINT comment_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.external_credential_profile
-    ADD CONSTRAINT external_credential_profile_user_id_fkey FOREIGN KEY (user_id) REFERENCES public."user"(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.feedback
-    ADD CONSTRAINT feedback_user_id_fkey FOREIGN KEY (user_id) REFERENCES public."user"(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.feedback
-    ADD CONSTRAINT feedback_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.github_installation
-    ADD CONSTRAINT github_installation_connected_by_id_fkey FOREIGN KEY (connected_by_id) REFERENCES public."user"(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.github_installation
-    ADD CONSTRAINT github_installation_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.github_pull_request_check_suite
-    ADD CONSTRAINT github_pull_request_check_suite_pr_id_fkey FOREIGN KEY (pr_id) REFERENCES public.github_pull_request(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.github_pull_request
-    ADD CONSTRAINT github_pull_request_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.inbox_item
-    ADD CONSTRAINT inbox_item_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.issue(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.inbox_item
-    ADD CONSTRAINT inbox_item_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.issue_label
-    ADD CONSTRAINT issue_label_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.issue
-    ADD CONSTRAINT issue_owner_id_fkey FOREIGN KEY (owner_id) REFERENCES public."user"(id);
-
-ALTER TABLE ONLY public.issue
-    ADD CONSTRAINT issue_parent_issue_id_fkey FOREIGN KEY (parent_issue_id) REFERENCES public.issue(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.issue
-    ADD CONSTRAINT issue_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.project(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.issue_pull_request
-    ADD CONSTRAINT issue_pull_request_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.issue(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.issue_pull_request
-    ADD CONSTRAINT issue_pull_request_pull_request_id_fkey FOREIGN KEY (pull_request_id) REFERENCES public.github_pull_request(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.issue_reaction
-    ADD CONSTRAINT issue_reaction_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.issue(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.issue_reaction
-    ADD CONSTRAINT issue_reaction_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.issue_subscriber
-    ADD CONSTRAINT issue_subscriber_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.issue(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.issue_to_label
-    ADD CONSTRAINT issue_to_label_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.issue(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.issue_to_label
-    ADD CONSTRAINT issue_to_label_label_id_fkey FOREIGN KEY (label_id) REFERENCES public.issue_label(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.issue
-    ADD CONSTRAINT issue_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.lark_binding_token
-    ADD CONSTRAINT lark_binding_token_installation_id_fkey FOREIGN KEY (installation_id) REFERENCES public.lark_installation(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.lark_binding_token
-    ADD CONSTRAINT lark_binding_token_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.lark_chat_session_binding
-    ADD CONSTRAINT lark_chat_session_binding_chat_session_id_fkey FOREIGN KEY (chat_session_id) REFERENCES public.chat_session(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.lark_chat_session_binding
-    ADD CONSTRAINT lark_chat_session_binding_installation_id_fkey FOREIGN KEY (installation_id) REFERENCES public.lark_installation(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.lark_inbound_audit
-    ADD CONSTRAINT lark_inbound_audit_installation_id_fkey FOREIGN KEY (installation_id) REFERENCES public.lark_installation(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.lark_inbound_message_dedup
-    ADD CONSTRAINT lark_inbound_message_dedup_installation_id_fkey FOREIGN KEY (installation_id) REFERENCES public.lark_installation(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.lark_installation
-    ADD CONSTRAINT lark_installation_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES public.agent(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.lark_installation
-    ADD CONSTRAINT lark_installation_installer_user_id_fkey FOREIGN KEY (installer_user_id) REFERENCES public."user"(id) ON DELETE RESTRICT;
-
-ALTER TABLE ONLY public.lark_installation
-    ADD CONSTRAINT lark_installation_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.lark_outbound_card_message
-    ADD CONSTRAINT lark_outbound_card_message_chat_session_id_fkey FOREIGN KEY (chat_session_id) REFERENCES public.chat_session(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.lark_outbound_card_message
-    ADD CONSTRAINT lark_outbound_card_message_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.agent_task_queue(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.lark_user_binding
-    ADD CONSTRAINT lark_user_binding_installation_fk FOREIGN KEY (installation_id, workspace_id) REFERENCES public.lark_installation(id, workspace_id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.lark_user_binding
-    ADD CONSTRAINT lark_user_binding_member_fk FOREIGN KEY (workspace_id, multica_user_id) REFERENCES public.member(workspace_id, user_id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.member
-    ADD CONSTRAINT member_user_id_fkey FOREIGN KEY (user_id) REFERENCES public."user"(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.member
-    ADD CONSTRAINT member_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.notification_preference
-    ADD CONSTRAINT notification_preference_user_id_fkey FOREIGN KEY (user_id) REFERENCES public."user"(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.notification_preference
-    ADD CONSTRAINT notification_preference_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.personal_access_token
-    ADD CONSTRAINT personal_access_token_user_id_fkey FOREIGN KEY (user_id) REFERENCES public."user"(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.pinned_item
-    ADD CONSTRAINT pinned_item_user_id_fkey FOREIGN KEY (user_id) REFERENCES public."user"(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.pinned_item
-    ADD CONSTRAINT pinned_item_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.project
-    ADD CONSTRAINT project_owner_id_fkey FOREIGN KEY (owner_id) REFERENCES public."user"(id);
-
-ALTER TABLE ONLY public.project_resource
-    ADD CONSTRAINT project_resource_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.project(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.project_resource
-    ADD CONSTRAINT project_resource_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.project
-    ADD CONSTRAINT project_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.prompt_evaluation_asset
-    ADD CONSTRAINT prompt_evaluation_asset_created_by_fkey FOREIGN KEY (created_by) REFERENCES public."user"(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.prompt_evaluation_asset
-    ADD CONSTRAINT prompt_evaluation_asset_prompt_id_fkey FOREIGN KEY (prompt_id) REFERENCES public.prompt_library_item(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.prompt_evaluation_asset
-    ADD CONSTRAINT prompt_evaluation_asset_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.prompt_evaluation_case_assertion
-    ADD CONSTRAINT prompt_evaluation_case_assertion_asset_id_fkey FOREIGN KEY (asset_id) REFERENCES public.prompt_evaluation_asset(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.prompt_evaluation_case_assertion
-    ADD CONSTRAINT prompt_evaluation_case_assertion_case_id_fkey FOREIGN KEY (case_id) REFERENCES public.prompt_evaluation_case(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.prompt_evaluation_case_assertion
-    ADD CONSTRAINT prompt_evaluation_case_assertion_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.prompt_evaluation_case
-    ADD CONSTRAINT prompt_evaluation_case_asset_id_fkey FOREIGN KEY (asset_id) REFERENCES public.prompt_evaluation_asset(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.prompt_evaluation_case
-    ADD CONSTRAINT prompt_evaluation_case_created_by_fkey FOREIGN KEY (created_by) REFERENCES public."user"(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.prompt_evaluation_case_operation
-    ADD CONSTRAINT prompt_evaluation_case_operation_asset_id_fkey FOREIGN KEY (asset_id) REFERENCES public.prompt_evaluation_asset(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.prompt_evaluation_case_operation
-    ADD CONSTRAINT prompt_evaluation_case_operation_created_by_fkey FOREIGN KEY (created_by) REFERENCES public."user"(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.prompt_evaluation_case_operation
-    ADD CONSTRAINT prompt_evaluation_case_operation_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.prompt_evaluation_case
-    ADD CONSTRAINT prompt_evaluation_case_prompt_id_fkey FOREIGN KEY (prompt_id) REFERENCES public.prompt_library_item(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.prompt_evaluation_case
-    ADD CONSTRAINT prompt_evaluation_case_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.prompt_evaluation_dataset_row
-    ADD CONSTRAINT prompt_evaluation_dataset_row_case_id_fkey FOREIGN KEY (case_id) REFERENCES public.prompt_evaluation_case(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.prompt_evaluation_dataset_row
-    ADD CONSTRAINT prompt_evaluation_dataset_row_created_by_fkey FOREIGN KEY (created_by) REFERENCES public."user"(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.prompt_evaluation_dataset_row
-    ADD CONSTRAINT prompt_evaluation_dataset_row_dataset_asset_id_fkey FOREIGN KEY (dataset_asset_id) REFERENCES public.prompt_evaluation_asset(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.prompt_evaluation_dataset_row
-    ADD CONSTRAINT prompt_evaluation_dataset_row_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.prompt_evaluation_dataset_version
-    ADD CONSTRAINT prompt_evaluation_dataset_version_created_by_fkey FOREIGN KEY (created_by) REFERENCES public."user"(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.prompt_evaluation_dataset_version
-    ADD CONSTRAINT prompt_evaluation_dataset_version_dataset_asset_id_fkey FOREIGN KEY (dataset_asset_id) REFERENCES public.prompt_evaluation_asset(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.prompt_evaluation_dataset_version_row
-    ADD CONSTRAINT prompt_evaluation_dataset_version_row_case_id_fkey FOREIGN KEY (case_id) REFERENCES public.prompt_evaluation_case(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.prompt_evaluation_dataset_version_row
-    ADD CONSTRAINT prompt_evaluation_dataset_version_row_dataset_asset_id_fkey FOREIGN KEY (dataset_asset_id) REFERENCES public.prompt_evaluation_asset(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.prompt_evaluation_dataset_version_row
-    ADD CONSTRAINT prompt_evaluation_dataset_version_row_dataset_version_id_fkey FOREIGN KEY (dataset_version_id) REFERENCES public.prompt_evaluation_dataset_version(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.prompt_evaluation_dataset_version_row
-    ADD CONSTRAINT prompt_evaluation_dataset_version_row_source_row_id_fkey FOREIGN KEY (source_row_id) REFERENCES public.prompt_evaluation_dataset_row(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.prompt_evaluation_dataset_version_row
-    ADD CONSTRAINT prompt_evaluation_dataset_version_row_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.prompt_evaluation_dataset_version
-    ADD CONSTRAINT prompt_evaluation_dataset_version_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.prompt_evaluation_dimension_score
-    ADD CONSTRAINT prompt_evaluation_dimension_score_asset_id_fkey FOREIGN KEY (asset_id) REFERENCES public.prompt_evaluation_asset(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.prompt_evaluation_dimension_score
-    ADD CONSTRAINT prompt_evaluation_dimension_score_prompt_id_fkey FOREIGN KEY (prompt_id) REFERENCES public.prompt_library_item(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.prompt_evaluation_dimension_score
-    ADD CONSTRAINT prompt_evaluation_dimension_score_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.prompt_evaluation_run(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.prompt_evaluation_dimension_score
-    ADD CONSTRAINT prompt_evaluation_dimension_score_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.prompt_evaluation_evidence_snapshot
-    ADD CONSTRAINT prompt_evaluation_evidence_snapshot_created_by_fkey FOREIGN KEY (created_by) REFERENCES public."user"(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.prompt_evaluation_evidence_snapshot
-    ADD CONSTRAINT prompt_evaluation_evidence_snapshot_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.prompt_evaluation_run(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.prompt_evaluation_evidence_snapshot
-    ADD CONSTRAINT prompt_evaluation_evidence_snapshot_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.prompt_evaluation_optimization_candidate
-    ADD CONSTRAINT prompt_evaluation_optimization_candida_published_prompt_id_fkey FOREIGN KEY (published_prompt_id) REFERENCES public.prompt_library_item(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.prompt_evaluation_optimization_candidate
-    ADD CONSTRAINT prompt_evaluation_optimization_candidate_asset_id_fkey FOREIGN KEY (asset_id) REFERENCES public.prompt_evaluation_asset(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.prompt_evaluation_optimization_candidate
-    ADD CONSTRAINT prompt_evaluation_optimization_candidate_created_by_fkey FOREIGN KEY (created_by) REFERENCES public."user"(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.prompt_evaluation_optimization_candidate
-    ADD CONSTRAINT prompt_evaluation_optimization_candidate_prompt_id_fkey FOREIGN KEY (prompt_id) REFERENCES public.prompt_library_item(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.prompt_evaluation_optimization_candidate
-    ADD CONSTRAINT prompt_evaluation_optimization_candidate_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.prompt_evaluation_run(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.prompt_evaluation_optimization_candidate
-    ADD CONSTRAINT prompt_evaluation_optimization_candidate_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.prompt_evaluation_run
-    ADD CONSTRAINT prompt_evaluation_run_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES public.agent(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.prompt_evaluation_run
-    ADD CONSTRAINT prompt_evaluation_run_asset_id_fkey FOREIGN KEY (asset_id) REFERENCES public.prompt_evaluation_asset(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.prompt_evaluation_run
-    ADD CONSTRAINT prompt_evaluation_run_chat_session_id_fkey FOREIGN KEY (chat_session_id) REFERENCES public.chat_session(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.prompt_evaluation_run
-    ADD CONSTRAINT prompt_evaluation_run_created_by_fkey FOREIGN KEY (created_by) REFERENCES public."user"(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.prompt_evaluation_run
-    ADD CONSTRAINT prompt_evaluation_run_prompt_id_fkey FOREIGN KEY (prompt_id) REFERENCES public.prompt_library_item(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.prompt_evaluation_run
-    ADD CONSTRAINT prompt_evaluation_run_reviewed_by_fkey FOREIGN KEY (reviewed_by) REFERENCES public."user"(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.prompt_evaluation_run
-    ADD CONSTRAINT prompt_evaluation_run_runtime_id_fkey FOREIGN KEY (runtime_id) REFERENCES public.agent_runtime(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.prompt_evaluation_run
-    ADD CONSTRAINT prompt_evaluation_run_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.agent_task_queue(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.prompt_evaluation_run
-    ADD CONSTRAINT prompt_evaluation_run_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.prompt_evaluation_test_suite_case
-    ADD CONSTRAINT prompt_evaluation_test_suite_case_case_id_fkey FOREIGN KEY (case_id) REFERENCES public.prompt_evaluation_case(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.prompt_evaluation_test_suite_case
-    ADD CONSTRAINT prompt_evaluation_test_suite_case_created_by_fkey FOREIGN KEY (created_by) REFERENCES public."user"(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.prompt_evaluation_test_suite_case
-    ADD CONSTRAINT prompt_evaluation_test_suite_case_test_suite_asset_id_fkey FOREIGN KEY (test_suite_asset_id) REFERENCES public.prompt_evaluation_asset(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.prompt_evaluation_test_suite_case
-    ADD CONSTRAINT prompt_evaluation_test_suite_case_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.prompt_evaluation_trial
-    ADD CONSTRAINT prompt_evaluation_trial_asset_id_fkey FOREIGN KEY (asset_id) REFERENCES public.prompt_evaluation_asset(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.prompt_evaluation_trial
-    ADD CONSTRAINT prompt_evaluation_trial_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.prompt_evaluation_run(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.prompt_evaluation_trial
-    ADD CONSTRAINT prompt_evaluation_trial_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.prompt_library_item
-    ADD CONSTRAINT prompt_library_item_created_by_fkey FOREIGN KEY (created_by) REFERENCES public."user"(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.prompt_library_item
-    ADD CONSTRAINT prompt_library_item_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.project(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.prompt_library_item
-    ADD CONSTRAINT prompt_library_item_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.prompt_library_trial
-    ADD CONSTRAINT prompt_library_trial_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES public.agent(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.prompt_library_trial
-    ADD CONSTRAINT prompt_library_trial_chat_session_id_fkey FOREIGN KEY (chat_session_id) REFERENCES public.chat_session(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.prompt_library_trial
-    ADD CONSTRAINT prompt_library_trial_created_by_fkey FOREIGN KEY (created_by) REFERENCES public."user"(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.prompt_library_trial
-    ADD CONSTRAINT prompt_library_trial_prompt_id_fkey FOREIGN KEY (prompt_id) REFERENCES public.prompt_library_item(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.prompt_library_trial
-    ADD CONSTRAINT prompt_library_trial_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.agent_task_queue(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.prompt_library_trial
-    ADD CONSTRAINT prompt_library_trial_version_id_fkey FOREIGN KEY (version_id) REFERENCES public.prompt_library_version(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.prompt_library_trial
-    ADD CONSTRAINT prompt_library_trial_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.agent_playground_experiment
-    ADD CONSTRAINT agent_playground_experiment_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.agent_playground_experiment
-    ADD CONSTRAINT agent_playground_experiment_created_by_fkey FOREIGN KEY (created_by) REFERENCES public."user"(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.agent_playground_experiment
-    ADD CONSTRAINT agent_playground_experiment_dataset_asset_id_fkey FOREIGN KEY (dataset_asset_id) REFERENCES public.prompt_evaluation_asset(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.agent_playground_experiment
-    ADD CONSTRAINT agent_playground_experiment_dataset_version_id_fkey FOREIGN KEY (dataset_version_id) REFERENCES public.prompt_evaluation_dataset_version(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.agent_playground_experiment
-    ADD CONSTRAINT agent_playground_experiment_judge_agent_id_fkey FOREIGN KEY (judge_agent_id) REFERENCES public.agent(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.agent_playground_input
-    ADD CONSTRAINT agent_playground_input_experiment_id_fkey FOREIGN KEY (experiment_id) REFERENCES public.agent_playground_experiment(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.agent_playground_input
-    ADD CONSTRAINT agent_playground_input_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.agent_playground_input
-    ADD CONSTRAINT agent_playground_input_dataset_row_id_fkey FOREIGN KEY (dataset_row_id) REFERENCES public.prompt_evaluation_dataset_version_row(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.agent_playground_agent
-    ADD CONSTRAINT agent_playground_agent_experiment_id_fkey FOREIGN KEY (experiment_id) REFERENCES public.agent_playground_experiment(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.agent_playground_agent
-    ADD CONSTRAINT agent_playground_agent_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
 ALTER TABLE ONLY public.agent_playground_agent
     ADD CONSTRAINT agent_playground_agent_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES public.agent(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.agent_playground_result
-    ADD CONSTRAINT agent_playground_result_experiment_id_fkey FOREIGN KEY (experiment_id) REFERENCES public.agent_playground_experiment(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.agent_playground_result
-    ADD CONSTRAINT agent_playground_result_input_id_fkey FOREIGN KEY (input_id) REFERENCES public.agent_playground_input(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.agent_playground_result
-    ADD CONSTRAINT agent_playground_result_experiment_agent_id_fkey FOREIGN KEY (experiment_agent_id) REFERENCES public.agent_playground_agent(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.agent_playground_result
-    ADD CONSTRAINT agent_playground_result_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.agent_playground_result
-    ADD CONSTRAINT agent_playground_result_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES public.agent(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.agent_playground_result
-    ADD CONSTRAINT agent_playground_result_chat_session_id_fkey FOREIGN KEY (chat_session_id) REFERENCES public.chat_session(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.agent_playground_result
-    ADD CONSTRAINT agent_playground_result_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.agent_task_queue(id) ON DELETE SET NULL;
-
-ALTER TABLE ONLY public.agent_playground_judgement
-    ADD CONSTRAINT agent_playground_judgement_experiment_id_fkey FOREIGN KEY (experiment_id) REFERENCES public.agent_playground_experiment(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.agent_playground_judgement
-    ADD CONSTRAINT agent_playground_judgement_input_id_fkey FOREIGN KEY (input_id) REFERENCES public.agent_playground_input(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.agent_playground_judgement
-    ADD CONSTRAINT agent_playground_judgement_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
-ALTER TABLE ONLY public.agent_playground_judgement
-    ADD CONSTRAINT agent_playground_judgement_judge_agent_id_fkey FOREIGN KEY (judge_agent_id) REFERENCES public.agent(id) ON DELETE CASCADE;
-
+ALTER TABLE ONLY public.agent_playground_agent
+    ADD CONSTRAINT agent_playground_agent_experiment_id_fkey FOREIGN KEY (experiment_id) REFERENCES public.agent_playground_experiment(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.agent_playground_agent
+    ADD CONSTRAINT agent_playground_agent_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.agent_playground_experiment
+    ADD CONSTRAINT agent_playground_experiment_created_by_fkey FOREIGN KEY (created_by) REFERENCES public."user"(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.agent_playground_experiment
+    ADD CONSTRAINT agent_playground_experiment_dataset_asset_id_fkey FOREIGN KEY (dataset_asset_id) REFERENCES public.prompt_evaluation_asset(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.agent_playground_experiment
+    ADD CONSTRAINT agent_playground_experiment_dataset_version_id_fkey FOREIGN KEY (dataset_version_id) REFERENCES public.prompt_evaluation_dataset_version(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.agent_playground_experiment
+    ADD CONSTRAINT agent_playground_experiment_judge_agent_id_fkey FOREIGN KEY (judge_agent_id) REFERENCES public.agent(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.agent_playground_experiment
+    ADD CONSTRAINT agent_playground_experiment_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.agent_playground_input
+    ADD CONSTRAINT agent_playground_input_dataset_row_id_fkey FOREIGN KEY (dataset_row_id) REFERENCES public.prompt_evaluation_dataset_version_row(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.agent_playground_input
+    ADD CONSTRAINT agent_playground_input_experiment_id_fkey FOREIGN KEY (experiment_id) REFERENCES public.agent_playground_experiment(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.agent_playground_input
+    ADD CONSTRAINT agent_playground_input_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
 ALTER TABLE ONLY public.agent_playground_judgement
     ADD CONSTRAINT agent_playground_judgement_chat_session_id_fkey FOREIGN KEY (chat_session_id) REFERENCES public.chat_session(id) ON DELETE SET NULL;
-
+ALTER TABLE ONLY public.agent_playground_judgement
+    ADD CONSTRAINT agent_playground_judgement_experiment_id_fkey FOREIGN KEY (experiment_id) REFERENCES public.agent_playground_experiment(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.agent_playground_judgement
+    ADD CONSTRAINT agent_playground_judgement_input_id_fkey FOREIGN KEY (input_id) REFERENCES public.agent_playground_input(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.agent_playground_judgement
+    ADD CONSTRAINT agent_playground_judgement_judge_agent_id_fkey FOREIGN KEY (judge_agent_id) REFERENCES public.agent(id) ON DELETE CASCADE;
 ALTER TABLE ONLY public.agent_playground_judgement
     ADD CONSTRAINT agent_playground_judgement_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.agent_task_queue(id) ON DELETE SET NULL;
-
+ALTER TABLE ONLY public.agent_playground_judgement
+    ADD CONSTRAINT agent_playground_judgement_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.agent_playground_result
+    ADD CONSTRAINT agent_playground_result_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES public.agent(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.agent_playground_result
+    ADD CONSTRAINT agent_playground_result_chat_session_id_fkey FOREIGN KEY (chat_session_id) REFERENCES public.chat_session(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.agent_playground_result
+    ADD CONSTRAINT agent_playground_result_experiment_agent_id_fkey FOREIGN KEY (experiment_agent_id) REFERENCES public.agent_playground_agent(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.agent_playground_result
+    ADD CONSTRAINT agent_playground_result_experiment_id_fkey FOREIGN KEY (experiment_id) REFERENCES public.agent_playground_experiment(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.agent_playground_result
+    ADD CONSTRAINT agent_playground_result_input_id_fkey FOREIGN KEY (input_id) REFERENCES public.agent_playground_input(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.agent_playground_result
+    ADD CONSTRAINT agent_playground_result_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.agent_task_queue(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.agent_playground_result
+    ADD CONSTRAINT agent_playground_result_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.agent
+    ADD CONSTRAINT agent_runtime_id_fkey FOREIGN KEY (runtime_id) REFERENCES public.agent_runtime(id) ON DELETE RESTRICT;
+ALTER TABLE ONLY public.agent_runtime
+    ADD CONSTRAINT agent_runtime_owner_id_fkey FOREIGN KEY (owner_id) REFERENCES public."user"(id);
+ALTER TABLE ONLY public.agent_runtime
+    ADD CONSTRAINT agent_runtime_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.agent_skill
+    ADD CONSTRAINT agent_skill_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES public.agent(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.agent_skill
+    ADD CONSTRAINT agent_skill_skill_id_fkey FOREIGN KEY (skill_id) REFERENCES public.skill(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.agent_task_queue
+    ADD CONSTRAINT agent_task_queue_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES public.agent(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.agent_task_queue
+    ADD CONSTRAINT agent_task_queue_autopilot_run_id_fkey FOREIGN KEY (autopilot_run_id) REFERENCES public.autopilot_run(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.agent_task_queue
+    ADD CONSTRAINT agent_task_queue_chat_session_id_fkey FOREIGN KEY (chat_session_id) REFERENCES public.chat_session(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.agent_task_queue
+    ADD CONSTRAINT agent_task_queue_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.issue(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.agent_task_queue
+    ADD CONSTRAINT agent_task_queue_parent_task_id_fkey FOREIGN KEY (parent_task_id) REFERENCES public.agent_task_queue(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.agent_task_queue
+    ADD CONSTRAINT agent_task_queue_runtime_id_fkey FOREIGN KEY (runtime_id) REFERENCES public.agent_runtime(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.agent_task_queue
+    ADD CONSTRAINT agent_task_queue_trigger_comment_id_fkey FOREIGN KEY (trigger_comment_id) REFERENCES public.comment(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.agent
+    ADD CONSTRAINT agent_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.attachment
+    ADD CONSTRAINT attachment_chat_message_id_fkey FOREIGN KEY (chat_message_id) REFERENCES public.chat_message(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.attachment
+    ADD CONSTRAINT attachment_chat_session_id_fkey FOREIGN KEY (chat_session_id) REFERENCES public.chat_session(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.attachment
+    ADD CONSTRAINT attachment_comment_id_fkey FOREIGN KEY (comment_id) REFERENCES public.comment(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.attachment
+    ADD CONSTRAINT attachment_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.issue(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.attachment
+    ADD CONSTRAINT attachment_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.autopilot
+    ADD CONSTRAINT autopilot_initial_trigger_id_fkey FOREIGN KEY (initial_trigger_id) REFERENCES public.autopilot_trigger(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.autopilot
+    ADD CONSTRAINT autopilot_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.project(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.autopilot_run
+    ADD CONSTRAINT autopilot_run_autopilot_id_fkey FOREIGN KEY (autopilot_id) REFERENCES public.autopilot(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.autopilot_run
+    ADD CONSTRAINT autopilot_run_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.issue(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.autopilot_run
+    ADD CONSTRAINT autopilot_run_squad_id_fkey FOREIGN KEY (squad_id) REFERENCES public.squad(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.autopilot_run
+    ADD CONSTRAINT autopilot_run_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.agent_task_queue(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.autopilot_run
+    ADD CONSTRAINT autopilot_run_trigger_id_fkey FOREIGN KEY (trigger_id) REFERENCES public.autopilot_trigger(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.autopilot_trigger
+    ADD CONSTRAINT autopilot_trigger_autopilot_id_fkey FOREIGN KEY (autopilot_id) REFERENCES public.autopilot(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.autopilot_trigger_rotation_request
+    ADD CONSTRAINT autopilot_trigger_rotation_request_trigger_id_fkey FOREIGN KEY (trigger_id) REFERENCES public.autopilot_trigger(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.autopilot_trigger_rotation_request
+    ADD CONSTRAINT autopilot_trigger_rotation_request_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.autopilot
+    ADD CONSTRAINT autopilot_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.chat_idempotency_record
+    ADD CONSTRAINT chat_idempotency_record_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.chat_message
+    ADD CONSTRAINT chat_message_chat_session_id_fkey FOREIGN KEY (chat_session_id) REFERENCES public.chat_session(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.chat_session
+    ADD CONSTRAINT chat_session_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES public.agent(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.chat_session
+    ADD CONSTRAINT chat_session_creator_id_fkey FOREIGN KEY (creator_id) REFERENCES public."user"(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.chat_session
+    ADD CONSTRAINT chat_session_runtime_id_fkey FOREIGN KEY (runtime_id) REFERENCES public.agent_runtime(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.chat_session
+    ADD CONSTRAINT chat_session_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.comment
+    ADD CONSTRAINT comment_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.issue(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.comment
+    ADD CONSTRAINT comment_parent_id_fkey FOREIGN KEY (parent_id) REFERENCES public.comment(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.comment_reaction
+    ADD CONSTRAINT comment_reaction_comment_id_fkey FOREIGN KEY (comment_id) REFERENCES public.comment(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.comment_reaction
+    ADD CONSTRAINT comment_reaction_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.comment
+    ADD CONSTRAINT comment_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.domain_event_delivery
+    ADD CONSTRAINT domain_event_delivery_event_id_fkey FOREIGN KEY (event_id) REFERENCES public.domain_event_outbox(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.domain_event_outbox
+    ADD CONSTRAINT domain_event_outbox_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.external_credential_profile
+    ADD CONSTRAINT external_credential_profile_user_id_fkey FOREIGN KEY (user_id) REFERENCES public."user"(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.feedback
+    ADD CONSTRAINT feedback_user_id_fkey FOREIGN KEY (user_id) REFERENCES public."user"(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.feedback
+    ADD CONSTRAINT feedback_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.github_installation
+    ADD CONSTRAINT github_installation_connected_by_id_fkey FOREIGN KEY (connected_by_id) REFERENCES public."user"(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.github_installation
+    ADD CONSTRAINT github_installation_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.github_pull_request_check_suite
+    ADD CONSTRAINT github_pull_request_check_suite_pr_id_fkey FOREIGN KEY (pr_id) REFERENCES public.github_pull_request(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.github_pull_request
+    ADD CONSTRAINT github_pull_request_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.inbox_item
+    ADD CONSTRAINT inbox_item_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.issue(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.inbox_item
+    ADD CONSTRAINT inbox_item_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.issue_label
+    ADD CONSTRAINT issue_label_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.issue
+    ADD CONSTRAINT issue_owner_id_fkey FOREIGN KEY (owner_id) REFERENCES public."user"(id);
+ALTER TABLE ONLY public.issue
+    ADD CONSTRAINT issue_parent_issue_id_fkey FOREIGN KEY (parent_issue_id) REFERENCES public.issue(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.issue
+    ADD CONSTRAINT issue_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.project(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.issue_pull_request
+    ADD CONSTRAINT issue_pull_request_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.issue(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.issue_pull_request
+    ADD CONSTRAINT issue_pull_request_pull_request_id_fkey FOREIGN KEY (pull_request_id) REFERENCES public.github_pull_request(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.issue_reaction
+    ADD CONSTRAINT issue_reaction_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.issue(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.issue_reaction
+    ADD CONSTRAINT issue_reaction_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.issue_subscriber
+    ADD CONSTRAINT issue_subscriber_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.issue(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.issue_to_label
+    ADD CONSTRAINT issue_to_label_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.issue(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.issue_to_label
+    ADD CONSTRAINT issue_to_label_label_id_fkey FOREIGN KEY (label_id) REFERENCES public.issue_label(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.issue
+    ADD CONSTRAINT issue_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.lark_binding_token
+    ADD CONSTRAINT lark_binding_token_installation_id_fkey FOREIGN KEY (installation_id) REFERENCES public.lark_installation(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.lark_binding_token
+    ADD CONSTRAINT lark_binding_token_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.lark_chat_session_binding
+    ADD CONSTRAINT lark_chat_session_binding_chat_session_id_fkey FOREIGN KEY (chat_session_id) REFERENCES public.chat_session(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.lark_chat_session_binding
+    ADD CONSTRAINT lark_chat_session_binding_installation_id_fkey FOREIGN KEY (installation_id) REFERENCES public.lark_installation(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.lark_inbound_audit
+    ADD CONSTRAINT lark_inbound_audit_installation_id_fkey FOREIGN KEY (installation_id) REFERENCES public.lark_installation(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.lark_inbound_message_dedup
+    ADD CONSTRAINT lark_inbound_message_dedup_installation_id_fkey FOREIGN KEY (installation_id) REFERENCES public.lark_installation(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.lark_installation
+    ADD CONSTRAINT lark_installation_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES public.agent(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.lark_installation
+    ADD CONSTRAINT lark_installation_installer_user_id_fkey FOREIGN KEY (installer_user_id) REFERENCES public."user"(id) ON DELETE RESTRICT;
+ALTER TABLE ONLY public.lark_installation
+    ADD CONSTRAINT lark_installation_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.lark_outbound_card_message
+    ADD CONSTRAINT lark_outbound_card_message_chat_session_id_fkey FOREIGN KEY (chat_session_id) REFERENCES public.chat_session(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.lark_outbound_card_message
+    ADD CONSTRAINT lark_outbound_card_message_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.agent_task_queue(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.lark_user_binding
+    ADD CONSTRAINT lark_user_binding_installation_fk FOREIGN KEY (installation_id, workspace_id) REFERENCES public.lark_installation(id, workspace_id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.lark_user_binding
+    ADD CONSTRAINT lark_user_binding_member_fk FOREIGN KEY (workspace_id, multica_user_id) REFERENCES public.member(workspace_id, user_id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.member
+    ADD CONSTRAINT member_user_id_fkey FOREIGN KEY (user_id) REFERENCES public."user"(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.member
+    ADD CONSTRAINT member_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.notification_preference
+    ADD CONSTRAINT notification_preference_user_id_fkey FOREIGN KEY (user_id) REFERENCES public."user"(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.notification_preference
+    ADD CONSTRAINT notification_preference_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.personal_access_token
+    ADD CONSTRAINT personal_access_token_user_id_fkey FOREIGN KEY (user_id) REFERENCES public."user"(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.pinned_item
+    ADD CONSTRAINT pinned_item_user_id_fkey FOREIGN KEY (user_id) REFERENCES public."user"(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.pinned_item
+    ADD CONSTRAINT pinned_item_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.project
+    ADD CONSTRAINT project_owner_id_fkey FOREIGN KEY (owner_id) REFERENCES public."user"(id);
+ALTER TABLE ONLY public.project_resource
+    ADD CONSTRAINT project_resource_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.project(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.project_resource
+    ADD CONSTRAINT project_resource_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.project
+    ADD CONSTRAINT project_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.prompt_evaluation_asset
+    ADD CONSTRAINT prompt_evaluation_asset_created_by_fkey FOREIGN KEY (created_by) REFERENCES public."user"(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.prompt_evaluation_asset
+    ADD CONSTRAINT prompt_evaluation_asset_prompt_id_fkey FOREIGN KEY (prompt_id) REFERENCES public.prompt_library_item(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.prompt_evaluation_asset
+    ADD CONSTRAINT prompt_evaluation_asset_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.prompt_evaluation_case_assertion
+    ADD CONSTRAINT prompt_evaluation_case_assertion_asset_id_fkey FOREIGN KEY (asset_id) REFERENCES public.prompt_evaluation_asset(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.prompt_evaluation_case_assertion
+    ADD CONSTRAINT prompt_evaluation_case_assertion_case_id_fkey FOREIGN KEY (case_id) REFERENCES public.prompt_evaluation_case(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.prompt_evaluation_case_assertion
+    ADD CONSTRAINT prompt_evaluation_case_assertion_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.prompt_evaluation_case
+    ADD CONSTRAINT prompt_evaluation_case_asset_id_fkey FOREIGN KEY (asset_id) REFERENCES public.prompt_evaluation_asset(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.prompt_evaluation_case
+    ADD CONSTRAINT prompt_evaluation_case_created_by_fkey FOREIGN KEY (created_by) REFERENCES public."user"(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.prompt_evaluation_case_operation
+    ADD CONSTRAINT prompt_evaluation_case_operation_asset_id_fkey FOREIGN KEY (asset_id) REFERENCES public.prompt_evaluation_asset(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.prompt_evaluation_case_operation
+    ADD CONSTRAINT prompt_evaluation_case_operation_created_by_fkey FOREIGN KEY (created_by) REFERENCES public."user"(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.prompt_evaluation_case_operation
+    ADD CONSTRAINT prompt_evaluation_case_operation_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.prompt_evaluation_case
+    ADD CONSTRAINT prompt_evaluation_case_prompt_id_fkey FOREIGN KEY (prompt_id) REFERENCES public.prompt_library_item(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.prompt_evaluation_case
+    ADD CONSTRAINT prompt_evaluation_case_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.prompt_evaluation_dataset_row
+    ADD CONSTRAINT prompt_evaluation_dataset_row_case_id_fkey FOREIGN KEY (case_id) REFERENCES public.prompt_evaluation_case(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.prompt_evaluation_dataset_row
+    ADD CONSTRAINT prompt_evaluation_dataset_row_created_by_fkey FOREIGN KEY (created_by) REFERENCES public."user"(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.prompt_evaluation_dataset_row
+    ADD CONSTRAINT prompt_evaluation_dataset_row_dataset_asset_id_fkey FOREIGN KEY (dataset_asset_id) REFERENCES public.prompt_evaluation_asset(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.prompt_evaluation_dataset_row
+    ADD CONSTRAINT prompt_evaluation_dataset_row_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.prompt_evaluation_dataset_version
+    ADD CONSTRAINT prompt_evaluation_dataset_version_created_by_fkey FOREIGN KEY (created_by) REFERENCES public."user"(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.prompt_evaluation_dataset_version
+    ADD CONSTRAINT prompt_evaluation_dataset_version_dataset_asset_id_fkey FOREIGN KEY (dataset_asset_id) REFERENCES public.prompt_evaluation_asset(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.prompt_evaluation_dataset_version_row
+    ADD CONSTRAINT prompt_evaluation_dataset_version_row_case_id_fkey FOREIGN KEY (case_id) REFERENCES public.prompt_evaluation_case(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.prompt_evaluation_dataset_version_row
+    ADD CONSTRAINT prompt_evaluation_dataset_version_row_dataset_asset_id_fkey FOREIGN KEY (dataset_asset_id) REFERENCES public.prompt_evaluation_asset(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.prompt_evaluation_dataset_version_row
+    ADD CONSTRAINT prompt_evaluation_dataset_version_row_dataset_version_id_fkey FOREIGN KEY (dataset_version_id) REFERENCES public.prompt_evaluation_dataset_version(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.prompt_evaluation_dataset_version_row
+    ADD CONSTRAINT prompt_evaluation_dataset_version_row_source_row_id_fkey FOREIGN KEY (source_row_id) REFERENCES public.prompt_evaluation_dataset_row(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.prompt_evaluation_dataset_version_row
+    ADD CONSTRAINT prompt_evaluation_dataset_version_row_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.prompt_evaluation_dataset_version
+    ADD CONSTRAINT prompt_evaluation_dataset_version_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.prompt_evaluation_dimension_score
+    ADD CONSTRAINT prompt_evaluation_dimension_score_asset_id_fkey FOREIGN KEY (asset_id) REFERENCES public.prompt_evaluation_asset(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.prompt_evaluation_dimension_score
+    ADD CONSTRAINT prompt_evaluation_dimension_score_prompt_id_fkey FOREIGN KEY (prompt_id) REFERENCES public.prompt_library_item(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.prompt_evaluation_dimension_score
+    ADD CONSTRAINT prompt_evaluation_dimension_score_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.prompt_evaluation_run(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.prompt_evaluation_dimension_score
+    ADD CONSTRAINT prompt_evaluation_dimension_score_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.prompt_evaluation_evidence_snapshot
+    ADD CONSTRAINT prompt_evaluation_evidence_snapshot_created_by_fkey FOREIGN KEY (created_by) REFERENCES public."user"(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.prompt_evaluation_evidence_snapshot
+    ADD CONSTRAINT prompt_evaluation_evidence_snapshot_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.prompt_evaluation_run(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.prompt_evaluation_evidence_snapshot
+    ADD CONSTRAINT prompt_evaluation_evidence_snapshot_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.prompt_evaluation_optimization_candidate
+    ADD CONSTRAINT prompt_evaluation_optimization_candida_published_prompt_id_fkey FOREIGN KEY (published_prompt_id) REFERENCES public.prompt_library_item(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.prompt_evaluation_optimization_candidate
+    ADD CONSTRAINT prompt_evaluation_optimization_candidate_asset_id_fkey FOREIGN KEY (asset_id) REFERENCES public.prompt_evaluation_asset(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.prompt_evaluation_optimization_candidate
+    ADD CONSTRAINT prompt_evaluation_optimization_candidate_created_by_fkey FOREIGN KEY (created_by) REFERENCES public."user"(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.prompt_evaluation_optimization_candidate
+    ADD CONSTRAINT prompt_evaluation_optimization_candidate_prompt_id_fkey FOREIGN KEY (prompt_id) REFERENCES public.prompt_library_item(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.prompt_evaluation_optimization_candidate
+    ADD CONSTRAINT prompt_evaluation_optimization_candidate_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.prompt_evaluation_run(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.prompt_evaluation_optimization_candidate
+    ADD CONSTRAINT prompt_evaluation_optimization_candidate_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.prompt_evaluation_run
+    ADD CONSTRAINT prompt_evaluation_run_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES public.agent(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.prompt_evaluation_run
+    ADD CONSTRAINT prompt_evaluation_run_asset_id_fkey FOREIGN KEY (asset_id) REFERENCES public.prompt_evaluation_asset(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.prompt_evaluation_run
+    ADD CONSTRAINT prompt_evaluation_run_chat_session_id_fkey FOREIGN KEY (chat_session_id) REFERENCES public.chat_session(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.prompt_evaluation_run
+    ADD CONSTRAINT prompt_evaluation_run_created_by_fkey FOREIGN KEY (created_by) REFERENCES public."user"(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.prompt_evaluation_run
+    ADD CONSTRAINT prompt_evaluation_run_prompt_id_fkey FOREIGN KEY (prompt_id) REFERENCES public.prompt_library_item(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.prompt_evaluation_run
+    ADD CONSTRAINT prompt_evaluation_run_reviewed_by_fkey FOREIGN KEY (reviewed_by) REFERENCES public."user"(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.prompt_evaluation_run
+    ADD CONSTRAINT prompt_evaluation_run_runtime_id_fkey FOREIGN KEY (runtime_id) REFERENCES public.agent_runtime(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.prompt_evaluation_run
+    ADD CONSTRAINT prompt_evaluation_run_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.agent_task_queue(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.prompt_evaluation_run
+    ADD CONSTRAINT prompt_evaluation_run_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.prompt_evaluation_test_suite_case
+    ADD CONSTRAINT prompt_evaluation_test_suite_case_case_id_fkey FOREIGN KEY (case_id) REFERENCES public.prompt_evaluation_case(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.prompt_evaluation_test_suite_case
+    ADD CONSTRAINT prompt_evaluation_test_suite_case_created_by_fkey FOREIGN KEY (created_by) REFERENCES public."user"(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.prompt_evaluation_test_suite_case
+    ADD CONSTRAINT prompt_evaluation_test_suite_case_test_suite_asset_id_fkey FOREIGN KEY (test_suite_asset_id) REFERENCES public.prompt_evaluation_asset(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.prompt_evaluation_test_suite_case
+    ADD CONSTRAINT prompt_evaluation_test_suite_case_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.prompt_evaluation_trial
+    ADD CONSTRAINT prompt_evaluation_trial_asset_id_fkey FOREIGN KEY (asset_id) REFERENCES public.prompt_evaluation_asset(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.prompt_evaluation_trial
+    ADD CONSTRAINT prompt_evaluation_trial_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.prompt_evaluation_run(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.prompt_evaluation_trial
+    ADD CONSTRAINT prompt_evaluation_trial_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.prompt_library_item
+    ADD CONSTRAINT prompt_library_item_created_by_fkey FOREIGN KEY (created_by) REFERENCES public."user"(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.prompt_library_item
+    ADD CONSTRAINT prompt_library_item_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.project(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.prompt_library_item
+    ADD CONSTRAINT prompt_library_item_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.prompt_library_trial
+    ADD CONSTRAINT prompt_library_trial_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES public.agent(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.prompt_library_trial
+    ADD CONSTRAINT prompt_library_trial_chat_session_id_fkey FOREIGN KEY (chat_session_id) REFERENCES public.chat_session(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.prompt_library_trial
+    ADD CONSTRAINT prompt_library_trial_created_by_fkey FOREIGN KEY (created_by) REFERENCES public."user"(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.prompt_library_trial
+    ADD CONSTRAINT prompt_library_trial_prompt_id_fkey FOREIGN KEY (prompt_id) REFERENCES public.prompt_library_item(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.prompt_library_trial
+    ADD CONSTRAINT prompt_library_trial_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.agent_task_queue(id) ON DELETE SET NULL;
+ALTER TABLE ONLY public.prompt_library_trial
+    ADD CONSTRAINT prompt_library_trial_version_id_fkey FOREIGN KEY (version_id) REFERENCES public.prompt_library_version(id) ON DELETE CASCADE;
+ALTER TABLE ONLY public.prompt_library_trial
+    ADD CONSTRAINT prompt_library_trial_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
 ALTER TABLE ONLY public.prompt_library_version
     ADD CONSTRAINT prompt_library_version_created_by_fkey FOREIGN KEY (created_by) REFERENCES public."user"(id) ON DELETE SET NULL;
-
 ALTER TABLE ONLY public.prompt_library_version
     ADD CONSTRAINT prompt_library_version_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.project(id) ON DELETE SET NULL;
-
 ALTER TABLE ONLY public.prompt_library_version
     ADD CONSTRAINT prompt_library_version_prompt_id_fkey FOREIGN KEY (prompt_id) REFERENCES public.prompt_library_item(id) ON DELETE CASCADE;
-
 ALTER TABLE ONLY public.prompt_library_version
     ADD CONSTRAINT prompt_library_version_source_candidate_id_fkey FOREIGN KEY (source_candidate_id) REFERENCES public.prompt_evaluation_optimization_candidate(id) ON DELETE SET NULL;
-
 ALTER TABLE ONLY public.prompt_library_version
     ADD CONSTRAINT prompt_library_version_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
+ALTER TABLE ONLY public.resource_create_request
+    ADD CONSTRAINT resource_create_request_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
 ALTER TABLE ONLY public.skill
     ADD CONSTRAINT skill_created_by_fkey FOREIGN KEY (created_by) REFERENCES public."user"(id);
-
 ALTER TABLE ONLY public.skill_file
     ADD CONSTRAINT skill_file_skill_id_fkey FOREIGN KEY (skill_id) REFERENCES public.skill(id) ON DELETE CASCADE;
-
+ALTER TABLE ONLY public.skill_import_request
+    ADD CONSTRAINT skill_import_request_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
 ALTER TABLE ONLY public.skill
     ADD CONSTRAINT skill_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
 ALTER TABLE ONLY public.squad
     ADD CONSTRAINT squad_leader_id_fkey FOREIGN KEY (leader_id) REFERENCES public.agent(id) ON DELETE RESTRICT;
-
 ALTER TABLE ONLY public.squad_member
     ADD CONSTRAINT squad_member_squad_id_fkey FOREIGN KEY (squad_id) REFERENCES public.squad(id) ON DELETE CASCADE;
-
 ALTER TABLE ONLY public.squad_sop_run
     ADD CONSTRAINT squad_sop_run_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.issue(id) ON DELETE CASCADE;
-
 ALTER TABLE ONLY public.squad_sop_run
     ADD CONSTRAINT squad_sop_run_leader_task_id_fkey FOREIGN KEY (leader_task_id) REFERENCES public.agent_task_queue(id) ON DELETE SET NULL;
-
 ALTER TABLE ONLY public.squad_sop_run
     ADD CONSTRAINT squad_sop_run_squad_id_fkey FOREIGN KEY (squad_id) REFERENCES public.squad(id) ON DELETE CASCADE;
-
 ALTER TABLE ONLY public.squad_sop_run
     ADD CONSTRAINT squad_sop_run_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
 ALTER TABLE ONLY public.squad_sop_step_event
     ADD CONSTRAINT squad_sop_step_event_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.issue(id) ON DELETE CASCADE;
-
 ALTER TABLE ONLY public.squad_sop_step_event
     ADD CONSTRAINT squad_sop_step_event_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.squad_sop_run(id) ON DELETE CASCADE;
-
 ALTER TABLE ONLY public.squad_sop_step_event
     ADD CONSTRAINT squad_sop_step_event_squad_id_fkey FOREIGN KEY (squad_id) REFERENCES public.squad(id) ON DELETE CASCADE;
-
 ALTER TABLE ONLY public.squad_sop_step_event
     ADD CONSTRAINT squad_sop_step_event_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.agent_task_queue(id) ON DELETE SET NULL;
-
 ALTER TABLE ONLY public.squad_sop_step_event
     ADD CONSTRAINT squad_sop_step_event_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
 ALTER TABLE ONLY public.squad
     ADD CONSTRAINT squad_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
 ALTER TABLE ONLY public.task_message
     ADD CONSTRAINT task_message_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.agent_task_queue(id) ON DELETE CASCADE;
-
 ALTER TABLE ONLY public.task_token
     ADD CONSTRAINT task_token_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES public.agent(id) ON DELETE CASCADE;
-
 ALTER TABLE ONLY public.task_token
     ADD CONSTRAINT task_token_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.agent_task_queue(id) ON DELETE CASCADE;
-
 ALTER TABLE ONLY public.task_token
     ADD CONSTRAINT task_token_user_id_fkey FOREIGN KEY (user_id) REFERENCES public."user"(id) ON DELETE CASCADE;
-
 ALTER TABLE ONLY public.task_token
     ADD CONSTRAINT task_token_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
 ALTER TABLE ONLY public.task_trace_event
     ADD CONSTRAINT task_trace_event_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES public.agent(id) ON DELETE CASCADE;
-
 ALTER TABLE ONLY public.task_trace_event
     ADD CONSTRAINT task_trace_event_autopilot_run_id_fkey FOREIGN KEY (autopilot_run_id) REFERENCES public.autopilot_run(id) ON DELETE SET NULL;
-
 ALTER TABLE ONLY public.task_trace_event
     ADD CONSTRAINT task_trace_event_chat_session_id_fkey FOREIGN KEY (chat_session_id) REFERENCES public.chat_session(id) ON DELETE SET NULL;
-
 ALTER TABLE ONLY public.task_trace_event
     ADD CONSTRAINT task_trace_event_issue_id_fkey FOREIGN KEY (issue_id) REFERENCES public.issue(id) ON DELETE SET NULL;
-
 ALTER TABLE ONLY public.task_trace_event
     ADD CONSTRAINT task_trace_event_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.project(id) ON DELETE SET NULL;
-
 ALTER TABLE ONLY public.task_trace_event
     ADD CONSTRAINT task_trace_event_runtime_id_fkey FOREIGN KEY (runtime_id) REFERENCES public.agent_runtime(id) ON DELETE SET NULL;
-
 ALTER TABLE ONLY public.task_trace_event
     ADD CONSTRAINT task_trace_event_squad_id_fkey FOREIGN KEY (squad_id) REFERENCES public.squad(id) ON DELETE SET NULL;
-
 ALTER TABLE ONLY public.task_trace_event
     ADD CONSTRAINT task_trace_event_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.agent_task_queue(id) ON DELETE CASCADE;
-
 ALTER TABLE ONLY public.task_trace_event
     ADD CONSTRAINT task_trace_event_trigger_comment_id_fkey FOREIGN KEY (trigger_comment_id) REFERENCES public.comment(id) ON DELETE SET NULL;
-
 ALTER TABLE ONLY public.task_trace_event
     ADD CONSTRAINT task_trace_event_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-
 ALTER TABLE ONLY public.task_usage
     ADD CONSTRAINT task_usage_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.agent_task_queue(id) ON DELETE CASCADE;
-
 ALTER TABLE ONLY public.webhook_delivery
     ADD CONSTRAINT webhook_delivery_autopilot_id_fkey FOREIGN KEY (autopilot_id) REFERENCES public.autopilot(id) ON DELETE CASCADE;
-
 ALTER TABLE ONLY public.webhook_delivery
     ADD CONSTRAINT webhook_delivery_autopilot_run_id_fkey FOREIGN KEY (autopilot_run_id) REFERENCES public.autopilot_run(id) ON DELETE SET NULL;
-
 ALTER TABLE ONLY public.webhook_delivery
     ADD CONSTRAINT webhook_delivery_replayed_from_delivery_id_fkey FOREIGN KEY (replayed_from_delivery_id) REFERENCES public.webhook_delivery(id) ON DELETE SET NULL;
-
 ALTER TABLE ONLY public.webhook_delivery
     ADD CONSTRAINT webhook_delivery_trigger_id_fkey FOREIGN KEY (trigger_id) REFERENCES public.autopilot_trigger(id) ON DELETE CASCADE;
-
 ALTER TABLE ONLY public.webhook_delivery
     ADD CONSTRAINT webhook_delivery_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
 
--- Required current-schema seed rows for an empty development database.
-INSERT INTO public.task_usage_hourly_rollup_state (id) VALUES (1) ON CONFLICT DO NOTHING;
-
 SELECT pg_catalog.set_config('search_path', 'public', false);
+
+-- Required current-schema seed rows for an empty database.
+INSERT INTO public.task_usage_hourly_rollup_state (id) VALUES (1) ON CONFLICT DO NOTHING;
