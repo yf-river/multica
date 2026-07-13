@@ -7,78 +7,37 @@ import (
 	"testing"
 )
 
-// TestCLIConfig_BackwardCompat_OldFileLoadsWithNilBackends verifies that a
-// config.json written by an older daemon (no `backends` key at all) loads
-// correctly into the new schema, with Backends == nil. This is the most
-// important guarantee of issue #3875's PR: existing on-disk configs MUST
-// continue to work byte-for-byte.
-func TestCLIConfig_BackwardCompat_OldFileLoadsWithNilBackends(t *testing.T) {
+func TestCLIConfigWithoutOverridesLoads(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
 
-	// Write a 4-field config exactly as the historical daemon would have.
 	cfgDir := filepath.Join(tmp, ".multica")
 	if err := os.MkdirAll(cfgDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	historical := `{
+	minimal := `{
   "server_url": "https://api.multica.ai",
   "app_url": "https://app.multica.ai",
   "workspace_id": "ws-123",
   "token": "mul_abcdef"
 }`
-	if err := os.WriteFile(filepath.Join(cfgDir, "config.json"), []byte(historical), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(cfgDir, "config.json"), []byte(minimal), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
 	cfg, err := LoadCLIConfigForProfile("")
 	if err != nil {
-		t.Fatalf("LoadCLIConfig on historical file: %v", err)
+		t.Fatalf("LoadCLIConfig: %v", err)
 	}
 
 	if cfg.ServerURL != "https://api.multica.ai" {
-		t.Errorf("ServerURL: got %q, want historical value", cfg.ServerURL)
+		t.Errorf("ServerURL: got %q", cfg.ServerURL)
 	}
 	if cfg.Token != "mul_abcdef" {
-		t.Errorf("Token: got %q, want historical value", cfg.Token)
+		t.Errorf("Token: got %q", cfg.Token)
 	}
 	if cfg.Backends != nil {
-		t.Errorf("Backends should be nil for historical config, got %+v", cfg.Backends)
-	}
-}
-
-// TestCLIConfig_BackwardCompat_NilBackendsOmittedFromJSON verifies that
-// saving a config without backend overrides does NOT add a `backends` key
-// to the on-disk JSON. This matters for users who never set overrides —
-// their config files must stay byte-identical, so a future downgrade to
-// an older daemon doesn't trip on an empty `backends: null` line.
-func TestCLIConfig_BackwardCompat_NilBackendsOmittedFromJSON(t *testing.T) {
-	tmp := t.TempDir()
-	t.Setenv("HOME", tmp)
-
-	cfg := CLIConfig{
-		ServerURL: "https://api.multica.ai",
-		Token:     "mul_xyz",
-	}
-	if err := SaveCLIConfigForProfile(cfg, ""); err != nil {
-		t.Fatal(err)
-	}
-
-	data, err := os.ReadFile(filepath.Join(tmp, ".multica", "config.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(data) == "" {
-		t.Fatal("config file is empty")
-	}
-
-	// The omitempty tag on Backends should keep it out of the JSON entirely.
-	var raw map[string]any
-	if err := json.Unmarshal(data, &raw); err != nil {
-		t.Fatalf("unmarshal saved config: %v", err)
-	}
-	if _, ok := raw["backends"]; ok {
-		t.Errorf("backends key should be omitted when nil, got: %s", string(data))
+		t.Errorf("Backends should be nil, got %+v", cfg.Backends)
 	}
 }
 
@@ -122,8 +81,8 @@ func TestCLIConfig_OpenClawOverride_RoundTrip(t *testing.T) {
 
 // TestCLIConfig_OpenClawOverride_PartialFieldsOmitted verifies that an
 // override with only one field set does not emit empty strings for the
-// unset field. Important so users can intentionally set only BinaryPath
-// (or only StateDir) and have the other follow the historical default,
+// unset field. Users can intentionally set only BinaryPath
+// (or only StateDir) and have the other follow the tool default,
 // without an empty string overriding env-var precedence.
 func TestCLIConfig_OpenClawOverride_PartialFieldsOmitted(t *testing.T) {
 	tmp := t.TempDir()
@@ -227,8 +186,7 @@ func TestCLIConfig_ProfileCommandOverrides_RoundTrip(t *testing.T) {
 }
 
 // TestCLIConfig_ProfileCommandOverrides_OmittedWhenEmpty verifies the
-// omitempty tag keeps the key out of the on-disk JSON when no overrides are
-// set, so configs for users who never pin a path stay byte-stable.
+// omitempty tags keep unused override keys out of the on-disk JSON.
 func TestCLIConfig_ProfileCommandOverrides_OmittedWhenEmpty(t *testing.T) {
 	tmp := t.TempDir()
 	t.Setenv("HOME", tmp)
@@ -248,5 +206,8 @@ func TestCLIConfig_ProfileCommandOverrides_OmittedWhenEmpty(t *testing.T) {
 	}
 	if _, ok := raw["profile_command_overrides"]; ok {
 		t.Errorf("profile_command_overrides should be omitted when empty, got: %s", string(data))
+	}
+	if _, ok := raw["backends"]; ok {
+		t.Errorf("backends should be omitted when empty, got: %s", string(data))
 	}
 }

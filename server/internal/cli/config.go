@@ -21,7 +21,7 @@ type CLIConfig struct {
 	// the daemon at non-default tool installations (e.g. an OpenClaw bundled
 	// inside another desktop app, or multiple isolated profiles on the same
 	// machine). Empty / absent means "discover from PATH and use vendor
-	// defaults" — the historical behavior. See issue #3875.
+	// defaults". See issue #3875.
 	Backends *BackendOverrides `json:"backends,omitempty"`
 
 	// ProfileCommandOverrides is a per-machine map of custom runtime
@@ -50,7 +50,7 @@ type BackendOverrides struct {
 // empty values fall through to the existing discovery path (PATH lookup for
 // BinaryPath, default `~/.openclaw/` for StateDir).
 //
-// Resolution precedence (env beats config beats default, for back-compat):
+// Resolution precedence is env, then config, then the tool default:
 //
 //	BinaryPath: MULTICA_OPENCLAW_PATH (env)  > backends.openclaw.binary_path > PATH lookup
 //	StateDir:   OPENCLAW_STATE_DIR (env)     > backends.openclaw.state_dir   > OpenClaw's built-in default (~/.openclaw)
