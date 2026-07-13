@@ -3,7 +3,6 @@ import {
   AppConfigSchema,
   BatchDeleteIssuesResponseSchema,
   BatchUpdateIssuesResponseSchema,
-  ChatSessionSchema,
   DashboardAgentRunTimeListSchema,
   DashboardUsageByAgentListSchema,
   DashboardUsageDailyListSchema,
@@ -46,27 +45,6 @@ const baseIssue = {
   created_at: "2026-01-01T00:00:00Z",
   updated_at: "2026-01-01T00:00:00Z",
 };
-
-const baseChatSession = {
-  id: "11111111-1111-1111-1111-111111111111",
-  workspace_id: "workspace-1",
-  agent_id: "agent-1",
-  creator_id: "user-1",
-  title: "Chat",
-  has_unread: false,
-  created_at: "2026-01-01T00:00:00Z",
-  updated_at: "2026-01-01T00:00:00Z",
-};
-
-describe("ChatSessionSchema", () => {
-  it("keeps an archived response from an older Desktop backend readable", () => {
-    expect(ChatSessionSchema.parse({ ...baseChatSession, status: "archived" }).status).toBe("archived");
-  });
-
-  it("defaults the current active status when the server omits it", () => {
-    expect(ChatSessionSchema.parse(baseChatSession).status).toBe("active");
-  });
-});
 
 describe("BatchDeleteIssuesResponseSchema", () => {
   it("preserves explicit per-item failures", () => {

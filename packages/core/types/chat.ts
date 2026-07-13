@@ -6,7 +6,6 @@ export interface ChatSession {
   agent_id: string;
   creator_id: string;
   title: string;
-  status: "active" | "archived";
   /** True when the session has any unread assistant replies. List-only. */
   has_unread: boolean;
   created_at: string;
@@ -79,13 +78,8 @@ export interface SendChatMessageResponse {
    * timer "snaps backwards" later when WS events update the cache.
    */
   created_at: string;
-  /**
-   * Attachment ids the server actually bound to this message. The client
-   * diffs these against the ids it requested to warn when an attachment
-   * silently failed to bind — no extra fetch needed. Optional for forward
-   * compat with servers that predate the field.
-   */
-  attachment_ids?: string[];
+  /** Attachment ids the server actually bound to this message. */
+  attachment_ids: string[];
 }
 
 export interface CancelledChatMessage {

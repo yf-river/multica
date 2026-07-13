@@ -65,10 +65,8 @@ interface ChatInputProps {
   onUploadFile?: (file: File) => Promise<UploadResult | null>;
   onStop?: () => void;
   isRunning?: boolean;
-  disabled?: boolean;
   /** True when the user has no agent available — disables the editor and
-   *  surfaces a distinct placeholder. Kept separate from `disabled` so
-   *  archived-session copy stays untouched. */
+   *  surfaces a distinct placeholder. */
   noAgent?: boolean;
   /** Name of the currently selected agent, used in the placeholder. */
   agentName?: string;
@@ -85,7 +83,6 @@ export function ChatInput({
   onUploadFile,
   onStop,
   isRunning,
-  disabled,
   noAgent,
   agentName,
   leftAdornment,
@@ -227,12 +224,11 @@ export function ChatInput({
 
   const handleSend = async () => {
     const content = editorRef.current?.getMarkdown()?.replace(/(\n\s*)+$/, "").trim();
-    if (!content || isRunning || isSubmitting || disabled || noAgent) {
+    if (!content || isRunning || isSubmitting || noAgent) {
       logger.debug("input.send skipped", {
         emptyContent: !content,
         isRunning,
         isSubmitting,
-        disabled,
         noAgent,
       });
       return;
@@ -326,13 +322,11 @@ export function ChatInput({
 
   const placeholder = noAgent
     ? t(($) => $.input.placeholder_no_agent)
-    : disabled
-      ? t(($) => $.input.placeholder_archived)
-      : agentName
-        ? t(($) => $.input.placeholder_named, { name: agentName })
-        : t(($) => $.input.placeholder_default);
+    : agentName
+      ? t(($) => $.input.placeholder_named, { name: agentName })
+      : t(($) => $.input.placeholder_default);
 
-  const uploadEnabled = !!onUploadFile && !disabled && !noAgent;
+  const uploadEnabled = !!onUploadFile && !noAgent;
 
   return (
     <div
@@ -410,7 +404,7 @@ export function ChatInput({
           )}
           <SubmitButton
             onClick={handleSend}
-            disabled={isEmpty || isSubmitting || !!disabled || !!noAgent || pendingUploads > 0}
+            disabled={isEmpty || isSubmitting || !!noAgent || pendingUploads > 0}
             loading={isSubmitting}
             running={isRunning}
             onStop={onStop}

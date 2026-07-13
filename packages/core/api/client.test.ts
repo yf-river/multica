@@ -2216,6 +2216,7 @@ describe("ApiClient", () => {
           message_id: "m1",
           task_id: "t1",
           created_at: "2026-07-11T00:00:00Z",
+          attachment_ids: [],
         }), {
           status: 201,
           headers: { "Content-Type": "application/json" },
@@ -2242,6 +2243,7 @@ describe("ApiClient", () => {
             message_id: "m1",
             task_id: "t1",
             created_at: "2026-07-11T00:00:00Z",
+            attachment_ids: [],
           }), {
             status: 201,
             headers: { "Content-Type": "application/json" },

@@ -11,7 +11,7 @@ import { EmbeddedAttachmentSchema, NonEmptyStringSchema } from "./schemas-intern
 export const ChatSessionSchema = z.object({
   id: NonEmptyStringSchema, workspace_id: NonEmptyStringSchema,
   agent_id: NonEmptyStringSchema, creator_id: NonEmptyStringSchema,
-  title: z.string().default(""), status: z.string().default("active"),
+  title: z.string().default(""),
   has_unread: z.boolean().default(false), created_at: z.string().default(""),
   updated_at: z.string().default(""),
 }).loose();
@@ -37,7 +37,7 @@ export const SendChatMessageResponseSchema = z.object({
   message_id: NonEmptyStringSchema,
   task_id: NonEmptyStringSchema,
   created_at: NonEmptyStringSchema,
-  attachment_ids: z.array(NonEmptyStringSchema).optional(),
+  attachment_ids: z.array(NonEmptyStringSchema),
 }).loose();
 
 export const ChatPendingTaskSchema = z.object({
@@ -53,14 +53,14 @@ export const PendingChatTasksResponseSchema = z.object({
 }).loose();
 
 export const EMPTY_CHAT_SESSION: ChatSession = {
-  id: "", workspace_id: "", agent_id: "", creator_id: "", title: "", status: "active",
+  id: "", workspace_id: "", agent_id: "", creator_id: "", title: "",
   has_unread: false, created_at: "", updated_at: "",
 };
 export const EMPTY_CHAT_MESSAGES_PAGE: ChatMessagesPage = {
   messages: [], limit: 50, has_more: false, next_cursor: null,
 };
 export const EMPTY_SEND_CHAT_MESSAGE_RESPONSE: SendChatMessageResponse = {
-  message_id: "", task_id: "", created_at: "",
+  message_id: "", task_id: "", created_at: "", attachment_ids: [],
 };
 export const EMPTY_CHAT_PENDING_TASK: ChatPendingTask = {};
 export const EMPTY_PENDING_CHAT_TASKS_RESPONSE: PendingChatTasksResponse = { tasks: [] };

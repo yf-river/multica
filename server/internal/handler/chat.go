@@ -181,7 +181,6 @@ func (h *Handler) ListChatSessions(w http.ResponseWriter, r *http.Request) {
 			AgentID:     uuidToString(s.AgentID),
 			CreatorID:   uuidToString(s.CreatorID),
 			Title:       s.Title,
-			Status:      "active",
 			HasUnread:   s.HasUnread,
 			CreatedAt:   timestampToString(s.CreatedAt),
 			UpdatedAt:   timestampToString(s.UpdatedAt),
@@ -424,14 +423,8 @@ type SendChatMessageResponse struct {
 	MessageID string `json:"message_id"`
 	TaskID    string `json:"task_id"`
 	// AttachmentIDs are the attachment rows actually bound to this message by
-	// the server. The client diffs these against the ids it requested so it
-	// can warn the user when an attachment silently failed to bind — no extra
-	// round-trip needed. No `omitempty`: a send that requested attachments but
-	// bound none must serialize `[]` (not be omitted), otherwise the client
-	// can't tell "all binds failed" from "older server without this field" and
-	// would silently skip the very warning this exists for. When no
-	// attachments were requested the value is nil → `null`, which the client's
-	// guard short-circuits on the requested-ids check.
+	// the server. The response always includes an array, including `[]` when
+	// none were requested or bound.
 	AttachmentIDs []string `json:"attachment_ids"`
 	// CreatedAt anchors the chat StatusPill timer the instant the user
 	// hits send. Without it the front-end falls back to its local clock
@@ -1076,7 +1069,6 @@ type ChatSessionResponse struct {
 	AgentID     string `json:"agent_id"`
 	CreatorID   string `json:"creator_id"`
 	Title       string `json:"title"`
-	Status      string `json:"status"`
 	// Only populated by list endpoints — single-session fetches return false.
 	HasUnread bool   `json:"has_unread"`
 	CreatedAt string `json:"created_at"`
@@ -1111,7 +1103,6 @@ func chatSessionToResponse(s db.ChatSession) ChatSessionResponse {
 		AgentID:     uuidToString(s.AgentID),
 		CreatorID:   uuidToString(s.CreatorID),
 		Title:       s.Title,
-		Status:      "active",
 		CreatedAt:   timestampToString(s.CreatedAt),
 		UpdatedAt:   timestampToString(s.UpdatedAt),
 	}

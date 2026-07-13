@@ -218,7 +218,7 @@ func TestUpdateChatSession_RenamesTitle(t *testing.T) {
 	}
 }
 
-func TestListChatSessionsReturnsCurrentActiveContract(t *testing.T) {
+func TestListChatSessionsReturnsCreatedSession(t *testing.T) {
 	agentID := createHandlerTestAgent(t, "ChatListCurrentAgent", nil)
 	sessionID := createHandlerTestChatSession(t, agentID)
 
@@ -236,9 +236,6 @@ func TestListChatSessionsReturnsCurrentActiveContract(t *testing.T) {
 	}
 	for _, session := range sessions {
 		if session.ID == sessionID {
-			if session.Status != "active" {
-				t.Fatalf("session status = %q, want active", session.Status)
-			}
 			return
 		}
 	}

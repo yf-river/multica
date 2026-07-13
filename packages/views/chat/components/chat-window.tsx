@@ -145,13 +145,6 @@ export function ChatWindow() {
     setRestoreDraftRequest(null);
   }, []);
 
-  // An older backend may still return archived sessions to Desktop. Keep that
-  // response-drift boundary read-only; the current backend emits only active.
-  const currentSession = activeSessionId
-    ? sessions.find((s) => s.id === activeSessionId)
-    : null;
-  const isSessionArchived = currentSession?.status === "archived";
-
   const qc = useQueryClient();
   const createSession = useCreateChatSession();
   const markRead = useMarkChatSessionRead();
@@ -589,9 +582,8 @@ export function ChatWindow() {
       }
       // The server reports which attachment ids it actually bound. Diff
       // against what we requested so a silent bind failure surfaces to the
-      // user — no extra fetch. Skip the check on servers that predate the
-      // field (attachment_ids undefined) rather than false-alarm.
-      if (requestedAttachmentIds.length > 0 && result.attachment_ids) {
+      // user — no extra fetch.
+      if (requestedAttachmentIds.length > 0) {
         const boundIds = new Set(result.attachment_ids);
         const missing = requestedAttachmentIds.filter((id) => !boundIds.has(id));
         if (missing.length > 0) {
@@ -848,8 +840,7 @@ export function ChatWindow() {
         <OfflineBanner agentName={activeAgent?.name} availability={availability} />
       )}
 
-      {/* Input — disabled for an archived response from an older backend; locked out entirely
-       *  when there's no agent (the EmptyState above carries the CTA). */}
+      {/* Input is locked out when there is no agent; the EmptyState above carries the CTA. */}
       <ChatInput
         onSend={handleSend}
         restoreDraftRequest={restoreDraftRequest}
@@ -857,7 +848,6 @@ export function ChatWindow() {
         onUploadFile={handleUploadFile}
         onStop={handleStop}
         isRunning={!!pendingTaskId}
-        disabled={isSessionArchived}
         noAgent={noAgent}
         agentName={activeAgent?.name}
         leftAdornment={
@@ -906,13 +896,6 @@ function SessionDropdown({
   const activeSession = sessions.find((s) => s.id === activeSessionId);
   const title = activeSession?.title?.trim() || t(($) => $.window.untitled);
   const triggerAgent = activeSession ? agentById.get(activeSession.agent_id) ?? null : null;
-
-  // Current servers emit active sessions; this filter protects Desktop from
-  // an older server that still exposes archived rows.
-  const historySessions = useMemo(
-    () => sessions.filter((s) => s.status !== "archived"),
-    [sessions],
-  );
 
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
@@ -1357,7 +1340,7 @@ function SessionDropdown({
           className="max-h-96 w-auto min-w-[max(16rem,var(--anchor-width,16rem))] max-w-96 gap-0 overflow-y-auto p-1"
           onClick={(e) => e.stopPropagation()}
         >
-          {historySessions.length === 0 ? (
+          {sessions.length === 0 ? (
             <div className="px-2 py-1.5 text-xs text-muted-foreground">
               {t(($) => $.window.no_previous)}
             </div>
@@ -1366,7 +1349,7 @@ function SessionDropdown({
               <div className="px-1.5 py-1 text-xs font-medium text-muted-foreground">
                 {t(($) => $.window.history_group)}
               </div>
-              {historySessions.map(renderRow)}
+              {sessions.map(renderRow)}
             </div>
           )}
         </PopoverContent>
