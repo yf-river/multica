@@ -135,13 +135,8 @@ func (h *Handler) CreatePromptEvaluationOptimizationCandidate(w http.ResponseWri
 		writeJSON(w, http.StatusCreated, replay)
 		return
 	}
-	run, err := h.Queries.GetPromptEvaluationRunInWorkspace(r.Context(), db.GetPromptEvaluationRunInWorkspaceParams{ID: runID, WorkspaceID: workspaceUUID})
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusNotFound, "prompt evaluation run not found")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "failed to load prompt evaluation run")
+	run, ok := loadPromptEvaluationRun(w, r, h.Queries, workspaceUUID, runID)
+	if !ok {
 		return
 	}
 	if !run.PromptID.Valid {
@@ -688,16 +683,8 @@ func (h *Handler) SyncPromptEvaluationRunFromTask(w http.ResponseWriter, r *http
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
-	run, err := qtx.GetPromptEvaluationRunInWorkspace(r.Context(), db.GetPromptEvaluationRunInWorkspaceParams{
-		ID:          runID,
-		WorkspaceID: workspaceUUID,
-	})
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusNotFound, "prompt evaluation run not found")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "failed to load prompt evaluation run")
+	run, ok := loadPromptEvaluationRun(w, r, qtx, workspaceUUID, runID)
+	if !ok {
 		return
 	}
 	if !run.TaskID.Valid {

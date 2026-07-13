@@ -19,6 +19,26 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
+func loadPromptEvaluationRun(
+	w http.ResponseWriter,
+	r *http.Request,
+	queries *db.Queries,
+	workspaceID, runID pgtype.UUID,
+) (db.PromptEvaluationRun, bool) {
+	run, err := queries.GetPromptEvaluationRunInWorkspace(r.Context(), db.GetPromptEvaluationRunInWorkspaceParams{
+		ID: runID, WorkspaceID: workspaceID,
+	})
+	if err == nil {
+		return run, true
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "prompt evaluation run not found")
+		return db.PromptEvaluationRun{}, false
+	}
+	writeError(w, http.StatusInternalServerError, "failed to load prompt evaluation run")
+	return db.PromptEvaluationRun{}, false
+}
+
 func (h *Handler) ListPromptEvaluationRuns(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
@@ -157,12 +177,7 @@ func (h *Handler) ListPromptEvaluationRunTrials(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
-	if _, err := h.Queries.GetPromptEvaluationRunInWorkspace(r.Context(), db.GetPromptEvaluationRunInWorkspaceParams{ID: runID, WorkspaceID: workspaceUUID}); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusNotFound, "prompt evaluation run not found")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "failed to load prompt evaluation run")
+	if _, ok := loadPromptEvaluationRun(w, r, h.Queries, workspaceUUID, runID); !ok {
 		return
 	}
 	trials, err := h.Queries.ListPromptEvaluationTrialsByRun(r.Context(), db.ListPromptEvaluationTrialsByRunParams{
@@ -216,13 +231,8 @@ func (h *Handler) CancelPromptEvaluationRun(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	run, err := h.Queries.GetPromptEvaluationRunInWorkspace(r.Context(), db.GetPromptEvaluationRunInWorkspaceParams{ID: runID, WorkspaceID: workspaceUUID})
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusNotFound, "prompt evaluation run not found")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "failed to load prompt evaluation run")
+	run, ok := loadPromptEvaluationRun(w, r, h.Queries, workspaceUUID, runID)
+	if !ok {
 		return
 	}
 	if run.Status == "已取消" {
@@ -307,13 +317,8 @@ func (h *Handler) ReviewPromptEvaluationRun(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	note := strings.TrimSpace(req.Note)
-	run, err := h.Queries.GetPromptEvaluationRunInWorkspace(r.Context(), db.GetPromptEvaluationRunInWorkspaceParams{ID: runID, WorkspaceID: workspaceUUID})
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusNotFound, "prompt evaluation run not found")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "failed to load prompt evaluation run")
+	run, ok := loadPromptEvaluationRun(w, r, h.Queries, workspaceUUID, runID)
+	if !ok {
 		return
 	}
 	if run.Status == decision && run.ReviewDecision == decision && run.ReviewNote == note && uuidToString(run.ReviewedBy) == userID {
@@ -497,12 +502,7 @@ func (h *Handler) ListPromptEvaluationEvidenceSnapshots(w http.ResponseWriter, r
 	if !ok {
 		return
 	}
-	if _, err := h.Queries.GetPromptEvaluationRunInWorkspace(r.Context(), db.GetPromptEvaluationRunInWorkspaceParams{ID: runID, WorkspaceID: workspaceUUID}); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusNotFound, "prompt evaluation run not found")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "failed to load prompt evaluation run")
+	if _, ok := loadPromptEvaluationRun(w, r, h.Queries, workspaceUUID, runID); !ok {
 		return
 	}
 	limit := int32(20)
