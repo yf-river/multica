@@ -8,7 +8,6 @@ import {
   Bot,
   Loader2,
   Plus,
-  X,
 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useVirtualizer } from "@tanstack/react-virtual";
@@ -70,6 +69,7 @@ import {
   ListGridCheckboxCell,
   ListGridSelectAllHeaderCell,
 } from "../../common/list-grid-selection";
+import { ListBatchToolbar } from "../../common/list-toolbar";
 import { PageHeader } from "../../layout/page-header";
 import { availabilityConfig } from "../presence";
 import { CreateAgentDialog } from "./create-agent-dialog";
@@ -615,22 +615,11 @@ function AgentBatchToolbar({
 
   return (
     <>
-      {/* Anchored to the page root (relative), NOT the viewport. */}
-      <div className="absolute bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-1 rounded-lg border bg-background px-2 py-1.5 shadow-lg">
-        <div className="mr-1 flex items-center gap-1.5 border-r pl-1 pr-2">
-          <span className="text-sm font-medium">
-            {t(($) => $.actions.selected, { count: rows.length })}
-          </span>
-          <button
-            type="button"
-            aria-label={t(($) => $.actions.clear_selection)}
-            onClick={onClear}
-            className="rounded p-0.5 transition-colors hover:bg-accent"
-          >
-            <X className="size-3.5 text-muted-foreground" />
-          </button>
-        </div>
-
+      <ListBatchToolbar
+        selectedLabel={t(($) => $.actions.selected, { count: rows.length })}
+        clearLabel={t(($) => $.actions.clear_selection)}
+        onClear={onClear}
+      >
         {anyActive && (
           <Button
             variant="ghost"
@@ -658,7 +647,7 @@ function AgentBatchToolbar({
             {t(($) => $.row_actions.restore)}
           </Button>
         )}
-      </div>
+      </ListBatchToolbar>
 
       <Dialog open={confirmArchive} onOpenChange={setConfirmArchive}>
         <DialogContent className="sm:max-w-md">

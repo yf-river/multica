@@ -8,7 +8,6 @@ import {
   MoreHorizontal,
   Plus,
   Trash2,
-  X,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -45,6 +44,7 @@ import {
 } from "@multica/ui/components/ui/tooltip";
 import { ActorAvatar } from "@multica/ui/components/common/actor-avatar";
 import { cn } from "@multica/ui/lib/utils";
+import { ListBatchToolbar } from "../../common/list-toolbar";
 import { useT } from "../../i18n";
 import type { SkillRow } from "./skills-page";
 
@@ -577,25 +577,11 @@ export function SkillBatchToolbar({
 
   return (
     <>
-      {/* Anchored to the page root (relative), NOT the viewport: with a
-          sidebar/split pane open, viewport-centering sits visibly off the
-          list's own center. Same rule for every future list page's batch
-          toolbar. */}
-      <div className="absolute bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-1 rounded-lg border bg-background px-2 py-1.5 shadow-lg">
-        <div className="mr-1 flex items-center gap-1.5 border-r pl-1 pr-2">
-          <span className="text-sm font-medium">
-            {t(($) => $.actions.selected, { count: rows.length })}
-          </span>
-          <button
-            type="button"
-            aria-label={t(($) => $.actions.clear_selection)}
-            onClick={onClear}
-            className="rounded p-0.5 transition-colors hover:bg-accent"
-          >
-            <X className="size-3.5 text-muted-foreground" />
-          </button>
-        </div>
-
+      <ListBatchToolbar
+        selectedLabel={t(($) => $.actions.selected, { count: rows.length })}
+        clearLabel={t(($) => $.actions.clear_selection)}
+        onClear={onClear}
+      >
         <Button variant="ghost" size="sm" onClick={() => setAddOpen(true)}>
           <Plus className="mr-1 size-3.5" />
           {t(($) => $.actions.add_to_agent)}
@@ -613,7 +599,7 @@ export function SkillBatchToolbar({
             </TooltipContent>
           </Tooltip>
         )}
-      </div>
+      </ListBatchToolbar>
 
       <AddToAgentDialog
         skills={rows.map((r) => r.skill)}

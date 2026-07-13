@@ -42,6 +42,7 @@ import { useModalStore } from "@multica/core/modals";
 import { AppLink, useRowLink } from "../../navigation";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { FILTER_ITEM_CLASS, HoverCheck } from "../../common/hover-check";
+import { ListBatchToolbar } from "../../common/list-toolbar";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { Button } from "@multica/ui/components/ui/button";
 import { Checkbox } from "@multica/ui/components/ui/checkbox";
@@ -691,20 +692,11 @@ function ProjectBatchToolbar({
 
   return (
     <>
-      <div className="absolute bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-1 rounded-lg border bg-background px-2 py-1.5 shadow-lg">
-        <div className="mr-1 flex items-center gap-1.5 border-r pl-1 pr-2">
-          <span className="text-sm font-medium">
-            {t(($) => $.page.selected, { count: rows.length })}
-          </span>
-          <button
-            type="button"
-            aria-label={t(($) => $.page.clear_selection)}
-            onClick={onClear}
-            className="rounded p-0.5 transition-colors hover:bg-accent"
-          >
-            <X className="size-3.5 text-muted-foreground" />
-          </button>
-        </div>
+      <ListBatchToolbar
+        selectedLabel={t(($) => $.page.selected, { count: rows.length })}
+        clearLabel={t(($) => $.page.clear_selection)}
+        onClear={onClear}
+      >
         {anyUnpinned && (
           <Button
             variant="ghost"
@@ -733,7 +725,7 @@ function ProjectBatchToolbar({
             {t(($) => $.page.delete)}
           </Button>
         )}
-      </div>
+      </ListBatchToolbar>
 
       <Dialog open={confirmDelete} onOpenChange={setConfirmDelete}>
         <DialogContent className="sm:max-w-md">

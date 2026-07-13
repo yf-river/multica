@@ -7,7 +7,6 @@ import {
   Pause,
   Play,
   Trash2,
-  X,
 } from "lucide-react";
 import { toast } from "sonner";
 import type { Autopilot } from "@multica/core/types";
@@ -31,6 +30,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@multica/ui/components/ui/dropdown-menu";
+import { ListBatchToolbar } from "../../common/list-toolbar";
 import { useT } from "../../i18n";
 
 // ---------------------------------------------------------------------------
@@ -217,23 +217,11 @@ export function AutopilotBatchToolbar({
 
   return (
     <>
-      {/* Anchored to the page root (relative), NOT the viewport — see the
-          skills batch toolbar for the rationale. */}
-      <div className="absolute bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-1 rounded-lg border bg-background px-2 py-1.5 shadow-lg">
-        <div className="mr-1 flex items-center gap-1.5 border-r pl-1 pr-2">
-          <span className="text-sm font-medium">
-            {t(($) => $.actions.selected, { count: rows.length })}
-          </span>
-          <button
-            type="button"
-            aria-label={t(($) => $.actions.clear_selection)}
-            onClick={onClear}
-            className="rounded p-0.5 transition-colors hover:bg-accent"
-          >
-            <X className="size-3.5 text-muted-foreground" />
-          </button>
-        </div>
-
+      <ListBatchToolbar
+        selectedLabel={t(($) => $.actions.selected, { count: rows.length })}
+        clearLabel={t(($) => $.actions.clear_selection)}
+        onClear={onClear}
+      >
         {anyActive && (
           <Button
             variant="ghost"
@@ -263,7 +251,7 @@ export function AutopilotBatchToolbar({
           <Trash2 className="mr-1 size-3.5" />
           {t(($) => $.actions.delete)}
         </Button>
-      </div>
+      </ListBatchToolbar>
 
       <DeleteAutopilotsDialog
         rows={rows}

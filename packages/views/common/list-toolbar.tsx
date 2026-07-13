@@ -71,6 +71,35 @@ export function ToolbarFrame({
   );
 }
 
+export function ListBatchToolbar({
+  selectedLabel,
+  clearLabel,
+  onClear,
+  children,
+}: {
+  selectedLabel: ReactNode;
+  clearLabel: string;
+  onClear: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div className="absolute bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-1 rounded-lg border bg-background px-2 py-1.5 shadow-lg">
+      <div className="mr-1 flex items-center gap-1.5 border-r pl-1 pr-2">
+        <span className="text-sm font-medium">{selectedLabel}</span>
+        <button
+          type="button"
+          aria-label={clearLabel}
+          onClick={onClear}
+          className="rounded p-0.5 transition-colors hover:bg-accent"
+        >
+          <X className="size-3.5 text-muted-foreground" />
+        </button>
+      </div>
+      {children}
+    </div>
+  );
+}
+
 function ToolbarFilterButton({
   hasActiveFilters,
   activeCount,
