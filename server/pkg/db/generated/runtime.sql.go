@@ -758,45 +758,18 @@ func (q *Queries) SetAgentRuntimeOffline(ctx context.Context, id pgtype.UUID) er
 	return err
 }
 
-const touchAgentRuntimeLastSeen = `-- name: TouchAgentRuntimeLastSeen :execrows
-UPDATE agent_runtime
-SET last_seen_at = now()
-WHERE id = $1 AND status = 'online'
-`
-
-// Bumps last_seen_at on an already-online runtime. Deliberately does NOT
-// touch status or updated_at: status is unchanged on the hot heartbeat path,
-// and avoiding updated_at keeps the row HOT-eligible (no index columns
-// change) and avoids invalidating any downstream consumer that watches
-// updated_at.
-//
-// The status='online' predicate is load-bearing: callers read rt.Status from
-// a prior SELECT and may race with the sweeper, which can flip the row to
-// offline between that SELECT and this UPDATE. Without the predicate this
-// query would silently leave a freshly-heartbeated runtime stuck in offline.
-// Returning affected rows lets callers detect that race and fall back to
-// MarkAgentRuntimeOnline to flip the row back online.
-func (q *Queries) TouchAgentRuntimeLastSeen(ctx context.Context, id pgtype.UUID) (int64, error) {
-	result, err := q.db.Exec(ctx, touchAgentRuntimeLastSeen, id)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
-}
-
 const touchAgentRuntimesLastSeenBatch = `-- name: TouchAgentRuntimesLastSeenBatch :execrows
 UPDATE agent_runtime
 SET last_seen_at = now()
 WHERE id = ANY($1::uuid[]) AND status = 'online'
 `
 
-// Bulk variant of TouchAgentRuntimeLastSeen used by the BatchedHeartbeatScheduler:
-// coalesces N per-runtime "bump last_seen_at" requests into a single UPDATE so a
-// fleet beating every 15s costs ~1 DB transaction per batch tick instead of N.
+// Coalesces N per-runtime "bump last_seen_at" requests into a single UPDATE so
+// a fleet beating every 15s costs ~1 DB transaction per batch tick instead of N.
 //
-// Same load-bearing predicate as the single-id form: status='online' avoids
-// silently un-deleting a sweeper-flipped offline row, and we deliberately do
-// NOT touch updated_at so the rows stay HOT-eligible. Affected-rows < len(ids)
+// The status='online' predicate avoids silently un-deleting a
+// sweeper-flipped offline row, and we deliberately do NOT touch updated_at so
+// the rows stay HOT-eligible. Affected-rows < len(ids)
 // means some IDs raced to offline between Schedule and flush; their next beat
 // will fall through the recordHeartbeat sync path and call MarkAgentRuntimeOnline.
 func (q *Queries) TouchAgentRuntimesLastSeenBatch(ctx context.Context, ids []pgtype.UUID) (int64, error) {
