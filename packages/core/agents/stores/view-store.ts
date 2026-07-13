@@ -1,23 +1,18 @@
 "use client";
 
-import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
 import {
-  createWorkspaceAwareStorage,
-  registerWorkspacePersistStore,
-} from "../../platform/workspace-storage";
-import { defaultStorage } from "../../platform/storage";
+  createWorkspaceListViewStore,
+  type WorkspaceListViewStoreState,
+} from "../../platform/workspace-list-view-store";
 
 // View preferences for the agents list page: scope, sort, column visibility,
 // and filters. Persisted per workspace, per user/device. Row selection is
 // session-scoped on purpose (same rationale as the skills/autopilots view
 // stores).
 
-// Scope mixes the ownership lens (mine/all) with the archived lifecycle
-// stage. Impure on paper, but the three are mutually exclusive in practice
-// and "mine" is the historical product default; the archived view ignores
-// the ownership lens entirely (showing only *my* archived agents would hide
-// other people's archived agents with no UI to explain why).
+// Scope combines the ownership lens with the archived lifecycle stage. The
+// three values are mutually exclusive, and archived intentionally ignores
+// ownership so it does not hide other members' archived agents.
 export type AgentsScope = "mine" | "all" | "archived";
 
 export const AGENT_SCOPES: AgentsScope[] = ["mine", "all", "archived"];
@@ -78,27 +73,12 @@ export const AGENT_DEFAULT_HIDDEN_COLUMNS: AgentColumnKey[] = [
   "created",
 ];
 
-export interface AgentsViewState {
-  scope: AgentsScope;
-  sortField: AgentSortField;
-  sortDirection: AgentSortDirection;
-  hiddenColumns: AgentColumnKey[];
-  filters: AgentListFilters;
+interface AgentsViewActions {
   setScope: (scope: AgentsScope) => void;
-  /** Header click: toggles direction on the active field, otherwise switches
-   *  to the field with its default direction. */
-  toggleSort: (field: AgentSortField) => void;
-  /** Display panel select: switches field (default direction), no toggle. */
-  setSortField: (field: AgentSortField) => void;
-  setSortDirection: (direction: AgentSortDirection) => void;
-  toggleColumn: (key: AgentColumnKey) => void;
-  toggleFilter: (key: keyof AgentListFilters, value: string) => void;
-  clearFilters: () => void;
 }
 
 const DEFAULTS = {
-  // "mine" is the historical default — most members care about their own
-  // agents first; admins flip to "all".
+  // Most members start with their own agents; admins can switch to all.
   scope: "mine" as AgentsScope,
   sortField: "lastActive" as AgentSortField,
   sortDirection: AGENT_SORT_DEFAULT_DIRECTION.lastActive,
@@ -106,87 +86,25 @@ const DEFAULTS = {
   filters: EMPTY_AGENT_FILTERS,
 };
 
-export const useAgentsViewStore = create<AgentsViewState>()(
-  persist(
-    (set) => ({
-      ...DEFAULTS,
-      // "Mine" is the clean personal view: entering it clears all filters,
-      // so Mine never carries filters. Switching to all/archived leaves
-      // filters intact (you can carry "owner = Bob" between them).
-      setScope: (scope) =>
-        set(scope === "mine" ? { scope, filters: EMPTY_AGENT_FILTERS } : { scope }),
-      toggleSort: (field) =>
-        set((state) =>
-          state.sortField === field
-            ? {
-                sortDirection: state.sortDirection === "asc" ? "desc" : "asc",
-              }
-            : {
-                sortField: field,
-                sortDirection: AGENT_SORT_DEFAULT_DIRECTION[field],
-              },
-        ),
-      setSortField: (field) =>
-        set((state) =>
-          state.sortField === field
-            ? {}
-            : {
-                sortField: field,
-                sortDirection: AGENT_SORT_DEFAULT_DIRECTION[field],
-              },
-        ),
-      setSortDirection: (direction) => set({ sortDirection: direction }),
-      toggleColumn: (key) =>
-        set((state) => ({
-          hiddenColumns: state.hiddenColumns.includes(key)
-            ? state.hiddenColumns.filter((k) => k !== key)
-            : [...state.hiddenColumns, key],
-        })),
-      toggleFilter: (key, value) =>
-        set((state) => {
-          const list = state.filters[key] as string[];
-          const next = list.includes(value)
-            ? list.filter((v) => v !== value)
-            : [...list, value];
-          // Applying any filter leaves the clean "mine" view for "all" —
-          // Mine is the no-filter mode (see setScope). Archived keeps its
-          // own scope (it can carry filters).
-          const scope = state.scope === "mine" ? "all" : state.scope;
-          return { scope, filters: { ...state.filters, [key]: next } };
-        }),
-      clearFilters: () => set({ filters: EMPTY_AGENT_FILTERS }),
-    }),
-    {
-      name: "multica_agents_view",
-      storage: createJSONStorage(() =>
-        createWorkspaceAwareStorage(defaultStorage),
-      ),
-      partialize: (state) => ({
-        scope: state.scope,
-        sortField: state.sortField,
-        sortDirection: state.sortDirection,
-        hiddenColumns: state.hiddenColumns,
-        filters: state.filters,
-      }),
-      version: 1,
-      // On rehydrate, if the new workspace has no persisted value, reset to
-      // the defaults instead of leaving the previous workspace's in-memory
-      // view state in place. Default merge keeps current state when
-      // persisted is undefined, which would leak state across workspaces.
-      merge: (persisted, current) => {
-        if (!persisted) return { ...current, ...DEFAULTS };
-        const p = persisted as Partial<AgentsViewState>;
-        // Deep-merge filters so a payload persisted before a new filter
-        // dimension existed (e.g. `owners`) still gets that key's default
-        // instead of dropping it to `undefined` and crashing `.length`.
-        return {
-          ...current,
-          ...p,
-          filters: { ...EMPTY_AGENT_FILTERS, ...(p.filters ?? {}) },
-        };
-      },
-    },
-  ),
-);
+export type AgentsViewState = WorkspaceListViewStoreState<
+  typeof DEFAULTS,
+  AgentsViewActions
+>;
 
-registerWorkspacePersistStore(useAgentsViewStore);
+export const useAgentsViewStore = createWorkspaceListViewStore<
+  typeof DEFAULTS,
+  AgentsViewActions
+>({
+  name: "multica_agents_view",
+  defaults: DEFAULTS,
+  sortDirections: AGENT_SORT_DEFAULT_DIRECTION,
+  version: 1,
+  // "Mine" is the clean personal view. Entering it clears all filters, and
+  // applying a filter leaves it for "all". Archived keeps its filters.
+  createExtraActions: (set) => ({
+    setScope: (scope) =>
+      set(scope === "mine" ? { scope, filters: EMPTY_AGENT_FILTERS } : { scope }),
+  }),
+  afterFilterToggle: (state) =>
+    state.scope === "mine" ? { scope: "all" } : {},
+});

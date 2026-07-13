@@ -26,7 +26,13 @@ beforeAll(() => {
 
 beforeEach(() => {
   localStorage.clear();
-  useAgentsViewStore.setState({ scope: "mine" });
+  useAgentsViewStore.setState({
+    scope: "mine",
+    sortField: "lastActive",
+    sortDirection: "desc",
+    hiddenColumns: ["model", "created"],
+    filters: { availability: [], runtimes: [], owners: [], models: [] },
+  });
   setCurrentWorkspace(null, null);
 });
 
@@ -42,6 +48,36 @@ describe("useAgentsViewStore", () => {
   it("setScope mutates the store", () => {
     useAgentsViewStore.getState().setScope("all");
     expect(useAgentsViewStore.getState().scope).toBe("all");
+  });
+
+  it("applies the shared sort, column, and filter transitions", () => {
+    const store = useAgentsViewStore.getState();
+
+    store.toggleSort("lastActive");
+    expect(useAgentsViewStore.getState().sortDirection).toBe("asc");
+
+    store.setSortField("name");
+    expect(useAgentsViewStore.getState()).toMatchObject({
+      sortField: "name",
+      sortDirection: "asc",
+    });
+
+    store.toggleColumn("model");
+    expect(useAgentsViewStore.getState().hiddenColumns).not.toContain("model");
+
+    store.toggleFilter("owners", "user-1");
+    expect(useAgentsViewStore.getState()).toMatchObject({
+      scope: "all",
+      filters: { owners: ["user-1"] },
+    });
+
+    useAgentsViewStore.getState().clearFilters();
+    expect(useAgentsViewStore.getState().filters).toEqual({
+      availability: [],
+      runtimes: [],
+      owners: [],
+      models: [],
+    });
   });
 
   it("partialize persists only view prefs (no actions) under the workspace-namespaced key", async () => {
