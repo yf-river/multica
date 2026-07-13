@@ -1,16 +1,13 @@
 package agent
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"os/exec"
 	"strings"
-	"time"
 )
 
 // claudeBackend implements Backend by spawning the Claude Code CLI
@@ -20,262 +17,10 @@ type claudeBackend struct {
 }
 
 func (b *claudeBackend) Execute(ctx context.Context, prompt string, opts ExecOptions) (*Session, error) {
-	execPath := b.cfg.ExecutablePath
-	if execPath == "" {
-		execPath = "claude"
-	}
-	if _, err := exec.LookPath(execPath); err != nil {
-		return nil, fmt.Errorf("claude executable not found at %q: %w", execPath, err)
-	}
-
-	timeout := opts.Timeout
-	runCtx, cancel := runContext(ctx, timeout)
-
-	args := buildClaudeArgs(opts, b.cfg.Logger)
-
-	process, err := startClaudeProtocolProcess(runCtx, cancel, b.cfg, opts, execPath, args, "claude")
-	if err != nil {
-		return nil, err
-	}
-	cmd, stdout, stdin := process.cmd, process.stdout, process.stdin
-	closeStdin, stderrBuf := process.closeStdin, process.stderr
-
-	msgCh := make(chan Message, 256)
-	resCh := make(chan Result, 1)
-
-	// writeClaudeInput runs in its own goroutine so it cannot deadlock
-	// against the stdout reader. With --verbose --output-format stream-json
-	// the CLI emits a startup banner before reading its first stdin frame;
-	// if nothing is draining stdout while we write the prompt, claude blocks
-	// writing stdout, never reads stdin, and our Write blocks until runCtx
-	// fires. The field symptom is "write |1: The pipe has been ended."
-	// surfacing exactly at the per-task timeout when the kill invalidates
-	// the still-blocked pipe.
-	//
-	// Keep stdin open after the initial user message. Claude's stream-json
-	// protocol can emit control_request events mid-run and expects matching
-	// control_response frames on the same input stream; closing stdin here
-	// leaves the child stuck waiting for a response until its own fallback
-	// timeout.
-	writeDone := make(chan error, 1)
-	go func() {
-		err := writeClaudeInput(stdin, prompt)
-		if err != nil {
-			closeStdin()
-		}
-		writeDone <- err
-	}()
-
-	go func() {
-		defer cancel()
-		defer close(msgCh)
-		defer close(resCh)
-		defer process.mcpConfigCleanup()
-
-		startTime := time.Now()
-		var output strings.Builder
-		var sessionID string
-		finalStatus := "completed"
-		var finalError string
-		sawAsyncLaunch := false
-		usage := make(map[string]TokenUsage)
-
-		// Close stdout when the context is cancelled so scanner.Scan() unblocks.
-		go func() {
-			<-runCtx.Done()
-			closeStdin()
-			_ = stdout.Close()
-		}()
-
-		scanner := bufio.NewScanner(stdout)
-		scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
-
-		for scanner.Scan() {
-			line := strings.TrimSpace(scanner.Text())
-			if line == "" {
-				continue
-			}
-
-			var msg claudeSDKMessage
-			if err := json.Unmarshal([]byte(line), &msg); err != nil {
-				continue
-			}
-
-			switch msg.Type {
-			case "assistant":
-				b.handleAssistant(msg, msgCh, &output, usage)
-			case "user":
-				if b.handleUser(msg, msgCh) {
-					sawAsyncLaunch = true
-				}
-			case "system":
-				if msg.SessionID != "" {
-					sessionID = msg.SessionID
-				}
-				trySend(msgCh, Message{Type: MessageStatus, Status: "running", SessionID: sessionID})
-			case "result":
-				sessionID = msg.SessionID
-				if msg.ResultText != "" {
-					output.Reset()
-					output.WriteString(msg.ResultText)
-				}
-				if resultUsage := claudeStreamResultUsage(msg, opts.Model); len(resultUsage) > 0 {
-					usage = resultUsage
-				}
-				if msg.IsError {
-					finalStatus = "failed"
-					finalError = msg.ResultText
-				}
-				closeStdin()
-			case "log":
-				if msg.Log != nil {
-					trySend(msgCh, Message{
-						Type:    MessageLog,
-						Level:   msg.Log.Level,
-						Content: msg.Log.Message,
-					})
-				}
-			case "control_request":
-				b.handleControlRequest(msg, stdin)
-			}
-		}
-
-		closeStdin()
-
-		// Wait for process exit
-		exitErr := cmd.Wait()
-		duration := time.Since(startTime)
-		// writeDone is buffered (cap 1) and the writer always sends — by the
-		// time cmd has exited, the prompt write has either succeeded, hit a
-		// broken pipe, or been unblocked by the kill that ended cmd.
-		writeErr := <-writeDone
-
-		switch {
-		case runCtx.Err() == context.DeadlineExceeded:
-			finalStatus = "timeout"
-			finalError = fmt.Sprintf("claude timed out after %s", timeout)
-		case runCtx.Err() == context.Canceled:
-			finalStatus = "aborted"
-			finalError = "execution cancelled"
-		case writeErr != nil && finalStatus == "completed" && sessionID == "":
-			// No result event landed and the prompt write failed — claude
-			// died before reading the prompt. Surface the write error; the
-			// stderr tail attached below carries the real reason.
-			finalStatus = "failed"
-			finalError = fmt.Sprintf("write claude input: %v", writeErr)
-		case exitErr != nil && finalStatus == "completed":
-			finalStatus = "failed"
-			finalError = fmt.Sprintf("claude exited with error: %v", exitErr)
-		}
-		if finalStatus == "completed" && sawAsyncLaunch {
-			finalStatus = "failed"
-			finalError = "claude launched an async background task; Multica-managed runs require foreground execution"
-		}
-
-		// cmd.Wait() has returned — os/exec's stderr copy goroutine has
-		// observed every byte claude wrote to stderr before exiting, so
-		// stderrBuf.Tail() is safe to sample now. Attach the tail to any
-		// non-empty failure message; callers upstream surface this as the
-		// task's error field, which is the only place users see it.
-		if finalError != "" {
-			finalError = withAgentStderr(finalError, "claude", stderrBuf.Tail())
-		}
-
-		b.cfg.Logger.Info("claude finished", "pid", cmd.Process.Pid, "status", finalStatus, "duration", duration.Round(time.Millisecond).String())
-
-		reportedSessionID := resolveSessionID(opts.ResumeSessionID, sessionID, finalStatus == "failed")
-		if reportedSessionID != sessionID {
-			b.cfg.Logger.Info("claude resume did not land; clearing fresh session id for daemon fallback",
-				"requested_resume", opts.ResumeSessionID,
-				"emitted_session", sessionID,
-			)
-		}
-
-		resCh <- Result{
-			Status:     finalStatus,
-			Output:     output.String(),
-			Error:      finalError,
-			DurationMs: duration.Milliseconds(),
-			SessionID:  reportedSessionID,
-			Usage:      usage,
-		}
-	}()
-
-	return &Session{Messages: msgCh, Result: resCh}, nil
-}
-
-func (b *claudeBackend) handleAssistant(msg claudeSDKMessage, ch chan<- Message, output *strings.Builder, usage map[string]TokenUsage) {
-	handleClaudeStreamAssistant(msg, ch, output, usage)
-}
-
-func (b *claudeBackend) handleUser(msg claudeSDKMessage, ch chan<- Message) bool {
-	var content claudeMessageContent
-	if err := json.Unmarshal(msg.Message, &content); err != nil {
-		return false
-	}
-
-	sawAsyncLaunch := false
-	for _, block := range content.Content {
-		if block.Type == "tool_result" {
-			resultStr := ""
-			if block.Content != nil {
-				resultStr = string(block.Content)
-				if claudeToolResultHasAsyncLaunch(block.Content) {
-					sawAsyncLaunch = true
-				}
-			}
-			trySend(ch, Message{
-				Type:   MessageToolResult,
-				CallID: block.ToolUseID,
-				Output: resultStr,
-			})
-		}
-	}
-	return sawAsyncLaunch
-}
-
-func (b *claudeBackend) handleControlRequest(msg claudeSDKMessage, stdin interface{ Write([]byte) (int, error) }) {
-	// Auto-approve all tool uses in autonomous/daemon mode.
-	var req claudeControlRequestPayload
-	if err := json.Unmarshal(msg.Request, &req); err != nil {
-		return
-	}
-
-	var inputMap map[string]any
-	if req.Input != nil {
-		_ = json.Unmarshal(req.Input, &inputMap)
-	}
-	if inputMap == nil {
-		inputMap = map[string]any{}
-	}
-	if forceClaudeToolInputForeground(inputMap) {
-		b.cfg.Logger.Info("claude: forced foreground tool execution",
-			"request_id", msg.RequestID,
-			"tool", req.ToolName,
-		)
-	}
-
-	response := map[string]any{
-		"type": "control_response",
-		"response": map[string]any{
-			"subtype":    "success",
-			"request_id": msg.RequestID,
-			"response": map[string]any{
-				"behavior":     "allow",
-				"updatedInput": inputMap,
-			},
-		},
-	}
-
-	data, err := json.Marshal(response)
-	if err != nil {
-		b.cfg.Logger.Warn("claude: failed to marshal control response", "error", err)
-		return
-	}
-	data = append(data, '\n')
-	if _, err := stdin.Write(data); err != nil {
-		b.cfg.Logger.Warn("claude: failed to write control response", "error", err)
-	}
+	return executeClaudeStreamBackend(ctx, prompt, opts, b.cfg, claudeStreamBackendSpec{
+		provider: "claude", defaultExecutable: "claude",
+		buildArgs: buildClaudeArgs, rejectAsyncTools: true,
+	})
 }
 
 func forceClaudeToolInputForeground(input map[string]any) bool {
@@ -322,13 +67,6 @@ func claudeMapHasAsyncLaunchStatus(value map[string]any) bool {
 	return ok && status == "async_launched"
 }
 
-// ── Claude SDK JSON types ──
-
-type claudeSDKMessage = claudeStreamMessage
-type claudeMessageContent = claudeStreamMessageContent
-type claudeContentBlock = claudeStreamContentBlock
-type claudeControlRequestPayload = claudeStreamControlRequest
-
 // ── Shared helpers ──
 
 func trySend(ch chan<- Message, msg Message) {
@@ -362,6 +100,10 @@ var claudeBlockedArgs = map[string]blockedArgMode{
 }
 
 func buildClaudeArgs(opts ExecOptions, logger *slog.Logger) []string {
+	return buildClaudeStreamArgs(opts, claudeBlockedArgs, logger)
+}
+
+func buildClaudeStreamArgs(opts ExecOptions, blockedArgs map[string]blockedArgMode, logger *slog.Logger) []string {
 	disallowedTools := append([]string{"AskUserQuestion"}, opts.DisallowedTools...)
 	permissionMode := strings.TrimSpace(opts.PermissionMode)
 	if permissionMode == "" {
@@ -407,40 +149,13 @@ func buildClaudeArgs(opts ExecOptions, logger *slog.Logger) []string {
 	if opts.ResumeSessionID != "" {
 		args = append(args, "--resume", opts.ResumeSessionID)
 	}
-	args = append(args, filterCustomArgs(opts.ExtraArgs, claudeBlockedArgs, logger)...)
-	args = append(args, filterCustomArgs(opts.CustomArgs, claudeBlockedArgs, logger)...)
+	args = append(args, filterCustomArgs(opts.ExtraArgs, blockedArgs, logger)...)
+	args = append(args, filterCustomArgs(opts.CustomArgs, blockedArgs, logger)...)
 	return args
 }
 
-func writeClaudeInput(w io.Writer, prompt string) error {
-	data, err := buildClaudeInput(prompt)
-	if err != nil {
-		return err
-	}
-	if _, err := w.Write(data); err != nil {
-		return err
-	}
-	return nil
-}
-
 func buildClaudeInput(prompt string) ([]byte, error) {
-	payload := map[string]any{
-		"type": "user",
-		"message": map[string]any{
-			"role": "user",
-			"content": []map[string]string{
-				{
-					"type": "text",
-					"text": prompt,
-				},
-			},
-		},
-	}
-	data, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("marshal claude input: %w", err)
-	}
-	return append(data, '\n'), nil
+	return buildClaudeStreamInput(prompt, "claude")
 }
 
 // resolveSessionID decides which session id to report on the Result. When the

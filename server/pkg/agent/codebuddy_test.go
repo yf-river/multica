@@ -321,9 +321,9 @@ func TestWriteCodebuddyInput(t *testing.T) {
 	t.Parallel()
 
 	var buf strings.Builder
-	err := writeCodebuddyInput(&buf, "hello world")
+	err := writeClaudeStreamInput(&buf, "hello world", "codebuddy")
 	if err != nil {
-		t.Fatalf("writeCodebuddyInput: %v", err)
+		t.Fatalf("writeClaudeStreamInput: %v", err)
 	}
 
 	data := buf.String()
@@ -363,21 +363,20 @@ func TestWriteCodebuddyInput(t *testing.T) {
 func TestCodebuddyHandleAssistantText(t *testing.T) {
 	t.Parallel()
 
-	b := &codebuddyBackend{cfg: Config{Logger: slog.Default()}}
 	ch := make(chan Message, 10)
 	var output strings.Builder
 
-	msg := codebuddySDKMessage{
+	msg := claudeStreamMessage{
 		Type: "assistant",
-		Message: mustMarshal(t, codebuddyMessageContent{
+		Message: mustMarshal(t, claudeStreamMessageContent{
 			Role: "assistant",
-			Content: []codebuddyContentBlock{
+			Content: []claudeStreamContentBlock{
 				{Type: "text", Text: "codebuddy says hi"},
 			},
 		}),
 	}
 
-	b.handleAssistant(msg, ch, &output, make(map[string]TokenUsage))
+	handleClaudeStreamAssistant(msg, ch, &output, make(map[string]TokenUsage))
 
 	if output.String() != "codebuddy says hi" {
 		t.Fatalf("expected output 'codebuddy says hi', got %q", output.String())
@@ -507,14 +506,13 @@ func TestIsKnownThinkingValue_Codebuddy(t *testing.T) {
 func TestCodebuddyHandleUserToolResult(t *testing.T) {
 	t.Parallel()
 
-	b := &codebuddyBackend{cfg: Config{Logger: slog.Default()}}
 	ch := make(chan Message, 10)
 
-	msg := codebuddySDKMessage{
+	msg := claudeStreamMessage{
 		Type: "user",
-		Message: mustMarshal(t, codebuddyMessageContent{
+		Message: mustMarshal(t, claudeStreamMessageContent{
 			Role: "user",
-			Content: []codebuddyContentBlock{
+			Content: []claudeStreamContentBlock{
 				{
 					Type:      "tool_result",
 					ToolUseID: "call-cb-1",
@@ -524,7 +522,7 @@ func TestCodebuddyHandleUserToolResult(t *testing.T) {
 		}),
 	}
 
-	b.handleUser(msg, ch)
+	handleClaudeStreamUser(msg, ch, false)
 
 	select {
 	case m := <-ch:

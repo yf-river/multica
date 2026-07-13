@@ -16,21 +16,20 @@ import (
 func TestClaudeHandleAssistantText(t *testing.T) {
 	t.Parallel()
 
-	b := &claudeBackend{cfg: Config{Logger: slog.Default()}}
 	ch := make(chan Message, 10)
 	var output strings.Builder
 
-	msg := claudeSDKMessage{
+	msg := claudeStreamMessage{
 		Type: "assistant",
-		Message: mustMarshal(t, claudeMessageContent{
+		Message: mustMarshal(t, claudeStreamMessageContent{
 			Role: "assistant",
-			Content: []claudeContentBlock{
+			Content: []claudeStreamContentBlock{
 				{Type: "text", Text: "Hello world"},
 			},
 		}),
 	}
 
-	b.handleAssistant(msg, ch, &output, make(map[string]TokenUsage))
+	handleClaudeStreamAssistant(msg, ch, &output, make(map[string]TokenUsage))
 
 	if output.String() != "Hello world" {
 		t.Fatalf("expected output 'Hello world', got %q", output.String())
@@ -48,15 +47,14 @@ func TestClaudeHandleAssistantText(t *testing.T) {
 func TestClaudeHandleAssistantToolUse(t *testing.T) {
 	t.Parallel()
 
-	b := &claudeBackend{cfg: Config{Logger: slog.Default()}}
 	ch := make(chan Message, 10)
 	var output strings.Builder
 
-	msg := claudeSDKMessage{
+	msg := claudeStreamMessage{
 		Type: "assistant",
-		Message: mustMarshal(t, claudeMessageContent{
+		Message: mustMarshal(t, claudeStreamMessageContent{
 			Role: "assistant",
-			Content: []claudeContentBlock{
+			Content: []claudeStreamContentBlock{
 				{
 					Type:  "tool_use",
 					ID:    "call-1",
@@ -67,7 +65,7 @@ func TestClaudeHandleAssistantToolUse(t *testing.T) {
 		}),
 	}
 
-	b.handleAssistant(msg, ch, &output, make(map[string]TokenUsage))
+	handleClaudeStreamAssistant(msg, ch, &output, make(map[string]TokenUsage))
 
 	if output.String() != "" {
 		t.Fatalf("tool_use should not add to output, got %q", output.String())
@@ -88,14 +86,13 @@ func TestClaudeHandleAssistantToolUse(t *testing.T) {
 func TestClaudeHandleUserToolResult(t *testing.T) {
 	t.Parallel()
 
-	b := &claudeBackend{cfg: Config{Logger: slog.Default()}}
 	ch := make(chan Message, 10)
 
-	msg := claudeSDKMessage{
+	msg := claudeStreamMessage{
 		Type: "user",
-		Message: mustMarshal(t, claudeMessageContent{
+		Message: mustMarshal(t, claudeStreamMessageContent{
 			Role: "user",
-			Content: []claudeContentBlock{
+			Content: []claudeStreamContentBlock{
 				{
 					Type:      "tool_result",
 					ToolUseID: "call-1",
@@ -105,7 +102,7 @@ func TestClaudeHandleUserToolResult(t *testing.T) {
 		}),
 	}
 
-	if b.handleUser(msg, ch) {
+	if handleClaudeStreamUser(msg, ch, true) {
 		t.Fatal("did not expect async launch in ordinary tool result")
 	}
 
@@ -126,17 +123,17 @@ func TestClaudeHandleControlRequestAutoApproves(t *testing.T) {
 
 	var written bytes.Buffer
 
-	msg := claudeSDKMessage{
+	msg := claudeStreamMessage{
 		Type:      "control_request",
 		RequestID: "req-42",
-		Request: mustMarshal(t, claudeControlRequestPayload{
+		Request: mustMarshal(t, claudeStreamControlRequest{
 			Subtype:  "tool_use",
 			ToolName: "Bash",
 			Input:    mustMarshal(t, map[string]any{"command": "ls"}),
 		}),
 	}
 
-	b.handleControlRequest(msg, &written)
+	handleClaudeStreamControlRequest(b.cfg.Logger, "claude", true, msg, &written)
 
 	var resp map[string]any
 	if err := json.Unmarshal(bytes.TrimSpace(written.Bytes()), &resp); err != nil {
@@ -171,10 +168,10 @@ func TestClaudeHandleControlRequestForcesBackgroundToolsForeground(t *testing.T)
 
 			var written bytes.Buffer
 
-			msg := claudeSDKMessage{
+			msg := claudeStreamMessage{
 				Type:      "control_request",
 				RequestID: "req-42",
-				Request: mustMarshal(t, claudeControlRequestPayload{
+				Request: mustMarshal(t, claudeStreamControlRequest{
 					Subtype:  "tool_use",
 					ToolName: toolName,
 					Input: mustMarshal(t, map[string]any{
@@ -184,7 +181,7 @@ func TestClaudeHandleControlRequestForcesBackgroundToolsForeground(t *testing.T)
 				}),
 			}
 
-			b.handleControlRequest(msg, &written)
+			handleClaudeStreamControlRequest(b.cfg.Logger, "claude", true, msg, &written)
 
 			var resp map[string]any
 			if err := json.Unmarshal(bytes.TrimSpace(written.Bytes()), &resp); err != nil {
@@ -210,14 +207,13 @@ func TestClaudeHandleControlRequestForcesBackgroundToolsForeground(t *testing.T)
 func TestClaudeHandleUserDetectsAsyncLaunchedToolResult(t *testing.T) {
 	t.Parallel()
 
-	b := &claudeBackend{cfg: Config{Logger: slog.Default()}}
 	ch := make(chan Message, 10)
 
-	msg := claudeSDKMessage{
+	msg := claudeStreamMessage{
 		Type: "user",
-		Message: mustMarshal(t, claudeMessageContent{
+		Message: mustMarshal(t, claudeStreamMessageContent{
 			Role: "user",
-			Content: []claudeContentBlock{
+			Content: []claudeStreamContentBlock{
 				{
 					Type:      "tool_result",
 					ToolUseID: "call-1",
@@ -230,7 +226,7 @@ func TestClaudeHandleUserDetectsAsyncLaunchedToolResult(t *testing.T) {
 		}),
 	}
 
-	if !b.handleUser(msg, ch) {
+	if !handleClaudeStreamUser(msg, ch, true) {
 		t.Fatal("expected async launch to be detected")
 	}
 }
@@ -238,14 +234,13 @@ func TestClaudeHandleUserDetectsAsyncLaunchedToolResult(t *testing.T) {
 func TestClaudeHandleUserIgnoresAsyncLaunchedTextOutput(t *testing.T) {
 	t.Parallel()
 
-	b := &claudeBackend{cfg: Config{Logger: slog.Default()}}
 	ch := make(chan Message, 10)
 
-	msg := claudeSDKMessage{
+	msg := claudeStreamMessage{
 		Type: "user",
-		Message: mustMarshal(t, claudeMessageContent{
+		Message: mustMarshal(t, claudeStreamMessageContent{
 			Role: "user",
-			Content: []claudeContentBlock{
+			Content: []claudeStreamContentBlock{
 				{
 					Type:      "tool_result",
 					ToolUseID: "call-1",
@@ -257,7 +252,7 @@ func TestClaudeHandleUserIgnoresAsyncLaunchedTextOutput(t *testing.T) {
 		}),
 	}
 
-	if b.handleUser(msg, ch) {
+	if handleClaudeStreamUser(msg, ch, true) {
 		t.Fatal("did not expect async launch to be detected in ordinary text output")
 	}
 }
@@ -265,17 +260,16 @@ func TestClaudeHandleUserIgnoresAsyncLaunchedTextOutput(t *testing.T) {
 func TestClaudeHandleAssistantInvalidJSON(t *testing.T) {
 	t.Parallel()
 
-	b := &claudeBackend{cfg: Config{Logger: slog.Default()}}
 	ch := make(chan Message, 10)
 	var output strings.Builder
 
-	msg := claudeSDKMessage{
+	msg := claudeStreamMessage{
 		Type:    "assistant",
 		Message: json.RawMessage(`invalid json`),
 	}
 
 	// Should not panic
-	b.handleAssistant(msg, ch, &output, make(map[string]TokenUsage))
+	handleClaudeStreamAssistant(msg, ch, &output, make(map[string]TokenUsage))
 
 	if output.String() != "" {
 		t.Fatalf("expected empty output for invalid JSON, got %q", output.String())
