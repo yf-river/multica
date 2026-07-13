@@ -4,6 +4,7 @@ import {
   formatFilterLabel,
   formatToolName,
   localizeTranscriptOutput,
+  summarizeToolInput,
   transcriptTruncatedSuffix,
   truncateTranscriptText,
 } from "./format";
@@ -47,5 +48,11 @@ describe("task transcript display formatting", () => {
     expect(truncateTranscriptText("abcdef", 3)).toBe("abc...");
     expect(transcriptTruncatedSuffix()).toBe("\n...（已截断）");
     expect(localizeTranscriptOutput("... (truncated)")).toBe("...（已截断）");
+  });
+
+  it("uses one tool-input summary rule with caller-selected truncation", () => {
+    expect(summarizeToolInput({ file_path: "/repo/src/file.ts" }, 10)).toBe(".../src/file.ts");
+    expect(summarizeToolInput({ command: "123456", prompt: "ignored" }, 4)).toBe("1234...");
+    expect(summarizeToolInput({ unknown: "fallback" }, 10)).toBe("fallback");
   });
 });

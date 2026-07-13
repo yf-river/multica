@@ -42,6 +42,7 @@ import {
   formatEventLabel,
   formatFilterLabel,
   localizeTranscriptOutput,
+  summarizeToolInput,
   transcriptTruncatedSuffix,
   truncateTranscriptText,
 } from "./format";
@@ -101,28 +102,8 @@ function getEventSummary(item: TimelineItem): string {
       return item.content?.split("\n").find((l) => l.trim().length > 0) ?? "";
     case "thinking":
       return item.content?.slice(0, 200) ?? "";
-    case "tool_use": {
-      if (!item.input) return "";
-      const inp = item.input as Record<string, string>;
-      if (inp.query) return inp.query;
-      if (inp.file_path) return shortenPath(inp.file_path);
-      if (inp.path) return shortenPath(inp.path);
-      if (inp.pattern) return inp.pattern;
-      if (inp.description) return String(inp.description);
-      if (inp.command) {
-        const cmd = String(inp.command);
-        return truncateTranscriptText(cmd, 120);
-      }
-      if (inp.prompt) {
-        const p = String(inp.prompt);
-        return truncateTranscriptText(p, 120);
-      }
-      if (inp.skill) return String(inp.skill);
-      for (const v of Object.values(inp)) {
-        if (typeof v === "string" && v.length > 0 && v.length < 120) return v;
-      }
-      return "";
-    }
+    case "tool_use":
+      return summarizeToolInput(item.input, 120);
     case "tool_result":
       return item.output ? truncateTranscriptText(localizeTranscriptOutput(item.output), 200) : "";
     case "error":
@@ -130,12 +111,6 @@ function getEventSummary(item: TimelineItem): string {
     default:
       return "";
   }
-}
-
-function shortenPath(p: string): string {
-  const parts = p.split("/");
-  if (parts.length <= 3) return p;
-  return ".../" + parts.slice(-2).join("/");
 }
 
 function formatDuration(start: string, end: string): string {

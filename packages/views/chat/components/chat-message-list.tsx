@@ -31,6 +31,7 @@ import {
   buildTimeline,
   formatToolName,
   localizeTranscriptOutput,
+  summarizeToolInput,
   transcriptTruncatedSuffix,
   truncateTranscriptText,
 } from "../../common/task-transcript";
@@ -549,38 +550,9 @@ function ItemRow({ item }: { item: ChatTimelineItem }) {
   }
 }
 
-function shortenPath(p: string): string {
-  const parts = p.split("/");
-  if (parts.length <= 3) return p;
-  return ".../" + parts.slice(-2).join("/");
-}
-
-function getToolSummary(item: ChatTimelineItem): string {
-  if (!item.input) return "";
-  const inp = item.input as Record<string, string>;
-  if (inp.query) return inp.query;
-  if (inp.file_path) return shortenPath(inp.file_path);
-  if (inp.path) return shortenPath(inp.path);
-  if (inp.pattern) return inp.pattern;
-  if (inp.description) return String(inp.description);
-  if (inp.command) {
-    const cmd = String(inp.command);
-    return truncateTranscriptText(cmd, 100);
-  }
-  if (inp.prompt) {
-    const p = String(inp.prompt);
-    return truncateTranscriptText(p, 100);
-  }
-  if (inp.skill) return String(inp.skill);
-  for (const v of Object.values(inp)) {
-    if (typeof v === "string" && v.length > 0 && v.length < 120) return v;
-  }
-  return "";
-}
-
 function ToolCallRow({ item }: { item: ChatTimelineItem }) {
   const [open, setOpen] = useState(false);
-  const summary = getToolSummary(item);
+  const summary = summarizeToolInput(item.input, 100);
   const hasInput = item.input && Object.keys(item.input).length > 0;
   const toolLabel = formatToolName(item.tool) || "工具";
 
