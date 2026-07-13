@@ -66,26 +66,19 @@ describe("global path / reserved slug consistency", () => {
   // must be reserved — otherwise a user could create a workspace with that slug
   // and shadow the global route's URL space.
   //
-  // GLOBAL_PREFIXES from paths.ts is private — we re-derive the list from
-  // probing isGlobalPath. Order matters: keep this list in sync with paths.ts.
-  const globalPrefixes = [
-    "/login",
-    "/logout",
-    "/signup",
-    "/workspaces/",
-  ];
+  const globalPaths = [paths.login(), paths.newWorkspace()];
 
-  it("isGlobalPath agrees with the canonical global prefix list", () => {
-    for (const prefix of globalPrefixes) {
-      expect(isGlobalPath(prefix)).toBe(true);
+  it("isGlobalPath agrees with the current global destinations", () => {
+    for (const path of globalPaths) {
+      expect(isGlobalPath(path)).toBe(true);
     }
     expect(isGlobalPath("/acme/issues")).toBe(false);
     expect(isGlobalPath("/")).toBe(false);
   });
 
   it("every global prefix's first path segment is a reserved slug", () => {
-    for (const prefix of globalPrefixes) {
-      const firstSegment = prefix.split("/").filter(Boolean)[0];
+    for (const path of globalPaths) {
+      const firstSegment = path.split("/").filter(Boolean)[0];
       if (!firstSegment) continue;
       expect(
         RESERVED_SLUGS.has(firstSegment),
