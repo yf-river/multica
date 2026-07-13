@@ -10,7 +10,7 @@ const PromptEvaluationSkillPatchSchema = z.object({
   patch: z.string().default(""),
   patch_hash: z.string().default(""),
   patch_bytes: z.number().default(0),
-  candidate_intent: z.enum(["update_existing_skill", "create_operation_skill"]).or(z.string()).default("update_existing_skill"),
+  candidate_intent: z.enum(["update_existing_skill", "create_operation_skill"]).or(z.string()),
   operation_skill_key: z.string().optional(),
   operation_skill_path: z.string().optional(),
   operation_skill_reason: z.string().optional(),

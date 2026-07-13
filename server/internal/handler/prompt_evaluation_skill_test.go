@@ -468,6 +468,7 @@ func TestPromptEvaluationSkillPatchDefaultsRequests(t *testing.T) {
 			"skill_patch": map[string]any{
 				"schema_version":       promptEvaluationSkillPatchSchema,
 				"patch":                patchText,
+				"candidate_intent":     "update_existing_skill",
 				"source_snapshot":      snapshot,
 				"source_resource_id":   "resource-1",
 				"repo_path":            "/tmp/goal-d-skill-patch",
@@ -488,7 +489,7 @@ func TestPromptEvaluationSkillPatchDefaultsRequests(t *testing.T) {
 		t.Fatalf("skill patch hash/bytes should be present after decode = %+v", skillPatch)
 	}
 	if skillPatch.CandidateIntent != "update_existing_skill" {
-		t.Fatalf("legacy skill patch should default to update_existing_skill, got %+v", skillPatch)
+		t.Fatalf("skill patch candidate intent = %q, want update_existing_skill", skillPatch.CandidateIntent)
 	}
 	freshnessReq := CheckPromptEvaluationSkillFreshnessRequest{}
 	applySkillPatchFreshnessDefaults(&freshnessReq, skillPatch)

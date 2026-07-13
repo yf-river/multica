@@ -97,7 +97,7 @@ type PromptEvaluationSkillPatch struct {
 	Patch                string                                 `json:"patch"`
 	PatchHash            string                                 `json:"patch_hash"`
 	PatchBytes           int                                    `json:"patch_bytes"`
-	CandidateIntent      string                                 `json:"candidate_intent,omitempty"`
+	CandidateIntent      string                                 `json:"candidate_intent"`
 	OperationSkillKey    string                                 `json:"operation_skill_key,omitempty"`
 	OperationSkillPath   string                                 `json:"operation_skill_path,omitempty"`
 	OperationSkillReason string                                 `json:"operation_skill_reason,omitempty"`

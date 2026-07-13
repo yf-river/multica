@@ -494,7 +494,7 @@ func normalizePromptEvaluationSkillPatch(raw PromptEvaluationSkillPatch, candida
 	if sourceSnapshot == nil {
 		return PromptEvaluationSkillPatch{}, errors.New("skill_patch.source_snapshot is required")
 	}
-	candidateIntent := firstNonEmpty(raw.CandidateIntent, "update_existing_skill")
+	candidateIntent := strings.TrimSpace(raw.CandidateIntent)
 	if candidateIntent != "update_existing_skill" && candidateIntent != "create_operation_skill" {
 		return PromptEvaluationSkillPatch{}, errors.New("skill_patch.candidate_intent must be update_existing_skill or create_operation_skill")
 	}
@@ -550,9 +550,6 @@ func skillPatchFromCandidate(candidate db.PromptEvaluationOptimizationCandidate)
 	}
 	if patch.PatchBytes == 0 {
 		patch.PatchBytes = len([]byte(patch.Patch))
-	}
-	if strings.TrimSpace(patch.CandidateIntent) == "" {
-		patch.CandidateIntent = "update_existing_skill"
 	}
 	return &patch
 }

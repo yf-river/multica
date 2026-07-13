@@ -127,6 +127,7 @@ test.describe("Goal E Gongfeng controlled skill writeback", () => {
         edit_note: "Goal E E-06 fixture applies to the actual v5.0.0_dev_sop checkout with pre-existing dirty files recorded.",
         skill_patch: {
           patch: candidatePatch,
+          candidate_intent: "update_existing_skill",
           source_snapshot: snapshot,
           source_resource_id: gongfengResource.id,
           repo_path: WRITEBACK_REPO,

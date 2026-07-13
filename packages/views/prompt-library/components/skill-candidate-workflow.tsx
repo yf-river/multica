@@ -47,7 +47,7 @@ export function SkillCandidateWorkflowPanel({
   const verificationPlan = stringFromUnknown(skillPatch["verification_plan"]);
   const patchHash = stringFromUnknown(skillPatch["patch_hash"]);
   const publicationStatus = stringFromUnknown(skillPatch["publication_status"]);
-  const candidateIntent = stringFromUnknown(skillPatch["candidate_intent"]) || "update_existing_skill";
+  const candidateIntent = stringFromUnknown(skillPatch["candidate_intent"]);
   const operationSkillKey = stringFromUnknown(skillPatch["operation_skill_key"]);
   const operationSkillPath = stringFromUnknown(skillPatch["operation_skill_path"]);
   const operationSkillReason = stringFromUnknown(skillPatch["operation_skill_reason"]);

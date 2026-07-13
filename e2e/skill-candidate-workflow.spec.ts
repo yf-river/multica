@@ -281,6 +281,7 @@ test.describe("Skill candidate workflow", () => {
       edit_note: "E2E fixture replaces generated prompt candidate with a skill patch.",
       skill_patch: {
         patch: candidatePatch,
+        candidate_intent: "update_existing_skill",
         source_snapshot: snapshot,
         source_resource_id: resource.id,
         repo_path: tempRepoPath,

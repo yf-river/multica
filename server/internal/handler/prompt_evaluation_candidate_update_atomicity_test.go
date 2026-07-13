@@ -95,7 +95,7 @@ func TestUpdatePromptEvaluationOptimizationCandidateDoesNotPartiallyCommitSkillP
 	failed := update(map[string]any{
 		"candidate_name": "new name", "candidate_content": "new content", "rationale": "new rationale",
 		"skill_patch": map[string]any{
-			"patch": "diff --git a/a b/a\n", "source_snapshot": map[string]any{
+			"patch": "diff --git a/a b/a\n", "candidate_intent": "update_existing_skill", "source_snapshot": map[string]any{
 				"schema_version": promptEvaluationSkillSnapshotSchema, "repo_path": "/repo", "branch": "HEAD",
 				"skill_path": ".codebuddy/skills/verify/SKILL.md", "skill_hash": "source-hash",
 			},

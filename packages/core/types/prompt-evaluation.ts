@@ -369,7 +369,7 @@ export interface PromptEvaluationSkillPatch {
   patch: string;
   patch_hash: string;
   patch_bytes: number;
-  candidate_intent?: "update_existing_skill" | "create_operation_skill" | string;
+  candidate_intent: "update_existing_skill" | "create_operation_skill" | string;
   operation_skill_key?: string;
   operation_skill_path?: string;
   operation_skill_reason?: string;
@@ -531,7 +531,10 @@ export interface UpdatePromptEvaluationOptimizationCandidateRequest {
   candidate_content: string;
   rationale?: string;
   edit_note?: string;
-  skill_patch?: Partial<PromptEvaluationSkillPatch> & { patch: string };
+  skill_patch?: Partial<PromptEvaluationSkillPatch> & {
+    patch: string;
+    candidate_intent: PromptEvaluationSkillPatch["candidate_intent"];
+  };
 }
 
 export interface PublishPromptEvaluationOptimizationCandidateResponse {
