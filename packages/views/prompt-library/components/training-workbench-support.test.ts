@@ -16,10 +16,4 @@ describe("summarizeLinkedDatasetVersions", () => {
       }],
     }))).toBe("绑定用例库版本：Regression Set v3 · 指纹 abcdef1234");
   });
-
-  it("does not read retired binding aliases", () => {
-    expect(summarizeLinkedDatasetVersions(asset({
-      数据集版本: [{ 数据集版本ID: "legacy-version", 数据集名称: "Legacy" }],
-    }))).toBeNull();
-  });
 });

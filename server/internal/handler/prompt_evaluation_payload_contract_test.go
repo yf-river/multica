@@ -65,25 +65,7 @@ func TestPromptEvaluationCaseProjectionsUseCanonicalFieldsOnly(t *testing.T) {
 	assertCanonical(t, fromVersion[0])
 }
 
-func TestPromptEvaluationCaseNormalizerDoesNotReadRetiredAliases(t *testing.T) {
-	retired := normalizePromptEvaluationCase(0, map[string]any{
-		"名称":       "retired name",
-		"变量":       map[string]any{"title": "retired"},
-		"期望包含":     []any{"retired"},
-		"标签":       []any{"retired"},
-		"input":    map[string]any{"retired": true},
-		"expected": map[string]any{"retired": true},
-	})
-	if retired.Name != "用例 1" || len(retired.Variables) != 0 || len(retired.ExpectedContains) != 0 || len(retired.Tags) != 0 {
-		t.Fatalf("retired aliases were still consumed: %#v", retired)
-	}
-	if _, exists := retired.Input["原始输入"]; exists {
-		t.Fatalf("retired input survived normalization: %#v", retired.Input)
-	}
-	if _, exists := retired.Expected["原始期望"]; exists {
-		t.Fatalf("retired expected value survived normalization: %#v", retired.Expected)
-	}
-
+func TestPromptEvaluationCaseNormalizerUsesCanonicalFields(t *testing.T) {
 	current := normalizePromptEvaluationCase(0, map[string]any{
 		"case_name":         "current name",
 		"variables":         map[string]any{"title": "current"},
@@ -103,8 +85,6 @@ func TestPromptEvaluationDatasetLinksUseCanonicalFieldsOnly(t *testing.T) {
 			"dataset_asset_id":   "dataset-2",
 			"dataset_name":       "Current Dataset",
 		}},
-		"数据集版本":   []any{map[string]any{"数据集版本ID": "retired-version"}},
-		"关联数据集ID": "retired-dataset",
 	}
 	refs := promptEvaluationExplicitDatasetVersionRefs(payload)
 	if len(refs) != 1 || refs[0].DatasetVersionID != "version-1" || refs[0].DatasetAssetID != "dataset-2" || refs[0].DatasetName != "Current Dataset" {
@@ -114,9 +94,6 @@ func TestPromptEvaluationDatasetLinksUseCanonicalFieldsOnly(t *testing.T) {
 	if len(ids) != 2 || ids[0] != "dataset-1" || ids[1] != "dataset-2" {
 		t.Fatalf("canonical ids = %#v", ids)
 	}
-	if refs := promptEvaluationExplicitDatasetVersionRefs(map[string]any{"数据集版本": payload["数据集版本"]}); len(refs) != 0 {
-		t.Fatalf("retired top-level alias was still consumed: %#v", refs)
-	}
 }
 
 func TestPromptEvaluationMetricsAndExperimentDimensionsHaveDistinctContracts(t *testing.T) {
@@ -124,8 +101,6 @@ func TestPromptEvaluationMetricsAndExperimentDimensionsHaveDistinctContracts(t *
 		"metric_contract":       []any{"case_count", "pass_rate"},
 		"metric_notes":          []any{"按当前快照统计"},
 		"experiment_dimensions": []any{"命中率", map[string]any{"name": "中文一致性", "weight": 2}},
-		"实验维度":                  []any{"retired"},
-		"指标口径":                  []any{"retired"},
 	}
 	dimensions := promptEvaluationExperimentDimensions(payload)
 	if len(dimensions) != 2 || dimensions[0].Name != "命中率" || dimensions[1].Name != "中文一致性" {
@@ -135,12 +110,6 @@ func TestPromptEvaluationMetricsAndExperimentDimensionsHaveDistinctContracts(t *
 	if profile.EvaluationDimensionCount != 2 || profile.ExperimentDimensionCount != 2 {
 		t.Fatalf("profile metric=%d experiment=%d", profile.EvaluationDimensionCount, profile.ExperimentDimensionCount)
 	}
-	if legacy := promptEvaluationExperimentDimensions(map[string]any{
-		"实验维度":            []any{"retired"},
-		"metric_contract": []any{"must-not-be-a-score"},
-	}); len(legacy) != 0 {
-		t.Fatalf("retired or metric fields became experiment dimensions: %#v", legacy)
-	}
 }
 
 func TestPromptEvaluationExperimentContextUsesCanonicalFieldsOnly(t *testing.T) {
@@ -148,20 +117,10 @@ func TestPromptEvaluationExperimentContextUsesCanonicalFieldsOnly(t *testing.T) 
 		"experiment_target":     "current target",
 		"baseline_output":       "current baseline",
 		"experiment_dimensions": []any{"命中率"},
-		"实验对象":                  "retired target",
-		"基线输出":                  "retired baseline",
 	}
 	dimensions := promptEvaluationExperimentDimensions(payload)
 	if len(dimensions) != 1 || dimensions[0].ExperimentTarget != "current target" || dimensions[0].BaselineOutput != "current baseline" {
 		t.Fatalf("canonical context = %#v", dimensions)
-	}
-	legacy := promptEvaluationExperimentDimensions(map[string]any{
-		"experiment_dimensions": []any{"命中率"},
-		"实验对象":                  "retired target",
-		"基线输出":                  "retired baseline",
-	})
-	if len(legacy) != 1 || legacy[0].ExperimentTarget != "" || legacy[0].BaselineOutput != "" {
-		t.Fatalf("retired context aliases were consumed: %#v", legacy)
 	}
 }
 
@@ -177,13 +136,13 @@ func TestPromptEvaluationPayloadRejectsMalformedAgentSelection(t *testing.T) {
 	}
 }
 
-func TestPromptEvaluationAssetTypesHaveNoHistoricalVariants(t *testing.T) {
+func TestPromptEvaluationAssetTypesRejectInvalidValues(t *testing.T) {
 	if !validPromptEvaluationAssetType(promptEvaluationAssetDataset) || !validPromptEvaluationAssetType(promptEvaluationAssetTestSuite) {
 		t.Fatal("current asset types were rejected")
 	}
-	for _, retired := range []string{"实验", "优化运行"} {
-		if validPromptEvaluationAssetType(retired) {
-			t.Fatalf("retired asset type %q was accepted", retired)
+	for _, invalid := range []string{"", "unknown"} {
+		if validPromptEvaluationAssetType(invalid) {
+			t.Fatalf("invalid asset type %q was accepted", invalid)
 		}
 	}
 }

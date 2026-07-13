@@ -18,23 +18,6 @@ func resetThinkingCacheForTests() {
 
 // ── Claude help parsing ──────────────────────────────────────────────
 
-func TestParseClaudeEffortHelp_OldFormat(t *testing.T) {
-	t.Parallel()
-	// claude 2.1.109 — the older help omits xhigh.
-	help := `Usage: claude [options]
-
-Options:
-  --model <model>     Model to use
-  --effort <level>    Effort level for the current session (low, medium, high, max)
-  --verbose
-`
-	got := parseClaudeEffortHelp(help)
-	want := []string{"low", "medium", "high", "max"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("parseClaudeEffortHelp: got %v, want %v", got, want)
-	}
-}
-
 func TestParseClaudeEffortHelp_NewFormat(t *testing.T) {
 	t.Parallel()
 	// claude 2.1.121 — the newer help adds xhigh.

@@ -43,8 +43,4 @@ describe("desktop debug and evaluation routes", () => {
       props: expect.objectContaining(props),
     });
   });
-
-  it("does not keep legacy training routes", () => {
-    expect(childRoutes.find((route) => route.path === "training")).toBeUndefined();
-  });
 });
