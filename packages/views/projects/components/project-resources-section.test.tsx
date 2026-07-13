@@ -18,7 +18,6 @@ vi.mock("@multica/core/projects", () => ({
   useCreateProjectResource: () => ({ mutateAsync: mockCreateProjectResource, isPending: false }),
   useDeleteProjectResource: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useSyncProjectResource: () => ({ mutateAsync: vi.fn(), isPending: false }),
-  useUpdateProjectResource: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 
 vi.mock("@multica/core/paths", () => ({
@@ -83,8 +82,6 @@ vi.mock("@multica/ui/components/ui/button", () => ({
 vi.mock("../../platform", () => ({
   isDesktopShell: () => false,
   useLocalDaemonStatus: () => ({ daemonId: null, running: false }),
-  pickDirectory: vi.fn(),
-  validateLocalDirectory: vi.fn(),
 }));
 
 vi.mock("sonner", () => ({
@@ -175,7 +172,7 @@ describe("ProjectResourcesSection", () => {
     expect(screen.queryByRole("button", { name: "启用" })).not.toBeInTheDocument();
   });
 
-  it("keeps existing local directories as compatibility resources without an add entry", () => {
+  it("renders a current local directory resource without dead edit controls", () => {
     mockProjectResources.mockReturnValue([
       {
         id: "local-resource-1",
@@ -197,8 +194,7 @@ describe("ProjectResourcesSection", () => {
     renderSection();
 
     expect(screen.getByText("user-center 本地目录")).toBeInTheDocument();
-    expect(screen.getByText("兼容保留")).toBeInTheDocument();
-    expect(screen.getByText("历史本地目录资源。标准任务默认使用平台 worktree，不再自动进入这个目录。")).toBeInTheDocument();
-    expect(screen.queryByText("添加本地目录")).not.toBeInTheDocument();
+    expect(screen.getByText("/data/ida/user-center")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "重命名" })).not.toBeInTheDocument();
   });
 });
