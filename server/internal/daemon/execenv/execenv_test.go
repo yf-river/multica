@@ -617,11 +617,15 @@ func TestReuseRefreshesSkillsWithoutDuplicating(t *testing.T) {
 
 	// Re-dispatch twice on the same persistent workdir.
 	for i := 0; i < 2; i++ {
-		if reused := Reuse(ReuseParams{
+		reused, err := Reuse(ReuseParams{
 			WorkDir:  env.WorkDir,
 			Provider: "claude",
 			Task:     task,
-		}, testLogger()); reused == nil {
+		}, testLogger())
+		if err != nil {
+			t.Fatalf("Reuse #%d failed: %v", i+1, err)
+		}
+		if reused == nil {
 			t.Fatalf("Reuse #%d returned nil", i+1)
 		}
 	}
@@ -687,11 +691,15 @@ func TestReuseReclaimsManagedSkillDirWithStrayAgentFile(t *testing.T) {
 		t.Fatalf("seed stray agent file: %v", err)
 	}
 
-	if reused := Reuse(ReuseParams{
+	reused, err := Reuse(ReuseParams{
 		WorkDir:  env.WorkDir,
 		Provider: "claude",
 		Task:     task,
-	}, testLogger()); reused == nil {
+	}, testLogger())
+	if err != nil {
+		t.Fatalf("Reuse failed: %v", err)
+	}
+	if reused == nil {
 		t.Fatal("Reuse returned nil")
 	}
 
@@ -714,6 +722,27 @@ func TestReuseReclaimsManagedSkillDirWithStrayAgentFile(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(skillsDir, "issue-review", "SKILL.md")); err != nil {
 		t.Errorf("expected a refreshed SKILL.md at the canonical slug: %v", err)
+	}
+}
+
+func TestReuseRejectsPartialContextRefresh(t *testing.T) {
+	t.Parallel()
+
+	workDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(workDir, ".agent_context"), []byte("blocks managed context directory"), 0o644); err != nil {
+		t.Fatalf("seed context path conflict: %v", err)
+	}
+
+	reused, err := Reuse(ReuseParams{
+		WorkDir:  workDir,
+		Provider: "claude",
+		Task:     TaskContextForEnv{IssueID: "fresh-issue"},
+	}, testLogger())
+	if err == nil {
+		t.Fatal("Reuse accepted a workdir whose current context could not be written")
+	}
+	if reused != nil {
+		t.Fatalf("Reuse returned a partial environment: %#v", reused)
 	}
 }
 
@@ -2575,7 +2604,10 @@ func TestReuseRestoresCodexHome(t *testing.T) {
 	}
 
 	// Reuse should restore CodexHome.
-	reused := Reuse(ReuseParams{WorkDir: env.WorkDir, Provider: "codex", Task: TaskContextForEnv{IssueID: "reuse-test"}}, testLogger())
+	reused, err := Reuse(ReuseParams{WorkDir: env.WorkDir, Provider: "codex", Task: TaskContextForEnv{IssueID: "reuse-test"}}, testLogger())
+	if err != nil {
+		t.Fatalf("Reuse failed: %v", err)
+	}
 	if reused == nil {
 		t.Fatal("Reuse returned nil")
 	}
@@ -2658,7 +2690,10 @@ func TestReuseRestoresCodexPluginCache(t *testing.T) {
 		t.Fatalf("remove codex plugins dir: %v", err)
 	}
 
-	reused := Reuse(ReuseParams{WorkDir: env.WorkDir, Provider: "codex", Task: TaskContextForEnv{IssueID: "reuse-plugin-test"}}, testLogger())
+	reused, err := Reuse(ReuseParams{WorkDir: env.WorkDir, Provider: "codex", Task: TaskContextForEnv{IssueID: "reuse-plugin-test"}}, testLogger())
+	if err != nil {
+		t.Fatalf("Reuse failed: %v", err)
+	}
 	if reused == nil {
 		t.Fatal("Reuse returned nil")
 	}
@@ -2696,7 +2731,7 @@ func TestReuseWritesMissingCodexWorkspaceSkills(t *testing.T) {
 		t.Fatalf("remove codex skills dir: %v", err)
 	}
 
-	reused := Reuse(ReuseParams{WorkDir: env.WorkDir, Provider: "codex", Task: TaskContextForEnv{
+	reused, err := Reuse(ReuseParams{WorkDir: env.WorkDir, Provider: "codex", Task: TaskContextForEnv{
 		IssueID: "reuse-skill-test",
 		AgentSkills: []SkillContextForEnv{
 			{
@@ -2706,6 +2741,9 @@ func TestReuseWritesMissingCodexWorkspaceSkills(t *testing.T) {
 			},
 		},
 	}}, testLogger())
+	if err != nil {
+		t.Fatalf("Reuse failed: %v", err)
+	}
 	if reused == nil {
 		t.Fatal("Reuse returned nil")
 	}
@@ -2755,7 +2793,7 @@ func TestReuseUpdatesCodexWorkspaceSkills(t *testing.T) {
 	}
 	defer func() { _ = env.Cleanup(true) }()
 
-	reused := Reuse(ReuseParams{WorkDir: env.WorkDir, Provider: "codex", Task: TaskContextForEnv{
+	reused, err := Reuse(ReuseParams{WorkDir: env.WorkDir, Provider: "codex", Task: TaskContextForEnv{
 		IssueID: "reuse-skill-update-test",
 		AgentSkills: []SkillContextForEnv{
 			{
@@ -2765,6 +2803,9 @@ func TestReuseUpdatesCodexWorkspaceSkills(t *testing.T) {
 			},
 		},
 	}}, testLogger())
+	if err != nil {
+		t.Fatalf("Reuse failed: %v", err)
+	}
 	if reused == nil {
 		t.Fatal("Reuse returned nil")
 	}
@@ -3061,9 +3102,12 @@ func TestReuseSeedsUserSkillUpdates(t *testing.T) {
 		t.Fatalf("update user SKILL.md: %v", err)
 	}
 
-	reused := Reuse(ReuseParams{WorkDir: env.WorkDir, Provider: "codex", Task: TaskContextForEnv{
+	reused, err := Reuse(ReuseParams{WorkDir: env.WorkDir, Provider: "codex", Task: TaskContextForEnv{
 		IssueID: "user-skill-reuse-test",
 	}}, testLogger())
+	if err != nil {
+		t.Fatalf("Reuse failed: %v", err)
+	}
 	if reused == nil {
 		t.Fatal("Reuse returned nil")
 	}
@@ -3116,12 +3160,15 @@ func TestReuseClearsUserSkillResidueOnWorkspaceConflict(t *testing.T) {
 		t.Fatalf("user support file should be seeded in round 1: %v", err)
 	}
 
-	reused := Reuse(ReuseParams{WorkDir: env.WorkDir, Provider: "codex", Task: TaskContextForEnv{
+	reused, err := Reuse(ReuseParams{WorkDir: env.WorkDir, Provider: "codex", Task: TaskContextForEnv{
 		IssueID: "reuse-conflict-test",
 		AgentSkills: []SkillContextForEnv{
 			{Name: "Writing", Content: "workspace writing"},
 		},
 	}}, testLogger())
+	if err != nil {
+		t.Fatalf("Reuse failed: %v", err)
+	}
 	if reused == nil {
 		t.Fatal("Reuse returned nil")
 	}
@@ -3178,9 +3225,12 @@ func TestReuseClearsRemovedUserSkill(t *testing.T) {
 		t.Fatalf("remove user skill: %v", err)
 	}
 
-	reused := Reuse(ReuseParams{WorkDir: env.WorkDir, Provider: "codex", Task: TaskContextForEnv{
+	reused, err := Reuse(ReuseParams{WorkDir: env.WorkDir, Provider: "codex", Task: TaskContextForEnv{
 		IssueID: "reuse-remove-test",
 	}}, testLogger())
+	if err != nil {
+		t.Fatalf("Reuse failed: %v", err)
+	}
 	if reused == nil {
 		t.Fatal("Reuse returned nil")
 	}

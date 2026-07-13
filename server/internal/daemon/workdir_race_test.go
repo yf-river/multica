@@ -95,9 +95,9 @@ func TestRunTask_StartTaskCalledAfterWorkdirOnDisk(t *testing.T) {
 	expectedWorkDir := filepath.Join(expectedEnvRoot, "workdir")
 
 	var (
-		startCalled    atomic.Bool
-		workdirOnDisk  atomic.Bool
-		envRootOnDisk  atomic.Bool
+		startCalled   atomic.Bool
+		workdirOnDisk atomic.Bool
+		envRootOnDisk atomic.Bool
 	)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -156,6 +156,98 @@ func TestRunTask_StartTaskCalledAfterWorkdirOnDisk(t *testing.T) {
 	}
 }
 
+func TestRunTaskDoesNotStartWithPartiallyRefreshedReusedContext(t *testing.T) {
+	t.Parallel()
+
+	priorWorkDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(priorWorkDir, ".agent_context"), []byte("blocks managed context directory"), 0o644); err != nil {
+		t.Fatalf("seed context path conflict: %v", err)
+	}
+
+	var startCalled atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/start") {
+			startCalled.Store(true)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	d := &Daemon{
+		client:         NewClient(srv.URL),
+		logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+		workspaces:     make(map[string]*workspaceState),
+		runtimeIndex:   map[string]Runtime{"rt-reuse": {ID: "rt-reuse", Provider: "claude"}},
+		activeEnvRoots: make(map[string]int),
+		cfg: Config{
+			WorkspacesRoot: t.TempDir(),
+			Agents:         map[string]AgentEntry{"claude": {Path: filepath.Join(t.TempDir(), "claude")}},
+		},
+	}
+	task := Task{
+		ID:           "task-reuse-context",
+		WorkspaceID:  "ws-reuse-context",
+		RuntimeID:    "rt-reuse",
+		IssueID:      "issue-reuse-context",
+		PriorWorkDir: priorWorkDir,
+		Agent:        &AgentData{Name: "test-agent"},
+	}
+
+	_, err := d.runTask(context.Background(), task, "claude", 0, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err == nil || !strings.Contains(err.Error(), "refresh context files") {
+		t.Fatalf("runTask error = %v, want explicit context refresh failure", err)
+	}
+	if startCalled.Load() {
+		t.Fatal("runTask started the server-side task after reuse context refresh failed")
+	}
+}
+
+func TestRunTaskFailsWhenRuntimeConfigCannotBeInjected(t *testing.T) {
+	t.Parallel()
+
+	priorWorkDir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(priorWorkDir, "CLAUDE.md"), 0o755); err != nil {
+		t.Fatalf("seed runtime config path conflict: %v", err)
+	}
+
+	var startCalled atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/start") {
+			startCalled.Store(true)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	d := &Daemon{
+		client:         NewClient(srv.URL),
+		logger:         slog.New(slog.NewTextHandler(io.Discard, nil)),
+		workspaces:     make(map[string]*workspaceState),
+		runtimeIndex:   map[string]Runtime{"rt-config": {ID: "rt-config", Provider: "claude"}},
+		activeEnvRoots: make(map[string]int),
+		cfg: Config{
+			WorkspacesRoot: t.TempDir(),
+			Agents:         map[string]AgentEntry{"claude": {Path: filepath.Join(t.TempDir(), "claude")}},
+		},
+	}
+	task := Task{
+		ID:           "task-runtime-config",
+		WorkspaceID:  "ws-runtime-config",
+		RuntimeID:    "rt-config",
+		IssueID:      "issue-runtime-config",
+		PriorWorkDir: priorWorkDir,
+		Agent:        &AgentData{Name: "test-agent"},
+	}
+
+	_, err := d.runTask(context.Background(), task, "claude", 0, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	if err == nil || !strings.Contains(err.Error(), "inject runtime config") {
+		t.Fatalf("runTask error = %v, want explicit runtime config injection failure", err)
+	}
+	if !startCalled.Load() {
+		t.Fatal("runTask did not reach runtime config injection after starting the prepared task")
+	}
+}
+
 // TestHandleTask_KeepsEnvRootActiveAcrossCompletion is the regression guard
 // for issue #3999 race B. After runner.run returns, the in-process active
 // guard installed inside runTask (defer unmarkActiveEnvRoot at the
@@ -178,7 +270,7 @@ func TestHandleTask_KeepsEnvRootActiveAcrossCompletion(t *testing.T) {
 	expectedEnvRoot := execenv.PredictRootDir(workspacesRoot, workspaceID, taskID)
 
 	var (
-		completeCalled atomic.Bool
+		completeCalled   atomic.Bool
 		activeAtComplete atomic.Bool
 	)
 

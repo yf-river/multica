@@ -199,10 +199,10 @@ func allocateCollisionFreeSkillDir(skillsParent, baseSlug string) (slug, dir str
 // writeSidecarManifest persists m to {envRoot}/{sidecarManifestFile}.
 // Empty manifests are still written so a later Cleanup that finds the
 // file knows tracking was attempted (vs. an old build that predates this
-// mechanism, where the file is absent and Cleanup must no-op). Failures
-// are returned to the caller; the caller treats them as non-fatal because
-// a missed manifest only degrades local_directory cleanup, not task
-// execution.
+// mechanism, where the file is absent and Cleanup must no-op). A new or reused
+// environment must not start without this manifest: local-directory and
+// managed-worktree cleanup otherwise cannot distinguish platform sidecars from
+// user files after the task exits.
 func writeSidecarManifest(envRoot string, m *sidecarManifest) error {
 	if envRoot == "" {
 		return nil

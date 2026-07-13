@@ -68,12 +68,10 @@ func writeContextFiles(workDir, provider string, ctx TaskContextForEnv, manifest
 		}
 	}
 
-	// Project resources are best-effort: a write failure logs but does not
-	// block task startup. Missing resources surface as the agent simply not
-	// seeing the file, which matches the "scoped, not dumped" design (the
-	// meta skill content always lists what the agent should expect).
+	// Project resources are part of the claimed task context. Failing here is
+	// safer than starting an Agent whose brief advertises resources that are
+	// absent from the structured sidecar consumed by Skills and tooling.
 	if err := writeProjectResources(workDir, ctx, manifest); err != nil {
-		// Caller logs warnings; avoid noisy returns for non-fatal context.
 		return fmt.Errorf("write project resources: %w", err)
 	}
 

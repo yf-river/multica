@@ -292,7 +292,7 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 	}
 
 	if err := writeSidecarManifest(envRoot, manifest); err != nil {
-		logger.Warn("execenv: write sidecar manifest failed (non-fatal)", "error", err)
+		return nil, fmt.Errorf("execenv: write sidecar manifest: %w", err)
 	}
 
 	// For OpenClaw, synthesize a per-task config that pins workspace to
@@ -344,10 +344,16 @@ type ReuseParams struct {
 }
 
 // Reuse wraps an existing workdir into an Environment and refreshes context files.
-// Returns nil if the workdir does not exist (caller should fall back to Prepare).
-func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
+// Returns (nil, nil) if the workdir does not exist (caller should fall back to
+// Prepare). Once a workdir exists, every refresh step is part of the execution
+// contract: returning a partially refreshed environment could run a task with
+// stale identity, skills, project context, or managed provider configuration.
+func Reuse(params ReuseParams, logger *slog.Logger) (*Environment, error) {
 	if _, err := os.Stat(params.WorkDir); err != nil {
-		return nil
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("execenv: inspect reuse workdir: %w", err)
 	}
 
 	rootDir := filepath.Dir(params.WorkDir)
@@ -397,10 +403,10 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 	// daemon skips anyway) or when no prior manifest exists (older build).
 	if env.RootDir != "" {
 		if err := removeReusedManagedSkillDirs(env.RootDir, skillsDirPath(params.WorkDir, params.Provider)); err != nil {
-			logger.Warn("execenv: reclaim managed skill dirs on reuse failed", "error", err)
+			return nil, fmt.Errorf("execenv: reclaim managed skill dirs on reuse: %w", err)
 		}
 		if err := CleanupSidecars(env.RootDir); err != nil {
-			logger.Warn("execenv: roll back prior sidecars on reuse failed", "error", err)
+			return nil, fmt.Errorf("execenv: roll back prior sidecars on reuse: %w", err)
 		}
 	}
 
@@ -416,7 +422,7 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 	// case to avoid creating a stray manifest at the filesystem root.
 	manifest := &sidecarManifest{}
 	if err := writeContextFiles(params.WorkDir, params.Provider, params.Task, manifest); err != nil {
-		logger.Warn("execenv: refresh context files failed", "error", err)
+		return nil, fmt.Errorf("execenv: refresh context files: %w", err)
 	}
 
 	// Restore CodexHome for Codex provider — the per-task codex-home directory
@@ -425,12 +431,11 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 	if params.Provider == "codex" {
 		codexHome := filepath.Join(env.RootDir, "codex-home")
 		if err := prepareCodexHomeWithOpts(codexHome, CodexHomeOptions{CodexVersion: params.CodexVersion, WorkDir: params.WorkDir}, logger); err != nil {
-			logger.Warn("execenv: refresh codex-home failed", "error", err)
-		} else {
-			env.CodexHome = codexHome
-			if err := hydrateCodexSkills(codexHome, params.Task.AgentSkills, logger); err != nil {
-				logger.Warn("execenv: refresh codex skills failed", "error", err)
-			}
+			return nil, fmt.Errorf("execenv: refresh codex-home: %w", err)
+		}
+		env.CodexHome = codexHome
+		if err := hydrateCodexSkills(codexHome, params.Task.AgentSkills, logger); err != nil {
+			return nil, fmt.Errorf("execenv: refresh codex skills: %w", err)
 		}
 	}
 
@@ -440,15 +445,14 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 	if params.Provider == "cursor" && env.RootDir != "" {
 		cursorDataDir, err := prepareCursorMcpConfig(env.RootDir, params.WorkDir, params.McpConfig, manifest)
 		if err != nil {
-			logger.Warn("execenv: refresh cursor mcp config failed", "error", err)
-			return nil
+			return nil, fmt.Errorf("execenv: refresh cursor mcp config: %w", err)
 		}
 		env.CursorDataDir = cursorDataDir
 	}
 
 	if env.RootDir != "" {
 		if err := writeSidecarManifest(env.RootDir, manifest); err != nil {
-			logger.Warn("execenv: refresh sidecar manifest failed", "error", err)
+			return nil, fmt.Errorf("execenv: refresh sidecar manifest: %w", err)
 		}
 	}
 
@@ -465,15 +469,14 @@ func Reuse(params ReuseParams, logger *slog.Logger) *Environment {
 			Gateway:     params.OpenclawGateway,
 		})
 		if err != nil {
-			logger.Warn("execenv: refresh openclaw config failed", "error", err)
-			return nil
+			return nil, fmt.Errorf("execenv: refresh openclaw config: %w", err)
 		}
 		env.OpenclawConfigPath = result.ConfigPath
 		env.OpenclawIncludeRoot = result.IncludeRoot
 	}
 
 	logger.Info("execenv: reusing env", "workdir", params.WorkDir)
-	return env
+	return env, nil
 }
 
 // hydrateCodexSkills populates the per-task CODEX_HOME/skills directory with

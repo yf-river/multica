@@ -161,7 +161,8 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		}
 	}
 	if task.PriorWorkDir != "" && issueSpace == nil {
-		env = execenv.Reuse(execenv.ReuseParams{
+		var err error
+		env, err = execenv.Reuse(execenv.ReuseParams{
 			WorkDir:         task.PriorWorkDir,
 			Provider:        provider,
 			CodexVersion:    codexVersion,
@@ -170,6 +171,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			OpenclawGateway: openclawGateway,
 			Task:            taskCtx,
 		}, d.logger)
+		if err != nil {
+			return TaskResult{}, fmt.Errorf("reuse execution environment: %w", err)
+		}
 	}
 	if env == nil {
 		var err error
@@ -228,7 +232,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// Inject runtime-specific config (meta skill) so the agent discovers .agent_context/.
 	runtimeBrief, err := execenv.InjectRuntimeConfig(env.WorkDir, provider, taskCtx)
 	if err != nil {
-		d.logger.Warn("execenv: inject runtime config failed (non-fatal)", "error", err)
+		return TaskResult{}, fmt.Errorf("inject runtime config: %w", err)
 	}
 	// Workdir is preserved for reuse by future cloud tasks on the same
 	// (agent, issue) pair only when the server does not provide an
