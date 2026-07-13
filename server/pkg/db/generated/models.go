@@ -1247,7 +1247,6 @@ type User struct {
 	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
 	OnboardedAt             pgtype.Timestamptz `json:"onboarded_at"`
 	OnboardingQuestionnaire []byte             `json:"onboarding_questionnaire"`
-	StarterContentState     pgtype.Text        `json:"starter_content_state"`
 	ProfileDescription      string             `json:"profile_description"`
 	Timezone                pgtype.Text        `json:"timezone"`
 	PasswordHash            pgtype.Text        `json:"password_hash"`

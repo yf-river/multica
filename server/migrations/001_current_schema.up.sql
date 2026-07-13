@@ -1688,7 +1688,6 @@ CREATE TABLE public."user" (
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     onboarded_at timestamp with time zone,
     onboarding_questionnaire jsonb DEFAULT '{}'::jsonb NOT NULL,
-    starter_content_state text,
     profile_description text DEFAULT ''::text NOT NULL,
     timezone text,
     password_hash text

@@ -63,7 +63,6 @@ export interface User {
    */
   onboarding_questionnaire: Record<string, unknown>;
   /** Persisted starter-content state returned by the current user API. */
-  starter_content_state: string | null;
   /**
    * Free-form self-description (role, stack, preferences). Injected into
    * the agent brief so coding agents have cheap, durable context about

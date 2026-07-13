@@ -11,7 +11,6 @@ export const mockUser: User = {
   avatar_url: null,
   onboarded_at: null,
   onboarding_questionnaire: {},
-  starter_content_state: null,
   timezone: null,
   profile_description: "",
   created_at: "2026-01-01T00:00:00Z",

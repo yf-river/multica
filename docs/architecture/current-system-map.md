@@ -25,7 +25,7 @@ evidence reviewable by humans.
 | Database functions | 9 |
 | Database triggers | 4 |
 | Database indexes | 194 |
-| Migration files (up + down) | 176 |
+| Migration files (up + down) | 178 |
 | sqlc modules | 55 |
 | sqlc queries | 561 |
 | Go WebSocket events | 79 |
@@ -662,6 +662,8 @@ intentionally platform-specific.
 | 87 | remove_unused_write_only_timestamps | up | — | 0 | 0 | 0 | `server/migrations/087_remove_unused_write_only_timestamps.up.sql` |
 | 88 | remove_unused_lark_binding_timestamp | down | — | 0 | 0 | 0 | `server/migrations/088_remove_unused_lark_binding_timestamp.down.sql` |
 | 88 | remove_unused_lark_binding_timestamp | up | — | 0 | 0 | 0 | `server/migrations/088_remove_unused_lark_binding_timestamp.up.sql` |
+| 89 | remove_starter_content_state | down | — | 0 | 0 | 0 | `server/migrations/089_remove_starter_content_state.down.sql` |
+| 89 | remove_starter_content_state | up | — | 0 | 0 | 0 | `server/migrations/089_remove_starter_content_state.up.sql` |
 
 ### Current tables discovered from up migrations
 

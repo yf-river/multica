@@ -14,7 +14,7 @@ import (
 const createUser = `-- name: CreateUser :one
 INSERT INTO "user" (name, account, avatar_url)
 VALUES ($1, $2, $3)
-RETURNING id, name, account, avatar_url, created_at, updated_at, onboarded_at, onboarding_questionnaire, starter_content_state, profile_description, timezone, password_hash
+RETURNING id, name, account, avatar_url, created_at, updated_at, onboarded_at, onboarding_questionnaire, profile_description, timezone, password_hash
 `
 
 type CreateUserParams struct {
@@ -35,7 +35,6 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.UpdatedAt,
 		&i.OnboardedAt,
 		&i.OnboardingQuestionnaire,
-		&i.StarterContentState,
 		&i.ProfileDescription,
 		&i.Timezone,
 		&i.PasswordHash,
@@ -46,7 +45,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 const createUserWithPassword = `-- name: CreateUserWithPassword :one
 INSERT INTO "user" (name, account, password_hash)
 VALUES ($1, $2, $3)
-RETURNING id, name, account, avatar_url, created_at, updated_at, onboarded_at, onboarding_questionnaire, starter_content_state, profile_description, timezone, password_hash
+RETURNING id, name, account, avatar_url, created_at, updated_at, onboarded_at, onboarding_questionnaire, profile_description, timezone, password_hash
 `
 
 type CreateUserWithPasswordParams struct {
@@ -67,7 +66,6 @@ func (q *Queries) CreateUserWithPassword(ctx context.Context, arg CreateUserWith
 		&i.UpdatedAt,
 		&i.OnboardedAt,
 		&i.OnboardingQuestionnaire,
-		&i.StarterContentState,
 		&i.ProfileDescription,
 		&i.Timezone,
 		&i.PasswordHash,
@@ -76,7 +74,7 @@ func (q *Queries) CreateUserWithPassword(ctx context.Context, arg CreateUserWith
 }
 
 const getUser = `-- name: GetUser :one
-SELECT id, name, account, avatar_url, created_at, updated_at, onboarded_at, onboarding_questionnaire, starter_content_state, profile_description, timezone, password_hash FROM "user"
+SELECT id, name, account, avatar_url, created_at, updated_at, onboarded_at, onboarding_questionnaire, profile_description, timezone, password_hash FROM "user"
 WHERE id = $1
 `
 
@@ -92,7 +90,6 @@ func (q *Queries) GetUser(ctx context.Context, id pgtype.UUID) (User, error) {
 		&i.UpdatedAt,
 		&i.OnboardedAt,
 		&i.OnboardingQuestionnaire,
-		&i.StarterContentState,
 		&i.ProfileDescription,
 		&i.Timezone,
 		&i.PasswordHash,
@@ -101,7 +98,7 @@ func (q *Queries) GetUser(ctx context.Context, id pgtype.UUID) (User, error) {
 }
 
 const getUserByAccount = `-- name: GetUserByAccount :one
-SELECT id, name, account, avatar_url, created_at, updated_at, onboarded_at, onboarding_questionnaire, starter_content_state, profile_description, timezone, password_hash FROM "user"
+SELECT id, name, account, avatar_url, created_at, updated_at, onboarded_at, onboarding_questionnaire, profile_description, timezone, password_hash FROM "user"
 WHERE account = $1
 `
 
@@ -117,7 +114,6 @@ func (q *Queries) GetUserByAccount(ctx context.Context, account string) (User, e
 		&i.UpdatedAt,
 		&i.OnboardedAt,
 		&i.OnboardingQuestionnaire,
-		&i.StarterContentState,
 		&i.ProfileDescription,
 		&i.Timezone,
 		&i.PasswordHash,
@@ -137,7 +133,7 @@ UPDATE "user" SET
     END,
     updated_at = now()
 WHERE id = $1
-RETURNING id, name, account, avatar_url, created_at, updated_at, onboarded_at, onboarding_questionnaire, starter_content_state, profile_description, timezone, password_hash
+RETURNING id, name, account, avatar_url, created_at, updated_at, onboarded_at, onboarding_questionnaire, profile_description, timezone, password_hash
 `
 
 type UpdateUserParams struct {
@@ -178,7 +174,6 @@ func (q *Queries) UpdateUser(ctx context.Context, arg UpdateUserParams) (User, e
 		&i.UpdatedAt,
 		&i.OnboardedAt,
 		&i.OnboardingQuestionnaire,
-		&i.StarterContentState,
 		&i.ProfileDescription,
 		&i.Timezone,
 		&i.PasswordHash,
