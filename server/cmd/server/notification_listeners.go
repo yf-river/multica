@@ -13,24 +13,7 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// mention represents a parsed @mention from markdown content (local alias).
-type mention struct {
-	Type string // "member", "agent", "issue", or "all"
-	ID   string // user_id, agent_id, issue_id, or "all"
-}
-
 var emptyDetails = []byte("{}")
-
-// parseMentions extracts mentions from markdown content.
-// Delegates to the shared util.ParseMentions and converts to the local type.
-func parseMentions(content string) []mention {
-	parsed := util.ParseMentions(content)
-	result := make([]mention, len(parsed))
-	for i, m := range parsed {
-		result[i] = mention{Type: m.Type, ID: m.ID}
-	}
-	return result
-}
 
 // parentBubbleNotifTypes is the allowlist of inbox notification types that
 // bubble up from a sub-issue to subscribers of its parent. Other event types
@@ -409,7 +392,7 @@ func notifyMentionedMembers(
 	bus *events.Bus,
 	queries *db.Queries,
 	e events.Event,
-	mentions []mention,
+	mentions []util.Mention,
 	issueID string,
 	issueTitle string,
 	issueStatus string,
@@ -544,7 +527,7 @@ func projectIssueCreatedNotifications(ctx context.Context, queries *db.Queries, 
 		}
 	}
 	if issue.Description != nil {
-		if err := notifyMentionedMembers(ctx, collector.bus, queries, event, parseMentions(*issue.Description),
+		if err := notifyMentionedMembers(ctx, collector.bus, queries, event, util.ParseMentions(*issue.Description),
 			issue.ID, issue.Title, issue.Status, issue.Title, skip, emptyDetails); err != nil {
 			return nil, err
 		}
@@ -631,12 +614,12 @@ func projectIssueUpdatedNotifications(ctx context.Context, queries *db.Queries, 
 	if payload.DescriptionChanged && issue.Description != nil {
 		previous := map[string]bool{}
 		if payload.PrevDescription != nil {
-			for _, mentioned := range parseMentions(*payload.PrevDescription) {
+			for _, mentioned := range util.ParseMentions(*payload.PrevDescription) {
 				previous[mentioned.Type+":"+mentioned.ID] = true
 			}
 		}
-		added := make([]mention, 0)
-		for _, mentioned := range parseMentions(*issue.Description) {
+		added := make([]util.Mention, 0)
+		for _, mentioned := range util.ParseMentions(*issue.Description) {
 			if !previous[mentioned.Type+":"+mentioned.ID] {
 				added = append(added, mentioned)
 			}
@@ -663,7 +646,7 @@ func projectCommentCreatedNotifications(ctx context.Context, queries *db.Queries
 	); err != nil {
 		return nil, err
 	}
-	mentions := parseMentions(comment.Content)
+	mentions := util.ParseMentions(comment.Content)
 	if len(mentions) > 0 {
 		if err := notifyMentionedMembers(ctx, collector.bus, queries, event, mentions,
 			comment.IssueID, payload.IssueTitle, payload.IssueStatus, payload.IssueTitle,

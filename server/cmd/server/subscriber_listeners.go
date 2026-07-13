@@ -105,7 +105,7 @@ func projectIssueCreatedSubscribers(ctx context.Context, queries *db.Queries, ev
 		}
 	}
 	if issue.Description != nil {
-		for _, mentioned := range parseMentions(*issue.Description) {
+		for _, mentioned := range util.ParseMentions(*issue.Description) {
 			if err := appendSubscriber(mentioned.Type, mentioned.ID, "mentioned"); err != nil {
 				return nil, err
 			}
@@ -126,11 +126,11 @@ func projectIssueUpdatedSubscribers(ctx context.Context, queries *db.Queries, ev
 	if payload.DescriptionChanged && issue.Description != nil {
 		previous := make(map[string]bool)
 		if payload.PrevDescription != nil {
-			for _, mentioned := range parseMentions(*payload.PrevDescription) {
+			for _, mentioned := range util.ParseMentions(*payload.PrevDescription) {
 				previous[mentioned.Type+":"+mentioned.ID] = true
 			}
 		}
-		for _, mentioned := range parseMentions(*issue.Description) {
+		for _, mentioned := range util.ParseMentions(*issue.Description) {
 			if previous[mentioned.Type+":"+mentioned.ID] {
 				continue
 			}
