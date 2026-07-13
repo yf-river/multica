@@ -1,4 +1,4 @@
-import { i18n, type Lang } from "@/lib/i18n";
+import { isDocsLang, type Lang } from "@/lib/i18n";
 
 export type DocsStaticParam = {
   lang: Lang;
@@ -10,10 +10,6 @@ type SourceStaticParam = {
   slug: string[];
 };
 
-function isLang(lang: string): lang is Lang {
-  return (i18n.languages as readonly string[]).includes(lang);
-}
-
 function paramKey(param: DocsStaticParam): string {
   return `${param.lang}/${param.slug.join("/")}`;
 }
@@ -23,7 +19,7 @@ export function docsSlugStaticParams(
 ): DocsStaticParam[] {
   const slugParams = params.filter(
     (param): param is DocsStaticParam =>
-      param.slug.length > 0 && isLang(param.lang),
+      param.slug.length > 0 && isDocsLang(param.lang),
   );
   const output: DocsStaticParam[] = [];
   const seen = new Set<string>();

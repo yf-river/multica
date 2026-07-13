@@ -5,16 +5,10 @@ import defaultMdxComponents from "fumadocs-ui/mdx";
 import type { Metadata } from "next";
 import { DocsHero } from "@/components/hero";
 import { Byline, NumberedCards, NumberedCard, NumberedSteps, Step } from "@/components/editorial";
-import { i18n, type Lang } from "@/lib/i18n";
+import { i18n, resolveDocsLang } from "@/lib/i18n";
 import { homeCopy } from "@/lib/translations";
 import { docsAlternates } from "@/lib/site";
 import { DocsLocaleProvider, LocaleLink } from "@/components/locale-link";
-
-function asLang(lang: string): Lang {
-  return (i18n.languages as readonly string[]).includes(lang)
-    ? (lang as Lang)
-    : (i18n.defaultLanguage as Lang);
-}
 
 // A layout's `generateStaticParams` does NOT cascade — every page that
 // wants SSG must declare its own. Without this, both `/docs/` and
@@ -30,7 +24,7 @@ export default async function Page({
   params: Promise<{ lang: string }>;
 }) {
   const { lang: rawLang } = await params;
-  const lang = asLang(rawLang);
+  const lang = resolveDocsLang(rawLang);
   const page = source.getPage([], lang);
   if (!page) notFound();
 
@@ -76,7 +70,7 @@ export async function generateMetadata({
   params: Promise<{ lang: string }>;
 }): Promise<Metadata> {
   const { lang: rawLang } = await params;
-  const lang = asLang(rawLang);
+  const lang = resolveDocsLang(rawLang);
   const page = source.getPage([], lang);
   if (!page) notFound();
 
