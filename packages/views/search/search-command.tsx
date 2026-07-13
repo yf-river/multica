@@ -54,6 +54,7 @@ import {
 } from "@multica/core/training";
 import { useModalStore } from "@multica/core/modals";
 import { memberListOptions } from "@multica/core/workspace/queries";
+import { nameInitials } from "@multica/core/workspace/actor-display";
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
 import { StatusIcon } from "../issues/components";
 import { ProjectIcon } from "../projects/components/project-icon";
@@ -100,15 +101,6 @@ interface NavPage {
 }
 
 type ThemeValue = "light" | "dark" | "system";
-
-function memberInitials(name: string) {
-  return name
-    .split(" ")
-    .map((word) => word[0])
-    .join("")
-    .toUpperCase()
-    .slice(0, 2);
-}
 
 function matchesMember(member: MemberWithUser, query: string) {
   return (
@@ -627,7 +619,7 @@ export function SearchCommand() {
                   >
                     <ActorAvatarBase
                       name={member.name}
-                      initials={memberInitials(member.name)}
+                      initials={nameInitials(member.name)}
                       avatarUrl={resolvePublicFileUrl(member.avatar_url)}
                       size={22}
                     />

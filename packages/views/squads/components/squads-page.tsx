@@ -25,6 +25,7 @@ import {
 } from "@multica/core/workspace/queries";
 import { runtimeListOptions, runtimeModelsOptions } from "@multica/core/runtimes";
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
+import { nameInitials } from "@multica/core/workspace/actor-display";
 import { useAuthStore } from "@multica/core/auth";
 import { api } from "@multica/core/api";
 import { useModalStore } from "@multica/core/modals";
@@ -176,12 +177,7 @@ function providerLabel(provider: string) {
 // ---------------------------------------------------------------------------
 
 function SquadAvatar({ squad }: { squad: Squad }) {
-  const initials = squad.name
-    .split(" ")
-    .map((w) => w[0])
-    .join("")
-    .toUpperCase()
-    .slice(0, 2);
+  const initials = nameInitials(squad.name);
   if (squad.avatar_url) {
     return (
       <ActorAvatarBase

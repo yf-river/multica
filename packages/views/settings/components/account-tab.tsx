@@ -11,6 +11,7 @@ import { toast } from "sonner";
 import { useAuthStore } from "@multica/core/auth";
 import { api } from "@multica/core/api";
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
+import { nameInitials } from "@multica/core/workspace/actor-display";
 import { useFileUpload } from "@multica/core/hooks/use-file-upload";
 import { useT } from "../../i18n";
 
@@ -40,12 +41,7 @@ export function AccountTab() {
 
   const descriptionTooLong = profileDescription.length > MAX_PROFILE_DESCRIPTION_LEN;
 
-  const initials = (user?.name ?? "")
-    .split(" ")
-    .map((w) => w[0])
-    .join("")
-    .toUpperCase()
-    .slice(0, 2);
+  const initials = nameInitials(user?.name ?? "");
 
   const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];

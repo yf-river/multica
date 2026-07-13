@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useWorkspaceId } from "../paths";
 import { memberListOptions, agentListOptions, squadListOptions } from "./queries";
 import { resolvePublicFileUrl } from "./avatar-url";
+import { nameInitials } from "./actor-display";
 import type { Agent, MemberWithUser, Squad } from "../types";
 
 export type ActorNameQueryScope = {
@@ -64,13 +65,7 @@ export function useActorName(scope: ActorNameQueryScope = DEFAULT_ACTOR_NAME_QUE
   }, [getAgentName, getMemberName, getSquadName]);
 
   const getActorInitials = useCallback((type: string, id: string) => {
-    const name = getActorName(type, id);
-    return name
-      .split(" ")
-      .map((w) => w[0])
-      .join("")
-      .toUpperCase()
-      .slice(0, 2);
+    return nameInitials(getActorName(type, id));
   }, [getActorName]);
 
   const getActorAvatarUrl = useCallback((type: string, id: string): string | null => {

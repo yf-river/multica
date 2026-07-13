@@ -6,6 +6,7 @@ import { useWorkspaceId } from "@multica/core/paths";
 import { useCurrentWorkspace } from "@multica/core/paths";
 import { memberListOptions } from "@multica/core/workspace/queries";
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
+import { nameInitials } from "@multica/core/workspace/actor-display";
 import { ActorAvatar as ActorAvatarBase } from "@multica/ui/components/common/actor-avatar";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { PageHeader } from "../layout/page-header";
@@ -42,12 +43,7 @@ export function MemberDetailPage({ userId }: { userId: string }) {
     );
   }
 
-  const initials = member.name
-    .split(" ")
-    .map((w) => w[0])
-    .join("")
-    .toUpperCase()
-    .slice(0, 2);
+  const initials = nameInitials(member.name);
 
   return (
     <div className="flex flex-1 min-h-0 flex-col">

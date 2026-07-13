@@ -7,6 +7,7 @@ import type { ReactNode } from "react";
 
 import { WorkspaceSlugProvider } from "../paths";
 import type { Workspace } from "../types";
+import { nameInitials } from "./actor-display";
 import { workspaceKeys } from "./queries";
 import { useActorName } from "./hooks";
 
@@ -42,6 +43,11 @@ function makeWrapper() {
 }
 
 describe("useActorName", () => {
+  it("keeps the current first-letter initials rule", () => {
+    expect(nameInitials("Ada Lovelace")).toBe("AL");
+    expect(nameInitials("单名")).toBe("单");
+  });
+
   it("keeps actor name callbacks stable when identity queries are disabled", () => {
     const { result, rerender } = renderHook(
       () =>

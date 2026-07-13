@@ -3,6 +3,7 @@
 import { ActorAvatar as ActorAvatarBase } from "@multica/ui/components/common/actor-avatar";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
+import { nameInitials } from "@multica/core/workspace/actor-display";
 
 export function AgentCardLoadingState() {
   return (
@@ -20,15 +21,6 @@ export function AgentCardUnavailable({ label }: { label: string }) {
   return <div className="text-xs text-muted-foreground">{label}</div>;
 }
 
-function agentInitials(name: string): string {
-  return name
-    .split(" ")
-    .map((word) => word[0])
-    .join("")
-    .toUpperCase()
-    .slice(0, 2);
-}
-
 export function AgentCardAvatar({
   name,
   avatarUrl,
@@ -39,7 +31,7 @@ export function AgentCardAvatar({
   return (
     <ActorAvatarBase
       name={name}
-      initials={agentInitials(name)}
+      initials={nameInitials(name)}
       avatarUrl={resolvePublicFileUrl(avatarUrl ?? null)}
       isAgent
       size={40}

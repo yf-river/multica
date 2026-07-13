@@ -8,6 +8,7 @@ import { useAuthStore } from "@multica/core/auth";
 import { useCurrentWorkspace, useWorkspacePaths } from "@multica/core/paths";
 import { useWorkspaceId } from "@multica/core/paths";
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
+import { nameInitials } from "@multica/core/workspace/actor-display";
 import { useFileUpload } from "@multica/core/hooks/use-file-upload";
 import { isImeComposing } from "@multica/core/utils";
 import { useTimeAgo } from "../../i18n";
@@ -240,12 +241,7 @@ export function SquadDetailPage() {
   const isSquadArchived = !!squad.archived_at;
   const canEditSquad = canManageSquad && !isSquadArchived;
 
-  const initials = squad.name
-    .split(" ")
-    .map((w) => w[0])
-    .join("")
-    .toUpperCase()
-    .slice(0, 2);
+  const initials = nameInitials(squad.name);
 
   return (
     <div className="flex flex-1 min-h-0 flex-col">
@@ -792,12 +788,7 @@ function SquadDetailInspector({
 }) {
   const { t } = useT("squads");
   const timeAgo = useTimeAgo();
-  const initials = squad.name
-    .split(" ")
-    .map((w) => w[0])
-    .join("")
-    .toUpperCase()
-    .slice(0, 2);
+  const initials = nameInitials(squad.name);
 
   return (
     <aside className="flex w-full flex-col rounded-lg border bg-background md:h-full md:min-h-0 md:overflow-y-auto">
