@@ -174,7 +174,7 @@ func (e *inboundEnricher) Enrich(ctx context.Context, msg InboundMessage, creds 
 	var b strings.Builder
 	if wantRecent {
 		if recentErr != nil {
-			b.WriteString(recentContextErrorBlock())
+			b.WriteString(recentContextErrorBlock)
 		} else if len(recentItems) > 0 {
 			b.WriteString(e.renderRecentContextBlock(recentItems, names))
 		}
@@ -190,7 +190,7 @@ func (e *inboundEnricher) Enrich(ctx context.Context, msg InboundMessage, creds 
 	if isForward {
 		if forwardErr != nil {
 			e.logger.Warn("lark enricher: forward fetch failed", "message_id", msg.MessageID, "err", forwardErr)
-			core = forwardedErrorBlock()
+			core = forwardedErrorBlock
 		} else {
 			core = e.renderForwardedItems(forwardItems, msg.MessageID, names)
 		}
@@ -321,9 +321,7 @@ func (e *inboundEnricher) renderRecentContextBlock(kept []LarkMessage, names map
 		len(kept), strings.Join(lines, "\n"))
 }
 
-func recentContextErrorBlock() string {
-	return "<recent_context type=\"error\">[unable to fetch recent context]</recent_context>"
-}
+const recentContextErrorBlock = "<recent_context type=\"error\">[unable to fetch recent context]</recent_context>"
 
 // renderQuotedBlock renders a <quoted_message> block from the already-
 // fetched GetMessage(parentID) result. A parent that is itself a
@@ -458,9 +456,7 @@ func quotedErrorBlock(messageID string) string {
 	return fmt.Sprintf("<quoted_message message_id=%q type=\"error\">[unable to fetch]</quoted_message>", messageID)
 }
 
-func forwardedErrorBlock() string {
-	return "<forwarded_messages type=\"error\">[unable to fetch]</forwarded_messages>"
-}
+const forwardedErrorBlock = "<forwarded_messages type=\"error\">[unable to fetch]</forwarded_messages>"
 
 func parseLarkMillis(s string) int64 {
 	n, _ := strconv.ParseInt(s, 10, 64)
