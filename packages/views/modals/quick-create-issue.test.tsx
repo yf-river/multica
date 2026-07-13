@@ -57,8 +57,6 @@ vi.mock("@tanstack/react-query", () => ({
         return {
           data: [{ id: "agent-1", name: "Bohan", archived_at: null, runtime_id: "runtime-1" }],
         };
-      case "runtimes":
-        return { data: [{ id: "runtime-1", metadata: { cli_version: "1.2.3" } }] };
       case "projects":
         return mockProjectsQuery;
       default:
@@ -113,13 +111,6 @@ vi.mock("@multica/core/issues/stores/quick-create-store", () => {
 vi.mock("@multica/core/auth", () => ({
   useAuthStore: (selector?: (state: { user: { id: string } }) => unknown) =>
     (selector ? selector({ user: { id: "user-1" } }) : { user: { id: "user-1" } }),
-}));
-
-vi.mock("@multica/core/runtimes", () => ({
-  runtimeListOptions: () => ({ queryKey: ["runtimes"] }),
-  checkQuickCreateCliVersion: () => ({ state: "ok", min: "1.0.0" }),
-  readRuntimeCliVersion: () => "1.2.3",
-  MIN_QUICK_CREATE_CLI_VERSION: "1.0.0",
 }));
 
 vi.mock("@multica/core/hooks/use-file-upload", () => ({

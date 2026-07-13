@@ -13,7 +13,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/service"
-	"github.com/multica-ai/multica/server/pkg/agent"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -21,26 +20,15 @@ import (
 func enableQuickCreateRuntime(t *testing.T, ctx context.Context) string {
 	t.Helper()
 
-	var agentID, runtimeID string
-	var previousMetadata []byte
+	var agentID string
 	if err := testPool.QueryRow(ctx, `
-		SELECT a.id, r.id, r.metadata
+		SELECT a.id
 		FROM agent a
 		JOIN agent_runtime r ON r.id = a.runtime_id
 		WHERE a.workspace_id = $1 AND a.name = 'Handler Test Agent'
-	`, testWorkspaceID).Scan(&agentID, &runtimeID, &previousMetadata); err != nil {
+	`, testWorkspaceID).Scan(&agentID); err != nil {
 		t.Fatalf("fetch quick-create agent runtime: %v", err)
 	}
-	if _, err := testPool.Exec(ctx,
-		`UPDATE agent_runtime SET metadata = jsonb_build_object('cli_version', $1::text) WHERE id = $2`,
-		agent.MinQuickCreateCLIVersion, runtimeID,
-	); err != nil {
-		t.Fatalf("bump runtime cli_version: %v", err)
-	}
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(context.Background(),
-			`UPDATE agent_runtime SET metadata = $1::jsonb WHERE id = $2`, previousMetadata, runtimeID)
-	})
 
 	return agentID
 }
@@ -67,10 +55,7 @@ func TestQuickCreateIssueParentTrustBoundary(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	// Resolve the seeded runtime + agent for this workspace, then bump the
-	// runtime metadata to a CLI version that clears MinQuickCreateCLIVersion.
-	// The seed runtime uses metadata '{}'::jsonb which would otherwise trip
-	// the daemon-version gate before we ever reach the parent_issue_id check.
+	// Resolve the seeded online runtime and agent for this workspace.
 	agentID := enableQuickCreateRuntime(t, ctx)
 
 	// Same-workspace parent — must be accepted and threaded through.
