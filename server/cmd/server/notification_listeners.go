@@ -349,7 +349,7 @@ func notifyDirect(
 	body string,
 	details []byte,
 ) error {
-	if !supportsInboxRecipientType(recipientType) {
+	if !isMemberOrAgentActorType(recipientType) {
 		return nil
 	}
 	// Skip if recipient is the actor
@@ -397,8 +397,8 @@ func notifyDirect(
 	return nil
 }
 
-func supportsInboxRecipientType(recipientType string) bool {
-	return recipientType == "member" || recipientType == "agent"
+func isMemberOrAgentActorType(actorType string) bool {
+	return actorType == "member" || actorType == "agent"
 }
 
 // notifyMentionedMembers creates inbox items for each @mentioned member,

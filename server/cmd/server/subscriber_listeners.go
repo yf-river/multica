@@ -154,10 +154,6 @@ func projectCommentCreatedSubscriber(ctx context.Context, queries *db.Queries, e
 	return []events.Event{created}, nil
 }
 
-func supportsIssueSubscriberUserType(userType string) bool {
-	return userType == "member" || userType == "agent"
-}
-
 func addSubscriber(
 	ctx context.Context,
 	queries *db.Queries,
@@ -167,7 +163,7 @@ func addSubscriber(
 	userID string,
 	reason string,
 ) (events.Event, bool, error) {
-	if !supportsIssueSubscriberUserType(userType) {
+	if !isMemberOrAgentActorType(userType) {
 		return events.Event{}, false, nil
 	}
 	parsedIssueID, err := util.ParseUUID(issueID)
