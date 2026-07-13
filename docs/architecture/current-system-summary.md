@@ -13,13 +13,13 @@ the expanded JSON and Markdown evidence under ignored
 | Next.js route handlers | 1 |
 | Next.js rewrites | 6 |
 | Desktop route literals | 29 |
-| Database tables | 86 |
+| Database tables | 85 |
 | Database functions | 9 |
 | Database triggers | 4 |
-| Database indexes | 194 |
-| Migration files | 4 |
+| Database indexes | 192 |
+| Migration files | 10 |
 | sqlc modules | 55 |
-| sqlc queries | 560 |
+| sqlc queries | 546 |
 | Go WebSocket events | 79 |
 | TypeScript WebSocket events | 69 |
 | Zustand stores | 27 |
