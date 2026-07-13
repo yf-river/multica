@@ -1,20 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useMemo } from "react";
-import { toast } from "sonner";
+import { useEffect, useMemo } from "react";
 import { ListTodo } from "lucide-react";
-import type { Issue, UpdateIssueRequest } from "@multica/core/types";
+import type { Issue } from "@multica/core/types";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { useQuery } from "@tanstack/react-query";
 import { useIssueViewStore, useClearFiltersOnWorkspaceChange, type IssueDateFilter } from "@multica/core/issues/stores/view-store";
 import { dateOnlyToLocalDate } from "@multica/core/issues/date";
 import { useIssuesScopeStore } from "@multica/core/issues/stores/issues-scope-store";
 import { ViewStoreProvider } from "@multica/core/issues/stores/view-store-context";
-import { filterIssues } from "../utils/filter";
+import { projectIssueViews } from "../utils/filter";
 import { BOARD_STATUSES } from "@multica/core/issues/config";
 import { useWorkspaceId } from "@multica/core/paths";
 import { issueAssigneeGroupsOptions, issueListOptions, childIssueProgressOptions, type AssigneeGroupedIssuesFilter } from "@multica/core/issues/queries";
-import { useUpdateIssue } from "@multica/core/issues/mutations";
 import { useIssueSelectionStore } from "@multica/core/issues/stores/selection-store";
 import { PageHeader } from "../../layout/page-header";
 import { IssuesHeader } from "./issues-header";
@@ -25,6 +23,7 @@ import { BatchActionToolbar } from "./batch-action-toolbar";
 import type { ChildProgress } from "./list-row";
 import { useT } from "../../i18n";
 import { useRunningIssueIds } from "../hooks/use-running-issue-ids";
+import { useMoveIssue } from "../hooks/use-move-issue";
 
 const EMPTY_CHILD_PROGRESS = new Map<string, ChildProgress>();
 
@@ -160,37 +159,40 @@ export function IssuesPage() {
 	const agentActivitySourceIssues = usesAssigneeBoard ? visibleAssigneeIssues : visibleAllIssues;
 	const runningIssueIds = useRunningIssueIds(agentActivitySourceIssues, wsId);
 
-  const issues = useMemo(
-    () => filterIssues(scopedIssues, { statusFilters, priorityFilters, assigneeFilters, includeNoAssignee, creatorFilters, projectFilters, includeNoProject, labelFilters, agentRunningFilter, runningIssueIds }),
-    [scopedIssues, statusFilters, priorityFilters, assigneeFilters, includeNoAssignee, creatorFilters, projectFilters, includeNoProject, labelFilters, agentRunningFilter, runningIssueIds],
+  const {
+    issues,
+    swimlaneIssues,
+    activeFilters,
+    visibleStatuses,
+    hiddenStatuses,
+  } = useMemo(
+    () =>
+      projectIssueViews(scopedIssues, {
+        statusFilters,
+        priorityFilters,
+        assigneeFilters,
+        includeNoAssignee,
+        creatorFilters,
+        projectFilters,
+        includeNoProject,
+        labelFilters,
+        agentRunningFilter,
+        runningIssueIds,
+      }),
+    [
+      scopedIssues,
+      statusFilters,
+      priorityFilters,
+      assigneeFilters,
+      includeNoAssignee,
+      creatorFilters,
+      projectFilters,
+      includeNoProject,
+      labelFilters,
+      agentRunningFilter,
+      runningIssueIds,
+    ],
   );
-
-  // Status-unfiltered companion for Swimlane — same narrowing as `issues`
-  // minus the status filter.
-  const swimlaneIssues = useMemo(
-    () => filterIssues(scopedIssues, { statusFilters: [], priorityFilters, assigneeFilters, includeNoAssignee, creatorFilters, projectFilters, includeNoProject, labelFilters, agentRunningFilter, runningIssueIds }),
-    [scopedIssues, priorityFilters, assigneeFilters, includeNoAssignee, creatorFilters, projectFilters, includeNoProject, labelFilters, agentRunningFilter, runningIssueIds],
-  );
-
-  const activeFilters = useMemo(() => ({
-    priorityFilters,
-    assigneeFilters,
-    includeNoAssignee,
-    creatorFilters,
-    projectFilters,
-    includeNoProject,
-    labelFilters,
-    agentRunningFilter,
-  }), [
-    priorityFilters,
-    assigneeFilters,
-    includeNoAssignee,
-    creatorFilters,
-    projectFilters,
-    includeNoProject,
-    labelFilters,
-    agentRunningFilter,
-  ]);
 
   const childProgressSourceIssues = usesAssigneeBoard ? visibleAssigneeIssues : visibleAllIssues;
   const hasListChildProgress = hasCompleteChildProgressSummaries(childProgressSourceIssues);
@@ -204,34 +206,7 @@ export function IssuesPage() {
   });
   const childProgressMap = hasListChildProgress ? listChildProgressMap : fallbackChildProgressMap;
 
-  const visibleStatuses = useMemo(() => {
-    if (statusFilters.length > 0)
-      return BOARD_STATUSES.filter((s) => statusFilters.includes(s));
-    return BOARD_STATUSES;
-  }, [statusFilters]);
-
-  const hiddenStatuses = useMemo(() => {
-    return BOARD_STATUSES.filter((s) => !visibleStatuses.includes(s));
-  }, [visibleStatuses]);
-
-  const updateIssueMutation = useUpdateIssue();
-  const handleMoveIssue = useCallback(
-    (issueId: string, updates: Pick<UpdateIssueRequest, "status" | "assignee_type" | "assignee_id" | "position" | "parent_issue_id">, onSettled?: () => void) => {
-      updateIssueMutation.mutate(
-        { id: issueId, ...updates },
-        {
-          onError: (err) =>
-            toast.error(
-              err instanceof Error && err.message
-                ? err.message
-                : t(($) => $.page.move_failed),
-            ),
-          onSettled: () => onSettled?.(),
-        },
-      );
-    },
-    [updateIssueMutation, t],
-  );
+  const handleMoveIssue = useMoveIssue(t(($) => $.page.move_failed));
 
   const contentSkeleton = viewMode === "list" ? (
     <div className="flex-1 min-h-0 overflow-y-auto p-2 space-y-1">

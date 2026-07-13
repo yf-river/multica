@@ -7,7 +7,7 @@ import { useQuery, type QueryKey } from "@tanstack/react-query";
 import { cn } from "@multica/ui/lib/utils";
 import { copyText } from "@multica/ui/lib/clipboard";
 import { toast } from "sonner";
-import type { Issue, IssueAssigneeGroup, Project, ProjectStatus, ProjectPriority, UpdateIssueRequest } from "@multica/core/types";
+import type { Issue, IssueAssigneeGroup, Project, ProjectStatus, ProjectPriority } from "@multica/core/types";
 import { useAuthStore } from "@multica/core/auth";
 import { projectDetailOptions } from "@multica/core/projects/queries";
 import { useUpdateProject, useDeleteProject } from "@multica/core/projects/mutations";
@@ -22,10 +22,8 @@ import {
   type IssueSortParam,
   type MyIssuesFilter,
 } from "@multica/core/issues/queries";
-import { useUpdateIssue } from "@multica/core/issues/mutations";
 import { openCreateIssue } from "@multica/core/issues";
 import { memberListOptions, agentListOptions } from "@multica/core/workspace/queries";
-import { agentTaskSnapshotOptions } from "@multica/core/agents";
 import { useWorkspaceId } from "@multica/core/paths";
 import { useRecentContextStore } from "@multica/core/chat";
 import { useWorkspacePaths } from "@multica/core/paths";
@@ -34,7 +32,7 @@ import { PROJECT_STATUS_ORDER, PROJECT_STATUS_CONFIG, PROJECT_PRIORITY_ORDER } f
 import { BOARD_STATUSES } from "@multica/core/issues/config";
 import { createIssueViewStore } from "@multica/core/issues/stores/view-store";
 import { ViewStoreProvider, useViewStore } from "@multica/core/issues/stores/view-store-context";
-import { filterIssues } from "../../issues/utils/filter";
+import { filterIssues, projectIssueViews } from "../../issues/utils/filter";
 import { getProjectIssueMetrics } from "./project-issue-metrics";
 import { filterRunningAssigneeGroups } from "./project-issue-filters";
 import { ActorAvatar } from "../../common/actor-avatar";
@@ -90,6 +88,8 @@ import {
 import { useT } from "../../i18n";
 import { useProjectStatusLabels, useProjectPriorityLabels } from "./labels";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
+import { useMoveIssue } from "../../issues/hooks/use-move-issue";
+import { useRunningIssueIds } from "../../issues/hooks/use-running-issue-ids";
 
 // ---------------------------------------------------------------------------
 // Property row — sidebar property display
@@ -150,43 +150,39 @@ function ProjectIssuesContent({
   const labelFilters = useViewStore((s) => s.labelFilters);
   const agentRunningFilter = useViewStore((s) => s.agentRunningFilter);
 
-  const { data: snapshot = [] } = useQuery(agentTaskSnapshotOptions(wsId));
-  const runningIssueIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const task of snapshot) {
-      if (task.status === "running" && task.issue_id) ids.add(task.issue_id);
-    }
-    return ids;
-  }, [snapshot]);
-
-  const issues = useMemo(
-    () => filterIssues(projectIssues, { statusFilters, priorityFilters, assigneeFilters, includeNoAssignee, creatorFilters, projectFilters: [], includeNoProject: false, labelFilters, agentRunningFilter, runningIssueIds }),
-    [projectIssues, statusFilters, priorityFilters, assigneeFilters, includeNoAssignee, creatorFilters, labelFilters, agentRunningFilter, runningIssueIds],
+  const runningIssueIds = useRunningIssueIds(projectIssues, wsId);
+  const {
+    issues,
+    swimlaneIssues,
+    activeFilters,
+    visibleStatuses,
+    hiddenStatuses,
+  } = useMemo(
+    () =>
+      projectIssueViews(projectIssues, {
+        statusFilters,
+        priorityFilters,
+        assigneeFilters,
+        includeNoAssignee,
+        creatorFilters,
+        projectFilters: [],
+        includeNoProject: false,
+        labelFilters,
+        agentRunningFilter,
+        runningIssueIds,
+      }),
+    [
+      projectIssues,
+      statusFilters,
+      priorityFilters,
+      assigneeFilters,
+      includeNoAssignee,
+      creatorFilters,
+      labelFilters,
+      agentRunningFilter,
+      runningIssueIds,
+    ],
   );
-
-  // Status-unfiltered companion for Swimlane.
-  const swimlaneIssues = useMemo(
-    () => filterIssues(projectIssues, { statusFilters: [], priorityFilters, assigneeFilters, includeNoAssignee, creatorFilters, projectFilters: [], includeNoProject: false, labelFilters, agentRunningFilter, runningIssueIds }),
-    [projectIssues, priorityFilters, assigneeFilters, includeNoAssignee, creatorFilters, labelFilters, agentRunningFilter, runningIssueIds],
-  );
-
-  const activeFilters = useMemo(() => ({
-    priorityFilters,
-    assigneeFilters,
-    includeNoAssignee,
-    creatorFilters,
-    projectFilters: [],
-    includeNoProject: false,
-    labelFilters,
-    agentRunningFilter,
-  }), [
-    priorityFilters,
-    assigneeFilters,
-    includeNoAssignee,
-    creatorFilters,
-    labelFilters,
-    agentRunningFilter,
-  ]);
 
   // Gantt rides its own dedicated query (scheduled-only) so it doesn't have
   // to wait for every status bucket to paginate in. View-store filters still
@@ -203,34 +199,8 @@ function ProjectIssuesContent({
 
   const { data: childProgressMap = new Map() } = useQuery(childIssueProgressOptions(wsId));
 
-  const visibleStatuses = useMemo(() => {
-    if (statusFilters.length > 0)
-      return BOARD_STATUSES.filter((s) => statusFilters.includes(s));
-    return BOARD_STATUSES;
-  }, [statusFilters]);
-
-  const hiddenStatuses = useMemo(
-    () => BOARD_STATUSES.filter((s) => !visibleStatuses.includes(s)),
-    [visibleStatuses],
-  );
-
-  const updateIssueMutation = useUpdateIssue();
-  const handleMoveIssue = useCallback(
-    (issueId: string, updates: Pick<UpdateIssueRequest, "status" | "assignee_type" | "assignee_id" | "position" | "parent_issue_id">, onSettled?: () => void) => {
-      updateIssueMutation.mutate(
-        { id: issueId, ...updates },
-        {
-          onError: (err) =>
-            toast.error(
-              err instanceof Error && err.message
-                ? err.message
-                : t(($) => $.detail.toast_move_issue_failed),
-            ),
-          onSettled: () => onSettled?.(),
-        },
-      );
-    },
-    [updateIssueMutation, t],
+  const handleMoveIssue = useMoveIssue(
+    t(($) => $.detail.toast_move_issue_failed),
   );
 
   // Gantt and Swimlane have their own data sources and empty states —

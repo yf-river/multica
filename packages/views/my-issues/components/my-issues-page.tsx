@@ -1,14 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { useStore } from "zustand";
-import { toast } from "sonner";
 import { ListTodo } from "lucide-react";
-import type { UpdateIssueRequest } from "@multica/core/types";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { useAuthStore } from "@multica/core/auth";
 import { useQuery } from "@tanstack/react-query";
-import { filterIssues } from "../../issues/utils/filter";
+import { projectIssueViews } from "../../issues/utils/filter";
 import { BOARD_STATUSES } from "@multica/core/issues/config";
 import { ViewStoreProvider } from "@multica/core/issues/stores/view-store-context";
 import { useIssueSelectionStore } from "@multica/core/issues/stores/selection-store";
@@ -19,12 +17,12 @@ import { BatchActionToolbar } from "../../issues/components/batch-action-toolbar
 import { useClearFiltersOnWorkspaceChange } from "@multica/core/issues/stores/view-store";
 import { useWorkspaceId } from "@multica/core/paths";
 import { myIssueAssigneeGroupsOptions, myIssueListOptions, childIssueProgressOptions, type AssigneeGroupedIssuesFilter, type MyIssuesFilter } from "@multica/core/issues/queries";
-import { useUpdateIssue } from "@multica/core/issues/mutations";
 import { myIssuesViewStore } from "@multica/core/issues/stores/my-issues-view-store";
 import { PageHeader } from "../../layout/page-header";
 import { useT } from "../../i18n";
 import { MyIssuesHeader } from "./my-issues-header";
 import { useRunningIssueIds } from "../../issues/hooks/use-running-issue-ids";
+import { useMoveIssue } from "../../issues/hooks/use-move-issue";
 
 export function MyIssuesPage() {
   const { t } = useT("my-issues");
@@ -116,10 +114,15 @@ export function MyIssuesPage() {
 
 	const runningIssueIds = useRunningIssueIds(myIssues, wsId);
 
-  // Apply status/priority/agent-running filters from view store
-  const issues = useMemo(
+  const {
+    issues,
+    swimlaneIssues,
+    activeFilters,
+    visibleStatuses,
+    hiddenStatuses,
+  } = useMemo(
     () =>
-      filterIssues(myIssues, {
+      projectIssueViews(myIssues, {
         statusFilters,
         priorityFilters,
         assigneeFilters: [],
@@ -131,68 +134,18 @@ export function MyIssuesPage() {
         agentRunningFilter,
         runningIssueIds,
       }),
-    [myIssues, statusFilters, priorityFilters, agentRunningFilter, runningIssueIds],
+    [
+      myIssues,
+      statusFilters,
+      priorityFilters,
+      agentRunningFilter,
+      runningIssueIds,
+    ],
   );
-
-  // Status-unfiltered companion for Swimlane.
-  const swimlaneIssues = useMemo(
-    () =>
-      filterIssues(myIssues, {
-        statusFilters: [],
-        priorityFilters,
-        assigneeFilters: [],
-        includeNoAssignee: false,
-        creatorFilters: [],
-        projectFilters: [],
-        includeNoProject: false,
-        labelFilters: [],
-        agentRunningFilter,
-        runningIssueIds,
-      }),
-    [myIssues, priorityFilters, agentRunningFilter, runningIssueIds],
-  );
-
-  const activeFilters = useMemo(() => ({
-    priorityFilters,
-    assigneeFilters: [],
-    includeNoAssignee: false,
-    creatorFilters: [],
-    projectFilters: [],
-    includeNoProject: false,
-    labelFilters: [],
-    agentRunningFilter,
-  }), [priorityFilters, agentRunningFilter]);
 
   const { data: childProgressMap = new Map() } = useQuery(childIssueProgressOptions(wsId));
 
-  const visibleStatuses = useMemo(() => {
-    if (statusFilters.length > 0)
-      return BOARD_STATUSES.filter((s) => statusFilters.includes(s));
-    return BOARD_STATUSES;
-  }, [statusFilters]);
-
-  const hiddenStatuses = useMemo(() => {
-    return BOARD_STATUSES.filter((s) => !visibleStatuses.includes(s));
-  }, [visibleStatuses]);
-
-  const updateIssueMutation = useUpdateIssue();
-  const handleMoveIssue = useCallback(
-    (issueId: string, updates: Pick<UpdateIssueRequest, "status" | "assignee_type" | "assignee_id" | "position" | "parent_issue_id">, onSettled?: () => void) => {
-      updateIssueMutation.mutate(
-        { id: issueId, ...updates },
-        {
-          onError: (err) =>
-            toast.error(
-              err instanceof Error && err.message
-                ? err.message
-                : t(($) => $.errors.move_failed),
-            ),
-          onSettled: () => onSettled?.(),
-        },
-      );
-    },
-    [updateIssueMutation, t],
-  );
+  const handleMoveIssue = useMoveIssue(t(($) => $.errors.move_failed));
 
   if (loading) {
     return (

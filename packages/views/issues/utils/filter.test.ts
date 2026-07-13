@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { Issue } from "@multica/core/types";
-import { filterIssues, type IssueFilters } from "./filter";
+import { filterIssues, projectIssueViews, type IssueFilters } from "./filter";
 
 const NO_FILTER: IssueFilters = {
   statusFilters: [],
@@ -247,5 +247,25 @@ describe("filterIssues", () => {
     // Issue 2 is in_progress (filtered out by status), issue 1 is todo and
     // in the running set → only "1" survives.
     expect(result.map((i) => i.id)).toEqual(["1"]);
+  });
+});
+
+describe("projectIssueViews", () => {
+  it("derives current, swimlane, status, and active-filter projections once", () => {
+    const runningIssueIds = new Set(["1", "2"]);
+    const projection = projectIssueViews(issues, {
+      ...NO_FILTER,
+      statusFilters: ["todo"],
+      agentRunningFilter: true,
+      runningIssueIds,
+    });
+
+    expect(projection.issues.map((issue) => issue.id)).toEqual(["1"]);
+    expect(projection.swimlaneIssues.map((issue) => issue.id)).toEqual([
+      "1",
+      "2",
+    ]);
+    expect(projection.visibleStatuses).toEqual(["todo"]);
+    expect(projection.hiddenStatuses).not.toContain("todo");
   });
 });
