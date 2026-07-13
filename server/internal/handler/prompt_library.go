@@ -237,22 +237,6 @@ func promptLibraryTrialRowToResponse(trial db.ListPromptLibraryTrialsRow) (Promp
 	}, nil
 }
 
-func decodeJSONArray(raw []byte, field string) ([]any, error) {
-	var value []any
-	if err := json.Unmarshal(raw, &value); err != nil || value == nil {
-		return nil, fmt.Errorf("%s must be a JSON array", field)
-	}
-	return value, nil
-}
-
-func decodeJSONObject(raw []byte, field string) (map[string]any, error) {
-	var value map[string]any
-	if err := json.Unmarshal(raw, &value); err != nil || value == nil {
-		return nil, fmt.Errorf("%s must be a JSON object", field)
-	}
-	return value, nil
-}
-
 func normalizePromptLibraryStatus(status string) string {
 	if status == "" {
 		return promptLibraryStatusActive

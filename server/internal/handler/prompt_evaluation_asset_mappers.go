@@ -510,30 +510,6 @@ func promptEvaluationOptimizationCandidateToResponse(item db.PromptEvaluationOpt
 	}
 }
 
-func mustDecodePersistedJSONObject(raw []byte, field string) map[string]any {
-	value, err := decodeJSONObject(raw, field)
-	if err != nil {
-		panic("handler: " + err.Error())
-	}
-	return value
-}
-
-func mustDecodePersistedJSONArray(raw []byte, field string) []any {
-	value, err := decodeJSONArray(raw, field)
-	if err != nil {
-		panic("handler: " + err.Error())
-	}
-	return value
-}
-
-func mustDecodePersistedJSONValue(raw []byte, field string) any {
-	var value any
-	if err := json.Unmarshal(raw, &value); err != nil {
-		panic("handler: " + field + " must be valid JSON: " + err.Error())
-	}
-	return value
-}
-
 func promptEvaluationEvidenceSnapshotToResponse(item db.PromptEvaluationEvidenceSnapshot, includeEvidence bool) PromptEvaluationEvidenceSnapshotResponse {
 	resp := PromptEvaluationEvidenceSnapshotResponse{
 		ID:            uuidToString(item.ID),

@@ -456,6 +456,7 @@ CREATE TABLE public.activity_log (
     action text NOT NULL,
     details jsonb DEFAULT '{}'::jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT activity_log_details_is_object CHECK ((jsonb_typeof(details) = 'object'::text)),
     CONSTRAINT activity_log_actor_type_check CHECK ((actor_type = ANY (ARRAY['member'::text, 'agent'::text, 'system'::text])))
 );
 

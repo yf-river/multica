@@ -2,7 +2,6 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"sort"
 	"strings"
@@ -368,13 +367,7 @@ func issueCommentBrief(comment db.Comment) IssueCommentBrief {
 }
 
 func issueActivityBrief(activity db.ActivityLog) IssueActivityBrief {
-	var details map[string]any
-	if len(activity.Details) > 0 {
-		_ = json.Unmarshal(activity.Details, &details)
-	}
-	if details == nil {
-		details = map[string]any{}
-	}
+	details := mustDecodePersistedJSONObject(activity.Details, "activity log details")
 	return IssueActivityBrief{
 		ID:        uuidToString(activity.ID),
 		IssueID:   uuidToString(activity.IssueID),
