@@ -503,46 +503,6 @@ func TestBuildClaudeArgsFiltersBlockedCustomArgs(t *testing.T) {
 	}
 }
 
-func TestBuildClaudeInputEncodesUserMessage(t *testing.T) {
-	t.Parallel()
-
-	data, err := buildClaudeInput("say pong")
-	if err != nil {
-		t.Fatalf("buildClaudeInput: %v", err)
-	}
-	if len(data) == 0 || data[len(data)-1] != '\n' {
-		t.Fatalf("expected newline-terminated payload, got %q", data)
-	}
-
-	var payload map[string]any
-	if err := json.Unmarshal(bytes.TrimSpace(data), &payload); err != nil {
-		t.Fatalf("unmarshal payload: %v", err)
-	}
-	if payload["type"] != "user" {
-		t.Fatalf("expected type user, got %v", payload["type"])
-	}
-
-	message, ok := payload["message"].(map[string]any)
-	if !ok {
-		t.Fatalf("expected message object, got %T", payload["message"])
-	}
-	if message["role"] != "user" {
-		t.Fatalf("expected role user, got %v", message["role"])
-	}
-
-	content, ok := message["content"].([]any)
-	if !ok || len(content) != 1 {
-		t.Fatalf("expected one content block, got %v", message["content"])
-	}
-	block, ok := content[0].(map[string]any)
-	if !ok {
-		t.Fatalf("expected content block object, got %T", content[0])
-	}
-	if block["type"] != "text" || block["text"] != "say pong" {
-		t.Fatalf("unexpected content block: %v", block)
-	}
-}
-
 func TestMergeEnvFiltersClaudeCodeVars(t *testing.T) {
 	t.Parallel()
 

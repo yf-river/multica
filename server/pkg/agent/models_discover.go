@@ -28,23 +28,12 @@ func discoverOpenCodeModels(ctx context.Context, executablePath string) ([]Model
 	defer cancel()
 	cmd := exec.CommandContext(runCtx, executablePath, "models", "--verbose")
 	hideAgentWindow(cmd)
-	// Parse whatever the verbose command printed, even on a non-zero exit — a
-	// stale config entry can make `opencode models` exit non-zero while still
-	// listing the resolvable catalog (mirrors the pi path; see #3729/#3627).
-	out, _ := cmd.Output()
+	// Parse whatever the command printed, even on a non-zero exit — a stale
+	// config entry can make discovery fail after listing resolvable models.
+	out, err := cmd.Output()
 	models := parseOpenCodeModels(string(out))
-	if len(models) == 0 {
-		// Verbose yielded nothing usable (unsupported flag, error text, or an
-		// empty list). Retry the plain command, which omits the per-model JSON
-		// but still prints the IDs.
-		cmd = exec.CommandContext(runCtx, executablePath, "models")
-		hideAgentWindow(cmd)
-		var err error
-		out, err = cmd.Output()
-		models = parseOpenCodeModels(string(out))
-		if len(models) == 0 && err != nil {
-			return nil, fmt.Errorf("discover OpenCode models: %w", err)
-		}
+	if len(models) == 0 && err != nil {
+		return nil, fmt.Errorf("discover OpenCode models: %w", err)
 	}
 	if len(models) == 0 {
 		return []Model{}, nil
@@ -52,9 +41,8 @@ func discoverOpenCodeModels(ctx context.Context, executablePath string) ([]Model
 	return models, nil
 }
 
-// parseOpenCodeModels accepts the `opencode models` text output and
-// extracts IDs. Non-verbose output is one `provider/model` row per line.
-// Verbose output appends a pretty-printed JSON object after each ID; when
+// parseOpenCodeModels accepts the `opencode models --verbose` output and
+// extracts IDs. Each ID is followed by a pretty-printed JSON object; when
 // that object contains `variants`, each enabled variant becomes a thinking
 // level that the backend later passes through `opencode run --variant`.
 func parseOpenCodeModels(output string) []Model {
@@ -107,10 +95,6 @@ func parseOpenCodeModelIDLine(line string) string {
 		return ""
 	}
 	if !strings.Contains(id, "/") {
-		return ""
-	}
-	// Skip header rows such as PROVIDER/MODEL.
-	if id == strings.ToUpper(id) {
 		return ""
 	}
 	return id

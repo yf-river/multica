@@ -154,10 +154,6 @@ func buildClaudeStreamArgs(opts ExecOptions, blockedArgs map[string]blockedArgMo
 	return args
 }
 
-func buildClaudeInput(prompt string) ([]byte, error) {
-	return buildClaudeStreamInput(prompt, "claude")
-}
-
 // resolveSessionID decides which session id to report on the Result. When the
 // caller requested --resume but claude emitted a fresh, different session id
 // AND the run failed, the resume did not land (claude prints

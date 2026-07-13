@@ -365,15 +365,14 @@ func TestStaticCatalogsHaveAtMostOneDefault(t *testing.T) {
 }
 
 func TestParseOpenCodeModels(t *testing.T) {
-	input := `PROVIDER/MODEL                     CONTEXT  MAX_OUT
-openai/gpt-4o                      128000   16384
-anthropic/claude-sonnet-4-6        200000   8192
-openai/gpt-4o                      128000   16384
+	input := `openai/gpt-4o
+anthropic/claude-sonnet-4-6
+openai/gpt-4o
 nonprefixed-line
 `
 	models := parseOpenCodeModels(input)
 	if len(models) != 2 {
-		t.Fatalf("expected 2 models (header skipped, duplicate deduped, non-slash skipped), got %d: %+v", len(models), models)
+		t.Fatalf("expected 2 models (duplicate deduped, non-slash skipped), got %d: %+v", len(models), models)
 	}
 	if models[0].ID != "openai/gpt-4o" || models[0].Provider != "openai" {
 		t.Errorf("unexpected first model: %+v", models[0])
@@ -469,41 +468,7 @@ anthropic/claude-sonnet-4-6
 	}
 }
 
-func TestDiscoverOpenCodeModelsFallsBackWhenVerboseFails(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("shell-script fake binary requires a POSIX shell")
-	}
-
-	dir := t.TempDir()
-	fake := filepath.Join(dir, "opencode")
-	script := `#!/bin/sh
-if [ "$1" = "models" ] && [ "$2" = "--verbose" ]; then
-  exit 2
-fi
-if [ "$1" = "models" ]; then
-  cat <<'EOF'
-PROVIDER/MODEL                     CONTEXT  MAX_OUT
-openai/gpt-4o                      128000   16384
-EOF
-  exit 0
-fi
-exit 1
-`
-	writeTestExecutable(t, fake, []byte(script))
-
-	models, err := discoverOpenCodeModels(context.Background(), fake)
-	if err != nil {
-		t.Fatalf("discoverOpenCodeModels: %v", err)
-	}
-	if len(models) != 1 {
-		t.Fatalf("expected fallback non-verbose model, got %d: %+v", len(models), models)
-	}
-	if models[0].ID != "openai/gpt-4o" || models[0].Thinking != nil {
-		t.Fatalf("unexpected fallback model: %+v", models[0])
-	}
-}
-
-func TestDiscoverOpenCodeModelsReturnsPlainCommandFailure(t *testing.T) {
+func TestDiscoverOpenCodeModelsReturnsCommandFailure(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell-script fake binary requires a POSIX shell")
 	}
@@ -681,37 +646,6 @@ func TestDiscoverPiModelsNonZeroExit(t *testing.T) {
 				t.Fatalf("expected exactly [glm-coding-plan/glm-4.7] despite non-zero exit, got %+v", models)
 			}
 		})
-	}
-}
-
-// TestDiscoverOpenCodeModelsFallsBackOnVerboseNoise verifies that a non-zero
-// `opencode models --verbose` whose stdout is unparseable noise still falls
-// back to the plain `opencode models` command instead of returning empty. The
-// earlier fix skipped the fallback whenever verbose printed any bytes, which
-// regressed this case. Mirrors the pi hardening in #3729.
-func TestDiscoverOpenCodeModelsFallsBackOnVerboseNoise(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("fake opencode binary is a /bin/sh script")
-	}
-
-	// `opencode models --verbose` => $2 == "--verbose": emit noise + exit 1.
-	// `opencode models`           => no $2: print the plain catalog.
-	script := "#!/bin/sh\n" +
-		"if [ \"$2\" = \"--verbose\" ]; then\n" +
-		"  echo 'panic: catalog sync failed'\n" +
-		"  exit 1\n" +
-		"fi\n" +
-		"echo 'openai/gpt-4o'\n"
-
-	fakePath := filepath.Join(t.TempDir(), "opencode")
-	writeTestExecutable(t, fakePath, []byte(script))
-
-	models, err := discoverOpenCodeModels(context.Background(), fakePath)
-	if err != nil {
-		t.Fatalf("discoverOpenCodeModels: %v", err)
-	}
-	if len(models) != 1 || models[0].ID != "openai/gpt-4o" {
-		t.Fatalf("expected fallback to plain `opencode models` to yield [openai/gpt-4o], got %+v", models)
 	}
 }
 

@@ -150,20 +150,13 @@ func TestBuildOpenclawArgs(t *testing.T) {
 		}
 	})
 
-	t.Run("custom agent is authoritative", func(t *testing.T) {
-		args := buildOpenclawArgs("task", "ses-3", ExecOptions{
-			Model:      "dropdown-agent",
-			CustomArgs: []string{"--agent", "configured-agent"},
-		}, slog.Default())
-		if countOccurrences(args, "--agent") != 1 || valueAfter(args, "--agent") != "configured-agent" {
-			t.Fatalf("args = %v", args)
-		}
-	})
-
 	t.Run("daemon flags cannot be overridden", func(t *testing.T) {
-		args := buildOpenclawArgs("task", "ses-4", ExecOptions{CustomArgs: []string{
-			"--model", "wrong", "--system-prompt", "wrong", "--session-id", "wrong", "--message", "wrong",
+		args := buildOpenclawArgs("task", "ses-4", ExecOptions{Model: "selected-agent", CustomArgs: []string{
+			"--agent", "wrong", "--model", "wrong", "--system-prompt", "wrong", "--session-id", "wrong", "--message", "wrong",
 		}}, slog.Default())
+		if valueAfter(args, "--agent") != "selected-agent" || countOccurrences(args, "--agent") != 1 {
+			t.Fatalf("agent selection was overridden: %v", args)
+		}
 		if indexOf(args, "--model") >= 0 || indexOf(args, "--system-prompt") >= 0 {
 			t.Fatalf("blocked args survived: %v", args)
 		}

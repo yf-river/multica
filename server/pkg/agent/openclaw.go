@@ -38,6 +38,7 @@ var openclawBlockedArgs = map[string]blockedArgMode{
 	"--local":         blockedStandalone, // local mode for daemon execution
 	"--json":          blockedStandalone, // JSON output for daemon communication
 	"--session-id":    blockedWithValue,  // managed by daemon for session resumption
+	"--agent":         blockedWithValue,  // selected by the current model dropdown
 	"--message":       blockedWithValue,  // prompt is set by daemon
 	"--model":         blockedWithValue,  // openclaw agent does not accept --model; model is bound at registration via `openclaw agents add/update --model`
 	"--system-prompt": blockedWithValue,  // openclaw agent does not accept --system-prompt; instructions are injected into --message
@@ -141,11 +142,9 @@ func buildOpenclawArgs(prompt, sessionID string, opts ExecOptions, logger *slog.
 	// passing --agent <id>. The model dropdown populates its list from
 	// `openclaw agents list`, so opts.Model here is an agent id (see
 	// openclawEntriesToModels — the agent's display name lives in the
-	// dropdown label, not in opts.Model). Only inject when the user
-	// hasn't already set --agent via custom_args — custom_args wins for
-	// backward compatibility with existing configs.
+	// dropdown label, not in opts.Model).
 	customArgs := filterCustomArgs(opts.CustomArgs, openclawBlockedArgs, logger)
-	if opts.Model != "" && !customArgsContains(customArgs, "--agent") {
+	if opts.Model != "" {
 		args = append(args, "--agent", opts.Model)
 	}
 	args = append(args, customArgs...)
@@ -155,18 +154,6 @@ func buildOpenclawArgs(prompt, sessionID string, opts ExecOptions, logger *slog.
 	}
 	args = append(args, "--message", prompt)
 	return args
-}
-
-// customArgsContains reports whether args contains the given flag
-// (either as a standalone token "--flag" or in "--flag=value" form).
-func customArgsContains(args []string, flag string) bool {
-	prefix := flag + "="
-	for _, a := range args {
-		if a == flag || strings.HasPrefix(a, prefix) {
-			return true
-		}
-	}
-	return false
 }
 
 // checkOpenclawVersion runs `<execPath> --version` and returns a
