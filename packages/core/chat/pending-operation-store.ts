@@ -117,14 +117,3 @@ export function claimPendingChatOperation(id: string): boolean {
 export function releasePendingChatOperation(id: string): void {
   inFlightOperationIds.delete(id);
 }
-
-export function selectPendingChatOperations(accountId: string | null, workspaceId: string | null) {
-  return (state: PendingChatOperationState): PendingChatOperation[] => {
-    if (!accountId || !workspaceId) return [];
-    return Object.values(state.operations)
-      .filter((operation) =>
-        operation.accountId === accountId && operation.workspaceId === workspaceId,
-      )
-      .sort((a, b) => a.createdAt - b.createdAt);
-  };
-}

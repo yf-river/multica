@@ -2,7 +2,6 @@
 
 import { beforeEach, describe, expect, it } from "vitest";
 import {
-  selectPendingChatOperations,
   usePendingChatOperationStore,
   type PendingChatOperation,
 } from "./pending-operation-store";
@@ -59,7 +58,7 @@ describe("pending chat operation store", () => {
     expect(usePendingChatOperationStore.getState().operations).toEqual({});
   });
 
-  it("isolates selectors by account and workspace and prunes removed workspaces", () => {
+  it("prunes operations for removed workspaces", () => {
     const first = operation();
     const second = operation({
       id: "22222222-2222-4222-8222-222222222222",
@@ -68,10 +67,6 @@ describe("pending chat operation store", () => {
     });
     usePendingChatOperationStore.getState().start(first);
     usePendingChatOperationStore.getState().start(second);
-
-    expect(selectPendingChatOperations("user-1", "ws-1")(
-      usePendingChatOperationStore.getState(),
-    )).toEqual([first]);
 
     usePendingChatOperationStore.getState().pruneWorkspaces(["ws-2"]);
     expect(Object.keys(usePendingChatOperationStore.getState().operations)).toEqual([second.id]);
