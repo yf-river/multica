@@ -159,7 +159,16 @@ func autopilotToResponse(a db.Autopilot, subscribers []db.AutopilotSubscriber) A
 	}
 }
 
-func (h *Handler) triggerToResponse(t db.AutopilotTrigger) AutopilotTriggerResponse {
+func (h *Handler) triggerToResponse(t db.AutopilotTrigger) (AutopilotTriggerResponse, error) {
+	var eventFilters []WebhookEventFilter
+	if len(t.EventFilters) > 0 {
+		if err := json.Unmarshal(t.EventFilters, &eventFilters); err != nil {
+			return AutopilotTriggerResponse{}, fmt.Errorf("decode autopilot event filters: %w", err)
+		}
+		if err := validateWebhookEventFilters(eventFilters); err != nil {
+			return AutopilotTriggerResponse{}, fmt.Errorf("validate persisted autopilot event filters: %w", err)
+		}
+	}
 	resp := AutopilotTriggerResponse{
 		ID:             uuidToString(t.ID),
 		AutopilotID:    uuidToString(t.AutopilotID),
@@ -191,18 +200,11 @@ func (h *Handler) triggerToResponse(t db.AutopilotTrigger) AutopilotTriggerRespo
 			hint := signingSecretHint(t.SigningSecret.String)
 			resp.SigningSecretHint = &hint
 		}
-		if len(t.EventFilters) > 0 {
-			var filters []WebhookEventFilter
-			if err := json.Unmarshal(t.EventFilters, &filters); err == nil {
-				resp.EventFilters = filters
-			}
-			// On unmarshal error we deliberately drop the field instead of
-			// surfacing raw bytes or 500ing — strict write-time validation
-			// is supposed to make this branch unreachable, and the matcher
-			// fails closed if a corrupt row ever slips through.
+		if len(eventFilters) > 0 {
+			resp.EventFilters = eventFilters
 		}
 	}
-	return resp
+	return resp, nil
 }
 
 // signingSecretHint returns the last 4 characters of the signing secret so a
@@ -412,7 +414,12 @@ func (h *Handler) GetAutopilot(w http.ResponseWriter, r *http.Request) {
 	}
 	triggerResp := make([]AutopilotTriggerResponse, len(triggers))
 	for i, t := range triggers {
-		triggerResp[i] = h.triggerToResponse(t)
+		converted, err := h.triggerToResponse(t)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to decode autopilot trigger")
+			return
+		}
+		triggerResp[i] = converted
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -598,7 +605,11 @@ func (h *Handler) CreateAutopilot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp := autopilotToResponse(autopilot, subs)
-	initialTrigger := h.triggerToResponse(trigger)
+	initialTrigger, err := h.triggerToResponse(trigger)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to prepare autopilot trigger")
+		return
+	}
 	resp.InitialTrigger = &initialTrigger
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create autopilot")
@@ -654,7 +665,10 @@ func (h *Handler) loadAutopilotCreateReplay(
 		return AutopilotResponse{}, false, errors.New("created autopilot initial trigger does not belong to it")
 	}
 	response := autopilotToResponse(autopilot, subs)
-	initialTrigger := h.triggerToResponse(trigger)
+	initialTrigger, err := h.triggerToResponse(trigger)
+	if err != nil {
+		return AutopilotResponse{}, false, err
+	}
 	response.InitialTrigger = &initialTrigger
 	return response, true, nil
 }

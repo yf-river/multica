@@ -627,6 +627,7 @@ CREATE TABLE public.autopilot_trigger (
     provider text DEFAULT 'generic'::text NOT NULL,
     signing_secret text,
     event_filters jsonb,
+	CONSTRAINT autopilot_trigger_event_filters_array CHECK (((event_filters IS NULL) OR ((kind = 'webhook'::text) AND (jsonb_typeof(event_filters) = 'array'::text)))),
     CONSTRAINT autopilot_trigger_kind_check CHECK ((kind = ANY (ARRAY['schedule'::text, 'webhook'::text]))),
     CONSTRAINT autopilot_trigger_provider_check CHECK ((provider = ANY (ARRAY['generic'::text, 'github'::text])))
 );

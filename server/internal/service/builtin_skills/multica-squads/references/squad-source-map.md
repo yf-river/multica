@@ -70,7 +70,7 @@ access and pending-task checks.
 
 | Contract | Current source |
 |---|---|
-| Save-time autopilot assignee validation | server/internal/handler/autopilot_triggers.go:230 |
+| Save-time autopilot assignee validation | server/internal/handler/autopilot_triggers.go:342 |
 | Runtime leader resolution and dispatch | server/internal/service/autopilot.go |
 | Parent squad trigger on child done | server/internal/handler/issue_child_done.go:246-387 |
 

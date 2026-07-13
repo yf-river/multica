@@ -111,7 +111,11 @@ func (h *Handler) CreateAutopilotTrigger(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	resp := h.triggerToResponse(trigger)
+	resp, err := h.triggerToResponse(trigger)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to prepare trigger response")
+		return
+	}
 	if err := completeResourceCreateRequest(
 		r.Context(), qtx, workspaceUUID, actorUUID, resourceTypeAutopilotTrigger,
 		idempotencyKey, requestHash, trigger.ID, resp,
@@ -492,7 +496,11 @@ func (h *Handler) UpdateAutopilotTrigger(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	resp := h.triggerToResponse(trigger)
+	resp, err := h.triggerToResponse(trigger)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to decode trigger response")
+		return
+	}
 	userID, _ := requireUserID(w, r)
 	h.publish(protocol.EventAutopilotUpdated, workspaceID, "member", userID, map[string]any{
 		"autopilot_id": uuidToString(ap.ID),
@@ -619,7 +627,11 @@ func (h *Handler) RotateAutopilotTriggerWebhookToken(w http.ResponseWriter, r *h
 		return
 	}
 
-	resp := h.triggerToResponse(rotated)
+	resp, err := h.triggerToResponse(rotated)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to prepare rotated trigger response")
+		return
+	}
 	if err := completeAutopilotTriggerRotationRequest(r.Context(), qtx, workspaceUUID, actorUUID, requestKey, prev.ID, requestHash, http.StatusOK, resp); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to complete webhook token rotation request")
 		return
@@ -678,7 +690,11 @@ func (h *Handler) SetAutopilotTriggerSigningSecret(w http.ResponseWriter, r *htt
 		return
 	}
 
-	resp := h.triggerToResponse(updated)
+	resp, err := h.triggerToResponse(updated)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to decode trigger response")
+		return
+	}
 	userID, _ := requireUserID(w, r)
 	// Publish the trigger update so the UI can refresh the has_signing_secret
 	// badge in real time. The event payload only carries the response shape,
