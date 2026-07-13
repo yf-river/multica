@@ -134,8 +134,11 @@ func (s *AutopilotService) dispatchAutopilot(
 
 	switch autopilot.ExecutionMode {
 	case "create_issue":
-		triggerTimezone := s.resolveAutopilotTriggerTimezone(ctx, triggerID)
-		if err := s.dispatchCreateIssue(ctx, autopilot, &run, triggerTimezone); err != nil {
+		triggerTimezone, err := s.resolveAutopilotTriggerTimezone(ctx, triggerID)
+		if err == nil {
+			err = s.dispatchCreateIssue(ctx, autopilot, &run, triggerTimezone)
+		}
+		if err != nil {
 			skipped, skipErr := s.handleDispatchSkip(ctx, autopilot, &run, err)
 			if skipped {
 				return &run, skipErr
@@ -211,8 +214,14 @@ func (s *AutopilotService) dispatchCreateIssue(ctx context.Context, ap db.Autopi
 
 	qtx := s.Queries.WithTx(tx)
 
-	title := s.interpolateTemplate(ap, *run, triggerTimezone)
-	description := s.buildIssueDescription(ap, *run, triggerTimezone)
+	title, err := s.interpolateTemplate(ap, *run, triggerTimezone)
+	if err != nil {
+		return fmt.Errorf("render issue title: %w", err)
+	}
+	description, err := s.buildIssueDescription(ap, *run, triggerTimezone)
+	if err != nil {
+		return fmt.Errorf("render issue description: %w", err)
+	}
 
 	issueNumber, err := qtx.IncrementIssueCounter(ctx, ap.WorkspaceID)
 	if err != nil {
@@ -1058,45 +1067,42 @@ func autopilotRunDurationMS(run db.AutopilotRun) int64 {
 	return ms
 }
 
-func (s *AutopilotService) resolveAutopilotTriggerTimezone(ctx context.Context, triggerID pgtype.UUID) string {
+func (s *AutopilotService) resolveAutopilotTriggerTimezone(ctx context.Context, triggerID pgtype.UUID) (string, error) {
 	if !triggerID.Valid || s == nil || s.Queries == nil {
-		return DefaultAutopilotTriggerTimezone
+		return DefaultAutopilotTriggerTimezone, nil
 	}
 
 	trigger, err := s.Queries.GetAutopilotTrigger(ctx, triggerID)
 	if err != nil {
-		slog.Warn("failed to load autopilot trigger timezone; falling back to UTC",
-			"trigger_id", util.UUIDToString(triggerID),
-			"error", err,
-		)
-		return DefaultAutopilotTriggerTimezone
+		return "", fmt.Errorf("load autopilot trigger timezone: %w", err)
 	}
 
 	timezone := strings.TrimSpace(trigger.Timezone.String)
 	if !trigger.Timezone.Valid || timezone == "" {
-		return DefaultAutopilotTriggerTimezone
+		return DefaultAutopilotTriggerTimezone, nil
 	}
 	if _, err := time.LoadLocation(timezone); err != nil {
-		slog.Warn("invalid autopilot trigger timezone; falling back to UTC",
-			"trigger_id", util.UUIDToString(triggerID),
-			"timezone", timezone,
-			"error", err,
-		)
-		return DefaultAutopilotTriggerTimezone
+		return "", fmt.Errorf("invalid autopilot trigger timezone %q: %w", timezone, err)
 	}
-	return timezone
+	return timezone, nil
 }
 
-func formatAutopilotRunTimestamp(run db.AutopilotRun, timezone string) string {
+func formatAutopilotRunTimestamp(run db.AutopilotRun, timezone string) (string, error) {
 	triggeredAt := autopilotRunTriggeredAt(run)
-	loc, label := autopilotTriggerLocation(timezone)
-	return triggeredAt.In(loc).Format("2006-01-02 15:04") + " " + label
+	loc, label, err := autopilotTriggerLocation(timezone)
+	if err != nil {
+		return "", err
+	}
+	return triggeredAt.In(loc).Format("2006-01-02 15:04") + " " + label, nil
 }
 
-func formatAutopilotRunDate(run db.AutopilotRun, timezone string) string {
+func formatAutopilotRunDate(run db.AutopilotRun, timezone string) (string, error) {
 	triggeredAt := autopilotRunTriggeredAt(run)
-	loc, _ := autopilotTriggerLocation(timezone)
-	return triggeredAt.In(loc).Format("2006-01-02")
+	loc, _, err := autopilotTriggerLocation(timezone)
+	if err != nil {
+		return "", err
+	}
+	return triggeredAt.In(loc).Format("2006-01-02"), nil
 }
 
 func autopilotRunTriggeredAt(run db.AutopilotRun) time.Time {
@@ -1109,16 +1115,16 @@ func autopilotRunTriggeredAt(run db.AutopilotRun) time.Time {
 	return time.Now().UTC()
 }
 
-func autopilotTriggerLocation(timezone string) (*time.Location, string) {
+func autopilotTriggerLocation(timezone string) (*time.Location, string, error) {
 	label := strings.TrimSpace(timezone)
 	if label == "" {
 		label = DefaultAutopilotTriggerTimezone
 	}
 	loc, err := time.LoadLocation(label)
 	if err != nil {
-		return time.UTC, DefaultAutopilotTriggerTimezone
+		return nil, "", fmt.Errorf("load autopilot trigger timezone %q: %w", label, err)
 	}
-	return loc, label
+	return loc, label, nil
 }
 
 // buildIssueDescription appends an autopilot system instruction to the
@@ -1126,8 +1132,11 @@ func autopilotTriggerLocation(timezone string) (*time.Location, string) {
 // it understands the actual work. For webhook-sourced runs, also appends
 // a payload section so the agent has the event context inline (otherwise
 // the agent only sees the issue body, never the run's trigger_payload).
-func (s *AutopilotService) buildIssueDescription(ap db.Autopilot, run db.AutopilotRun, triggerTimezone string) pgtype.Text {
-	triggeredAt := formatAutopilotRunTimestamp(run, triggerTimezone)
+func (s *AutopilotService) buildIssueDescription(ap db.Autopilot, run db.AutopilotRun, triggerTimezone string) (pgtype.Text, error) {
+	triggeredAt, err := formatAutopilotRunTimestamp(run, triggerTimezone)
+	if err != nil {
+		return pgtype.Text{}, err
+	}
 	var b strings.Builder
 	b.WriteString(ap.Description.String)
 	b.WriteString("\n\n---\n*Autopilot run triggered at ")
@@ -1165,7 +1174,7 @@ func (s *AutopilotService) buildIssueDescription(ap db.Autopilot, run db.Autopil
 		b.WriteString("\n```")
 	}
 
-	return pgtype.Text{String: b.String(), Valid: true}
+	return pgtype.Text{String: b.String(), Valid: true}, nil
 }
 
 func prettifyJSON(raw []byte) ([]byte, error) {
@@ -1187,12 +1196,15 @@ var issueTitleTemplateTokenRE = regexp.MustCompile(`\{\{\s*([^{}]*?)\s*\}\}`)
 // tolerated so the render layer accepts every form that
 // ValidateIssueTitleTemplate accepts — otherwise users would save templates
 // that pass validation but still emit a literal token at trigger time.
-func (s *AutopilotService) interpolateTemplate(ap db.Autopilot, run db.AutopilotRun, triggerTimezone string) string {
+func (s *AutopilotService) interpolateTemplate(ap db.Autopilot, run db.AutopilotRun, triggerTimezone string) (string, error) {
 	tmpl := ap.Title
 	if ap.IssueTitleTemplate.Valid && ap.IssueTitleTemplate.String != "" {
 		tmpl = ap.IssueTitleTemplate.String
 	}
-	triggerDate := formatAutopilotRunDate(run, triggerTimezone)
+	triggerDate, err := formatAutopilotRunDate(run, triggerTimezone)
+	if err != nil {
+		return "", err
+	}
 	return issueTitleTemplateTokenRE.ReplaceAllStringFunc(tmpl, func(match string) string {
 		name := strings.TrimSpace(match[2 : len(match)-2])
 		switch name {
@@ -1201,7 +1213,7 @@ func (s *AutopilotService) interpolateTemplate(ap db.Autopilot, run db.Autopilot
 		default:
 			return match
 		}
-	})
+	}), nil
 }
 
 // SupportedIssueTitleTemplateVariables enumerates the placeholders that
