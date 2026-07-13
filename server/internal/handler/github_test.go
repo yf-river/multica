@@ -962,8 +962,8 @@ func TestWebhook_PullRequest_SynchronizeClearsMergeable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListPullRequestsByIssue: %v", err)
 	}
-	if !rows[0].MergeableState.Valid || rows[0].MergeableState.String != "clean" {
-		t.Fatalf("setup: expected mergeable_state=clean, got %+v", rows[0].MergeableState)
+	if !rows[0].GithubPullRequest.MergeableState.Valid || rows[0].GithubPullRequest.MergeableState.String != "clean" {
+		t.Fatalf("setup: expected mergeable_state=clean, got %+v", rows[0].GithubPullRequest.MergeableState)
 	}
 
 	// Synchronize — payload still claims clean, but we must blank it.
@@ -973,11 +973,11 @@ func TestWebhook_PullRequest_SynchronizeClearsMergeable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListPullRequestsByIssue: %v", err)
 	}
-	if rows[0].MergeableState.Valid {
-		t.Errorf("expected mergeable_state cleared on synchronize, got %q", rows[0].MergeableState.String)
+	if rows[0].GithubPullRequest.MergeableState.Valid {
+		t.Errorf("expected mergeable_state cleared on synchronize, got %q", rows[0].GithubPullRequest.MergeableState.String)
 	}
-	if rows[0].HeadSha != "head2" {
-		t.Errorf("expected head_sha updated to head2, got %q", rows[0].HeadSha)
+	if rows[0].GithubPullRequest.HeadSha != "head2" {
+		t.Errorf("expected head_sha updated to head2, got %q", rows[0].GithubPullRequest.HeadSha)
 	}
 }
 
@@ -1003,8 +1003,8 @@ func TestWebhook_PullRequest_MetadataPreservesMergeable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListPullRequestsByIssue: %v", err)
 	}
-	if !rows[0].MergeableState.Valid || rows[0].MergeableState.String != "clean" {
-		t.Fatalf("setup: expected mergeable_state=clean, got %+v", rows[0].MergeableState)
+	if !rows[0].GithubPullRequest.MergeableState.Valid || rows[0].GithubPullRequest.MergeableState.String != "clean" {
+		t.Fatalf("setup: expected mergeable_state=clean, got %+v", rows[0].GithubPullRequest.MergeableState)
 	}
 
 	// A second labeled event arrives with mergeable_state empty (typical for
@@ -1015,8 +1015,8 @@ func TestWebhook_PullRequest_MetadataPreservesMergeable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListPullRequestsByIssue: %v", err)
 	}
-	if !rows[0].MergeableState.Valid || rows[0].MergeableState.String != "clean" {
-		t.Errorf("expected mergeable_state preserved as clean after metadata event, got %+v", rows[0].MergeableState)
+	if !rows[0].GithubPullRequest.MergeableState.Valid || rows[0].GithubPullRequest.MergeableState.String != "clean" {
+		t.Errorf("expected mergeable_state preserved as clean after metadata event, got %+v", rows[0].GithubPullRequest.MergeableState)
 	}
 }
 

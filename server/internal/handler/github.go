@@ -185,31 +185,12 @@ func githubPullRequestToResponse(p db.GithubPullRequest) GitHubPullRequestRespon
 }
 
 func issuePullRequestRowToResponse(p db.ListPullRequestsByIssueRow) GitHubPullRequestResponse {
-	return GitHubPullRequestResponse{
-		ID:               uuidToString(p.ID),
-		WorkspaceID:      uuidToString(p.WorkspaceID),
-		RepoOwner:        p.RepoOwner,
-		RepoName:         p.RepoName,
-		Number:           p.PrNumber,
-		Title:            p.Title,
-		State:            p.State,
-		HtmlURL:          normalizeGongfengPullRequestURL(p.HtmlUrl, p.RepoOwner, p.RepoName, p.PrNumber),
-		Branch:           textToPtr(p.Branch),
-		AuthorLogin:      textToPtr(p.AuthorLogin),
-		AuthorAvatarURL:  textToPtr(p.AuthorAvatarUrl),
-		MergedAt:         timestampToPtr(p.MergedAt),
-		ClosedAt:         timestampToPtr(p.ClosedAt),
-		PRCreatedAt:      timestampToString(p.PrCreatedAt),
-		PRUpdatedAt:      timestampToString(p.PrUpdatedAt),
-		MergeableState:   textToPtr(p.MergeableState),
-		ChecksConclusion: aggregateChecksConclusion(p.ChecksFailed, p.ChecksPassed, p.ChecksPending, p.ChecksTotal),
-		ChecksPassed:     p.ChecksPassed,
-		ChecksFailed:     p.ChecksFailed,
-		ChecksPending:    p.ChecksPending,
-		Additions:        p.Additions,
-		Deletions:        p.Deletions,
-		ChangedFiles:     p.ChangedFiles,
-	}
+	resp := githubPullRequestToResponse(p.GithubPullRequest)
+	resp.ChecksConclusion = aggregateChecksConclusion(p.ChecksFailed, p.ChecksPassed, p.ChecksPending, p.ChecksTotal)
+	resp.ChecksPassed = p.ChecksPassed
+	resp.ChecksFailed = p.ChecksFailed
+	resp.ChecksPending = p.ChecksPending
+	return resp
 }
 
 // aggregateChecksConclusion collapses the per-PR check_suite counts into a

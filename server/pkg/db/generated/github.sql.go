@@ -388,12 +388,7 @@ checks AS (
     GROUP BY pr_id
 )
 SELECT
-    pr.id, pr.workspace_id, pr.installation_id, pr.repo_owner, pr.repo_name,
-    pr.pr_number, pr.title, pr.state, pr.html_url, pr.branch, pr.author_login,
-    pr.author_avatar_url, pr.merged_at, pr.closed_at, pr.pr_created_at,
-    pr.pr_updated_at, pr.head_sha, pr.mergeable_state,
-    pr.additions, pr.deletions, pr.changed_files,
-    pr.created_at, pr.updated_at,
+    pr.id, pr.workspace_id, pr.installation_id, pr.repo_owner, pr.repo_name, pr.pr_number, pr.title, pr.state, pr.html_url, pr.branch, pr.author_login, pr.author_avatar_url, pr.merged_at, pr.closed_at, pr.pr_created_at, pr.pr_updated_at, pr.created_at, pr.updated_at, pr.head_sha, pr.mergeable_state, pr.additions, pr.deletions, pr.changed_files,
     COALESCE(c.total, 0)::bigint   AS checks_total,
     COALESCE(c.passed, 0)::bigint  AS checks_passed,
     COALESCE(c.failed, 0)::bigint  AS checks_failed,
@@ -406,33 +401,11 @@ ORDER BY pr.pr_created_at DESC
 `
 
 type ListPullRequestsByIssueRow struct {
-	ID              pgtype.UUID        `json:"id"`
-	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
-	InstallationID  int64              `json:"installation_id"`
-	RepoOwner       string             `json:"repo_owner"`
-	RepoName        string             `json:"repo_name"`
-	PrNumber        int32              `json:"pr_number"`
-	Title           string             `json:"title"`
-	State           string             `json:"state"`
-	HtmlUrl         string             `json:"html_url"`
-	Branch          pgtype.Text        `json:"branch"`
-	AuthorLogin     pgtype.Text        `json:"author_login"`
-	AuthorAvatarUrl pgtype.Text        `json:"author_avatar_url"`
-	MergedAt        pgtype.Timestamptz `json:"merged_at"`
-	ClosedAt        pgtype.Timestamptz `json:"closed_at"`
-	PrCreatedAt     pgtype.Timestamptz `json:"pr_created_at"`
-	PrUpdatedAt     pgtype.Timestamptz `json:"pr_updated_at"`
-	HeadSha         string             `json:"head_sha"`
-	MergeableState  pgtype.Text        `json:"mergeable_state"`
-	Additions       int32              `json:"additions"`
-	Deletions       int32              `json:"deletions"`
-	ChangedFiles    int32              `json:"changed_files"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
-	ChecksTotal     int64              `json:"checks_total"`
-	ChecksPassed    int64              `json:"checks_passed"`
-	ChecksFailed    int64              `json:"checks_failed"`
-	ChecksPending   int64              `json:"checks_pending"`
+	GithubPullRequest GithubPullRequest `json:"github_pull_request"`
+	ChecksTotal       int64             `json:"checks_total"`
+	ChecksPassed      int64             `json:"checks_passed"`
+	ChecksFailed      int64             `json:"checks_failed"`
+	ChecksPending     int64             `json:"checks_pending"`
 }
 
 // Returns the issue's linked PRs with the aggregated check-suite counts for
@@ -454,29 +427,29 @@ func (q *Queries) ListPullRequestsByIssue(ctx context.Context, issueID pgtype.UU
 	for rows.Next() {
 		var i ListPullRequestsByIssueRow
 		if err := rows.Scan(
-			&i.ID,
-			&i.WorkspaceID,
-			&i.InstallationID,
-			&i.RepoOwner,
-			&i.RepoName,
-			&i.PrNumber,
-			&i.Title,
-			&i.State,
-			&i.HtmlUrl,
-			&i.Branch,
-			&i.AuthorLogin,
-			&i.AuthorAvatarUrl,
-			&i.MergedAt,
-			&i.ClosedAt,
-			&i.PrCreatedAt,
-			&i.PrUpdatedAt,
-			&i.HeadSha,
-			&i.MergeableState,
-			&i.Additions,
-			&i.Deletions,
-			&i.ChangedFiles,
-			&i.CreatedAt,
-			&i.UpdatedAt,
+			&i.GithubPullRequest.ID,
+			&i.GithubPullRequest.WorkspaceID,
+			&i.GithubPullRequest.InstallationID,
+			&i.GithubPullRequest.RepoOwner,
+			&i.GithubPullRequest.RepoName,
+			&i.GithubPullRequest.PrNumber,
+			&i.GithubPullRequest.Title,
+			&i.GithubPullRequest.State,
+			&i.GithubPullRequest.HtmlUrl,
+			&i.GithubPullRequest.Branch,
+			&i.GithubPullRequest.AuthorLogin,
+			&i.GithubPullRequest.AuthorAvatarUrl,
+			&i.GithubPullRequest.MergedAt,
+			&i.GithubPullRequest.ClosedAt,
+			&i.GithubPullRequest.PrCreatedAt,
+			&i.GithubPullRequest.PrUpdatedAt,
+			&i.GithubPullRequest.CreatedAt,
+			&i.GithubPullRequest.UpdatedAt,
+			&i.GithubPullRequest.HeadSha,
+			&i.GithubPullRequest.MergeableState,
+			&i.GithubPullRequest.Additions,
+			&i.GithubPullRequest.Deletions,
+			&i.GithubPullRequest.ChangedFiles,
 			&i.ChecksTotal,
 			&i.ChecksPassed,
 			&i.ChecksFailed,
