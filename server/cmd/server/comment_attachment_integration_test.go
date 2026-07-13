@@ -131,7 +131,7 @@ func TestUpdateCommentAttachments(t *testing.T) {
 		}
 	})
 
-	t.Run("old client omitting attachment_ids preserves existing attachments", func(t *testing.T) {
+	t.Run("missing attachment_ids is rejected without changing attachments", func(t *testing.T) {
 		att1 := createTestAttachment(t, issueID)
 
 		commentID := createCommentWithAttachments(t, issueID, "comment with attachment", []string{att1})
@@ -140,14 +140,18 @@ func TestUpdateCommentAttachments(t *testing.T) {
 			t.Fatalf("expected 1 attachment, got %d", len(ids))
 		}
 
-		// Old client: only sends content, no attachment_ids field at all.
-		updateComment(t, commentID, map[string]any{
+		resp := authRequest(t, "PUT", "/api/comments/"+commentID, map[string]any{
 			"content": "edited content without attachment_ids",
 		})
+		defer func() { _ = resp.Body.Close() }()
+		if resp.StatusCode != 400 {
+			body, _ := io.ReadAll(resp.Body)
+			t.Fatalf("UpdateComment: expected 400, got %d: %s", resp.StatusCode, body)
+		}
 
 		ids := listCommentAttachmentIDs(t, commentID)
 		if len(ids) != 1 {
-			t.Fatalf("expected 1 attachment preserved (old client), got %d", len(ids))
+			t.Fatalf("expected 1 unchanged attachment, got %d", len(ids))
 		}
 		if ids[0] != att1 {
 			t.Errorf("expected att1 %q preserved, got %q", att1, ids[0])

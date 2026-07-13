@@ -812,7 +812,7 @@ export class ApiClient extends ApiTransport {
     });
   }
 
-  async updateComment(commentId: string, content: string, attachmentIds?: string[], suppressAgentIds?: string[]): Promise<Comment> {
+  async updateComment(commentId: string, content: string, attachmentIds: string[], suppressAgentIds?: string[]): Promise<Comment> {
     const raw = await this.fetch<unknown>(`/api/comments/${commentId}`, {
       method: "PUT",
       body: JSON.stringify({

@@ -62,7 +62,8 @@ func TestUpdateCommentRollsBackCancellationWhenReplacementTaskFails(t *testing.T
 
 	w = httptest.NewRecorder()
 	req := newRequest(http.MethodPut, "/api/comments/"+comment.ID, map[string]any{
-		"content": "replacement actionable comment " + uuid.NewString(),
+		"content":        "replacement actionable comment " + uuid.NewString(),
+		"attachment_ids": []string{},
 	})
 	req = withURLParam(req, "commentId", comment.ID)
 	testHandler.UpdateComment(w, req)
@@ -89,7 +90,10 @@ func TestUpdateCommentCommitsDurableEvent(t *testing.T) {
 	}
 	content := "after durable edit " + uuid.NewString()
 	w = httptest.NewRecorder()
-	req := newRequest(http.MethodPut, "/api/comments/"+comment.ID, map[string]any{"content": content})
+	req := newRequest(http.MethodPut, "/api/comments/"+comment.ID, map[string]any{
+		"content":        content,
+		"attachment_ids": []string{},
+	})
 	req = withURLParam(req, "commentId", comment.ID)
 	testHandler.UpdateComment(w, req)
 	if w.Code != http.StatusOK {

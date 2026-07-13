@@ -365,6 +365,7 @@ func TestUpdateComment_SuppressAgentIDsFiltersEditRetrigger(t *testing.T) {
 
 	updateCommentForTriggerPreviewTest(t, commentID, map[string]any{
 		"content":            content,
+		"attachment_ids":     []string{},
 		"suppress_agent_ids": []string{agentB},
 	})
 

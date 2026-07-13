@@ -21,7 +21,8 @@ func TestEditCommentTriggers(t *testing.T) {
 
 		newContent := fmt.Sprintf("[@Agent](mention://agent/%s) please review", agentID)
 		updateComment(t, commentID, map[string]any{
-			"content": newContent,
+			"content":        newContent,
+			"attachment_ids": []string{},
 		})
 
 		if n := countPendingTasks(t, issueID); n != 1 {
@@ -39,7 +40,8 @@ func TestEditCommentTriggers(t *testing.T) {
 		}
 
 		updateComment(t, commentID, map[string]any{
-			"content": "removed the mention, nevermind",
+			"content":        "removed the mention, nevermind",
+			"attachment_ids": []string{},
 		})
 
 		if n := countPendingTasks(t, issueID); n != 0 {
@@ -60,7 +62,8 @@ func TestEditCommentTriggers(t *testing.T) {
 
 		newContent := fmt.Sprintf("[@Agent](mention://agent/%s) actually fix bug B instead", agentID)
 		updateComment(t, commentID, map[string]any{
-			"content": newContent,
+			"content":        newContent,
+			"attachment_ids": []string{},
 		})
 
 		if n := countPendingTasks(t, issueID); n != 1 {
@@ -85,7 +88,8 @@ func TestEditCommentTriggers(t *testing.T) {
 		clearTasks(t, assignedIssue)
 
 		updateComment(t, commentID, map[string]any{
-			"content": "actually fix the signup page instead",
+			"content":        "actually fix the signup page instead",
+			"attachment_ids": []string{},
 		})
 
 		if n := countPendingTasks(t, assignedIssue); n != 1 {

@@ -2845,7 +2845,8 @@ func TestCommentWritePathsPreserveIssueIdentifiers(t *testing.T) {
 	updatedContent := "updated MUL-3310 issue/MUL-3310 feature/MUL-3310 " + explicitMention
 	w := httptest.NewRecorder()
 	req := newRequest("PUT", "/api/comments/"+firstCommentID, map[string]any{
-		"content": updatedContent,
+		"content":        updatedContent,
+		"attachment_ids": []string{},
 	})
 	req = withURLParam(req, "commentId", firstCommentID)
 	testHandler.UpdateComment(w, req)

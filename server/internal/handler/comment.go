@@ -487,15 +487,14 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "content is required")
 		return
 	}
+	if req.AttachmentIDs == nil {
+		writeError(w, http.StatusBadRequest, "attachment_ids is required")
+		return
+	}
 
-	var attachmentIDs []pgtype.UUID
-	replaceAttachments := req.AttachmentIDs != nil
-	if replaceAttachments {
-		var ok bool
-		attachmentIDs, ok = parseUUIDSliceOrBadRequest(w, *req.AttachmentIDs, "attachment_ids")
-		if !ok {
-			return
-		}
+	attachmentIDs, ok := parseUUIDSliceOrBadRequest(w, *req.AttachmentIDs, "attachment_ids")
+	if !ok {
+		return
 	}
 	suppressAgentIDs, ok := parseUUIDSliceOrBadRequest(w, req.SuppressAgentIDs, "suppress_agent_ids")
 	if !ok {
@@ -531,12 +530,7 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var attachments []db.Attachment
-	if replaceAttachments {
-		attachments, err = replaceCommentAttachmentSet(r.Context(), qtx, comment, attachmentIDs)
-	} else {
-		attachments, err = listCommentAttachments(r.Context(), qtx, comment)
-	}
+	attachments, err := replaceCommentAttachmentSet(r.Context(), qtx, comment, attachmentIDs)
 	if errors.Is(err, errCommentAttachmentsUnavailable) {
 		writeError(w, http.StatusBadRequest, "one or more attachments are unavailable for this comment")
 		return
