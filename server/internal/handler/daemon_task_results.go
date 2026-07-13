@@ -232,17 +232,15 @@ func (h *Handler) normalizeTaskUsagePayload(ctx context.Context, task db.AgentTa
 		u.InputTokens = nonNegativeDelta(u.InputTokens, previous.InputTokens)
 		u.OutputTokens = nonNegativeDelta(u.OutputTokens, previous.OutputTokens)
 		u.CacheReadTokens = nonNegativeDelta(u.CacheReadTokens, previous.CacheReadTokens)
-		u.CacheWriteTokens = nonNegativeDelta(u.CacheWriteTokens, previous.CacheWriteTokens)
 	}
 	u.CacheWriteTokens = 0
 	return u, nil
 }
 
 type taskUsageTotals struct {
-	InputTokens      int64
-	OutputTokens     int64
-	CacheReadTokens  int64
-	CacheWriteTokens int64
+	InputTokens     int64
+	OutputTokens    int64
+	CacheReadTokens int64
 }
 
 func (h *Handler) previousCodebuddySessionUsage(ctx context.Context, task db.AgentTaskQueue, provider, model string) (taskUsageTotals, bool, error) {
@@ -254,8 +252,7 @@ func (h *Handler) previousCodebuddySessionUsage(ctx context.Context, task db.Age
 		SELECT
 			COALESCE(SUM(tu.input_tokens), 0)::bigint,
 			COALESCE(SUM(tu.output_tokens), 0)::bigint,
-			COALESCE(SUM(tu.cache_read_tokens), 0)::bigint,
-			COALESCE(SUM(tu.cache_write_tokens), 0)::bigint
+			COALESCE(SUM(tu.cache_read_tokens), 0)::bigint
 		FROM task_usage tu
 		JOIN agent_task_queue atq ON atq.id = tu.task_id
 		WHERE atq.session_id = $1
@@ -267,12 +264,11 @@ func (h *Handler) previousCodebuddySessionUsage(ctx context.Context, task db.Age
 		&previous.InputTokens,
 		&previous.OutputTokens,
 		&previous.CacheReadTokens,
-		&previous.CacheWriteTokens,
 	)
 	if err != nil {
 		return taskUsageTotals{}, false, err
 	}
-	return previous, previous.InputTokens > 0 || previous.OutputTokens > 0 || previous.CacheReadTokens > 0 || previous.CacheWriteTokens > 0, nil
+	return previous, previous.InputTokens > 0 || previous.OutputTokens > 0 || previous.CacheReadTokens > 0, nil
 }
 
 func nonNegativeDelta(current, previous int64) int64 {

@@ -184,11 +184,7 @@ export function usageTokenTotal(
   > & { provider?: string | null },
 ): number {
   if (isCodeBuddyUsage(usage.provider)) {
-    const input =
-      usage.input_tokens < usage.cache_read_tokens + usage.cache_write_tokens
-        ? usage.input_tokens + usage.cache_read_tokens + usage.cache_write_tokens
-        : usage.input_tokens;
-    return input + usage.output_tokens;
+    return usage.input_tokens + usage.output_tokens;
   }
   return (
     usage.input_tokens +

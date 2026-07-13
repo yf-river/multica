@@ -210,7 +210,6 @@ func isCodeBuddyUsage(provider, model string) bool {
 }
 
 func estimateCodeBuddyUsageCostBreakdownUSD(price ModelPrice, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens int64) UsageCostBreakdown {
-	inputTokens = codeBuddyEffectiveInputTokens(inputTokens, cacheReadTokens, cacheWriteTokens)
 	uncachedInputTokens := inputTokens - cacheReadTokens
 	if uncachedInputTokens < 0 {
 		uncachedInputTokens = 0
@@ -224,11 +223,4 @@ func estimateCodeBuddyUsageCostBreakdownUSD(price ModelPrice, inputTokens, outpu
 	}
 	breakdown.TotalCostUSD = RoundCostUSD(breakdown.InputCostUSD + breakdown.OutputCostUSD + breakdown.CacheReadCostUSD)
 	return breakdown
-}
-
-func codeBuddyEffectiveInputTokens(inputTokens, cacheReadTokens, cacheWriteTokens int64) int64 {
-	if inputTokens < cacheReadTokens+cacheWriteTokens {
-		return inputTokens + cacheReadTokens + cacheWriteTokens
-	}
-	return inputTokens
 }

@@ -172,17 +172,6 @@ describe("aggregateCostByTask", () => {
     expect(aggregateCostByTask(rows)[0]?.tokens).toBe(59_924);
   });
 
-  it("recovers CodeBuddy legacy rows where input stored only uncached tokens", () => {
-    expect(
-      usageTokenTotal({
-        provider: "codebuddy",
-        input_tokens: 0,
-        output_tokens: 186,
-        cache_read_tokens: 29_440,
-        cache_write_tokens: 30_298,
-      }),
-    ).toBe(59_924);
-  });
 });
 
 // ---------------------------------------------------------------------------

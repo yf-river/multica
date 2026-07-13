@@ -269,7 +269,6 @@ func (m *BusinessMetrics) RecordLLMUsage(source, runtimeMode, rawProvider, model
 	}
 
 	if isCodeBuddyUsage(rawProvider, modelAlias) {
-		inputTokens = codeBuddyEffectiveInputTokens(inputTokens, cacheReadTokens, cacheWriteTokens)
 		uncachedInputTokens := inputTokens - cacheReadTokens
 		if uncachedInputTokens < 0 {
 			uncachedInputTokens = 0

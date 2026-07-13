@@ -41,7 +41,6 @@ func TestEstimateUsageCostBreakdownUSDCodeBuddyOfficialSamples(t *testing.T) {
 		want       float64
 	}{
 		{name: "platform-first-run", input: 59_738, output: 186, cacheRead: 29_440, cacheWrite: 30_298, want: 0.013449},
-		{name: "platform-first-run-legacy-uncached-input", input: 0, output: 186, cacheRead: 29_440, cacheWrite: 30_298, want: 0.013449},
 		{name: "platform-follow-up", input: 30_897, output: 9, cacheRead: 29_440, cacheWrite: 1_457, want: 0.000749},
 		{name: "direct-a", input: 11_493, output: 6, cacheRead: 0, cacheWrite: 11_493, want: 0.005004},
 		{name: "direct-b", input: 11_494, output: 6, cacheRead: 0, cacheWrite: 11_494, want: 0.005005},
