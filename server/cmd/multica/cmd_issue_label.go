@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"os"
 
@@ -56,17 +55,11 @@ func init() {
 }
 
 func runIssueLabelList(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, issueRef, err := newIssueClientAndRef(cmd, args[0])
 	if err != nil {
 		return err
 	}
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
-
-	issueRef, err := resolveIssueRef(ctx, client, args[0])
-	if err != nil {
-		return fmt.Errorf("resolve issue: %w", err)
-	}
 
 	var result map[string]any
 	if err := client.GetJSON(ctx, "/api/issues/"+issueRef.ID+"/labels", &result); err != nil {
@@ -76,16 +69,14 @@ func runIssueLabelList(cmd *cobra.Command, args []string) error {
 }
 
 func runIssueLabelAdd(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, issueRef, err := newIssueClientAndRef(cmd, args[0])
 	if err != nil {
 		return err
 	}
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
-
-	issueRef, labelRef, err := resolveIssueLabelRefs(ctx, client, args[0], args[1])
+	labelRef, err := resolveLabelID(ctx, client, args[1])
 	if err != nil {
-		return err
+		return fmt.Errorf("resolve label: %w", err)
 	}
 
 	body := map[string]any{"label_id": labelRef.ID}
@@ -97,16 +88,14 @@ func runIssueLabelAdd(cmd *cobra.Command, args []string) error {
 }
 
 func runIssueLabelRemove(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, issueRef, err := newIssueClientAndRef(cmd, args[0])
 	if err != nil {
 		return err
 	}
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
-
-	issueRef, labelRef, err := resolveIssueLabelRefs(ctx, client, args[0], args[1])
+	labelRef, err := resolveLabelID(ctx, client, args[1])
 	if err != nil {
-		return err
+		return fmt.Errorf("resolve label: %w", err)
 	}
 
 	if err := client.DeleteJSON(ctx, "/api/issues/"+issueRef.ID+"/labels/"+labelRef.ID); err != nil {
@@ -126,18 +115,6 @@ func runIssueLabelRemove(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	return printIssueLabelsResult(cmd, result)
-}
-
-func resolveIssueLabelRefs(ctx context.Context, client *cli.APIClient, issueArg, labelArg string) (resolvedID, resolvedID, error) {
-	issueRef, err := resolveIssueRef(ctx, client, issueArg)
-	if err != nil {
-		return resolvedID{}, resolvedID{}, fmt.Errorf("resolve issue: %w", err)
-	}
-	labelRef, err := resolveLabelID(ctx, client, labelArg)
-	if err != nil {
-		return resolvedID{}, resolvedID{}, fmt.Errorf("resolve label: %w", err)
-	}
-	return issueRef, labelRef, nil
 }
 
 func printIssueLabelsResult(cmd *cobra.Command, result map[string]any) error {

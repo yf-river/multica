@@ -33,11 +33,22 @@ import (
 // arrives as `?`. Reading a UTF-8 file directly bypasses the shell's pipe
 // re-encoding entirely. See issues #2198 / #2236 / #2376.
 func resolveTextFlag(cmd *cobra.Command, flagName string) (string, bool, error) {
+	return resolveTextInput(cmd, flagName, true)
+}
+
+func resolveFileOrStdinTextFlag(cmd *cobra.Command, flagName string) (string, bool, error) {
+	return resolveTextInput(cmd, flagName, false)
+}
+
+func resolveTextInput(cmd *cobra.Command, flagName string, allowInline bool) (string, bool, error) {
 	stdinFlag := flagName + "-stdin"
 	fileFlag := flagName + "-file"
 	useStdin, _ := cmd.Flags().GetBool(stdinFlag)
-	inline, _ := cmd.Flags().GetString(flagName)
 	filePath, _ := cmd.Flags().GetString(fileFlag)
+	inline := ""
+	if allowInline {
+		inline, _ = cmd.Flags().GetString(flagName)
+	}
 
 	sources := 0
 	if useStdin {
@@ -50,6 +61,9 @@ func resolveTextFlag(cmd *cobra.Command, flagName string) (string, bool, error) 
 		sources++
 	}
 	if sources > 1 {
+		if !allowInline {
+			return "", false, fmt.Errorf("--%s and --%s are mutually exclusive", stdinFlag, fileFlag)
+		}
 		return "", false, fmt.Errorf("--%s, --%s, and --%s are mutually exclusive", flagName, stdinFlag, fileFlag)
 	}
 
@@ -79,40 +93,6 @@ func resolveTextFlag(cmd *cobra.Command, flagName string) (string, bool, error) 
 		return "", false, nil
 	}
 	return util.UnescapeBackslashEscapes(inline), true, nil
-}
-
-func resolveFileOrStdinTextFlag(cmd *cobra.Command, flagName string) (string, bool, error) {
-	stdinFlag := flagName + "-stdin"
-	fileFlag := flagName + "-file"
-	useStdin, _ := cmd.Flags().GetBool(stdinFlag)
-	filePath, _ := cmd.Flags().GetString(fileFlag)
-
-	if useStdin && filePath != "" {
-		return "", false, fmt.Errorf("--%s and --%s are mutually exclusive", stdinFlag, fileFlag)
-	}
-	if useStdin {
-		data, err := io.ReadAll(os.Stdin)
-		if err != nil {
-			return "", false, fmt.Errorf("read stdin for --%s: %w", stdinFlag, err)
-		}
-		body := strings.TrimSuffix(string(data), "\n")
-		if body == "" {
-			return "", false, fmt.Errorf("stdin content for --%s is empty", stdinFlag)
-		}
-		return body, true, nil
-	}
-	if filePath != "" {
-		data, err := os.ReadFile(filePath)
-		if err != nil {
-			return "", false, fmt.Errorf("read file for --%s: %w", fileFlag, err)
-		}
-		body := strings.TrimSuffix(string(data), "\n")
-		if body == "" {
-			return "", false, fmt.Errorf("file content for --%s is empty", fileFlag)
-		}
-		return body, true, nil
-	}
-	return "", false, nil
 }
 
 var issueCmd = &cobra.Command{
@@ -593,18 +573,11 @@ func runIssueList(cmd *cobra.Command, _ []string) error {
 }
 
 func runIssuePullRequests(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, issueRef, err := newIssueClientAndRef(cmd, args[0])
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
-
-	issueRef, err := resolveIssueRef(ctx, client, args[0])
-	if err != nil {
-		return fmt.Errorf("resolve issue: %w", err)
-	}
 
 	var result map[string]any
 	if err := client.GetJSON(ctx, "/api/issues/"+url.PathEscape(issueRef.ID)+"/pull-requests", &result); err != nil {
@@ -686,18 +659,11 @@ func newIssueClientAndRef(cmd *cobra.Command, issueArg string) (*cli.APIClient, 
 }
 
 func runIssueGet(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, issueRef, err := newIssueClientAndRef(cmd, args[0])
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
-
-	issueRef, err := resolveIssueRef(ctx, client, args[0])
-	if err != nil {
-		return fmt.Errorf("resolve issue: %w", err)
-	}
 
 	var issue map[string]any
 	if err := client.GetJSON(ctx, "/api/issues/"+issueRef.ID, &issue); err != nil {
@@ -735,18 +701,11 @@ func runIssueGet(cmd *cobra.Command, args []string) error {
 }
 
 func runIssueChildren(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, issueRef, err := newIssueClientAndRef(cmd, args[0])
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
-
-	issueRef, err := resolveIssueRef(ctx, client, args[0])
-	if err != nil {
-		return fmt.Errorf("resolve issue: %w", err)
-	}
 
 	var resp struct {
 		Issues []map[string]any `json:"issues"`
@@ -983,18 +942,11 @@ func runIssueUpdate(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, issueRef, err := newIssueClientAndRef(cmd, args[0])
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
-
-	issueRef, err := resolveIssueRef(ctx, client, args[0])
-	if err != nil {
-		return fmt.Errorf("resolve issue: %w", err)
-	}
 
 	body := map[string]any{}
 	if cmd.Flags().Changed("title") {
@@ -1082,18 +1034,11 @@ func runIssueAssign(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--to/--to-id and --unassign are mutually exclusive")
 	}
 
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, issueRef, err := newIssueClientAndRef(cmd, args[0])
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
-
-	issueRef, err := resolveIssueRef(ctx, client, args[0])
-	if err != nil {
-		return fmt.Errorf("resolve issue: %w", err)
-	}
 
 	body := map[string]any{}
 	displayTarget := toName
@@ -1138,18 +1083,11 @@ func runIssueStatus(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, issueRef, err := newIssueClientAndRef(cmd, id)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
-
-	issueRef, err := resolveIssueRef(ctx, client, id)
-	if err != nil {
-		return fmt.Errorf("resolve issue: %w", err)
-	}
 
 	body := map[string]any{"status": status}
 	var result map[string]any

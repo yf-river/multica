@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"os"
 
@@ -30,17 +29,11 @@ func runIssueSourceFetch(cmd *cobra.Command, args []string) error {
 	fetchErr, _ := cmd.Flags().GetString("error")
 	durationMs, _ := cmd.Flags().GetInt64("duration-ms")
 
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, issueRef, err := newIssueClientAndRef(cmd, args[0])
 	if err != nil {
 		return err
 	}
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
-
-	issueRef, err := resolveIssueRef(ctx, client, args[0])
-	if err != nil {
-		return fmt.Errorf("resolve issue: %w", err)
-	}
 
 	body := map[string]any{
 		"provider":       provider,

@@ -16,18 +16,11 @@ import (
 )
 
 func runIssueCommentList(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, issueRef, err := newIssueClientAndRef(cmd, args[0])
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
-
-	issueRef, err := resolveIssueRef(ctx, client, args[0])
-	if err != nil {
-		return fmt.Errorf("resolve issue: %w", err)
-	}
 
 	since, _ := cmd.Flags().GetString("since")
 	thread, _ := cmd.Flags().GetString("thread")
@@ -262,18 +255,11 @@ func runIssueCommentDelete(cmd *cobra.Command, args []string) error {
 // ---------------------------------------------------------------------------
 
 func runIssueRuns(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, issueRef, err := newIssueClientAndRef(cmd, args[0])
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
-
-	issueRef, err := resolveIssueRef(ctx, client, args[0])
-	if err != nil {
-		return fmt.Errorf("resolve issue: %w", err)
-	}
 
 	var runs []map[string]any
 	if err := client.GetJSON(ctx, "/api/issues/"+issueRef.ID+"/task-runs", &runs); err != nil {
@@ -384,18 +370,11 @@ func runIssueRunMessages(cmd *cobra.Command, args []string) error {
 // ---------------------------------------------------------------------------
 
 func runIssueRerun(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, issueRef, err := newIssueClientAndRef(cmd, args[0])
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
-
-	issueRef, err := resolveIssueRef(ctx, client, args[0])
-	if err != nil {
-		return fmt.Errorf("resolve issue: %w", err)
-	}
 
 	var task map[string]any
 	if err := client.PostJSONWithIdempotencyKey(ctx, "/api/issues/"+issueRef.ID+"/rerun", map[string]any{"target": "current_assignee"}, uuid.NewString(), &task); err != nil {
@@ -522,18 +501,11 @@ func runIssueSearch(cmd *cobra.Command, args []string) error {
 // ---------------------------------------------------------------------------
 
 func runIssueSubscriberList(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, issueRef, err := newIssueClientAndRef(cmd, args[0])
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
-
-	issueRef, err := resolveIssueRef(ctx, client, args[0])
-	if err != nil {
-		return fmt.Errorf("resolve issue: %w", err)
-	}
 
 	var subscribers []map[string]any
 	if err := client.GetJSON(ctx, "/api/issues/"+issueRef.ID+"/subscribers", &subscribers); err != nil {
@@ -574,18 +546,11 @@ func runIssueSubscriberRemove(cmd *cobra.Command, args []string) error {
 // runIssueSubscriberMutation shares subscribe/unsubscribe logic — both endpoints
 // take the same request body and only differ in the path.
 func runIssueSubscriberMutation(cmd *cobra.Command, issueID, action string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, issueRef, err := newIssueClientAndRef(cmd, issueID)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
-
-	issueRef, err := resolveIssueRef(ctx, client, issueID)
-	if err != nil {
-		return fmt.Errorf("resolve issue: %w", err)
-	}
 
 	body := map[string]any{}
 	userName, _ := cmd.Flags().GetString("user")
