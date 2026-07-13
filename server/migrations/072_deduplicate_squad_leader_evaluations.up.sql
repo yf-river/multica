@@ -18,6 +18,6 @@ WHERE id IN (
 
 DROP INDEX IF EXISTS idx_activity_log_squad_no_action_task;
 
-CREATE UNIQUE INDEX activity_log_squad_evaluation_task_unique
+CREATE UNIQUE INDEX IF NOT EXISTS activity_log_squad_evaluation_task_unique
     ON activity_log (issue_id, actor_id, (details->>'task_id'))
     WHERE actor_type = 'agent' AND action = 'squad_leader_evaluated';
