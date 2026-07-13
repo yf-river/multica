@@ -4,7 +4,7 @@ import { useMemo, useState } from "react";
 import { Cloud, Lock, Monitor } from "lucide-react";
 import type {
   AgentRuntime,
-  AgentScope,
+  ResourceScope,
   MemberWithUser,
 } from "@multica/core/types";
 import { ActorAvatar } from "../../../common/actor-avatar";
@@ -37,7 +37,7 @@ export function RuntimePicker({
   runtimes: AgentRuntime[];
   members: MemberWithUser[];
   currentUserId: string | null;
-  targetScope: AgentScope;
+  targetScope: ResourceScope;
   /** When false, render a static read-only display and skip the popover. */
   canEdit?: boolean;
   onChange: (runtimeId: string) => Promise<void> | void;

@@ -1,6 +1,6 @@
 "use client";
 
-import type { AgentScope } from "@multica/core/types";
+import type { ResourceScope } from "@multica/core/types";
 import { ResourceScopeBadge } from "../../common/resource-scope";
 import { useT } from "../../i18n";
 
@@ -18,7 +18,7 @@ export function ScopeBadge({
   compact = false,
   className = "",
 }: {
-  value: AgentScope;
+  value: ResourceScope;
   compact?: boolean;
   className?: string;
 }) {

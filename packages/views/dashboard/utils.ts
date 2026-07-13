@@ -1,6 +1,6 @@
 import type {
   DashboardUsageDaily,
-  DashboardUsageByAgent,
+  RuntimeUsageByAgent,
   DashboardAgentRunTime,
   DashboardRunTimeDaily,
 } from "@multica/core/types";
@@ -152,7 +152,7 @@ export interface AgentCostRow {
 // Fold per-(agent, model) rows into one row per agent. Cost is the sum
 // across this agent's models, which is the figure the user cares about.
 // Sort by cost desc so the heaviest spender lands first.
-export function aggregateAgentTokens(rows: DashboardUsageByAgent[]): AgentCostRow[] {
+export function aggregateAgentTokens(rows: RuntimeUsageByAgent[]): AgentCostRow[] {
   const map = new Map<string, AgentCostRow>();
   for (const r of rows) {
     const entry = map.get(r.agent_id) ?? {

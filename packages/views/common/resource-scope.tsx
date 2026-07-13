@@ -1,15 +1,14 @@
 "use client";
 
 import { Globe, Lock } from "lucide-react";
+import type { ResourceScope } from "@multica/core/types";
 import {
   Tooltip,
   TooltipContent,
   TooltipTrigger,
 } from "@multica/ui/components/ui/tooltip";
 
-export type ResourceScope = "workspace" | "personal";
-
-export function runtimeResourceScope(value: "workspace" | "personal" | null | undefined): ResourceScope {
+export function runtimeResourceScope(value: ResourceScope | null | undefined): ResourceScope {
   return value === "workspace" ? "workspace" : "personal";
 }
 

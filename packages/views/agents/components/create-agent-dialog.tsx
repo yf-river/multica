@@ -13,8 +13,8 @@ import { useWorkspaceId } from "@multica/core/paths";
 import { workspaceKeys } from "@multica/core/workspace/queries";
 import type {
   Agent,
-  AgentScope,
-  RuntimeDevice,
+  ResourceScope,
+  AgentRuntime,
   MemberWithUser,
   CreateAgentRequest,
 } from "@multica/core/types";
@@ -48,7 +48,7 @@ export function CreateAgentDialog({
   onClose,
   onCreate,
 }: {
-  runtimes: RuntimeDevice[];
+  runtimes: AgentRuntime[];
   runtimesLoading?: boolean;
   members: MemberWithUser[];
   currentUserId: string | null;
@@ -81,7 +81,7 @@ export function CreateAgentDialog({
     template ? `${template.name}${t(($) => $.create_dialog.duplicate_copy_suffix)}` : "",
   );
   const [description, setDescription] = useState(template?.description ?? "");
-  const [scope, setScope] = useState<AgentScope>(
+  const [scope, setScope] = useState<ResourceScope>(
     template?.scope ?? "personal",
   );
   const [model, setModel] = useState(template?.model ?? "");

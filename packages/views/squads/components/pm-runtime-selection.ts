@@ -1,9 +1,9 @@
-import type { RuntimeDevice, SquadScope } from "@multica/core/types";
+import type { AgentRuntime, SquadScope } from "@multica/core/types";
 
 const DEFAULT_PM_PROVIDER = "codebuddy";
 
 export function isRuntimeCompatibleWithPMScope(
-  runtime: RuntimeDevice,
+  runtime: AgentRuntime,
   targetScope: SquadScope,
   currentUserId: string | null,
 ) {
@@ -25,7 +25,7 @@ function providerSortRank(provider: string) {
 }
 
 export function pmProviderChoices(
-  runtimes: RuntimeDevice[],
+  runtimes: AgentRuntime[],
   targetScope: SquadScope,
   currentUserId: string | null,
 ) {
@@ -47,7 +47,7 @@ export function pmProviderChoices(
 }
 
 export function bestRuntimeForPMProvider(
-  runtimes: RuntimeDevice[],
+  runtimes: AgentRuntime[],
   provider: string,
   targetScope: SquadScope,
   currentUserId: string | null,

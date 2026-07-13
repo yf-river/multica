@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
-import type { Agent, RuntimeDevice } from "@multica/core/types";
+import type { Agent, AgentRuntime } from "@multica/core/types";
 import { createSafeId } from "@multica/core/utils";
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
@@ -35,7 +35,7 @@ export function CustomArgsTab({
   onDirtyChange,
 }: {
   agent: Agent;
-  runtimeDevice?: RuntimeDevice;
+  runtimeDevice?: AgentRuntime;
   onSave: (updates: Partial<Agent>) => Promise<void>;
   onDirtyChange?: (dirty: boolean) => void;
 }) {

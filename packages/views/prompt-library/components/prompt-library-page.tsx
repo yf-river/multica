@@ -85,9 +85,7 @@ import {
 } from "./case-model";
 import { usePromptLibraryMutations } from "./use-prompt-library-mutations";
 
-type WorkbenchTab = TrainingWorkbenchTab;
-
-function isEvaluationRunRecordsTab(tab: WorkbenchTab): boolean {
+function isEvaluationRunRecordsTab(tab: TrainingWorkbenchTab): boolean {
   return tab === "评测记录";
 }
 
@@ -181,7 +179,7 @@ export function PromptLibraryPage({
     spanAnchor: navigation.searchParams.get("span"),
     failureAnchor: navigation.searchParams.get("failure"),
   };
-  const [activeTab, setActiveTab] = useState<WorkbenchTab>(() => trainingWorkbenchTabFromView(resolvedView));
+  const [activeTab, setActiveTab] = useState<TrainingWorkbenchTab>(() => trainingWorkbenchTabFromView(resolvedView));
   const activeSectionLabel = trainingWorkbenchSectionLabelFromView(resolvedView);
   const [runStatusFilter, setRunStatusFilter] = useState<RunStatusFilter>("全部");
   const [exportingAssetEvidencePackageAssetId, setExportingAssetEvidencePackageAssetId] = useState<string | null>(null);
@@ -889,7 +887,7 @@ export function PromptLibraryPage({
 
 
 type WorkbenchPanelProps = TrainingAssetPanelBaseProps & {
-  activeTab: WorkbenchTab;
+  activeTab: TrainingWorkbenchTab;
   workspaceId: string;
   focusedRunId: string | null;
   evidenceFocus: EvidenceFocus;

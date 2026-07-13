@@ -143,11 +143,6 @@ function columnTrackVars(
   } as React.CSSProperties;
 }
 
-// Sort/filter/column types and defaults live in the core view store
-// (@multica/core/skills/stores/view-store) so the persisted state and the
-// UI share one definition.
-type SortField = SkillSortField;
-
 export interface SkillRow {
   skill: SkillSummary;
   agents: Agent[];
@@ -389,16 +384,16 @@ function SkillListHeader({
   onToggleAll,
   isColVisible,
 }: {
-  sortField: SortField;
+  sortField: SkillSortField;
   sortDirection: ListGridSortDirection;
-  onSort: (field: SortField) => void;
+  onSort: (field: SkillSortField) => void;
   allSelected: boolean;
   someSelected: boolean;
   onToggleAll: () => void;
   isColVisible: (key: SkillColumnKey) => boolean;
 }) {
   const { t } = useT("skills");
-  const sorted = (field: SortField) =>
+  const sorted = (field: SkillSortField) =>
     sortField === field ? sortDirection : false;
   return (
     <ListGridHeader>

@@ -3,7 +3,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, fireEvent, cleanup, waitFor } from "@testing-library/react";
-import type { Agent, MemberWithUser, RuntimeDevice } from "@multica/core/types";
+import type { Agent, AgentRuntime, MemberWithUser } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
 import { WorkspaceSlugProvider } from "@multica/core/paths";
 import { NavigationProvider, type NavigationAdapter } from "../../navigation";
@@ -76,7 +76,7 @@ const members: MemberWithUser[] = [
   },
 ];
 
-function makeRuntime(overrides: Partial<RuntimeDevice>): RuntimeDevice {
+function makeRuntime(overrides: Partial<AgentRuntime>): AgentRuntime {
   return {
     id: "rt",
     workspace_id: "ws-1",
@@ -122,7 +122,7 @@ function makeTemplate(runtimeId: string): Agent {
   };
 }
 
-function renderDialog(runtimes: RuntimeDevice[], template?: Agent) {
+function renderDialog(runtimes: AgentRuntime[], template?: Agent) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });

@@ -5,9 +5,9 @@ import { ChevronDown, Cloud, Loader2, Lock } from "lucide-react";
 import { ProviderLogo } from "../../runtimes/components/provider-logo";
 import { ActorAvatar } from "../../common/actor-avatar";
 import type {
-  AgentScope,
+  ResourceScope,
   MemberWithUser,
-  RuntimeDevice,
+  AgentRuntime,
 } from "@multica/core/types";
 import {
   Popover,
@@ -28,11 +28,11 @@ export function RuntimePicker({
   selectedRuntimeId,
   onSelect,
 }: {
-  runtimes: RuntimeDevice[];
+  runtimes: AgentRuntime[];
   runtimesLoading?: boolean;
   members: MemberWithUser[];
   currentUserId: string | null;
-  targetScope: AgentScope;
+  targetScope: ResourceScope;
   selectedRuntimeId: string;
   onSelect: (id: string) => void;
 }) {
@@ -250,9 +250,9 @@ export function RuntimePicker({
 // Visibility gate exposed so the parent can defend Create against a locked
 // selection (e.g. duplicate of an agent whose runtime is now private).
 export function isRuntimeUsableForUser(
-  r: RuntimeDevice,
+  r: AgentRuntime,
   currentUserId: string | null,
-  targetScope?: AgentScope,
+  targetScope?: ResourceScope,
 ): boolean {
   if (targetScope === "workspace") return r.scope === "workspace";
   if (targetScope === "personal") {
@@ -266,11 +266,11 @@ export function isRuntimeUsableForUser(
 }
 
 function computeFilteredRuntimes(
-  runtimes: RuntimeDevice[],
+  runtimes: AgentRuntime[],
   filter: RuntimeFilter,
   currentUserId: string | null,
-  targetScope: AgentScope,
-): RuntimeDevice[] {
+  targetScope: ResourceScope,
+): AgentRuntime[] {
   const filtered =
     filter === "mine" && currentUserId
       ? runtimes.filter((r) => r.owner_id === currentUserId)

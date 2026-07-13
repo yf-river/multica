@@ -18,9 +18,7 @@ import {
   type TrainingWorkbenchTab,
 } from "@multica/core/training";
 
-type WorkbenchTab = TrainingWorkbenchTab;
-
-export function emptyTrainingRouteText(activeTab: WorkbenchTab) {
+export function emptyTrainingRouteText(activeTab: TrainingWorkbenchTab) {
   switch (activeTab) {
     case "用例库":
       return "暂无用例库，先新建用例库或从 trace 导入用例";
@@ -40,7 +38,7 @@ type TrainingRouteIntro = {
 };
 
 export function trainingRouteIntro(
-  activeTab: WorkbenchTab,
+  activeTab: TrainingWorkbenchTab,
   context: {
     visibleAssets: PromptEvaluationAsset[];
     cases: PromptEvaluationStructuredCase[];
@@ -113,7 +111,7 @@ export function TrainingFocusedIssueCallout({
   issueId,
   taskCount,
 }: {
-  activeTab: WorkbenchTab;
+  activeTab: TrainingWorkbenchTab;
   issueId: string;
   taskCount: number;
 }) {
@@ -184,7 +182,7 @@ export function TrainingRouteWorkspaceBand({
   candidates,
   runStatusFilter,
 }: {
-  activeTab: WorkbenchTab;
+  activeTab: TrainingWorkbenchTab;
   route: string;
   visibleAssets: PromptEvaluationAsset[];
   cases: PromptEvaluationStructuredCase[];
@@ -233,7 +231,7 @@ type TrainingRouteOperatingModel = {
 };
 
 function trainingRouteOperatingModel(
-  activeTab: WorkbenchTab,
+  activeTab: TrainingWorkbenchTab,
   context: {
     visibleAssets: PromptEvaluationAsset[];
     cases: PromptEvaluationStructuredCase[];
@@ -295,7 +293,7 @@ function trainingRouteOperatingModel(
   }
 }
 
-export function tabToAssetType(tab: WorkbenchTab): PromptEvaluationAssetType | null {
+export function tabToAssetType(tab: TrainingWorkbenchTab): PromptEvaluationAssetType | null {
   if (tab === "用例库") return "数据集";
   if (tab === "测试套件") return "测试套件";
   return null;

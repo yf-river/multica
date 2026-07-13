@@ -35,8 +35,6 @@ import {
   summarizeLinkedDatasetVersions,
 } from "./training-workbench-support";
 
-type WorkbenchTab = TrainingWorkbenchTab;
-
 export type TrainingAssetPanelBaseProps = {
   assets: PromptEvaluationAsset[];
   cases: PromptEvaluationStructuredCase[];
@@ -67,7 +65,7 @@ export type TrainingAssetPanelBaseProps = {
 };
 
 export type TrainingAssetPanelProps = TrainingAssetPanelBaseProps & {
-  activeTab: WorkbenchTab;
+  activeTab: TrainingWorkbenchTab;
   route: string;
   title: string;
 };

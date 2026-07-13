@@ -94,7 +94,7 @@ const ALL_PROJECTS = "__all__";
 // every render while the query is loading, which breaks useMemo's
 // reference-equality dep check and trips the exhaustive-deps lint rule.
 const EMPTY_DAILY: import("@multica/core/types").DashboardUsageDaily[] = [];
-const EMPTY_BY_AGENT: import("@multica/core/types").DashboardUsageByAgent[] = [];
+const EMPTY_BY_AGENT: import("@multica/core/types").RuntimeUsageByAgent[] = [];
 const EMPTY_RUNTIME: import("@multica/core/types").DashboardAgentRunTime[] = [];
 const EMPTY_RUNTIME_DAILY: import("@multica/core/types").DashboardRunTimeDaily[] = [];
 

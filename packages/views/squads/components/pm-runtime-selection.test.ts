@@ -1,12 +1,12 @@
 import { describe, expect, it } from "vitest";
-import type { RuntimeDevice } from "@multica/core/types";
+import type { AgentRuntime } from "@multica/core/types";
 import {
   bestRuntimeForPMProvider,
   isRuntimeCompatibleWithPMScope,
   pmProviderChoices,
 } from "./pm-runtime-selection";
 
-function runtime(input: Partial<RuntimeDevice> & { id: string }): RuntimeDevice {
+function runtime(input: Partial<AgentRuntime> & { id: string }): AgentRuntime {
   return {
     id: input.id,
     workspace_id: input.workspace_id ?? "ws-1",

@@ -56,7 +56,6 @@ import type {
   RuntimeUsageByAgent,
   RuntimeUsageByTask,
   DashboardUsageDaily,
-  DashboardUsageByAgent,
   DashboardAgentRunTime,
   DashboardRunTimeDaily,
   RuntimeModelListRequest,
@@ -1199,13 +1198,13 @@ export class ApiClient extends ApiTransport {
 
   async getDashboardUsageByAgent(
     params: { days?: number; project_id?: string | null; tz?: string },
-  ): Promise<DashboardUsageByAgent[]> {
+  ): Promise<RuntimeUsageByAgent[]> {
     const search = new URLSearchParams();
     if (params.days) search.set("days", String(params.days));
     if (params.project_id) search.set("project_id", params.project_id);
     if (params.tz) search.set("tz", params.tz);
     const raw = await this.fetch<unknown>(`/api/dashboard/usage/by-agent?${search}`);
-    return parseWithFallback<DashboardUsageByAgent[]>(
+    return parseWithFallback<RuntimeUsageByAgent[]>(
       raw,
       DashboardUsageByAgentListSchema,
       [],

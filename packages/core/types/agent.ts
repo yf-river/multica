@@ -3,14 +3,11 @@ export type AgentStatus = "idle" | "working" | "blocked" | "error" | "offline";
 export type AgentRuntimeMode = "local" | "cloud";
 
 export type ResourceScope = "personal" | "workspace";
-export type AgentScope = ResourceScope;
 
 // Runtime scope uses the same product vocabulary as agents and squads.
 // "personal" means same-owner personal agents only; "workspace" opens the
 // runtime for workspace-scoped agents.
-export type RuntimeScope = ResourceScope;
-
-export interface RuntimeDevice {
+export interface AgentRuntime {
   id: string;
   workspace_id: string;
   daemon_id: string | null;
@@ -23,7 +20,7 @@ export interface RuntimeDevice {
   metadata: Record<string, unknown>;
   owner_id: string | null;
   /** Defaults to "workspace" when omitted. */
-  scope: RuntimeScope;
+  scope: ResourceScope;
   /**
    * The custom runtime profile this registered runtime was launched from,
    * or `null` for a built-in protocol family. The UI uses this to stamp a
@@ -37,13 +34,11 @@ export interface RuntimeDevice {
   updated_at: string;
 }
 
-export type AgentRuntime = RuntimeDevice;
-
 // ---------------------------------------------------------------------------
 // Custom runtime profiles (MUL-3284)
 //
 // A RuntimeProfile is a workspace-level *definition* of a custom runtime
-// backend — distinct from a RuntimeDevice, which is a daemon-registered
+// backend — distinct from an AgentRuntime, which is a daemon-registered
 // *instance*. An admin authors a profile (display name + base protocol
 // family + the CLI command to launch), and daemons can then register
 // runtimes against it; those instances carry `profile_id` pointing back here.
@@ -262,7 +257,7 @@ export interface Agent {
    * Older backends omit this field; treat `undefined` as false.
    */
   mcp_config_redacted?: boolean;
-  scope: AgentScope;
+  scope: ResourceScope;
   status: AgentStatus;
   max_concurrent_tasks: number;
   model: string;
@@ -307,7 +302,7 @@ export interface CreateAgentRequest {
   runtime_config?: Record<string, unknown>;
   custom_env?: Record<string, string>;
   custom_args?: string[];
-  scope?: AgentScope;
+  scope?: ResourceScope;
   max_concurrent_tasks?: number;
   model?: string;
   /** Optional runtime-native reasoning/effort token. See `Agent.thinking_level`. */
@@ -340,7 +335,7 @@ export interface UpdateAgentRequest {
    *     validate / translate it according to their own MCP integration
    */
   mcp_config?: unknown | null;
-  scope?: AgentScope;
+  scope?: ResourceScope;
   status?: AgentStatus;
   max_concurrent_tasks?: number;
   model?: string;
@@ -520,10 +515,6 @@ export interface RuntimeUsageByTask extends UsageTotals {
 export interface DashboardUsageDaily extends CountedUsageTotals {
   date: string;
 }
-
-// Per-(agent, model) token totals for the workspace dashboard. Identical wire
-// shape to RuntimeUsageByAgent; the client folds by agent_id and sums cost.
-export type DashboardUsageByAgent = RuntimeUsageByAgent;
 
 // Per-agent total terminal-task run-time + counts. Powers the workspace
 // dashboard's "time by agent" list. failed_count is a subset of
