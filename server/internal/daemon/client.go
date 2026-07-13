@@ -263,17 +263,8 @@ func (c *Client) GetTaskStatus(ctx context.Context, taskID string) (string, erro
 	return resp.Status, nil
 }
 
-// HeartbeatResponse and pending request types alias the wire types so HTTP and
-// WS heartbeat paths share a single decoder shape.
-type (
-	HeartbeatResponse       = protocol.DaemonHeartbeatAckPayload
-	PendingModelList        = protocol.DaemonHeartbeatPendingModelList
-	PendingLocalSkills      = protocol.DaemonHeartbeatPendingLocalSkills
-	PendingLocalSkillImport = protocol.DaemonHeartbeatPendingLocalSkillImport
-)
-
-func (c *Client) SendHeartbeat(ctx context.Context, runtimeID string, metadata json.RawMessage) (*HeartbeatResponse, error) {
-	var resp HeartbeatResponse
+func (c *Client) SendHeartbeat(ctx context.Context, runtimeID string, metadata json.RawMessage) (*protocol.DaemonHeartbeatAckPayload, error) {
+	var resp protocol.DaemonHeartbeatAckPayload
 	body := map[string]any{
 		"runtime_id": runtimeID,
 	}

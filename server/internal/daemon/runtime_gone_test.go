@@ -13,6 +13,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // freshDaemon builds a Daemon with every map field the production New() seeds
@@ -269,7 +271,7 @@ func TestHandleWSHeartbeatAck_RuntimeGoneTriggersRecovery(t *testing.T) {
 	d.workspaces["ws-1"] = &workspaceState{workspaceID: "ws-1", runtimeIDs: []string{"rt-old"}}
 	d.runtimeIndex["rt-old"] = Runtime{ID: "rt-old"}
 
-	d.handleWSHeartbeatAck(context.Background(), &HeartbeatResponse{
+	d.handleWSHeartbeatAck(context.Background(), &protocol.DaemonHeartbeatAckPayload{
 		RuntimeID:   "rt-old",
 		Status:      "runtime_gone",
 		RuntimeGone: true,
@@ -298,7 +300,7 @@ func TestHandleWSHeartbeatAck_EmptyAckIgnored(t *testing.T) {
 
 	d := freshDaemon("")
 	d.handleWSHeartbeatAck(context.Background(), nil)
-	d.handleWSHeartbeatAck(context.Background(), &HeartbeatResponse{RuntimeID: ""})
+	d.handleWSHeartbeatAck(context.Background(), &protocol.DaemonHeartbeatAckPayload{RuntimeID: ""})
 	// Should not panic or dispatch an action.
 }
 

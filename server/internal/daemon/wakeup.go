@@ -246,7 +246,7 @@ func marshalRaw(v any) json.RawMessage {
 // route it through the same self-heal entry point as the HTTP path and do
 // handleRuntimeGone uses the daemon root context for its register call, so
 // this function can safely pass any caller context here.
-func (d *Daemon) handleWSHeartbeatAck(ctx context.Context, ack *HeartbeatResponse) {
+func (d *Daemon) handleWSHeartbeatAck(ctx context.Context, ack *protocol.DaemonHeartbeatAckPayload) {
 	if ack == nil || ack.RuntimeID == "" {
 		return
 	}
@@ -294,7 +294,7 @@ func (d *Daemon) readTaskWakeupMessages(conn *websocket.Conn, taskWakeups chan<-
 			}
 			go d.handleRuntimeProfilesChanged(payload)
 		case protocol.EventDaemonHeartbeatAck:
-			var ack HeartbeatResponse
+			var ack protocol.DaemonHeartbeatAckPayload
 			if err := json.Unmarshal(msg.Payload, &ack); err != nil {
 				d.logger.Debug("ws heartbeat ack invalid payload", "error", err)
 				continue

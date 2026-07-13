@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/multica-ai/multica/server/pkg/agent"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 func (d *Daemon) workspaceSyncLoop(ctx context.Context) {
@@ -286,7 +287,7 @@ func (d *Daemon) runHeartbeatTick(ctx context.Context, rid string) {
 // transport (HTTP POST /api/daemon/heartbeat or WS daemon:heartbeat_ack).
 // Each action is dispatched in its own goroutine so a slow handler cannot
 // block subsequent heartbeats.
-func (d *Daemon) handleHeartbeatActions(ctx context.Context, runtimeID string, resp *HeartbeatResponse) {
+func (d *Daemon) handleHeartbeatActions(ctx context.Context, runtimeID string, resp *protocol.DaemonHeartbeatAckPayload) {
 	if resp == nil {
 		return
 	}
@@ -414,7 +415,7 @@ func (d *Daemon) handleLocalSkillList(ctx context.Context, rt Runtime, requestID
 	})
 }
 
-func (d *Daemon) handleLocalSkillImport(ctx context.Context, rt Runtime, pending PendingLocalSkillImport) {
+func (d *Daemon) handleLocalSkillImport(ctx context.Context, rt Runtime, pending protocol.DaemonHeartbeatPendingLocalSkillImport) {
 	d.logger.Info("runtime local skill import requested", "runtime_id", rt.ID, "request_id", pending.ID, "provider", rt.Provider, "skill_key", pending.SkillKey)
 
 	skill, supported, err := loadRuntimeLocalSkillBundle(rt.Provider, pending.SkillKey)
