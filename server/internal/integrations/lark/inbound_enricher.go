@@ -132,13 +132,6 @@ func (e *inboundEnricher) Enrich(ctx context.Context, msg InboundMessage, creds 
 		// Nothing to expand and no group prefetch wanted — no network call.
 		return msg
 	}
-	// If the transport isn't wired (stub client on a deployment without
-	// a Lark app), skip rather than stamp every reply with a fetch
-	// error. Body stays whatever the decoder produced.
-	if e.client == nil || !e.client.IsConfigured() {
-		return msg
-	}
-
 	// Phase 1 — fetch every set of messages we may render. Each is
 	// best-effort; its error is handled where the block is rendered. We
 	// fetch up front (rather than fetch-and-render per block) so Phase 2

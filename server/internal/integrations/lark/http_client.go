@@ -137,11 +137,6 @@ type cachedToken struct {
 	expiresAt time.Time
 }
 
-// IsConfigured reports true: once this client exists at all, the
-// outbound transport path (send / patch / binding prompt / bot info)
-// is wired. Unconfigured deployments represent the client as nil.
-func (c *httpAPIClient) IsConfigured() bool { return true }
-
 // tenantAccessToken returns a usable tenant_access_token for the
 // given installation, reusing a cached token while it is alive (minus
 // safety margin) and otherwise fetching a fresh one from Lark.

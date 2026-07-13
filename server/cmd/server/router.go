@@ -371,9 +371,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				if err != nil {
 					return nil, nil, fmt.Errorf("initialize Lark inbound connector: %w", err)
 				}
-				h.LarkHub = lark.NewHub(queries, connectorFactory, dispatcher, lark.HubConfig{})
-				h.LarkHub.SetTypingIndicatorManager(typingIndicator)
-
 				// OutcomeReplier wires the outbound side of the
 				// EventEmitter contract: NeedsBinding / AgentOffline /
 				// AgentArchived translate to a Lark-side reply card.
@@ -387,7 +384,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					PublicURL:   signupConfig.PublicURL,
 					Logger:      slog.Default(),
 				})
-				h.LarkHub.SetOutcomeReplier(replier)
+				h.LarkHub = lark.NewHub(queries, connectorFactory, dispatcher, replier, lark.HubConfig{})
+				h.LarkHub.SetTypingIndicatorManager(typingIndicator)
 				// The agent-offline / agent-archived notice is now decided
 				// at debounce-flush time rather than synchronously from
 				// Handle, so the dispatcher drives that reply itself through

@@ -61,15 +61,12 @@ type EnsureChatSessionParams struct {
 // Lark-side message id used for idempotency dedup.
 //
 // ClaimToken is the owner-fencing token returned by the dispatcher's
-// ClaimLarkInboundDedup call. When ClaimToken.Valid is true,
-// AppendUserMessage runs MarkLarkInboundDedupProcessed INSIDE its own
+// ClaimLarkInboundDedup call. AppendUserMessage runs
+// MarkLarkInboundDedupProcessed INSIDE its own
 // chat_message+session transaction, gated on this token. A mismatched
 // token (another worker re-claimed the row while we were running)
 // returns ErrClaimLost and rolls back the entire transaction, so no
-// second chat_message can land for the same Lark message_id. Pass an
-// invalid (zero) UUID to skip the in-tx Mark — useful for tests and
-// for callers that have already finalized dedup outside the
-// transaction.
+// second chat_message can land for the same Lark message_id.
 type AppendUserMessageParams struct {
 	ChatSessionID pgtype.UUID
 	Sender        pgtype.UUID
@@ -77,9 +74,7 @@ type AppendUserMessageParams struct {
 	// quoted-reply / forwarded context the enricher inlined.
 	Body string
 	// CommandBody is the user's own typed text, used as the `/issue`
-	// command source. It is the un-enriched Body; when empty (callers
-	// that don't set it), `/issue` parsing falls back to Body so
-	// behavior is unchanged for the non-enriched path.
+	// command source. It is the un-enriched Body.
 	CommandBody    string
 	InstallationID pgtype.UUID
 	LarkMessageID  string
@@ -97,12 +92,6 @@ type AppendResult struct {
 	// with `/issue`. The caller passes this to
 	// service.IssueService.Create.
 	IssueCommand *IssueCommand
-	// DedupMarked is true when AppendUserMessage finalized the dedup
-	// claim in its own transaction (i.e. ClaimToken was supplied and
-	// the Mark succeeded). The dispatcher uses this to skip the
-	// post-pipeline finalize, since the row is already in its
-	// terminal state.
-	DedupMarked bool
 }
 
 // IssueCommand is the parsed shape of a user-typed `/issue ...`

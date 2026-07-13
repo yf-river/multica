@@ -72,10 +72,8 @@ func larkInstallationToResponse(row db.LarkInstallation) LarkInstallationRespons
 //     != nil`). When false, no install flow can succeed at all; the
 //     UI hides the tab.
 //   - install_supported: the device-flow install path is wired
-//     end-to-end: a RegistrationService exists (deployment supplied
-//     MULTICA_LARK_SECRET_KEY) AND the APIClient.IsConfigured signal
-//     is true (the real Lark HTTP client is in place — the stub
-//     cannot complete the post-poll GetBotInfo call). When false,
+//     end-to-end: a RegistrationService and live APIClient both exist.
+//     When false,
 //     the agent-detail "Bind" button stays hidden and the Settings
 //     tab surfaces a "coming soon" notice; already-installed bots
 //     still appear and remain manageable.
@@ -104,7 +102,7 @@ func (h *Handler) ListLarkInstallations(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"installations":     out,
 		"configured":        true,
-		"install_supported": h.LarkRegistration != nil && h.LarkAPIClient != nil && h.LarkAPIClient.IsConfigured(),
+		"install_supported": h.LarkRegistration != nil && h.LarkAPIClient != nil,
 	})
 }
 

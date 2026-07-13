@@ -124,8 +124,7 @@ type Handler struct {
 	// PatchInteractiveCard, SendBindingPromptCard, GetBotInfo. The
 	// router wires the real Lark HTTP client whenever
 	// MULTICA_LARK_SECRET_KEY is set. It remains nil when Lark is not
-	// configured. The UI consults IsConfigured() to decide whether to
-	// surface install entry points.
+	// configured. Its presence means the install transport is ready.
 	LarkAPIClient lark.APIClient
 	// LarkHub owns the per-installation supervisor goroutines that
 	// hold the §4.4 WS lease and run the EventConnector. Nil only

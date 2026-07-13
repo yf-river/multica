@@ -32,7 +32,6 @@ type deleteReactionCall struct {
 	reactionID string
 }
 
-func (f *fakeTypingAPIClient) IsConfigured() bool { return true }
 func (f *fakeTypingAPIClient) SendInteractiveCard(context.Context, SendCardParams) (string, error) {
 	return "", nil
 }

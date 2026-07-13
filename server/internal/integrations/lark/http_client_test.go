@@ -204,13 +204,6 @@ func testCreds() InstallationCredentials {
 	return InstallationCredentials{AppID: "cli_app_xx", AppSecret: "secret_xx"}
 }
 
-func TestHTTPClient_IsConfigured(t *testing.T) {
-	c := NewHTTPAPIClient(HTTPClientConfig{})
-	if !c.IsConfigured() {
-		t.Fatalf("real client must report IsConfigured()=true")
-	}
-}
-
 // TestHTTPClient_SendInteractiveCard_DefaultRendererBodyHasUpdateMulti
 // is the send-side half of the must-fix wire check: when the Patcher
 // uses NewDefaultRenderer to produce a card and ships it via

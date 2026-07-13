@@ -15,13 +15,6 @@ import (
 // already authenticated the installation row and decrypted its
 // app_secret. The client never reads `lark_installation` itself.
 type APIClient interface {
-	// IsConfigured reports whether this APIClient can reach Lark over
-	// the network. It is the "HTTP outbound is wired" signal: the stub
-	// returns false; the real Lark HTTP client returns true once
-	// instantiated. Handlers consult this when deciding whether to
-	// surface install / management UI that needs to talk to Lark.
-	IsConfigured() bool
-
 	// SendInteractiveCard posts an interactive card into a Lark chat
 	// and returns Lark's message_id for the card. The patcher persists
 	// this id in lark_outbound_card_message so subsequent patches can

@@ -504,18 +504,6 @@ func (d *Dispatcher) processClaimed(ctx context.Context, msg InboundMessage, ins
 		return DispatchResult{}, finalizeRelease, fmt.Errorf("append user message: %w", err)
 	}
 
-	// Post-AppendUserMessage paths must NOT Release the claim, because
-	// the chat_message + dedup Mark are already committed. Mark-again
-	// is a no-op (the in-tx Mark already landed), so finalizeNone.
-	postAppendFinalize := finalizeNone
-	if !appendRes.DedupMarked {
-		// Defensive: the dispatcher always passes a valid claim token,
-		// but if a future caller wires AppendUserMessage with an
-		// invalid token the Mark would not have run in-tx. Fall back
-		// to the post-pipeline Mark so the row still terminates.
-		postAppendFinalize = finalizeMark
-	}
-
 	res := DispatchResult{
 		Outcome:        OutcomeIngested,
 		InstallationID: inst.ID,
@@ -524,12 +512,11 @@ func (d *Dispatcher) processClaimed(ctx context.Context, msg InboundMessage, ins
 	}
 
 	// 7. /issue command, if present. chat_message is already durable
-	//    above; from here all error returns must signal finalizeNone
-	//    (or finalizeMark in the defensive fallback above).
+	//    above; from here all error returns must signal finalizeNone.
 	if appendRes.IssueCommand != nil {
 		issueRes, err := d.createIssueFromCommand(ctx, inst, binding.MulticaUserID, sessionID, *appendRes.IssueCommand)
 		if err != nil {
-			return DispatchResult{}, postAppendFinalize, fmt.Errorf("create issue from command: %w", err)
+			return DispatchResult{}, finalizeNone, fmt.Errorf("create issue from command: %w", err)
 		}
 		res.IssueID = issueRes.Issue.ID
 		res.IssueNumber = issueRes.Issue.Number
@@ -566,7 +553,7 @@ func (d *Dispatcher) processClaimed(ctx context.Context, msg InboundMessage, ins
 	// in a multi-sender silence window the last sender wins, matching the
 	// "latest message in a window wins" rule above. See MUL-2645.
 	d.scheduleRun(inst, msg, sessionID, binding.MulticaUserID)
-	return res, postAppendFinalize, nil
+	return res, finalizeNone, nil
 }
 
 // scheduleRun hands the per-session run trigger to the debouncer (or fires

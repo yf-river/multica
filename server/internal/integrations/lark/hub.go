@@ -198,7 +198,7 @@ func (c HubConfig) withDefaults() HubConfig {
 //
 // Lifecycle:
 //
-//	hub := NewHub(queries, factory, dispatcher, HubConfig{})
+//	hub := NewHub(queries, factory, dispatcher, replier, HubConfig{})
 //	go hub.Run(ctx)             // returns when ctx is cancelled
 //	... ctx cancellation triggers ...
 //	hub.Wait()                  // joins on every per-installation goroutine
@@ -262,37 +262,22 @@ type supervisorEntry struct {
 	gen         uint64
 }
 
-// NewHub constructs a Hub bound to the supplied queries, connector
-// factory and dispatcher. The Hub does not start any goroutines until
-// Run is called. The replier (OutcomeReplier) handles the outbound
-// side of the EventEmitter contract — NeedsBinding / AgentOffline /
-// AgentArchived cards — and is best-effort: failures are logged and
-// do not interrupt inbound processing. A nil replier falls back to
-// the noop replier so callers that have not wired outbound replies
-// yet still get the inbound pipeline running.
-func NewHub(queries HubQueries, factory ConnectorFactory, dispatcher *Dispatcher, cfg HubConfig) *Hub {
+// NewHub constructs a Hub bound to the supplied queries, connector factory,
+// dispatcher, and outbound replier. The Hub does not start any goroutines
+// until Run is called. Reply failures are best-effort and do not interrupt
+// inbound processing.
+func NewHub(queries HubQueries, factory ConnectorFactory, dispatcher *Dispatcher, replier OutcomeReplier, cfg HubConfig) *Hub {
 	cfg = cfg.withDefaults()
 	return &Hub{
 		queries:     queries,
 		factory:     factory,
 		dispatcher:  dispatcher,
-		replier:     NewNoopOutcomeReplier(cfg.Logger),
+		replier:     replier,
 		cfg:         cfg,
 		nodeID:      newNodeID(),
 		supervisors: make(map[string]supervisorEntry),
 		runDone:     make(chan struct{}),
 	}
-}
-
-// SetOutcomeReplier installs the production replier on the Hub. Must
-// be called BEFORE Run; setting it afterwards is a data race against
-// the supervisor's emit goroutines. Nil resets back to the noop
-// replier (useful for tests).
-func (h *Hub) SetOutcomeReplier(r OutcomeReplier) {
-	if r == nil {
-		r = NewNoopOutcomeReplier(h.cfg.Logger)
-	}
-	h.replier = r
 }
 
 // SetTypingIndicatorManager installs the typing-indicator manager on
@@ -813,8 +798,7 @@ func (h *Hub) handleEvent(ctx context.Context, inst db.LarkInstallation, log *sl
 // scheduleReply detaches the OutcomeReplier from the ACK critical path.
 // The reply goroutine uses a fresh context.Background() with a
 // ReplyTimeout deadline so it is independent of the inbound emit ctx
-// (which the connector cancels as soon as Run exits). A nil or noop
-// replier short-circuits — no goroutine, no wg tracking.
+// (which the connector cancels as soon as Run exits).
 //
 // Why a fresh background ctx instead of inheriting from the emit ctx:
 // the emit ctx is cancelled when the connector's runCtx fires, which
@@ -822,24 +806,12 @@ func (h *Hub) handleEvent(ctx context.Context, inst db.LarkInstallation, log *sl
 // kill the outbound reply for no reason — the binding card / offline
 // notice is still wanted. ReplyTimeout is the only guard we need.
 func (h *Hub) scheduleReply(inst db.LarkInstallation, msg InboundMessage, res DispatchResult, log *slog.Logger) {
-	r := h.replier
-	if r == nil {
-		return
-	}
-	// Fast path: noop replier doesn't do any IO, run it inline so we
-	// don't pay goroutine + waitgroup cost for a no-op. The exposed
-	// type is unexported but the test seam uses NewNoopOutcomeReplier
-	// which returns *noopReplier, so the type-assert is safe.
-	if _, isNoop := r.(*noopReplier); isNoop {
-		r.Reply(context.Background(), inst, msg, res)
-		return
-	}
 	h.replyWg.Add(1)
 	go func() {
 		defer h.replyWg.Done()
 		ctx, cancel := context.WithTimeout(context.Background(), h.cfg.ReplyTimeout)
 		defer cancel()
-		r.Reply(ctx, inst, msg, res)
+		h.replier.Reply(ctx, inst, msg, res)
 		if ctx.Err() == context.DeadlineExceeded {
 			log.Warn("lark hub: outbound reply timed out",
 				"event_id", msg.EventID,

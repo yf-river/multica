@@ -19,7 +19,6 @@ import (
 // what landed.
 type stubAPIClientWithRecorder struct {
 	mu             sync.Mutex
-	configured     bool
 	bindingCalls   []BindingPromptParams
 	interactiveOut []SendCardParams
 	textOut        []SendTextParams
@@ -27,8 +26,6 @@ type stubAPIClientWithRecorder struct {
 	textErr        error
 	bindingErr     error
 }
-
-func (s *stubAPIClientWithRecorder) IsConfigured() bool { return s.configured }
 
 func (s *stubAPIClientWithRecorder) SendInteractiveCard(ctx context.Context, p SendCardParams) (string, error) {
 	s.mu.Lock()
@@ -129,47 +126,6 @@ func (s stubReplierQueries) GetAgent(ctx context.Context, id pgtype.UUID) (db.Ag
 // the test file: the production path uses bindingSvc directly; the
 // test path wraps the replier so Reply can be exercised end-to-end.
 
-// TestLarkOutcomeReplierFallsBackToNoopWhenStubAPI ensures the
-// production replier downgrades to noop when the supplied APIClient
-// reports IsConfigured()=false. This avoids a misconfigured
-// deployment burning binding tokens that can never be delivered.
-func TestLarkOutcomeReplierFallsBackToNoopWhenStubAPI(t *testing.T) {
-	t.Parallel()
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	stub := &stubAPIClientWithRecorder{configured: false}
-	rep := NewLarkOutcomeReplier(OutcomeReplierConfig{
-		APIClient:   stub,
-		BindingSvc:  &BindingTokenService{}, // not nil so we exercise the IsConfigured guard
-		Credentials: stubCredentialsResolver{secret: "s"},
-		Queries:     stubReplierQueries{},
-		PublicURL:   "https://multica.test",
-		Logger:      log,
-	})
-	if _, isNoop := rep.(*noopReplier); !isNoop {
-		t.Fatalf("expected noopReplier when APIClient.IsConfigured()=false, got %T", rep)
-	}
-}
-
-// TestLarkOutcomeReplierFallsBackToNoopWhenNilDep verifies that any
-// missing dependency yields a noop replier rather than a half-wired
-// production one (which would panic on first use).
-func TestLarkOutcomeReplierFallsBackToNoopWhenNilDep(t *testing.T) {
-	t.Parallel()
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	cases := []OutcomeReplierConfig{
-		{}, // all nil
-		{APIClient: &stubAPIClientWithRecorder{configured: true}},
-		{APIClient: &stubAPIClientWithRecorder{configured: true}, BindingSvc: &BindingTokenService{}},
-		{APIClient: &stubAPIClientWithRecorder{configured: true}, BindingSvc: &BindingTokenService{}, Credentials: stubCredentialsResolver{secret: "s"}},
-	}
-	for i, cfg := range cases {
-		cfg.Logger = log
-		if _, isNoop := NewLarkOutcomeReplier(cfg).(*noopReplier); !isNoop {
-			t.Errorf("case %d: expected noopReplier with missing dep, got production", i)
-		}
-	}
-}
-
 // TestLarkOutcomeReplierAgentOfflineSendsCard exercises the
 // non-binding path, which doesn't require the BindingTokenService
 // machinery — we can construct the production replier and assert
@@ -177,7 +133,7 @@ func TestLarkOutcomeReplierFallsBackToNoopWhenNilDep(t *testing.T) {
 func TestLarkOutcomeReplierAgentOfflineSendsCard(t *testing.T) {
 	t.Parallel()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	stub := &stubAPIClientWithRecorder{configured: true}
+	stub := &stubAPIClientWithRecorder{}
 	rep := NewLarkOutcomeReplier(OutcomeReplierConfig{
 		APIClient:   stub,
 		BindingSvc:  &BindingTokenService{},
@@ -212,7 +168,7 @@ func TestLarkOutcomeReplierAgentOfflineSendsCard(t *testing.T) {
 func TestLarkOutcomeReplierAgentArchivedSendsCard(t *testing.T) {
 	t.Parallel()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	stub := &stubAPIClientWithRecorder{configured: true}
+	stub := &stubAPIClientWithRecorder{}
 	rep := NewLarkOutcomeReplier(OutcomeReplierConfig{
 		APIClient:   stub,
 		BindingSvc:  &BindingTokenService{},
@@ -237,7 +193,7 @@ func TestLarkOutcomeReplierAgentArchivedSendsCard(t *testing.T) {
 func TestLarkOutcomeReplierIngestedAndDroppedAreSilent(t *testing.T) {
 	t.Parallel()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	stub := &stubAPIClientWithRecorder{configured: true}
+	stub := &stubAPIClientWithRecorder{}
 	rep := NewLarkOutcomeReplier(OutcomeReplierConfig{
 		APIClient:   stub,
 		BindingSvc:  &BindingTokenService{},
@@ -262,7 +218,7 @@ func TestLarkOutcomeReplierIngestedAndDroppedAreSilent(t *testing.T) {
 func TestLarkOutcomeReplierOfflineSwallowsAPIError(t *testing.T) {
 	t.Parallel()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	stub := &stubAPIClientWithRecorder{configured: true, sendErr: errors.New("lark 5xx")}
+	stub := &stubAPIClientWithRecorder{sendErr: errors.New("lark 5xx")}
 	rep := NewLarkOutcomeReplier(OutcomeReplierConfig{
 		APIClient:   stub,
 		BindingSvc:  &BindingTokenService{},
@@ -273,19 +229,6 @@ func TestLarkOutcomeReplierOfflineSwallowsAPIError(t *testing.T) {
 	})
 	// Should NOT panic.
 	rep.Reply(context.Background(), db.LarkInstallation{}, InboundMessage{ChatID: "oc"}, DispatchResult{Outcome: OutcomeAgentOffline})
-}
-
-// TestNoopReplierIsHandledByHub verifies that NewHub installs a noop
-// replier by default — so the inbound pipeline runs even when the
-// caller never calls SetOutcomeReplier (e.g. in deployments that
-// only run the inbound dispatcher pre-outbound-wiring). This guards
-// the "no nil replier crash" contract on hub.handleEvent.
-func TestNoopReplierIsHandledByHub(t *testing.T) {
-	t.Parallel()
-	hub := NewHub(nil, nil, nil, HubConfig{})
-	if hub.replier == nil {
-		t.Fatal("Hub.replier must default to noop, not nil")
-	}
 }
 
 // TestLarkOutcomeReplierIssueCreatedSendsConfirmation pins the
@@ -300,7 +243,7 @@ func TestNoopReplierIsHandledByHub(t *testing.T) {
 func TestLarkOutcomeReplierIssueCreatedSendsConfirmation(t *testing.T) {
 	t.Parallel()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	stub := &stubAPIClientWithRecorder{configured: true}
+	stub := &stubAPIClientWithRecorder{}
 	rep := NewLarkOutcomeReplier(OutcomeReplierConfig{
 		APIClient:   stub,
 		BindingSvc:  &BindingTokenService{},
@@ -354,7 +297,7 @@ func TestLarkOutcomeReplierIssueCreatedSendsConfirmation(t *testing.T) {
 func TestLarkOutcomeReplierOutcomeIngestedSilentWithoutIssue(t *testing.T) {
 	t.Parallel()
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	stub := &stubAPIClientWithRecorder{configured: true}
+	stub := &stubAPIClientWithRecorder{}
 	rep := NewLarkOutcomeReplier(OutcomeReplierConfig{
 		APIClient:   stub,
 		BindingSvc:  &BindingTokenService{},

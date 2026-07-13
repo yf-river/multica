@@ -241,10 +241,8 @@ func (f *fakeChat) AppendUserMessage(ctx context.Context, p AppendUserMessagePar
 	if f.appendErr != nil {
 		return f.appendResult, f.appendErr
 	}
-	res := f.appendResult
-	// Mirror chatSessionService.AppendUserMessage: when the dispatcher
-	// supplies a claim token, Mark in-tx; zero rows ↔ stale-reclaim
-	// rotated the token under our feet, surface ErrClaimLost.
+	// Mirror chatSessionService.AppendUserMessage when a test supplies the
+	// query fake: Mark in-tx; zero rows means stale-reclaim rotated the token.
 	if f.queries != nil && p.ClaimToken.Valid && p.LarkMessageID != "" {
 		rows, err := f.queries.MarkLarkInboundDedupProcessed(ctx, db.MarkLarkInboundDedupProcessedParams{
 			InstallationID: p.InstallationID,
@@ -257,9 +255,8 @@ func (f *fakeChat) AppendUserMessage(ctx context.Context, p AppendUserMessagePar
 		if rows == 0 {
 			return AppendResult{}, ErrClaimLost
 		}
-		res.DedupMarked = true
 	}
-	return res, nil
+	return f.appendResult, nil
 }
 
 type fakeAudit struct {
@@ -1194,6 +1191,7 @@ func TestDispatcher_EnsureChatSessionFailureReleasesClaim(t *testing.T) {
 	chat := &fakeChat{
 		ensureID:  sessionID,
 		ensureErr: errors.New("ensure chat session: connection refused"),
+		queries:   queries,
 	}
 	d := &Dispatcher{
 		Queries:     queries,
@@ -1357,6 +1355,7 @@ func TestDispatcher_DurableErrorMarksClaim(t *testing.T) {
 	chat := &fakeChat{
 		ensureID:     sessionID,
 		appendResult: AppendResult{IssueCommand: &IssueCommand{Title: "boom"}},
+		queries:      queries,
 	}
 	issueErr := errors.New("create issue: connection refused")
 	d := &Dispatcher{
@@ -1490,7 +1489,7 @@ func TestDispatcher_StaleInFlightClaimReclaimable(t *testing.T) {
 		dedup:             map[string]*fakeDedupRow{seedDedupKey("msg-stale"): {processed: false, token: validUUID(0xAB)}},
 		dedupReclaim:      true, // simulates received_at < now() - 60s
 	}
-	chat := &fakeChat{ensureID: sessionID, appendResult: AppendResult{}}
+	chat := &fakeChat{ensureID: sessionID, appendResult: AppendResult{}, queries: queries}
 	d := &Dispatcher{
 		Queries:     queries,
 		Chat:        chat,
@@ -1681,11 +1680,7 @@ func TestDispatcher_InTxMarkPreventsPostCommitReclaim(t *testing.T) {
 		t.Fatalf("first delivery must ingest; got %+v", res)
 	}
 
-	// AppendUserMessage's in-tx Mark fired; the dispatcher's post-
-	// pipeline applyFinalize saw DedupMarked=true and skipped its
-	// own Mark call. Total fakeQueries.MarkLarkInboundDedupProcessed
-	// calls must therefore be exactly 1 — proves the in-tx path was
-	// the sole writer.
+	// AppendUserMessage's in-tx Mark is the sole writer.
 	if queries.calledMark != 1 {
 		t.Fatalf("expected exactly one Mark call (in-tx only, no post-finalize duplicate); calledMark=%d",
 			queries.calledMark)
@@ -1731,13 +1726,8 @@ func TestDispatcher_InTxMarkPreventsPostCommitReclaim(t *testing.T) {
 	}
 }
 
-// TestDispatcher_InTxMarkSucceedsAndSkipsPostFinalize is a positive
-// regression for the in-tx Mark path: when AppendUserMessage returns
-// DedupMarked=true the dispatcher must NOT issue an additional Mark
-// from applyFinalize. This is the contract that makes the new design
-// safe — calling Mark twice is benign at the SQL layer (the
-// processed_at IS NULL guard makes the second call a no-op), but the
-// extra round-trip would defeat the "in-tx atomic finalize" goal.
+// TestDispatcher_InTxMarkSucceedsAndSkipsPostFinalize verifies that the
+// dispatcher does not issue a second Mark after the in-transaction write.
 func TestDispatcher_InTxMarkSucceedsAndSkipsPostFinalize(t *testing.T) {
 	sessionID := validUUID(0x66)
 	queries := &fakeQueries{

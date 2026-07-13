@@ -12,10 +12,9 @@ import (
 // ids it was asked for, so tests can assert both the rendered body and
 // the network fan-out (e.g. "no call when nothing to enrich").
 type enricherFakeClient struct {
-	configured bool
-	byID       map[string][]LarkMessage
-	errByID    map[string]error
-	calls      []string
+	byID    map[string][]LarkMessage
+	errByID map[string]error
+	calls   []string
 
 	// ListChatMessages canned results + recorder, keyed by chat id.
 	byChat     map[ChatID][]LarkMessage
@@ -32,15 +31,13 @@ type enricherFakeClient struct {
 
 func newEnricherFake() *enricherFakeClient {
 	return &enricherFakeClient{
-		configured: true,
-		byID:       map[string][]LarkMessage{},
-		errByID:    map[string]error{},
-		byChat:     map[ChatID][]LarkMessage{},
-		errByChat:  map[ChatID]error{},
+		byID:      map[string][]LarkMessage{},
+		errByID:   map[string]error{},
+		byChat:    map[ChatID][]LarkMessage{},
+		errByChat: map[ChatID]error{},
 	}
 }
 
-func (f *enricherFakeClient) IsConfigured() bool { return f.configured }
 func (f *enricherFakeClient) GetMessage(ctx context.Context, creds InstallationCredentials, id string) ([]LarkMessage, error) {
 	f.calls = append(f.calls, id)
 	if e, ok := f.errByID[id]; ok {
@@ -308,22 +305,6 @@ func TestEnrichNoopWhenNothingAttached(t *testing.T) {
 	}
 	if len(fake.calls) != 0 {
 		t.Errorf("no GetMessage should be issued, got %v", fake.calls)
-	}
-}
-
-// TestEnrichSkipsWhenClientUnconfigured: with the stub/unconfigured
-// client we must not stamp a fetch error on every reply — skip silently.
-func TestEnrichSkipsWhenClientUnconfigured(t *testing.T) {
-	t.Parallel()
-	fake := newEnricherFake()
-	fake.configured = false
-	in := InboundMessage{MessageType: "text", MessageID: "om", Body: "hi", ParentID: "om_parent"}
-	out := enrich(t, fake, in, InboundEnricherConfig{})
-	if out.Body != "hi" {
-		t.Errorf("body should be unchanged when client unconfigured, got %q", out.Body)
-	}
-	if len(fake.calls) != 0 {
-		t.Errorf("no GetMessage when unconfigured, got %v", fake.calls)
 	}
 }
 

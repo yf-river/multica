@@ -36,36 +36,6 @@ type OutcomeReplierQueries interface {
 	GetAgent(ctx context.Context, id pgtype.UUID) (db.Agent, error)
 }
 
-// noopReplier is the safe default when Lark is wired without an
-// outbound APIClient (stub) or without a BindingTokenService. It
-// logs each outcome that would have produced a reply so an operator
-// can see the gap in production logs.
-type noopReplier struct {
-	log *slog.Logger
-}
-
-func (n *noopReplier) Reply(ctx context.Context, inst db.LarkInstallation, msg InboundMessage, res DispatchResult) {
-	switch res.Outcome {
-	case OutcomeNeedsBinding, OutcomeAgentOffline, OutcomeAgentArchived:
-		n.log.Warn("lark outcome replier: outbound reply skipped (replier not wired)",
-			"outcome", string(res.Outcome),
-			"installation_id", uuidString(inst.ID),
-			"chat_id", string(msg.ChatID),
-			"open_id", string(msg.SenderOpenID),
-		)
-	}
-}
-
-// NewNoopOutcomeReplier returns the no-op replier. Used as the
-// fallback when the production wiring is incomplete (e.g. stub
-// APIClient, no binding token service).
-func NewNoopOutcomeReplier(log *slog.Logger) OutcomeReplier {
-	if log == nil {
-		log = slog.Default()
-	}
-	return &noopReplier{log: log}
-}
-
 // LarkOutcomeReplier is the production OutcomeReplier. It composes:
 //
 //   - APIClient — to send the binding prompt card (open_id-targeted)
@@ -105,20 +75,13 @@ type OutcomeReplierConfig struct {
 	Logger      *slog.Logger
 }
 
-// NewLarkOutcomeReplier validates the configuration and returns the
-// production replier. Missing dependencies fall back to noop so the
-// boot path stays robust on partially-configured deployments.
-func NewLarkOutcomeReplier(cfg OutcomeReplierConfig) OutcomeReplier {
+// NewLarkOutcomeReplier returns the production replier. The enabled Lark
+// startup path owns dependency construction; disabled deployments never build
+// a Hub or replier.
+func NewLarkOutcomeReplier(cfg OutcomeReplierConfig) *LarkOutcomeReplier {
 	log := cfg.Logger
 	if log == nil {
 		log = slog.Default()
-	}
-	if cfg.APIClient == nil || cfg.BindingSvc == nil || cfg.Credentials == nil || cfg.Queries == nil {
-		return NewNoopOutcomeReplier(log)
-	}
-	if !cfg.APIClient.IsConfigured() {
-		log.Warn("lark outcome replier: APIClient.IsConfigured()=false; downgrading to noop replier")
-		return NewNoopOutcomeReplier(log)
 	}
 	if cfg.PublicURL == "" {
 		log.Warn("lark outcome replier: MULTICA_PUBLIC_URL not set; binding prompt CTA will not work")
