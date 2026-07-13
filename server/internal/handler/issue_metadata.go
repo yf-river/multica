@@ -108,8 +108,8 @@ func parseIssueMetadata(raw []byte) map[string]any {
 }
 
 // parseMetadataFilterParam reads the `metadata` query parameter (a JSON
-// object) and returns it as the JSONB filter blob passed to ListIssues /
-// CountIssues / ListOpenIssues. Empty input means "no filter" and returns
+// object) and returns it as the JSONB filter blob passed to the current issue
+// list queries. Empty input means "no filter" and returns
 // a nil []byte, which the SQL layer interprets as "skip the @> check".
 //
 // Validates that the filter is itself a flat object of primitives, mirroring

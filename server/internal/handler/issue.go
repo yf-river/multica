@@ -226,7 +226,7 @@ type GroupedIssuesResponse struct {
 }
 
 type groupedIssueRow struct {
-	db.ListIssuesRow
+	db.Issue
 	GroupTotal int64
 	Summary    issueListSummary
 }
@@ -241,13 +241,13 @@ type ListIssueBucketsResponse struct {
 }
 
 type issueBucketRow struct {
-	db.ListIssuesRow
+	db.Issue
 	StatusTotal int64
 	Summary     issueListSummary
 }
 
 type issueListRow struct {
-	db.ListIssuesRow
+	db.Issue
 	Summary issueListSummary
 }
 

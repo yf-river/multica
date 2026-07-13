@@ -88,7 +88,7 @@ func TestListIssues_ScheduledFilter(t *testing.T) {
 	}
 
 	// With scheduled=true only the three dated issues should surface, and
-	// CountIssues must agree so the frontend pagination logic stays sane.
+	// The dynamic count query must agree so frontend pagination stays sane.
 	scheduledIDs, scheduledTotal := list("&scheduled=true")
 	for _, want := range []string{withStart, withDue, withBoth} {
 		if !containsIssueID(scheduledIDs, want) {

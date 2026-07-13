@@ -67,31 +67,6 @@ func issueToResponse(i db.Issue, issuePrefix string) IssueResponse {
 		Metadata:        parseIssueMetadata(i.Metadata),
 	}
 }
-func issueListRowToResponse(i db.ListIssuesRow, issuePrefix string) IssueResponse {
-	identifier := issuePrefix + "-" + strconv.Itoa(int(i.Number))
-	return IssueResponse{
-		ID:            uuidToString(i.ID),
-		WorkspaceID:   uuidToString(i.WorkspaceID),
-		Number:        i.Number,
-		Identifier:    identifier,
-		Title:         i.Title,
-		Description:   textToPtr(i.Description),
-		Status:        i.Status,
-		Priority:      i.Priority,
-		AssigneeType:  textToPtr(i.AssigneeType),
-		AssigneeID:    uuidToPtr(i.AssigneeID),
-		CreatorType:   i.CreatorType,
-		CreatorID:     uuidToString(i.CreatorID),
-		ParentIssueID: uuidToPtr(i.ParentIssueID),
-		ProjectID:     uuidToPtr(i.ProjectID),
-		Position:      i.Position,
-		StartDate:     dateToPtr(i.StartDate),
-		DueDate:       dateToPtr(i.DueDate),
-		CreatedAt:     timestampToString(i.CreatedAt),
-		UpdatedAt:     timestampToString(i.UpdatedAt),
-		Metadata:      parseIssueMetadata(i.Metadata),
-	}
-}
 func openIssueRowToResponse(i db.ListOpenIssuesRow, issuePrefix string) IssueResponse {
 	identifier := issuePrefix + "-" + strconv.Itoa(int(i.Number))
 	return IssueResponse{
@@ -193,7 +168,7 @@ func issueListScanDest(row *issueListRow) []any {
 	}
 }
 func issueListRowWithSummaryToResponse(row issueListRow, issuePrefix string) IssueResponse {
-	resp := issueListRowToResponse(row.ListIssuesRow, issuePrefix)
+	resp := issueToResponse(row.Issue, issuePrefix)
 	attachIssueListSummary(&resp, row.Summary)
 	return resp
 }

@@ -488,14 +488,14 @@ SELECT id, workspace_id, title, description, status, priority,
 	bucketRows := []issueBucketRow{}
 	for rows.Next() {
 		var row issueBucketRow
-		base := issueListRow{ListIssuesRow: row.ListIssuesRow, Summary: row.Summary}
+		base := issueListRow{Issue: row.Issue, Summary: row.Summary}
 		dest := append(issueListScanDest(&base), &row.StatusTotal)
 		if err := rows.Scan(dest...); err != nil {
 			slog.Warn("ListIssueBuckets scan failed", "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to list issue buckets")
 			return
 		}
-		row.ListIssuesRow = base.ListIssuesRow
+		row.Issue = base.Issue
 		row.Summary = base.Summary
 		bucketRows = append(bucketRows, row)
 	}
@@ -522,8 +522,8 @@ SELECT id, workspace_id, title, description, status, priority,
 	for _, row := range bucketRows {
 		status := row.Status
 		issue := issueListRowWithSummaryToResponse(issueListRow{
-			ListIssuesRow: row.ListIssuesRow,
-			Summary:       row.Summary,
+			Issue:   row.Issue,
+			Summary: row.Summary,
 		}, prefix)
 		labels := labelsMap[issue.ID]
 		if labels == nil {
@@ -1014,14 +1014,14 @@ ORDER BY
 	groupedRows := []groupedIssueRow{}
 	for rows.Next() {
 		var row groupedIssueRow
-		base := issueListRow{ListIssuesRow: row.ListIssuesRow, Summary: row.Summary}
+		base := issueListRow{Issue: row.Issue, Summary: row.Summary}
 		dest := append(issueListScanDest(&base), &row.GroupTotal)
 		if err := rows.Scan(dest...); err != nil {
 			slog.Warn("ListGroupedIssues scan failed", "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to list grouped issues")
 			return
 		}
-		row.ListIssuesRow = base.ListIssuesRow
+		row.Issue = base.Issue
 		row.Summary = base.Summary
 		groupedRows = append(groupedRows, row)
 	}
@@ -1060,8 +1060,8 @@ ORDER BY
 		}
 
 		issue := issueListRowWithSummaryToResponse(issueListRow{
-			ListIssuesRow: row.ListIssuesRow,
-			Summary:       row.Summary,
+			Issue:   row.Issue,
+			Summary: row.Summary,
 		}, prefix)
 		labels := labelsMap[issue.ID]
 		if labels == nil {
