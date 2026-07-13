@@ -210,13 +210,9 @@ export function sanitizeTabPath(path: string): string | null {
 // Tab factory
 // ---------------------------------------------------------------------------
 
-function createId(): string {
-  return createSafeId();
-}
-
 function makeTab(path: string, title: string, icon: string): Tab {
   return {
-    id: createId(),
+    id: createSafeId(),
     path,
     title,
     icon,

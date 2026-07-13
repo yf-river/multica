@@ -212,7 +212,7 @@ function RunReviewSummaryCard({
   const cancelledTasks = terminalTasks.filter((task) => task.status === "cancelled");
   const tokenTotal = summary
     ? summary.total_input_tokens + summary.total_output_tokens + summary.total_cache_read_tokens + summary.total_cache_write_tokens
-    : traceEvents.reduce((sum, event) => sum + traceEventTokenTotal(event), 0);
+    : traceEvents.reduce((sum, event) => sum + usageTokenTotal(event), 0);
   const taskCount = Number(aggregate["任务数"] ?? terminalTasks.length);
   const anomalyCount =
     Number(aggregate["异常工具数"] ?? 0) + failedTasks.length + cancelledTasks.length;
@@ -601,10 +601,6 @@ function formatTimestamp(value: string | null | undefined): string {
   if (Number.isNaN(date.getTime())) return "";
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}`;
-}
-
-function traceEventTokenTotal(event: TaskTraceEvent): number {
-  return usageTokenTotal(event);
 }
 
 function traceEventStageLabel(eventType: string): string {

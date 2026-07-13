@@ -262,10 +262,6 @@ function isJsonDocumentText(text: string): boolean {
   }
 }
 
-function isStructuredPlainText(text: string): boolean {
-  return isJsonDocumentText(text);
-}
-
 function hasRichStyle(style: string): boolean {
   const normalized = style.toLowerCase();
   return (
@@ -343,7 +339,7 @@ function classifyPaste({
   if (html && html.includes("data-pm-slice")) return "native";
   if (html && hasSemanticRichHtml(html, text)) return "native";
   if (text.length > LARGE_PASTE_TEXT_THRESHOLD) return "literal";
-  if (isStructuredPlainText(text)) return "literal";
+  if (isJsonDocumentText(text)) return "literal";
   return "markdown";
 }
 

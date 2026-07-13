@@ -676,7 +676,7 @@ func buildObservabilitySummary(
 	stageBreakdown := buildObservabilitySOPStageBreakdown(runs, events, usageTracesByTask, taskMessages)
 	return map[string]any{
 		"指标": map[string]any{
-			"SOP 执行数":   durationCountOrTotal(durationCount, len(runs)),
+			"SOP 执行数":   len(runs),
 			"SOP 事件数":   sopEventCount,
 			"阶段耗时":      avgInt64(totalDuration, durationCount),
 			"队列等待":      queueWait,
@@ -916,10 +916,6 @@ func observabilityModelLabel(provider, model string) string {
 		return provider
 	}
 	return provider + "/" + model
-}
-
-func durationCountOrTotal(_ int64, total int) int {
-	return total
 }
 
 func avgInt64(total int64, count int64) any {

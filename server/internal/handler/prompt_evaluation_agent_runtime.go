@@ -786,10 +786,6 @@ func floatFromAny(value any) float64 {
 	}
 }
 
-func promptEvaluationAgentRunMessage() string {
-	return "真实智能体任务已入队；请通过 task messages、usage 和运行历史追踪结果。"
-}
-
 func promptEvaluationDatasetRowsFingerprint(rows []db.PromptEvaluationDatasetRow) string {
 	snapshot := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {

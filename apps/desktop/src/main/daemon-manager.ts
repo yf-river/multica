@@ -708,10 +708,6 @@ async function loadPrefs(): Promise<DaemonPrefs> {
   return loadDaemonPrefs(PREFS_PATH);
 }
 
-async function savePrefs(prefs: unknown): Promise<DaemonPrefs> {
-  return saveDaemonPrefs(PREFS_PATH, prefs);
-}
-
 async function clearToken(): Promise<void> {
   const active = await ensureActiveProfile();
   const config = await readProfileConfig(active.name);
@@ -1086,7 +1082,7 @@ export function setupDaemonManager(
     (_event, prefs: Partial<DaemonPrefs>) =>
       loadPrefs().then((cur) => {
         const merged = { ...cur, ...prefs };
-        return savePrefs(merged);
+        return saveDaemonPrefs(PREFS_PATH, merged);
       }),
   );
   ipcMain.handle("daemon:auto-start", async () => {

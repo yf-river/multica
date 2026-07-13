@@ -8,4 +8,3 @@ export type {
   SupportedLocale,
 } from "./types";
 export { DEFAULT_LOCALE, SUPPORTED_LOCALES } from "./types";
-export { matchLocale, pickLocale } from "./pick-locale";

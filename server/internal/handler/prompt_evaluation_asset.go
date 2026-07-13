@@ -1337,7 +1337,7 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 		RuntimeID:     uuidToString(runtimeRow.ID),
 		Model:         promptEvaluationModelForAgent(agentRow),
 		Status:        "已入队",
-		Message:       promptEvaluationAgentRunMessage(),
+		Message:       "真实智能体任务已入队；请通过 task messages、usage 和运行历史追踪结果。",
 	}
 	if err := completeResourceCreateRequest(
 		r.Context(), qtx, workspaceID, requestActorID, resourceTypePromptEvaluationRun,

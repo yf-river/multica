@@ -23,7 +23,7 @@ export function installContextMenu(webContents: WebContents): void {
     // shell.openExternal would route through the OS handler and is
     // outside what this menu promises.
     const linkIsHttpUrl = !!linkURL && isSafeExternalHttpUrl(linkURL);
-    const labels = pickLabels();
+    const labels = contextMenuLabels;
 
     const menu = new Menu();
 
@@ -89,7 +89,3 @@ const contextMenuLabels: ContextMenuLabels = {
   openLink: "在浏览器中打开链接",
   copyLinkAddress: "复制链接地址",
 };
-
-function pickLabels(): ContextMenuLabels {
-  return contextMenuLabels;
-}
