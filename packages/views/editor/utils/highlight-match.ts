@@ -1,3 +1,5 @@
+import { isOffsetInRanges } from "@multica/ui/markdown/linkify";
+
 /**
  * highlight-match — the single source of truth for what `==text==` highlight
  * spans look like. BOTH the editor tokenizer (extensions/highlight.ts) and the
@@ -52,10 +54,6 @@ export function findLiteralRanges(text: string): Range[] {
   return ranges;
 }
 
-function isInside(pos: number, ranges: Range[]): boolean {
-  return ranges.some((r) => pos >= r.start && pos < r.end);
-}
-
 /**
  * Try to match a highlight whose opening `==` begins at `i`. Returns the
  * exclusive end offset (just past the closing `==`) and the inner text, or
@@ -76,7 +74,7 @@ export function matchHighlightAt(
   if (/\s/.test(text[innerStart]!)) return null;
 
   const r = ranges ?? findLiteralRanges(text);
-  if (isInside(i, r)) return null; // opening fence is literal (inside code/math)
+  if (isOffsetInRanges(i, r)) return null; // opening fence is literal (inside code/math)
 
   // INNER may not cross a blank line: cap the scan at the first one.
   const blankRel = text.slice(innerStart).search(BLANK_LINE_RE);
@@ -84,7 +82,7 @@ export function matchHighlightAt(
 
   for (let j = innerStart + 1; j <= scanLimit && j + 1 < text.length; j++) {
     if (text[j] !== "=" || text[j + 1] !== "=") continue;
-    if (isInside(j, r)) continue; // closing fence is literal — keep scanning
+    if (isOffsetInRanges(j, r)) continue; // closing fence is literal — keep scanning
     if (/\s/.test(text[j - 1]!)) continue; // no whitespace directly before fence
     return { end: j + 2, inner: text.slice(innerStart, j) };
   }

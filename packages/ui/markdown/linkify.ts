@@ -105,7 +105,7 @@ function findCodeRanges(text: string): CodeRange[] {
 /**
  * Check if a position is inside any code range
  */
-function isInsideCode(pos: number, ranges: CodeRange[]): boolean {
+export function isOffsetInRanges(pos: number, ranges: readonly { start: number; end: number }[]): boolean {
   return ranges.some((r) => pos >= r.start && pos < r.end)
 }
 
@@ -333,7 +333,7 @@ export function preprocessLinks(text: string): string {
 
   for (const link of links) {
     // Skip if inside code block
-    if (isInsideCode(link.start, codeRanges)) continue
+    if (isOffsetInRanges(link.start, codeRanges)) continue
 
     // Skip if this match is inside an existing markdown link or image.
     if (markdownLinkRanges.some((range) => rangesOverlap(link, range))) continue
