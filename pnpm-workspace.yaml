@@ -18,7 +18,6 @@ catalog:
   # State Management
   zustand: "^5.0.0"
   "@tanstack/react-query": "^5.96.2"
-  "@tanstack/react-table": "^8.21.3"
 
   # Runtime schema validation (defensive boundary against API drift —
   # see CLAUDE.md "API Response Compatibility")

@@ -13,8 +13,6 @@
   "ignoreFiles": [
     "apps/desktop/src/renderer/src/env.d.ts",
     "apps/desktop/src/preload/index.d.ts",
-    "apps/web/lib/use-cases-source.ts",
-    "apps/web/source.config.ts",
     "apps/web/test/helpers.tsx"
   ],
   "ignoreBinaries": [
@@ -55,7 +53,6 @@
     "clsx",
     "cmdk",
     "date-fns",
-    "embla-carousel-react",
     "emoji-mart",
     "linkify-it",
     "lowlight",
@@ -72,7 +69,6 @@
     "tailwind-merge",
     "tailwindcss",
     "tw-animate-css",
-    "vaul",
     "vitest",
     "zod"
   ],

@@ -14,7 +14,6 @@
     "./common/markdown": "./common/markdown.tsx",
     "./editor": "./editor/index.ts",
     "./issues/components": "./issues/components/index.ts",
-    "./issues/hooks": "./issues/hooks/index.ts",
     "./issues/utils/filter": "./issues/utils/filter.ts",
     "./issues/utils/sort": "./issues/utils/sort.ts",
     "./common/task-transcript": "./common/task-transcript/index.ts",
@@ -105,7 +104,6 @@
   },
   "peerDependencies": {
     "@tanstack/react-query": "catalog:",
-    "@tanstack/react-table": "catalog:",
     "i18next": "catalog:",
     "lucide-react": "catalog:",
     "react": "catalog:",
