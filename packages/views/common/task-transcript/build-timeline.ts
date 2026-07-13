@@ -37,10 +37,6 @@ export function coalesceTimelineItems(items: TimelineItem[]): TimelineItem[] {
   return out;
 }
 
-export function appendTimelineItem(items: TimelineItem[], item: TimelineItem): TimelineItem[] {
-  return coalesceTimelineItems([...items, item]);
-}
-
 function redactTimelineItems(items: TimelineItem[]): TimelineItem[] {
   return items.map((item) => ({
     ...item,
