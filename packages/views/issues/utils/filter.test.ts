@@ -267,5 +267,6 @@ describe("projectIssueViews", () => {
     ]);
     expect(projection.visibleStatuses).toEqual(["todo"]);
     expect(projection.hiddenStatuses).not.toContain("todo");
+    expect(projection.activeFilters.runningIssueIds).toBe(runningIssueIds);
   });
 });

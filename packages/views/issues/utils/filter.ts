@@ -106,7 +106,7 @@ export function projectIssueViews(
   sourceIssues: Issue[],
   filters: IssueFilters,
 ): IssueViewProjection {
-  const { statusFilters, runningIssueIds, ...activeFilters } = filters;
+  const { statusFilters, ...activeFilters } = filters;
   const visibleStatuses =
     statusFilters.length > 0
       ? BOARD_STATUSES.filter((status) => statusFilters.includes(status))
@@ -117,7 +117,6 @@ export function projectIssueViews(
     swimlaneIssues: filterIssues(sourceIssues, {
       ...activeFilters,
       statusFilters: [],
-      runningIssueIds,
     }),
     activeFilters,
     visibleStatuses,
