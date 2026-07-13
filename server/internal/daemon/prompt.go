@@ -7,14 +7,10 @@ import (
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 )
 
-const (
-	squadOperatingProtocolHeadingZH = "## 小队负责人操作协议"
-	squadOperatingProtocolHeadingEN = "## Squad Operating Protocol"
-)
+const squadOperatingProtocolHeading = "## 小队负责人操作协议"
 
 func hasSquadLeaderBriefing(instructions string) bool {
-	return strings.Contains(instructions, squadOperatingProtocolHeadingZH) ||
-		strings.Contains(instructions, squadOperatingProtocolHeadingEN)
+	return strings.Contains(instructions, squadOperatingProtocolHeading)
 }
 
 // BuildPrompt constructs the task prompt for an agent CLI.

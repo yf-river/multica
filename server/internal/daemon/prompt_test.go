@@ -592,23 +592,6 @@ func TestBuildPromptSquadLeaderNoActionForAgentTrigger(t *testing.T) {
 	}
 }
 
-func TestBuildPromptSquadLeaderNoActionLegacyEnglishHeading(t *testing.T) {
-	task := Task{
-		IssueID:               "issue-123",
-		TriggerCommentID:      "comment-456",
-		TriggerCommentContent: "Deploy complete.",
-		TriggerAuthorType:     "agent",
-		TriggerAuthorName:     "deploy-boy",
-		Agent: &AgentData{
-			Instructions: "Some instructions\n\n## Squad Operating Protocol\n\nlegacy briefing",
-		},
-	}
-	out := BuildPrompt(task)
-	if !strings.Contains(out, "小队负责人 no_action 规则") {
-		t.Errorf("legacy English squad heading must still inject no_action rule, got:\n%s", out)
-	}
-}
-
 func TestBuildChatPromptAttachmentIDsCanBeBoundToCreatedIssues(t *testing.T) {
 	task := Task{
 		ChatSessionID: "sess-1",
