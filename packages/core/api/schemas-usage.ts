@@ -69,7 +69,7 @@ const DashboardRunTimeDailySchema = z.object({
 export const DashboardRunTimeDailyListSchema = z.array(DashboardRunTimeDailySchema);
 
 // ---------------------------------------------------------------------------
-// Runtime usage schemas — the runtime-detail page's four usage endpoints
+// Runtime usage schemas — the runtime-detail page's current usage endpoints
 // (`/api/runtimes/:id/usage*`). Same leniency rules as the dashboard
 // schemas above: numbers default to 0, strings to "", `.loose()` passes
 // unknown fields.
@@ -88,13 +88,6 @@ const RuntimeUsageSchema = z.object({
 }).loose();
 
 export const RuntimeUsageListSchema = z.array(RuntimeUsageSchema);
-
-const RuntimeHourlyActivitySchema = z.object({
-  hour: z.number().default(0),
-  count: z.number().default(0),
-}).loose();
-
-export const RuntimeHourlyActivityListSchema = z.array(RuntimeHourlyActivitySchema);
 
 const RuntimeUsageByAgentSchema = z.object({
   agent_id: z.string().default(""),
@@ -129,17 +122,3 @@ const RuntimeUsageByTaskSchema = z.object({
 }).loose();
 
 export const RuntimeUsageByTaskListSchema = z.array(RuntimeUsageByTaskSchema);
-
-const RuntimeUsageByHourSchema = z.object({
-  hour: z.number().default(0),
-  provider: z.string().default(""),
-  model: z.string().default(""),
-  input_tokens: z.number().default(0),
-  output_tokens: z.number().default(0),
-  cache_read_tokens: z.number().default(0),
-  cache_write_tokens: z.number().default(0),
-  task_count: z.number().default(0),
-  ...UsageCostFieldsSchema,
-}).loose();
-
-export const RuntimeUsageByHourListSchema = z.array(RuntimeUsageByHourSchema);

@@ -1,10 +1,5 @@
 import type { CreateSkillRequest } from "../types";
-import {
-  createWorkspacePendingCreateStore,
-  type PendingCreateOperation,
-} from "../platform/pending-create-store";
-
-export type PendingSkillCreate = PendingCreateOperation<CreateSkillRequest>;
+import { createWorkspacePendingCreateStore } from "../platform/pending-create-store";
 
 export const useSkillPendingOperationStore =
   createWorkspacePendingCreateStore<CreateSkillRequest>(

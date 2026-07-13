@@ -257,12 +257,3 @@ func readLocalMeta(filePath string) (localMeta, bool) {
 	}
 	return meta, true
 }
-
-func (s *LocalStorage) UploadFromReader(ctx context.Context, key string, reader io.Reader, contentType string, filename string) (string, error) {
-	data, err := io.ReadAll(reader)
-	if err != nil {
-		return "", fmt.Errorf("local storage ReadAll: %w", err)
-	}
-
-	return s.Upload(ctx, key, data, contentType, filename)
-}

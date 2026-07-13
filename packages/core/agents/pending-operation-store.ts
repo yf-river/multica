@@ -1,10 +1,5 @@
 import type { CreateAgentRequest } from "../types";
-import {
-  createWorkspacePendingCreateStore,
-  type PendingCreateOperation,
-} from "../platform/pending-create-store";
-
-export type PendingAgentCreate = PendingCreateOperation<CreateAgentRequest>;
+import { createWorkspacePendingCreateStore } from "../platform/pending-create-store";
 
 export const useAgentPendingOperationStore =
   createWorkspacePendingCreateStore<CreateAgentRequest>(

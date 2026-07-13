@@ -1,10 +1,9 @@
 /**
  * Public API for the permissions module.
  *
- * Exports only what the views currently consume. The full pure-rule set lives
- * in `./rules` and is available to tests and future surfaces directly. Adding
- * a new rule to the public API should follow the same minimum-surface pattern
- * — only export when there's a caller.
+ * Exports only what the views currently consume. Adding a new rule to the
+ * public API should follow the same minimum-surface pattern — only add it when
+ * there is a current caller.
  */
 export type {
   Decision,

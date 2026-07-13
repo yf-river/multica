@@ -394,18 +394,6 @@ func mustMarshalRaw(v any) json.RawMessage {
 	return data
 }
 
-func (h *Hub) RuntimeConnectionCount(runtimeID string) int {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	return len(h.byRuntime[runtimeID])
-}
-
-func (h *Hub) WorkspaceConnectionCount(workspaceID string) int {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	return len(h.byWorkspace[workspaceID])
-}
-
 func (h *Hub) register(c *client) {
 	h.mu.Lock()
 	h.clients[c] = true

@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useMemo } from "react";
+import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
 import {
   claimPendingChatOperation,
   releasePendingChatOperation,
   replayPendingChatOperation,
+  selectPendingChatOperations,
   usePendingChatOperationStore,
 } from "@multica/core/chat";
 import { chatKeys } from "@multica/core/chat/queries";
@@ -20,15 +21,9 @@ const logger = createLogger("chat.recovery");
 /** Retry durable chat intents after reload or an outcome-unknown response. */
 export function useChatOperationRecovery(workspaceId: string | null) {
   const accountId = useAuthStore((state) => state.user?.id ?? null);
-  const operationMap = usePendingChatOperationStore((state) => state.operations);
-  const operations = useMemo(() => {
-    if (!accountId || !workspaceId) return [];
-    return Object.values(operationMap)
-      .filter((operation) =>
-        operation.accountId === accountId && operation.workspaceId === workspaceId,
-      )
-      .sort((a, b) => a.createdAt - b.createdAt);
-  }, [accountId, operationMap, workspaceId]);
+  const operations = usePendingChatOperationStore(
+    selectPendingChatOperations(accountId, workspaceId),
+  );
   const queryClient = useQueryClient();
 
   useEffect(() => {

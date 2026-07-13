@@ -53,8 +53,6 @@ export type TrainingWorkbenchViewId = TrainingWorkbenchView["view"];
 export type TrainingWorkbenchCanonicalRoute = TrainingWorkbenchView["canonicalRoute"];
 export type TrainingWorkbenchSection = typeof TRAINING_WORKBENCH_SECTIONS[number]["key"];
 
-export const TRAINING_WORKBENCH_TABS = TRAINING_WORKBENCH_VIEWS.map((item) => item.tab) as TrainingWorkbenchTab[];
-export const DEFAULT_TRAINING_WORKBENCH_TAB: TrainingWorkbenchTab = "提示词库";
 export const DEFAULT_TRAINING_WORKBENCH_VIEW: TrainingWorkbenchViewId = "prompts";
 export const DEFAULT_DEBUG_WORKBENCH_VIEW: TrainingWorkbenchViewId = "prompts";
 export const DEFAULT_EVALUATION_WORKBENCH_VIEW: TrainingWorkbenchViewId = "datasets";
@@ -126,10 +124,6 @@ export function trainingWorkbenchTitleFromView(view: string | null): string {
 
 export function trainingWorkbenchShowsPromptEditor(view: string | null): boolean {
   return trainingWorkbenchTabFromView(view) === "提示词库";
-}
-
-export function trainingWorkbenchCanonicalRouteFromView(view: string | null): string {
-  return TRAINING_WORKBENCH_CANONICAL_ROUTE_BY_VIEW[normalizeTrainingWorkbenchView(view)];
 }
 
 export function debugWorkbenchPath(baseDebugPath: string, view: string | null): string {

@@ -640,22 +640,6 @@ type PromptEvaluationDatasetFromTracesResponse struct {
 	Source       string                         `json:"source"`
 }
 
-type PromptEvaluationExperimentDimensionResponse struct {
-	ID                string  `json:"id"`
-	WorkspaceID       string  `json:"workspace_id"`
-	ExperimentAssetID string  `json:"experiment_asset_id"`
-	DimensionIndex    int32   `json:"dimension_index"`
-	DimensionName     string  `json:"dimension_name"`
-	ExperimentTarget  string  `json:"experiment_target"`
-	BaselineOutput    string  `json:"baseline_output"`
-	ComparisonPayload any     `json:"comparison_payload"`
-	Status            string  `json:"status"`
-	Source            string  `json:"source"`
-	CreatedBy         *string `json:"created_by"`
-	CreatedAt         string  `json:"created_at"`
-	UpdatedAt         string  `json:"updated_at"`
-}
-
 type PromptEvaluationDimensionScoreResponse struct {
 	ID             string  `json:"id"`
 	WorkspaceID    string  `json:"workspace_id"`

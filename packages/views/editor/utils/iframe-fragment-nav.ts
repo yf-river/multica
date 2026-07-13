@@ -47,6 +47,3 @@ const FRAGMENT_NAV_SHIM = `<script>
 export function withFragmentNavShim(html: string | undefined): string {
   return (html ?? "") + FRAGMENT_NAV_SHIM;
 }
-
-/** Exposed for unit tests so they can assert the shim was appended verbatim. */
-export const __FRAGMENT_NAV_SHIM__ = FRAGMENT_NAV_SHIM;

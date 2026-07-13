@@ -140,9 +140,9 @@ describe("useRealtimeSync — ws instance change", () => {
     rerender({ ws: ws2 });
 
     // Should have called invalidateQueries for all workspace-scoped keys
-    // (14 workspace-scoped + 6 per-issue prefixes + 1 workspaceKeys.list()
-    // = 21 calls)
-    expect(invalidateSpy).toHaveBeenCalledTimes(21);
+    // (14 workspace-scoped + 5 per-issue prefixes + 1 workspaceKeys.list()
+    // = 20 calls)
+    expect(invalidateSpy).toHaveBeenCalledTimes(20);
   });
 
   it("does not re-invalidate when rerendered with the same ws instance", () => {
@@ -178,7 +178,6 @@ describe("useRealtimeSync — ws instance change", () => {
     expect(calls).toContainEqual(["issues", "timeline"]);
     expect(calls).toContainEqual(["issues", "reactions"]);
     expect(calls).toContainEqual(["issues", "subscribers"]);
-    expect(calls).toContainEqual(["issues", "usage"]);
     expect(calls).toContainEqual(["issues", "attachments"]);
     expect(calls).toContainEqual(["issues", "tasks"]);
   });

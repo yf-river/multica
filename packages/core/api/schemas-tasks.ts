@@ -5,7 +5,6 @@ import type {
   AgentTask,
   IssueExecutionTreeResponse,
   IssueTaskTraceResponse,
-  IssueUsageSummary,
   TaskMessagePayload,
 } from "../types";
 import {
@@ -104,22 +103,6 @@ export const TaskMessageListSchema = z.array(z.object({
 }).loose());
 
 export const EMPTY_TASK_MESSAGES: TaskMessagePayload[] = [];
-
-export const IssueUsageSummarySchema = z.object({
-  total_input_tokens: z.number().default(0),
-  total_output_tokens: z.number().default(0),
-  total_cache_read_tokens: z.number().default(0),
-  total_cache_write_tokens: z.number().default(0),
-  task_count: z.number().default(0),
-}).loose();
-
-export const EMPTY_ISSUE_USAGE_SUMMARY: IssueUsageSummary = {
-  total_input_tokens: 0,
-  total_output_tokens: 0,
-  total_cache_read_tokens: 0,
-  total_cache_write_tokens: 0,
-  task_count: 0,
-};
 
 export const IssueTaskTraceResponseSchema = z.object({
   events: z.array(TaskTraceEventSchema).default([]),

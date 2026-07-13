@@ -89,8 +89,6 @@ export const issueKeys = {
   subscribersAll: () => ["issues", "subscribers"] as const,
   subscribers: (issueId: string) =>
     [...issueKeys.subscribersAll(), issueId] as const,
-  usageAll: () => ["issues", "usage"] as const,
-  usage: (issueId: string) => [...issueKeys.usageAll(), issueId] as const,
   traceAll: () => ["issues", "trace"] as const,
   trace: (issueId: string) => [...issueKeys.traceAll(), issueId] as const,
   executionTreeAll: () => ["issues", "execution-tree"] as const,
@@ -514,13 +512,6 @@ export function issueSubscribersOptions(issueId: string) {
   return queryOptions({
     queryKey: issueKeys.subscribers(issueId),
     queryFn: () => api.listIssueSubscribers(issueId),
-  });
-}
-
-export function issueUsageOptions(issueId: string) {
-  return queryOptions({
-    queryKey: issueKeys.usage(issueId),
-    queryFn: () => api.getIssueUsage(issueId),
   });
 }
 

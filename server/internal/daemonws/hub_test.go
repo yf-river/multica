@@ -15,6 +15,18 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
+func runtimeConnectionCount(hub *Hub, runtimeID string) int {
+	hub.mu.RLock()
+	defer hub.mu.RUnlock()
+	return len(hub.byRuntime[runtimeID])
+}
+
+func workspaceConnectionCount(hub *Hub, workspaceID string) int {
+	hub.mu.RLock()
+	defer hub.mu.RUnlock()
+	return len(hub.byWorkspace[workspaceID])
+}
+
 func newTestHubConnection(t *testing.T, hub *Hub, identity ClientIdentity) *websocket.Conn {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -93,7 +105,7 @@ func TestNotifyTaskAvailable(t *testing.T) {
 	})
 
 	deadline := time.Now().Add(time.Second)
-	for hub.RuntimeConnectionCount("runtime-1") == 0 {
+	for runtimeConnectionCount(hub, "runtime-1") == 0 {
 		if time.Now().After(deadline) {
 			t.Fatal("runtime connection was not registered")
 		}
@@ -124,7 +136,7 @@ func TestNotifyRuntimeProfilesChanged(t *testing.T) {
 	})
 
 	deadline := time.Now().Add(time.Second)
-	for hub.WorkspaceConnectionCount("ws-1") == 0 {
+	for workspaceConnectionCount(hub, "ws-1") == 0 {
 		if time.Now().After(deadline) {
 			t.Fatal("workspace connection was not registered")
 		}
@@ -155,15 +167,15 @@ func TestNotifyRuntimeProfilesChangedIndexesAllAuthorizedWorkspaces(t *testing.T
 	})
 
 	deadline := time.Now().Add(time.Second)
-	for hub.WorkspaceConnectionCount("ws-1") == 0 || hub.WorkspaceConnectionCount("ws-2") == 0 {
+	for workspaceConnectionCount(hub, "ws-1") == 0 || workspaceConnectionCount(hub, "ws-2") == 0 {
 		if time.Now().After(deadline) {
 			t.Fatalf("workspace connections not registered: ws-1=%d ws-2=%d",
-				hub.WorkspaceConnectionCount("ws-1"),
-				hub.WorkspaceConnectionCount("ws-2"))
+				workspaceConnectionCount(hub, "ws-1"),
+				workspaceConnectionCount(hub, "ws-2"))
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	if got := hub.WorkspaceConnectionCount("ws-3"); got != 0 {
+	if got := workspaceConnectionCount(hub, "ws-3"); got != 0 {
 		t.Fatalf("workspace ws-3 connection count = %d, want 0", got)
 	}
 

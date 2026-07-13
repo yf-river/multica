@@ -49,14 +49,12 @@ import type {
   UpdateSkillRequest,
   SetAgentSkillsRequest,
   RuntimeUsage,
-  IssueUsageSummary,
   IssueTaskTraceResponse,
   IssueExecutionTreeResponse,
   ListIssueSOPRunsResponse,
   ObservabilitySummary,
   RuntimeUsageByAgent,
   RuntimeUsageByTask,
-  RuntimeUsageByHour,
   DashboardUsageDaily,
   DashboardUsageByAgent,
   DashboardAgentRunTime,
@@ -204,7 +202,6 @@ import {
   AgentActivityBucketListSchema,
   AgentRunCountListSchema,
   TaskMessageListSchema,
-  IssueUsageSummarySchema,
   IssueTaskTraceResponseSchema,
   IssueExecutionTreeResponseSchema,
   SearchIssuesResponseSchema,
@@ -229,7 +226,6 @@ import {
   EMPTY_AGENT_ACTIVITY_BUCKETS,
   EMPTY_AGENT_RUN_COUNTS,
   EMPTY_TASK_MESSAGES,
-  EMPTY_ISSUE_USAGE_SUMMARY,
   EMPTY_ISSUE_TASK_TRACE_RESPONSE,
   EMPTY_ISSUE_EXECUTION_TREE,
   EMPTY_SEARCH_ISSUES_RESPONSE,
@@ -340,7 +336,6 @@ import {
   ListWebhookDeliveriesResponseSchema,
   RuntimeUsageByAgentListSchema,
   RuntimeUsageByTaskListSchema,
-  RuntimeUsageByHourListSchema,
   RuntimeUsageListSchema,
   RuntimeProfileListResponseSchema,
   RuntimeProfileSchema,
@@ -1179,24 +1174,6 @@ export class ApiClient extends ApiTransport {
     );
   }
 
-  async getRuntimeUsageByHour(
-    runtimeId: string,
-    params?: { days?: number; tz?: string },
-  ): Promise<RuntimeUsageByHour[]> {
-    const search = new URLSearchParams();
-    if (params?.days) search.set("days", String(params.days));
-    if (params?.tz) search.set("tz", params.tz);
-    const raw = await this.fetch<unknown>(
-      `/api/runtimes/${runtimeId}/usage/by-hour?${search}`,
-    );
-    return parseWithFallback<RuntimeUsageByHour[]>(
-      raw,
-      RuntimeUsageByHourListSchema,
-      [],
-      { endpoint: "GET /api/runtimes/:id/usage/by-hour" },
-    );
-  }
-
   // ---------------------------------------------------------------------------
   // Workspace dashboard — three independent rollups for `/{slug}/dashboard`.
   // Each accepts an optional `project_id` to narrow the scope to one project.
@@ -1440,13 +1417,6 @@ export class ApiClient extends ApiTransport {
     return parseWithFallback(raw, AgentTaskListSchema, [], {
       endpoint: "GET /api/issues/:id/task-runs",
     }) as AgentTask[];
-  }
-
-  async getIssueUsage(issueId: string): Promise<IssueUsageSummary> {
-    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/usage`);
-    return parseWithFallback(raw, IssueUsageSummarySchema, EMPTY_ISSUE_USAGE_SUMMARY, {
-      endpoint: "GET /api/issues/:id/usage",
-    });
   }
 
   async listIssueTaskTraceEvents(issueId: string): Promise<IssueTaskTraceResponse> {
@@ -1814,11 +1784,6 @@ export class ApiClient extends ApiTransport {
   async listChatSessions(): Promise<ChatSession[]> {
     const raw = await this.fetch<unknown>("/api/chat/sessions");
     return parseWithFallback(raw, ChatSessionListSchema, [], { endpoint: "GET /api/chat/sessions" });
-  }
-
-  async getChatSession(id: string): Promise<ChatSession> {
-    const raw = await this.fetch<unknown>(`/api/chat/sessions/${id}`);
-    return parseWithFallback(raw, ChatSessionSchema, EMPTY_CHAT_SESSION, { endpoint: "GET /api/chat/sessions/:id" });
   }
 
   async createChatSession(

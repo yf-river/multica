@@ -260,10 +260,6 @@ export function isWritingModelBenchmarkPayload(payload: unknown): payload is Wri
   );
 }
 
-export function isSkillScenarioAsset(asset: PromptEvaluationAsset): boolean {
-  return isSkillScenarioPayload(asset.payload);
-}
-
 export function summarizeSkillScenarioTarget(asset: PromptEvaluationAsset): string | null {
   if (!isSkillScenarioPayload(asset.payload)) return null;
   const { target, scenario } = asset.payload;

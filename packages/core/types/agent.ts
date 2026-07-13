@@ -432,14 +432,6 @@ export interface SetAgentSkillsRequest {
   skill_ids: string[];
 }
 
-export interface IssueUsageSummary {
-  total_input_tokens: number;
-  total_output_tokens: number;
-  total_cache_read_tokens: number;
-  total_cache_write_tokens: number;
-  task_count: number;
-}
-
 export interface TaskTraceEvent {
   id: string;
   workspace_id: string;
@@ -495,11 +487,6 @@ export interface RuntimeUsage {
   priced: boolean;
 }
 
-export interface RuntimeHourlyActivity {
-  hour: number;
-  count: number;
-}
-
 // One (agent, provider, model) row of the "Cost by agent" tab on the runtime
 // detail page. The backend computes cost per row; the client groups these rows
 // by agent_id and sums cost per agent across models.
@@ -538,27 +525,6 @@ export interface RuntimeUsageByTask {
   output_tokens: number;
   cache_read_tokens: number;
   cache_write_tokens: number;
-  cost_usd: number;
-  input_cost_usd: number;
-  output_cost_usd: number;
-  cache_read_cost_usd: number;
-  cache_write_cost_usd: number;
-  cache_savings_usd: number;
-  priced: boolean;
-}
-
-// One (hour, provider, model) row for the "By hour" tab; hour ∈ 0..23. Hours
-// with zero activity are omitted by the server; the client fills the gap to
-// render a continuous axis.
-export interface RuntimeUsageByHour {
-  hour: number;
-  provider: string;
-  model: string;
-  input_tokens: number;
-  output_tokens: number;
-  cache_read_tokens: number;
-  cache_write_tokens: number;
-  task_count: number;
   cost_usd: number;
   input_cost_usd: number;
   output_cost_usd: number;

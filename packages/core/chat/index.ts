@@ -5,6 +5,7 @@ export type { RecentContextEntry, RecentContextType } from "./recent-context-sto
 export {
   claimPendingChatOperation,
   releasePendingChatOperation,
+  selectPendingChatOperations,
   usePendingChatOperationStore,
 } from "./pending-operation-store";
 export type {

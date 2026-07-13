@@ -50,11 +50,6 @@ export interface ActivityWindowSummary {
   windowDays: number;
 }
 
-const EMPTY: AgentActivity = {
-  buckets: Array.from({ length: DAYS }, () => ({ total: 0, failed: 0 })),
-  daysSinceCreated: DAYS,
-};
-
 const EMPTY_SUMMARY: ActivityWindowSummary = {
   buckets: [],
   totalRuns: 0,
@@ -200,5 +195,3 @@ function startOfDay(ts: number): number {
   d.setHours(0, 0, 0, 0);
   return d.getTime();
 }
-
-export const __EMPTY_ACTIVITY = EMPTY;

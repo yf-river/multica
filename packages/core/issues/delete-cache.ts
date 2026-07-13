@@ -138,7 +138,6 @@ export function invalidateIssueScopedCaches(
   qc.invalidateQueries({ queryKey: issueKeys.timeline(issueId) });
   qc.invalidateQueries({ queryKey: issueKeys.reactions(issueId) });
   qc.invalidateQueries({ queryKey: issueKeys.subscribers(issueId) });
-  qc.invalidateQueries({ queryKey: issueKeys.usage(issueId) });
   qc.invalidateQueries({ queryKey: issueKeys.attachments(issueId) });
   qc.invalidateQueries({ queryKey: issueKeys.tasks(issueId) });
   qc.invalidateQueries({ queryKey: issueKeys.children(wsId, issueId) });
@@ -159,7 +158,6 @@ export function cleanupDeletedIssueCaches(
   qc.removeQueries({ queryKey: issueKeys.timeline(issueId) });
   qc.removeQueries({ queryKey: issueKeys.reactions(issueId) });
   qc.removeQueries({ queryKey: issueKeys.subscribers(issueId) });
-  qc.removeQueries({ queryKey: issueKeys.usage(issueId) });
   qc.removeQueries({ queryKey: issueKeys.attachments(issueId) });
   qc.removeQueries({ queryKey: issueKeys.tasks(issueId) });
   qc.removeQueries({ queryKey: issueKeys.children(wsId, issueId) });

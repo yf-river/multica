@@ -334,13 +334,7 @@ type ReuseParams struct {
 	// OpenclawGateway is the per-task Gateway pin re-applied on reuse so the
 	// agent picks up any runtime_config changes saved since the prior run.
 	OpenclawGateway OpenclawGatewayPin
-	// LocalDirectory is true when the reused WorkDir is a user-supplied
-	// directory (the local_directory flow). The flag is propagated into
-	// the returned Environment so downstream callers (notably the GC
-	// loop) keep the "never delete the user's directory" invariant on
-	// reuse paths.
-	LocalDirectory bool
-	Task           TaskContextForEnv // refreshed context files / skills
+	Task            TaskContextForEnv // refreshed context files / skills
 }
 
 // Reuse wraps an existing workdir into an Environment and refreshes context files.
@@ -356,24 +350,10 @@ func Reuse(params ReuseParams, logger *slog.Logger) (*Environment, error) {
 		return nil, fmt.Errorf("execenv: inspect reuse workdir: %w", err)
 	}
 
-	rootDir := filepath.Dir(params.WorkDir)
-	if params.LocalDirectory {
-		// For local_directory tasks the user's WorkDir is unrelated to
-		// envRoot (envRoot still lives under workspacesRoot/{wsID}/...),
-		// so reading it from filepath.Dir(WorkDir) would point at the
-		// parent of the user's directory. Callers that need a real
-		// RootDir on the reuse path should arrange to pass it in
-		// explicitly; for v1 the daemon only ever reuses local_directory
-		// workdirs after a fresh Prepare in the same task lifetime, so
-		// the empty RootDir on reuse is fine for the current callers
-		// (GC writes meta from Prepare's result, not Reuse's).
-		rootDir = ""
-	}
 	env := &Environment{
-		RootDir:        rootDir,
-		WorkDir:        params.WorkDir,
-		LocalDirectory: params.LocalDirectory,
-		logger:         logger,
+		RootDir: filepath.Dir(params.WorkDir),
+		WorkDir: params.WorkDir,
+		logger:  logger,
 	}
 
 	// Roll back the previous dispatch's sidecar writes before refreshing.

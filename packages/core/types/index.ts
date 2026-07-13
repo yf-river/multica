@@ -38,10 +38,8 @@ export type {
   UpdateSkillRequest,
   SetAgentSkillsRequest,
   RuntimeUsage,
-  RuntimeHourlyActivity,
   RuntimeUsageByAgent,
   RuntimeUsageByTask,
-  RuntimeUsageByHour,
   DashboardUsageDaily,
   DashboardUsageByAgent,
   DashboardAgentRunTime,
@@ -61,7 +59,6 @@ export type {
   RuntimeLocalSkillImportRequest,
   RuntimeLocalSkillsResult,
   RuntimeLocalSkillImportResult,
-  IssueUsageSummary,
   TaskTraceEvent,
   IssueTaskTraceResponse,
 } from "./agent";

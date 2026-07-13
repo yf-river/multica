@@ -1,13 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
-  DEFAULT_TRAINING_WORKBENCH_TAB,
   DEFAULT_TRAINING_WORKBENCH_VIEW,
   TRAINING_WORKBENCH_VIEWS,
   TRAINING_WORKBENCH_VIEWS_BY_SECTION,
   debugWorkbenchPath,
   evaluationWorkbenchPath,
   trainingWorkbenchCanonicalPath,
-  trainingWorkbenchCanonicalRouteFromView,
   trainingWorkbenchSectionFromView,
   trainingWorkbenchTabFromView,
   trainingWorkbenchShowsPromptEditor,
@@ -17,7 +15,6 @@ import {
 
 describe("training workbench navigation", () => {
   it("uses the prompt library as the default entry", () => {
-    expect(DEFAULT_TRAINING_WORKBENCH_TAB).toBe("提示词库");
     expect(DEFAULT_TRAINING_WORKBENCH_VIEW).toBe("prompts");
     expect(trainingWorkbenchTabFromView(null)).toBe("提示词库");
     expect(trainingWorkbenchTabFromView("missing-view")).toBe("提示词库");
@@ -72,9 +69,6 @@ describe("training workbench navigation", () => {
   it("builds canonical debug and evaluation paths", () => {
     const paths = { debug: () => "/acme/debug", evaluation: () => "/acme/evaluation" };
 
-    expect(trainingWorkbenchCanonicalRouteFromView("prompts")).toBe("prompts");
-    expect(trainingWorkbenchCanonicalRouteFromView("agent-playground")).toBe("agent-playground");
-    expect(trainingWorkbenchCanonicalRouteFromView("evaluation-runs")).toBe("runs");
     expect(trainingWorkbenchViewFromCanonicalRoute("debug", "datasets")).toBe("prompts");
     expect(trainingWorkbenchViewFromCanonicalRoute("evaluation", "prompts")).toBe("datasets");
     expect(debugWorkbenchPath(paths.debug(), "prompts")).toBe("/acme/debug/prompts");

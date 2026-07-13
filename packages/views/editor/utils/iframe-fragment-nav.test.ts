@@ -1,16 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  __FRAGMENT_NAV_SHIM__,
-  withFragmentNavShim,
-} from "./iframe-fragment-nav";
+import { withFragmentNavShim } from "./iframe-fragment-nav";
+
+const fragmentNavShim = withFragmentNavShim("");
 
 describe("withFragmentNavShim", () => {
   it("appends the shim verbatim at the end of the original HTML", () => {
     const html = "<h1 id='a'>A</h1><a href='#a'>jump</a>";
     const out = withFragmentNavShim(html);
     expect(out.startsWith(html)).toBe(true);
-    expect(out.endsWith(__FRAGMENT_NAV_SHIM__)).toBe(true);
-    expect(out).toBe(html + __FRAGMENT_NAV_SHIM__);
+    expect(out.endsWith(fragmentNavShim)).toBe(true);
+    expect(out).toBe(html + fragmentNavShim);
   });
 
   it("does not mutate the input string", () => {
@@ -20,7 +19,7 @@ describe("withFragmentNavShim", () => {
   });
 
   it("handles empty input", () => {
-    expect(withFragmentNavShim("")).toBe(__FRAGMENT_NAV_SHIM__);
+    expect(withFragmentNavShim("")).toBe(fragmentNavShim);
   });
 });
 
@@ -31,7 +30,7 @@ describe("withFragmentNavShim", () => {
 //
 // scrollIntoView is not implemented in jsdom; we stub it per-test.
 function loadShimIntoDocument(targetDocument: Document) {
-  const inner = __FRAGMENT_NAV_SHIM__
+  const inner = fragmentNavShim
     .replace(/^<script>/, "")
     .replace(/<\/script>$/, "");
   new Function("document", inner)(targetDocument);
