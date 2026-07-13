@@ -266,26 +266,6 @@ INSERT INTO lark_inbound_audit (
     $2
 );
 
--- name: CreateLarkOutboundCardMessage :one
-INSERT INTO lark_outbound_card_message (
-    chat_session_id, task_id, lark_chat_id, lark_card_message_id, status
-) VALUES (
-    $1, sqlc.narg('task_id'), $2, $3, $4
-)
-RETURNING *;
-
--- name: GetLarkOutboundCardByTask :one
--- Most card patches arrive keyed by task_id (we're streaming an agent
--- run's output). The partial unique index on (task_id) WHERE task_id IS
--- NOT NULL guarantees this returns at most one row.
-SELECT * FROM lark_outbound_card_message
-WHERE task_id = $1;
-
--- name: UpdateLarkOutboundCardStatus :exec
-UPDATE lark_outbound_card_message
-SET status = $2
-WHERE id = $1;
-
 -- =====================
 -- lark_binding_token
 -- =====================

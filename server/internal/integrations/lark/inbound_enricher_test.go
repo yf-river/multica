@@ -71,7 +71,6 @@ func (f *enricherFakeClient) BatchGetUsers(ctx context.Context, creds Installati
 func (f *enricherFakeClient) SendInteractiveCard(context.Context, SendCardParams) (string, error) {
 	return "", nil
 }
-func (f *enricherFakeClient) PatchInteractiveCard(context.Context, PatchCardParams) error { return nil }
 func (f *enricherFakeClient) SendTextMessage(context.Context, SendTextParams) (string, error) {
 	return "", nil
 }

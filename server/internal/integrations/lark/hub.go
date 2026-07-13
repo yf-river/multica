@@ -44,9 +44,8 @@ type HubQueries interface {
 //     to send the respective copy as a Lark card; the chat_message
 //     row is already persisted, so the agent will pick the message
 //     up on resume.
-//   - OutcomeIngested means the message landed and (optionally) a
-//     task was enqueued; the connector emits a "thinking…" card and
-//     lets the outbound Patcher take over from there.
+//   - OutcomeIngested means the message landed and (optionally) a task was
+//     enqueued; the durable outbound consumer delivers the eventual reply.
 //   - OutcomeDropped is informational only (the message was filtered
 //     for a legitimate reason); typical connectors do nothing.
 //

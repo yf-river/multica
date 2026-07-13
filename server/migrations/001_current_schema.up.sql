@@ -1032,16 +1032,6 @@ CREATE TABLE public.lark_installation (
     CONSTRAINT lark_installation_region_check CHECK ((region = ANY (ARRAY['feishu'::text, 'lark'::text]))),
     CONSTRAINT lark_installation_status_check CHECK ((status = ANY (ARRAY['active'::text, 'revoked'::text])))
 );
-CREATE TABLE public.lark_outbound_card_message (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    chat_session_id uuid NOT NULL,
-    task_id uuid,
-    lark_chat_id text NOT NULL,
-    lark_card_message_id text NOT NULL,
-    status text DEFAULT 'pending'::text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT lark_outbound_card_message_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'streaming'::text, 'final'::text, 'error'::text])))
-);
 CREATE TABLE public.lark_user_binding (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     workspace_id uuid NOT NULL,
@@ -1893,8 +1883,6 @@ ALTER TABLE ONLY public.lark_installation
     ADD CONSTRAINT lark_installation_pkey PRIMARY KEY (id);
 ALTER TABLE ONLY public.lark_installation
     ADD CONSTRAINT lark_installation_workspace_id_agent_id_key UNIQUE (workspace_id, agent_id);
-ALTER TABLE ONLY public.lark_outbound_card_message
-    ADD CONSTRAINT lark_outbound_card_message_pkey PRIMARY KEY (id);
 ALTER TABLE ONLY public.lark_user_binding
     ADD CONSTRAINT lark_user_binding_installation_id_lark_open_id_key UNIQUE (installation_id, lark_open_id);
 ALTER TABLE ONLY public.lark_user_binding
@@ -2124,8 +2112,6 @@ CREATE INDEX idx_lark_inbound_dedup_received ON public.lark_inbound_message_dedu
 CREATE INDEX idx_lark_installation_agent ON public.lark_installation USING btree (agent_id);
 CREATE INDEX idx_lark_installation_lease ON public.lark_installation USING btree (ws_lease_expires_at) WHERE (status = 'active'::text);
 CREATE INDEX idx_lark_installation_workspace ON public.lark_installation USING btree (workspace_id);
-CREATE INDEX idx_lark_outbound_card_session ON public.lark_outbound_card_message USING btree (chat_session_id, created_at DESC);
-CREATE UNIQUE INDEX idx_lark_outbound_card_task ON public.lark_outbound_card_message USING btree (task_id) WHERE (task_id IS NOT NULL);
 CREATE INDEX idx_lark_user_binding_user ON public.lark_user_binding USING btree (multica_user_id, workspace_id);
 CREATE INDEX idx_lark_user_binding_workspace_open ON public.lark_user_binding USING btree (workspace_id, lark_open_id);
 CREATE INDEX idx_member_user_workspace ON public.member USING btree (user_id, workspace_id);
@@ -2431,10 +2417,6 @@ ALTER TABLE ONLY public.lark_installation
     ADD CONSTRAINT lark_installation_installer_user_id_fkey FOREIGN KEY (installer_user_id) REFERENCES public."user"(id) ON DELETE RESTRICT;
 ALTER TABLE ONLY public.lark_installation
     ADD CONSTRAINT lark_installation_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
-ALTER TABLE ONLY public.lark_outbound_card_message
-    ADD CONSTRAINT lark_outbound_card_message_chat_session_id_fkey FOREIGN KEY (chat_session_id) REFERENCES public.chat_session(id) ON DELETE CASCADE;
-ALTER TABLE ONLY public.lark_outbound_card_message
-    ADD CONSTRAINT lark_outbound_card_message_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.agent_task_queue(id) ON DELETE SET NULL;
 ALTER TABLE ONLY public.lark_user_binding
     ADD CONSTRAINT lark_user_binding_installation_fk FOREIGN KEY (installation_id, workspace_id) REFERENCES public.lark_installation(id, workspace_id) ON DELETE CASCADE;
 ALTER TABLE ONLY public.lark_user_binding

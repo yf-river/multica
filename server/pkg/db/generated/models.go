@@ -595,16 +595,6 @@ type LarkInstallation struct {
 	Region             string             `json:"region"`
 }
 
-type LarkOutboundCardMessage struct {
-	ID                pgtype.UUID        `json:"id"`
-	ChatSessionID     pgtype.UUID        `json:"chat_session_id"`
-	TaskID            pgtype.UUID        `json:"task_id"`
-	LarkChatID        string             `json:"lark_chat_id"`
-	LarkCardMessageID string             `json:"lark_card_message_id"`
-	Status            string             `json:"status"`
-	CreatedAt         pgtype.Timestamptz `json:"created_at"`
-}
-
 type LarkUserBinding struct {
 	ID             pgtype.UUID `json:"id"`
 	WorkspaceID    pgtype.UUID `json:"workspace_id"`

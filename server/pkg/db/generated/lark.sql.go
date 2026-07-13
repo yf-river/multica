@@ -209,44 +209,6 @@ func (q *Queries) CreateLarkChatSessionBinding(ctx context.Context, arg CreateLa
 	return i, err
 }
 
-const createLarkOutboundCardMessage = `-- name: CreateLarkOutboundCardMessage :one
-INSERT INTO lark_outbound_card_message (
-    chat_session_id, task_id, lark_chat_id, lark_card_message_id, status
-) VALUES (
-    $1, $5, $2, $3, $4
-)
-RETURNING id, chat_session_id, task_id, lark_chat_id, lark_card_message_id, status, created_at
-`
-
-type CreateLarkOutboundCardMessageParams struct {
-	ChatSessionID     pgtype.UUID `json:"chat_session_id"`
-	LarkChatID        string      `json:"lark_chat_id"`
-	LarkCardMessageID string      `json:"lark_card_message_id"`
-	Status            string      `json:"status"`
-	TaskID            pgtype.UUID `json:"task_id"`
-}
-
-func (q *Queries) CreateLarkOutboundCardMessage(ctx context.Context, arg CreateLarkOutboundCardMessageParams) (LarkOutboundCardMessage, error) {
-	row := q.db.QueryRow(ctx, createLarkOutboundCardMessage,
-		arg.ChatSessionID,
-		arg.LarkChatID,
-		arg.LarkCardMessageID,
-		arg.Status,
-		arg.TaskID,
-	)
-	var i LarkOutboundCardMessage
-	err := row.Scan(
-		&i.ID,
-		&i.ChatSessionID,
-		&i.TaskID,
-		&i.LarkChatID,
-		&i.LarkCardMessageID,
-		&i.Status,
-		&i.CreatedAt,
-	)
-	return i, err
-}
-
 const createLarkUserBinding = `-- name: CreateLarkUserBinding :one
 
 INSERT INTO lark_user_binding (
@@ -446,29 +408,6 @@ func (q *Queries) GetLarkInstallationInWorkspace(ctx context.Context, arg GetLar
 		&i.UpdatedAt,
 		&i.BotUnionID,
 		&i.Region,
-	)
-	return i, err
-}
-
-const getLarkOutboundCardByTask = `-- name: GetLarkOutboundCardByTask :one
-SELECT id, chat_session_id, task_id, lark_chat_id, lark_card_message_id, status, created_at FROM lark_outbound_card_message
-WHERE task_id = $1
-`
-
-// Most card patches arrive keyed by task_id (we're streaming an agent
-// run's output). The partial unique index on (task_id) WHERE task_id IS
-// NOT NULL guarantees this returns at most one row.
-func (q *Queries) GetLarkOutboundCardByTask(ctx context.Context, taskID pgtype.UUID) (LarkOutboundCardMessage, error) {
-	row := q.db.QueryRow(ctx, getLarkOutboundCardByTask, taskID)
-	var i LarkOutboundCardMessage
-	err := row.Scan(
-		&i.ID,
-		&i.ChatSessionID,
-		&i.TaskID,
-		&i.LarkChatID,
-		&i.LarkCardMessageID,
-		&i.Status,
-		&i.CreatedAt,
 	)
 	return i, err
 }
@@ -783,22 +722,6 @@ type SetLarkInstallationStatusParams struct {
 
 func (q *Queries) SetLarkInstallationStatus(ctx context.Context, arg SetLarkInstallationStatusParams) error {
 	_, err := q.db.Exec(ctx, setLarkInstallationStatus, arg.ID, arg.Status)
-	return err
-}
-
-const updateLarkOutboundCardStatus = `-- name: UpdateLarkOutboundCardStatus :exec
-UPDATE lark_outbound_card_message
-SET status = $2
-WHERE id = $1
-`
-
-type UpdateLarkOutboundCardStatusParams struct {
-	ID     pgtype.UUID `json:"id"`
-	Status string      `json:"status"`
-}
-
-func (q *Queries) UpdateLarkOutboundCardStatus(ctx context.Context, arg UpdateLarkOutboundCardStatusParams) error {
-	_, err := q.db.Exec(ctx, updateLarkOutboundCardStatus, arg.ID, arg.Status)
 	return err
 }
 

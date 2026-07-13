@@ -2,7 +2,6 @@ package lark
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -17,26 +16,14 @@ import (
 )
 
 type fakePatcherQueries struct {
-	mu              sync.Mutex
 	binding         db.LarkChatSessionBinding
 	bindingErr      error
 	installation    db.LarkInstallation
 	installationErr error
 	agent           db.Agent
 	agentErr        error
-	card            db.LarkOutboundCardMessage
-	cardErr         error
-	created         []db.CreateLarkOutboundCardMessageParams
-	createReturn    db.LarkOutboundCardMessage
-	statusUpdates   []db.UpdateLarkOutboundCardStatusParams
 }
 
-func (f *fakePatcherQueries) GetAgentTask(ctx context.Context, id pgtype.UUID) (db.AgentTaskQueue, error) {
-	return db.AgentTaskQueue{}, nil
-}
-func (f *fakePatcherQueries) GetChatSession(ctx context.Context, id pgtype.UUID) (db.ChatSession, error) {
-	return db.ChatSession{}, nil
-}
 func (f *fakePatcherQueries) GetAgent(ctx context.Context, id pgtype.UUID) (db.Agent, error) {
 	return f.agent, f.agentErr
 }
@@ -45,21 +32,6 @@ func (f *fakePatcherQueries) GetLarkInstallation(ctx context.Context, id pgtype.
 }
 func (f *fakePatcherQueries) GetLarkChatSessionBindingBySession(ctx context.Context, sessID pgtype.UUID) (db.LarkChatSessionBinding, error) {
 	return f.binding, f.bindingErr
-}
-func (f *fakePatcherQueries) GetLarkOutboundCardByTask(ctx context.Context, taskID pgtype.UUID) (db.LarkOutboundCardMessage, error) {
-	return f.card, f.cardErr
-}
-func (f *fakePatcherQueries) CreateLarkOutboundCardMessage(ctx context.Context, arg db.CreateLarkOutboundCardMessageParams) (db.LarkOutboundCardMessage, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.created = append(f.created, arg)
-	return f.createReturn, nil
-}
-func (f *fakePatcherQueries) UpdateLarkOutboundCardStatus(ctx context.Context, arg db.UpdateLarkOutboundCardStatusParams) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.statusUpdates = append(f.statusUpdates, arg)
-	return nil
 }
 
 type fakeCredentials struct{ secret string }
@@ -71,12 +43,10 @@ func (f fakeCredentials) DecryptAppSecret(inst db.LarkInstallation) (string, err
 type fakeAPIClient struct {
 	mu             sync.Mutex
 	sent           []SendCardParams
-	patched        []PatchCardParams
 	textSent       []SendTextParams
 	mdCardSent     []SendMarkdownCardParams
 	sendReturn     string
 	sendErr        error
-	patchErr       error
 	textSendErr    error
 	textSendReturn string
 	mdCardErr      error
@@ -89,12 +59,6 @@ func (f *fakeAPIClient) SendInteractiveCard(ctx context.Context, p SendCardParam
 	defer f.mu.Unlock()
 	f.sent = append(f.sent, p)
 	return f.sendReturn, f.sendErr
-}
-func (f *fakeAPIClient) PatchInteractiveCard(ctx context.Context, p PatchCardParams) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.patched = append(f.patched, p)
-	return f.patchErr
 }
 func (f *fakeAPIClient) SendTextMessage(ctx context.Context, p SendTextParams) (string, error) {
 	f.mu.Lock()
@@ -150,8 +114,7 @@ func newTestPatcher(t *testing.T) (*Patcher, *fakePatcherQueries, *fakeAPIClient
 			AgentID:            uuidFromString(t, "aaaa1111-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
 			Region:             "feishu",
 		},
-		agent:   db.Agent{Name: "TestAgent"},
-		cardErr: pgx.ErrNoRows,
+		agent: db.Agent{Name: "TestAgent"},
 	}
 	api := &fakeAPIClient{sendReturn: "lark_card_msg_1", textSendReturn: "lark_text_msg_1"}
 	p := NewPatcher(q, fakeCredentials{secret: "shh"}, api, PatcherConfig{
@@ -200,9 +163,8 @@ func TestPatcherSendsPlainTextOnChatDone(t *testing.T) {
 	if got.InstallationID.AppID != "cli_test_app" {
 		t.Errorf("expected installation app_id propagated; got %q", got.InstallationID.AppID)
 	}
-	if len(api.sent) != 0 || len(api.patched) != 0 {
-		t.Errorf("ChatDone must NOT send / patch any card; got sent=%d patched=%d",
-			len(api.sent), len(api.patched))
+	if len(api.sent) != 0 {
+		t.Errorf("plain ChatDone must not send an error card; got %d", len(api.sent))
 	}
 }
 
@@ -243,8 +205,8 @@ func TestPatcherRoutesMarkdownReplyToCard(t *testing.T) {
 	if len(api.textSent) != 0 {
 		t.Errorf("markdown body must NOT also fire SendTextMessage; got %d", len(api.textSent))
 	}
-	if len(api.sent) != 0 || len(api.patched) != 0 {
-		t.Errorf("ChatDone must NOT use legacy card paths; sent=%d patched=%d", len(api.sent), len(api.patched))
+	if len(api.sent) != 0 {
+		t.Errorf("markdown ChatDone must not send an error card; got %d", len(api.sent))
 	}
 }
 
@@ -328,8 +290,7 @@ func TestPatcherSkipsWhenNoChatSessionBinding(t *testing.T) {
 // surfaces a card. The visual distinction between a successful reply
 // (plain text bubble) and a failure (red header card) is genuinely
 // useful — and failures are rare enough that the card chrome isn't
-// noisy. One-shot send (no patching of any prior thinking card,
-// because there isn't one anymore).
+// noisy.
 func TestPatcherFailEventSendsErrorCard(t *testing.T) {
 	p, q, api := newTestPatcher(t)
 	taskID := uuidFromString(t, "ee444444-ee44-ee44-ee44-eeeeeeeeeeee")
@@ -349,9 +310,6 @@ func TestPatcherFailEventSendsErrorCard(t *testing.T) {
 	defer api.mu.Unlock()
 	if len(api.sent) != 1 {
 		t.Fatalf("fail event must send an error card; got %d card sends", len(api.sent))
-	}
-	if len(api.patched) != 0 {
-		t.Errorf("fail event must NOT patch any card (no prior card lifecycle); got %d patches", len(api.patched))
 	}
 	if !strings.Contains(api.sent[0].CardJSON, "boom") {
 		t.Errorf("error card body should embed the error message; got %s", api.sent[0].CardJSON)
@@ -428,9 +386,8 @@ func TestPatcherIgnoresEventTaskCompletedForChatTasks(t *testing.T) {
 	if api.textSent[0].Text != "Hello! I'm cc, a coding agent…" {
 		t.Errorf("text content mismatch; got %q", api.textSent[0].Text)
 	}
-	if len(api.sent) != 0 || len(api.patched) != 0 {
-		t.Errorf("no card outbound expected on the success path; got sent=%d patched=%d",
-			len(api.sent), len(api.patched))
+	if len(api.sent) != 0 {
+		t.Errorf("no error card expected on the success path; got %d", len(api.sent))
 	}
 }
 
@@ -451,39 +408,5 @@ func TestPatcherDurableConsumerReturnsProviderFailureForRetry(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "lark unavailable") {
 		t.Fatalf("durable consumer error = %v", err)
-	}
-}
-
-// TestDefaultRendererConfigCarriesUpdateMulti pins the streaming-card
-// contract: Lark refuses PatchInteractiveCard on a card whose config
-// does not declare update_multi=true. Since the Patcher's whole
-// raison d'être is to send a thinking card and then patch it forward
-// to streaming/final/error, ANY kind missing update_multi would make
-// the patch silently no-op against Lark while the local DB row still
-// flips. Hence the assertion covers every kind, not just the final
-// patched kinds.
-func TestDefaultRendererConfigCarriesUpdateMulti(t *testing.T) {
-	r := NewDefaultRenderer()
-	for _, kind := range []CardKind{CardKindThinking, CardKindRunning, CardKindFinal, CardKindError} {
-		t.Run(string(kind), func(t *testing.T) {
-			out, err := r.Render(RenderInput{Kind: kind, Content: "x", ErrorMessage: "y"})
-			if err != nil {
-				t.Fatalf("render: %v", err)
-			}
-			var doc map[string]any
-			if err := json.Unmarshal([]byte(out.JSON), &doc); err != nil {
-				t.Fatalf("decode card json: %v", err)
-			}
-			cfg, ok := doc["config"].(map[string]any)
-			if !ok {
-				t.Fatalf("missing config block: %v", doc)
-			}
-			if v, _ := cfg["update_multi"].(bool); !v {
-				t.Errorf("config.update_multi must be true so subsequent patches apply; got %v", cfg)
-			}
-			if v, _ := cfg["wide_screen_mode"].(bool); !v {
-				t.Errorf("config.wide_screen_mode regression: %v", cfg)
-			}
-		})
 	}
 }

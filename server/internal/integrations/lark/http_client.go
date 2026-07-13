@@ -345,38 +345,6 @@ func (c *httpAPIClient) SendMarkdownCard(ctx context.Context, p SendMarkdownCard
 	return c.sendMessage(ctx, p.InstallationID, p.ChatID, "interactive", string(cardBytes), "send markdown card")
 }
 
-// PatchInteractiveCard updates an existing card's body. Lark's
-// message-patch endpoint replaces the whole card payload; callers
-// (i.e. the Patcher) render the full updated card each time.
-func (c *httpAPIClient) PatchInteractiveCard(ctx context.Context, p PatchCardParams) error {
-	if p.LarkCardMessageID == "" {
-		return errors.New("lark http client: missing card message id")
-	}
-	if p.CardJSON == "" {
-		return errors.New("lark http client: missing card json")
-	}
-	token, err := c.tenantAccessToken(ctx, p.InstallationID)
-	if err != nil {
-		return err
-	}
-	body := map[string]string{"content": p.CardJSON}
-	var resp struct {
-		Code int    `json:"code"`
-		Msg  string `json:"msg"`
-	}
-	path := "/open-apis/im/v1/messages/" + url.PathEscape(p.LarkCardMessageID)
-	if err := c.doJSON(ctx, c.resolveBaseURL(p.InstallationID), http.MethodPatch, path, token, body, &resp); err != nil {
-		return fmt.Errorf("lark http client: patch interactive card: %w", err)
-	}
-	if resp.Code != 0 {
-		if isTokenError(resp.Code) {
-			c.invalidateToken(p.InstallationID.AppID)
-		}
-		return fmt.Errorf("lark http client: patch interactive card: code=%d msg=%q", resp.Code, resp.Msg)
-	}
-	return nil
-}
-
 // SendBindingPromptCard renders the member-binding card and posts it
 // directly to the unbound user's open_id (not the chat). Keeping the
 // card template inside this client — rather than the dispatcher —

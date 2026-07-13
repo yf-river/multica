@@ -37,10 +37,6 @@ func (s *stubAPIClientWithRecorder) SendInteractiveCard(ctx context.Context, p S
 	return "lark-msg-id", nil
 }
 
-func (s *stubAPIClientWithRecorder) PatchInteractiveCard(ctx context.Context, p PatchCardParams) error {
-	return nil
-}
-
 func (s *stubAPIClientWithRecorder) SendTextMessage(ctx context.Context, p SendTextParams) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

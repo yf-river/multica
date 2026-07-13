@@ -16,47 +16,15 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// CardStatus mirrors lark_outbound_card_message.status. Kept as a typed
-// alias so callers can't pass arbitrary strings into the status column.
-type CardStatus string
-
-const (
-	CardStatusPending   CardStatus = "pending"
-	CardStatusStreaming CardStatus = "streaming"
-	CardStatusFinal     CardStatus = "final"
-	CardStatusError     CardStatus = "error"
-)
-
-// CardKind enumerates the small set of card variants the patcher
-// renders. The Renderer is plug-replaceable so the on-wire card
-// template can evolve without touching the patcher's transport / DB
-// logic.
-type CardKind string
-
-const (
-	CardKindThinking CardKind = "thinking"
-	CardKindRunning  CardKind = "running"
-	CardKindFinal    CardKind = "final"
-	CardKindError    CardKind = "error"
-)
-
 // CardRender is the rendered card body the Renderer produces. The
 // patcher serializes the JSON before handing it to APIClient.
 type CardRender struct {
 	JSON string
 }
 
-// RenderInput is the (typed) snapshot the Renderer sees when building
-// or patching a card. Fields are populated as they become available
-// during a task lifecycle — IssueNumber is set for `/issue` flows,
-// Content is set for completed chat tasks, ErrorMessage for failed.
+// RenderInput contains the current task-failure card data.
 type RenderInput struct {
-	Kind         CardKind
 	AgentName    string
-	IssueNumber  int32
-	IssueID      pgtype.UUID
-	TaskID       pgtype.UUID
-	Content      string
 	ErrorMessage string
 }
 
@@ -83,39 +51,13 @@ func (defaultRenderer) Render(in RenderInput) (CardRender, error) {
 	if in.AgentName != "" {
 		header = in.AgentName
 	}
-	var body string
-	switch in.Kind {
-	case CardKindThinking:
-		body = "Thinking…"
-	case CardKindRunning:
-		body = "Working on it…"
-	case CardKindFinal:
-		body = in.Content
-		if body == "" {
-			body = "Done."
-		}
-	case CardKindError:
-		body = "Run failed."
-		if in.ErrorMessage != "" {
-			body = "Run failed: " + in.ErrorMessage
-		}
-	default:
-		return CardRender{}, fmt.Errorf("unknown card kind %q", in.Kind)
+	body := "Run failed."
+	if in.ErrorMessage != "" {
+		body = "Run failed: " + in.ErrorMessage
 	}
-	// update_multi MUST be true on every render: Lark refuses to apply
-	// PatchInteractiveCard to a card whose config does not declare it
-	// a "shared, updatable" card. Since this renderer drives the
-	// thinking → streaming → final/error lifecycle (the card is sent
-	// once and patched multiple times), an absent update_multi causes
-	// every patch after the first send to silently no-op on the
-	// Lark side while the local outbound status row still flips to
-	// streaming/final. Keep this on every kind — including thinking
-	// and error — because that initial JSON IS the body Lark stores
-	// and consults for subsequent patches.
 	doc := map[string]any{
 		"config": map[string]any{
 			"wide_screen_mode": true,
-			"update_multi":     true,
 		},
 		"header": map[string]any{
 			"template": "blue",
@@ -142,14 +84,9 @@ func (defaultRenderer) Render(in RenderInput) (CardRender, error) {
 // needs. Declared as an interface so the patcher is unit-testable
 // without a real Postgres connection.
 type PatcherQueries interface {
-	GetAgentTask(ctx context.Context, id pgtype.UUID) (db.AgentTaskQueue, error)
-	GetChatSession(ctx context.Context, id pgtype.UUID) (db.ChatSession, error)
 	GetAgent(ctx context.Context, id pgtype.UUID) (db.Agent, error)
 	GetLarkInstallation(ctx context.Context, id pgtype.UUID) (db.LarkInstallation, error)
 	GetLarkChatSessionBindingBySession(ctx context.Context, chatSessionID pgtype.UUID) (db.LarkChatSessionBinding, error)
-	GetLarkOutboundCardByTask(ctx context.Context, taskID pgtype.UUID) (db.LarkOutboundCardMessage, error)
-	CreateLarkOutboundCardMessage(ctx context.Context, arg db.CreateLarkOutboundCardMessageParams) (db.LarkOutboundCardMessage, error)
-	UpdateLarkOutboundCardStatus(ctx context.Context, arg db.UpdateLarkOutboundCardStatusParams) error
 }
 
 // CredentialsResolver decrypts an installation's app_secret for the
@@ -275,7 +212,7 @@ func (p *Patcher) consumeEvent(ctx context.Context, _ *db.Queries, event events.
 }
 
 func (p *Patcher) processEvent(ctx context.Context, e events.Event) error {
-	taskID, chatSessionID, ok := taskAndSessionFromEvent(e)
+	_, chatSessionID, ok := taskAndSessionFromEvent(e)
 	if !ok {
 		return nil
 	}
@@ -323,7 +260,7 @@ func (p *Patcher) processEvent(ctx context.Context, e events.Event) error {
 	case protocol.EventChatDone:
 		return p.sendChatReply(ctx, creds, binding, e.Payload)
 	case protocol.EventTaskFailed:
-		return p.fail(ctx, creds, binding, taskID, agentName, e.Payload)
+		return p.fail(ctx, creds, binding, agentName, e.Payload)
 	}
 	return nil
 }
@@ -387,11 +324,9 @@ func (p *Patcher) installationCredentials(inst db.LarkInstallation) (Installatio
 //
 // Each delivery attempt is one send (no patching). The durable dispatcher
 // retries provider failures and records the successful consumer receipt.
-func (p *Patcher) fail(ctx context.Context, creds InstallationCredentials, binding db.LarkChatSessionBinding, taskID pgtype.UUID, agentName string, payload any) error {
+func (p *Patcher) fail(ctx context.Context, creds InstallationCredentials, binding db.LarkChatSessionBinding, agentName string, payload any) error {
 	render, err := p.cfg.Renderer.Render(RenderInput{
-		Kind:         CardKindError,
 		AgentName:    agentName,
-		TaskID:       taskID,
 		ErrorMessage: errorMessageFromPayload(payload),
 	})
 	if err != nil {

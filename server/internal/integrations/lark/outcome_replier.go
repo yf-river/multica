@@ -263,11 +263,8 @@ func (r *LarkOutcomeReplier) installationCredentials(inst db.LarkInstallation) (
 }
 
 // renderNoticeCard produces a minimal text-only interactive card for
-// the offline / archived dispatch outcomes. Lark requires
-// update_multi=true on every card we may patch later; these notice
-// cards are one-shot, so update_multi is left false (the card stays
-// as-is). Header / body match the Chinese voice used elsewhere in
-// the integration.
+// the offline / archived dispatch outcomes. These cards are sent once and
+// remain unchanged. Header / body match the Chinese voice used elsewhere.
 func renderNoticeCard(header, body string) (string, error) {
 	doc := map[string]any{
 		"config": map[string]any{"wide_screen_mode": true},

@@ -16,7 +16,7 @@
 //     the connector can post the matching Lark-side reply card)
 //  6. AuditLogger (lark_inbound_audit; deliberately no body column)
 //  7. APIClient interface + http_client.go (real Lark Open Platform
-//     transport for IM v1 send/patch + binding prompt + bot info)
+//     transport for messages, reactions, binding prompts and bot info)
 //  8. Hub (WS lease + per-installation supervisor goroutines with
 //     exponential backoff + jitter; renewer cancels the connector's
 //     run ctx on lease loss to keep §4.4 ownership safe across
@@ -27,9 +27,8 @@
 //     SDK — bootstrap via POST /callback/ws/endpoint, app-layer
 //     ping/pong, ACK responses on every data frame, ctx cancel breaks
 //     blocking ReadMessage via a watchdog goroutine for §4.4)
-//  10. Patcher (subscribes to task / chat-done events; keeps the
-//     per-task Lark interactive card in sync; throttled patches +
-//     final/error bypass)
+//  10. Patcher (subscribes to task/chat-done events; sends successful
+//     replies as text or markdown and failures as one-shot cards)
 //  11. OutcomeReplier (outbound side of the EventEmitter contract:
 //     NeedsBinding mints a token + sends the binding prompt;
 //     AgentOffline / AgentArchived push status notice cards into the
@@ -48,8 +47,8 @@
 //     HTTP `SendChatMessage` handler. Group chat_sessions have multi-
 //     member creator semantics that the HTTP handler's single-creator
 //     guard rejects on purpose.
-//  3. Outbound card-message mapping lives in `lark_outbound_card_message`
-//     (per task/message), never on `chat_session.metadata`.
+//  3. Outbound delivery is stateless; durable domain-event receipts own retry
+//     and idempotency rather than chat-session metadata or a second card state.
 //  4. Unbound users and non-workspace members never reach
 //     chat_session/chat_message. They land in `lark_inbound_audit` (no
 //     body) with a drop_reason and nothing else.

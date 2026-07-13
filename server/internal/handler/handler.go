@@ -120,8 +120,8 @@ type Handler struct {
 	// key is unset or the RegistrationService failed to construct at
 	// boot.
 	LarkRegistration *lark.RegistrationService
-	// LarkAPIClient is the live transport that backs SendInteractiveCard,
-	// PatchInteractiveCard, SendBindingPromptCard, GetBotInfo. The
+	// LarkAPIClient is the live transport for Lark messages, reactions,
+	// binding prompts, identity lookup, and attachment enrichment. The
 	// router wires the real Lark HTTP client whenever
 	// MULTICA_LARK_SECRET_KEY is set. It remains nil when Lark is not
 	// configured. Its presence means the install transport is ready.

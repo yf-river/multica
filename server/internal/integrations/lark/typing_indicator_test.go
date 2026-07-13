@@ -35,9 +35,6 @@ type deleteReactionCall struct {
 func (f *fakeTypingAPIClient) SendInteractiveCard(context.Context, SendCardParams) (string, error) {
 	return "", nil
 }
-func (f *fakeTypingAPIClient) PatchInteractiveCard(context.Context, PatchCardParams) error {
-	return nil
-}
 func (f *fakeTypingAPIClient) SendTextMessage(context.Context, SendTextParams) (string, error) {
 	return "", nil
 }
