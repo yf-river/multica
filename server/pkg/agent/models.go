@@ -140,7 +140,7 @@ func ListModels(ctx context.Context, providerType, executablePath string) ([]Mod
 			if err != nil {
 				return nil, err
 			}
-			annotateCodebuddyThinking(ctx, models, executablePath)
+			annotateCodebuddyThinking(models)
 			return models, nil
 		})
 	default:

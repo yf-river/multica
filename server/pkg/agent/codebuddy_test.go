@@ -392,56 +392,6 @@ func TestCodebuddyHandleAssistantText(t *testing.T) {
 	}
 }
 
-func TestParseCodebuddyModels_FullHelp(t *testing.T) {
-	t.Parallel()
-	helpOutput := `Usage: codebuddy [options] [command] [prompt]
-
-Options:
-  --model <model>                                  Model for the current session. Please provide the model ID. Currently supported: (claude-sonnet-4.6, claude-opus-4.7, gemini-3.1-pro, gpt-5.5, glm-5.1-ioa, minimax-m2.7-ioa, kimi-k2.6-ioa, hy3-preview-ioa, deepseek-v3-2-volc-ioa)
-  --effort <level>                                 Reasoning effort level (low, medium, high, xhigh)
-`
-	models := parseCodebuddyModels(helpOutput)
-	if len(models) != 9 {
-		t.Fatalf("expected 9 models, got %d: %+v", len(models), models)
-	}
-	if !models[0].Default {
-		t.Error("first model should be marked as default")
-	}
-	if models[0].ID != "claude-sonnet-4.6" {
-		t.Errorf("first model ID = %q, want claude-sonnet-4.6", models[0].ID)
-	}
-	if models[0].Provider != "anthropic" {
-		t.Errorf("claude model provider = %q, want anthropic", models[0].Provider)
-	}
-	// Spot check providers
-	providers := map[string]string{}
-	for _, m := range models {
-		providers[m.ID] = m.Provider
-	}
-	checks := map[string]string{
-		"gpt-5.5":                "openai",
-		"gemini-3.1-pro":         "google",
-		"glm-5.1-ioa":            "zhipu",
-		"minimax-m2.7-ioa":       "minimax",
-		"kimi-k2.6-ioa":          "kimi",
-		"hy3-preview-ioa":        "hunyuan",
-		"deepseek-v3-2-volc-ioa": "deepseek",
-	}
-	for id, want := range checks {
-		if got := providers[id]; got != want {
-			t.Errorf("provider(%q) = %q, want %q", id, got, want)
-		}
-	}
-}
-
-func TestParseCodebuddyModels_Malformed(t *testing.T) {
-	t.Parallel()
-	models := parseCodebuddyModels("totally unrelated output\nno model line here")
-	if len(models) != 0 {
-		t.Fatalf("expected 0 models from malformed output, got %d", len(models))
-	}
-}
-
 func TestDiscoverCodebuddyModels_UsesACPModelCatalog(t *testing.T) {
 	t.Parallel()
 	if runtime.GOOS == "windows" {
@@ -479,20 +429,6 @@ sleep 1
 	}
 }
 
-func TestParseCodebuddyModels_CurrentHelpWithoutCatalog(t *testing.T) {
-	t.Parallel()
-	helpOutput := `Usage: codebuddy|cbc [options] [command] [prompt]
-
-Options:
-  --model <model>                                  Model for the current session. Please provide the model ID.
-  --effort <level>                                 Reasoning effort level (minimal, low, medium, high, xhigh, max)
-`
-	models := parseCodebuddyModels(helpOutput)
-	if len(models) != 0 {
-		t.Fatalf("expected 0 models from current help without catalog, got %d: %+v", len(models), models)
-	}
-}
-
 func TestParseCodebuddyModelList_DedupesAndGroups(t *testing.T) {
 	t.Parallel()
 	models := parseCodebuddyModelList("gpt-5.5, gpt-5.5\nkimi-k2.6-ioa hy3-preview-ioa")
@@ -525,17 +461,6 @@ func TestCodebuddyModelsFromEnv(t *testing.T) {
 	}
 }
 
-func TestCodebuddyHelpDiscoveryEnabled(t *testing.T) {
-	if codebuddyHelpDiscoveryEnabled() {
-		t.Fatal("help discovery should be disabled by default")
-	}
-
-	t.Setenv("MULTICA_CODEBUDDY_HELP_DISCOVERY", "true")
-	if !codebuddyHelpDiscoveryEnabled() {
-		t.Fatal("help discovery should be enabled by explicit env flag")
-	}
-}
-
 func TestCodebuddyStaticModels_ExpandedFallback(t *testing.T) {
 	t.Parallel()
 	models := codebuddyStaticModels()
@@ -554,29 +479,6 @@ func TestCodebuddyStaticModels_ExpandedFallback(t *testing.T) {
 		if !ids[id] {
 			t.Fatalf("fallback missing model %q: %+v", id, models)
 		}
-	}
-}
-
-func TestParseCodebuddyEffortHelp(t *testing.T) {
-	t.Parallel()
-	helpOutput := `  --effort <level>                                 Reasoning effort level (low, medium, high, xhigh)`
-	levels := parseCodebuddyEffortHelp(helpOutput)
-	expected := []string{"low", "medium", "high", "xhigh"}
-	if len(levels) != len(expected) {
-		t.Fatalf("expected %d levels, got %d: %v", len(expected), len(levels), levels)
-	}
-	for i, l := range levels {
-		if l != expected[i] {
-			t.Errorf("level[%d]: expected %q, got %q", i, expected[i], l)
-		}
-	}
-}
-
-func TestParseCodebuddyEffortHelp_Missing(t *testing.T) {
-	t.Parallel()
-	levels := parseCodebuddyEffortHelp("no effort line here")
-	if len(levels) != 0 {
-		t.Fatalf("expected nil for missing effort line, got %v", levels)
 	}
 }
 

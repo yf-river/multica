@@ -9,7 +9,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -976,14 +975,9 @@ func isOpenclawIdentifier(s string) bool {
 
 // ── CodeBuddy model discovery ──
 
-// codebuddyModelRe matches the `--model <model> ... Currently supported: (m1, m2, ...)`
-// line in `codebuddy --help` output.
-var codebuddyModelRe = regexp.MustCompile(`--model\s*<[^>]+>\s*.*?Currently supported:\s*\(([^)]+)\)`)
-
-// discoverCodebuddyModels returns the CodeBuddy model catalog. Recent
-// CodeBuddy builds no longer print a supported-model list in --help, so an
-// operator-provided catalog takes precedence; the legacy --help parser is
-// retained for older builds and the static catalog is the final fallback.
+// discoverCodebuddyModels returns the current CodeBuddy model catalog. An
+// operator-provided catalog takes precedence, then ACP discovery, then the
+// maintained static catalog.
 func discoverCodebuddyModels(ctx context.Context, executablePath string) ([]Model, error) {
 	if models := codebuddyModelsFromEnv(); len(models) > 0 {
 		return models, nil
@@ -997,15 +991,6 @@ func discoverCodebuddyModels(ctx context.Context, executablePath string) ([]Mode
 	models, err := discoverCodebuddyACPModels(ctx, executablePath)
 	if err == nil && len(models) > 0 {
 		return models, nil
-	}
-	if codebuddyHelpDiscoveryEnabled() {
-		helpOut := codebuddyHelpOutput(ctx, executablePath)
-		if helpOut != "" {
-			models := parseCodebuddyModels(helpOut)
-			if len(models) > 0 {
-				return models, nil
-			}
-		}
 	}
 	return codebuddyStaticModels(), nil
 }
@@ -1030,20 +1015,6 @@ func discoverCodebuddyACPModels(ctx context.Context, executablePath string) ([]M
 
 func codebuddyModelsFromEnv() []Model {
 	return parseCodebuddyModelList(os.Getenv("MULTICA_CODEBUDDY_MODELS"))
-}
-
-// parseCodebuddyModels extracts model IDs from codebuddy --help output.
-// The help text contains a line like:
-//
-//	--model <model>  ... Currently supported: (model1, model2, ...)
-//
-// The first model in the list is marked as default.
-func parseCodebuddyModels(helpOutput string) []Model {
-	match := codebuddyModelRe.FindStringSubmatch(helpOutput)
-	if len(match) < 2 {
-		return nil
-	}
-	return parseCodebuddyModelList(match[1])
 }
 
 func parseCodebuddyModelList(rawList string) []Model {
