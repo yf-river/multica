@@ -115,7 +115,7 @@ func (b *CodexBrokerBackend) ensureProcess(ctx context.Context, cfg Config, opts
 		return nil, fmt.Errorf("codex: mcp_config is set but CODEX_HOME env var is not configured; cannot apply managed MCP")
 	}
 	disableImageGeneration := shouldDisableCodexImageGeneration(ctx, execPath, opts, cfg.Env, cfg.Logger)
-	args := buildCodexArgs(opts, cfg.Logger, disableImageGeneration)
+	args := buildCodexArgs(opts, cfg.Env, cfg.Logger, disableImageGeneration)
 	key := codexBrokerKey(execPath, args, cfg.Env, opts.McpConfig)
 
 	b.procMu.Lock()

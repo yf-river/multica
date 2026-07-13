@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -1582,7 +1584,7 @@ func TestBuildCodexArgsExtraArgsBeforeCustomArgsAndFiltersBoth(t *testing.T) {
 	args := buildCodexArgs(ExecOptions{
 		ExtraArgs:  []string{"--listen", "tcp://evil", "--sandbox", "read-only"},
 		CustomArgs: []string{"--sandbox", "workspace-write", "--listen=bad"},
-	}, slog.Default(), false)
+	}, nil, slog.Default(), false)
 	joined := strings.Join(args, " ")
 	if strings.Contains(joined, "tcp://evil") || strings.Contains(joined, "--listen=bad") {
 		t.Fatalf("blocked args should be filtered from both layers: %v", args)
@@ -1606,7 +1608,7 @@ func TestBuildCodexArgsDisablesImageGenerationWhenRequested(t *testing.T) {
 
 	args := buildCodexArgs(ExecOptions{
 		Model: "some-model",
-	}, slog.Default(), true)
+	}, nil, slog.Default(), true)
 
 	if !containsArgPair(args, "--disable", "image_generation") {
 		t.Fatalf("expected image_generation to be disabled, got %v", args)
@@ -1618,7 +1620,7 @@ func TestBuildCodexArgsLeavesImageGenerationWhenAllowed(t *testing.T) {
 
 	args := buildCodexArgs(ExecOptions{
 		Model: "some-model",
-	}, slog.Default(), false)
+	}, nil, slog.Default(), false)
 
 	if containsArgPair(args, "--disable", "image_generation") {
 		t.Fatalf("did not expect image_generation to be disabled, got %v", args)
@@ -1709,6 +1711,64 @@ func containsArgPair(args []string, first, second string) bool {
 	return false
 }
 
+func TestCodexRuntimeOverrides(t *testing.T) {
+	t.Parallel()
+
+	linux := codexRuntimeOverrides(nil, "linux", "/tmp/multica-task")
+	for _, pair := range [][2]string{
+		{"-c", `sandbox_mode="workspace-write"`},
+		{"-c", "sandbox_workspace_write.network_access=true"},
+		{"--disable", "multi_agent"},
+		{"--disable", "memories"},
+		{"-c", "memories.generate_memories=false"},
+		{"-c", "memories.use_memories=false"},
+	} {
+		if !containsArgPair(linux, pair[0], pair[1]) {
+			t.Errorf("linux overrides missing %q %q: %v", pair[0], pair[1], linux)
+		}
+	}
+	trusted := "projects." + strconv.Quote("/tmp/multica-task") + `.trust_level="trusted"`
+	if !containsArgPair(linux, "-c", trusted) {
+		t.Errorf("linux overrides missing trusted workdir %q: %v", trusted, linux)
+	}
+
+	darwin := codexRuntimeOverrides(nil, "darwin", "")
+	if !containsArgPair(darwin, "-c", `sandbox_mode="danger-full-access"`) {
+		t.Errorf("darwin overrides missing sandbox fallback: %v", darwin)
+	}
+	if containsArgPair(darwin, "-c", "sandbox_workspace_write.network_access=true") {
+		t.Errorf("darwin overrides must not add workspace-write network config: %v", darwin)
+	}
+
+	optedIn := codexRuntimeOverrides(map[string]string{
+		codexMultiAgentEnv: "yes",
+		codexMemoryEnv:     "ON",
+	}, "linux", "")
+	if containsArgPair(optedIn, "--disable", "multi_agent") ||
+		containsArgPair(optedIn, "--disable", "memories") ||
+		containsArgPair(optedIn, "-c", "memories.generate_memories=false") {
+		t.Errorf("opted-in features must remain controlled by user config: %v", optedIn)
+	}
+}
+
+func TestBuildCodexArgsAppendsRuntimePolicyAfterCustomConfig(t *testing.T) {
+	t.Parallel()
+
+	args := buildCodexArgs(ExecOptions{
+		Cwd:        "/tmp/current-task",
+		CustomArgs: []string{"-c", `sandbox_mode="read-only"`, "--enable", "multi_agent"},
+	}, nil, slog.Default(), false)
+
+	customSandbox := slices.Index(args, `sandbox_mode="read-only"`)
+	managedSandbox := slices.Index(args, `sandbox_mode="workspace-write"`)
+	if customSandbox < 0 || managedSandbox <= customSandbox {
+		t.Fatalf("managed sandbox override must follow custom config: %v", args)
+	}
+	if !containsArgPair(args, "--disable", "multi_agent") {
+		t.Fatalf("managed multi-agent policy missing: %v", args)
+	}
+}
+
 func TestBuildCodexArgsDoesNotLeakMcpToArgv(t *testing.T) {
 	t.Parallel()
 
@@ -1721,7 +1781,7 @@ func TestBuildCodexArgsDoesNotLeakMcpToArgv(t *testing.T) {
 	args := buildCodexArgs(ExecOptions{
 		McpConfig:  raw,
 		CustomArgs: []string{"-c", `model="o3"`},
-	}, slog.Default(), false)
+	}, nil, slog.Default(), false)
 
 	joined := strings.Join(args, " ")
 	if strings.Contains(joined, "mcp_servers") {
@@ -1829,7 +1889,7 @@ func TestBuildCodexArgsPreservesCustomMcpOverridesWhenUnmanaged(t *testing.T) {
 	// namespace once an admin opts in via the MCP Tab.
 	args := buildCodexArgs(ExecOptions{
 		CustomArgs: []string{"-c", `mcp_servers.fetch={ command = "uvx" }`, "-c", `model="o3"`},
-	}, slog.Default(), false)
+	}, nil, slog.Default(), false)
 	foundMcp := false
 	for i := 0; i+1 < len(args); i++ {
 		if args[i] == "-c" && strings.HasPrefix(args[i+1], "mcp_servers.") {
@@ -1852,7 +1912,7 @@ func TestBuildCodexArgsDropsCustomMcpOverridesWhenManaged(t *testing.T) {
 	args := buildCodexArgs(ExecOptions{
 		McpConfig:  raw,
 		CustomArgs: []string{"-c", `mcp_servers.fetch={ command = "evil" }`, "-c", `model="o3"`},
-	}, slog.Default(), false)
+	}, nil, slog.Default(), false)
 	for i := 0; i+1 < len(args); i++ {
 		if args[i] == "-c" && strings.HasPrefix(args[i+1], "mcp_servers.") {
 			t.Fatalf("custom_args mcp_servers must be filtered when managed mcp_config is present, got %v", args)

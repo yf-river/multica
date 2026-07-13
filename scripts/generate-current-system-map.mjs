@@ -697,6 +697,10 @@ function parseEnvironment(overrides) {
           kind: "go-env-helper-constant",
           pattern: /\b(?:env[A-Za-z0-9_]*|mustEnv|[A-Za-z_][A-Za-z0-9_]*(?:Env|FromEnv)[A-Za-z0-9_]*|probe)\(\s*([A-Za-z_][A-Za-z0-9_]*)/g,
         },
+        {
+          kind: "go-env-map-constant",
+          pattern: /\b(?:env|[A-Za-z_][A-Za-z0-9_]*Env)\s*\[\s*([A-Za-z_][A-Za-z0-9_]*)\s*\]/g,
+        },
       ];
       for (const { kind, pattern } of symbolicPatterns) {
         for (const match of content.matchAll(pattern)) {

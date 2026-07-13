@@ -150,9 +150,6 @@ type Daemon struct {
 	reloading       sync.Mutex         // prevents concurrent workspace syncs
 	runtimeSet      *runtimeSetWatcher // multi-subscriber pub/sub for runtime-set changes
 
-	versionsMu    sync.RWMutex      // guards agentVersions
-	agentVersions map[string]string // provider -> detected CLI version (set during registration)
-
 	// runtimeGoneMu guards runtimeGoneInflight, reregisterNextAttempt, and
 	// reregisterLastCompletedAt. The state lets heartbeat / poller / WS-ack
 	// handlers converge on a single recovery path when they each detect that a
@@ -201,7 +198,6 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 		runtimeIndex:              make(map[string]Runtime),
 		profileLaunches:           make(map[string]runtimeProfileLaunch),
 		runtimeSet:                newRuntimeSetWatcher(),
-		agentVersions:             make(map[string]string),
 		activeEnvRoots:            make(map[string]int),
 		runtimeLastTaskStart:      make(map[string]time.Time),
 		runtimeGoneInflight:       make(map[string]struct{}),
@@ -228,22 +224,6 @@ func (d *Daemon) codexBrokerBackend(runtimeID string, cfg agent.Config) agent.Ba
 	backend := agent.NewCodexBrokerBackend(cfg)
 	d.codexBrokers[key] = backend
 	return backend
-}
-
-// setAgentVersion records the detected CLI version for an agent provider so
-// later task-dispatch code (e.g. Codex sandbox policy) can read it.
-func (d *Daemon) setAgentVersion(provider, version string) {
-	d.versionsMu.Lock()
-	defer d.versionsMu.Unlock()
-	d.agentVersions[provider] = version
-}
-
-// agentVersion returns the last-detected CLI version for an agent provider,
-// or an empty string if unknown.
-func (d *Daemon) agentVersion(provider string) string {
-	d.versionsMu.RLock()
-	defer d.versionsMu.RUnlock()
-	return d.agentVersions[provider]
 }
 
 func (d *Daemon) notifyRuntimeSetChanged() {

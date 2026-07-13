@@ -123,7 +123,6 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 
 	// Try to reuse the workdir from a previous task on the same (agent, issue) pair.
 	var env *execenv.Environment
-	codexVersion := d.agentVersion("codex")
 	openclawBin := ""
 	if provider == "openclaw" {
 		openclawBin = entry.Path
@@ -168,7 +167,6 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		env, err = execenv.Reuse(execenv.ReuseParams{
 			WorkDir:         task.PriorWorkDir,
 			Provider:        provider,
-			CodexVersion:    codexVersion,
 			OpenclawBin:     openclawBin,
 			McpConfig:       agentMcpConfig,
 			OpenclawGateway: openclawGateway,
@@ -186,7 +184,6 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			TaskID:          task.ID,
 			AgentName:       agentName,
 			Provider:        provider,
-			CodexVersion:    codexVersion,
 			OpenclawBin:     openclawBin,
 			McpConfig:       agentMcpConfig,
 			OpenclawGateway: openclawGateway,

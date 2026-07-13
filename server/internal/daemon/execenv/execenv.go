@@ -49,7 +49,6 @@ type PrepareParams struct {
 	TaskID         string // task UUID — used for directory name
 	AgentName      string // for git branch naming only
 	Provider       string // agent provider (determines runtime config and skill injection paths)
-	CodexVersion   string // detected Codex CLI version (only used when Provider == "codex")
 	OpenclawBin    string // resolved openclaw CLI path (only used when Provider == "openclaw"); empty = look up on PATH
 	// McpConfig is the agent's saved `mcp_config` JSON, forwarded to the
 	// provider-specific config preparer when that provider materialises MCP
@@ -269,7 +268,7 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 	// For Codex, set up a per-task CODEX_HOME seeded from ~/.codex/ with skills.
 	if params.Provider == "codex" {
 		codexHome := filepath.Join(envRoot, "codex-home")
-		if err := prepareCodexHomeWithOpts(codexHome, CodexHomeOptions{CodexVersion: params.CodexVersion, WorkDir: workDir}, logger); err != nil {
+		if err := prepareCodexHome(codexHome, logger); err != nil {
 			return nil, fmt.Errorf("execenv: prepare codex-home: %w", err)
 		}
 		if err := hydrateCodexSkills(codexHome, params.Task.AgentSkills, logger); err != nil {
@@ -319,13 +318,12 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 }
 
 // ReuseParams describes the inputs to Reuse. It mirrors PrepareParams for
-// the per-provider knobs (CodexVersion, OpenclawBin) so callers can pass
+// the per-provider knobs (OpenclawBin) so callers can pass
 // the same resolved binary path on both first-run and reuse paths.
 type ReuseParams struct {
-	WorkDir      string
-	Provider     string
-	CodexVersion string // only used when Provider == "codex"
-	OpenclawBin  string // only used when Provider == "openclaw"; empty = PATH lookup
+	WorkDir     string
+	Provider    string
+	OpenclawBin string // only used when Provider == "openclaw"; empty = PATH lookup
 	// McpConfig is the agent's saved `mcp_config` JSON. Reused on reuse so a
 	// freshly-saved managed set re-materialises into the wrapper before the
 	// task starts — without this a stale wrapper from a prior run would keep
@@ -399,11 +397,11 @@ func Reuse(params ReuseParams, logger *slog.Logger) (*Environment, error) {
 	}
 
 	// Restore CodexHome for Codex provider — the per-task codex-home directory
-	// lives alongside the workdir. Re-run prepareCodexHomeWithOpts to ensure
-	// config (especially sandbox/network access) is up to date.
+	// lives alongside the workdir. Re-run prepareCodexHome so copied auth and
+	// config files track the current runtime profile.
 	if params.Provider == "codex" {
 		codexHome := filepath.Join(env.RootDir, "codex-home")
-		if err := prepareCodexHomeWithOpts(codexHome, CodexHomeOptions{CodexVersion: params.CodexVersion, WorkDir: params.WorkDir}, logger); err != nil {
+		if err := prepareCodexHome(codexHome, logger); err != nil {
 			return nil, fmt.Errorf("execenv: refresh codex-home: %w", err)
 		}
 		env.CodexHome = codexHome

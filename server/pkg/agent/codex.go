@@ -150,7 +150,7 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 	}
 
 	disableImageGeneration := shouldDisableCodexImageGeneration(runCtx, execPath, opts, b.cfg.Env, b.cfg.Logger)
-	codexArgs := buildCodexArgs(opts, b.cfg.Logger, disableImageGeneration)
+	codexArgs := buildCodexArgs(opts, b.cfg.Env, b.cfg.Logger, disableImageGeneration)
 	cmd := exec.CommandContext(runCtx, execPath, codexArgs...)
 	hideAgentWindow(cmd)
 	// Bound the wait after the context is cancelled so a stuck child (or an

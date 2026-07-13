@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"testing"
 )
@@ -55,7 +54,7 @@ func prepareSeededCodexConfigHome(t *testing.T) preparedCodexConfigHome {
 	t.Setenv("CODEX_HOME", sharedHome)
 
 	codexHome := filepath.Join(t.TempDir(), "codex-home")
-	if err := prepareCodexHomeWithOpts(codexHome, CodexHomeOptions{GOOS: "linux"}, testLogger()); err != nil {
+	if err := prepareCodexHome(codexHome, testLogger()); err != nil {
 		t.Fatalf("first prepareCodexHome: %v", err)
 	}
 
@@ -1913,7 +1912,7 @@ func TestPrepareCodexHomeSeedsFromShared(t *testing.T) {
 	t.Setenv("CODEX_HOME", sharedHome)
 
 	codexHome := filepath.Join(t.TempDir(), "codex-home")
-	if err := prepareCodexHomeWithOpts(codexHome, CodexHomeOptions{GOOS: "linux"}, testLogger()); err != nil {
+	if err := prepareCodexHome(codexHome, testLogger()); err != nil {
 		t.Fatalf("prepareCodexHome failed: %v", err)
 	}
 
@@ -1960,14 +1959,15 @@ func TestPrepareCodexHomeSeedsFromShared(t *testing.T) {
 		t.Errorf("config.json content = %q", data)
 	}
 
-	// config.toml should be copied and have network access appended.
+	// config.toml should remain a direct isolated copy. Runtime policy is
+	// applied on Codex argv rather than mutating user configuration.
 	data, _ = os.ReadFile(filepath.Join(codexHome, "config.toml"))
 	tomlStr := string(data)
 	if !strings.Contains(tomlStr, `model = "o3"`) {
 		t.Errorf("config.toml missing original model setting, got: %q", tomlStr)
 	}
-	if !strings.Contains(tomlStr, "network_access = true") {
-		t.Errorf("config.toml missing network_access, got: %q", tomlStr)
+	if tomlStr != `model = "o3"` {
+		t.Errorf("config.toml changed while copying, got: %q", tomlStr)
 	}
 
 	// instructions.md should be copied.
@@ -2015,7 +2015,7 @@ model = "o3"
 	t.Setenv("CODEX_HOME", sharedHome)
 
 	codexHome := filepath.Join(t.TempDir(), "codex-home")
-	if err := prepareCodexHomeWithOpts(codexHome, CodexHomeOptions{GOOS: "linux"}, testLogger()); err != nil {
+	if err := prepareCodexHome(codexHome, testLogger()); err != nil {
 		t.Fatalf("prepareCodexHome failed: %v", err)
 	}
 
@@ -2046,12 +2046,12 @@ func TestPrepareCodexHomeSkipsMissingFiles(t *testing.T) {
 	t.Setenv("CODEX_HOME", sharedHome)
 
 	codexHome := filepath.Join(t.TempDir(), "codex-home")
-	if err := prepareCodexHomeWithOpts(codexHome, CodexHomeOptions{GOOS: "linux"}, testLogger()); err != nil {
+	if err := prepareCodexHome(codexHome, testLogger()); err != nil {
 		t.Fatalf("prepareCodexHome failed: %v", err)
 	}
 
-	// Directory should contain auto-generated config.toml and plugin cache
-	// exposure. Sessions are task-local and are created by Codex at runtime.
+	// Only the plugin cache exposure is created. Runtime safety policy is
+	// passed to Codex on argv and does not manufacture a config.toml.
 	entries, err := os.ReadDir(codexHome)
 	if err != nil {
 		t.Fatalf("failed to read codex-home: %v", err)
@@ -2060,14 +2060,11 @@ func TestPrepareCodexHomeSkipsMissingFiles(t *testing.T) {
 	for _, e := range entries {
 		entryNames[e.Name()] = true
 	}
-	if !entryNames["config.toml"] {
-		t.Error("expected config.toml (auto-generated for network access)")
-	}
 	if !entryNames["plugins"] {
 		t.Error("expected plugins directory for plugin cache exposure")
 	}
 	for name := range entryNames {
-		if name != "config.toml" && name != "plugins" {
+		if name != "plugins" {
 			t.Errorf("unexpected entry: %s", name)
 		}
 	}
@@ -2114,7 +2111,7 @@ func TestPrepareCodexHome_RefreshesStaleAuthCopyOnReuse(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := prepareCodexHomeWithOpts(codexHome, CodexHomeOptions{GOOS: "linux"}, testLogger()); err != nil {
+	if err := prepareCodexHome(codexHome, testLogger()); err != nil {
 		t.Fatalf("prepareCodexHome failed: %v", err)
 	}
 
@@ -2153,7 +2150,7 @@ env_key = "NEW_API_KEY"
 	seedSharedCodexConfigFiles(t, home.sharedHome, "rotate", newConfig, `{"model":"new-model"}`, "new instructions")
 
 	// Resume path: same per-task codex-home, re-prepared.
-	if err := prepareCodexHomeWithOpts(home.codexHome, CodexHomeOptions{GOOS: "linux"}, testLogger()); err != nil {
+	if err := prepareCodexHome(home.codexHome, testLogger()); err != nil {
 		t.Fatalf("second prepareCodexHome (resume): %v", err)
 	}
 
@@ -2173,19 +2170,6 @@ env_key = "NEW_API_KEY"
 			t.Errorf("per-task config.toml still contains stale %q after refresh, got:\n%s", bad, s)
 		}
 	}
-	// Daemon-managed sandbox / multi-agent / memory blocks must all be
-	// re-applied on top of the fresh copy — PR correctness depends on it.
-	for _, marker := range []string{
-		multicaManagedBeginMarker,
-		multicaMultiAgentBeginMarker,
-		multicaMemoryFeatureBeginMarker,
-		multicaMemoryConfigBeginMarker,
-	} {
-		if !strings.Contains(s, marker) {
-			t.Errorf("daemon-managed marker %q missing after refresh, got:\n%s", marker, s)
-		}
-	}
-
 	// config.json must reflect the new model.
 	data, err = os.ReadFile(filepath.Join(home.codexHome, "config.json"))
 	if err != nil {
@@ -2210,10 +2194,7 @@ env_key = "NEW_API_KEY"
 // whole `~/.codex/config.toml`, removing `config.json`, or deleting
 // `instructions.md` — the per-task copy must be dropped too, otherwise
 // session resume keeps replaying a provider / instruction file the user has
-// already removed from the shared config. For config.toml the subsequent
-// daemon-managed ensure* passes recreate a minimal file with only the
-// managed sandbox / multi-agent / memory blocks; for config.json and
-// instructions.md the per-task copy simply disappears.
+// already removed from the shared config.
 func TestPrepareCodexHome_DropsCopiedConfigWhenSharedSourceRemoved(t *testing.T) {
 	// Cannot use t.Parallel() with t.Setenv.
 
@@ -2234,282 +2215,15 @@ func TestPrepareCodexHome_DropsCopiedConfigWhenSharedSourceRemoved(t *testing.T)
 	}
 
 	// Resume path: same per-task codex-home, re-prepared.
-	if err := prepareCodexHomeWithOpts(home.codexHome, CodexHomeOptions{GOOS: "linux"}, testLogger()); err != nil {
+	if err := prepareCodexHome(home.codexHome, testLogger()); err != nil {
 		t.Fatalf("second prepareCodexHome (resume): %v", err)
 	}
 
-	// config.json and instructions.md have no daemon-managed default — they
-	// must disappear in lockstep with the shared source.
-	for _, name := range []string{"config.json", "instructions.md"} {
+	// All copied files must disappear in lockstep with the shared source.
+	for _, name := range []string{"config.toml", "config.json", "instructions.md"} {
 		if _, err := os.Stat(filepath.Join(home.codexHome, name)); !os.IsNotExist(err) {
 			t.Errorf("per-task %s still exists after shared source removed (stat err = %v)", name, err)
 		}
-	}
-
-	// config.toml must still exist because the ensure* passes recreate it,
-	// but it must contain only the daemon-managed blocks — no stale user
-	// provider/URL/env_key.
-	data, err := os.ReadFile(filepath.Join(home.codexHome, "config.toml"))
-	if err != nil {
-		t.Fatalf("read per-task config.toml after shared removal: %v", err)
-	}
-	s := string(data)
-	for _, bad := range []string{"old-provider", "https://old.example.com", "OLD_API_KEY"} {
-		if strings.Contains(s, bad) {
-			t.Errorf("per-task config.toml still contains stale %q after shared source removed, got:\n%s", bad, s)
-		}
-	}
-	for _, marker := range []string{
-		multicaManagedBeginMarker,
-		multicaMultiAgentBeginMarker,
-		multicaMemoryFeatureBeginMarker,
-		multicaMemoryConfigBeginMarker,
-	} {
-		if !strings.Contains(s, marker) {
-			t.Errorf("daemon-managed marker %q missing after shared source removed, got:\n%s", marker, s)
-		}
-	}
-}
-
-func TestEnsureCodexSandboxConfigCreatesDefaultLinux(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "config.toml")
-
-	policy := codexSandboxPolicyFor("linux")
-	if err := ensureCodexSandboxConfig(configPath, policy, "0.121.0", testLogger()); err != nil {
-		t.Fatalf("ensureCodexSandboxConfig failed: %v", err)
-	}
-
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatalf("failed to read config.toml: %v", err)
-	}
-	s := string(data)
-	if !strings.Contains(s, multicaManagedBeginMarker) || !strings.Contains(s, multicaManagedEndMarker) {
-		t.Errorf("missing managed block markers, got:\n%s", s)
-	}
-	if !strings.Contains(s, `sandbox_mode = "workspace-write"`) {
-		t.Error("missing sandbox_mode")
-	}
-	// The managed block uses TOML dotted-key form rather than a
-	// `[sandbox_workspace_write]` section header so it cannot leak into or
-	// inherit from any surrounding table scope. See upsertMulticaManagedBlock
-	// for why.
-	if strings.Contains(s, "[sandbox_workspace_write]") {
-		t.Errorf("managed block must not open a [sandbox_workspace_write] table header, got:\n%s", s)
-	}
-	if !strings.Contains(s, "sandbox_workspace_write.network_access = true") {
-		t.Errorf("missing dotted-key network_access = true, got:\n%s", s)
-	}
-}
-
-func TestEnsureCodexSandboxConfigDarwinFallsBack(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "config.toml")
-
-	policy := codexSandboxPolicyFor("darwin")
-	if err := ensureCodexSandboxConfig(configPath, policy, "0.121.0", testLogger()); err != nil {
-		t.Fatalf("ensureCodexSandboxConfig failed: %v", err)
-	}
-
-	s, _ := os.ReadFile(configPath)
-	if !strings.Contains(string(s), `sandbox_mode = "danger-full-access"`) {
-		t.Errorf("expected danger-full-access fallback on macOS, got:\n%s", s)
-	}
-	if strings.Contains(string(s), "[sandbox_workspace_write]") {
-		t.Errorf("should not emit workspace-write section on macOS fallback, got:\n%s", s)
-	}
-}
-
-func TestEnsureCodexSandboxConfigIsIdempotent(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "config.toml")
-
-	policy := codexSandboxPolicyFor("linux")
-	for i := 0; i < 3; i++ {
-		if err := ensureCodexSandboxConfig(configPath, policy, "0.121.0", testLogger()); err != nil {
-			t.Fatalf("pass %d: %v", i, err)
-		}
-	}
-	data, _ := os.ReadFile(configPath)
-	// The managed block should appear exactly once.
-	if n := strings.Count(string(data), multicaManagedBeginMarker); n != 1 {
-		t.Errorf("expected exactly 1 managed block, got %d in:\n%s", n, data)
-	}
-}
-
-func TestEnsureCodexSandboxConfigPreservesUserContent(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "config.toml")
-
-	existing := `model = "o3"
-approval_policy = "on-failure"
-`
-	if err := os.WriteFile(configPath, []byte(existing), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	policy := codexSandboxPolicyFor("linux")
-	if err := ensureCodexSandboxConfig(configPath, policy, "0.121.0", testLogger()); err != nil {
-		t.Fatalf("ensureCodexSandboxConfig failed: %v", err)
-	}
-
-	data, _ := os.ReadFile(configPath)
-	s := string(data)
-	if !strings.Contains(s, `model = "o3"`) {
-		t.Error("lost existing model setting")
-	}
-	if !strings.Contains(s, "approval_policy") {
-		t.Error("lost existing approval_policy")
-	}
-	if !strings.Contains(s, "network_access = true") {
-		t.Error("missing network_access = true")
-	}
-}
-
-func TestEnsureCodexSandboxConfigReplacesUserSandboxPolicy(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "config.toml")
-	existing := `model = "o3"
-sandbox_mode = "workspace-write"
-[sandbox_workspace_write]
-network_access = true
-`
-	if err := os.WriteFile(configPath, []byte(existing), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	policy := codexSandboxPolicyFor("darwin")
-	if err := ensureCodexSandboxConfig(configPath, policy, "0.121.0", testLogger()); err != nil {
-		t.Fatal(err)
-	}
-	data, _ := os.ReadFile(configPath)
-	content := string(data)
-	if strings.Count(content, "sandbox_mode") != 1 || strings.Contains(content, "[sandbox_workspace_write]") {
-		t.Fatalf("expected one daemon-owned sandbox policy, got:\n%s", content)
-	}
-	if !strings.Contains(content, `model = "o3"`) {
-		t.Fatalf("unrelated user config was lost:\n%s", content)
-	}
-}
-
-func TestEnsureCodexSandboxConfigHoistsAboveUserTables(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "config.toml")
-
-	// User config that ends inside a table. If the managed block were
-	// appended at EOF, `sandbox_mode = "..."` would be parsed as
-	// permissions.multica.sandbox_mode and Codex would never see it — see
-	// review of MUL-963 PR #1246. The block must be hoisted above any
-	// user-defined table headers so it lives at the TOML root.
-	existing := `model = "o3"
-
-[permissions.multica]
-trust = "always"
-`
-	if err := os.WriteFile(configPath, []byte(existing), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	policy := codexSandboxPolicyFor("linux")
-	if err := ensureCodexSandboxConfig(configPath, policy, "0.121.0", testLogger()); err != nil {
-		t.Fatalf("ensureCodexSandboxConfig failed: %v", err)
-	}
-
-	data, _ := os.ReadFile(configPath)
-	s := string(data)
-
-	beginIdx := strings.Index(s, multicaManagedBeginMarker)
-	endIdx := strings.Index(s, multicaManagedEndMarker)
-	tableIdx := strings.Index(s, "[permissions.multica]")
-	if beginIdx < 0 || endIdx < 0 || tableIdx < 0 {
-		t.Fatalf("expected managed block and user table to both be present, got:\n%s", s)
-	}
-	// The entire managed block must sit before the user's table header so
-	// that sandbox_mode and sandbox_workspace_write.network_access are
-	// parsed at the TOML root.
-	if beginIdx >= endIdx || endIdx >= tableIdx {
-		t.Errorf("managed block must be hoisted above [permissions.multica]; got begin=%d end=%d table=%d:\n%s", beginIdx, endIdx, tableIdx, s)
-	}
-	// User content must be preserved verbatim.
-	if !strings.Contains(s, `model = "o3"`) {
-		t.Error("lost user top-level key")
-	}
-	if !strings.Contains(s, `trust = "always"`) {
-		t.Error("lost user permissions.multica content")
-	}
-
-	// Running again must be idempotent even when the preceding content ends
-	// inside a table.
-	if err := ensureCodexSandboxConfig(configPath, policy, "0.121.0", testLogger()); err != nil {
-		t.Fatalf("second pass: %v", err)
-	}
-	data2, _ := os.ReadFile(configPath)
-	if string(data2) != s {
-		t.Errorf("second pass should be idempotent:\n--- first ---\n%s\n--- second ---\n%s", s, data2)
-	}
-	if n := strings.Count(string(data2), multicaManagedBeginMarker); n != 1 {
-		t.Errorf("expected exactly one managed block after idempotent rewrite, got %d", n)
-	}
-}
-
-func TestCodexSandboxPolicyFor(t *testing.T) {
-	t.Parallel()
-	cases := []struct {
-		name     string
-		goos     string
-		wantMode string
-		wantNet  bool
-	}{
-		{"linux", "linux", "workspace-write", true},
-		{"darwin", "darwin", "danger-full-access", false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			p := codexSandboxPolicyFor(tc.goos)
-			if p.Mode != tc.wantMode {
-				t.Errorf("mode = %q, want %q", p.Mode, tc.wantMode)
-			}
-			if p.NetworkAccess != tc.wantNet {
-				t.Errorf("network_access = %v, want %v", p.NetworkAccess, tc.wantNet)
-			}
-			if p.Reason == "" {
-				t.Error("expected non-empty Reason")
-			}
-		})
-	}
-}
-
-func TestPrepareCodexHomeEnsuresNetworkAccess(t *testing.T) {
-	// Cannot use t.Parallel() with t.Setenv.
-
-	// Empty shared home — no config.toml to copy.
-	sharedHome := t.TempDir()
-	t.Setenv("CODEX_HOME", sharedHome)
-
-	codexHome := filepath.Join(t.TempDir(), "codex-home")
-	// Default prepareCodexHome assumes linux-like behavior.
-	if err := prepareCodexHomeWithOpts(codexHome, CodexHomeOptions{GOOS: "linux"}, testLogger()); err != nil {
-		t.Fatalf("prepareCodexHome failed: %v", err)
-	}
-
-	// config.toml should be created with network access defaults.
-	data, err := os.ReadFile(filepath.Join(codexHome, "config.toml"))
-	if err != nil {
-		t.Fatalf("config.toml not created: %v", err)
-	}
-	s := string(data)
-	if !strings.Contains(s, "network_access = true") {
-		t.Error("config.toml missing network_access = true")
-	}
-	if !strings.Contains(s, `sandbox_mode = "workspace-write"`) {
-		t.Error("config.toml missing sandbox_mode")
 	}
 }
 
@@ -2551,48 +2265,6 @@ func TestReuseRestoresCodexHome(t *testing.T) {
 		t.Fatal("expected CodexHome to be restored after Reuse")
 	}
 
-	// Verify config.toml has a managed block (exact mode depends on host
-	// platform; either workspace-write or danger-full-access is valid).
-	data, err := os.ReadFile(filepath.Join(reused.CodexHome, "config.toml"))
-	if err != nil {
-		t.Fatalf("config.toml not found in reused CodexHome: %v", err)
-	}
-	if !strings.Contains(string(data), multicaManagedBeginMarker) {
-		t.Error("reused config.toml missing multica-managed block")
-	}
-}
-
-func TestPrepareCodexHomeTrustsTaskWorkDir(t *testing.T) {
-	// Cannot use t.Parallel() with t.Setenv.
-
-	sharedHome := t.TempDir()
-	t.Setenv("CODEX_HOME", sharedHome)
-
-	env, err := Prepare(PrepareParams{
-		WorkspacesRoot: t.TempDir(),
-		WorkspaceID:    "ws-codex-trust",
-		TaskID:         "aabbccdd-1111-2222-3333-444455556666",
-		AgentName:      "Codex Agent",
-		Provider:       "codex",
-		Task:           TaskContextForEnv{IssueID: "trust-test"},
-	}, testLogger())
-	if err != nil {
-		t.Fatalf("Prepare failed: %v", err)
-	}
-	defer func() { _ = env.Cleanup(true) }()
-
-	data, err := os.ReadFile(filepath.Join(env.CodexHome, "config.toml"))
-	if err != nil {
-		t.Fatalf("read config.toml: %v", err)
-	}
-	wantHeader := "[projects." + strconv.Quote(env.WorkDir) + "]"
-	s := string(data)
-	if !strings.Contains(s, wantHeader) {
-		t.Fatalf("config.toml missing trusted workdir header %q:\n%s", wantHeader, s)
-	}
-	if !strings.Contains(s, "trust_level = \"trusted\"") {
-		t.Fatalf("config.toml missing trusted workdir level:\n%s", s)
-	}
 }
 
 func TestReuseRestoresCodexPluginCache(t *testing.T) {

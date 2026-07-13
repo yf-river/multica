@@ -8,14 +8,21 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 )
 
-func buildCodexArgs(opts ExecOptions, logger *slog.Logger, disableImageGeneration bool) []string {
+const (
+	codexMultiAgentEnv = "MULTICA_CODEX_MULTI_AGENT"
+	codexMemoryEnv     = "MULTICA_CODEX_MEMORY"
+)
+
+func buildCodexArgs(opts ExecOptions, env map[string]string, logger *slog.Logger, disableImageGeneration bool) []string {
 	args := []string{"app-server", "--listen", "stdio://"}
 	extra := filterCustomArgs(opts.ExtraArgs, codexBlockedArgs, logger)
 	custom := filterCustomArgs(opts.CustomArgs, codexBlockedArgs, logger)
@@ -35,7 +42,57 @@ func buildCodexArgs(opts ExecOptions, logger *slog.Logger, disableImageGeneratio
 	if disableImageGeneration {
 		args = append(args, "--disable", "image_generation")
 	}
+	if runtime.GOOS == "darwin" && logger != nil {
+		logger.Warn("codex sandbox: using danger-full-access because macOS Seatbelt blocks daemon network access")
+	}
+	args = append(args, codexRuntimeOverrides(env, runtime.GOOS, opts.Cwd)...)
 	return args
+}
+
+// codexRuntimeOverrides keeps daemon-owned safety policy in the process
+// invocation. Native subagents are disabled because the daemon owns only the
+// parent lifecycle; native memories are disabled to prevent cross-task context
+// leaks. macOS uses danger-full-access because Seatbelt currently blocks the
+// API network calls required by a task. Codex applies -c overrides after
+// config.toml, so copied user settings remain untouched and no per-task TOML
+// rewriting is required.
+func codexRuntimeOverrides(env map[string]string, goos, workDir string) []string {
+	args := make([]string, 0, 14)
+	if goos == "darwin" {
+		args = append(args, "-c", `sandbox_mode="danger-full-access"`)
+	} else {
+		args = append(args,
+			"-c", `sandbox_mode="workspace-write"`,
+			"-c", "sandbox_workspace_write.network_access=true",
+		)
+	}
+	if !codexFeatureOptedIn(env[codexMultiAgentEnv]) {
+		args = append(args, "--disable", "multi_agent")
+	}
+	if !codexFeatureOptedIn(env[codexMemoryEnv]) {
+		args = append(args,
+			"--disable", "memories",
+			"-c", "memories.generate_memories=false",
+			"-c", "memories.use_memories=false",
+		)
+	}
+	if strings.TrimSpace(workDir) != "" {
+		absWorkDir, err := filepath.Abs(workDir)
+		if err != nil {
+			absWorkDir = workDir
+		}
+		args = append(args, "-c", "projects."+strconv.Quote(absWorkDir)+`.trust_level="trusted"`)
+	}
+	return args
+}
+
+func codexFeatureOptedIn(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func effectiveCodexModelForToolGuard(opts ExecOptions, extraArgs, customArgs []string) string {
