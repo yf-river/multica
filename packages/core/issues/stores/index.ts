@@ -31,7 +31,6 @@ export {
   useIssueViewStore,
   createIssueViewStore,
   viewStoreSlice,
-  viewStorePersistOptions,
   useClearFiltersOnWorkspaceChange,
   SORT_OPTIONS,
   CARD_PROPERTY_OPTIONS,

@@ -6,7 +6,6 @@ import {
   type IssueViewState,
   viewStoreSlice,
   viewStorePersistOptions,
-  mergeViewStatePersisted,
 } from "./view-store";
 import { registerWorkspacePersistStore } from "../../platform/workspace-storage";
 
@@ -35,7 +34,6 @@ const _actorIssuesViewStore = createStore<ActorIssuesViewState>()(
         ...basePersist.partialize(state),
         scope: state.scope,
       }),
-      merge: mergeViewStatePersisted<ActorIssuesViewState>,
     },
   ),
 );

@@ -313,46 +313,7 @@ export const viewStorePersistOptions = (name: string) => ({
     swimlaneOrders: state.swimlaneOrders,
     collapsedSwimlanes: state.collapsedSwimlanes,
   }),
-  // Default Zustand merge is shallow, so a persisted `cardProperties` snapshot
-  // saved before a new toggle was introduced wins entirely and the new key is
-  // missing — the dropdown switch then reads `undefined` and renders unchecked
-  // even though defaults treat it as on. Deep-merge `cardProperties` so newly
-  // added toggles inherit their default value for existing users.
-  merge: mergeViewStatePersisted,
 });
-
-/**
- * Reusable persist `merge` for view-state stores. Generic over T so the same
- * deep-merge for `cardProperties` works for both the issues view store and
- * the my-issues view store (which extends IssueViewState).
- */
-export function mergeViewStatePersisted<T extends IssueViewState>(
-  persisted: unknown,
-  current: T,
-): T {
-  const p = (persisted ?? {}) as Partial<T>;
-  // `collapsedSwimlanes` changed shape from `string[]` to
-  // `Record<SwimlaneGrouping, string[]>`. A snapshot saved in the old
-  // shape would otherwise overwrite the default record with an array
-  // and crash on first read — fall back to the default when the
-  // persisted value isn't a plain object.
-  const isRecord = (v: unknown): v is Record<string, unknown> =>
-    v !== null && typeof v === "object" && !Array.isArray(v);
-  return {
-    ...current,
-    ...p,
-    cardProperties: {
-      ...current.cardProperties,
-      ...(p.cardProperties ?? {}),
-    },
-    swimlaneOrders: isRecord(p.swimlaneOrders)
-      ? { ...current.swimlaneOrders, ...p.swimlaneOrders }
-      : current.swimlaneOrders,
-    collapsedSwimlanes: isRecord(p.collapsedSwimlanes)
-      ? { ...current.collapsedSwimlanes, ...p.collapsedSwimlanes }
-      : current.collapsedSwimlanes,
-  };
-}
 
 /** Factory: creates a vanilla StoreApi for use with React Context. */
 export function createIssueViewStore(persistKey: string): StoreApi<IssueViewState> {

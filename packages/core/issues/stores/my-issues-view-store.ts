@@ -6,7 +6,6 @@ import {
   type IssueViewState,
   viewStoreSlice,
   viewStorePersistOptions,
-  mergeViewStatePersisted,
 } from "./view-store";
 import { registerWorkspacePersistStore } from "../../platform/workspace-storage";
 
@@ -33,11 +32,6 @@ const _myIssuesViewStore = createStore<MyIssuesViewState>()(
         ...basePersist.partialize(state),
         scope: state.scope,
       }),
-      // Reuse the same deep-merge as the base view store so newly added
-      // cardProperties toggles inherit defaults for existing users. Without
-      // this, the my-issues page renders no labels because the persisted
-      // snapshot predates the `labels` key and shallow-merge wins.
-      merge: mergeViewStatePersisted<MyIssuesViewState>,
     },
   ),
 );
