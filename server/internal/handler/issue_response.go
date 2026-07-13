@@ -68,29 +68,11 @@ func issueToResponse(i db.Issue, issuePrefix string) IssueResponse {
 	}
 }
 func openIssueRowToResponse(i db.ListOpenIssuesRow, issuePrefix string) IssueResponse {
-	identifier := issuePrefix + "-" + strconv.Itoa(int(i.Number))
-	return IssueResponse{
-		ID:            uuidToString(i.ID),
-		WorkspaceID:   uuidToString(i.WorkspaceID),
-		Number:        i.Number,
-		Identifier:    identifier,
-		Title:         i.Title,
-		Description:   textToPtr(i.Description),
-		Status:        i.Status,
-		Priority:      i.Priority,
-		AssigneeType:  textToPtr(i.AssigneeType),
-		AssigneeID:    uuidToPtr(i.AssigneeID),
-		CreatorType:   i.CreatorType,
-		CreatorID:     uuidToString(i.CreatorID),
-		ParentIssueID: uuidToPtr(i.ParentIssueID),
-		ProjectID:     uuidToPtr(i.ProjectID),
-		Position:      i.Position,
-		StartDate:     dateToPtr(i.StartDate),
-		DueDate:       dateToPtr(i.DueDate),
-		CreatedAt:     timestampToString(i.CreatedAt),
-		UpdatedAt:     timestampToString(i.UpdatedAt),
-		Metadata:      parseIssueMetadata(i.Metadata),
-	}
+	resp := issueToResponse(i.Issue, issuePrefix)
+	// The open-only list contract predates work timing fields and omits them.
+	resp.WorkStartedAt = nil
+	resp.WorkCompletedAt = nil
+	return resp
 }
 func issueListJoinSQL(visibleAgentIDsRef string) string {
 	return fmt.Sprintf(`LEFT JOIN "user" assignee_member

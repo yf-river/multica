@@ -214,7 +214,7 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 		prefix := h.getIssuePrefix(ctx, wsUUID)
 		ids := make([]pgtype.UUID, len(issues))
 		for i, issue := range issues {
-			ids[i] = issue.ID
+			ids[i] = issue.Issue.ID
 		}
 		labelsMap, err := h.labelsByIssue(ctx, wsUUID, ids)
 		if err != nil {

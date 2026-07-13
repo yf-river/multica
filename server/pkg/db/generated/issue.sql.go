@@ -637,10 +637,7 @@ func (q *Queries) ListChildrenByParents(ctx context.Context, arg ListChildrenByP
 }
 
 const listOpenIssues = `-- name: ListOpenIssues :many
-SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
-       i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
-       i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at, i.updated_at,
-       i.number, i.project_id, i.metadata, i.scope, i.owner_id
+SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority, i.assignee_type, i.assignee_id, i.creator_type, i.creator_id, i.parent_issue_id, i.position, i.due_date, i.created_at, i.updated_at, i.number, i.project_id, i.origin_type, i.origin_id, i.first_executed_at, i.start_date, i.metadata, i.scope, i.owner_id, i.work_started_at, i.work_completed_at
 FROM issue i
 WHERE i.workspace_id = $1
   AND i.status NOT IN ('done', 'cancelled')
@@ -697,27 +694,7 @@ type ListOpenIssuesParams struct {
 }
 
 type ListOpenIssuesRow struct {
-	ID            pgtype.UUID        `json:"id"`
-	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
-	Title         string             `json:"title"`
-	Description   pgtype.Text        `json:"description"`
-	Status        string             `json:"status"`
-	Priority      string             `json:"priority"`
-	AssigneeType  pgtype.Text        `json:"assignee_type"`
-	AssigneeID    pgtype.UUID        `json:"assignee_id"`
-	CreatorType   string             `json:"creator_type"`
-	CreatorID     pgtype.UUID        `json:"creator_id"`
-	ParentIssueID pgtype.UUID        `json:"parent_issue_id"`
-	Position      float64            `json:"position"`
-	StartDate     pgtype.Date        `json:"start_date"`
-	DueDate       pgtype.Date        `json:"due_date"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
-	Number        int32              `json:"number"`
-	ProjectID     pgtype.UUID        `json:"project_id"`
-	Metadata      []byte             `json:"metadata"`
-	Scope         string             `json:"scope"`
-	OwnerID       pgtype.UUID        `json:"owner_id"`
+	Issue Issue `json:"issue"`
 }
 
 // See ListIssues for the semantics of involves_user_id (mirrors the 4-branch
@@ -741,27 +718,32 @@ func (q *Queries) ListOpenIssues(ctx context.Context, arg ListOpenIssuesParams) 
 	for rows.Next() {
 		var i ListOpenIssuesRow
 		if err := rows.Scan(
-			&i.ID,
-			&i.WorkspaceID,
-			&i.Title,
-			&i.Description,
-			&i.Status,
-			&i.Priority,
-			&i.AssigneeType,
-			&i.AssigneeID,
-			&i.CreatorType,
-			&i.CreatorID,
-			&i.ParentIssueID,
-			&i.Position,
-			&i.StartDate,
-			&i.DueDate,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.Number,
-			&i.ProjectID,
-			&i.Metadata,
-			&i.Scope,
-			&i.OwnerID,
+			&i.Issue.ID,
+			&i.Issue.WorkspaceID,
+			&i.Issue.Title,
+			&i.Issue.Description,
+			&i.Issue.Status,
+			&i.Issue.Priority,
+			&i.Issue.AssigneeType,
+			&i.Issue.AssigneeID,
+			&i.Issue.CreatorType,
+			&i.Issue.CreatorID,
+			&i.Issue.ParentIssueID,
+			&i.Issue.Position,
+			&i.Issue.DueDate,
+			&i.Issue.CreatedAt,
+			&i.Issue.UpdatedAt,
+			&i.Issue.Number,
+			&i.Issue.ProjectID,
+			&i.Issue.OriginType,
+			&i.Issue.OriginID,
+			&i.Issue.FirstExecutedAt,
+			&i.Issue.StartDate,
+			&i.Issue.Metadata,
+			&i.Issue.Scope,
+			&i.Issue.OwnerID,
+			&i.Issue.WorkStartedAt,
+			&i.Issue.WorkCompletedAt,
 		); err != nil {
 			return nil, err
 		}

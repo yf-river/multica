@@ -1,15 +1,57 @@
 package handler
 
 import (
+	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
+
+func TestListIssuesOpenOnlyKeepsCurrentResponseContract(t *testing.T) {
+	ctx := context.Background()
+	activeID := insertIssueTo(t, ctx, testWorkspaceID, "open-only-active", "member", testUserID)
+	doneID := insertIssueTo(t, ctx, testWorkspaceID, "open-only-done", "member", testUserID)
+	mustExec(t, ctx, `UPDATE issue SET status = 'in_progress', work_started_at = $2 WHERE id = $1`, activeID, time.Now())
+	mustExec(t, ctx, `UPDATE issue SET status = 'done' WHERE id = $1`, doneID)
+
+	w := httptest.NewRecorder()
+	testHandler.ListIssues(w, newRequest("GET", "/api/issues?workspace_id="+testWorkspaceID+"&open_only=true&creator_id="+testUserID, nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("ListIssues open_only: status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var payload struct {
+		Issues []map[string]json.RawMessage `json:"issues"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	foundActive := false
+	for _, issue := range payload.Issues {
+		var id string
+		if err := json.Unmarshal(issue["id"], &id); err != nil {
+			t.Fatalf("decode issue id: %v", err)
+		}
+		if id == doneID {
+			t.Fatal("open_only returned a completed issue")
+		}
+		if id == activeID {
+			foundActive = true
+			if _, exists := issue["work_started_at"]; exists {
+				t.Fatal("open_only response unexpectedly included work_started_at")
+			}
+		}
+	}
+	if !foundActive {
+		t.Fatal("open_only did not return the active issue")
+	}
+}
 
 func TestParseIssueOrder(t *testing.T) {
 	tests := []struct {
