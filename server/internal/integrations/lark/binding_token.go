@@ -53,8 +53,7 @@ type InstallerBinder interface {
 	BindInstallerTx(ctx context.Context, qtx *db.Queries, p InstallerBindParams) error
 }
 
-// InstallerBindParams carries the inputs InstallerBinder needs. Kept
-// as a struct so adding union_id (Phase 2) does not break callers.
+// InstallerBindParams carries the complete current binding identity.
 type InstallerBindParams struct {
 	WorkspaceID    pgtype.UUID
 	InstallationID pgtype.UUID

@@ -250,14 +250,14 @@ func (q *Queries) CreateLarkOutboundCardMessage(ctx context.Context, arg CreateL
 const createLarkUserBinding = `-- name: CreateLarkUserBinding :one
 
 INSERT INTO lark_user_binding (
-    workspace_id, multica_user_id, installation_id, lark_open_id, union_id
+    workspace_id, multica_user_id, installation_id, lark_open_id
 ) VALUES (
-    $1, $2, $3, $4, $5
+    $1, $2, $3, $4
 )
 ON CONFLICT (installation_id, lark_open_id) DO UPDATE SET
-    union_id = COALESCE(EXCLUDED.union_id, lark_user_binding.union_id)
+    multica_user_id = EXCLUDED.multica_user_id
 WHERE lark_user_binding.multica_user_id = EXCLUDED.multica_user_id
-RETURNING id, workspace_id, multica_user_id, installation_id, lark_open_id, union_id
+RETURNING id, workspace_id, multica_user_id, installation_id, lark_open_id
 `
 
 type CreateLarkUserBindingParams struct {
@@ -265,7 +265,6 @@ type CreateLarkUserBindingParams struct {
 	MulticaUserID  pgtype.UUID `json:"multica_user_id"`
 	InstallationID pgtype.UUID `json:"installation_id"`
 	LarkOpenID     string      `json:"lark_open_id"`
-	UnionID        pgtype.Text `json:"union_id"`
 }
 
 // =====================
@@ -286,8 +285,8 @@ type CreateLarkUserBindingParams struct {
 //     caller (lark.BindingTokenService.RedeemAndBind) translates
 //     that into ErrBindingAlreadyAssigned.
 //
-// The same-user case still refreshes union_id so an idempotent re-bind by the
-// original user continues to work; only a cross-user re-assignment is rejected.
+// The same-user case is an idempotent no-op that still returns the existing
+// row; only a cross-user re-assignment is rejected.
 // True account changes must go through an explicit unbind flow, not
 // through a binding token.
 func (q *Queries) CreateLarkUserBinding(ctx context.Context, arg CreateLarkUserBindingParams) (LarkUserBinding, error) {
@@ -296,7 +295,6 @@ func (q *Queries) CreateLarkUserBinding(ctx context.Context, arg CreateLarkUserB
 		arg.MulticaUserID,
 		arg.InstallationID,
 		arg.LarkOpenID,
-		arg.UnionID,
 	)
 	var i LarkUserBinding
 	err := row.Scan(
@@ -305,7 +303,6 @@ func (q *Queries) CreateLarkUserBinding(ctx context.Context, arg CreateLarkUserB
 		&i.MulticaUserID,
 		&i.InstallationID,
 		&i.LarkOpenID,
-		&i.UnionID,
 	)
 	return i, err
 }
@@ -477,7 +474,7 @@ func (q *Queries) GetLarkOutboundCardByTask(ctx context.Context, taskID pgtype.U
 }
 
 const getLarkUserBindingByOpenID = `-- name: GetLarkUserBindingByOpenID :one
-SELECT id, workspace_id, multica_user_id, installation_id, lark_open_id, union_id FROM lark_user_binding
+SELECT id, workspace_id, multica_user_id, installation_id, lark_open_id FROM lark_user_binding
 WHERE installation_id = $1 AND lark_open_id = $2
 `
 
@@ -499,7 +496,6 @@ func (q *Queries) GetLarkUserBindingByOpenID(ctx context.Context, arg GetLarkUse
 		&i.MulticaUserID,
 		&i.InstallationID,
 		&i.LarkOpenID,
-		&i.UnionID,
 	)
 	return i, err
 }

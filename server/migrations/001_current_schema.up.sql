@@ -969,8 +969,7 @@ CREATE TABLE public.lark_user_binding (
     workspace_id uuid NOT NULL,
     multica_user_id uuid NOT NULL,
     installation_id uuid NOT NULL,
-    lark_open_id text NOT NULL,
-    union_id text
+    lark_open_id text NOT NULL
 );
 
 CREATE TABLE public.member (

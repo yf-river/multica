@@ -117,17 +117,17 @@ WHERE id = $1
 --      caller (lark.BindingTokenService.RedeemAndBind) translates
 --      that into ErrBindingAlreadyAssigned.
 --
--- The same-user case still refreshes union_id so an idempotent re-bind by the
--- original user continues to work; only a cross-user re-assignment is rejected.
+-- The same-user case is an idempotent no-op that still returns the existing
+-- row; only a cross-user re-assignment is rejected.
 -- True account changes must go through an explicit unbind flow, not
 -- through a binding token.
 INSERT INTO lark_user_binding (
-    workspace_id, multica_user_id, installation_id, lark_open_id, union_id
+    workspace_id, multica_user_id, installation_id, lark_open_id
 ) VALUES (
-    $1, $2, $3, $4, sqlc.narg('union_id')
+    $1, $2, $3, $4
 )
 ON CONFLICT (installation_id, lark_open_id) DO UPDATE SET
-    union_id = COALESCE(EXCLUDED.union_id, lark_user_binding.union_id)
+    multica_user_id = EXCLUDED.multica_user_id
 WHERE lark_user_binding.multica_user_id = EXCLUDED.multica_user_id
 RETURNING *;
 
