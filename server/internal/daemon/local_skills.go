@@ -28,17 +28,7 @@ type runtimeLocalSkillSummary struct {
 	Description string `json:"description,omitempty"`
 	SourcePath  string `json:"source_path"`
 	Provider    string `json:"provider"`
-	// Root classifies which discovery root surfaced this skill:
-	// localSkillRootProvider ("provider") for the runtime's own skill
-	// directory (e.g. ~/.claude/skills) or localSkillRootUniversal
-	// ("universal") for the cross-tool ~/.agents/skills fallback. The UI
-	// uses it to label a skill's origin and to hint, in the import dialog,
-	// whether a skill came from a provider-specific or a shared location.
-	// Older daemons that predate multi-root discovery omit the field; the
-	// server treats an empty value as "unknown" rather than a provider/
-	// universal assertion.
-	Root      string `json:"root,omitempty"`
-	FileCount int    `json:"file_count"`
+	FileCount   int    `json:"file_count"`
 }
 
 type runtimeLocalSkillBundle struct {
@@ -50,31 +40,10 @@ type runtimeLocalSkillBundle struct {
 	Files       []SkillFileData `json:"files,omitempty"`
 }
 
-// localSkillRoot is a single discovery location plus a classifier for where
-// it came from. Roots are returned in priority order by
-// localSkillRootsForProvider; the kind is surfaced to the UI on each
-// discovered skill (see runtimeLocalSkillSummary.Root).
-type localSkillRoot struct {
-	path string
-	kind string
-}
-
-const (
-	// localSkillRootProvider marks a runtime's own skill directory (e.g.
-	// ~/.claude/skills). These take priority over the universal root.
-	localSkillRootProvider = "provider"
-	// localSkillRootUniversal marks the cross-tool ~/.agents/skills root,
-	// a convention shared by Codex, Gemini CLI, Augment and others as a
-	// universal home-level skill store. It is always searched last so a
-	// same-key skill in the provider directory keeps winning.
-	localSkillRootUniversal = "universal"
-)
-
 // localSkillRootsForProvider returns the ordered user-level skill roots
 // scanned for each runtime/provider. The slice is in priority order:
 //
-//  1. the runtime's provider-specific root (backward-compatible with the
-//     single-root behavior that predates ~/.agents/skills support), then
+//  1. the runtime's provider-specific root, then
 //  2. the cross-tool universal root ~/.agents/skills.
 //
 // Listing and import both walk the roots in this order and the first match of
@@ -100,7 +69,7 @@ const (
 // Longer-term this mapping would be better colocated with the provider
 // definitions under server/pkg/agent so adding a new runtime can't silently
 // miss the local-skills surface.
-func localSkillRootsForProvider(provider string) ([]localSkillRoot, bool, error) {
+func localSkillRootsForProvider(provider string) ([]string, bool, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil, false, fmt.Errorf("resolve user home: %w", err)
@@ -136,9 +105,9 @@ func localSkillRootsForProvider(provider string) ([]localSkillRoot, bool, error)
 		return nil, false, nil
 	}
 
-	return []localSkillRoot{
-		{path: providerRoot, kind: localSkillRootProvider},
-		{path: filepath.Join(home, ".agents", "skills"), kind: localSkillRootUniversal},
+	return []string{
+		providerRoot,
+		filepath.Join(home, ".agents", "skills"),
 	}, true, nil
 }
 
@@ -296,13 +265,11 @@ func listRuntimeLocalSkills(provider string) ([]runtimeLocalSkillSummary, bool, 
 	skills := make([]runtimeLocalSkillSummary, 0)
 	// Dedupe strictly by Key. Roots are visited in priority order
 	// (provider-specific first, ~/.agents/skills last); the first
-	// occurrence of a Key wins. This keeps backward compatibility provable:
-	// every skill visible under the single-root behavior keeps its Key,
-	// SourcePath and FileCount, and we only ever *add* non-conflicting Keys
-	// discovered under the universal root.
+	// occurrence of a Key wins, so provider-specific skills take precedence
+	// and the universal root only contributes non-conflicting keys.
 	seenKeys := make(map[string]bool)
 	for _, root := range roots {
-		if _, err := os.Stat(root.path); err != nil {
+		if _, err := os.Stat(root); err != nil {
 			if os.IsNotExist(err) {
 				continue
 			}
@@ -318,7 +285,7 @@ func listRuntimeLocalSkills(provider string) ([]runtimeLocalSkillSummary, bool, 
 		// drop the legitimate second entry.
 		rootSkills := make([]runtimeLocalSkillSummary, 0)
 		visited := make(map[string]bool)
-		enumerateLocalSkills(provider, root.kind, root.path, root.path, 0, visited, &rootSkills)
+		enumerateLocalSkills(provider, root, root, 0, visited, &rootSkills)
 
 		for _, s := range rootSkills {
 			if seenKeys[s.Key] {
@@ -348,7 +315,7 @@ func listRuntimeLocalSkills(provider string) ([]runtimeLocalSkillSummary, bool, 
 // EvalSymlinks up front. Errors from EvalSymlinks just stop the descent on
 // that branch — most often it's a dangling link, which we want to ignore.
 func enumerateLocalSkills(
-	provider, rootKind, walkRoot, currentDir string,
+	provider, walkRoot, currentDir string,
 	depth int,
 	visited map[string]bool,
 	skills *[]runtimeLocalSkillSummary,
@@ -412,7 +379,6 @@ func enumerateLocalSkills(
 				Description: description,
 				SourcePath:  relativizeHomePath(path),
 				Provider:    provider,
-				Root:        rootKind,
 				// `files` is the supporting bundle (collectLocalSkillFiles
 				// intentionally excludes SKILL.md so the bundle's `Content`
 				// field can carry it without duplication on import). For the
@@ -424,7 +390,7 @@ func enumerateLocalSkills(
 		}
 
 		// No SKILL.md here — descend looking for nested skills.
-		enumerateLocalSkills(provider, rootKind, walkRoot, path, depth+1, visited, skills)
+		enumerateLocalSkills(provider, walkRoot, path, depth+1, visited, skills)
 	}
 }
 
@@ -450,7 +416,7 @@ func loadRuntimeLocalSkillBundle(provider, skillKey string) (*runtimeLocalSkillB
 	// returned, so we never silently substitute a different-content same-key
 	// skill from a lower-priority root.
 	for _, root := range roots {
-		skillDir := filepath.Join(root.path, filepath.FromSlash(key))
+		skillDir := filepath.Join(root, filepath.FromSlash(key))
 		info, err := os.Stat(skillDir)
 		if err != nil {
 			// IsNotExist => this root simply lacks the skill, try the next.

@@ -173,13 +173,7 @@ type RuntimeLocalSkillSummary struct {
 	Description string `json:"description,omitempty"`
 	SourcePath  string `json:"source_path"`
 	Provider    string `json:"provider"`
-	// Root classifies the discovery root the daemon found this skill under:
-	// "provider" (the runtime's own skill directory, e.g. ~/.claude/skills)
-	// or "universal" (the cross-tool ~/.agents/skills fallback). Daemons
-	// that predate multi-root discovery omit it; an empty value means
-	// "unknown" and the UI should not assert either origin.
-	Root      string `json:"root,omitempty"`
-	FileCount int    `json:"file_count"`
+	FileCount   int    `json:"file_count"`
 }
 
 type RuntimeLocalSkillListRequest struct {

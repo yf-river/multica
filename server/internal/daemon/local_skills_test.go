@@ -333,7 +333,7 @@ func TestLoadRuntimeLocalSkillBundle_Cursor(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 // A skill that lives only in the universal ~/.agents/skills root (no provider
-// directory at all) must be discovered and tagged Root="universal".
+// directory at all) must be discovered.
 func TestListRuntimeLocalSkills_DiscoversUniversalAgentsRoot(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -358,9 +358,6 @@ func TestListRuntimeLocalSkills_DiscoversUniversalAgentsRoot(t *testing.T) {
 	}
 	if skills[0].Name != "Universal Helper" {
 		t.Fatalf("name = %q, want Universal Helper", skills[0].Name)
-	}
-	if skills[0].Root != localSkillRootUniversal {
-		t.Fatalf("root = %q, want %q", skills[0].Root, localSkillRootUniversal)
 	}
 	if skills[0].SourcePath != "~/.agents/skills/universal-helper" {
 		t.Fatalf("source_path = %q", skills[0].SourcePath)
@@ -403,10 +400,8 @@ func TestLoadRuntimeLocalSkillBundle_ImportsFromUniversalRoot(t *testing.T) {
 }
 
 // When the same key exists in BOTH the provider root and the universal root,
-// the provider root wins: its SourcePath, Root tag and content are preserved
-// and the universal copy is dropped. This is the backward-compatibility
-// guarantee — adding the universal root never changes what an existing
-// provider-root key resolves to.
+// the provider root wins: its SourcePath and content are preserved and the
+// universal copy is dropped.
 func TestLocalSkills_ProviderRootWinsOnKeyConflict(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -427,9 +422,6 @@ func TestLocalSkills_ProviderRootWinsOnKeyConflict(t *testing.T) {
 	}
 	if skills[0].Name != "Provider Copy" {
 		t.Fatalf("name = %q, want Provider Copy (provider root must win)", skills[0].Name)
-	}
-	if skills[0].Root != localSkillRootProvider {
-		t.Fatalf("root = %q, want %q", skills[0].Root, localSkillRootProvider)
 	}
 	if skills[0].SourcePath != "~/.claude/skills/dup" {
 		t.Fatalf("source_path = %q, want provider path", skills[0].SourcePath)
@@ -465,27 +457,18 @@ func TestListRuntimeLocalSkills_MergesBothRoots(t *testing.T) {
 		t.Fatalf("listRuntimeLocalSkills: %v", err)
 	}
 	keys := make([]string, 0, len(skills))
-	roots := make(map[string]string)
 	for _, s := range skills {
 		keys = append(keys, s.Key)
-		roots[s.Key] = s.Root
 	}
 	// Sorted once after merge: "provider-only" < "universal-only".
 	wantKeys := []string{"provider-only", "universal-only"}
 	if !reflect.DeepEqual(keys, wantKeys) {
 		t.Fatalf("keys = %v, want %v", keys, wantKeys)
 	}
-	if roots["provider-only"] != localSkillRootProvider {
-		t.Fatalf("provider-only root = %q", roots["provider-only"])
-	}
-	if roots["universal-only"] != localSkillRootUniversal {
-		t.Fatalf("universal-only root = %q", roots["universal-only"])
-	}
 }
 
 // A missing universal root is not an error: discovery still returns the
-// provider-root skills. (Mirror of the original single-root "missing root
-// returns empty" guarantee, now per-root.)
+// provider-root skills.
 func TestListRuntimeLocalSkills_MissingUniversalRootIsNotAnError(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -540,10 +523,6 @@ func TestListRuntimeLocalSkills_NestedSkillInUniversalRoot(t *testing.T) {
 	if len(skills) != 1 || skills[0].Key != "release/reporter" {
 		t.Fatalf("expected release/reporter, got %v", skills)
 	}
-	if skills[0].Root != localSkillRootUniversal {
-		t.Fatalf("root = %q, want %q", skills[0].Root, localSkillRootUniversal)
-	}
-
 	bundle, _, err := loadRuntimeLocalSkillBundle("opencode", "release/reporter")
 	if err != nil {
 		t.Fatalf("loadRuntimeLocalSkillBundle: %v", err)
@@ -631,20 +610,12 @@ func TestListRuntimeLocalSkills_PerRootVisitedAllowsCrossRootSymlinkAlias(t *tes
 		t.Fatalf("listRuntimeLocalSkills: %v", err)
 	}
 	keys := make([]string, 0, len(skills))
-	roots := make(map[string]string)
 	for _, s := range skills {
 		keys = append(keys, s.Key)
-		roots[s.Key] = s.Root
 	}
 	wantKeys := []string{"bar", "foo"}
 	if !reflect.DeepEqual(keys, wantKeys) {
 		t.Fatalf("keys = %v, want %v (per-root visited must not collapse the alias)", keys, wantKeys)
-	}
-	if roots["bar"] != localSkillRootProvider {
-		t.Fatalf("bar root = %q, want provider", roots["bar"])
-	}
-	if roots["foo"] != localSkillRootUniversal {
-		t.Fatalf("foo root = %q, want universal", roots["foo"])
 	}
 }
 
@@ -679,8 +650,8 @@ func TestLoadRuntimeLocalSkillBundle_ProviderDirWithoutSkillMdFallsThrough(t *te
 	if len(skills) != 1 {
 		t.Fatalf("expected 1 skill, got %d (%v)", len(skills), skills)
 	}
-	if skills[0].Key != "shadowed" || skills[0].Root != localSkillRootUniversal {
-		t.Fatalf("list surfaced %+v, want key=shadowed root=universal", skills[0])
+	if skills[0].Key != "shadowed" {
+		t.Fatalf("list surfaced %+v, want key=shadowed", skills[0])
 	}
 	if skills[0].SourcePath != "~/.agents/skills/shadowed" {
 		t.Fatalf("list source_path = %q, want ~/.agents/skills/shadowed", skills[0].SourcePath)

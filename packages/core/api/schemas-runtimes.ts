@@ -105,7 +105,6 @@ const RuntimeLocalSkillSummarySchema = z.object({
   description: z.string().optional(),
   source_path: NonEmptyStringSchema,
   provider: NonEmptyStringSchema,
-  root: z.enum(["provider", "universal"]).optional(),
   file_count: z.number().int().nonnegative(),
 }).loose();
 
