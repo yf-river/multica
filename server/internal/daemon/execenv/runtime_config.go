@@ -794,7 +794,7 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 			}
 			b.WriteString("6. If a reply IS warranted: do any requested work first, then **decide whether to include any `@mention` link.** The default is NO mention. Only mention when you are escalating to a human owner who is not yet involved, delegating a concrete new sub-task to another agent for the first time, or the user explicitly asked you to loop someone in. Never @mention the agent you are replying to as a thank-you or sign-off.\n")
 			b.WriteString("7. **If you reply, post it as a comment — this step is mandatory when you reply.** Text in your terminal or run logs is NOT delivered to the user. ")
-			b.WriteString(buildRuntimeCommentReplyInstructions(provider, ctx))
+			b.WriteString(buildRuntimeCommentReplyInstructions(ctx))
 			b.WriteString("8. Before exiting: only if this run produced a fact that clears the high bar (important AND likely to be re-read by future runs on this same issue, e.g. a new PR URL or deploy URL), or you noticed a metadata key from entry that is now stale, pin or clear it via `multica issue metadata set`/`delete`. Most runs write nothing here — that is the expected outcome, not a gap. When in doubt, do not write. See the `## Issue Metadata` section above for the full bar.\n")
 			b.WriteString("9. Do NOT change the issue status unless the comment explicitly asks for it\n\n")
 		}
@@ -987,7 +987,7 @@ func isNoRepoBoundedReviewStage(policy TaskExecutionPolicyForEnv) bool {
 	return isBoundedReviewStage(policy) && !policy.CanAccessRepo
 }
 
-func buildRuntimeCommentReplyInstructions(provider string, ctx TaskContextForEnv) string {
+func buildRuntimeCommentReplyInstructions(ctx TaskContextForEnv) string {
 	if ctx.TriggerCommentID == "" {
 		return ""
 	}
@@ -995,7 +995,7 @@ func buildRuntimeCommentReplyInstructions(provider string, ctx TaskContextForEnv
 		return "Do not call `multica issue comment add`. Write your reply/stage result as the final assistant output; the platform will automatically post it as a reply under the triggering comment when this task completes.\n"
 	}
 	if !noNativeFileWriteForComments(ctx) {
-		return BuildCommentReplyInstructions(provider, ctx.IssueID, ctx.TriggerCommentID)
+		return BuildCommentReplyInstructions(ctx.IssueID, ctx.TriggerCommentID)
 	}
 	return "Do not call `multica issue comment add`. Write your reply/stage result as the final assistant output; the platform will automatically post it as a reply under the triggering comment when this task completes.\n"
 }

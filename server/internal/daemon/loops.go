@@ -108,7 +108,7 @@ func (d *Daemon) syncWorkspacesFromAPI(ctx context.Context) error {
 			d.logger.Info("registered runtime", "workspace_id", id, "runtime_id", rt.ID, "provider", rt.Provider)
 		}
 		d.mu.Lock()
-		ws := newWorkspaceState(id, runtimeIDs, resp.ReposVersion, resp.Repos, resp.Settings)
+		ws := newWorkspaceState(id, runtimeIDs, resp.Repos, resp.Settings)
 		// Seed the profile signature so the next sync tick can detect drift
 		// without re-registering on a transient fetch failure (empty sig is
 		// the explicit "unknown — keep the previous value" sentinel from
@@ -391,7 +391,7 @@ func (d *Daemon) handleModelList(ctx context.Context, rt Runtime, requestID stri
 	d.reportModelListResult(ctx, rt, requestID, map[string]any{
 		"status":    "completed",
 		"models":    wire,
-		"supported": agent.ModelSelectionSupported(rt.Provider),
+		"supported": true,
 	})
 }
 

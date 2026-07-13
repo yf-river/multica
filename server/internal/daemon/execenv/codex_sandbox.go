@@ -6,7 +6,6 @@ import (
 	"os"
 	"regexp"
 	"runtime"
-	"strconv"
 	"strings"
 )
 
@@ -18,17 +17,10 @@ import (
 // `no such host` errors when calling out (for example, `multica issue get`
 // hitting the Multica API). See upstream issue openai/codex#10390.
 //
-// Until a fixed Codex release ships, the per-task Codex config on macOS needs
+// The per-task Codex config on macOS needs
 // to fall back to `sandbox_mode = "danger-full-access"` so the agent can
-// actually reach the Multica API. On Linux (and on macOS once the upstream
-// fix is released), the normal `workspace-write` + `network_access = true`
-// combo is preferred because it keeps the filesystem sandbox intact.
-//
-// CodexDarwinNetworkAccessFixedVersion is the earliest Codex CLI version in
-// which `network_access = true` is honored under Seatbelt on macOS. Bump this
-// constant when the upstream fix ships. Empty string means "no known fixed
-// release yet — always treat macOS Codex as broken for network access".
-const CodexDarwinNetworkAccessFixedVersion = ""
+// actually reach the Multica API. On Linux, the normal `workspace-write` +
+// `network_access = true` combo keeps the filesystem sandbox intact.
 
 // codexSandboxPolicy describes how the per-task Codex config.toml should
 // configure the sandbox.
@@ -42,16 +34,13 @@ type codexSandboxPolicy struct {
 	Reason string
 }
 
-// codexSandboxPolicyFor picks the right policy for the given platform and
-// detected Codex CLI version.
+// codexSandboxPolicyFor picks the current policy for the given platform.
 //
 //   - Non-darwin: always workspace-write with network access (Landlock is not
 //     affected by the macOS Seatbelt bug).
-//   - darwin with a version at or above CodexDarwinNetworkAccessFixedVersion:
-//     workspace-write with network access (upstream bug fixed).
-//   - darwin otherwise (including when the version is unknown): fall back to
-//     danger-full-access so the Multica CLI can reach the API.
-func codexSandboxPolicyFor(goos, detectedVersion string) codexSandboxPolicy {
+//   - darwin: fall back to danger-full-access so the Multica CLI can reach the
+//     API while openai/codex#10390 remains unresolved.
+func codexSandboxPolicyFor(goos string) codexSandboxPolicy {
 	if goos == "" {
 		goos = runtime.GOOS
 	}
@@ -62,39 +51,11 @@ func codexSandboxPolicyFor(goos, detectedVersion string) codexSandboxPolicy {
 			Reason:        "non-darwin platform — seatbelt bug does not apply",
 		}
 	}
-	if codexDarwinNetworkAccessFixed(detectedVersion) {
-		return codexSandboxPolicy{
-			Mode:          "workspace-write",
-			NetworkAccess: true,
-			Reason:        "codex version includes macOS network_access fix",
-		}
-	}
-	reason := "codex on macOS: seatbelt ignores sandbox_workspace_write.network_access (openai/codex#10390)"
-	if detectedVersion == "" {
-		reason += " — version unknown, assuming broken"
-	}
 	return codexSandboxPolicy{
 		Mode:          "danger-full-access",
 		NetworkAccess: false,
-		Reason:        reason,
+		Reason:        "codex on macOS: seatbelt ignores sandbox_workspace_write.network_access (openai/codex#10390)",
 	}
-}
-
-// codexDarwinNetworkAccessFixed returns true if the given detected version is
-// known to honor `network_access = true` under Seatbelt on macOS.
-func codexDarwinNetworkAccessFixed(detectedVersion string) bool {
-	if CodexDarwinNetworkAccessFixedVersion == "" || detectedVersion == "" {
-		return false
-	}
-	fixed, err := parseCodexSemver(CodexDarwinNetworkAccessFixedVersion)
-	if err != nil {
-		return false
-	}
-	got, err := parseCodexSemver(detectedVersion)
-	if err != nil {
-		return false
-	}
-	return !got.lessThan(fixed)
 }
 
 // codexUpgradeHint returns a short, actionable hint for users running a Codex
@@ -171,34 +132,25 @@ func upsertMulticaManagedBlock(content string, policy codexSandboxPolicy) string
 	return block + "\n" + content
 }
 
-// stripLegacySandboxDirectives removes top-level `sandbox_mode = ...` lines
-// and any `[sandbox_workspace_write]` section that would otherwise conflict
-// with the managed block. This lets the daemon migrate tasks whose config.toml
-// was produced by an older daemon that wrote those values inline.
-//
-// Only top-level entries are stripped; anything under an unrelated section
-// header (like `[permissions.foo]`) is preserved untouched.
-func stripLegacySandboxDirectives(content string) string {
+// stripConflictingSandboxDirectives removes sandbox settings inherited from
+// the user's current Codex config before the daemon writes its task-specific
+// policy. Leaving both copies would produce duplicate TOML keys and prevent
+// Codex from starting. Unrelated user settings are preserved.
+func stripConflictingSandboxDirectives(content string) string {
 	lines := strings.Split(content, "\n")
 	out := make([]string, 0, len(lines))
-	inLegacyWorkspaceWrite := false
+	inWorkspaceWrite := false
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "[") {
-			// Entering a new section. Exit legacy-tracking if we were in one.
-			inLegacyWorkspaceWrite = trimmed == "[sandbox_workspace_write]"
-			if inLegacyWorkspaceWrite {
+			inWorkspaceWrite = trimmed == "[sandbox_workspace_write]"
+			if inWorkspaceWrite {
 				continue
 			}
 			out = append(out, line)
 			continue
 		}
-		if inLegacyWorkspaceWrite {
-			// Drop the legacy section body until the next section.
-			continue
-		}
-		if strings.HasPrefix(trimmed, "sandbox_mode") {
-			// Drop legacy top-level sandbox_mode declarations.
+		if inWorkspaceWrite || strings.HasPrefix(trimmed, "sandbox_mode") {
 			continue
 		}
 		out = append(out, line)
@@ -219,11 +171,8 @@ func ensureCodexSandboxConfig(configPath string, policy codexSandboxPolicy, dete
 		return fmt.Errorf("read config.toml: %w", err)
 	}
 	existing := string(data)
-
-	// Drop inline sandbox_mode / [sandbox_workspace_write] from older daemon
-	// versions so they don't collide with the managed block.
 	if existing != "" && !managedBlockRe.MatchString(existing) {
-		existing = stripLegacySandboxDirectives(existing)
+		existing = stripConflictingSandboxDirectives(existing)
 	}
 
 	updated := upsertMulticaManagedBlock(existing, policy)
@@ -248,35 +197,4 @@ func ensureCodexSandboxConfig(configPath string, policy codexSandboxPolicy, dete
 		return fmt.Errorf("write config.toml: %w", err)
 	}
 	return nil
-}
-
-// --- small semver helper, scoped to this package to avoid an import cycle
-// with server/pkg/agent. The agent package already has a similar parser; we
-// duplicate the minimal bits here because execenv cannot depend on agent.
-
-type codexSemver struct {
-	Major, Minor, Patch int
-}
-
-var codexSemverRe = regexp.MustCompile(`v?(\d+)\.(\d+)\.(\d+)`)
-
-func parseCodexSemver(raw string) (codexSemver, error) {
-	m := codexSemverRe.FindStringSubmatch(raw)
-	if m == nil {
-		return codexSemver{}, fmt.Errorf("cannot parse version %q", raw)
-	}
-	maj, _ := strconv.Atoi(m[1])
-	min, _ := strconv.Atoi(m[2])
-	pat, _ := strconv.Atoi(m[3])
-	return codexSemver{Major: maj, Minor: min, Patch: pat}, nil
-}
-
-func (v codexSemver) lessThan(o codexSemver) bool {
-	if v.Major != o.Major {
-		return v.Major < o.Major
-	}
-	if v.Minor != o.Minor {
-		return v.Minor < o.Minor
-	}
-	return v.Patch < o.Patch
 }

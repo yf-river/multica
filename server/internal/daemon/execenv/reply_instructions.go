@@ -150,10 +150,7 @@ func activeThreadID(triggerThreadID, triggerCommentID string) string {
 // All flags live on one shell-token line; the body never touches the shell;
 // no heredoc boundary exists for flags to leak across. This converges with
 // the long-standing Windows path so the cross-platform template is one shape.
-//
-// provider is retained for caller symmetry and future per-provider tweaks; the
-// guardrail itself is intentionally identical across providers and hosts.
-func BuildCommentReplyInstructions(provider, issueID, triggerCommentID string) string {
+func BuildCommentReplyInstructions(issueID, triggerCommentID string) string {
 	if triggerCommentID == "" {
 		return ""
 	}

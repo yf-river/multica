@@ -19,11 +19,8 @@ func hasSquadLeaderBriefing(instructions string) bool {
 
 // BuildPrompt constructs the task prompt for an agent CLI.
 // Keep this minimal — detailed instructions live in CLAUDE.md / AGENTS.md
-// injected by execenv.InjectRuntimeConfig. The provider string is threaded
-// through to comment-triggered tasks' per-turn reply template; ordinary agents
-// use the provider-agnostic `--content-file` template, while coordinator tasks
-// without file-write tools use final output auto-commenting.
-func BuildPrompt(task Task, provider string) string {
+// injected by execenv.InjectRuntimeConfig.
+func BuildPrompt(task Task) string {
 	if task.SourceSummaryPrompt != "" {
 		return buildSourceSummaryPrompt(task)
 	}
@@ -31,7 +28,7 @@ func BuildPrompt(task Task, provider string) string {
 		return buildChatPrompt(task)
 	}
 	if task.TriggerCommentID != "" {
-		return buildCommentPrompt(task, provider)
+		return buildCommentPrompt(task)
 	}
 	if task.AutopilotRunID != "" {
 		return buildAutopilotPrompt(task)
@@ -198,7 +195,7 @@ func buildQuickCreatePrompt(task Task) string {
 // The reply instructions (including the current TriggerCommentID as --parent)
 // are re-emitted on every turn so resumed sessions cannot carry forward a
 // previous turn's --parent UUID.
-func buildCommentPrompt(task Task, provider string) string {
+func buildCommentPrompt(task Task) string {
 	var b strings.Builder
 	b.WriteString("You are running as a local coding agent for a Multica workspace.\n\n")
 	fmt.Fprintf(&b, "Your assigned issue ID is: %s\n\n", task.IssueID)
@@ -244,11 +241,11 @@ func buildCommentPrompt(task Task, provider string) string {
 		fmt.Fprintf(&b, "Read the discussion: `multica issue comment list %s --output json` (long issue? use `--recent 20`).\n\n", task.IssueID)
 	}
 	writeSourceContextPrompt(&b, task)
-	b.WriteString(buildTaskCommentReplyInstructions(provider, task))
+	b.WriteString(buildTaskCommentReplyInstructions(task))
 	return b.String()
 }
 
-func buildTaskCommentReplyInstructions(provider string, task Task) string {
+func buildTaskCommentReplyInstructions(task Task) string {
 	if task.TriggerCommentID == "" {
 		return ""
 	}
@@ -256,7 +253,7 @@ func buildTaskCommentReplyInstructions(provider string, task Task) string {
 		return "Do not call `multica issue comment add` and do not create `reply.md` or local `.md` files. Write the complete stage result as your final assistant output; the platform will automatically post it as a reply under the triggering comment when this task completes.\n"
 	}
 	if task.ExecutionPolicy == nil || !strings.EqualFold(strings.TrimSpace(task.ExecutionPolicy.RoleKind), "coordinator") || task.ExecutionPolicy.CanAccessRepo {
-		return execenv.BuildCommentReplyInstructions(provider, task.IssueID, task.TriggerCommentID)
+		return execenv.BuildCommentReplyInstructions(task.IssueID, task.TriggerCommentID)
 	}
 	return "Do not call `multica issue comment add` and do not create `reply.md` or local `.md` files. Coordinator mode has no native file-write tool, so write the complete Markdown reply as your final assistant output; the platform will automatically post it as a reply under the triggering comment when this task completes.\n"
 }

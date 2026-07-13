@@ -51,7 +51,7 @@ func TestWorkspaceCoAuthoredByEnabled(t *testing.T) {
 				if tc.settings != "" {
 					raw = json.RawMessage(tc.settings)
 				}
-				d.workspaces["ws"] = newWorkspaceState("ws", nil, "", nil, raw)
+				d.workspaces["ws"] = newWorkspaceState("ws", nil, nil, raw)
 			}
 			if got := d.workspaceCoAuthoredByEnabled("ws"); got != tc.want {
 				t.Fatalf("workspaceCoAuthoredByEnabled(%q) = %v, want %v",
@@ -107,7 +107,6 @@ func TestSyncWorkspacesRefreshesSettingsOnExistingWorkspace(t *testing.T) {
 	d.workspaces[workspaceID] = newWorkspaceState(
 		workspaceID,
 		[]string{"rt-1"},
-		"v1",
 		nil,
 		json.RawMessage(`{"github_enabled":true,"co_authored_by_enabled":true}`),
 	)

@@ -45,7 +45,7 @@ func TestBuildPromptIncludesTapdSourceContext(t *testing.T) {
 				},
 			},
 		},
-	}, "codex")
+	})
 
 	for _, want := range []string{
 		"Source context:",
@@ -86,7 +86,7 @@ func TestBuildPromptUsesSourceSummaryPrompt(t *testing.T) {
 				BodyExcerpt:   "租户创建校验场景需要通过租户 ID 查询初始化管理员信息。",
 			},
 		},
-	}, "codex")
+	})
 
 	for _, want := range []string{
 		"requirement summarization agent",
@@ -130,7 +130,7 @@ func TestBuildCommentPromptPlacesSourceContextAfterIssueRead(t *testing.T) {
 				FetchStatus:   "pending_mcp_fetch",
 			},
 		},
-	}, "codex")
+	})
 
 	assertPromptOrder(t, out, "Start by running `multica issue get issue-comment-1 --output json`", "Source context:")
 }
@@ -157,7 +157,7 @@ func TestBuildPromptBlocksTapdWhenProfileMissing(t *testing.T) {
 				},
 			},
 		},
-	}, "codex")
+	})
 
 	for _, want := range []string{
 		"fetch_status=blocked_missing_profile",
@@ -192,7 +192,7 @@ func TestBuildPromptUsesFetchedTapdSourceContext(t *testing.T) {
 				Version:       "2026-07-02 10:00:00",
 			},
 		},
-	}, "codex")
+	})
 
 	for _, want := range []string{
 		"fetch_status=fetched",
@@ -225,7 +225,7 @@ func TestBuildPromptUsesHumanRecoveryWhenTapdFetchFailed(t *testing.T) {
 				FetchError:    "TAPD MCP returned 401 unauthorized",
 			},
 		},
-	}, "codex")
+	})
 
 	for _, want := range []string{
 		"fetch_status=fetch_failed",
@@ -488,7 +488,7 @@ func TestBuildPromptSquadLeaderNoActionForMemberTrigger(t *testing.T) {
 			Instructions: "一些说明\n\n## 小队负责人操作协议\n\n你是负责人...",
 		},
 	}
-	out := BuildPrompt(task, "claude")
+	out := BuildPrompt(task)
 	if !strings.Contains(out, "小队负责人 no_action 规则") {
 		t.Errorf("buildCommentPrompt must inject squad leader no_action rule for member-triggered comments, got:\n%s", out)
 	}
@@ -512,7 +512,7 @@ func TestBuildPromptCoordinatorCommentUsesFinalOutput(t *testing.T) {
 			CanAccessRepo: false,
 		},
 	}
-	out := BuildPrompt(task, "codebuddy")
+	out := BuildPrompt(task)
 	for _, want := range []string{
 		"Do not call `multica issue comment add`",
 		"do not create `reply.md` or local `.md` files",
@@ -549,7 +549,7 @@ func TestBuildPromptRepoReadOnlyStageUsesFinalOutputReply(t *testing.T) {
 			CanEditRepo:   false,
 		},
 	}
-	out := BuildPrompt(task, "codebuddy")
+	out := BuildPrompt(task)
 	for _, want := range []string{
 		"Write the complete stage result as your final assistant output",
 		"the platform will automatically post it as a reply under the triggering comment",
@@ -584,7 +584,7 @@ func TestBuildPromptSquadLeaderNoActionForAgentTrigger(t *testing.T) {
 			Instructions: "一些说明\n\n## 小队负责人操作协议\n\n你是负责人...",
 		},
 	}
-	out := BuildPrompt(task, "claude")
+	out := BuildPrompt(task)
 	if !strings.Contains(out, "小队负责人 no_action 规则") {
 		t.Errorf("buildCommentPrompt must inject squad leader no_action rule for agent-triggered comments, got:\n%s", out)
 	}
@@ -601,7 +601,7 @@ func TestBuildPromptSquadLeaderNoActionLegacyEnglishHeading(t *testing.T) {
 			Instructions: "Some instructions\n\n## Squad Operating Protocol\n\nlegacy briefing",
 		},
 	}
-	out := BuildPrompt(task, "claude")
+	out := BuildPrompt(task)
 	if !strings.Contains(out, "小队负责人 no_action 规则") {
 		t.Errorf("legacy English squad heading must still inject no_action rule, got:\n%s", out)
 	}
@@ -615,7 +615,7 @@ func TestBuildChatPromptAttachmentIDsCanBeBoundToCreatedIssues(t *testing.T) {
 			{ID: "019ec09d-6222-722b-bdfa-427b105d80be", Filename: "shot.png", ContentType: "image/png"},
 		},
 	}
-	out := BuildPrompt(task, "claude")
+	out := BuildPrompt(task)
 	for _, want := range []string{
 		"Attachments on this message:",
 		"id=019ec09d-6222-722b-bdfa-427b105d80be",
@@ -739,7 +739,7 @@ func TestBuildChatPromptSlashSkills(t *testing.T) {
 // to the flat dump, even though it cannot anchor a --thread without a
 // trigger comment id.
 func TestBuildPromptDefaultMentionsRecent(t *testing.T) {
-	out := BuildPrompt(Task{IssueID: "issue-default-1"}, "claude")
+	out := BuildPrompt(Task{IssueID: "issue-default-1"})
 	for _, s := range []string{
 		"--recent 20 --output json",
 		"Next thread cursor:",
@@ -775,7 +775,7 @@ func TestBuildPromptNonSquadLeaderNoRule(t *testing.T) {
 			Instructions: "Some instructions without the squad marker",
 		},
 	}
-	out := BuildPrompt(task, "claude")
+	out := BuildPrompt(task)
 	if strings.Contains(out, "小队负责人 no_action 规则") {
 		t.Errorf("buildCommentPrompt must NOT inject squad leader no_action rule for non-squad-leader agents, got:\n%s", out)
 	}
@@ -800,7 +800,7 @@ func TestBuildPromptNewCommentsHint(t *testing.T) {
 		NewCommentCount:       3,
 		NewCommentsSince:      since,
 	}
-	out := BuildPrompt(task, "claude")
+	out := BuildPrompt(task)
 
 	// Issue-wide count (reverted from the thread-scoped wording).
 	if !strings.Contains(out, "3 new comment(s) on this issue since your last run") {
@@ -842,7 +842,7 @@ func TestBuildPromptColdStartThreadRead(t *testing.T) {
 		NewCommentCount:       0,
 		NewCommentsSince:      "",
 	}
-	out := BuildPrompt(task, "claude")
+	out := BuildPrompt(task)
 	if strings.Contains(out, "new comment(s) since your last run") {
 		t.Errorf("no since-delta hint should render on cold start, got:\n%s", out)
 	}
@@ -867,7 +867,7 @@ func TestBuildPromptResumedNoDeltaDoesNotForceThreadRead(t *testing.T) {
 		NewCommentCount:       0,
 		NewCommentsSince:      "",
 	}
-	out := BuildPrompt(task, "claude")
+	out := BuildPrompt(task)
 
 	for _, want := range []string{
 		"triggering comment is already included above",

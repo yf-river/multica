@@ -106,7 +106,6 @@ var (
 type workspaceState struct {
 	workspaceID     string
 	runtimeIDs      []string
-	reposVersion    string // stored for future use: skip refresh when version unchanged
 	allowedRepoURLs map[string]struct{}
 	taskRepoURLs    map[string]struct{}
 	settings        json.RawMessage // workspace settings (JSONB)

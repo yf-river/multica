@@ -148,22 +148,6 @@ func ListModels(ctx context.Context, providerType, executablePath string) ([]Mod
 	}
 }
 
-// ModelSelectionSupported reports whether setting `agent.model` has
-// any effect for the given provider. Every built-in provider now honours
-// `opts.Model` end-to-end — Hermes routes it through the ACP
-// `session/set_model` RPC before each prompt; Claude / Codex / Cursor /
-// Gemini / Copilot / Kimi / Kiro / OpenCode / OpenClaw / Pi / Antigravity
-// pass it via flag or session config (Antigravity gained `--model` in agy
-// 1.0.6 — MUL-3125).
-//
-// The hook is retained — rather than inlining `true` at the call sites — so
-// a future model-less runtime can opt out in one place, which makes the UI
-// render a disabled "Managed by runtime" picker instead of an empty
-// dropdown plus a silently-ignored manual-entry field.
-func ModelSelectionSupported(providerType string) bool {
-	return true
-}
-
 // ModelKnownIncompatibleWithProvider reports whether a saved model is a known
 // mismatch for a target runtime provider. For first-party providers with
 // maintained static catalogs, compatibility is exact: the model must be one of

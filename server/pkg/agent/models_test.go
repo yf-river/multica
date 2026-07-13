@@ -965,26 +965,6 @@ func TestParseHermesSessionNewModelsGarbage(t *testing.T) {
 	}
 }
 
-func TestHermesModelSelectionSupported(t *testing.T) {
-	// Regression guard: hermes now supports model selection via
-	// the ACP session/set_model RPC, so the UI dropdown should
-	// not be disabled for it.
-	if !ModelSelectionSupported("hermes") {
-		t.Error("hermes should be model-selection-supported now that set_session_model is wired")
-	}
-}
-
-// TestAntigravityModelSelectionSupported pins that the antigravity provider
-// now reports model selection as supported: agy 1.0.6 added a `--model` flag
-// (MUL-3125) and buildAntigravityArgs wires opts.Model through, so the UI
-// must render the live picker rather than a disabled "Managed by runtime"
-// label.
-func TestAntigravityModelSelectionSupported(t *testing.T) {
-	if !ModelSelectionSupported("antigravity") {
-		t.Error("antigravity should be model-selection-supported now that agy 1.0.6 has --model")
-	}
-}
-
 // TestParseAntigravityModels covers the `agy models` line-per-name format:
 // each non-blank line becomes a Model whose ID and Label are the verbatim
 // display string `--model` expects, duplicates collapse, and blanks drop.

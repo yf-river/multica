@@ -220,7 +220,7 @@ func TestRefreshWorkspaceRuntimeProfiles_NoDrift_DoesNotReregister(t *testing.T)
 	if err != nil {
 		t.Fatalf("initial register: %v", err)
 	}
-	d.workspaces["ws-1"] = newWorkspaceState("ws-1", []string{resp.Runtimes[0].ID}, "", nil, nil)
+	d.workspaces["ws-1"] = newWorkspaceState("ws-1", []string{resp.Runtimes[0].ID}, nil, nil)
 	d.workspaces["ws-1"].profileSetSig = profileSig
 	for _, rt := range resp.Runtimes {
 		d.runtimeIndex[rt.ID] = rt
@@ -267,7 +267,7 @@ func TestRefreshWorkspaceRuntimeProfiles_NewProfileTriggersReregister(t *testing
 		ids = append(ids, rt.ID)
 		d.runtimeIndex[rt.ID] = rt
 	}
-	d.workspaces["ws-1"] = newWorkspaceState("ws-1", ids, "", nil, nil)
+	d.workspaces["ws-1"] = newWorkspaceState("ws-1", ids, nil, nil)
 	d.workspaces["ws-1"].profileSetSig = profileSig
 	beforeRegisterCalls := fx.registerCalls.Load()
 
@@ -361,7 +361,7 @@ func TestRefreshWorkspaceRuntimeProfiles_DriftWithRunningRuntimeSkipsOrphanRecov
 		ids = append(ids, rt.ID)
 		d.runtimeIndex[rt.ID] = rt
 	}
-	d.workspaces["ws-1"] = newWorkspaceState("ws-1", ids, "", nil, nil)
+	d.workspaces["ws-1"] = newWorkspaceState("ws-1", ids, nil, nil)
 	d.workspaces["ws-1"].profileSetSig = profileSig
 	if len(ids) < 2 {
 		t.Fatalf("setup expected at least 2 runtimes (built-in + custom); got %d", len(ids))
@@ -419,7 +419,7 @@ func TestRefreshWorkspaceRuntimeProfiles_DisableConvergesCustomOnlyDaemon(t *tes
 	}
 	initialRuntimeID := resp.Runtimes[0].ID
 	d.runtimeIndex[initialRuntimeID] = resp.Runtimes[0]
-	d.workspaces["ws-1"] = newWorkspaceState("ws-1", []string{initialRuntimeID}, "", nil, nil)
+	d.workspaces["ws-1"] = newWorkspaceState("ws-1", []string{initialRuntimeID}, nil, nil)
 	d.workspaces["ws-1"].profileSetSig = profileSig
 
 	// User disables the only profile: server's daemon-facing list now
@@ -526,7 +526,7 @@ func TestRefreshWorkspaceRuntimeProfiles_DisableOneOfManyDeregistersDroppedID(t 
 		t.Fatalf("setup expected a runtime for prof-1; got %+v", resp.Runtimes)
 	}
 	initialIDs := []string{resp.Runtimes[0].ID, resp.Runtimes[1].ID}
-	d.workspaces["ws-1"] = newWorkspaceState("ws-1", initialIDs, "", nil, nil)
+	d.workspaces["ws-1"] = newWorkspaceState("ws-1", initialIDs, nil, nil)
 	d.workspaces["ws-1"].profileSetSig = profileSig
 
 	// User disables the custom profile.
@@ -590,7 +590,7 @@ func TestRefreshWorkspaceRuntimeProfiles_FetchErrorIsBestEffort(t *testing.T) {
 	d := freshDaemon(srv.URL)
 	d.profileLaunches = make(map[string]runtimeProfileLaunch)
 	knownSig := profileSetSignature(profiles)
-	d.workspaces["ws-1"] = newWorkspaceState("ws-1", []string{"rt-1"}, "", nil, nil)
+	d.workspaces["ws-1"] = newWorkspaceState("ws-1", []string{"rt-1"}, nil, nil)
 	d.workspaces["ws-1"].profileSetSig = knownSig
 
 	err := d.refreshWorkspaceRuntimeProfiles(context.Background(), "ws-1")

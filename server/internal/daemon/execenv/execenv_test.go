@@ -2276,7 +2276,7 @@ func TestEnsureCodexSandboxConfigCreatesDefaultLinux(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.toml")
 
-	policy := codexSandboxPolicyFor("linux", "0.121.0")
+	policy := codexSandboxPolicyFor("linux")
 	if err := ensureCodexSandboxConfig(configPath, policy, "0.121.0", testLogger()); err != nil {
 		t.Fatalf("ensureCodexSandboxConfig failed: %v", err)
 	}
@@ -2309,7 +2309,7 @@ func TestEnsureCodexSandboxConfigDarwinFallsBack(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.toml")
 
-	policy := codexSandboxPolicyFor("darwin", "0.121.0")
+	policy := codexSandboxPolicyFor("darwin")
 	if err := ensureCodexSandboxConfig(configPath, policy, "0.121.0", testLogger()); err != nil {
 		t.Fatalf("ensureCodexSandboxConfig failed: %v", err)
 	}
@@ -2328,7 +2328,7 @@ func TestEnsureCodexSandboxConfigIsIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.toml")
 
-	policy := codexSandboxPolicyFor("linux", "0.121.0")
+	policy := codexSandboxPolicyFor("linux")
 	for i := 0; i < 3; i++ {
 		if err := ensureCodexSandboxConfig(configPath, policy, "0.121.0", testLogger()); err != nil {
 			t.Fatalf("pass %d: %v", i, err)
@@ -2353,7 +2353,7 @@ approval_policy = "on-failure"
 		t.Fatal(err)
 	}
 
-	policy := codexSandboxPolicyFor("linux", "0.121.0")
+	policy := codexSandboxPolicyFor("linux")
 	if err := ensureCodexSandboxConfig(configPath, policy, "0.121.0", testLogger()); err != nil {
 		t.Fatalf("ensureCodexSandboxConfig failed: %v", err)
 	}
@@ -2371,18 +2371,12 @@ approval_policy = "on-failure"
 	}
 }
 
-func TestEnsureCodexSandboxConfigStripsLegacyInlineDirectives(t *testing.T) {
+func TestEnsureCodexSandboxConfigReplacesUserSandboxPolicy(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.toml")
-
-	// Simulate a config.toml produced by an older daemon version that wrote
-	// sandbox directives inline (no managed block markers). After migration,
-	// the inline directives should be gone and only the managed block should
-	// carry them.
 	existing := `model = "o3"
 sandbox_mode = "workspace-write"
-
 [sandbox_workspace_write]
 network_access = true
 `
@@ -2390,25 +2384,17 @@ network_access = true
 		t.Fatal(err)
 	}
 
-	policy := codexSandboxPolicyFor("darwin", "0.121.0")
+	policy := codexSandboxPolicyFor("darwin")
 	if err := ensureCodexSandboxConfig(configPath, policy, "0.121.0", testLogger()); err != nil {
-		t.Fatalf("ensureCodexSandboxConfig failed: %v", err)
+		t.Fatal(err)
 	}
-
 	data, _ := os.ReadFile(configPath)
-	s := string(data)
-	if !strings.Contains(s, `model = "o3"`) {
-		t.Error("should have preserved unrelated user config")
+	content := string(data)
+	if strings.Count(content, "sandbox_mode") != 1 || strings.Contains(content, "[sandbox_workspace_write]") {
+		t.Fatalf("expected one daemon-owned sandbox policy, got:\n%s", content)
 	}
-	// Inline sandbox_mode and [sandbox_workspace_write] should be stripped.
-	if strings.Count(s, "sandbox_mode") != 1 {
-		t.Errorf("expected exactly one sandbox_mode line (inside managed block), got:\n%s", s)
-	}
-	if strings.Contains(s, "[sandbox_workspace_write]") {
-		t.Errorf("darwin fallback should not retain workspace-write section:\n%s", s)
-	}
-	if !strings.Contains(s, `sandbox_mode = "danger-full-access"`) {
-		t.Errorf("expected danger-full-access on macOS, got:\n%s", s)
+	if !strings.Contains(content, `model = "o3"`) {
+		t.Fatalf("unrelated user config was lost:\n%s", content)
 	}
 }
 
@@ -2431,7 +2417,7 @@ trust = "always"
 		t.Fatal(err)
 	}
 
-	policy := codexSandboxPolicyFor("linux", "0.121.0")
+	policy := codexSandboxPolicyFor("linux")
 	if err := ensureCodexSandboxConfig(configPath, policy, "0.121.0", testLogger()); err != nil {
 		t.Fatalf("ensureCodexSandboxConfig failed: %v", err)
 	}
@@ -2473,70 +2459,20 @@ trust = "always"
 	}
 }
 
-func TestEnsureCodexSandboxConfigMovesLegacyTrailingBlockToTop(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "config.toml")
-
-	// Simulate a config.toml produced by the pre-fix PR #1246 logic, which
-	// appended the managed block to EOF — so the block sits below a user
-	// table. On the next daemon run, the block must be hoisted back to the
-	// top; otherwise sandbox_mode remains trapped inside the preceding table.
-	legacy := `model = "o3"
-
-[permissions.multica]
-trust = "always"
-
-` + multicaManagedBeginMarker + `
-sandbox_mode = "workspace-write"
-
-[sandbox_workspace_write]
-network_access = true
-` + multicaManagedEndMarker + `
-`
-	if err := os.WriteFile(configPath, []byte(legacy), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	policy := codexSandboxPolicyFor("linux", "0.121.0")
-	if err := ensureCodexSandboxConfig(configPath, policy, "0.121.0", testLogger()); err != nil {
-		t.Fatalf("ensureCodexSandboxConfig failed: %v", err)
-	}
-	data, _ := os.ReadFile(configPath)
-	s := string(data)
-
-	beginIdx := strings.Index(s, multicaManagedBeginMarker)
-	tableIdx := strings.Index(s, "[permissions.multica]")
-	if beginIdx < 0 || tableIdx < 0 || beginIdx > tableIdx {
-		t.Errorf("expected managed block to be hoisted above [permissions.multica], got:\n%s", s)
-	}
-	if strings.Count(s, multicaManagedBeginMarker) != 1 {
-		t.Errorf("expected exactly one managed block, got:\n%s", s)
-	}
-	// The old inline `[sandbox_workspace_write]` header must be gone — the
-	// new block uses dotted-key form only.
-	if strings.Contains(s, "[sandbox_workspace_write]") {
-		t.Errorf("managed block must not emit [sandbox_workspace_write] table header, got:\n%s", s)
-	}
-}
-
 func TestCodexSandboxPolicyFor(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
 		name     string
 		goos     string
-		version  string
 		wantMode string
 		wantNet  bool
 	}{
-		{"linux any version", "linux", "0.100.0", "workspace-write", true},
-		{"linux unknown version", "linux", "", "workspace-write", true},
-		{"darwin old version", "darwin", "0.121.0", "danger-full-access", false},
-		{"darwin unknown version", "darwin", "", "danger-full-access", false},
+		{"linux", "linux", "workspace-write", true},
+		{"darwin", "darwin", "danger-full-access", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			p := codexSandboxPolicyFor(tc.goos, tc.version)
+			p := codexSandboxPolicyFor(tc.goos)
 			if p.Mode != tc.wantMode {
 				t.Errorf("mode = %q, want %q", p.Mode, tc.wantMode)
 			}

@@ -181,7 +181,6 @@ func (d *Daemon) applyRegisterResponseInPlace(workspaceID string, resp *Register
 	// what the server says without leaving stale heartbeat goroutines.
 	ws.runtimeIDs = newIDs
 	if resp.ReposVersion != "" {
-		ws.reposVersion = resp.ReposVersion
 		ws.allowedRepoURLs = repoAllowlist(resp.Repos)
 	}
 	if len(resp.Settings) > 0 {
@@ -667,11 +666,10 @@ func profileSetSignature(profiles []RuntimeProfile) string {
 	return strconv.FormatUint(h.Sum64(), 16)
 }
 
-func newWorkspaceState(workspaceID string, runtimeIDs []string, reposVersion string, repos []RepoData, settings json.RawMessage) *workspaceState {
+func newWorkspaceState(workspaceID string, runtimeIDs []string, repos []RepoData, settings json.RawMessage) *workspaceState {
 	return &workspaceState{
 		workspaceID:     workspaceID,
 		runtimeIDs:      runtimeIDs,
-		reposVersion:    reposVersion,
 		allowedRepoURLs: repoAllowlist(repos),
 		settings:        settings,
 	}
@@ -842,7 +840,6 @@ func (d *Daemon) refreshWorkspaceRepos(ctx context.Context, workspaceID string) 
 
 	d.mu.Lock()
 	if ws, ok := d.workspaces[workspaceID]; ok {
-		ws.reposVersion = resp.ReposVersion
 		ws.allowedRepoURLs = repoAllowlist(resp.Repos)
 		// Keep the cached settings in sync with the server. The daemon's
 		// feature gates (e.g. workspaceCoAuthoredByEnabled) read directly from

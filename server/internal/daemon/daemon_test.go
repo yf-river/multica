@@ -479,7 +479,7 @@ func TestBuildPromptContainsIssueID(t *testing.T) {
 				{Name: "Concise", Content: "Be concise."},
 			},
 		},
-	}, "claude")
+	})
 
 	// Prompt should contain the issue ID and CLI hint.
 	for _, want := range []string{
@@ -505,7 +505,7 @@ func TestBuildPromptNoIssueDetails(t *testing.T) {
 	prompt := BuildPrompt(Task{
 		IssueID: "test-id",
 		Agent:   &AgentData{Name: "Test"},
-	}, "claude")
+	})
 
 	// Prompt should not contain issue title/description (agent fetches via CLI).
 	for _, absent := range []string{"**Issue:**", "**Summary:**"} {
@@ -524,7 +524,7 @@ func TestBuildPromptAutopilotRunOnly(t *testing.T) {
 		AutopilotTitle:       "Daily dependency check",
 		AutopilotDescription: "Check dependencies and report outdated packages.",
 		AutopilotSource:      "manual",
-	}, "claude")
+	})
 
 	for _, want := range []string{
 		"run-only mode",
@@ -556,7 +556,7 @@ func TestBuildPromptCommentTriggered(t *testing.T) {
 		TriggerCommentID:      commentID,
 		TriggerCommentContent: commentContent,
 		Agent:                 &AgentData{Name: "Test"},
-	}, "claude")
+	})
 
 	// Prompt should contain the comment content, the trigger comment id, and
 	// the full reply command with --parent. Re-emitting --parent on every turn
@@ -601,7 +601,7 @@ func TestBuildPromptCommentTriggeredByAgent(t *testing.T) {
 		TriggerAuthorType:     "agent",
 		TriggerAuthorName:     "Atlas",
 		Agent:                 &AgentData{Name: "Test"},
-	}, "claude")
+	})
 
 	for _, want := range []string{
 		"Another agent (Atlas)",
@@ -627,7 +627,7 @@ func TestBuildPromptCommentTriggeredByMember(t *testing.T) {
 		TriggerAuthorType:     "member",
 		TriggerAuthorName:     "Alice",
 		Agent:                 &AgentData{Name: "Test"},
-	}, "claude")
+	})
 
 	if !strings.Contains(prompt, "A user just left a new comment") {
 		t.Fatalf("member-triggered prompt should label the author as a user\n---\n%s", prompt)
@@ -656,7 +656,7 @@ func TestBuildPromptCommentTriggeredNoContent(t *testing.T) {
 		IssueID:          "test-id",
 		TriggerCommentID: "comment-id",
 		Agent:            &AgentData{Name: "Test"},
-	}, "claude")
+	})
 
 	if !strings.Contains(prompt, "multica issue get") {
 		t.Fatal("prompt missing CLI hint")
@@ -677,7 +677,7 @@ func TestBuildPromptNoRepoBoundedStageDoesNotPromptCLIReads(t *testing.T) {
 			CanAccessRepo: false,
 			CanEditRepo:   false,
 		},
-	}, "codebuddy")
+	})
 
 	for _, want := range []string{
 		"Do not call tools or CLI commands",
@@ -717,7 +717,7 @@ func TestBuildPromptSquadLeaderNoActionProhibition(t *testing.T) {
 			Name:         "Leader",
 			Instructions: "你负责协调小队。\n\n## 小队负责人操作协议\n\n你是负责人。",
 		},
-	}, "claude")
+	})
 
 	for _, want := range []string{
 		"小队负责人 no_action 规则",
@@ -740,7 +740,7 @@ func TestBuildPromptSquadLeaderNoActionProhibition(t *testing.T) {
 			Name:         "Regular",
 			Instructions: "You are a regular agent.",
 		},
-	}, "claude")
+	})
 
 	if strings.Contains(nonLeaderPrompt, "小队负责人 no_action 规则") {
 		t.Fatalf("non-squad-leader prompt should NOT contain squad leader rule\n---\n%s", nonLeaderPrompt)
@@ -1682,7 +1682,6 @@ func TestEnsureRepoReadyCachedRepoStillRefreshesSettings(t *testing.T) {
 	d.workspaces["ws-1"] = newWorkspaceState(
 		"ws-1",
 		nil,
-		"v1",
 		[]RepoData{{URL: sourceRepo}},
 		json.RawMessage(`{"github_enabled":true,"co_authored_by_enabled":true}`),
 	)
@@ -1713,7 +1712,7 @@ func TestEnsureRepoReadyTrimsURL(t *testing.T) {
 	if err := d.repoCache.Sync("ws-1", []repocache.RepoInfo{{URL: sourceRepo}}); err != nil {
 		t.Fatalf("seed repo cache: %v", err)
 	}
-	d.workspaces["ws-1"] = newWorkspaceState("ws-1", nil, "v1", []RepoData{{URL: sourceRepo}}, nil)
+	d.workspaces["ws-1"] = newWorkspaceState("ws-1", nil, []RepoData{{URL: sourceRepo}}, nil)
 
 	// URL with trailing whitespace should still resolve to the cached repo.
 	if err := d.ensureRepoReady(context.Background(), "ws-1", "  "+sourceRepo+"  "); err != nil {
@@ -1734,7 +1733,7 @@ func TestEnsureRepoReadyRefreshesOnMiss(t *testing.T) {
 		Repos:        []RepoData{{URL: sourceRepo}},
 		ReposVersion: "v2",
 	})
-	d.workspaces["ws-1"] = newWorkspaceState("ws-1", nil, "", nil, nil)
+	d.workspaces["ws-1"] = newWorkspaceState("ws-1", nil, nil, nil)
 
 	if err := d.ensureRepoReady(context.Background(), "ws-1", sourceRepo); err != nil {
 		t.Fatalf("ensureRepoReady: %v", err)
@@ -1768,7 +1767,7 @@ func TestRegisterTaskReposAllowsProjectOnlyURL(t *testing.T) {
 	})
 	// Workspace has zero workspace-bound repos; the project resource gives us
 	// the only repo URL the agent should be able to check out.
-	d.workspaces["ws-1"] = newWorkspaceState("ws-1", nil, "", nil, nil)
+	d.workspaces["ws-1"] = newWorkspaceState("ws-1", nil, nil, nil)
 
 	d.registerTaskRepos("ws-1", []RepoData{{URL: sourceRepo}})
 
@@ -1816,7 +1815,7 @@ func TestRegisterTaskReposSurvivesWorkspaceRefresh(t *testing.T) {
 			ReposVersion: "v2",
 		})
 	})
-	d.workspaces["ws-1"] = newWorkspaceState("ws-1", nil, "", nil, nil)
+	d.workspaces["ws-1"] = newWorkspaceState("ws-1", nil, nil, nil)
 	d.registerTaskRepos("ws-1", []RepoData{{URL: sourceRepo}})
 
 	// Wait for the registration to populate the cache.
@@ -1844,7 +1843,7 @@ func TestEnsureRepoReadyReturnsNotConfigured(t *testing.T) {
 			ReposVersion: "v1",
 		})
 	})
-	d.workspaces["ws-1"] = newWorkspaceState("ws-1", nil, "", nil, nil)
+	d.workspaces["ws-1"] = newWorkspaceState("ws-1", nil, nil, nil)
 
 	err := d.ensureRepoReady(context.Background(), "ws-1", "git@example.com:team/api.git")
 	if !errors.Is(err, ErrRepoNotConfigured) {
@@ -1863,7 +1862,7 @@ func TestEnsureRepoReadyReportsSyncFailure(t *testing.T) {
 			ReposVersion: "v1",
 		})
 	})
-	d.workspaces["ws-1"] = newWorkspaceState("ws-1", nil, "", nil, nil)
+	d.workspaces["ws-1"] = newWorkspaceState("ws-1", nil, nil, nil)
 
 	err := d.ensureRepoReady(context.Background(), "ws-1", missingRepo)
 	if err == nil || !strings.Contains(err.Error(), "repo is configured but not synced:") {
@@ -1883,7 +1882,7 @@ func TestEnsureRepoReadyConcurrentMissRefreshesOnce(t *testing.T) {
 		Repos:        []RepoData{{URL: sourceRepo}},
 		ReposVersion: "v2",
 	})
-	d.workspaces["ws-1"] = newWorkspaceState("ws-1", nil, "", nil, nil)
+	d.workspaces["ws-1"] = newWorkspaceState("ws-1", nil, nil, nil)
 
 	const concurrency = 8
 	var wg sync.WaitGroup
