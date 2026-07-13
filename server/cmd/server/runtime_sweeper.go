@@ -182,8 +182,7 @@ func sweepOfflineRuntimeTasks(ctx context.Context, taskSvc *service.TaskService)
 // filterStaleRuntimesByLiveness narrows a SELECT-of-stale-candidates down to
 // the set that should actually be flipped offline. When liveness is available
 // and reports a candidate as alive, we skip it (DB is just lagging). When the
-// store is unavailable or errors, we trust the DB stale window — i.e. every
-// candidate flips, matching the legacy MarkStaleRuntimesOffline behavior.
+// store is unavailable or errors, we trust the DB stale window.
 func filterStaleRuntimesByLiveness(ctx context.Context, candidates []db.SelectStaleOnlineRuntimesRow, liveness handler.LivenessStore) []pgtype.UUID {
 	ids := make([]pgtype.UUID, 0, len(candidates))
 	if !liveness.Available() {

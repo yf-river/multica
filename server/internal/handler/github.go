@@ -85,9 +85,8 @@ type GitHubPullRequestResponse struct {
 	ChecksFailed  int64 `json:"checks_failed"`
 	ChecksPending int64 `json:"checks_pending"`
 	// Diff stats (lines added/removed and file count) sourced from the
-	// `pull_request` webhook payload. Legacy rows that pre-date this
-	// field default to 0; the frontend treats total == 0 as "unknown"
-	// and hides the stats row.
+	// `pull_request` webhook payload. Zero means unavailable, and the
+	// frontend hides the stats row.
 	Additions    int32 `json:"additions"`
 	Deletions    int32 `json:"deletions"`
 	ChangedFiles int32 `json:"changed_files"`

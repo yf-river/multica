@@ -13,11 +13,6 @@ import (
 // browser/desktop client — one human, one session — but break for
 // group chat_sessions where many Lark users converse with one Bot.
 //
-// Concrete implementation lands in a follow-up PR (MUL-2671). The
-// interface is declared here so the migration + service boundary PR
-// can establish the architectural cut without dragging in OAuth, WS,
-// and card-patching code.
-//
 // Inbound contract (enforced by the implementation):
 //
 //   - EnsureChatSession is the ONLY way Lark code creates / looks up a

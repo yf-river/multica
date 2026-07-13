@@ -417,7 +417,7 @@ func runDaemonRestart(cmd *cobra.Command, args []string) error {
 				}
 			}
 			// Wait until the port is fully released (not merely past "running"),
-			// otherwise the fresh start below races the old daemon's listener.
+	// otherwise the fresh start below races the previous daemon's listener.
 			for i := 0; i < 10; i++ {
 				time.Sleep(500 * time.Millisecond)
 				sctx, scancel := context.WithTimeout(context.Background(), 1*time.Second)

@@ -277,9 +277,8 @@ func (p *Patcher) processEvent(ctx context.Context, e events.Event) error {
 //     bold/italic, links) → schema-2.0 interactive card with a
 //     `tag: "markdown"` body element so Lark's client renders the
 //     formatting instead of leaving raw `**bold**` characters in
-//     the transcript. The card is visually subtler than the legacy
-//     binding-prompt template — just a single markdown block, no
-//     header / icon / CTA buttons.
+//     the transcript. The card is a single markdown block with no
+//     header, icon, or CTA buttons.
 //
 // Empty content is silently dropped: we'd rather show nothing than
 // "Done." (the prior card fallback that confused Bohan in the live

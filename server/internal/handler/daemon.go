@@ -148,7 +148,7 @@ type DaemonRegisterRequest struct {
 		Status   string          `json:"status"`
 		Metadata json.RawMessage `json:"metadata,omitempty"`
 		// ProfileID, when non-empty, marks this as an instance of a custom
-		// runtime_profile (MUL-3284). Empty = built-in runtime (legacy path).
+		// runtime_profile (MUL-3284). Empty means a built-in runtime.
 		// Type carries the protocol family for both built-in and custom rows
 		// so task routing (agent.New) is unchanged.
 		ProfileID string `json:"profile_id"`

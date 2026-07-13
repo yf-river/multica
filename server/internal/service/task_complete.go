@@ -710,7 +710,6 @@ func squadSOPRunForWorkerTask(ctx context.Context, queries *db.Queries, task db.
 // failureReason is a coarse classifier consumed by the auto-retry path.
 // Pass "" when unknown — the server runs the raw error text through
 // taskfailure.Classify so the persisted failure_reason still lands in
-// the canonical refined taxonomy rather than the legacy "agent_error"
-// coarse bucket. Daemon callers that already produced a refined reason
+// the canonical refined taxonomy. Daemon callers that already produced a refined reason
 // (via classifyPoisonedError, the timeout / runtime classifier, etc.)
 // will have their value preserved untouched.

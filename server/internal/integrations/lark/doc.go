@@ -1,7 +1,6 @@
 // Package lark contains the Multica ↔ 飞书 (Lark) Bot integration.
 //
-// MVP scope is tracked in MUL-2671. After the migration / service
-// boundary PRs landed, this package now covers:
+// The package covers the complete Lark integration boundary:
 //
 //  1. DB schema + sqlc wrappers
 //  2. InstallationService (encrypted app_secret, workspace-scoped lookups)

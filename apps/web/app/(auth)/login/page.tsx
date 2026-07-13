@@ -34,8 +34,7 @@ function LoginPageContent() {
   const platform = searchParams.get("platform");
   const isDesktopHandoff = platform === "desktop" && !cliCallbackRaw;
   // `next` carries a protected URL the user was originally headed to.
-  // With URL-driven workspaces there is no legacy
-  // "/issues" default — if `next` is absent we decide after login based on
+  // If `next` is absent we decide after login based on
   // the user's workspace list. Sanitize first so a crafted `?next=https://evil`
   // cannot bounce the user off-origin after a successful login.
   const nextUrl = sanitizeNextUrl(searchParams.get("next"));

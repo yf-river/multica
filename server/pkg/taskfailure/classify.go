@@ -6,8 +6,7 @@ import (
 )
 
 // providerHTTP5xxRe matches a 3-digit number starting with 5 (5xx HTTP
-// status code) that isn't surrounded by other digits. Mirrors the SQL
-// regex `(^|[^0-9])5[0-9][0-9]([^0-9]|$)` from MUL-1949 — keeps phrases
+// status code) that isn't surrounded by other digits. This keeps phrases
 // like "1500ms" or "1.5.0" from accidentally landing in
 // provider_server_error.
 //
@@ -20,13 +19,6 @@ var providerHTTP5xxRe = regexp.MustCompile(`(^|[^0-9])5[0-9][0-9]([^0-9]|$)`)
 // to one of the 14 agent_error.* sub-reasons. Always returns a valid
 // Reason; falls back to ReasonAgentUnknown when no rule matches and for
 // empty input.
-//
-// The rule order mirrors the SQL CASE expression in MUL-1949
-// (db-boy's offline backfill query). The SQL is the source of truth:
-// when the two diverge, this Go classifier is wrong and should be
-// updated to match. Keeping them in lock-step is required so that
-// in-flight rows and historically backfilled rows share the same
-// taxonomy.
 //
 // Matching is case-insensitive substring against the lowercased input.
 // More-specific rules come before more-generic ones (e.g.

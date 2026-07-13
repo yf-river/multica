@@ -402,9 +402,8 @@ func stripUserMcpServers(resolved map[string]any) {
 // openclawActiveConfigPath runs `openclaw config file` to discover the path
 // the openclaw CLI considers active. Returns (absolutePath, exists, error).
 //
-// The CLI handles the full resolution chain — OPENCLAW_CONFIG_PATH, the
-// state directory (OPENCLAW_STATE_DIR / OPENCLAW_HOME / default), legacy
-// migration, and `~` expansion — so we don't re-implement it here.
+// The CLI handles its full resolution chain and `~` expansion, so we do not
+// duplicate that logic here.
 //
 // The reported path uses `~` shorthand for the user's home; we expand it
 // so the $include reference we write is unambiguous absolute.

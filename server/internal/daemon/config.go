@@ -824,8 +824,7 @@ func openclawOverrideFrom(cfg cli.CLIConfig) *cli.OpenClawOverride {
 // applyOpenclawOverride translates the config-file overrides into process
 // env vars, which the existing probe() / buildEnv code paths already honor.
 // Env-set-by-user wins over config-set-by-file: we only Setenv when the var
-// is not already present, preserving the back-compat contract documented
-// on cli.OpenClawOverride.
+// is not already present, matching the precedence on cli.OpenClawOverride.
 //
 // Side-effecting on os.Setenv is intentional and scoped:
 //

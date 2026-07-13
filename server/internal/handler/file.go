@@ -168,8 +168,7 @@ func attachmentDownloadPath(id string) string {
 //     time-bounded signed URLs and the raw `a.Url` is unauth-deny),
 //     AND
 //     - `a.Url` is itself an absolute http(s) URL with no signature
-//     query — defends against legacy rows backfilled while baseURL
-//     was unset, and against a freshly-signed `download_url` ever
+//     query, preventing a freshly-signed `download_url` from ever
 //     leaking into `a.Url` (the original MUL-3130 bug).
 //
 //  2. Every other shape — CloudFront-signed mode, S3 presign /proxy

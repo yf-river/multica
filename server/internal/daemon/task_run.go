@@ -753,11 +753,8 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			// falls through to taskfailure.Classify, which maps the
 			// raw error string to one of the 14 agent_error.*
 			// sub-reasons (provider auth, capacity, context overflow,
-			// runner crash, …) or to ReasonAgentUnknown. This keeps
-			// the failure_reason column in the canonical refined
-			// taxonomy at write time instead of waiting on the
-			// MUL-1949 offline backfill to re-classify after the
-			// fact.
+			// runner crash, …) or to ReasonAgentUnknown before the row
+			// is persisted.
 			failureReason = taskfailure.Classify(errMsg).String()
 		}
 		return TaskResult{

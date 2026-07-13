@@ -121,7 +121,7 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 		// MUL-2946: route the bare error string through the canonical
 		// classifier so the failure_reason column reflects the actual
 		// shape of the failure (provider 5xx, network, process crash,
-		// …) rather than the coarse legacy "agent_error" bucket.
+		// …).
 		reason := taskfailure.Classify(err.Error())
 		if failErr := d.client.FailTask(ctx, task.ID, err.Error(), "", "", reason.String()); failErr != nil {
 			taskLog.Error("fail task callback failed", "error", failErr)
@@ -184,8 +184,8 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 		// misleading red badge in the UI — leave the task in running
 		// instead so a future fix (server-side stuck-task reaper, or a
 		// daemon-side persistent pending queue) can recover it. Only
-		// permanent server-side rejections (4xx other than 408/429)
-		// warrant the legacy fallback, because at that point the server
+		// Permanent server-side rejections (4xx other than 408/429)
+		// warrant a failure callback, because at that point the server
 		// has already refused this task and the only useful UI signal
 		// left is a concrete failure.
 		if isTransientError(err) {
@@ -198,9 +198,7 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 		// — the agent itself succeeded, so the err here describes the
 		// server response rather than an agent failure. The classifier
 		// is unlikely to match anything in the server's error text and
-		// will land at ReasonAgentUnknown ("agent_error.unknown"),
-		// which is the canonical replacement for the legacy
-		// "agent_error" coarse bucket.
+		// will land at ReasonAgentUnknown ("agent_error.unknown").
 		fallbackErrMsg := fmt.Sprintf("complete task failed: %s", err.Error())
 		if failErr := d.client.FailTask(ctx, taskID, fallbackErrMsg, result.SessionID, result.WorkDir, taskfailure.Classify(fallbackErrMsg).String()); failErr != nil {
 			taskLog.Error("fail task fallback also failed", "error", failErr)
@@ -218,8 +216,7 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 				// MUL-2946: classify the agent's comment text so the
 				// failure_reason lands in the refined taxonomy
 				// (provider_auth_or_access, context_overflow,
-				// process_failure, …) instead of the legacy coarse
-				// "agent_error" bucket. Empty comment lands in
+				// process_failure, …). Empty comment lands in
 				// ReasonAgentUnknown.
 				failureReason = taskfailure.Classify(result.Comment).String()
 			}

@@ -1,20 +1,7 @@
-// Package taskfailure is the canonical, refined taxonomy of values written
-// into agent_task_queue.failure_reason and chat_message.failure_reason.
-//
-// History: until MUL-1949, server/daemon code wrote one of a small handful
-// of coarse failure_reason values ("agent_error", "timeout",
-// "runtime_offline", …). The "agent_error" bucket grew to ~30% of all
-// failures and hid the real cause (provider 401, quota exceeded, context
-// overflow, runner crash, etc.) inside the free-form `error` text column.
-// MUL-1949's offline backfill SQL re-classified those rows into 14
-// agent_error.* sub-reasons via a CASE expression on the error text.
-//
-// This package lifts that classifier into the in-flight write path so the
-// stored failure_reason is already refined when the row is first
-// persisted, and so server / daemon / cloud share a single source of
-// truth for the canonical 23 values. PR1 of the Grafana board plan
-// ([MUL-2946](https://multica/issues/MUL-2946)). Subsequent PRs use
-// AllReasons() to pre-warm the Prometheus failure_reason label set.
+// Package taskfailure owns the failure_reason values persisted on tasks and
+// chat messages and exposed as Prometheus labels. Server, daemon, and cloud
+// callers must use this package so classification stays identical at write
+// time.
 //
 // The 23 canonical values fall into two groups:
 //
@@ -31,11 +18,8 @@
 //     Classify(rawError) when the agent process surfaced an error string.
 //     The `agent_error.` prefix identifies membership in this set.
 //
-// Wire stability: the string forms of these constants are persisted into
-// the database and surfaced as Prometheus labels. Renaming a value is a
-// breaking change. New values may be added — but only after the SQL
-// classifier in MUL-1949 grows a matching rule and a backfill migration
-// re-classifies historical rows.
+// The string forms are current persisted and metric contracts. Renaming or
+// adding one requires an explicit data-contract change.
 package taskfailure
 
 // Reason is a string-backed enum of the canonical failure_reason values

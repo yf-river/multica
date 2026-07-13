@@ -718,9 +718,7 @@ func formatAdmissionReason(ap db.Autopilot, raw string) string {
 	case "agent has no runtime bound":
 		return prefix + "agent has no runtime bound"
 	default:
-		// raw is "agent runtime is X" — surface the runtime status while
-		// preserving the legacy "at dispatch time" suffix from MUL-1899
-		// so alert queries do not need to change.
+		// raw is "agent runtime is X"; keep the alert's stable suffix.
 		return raw + " at dispatch time"
 	}
 }

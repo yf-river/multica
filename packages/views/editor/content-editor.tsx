@@ -255,7 +255,7 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
     //
     // One exception on id collision: when the caller's copy has an EMPTY
     // `download_url` (the create-issue draft strips the short-lived signed URL
-    // before persisting), backfill it from the session upload. The session copy
+        // before persisting), populate it from the session upload. The session copy
     // holds the this-response signed URL, so the just-pasted image first-paints
     // from it instead of taking an extra redirect hop through `markdown_url`.
     const providerAttachments = useMemo(() => {

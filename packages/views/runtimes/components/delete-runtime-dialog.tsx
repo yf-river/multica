@@ -34,8 +34,8 @@ import { isSelfHealingRuntime } from "../utils";
 // DeleteRuntimeDialog is the single confirmation surface for runtime
 // deletion across the list-page kebab and the detail-page Diagnostics
 // card. It runs in two modes that share the same shell — light when no
-// agents are bound (matches the legacy "are you sure" prompt) and
-// cascade when active agents would be archived as part of the delete.
+// agents are bound and cascade when active agents would be archived as
+// part of the delete.
 //
 // Mode is decided dynamically:
 //   1. Initial: peek at the cached agent list and pick light vs cascade
@@ -186,8 +186,8 @@ export function DeleteRuntimeDialog({
     onOpenChange(next);
   };
 
-  // Light mode keeps the legacy short copy. Cascade mode mirrors the plan
-  // 赵刚 wrote: destructive title with the count, a destructive warning
+  // Light mode keeps the short confirmation copy. Cascade mode uses a
+  // destructive title with the count, a destructive warning
   // banner, the agent table, then a checkbox confirm whose label restates
   // the consequences in the same words as the warning.
   return (
@@ -251,9 +251,7 @@ function SelfHealNotice({ runtime }: { runtime: AgentRuntime }) {
 }
 
 // ---------------------------------------------------------------------------
-// Light mode — no active agents, classic "are you sure" prompt. Title and
-// description match the legacy AlertDialog so existing screenshots / muscle
-// memory still apply.
+// Light mode — no active agents, short "are you sure" prompt.
 // ---------------------------------------------------------------------------
 
 function LightBody({

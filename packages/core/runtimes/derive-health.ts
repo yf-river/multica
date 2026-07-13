@@ -15,9 +15,7 @@ const ABOUT_TO_GC_THRESHOLD_MS = 6 * 24 * 3600 * 1000; // 6 days
 export function deriveRuntimeHealth(runtime: AgentRuntime, now: number): RuntimeHealth {
   if (runtime.status === "online") return "online";
 
-  // No last_seen timestamp ever recorded — treat as long-offline. This is
-  // an unusual case (the back-end always sets last_seen_at on register),
-  // but defending against it keeps the UI from crashing on legacy rows.
+  // A runtime that has never reported last_seen_at is long-offline.
   const lastSeen = runtime.last_seen_at ? new Date(runtime.last_seen_at).getTime() : 0;
   const offlineFor = now - lastSeen;
 
