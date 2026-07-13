@@ -400,6 +400,7 @@ func TestCommentTriggeredBriefCarriesNewCommentsHint(t *testing.T) {
 	ctx := TaskContextForEnv{
 		IssueID:          issueID,
 		TriggerCommentID: "reply-abc",
+		TriggerThreadID:  "reply-abc",
 		NewCommentCount:  4,
 		NewCommentsSince: since,
 	}

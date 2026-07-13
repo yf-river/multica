@@ -3443,6 +3443,7 @@ func TestInjectRuntimeConfigCommentTriggerColdStartRead(t *testing.T) {
 	ctx := TaskContextForEnv{
 		IssueID:          issueID,
 		TriggerCommentID: triggerID,
+		TriggerThreadID:  triggerID,
 	}
 	if _, err := InjectRuntimeConfig(dir, "claude", ctx); err != nil {
 		t.Fatalf("InjectRuntimeConfig failed: %v", err)

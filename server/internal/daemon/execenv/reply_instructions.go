@@ -22,32 +22,18 @@ import "fmt"
 // there are no new comments (newCommentCount <= 0) or issueID is empty. In those
 // cases the caller falls back to BuildResumedCommentsHint (when a prior session
 // is active) or BuildColdCommentsHint.
-func BuildNewCommentsHint(issueID, triggerCommentID, triggerThreadID, newCommentsSince string, newCommentCount int) string {
-	if newCommentCount <= 0 || newCommentsSince == "" || issueID == "" {
+func BuildNewCommentsHint(issueID, triggerThreadID, newCommentsSince string, newCommentCount int) string {
+	if newCommentCount <= 0 || newCommentsSince == "" || issueID == "" || triggerThreadID == "" {
 		return ""
 	}
-	threadID := activeThreadID(triggerThreadID, triggerCommentID)
-	// When we know the triggering thread, steer the agent to read THAT thread
-	// first rather than blindly pulling every new comment issue-wide. The
-	// issue-wide --since catch-up is demoted to an only-if-needed fallback.
-	if threadID != "" {
-		return fmt.Sprintf(
-			"%d new comment(s) on this issue since your last run — don't read them all blindly. "+
-				"Start with the thread your triggering comment is in: "+
-				"`multica issue comment list %s --thread %s --since %s --output json` "+
-				"(swap `--since` for `--tail 30` if you need the full thread, not just the delta). "+
-				"Only if you need context from the other threads, catch up issue-wide: "+
-				"`multica issue comment list %s --since %s --output json`.\n\n",
-			newCommentCount, issueID, threadID, newCommentsSince, issueID, newCommentsSince,
-		)
-	}
-	// Defensive: comment triggers always carry a trigger id, but if one is
-	// missing there is no thread to anchor on, so fall back to the plain
-	// issue-wide catch-up.
 	return fmt.Sprintf(
-		"%d new comment(s) on this issue since your last run. Catch up: "+
+		"%d new comment(s) on this issue since your last run — don't read them all blindly. "+
+			"Start with the thread your triggering comment is in: "+
+			"`multica issue comment list %s --thread %s --since %s --output json` "+
+			"(swap `--since` for `--tail 30` if you need the full thread, not just the delta). "+
+			"Only if you need context from the other threads, catch up issue-wide: "+
 			"`multica issue comment list %s --since %s --output json`.\n\n",
-		newCommentCount, issueID, newCommentsSince,
+		newCommentCount, issueID, triggerThreadID, newCommentsSince, issueID, newCommentsSince,
 	)
 }
 
@@ -60,8 +46,7 @@ func BuildNewCommentsHint(issueID, triggerCommentID, triggerThreadID, newComment
 // replies should refresh the triggering conversation rather than trusting
 // resumed memory alone.
 func BuildResumedCommentsHint(issueID, triggerCommentID, triggerThreadID string) string {
-	threadID := activeThreadID(triggerThreadID, triggerCommentID)
-	if issueID == "" || threadID == "" {
+	if issueID == "" || triggerThreadID == "" {
 		return ""
 	}
 	return fmt.Sprintf(
@@ -71,7 +56,7 @@ func BuildResumedCommentsHint(issueID, triggerCommentID, triggerThreadID string)
 			"If your reply depends on thread context, do not rely only on resumed session memory — "+
 			"first pull the triggering conversation with: "+
 			"`multica issue comment list %s --thread %s --tail 30 --output json`.\n\n",
-		threadID, triggerCommentID, issueID, threadID,
+		triggerThreadID, triggerCommentID, issueID, triggerThreadID,
 	)
 }
 
@@ -88,9 +73,8 @@ func BuildResumedCommentsHint(issueID, triggerCommentID, triggerThreadID string)
 // single-source rule as BuildNewCommentsHint, PR #2816). Returns "" when there
 // is no triggering comment to thread from, so the caller can keep a final plain
 // fallback.
-func BuildColdCommentsHint(issueID, triggerCommentID, triggerThreadID string) string {
-	threadID := activeThreadID(triggerThreadID, triggerCommentID)
-	if issueID == "" || threadID == "" {
+func BuildColdCommentsHint(issueID, triggerThreadID string) string {
+	if issueID == "" || triggerThreadID == "" {
 		return ""
 	}
 	return fmt.Sprintf(
@@ -98,15 +82,8 @@ func BuildColdCommentsHint(issueID, triggerCommentID, triggerThreadID string) st
 			"`multica issue comment list %s --thread %s --tail 30 --output json` "+
 			"(that thread's root + its 30 newest replies). "+
 			"Need cross-thread background? `multica issue comment list %s --recent 20 --output json`.\n\n",
-		issueID, threadID, issueID,
+		issueID, triggerThreadID, issueID,
 	)
-}
-
-func activeThreadID(triggerThreadID, triggerCommentID string) string {
-	if triggerThreadID != "" {
-		return triggerThreadID
-	}
-	return triggerCommentID
 }
 
 // BuildCommentReplyInstructions returns the canonical block telling an agent
