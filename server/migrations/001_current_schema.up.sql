@@ -1068,6 +1068,7 @@ CREATE TABLE public.prompt_evaluation_asset (
     dataset_row_count integer DEFAULT 0 NOT NULL,
     test_suite_case_count integer DEFAULT 0 NOT NULL,
     experiment_dimension_count integer DEFAULT 0 NOT NULL,
+    CONSTRAINT prompt_evaluation_asset_payload_is_object CHECK ((jsonb_typeof(payload) = 'object'::text)),
     CONSTRAINT prompt_evaluation_asset_status_check CHECK ((status = ANY (ARRAY['启用'::text, '归档'::text]))),
     CONSTRAINT prompt_evaluation_asset_type_check CHECK ((asset_type = ANY (ARRAY['数据集'::text, '测试套件'::text])))
 );

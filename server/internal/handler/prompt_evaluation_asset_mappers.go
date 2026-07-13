@@ -15,6 +15,13 @@ import (
 )
 
 func promptEvaluationAssetToResponse(asset db.PromptEvaluationAsset) PromptEvaluationAssetResponse {
+	payload, err := decodeJSONObject(asset.Payload, "prompt evaluation asset payload")
+	if err != nil {
+		// The current schema and migration enforce this database invariant. A
+		// violation is persistence corruption, not a value that the API may
+		// safely replace with an empty object.
+		panic("handler: " + err.Error())
+	}
 	return PromptEvaluationAssetResponse{
 		ID:                       uuidToString(asset.ID),
 		WorkspaceID:              uuidToString(asset.WorkspaceID),
@@ -22,7 +29,7 @@ func promptEvaluationAssetToResponse(asset db.PromptEvaluationAsset) PromptEvalu
 		Name:                     asset.Name,
 		Description:              asset.Description,
 		AssetType:                asset.AssetType,
-		Payload:                  decodeJSONDefault(asset.Payload, map[string]any{}),
+		Payload:                  payload,
 		Status:                   asset.Status,
 		CreatedBy:                uuidToPtr(asset.CreatedBy),
 		CreatedAt:                timestampToString(asset.CreatedAt),
