@@ -228,15 +228,11 @@ func webhookPathForToken(token string) string {
 func runToResponse(r db.AutopilotRun) AutopilotRunResponse {
 	var payload any
 	if r.TriggerPayload != nil {
-		if err := json.Unmarshal(r.TriggerPayload, &payload); err != nil {
-			slog.Warn("decode autopilot trigger payload failed", "run_id", uuidToString(r.ID), "error", err)
-		}
+		payload = mustDecodePersistedJSONObject(r.TriggerPayload, "autopilot run trigger payload")
 	}
 	var result any
 	if r.Result != nil {
-		if err := json.Unmarshal(r.Result, &result); err != nil {
-			slog.Warn("decode autopilot result failed", "run_id", uuidToString(r.ID), "error", err)
-		}
+		result = mustDecodePersistedJSONValue(r.Result, "autopilot run result")
 	}
 	return AutopilotRunResponse{
 		ID:             uuidToString(r.ID),

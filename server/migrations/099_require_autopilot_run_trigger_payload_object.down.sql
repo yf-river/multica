@@ -1,0 +1,1 @@
+ALTER TABLE autopilot_run DROP CONSTRAINT IF EXISTS autopilot_run_trigger_payload_is_object;

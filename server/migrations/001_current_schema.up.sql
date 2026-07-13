@@ -600,6 +600,7 @@ CREATE TABLE public.autopilot_run (
     result jsonb,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     squad_id uuid,
+    CONSTRAINT autopilot_run_trigger_payload_is_object CHECK (((trigger_payload IS NULL) OR (jsonb_typeof(trigger_payload) = 'object'::text))),
     CONSTRAINT autopilot_run_source_check CHECK ((source = ANY (ARRAY['schedule'::text, 'manual'::text, 'webhook'::text]))),
     CONSTRAINT autopilot_run_status_check CHECK ((status = ANY (ARRAY['issue_created'::text, 'running'::text, 'completed'::text, 'failed'::text, 'skipped'::text])))
 );

@@ -177,6 +177,44 @@ func TestBuildIssueDescription_WebhookSourceMissingEnvelope(t *testing.T) {
 	}
 }
 
+func TestBuildIssueDescription_RejectsMalformedPersistedWebhookPayload(t *testing.T) {
+	s := &AutopilotService{}
+	ap := db.Autopilot{Description: pgtype.Text{String: "thing", Valid: true}}
+	run := db.AutopilotRun{
+		Source:         "webhook",
+		TriggerPayload: []byte(`not-json`),
+		TriggeredAt:    pgtype.Timestamptz{Time: time.Now().UTC(), Valid: true},
+	}
+
+	if _, err := s.buildIssueDescription(ap, run, "UTC"); err == nil {
+		t.Fatal("malformed persisted webhook payload should fail")
+	}
+}
+
+func TestValidateAutopilotTriggerPayload(t *testing.T) {
+	tests := []struct {
+		name    string
+		payload []byte
+		wantErr bool
+	}{
+		{name: "absent", payload: nil},
+		{name: "object", payload: []byte(`{"event":"manual"}`)},
+		{name: "array", payload: []byte(`[]`), wantErr: true},
+		{name: "scalar", payload: []byte(`true`), wantErr: true},
+		{name: "null", payload: []byte(`null`), wantErr: true},
+		{name: "malformed", payload: []byte(`{`), wantErr: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateAutopilotTriggerPayload(test.payload)
+			if (err != nil) != test.wantErr {
+				t.Fatalf("validateAutopilotTriggerPayload(%q) error = %v, wantErr %v", test.payload, err, test.wantErr)
+			}
+		})
+	}
+}
+
 func TestBuildIssueDescription_NonWebhookSourceWithPayloadIgnored(t *testing.T) {
 	// Manual / schedule with a payload should not get a webhook block.
 	s := &AutopilotService{}

@@ -94,6 +94,9 @@ func (s *AutopilotService) dispatchAutopilot(
 	payload []byte,
 	requestKey pgtype.UUID,
 ) (*db.AutopilotRun, error) {
+	if err := validateAutopilotTriggerPayload(payload); err != nil {
+		return nil, err
+	}
 	if requestKey.Valid {
 		if replay, err := s.awaitAutopilotRunReplay(ctx, autopilot, source, requestKey); err == nil {
 			return &replay, nil
@@ -1150,22 +1153,25 @@ func (s *AutopilotService) buildIssueDescription(ap db.Autopilot, run db.Autopil
 			Event        string          `json:"event"`
 			EventPayload json.RawMessage `json:"eventPayload"`
 		}
-		if err := json.Unmarshal(run.TriggerPayload, &env); err == nil {
-			if env.Event != "" {
-				event = env.Event
+		if err := json.Unmarshal(run.TriggerPayload, &env); err != nil {
+			return pgtype.Text{}, fmt.Errorf("decode persisted webhook envelope: %w", err)
+		}
+		if env.Event != "" {
+			event = env.Event
+		}
+		if len(env.EventPayload) > 0 {
+			pretty, err := prettifyJSON(env.EventPayload)
+			if err != nil {
+				return pgtype.Text{}, fmt.Errorf("format persisted webhook event payload: %w", err)
 			}
-			if len(env.EventPayload) > 0 {
-				if pretty, err := prettifyJSON(env.EventPayload); err == nil {
-					payloadJSON = pretty
-				}
-			}
+			payloadJSON = pretty
 		}
 		if len(payloadJSON) == 0 {
-			if pretty, err := prettifyJSON(run.TriggerPayload); err == nil {
-				payloadJSON = pretty
-			} else {
-				payloadJSON = run.TriggerPayload
+			pretty, err := prettifyJSON(run.TriggerPayload)
+			if err != nil {
+				return pgtype.Text{}, fmt.Errorf("format persisted webhook envelope: %w", err)
 			}
+			payloadJSON = pretty
 		}
 		b.WriteString("\n\nWebhook event: ")
 		b.WriteString(event)
@@ -1175,6 +1181,17 @@ func (s *AutopilotService) buildIssueDescription(ap db.Autopilot, run db.Autopil
 	}
 
 	return pgtype.Text{String: b.String(), Valid: true}, nil
+}
+
+func validateAutopilotTriggerPayload(payload []byte) error {
+	if len(payload) == 0 {
+		return nil
+	}
+	var value map[string]any
+	if err := json.Unmarshal(payload, &value); err != nil || value == nil {
+		return errors.New("autopilot trigger payload must be a JSON object")
+	}
+	return nil
 }
 
 func prettifyJSON(raw []byte) ([]byte, error) {
