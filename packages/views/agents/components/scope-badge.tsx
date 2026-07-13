@@ -1,10 +1,7 @@
 "use client";
 
 import type { AgentScope } from "@multica/core/types";
-import {
-  agentResourceScope,
-  ResourceScopeBadge,
-} from "../../common/resource-scope";
+import { ResourceScopeBadge } from "../../common/resource-scope";
 import { useT } from "../../i18n";
 
 /**
@@ -26,7 +23,7 @@ export function ScopeBadge({
   className?: string;
 }) {
   const { t } = useT("agents");
-  const scope = agentResourceScope(value);
+  const scope = value;
   const label = t(($) => $.scope[value].label);
   const tooltip = t(($) => $.scope[value].tooltip);
 

@@ -67,10 +67,7 @@ import type { Squad, SquadMember, SquadMemberStatus, SquadMemberStatusValue, Age
 import { useT } from "../../i18n";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 import { sopStageDisplayName } from "../../common/sop-stage-labels";
-import {
-  squadResourceScope,
-  ResourceScopeBadge,
-} from "../../common/resource-scope";
+import { ResourceScopeBadge } from "../../common/resource-scope";
 
 export function SquadDetailPage() {
   const { t } = useT("squads");
@@ -837,7 +834,7 @@ function SquadDetailInspector({
           </InspectorRow>
           <InspectorRow label="使用范围">
             <ResourceScopeBadge
-              scope={squadResourceScope(squad.scope)}
+              scope={squad.scope}
               label={
                 squad.scope === "personal"
                   ? t(($) => $.page.scope_personal)

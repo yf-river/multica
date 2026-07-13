@@ -100,7 +100,6 @@ import { ActorAvatar } from "../../common/actor-avatar";
 import { ModelDropdown } from "../../agents/components/model-dropdown";
 import { FILTER_ITEM_CLASS, HoverCheck } from "../../common/hover-check";
 import {
-  squadResourceScope,
   ResourceScopeBadge,
   resourceSegmentedOptionClass,
 } from "../../common/resource-scope";
@@ -211,7 +210,7 @@ function NameCell({ squad }: { squad: Squad }) {
             {squad.name}
           </span>
           <ResourceScopeBadge
-            scope={squadResourceScope(squad.scope)}
+            scope={squad.scope}
             label={
               squad.scope === "personal"
                 ? t(($) => $.page.scope_personal)
