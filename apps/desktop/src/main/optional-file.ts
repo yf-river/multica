@@ -1,11 +1,8 @@
 import { readFile, rm } from "node:fs/promises";
+import { errorMessage } from "./error-message";
 
 function isMissingFile(error: unknown): boolean {
   return (error as NodeJS.ErrnoException).code === "ENOENT";
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 export async function readOptionalTextFile(path: string): Promise<string | null> {

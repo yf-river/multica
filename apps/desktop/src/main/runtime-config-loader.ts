@@ -8,6 +8,7 @@ import {
   type RuntimeConfigEnv,
   type RuntimeConfigResult,
 } from "../shared/runtime-config";
+import { errorMessage } from "./error-message";
 
 export async function loadRuntimeConfig(options: {
   isDev: boolean;
@@ -50,10 +51,6 @@ function isMissingFileError(err: unknown): boolean {
       "code" in err &&
       (err as NodeJS.ErrnoException).code === "ENOENT",
   );
-}
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 export type { RuntimeConfigResult };

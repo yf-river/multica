@@ -2,6 +2,7 @@ import { ipcMain, dialog, BrowserWindow } from "electron";
 import { access, stat } from "fs/promises";
 import { constants as fsConstants } from "fs";
 import { basename, isAbsolute } from "path";
+import { errorMessage } from "./error-message";
 
 interface PickDirectoryResult {
   ok: boolean;
@@ -51,10 +52,6 @@ async function validateLocalDirectory(
     return { ok: false, reason: "not_writable" };
   }
   return { ok: true };
-}
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 export function setupLocalDirectory(

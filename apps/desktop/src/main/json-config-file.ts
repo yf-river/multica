@@ -1,8 +1,5 @@
 import { readOptionalTextFile } from "./optional-file";
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
+import { errorMessage } from "./error-message";
 
 /**
  * Read an optional JSON object without turning corruption or I/O failures into

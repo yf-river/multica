@@ -31,6 +31,7 @@ import {
 import { readOptionalJsonObject } from "./json-config-file";
 import { readOptionalTextFile, removeOptionalFile } from "./optional-file";
 import { loadDaemonPrefs, saveDaemonPrefs } from "./daemon-prefs";
+import { errorMessage } from "./error-message";
 
 const DEFAULT_HEALTH_PORT = 19514;
 const POLL_INTERVAL_MS = 5_000;
@@ -727,10 +728,6 @@ type ReauthResult =
   | { ok: true }
   | { ok: false; reason: "session_invalid" }
   | { ok: false; reason: "transient"; message: string };
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
 
 /**
  * Recover the local daemon from the "auth_expired" state. Drops the stale
