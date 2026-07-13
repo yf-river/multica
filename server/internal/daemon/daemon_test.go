@@ -92,6 +92,24 @@ func TestLoadProjectSkillsForPolicyFiltersSOPStageSkills(t *testing.T) {
 	}
 }
 
+func TestLoadProjectSkillsForPolicyRejectsUnreadableActiveSkill(t *testing.T) {
+	repoDir := t.TempDir()
+	brokenSkillFile := filepath.Join(repoDir, ".codebuddy", "skills", "04-implement", "SKILL.md")
+	if err := os.MkdirAll(brokenSkillFile, 0o755); err != nil {
+		t.Fatalf("seed unreadable project skill: %v", err)
+	}
+
+	if _, err := loadProjectSkillsForPolicy(repoDir, TaskExecutionPolicy{ProjectSkillMode: "implementation"}); err == nil {
+		t.Fatal("active project skill read failure should block the task overlay")
+	}
+}
+
+func TestLoadProjectSkillsForPolicyRejectsUnknownMode(t *testing.T) {
+	if _, err := loadProjectSkillsForPolicy(t.TempDir(), TaskExecutionPolicy{ProjectSkillMode: "everything"}); err == nil {
+		t.Fatal("unknown project skill mode should not widen access to every project skill")
+	}
+}
+
 func TestNormalizeServerBaseURL(t *testing.T) {
 	t.Parallel()
 

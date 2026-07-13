@@ -1,25 +1,21 @@
 package daemon
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
-	"io"
-	"log/slog"
 	"strings"
 	"testing"
 
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 )
 
-func quietLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(io.Discard, nil))
-}
-
 func TestDecodeOpenclawRuntimeConfigEmpty(t *testing.T) {
 	t.Parallel()
 
-	mode, gw := decodeOpenclawRuntimeConfig(nil, quietLogger())
+	mode, gw, err := decodeOpenclawRuntimeConfig(nil)
+	if err != nil {
+		t.Fatalf("decode empty config: %v", err)
+	}
 	if mode != "" {
 		t.Errorf("mode for nil payload: got %q, want \"\"", mode)
 	}
@@ -40,7 +36,10 @@ func TestDecodeOpenclawRuntimeConfigGatewayMode(t *testing.T) {
 			"tls": true
 		}
 	}`)
-	mode, gw := decodeOpenclawRuntimeConfig(raw, quietLogger())
+	mode, gw, err := decodeOpenclawRuntimeConfig(raw)
+	if err != nil {
+		t.Fatalf("decode gateway config: %v", err)
+	}
 	if mode != "gateway" {
 		t.Errorf("mode: got %q, want %q", mode, "gateway")
 	}
@@ -55,17 +54,11 @@ func TestDecodeOpenclawRuntimeConfigGatewayMode(t *testing.T) {
 	}
 }
 
-func TestDecodeOpenclawRuntimeConfigMalformedFailsSoftToLocal(t *testing.T) {
+func TestDecodeOpenclawRuntimeConfigRejectsMalformedPayload(t *testing.T) {
 	t.Parallel()
 
-	// A broken JSON blob must never block dispatch — the agent runs in the
-	// historical embedded mode until the user fixes the config.
-	mode, gw := decodeOpenclawRuntimeConfig(json.RawMessage(`{"mode": "gateway"`), quietLogger())
-	if mode != "" {
-		t.Errorf("mode for malformed payload: got %q, want \"\"", mode)
-	}
-	if !gw.IsZero() {
-		t.Errorf("gateway for malformed payload: got %+v, want zero", gw)
+	if _, _, err := decodeOpenclawRuntimeConfig(json.RawMessage(`{"mode": "gateway"`)); err == nil {
+		t.Fatal("malformed payload should fail")
 	}
 }
 
@@ -74,7 +67,10 @@ func TestDecodeOpenclawRuntimeConfigModeOnly(t *testing.T) {
 
 	// Users may switch to gateway mode and rely on the daemon host's local
 	// ~/.openclaw/openclaw.json for the endpoint — gateway block stays zero.
-	mode, gw := decodeOpenclawRuntimeConfig(json.RawMessage(`{"mode": "gateway"}`), quietLogger())
+	mode, gw, err := decodeOpenclawRuntimeConfig(json.RawMessage(`{"mode": "gateway"}`))
+	if err != nil {
+		t.Fatalf("decode mode-only gateway config: %v", err)
+	}
 	if mode != "gateway" {
 		t.Errorf("mode: got %q, want %q", mode, "gateway")
 	}
@@ -129,7 +125,10 @@ func TestDecodeOpenclawRuntimeConfigLocalModeDropsGatewayPin(t *testing.T) {
 		"mode": "local",
 		"gateway": {"host": "gw.internal", "port": 18789, "token": "secret", "tls": true}
 	}`)
-	mode, gw := decodeOpenclawRuntimeConfig(raw, quietLogger())
+	mode, gw, err := decodeOpenclawRuntimeConfig(raw)
+	if err != nil {
+		t.Fatalf("decode local config: %v", err)
+	}
 	if mode != "local" {
 		t.Errorf("mode: got %q, want %q", mode, "local")
 	}
@@ -138,26 +137,14 @@ func TestDecodeOpenclawRuntimeConfigLocalModeDropsGatewayPin(t *testing.T) {
 	}
 }
 
-// TestDecodeOpenclawRuntimeConfigUnknownModeWarnsAndDropsPin — a typo'd mode
-// neither behaves like gateway nor silently like local: it falls back to local
-// (zero pin) AND logs a WARN so the misconfiguration is discoverable.
-func TestDecodeOpenclawRuntimeConfigUnknownModeWarnsAndDropsPin(t *testing.T) {
+func TestDecodeOpenclawRuntimeConfigRejectsUnknownMode(t *testing.T) {
 	t.Parallel()
 
-	var buf bytes.Buffer
-	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
 	raw := json.RawMessage(`{
 		"mode": "gatway",
 		"gateway": {"host": "gw.internal", "port": 18789, "token": "secret"}
 	}`)
-	mode, gw := decodeOpenclawRuntimeConfig(raw, logger)
-	if mode != "gatway" {
-		t.Errorf("mode: got %q, want %q", mode, "gatway")
-	}
-	if !gw.IsZero() {
-		t.Errorf("gateway for unknown mode: got %+v, want zero", gw)
-	}
-	if !strings.Contains(buf.String(), "unrecognized mode") {
-		t.Errorf("expected WARN about unrecognized mode, got: %q", buf.String())
+	if _, _, err := decodeOpenclawRuntimeConfig(raw); err == nil {
+		t.Fatal("unknown mode should fail")
 	}
 }

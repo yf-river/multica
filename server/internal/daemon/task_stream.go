@@ -470,6 +470,11 @@ func loadProjectSkillsForPolicy(repoDir string, policy TaskExecutionPolicy) ([]e
 	if strings.TrimSpace(repoDir) == "" || policy.ProjectSkillMode == "none" {
 		return nil, nil
 	}
+	switch policy.ProjectSkillMode {
+	case "all", "stage", "implementation", "verification":
+	default:
+		return nil, fmt.Errorf("unsupported project skill mode %q", policy.ProjectSkillMode)
+	}
 	var result []execenv.SkillContextForEnv
 	for _, root := range []string{
 		filepath.Join(repoDir, ".codebuddy", "skills"),
@@ -522,7 +527,7 @@ func projectSkillAllowedByPolicy(name string, policy TaskExecutionPolicy) bool {
 	case "verification":
 		return key == "05-verify" || !isSOPStageSkillName(key)
 	default:
-		return true
+		return false
 	}
 }
 

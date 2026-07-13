@@ -133,13 +133,15 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		agentMcpConfig = task.Agent.McpConfig
 	}
 	// Decode openclaw-specific runtime_config knobs once so reuse / prepare /
-	// ExecOptions all see the same mode + gateway pin (issue #3260). Parse
-	// failures fail soft to local mode — a broken JSON blob must never block
-	// task dispatch.
+	// ExecOptions all see the same mode + gateway pin (issue #3260).
 	var openclawMode string
 	var openclawGateway execenv.OpenclawGatewayPin
 	if task.Agent != nil && provider == "openclaw" {
-		openclawMode, openclawGateway = decodeOpenclawRuntimeConfig(task.Agent.RuntimeConfig, d.logger)
+		var err error
+		openclawMode, openclawGateway, err = decodeOpenclawRuntimeConfig(task.Agent.RuntimeConfig)
+		if err != nil {
+			return TaskResult{}, err
+		}
 	}
 	var issueSpace *preparedIssueExecutionSpace
 	if issueExecutionSpaceEnabled(task) && executionPolicy.CanAccessRepo {
@@ -150,8 +152,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		}
 		projectSkills, err := loadProjectSkillsForPolicy(issueSpace.PrimaryRepoDir, executionPolicy)
 		if err != nil {
-			taskLog.Warn("project skills overlay failed", "error", err, "repo_dir", issueSpace.PrimaryRepoDir)
-		} else if len(projectSkills) > 0 {
+			return TaskResult{}, fmt.Errorf("load project skills overlay: %w", err)
+		}
+		if len(projectSkills) > 0 {
 			taskCtx.AgentSkills = mergeSkillContexts(taskCtx.AgentSkills, projectSkills)
 			taskLog.Info("project skills overlay loaded",
 				"repo_dir", issueSpace.PrimaryRepoDir,

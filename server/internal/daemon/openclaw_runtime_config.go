@@ -2,7 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
-	"log/slog"
+	"fmt"
 
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 )
@@ -10,7 +10,7 @@ import (
 // openclawRuntimeConfig is the schema the daemon expects under an openclaw
 // agent's `runtime_config` JSONB column. All fields are optional; absence
 // (or the agent's whole runtime_config being null/empty) keeps the
-// historical embedded behaviour so existing agents are unaffected.
+// current local execution behaviour.
 //
 // Schema (issue #3260):
 //
@@ -51,36 +51,31 @@ type openclawRuntimeGatewayConfig struct {
 // agent's runtime_config payload. Returns the routing mode plus the gateway
 // pin shaped for execenv. The pin is non-zero only in gateway mode — any
 // other mode drops it so a local-mode payload can't smuggle a bearer token
-// into the per-task wrapper. A malformed payload logs a warning and degrades
-// to local mode (mode="", zero gateway) rather than failing dispatch — the
-// alternative would let one bad save block every task that agent runs.
-func decodeOpenclawRuntimeConfig(raw json.RawMessage, logger *slog.Logger) (string, execenv.OpenclawGatewayPin) {
+// into the per-task wrapper. Empty config is the current local default;
+// malformed JSON and unknown modes are configuration errors, not permission to
+// silently run the task through a different execution path.
+func decodeOpenclawRuntimeConfig(raw json.RawMessage) (string, execenv.OpenclawGatewayPin, error) {
 	if len(raw) == 0 {
-		return "", execenv.OpenclawGatewayPin{}
+		return "", execenv.OpenclawGatewayPin{}, nil
 	}
 	var cfg openclawRuntimeConfig
 	if err := json.Unmarshal(raw, &cfg); err != nil {
-		logger.Warn("openclaw runtime_config: parse failed; falling back to local mode", "error", err)
-		return "", execenv.OpenclawGatewayPin{}
+		return "", execenv.OpenclawGatewayPin{}, fmt.Errorf("decode openclaw runtime_config: %w", err)
 	}
-	// Surface an unrecognized non-empty mode instead of silently treating it
-	// as local — a typo like "gatway" would otherwise leave the user wondering
-	// why their gateway config is ignored.
 	if cfg.Mode != "" && cfg.Mode != "local" && cfg.Mode != "gateway" {
-		logger.Warn("openclaw runtime_config: unrecognized mode; falling back to local mode",
-			"mode", cfg.Mode)
+		return "", execenv.OpenclawGatewayPin{}, fmt.Errorf("openclaw runtime_config mode %q is not local or gateway", cfg.Mode)
 	}
 	// Only gateway mode consults the pin. For every other mode (local / empty /
 	// unrecognized) drop the gateway block so a stray
 	// {"mode":"local","gateway":{...,"token":"..."}} never writes the bearer
 	// token into the 0o600 per-task wrapper that `--local` makes openclaw ignore.
 	if cfg.Mode != "gateway" {
-		return cfg.Mode, execenv.OpenclawGatewayPin{}
+		return cfg.Mode, execenv.OpenclawGatewayPin{}, nil
 	}
 	return cfg.Mode, execenv.OpenclawGatewayPin{
 		Host:  cfg.Gateway.Host,
 		Port:  cfg.Gateway.Port,
 		Token: cfg.Gateway.Token,
 		TLS:   cfg.Gateway.TLS,
-	}
+	}, nil
 }
