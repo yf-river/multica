@@ -536,21 +536,6 @@ func TestCachedDiscoveryDoesNotCacheEmpty(t *testing.T) {
 	}
 }
 
-func TestParsePiModels(t *testing.T) {
-	input := `openai:gpt-4o
-anthropic:claude-opus-4-7
-openai:gpt-4o
-bareword
-`
-	models := parsePiModels(input)
-	if len(models) != 2 {
-		t.Fatalf("expected 2 models, got %d: %+v", len(models), models)
-	}
-	if models[0].ID != "openai/gpt-4o" {
-		t.Errorf("expected colon normalized to slash: %+v", models[0])
-	}
-}
-
 func TestParsePiModelsTableFormat(t *testing.T) {
 	input := `provider             model                   context  max-out  thinking  images
 bailian-coding-plan  glm-4.7                 202.8K   16.4K    no        no
@@ -573,8 +558,7 @@ bareword-only-line
 	if models[2].ID != "opencode/claude-sonnet-4-6" || models[2].Provider != "opencode" {
 		t.Errorf("unexpected third model: %+v", models[2])
 	}
-	// Colon inside a model name in column 1 must be preserved — only
-	// the legacy `provider:model` form gets colon→slash normalization.
+	// A colon inside the model column is part of the current model ID.
 	if models[3].ID != "opencode/claude-sonnet-4-6:exp" || models[3].Provider != "opencode" {
 		t.Errorf("expected ':' inside table-format model name to be preserved: %+v", models[3])
 	}
@@ -594,58 +578,21 @@ func TestDiscoverPiModelsNonZeroExit(t *testing.T) {
 
 	const table = "provider         model        context  max-out  thinking  images\n" +
 		"glm-coding-plan  glm-4.7      202.8K   16.4K    no        no"
-	// The unmatched-pattern warning, with and without the `Warning:` prefix —
-	// the prefix is not guaranteed across pi versions, and the bare form is
-	// what slips past a naive guard into a bogus `No/models` model.
+	// The unmatched-pattern warning is emitted on stderr while the table
+	// remains on stdout.
 	const prefixed = `Warning: No models match pattern "opencode-go/mimo-v2-omni"`
-	const bare = `No models match pattern "opencode-go/mimo-v2-pro"`
+	fakePath := filepath.Join(t.TempDir(), "pi")
+	writeTestExecutable(t, fakePath, []byte("#!/bin/sh\n"+
+		"cat <<'EOF'\n"+table+"\nEOF\n"+
+		"echo "+strconv.Quote(prefixed)+" >&2\n"+
+		"exit 1\n"))
 
-	cases := []struct {
-		name   string
-		script string
-	}{
-		{
-			// Newer pi prints the catalog to stdout; the stale-pattern
-			// warning goes to stderr and the process exits non-zero.
-			name: "catalog on stdout",
-			script: "#!/bin/sh\n" +
-				"cat <<'EOF'\n" + table + "\nEOF\n" +
-				"echo " + strconv.Quote(prefixed) + " >&2\n" +
-				"exit 1\n",
-		},
-		{
-			// Older pi prints the catalog (and the warning) to stderr; same
-			// non-zero exit. The stderr fallback must still parse the catalog.
-			name: "catalog and prefixed warning on stderr",
-			script: "#!/bin/sh\n" +
-				"cat >&2 <<'EOF'\n" + table + "\n" + prefixed + "\nEOF\n" +
-				"exit 1\n",
-		},
-		{
-			// Same, but the warning has no `Warning:` prefix — must not leak in
-			// as a `No/models` row.
-			name: "catalog and bare warning on stderr",
-			script: "#!/bin/sh\n" +
-				"cat >&2 <<'EOF'\n" + table + "\n" + bare + "\nEOF\n" +
-				"exit 1\n",
-		},
+	models, err := discoverPiModels(context.Background(), fakePath)
+	if err != nil {
+		t.Fatalf("discoverPiModels: %v", err)
 	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			fakePath := filepath.Join(t.TempDir(), "pi")
-			writeTestExecutable(t, fakePath, []byte(tc.script))
-
-			models, err := discoverPiModels(context.Background(), fakePath)
-			if err != nil {
-				t.Fatalf("discoverPiModels: %v", err)
-			}
-			// Exactly the resolvable model — no warning line coined into a
-			// bogus entry, no header row.
-			if len(models) != 1 || models[0].ID != "glm-coding-plan/glm-4.7" {
-				t.Fatalf("expected exactly [glm-coding-plan/glm-4.7] despite non-zero exit, got %+v", models)
-			}
-		})
+	if len(models) != 1 || models[0].ID != "glm-coding-plan/glm-4.7" {
+		t.Fatalf("expected exactly [glm-coding-plan/glm-4.7] despite non-zero exit, got %+v", models)
 	}
 }
 

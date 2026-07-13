@@ -209,9 +209,7 @@ func openCodeThinkingLevelsFromVariants(variants map[string]opencodeModelVariant
 	return levels
 }
 
-// discoverPiModels runs `pi --list-models` and parses its output.
-// Older pi versions print the list to stderr; newer versions use
-// stdout. We capture both and parse whichever is non-empty.
+// discoverPiModels runs `pi --list-models` and parses its stdout table.
 func discoverPiModels(ctx context.Context, executablePath string) ([]Model, error) {
 	if executablePath == "" {
 		executablePath = "pi"
@@ -229,24 +227,16 @@ func discoverPiModels(ctx context.Context, executablePath string) ([]Model, erro
 	defer cancel()
 	cmd := exec.CommandContext(runCtx, executablePath, "--list-models")
 	hideAgentWindow(cmd)
-	var stderr strings.Builder
-	cmd.Stderr = &stderr
 	stdout, err := cmd.Output()
-	if err != nil && len(stdout) == 0 && stderr.Len() == 0 {
+	if err != nil && len(stdout) == 0 {
 		return []Model{}, nil
 	}
-	text := string(stdout)
-	if strings.TrimSpace(text) == "" {
-		text = stderr.String()
-	}
-	return parsePiModels(text), nil
+	return parsePiModels(string(stdout)), nil
 }
 
-// parsePiModels accepts the `pi --list-models` output. Pi historically
-// emitted `provider:model` per line and now emits a multi-column table
-// (`provider  model  context …`); both shapes are normalized to
-// `provider/model` to match opencode/UI conventions. The case-insensitive
-// `provider` token in column 0 is treated as the table header and skipped.
+// parsePiModels accepts the current `pi --list-models` table
+// (`provider  model  context …`) and normalizes each row to the
+// `provider/model` convention used by OpenCode and the UI.
 func parsePiModels(output string) []Model {
 	scanner := bufio.NewScanner(strings.NewReader(output))
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
@@ -273,17 +263,10 @@ func parsePiModels(output string) []Model {
 		if strings.EqualFold(first, "provider") {
 			continue
 		}
-		var id string
-		if strings.ContainsAny(first, ":/") {
-			// Legacy `provider:model` format — normalize colon to slash.
-			// Restricted to this branch so a model name with a `:` in
-			// the table format's column 1 is not silently rewritten.
-			id = strings.Replace(first, ":", "/", 1)
-		} else if len(fields) >= 2 {
-			id = first + "/" + fields[1]
-		} else {
+		if len(fields) < 2 {
 			continue
 		}
+		id := first + "/" + fields[1]
 		// A real id has a non-empty provider and model on both sides of the
 		// slash. Drop anything that doesn't (e.g. a stray `something:` token),
 		// a cheap structural backstop on top of the diagnostic filter above.
