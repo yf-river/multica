@@ -385,7 +385,7 @@ function stringFromRecord(record: Record<string, unknown>, key: string): string 
   return "";
 }
 
-function formatNumber(value: unknown): string {
+export function formatNumber(value: unknown): string {
   return typeof value === "number" && Number.isFinite(value) ? value.toLocaleString("zh-CN") : "0";
 }
 

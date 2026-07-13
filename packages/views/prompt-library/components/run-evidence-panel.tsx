@@ -30,6 +30,7 @@ import {
 import { SkillCandidateWorkflowPanel } from "./skill-candidate-workflow";
 import { useSkillCandidateWorkflowActions } from "./use-skill-candidate-workflow-actions";
 import { useCandidateDecisionActions } from "./use-candidate-decision-actions";
+import { formatNumber } from "./training-workbench-support";
 
 export type RunOptimizationActions = {
   canGenerate: boolean;
@@ -338,10 +339,6 @@ function snapshotSummary(snapshot: PromptEvaluationEvidenceSnapshot, recordedLab
   const keys = Object.keys(summary).slice(0, 4);
   if (keys.length === 0) return `run ${snapshot.run_id}`;
   return keys.map((key) => `${key}: ${stringFromUnknown(summary[key]) || recordedLabel}`).join(" · ");
-}
-
-function formatNumber(value: unknown): string {
-  return typeof value === "number" && Number.isFinite(value) ? value.toLocaleString("zh-CN") : "0";
 }
 
 function formatMoney(value: unknown): string {
