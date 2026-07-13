@@ -8,15 +8,7 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-type commentReactionReader interface {
-	ListReactionsByCommentIDs(context.Context, []pgtype.UUID) ([]db.CommentReaction, error)
-}
-
-type commentAttachmentReader interface {
-	ListAttachmentsByCommentIDs(context.Context, db.ListAttachmentsByCommentIDsParams) ([]db.Attachment, error)
-}
-
-func loadCommentReactions(ctx context.Context, queries commentReactionReader, commentIDs []pgtype.UUID) (map[string][]ReactionResponse, error) {
+func loadCommentReactions(ctx context.Context, queries *db.Queries, commentIDs []pgtype.UUID) (map[string][]ReactionResponse, error) {
 	if len(commentIDs) == 0 {
 		return nil, nil
 	}
@@ -32,7 +24,7 @@ func loadCommentReactions(ctx context.Context, queries commentReactionReader, co
 	return grouped, nil
 }
 
-func (h *Handler) loadCommentAttachments(ctx context.Context, queries commentAttachmentReader, workspaceID pgtype.UUID, commentIDs []pgtype.UUID) (map[string][]AttachmentResponse, error) {
+func (h *Handler) loadCommentAttachments(ctx context.Context, queries *db.Queries, workspaceID pgtype.UUID, commentIDs []pgtype.UUID) (map[string][]AttachmentResponse, error) {
 	if len(commentIDs) == 0 {
 		return nil, nil
 	}
