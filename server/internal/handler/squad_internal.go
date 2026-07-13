@@ -444,9 +444,8 @@ func matchesInternalSquadTemplate(squad db.Squad, template internalSquadTemplate
 }
 
 func internalSquadProfileKey(squad db.Squad) string {
-	profile := decodeJSONDefault(squad.SopProfile, map[string]any{})
-	profileMap, _ := profile.(map[string]any)
-	return stringFromAny(profileMap["profile_key"])
+	profile := mustDecodePersistedJSONObject(squad.SopProfile, "squad SOP profile")
+	return stringFromAny(profile["profile_key"])
 }
 
 func matchesInternalSquadProfileKey(squad db.Squad, template internalSquadTemplate) bool {

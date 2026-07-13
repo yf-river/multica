@@ -25,7 +25,10 @@ func TestSquadSOPTaskStepMatchingAndState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	steps := parseSquadSOPProfileSteps(raw)
+	steps, err := parseSquadSOPProfileSteps(raw)
+	if err != nil {
+		t.Fatalf("parse SOP profile: %v", err)
+	}
 	step, index, ok := matchSquadSOPStepForAgent(steps, "02-design")
 	if !ok {
 		t.Fatal("expected 02-design agent to match profile step")

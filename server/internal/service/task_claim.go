@@ -307,7 +307,10 @@ func (s *TaskService) projectSquadSOPTaskStarted(
 	if err != nil {
 		return fmt.Errorf("load task agent for Squad SOP start: %w", err)
 	}
-	steps := parseSquadSOPProfileSteps(run.Profile)
+	steps, err := parseSquadSOPProfileSteps(run.Profile)
+	if err != nil {
+		return fmt.Errorf("decode Squad SOP run profile: %w", err)
+	}
 	step, _, ok := matchSquadSOPStepForAgentRecord(steps, agent)
 	if !ok {
 		return nil
@@ -375,7 +378,10 @@ func squadSOPFailureComment(ctx context.Context, queries *db.Queries, task db.Ag
 	if err != nil {
 		return "", false, err
 	}
-	steps := parseSquadSOPProfileSteps(run.Profile)
+	steps, err := parseSquadSOPProfileSteps(run.Profile)
+	if err != nil {
+		return "", false, fmt.Errorf("decode Squad SOP run profile: %w", err)
+	}
 	step, _, ok := matchSquadSOPStepForAgentRecord(steps, agent)
 	if !ok {
 		return "", false, nil
@@ -422,7 +428,11 @@ func squadSOPTaskHasDeliveryComment(ctx context.Context, queries *db.Queries, ta
 	if err != nil {
 		return false, err
 	}
-	if _, _, ok := matchSquadSOPStepForAgentRecord(parseSquadSOPProfileSteps(run.Profile), agent); !ok {
+	steps, err := parseSquadSOPProfileSteps(run.Profile)
+	if err != nil {
+		return false, fmt.Errorf("decode Squad SOP run profile: %w", err)
+	}
+	if _, _, ok := matchSquadSOPStepForAgentRecord(steps, agent); !ok {
 		return false, nil
 	}
 	comments, err := queries.ListCommentsForIssue(ctx, db.ListCommentsForIssueParams{
@@ -595,12 +605,12 @@ func isAssignmentIssueTaskForStatusAutomation(task db.AgentTaskQueue) bool {
 	return true
 }
 
-func parseSquadSOPProfileSteps(raw []byte) []squadSOPProfileStep {
+func parseSquadSOPProfileSteps(raw []byte) ([]squadSOPProfileStep, error) {
 	var profile squadSOPProfile
-	if len(raw) == 0 || json.Unmarshal(raw, &profile) != nil {
-		return nil
+	if err := json.Unmarshal(raw, &profile); err != nil {
+		return nil, err
 	}
-	return profile.Steps
+	return profile.Steps, nil
 }
 
 func matchSquadSOPStepForAgentRecord(steps []squadSOPProfileStep, agent db.Agent) (squadSOPProfileStep, int, bool) {

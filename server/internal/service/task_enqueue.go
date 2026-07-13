@@ -245,7 +245,10 @@ func (s *TaskService) createSquadSOPRunForLeaderTask(ctx context.Context, querie
 		return fmt.Errorf("load squad for SOP run: %w", err)
 	}
 
-	profile := normalizeSquadSOPProfile(squad.SopProfile)
+	profile, err := normalizeSquadSOPProfile(squad.SopProfile)
+	if err != nil {
+		return fmt.Errorf("decode squad SOP profile: %w", err)
+	}
 	profileKey, currentStepKey, currentStepName, roleKey := squadSOPProfileSummary(profile)
 	run, err := queries.CreateSquadSOPRun(ctx, db.CreateSquadSOPRunParams{
 		WorkspaceID:    issue.WorkspaceID,
@@ -282,19 +285,16 @@ func (s *TaskService) createSquadSOPRunForLeaderTask(ctx context.Context, querie
 	return nil
 }
 
-func normalizeSquadSOPProfile(raw []byte) []byte {
-	if len(raw) == 0 || string(raw) == "null" {
-		return []byte(`{}`)
-	}
+func normalizeSquadSOPProfile(raw []byte) ([]byte, error) {
 	var obj map[string]any
 	if err := json.Unmarshal(raw, &obj); err != nil || obj == nil {
-		return []byte(`{}`)
+		return nil, errors.New("profile must be a JSON object")
 	}
 	normalized, err := json.Marshal(obj)
 	if err != nil {
-		return []byte(`{}`)
+		return nil, fmt.Errorf("encode profile: %w", err)
 	}
-	return normalized
+	return normalized, nil
 }
 
 func squadSOPProfileSummary(profile []byte) (profileKey, currentStepKey, currentStepName, roleKey string) {

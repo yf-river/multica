@@ -100,7 +100,7 @@ func squadSOPRunToResponse(run db.SquadSopRun, events []SquadSOPEventResponse) S
 		SquadID:         uuidToString(run.SquadID),
 		LeaderTaskID:    uuidToPtr(run.LeaderTaskID),
 		ProfileKey:      run.ProfileKey,
-		Profile:         decodeJSONDefault(run.Profile, map[string]any{}),
+		Profile:         mustDecodePersistedJSONObject(run.Profile, "squad SOP run profile"),
 		Status:          run.Status,
 		CurrentStepKey:  run.CurrentStepKey,
 		StartedAt:       timestampToString(run.StartedAt),
@@ -126,7 +126,7 @@ func squadSOPEventToResponse(event db.SquadSopStepEvent) SquadSOPEventResponse {
 		RoleKey:       event.RoleKey,
 		EventType:     event.EventType,
 		Status:        event.Status,
-		Evidence:      decodeJSONDefault(event.Evidence, map[string]any{}),
+		Evidence:      mustDecodePersistedJSONObject(event.Evidence, "squad SOP step event evidence"),
 		Reason:        event.Reason,
 		DurationMs:    duration,
 		CreatedByType: event.CreatedByType,
@@ -538,18 +538,11 @@ func firstFailureReason(events []SquadSOPEventResponse) string {
 }
 
 func evidenceCount(raw []byte) int {
-	value := decodeJSONDefault(raw, map[string]any{})
-	switch typed := value.(type) {
-	case []any:
-		return len(typed)
-	case map[string]any:
-		if len(typed) == 0 {
-			return 0
-		}
-		return 1
-	default:
+	value := mustDecodePersistedJSONObject(raw, "squad SOP step event evidence")
+	if len(value) == 0 {
 		return 0
 	}
+	return 1
 }
 
 type observabilityUsageBreakdown struct {

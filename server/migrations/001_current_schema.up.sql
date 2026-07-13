@@ -1523,6 +1523,7 @@ CREATE TABLE public.squad (
     instructions text DEFAULT ''::text NOT NULL,
     sop_profile jsonb DEFAULT '{}'::jsonb NOT NULL,
     scope text DEFAULT 'workspace'::text NOT NULL,
+    CONSTRAINT squad_sop_profile_object CHECK ((jsonb_typeof(sop_profile) = 'object'::text)),
     CONSTRAINT squad_scope_check CHECK ((scope = ANY (ARRAY['personal'::text, 'workspace'::text])))
 );
 
@@ -1550,7 +1551,8 @@ CREATE TABLE public.squad_sop_run (
     completed_at timestamp with time zone,
     total_duration_ms bigint,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT squad_sop_run_profile_is_object CHECK ((jsonb_typeof(profile) = 'object'::text))
 );
 
 CREATE TABLE public.squad_sop_step_event (
@@ -1570,7 +1572,8 @@ CREATE TABLE public.squad_sop_step_event (
     created_by_type text DEFAULT ''::text NOT NULL,
     created_by_id uuid,
     task_id uuid,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT squad_sop_step_event_evidence_is_object CHECK ((jsonb_typeof(evidence) = 'object'::text))
 );
 
 CREATE TABLE public.sys_cron_executions (

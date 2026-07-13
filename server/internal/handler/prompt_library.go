@@ -253,17 +253,6 @@ func decodeJSONObject(raw []byte, field string) (map[string]any, error) {
 	return value, nil
 }
 
-func decodeJSONDefault(raw []byte, fallback any) any {
-	if len(raw) == 0 {
-		return fallback
-	}
-	var value any
-	if err := json.Unmarshal(raw, &value); err != nil || value == nil {
-		return fallback
-	}
-	return value
-}
-
 func normalizePromptLibraryStatus(status string) string {
 	if status == "" {
 		return promptLibraryStatusActive

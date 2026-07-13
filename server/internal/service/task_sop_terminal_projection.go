@@ -220,7 +220,10 @@ func (s *TaskService) projectSquadSOPTerminalWithPolicy(
 	if err != nil {
 		return nil, fmt.Errorf("load Squad SOP task agent: %w", err)
 	}
-	steps := parseSquadSOPProfileSteps(run.Profile)
+	steps, err := parseSquadSOPProfileSteps(run.Profile)
+	if err != nil {
+		return nil, fmt.Errorf("decode Squad SOP run profile: %w", err)
+	}
 	step, stepIndex, matches := matchSquadSOPStepForAgentRecord(steps, agent)
 	if !matches {
 		return nil, nil
