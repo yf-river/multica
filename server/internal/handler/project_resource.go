@@ -177,9 +177,9 @@ func validateGongfengRepoRef(ref json.RawMessage) (json.RawMessage, error) {
 	payload.HeadCommit = strings.TrimSpace(payload.HeadCommit)
 	payload.Branch = strings.TrimSpace(payload.Branch)
 	payload.CommitSHA = strings.TrimSpace(payload.CommitSHA)
-	payload.ConnectionStatus = normalizeRemovedProjectResourceDisabledStatus(payload.ConnectionStatus)
-	payload.SyncStatus = normalizeRemovedProjectResourceDisabledStatus(payload.SyncStatus)
-	payload.TestStatus = normalizeRemovedProjectResourceDisabledStatus(payload.TestStatus)
+	payload.ConnectionStatus = strings.TrimSpace(payload.ConnectionStatus)
+	payload.SyncStatus = strings.TrimSpace(payload.SyncStatus)
+	payload.TestStatus = strings.TrimSpace(payload.TestStatus)
 	payload.LastTestedAt = strings.TrimSpace(payload.LastTestedAt)
 	payload.LastSyncedAt = strings.TrimSpace(payload.LastSyncedAt)
 	payload.CredentialStatus = strings.TrimSpace(payload.CredentialStatus)
@@ -197,14 +197,6 @@ func validateGongfengRepoRef(ref json.RawMessage) (json.RawMessage, error) {
 		return nil, err
 	}
 	return out, nil
-}
-
-func normalizeRemovedProjectResourceDisabledStatus(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "disabled" {
-		return ""
-	}
-	return value
 }
 
 func normalizeGongfengProjectPath(value string) string {
