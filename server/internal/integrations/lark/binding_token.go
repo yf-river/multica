@@ -47,8 +47,7 @@ type RedeemedBindingToken struct {
 //
 // `qtx` is the *db.Queries handle to run the bind against. The caller
 // opens the transaction so the installation insert and the binding
-// write commit together; nil means "use the service's own
-// (non-transactional) queries handle".
+// write commit together.
 type InstallerBinder interface {
 	BindInstallerTx(ctx context.Context, qtx *db.Queries, p InstallerBindParams) error
 }
@@ -143,9 +142,6 @@ func (s *BindingTokenService) Mint(ctx context.Context, workspaceID, installatio
 // return guarantees both the consumed_at write and the binding row
 // landed; a returned error guarantees neither did.
 func (s *BindingTokenService) RedeemAndBind(ctx context.Context, raw string, multicaUserID pgtype.UUID) (RedeemedBindingToken, error) {
-	if s.tx == nil {
-		return RedeemedBindingToken{}, errors.New("lark: BindingTokenService missing TxStarter")
-	}
 	tx, err := s.tx.Begin(ctx)
 	if err != nil {
 		return RedeemedBindingToken{}, fmt.Errorf("begin tx: %w", err)
@@ -254,11 +250,7 @@ func redeemedBindingToken(row db.LarkBindingToken) RedeemedBindingToken {
 // preventing one workspace admin from silently rebinding another's
 // PersonalAgent install.
 func (s *BindingTokenService) BindInstallerTx(ctx context.Context, qtx *db.Queries, p InstallerBindParams) error {
-	q := qtx
-	if q == nil {
-		q = s.queries
-	}
-	_, err := q.CreateLarkUserBinding(ctx, db.CreateLarkUserBindingParams{
+	_, err := qtx.CreateLarkUserBinding(ctx, db.CreateLarkUserBindingParams{
 		WorkspaceID:    p.WorkspaceID,
 		MulticaUserID:  p.MulticaUserID,
 		InstallationID: p.InstallationID,
