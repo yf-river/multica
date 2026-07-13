@@ -800,10 +800,10 @@ func promptEvaluationDatasetRowsFingerprint(rows []db.PromptEvaluationDatasetRow
 		snapshot = append(snapshot, map[string]any{
 			"row_index":         row.RowIndex,
 			"row_name":          row.RowName,
-			"variables":         decodeJSONDefault(row.Variables, map[string]any{}),
-			"expected_contains": decodeJSONDefault(row.ExpectedContains, []any{}),
-			"expected":          decodeJSONDefault(row.Expected, map[string]any{}),
-			"tags":              decodeJSONDefault(row.Tags, []any{}),
+			"variables":         mustDecodePersistedJSONObject(row.Variables, "prompt evaluation dataset row variables"),
+			"expected_contains": mustDecodePersistedJSONArray(row.ExpectedContains, "prompt evaluation dataset row expected_contains"),
+			"expected":          mustDecodePersistedJSONObject(row.Expected, "prompt evaluation dataset row expected"),
+			"tags":              mustDecodePersistedJSONArray(row.Tags, "prompt evaluation dataset row tags"),
 			"source":            row.Source,
 		})
 	}
@@ -815,10 +815,10 @@ func promptEvaluationDatasetVersionRowFingerprint(row db.PromptEvaluationDataset
 	snapshot := map[string]any{
 		"row_index":         row.RowIndex,
 		"row_name":          row.RowName,
-		"variables":         decodeJSONDefault(row.Variables, map[string]any{}),
-		"expected_contains": decodeJSONDefault(row.ExpectedContains, []any{}),
-		"expected":          decodeJSONDefault(row.Expected, map[string]any{}),
-		"tags":              decodeJSONDefault(row.Tags, []any{}),
+		"variables":         mustDecodePersistedJSONObject(row.Variables, "prompt evaluation dataset version row variables"),
+		"expected_contains": mustDecodePersistedJSONArray(row.ExpectedContains, "prompt evaluation dataset version row expected_contains"),
+		"expected":          mustDecodePersistedJSONObject(row.Expected, "prompt evaluation dataset version row expected"),
+		"tags":              mustDecodePersistedJSONArray(row.Tags, "prompt evaluation dataset version row tags"),
 		"source":            row.Source,
 	}
 	sum := sha256.Sum256(mustJSONBytes(snapshot))
@@ -886,9 +886,9 @@ func promptEvaluationPayloadCasesFromDatasetVersionRows(rows []db.PromptEvaluati
 	for _, row := range rows {
 		cases = append(cases, map[string]any{
 			"case_name":         row.RowName,
-			"variables":         decodeJSONDefault(row.Variables, map[string]any{}),
-			"expected_contains": decodeJSONDefault(row.ExpectedContains, []any{}),
-			"tags":              decodeJSONDefault(row.Tags, []any{}),
+			"variables":         mustDecodePersistedJSONObject(row.Variables, "prompt evaluation dataset version row variables"),
+			"expected_contains": mustDecodePersistedJSONArray(row.ExpectedContains, "prompt evaluation dataset version row expected_contains"),
+			"tags":              mustDecodePersistedJSONArray(row.Tags, "prompt evaluation dataset version row tags"),
 		})
 	}
 	return cases

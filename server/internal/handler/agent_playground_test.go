@@ -190,6 +190,17 @@ func TestCreateAgentPlaygroundExperimentRejectsCorruptDatasetVariables(t *testin
 	}
 	suffix := time.Now().UnixNano()
 	assetID, versionID := createAgentPlaygroundDatasetSnapshot(t, suffix)
+	if _, err := testPool.Exec(context.Background(), `ALTER TABLE prompt_evaluation_dataset_version_row DROP CONSTRAINT prompt_evaluation_dataset_version_row_variables_is_object`); err != nil {
+		t.Fatalf("temporarily remove variables constraint: %v", err)
+	}
+	defer func() {
+		if _, err := testPool.Exec(context.Background(), `UPDATE prompt_evaluation_dataset_version_row SET variables='{}'::jsonb WHERE dataset_version_id=$1`, versionID); err != nil {
+			t.Errorf("repair corrupt dataset variables: %v", err)
+		}
+		if _, err := testPool.Exec(context.Background(), `ALTER TABLE prompt_evaluation_dataset_version_row ADD CONSTRAINT prompt_evaluation_dataset_version_row_variables_is_object CHECK (jsonb_typeof(variables) = 'object')`); err != nil {
+			t.Errorf("restore variables constraint: %v", err)
+		}
+	}()
 	if _, err := testPool.Exec(context.Background(), `UPDATE prompt_evaluation_dataset_version_row SET variables='null'::jsonb WHERE dataset_version_id=$1`, versionID); err != nil {
 		t.Fatalf("corrupt dataset variables: %v", err)
 	}

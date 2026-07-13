@@ -1090,6 +1090,11 @@ CREATE TABLE public.prompt_evaluation_case (
     created_by uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT prompt_evaluation_case_expected_contains_is_array CHECK ((jsonb_typeof(expected_contains) = 'array'::text)),
+    CONSTRAINT prompt_evaluation_case_expected_is_object CHECK ((jsonb_typeof(expected) = 'object'::text)),
+    CONSTRAINT prompt_evaluation_case_input_is_object CHECK ((jsonb_typeof(input) = 'object'::text)),
+    CONSTRAINT prompt_evaluation_case_tags_is_array CHECK ((jsonb_typeof(tags) = 'array'::text)),
+    CONSTRAINT prompt_evaluation_case_variables_is_object CHECK ((jsonb_typeof(variables) = 'object'::text)),
     CONSTRAINT prompt_evaluation_case_status_check CHECK ((status = ANY (ARRAY['启用'::text, '归档'::text, 'draft'::text, 'approved'::text, 'active'::text])))
 );
 
@@ -1144,6 +1149,10 @@ CREATE TABLE public.prompt_evaluation_dataset_row (
     created_by uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT prompt_evaluation_dataset_row_expected_contains_is_array CHECK ((jsonb_typeof(expected_contains) = 'array'::text)),
+    CONSTRAINT prompt_evaluation_dataset_row_expected_is_object CHECK ((jsonb_typeof(expected) = 'object'::text)),
+    CONSTRAINT prompt_evaluation_dataset_row_tags_is_array CHECK ((jsonb_typeof(tags) = 'array'::text)),
+    CONSTRAINT prompt_evaluation_dataset_row_variables_is_object CHECK ((jsonb_typeof(variables) = 'object'::text)),
     CONSTRAINT prompt_evaluation_dataset_row_source_check CHECK ((source = ANY (ARRAY['payload'::text, 'manual'::text, 'trace'::text]))),
     CONSTRAINT prompt_evaluation_dataset_row_status_check CHECK ((status = ANY (ARRAY['启用'::text, '归档'::text, 'draft'::text, 'approved'::text, 'active'::text])))
 );
@@ -1158,7 +1167,8 @@ CREATE TABLE public.prompt_evaluation_dataset_version (
     row_fingerprint text DEFAULT ''::text NOT NULL,
     metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
     created_by uuid,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT prompt_evaluation_dataset_version_metadata_is_object CHECK ((jsonb_typeof(metadata) = 'object'::text))
 );
 
 CREATE TABLE public.prompt_evaluation_dataset_version_row (
@@ -1175,7 +1185,11 @@ CREATE TABLE public.prompt_evaluation_dataset_version_row (
     expected jsonb DEFAULT '{}'::jsonb NOT NULL,
     tags jsonb DEFAULT '[]'::jsonb NOT NULL,
     source text DEFAULT 'payload'::text NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT prompt_evaluation_dataset_version_row_expected_contains_is_array CHECK ((jsonb_typeof(expected_contains) = 'array'::text)),
+    CONSTRAINT prompt_evaluation_dataset_version_row_expected_is_object CHECK ((jsonb_typeof(expected) = 'object'::text)),
+    CONSTRAINT prompt_evaluation_dataset_version_row_tags_is_array CHECK ((jsonb_typeof(tags) = 'array'::text)),
+    CONSTRAINT prompt_evaluation_dataset_version_row_variables_is_object CHECK ((jsonb_typeof(variables) = 'object'::text))
 );
 
 CREATE TABLE public.prompt_evaluation_dimension_score (

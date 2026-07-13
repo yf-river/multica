@@ -659,7 +659,7 @@ func executePromptEvaluationCaseBulkTagsInTx(ctx context.Context, queries *db.Qu
 	sampleIDs := make([]string, 0, 20)
 	skippedCount := int32(0)
 	for _, item := range matched {
-		currentTags := stringListFromAny(decodeJSONDefault(item.Tags, []any{}))
+		currentTags := stringListFromAny(mustDecodePersistedJSONArray(item.Tags, "prompt evaluation case tags"))
 		nextTags := bulkPromptEvaluationCaseTags(currentTags, job.TargetTags, job.Mode, job.SourceTag, job.TargetTag)
 		if samePromptEvaluationStringList(currentTags, nextTags) {
 			skippedCount += 1
@@ -1195,9 +1195,9 @@ func promptEvaluationPayloadCasesFromCaseRows(rows []db.PromptEvaluationCase) []
 		}
 		cases = append(cases, map[string]any{
 			"case_name":         row.CaseName,
-			"variables":         decodeJSONDefault(row.Variables, map[string]any{}),
-			"expected_contains": decodeJSONDefault(row.ExpectedContains, []any{}),
-			"tags":              decodeJSONDefault(row.Tags, []any{}),
+			"variables":         mustDecodePersistedJSONObject(row.Variables, "prompt evaluation case variables"),
+			"expected_contains": mustDecodePersistedJSONArray(row.ExpectedContains, "prompt evaluation case expected_contains"),
+			"tags":              mustDecodePersistedJSONArray(row.Tags, "prompt evaluation case tags"),
 		})
 	}
 	return cases

@@ -273,9 +273,9 @@ func (h *Handler) promptEvaluationCasesForAsset(w http.ResponseWriter, r *http.R
 	for _, row := range executableRows {
 		cases = append(cases, map[string]any{
 			"case_name":         row.CaseName,
-			"variables":         decodeJSONDefault(row.Variables, map[string]any{}),
+			"variables":         mustDecodePersistedJSONObject(row.Variables, "prompt evaluation case variables"),
 			"expected_contains": promptEvaluationExpectedContainsFromAssertions(row.ExpectedContains, assertionsByCase[uuidToString(row.ID)]),
-			"tags":              decodeJSONDefault(row.Tags, []any{}),
+			"tags":              mustDecodePersistedJSONArray(row.Tags, "prompt evaluation case tags"),
 		})
 	}
 	return cases, true

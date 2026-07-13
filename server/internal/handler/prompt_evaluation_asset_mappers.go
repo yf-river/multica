@@ -56,7 +56,7 @@ func promptEvaluationDatasetVersionToResponse(version db.PromptEvaluationDataset
 		VersionLabel:   version.VersionLabel,
 		RowCount:       version.RowCount,
 		RowFingerprint: version.RowFingerprint,
-		Metadata:       decodeJSONDefault(version.Metadata, map[string]any{}),
+		Metadata:       mustDecodePersistedJSONObject(version.Metadata, "prompt evaluation dataset version metadata"),
 		CreatedBy:      uuidToPtr(version.CreatedBy),
 		CreatedAt:      timestampToString(version.CreatedAt),
 	}
@@ -72,10 +72,10 @@ func promptEvaluationDatasetVersionRowToResponse(row db.PromptEvaluationDatasetV
 		CaseID:           uuidToPtr(row.CaseID),
 		RowIndex:         row.RowIndex,
 		RowName:          row.RowName,
-		Variables:        decodeJSONDefault(row.Variables, map[string]any{}),
-		ExpectedContains: decodeJSONDefault(row.ExpectedContains, []any{}),
-		Expected:         decodeJSONDefault(row.Expected, map[string]any{}),
-		Tags:             decodeJSONDefault(row.Tags, []any{}),
+		Variables:        mustDecodePersistedJSONObject(row.Variables, "prompt evaluation dataset version row variables"),
+		ExpectedContains: mustDecodePersistedJSONArray(row.ExpectedContains, "prompt evaluation dataset version row expected_contains"),
+		Expected:         mustDecodePersistedJSONObject(row.Expected, "prompt evaluation dataset version row expected"),
+		Tags:             mustDecodePersistedJSONArray(row.Tags, "prompt evaluation dataset version row tags"),
 		Source:           row.Source,
 		CreatedAt:        timestampToString(row.CreatedAt),
 	}
@@ -178,12 +178,12 @@ func promptEvaluationCaseToResponse(item db.PromptEvaluationCase, assertions []d
 		PromptID:         uuidToPtr(item.PromptID),
 		CaseIndex:        item.CaseIndex,
 		CaseName:         item.CaseName,
-		Variables:        decodeJSONDefault(item.Variables, map[string]any{}),
-		ExpectedContains: decodeJSONDefault(item.ExpectedContains, []any{}),
+		Variables:        mustDecodePersistedJSONObject(item.Variables, "prompt evaluation case variables"),
+		ExpectedContains: mustDecodePersistedJSONArray(item.ExpectedContains, "prompt evaluation case expected_contains"),
 		Assertions:       promptEvaluationCaseAssertionsToResponse(assertions),
-		Input:            decodeJSONDefault(item.Input, map[string]any{}),
-		Expected:         decodeJSONDefault(item.Expected, map[string]any{}),
-		Tags:             decodeJSONDefault(item.Tags, []any{}),
+		Input:            mustDecodePersistedJSONObject(item.Input, "prompt evaluation case input"),
+		Expected:         mustDecodePersistedJSONObject(item.Expected, "prompt evaluation case expected"),
+		Tags:             mustDecodePersistedJSONArray(item.Tags, "prompt evaluation case tags"),
 		Status:           item.Status,
 		Source:           item.Source,
 		CreatedBy:        uuidToPtr(item.CreatedBy),
@@ -515,6 +515,14 @@ func promptEvaluationOptimizationCandidateToResponse(item db.PromptEvaluationOpt
 
 func mustDecodePersistedJSONObject(raw []byte, field string) map[string]any {
 	value, err := decodeJSONObject(raw, field)
+	if err != nil {
+		panic("handler: " + err.Error())
+	}
+	return value
+}
+
+func mustDecodePersistedJSONArray(raw []byte, field string) []any {
+	value, err := decodeJSONArray(raw, field)
 	if err != nil {
 		panic("handler: " + err.Error())
 	}
