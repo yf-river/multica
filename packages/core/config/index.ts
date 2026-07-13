@@ -10,8 +10,7 @@ interface ConfigState {
   daemonServerUrl: string;
   daemonAppUrl: string;
   // Self-host gate (#3433): when true, every "Create workspace" affordance
-  // must be hidden. Defaults to false so unknown / older servers behave like
-  // the managed-cloud case.
+  // must be hidden.
   workspaceCreationDisabled: boolean;
   setCdnConfig: (config: { cdnDomain: string; cdnSigned?: boolean }) => void;
   setWorkspaceCreationDisabled: (disabled: boolean) => void;

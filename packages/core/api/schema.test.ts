@@ -155,7 +155,11 @@ describe("ApiClient schema fallback", () => {
     it("drops malformed daemon setup URLs instead of throwing", async () => {
       stubFetchJson({
         cdn_domain: "cdn.example.com",
+        cdn_signed: false,
         allow_signup: true,
+        posthog_key: "",
+        posthog_host: "",
+        analytics_environment: "test",
         daemon_server_url: { wrong: "shape" },
         daemon_app_url: 123,
         workspace_creation_disabled: false,

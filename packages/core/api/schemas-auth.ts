@@ -8,23 +8,20 @@ import { NonEmptyStringSchema } from "./schemas-internal";
 // trust this shape — a drift here would knock both surfaces out. Kept
 // lenient by the same rules as IssueSchema: enums stay `z.string()`,
 // nullable fields are unioned with `null`, unknown server fields pass
-// through via `.loose()`. `profile_description` is the field added in
-// MUL-2406; the server emits `""` when unset (NOT NULL DEFAULT ''), so
-// the schema defaults to `""` too — keeps the type tight without
-// breaking older backends that don't return the column yet.
+// through via `.loose()`.
 // ---------------------------------------------------------------------------
 
 export const UserSchema = z.object({
   id: NonEmptyStringSchema,
-  name: z.string().default(""),
-  account: z.string().default(""),
-  avatar_url: z.string().nullable().default(null),
-  onboarded_at: z.string().nullable().default(null),
-  onboarding_questionnaire: z.record(z.string(), z.unknown()).default({}),
-  profile_description: z.string().default(""),
-  timezone: z.string().nullable().default(null),
-  created_at: z.string().default(""),
-  updated_at: z.string().default(""),
+  name: z.string(),
+  account: z.string(),
+  avatar_url: z.string().nullable(),
+  onboarded_at: z.string().nullable(),
+  onboarding_questionnaire: z.record(z.string(), z.unknown()),
+  profile_description: z.string(),
+  timezone: z.string().nullable(),
+  created_at: z.string(),
+  updated_at: z.string(),
 }).loose();
 
 export const LoginResponseSchema = z.object({

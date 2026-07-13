@@ -124,6 +124,7 @@ function makeRuntime(overrides: Partial<AgentRuntime>): AgentRuntime {
     metadata: {},
     owner_id: "user-me",
     scope: "personal",
+    profile_id: null,
     last_seen_at: "2026-04-27T11:59:50Z",
     created_at: "2026-04-01T00:00:00Z",
     updated_at: "2026-04-01T00:00:00Z",

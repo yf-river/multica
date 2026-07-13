@@ -59,13 +59,6 @@ type UserResponse struct {
 const MaxProfileDescriptionLen = 2000
 
 func userToResponse(u db.User) UserResponse {
-	// JSONB column is []byte with DEFAULT '{}', so it's never nil at the DB
-	// level. Defensive coalesce just in case a future ALTER makes the column
-	// nullable and some row comes back with no default applied.
-	q := u.OnboardingQuestionnaire
-	if len(q) == 0 {
-		q = []byte("{}")
-	}
 	return UserResponse{
 		ID:                      uuidToString(u.ID),
 		Name:                    u.Name,
@@ -73,7 +66,7 @@ func userToResponse(u db.User) UserResponse {
 		AvatarURL:               textToPtr(u.AvatarUrl),
 		Timezone:                textToPtr(u.Timezone),
 		OnboardedAt:             timestampToPtr(u.OnboardedAt),
-		OnboardingQuestionnaire: json.RawMessage(q),
+		OnboardingQuestionnaire: json.RawMessage(u.OnboardingQuestionnaire),
 		ProfileDescription:      u.ProfileDescription,
 		CreatedAt:               timestampToString(u.CreatedAt),
 		UpdatedAt:               timestampToString(u.UpdatedAt),

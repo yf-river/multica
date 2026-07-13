@@ -47,13 +47,12 @@ export function AuthInitializer({
         if (cfg.cdn_domain) {
           configStore.getState().setCdnConfig({
             cdnDomain: cfg.cdn_domain,
-            // Old servers omit this — false keeps the previous behavior.
-            cdnSigned: cfg.cdn_signed === true,
+            cdnSigned: cfg.cdn_signed,
           });
         }
         configStore
           .getState()
-          .setWorkspaceCreationDisabled(cfg.workspace_creation_disabled === true);
+          .setWorkspaceCreationDisabled(cfg.workspace_creation_disabled);
         configStore.getState().setDaemonConfig({
           daemonServerUrl: cfg.daemon_server_url,
           daemonAppUrl: cfg.daemon_app_url,

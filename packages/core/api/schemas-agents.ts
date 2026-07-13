@@ -13,8 +13,8 @@ import { NonEmptyStringSchema } from "./schemas-internal";
 // Runtime response contracts for agents.
 const AgentSkillSummarySchema = z.object({
   id: NonEmptyStringSchema,
-  name: z.string().default(""),
-  description: z.string().default(""),
+  name: z.string(),
+  description: z.string(),
 }).loose();
 
 const AgentWireSchema = z.object({
@@ -22,27 +22,27 @@ const AgentWireSchema = z.object({
   workspace_id: NonEmptyStringSchema,
   runtime_id: NonEmptyStringSchema,
   name: z.string(),
-  description: z.string().default(""),
-  instructions: z.string().default(""),
-  avatar_url: z.string().nullable().optional().transform((value) => value ?? null),
-  runtime_mode: z.string().default("local"),
-  runtime_config: z.record(z.string(), z.unknown()).default({}),
-  custom_args: z.array(z.string()).default([]),
-  has_custom_env: z.boolean().optional(),
-  custom_env_key_count: z.number().optional(),
-  mcp_config: z.unknown().optional(),
-  mcp_config_redacted: z.boolean().optional(),
-  scope: z.string().default("workspace"),
-  status: z.string().default("idle"),
-  max_concurrent_tasks: z.number().default(1),
-  model: z.string().default(""),
-  thinking_level: z.string().optional(),
-  owner_id: z.string().nullable().optional().transform((value) => value ?? null),
-  skills: z.array(AgentSkillSummarySchema).default([]),
-  created_at: z.string().default(""),
-  updated_at: z.string().default(""),
-  archived_at: z.string().nullable().optional().transform((value) => value ?? null),
-  archived_by: z.string().nullable().optional().transform((value) => value ?? null),
+  description: z.string(),
+  instructions: z.string(),
+  avatar_url: z.string().nullable(),
+  runtime_mode: z.string(),
+  runtime_config: z.record(z.string(), z.unknown()),
+  custom_args: z.array(z.string()),
+  has_custom_env: z.boolean(),
+  custom_env_key_count: z.number(),
+  mcp_config: z.unknown(),
+  mcp_config_redacted: z.boolean(),
+  scope: z.string(),
+  status: z.string(),
+  max_concurrent_tasks: z.number(),
+  model: z.string(),
+  thinking_level: z.string(),
+  owner_id: z.string().nullable(),
+  skills: z.array(AgentSkillSummarySchema),
+  created_at: z.string(),
+  updated_at: z.string(),
+  archived_at: z.string().nullable(),
+  archived_by: z.string().nullable(),
 }).loose();
 
 export const AgentSchema = AgentWireSchema.transform((wire) => {
@@ -67,38 +67,38 @@ export const AgentTaskCancellationCountSchema = z.object({
 export const EMPTY_AGENT: Agent = {
   id: "", workspace_id: "", runtime_id: "", name: "", description: "", instructions: "",
   avatar_url: null, runtime_mode: "local", runtime_config: {}, custom_args: [], scope: "workspace",
-  status: "offline", max_concurrent_tasks: 1, model: "", owner_id: null, skills: [],
+  has_custom_env: false, custom_env_key_count: 0, mcp_config: null, mcp_config_redacted: false,
+  status: "offline", max_concurrent_tasks: 1, model: "", thinking_level: "", owner_id: null, skills: [],
   created_at: "", updated_at: "", archived_at: null, archived_by: null,
 };
 
 export const EMPTY_AGENT_ENV_RESPONSE: AgentEnvResponse = { agent_id: "", custom_env: {} };
 
 // Squad list responses carry lightweight membership previews used by hover
-// cards. The preview fields are additive API fields, so older backends default
-// cleanly to no preview instead of breaking newer frontends.
+// cards.
 const SquadMemberPreviewSchema = z.object({
   member_type: z.string(),
   member_id: z.string(),
-  role: z.string().default(""),
+  role: z.string(),
 }).loose();
 
 export const SquadSchema = z.object({
   id: z.string(),
   workspace_id: z.string(),
   name: z.string(),
-  description: z.string().default(""),
-  instructions: z.string().default(""),
-  sop_profile: z.record(z.string(), z.unknown()).default({}),
-  avatar_url: z.string().nullable().optional().transform((v) => v ?? null),
-  scope: z.enum(["workspace", "personal"]).default("workspace"),
+  description: z.string(),
+  instructions: z.string(),
+  sop_profile: z.record(z.string(), z.unknown()),
+  avatar_url: z.string().nullable(),
+  scope: z.enum(["workspace", "personal"]),
   leader_id: z.string(),
   creator_id: z.string(),
   created_at: z.string(),
   updated_at: z.string(),
-  archived_at: z.string().nullable().optional().transform((v) => v ?? null),
-  archived_by: z.string().nullable().optional().transform((v) => v ?? null),
-  member_count: z.number().default(0),
-  member_preview: z.array(SquadMemberPreviewSchema).default([]),
+  archived_at: z.string().nullable(),
+  archived_by: z.string().nullable(),
+  member_count: z.number(),
+  member_preview: z.array(SquadMemberPreviewSchema),
 }).loose();
 
 export const SquadListSchema = z.array(SquadSchema);
@@ -127,7 +127,7 @@ export const SquadMemberSchema = z.object({
   squad_id: NonEmptyStringSchema,
   member_type: z.string(),
   member_id: NonEmptyStringSchema,
-  role: z.string().default(""),
+  role: z.string(),
   created_at: z.string(),
 }).loose();
 
@@ -151,7 +151,7 @@ const InternalSquadTemplateAgentSchema = z.object({
 
 export const InternalSquadTemplateResponseSchema = z.object({
   squad: SquadSchema,
-  agents: z.array(InternalSquadTemplateAgentSchema).default([]),
+  agents: z.array(InternalSquadTemplateAgentSchema),
 }).loose();
 
 export const EMPTY_INTERNAL_SQUAD_TEMPLATE_RESPONSE: InternalSquadTemplateResponse = {

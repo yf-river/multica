@@ -20,7 +20,7 @@ function runtime(input: Partial<AgentRuntime> & { id: string }): AgentRuntime {
     metadata: input.metadata ?? {},
     owner_id: input.owner_id ?? "user-1",
     scope: input.scope ?? "workspace",
-    profile_id: input.profile_id,
+    profile_id: input.profile_id ?? null,
     last_seen_at: input.last_seen_at ?? "2026-07-02T01:00:00Z",
     created_at: input.created_at ?? "2026-07-02T00:00:00Z",
     updated_at: input.updated_at ?? "2026-07-02T00:00:00Z",

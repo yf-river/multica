@@ -138,23 +138,19 @@ describe("TimelineEntriesSchema", () => {
   });
 });
 
-// `user.timezone` (Viewing tz) was added in the timezone-architecture RFC.
-// A desktop build older than the server — or a server predating the
-// `user.timezone` migration — will return a `/api/me` body with no
-// `timezone` key. The schema must not fail closed on that: the field
-// defaults to `null`, which the frontend resolves to the browser-detected
-// tz at render time.
-describe("UserSchema timezone drift", () => {
+describe("UserSchema timezone contract", () => {
   const base = {
     id: "11111111-1111-1111-1111-111111111111",
     name: "Ada",
     account: "ada",
+    avatar_url: null,
+    onboarded_at: null,
+    onboarding_questionnaire: {},
+    profile_description: "",
+    timezone: null,
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
   };
-
-  it("defaults timezone to null when the field is absent", () => {
-    const parsed = UserSchema.parse(base);
-    expect(parsed.timezone).toBe(null);
-  });
 
   it("preserves an explicit IANA timezone", () => {
     const parsed = UserSchema.parse({ ...base, timezone: "Asia/Tokyo" });
@@ -195,20 +191,11 @@ describe("SquadListSchema member preview drift", () => {
     updated_at: "2026-05-01T00:00:00Z",
     archived_at: null,
     archived_by: null,
+    sop_profile: {},
+    scope: "workspace" as const,
+    member_count: 0,
+    member_preview: [],
   };
-
-  it("defaults preview fields when an older backend omits them", () => {
-    const parsed = SquadListSchema.parse([baseSquad]);
-    expect(parsed[0]?.member_count).toBe(0);
-    expect(parsed[0]?.member_preview).toEqual([]);
-  });
-
-  it("defaults preview fields on a single squad response", () => {
-    const parsed = SquadSchema.parse(baseSquad);
-    expect(parsed.member_count).toBe(0);
-    expect(parsed.member_preview).toEqual([]);
-    expect(parsed.sop_profile).toEqual({});
-  });
 
   it("preserves project SOP profile fields", () => {
     const parsed = SquadSchema.parse({
@@ -485,23 +472,17 @@ describe("ObservabilitySummarySchema full-summary defaults", () => {
   });
 });
 
-describe("AppConfigSchema cdn_signed drift", () => {
-  it("defaults cdn_signed to false when the server omits it (pre-MUL-3254 servers)", () => {
-    const parsed = AppConfigSchema.parse({ cdn_domain: "cdn.example.com" });
-    expect(parsed.cdn_signed).toBe(false);
-  });
-
-  it("coerces a malformed cdn_signed to false instead of failing the whole config", () => {
+describe("AppConfigSchema current contract", () => {
+  it("keeps cdn_signed=true from a signing-enabled server", () => {
     const parsed = AppConfigSchema.parse({
       cdn_domain: "cdn.example.com",
-      cdn_signed: "yes",
+      cdn_signed: true,
+      allow_signup: true,
+      posthog_key: "",
+      posthog_host: "",
+      analytics_environment: "test",
+      workspace_creation_disabled: false,
     });
-    expect(parsed.cdn_signed).toBe(false);
-    expect(parsed.cdn_domain).toBe("cdn.example.com");
-  });
-
-  it("keeps cdn_signed=true from a signing-enabled server", () => {
-    const parsed = AppConfigSchema.parse({ cdn_signed: true });
     expect(parsed.cdn_signed).toBe(true);
   });
 });

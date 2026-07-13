@@ -193,7 +193,6 @@ function RuntimeNameCell({ runtime }: { runtime: AgentRuntime }) {
 // Distinguishes a built-in protocol-family runtime from one launched off a
 // custom runtime profile. `profile_id` is the discriminator: a non-null /
 // non-empty value means the runtime was started from a custom profile.
-// Older backends omit the field — treated as built-in.
 function RuntimeKindBadge({ runtime }: { runtime: AgentRuntime }) {
   const { t } = useT("runtimes");
   const isCustom = !!runtime.profile_id;

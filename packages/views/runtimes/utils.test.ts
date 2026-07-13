@@ -28,6 +28,7 @@ describe("isSelfHealingRuntime", () => {
       metadata: {},
       owner_id: null,
       scope: "personal",
+      profile_id: null,
       last_seen_at: null,
       created_at: "2026-01-01T00:00:00Z",
       updated_at: "2026-01-01T00:00:00Z",
