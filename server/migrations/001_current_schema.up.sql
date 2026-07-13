@@ -1231,6 +1231,9 @@ CREATE TABLE public.prompt_evaluation_optimization_candidate (
     created_by uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT prompt_evaluation_optimization_candidate_metrics_is_object CHECK ((jsonb_typeof(metrics) = 'object'::text)),
+    CONSTRAINT prompt_evaluation_optimization_candidate_source_failure_summary_is_object CHECK ((jsonb_typeof(source_failure_summary) = 'object'::text)),
+    CONSTRAINT prompt_evaluation_optimization_candidate_source_prompt_snapshot_is_object CHECK ((jsonb_typeof(source_prompt_snapshot) = 'object'::text)),
     CONSTRAINT prompt_evaluation_optimization_candidate_status_check CHECK ((status = ANY (ARRAY['待确认'::text, '已发布'::text, '已拒绝'::text])))
 );
 
@@ -1270,6 +1273,8 @@ CREATE TABLE public.prompt_evaluation_run (
     review_note text DEFAULT ''::text NOT NULL,
     reviewed_by uuid,
     reviewed_at timestamp with time zone,
+    CONSTRAINT prompt_evaluation_run_evidence_is_object CHECK ((jsonb_typeof(evidence) = 'object'::text)),
+    CONSTRAINT prompt_evaluation_run_metrics_is_object CHECK ((jsonb_typeof(metrics) = 'object'::text)),
     CONSTRAINT prompt_evaluation_run_review_decision_check CHECK ((review_decision = ANY (ARRAY[''::text, '通过'::text, '未通过'::text]))),
     CONSTRAINT prompt_evaluation_run_run_kind_check CHECK ((run_kind = ANY (ARRAY['本地渲染'::text, 'Agent执行'::text]))),
     CONSTRAINT prompt_evaluation_run_status_check CHECK ((status = ANY (ARRAY['已入队'::text, '运行中'::text, '通过'::text, '未通过'::text, '失败'::text, '已取消'::text, '需人工复核'::text])))

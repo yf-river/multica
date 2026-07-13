@@ -468,10 +468,12 @@ func applyPromptEvaluationSkillCandidate(req ApplyPromptEvaluationSkillCandidate
 
 func skillSnapshotFromCandidate(candidate db.PromptEvaluationOptimizationCandidate) *PromptEvaluationSkillSnapshotResponse {
 	for _, raw := range [][]byte{candidate.SourceFailureSummary, candidate.Metrics, candidate.SourcePromptSnapshot} {
-		payload, ok := decodeJSONDefault(raw, map[string]any{}).(map[string]any)
-		if !ok {
+		// Zero bytes only occur on deliberately partial in-memory rows. Persisted
+		// rows are NOT NULL with object defaults and must satisfy migration 094.
+		if len(raw) == 0 {
 			continue
 		}
+		payload := mustDecodePersistedJSONObject(raw, "prompt evaluation optimization candidate skill evidence")
 		for _, key := range []string{"skill_snapshot", "Skill Snapshot", "技能快照"} {
 			if snapshot, ok := decodeSkillSnapshotAny(payload[key]); ok {
 				return &snapshot

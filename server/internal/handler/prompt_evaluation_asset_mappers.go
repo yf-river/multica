@@ -82,6 +82,8 @@ func promptEvaluationDatasetVersionRowToResponse(row db.PromptEvaluationDatasetV
 }
 
 func promptEvaluationRunToResponse(run db.PromptEvaluationRun) PromptEvaluationRunResponse {
+	metrics := mustDecodePersistedJSONObject(run.Metrics, "prompt evaluation run metrics")
+	evidence := mustDecodePersistedJSONObject(run.Evidence, "prompt evaluation run evidence")
 	return PromptEvaluationRunResponse{
 		ID:                uuidToString(run.ID),
 		WorkspaceID:       uuidToString(run.WorkspaceID),
@@ -107,8 +109,8 @@ func promptEvaluationRunToResponse(run db.PromptEvaluationRun) PromptEvaluationR
 		EstimatedCost:     run.EstimatedCost,
 		FailureReason:     run.FailureReason,
 		Conclusion:        run.Conclusion,
-		Metrics:           decodeJSONDefault(run.Metrics, map[string]any{}),
-		Evidence:          decodeJSONDefault(run.Evidence, map[string]any{}),
+		Metrics:           metrics,
+		Evidence:          evidence,
 		StartedAt:         timestampToString(run.StartedAt),
 		CompletedAt:       timestampToString(run.CompletedAt),
 		CreatedBy:         uuidToPtr(run.CreatedBy),
@@ -485,6 +487,9 @@ func refreshPromptEvaluationExperimentDimensionCount(ctx context.Context, qtx *d
 }
 
 func promptEvaluationOptimizationCandidateToResponse(item db.PromptEvaluationOptimizationCandidate) PromptEvaluationOptimizationCandidateResponse {
+	sourceFailureSummary := mustDecodePersistedJSONObject(item.SourceFailureSummary, "prompt evaluation optimization candidate source failure summary")
+	sourcePromptSnapshot := mustDecodePersistedJSONObject(item.SourcePromptSnapshot, "prompt evaluation optimization candidate source prompt snapshot")
+	metrics := mustDecodePersistedJSONObject(item.Metrics, "prompt evaluation optimization candidate metrics")
 	return PromptEvaluationOptimizationCandidateResponse{
 		ID:                   uuidToString(item.ID),
 		WorkspaceID:          uuidToString(item.WorkspaceID),
@@ -495,9 +500,9 @@ func promptEvaluationOptimizationCandidateToResponse(item db.PromptEvaluationOpt
 		CandidateContent:     item.CandidateContent,
 		Rationale:            item.Rationale,
 		FailedCaseCount:      item.FailedCaseCount,
-		SourceFailureSummary: decodeJSONDefault(item.SourceFailureSummary, map[string]any{}),
-		SourcePromptSnapshot: decodeJSONDefault(item.SourcePromptSnapshot, map[string]any{}),
-		Metrics:              decodeJSONDefault(item.Metrics, map[string]any{}),
+		SourceFailureSummary: sourceFailureSummary,
+		SourcePromptSnapshot: sourcePromptSnapshot,
+		Metrics:              metrics,
 		SkillPatch:           skillPatchFromCandidate(item),
 		Status:               item.Status,
 		PublishedPromptID:    uuidToPtr(item.PublishedPromptID),
@@ -506,6 +511,14 @@ func promptEvaluationOptimizationCandidateToResponse(item db.PromptEvaluationOpt
 		CreatedAt:            timestampToString(item.CreatedAt),
 		UpdatedAt:            timestampToString(item.UpdatedAt),
 	}
+}
+
+func mustDecodePersistedJSONObject(raw []byte, field string) map[string]any {
+	value, err := decodeJSONObject(raw, field)
+	if err != nil {
+		panic("handler: " + err.Error())
+	}
+	return value
 }
 
 func promptEvaluationEvidenceSnapshotToResponse(item db.PromptEvaluationEvidenceSnapshot, includeEvidence bool) PromptEvaluationEvidenceSnapshotResponse {

@@ -184,10 +184,7 @@ func (h *Handler) CreatePromptEvaluationOptimizationCandidate(w http.ResponseWri
 	if len(weakDimensions) == 0 {
 		weakDimensions = promptEvaluationDefaultWeakDimensionSummaries(run)
 	}
-	candidateMetrics, _ := decodeJSONDefault(run.Metrics, map[string]any{}).(map[string]any)
-	if candidateMetrics == nil {
-		candidateMetrics = map[string]any{}
-	}
+	candidateMetrics := mustDecodePersistedJSONObject(run.Metrics, "prompt evaluation run metrics")
 	if len(weakDimensions) > 0 {
 		priority := promptEvaluationCandidatePriority(weakDimensions)
 		sourceSummary["失败维度"] = weakDimensions
