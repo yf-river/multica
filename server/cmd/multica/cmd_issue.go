@@ -121,11 +121,10 @@ var issueChildrenCmd = &cobra.Command{
 }
 
 var issuePullRequestsCmd = &cobra.Command{
-	Use:     "pull-requests <id>",
-	Aliases: []string{"prs"},
-	Short:   "List pull requests linked to an issue",
-	Args:    exactArgs(1),
-	RunE:    runIssuePullRequests,
+	Use:   "pull-requests <id>",
+	Short: "List pull requests linked to an issue",
+	Args:  exactArgs(1),
+	RunE:  runIssuePullRequests,
 }
 
 var issueSourceFetchCmd = &cobra.Command{

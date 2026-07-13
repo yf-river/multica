@@ -39,12 +39,11 @@ var repoAddCmd = &cobra.Command{
 }
 
 var repoRemoveCmd = &cobra.Command{
-	Use:     "remove [url]...",
-	Aliases: []string{"rm"},
-	Short:   "Remove repositories from the workspace registry",
-	Long:    "Removes one or more repository URLs from the current workspace repository registry.",
-	Args:    cobra.ArbitraryArgs,
-	RunE:    runRepoRemove,
+	Use:   "remove [url]...",
+	Short: "Remove repositories from the workspace registry",
+	Long:  "Removes one or more repository URLs from the current workspace repository registry.",
+	Args:  cobra.ArbitraryArgs,
+	RunE:  runRepoRemove,
 }
 
 var repoCheckoutCmd = &cobra.Command{
