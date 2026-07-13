@@ -1131,9 +1131,9 @@ func summarizeIssueTimeline(issue IssueResponse, nodes []IssueTimelineNodeRespon
 		summary.AcceptanceStatus = "done"
 		summary.FailureSummary = ""
 	}
-	summary.AgentExecutionDurationMs = mergedAgentExecutionDurationMs(nodes)
-	humanConfirmationMs := mergedHumanConfirmationDurationMs(nodes)
-	childIssueWaitMs := mergedChildIssueWaitDurationMs(nodes)
+	summary.AgentExecutionDurationMs = mergedNodeDurationMs(nodes, "agent_task")
+	humanConfirmationMs := mergedNodeDurationMs(nodes, "human_confirmation")
+	childIssueWaitMs := mergedNodeDurationMs(nodes, "child_issue_ref")
 	if summary.WorkStartedAt != "" && summary.WorkCompletedAt != "" {
 		if started, startErr := time.Parse(time.RFC3339, summary.WorkStartedAt); startErr == nil {
 			if completed, completedErr := time.Parse(time.RFC3339, summary.WorkCompletedAt); completedErr == nil && completed.After(started) {
@@ -1238,18 +1238,6 @@ func timelineAgentWorkBounds(nodes []IssueTimelineNodeResponse) (startedAt strin
 type timelineInterval struct {
 	start time.Time
 	end   time.Time
-}
-
-func mergedAgentExecutionDurationMs(nodes []IssueTimelineNodeResponse) int64 {
-	return mergedNodeDurationMs(nodes, "agent_task")
-}
-
-func mergedHumanConfirmationDurationMs(nodes []IssueTimelineNodeResponse) int64 {
-	return mergedNodeDurationMs(nodes, "human_confirmation")
-}
-
-func mergedChildIssueWaitDurationMs(nodes []IssueTimelineNodeResponse) int64 {
-	return mergedNodeDurationMs(nodes, "child_issue_ref")
 }
 
 func mergedWaitDurationMs(nodes []IssueTimelineNodeResponse, nodeTypes ...string) int64 {
