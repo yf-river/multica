@@ -8,8 +8,8 @@ const envName = process.env.GOAL_TEST_ENV || "int";
 const runEnv = readEnvFile(path.join(repoRoot, ".run/env", `goal-test-${envName}.env`));
 
 const cliArgs = process.argv.slice(2);
-const specArgs = splitWords(process.env.SPEC || process.env.E2E_SPEC || "");
-const extraArgs = splitWords(process.env.ARGS || process.env.E2E_ARGS || "");
+const specArgs = splitWords(process.env.SPEC || "");
+const extraArgs = splitWords(process.env.ARGS || "");
 const defaultArgs = [
   "e2e/squad-sop-ui.spec.ts",
   "e2e/coding-squad-ui.spec.ts",
