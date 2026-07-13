@@ -469,9 +469,7 @@ export interface IssueTaskTraceResponse {
   events: TaskTraceEvent[];
 }
 
-export interface RuntimeUsage {
-  runtime_id: string;
-  date: string;
+interface UsageTotals {
   provider: string;
   model: string;
   input_tokens: number;
@@ -485,32 +483,27 @@ export interface RuntimeUsage {
   cache_write_cost_usd: number;
   cache_savings_usd: number;
   priced: boolean;
+}
+
+interface CountedUsageTotals extends UsageTotals {
+  task_count: number;
+}
+
+export interface RuntimeUsage extends UsageTotals {
+  runtime_id: string;
+  date: string;
 }
 
 // One (agent, provider, model) row of the "Cost by agent" tab on the runtime
 // detail page. The backend computes cost per row; the client groups these rows
 // by agent_id and sums cost per agent across models.
-export interface RuntimeUsageByAgent {
+export interface RuntimeUsageByAgent extends CountedUsageTotals {
   agent_id: string;
-  provider: string;
-  model: string;
-  input_tokens: number;
-  output_tokens: number;
-  cache_read_tokens: number;
-  cache_write_tokens: number;
-  task_count: number;
-  cost_usd: number;
-  input_cost_usd: number;
-  output_cost_usd: number;
-  cache_read_cost_usd: number;
-  cache_write_cost_usd: number;
-  cache_savings_usd: number;
-  priced: boolean;
 }
 
 // One (task, provider, model) row for the "Cost by task" tab on the runtime
 // detail page. The client folds rows by task_id after pricing each model row.
-export interface RuntimeUsageByTask {
+export interface RuntimeUsageByTask extends UsageTotals {
   task_id: string;
   issue_id: string | null;
   issue_number: number;
@@ -519,61 +512,18 @@ export interface RuntimeUsageByTask {
   status: string;
   started_at: string | null;
   completed_at: string | null;
-  provider: string;
-  model: string;
-  input_tokens: number;
-  output_tokens: number;
-  cache_read_tokens: number;
-  cache_write_tokens: number;
-  cost_usd: number;
-  input_cost_usd: number;
-  output_cost_usd: number;
-  cache_read_cost_usd: number;
-  cache_write_cost_usd: number;
-  cache_savings_usd: number;
-  priced: boolean;
 }
 
 // One (date, provider, model) bucket of token usage for the workspace
 // dashboard. Workspace-scoped (no runtime_id) and optionally narrowed to a
 // single project on the server side. The backend computes cost per row.
-export interface DashboardUsageDaily {
+export interface DashboardUsageDaily extends CountedUsageTotals {
   date: string;
-  provider: string;
-  model: string;
-  input_tokens: number;
-  output_tokens: number;
-  cache_read_tokens: number;
-  cache_write_tokens: number;
-  task_count: number;
-  cost_usd: number;
-  input_cost_usd: number;
-  output_cost_usd: number;
-  cache_read_cost_usd: number;
-  cache_write_cost_usd: number;
-  cache_savings_usd: number;
-  priced: boolean;
 }
 
 // Per-(agent, model) token totals for the workspace dashboard. Identical wire
 // shape to RuntimeUsageByAgent; the client folds by agent_id and sums cost.
-export interface DashboardUsageByAgent {
-  agent_id: string;
-  provider: string;
-  model: string;
-  input_tokens: number;
-  output_tokens: number;
-  cache_read_tokens: number;
-  cache_write_tokens: number;
-  task_count: number;
-  cost_usd: number;
-  input_cost_usd: number;
-  output_cost_usd: number;
-  cache_read_cost_usd: number;
-  cache_write_cost_usd: number;
-  cache_savings_usd: number;
-  priced: boolean;
-}
+export type DashboardUsageByAgent = RuntimeUsageByAgent;
 
 // Per-agent total terminal-task run-time + counts. Powers the workspace
 // dashboard's "time by agent" list. failed_count is a subset of

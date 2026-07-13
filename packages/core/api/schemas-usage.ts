@@ -12,7 +12,13 @@ import { z } from "zod";
 // only that row instead of dropping the whole array to the `[]` fallback.
 // ---------------------------------------------------------------------------
 
-const UsageCostFieldsSchema = {
+const UsageFieldsSchema = {
+  provider: z.string().default(""),
+  model: z.string().default(""),
+  input_tokens: z.number().default(0),
+  output_tokens: z.number().default(0),
+  cache_read_tokens: z.number().default(0),
+  cache_write_tokens: z.number().default(0),
   cost_usd: z.number().default(0),
   input_cost_usd: z.number().default(0),
   output_cost_usd: z.number().default(0),
@@ -22,30 +28,21 @@ const UsageCostFieldsSchema = {
   priced: z.boolean().default(false),
 };
 
+const CountedUsageFieldsSchema = {
+  ...UsageFieldsSchema,
+  task_count: z.number().default(0),
+};
+
 const DashboardUsageDailySchema = z.object({
   date: z.string().default(""),
-  provider: z.string().default(""),
-  model: z.string().default(""),
-  input_tokens: z.number().default(0),
-  output_tokens: z.number().default(0),
-  cache_read_tokens: z.number().default(0),
-  cache_write_tokens: z.number().default(0),
-  task_count: z.number().default(0),
-  ...UsageCostFieldsSchema,
+  ...CountedUsageFieldsSchema,
 }).loose();
 
 export const DashboardUsageDailyListSchema = z.array(DashboardUsageDailySchema);
 
 const DashboardUsageByAgentSchema = z.object({
   agent_id: z.string().default(""),
-  provider: z.string().default(""),
-  model: z.string().default(""),
-  input_tokens: z.number().default(0),
-  output_tokens: z.number().default(0),
-  cache_read_tokens: z.number().default(0),
-  cache_write_tokens: z.number().default(0),
-  task_count: z.number().default(0),
-  ...UsageCostFieldsSchema,
+  ...CountedUsageFieldsSchema,
 }).loose();
 
 export const DashboardUsageByAgentListSchema = z.array(DashboardUsageByAgentSchema);
@@ -78,27 +75,14 @@ export const DashboardRunTimeDailyListSchema = z.array(DashboardRunTimeDailySche
 const RuntimeUsageSchema = z.object({
   runtime_id: z.string().default(""),
   date: z.string().default(""),
-  provider: z.string().default(""),
-  model: z.string().default(""),
-  input_tokens: z.number().default(0),
-  output_tokens: z.number().default(0),
-  cache_read_tokens: z.number().default(0),
-  cache_write_tokens: z.number().default(0),
-  ...UsageCostFieldsSchema,
+  ...UsageFieldsSchema,
 }).loose();
 
 export const RuntimeUsageListSchema = z.array(RuntimeUsageSchema);
 
 const RuntimeUsageByAgentSchema = z.object({
   agent_id: z.string().default(""),
-  provider: z.string().default(""),
-  model: z.string().default(""),
-  input_tokens: z.number().default(0),
-  output_tokens: z.number().default(0),
-  cache_read_tokens: z.number().default(0),
-  cache_write_tokens: z.number().default(0),
-  task_count: z.number().default(0),
-  ...UsageCostFieldsSchema,
+  ...CountedUsageFieldsSchema,
 }).loose();
 
 export const RuntimeUsageByAgentListSchema = z.array(RuntimeUsageByAgentSchema);
@@ -112,13 +96,7 @@ const RuntimeUsageByTaskSchema = z.object({
   status: z.string().default(""),
   started_at: z.string().nullable().default(null),
   completed_at: z.string().nullable().default(null),
-  provider: z.string().default(""),
-  model: z.string().default(""),
-  input_tokens: z.number().default(0),
-  output_tokens: z.number().default(0),
-  cache_read_tokens: z.number().default(0),
-  cache_write_tokens: z.number().default(0),
-  ...UsageCostFieldsSchema,
+  ...UsageFieldsSchema,
 }).loose();
 
 export const RuntimeUsageByTaskListSchema = z.array(RuntimeUsageByTaskSchema);
