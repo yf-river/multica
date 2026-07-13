@@ -215,26 +215,13 @@ func promptLibraryTrialToResponse(trial db.PromptLibraryTrial) (PromptLibraryTri
 }
 
 func promptLibraryTrialRowToResponse(trial db.ListPromptLibraryTrialsRow) (PromptLibraryTrialResponse, error) {
-	variables, err := decodeJSONObject(trial.Variables, "prompt library trial variables")
+	resp, err := promptLibraryTrialToResponse(trial.PromptLibraryTrial)
 	if err != nil {
 		return PromptLibraryTrialResponse{}, err
 	}
-	return PromptLibraryTrialResponse{
-		ID:              uuidToString(trial.ID),
-		WorkspaceID:     uuidToString(trial.WorkspaceID),
-		PromptID:        uuidToString(trial.PromptID),
-		VersionID:       uuidToString(trial.VersionID),
-		AgentID:         uuidToString(trial.AgentID),
-		ChatSessionID:   uuidToPtr(trial.ChatSessionID),
-		TaskID:          uuidToPtr(trial.TaskID),
-		RenderedMessage: trial.RenderedMessage,
-		Variables:       variables,
-		Status:          trial.Status,
-		OutputPreview:   trial.OutputPreview,
-		CreatedBy:       uuidToPtr(trial.CreatedBy),
-		CreatedAt:       timestampToString(trial.CreatedAt),
-		UpdatedAt:       timestampToString(trial.UpdatedAt),
-	}, nil
+	resp.Status = trial.EffectiveStatus
+	resp.OutputPreview = trial.EffectiveOutputPreview
+	return resp, nil
 }
 
 func normalizePromptLibraryStatus(status string) string {
@@ -810,7 +797,7 @@ func (h *Handler) ListPromptLibraryTrials(w http.ResponseWriter, r *http.Request
 	for i, trial := range trials {
 		resp[i], err = promptLibraryTrialRowToResponse(trial)
 		if err != nil {
-			slog.Error("invalid persisted prompt library trial", "id", uuidToString(trial.ID), "error", err)
+			slog.Error("invalid persisted prompt library trial", "id", uuidToString(trial.PromptLibraryTrial.ID), "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to decode prompt library trial")
 			return
 		}
