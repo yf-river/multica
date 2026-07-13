@@ -1,6 +1,7 @@
 "use client";
 
-import { api, isMutationOutcomeUnknown } from "../api";
+import { api } from "../api";
+import { executeRecoverableMutation } from "../api/transport";
 import {
   createWorkspaceRecoverableOperationStore,
   type RecoverableOperationStore,
@@ -30,16 +31,10 @@ async function execute(
   client: AgentPlaygroundCreateClient,
   operation: PendingAgentPlaygroundCreate,
 ) {
-  try {
-    const detail = await client.createAgentPlaygroundExperiment(operation.request, operation.requestKey);
-    useAgentPlaygroundCreateStore.getState().setPending();
-    return detail;
-  } catch (error) {
-    if (!isMutationOutcomeUnknown(error)) {
-      useAgentPlaygroundCreateStore.getState().setPending();
-    }
-    throw error;
-  }
+  return executeRecoverableMutation(
+    () => client.createAgentPlaygroundExperiment(operation.request, operation.requestKey),
+    () => useAgentPlaygroundCreateStore.getState().setPending(),
+  );
 }
 
 export async function createAgentPlaygroundExperimentWithRecovery(

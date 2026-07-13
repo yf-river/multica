@@ -1,6 +1,7 @@
 "use client";
 
-import { api, isMutationOutcomeUnknown } from "../api";
+import { api } from "../api";
+import { executeRecoverableMutation } from "../api/transport";
 import {
   createAccountRecoverableOperationStore,
   type RecoverableOperationStore,
@@ -31,16 +32,10 @@ export interface WorkspaceCreateClient {
 }
 
 async function execute(client: WorkspaceCreateClient, operation: PendingWorkspaceCreate) {
-  try {
-    const workspace = await client.createWorkspace(operation.request, operation.requestKey);
-    useWorkspaceCreateOperationStore.getState().setPending();
-    return workspace;
-  } catch (error) {
-    if (!isMutationOutcomeUnknown(error)) {
-      useWorkspaceCreateOperationStore.getState().setPending();
-    }
-    throw error;
-  }
+  return executeRecoverableMutation(
+    () => client.createWorkspace(operation.request, operation.requestKey),
+    () => useWorkspaceCreateOperationStore.getState().setPending(),
+  );
 }
 
 export async function createWorkspaceWithRecovery(

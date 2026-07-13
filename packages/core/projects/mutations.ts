@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, isMutationOutcomeUnknown } from "../api";
+import { api } from "../api";
+import { executeRecoverableMutation } from "../api/transport";
 import { projectKeys } from "./queries";
 import { useWorkspaceId } from "../paths";
 import { useRecentContextStore } from "../chat/recent-context-store";
@@ -18,19 +19,13 @@ export function useCreateProject() {
         request: data,
       };
       draftStore.setDraft({ pendingCreate });
-      try {
-        const project = await api.createProject(
+      return executeRecoverableMutation(
+        () => api.createProject(
           pendingCreate.request,
           pendingCreate.requestKey,
-        );
-        useProjectDraftStore.getState().setDraft({ pendingCreate: undefined });
-        return project;
-      } catch (error) {
-        if (!isMutationOutcomeUnknown(error)) {
-          useProjectDraftStore.getState().setDraft({ pendingCreate: undefined });
-        }
-        throw error;
-      }
+        ),
+        () => useProjectDraftStore.getState().setDraft({ pendingCreate: undefined }),
+      );
     },
     onSuccess: (newProject) => {
       qc.setQueryData<ListProjectsResponse>(projectKeys.list(wsId), (old) =>

@@ -1,6 +1,7 @@
 "use client";
 
-import { api, isMutationOutcomeUnknown } from "../api";
+import { api } from "../api";
+import { executeRecoverableMutation } from "../api/transport";
 import {
   createWorkspaceRecoverableOperationStore,
   type RecoverableOperationStore,
@@ -29,18 +30,14 @@ export interface SkillReEvalRunClient {
 }
 
 async function execute(client: SkillReEvalRunClient, operation: PendingSkillReEvalRun) {
-  try {
-    const response = await client.runPromptEvaluationSkillReEval(
+  return executeRecoverableMutation(
+    () => client.runPromptEvaluationSkillReEval(
       operation.candidateId,
       operation.request,
       operation.requestKey,
-    );
-    useSkillReEvalRunStore.getState().setPending();
-    return response;
-  } catch (error) {
-    if (!isMutationOutcomeUnknown(error)) useSkillReEvalRunStore.getState().setPending();
-    throw error;
-  }
+    ),
+    () => useSkillReEvalRunStore.getState().setPending(),
+  );
 }
 
 export async function runPromptEvaluationSkillReEvalWithRecovery(

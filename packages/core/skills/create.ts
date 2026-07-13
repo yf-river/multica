@@ -1,4 +1,5 @@
-import { api, isMutationOutcomeUnknown } from "../api";
+import { api } from "../api";
+import { executeRecoverableMutation } from "../api/transport";
 import type { CreateSkillRequest, Skill } from "../types";
 import { generateUUID } from "../utils";
 import { useSkillPendingOperationStore } from "./pending-operation-store";
@@ -20,17 +21,11 @@ export async function createSkillWithRecovery(
     request,
   };
   operations.setPendingCreate(pendingCreate);
-  try {
-    const skill = await client.createSkill(
+  return executeRecoverableMutation(
+    () => client.createSkill(
       pendingCreate.request,
       pendingCreate.requestKey,
-    );
-    useSkillPendingOperationStore.getState().setPendingCreate();
-    return skill;
-  } catch (error) {
-    if (!isMutationOutcomeUnknown(error)) {
-      useSkillPendingOperationStore.getState().setPendingCreate();
-    }
-    throw error;
-  }
+    ),
+    () => useSkillPendingOperationStore.getState().setPendingCreate(),
+  );
 }

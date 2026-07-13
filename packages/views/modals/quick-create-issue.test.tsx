@@ -72,7 +72,6 @@ vi.mock("@multica/core/api", () => ({
   ApiError: class ApiError extends Error {
     body?: unknown;
   },
-  isMutationOutcomeUnknown: () => false,
 }));
 
 vi.mock("@multica/core/paths", () => ({

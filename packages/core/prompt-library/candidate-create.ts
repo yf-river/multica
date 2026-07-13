@@ -1,6 +1,7 @@
 "use client";
 
-import { api, isMutationOutcomeUnknown } from "../api";
+import { api } from "../api";
+import { executeRecoverableMutation } from "../api/transport";
 import {
   createWorkspaceRecoverableOperationStore,
   type RecoverableOperationStore,
@@ -27,17 +28,13 @@ export interface CandidateCreateClient {
 }
 
 async function execute(client: CandidateCreateClient, operation: PendingCandidateCreate) {
-  try {
-    const response = await client.createPromptEvaluationOptimizationCandidate(
+  return executeRecoverableMutation(
+    () => client.createPromptEvaluationOptimizationCandidate(
       operation.runId,
       operation.requestKey,
-    );
-    useCandidateCreateStore.getState().setPending();
-    return response;
-  } catch (error) {
-    if (!isMutationOutcomeUnknown(error)) useCandidateCreateStore.getState().setPending();
-    throw error;
-  }
+    ),
+    () => useCandidateCreateStore.getState().setPending(),
+  );
 }
 
 export async function createPromptEvaluationOptimizationCandidateWithRecovery(

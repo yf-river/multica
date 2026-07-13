@@ -1,6 +1,7 @@
 "use client";
 
-import { api, isMutationOutcomeUnknown } from "../api";
+import { api } from "../api";
+import { executeRecoverableMutation } from "../api/transport";
 import {
   createWorkspaceRecoverableOperationStore,
   type RecoverableOperationStore,
@@ -32,18 +33,14 @@ export interface SkillReEvalAssetClient {
 }
 
 async function execute(client: SkillReEvalAssetClient, operation: PendingSkillReEvalAsset) {
-  try {
-    const response = await client.preparePromptEvaluationSkillReEvalAsset(
+  return executeRecoverableMutation(
+    () => client.preparePromptEvaluationSkillReEvalAsset(
       operation.candidateId,
       operation.request,
       operation.requestKey,
-    );
-    useSkillReEvalAssetStore.getState().setPending();
-    return response;
-  } catch (error) {
-    if (!isMutationOutcomeUnknown(error)) useSkillReEvalAssetStore.getState().setPending();
-    throw error;
-  }
+    ),
+    () => useSkillReEvalAssetStore.getState().setPending(),
+  );
 }
 
 export async function preparePromptEvaluationSkillReEvalAssetWithRecovery(

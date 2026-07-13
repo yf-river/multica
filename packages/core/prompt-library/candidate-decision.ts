@@ -1,6 +1,7 @@
 "use client";
 
-import { api, isMutationOutcomeUnknown } from "../api";
+import { api } from "../api";
+import { executeRecoverableMutation } from "../api/transport";
 import {
   createWorkspaceRecoverableOperationStore,
   type RecoverableOperationStore,
@@ -32,19 +33,24 @@ export interface CandidateDecisionClient {
   ): Promise<PromptEvaluationOptimizationCandidate>;
 }
 
-async function execute(client: CandidateDecisionClient, decision: CandidateDecision) {
-  try {
-    const response = decision.kind === "publish"
-      ? await client.publishPromptEvaluationOptimizationCandidate(decision.candidateId, decision.requestKey)
-      : await client.rejectPromptEvaluationOptimizationCandidate(
+async function execute(
+  client: CandidateDecisionClient,
+  decision: CandidateDecision,
+): Promise<
+  | PromptEvaluationOptimizationCandidate
+  | PublishPromptEvaluationOptimizationCandidateResponse
+> {
+  return executeRecoverableMutation<
+    | PromptEvaluationOptimizationCandidate
+    | PublishPromptEvaluationOptimizationCandidateResponse
+  >(
+    () => decision.kind === "publish"
+      ? client.publishPromptEvaluationOptimizationCandidate(decision.candidateId, decision.requestKey)
+      : client.rejectPromptEvaluationOptimizationCandidate(
           decision.candidateId, { reason: decision.reason || undefined }, decision.requestKey,
-        );
-    useCandidateDecisionStore.getState().setPending();
-    return response;
-  } catch (error) {
-    if (!isMutationOutcomeUnknown(error)) useCandidateDecisionStore.getState().setPending();
-    throw error;
-  }
+        ),
+    () => useCandidateDecisionStore.getState().setPending(),
+  );
 }
 
 async function recoverPending(client: CandidateDecisionClient) {

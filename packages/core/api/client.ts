@@ -191,7 +191,6 @@ import {
 export {
   ApiError,
   ApiTransportError,
-  isMutationOutcomeUnknown,
   type ApiClientIdentity,
   type ApiClientOptions,
 } from "./transport";

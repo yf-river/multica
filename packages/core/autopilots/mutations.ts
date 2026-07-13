@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, isMutationOutcomeUnknown } from "../api";
+import { api } from "../api";
+import { executeRecoverableMutation } from "../api/transport";
 import { generateUUID } from "../utils";
 import { autopilotKeys } from "./queries";
 import { useWorkspaceId } from "../paths";
@@ -24,19 +25,13 @@ export function useCreateAutopilot() {
         request: data,
       };
       operations.setPendingCreate(pendingCreate);
-      try {
-        const result = await api.createAutopilot(
+      return executeRecoverableMutation(
+        () => api.createAutopilot(
           pendingCreate.request,
           pendingCreate.requestKey,
-        );
-        useAutopilotPendingOperationStore.getState().setPendingCreate();
-        return result;
-      } catch (error) {
-        if (!isMutationOutcomeUnknown(error)) {
-          useAutopilotPendingOperationStore.getState().setPendingCreate();
-        }
-        throw error;
-      }
+        ),
+        () => useAutopilotPendingOperationStore.getState().setPendingCreate(),
+      );
     },
     onSuccess: (newAutopilot) => {
       qc.setQueryData<ListAutopilotsResponse>(autopilotKeys.list(wsId), (old) =>
@@ -122,16 +117,10 @@ export function useTriggerAutopilot() {
       const operations = useAutopilotPendingOperationStore.getState();
       const requestKey = operations.manualTriggerKeys[id] ?? generateUUID();
       operations.setManualTriggerKey(id, requestKey);
-      try {
-        const result = await api.triggerAutopilot(id, requestKey);
-        useAutopilotPendingOperationStore.getState().clearManualTriggerKey(id);
-        return result;
-      } catch (error) {
-        if (!isMutationOutcomeUnknown(error)) {
-          useAutopilotPendingOperationStore.getState().clearManualTriggerKey(id);
-        }
-        throw error;
-      }
+      return executeRecoverableMutation(
+        () => api.triggerAutopilot(id, requestKey),
+        () => useAutopilotPendingOperationStore.getState().clearManualTriggerKey(id),
+      );
     },
     onSettled: (_data, _err, id) => {
       qc.invalidateQueries({ queryKey: autopilotKeys.runs(wsId, id) });

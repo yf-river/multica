@@ -1,4 +1,5 @@
-import { api, isMutationOutcomeUnknown } from "../api";
+import { api } from "../api";
+import { executeRecoverableMutation } from "../api/transport";
 import type { Agent, CreateAgentRequest } from "../types";
 import { generateUUID } from "../utils";
 import { useAgentPendingOperationStore } from "./pending-operation-store";
@@ -20,17 +21,11 @@ export async function createAgentWithRecovery(
     request,
   };
   operations.setPendingCreate(pendingCreate);
-  try {
-    const agent = await client.createAgent(
+  return executeRecoverableMutation(
+    () => client.createAgent(
       pendingCreate.request,
       pendingCreate.requestKey,
-    );
-    useAgentPendingOperationStore.getState().setPendingCreate();
-    return agent;
-  } catch (error) {
-    if (!isMutationOutcomeUnknown(error)) {
-      useAgentPendingOperationStore.getState().setPendingCreate();
-    }
-    throw error;
-  }
+    ),
+    () => useAgentPendingOperationStore.getState().setPendingCreate(),
+  );
 }

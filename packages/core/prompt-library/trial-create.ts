@@ -1,4 +1,5 @@
-import { api, isMutationOutcomeUnknown } from "../api";
+import { api } from "../api";
+import { executeRecoverableMutation } from "../api/transport";
 import {
   createWorkspaceAwareStorage,
   registerWorkspacePersistStore,
@@ -109,21 +110,15 @@ async function execute(
   scope: string,
   operation: PendingTrialCreate,
 ) {
-  try {
-    const trial = await client.createPromptLibraryTrial(
+  return executeRecoverableMutation(
+    () => client.createPromptLibraryTrial(
       operation.promptId,
       operation.versionId,
       operation.request,
       operation.requestKey,
-    );
-    usePromptLibraryCreateStore.getState().setPending(scope);
-    return trial;
-  } catch (error) {
-    if (!isMutationOutcomeUnknown(error)) {
-      usePromptLibraryCreateStore.getState().setPending(scope);
-    }
-    throw error;
-  }
+    ),
+    () => usePromptLibraryCreateStore.getState().setPending(scope),
+  );
 }
 
 export async function createPromptLibraryTrialWithRecovery(
@@ -153,14 +148,10 @@ async function executeItem(
   client: Pick<PromptLibraryCreateClient, "createPromptLibraryItem">,
   operation: PendingItemCreate,
 ) {
-  try {
-    const item = await client.createPromptLibraryItem(operation.request, operation.requestKey);
-    usePromptLibraryCreateStore.getState().setItem();
-    return item;
-  } catch (error) {
-    if (!isMutationOutcomeUnknown(error)) usePromptLibraryCreateStore.getState().setItem();
-    throw error;
-  }
+  return executeRecoverableMutation(
+    () => client.createPromptLibraryItem(operation.request, operation.requestKey),
+    () => usePromptLibraryCreateStore.getState().setItem(),
+  );
 }
 
 export async function createPromptLibraryItemWithRecovery(
@@ -181,14 +172,10 @@ async function executeVersion(
   client: Pick<PromptLibraryCreateClient, "createPromptLibraryVersion">,
   operation: PendingVersionCreate,
 ) {
-  try {
-    const result = await client.createPromptLibraryVersion(operation.promptId, operation.request, operation.requestKey);
-    usePromptLibraryCreateStore.getState().setVersion(operation.promptId);
-    return result;
-  } catch (error) {
-    if (!isMutationOutcomeUnknown(error)) usePromptLibraryCreateStore.getState().setVersion(operation.promptId);
-    throw error;
-  }
+  return executeRecoverableMutation(
+    () => client.createPromptLibraryVersion(operation.promptId, operation.request, operation.requestKey),
+    () => usePromptLibraryCreateStore.getState().setVersion(operation.promptId),
+  );
 }
 
 export async function createPromptLibraryVersionWithRecovery(

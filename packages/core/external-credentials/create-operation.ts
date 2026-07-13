@@ -1,6 +1,7 @@
 "use client";
 
-import { api, ApiError, isMutationOutcomeUnknown } from "../api";
+import { api, ApiError } from "../api";
+import { executeRecoverableMutation } from "../api/transport";
 import {
   createAccountRecoverableOperationStore,
   type RecoverableOperationStore,
@@ -55,16 +56,10 @@ async function execute(
   request: CreateExternalCredentialProfileRequest,
   requestKey: string,
 ) {
-  try {
-    const profile = await client.createExternalCredentialProfile(request, requestKey);
-    useCredentialProfileCreateStore.getState().setPending();
-    return profile;
-  } catch (error) {
-    if (!isMutationOutcomeUnknown(error)) {
-      useCredentialProfileCreateStore.getState().setPending();
-    }
-    throw error;
-  }
+  return executeRecoverableMutation(
+    () => client.createExternalCredentialProfile(request, requestKey),
+    () => useCredentialProfileCreateStore.getState().setPending(),
+  );
 }
 
 export async function createExternalCredentialProfileWithRecovery(

@@ -1,5 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, isMutationOutcomeUnknown } from "../api";
+import { api } from "../api";
+import { executeRecoverableMutation } from "../api/transport";
 import { useWorkspaceId } from "../paths";
 import type { CreateSquadRequest, Squad } from "../types";
 import { generateUUID } from "../utils";
@@ -17,19 +18,13 @@ export function useCreateSquad() {
         request,
       };
       operations.setPendingCreate(pendingCreate);
-      try {
-        const squad = await api.createSquad(
+      return executeRecoverableMutation(
+        () => api.createSquad(
           pendingCreate.request,
           pendingCreate.requestKey,
-        );
-        useSquadPendingOperationStore.getState().setPendingCreate();
-        return squad;
-      } catch (error) {
-        if (!isMutationOutcomeUnknown(error)) {
-          useSquadPendingOperationStore.getState().setPendingCreate();
-        }
-        throw error;
-      }
+        ),
+        () => useSquadPendingOperationStore.getState().setPendingCreate(),
+      );
     },
     onSuccess: (squad) => {
       queryClient.setQueryData<Squad[]>(workspaceKeys.squads(workspaceId), (old) =>

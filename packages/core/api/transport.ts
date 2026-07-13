@@ -53,11 +53,25 @@ export class ApiTransportError extends Error {
   }
 }
 
-export function isMutationOutcomeUnknown(error: unknown): boolean {
+function isMutationOutcomeUnknown(error: unknown): boolean {
   return (
     (error instanceof ApiTransportError || error instanceof ApiResponseValidationError) &&
     error.mayHaveCommitted
   );
+}
+
+export async function executeRecoverableMutation<Result>(
+  mutate: () => Promise<Result>,
+  clearPending: () => void,
+): Promise<Result> {
+  try {
+    const result = await mutate();
+    clearPending();
+    return result;
+  } catch (error) {
+    if (!isMutationOutcomeUnknown(error)) clearPending();
+    throw error;
+  }
 }
 
 export class ApiTransport {

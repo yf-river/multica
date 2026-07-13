@@ -1,4 +1,4 @@
-import { isMutationOutcomeUnknown } from "../api";
+import { executeRecoverableMutation } from "../api/transport";
 import type { QuickCreateIssueRequest, QuickCreateIssueResponse } from "../types";
 import { generateUUID } from "../utils";
 import { useQuickCreateStore } from "./stores/quick-create-store";
@@ -19,14 +19,8 @@ export async function quickCreateIssueWithRecovery(
   const operation = existing ?? { request, idempotencyKey: generateUUID() };
 
   if (operation !== existing) store.setPendingOperation(operation);
-  try {
-    const response = await api.quickCreateIssue(operation.request, operation.idempotencyKey);
-    useQuickCreateStore.getState().clearPendingOperation(operation.idempotencyKey);
-    return response;
-  } catch (error) {
-    if (!isMutationOutcomeUnknown(error)) {
-      useQuickCreateStore.getState().clearPendingOperation(operation.idempotencyKey);
-    }
-    throw error;
-  }
+  return executeRecoverableMutation(
+    () => api.quickCreateIssue(operation.request, operation.idempotencyKey),
+    () => useQuickCreateStore.getState().clearPendingOperation(operation.idempotencyKey),
+  );
 }

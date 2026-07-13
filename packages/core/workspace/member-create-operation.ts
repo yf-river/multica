@@ -1,6 +1,7 @@
 "use client";
 
-import { api, isMutationOutcomeUnknown } from "../api";
+import { api } from "../api";
+import { executeRecoverableMutation } from "../api/transport";
 import {
   createWorkspaceRecoverableOperationStore,
   type RecoverableOperationStore,
@@ -52,16 +53,10 @@ async function execute(
   request: CreateMemberRequest,
   requestKey: string,
 ) {
-  try {
-    const member = await client.createMember(workspaceId, request, requestKey);
-    useMemberCreateOperationStore.getState().setPending();
-    return member;
-  } catch (error) {
-    if (!isMutationOutcomeUnknown(error)) {
-      useMemberCreateOperationStore.getState().setPending();
-    }
-    throw error;
-  }
+  return executeRecoverableMutation(
+    () => client.createMember(workspaceId, request, requestKey),
+    () => useMemberCreateOperationStore.getState().setPending(),
+  );
 }
 
 export async function createMemberWithRecovery(

@@ -1,4 +1,5 @@
-import { api, isMutationOutcomeUnknown } from "../api";
+import { api } from "../api";
+import { executeRecoverableMutation } from "../api/transport";
 import type { CreateIssueRequest, Issue } from "../types";
 import { generateUUID } from "../utils";
 import {
@@ -14,16 +15,10 @@ async function executeIssueCreate(
   client: IssueCreateClient,
   operation: PendingIssueCreate,
 ): Promise<Issue> {
-  try {
-    const issue = await client.createIssue(operation.request, operation.requestKey);
-    useIssueCreatePendingStore.getState().setPendingCreate();
-    return issue;
-  } catch (error) {
-    if (!isMutationOutcomeUnknown(error)) {
-      useIssueCreatePendingStore.getState().setPendingCreate();
-    }
-    throw error;
-  }
+  return executeRecoverableMutation(
+    () => client.createIssue(operation.request, operation.requestKey),
+    () => useIssueCreatePendingStore.getState().setPendingCreate(),
+  );
 }
 
 export async function createIssueWithRecovery(

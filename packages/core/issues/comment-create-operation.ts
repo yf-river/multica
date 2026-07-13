@@ -1,4 +1,5 @@
-import { api, isMutationOutcomeUnknown } from "../api";
+import { api } from "../api";
+import { executeRecoverableMutation } from "../api/transport";
 import type { Comment, CreateCommentRequest } from "../types";
 import { generateUUID } from "../utils";
 import {
@@ -18,16 +19,10 @@ async function executeCommentCreate(
   scope: string,
   operation: PendingCommentCreate,
 ): Promise<Comment> {
-  try {
-    const comment = await client.createComment(operation.issueId, operation.request, operation.requestKey);
-    useCommentDraftStore.getState().setPendingCreate(scope);
-    return comment;
-  } catch (error) {
-    if (!isMutationOutcomeUnknown(error)) {
-      useCommentDraftStore.getState().setPendingCreate(scope);
-    }
-    throw error;
-  }
+  return executeRecoverableMutation(
+    () => client.createComment(operation.issueId, operation.request, operation.requestKey),
+    () => useCommentDraftStore.getState().setPendingCreate(scope),
+  );
 }
 
 export async function createCommentWithRecovery(
