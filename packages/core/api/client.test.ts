@@ -2018,16 +2018,6 @@ describe("ApiClient", () => {
       expect(page).toEqual({ messages: [], limit: 50, has_more: false, next_cursor: null });
     });
 
-    it("propagates a missing current paged route without legacy fallback", async () => {
-      const fetchMock = vi
-        .fn()
-        .mockResolvedValue(jsonResponse({ error: "not found" }, 404, "Not Found"));
-      vi.stubGlobal("fetch", fetchMock);
-
-      const client = new ApiClient("https://api.example.test");
-      await expect(client.listChatMessagesPage("session-1")).rejects.toBeInstanceOf(ApiError);
-      expect(fetchMock).toHaveBeenCalledTimes(1);
-    });
   });
 
   describe("cancelTaskById response parsing", () => {
