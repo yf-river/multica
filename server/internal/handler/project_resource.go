@@ -911,12 +911,7 @@ func probeGongfengURL(ctx context.Context, rawURL string) gongfengProbeResult {
 	if err != nil {
 		return gongfengProbeResult{ConnectionStatus: "invalid_url", TestStatus: "failed"}
 	}
-	client := &http.Client{
-		Timeout: 20 * time.Second,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
+	client := newNoRedirectHTTPClient(20 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return gongfengProbeResult{ConnectionStatus: "unreachable", TestStatus: "failed"}
@@ -946,15 +941,8 @@ func probeGongfengWithCredential(ctx context.Context, ref gongfengRepoRef, token
 	if err != nil {
 		return gongfengCredentialProbeResult{ConnectionStatus: "invalid_url", TestStatus: "failed", Target: target}
 	}
-	req.Header.Set("PRIVATE-TOKEN", token)
-	req.Header.Set("Private-Token", token)
-	req.Header.Set("Authorization", "Bearer "+token)
-	client := &http.Client{
-		Timeout: 20 * time.Second,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
+	setGongfengCredentialHeaders(req, token)
+	client := newNoRedirectHTTPClient(20 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return gongfengCredentialProbeResult{ConnectionStatus: "credential_probe_unreachable", TestStatus: "failed", Target: target}
@@ -1013,15 +1001,8 @@ func fetchGongfengDefaultBranch(ctx context.Context, projectPath string, token s
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("PRIVATE-TOKEN", token)
-	req.Header.Set("Private-Token", token)
-	req.Header.Set("Authorization", "Bearer "+token)
-	client := &http.Client{
-		Timeout: 20 * time.Second,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
+	setGongfengCredentialHeaders(req, token)
+	client := newNoRedirectHTTPClient(20 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("gongfeng default branch lookup failed: %w", err)
@@ -1062,12 +1043,7 @@ func fetchGongfengBranches(ctx context.Context, projectPath string, token string
 	if projectPath == "" {
 		return nil, errors.New("gongfeng project_path is required")
 	}
-	client := &http.Client{
-		Timeout: 20 * time.Second,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
+	client := newNoRedirectHTTPClient(20 * time.Second)
 	type gongfengBranchListItem struct {
 		Name   string `json:"name"`
 		Commit struct {
@@ -1086,9 +1062,7 @@ func fetchGongfengBranches(ctx context.Context, projectPath string, token string
 		if err != nil {
 			return nil, err
 		}
-		req.Header.Set("PRIVATE-TOKEN", token)
-		req.Header.Set("Private-Token", token)
-		req.Header.Set("Authorization", "Bearer "+token)
+		setGongfengCredentialHeaders(req, token)
 		resp, err := client.Do(req)
 		if err != nil {
 			return nil, fmt.Errorf("gongfeng branch list lookup failed: %w", err)
@@ -1195,15 +1169,8 @@ func fetchGongfengBranchHeadCommit(ctx context.Context, projectPath string, bran
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("PRIVATE-TOKEN", token)
-	req.Header.Set("Private-Token", token)
-	req.Header.Set("Authorization", "Bearer "+token)
-	client := &http.Client{
-		Timeout: 20 * time.Second,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
+	setGongfengCredentialHeaders(req, token)
+	client := newNoRedirectHTTPClient(20 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("gongfeng branch head lookup failed: %w", err)

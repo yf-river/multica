@@ -429,6 +429,21 @@ func (h *Handler) TestExternalCredentialProfile(w http.ResponseWriter, r *http.R
 	})
 }
 
+func newNoRedirectHTTPClient(timeout time.Duration) *http.Client {
+	return &http.Client{
+		Timeout: timeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
+func setGongfengCredentialHeaders(req *http.Request, token string) {
+	req.Header.Set("PRIVATE-TOKEN", token)
+	req.Header.Set("Private-Token", token)
+	req.Header.Set("Authorization", "Bearer "+token)
+}
+
 func (h *Handler) verifyGongfengCredentialConnection(ctx context.Context, secretRef string, encrypted []byte) (string, pgtype.Timestamptz, pgtype.Text) {
 	now := pgtype.Timestamptz{Time: time.Now(), Valid: true}
 	token, err := h.resolveExternalCredentialToken(db.ExternalCredentialProfile{
@@ -447,15 +462,8 @@ func (h *Handler) verifyGongfengCredentialConnection(ctx context.Context, secret
 	if err != nil {
 		return "failed", now, pgtype.Text{String: "工蜂连接测试地址无效。", Valid: true}
 	}
-	req.Header.Set("PRIVATE-TOKEN", token)
-	req.Header.Set("Private-Token", token)
-	req.Header.Set("Authorization", "Bearer "+token)
-	client := &http.Client{
-		Timeout: 8 * time.Second,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
+	setGongfengCredentialHeaders(req, token)
+	client := newNoRedirectHTTPClient(8 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return "failed", now, pgtype.Text{String: "无法连接工蜂 API；请检查网络或 GONGFENG_API_BASE。", Valid: true}
@@ -495,12 +503,7 @@ func (h *Handler) verifyTAPDCredentialConnection(ctx context.Context, secretRef 
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Via", "mcp")
-	client := &http.Client{
-		Timeout: 8 * time.Second,
-		CheckRedirect: func(*http.Request, []*http.Request) error {
-			return http.ErrUseLastResponse
-		},
-	}
+	client := newNoRedirectHTTPClient(8 * time.Second)
 	resp, err := client.Do(req)
 	if err != nil {
 		return "failed", now, pgtype.Text{String: "无法连接 TAPD API；请检查网络或 TAPD_API_BASE_URL。", Valid: true}
