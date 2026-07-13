@@ -472,7 +472,7 @@ func (s *TaskService) projectTaskStartIssueStatus(
 	queries *db.Queries,
 	task db.AgentTaskQueue,
 ) (*taskIssueStatusProjection, error) {
-	if !shouldAutoStartIssueForTask(task) {
+	if !isAssignmentIssueTaskForStatusAutomation(task) {
 		return nil, nil
 	}
 	issue, err := queries.GetIssue(ctx, task.IssueID)
@@ -512,7 +512,7 @@ func (s *TaskService) projectTaskFailureIssueStatus(
 	task db.AgentTaskQueue,
 	skip bool,
 ) (*taskIssueStatusProjection, error) {
-	if skip || !shouldAutoBlockIssueForTaskFailure(task) {
+	if skip || !isAssignmentIssueTaskForStatusAutomation(task) {
 		return nil, nil
 	}
 	hasActive, err := queries.HasActiveTaskForIssue(ctx, task.IssueID)
@@ -570,10 +570,6 @@ func (s *TaskService) publishTaskIssueStatusProjection(ctx context.Context, proj
 	}
 }
 
-func shouldAutoStartIssueForTask(task db.AgentTaskQueue) bool {
-	return isAssignmentIssueTaskForStatusAutomation(task)
-}
-
 func shouldConsiderAutoReviewIssueForTask(task db.AgentTaskQueue) bool {
 	return isAssignmentIssueTaskForStatusAutomation(task) && !task.IsLeaderTask
 }
@@ -586,10 +582,6 @@ func shouldAutoReviewIssueForTask(task db.AgentTaskQueue, issue db.Issue) bool {
 		issue.AssigneeType.String == "agent" &&
 		issue.AssigneeID.Valid &&
 		issue.AssigneeID == task.AgentID
-}
-
-func shouldAutoBlockIssueForTaskFailure(task db.AgentTaskQueue) bool {
-	return isAssignmentIssueTaskForStatusAutomation(task)
 }
 
 func isAssignmentIssueTaskForStatusAutomation(task db.AgentTaskQueue) bool {

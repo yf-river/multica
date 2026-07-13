@@ -233,56 +233,41 @@ func TestTaskIssueStatusAutomationPredicates(t *testing.T) {
 	}
 
 	cases := []struct {
-		name      string
-		task      db.AgentTaskQueue
-		wantStart bool
-		wantBlock bool
+		name string
+		task db.AgentTaskQueue
+		want bool
 	}{
 		{
-			name:      "ordinary assignment task",
-			task:      baseTask,
-			wantStart: true,
-			wantBlock: true,
+			name: "ordinary assignment task",
+			task: baseTask,
+			want: true,
 		},
 		{
-			name:      "comment-triggered task",
-			task:      func() db.AgentTaskQueue { t := baseTask; t.TriggerCommentID = commentID; return t }(),
-			wantStart: false,
-			wantBlock: false,
+			name: "comment-triggered task",
+			task: func() db.AgentTaskQueue { t := baseTask; t.TriggerCommentID = commentID; return t }(),
 		},
 		{
-			name:      "chat task",
-			task:      func() db.AgentTaskQueue { t := baseTask; t.ChatSessionID = chatID; return t }(),
-			wantStart: false,
-			wantBlock: false,
+			name: "chat task",
+			task: func() db.AgentTaskQueue { t := baseTask; t.ChatSessionID = chatID; return t }(),
 		},
 		{
-			name:      "autopilot task",
-			task:      func() db.AgentTaskQueue { t := baseTask; t.AutopilotRunID = autopilotRunID; return t }(),
-			wantStart: false,
-			wantBlock: false,
+			name: "autopilot task",
+			task: func() db.AgentTaskQueue { t := baseTask; t.AutopilotRunID = autopilotRunID; return t }(),
 		},
 		{
-			name:      "source summary task",
-			task:      func() db.AgentTaskQueue { t := baseTask; t.Context = sourceContext; return t }(),
-			wantStart: false,
-			wantBlock: false,
+			name: "source summary task",
+			task: func() db.AgentTaskQueue { t := baseTask; t.Context = sourceContext; return t }(),
 		},
 		{
-			name:      "quick create style task without issue",
-			task:      db.AgentTaskQueue{ID: testUUID(21), AgentID: agentID},
-			wantStart: false,
-			wantBlock: false,
+			name: "quick create style task without issue",
+			task: db.AgentTaskQueue{ID: testUUID(21), AgentID: agentID},
 		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := shouldAutoStartIssueForTask(tc.task); got != tc.wantStart {
-				t.Fatalf("shouldAutoStartIssueForTask = %v, want %v", got, tc.wantStart)
-			}
-			if got := shouldAutoBlockIssueForTaskFailure(tc.task); got != tc.wantBlock {
-				t.Fatalf("shouldAutoBlockIssueForTaskFailure = %v, want %v", got, tc.wantBlock)
+			if got := isAssignmentIssueTaskForStatusAutomation(tc.task); got != tc.want {
+				t.Fatalf("isAssignmentIssueTaskForStatusAutomation = %v, want %v", got, tc.want)
 			}
 		})
 	}
