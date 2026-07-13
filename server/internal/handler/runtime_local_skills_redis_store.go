@@ -92,12 +92,11 @@ func NewRedisLocalSkillListStore(rdb *redis.Client) *RedisLocalSkillListStore {
 func (s *RedisLocalSkillListStore) Create(ctx context.Context, runtimeID, requestID string) (*RuntimeLocalSkillListRequest, error) {
 	now := time.Now()
 	req := &RuntimeLocalSkillListRequest{
-		ID:        requestID,
-		RuntimeID: runtimeID,
-		Status:    RuntimeLocalSkillPending,
+		runtimeLocalSkillRequestState: runtimeLocalSkillRequestState{
+			ID: requestID, RuntimeID: runtimeID, Status: RuntimeLocalSkillPending,
+			CreatedAt: now, UpdatedAt: now,
+		},
 		Supported: true,
-		CreatedAt: now,
-		UpdatedAt: now,
 	}
 	data, err := json.Marshal(req)
 	if err != nil {
@@ -147,7 +146,7 @@ func (s *RedisLocalSkillListStore) loadListRequest(ctx context.Context, id strin
 	if err := json.Unmarshal(raw, &req); err != nil {
 		return nil, fmt.Errorf("decode list request: %w", err)
 	}
-	if applyLocalSkillListTimeout(&req, time.Now()) {
+	if applyLocalSkillTimeout(&req.runtimeLocalSkillRequestState, time.Now()) {
 		// Persist the timeout so subsequent Get / PopPending on any node see
 		// the terminal state. Also drop the id from the pending zset —
 		// PopPending would do this itself, but doing it here keeps the set
@@ -285,16 +284,15 @@ func NewRedisLocalSkillImportStore(rdb *redis.Client) *RedisLocalSkillImportStor
 func (s *RedisLocalSkillImportStore) Create(ctx context.Context, input LocalSkillImportRequestInput) (*RuntimeLocalSkillImportRequest, error) {
 	now := time.Now()
 	req := &RuntimeLocalSkillImportRequest{
-		ID:            input.RequestID,
-		RuntimeID:     input.RuntimeID,
+		runtimeLocalSkillRequestState: runtimeLocalSkillRequestState{
+			ID: input.RequestID, RuntimeID: input.RuntimeID, Status: RuntimeLocalSkillPending,
+			CreatedAt: now, UpdatedAt: now,
+		},
 		SkillKey:      input.SkillKey,
 		Name:          input.Name,
 		Description:   input.Description,
 		Action:        input.Action,
 		TargetSkillID: input.TargetSkillID,
-		Status:        RuntimeLocalSkillPending,
-		CreatedAt:     now,
-		UpdatedAt:     now,
 		CreatorID:     input.CreatorID,
 		RequestHash:   input.RequestHash,
 	}
@@ -346,7 +344,7 @@ func (s *RedisLocalSkillImportStore) loadImportRequest(ctx context.Context, id s
 	if err != nil {
 		return nil, err
 	}
-	if applyLocalSkillImportTimeout(req, time.Now()) {
+	if applyLocalSkillTimeout(&req.runtimeLocalSkillRequestState, time.Now()) {
 		if err := s.persistImportRequest(ctx, req); err != nil {
 			return nil, err
 		}
