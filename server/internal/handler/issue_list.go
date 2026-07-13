@@ -14,6 +14,17 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
+func parseIssueListPagination(values url.Values, defaultLimit int) (limit, offset int) {
+	limit = defaultLimit
+	if value, err := strconv.Atoi(values.Get("limit")); err == nil && value > 0 {
+		limit = min(value, 100)
+	}
+	if value, err := strconv.Atoi(values.Get("offset")); err == nil && value >= 0 {
+		offset = value
+	}
+	return limit, offset
+}
+
 func (h *Handler) SearchIssues(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	workspaceID := h.resolveWorkspaceID(r)
@@ -238,21 +249,7 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit := 100
-	offset := 0
-	if l := r.URL.Query().Get("limit"); l != "" {
-		if v, err := strconv.Atoi(l); err == nil && v > 0 {
-			limit = v
-		}
-	}
-	if limit > 100 {
-		limit = 100
-	}
-	if o := r.URL.Query().Get("offset"); o != "" {
-		if v, err := strconv.Atoi(o); err == nil && v >= 0 {
-			offset = v
-		}
-	}
+	limit, offset := parseIssueListPagination(r.URL.Query(), 100)
 
 	var statusFilter pgtype.Text
 	if s := r.URL.Query().Get("status"); s != "" {
@@ -410,21 +407,7 @@ func (h *Handler) ListIssueBuckets(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	limit := 50
-	offset := 0
-	if l := r.URL.Query().Get("limit"); l != "" {
-		if v, err := strconv.Atoi(l); err == nil && v > 0 {
-			limit = v
-		}
-	}
-	if limit > 100 {
-		limit = 100
-	}
-	if o := r.URL.Query().Get("offset"); o != "" {
-		if v, err := strconv.Atoi(o); err == nil && v >= 0 {
-			offset = v
-		}
-	}
+	limit, offset := parseIssueListPagination(r.URL.Query(), 50)
 
 	where := []string{"i.workspace_id = $1", "i.status = ANY($2::text[])"}
 	args := []any{wsUUID, statuses}
@@ -815,21 +798,7 @@ func (h *Handler) ListGroupedIssues(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit := 50
-	offset := 0
-	if l := r.URL.Query().Get("limit"); l != "" {
-		if v, err := strconv.Atoi(l); err == nil && v > 0 {
-			limit = v
-		}
-	}
-	if limit > 100 {
-		limit = 100
-	}
-	if o := r.URL.Query().Get("offset"); o != "" {
-		if v, err := strconv.Atoi(o); err == nil && v > 0 {
-			offset = v
-		}
-	}
+	limit, offset := parseIssueListPagination(r.URL.Query(), 50)
 
 	where := []string{"i.workspace_id = $1"}
 	args := []any{wsUUID}
