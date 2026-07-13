@@ -1173,8 +1173,8 @@ type membershipChecker struct {
 
 func (mc *membershipChecker) IsMember(ctx context.Context, userID, workspaceID string) bool {
 	_, err := mc.queries.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{
-		UserID:      parseUUID(userID),
-		WorkspaceID: parseUUID(workspaceID),
+		UserID:      util.MustParseUUID(userID),
+		WorkspaceID: util.MustParseUUID(workspaceID),
 	})
 	return err == nil
 }
@@ -1219,15 +1219,8 @@ func (pr *patResolver) ResolveToken(ctx context.Context, token string) (string, 
 	return userID, true
 }
 
-// parseUUID is a thin alias for util.MustParseUUID. Call sites here are all
-// internal round-trips of DB-sourced UUIDs (e.g. issue.ID, e.ActorID), so an
-// invalid value indicates a programming error and should panic loudly.
-func parseUUID(s string) pgtype.UUID {
-	return util.MustParseUUID(s)
-}
-
 // optionalUUID returns a NULL pgtype.UUID for an empty string and otherwise
-// behaves like parseUUID. Use this for actor IDs on events where the producer
+// parses a required UUID. Use this for actor IDs on events where the producer
 // may legitimately be a "system" actor with no member/agent attribution
 // (e.g. GitHub webhook auto-status sync) — the activity_log and inbox_item
 // tables both allow actor_id to be NULL.

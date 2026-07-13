@@ -87,7 +87,7 @@ func TestChatCompletionProjectionEnqueuesLarkBoundReply(t *testing.T) {
 		AppID:              "chat-projection-" + uuid.NewString(),
 		AppSecretEncrypted: []byte("test-ciphertext"),
 		BotOpenID:          "bot-" + uuid.NewString(),
-		InstallerUserID:    parseUUID(testUserID),
+		InstallerUserID:    util.MustParseUUID(testUserID),
 		Region:             "feishu",
 	})
 	if err != nil {
@@ -296,14 +296,14 @@ func setupChatCompletionFixture(t *testing.T, ctx context.Context) *chatCompleti
 	`, testWorkspaceID).Scan(&agentID); err != nil {
 		t.Fatalf("load chat fixture agent: %v", err)
 	}
-	agent, err := queries.GetAgent(ctx, parseUUID(agentID))
+	agent, err := queries.GetAgent(ctx, util.MustParseUUID(agentID))
 	if err != nil {
 		t.Fatalf("GetAgent: %v", err)
 	}
 	fixture.session, err = queries.CreateChatSession(ctx, db.CreateChatSessionParams{
-		WorkspaceID: parseUUID(testWorkspaceID),
+		WorkspaceID: util.MustParseUUID(testWorkspaceID),
 		AgentID:     agent.ID,
-		CreatorID:   parseUUID(testUserID),
+		CreatorID:   util.MustParseUUID(testUserID),
 		Title:       "durable chat completion",
 	})
 	if err != nil {
@@ -314,7 +314,7 @@ func setupChatCompletionFixture(t *testing.T, ctx context.Context) *chatCompleti
 		RuntimeID:       agent.RuntimeID,
 		Priority:        0,
 		ChatSessionID:   fixture.session.ID,
-		InitiatorUserID: parseUUID(testUserID),
+		InitiatorUserID: util.MustParseUUID(testUserID),
 	})
 	if err != nil {
 		t.Fatalf("CreateChatTask: %v", err)

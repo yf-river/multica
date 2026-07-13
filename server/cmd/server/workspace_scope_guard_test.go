@@ -30,7 +30,7 @@ func TestWorkspaceScopeGuard(t *testing.T) {
 
 	ctx := context.Background()
 	queries := db.New(testPool)
-	wsA := parseUUID(testWorkspaceID)
+	wsA := util.MustParseUUID(testWorkspaceID)
 	wsB := randomUUID(t) // never-existed workspace; the guard predicate must reject it
 
 	t.Run("DeleteIssue", func(t *testing.T) {
@@ -143,7 +143,7 @@ func seedIssue(t *testing.T, ctx context.Context) pgtype.UUID {
 	`, testWorkspaceID, testUserID, n).Scan(&s); err != nil {
 		t.Fatalf("seed issue: %v", err)
 	}
-	return parseUUID(s)
+	return util.MustParseUUID(s)
 }
 
 func seedComment(t *testing.T, ctx context.Context, issueID pgtype.UUID) pgtype.UUID {
@@ -156,7 +156,7 @@ func seedComment(t *testing.T, ctx context.Context, issueID pgtype.UUID) pgtype.
 	`, util.UUIDToString(issueID), testWorkspaceID, testUserID).Scan(&s); err != nil {
 		t.Fatalf("seed comment: %v", err)
 	}
-	return parseUUID(s)
+	return util.MustParseUUID(s)
 }
 
 func seedProject(t *testing.T, ctx context.Context) pgtype.UUID {
@@ -169,7 +169,7 @@ func seedProject(t *testing.T, ctx context.Context) pgtype.UUID {
 	`, testWorkspaceID).Scan(&s); err != nil {
 		t.Fatalf("seed project: %v", err)
 	}
-	return parseUUID(s)
+	return util.MustParseUUID(s)
 }
 
 func seedSkill(t *testing.T, ctx context.Context) pgtype.UUID {
@@ -185,7 +185,7 @@ func seedSkill(t *testing.T, ctx context.Context) pgtype.UUID {
 	`, testWorkspaceID, name, testUserID).Scan(&s); err != nil {
 		t.Fatalf("seed skill: %v", err)
 	}
-	return parseUUID(s)
+	return util.MustParseUUID(s)
 }
 
 func seedChatSession(t *testing.T, ctx context.Context) pgtype.UUID {
@@ -204,7 +204,7 @@ func seedChatSession(t *testing.T, ctx context.Context) pgtype.UUID {
 	`, testWorkspaceID, agentID, testUserID).Scan(&s); err != nil {
 		t.Fatalf("seed chat_session: %v", err)
 	}
-	return parseUUID(s)
+	return util.MustParseUUID(s)
 }
 
 func assertRowExists(t *testing.T, ctx context.Context, table string, id pgtype.UUID) {
@@ -225,7 +225,7 @@ func randomUUID(t *testing.T) pgtype.UUID {
 	if err != nil {
 		t.Fatalf("uuid.NewRandom: %v", err)
 	}
-	return parseUUID(u.String())
+	return util.MustParseUUID(u.String())
 }
 
 // uniqueName returns prefix + a short random suffix to avoid UNIQUE collisions

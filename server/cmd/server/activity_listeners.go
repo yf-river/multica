@@ -100,8 +100,8 @@ func consumeIssueUpdatedActivities(ctx context.Context, queries *db.Queries, eve
 
 func createIssueActivity(ctx context.Context, queries *db.Queries, event events.Event, issue eventIssue, action string, details []byte) (events.Event, error) {
 	activity, err := queries.CreateActivity(ctx, db.CreateActivityParams{
-		WorkspaceID: parseUUID(issue.WorkspaceID),
-		IssueID:     parseUUID(issue.ID),
+		WorkspaceID: util.MustParseUUID(issue.WorkspaceID),
+		IssueID:     util.MustParseUUID(issue.ID),
 		ActorType:   util.StrToText(event.ActorType),
 		ActorID:     optionalUUID(event.ActorID),
 		Action:      action,
@@ -132,7 +132,7 @@ func projectTaskActivity(ctx context.Context, queries *db.Queries, event events.
 		return nil, nil
 	}
 
-	issue, err := queries.GetIssue(ctx, parseUUID(issueID))
+	issue, err := queries.GetIssue(ctx, util.MustParseUUID(issueID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -145,9 +145,9 @@ func projectTaskActivity(ctx context.Context, queries *db.Queries, event events.
 
 	activity, err := queries.CreateActivity(ctx, db.CreateActivityParams{
 		WorkspaceID: issue.WorkspaceID,
-		IssueID:     parseUUID(issueID),
+		IssueID:     util.MustParseUUID(issueID),
 		ActorType:   util.StrToText("agent"),
-		ActorID:     parseUUID(payload.AgentID),
+		ActorID:     util.MustParseUUID(payload.AgentID),
 		Action:      action,
 		Details:     []byte("{}"),
 	})

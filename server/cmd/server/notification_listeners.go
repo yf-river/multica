@@ -90,7 +90,7 @@ func loadUserPrefs(
 	}
 
 	rows, err := queries.ListNotificationPreferencesByUsers(ctx, db.ListNotificationPreferencesByUsersParams{
-		WorkspaceID: parseUUID(workspaceID),
+		WorkspaceID: util.MustParseUUID(workspaceID),
 		UserIds:     uuids,
 	})
 	if err != nil {
@@ -132,8 +132,8 @@ func archiveStaleTaskFailedInbox(
 	issueID string,
 ) error {
 	rows, err := queries.ArchiveInboxByIssueAndType(ctx, db.ArchiveInboxByIssueAndTypeParams{
-		WorkspaceID: parseUUID(workspaceID),
-		IssueID:     parseUUID(issueID),
+		WorkspaceID: util.MustParseUUID(workspaceID),
+		IssueID:     util.MustParseUUID(issueID),
 		Type:        "task_failed",
 	})
 	if err != nil {
@@ -210,7 +210,7 @@ func notifySubscribers(
 	}
 
 	// Also notify parent issue subscribers if this is a sub-issue.
-	issue, err := queries.GetIssue(ctx, parseUUID(issueID))
+	issue, err := queries.GetIssue(ctx, util.MustParseUUID(issueID))
 	if err != nil {
 		return err
 	}
@@ -259,7 +259,7 @@ func notifyIssueSubscribers(
 ) (map[string]bool, error) {
 	notified := map[string]bool{}
 
-	subs, err := queries.ListIssueSubscribers(ctx, parseUUID(subscriberIssueID))
+	subs, err := queries.ListIssueSubscribers(ctx, util.MustParseUUID(subscriberIssueID))
 	if err != nil {
 		return nil, err
 	}
@@ -300,12 +300,12 @@ func notifyIssueSubscribers(
 		}
 
 		item, err := queries.CreateInboxItem(ctx, db.CreateInboxItemParams{
-			WorkspaceID:   parseUUID(workspaceID),
+			WorkspaceID:   util.MustParseUUID(workspaceID),
 			RecipientType: "member",
 			RecipientID:   sub.UserID,
 			Type:          notifType,
 			Severity:      severity,
-			IssueID:       parseUUID(targetIssueID),
+			IssueID:       util.MustParseUUID(targetIssueID),
 			Title:         title,
 			Body:          util.StrToText(body),
 			ActorType:     util.StrToText(e.ActorType),
@@ -369,12 +369,12 @@ func notifyDirect(
 	}
 
 	item, err := queries.CreateInboxItem(ctx, db.CreateInboxItemParams{
-		WorkspaceID:   parseUUID(workspaceID),
+		WorkspaceID:   util.MustParseUUID(workspaceID),
 		RecipientType: recipientType,
-		RecipientID:   parseUUID(recipientID),
+		RecipientID:   util.MustParseUUID(recipientID),
 		Type:          notifType,
 		Severity:      severity,
-		IssueID:       parseUUID(issueID),
+		IssueID:       util.MustParseUUID(issueID),
 		Title:         title,
 		Body:          util.StrToText(body),
 		ActorType:     util.StrToText(e.ActorType),
@@ -456,7 +456,7 @@ func notifyMentionedMembers(
 
 	// If @all is present, expand to all workspace members.
 	if hasAll {
-		members, err := queries.ListMembers(ctx, parseUUID(e.WorkspaceID))
+		members, err := queries.ListMembers(ctx, util.MustParseUUID(e.WorkspaceID))
 		if err != nil {
 			return err
 		}
@@ -486,12 +486,12 @@ func notifyMentionedMembers(
 			continue
 		}
 		item, err := queries.CreateInboxItem(ctx, db.CreateInboxItemParams{
-			WorkspaceID:   parseUUID(e.WorkspaceID),
+			WorkspaceID:   util.MustParseUUID(e.WorkspaceID),
 			RecipientType: "member",
-			RecipientID:   parseUUID(id),
+			RecipientID:   util.MustParseUUID(id),
 			Type:          "mentioned",
 			Severity:      "info",
-			IssueID:       parseUUID(issueID),
+			IssueID:       util.MustParseUUID(issueID),
 			Title:         title,
 			ActorType:     util.StrToText(e.ActorType),
 			ActorID:       optionalUUID(e.ActorID),
@@ -678,7 +678,7 @@ func projectTaskFailedNotifications(ctx context.Context, queries *db.Queries, ev
 	if payload.IssueID == "" {
 		return nil, nil
 	}
-	issue, err := queries.GetIssue(ctx, parseUUID(payload.IssueID))
+	issue, err := queries.GetIssue(ctx, util.MustParseUUID(payload.IssueID))
 	if err != nil {
 		return nil, err
 	}

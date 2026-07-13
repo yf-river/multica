@@ -168,17 +168,17 @@ func assertQuickCreateInboxCount(t *testing.T, ctx context.Context, taskID pgtyp
 
 func createQuickCreateIssue(t *testing.T, ctx context.Context, fixture quickCreateTaskFixture, title string) db.Issue {
 	t.Helper()
-	number, err := fixture.queries.IncrementIssueCounter(ctx, parseUUID(testWorkspaceID))
+	number, err := fixture.queries.IncrementIssueCounter(ctx, util.MustParseUUID(testWorkspaceID))
 	if err != nil {
 		t.Fatalf("IncrementIssueCounter: %v", err)
 	}
 	issue, err := fixture.queries.CreateIssueWithOrigin(ctx, db.CreateIssueWithOriginParams{
-		WorkspaceID: parseUUID(testWorkspaceID),
+		WorkspaceID: util.MustParseUUID(testWorkspaceID),
 		Title:       title,
 		Status:      "todo",
 		Priority:    "none",
 		CreatorType: "agent",
-		CreatorID:   parseUUID(fixture.agentID),
+		CreatorID:   util.MustParseUUID(fixture.agentID),
 		Number:      number,
 		OriginType:  pgtype.Text{String: "quick_create", Valid: true},
 		OriginID:    fixture.task.ID,
@@ -237,11 +237,11 @@ func setupDispatchedQuickCreateTask(t *testing.T, ctx context.Context, prompt st
 	}
 
 	task, err := taskSvc.EnqueueQuickCreateTask(ctx, service.EnqueueQuickCreateTaskParams{
-		WorkspaceID: parseUUID(testWorkspaceID),
-		RequesterID: parseUUID(testUserID),
-		AgentID:     parseUUID(agentID),
+		WorkspaceID: util.MustParseUUID(testWorkspaceID),
+		RequesterID: util.MustParseUUID(testUserID),
+		AgentID:     util.MustParseUUID(agentID),
 		Prompt:      prompt,
-		RequestID:   parseUUID(uuid.NewString()),
+		RequestID:   util.MustParseUUID(uuid.NewString()),
 		RequestHash: "subscriber-test:" + prompt,
 	})
 	if err != nil {

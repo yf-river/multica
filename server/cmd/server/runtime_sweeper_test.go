@@ -8,6 +8,7 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -151,7 +152,7 @@ func TestRefreshAgentStatusFromTasks(t *testing.T) {
 		t.Fatalf("failed to seed idle agent status: %v", err)
 	}
 
-	agent, err := queries.RefreshAgentStatusFromTasks(ctx, parseUUID(agentID))
+	agent, err := queries.RefreshAgentStatusFromTasks(ctx, util.MustParseUUID(agentID))
 	if err != nil {
 		t.Fatalf("RefreshAgentStatusFromTasks with dispatched task failed: %v", err)
 	}
@@ -170,7 +171,7 @@ func TestRefreshAgentStatusFromTasks(t *testing.T) {
 		t.Fatalf("failed to reseed working agent status: %v", err)
 	}
 
-	agent, err = queries.RefreshAgentStatusFromTasks(ctx, parseUUID(agentID))
+	agent, err = queries.RefreshAgentStatusFromTasks(ctx, util.MustParseUUID(agentID))
 	if err != nil {
 		t.Fatalf("RefreshAgentStatusFromTasks with no active tasks failed: %v", err)
 	}

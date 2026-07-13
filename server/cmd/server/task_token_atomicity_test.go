@@ -80,8 +80,8 @@ func createTaskToken(t *testing.T, ctx context.Context, fixture *chatCompletionF
 		TokenHash:   uuid.NewString(),
 		TaskID:      fixture.task.ID,
 		AgentID:     fixture.task.AgentID,
-		WorkspaceID: parseUUID(testWorkspaceID),
-		UserID:      parseUUID(testUserID),
+		WorkspaceID: util.MustParseUUID(testWorkspaceID),
+		UserID:      util.MustParseUUID(testUserID),
 		ExpiresAt:   pgtype.Timestamptz{Time: time.Now().Add(time.Hour), Valid: true},
 	}); err != nil {
 		t.Fatalf("CreateTaskToken: %v", err)

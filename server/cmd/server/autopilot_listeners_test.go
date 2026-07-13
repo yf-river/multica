@@ -148,16 +148,16 @@ func TestAutopilotRunOnlyTaskTerminalEventsUpdateRun(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			ap, err := f.queries.CreateAutopilot(ctx, db.CreateAutopilotParams{
-				WorkspaceID:        parseUUID(testWorkspaceID),
+				WorkspaceID:        util.MustParseUUID(testWorkspaceID),
 				Title:              "Run-only listener " + tc.name,
 				Description:        pgtype.Text{String: "Run listener regression test", Valid: true},
 				AssigneeType:       "agent",
-				AssigneeID:         parseUUID(f.agentID),
+				AssigneeID:         util.MustParseUUID(f.agentID),
 				Status:             "active",
 				ExecutionMode:      "run_only",
 				IssueTitleTemplate: pgtype.Text{},
 				CreatedByType:      "member",
-				CreatedByID:        parseUUID(testUserID),
+				CreatedByID:        util.MustParseUUID(testUserID),
 			})
 			if err != nil {
 				t.Fatalf("CreateAutopilot: %v", err)
@@ -241,16 +241,16 @@ func dispatchCreateIssueAutopilot(t *testing.T, title string) linkedIssueAutopil
 	f := setupAutopilotListenerFixture(t)
 
 	ap, err := f.queries.CreateAutopilot(ctx, db.CreateAutopilotParams{
-		WorkspaceID:        parseUUID(testWorkspaceID),
+		WorkspaceID:        util.MustParseUUID(testWorkspaceID),
 		Title:              title,
 		Description:        pgtype.Text{String: "VEN-661 / VEN-662 regression test", Valid: true},
 		AssigneeType:       "agent",
-		AssigneeID:         parseUUID(f.agentID),
+		AssigneeID:         util.MustParseUUID(f.agentID),
 		Status:             "active",
 		ExecutionMode:      "create_issue",
 		IssueTitleTemplate: pgtype.Text{String: "Linked issue", Valid: true},
 		CreatedByType:      "member",
-		CreatedByID:        parseUUID(testUserID),
+		CreatedByID:        util.MustParseUUID(testUserID),
 	})
 	if err != nil {
 		t.Fatalf("CreateAutopilot: %v", err)
@@ -315,7 +315,7 @@ func createOfflineLocalAgent(t *testing.T, ctx context.Context, runtimeName, pro
 		)
 		VALUES ($1, NULL, $2, 'local', $3, 'offline', '{}'::jsonb, '{}'::jsonb, now())
 		RETURNING id::text
-	`, parseUUID(testWorkspaceID), runtimeName, provider).Scan(&runtimeID); err != nil {
+	`, util.MustParseUUID(testWorkspaceID), runtimeName, provider).Scan(&runtimeID); err != nil {
 		t.Fatalf("create runtime: %v", err)
 	}
 	t.Cleanup(func() {
@@ -329,7 +329,7 @@ func createOfflineLocalAgent(t *testing.T, ctx context.Context, runtimeName, pro
 		)
 		VALUES ($1, $2, '', 'local', '{}'::jsonb, $3, 'workspace', 1, $4)
 		RETURNING id::text
-	`, parseUUID(testWorkspaceID), agentName, runtimeID, parseUUID(testUserID)).Scan(&agentID); err != nil {
+	`, util.MustParseUUID(testWorkspaceID), agentName, runtimeID, util.MustParseUUID(testUserID)).Scan(&agentID); err != nil {
 		t.Fatalf("create agent: %v", err)
 	}
 	t.Cleanup(func() {
@@ -341,16 +341,16 @@ func createOfflineLocalAgent(t *testing.T, ctx context.Context, runtimeName, pro
 func createRunOnlyAutopilotForAgent(t *testing.T, ctx context.Context, queries *db.Queries, title, description, agentID string) db.Autopilot {
 	t.Helper()
 	ap, err := queries.CreateAutopilot(ctx, db.CreateAutopilotParams{
-		WorkspaceID:        parseUUID(testWorkspaceID),
+		WorkspaceID:        util.MustParseUUID(testWorkspaceID),
 		Title:              title,
 		Description:        pgtype.Text{String: description, Valid: true},
 		AssigneeType:       "agent",
-		AssigneeID:         parseUUID(agentID),
+		AssigneeID:         util.MustParseUUID(agentID),
 		Status:             "active",
 		ExecutionMode:      "run_only",
 		IssueTitleTemplate: pgtype.Text{},
 		CreatedByType:      "member",
-		CreatedByID:        parseUUID(testUserID),
+		CreatedByID:        util.MustParseUUID(testUserID),
 	})
 	if err != nil {
 		t.Fatalf("CreateAutopilot: %v", err)
@@ -556,16 +556,16 @@ func TestAutopilotTaskProjectionReturnsTransientDatabaseFailure(t *testing.T) {
 	ctx := context.Background()
 	f := setupAutopilotListenerFixture(t)
 	ap, err := f.queries.CreateAutopilot(ctx, db.CreateAutopilotParams{
-		WorkspaceID:        parseUUID(testWorkspaceID),
+		WorkspaceID:        util.MustParseUUID(testWorkspaceID),
 		Title:              "Durable projection retry",
 		Description:        pgtype.Text{String: "failure propagation", Valid: true},
 		AssigneeType:       "agent",
-		AssigneeID:         parseUUID(f.agentID),
+		AssigneeID:         util.MustParseUUID(f.agentID),
 		Status:             "active",
 		ExecutionMode:      "run_only",
 		IssueTitleTemplate: pgtype.Text{},
 		CreatedByType:      "member",
-		CreatedByID:        parseUUID(testUserID),
+		CreatedByID:        util.MustParseUUID(testUserID),
 	})
 	if err != nil {
 		t.Fatalf("create autopilot: %v", err)
@@ -622,16 +622,16 @@ func TestAutopilotRunOnlyRollsBackTaskWhenRunLinkFails(t *testing.T) {
 	ctx := context.Background()
 	f := setupAutopilotListenerFixture(t)
 	ap, err := f.queries.CreateAutopilot(ctx, db.CreateAutopilotParams{
-		WorkspaceID:        parseUUID(testWorkspaceID),
+		WorkspaceID:        util.MustParseUUID(testWorkspaceID),
 		Title:              "Atomic run-only dispatch",
 		Description:        pgtype.Text{String: "task and run link must commit together", Valid: true},
 		AssigneeType:       "agent",
-		AssigneeID:         parseUUID(f.agentID),
+		AssigneeID:         util.MustParseUUID(f.agentID),
 		Status:             "active",
 		ExecutionMode:      "run_only",
 		IssueTitleTemplate: pgtype.Text{},
 		CreatedByType:      "member",
-		CreatedByID:        parseUUID(testUserID),
+		CreatedByID:        util.MustParseUUID(testUserID),
 	})
 	if err != nil {
 		t.Fatalf("create autopilot: %v", err)
@@ -698,16 +698,16 @@ func TestAutopilotCreateIssueRollsBackIssueWhenTaskInsertFails(t *testing.T) {
 	ctx := context.Background()
 	f := setupAutopilotListenerFixture(t)
 	ap, err := f.queries.CreateAutopilot(ctx, db.CreateAutopilotParams{
-		WorkspaceID:        parseUUID(testWorkspaceID),
+		WorkspaceID:        util.MustParseUUID(testWorkspaceID),
 		Title:              "Atomic create-issue dispatch",
 		Description:        pgtype.Text{String: "issue and task must commit together", Valid: true},
 		AssigneeType:       "agent",
-		AssigneeID:         parseUUID(f.agentID),
+		AssigneeID:         util.MustParseUUID(f.agentID),
 		Status:             "active",
 		ExecutionMode:      "create_issue",
 		IssueTitleTemplate: pgtype.Text{String: "Atomic create-issue task", Valid: true},
 		CreatedByType:      "member",
-		CreatedByID:        parseUUID(testUserID),
+		CreatedByID:        util.MustParseUUID(testUserID),
 	})
 	if err != nil {
 		t.Fatalf("create autopilot: %v", err)

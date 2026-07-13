@@ -23,7 +23,7 @@ func pickFixtureAgent(t *testing.T) pgtype.UUID {
 	).Scan(&agentID); err != nil {
 		t.Fatalf("load fixture agent: %v", err)
 	}
-	return parseUUID(agentID)
+	return util.MustParseUUID(agentID)
 }
 
 // seedAutopilot creates an autopilot owned by the given creator (member or
@@ -32,7 +32,7 @@ func seedAutopilot(t *testing.T, queries *db.Queries, title, creatorType string,
 	t.Helper()
 	ctx := context.Background()
 	ap, err := queries.CreateAutopilot(ctx, db.CreateAutopilotParams{
-		WorkspaceID:   parseUUID(testWorkspaceID),
+		WorkspaceID:   util.MustParseUUID(testWorkspaceID),
 		Title:         title,
 		AssigneeType:  "agent",
 		AssigneeID:    agentID,
@@ -96,8 +96,8 @@ func TestAutopilotFailureMonitor_PausesOffenderAndNotifiesCreator(t *testing.T) 
 	}
 
 	agentID := pickFixtureAgent(t)
-	offender := seedAutopilot(t, queries, "Failure monitor: offender", "member", parseUUID(testUserID), agentID)
-	innocent := seedAutopilot(t, queries, "Failure monitor: innocent", "member", parseUUID(testUserID), agentID)
+	offender := seedAutopilot(t, queries, "Failure monitor: offender", "member", util.MustParseUUID(testUserID), agentID)
+	innocent := seedAutopilot(t, queries, "Failure monitor: innocent", "member", util.MustParseUUID(testUserID), agentID)
 
 	now := time.Now()
 	// 12 runs in window, 11 failed → 91.6% > 90% and ≥10 min runs.
@@ -171,7 +171,7 @@ func TestAutopilotFailureMonitor_LeavesAlreadyPausedAlone(t *testing.T) {
 	}
 
 	agentID := pickFixtureAgent(t)
-	ap := seedAutopilot(t, queries, "Failure monitor: already paused", "member", parseUUID(testUserID), agentID)
+	ap := seedAutopilot(t, queries, "Failure monitor: already paused", "member", util.MustParseUUID(testUserID), agentID)
 	seedAutopilotRuns(t, ap.ID, 12, 11, time.Now().Add(-1*time.Hour))
 
 	// Manually pause first.
@@ -240,7 +240,7 @@ func TestAutopilotFailureMonitor_BelowThresholdNoOp(t *testing.T) {
 	}
 
 	agentID := pickFixtureAgent(t)
-	ap := seedAutopilot(t, queries, "Failure monitor: under threshold", "member", parseUUID(testUserID), agentID)
+	ap := seedAutopilot(t, queries, "Failure monitor: under threshold", "member", util.MustParseUUID(testUserID), agentID)
 	// 12 total, 5 failed → 41.6% < 90%.
 	seedAutopilotRuns(t, ap.ID, 12, 5, time.Now().Add(-1*time.Hour))
 
