@@ -97,7 +97,6 @@ export const usePendingChatOperationStore = create<PendingChatOperationState>()(
       storage: createJSONStorage(() => defaultStorage),
       partialize: (state) => ({ operations: state.operations }),
       version: 1,
-      migrate: () => ({ operations: {} }),
     },
   ),
 );

@@ -65,11 +65,11 @@ describe("useAgentsViewStore", () => {
   it("rehydrates a different saved scope on workspace switch", async () => {
     localStorage.setItem(
       "multica_agents_view:acme",
-      JSON.stringify({ state: { scope: "all" }, version: 0 }),
+      JSON.stringify({ state: { scope: "all" }, version: 1 }),
     );
     localStorage.setItem(
       "multica_agents_view:beta",
-      JSON.stringify({ state: { scope: "mine" }, version: 0 }),
+      JSON.stringify({ state: { scope: "mine" }, version: 1 }),
     );
 
     setCurrentWorkspace("acme", "ws_a");
@@ -86,7 +86,7 @@ describe("useAgentsViewStore", () => {
   it("resets to 'mine' when switching to a workspace with no persisted value", async () => {
     localStorage.setItem(
       "multica_agents_view:acme",
-      JSON.stringify({ state: { scope: "all" }, version: 0 }),
+      JSON.stringify({ state: { scope: "all" }, version: 1 }),
     );
 
     setCurrentWorkspace("acme", "ws_a");
@@ -101,37 +101,4 @@ describe("useAgentsViewStore", () => {
     expect(localStorage.getItem("multica_agents_view:acme")).not.toBeNull();
   });
 
-  it("normalizes an invalid persisted scope at rehydration", async () => {
-    localStorage.setItem(
-      "multica_agents_view:acme",
-      JSON.stringify({ state: { scope: "active" }, version: 0 }),
-    );
-
-    setCurrentWorkspace("acme", "ws_a");
-    await flush();
-    await flush();
-
-    expect(useAgentsViewStore.getState().scope).toBe("mine");
-  });
-
-  it("backfills new filter dimensions when rehydrating a pre-owners payload", async () => {
-    // A payload persisted before the `owners` filter existed must not drop
-    // the key to undefined (the agents list filter predicate reads
-    // `filters.owners.length` and would crash).
-    localStorage.setItem(
-      "multica_agents_view:acme",
-      JSON.stringify({
-        state: { filters: { availability: ["online"], runtimes: [] } },
-        version: 0,
-      }),
-    );
-
-    setCurrentWorkspace("acme", "ws_a");
-    await flush();
-    await flush();
-
-    const filters = useAgentsViewStore.getState().filters;
-    expect(filters.owners).toEqual([]);
-    expect(filters.availability).toEqual(["online"]);
-  });
 });

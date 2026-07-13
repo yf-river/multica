@@ -105,7 +105,6 @@ export const useRecentContextStore = create<RecentContextState>()(
       storage: createJSONStorage(() => defaultStorage),
       partialize: (state) => ({ byWorkspace: state.byWorkspace }),
       version: 1,
-      migrate: () => ({ byWorkspace: {} }),
     },
   ),
 );

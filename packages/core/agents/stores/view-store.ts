@@ -106,19 +106,6 @@ const DEFAULTS = {
   filters: EMPTY_AGENT_FILTERS,
 };
 
-function isAgentsScope(value: unknown): value is AgentsScope {
-  return typeof value === "string" && AGENT_SCOPES.some((scope) => scope === value);
-}
-
-function migrateAgentsViewState(persisted: unknown): Partial<AgentsViewState> {
-  if (!persisted || typeof persisted !== "object") return { ...DEFAULTS };
-  const state = persisted as Partial<AgentsViewState>;
-  return {
-    ...state,
-    scope: isAgentsScope(state.scope) ? state.scope : DEFAULTS.scope,
-  };
-}
-
 export const useAgentsViewStore = create<AgentsViewState>()(
   persist(
     (set) => ({
@@ -182,7 +169,6 @@ export const useAgentsViewStore = create<AgentsViewState>()(
         filters: state.filters,
       }),
       version: 1,
-      migrate: migrateAgentsViewState,
       // On rehydrate, if the new workspace has no persisted value, reset to
       // the defaults instead of leaving the previous workspace's in-memory
       // view state in place. Default merge keeps current state when
