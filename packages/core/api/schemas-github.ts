@@ -30,14 +30,14 @@ const GitHubInstallationSchema = z.object({
   account_login: NonEmptyStringSchema,
   account_type: NonEmptyStringSchema,
   account_avatar_url: z.string().nullable(),
-  created_at: z.string().default(""),
+  created_at: z.string(),
   connected_by: z.string().optional(),
 });
 
 export const GitHubInstallationListResponseSchema = z.object({
   installations: z.array(GitHubInstallationSchema).default([]),
   configured: z.boolean(),
-  can_manage: z.boolean().default(false),
+  can_manage: z.boolean(),
 });
 
 export const GitHubConnectResponseSchema = z.object({
@@ -71,16 +71,16 @@ const GitHubPullRequestSchema = z.object({
   author_avatar_url: z.string().nullable(),
   merged_at: z.string().nullable(),
   closed_at: z.string().nullable(),
-  pr_created_at: z.string().default(""),
-  pr_updated_at: z.string().default(""),
-  mergeable_state: z.string().nullable().optional(),
-  checks_conclusion: z.string().nullable().optional(),
-  checks_passed: z.number().optional(),
-  checks_failed: z.number().optional(),
-  checks_pending: z.number().optional(),
-  additions: z.number().optional(),
-  deletions: z.number().optional(),
-  changed_files: z.number().optional(),
+  pr_created_at: z.string(),
+  pr_updated_at: z.string(),
+  mergeable_state: z.string().nullable(),
+  checks_conclusion: z.string().nullable(),
+  checks_passed: z.number(),
+  checks_failed: z.number(),
+  checks_pending: z.number(),
+  additions: z.number(),
+  deletions: z.number(),
+  changed_files: z.number(),
 });
 
 export const GitHubPullRequestListResponseSchema = z.object({

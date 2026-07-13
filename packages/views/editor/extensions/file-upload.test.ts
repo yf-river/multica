@@ -189,12 +189,8 @@ describe("uploadAndInsertFile", () => {
   });
 
   it("persists markdown_url into the markdown body, not the short-lived storage URL", async () => {
-    // Regression pin for MUL-3130 review feedback. useFileUpload returns
-    // both `link` (= att.url, short-lived signed `/uploads/<key>?exp&sig`
-    // on LocalStorage) and `markdown_url` (= /api/attachments/<id>/download).
-    // The editor must persist `markdown_url` so the comment doesn't
-    // capture a 30-min signature, while non-markdown callers (avatar
-    // pickers, logo upload) keep using `link` for backward compatibility.
+    // The upload response carries a short-lived display URL and a durable
+    // markdown URL. Persist only the durable URL in editor content.
     const editor = makeEditor();
     const SIGNED_URL = "/uploads/workspaces/ws-1/photo.png?exp=42&sig=fake";
     const STABLE_URL = "/api/attachments/attachment-7/download";

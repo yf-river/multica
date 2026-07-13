@@ -3,15 +3,21 @@ import {
   derivePullRequestStatusKind,
   derivePullRequestProgressSegments,
   shouldShowPullRequestStats,
-  type PullRequestStatusInput,
 } from "./pull-request-status";
 
-const base: PullRequestStatusInput = { state: "open" };
+const base = {
+  state: "open",
+  mergeable_state: null,
+  checks_failed: 0,
+  checks_pending: 0,
+  checks_passed: 0,
+} as const;
 
 describe("derivePullRequestStatusKind", () => {
   it("closed beats every other signal", () => {
     expect(
       derivePullRequestStatusKind({
+        ...base,
         state: "closed",
         mergeable_state: "dirty",
         checks_failed: 99,
@@ -24,6 +30,7 @@ describe("derivePullRequestStatusKind", () => {
   it("merged beats every other signal except closed", () => {
     expect(
       derivePullRequestStatusKind({
+        ...base,
         state: "merged",
         mergeable_state: "dirty",
         checks_failed: 5,
@@ -79,7 +86,7 @@ describe("derivePullRequestStatusKind", () => {
   });
 
   it("opaque mergeable values render as unknown", () => {
-    for (const m of ["blocked", "behind", "unstable", "has_hooks", "unknown", null, undefined]) {
+    for (const m of ["blocked", "behind", "unstable", "has_hooks", "unknown", null]) {
       expect(derivePullRequestStatusKind({ ...base, mergeable_state: m })).toBe("unknown");
     }
   });
@@ -87,15 +94,12 @@ describe("derivePullRequestStatusKind", () => {
 
 describe("derivePullRequestProgressSegments", () => {
   it("returns null for terminal PRs (merged / closed)", () => {
-    expect(derivePullRequestProgressSegments({ state: "merged", checks_passed: 5 })).toBeNull();
-    expect(derivePullRequestProgressSegments({ state: "closed", checks_failed: 3 })).toBeNull();
+    expect(derivePullRequestProgressSegments({ ...base, state: "merged", checks_passed: 5 })).toBeNull();
+    expect(derivePullRequestProgressSegments({ ...base, state: "closed", checks_failed: 3 })).toBeNull();
   });
 
   it("returns null when no suite has been observed", () => {
     expect(derivePullRequestProgressSegments({ ...base })).toBeNull();
-    expect(
-      derivePullRequestProgressSegments({ ...base, checks_failed: 0, checks_pending: 0, checks_passed: 0 }),
-    ).toBeNull();
   });
 
   it("orders segments failed → pending → passed (failure leftmost)", () => {
@@ -132,15 +136,14 @@ describe("derivePullRequestProgressSegments", () => {
 });
 
 describe("shouldShowPullRequestStats", () => {
-  it("hides when every field is 0 or missing (legacy backend)", () => {
-    expect(shouldShowPullRequestStats({})).toBe(false);
+  it("hides when GitHub supplied no diff statistics", () => {
     expect(shouldShowPullRequestStats({ additions: 0, deletions: 0, changed_files: 0 })).toBe(false);
   });
 
   it("shows when at least one number is non-zero", () => {
-    expect(shouldShowPullRequestStats({ additions: 1 })).toBe(true);
-    expect(shouldShowPullRequestStats({ deletions: 1 })).toBe(true);
-    expect(shouldShowPullRequestStats({ changed_files: 1 })).toBe(true);
+    expect(shouldShowPullRequestStats({ additions: 1, deletions: 0, changed_files: 0 })).toBe(true);
+    expect(shouldShowPullRequestStats({ additions: 0, deletions: 1, changed_files: 0 })).toBe(true);
+    expect(shouldShowPullRequestStats({ additions: 0, deletions: 0, changed_files: 1 })).toBe(true);
     expect(shouldShowPullRequestStats({ additions: 437, deletions: 6, changed_files: 6 })).toBe(true);
   });
 });

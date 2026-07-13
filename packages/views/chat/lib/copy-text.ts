@@ -37,7 +37,7 @@ export function splitTimeline(items: ChatTimelineItem[]): {
  * Markdown source the Copy action puts on the clipboard. By design this is
  * the user-visible answer only — anything inside the outer fold (thinking,
  * tool calls, sandwiched intermediate text) is dropped. Falls back to
- * `message.content` for legacy messages without a timeline and for the
+ * `message.content` for current messages without timeline items and for the
  * pathological all-non-text shape so Copy never produces an empty string.
  */
 export function extractCopyText(

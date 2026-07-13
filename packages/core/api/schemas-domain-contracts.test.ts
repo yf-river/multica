@@ -103,8 +103,8 @@ describe("domain response schema fallbacks", () => {
     expect(parsed.source).toBe("手动创建");
   });
 
-  it("normalizes missing Lark booleans and region before exposing the current model", () => {
-    const parsed = LarkInstallationListResponseSchema.parse({
+  it("requires the current Lark installation contract", () => {
+    expect(LarkInstallationListResponseSchema.safeParse({
       configured: true,
       installations: [{
         id: "installation-1",
@@ -114,6 +114,24 @@ describe("domain response schema fallbacks", () => {
         bot_open_id: "bot-1",
         installer_user_id: "user-1",
         status: "active",
+      }],
+    }).success).toBe(false);
+
+    const parsed = LarkInstallationListResponseSchema.parse({
+      configured: true,
+      install_supported: false,
+      installations: [{
+        id: "installation-1",
+        workspace_id: "workspace-1",
+        agent_id: "agent-1",
+        app_id: "app-1",
+        bot_open_id: "bot-1",
+        installer_user_id: "user-1",
+        status: "active",
+        region: "feishu",
+        installed_at: "2026-07-01T00:00:00Z",
+        created_at: "2026-07-01T00:00:00Z",
+        updated_at: "2026-07-01T00:00:00Z",
       }],
     });
     expect(parsed.install_supported).toBe(false);
@@ -486,6 +504,16 @@ describe("domain response schema fallbacks", () => {
         author_avatar_url: null,
         merged_at: null,
         closed_at: null,
+        pr_created_at: "2026-07-01T00:00:00Z",
+        pr_updated_at: "2026-07-01T00:00:00Z",
+        mergeable_state: null,
+        checks_conclusion: null,
+        checks_passed: 0,
+        checks_failed: 0,
+        checks_pending: 0,
+        additions: 0,
+        deletions: 0,
+        changed_files: 0,
       }],
     }).pull_requests).toHaveLength(1);
 

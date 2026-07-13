@@ -117,6 +117,7 @@ function PullRequestRow({ pr }: { pr: GitHubPullRequest }) {
   });
   const segments = derivePullRequestProgressSegments({
     state: pr.state,
+    mergeable_state: pr.mergeable_state,
     checks_failed: pr.checks_failed,
     checks_pending: pr.checks_pending,
     checks_passed: pr.checks_passed,

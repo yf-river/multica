@@ -8,7 +8,11 @@ describe("decideVersionAction", () => {
 
   it("returns not_running when status is not 'running'", () => {
     expect(
-      decideVersionAction("v1.0.0", { status: "stopped", cli_version: "v1.0.0" }),
+      decideVersionAction("v1.0.0", {
+        status: "stopped",
+        cli_version: "v1.0.0",
+        active_task_count: 0,
+      }),
     ).toBe("not_running");
   });
 
@@ -17,15 +21,6 @@ describe("decideVersionAction", () => {
       decideVersionAction(null, {
         status: "running",
         cli_version: "v1.0.0",
-        active_task_count: 0,
-      }),
-    ).toBe("ok");
-  });
-
-  it("returns ok when running daemon does not report cli_version (older daemon)", () => {
-    expect(
-      decideVersionAction("v1.0.0", {
-        status: "running",
         active_task_count: 0,
       }),
     ).toBe("ok");
@@ -47,15 +42,6 @@ describe("decideVersionAction", () => {
         status: "running",
         cli_version: "v1.2.2",
         active_task_count: 0,
-      }),
-    ).toBe("restart");
-  });
-
-  it("treats missing active_task_count as 0 (old daemon that still reports cli_version)", () => {
-    expect(
-      decideVersionAction("v1.2.3", {
-        status: "running",
-        cli_version: "v1.2.2",
       }),
     ).toBe("restart");
   });

@@ -736,10 +736,8 @@ export function useRealtimeSync(
       // setQueryData (active query) + invalidateQueries (others)" pattern
       // (https://tkdodo.eu/blog/using-web-sockets-with-react-query).
       //
-      // Falls back to invalidate-only when the server omits the message
-      // payload (older builds). Older clients hitting a newer server also
-      // work: they ignore the extra fields and rely on the invalidate
-      // below, which keeps the old behavior alive.
+      // Empty-output completions have no assistant row to insert; the
+      // authoritative invalidation below still reconciles the cache.
       applyChatDoneToCache(qc, payload);
       invalidatePendingAggregate();
       // Assistant message just landed → has_unread may have flipped to true.

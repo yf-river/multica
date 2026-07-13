@@ -1,9 +1,8 @@
 /** A Lark Bot installation bound to a single Multica agent.
  *
  * Wire shape mirrors `LarkInstallationResponse` in
- * `server/internal/handler/lark.go`. New fields the backend adds in the
- * future MUST default to optional so older desktop builds keep parsing
- * the response — see CLAUDE.md → API Response Compatibility. */
+ * `server/internal/handler/lark.go`. Unknown future fields remain harmless,
+ * while fields in the current wire contract stay required. */
 export interface LarkInstallation {
   id: string;
   workspace_id: string;
@@ -14,8 +13,7 @@ export interface LarkInstallation {
   installer_user_id: string;
   status: "active" | "revoked" | string;
   /** Which Lark cloud the bot lives on: "feishu" (mainland) or "lark"
-   * (international). Runtime parsing defaults a missing drifted response to
-   * Feishu before it reaches this current model. */
+   * (international). */
   region: "feishu" | "lark" | string;
   installed_at: string;
   created_at: string;
@@ -32,8 +30,7 @@ export interface ListLarkInstallationsResponse {
    * complete end-to-end — i.e. the device-flow RegistrationService is
    * wired AND the real Lark HTTP APIClient (not the no-op stub) is in
    * place. When false the install entry points are hidden and the
-   * panel surfaces a "coming soon" notice. Runtime parsing defaults a missing
-   * drifted response to false before it reaches this current model. */
+   * panel surfaces a "coming soon" notice. */
   install_supported: boolean;
 }
 

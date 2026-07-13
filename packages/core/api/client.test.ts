@@ -1229,6 +1229,14 @@ describe("ApiClient", () => {
           closed_at: null,
           pr_created_at: "",
           pr_updated_at: "",
+          mergeable_state: null,
+          checks_conclusion: null,
+          checks_passed: 0,
+          checks_failed: 0,
+          checks_pending: 0,
+          additions: 0,
+          deletions: 0,
+          changed_files: 0,
         }],
       }), { status: 200, headers: { "Content-Type": "application/json" } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({
@@ -1248,6 +1256,14 @@ describe("ApiClient", () => {
           closed_at: null,
           pr_created_at: "",
           pr_updated_at: "",
+          mergeable_state: null,
+          checks_conclusion: null,
+          checks_passed: 0,
+          checks_failed: 0,
+          checks_pending: 0,
+          additions: 0,
+          deletions: 0,
+          changed_files: 0,
         }],
       }), { status: 200, headers: { "Content-Type": "application/json" } }));
     vi.stubGlobal("fetch", fetchMock);

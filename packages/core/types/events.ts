@@ -260,9 +260,8 @@ export interface ChatDonePayload {
   task_id: string;
   /**
    * Server populates these from the freshly-persisted assistant ChatMessage
-   * row so the WS handler can write it into the messages cache inline. Older
-   * servers (pre-#2123) only sent chat_session_id + task_id; treat every field
-   * below as optional and fall back to a refetch when absent.
+   * row so the WS handler can write it into the messages cache inline. An
+   * empty completion creates no assistant row, so these fields stay optional.
    */
   message_id?: string;
   content?: string;

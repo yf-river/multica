@@ -151,7 +151,7 @@ describe("PullRequestList sidebar rows", () => {
     expect(screen.queryByText("Checks passed")).not.toBeInTheDocument();
   });
 
-  it("hides stats row when all stats are 0 (legacy backend)", async () => {
+  it("hides stats row when GitHub supplied no diff statistics", async () => {
     mockPRs = [makePR()];
     renderList();
     await waitForRender();

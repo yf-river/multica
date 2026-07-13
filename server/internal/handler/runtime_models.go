@@ -389,7 +389,7 @@ func (h *Handler) ReportModelListResult(w http.ResponseWriter, r *http.Request) 
 	var body struct {
 		Status    string       `json:"status"` // "completed" or "failed"
 		Models    []ModelEntry `json:"models"`
-		Supported *bool        `json:"supported"`
+		Supported bool         `json:"supported"`
 		Error     string       `json:"error"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -398,13 +398,7 @@ func (h *Handler) ReportModelListResult(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if body.Status == "completed" {
-		// Older daemons may omit `supported`; default to true to keep
-		// the UI usable while they haven't been redeployed yet.
-		supported := true
-		if body.Supported != nil {
-			supported = *body.Supported
-		}
-		if err := h.ModelListStore.Complete(r.Context(), requestID, body.Models, supported); err != nil {
+		if err := h.ModelListStore.Complete(r.Context(), requestID, body.Models, body.Supported); err != nil {
 			// Surface the store failure as 5xx so the daemon can retry instead
 			// of swallowing the report (leaves the request stuck in running
 			// until the server-side timeout, which is exactly the "looks OK

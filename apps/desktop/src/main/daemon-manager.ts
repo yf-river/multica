@@ -155,18 +155,17 @@ function sendStatus(status: DaemonStatus): void {
 }
 
 interface HealthPayload {
-  status?: string;
-  pid?: number;
-  /** Daemon's runtime.GOOS. Absent on daemons older than the #3916 fix. */
-  os?: string;
-  uptime?: string;
-  daemon_id?: string;
-  device_name?: string;
-  server_url?: string;
-  cli_version?: string;
-  active_task_count?: number;
-  agents?: string[];
-  workspaces?: unknown[];
+  status: string;
+  pid: number;
+  os: string;
+  uptime: string;
+  daemon_id: string;
+  device_name: string;
+  server_url: string;
+  cli_version: string;
+  active_task_count: number;
+  agents: string[];
+  workspaces: unknown[];
 }
 
 async function fetchHealthAtPort(
@@ -580,7 +579,7 @@ async function ensureRunningDaemonVersionMatches(): Promise<
       return "ok";
     case "defer": {
       if (!pendingVersionRestart) {
-        const activeTasks = running?.active_task_count ?? 0;
+        const activeTasks = running!.active_task_count;
         console.log(
           `[daemon] CLI version mismatch (bundled=${bundled} running=${running?.cli_version}); deferring restart until ${activeTasks} active task(s) finish`,
         );

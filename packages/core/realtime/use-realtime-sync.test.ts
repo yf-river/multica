@@ -122,7 +122,7 @@ describe("applyChatDoneToCache", () => {
     expect(qc.getQueryData<ChatPendingTask>(pendingKey)).toEqual({});
   });
 
-  it("falls back to invalidation-only when older servers omit message fields", () => {
+  it("uses invalidation-only when an empty completion has no assistant message", () => {
     const qc = createQueryClient();
     qc.setQueryData(messagesKey, messagePages([userMessage()]));
     qc.setQueryData<ChatPendingTask>(pendingKey, {

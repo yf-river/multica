@@ -462,9 +462,8 @@ function LarkDisconnectConfirmDialog({
 // Feishu (mainland) bots are managed at open.feishu.cn, Lark
 // (international) bots at open.larksuite.com. The region is auto-detected
 // at install time and surfaced per installation on the listings
-// response; an older server that omits `region` defaults to Feishu
-// (API-compat — see CLAUDE.md).
-function larkDevConsoleHost(region?: string): string {
+// response.
+function larkDevConsoleHost(region: string): string {
   return region === "lark"
     ? "https://open.larksuite.com"
     : "https://open.feishu.cn";

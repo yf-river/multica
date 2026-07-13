@@ -343,8 +343,7 @@ function MessageCopyButton({
 // Persisted "Replied in 38s" / "Failed after 12s" line under the assistant
 // bubble. Reads `elapsed_ms` straight off the chat_message — server computes
 // it once at task completion, so this caption is identical across reloads
-// and devices. Skipped silently when null (legacy messages predating
-// current schema + user messages).
+// and devices. User messages have no elapsed duration, so null is omitted.
 function ElapsedCaption({
   variant,
   elapsedMs,

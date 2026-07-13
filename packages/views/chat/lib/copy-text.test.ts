@@ -82,8 +82,8 @@ describe("splitTimeline", () => {
 });
 
 describe("extractCopyText", () => {
-  it("falls back to message.content when timeline is empty (legacy)", () => {
-    expect(extractCopyText(message("legacy body"), [])).toBe("legacy body");
+  it("uses message.content when timeline is empty", () => {
+    expect(extractCopyText(message("message body"), [])).toBe("message body");
   });
 
   it("returns concatenated text segments for an all-text timeline", () => {

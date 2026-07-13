@@ -16,16 +16,16 @@ const LarkInstallationSchema = z.object({
   bot_open_id: NonEmptyStringSchema,
   installer_user_id: NonEmptyStringSchema,
   status: NonEmptyStringSchema,
-  region: z.string().default("feishu"),
-  installed_at: z.string().default(""),
-  created_at: z.string().default(""),
-  updated_at: z.string().default(""),
+  region: z.string(),
+  installed_at: z.string(),
+  created_at: z.string(),
+  updated_at: z.string(),
 });
 
 export const LarkInstallationListResponseSchema = z.object({
   installations: z.array(LarkInstallationSchema).default([]),
   configured: z.boolean(),
-  install_supported: z.boolean().default(false),
+  install_supported: z.boolean(),
 });
 
 export const BeginLarkInstallResponseSchema = z.object({

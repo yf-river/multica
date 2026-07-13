@@ -44,20 +44,15 @@ export interface GitHubPullRequest {
   closed_at: string | null;
   pr_created_at: string;
   pr_updated_at: string;
-  /** Optional; older backends omit this field. */
-  mergeable_state?: GitHubMergeableState | null;
-  /** Optional; older backends omit this field. */
-  checks_conclusion?: GitHubPullRequestChecksConclusion | null;
-  /** Per-suite counts that feed the segmented progress bar. Older backends
-   * omit these; treat absence as 0 (the card renders only when sum > 0). */
-  checks_passed?: number;
-  checks_failed?: number;
-  checks_pending?: number;
-  /** Diff stats from GitHub's `pull_request` payload. Older backends omit
-   * these fields; we treat 0/0/0 as "unknown" and hide the stats row. */
-  additions?: number;
-  deletions?: number;
-  changed_files?: number;
+  mergeable_state: GitHubMergeableState | null;
+  checks_conclusion: GitHubPullRequestChecksConclusion | null;
+  checks_passed: number;
+  checks_failed: number;
+  checks_pending: number;
+  /** The server uses 0/0/0 when GitHub has not supplied diff statistics. */
+  additions: number;
+  deletions: number;
+  changed_files: number;
 }
 
 export interface ListGitHubInstallationsResponse {
@@ -65,10 +60,8 @@ export interface ListGitHubInstallationsResponse {
   /** Whether the deployment has GitHub App credentials configured. When false, the Connect button is hidden / disabled. */
   configured: boolean;
   /** Whether the caller can connect / disconnect installations. Non-admin
-   * members get `false` along with installations that omit `installation_id`.
-   * Older backends predating MUL-2413 omit the field; treat absence as
-   * `false` for read-only safety. */
-  can_manage?: boolean;
+   * members get `false` along with installations that omit `installation_id`. */
+  can_manage: boolean;
 }
 
 export interface GitHubConnectResponse {
