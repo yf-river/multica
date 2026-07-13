@@ -25,6 +25,27 @@ type skillCreateInput struct {
 	AllowNameConflict bool
 }
 
+func upsertSkillFiles(ctx context.Context, q *db.Queries, skillID pgtype.UUID, files []CreateSkillFileRequest) ([]SkillFileResponse, error) {
+	responses := make([]SkillFileResponse, 0, len(files))
+	for _, file := range files {
+		// SKILL.md is the primary skill content stored on skill.Content. Files
+		// contains only supporting assets across create, update and import.
+		if skillpkg.IsReservedContentPath(file.Path) {
+			continue
+		}
+		stored, err := q.UpsertSkillFile(ctx, db.UpsertSkillFileParams{
+			SkillID: skillID,
+			Path:    sanitizePostgresText(file.Path),
+			Content: sanitizePostgresText(file.Content),
+		})
+		if err != nil {
+			return nil, err
+		}
+		responses = append(responses, skillFileToResponse(stored))
+	}
+	return responses, nil
+}
+
 // createSkillWithFilesInTx writes a skill plus its supporting files using the
 // provided sqlc Queries handle, which must already be bound to an open
 // transaction. Callers compose skill creation with other writes (e.g. agent
@@ -57,22 +78,9 @@ func createSkillWithFilesInTx(ctx context.Context, qtx *db.Queries, input skillC
 		return SkillWithFilesResponse{}, err
 	}
 
-	fileResps := make([]SkillFileResponse, 0, len(input.Files))
-	for _, f := range input.Files {
-		// SKILL.md is reserved for the primary skill content (skill.Content).
-		// Supporting files must carry additional assets, not duplicate the main file.
-		if skillpkg.IsReservedContentPath(f.Path) {
-			continue
-		}
-		sf, err := qtx.UpsertSkillFile(ctx, db.UpsertSkillFileParams{
-			SkillID: skill.ID,
-			Path:    sanitizePostgresText(f.Path),
-			Content: sanitizePostgresText(f.Content),
-		})
-		if err != nil {
-			return SkillWithFilesResponse{}, err
-		}
-		fileResps = append(fileResps, skillFileToResponse(sf))
+	fileResps, err := upsertSkillFiles(ctx, qtx, skill.ID, input.Files)
+	if err != nil {
+		return SkillWithFilesResponse{}, err
 	}
 
 	skillResp, err := skillToResponse(skill)
@@ -198,17 +206,9 @@ func overwriteSkillWithFilesInTx(ctx context.Context, qtx *db.Queries, input ski
 	if err := qtx.DeleteSkillFilesBySkill(ctx, skill.ID); err != nil {
 		return SkillWithFilesResponse{}, err
 	}
-	fileResps := make([]SkillFileResponse, 0, len(input.Files))
-	for _, f := range input.Files {
-		sf, err := qtx.UpsertSkillFile(ctx, db.UpsertSkillFileParams{
-			SkillID: skill.ID,
-			Path:    sanitizePostgresText(f.Path),
-			Content: sanitizePostgresText(f.Content),
-		})
-		if err != nil {
-			return SkillWithFilesResponse{}, err
-		}
-		fileResps = append(fileResps, skillFileToResponse(sf))
+	fileResps, err := upsertSkillFiles(ctx, qtx, skill.ID, input.Files)
+	if err != nil {
+		return SkillWithFilesResponse{}, err
 	}
 
 	skillResp, err := skillToResponse(skill)

@@ -15,7 +15,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/logger"
-	skillpkg "github.com/multica-ai/multica/server/internal/skill"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -575,22 +574,10 @@ func (h *Handler) UpdateSkill(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "failed to delete old skill files")
 			return
 		}
-		fileResps = make([]SkillFileResponse, 0, len(req.Files))
-		for _, f := range req.Files {
-			// SKILL.md is reserved for the primary skill content (skill.Content).
-			if skillpkg.IsReservedContentPath(f.Path) {
-				continue
-			}
-			sf, err := qtx.UpsertSkillFile(r.Context(), db.UpsertSkillFileParams{
-				SkillID: skill.ID,
-				Path:    sanitizePostgresText(f.Path),
-				Content: sanitizePostgresText(f.Content),
-			})
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, "failed to upsert skill file: "+err.Error())
-				return
-			}
-			fileResps = append(fileResps, skillFileToResponse(sf))
+		fileResps, err = upsertSkillFiles(r.Context(), qtx, skill.ID, req.Files)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to upsert skill file: "+err.Error())
+			return
 		}
 	} else {
 		files, err := qtx.ListSkillFiles(r.Context(), skill.ID)
