@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"os/exec"
 	"regexp"
@@ -30,199 +31,152 @@ func (b *cursorBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 		return nil, fmt.Errorf("cursor-agent executable not found at %q: %w", execName, err)
 	}
 
-	timeout := opts.Timeout
-	runCtx, cancel := runContext(ctx, timeout)
-
 	args := buildCursorArgs(prompt, opts, b.cfg.Logger)
 	argv0, cmdArgs := chooseCursorInvocation(execName, lookedUp, args, b.cfg.Logger)
+	return executeStreamCommand(ctx, opts.Timeout, streamCommandSpec{
+		name:       "cursor-agent",
+		pipeName:   "cursor",
+		stderrName: "cursor",
+		executable: argv0,
+		args:       cmdArgs,
+		env:        buildEnv(b.cfg.Env),
+		cwd:        opts.Cwd,
+		waitDelay:  500 * time.Millisecond,
+		logger:     b.cfg.Logger,
+		model:      opts.Model,
+		parse: func(stdout io.Reader, msgCh chan<- Message, cancel context.CancelFunc) streamCommandResult {
+			configuredModel := strings.TrimSpace(opts.Model)
+			var output strings.Builder
+			var sessionID string
+			finalStatus := "completed"
+			var finalError string
+			resultSeen := false
+			// stepUsage accumulates per-step token counts from "step_finish" events.
+			// resultUsage holds authoritative session totals from "result" events.
+			// If the result event includes usage, we use resultUsage exclusively;
+			// otherwise we fall back to stepUsage.
+			stepUsage := make(map[string]TokenUsage)
+			resultUsage := make(map[string]TokenUsage)
+			hasResultUsage := false
 
-	cmd := exec.CommandContext(runCtx, argv0, cmdArgs...)
-	hideAgentWindow(cmd)
-	b.cfg.Logger.Info("agent command", "exec", argv0, "args", cmdArgs)
-	cmd.WaitDelay = 500 * time.Millisecond
-	if opts.Cwd != "" {
-		cmd.Dir = opts.Cwd
-	}
-	cmd.Env = buildEnv(b.cfg.Env)
+			scanner := bufio.NewScanner(stdout)
+			scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
 
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		cancel()
-		return nil, fmt.Errorf("cursor stdout pipe: %w", err)
-	}
-	cmd.Stderr = newLogWriter(b.cfg.Logger, "[cursor:stderr] ")
-
-	if err := cmd.Start(); err != nil {
-		cancel()
-		return nil, fmt.Errorf("start cursor-agent: %w", err)
-	}
-
-	b.cfg.Logger.Info("cursor-agent started", "pid", cmd.Process.Pid, "cwd", opts.Cwd, "model", opts.Model)
-
-	msgCh := make(chan Message, 256)
-	resCh := make(chan Result, 1)
-
-	go func() {
-		defer cancel()
-		defer close(msgCh)
-		defer close(resCh)
-
-		// Close stdout when the context is cancelled so scanner.Scan() unblocks.
-		go func() {
-			<-runCtx.Done()
-			_ = stdout.Close()
-		}()
-
-		startTime := time.Now()
-		configuredModel := strings.TrimSpace(opts.Model)
-		var output strings.Builder
-		var sessionID string
-		finalStatus := "completed"
-		var finalError string
-		resultSeen := false
-		// stepUsage accumulates per-step token counts from "step_finish" events.
-		// resultUsage holds authoritative session totals from "result" events.
-		// If the result event includes usage, we use resultUsage exclusively;
-		// otherwise we fall back to stepUsage.
-		stepUsage := make(map[string]TokenUsage)
-		resultUsage := make(map[string]TokenUsage)
-		hasResultUsage := false
-
-		scanner := bufio.NewScanner(stdout)
-		scanner.Buffer(make([]byte, 0, 1024*1024), 10*1024*1024)
-
-		for scanner.Scan() {
-			raw := scanner.Text()
-			line := normalizeCursorStreamLine(raw)
-			if line == "" {
-				continue
-			}
-
-			var evt cursorStreamEvent
-			if err := json.Unmarshal([]byte(line), &evt); err != nil {
-				continue
-			}
-
-			if sid := evt.readSessionID(); sid != "" {
-				sessionID = sid
-			}
-
-			switch evt.Type {
-			case "system":
-				if evt.Subtype == "init" {
-					trySend(msgCh, Message{Type: MessageStatus, Status: "running"})
+			for scanner.Scan() {
+				raw := scanner.Text()
+				line := normalizeCursorStreamLine(raw)
+				if line == "" {
+					continue
 				}
-				if evt.Subtype == "error" {
+
+				var evt cursorStreamEvent
+				if err := json.Unmarshal([]byte(line), &evt); err != nil {
+					continue
+				}
+
+				if sid := evt.readSessionID(); sid != "" {
+					sessionID = sid
+				}
+
+				switch evt.Type {
+				case "system":
+					if evt.Subtype == "init" {
+						trySend(msgCh, Message{Type: MessageStatus, Status: "running"})
+					}
+					if evt.Subtype == "error" {
+						errMsg := cursorErrorText(&evt)
+						if errMsg != "" {
+							trySend(msgCh, Message{Type: MessageError, Content: errMsg})
+						}
+					}
+
+				case "assistant":
+					b.handleCursorAssistant(&evt, msgCh, &output)
+
+				case "tool_use":
+					var params map[string]any
+					if evt.Parameters != nil {
+						_ = json.Unmarshal(evt.Parameters, &params)
+					}
+					trySend(msgCh, Message{
+						Type:   MessageToolUse,
+						Tool:   evt.ToolName,
+						CallID: evt.ToolID,
+						Input:  params,
+					})
+
+				case "tool_result":
+					trySend(msgCh, Message{
+						Type:   MessageToolResult,
+						CallID: evt.ToolID,
+						Output: evt.Output,
+					})
+
+				case "result":
+					resultSeen = true
+					if evt.IsError || evt.Subtype == "error" {
+						finalStatus = "failed"
+						finalError = cursorErrorText(&evt)
+					}
+					if evt.ResultText != "" && output.Len() == 0 {
+						output.WriteString(evt.ResultText)
+					}
+					b.accumulateResultUsage(resultUsage, &evt, configuredModel)
+					if evt.hasResultUsage() {
+						hasResultUsage = true
+					}
+					// Current Cursor Agent versions can emit the terminal result
+					// event but keep a worker process alive. Treat result as the
+					// protocol boundary so the daemon can report completion.
+					cancel()
+
+				case "error":
 					errMsg := cursorErrorText(&evt)
 					if errMsg != "" {
-						trySend(msgCh, Message{Type: MessageError, Content: errMsg})
+						finalError = errMsg
 					}
-				}
+					trySend(msgCh, Message{Type: MessageError, Content: errMsg})
 
-			case "assistant":
-				b.handleCursorAssistant(&evt, msgCh, &output)
-
-			case "tool_use":
-				var params map[string]any
-				if evt.Parameters != nil {
-					_ = json.Unmarshal(evt.Parameters, &params)
-				}
-				trySend(msgCh, Message{
-					Type:   MessageToolUse,
-					Tool:   evt.ToolName,
-					CallID: evt.ToolID,
-					Input:  params,
-				})
-
-			case "tool_result":
-				trySend(msgCh, Message{
-					Type:   MessageToolResult,
-					CallID: evt.ToolID,
-					Output: evt.Output,
-				})
-
-			case "result":
-				resultSeen = true
-				if evt.IsError || evt.Subtype == "error" {
-					finalStatus = "failed"
-					finalError = cursorErrorText(&evt)
-				}
-				if evt.ResultText != "" && output.Len() == 0 {
-					output.WriteString(evt.ResultText)
-				}
-				b.accumulateResultUsage(resultUsage, &evt, configuredModel)
-				if evt.hasResultUsage() {
-					hasResultUsage = true
-				}
-				// Current Cursor Agent versions can emit the terminal result
-				// event but keep a worker process alive. Treat result as the
-				// protocol boundary so the daemon can report completion.
-				cancel()
-
-			case "error":
-				errMsg := cursorErrorText(&evt)
-				if errMsg != "" {
-					finalError = errMsg
-				}
-				trySend(msgCh, Message{Type: MessageError, Content: errMsg})
-
-			case "text":
-				if evt.Part != nil {
-					var part cursorTextPart
-					_ = json.Unmarshal(evt.Part, &part)
-					if part.Text != "" {
-						output.WriteString(part.Text)
-						trySend(msgCh, Message{Type: MessageText, Content: part.Text})
+				case "text":
+					if evt.Part != nil {
+						var part cursorTextPart
+						_ = json.Unmarshal(evt.Part, &part)
+						if part.Text != "" {
+							output.WriteString(part.Text)
+							trySend(msgCh, Message{Type: MessageText, Content: part.Text})
+						}
 					}
-				}
 
-			case "step_finish":
-				if evt.Part != nil {
-					var part cursorStepFinishPart
-					_ = json.Unmarshal(evt.Part, &part)
-					model := cursorUsageModel(evt.Model, configuredModel)
-					u := stepUsage[model]
-					u.InputTokens += int64(part.Tokens.Input)
-					u.OutputTokens += int64(part.Tokens.Output)
-					u.CacheReadTokens += int64(part.Tokens.Cache.Read)
-					stepUsage[model] = u
+				case "step_finish":
+					if evt.Part != nil {
+						var part cursorStepFinishPart
+						_ = json.Unmarshal(evt.Part, &part)
+						model := cursorUsageModel(evt.Model, configuredModel)
+						u := stepUsage[model]
+						u.InputTokens += int64(part.Tokens.Input)
+						u.OutputTokens += int64(part.Tokens.Output)
+						u.CacheReadTokens += int64(part.Tokens.Cache.Read)
+						stepUsage[model] = u
+					}
 				}
 			}
-		}
 
-		// Use result usage if available (session totals); otherwise fall back
-		// to accumulated step_finish usage.
-		if !hasResultUsage {
-			resultUsage = stepUsage
-		}
+			// Use result usage if available (session totals); otherwise fall back
+			// to accumulated step_finish usage.
+			if !hasResultUsage {
+				resultUsage = stepUsage
+			}
 
-		exitErr := cmd.Wait()
-		duration := time.Since(startTime)
-
-		if runCtx.Err() == context.DeadlineExceeded {
-			finalStatus = "timeout"
-			finalError = fmt.Sprintf("cursor-agent timed out after %s", timeout)
-		} else if runCtx.Err() == context.Canceled && !resultSeen {
-			finalStatus = "aborted"
-			finalError = "execution cancelled"
-		} else if exitErr != nil && finalStatus == "completed" && !resultSeen {
-			finalStatus = "failed"
-			finalError = fmt.Sprintf("cursor-agent exited with error: %v", exitErr)
-		}
-
-		b.cfg.Logger.Info("cursor-agent finished", "pid", cmd.Process.Pid, "status", finalStatus, "duration", duration.Round(time.Millisecond).String())
-
-		resCh <- Result{
-			Status:     finalStatus,
-			Output:     output.String(),
-			Error:      finalError,
-			DurationMs: duration.Milliseconds(),
-			SessionID:  sessionID,
-			Usage:      resultUsage,
-		}
-	}()
-
-	return &Session{Messages: msgCh, Result: resCh}, nil
+			return streamCommandResult{
+				status:             finalStatus,
+				output:             output.String(),
+				errMsg:             finalError,
+				sessionID:          sessionID,
+				usage:              resultUsage,
+				terminalResultSeen: resultSeen,
+			}
+		},
+	})
 }
 
 func (b *cursorBackend) handleCursorAssistant(evt *cursorStreamEvent, ch chan<- Message, output *strings.Builder) {

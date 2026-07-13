@@ -46,9 +46,6 @@ func (b *opencodeBackend) Execute(ctx context.Context, prompt string, opts ExecO
 	}
 	execPath = resolved
 
-	timeout := opts.Timeout
-	runCtx, cancel := runContext(ctx, timeout)
-
 	args := []string{"run", "--format", "json", "--dangerously-skip-permissions"}
 	// Anchor OpenCode's project discovery (AGENTS.md walk-up + .opencode/skills/
 	// project config scan) at the task workdir. Without this, OpenCode falls
@@ -80,14 +77,6 @@ func (b *opencodeBackend) Execute(ctx context.Context, prompt string, opts ExecO
 	args = append(args, filterCustomArgs(opts.CustomArgs, opencodeBlockedArgs, b.cfg.Logger)...)
 	args = append(args, prompt)
 
-	cmd := exec.CommandContext(runCtx, execPath, args...)
-	hideAgentWindow(cmd)
-	b.cfg.Logger.Info("agent command", "exec", execPath, "args", args)
-	cmd.WaitDelay = 10 * time.Second
-	if opts.Cwd != "" {
-		cmd.Dir = opts.Cwd
-	}
-
 	env := buildEnv(b.cfg.Env)
 	// Keep daemon-mode runs non-interactive without relying on
 	// OPENCODE_PERMISSION. OpenCode deep-merges that env override into user
@@ -117,7 +106,6 @@ func (b *opencodeBackend) Execute(ctx context.Context, prompt string, opts ExecO
 	// survive across runs.
 	mcpContent, err := buildOpenCodeMCPConfigContent(opts.McpConfig)
 	if err != nil {
-		cancel()
 		return nil, err
 	}
 	if mcpContent != "" {
@@ -126,79 +114,39 @@ func (b *opencodeBackend) Execute(ctx context.Context, prompt string, opts ExecO
 		}
 		env = append(env, "OPENCODE_CONFIG_CONTENT="+mcpContent)
 	}
-	cmd.Env = env
+	return executeStreamCommand(ctx, opts.Timeout, streamCommandSpec{
+		name:       "opencode",
+		executable: execPath,
+		args:       args,
+		env:        env,
+		cwd:        opts.Cwd,
+		waitDelay:  10 * time.Second,
+		logger:     b.cfg.Logger,
+		model:      opts.Model,
+		parse: func(stdout io.Reader, msgCh chan<- Message, _ context.CancelFunc) streamCommandResult {
+			scanResult := b.processEvents(stdout, msgCh)
 
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		cancel()
-		return nil, fmt.Errorf("opencode stdout pipe: %w", err)
-	}
-	cmd.Stderr = newLogWriter(b.cfg.Logger, "[opencode:stderr] ")
-
-	if err := cmd.Start(); err != nil {
-		cancel()
-		return nil, fmt.Errorf("start opencode: %w", err)
-	}
-
-	b.cfg.Logger.Info("opencode started", "pid", cmd.Process.Pid, "cwd", opts.Cwd, "model", opts.Model)
-
-	msgCh := make(chan Message, 256)
-	resCh := make(chan Result, 1)
-
-	// Close stdout when the context is cancelled so the scanner unblocks.
-	go func() {
-		<-runCtx.Done()
-		_ = stdout.Close()
-	}()
-
-	go func() {
-		defer cancel()
-		defer close(msgCh)
-		defer close(resCh)
-
-		startTime := time.Now()
-		scanResult := b.processEvents(stdout, msgCh)
-
-		// Wait for process exit.
-		exitErr := cmd.Wait()
-		duration := time.Since(startTime)
-
-		if runCtx.Err() == context.DeadlineExceeded {
-			scanResult.status = "timeout"
-			scanResult.errMsg = fmt.Sprintf("opencode timed out after %s", timeout)
-		} else if runCtx.Err() == context.Canceled {
-			scanResult.status = "aborted"
-			scanResult.errMsg = "execution cancelled"
-		} else if exitErr != nil && scanResult.status == "completed" {
-			scanResult.status = "failed"
-			scanResult.errMsg = fmt.Sprintf("opencode exited with error: %v", exitErr)
-		}
-
-		b.cfg.Logger.Info("opencode finished", "pid", cmd.Process.Pid, "status", scanResult.status, "duration", duration.Round(time.Millisecond).String())
-
-		// Build usage map. OpenCode doesn't report model per-step, so we
-		// attribute all usage to the configured model (or "unknown").
-		var usage map[string]TokenUsage
-		u := scanResult.usage
-		if u.InputTokens > 0 || u.OutputTokens > 0 || u.CacheReadTokens > 0 || u.CacheWriteTokens > 0 {
-			model := opts.Model
-			if model == "" {
-				model = "unknown"
+			// Build usage map. OpenCode doesn't report model per-step, so we
+			// attribute all usage to the configured model (or "unknown").
+			var usage map[string]TokenUsage
+			u := scanResult.usage
+			if u.InputTokens > 0 || u.OutputTokens > 0 || u.CacheReadTokens > 0 || u.CacheWriteTokens > 0 {
+				model := opts.Model
+				if model == "" {
+					model = "unknown"
+				}
+				usage = map[string]TokenUsage{model: u}
 			}
-			usage = map[string]TokenUsage{model: u}
-		}
 
-		resCh <- Result{
-			Status:     scanResult.status,
-			Output:     scanResult.output,
-			Error:      scanResult.errMsg,
-			DurationMs: duration.Milliseconds(),
-			SessionID:  scanResult.sessionID,
-			Usage:      usage,
-		}
-	}()
-
-	return &Session{Messages: msgCh, Result: resCh}, nil
+			return streamCommandResult{
+				status:    scanResult.status,
+				output:    scanResult.output,
+				errMsg:    scanResult.errMsg,
+				sessionID: scanResult.sessionID,
+				usage:     usage,
+			}
+		},
+	})
 }
 
 // ── Event handlers ──

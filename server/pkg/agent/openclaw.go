@@ -65,106 +65,52 @@ func (b *openclawBackend) Execute(ctx context.Context, prompt string, opts ExecO
 		return nil, err
 	}
 
-	timeout := opts.Timeout
-	runCtx, cancel := runContext(ctx, timeout)
-
 	sessionID := opts.ResumeSessionID
 	if sessionID == "" {
 		sessionID = fmt.Sprintf("multica-%d", time.Now().UnixNano())
 	}
 	args := buildOpenclawArgs(prompt, sessionID, opts, b.cfg.Logger)
 
-	cmd := exec.CommandContext(runCtx, execPath, args...)
-	hideAgentWindow(cmd)
-	b.cfg.Logger.Info("agent command", "exec", execPath, "args", args)
-	cmd.WaitDelay = 10 * time.Second
-	if opts.Cwd != "" {
-		cmd.Dir = opts.Cwd
-	}
-	cmd.Env = buildEnv(b.cfg.Env)
+	return executeStreamCommand(ctx, opts.Timeout, streamCommandSpec{
+		name:       "openclaw",
+		executable: execPath,
+		args:       args,
+		env:        buildEnv(b.cfg.Env),
+		cwd:        opts.Cwd,
+		waitDelay:  10 * time.Second,
+		logger:     b.cfg.Logger,
+		model:      opts.Model,
+		parse: func(stdout io.Reader, msgCh chan<- Message, _ context.CancelFunc) streamCommandResult {
+			scanResult := b.processOutput(stdout, msgCh)
 
-	// openclaw writes its --json output to stdout. Stderr carries log
-	// overflow (security warnings, tool errors, etc.) — capture it via a
-	// log writer so it surfaces in daemon logs without being fed into the
-	// JSON parser.
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		cancel()
-		return nil, fmt.Errorf("openclaw stdout pipe: %w", err)
-	}
-	cmd.Stderr = newLogWriter(b.cfg.Logger, "[openclaw:stderr] ")
-
-	if err := cmd.Start(); err != nil {
-		cancel()
-		return nil, fmt.Errorf("start openclaw: %w", err)
-	}
-
-	b.cfg.Logger.Info("openclaw started", "pid", cmd.Process.Pid, "cwd", opts.Cwd, "model", opts.Model)
-
-	msgCh := make(chan Message, 256)
-	resCh := make(chan Result, 1)
-
-	// Close stdout when the context is cancelled so the scanner unblocks.
-	go func() {
-		<-runCtx.Done()
-		_ = stdout.Close()
-	}()
-
-	go func() {
-		defer cancel()
-		defer close(msgCh)
-		defer close(resCh)
-
-		startTime := time.Now()
-		scanResult := b.processOutput(stdout, msgCh)
-
-		// Wait for process exit.
-		exitErr := cmd.Wait()
-		duration := time.Since(startTime)
-
-		if runCtx.Err() == context.DeadlineExceeded {
-			scanResult.status = "timeout"
-			scanResult.errMsg = fmt.Sprintf("openclaw timed out after %s", timeout)
-		} else if runCtx.Err() == context.Canceled {
-			scanResult.status = "aborted"
-			scanResult.errMsg = "execution cancelled"
-		} else if exitErr != nil && scanResult.status == "completed" {
-			scanResult.status = "failed"
-			scanResult.errMsg = fmt.Sprintf("openclaw exited with error: %v", exitErr)
-		}
-
-		b.cfg.Logger.Info("openclaw finished", "pid", cmd.Process.Pid, "status", scanResult.status, "duration", duration.Round(time.Millisecond).String())
-
-		// Build usage map. Prefer the model openclaw reported in
-		// `meta.agentMeta.model` (the actual LLM, e.g. `deepseek-chat`).
-		// Fall back to opts.Model — which for openclaw is the agent name
-		// passed via `--agent`, not a real model identifier — only when
-		// the runtime didn't surface its own model. Last resort is the
-		// daemon's `unknown` placeholder.
-		var usage map[string]TokenUsage
-		u := scanResult.usage
-		if u.InputTokens > 0 || u.OutputTokens > 0 || u.CacheReadTokens > 0 || u.CacheWriteTokens > 0 {
-			model := scanResult.model
-			if model == "" {
-				model = opts.Model
+			// Build usage map. Prefer the model openclaw reported in
+			// `meta.agentMeta.model` (the actual LLM, e.g. `deepseek-chat`).
+			// Fall back to opts.Model — which for openclaw is the agent name
+			// passed via `--agent`, not a real model identifier — only when
+			// the runtime didn't surface its own model. Last resort is the
+			// daemon's `unknown` placeholder.
+			var usage map[string]TokenUsage
+			u := scanResult.usage
+			if u.InputTokens > 0 || u.OutputTokens > 0 || u.CacheReadTokens > 0 || u.CacheWriteTokens > 0 {
+				model := scanResult.model
+				if model == "" {
+					model = opts.Model
+				}
+				if model == "" {
+					model = "unknown"
+				}
+				usage = map[string]TokenUsage{model: u}
 			}
-			if model == "" {
-				model = "unknown"
+
+			return streamCommandResult{
+				status:    scanResult.status,
+				output:    scanResult.output,
+				errMsg:    scanResult.errMsg,
+				sessionID: scanResult.sessionID,
+				usage:     usage,
 			}
-			usage = map[string]TokenUsage{model: u}
-		}
-
-		resCh <- Result{
-			Status:     scanResult.status,
-			Output:     scanResult.output,
-			Error:      scanResult.errMsg,
-			DurationMs: duration.Milliseconds(),
-			SessionID:  scanResult.sessionID,
-			Usage:      usage,
-		}
-	}()
-
-	return &Session{Messages: msgCh, Result: resCh}, nil
+		},
+	})
 }
 
 // buildOpenclawArgs assembles the argv for a one-shot `openclaw agent` invocation.

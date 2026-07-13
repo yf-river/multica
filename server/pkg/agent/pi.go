@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -176,191 +177,136 @@ func (b *piBackend) Execute(ctx context.Context, prompt string, opts ExecOptions
 		return nil, fmt.Errorf("pi session file: %w", err)
 	}
 
-	runCtx, cancel := runContext(ctx, timeout)
-
 	args := buildPiArgs(prompt, sessionPath, opts, b.cfg.Logger)
 	argv0, cmdArgs := choosePiInvocation(execName, lookedUp, args, b.cfg.Logger)
-
-	cmd := exec.CommandContext(runCtx, argv0, cmdArgs...)
-	hideAgentWindow(cmd)
-	b.cfg.Logger.Info("agent command", "exec", argv0, "args", cmdArgs)
-	cmd.WaitDelay = 10 * time.Second
-	if opts.Cwd != "" {
-		cmd.Dir = opts.Cwd
-	}
-	cmd.Env = buildEnv(b.cfg.Env)
-
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		cancel()
-		return nil, fmt.Errorf("pi stdout pipe: %w", err)
-	}
-	// Attach an explicit stdin pipe so we can close it ourselves. Pi reads
+	// Attach an explicit stdin pipe and close it immediately after Start. Pi reads
 	// its prompt from argv (positional, see buildPiArgs) and never expects
 	// interactive input, but when the parent leaves cmd.Stdin nil and the
 	// daemon is run under systemd, Pi has been observed to block in its
 	// event loop awaiting stdin events instead of progressing to "done"
 	// (#2188). Closing the pipe immediately after Start delivers an
 	// explicit EOF on a FIFO, which unblocks Pi's readable side.
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		cancel()
-		return nil, fmt.Errorf("pi stdin pipe: %w", err)
-	}
-	cmd.Stderr = newLogWriter(b.cfg.Logger, "[pi:stderr] ")
+	return executeStreamCommand(ctx, timeout, streamCommandSpec{
+		name:       "pi",
+		executable: argv0,
+		args:       cmdArgs,
+		env:        buildEnv(b.cfg.Env),
+		cwd:        opts.Cwd,
+		waitDelay:  10 * time.Second,
+		logger:     b.cfg.Logger,
+		model:      opts.Model,
+		closeStdin: true,
+		parse: func(stdout io.Reader, msgCh chan<- Message, _ context.CancelFunc) streamCommandResult {
+			var output strings.Builder
+			finalStatus := "completed"
+			var finalError string
+			usage := make(map[string]TokenUsage)
 
-	if err := cmd.Start(); err != nil {
-		_ = stdin.Close()
-		cancel()
-		return nil, fmt.Errorf("start pi: %w", err)
-	}
-	_ = stdin.Close()
+			scanner := bufio.NewScanner(stdout)
+			// Pi message_update events can be large (they embed the full message
+			// partial on each delta), so give the scanner generous headroom.
+			scanner.Buffer(make([]byte, 0, 1024*1024), 32*1024*1024)
+			var textBuffer strings.Builder
 
-	b.cfg.Logger.Info("pi started", "pid", cmd.Process.Pid, "cwd", opts.Cwd, "model", opts.Model)
-
-	msgCh := make(chan Message, 256)
-	resCh := make(chan Result, 1)
-
-	// Close stdout when the context is cancelled so scanner.Scan() unblocks.
-	go func() {
-		<-runCtx.Done()
-		_ = stdout.Close()
-	}()
-
-	go func() {
-		defer cancel()
-		defer close(msgCh)
-		defer close(resCh)
-
-		startTime := time.Now()
-		var output strings.Builder
-		finalStatus := "completed"
-		var finalError string
-		usage := make(map[string]TokenUsage)
-
-		scanner := bufio.NewScanner(stdout)
-		// Pi message_update events can be large (they embed the full message
-		// partial on each delta), so give the scanner generous headroom.
-		scanner.Buffer(make([]byte, 0, 1024*1024), 32*1024*1024)
-		var textBuffer strings.Builder
-
-		for scanner.Scan() {
-			line := strings.TrimSpace(scanner.Text())
-			if line == "" {
-				continue
-			}
-			var evt piStreamEvent
-			if err := json.Unmarshal([]byte(line), &evt); err != nil {
-				continue
-			}
-
-			switch evt.Type {
-			case "agent_start":
-				trySend(msgCh, Message{Type: MessageStatus, Status: "running"})
-
-			case "message_update":
-				if evt.AssistantMessageEvent == nil {
+			for scanner.Scan() {
+				line := strings.TrimSpace(scanner.Text())
+				if line == "" {
 					continue
 				}
-				switch evt.AssistantMessageEvent.Type {
-				case "text_delta":
-					if d := drainPiTextBuffer(&textBuffer, evt.AssistantMessageEvent.Delta); d != "" {
-						output.WriteString(d)
-						trySend(msgCh, Message{Type: MessageText, Content: d})
-					}
-				case "thinking_delta":
-					if d := evt.AssistantMessageEvent.Delta; d != "" {
-						trySend(msgCh, Message{Type: MessageThinking, Content: d})
-					}
+				var evt piStreamEvent
+				if err := json.Unmarshal([]byte(line), &evt); err != nil {
+					continue
 				}
 
-			case "tool_execution_start":
-				var params map[string]any
-				if len(evt.Args) > 0 {
-					_ = json.Unmarshal(evt.Args, &params)
-				}
-				trySend(msgCh, Message{
-					Type:   MessageToolUse,
-					Tool:   evt.ToolName,
-					CallID: evt.ToolCallID,
-					Input:  params,
-				})
+				switch evt.Type {
+				case "agent_start":
+					trySend(msgCh, Message{Type: MessageStatus, Status: "running"})
 
-			case "tool_execution_end":
-				trySend(msgCh, Message{
-					Type:   MessageToolResult,
-					CallID: evt.ToolCallID,
-					Output: decodePiResult(evt.Result),
-				})
-
-			case "turn_end":
-				if msg := decodePiMessage(evt.Message); msg != nil && msg.Usage != nil {
-					model := msg.Model
-					if model == "" {
-						model = opts.Model
+				case "message_update":
+					if evt.AssistantMessageEvent == nil {
+						continue
 					}
-					if model == "" {
-						model = "unknown"
+					switch evt.AssistantMessageEvent.Type {
+					case "text_delta":
+						if d := drainPiTextBuffer(&textBuffer, evt.AssistantMessageEvent.Delta); d != "" {
+							output.WriteString(d)
+							trySend(msgCh, Message{Type: MessageText, Content: d})
+						}
+					case "thinking_delta":
+						if d := evt.AssistantMessageEvent.Delta; d != "" {
+							trySend(msgCh, Message{Type: MessageThinking, Content: d})
+						}
 					}
-					u := usage[model]
-					u.InputTokens += msg.Usage.Input
-					u.OutputTokens += msg.Usage.Output
-					u.CacheReadTokens += msg.Usage.CacheRead
-					u.CacheWriteTokens += msg.Usage.CacheWrite
-					usage[model] = u
-				}
 
-			case "error":
-				errText := decodePiString(evt.Message)
-				trySend(msgCh, Message{Type: MessageError, Content: errText})
-				if finalStatus == "completed" {
-					finalStatus = "failed"
-					finalError = errText
-				}
+				case "tool_execution_start":
+					var params map[string]any
+					if len(evt.Args) > 0 {
+						_ = json.Unmarshal(evt.Args, &params)
+					}
+					trySend(msgCh, Message{
+						Type:   MessageToolUse,
+						Tool:   evt.ToolName,
+						CallID: evt.ToolCallID,
+						Input:  params,
+					})
 
-			case "auto_retry_end":
-				if !evt.Success && finalStatus == "completed" {
-					finalStatus = "failed"
-					if evt.FinalError != "" {
-						finalError = evt.FinalError
-					} else {
-						finalError = "pi exhausted automatic retries"
+				case "tool_execution_end":
+					trySend(msgCh, Message{
+						Type:   MessageToolResult,
+						CallID: evt.ToolCallID,
+						Output: decodePiResult(evt.Result),
+					})
+
+				case "turn_end":
+					if msg := decodePiMessage(evt.Message); msg != nil && msg.Usage != nil {
+						model := msg.Model
+						if model == "" {
+							model = opts.Model
+						}
+						if model == "" {
+							model = "unknown"
+						}
+						u := usage[model]
+						u.InputTokens += msg.Usage.Input
+						u.OutputTokens += msg.Usage.Output
+						u.CacheReadTokens += msg.Usage.CacheRead
+						u.CacheWriteTokens += msg.Usage.CacheWrite
+						usage[model] = u
+					}
+
+				case "error":
+					errText := decodePiString(evt.Message)
+					trySend(msgCh, Message{Type: MessageError, Content: errText})
+					if finalStatus == "completed" {
+						finalStatus = "failed"
+						finalError = errText
+					}
+
+				case "auto_retry_end":
+					if !evt.Success && finalStatus == "completed" {
+						finalStatus = "failed"
+						if evt.FinalError != "" {
+							finalError = evt.FinalError
+						} else {
+							finalError = "pi exhausted automatic retries"
+						}
 					}
 				}
 			}
-		}
-		if d := flushPiTextBuffer(&textBuffer); d != "" {
-			output.WriteString(d)
-			trySend(msgCh, Message{Type: MessageText, Content: d})
-		}
+			if d := flushPiTextBuffer(&textBuffer); d != "" {
+				output.WriteString(d)
+				trySend(msgCh, Message{Type: MessageText, Content: d})
+			}
 
-		waitErr := cmd.Wait()
-		duration := time.Since(startTime)
-
-		if runCtx.Err() == context.DeadlineExceeded {
-			finalStatus = "timeout"
-			finalError = fmt.Sprintf("pi timed out after %s", timeout)
-		} else if runCtx.Err() == context.Canceled {
-			finalStatus = "aborted"
-			finalError = "execution cancelled"
-		} else if waitErr != nil && finalStatus == "completed" {
-			finalStatus = "failed"
-			finalError = fmt.Sprintf("pi exited with error: %v", waitErr)
-		}
-
-		b.cfg.Logger.Info("pi finished", "pid", cmd.Process.Pid, "status", finalStatus, "duration", duration.Round(time.Millisecond).String())
-
-		resCh <- Result{
-			Status:     finalStatus,
-			Output:     output.String(),
-			Error:      finalError,
-			DurationMs: duration.Milliseconds(),
-			SessionID:  sessionPath,
-			Usage:      usage,
-		}
-	}()
-
-	return &Session{Messages: msgCh, Result: resCh}, nil
+			return streamCommandResult{
+				status:    finalStatus,
+				output:    output.String(),
+				errMsg:    finalError,
+				sessionID: sessionPath,
+				usage:     usage,
+			}
+		},
+	})
 }
 
 // ── Pi event types ──
