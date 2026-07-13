@@ -636,22 +636,6 @@ export const useTabStore = create<TabStore>()(
       name: "multica_tabs",
       version: 3,
       storage: createJSONStorage(() => createPersistStorage(defaultStorage)),
-      migrate: (persistedState, version) => {
-        // v1 → v2: flat `tabs` array → per-workspace grouping.
-        // Tabs whose path isn't workspace-scoped (root `/`, login, etc.)
-        // are dropped — they have no workspace to belong to, and the new
-        // model's invariant is "every tab lives in a workspace group".
-        let state = persistedState;
-        if (version < 2 && state && typeof state === "object") {
-          state = migrateV1ToV2(state as Partial<V1Persisted>);
-        }
-        // v2 → v3: introduce `Tab.pinned`. Existing tabs default to
-        // unpinned; pin ordering invariant trivially holds (no pinned tabs).
-        if (version < 3 && state && typeof state === "object") {
-          state = migrateV2ToV3(state as V2Persisted);
-        }
-        return state as V3Persisted;
-      },
       partialize: (state) => ({
         activeWorkspaceSlug: state.activeWorkspaceSlug,
         byWorkspace: Object.fromEntries(
@@ -672,7 +656,7 @@ export const useTabStore = create<TabStore>()(
         ),
       }),
       merge: (persistedState, currentState) => {
-        const persisted = persistedState as Partial<V3Persisted> | undefined;
+        const persisted = persistedState as Partial<PersistedTabState> | undefined;
         if (!persisted?.byWorkspace) return currentState;
 
         const byWorkspace: Record<string, WorkspaceTabGroup> = {};
@@ -680,9 +664,9 @@ export const useTabStore = create<TabStore>()(
           const tabs: Tab[] = [];
           for (const pTab of pGroup.tabs) {
             const clean = sanitizeTabPath(pTab.path);
-            // Persisted path may have come from a stale version or a
-            // manual edit. Drop rather than rewrite so we never silently
-            // put users on a path that doesn't match the group's slug.
+            // Persisted storage is an untrusted local boundary and may be
+            // manually edited or corrupt. Drop rather than rewrite so we
+            // never put users on a path that doesn't match the group's slug.
             if (!clean || extractWorkspaceSlug(clean) !== slug) {
               console.warn(
                 `[tab-store] dropping persisted tab "${pTab.path}" from ` +
@@ -703,8 +687,8 @@ export const useTabStore = create<TabStore>()(
           }
           if (tabs.length === 0) continue;
           // Enforce the "pinned first" invariant on rehydration in case a
-          // user (or a buggy older write) persisted the pinned tabs out of
-          // order. Stable sort preserves intra-group order.
+          // malformed local storage wrote pinned tabs out of order. Stable
+          // sort preserves intra-group order.
           tabs.sort((a, b) => (a.pinned === b.pinned ? 0 : a.pinned ? -1 : 1));
           const activeTabId = tabs.some((t) => t.id === pGroup.activeTabId)
             ? pGroup.activeTabId
@@ -724,39 +708,10 @@ export const useTabStore = create<TabStore>()(
 );
 
 // ---------------------------------------------------------------------------
-// Persisted shapes (for migration)
+// Current persisted shape
 // ---------------------------------------------------------------------------
 
-interface V1Tab {
-  id: string;
-  path: string;
-  title: string;
-  icon: string;
-}
-
-interface V1Persisted {
-  tabs: V1Tab[];
-  activeTabId: string;
-}
-
-interface V2PersistedTab {
-  id: string;
-  path: string;
-  title: string;
-  icon: string;
-}
-
-interface V2PersistedGroup {
-  tabs: V2PersistedTab[];
-  activeTabId: string;
-}
-
-interface V2Persisted {
-  activeWorkspaceSlug: string | null;
-  byWorkspace: Record<string, V2PersistedGroup>;
-}
-
-interface V3PersistedTab {
+interface PersistedTab {
   id: string;
   path: string;
   title: string;
@@ -764,70 +719,14 @@ interface V3PersistedTab {
   pinned: boolean;
 }
 
-interface V3PersistedGroup {
-  tabs: V3PersistedTab[];
+interface PersistedTabGroup {
+  tabs: PersistedTab[];
   activeTabId: string;
 }
 
-interface V3Persisted {
+interface PersistedTabState {
   activeWorkspaceSlug: string | null;
-  byWorkspace: Record<string, V3PersistedGroup>;
-}
-
-export function migrateV2ToV3(v2: V2Persisted): V3Persisted {
-  const byWorkspace: Record<string, V3PersistedGroup> = {};
-  for (const [slug, group] of Object.entries(v2.byWorkspace ?? {})) {
-    byWorkspace[slug] = {
-      activeTabId: group.activeTabId,
-      tabs: group.tabs.map((t) => ({ ...t, pinned: false })),
-    };
-  }
-  return {
-    activeWorkspaceSlug: v2.activeWorkspaceSlug ?? null,
-    byWorkspace,
-  };
-}
-
-export function migrateV1ToV2(v1: Partial<V1Persisted>): V2Persisted {
-  const byWorkspace: Record<string, V2PersistedGroup> = {};
-  const oldTabs = v1.tabs ?? [];
-  for (const tab of oldTabs) {
-    const slug = extractWorkspaceSlug(tab.path);
-    if (!slug) continue; // drop root / global-path tabs
-    if (!byWorkspace[slug]) byWorkspace[slug] = { tabs: [], activeTabId: "" };
-    byWorkspace[slug].tabs.push({
-      id: tab.id,
-      path: tab.path,
-      title: tab.title,
-      icon: tab.icon,
-    });
-  }
-
-  // Each group needs a valid activeTabId. Prefer the one from v1 if it
-  // landed in this group; otherwise fall back to the first tab.
-  for (const slug of Object.keys(byWorkspace)) {
-    const group = byWorkspace[slug];
-    const hasOldActive = group.tabs.some((t) => t.id === v1.activeTabId);
-    group.activeTabId = hasOldActive
-      ? (v1.activeTabId as string)
-      : group.tabs[0].id;
-  }
-
-  // Active workspace: whichever group inherited the v1 activeTab, falling
-  // back to the first group we created (arbitrary but deterministic given
-  // Object.keys iteration order on string keys).
-  let activeWorkspaceSlug: string | null = null;
-  for (const slug of Object.keys(byWorkspace)) {
-    if (byWorkspace[slug].activeTabId === v1.activeTabId) {
-      activeWorkspaceSlug = slug;
-      break;
-    }
-  }
-  if (!activeWorkspaceSlug) {
-    activeWorkspaceSlug = Object.keys(byWorkspace)[0] ?? null;
-  }
-
-  return { activeWorkspaceSlug, byWorkspace };
+  byWorkspace: Record<string, PersistedTabGroup>;
 }
 
 // ---------------------------------------------------------------------------

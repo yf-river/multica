@@ -14,12 +14,7 @@ vi.mock("../routes", () => ({
   createTabRouter: createTabRouterMock,
 }));
 
-import {
-  sanitizeTabPath,
-  migrateV1ToV2,
-  migrateV2ToV3,
-  useTabStore,
-} from "./tab-store";
+import { sanitizeTabPath, useTabStore } from "./tab-store";
 
 beforeEach(() => {
   createTabRouterMock.mockClear();
@@ -57,55 +52,6 @@ describe("sanitizeTabPath", () => {
   it("passes through user slugs that happen to look path-like but aren't reserved", () => {
     expect(sanitizeTabPath("/acme-issues/issues")).toBe("/acme-issues/issues");
     expect(sanitizeTabPath("/project-x/inbox")).toBe("/project-x/inbox");
-  });
-});
-
-describe("migrateV1ToV2", () => {
-  it("groups v1 flat tabs by workspace slug", () => {
-    const v1 = {
-      tabs: [
-        { id: "t1", path: "/acme/issues", title: "任务", icon: "ListTodo" },
-        { id: "t2", path: "/acme/projects", title: "项目", icon: "FolderKanban" },
-        { id: "t3", path: "/butter/issues", title: "任务", icon: "ListTodo" },
-      ],
-      activeTabId: "t2",
-    };
-    const v2 = migrateV1ToV2(v1);
-    expect(Object.keys(v2.byWorkspace).sort()).toEqual(["acme", "butter"]);
-    expect(v2.byWorkspace.acme.tabs).toHaveLength(2);
-    expect(v2.byWorkspace.butter.tabs).toHaveLength(1);
-    expect(v2.byWorkspace.acme.activeTabId).toBe("t2");
-    expect(v2.byWorkspace.butter.activeTabId).toBe("t3"); // first tab in group
-    expect(v2.activeWorkspaceSlug).toBe("acme"); // contained v1.activeTabId
-  });
-
-  it("drops tabs at root / transition / reserved-slug paths", () => {
-    const v1 = {
-      tabs: [
-        { id: "t1", path: "/", title: "任务", icon: "ListTodo" },
-        { id: "t2", path: "/workspaces/new", title: "New", icon: "Plus" },
-        { id: "t3", path: "/acme/issues", title: "任务", icon: "ListTodo" },
-      ],
-      activeTabId: "t1",
-    };
-    const v2 = migrateV1ToV2(v1);
-    expect(Object.keys(v2.byWorkspace)).toEqual(["acme"]);
-    expect(v2.byWorkspace.acme.tabs).toHaveLength(1);
-    // v1.activeTabId was dropped; active falls back to first group's first tab.
-    expect(v2.activeWorkspaceSlug).toBe("acme");
-    expect(v2.byWorkspace.acme.activeTabId).toBe("t3");
-  });
-
-  it("handles empty v1 state gracefully", () => {
-    const v2 = migrateV1ToV2({ tabs: [], activeTabId: "" });
-    expect(v2.byWorkspace).toEqual({});
-    expect(v2.activeWorkspaceSlug).toBeNull();
-  });
-
-  it("handles v1 with no tabs field (corrupted state)", () => {
-    const v2 = migrateV1ToV2({});
-    expect(v2.byWorkspace).toEqual({});
-    expect(v2.activeWorkspaceSlug).toBeNull();
   });
 });
 
@@ -440,34 +386,5 @@ describe("moveTab boundary clamp", () => {
       "/acme/issues",
       "/acme/projects",
     ]);
-  });
-});
-
-describe("migrateV2ToV3", () => {
-  it("adds pinned=false to every persisted tab", () => {
-    const v2 = {
-      activeWorkspaceSlug: "acme",
-      byWorkspace: {
-        acme: {
-          activeTabId: "t1",
-          tabs: [
-            { id: "t1", path: "/acme/issues", title: "任务", icon: "ListTodo" },
-            { id: "t2", path: "/acme/projects", title: "项目", icon: "FolderKanban" },
-          ],
-        },
-      },
-    };
-    const v3 = migrateV2ToV3(v2);
-    expect(v3.activeWorkspaceSlug).toBe("acme");
-    expect(v3.byWorkspace.acme.tabs).toEqual([
-      { id: "t1", path: "/acme/issues", title: "任务", icon: "ListTodo", pinned: false },
-      { id: "t2", path: "/acme/projects", title: "项目", icon: "FolderKanban", pinned: false },
-    ]);
-  });
-
-  it("handles missing byWorkspace gracefully", () => {
-    const v3 = migrateV2ToV3({ activeWorkspaceSlug: null } as Parameters<typeof migrateV2ToV3>[0]);
-    expect(v3.byWorkspace).toEqual({});
-    expect(v3.activeWorkspaceSlug).toBeNull();
   });
 });
