@@ -510,8 +510,7 @@ func TestParseCodebuddyModelList_DedupesAndGroups(t *testing.T) {
 	}
 }
 
-func TestCodebuddyModelsFromEnv_Priority(t *testing.T) {
-	t.Setenv("CODEBUDDY_MODELS", "deepseek-v3-2-volc-ioa")
+func TestCodebuddyModelsFromEnv(t *testing.T) {
 	t.Setenv("MULTICA_CODEBUDDY_MODELS", "glm-5.1-ioa, minimax-m2.7-ioa")
 
 	models := codebuddyModelsFromEnv()

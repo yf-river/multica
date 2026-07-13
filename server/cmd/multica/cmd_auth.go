@@ -83,18 +83,26 @@ func resolveToken(cmd *cobra.Command) (string, error) {
 }
 
 func resolveAppURL(cmd *cobra.Command) (string, error) {
-	for _, key := range []string{"MULTICA_APP_URL", "FRONTEND_ORIGIN"} {
-		if val := strings.TrimSpace(os.Getenv(key)); val != "" {
-			return strings.TrimRight(val, "/"), nil
-		}
+	appURL, err := configuredAppURL(cmd)
+	if err != nil {
+		return "", err
+	}
+	if appURL == "" {
+		return "", fmt.Errorf("app URL not set: use MULTICA_APP_URL or run 'multica setup cloud' or 'multica setup self-host'")
+	}
+	return appURL, nil
+}
+
+// configuredAppURL returns the canonical app URL without requiring it. Token
+// login uses the empty result to skip opening the workspace-creation page.
+func configuredAppURL(cmd *cobra.Command) (string, error) {
+	if value := strings.TrimSpace(os.Getenv("MULTICA_APP_URL")); value != "" {
+		return strings.TrimRight(value, "/"), nil
 	}
 	profile := resolveProfile(cmd)
 	cfg, err := cli.LoadCLIConfigForProfile(profile)
 	if err != nil {
 		return "", fmt.Errorf("load CLI config: %w", err)
-	}
-	if cfg.AppURL == "" {
-		return "", fmt.Errorf("app URL not set: use MULTICA_APP_URL or run 'multica setup cloud' or 'multica setup self-host'")
 	}
 	return strings.TrimRight(cfg.AppURL, "/"), nil
 }

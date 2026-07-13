@@ -75,9 +75,6 @@ func daemonSetupURLsFromEnv() (string, string) {
 	serverURL := normalizePublicURL(os.Getenv("MULTICA_PUBLIC_URL"))
 	appURL := normalizePublicURL(os.Getenv("MULTICA_APP_URL"))
 	if appURL == "" {
-		appURL = normalizePublicURL(os.Getenv("FRONTEND_ORIGIN"))
-	}
-	if appURL == "" {
 		return "", ""
 	}
 

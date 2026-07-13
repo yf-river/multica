@@ -1029,12 +1029,7 @@ func discoverCodebuddyACPModels(ctx context.Context, executablePath string) ([]M
 }
 
 func codebuddyModelsFromEnv() []Model {
-	for _, name := range []string{"MULTICA_CODEBUDDY_MODELS", "CODEBUDDY_MODELS"} {
-		if models := parseCodebuddyModelList(os.Getenv(name)); len(models) > 0 {
-			return models
-		}
-	}
-	return nil
+	return parseCodebuddyModelList(os.Getenv("MULTICA_CODEBUDDY_MODELS"))
 }
 
 // parseCodebuddyModels extracts model IDs from codebuddy --help output.

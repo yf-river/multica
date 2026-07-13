@@ -102,23 +102,9 @@ func TestGetConfigUsesAppURLForSameOriginDaemonSetup(t *testing.T) {
 	}
 }
 
-func TestGetConfigUsesFrontendOriginForSameOriginDaemonSetup(t *testing.T) {
-	t.Setenv("MULTICA_APP_URL", "")
-	t.Setenv("FRONTEND_ORIGIN", "https://multica.internal.example/")
-
-	cfg := getConfigForTest(t)
-	if cfg.DaemonServerURL != "https://multica.internal.example" {
-		t.Fatalf("daemon_server_url: want same-origin URL, got %q", cfg.DaemonServerURL)
-	}
-	if cfg.DaemonAppURL != "https://multica.internal.example" {
-		t.Fatalf("daemon_app_url: want frontend origin, got %q", cfg.DaemonAppURL)
-	}
-}
-
 func TestGetConfigOmitsOfficialCloudDaemonSetup(t *testing.T) {
 	t.Setenv("MULTICA_PUBLIC_URL", "https://api.multica.ai")
-	t.Setenv("MULTICA_APP_URL", "")
-	t.Setenv("FRONTEND_ORIGIN", "https://multica.ai")
+	t.Setenv("MULTICA_APP_URL", "https://multica.ai")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
 	w := httptest.NewRecorder()
@@ -151,8 +137,7 @@ func TestGetConfigOmitsOfficialCloudDaemonSetup(t *testing.T) {
 // setup URLs are omitted and the dialog falls back to `multica setup`.
 func TestGetConfigOmitsCloudDaemonSetupWithoutPublicURL(t *testing.T) {
 	t.Setenv("MULTICA_PUBLIC_URL", "")
-	t.Setenv("MULTICA_APP_URL", "")
-	t.Setenv("FRONTEND_ORIGIN", "https://multica.ai")
+	t.Setenv("MULTICA_APP_URL", "https://multica.ai")
 
 	cfg := getConfigForTest(t)
 	if cfg.DaemonServerURL != "" {

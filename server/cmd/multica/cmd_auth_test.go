@@ -43,18 +43,6 @@ func TestResolveAppURL(t *testing.T) {
 		}
 	})
 
-	t.Run("falls back to FRONTEND_ORIGIN", func(t *testing.T) {
-		t.Setenv("MULTICA_APP_URL", "")
-		t.Setenv("FRONTEND_ORIGIN", "http://localhost:13026")
-
-		got, err := resolveAppURL(cmd)
-		if err != nil {
-			t.Fatalf("resolveAppURL: %v", err)
-		}
-		if got != "http://localhost:13026" {
-			t.Fatalf("resolveAppURL() = %q, want %q", got, "http://localhost:13026")
-		}
-	})
 }
 
 func TestAuthCommandsPreserveUnreadableConfig(t *testing.T) {

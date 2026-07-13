@@ -4,29 +4,12 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/multica-ai/multica/server/internal/cli"
 )
-
-// tryResolveAppURL returns the app URL if configured, or "" if no value was
-// configured. An unreadable profile remains an error.
-func tryResolveAppURL(cmd *cobra.Command) (string, error) {
-	for _, key := range []string{"MULTICA_APP_URL", "FRONTEND_ORIGIN"} {
-		if val := strings.TrimSpace(os.Getenv(key)); val != "" {
-			return strings.TrimRight(val, "/"), nil
-		}
-	}
-	profile := resolveProfile(cmd)
-	cfg, err := cli.LoadCLIConfigForProfile(profile)
-	if err != nil {
-		return "", fmt.Errorf("load CLI config: %w", err)
-	}
-	return strings.TrimRight(cfg.AppURL, "/"), nil
-}
 
 var loginCmd = &cobra.Command{
 	Use:   "login",
@@ -131,7 +114,7 @@ func waitForWorkspaceCreation(cmd *cobra.Command, client *cli.APIClient) ([]stru
 	ID   string `json:"id"`
 	Name string `json:"name"`
 }, error) {
-	appURL, err := tryResolveAppURL(cmd)
+	appURL, err := configuredAppURL(cmd)
 	if err != nil {
 		return nil, err
 	}
