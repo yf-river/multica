@@ -430,7 +430,7 @@ func decodePayloadObject(raw []byte) map[string]any {
 func mustJSONBytes(value any) []byte {
 	raw, err := json.Marshal(value)
 	if err != nil {
-		return []byte("{}")
+		panic("handler: marshal required JSON value: " + err.Error())
 	}
 	return raw
 }
