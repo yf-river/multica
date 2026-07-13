@@ -213,11 +213,7 @@ type UpdateSkillRequest struct {
 	Files       []CreateSkillFileRequest `json:"files,omitempty"`
 }
 
-type SetAgentSkillsRequest struct {
-	SkillIDs []string `json:"skill_ids"`
-}
-
-type AddAgentSkillsRequest struct {
+type AgentSkillsRequest struct {
 	SkillIDs []string `json:"skill_ids"`
 }
 

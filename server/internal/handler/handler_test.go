@@ -3121,6 +3121,33 @@ func TestSetAgentSkillsRejectsMalformedSkillID(t *testing.T) {
 	}
 }
 
+func TestSetAgentSkillsReplacesExistingAssignments(t *testing.T) {
+	agentID := createHandlerTestAgent(t, "Handler Set Skill Replaces Existing", nil)
+	existingSkillID := insertHandlerTestSkill(t, "set-replace-existing", "existing body")
+	newSkillID := insertHandlerTestSkill(t, "set-replace-new", "new body")
+	mustExec(t, context.Background(),
+		`INSERT INTO agent_skill (agent_id, skill_id) VALUES ($1, $2)`,
+		agentID, existingSkillID,
+	)
+
+	w := httptest.NewRecorder()
+	req := newRequest("PUT", "/api/agents/"+agentID+"/skills", map[string]any{
+		"skill_ids": []string{newSkillID},
+	})
+	req = withURLParam(req, "id", agentID)
+	testHandler.SetAgentSkills(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("SetAgentSkills: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp []SkillSummaryResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	assertSkillIDsPresent(t, resp, newSkillID)
+	assertAgentSkillRowCount(t, agentID, 1)
+}
+
 func TestAddAgentSkillsPreservesExistingAssignments(t *testing.T) {
 	agentID := createHandlerTestAgent(t, "Handler Add Skill Preserves Existing", nil)
 	existingSkillID := insertHandlerTestSkill(t, "add-preserve-existing", "existing body")

@@ -110,52 +110,9 @@ func fetchFromSkillsSh(httpClient *http.Client, rawURL string) (*importedSkill, 
 		},
 	}
 
-	// 2. List supporting files via GitHub API
-	apiURL := buildGitHubContentsURL(owner, repo, skillDir, defaultBranch)
-	dirResp, err := doGitHubAPIGet(httpClient, apiURL)
-	if err != nil {
-		return nil, fmt.Errorf("github import: list supporting files at %s: %w", apiURL, err)
-	}
-	if dirResp.StatusCode != http.StatusOK {
-		status := dirResp.StatusCode
-		_ = dirResp.Body.Close()
-		return nil, fmt.Errorf("github import: list supporting files at %s: status %d", apiURL, status)
-	}
-	defer func() { _ = dirResp.Body.Close() }()
-
-	var entries []githubContentEntry
-	if err := json.NewDecoder(dirResp.Body).Decode(&entries); err != nil {
-		return nil, fmt.Errorf("github import: decode supporting files at %s: %w", apiURL, err)
-	}
-
-	// 3. Recursively collect files (excluding SKILL.md and LICENSE)
-	var allFiles []githubContentEntry
-	slog.Info("github import: collecting supporting files", "skill", skillName, "top_level_entries", len(entries))
-	if err := collectGitHubFiles(httpClient, entries, &allFiles, apiURL); err != nil {
+	if err := addGitHubSupportingFiles(httpClient, result, owner, repo, skillDir, defaultBranch); err != nil {
 		return nil, err
 	}
-	slog.Info("github import: collected supporting files", "skill", skillName, "files", len(allFiles))
-
-	// 4. Download each file
-	basePath := ""
-	if skillDir != "" {
-		basePath = skillDir + "/"
-	}
-	for _, entry := range allFiles {
-		if entry.DownloadURL == "" {
-			return nil, fmt.Errorf("github import: file %s has no download URL", entry.Path)
-		}
-		body, err := fetchRawFile(httpClient, entry.DownloadURL)
-		if err != nil {
-			return nil, fmt.Errorf("github import: %s: %w", entry.Path, err)
-		}
-		// Convert absolute GitHub path to relative path within skill
-		relPath := strings.TrimPrefix(entry.Path, basePath)
-		if err := result.addFile(relPath, string(body)); err != nil {
-			return nil, err
-		}
-	}
-
 	return result, nil
 }
 
@@ -234,6 +191,49 @@ func collectGitHubFiles(httpClient *http.Client, entries []githubContentEntry, o
 			if err := collectGitHubFiles(httpClient, subEntries, out, subURL); err != nil {
 				return err
 			}
+		}
+	}
+	return nil
+}
+
+func addGitHubSupportingFiles(httpClient *http.Client, result *importedSkill, owner, repo, skillDir, ref string) error {
+	apiURL := buildGitHubContentsURL(owner, repo, skillDir, ref)
+	resp, err := doGitHubAPIGet(httpClient, apiURL)
+	if err != nil {
+		return fmt.Errorf("github import: list supporting files at %s: %w", apiURL, err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		status := resp.StatusCode
+		_ = resp.Body.Close()
+		return fmt.Errorf("github import: list supporting files at %s: status %d", apiURL, status)
+	}
+
+	var entries []githubContentEntry
+	decodeErr := json.NewDecoder(resp.Body).Decode(&entries)
+	_ = resp.Body.Close()
+	if decodeErr != nil {
+		return fmt.Errorf("github import: decode supporting files at %s: %w", apiURL, decodeErr)
+	}
+
+	var files []githubContentEntry
+	if err := collectGitHubFiles(httpClient, entries, &files, apiURL); err != nil {
+		return err
+	}
+
+	basePath := strings.TrimSuffix(skillDir, "/")
+	if basePath != "" {
+		basePath += "/"
+	}
+	for _, file := range files {
+		if file.DownloadURL == "" {
+			return fmt.Errorf("github import: file %s has no download URL", file.Path)
+		}
+		body, err := fetchRawFile(httpClient, file.DownloadURL)
+		if err != nil {
+			return fmt.Errorf("github import: %s: %w", file.Path, err)
+		}
+		if err := result.addFile(strings.TrimPrefix(file.Path, basePath), string(body)); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -674,46 +674,9 @@ func fetchFromGitHub(httpClient *http.Client, rawURL string) (*importedSkill, er
 		},
 	}
 
-	apiURL := buildGitHubContentsURL(spec.owner, spec.repo, spec.skillDir, spec.ref)
-	dirResp, err := doGitHubAPIGet(httpClient, apiURL)
-	if err != nil {
-		return nil, fmt.Errorf("github import: list supporting files at %s: %w", apiURL, err)
-	}
-	if dirResp.StatusCode != http.StatusOK {
-		status := dirResp.StatusCode
-		_ = dirResp.Body.Close()
-		return nil, fmt.Errorf("github import: list supporting files at %s: status %d", apiURL, status)
-	}
-	defer func() { _ = dirResp.Body.Close() }()
-
-	var entries []githubContentEntry
-	if err := json.NewDecoder(dirResp.Body).Decode(&entries); err != nil {
-		return nil, fmt.Errorf("github import: decode supporting files at %s: %w", apiURL, err)
-	}
-
-	var allFiles []githubContentEntry
-	if err := collectGitHubFiles(httpClient, entries, &allFiles, apiURL); err != nil {
+	if err := addGitHubSupportingFiles(httpClient, result, spec.owner, spec.repo, spec.skillDir, spec.ref); err != nil {
 		return nil, err
 	}
-
-	basePath := ""
-	if spec.skillDir != "" {
-		basePath = spec.skillDir + "/"
-	}
-	for _, entry := range allFiles {
-		if entry.DownloadURL == "" {
-			return nil, fmt.Errorf("github import: file %s has no download URL", entry.Path)
-		}
-		body, err := fetchRawFile(httpClient, entry.DownloadURL)
-		if err != nil {
-			return nil, fmt.Errorf("github import: %s: %w", entry.Path, err)
-		}
-		relPath := strings.TrimPrefix(entry.Path, basePath)
-		if err := result.addFile(relPath, string(body)); err != nil {
-			return nil, err
-		}
-	}
-
 	return result, nil
 }
 
@@ -1121,83 +1084,18 @@ func (h *Handler) ListAgentSkills(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-
-	skills, err := h.Queries.ListAgentSkillSummaries(r.Context(), agent.ID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list agent skills")
-		return
-	}
-
-	resp := make([]SkillSummaryResponse, len(skills))
-	for i, s := range skills {
-		resp[i], err = skillSummaryToResponse(
-			s.ID, s.WorkspaceID, s.Name, s.Description, s.Config,
-			s.CreatedBy, s.CreatedAt, s.UpdatedAt,
-		)
-		if err != nil {
-			writeSkillConfigDecodeError(w, r, uuidToString(s.ID), err)
-			return
-		}
-	}
-	writeJSON(w, http.StatusOK, resp)
+	h.writeAgentSkills(w, r, agent, false)
 }
 
 func (h *Handler) SetAgentSkills(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	agent, ok := h.loadAgentForUser(w, r, id)
-	if !ok {
-		return
-	}
-	if !h.canManageAgent(w, r, agent) {
-		return
-	}
-
-	var req SetAgentSkillsRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-	skillUUIDs, ok := parseUUIDSliceOrBadRequest(w, req.SkillIDs, "skill_ids")
-	if !ok {
-		return
-	}
-	if !h.validateAgentSkillIDsInWorkspace(w, r, agent, skillUUIDs) {
-		return
-	}
-
-	tx, err := h.TxStarter.Begin(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to start transaction")
-		return
-	}
-	defer func() { _ = tx.Rollback(r.Context()) }()
-
-	qtx := h.Queries.WithTx(tx)
-
-	if err := qtx.RemoveAllAgentSkills(r.Context(), agent.ID); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to clear agent skills")
-		return
-	}
-
-	for _, skillID := range skillUUIDs {
-		if err := qtx.AddAgentSkill(r.Context(), db.AddAgentSkillParams{
-			AgentID: agent.ID,
-			SkillID: skillID,
-		}); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to add agent skill: "+err.Error())
-			return
-		}
-	}
-
-	if err := tx.Commit(r.Context()); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to commit")
-		return
-	}
-
-	h.writeUpdatedAgentSkills(w, r, agent)
+	h.updateAgentSkills(w, r, true)
 }
 
 func (h *Handler) AddAgentSkills(w http.ResponseWriter, r *http.Request) {
+	h.updateAgentSkills(w, r, false)
+}
+
+func (h *Handler) updateAgentSkills(w http.ResponseWriter, r *http.Request, replace bool) {
 	id := chi.URLParam(r, "id")
 	agent, ok := h.loadAgentForUser(w, r, id)
 	if !ok {
@@ -1207,7 +1105,7 @@ func (h *Handler) AddAgentSkills(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req AddAgentSkillsRequest
+	var req AgentSkillsRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -1228,6 +1126,12 @@ func (h *Handler) AddAgentSkills(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = tx.Rollback(r.Context()) }()
 
 	qtx := h.Queries.WithTx(tx)
+	if replace {
+		if err := qtx.RemoveAllAgentSkills(r.Context(), agent.ID); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to clear agent skills")
+			return
+		}
+	}
 	for _, skillID := range skillUUIDs {
 		if err := qtx.AddAgentSkill(r.Context(), db.AddAgentSkillParams{
 			AgentID: agent.ID,
@@ -1243,7 +1147,7 @@ func (h *Handler) AddAgentSkills(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.writeUpdatedAgentSkills(w, r, agent)
+	h.writeAgentSkills(w, r, agent, true)
 }
 
 func (h *Handler) validateAgentSkillIDsInWorkspace(w http.ResponseWriter, r *http.Request, agent db.Agent, skillUUIDs []pgtype.UUID) bool {
@@ -1265,7 +1169,7 @@ func (h *Handler) validateAgentSkillIDsInWorkspace(w http.ResponseWriter, r *htt
 	return true
 }
 
-func (h *Handler) writeUpdatedAgentSkills(w http.ResponseWriter, r *http.Request, agent db.Agent) {
+func (h *Handler) writeAgentSkills(w http.ResponseWriter, r *http.Request, agent db.Agent, publish bool) {
 	skills, err := h.Queries.ListAgentSkillSummaries(r.Context(), agent.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list agent skills")
@@ -1283,7 +1187,9 @@ func (h *Handler) writeUpdatedAgentSkills(w http.ResponseWriter, r *http.Request
 			return
 		}
 	}
-	actorType, actorID := h.resolveActor(r, requestUserID(r), uuidToString(agent.WorkspaceID))
-	h.publish(protocol.EventAgentStatus, uuidToString(agent.WorkspaceID), actorType, actorID, map[string]any{"agent_id": uuidToString(agent.ID), "skills": resp})
+	if publish {
+		actorType, actorID := h.resolveActor(r, requestUserID(r), uuidToString(agent.WorkspaceID))
+		h.publish(protocol.EventAgentStatus, uuidToString(agent.WorkspaceID), actorType, actorID, map[string]any{"agent_id": uuidToString(agent.ID), "skills": resp})
+	}
 	writeJSON(w, http.StatusOK, resp)
 }
