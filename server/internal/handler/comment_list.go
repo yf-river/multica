@@ -553,13 +553,8 @@ func (h *Handler) fetchCommentsForList(ctx context.Context, args fetchCommentsAr
 			}
 			comments := make([]db.Comment, len(rows))
 			for i, r := range rows {
-				comments[i] = db.Comment{
-					ID: r.ID, IssueID: r.IssueID, AuthorType: r.AuthorType, AuthorID: r.AuthorID,
-					Content: r.Content, Type: r.Type, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
-					ParentID: r.ParentID, WorkspaceID: r.WorkspaceID, ResolvedAt: r.ResolvedAt,
-					ResolvedByType: r.ResolvedByType, ResolvedByID: r.ResolvedByID,
-				}
-				stats[uuidToString(r.ID)] = rootStat{ReplyCount: int(r.ReplyCount), LastActivityAt: r.LastActivityAt}
+				comments[i] = r.Comment
+				stats[uuidToString(r.Comment.ID)] = rootStat{ReplyCount: int(r.ReplyCount), LastActivityAt: r.LastActivityAt}
 			}
 			return fetchCommentsResult{Comments: comments, RootStats: stats}, nil
 		}
@@ -574,13 +569,8 @@ func (h *Handler) fetchCommentsForList(ctx context.Context, args fetchCommentsAr
 		}
 		comments := make([]db.Comment, len(rows))
 		for i, r := range rows {
-			comments[i] = db.Comment{
-				ID: r.ID, IssueID: r.IssueID, AuthorType: r.AuthorType, AuthorID: r.AuthorID,
-				Content: r.Content, Type: r.Type, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
-				ParentID: r.ParentID, WorkspaceID: r.WorkspaceID, ResolvedAt: r.ResolvedAt,
-				ResolvedByType: r.ResolvedByType, ResolvedByID: r.ResolvedByID,
-			}
-			stats[uuidToString(r.ID)] = rootStat{ReplyCount: int(r.ReplyCount), LastActivityAt: r.LastActivityAt}
+			comments[i] = r.Comment
+			stats[uuidToString(r.Comment.ID)] = rootStat{ReplyCount: int(r.ReplyCount), LastActivityAt: r.LastActivityAt}
 		}
 		return fetchCommentsResult{Comments: comments, RootStats: stats}, nil
 	}

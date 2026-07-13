@@ -56,9 +56,7 @@ thread_stats AS (
     FROM membership
     GROUP BY root_id
 )
-SELECT c.id, c.issue_id, c.author_type, c.author_id, c.content, c.type,
-       c.created_at, c.updated_at, c.parent_id, c.workspace_id,
-       c.resolved_at, c.resolved_by_type, c.resolved_by_id,
+SELECT sqlc.embed(c),
        ts.reply_count AS reply_count,
        ts.last_activity_at AS last_activity_at
 FROM selected_roots sr
@@ -101,9 +99,7 @@ thread_stats AS (
     FROM membership
     GROUP BY root_id
 )
-SELECT c.id, c.issue_id, c.author_type, c.author_id, c.content, c.type,
-       c.created_at, c.updated_at, c.parent_id, c.workspace_id,
-       c.resolved_at, c.resolved_by_type, c.resolved_by_id,
+SELECT sqlc.embed(c),
        ts.reply_count AS reply_count,
        ts.last_activity_at AS last_activity_at
 FROM selected_roots sr
