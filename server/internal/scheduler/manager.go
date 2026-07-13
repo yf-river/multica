@@ -258,9 +258,6 @@ func (m *Manager) plansForTick(
 	}
 }
 
-// (legacy wrapper removed; the previous latestPlan_ shim is no longer
-// needed because plansForTick renames its bucket variable to `latest`.)
-
 // processPlan owns one (job, scope, plan_time) attempt: claim → run
 // handler with heartbeat → terminal update.
 func (m *Manager) processPlan(

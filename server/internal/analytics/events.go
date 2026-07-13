@@ -78,8 +78,6 @@ type CoreProperties struct {
 	IsDemo         bool
 }
 
-type TaskContext = CoreProperties
-
 // Platform is used as the "platform" event property so funnels can split by
 // web / desktop / cli. Request-path events use PlatformServer as a fallback
 // when the caller is a server-originating action (e.g. auto-created user);

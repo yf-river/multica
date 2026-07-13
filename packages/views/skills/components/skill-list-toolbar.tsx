@@ -27,8 +27,6 @@ import {
 import { useT } from "../../i18n";
 import type { SkillRow } from "./skills-page";
 
-export type OriginType = SkillOriginType;
-
 const COLUMN_KEYS: SkillColumnKey[] = [
   "usedBy",
   "source",
@@ -48,7 +46,7 @@ function countActiveFilterDimensions(filters: SkillListFilters): number {
   return count;
 }
 
-const ORIGIN_TYPES: OriginType[] = [
+const ORIGIN_TYPES: SkillOriginType[] = [
   "manual",
   "runtime_local",
   "clawhub",
@@ -56,7 +54,7 @@ const ORIGIN_TYPES: OriginType[] = [
   "github",
 ];
 
-function originIcon(type: OriginType) {
+function originIcon(type: SkillOriginType) {
   if (type === "manual") return <Pencil className="size-3.5" />;
   if (type === "runtime_local") return <HardDrive className="size-3.5" />;
   return <Download className="size-3.5" />;
@@ -103,7 +101,7 @@ export function SkillListToolbar({
   const usedCount = allRows.filter((r) => r.agents.length > 0).length;
   const unusedCount = allRows.length - usedCount;
 
-  const originCounts = new Map<OriginType, number>();
+  const originCounts = new Map<SkillOriginType, number>();
   const agentOptions = new Map<string, { agent: Agent; count: number }>();
   const creatorOptions = new Map<
     string,
@@ -130,7 +128,7 @@ export function SkillListToolbar({
     }
   }
 
-  const ORIGIN_LABELS: Record<OriginType, string> = {
+  const ORIGIN_LABELS: Record<SkillOriginType, string> = {
     manual: t(($) => $.table.source_manual),
     runtime_local: t(($) => $.table.source_runtime_unknown),
     clawhub: t(($) => $.table.source_clawhub),
