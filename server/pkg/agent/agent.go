@@ -182,7 +182,7 @@ func New(agentType string, cfg Config) (Backend, error) {
 	case "codebuddy":
 		return &codebuddyBackend{cfg: cfg}, nil
 	case "codex":
-		return &codexBackend{cfg: cfg}, nil
+		return NewCodexBrokerBackend(cfg), nil
 	case "copilot":
 		return &copilotBackend{cfg: cfg}, nil
 	case "opencode":

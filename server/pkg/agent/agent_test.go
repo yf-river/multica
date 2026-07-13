@@ -23,8 +23,8 @@ func TestNewReturnsCodexBackend(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New(codex) error: %v", err)
 	}
-	if _, ok := b.(*codexBackend); !ok {
-		t.Fatalf("expected *codexBackend, got %T", b)
+	if _, ok := b.(*CodexBrokerBackend); !ok {
+		t.Fatalf("expected *CodexBrokerBackend, got %T", b)
 	}
 }
 

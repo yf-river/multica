@@ -1545,6 +1545,11 @@ func executeFakeCodex(t *testing.T, fakePath string, opts ExecOptions) Result {
 	if err != nil {
 		t.Fatalf("new codex backend: %v", err)
 	}
+	return executeCodex(t, backend, opts)
+}
+
+func executeCodex(t *testing.T, backend Backend, opts ExecOptions) Result {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	session, err := backend.Execute(ctx, "prompt", opts)
@@ -1830,17 +1835,15 @@ func TestCodexExecuteFailsClosedWhenMcpConfigInvalid(t *testing.T) {
 		t.Fatalf("new codex backend: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_, err = backend.Execute(ctx, "prompt", ExecOptions{
+	result := executeCodex(t, backend, ExecOptions{
 		Timeout:   2 * time.Second,
 		McpConfig: json.RawMessage(`not json`),
 	})
-	if err == nil {
-		t.Fatal("expected Execute to fail closed on malformed mcp_config, got nil error")
+	if result.Status != "failed" {
+		t.Fatalf("expected malformed mcp_config to fail closed, got status=%q", result.Status)
 	}
-	if !strings.Contains(err.Error(), "mcp_config") {
-		t.Fatalf("expected error to mention mcp_config, got %q", err)
+	if !strings.Contains(result.Error, "mcp_config") {
+		t.Fatalf("expected error to mention mcp_config, got %q", result.Error)
 	}
 }
 
@@ -1864,17 +1867,15 @@ func TestCodexExecuteFailsClosedWhenManagedMcpButNoCodexHome(t *testing.T) {
 		t.Fatalf("new codex backend: %v", err)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	_, err = backend.Execute(ctx, "prompt", ExecOptions{
+	result := executeCodex(t, backend, ExecOptions{
 		Timeout:   2 * time.Second,
 		McpConfig: json.RawMessage(`{"mcpServers":{"fetch":{"command":"uvx"}}}`),
 	})
-	if err == nil {
-		t.Fatal("expected Execute to fail closed when managed mcp_config but no CODEX_HOME, got nil error")
+	if result.Status != "failed" {
+		t.Fatalf("expected managed mcp_config without CODEX_HOME to fail closed, got status=%q", result.Status)
 	}
-	if !strings.Contains(err.Error(), "CODEX_HOME") {
-		t.Fatalf("expected error to mention CODEX_HOME, got %q", err)
+	if !strings.Contains(result.Error, "CODEX_HOME") {
+		t.Fatalf("expected error to mention CODEX_HOME, got %q", result.Error)
 	}
 }
 
