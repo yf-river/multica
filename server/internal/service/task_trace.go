@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -458,9 +459,14 @@ func (s *TaskService) recordTaskCancelledTrace(ctx context.Context, q *db.Querie
 	}
 	var metadata []byte
 	if task.ChatSessionID.Valid {
-		metadata = mergeTaskTraceMetadata(nil, map[string]any{
+		var err error
+		metadata, err = mergeTaskTraceMetadata(nil, map[string]any{
 			"chat_session_id": util.UUIDToString(task.ChatSessionID),
 		})
+		if err != nil {
+			slog.Warn("encode cancelled task trace metadata failed", "error", err, "task_id", util.UUIDToString(task.ID))
+			return
+		}
 	}
 	opts := taskTraceOptions{
 		DurationMs:    taskTotalMilliseconds(task),
@@ -851,10 +857,14 @@ func (s *TaskService) buildTaskTraceEventParams(ctx context.Context, task db.Age
 	if chatSessionID.Valid {
 		if _, err := s.Queries.GetChatSession(ctx, chatSessionID); err != nil {
 			sessionID := util.UUIDToString(chatSessionID)
-			metadata = mergeTaskTraceMetadata(metadata, map[string]any{
+			metadata, err = mergeTaskTraceMetadata(metadata, map[string]any{
 				"deleted_chat_session_id": sessionID,
 				"chat_session_missing":    true,
 			})
+			if err != nil {
+				slog.Warn("encode missing chat session trace metadata failed", "error", err, "task_id", util.UUIDToString(task.ID))
+				return db.CreateTaskTraceEventParams{}, false
+			}
 			chatSessionID = pgtype.UUID{}
 		}
 	}
@@ -891,11 +901,14 @@ func (s *TaskService) buildTaskTraceEventParams(ctx context.Context, task db.Age
 	}, true
 }
 
-func mergeTaskTraceMetadata(raw []byte, extra map[string]any) []byte {
+func mergeTaskTraceMetadata(raw []byte, extra map[string]any) ([]byte, error) {
 	base := map[string]any{}
 	if len(raw) > 0 {
 		if err := json.Unmarshal(raw, &base); err != nil {
-			base = map[string]any{"raw_metadata": string(raw)}
+			return nil, fmt.Errorf("decode task trace metadata: %w", err)
+		}
+		if base == nil {
+			return nil, errors.New("task trace metadata must be a JSON object")
 		}
 	}
 	for k, v := range extra {
@@ -903,9 +916,9 @@ func mergeTaskTraceMetadata(raw []byte, extra map[string]any) []byte {
 	}
 	encoded, err := json.Marshal(base)
 	if err != nil {
-		return raw
+		return nil, fmt.Errorf("encode task trace metadata: %w", err)
 	}
-	return encoded
+	return encoded, nil
 }
 
 func taskQueueWaitSeconds(task db.AgentTaskQueue) float64 {

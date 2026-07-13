@@ -160,7 +160,12 @@ func (h *Handler) CreatePromptEvaluationDatasetFromTraces(w http.ResponseWriter,
 			return
 		}
 		cases = append(cases, promptEvaluationCaseToResponse(created, assertions))
-		traceResp = append(traceResp, taskTraceEventToResponse(event))
+		convertedTrace, err := taskTraceEventToResponse(event)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to decode task trace metadata")
+			return
+		}
+		traceResp = append(traceResp, convertedTrace)
 	}
 	updatedAsset, err := qtx.GetPromptEvaluationAssetInWorkspace(r.Context(), db.GetPromptEvaluationAssetInWorkspaceParams{ID: asset.ID, WorkspaceID: asset.WorkspaceID})
 	if err != nil {

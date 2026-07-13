@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -741,10 +742,10 @@ type TaskTraceEventResponse struct {
 	CreatedAt        string         `json:"created_at"`
 }
 
-func taskTraceEventToResponse(ev db.TaskTraceEvent) TaskTraceEventResponse {
-	metadata := map[string]any{}
-	if len(ev.Metadata) > 0 {
-		_ = json.Unmarshal(ev.Metadata, &metadata)
+func taskTraceEventToResponse(ev db.TaskTraceEvent) (TaskTraceEventResponse, error) {
+	var metadata map[string]any
+	if err := json.Unmarshal(ev.Metadata, &metadata); err != nil || metadata == nil {
+		return TaskTraceEventResponse{}, fmt.Errorf("decode task trace metadata: expected JSON object")
 	}
 	return TaskTraceEventResponse{
 		ID:               uuidToString(ev.ID),
@@ -777,7 +778,19 @@ func taskTraceEventToResponse(ev db.TaskTraceEvent) TaskTraceEventResponse {
 		ChatSessionID:    uuidToPtr(ev.ChatSessionID),
 		Metadata:         metadata,
 		CreatedAt:        timestampToString(ev.CreatedAt),
+	}, nil
+}
+
+func taskTraceEventsToResponse(events []db.TaskTraceEvent) ([]TaskTraceEventResponse, error) {
+	response := make([]TaskTraceEventResponse, len(events))
+	for i, event := range events {
+		converted, err := taskTraceEventToResponse(event)
+		if err != nil {
+			return nil, err
+		}
+		response[i] = converted
 	}
+	return response, nil
 }
 
 // ListIssueTaskTraceEvents returns the durable task trace events for an issue.
@@ -793,9 +806,10 @@ func (h *Handler) ListIssueTaskTraceEvents(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "failed to list issue trace events")
 		return
 	}
-	resp := make([]TaskTraceEventResponse, len(events))
-	for i, ev := range events {
-		resp[i] = taskTraceEventToResponse(ev)
+	resp, err := taskTraceEventsToResponse(events)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to decode issue trace events")
+		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"events": resp})
 }

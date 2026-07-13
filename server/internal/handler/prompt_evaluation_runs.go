@@ -472,9 +472,9 @@ func (h *Handler) buildPromptEvaluationRunEvidenceResponse(ctx context.Context, 
 		if err != nil {
 			return PromptEvaluationRunEvidenceResponse{}, err
 		}
-		traceResp = make([]TaskTraceEventResponse, len(traceEvents))
-		for i, event := range traceEvents {
-			traceResp[i] = taskTraceEventToResponse(event)
+		traceResp, err = taskTraceEventsToResponse(traceEvents)
+		if err != nil {
+			return PromptEvaluationRunEvidenceResponse{}, err
 		}
 	}
 	refs, err := h.loadPromptEvaluationEvidenceRefs(ctx, workspaceUUID, run, task, traceResp)

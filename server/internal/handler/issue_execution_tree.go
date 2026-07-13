@@ -249,9 +249,9 @@ func (h *Handler) buildIssueExecutionNode(ctx context.Context, issue db.Issue, p
 	if err != nil {
 		return IssueExecutionNodeResponse{}, err
 	}
-	traceResp := make([]TaskTraceEventResponse, 0, len(traces))
-	for _, event := range traces {
-		traceResp = append(traceResp, taskTraceEventToResponse(event))
+	traceResp, err := taskTraceEventsToResponse(traces)
+	if err != nil {
+		return IssueExecutionNodeResponse{}, err
 	}
 
 	commentIDs := make([]pgtype.UUID, 0, len(comments))

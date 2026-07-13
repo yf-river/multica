@@ -713,7 +713,8 @@ CREATE TABLE public.feedback (
     workspace_id uuid,
     message text NOT NULL,
     metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT task_trace_event_metadata_is_object CHECK ((jsonb_typeof(metadata) = 'object'::text))
 );
 
 CREATE TABLE public.github_installation (

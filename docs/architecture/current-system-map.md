@@ -25,7 +25,7 @@ evidence reviewable by humans.
 | Database functions | 9 |
 | Database triggers | 4 |
 | Database indexes | 194 |
-| Migration files (up + down) | 180 |
+| Migration files (up + down) | 182 |
 | sqlc modules | 55 |
 | sqlc queries | 561 |
 | Go WebSocket events | 79 |
@@ -666,6 +666,8 @@ intentionally platform-specific.
 | 89 | remove_starter_content_state | up | — | 0 | 0 | 0 | `server/migrations/089_remove_starter_content_state.up.sql` |
 | 90 | remove_unused_lark_user_union_id | down | — | 0 | 0 | 0 | `server/migrations/090_remove_unused_lark_user_union_id.down.sql` |
 | 90 | remove_unused_lark_user_union_id | up | — | 0 | 0 | 0 | `server/migrations/090_remove_unused_lark_user_union_id.up.sql` |
+| 91 | require_task_trace_metadata_object | down | — | 0 | 0 | 0 | `server/migrations/091_require_task_trace_metadata_object.down.sql` |
+| 91 | require_task_trace_metadata_object | up | — | 0 | 0 | 0 | `server/migrations/091_require_task_trace_metadata_object.up.sql` |
 
 ### Current tables discovered from up migrations
 
