@@ -72,6 +72,15 @@ type errorRow struct{ err error }
 
 func (r errorRow) Scan(...interface{}) error { return r.err }
 
+type immediateTestHeartbeatScheduler struct {
+	queries *db.Queries
+}
+
+func (s immediateTestHeartbeatScheduler) Schedule(ctx context.Context, rt db.AgentRuntime) error {
+	_, err := s.queries.MarkAgentRuntimeOnline(ctx, rt.ID)
+	return err
+}
+
 type failTaskUsageDB struct {
 	db.DBTX
 	failAt int
@@ -262,7 +271,7 @@ func TestMain(m *testing.M) {
 	hub := realtime.NewHub()
 	go hub.Run()
 	bus := events.New()
-	testHandler = New(queries, pool, hub, bus, nil, nil, analytics.NoopClient{}, Config{AllowSignup: true})
+	testHandler = New(queries, pool, hub, bus, nil, nil, analytics.NoopClient{}, Config{AllowSignup: true}, immediateTestHeartbeatScheduler{queries: queries})
 	testCredentialBox, err := secretbox.New(bytes.Repeat([]byte{0x42}, secretbox.KeySize))
 	if err != nil {
 		fmt.Printf("Failed to create handler test credential box: %v\n", err)

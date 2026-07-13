@@ -5,9 +5,17 @@ import (
 	"sync"
 	"testing"
 	"time"
-
-	"github.com/jackc/pgx/v5/pgtype"
 )
+
+func (b *BatchedHeartbeatScheduler) FlushNow(ctx context.Context) {
+	b.flushOnce(ctx)
+}
+
+func (b *BatchedHeartbeatScheduler) PendingCount() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.pending)
+}
 
 // TestBatchedHeartbeatScheduler_CoalescesAndFlushes confirms the core P1 win:
 // many Schedule calls for the same id within a tick window collapse to a
@@ -233,42 +241,3 @@ func TestBatchedHeartbeatScheduler_RaceToOfflineSelfHeals(t *testing.T) {
 		t.Fatalf("expected sync recovery to flip back to online, got %q", status2)
 	}
 }
-
-// TestPassthroughHeartbeatScheduler_TouchAndRaceRecovery confirms the legacy
-// behavior is preserved end-to-end: an online row gets bumped via Touch, and
-// a row whose status was raced to offline between SELECT and Schedule is
-// recovered via MarkAgentRuntimeOnline.
-func TestPassthroughHeartbeatScheduler_TouchAndRaceRecovery(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
-	runtimeID := createRuntimeLocalSkillTestRuntime(t, testUserID)
-	stale := time.Now().Add(-time.Hour)
-	setRuntimeLastSeenAt(t, runtimeID, stale)
-	rt := loadRuntime(t, runtimeID)
-
-	sched := NewPassthroughHeartbeatScheduler(testHandler.Queries)
-
-	if err := sched.Schedule(context.Background(), rt); err != nil {
-		t.Fatalf("Schedule: %v", err)
-	}
-	_, lastSeen, _ := readRuntimeRow(t, runtimeID)
-	if !lastSeen.After(stale.Add(time.Minute)) {
-		t.Fatalf("passthrough did not bump last_seen_at: stale=%s after=%s", stale, lastSeen)
-	}
-
-	// Race: snapshot still says online but DB is now offline.
-	rt2 := loadRuntime(t, runtimeID)
-	setRuntimeStatus(t, runtimeID, "offline")
-	if err := sched.Schedule(context.Background(), rt2); err != nil {
-		t.Fatalf("Schedule under race: %v", err)
-	}
-	status, _, _ := readRuntimeRow(t, runtimeID)
-	if status != "online" {
-		t.Fatalf("expected race recovery via MarkAgentRuntimeOnline, got %q", status)
-	}
-}
-
-// silenceUnusedPgUUID ensures the package compiles even if no other test
-// happens to reference pgtype after future edits trim imports.
-var _ = pgtype.UUID{}

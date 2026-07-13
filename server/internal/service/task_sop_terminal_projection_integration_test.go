@@ -513,31 +513,6 @@ func seedSquadTerminalProjectionFixture(
 	return fixture
 }
 
-func attachGongfengProjectToSquadProjectionIssue(
-	t *testing.T,
-	pool *pgxpool.Pool,
-	fixture squadTerminalProjectionFixture,
-) {
-	t.Helper()
-	ctx := context.Background()
-	projectID := testPGUUID()
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO project (id, workspace_id, title, status, priority, scope)
-		VALUES ($1, $2, 'SOP atomic MR gate', 'in_progress', 'medium', 'workspace')
-	`, projectID, fixture.workspaceID); err != nil {
-		t.Fatalf("create Gongfeng project: %v", err)
-	}
-	if _, err := pool.Exec(ctx, `
-		INSERT INTO project_resource (project_id, workspace_id, resource_type, resource_ref)
-		VALUES ($1, $2, 'gongfeng_repo', '{"project_path":"example/repo"}')
-	`, projectID, fixture.workspaceID); err != nil {
-		t.Fatalf("create Gongfeng project resource: %v", err)
-	}
-	if _, err := pool.Exec(ctx, `UPDATE issue SET project_id = $2 WHERE id = $1`, fixture.issueID, projectID); err != nil {
-		t.Fatalf("attach Gongfeng project to issue: %v", err)
-	}
-}
-
 func installSquadTerminalProjectionFailureTrigger(
 	t *testing.T,
 	pool *pgxpool.Pool,

@@ -231,7 +231,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		AttachmentDownloadMode:   os.Getenv("ATTACHMENT_DOWNLOAD_MODE"),
 		AttachmentDownloadURLTTL: envDuration("ATTACHMENT_DOWNLOAD_URL_TTL", 30*time.Minute),
 	}
-	h := handler.New(queries, pool, hub, bus, store, cfSigner, analyticsClient, signupConfig, daemonHub)
+	h := handler.New(queries, pool, hub, bus, store, cfSigner, analyticsClient, signupConfig, opts.HeartbeatScheduler, daemonHub)
 	if opts.EventDispatcher != nil {
 		if err := h.RegisterPromptEvaluationCaseOperationConsumer(opts.EventDispatcher); err != nil {
 			return nil, nil, fmt.Errorf("register prompt evaluation case operation consumer: %w", err)
@@ -434,7 +434,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	if opts.HeartbeatScheduler == nil {
 		return nil, nil, errors.New("heartbeat scheduler is required")
 	}
-	h.HeartbeatScheduler = opts.HeartbeatScheduler
 	// The PAT cache is shared by regular and daemon authentication. Its
 	// constructor returns nil without Redis, which means "always hit DB".
 	patCache := auth.NewPATCache(rdb)

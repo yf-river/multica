@@ -20,7 +20,6 @@ import (
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/events"
-	"github.com/multica-ai/multica/server/internal/handler"
 	"github.com/multica-ai/multica/server/internal/realtime"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -32,6 +31,18 @@ var (
 	testUserID      string
 	testWorkspaceID string
 )
+
+type immediateTestHeartbeatScheduler struct {
+	queries *db.Queries
+}
+
+func (s immediateTestHeartbeatScheduler) Schedule(ctx context.Context, rt db.AgentRuntime) error {
+	if s.queries == nil {
+		return nil
+	}
+	_, err := s.queries.MarkAgentRuntimeOnline(ctx, rt.ID)
+	return err
+}
 
 func mustExec(t testing.TB, ctx context.Context, query string, args ...any) {
 	t.Helper()
@@ -81,7 +92,7 @@ func TestMain(m *testing.M) {
 	bus := events.New()
 	registerListeners(bus, hub)
 	router, _, err := NewRouterWithOptions(pool, hub, bus, analytics.NoopClient{}, nil, RouterOptions{
-		HeartbeatScheduler: handler.NewPassthroughHeartbeatScheduler(db.New(pool)),
+		HeartbeatScheduler: immediateTestHeartbeatScheduler{queries: db.New(pool)},
 	})
 	if err != nil {
 		fmt.Printf("Failed to construct integration test router: %v\n", err)

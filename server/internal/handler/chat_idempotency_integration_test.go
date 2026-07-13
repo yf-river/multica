@@ -315,7 +315,8 @@ func TestSendChatMessageRollsBackWhenIdempotencyCompletionFails(t *testing.T) {
 }
 
 func newChatIdempotencyTestHandler(bus *events.Bus) *Handler {
-	return New(db.New(testPool), testPool, nil, bus, nil, nil, analytics.NoopClient{}, Config{AllowSignup: true})
+	queries := db.New(testPool)
+	return New(queries, testPool, nil, bus, nil, nil, analytics.NoopClient{}, Config{AllowSignup: true}, immediateTestHeartbeatScheduler{queries: queries})
 }
 
 func handlerTestChatAgentID(t *testing.T) string {
