@@ -81,7 +81,7 @@ test("Prompt Library item and version survive exact replay and render in the cur
     await page.goto(`/${workspace.slug}/debug/prompts`, { waitUntil: "domcontentloaded" });
     await waitForPageText(page, created.name, 30_000);
     await page.getByRole("button", { name: new RegExp(created.name) }).click();
-    await expect(page.getByTestId("prompt-version-history")).toContainText("v2");
+    await expect(page.getByTestId("prompt-version-history")).toContainText("版本 2");
     await expect(page.getByTestId("prompt-library-editor")).toContainText(versionRequest.content);
     await expect(page.getByTestId("prompt-library-editor")).toContainText(`${prefix} Agent`);
     await expect(page.getByTestId("prompt-library-editor")).toContainText("登录失败");

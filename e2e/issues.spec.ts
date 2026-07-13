@@ -89,7 +89,7 @@ test.describe("Issues", () => {
     await expect(page.getByText(updatedTodayTitle)).toBeVisible();
 
     await page.getByRole("button", { name: "筛选" }).click();
-    await page.getByRole("menuitem", { name: "日期" }).hover();
+    await page.getByRole("menuitem", { name: /^日期(?:\s|$)/ }).hover();
     await page.getByRole("menuitem", { name: "今天" }).click();
 
     await expect(page.getByRole("button", { name: /1 个筛选/ })).toBeVisible();
@@ -98,7 +98,7 @@ test.describe("Issues", () => {
     await expect(page.getByText(updatedTodayTitle)).toBeHidden({ timeout: 10000 });
 
     await page.getByRole("button", { name: /1 个筛选/ }).click();
-    const dateFilterItem = page.getByRole("menuitem", { name: "日期" });
+    const dateFilterItem = page.getByRole("menuitem", { name: /^日期(?:\s|$)/ });
     await dateFilterItem.focus();
     await page.keyboard.press("ArrowRight");
     const updatedDateField = page.getByRole("menuitemradio", { name: "更新时间" });
@@ -124,7 +124,7 @@ test.describe("Issues", () => {
     await expect(page.getByText(oldTitle)).toBeVisible();
 
     await page.getByRole("button", { name: "筛选" }).click();
-    await page.getByRole("menuitem", { name: "日期" }).hover();
+    await page.getByRole("menuitem", { name: /^日期(?:\s|$)/ }).hover();
     const customDateButton = page.getByRole("button", { name: "自定义日期或范围" });
     await expect(customDateButton).toBeVisible();
     await customDateButton.click();
