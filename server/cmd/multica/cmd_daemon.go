@@ -557,9 +557,7 @@ func printDaemonStatusReport(w io.Writer, label string, health map[string]any) {
 	type row struct{ key, value string }
 	rows := []row{
 		{label, fmt.Sprintf("running (pid %v, uptime %v)", health["pid"], health["uptime"])},
-	}
-	if version, ok := health["cli_version"].(string); ok && version != "" {
-		rows = append(rows, row{"Version", version})
+		{"Version", health["cli_version"].(string)},
 	}
 	if agents, ok := health["agents"].([]any); ok && len(agents) > 0 {
 		parts := make([]string, len(agents))

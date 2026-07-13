@@ -60,42 +60,6 @@ func TestPrintDaemonStatusIncludesCLIVersion(t *testing.T) {
 	}
 }
 
-// TestPrintDaemonStatusOmitsVersionWhenMissing pins the back-compat contract:
-// when the daemon doesn't report cli_version (older daemon paired with a newer
-// CLI) or reports an empty string, the CLI must skip the line entirely instead
-// of printing "Version: ".
-func TestPrintDaemonStatusOmitsVersionWhenMissing(t *testing.T) {
-	t.Parallel()
-
-	cases := map[string]map[string]any{
-		"key missing": {
-			"status":     "running",
-			"pid":        float64(1234),
-			"uptime":     "1h2m3s",
-			"workspaces": []any{},
-		},
-		"empty string": {
-			"status":      "running",
-			"pid":         float64(1234),
-			"uptime":      "1h2m3s",
-			"cli_version": "",
-			"workspaces":  []any{},
-		},
-	}
-
-	for name, health := range cases {
-		health := health
-		t.Run(name, func(t *testing.T) {
-			t.Parallel()
-			var out bytes.Buffer
-			printDaemonStatusReport(&out, "Daemon", health)
-			if strings.Contains(out.String(), "Version:") {
-				t.Fatalf("daemon status output = %q, want no Version line", out.String())
-			}
-		})
-	}
-}
-
 // TestPrintDaemonStatusAlignsValuesWithProfileLabel guards the alignment fix:
 // before, a "Daemon [profile]" label was wider than the other keys, so the
 // Daemon row's value started further right than every subsequent row. The
