@@ -30,6 +30,11 @@ import {
   onIssueLabelsChanged,
   onIssueMetadataChanged,
 } from "../issues/ws-updaters";
+import {
+  applyIssueDetailEvent,
+  issueDetailEvents,
+  type IssueDetailEvent,
+} from "../issues/detail-ws-updaters";
 import { onInboxNew, onInboxInvalidate, onInboxIssueStatusChanged, onInboxIssueDeleted } from "../inbox/ws-updaters";
 import { inboxKeys } from "../inbox/queries";
 import {
@@ -58,18 +63,6 @@ import type {
   InboxNewPayload,
   InboxItem,
   NotificationPreferenceResponse,
-  CommentCreatedPayload,
-  CommentUpdatedPayload,
-  CommentDeletedPayload,
-  CommentResolvedPayload,
-  CommentUnresolvedPayload,
-  ActivityCreatedPayload,
-  ReactionAddedPayload,
-  ReactionRemovedPayload,
-  IssueReactionAddedPayload,
-  IssueReactionRemovedPayload,
-  SubscriberAddedPayload,
-  SubscriberRemovedPayload,
   TaskMessagePayload,
   TaskQueuedPayload,
   TaskDispatchPayload,
@@ -521,15 +514,10 @@ export function useRealtimeSync(
     };
 
     // Event types handled by specific handlers below -- skip generic refresh
-    const specificEvents = new Set([
+    const specificEvents = new Set<string>([
+      ...issueDetailEvents,
       "workspace:updated",
       "issue:updated", "issue:created", "issue:deleted", "issue_labels:changed", "issue_metadata:changed", "inbox:new",
-      "comment:created", "comment:updated", "comment:deleted",
-      "comment:resolved", "comment:unresolved",
-      "activity:created",
-      "reaction:added", "reaction:removed",
-      "issue_reaction:added", "issue_reaction:removed",
-      "subscriber:added", "subscriber:removed",
       "daemon:heartbeat",
       // Chat events are handled explicitly below; do not double-invalidate.
       "chat:message", "chat:done", "chat:session_read", "chat:session_deleted",
@@ -607,90 +595,13 @@ export function useRealtimeSync(
       await handleInboxNew(qc, item);
     });
 
-    // --- Timeline event handlers (global fallback) ---
-    // These events are also handled granularly by useIssueTimeline when
-    // IssueDetail is mounted. This global handler exists to mark the
-    // timeline cache stale for issues whose IssueDetail is *not* mounted,
-    // so stale data isn't served on next mount (staleTime: Infinity, set on
-    // the QueryClient default, relies on this).
-    //
-    // `refetchType: "none"` is the load-bearing detail: without it, an
-    // active IssueDetail observer would refetch the entire timeline on
-    // every comment / activity / reaction event. The refetch replaces
-    // every entry's reference and busts React.memo on every CommentCard
-    // subtree (visible during AI streaming as a flash across all sibling
-    // threads, MUL-1941). Inactive observers don't refetch either way;
-    // when IssueDetail mounts later, the stale flag triggers the refetch
-    // through `refetchOnMount`. Active observers stay fresh via the
-    // granular setQueryData handlers in `useIssueTimeline`.
-    const invalidateTimeline = (issueId: string) => {
-      qc.invalidateQueries({
-        queryKey: issueKeys.timeline(issueId),
-        refetchType: "none",
-      });
-    };
-
-    const unsubCommentCreated = ws.on("comment:created", (p) => {
-      const { comment } = p as CommentCreatedPayload;
-      if (comment?.issue_id) invalidateTimeline(comment.issue_id);
-    });
-
-    const unsubCommentUpdated = ws.on("comment:updated", (p) => {
-      const { comment } = p as CommentUpdatedPayload;
-      if (comment?.issue_id) invalidateTimeline(comment.issue_id);
-    });
-
-    const unsubCommentDeleted = ws.on("comment:deleted", (p) => {
-      const { issue_id } = p as CommentDeletedPayload;
-      if (issue_id) invalidateTimeline(issue_id);
-    });
-
-    const unsubCommentResolved = ws.on("comment:resolved", (p) => {
-      const { comment } = p as CommentResolvedPayload;
-      if (comment?.issue_id) invalidateTimeline(comment.issue_id);
-    });
-
-    const unsubCommentUnresolved = ws.on("comment:unresolved", (p) => {
-      const { comment } = p as CommentUnresolvedPayload;
-      if (comment?.issue_id) invalidateTimeline(comment.issue_id);
-    });
-
-    const unsubActivityCreated = ws.on("activity:created", (p) => {
-      const { issue_id } = p as ActivityCreatedPayload;
-      if (issue_id) invalidateTimeline(issue_id);
-    });
-
-    const unsubReactionAdded = ws.on("reaction:added", (p) => {
-      const { issue_id } = p as ReactionAddedPayload;
-      if (issue_id) invalidateTimeline(issue_id);
-    });
-
-    const unsubReactionRemoved = ws.on("reaction:removed", (p) => {
-      const { issue_id } = p as ReactionRemovedPayload;
-      if (issue_id) invalidateTimeline(issue_id);
-    });
-
-    // --- Issue-level reactions & subscribers (global fallback) ---
-
-    const unsubIssueReactionAdded = ws.on("issue_reaction:added", (p) => {
-      const { issue_id } = p as IssueReactionAddedPayload;
-      if (issue_id) qc.invalidateQueries({ queryKey: issueKeys.reactions(issue_id) });
-    });
-
-    const unsubIssueReactionRemoved = ws.on("issue_reaction:removed", (p) => {
-      const { issue_id } = p as IssueReactionRemovedPayload;
-      if (issue_id) qc.invalidateQueries({ queryKey: issueKeys.reactions(issue_id) });
-    });
-
-    const unsubSubscriberAdded = ws.on("subscriber:added", (p) => {
-      const { issue_id } = p as SubscriberAddedPayload;
-      if (issue_id) qc.invalidateQueries({ queryKey: issueKeys.subscribers(issue_id) });
-    });
-
-    const unsubSubscriberRemoved = ws.on("subscriber:removed", (p) => {
-      const { issue_id } = p as SubscriberRemovedPayload;
-      if (issue_id) qc.invalidateQueries({ queryKey: issueKeys.subscribers(issue_id) });
-    });
+    // Issue detail events have one cache-projection owner. The updater applies
+    // the payload immediately and also marks inactive caches stale.
+    const subscribeIssueDetailEvent = (event: IssueDetailEvent) =>
+      ws.on(event, (payload) => applyIssueDetailEvent(qc, event, payload));
+    const issueDetailUnsubscribers = issueDetailEvents.map(
+      subscribeIssueDetailEvent,
+    );
 
     // --- Side-effect handlers (toast, navigation) ---
 
@@ -1008,18 +919,7 @@ export function useRealtimeSync(
       unsubIssueLabelsChanged();
       unsubIssueMetadataChanged();
       unsubInboxNew();
-      unsubCommentCreated();
-      unsubCommentUpdated();
-      unsubCommentDeleted();
-      unsubCommentResolved();
-      unsubCommentUnresolved();
-      unsubActivityCreated();
-      unsubReactionAdded();
-      unsubReactionRemoved();
-      unsubIssueReactionAdded();
-      unsubIssueReactionRemoved();
-      unsubSubscriberAdded();
-      unsubSubscriberRemoved();
+      issueDetailUnsubscribers.forEach((unsubscribe) => unsubscribe());
       unsubWsUpdated();
       unsubWsDeleted();
       unsubMemberRemoved();
