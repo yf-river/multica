@@ -45,12 +45,8 @@ func (d *LarkJSONFrameDecoder) Decode(payload []byte, inst db.LarkInstallation) 
 		return InboundMessage{}, false, fmt.Errorf("envelope: %w", err)
 	}
 
-	// Lark long-conn data frames are always v2 event envelopes
-	// (schema "2.0"). The legacy webhook v1 "type":"event_callback"
-	// shape is not used on long-conn — we accept it defensively in
-	// case Lark adds a back-compat mode, but the canonical path is
-	// schema-driven.
-	if env.Type != "" && env.Type != "event_callback" {
+	// Lark long-connection data frames use the schema 2.0 event envelope.
+	if env.Schema != "2.0" {
 		return InboundMessage{}, false, nil
 	}
 
@@ -59,7 +55,7 @@ func (d *LarkJSONFrameDecoder) Decode(payload []byte, inst db.LarkInstallation) 
 	}
 
 	if env.Event == nil {
-		return InboundMessage{}, false, errors.New("event_callback with empty event payload")
+		return InboundMessage{}, false, errors.New("schema 2.0 envelope with empty event payload")
 	}
 	var evt larkMessageReceiveEvent
 	if err := json.Unmarshal(env.Event, &evt); err != nil {
@@ -117,7 +113,6 @@ func (d *LarkJSONFrameDecoder) Decode(payload []byte, inst db.LarkInstallation) 
 // larkEventEnvelope mirrors the outer JSON Lark wraps every push in.
 type larkEventEnvelope struct {
 	Schema string          `json:"schema"`
-	Type   string          `json:"type"`
 	Header larkEventHeader `json:"header"`
 	Event  json.RawMessage `json:"event"`
 }

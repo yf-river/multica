@@ -11,7 +11,7 @@ import (
 func TestLarkJSONFrameDecoderTextMessageInP2P(t *testing.T) {
 	t.Parallel()
 	raw := []byte(`{
-		"type":"event_callback",
+		"schema":"2.0",
 		"header":{
 			"event_id":"evt-1",
 			"event_type":"im.message.receive_v1",
@@ -64,7 +64,7 @@ func TestLarkJSONFrameDecoderGroupMentionDiscrimination(t *testing.T) {
 	t.Parallel()
 	mkRaw := func(mentionOpenID string) []byte {
 		return []byte(`{
-			"type":"event_callback",
+			"schema":"2.0",
 			"header":{"event_id":"e","event_type":"im.message.receive_v1","app_id":"a"},
 			"event":{
 				"sender":{"sender_id":{"open_id":"ou_user"}},
@@ -114,7 +114,7 @@ func TestLarkJSONFrameDecoderGroupMentionUnionID(t *testing.T) {
 
 	mkRaw := func(mentionOpenID, mentionUnionID string) []byte {
 		return []byte(`{
-			"type":"event_callback",
+			"schema":"2.0",
 			"header":{"event_id":"e","event_type":"im.message.receive_v1","app_id":"a"},
 			"event":{
 				"sender":{"sender_id":{"open_id":"ou_user"}},
@@ -200,7 +200,7 @@ func TestLarkJSONFrameDecoderMentionPlaceholderRewrite(t *testing.T) {
 		contentBytes, _ := json.Marshal(contentDoc)
 		contentEsc, _ := json.Marshal(string(contentBytes))
 		return []byte(`{
-			"type":"event_callback",
+			"schema":"2.0",
 			"header":{"event_id":"e","event_type":"im.message.receive_v1","app_id":"a"},
 			"event":{
 				"sender":{"sender_id":{"open_id":"ou_user"}},
@@ -379,7 +379,7 @@ func TestLarkJSONFrameDecoderDropsHeartbeat(t *testing.T) {
 	cases := [][]byte{
 		[]byte(`{"type":"heartbeat"}`),
 		[]byte(`{"type":"frame_ack","data":{"id":"1"}}`),
-		[]byte(`{"type":"event_callback","header":{"event_type":"im.message.unknown_kind"}}`),
+		[]byte(`{"schema":"2.0","header":{"event_type":"im.message.unknown_kind"}}`),
 	}
 	for _, raw := range cases {
 		msg, ok, err := d.Decode(raw, db.LarkInstallation{})
@@ -414,7 +414,7 @@ func TestLarkJSONFrameDecoderMalformedReturnsError(t *testing.T) {
 func TestLarkJSONFrameDecoderMessageContentEmptyOnInvalidContentJSON(t *testing.T) {
 	t.Parallel()
 	raw := []byte(`{
-		"type":"event_callback",
+		"schema":"2.0",
 		"header":{"event_id":"e","event_type":"im.message.receive_v1","app_id":"a"},
 		"event":{
 			"sender":{"sender_id":{"open_id":"ou_user"}},
@@ -433,7 +433,7 @@ func TestLarkJSONFrameDecoderMessageContentEmptyOnInvalidContentJSON(t *testing.
 func TestLarkJSONFrameDecoderNonTextMessageHasEmptyBody(t *testing.T) {
 	t.Parallel()
 	raw := []byte(`{
-		"type":"event_callback",
+		"schema":"2.0",
 		"header":{"event_id":"e","event_type":"im.message.receive_v1","app_id":"a"},
 		"event":{
 			"sender":{"sender_id":{"open_id":"ou_user"}},
@@ -464,7 +464,7 @@ func TestLarkJSONFrameDecoderPostMessageFlattened(t *testing.T) {
 		t.Fatalf("marshal: %v", err)
 	}
 	raw := []byte(`{
-		"type":"event_callback",
+		"schema":"2.0",
 		"header":{"event_id":"e","event_type":"im.message.receive_v1","app_id":"a"},
 		"event":{
 			"sender":{"sender_id":{"open_id":"ou_user"}},
@@ -496,7 +496,7 @@ func TestLarkJSONFrameDecoderPostResolvesMentions(t *testing.T) {
 		t.Fatalf("marshal: %v", err)
 	}
 	raw := []byte(`{
-		"type":"event_callback",
+		"schema":"2.0",
 		"header":{"event_id":"e","event_type":"im.message.receive_v1","app_id":"a"},
 		"event":{
 			"sender":{"sender_id":{"open_id":"ou_user"}},
@@ -530,7 +530,7 @@ func TestLarkJSONFrameDecoderPostResolvesMentions(t *testing.T) {
 func TestLarkJSONFrameDecoderCapturesReplyLinkage(t *testing.T) {
 	t.Parallel()
 	raw := []byte(`{
-		"type":"event_callback",
+		"schema":"2.0",
 		"header":{"event_id":"e","event_type":"im.message.receive_v1","app_id":"a"},
 		"event":{
 			"sender":{"sender_id":{"open_id":"ou_user"}},
