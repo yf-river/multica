@@ -17,6 +17,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // projectResourcesForClaim converts the persisted project resource model into
@@ -540,7 +541,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			}
 			if len(atts) > 0 {
 				for _, a := range atts {
-					resp.ChatMessageAttachments = append(resp.ChatMessageAttachments, ChatAttachmentMeta{
+					resp.ChatMessageAttachments = append(resp.ChatMessageAttachments, protocol.ChatAttachmentMeta{
 						ID:          uuidToString(a.ID),
 						Filename:    a.Filename,
 						ContentType: a.ContentType,

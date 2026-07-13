@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 const (
@@ -19,17 +20,17 @@ const (
 	gongfengMCPServerName = "gongfeng"
 )
 
-func (h *Handler) buildIssueSourceContext(ctx context.Context, issue db.Issue, credentialUserID pgtype.UUID) (*TaskSourceContext, error) {
+func (h *Handler) buildIssueSourceContext(ctx context.Context, issue db.Issue, credentialUserID pgtype.UUID) (*protocol.TaskSourceContext, error) {
 	metadata := decodeIssueMetadataObject(issue.Metadata)
 	provider := strings.ToLower(metadataStringValue(metadata, "source_provider"))
 	if provider == "" {
 		return nil, nil
 	}
 
-	source := &TaskSourceContext{
+	source := &protocol.TaskSourceContext{
 		Provider:            provider,
 		URL:                 metadataStringValue(metadata, "source_url"),
-		ExternalCredentials: map[string]TaskExternalCredentialContext{},
+		ExternalCredentials: map[string]protocol.TaskExternalCredentialContext{},
 	}
 
 	switch provider {
@@ -49,7 +50,7 @@ func (h *Handler) buildIssueSourceContext(ctx context.Context, issue db.Issue, c
 				fetchError = "no usable account-level TAPD credential profile for task creator or trigger user"
 			}
 		}
-		source.TAPD = &TAPDTaskSourceContext{
+		source.TAPD = &protocol.TAPDTaskSourceContext{
 			WorkspaceID:   firstNonEmpty(metadataStringValue(metadata, "tapd_workspace_id"), metadataStringValue(metadata, "tapd_workspace")),
 			ResourceType:  firstNonEmpty(metadataStringValue(metadata, "tapd_resource_type"), metadataStringValue(metadata, "tapd_type")),
 			ResourceID:    firstNonEmpty(metadataStringValue(metadata, "tapd_resource_id"), metadataStringValue(metadata, "tapd_wiki_id")),
@@ -77,8 +78,8 @@ func (h *Handler) buildIssueSourceContext(ctx context.Context, issue db.Issue, c
 	return source, nil
 }
 
-func (h *Handler) sourceCredentialContext(ctx context.Context, userID pgtype.UUID, provider, mcpServer string) (TaskExternalCredentialContext, error) {
-	out := TaskExternalCredentialContext{
+func (h *Handler) sourceCredentialContext(ctx context.Context, userID pgtype.UUID, provider, mcpServer string) (protocol.TaskExternalCredentialContext, error) {
+	out := protocol.TaskExternalCredentialContext{
 		Provider:    provider,
 		Scope:       "account",
 		Inheritance: taskSourceInheritance,
@@ -96,20 +97,20 @@ func (h *Handler) sourceCredentialContext(ctx context.Context, userID pgtype.UUI
 		if errors.Is(err, pgx.ErrNoRows) {
 			return out, nil
 		}
-		return TaskExternalCredentialContext{}, fmt.Errorf("load %s credential profile: %w", provider, err)
+		return protocol.TaskExternalCredentialContext{}, fmt.Errorf("load %s credential profile: %w", provider, err)
 	}
 	out.ProfileID = uuidToString(profile.ID)
 	out.ProfileName = profile.Name
 	out.ProfileStatus = profile.Status
 	env, err := h.externalCredentialProfileEnv(profile)
 	if err != nil {
-		return TaskExternalCredentialContext{}, err
+		return protocol.TaskExternalCredentialContext{}, err
 	}
 	out.Configured = len(env) > 0
 	return out, nil
 }
 
-func (h *Handler) injectSourceCredentialMCPEnv(ctx context.Context, mcpConfig json.RawMessage, source *TaskSourceContext) (json.RawMessage, error) {
+func (h *Handler) injectSourceCredentialMCPEnv(ctx context.Context, mcpConfig json.RawMessage, source *protocol.TaskSourceContext) (json.RawMessage, error) {
 	if source == nil || len(source.ExternalCredentials) == 0 {
 		return mcpConfig, nil
 	}

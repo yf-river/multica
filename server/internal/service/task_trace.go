@@ -397,7 +397,7 @@ func (s *TaskService) captureTaskDispatched(ctx context.Context, task db.AgentTa
 	}
 }
 
-func (s *TaskService) AnalyticsContextForTask(ctx context.Context, task db.AgentTaskQueue) analytics.TaskContext {
+func (s *TaskService) AnalyticsContextForTask(ctx context.Context, task db.AgentTaskQueue) analytics.CoreProperties {
 	return s.taskAnalyticsContext(ctx, task)
 }
 
@@ -577,21 +577,21 @@ func (s *TaskService) CaptureLeaseExpiredTasks(ctx context.Context, tasks []db.A
 	}
 }
 
-func (s *TaskService) cachedTaskAnalyticsContext(task db.AgentTaskQueue) (analytics.TaskContext, bool) {
+func (s *TaskService) cachedTaskAnalyticsContext(task db.AgentTaskQueue) (analytics.CoreProperties, bool) {
 	key := taskAnalyticsContextKey(task)
 	if key == "" {
-		return analytics.TaskContext{}, false
+		return analytics.CoreProperties{}, false
 	}
 	s.analyticsContextMu.Lock()
 	defer s.analyticsContextMu.Unlock()
 	if s.analyticsContextCache == nil {
-		return analytics.TaskContext{}, false
+		return analytics.CoreProperties{}, false
 	}
 	tc, ok := s.analyticsContextCache[key]
 	return tc, ok
 }
 
-func (s *TaskService) storeTaskAnalyticsContext(task db.AgentTaskQueue, tc analytics.TaskContext) {
+func (s *TaskService) storeTaskAnalyticsContext(task db.AgentTaskQueue, tc analytics.CoreProperties) {
 	if tc.WorkspaceID == "" {
 		return
 	}
@@ -602,7 +602,7 @@ func (s *TaskService) storeTaskAnalyticsContext(task db.AgentTaskQueue, tc analy
 	s.analyticsContextMu.Lock()
 	defer s.analyticsContextMu.Unlock()
 	if s.analyticsContextCache == nil {
-		s.analyticsContextCache = make(map[string]analytics.TaskContext)
+		s.analyticsContextCache = make(map[string]analytics.CoreProperties)
 	}
 	if _, ok := s.analyticsContextCache[key]; !ok {
 		s.analyticsContextOrder = append(s.analyticsContextOrder, key)
@@ -653,11 +653,11 @@ func (s *TaskService) taskMetricsContext(ctx context.Context, task db.AgentTaskQ
 	return source, tc.RuntimeMode, tc.Provider
 }
 
-func (s *TaskService) taskAnalyticsContext(ctx context.Context, task db.AgentTaskQueue) analytics.TaskContext {
+func (s *TaskService) taskAnalyticsContext(ctx context.Context, task db.AgentTaskQueue) analytics.CoreProperties {
 	if tc, ok := s.cachedTaskAnalyticsContext(task); ok {
 		return tc
 	}
-	tc := analytics.TaskContext{
+	tc := analytics.CoreProperties{
 		AgentID: util.UUIDToString(task.AgentID),
 		TaskID:  util.UUIDToString(task.ID),
 		Source:  analytics.SourceManual,

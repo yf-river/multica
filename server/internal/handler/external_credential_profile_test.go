@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 func TestCreateExternalCredentialProfileRecoversExactResult(t *testing.T) {
@@ -664,8 +665,8 @@ func TestClaimTaskIncludesTapdSourceContextWithAccountCredential(t *testing.T) {
 	}
 	var claim struct {
 		Task *struct {
-			SourceContext *TaskSourceContext `json:"source_context"`
-			Agent         *TaskAgentData     `json:"agent"`
+			SourceContext *protocol.TaskSourceContext `json:"source_context"`
+			Agent         *TaskAgentData              `json:"agent"`
 		} `json:"task"`
 	}
 	if err := json.NewDecoder(w.Body).Decode(&claim); err != nil {

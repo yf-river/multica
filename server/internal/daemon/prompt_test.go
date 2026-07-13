@@ -3,6 +3,8 @@ package daemon
 import (
 	"strings"
 	"testing"
+
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 func assertPromptOrder(t *testing.T, out, before, after string) {
@@ -23,17 +25,17 @@ func assertPromptOrder(t *testing.T, out, before, after string) {
 func TestBuildPromptIncludesTapdSourceContext(t *testing.T) {
 	out := BuildPrompt(Task{
 		IssueID: "issue-1",
-		SourceContext: &TaskSourceContext{
+		SourceContext: &protocol.TaskSourceContext{
 			Provider: "tapd",
 			URL:      "https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004154",
-			TAPD: &TAPDTaskSourceContext{
+			TAPD: &protocol.TAPDTaskSourceContext{
 				WorkspaceID:   "47654106",
 				ResourceType:  "markdown_wiki",
 				ResourceID:    "1147654106001004154",
 				FetchProvider: "tapd_mcp",
 				FetchStatus:   "pending_mcp_fetch",
 			},
-			ExternalCredentials: map[string]TaskExternalCredentialContext{
+			ExternalCredentials: map[string]protocol.TaskExternalCredentialContext{
 				"tapd": {
 					Provider:      "tapd",
 					Scope:         "account",
@@ -73,10 +75,10 @@ func TestBuildPromptUsesSourceSummaryPrompt(t *testing.T) {
 	out := BuildPrompt(Task{
 		IssueID:             "issue-summary-1",
 		SourceSummaryPrompt: "基于任务的 TAPD 来源内容生成结构化需求摘要。",
-		SourceContext: &TaskSourceContext{
+		SourceContext: &protocol.TaskSourceContext{
 			Provider: "tapd",
 			URL:      "https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004154",
-			TAPD: &TAPDTaskSourceContext{
+			TAPD: &protocol.TAPDTaskSourceContext{
 				WorkspaceID:   "47654106",
 				ResourceType:  "markdown_wiki",
 				ResourceID:    "1147654106001004154",
@@ -119,10 +121,10 @@ func TestBuildCommentPromptPlacesSourceContextAfterIssueRead(t *testing.T) {
 		TriggerAuthorType:     "member",
 		TriggerAuthorName:     "Alice",
 		TriggerCommentContent: "继续看 TAPD 来源",
-		SourceContext: &TaskSourceContext{
+		SourceContext: &protocol.TaskSourceContext{
 			Provider: "tapd",
 			URL:      "https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004154",
-			TAPD: &TAPDTaskSourceContext{
+			TAPD: &protocol.TAPDTaskSourceContext{
 				WorkspaceID:   "47654106",
 				ResourceType:  "markdown_wiki",
 				ResourceID:    "1147654106001004154",
@@ -138,9 +140,9 @@ func TestBuildCommentPromptPlacesSourceContextAfterIssueRead(t *testing.T) {
 func TestBuildPromptBlocksTapdWhenProfileMissing(t *testing.T) {
 	out := BuildPrompt(Task{
 		IssueID: "issue-1",
-		SourceContext: &TaskSourceContext{
+		SourceContext: &protocol.TaskSourceContext{
 			Provider: "tapd",
-			TAPD: &TAPDTaskSourceContext{
+			TAPD: &protocol.TAPDTaskSourceContext{
 				WorkspaceID:   "47654106",
 				ResourceType:  "markdown_wiki",
 				ResourceID:    "1147654106001004154",
@@ -148,7 +150,7 @@ func TestBuildPromptBlocksTapdWhenProfileMissing(t *testing.T) {
 				FetchStatus:   "blocked_missing_profile",
 				FetchError:    "no account-level TAPD credential profile",
 			},
-			ExternalCredentials: map[string]TaskExternalCredentialContext{
+			ExternalCredentials: map[string]protocol.TaskExternalCredentialContext{
 				"tapd": {
 					Provider:    "tapd",
 					Scope:       "account",
@@ -177,10 +179,10 @@ func TestBuildPromptBlocksTapdWhenProfileMissing(t *testing.T) {
 func TestBuildPromptUsesFetchedTapdSourceContext(t *testing.T) {
 	out := BuildPrompt(Task{
 		IssueID: "issue-1",
-		SourceContext: &TaskSourceContext{
+		SourceContext: &protocol.TaskSourceContext{
 			Provider: "tapd",
 			URL:      "https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004223",
-			TAPD: &TAPDTaskSourceContext{
+			TAPD: &protocol.TAPDTaskSourceContext{
 				WorkspaceID:   "47654106",
 				ResourceType:  "markdown_wiki",
 				ResourceID:    "1147654106001004223",
@@ -213,10 +215,10 @@ func TestBuildPromptUsesFetchedTapdSourceContext(t *testing.T) {
 func TestBuildPromptUsesHumanRecoveryWhenTapdFetchFailed(t *testing.T) {
 	out := BuildPrompt(Task{
 		IssueID: "issue-1",
-		SourceContext: &TaskSourceContext{
+		SourceContext: &protocol.TaskSourceContext{
 			Provider: "tapd",
 			URL:      "https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004223",
-			TAPD: &TAPDTaskSourceContext{
+			TAPD: &protocol.TAPDTaskSourceContext{
 				WorkspaceID:   "47654106",
 				ResourceType:  "markdown_wiki",
 				ResourceID:    "1147654106001004223",
@@ -611,7 +613,7 @@ func TestBuildChatPromptAttachmentIDsCanBeBoundToCreatedIssues(t *testing.T) {
 	task := Task{
 		ChatSessionID: "sess-1",
 		ChatMessage:   "please create an issue with this screenshot",
-		ChatMessageAttachments: []ChatAttachmentMeta{
+		ChatMessageAttachments: []protocol.ChatAttachmentMeta{
 			{ID: "019ec09d-6222-722b-bdfa-427b105d80be", Filename: "shot.png", ContentType: "image/png"},
 		},
 	}

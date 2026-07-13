@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 func TestResolveExternalCredentialTokenDoesNotFallBackAfterDecryptFailure(t *testing.T) {
@@ -44,7 +45,7 @@ func TestInjectSourceCredentialMCPEnvPreservesProfileReloadFailure(t *testing.T)
 	}
 	h := *testHandler
 	h.Queries = db.New(failNamedQueryDB{DBTX: testPool, queryName: "GetDefaultExternalCredentialProfileForUser"})
-	source := &TaskSourceContext{ExternalCredentials: map[string]TaskExternalCredentialContext{
+	source := &protocol.TaskSourceContext{ExternalCredentials: map[string]protocol.TaskExternalCredentialContext{
 		externalCredentialProviderGongfeng: {
 			Provider:   externalCredentialProviderGongfeng,
 			Configured: true,

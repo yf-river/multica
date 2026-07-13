@@ -47,7 +47,7 @@ type TaskService struct {
 	EmptyClaim *EmptyClaimCache
 
 	analyticsContextMu    sync.Mutex
-	analyticsContextCache map[string]analytics.TaskContext
+	analyticsContextCache map[string]analytics.CoreProperties
 	analyticsContextOrder []string
 }
 
