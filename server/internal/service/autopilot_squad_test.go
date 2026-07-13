@@ -22,7 +22,6 @@ func TestAutopilotSquadAttribution(t *testing.T) {
 		{"agent assignee returns zero", db.Autopilot{AssigneeType: "agent", AssigneeID: id}, pgtype.UUID{}},
 		{"squad assignee returns squad id", db.Autopilot{AssigneeType: "squad", AssigneeID: id}, id},
 		{"squad with invalid id returns zero", db.Autopilot{AssigneeType: "squad", AssigneeID: pgtype.UUID{}}, pgtype.UUID{}},
-		{"unset type defaults to non-squad", db.Autopilot{AssigneeID: id}, pgtype.UUID{}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

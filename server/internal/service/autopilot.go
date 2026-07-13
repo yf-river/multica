@@ -751,7 +751,7 @@ var errSquadArchived = errors.New("squad is archived")
 // inserts a row that bypasses the check.
 func (s *AutopilotService) resolveAutopilotLeader(ctx context.Context, ap db.Autopilot) (agent db.Agent, squadResolved bool, err error) {
 	switch ap.AssigneeType {
-	case "", "agent":
+	case "agent":
 		agent, err = s.Queries.GetAgent(ctx, ap.AssigneeID)
 		return agent, false, err
 	case "squad":
@@ -772,10 +772,8 @@ func (s *AutopilotService) resolveAutopilotLeader(ctx context.Context, ap db.Aut
 	}
 }
 
-// autopilotSquadAttribution returns the squad_id attribution hook for an
-// autopilot_run row. Only populated when assignee_type='squad'. First-version
-// reports do not consume this; it exists so a future squad-cost view does not
-// need to backfill — see RFC §4.e (MUL-2429).
+// autopilotSquadAttribution snapshots the squad id onto autopilot runs so task
+// traces keep their original squad attribution after the Autopilot changes.
 func autopilotSquadAttribution(ap db.Autopilot) pgtype.UUID {
 	if ap.AssigneeType == "squad" && ap.AssigneeID.Valid {
 		return ap.AssigneeID
