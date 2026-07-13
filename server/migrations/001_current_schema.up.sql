@@ -1045,7 +1045,9 @@ CREATE TABLE public.project_resource (
     label text,
     "position" integer DEFAULT 0 NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    created_by uuid
+    created_by uuid,
+    CONSTRAINT project_resource_ref_is_object CHECK ((jsonb_typeof(resource_ref) = 'object'::text)),
+    CONSTRAINT project_resource_type_check CHECK ((resource_type = ANY (ARRAY['github_repo'::text, 'gongfeng_repo'::text, 'local_directory'::text])))
 );
 
 CREATE TABLE public.prompt_evaluation_asset (

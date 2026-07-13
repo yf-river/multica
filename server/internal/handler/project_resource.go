@@ -33,16 +33,12 @@ type ProjectResourceResponse struct {
 }
 
 func projectResourceToResponse(r db.ProjectResource) ProjectResourceResponse {
-	ref := json.RawMessage(r.ResourceRef)
-	if len(ref) == 0 {
-		ref = json.RawMessage("{}")
-	}
 	return ProjectResourceResponse{
 		ID:           uuidToString(r.ID),
 		ProjectID:    uuidToString(r.ProjectID),
 		WorkspaceID:  uuidToString(r.WorkspaceID),
 		ResourceType: r.ResourceType,
-		ResourceRef:  ref,
+		ResourceRef:  json.RawMessage(r.ResourceRef),
 		Label:        textToPtr(r.Label),
 		Position:     r.Position,
 		CreatedAt:    timestampToString(r.CreatedAt),

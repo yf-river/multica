@@ -24,7 +24,7 @@ import (
 // inventory and the subset that can be checked out as repositories. The first
 // repository branch/ref hint is returned separately for issue execution-space
 // setup; callers that do not create an execution space can ignore it.
-func projectResourcesForClaim(rows []db.ProjectResource) ([]ProjectResourceData, []RepoData, string) {
+func projectResourcesForClaim(rows []db.ProjectResource) ([]ProjectResourceData, []RepoData, string, error) {
 	resources := make([]ProjectResourceData, 0, len(rows))
 	repos := make([]RepoData, 0, len(rows))
 	repoRef := ""
@@ -33,9 +33,9 @@ func projectResourcesForClaim(rows []db.ProjectResource) ([]ProjectResourceData,
 		if row.Label.Valid {
 			label = row.Label.String
 		}
-		ref := json.RawMessage(row.ResourceRef)
-		if len(ref) == 0 {
-			ref = json.RawMessage("{}")
+		ref, err := validateAndNormalizeResourceRef(row.ResourceType, json.RawMessage(row.ResourceRef))
+		if err != nil {
+			return nil, nil, "", fmt.Errorf("project resource %s: %w", uuidToString(row.ID), err)
 		}
 		resources = append(resources, ProjectResourceData{
 			ID:           uuidToString(row.ID),
@@ -50,11 +50,12 @@ func projectResourcesForClaim(rows []db.ProjectResource) ([]ProjectResourceData,
 				URL               string `json:"url"`
 				DefaultBranchHint string `json:"default_branch_hint"`
 			}
-			if json.Unmarshal(row.ResourceRef, &payload) == nil && payload.URL != "" {
-				repos = append(repos, RepoData{URL: payload.URL})
-				if repoRef == "" {
-					repoRef = strings.TrimSpace(payload.DefaultBranchHint)
-				}
+			if err := json.Unmarshal(ref, &payload); err != nil {
+				return nil, nil, "", fmt.Errorf("decode normalized GitHub project resource %s: %w", uuidToString(row.ID), err)
+			}
+			repos = append(repos, RepoData{URL: payload.URL})
+			if repoRef == "" {
+				repoRef = strings.TrimSpace(payload.DefaultBranchHint)
 			}
 		case "gongfeng_repo":
 			var payload struct {
@@ -63,17 +64,18 @@ func projectResourcesForClaim(rows []db.ProjectResource) ([]ProjectResourceData,
 				Ref         string `json:"ref"`
 				Branch      string `json:"branch"`
 			}
-			if json.Unmarshal(row.ResourceRef, &payload) == nil {
-				if cloneURL := canonicalGongfengCloneURL(payload.URL, payload.ProjectPath); cloneURL != "" {
-					repos = append(repos, RepoData{URL: cloneURL})
-					if repoRef == "" {
-						repoRef = firstNonEmpty(strings.TrimSpace(payload.Branch), strings.TrimSpace(payload.Ref))
-					}
+			if err := json.Unmarshal(ref, &payload); err != nil {
+				return nil, nil, "", fmt.Errorf("decode normalized Gongfeng project resource %s: %w", uuidToString(row.ID), err)
+			}
+			if cloneURL := canonicalGongfengCloneURL(payload.URL, payload.ProjectPath); cloneURL != "" {
+				repos = append(repos, RepoData{URL: cloneURL})
+				if repoRef == "" {
+					repoRef = firstNonEmpty(strings.TrimSpace(payload.Branch), strings.TrimSpace(payload.Ref))
 				}
 			}
 		}
 	}
-	return resources, repos, repoRef
+	return resources, repos, repoRef, nil
 }
 
 func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
@@ -300,7 +302,12 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if len(rows) > 0 && !suppressIssueReposForRole {
-				resp.ProjectResources, projectRepos, projectRepoRef = projectResourcesForClaim(rows)
+				resp.ProjectResources, projectRepos, projectRepoRef, err = projectResourcesForClaim(rows)
+				if err != nil {
+					h.writeClaimResponseBuildError(w, task.ID, runtimeID, "issue project resource contract", err)
+					outcome = "error_build"
+					return
+				}
 			}
 		}
 
@@ -625,7 +632,12 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				if len(rows) > 0 {
-					resp.ProjectResources, projectRepos, _ = projectResourcesForClaim(rows)
+					resp.ProjectResources, projectRepos, _, err = projectResourcesForClaim(rows)
+					if err != nil {
+						h.writeClaimResponseBuildError(w, task.ID, runtimeID, "quick-create project resource contract", err)
+						outcome = "error_build"
+						return
+					}
 				}
 			}
 

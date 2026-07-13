@@ -109,9 +109,10 @@ func sanitizeAccountForBrief(account string) string {
 }
 
 // formatProjectResource renders a single resource as a human-readable bullet.
-// Unknown resource types fall back to a JSON-encoded ref so the agent can
-// still read what the user attached. New resource types should add a case
-// here AND in the API validator (handler/project_resource.go).
+// The server validates the three current resource types before a task can be
+// claimed. New types must add an explicit renderer here and API validation in
+// handler/project_resource.go; silently rendering an unknown type would split
+// the task runtime contract from the project-resource API.
 func formatProjectResource(r ProjectResourceForEnv) string {
 	label := r.Label
 	switch r.ResourceType {
@@ -161,16 +162,15 @@ func formatProjectResource(r ProjectResourceForEnv) string {
 		}
 		out += ". Use the `gongfeng` MCP server for branch/file/MR resolution; do not treat this as a GitHub resource."
 		return out
-	default:
+	case "local_directory":
 		ref := string(r.ResourceRef)
-		if ref == "" {
-			ref = "{}"
-		}
 		out := fmt.Sprintf("**%s**: `%s`", r.ResourceType, ref)
 		if label != "" {
 			out += " — " + label
 		}
 		return out
+	default:
+		panic(fmt.Sprintf("unsupported project resource type %q", r.ResourceType))
 	}
 }
 
