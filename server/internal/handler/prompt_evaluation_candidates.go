@@ -746,10 +746,6 @@ func (h *Handler) syncPromptEvaluationCasesFromPayload(w http.ResponseWriter, r 
 		writeError(w, http.StatusInternalServerError, "failed to refresh prompt evaluation test suite cases")
 		return false
 	}
-	if err := refreshPromptEvaluationExperimentDimensionCount(r.Context(), qtx, asset.WorkspaceID, asset.ID); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to refresh prompt evaluation experiment dimensions")
-		return false
-	}
 	cases := promptEvaluationCases(decodePayloadObject(asset.Payload))
 	for idx, item := range cases {
 		normalized := normalizePromptEvaluationCase(idx, item)

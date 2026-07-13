@@ -34,7 +34,6 @@ WITH filtered_assets AS (
     SELECT pea.*
     FROM prompt_evaluation_asset pea
     WHERE pea.workspace_id = $1
-      AND (sqlc.arg('include_acceptance_fixtures')::boolean OR TRUE)
 ),
 asset_summary AS (
     SELECT
@@ -97,7 +96,6 @@ candidate_summary AS (
     JOIN filtered_assets pea ON pea.id = peoc.asset_id
     WHERE peoc.workspace_id = $1
       AND (sqlc.narg('since')::timestamptz IS NULL OR peoc.created_at >= sqlc.narg('since'))
-      AND (sqlc.arg('include_acceptance_fixtures')::boolean OR TRUE)
 ),
 snapshot_summary AS (
     SELECT

@@ -917,10 +917,6 @@ func (h *Handler) CreatePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 	if ok := h.syncPromptEvaluationCasesFromPayload(w, r, qtx, asset, actorID); !ok {
 		return
 	}
-	if err := syncPromptEvaluationExperimentDimensions(r.Context(), qtx, asset, actorID); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to sync prompt evaluation experiment dimensions")
-		return
-	}
 	createdAsset, err := qtx.GetPromptEvaluationAssetInWorkspace(r.Context(), db.GetPromptEvaluationAssetInWorkspaceParams{ID: asset.ID, WorkspaceID: asset.WorkspaceID})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to reload prompt evaluation asset")
@@ -1028,10 +1024,6 @@ func (h *Handler) UpdatePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if ok := h.syncPromptEvaluationCasesFromPayload(w, r, qtx, asset, existing.CreatedBy); !ok {
-		return
-	}
-	if err := syncPromptEvaluationExperimentDimensions(r.Context(), qtx, asset, existing.CreatedBy); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to sync prompt evaluation experiment dimensions")
 		return
 	}
 	if err := tx.Commit(r.Context()); err != nil {

@@ -404,7 +404,6 @@ WITH filtered_assets AS (
     SELECT pea.id, pea.workspace_id, pea.prompt_id, pea.name, pea.description, pea.asset_type, pea.payload, pea.status, pea.created_by, pea.created_at, pea.updated_at, pea.structure_schema, pea.structured_case_count, pea.structured_variable_count, pea.structured_assertion_count, pea.linked_dataset_count, pea.linked_prompt_count, pea.evaluation_dimension_count, pea.dataset_row_count, pea.test_suite_case_count, pea.experiment_dimension_count
     FROM prompt_evaluation_asset pea
     WHERE pea.workspace_id = $1
-      AND ($2::boolean OR TRUE)
 ),
 asset_summary AS (
     SELECT
@@ -455,7 +454,7 @@ run_summary AS (
     FROM prompt_evaluation_run per
     JOIN filtered_assets pea ON pea.id = per.asset_id
     WHERE per.workspace_id = $1
-      AND ($3::timestamptz IS NULL OR per.created_at >= $3)
+      AND ($2::timestamptz IS NULL OR per.created_at >= $2)
 ),
 candidate_summary AS (
     SELECT
@@ -466,8 +465,7 @@ candidate_summary AS (
     FROM prompt_evaluation_optimization_candidate peoc
     JOIN filtered_assets pea ON pea.id = peoc.asset_id
     WHERE peoc.workspace_id = $1
-      AND ($3::timestamptz IS NULL OR peoc.created_at >= $3)
-      AND ($2::boolean OR TRUE)
+      AND ($2::timestamptz IS NULL OR peoc.created_at >= $2)
 ),
 snapshot_summary AS (
     SELECT
@@ -477,7 +475,7 @@ snapshot_summary AS (
     JOIN prompt_evaluation_run per ON per.id = pees.run_id
     JOIN filtered_assets pea ON pea.id = per.asset_id
     WHERE pees.workspace_id = $1
-      AND ($3::timestamptz IS NULL OR pees.created_at >= $3)
+      AND ($2::timestamptz IS NULL OR pees.created_at >= $2)
 )
 SELECT
     a.total_assets,
@@ -532,9 +530,8 @@ CROSS JOIN snapshot_summary es
 `
 
 type GetPromptEvaluationSummaryParams struct {
-	WorkspaceID               pgtype.UUID        `json:"workspace_id"`
-	IncludeAcceptanceFixtures bool               `json:"include_acceptance_fixtures"`
-	Since                     pgtype.Timestamptz `json:"since"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	Since       pgtype.Timestamptz `json:"since"`
 }
 
 type GetPromptEvaluationSummaryRow struct {
@@ -582,7 +579,7 @@ type GetPromptEvaluationSummaryRow struct {
 }
 
 func (q *Queries) GetPromptEvaluationSummary(ctx context.Context, arg GetPromptEvaluationSummaryParams) (GetPromptEvaluationSummaryRow, error) {
-	row := q.db.QueryRow(ctx, getPromptEvaluationSummary, arg.WorkspaceID, arg.IncludeAcceptanceFixtures, arg.Since)
+	row := q.db.QueryRow(ctx, getPromptEvaluationSummary, arg.WorkspaceID, arg.Since)
 	var i GetPromptEvaluationSummaryRow
 	err := row.Scan(
 		&i.TotalAssets,

@@ -429,10 +429,6 @@ func syncPromptEvaluationTestSuiteCase(ctx context.Context, qtx *db.Queries, ass
 	return refreshPromptEvaluationTestSuiteCaseCount(ctx, qtx, item.WorkspaceID, item.AssetID)
 }
 
-func syncPromptEvaluationExperimentDimensions(ctx context.Context, qtx *db.Queries, asset db.PromptEvaluationAsset, createdBy pgtype.UUID) error {
-	return nil
-}
-
 func deletePromptEvaluationDatasetRowsForCase(ctx context.Context, qtx *db.Queries, workspaceID pgtype.UUID, caseID pgtype.UUID) error {
 	deletedAssets, err := qtx.DeletePromptEvaluationDatasetRowsByCase(ctx, db.DeletePromptEvaluationDatasetRowsByCaseParams{
 		WorkspaceID: workspaceID,
@@ -477,10 +473,6 @@ func refreshPromptEvaluationTestSuiteCaseCount(ctx context.Context, qtx *db.Quer
 		WorkspaceID:      workspaceID,
 		TestSuiteAssetID: assetID,
 	})
-}
-
-func refreshPromptEvaluationExperimentDimensionCount(ctx context.Context, qtx *db.Queries, workspaceID pgtype.UUID, assetID pgtype.UUID) error {
-	return nil
 }
 
 func promptEvaluationOptimizationCandidateToResponse(item db.PromptEvaluationOptimizationCandidate) PromptEvaluationOptimizationCandidateResponse {

@@ -944,18 +944,6 @@ func TestGetPromptEvaluationSummaryIncludesDevelopmentFixtures(t *testing.T) {
 		t.Fatalf("all summary should include acceptance fixtures, assets=%#v status=%#v metrics=%#v", allSummary.Assets, allSummary.RunStatus, allSummary.Metrics)
 	}
 
-	compatW := httptest.NewRecorder()
-	testHandler.GetPromptEvaluationSummary(compatW, newRequest(http.MethodGet, "/api/prompt-evaluation-summary?include_acceptance_fixtures=false", nil))
-	if compatW.Code != http.StatusOK {
-		t.Fatalf("compat summary status = %d, body = %s", compatW.Code, compatW.Body.String())
-	}
-	var compatSummary PromptEvaluationSummaryResponse
-	if err := json.Unmarshal(compatW.Body.Bytes(), &compatSummary); err != nil {
-		t.Fatalf("decode compat summary: %v", err)
-	}
-	if compatSummary.Assets["资产总数"] != 2 || compatSummary.RunStatus["运行总数"] != 3 || compatSummary.Metrics["输入token"].(float64) != 124 {
-		t.Fatalf("compat summary should include acceptance fixtures, assets=%#v status=%#v metrics=%#v", compatSummary.Assets, compatSummary.RunStatus, compatSummary.Metrics)
-	}
 }
 
 func TestRunPromptEvaluationAssetReadsDatasetPayload(t *testing.T) {
