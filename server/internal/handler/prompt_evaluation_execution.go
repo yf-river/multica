@@ -408,9 +408,9 @@ func buildPromptEvaluationCandidateFailureSummary(run db.PromptEvaluationRun, tr
 			"用例名称":  trial.CaseName,
 			"状态":    trial.Status,
 			"失败原因":  trial.FailureReason,
-			"输入":    decodeJSONDefault(trial.Input, map[string]any{}),
-			"期望":    decodeJSONDefault(trial.Expected, map[string]any{}),
-			"输出":    decodeJSONDefault(trial.Output, map[string]any{}),
+			"输入":    mustDecodePersistedJSONObject(trial.Input, "prompt evaluation trial input"),
+			"期望":    mustDecodePersistedJSONObject(trial.Expected, "prompt evaluation trial expected"),
+			"输出":    mustDecodePersistedJSONValue(trial.Output, "prompt evaluation trial output"),
 			"渲染提示词": trial.RenderedPrompt,
 		})
 	}
@@ -420,8 +420,8 @@ func buildPromptEvaluationCandidateFailureSummary(run db.PromptEvaluationRun, tr
 				"用例序号": trial.CaseIndex,
 				"用例名称": trial.CaseName,
 				"状态":   trial.Status,
-				"输入":   decodeJSONDefault(trial.Input, map[string]any{}),
-				"期望":   decodeJSONDefault(trial.Expected, map[string]any{}),
+				"输入":   mustDecodePersistedJSONObject(trial.Input, "prompt evaluation trial input"),
+				"期望":   mustDecodePersistedJSONObject(trial.Expected, "prompt evaluation trial expected"),
 			})
 		}
 	}
@@ -440,7 +440,7 @@ func buildPromptEvaluationCandidateFailureSummary(run db.PromptEvaluationRun, tr
 		"失败原因":          run.FailureReason,
 		"评估结论":          run.Conclusion,
 		"失败用例":          trialSummaries,
-		"evidence":      decodeJSONDefault(run.Evidence, map[string]any{}),
+		"evidence":      mustDecodePersistedJSONObject(run.Evidence, "prompt evaluation run evidence"),
 		"生成说明":          "基于结构化运行记录和失败用例生成优化候选；候选不会自动替换生产提示词。",
 	}
 }
@@ -544,8 +544,8 @@ func buildPromptEvaluationSourcePromptSnapshot(prompt db.PromptLibraryItem) map[
 		"类型":        prompt.PromptType,
 		"版本":        prompt.Version,
 		"状态":        prompt.Status,
-		"变量":        decodeJSONDefault(prompt.Variables, []any{}),
-		"标签":        decodeJSONDefault(prompt.Tags, []any{}),
+		"变量":        mustDecodePersistedJSONArray(prompt.Variables, "prompt library item variables"),
+		"标签":        mustDecodePersistedJSONArray(prompt.Tags, "prompt library item tags"),
 		"内容摘要":      truncatePromptEvaluationEvidence(prompt.Content, 1200),
 	}
 }
@@ -567,7 +567,7 @@ func buildPromptEvaluationPublishedPromptDescription(candidate db.PromptEvaluati
 }
 
 func buildPromptEvaluationPublishedPromptTags(raw []byte) []byte {
-	tags := stringListFromAny(decodeJSONDefault(raw, []any{}))
+	tags := stringListFromAny(mustDecodePersistedJSONArray(raw, "prompt library item tags"))
 	seen := map[string]bool{}
 	next := make([]string, 0, len(tags)+3)
 	for _, tag := range append(tags, "优化发布", "人工确认", "训练与评估") {

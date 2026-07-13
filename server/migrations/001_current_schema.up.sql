@@ -1130,7 +1130,10 @@ CREATE TABLE public.prompt_evaluation_case_operation (
     error_message text DEFAULT ''::text NOT NULL,
     started_at timestamp with time zone,
     completed_at timestamp with time zone,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT prompt_evaluation_case_operation_filter_is_object CHECK ((jsonb_typeof(filter) = 'object'::text)),
+    CONSTRAINT prompt_evaluation_case_operation_input_is_object CHECK ((jsonb_typeof(input) = 'object'::text)),
+    CONSTRAINT prompt_evaluation_case_operation_sample_case_ids_is_array CHECK ((jsonb_typeof(sample_case_ids) = 'array'::text))
 );
 
 CREATE TABLE public.prompt_evaluation_dataset_row (
@@ -1223,6 +1226,8 @@ CREATE TABLE public.prompt_evaluation_evidence_snapshot (
     evidence jsonb DEFAULT '{}'::jsonb NOT NULL,
     created_by uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT prompt_evaluation_evidence_snapshot_evidence_is_object CHECK ((jsonb_typeof(evidence) = 'object'::text)),
+    CONSTRAINT prompt_evaluation_evidence_snapshot_summary_is_object CHECK ((jsonb_typeof(summary) = 'object'::text)),
     CONSTRAINT prompt_evaluation_evidence_snapshot_type_check CHECK ((snapshot_type = ANY (ARRAY['手动归档'::text, '验收归档'::text, '自动归档'::text])))
 );
 
@@ -1332,6 +1337,9 @@ CREATE TABLE public.prompt_evaluation_trial (
     failure_reason text DEFAULT ''::text NOT NULL,
     evidence jsonb DEFAULT '{}'::jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT prompt_evaluation_trial_evidence_is_object CHECK ((jsonb_typeof(evidence) = 'object'::text)),
+    CONSTRAINT prompt_evaluation_trial_expected_is_object CHECK ((jsonb_typeof(expected) = 'object'::text)),
+    CONSTRAINT prompt_evaluation_trial_input_is_object CHECK ((jsonb_typeof(input) = 'object'::text)),
     CONSTRAINT prompt_evaluation_trial_status_check CHECK ((status = ANY (ARRAY['待执行'::text, '通过'::text, '未通过'::text, '失败'::text, '已跳过'::text, '需人工复核'::text])))
 );
 

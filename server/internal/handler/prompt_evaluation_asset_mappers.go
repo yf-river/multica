@@ -139,15 +139,15 @@ func promptEvaluationTrialToResponse(trial db.PromptEvaluationTrial) PromptEvalu
 		CaseIndex:      trial.CaseIndex,
 		CaseName:       trial.CaseName,
 		Status:         trial.Status,
-		Input:          decodeJSONDefault(trial.Input, map[string]any{}),
-		Expected:       decodeJSONDefault(trial.Expected, map[string]any{}),
-		Output:         decodeJSONDefault(trial.Output, map[string]any{}),
+		Input:          mustDecodePersistedJSONObject(trial.Input, "prompt evaluation trial input"),
+		Expected:       mustDecodePersistedJSONObject(trial.Expected, "prompt evaluation trial expected"),
+		Output:         mustDecodePersistedJSONValue(trial.Output, "prompt evaluation trial output"),
 		RenderedPrompt: trial.RenderedPrompt,
 		InputTokens:    trial.InputTokens,
 		OutputTokens:   trial.OutputTokens,
 		DurationMs:     trial.DurationMs,
 		FailureReason:  trial.FailureReason,
-		Evidence:       decodeJSONDefault(trial.Evidence, map[string]any{}),
+		Evidence:       mustDecodePersistedJSONObject(trial.Evidence, "prompt evaluation trial evidence"),
 		CreatedAt:      timestampToString(trial.CreatedAt),
 	}
 }
@@ -198,11 +198,11 @@ func promptEvaluationCaseOperationToResponse(item db.PromptEvaluationCaseOperati
 		WorkspaceID:   uuidToString(item.WorkspaceID),
 		AssetID:       uuidToString(item.AssetID),
 		OperationType: item.OperationType,
-		Filter:        decodeJSONDefault(item.Filter, map[string]any{}),
-		Input:         decodeJSONDefault(item.Input, map[string]any{}),
+		Filter:        mustDecodePersistedJSONObject(item.Filter, "prompt evaluation case operation filter"),
+		Input:         mustDecodePersistedJSONObject(item.Input, "prompt evaluation case operation input"),
 		ChangedCount:  item.ChangedCount,
 		SkippedCount:  item.SkippedCount,
-		SampleCaseIDs: decodeJSONDefault(item.SampleCaseIds, []any{}),
+		SampleCaseIDs: mustDecodePersistedJSONArray(item.SampleCaseIds, "prompt evaluation case operation sample_case_ids"),
 		CreatedBy:     uuidToPtr(item.CreatedBy),
 		CreatedAt:     timestampToString(item.CreatedAt),
 		Status:        item.Status,
@@ -242,7 +242,7 @@ func promptEvaluationAssertionsByCase(assertions []db.PromptEvaluationCaseAssert
 }
 
 func promptEvaluationAssertionTexts(raw []byte) []string {
-	values := stringListFromAny(decodeJSONDefault(raw, []any{}))
+	values := stringListFromAny(mustDecodePersistedJSONArray(raw, "prompt evaluation case expected_contains"))
 	if len(values) == 0 {
 		return nil
 	}
@@ -320,10 +320,7 @@ func promptEvaluationDimensionScoreTrendToResponse(item db.ListPromptEvaluationD
 
 func promptEvaluationExpectedContainsFromAssertions(fallback []byte, assertions []db.PromptEvaluationCaseAssertion) []any {
 	if len(assertions) == 0 {
-		if values, ok := decodeJSONDefault(fallback, []any{}).([]any); ok {
-			return values
-		}
-		return []any{}
+		return mustDecodePersistedJSONArray(fallback, "prompt evaluation case expected_contains")
 	}
 	result := make([]any, 0, len(assertions))
 	for _, item := range assertions {
@@ -529,6 +526,14 @@ func mustDecodePersistedJSONArray(raw []byte, field string) []any {
 	return value
 }
 
+func mustDecodePersistedJSONValue(raw []byte, field string) any {
+	var value any
+	if err := json.Unmarshal(raw, &value); err != nil {
+		panic("handler: " + field + " must be valid JSON: " + err.Error())
+	}
+	return value
+}
+
 func promptEvaluationEvidenceSnapshotToResponse(item db.PromptEvaluationEvidenceSnapshot, includeEvidence bool) PromptEvaluationEvidenceSnapshotResponse {
 	resp := PromptEvaluationEvidenceSnapshotResponse{
 		ID:            uuidToString(item.ID),
@@ -536,12 +541,12 @@ func promptEvaluationEvidenceSnapshotToResponse(item db.PromptEvaluationEvidence
 		RunID:         uuidToString(item.RunID),
 		SnapshotType:  item.SnapshotType,
 		SchemaVersion: item.SchemaVersion,
-		Summary:       decodeJSONDefault(item.Summary, map[string]any{}),
+		Summary:       mustDecodePersistedJSONObject(item.Summary, "prompt evaluation evidence snapshot summary"),
 		CreatedBy:     uuidToPtr(item.CreatedBy),
 		CreatedAt:     timestampToString(item.CreatedAt),
 	}
 	if includeEvidence {
-		resp.Evidence = decodeJSONDefault(item.Evidence, map[string]any{})
+		resp.Evidence = mustDecodePersistedJSONObject(item.Evidence, "prompt evaluation evidence snapshot evidence")
 	}
 	return resp
 }
@@ -553,7 +558,7 @@ func promptEvaluationEvidenceSnapshotListRowToResponse(item db.ListPromptEvaluat
 		RunID:         uuidToString(item.RunID),
 		SnapshotType:  item.SnapshotType,
 		SchemaVersion: item.SchemaVersion,
-		Summary:       decodeJSONDefault(item.Summary, map[string]any{}),
+		Summary:       mustDecodePersistedJSONObject(item.Summary, "prompt evaluation evidence snapshot summary"),
 		CreatedBy:     uuidToPtr(item.CreatedBy),
 		CreatedAt:     timestampToString(item.CreatedAt),
 	}

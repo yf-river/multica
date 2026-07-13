@@ -493,7 +493,7 @@ func (h *Handler) buildPromptEvaluationRunEvidenceResponse(ctx context.Context, 
 		ToolCallChains:   toolCallChains,
 		ToolCallSummary:  toolCallSummary,
 		ExecutionSummary: executionSummary,
-		Evidence:         decodeJSONDefault(run.Evidence, map[string]any{}),
+		Evidence:         mustDecodePersistedJSONObject(run.Evidence, "prompt evaluation run evidence"),
 		Context:          buildPromptEvaluationEvidenceContext(run, task, refs, trialResp, usageResp, messageResp, traceResp),
 	}, nil
 }

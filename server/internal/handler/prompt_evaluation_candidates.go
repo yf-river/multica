@@ -302,7 +302,7 @@ func (h *Handler) promptEvaluationCandidateRuntimeEvidence(ctx context.Context, 
 			"queue_wait_ms":  int64Value(event.QueueWaitMs),
 			"run_ms":         int64Value(event.RunMs),
 			"total_ms":       int64Value(event.TotalMs),
-			"metadata":       decodeJSONDefault(event.Metadata, map[string]any{}),
+			"metadata":       mustDecodePersistedJSONObject(event.Metadata, "task trace event metadata"),
 			"created_at":     timestampToString(event.CreatedAt),
 		})
 	}
