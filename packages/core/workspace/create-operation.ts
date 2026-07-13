@@ -1,10 +1,10 @@
 "use client";
 
-import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
 import { api, isMutationOutcomeUnknown } from "../api";
-import { defaultStorage } from "../platform/storage";
-import { registerAccountPersistStore } from "../platform/workspace-storage";
+import {
+  createAccountRecoverableOperationStore,
+  type RecoverableOperationStore,
+} from "../platform/recoverable-operation-store";
 import type { Workspace } from "../types";
 import { generateUUID } from "../utils";
 
@@ -21,30 +21,10 @@ interface PendingWorkspaceCreate {
   createdAt: number;
 }
 
-interface WorkspaceCreateOperationState {
-  pending?: PendingWorkspaceCreate;
-  setPending: (pending?: PendingWorkspaceCreate) => void;
-}
-
-export const useWorkspaceCreateOperationStore = create<WorkspaceCreateOperationState>()(
-  persist(
-    (set) => ({
-      setPending: (pending) => set({ pending }),
-    }),
-    {
-      name: "multica_workspace_create_operation",
-      storage: createJSONStorage(() => defaultStorage),
-      partialize: ({ pending }) => ({ pending }),
-      onRehydrateStorage: () => (state) => {
-        if (state?.pending && state.pending.createdAt < Date.now() - 30 * 24 * 60 * 60 * 1000) {
-          state.pending = undefined;
-        }
-      },
-    },
-  ),
-);
-
-registerAccountPersistStore(useWorkspaceCreateOperationStore);
+export const useWorkspaceCreateOperationStore: RecoverableOperationStore<PendingWorkspaceCreate> =
+  createAccountRecoverableOperationStore<PendingWorkspaceCreate>(
+    "multica_workspace_create_operation",
+  );
 
 export interface WorkspaceCreateClient {
   createWorkspace(request: CreateWorkspaceRequest, requestKey: string): Promise<Workspace>;

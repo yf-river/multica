@@ -1,10 +1,10 @@
 "use client";
 
-import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
 import { api, isMutationOutcomeUnknown } from "../api";
-import { createWorkspaceAwareStorage, registerWorkspacePersistStore } from "../platform/workspace-storage";
-import { defaultStorage } from "../platform/storage";
+import {
+  createWorkspaceRecoverableOperationStore,
+  type RecoverableOperationStore,
+} from "../platform/recoverable-operation-store";
 import type { CreateMemberRequest, MemberWithUser } from "../types";
 import { generateUUID } from "../utils";
 
@@ -14,28 +14,10 @@ interface PendingMemberCreate {
   createdAt: number;
 }
 
-interface MemberCreateOperationState {
-  pending?: PendingMemberCreate;
-  setPending: (pending?: PendingMemberCreate) => void;
-}
-
-export const useMemberCreateOperationStore = create<MemberCreateOperationState>()(
-  persist(
-    (set) => ({ setPending: (pending) => set({ pending }) }),
-    {
-      name: "multica_member_create_operation",
-      storage: createJSONStorage(() => createWorkspaceAwareStorage(defaultStorage)),
-      partialize: ({ pending }) => ({ pending }),
-      onRehydrateStorage: () => (state) => {
-        if (state?.pending && state.pending.createdAt < Date.now() - 30 * 24 * 60 * 60 * 1000) {
-          state.pending = undefined;
-        }
-      },
-    },
-  ),
-);
-
-registerWorkspacePersistStore(useMemberCreateOperationStore);
+export const useMemberCreateOperationStore: RecoverableOperationStore<PendingMemberCreate> =
+  createWorkspaceRecoverableOperationStore<PendingMemberCreate>(
+    "multica_member_create_operation",
+  );
 
 export interface MemberCreateClient {
   createMember(workspaceId: string, request: CreateMemberRequest, requestKey: string): Promise<MemberWithUser>;

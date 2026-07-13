@@ -1,10 +1,10 @@
 "use client";
 
-import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
 import { api, isMutationOutcomeUnknown } from "../api";
-import { defaultStorage } from "../platform/storage";
-import { createWorkspaceAwareStorage, registerWorkspacePersistStore } from "../platform/workspace-storage";
+import {
+  createWorkspaceRecoverableOperationStore,
+  type RecoverableOperationStore,
+} from "../platform/recoverable-operation-store";
 import type { PromptEvaluationOptimizationCandidate } from "../types";
 import { generateUUID } from "../utils";
 
@@ -14,28 +14,10 @@ interface PendingCandidateCreate {
   createdAt: number;
 }
 
-interface CandidateCreateState {
-  pending?: PendingCandidateCreate;
-  setPending: (pending?: PendingCandidateCreate) => void;
-}
-
-export const useCandidateCreateStore = create<CandidateCreateState>()(
-  persist(
-    (set) => ({ setPending: (pending) => set({ pending }) }),
-    {
-      name: "multica_prompt_candidate_create",
-      storage: createJSONStorage(() => createWorkspaceAwareStorage(defaultStorage)),
-      partialize: ({ pending }) => ({ pending }),
-      onRehydrateStorage: () => (state) => {
-        if (state?.pending && state.pending.createdAt < Date.now() - 30 * 24 * 60 * 60 * 1000) {
-          state.pending = undefined;
-        }
-      },
-    },
-  ),
-);
-
-registerWorkspacePersistStore(useCandidateCreateStore);
+export const useCandidateCreateStore: RecoverableOperationStore<PendingCandidateCreate> =
+  createWorkspaceRecoverableOperationStore<PendingCandidateCreate>(
+    "multica_prompt_candidate_create",
+  );
 
 export interface CandidateCreateClient {
   createPromptEvaluationOptimizationCandidate(

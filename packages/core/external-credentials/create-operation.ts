@@ -1,10 +1,10 @@
 "use client";
 
-import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
 import { api, ApiError, isMutationOutcomeUnknown } from "../api";
-import { defaultStorage } from "../platform/storage";
-import { registerAccountPersistStore } from "../platform/workspace-storage";
+import {
+  createAccountRecoverableOperationStore,
+  type RecoverableOperationStore,
+} from "../platform/recoverable-operation-store";
 import type { CreateExternalCredentialProfileRequest, ExternalCredentialProfile } from "../types";
 import { generateUUID } from "../utils";
 
@@ -14,28 +14,10 @@ interface PendingCredentialProfileCreate {
   createdAt: number;
 }
 
-interface CredentialProfileCreateState {
-  pending?: PendingCredentialProfileCreate;
-  setPending: (pending?: PendingCredentialProfileCreate) => void;
-}
-
-export const useCredentialProfileCreateStore = create<CredentialProfileCreateState>()(
-  persist(
-    (set) => ({ setPending: (pending) => set({ pending }) }),
-    {
-      name: "multica_credential_profile_create",
-      storage: createJSONStorage(() => defaultStorage),
-      partialize: ({ pending }) => ({ pending }),
-      onRehydrateStorage: () => (state) => {
-        if (state?.pending && state.pending.createdAt < Date.now() - 30 * 24 * 60 * 60 * 1000) {
-          state.pending = undefined;
-        }
-      },
-    },
-  ),
-);
-
-registerAccountPersistStore(useCredentialProfileCreateStore);
+export const useCredentialProfileCreateStore: RecoverableOperationStore<PendingCredentialProfileCreate> =
+  createAccountRecoverableOperationStore<PendingCredentialProfileCreate>(
+    "multica_credential_profile_create",
+  );
 
 export interface CredentialProfileCreateClient {
   createExternalCredentialProfile(

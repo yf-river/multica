@@ -1,10 +1,10 @@
 "use client";
 
-import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
 import { api, isMutationOutcomeUnknown } from "../api";
-import { defaultStorage } from "../platform/storage";
-import { createWorkspaceAwareStorage, registerWorkspacePersistStore } from "../platform/workspace-storage";
+import {
+  createWorkspaceRecoverableOperationStore,
+  type RecoverableOperationStore,
+} from "../platform/recoverable-operation-store";
 import type { AgentPlaygroundDetail, CreateAgentPlaygroundExperimentRequest } from "../types";
 import { generateUUID } from "../utils";
 
@@ -14,28 +14,10 @@ interface PendingAgentPlaygroundCreate {
   createdAt: number;
 }
 
-interface AgentPlaygroundCreateState {
-  pending?: PendingAgentPlaygroundCreate;
-  setPending: (pending?: PendingAgentPlaygroundCreate) => void;
-}
-
-export const useAgentPlaygroundCreateStore = create<AgentPlaygroundCreateState>()(
-  persist(
-    (set) => ({ setPending: (pending) => set({ pending }) }),
-    {
-      name: "multica_agent_playground_create",
-      storage: createJSONStorage(() => createWorkspaceAwareStorage(defaultStorage)),
-      partialize: ({ pending }) => ({ pending }),
-      onRehydrateStorage: () => (state) => {
-        if (state?.pending && state.pending.createdAt < Date.now() - 30 * 24 * 60 * 60 * 1000) {
-          state.pending = undefined;
-        }
-      },
-    },
-  ),
-);
-
-registerWorkspacePersistStore(useAgentPlaygroundCreateStore);
+export const useAgentPlaygroundCreateStore: RecoverableOperationStore<PendingAgentPlaygroundCreate> =
+  createWorkspaceRecoverableOperationStore<PendingAgentPlaygroundCreate>(
+    "multica_agent_playground_create",
+  );
 
 export interface AgentPlaygroundCreateClient {
   createAgentPlaygroundExperiment(

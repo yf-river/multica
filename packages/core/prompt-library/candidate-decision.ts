@@ -1,10 +1,10 @@
 "use client";
 
-import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
 import { api, isMutationOutcomeUnknown } from "../api";
-import { defaultStorage } from "../platform/storage";
-import { createWorkspaceAwareStorage, registerWorkspacePersistStore } from "../platform/workspace-storage";
+import {
+  createWorkspaceRecoverableOperationStore,
+  type RecoverableOperationStore,
+} from "../platform/recoverable-operation-store";
 import type {
   PromptEvaluationOptimizationCandidate,
   PublishPromptEvaluationOptimizationCandidateResponse,
@@ -15,28 +15,10 @@ type CandidateDecision =
   | { kind: "publish"; candidateId: string; requestKey: string; createdAt: number }
   | { kind: "reject"; candidateId: string; reason: string; requestKey: string; createdAt: number };
 
-interface CandidateDecisionState {
-  pending?: CandidateDecision;
-  setPending: (pending?: CandidateDecision) => void;
-}
-
-export const useCandidateDecisionStore = create<CandidateDecisionState>()(
-  persist(
-    (set) => ({ setPending: (pending) => set({ pending }) }),
-    {
-      name: "multica_prompt_candidate_decision",
-      storage: createJSONStorage(() => createWorkspaceAwareStorage(defaultStorage)),
-      partialize: ({ pending }) => ({ pending }),
-      onRehydrateStorage: () => (state) => {
-        if (state?.pending && state.pending.createdAt < Date.now() - 30 * 24 * 60 * 60 * 1000) {
-          state.pending = undefined;
-        }
-      },
-    },
-  ),
-);
-
-registerWorkspacePersistStore(useCandidateDecisionStore);
+export const useCandidateDecisionStore: RecoverableOperationStore<CandidateDecision> =
+  createWorkspaceRecoverableOperationStore<CandidateDecision>(
+    "multica_prompt_candidate_decision",
+  );
 
 export interface CandidateDecisionClient {
   publishPromptEvaluationOptimizationCandidate(

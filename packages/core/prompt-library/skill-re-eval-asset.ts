@@ -1,10 +1,10 @@
 "use client";
 
-import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
 import { api, isMutationOutcomeUnknown } from "../api";
-import { defaultStorage } from "../platform/storage";
-import { createWorkspaceAwareStorage, registerWorkspacePersistStore } from "../platform/workspace-storage";
+import {
+  createWorkspaceRecoverableOperationStore,
+  type RecoverableOperationStore,
+} from "../platform/recoverable-operation-store";
 import type {
   PreparePromptEvaluationSkillReEvalRequest,
   PromptEvaluationSkillReEvalAssetResponse,
@@ -18,28 +18,10 @@ interface PendingSkillReEvalAsset {
   createdAt: number;
 }
 
-interface SkillReEvalAssetState {
-  pending?: PendingSkillReEvalAsset;
-  setPending: (pending?: PendingSkillReEvalAsset) => void;
-}
-
-export const useSkillReEvalAssetStore = create<SkillReEvalAssetState>()(
-  persist(
-    (set) => ({ setPending: (pending) => set({ pending }) }),
-    {
-      name: "multica_skill_re_eval_asset",
-      storage: createJSONStorage(() => createWorkspaceAwareStorage(defaultStorage)),
-      partialize: ({ pending }) => ({ pending }),
-      onRehydrateStorage: () => (state) => {
-        if (state?.pending && state.pending.createdAt < Date.now() - 30 * 24 * 60 * 60 * 1000) {
-          state.pending = undefined;
-        }
-      },
-    },
-  ),
-);
-
-registerWorkspacePersistStore(useSkillReEvalAssetStore);
+export const useSkillReEvalAssetStore: RecoverableOperationStore<PendingSkillReEvalAsset> =
+  createWorkspaceRecoverableOperationStore<PendingSkillReEvalAsset>(
+    "multica_skill_re_eval_asset",
+  );
 
 export interface SkillReEvalAssetClient {
   preparePromptEvaluationSkillReEvalAsset(
