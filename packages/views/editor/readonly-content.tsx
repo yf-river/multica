@@ -30,7 +30,7 @@ import rehypeSanitize, { defaultSchema } from "rehype-sanitize";
 import { createLowlight, common } from "lowlight";
 import { toHtml } from "hast-util-to-html";
 import { cn } from "@multica/ui/lib/utils";
-import { useWorkspacePaths, useWorkspaceSlug } from "@multica/core/paths";
+import { useWorkspacePaths } from "@multica/core/paths";
 import type { Attachment } from "@multica/core/types";
 import { useNavigation } from "../navigation";
 import { IssueMentionCard } from "../issues/components/issue-mention-card";
@@ -156,9 +156,6 @@ function ProjectMentionLink({ projectId, label }: { projectId: string; label?: s
   );
 }
 
-// Named component so it can call useWorkspaceSlug() — arrow function inlined
-// inside `components` below would still work, but extracting it keeps the
-// hook usage explicit and avoids hook-in-object-literal surprises.
 function ReadonlyLink({
   href,
   children,
@@ -166,8 +163,6 @@ function ReadonlyLink({
   href?: string;
   children?: React.ReactNode;
 }) {
-  const slug = useWorkspaceSlug();
-
   if (href?.startsWith("slash://skill/")) {
     return <span className="slash-command">{children}</span>;
   }
@@ -202,7 +197,7 @@ function ReadonlyLink({
       href={href}
       onClick={(e) => {
         e.preventDefault();
-        if (href) openLink(href, slug);
+        if (href) openLink(href);
       }}
     >
       {children}

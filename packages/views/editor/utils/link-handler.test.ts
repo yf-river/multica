@@ -7,20 +7,6 @@ describe("openLink", () => {
     vi.restoreAllMocks();
   });
 
-  it("prepends the workspace slug for current workspace-scoped links", () => {
-    const listener = vi.fn();
-    window.addEventListener("multica:navigate", listener);
-
-    openLink("/issues/abc", "acme");
-
-    expect(listener).toHaveBeenCalledTimes(1);
-    expect(listener.mock.calls[0]?.[0]).toMatchObject({
-      detail: { path: "/acme/issues/abc" },
-    });
-
-    window.removeEventListener("multica:navigate", listener);
-  });
-
   it("opens safe external links in an isolated tab", () => {
     const open = vi.spyOn(window, "open").mockImplementation(() => null);
 

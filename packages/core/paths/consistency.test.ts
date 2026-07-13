@@ -2,11 +2,7 @@ import { describe, it, expect } from "vitest";
 import { paths, isGlobalPath } from "./paths";
 import { RESERVED_SLUGS } from "./reserved-slugs";
 
-// C4 — link-handler's WORKSPACE_ROUTE_SEGMENTS must match paths.workspace's
-// parameterless method names. We can't import WORKSPACE_ROUTE_SEGMENTS here
-// because link-handler is in packages/views (no inverse import allowed), so
-// we hardcode the expected list and assert paths.workspace produces the same
-// keys. If you change either, BOTH need to be updated — the test catches drift.
+// C4 — current workspace paths always include their workspace slug.
 describe("paths.workspace() shape", () => {
   it("exposes the expected parameterless workspace route methods", () => {
     const ws = paths.workspace("__probe__");
