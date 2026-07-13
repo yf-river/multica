@@ -2,7 +2,6 @@ package agent
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -762,10 +761,7 @@ func parseCursorModels(output string) []Model {
 		}
 		id := strings.TrimSpace(line[:idx])
 		label := strings.TrimSpace(line[idx+3:])
-		if !isOpenclawIdentifier(id) {
-			// Reuse the identifier guard — cursor IDs are in the
-			// same character set (alnum + `-./_`), so anything
-			// that fails it is either malformed or a header line.
+		if !isCursorModelIdentifier(id) {
 			continue
 		}
 		if seen[id] {
@@ -791,14 +787,9 @@ func parseCursorModels(output string) []Model {
 	return models
 }
 
-// discoverOpenclawAgents enumerates the pre-registered OpenClaw
-// agents (which is where model selection actually lives in the
-// OpenClaw world — each agent is bound to a model at `agents add`
-// time). It tries structured JSON output first, falling back to a
-// conservative text parser that rejects TUI decoration and section
-// headers. On any ambiguity we return an empty list and let the
-// creatable dropdown handle manual entry — a silently-wrong
-// enumeration would be worse than none.
+// discoverOpenclawAgents enumerates the pre-registered OpenClaw agents. Model
+// selection lives on those agents, and the current CLI exposes the catalog as
+// a JSON array through `agents list --json`.
 func discoverOpenclawAgents(ctx context.Context, executablePath string) ([]Model, error) {
 	if executablePath == "" {
 		executablePath = "openclaw"
@@ -809,34 +800,17 @@ func discoverOpenclawAgents(ctx context.Context, executablePath string) ([]Model
 	runCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
-	// Try JSON modes first. Different openclaw builds expose the
-	// flag under different names; trying a couple is cheap.
-	for _, jsonArgs := range [][]string{
-		{"agents", "list", "--json"},
-		{"agents", "list", "--output", "json"},
-		{"agents", "list", "-o", "json"},
-	} {
-		cmd := exec.CommandContext(runCtx, executablePath, jsonArgs...)
-		hideAgentWindow(cmd)
-		out, err := cmd.Output()
-		if err != nil && len(out) == 0 {
-			continue
-		}
-		if models, ok := parseOpenclawAgentsJSON(out); ok {
-			return models, nil
-		}
-	}
-
-	// Text fallback. Be strict — the default output is a decorated
-	// banner with box-drawing and section headers, and picking up
-	// the wrong tokens produces nonsense entries like "Identity:".
-	cmd := exec.CommandContext(runCtx, executablePath, "agents", "list")
+	cmd := exec.CommandContext(runCtx, executablePath, "agents", "list", "--json")
 	hideAgentWindow(cmd)
 	out, err := cmd.Output()
-	if err != nil && len(out) == 0 {
+	if err != nil {
 		return []Model{}, nil
 	}
-	return parseOpenclawAgents(string(out)), nil
+	models, ok := parseOpenclawAgentsJSON(out)
+	if !ok {
+		return []Model{}, nil
+	}
+	return models, nil
 }
 
 // openclawAgentEntry is the shape parseOpenclawAgentsJSON expects
@@ -845,8 +819,6 @@ func discoverOpenclawAgents(ctx context.Context, executablePath string) ([]Model
 // display label set via `openclaw agents set-identity --name` and
 // is only used to enrich the dropdown label. The two are not
 // interchangeable — see openclawEntriesToModels for the mapping.
-// Older openclaw versions may emit only `name`; in that case we
-// fall back to using it as the id for backward compatibility.
 // `model` is optional and only used to enrich the dropdown label.
 type openclawAgentEntry struct {
 	Name  string `json:"name"`
@@ -854,29 +826,14 @@ type openclawAgentEntry struct {
 	Model string `json:"model"`
 }
 
-// parseOpenclawAgentsJSON accepts `openclaw agents list --json`-style
-// output. It handles two common shapes: a top-level array, or an
-// object with an `agents` key whose value is an array. Returns
-// ok=false if the input isn't valid JSON in either shape.
+// parseOpenclawAgentsJSON accepts the current top-level array returned by
+// `openclaw agents list --json`.
 func parseOpenclawAgentsJSON(raw []byte) ([]Model, bool) {
-	raw = bytes.TrimSpace(raw)
-	if len(raw) == 0 {
+	var entries []openclawAgentEntry
+	if err := json.Unmarshal(raw, &entries); err != nil || entries == nil {
 		return nil, false
 	}
-
-	var flat []openclawAgentEntry
-	if err := json.Unmarshal(raw, &flat); err == nil {
-		return openclawEntriesToModels(flat), true
-	}
-
-	var wrapped struct {
-		Agents []openclawAgentEntry `json:"agents"`
-	}
-	if err := json.Unmarshal(raw, &wrapped); err == nil && wrapped.Agents != nil {
-		return openclawEntriesToModels(wrapped.Agents), true
-	}
-
-	return nil, false
+	return openclawEntriesToModels(entries), true
 }
 
 func openclawEntriesToModels(entries []openclawAgentEntry) []Model {
@@ -888,15 +845,12 @@ func openclawEntriesToModels(entries []openclawAgentEntry) []Model {
 		// (e.g. "Sub2API OPS") which openclaw's normalizeAgentId would
 		// mangle into a different string ("sub2api-ops"), causing a
 		// lookup miss and "no parseable output" errors.
-		id := e.ID
-		if id == "" {
-			id = e.Name
-		}
+		id := strings.TrimSpace(e.ID)
 		if id == "" || seen[id] {
 			continue
 		}
 		seen[id] = true
-		displayName := e.Name
+		displayName := strings.TrimSpace(e.Name)
 		if displayName == "" {
 			displayName = id
 		}
@@ -909,50 +863,9 @@ func openclawEntriesToModels(entries []openclawAgentEntry) []Model {
 	return models
 }
 
-// parseOpenclawAgents extracts agent names from the text output of
-// `openclaw agents list`. The default CLI output is a decorated
-// banner — section headers ending in `:`, box-drawing characters,
-// and single-character icons — so we only accept lines that look
-// like a proper `<name> <model>` row: at least two whitespace-
-// separated tokens, both made of safe identifier characters, and
-// neither ending in `:`. Anything else is discarded to avoid
-// surfacing "Identity:" or `◇` as selectable models.
-func parseOpenclawAgents(output string) []Model {
-	scanner := bufio.NewScanner(strings.NewReader(output))
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	var models []Model
-	seen := map[string]bool{}
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		fields := strings.Fields(line)
-		if len(fields) < 2 {
-			continue
-		}
-		name, model := fields[0], fields[1]
-		if !isOpenclawIdentifier(name) || !isOpenclawIdentifier(model) {
-			continue
-		}
-		if seen[name] {
-			continue
-		}
-		seen[name] = true
-		models = append(models, Model{
-			ID:       name,
-			Label:    name + " (" + model + ")",
-			Provider: "openclaw",
-		})
-	}
-	return models
-}
-
-// isOpenclawIdentifier reports whether s looks like a valid
-// agent-name or model-id token: starts with a letter, contains only
-// identifier-safe characters, and isn't a section header
-// (trailing colon). Rejects TUI decoration like `│`, `╭`, `◇`, `|`.
-func isOpenclawIdentifier(s string) bool {
+// isCursorModelIdentifier rejects headers and decoration in Cursor's
+// human-readable model list.
+func isCursorModelIdentifier(s string) bool {
 	if s == "" || strings.HasSuffix(s, ":") {
 		return false
 	}
