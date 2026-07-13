@@ -3,6 +3,8 @@ package handler
 import (
 	"strings"
 	"testing"
+
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 func TestMustJSONBytesRejectsUnsupportedValues(t *testing.T) {
@@ -17,4 +19,27 @@ func TestMustJSONBytesRejectsUnsupportedValues(t *testing.T) {
 	}()
 
 	mustJSONBytes(make(chan struct{}))
+}
+
+func TestPromptEvaluationPersistedJSONReadersRejectInvalidShapes(t *testing.T) {
+	tests := []struct {
+		name string
+		call func()
+	}{
+		{"payload", func() { decodePayloadObject([]byte(`[]`)) }},
+		{"prompt variables", func() { promptVariableDefaults([]byte(`{}`)) }},
+		{"restore metadata", func() {
+			promptEvaluationDatasetVersionRestoreMetadata(db.PromptEvaluationDatasetVersion{}, []byte(`[]`))
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			defer func() {
+				if recovered := recover(); recovered == nil {
+					t.Fatal("invalid persisted JSON did not panic")
+				}
+			}()
+			test.call()
+		})
+	}
 }

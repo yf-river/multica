@@ -426,7 +426,7 @@ func promptEvaluationTaskEvidence(run db.PromptEvaluationRun, task db.AgentTaskQ
 		"run_id":        util.UUIDToString(run.ID),
 		"task_id":       util.UUIDToString(task.ID),
 		"task_status":   task.Status,
-		"task_result":   decodeJSONDefault(task.Result, map[string]any{}),
+		"task_result":   decodeOptionalPersistedJSON(task.Result, map[string]any{}, "agent task result"),
 		"task_error":    promptEvaluationTextValue(task.Error),
 		"session_id":    promptEvaluationTextValue(task.SessionID),
 		"work_dir":      promptEvaluationTextValue(task.WorkDir),
@@ -479,8 +479,8 @@ type promptEvaluationAgentCaseVerdict struct {
 func promptEvaluationPreservedRunFacts(run db.PromptEvaluationRun) map[string]any {
 	result := map[string]any{}
 	for _, raw := range []any{
-		decodeJSONDefault(run.Metrics, map[string]any{}),
-		decodeJSONDefault(run.Evidence, map[string]any{}),
+		mustDecodePersistedJSONObject(run.Metrics, "prompt evaluation run metrics"),
+		mustDecodePersistedJSONObject(run.Evidence, "prompt evaluation run evidence"),
 	} {
 		record, ok := raw.(map[string]any)
 		if !ok {
@@ -496,9 +496,9 @@ func promptEvaluationPreservedRunFacts(run db.PromptEvaluationRun) map[string]an
 }
 
 func promptEvaluationAgentDimensionScoresFromRun(run db.PromptEvaluationRun, verdicts []promptEvaluationAgentCaseVerdict, scored bool) []promptEvaluationAgentDimensionScore {
-	dimensions := promptEvaluationDimensionScoresFromRaw(decodeJSONDefault(run.Metrics, map[string]any{}))
+	dimensions := promptEvaluationDimensionScoresFromRaw(mustDecodePersistedJSONObject(run.Metrics, "prompt evaluation run metrics"))
 	if len(dimensions) == 0 {
-		dimensions = promptEvaluationDimensionScoresFromRaw(decodeJSONDefault(run.Evidence, map[string]any{}))
+		dimensions = promptEvaluationDimensionScoresFromRaw(mustDecodePersistedJSONObject(run.Evidence, "prompt evaluation run evidence"))
 	}
 	if len(dimensions) == 0 {
 		return nil
@@ -974,23 +974,24 @@ func promptEvaluationPerCaseUsage(totalCases int32, inputTokens int32, outputTok
 }
 
 func decodePayloadObject(raw []byte) map[string]any {
-	var payload map[string]any
-	if len(raw) > 0 {
-		_ = json.Unmarshal(raw, &payload)
-	}
-	if payload == nil {
-		return map[string]any{}
-	}
-	return payload
+	return mustDecodePersistedJSONObject(raw, "prompt evaluation asset payload")
 }
 
-func decodeJSONDefault(raw []byte, fallback any) any {
+func mustDecodePersistedJSONObject(raw []byte, field string) map[string]any {
+	var value map[string]any
+	if err := json.Unmarshal(raw, &value); err != nil || value == nil {
+		panic("service: " + field + " must be a JSON object")
+	}
+	return value
+}
+
+func decodeOptionalPersistedJSON(raw []byte, fallback any, field string) any {
 	if len(raw) == 0 {
 		return fallback
 	}
 	var value any
 	if err := json.Unmarshal(raw, &value); err != nil {
-		return fallback
+		panic("service: " + field + " must be valid JSON: " + err.Error())
 	}
 	return value
 }
@@ -998,7 +999,7 @@ func decodeJSONDefault(raw []byte, fallback any) any {
 func mustJSONBytes(value any) []byte {
 	raw, err := json.Marshal(value)
 	if err != nil {
-		return []byte("{}")
+		panic("service: marshal required JSON value: " + err.Error())
 	}
 	return raw
 }

@@ -417,14 +417,7 @@ func promptEvaluationPayloadWithCases(payload map[string]any, cases []map[string
 }
 
 func decodePayloadObject(raw []byte) map[string]any {
-	var payload map[string]any
-	if len(raw) > 0 {
-		_ = json.Unmarshal(raw, &payload)
-	}
-	if payload == nil {
-		return map[string]any{}
-	}
-	return payload
+	return mustDecodePersistedJSONObject(raw, "prompt evaluation payload")
 }
 
 func mustJSONBytes(value any) []byte {
@@ -743,10 +736,13 @@ func renderPromptContent(content string, variablesRaw []byte, values map[string]
 }
 
 func promptVariableDefaults(raw []byte) map[string]string {
-	var variables []map[string]any
-	_ = json.Unmarshal(raw, &variables)
+	values := mustDecodePersistedJSONArray(raw, "prompt library item variables")
 	defaults := map[string]string{}
-	for _, variable := range variables {
+	for _, value := range values {
+		variable, ok := value.(map[string]any)
+		if !ok {
+			continue
+		}
 		name := stringFromAny(variable["name"])
 		if name == "" {
 			continue
@@ -904,11 +900,9 @@ func promptEvaluationDatasetVersionRestoreMetadata(version db.PromptEvaluationDa
 		"恢复时间":      time.Now().Format(time.RFC3339),
 	}
 	if len(requestMetadata) > 0 {
-		var extra map[string]any
-		if err := json.Unmarshal(requestMetadata, &extra); err == nil {
-			for key, value := range extra {
-				metadata[key] = value
-			}
+		extra := mustDecodePersistedJSONObject(requestMetadata, "dataset version restore metadata")
+		for key, value := range extra {
+			metadata[key] = value
 		}
 	}
 	return mustJSONBytes(metadata)
