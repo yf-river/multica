@@ -714,21 +714,10 @@ func executePromptEvaluationCaseBulkTagsInTx(ctx context.Context, queries *db.Qu
 			"created_at":     time.Now().Format(time.RFC3339),
 		}
 		payloadBytes := mustJSONBytes(payload)
-		profile := promptEvaluationAssetProfileFromPayload(payloadBytes, job.Asset.PromptID)
-		if _, err = queries.UpdatePromptEvaluationAsset(ctx, db.UpdatePromptEvaluationAssetParams{
-			ID:                       job.Asset.ID,
-			WorkspaceID:              job.Asset.WorkspaceID,
-			PromptID:                 job.Asset.PromptID,
-			Payload:                  payloadBytes,
-			StructureSchema:          pgtype.Text{String: profile.StructureSchema, Valid: true},
-			StructuredCaseCount:      pgtype.Int4{Int32: profile.StructuredCaseCount, Valid: true},
-			StructuredVariableCount:  pgtype.Int4{Int32: profile.StructuredVariableCount, Valid: true},
-			StructuredAssertionCount: pgtype.Int4{Int32: profile.StructuredAssertionCount, Valid: true},
-			LinkedDatasetCount:       pgtype.Int4{Int32: profile.LinkedDatasetCount, Valid: true},
-			LinkedPromptCount:        pgtype.Int4{Int32: profile.LinkedPromptCount, Valid: true},
-			EvaluationDimensionCount: pgtype.Int4{Int32: profile.EvaluationDimensionCount, Valid: true},
-			ExperimentDimensionCount: pgtype.Int4{Int32: profile.ExperimentDimensionCount, Valid: true},
-		}); err != nil {
+		if _, err = queries.UpdatePromptEvaluationAsset(
+			ctx,
+			promptEvaluationAssetPayloadUpdateParams(job.Asset, payloadBytes),
+		); err != nil {
 			return promptEvaluationCaseBulkTagsResult{}, fmt.Errorf("update prompt evaluation asset payload: %w", err)
 		}
 	}

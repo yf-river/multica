@@ -665,6 +665,34 @@ func promptEvaluationAssetProfileFromPayload(raw []byte, promptID pgtype.UUID) p
 	}
 }
 
+func promptEvaluationAssetPayloadUpdateParams(
+	asset db.PromptEvaluationAsset,
+	payload []byte,
+) db.UpdatePromptEvaluationAssetParams {
+	params := db.UpdatePromptEvaluationAssetParams{
+		ID: asset.ID, WorkspaceID: asset.WorkspaceID, PromptID: asset.PromptID, Payload: payload,
+	}
+	return withPromptEvaluationAssetProfile(
+		params,
+		promptEvaluationAssetProfileFromPayload(payload, asset.PromptID),
+	)
+}
+
+func withPromptEvaluationAssetProfile(
+	params db.UpdatePromptEvaluationAssetParams,
+	profile promptEvaluationAssetProfile,
+) db.UpdatePromptEvaluationAssetParams {
+	params.StructureSchema = pgtype.Text{String: profile.StructureSchema, Valid: true}
+	params.StructuredCaseCount = pgtype.Int4{Int32: profile.StructuredCaseCount, Valid: true}
+	params.StructuredVariableCount = pgtype.Int4{Int32: profile.StructuredVariableCount, Valid: true}
+	params.StructuredAssertionCount = pgtype.Int4{Int32: profile.StructuredAssertionCount, Valid: true}
+	params.LinkedDatasetCount = pgtype.Int4{Int32: profile.LinkedDatasetCount, Valid: true}
+	params.LinkedPromptCount = pgtype.Int4{Int32: profile.LinkedPromptCount, Valid: true}
+	params.EvaluationDimensionCount = pgtype.Int4{Int32: profile.EvaluationDimensionCount, Valid: true}
+	params.ExperimentDimensionCount = pgtype.Int4{Int32: profile.ExperimentDimensionCount, Valid: true}
+	return params
+}
+
 func countPromptEvaluationProfileValues(payload map[string]any, keys ...string) int {
 	seen := map[string]bool{}
 	for _, key := range keys {

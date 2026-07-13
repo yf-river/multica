@@ -180,23 +180,10 @@ func updatePromptEvaluationAssetPayload(
 	asset db.PromptEvaluationAsset,
 	payload map[string]any,
 ) (db.PromptEvaluationAsset, error) {
-	profile := promptEvaluationAssetProfileFromPayload(mustJSONBytes(payload), asset.PromptID)
-	updated, err := queries.UpdatePromptEvaluationAsset(ctx, db.UpdatePromptEvaluationAssetParams{
-		ID: asset.ID, WorkspaceID: asset.WorkspaceID, PromptID: asset.PromptID,
-		Name:                     pgtype.Text{String: asset.Name, Valid: true},
-		Description:              pgtype.Text{String: asset.Description, Valid: true},
-		AssetType:                pgtype.Text{String: asset.AssetType, Valid: true},
-		Payload:                  mustJSONBytes(payload),
-		Status:                   pgtype.Text{String: asset.Status, Valid: true},
-		StructureSchema:          pgtype.Text{String: profile.StructureSchema, Valid: true},
-		StructuredCaseCount:      pgtype.Int4{Int32: profile.StructuredCaseCount, Valid: true},
-		StructuredVariableCount:  pgtype.Int4{Int32: profile.StructuredVariableCount, Valid: true},
-		StructuredAssertionCount: pgtype.Int4{Int32: profile.StructuredAssertionCount, Valid: true},
-		LinkedDatasetCount:       pgtype.Int4{Int32: profile.LinkedDatasetCount, Valid: true},
-		LinkedPromptCount:        pgtype.Int4{Int32: profile.LinkedPromptCount, Valid: true},
-		EvaluationDimensionCount: pgtype.Int4{Int32: profile.EvaluationDimensionCount, Valid: true},
-		ExperimentDimensionCount: pgtype.Int4{Int32: profile.ExperimentDimensionCount, Valid: true},
-	})
+	updated, err := queries.UpdatePromptEvaluationAsset(
+		ctx,
+		promptEvaluationAssetPayloadUpdateParams(asset, mustJSONBytes(payload)),
+	)
 	if err != nil {
 		return db.PromptEvaluationAsset{}, fmt.Errorf("update prompt evaluation asset payload: %w", err)
 	}

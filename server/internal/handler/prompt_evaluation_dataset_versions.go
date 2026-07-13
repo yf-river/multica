@@ -754,21 +754,10 @@ func (h *Handler) RestorePromptEvaluationDatasetVersion(w http.ResponseWriter, r
 		"restored_at":        time.Now().Format(time.RFC3339),
 	}
 	payloadBytes := mustJSONBytes(payload)
-	profile := promptEvaluationAssetProfileFromPayload(payloadBytes, asset.PromptID)
-	updatedAsset, err := qtx.UpdatePromptEvaluationAsset(r.Context(), db.UpdatePromptEvaluationAssetParams{
-		ID:                       asset.ID,
-		WorkspaceID:              asset.WorkspaceID,
-		PromptID:                 asset.PromptID,
-		Payload:                  payloadBytes,
-		StructureSchema:          pgtype.Text{String: profile.StructureSchema, Valid: true},
-		StructuredCaseCount:      pgtype.Int4{Int32: profile.StructuredCaseCount, Valid: true},
-		StructuredVariableCount:  pgtype.Int4{Int32: profile.StructuredVariableCount, Valid: true},
-		StructuredAssertionCount: pgtype.Int4{Int32: profile.StructuredAssertionCount, Valid: true},
-		LinkedDatasetCount:       pgtype.Int4{Int32: profile.LinkedDatasetCount, Valid: true},
-		LinkedPromptCount:        pgtype.Int4{Int32: profile.LinkedPromptCount, Valid: true},
-		EvaluationDimensionCount: pgtype.Int4{Int32: profile.EvaluationDimensionCount, Valid: true},
-		ExperimentDimensionCount: pgtype.Int4{Int32: profile.ExperimentDimensionCount, Valid: true},
-	})
+	updatedAsset, err := qtx.UpdatePromptEvaluationAsset(
+		r.Context(),
+		promptEvaluationAssetPayloadUpdateParams(asset, payloadBytes),
+	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update restored dataset asset")
 		return

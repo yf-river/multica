@@ -1001,14 +1001,7 @@ func (h *Handler) UpdatePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 		Status:      textParam(req.Status),
 	}
 	if profile != nil {
-		assetParams.StructureSchema = pgtype.Text{String: profile.StructureSchema, Valid: true}
-		assetParams.StructuredCaseCount = pgtype.Int4{Int32: profile.StructuredCaseCount, Valid: true}
-		assetParams.StructuredVariableCount = pgtype.Int4{Int32: profile.StructuredVariableCount, Valid: true}
-		assetParams.StructuredAssertionCount = pgtype.Int4{Int32: profile.StructuredAssertionCount, Valid: true}
-		assetParams.LinkedDatasetCount = pgtype.Int4{Int32: profile.LinkedDatasetCount, Valid: true}
-		assetParams.LinkedPromptCount = pgtype.Int4{Int32: profile.LinkedPromptCount, Valid: true}
-		assetParams.EvaluationDimensionCount = pgtype.Int4{Int32: profile.EvaluationDimensionCount, Valid: true}
-		assetParams.ExperimentDimensionCount = pgtype.Int4{Int32: profile.ExperimentDimensionCount, Valid: true}
+		assetParams = withPromptEvaluationAssetProfile(assetParams, *profile)
 	}
 	asset, err := qtx.UpdatePromptEvaluationAsset(r.Context(), assetParams)
 	if err != nil {
