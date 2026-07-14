@@ -32,12 +32,6 @@ import {
   PromptEvaluationCaseListResponseSchema,
 } from "./schemas-prompt-evaluation-cases";
 import {
-  EMPTY_PROMPT_EVALUATION_ASSET_LIST_RESPONSE,
-  EMPTY_PROMPT_EVALUATION_CASE_LIST_RESPONSE,
-  EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE_LIST_RESPONSE,
-  EMPTY_PROMPT_EVALUATION_RUN_LIST_RESPONSE,
-} from "./schemas-prompt-evaluation-empty";
-import {
   PromptEvaluationOptimizationCandidateListResponseSchema,
 } from "./schemas-prompt-evaluation-optimization";
 import {
@@ -141,9 +135,9 @@ describe("domain response schema fallbacks", () => {
   });
 
   it("rejects malformed Prompt Library items", () => {
-    const fallback = { items: [], total: 0 };
+    const fallback = { items: [] };
     expect(parseWithFallback(
-      { items: 1, total: 1 },
+      { items: 1 },
       PromptLibraryItemListResponseSchema,
       fallback,
       { endpoint: "GET /api/prompt-library" },
@@ -151,39 +145,43 @@ describe("domain response schema fallbacks", () => {
   });
 
   it("rejects malformed evaluation assets", () => {
+    const fallback = { items: [] };
     expect(parseWithFallback(
-      { items: {}, total: 1 },
+      { items: {} },
       PromptEvaluationAssetListResponseSchema,
-      EMPTY_PROMPT_EVALUATION_ASSET_LIST_RESPONSE,
+      fallback,
       { endpoint: "GET /api/prompt-evaluation-assets" },
-    )).toBe(EMPTY_PROMPT_EVALUATION_ASSET_LIST_RESPONSE);
+    )).toBe(fallback);
   });
 
   it("rejects malformed evaluation runs", () => {
+    const fallback = { items: [] };
     expect(parseWithFallback(
-      { items: "not-an-array", total: 1 },
+      { items: "not-an-array" },
       PromptEvaluationRunListResponseSchema,
-      EMPTY_PROMPT_EVALUATION_RUN_LIST_RESPONSE,
+      fallback,
       { endpoint: "GET /api/prompt-evaluation-runs" },
-    )).toBe(EMPTY_PROMPT_EVALUATION_RUN_LIST_RESPONSE);
+    )).toBe(fallback);
   });
 
   it("rejects malformed evaluation cases", () => {
+    const fallback = { items: [] };
     expect(parseWithFallback(
-      { items: false, total: 1 },
+      { items: false },
       PromptEvaluationCaseListResponseSchema,
-      EMPTY_PROMPT_EVALUATION_CASE_LIST_RESPONSE,
+      fallback,
       { endpoint: "GET /api/prompt-evaluation-cases" },
-    )).toBe(EMPTY_PROMPT_EVALUATION_CASE_LIST_RESPONSE);
+    )).toBe(fallback);
   });
 
   it("rejects malformed optimization candidates", () => {
+    const fallback = { items: [] };
     expect(parseWithFallback(
-      { items: null, total: 1 },
+      { items: null },
       PromptEvaluationOptimizationCandidateListResponseSchema,
-      EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE_LIST_RESPONSE,
+      fallback,
       { endpoint: "GET /api/prompt-evaluation-optimization-candidates" },
-    )).toBe(EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE_LIST_RESPONSE);
+    )).toBe(fallback);
   });
 
   it("rejects a malformed usage collection", () => {

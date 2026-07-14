@@ -15,7 +15,6 @@ function profile(
 ): RuntimeProfile {
   return {
     id,
-    workspace_id: "ws-1",
     display_name: displayName,
     protocol_family: "codex",
     command_name: "codex",

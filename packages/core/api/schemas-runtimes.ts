@@ -186,7 +186,6 @@ export const EMPTY_RUNTIME_LOCAL_SKILL_IMPORT_REQUEST: RuntimeLocalSkillImportRe
 
 export const RuntimeProfileSchema = z.object({
   id: z.string(),
-  workspace_id: z.string(),
   display_name: z.string(),
   // Keep the protocol family forward-compatible with newer daemons.
   protocol_family: z.string().default("claude"),
@@ -203,7 +202,6 @@ export const RuntimeProfileListResponseSchema = z.object({
 
 export const EMPTY_RUNTIME_PROFILE: RuntimeProfile = {
   id: "",
-  workspace_id: "",
   display_name: "",
   protocol_family: "claude",
   command_name: "",

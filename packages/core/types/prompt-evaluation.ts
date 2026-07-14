@@ -152,11 +152,6 @@ export interface PromptEvaluationEvidenceSnapshot {
   created_at: string;
 }
 
-export interface ListPromptEvaluationEvidenceSnapshotsResponse {
-  items: PromptEvaluationEvidenceSnapshot[];
-  total: number;
-}
-
 export interface PromptEvaluationAssetEvidenceSnapshotSkip {
   run_id: string;
   reason: string;
@@ -320,37 +315,6 @@ export interface PublishPromptEvaluationOptimizationCandidateResponse {
 
 export interface RejectPromptEvaluationOptimizationCandidateRequest {
   reason?: string;
-}
-
-export interface ListPromptEvaluationAssetsResponse {
-  items: PromptEvaluationAsset[];
-  total: number;
-}
-
-export interface ListPromptEvaluationDatasetVersionsResponse {
-  items: PromptEvaluationDatasetVersion[];
-  total: number;
-}
-
-export interface ListPromptEvaluationRunsResponse {
-  items: PromptEvaluationRun[];
-  total: number;
-}
-
-export interface ListPromptEvaluationCasesResponse {
-  items: PromptEvaluationStructuredCase[];
-  total: number;
-  limit: number;
-  offset: number;
-  has_more: boolean;
-  next_cursor: string | null;
-  sort_by: PromptEvaluationCaseSortBy;
-  sort_direction: "asc" | "desc";
-}
-
-export interface ListPromptEvaluationOptimizationCandidatesResponse {
-  items: PromptEvaluationOptimizationCandidate[];
-  total: number;
 }
 
 export interface ListPromptEvaluationAssetsParams {

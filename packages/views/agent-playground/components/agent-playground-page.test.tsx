@@ -97,8 +97,8 @@ beforeEach(() => {
   mockApi.listExperiments.mockResolvedValue({ items: [], total: 0 });
   mockApi.getExperiment.mockResolvedValue(createdDetail);
   mockApi.listAgents.mockResolvedValue([]);
-  mockApi.listAssets.mockResolvedValue({ items: [], total: 0 });
-  mockApi.listVersions.mockResolvedValue({ items: [], total: 0 });
+  mockApi.listAssets.mockResolvedValue([]);
+  mockApi.listVersions.mockResolvedValue([]);
   mockApi.createExperiment.mockResolvedValue(createdDetail);
 });
 
@@ -114,8 +114,8 @@ describe("AgentPlaygroundPage", () => {
 
   it("creates an experiment from one dataset snapshot and selected agent", async () => {
     mockApi.listAgents.mockResolvedValue([agent]);
-    mockApi.listAssets.mockResolvedValue({ items: [dataset], total: 1 });
-    mockApi.listVersions.mockResolvedValue({ items: [version], total: 1 });
+    mockApi.listAssets.mockResolvedValue([dataset]);
+    mockApi.listVersions.mockResolvedValue([version]);
     renderPage();
 
     await screen.findByRole("option", { name: dataset.name });

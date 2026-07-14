@@ -10,7 +10,6 @@ import {
 function profile(overrides: Partial<RuntimeProfile> = {}): RuntimeProfile {
   return {
     id: "profile-1",
-    workspace_id: "ws-1",
     display_name: "Team Codex",
     protocol_family: "codex",
     command_name: "team-codex",

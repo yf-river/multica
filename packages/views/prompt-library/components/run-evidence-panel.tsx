@@ -79,7 +79,7 @@ export function RunEvidencePanel({
     queryFn: () => api.listPromptEvaluationOptimizationCandidates({ run_id: runId, limit: 5 }),
     enabled: Boolean(workspaceId && runId),
   });
-  const candidates = candidatesQuery.data?.items ?? [];
+  const candidates = candidatesQuery.data ?? [];
   const candidate = candidates[0] ?? null;
 
   if (loading) {

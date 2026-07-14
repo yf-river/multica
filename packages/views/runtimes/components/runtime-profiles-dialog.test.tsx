@@ -45,7 +45,6 @@ const TEST_RESOURCES = { "zh-Hans": { common: enCommon, runtimes: enRuntimes } }
 function profile(overrides: Partial<RuntimeProfile> = {}): RuntimeProfile {
   return {
     id: "prof-1",
-    workspace_id: "ws-1",
     display_name: "Team Codex",
     protocol_family: "codex",
     command_name: "codex",

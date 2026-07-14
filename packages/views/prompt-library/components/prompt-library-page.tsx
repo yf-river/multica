@@ -260,7 +260,7 @@ export function PromptLibraryPage({
       });
     }, 0);
     return () => window.clearTimeout(timer);
-  }, [activeTab, focusedCaseId, caseQuery.data?.items.length]);
+  }, [activeTab, focusedCaseId, caseQuery.data?.length]);
   const runQuery = useQuery({
     queryKey: [...promptLibraryKeys.runs(workspaceId ?? ""), effectiveRunStatusFilter] as const,
     queryFn: () => api.listPromptEvaluationRuns({
@@ -296,10 +296,10 @@ export function PromptLibraryPage({
       })),
   });
   const items = listQuery.data ?? [];
-  const assets = useMemo(() => assetQuery.data?.items ?? [], [assetQuery.data?.items]);
-  const cases = caseQuery.data?.items ?? [];
-  const runs = runQuery.data?.items ?? [];
-  const candidates = candidateQuery.data?.items ?? [];
+  const assets = useMemo(() => assetQuery.data ?? [], [assetQuery.data]);
+  const cases = caseQuery.data ?? [];
+  const runs = runQuery.data ?? [];
+  const candidates = candidateQuery.data ?? [];
   const skillResourceOptions = useMemo(
     () => buildSkillResourceOptions(projectQuery.data ?? [], projectResourceQueries.map((query) => query.data ?? [])),
     [projectQuery.data, projectResourceQueries],

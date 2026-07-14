@@ -140,12 +140,6 @@ import type {
   ListPromptEvaluationRunsParams,
   ListPromptEvaluationCasesParams,
   ListPromptEvaluationOptimizationCandidatesParams,
-  ListPromptEvaluationAssetsResponse,
-  ListPromptEvaluationDatasetVersionsResponse,
-  ListPromptEvaluationRunsResponse,
-  ListPromptEvaluationEvidenceSnapshotsResponse,
-  ListPromptEvaluationCasesResponse,
-  ListPromptEvaluationOptimizationCandidatesResponse,
   CreatePromptEvaluationAssetRequest,
   UpdatePromptEvaluationAssetRequest,
   ReviewPromptEvaluationRunRequest,
@@ -263,19 +257,13 @@ import {
   EMPTY_AGENT_PLAYGROUND_DETAIL,
   EMPTY_AGENT_PLAYGROUND_EXPERIMENT_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_ASSET,
-  EMPTY_PROMPT_EVALUATION_ASSET_LIST_RESPONSE,
-  EMPTY_PROMPT_EVALUATION_DATASET_VERSION_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_RUN,
-  EMPTY_PROMPT_EVALUATION_RUN_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_RUN_EVIDENCE,
   EMPTY_PROMPT_EVALUATION_ASSET_EVIDENCE_ARCHIVE_PACKAGE,
   EMPTY_PROMPT_EVALUATION_ASSET_EVIDENCE_SNAPSHOT_RESPONSE,
   EMPTY_PROMPT_EVALUATION_EVIDENCE_SNAPSHOT,
-  EMPTY_PROMPT_EVALUATION_EVIDENCE_SNAPSHOT_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_CASE,
-  EMPTY_PROMPT_EVALUATION_CASE_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE,
-  EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE_LIST_RESPONSE,
   EMPTY_PUBLISH_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE_RESPONSE,
   EMPTY_PROMPT_EVALUATION_SKILL_APPLY_CANDIDATE_RESPONSE,
   EMPTY_PROMPT_EVALUATION_SKILL_FRESHNESS_RESULT,
@@ -1417,7 +1405,7 @@ export class ApiClient extends ApiTransport {
 
   async listIssueSOPRuns(issueId: string): Promise<SquadSOPRun[]> {
     const raw = await this.fetch<unknown>(`/api/issues/${issueId}/sop-runs`);
-    return parseWithFallback(raw, IssueSOPRunsResponseSchema, { items: [], total: 0 }, {
+    return parseWithFallback(raw, IssueSOPRunsResponseSchema, { items: [] }, {
       endpoint: "GET /api/issues/:id/sop-runs",
     }).items;
   }
@@ -1959,21 +1947,21 @@ export class ApiClient extends ApiTransport {
     if (params?.status) search.set("status", params.status);
     const query = search.toString();
     const raw = await this.fetch<unknown>(`/api/prompt-library${query ? `?${query}` : ""}`);
-    return parseWithFallback(raw, PromptLibraryItemListResponseSchema, { items: [], total: 0 }, {
+    return parseWithFallback(raw, PromptLibraryItemListResponseSchema, { items: [] }, {
       endpoint: "GET /api/prompt-library",
     }).items;
   }
 
   async listPromptLibraryVersions(id: string): Promise<PromptLibraryVersion[]> {
     const raw = await this.fetch<unknown>(`/api/prompt-library/${id}/versions`);
-    return parseWithFallback(raw, PromptLibraryVersionListResponseSchema, { items: [], total: 0 }, {
+    return parseWithFallback(raw, PromptLibraryVersionListResponseSchema, { items: [] }, {
       endpoint: "GET /api/prompt-library/:id/versions",
     }).items;
   }
 
   async listPromptLibraryTrials(id: string): Promise<PromptLibraryTrial[]> {
     const raw = await this.fetch<unknown>(`/api/prompt-library/${id}/trials`);
-    return parseWithFallback(raw, PromptLibraryTrialListResponseSchema, { items: [], total: 0 }, {
+    return parseWithFallback(raw, PromptLibraryTrialListResponseSchema, { items: [] }, {
       endpoint: "GET /api/prompt-library/:id/trials",
     }).items;
   }
@@ -2095,16 +2083,16 @@ export class ApiClient extends ApiTransport {
   }
 
   // Prompt evaluation assets
-  async listPromptEvaluationAssets(params?: ListPromptEvaluationAssetsParams): Promise<ListPromptEvaluationAssetsResponse> {
+  async listPromptEvaluationAssets(params?: ListPromptEvaluationAssetsParams): Promise<PromptEvaluationAsset[]> {
     const search = new URLSearchParams();
     if (params?.prompt_id) search.set("prompt_id", params.prompt_id);
     if (params?.asset_type) search.set("asset_type", params.asset_type);
     if (params?.status) search.set("status", params.status);
     const query = search.toString();
     const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets${query ? `?${query}` : ""}`);
-    return parseWithFallback(raw, PromptEvaluationAssetListResponseSchema, EMPTY_PROMPT_EVALUATION_ASSET_LIST_RESPONSE, {
+    return parseWithFallback(raw, PromptEvaluationAssetListResponseSchema, { items: [] }, {
       endpoint: "GET /api/prompt-evaluation-assets",
-    }) as ListPromptEvaluationAssetsResponse;
+    }).items as PromptEvaluationAsset[];
   }
 
   async createPromptEvaluationAsset(
@@ -2165,14 +2153,14 @@ export class ApiClient extends ApiTransport {
     return this.retryUnknownMutationOnce(attempt);
   }
 
-  async listPromptEvaluationDatasetVersions(id: string, limit?: number): Promise<ListPromptEvaluationDatasetVersionsResponse> {
+  async listPromptEvaluationDatasetVersions(id: string, limit?: number): Promise<PromptEvaluationDatasetVersion[]> {
     const search = new URLSearchParams();
     if (limit) search.set("limit", String(limit));
     const query = search.toString();
     const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/dataset-versions${query ? `?${query}` : ""}`);
-    return parseWithFallback(raw, PromptEvaluationDatasetVersionListResponseSchema, EMPTY_PROMPT_EVALUATION_DATASET_VERSION_LIST_RESPONSE, {
+    return parseWithFallback(raw, PromptEvaluationDatasetVersionListResponseSchema, { items: [] }, {
       endpoint: "GET /api/prompt-evaluation-assets/:id/dataset-versions",
-    }) as ListPromptEvaluationDatasetVersionsResponse;
+    }).items as PromptEvaluationDatasetVersion[];
   }
 
   async createPromptEvaluationDatasetVersion(
@@ -2205,7 +2193,7 @@ export class ApiClient extends ApiTransport {
     return this.retryUnknownMutationOnce(attempt);
   }
 
-  async listPromptEvaluationCases(params?: ListPromptEvaluationCasesParams): Promise<ListPromptEvaluationCasesResponse> {
+  async listPromptEvaluationCases(params?: ListPromptEvaluationCasesParams): Promise<PromptEvaluationStructuredCase[]> {
     const search = new URLSearchParams();
     if (params?.asset_id) search.set("asset_id", params.asset_id);
     if (params?.status) search.set("status", params.status);
@@ -2218,9 +2206,9 @@ export class ApiClient extends ApiTransport {
     if (params?.sort_direction) search.set("sort_direction", params.sort_direction);
     const query = search.toString();
     const raw = await this.fetch<unknown>(`/api/prompt-evaluation-cases${query ? `?${query}` : ""}`);
-    return parseWithFallback(raw, PromptEvaluationCaseListResponseSchema, EMPTY_PROMPT_EVALUATION_CASE_LIST_RESPONSE, {
+    return parseWithFallback(raw, PromptEvaluationCaseListResponseSchema, { items: [] }, {
       endpoint: "GET /api/prompt-evaluation-cases",
-    }) as ListPromptEvaluationCasesResponse;
+    }).items as PromptEvaluationStructuredCase[];
   }
 
   async createPromptEvaluationCase(
@@ -2255,7 +2243,7 @@ export class ApiClient extends ApiTransport {
     await this.fetch(`/api/prompt-evaluation-cases/${id}`, { method: "DELETE" });
   }
 
-  async listPromptEvaluationRuns(params?: ListPromptEvaluationRunsParams): Promise<ListPromptEvaluationRunsResponse> {
+  async listPromptEvaluationRuns(params?: ListPromptEvaluationRunsParams): Promise<PromptEvaluationRun[]> {
     const search = new URLSearchParams();
     if (params?.asset_id) search.set("asset_id", params.asset_id);
     if (params?.status) search.set("status", params.status);
@@ -2264,9 +2252,9 @@ export class ApiClient extends ApiTransport {
     if (params?.offset) search.set("offset", String(params.offset));
     const query = search.toString();
     const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs${query ? `?${query}` : ""}`);
-    return parseWithFallback(raw, PromptEvaluationRunListResponseSchema, EMPTY_PROMPT_EVALUATION_RUN_LIST_RESPONSE, {
+    return parseWithFallback(raw, PromptEvaluationRunListResponseSchema, { items: [] }, {
       endpoint: "GET /api/prompt-evaluation-runs",
-    }) as ListPromptEvaluationRunsResponse;
+    }).items as PromptEvaluationRun[];
   }
 
   async getPromptEvaluationRunEvidence(runId: string): Promise<PromptEvaluationRunEvidence> {
@@ -2276,14 +2264,14 @@ export class ApiClient extends ApiTransport {
     }) as PromptEvaluationRunEvidence;
   }
 
-  async listPromptEvaluationEvidenceSnapshots(runId: string, limit?: number): Promise<ListPromptEvaluationEvidenceSnapshotsResponse> {
+  async listPromptEvaluationEvidenceSnapshots(runId: string, limit?: number): Promise<PromptEvaluationEvidenceSnapshot[]> {
     const search = new URLSearchParams();
     if (limit) search.set("limit", String(limit));
     const query = search.toString();
     const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/evidence-snapshots${query ? `?${query}` : ""}`);
-    return parseWithFallback(raw, PromptEvaluationEvidenceSnapshotListResponseSchema, EMPTY_PROMPT_EVALUATION_EVIDENCE_SNAPSHOT_LIST_RESPONSE, {
+    return parseWithFallback(raw, PromptEvaluationEvidenceSnapshotListResponseSchema, { items: [] }, {
       endpoint: "GET /api/prompt-evaluation-runs/:id/evidence-snapshots",
-    }) as ListPromptEvaluationEvidenceSnapshotsResponse;
+    }).items as PromptEvaluationEvidenceSnapshot[];
   }
 
   async createPromptEvaluationEvidenceSnapshot(
@@ -2365,7 +2353,7 @@ export class ApiClient extends ApiTransport {
     return this.retryUnknownMutationOnce(attempt);
   }
 
-  async listPromptEvaluationOptimizationCandidates(params?: ListPromptEvaluationOptimizationCandidatesParams): Promise<ListPromptEvaluationOptimizationCandidatesResponse> {
+  async listPromptEvaluationOptimizationCandidates(params?: ListPromptEvaluationOptimizationCandidatesParams): Promise<PromptEvaluationOptimizationCandidate[]> {
     const search = new URLSearchParams();
     if (params?.run_id) search.set("run_id", params.run_id);
     if (params?.prompt_id) search.set("prompt_id", params.prompt_id);
@@ -2373,9 +2361,9 @@ export class ApiClient extends ApiTransport {
     if (params?.limit) search.set("limit", String(params.limit));
     const query = search.toString();
     const raw = await this.fetch<unknown>(`/api/prompt-evaluation-optimization-candidates${query ? `?${query}` : ""}`);
-    return parseWithFallback(raw, PromptEvaluationOptimizationCandidateListResponseSchema, EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE_LIST_RESPONSE, {
+    return parseWithFallback(raw, PromptEvaluationOptimizationCandidateListResponseSchema, { items: [] }, {
       endpoint: "GET /api/prompt-evaluation-optimization-candidates",
-    }) as ListPromptEvaluationOptimizationCandidatesResponse;
+    }).items as PromptEvaluationOptimizationCandidate[];
   }
 
   async createPromptEvaluationOptimizationCandidate(

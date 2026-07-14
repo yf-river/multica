@@ -30,7 +30,7 @@ export async function createIssueReviewDraftCase(
 ) {
   if (!tree) throw new Error("执行树尚未加载，不能生成评测用例");
   const assets = await api.listPromptEvaluationAssets({ asset_type: "数据集", status: "启用" });
-  let asset = assets.items.find((item) => item.name === ISSUE_REVIEW_DRAFT_DATASET_NAME);
+  let asset = assets.find((item) => item.name === ISSUE_REVIEW_DRAFT_DATASET_NAME);
   if (!asset) {
     asset = await api.createPromptEvaluationAsset({
       name: ISSUE_REVIEW_DRAFT_DATASET_NAME,

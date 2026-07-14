@@ -64,8 +64,8 @@ beforeEach(() => {
   navigationState.search = "";
   mockApi.listPromptLibraryItems.mockResolvedValue([]);
   mockApi.listAgents.mockResolvedValue([]);
-  mockApi.listPromptEvaluationAssets.mockResolvedValue({ items: [], total: 0 });
-  mockApi.listPromptEvaluationCases.mockResolvedValue({ items: [], total: 0 });
+  mockApi.listPromptEvaluationAssets.mockResolvedValue([]);
+  mockApi.listPromptEvaluationCases.mockResolvedValue([]);
   mockApi.getIssueExecutionTree.mockResolvedValue({
     root: { id: "issue-1", tasks: [{ id: "task-1" }], children: [] },
   });

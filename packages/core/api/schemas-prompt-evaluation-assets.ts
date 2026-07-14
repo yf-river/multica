@@ -55,7 +55,6 @@ export const PromptEvaluationAssetSchema = z.object({
 
 export const PromptEvaluationAssetListResponseSchema = z.object({
   items: z.array(PromptEvaluationAssetSchema).default([]),
-  total: z.number().default(0),
 }).loose();
 
 export const PromptEvaluationDatasetVersionSchema = z.object({
@@ -73,5 +72,4 @@ export const PromptEvaluationDatasetVersionSchema = z.object({
 
 export const PromptEvaluationDatasetVersionListResponseSchema = z.object({
   items: z.array(PromptEvaluationDatasetVersionSchema).default([]),
-  total: z.number().default(0),
 }).loose();

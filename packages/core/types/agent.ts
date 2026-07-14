@@ -63,7 +63,6 @@ export type RuntimeProtocolFamily =
 
 export interface RuntimeProfile {
   id: string;
-  workspace_id: string;
   display_name: string;
   protocol_family: RuntimeProtocolFamily;
   command_name: string;

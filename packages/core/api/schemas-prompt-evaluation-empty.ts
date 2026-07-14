@@ -1,7 +1,4 @@
 import type {
-  ListPromptEvaluationAssetsResponse,
-  ListPromptEvaluationDatasetVersionsResponse,
-  ListPromptEvaluationOptimizationCandidatesResponse,
   PromptEvaluationAsset,
   PromptEvaluationAssetEvidenceSnapshotResponse,
   PromptEvaluationEvidenceSnapshot,
@@ -14,7 +11,6 @@ import type {
   PromptEvaluationSkillFreshnessResult,
   PromptEvaluationSkillReEvalAssetResponse,
   PromptEvaluationSkillReEvalRunResponse,
-  ListPromptEvaluationEvidenceSnapshotsResponse,
   PromptEvaluationAssetEvidenceArchivePackage,
   PublishPromptEvaluationOptimizationCandidateResponse,
 } from "../types";
@@ -35,16 +31,6 @@ export const EMPTY_PROMPT_EVALUATION_ASSET: PromptEvaluationAsset = {
   updated_at: "",
   dataset_row_count: 0,
   test_suite_case_count: 0,
-};
-
-export const EMPTY_PROMPT_EVALUATION_ASSET_LIST_RESPONSE: ListPromptEvaluationAssetsResponse = {
-  items: [],
-  total: 0,
-};
-
-export const EMPTY_PROMPT_EVALUATION_DATASET_VERSION_LIST_RESPONSE: ListPromptEvaluationDatasetVersionsResponse = {
-  items: [],
-  total: 0,
 };
 
 export const EMPTY_PROMPT_EVALUATION_RUN: PromptEvaluationRun = {
@@ -81,11 +67,6 @@ export const EMPTY_PROMPT_EVALUATION_RUN: PromptEvaluationRun = {
   review_decision: "",
   review_note: "",
   reviewed_at: "",
-};
-
-export const EMPTY_PROMPT_EVALUATION_RUN_LIST_RESPONSE = {
-  items: [],
-  total: 0,
 };
 
 export const EMPTY_PROMPT_EVALUATION_RUN_EVIDENCE: PromptEvaluationRunEvidence = {
@@ -133,21 +114,6 @@ export const EMPTY_PROMPT_EVALUATION_ASSET_EVIDENCE_ARCHIVE_PACKAGE: PromptEvalu
   中文摘要: {},
 };
 
-export const EMPTY_PROMPT_EVALUATION_EVIDENCE_SNAPSHOT_LIST_RESPONSE: ListPromptEvaluationEvidenceSnapshotsResponse = {
-  items: [],
-  total: 0,
-};
-export const EMPTY_PROMPT_EVALUATION_CASE_LIST_RESPONSE = {
-  items: [],
-  total: 0,
-  limit: 0,
-  offset: 0,
-  has_more: false,
-  next_cursor: null,
-  sort_by: "case_index",
-  sort_direction: "asc",
-};
-
 export const EMPTY_PROMPT_EVALUATION_CASE: PromptEvaluationStructuredCase = {
   id: "",
   workspace_id: "",
@@ -183,11 +149,6 @@ export const EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE: PromptEvaluationOpt
   created_by: null,
   created_at: "",
   updated_at: "",
-};
-
-export const EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE_LIST_RESPONSE: ListPromptEvaluationOptimizationCandidatesResponse = {
-  items: [],
-  total: 0,
 };
 
 export const EMPTY_PROMPT_EVALUATION_SKILL_FRESHNESS_RESULT: PromptEvaluationSkillFreshnessResult = {

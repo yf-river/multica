@@ -1727,12 +1727,13 @@ describe("ApiClient", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const client = new ApiClient("https://api.example.test");
-    await client.listPromptEvaluationRuns({
+    const runs = await client.listPromptEvaluationRuns({
       since: "2026-07-01T00:00:00.000Z",
       limit: 200,
       offset: 400,
     });
 
+    expect(runs).toEqual([]);
     expect(fetchMock).toHaveBeenCalledWith(
       "https://api.example.test/api/prompt-evaluation-runs?since=2026-07-01T00%3A00%3A00.000Z&limit=200&offset=400",
       expect.any(Object),

@@ -263,7 +263,7 @@ export function RunHistoryPanel({
                   {expandedRunId === run.id && (
                     <RunEvidencePanel
                       evidence={evidenceQuery.data ?? null}
-                      snapshots={evidenceSnapshotQuery.data?.items ?? []}
+                      snapshots={evidenceSnapshotQuery.data ?? []}
                       snapshotsLoading={evidenceSnapshotQuery.isLoading || evidenceSnapshotQuery.isFetching}
                       loading={evidenceQuery.isLoading || evidenceQuery.isFetching}
                       error={evidenceQuery.isError}

@@ -49,7 +49,7 @@ const evidence = {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockApi.listPromptEvaluationOptimizationCandidates.mockResolvedValue({ items: [], total: 0 });
+  mockApi.listPromptEvaluationOptimizationCandidates.mockResolvedValue([]);
 });
 
 describe("RunEvidencePanel", () => {

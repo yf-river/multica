@@ -79,8 +79,8 @@ export function AgentPlaygroundPage() {
     enabled: Boolean(datasetId),
   });
   const agents = agentsQuery.data ?? [];
-  const datasets = datasetsQuery.data?.items ?? [];
-  const datasetVersions = useMemo(() => datasetVersionsQuery.data?.items ?? [], [datasetVersionsQuery.data?.items]);
+  const datasets = datasetsQuery.data ?? [];
+  const datasetVersions = useMemo(() => datasetVersionsQuery.data ?? [], [datasetVersionsQuery.data]);
   const detail = detailQuery.data ?? null;
   const selectedDatasetVersion = datasetVersions.find((version) => version.id === datasetVersionId);
   const plannedTaskCount = (selectedDatasetVersion?.row_count ?? 0) * selectedAgentIds.length;

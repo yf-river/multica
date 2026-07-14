@@ -802,7 +802,7 @@ function DatasetVersionHistoryPanel({
     queryFn: () => api.listPromptEvaluationDatasetVersions(asset.id, 10),
     enabled: Boolean(asset.workspace_id && asset.id),
   });
-  const versions = versionsQuery.data?.items ?? [];
+  const versions = versionsQuery.data ?? [];
 
   return (
     <section

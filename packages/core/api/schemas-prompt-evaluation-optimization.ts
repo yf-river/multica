@@ -46,7 +46,6 @@ export const PromptEvaluationOptimizationCandidateSchema = z.object({
 
 export const PromptEvaluationOptimizationCandidateListResponseSchema = z.object({
   items: z.array(PromptEvaluationOptimizationCandidateSchema).default([]),
-  total: z.number().default(0),
 }).loose();
 
 export const PromptEvaluationSkillFreshnessResultSchema = z.object({
