@@ -80,18 +80,22 @@ func writeRuntimeResponseDecodeError(w http.ResponseWriter, r *http.Request, run
 // ---------------------------------------------------------------------------
 
 type runtimeUsageResponse struct {
-	RuntimeID        string `json:"runtime_id"`
-	Date             string `json:"date"`
+	RuntimeID string `json:"runtime_id"`
+	Date      string `json:"date"`
+	usageResponse
+}
+
+type usageResponse struct {
 	Provider         string `json:"provider"`
 	Model            string `json:"model"`
 	InputTokens      int64  `json:"input_tokens"`
 	OutputTokens     int64  `json:"output_tokens"`
 	CacheReadTokens  int64  `json:"cache_read_tokens"`
 	CacheWriteTokens int64  `json:"cache_write_tokens"`
-	UsageCostResponse
+	usageCostFields
 }
 
-type UsageCostResponse struct {
+type usageCostFields struct {
 	CostUSD           float64 `json:"cost_usd"`
 	InputCostUSD      float64 `json:"input_cost_usd"`
 	OutputCostUSD     float64 `json:"output_cost_usd"`
@@ -101,12 +105,20 @@ type UsageCostResponse struct {
 	Priced            bool    `json:"priced"`
 }
 
-func usageCostResponse(provider, model string, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens int64) UsageCostResponse {
+func newUsageResponse(provider, model string, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens int64) usageResponse {
+	response := usageResponse{
+		Provider:         provider,
+		Model:            model,
+		InputTokens:      inputTokens,
+		OutputTokens:     outputTokens,
+		CacheReadTokens:  cacheReadTokens,
+		CacheWriteTokens: cacheWriteTokens,
+	}
 	breakdown, ok := metrics.EstimateUsageCostBreakdownUSD(provider, model, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens)
 	if !ok {
-		return UsageCostResponse{Priced: false}
+		return response
 	}
-	return UsageCostResponse{
+	response.usageCostFields = usageCostFields{
 		CostUSD:           breakdown.TotalCostUSD,
 		InputCostUSD:      breakdown.InputCostUSD,
 		OutputCostUSD:     breakdown.OutputCostUSD,
@@ -115,6 +127,7 @@ func usageCostResponse(provider, model string, inputTokens, outputTokens, cacheR
 		CacheSavingsUSD:   breakdown.CacheSavingsUSD,
 		Priced:            true,
 	}
+	return response
 }
 
 // GetRuntimeUsage returns daily token usage for a runtime, aggregated from
@@ -156,15 +169,9 @@ func (h *Handler) listRuntimeUsage(ctx context.Context, runtimeID pgtype.UUID, t
 	resp := make([]runtimeUsageResponse, len(rows))
 	for i, row := range rows {
 		resp[i] = runtimeUsageResponse{
-			RuntimeID:        resolvedRuntimeID,
-			Date:             row.Date.Time.Format("2006-01-02"),
-			Provider:         row.Provider,
-			Model:            row.Model,
-			InputTokens:      row.InputTokens,
-			OutputTokens:     row.OutputTokens,
-			CacheReadTokens:  row.CacheReadTokens,
-			CacheWriteTokens: row.CacheWriteTokens,
-			UsageCostResponse: usageCostResponse(
+			RuntimeID: resolvedRuntimeID,
+			Date:      row.Date.Time.Format("2006-01-02"),
+			usageResponse: newUsageResponse(
 				row.Provider,
 				row.Model,
 				row.InputTokens,
@@ -208,19 +215,13 @@ func (h *Handler) GetRuntimeTaskActivity(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// RuntimeUsageByAgentResponse is one (agent, provider, model) row of "Cost by
+// runtimeUsageByAgentResponse is one (agent, provider, model) row of "Cost by
 // agent". The server computes cost per row; the client groups by agent_id and
 // sums cost across models.
-type RuntimeUsageByAgentResponse struct {
-	AgentID          string `json:"agent_id"`
-	Provider         string `json:"provider"`
-	Model            string `json:"model"`
-	InputTokens      int64  `json:"input_tokens"`
-	OutputTokens     int64  `json:"output_tokens"`
-	CacheReadTokens  int64  `json:"cache_read_tokens"`
-	CacheWriteTokens int64  `json:"cache_write_tokens"`
-	TaskCount        int32  `json:"task_count"`
-	UsageCostResponse
+type runtimeUsageByAgentResponse struct {
+	AgentID   string `json:"agent_id"`
+	TaskCount int32  `json:"task_count"`
+	usageResponse
 }
 
 // runtimeUsageByTaskResponse is one (task, provider, model) row of "Cost by
@@ -228,21 +229,15 @@ type RuntimeUsageByAgentResponse struct {
 // endpoint reads raw task_usage rows and computes cost before the client folds
 // rows by task_id.
 type runtimeUsageByTaskResponse struct {
-	TaskID           string  `json:"task_id"`
-	IssueID          *string `json:"issue_id"`
-	IssueNumber      int32   `json:"issue_number"`
-	IssueTitle       string  `json:"issue_title"`
-	AgentID          string  `json:"agent_id"`
-	Status           string  `json:"status"`
-	StartedAt        *string `json:"started_at"`
-	CompletedAt      *string `json:"completed_at"`
-	Provider         string  `json:"provider"`
-	Model            string  `json:"model"`
-	InputTokens      int64   `json:"input_tokens"`
-	OutputTokens     int64   `json:"output_tokens"`
-	CacheReadTokens  int64   `json:"cache_read_tokens"`
-	CacheWriteTokens int64   `json:"cache_write_tokens"`
-	UsageCostResponse
+	TaskID      string  `json:"task_id"`
+	IssueID     *string `json:"issue_id"`
+	IssueNumber int32   `json:"issue_number"`
+	IssueTitle  string  `json:"issue_title"`
+	AgentID     string  `json:"agent_id"`
+	Status      string  `json:"status"`
+	StartedAt   *string `json:"started_at"`
+	CompletedAt *string `json:"completed_at"`
+	usageResponse
 }
 
 // GetRuntimeUsageByAgent returns per-agent token aggregates for a runtime
@@ -268,18 +263,12 @@ func (h *Handler) GetRuntimeUsageByAgent(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	resp := make([]RuntimeUsageByAgentResponse, len(rows))
+	resp := make([]runtimeUsageByAgentResponse, len(rows))
 	for i, row := range rows {
-		resp[i] = RuntimeUsageByAgentResponse{
-			AgentID:          uuidToString(row.AgentID),
-			Provider:         row.Provider,
-			Model:            row.Model,
-			InputTokens:      row.InputTokens,
-			OutputTokens:     row.OutputTokens,
-			CacheReadTokens:  row.CacheReadTokens,
-			CacheWriteTokens: row.CacheWriteTokens,
-			TaskCount:        row.TaskCount,
-			UsageCostResponse: usageCostResponse(
+		resp[i] = runtimeUsageByAgentResponse{
+			AgentID:   uuidToString(row.AgentID),
+			TaskCount: row.TaskCount,
+			usageResponse: newUsageResponse(
 				row.Provider,
 				row.Model,
 				row.InputTokens,
@@ -317,21 +306,15 @@ func (h *Handler) GetRuntimeUsageByTask(w http.ResponseWriter, r *http.Request) 
 	resp := make([]runtimeUsageByTaskResponse, len(rows))
 	for i, row := range rows {
 		resp[i] = runtimeUsageByTaskResponse{
-			TaskID:           uuidToString(row.TaskID),
-			IssueID:          uuidToPtr(row.IssueID),
-			IssueNumber:      row.IssueNumber,
-			IssueTitle:       row.IssueTitle,
-			AgentID:          uuidToString(row.AgentID),
-			Status:           row.Status,
-			StartedAt:        timestampToPtr(row.StartedAt),
-			CompletedAt:      timestampToPtr(row.CompletedAt),
-			Provider:         row.Provider,
-			Model:            row.Model,
-			InputTokens:      row.InputTokens,
-			OutputTokens:     row.OutputTokens,
-			CacheReadTokens:  row.CacheReadTokens,
-			CacheWriteTokens: row.CacheWriteTokens,
-			UsageCostResponse: usageCostResponse(
+			TaskID:      uuidToString(row.TaskID),
+			IssueID:     uuidToPtr(row.IssueID),
+			IssueNumber: row.IssueNumber,
+			IssueTitle:  row.IssueTitle,
+			AgentID:     uuidToString(row.AgentID),
+			Status:      row.Status,
+			StartedAt:   timestampToPtr(row.StartedAt),
+			CompletedAt: timestampToPtr(row.CompletedAt),
+			usageResponse: newUsageResponse(
 				row.Provider,
 				row.Model,
 				row.InputTokens,
@@ -345,19 +328,13 @@ func (h *Handler) GetRuntimeUsageByTask(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// RuntimeUsageByHourResponse is one (hour, provider, model) row. Hours with
+// runtimeUsageByHourResponse is one (hour, provider, model) row. Hours with
 // zero activity are omitted by the SQL; clients fill the gap to render a
 // continuous 0..23 axis.
-type RuntimeUsageByHourResponse struct {
-	Hour             int    `json:"hour"`
-	Provider         string `json:"provider"`
-	Model            string `json:"model"`
-	InputTokens      int64  `json:"input_tokens"`
-	OutputTokens     int64  `json:"output_tokens"`
-	CacheReadTokens  int64  `json:"cache_read_tokens"`
-	CacheWriteTokens int64  `json:"cache_write_tokens"`
-	TaskCount        int32  `json:"task_count"`
-	UsageCostResponse
+type runtimeUsageByHourResponse struct {
+	Hour      int   `json:"hour"`
+	TaskCount int32 `json:"task_count"`
+	usageResponse
 }
 
 // GetRuntimeUsageByHour returns hourly (0..23) token aggregates for a
@@ -386,18 +363,12 @@ func (h *Handler) GetRuntimeUsageByHour(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	resp := make([]RuntimeUsageByHourResponse, len(rows))
+	resp := make([]runtimeUsageByHourResponse, len(rows))
 	for i, row := range rows {
-		resp[i] = RuntimeUsageByHourResponse{
-			Hour:             int(row.Hour),
-			Provider:         row.Provider,
-			Model:            row.Model,
-			InputTokens:      row.InputTokens,
-			OutputTokens:     row.OutputTokens,
-			CacheReadTokens:  row.CacheReadTokens,
-			CacheWriteTokens: row.CacheWriteTokens,
-			TaskCount:        row.TaskCount,
-			UsageCostResponse: usageCostResponse(
+		resp[i] = runtimeUsageByHourResponse{
+			Hour:      int(row.Hour),
+			TaskCount: row.TaskCount,
+			usageResponse: newUsageResponse(
 				row.Provider,
 				row.Model,
 				row.InputTokens,

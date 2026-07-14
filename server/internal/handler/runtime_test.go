@@ -113,8 +113,8 @@ func TestListAgentRuntimesClientCanceledReturns499(t *testing.T) {
 	}
 }
 
-func TestUsageCostResponse(t *testing.T) {
-	priced := usageCostResponse("codex", "gpt-5.3-codex-spark", 1_000_000, 1_000_000, 1_000_000, 1_000_000)
+func TestNewUsageResponseIncludesCost(t *testing.T) {
+	priced := newUsageResponse("codex", "gpt-5.3-codex-spark", 1_000_000, 1_000_000, 1_000_000, 1_000_000)
 	if !priced.Priced {
 		t.Fatalf("expected spark row to be priced")
 	}
@@ -124,8 +124,19 @@ func TestUsageCostResponse(t *testing.T) {
 	if priced.InputCostUSD != 1.75 || priced.OutputCostUSD != 14 || priced.CacheReadCostUSD != 0.175 || priced.CacheWriteCostUSD != 0.175 {
 		t.Fatalf("unexpected breakdown: %+v", priced)
 	}
+	encoded, err := json.Marshal(priced)
+	if err != nil {
+		t.Fatalf("marshal usage response: %v", err)
+	}
+	var wire map[string]any
+	if err := json.Unmarshal(encoded, &wire); err != nil {
+		t.Fatalf("decode usage response: %v", err)
+	}
+	if wire["provider"] != "codex" || wire["input_tokens"] != float64(1_000_000) || wire["cost_usd"] != 16.1 || wire["priced"] != true {
+		t.Fatalf("usage response wire fields = %#v", wire)
+	}
 
-	unpriced := usageCostResponse("fictional", "unknown-model", 1_000_000, 0, 0, 0)
+	unpriced := newUsageResponse("fictional", "unknown-model", 1_000_000, 0, 0, 0)
 	if unpriced.Priced {
 		t.Fatalf("expected unknown model to be unpriced")
 	}
