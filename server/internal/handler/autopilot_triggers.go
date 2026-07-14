@@ -236,7 +236,7 @@ func prepareAutopilotTrigger(
 		if req.Timezone != nil && *req.Timezone != "" {
 			tz = *req.Timezone
 		}
-		t, err := computeNextRun(*req.CronExpression, tz)
+		t, err := service.ComputeNextRun(*req.CronExpression, tz)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return preparedAutopilotTrigger{}, false
@@ -482,7 +482,7 @@ func (h *Handler) UpdateAutopilotTrigger(w http.ResponseWriter, r *http.Request)
 		tz = *req.Timezone
 	}
 	if prev.Kind == "schedule" && cronExpr != "" {
-		t, err := computeNextRun(cronExpr, tz)
+		t, err := service.ComputeNextRun(cronExpr, tz)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return

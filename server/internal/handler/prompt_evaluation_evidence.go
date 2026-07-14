@@ -388,7 +388,7 @@ func promptEvaluationToolFailureSignal(tool string, output string) (bool, string
 	if normalized == "" {
 		return false, ""
 	}
-	if promptEvaluationToolOutputHasToolUseError(normalized) {
+	if strings.Contains(normalized, "<tool_use_error>") {
 		return true, "工具调用返回错误"
 	}
 	if exitCode, ok := promptEvaluationToolExitCode(normalized); ok {
@@ -490,10 +490,6 @@ func promptEvaluationToolOutputHasNonEmptyStderr(output string) bool {
 		}
 	}
 	return false
-}
-
-func promptEvaluationToolOutputHasToolUseError(output string) bool {
-	return strings.Contains(output, "<tool_use_error>")
 }
 
 func promptEvaluationToolStructuredFailureReason(output string) string {
@@ -974,4 +970,3 @@ func promptEvaluationEvidenceSummaryString(value any) string {
 	}
 	return string(raw)
 }
-

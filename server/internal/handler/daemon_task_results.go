@@ -370,10 +370,10 @@ func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 	prepared := make([]preparedTaskMessage, 0, len(req.Messages))
 	for _, msg := range req.Messages {
 		// Redact sensitive information before persisting or broadcasting.
-		msg.Type = sanitizeTaskMessageText(msg.Type)
-		msg.Tool = sanitizeTaskMessageText(msg.Tool)
-		msg.Content = sanitizeTaskMessageText(redact.Text(msg.Content))
-		msg.Output = sanitizeTaskMessageText(redact.Text(msg.Output))
+		msg.Type = sanitizePostgresText(msg.Type)
+		msg.Tool = sanitizePostgresText(msg.Tool)
+		msg.Content = sanitizePostgresText(redact.Text(msg.Content))
+		msg.Output = sanitizePostgresText(redact.Text(msg.Output))
 		msg.Input = sanitizeTaskMessageInput(redact.InputMap(msg.Input))
 
 		var inputJSON []byte
@@ -438,10 +438,6 @@ func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-func sanitizeTaskMessageText(value string) string {
-	return sanitizePostgresText(value)
-}
-
 func sanitizeTaskMessageInput(input map[string]any) map[string]any {
 	if input == nil {
 		return nil
@@ -453,11 +449,11 @@ func sanitizeTaskMessageInput(input map[string]any) map[string]any {
 func sanitizeTaskMessageValue(value any) any {
 	switch typed := value.(type) {
 	case string:
-		return sanitizeTaskMessageText(typed)
+		return sanitizePostgresText(typed)
 	case map[string]any:
 		out := make(map[string]any, len(typed))
 		for key, item := range typed {
-			out[sanitizeTaskMessageText(key)] = sanitizeTaskMessageValue(item)
+			out[sanitizePostgresText(key)] = sanitizeTaskMessageValue(item)
 		}
 		return out
 	case []any:

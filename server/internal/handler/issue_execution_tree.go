@@ -489,7 +489,7 @@ func buildIssueTimelineNodes(root issueExecutionNodeResponse) []issueTimelineNod
 	for _, task := range root.Tasks {
 		taskTraces := traceByTask[task.ID]
 		taskArtifacts := artifactsByTask[task.ID]
-		responsibilityStartedAt := taskResponsibilityStartedAt(task)
+		responsibilityStartedAt := firstNonEmpty(task.TriggerCommentCreatedAt, task.CreatedAt, ptrString(task.StartedAt))
 		node := issueTimelineNodeResponse{
 			IssueID:               root.Issue.ID,
 			RootTaskID:            rootTaskID,
@@ -1045,10 +1045,6 @@ func compareTimelineTasks(left, right AgentTaskResponse) int {
 	return 0
 }
 
-func taskResponsibilityStartedAt(task AgentTaskResponse) string {
-	return firstNonEmpty(task.TriggerCommentCreatedAt, task.CreatedAt, ptrString(task.StartedAt))
-}
-
 func responsibilityDurationMs(task AgentTaskResponse, startedAt string) int64 {
 	if startedAt == "" || task.CompletedAt == nil {
 		return 0
@@ -1131,9 +1127,9 @@ func summarizeIssueTimeline(issue IssueResponse, nodes []issueTimelineNodeRespon
 		summary.AcceptanceStatus = "done"
 		summary.FailureSummary = ""
 	}
-	summary.AgentExecutionDurationMs = mergedNodeDurationMs(nodes, "agent_task")
-	humanConfirmationMs := mergedNodeDurationMs(nodes, "human_confirmation")
-	childIssueWaitMs := mergedNodeDurationMs(nodes, "child_issue_ref")
+	summary.AgentExecutionDurationMs = mergedWaitDurationMs(nodes, "agent_task")
+	humanConfirmationMs := mergedWaitDurationMs(nodes, "human_confirmation")
+	childIssueWaitMs := mergedWaitDurationMs(nodes, "child_issue_ref")
 	if summary.WorkStartedAt != "" && summary.WorkCompletedAt != "" {
 		if started, startErr := time.Parse(time.RFC3339, summary.WorkStartedAt); startErr == nil {
 			if completed, completedErr := time.Parse(time.RFC3339, summary.WorkCompletedAt); completedErr == nil && completed.After(started) {
@@ -1269,10 +1265,6 @@ func mergedWaitDurationMs(nodes []issueTimelineNodeResponse, nodeTypes ...string
 		total += interval.end.Sub(interval.start).Milliseconds()
 	}
 	return total
-}
-
-func mergedNodeDurationMs(nodes []issueTimelineNodeResponse, nodeType string) int64 {
-	return mergedWaitDurationMs(nodes, nodeType)
 }
 
 func mergeTimelineIntervals(intervals []timelineInterval) []timelineInterval {

@@ -2753,19 +2753,6 @@ func TestPromptEvaluationOptimizationCandidateUsesAgentEvidence(t *testing.T) {
 	}
 }
 
-func TestPromptEvaluationRequestedAgentIDUsesCanonicalFieldOnly(t *testing.T) {
-	payload := map[string]any{"运行环境": map[string]any{"目标智能体标识": "retired"}}
-	if got := promptEvaluationRequestedAgentID(payload); got != "" {
-		t.Fatalf("retired requested agent id = %q", got)
-	}
-
-	explicit := "11111111-1111-4111-8111-111111111111"
-	payload["agent_id"] = explicit
-	if got := promptEvaluationRequestedAgentID(payload); got != explicit {
-		t.Fatalf("requested agent id = %q, want %q", got, explicit)
-	}
-}
-
 func TestRunPromptEvaluationAssetAgentAutoSyncsCancelledTask(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("handler test fixture not initialized")

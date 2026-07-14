@@ -8,7 +8,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -20,11 +19,6 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
-
-// computeNextRun delegates to the shared cron helper in the service package.
-func computeNextRun(cronExpr, timezone string) (time.Time, error) {
-	return service.ComputeNextRun(cronExpr, timezone)
-}
 
 // ── Response types ──────────────────────────────────────────────────────────
 
@@ -184,7 +178,7 @@ func (h *Handler) triggerToResponse(t db.AutopilotTrigger) (AutopilotTriggerResp
 		UpdatedAt:      timestampToString(t.UpdatedAt),
 	}
 	if t.Kind == "webhook" && t.WebhookToken.Valid && t.WebhookToken.String != "" {
-		path := webhookPathForToken(t.WebhookToken.String)
+		path := "/api/webhooks/autopilots/" + t.WebhookToken.String
 		resp.WebhookPath = &path
 		if h.cfg.PublicURL != "" {
 			full := h.cfg.PublicURL + path
@@ -216,13 +210,6 @@ func signingSecretHint(secret string) string {
 		return ""
 	}
 	return secret[len(secret)-4:]
-}
-
-// webhookPathForToken composes the path used by the public ingress route.
-// Kept as a free function (no Handler receiver) so test code that builds
-// expected URLs without instantiating a Handler can call it.
-func webhookPathForToken(token string) string {
-	return "/api/webhooks/autopilots/" + token
 }
 
 func runToResponse(r db.AutopilotRun) AutopilotRunResponse {

@@ -753,7 +753,7 @@ func (h *Handler) ListPromptEvaluationAssets(w http.ResponseWriter, r *http.Requ
 	var status pgtype.Text
 	if value := r.URL.Query().Get("status"); value != "" {
 		if !validPromptEvaluationCaseStatus(value) {
-			writeError(w, http.StatusBadRequest, promptEvaluationCaseStatusError())
+			writeError(w, http.StatusBadRequest, promptEvaluationCaseStatusError)
 			return
 		}
 		status = pgtype.Text{String: value, Valid: true}

@@ -171,7 +171,7 @@ func promptEvaluationSOPVerifier(agents []db.Agent) (db.Agent, bool) {
 }
 
 func (h *Handler) selectPromptEvaluationExecutionAgent(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID, ownerID pgtype.UUID, member db.Member, payload map[string]any) (db.Agent, db.AgentRuntime, bool) {
-	requestedAgentID := promptEvaluationRequestedAgentID(payload)
+	requestedAgentID := strings.TrimSpace(stringFromAny(payload["agent_id"]))
 	if requestedAgentID == "" {
 		return h.ensurePromptEvaluationAgent(w, r, workspaceID, ownerID, member)
 	}
@@ -229,10 +229,6 @@ func (h *Handler) selectPromptEvaluationRuntime(w http.ResponseWriter, r *http.R
 	}
 	writeError(w, http.StatusServiceUnavailable, readiness.Fix)
 	return db.AgentRuntime{}, false
-}
-
-func promptEvaluationRequestedAgentID(payload map[string]any) string {
-	return strings.TrimSpace(stringFromAny(payload["agent_id"]))
 }
 
 func promptEvaluationModelForAgent(agent db.Agent) string {

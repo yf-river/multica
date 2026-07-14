@@ -38,7 +38,7 @@ func parsePromptEvaluationCaseFilters(w http.ResponseWriter, values url.Values) 
 	var filters promptEvaluationCaseFilters
 	if value := values.Get("status"); value != "" {
 		if !validPromptEvaluationCaseStatus(value) {
-			writeError(w, http.StatusBadRequest, promptEvaluationCaseStatusError())
+			writeError(w, http.StatusBadRequest, promptEvaluationCaseStatusError)
 			return filters, false
 		}
 		filters.status = pgtype.Text{String: value, Valid: true}
@@ -463,7 +463,7 @@ func (h *Handler) BulkUpdatePromptEvaluationCaseTags(w http.ResponseWriter, r *h
 	var status pgtype.Text
 	if value := strings.TrimSpace(req.Status); value != "" {
 		if !validPromptEvaluationCaseStatus(value) {
-			writeError(w, http.StatusBadRequest, promptEvaluationCaseStatusError())
+			writeError(w, http.StatusBadRequest, promptEvaluationCaseStatusError)
 			return
 		}
 		status = pgtype.Text{String: value, Valid: true}
@@ -862,9 +862,7 @@ func validPromptEvaluationCaseStatus(status string) bool {
 	}
 }
 
-func promptEvaluationCaseStatusError() string {
-	return "status must be 启用, 归档, draft, approved, or active"
-}
+const promptEvaluationCaseStatusError = "status must be 启用, 归档, draft, approved, or active"
 
 func (h *Handler) CreatePromptEvaluationCase(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
@@ -903,7 +901,7 @@ func (h *Handler) CreatePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 		status = "启用"
 	}
 	if !validPromptEvaluationCaseStatus(status) {
-		writeError(w, http.StatusBadRequest, promptEvaluationCaseStatusError())
+		writeError(w, http.StatusBadRequest, promptEvaluationCaseStatusError)
 		return
 	}
 	req.Status = status
@@ -1238,26 +1236,26 @@ func (h *Handler) UpdatePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 		status = strings.TrimSpace(*req.Status)
 	}
 	if !validPromptEvaluationCaseStatus(status) {
-		writeError(w, http.StatusBadRequest, promptEvaluationCaseStatusError())
+		writeError(w, http.StatusBadRequest, promptEvaluationCaseStatusError)
 		return
 	}
-	variables, ok := jsonObjectBytesForUpdate(w, req.Variables, "variables", current.Variables)
+	variables, ok := jsonObjectBytesOrDefault(w, req.Variables, "variables", current.Variables)
 	if !ok {
 		return
 	}
-	expectedContains, ok := jsonArrayBytesForUpdate(w, req.ExpectedContains, "expected_contains", current.ExpectedContains)
+	expectedContains, ok := jsonArrayBytesOrDefault(w, req.ExpectedContains, "expected_contains", current.ExpectedContains)
 	if !ok {
 		return
 	}
-	input, ok := jsonObjectBytesForUpdate(w, req.Input, "input", current.Input)
+	input, ok := jsonObjectBytesOrDefault(w, req.Input, "input", current.Input)
 	if !ok {
 		return
 	}
-	expected, ok := jsonObjectBytesForUpdate(w, req.Expected, "expected", current.Expected)
+	expected, ok := jsonObjectBytesOrDefault(w, req.Expected, "expected", current.Expected)
 	if !ok {
 		return
 	}
-	tags, ok := jsonArrayBytesForUpdate(w, req.Tags, "tags", current.Tags)
+	tags, ok := jsonArrayBytesOrDefault(w, req.Tags, "tags", current.Tags)
 	if !ok {
 		return
 	}

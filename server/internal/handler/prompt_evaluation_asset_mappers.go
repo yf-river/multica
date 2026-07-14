@@ -837,14 +837,6 @@ func jsonArrayBytesOrDefault(w http.ResponseWriter, raw json.RawMessage, field s
 	return raw, true
 }
 
-func jsonObjectBytesForUpdate(w http.ResponseWriter, raw json.RawMessage, field string, existing []byte) ([]byte, bool) {
-	return jsonObjectBytesOrDefault(w, raw, field, existing)
-}
-
-func jsonArrayBytesForUpdate(w http.ResponseWriter, raw json.RawMessage, field string, existing []byte) ([]byte, bool) {
-	return jsonArrayBytesOrDefault(w, raw, field, existing)
-}
-
 func (h *Handler) promptEvaluationPromptID(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID, raw json.RawMessage, fallback pgtype.UUID) (pgtype.UUID, bool) {
 	if len(raw) == 0 {
 		return fallback, true
