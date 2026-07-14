@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
-import { executeRecoverableMutation } from "../api/transport";
+import { executePendingMutation } from "../api/transport";
 import { useWorkspaceId } from "../paths";
 import type { CreateSquadRequest, Squad } from "../types";
 import { generateUUID } from "../utils";
@@ -13,17 +13,11 @@ export function useCreateSquad() {
   return useMutation({
     mutationFn: async (request: CreateSquadRequest) => {
       const operations = useSquadPendingOperationStore.getState();
-      const pendingCreate = operations.pendingCreate ?? {
-        requestKey: generateUUID(),
-        request,
-      };
-      operations.setPendingCreate(pendingCreate);
-      return executeRecoverableMutation(
-        () => api.createSquad(
-          pendingCreate.request,
-          pendingCreate.requestKey,
-        ),
-        () => useSquadPendingOperationStore.getState().setPendingCreate(),
+      return executePendingMutation(
+        operations.pendingCreate,
+        () => ({ requestKey: generateUUID(), request }),
+        operations.setPendingCreate,
+        (operation) => api.createSquad(operation.request, operation.requestKey),
       );
     },
     onSuccess: (squad) => {

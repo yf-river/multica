@@ -1,6 +1,6 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
-import { executeRecoverableMutation } from "../api/transport";
+import { executePendingMutation } from "../api/transport";
 import { generateUUID } from "../utils";
 import { autopilotKeys } from "./queries";
 import { useWorkspaceId } from "../paths";
@@ -20,17 +20,11 @@ export function useCreateAutopilot() {
   return useMutation({
     mutationFn: async (data: CreateAutopilotRequest) => {
       const operations = useAutopilotPendingOperationStore.getState();
-      const pendingCreate = operations.pendingCreate ?? {
-        requestKey: generateUUID(),
-        request: data,
-      };
-      operations.setPendingCreate(pendingCreate);
-      return executeRecoverableMutation(
-        () => api.createAutopilot(
-          pendingCreate.request,
-          pendingCreate.requestKey,
-        ),
-        () => useAutopilotPendingOperationStore.getState().setPendingCreate(),
+      return executePendingMutation(
+        operations.pendingCreate,
+        () => ({ requestKey: generateUUID(), request: data }),
+        operations.setPendingCreate,
+        (operation) => api.createAutopilot(operation.request, operation.requestKey),
       );
     },
     onSuccess: (newAutopilot) => {
@@ -109,11 +103,13 @@ export function useTriggerAutopilot() {
   return useMutation({
     mutationFn: async (id: string) => {
       const operations = useAutopilotPendingOperationStore.getState();
-      const requestKey = operations.manualTriggerKeys[id] ?? generateUUID();
-      operations.setManualTriggerKey(id, requestKey);
-      return executeRecoverableMutation(
-        () => api.triggerAutopilot(id, requestKey),
-        () => useAutopilotPendingOperationStore.getState().clearManualTriggerKey(id),
+      return executePendingMutation(
+        operations.manualTriggerKeys[id],
+        generateUUID,
+        (requestKey) => requestKey
+          ? operations.setManualTriggerKey(id, requestKey)
+          : operations.clearManualTriggerKey(id),
+        (requestKey) => api.triggerAutopilot(id, requestKey),
       );
     },
     onSettled: (_data, _err, id) => {

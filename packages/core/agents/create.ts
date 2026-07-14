@@ -1,5 +1,5 @@
 import { api, type ApiClient } from "../api";
-import { executeRecoverableMutation } from "../api/transport";
+import { executePendingMutation } from "../api/transport";
 import type { Agent, CreateAgentRequest } from "../types";
 import { generateUUID } from "../utils";
 import { useAgentPendingOperationStore } from "./pending-operation-store";
@@ -11,16 +11,10 @@ export async function createAgentWithRecovery(
   client: AgentCreateClient = api,
 ): Promise<Agent> {
   const operations = useAgentPendingOperationStore.getState();
-  const pendingCreate = operations.pendingCreate ?? {
-    requestKey: generateUUID(),
-    request,
-  };
-  operations.setPendingCreate(pendingCreate);
-  return executeRecoverableMutation(
-    () => client.createAgent(
-      pendingCreate.request,
-      pendingCreate.requestKey,
-    ),
-    () => useAgentPendingOperationStore.getState().setPendingCreate(),
+  return executePendingMutation(
+    operations.pendingCreate,
+    () => ({ requestKey: generateUUID(), request }),
+    operations.setPendingCreate,
+    (operation) => client.createAgent(operation.request, operation.requestKey),
   );
 }

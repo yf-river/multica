@@ -78,6 +78,21 @@ export function sameMutationRequest(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
+export async function executePendingMutation<Operation, Result>(
+  pending: Operation | null | undefined,
+  createOperation: () => Operation,
+  setPending: (operation?: Operation) => void,
+  mutate: (operation: Operation) => Promise<Result>,
+  clearPending: (operation: Operation) => void = () => setPending(),
+): Promise<Result> {
+  const operation = pending ?? createOperation();
+  if (!pending) setPending(operation);
+  return executeRecoverableMutation(
+    () => mutate(operation),
+    () => clearPending(operation),
+  );
+}
+
 export async function executeRecoverableIntent<Operation, Result>(
   pending: Operation | undefined,
   isSameIntent: (pending: Operation) => boolean,

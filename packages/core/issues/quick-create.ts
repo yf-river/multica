@@ -1,5 +1,5 @@
 import type { ApiClient } from "../api";
-import { executeRecoverableMutation } from "../api/transport";
+import { executePendingMutation } from "../api/transport";
 import type { QuickCreateIssueRequest } from "../types";
 import { generateUUID } from "../utils";
 import { useQuickCreateStore } from "./stores/quick-create-store";
@@ -11,12 +11,13 @@ export async function quickCreateIssueWithRecovery(
   request: QuickCreateIssueRequest,
 ): Promise<void> {
   const store = useQuickCreateStore.getState();
-  const existing = store.pendingOperation;
-  const operation = existing ?? { request, idempotencyKey: generateUUID() };
-
-  if (operation !== existing) store.setPendingOperation(operation);
-  return executeRecoverableMutation(
-    () => api.quickCreateIssue(operation.request, operation.idempotencyKey),
-    () => useQuickCreateStore.getState().clearPendingOperation(operation.idempotencyKey),
+  return executePendingMutation(
+    store.pendingOperation,
+    () => ({ request, idempotencyKey: generateUUID() }),
+    (operation) => {
+      if (operation) store.setPendingOperation(operation);
+    },
+    (operation) => api.quickCreateIssue(operation.request, operation.idempotencyKey),
+    (operation) => useQuickCreateStore.getState().clearPendingOperation(operation.idempotencyKey),
   );
 }
