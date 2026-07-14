@@ -1760,7 +1760,7 @@ CREATE TABLE public.workspace (
     name text NOT NULL,
     slug text NOT NULL,
     description text,
-    settings jsonb DEFAULT '{}'::jsonb NOT NULL,
+    settings jsonb DEFAULT '{"github_enabled": true, "github_pr_sidebar_enabled": true, "co_authored_by_enabled": true}'::jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     context text,
@@ -1769,6 +1769,7 @@ CREATE TABLE public.workspace (
     issue_counter integer DEFAULT 0 NOT NULL,
     avatar_url text,
     CONSTRAINT workspace_repos_array CHECK ((jsonb_typeof(repos) = 'array'::text)),
+    CONSTRAINT workspace_github_settings_shape CHECK (((settings ? 'github_enabled'::text) AND (jsonb_typeof((settings -> 'github_enabled'::text)) = 'boolean'::text) AND (settings ? 'github_pr_sidebar_enabled'::text) AND (jsonb_typeof((settings -> 'github_pr_sidebar_enabled'::text)) = 'boolean'::text) AND (settings ? 'co_authored_by_enabled'::text) AND (jsonb_typeof((settings -> 'co_authored_by_enabled'::text)) = 'boolean'::text))),
     CONSTRAINT workspace_settings_object CHECK ((jsonb_typeof(settings) = 'object'::text))
 );
 ALTER TABLE ONLY public.activity_log
