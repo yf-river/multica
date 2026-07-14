@@ -54,16 +54,13 @@ export const ReactionSchema = z.object({
   actor_type: z.string(),
   actor_id: z.string(),
   emoji: z.string(),
-  created_at: z.string(),
 }).loose();
 
 export const IssueReactionSchema = z.object({
   id: NonEmptyStringSchema,
-  issue_id: NonEmptyStringSchema,
   actor_type: z.string(),
   actor_id: z.string(),
   emoji: z.string(),
-  created_at: z.string(),
 }).loose();
 
 // Standalone attachment lookup (`GET /api/attachments/{id}`) is the source of
@@ -78,26 +75,16 @@ export const AttachmentResponseSchema = z.object({
   download_url: NonEmptyStringSchema,
   markdown_url: NonEmptyStringSchema,
   filename: z.string(),
-  chat_session_id: z.string().nullable().optional(),
-  chat_message_id: z.string().nullable().optional(),
 }).loose();
 
 export const EMPTY_ATTACHMENT: Attachment = {
   id: "",
-  workspace_id: "",
-  issue_id: null,
-  comment_id: null,
-  chat_session_id: null,
-  chat_message_id: null,
-  uploader_type: "",
-  uploader_id: "",
   filename: "",
   url: "",
   download_url: "",
   markdown_url: "",
   content_type: "",
   size_bytes: 0,
-  created_at: "",
 };
 
 // All object schemas use `.loose()` so unknown server-side fields pass
@@ -117,7 +104,6 @@ const TimelineEntrySchema = z.object({
   details: z.record(z.string(), z.unknown()).optional(),
   content: z.string().optional(),
   parent_id: z.string().nullable().optional(),
-  updated_at: z.string().optional(),
   comment_type: z.string().optional(),
   reactions: z.array(ReactionSchema).optional(),
   attachments: z.array(EmbeddedAttachmentSchema).optional(),
@@ -171,16 +157,13 @@ export const EMPTY_REACTION: Reaction = {
   actor_type: "",
   actor_id: "",
   emoji: "",
-  created_at: "",
 };
 
 export const EMPTY_ISSUE_REACTION: IssueReaction = {
   id: "",
-  issue_id: "",
   actor_type: "",
   actor_id: "",
   emoji: "",
-  created_at: "",
 };
 
 const CommentTriggerPreviewAgentSchema = z.object({
@@ -202,8 +185,6 @@ const IssueMetadataSchema = z.record(z.string(), z.union([z.string(), z.number()
 
 export const IssueSchema = z.object({
   id: NonEmptyStringSchema,
-  workspace_id: NonEmptyStringSchema,
-  number: z.number(),
   identifier: z.string(),
   title: z.string(),
   description: z.string().nullable(),
@@ -223,14 +204,10 @@ export const IssueSchema = z.object({
   labels: z.array(z.unknown()).optional(),
   created_at: z.string(),
   updated_at: z.string(),
-  work_started_at: z.string().nullable().optional(),
-  work_completed_at: z.string().nullable().optional(),
 }).loose();
 
 export const EMPTY_ISSUE: Issue = {
   id: "",
-  workspace_id: "",
-  number: 0,
   identifier: "",
   title: "",
   description: null,

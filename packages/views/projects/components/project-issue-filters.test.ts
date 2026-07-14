@@ -7,7 +7,6 @@ function issue(id: string): Issue {
     id,
     title: `Issue ${id}`,
     identifier: id,
-    number: Number(id.replace(/\D/g, "")) || 0,
     description: null,
     status: "todo",
     priority: "none",
@@ -15,15 +14,15 @@ function issue(id: string): Issue {
     assignee_id: null,
     creator_type: "member",
     creator_id: "user-1",
-    workspace_id: "ws-1",
     project_id: "project-1",
     parent_issue_id: null,
     position: 0,
     due_date: null,
     start_date: null,
+    metadata: {},
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
-  } as Issue;
+  };
 }
 
 function group(id: string, issues: Issue[]): IssueAssigneeGroup {

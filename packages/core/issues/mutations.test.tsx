@@ -32,8 +32,6 @@ const WS_ID = "ws-1";
 function makeIssue(idx: number, overrides: Partial<Issue> = {}): Issue {
   return {
     id: `issue-${idx}`,
-    workspace_id: WS_ID,
-    number: idx,
     identifier: `MUL-${idx}`,
     title: `Issue ${idx}`,
     description: null,
@@ -333,7 +331,6 @@ describe("useResolveComment", () => {
       reactions: [],
       attachments: [],
       created_at: "2026-01-01T00:00:00Z",
-      updated_at: "2026-01-01T00:00:00Z",
       resolved_at: resolvedAt,
       resolved_by_type: resolvedAt ? "member" : null,
       resolved_by_id: resolvedAt ? "user-1" : null,

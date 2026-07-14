@@ -380,8 +380,6 @@ vi.mock("react-resizable-panels", () => ({
 
 const mockIssue: Issue = {
   id: "issue-1",
-  workspace_id: "ws-1",
-  number: 1,
   identifier: "TES-1",
   title: "Implement authentication",
   description: "Add JWT auth to the backend",
@@ -410,7 +408,6 @@ const mockTimeline: TimelineEntry[] = [
     content: "Started working on this",
     parent_id: null,
     created_at: "2026-01-16T00:00:00Z",
-    updated_at: "2026-01-16T00:00:00Z",
     comment_type: "comment",
   },
   {
@@ -421,7 +418,6 @@ const mockTimeline: TimelineEntry[] = [
     content: "I can help with this",
     parent_id: null,
     created_at: "2026-01-17T00:00:00Z",
-    updated_at: "2026-01-17T00:00:00Z",
     comment_type: "comment",
   },
 ];

@@ -43,8 +43,6 @@ const workspace: Workspace = {
 
 const baseIssue: Issue = {
   id: ISSUE_ID,
-  workspace_id: WS_ID,
-  number: 1,
   identifier: "TST-1",
   title: "Deleted issue",
   description: null,
@@ -68,7 +66,6 @@ const baseIssue: Issue = {
 const otherIssue: Issue = {
   ...baseIssue,
   id: OTHER_ISSUE_ID,
-  number: 2,
   identifier: "TST-2",
   title: "Other issue",
   parent_issue_id: null,
@@ -76,20 +73,12 @@ const otherIssue: Issue = {
 
 const attachment: Attachment = {
   id: "attachment-1",
-  workspace_id: WS_ID,
-  issue_id: ISSUE_ID,
-  comment_id: null,
-  chat_session_id: null,
-  chat_message_id: null,
-  uploader_type: "member",
-  uploader_id: "member-1",
   filename: "evidence.png",
   url: "s3://bucket/evidence.png",
   download_url: "https://example.test/evidence.png",
   markdown_url: "https://example.test/api/attachments/attachment-1/download",
   content_type: "image/png",
   size_bytes: 1,
-  created_at: "2026-01-01T00:00:00Z",
 };
 
 const timeline: TimelineEntry[] = [
@@ -470,7 +459,7 @@ describe("useBatchDeleteIssues", () => {
       issueLabels,
     );
     qc.setQueryData<Attachment[]>(issueKeys.attachments(OTHER_ISSUE_ID), [
-      { ...attachment, id: "attachment-2", issue_id: OTHER_ISSUE_ID },
+      { ...attachment, id: "attachment-2" },
     ]);
     qc.setQueryData<TimelineEntry[]>(issueKeys.timeline(OTHER_ISSUE_ID), [
       { ...timeline[0]!, id: "activity-2" },
@@ -526,7 +515,7 @@ describe("useBatchDeleteIssues", () => {
         issueLabels,
       );
       expect(qc.getQueryData(issueKeys.attachments(OTHER_ISSUE_ID))).toEqual([
-        { ...attachment, id: "attachment-2", issue_id: OTHER_ISSUE_ID },
+        { ...attachment, id: "attachment-2" },
       ]);
       expect(qc.getQueryData(issueKeys.timeline(OTHER_ISSUE_ID))).toEqual([
         { ...timeline[0]!, id: "activity-2" },

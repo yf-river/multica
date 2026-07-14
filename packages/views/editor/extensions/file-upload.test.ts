@@ -46,16 +46,8 @@ function makeUpload(
   },
 ): Attachment {
   return {
-    workspace_id: "ws-1",
-    issue_id: null,
-    comment_id: null,
-    chat_session_id: null,
-    chat_message_id: null,
-    uploader_type: "member",
-    uploader_id: "user-1",
     content_type: "image/png",
     size_bytes: 1,
-    created_at: new Date(0).toISOString(),
     ...overrides,
     url: overrides.url,
     download_url: overrides.download_url ?? overrides.url,

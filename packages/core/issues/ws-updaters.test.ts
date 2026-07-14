@@ -50,8 +50,6 @@ const labelB: Label = {
 
 const baseIssue: Issue = {
   id: ISSUE_ID,
-  workspace_id: WS_ID,
-  number: 1,
   identifier: "MUL-1",
   title: "Test",
   description: null,
@@ -299,11 +297,9 @@ describe("onIssueDeleted", () => {
     qc.setQueryData<IssueReaction[]>(issueKeys.reactions(ISSUE_ID), [
       {
         id: "reaction-1",
-        issue_id: ISSUE_ID,
         actor_type: "member",
         actor_id: "user-1",
         emoji: "+1",
-        created_at: "2025-01-01T00:00:00Z",
       },
     ]);
     qc.setQueryData<IssueSubscriber[]>(issueKeys.subscribers(ISSUE_ID), [
@@ -318,20 +314,12 @@ describe("onIssueDeleted", () => {
     qc.setQueryData<Attachment[]>(issueKeys.attachments(ISSUE_ID), [
       {
         id: "attachment-1",
-        workspace_id: WS_ID,
-        issue_id: ISSUE_ID,
-        comment_id: null,
-        chat_session_id: null,
-        chat_message_id: null,
-        uploader_type: "member",
-        uploader_id: "user-1",
         filename: "evidence.png",
         url: "s3://bucket/evidence.png",
         download_url: "https://example.test/evidence.png",
         markdown_url: "https://example.test/api/attachments/att-1/download",
         content_type: "image/png",
         size_bytes: 1,
-        created_at: "2025-01-01T00:00:00Z",
       },
     ]);
     qc.setQueryData<AgentTask[]>(issueKeys.tasks(ISSUE_ID), [makeTask()]);

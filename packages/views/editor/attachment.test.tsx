@@ -129,20 +129,12 @@ import { configStore } from "@multica/core/config";
 function makeRecord(overrides: Partial<AttachmentRecord> = {}): AttachmentRecord {
   return {
     id: "att-1",
-    workspace_id: "ws-1",
-    issue_id: null,
-    comment_id: null,
-    chat_session_id: null,
-    chat_message_id: null,
-    uploader_type: "member",
-    uploader_id: "u-1",
     filename: "shot.png",
     url: "https://cdn.example.test/att-1.png",
     download_url: "https://cdn.example.test/att-1.png?Signature=s",
     markdown_url: "https://cdn.example.test/api/attachments/att-1/download",
     content_type: "image/png",
     size_bytes: 1024,
-    created_at: "2026-05-13T00:00:00Z",
     ...overrides,
   };
 }

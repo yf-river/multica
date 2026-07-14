@@ -49,7 +49,6 @@ function commentToTimelineEntry(comment: Comment): TimelineEntry {
     content: comment.content,
     parent_id: comment.parent_id,
     created_at: comment.created_at,
-    updated_at: comment.updated_at,
     comment_type: comment.type,
     reactions: comment.reactions ?? [],
     attachments: comment.attachments ?? [],

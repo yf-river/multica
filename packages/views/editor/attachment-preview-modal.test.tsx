@@ -133,20 +133,12 @@ function render(ui: ReactElement) {
 function makeAttachment(overrides: Partial<Attachment> = {}): Attachment {
   return {
     id: "att-1",
-    workspace_id: "ws-1",
-    issue_id: null,
-    comment_id: null,
-    chat_session_id: null,
-    chat_message_id: null,
-    uploader_type: "member",
-    uploader_id: "u-1",
     filename: "test.bin",
     url: "https://cdn.example.test/att-1.bin",
     download_url: "https://cdn.example.test/att-1.bin?Signature=s",
     markdown_url: "https://cdn.example.test/api/attachments/att-1/download",
     content_type: "application/octet-stream",
     size_bytes: 0,
-    created_at: "2026-05-13T00:00:00Z",
     ...overrides,
   };
 }

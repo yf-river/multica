@@ -254,8 +254,6 @@ vi.mock("@dnd-kit/utilities", () => ({
 const mockIssues: Issue[] = [
   {
     id: "parent-1",
-    workspace_id: "ws-1",
-    number: 1,
     identifier: "PROJ-1",
     title: "Parent Issue 1",
     description: "Parent description",
@@ -276,8 +274,6 @@ const mockIssues: Issue[] = [
   },
   {
     id: "child-1",
-    workspace_id: "ws-1",
-    number: 2,
     identifier: "PROJ-2",
     title: "Child Issue 1",
     description: "Child description",
@@ -298,8 +294,6 @@ const mockIssues: Issue[] = [
   },
   {
     id: "orphan-1",
-    workspace_id: "ws-1",
-    number: 3,
     identifier: "PROJ-3",
     title: "Orphan Issue 1",
     description: "无父 issue",
@@ -438,8 +432,6 @@ describe("SwimLaneView", () => {
   // A child whose parent isn't in the loaded set — lands in "其他父 issue".
   const orphanChild: Issue = {
     id: "lonely-child",
-    workspace_id: "ws-1",
-    number: 99,
     identifier: "PROJ-99",
     title: "Lonely Child",
     description: null,
@@ -710,8 +702,6 @@ describe("SwimLaneView", () => {
   const multiParentIssues: Issue[] = [
     {
       id: "parent-1",
-      workspace_id: "ws-1",
-      number: 1,
       identifier: "PROJ-1",
       title: "Parent A",
       description: null,
@@ -732,8 +722,6 @@ describe("SwimLaneView", () => {
     },
     {
       id: "parent-2",
-      workspace_id: "ws-1",
-      number: 2,
       identifier: "PROJ-10",
       title: "Parent B",
       description: null,
@@ -754,8 +742,6 @@ describe("SwimLaneView", () => {
     },
     {
       id: "child-of-1",
-      workspace_id: "ws-1",
-      number: 3,
       identifier: "PROJ-2",
       title: "Child of A",
       description: null,
@@ -776,8 +762,6 @@ describe("SwimLaneView", () => {
     },
     {
       id: "child-of-2",
-      workspace_id: "ws-1",
-      number: 4,
       identifier: "PROJ-11",
       title: "Child of B",
       description: null,
@@ -1227,8 +1211,6 @@ describe("SwimLaneView", () => {
     // GP.id (from parent.parent_issue_id) and GC is never fetched.
     const grandparent: Issue = {
       id: "gp-1",
-      workspace_id: "ws-1",
-      number: 10,
       identifier: "PROJ-10",
       title: "Grandparent",
       description: null,
@@ -1250,7 +1232,6 @@ describe("SwimLaneView", () => {
     const parent: Issue = {
       ...grandparent,
       id: "p-1",
-      number: 11,
       identifier: "PROJ-11",
       title: "Parent",
       parent_issue_id: "gp-1",
@@ -1259,7 +1240,6 @@ describe("SwimLaneView", () => {
     const grandchild: Issue = {
       ...grandparent,
       id: "gc-1",
-      number: 12,
       identifier: "PROJ-12",
       title: "Grandchild (batch only)",
       status: "in_progress",
@@ -1300,8 +1280,6 @@ describe("SwimLaneView", () => {
     // grandchildren are discoverable.
     const parentWithUnloadedChildren: Issue = {
       id: "p-only",
-      workspace_id: "ws-1",
-      number: 50,
       identifier: "PROJ-50",
       title: "Standalone parent",
       description: null,
@@ -1380,8 +1358,6 @@ describe("SwimLaneView", () => {
 
     const grandparent: Issue = {
       id: "gp-2",
-      workspace_id: "ws-1",
-      number: 20,
       identifier: "PROJ-20",
       title: "Grandparent 2",
       description: null,
@@ -1403,7 +1379,6 @@ describe("SwimLaneView", () => {
     const parent: Issue = {
       ...grandparent,
       id: "p-2",
-      number: 21,
       identifier: "PROJ-21",
       title: "Parent 2",
       parent_issue_id: "gp-2",
@@ -1412,7 +1387,6 @@ describe("SwimLaneView", () => {
     const matchingGrandchild: Issue = {
       ...grandparent,
       id: "gc-matching",
-      number: 22,
       identifier: "PROJ-22",
       title: "Matching Child (High Priority)",
       status: "in_progress",
@@ -1423,7 +1397,6 @@ describe("SwimLaneView", () => {
     const nonMatchingGrandchild: Issue = {
       ...grandparent,
       id: "gc-non-matching",
-      number: 23,
       identifier: "PROJ-23",
       title: "Non-matching Child (Low Priority)",
       status: "in_progress",
@@ -1473,8 +1446,6 @@ describe("SwimLaneView", () => {
 
     const grandparent: Issue = {
       id: "gp-3",
-      workspace_id: "ws-1",
-      number: 30,
       identifier: "PROJ-30",
       title: "Grandparent 3",
       description: null,
@@ -1496,7 +1467,6 @@ describe("SwimLaneView", () => {
     const parent: Issue = {
       ...grandparent,
       id: "p-3",
-      number: 31,
       identifier: "PROJ-31",
       title: "Parent 3",
       parent_issue_id: "gp-3",
@@ -1505,7 +1475,6 @@ describe("SwimLaneView", () => {
     const runningGrandchild: Issue = {
       ...grandparent,
       id: "gc-running",
-      number: 32,
       identifier: "PROJ-32",
       title: "Running Child",
       status: "in_progress",
@@ -1515,7 +1484,6 @@ describe("SwimLaneView", () => {
     const nonRunningGrandchild: Issue = {
       ...grandparent,
       id: "gc-non-running",
-      number: 33,
       identifier: "PROJ-33",
       title: "Non-running Child",
       status: "in_progress",

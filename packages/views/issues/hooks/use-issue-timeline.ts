@@ -179,7 +179,6 @@ export function useIssueTimeline(issueId: string, userId?: string) {
                 actor_type: "member",
                 actor_id: userId ?? "",
                 emoji: vars.emoji,
-                created_at: "",
               },
             ];
           }

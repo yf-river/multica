@@ -5,8 +5,6 @@ import { TestI18nProvider } from "../../../test/i18n";
 
 export const mockIssue: Issue = {
   id: "issue-1",
-  workspace_id: "ws-1",
-  number: 1,
   identifier: "TES-1",
   title: "Example",
   description: null,
@@ -20,9 +18,11 @@ export const mockIssue: Issue = {
   start_date: null,
   due_date: null,
   project_id: null,
+  position: 0,
+  metadata: {},
   created_at: "2026-01-01T00:00:00Z",
   updated_at: "2026-01-01T00:00:00Z",
-} as Issue;
+};
 
 export function IssueActionsQueryProvider({
   children,

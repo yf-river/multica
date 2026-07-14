@@ -379,20 +379,12 @@ describe("ContentEditor", () => {
 function makeAttachment(id: string, overrides: Partial<Attachment> = {}): Attachment {
   return {
     id,
-    workspace_id: "ws-1",
-    issue_id: null,
-    comment_id: null,
-    chat_session_id: null,
-    chat_message_id: null,
-    uploader_type: "member",
-    uploader_id: "u-1",
     filename: `${id}.png`,
     url: `/uploads/${id}.png`,
     download_url: `/api/attachments/${id}/download`,
     markdown_url: `https://api.multica.test/api/attachments/${id}/download`,
     content_type: "image/png",
     size_bytes: 1,
-    created_at: "2026-06-10T00:00:00Z",
     ...overrides,
   };
 }

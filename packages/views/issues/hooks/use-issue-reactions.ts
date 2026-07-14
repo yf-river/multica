@@ -47,18 +47,16 @@ export function useIssueReactions(issueId: string, userId?: string) {
             ...result,
             {
               id: `optimistic-${vars.emoji}`,
-              issue_id: issueId,
               actor_type: "member",
               actor_id: userId ?? "",
               emoji: vars.emoji,
-              created_at: "",
             },
           ];
         }
       }
     }
     return result;
-  }, [serverReactions, pendingVars, issueId, userId]);
+  }, [serverReactions, pendingVars, userId]);
 
   // --- Mutation ---
 

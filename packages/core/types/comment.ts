@@ -11,7 +11,6 @@ export interface Reaction {
   actor_type: string;
   actor_id: string;
   emoji: string;
-  created_at: string;
 }
 
 export interface Comment {

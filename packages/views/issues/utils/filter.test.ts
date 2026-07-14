@@ -16,8 +16,6 @@ const NO_FILTER: IssueFilters = {
 function makeIssue(overrides: Partial<Issue> = {}): Issue {
   return {
     id: "i-1",
-    workspace_id: "ws-1",
-    number: 1,
     identifier: "MUL-1",
     title: "Test",
     description: null,

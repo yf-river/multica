@@ -21,8 +21,6 @@ const EXPECTED_CHILDREN_CHUNK_SIZE = 200;
 function makeIssue(idx: number): Issue {
   return {
     id: `issue-${idx}`,
-    workspace_id: WS_ID,
-    number: idx,
     identifier: `MUL-${idx}`,
     title: `Issue ${idx}`,
     description: null,

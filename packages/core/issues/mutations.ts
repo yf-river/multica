@@ -628,7 +628,6 @@ export function useCreateComment(issueId: string) {
         reactions: comment.reactions ?? [],
         attachments: comment.attachments ?? [],
         created_at: comment.created_at,
-        updated_at: comment.updated_at,
       };
       // Dedupe by id: the `comment:created` WS event may have already added
       // this entry from the broadcast path before this onSuccess fires. Skip

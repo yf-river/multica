@@ -336,8 +336,6 @@ const mockIssues: Issue[] = [
   {
     ...issueDefaults,
     id: "issue-1",
-    workspace_id: "ws-1",
-    number: 1,
     identifier: "TES-1",
     title: "Implement auth",
     description: "Add JWT authentication",
@@ -355,8 +353,6 @@ const mockIssues: Issue[] = [
   {
     ...issueDefaults,
     id: "issue-2",
-    workspace_id: "ws-1",
-    number: 2,
     identifier: "TES-2",
     title: "Design landing page",
     description: null,
@@ -374,8 +370,6 @@ const mockIssues: Issue[] = [
   {
     ...issueDefaults,
     id: "issue-3",
-    workspace_id: "ws-1",
-    number: 3,
     identifier: "TES-3",
     title: "Write tests",
     description: null,
@@ -393,8 +387,6 @@ const mockIssues: Issue[] = [
   {
     ...issueDefaults,
     id: "issue-4",
-    workspace_id: "ws-1",
-    number: 4,
     identifier: "TES-4",
     title: "Squad task",
     description: null,
@@ -546,7 +538,6 @@ describe("IssuesPage (shared)", () => {
     const fixtureIssue: Issue = {
       ...mockIssues[0]!,
       id: "issue-fixture",
-      number: 99,
       identifier: "TES-99",
       title: "curl user-center 小队真实端到端验收",
       project: { id: "project-fixture", title: "curl gateway 1782316918018", icon: null },
