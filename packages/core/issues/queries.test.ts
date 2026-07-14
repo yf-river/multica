@@ -5,11 +5,8 @@ import { setApiInstance } from "../api";
 import type { ApiClient } from "../api/client";
 import type { Issue, ListIssueBucketsResponse, ListIssuesParams, ListIssuesResponse } from "../types";
 import {
-  CHILDREN_BY_PARENTS_CHUNK_SIZE,
   ISSUE_PAGE_SIZE,
   PAGINATED_STATUSES,
-  PROJECT_GANTT_MAX_ISSUES,
-  PROJECT_GANTT_PAGE_LIMIT,
   childrenByParentsOptions,
   issueKeys,
   issueListOptions,
@@ -18,6 +15,8 @@ import {
 
 const WS_ID = "ws-1";
 const PROJECT_ID = "project-1";
+const EXPECTED_GANTT_PAGE_LIMIT = 500;
+const EXPECTED_CHILDREN_CHUNK_SIZE = 200;
 
 function makeIssue(idx: number): Issue {
   return {
@@ -115,7 +114,7 @@ describe("projectGanttIssuesOptions", () => {
     vi.restoreAllMocks();
   });
 
-  it("returns the first page directly when it fits under PROJECT_GANTT_PAGE_LIMIT", async () => {
+  it("returns the first page directly when it fits under the page limit", async () => {
     const listIssues = vi
       .fn<(params?: ListIssuesParams) => Promise<ListIssuesResponse>>()
       .mockResolvedValue({
@@ -130,19 +129,19 @@ describe("projectGanttIssuesOptions", () => {
     expect(listIssues).toHaveBeenCalledWith({
       project_id: PROJECT_ID,
       scheduled: true,
-      limit: PROJECT_GANTT_PAGE_LIMIT,
+      limit: EXPECTED_GANTT_PAGE_LIMIT,
       offset: 0,
     });
     expect(data).toHaveLength(2);
   });
 
   it("loops through pages until total is satisfied (no silent truncation)", async () => {
-    const total = PROJECT_GANTT_PAGE_LIMIT + 7;
-    const firstPage = Array.from({ length: PROJECT_GANTT_PAGE_LIMIT }, (_, i) =>
+    const total = EXPECTED_GANTT_PAGE_LIMIT + 7;
+    const firstPage = Array.from({ length: EXPECTED_GANTT_PAGE_LIMIT }, (_, i) =>
       makeIssue(i),
     );
     const secondPage = Array.from({ length: 7 }, (_, i) =>
-      makeIssue(PROJECT_GANTT_PAGE_LIMIT + i),
+      makeIssue(EXPECTED_GANTT_PAGE_LIMIT + i),
     );
 
     const listIssues = vi
@@ -152,7 +151,7 @@ describe("projectGanttIssuesOptions", () => {
         const offset = params.offset ?? 0;
         if (offset === 0)
           return { issues: firstPage, total };
-        if (offset === PROJECT_GANTT_PAGE_LIMIT)
+        if (offset === EXPECTED_GANTT_PAGE_LIMIT)
           return { issues: secondPage, total };
         throw new Error(`unexpected offset ${offset}`);
       });
@@ -171,7 +170,7 @@ describe("projectGanttIssuesOptions", () => {
       .fn<(params?: ListIssuesParams) => Promise<ListIssuesResponse>>()
       .mockResolvedValue({
         issues: [makeIssue(1)],
-        total: PROJECT_GANTT_MAX_ISSUES,
+        total: 10_000,
       });
     installFakeApi(listIssues);
 
@@ -214,7 +213,7 @@ describe("childrenByParentsOptions chunking", () => {
 
   it("chunks parentIds into multiple requests when over the server cap", async () => {
     // 2.5 chunks worth of parents → 3 parallel requests.
-    const count = CHILDREN_BY_PARENTS_CHUNK_SIZE * 2 + 17;
+    const count = EXPECTED_CHILDREN_CHUNK_SIZE * 2 + 17;
     const parentIds = Array.from({ length: count }, (_, i) => `p-${i}`);
     const calls: string[][] = [];
     const listChildrenByParents = vi
@@ -228,8 +227,8 @@ describe("childrenByParentsOptions chunking", () => {
     await qc.fetchQuery(childrenByParentsOptions(WS_ID, parentIds, qc));
 
     expect(listChildrenByParents).toHaveBeenCalledTimes(3);
-    expect(calls[0]).toHaveLength(CHILDREN_BY_PARENTS_CHUNK_SIZE);
-    expect(calls[1]).toHaveLength(CHILDREN_BY_PARENTS_CHUNK_SIZE);
+    expect(calls[0]).toHaveLength(EXPECTED_CHILDREN_CHUNK_SIZE);
+    expect(calls[1]).toHaveLength(EXPECTED_CHILDREN_CHUNK_SIZE);
     expect(calls[2]).toHaveLength(17);
     // Together the chunks must cover every input parent id.
     expect(calls.flat().sort()).toEqual(parentIds.slice().sort());
@@ -237,7 +236,7 @@ describe("childrenByParentsOptions chunking", () => {
 
   it("merges children from all chunks into one grouped map", async () => {
     const parentIds = Array.from(
-      { length: CHILDREN_BY_PARENTS_CHUNK_SIZE + 1 },
+      { length: EXPECTED_CHILDREN_CHUNK_SIZE + 1 },
       (_, i) => `p-${i}`,
     );
     // First chunk returns a child of p-0, second chunk returns a child of

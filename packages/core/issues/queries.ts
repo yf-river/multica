@@ -315,7 +315,7 @@ export function myIssueListOptions(
  * scheduled issue (no client pagination), so this is just the chunk size we
  * use to walk the server's `(limit, offset)` window until we hit `total`.
  */
-export const PROJECT_GANTT_PAGE_LIMIT = 500;
+const PROJECT_GANTT_PAGE_LIMIT = 500;
 
 /**
  * Paranoia cap on the loop in {@link fetchProjectGanttIssues}. Real projects
@@ -323,7 +323,7 @@ export const PROJECT_GANTT_PAGE_LIMIT = 500;
  * issues is already a product problem, not a Gantt-rendering one — but the
  * guard prevents a buggy server `total` from spinning the loop forever.
  */
-export const PROJECT_GANTT_MAX_ISSUES = 10_000;
+const PROJECT_GANTT_MAX_ISSUES = 10_000;
 
 async function fetchProjectGanttIssues(projectId: string) {
   const issues = [];
@@ -421,7 +421,7 @@ export function childIssuesOptions(wsId: string, id: string) {
  * match `listChildrenByParentsLimit` in server/internal/handler/issue.go.
  * Exceeding it returns 400, so the client chunks larger requests.
  */
-export const CHILDREN_BY_PARENTS_CHUNK_SIZE = 200;
+const CHILDREN_BY_PARENTS_CHUNK_SIZE = 200;
 
 /**
  * Batched variant of {@link childIssuesOptions}: fetches children for all
