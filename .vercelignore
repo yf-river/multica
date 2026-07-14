@@ -71,7 +71,6 @@ dist-electron
 **/*.test.*
 **/*.spec.*
 /packages/eslint-config/
-/apps/web/components.json
 /apps/web/eslint.config.mjs
 /apps/web/vitest.config.ts
 
