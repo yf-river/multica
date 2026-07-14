@@ -60,9 +60,7 @@ describe("ApiClient", () => {
   it("sends the required idempotency key when creating a chat session", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       id: "session-1",
-      workspace_id: "ws-1",
       agent_id: "agent-1",
-      creator_id: "user-1",
     }), { status: 201, headers: { "Content-Type": "application/json" } }));
     vi.stubGlobal("fetch", fetchMock);
     const client = new ApiClient("https://api.example.test");
@@ -2008,7 +2006,7 @@ describe("ApiClient", () => {
       expect(fetchMock.mock.calls[0]![0]).toBe(
         "https://api.example.test/api/chat/sessions/session-1/messages/page?limit=50",
       );
-      expect(page).toEqual({ messages: [], limit: 50, has_more: false, next_cursor: null });
+      expect(page).toEqual({ messages: [], has_more: false, next_cursor: null });
     });
 
   });

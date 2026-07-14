@@ -39,17 +39,15 @@ function createQueryClient() {
 function userMessage(): ChatMessage {
   return {
     id: "msg-user",
-    chat_session_id: sessionId,
     role: "user",
     content: "hello",
     task_id: null,
-    created_at: "2026-05-13T05:00:00Z",
   };
 }
 
 function messagePages(messages: ChatMessage[]): InfiniteData<ChatMessagesPage> {
   return {
-    pages: [{ messages, limit: 50, has_more: false, next_cursor: null }],
+    pages: [{ messages, has_more: false, next_cursor: null }],
     pageParams: [null],
   };
 }
@@ -61,7 +59,6 @@ function donePayload(overrides: Partial<ChatDonePayload> = {}): ChatDonePayload 
     message_id: "msg-assistant",
     content: "done",
     elapsed_ms: 1234,
-    created_at: "2026-05-13T05:00:02Z",
     ...overrides,
   };
 }
@@ -86,11 +83,9 @@ describe("applyChatDoneToCache", () => {
       userMessage(),
       {
         id: "msg-assistant",
-        chat_session_id: sessionId,
         role: "assistant",
         content: "done",
         task_id: taskId,
-        created_at: "2026-05-13T05:00:02Z",
         elapsed_ms: 1234,
       },
     ]);
@@ -100,11 +95,9 @@ describe("applyChatDoneToCache", () => {
     const qc = createQueryClient();
     const assistant: ChatMessage = {
       id: "msg-assistant",
-      chat_session_id: sessionId,
       role: "assistant",
       content: "done",
       task_id: taskId,
-      created_at: "2026-05-13T05:00:02Z",
       elapsed_ms: 1234,
     };
     qc.setQueryData(messagesKey, messagePages([userMessage(), assistant]));
@@ -234,18 +227,17 @@ describe("applyChatDoneToCache paged messages", () => {
     const older = userMessage();
     const latest: ChatMessage = {
       id: "msg-latest",
-      chat_session_id: sessionId,
       role: "user",
       content: "latest",
       task_id: null,
-      created_at: "2026-05-13T05:00:01Z",
     };
+    const latestCursor = { created_at: "2026-05-13T05:00:01Z", id: latest.id };
     qc.setQueryData<InfiniteData<ChatMessagesPage>>(chatKeys.messagesPage(sessionId), {
       pages: [
-        { messages: [latest], limit: 1, has_more: true, next_cursor: { created_at: latest.created_at, id: latest.id } },
-        { messages: [older], limit: 1, has_more: false, next_cursor: null },
+        { messages: [latest], has_more: true, next_cursor: latestCursor },
+        { messages: [older], has_more: false, next_cursor: null },
       ],
-      pageParams: [null, { created_at: latest.created_at, id: latest.id }],
+      pageParams: [null, latestCursor],
     });
 
     applyChatDoneToCache(qc, donePayload());

@@ -9,19 +9,19 @@ import type {
 import { EmbeddedAttachmentSchema, NonEmptyStringSchema } from "./schemas-internal";
 
 export const ChatSessionSchema = z.object({
-  id: NonEmptyStringSchema, workspace_id: NonEmptyStringSchema,
-  agent_id: NonEmptyStringSchema, creator_id: NonEmptyStringSchema,
+  id: NonEmptyStringSchema,
+  agent_id: NonEmptyStringSchema,
   title: z.string().default(""),
-  has_unread: z.boolean().default(false), created_at: z.string().default(""),
+  has_unread: z.boolean().default(false),
   updated_at: z.string().default(""),
 }).loose();
 export const ChatSessionListSchema = z.array(ChatSessionSchema);
 
 const ChatMessageSchema = z.object({
-  id: NonEmptyStringSchema, chat_session_id: NonEmptyStringSchema,
+  id: NonEmptyStringSchema,
   role: z.string(), content: z.string().default(""),
   task_id: z.string().nullable().optional().transform((value) => value ?? null),
-  created_at: z.string().default(""), attachments: z.array(EmbeddedAttachmentSchema).optional(),
+  attachments: z.array(EmbeddedAttachmentSchema).optional(),
   failure_reason: z.string().nullable().optional(), elapsed_ms: z.number().nullable().optional(),
 }).loose();
 const ChatMessagesCursorSchema = z.object({
@@ -29,7 +29,7 @@ const ChatMessagesCursorSchema = z.object({
   id: NonEmptyStringSchema,
 }).loose();
 export const ChatMessagesPageSchema = z.object({
-  messages: z.array(ChatMessageSchema).default([]), limit: z.number().default(50),
+  messages: z.array(ChatMessageSchema).default([]),
   has_more: z.boolean().default(false), next_cursor: ChatMessagesCursorSchema.nullable().optional(),
 }).loose();
 
@@ -45,7 +45,6 @@ export const ChatPendingTaskSchema = z.object({
 }).loose();
 const PendingChatTaskItemSchema = z.object({
   task_id: NonEmptyStringSchema,
-  status: z.string(),
   chat_session_id: NonEmptyStringSchema,
 }).loose();
 export const PendingChatTasksResponseSchema = z.object({
@@ -53,11 +52,10 @@ export const PendingChatTasksResponseSchema = z.object({
 }).loose();
 
 export const EMPTY_CHAT_SESSION: ChatSession = {
-  id: "", workspace_id: "", agent_id: "", creator_id: "", title: "",
-  has_unread: false, created_at: "", updated_at: "",
+  id: "", agent_id: "", title: "", has_unread: false, updated_at: "",
 };
 export const EMPTY_CHAT_MESSAGES_PAGE: ChatMessagesPage = {
-  messages: [], limit: 50, has_more: false, next_cursor: null,
+  messages: [], has_more: false, next_cursor: null,
 };
 export const EMPTY_SEND_CHAT_MESSAGE_RESPONSE: SendChatMessageResponse = {
   message_id: "", task_id: "", created_at: "", attachment_ids: [],

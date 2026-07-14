@@ -2,19 +2,15 @@ import type { AgentTask } from "./agent";
 
 export interface ChatSession {
   id: string;
-  workspace_id: string;
   agent_id: string;
-  creator_id: string;
   title: string;
   /** True when the session has any unread assistant replies. List-only. */
   has_unread: boolean;
-  created_at: string;
   updated_at: string;
 }
 
 export interface PendingChatTaskItem {
   task_id: string;
-  status: string;
   chat_session_id: string;
 }
 
@@ -24,11 +20,9 @@ export interface PendingChatTasksResponse {
 
 export interface ChatMessage {
   id: string;
-  chat_session_id: string;
   role: "user" | "assistant";
   content: string;
   task_id: string | null;
-  created_at: string;
   /**
    * Attachments linked to this message via the attachment table's
    * chat_message_id FK. Populated by ListChatMessages. UI renders these
@@ -63,7 +57,6 @@ interface ChatMessagesCursor {
 
 export interface ChatMessagesPage {
   messages: ChatMessage[];
-  limit: number;
   has_more: boolean;
   next_cursor?: ChatMessagesCursor | null;
 }

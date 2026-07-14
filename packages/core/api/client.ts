@@ -1810,7 +1810,7 @@ export class ApiClient extends ApiTransport {
     const raw = await this.fetch<unknown>(
       `/api/chat/sessions/${sessionId}/messages/page?${query.toString()}`,
     );
-    return parseWithFallback(raw, ChatMessagesPageSchema, { ...EMPTY_CHAT_MESSAGES_PAGE, limit }, {
+    return parseWithFallback(raw, ChatMessagesPageSchema, EMPTY_CHAT_MESSAGES_PAGE, {
       endpoint: "GET /api/chat/sessions/:id/messages/page",
     });
   }

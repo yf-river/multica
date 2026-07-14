@@ -1,13 +1,8 @@
 import { useEffect, useState } from "react";
 import type { AgentTask, IssueTimelineNode, IssueTimelineSummary } from "@multica/core/types";
 import type {
-  TaskCancelledPayload,
-  TaskCompletedPayload,
-  TaskDispatchPayload,
-  TaskFailedPayload,
+  TaskLifecyclePayload,
   TaskMessagePayload,
-  TaskQueuedPayload,
-  TaskRunningPayload,
 } from "@multica/core/types/events";
 import { formatDuration, parseTimeMs } from "./run-review-format";
 
@@ -16,12 +11,7 @@ const RUN_REVIEW_MESSAGE_REFRESH_MAX_WAIT_MS = 4_000;
 const RUN_REVIEW_LIVE_DURATION_TICK_MS = 1_000;
 
 export type RunReviewTaskEventPayload =
-  | TaskQueuedPayload
-  | TaskDispatchPayload
-  | TaskRunningPayload
-  | TaskCompletedPayload
-  | TaskFailedPayload
-  | TaskCancelledPayload
+  | TaskLifecyclePayload
   | TaskMessagePayload;
 
 export function runReviewTotalDurationMs(summary: IssueTimelineSummary | undefined): number {

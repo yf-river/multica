@@ -24,11 +24,9 @@ const tool = (seq: number, name = "Read"): ChatTimelineItem => ({
 
 const message = (content: string): ChatMessage => ({
   id: "m1",
-  chat_session_id: "s1",
   role: "assistant",
   content,
   task_id: "t1",
-  created_at: "2026-05-06T00:00:00Z",
 });
 
 describe("splitTimeline", () => {

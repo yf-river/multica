@@ -29,7 +29,6 @@ export function appendChatMessageToLatestPageCache(
         return {
           pages: [{
             messages: [message],
-            limit: 50,
             has_more: false,
             next_cursor: null,
           }],

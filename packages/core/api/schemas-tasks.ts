@@ -89,7 +89,6 @@ export const EMPTY_AGENT_RUN_COUNTS: AgentRunCount[] = [];
 export const TaskMessageListSchema = z.array(z.object({
   task_id: NonEmptyStringSchema,
   issue_id: z.string().default(""),
-  chat_session_id: z.string().optional(),
   seq: z.number(),
   type: z.string(),
   tool: z.string().optional(),

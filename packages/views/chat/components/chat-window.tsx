@@ -458,11 +458,9 @@ export function ChatWindow() {
       const sentAt = new Date().toISOString();
       const optimistic: ChatMessage = {
         id: `optimistic-chat:${operationId}`,
-        chat_session_id: sessionId,
         role: "user",
         content: finalContent,
         task_id: null,
-        created_at: sentAt,
         attachments: draftAttachments,
       };
       // Seed cache BEFORE flipping activeSessionId. If we set the active

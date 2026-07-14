@@ -172,7 +172,6 @@ export interface ActivityCreatedPayload {
 export interface TaskMessagePayload {
   task_id: string;
   issue_id: string;
-  chat_session_id?: string;
   seq: number;
   type: "text" | "thinking" | "tool_use" | "tool_result" | "error";
   tool?: string;
@@ -182,52 +181,10 @@ export interface TaskMessagePayload {
   created_at?: string;
 }
 
-export interface TaskQueuedPayload {
+export interface TaskLifecyclePayload {
   task_id: string;
-  agent_id: string;
   issue_id: string;
   chat_session_id?: string;
-  status: string;
-}
-
-export interface TaskDispatchPayload {
-  task_id: string;
-  agent_id: string;
-  issue_id: string;
-  runtime_id: string;
-  chat_session_id?: string;
-}
-
-export interface TaskRunningPayload {
-  task_id: string;
-  agent_id: string;
-  issue_id: string;
-  chat_session_id?: string;
-  status: string;
-}
-
-export interface TaskCompletedPayload {
-  task_id: string;
-  agent_id: string;
-  issue_id: string;
-  chat_session_id?: string;
-  status: string;
-}
-
-export interface TaskFailedPayload {
-  task_id: string;
-  agent_id: string;
-  issue_id: string;
-  chat_session_id?: string;
-  status: string;
-}
-
-export interface TaskCancelledPayload {
-  task_id: string;
-  agent_id: string;
-  issue_id: string;
-  chat_session_id?: string;
-  status: string;
 }
 
 export interface ReactionAddedPayload {
@@ -266,5 +223,4 @@ export interface ChatDonePayload {
   message_id?: string;
   content?: string;
   elapsed_ms?: number;
-  created_at?: string;
 }

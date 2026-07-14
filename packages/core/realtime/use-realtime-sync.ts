@@ -64,12 +64,7 @@ import type {
   InboxItem,
   NotificationPreferences,
   TaskMessagePayload,
-  TaskQueuedPayload,
-  TaskDispatchPayload,
-  TaskRunningPayload,
-  TaskCompletedPayload,
-  TaskFailedPayload,
-  TaskCancelledPayload,
+  TaskLifecyclePayload,
   ChatDonePayload,
   ChatMessage,
   ChatPendingTask,
@@ -98,11 +93,9 @@ export function applyChatDoneToCache(
   if (messageId && content !== undefined) {
     const assistant: ChatMessage = {
       id: messageId,
-      chat_session_id: sessionId,
       role: "assistant",
       content,
       task_id: taskId,
-      created_at: payload.created_at ?? new Date().toISOString(),
       elapsed_ms: payload.elapsed_ms ?? null,
     };
     qc.setQueryData<InfiniteData<ChatMessagesPage> | undefined>(
@@ -755,7 +748,7 @@ export function useRealtimeSync(
     // id; this handler upgrades it to the real task_id (and reaffirms status
     // when reconnect replays the event for an already-running task).
     const unsubTaskQueued = ws.on("task:queued", (p) => {
-      const payload = p as TaskQueuedPayload;
+      const payload = p as TaskLifecyclePayload;
       if (!payload.chat_session_id) return;
       qc.setQueryData<ChatPendingTask>(
         chatKeys.pendingTask(payload.chat_session_id),
@@ -775,7 +768,7 @@ export function useRealtimeSync(
     // frame. Stage decision in TaskStatusPill maps "running" + empty
     // taskMessages → "Thinking · Ns".
     const unsubTaskDispatch = ws.on("task:dispatch", (p) => {
-      const payload = p as TaskDispatchPayload;
+      const payload = p as TaskLifecyclePayload;
       if (!payload.chat_session_id) return;
       qc.setQueryData<ChatPendingTask>(
         chatKeys.pendingTask(payload.chat_session_id),
@@ -789,7 +782,7 @@ export function useRealtimeSync(
     // task:running confirms the daemon entered the run phase. The
     // dispatch→running path is normally collapsed by the handler above.
     const unsubTaskRunning = ws.on("task:running", (p) => {
-      const payload = p as TaskRunningPayload;
+      const payload = p as TaskLifecyclePayload;
       if (!payload.chat_session_id) return;
       qc.setQueryData<ChatPendingTask>(
         chatKeys.pendingTask(payload.chat_session_id),
@@ -809,7 +802,7 @@ export function useRealtimeSync(
     // stopped chat task had already streamed transcript rows, so refresh the
     // message page along with clearing pending.
     const unsubTaskCancelled = ws.on("task:cancelled", (p) => {
-      const payload = p as TaskCancelledPayload;
+      const payload = p as TaskLifecyclePayload;
       if (!payload.chat_session_id) return;
       chatWsLogger.info("task:cancelled (global, chat)", {
         task_id: payload.task_id,
@@ -821,7 +814,7 @@ export function useRealtimeSync(
     });
 
     const unsubTaskCompleted = ws.on("task:completed", (p) => {
-      const payload = p as TaskCompletedPayload;
+      const payload = p as TaskLifecyclePayload;
       if (!payload.chat_session_id) return; // issue tasks handled elsewhere
       chatWsLogger.info("task:completed (global, chat)", {
         task_id: payload.task_id,
@@ -836,7 +829,7 @@ export function useRealtimeSync(
     });
 
     const unsubTaskFailed = ws.on("task:failed", (p) => {
-      const payload = p as TaskFailedPayload;
+      const payload = p as TaskLifecyclePayload;
       if (!payload.chat_session_id) return;
       chatWsLogger.warn("task:failed (global, chat)", {
         task_id: payload.task_id,
