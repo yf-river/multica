@@ -1,10 +1,5 @@
 import type { CreateIssueRequest } from "../types";
-import {
-  createWorkspacePendingCreateStore,
-  type PendingCreateOperation,
-} from "../platform/pending-create-store";
-
-export type PendingIssueCreate = PendingCreateOperation<CreateIssueRequest>;
+import { createWorkspacePendingCreateStore } from "../platform/pending-create-store";
 
 export const useIssueCreatePendingStore =
   createWorkspacePendingCreateStore<CreateIssueRequest>(

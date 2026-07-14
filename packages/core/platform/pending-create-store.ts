@@ -6,7 +6,7 @@ import {
   registerWorkspacePersistStore,
 } from "./workspace-storage";
 
-export interface PendingCreateOperation<Request> {
+interface PendingCreateOperation<Request> {
   requestKey: string;
   request: Request;
 }

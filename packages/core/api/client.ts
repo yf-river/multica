@@ -176,7 +176,6 @@ import {
 export {
   ApiError,
   ApiTransportError,
-  type ApiClientIdentity,
   type ApiClientOptions,
 } from "./transport";
 import {

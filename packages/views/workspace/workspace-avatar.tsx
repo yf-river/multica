@@ -38,4 +38,4 @@ function WorkspaceAvatar({ name, avatarUrl, size = "sm", className }: WorkspaceA
   );
 }
 
-export { WorkspaceAvatar, type WorkspaceAvatarProps };
+export { WorkspaceAvatar };

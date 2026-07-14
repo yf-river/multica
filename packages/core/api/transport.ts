@@ -4,20 +4,15 @@ import { getCurrentSlug } from "../platform/workspace-storage";
 import { createRequestId } from "../utils";
 import { ApiResponseValidationError } from "./schema";
 
-/** Identifies the calling client through the X-Client-* request headers. */
-export interface ApiClientIdentity {
-  /** Logical client kind. The server recognizes web, desktop, CLI and daemon clients. */
-  platform?: string;
-  /** Client release, tag or commit identifier. */
-  version?: string;
-  /** Operating system reported by native clients. */
-  os?: string;
-}
-
 export interface ApiClientOptions {
   logger?: Logger;
   onUnauthorized?: () => void;
-  identity?: ApiClientIdentity;
+  /** Values sent through the X-Client-* request headers. */
+  identity?: {
+    platform?: string;
+    version?: string;
+    os?: string;
+  };
 }
 
 export type JsonRequestInit = RequestInit & {

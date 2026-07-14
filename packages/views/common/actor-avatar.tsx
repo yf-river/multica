@@ -30,7 +30,7 @@ import { useNavigation } from "../navigation";
  *
  * Has no effect for non-agent actors (members always render the member card).
  */
-export type AgentHoverCardVariant = "profile" | "live";
+type AgentHoverCardVariant = "profile" | "live";
 
 interface ActorAvatarProps {
   actorType: string;

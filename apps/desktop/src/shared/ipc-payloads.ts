@@ -1,4 +1,4 @@
-export type DesktopOS = "macos" | "windows" | "linux" | "unknown";
+type DesktopOS = "macos" | "windows" | "linux" | "unknown";
 
 export interface DesktopAppInfo {
   version: string;
