@@ -8,61 +8,6 @@ export type PromptEvaluationCaseStatus = PromptEvaluationAssetStatus | "draft" |
 export type PromptEvaluationCaseSortBy = "case_index" | "case_name" | "source" | "created_at" | "updated_at";
 export type PromptEvaluationOptimizationCandidateStatus = "待确认" | "已发布" | "已拒绝";
 
-export interface PromptEvaluationCase {
-  case_name: string;
-  variables: Record<string, unknown>;
-  expected_contains: string[];
-  tags?: string[];
-}
-
-interface PromptEvaluationMetricSummary {
-  总用例数: number;
-  通过数: number;
-  失败数: number;
-  通过率: number;
-  总耗时毫秒: number;
-  平均耗时毫秒: number;
-  输入token: number;
-  输出token: number;
-  预估成本: number;
-  执行Agent: string;
-  模型: string;
-  runtime: string;
-  "trace/task id": string;
-  失败原因: string;
-  评估结论: string;
-}
-
-interface PromptEvaluationStructuredPayload extends Record<string, unknown> {
-  schema_version: 1;
-  schema: "multica.training_evaluation.payload.v1";
-  语义版本: "multica.training_evaluation.v1";
-  cases: PromptEvaluationCase[];
-  payload_contract?: Record<string, unknown>;
-  metric_contract?: string[];
-  metric_notes?: string[];
-  experiment_dimensions?: Array<string | PromptEvaluationExperimentDimension>;
-  experiment_target?: string;
-  baseline_output?: string;
-  agent_id?: string;
-  linked_dataset_ids?: string[];
-  linked_dataset_versions?: PromptEvaluationDatasetVersionBinding[];
-  最近运行?: PromptEvaluationMetricSummary;
-  运行记录?: PromptEvaluationMetricSummary[];
-}
-
-interface PromptEvaluationExperimentDimension extends Record<string, unknown> {
-  name: string;
-}
-
-interface PromptEvaluationDatasetVersionBinding extends Record<string, unknown> {
-  dataset_version_id: string;
-  dataset_asset_id?: string;
-  dataset_name?: string;
-  version?: number;
-  row_fingerprint?: string;
-}
-
 export interface PromptEvaluationAsset {
   id: string;
   workspace_id: string;
@@ -70,7 +15,7 @@ export interface PromptEvaluationAsset {
   name: string;
   description: string;
   asset_type: PromptEvaluationAssetType;
-  payload: Record<string, unknown> | PromptEvaluationStructuredPayload;
+  payload: Record<string, unknown>;
   status: PromptEvaluationAssetStatus;
   created_by: string | null;
   created_at: string;
@@ -317,7 +262,7 @@ export interface PromptEvaluationSkillPatch {
   operation_skill_key?: string;
   operation_skill_path?: string;
   operation_skill_reason?: string;
-  source_snapshot?: PromptEvaluationSkillSnapshot;
+  source_snapshot?: Record<string, unknown>;
   source_resource_id?: string;
   repo_path?: string;
   target_branch?: string;
@@ -331,86 +276,33 @@ export interface PromptEvaluationSkillPatch {
   updated_at?: string;
 }
 
-export interface PromptEvaluationSkillSnapshot {
-  schema_version: "multica.skill.snapshot.v1" | string;
-  provider: string;
-  repo: string;
-  repo_path?: string;
-  branch: string;
-  base_commit: string;
-  skill_path: string;
-  skill_hash: string;
-  source_resource_id?: string;
-}
-
-export type PromptEvaluationSkillFreshnessStatus =
-  | "fresh"
-  | "branch_changed_skill_unchanged"
-  | "stale"
-  | "conflict"
-  | "rebaseable";
-
 export interface CheckPromptEvaluationSkillFreshnessRequest {
   source_resource_id?: string;
   repo_path?: string;
   target_branch?: string;
   skill_path?: string;
-  candidate_patch?: string;
-  candidate_intent?: "update_existing_skill" | "create_operation_skill" | string;
-  snapshot?: PromptEvaluationSkillSnapshot;
 }
 
 export interface PromptEvaluationSkillFreshnessResult {
-  schema_version: "multica.skill.freshness.v1" | string;
-  status: PromptEvaluationSkillFreshnessStatus;
-  reason: string;
-  target_branch: string;
-  head_commit: string;
-  base_commit: string;
-  skill_path: string;
+  status: "fresh" | "branch_changed_skill_unchanged" | "stale" | "conflict" | "rebaseable";
   patch_check: "not_needed" | "missing_patch" | "conflict" | "applies" | "creates_file" | "target_exists" | string;
-  checked_at: string;
-  snapshot: PromptEvaluationSkillSnapshot;
 }
-
-export type PromptEvaluationSkillApplyStatus = "dry_run" | "applied" | "blocked" | "conflict";
 
 export interface ApplyPromptEvaluationSkillCandidateRequest {
   source_resource_id?: string;
   repo_path?: string;
   target_branch?: string;
   skill_path?: string;
-  candidate_patch?: string;
-  candidate_intent?: "update_existing_skill" | "create_operation_skill" | string;
   changelog_path?: string;
-  change_reason?: string;
-  verification_result?: string;
-  rollback_plan?: string;
-  dry_run?: boolean;
   allow_dirty?: boolean;
   skip_changelog?: boolean;
-  snapshot?: PromptEvaluationSkillSnapshot;
 }
 
 export interface PromptEvaluationSkillApplyResult {
-  schema_version: "multica.skill.apply.v1" | string;
-  status: PromptEvaluationSkillApplyStatus;
-  reason: string;
-  repo_path: string;
-  target_branch: string;
-  head_commit: string;
-  skill_path: string;
-  changelog_path?: string;
-  patch_check: "not_run" | "applies" | "conflict" | string;
-  freshness: PromptEvaluationSkillFreshnessResult;
-  changed_files: string[];
-  re_eval_plan: Record<string, unknown>;
-  checked_at: string;
-  snapshot: PromptEvaluationSkillSnapshot;
+  status: "dry_run" | "applied" | "blocked" | "conflict";
 }
 
 export interface PromptEvaluationSkillApplyCandidateResponse {
-  candidate: PromptEvaluationOptimizationCandidate;
   apply: PromptEvaluationSkillApplyResult;
 }
 
@@ -419,52 +311,26 @@ export interface PreparePromptEvaluationSkillReEvalRequest {
   repo_path?: string;
   target_branch?: string;
   skill_path?: string;
-  name?: string;
-  description?: string;
-  statuses?: string[];
   include_draft?: boolean;
-  snapshot?: PromptEvaluationSkillSnapshot;
 }
 
 export interface RunPromptEvaluationSkillReEvalRequest {
   asset_id?: string;
 }
 
-export interface PromptEvaluationSkillReEvalCase {
-  name: string;
-  variables: Record<string, unknown>;
-  expected_contains: string[];
-  tags: string[];
-  input: Record<string, unknown>;
-  expected: Record<string, unknown>;
-  status: string;
-}
-
 export interface PromptEvaluationSkillReEvalAssetResponse {
-  candidate: PromptEvaluationOptimizationCandidate;
-  asset: PromptEvaluationAsset;
-  source_snapshot: PromptEvaluationSkillSnapshot;
-  re_eval_snapshot: PromptEvaluationSkillSnapshot;
+  asset: Pick<PromptEvaluationAsset, "id">;
   case_count: number;
-  cases: PromptEvaluationSkillReEvalCase[];
-  re_eval_plan: Record<string, unknown>;
 }
 
 export interface PromptEvaluationSkillReEvalRunResponse {
-  candidate: PromptEvaluationOptimizationCandidate;
-  asset: PromptEvaluationAsset;
-  run: PromptEvaluationRun;
-  source_snapshot: PromptEvaluationSkillSnapshot;
-  re_eval_snapshot: PromptEvaluationSkillSnapshot;
-  case_count: number;
-  re_eval_run: Record<string, unknown>;
+  run: Pick<PromptEvaluationRun, "id" | "status">;
 }
 
 export interface UpdatePromptEvaluationOptimizationCandidateRequest {
   candidate_name: string;
   candidate_content: string;
   rationale?: string;
-  edit_note?: string;
   skill_patch?: Partial<PromptEvaluationSkillPatch> & {
     patch: string;
     candidate_intent: PromptEvaluationSkillPatch["candidate_intent"];

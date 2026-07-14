@@ -6,7 +6,7 @@ import { setCurrentWorkspace } from "../platform/workspace-storage";
 import type { PromptEvaluationSkillReEvalAssetResponse } from "../types";
 import { preparePromptEvaluationSkillReEvalAssetWithRecovery } from "./skill-re-eval-asset";
 
-const response = (id: string) => ({ asset: { id } }) as PromptEvaluationSkillReEvalAssetResponse;
+const response = (id: string) => ({ asset: { id }, case_count: 0 }) as PromptEvaluationSkillReEvalAssetResponse;
 let workspaceSequence = 0;
 
 describe("preparePromptEvaluationSkillReEvalAssetWithRecovery", () => {

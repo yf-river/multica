@@ -1,8 +1,7 @@
 import { z } from "zod";
-import { PromptEvaluationAssetSchema } from "./schemas-prompt-evaluation-assets";
 import { PromptEvaluationRunSchema } from "./schemas-prompt-evaluation-runs";
-import { PromptLibraryItemSchema } from "./schemas-prompt-library";
 import { NonEmptyStringSchema } from "./schemas-internal";
+import { PromptLibraryItemSchema } from "./schemas-prompt-library";
 
 // Runtime response contracts for prompt evaluation optimization.
 const PromptEvaluationSkillPatchSchema = z.object({
@@ -51,81 +50,26 @@ export const PromptEvaluationOptimizationCandidateListResponseSchema = z.object(
   total: z.number().default(0),
 }).loose();
 
-const PromptEvaluationSkillSnapshotSchema = z.object({
-  schema_version: z.string().default("multica.skill.snapshot.v1"),
-  provider: z.string().default("gongfeng"),
-  repo: z.string().default(""),
-  repo_path: z.string().optional(),
-  branch: z.string().default(""),
-  base_commit: z.string().default(""),
-  skill_path: z.string().default(""),
-  skill_hash: z.string().default(""),
-  source_resource_id: z.string().optional(),
-}).loose();
-
 export const PromptEvaluationSkillFreshnessResultSchema = z.object({
-  schema_version: z.string().default("multica.skill.freshness.v1"),
   status: z.enum(["fresh", "branch_changed_skill_unchanged", "stale", "conflict", "rebaseable"]).default("stale"),
-  reason: z.string().default(""),
-  target_branch: z.string().default(""),
-  head_commit: z.string().default(""),
-  base_commit: z.string().default(""),
-  skill_path: z.string().default(""),
   patch_check: z.string().default("not_needed"),
-  checked_at: z.string().default(""),
-  snapshot: PromptEvaluationSkillSnapshotSchema,
 }).loose();
 
 const PromptEvaluationSkillApplyResultSchema = z.object({
-  schema_version: z.string().default("multica.skill.apply.v1"),
   status: z.enum(["dry_run", "applied", "blocked", "conflict"]).default("blocked"),
-  reason: z.string().default(""),
-  repo_path: z.string().default(""),
-  target_branch: z.string().default(""),
-  head_commit: z.string().default(""),
-  skill_path: z.string().default(""),
-  changelog_path: z.string().optional(),
-  patch_check: z.string().default("not_run"),
-  freshness: PromptEvaluationSkillFreshnessResultSchema,
-  changed_files: z.array(z.string()).default([]),
-  re_eval_plan: z.record(z.string(), z.unknown()).default({}),
-  checked_at: z.string().default(""),
-  snapshot: PromptEvaluationSkillSnapshotSchema,
 }).loose();
 
 export const PromptEvaluationSkillApplyCandidateResponseSchema = z.object({
-  candidate: PromptEvaluationOptimizationCandidateSchema,
   apply: PromptEvaluationSkillApplyResultSchema,
 }).loose();
 
-const PromptEvaluationSkillReEvalCaseSchema = z.object({
-  name: z.string().default(""),
-  variables: z.record(z.string(), z.unknown()).default({}),
-  expected_contains: z.array(z.string()).default([]),
-  tags: z.array(z.string()).default([]),
-  input: z.record(z.string(), z.unknown()).default({}),
-  expected: z.record(z.string(), z.unknown()).default({}),
-  status: z.string().default("approved"),
-}).loose();
-
 export const PromptEvaluationSkillReEvalAssetResponseSchema = z.object({
-  candidate: PromptEvaluationOptimizationCandidateSchema,
-  asset: PromptEvaluationAssetSchema,
-  source_snapshot: PromptEvaluationSkillSnapshotSchema,
-  re_eval_snapshot: PromptEvaluationSkillSnapshotSchema,
+  asset: z.object({ id: NonEmptyStringSchema }).loose(),
   case_count: z.number().default(0),
-  cases: z.array(PromptEvaluationSkillReEvalCaseSchema).default([]),
-  re_eval_plan: z.record(z.string(), z.unknown()).default({}),
 }).loose();
 
 export const PromptEvaluationSkillReEvalRunResponseSchema = z.object({
-  candidate: PromptEvaluationOptimizationCandidateSchema,
-  asset: PromptEvaluationAssetSchema,
-  run: PromptEvaluationRunSchema,
-  source_snapshot: PromptEvaluationSkillSnapshotSchema,
-  re_eval_snapshot: PromptEvaluationSkillSnapshotSchema,
-  case_count: z.number().default(0),
-  re_eval_run: z.record(z.string(), z.unknown()).default({}),
+  run: PromptEvaluationRunSchema.pick({ id: true, status: true }),
 }).loose();
 
 export const PublishPromptEvaluationOptimizationCandidateResponseSchema = z.object({

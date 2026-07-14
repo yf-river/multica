@@ -14,7 +14,6 @@ import type {
   PromptEvaluationSkillFreshnessResult,
   PromptEvaluationSkillReEvalAssetResponse,
   PromptEvaluationSkillReEvalRunResponse,
-  PromptEvaluationSkillSnapshot,
   ListPromptEvaluationEvidenceSnapshotsResponse,
   PromptEvaluationAssetEvidenceArchivePackage,
   PublishPromptEvaluationOptimizationCandidateResponse,
@@ -204,68 +203,26 @@ export const EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE_LIST_RESPONSE: ListP
   total: 0,
 };
 
-const EMPTY_PROMPT_EVALUATION_SKILL_SNAPSHOT: PromptEvaluationSkillSnapshot = {
-  schema_version: "multica.skill.snapshot.v1",
-  provider: "gongfeng",
-  repo: "",
-  branch: "",
-  base_commit: "",
-  skill_path: "",
-  skill_hash: "",
-};
-
 export const EMPTY_PROMPT_EVALUATION_SKILL_FRESHNESS_RESULT: PromptEvaluationSkillFreshnessResult = {
-  schema_version: "multica.skill.freshness.v1",
   status: "stale",
-  reason: "",
-  target_branch: "",
-  head_commit: "",
-  base_commit: "",
-  skill_path: "",
   patch_check: "not_needed",
-  checked_at: "",
-  snapshot: EMPTY_PROMPT_EVALUATION_SKILL_SNAPSHOT,
 };
 
 const EMPTY_PROMPT_EVALUATION_SKILL_APPLY_RESULT: PromptEvaluationSkillApplyResult = {
-  schema_version: "multica.skill.apply.v1",
   status: "blocked",
-  reason: "",
-  repo_path: "",
-  target_branch: "",
-  head_commit: "",
-  skill_path: "",
-  patch_check: "not_run",
-  freshness: EMPTY_PROMPT_EVALUATION_SKILL_FRESHNESS_RESULT,
-  changed_files: [],
-  re_eval_plan: {},
-  checked_at: "",
-  snapshot: EMPTY_PROMPT_EVALUATION_SKILL_SNAPSHOT,
 };
 
 export const EMPTY_PROMPT_EVALUATION_SKILL_APPLY_CANDIDATE_RESPONSE: PromptEvaluationSkillApplyCandidateResponse = {
-  candidate: EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE,
   apply: EMPTY_PROMPT_EVALUATION_SKILL_APPLY_RESULT,
 };
 
 export const EMPTY_PROMPT_EVALUATION_SKILL_RE_EVAL_ASSET_RESPONSE: PromptEvaluationSkillReEvalAssetResponse = {
-  candidate: EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE,
-  asset: EMPTY_PROMPT_EVALUATION_ASSET,
-  source_snapshot: EMPTY_PROMPT_EVALUATION_SKILL_SNAPSHOT,
-  re_eval_snapshot: EMPTY_PROMPT_EVALUATION_SKILL_SNAPSHOT,
+  asset: { id: "" },
   case_count: 0,
-  cases: [],
-  re_eval_plan: {},
 };
 
 export const EMPTY_PROMPT_EVALUATION_SKILL_RE_EVAL_RUN_RESPONSE: PromptEvaluationSkillReEvalRunResponse = {
-  candidate: EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE,
-  asset: EMPTY_PROMPT_EVALUATION_ASSET,
-  run: EMPTY_PROMPT_EVALUATION_RUN,
-  source_snapshot: EMPTY_PROMPT_EVALUATION_SKILL_SNAPSHOT,
-  re_eval_snapshot: EMPTY_PROMPT_EVALUATION_SKILL_SNAPSHOT,
-  case_count: 0,
-  re_eval_run: {},
+  run: { id: "", status: "已入队" },
 };
 
 export const EMPTY_PUBLISH_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE_RESPONSE: PublishPromptEvaluationOptimizationCandidateResponse = {

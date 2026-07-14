@@ -6,7 +6,7 @@ import { setCurrentWorkspace } from "../platform/workspace-storage";
 import type { PromptEvaluationSkillReEvalRunResponse } from "../types";
 import { runPromptEvaluationSkillReEvalWithRecovery } from "./skill-re-eval-run";
 
-const response = (id: string) => ({ run: { id } }) as PromptEvaluationSkillReEvalRunResponse;
+const response = (id: string) => ({ run: { id, status: "已入队" } }) as PromptEvaluationSkillReEvalRunResponse;
 let workspaceSequence = 0;
 
 describe("runPromptEvaluationSkillReEvalWithRecovery", () => {
