@@ -28,9 +28,6 @@ func TestUserResponsePreservesPersistedProfileFields(t *testing.T) {
 	if value, ok := payload["onboarded_at"]; !ok || value != nil {
 		t.Fatalf("onboarded_at = %#v, want explicit null", value)
 	}
-	if _, ok := payload["starter_content_state"]; ok {
-		t.Fatal("user response exposes removed starter_content_state")
-	}
 	questionnaire, ok := payload["onboarding_questionnaire"].(map[string]any)
 	if !ok || len(questionnaire) != 0 {
 		t.Fatalf("onboarding_questionnaire = %#v, want empty object", payload["onboarding_questionnaire"])

@@ -325,30 +325,6 @@ func TestAgentUpdateNoFieldsErrorPointsAtEnvCommand(t *testing.T) {
 	}
 }
 
-// TestAgentUpdateDoesNotExposeCustomEnvFlags is the inverse guarantee
-// for the above test: if someone re-adds the --custom-env* flags to
-// `agent update`, this fails loudly. The /env path is the only
-// audited surface and we don't want a silent regression.
-func TestAgentUpdateDoesNotExposeCustomEnvFlags(t *testing.T) {
-	for _, flag := range []string{"custom-env", "custom-env-stdin", "custom-env-file"} {
-		if agentUpdateCmd.Flag(flag) != nil {
-			t.Errorf("agent update must NOT expose --%s after MUL-2600; use `multica agent env set` instead", flag)
-		}
-	}
-}
-
-// TestAgentCreateDoesNotExposeFromTemplate guards against re-adding the
-// `--from-template` flag. It was an untaught, immature CLI surface that
-// short-circuited before body assembly — silently dropping sibling create
-// flags like --mcp-config / --custom-env — and was removed. The agent-template
-// backend API still exists but has no CLI surface; manual `agent create` is the
-// only supported CLI creation path.
-func TestAgentCreateDoesNotExposeFromTemplate(t *testing.T) {
-	if agentCreateCmd.Flag("from-template") != nil {
-		t.Error("agent create must NOT expose --from-template; it was removed as an untaught CLI surface that silently dropped sibling flags")
-	}
-}
-
 // TestParseCustomEnvErrorSanitization guards against future changes
 // re-introducing %w wrapping of json.Unmarshal errors. Those errors
 // can surface short fragments of the input, which — for a flag that

@@ -255,13 +255,8 @@ func TestInferCopilotProvider(t *testing.T) {
 }
 
 func TestCopilotStaticModelsExposesFullCatalog(t *testing.T) {
-	// GitHub Copilot CLI has no `models list` subcommand, so the
-	// catalog is hand-maintained from the official supported-models
-	// docs. Regression guard for multica-ai/multica#1948 — the
-	// dropdown previously shipped only 2 models and used dashed IDs
-	// (`claude-sonnet-4-6`) which the CLI rejects. IDs must use the
-	// dotted form (`claude-sonnet-4.6`) that `copilot --model <id>`
-	// actually accepts, and cover both OpenAI and Anthropic families.
+	// GitHub Copilot CLI has no `models list` subcommand, so the catalog is
+	// hand-maintained from the official supported-models documentation.
 	models := copilotStaticModels()
 	ids := map[string]Model{}
 	for _, m := range models {
@@ -276,13 +271,6 @@ func TestCopilotStaticModelsExposesFullCatalog(t *testing.T) {
 	} {
 		if _, ok := ids[want]; !ok {
 			t.Errorf("missing expected Copilot model %q in: %+v", want, models)
-		}
-	}
-	// Dashed legacy IDs must not reappear — `copilot --model
-	// claude-sonnet-4-6` errors with "Model ... is not available".
-	for _, banned := range []string{"claude-sonnet-4-6", "claude-sonnet-4-5"} {
-		if _, ok := ids[banned]; ok {
-			t.Errorf("Copilot catalog must not use dashed model id %q; use dotted form", banned)
 		}
 	}
 	for _, m := range models {

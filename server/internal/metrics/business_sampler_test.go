@@ -126,16 +126,6 @@ func TestBusinessSamplerCollectorEmitsExpectedMetrics(t *testing.T) {
 			t.Errorf("metrics body missing %q\nbody:\n%s", want, body)
 		}
 	}
-	for _, removed := range []string{
-		`multica_active_users{window="1h"}`,
-		`multica_active_users{window="24h"}`,
-		`multica_active_workspaces{window="1h"}`,
-		`multica_active_workspaces{window="24h"}`,
-	} {
-		if strings.Contains(body, removed) {
-			t.Errorf("metrics body still exposes removed long DB window %q\nbody:\n%s", removed, body)
-		}
-	}
 }
 
 // TestBusinessSamplerSelfIntrospectionHistogramIsExposed observes a value

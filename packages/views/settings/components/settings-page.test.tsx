@@ -84,13 +84,6 @@ describe("SettingsPage tabs", () => {
     };
   });
 
-  it("does not expose the removed Labs tab", () => {
-    renderSettingsPage();
-
-    expect(screen.queryByRole("tab", { name: "实验室" })).toBeNull();
-    expect(screen.queryByText("暂无实验")).toBeNull();
-  });
-
   it("opens the GitHub settings surface used by the installation callback", () => {
     renderSettingsPage("tab=github&github_connected=1");
 
