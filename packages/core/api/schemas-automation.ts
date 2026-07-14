@@ -4,8 +4,6 @@ import type {
   AutopilotRun,
   AutopilotTrigger,
   GetAutopilotResponse,
-  ListAutopilotRunsResponse,
-  ListWebhookDeliveriesResponse,
   WebhookDelivery,
 } from "../types";
 import { NonEmptyStringSchema } from "./schemas-internal";
@@ -72,17 +70,13 @@ const WebhookDeliverySchema = z.object({
   response_body: z.string().nullable().optional(),
 }).loose();
 
-export const ListWebhookDeliveriesResponseSchema = z.object({
+export const WebhookDeliveryListSchema = z.object({
   deliveries: z.array(WebhookDeliverySchema).default([]),
-  total: z.number().default(0),
-}).loose();
+}).loose().transform(({ deliveries }) => deliveries);
 
 export const WebhookDeliveryResponseSchema = WebhookDeliverySchema;
 
-export const EMPTY_LIST_WEBHOOK_DELIVERIES_RESPONSE: ListWebhookDeliveriesResponse = {
-  deliveries: [],
-  total: 0,
-};
+export const EMPTY_WEBHOOK_DELIVERIES: WebhookDelivery[] = [];
 
 // ---------------------------------------------------------------------------
 // Autopilot list schema. Enums (`status`, `execution_mode`, `trigger_kinds`,
@@ -120,15 +114,11 @@ export const AutopilotSchema = z.object({
   subscribers: z.array(AutopilotSubscriberSchema).default([]),
 }).loose();
 
-export const ListAutopilotsResponseSchema = z.object({
+export const AutopilotListSchema = z.object({
   autopilots: z.array(AutopilotSchema).default([]),
-  total: z.number().default(0),
-}).loose();
+}).loose().transform(({ autopilots }) => autopilots);
 
-export const EMPTY_LIST_AUTOPILOTS_RESPONSE = {
-  autopilots: [],
-  total: 0,
-};
+export const EMPTY_AUTOPILOTS: Autopilot[] = [];
 
 export const EMPTY_AUTOPILOT: Autopilot = {
   id: "",
@@ -250,15 +240,11 @@ export const EMPTY_GET_AUTOPILOT_RESPONSE: GetAutopilotResponse = {
   triggers: [],
 };
 
-export const ListAutopilotRunsResponseSchema = z.object({
+export const AutopilotRunListSchema = z.object({
   runs: z.array(AutopilotRunSchema).default([]),
-  total: z.number().default(0),
-}).loose();
+}).loose().transform(({ runs }) => runs);
 
-export const EMPTY_LIST_AUTOPILOT_RUNS_RESPONSE: ListAutopilotRunsResponse = {
-  runs: [],
-  total: 0,
-};
+export const EMPTY_AUTOPILOT_RUNS: AutopilotRun[] = [];
 
 export const EMPTY_WEBHOOK_DELIVERY: WebhookDelivery = {
   id: "",

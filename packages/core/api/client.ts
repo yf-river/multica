@@ -93,10 +93,7 @@ import type {
   UpdateAutopilotRequest,
   CreateAutopilotTriggerRequest,
   UpdateAutopilotTriggerRequest,
-  ListAutopilotsResponse,
   GetAutopilotResponse,
-  ListAutopilotRunsResponse,
-  ListWebhookDeliveriesResponse,
   WebhookDelivery,
   NotificationPreferenceResponse,
   NotificationPreferences,
@@ -270,7 +267,7 @@ import {
   EMPTY_GITHUB_CONNECT_RESPONSE,
   EMPTY_GITHUB_INSTALLATION_LIST_RESPONSE,
   EMPTY_GITHUB_PULL_REQUEST_LIST_RESPONSE,
-  EMPTY_LIST_WEBHOOK_DELIVERIES_RESPONSE,
+  EMPTY_WEBHOOK_DELIVERIES,
   EMPTY_PROMPT_LIBRARY_ITEM,
   EMPTY_PROMPT_LIBRARY_LIST_RESPONSE,
   EMPTY_PROMPT_LIBRARY_TRIAL,
@@ -310,25 +307,25 @@ import {
   type AppConfigResponse,
   GroupedIssuesResponseSchema,
   ListIssueBucketsResponseSchema,
-  ListAutopilotsResponseSchema,
-  EMPTY_LIST_AUTOPILOTS_RESPONSE,
+  AutopilotListSchema,
+  EMPTY_AUTOPILOTS,
   AutopilotSchema,
   CreateAutopilotResponseSchema,
   AutopilotTriggerSchema,
   AutopilotRunSchema,
   GetAutopilotResponseSchema,
-  ListAutopilotRunsResponseSchema,
+  AutopilotRunListSchema,
   EMPTY_AUTOPILOT,
   EMPTY_AUTOPILOT_TRIGGER,
   EMPTY_AUTOPILOT_RUN,
   EMPTY_GET_AUTOPILOT_RESPONSE,
-  EMPTY_LIST_AUTOPILOT_RUNS_RESPONSE,
+  EMPTY_AUTOPILOT_RUNS,
   ListIssuesResponseSchema,
   IssueSchema,
   CommentSchema,
   ReactionSchema,
   IssueReactionSchema,
-  ListWebhookDeliveriesResponseSchema,
+  WebhookDeliveryListSchema,
   RuntimeUsageByAgentListSchema,
   RuntimeUsageByTaskListSchema,
   RuntimeUsageListSchema,
@@ -2861,14 +2858,14 @@ export class ApiClient extends ApiTransport {
   }
 
   // Autopilots
-  async listAutopilots(params?: { status?: string }): Promise<ListAutopilotsResponse> {
+  async listAutopilots(params?: { status?: string }): Promise<Autopilot[]> {
     const search = new URLSearchParams();
     if (params?.status) search.set("status", params.status);
     const raw = await this.fetch<unknown>(`/api/autopilots?${search}`);
     return parseWithFallback(
       raw,
-      ListAutopilotsResponseSchema,
-      EMPTY_LIST_AUTOPILOTS_RESPONSE as ListAutopilotsResponse,
+      AutopilotListSchema,
+      EMPTY_AUTOPILOTS,
       { endpoint: "GET /api/autopilots" },
     );
   }
@@ -2940,15 +2937,15 @@ export class ApiClient extends ApiTransport {
     return this.retryUnknownMutationOnce(attempt);
   }
 
-  async listAutopilotRuns(id: string, params?: { limit?: number; offset?: number }): Promise<ListAutopilotRunsResponse> {
+  async listAutopilotRuns(id: string, params?: { limit?: number; offset?: number }): Promise<AutopilotRun[]> {
     const search = new URLSearchParams();
     if (params?.limit) search.set("limit", params.limit.toString());
     if (params?.offset) search.set("offset", params.offset.toString());
     const raw = await this.fetch<unknown>(`/api/autopilots/${id}/runs?${search}`);
     return parseWithFallback(
       raw,
-      ListAutopilotRunsResponseSchema,
-      EMPTY_LIST_AUTOPILOT_RUNS_RESPONSE,
+      AutopilotRunListSchema,
+      EMPTY_AUTOPILOT_RUNS,
       { endpoint: "GET /api/autopilots/:id/runs" },
     );
   }
@@ -3019,7 +3016,7 @@ export class ApiClient extends ApiTransport {
   async listAutopilotDeliveries(
     autopilotId: string,
     params?: { limit?: number; offset?: number },
-  ): Promise<ListWebhookDeliveriesResponse> {
+  ): Promise<WebhookDelivery[]> {
     const search = new URLSearchParams();
     if (params?.limit) search.set("limit", params.limit.toString());
     if (params?.offset) search.set("offset", params.offset.toString());
@@ -3028,8 +3025,8 @@ export class ApiClient extends ApiTransport {
     );
     return parseWithFallback(
       raw,
-      ListWebhookDeliveriesResponseSchema,
-      EMPTY_LIST_WEBHOOK_DELIVERIES_RESPONSE,
+      WebhookDeliveryListSchema,
+      EMPTY_WEBHOOK_DELIVERIES,
       { endpoint: "GET /api/autopilots/:id/deliveries" },
     );
   }

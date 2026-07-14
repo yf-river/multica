@@ -7,7 +7,7 @@ import { useWorkspaceId } from "../paths";
 import type {
   CreateAutopilotRequest,
   UpdateAutopilotRequest,
-  ListAutopilotsResponse,
+  Autopilot,
   GetAutopilotResponse,
   CreateAutopilotTriggerRequest,
   UpdateAutopilotTriggerRequest,
@@ -34,9 +34,9 @@ export function useCreateAutopilot() {
       );
     },
     onSuccess: (newAutopilot) => {
-      qc.setQueryData<ListAutopilotsResponse>(autopilotKeys.list(wsId), (old) =>
-        old && !old.autopilots.some((a) => a.id === newAutopilot.id)
-          ? { ...old, autopilots: [...old.autopilots, newAutopilot], total: old.total + 1 }
+      qc.setQueryData<Autopilot[]>(autopilotKeys.list(wsId), (old) =>
+        old && !old.some((autopilot) => autopilot.id === newAutopilot.id)
+          ? [...old, newAutopilot]
           : old,
       );
     },
@@ -54,21 +54,16 @@ export function useUpdateAutopilot() {
       api.updateAutopilot(id, data),
     onMutate: ({ id, ...data }) => {
       qc.cancelQueries({ queryKey: autopilotKeys.list(wsId) });
-      const prevList = qc.getQueryData<ListAutopilotsResponse>(autopilotKeys.list(wsId));
+      const prevList = qc.getQueryData<Autopilot[]>(autopilotKeys.list(wsId));
       const prevDetail = qc.getQueryData<GetAutopilotResponse>(autopilotKeys.detail(wsId, id));
       // Request shape (AutopilotSubscriberInput) lacks `created_at`, so it's
       // not assignable to the response shape. onSettled invalidates the
       // detail query and refetches the authoritative server payload.
       const { subscribers: _omitSubs, ...optimistic } = data;
-      qc.setQueryData<ListAutopilotsResponse>(autopilotKeys.list(wsId), (old) =>
-        old
-          ? {
-              ...old,
-              autopilots: old.autopilots.map((a) =>
-                a.id === id ? { ...a, ...optimistic } : a,
-              ),
-            }
-          : old,
+      qc.setQueryData<Autopilot[]>(autopilotKeys.list(wsId), (old) =>
+        old?.map((autopilot) =>
+          autopilot.id === id ? { ...autopilot, ...optimistic } : autopilot,
+        ),
       );
       qc.setQueryData<GetAutopilotResponse>(autopilotKeys.detail(wsId, id), (old) =>
         old ? { ...old, autopilot: { ...old.autopilot, ...optimistic } } : old,
@@ -93,9 +88,9 @@ export function useDeleteAutopilot() {
     mutationFn: (id: string) => api.deleteAutopilot(id),
     onMutate: async (id) => {
       await qc.cancelQueries({ queryKey: autopilotKeys.list(wsId) });
-      const prevList = qc.getQueryData<ListAutopilotsResponse>(autopilotKeys.list(wsId));
-      qc.setQueryData<ListAutopilotsResponse>(autopilotKeys.list(wsId), (old) =>
-        old ? { ...old, autopilots: old.autopilots.filter((a) => a.id !== id), total: old.total - 1 } : old,
+      const prevList = qc.getQueryData<Autopilot[]>(autopilotKeys.list(wsId));
+      qc.setQueryData<Autopilot[]>(autopilotKeys.list(wsId), (old) =>
+        old?.filter((autopilot) => autopilot.id !== id),
       );
       qc.removeQueries({ queryKey: autopilotKeys.detail(wsId, id) });
       return { prevList };

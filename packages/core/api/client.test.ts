@@ -367,7 +367,7 @@ describe("ApiClient", () => {
     await expect(client.getAutopilot("autopilot-1"))
       .resolves.toMatchObject({ autopilot: { id: "" }, triggers: [] });
     await expect(client.listAutopilotRuns("autopilot-1"))
-      .resolves.toMatchObject({ runs: [], total: 0 });
+      .resolves.toEqual([]);
     await expect(client.createAutopilot({
       title: "Daily review",
       assignee_type: "agent",

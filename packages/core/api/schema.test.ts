@@ -115,16 +115,16 @@ describe("ApiClient schema fallback", () => {
       stubFetchJson({ autopilots: "not-an-array", total: 1 });
       const client = new ApiClient("https://api.example.test");
       const res = await client.listAutopilots();
-      expect(res).toEqual({ autopilots: [], total: 0 });
+      expect(res).toEqual([]);
     });
 
     it("accepts a current row without list-only derived fields", async () => {
       stubFetchJson({ autopilots: [baseAutopilot], total: 1 });
       const client = new ApiClient("https://api.example.test");
       const res = await client.listAutopilots();
-      expect(res.autopilots).toHaveLength(1);
-      expect(res.autopilots[0]?.trigger_kinds).toBeUndefined();
-      expect(res.autopilots[0]?.last_run_status).toBeUndefined();
+      expect(res).toHaveLength(1);
+      expect(res[0]?.trigger_kinds).toBeUndefined();
+      expect(res[0]?.last_run_status).toBeUndefined();
     });
 
     it("passes derived fields through and tolerates enum drift", async () => {
@@ -142,12 +142,12 @@ describe("ApiClient schema fallback", () => {
       });
       const client = new ApiClient("https://api.example.test");
       const res = await client.listAutopilots();
-      expect(res.autopilots[0]?.trigger_kinds).toEqual([
+      expect(res[0]?.trigger_kinds).toEqual([
         "schedule",
         "some_future_kind",
       ]);
-      expect(res.autopilots[0]?.next_run_at).toBe("2026-06-13T09:00:00Z");
-      expect(res.autopilots[0]?.last_run_status).toBe("some_future_status");
+      expect(res[0]?.next_run_at).toBe("2026-06-13T09:00:00Z");
+      expect(res[0]?.last_run_status).toBe("some_future_status");
     });
   });
 
@@ -214,14 +214,14 @@ describe("ApiClient schema fallback", () => {
       stubFetchJson(null);
       const client = new ApiClient("https://api.example.test");
       const res = await client.listAutopilotDeliveries("ap-1");
-      expect(res).toEqual({ deliveries: [], total: 0 });
+      expect(res).toEqual([]);
     });
 
     it("falls back to an empty list when `deliveries` is not an array", async () => {
       stubFetchJson({ deliveries: "not-an-array", total: 0 });
       const client = new ApiClient("https://api.example.test");
       const res = await client.listAutopilotDeliveries("ap-1");
-      expect(res).toEqual({ deliveries: [], total: 0 });
+      expect(res).toEqual([]);
     });
 
     it("accepts an unknown future status value rather than dropping the row", async () => {
@@ -256,8 +256,8 @@ describe("ApiClient schema fallback", () => {
       });
       const client = new ApiClient("https://api.example.test");
       const res = await client.listAutopilotDeliveries("ap-1");
-      expect(res.deliveries).toHaveLength(1);
-      expect(res.deliveries[0]?.status).toBe("quarantined");
+      expect(res).toHaveLength(1);
+      expect(res[0]?.status).toBe("quarantined");
     });
   });
 

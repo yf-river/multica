@@ -158,19 +158,9 @@ export interface UpdateAutopilotTriggerRequest {
   event_filters?: WebhookEventFilter[] | null;
 }
 
-export interface ListAutopilotsResponse {
-  autopilots: Autopilot[];
-  total: number;
-}
-
 export interface GetAutopilotResponse {
   autopilot: Autopilot;
   triggers: AutopilotTrigger[];
-}
-
-export interface ListAutopilotRunsResponse {
-  runs: AutopilotRun[];
-  total: number;
 }
 
 // Webhook delivery enum is server-canonical. The frontend MUST `default`
@@ -215,9 +205,4 @@ export interface WebhookDelivery {
   selected_headers?: Record<string, unknown> | null;
   raw_body?: string | null;
   response_body?: string | null;
-}
-
-export interface ListWebhookDeliveriesResponse {
-  deliveries: WebhookDelivery[];
-  total: number;
 }

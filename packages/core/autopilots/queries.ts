@@ -20,7 +20,6 @@ export function autopilotListOptions(wsId: string) {
   return queryOptions({
     queryKey: autopilotKeys.list(wsId),
     queryFn: () => api.listAutopilots(),
-    select: (data) => data.autopilots,
   });
 }
 
@@ -35,7 +34,6 @@ export function autopilotRunsOptions(wsId: string, id: string) {
   return queryOptions({
     queryKey: autopilotKeys.runs(wsId, id),
     queryFn: () => api.listAutopilotRuns(id),
-    select: (data) => data.runs,
   });
 }
 
@@ -68,7 +66,6 @@ export function autopilotDeliveriesOptions(
   return queryOptions({
     queryKey: autopilotKeys.deliveries(wsId, autopilotId),
     queryFn: () => api.listAutopilotDeliveries(autopilotId),
-    select: (data) => data.deliveries,
     enabled: options?.enabled ?? true,
   });
 }

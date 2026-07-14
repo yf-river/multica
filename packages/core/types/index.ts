@@ -232,13 +232,10 @@ export type {
   UpdateAutopilotRequest,
   CreateAutopilotTriggerRequest,
   UpdateAutopilotTriggerRequest,
-  ListAutopilotsResponse,
   GetAutopilotResponse,
-  ListAutopilotRunsResponse,
   WebhookDelivery,
   WebhookDeliveryStatus,
   WebhookSignatureStatus,
-  ListWebhookDeliveriesResponse,
 } from "./autopilot";
 export type {
   Squad,

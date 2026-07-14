@@ -12,10 +12,10 @@ import { EMPTY_USER, UserSchema } from "./schemas-auth";
 import {
   AutopilotRunSchema,
   AutopilotTriggerSchema,
+  EMPTY_WEBHOOK_DELIVERIES,
   EMPTY_GET_AUTOPILOT_RESPONSE,
   GetAutopilotResponseSchema,
-  EMPTY_LIST_WEBHOOK_DELIVERIES_RESPONSE,
-  ListWebhookDeliveriesResponseSchema,
+  WebhookDeliveryListSchema,
 } from "./schemas-automation";
 import {
   EMPTY_ISSUE,
@@ -232,10 +232,10 @@ describe("domain response schema fallbacks", () => {
   it("rejects malformed webhook deliveries", () => {
     expect(parseWithFallback(
       { deliveries: {}, total: 1 },
-      ListWebhookDeliveriesResponseSchema,
-      EMPTY_LIST_WEBHOOK_DELIVERIES_RESPONSE,
+      WebhookDeliveryListSchema,
+      EMPTY_WEBHOOK_DELIVERIES,
       { endpoint: "GET /api/webhook-deliveries" },
-    )).toBe(EMPTY_LIST_WEBHOOK_DELIVERIES_RESPONSE);
+    )).toBe(EMPTY_WEBHOOK_DELIVERIES);
   });
 
   it("rejects malformed Autopilot identity and run linkage", () => {
