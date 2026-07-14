@@ -89,7 +89,6 @@ const draftCase: PromptEvaluationStructuredCase = {
   case_name: "Login failure",
   variables: { title: "Login failure" },
   expected_contains: ["root cause"],
-  assertions: [],
   input: {},
   expected: {},
   tags: ["auth"],

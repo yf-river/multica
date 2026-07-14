@@ -154,7 +154,6 @@ export type {
   PromptEvaluationAssetEvidenceSnapshotResponse,
   PromptEvaluationAssetEvidenceSnapshotSkip,
   PromptEvaluationStructuredCase,
-  PromptEvaluationCaseAssertion,
   PromptEvaluationDatasetVersion,
   CreatePromptEvaluationDatasetFromTracesRequest,
   PromptEvaluationDatasetFromTracesResponse,

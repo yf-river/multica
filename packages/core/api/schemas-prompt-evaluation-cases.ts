@@ -4,10 +4,7 @@ import { PromptEvaluationAssetSchema } from "./schemas-prompt-evaluation-assets"
 import { TaskTraceEventSchema } from "./schemas-internal";
 import { PromptEvaluationCaseSchema } from "./schemas-prompt-evaluation-case-model";
 
-export {
-  PromptEvaluationCaseAssertionSchema,
-  PromptEvaluationCaseSchema,
-} from "./schemas-prompt-evaluation-case-model";
+export { PromptEvaluationCaseSchema } from "./schemas-prompt-evaluation-case-model";
 
 // Runtime response contracts for prompt evaluation cases.
 export const PromptEvaluationCaseListResponseSchema = z.object({

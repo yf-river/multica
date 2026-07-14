@@ -115,7 +115,6 @@ const structuredCase: PromptEvaluationStructuredCase = {
   case_name: "登录失败复盘",
   variables: { input: "用户登录失败" },
   expected_contains: ["失败原因"],
-  assertions: [],
   input: { 内容: "用户登录失败" },
   expected: { 内容: "说明失败原因" },
   tags: ["账号系统"],

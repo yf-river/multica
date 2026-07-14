@@ -9,7 +9,6 @@ const PromptEvaluationSkillPatchSchema = z.object({
   schema_version: z.string().default("multica.skill.patch.v1"),
   patch: z.string().default(""),
   patch_hash: z.string().default(""),
-  patch_bytes: z.number().default(0),
   candidate_intent: z.enum(["update_existing_skill", "create_operation_skill"]).or(z.string()),
   operation_skill_key: z.string().optional(),
   operation_skill_path: z.string().optional(),
@@ -100,7 +99,6 @@ const PromptEvaluationSkillApplyResultSchema = z.object({
   re_eval_required: z.boolean().default(true),
   re_eval_plan: z.record(z.string(), z.unknown()).default({}),
   checked_at: z.string().default(""),
-  applied_at: z.string().optional(),
   snapshot: PromptEvaluationSkillSnapshotSchema,
 }).loose();
 
@@ -116,8 +114,6 @@ const PromptEvaluationSkillReEvalCaseSchema = z.object({
   tags: z.array(z.string()).default([]),
   input: z.record(z.string(), z.unknown()).default({}),
   expected: z.record(z.string(), z.unknown()).default({}),
-  source_commit: z.string().default(""),
-  evidence_source: z.string().default(""),
   status: z.string().default("approved"),
 }).loose();
 

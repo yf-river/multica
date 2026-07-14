@@ -173,7 +173,6 @@ export const EMPTY_PROMPT_EVALUATION_CASE: PromptEvaluationStructuredCase = {
   case_name: "",
   variables: {},
   expected_contains: [],
-  assertions: [],
   input: {},
   expected: {},
   tags: [],

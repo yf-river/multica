@@ -149,7 +149,6 @@ export interface PromptEvaluationTrial {
   input: Record<string, unknown>;
   expected: Record<string, unknown>;
   output: unknown;
-  rendered_prompt: string;
   input_tokens: number;
   output_tokens: number;
   duration_ms: number;
@@ -176,8 +175,6 @@ export interface PromptEvaluationTaskUsage {
 interface PromptEvaluationExecutionSpan {
   id: string;
   parent_id?: string;
-  span_kind: string;
-  span_name: string;
   status: string;
   seq: number;
   task_id?: string;
@@ -198,8 +195,6 @@ export interface PromptEvaluationToolCallChain {
   status: "已配对" | "缺少结果" | "孤立结果" | string;
   use_seq?: number;
   result_seq?: number;
-  use_span_id?: string;
-  result_span_id?: string;
   input?: Record<string, unknown>;
   output?: string;
   duration_ms?: number;
@@ -301,7 +296,6 @@ export interface PromptEvaluationStructuredCase {
   case_name: string;
   variables: Record<string, unknown>;
   expected_contains: unknown[];
-  assertions: PromptEvaluationCaseAssertion[];
   input: Record<string, unknown>;
   expected: Record<string, unknown>;
   tags: unknown[];
@@ -310,19 +304,6 @@ export interface PromptEvaluationStructuredCase {
   created_by: string | null;
   created_at: string;
   updated_at: string;
-}
-
-export interface PromptEvaluationCaseAssertion {
-  id: string;
-  workspace_id: string;
-  asset_id: string;
-  case_id: string;
-  assertion_index: number;
-  assertion_type: "包含文本";
-  expected_text: string;
-  status: PromptEvaluationCaseStatus;
-  source: string;
-  created_at: string;
 }
 
 export interface CreatePromptEvaluationDatasetFromTracesRequest {
@@ -368,7 +349,6 @@ export interface PromptEvaluationSkillPatch {
   schema_version: "multica.skill.patch.v1" | string;
   patch: string;
   patch_hash: string;
-  patch_bytes: number;
   candidate_intent: "update_existing_skill" | "create_operation_skill" | string;
   operation_skill_key?: string;
   operation_skill_path?: string;
@@ -468,7 +448,6 @@ export interface PromptEvaluationSkillApplyResult {
   re_eval_required: boolean;
   re_eval_plan: Record<string, unknown>;
   checked_at: string;
-  applied_at?: string;
   snapshot: PromptEvaluationSkillSnapshot;
 }
 
@@ -500,8 +479,6 @@ export interface PromptEvaluationSkillReEvalCase {
   tags: string[];
   input: Record<string, unknown>;
   expected: Record<string, unknown>;
-  source_commit: string;
-  evidence_source: string;
   status: string;
 }
 
