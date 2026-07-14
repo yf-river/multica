@@ -21,13 +21,11 @@ func TestRedisModelListStore_EnvelopePersistsRunStartedAt(t *testing.T) {
 	store := &redisModelListStore{}
 	now := time.Now().UTC().Truncate(time.Microsecond) // JSON loses sub-µs precision
 	req := &ModelListRequest{
-		ID:           "id-1",
-		RuntimeID:    "rt-1",
-		Status:       ModelListRunning,
-		Supported:    true,
-		CreatedAt:    now.Add(-time.Second),
-		UpdatedAt:    now,
-		RunStartedAt: &now,
+		runtimeAsyncRequestState: runtimeAsyncRequestState{
+			ID: "id-1", RuntimeID: "rt-1", Status: runtimeAsyncRunning,
+			CreatedAt: now.Add(-time.Second), UpdatedAt: now, RunStartedAt: &now,
+		},
+		Supported: true,
 	}
 	data, err := store.marshalRequest(req)
 	if err != nil {
@@ -43,7 +41,7 @@ func TestRedisModelListStore_EnvelopePersistsRunStartedAt(t *testing.T) {
 	if !got.RunStartedAt.Equal(now) {
 		t.Errorf("RunStartedAt drifted: got %s, want %s", got.RunStartedAt, now)
 	}
-	if got.Status != ModelListRunning {
+	if got.Status != runtimeAsyncRunning {
 		t.Errorf("Status lost: got %s", got.Status)
 	}
 	if got.ID != "id-1" || got.RuntimeID != "rt-1" {
@@ -60,7 +58,7 @@ func TestRedisModelListStore_CreateGetComplete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if req.Status != ModelListPending {
+	if req.Status != runtimeAsyncPending {
 		t.Fatalf("initial status = %s", req.Status)
 	}
 
@@ -84,7 +82,7 @@ func TestRedisModelListStore_CreateGetComplete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get after complete: %v", err)
 	}
-	if got.Status != ModelListCompleted {
+	if got.Status != runtimeAsyncCompleted {
 		t.Fatalf("status after complete = %s", got.Status)
 	}
 	if len(got.Models) != 2 {
@@ -150,7 +148,7 @@ func TestRedisModelListStore_PopPendingAcrossInstances(t *testing.T) {
 	if popped.ID != req.ID {
 		t.Fatalf("popped id = %s, want %s", popped.ID, req.ID)
 	}
-	if popped.Status != ModelListRunning {
+	if popped.Status != runtimeAsyncRunning {
 		t.Fatalf("popped status = %s, want running", popped.Status)
 	}
 	if popped.RunStartedAt == nil {
@@ -212,7 +210,7 @@ func TestRedisModelListStore_PendingTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if got.Status != ModelListTimeout {
+	if got.Status != runtimeAsyncTimeout {
 		t.Fatalf("status = %s, want timeout", got.Status)
 	}
 
@@ -243,12 +241,12 @@ func TestRedisModelListStore_RunningTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("pop: %v", err)
 	}
-	if popped == nil || popped.Status != ModelListRunning {
+	if popped == nil || popped.Status != runtimeAsyncRunning {
 		t.Fatalf("expected running, got %+v", popped)
 	}
 
 	// Rewind RunStartedAt past the running threshold.
-	aged := time.Now().Add(-modelListRunningTimeout - time.Second)
+	aged := time.Now().Add(-runtimeAsyncRunningTimeout - time.Second)
 	popped.RunStartedAt = &aged
 	if err := store.persistRequest(ctx, popped); err != nil {
 		t.Fatalf("persist rewound: %v", err)
@@ -258,7 +256,7 @@ func TestRedisModelListStore_RunningTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if got.Status != ModelListTimeout {
+	if got.Status != runtimeAsyncTimeout {
 		t.Fatalf("status = %s, want timeout", got.Status)
 	}
 }

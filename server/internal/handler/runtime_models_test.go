@@ -31,7 +31,7 @@ func TestModelListStore_RunningRequestTimesOut(t *testing.T) {
 	if claimed == nil {
 		t.Fatal("expected PopPending to claim the pending request")
 	}
-	if claimed.Status != ModelListRunning {
+	if claimed.Status != runtimeAsyncRunning {
 		t.Fatalf("expected Running after PopPending, got %s", claimed.Status)
 	}
 	if claimed.RunStartedAt == nil {
@@ -41,7 +41,7 @@ func TestModelListStore_RunningRequestTimesOut(t *testing.T) {
 	// Age the running record past the threshold without the daemon ever
 	// reporting a result. Get() must flip it to Timeout so the UI can
 	// terminate polling instead of waiting for the retention sweep.
-	aged := time.Now().Add(-(modelListRunningTimeout + time.Second))
+	aged := time.Now().Add(-(runtimeAsyncRunningTimeout + time.Second))
 	claimed.RunStartedAt = &aged
 	got, err := store.Get(ctx, req.ID)
 	if err != nil {
@@ -50,7 +50,7 @@ func TestModelListStore_RunningRequestTimesOut(t *testing.T) {
 	if got == nil {
 		t.Fatal("expected stored request")
 	}
-	if got.Status != ModelListTimeout {
+	if got.Status != runtimeAsyncTimeout {
 		t.Fatalf("expected Timeout after running threshold, got %s", got.Status)
 	}
 	if got.Error == "" {

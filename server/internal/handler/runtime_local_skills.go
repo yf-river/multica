@@ -19,21 +19,6 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-type runtimeLocalSkillRequestStatus string
-
-const (
-	RuntimeLocalSkillPending   runtimeLocalSkillRequestStatus = "pending"
-	RuntimeLocalSkillRunning   runtimeLocalSkillRequestStatus = "running"
-	RuntimeLocalSkillCompleted runtimeLocalSkillRequestStatus = "completed"
-	RuntimeLocalSkillFailed    runtimeLocalSkillRequestStatus = "failed"
-	RuntimeLocalSkillTimeout   runtimeLocalSkillRequestStatus = "timeout"
-	// RuntimeLocalSkillConflict is a terminal state set when a fresh import
-	// hits an existing same-name skill. It is not an error: the request carries
-	// structured Conflict metadata so the caller (Desktop UI / CLI) can offer
-	// overwrite / rename / skip instead of silently failing. See MUL-2800.
-	RuntimeLocalSkillConflict runtimeLocalSkillRequestStatus = "conflict"
-)
-
 // LocalSkillImportAction selects how a runtime-local-skill import resolves when
 // a skill with the same name already exists in the workspace.
 type LocalSkillImportAction string
@@ -48,7 +33,7 @@ const (
 )
 
 // LocalSkillImportConflict is the structured result attached to a request that
-// terminated in RuntimeLocalSkillConflict. CanOverwrite reflects the
+// terminated in the shared conflict status. CanOverwrite reflects the
 // creator-only re-import policy (canOverwriteSkillByLocalImport).
 type LocalSkillImportConflict struct {
 	ExistingSkillID   string `json:"existing_skill_id"`
@@ -67,10 +52,9 @@ const (
 	// Timeout invariant: IMPORT_CONCURRENCY (views/.../runtime-local-skill-import-panel.tsx)
 	// × heartbeat period (~15s) ≤ runtimeLocalSkillPendingTimeout, and
 	// IMPORT_POLL_TIMEOUT_MS (core/runtimes/local-skills.ts) must exceed
-	// runtimeLocalSkillPendingTimeout + runtimeLocalSkillRunningTimeout.
+	// runtimeLocalSkillPendingTimeout + runtimeAsyncRunningTimeout.
 	// See also maxLocalSkillImportBatch in daemon.go.
 	runtimeLocalSkillPendingTimeout = 3 * time.Minute
-	runtimeLocalSkillRunningTimeout = 60 * time.Second
 	runtimeLocalSkillStoreRetention = 5 * time.Minute
 )
 
@@ -118,32 +102,14 @@ type LocalSkillImportStore interface {
 	// multiple imports per heartbeat cycle.
 	PopPendingBatch(ctx context.Context, runtimeID string, limit int) ([]*RuntimeLocalSkillImportRequest, error)
 	Complete(ctx context.Context, id string, skill SkillResponse) error
-	// Conflict transitions a request to the terminal RuntimeLocalSkillConflict
+	// Conflict transitions a request to the terminal conflict status,
 	// state, attaching structured conflict metadata for the caller to act on.
 	Conflict(ctx context.Context, id string, info LocalSkillImportConflict) error
 	Fail(ctx context.Context, id string, errMsg string) error
 }
 
-// applyLocalSkillTimeout transitions either request kind into the timeout
-// terminal state. Returns true when callers need to persist the transition.
-func applyLocalSkillTimeout(req *runtimeLocalSkillRequestState, now time.Time) bool {
-	switch req.Status {
-	case RuntimeLocalSkillPending:
-		if now.Sub(req.CreatedAt) > runtimeLocalSkillPendingTimeout {
-			req.Status = RuntimeLocalSkillTimeout
-			req.Error = "daemon did not respond within 3 minutes"
-			req.UpdatedAt = now
-			return true
-		}
-	case RuntimeLocalSkillRunning:
-		if req.RunStartedAt != nil && now.Sub(*req.RunStartedAt) > runtimeLocalSkillRunningTimeout {
-			req.Status = RuntimeLocalSkillTimeout
-			req.Error = "daemon did not finish within 60 seconds"
-			req.UpdatedAt = now
-			return true
-		}
-	}
-	return false
+func applyLocalSkillTimeout(req *runtimeAsyncRequestState, now time.Time) bool {
+	return applyRuntimeAsyncTimeout(req, now, runtimeLocalSkillPendingTimeout, "daemon did not respond within 3 minutes")
 }
 
 type RuntimeLocalSkillSummary struct {
@@ -155,27 +121,14 @@ type RuntimeLocalSkillSummary struct {
 	FileCount   int    `json:"file_count"`
 }
 
-// runtimeLocalSkillRequestState is the one lifecycle model shared by list and
-// import requests. Anonymous embedding preserves their existing flat JSON and
-// Redis representation.
-type runtimeLocalSkillRequestState struct {
-	ID           string                         `json:"id"`
-	RuntimeID    string                         `json:"runtime_id"`
-	Status       runtimeLocalSkillRequestStatus `json:"status"`
-	Error        string                         `json:"error,omitempty"`
-	CreatedAt    time.Time                      `json:"created_at"`
-	UpdatedAt    time.Time                      `json:"updated_at"`
-	RunStartedAt *time.Time                     `json:"-"`
-}
-
 type RuntimeLocalSkillListRequest struct {
-	runtimeLocalSkillRequestState
+	runtimeAsyncRequestState
 	Skills    []RuntimeLocalSkillSummary `json:"skills,omitempty"`
 	Supported bool                       `json:"supported"`
 }
 
 type RuntimeLocalSkillImportRequest struct {
-	runtimeLocalSkillRequestState
+	runtimeAsyncRequestState
 	SkillKey      string                    `json:"skill_key"`
 	Name          *string                   `json:"name,omitempty"`
 	Description   *string                   `json:"description,omitempty"`
@@ -220,8 +173,8 @@ func (s *inMemoryLocalSkillListStore) Create(_ context.Context, runtimeID, reque
 		return existing, nil
 	}
 	req := &RuntimeLocalSkillListRequest{
-		runtimeLocalSkillRequestState: runtimeLocalSkillRequestState{
-			ID: requestID, RuntimeID: runtimeID, Status: RuntimeLocalSkillPending,
+		runtimeAsyncRequestState: runtimeAsyncRequestState{
+			ID: requestID, RuntimeID: runtimeID, Status: runtimeAsyncPending,
 			CreatedAt: time.Now(), UpdatedAt: time.Now(),
 		},
 		Supported: true,
@@ -238,7 +191,7 @@ func (s *inMemoryLocalSkillListStore) Get(_ context.Context, id string) (*Runtim
 	if !ok {
 		return nil, nil
 	}
-	applyLocalSkillTimeout(&req.runtimeLocalSkillRequestState, time.Now())
+	applyLocalSkillTimeout(&req.runtimeAsyncRequestState, time.Now())
 	return req, nil
 }
 
@@ -248,8 +201,8 @@ func (s *inMemoryLocalSkillListStore) HasPending(_ context.Context, runtimeID st
 
 	now := time.Now()
 	for _, req := range s.requests {
-		applyLocalSkillTimeout(&req.runtimeLocalSkillRequestState, now)
-		if req.RuntimeID == runtimeID && req.Status == RuntimeLocalSkillPending {
+		applyLocalSkillTimeout(&req.runtimeAsyncRequestState, now)
+		if req.RuntimeID == runtimeID && req.Status == runtimeAsyncPending {
 			return true, nil
 		}
 	}
@@ -263,15 +216,15 @@ func (s *inMemoryLocalSkillListStore) PopPending(_ context.Context, runtimeID st
 	var oldest *RuntimeLocalSkillListRequest
 	now := time.Now()
 	for _, req := range s.requests {
-		applyLocalSkillTimeout(&req.runtimeLocalSkillRequestState, now)
-		if req.RuntimeID == runtimeID && req.Status == RuntimeLocalSkillPending {
+		applyLocalSkillTimeout(&req.runtimeAsyncRequestState, now)
+		if req.RuntimeID == runtimeID && req.Status == runtimeAsyncPending {
 			if oldest == nil || req.CreatedAt.Before(oldest.CreatedAt) {
 				oldest = req
 			}
 		}
 	}
 	if oldest != nil {
-		oldest.Status = RuntimeLocalSkillRunning
+		oldest.Status = runtimeAsyncRunning
 		startedAt := now
 		oldest.RunStartedAt = &startedAt
 		oldest.UpdatedAt = now
@@ -284,7 +237,7 @@ func (s *inMemoryLocalSkillListStore) Complete(_ context.Context, id string, ski
 	defer s.mu.Unlock()
 
 	if req, ok := s.requests[id]; ok {
-		req.Status = RuntimeLocalSkillCompleted
+		req.Status = runtimeAsyncCompleted
 		req.Skills = skills
 		req.Supported = supported
 		req.UpdatedAt = time.Now()
@@ -297,7 +250,7 @@ func (s *inMemoryLocalSkillListStore) Fail(_ context.Context, id string, errMsg 
 	defer s.mu.Unlock()
 
 	if req, ok := s.requests[id]; ok {
-		req.Status = RuntimeLocalSkillFailed
+		req.Status = runtimeAsyncFailed
 		req.Error = errMsg
 		req.UpdatedAt = time.Now()
 	}
@@ -332,8 +285,8 @@ func (s *inMemoryLocalSkillImportStore) Create(_ context.Context, input LocalSki
 		return existing, nil
 	}
 	req := &RuntimeLocalSkillImportRequest{
-		runtimeLocalSkillRequestState: runtimeLocalSkillRequestState{
-			ID: input.RequestID, RuntimeID: input.RuntimeID, Status: RuntimeLocalSkillPending,
+		runtimeAsyncRequestState: runtimeAsyncRequestState{
+			ID: input.RequestID, RuntimeID: input.RuntimeID, Status: runtimeAsyncPending,
 			CreatedAt: time.Now(), UpdatedAt: time.Now(),
 		},
 		SkillKey:      input.SkillKey,
@@ -356,7 +309,7 @@ func (s *inMemoryLocalSkillImportStore) Get(_ context.Context, id string) (*Runt
 	if !ok {
 		return nil, nil
 	}
-	applyLocalSkillTimeout(&req.runtimeLocalSkillRequestState, time.Now())
+	applyLocalSkillTimeout(&req.runtimeAsyncRequestState, time.Now())
 	return req, nil
 }
 
@@ -366,8 +319,8 @@ func (s *inMemoryLocalSkillImportStore) HasPending(_ context.Context, runtimeID 
 
 	now := time.Now()
 	for _, req := range s.requests {
-		applyLocalSkillTimeout(&req.runtimeLocalSkillRequestState, now)
-		if req.RuntimeID == runtimeID && req.Status == RuntimeLocalSkillPending {
+		applyLocalSkillTimeout(&req.runtimeAsyncRequestState, now)
+		if req.RuntimeID == runtimeID && req.Status == runtimeAsyncPending {
 			return true, nil
 		}
 	}
@@ -383,8 +336,8 @@ func (s *inMemoryLocalSkillImportStore) PopPendingBatch(_ context.Context, runti
 	// Collect all pending requests for this runtime, sorted by creation time.
 	var pending []*RuntimeLocalSkillImportRequest
 	for _, req := range s.requests {
-		applyLocalSkillTimeout(&req.runtimeLocalSkillRequestState, now)
-		if req.RuntimeID == runtimeID && req.Status == RuntimeLocalSkillPending {
+		applyLocalSkillTimeout(&req.runtimeAsyncRequestState, now)
+		if req.RuntimeID == runtimeID && req.Status == runtimeAsyncPending {
 			pending = append(pending, req)
 		}
 	}
@@ -398,7 +351,7 @@ func (s *inMemoryLocalSkillImportStore) PopPendingBatch(_ context.Context, runti
 
 	result := make([]*RuntimeLocalSkillImportRequest, 0, limit)
 	for _, req := range pending[:limit] {
-		req.Status = RuntimeLocalSkillRunning
+		req.Status = runtimeAsyncRunning
 		startedAt := now
 		req.RunStartedAt = &startedAt
 		req.UpdatedAt = now
@@ -412,7 +365,7 @@ func (s *inMemoryLocalSkillImportStore) Complete(_ context.Context, id string, s
 	defer s.mu.Unlock()
 
 	if req, ok := s.requests[id]; ok {
-		req.Status = RuntimeLocalSkillCompleted
+		req.Status = runtimeAsyncCompleted
 		req.Skill = &skill
 		req.UpdatedAt = time.Now()
 	}
@@ -424,7 +377,7 @@ func (s *inMemoryLocalSkillImportStore) Conflict(_ context.Context, id string, i
 	defer s.mu.Unlock()
 
 	if req, ok := s.requests[id]; ok {
-		req.Status = RuntimeLocalSkillConflict
+		req.Status = runtimeAsyncConflict
 		conflict := info
 		req.Conflict = &conflict
 		req.UpdatedAt = time.Now()
@@ -437,7 +390,7 @@ func (s *inMemoryLocalSkillImportStore) Fail(_ context.Context, id string, errMs
 	defer s.mu.Unlock()
 
 	if req, ok := s.requests[id]; ok {
-		req.Status = RuntimeLocalSkillFailed
+		req.Status = runtimeAsyncFailed
 		req.Error = errMsg
 		req.UpdatedAt = time.Now()
 	}
@@ -472,11 +425,6 @@ func cleanOptionalString(value *string) *string {
 		return nil
 	}
 	return &trimmed
-}
-
-func runtimeLocalSkillRequestTerminal(status runtimeLocalSkillRequestStatus) bool {
-	return status == RuntimeLocalSkillCompleted || status == RuntimeLocalSkillFailed ||
-		status == RuntimeLocalSkillTimeout || status == RuntimeLocalSkillConflict
 }
 
 func (h *Handler) requireRuntimeLocalSkillAccess(w http.ResponseWriter, r *http.Request, runtimeID string) (runtimeIDAndWorkspace, bool) {
@@ -669,7 +617,7 @@ func (h *Handler) ReportLocalSkillListResult(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusNotFound, "request not found")
 		return
 	}
-	if runtimeLocalSkillRequestTerminal(req.Status) {
+	if runtimeAsyncRequestTerminal(req.Status) {
 		slog.Debug("ignoring stale runtime local skills report", "runtime_id", runtimeID, "request_id", requestID, "status", req.Status)
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 		return
@@ -729,7 +677,7 @@ func (h *Handler) ReportLocalSkillImportResult(w http.ResponseWriter, r *http.Re
 		writeError(w, http.StatusNotFound, "request not found")
 		return
 	}
-	if runtimeLocalSkillRequestTerminal(req.Status) {
+	if runtimeAsyncRequestTerminal(req.Status) {
 		slog.Debug("ignoring stale runtime local skill import report", "runtime_id", runtimeID, "request_id", requestID, "status", req.Status)
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 		return
@@ -913,7 +861,7 @@ func (h *Handler) failLocalSkillImport(w http.ResponseWriter, r *http.Request, r
 }
 
 // reportLocalSkillConflict records a same-name conflict as the terminal
-// RuntimeLocalSkillConflict state with structured metadata the caller uses to
+// shared conflict state with structured metadata the caller uses to
 // offer overwrite / rename / skip.
 func (h *Handler) reportLocalSkillConflict(w http.ResponseWriter, r *http.Request, requestID, creatorID string, existing db.Skill) {
 	info := LocalSkillImportConflict{

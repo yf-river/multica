@@ -67,7 +67,7 @@ func TestRedisLocalSkillListStore_CreateGetComplete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if req.Status != RuntimeLocalSkillPending {
+	if req.Status != runtimeAsyncPending {
 		t.Fatalf("initial status = %s", req.Status)
 	}
 
@@ -97,7 +97,7 @@ func TestRedisLocalSkillListStore_CreateGetComplete(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get after complete: %v", err)
 	}
-	if got.Status != RuntimeLocalSkillCompleted {
+	if got.Status != runtimeAsyncCompleted {
 		t.Fatalf("status after complete = %s", got.Status)
 	}
 	if len(got.Skills) != 1 || got.Skills[0].Key != "review-helper" {
@@ -156,7 +156,7 @@ func TestRedisLocalSkillListStore_PopPendingAcrossInstances(t *testing.T) {
 	if popped.ID != req.ID {
 		t.Fatalf("popped id = %s, want %s", popped.ID, req.ID)
 	}
-	if popped.Status != RuntimeLocalSkillRunning {
+	if popped.Status != runtimeAsyncRunning {
 		t.Fatalf("popped status = %s, want running", popped.Status)
 	}
 	if popped.RunStartedAt == nil {
@@ -214,7 +214,7 @@ func TestRedisLocalSkillListStore_PendingTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if got.Status != RuntimeLocalSkillTimeout {
+	if got.Status != runtimeAsyncTimeout {
 		t.Fatalf("status = %s, want timeout", got.Status)
 	}
 
@@ -330,7 +330,7 @@ func TestRedisLocalSkillImportStore_PreservesConflict(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get: %v", err)
 	}
-	if got.Status != RuntimeLocalSkillConflict {
+	if got.Status != runtimeAsyncConflict {
 		t.Fatalf("status = %s, want conflict", got.Status)
 	}
 	if got.Conflict == nil {
@@ -369,7 +369,7 @@ func TestRedisLocalSkillImportStore_PopPendingAcrossInstances(t *testing.T) {
 	if popped == nil || popped.ID != req.ID {
 		t.Fatalf("cross-node pop failed: got %+v", popped)
 	}
-	if popped.Status != RuntimeLocalSkillRunning {
+	if popped.Status != runtimeAsyncRunning {
 		t.Fatalf("popped status = %s", popped.Status)
 	}
 	if popped.SkillKey != "review-helper" {
@@ -441,7 +441,7 @@ func TestRedisLocalSkillListStore_PopPendingAtomicClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get after pop: %v", err)
 	}
-	if got.Status != RuntimeLocalSkillRunning {
+	if got.Status != runtimeAsyncRunning {
 		t.Fatalf("record status = %s, want running", got.Status)
 	}
 
@@ -485,7 +485,7 @@ func TestRedisLocalSkillImportStore_PopPendingBatch(t *testing.T) {
 		t.Fatalf("expected 3, got %d", len(batch))
 	}
 	for _, req := range batch {
-		if req.Status != RuntimeLocalSkillRunning {
+		if req.Status != runtimeAsyncRunning {
 			t.Fatalf("batch item status = %s, want running", req.Status)
 		}
 	}

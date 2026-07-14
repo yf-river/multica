@@ -110,10 +110,10 @@ func countSkillFiles(t *testing.T, skillID string) int {
 	return count
 }
 
-func assertRuntimeLocalSkillTimeout(t *testing.T, status runtimeLocalSkillRequestStatus, errMsg string) {
+func assertRuntimeLocalSkillTimeout(t *testing.T, status runtimeAsyncRequestStatus, errMsg string) {
 	t.Helper()
 
-	if status != RuntimeLocalSkillTimeout {
+	if status != runtimeAsyncTimeout {
 		t.Fatalf("expected timeout, got %s", status)
 	}
 	if errMsg == "" {
@@ -180,7 +180,7 @@ func TestInMemoryLocalSkillListStore_TimesOutRunningRequests(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	req.Status = RuntimeLocalSkillRunning
+	req.Status = runtimeAsyncRunning
 	startedAt := time.Now().Add(-61 * time.Second)
 	req.RunStartedAt = &startedAt
 
@@ -206,7 +206,7 @@ func TestInMemoryLocalSkillImportStore_TimesOutRunningRequests(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	req.Status = RuntimeLocalSkillRunning
+	req.Status = runtimeAsyncRunning
 	startedAt := time.Now().Add(-61 * time.Second)
 	req.RunStartedAt = &startedAt
 
@@ -390,7 +390,7 @@ func TestRuntimeLocalSkillImportFlow_EndToEnd(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&completed); err != nil {
 		t.Fatalf("decode poll response: %v", err)
 	}
-	if completed.Status != RuntimeLocalSkillCompleted {
+	if completed.Status != runtimeAsyncCompleted {
 		t.Fatalf("expected completed status, got %s", completed.Status)
 	}
 	if completed.Skill == nil {
@@ -513,7 +513,7 @@ func TestReportLocalSkillImportResult_IgnoresTimedOutRequests(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create import request: %v", err)
 	}
-	importReq.Status = RuntimeLocalSkillRunning
+	importReq.Status = runtimeAsyncRunning
 	startedAt := time.Now().Add(-61 * time.Second)
 	importReq.RunStartedAt = &startedAt
 
@@ -521,7 +521,7 @@ func TestReportLocalSkillImportResult_IgnoresTimedOutRequests(t *testing.T) {
 	if err != nil {
 		t.Fatalf("get import request: %v", err)
 	}
-	if timedOut == nil || timedOut.Status != RuntimeLocalSkillTimeout {
+	if timedOut == nil || timedOut.Status != runtimeAsyncTimeout {
 		t.Fatalf("expected timed out request, got %#v", timedOut)
 	}
 

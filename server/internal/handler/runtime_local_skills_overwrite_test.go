@@ -190,7 +190,7 @@ func TestRuntimeLocalSkillImport_ConflictCreatorCanOverwrite(t *testing.T) {
 		reportBundleBody(name, "incoming description", "# incoming", map[string]string{"a.md": "A"}),
 	)
 
-	if got.Status != RuntimeLocalSkillConflict {
+	if got.Status != runtimeAsyncConflict {
 		t.Fatalf("status = %s, want conflict", got.Status)
 	}
 	if got.Conflict == nil {
@@ -229,7 +229,7 @@ func TestRuntimeLocalSkillImport_ConflictNonCreatorCannotOverwrite(t *testing.T)
 		reportBundleBody(name, "incoming description", "# incoming", nil),
 	)
 
-	if got.Status != RuntimeLocalSkillConflict {
+	if got.Status != runtimeAsyncConflict {
 		t.Fatalf("status = %s, want conflict", got.Status)
 	}
 	if got.Conflict == nil {
@@ -264,7 +264,7 @@ func TestRuntimeLocalSkillImport_OverwritePreservesIdentityAndBindings(t *testin
 		reportBundleBody(name, "overwritten description", "# overwritten", map[string]string{"keep.md": "new keep"}),
 	)
 
-	if got.Status != RuntimeLocalSkillCompleted {
+	if got.Status != runtimeAsyncCompleted {
 		t.Fatalf("status = %s, want completed (error=%q)", got.Status, got.Error)
 	}
 	if got.Skill == nil {
@@ -305,7 +305,7 @@ func TestRuntimeLocalSkillImport_OverwriteNonCreatorFails(t *testing.T) {
 		reportBundleBody(name, "incoming description", "# incoming", nil),
 	)
 
-	if got.Status != RuntimeLocalSkillFailed {
+	if got.Status != runtimeAsyncFailed {
 		t.Fatalf("status = %s, want failed", got.Status)
 	}
 	// Original skill (owned by someone else) must be untouched.
@@ -333,7 +333,7 @@ func TestRuntimeLocalSkillImport_OverwriteTargetDeletedFails(t *testing.T) {
 		reportBundleBody(name, "incoming description", "# incoming", map[string]string{"a.md": "A"}),
 	)
 
-	if got.Status != RuntimeLocalSkillFailed {
+	if got.Status != runtimeAsyncFailed {
 		t.Fatalf("status = %s, want failed", got.Status)
 	}
 	// Must NOT fall back to creating a new skill by name.
@@ -367,7 +367,7 @@ func TestRuntimeLocalSkillImport_OverwriteRetryIsIdempotent(t *testing.T) {
 		reportBundleBody(name, "second overwrite", "# second", map[string]string{"second.md": "2", "extra.md": "3"}))
 
 	got := pollLocalSkillImport(t, runtimeID, requestID)
-	if got.Status != RuntimeLocalSkillCompleted {
+	if got.Status != runtimeAsyncCompleted {
 		t.Fatalf("status = %s, want completed", got.Status)
 	}
 	if _, desc, _, _ := getSkillRow(t, existingID); desc != "first overwrite" {
@@ -418,7 +418,7 @@ func TestRuntimeLocalSkillImport_OverwriteNameMismatchFails(t *testing.T) {
 		reportBundleBody(otherName, "incoming description", "# incoming", map[string]string{"a.md": "A"}),
 	)
 
-	if got.Status != RuntimeLocalSkillFailed {
+	if got.Status != runtimeAsyncFailed {
 		t.Fatalf("status = %s, want failed (name mismatch)", got.Status)
 	}
 	if _, desc, _, _ := getSkillRow(t, targetID); desc != "original description" {

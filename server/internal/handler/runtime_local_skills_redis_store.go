@@ -92,8 +92,8 @@ func NewRedisLocalSkillListStore(rdb *redis.Client) *RedisLocalSkillListStore {
 func (s *RedisLocalSkillListStore) Create(ctx context.Context, runtimeID, requestID string) (*RuntimeLocalSkillListRequest, error) {
 	now := time.Now()
 	req := &RuntimeLocalSkillListRequest{
-		runtimeLocalSkillRequestState: runtimeLocalSkillRequestState{
-			ID: requestID, RuntimeID: runtimeID, Status: RuntimeLocalSkillPending,
+		runtimeAsyncRequestState: runtimeAsyncRequestState{
+			ID: requestID, RuntimeID: runtimeID, Status: runtimeAsyncPending,
 			CreatedAt: now, UpdatedAt: now,
 		},
 		Supported: true,
@@ -146,7 +146,7 @@ func (s *RedisLocalSkillListStore) loadListRequest(ctx context.Context, id strin
 	if err := json.Unmarshal(raw, &req); err != nil {
 		return nil, fmt.Errorf("decode list request: %w", err)
 	}
-	if applyLocalSkillTimeout(&req.runtimeLocalSkillRequestState, time.Now()) {
+	if applyLocalSkillTimeout(&req.runtimeAsyncRequestState, time.Now()) {
 		// Persist the timeout so subsequent Get / PopPending on any node see
 		// the terminal state. Also drop the id from the pending zset —
 		// PopPending would do this itself, but doing it here keeps the set
@@ -204,7 +204,7 @@ func (s *RedisLocalSkillListStore) PopPending(ctx context.Context, runtimeID str
 			s.rdb.ZRem(ctx, pendingKey, id)
 			continue
 		}
-		if req.Status != RuntimeLocalSkillPending {
+		if req.Status != runtimeAsyncPending {
 			// Either the timeout fired inside loadListRequest or another node
 			// already picked it up. Either way, unlink from the pending set
 			// and move on to the next one.
@@ -213,7 +213,7 @@ func (s *RedisLocalSkillListStore) PopPending(ctx context.Context, runtimeID str
 		}
 
 		now := time.Now()
-		req.Status = RuntimeLocalSkillRunning
+		req.Status = runtimeAsyncRunning
 		req.RunStartedAt = &now
 		req.UpdatedAt = now
 		data, err := json.Marshal(req)
@@ -248,7 +248,7 @@ func (s *RedisLocalSkillListStore) Complete(ctx context.Context, id string, skil
 	if req == nil {
 		return nil
 	}
-	req.Status = RuntimeLocalSkillCompleted
+	req.Status = runtimeAsyncCompleted
 	req.Skills = skills
 	req.Supported = supported
 	req.UpdatedAt = time.Now()
@@ -263,7 +263,7 @@ func (s *RedisLocalSkillListStore) Fail(ctx context.Context, id string, errMsg s
 	if req == nil {
 		return nil
 	}
-	req.Status = RuntimeLocalSkillFailed
+	req.Status = runtimeAsyncFailed
 	req.Error = errMsg
 	req.UpdatedAt = time.Now()
 	return s.persistListRequest(ctx, req)
@@ -284,8 +284,8 @@ func NewRedisLocalSkillImportStore(rdb *redis.Client) *redisLocalSkillImportStor
 func (s *redisLocalSkillImportStore) Create(ctx context.Context, input LocalSkillImportRequestInput) (*RuntimeLocalSkillImportRequest, error) {
 	now := time.Now()
 	req := &RuntimeLocalSkillImportRequest{
-		runtimeLocalSkillRequestState: runtimeLocalSkillRequestState{
-			ID: input.RequestID, RuntimeID: input.RuntimeID, Status: RuntimeLocalSkillPending,
+		runtimeAsyncRequestState: runtimeAsyncRequestState{
+			ID: input.RequestID, RuntimeID: input.RuntimeID, Status: runtimeAsyncPending,
 			CreatedAt: now, UpdatedAt: now,
 		},
 		SkillKey:      input.SkillKey,
@@ -344,7 +344,7 @@ func (s *redisLocalSkillImportStore) loadImportRequest(ctx context.Context, id s
 	if err != nil {
 		return nil, err
 	}
-	if applyLocalSkillTimeout(&req.runtimeLocalSkillRequestState, time.Now()) {
+	if applyLocalSkillTimeout(&req.runtimeAsyncRequestState, time.Now()) {
 		if err := s.persistImportRequest(ctx, req); err != nil {
 			return nil, err
 		}
@@ -438,13 +438,13 @@ func (s *redisLocalSkillImportStore) PopPendingBatch(ctx context.Context, runtim
 			s.rdb.ZRem(ctx, pendingKey, id)
 			continue
 		}
-		if req.Status != RuntimeLocalSkillPending {
+		if req.Status != runtimeAsyncPending {
 			s.rdb.ZRem(ctx, pendingKey, id)
 			continue
 		}
 
 		now := time.Now()
-		req.Status = RuntimeLocalSkillRunning
+		req.Status = runtimeAsyncRunning
 		req.RunStartedAt = &now
 		req.UpdatedAt = now
 		data, err := s.marshalImport(req)
@@ -475,7 +475,7 @@ func (s *redisLocalSkillImportStore) Complete(ctx context.Context, id string, sk
 	if req == nil {
 		return nil
 	}
-	req.Status = RuntimeLocalSkillCompleted
+	req.Status = runtimeAsyncCompleted
 	req.Skill = &skill
 	req.UpdatedAt = time.Now()
 	return s.persistImportRequest(ctx, req)
@@ -489,7 +489,7 @@ func (s *redisLocalSkillImportStore) Conflict(ctx context.Context, id string, in
 	if req == nil {
 		return nil
 	}
-	req.Status = RuntimeLocalSkillConflict
+	req.Status = runtimeAsyncConflict
 	conflict := info
 	req.Conflict = &conflict
 	req.UpdatedAt = time.Now()
@@ -504,7 +504,7 @@ func (s *redisLocalSkillImportStore) Fail(ctx context.Context, id string, errMsg
 	if req == nil {
 		return nil
 	}
-	req.Status = RuntimeLocalSkillFailed
+	req.Status = runtimeAsyncFailed
 	req.Error = errMsg
 	req.UpdatedAt = time.Now()
 	return s.persistImportRequest(ctx, req)

@@ -31,17 +31,6 @@ import (
 // and the picker shows "No models available" (regression: see issue
 // review on multica-ai/multica#2009).
 
-// ModelListStatus represents the lifecycle of a model list request.
-type ModelListStatus string
-
-const (
-	ModelListPending   ModelListStatus = "pending"
-	ModelListRunning   ModelListStatus = "running"
-	ModelListCompleted ModelListStatus = "completed"
-	ModelListFailed    ModelListStatus = "failed"
-	ModelListTimeout   ModelListStatus = "timeout"
-)
-
 // ModelListRequest represents a pending or completed model list request.
 // Supported is false when the provider ignores per-agent model
 // selection entirely (currently: hermes). The UI uses this to
@@ -52,15 +41,9 @@ const (
 // `json:"-"` because it's a server-side bookkeeping field — the UI only
 // needs Status / UpdatedAt to drive the polling loop.
 type ModelListRequest struct {
-	ID           string          `json:"id"`
-	RuntimeID    string          `json:"runtime_id"`
-	Status       ModelListStatus `json:"status"`
-	Models       []ModelEntry    `json:"models,omitempty"`
-	Supported    bool            `json:"supported"`
-	Error        string          `json:"error,omitempty"`
-	CreatedAt    time.Time       `json:"created_at"`
-	UpdatedAt    time.Time       `json:"updated_at"`
-	RunStartedAt *time.Time      `json:"-"`
+	runtimeAsyncRequestState
+	Models    []ModelEntry `json:"models,omitempty"`
+	Supported bool         `json:"supported"`
 }
 
 // ModelEntry mirrors agent.Model for the wire. `Default` tags the
@@ -105,14 +88,6 @@ const (
 	// modelListPendingTimeout bounds how long a pending request can sit in
 	// the store before the UI is told "daemon didn't pick this up".
 	modelListPendingTimeout = 30 * time.Second
-	// modelListRunningTimeout bounds how long a claimed (running) request
-	// can stay claimed before the UI is told "daemon picked this up but
-	// never reported a result". This matters when the heartbeat response
-	// carrying `pending_model_list` is lost in transit (e.g. HTTP client
-	// timeout after PopPending already mutated store state): without this
-	// transition the UI would keep polling a record that is stuck in
-	// `running` until retention sweeps it.
-	modelListRunningTimeout = 60 * time.Second
 	// modelListStoreRetention bounds how long any stored request lives in
 	// the backing store. The Redis backend uses it as a TTL; the in-memory
 	// backend GCs on Create. The window is deliberately wider than the
@@ -137,30 +112,19 @@ type ModelListStore interface {
 	Fail(ctx context.Context, id string, errMsg string) error
 }
 
-// applyModelListTimeout transitions a request to ModelListTimeout when it has
+// applyModelListTimeout transitions a request to runtimeAsyncTimeout when it has
 // been stuck in a non-terminal state past its threshold. Returns true when
 // the record was modified so callers can persist the change. The pending
 // threshold catches "daemon never picked this up"; the running threshold
 // catches "daemon picked it up but the result report was lost" — without
 // the running escape, only retention sweep ends the polling loop.
 func applyModelListTimeout(req *ModelListRequest, now time.Time) bool {
-	switch req.Status {
-	case ModelListPending:
-		if now.Sub(req.CreatedAt) > modelListPendingTimeout {
-			req.Status = ModelListTimeout
-			req.Error = "daemon did not respond within 30 seconds"
-			req.UpdatedAt = now
-			return true
-		}
-	case ModelListRunning:
-		if req.RunStartedAt != nil && now.Sub(*req.RunStartedAt) > modelListRunningTimeout {
-			req.Status = ModelListTimeout
-			req.Error = "daemon did not finish within 60 seconds"
-			req.UpdatedAt = now
-			return true
-		}
-	}
-	return false
+	return applyRuntimeAsyncTimeout(
+		&req.runtimeAsyncRequestState,
+		now,
+		modelListPendingTimeout,
+		"daemon did not respond within 30 seconds",
+	)
 }
 
 // InMemoryModelListStore is the single-node implementation. Adequate for
@@ -195,14 +159,13 @@ func (s *InMemoryModelListStore) Create(_ context.Context, runtimeID, requestID 
 		return existing, nil
 	}
 	req := &ModelListRequest{
-		ID:        requestID,
-		RuntimeID: runtimeID,
-		Status:    ModelListPending,
+		runtimeAsyncRequestState: runtimeAsyncRequestState{
+			ID: requestID, RuntimeID: runtimeID, Status: runtimeAsyncPending,
+			CreatedAt: now, UpdatedAt: now,
+		},
 		// Default to true; the daemon overrides this in the report
 		// for providers that don't support per-agent model selection.
 		Supported: true,
-		CreatedAt: now,
-		UpdatedAt: now,
 	}
 	s.requests[req.ID] = req
 	return req, nil
@@ -227,7 +190,7 @@ func (s *InMemoryModelListStore) HasPending(_ context.Context, runtimeID string)
 	now := time.Now()
 	for _, req := range s.requests {
 		applyModelListTimeout(req, now)
-		if req.RuntimeID == runtimeID && req.Status == ModelListPending {
+		if req.RuntimeID == runtimeID && req.Status == runtimeAsyncPending {
 			return true, nil
 		}
 	}
@@ -242,14 +205,14 @@ func (s *InMemoryModelListStore) PopPending(_ context.Context, runtimeID string)
 	now := time.Now()
 	for _, req := range s.requests {
 		applyModelListTimeout(req, now)
-		if req.RuntimeID == runtimeID && req.Status == ModelListPending {
+		if req.RuntimeID == runtimeID && req.Status == runtimeAsyncPending {
 			if oldest == nil || req.CreatedAt.Before(oldest.CreatedAt) {
 				oldest = req
 			}
 		}
 	}
 	if oldest != nil {
-		oldest.Status = ModelListRunning
+		oldest.Status = runtimeAsyncRunning
 		startedAt := now
 		oldest.RunStartedAt = &startedAt
 		oldest.UpdatedAt = now
@@ -262,7 +225,7 @@ func (s *InMemoryModelListStore) Complete(_ context.Context, id string, models [
 	defer s.mu.Unlock()
 
 	if req, ok := s.requests[id]; ok {
-		req.Status = ModelListCompleted
+		req.Status = runtimeAsyncCompleted
 		req.Models = models
 		req.Supported = supported
 		req.UpdatedAt = time.Now()
@@ -275,15 +238,11 @@ func (s *InMemoryModelListStore) Fail(_ context.Context, id string, errMsg strin
 	defer s.mu.Unlock()
 
 	if req, ok := s.requests[id]; ok {
-		req.Status = ModelListFailed
+		req.Status = runtimeAsyncFailed
 		req.Error = errMsg
 		req.UpdatedAt = time.Now()
 	}
 	return nil
-}
-
-func modelListRequestTerminal(status ModelListStatus) bool {
-	return status == ModelListCompleted || status == ModelListFailed || status == ModelListTimeout
 }
 
 // ---------------------------------------------------------------------------
@@ -380,7 +339,7 @@ func (h *Handler) ReportModelListResult(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusNotFound, "request not found")
 		return
 	}
-	if modelListRequestTerminal(existing.Status) {
+	if runtimeAsyncRequestTerminal(existing.Status) {
 		slog.Debug("ignoring stale model list report", "runtime_id", runtimeID, "request_id", requestID, "status", existing.Status)
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 		return

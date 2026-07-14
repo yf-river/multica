@@ -52,12 +52,11 @@ func NewRedisModelListStore(rdb *redis.Client) *redisModelListStore {
 func (s *redisModelListStore) Create(ctx context.Context, runtimeID, requestID string) (*ModelListRequest, error) {
 	now := time.Now()
 	req := &ModelListRequest{
-		ID:        requestID,
-		RuntimeID: runtimeID,
-		Status:    ModelListPending,
+		runtimeAsyncRequestState: runtimeAsyncRequestState{
+			ID: requestID, RuntimeID: runtimeID, Status: runtimeAsyncPending,
+			CreatedAt: now, UpdatedAt: now,
+		},
 		Supported: true,
-		CreatedAt: now,
-		UpdatedAt: now,
 	}
 	data, err := s.marshalRequest(req)
 	if err != nil {
@@ -195,7 +194,7 @@ func (s *redisModelListStore) PopPending(ctx context.Context, runtimeID string) 
 			s.rdb.ZRem(ctx, pendingKey, id)
 			continue
 		}
-		if req.Status != ModelListPending {
+		if req.Status != runtimeAsyncPending {
 			// Either the timeout fired inside loadRequest or another node
 			// already picked it up. Unlink from the pending set and retry.
 			s.rdb.ZRem(ctx, pendingKey, id)
@@ -203,7 +202,7 @@ func (s *redisModelListStore) PopPending(ctx context.Context, runtimeID string) 
 		}
 
 		now := time.Now()
-		req.Status = ModelListRunning
+		req.Status = runtimeAsyncRunning
 		req.RunStartedAt = &now
 		req.UpdatedAt = now
 		data, err := s.marshalRequest(req)
@@ -237,7 +236,7 @@ func (s *redisModelListStore) Complete(ctx context.Context, id string, models []
 	if req == nil {
 		return nil
 	}
-	req.Status = ModelListCompleted
+	req.Status = runtimeAsyncCompleted
 	req.Models = models
 	req.Supported = supported
 	req.UpdatedAt = time.Now()
@@ -252,7 +251,7 @@ func (s *redisModelListStore) Fail(ctx context.Context, id string, errMsg string
 	if req == nil {
 		return nil
 	}
-	req.Status = ModelListFailed
+	req.Status = runtimeAsyncFailed
 	req.Error = errMsg
 	req.UpdatedAt = time.Now()
 	return s.persistRequest(ctx, req)
