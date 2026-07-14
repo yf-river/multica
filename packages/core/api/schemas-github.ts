@@ -1,7 +1,6 @@
 import { z } from "zod";
 import type {
   GitHubConnectResponse,
-  GitHubPullRequest,
   ListGitHubInstallationsResponse,
 } from "../types";
 import { NonEmptyStringSchema } from "./schemas-internal";
@@ -72,7 +71,7 @@ const GitHubPullRequestSchema = z.object({
 
 export const GitHubPullRequestListResponseSchema = z.object({
   pull_requests: z.array(GitHubPullRequestSchema).default([]),
-});
+}).transform(({ pull_requests }) => pull_requests);
 
 export const EMPTY_GITHUB_CONNECT_RESPONSE: GitHubConnectResponse = {
   configured: false,
@@ -82,8 +81,4 @@ export const EMPTY_GITHUB_INSTALLATION_LIST_RESPONSE: ListGitHubInstallationsRes
   installations: [],
   configured: false,
   can_manage: false,
-};
-
-export const EMPTY_GITHUB_PULL_REQUEST_LIST_RESPONSE: { pull_requests: GitHubPullRequest[] } = {
-  pull_requests: [],
 };

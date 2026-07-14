@@ -58,7 +58,7 @@ export function PullRequestList({ issueId }: { issueId: string }) {
   const { t } = useT("issues");
   const [expanded, setExpanded] = useState(false);
   const { data, isLoading } = useQuery(issuePullRequestsOptions(issueId));
-  const prs = data?.pull_requests ?? [];
+  const prs = data ?? [];
 
   if (isLoading) {
     return <p className="text-xs text-muted-foreground px-2">{t(($) => $.detail.pull_requests_loading)}</p>;

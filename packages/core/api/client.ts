@@ -249,7 +249,6 @@ import {
   EMPTY_REDEEM_LARK_BINDING_TOKEN_RESPONSE,
   EMPTY_GITHUB_CONNECT_RESPONSE,
   EMPTY_GITHUB_INSTALLATION_LIST_RESPONSE,
-  EMPTY_GITHUB_PULL_REQUEST_LIST_RESPONSE,
   EMPTY_WEBHOOK_DELIVERIES,
   EMPTY_PROMPT_LIBRARY_ITEM,
   EMPTY_PROMPT_LIBRARY_TRIAL,
@@ -270,7 +269,6 @@ import {
   EMPTY_PROMPT_EVALUATION_SKILL_RE_EVAL_ASSET_RESPONSE,
   EMPTY_PROMPT_EVALUATION_SKILL_RE_EVAL_RUN_RESPONSE,
   EMPTY_RUNTIME_PROFILE,
-  EMPTY_RUNTIME_PROFILE_LIST_RESPONSE,
   EMPTY_RUNTIME_DEVICE,
   EMPTY_RUNTIME_CASCADE_DELETE_RESPONSE,
   EMPTY_RUNTIME_MODEL_LIST_REQUEST,
@@ -1036,12 +1034,9 @@ export class ApiClient extends ApiTransport {
     const raw = await this.fetch<unknown>(
       `/api/workspaces/${workspaceId}/runtime-profiles`,
     );
-    return parseWithFallback(
-      raw,
-      RuntimeProfileListResponseSchema,
-      EMPTY_RUNTIME_PROFILE_LIST_RESPONSE,
-      { endpoint: "GET /api/workspaces/:workspaceId/runtime-profiles" },
-    ).runtime_profiles;
+    return parseWithFallback(raw, RuntimeProfileListResponseSchema, [], {
+      endpoint: "GET /api/workspaces/:workspaceId/runtime-profiles",
+    });
   }
 
   async createRuntimeProfile(
@@ -1405,9 +1400,9 @@ export class ApiClient extends ApiTransport {
 
   async listIssueSOPRuns(issueId: string): Promise<SquadSOPRun[]> {
     const raw = await this.fetch<unknown>(`/api/issues/${issueId}/sop-runs`);
-    return parseWithFallback(raw, IssueSOPRunsResponseSchema, { items: [] }, {
+    return parseWithFallback(raw, IssueSOPRunsResponseSchema, [], {
       endpoint: "GET /api/issues/:id/sop-runs",
-    }).items;
+    });
   }
 
   async cancelTask(issueId: string, taskId: string): Promise<AgentTask> {
@@ -1947,23 +1942,23 @@ export class ApiClient extends ApiTransport {
     if (params?.status) search.set("status", params.status);
     const query = search.toString();
     const raw = await this.fetch<unknown>(`/api/prompt-library${query ? `?${query}` : ""}`);
-    return parseWithFallback(raw, PromptLibraryItemListResponseSchema, { items: [] }, {
+    return parseWithFallback(raw, PromptLibraryItemListResponseSchema, [], {
       endpoint: "GET /api/prompt-library",
-    }).items;
+    });
   }
 
   async listPromptLibraryVersions(id: string): Promise<PromptLibraryVersion[]> {
     const raw = await this.fetch<unknown>(`/api/prompt-library/${id}/versions`);
-    return parseWithFallback(raw, PromptLibraryVersionListResponseSchema, { items: [] }, {
+    return parseWithFallback(raw, PromptLibraryVersionListResponseSchema, [], {
       endpoint: "GET /api/prompt-library/:id/versions",
-    }).items;
+    });
   }
 
   async listPromptLibraryTrials(id: string): Promise<PromptLibraryTrial[]> {
     const raw = await this.fetch<unknown>(`/api/prompt-library/${id}/trials`);
-    return parseWithFallback(raw, PromptLibraryTrialListResponseSchema, { items: [] }, {
+    return parseWithFallback(raw, PromptLibraryTrialListResponseSchema, [], {
       endpoint: "GET /api/prompt-library/:id/trials",
-    }).items;
+    });
   }
 
   async createPromptLibraryItem(data: CreatePromptLibraryItemRequest, idempotencyKey = generateUUID()): Promise<PromptLibraryItem> {
@@ -2090,9 +2085,9 @@ export class ApiClient extends ApiTransport {
     if (params?.status) search.set("status", params.status);
     const query = search.toString();
     const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets${query ? `?${query}` : ""}`);
-    return parseWithFallback(raw, PromptEvaluationAssetListResponseSchema, { items: [] }, {
+    return parseWithFallback(raw, PromptEvaluationAssetListResponseSchema, [], {
       endpoint: "GET /api/prompt-evaluation-assets",
-    }).items as PromptEvaluationAsset[];
+    }) as PromptEvaluationAsset[];
   }
 
   async createPromptEvaluationAsset(
@@ -2158,9 +2153,9 @@ export class ApiClient extends ApiTransport {
     if (limit) search.set("limit", String(limit));
     const query = search.toString();
     const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/dataset-versions${query ? `?${query}` : ""}`);
-    return parseWithFallback(raw, PromptEvaluationDatasetVersionListResponseSchema, { items: [] }, {
+    return parseWithFallback(raw, PromptEvaluationDatasetVersionListResponseSchema, [], {
       endpoint: "GET /api/prompt-evaluation-assets/:id/dataset-versions",
-    }).items as PromptEvaluationDatasetVersion[];
+    }) as PromptEvaluationDatasetVersion[];
   }
 
   async createPromptEvaluationDatasetVersion(
@@ -2206,9 +2201,9 @@ export class ApiClient extends ApiTransport {
     if (params?.sort_direction) search.set("sort_direction", params.sort_direction);
     const query = search.toString();
     const raw = await this.fetch<unknown>(`/api/prompt-evaluation-cases${query ? `?${query}` : ""}`);
-    return parseWithFallback(raw, PromptEvaluationCaseListResponseSchema, { items: [] }, {
+    return parseWithFallback(raw, PromptEvaluationCaseListResponseSchema, [], {
       endpoint: "GET /api/prompt-evaluation-cases",
-    }).items as PromptEvaluationStructuredCase[];
+    }) as PromptEvaluationStructuredCase[];
   }
 
   async createPromptEvaluationCase(
@@ -2252,9 +2247,9 @@ export class ApiClient extends ApiTransport {
     if (params?.offset) search.set("offset", String(params.offset));
     const query = search.toString();
     const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs${query ? `?${query}` : ""}`);
-    return parseWithFallback(raw, PromptEvaluationRunListResponseSchema, { items: [] }, {
+    return parseWithFallback(raw, PromptEvaluationRunListResponseSchema, [], {
       endpoint: "GET /api/prompt-evaluation-runs",
-    }).items as PromptEvaluationRun[];
+    }) as PromptEvaluationRun[];
   }
 
   async getPromptEvaluationRunEvidence(runId: string): Promise<PromptEvaluationRunEvidence> {
@@ -2269,9 +2264,9 @@ export class ApiClient extends ApiTransport {
     if (limit) search.set("limit", String(limit));
     const query = search.toString();
     const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/evidence-snapshots${query ? `?${query}` : ""}`);
-    return parseWithFallback(raw, PromptEvaluationEvidenceSnapshotListResponseSchema, { items: [] }, {
+    return parseWithFallback(raw, PromptEvaluationEvidenceSnapshotListResponseSchema, [], {
       endpoint: "GET /api/prompt-evaluation-runs/:id/evidence-snapshots",
-    }).items as PromptEvaluationEvidenceSnapshot[];
+    }) as PromptEvaluationEvidenceSnapshot[];
   }
 
   async createPromptEvaluationEvidenceSnapshot(
@@ -2361,9 +2356,9 @@ export class ApiClient extends ApiTransport {
     if (params?.limit) search.set("limit", String(params.limit));
     const query = search.toString();
     const raw = await this.fetch<unknown>(`/api/prompt-evaluation-optimization-candidates${query ? `?${query}` : ""}`);
-    return parseWithFallback(raw, PromptEvaluationOptimizationCandidateListResponseSchema, { items: [] }, {
+    return parseWithFallback(raw, PromptEvaluationOptimizationCandidateListResponseSchema, [], {
       endpoint: "GET /api/prompt-evaluation-optimization-candidates",
-    }).items as PromptEvaluationOptimizationCandidate[];
+    }) as PromptEvaluationOptimizationCandidate[];
   }
 
   async createPromptEvaluationOptimizationCandidate(
@@ -2564,12 +2559,9 @@ export class ApiClient extends ApiTransport {
     const raw = await this.fetch<unknown>(
       `/api/external-credential-profiles${query ? `?${query}` : ""}`,
     );
-    return parseWithFallback(
-      raw,
-      ExternalCredentialProfileListResponseSchema,
-      { profiles: [] },
-      { endpoint: "GET /api/external-credential-profiles" },
-    ).profiles;
+    return parseWithFallback(raw, ExternalCredentialProfileListResponseSchema, [], {
+      endpoint: "GET /api/external-credential-profiles",
+    });
   }
 
   async getExternalCredentialProfile(id: string): Promise<ExternalCredentialProfile> {
@@ -2831,9 +2823,9 @@ export class ApiClient extends ApiTransport {
   // value or extra field can't white-screen the Squad page (#2143).
   async getSquadMemberStatus(squadId: string): Promise<SquadMemberStatus[]> {
     const raw = await this.fetch<unknown>(`/api/squads/${squadId}/members/status`);
-    return parseWithFallback(raw, SquadMemberStatusListResponseSchema, { members: [] }, {
+    return parseWithFallback(raw, SquadMemberStatusListResponseSchema, [], {
       endpoint: "GET /api/squads/:id/members/status",
-    }).members;
+    });
   }
 
   // Autopilots
@@ -3073,12 +3065,12 @@ export class ApiClient extends ApiTransport {
     });
   }
 
-  async listIssuePullRequests(issueId: string): Promise<{ pull_requests: GitHubPullRequest[] }> {
+  async listIssuePullRequests(issueId: string): Promise<GitHubPullRequest[]> {
     const raw = await this.fetch<unknown>(`/api/issues/${issueId}/pull-requests`);
     return parseWithFallback(
       raw,
       GitHubPullRequestListResponseSchema,
-      EMPTY_GITHUB_PULL_REQUEST_LIST_RESPONSE,
+      [],
       { endpoint: "GET /api/issues/:id/pull-requests" },
     );
   }

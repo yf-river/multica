@@ -1250,13 +1250,11 @@ describe("ApiClient", () => {
     const installations = await client.listGitHubInstallations("workspace-1");
     expect(installations.installations[0]).not.toHaveProperty("private_key");
     await expect(client.listIssuePullRequests("issue-1"))
-      .resolves.toMatchObject({
-        pull_requests: [{
+      .resolves.toMatchObject([{
           html_url: "https://git.code.tencent.com/ChainWeaver/ida/user-center/merge_requests/61234",
-        }],
-      });
+        }]);
     await expect(client.listIssuePullRequests("issue-1"))
-      .resolves.toEqual({ pull_requests: [] });
+      .resolves.toEqual([]);
   });
 
   it("validates workspace, repository, and member responses", async () => {

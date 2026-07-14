@@ -19,7 +19,7 @@ export const PromptLibraryItemSchema = z.object({
 
 export const PromptLibraryItemListResponseSchema = z.object({
   items: z.array(PromptLibraryItemSchema).default([]),
-}).loose();
+}).loose().transform(({ items }) => items);
 
 const PromptLibraryVersionSchema = z.object({
   id: NonEmptyStringSchema,
@@ -34,7 +34,7 @@ const PromptLibraryVersionSchema = z.object({
 
 export const PromptLibraryVersionListResponseSchema = z.object({
   items: z.array(PromptLibraryVersionSchema).default([]),
-}).loose();
+}).loose().transform(({ items }) => items);
 
 export const CreatePromptLibraryVersionResponseSchema = z.object({
   item: PromptLibraryItemSchema,
@@ -52,7 +52,7 @@ export const PromptLibraryTrialSchema = z.object({
 
 export const PromptLibraryTrialListResponseSchema = z.object({
   items: z.array(PromptLibraryTrialSchema).default([]),
-}).loose();
+}).loose().transform(({ items }) => items);
 
 export const EMPTY_PROMPT_LIBRARY_ITEM: PromptLibraryItem = {
   id: "",

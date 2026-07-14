@@ -198,7 +198,7 @@ export const RuntimeProfileSchema = z.object({
 
 export const RuntimeProfileListResponseSchema = z.object({
   runtime_profiles: z.array(RuntimeProfileSchema).default([]),
-}).loose();
+}).loose().transform(({ runtime_profiles }) => runtime_profiles);
 
 export const EMPTY_RUNTIME_PROFILE: RuntimeProfile = {
   id: "",
@@ -209,8 +209,4 @@ export const EMPTY_RUNTIME_PROFILE: RuntimeProfile = {
   fixed_args: [],
   enabled: false,
   updated_at: "",
-};
-
-export const EMPTY_RUNTIME_PROFILE_LIST_RESPONSE: { runtime_profiles: RuntimeProfile[] } = {
-  runtime_profiles: [],
 };

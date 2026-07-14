@@ -46,7 +46,7 @@ export const PromptEvaluationOptimizationCandidateSchema = z.object({
 
 export const PromptEvaluationOptimizationCandidateListResponseSchema = z.object({
   items: z.array(PromptEvaluationOptimizationCandidateSchema).default([]),
-}).loose();
+}).loose().transform(({ items }) => items);
 
 export const PromptEvaluationSkillFreshnessResultSchema = z.object({
   status: z.enum(["fresh", "branch_changed_skill_unchanged", "stale", "conflict", "rebaseable"]).default("stale"),

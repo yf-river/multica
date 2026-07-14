@@ -30,7 +30,7 @@ const SquadMemberStatusSchema = z.object({
 
 export const SquadMemberStatusListResponseSchema = z.object({
   members: z.array(SquadMemberStatusSchema).default([]),
-}).loose();
+}).loose().transform(({ members }) => members);
 
 // ---------------------------------------------------------------------------
 // Webhook delivery schemas — backing the Autopilot Deliveries section. Enums

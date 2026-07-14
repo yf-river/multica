@@ -23,7 +23,7 @@ export const ExternalCredentialProfileSchema = z.object({
 
 export const ExternalCredentialProfileListResponseSchema = z.object({
   profiles: z.array(ExternalCredentialProfileSchema).default([]),
-});
+}).transform(({ profiles }) => profiles);
 
 export const TestExternalCredentialProfileResponseSchema = z.object({
   provider: NonEmptyStringSchema,

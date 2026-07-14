@@ -9,7 +9,7 @@ export { PromptEvaluationCaseSchema } from "./schemas-prompt-evaluation-case-mod
 // Runtime response contracts for prompt evaluation cases.
 export const PromptEvaluationCaseListResponseSchema = z.object({
   items: z.array(PromptEvaluationCaseSchema).default([]),
-}).loose();
+}).loose().transform(({ items }) => items);
 
 export const PromptEvaluationDatasetFromTracesResponseSchema: z.ZodType<PromptEvaluationDatasetFromTracesResponse> = z.object({
   asset: PromptEvaluationAssetSchema,

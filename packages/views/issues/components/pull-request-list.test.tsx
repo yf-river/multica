@@ -16,7 +16,7 @@ vi.mock("@multica/core/github/queries", async () => {
     ...actual,
     issuePullRequestsOptions: (issueId: string) => ({
       queryKey: ["github", "pull-requests", issueId],
-      queryFn: async () => ({ pull_requests: mockPRs }),
+      queryFn: async () => mockPRs,
       enabled: !!issueId,
     }),
   };

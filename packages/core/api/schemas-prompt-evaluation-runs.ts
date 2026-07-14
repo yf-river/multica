@@ -131,7 +131,7 @@ export const PromptEvaluationEvidenceSnapshotSchema = z.object({
 
 export const PromptEvaluationEvidenceSnapshotListResponseSchema = z.object({
   items: z.array(PromptEvaluationEvidenceSnapshotSchema).default([]),
-}).loose();
+}).loose().transform(({ items }) => items);
 
 export const PromptEvaluationAssetEvidenceSnapshotResponseSchema = z.object({
   asset_id: NonEmptyStringSchema,
@@ -160,4 +160,4 @@ export const PromptEvaluationAssetEvidenceArchivePackageSchema = z.object({
 
 export const PromptEvaluationRunListResponseSchema = z.object({
   items: z.array(PromptEvaluationRunSchema).default([]),
-}).loose();
+}).loose().transform(({ items }) => items);

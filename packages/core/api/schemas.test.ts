@@ -228,7 +228,7 @@ describe("PromptLibraryItemSchema", () => {
 
   it("defaults list response shape", () => {
     const parsed = PromptLibraryItemListResponseSchema.parse({});
-    expect(parsed.items).toEqual([]);
+    expect(parsed).toEqual([]);
   });
 });
 
@@ -323,7 +323,7 @@ describe("PromptEvaluationAssetSchema", () => {
 
   it("defaults evaluation asset list response shape", () => {
     const parsed = PromptEvaluationAssetListResponseSchema.parse({});
-    expect(parsed.items).toEqual([]);
+    expect(parsed).toEqual([]);
   });
 
   it("rejects unsupported asset types", () => {

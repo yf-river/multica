@@ -41,7 +41,6 @@ import {
   PromptLibraryItemListResponseSchema,
 } from "./schemas-prompt-library";
 import {
-  EMPTY_RUNTIME_PROFILE_LIST_RESPONSE,
   RuntimeLocalSkillImportRequestSchema,
   RuntimeLocalSkillListRequestSchema,
   RuntimeModelListRequestSchema,
@@ -135,7 +134,7 @@ describe("domain response schema fallbacks", () => {
   });
 
   it("rejects malformed Prompt Library items", () => {
-    const fallback = { items: [] };
+    const fallback: never[] = [];
     expect(parseWithFallback(
       { items: 1 },
       PromptLibraryItemListResponseSchema,
@@ -145,7 +144,7 @@ describe("domain response schema fallbacks", () => {
   });
 
   it("rejects malformed evaluation assets", () => {
-    const fallback = { items: [] };
+    const fallback: never[] = [];
     expect(parseWithFallback(
       { items: {} },
       PromptEvaluationAssetListResponseSchema,
@@ -155,7 +154,7 @@ describe("domain response schema fallbacks", () => {
   });
 
   it("rejects malformed evaluation runs", () => {
-    const fallback = { items: [] };
+    const fallback: never[] = [];
     expect(parseWithFallback(
       { items: "not-an-array" },
       PromptEvaluationRunListResponseSchema,
@@ -165,7 +164,7 @@ describe("domain response schema fallbacks", () => {
   });
 
   it("rejects malformed evaluation cases", () => {
-    const fallback = { items: [] };
+    const fallback: never[] = [];
     expect(parseWithFallback(
       { items: false },
       PromptEvaluationCaseListResponseSchema,
@@ -175,7 +174,7 @@ describe("domain response schema fallbacks", () => {
   });
 
   it("rejects malformed optimization candidates", () => {
-    const fallback = { items: [] };
+    const fallback: never[] = [];
     expect(parseWithFallback(
       { items: null },
       PromptEvaluationOptimizationCandidateListResponseSchema,
@@ -195,12 +194,13 @@ describe("domain response schema fallbacks", () => {
   });
 
   it("rejects malformed runtime profiles", () => {
+    const fallback: never[] = [];
     expect(parseWithFallback(
       { runtime_profiles: [{ id: 42 }] },
       RuntimeProfileListResponseSchema,
-      EMPTY_RUNTIME_PROFILE_LIST_RESPONSE,
+      fallback,
       { endpoint: "GET /api/workspaces/:workspaceId/runtime-profiles" },
-    )).toBe(EMPTY_RUNTIME_PROFILE_LIST_RESPONSE);
+    )).toBe(fallback);
   });
 
   it("rejects malformed webhook deliveries", () => {
@@ -486,7 +486,7 @@ describe("domain response schema fallbacks", () => {
         deletions: 0,
         changed_files: 0,
       }],
-    }).pull_requests).toHaveLength(1);
+    })).toHaveLength(1);
 
     expect(GitHubConnectResponseSchema.safeParse({
       configured: true,

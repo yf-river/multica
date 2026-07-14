@@ -143,7 +143,7 @@ const SquadSOPRunSchema = z.object({
 
 export const IssueSOPRunsResponseSchema = z.object({
   items: z.array(SquadSOPRunSchema).default([]),
-}).loose();
+}).loose().transform(({ items }) => items);
 
 const ObservabilityUsageBreakdownSchema = z.object({
   "名称": z.string().default(""),
