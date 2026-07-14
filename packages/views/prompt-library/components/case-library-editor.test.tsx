@@ -5,8 +5,9 @@ import type { PromptEvaluationAsset, PromptEvaluationStructuredCase } from "@mul
 import {
   CaseLibraryEditorPanel,
   type CaseLibraryEditorCopy,
-  type CaseLibraryEditorPanelProps,
 } from "./case-library-editor";
+
+type CaseLibraryEditorPanelProps = Parameters<typeof CaseLibraryEditorPanel>[0];
 
 const copy: CaseLibraryEditorCopy = {
   title: "评估数据集",

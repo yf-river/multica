@@ -89,7 +89,7 @@ export interface ManualCasePanelCopy {
   addCase: string;
 }
 
-export interface ManualCasePanelProps {
+interface ManualCasePanelProps {
   asset: PromptEvaluationAsset;
   cases: PromptEvaluationStructuredCase[];
   draft: ManualCaseDraft;

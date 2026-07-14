@@ -112,7 +112,7 @@ export interface CaseLibraryEditorCopy {
   versionHistory: DatasetVersionHistoryCopy;
 }
 
-export interface CaseLibraryEditorPanelProps {
+interface CaseLibraryEditorPanelProps {
   assets: PromptEvaluationAsset[];
   cases: PromptEvaluationStructuredCase[];
   loading: boolean;

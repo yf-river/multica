@@ -64,7 +64,7 @@ export type TrainingAssetPanelBaseProps = {
   exportingAssetEvidencePackageAssetId: string | null;
 };
 
-export type TrainingAssetPanelProps = TrainingAssetPanelBaseProps & {
+type TrainingAssetPanelProps = TrainingAssetPanelBaseProps & {
   activeTab: TrainingWorkbenchTab;
   route: string;
   title: string;

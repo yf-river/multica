@@ -4,8 +4,9 @@ import type { PromptEvaluationAsset, PromptEvaluationStructuredCase } from "@mul
 import {
   ManualCasePanel,
   type ManualCasePanelCopy,
-  type ManualCasePanelProps,
 } from "./manual-case-panel";
+
+type ManualCasePanelProps = Parameters<typeof ManualCasePanel>[0];
 
 const copy: ManualCasePanelCopy = {
   title: "结构化评测用例",

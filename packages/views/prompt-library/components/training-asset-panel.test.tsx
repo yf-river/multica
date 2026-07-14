@@ -2,7 +2,7 @@ import { useState } from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import type { PromptEvaluationAsset } from "@multica/core/types";
-import { TrainingAssetPanel, type TrainingAssetPanelProps } from "./training-asset-panel";
+import { TrainingAssetPanel } from "./training-asset-panel";
 import type { ManualCaseDraft } from "./case-model";
 
 vi.mock("@multica/core/paths", () => ({
@@ -57,7 +57,7 @@ const originalDraft: ManualCaseDraft = {
 
 function StatefulPanel({
   onCreateCase,
-}: Pick<TrainingAssetPanelProps, "onCreateCase">) {
+}: Pick<Parameters<typeof TrainingAssetPanel>[0], "onCreateCase">) {
   const [caseDrafts, setCaseDrafts] = useState<Record<string, ManualCaseDraft>>({
     [asset.id]: originalDraft,
   });
