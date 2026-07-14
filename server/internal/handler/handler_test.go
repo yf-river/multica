@@ -272,7 +272,7 @@ func TestMain(m *testing.M) {
 	go hub.Run()
 	bus := events.New()
 	testHandler = New(queries, pool, hub, bus, nil, nil, analytics.NoopClient{}, Config{AllowSignup: true}, immediateTestHeartbeatScheduler{queries: queries})
-	testCredentialBox, err := secretbox.New(bytes.Repeat([]byte{0x42}, secretbox.KeySize))
+	testCredentialBox, err := secretbox.New(bytes.Repeat([]byte{0x42}, 32))
 	if err != nil {
 		fmt.Printf("Failed to create handler test credential box: %v\n", err)
 		pool.Close()

@@ -24,10 +24,10 @@ import (
 	"os"
 )
 
-// KeySize is the required master-key length in bytes (AES-256).
-const KeySize = 32
+// keySize is the required master-key length in bytes (AES-256).
+const keySize = 32
 
-// ErrInvalidKey is returned by New when the key length is not KeySize.
+// ErrInvalidKey is returned by New when the key length is not keySize.
 var ErrInvalidKey = errors.New("secretbox: key must be 32 bytes")
 
 // ErrCiphertextTooShort is returned when the input to Open is smaller
@@ -45,7 +45,7 @@ type Box struct {
 // should hold the returned *Box for the process lifetime; constructing
 // it per request needlessly re-derives the AES round keys.
 func New(key []byte) (*Box, error) {
-	if len(key) != KeySize {
+	if len(key) != keySize {
 		return nil, ErrInvalidKey
 	}
 	block, err := aes.NewCipher(key)
@@ -88,7 +88,7 @@ func (b *Box) Open(sealed []byte) ([]byte, error) {
 }
 
 // LoadKey reads a base64-encoded 32-byte key from the given env var.
-// Returns ErrInvalidKey if the decoded length is not KeySize. Empty
+// Returns ErrInvalidKey if the decoded length is not keySize. Empty
 // env values are treated as "not configured" and surface as a clear
 // error rather than silently using a zero key.
 func LoadKey(envVar string) ([]byte, error) {
@@ -100,8 +100,8 @@ func LoadKey(envVar string) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("secretbox: %s is not valid base64: %w", envVar, err)
 	}
-	if len(key) != KeySize {
-		return nil, fmt.Errorf("secretbox: %s decodes to %d bytes, expected %d", envVar, len(key), KeySize)
+	if len(key) != keySize {
+		return nil, fmt.Errorf("secretbox: %s decodes to %d bytes, expected %d", envVar, len(key), keySize)
 	}
 	return key, nil
 }

@@ -23,11 +23,11 @@ import (
 // failure before the user actually has to re-run `multica login`.
 const PATRenewThreshold = 7 * 24 * time.Hour
 
-// PATRenewExtension is how far into the future a renewed PAT's expires_at is
+// patRenewExtension is how far into the future a renewed PAT's expires_at is
 // pushed. Matches the initial issuance window in CreatePersonalAccessToken
 // (90 days) so renewed tokens converge on the same lifetime as freshly minted
 // ones — no second-class renewed tokens.
-const PATRenewExtension = 90 * 24 * time.Hour
+const patRenewExtension = 90 * 24 * time.Hour
 
 type PersonalAccessTokenResponse struct {
 	ID         string  `json:"id"`
@@ -275,7 +275,7 @@ func (h *Handler) RenewCurrentPersonalAccessToken(w http.ResponseWriter, r *http
 		return
 	}
 
-	newExpiresAt := pgtype.Timestamptz{Time: now.Add(PATRenewExtension), Valid: true}
+	newExpiresAt := pgtype.Timestamptz{Time: now.Add(patRenewExtension), Valid: true}
 	// Pass the renewal threshold as the CAS predicate: only update if the
 	// row's existing expires_at is still inside this window. After the
 	// first writer succeeds the row sits at now+90d, which is well past

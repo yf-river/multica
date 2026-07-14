@@ -207,13 +207,13 @@ func TestRenewPAT_ExtendsWhenInsideRenewalWindow(t *testing.T) {
 	).Scan(&actual); err != nil {
 		t.Fatalf("readback: %v", err)
 	}
-	// Renewed expiry should be roughly now + PATRenewExtension (90 days),
+	// Renewed expiry should be roughly now + patRenewExtension (90 days),
 	// well past the old expiry. Use a wide window — the test only needs to
 	// know the row was bumped, not the exact instant.
 	if !actual.After(oldExpiry.Add(24 * time.Hour)) {
 		t.Fatalf("expected new expiry to be far past old %v, got %v", oldExpiry, actual)
 	}
-	wantAround := time.Now().Add(PATRenewExtension)
+	wantAround := time.Now().Add(patRenewExtension)
 	if actual.Before(wantAround.Add(-time.Hour)) || actual.After(wantAround.Add(time.Hour)) {
 		t.Fatalf("expected new expiry near %v, got %v", wantAround, actual)
 	}
@@ -355,7 +355,7 @@ func TestRenewPAT_ConcurrentRenewIsIdempotent(t *testing.T) {
 	).Scan(&actual); err != nil {
 		t.Fatalf("readback: %v", err)
 	}
-	wantAround := time.Now().Add(PATRenewExtension)
+	wantAround := time.Now().Add(patRenewExtension)
 	if actual.Before(wantAround.Add(-time.Hour)) || actual.After(wantAround.Add(time.Hour)) {
 		t.Fatalf("expected expiry near %v, got %v", wantAround, actual)
 	}

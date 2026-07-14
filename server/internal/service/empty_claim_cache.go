@@ -17,15 +17,15 @@ import (
 // which closes the race where a slow claim writes an empty verdict
 // AFTER an enqueue has already invalidated it:
 //
-//   T1 claim:   v0 := GET version
-//               SELECT ... -> empty
-//               (slow, e.g. GC pause)
-//   T2 enqueue: INSERT row
-//               INCR version  (-> v1)
-//               wakeup
-//   T1 claim:   SET empty = v0
-//   T3 claim:   v1' := GET version (== v1)
-//               GET empty (== v0) -> v0 != v1, treat as miss -> SELECT
+//	T1 claim:   v0 := GET version
+//	            SELECT ... -> empty
+//	            (slow, e.g. GC pause)
+//	T2 enqueue: INSERT row
+//	            INCR version  (-> v1)
+//	            wakeup
+//	T1 claim:   SET empty = v0
+//	T3 claim:   v1' := GET version (== v1)
+//	            GET empty (== v0) -> v0 != v1, treat as miss -> SELECT
 //
 // Without the version tag T3 would have hit the stale empty key and
 // the just-queued task would sit idle until the empty key's TTL
@@ -36,13 +36,13 @@ const (
 	emptyClaimVersionPrefix = "mul:claim:runtime:version:"
 )
 
-// EmptyClaimCacheTTL bounds how long a cached "no queued task" verdict
+// emptyClaimCacheTTL bounds how long a cached "no queued task" verdict
 // stays believable. Enqueue invalidates the verdict by bumping the
 // per-runtime version before waking the daemon, so a longer TTL keeps
 // the steady-state idle poll path off Postgres. The TTL remains the
 // safety net for a missed invalidation, e.g. a transient Redis failure
 // during Bump.
-const EmptyClaimCacheTTL = 3 * time.Minute
+const emptyClaimCacheTTL = 3 * time.Minute
 
 // emptyClaimVersionTTL keeps the version counter alive long enough that
 // a rarely-polled runtime doesn't reset to 0 between an enqueue's
@@ -82,7 +82,7 @@ func NewEmptyClaimCache(rdb *redis.Client) *EmptyClaimCache {
 	return &EmptyClaimCache{rdb: rdb}
 }
 
-func emptyClaimKey(runtimeID string) string   { return emptyClaimCachePrefix + runtimeID }
+func emptyClaimKey(runtimeID string) string     { return emptyClaimCachePrefix + runtimeID }
 func emptyClaimVersion(runtimeID string) string { return emptyClaimVersionPrefix + runtimeID }
 
 func (c *EmptyClaimCache) bounded(ctx context.Context) (context.Context, context.CancelFunc) {
@@ -169,7 +169,7 @@ func (c *EmptyClaimCache) MarkEmpty(ctx context.Context, runtimeID string, obser
 	}
 	bctx, cancel := c.bounded(ctx)
 	defer cancel()
-	if err := c.rdb.Set(bctx, emptyClaimKey(runtimeID), strconv.FormatInt(observedVersion, 10), EmptyClaimCacheTTL).Err(); err != nil {
+	if err := c.rdb.Set(bctx, emptyClaimKey(runtimeID), strconv.FormatInt(observedVersion, 10), emptyClaimCacheTTL).Err(); err != nil {
 		slog.Warn("empty_claim_cache: set failed", "error", err)
 	}
 }

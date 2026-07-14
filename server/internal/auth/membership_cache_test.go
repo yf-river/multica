@@ -13,7 +13,7 @@ func TestMembershipCache_NilSafe(t *testing.T) {
 	if c.Get(ctx, "any-user", "any-workspace") {
 		t.Fatal("nil cache must miss")
 	}
-	c.Set(ctx, "any-user", "any-workspace") // no panic
+	c.Set(ctx, "any-user", "any-workspace")        // no panic
 	c.Invalidate(ctx, "any-user", "any-workspace") // no panic
 }
 
@@ -59,8 +59,8 @@ func TestMembershipCache_TTL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TTL: %v", err)
 	}
-	if ttl <= 0 || ttl > MembershipCacheTTL+time.Second {
-		t.Fatalf("unexpected TTL %v (want ~%v)", ttl, MembershipCacheTTL)
+	if ttl <= 0 || ttl > membershipCacheTTL+time.Second {
+		t.Fatalf("unexpected TTL %v (want ~%v)", ttl, membershipCacheTTL)
 	}
 }
 

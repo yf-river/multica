@@ -115,8 +115,8 @@ func TestEmptyClaimCache_TTL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TTL: %v", err)
 	}
-	if ttl <= 0 || ttl > EmptyClaimCacheTTL+time.Second {
-		t.Fatalf("unexpected empty-key TTL %v (want ~%v)", ttl, EmptyClaimCacheTTL)
+	if ttl <= 0 || ttl > emptyClaimCacheTTL+time.Second {
+		t.Fatalf("unexpected empty-key TTL %v (want ~%v)", ttl, emptyClaimCacheTTL)
 	}
 }
 

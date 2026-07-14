@@ -4230,7 +4230,7 @@ func TestGetTaskGCCheck(t *testing.T) {
 //  2. Each handler that mutates membership actually calls
 //     h.MembershipCache.Invalidate(...) — so a future refactor that drops
 //     one of those calls will fail CI instead of silently leaking a stale
-//     authorization grant for up to MembershipCacheTTL.
+//     authorization grant for up to the membership cache TTL.
 // ---------------------------------------------------------------------------
 
 // installFreshMembershipCache swaps in a Redis-backed MembershipCache against

@@ -9,7 +9,7 @@ import (
 
 func mustNewBox(t *testing.T) *Box {
 	t.Helper()
-	key := make([]byte, KeySize)
+	key := make([]byte, keySize)
 	if _, err := rand.Read(key); err != nil {
 		t.Fatalf("rand: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestLoadKey(t *testing.T) {
 		}
 	})
 	t.Run("happy path", func(t *testing.T) {
-		key := make([]byte, KeySize)
+		key := make([]byte, keySize)
 		_, _ = rand.Read(key)
 		t.Setenv(envVar, base64.StdEncoding.EncodeToString(key))
 		got, err := LoadKey(envVar)
