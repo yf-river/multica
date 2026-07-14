@@ -332,7 +332,7 @@ function parseDesktopRoutes(overrides) {
   let active = false;
 
   lines.forEach((line) => {
-    if (line.includes("export const appRoutes:")) active = true;
+    if (/\bconst\s+appRoutes\s*:/.test(line)) active = true;
     if (!active) return;
     if (line.includes("Create an independent memory router")) {
       active = false;

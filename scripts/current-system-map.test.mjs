@@ -48,6 +48,7 @@ test("generated evidence never depends on ignored build output", () => {
   });
   assert.equal(check.stdout.trim(), "", `ignored evidence leaked into inventory:\n${check.stdout}`);
   assert.doesNotMatch(JSON.stringify(inventory), /apps\/desktop\/out|\/(?:\.next|dist|build|coverage)\//);
+  assert.ok(inventory.frontend.desktopRoutes.length > 0, "private Desktop route table was not inventoried");
 });
 
 test("runtime env helpers and Vite main-process configuration are inventoried", () => {
