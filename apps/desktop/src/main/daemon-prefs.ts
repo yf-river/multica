@@ -3,7 +3,7 @@ import { dirname } from "path";
 import type { DaemonPrefs } from "../shared/daemon-types";
 import { readOptionalJsonObject } from "./json-config-file";
 
-export const DEFAULT_DAEMON_PREFS: DaemonPrefs = {
+const DEFAULT_DAEMON_PREFS: DaemonPrefs = {
   autoStart: true,
   autoStop: false,
 };

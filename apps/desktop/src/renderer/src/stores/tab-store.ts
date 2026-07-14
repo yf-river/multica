@@ -188,7 +188,7 @@ function extractWorkspaceSlug(path: string): string | null {
  * dropping the tab or substituting a default). Unlike the prior design,
  * there is no root "/" sentinel — tabs are always scoped.
  */
-export function sanitizeTabPath(path: string): string | null {
+function sanitizeTabPath(path: string): string | null {
   const firstSegment = path.split("/").filter(Boolean)[0] ?? "";
   if (!firstSegment) return null;
   if (isReservedSlug(firstSegment)) {

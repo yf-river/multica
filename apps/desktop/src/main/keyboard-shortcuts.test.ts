@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { handleAppShortcut, type ShortcutInput } from "./keyboard-shortcuts";
+import { handleAppShortcut } from "./keyboard-shortcuts";
+
+type ShortcutInput = Parameters<typeof handleAppShortcut>[0];
 
 function makeWc(initialLevel = 0) {
   let level = initialLevel;

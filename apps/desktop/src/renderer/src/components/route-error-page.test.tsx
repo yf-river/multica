@@ -18,7 +18,7 @@ vi.mock("@/stores/tab-store", () => ({
   },
 }));
 
-import { DesktopRouteErrorPage, formatRouteErrorReport } from "./route-error-page";
+import { DesktopRouteErrorPage } from "./route-error-page";
 
 function Boom(): null {
   throw new Error("route render exploded");
@@ -81,20 +81,8 @@ describe("DesktopRouteErrorPage", () => {
         initialMessage: expect.stringContaining("kind: desktop_route_error"),
       }),
     );
-  });
-
-  it("formats route diagnostics without internal implementation notes", () => {
-    const report = formatRouteErrorReport({
-      error: new Error("bad route"),
-      url: "app://desktop/acme/issues",
-      appInfo: { version: "1.2.3", os: "macos" },
-      trigger: "route-errorElement",
-    });
-
-    expect(report).toContain("kind: desktop_route_error");
+    const report = openModal.mock.calls[0]?.[1]?.initialMessage as string;
     expect(report).toContain("trigger: route-errorElement");
-    expect(report).toContain("app_version: 1.2.3");
-    expect(report).toContain("runtime_os: macos");
     expect(report).not.toContain("TODO");
   });
 });

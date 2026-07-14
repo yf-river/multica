@@ -3,7 +3,7 @@ import type { WebContents } from "electron";
 // Shape of the input subset we read from Electron's `before-input-event`.
 // Modeled as a structural type so the handler is unit-testable without a
 // real Electron Input instance.
-export type ShortcutInput = {
+type ShortcutInput = {
   type: string;
   key: string;
   control: boolean;

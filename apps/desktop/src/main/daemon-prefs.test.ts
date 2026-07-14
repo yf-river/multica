@@ -2,11 +2,7 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import { join } from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-  DEFAULT_DAEMON_PREFS,
-  loadDaemonPrefs,
-  saveDaemonPrefs,
-} from "./daemon-prefs";
+import { loadDaemonPrefs, saveDaemonPrefs } from "./daemon-prefs";
 
 describe("daemon preferences", () => {
   let dir: string;
@@ -22,7 +18,10 @@ describe("daemon preferences", () => {
   });
 
   it("uses defaults only when the file does not exist", async () => {
-    await expect(loadDaemonPrefs(path)).resolves.toEqual(DEFAULT_DAEMON_PREFS);
+    await expect(loadDaemonPrefs(path)).resolves.toEqual({
+      autoStart: true,
+      autoStop: false,
+    });
   });
 
   it("rejects malformed JSON instead of silently replacing user data", async () => {

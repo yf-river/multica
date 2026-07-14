@@ -14,44 +14,57 @@ vi.mock("../routes", () => ({
   createTabRouter: createTabRouterMock,
 }));
 
-import { sanitizeTabPath, useTabStore } from "./tab-store";
+import { useTabStore } from "./tab-store";
 
 beforeEach(() => {
   createTabRouterMock.mockClear();
   useTabStore.getState().reset();
 });
 
-describe("sanitizeTabPath", () => {
-  it("rejects the root sentinel — tabs must be workspace-scoped", () => {
-    expect(sanitizeTabPath("/")).toBeNull();
-    expect(sanitizeTabPath("")).toBeNull();
+function openTestTab(path: string) {
+  const store = useTabStore.getState();
+  if (!store.activeWorkspaceSlug) store.switchWorkspace("acme");
+  return store.openTab(path, "test", "Circle");
+}
+
+describe("tab path boundary", () => {
+  it("rejects workspace-less paths", () => {
+    expect(["/", ""].map(openTestTab)).toEqual(["", ""]);
+    expect(useTabStore.getState().byWorkspace.acme.tabs).toHaveLength(1);
   });
 
-  it("silently rejects transition paths (no warn — navigation adapter intercepts them)", () => {
+  it("silently rejects transition paths", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    expect(sanitizeTabPath("/workspaces/new")).toBeNull();
+    expect(openTestTab("/workspaces/new")).toBe("");
     expect(warn).not.toHaveBeenCalled();
     warn.mockRestore();
   });
 
-  it("passes through valid workspace-scoped paths", () => {
-    expect(sanitizeTabPath("/acme/issues")).toBe("/acme/issues");
-    expect(sanitizeTabPath("/my-team/projects/abc")).toBe("/my-team/projects/abc");
-    expect(sanitizeTabPath("/acme/debug/prompts")).toBe("/acme/debug/prompts");
-    expect(sanitizeTabPath("/acme/evaluation/runs")).toBe("/acme/evaluation/runs");
+  it("opens valid workspace-scoped paths", () => {
+    for (const path of [
+      "/acme/issues",
+      "/my-team/projects/abc",
+      "/acme/debug/prompts",
+      "/acme/evaluation/runs",
+    ]) {
+      const tabId = openTestTab(path);
+      expect(tabId).not.toBe("");
+      expect(useTabStore.getState().byWorkspace.acme.tabs.find((tab) => tab.id === tabId)?.path)
+        .toBe(path);
+    }
   });
 
-  it("rejects paths whose first segment is a reserved slug (missing workspace prefix)", () => {
+  it("rejects reserved root paths", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    expect(sanitizeTabPath("/issues")).toBeNull();
-    expect(sanitizeTabPath("/settings")).toBeNull();
+    expect(["/issues", "/settings"].map(openTestTab)).toEqual(["", ""]);
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
   });
 
-  it("passes through user slugs that happen to look path-like but aren't reserved", () => {
-    expect(sanitizeTabPath("/acme-issues/issues")).toBe("/acme-issues/issues");
-    expect(sanitizeTabPath("/project-x/inbox")).toBe("/project-x/inbox");
+  it("accepts non-reserved workspace-like slugs", () => {
+    for (const path of ["/acme-issues/issues", "/project-x/inbox"]) {
+      expect(openTestTab(path)).not.toBe("");
+    }
   });
 });
 

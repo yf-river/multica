@@ -10,7 +10,7 @@ type DesktopAppInfo = {
   os?: string;
 };
 
-export function formatRouteErrorReport({
+function formatRouteErrorReport({
   error,
   url,
   appInfo,

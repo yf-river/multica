@@ -109,7 +109,7 @@ function PageShell() {
  * rather than 404; App.tsx's bootstrap repoints activeWorkspaceSlug on the
  * next render pass.
  */
-export const appRoutes: RouteObject[] = [
+const appRoutes: RouteObject[] = [
   {
     element: <PageShell />,
     errorElement: <DesktopRouteErrorPage />,

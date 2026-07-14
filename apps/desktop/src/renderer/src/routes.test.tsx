@@ -2,9 +2,10 @@ import { describe, expect, it } from "vitest";
 import { Navigate } from "react-router-dom";
 import { PromptLibraryPage } from "@multica/views/prompt-library";
 import { AgentPlaygroundPage } from "@multica/views/agent-playground";
-import { appRoutes } from "./routes";
+import { createTabRouter } from "./routes";
 
 describe("desktop debug and evaluation routes", () => {
+  const appRoutes = createTabRouter("/acme/issues").routes;
   const workspaceRoute = appRoutes[0]?.children?.find((route) => route.path === ":workspaceSlug");
   const childRoutes = workspaceRoute?.children ?? [];
 
