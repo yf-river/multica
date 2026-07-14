@@ -19,6 +19,28 @@ import {
 } from "./run-model";
 import type { SkillResourceOption } from "./skill-candidate-model";
 
+export type RunHistoryPanelProps = {
+  workspaceId: string;
+  runs: PromptEvaluationRun[];
+  focusedRunId: string | null;
+  evidenceFocus: EvidenceFocus;
+  runStatusFilter: RunStatusFilter;
+  onRunStatusFilterChange: (status: RunStatusFilter) => void;
+  candidates: PromptEvaluationOptimizationCandidate[];
+  skillResources: SkillResourceOption[];
+  loading: boolean;
+  onSyncRun: (runId: string) => void;
+  syncingRunId: string | null;
+  onCancelRun: (runId: string) => void;
+  cancellingRunId: string | null;
+  onReviewRun: (run: PromptEvaluationRun, decision: "通过" | "未通过") => void;
+  reviewingRunId: string | null;
+  onCreateEvidenceSnapshot: (runId: string) => void;
+  creatingEvidenceSnapshotRunId: string | null;
+  onGenerateCandidate: (runId: string) => void;
+  generatingCandidateRunId: string | null;
+};
+
 export function RunHistoryPanel({
   workspaceId,
   runs,
@@ -39,27 +61,7 @@ export function RunHistoryPanel({
   creatingEvidenceSnapshotRunId,
   onGenerateCandidate,
   generatingCandidateRunId,
-}: {
-  workspaceId: string;
-  runs: PromptEvaluationRun[];
-  focusedRunId: string | null;
-  evidenceFocus: EvidenceFocus;
-  runStatusFilter: RunStatusFilter;
-  onRunStatusFilterChange: (status: RunStatusFilter) => void;
-  candidates: PromptEvaluationOptimizationCandidate[];
-  skillResources: SkillResourceOption[];
-  loading: boolean;
-  onSyncRun: (runId: string) => void;
-  syncingRunId: string | null;
-  onCancelRun: (runId: string) => void;
-  cancellingRunId: string | null;
-  onReviewRun: (run: PromptEvaluationRun, decision: "通过" | "未通过") => void;
-  reviewingRunId: string | null;
-  onCreateEvidenceSnapshot: (runId: string) => void;
-  creatingEvidenceSnapshotRunId: string | null;
-  onGenerateCandidate: (runId: string) => void;
-  generatingCandidateRunId: string | null;
-}) {
+}: RunHistoryPanelProps) {
   const { t } = useT("prompt-library");
   const candidatesByRun = useMemo(() => buildCandidatesByRun(candidates), [candidates]);
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);

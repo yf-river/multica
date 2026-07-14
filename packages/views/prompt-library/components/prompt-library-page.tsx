@@ -23,7 +23,6 @@ import {
 } from "@multica/core/training";
 import type {
   PromptEvaluationAsset,
-  PromptEvaluationOptimizationCandidate,
   PromptEvaluationRun,
   PromptEvaluationAssetEvidenceArchivePackage,
   PromptEvaluationAssetType,
@@ -52,16 +51,13 @@ import { trainingSelectedPromptStorageKey } from "./prompt-selection-storage";
 import { PromptTrialPanel, PromptVersionHistory } from "./prompt-editor-panels";
 import { Field } from "./form-field";
 import { extractPromptVariables } from "./prompt-trial-model";
-import {
-  buildSkillResourceOptions,
-  type SkillResourceOption,
-} from "./skill-candidate-model";
+import { buildSkillResourceOptions } from "./skill-candidate-model";
 import { promptLibraryKeys } from "./prompt-library-query-keys";
 import {
   type EvidenceFocus,
   type RunStatusFilter,
 } from "./run-model";
-import { RunHistoryPanel } from "./run-history-panel";
+import { RunHistoryPanel, type RunHistoryPanelProps } from "./run-history-panel";
 import {
   CaseLibraryEditorPanel,
   type CaseLibraryEditorCopy,
@@ -886,16 +882,9 @@ export function PromptLibraryPage({
 }
 
 
-type WorkbenchPanelProps = TrainingAssetPanelBaseProps & {
+type WorkbenchPanelProps = TrainingAssetPanelBaseProps & Omit<RunHistoryPanelProps, "runs" | "loading"> & {
   activeTab: TrainingWorkbenchTab;
-  workspaceId: string;
-  focusedRunId: string | null;
-  evidenceFocus: EvidenceFocus;
-  runStatusFilter: RunStatusFilter;
   focusedIssueTaskIds: string[];
-  onRunStatusFilterChange: (status: RunStatusFilter) => void;
-  candidates: PromptEvaluationOptimizationCandidate[];
-  skillResources: SkillResourceOption[];
   onCreateAsset: (assetType: PromptEvaluationAssetType) => void;
   onCreateSkillScenarioAsset: (assetType: Extract<PromptEvaluationAssetType, "数据集" | "测试套件">) => void;
   onCreateWritingBenchmarkAsset: () => void;
@@ -906,16 +895,6 @@ type WorkbenchPanelProps = TrainingAssetPanelBaseProps & {
   deletingCaseLibraryDatasetId: string | null;
   onCreateCaseLibraryCase: (asset: PromptEvaluationAsset, draft: ManualCaseDraft) => Promise<unknown>;
   creatingCaseLibraryCase: boolean;
-  onSyncRun: (runId: string) => void;
-  syncingRunId: string | null;
-  onCancelRun: (runId: string) => void;
-  cancellingRunId: string | null;
-  onReviewRun: (run: PromptEvaluationRun, decision: "通过" | "未通过") => void;
-  reviewingRunId: string | null;
-  onCreateEvidenceSnapshot: (runId: string) => void;
-  creatingEvidenceSnapshotRunId: string | null;
-  onGenerateCandidate: (runId: string) => void;
-  generatingCandidateRunId: string | null;
 };
 
 function WorkbenchPanel({
