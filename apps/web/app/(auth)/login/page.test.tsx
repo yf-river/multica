@@ -39,7 +39,7 @@ const {
   authStateRef: {
     state: {
       login: vi.fn(),
-      user: null as null | { id: string; account: string; onboarded_at?: string | null },
+      user: null as null | { id: string; account: string },
       isLoading: false,
     },
   },
@@ -98,7 +98,7 @@ describe("LoginPage", () => {
   });
 
   it("logs in through account/password and routes after success", async () => {
-    mockLogin.mockResolvedValueOnce({ id: "u1", account: "alice", onboarded_at: null });
+    mockLogin.mockResolvedValueOnce({ id: "u1", account: "alice" });
     const user = userEvent.setup();
     render(<LoginPage />, { wrapper: createWrapper() });
 
@@ -117,7 +117,6 @@ describe("LoginPage", () => {
     authStateRef.state.user = {
       id: "u1",
       account: "alice",
-      onboarded_at: "2026-01-01T00:00:00Z",
     };
     mockIssueCliToken.mockResolvedValue({ token: "handoff-jwt" });
 

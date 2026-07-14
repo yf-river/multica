@@ -16,12 +16,8 @@ export const UserSchema = z.object({
   name: z.string(),
   account: z.string(),
   avatar_url: z.string().nullable(),
-  onboarded_at: z.string().nullable(),
-  onboarding_questionnaire: z.record(z.string(), z.unknown()),
   profile_description: z.string(),
   timezone: z.string().nullable(),
-  created_at: z.string(),
-  updated_at: z.string(),
 }).loose();
 
 export const LoginResponseSchema = z.object({
@@ -38,10 +34,6 @@ export const EMPTY_USER: User = {
   name: "",
   account: "",
   avatar_url: null,
-  onboarded_at: null,
-  onboarding_questionnaire: {},
   profile_description: "",
   timezone: null,
-  created_at: "",
-  updated_at: "",
 };

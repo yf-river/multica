@@ -57,22 +57,18 @@ const members: MemberWithUser[] = [
   {
     id: "m-me",
     user_id: ME,
-    workspace_id: "ws-1",
     role: "member",
     name: "Me",
     account: "me",
     avatar_url: null,
-    created_at: "2026-01-01T00:00:00Z",
   },
   {
     id: "m-other",
     user_id: OTHER,
-    workspace_id: "ws-1",
     role: "member",
     name: "其他",
     account: "other",
     avatar_url: null,
-    created_at: "2026-01-01T00:00:00Z",
   },
 ];
 

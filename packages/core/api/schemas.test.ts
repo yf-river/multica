@@ -143,12 +143,8 @@ describe("UserSchema timezone contract", () => {
     name: "Ada",
     account: "ada",
     avatar_url: null,
-    onboarded_at: null,
-    onboarding_questionnaire: {},
     profile_description: "",
     timezone: null,
-    created_at: "2026-01-01T00:00:00Z",
-    updated_at: "2026-01-01T00:00:00Z",
   };
 
   it("preserves an explicit IANA timezone", () => {

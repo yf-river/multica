@@ -778,8 +778,8 @@ describe("ApiClient", () => {
 
   it("retries member-create unknown outcomes without changing request identity", async () => {
     const member = {
-      id: "member-1", workspace_id: "workspace-1", user_id: "user-2", role: "member",
-      created_at: "now", name: "Ada", account: "ada", avatar_url: null,
+      id: "member-1", user_id: "user-2", role: "member",
+      name: "Ada", account: "ada", avatar_url: null,
     };
     const fetchMock = vi.fn()
       .mockRejectedValueOnce(new TypeError("response lost"))
@@ -1470,7 +1470,6 @@ describe("ApiClient", () => {
     const workspace = {
       id: "workspace-1", name: "Current", slug: "current", description: null,
       context: null, settings: {}, repos: [], issue_prefix: "CUR", avatar_url: null,
-      created_at: "now", updated_at: "now",
     };
     const fetchMock = vi.fn()
       .mockRejectedValueOnce(new TypeError("response lost"))

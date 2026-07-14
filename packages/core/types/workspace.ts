@@ -2,8 +2,6 @@ export type MemberRole = "owner" | "admin" | "member";
 
 export interface WorkspaceRepo {
   url: string;
-  description?: string;
-  provider?: "gongfeng" | string;
   project_path?: string;
   default_branch?: string;
   head_commit?: string;
@@ -16,12 +14,9 @@ export interface WorkspaceRepo {
 
 export interface WorkspaceRepoProbeResponse {
   url: string;
-  provider: "gongfeng" | string;
   project_path: string;
   default_branch: string;
   branches: string[];
-  connection_status: string;
-  test_status: string;
 }
 
 export interface Workspace {
@@ -34,16 +29,6 @@ export interface Workspace {
   repos: WorkspaceRepo[];
   issue_prefix: string;
   avatar_url: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface Member {
-  id: string;
-  workspace_id: string;
-  user_id: string;
-  role: MemberRole;
-  created_at: string;
 }
 
 export interface User {
@@ -51,14 +36,6 @@ export interface User {
   name: string;
   account: string;
   avatar_url: string | null;
-  onboarded_at: string | null;
-  /**
-   * Persisted questionnaire payload from the server. It remains untyped at
-   * this boundary because historical answers are free-form JSON. The server
-   * always returns an object (default `{}`), never null.
-   */
-  onboarding_questionnaire: Record<string, unknown>;
-  /** Persisted starter-content state returned by the current user API. */
   /**
    * Free-form self-description (role, stack, preferences). Injected into
    * the agent brief so coding agents have cheap, durable context about
@@ -68,16 +45,12 @@ export interface User {
   profile_description: string;
   /** Pinned IANA tz; null means "use browser-detected tz at render time". */
   timezone: string | null;
-  created_at: string;
-  updated_at: string;
 }
 
 export interface MemberWithUser {
   id: string;
-  workspace_id: string;
   user_id: string;
   role: MemberRole;
-  created_at: string;
   name: string;
   account: string;
   avatar_url: string | null;

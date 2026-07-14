@@ -219,12 +219,10 @@ function makeMember(user_id: string, name: string): MemberWithUser {
   return {
     id: `m-${user_id}`,
     user_id,
-    workspace_id: "ws-1",
     role: "member",
     name,
     account: user_id,
     avatar_url: null,
-    created_at: "2026-01-01T00:00:00Z",
   };
 }
 
