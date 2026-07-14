@@ -39,6 +39,25 @@ func loadPromptEvaluationRun(
 	return db.PromptEvaluationRun{}, false
 }
 
+type promptEvaluationRunScope struct {
+	workspaceID   string
+	workspaceUUID pgtype.UUID
+	runID         pgtype.UUID
+}
+
+func (h *Handler) parsePromptEvaluationRunScope(w http.ResponseWriter, r *http.Request) (promptEvaluationRunScope, bool) {
+	workspaceID := h.resolveWorkspaceID(r)
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return promptEvaluationRunScope{}, false
+	}
+	runID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "prompt evaluation run id")
+	if !ok {
+		return promptEvaluationRunScope{}, false
+	}
+	return promptEvaluationRunScope{workspaceID: workspaceID, workspaceUUID: workspaceUUID, runID: runID}, true
+}
+
 func (h *Handler) ListPromptEvaluationRuns(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
@@ -164,21 +183,16 @@ func (h *Handler) GetPromptEvaluationRuntimeReadiness(w http.ResponseWriter, r *
 }
 
 func (h *Handler) ListPromptEvaluationRunTrials(w http.ResponseWriter, r *http.Request) {
-	workspaceID := h.resolveWorkspaceID(r)
-	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	scope, ok := h.parsePromptEvaluationRunScope(w, r)
 	if !ok {
 		return
 	}
-	runID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "prompt evaluation run id")
-	if !ok {
-		return
-	}
-	if _, ok := loadPromptEvaluationRun(w, r, h.Queries, workspaceUUID, runID); !ok {
+	if _, ok := loadPromptEvaluationRun(w, r, h.Queries, scope.workspaceUUID, scope.runID); !ok {
 		return
 	}
 	trials, err := h.Queries.ListPromptEvaluationTrialsByRun(r.Context(), db.ListPromptEvaluationTrialsByRunParams{
-		RunID:       runID,
-		WorkspaceID: workspaceUUID,
+		RunID:       scope.runID,
+		WorkspaceID: scope.workspaceUUID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list prompt evaluation trials")
@@ -192,16 +206,11 @@ func (h *Handler) ListPromptEvaluationRunTrials(w http.ResponseWriter, r *http.R
 }
 
 func (h *Handler) GetPromptEvaluationRunEvidence(w http.ResponseWriter, r *http.Request) {
-	workspaceID := h.resolveWorkspaceID(r)
-	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	scope, ok := h.parsePromptEvaluationRunScope(w, r)
 	if !ok {
 		return
 	}
-	runID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "prompt evaluation run id")
-	if !ok {
-		return
-	}
-	resp, err := h.buildPromptEvaluationRunEvidenceResponse(r.Context(), workspaceUUID, runID)
+	resp, err := h.buildPromptEvaluationRunEvidenceResponse(r.Context(), scope.workspaceUUID, scope.runID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "prompt evaluation run not found")
@@ -218,16 +227,11 @@ func (h *Handler) CancelPromptEvaluationRun(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	workspaceID := h.resolveWorkspaceID(r)
-	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	scope, ok := h.parsePromptEvaluationRunScope(w, r)
 	if !ok {
 		return
 	}
-	runID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "prompt evaluation run id")
-	if !ok {
-		return
-	}
-	run, ok := loadPromptEvaluationRun(w, r, h.Queries, workspaceUUID, runID)
+	run, ok := loadPromptEvaluationRun(w, r, h.Queries, scope.workspaceUUID, scope.runID)
 	if !ok {
 		return
 	}
@@ -240,7 +244,7 @@ func (h *Handler) CancelPromptEvaluationRun(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if run.TaskID.Valid {
-		if !h.canCancelPromptEvaluationTask(w, r, userID, workspaceID, workspaceUUID, run.TaskID) {
+		if !h.canCancelPromptEvaluationTask(w, r, userID, scope.workspaceID, scope.workspaceUUID, run.TaskID) {
 			return
 		}
 		if _, err := h.TaskService.CancelTaskWithResult(r.Context(), run.TaskID); err != nil {
@@ -257,18 +261,18 @@ func (h *Handler) CancelPromptEvaluationRun(w http.ResponseWriter, r *http.Reque
 	qtx := h.Queries.WithTx(tx)
 	if err := qtx.MarkPromptEvaluationTrialsSkippedByRun(r.Context(), db.MarkPromptEvaluationTrialsSkippedByRunParams{
 		RunID:       run.ID,
-		WorkspaceID: workspaceUUID,
+		WorkspaceID: scope.workspaceUUID,
 	}); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to mark prompt evaluation trials skipped")
 		return
 	}
 	cancelled, err := qtx.CancelPromptEvaluationRun(r.Context(), db.CancelPromptEvaluationRunParams{
 		ID:          run.ID,
-		WorkspaceID: workspaceUUID,
+		WorkspaceID: scope.workspaceUUID,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			reloaded, loadErr := h.Queries.GetPromptEvaluationRunInWorkspace(r.Context(), db.GetPromptEvaluationRunInWorkspaceParams{ID: run.ID, WorkspaceID: workspaceUUID})
+			reloaded, loadErr := h.Queries.GetPromptEvaluationRunInWorkspace(r.Context(), db.GetPromptEvaluationRunInWorkspaceParams{ID: run.ID, WorkspaceID: scope.workspaceUUID})
 			if loadErr == nil && reloaded.Status == "已取消" {
 				writeJSON(w, http.StatusOK, promptEvaluationRunToResponse(reloaded))
 				return
@@ -291,12 +295,7 @@ func (h *Handler) ReviewPromptEvaluationRun(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	workspaceID := h.resolveWorkspaceID(r)
-	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
-	if !ok {
-		return
-	}
-	runID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "prompt evaluation run id")
+	scope, ok := h.parsePromptEvaluationRunScope(w, r)
 	if !ok {
 		return
 	}
@@ -313,7 +312,7 @@ func (h *Handler) ReviewPromptEvaluationRun(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	note := strings.TrimSpace(req.Note)
-	run, ok := loadPromptEvaluationRun(w, r, h.Queries, workspaceUUID, runID)
+	run, ok := loadPromptEvaluationRun(w, r, h.Queries, scope.workspaceUUID, scope.runID)
 	if !ok {
 		return
 	}
@@ -334,7 +333,7 @@ func (h *Handler) ReviewPromptEvaluationRun(w http.ResponseWriter, r *http.Reque
 	qtx := h.Queries.WithTx(tx)
 	reviewed, err := qtx.ReviewPromptEvaluationRun(r.Context(), db.ReviewPromptEvaluationRunParams{
 		ID:          run.ID,
-		WorkspaceID: workspaceUUID,
+		WorkspaceID: scope.workspaceUUID,
 		Status:      decision,
 		ReviewedBy:  parseUUID(userID),
 		Note:        pgtype.Text{String: note, Valid: true},
@@ -344,22 +343,22 @@ func (h *Handler) ReviewPromptEvaluationRun(w http.ResponseWriter, r *http.Reque
 			writeError(w, http.StatusConflict, "prompt evaluation run is no longer waiting for manual review")
 			return
 		}
-		slog.Error("failed to review prompt evaluation run", "run_id", uuidToString(run.ID), "workspace_id", workspaceID, "user_id", userID, "decision", decision, "error", err)
+		slog.Error("failed to review prompt evaluation run", "run_id", uuidToString(run.ID), "workspace_id", scope.workspaceID, "user_id", userID, "decision", decision, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to review prompt evaluation run")
 		return
 	}
 	if err := qtx.MarkPromptEvaluationReviewTrialsByRun(r.Context(), db.MarkPromptEvaluationReviewTrialsByRunParams{
 		RunID:       run.ID,
-		WorkspaceID: workspaceUUID,
+		WorkspaceID: scope.workspaceUUID,
 		Status:      decision,
 		Note:        pgtype.Text{String: note, Valid: true},
 	}); err != nil {
-		slog.Error("failed to review prompt evaluation trials", "run_id", uuidToString(run.ID), "workspace_id", workspaceID, "decision", decision, "error", err)
+		slog.Error("failed to review prompt evaluation trials", "run_id", uuidToString(run.ID), "workspace_id", scope.workspaceID, "decision", decision, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to review prompt evaluation trials")
 		return
 	}
 	if err := tx.Commit(r.Context()); err != nil {
-		slog.Error("failed to commit prompt evaluation review", "run_id", uuidToString(run.ID), "workspace_id", workspaceID, "decision", decision, "error", err)
+		slog.Error("failed to commit prompt evaluation review", "run_id", uuidToString(run.ID), "workspace_id", scope.workspaceID, "decision", decision, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to commit prompt evaluation review")
 		return
 	}
@@ -489,16 +488,11 @@ func (h *Handler) buildPromptEvaluationRunEvidenceResponse(ctx context.Context, 
 }
 
 func (h *Handler) ListPromptEvaluationEvidenceSnapshots(w http.ResponseWriter, r *http.Request) {
-	workspaceID := h.resolveWorkspaceID(r)
-	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	scope, ok := h.parsePromptEvaluationRunScope(w, r)
 	if !ok {
 		return
 	}
-	runID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "prompt evaluation run id")
-	if !ok {
-		return
-	}
-	if _, ok := loadPromptEvaluationRun(w, r, h.Queries, workspaceUUID, runID); !ok {
+	if _, ok := loadPromptEvaluationRun(w, r, h.Queries, scope.workspaceUUID, scope.runID); !ok {
 		return
 	}
 	limit := int32(20)
@@ -511,8 +505,8 @@ func (h *Handler) ListPromptEvaluationEvidenceSnapshots(w http.ResponseWriter, r
 		limit = int32(parsed)
 	}
 	items, err := h.Queries.ListPromptEvaluationEvidenceSnapshotsByRun(r.Context(), db.ListPromptEvaluationEvidenceSnapshotsByRunParams{
-		WorkspaceID: workspaceUUID,
-		RunID:       runID,
+		WorkspaceID: scope.workspaceUUID,
+		RunID:       scope.runID,
 		Limit:       limit,
 	})
 	if err != nil {
@@ -954,12 +948,7 @@ func (h *Handler) buildPromptEvaluationEvidenceSnapshotRecord(ctx context.Contex
 }
 
 func (h *Handler) GetPromptEvaluationEvidenceSnapshot(w http.ResponseWriter, r *http.Request) {
-	workspaceID := h.resolveWorkspaceID(r)
-	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
-	if !ok {
-		return
-	}
-	runID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "prompt evaluation run id")
+	scope, ok := h.parsePromptEvaluationRunScope(w, r)
 	if !ok {
 		return
 	}
@@ -969,7 +958,7 @@ func (h *Handler) GetPromptEvaluationEvidenceSnapshot(w http.ResponseWriter, r *
 	}
 	item, err := h.Queries.GetPromptEvaluationEvidenceSnapshotInWorkspace(r.Context(), db.GetPromptEvaluationEvidenceSnapshotInWorkspaceParams{
 		ID:          snapshotID,
-		WorkspaceID: workspaceUUID,
+		WorkspaceID: scope.workspaceUUID,
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -979,7 +968,7 @@ func (h *Handler) GetPromptEvaluationEvidenceSnapshot(w http.ResponseWriter, r *
 		writeError(w, http.StatusInternalServerError, "failed to load prompt evaluation evidence snapshot")
 		return
 	}
-	if uuidToString(item.RunID) != uuidToString(runID) {
+	if uuidToString(item.RunID) != uuidToString(scope.runID) {
 		writeError(w, http.StatusNotFound, "prompt evaluation evidence snapshot not found")
 		return
 	}
