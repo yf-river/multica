@@ -403,7 +403,10 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		// Re-use the existing personal-agent gate so the user can still
 		// reach this session — covers role downgrade and agent
 		// visibility flips. The gate writes 4xx on failure.
-		session, ok := h.gateChatSessionForUser(w, r, userID, workspaceID, chatSessionID)
+		session, ok := h.gateChatSessionForUser(w, r, chatRequestScope{
+			userID:      userID,
+			workspaceID: workspaceID,
+		}, chatSessionID)
 		if !ok {
 			return
 		}

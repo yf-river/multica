@@ -35,12 +35,28 @@ type createChatSessionRequest struct {
 	Title   string `json:"title"`
 }
 
-func (h *Handler) CreateChatSession(w http.ResponseWriter, r *http.Request) {
+type chatRequestScope struct {
+	userID      string
+	workspaceID string
+}
+
+func requireChatRequestScope(w http.ResponseWriter, r *http.Request) (chatRequestScope, bool) {
 	userID, ok := requireUserID(w, r)
+	if !ok {
+		return chatRequestScope{}, false
+	}
+	workspaceID := ctxWorkspaceID(r.Context())
+	return chatRequestScope{
+		userID:      userID,
+		workspaceID: workspaceID,
+	}, true
+}
+
+func (h *Handler) CreateChatSession(w http.ResponseWriter, r *http.Request) {
+	requestScope, ok := requireChatRequestScope(w, r)
 	if !ok {
 		return
 	}
-	workspaceID := ctxWorkspaceID(r.Context())
 	idempotencyKey, ok := requireIdempotencyKey(w, r)
 	if !ok {
 		return
@@ -63,13 +79,12 @@ func (h *Handler) CreateChatSession(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, requestScope.workspaceID, "workspace id")
 	if !ok {
 		return
 	}
-
-	actorType, actorID := resolveActor(r, userID)
-	scope, err := newChatIdempotencyScope(
+	actorType, actorID := resolveActor(r, requestScope.userID)
+	idempotencyScope, err := newChatIdempotencyScope(
 		workspaceUUID,
 		actorType,
 		parseUUID(actorID),
@@ -89,7 +104,7 @@ func (h *Handler) CreateChatSession(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
-	record, created, err := reserveChatIdempotencyRecord(r.Context(), qtx, scope)
+	record, created, err := reserveChatIdempotencyRecord(r.Context(), qtx, idempotencyScope)
 	if err != nil {
 		writeChatIdempotencyFailure(w, err)
 		return
@@ -118,13 +133,13 @@ func (h *Handler) CreateChatSession(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "agent is archived")
 		return
 	}
-	if !h.requirePersonalAgentAccess(w, r, lockedAgent, actorType, actorID, workspaceID, "you do not have access to this agent") {
+	if !h.requirePersonalAgentAccess(w, r, lockedAgent, actorType, actorID, requestScope.workspaceID, "you do not have access to this agent") {
 		return
 	}
 	session, err := qtx.CreateChatSession(r.Context(), db.CreateChatSessionParams{
 		WorkspaceID: workspaceUUID,
 		AgentID:     agentID,
-		CreatorID:   parseUUID(userID),
+		CreatorID:   parseUUID(requestScope.userID),
 		Title:       req.Title,
 	})
 	if err != nil {
@@ -132,7 +147,7 @@ func (h *Handler) CreateChatSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response := chatSessionToResponse(session)
-	if err := completeChatIdempotencyRecord(r.Context(), qtx, scope, http.StatusCreated, response); err != nil {
+	if err := completeChatIdempotencyRecord(r.Context(), qtx, idempotencyScope, http.StatusCreated, response); err != nil {
 		slog.Error("persist create-chat-session response failed", "error", err)
 		writeChatIdempotencyFailure(w, err)
 		return
@@ -145,11 +160,10 @@ func (h *Handler) CreateChatSession(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) ListChatSessions(w http.ResponseWriter, r *http.Request) {
-	userID, ok := requireUserID(w, r)
+	scope, ok := requireChatRequestScope(w, r)
 	if !ok {
 		return
 	}
-	workspaceID := ctxWorkspaceID(r.Context())
 
 	// Compute the accessible-agents set once and use it to drop sessions
 	// whose target agent the caller no longer has access to — without this,
@@ -157,14 +171,14 @@ func (h *Handler) ListChatSessions(w http.ResponseWriter, r *http.Request) {
 	// (and transcripts via ListChatMessages) for any personal agent they
 	// previously had access to. Falls back to the user's role from the
 	// workspace member context.
-	allowed, ok := h.chatAccessibleAgentIDs(w, r, userID, workspaceID)
+	allowed, ok := h.chatAccessibleAgentIDs(w, r, scope)
 	if !ok {
 		return
 	}
 
 	rows, err := h.Queries.ListChatSessionsByCreator(r.Context(), db.ListChatSessionsByCreatorParams{
-		WorkspaceID: parseUUID(workspaceID),
-		CreatorID:   parseUUID(userID),
+		WorkspaceID: parseUUID(scope.workspaceID),
+		CreatorID:   parseUUID(scope.userID),
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list chat sessions")
@@ -189,13 +203,13 @@ func (h *Handler) ListChatSessions(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-func (h *Handler) chatAccessibleAgentIDs(w http.ResponseWriter, r *http.Request, userID, workspaceID string) (map[string]struct{}, bool) {
-	member, ok := h.workspaceMember(w, r, workspaceID)
+func (h *Handler) chatAccessibleAgentIDs(w http.ResponseWriter, r *http.Request, scope chatRequestScope) (map[string]struct{}, bool) {
+	member, ok := h.workspaceMember(w, r, scope.workspaceID)
 	if !ok {
 		return nil, false
 	}
-	actorType, actorID := resolveActor(r, userID)
-	allowed, err := h.accessibleAgentIDs(r.Context(), workspaceID, actorType, actorID, member.Role)
+	actorType, actorID := resolveActor(r, scope.userID)
+	allowed, err := h.accessibleAgentIDs(r.Context(), scope.workspaceID, actorType, actorID, member.Role)
 	if err != nil {
 		if !writeClientClosedIfCanceled(w, err) {
 			writeError(w, http.StatusInternalServerError, "failed to resolve agent access")
@@ -205,12 +219,12 @@ func (h *Handler) chatAccessibleAgentIDs(w http.ResponseWriter, r *http.Request,
 	return allowed, true
 }
 
-func (h *Handler) loadChatSessionForUser(w http.ResponseWriter, r *http.Request, userID, workspaceID, sessionID string) (db.ChatSession, bool) {
+func (h *Handler) loadChatSessionForUser(w http.ResponseWriter, r *http.Request, scope chatRequestScope, sessionID string) (db.ChatSession, bool) {
 	sessionUUID, ok := parseUUIDOrBadRequest(w, sessionID, "chat session id")
 	if !ok {
 		return db.ChatSession{}, false
 	}
-	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, scope.workspaceID, "workspace id")
 	if !ok {
 		return db.ChatSession{}, false
 	}
@@ -222,7 +236,7 @@ func (h *Handler) loadChatSessionForUser(w http.ResponseWriter, r *http.Request,
 		writeEntityLoadError(w, r, err, "chat session", "session_id", sessionID)
 		return db.ChatSession{}, false
 	}
-	if uuidToString(session.CreatorID) != userID {
+	if uuidToString(session.CreatorID) != scope.userID {
 		writeError(w, http.StatusForbidden, "not your chat session")
 		return db.ChatSession{}, false
 	}
@@ -234,8 +248,8 @@ func (h *Handler) loadChatSessionForUser(w http.ResponseWriter, r *http.Request,
 // agent (role downgrade, ownership transfer, agent flipped to private)
 // cannot continue reading the chat transcript even though they remain the
 // session creator. Returns ok=false after writing the error response.
-func (h *Handler) gateChatSessionForUser(w http.ResponseWriter, r *http.Request, userID, workspaceID, sessionID string) (db.ChatSession, bool) {
-	session, ok := h.loadChatSessionForUser(w, r, userID, workspaceID, sessionID)
+func (h *Handler) gateChatSessionForUser(w http.ResponseWriter, r *http.Request, scope chatRequestScope, sessionID string) (db.ChatSession, bool) {
+	session, ok := h.loadChatSessionForUser(w, r, scope, sessionID)
 	if !ok {
 		return db.ChatSession{}, false
 	}
@@ -244,31 +258,29 @@ func (h *Handler) gateChatSessionForUser(w http.ResponseWriter, r *http.Request,
 		writeEntityLoadError(w, r, err, "agent", "agent_id", uuidToString(session.AgentID))
 		return db.ChatSession{}, false
 	}
-	actorType, actorID := resolveActor(r, userID)
-	if !h.requirePersonalAgentAccess(w, r, agent, actorType, actorID, workspaceID, "you do not have access to this agent") {
+	actorType, actorID := resolveActor(r, scope.userID)
+	if !h.requirePersonalAgentAccess(w, r, agent, actorType, actorID, scope.workspaceID, "you do not have access to this agent") {
 		return db.ChatSession{}, false
 	}
 	return session, true
 }
 
-func (h *Handler) GetChatSession(w http.ResponseWriter, r *http.Request) {
-	userID, ok := requireUserID(w, r)
+func (h *Handler) requireCurrentChatSession(w http.ResponseWriter, r *http.Request) (chatRequestScope, db.ChatSession, bool) {
+	scope, ok := requireChatRequestScope(w, r)
 	if !ok {
-		return
+		return chatRequestScope{}, db.ChatSession{}, false
 	}
-	workspaceID := ctxWorkspaceID(r.Context())
-	sessionID := chi.URLParam(r, "sessionId")
+	session, ok := h.gateChatSessionForUser(w, r, scope, chi.URLParam(r, "sessionId"))
+	return scope, session, ok
+}
 
-	session, ok := h.gateChatSessionForUser(w, r, userID, workspaceID, sessionID)
+func (h *Handler) GetChatSession(w http.ResponseWriter, r *http.Request) {
+	_, session, ok := h.requireCurrentChatSession(w, r)
 	if !ok {
 		return
 	}
 
 	writeJSON(w, http.StatusOK, chatSessionToResponse(session))
-}
-
-type UpdateChatSessionRequest struct {
-	Title *string `json:"title"`
 }
 
 // UpdateChatSession updates user-editable fields on a chat session — today
@@ -277,14 +289,15 @@ type UpdateChatSessionRequest struct {
 // immutable, and the resume pointers
 // (session_id / work_dir / runtime_id) are daemon-owned.
 func (h *Handler) UpdateChatSession(w http.ResponseWriter, r *http.Request) {
-	userID, ok := requireUserID(w, r)
+	scope, ok := requireChatRequestScope(w, r)
 	if !ok {
 		return
 	}
-	workspaceID := ctxWorkspaceID(r.Context())
 	sessionID := chi.URLParam(r, "sessionId")
 
-	var req UpdateChatSessionRequest
+	var req struct {
+		Title *string `json:"title"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -303,7 +316,7 @@ func (h *Handler) UpdateChatSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	session, ok := h.gateChatSessionForUser(w, r, userID, workspaceID, sessionID)
+	session, ok := h.gateChatSessionForUser(w, r, scope, sessionID)
 	if !ok {
 		return
 	}
@@ -318,7 +331,7 @@ func (h *Handler) UpdateChatSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resolvedSessionID := uuidToString(updated.ID)
-	h.publishChat(protocol.EventChatSessionUpdated, workspaceID, "member", userID, resolvedSessionID, protocol.ChatSessionUpdatedPayload{
+	h.publishChat(protocol.EventChatSessionUpdated, scope.workspaceID, "member", scope.userID, resolvedSessionID, protocol.ChatSessionUpdatedPayload{
 		ChatSessionID: resolvedSessionID,
 		Title:         updated.Title,
 		UpdatedAt:     timestampToString(updated.UpdatedAt),
@@ -333,14 +346,13 @@ func (h *Handler) UpdateChatSession(w http.ResponseWriter, r *http.Request) {
 // the FK ON DELETE SET NULL on agent_task_queue.chat_session_id. Cancel
 // failure aborts the delete; events fire only after commit.
 func (h *Handler) DeleteChatSession(w http.ResponseWriter, r *http.Request) {
-	userID, ok := requireUserID(w, r)
+	scope, ok := requireChatRequestScope(w, r)
 	if !ok {
 		return
 	}
-	workspaceID := ctxWorkspaceID(r.Context())
 	sessionID := chi.URLParam(r, "sessionId")
 
-	session, ok := h.loadChatSessionForUser(w, r, userID, workspaceID, sessionID)
+	session, ok := h.loadChatSessionForUser(w, r, scope, sessionID)
 	if !ok {
 		return
 	}
@@ -403,7 +415,7 @@ func (h *Handler) DeleteChatSession(w http.ResponseWriter, r *http.Request) {
 	h.TaskService.NotifyCancelledTasks(r.Context(), cancelled, cancelledEvents)
 
 	resolvedSessionID := uuidToString(session.ID)
-	h.publishChat(protocol.EventChatSessionDeleted, workspaceID, "member", userID, resolvedSessionID, protocol.ChatSessionDeletedPayload{
+	h.publishChat(protocol.EventChatSessionDeleted, scope.workspaceID, "member", scope.userID, resolvedSessionID, protocol.ChatSessionDeletedPayload{
 		ChatSessionID: resolvedSessionID,
 	})
 
@@ -435,11 +447,10 @@ type SendChatMessageResponse struct {
 }
 
 func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
-	userID, ok := requireUserID(w, r)
+	requestScope, ok := requireChatRequestScope(w, r)
 	if !ok {
 		return
 	}
-	workspaceID := ctxWorkspaceID(r.Context())
 	sessionID := chi.URLParam(r, "sessionId")
 	idempotencyKey, ok := requireIdempotencyKey(w, r)
 	if !ok {
@@ -468,13 +479,12 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, requestScope.workspaceID, "workspace id")
 	if !ok {
 		return
 	}
-
-	actorType, actorID := resolveActor(r, userID)
-	scope, err := newChatIdempotencyScope(
+	actorType, actorID := resolveActor(r, requestScope.userID)
+	idempotencyScope, err := newChatIdempotencyScope(
 		workspaceUUID,
 		actorType,
 		parseUUID(actorID),
@@ -499,7 +509,7 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
-	record, created, err := reserveChatIdempotencyRecord(r.Context(), qtx, scope)
+	record, created, err := reserveChatIdempotencyRecord(r.Context(), qtx, idempotencyScope)
 	if err != nil {
 		writeChatIdempotencyFailure(w, err)
 		return
@@ -529,7 +539,7 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "chat session not found")
 		return
 	}
-	if uuidToString(session.CreatorID) != userID {
+	if uuidToString(session.CreatorID) != requestScope.userID {
 		writeError(w, http.StatusForbidden, "not your chat session")
 		return
 	}
@@ -550,7 +560,7 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "agent has no runtime")
 		return
 	}
-	if !h.requirePersonalAgentAccess(w, r, lockedAgent, actorType, actorID, workspaceID, "you do not have access to this agent") {
+	if !h.requirePersonalAgentAccess(w, r, lockedAgent, actorType, actorID, requestScope.workspaceID, "you do not have access to this agent") {
 		return
 	}
 	lockedSession, err := qtx.LockChatSessionForSend(r.Context(), db.LockChatSessionForSendParams{
@@ -614,7 +624,7 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 		qtx,
 		lockedSession,
 		lockedAgent,
-		parseUUID(userID),
+		parseUUID(requestScope.userID),
 	)
 	if err != nil {
 		slog.Error("create transactional chat task failed", "session_id", sessionID, "error", err)
@@ -638,7 +648,7 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 		CreatedAt:     timestampToString(task.CreatedAt),
 		AttachmentIDs: boundAttachmentIDs,
 	}
-	if err := completeChatIdempotencyRecord(r.Context(), qtx, scope, http.StatusCreated, response); err != nil {
+	if err := completeChatIdempotencyRecord(r.Context(), qtx, idempotencyScope, http.StatusCreated, response); err != nil {
 		slog.Error("persist send-chat-message response failed", "error", err)
 		writeChatIdempotencyFailure(w, err)
 		return
@@ -652,8 +662,8 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 	taskContext := h.TaskService.AnalyticsContextForTask(r.Context(), task)
 	platform, _, _ := middleware.ClientMetadataFromContext(r.Context())
 	obsmetrics.RecordEvent(h.Analytics, h.Metrics, analytics.ChatMessageSent(
-		userID,
-		workspaceID,
+		requestScope.userID,
+		requestScope.workspaceID,
 		uuidToString(lockedSession.ID),
 		uuidToString(task.ID),
 		uuidToString(lockedSession.AgentID),
@@ -664,7 +674,7 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 
 	// Broadcast the user message.
 	resolvedSessionID := uuidToString(lockedSession.ID)
-	h.publishChat(protocol.EventChatMessage, workspaceID, "member", userID, resolvedSessionID, protocol.ChatMessagePayload{
+	h.publishChat(protocol.EventChatMessage, requestScope.workspaceID, "member", requestScope.userID, resolvedSessionID, protocol.ChatMessagePayload{
 		ChatSessionID: resolvedSessionID,
 		MessageID:     uuidToString(msg.ID),
 		Role:          "user",
@@ -718,17 +728,11 @@ func parseChatMessagesPageParams(r *http.Request) (int, pgtype.Timestamptz, pgty
 }
 
 func (h *Handler) ListChatMessagesPage(w http.ResponseWriter, r *http.Request) {
-	userID, ok := requireUserID(w, r)
+	scope, session, ok := h.requireCurrentChatSession(w, r)
 	if !ok {
 		return
 	}
-	workspaceID := ctxWorkspaceID(r.Context())
-	sessionID := chi.URLParam(r, "sessionId")
-
-	session, ok := h.gateChatSessionForUser(w, r, userID, workspaceID, sessionID)
-	if !ok {
-		return
-	}
+	sessionID := uuidToString(session.ID)
 
 	limit, beforeCreatedAt, beforeID, err := parseChatMessagesPageParams(r)
 	if err != nil {
@@ -769,9 +773,9 @@ func (h *Handler) ListChatMessagesPage(w http.ResponseWriter, r *http.Request) {
 	for i, m := range messages {
 		messageIDs[i] = m.ID
 	}
-	groupedAtt, err := h.loadChatMessageAttachments(r.Context(), workspaceID, messageIDs)
+	groupedAtt, err := h.loadChatMessageAttachments(r.Context(), scope.workspaceID, messageIDs)
 	if err != nil {
-		slog.Error("load chat message attachments failed", "error", err, "session_id", sessionID, "workspace_id", workspaceID)
+		slog.Error("load chat message attachments failed", "error", err, "session_id", sessionID, "workspace_id", scope.workspaceID)
 		writeError(w, http.StatusInternalServerError, "failed to list chat messages")
 		return
 	}
@@ -804,14 +808,7 @@ type PendingChatTaskResponse struct {
 // and broadcasts chat:session_read so other devices of the same user drop
 // their badges.
 func (h *Handler) MarkChatSessionRead(w http.ResponseWriter, r *http.Request) {
-	userID, ok := requireUserID(w, r)
-	if !ok {
-		return
-	}
-	workspaceID := ctxWorkspaceID(r.Context())
-	sessionID := chi.URLParam(r, "sessionId")
-
-	session, ok := h.gateChatSessionForUser(w, r, userID, workspaceID, sessionID)
+	scope, session, ok := h.requireCurrentChatSession(w, r)
 	if !ok {
 		return
 	}
@@ -822,7 +819,7 @@ func (h *Handler) MarkChatSessionRead(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resolvedSessionID := uuidToString(session.ID)
-	h.publishChat(protocol.EventChatSessionRead, workspaceID, "member", userID, resolvedSessionID, protocol.ChatSessionReadPayload{
+	h.publishChat(protocol.EventChatSessionRead, scope.workspaceID, "member", scope.userID, resolvedSessionID, protocol.ChatSessionReadPayload{
 		ChatSessionID: resolvedSessionID,
 	})
 
@@ -858,20 +855,19 @@ type cancelTaskByUserResponse struct {
 // window is closed (no per-session query is subscribed). Tasks belonging to
 // personal agents the caller has lost access to are dropped from the response.
 func (h *Handler) ListPendingChatTasks(w http.ResponseWriter, r *http.Request) {
-	userID, ok := requireUserID(w, r)
+	scope, ok := requireChatRequestScope(w, r)
 	if !ok {
 		return
 	}
-	workspaceID := ctxWorkspaceID(r.Context())
 
-	allowed, ok := h.chatAccessibleAgentIDs(w, r, userID, workspaceID)
+	allowed, ok := h.chatAccessibleAgentIDs(w, r, scope)
 	if !ok {
 		return
 	}
 
 	rows, err := h.Queries.ListPendingChatTasksByCreator(r.Context(), db.ListPendingChatTasksByCreatorParams{
-		WorkspaceID: parseUUID(workspaceID),
-		CreatorID:   parseUUID(userID),
+		WorkspaceID: parseUUID(scope.workspaceID),
+		CreatorID:   parseUUID(scope.userID),
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list pending chat tasks")
@@ -882,8 +878,8 @@ func (h *Handler) ListPendingChatTasks(w http.ResponseWriter, r *http.Request) {
 	// session list is small, so one extra query is cheaper than per-row
 	// lookups.
 	sessions, err := h.Queries.ListChatSessionsByCreator(r.Context(), db.ListChatSessionsByCreatorParams{
-		WorkspaceID: parseUUID(workspaceID),
-		CreatorID:   parseUUID(userID),
+		WorkspaceID: parseUUID(scope.workspaceID),
+		CreatorID:   parseUUID(scope.userID),
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to resolve chat session agents")
@@ -917,17 +913,11 @@ func (h *Handler) ListPendingChatTasks(w http.ResponseWriter, r *http.Request) {
 // / running) for a chat session. The frontend polls this on mount / session
 // switch so pending UI state survives refresh and reopen.
 func (h *Handler) GetPendingChatTask(w http.ResponseWriter, r *http.Request) {
-	userID, ok := requireUserID(w, r)
+	_, session, ok := h.requireCurrentChatSession(w, r)
 	if !ok {
 		return
 	}
-	workspaceID := ctxWorkspaceID(r.Context())
-	sessionID := chi.URLParam(r, "sessionId")
-
-	session, ok := h.gateChatSessionForUser(w, r, userID, workspaceID, sessionID)
-	if !ok {
-		return
-	}
+	sessionID := uuidToString(session.ID)
 
 	task, err := h.Queries.GetPendingChatTask(r.Context(), session.ID)
 	if err != nil {
@@ -976,12 +966,11 @@ func (h *Handler) GetPendingChatTask(w http.ResponseWriter, r *http.Request) {
 //     id-only endpoint is never more permissive than the surface that exposes
 //     the task.
 func (h *Handler) CancelTaskByUser(w http.ResponseWriter, r *http.Request) {
-	userID, ok := requireUserID(w, r)
+	scope, ok := requireChatRequestScope(w, r)
 	if !ok {
 		return
 	}
-	workspaceID := ctxWorkspaceID(r.Context())
-	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, scope.workspaceID, "workspace id")
 	if !ok {
 		return
 	}
@@ -993,7 +982,7 @@ func (h *Handler) CancelTaskByUser(w http.ResponseWriter, r *http.Request) {
 
 	task, err := h.Queries.GetAgentTaskInWorkspace(r.Context(), db.GetAgentTaskInWorkspaceParams{
 		ID:          taskUUID,
-		WorkspaceID: wsUUID,
+		WorkspaceID: workspaceUUID,
 	})
 	if err != nil {
 		writeEntityLoadError(w, r, err, "task", "task_id", taskID)
@@ -1005,13 +994,13 @@ func (h *Handler) CancelTaskByUser(w http.ResponseWriter, r *http.Request) {
 		// cancel its task, even though the workspace is shared.
 		cs, err := h.Queries.GetChatSessionInWorkspace(r.Context(), db.GetChatSessionInWorkspaceParams{
 			ID:          task.ChatSessionID,
-			WorkspaceID: wsUUID,
+			WorkspaceID: workspaceUUID,
 		})
 		if err != nil {
 			writeEntityLoadError(w, r, err, "task", "task_id", taskID, "chat_session_id", uuidToString(task.ChatSessionID))
 			return
 		}
-		if uuidToString(cs.CreatorID) != userID {
+		if uuidToString(cs.CreatorID) != scope.userID {
 			writeError(w, http.StatusForbidden, "not your task")
 			return
 		}
@@ -1021,14 +1010,14 @@ func (h *Handler) CancelTaskByUser(w http.ResponseWriter, r *http.Request) {
 		// agents. Mirror that gate here.
 		agent, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
 			ID:          task.AgentID,
-			WorkspaceID: wsUUID,
+			WorkspaceID: workspaceUUID,
 		})
 		if err != nil {
 			writeEntityLoadError(w, r, err, "task", "task_id", taskID, "agent_id", uuidToString(task.AgentID))
 			return
 		}
-		actorType, actorID := resolveActor(r, userID)
-		if !h.requirePersonalAgentAccess(w, r, agent, actorType, actorID, workspaceID, "you do not have access to this agent") {
+		actorType, actorID := resolveActor(r, scope.userID)
+		if !h.requirePersonalAgentAccess(w, r, agent, actorType, actorID, scope.workspaceID, "you do not have access to this agent") {
 			return
 		}
 	}
@@ -1040,7 +1029,7 @@ func (h *Handler) CancelTaskByUser(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := cancelTaskByUserResponse{
-		AgentTaskResponse: taskToResponse(cancelled.Task, workspaceID),
+		AgentTaskResponse: taskToResponse(cancelled.Task, scope.workspaceID),
 	}
 	if cancelled.CancelledChatMessage != nil {
 		attachments := make([]AttachmentResponse, 0, len(cancelled.CancelledChatMessage.Attachments))
