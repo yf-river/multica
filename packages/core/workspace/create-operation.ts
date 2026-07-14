@@ -22,7 +22,7 @@ interface PendingWorkspaceCreate {
   createdAt: number;
 }
 
-export const useWorkspaceCreateOperationStore: RecoverableOperationStore<PendingWorkspaceCreate> =
+const useWorkspaceCreateOperationStore: RecoverableOperationStore<PendingWorkspaceCreate> =
   createAccountRecoverableOperationStore<PendingWorkspaceCreate>(
     "multica_workspace_create_operation",
   );

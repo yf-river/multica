@@ -15,7 +15,7 @@ interface PendingCredentialProfileCreate {
   createdAt: number;
 }
 
-export const useCredentialProfileCreateStore: RecoverableOperationStore<PendingCredentialProfileCreate> =
+const useCredentialProfileCreateStore: RecoverableOperationStore<PendingCredentialProfileCreate> =
   createAccountRecoverableOperationStore<PendingCredentialProfileCreate>(
     "multica_credential_profile_create",
   );

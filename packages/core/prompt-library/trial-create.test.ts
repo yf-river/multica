@@ -8,33 +8,37 @@ import {
   createPromptLibraryItemWithRecovery,
   createPromptLibraryTrialWithRecovery,
   createPromptLibraryVersionWithRecovery,
-  usePromptLibraryCreateStore,
 } from "./trial-create";
 
 const trial = (id: string) => ({ id }) as PromptLibraryTrial;
+let workspaceSequence = 0;
 
 describe("createPromptLibraryTrialWithRecovery", () => {
-  beforeEach(() => {
-    setCurrentWorkspace("test-account", "workspace-1");
+  beforeEach(async () => {
     localStorage.clear();
-    usePromptLibraryCreateStore.setState({ pending: {}, item: undefined, versions: {} });
+    workspaceSequence += 1;
+    setCurrentWorkspace(`prompt-library-${workspaceSequence}`, `workspace-${workspaceSequence}`);
+    await Promise.resolve();
+    await Promise.resolve();
   });
 
   it("recovers an item create before submitting a changed draft", async () => {
-    usePromptLibraryCreateStore.getState().setItem({
-      request: { name: "old", content: "old" },
-      requestKey: "10000000-0000-4000-8000-000000000005",
-      createdAt: Date.now(),
-    });
     const createPromptLibraryItem = vi.fn()
+      .mockRejectedValueOnce(new ApiTransportError("POST old item", true, new Error("lost")))
       .mockResolvedValueOnce({ id: "item-1" } as PromptLibraryItem)
       .mockResolvedValueOnce({ id: "item-2" } as PromptLibraryItem);
+    await expect(createPromptLibraryItemWithRecovery(
+      { name: "old", content: "old" },
+      { createPromptLibraryItem },
+    )).rejects.toBeInstanceOf(ApiTransportError);
     await expect(createPromptLibraryItemWithRecovery(
       { name: "new", content: "new" },
       { createPromptLibraryItem },
     )).resolves.toMatchObject({ id: "item-2" });
-    expect(createPromptLibraryItem).toHaveBeenCalledTimes(2);
-    expect(usePromptLibraryCreateStore.getState().item).toBeUndefined();
+    expect(createPromptLibraryItem).toHaveBeenCalledTimes(3);
+    expect(createPromptLibraryItem.mock.calls[1]).toEqual([
+      { name: "old", content: "old" }, createPromptLibraryItem.mock.calls[0]?.[1],
+    ]);
   });
 
   it("persists a version intent when its outcome is unknown", async () => {
@@ -46,9 +50,11 @@ describe("createPromptLibraryTrialWithRecovery", () => {
       { content: "reliable", change_note: "reason" },
       { createPromptLibraryVersion },
     )).rejects.toBeInstanceOf(ApiTransportError);
-    const pending = usePromptLibraryCreateStore.getState().versions["prompt-1"];
-    expect(pending?.request).toEqual({ content: "reliable", change_note: "reason" });
-    expect(pending?.requestKey).toMatch(/^[0-9a-f-]{36}$/);
+    const stored = localStorage.getItem(
+      `multica_prompt_library_trial_create:prompt-library-${workspaceSequence}`,
+    ) ?? "";
+    expect(stored).toContain("reliable");
+    expect(stored).toMatch(/[0-9a-f-]{36}/);
   });
 
   it("preserves the exact trial intent after an unknown outcome", async () => {
@@ -59,25 +65,31 @@ describe("createPromptLibraryTrialWithRecovery", () => {
       agent_id: "agent-1",
       variables: { topic: "reliability" },
     }, { createPromptLibraryTrial })).rejects.toBeInstanceOf(ApiTransportError);
-    const pending = Object.values(usePromptLibraryCreateStore.getState().pending)[0];
-    expect(pending?.request).toEqual({ agent_id: "agent-1", variables: { topic: "reliability" } });
-    expect(pending?.requestKey).toMatch(/^[0-9a-f-]{36}$/);
-    expect(localStorage.getItem("multica_prompt_library_trial_create:test-account")).toContain("reliability");
+    const stored = localStorage.getItem(
+      `multica_prompt_library_trial_create:prompt-library-${workspaceSequence}`,
+    ) ?? "";
+    expect(stored).toContain("reliability");
+    expect(stored).toMatch(/[0-9a-f-]{36}/);
   });
 
   it("recovers an older trial before submitting changed variables", async () => {
-    const scope = "prompt-1:version-1:agent-1";
-    usePromptLibraryCreateStore.getState().setPending(scope, {
-      promptId: "prompt-1", versionId: "version-1", requestKey: "10000000-0000-4000-8000-000000000004",
-      request: { agent_id: "agent-1", variables: { topic: "old" } },
-      createdAt: Date.now(),
-    });
-    const createPromptLibraryTrial = vi.fn().mockResolvedValueOnce(trial("trial-1")).mockResolvedValueOnce(trial("trial-2"));
+    const createPromptLibraryTrial = vi.fn()
+      .mockRejectedValueOnce(new ApiTransportError("POST old trial", true, new Error("lost")))
+      .mockResolvedValueOnce(trial("trial-1"))
+      .mockResolvedValueOnce(trial("trial-2"));
     const client = { createPromptLibraryTrial };
+    await expect(createPromptLibraryTrialWithRecovery("prompt-1", "version-1", {
+      agent_id: "agent-1", variables: { topic: "old" },
+    }, client)).rejects.toBeInstanceOf(ApiTransportError);
     await expect(createPromptLibraryTrialWithRecovery("prompt-1", "version-1", {
       agent_id: "agent-1", variables: { topic: "new" },
     }, client)).resolves.toMatchObject({ id: "trial-2" });
-    expect(createPromptLibraryTrial).toHaveBeenCalledTimes(2);
-    expect(usePromptLibraryCreateStore.getState().pending).toEqual({});
+    expect(createPromptLibraryTrial).toHaveBeenCalledTimes(3);
+    expect(createPromptLibraryTrial.mock.calls[1]).toEqual([
+      "prompt-1",
+      "version-1",
+      { agent_id: "agent-1", variables: { topic: "old" } },
+      createPromptLibraryTrial.mock.calls[0]?.[3],
+    ]);
   });
 });

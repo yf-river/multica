@@ -47,7 +47,7 @@ interface PromptLibraryCreateState {
   setVersion: (promptId: string, operation?: PendingVersionCreate) => void;
 }
 
-export const usePromptLibraryCreateStore = create<PromptLibraryCreateState>()(
+const usePromptLibraryCreateStore = create<PromptLibraryCreateState>()(
   persist((set) => ({
     pending: {},
     versions: {},

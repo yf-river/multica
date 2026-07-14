@@ -15,7 +15,7 @@ interface PendingMemberCreate {
   createdAt: number;
 }
 
-export const useMemberCreateOperationStore: RecoverableOperationStore<PendingMemberCreate> =
+const useMemberCreateOperationStore: RecoverableOperationStore<PendingMemberCreate> =
   createWorkspaceRecoverableOperationStore<PendingMemberCreate>(
     "multica_member_create_operation",
   );

@@ -2,18 +2,16 @@
 
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiTransportError } from "../api";
+import { resetAccountState } from "../platform/workspace-storage";
 import type { Workspace } from "../types";
-import {
-  createWorkspaceWithRecovery,
-  useWorkspaceCreateOperationStore,
-} from "./create-operation";
+import { createWorkspaceWithRecovery } from "./create-operation";
 
 const workspace = (id: string) => ({ id }) as Workspace;
 
 describe("createWorkspaceWithRecovery", () => {
   beforeEach(() => {
     localStorage.clear();
-    useWorkspaceCreateOperationStore.setState({ pending: undefined });
+    resetAccountState();
   });
 
   it("persists the exact workspace intent after an unknown outcome", async () => {
@@ -24,25 +22,25 @@ describe("createWorkspaceWithRecovery", () => {
       { name: "Current", slug: "current" },
       { createWorkspace },
     )).rejects.toBeInstanceOf(ApiTransportError);
-    const pending = useWorkspaceCreateOperationStore.getState().pending;
-    expect(pending?.request).toEqual({ name: "Current", slug: "current" });
-    expect(pending?.requestKey).toMatch(/^[0-9a-f-]{36}$/);
-    expect(localStorage.getItem("multica_workspace_create_operation")).toContain("current");
+    const stored = localStorage.getItem("multica_workspace_create_operation") ?? "";
+    expect(stored).toContain("current");
+    expect(stored).toMatch(/[0-9a-f-]{36}/);
   });
 
   it("recovers an older workspace before creating a changed request", async () => {
-    useWorkspaceCreateOperationStore.getState().setPending({
-      request: { name: "Old", slug: "old" },
-      requestKey: "10000000-0000-4000-8000-000000000006",
-      createdAt: Date.now(),
-    });
     const createWorkspace = vi.fn()
+      .mockRejectedValueOnce(new ApiTransportError("POST old workspace", true, new Error("lost")))
       .mockResolvedValueOnce(workspace("workspace-1"))
       .mockResolvedValueOnce(workspace("workspace-2"));
     const client = { createWorkspace };
+    await expect(createWorkspaceWithRecovery({ name: "Old", slug: "old" }, client))
+      .rejects.toBeInstanceOf(ApiTransportError);
     await expect(createWorkspaceWithRecovery({ name: "New", slug: "new" }, client))
       .resolves.toMatchObject({ id: "workspace-2" });
-    expect(createWorkspace).toHaveBeenCalledTimes(2);
-    expect(useWorkspaceCreateOperationStore.getState().pending).toBeUndefined();
+    expect(createWorkspace).toHaveBeenCalledTimes(3);
+    expect(createWorkspace.mock.calls[1]).toEqual([
+      { name: "Old", slug: "old" }, createWorkspace.mock.calls[0]?.[1],
+    ]);
+    expect(createWorkspace.mock.calls[2]?.[0]).toEqual({ name: "New", slug: "new" });
   });
 });
