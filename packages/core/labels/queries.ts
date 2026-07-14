@@ -14,7 +14,6 @@ export function labelListOptions(wsId: string) {
   return queryOptions({
     queryKey: labelKeys.list(wsId),
     queryFn: () => api.listLabels(),
-    select: (data) => data.labels,
   });
 }
 
@@ -22,7 +21,6 @@ export function issueLabelsOptions(wsId: string, issueId: string) {
   return queryOptions({
     queryKey: labelKeys.byIssue(wsId, issueId),
     queryFn: () => api.listLabelsForIssue(issueId),
-    select: (data) => data.labels,
     enabled: Boolean(issueId),
   });
 }

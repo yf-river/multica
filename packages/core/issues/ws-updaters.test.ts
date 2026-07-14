@@ -23,7 +23,6 @@ import type {
   Attachment,
   Issue,
   IssueReaction,
-  IssueLabelsResponse,
   IssueSubscriber,
   Label,
   ListIssuesCache,
@@ -39,20 +38,14 @@ const PROJECT_ID = "project-1";
 
 const labelA: Label = {
   id: "label-a",
-  workspace_id: WS_ID,
   name: "bug",
   color: "#ef4444",
-  created_at: "2025-01-01T00:00:00Z",
-  updated_at: "2025-01-01T00:00:00Z",
 };
 
 const labelB: Label = {
   id: "label-b",
-  workspace_id: WS_ID,
   name: "feature",
   color: "#22c55e",
-  created_at: "2025-01-01T00:00:00Z",
-  updated_at: "2025-01-01T00:00:00Z",
 };
 
 const baseIssue: Issue = {
@@ -128,15 +121,13 @@ describe("onIssueLabelsChanged", () => {
   });
 
   it("patches the per-issue label cache when present (LabelPicker source)", () => {
-    qc.setQueryData<IssueLabelsResponse>(labelKeys.byIssue(WS_ID, ISSUE_ID), {
-      labels: [labelA],
-    });
+    qc.setQueryData<Label[]>(labelKeys.byIssue(WS_ID, ISSUE_ID), [labelA]);
 
     onIssueLabelsChanged(qc, WS_ID, ISSUE_ID, [labelB]);
 
     expect(
-      qc.getQueryData<IssueLabelsResponse>(labelKeys.byIssue(WS_ID, ISSUE_ID)),
-    ).toEqual({ labels: [labelB] });
+      qc.getQueryData<Label[]>(labelKeys.byIssue(WS_ID, ISSUE_ID)),
+    ).toEqual([labelB]);
   });
 
   it("leaves the per-issue label cache untouched when the picker has not fetched", () => {
@@ -346,15 +337,13 @@ describe("onIssueDeleted", () => {
     ]);
     qc.setQueryData<AgentTask[]>(issueKeys.tasks(ISSUE_ID), [makeTask()]);
     qc.setQueryData<Issue[]>(issueKeys.children(WS_ID, ISSUE_ID), [otherIssue]);
-    qc.setQueryData<IssueLabelsResponse>(labelKeys.byIssue(WS_ID, ISSUE_ID), {
-      labels: [labelA],
-    });
+    qc.setQueryData<Label[]>(labelKeys.byIssue(WS_ID, ISSUE_ID), [labelA]);
 
     qc.setQueryData<Issue>(issueKeys.detail(WS_ID, OTHER_ISSUE_ID), otherIssue);
     qc.setQueryData<TimelineEntry[]>(issueKeys.timeline(OTHER_ISSUE_ID), []);
-    qc.setQueryData<IssueLabelsResponse>(
+    qc.setQueryData<Label[]>(
       labelKeys.byIssue(WS_ID, OTHER_ISSUE_ID),
-      { labels: [labelB] },
+      [labelB],
     );
 
     onIssueDeleted(qc, WS_ID, ISSUE_ID);
@@ -372,9 +361,9 @@ describe("onIssueDeleted", () => {
       otherIssue,
     );
     expect(qc.getQueryData(issueKeys.timeline(OTHER_ISSUE_ID))).toEqual([]);
-    expect(qc.getQueryData(labelKeys.byIssue(WS_ID, OTHER_ISSUE_ID))).toEqual({
-      labels: [labelB],
-    });
+    expect(qc.getQueryData(labelKeys.byIssue(WS_ID, OTHER_ISSUE_ID))).toEqual([
+      labelB,
+    ]);
   });
 
   it("removes the deleted issue from workspace and my-issues list caches immediately", () => {

@@ -16,7 +16,6 @@ import type {
   AgentTask,
   Attachment,
   Issue,
-  IssueLabelsResponse,
   Label,
   ListIssuesCache,
   TimelineEntry,
@@ -108,16 +107,11 @@ const timeline: TimelineEntry[] = [
 
 const label: Label = {
   id: "label-1",
-  workspace_id: WS_ID,
   name: "bug",
   color: "#ef4444",
-  created_at: "2026-01-01T00:00:00Z",
-  updated_at: "2026-01-01T00:00:00Z",
 };
 
-const issueLabels: IssueLabelsResponse = {
-  labels: [label],
-};
+const issueLabels: Label[] = [label];
 
 function makeListCache(...issues: Issue[]): ListIssuesCache {
   return {
@@ -474,7 +468,7 @@ describe("useBatchDeleteIssues", () => {
       attachment,
     ]);
     qc.setQueryData<TimelineEntry[]>(issueKeys.timeline(ISSUE_ID), timeline);
-    qc.setQueryData<IssueLabelsResponse>(
+    qc.setQueryData<Label[]>(
       labelKeys.byIssue(WS_ID, ISSUE_ID),
       issueLabels,
     );
@@ -484,7 +478,7 @@ describe("useBatchDeleteIssues", () => {
     qc.setQueryData<TimelineEntry[]>(issueKeys.timeline(OTHER_ISSUE_ID), [
       { ...timeline[0]!, id: "activity-2" },
     ]);
-    qc.setQueryData<IssueLabelsResponse>(
+    qc.setQueryData<Label[]>(
       labelKeys.byIssue(WS_ID, OTHER_ISSUE_ID),
       issueLabels,
     );

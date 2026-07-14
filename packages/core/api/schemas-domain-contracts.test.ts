@@ -74,9 +74,9 @@ import {
 } from "./schemas-projects";
 import { EMPTY_SKILL, SkillSchema } from "./schemas-skills";
 import {
-  EMPTY_LABEL_LIST_RESPONSE,
-  IssueLabelsResponseSchema,
-  ListLabelsResponseSchema,
+  EMPTY_LABELS,
+  IssueLabelListSchema,
+  LabelListSchema,
 } from "./schemas-labels";
 import { EMPTY_PINNED_ITEM_LIST, PinnedItemListSchema } from "./schemas-pins";
 import {
@@ -87,7 +87,7 @@ import {
 
 describe("domain response schema fallbacks", () => {
   it("rejects incomplete issue-label mutation responses", () => {
-    expect(IssueLabelsResponseSchema.safeParse({}).success).toBe(false);
+    expect(IssueLabelListSchema.safeParse({}).success).toBe(false);
   });
   it("maps unknown prompt version sources to the current creation source", () => {
     const parsed = PromptLibraryVersionListResponseSchema.parse({
@@ -345,10 +345,10 @@ describe("domain response schema fallbacks", () => {
   it("rejects malformed Label, Pin and internal Squad identities", () => {
     expect(parseWithFallback(
       { labels: [{ id: "label-1", color: "red" }], total: 1 },
-      ListLabelsResponseSchema,
-      EMPTY_LABEL_LIST_RESPONSE,
+      LabelListSchema,
+      EMPTY_LABELS,
       { endpoint: "GET /api/labels" },
-    )).toBe(EMPTY_LABEL_LIST_RESPONSE);
+    )).toBe(EMPTY_LABELS);
     expect(parseWithFallback(
       [{ id: "pin-1", item_id: 42 }],
       PinnedItemListSchema,

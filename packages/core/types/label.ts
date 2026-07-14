@@ -7,12 +7,9 @@
  */
 export interface Label {
   id: string;
-  workspace_id: string;
   name: string;
   /** Normalized lowercase hex color, e.g. `#3b82f6`. */
   color: string;
-  created_at: string;
-  updated_at: string;
 }
 
 export interface CreateLabelRequest {
@@ -23,13 +20,4 @@ export interface CreateLabelRequest {
 export interface UpdateLabelRequest {
   name?: string;
   color?: string;
-}
-
-export interface ListLabelsResponse {
-  labels: Label[];
-  total: number;
-}
-
-export interface IssueLabelsResponse {
-  labels: Label[];
 }

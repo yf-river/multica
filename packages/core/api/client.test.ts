@@ -409,7 +409,7 @@ describe("ApiClient", () => {
     )));
     const client = new ApiClient("https://api.example.test");
 
-    await expect(client.listLabels()).resolves.toMatchObject({ labels: [], total: 0 });
+    await expect(client.listLabels()).resolves.toEqual([]);
     await expect(client.listPins()).resolves.toEqual([]);
     await expect(client.listSquadMembers("squad-1")).resolves.toEqual([]);
     await expect(client.createLabel({ name: "bug", color: "#ff0000" }))

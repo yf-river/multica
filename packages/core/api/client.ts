@@ -81,8 +81,6 @@ import type {
   Label,
   CreateLabelRequest,
   UpdateLabelRequest,
-  ListLabelsResponse,
-  IssueLabelsResponse,
   PinnedItem,
   CreatePinRequest,
   PinnedItemType,
@@ -405,8 +403,8 @@ import {
   SkillSchema,
   SkillSummaryListSchema,
   LabelSchema,
-  ListLabelsResponseSchema,
-  IssueLabelsResponseSchema,
+  LabelListSchema,
+  IssueLabelListSchema,
   PinnedItemSchema,
   PinnedItemListSchema,
   SquadMemberSchema,
@@ -418,8 +416,7 @@ import {
   EMPTY_SKILL,
   EMPTY_SKILL_SUMMARIES,
   EMPTY_LABEL,
-  EMPTY_LABEL_LIST_RESPONSE,
-  EMPTY_ISSUE_LABELS_RESPONSE,
+  EMPTY_LABELS,
   EMPTY_PINNED_ITEM,
   EMPTY_PINNED_ITEM_LIST,
   EMPTY_SQUAD_MEMBER,
@@ -2659,9 +2656,9 @@ export class ApiClient extends ApiTransport {
   }
 
   // Labels
-  async listLabels(): Promise<ListLabelsResponse> {
+  async listLabels(): Promise<Label[]> {
     const raw = await this.fetch<unknown>(`/api/labels`);
-    return parseWithFallback(raw, ListLabelsResponseSchema, EMPTY_LABEL_LIST_RESPONSE, {
+    return parseWithFallback(raw, LabelListSchema, EMPTY_LABELS, {
       endpoint: "GET /api/labels",
     });
   }
@@ -2692,29 +2689,29 @@ export class ApiClient extends ApiTransport {
     await this.fetch(`/api/labels/${id}`, { method: "DELETE" });
   }
 
-  async listLabelsForIssue(issueId: string): Promise<IssueLabelsResponse> {
+  async listLabelsForIssue(issueId: string): Promise<Label[]> {
     const raw = await this.fetch<unknown>(`/api/issues/${issueId}/labels`);
-    return parseWithFallback(raw, IssueLabelsResponseSchema, EMPTY_ISSUE_LABELS_RESPONSE, {
+    return parseWithFallback(raw, IssueLabelListSchema, EMPTY_LABELS, {
       endpoint: "GET /api/issues/:id/labels",
     });
   }
 
-  async attachLabel(issueId: string, labelId: string): Promise<IssueLabelsResponse> {
+  async attachLabel(issueId: string, labelId: string): Promise<Label[]> {
     const raw = await this.fetch<unknown>(`/api/issues/${issueId}/labels`, {
       method: "POST",
       body: JSON.stringify({ label_id: labelId }),
     });
-    return parseOrThrow(raw, IssueLabelsResponseSchema, EMPTY_ISSUE_LABELS_RESPONSE, {
+    return parseOrThrow(raw, IssueLabelListSchema, EMPTY_LABELS, {
       endpoint: "POST /api/issues/:id/labels",
       mayHaveCommitted: true,
     });
   }
 
-  async detachLabel(issueId: string, labelId: string): Promise<IssueLabelsResponse> {
+  async detachLabel(issueId: string, labelId: string): Promise<Label[]> {
     const raw = await this.fetch<unknown>(`/api/issues/${issueId}/labels/${labelId}`, {
       method: "DELETE",
     });
-    return parseOrThrow(raw, IssueLabelsResponseSchema, EMPTY_ISSUE_LABELS_RESPONSE, {
+    return parseOrThrow(raw, IssueLabelListSchema, EMPTY_LABELS, {
       endpoint: "DELETE /api/issues/:id/labels/:labelId",
       mayHaveCommitted: true,
     });

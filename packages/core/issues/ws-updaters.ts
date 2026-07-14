@@ -8,7 +8,7 @@ import {
   patchIssueInBuckets,
 } from "./cache-helpers";
 import { cleanupDeletedIssueCaches } from "./delete-cache";
-import type { Issue, IssueLabelsResponse, IssueMetadata, Label } from "../types";
+import type { Issue, IssueMetadata, Label } from "../types";
 import type { ListIssuesCache } from "../types";
 
 export function onIssueCreated(
@@ -123,8 +123,8 @@ export function onIssueLabelsChanged(
   qc.setQueryData<Issue>(issueKeys.detail(wsId, issueId), (old) =>
     old ? { ...old, labels } : old,
   );
-  qc.setQueryData<IssueLabelsResponse>(labelKeys.byIssue(wsId, issueId), (old) =>
-    old ? { ...old, labels } : old,
+  qc.setQueryData<Label[]>(labelKeys.byIssue(wsId, issueId), (old) =>
+    old ? labels : old,
   );
   // Patch the Project Gantt caches in-place: the Gantt view applies
   // `labelFilters` to the row data, so a stale `labels` array would silently
