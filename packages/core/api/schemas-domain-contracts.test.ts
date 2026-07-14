@@ -265,6 +265,22 @@ describe("domain response schema fallbacks", () => {
     )).toBe(EMPTY_WORKSPACE);
   });
 
+  it("normalizes GitHub settings drift at the workspace response boundary", () => {
+    const workspace = WorkspaceSchema.parse({
+      id: "workspace-1",
+      name: "Workspace",
+      slug: "workspace",
+      settings: { github_enabled: false, co_authored_by_enabled: null, custom: "kept" },
+    });
+    expect(workspace.settings).toEqual({
+      github_enabled: false,
+      github_pr_sidebar_enabled: true,
+      co_authored_by_enabled: true,
+      github_auto_link_prs_enabled: true,
+      custom: "kept",
+    });
+  });
+
   it("rejects a malformed inbox identity", () => {
     expect(parseWithFallback(
       { id: 42 },

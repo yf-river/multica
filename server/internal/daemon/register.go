@@ -720,8 +720,7 @@ func (d *Daemon) workspaceLastRepoSyncErr(workspaceID string) string {
 }
 
 // workspaceCoAuthoredByEnabled returns whether the Co-authored-by hook should
-// be installed for the given workspace. Defaults to true when either setting
-// is absent (new workspaces, older servers that don't send settings).
+// be installed for the given workspace.
 //
 // The hook is gated by BOTH the GitHub master switch (`github_enabled`) and
 // the dedicated co-author switch (`co_authored_by_enabled`) so flipping the
@@ -732,22 +731,16 @@ func (d *Daemon) workspaceCoAuthoredByEnabled(workspaceID string) bool {
 	defer d.mu.Unlock()
 	ws, ok := d.workspaces[workspaceID]
 	if !ok || len(ws.settings) == 0 {
-		return true // default: enabled
-	}
-	var s struct {
-		GitHubEnabled       *bool `json:"github_enabled"`
-		CoAuthoredByEnabled *bool `json:"co_authored_by_enabled"`
-	}
-	if err := json.Unmarshal(ws.settings, &s); err != nil {
-		return true // default: enabled when payload is malformed
-	}
-	if s.GitHubEnabled != nil && !*s.GitHubEnabled {
 		return false
 	}
-	if s.CoAuthoredByEnabled == nil {
-		return true // default: enabled
+	var s struct {
+		GitHubEnabled       bool `json:"github_enabled"`
+		CoAuthoredByEnabled bool `json:"co_authored_by_enabled"`
 	}
-	return *s.CoAuthoredByEnabled
+	if err := json.Unmarshal(ws.settings, &s); err != nil {
+		return false
+	}
+	return s.GitHubEnabled && s.CoAuthoredByEnabled
 }
 
 // registerTaskRepos merges task-scoped repos (e.g. project github_repo

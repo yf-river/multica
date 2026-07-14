@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -23,6 +24,31 @@ import (
 
 var nonAlpha = regexp.MustCompile(`[^a-zA-Z]`)
 var workspaceSlugPattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
+
+var workspaceBooleanSettingDefaults = map[string]bool{
+	"github_enabled":               true,
+	"github_pr_sidebar_enabled":    true,
+	"co_authored_by_enabled":       true,
+	"github_auto_link_prs_enabled": true,
+}
+
+func canonicalizeWorkspaceSettings(settings map[string]any) (map[string]any, error) {
+	canonical := maps.Clone(settings)
+	if canonical == nil {
+		canonical = make(map[string]any, len(workspaceBooleanSettingDefaults))
+	}
+	for key, defaultValue := range workspaceBooleanSettingDefaults {
+		value, exists := canonical[key]
+		if !exists {
+			canonical[key] = defaultValue
+			continue
+		}
+		if _, ok := value.(bool); !ok {
+			return nil, fmt.Errorf("settings.%s must be a boolean", key)
+		}
+	}
+	return canonical, nil
+}
 
 // generateIssuePrefix produces a 2-5 char uppercase prefix from a workspace name.
 // Examples: "Jiayuan's Workspace" → "JIA", "My Team" → "MYT", "AB" → "AB".
@@ -587,7 +613,12 @@ func (h *Handler) UpdateWorkspace(w http.ResponseWriter, r *http.Request) {
 		params.Context = pgtype.Text{String: *req.Context, Valid: true}
 	}
 	if req.Settings != nil {
-		s, err := json.Marshal(*req.Settings)
+		canonical, err := canonicalizeWorkspaceSettings(*req.Settings)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		s, err := json.Marshal(canonical)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "settings must be a JSON object")
 			return

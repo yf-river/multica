@@ -74,7 +74,7 @@ export function GitHubTab() {
     setSavingKey(key);
     try {
       const merged = {
-        ...((workspace.settings as Record<string, unknown>) ?? {}),
+        ...workspace.settings,
         [key]: next,
       };
       const updated = await api.updateWorkspace(workspace.id, { settings: merged });

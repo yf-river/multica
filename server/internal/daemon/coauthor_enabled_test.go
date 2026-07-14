@@ -11,11 +11,7 @@ import (
 )
 
 // workspaceCoAuthoredByEnabled gates the prepare-commit-msg hook installed in
-// agent worktrees. RFC MUL-2414 adds the `github_enabled` master switch:
-// when it is explicitly false the hook must NOT be installed even if
-// `co_authored_by_enabled` is true. The function also defaults to true
-// whenever settings are absent or malformed so existing workspaces keep
-// their historical behavior.
+// agent worktrees. Both current settings must be explicit and enabled.
 func TestWorkspaceCoAuthoredByEnabled(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -23,12 +19,10 @@ func TestWorkspaceCoAuthoredByEnabled(t *testing.T) {
 		settings string
 		want     bool
 	}{
-		{"unknown workspace defaults on", false, "", true},
-		{"registered workspace, nil settings defaults on", true, "", true},
-		{"empty object defaults on", true, "{}", true},
-		{"co_authored_by absent defaults on", true, `{"github_enabled":true}`, true},
-		{"co_authored_by true", true, `{"co_authored_by_enabled":true}`, true},
-		{"co_authored_by false", true, `{"co_authored_by_enabled":false}`, false},
+		{"unknown workspace is disabled", false, "", false},
+		{"registered workspace without settings is disabled", true, "", false},
+		{"both settings enabled", true, `{"github_enabled":true,"co_authored_by_enabled":true}`, true},
+		{"co-authored-by disabled", true, `{"github_enabled":true,"co_authored_by_enabled":false}`, false},
 		{
 			"master off forces hook off even when co_authored_by true",
 			true,
@@ -41,7 +35,7 @@ func TestWorkspaceCoAuthoredByEnabled(t *testing.T) {
 			`{"github_enabled":true,"co_authored_by_enabled":false}`,
 			false,
 		},
-		{"malformed settings defaults on", true, `not json`, true},
+		{"malformed settings is disabled", true, `not json`, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

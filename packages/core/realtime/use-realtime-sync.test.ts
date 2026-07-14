@@ -7,13 +7,14 @@ import { inboxKeys } from "../inbox/queries";
 import { issueKeys } from "../issues/queries";
 import { notificationPreferenceKeys } from "../notification-preferences/queries";
 import { workspaceKeys } from "../workspace/queries";
-import type {
-  ChatDonePayload,
-  ChatMessage,
-  ChatPendingTask,
-  ChatMessagesPage,
-  InboxItem,
-  Workspace,
+import {
+  DEFAULT_WORKSPACE_SETTINGS,
+  type ChatDonePayload,
+  type ChatMessage,
+  type ChatPendingTask,
+  type ChatMessagesPage,
+  type InboxItem,
+  type Workspace,
 } from "../types";
 import {
   applyChatDoneToCache,
@@ -156,7 +157,7 @@ describe("applyWorkspaceUpdatedToCache", () => {
       slug: "test",
       description: null,
       context: null,
-      settings: {},
+      settings: { ...DEFAULT_WORKSPACE_SETTINGS },
       repos: [],
       issue_prefix: "TES",
       avatar_url: null,
@@ -257,7 +258,7 @@ describe("resolveInboxSourceSlug", () => {
       slug: "workspace-a",
       description: null,
       context: null,
-      settings: {},
+      settings: { ...DEFAULT_WORKSPACE_SETTINGS },
       repos: [],
       issue_prefix: "WSA",
       avatar_url: null,
@@ -310,7 +311,7 @@ describe("handleInboxNew", () => {
       slug: "workspace-a",
       description: null,
       context: null,
-      settings: {},
+      settings: { ...DEFAULT_WORKSPACE_SETTINGS },
       repos: [],
       issue_prefix: "WSA",
       avatar_url: null,

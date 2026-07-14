@@ -1,23 +1,14 @@
 import { describe, it, expect } from "vitest";
 import { deriveGitHubSettings } from "./settings";
-import type { Workspace } from "../types";
+import { DEFAULT_WORKSPACE_SETTINGS, type Workspace, type WorkspaceSettings } from "../types";
 
-function ws(settings: Record<string, unknown>): Pick<Workspace, "settings"> {
-  return { settings };
+function ws(settings: Partial<WorkspaceSettings>): Pick<Workspace, "settings"> {
+  return { settings: { ...DEFAULT_WORKSPACE_SETTINGS, ...settings } };
 }
 
 describe("deriveGitHubSettings", () => {
-  it("defaults every flag to true when workspace is null", () => {
+  it("uses the current workspace defaults before a workspace is selected", () => {
     expect(deriveGitHubSettings(null)).toEqual({
-      enabled: true,
-      prSidebar: true,
-      coAuthor: true,
-      autoLinkPRs: true,
-    });
-  });
-
-  it("defaults every flag to true on empty settings", () => {
-    expect(deriveGitHubSettings(ws({}))).toEqual({
       enabled: true,
       prSidebar: true,
       coAuthor: true,
@@ -54,13 +45,5 @@ describe("deriveGitHubSettings", () => {
     expect(
       deriveGitHubSettings(ws({ github_auto_link_prs_enabled: false })),
     ).toMatchObject({ enabled: true, prSidebar: true, coAuthor: true, autoLinkPRs: false });
-  });
-
-  it("treats non-false values (true, null, missing) as enabled", () => {
-    expect(
-      deriveGitHubSettings(
-        ws({ github_enabled: true, github_pr_sidebar_enabled: null }),
-      ),
-    ).toMatchObject({ enabled: true, prSidebar: true });
   });
 });

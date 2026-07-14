@@ -12,14 +12,15 @@ import { issueKeys } from "@multica/core/issues/queries";
 import { labelKeys } from "@multica/core/labels/queries";
 import { WorkspaceSlugProvider } from "@multica/core/paths";
 import { workspaceKeys } from "@multica/core/workspace/queries";
-import type {
-  AgentTask,
-  Attachment,
-  Issue,
-  Label,
-  ListIssuesCache,
-  TimelineEntry,
-  Workspace,
+import {
+  DEFAULT_WORKSPACE_SETTINGS,
+  type AgentTask,
+  type Attachment,
+  type Issue,
+  type Label,
+  type ListIssuesCache,
+  type TimelineEntry,
+  type Workspace,
 } from "@multica/core/types";
 
 const WS_ID = "ws-1";
@@ -35,7 +36,7 @@ const workspace: Workspace = {
   slug: SLUG,
   description: null,
   context: null,
-  settings: {},
+  settings: { ...DEFAULT_WORKSPACE_SETTINGS },
   repos: [],
   issue_prefix: "TST",
   avatar_url: null,

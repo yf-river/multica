@@ -345,7 +345,7 @@ func TestWorkspaceToResponse_RejectsNonArrayRepos(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			workspace := db.Workspace{Settings: []byte(`{}`), Repos: tc.raw}
+			workspace := db.Workspace{Settings: []byte(`{"github_enabled":true,"github_pr_sidebar_enabled":true,"co_authored_by_enabled":true,"github_auto_link_prs_enabled":true}`), Repos: tc.raw}
 			if _, err := workspaceToResponse(workspace); err == nil {
 				t.Fatalf("workspaceToResponse(%s) expected an error", tc.raw)
 			}
@@ -355,7 +355,7 @@ func TestWorkspaceToResponse_RejectsNonArrayRepos(t *testing.T) {
 
 func TestWorkspaceToResponse_AcceptsRepositoryArray(t *testing.T) {
 	workspace := db.Workspace{
-		Settings: []byte(`{}`),
+		Settings: []byte(`{"github_enabled":true,"github_pr_sidebar_enabled":true,"co_authored_by_enabled":true,"github_auto_link_prs_enabled":true}`),
 		Repos:    []byte(`[{"url":"https://git.example.com/repo.git"}]`),
 	}
 	response, err := workspaceToResponse(workspace)
@@ -371,6 +371,42 @@ func TestWorkspaceToResponse_RejectsNonObjectSettings(t *testing.T) {
 	workspace := db.Workspace{Settings: []byte(`[]`), Repos: []byte(`[]`)}
 	if _, err := workspaceToResponse(workspace); err == nil {
 		t.Fatal("workspaceToResponse expected an error for array settings")
+	}
+}
+
+func TestCanonicalizeWorkspaceSettingsEnforcesCurrentGitHubShape(t *testing.T) {
+	settings := map[string]any{
+		"github_enabled":               false,
+		"github_pr_sidebar_enabled":    true,
+		"co_authored_by_enabled":       true,
+		"github_auto_link_prs_enabled": true,
+		"custom":                       "kept",
+	}
+	canonical, err := canonicalizeWorkspaceSettings(settings)
+	if err != nil {
+		t.Fatalf("canonicalize workspace settings: %v", err)
+	}
+	if canonical["github_enabled"] != false || canonical["custom"] != "kept" {
+		t.Fatalf("explicit settings changed: %#v", canonical)
+	}
+
+	canonical, err = canonicalizeWorkspaceSettings(map[string]any{"github_enabled": true})
+	if err != nil {
+		t.Fatalf("canonicalize partial workspace settings: %v", err)
+	}
+	for key := range workspaceBooleanSettingDefaults {
+		if canonical[key] != true {
+			t.Fatalf("%s = %#v, want true", key, canonical[key])
+		}
+	}
+
+	invalid := make(map[string]any, len(settings))
+	for key, value := range settings {
+		invalid[key] = value
+	}
+	invalid["github_enabled"] = nil
+	if _, err := canonicalizeWorkspaceSettings(invalid); err == nil {
+		t.Fatal("expected a non-boolean current GitHub setting to be rejected")
 	}
 }
 
@@ -653,8 +689,17 @@ VALUES ($1, $2, 'owner')
 		if err := testPool.QueryRow(ctx, `SELECT settings FROM workspace WHERE id = $1`, wsID).Scan(&raw); err != nil {
 			t.Fatalf("read settings: %v", err)
 		}
-		if string(raw) != "{}" {
-			t.Fatalf("invalid settings update should not persist, got %s", raw)
+		var settings map[string]any
+		if err := json.Unmarshal(raw, &settings); err != nil {
+			t.Fatalf("decode settings: %v", err)
+		}
+		if len(settings) != len(workspaceBooleanSettingDefaults) {
+			t.Fatalf("invalid settings update changed current settings: %#v", settings)
+		}
+		for key, defaultValue := range workspaceBooleanSettingDefaults {
+			if settings[key] != defaultValue {
+				t.Fatalf("invalid settings update changed %s: %#v", key, settings[key])
+			}
 		}
 	})
 

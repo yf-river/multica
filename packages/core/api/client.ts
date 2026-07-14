@@ -37,6 +37,7 @@ import type {
   Reaction,
   IssueReaction,
   Workspace,
+  WorkspaceSettings,
   WorkspaceRepo,
   WorkspaceRepoProbeResponse,
   MemberWithUser,
@@ -1559,7 +1560,7 @@ export class ApiClient extends ApiTransport {
     return this.retryUnknownMutationOnce(attempt);
   }
 
-  async updateWorkspace(id: string, data: { name?: string; description?: string; context?: string; settings?: Record<string, unknown>; repos?: WorkspaceRepo[]; issue_prefix?: string; avatar_url?: string }): Promise<Workspace> {
+  async updateWorkspace(id: string, data: { name?: string; description?: string; context?: string; settings?: WorkspaceSettings; repos?: WorkspaceRepo[]; issue_prefix?: string; avatar_url?: string }): Promise<Workspace> {
     const raw = await this.fetch<unknown>(`/api/workspaces/${id}`, {
       method: "PATCH",
       body: JSON.stringify(data),

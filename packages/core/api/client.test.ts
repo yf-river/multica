@@ -1448,7 +1448,14 @@ describe("ApiClient", () => {
   it("retries workspace-create unknown outcomes with one request identity", async () => {
     const workspace = {
       id: "workspace-1", name: "Current", slug: "current", description: null,
-      context: null, settings: {}, repos: [], issue_prefix: "CUR", avatar_url: null,
+      context: null,
+      settings: {
+        github_enabled: true,
+        github_pr_sidebar_enabled: true,
+        co_authored_by_enabled: true,
+        github_auto_link_prs_enabled: true,
+      },
+      repos: [], issue_prefix: "CUR", avatar_url: null,
     };
     const fetchMock = vi.fn()
       .mockRejectedValueOnce(new TypeError("response lost"))

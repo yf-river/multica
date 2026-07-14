@@ -1,4 +1,4 @@
-import type { Workspace } from "../types";
+import { DEFAULT_WORKSPACE_SETTINGS, type Workspace } from "../types";
 
 export interface GitHubSettings {
   /** Master switch. When false, every UI affordance and side-effect is gated off. */
@@ -12,18 +12,18 @@ export interface GitHubSettings {
 }
 
 /**
- * Pure derivation from a workspace's settings JSONB. Defaults every flag to
- * true so workspaces predating MUL-2414 keep the historical "all on" behavior.
+ * Pure derivation from the current workspace settings contract. API response
+ * drift is normalized once by WorkspaceSchema before it reaches this layer.
  */
 export function deriveGitHubSettings(
   workspace: Pick<Workspace, "settings"> | null | undefined,
 ): GitHubSettings {
-  const s = (workspace?.settings ?? {}) as Record<string, unknown>;
-  const enabled = s.github_enabled !== false;
+  const s = workspace?.settings ?? DEFAULT_WORKSPACE_SETTINGS;
+  const enabled = s.github_enabled;
   return {
     enabled,
-    prSidebar: enabled && s.github_pr_sidebar_enabled !== false,
-    coAuthor: enabled && s.co_authored_by_enabled !== false,
-    autoLinkPRs: enabled && s.github_auto_link_prs_enabled !== false,
+    prSidebar: enabled && s.github_pr_sidebar_enabled,
+    coAuthor: enabled && s.co_authored_by_enabled,
+    autoLinkPRs: enabled && s.github_auto_link_prs_enabled,
   };
 }

@@ -7,7 +7,7 @@ import {
   useCurrentWorkspace,
 } from "@multica/core/paths";
 import { workspaceKeys } from "@multica/core/workspace/queries";
-import type { Workspace } from "@multica/core/types";
+import { DEFAULT_WORKSPACE_SETTINGS, type Workspace } from "@multica/core/types";
 
 // Hook tests for @multica/core/paths live here because packages/core/ runs
 // Vitest in node environment (no jsdom). packages/views/ already has jsdom +
@@ -21,7 +21,7 @@ function makeWorkspace(over: Partial<Workspace>): Workspace {
     slug: "default",
     description: null,
     context: null,
-    settings: {},
+    settings: { ...DEFAULT_WORKSPACE_SETTINGS },
     repos: [],
     issue_prefix: "DEF",
     avatar_url: null,

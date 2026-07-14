@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import type { ReactNode } from "react";
 
 import { WorkspaceSlugProvider } from "../paths";
-import type { Workspace } from "../types";
+import { DEFAULT_WORKSPACE_SETTINGS, type Workspace } from "../types";
 import { nameInitials } from "./actor-display";
 import { workspaceKeys } from "./queries";
 import { useActorName } from "./hooks";
@@ -17,7 +17,7 @@ const WORKSPACE: Workspace = {
   slug: "ai-studio",
   description: null,
   context: null,
-  settings: {},
+  settings: { ...DEFAULT_WORKSPACE_SETTINGS },
   repos: [],
   issue_prefix: "GT",
   avatar_url: null,

@@ -19,13 +19,27 @@ export interface WorkspaceRepoProbeResponse {
   branches: string[];
 }
 
+export interface WorkspaceSettings extends Record<string, unknown> {
+  github_enabled: boolean;
+  github_pr_sidebar_enabled: boolean;
+  co_authored_by_enabled: boolean;
+  github_auto_link_prs_enabled: boolean;
+}
+
+export const DEFAULT_WORKSPACE_SETTINGS: WorkspaceSettings = {
+  github_enabled: true,
+  github_pr_sidebar_enabled: true,
+  co_authored_by_enabled: true,
+  github_auto_link_prs_enabled: true,
+};
+
 export interface Workspace {
   id: string;
   name: string;
   slug: string;
   description: string | null;
   context: string | null;
-  settings: Record<string, unknown>;
+  settings: WorkspaceSettings;
   repos: WorkspaceRepo[];
   issue_prefix: string;
   avatar_url: string | null;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Workspace } from "../types";
+import { DEFAULT_WORKSPACE_SETTINGS, type Workspace } from "../types";
 import { paths } from "./paths";
 import { resolvePostAuthDestination } from "./resolve";
 
@@ -10,7 +10,7 @@ function makeWs(slug: string): Workspace {
     slug,
     description: null,
     context: null,
-    settings: {},
+    settings: { ...DEFAULT_WORKSPACE_SETTINGS },
     repos: [],
     issue_prefix: slug.toUpperCase(),
     avatar_url: null,

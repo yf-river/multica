@@ -1,5 +1,20 @@
 import { z } from "zod";
-import type { MemberWithUser, Workspace, WorkspaceRepo, WorkspaceRepoProbeResponse } from "../types";
+import {
+  DEFAULT_WORKSPACE_SETTINGS,
+  type MemberWithUser,
+  type Workspace,
+  type WorkspaceRepo,
+  type WorkspaceRepoProbeResponse,
+  type WorkspaceSettings,
+} from "../types";
+
+const WorkspaceSettingsSchema = z.record(z.string(), z.unknown()).default({}).transform((settings): WorkspaceSettings => {
+  const normalized: Record<string, unknown> = { ...settings };
+  for (const [key, defaultValue] of Object.entries(DEFAULT_WORKSPACE_SETTINGS)) {
+    if (typeof normalized[key] !== "boolean") normalized[key] = defaultValue;
+  }
+  return normalized as WorkspaceSettings;
+});
 
 export const WorkspaceRepoSchema = z.object({
   url: z.string(),
@@ -19,7 +34,7 @@ export const WorkspaceSchema = z.object({
   slug: z.string(),
   description: z.string().nullable().optional().transform((value) => value ?? null),
   context: z.string().nullable().optional().transform((value) => value ?? null),
-  settings: z.record(z.string(), z.unknown()).default({}),
+  settings: WorkspaceSettingsSchema,
   repos: z.array(WorkspaceRepoSchema).default([]),
   issue_prefix: z.string().default(""),
   avatar_url: z.string().nullable().optional().transform((value) => value ?? null),
@@ -51,7 +66,7 @@ export const EMPTY_WORKSPACE: Workspace = {
   slug: "",
   description: null,
   context: null,
-  settings: {},
+  settings: { ...DEFAULT_WORKSPACE_SETTINGS },
   repos: [],
   issue_prefix: "",
   avatar_url: null,

@@ -18,7 +18,12 @@ const workspaceRef = vi.hoisted(() => ({
     id: "workspace-1",
     name: "Acme",
     slug: "acme",
-    settings: {} as Record<string, unknown>,
+    settings: {
+      github_enabled: true,
+      github_pr_sidebar_enabled: true,
+      co_authored_by_enabled: true,
+      github_auto_link_prs_enabled: true,
+    },
     repos: [{ url: "https://github.com/acme/api" }] as { url: string }[],
   },
 }));
@@ -119,13 +124,23 @@ function I18nWrapper({ children }: { children: ReactNode }) {
   );
 }
 
+function currentSettings(overrides: Record<string, boolean> = {}) {
+  return {
+    github_enabled: true,
+    github_pr_sidebar_enabled: true,
+    co_authored_by_enabled: true,
+    github_auto_link_prs_enabled: true,
+    ...overrides,
+  };
+}
+
 function resetFixtures() {
   vi.clearAllMocks();
   workspaceRef.current = {
     id: "workspace-1",
     name: "Acme",
     slug: "acme",
-    settings: {},
+    settings: currentSettings(),
     repos: [{ url: "https://github.com/acme/api" }],
   };
   membersRef.current = [{ user_id: "user-1", role: "owner" }];
@@ -143,13 +158,13 @@ describe("GitHubTab", () => {
   });
 
   it("does not show the hint once the master switch is off", () => {
-    workspaceRef.current.settings = { github_enabled: false };
+    workspaceRef.current.settings = currentSettings({ github_enabled: false });
     render(<GitHubTab />, { wrapper: I18nWrapper });
     expect(screen.queryByText(/团队不使用 GitHub？/)).toBeNull();
   });
 
   it("disables every feature switch when the master switch is off", () => {
-    workspaceRef.current.settings = { github_enabled: false };
+    workspaceRef.current.settings = currentSettings({ github_enabled: false });
     render(<GitHubTab />, { wrapper: I18nWrapper });
 
     const master = screen.getByRole("switch", { name: /启用 GitHub 功能/i });
@@ -168,10 +183,10 @@ describe("GitHubTab", () => {
 
   it("flipping the master switch off persists github_enabled=false and merges existing settings", async () => {
     const user = userEvent.setup();
-    workspaceRef.current.settings = { co_authored_by_enabled: true };
+    workspaceRef.current.settings = currentSettings();
     mockUpdateWorkspace.mockResolvedValue({
       ...workspaceRef.current,
-      settings: { co_authored_by_enabled: true, github_enabled: false },
+      settings: currentSettings({ github_enabled: false }),
     });
 
     render(<GitHubTab />, { wrapper: I18nWrapper });
@@ -180,7 +195,7 @@ describe("GitHubTab", () => {
 
     await waitFor(() => {
       expect(mockUpdateWorkspace).toHaveBeenCalledWith("workspace-1", {
-        settings: { co_authored_by_enabled: true, github_enabled: false },
+        settings: currentSettings({ github_enabled: false }),
       });
     });
   });
@@ -211,7 +226,7 @@ describe("GitHubTab", () => {
   });
 
   it("断开 button is still visible when the master switch is off", () => {
-    workspaceRef.current.settings = { github_enabled: false };
+    workspaceRef.current.settings = currentSettings({ github_enabled: false });
     installationsRef.current = {
       configured: true,
       can_manage: true,
