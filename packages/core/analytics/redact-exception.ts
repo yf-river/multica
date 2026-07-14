@@ -20,7 +20,7 @@ const PATTERNS: Array<[RegExp, string]> = [
 ];
 
 /** Redact sensitive token-like substrings from a free-text string. */
-export function redactText(input: unknown): unknown {
+function redactText(input: unknown): unknown {
   if (typeof input !== "string" || input.length === 0) return input;
   let out = input;
   for (const [pattern, replacement] of PATTERNS) {
