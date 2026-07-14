@@ -42,7 +42,7 @@ export const PromptLibraryItemListResponseSchema = z.object({
   total: z.number().default(0),
 }).loose();
 
-export const PromptLibraryVersionSchema = z.object({
+const PromptLibraryVersionSchema = z.object({
   id: NonEmptyStringSchema,
   prompt_id: NonEmptyStringSchema,
   workspace_id: NonEmptyStringSchema,
