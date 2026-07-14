@@ -8,15 +8,11 @@ export const WorkspaceRepoSchema = z.object({
   project_path: z.string().optional(),
   default_branch: z.string().optional(),
   head_commit: z.string().optional(),
-  commit_sha: z.string().optional(),
   connection_status: z.string().optional(),
   sync_status: z.string().optional(),
   test_status: z.string().optional(),
   last_tested_at: z.string().optional(),
   last_synced_at: z.string().optional(),
-  resolve_status: z.string().optional(),
-  resolve_error: z.string().optional(),
-  last_resolved_at: z.string().optional(),
 }).loose();
 
 export const WorkspaceSchema = z.object({

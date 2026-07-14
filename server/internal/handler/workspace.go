@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -303,15 +304,11 @@ type workspaceRepoRef struct {
 	ProjectPath      string `json:"project_path,omitempty"`
 	DefaultBranch    string `json:"default_branch,omitempty"`
 	HeadCommit       string `json:"head_commit,omitempty"`
-	CommitSHA        string `json:"commit_sha,omitempty"`
 	ConnectionStatus string `json:"connection_status,omitempty"`
 	SyncStatus       string `json:"sync_status,omitempty"`
 	TestStatus       string `json:"test_status,omitempty"`
 	LastTestedAt     string `json:"last_tested_at,omitempty"`
 	LastSyncedAt     string `json:"last_synced_at,omitempty"`
-	ResolveStatus    string `json:"resolve_status,omitempty"`
-	ResolveError     string `json:"resolve_error,omitempty"`
-	LastResolvedAt   string `json:"last_resolved_at,omitempty"`
 }
 
 func validateAndNormalizeWorkspaceRepos(value any) ([]byte, error) {
@@ -334,20 +331,30 @@ func validateAndNormalizeWorkspaceRepos(value any) ([]byte, error) {
 		repo.ProjectPath = strings.Trim(strings.TrimSpace(repo.ProjectPath), "/")
 		repo.DefaultBranch = strings.TrimSpace(repo.DefaultBranch)
 		repo.HeadCommit = strings.TrimSpace(repo.HeadCommit)
-		repo.CommitSHA = strings.TrimSpace(repo.CommitSHA)
 		repo.ConnectionStatus = strings.TrimSpace(repo.ConnectionStatus)
 		repo.SyncStatus = strings.TrimSpace(repo.SyncStatus)
 		repo.TestStatus = strings.TrimSpace(repo.TestStatus)
 		repo.LastTestedAt = strings.TrimSpace(repo.LastTestedAt)
 		repo.LastSyncedAt = strings.TrimSpace(repo.LastSyncedAt)
-		repo.ResolveStatus = strings.TrimSpace(repo.ResolveStatus)
-		repo.ResolveError = strings.TrimSpace(repo.ResolveError)
-		repo.LastResolvedAt = strings.TrimSpace(repo.LastResolvedAt)
 		if repo.URL == "" {
 			return nil, fmt.Errorf("repos[%d]: url is required", i)
 		}
 		if !isValidGitRepoURL(repo.URL) {
 			return nil, fmt.Errorf("repos[%d]: url must be a valid http(s) or ssh git URL", i)
+		}
+		parsedURL, _ := url.Parse(repo.URL)
+		if parsedURL != nil && strings.EqualFold(parsedURL.Hostname(), "git.code.tencent.com") {
+			parsed, err := parseGongfengURL(repo.URL)
+			if err != nil {
+				return nil, fmt.Errorf("repos[%d]: %w", i, err)
+			}
+			repo.Provider = "gongfeng"
+			if repo.ProjectPath == "" || repo.DefaultBranch == "" {
+				return nil, fmt.Errorf("repos[%d]: gongfeng repositories require project_path and default_branch", i)
+			}
+			if repo.ProjectPath != parsed.ProjectPath {
+				return nil, fmt.Errorf("repos[%d]: project_path must match the Gongfeng repository URL", i)
+			}
 		}
 		if _, ok := seen[repo.URL]; ok {
 			continue
@@ -535,14 +542,11 @@ func (h *Handler) ResolveWorkspaceRepo(w http.ResponseWriter, r *http.Request) {
 		ProjectPath:      parsed.ProjectPath,
 		DefaultBranch:    branch,
 		HeadCommit:       commit,
-		CommitSHA:        commit,
 		ConnectionStatus: ref.ConnectionStatus,
 		SyncStatus:       "synced",
 		TestStatus:       ref.TestStatus,
 		LastTestedAt:     now,
 		LastSyncedAt:     now,
-		ResolveStatus:    "resolved",
-		LastResolvedAt:   now,
 	})
 }
 

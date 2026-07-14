@@ -601,7 +601,6 @@ function RepositoryDetailsDialog({
 }) {
   const { t } = useT("settings");
   const qc = useQueryClient();
-  const [resolving, setResolving] = useState(false);
   const [editingBranch, setEditingBranch] = useState(false);
   const [loadingBranches, setLoadingBranches] = useState(false);
   const [savingBranch, setSavingBranch] = useState(false);
@@ -611,30 +610,8 @@ function RepositoryDetailsDialog({
   const defaultBranch = repositoryDefaultBranch(row);
   const projectPath = repositoryProjectPath(row);
   const commitID = repositoryCommitID(row);
-  const needsResolve = row.inLibrary && !row.repo?.resolve_status;
   const branchChanged = Boolean(selectedBranch && selectedBranch !== defaultBranch);
   const canEditBranch = row.inLibrary;
-
-  const handleResolve = async () => {
-    if (!row.inLibrary || resolving) return;
-    setResolving(true);
-    try {
-      const resolved = await api.resolveWorkspaceRepo(workspace.id, { url: row.url });
-      const repos = workspaceRepoList(workspace).map((repo) =>
-        repo.url === row.url ? { ...repo, ...resolved } : repo,
-      );
-      onRepoResolved(resolved);
-      const updated = await api.updateWorkspace(workspace.id, { repos });
-      qc.setQueryData(workspaceKeys.list(), (old: Workspace[] | undefined) =>
-        old?.map((ws) => (ws.id === updated.id ? updated : ws)),
-      );
-      toast.success(t(($) => $.repositories.gongfeng_inventory.resolve_success));
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : t(($) => $.repositories.gongfeng_inventory.resolve_failed));
-    } finally {
-      setResolving(false);
-    }
-  };
 
   const invalidateUsageQueries = (usages: GongfengResourceUsage[]) => {
     const projectIds = new Set(usages.map((usage) => usage.project.id));
@@ -826,21 +803,6 @@ function RepositoryDetailsDialog({
               )}
             </div>
           )}
-          {needsResolve && (
-            <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-900">
-              <span>{t(($) => $.repositories.gongfeng_inventory.resolve_hint)}</span>
-              <button
-                type="button"
-                className="inline-flex h-7 items-center justify-center rounded-md border border-amber-300 bg-background px-2 text-[11px] text-amber-900 hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={resolving}
-                onClick={() => void handleResolve()}
-              >
-                {resolving
-                  ? t(($) => $.repositories.gongfeng_inventory.resolving)
-                  : t(($) => $.repositories.gongfeng_inventory.resolve)}
-              </button>
-            </div>
-          )}
           <div className="space-y-2">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="font-medium">{t(($) => $.repositories.gongfeng_inventory.usages_title)}</div>
@@ -978,19 +940,15 @@ function MetaBadge({ children }: { children: ReactNode }) {
 }
 
 function repositoryDefaultBranch(row: RepositoryLibraryRow): string {
-  const fromLibrary = row.repo?.default_branch?.trim();
-  if (fromLibrary) return fromLibrary;
-  return firstNonEmpty(row.usages.map((usage) => usage.resource_ref.branch || usage.resource_ref.ref));
+  return row.repo?.default_branch?.trim() ?? "";
 }
 
 function repositoryProjectPath(row: RepositoryLibraryRow): string {
-  return gongfengWorkspaceRepoProjectPath(row.repo) || inferProjectPathFromGongfengURL(row.url);
+  return gongfengWorkspaceRepoProjectPath(row.repo);
 }
 
 function gongfengWorkspaceRepoProjectPath(repo: WorkspaceRepo | undefined): string {
-  const fromLibrary = repo?.project_path?.trim();
-  if (fromLibrary) return fromLibrary;
-  return repo?.url ? inferProjectPathFromGongfengURL(repo.url) : "";
+  return repo?.project_path?.trim() ?? "";
 }
 
 function gongfengResourceProjectPath(ref: GongfengRepoResourceRef): string {
@@ -1008,7 +966,6 @@ function repositoryDisplayName(row: RepositoryLibraryRow): string {
 function repositoryCommitID(row: RepositoryLibraryRow): string {
   return firstNonEmpty([
     row.repo?.head_commit,
-    row.repo?.commit_sha,
     ...row.usages.flatMap((usage) => [usage.resource_ref.head_commit, usage.resource_ref.commit_sha]),
   ]);
 }
@@ -1018,7 +975,7 @@ function buildBranchSyncedResourceRef(
   resolved: WorkspaceRepo,
 ): GongfengRepoResourceRef {
   const branch = resolved.default_branch?.trim() || current.branch || current.ref || "";
-  const commit = resolved.commit_sha || resolved.head_commit || "";
+  const commit = resolved.head_commit || "";
   return {
     ...current,
     provider: "gongfeng",

@@ -723,19 +723,45 @@ VALUES ($1, $2, 'owner')
 		}
 	})
 
+	t.Run("rejects incomplete or mismatched Gongfeng repos", func(t *testing.T) {
+		cases := []map[string]any{
+			{
+				"url": "https://git.code.tencent.com/ChainWeaver/ida/user-center",
+			},
+			{
+				"url":            "https://git.code.tencent.com/ChainWeaver/ida/user-center",
+				"project_path":   "ChainWeaver/ida/gateway",
+				"default_branch": "main",
+			},
+		}
+		for _, repo := range cases {
+			w := httptest.NewRecorder()
+			req := newRequest("PATCH", "/api/workspaces/"+wsID, map[string]any{
+				"repos": []map[string]any{repo},
+			})
+			req = withURLParam(req, "id", wsID)
+			testHandler.UpdateWorkspace(w, req)
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("incomplete Gongfeng repo should return 400, got %d: %s", w.Code, w.Body.String())
+			}
+		}
+	})
+
 	t.Run("keeps gongfeng project resources backed by project_path", func(t *testing.T) {
 		w := httptest.NewRecorder()
 		req := newRequest("PATCH", "/api/workspaces/"+wsID, map[string]any{
 			"repos": []map[string]any{
 				{
-					"url":          "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
-					"provider":     "gongfeng",
-					"project_path": "ChainWeaver/ida/user-center",
+					"url":            "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+					"provider":       "gongfeng",
+					"project_path":   "ChainWeaver/ida/user-center",
+					"default_branch": "v5.0.0_dev",
 				},
 				{
-					"url":          "https://git.code.tencent.com/ChainWeaver/ida/user-center/-/tree/release",
-					"provider":     "gongfeng",
-					"project_path": "ChainWeaver/ida/user-center",
+					"url":            "https://git.code.tencent.com/ChainWeaver/ida/user-center/-/tree/release",
+					"provider":       "gongfeng",
+					"project_path":   "ChainWeaver/ida/user-center",
+					"default_branch": "release",
 				},
 			},
 		})
@@ -782,9 +808,10 @@ VALUES ($1, $2, 'owner')
 		req = newRequest("PATCH", "/api/workspaces/"+wsID, map[string]any{
 			"repos": []map[string]any{
 				{
-					"url":          "https://git.code.tencent.com/ChainWeaver/ida/user-center/-/tree/release",
-					"provider":     "gongfeng",
-					"project_path": "ChainWeaver/ida/user-center",
+					"url":            "https://git.code.tencent.com/ChainWeaver/ida/user-center/-/tree/release",
+					"provider":       "gongfeng",
+					"project_path":   "ChainWeaver/ida/user-center",
+					"default_branch": "release",
 				},
 			},
 		})

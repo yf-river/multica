@@ -24,11 +24,9 @@ const workspaceRef = vi.hoisted(() => ({
         project_path: "ChainWeaver/ida/user-center",
         default_branch: "v5.0.0_dev",
         head_commit: "abc1234",
-        commit_sha: "abc1234",
         connection_status: "credential_backed",
         sync_status: "synced",
         test_status: "passed",
-        resolve_status: "resolved",
       },
     ],
   } as any,
@@ -166,11 +164,9 @@ describe("RepositoriesTab", () => {
           project_path: "ChainWeaver/ida/user-center",
           default_branch: "v5.0.0_dev",
           head_commit: "abc1234",
-          commit_sha: "abc1234",
           connection_status: "credential_backed",
           sync_status: "synced",
           test_status: "passed",
-          resolve_status: "resolved",
         },
       ],
     };
@@ -242,14 +238,11 @@ describe("RepositoriesTab", () => {
       project_path: projectPathForURL(payload.url),
       default_branch: payload.default_branch || "v5.0.0_dev",
       head_commit: "def5678",
-      commit_sha: "def5678",
       connection_status: "credential_backed",
       sync_status: "synced",
       test_status: "passed",
       last_tested_at: "2026-06-28T00:00:00Z",
       last_synced_at: "2026-06-28T00:00:00Z",
-      resolve_status: "resolved",
-      last_resolved_at: "2026-06-28T00:00:00Z",
     }));
     mockUpdateProjectResource.mockImplementation(async (_projectId: string, resourceId: string, data: any) => ({
       id: resourceId,
@@ -344,11 +337,9 @@ describe("RepositoriesTab", () => {
             project_path: "ChainWeaver/ida/user-center",
             default_branch: "v5.0.0_dev",
             head_commit: "abc1234",
-            commit_sha: "abc1234",
             connection_status: "credential_backed",
             sync_status: "synced",
             test_status: "passed",
-            resolve_status: "resolved",
           },
           {
             url: "https://git.code.tencent.com/ChainWeaver/ida/gateway",
@@ -356,14 +347,11 @@ describe("RepositoriesTab", () => {
             project_path: "ChainWeaver/ida/gateway",
             default_branch: "v5.0.0_dev",
             head_commit: "def5678",
-            commit_sha: "def5678",
             connection_status: "credential_backed",
             sync_status: "synced",
             test_status: "passed",
             last_tested_at: "2026-06-28T00:00:00Z",
             last_synced_at: "2026-06-28T00:00:00Z",
-            resolve_status: "resolved",
-            last_resolved_at: "2026-06-28T00:00:00Z",
           },
         ],
       });
@@ -404,69 +392,6 @@ describe("RepositoriesTab", () => {
     expect(screen.getByRole("button", { name: "删除项目关联" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "测试并同步项目关联" })).toBeNull();
     expect(screen.queryByRole("button", { name: "停用项目关联" })).toBeNull();
-  });
-
-  it("旧资源库数据详情用项目关联字段兜底展示默认分支和工蜂项目", async () => {
-    const user = userEvent.setup();
-    workspaceRef.current = {
-      ...workspaceRef.current,
-      repos: [
-        {
-          url: "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
-        },
-      ],
-    };
-    render(<RepositoriesTab />, { wrapper: I18nWrapper });
-
-    await user.click(screen.getByRole("button", { name: "详情" }));
-
-    expect(screen.getByRole("dialog", { name: "工蜂仓库详情" })).toBeTruthy();
-    expect(screen.getAllByText("v5.0.0_dev").length).toBeGreaterThan(0);
-    expect(screen.getByText("ChainWeaver/ida/user-center")).toBeTruthy();
-    expect(screen.getByText("Commit ID")).toBeTruthy();
-    expect(screen.getByText("这条仓库是旧记录，缺少工蜂项目和默认分支等元信息。可以重新解析后补全。")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "补全信息" })).toBeTruthy();
-  });
-
-  it("旧资源库数据可以重新解析并回写 workspace.repos", async () => {
-    const user = userEvent.setup();
-    workspaceRef.current = {
-      ...workspaceRef.current,
-      repos: [
-        {
-          url: "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
-        },
-      ],
-    };
-    render(<RepositoriesTab />, { wrapper: I18nWrapper });
-
-    await user.click(screen.getByRole("button", { name: "详情" }));
-    await user.click(screen.getByRole("button", { name: "补全信息" }));
-
-    await waitFor(() => {
-      expect(mockResolveWorkspaceRepo).toHaveBeenCalledWith("workspace-1", {
-        url: "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
-      });
-      expect(mockUpdateWorkspace).toHaveBeenCalledWith("workspace-1", {
-        repos: [
-          {
-            url: "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
-            provider: "gongfeng",
-            project_path: "ChainWeaver/ida/user-center",
-            default_branch: "v5.0.0_dev",
-            head_commit: "def5678",
-            commit_sha: "def5678",
-            connection_status: "credential_backed",
-            sync_status: "synced",
-            test_status: "passed",
-            last_tested_at: "2026-06-28T00:00:00Z",
-            last_synced_at: "2026-06-28T00:00:00Z",
-            resolve_status: "resolved",
-            last_resolved_at: "2026-06-28T00:00:00Z",
-          },
-        ],
-      });
-    });
   });
 
   it("不再把仅项目侧存在的 Gongfeng 资源展示成资源库行", () => {
@@ -518,14 +443,11 @@ describe("RepositoriesTab", () => {
             project_path: "ChainWeaver/ida/user-center",
             default_branch: "v5.0.0_dev",
             head_commit: "def5678",
-            commit_sha: "def5678",
             connection_status: "credential_backed",
             sync_status: "synced",
             test_status: "passed",
             last_tested_at: "2026-06-28T00:00:00Z",
             last_synced_at: "2026-06-28T00:00:00Z",
-            resolve_status: "resolved",
-            last_resolved_at: "2026-06-28T00:00:00Z",
           },
         ],
       });
@@ -653,7 +575,6 @@ describe("RepositoriesTab", () => {
             url: "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
             default_branch: "dev_sop",
             head_commit: "def5678",
-            commit_sha: "def5678",
           }),
         ],
       });
