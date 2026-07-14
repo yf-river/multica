@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import type { Agent, Skill } from "../types";
 import {
   canAssignAgentToIssue,
-  canDeleteSkill,
   canEditAgent,
   canEditSkill,
 } from "./rules";
@@ -137,7 +136,7 @@ describe("canAssignAgentToIssue", () => {
   });
 });
 
-describe("canEditSkill / canDeleteSkill", () => {
+describe("canEditSkill", () => {
   const skill = makeSkill(ALICE);
   it("allows admins", () => {
     expect(canEditSkill(skill, { userId: BOB, role: "admin" }).allowed).toBe(
@@ -156,11 +155,5 @@ describe("canEditSkill / canDeleteSkill", () => {
     expect(
       canEditSkill(makeSkill(null), { userId: ALICE, role: "member" }).allowed,
     ).toBe(false);
-  });
-  it("canDeleteSkill mirrors canEditSkill", () => {
-    expect(canDeleteSkill(skill, { userId: ALICE, role: "member" }).allowed)
-      .toBe(true);
-    expect(canDeleteSkill(skill, { userId: BOB, role: "member" }).allowed)
-      .toBe(false);
   });
 });

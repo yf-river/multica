@@ -80,7 +80,3 @@ export function canEditSkill(skill: Skill, ctx: PermissionContext): Decision {
     "只有创建者和工作区管理员可以编辑这个技能。",
   );
 }
-
-export function canDeleteSkill(skill: Skill, ctx: PermissionContext): Decision {
-  return canEditSkill(skill, ctx);
-}

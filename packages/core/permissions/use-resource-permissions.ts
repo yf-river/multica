@@ -4,7 +4,6 @@ import type { Agent, Skill } from "../types";
 import { useCurrentMember } from "./use-current-member";
 import {
   canAssignAgentToIssue,
-  canDeleteSkill,
   canEditAgent,
   canEditSkill,
 } from "./rules";
@@ -58,6 +57,6 @@ export function useSkillPermissions(
   }
   return {
     canEdit: canEditSkill(skill, ctx),
-    canDelete: canDeleteSkill(skill, ctx),
+    canDelete: canEditSkill(skill, ctx),
   };
 }
