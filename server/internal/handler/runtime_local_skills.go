@@ -6,9 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"sort"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -141,259 +139,145 @@ type RuntimeLocalSkillImportRequest struct {
 }
 
 var errLocalSkillImportRequestConflict = errors.New("local skill import request conflict")
-var errRuntimeAsyncRequestConflict = errors.New("runtime async request conflict")
 
 // inMemoryLocalSkillListStore is the single-node implementation — good enough
 // for local dev and the in-process test suite. Production (multi-node) must
 // use RedisLocalSkillListStore so every API node agrees on the same pending
 // set.
 type inMemoryLocalSkillListStore struct {
-	mu       sync.Mutex
-	requests map[string]*RuntimeLocalSkillListRequest
+	*inMemoryRuntimeAsyncStore[RuntimeLocalSkillListRequest]
 }
 
 func NewInMemoryLocalSkillListStore() *inMemoryLocalSkillListStore {
-	return &inMemoryLocalSkillListStore{requests: make(map[string]*RuntimeLocalSkillListRequest)}
+	return &inMemoryLocalSkillListStore{newInMemoryRuntimeAsyncStore(
+		runtimeLocalSkillStoreRetention,
+		func(request *RuntimeLocalSkillListRequest) *runtimeAsyncRequestState {
+			return &request.runtimeAsyncRequestState
+		},
+		applyLocalSkillTimeout,
+	)}
 }
 
 func (s *inMemoryLocalSkillListStore) Create(_ context.Context, runtimeID, requestID string) (*RuntimeLocalSkillListRequest, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	for id, req := range s.requests {
-		if time.Since(req.CreatedAt) > runtimeLocalSkillStoreRetention {
-			delete(s.requests, id)
+	return s.create(requestID, func(now time.Time) *RuntimeLocalSkillListRequest {
+		return &RuntimeLocalSkillListRequest{
+			runtimeAsyncRequestState: runtimeAsyncRequestState{
+				ID: requestID, RuntimeID: runtimeID, Status: runtimeAsyncPending,
+				CreatedAt: now, UpdatedAt: now,
+			},
+			Supported: true,
 		}
-	}
-
-	if existing := s.requests[requestID]; existing != nil {
+	}, func(existing *RuntimeLocalSkillListRequest) error {
 		if existing.RuntimeID != runtimeID {
-			return nil, errRuntimeAsyncRequestConflict
+			return errRuntimeAsyncRequestConflict
 		}
-		return existing, nil
-	}
-	req := &RuntimeLocalSkillListRequest{
-		runtimeAsyncRequestState: runtimeAsyncRequestState{
-			ID: requestID, RuntimeID: runtimeID, Status: runtimeAsyncPending,
-			CreatedAt: time.Now(), UpdatedAt: time.Now(),
-		},
-		Supported: true,
-	}
-	s.requests[req.ID] = req
-	return req, nil
+		return nil
+	})
 }
 
 func (s *inMemoryLocalSkillListStore) Get(_ context.Context, id string) (*RuntimeLocalSkillListRequest, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	req, ok := s.requests[id]
-	if !ok {
-		return nil, nil
-	}
-	applyLocalSkillTimeout(&req.runtimeAsyncRequestState, time.Now())
-	return req, nil
+	return s.get(id), nil
 }
 
 func (s *inMemoryLocalSkillListStore) HasPending(_ context.Context, runtimeID string) (bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	now := time.Now()
-	for _, req := range s.requests {
-		applyLocalSkillTimeout(&req.runtimeAsyncRequestState, now)
-		if req.RuntimeID == runtimeID && req.Status == runtimeAsyncPending {
-			return true, nil
-		}
-	}
-	return false, nil
+	return s.hasPending(runtimeID), nil
 }
 
 func (s *inMemoryLocalSkillListStore) PopPending(_ context.Context, runtimeID string) (*RuntimeLocalSkillListRequest, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	var oldest *RuntimeLocalSkillListRequest
-	now := time.Now()
-	for _, req := range s.requests {
-		applyLocalSkillTimeout(&req.runtimeAsyncRequestState, now)
-		if req.RuntimeID == runtimeID && req.Status == runtimeAsyncPending {
-			if oldest == nil || req.CreatedAt.Before(oldest.CreatedAt) {
-				oldest = req
-			}
-		}
+	pending := s.popPending(runtimeID, 1)
+	if len(pending) == 0 {
+		return nil, nil
 	}
-	if oldest != nil {
-		oldest.Status = runtimeAsyncRunning
-		startedAt := now
-		oldest.RunStartedAt = &startedAt
-		oldest.UpdatedAt = now
-	}
-	return oldest, nil
+	return pending[0], nil
 }
 
 func (s *inMemoryLocalSkillListStore) Complete(_ context.Context, id string, skills []RuntimeLocalSkillSummary, supported bool) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if req, ok := s.requests[id]; ok {
-		req.Status = runtimeAsyncCompleted
-		req.Skills = skills
-		req.Supported = supported
-		req.UpdatedAt = time.Now()
-	}
+	s.update(id, func(request *RuntimeLocalSkillListRequest, state *runtimeAsyncRequestState, now time.Time) {
+		state.Status = runtimeAsyncCompleted
+		request.Skills = skills
+		request.Supported = supported
+		state.UpdatedAt = now
+	})
 	return nil
 }
 
 func (s *inMemoryLocalSkillListStore) Fail(_ context.Context, id string, errMsg string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if req, ok := s.requests[id]; ok {
-		req.Status = runtimeAsyncFailed
-		req.Error = errMsg
-		req.UpdatedAt = time.Now()
-	}
+	s.fail(id, errMsg)
 	return nil
 }
 
 // inMemoryLocalSkillImportStore mirrors inMemoryLocalSkillListStore for import
 // requests. Same single-node vs. multi-node caveat.
 type inMemoryLocalSkillImportStore struct {
-	mu       sync.Mutex
-	requests map[string]*RuntimeLocalSkillImportRequest
+	*inMemoryRuntimeAsyncStore[RuntimeLocalSkillImportRequest]
 }
 
 func NewInMemoryLocalSkillImportStore() *inMemoryLocalSkillImportStore {
-	return &inMemoryLocalSkillImportStore{requests: make(map[string]*RuntimeLocalSkillImportRequest)}
+	return &inMemoryLocalSkillImportStore{newInMemoryRuntimeAsyncStore(
+		runtimeLocalSkillStoreRetention,
+		func(request *RuntimeLocalSkillImportRequest) *runtimeAsyncRequestState {
+			return &request.runtimeAsyncRequestState
+		},
+		applyLocalSkillTimeout,
+	)}
 }
 
 func (s *inMemoryLocalSkillImportStore) Create(_ context.Context, input LocalSkillImportRequestInput) (*RuntimeLocalSkillImportRequest, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	for id, req := range s.requests {
-		if time.Since(req.CreatedAt) > runtimeLocalSkillStoreRetention {
-			delete(s.requests, id)
+	return s.create(input.RequestID, func(now time.Time) *RuntimeLocalSkillImportRequest {
+		return &RuntimeLocalSkillImportRequest{
+			runtimeAsyncRequestState: runtimeAsyncRequestState{
+				ID: input.RequestID, RuntimeID: input.RuntimeID, Status: runtimeAsyncPending,
+				CreatedAt: now, UpdatedAt: now,
+			},
+			SkillKey:      input.SkillKey,
+			Name:          input.Name,
+			Description:   input.Description,
+			Action:        input.Action,
+			TargetSkillID: input.TargetSkillID,
+			CreatorID:     input.CreatorID,
+			RequestHash:   input.RequestHash,
 		}
-	}
-
-	if existing := s.requests[input.RequestID]; existing != nil {
+	}, func(existing *RuntimeLocalSkillImportRequest) error {
 		if existing.RequestHash != input.RequestHash {
-			return nil, errLocalSkillImportRequestConflict
+			return errLocalSkillImportRequestConflict
 		}
-		return existing, nil
-	}
-	req := &RuntimeLocalSkillImportRequest{
-		runtimeAsyncRequestState: runtimeAsyncRequestState{
-			ID: input.RequestID, RuntimeID: input.RuntimeID, Status: runtimeAsyncPending,
-			CreatedAt: time.Now(), UpdatedAt: time.Now(),
-		},
-		SkillKey:      input.SkillKey,
-		Name:          input.Name,
-		Description:   input.Description,
-		Action:        input.Action,
-		TargetSkillID: input.TargetSkillID,
-		CreatorID:     input.CreatorID,
-		RequestHash:   input.RequestHash,
-	}
-	s.requests[req.ID] = req
-	return req, nil
+		return nil
+	})
 }
 
 func (s *inMemoryLocalSkillImportStore) Get(_ context.Context, id string) (*RuntimeLocalSkillImportRequest, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	req, ok := s.requests[id]
-	if !ok {
-		return nil, nil
-	}
-	applyLocalSkillTimeout(&req.runtimeAsyncRequestState, time.Now())
-	return req, nil
+	return s.get(id), nil
 }
 
 func (s *inMemoryLocalSkillImportStore) HasPending(_ context.Context, runtimeID string) (bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	now := time.Now()
-	for _, req := range s.requests {
-		applyLocalSkillTimeout(&req.runtimeAsyncRequestState, now)
-		if req.RuntimeID == runtimeID && req.Status == runtimeAsyncPending {
-			return true, nil
-		}
-	}
-	return false, nil
+	return s.hasPending(runtimeID), nil
 }
 
 func (s *inMemoryLocalSkillImportStore) PopPendingBatch(_ context.Context, runtimeID string, limit int) ([]*RuntimeLocalSkillImportRequest, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	now := time.Now()
-
-	// Collect all pending requests for this runtime, sorted by creation time.
-	var pending []*RuntimeLocalSkillImportRequest
-	for _, req := range s.requests {
-		applyLocalSkillTimeout(&req.runtimeAsyncRequestState, now)
-		if req.RuntimeID == runtimeID && req.Status == runtimeAsyncPending {
-			pending = append(pending, req)
-		}
-	}
-	sort.Slice(pending, func(i, j int) bool {
-		return pending[i].CreatedAt.Before(pending[j].CreatedAt)
-	})
-
-	if limit > len(pending) {
-		limit = len(pending)
-	}
-
-	result := make([]*RuntimeLocalSkillImportRequest, 0, limit)
-	for _, req := range pending[:limit] {
-		req.Status = runtimeAsyncRunning
-		startedAt := now
-		req.RunStartedAt = &startedAt
-		req.UpdatedAt = now
-		result = append(result, req)
-	}
-	return result, nil
+	return s.popPending(runtimeID, limit), nil
 }
 
 func (s *inMemoryLocalSkillImportStore) Complete(_ context.Context, id string, skill SkillResponse) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if req, ok := s.requests[id]; ok {
-		req.Status = runtimeAsyncCompleted
-		req.Skill = &skill
-		req.UpdatedAt = time.Now()
-	}
+	s.update(id, func(request *RuntimeLocalSkillImportRequest, state *runtimeAsyncRequestState, now time.Time) {
+		state.Status = runtimeAsyncCompleted
+		request.Skill = &skill
+		state.UpdatedAt = now
+	})
 	return nil
 }
 
 func (s *inMemoryLocalSkillImportStore) Conflict(_ context.Context, id string, info LocalSkillImportConflict) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if req, ok := s.requests[id]; ok {
-		req.Status = runtimeAsyncConflict
+	s.update(id, func(request *RuntimeLocalSkillImportRequest, state *runtimeAsyncRequestState, now time.Time) {
+		state.Status = runtimeAsyncConflict
 		conflict := info
-		req.Conflict = &conflict
-		req.UpdatedAt = time.Now()
-	}
+		request.Conflict = &conflict
+		state.UpdatedAt = now
+	})
 	return nil
 }
 
 func (s *inMemoryLocalSkillImportStore) Fail(_ context.Context, id string, errMsg string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if req, ok := s.requests[id]; ok {
-		req.Status = runtimeAsyncFailed
-		req.Error = errMsg
-		req.UpdatedAt = time.Now()
-	}
+	s.fail(id, errMsg)
 	return nil
 }
 

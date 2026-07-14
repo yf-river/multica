@@ -106,7 +106,7 @@ func (s *redisModelListStore) loadRequest(ctx context.Context, id string) (*Mode
 	if err != nil {
 		return nil, err
 	}
-	if applyModelListTimeout(req, time.Now()) {
+	if applyModelListTimeout(&req.runtimeAsyncRequestState, time.Now()) {
 		if err := s.persistRequest(ctx, req); err != nil {
 			return nil, err
 		}

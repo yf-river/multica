@@ -6,7 +6,6 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -118,9 +117,9 @@ type ModelListStore interface {
 // threshold catches "daemon never picked this up"; the running threshold
 // catches "daemon picked it up but the result report was lost" — without
 // the running escape, only retention sweep ends the polling loop.
-func applyModelListTimeout(req *ModelListRequest, now time.Time) bool {
+func applyModelListTimeout(req *runtimeAsyncRequestState, now time.Time) bool {
 	return applyRuntimeAsyncTimeout(
-		&req.runtimeAsyncRequestState,
+		req,
 		now,
 		modelListPendingTimeout,
 		"daemon did not respond within 30 seconds",
@@ -132,116 +131,64 @@ func applyModelListTimeout(req *ModelListRequest, now time.Time) bool {
 // (each replica gets its own map and the pending request is invisible to
 // every replica that didn't receive the POST).
 type InMemoryModelListStore struct {
-	mu       sync.Mutex
-	requests map[string]*ModelListRequest
+	*inMemoryRuntimeAsyncStore[ModelListRequest]
 }
 
 func NewInMemoryModelListStore() *InMemoryModelListStore {
-	return &InMemoryModelListStore{requests: make(map[string]*ModelListRequest)}
+	return &InMemoryModelListStore{newInMemoryRuntimeAsyncStore(
+		modelListStoreRetention,
+		func(request *ModelListRequest) *runtimeAsyncRequestState { return &request.runtimeAsyncRequestState },
+		applyModelListTimeout,
+	)}
 }
 
 func (s *InMemoryModelListStore) Create(_ context.Context, runtimeID, requestID string) (*ModelListRequest, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	// Garbage-collect stale entries so the map can't grow unbounded.
-	for id, req := range s.requests {
-		if time.Since(req.CreatedAt) > modelListStoreRetention {
-			delete(s.requests, id)
+	return s.create(requestID, func(now time.Time) *ModelListRequest {
+		return &ModelListRequest{
+			runtimeAsyncRequestState: runtimeAsyncRequestState{
+				ID: requestID, RuntimeID: runtimeID, Status: runtimeAsyncPending,
+				CreatedAt: now, UpdatedAt: now,
+			},
+			// Default to true; the daemon overrides this in the report
+			// for providers that don't support per-agent model selection.
+			Supported: true,
 		}
-	}
-
-	now := time.Now()
-	if existing := s.requests[requestID]; existing != nil {
+	}, func(existing *ModelListRequest) error {
 		if existing.RuntimeID != runtimeID {
-			return nil, errRuntimeAsyncRequestConflict
+			return errRuntimeAsyncRequestConflict
 		}
-		return existing, nil
-	}
-	req := &ModelListRequest{
-		runtimeAsyncRequestState: runtimeAsyncRequestState{
-			ID: requestID, RuntimeID: runtimeID, Status: runtimeAsyncPending,
-			CreatedAt: now, UpdatedAt: now,
-		},
-		// Default to true; the daemon overrides this in the report
-		// for providers that don't support per-agent model selection.
-		Supported: true,
-	}
-	s.requests[req.ID] = req
-	return req, nil
+		return nil
+	})
 }
 
 func (s *InMemoryModelListStore) Get(_ context.Context, id string) (*ModelListRequest, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	req, ok := s.requests[id]
-	if !ok {
-		return nil, nil
-	}
-	applyModelListTimeout(req, time.Now())
-	return req, nil
+	return s.get(id), nil
 }
 
 func (s *InMemoryModelListStore) HasPending(_ context.Context, runtimeID string) (bool, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	now := time.Now()
-	for _, req := range s.requests {
-		applyModelListTimeout(req, now)
-		if req.RuntimeID == runtimeID && req.Status == runtimeAsyncPending {
-			return true, nil
-		}
-	}
-	return false, nil
+	return s.hasPending(runtimeID), nil
 }
 
 func (s *InMemoryModelListStore) PopPending(_ context.Context, runtimeID string) (*ModelListRequest, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	var oldest *ModelListRequest
-	now := time.Now()
-	for _, req := range s.requests {
-		applyModelListTimeout(req, now)
-		if req.RuntimeID == runtimeID && req.Status == runtimeAsyncPending {
-			if oldest == nil || req.CreatedAt.Before(oldest.CreatedAt) {
-				oldest = req
-			}
-		}
+	pending := s.popPending(runtimeID, 1)
+	if len(pending) == 0 {
+		return nil, nil
 	}
-	if oldest != nil {
-		oldest.Status = runtimeAsyncRunning
-		startedAt := now
-		oldest.RunStartedAt = &startedAt
-		oldest.UpdatedAt = now
-	}
-	return oldest, nil
+	return pending[0], nil
 }
 
 func (s *InMemoryModelListStore) Complete(_ context.Context, id string, models []ModelEntry, supported bool) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if req, ok := s.requests[id]; ok {
-		req.Status = runtimeAsyncCompleted
-		req.Models = models
-		req.Supported = supported
-		req.UpdatedAt = time.Now()
-	}
+	s.update(id, func(request *ModelListRequest, state *runtimeAsyncRequestState, now time.Time) {
+		state.Status = runtimeAsyncCompleted
+		request.Models = models
+		request.Supported = supported
+		state.UpdatedAt = now
+	})
 	return nil
 }
 
 func (s *InMemoryModelListStore) Fail(_ context.Context, id string, errMsg string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if req, ok := s.requests[id]; ok {
-		req.Status = runtimeAsyncFailed
-		req.Error = errMsg
-		req.UpdatedAt = time.Now()
-	}
+	s.fail(id, errMsg)
 	return nil
 }
 
