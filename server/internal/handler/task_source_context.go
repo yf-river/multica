@@ -51,9 +51,9 @@ func (h *Handler) buildIssueSourceContext(ctx context.Context, issue db.Issue, c
 			}
 		}
 		source.TAPD = &protocol.TAPDTaskSourceContext{
-			WorkspaceID:   firstNonEmpty(metadataStringValue(metadata, "tapd_workspace_id"), metadataStringValue(metadata, "tapd_workspace")),
-			ResourceType:  firstNonEmpty(metadataStringValue(metadata, "tapd_resource_type"), metadataStringValue(metadata, "tapd_type")),
-			ResourceID:    firstNonEmpty(metadataStringValue(metadata, "tapd_resource_id"), metadataStringValue(metadata, "tapd_wiki_id")),
+			WorkspaceID:   metadataStringValue(metadata, "tapd_workspace_id"),
+			ResourceType:  metadataStringValue(metadata, "tapd_resource_type"),
+			ResourceID:    metadataStringValue(metadata, "tapd_resource_id"),
 			FetchProvider: firstNonEmpty(metadataStringValue(metadata, "source_fetch_provider"), "tapd_mcp"),
 			FetchStatus:   fetchStatus,
 			FetchError:    fetchError,

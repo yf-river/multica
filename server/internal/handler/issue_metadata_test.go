@@ -260,12 +260,13 @@ func TestCreateIssueWithMetadata(t *testing.T) {
 		"status":   "todo",
 		"priority": "medium",
 		"metadata": map[string]any{
-			"source_provider": "tapd",
-			"tapd_workspace":  "47654106",
-			"tapd_wiki_id":    "1147654106001004154",
-			"source_title":    "User quick entry requirement",
-			"source_synced":   true,
-			"source_version":  1,
+			"source_provider":    "tapd",
+			"tapd_workspace_id":  "47654106",
+			"tapd_resource_type": "markdown_wiki",
+			"tapd_resource_id":   "1147654106001004154",
+			"source_fetch_title": "User quick entry requirement",
+			"source_synced":      true,
+			"source_version":     1,
 		},
 	})
 	testHandler.CreateIssue(w, req)
@@ -297,12 +298,12 @@ func TestCreateIssueWithMetadata(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&fetched); err != nil {
 		t.Fatalf("decode get response: %v", err)
 	}
-	if fetched.Metadata["tapd_wiki_id"] != "1147654106001004154" {
+	if fetched.Metadata["tapd_resource_id"] != "1147654106001004154" {
 		t.Fatalf("metadata not persisted: %+v", fetched.Metadata)
 	}
 
 	w = httptest.NewRecorder()
-	req = newRequest("GET", `/api/issues?metadata={"source_provider":"tapd","tapd_wiki_id":"1147654106001004154"}`, nil)
+	req = newRequest("GET", `/api/issues?metadata={"source_provider":"tapd","tapd_resource_id":"1147654106001004154"}`, nil)
 	testHandler.ListIssues(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("ListIssues metadata filter: expected 200, got %d: %s", w.Code, w.Body.String())
@@ -364,7 +365,6 @@ func TestCreateIssueAutoDetectsTapdWikiSourceURL(t *testing.T) {
 		"tapd_workspace_id":                "47654106",
 		"tapd_resource_type":               "markdown_wiki",
 		"tapd_resource_id":                 "1147654106001004223",
-		"tapd_wiki_id":                     "1147654106001004223",
 		"source_fetch_provider":            "tapd_mcp",
 		"source_credential_scope":          "account",
 		"source_credential_inheritance":    "task_creator_or_trigger_user",

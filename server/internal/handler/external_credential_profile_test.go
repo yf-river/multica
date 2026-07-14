@@ -520,9 +520,10 @@ func TestCreateTapdIssueInheritsAccountCredentialProfile(t *testing.T) {
 		"status":   "todo",
 		"priority": "medium",
 		"metadata": map[string]any{
-			"source_provider": "tapd",
-			"tapd_workspace":  "47654106",
-			"tapd_wiki_id":    "1147654106001004154",
+			"source_provider":    "tapd",
+			"tapd_workspace_id":  "47654106",
+			"tapd_resource_type": "markdown_wiki",
+			"tapd_resource_id":   "1147654106001004154",
 		},
 	})
 	testHandler.CreateIssue(w, req)
@@ -567,9 +568,10 @@ func TestCreateTapdIssueMarksMissingAccountCredentialProfile(t *testing.T) {
 		"status":   "todo",
 		"priority": "medium",
 		"metadata": map[string]any{
-			"source_provider": "tapd",
-			"tapd_workspace":  "47654106",
-			"tapd_wiki_id":    "1147654106001004154",
+			"source_provider":    "tapd",
+			"tapd_workspace_id":  "47654106",
+			"tapd_resource_type": "markdown_wiki",
+			"tapd_resource_id":   "1147654106001004154",
 		},
 	})
 	testHandler.CreateIssue(w, req)

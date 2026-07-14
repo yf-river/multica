@@ -578,9 +578,6 @@ func enrichTAPDSourceMetadataFromText(metadata map[string]json.RawMessage, texts
 	setIfMissing("tapd_workspace_id", ref.WorkspaceID)
 	setIfMissing("tapd_resource_type", ref.ResourceType)
 	setIfMissing("tapd_resource_id", ref.ResourceID)
-	if ref.ResourceType == "markdown_wiki" {
-		setIfMissing("tapd_wiki_id", ref.ResourceID)
-	}
 	return out
 }
 func parseTAPDSourceURL(value string) (tapdSourceRef, bool) {

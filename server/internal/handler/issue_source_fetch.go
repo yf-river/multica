@@ -63,9 +63,9 @@ func (h *Handler) RecordIssueSourceFetch(w http.ResponseWriter, r *http.Request)
 				req.Provider = "tapd"
 			}
 			metadata := parseIssueMetadata(issue.Metadata)
-			req.WorkspaceID = firstNonEmpty(req.WorkspaceID, stringFromMetadata(metadata, "tapd_workspace_id"), stringFromMetadata(metadata, "tapd_workspace"))
+			req.WorkspaceID = firstNonEmpty(req.WorkspaceID, stringFromMetadata(metadata, "tapd_workspace_id"))
 			req.ResourceType = firstNonEmpty(req.ResourceType, stringFromMetadata(metadata, "tapd_resource_type"))
-			req.ResourceID = firstNonEmpty(req.ResourceID, stringFromMetadata(metadata, "tapd_resource_id"), stringFromMetadata(metadata, "tapd_wiki_id"))
+			req.ResourceID = firstNonEmpty(req.ResourceID, stringFromMetadata(metadata, "tapd_resource_id"))
 			req.URL = firstNonEmpty(req.URL, stringFromMetadata(metadata, "source_url"))
 		} else {
 			req = fetched
@@ -297,9 +297,9 @@ func (h *Handler) autoFetchTAPDSource(ctx context.Context, userID string, req Re
 	if provider != externalCredentialProviderTAPD {
 		return req, fmt.Errorf("auto_fetch currently supports tapd only")
 	}
-	workspaceID := firstNonEmpty(req.WorkspaceID, stringFromMetadata(metadata, "tapd_workspace_id"), stringFromMetadata(metadata, "tapd_workspace"))
+	workspaceID := firstNonEmpty(req.WorkspaceID, stringFromMetadata(metadata, "tapd_workspace_id"))
 	resourceType := firstNonEmpty(req.ResourceType, stringFromMetadata(metadata, "tapd_resource_type"))
-	resourceID := firstNonEmpty(req.ResourceID, stringFromMetadata(metadata, "tapd_resource_id"), stringFromMetadata(metadata, "tapd_wiki_id"))
+	resourceID := firstNonEmpty(req.ResourceID, stringFromMetadata(metadata, "tapd_resource_id"))
 	sourceURL := firstNonEmpty(req.URL, stringFromMetadata(metadata, "source_url"))
 	if ref, ok := parseTAPDSourceURL(sourceURL); ok {
 		sourceURL = ref.URL

@@ -64,18 +64,12 @@ function getTAPDSourceReference(issue: Issue, t: IssueDetailT): IssueSourceRefer
   const resourceType = firstMetadataText(issue, [
     "tapd_resource_type",
     "source_fetch_resource_type",
-    "tapd_type",
   ]);
   const sourceId = firstMetadataText(issue, [
     "tapd_resource_id",
     "source_fetch_resource_id",
-    "tapd_wiki_id",
   ]);
-  const title = firstMetadataText(issue, [
-    "source_fetch_title",
-    "tapd_title",
-    "source_title",
-  ]) || t(($) => $.detail.tapd_source_title_fallback);
+  const title = metadataText(issue, "source_fetch_title") || t(($) => $.detail.tapd_source_title_fallback);
   const summary = firstMetadataText(issue, [
     "source_fetch_summary",
     "source_fetch_body_excerpt",

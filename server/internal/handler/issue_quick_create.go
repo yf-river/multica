@@ -423,9 +423,6 @@ func (h *Handler) quickCreateTAPDSourceIssue(ctx context.Context, w http.Respons
 	setRawMetadataString(metadata, "tapd_workspace_id", p.Ref.WorkspaceID)
 	setRawMetadataString(metadata, "tapd_resource_type", p.Ref.ResourceType)
 	setRawMetadataString(metadata, "tapd_resource_id", p.Ref.ResourceID)
-	if p.Ref.ResourceType == "markdown_wiki" {
-		setRawMetadataString(metadata, "tapd_wiki_id", p.Ref.ResourceID)
-	}
 	metadata = h.enrichSourceCredentialMetadata(ctx, metadata, p.RequesterIDRaw)
 	for key, value := range sourceFetchMetadata(fetched) {
 		raw, _ := json.Marshal(value)
