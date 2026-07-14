@@ -136,8 +136,6 @@ export type {
 export type {
   PromptEvaluationAsset,
   PromptEvaluationRun,
-  PromptEvaluationTrial,
-  PromptEvaluationTaskUsage,
   PromptEvaluationRunEvidence,
   PromptEvaluationEvidenceSnapshot,
   PromptEvaluationEvidenceSnapshotType,

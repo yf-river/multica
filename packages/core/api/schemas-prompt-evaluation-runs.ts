@@ -39,40 +39,6 @@ export const PromptEvaluationRunSchema = z.object({
   reviewed_at: z.string().default(""),
 }).loose();
 
-const PromptEvaluationTrialSchema = z.object({
-  id: z.string(),
-  run_id: z.string(),
-  workspace_id: z.string(),
-  asset_id: z.string(),
-  case_index: z.number().default(0),
-  case_name: z.string().default(""),
-  status: z.enum(["待执行", "通过", "未通过", "失败", "已跳过", "需人工复核"]),
-  input: z.record(z.string(), z.unknown()).default({}),
-  expected: z.record(z.string(), z.unknown()).default({}),
-  output: z.unknown().default({}),
-  input_tokens: z.number().default(0),
-  output_tokens: z.number().default(0),
-  duration_ms: z.number().default(0),
-  failure_reason: z.string().default(""),
-  evidence: z.record(z.string(), z.unknown()).default({}),
-  created_at: z.string().default(""),
-}).loose();
-
-const PromptEvaluationTaskUsageSchema = z.object({
-  id: z.string(),
-  task_id: z.string(),
-  provider: z.string().default(""),
-  model: z.string().default(""),
-  input_tokens: z.number().default(0),
-  output_tokens: z.number().default(0),
-  cache_read_tokens: z.number().default(0),
-  cache_write_tokens: z.number().default(0),
-  estimated_cost: z.number().optional(),
-  priced: z.boolean().optional(),
-  created_at: z.string().default(""),
-  updated_at: z.string().default(""),
-}).loose();
-
 const PromptEvaluationTaskMessageSchema = z.object({
   task_id: z.string(),
   issue_id: z.string().default(""),
@@ -105,8 +71,8 @@ const PromptEvaluationToolCallChainSchema = z.object({
 
 export const PromptEvaluationRunEvidenceSchema = z.object({
   run: PromptEvaluationRunSchema,
-  trials: z.array(PromptEvaluationTrialSchema).default([]),
-  task_usage: z.array(PromptEvaluationTaskUsageSchema).default([]),
+  trials: z.array(z.record(z.string(), z.unknown())).default([]),
+  task_usage: z.array(z.record(z.string(), z.unknown())).default([]),
   task_messages: z.array(PromptEvaluationTaskMessageSchema).default([]),
   trace_events: z.array(TaskTraceEventSchema).default([]),
   execution_spans: z.array(z.record(z.string(), z.unknown())).default([]),

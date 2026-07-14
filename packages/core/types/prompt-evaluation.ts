@@ -69,40 +69,6 @@ export interface PromptEvaluationRun {
   reviewed_at: string;
 }
 
-export interface PromptEvaluationTrial {
-  id: string;
-  run_id: string;
-  workspace_id: string;
-  asset_id: string;
-  case_index: number;
-  case_name: string;
-  status: "待执行" | "通过" | "未通过" | "失败" | "已跳过" | "需人工复核";
-  input: Record<string, unknown>;
-  expected: Record<string, unknown>;
-  output: unknown;
-  input_tokens: number;
-  output_tokens: number;
-  duration_ms: number;
-  failure_reason: string;
-  evidence: Record<string, unknown>;
-  created_at: string;
-}
-
-export interface PromptEvaluationTaskUsage {
-  id: string;
-  task_id: string;
-  provider: string;
-  model: string;
-  input_tokens: number;
-  output_tokens: number;
-  cache_read_tokens: number;
-  cache_write_tokens: number;
-  estimated_cost?: number;
-  priced?: boolean;
-  created_at: string;
-  updated_at: string;
-}
-
 export interface PromptEvaluationToolCallChain {
   id: string;
   task_id?: string;
@@ -122,8 +88,8 @@ export interface PromptEvaluationToolCallChain {
 
 export interface PromptEvaluationRunEvidence {
   run: PromptEvaluationRun;
-  trials: PromptEvaluationTrial[];
-  task_usage: PromptEvaluationTaskUsage[];
+  trials: Array<Record<string, unknown>>;
+  task_usage: Array<Record<string, unknown>>;
   task_messages: TaskMessagePayload[];
   trace_events: TaskTraceEvent[];
   execution_spans: Record<string, unknown>[];

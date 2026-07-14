@@ -35,8 +35,10 @@ import {
   PromptEvaluationOptimizationCandidateListResponseSchema,
 } from "./schemas-prompt-evaluation-optimization";
 import {
+  PromptEvaluationRunEvidenceSchema,
   PromptEvaluationRunListResponseSchema,
 } from "./schemas-prompt-evaluation-runs";
+import { EMPTY_PROMPT_EVALUATION_RUN } from "./schemas-prompt-evaluation-empty";
 import {
   PromptLibraryItemListResponseSchema,
 } from "./schemas-prompt-library";
@@ -161,6 +163,28 @@ describe("domain response schema fallbacks", () => {
       fallback,
       { endpoint: "GET /api/prompt-evaluation-runs" },
     )).toBe(fallback);
+  });
+
+  it("preserves opaque trial and usage evidence without projecting unused fields", () => {
+    const trial = { id: "trial-1", future_field: { score: 1 } };
+    const usage = { provider_payload: ["kept", 2] };
+    const parsed = PromptEvaluationRunEvidenceSchema.parse({
+      run: {
+        ...EMPTY_PROMPT_EVALUATION_RUN,
+        id: "run-1",
+        workspace_id: "workspace-1",
+        asset_id: "asset-1",
+      },
+      trials: [trial],
+      task_usage: [usage],
+    });
+
+    expect(parsed.trials).toEqual([trial]);
+    expect(parsed.task_usage).toEqual([usage]);
+    expect(PromptEvaluationRunEvidenceSchema.safeParse({
+      ...parsed,
+      trials: ["not-an-evidence-object"],
+    }).success).toBe(false);
   });
 
   it("rejects malformed evaluation cases", () => {
