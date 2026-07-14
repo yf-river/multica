@@ -9,29 +9,12 @@ import type {
 } from "../types";
 import { NonEmptyStringSchema } from "./schemas-internal";
 // Runtime response contracts for prompt library.
-const PromptLibraryVariableSchema = z.object({
-  name: z.string(),
-  label: z.string().optional(),
-  required: z.boolean().optional(),
-  description: z.string().optional(),
-  default_value: z.string().optional(),
-}).loose();
-
 export const PromptLibraryItemSchema = z.object({
   id: NonEmptyStringSchema,
-  workspace_id: NonEmptyStringSchema,
-  project_id: z.string().nullable().optional().transform((v) => v ?? null),
   name: z.string(),
   description: z.string().default(""),
-  prompt_type: z.string().default("text"),
   content: z.string(),
-  variables: z.array(PromptLibraryVariableSchema).default([]),
-  tags: z.array(z.string()).default([]),
-  status: z.enum(["启用", "归档"]).default("启用"),
   version: z.number().default(1),
-  created_by: z.string().nullable().optional().transform((v) => v ?? null),
-  created_at: z.string(),
-  updated_at: z.string(),
 }).loose();
 
 export const PromptLibraryItemListResponseSchema = z.object({
@@ -41,20 +24,12 @@ export const PromptLibraryItemListResponseSchema = z.object({
 
 const PromptLibraryVersionSchema = z.object({
   id: NonEmptyStringSchema,
-  prompt_id: NonEmptyStringSchema,
-  workspace_id: NonEmptyStringSchema,
-  project_id: z.string().nullable().optional().transform((v) => v ?? null),
   version: z.number().default(1),
   name: z.string(),
   description: z.string().default(""),
-  prompt_type: z.string().default("text"),
   content: z.string(),
-  variables: z.array(PromptLibraryVariableSchema).default([]),
-  tags: z.array(z.string()).default([]),
-  source: z.enum(["手动创建", "手动更新", "优化候选发布"]).catch("手动创建").default("手动创建"),
   source_candidate_id: z.string().nullable().optional().transform((v) => v ?? null),
   change_note: z.string().default(""),
-  created_by: z.string().nullable().optional().transform((v) => v ?? null),
   created_at: z.string(),
 }).loose();
 
@@ -70,19 +45,11 @@ export const CreatePromptLibraryVersionResponseSchema = z.object({
 
 export const PromptLibraryTrialSchema = z.object({
   id: NonEmptyStringSchema,
-  workspace_id: NonEmptyStringSchema,
-  prompt_id: NonEmptyStringSchema,
-  version_id: NonEmptyStringSchema,
   agent_id: NonEmptyStringSchema,
-  chat_session_id: z.string().nullable().optional().transform((v) => v ?? null),
-  task_id: z.string().nullable().optional().transform((v) => v ?? null),
-  rendered_message: z.string().default(""),
   variables: z.record(z.string(), z.unknown()).default({}),
   status: z.string().default("queued"),
   output_preview: z.string().default(""),
-  created_by: z.string().nullable().optional().transform((v) => v ?? null),
   created_at: z.string(),
-  updated_at: z.string(),
 }).loose();
 
 export const PromptLibraryTrialListResponseSchema = z.object({
@@ -92,55 +59,30 @@ export const PromptLibraryTrialListResponseSchema = z.object({
 
 export const EMPTY_PROMPT_LIBRARY_ITEM: PromptLibraryItem = {
   id: "",
-  workspace_id: "",
-  project_id: null,
   name: "",
   description: "",
-  prompt_type: "text",
   content: "",
-  variables: [],
-  tags: [],
-  status: "启用",
   version: 1,
-  created_by: null,
-  created_at: "",
-  updated_at: "",
 };
 
 export const EMPTY_PROMPT_LIBRARY_VERSION: PromptLibraryVersion = {
   id: "",
-  prompt_id: "",
-  workspace_id: "",
-  project_id: null,
   version: 1,
   name: "",
   description: "",
-  prompt_type: "text",
   content: "",
-  variables: [],
-  tags: [],
-  source: "手动创建",
   source_candidate_id: null,
   change_note: "",
-  created_by: null,
   created_at: "",
 };
 
 export const EMPTY_PROMPT_LIBRARY_TRIAL: PromptLibraryTrial = {
   id: "",
-  workspace_id: "",
-  prompt_id: "",
-  version_id: "",
   agent_id: "",
-  chat_session_id: null,
-  task_id: null,
-  rendered_message: "",
   variables: {},
   status: "queued",
   output_preview: "",
-  created_by: null,
   created_at: "",
-  updated_at: "",
 };
 
 const AgentPlaygroundExperimentSchema = z.object({

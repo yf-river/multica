@@ -216,28 +216,18 @@ describe("SquadListSchema member preview drift", () => {
 describe("PromptLibraryItemSchema", () => {
   const basePrompt = {
     id: "prompt-1",
-    workspace_id: "ws-1",
-    project_id: null,
     name: "user-center 需求澄清提示词",
     description: "小队队长使用",
-    prompt_type: "需求澄清",
     content: "请澄清目标、边界、验收条件和风险。",
-    variables: [{ name: "issue_title", label: "任务标题", required: true }],
-    tags: ["user-center", "小队"],
-    status: "启用",
     version: 1,
-    created_by: "user-1",
-    created_at: "2026-06-21T00:00:00Z",
-    updated_at: "2026-06-21T00:00:00Z",
   };
 
-  it("preserves Chinese prompt library fields", () => {
+  it("parses the current prompt library projection", () => {
     const parsed = PromptLibraryItemSchema.parse(basePrompt);
     expect(parsed.name).toBe("user-center 需求澄清提示词");
-    expect(parsed.prompt_type).toBe("需求澄清");
-    expect(parsed.status).toBe("启用");
-    expect(parsed.variables[0]?.label).toBe("任务标题");
-    expect(parsed.tags).toEqual(["user-center", "小队"]);
+    expect(parsed.description).toBe("小队队长使用");
+    expect(parsed.content).toContain("验收条件");
+    expect(parsed.version).toBe(1);
   });
 
   it("defaults list response shape", () => {

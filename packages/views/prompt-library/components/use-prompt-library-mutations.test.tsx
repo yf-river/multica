@@ -52,19 +52,10 @@ vi.mock("../../i18n/use-t", () => ({
 
 const prompt: PromptLibraryItem = {
   id: "prompt-1",
-  workspace_id: "workspace-1",
-  project_id: null,
   name: "登录失败分析",
   description: "",
-  prompt_type: "text",
   content: "分析登录失败原因",
-  variables: [],
-  tags: [],
-  status: "启用",
   version: 1,
-  created_by: null,
-  created_at: "2026-07-10T00:00:00Z",
-  updated_at: "2026-07-10T00:00:00Z",
 };
 
 function renderController() {

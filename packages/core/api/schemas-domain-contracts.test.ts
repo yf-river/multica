@@ -45,7 +45,6 @@ import {
 } from "./schemas-prompt-evaluation-runs";
 import {
   PromptLibraryItemListResponseSchema,
-  PromptLibraryVersionListResponseSchema,
 } from "./schemas-prompt-library";
 import {
   EMPTY_RUNTIME_PROFILE_LIST_RESPONSE,
@@ -88,23 +87,6 @@ describe("domain response schema fallbacks", () => {
   it("rejects incomplete issue-label mutation responses", () => {
     expect(IssueLabelListSchema.safeParse({}).success).toBe(false);
   });
-  it("maps unknown prompt version sources to the current creation source", () => {
-    const parsed = PromptLibraryVersionListResponseSchema.parse({
-      items: [{
-        id: "version-1",
-        prompt_id: "prompt-1",
-        workspace_id: "workspace-1",
-        version: 1,
-        name: "Current prompt",
-        content: "Current content",
-        source: "removed-source",
-        created_at: "2026-07-12T00:00:00Z",
-      }],
-      total: 1,
-    });
-    expect(parsed.items[0]?.source).toBe("手动创建");
-  });
-
   it("requires the current Lark installation contract", () => {
     expect(LarkInstallationListResponseSchema.safeParse({
       configured: true,

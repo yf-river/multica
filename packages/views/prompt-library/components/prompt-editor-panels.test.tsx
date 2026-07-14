@@ -8,38 +8,21 @@ import { PromptTrialPanel, PromptVersionHistory } from "./prompt-editor-panels";
 
 const prompt = {
   id: "prompt-1",
-  workspace_id: "workspace-1",
-  project_id: null,
   name: "登录排查",
   description: "",
-  prompt_type: "text",
   content: "分析 {{issue}}",
-  variables: [],
-  tags: [],
-  status: "启用",
   version: 5,
-  created_by: null,
-  created_at: "2026-07-01T00:00:00Z",
-  updated_at: "2026-07-01T00:00:00Z",
 } satisfies PromptLibraryItem;
 
 function version(number: number): PromptLibraryVersion {
   return {
     id: `version-${number}`,
-    prompt_id: prompt.id,
-    workspace_id: prompt.workspace_id,
-    project_id: null,
     version: number,
     name: prompt.name,
     description: "",
-    prompt_type: "text",
     content: `版本 ${number} 内容`,
-    variables: [],
-    tags: [],
-    source: "手动更新",
     source_candidate_id: null,
     change_note: "",
-    created_by: null,
     created_at: `2026-07-0${number}T00:00:00Z`,
   };
 }
@@ -47,19 +30,11 @@ function version(number: number): PromptLibraryVersion {
 function trial(number: number): PromptLibraryTrial {
   return {
     id: `trial-${number}`,
-    workspace_id: prompt.workspace_id,
-    prompt_id: prompt.id,
-    version_id: "version-5",
     agent_id: number === 1 ? "agent-1" : "missing-agent",
-    chat_session_id: null,
-    task_id: null,
-    rendered_message: "",
     variables: number === 1 ? { issue: "登录失败" } : {},
     status: "completed",
     output_preview: `结果 ${number}`,
-    created_by: null,
     created_at: `2026-07-${String(number).padStart(2, "0")}T00:00:00Z`,
-    updated_at: `2026-07-${String(number).padStart(2, "0")}T00:00:00Z`,
   };
 }
 
