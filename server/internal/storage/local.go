@@ -128,6 +128,9 @@ func (s *LocalStorage) DeleteKeys(ctx context.Context, keys []string) {
 }
 
 func (s *LocalStorage) Upload(ctx context.Context, key string, data []byte, contentType string, filename string) (string, error) {
+	if strings.TrimSpace(filename) == "" {
+		return "", errors.New("local Upload: filename is required")
+	}
 	dest, err := s.objectPath(key)
 	if err != nil {
 		return "", fmt.Errorf("local Upload: %w", err)
@@ -146,14 +149,11 @@ func (s *LocalStorage) Upload(ctx context.Context, key string, data []byte, cont
 	}
 	// The sidecar and object form one upload result. If metadata cannot be
 	// persisted, remove the just-written object and fail instead of returning a
-	// URL whose download name/content type no longer matches the request. Skip
-	// the sidecar only when there is no filename to preserve.
-	if filename != "" {
-		body, _ := json.Marshal(localMeta{Filename: filename, ContentType: contentType})
-		if err := os.WriteFile(dest+metaSuffix, body, 0644); err != nil {
-			cleanupErr := os.Remove(dest)
-			return "", errors.Join(fmt.Errorf("local storage metadata WriteFile: %w", err), cleanupErr)
-		}
+	// URL whose download name/content type no longer matches the request.
+	body, _ := json.Marshal(localMeta{Filename: filename, ContentType: contentType})
+	if err := os.WriteFile(dest+metaSuffix, body, 0644); err != nil {
+		cleanupErr := os.Remove(dest)
+		return "", errors.Join(fmt.Errorf("local storage metadata WriteFile: %w", err), cleanupErr)
 	}
 
 	if s.baseURL != "" {
@@ -175,7 +175,7 @@ func (s *LocalStorage) ServeFile(w http.ResponseWriter, r *http.Request, filenam
 	filePath, err := s.objectPath(filename)
 	// filepath.Join cleans the path but doesn't enforce containment, so a
 	// caller passing "../etc/passwd" lands outside uploadDir. http.ServeFile
-	// rejects such requests on r.URL.Path, but readLocalMeta runs first —
+	// rejects such requests on r.URL.Path, but the sidecar read happens first —
 	// without this guard a crafted path could trigger a stray disk read on
 	// an arbitrary <some-path>.meta.json before the 400 lands.
 	if err != nil {
@@ -184,15 +184,20 @@ func (s *LocalStorage) ServeFile(w http.ResponseWriter, r *http.Request, filenam
 	}
 	slog.Info("serving file", "filename", filename, "filepath", filePath)
 
-	// Mirror the S3 Upload path: when sidecar metadata exists for this key,
-	// set Content-Disposition with the original uploaded filename. Without
-	// it, browsers download the file under the storage-key basename (the
-	// UUID + extension) instead of the human-readable name the uploader
-	// chose. Uploads from before the sidecar landed have no .meta.json on
-	// disk and fall through to the existing behavior.
-	if meta, ok := readLocalMeta(filePath); ok && meta.Filename != "" {
-		w.Header().Set("Content-Disposition", ContentDisposition(meta.ContentType, meta.Filename))
+	body, err := os.ReadFile(filePath + metaSuffix)
+	var meta localMeta
+	if err == nil {
+		err = json.Unmarshal(body, &meta)
 	}
+	if err == nil && (strings.TrimSpace(meta.Filename) == "" || strings.TrimSpace(meta.ContentType) == "") {
+		err = errors.New("sidecar filename and content type are required")
+	}
+	if err != nil {
+		slog.Error("failed to read local storage metadata", "filename", filename, "error", err)
+		http.Error(w, "attachment metadata unavailable", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Disposition", ContentDisposition(meta.ContentType, meta.Filename))
 
 	// Use http.ServeFile which has built-in path traversal protection
 	// It sanitizes the path and prevents access outside the directory
@@ -244,16 +249,4 @@ func isUnder(dir, target string) bool {
 		return false
 	}
 	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
-}
-
-func readLocalMeta(filePath string) (localMeta, bool) {
-	body, err := os.ReadFile(filePath + metaSuffix)
-	if err != nil {
-		return localMeta{}, false
-	}
-	var meta localMeta
-	if err := json.Unmarshal(body, &meta); err != nil {
-		return localMeta{}, false
-	}
-	return meta, true
 }

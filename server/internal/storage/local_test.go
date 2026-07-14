@@ -368,11 +368,7 @@ func TestLocalStorage_ServeFile_ContentDispositionFromSidecar(t *testing.T) {
 	}
 }
 
-// TestLocalStorage_ServeFile_NoSidecarFallback documents the graceful
-// degradation path: files uploaded before the sidecar landed (or written
-// out-of-band) have no .meta.json on disk and ServeFile must not set
-// Content-Disposition — leaving the existing pre-fix behavior intact.
-func TestLocalStorage_ServeFile_NoSidecarFallback(t *testing.T) {
+func TestLocalStorage_ServeFile_RequiresSidecar(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("LOCAL_UPLOAD_DIR", tmpDir)
 
@@ -381,7 +377,7 @@ func TestLocalStorage_ServeFile_NoSidecarFallback(t *testing.T) {
 		t.Fatal("NewLocalStorageFromEnv returned nil")
 	}
 
-	key := "legacy-no-sidecar.txt"
+	key := "missing-sidecar.txt"
 	if err := os.WriteFile(filepath.Join(tmpDir, key), []byte("body"), 0644); err != nil {
 		t.Fatalf("seed write failed: %v", err)
 	}
@@ -390,8 +386,8 @@ func TestLocalStorage_ServeFile_NoSidecarFallback(t *testing.T) {
 	rec := httptest.NewRecorder()
 	store.ServeFile(rec, req, key)
 
-	if got := rec.Header().Get("Content-Disposition"); got != "" {
-		t.Errorf("Content-Disposition = %q, want empty (no sidecar fallback)", got)
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("status = %d, want %d", rec.Code, http.StatusInternalServerError)
 	}
 }
 
@@ -429,7 +425,7 @@ func TestLocalStorage_ServeFile_RejectsSidecarSuffix(t *testing.T) {
 
 // TestLocalStorage_ServeFile_RejectsPathTraversal documents that a key
 // pointing outside uploadDir is rejected before any sidecar read. Without
-// this guard, readLocalMeta would attempt a disk read at <some-path>.meta.json
+// this guard, ServeFile would attempt a disk read at <some-path>.meta.json
 // before http.ServeFile's own ".." check fires on r.URL.Path.
 func TestLocalStorage_ServeFile_RejectsPathTraversal(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -465,11 +461,7 @@ func TestLocalStorage_ServeFile_RejectsPathTraversal(t *testing.T) {
 	}
 }
 
-// TestLocalStorage_Upload_SkipsSidecarWhenFilenameEmpty verifies the tighter
-// Upload gate: a write with no filename has nothing useful to preserve, so
-// we shouldn't litter the upload directory with content-type-only sidecars
-// that ServeFile would ignore anyway.
-func TestLocalStorage_Upload_SkipsSidecarWhenFilenameEmpty(t *testing.T) {
+func TestLocalStorage_Upload_RejectsEmptyFilename(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("LOCAL_UPLOAD_DIR", tmpDir)
 
@@ -478,14 +470,13 @@ func TestLocalStorage_Upload_SkipsSidecarWhenFilenameEmpty(t *testing.T) {
 		t.Fatal("NewLocalStorageFromEnv returned nil")
 	}
 
-	ctx := context.Background()
 	key := "no-filename.bin"
-	if _, err := store.Upload(ctx, key, []byte("body"), "application/octet-stream", ""); err != nil {
-		t.Fatalf("Upload failed: %v", err)
+	if _, err := store.Upload(context.Background(), key, []byte("body"), "application/octet-stream", ""); err == nil {
+		t.Fatal("Upload should reject an empty filename")
 	}
 
-	if _, err := os.Stat(filepath.Join(tmpDir, key+metaSuffix)); !os.IsNotExist(err) {
-		t.Errorf("sidecar should not exist when filename is empty, got err=%v", err)
+	if _, err := os.Stat(filepath.Join(tmpDir, key)); !os.IsNotExist(err) {
+		t.Errorf("object should not exist after rejected upload, got err=%v", err)
 	}
 }
 
