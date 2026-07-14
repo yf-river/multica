@@ -1,7 +1,7 @@
 import { queryOptions } from "@tanstack/react-query";
 import { api } from "../api";
 
-export const dashboardKeys = {
+const dashboardKeys = {
   all: (wsId: string) => ["dashboard", wsId] as const,
   daily: (
     wsId: string,
