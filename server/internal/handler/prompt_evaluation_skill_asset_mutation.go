@@ -30,8 +30,8 @@ func executePromptEvaluationSkillAssetMutation[Result, Response any](
 	if !ok {
 		return
 	}
-	replay, found, err := loadPromptEvaluationSkillAssetMutationReplay(
-		r.Context(), h, asset, actorID, resourceType, idempotencyKey, requestHash, isValid,
+	replay, found, err := loadResourceCreateReplay(
+		r.Context(), h.Queries, asset.WorkspaceID, actorID, resourceType, idempotencyKey, requestHash, isValid,
 	)
 	if err != nil {
 		writePromptEvaluationSkillAssetMutationError(w, err, operation)
@@ -95,21 +95,6 @@ func writePromptEvaluationSkillAssetMutationError(w http.ResponseWriter, err err
 	writeError(w, http.StatusInternalServerError, "failed to persist "+operation)
 }
 
-func loadPromptEvaluationSkillAssetMutationReplay[T any](
-	ctx context.Context,
-	h *Handler,
-	asset db.PromptEvaluationAsset,
-	actorID pgtype.UUID,
-	resourceType string,
-	idempotencyKey pgtype.UUID,
-	requestHash string,
-	isValid func(T) bool,
-) (T, bool, error) {
-	return loadResourceCreateReplay(
-		ctx, h.Queries, asset.WorkspaceID, actorID, resourceType, idempotencyKey, requestHash, isValid,
-	)
-}
-
 func persistPromptEvaluationSkillAssetMutation[T any](
 	ctx context.Context,
 	h *Handler,
@@ -131,15 +116,13 @@ func persistPromptEvaluationSkillAssetMutation[T any](
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(ctx, qtx, asset.WorkspaceID, actorID, resourceType, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		_ = tx.Rollback(ctx)
-		replay, found, replayErr := loadPromptEvaluationSkillAssetMutationReplay(
-			ctx, h, asset, actorID, resourceType, idempotencyKey, requestHash, isValid,
-		)
+		replay, replayErr := loadResourceCreateReplayAfterConflict(ctx, tx, func() (T, bool, error) {
+			return loadResourceCreateReplay(
+				ctx, h.Queries, asset.WorkspaceID, actorID, resourceType, idempotencyKey, requestHash, isValid,
+			)
+		})
 		if replayErr != nil {
 			return zero, replayErr
-		}
-		if !found {
-			return zero, fmt.Errorf("%s replay disappeared after reservation conflict", resourceType)
 		}
 		return replay, nil
 	}

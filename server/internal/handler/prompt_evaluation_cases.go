@@ -936,11 +936,14 @@ func (h *Handler) CreatePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	replay, found, replayErr := loadResourceCreateReplay(
-		r.Context(), h.Queries, workspaceUUID, actorID, resourceTypePromptEvalCase,
-		idempotencyKey, requestHash,
-		func(response PromptEvaluationCaseResponse) bool { return response.ID != "" },
-	)
+	loadReplay := func() (PromptEvaluationCaseResponse, bool, error) {
+		return loadResourceCreateReplay(
+			r.Context(), h.Queries, workspaceUUID, actorID, resourceTypePromptEvalCase,
+			idempotencyKey, requestHash,
+			func(response PromptEvaluationCaseResponse) bool { return response.ID != "" },
+		)
+	}
+	replay, found, replayErr := loadReplay()
 	if replayErr != nil {
 		writePromptEvaluationCaseCreateReplayError(w, replayErr)
 		return
@@ -958,16 +961,8 @@ func (h *Handler) CreatePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, actorID, resourceTypePromptEvalCase, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		_ = tx.Rollback(r.Context())
-		replay, found, replayErr = loadResourceCreateReplay(
-			r.Context(), h.Queries, workspaceUUID, actorID, resourceTypePromptEvalCase,
-			idempotencyKey, requestHash,
-			func(response PromptEvaluationCaseResponse) bool { return response.ID != "" },
-		)
-		if replayErr != nil || !found {
-			if replayErr == nil {
-				replayErr = errors.New("prompt evaluation case replay disappeared after conflict")
-			}
+		replay, replayErr = loadResourceCreateReplayAfterConflict(r.Context(), tx, loadReplay)
+		if replayErr != nil {
 			writePromptEvaluationCaseCreateReplayError(w, replayErr)
 			return
 		}

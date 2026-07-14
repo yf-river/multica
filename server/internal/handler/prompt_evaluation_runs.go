@@ -552,11 +552,14 @@ func (h *Handler) CreatePromptEvaluationEvidenceSnapshot(w http.ResponseWriter, 
 	if !ok {
 		return
 	}
-	replay, found, replayErr := loadResourceCreateReplay(
-		r.Context(), h.Queries, workspaceUUID, actorID, resourceTypePromptEvidenceSnapshot,
-		idempotencyKey, requestHash,
-		func(response PromptEvaluationEvidenceSnapshotResponse) bool { return response.ID != "" },
-	)
+	loadReplay := func() (PromptEvaluationEvidenceSnapshotResponse, bool, error) {
+		return loadResourceCreateReplay(
+			r.Context(), h.Queries, workspaceUUID, actorID, resourceTypePromptEvidenceSnapshot,
+			idempotencyKey, requestHash,
+			func(response PromptEvaluationEvidenceSnapshotResponse) bool { return response.ID != "" },
+		)
+	}
+	replay, found, replayErr := loadReplay()
 	if replayErr != nil {
 		writePromptEvaluationEvidenceSnapshotReplayError(w, replayErr)
 		return
@@ -583,16 +586,8 @@ func (h *Handler) CreatePromptEvaluationEvidenceSnapshot(w http.ResponseWriter, 
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, actorID, resourceTypePromptEvidenceSnapshot, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		_ = tx.Rollback(r.Context())
-		replay, found, replayErr = loadResourceCreateReplay(
-			r.Context(), h.Queries, workspaceUUID, actorID, resourceTypePromptEvidenceSnapshot,
-			idempotencyKey, requestHash,
-			func(response PromptEvaluationEvidenceSnapshotResponse) bool { return response.ID != "" },
-		)
-		if replayErr != nil || !found {
-			if replayErr == nil {
-				replayErr = errors.New("prompt evaluation evidence snapshot replay disappeared after conflict")
-			}
+		replay, replayErr = loadResourceCreateReplayAfterConflict(r.Context(), tx, loadReplay)
+		if replayErr != nil {
 			writePromptEvaluationEvidenceSnapshotReplayError(w, replayErr)
 			return
 		}
@@ -661,11 +656,14 @@ func (h *Handler) CreatePromptEvaluationAssetEvidenceSnapshots(w http.ResponseWr
 	if !ok {
 		return
 	}
-	replay, found, replayErr := loadResourceCreateReplay(
-		r.Context(), h.Queries, asset.WorkspaceID, actorID, resourceTypePromptEvidenceBatch,
-		idempotencyKey, requestHash,
-		func(response PromptEvaluationAssetEvidenceSnapshotResponse) bool { return response.AssetID != "" },
-	)
+	loadReplay := func() (PromptEvaluationAssetEvidenceSnapshotResponse, bool, error) {
+		return loadResourceCreateReplay(
+			r.Context(), h.Queries, asset.WorkspaceID, actorID, resourceTypePromptEvidenceBatch,
+			idempotencyKey, requestHash,
+			func(response PromptEvaluationAssetEvidenceSnapshotResponse) bool { return response.AssetID != "" },
+		)
+	}
+	replay, found, replayErr := loadReplay()
 	if replayErr != nil {
 		writePromptEvaluationEvidenceBatchReplayError(w, replayErr)
 		return
@@ -714,16 +712,8 @@ func (h *Handler) CreatePromptEvaluationAssetEvidenceSnapshots(w http.ResponseWr
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, asset.WorkspaceID, actorID, resourceTypePromptEvidenceBatch, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		_ = tx.Rollback(r.Context())
-		replay, found, replayErr = loadResourceCreateReplay(
-			r.Context(), h.Queries, asset.WorkspaceID, actorID, resourceTypePromptEvidenceBatch,
-			idempotencyKey, requestHash,
-			func(response PromptEvaluationAssetEvidenceSnapshotResponse) bool { return response.AssetID != "" },
-		)
-		if replayErr != nil || !found {
-			if replayErr == nil {
-				replayErr = errors.New("asset evidence snapshot replay disappeared after conflict")
-			}
+		replay, replayErr = loadResourceCreateReplayAfterConflict(r.Context(), tx, loadReplay)
+		if replayErr != nil {
 			writePromptEvaluationEvidenceBatchReplayError(w, replayErr)
 			return
 		}

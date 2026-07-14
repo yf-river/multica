@@ -118,9 +118,14 @@ func (h *Handler) CreatePromptEvaluationOptimizationCandidate(w http.ResponseWri
 		return
 	}
 	requestActorID := parseUUID(userID)
-	if replay, found, err := h.loadPromptEvaluationCandidateCreateReplay(
-		r.Context(), workspaceUUID, requestActorID, idempotencyKey, requestHash,
-	); err != nil {
+	loadReplay := func() (PromptEvaluationOptimizationCandidateResponse, bool, error) {
+		return loadResourceCreateReplay(
+			r.Context(), h.Queries, workspaceUUID, requestActorID, resourceTypePromptCandidate,
+			idempotencyKey, requestHash,
+			func(response PromptEvaluationOptimizationCandidateResponse) bool { return response.ID != "" },
+		)
+	}
+	if replay, found, err := loadReplay(); err != nil {
 		writePromptEvaluationCandidateCreateReplayError(w, err)
 		return
 	} else if found {
@@ -190,14 +195,8 @@ func (h *Handler) CreatePromptEvaluationOptimizationCandidate(w http.ResponseWri
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, requestActorID, resourceTypePromptCandidate, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		_ = tx.Rollback(r.Context())
-		replay, found, replayErr := h.loadPromptEvaluationCandidateCreateReplay(
-			r.Context(), workspaceUUID, requestActorID, idempotencyKey, requestHash,
-		)
-		if replayErr != nil || !found {
-			if replayErr == nil {
-				replayErr = errors.New("optimization candidate replay disappeared after conflict")
-			}
+		replay, replayErr := loadResourceCreateReplayAfterConflict(r.Context(), tx, loadReplay)
+		if replayErr != nil {
 			writePromptEvaluationCandidateCreateReplayError(w, replayErr)
 			return
 		}
@@ -327,9 +326,16 @@ func (h *Handler) PublishPromptEvaluationOptimizationCandidate(w http.ResponseWr
 		return
 	}
 	requestActorID := parseUUID(userID)
-	if replay, found, err := h.loadPromptEvaluationCandidatePublishReplay(
-		r.Context(), workspaceUUID, requestActorID, idempotencyKey, requestHash,
-	); err != nil {
+	loadReplay := func() (PublishPromptEvaluationOptimizationCandidateResponse, bool, error) {
+		return loadResourceCreateReplay(
+			r.Context(), h.Queries, workspaceUUID, requestActorID, resourceTypePromptPublish,
+			idempotencyKey, requestHash,
+			func(response PublishPromptEvaluationOptimizationCandidateResponse) bool {
+				return response.Candidate.ID != "" && response.Prompt.ID != ""
+			},
+		)
+	}
+	if replay, found, err := loadReplay(); err != nil {
 		writePromptEvaluationCandidatePublishReplayError(w, err)
 		return
 	} else if found {
@@ -361,14 +367,8 @@ func (h *Handler) PublishPromptEvaluationOptimizationCandidate(w http.ResponseWr
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, requestActorID, resourceTypePromptPublish, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		_ = tx.Rollback(r.Context())
-		replay, found, replayErr := h.loadPromptEvaluationCandidatePublishReplay(
-			r.Context(), workspaceUUID, requestActorID, idempotencyKey, requestHash,
-		)
-		if replayErr != nil || !found {
-			if replayErr == nil {
-				replayErr = errors.New("optimization candidate publish replay disappeared after conflict")
-			}
+		replay, replayErr := loadResourceCreateReplayAfterConflict(r.Context(), tx, loadReplay)
+		if replayErr != nil {
 			writePromptEvaluationCandidatePublishReplayError(w, replayErr)
 			return
 		}
@@ -576,9 +576,14 @@ func (h *Handler) RejectPromptEvaluationOptimizationCandidate(w http.ResponseWri
 		return
 	}
 	requestActorID := parseUUID(userID)
-	if replay, found, err := h.loadPromptEvaluationCandidateRejectReplay(
-		r.Context(), workspaceUUID, requestActorID, idempotencyKey, requestHash,
-	); err != nil {
+	loadReplay := func() (PromptEvaluationOptimizationCandidateResponse, bool, error) {
+		return loadResourceCreateReplay(
+			r.Context(), h.Queries, workspaceUUID, requestActorID, resourceTypePromptReject,
+			idempotencyKey, requestHash,
+			func(response PromptEvaluationOptimizationCandidateResponse) bool { return response.ID != "" },
+		)
+	}
+	if replay, found, err := loadReplay(); err != nil {
 		writePromptEvaluationCandidateRejectReplayError(w, err)
 		return
 	} else if found {
@@ -602,14 +607,8 @@ func (h *Handler) RejectPromptEvaluationOptimizationCandidate(w http.ResponseWri
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, requestActorID, resourceTypePromptReject, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		_ = tx.Rollback(r.Context())
-		replay, found, replayErr := h.loadPromptEvaluationCandidateRejectReplay(
-			r.Context(), workspaceUUID, requestActorID, idempotencyKey, requestHash,
-		)
-		if replayErr != nil || !found {
-			if replayErr == nil {
-				replayErr = errors.New("optimization candidate reject replay disappeared after conflict")
-			}
+		replay, replayErr := loadResourceCreateReplayAfterConflict(r.Context(), tx, loadReplay)
+		if replayErr != nil {
 			writePromptEvaluationCandidateRejectReplayError(w, replayErr)
 			return
 		}

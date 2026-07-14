@@ -105,6 +105,23 @@ func loadResourceCreateReplay[T any](
 	return response, true, nil
 }
 
+func loadResourceCreateReplayAfterConflict[T any](
+	ctx context.Context,
+	tx pgx.Tx,
+	loadReplay func() (T, bool, error),
+) (T, error) {
+	var response T
+	_ = tx.Rollback(ctx)
+	replay, found, err := loadReplay()
+	if err != nil {
+		return response, err
+	}
+	if !found {
+		return response, errors.New("resource create replay disappeared after reservation conflict")
+	}
+	return replay, nil
+}
+
 func completeResourceCreateRequest(
 	ctx context.Context,
 	queries *db.Queries,

@@ -830,11 +830,14 @@ func (h *Handler) CreatePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	replay, found, replayErr := loadResourceCreateReplay(
-		r.Context(), h.Queries, workspaceUUID, actorID, resourceTypePromptEvalAsset,
-		idempotencyKey, requestHash,
-		func(response PromptEvaluationAssetResponse) bool { return response.ID != "" },
-	)
+	loadReplay := func() (PromptEvaluationAssetResponse, bool, error) {
+		return loadResourceCreateReplay(
+			r.Context(), h.Queries, workspaceUUID, actorID, resourceTypePromptEvalAsset,
+			idempotencyKey, requestHash,
+			func(response PromptEvaluationAssetResponse) bool { return response.ID != "" },
+		)
+	}
+	replay, found, replayErr := loadReplay()
 	if replayErr != nil {
 		writePromptEvaluationAssetCreateReplayError(w, replayErr)
 		return
@@ -861,16 +864,8 @@ func (h *Handler) CreatePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, actorID, resourceTypePromptEvalAsset, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		_ = tx.Rollback(r.Context())
-		replay, found, replayErr = loadResourceCreateReplay(
-			r.Context(), h.Queries, workspaceUUID, actorID, resourceTypePromptEvalAsset,
-			idempotencyKey, requestHash,
-			func(response PromptEvaluationAssetResponse) bool { return response.ID != "" },
-		)
-		if replayErr != nil || !found {
-			if replayErr == nil {
-				replayErr = errors.New("prompt evaluation asset replay disappeared after conflict")
-			}
+		replay, replayErr = loadResourceCreateReplayAfterConflict(r.Context(), tx, loadReplay)
+		if replayErr != nil {
 			writePromptEvaluationAssetCreateReplayError(w, replayErr)
 			return
 		}
@@ -1065,10 +1060,14 @@ func (h *Handler) RunPromptEvaluationAsset(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	requestActorID := parseUUID(userID)
-	if replay, found, err := loadPromptEvaluationLocalRunReplay(
-		h, r.Context(), workspaceID, requestActorID, idempotencyKey, requestHash,
-		func(response PromptEvaluationAssetResponse) bool { return response.ID != "" },
-	); err != nil {
+	loadReplay := func() (PromptEvaluationAssetResponse, bool, error) {
+		return loadResourceCreateReplay(
+			r.Context(), h.Queries, workspaceID, requestActorID, resourceTypePromptLocalRun,
+			idempotencyKey, requestHash,
+			func(response PromptEvaluationAssetResponse) bool { return response.ID != "" },
+		)
+	}
+	if replay, found, err := loadReplay(); err != nil {
 		writePromptEvaluationLocalRunReplayError(w, err)
 		return
 	} else if found {
@@ -1106,15 +1105,8 @@ func (h *Handler) RunPromptEvaluationAsset(w http.ResponseWriter, r *http.Reques
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, workspaceID, requestActorID, resourceTypePromptLocalRun, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		_ = tx.Rollback(r.Context())
-		replay, found, replayErr := loadPromptEvaluationLocalRunReplay(
-			h, r.Context(), workspaceID, requestActorID, idempotencyKey, requestHash,
-			func(response PromptEvaluationAssetResponse) bool { return response.ID != "" },
-		)
-		if replayErr != nil || !found {
-			if replayErr == nil {
-				replayErr = errors.New("prompt evaluation local run replay disappeared after conflict")
-			}
+		replay, replayErr := loadResourceCreateReplayAfterConflict(r.Context(), tx, loadReplay)
+		if replayErr != nil {
 			writePromptEvaluationLocalRunReplayError(w, replayErr)
 			return
 		}
@@ -1185,9 +1177,16 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 		return
 	}
 	requestActorID := parseUUID(userID)
-	if replay, found, err := h.loadPromptEvaluationAgentRunReplay(
-		r.Context(), workspaceID, requestActorID, idempotencyKey, requestHash,
-	); err != nil {
+	loadReplay := func() (PromptEvaluationAgentRunResponse, bool, error) {
+		return loadResourceCreateReplay(
+			r.Context(), h.Queries, workspaceID, requestActorID, resourceTypePromptEvaluationRun,
+			idempotencyKey, requestHash,
+			func(response PromptEvaluationAgentRunResponse) bool {
+				return response.Run.ID != "" && response.TaskID != ""
+			},
+		)
+	}
+	if replay, found, err := loadReplay(); err != nil {
 		writePromptEvaluationAgentRunReplayError(w, err)
 		return
 	} else if found {
@@ -1236,14 +1235,8 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, workspaceID, requestActorID, resourceTypePromptEvaluationRun, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		_ = tx.Rollback(r.Context())
-		replay, found, replayErr := h.loadPromptEvaluationAgentRunReplay(
-			r.Context(), workspaceID, requestActorID, idempotencyKey, requestHash,
-		)
-		if replayErr != nil || !found {
-			if replayErr == nil {
-				replayErr = errors.New("prompt evaluation agent run replay disappeared after conflict")
-			}
+		replay, replayErr := loadResourceCreateReplayAfterConflict(r.Context(), tx, loadReplay)
+		if replayErr != nil {
 			writePromptEvaluationAgentRunReplayError(w, replayErr)
 			return
 		}

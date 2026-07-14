@@ -499,12 +499,8 @@ func (h *Handler) ApplyPromptEvaluationSkillCandidate(w http.ResponseWriter, r *
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, actorID, resourceTypePromptSkillApply, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		_ = tx.Rollback(r.Context())
-		replay, found, replayErr := loadReplay()
-		if replayErr != nil || !found {
-			if replayErr == nil {
-				replayErr = errors.New("skill apply replay disappeared after reservation conflict")
-			}
+		replay, replayErr := loadResourceCreateReplayAfterConflict(r.Context(), tx, loadReplay)
+		if replayErr != nil {
 			writePromptEvaluationSkillApplyReplayError(w, replayErr)
 			return
 		}
@@ -619,9 +615,14 @@ func (h *Handler) PreparePromptEvaluationSkillReEvalAsset(w http.ResponseWriter,
 		return
 	}
 	requestActorID := parseUUID(userID)
-	if replay, found, err := h.loadPromptEvaluationReEvalAssetReplay(
-		r.Context(), workspaceUUID, requestActorID, idempotencyKey, requestHash,
-	); err != nil {
+	loadReplay := func() (PromptEvaluationSkillReEvalAssetResponse, bool, error) {
+		return loadResourceCreateReplay(
+			r.Context(), h.Queries, workspaceUUID, requestActorID, resourceTypePromptReEvalAsset,
+			idempotencyKey, requestHash,
+			func(response PromptEvaluationSkillReEvalAssetResponse) bool { return response.Asset.ID != "" },
+		)
+	}
+	if replay, found, err := loadReplay(); err != nil {
 		writePromptEvaluationReEvalAssetReplayError(w, err)
 		return
 	} else if found {
@@ -722,14 +723,8 @@ func (h *Handler) PreparePromptEvaluationSkillReEvalAsset(w http.ResponseWriter,
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, requestActorID, resourceTypePromptReEvalAsset, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		_ = tx.Rollback(r.Context())
-		replay, found, replayErr := h.loadPromptEvaluationReEvalAssetReplay(
-			r.Context(), workspaceUUID, requestActorID, idempotencyKey, requestHash,
-		)
-		if replayErr != nil || !found {
-			if replayErr == nil {
-				replayErr = errors.New("skill re-eval asset replay disappeared after conflict")
-			}
+		replay, replayErr := loadResourceCreateReplayAfterConflict(r.Context(), tx, loadReplay)
+		if replayErr != nil {
 			writePromptEvaluationReEvalAssetReplayError(w, replayErr)
 			return
 		}
@@ -852,10 +847,14 @@ func (h *Handler) RunPromptEvaluationSkillReEval(w http.ResponseWriter, r *http.
 		return
 	}
 	requestActorID := parseUUID(userID)
-	if replay, found, err := loadPromptEvaluationLocalRunReplay(
-		h, r.Context(), workspaceUUID, requestActorID, idempotencyKey, requestHash,
-		func(response PromptEvaluationSkillReEvalRunResponse) bool { return response.Run.ID != "" },
-	); err != nil {
+	loadReplay := func() (PromptEvaluationSkillReEvalRunResponse, bool, error) {
+		return loadResourceCreateReplay(
+			r.Context(), h.Queries, workspaceUUID, requestActorID, resourceTypePromptLocalRun,
+			idempotencyKey, requestHash,
+			func(response PromptEvaluationSkillReEvalRunResponse) bool { return response.Run.ID != "" },
+		)
+	}
+	if replay, found, err := loadReplay(); err != nil {
 		writePromptEvaluationLocalRunReplayError(w, err)
 		return
 	} else if found {
@@ -921,15 +920,8 @@ func (h *Handler) RunPromptEvaluationSkillReEval(w http.ResponseWriter, r *http.
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, requestActorID, resourceTypePromptLocalRun, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		_ = tx.Rollback(r.Context())
-		replay, found, replayErr := loadPromptEvaluationLocalRunReplay(
-			h, r.Context(), workspaceUUID, requestActorID, idempotencyKey, requestHash,
-			func(response PromptEvaluationSkillReEvalRunResponse) bool { return response.Run.ID != "" },
-		)
-		if replayErr != nil || !found {
-			if replayErr == nil {
-				replayErr = errors.New("skill re-eval run replay disappeared after conflict")
-			}
+		replay, replayErr := loadResourceCreateReplayAfterConflict(r.Context(), tx, loadReplay)
+		if replayErr != nil {
 			writePromptEvaluationLocalRunReplayError(w, replayErr)
 			return
 		}

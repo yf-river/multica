@@ -58,11 +58,14 @@ func (h *Handler) CreatePromptEvaluationDatasetFromTraces(w http.ResponseWriter,
 	if !ok {
 		return
 	}
-	replay, found, replayErr := loadResourceCreateReplay(
-		r.Context(), h.Queries, asset.WorkspaceID, actorID, resourceTypePromptTraceImport,
-		idempotencyKey, requestHash,
-		func(response PromptEvaluationDatasetFromTracesResponse) bool { return response.Asset.ID != "" },
-	)
+	loadReplay := func() (PromptEvaluationDatasetFromTracesResponse, bool, error) {
+		return loadResourceCreateReplay(
+			r.Context(), h.Queries, asset.WorkspaceID, actorID, resourceTypePromptTraceImport,
+			idempotencyKey, requestHash,
+			func(response PromptEvaluationDatasetFromTracesResponse) bool { return response.Asset.ID != "" },
+		)
+	}
+	replay, found, replayErr := loadReplay()
 	if replayErr != nil {
 		writePromptEvaluationTraceImportReplayError(w, replayErr)
 		return
@@ -88,16 +91,8 @@ func (h *Handler) CreatePromptEvaluationDatasetFromTraces(w http.ResponseWriter,
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, asset.WorkspaceID, actorID, resourceTypePromptTraceImport, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		_ = tx.Rollback(r.Context())
-		replay, found, replayErr = loadResourceCreateReplay(
-			r.Context(), h.Queries, asset.WorkspaceID, actorID, resourceTypePromptTraceImport,
-			idempotencyKey, requestHash,
-			func(response PromptEvaluationDatasetFromTracesResponse) bool { return response.Asset.ID != "" },
-		)
-		if replayErr != nil || !found {
-			if replayErr == nil {
-				replayErr = errors.New("trace dataset import replay disappeared after conflict")
-			}
+		replay, replayErr = loadResourceCreateReplayAfterConflict(r.Context(), tx, loadReplay)
+		if replayErr != nil {
 			writePromptEvaluationTraceImportReplayError(w, replayErr)
 			return
 		}
@@ -334,11 +329,14 @@ func (h *Handler) CreatePromptEvaluationDatasetVersion(w http.ResponseWriter, r 
 	if !ok {
 		return
 	}
-	replay, found, replayErr := loadResourceCreateReplay(
-		r.Context(), h.Queries, asset.WorkspaceID, actorID, resourceTypePromptDatasetVersion,
-		idempotencyKey, requestHash,
-		func(response PromptEvaluationDatasetVersionResponse) bool { return response.ID != "" },
-	)
+	loadReplay := func() (PromptEvaluationDatasetVersionResponse, bool, error) {
+		return loadResourceCreateReplay(
+			r.Context(), h.Queries, asset.WorkspaceID, actorID, resourceTypePromptDatasetVersion,
+			idempotencyKey, requestHash,
+			func(response PromptEvaluationDatasetVersionResponse) bool { return response.ID != "" },
+		)
+	}
+	replay, found, replayErr := loadReplay()
 	if replayErr != nil {
 		writePromptEvaluationDatasetVersionReplayError(w, replayErr)
 		return
@@ -356,16 +354,8 @@ func (h *Handler) CreatePromptEvaluationDatasetVersion(w http.ResponseWriter, r 
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, asset.WorkspaceID, actorID, resourceTypePromptDatasetVersion, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		_ = tx.Rollback(r.Context())
-		replay, found, replayErr = loadResourceCreateReplay(
-			r.Context(), h.Queries, asset.WorkspaceID, actorID, resourceTypePromptDatasetVersion,
-			idempotencyKey, requestHash,
-			func(response PromptEvaluationDatasetVersionResponse) bool { return response.ID != "" },
-		)
-		if replayErr != nil || !found {
-			if replayErr == nil {
-				replayErr = errors.New("dataset version replay disappeared after conflict")
-			}
+		replay, replayErr = loadResourceCreateReplayAfterConflict(r.Context(), tx, loadReplay)
+		if replayErr != nil {
 			writePromptEvaluationDatasetVersionReplayError(w, replayErr)
 			return
 		}
@@ -617,13 +607,16 @@ func (h *Handler) RestorePromptEvaluationDatasetVersion(w http.ResponseWriter, r
 	if !ok {
 		return
 	}
-	replay, found, replayErr := loadResourceCreateReplay(
-		r.Context(), h.Queries, asset.WorkspaceID, actorID, resourceTypePromptDatasetRestore,
-		idempotencyKey, requestHash,
-		func(response RestorePromptEvaluationDatasetVersionResponse) bool {
-			return response.RestoredVersion.ID != ""
-		},
-	)
+	loadReplay := func() (RestorePromptEvaluationDatasetVersionResponse, bool, error) {
+		return loadResourceCreateReplay(
+			r.Context(), h.Queries, asset.WorkspaceID, actorID, resourceTypePromptDatasetRestore,
+			idempotencyKey, requestHash,
+			func(response RestorePromptEvaluationDatasetVersionResponse) bool {
+				return response.RestoredVersion.ID != ""
+			},
+		)
+	}
+	replay, found, replayErr := loadReplay()
 	if replayErr != nil {
 		writePromptEvaluationDatasetRestoreReplayError(w, replayErr)
 		return
@@ -642,18 +635,8 @@ func (h *Handler) RestorePromptEvaluationDatasetVersion(w http.ResponseWriter, r
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, asset.WorkspaceID, actorID, resourceTypePromptDatasetRestore, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		_ = tx.Rollback(r.Context())
-		replay, found, replayErr = loadResourceCreateReplay(
-			r.Context(), h.Queries, asset.WorkspaceID, actorID, resourceTypePromptDatasetRestore,
-			idempotencyKey, requestHash,
-			func(response RestorePromptEvaluationDatasetVersionResponse) bool {
-				return response.RestoredVersion.ID != ""
-			},
-		)
-		if replayErr != nil || !found {
-			if replayErr == nil {
-				replayErr = errors.New("dataset version restore replay disappeared after conflict")
-			}
+		replay, replayErr = loadResourceCreateReplayAfterConflict(r.Context(), tx, loadReplay)
+		if replayErr != nil {
 			writePromptEvaluationDatasetRestoreReplayError(w, replayErr)
 			return
 		}
