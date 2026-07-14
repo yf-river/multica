@@ -3,14 +3,12 @@ import type { CreatePromptEvaluationAssetRequest, PromptEvaluationAsset, PromptE
 const SKILL_SCENARIO_EVALUATION_SCHEMA = "multica.skill_scenario_eval.v1";
 const WRITING_MODEL_BENCHMARK_SCHEMA = "multica.writing_model_benchmark.v1";
 
-export type SkillScenarioRole = "sop" | "operation";
-
 export type SkillScenarioTarget = {
   kind: "repo_skill";
   repo_path: string;
   branch: string;
   skill_path: string;
-  skill_role: SkillScenarioRole;
+  skill_role: "sop" | "operation";
 };
 
 export type SkillScenarioPayload = {
@@ -39,7 +37,7 @@ export type SkillScenarioPayload = {
   }>;
 };
 
-export type WritingModelBenchmarkPayload = {
+type WritingModelBenchmarkPayload = {
   schema_version: 1;
   schema: typeof WRITING_MODEL_BENCHMARK_SCHEMA;
   evaluation_mode: "multi_model_writing";

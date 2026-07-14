@@ -42,7 +42,7 @@ const TRAINING_WORKBENCH_ALL_VIEWS = [
 ] as const;
 
 export const TRAINING_WORKBENCH_VIEWS = TRAINING_WORKBENCH_ALL_VIEWS.filter((item) => item.visible);
-export const TRAINING_WORKBENCH_SECTIONS = [
+const TRAINING_WORKBENCH_SECTIONS = [
   { key: "debug", label: "调试", defaultView: "prompts" },
   { key: "evaluation", label: "评估", defaultView: "datasets" },
 ] as const;
@@ -50,8 +50,8 @@ export const TRAINING_WORKBENCH_SECTIONS = [
 export type TrainingWorkbenchView = typeof TRAINING_WORKBENCH_ALL_VIEWS[number];
 export type TrainingWorkbenchTab = TrainingWorkbenchView["tab"];
 export type TrainingWorkbenchViewId = TrainingWorkbenchView["view"];
-export type TrainingWorkbenchCanonicalRoute = TrainingWorkbenchView["canonicalRoute"];
-export type TrainingWorkbenchSection = typeof TRAINING_WORKBENCH_SECTIONS[number]["key"];
+type TrainingWorkbenchCanonicalRoute = TrainingWorkbenchView["canonicalRoute"];
+type TrainingWorkbenchSection = typeof TRAINING_WORKBENCH_SECTIONS[number]["key"];
 
 const DEFAULT_TRAINING_WORKBENCH_VIEW: TrainingWorkbenchViewId = "prompts";
 export const DEFAULT_DEBUG_WORKBENCH_VIEW: TrainingWorkbenchViewId = "prompts";
@@ -61,19 +61,19 @@ export const TRAINING_WORKBENCH_VIEW_BY_TAB = Object.fromEntries(
   TRAINING_WORKBENCH_ALL_VIEWS.map((item) => [item.tab, item.view]),
 ) as Record<TrainingWorkbenchTab, TrainingWorkbenchViewId>;
 
-export const TRAINING_WORKBENCH_TAB_BY_VIEW = Object.fromEntries(
+const TRAINING_WORKBENCH_TAB_BY_VIEW = Object.fromEntries(
   TRAINING_WORKBENCH_ALL_VIEWS.map((item) => [item.view, item.tab]),
 ) as Record<TrainingWorkbenchViewId, TrainingWorkbenchTab>;
 
-export const TRAINING_WORKBENCH_CANONICAL_ROUTE_BY_VIEW = Object.fromEntries(
+const TRAINING_WORKBENCH_CANONICAL_ROUTE_BY_VIEW = Object.fromEntries(
   TRAINING_WORKBENCH_ALL_VIEWS.map((item) => [item.view, item.canonicalRoute]),
 ) as Record<TrainingWorkbenchViewId, TrainingWorkbenchCanonicalRoute>;
 
-export const TRAINING_WORKBENCH_VIEW_BY_ROUTE = Object.fromEntries(
+const TRAINING_WORKBENCH_VIEW_BY_ROUTE = Object.fromEntries(
   TRAINING_WORKBENCH_ALL_VIEWS.map((item) => [item.canonicalRoute, item.view]),
 ) as Record<string, TrainingWorkbenchViewId>;
 
-export const TRAINING_WORKBENCH_SECTION_BY_VIEW = Object.fromEntries(
+const TRAINING_WORKBENCH_SECTION_BY_VIEW = Object.fromEntries(
   TRAINING_WORKBENCH_ALL_VIEWS.map((item) => [item.view, item.section]),
 ) as Record<TrainingWorkbenchViewId, TrainingWorkbenchSection>;
 
@@ -84,7 +84,7 @@ export const TRAINING_WORKBENCH_VIEWS_BY_SECTION = Object.fromEntries(
   ]),
 ) as Record<TrainingWorkbenchSection, typeof TRAINING_WORKBENCH_VIEWS>;
 
-export const TRAINING_WORKBENCH_SECTION_LABEL_BY_SECTION = Object.fromEntries(
+const TRAINING_WORKBENCH_SECTION_LABEL_BY_SECTION = Object.fromEntries(
   TRAINING_WORKBENCH_SECTIONS.map((item) => [item.key, item.label]),
 ) as Record<TrainingWorkbenchSection, string>;
 
