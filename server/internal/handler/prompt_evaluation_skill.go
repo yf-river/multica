@@ -170,20 +170,14 @@ type PromptEvaluationSkillFreshnessResult struct {
 }
 
 type ApplyPromptEvaluationSkillCandidateRequest struct {
-	SourceResourceID   string                                 `json:"source_resource_id"`
-	RepoPath           string                                 `json:"repo_path"`
-	TargetBranch       string                                 `json:"target_branch"`
-	SkillPath          string                                 `json:"skill_path"`
-	CandidatePatch     string                                 `json:"candidate_patch"`
-	CandidateIntent    string                                 `json:"candidate_intent"`
-	ChangelogPath      string                                 `json:"changelog_path"`
-	ChangeReason       string                                 `json:"change_reason"`
-	VerificationResult string                                 `json:"verification_result"`
-	RollbackPlan       string                                 `json:"rollback_plan"`
-	DryRun             bool                                   `json:"dry_run"`
-	AllowDirty         bool                                   `json:"allow_dirty"`
-	SkipChangelog      bool                                   `json:"skip_changelog"`
-	Snapshot           *PromptEvaluationSkillSnapshotResponse `json:"snapshot"`
+	CheckPromptEvaluationSkillFreshnessRequest
+	ChangelogPath      string `json:"changelog_path"`
+	ChangeReason       string `json:"change_reason"`
+	VerificationResult string `json:"verification_result"`
+	RollbackPlan       string `json:"rollback_plan"`
+	DryRun             bool   `json:"dry_run"`
+	AllowDirty         bool   `json:"allow_dirty"`
+	SkipChangelog      bool   `json:"skip_changelog"`
 }
 
 type PromptEvaluationSkillApplyResult struct {
@@ -365,6 +359,30 @@ func (h *Handler) CreatePromptEvaluationSkillCaseDrafts(w http.ResponseWriter, r
 	)
 }
 
+func (h *Handler) resolvePromptEvaluationSkillCandidateRequest(
+	w http.ResponseWriter,
+	r *http.Request,
+	candidate db.PromptEvaluationOptimizationCandidate,
+	patch *PromptEvaluationSkillPatch,
+	req *CheckPromptEvaluationSkillFreshnessRequest,
+) (*PromptEvaluationSkillSnapshotResponse, bool) {
+	provider, repo := "", ""
+	if ok := h.applyPromptEvaluationSkillSourceResourceDefaults(
+		w, r, &provider, &repo, &req.RepoPath, &req.TargetBranch, &req.SourceResourceID,
+	); !ok {
+		return nil, false
+	}
+	snapshot := resolvePromptEvaluationSkillCandidateSnapshot(candidate, patch, req.Snapshot, req.SourceResourceID)
+	if snapshot == nil {
+		writeError(w, http.StatusBadRequest, "skill snapshot is required")
+		return nil, false
+	}
+	if req.CandidatePatch == "" {
+		req.CandidatePatch = candidate.CandidateContent
+	}
+	return snapshot, true
+}
+
 func (h *Handler) CheckPromptEvaluationSkillCandidateFreshness(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
@@ -393,18 +411,12 @@ func (h *Handler) CheckPromptEvaluationSkillCandidateFreshness(w http.ResponseWr
 		return
 	}
 	skillPatch := skillPatchFromCandidate(candidate)
-	applySkillPatchFreshnessDefaults(&req, skillPatch)
-	provider, repo := "", ""
-	if ok := h.applyPromptEvaluationSkillSourceResourceDefaults(w, r, &provider, &repo, &req.RepoPath, &req.TargetBranch, &req.SourceResourceID); !ok {
+	applySkillPatchCandidateDefaults(&req, skillPatch)
+	snapshot, ok := h.resolvePromptEvaluationSkillCandidateRequest(
+		w, r, candidate, skillPatch, &req,
+	)
+	if !ok {
 		return
-	}
-	snapshot := resolvePromptEvaluationSkillCandidateSnapshot(candidate, skillPatch, req.Snapshot, req.SourceResourceID)
-	if snapshot == nil {
-		writeError(w, http.StatusBadRequest, "skill snapshot is required")
-		return
-	}
-	if req.CandidatePatch == "" {
-		req.CandidatePatch = candidate.CandidateContent
 	}
 	result, err := checkPromptEvaluationSkillFreshness(req, *snapshot, time.Now().UTC())
 	if err != nil {
@@ -445,17 +457,11 @@ func (h *Handler) ApplyPromptEvaluationSkillCandidate(w http.ResponseWriter, r *
 	}
 	skillPatch := skillPatchFromCandidate(candidate)
 	applySkillPatchApplyDefaults(&req, skillPatch)
-	provider, repo := "", ""
-	if ok := h.applyPromptEvaluationSkillSourceResourceDefaults(w, r, &provider, &repo, &req.RepoPath, &req.TargetBranch, &req.SourceResourceID); !ok {
+	snapshot, ok := h.resolvePromptEvaluationSkillCandidateRequest(
+		w, r, candidate, skillPatch, &req.CheckPromptEvaluationSkillFreshnessRequest,
+	)
+	if !ok {
 		return
-	}
-	snapshot := resolvePromptEvaluationSkillCandidateSnapshot(candidate, skillPatch, req.Snapshot, req.SourceResourceID)
-	if snapshot == nil {
-		writeError(w, http.StatusBadRequest, "skill snapshot is required")
-		return
-	}
-	if req.CandidatePatch == "" {
-		req.CandidatePatch = candidate.CandidateContent
 	}
 	actorID := parseUUID(userID)
 	idempotencyKey, ok := optionalIdempotencyKey(w, r)

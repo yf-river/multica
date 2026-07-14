@@ -247,9 +247,11 @@ func TestPromptEvaluationSkillApplyWritesChangelogAndRequiresReEval(t *testing.T
 	writeSkillTestFile(t, repoPath, skillPath, v1)
 
 	result, err := applyPromptEvaluationSkillCandidate(ApplyPromptEvaluationSkillCandidateRequest{
-		RepoPath:           repoPath,
-		SkillPath:          skillPath,
-		CandidatePatch:     patch,
+		CheckPromptEvaluationSkillFreshnessRequest: CheckPromptEvaluationSkillFreshnessRequest{
+			RepoPath:       repoPath,
+			SkillPath:      skillPath,
+			CandidatePatch: patch,
+		},
 		ChangeReason:       "Improve verification evidence discipline.",
 		VerificationResult: "Focused helper test passed.",
 		RollbackPlan:       "Reverse the candidate patch.",
@@ -346,7 +348,9 @@ func TestPromptEvaluationSkillApplyRollsBackPatchWhenChangelogFails(t *testing.T
 	writeSkillTestFile(t, repoPath, "blocked", "not a directory")
 
 	_, err = applyPromptEvaluationSkillCandidate(ApplyPromptEvaluationSkillCandidateRequest{
-		RepoPath: repoPath, SkillPath: skillPath, CandidatePatch: patch,
+		CheckPromptEvaluationSkillFreshnessRequest: CheckPromptEvaluationSkillFreshnessRequest{
+			RepoPath: repoPath, SkillPath: skillPath, CandidatePatch: patch,
+		},
 		ChangelogPath: "blocked/CHANGELOG.md", AllowDirty: true,
 	}, snapshot, map[string]any{"operation_id": "rollback-test"}, time.Now().UTC())
 	if err == nil {
@@ -405,10 +409,12 @@ func TestPromptEvaluationSkillApplyCreatesOperationSkill(t *testing.T) {
 	}
 
 	result, err := applyPromptEvaluationSkillCandidate(ApplyPromptEvaluationSkillCandidateRequest{
-		RepoPath:           repoPath,
-		SkillPath:          newSkillPath,
-		CandidatePatch:     patch,
-		CandidateIntent:    "create_operation_skill",
+		CheckPromptEvaluationSkillFreshnessRequest: CheckPromptEvaluationSkillFreshnessRequest{
+			RepoPath:        repoPath,
+			SkillPath:       newSkillPath,
+			CandidatePatch:  patch,
+			CandidateIntent: "create_operation_skill",
+		},
 		ChangeReason:       "Adding a user-center API is a repeated operation.",
 		VerificationResult: "Service sandbox curl and eval candidate chain passed.",
 		RollbackPlan:       "Remove the new operation skill directory and CHANGELOG entry.",
@@ -492,7 +498,7 @@ func TestPromptEvaluationSkillPatchDefaultsRequests(t *testing.T) {
 		t.Fatalf("skill patch candidate intent = %q, want update_existing_skill", skillPatch.CandidateIntent)
 	}
 	freshnessReq := CheckPromptEvaluationSkillFreshnessRequest{}
-	applySkillPatchFreshnessDefaults(&freshnessReq, skillPatch)
+	applySkillPatchCandidateDefaults(&freshnessReq, skillPatch)
 	if freshnessReq.CandidatePatch != patchText || freshnessReq.SourceResourceID != "resource-1" || freshnessReq.SkillPath != snapshot.SkillPath {
 		t.Fatalf("freshness defaults = %+v", freshnessReq)
 	}
@@ -577,9 +583,11 @@ func TestPromptEvaluationSkillApplyBlocksDirtyWorktreeByDefault(t *testing.T) {
 	writeSkillTestFile(t, repoPath, "README.md", "dirty\n")
 
 	result, err := applyPromptEvaluationSkillCandidate(ApplyPromptEvaluationSkillCandidateRequest{
-		RepoPath:       repoPath,
-		SkillPath:      skillPath,
-		CandidatePatch: patch,
+		CheckPromptEvaluationSkillFreshnessRequest: CheckPromptEvaluationSkillFreshnessRequest{
+			RepoPath:       repoPath,
+			SkillPath:      skillPath,
+			CandidatePatch: patch,
+		},
 	}, snapshot, nil, now.Add(time.Minute))
 	if err != nil {
 		t.Fatalf("apply dirty worktree: %v", err)
