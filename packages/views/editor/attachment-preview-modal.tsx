@@ -74,7 +74,7 @@ import { CodeBlockStatic } from "./code-block-static";
 // / audio) can be opened from a `url` source because those render directly
 // from the URL without hitting the text-content proxy.
 
-export type PreviewSource =
+type PreviewSource =
   | { kind: "full"; attachment: Attachment }
   | { kind: "url"; url: string; filename: string };
 
@@ -144,15 +144,12 @@ interface AttachmentPreviewModalProps {
 // means each carries its own (collapsed) state — they never collide because
 // only one preview is open per user click.
 
-export interface AttachmentPreviewHandle {
+interface AttachmentPreviewHandle {
   /** Try to open a preview for the source. Returns false when the file type
    *  isn't previewable, OR when the source is URL-only but the kind requires
    *  a full attachment (text/markdown/html). Callers can fall back to a
    *  download flow. */
   tryOpen: (source: PreviewSource) => boolean;
-  /** Force-open a preview, skipping the previewable() guard. Use for cases
-   *  where the caller has already filtered. */
-  open: (source: PreviewSource) => void;
   /** Modal node to render somewhere in the caller's tree. Resolves to `null`
    *  when no preview is active. Safe to render inside any container — the
    *  modal portals to document.body. */
@@ -162,7 +159,6 @@ export interface AttachmentPreviewHandle {
 export function useAttachmentPreview(): AttachmentPreviewHandle {
   const [current, setCurrent] = useState<PreviewSource | null>(null);
 
-  const open = useCallback((source: PreviewSource) => setCurrent(source), []);
   const tryOpen = useCallback((source: PreviewSource) => {
     const state = normalize(source);
     const kind = getPreviewKind(state.contentType, state.filename);
@@ -175,7 +171,6 @@ export function useAttachmentPreview(): AttachmentPreviewHandle {
 
   return useMemo(
     () => ({
-      open,
       tryOpen,
       modal: current ? (
         <AttachmentPreviewModal
@@ -185,7 +180,7 @@ export function useAttachmentPreview(): AttachmentPreviewHandle {
         />
       ) : null,
     }),
-    [current, open, tryOpen],
+    [current, tryOpen],
   );
 }
 
@@ -528,7 +523,3 @@ function UnsupportedFallback({
     </div>
   );
 }
-
-// Re-export the predicate from the dispatch util so entry-point components
-// only need a single import to gate the Eye button.
-export { isPreviewable } from "./utils/preview";

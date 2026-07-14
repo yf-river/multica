@@ -28,16 +28,7 @@ export function matchesPinyin(name: string, query: string): boolean {
 
   // Hybrid match: some chars matched by full pinyin, rest by initials
   // e.g. "liyl" matches "李云龙" (li + y + l)
-  return hybridMatch(full, q);
-}
-
-/**
- * Hybrid matching: the query can be a mix of full pinyin for some characters
- * and initials for others, consumed left-to-right.
- * e.g. for ["li", "yun", "long"], query "liyunl" matches (li + yun + l)
- */
-function hybridMatch(pinyinArr: string[], query: string): boolean {
-  return match(pinyinArr, 0, query, 0);
+  return match(full, 0, q, 0);
 }
 
 function match(arr: string[], ai: number, q: string, qi: number): boolean {

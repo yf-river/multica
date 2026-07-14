@@ -107,11 +107,6 @@ function attachmentIdFromTestDownloadURL(url: string): string | undefined {
 }
 vi.mock("./attachment-download-context", () => ({
   useAttachmentDownloadResolver: () => ({
-    resolveAttachmentId: (url: string) =>
-      resolverState.attachments.find((a) => {
-        const id = attachmentIdFromTestDownloadURL(url);
-        return id !== undefined && a.id === id;
-      })?.id,
     resolveAttachment: (url: string) =>
       resolverState.attachments.find((a) => {
         const id = attachmentIdFromTestDownloadURL(url);

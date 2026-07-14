@@ -1,6 +1,6 @@
 "use client";
 
-import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
+import { useEffect, useRef } from "react";
 import { useEditor, EditorContent } from "@tiptap/react";
 import { Extension } from "@tiptap/core";
 import { Document } from "@tiptap/extension-document";
@@ -23,11 +23,6 @@ interface TitleEditorProps {
   onSubmit?: () => void;
   onBlur?: (value: string) => void;
   onChange?: (value: string) => void;
-}
-
-interface TitleEditorRef {
-  getText: () => string;
-  focus: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -68,19 +63,15 @@ function createTitleKeymap(opts: {
 // Component
 // ---------------------------------------------------------------------------
 
-const TitleEditor = forwardRef<TitleEditorRef, TitleEditorProps>(
-  function TitleEditor(
-    {
-      defaultValue = "",
-      placeholder: placeholderText = "",
-      className,
-      autoFocus = false,
-      onSubmit,
-      onBlur,
-      onChange,
-    },
-    ref,
-  ) {
+function TitleEditor({
+  defaultValue = "",
+  placeholder: placeholderText = "",
+  className,
+  autoFocus = false,
+  onSubmit,
+  onBlur,
+  onChange,
+}: TitleEditorProps) {
     const { t } = useT("editor");
     const onSubmitRef = useRef(onSubmit);
     const onBlurRef = useRef(onBlur);
@@ -170,17 +161,9 @@ const TitleEditor = forwardRef<TitleEditorRef, TitleEditorProps>(
       );
     }, [defaultValue, editor]);
 
-    useImperativeHandle(ref, () => ({
-      getText: () => editor?.getText() ?? "",
-      focus: () => {
-        editor?.commands.focus("end");
-      },
-    }));
-
     if (!editor) return null;
 
     return <EditorContent editor={editor} />;
-  },
-);
+}
 
-export { TitleEditor, type TitleEditorProps, type TitleEditorRef };
+export { TitleEditor };

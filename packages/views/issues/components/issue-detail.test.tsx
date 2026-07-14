@@ -106,18 +106,6 @@ vi.mock("../../navigation", () => ({
 vi.mock("../../editor", () => ({
   useFileDropZone: () => ({ isDragOver: false, dropZoneProps: {} }),
   FileDropOverlay: () => null,
-  // No-op so comment-card's AttachmentList can render without hitting the
-  // real API singleton; tests that care about download wiring should write
-  // dedicated specs against `use-download-attachment.test.tsx`.
-  useDownloadAttachment: () => vi.fn(),
-  // Inert preview hook — comment-card's AttachmentList uses it to gate the
-  // Eye button. Dedicated coverage lives in attachment-preview-modal.test.tsx.
-  useAttachmentPreview: () => ({
-    open: vi.fn(),
-    tryOpen: () => false,
-    modal: null,
-  }),
-  isPreviewable: () => false,
   ReadonlyContent: ({ content }: { content: string }) => (
     <div data-testid="readonly-content">{content}</div>
   ),
@@ -147,30 +135,26 @@ vi.mock("../../editor", () => ({
       />
     );
   }),
-  TitleEditor: forwardRef(function MockTitleEditor(
-    { defaultValue, placeholder, onBlur, onChange }: any,
-    ref: any,
-  ) {
-    const valueRef = useRef(defaultValue || "");
+  TitleEditor: function MockTitleEditor({
+    defaultValue,
+    placeholder,
+    onBlur,
+    onChange,
+  }: any) {
     const [value, setValue] = useState(defaultValue || "");
-    useImperativeHandle(ref, () => ({
-      getText: () => valueRef.current,
-      focus: () => {},
-    }));
     return (
       <input
         value={value}
         onChange={(e) => {
-          valueRef.current = e.target.value;
           setValue(e.target.value);
           onChange?.(e.target.value);
         }}
-        onBlur={() => onBlur?.(valueRef.current)}
+        onBlur={() => onBlur?.(value)}
         placeholder={placeholder}
         data-testid="title-editor"
       />
     );
-  }),
+  },
 }));
 
 // Mock common components

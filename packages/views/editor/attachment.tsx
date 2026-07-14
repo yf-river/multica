@@ -50,7 +50,7 @@ import "./styles/attachment.css";
 // Public API
 // ---------------------------------------------------------------------------
 
-export type AttachmentInput =
+type AttachmentInput =
   // Server response in hand — full record. Used by AttachmentList and any
   // caller iterating a server-returned attachments[] array.
   | { kind: "record"; attachment: AttachmentRecord }
@@ -84,7 +84,7 @@ export type AttachmentInput =
       forceKind?: PreviewKind;
     };
 
-export interface AttachmentProps {
+interface AttachmentProps {
   attachment: AttachmentInput;
   /** Editor hint — when true, the image toolbar exposes Trash. */
   editable?: boolean;

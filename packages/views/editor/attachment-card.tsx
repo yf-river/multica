@@ -101,7 +101,7 @@ function AttachmentCardChrome({
   );
 }
 
-export interface AttachmentCardProps {
+interface AttachmentCardProps {
   /** Filename used for icon label and previewable-kind detection. */
   filename: string;
   /** Content type used in addition to filename for previewable-kind detection. */

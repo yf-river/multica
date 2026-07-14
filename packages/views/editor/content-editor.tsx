@@ -529,4 +529,4 @@ const ContentEditor = forwardRef<ContentEditorRef, ContentEditorProps>(
   },
 );
 
-export { ContentEditor, type ContentEditorProps, type ContentEditorRef };
+export { ContentEditor, type ContentEditorRef };

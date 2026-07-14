@@ -435,7 +435,7 @@ export class PreviewTooLargeError extends Error {
 }
 
 // Thrown by getAttachmentTextContent when the server's text whitelist
-// rejects the content type. Normally the client's isPreviewable() guard
+// rejects the content type. Normally the client's preview-kind guard
 // catches this earlier, but the two whitelists can drift — surfacing the
 // 415 as a typed error makes the drift visible.
 export class PreviewUnsupportedError extends Error {

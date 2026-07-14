@@ -78,10 +78,6 @@ function escapeRawHtmlTagsInSegment(segment: string): string {
   );
 }
 
-function collectRawHtmlTagsInSegment(segment: string): string[] {
-  return segment.match(RAW_HTML_TAG_RE) ?? [];
-}
-
 function escapeTagsOutsideCodeSpans(line: string): string {
   const parts: string[] = [];
   let i = 0;
@@ -161,7 +157,7 @@ function collectTagsOutsideCodeSpans(line: string): string[] {
 
     const nextBacktick = line.indexOf("`", i);
     const end = nextBacktick === -1 ? line.length : nextBacktick;
-    tags.push(...collectRawHtmlTagsInSegment(line.slice(i, end)));
+    tags.push(...(line.slice(i, end).match(RAW_HTML_TAG_RE) ?? []));
     i = end;
   }
 

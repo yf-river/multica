@@ -158,10 +158,6 @@ export function getPreviewKind(
   return null;
 }
 
-export function isPreviewable(contentType: string, filename: string): boolean {
-  return getPreviewKind(contentType, filename) !== null;
-}
-
 // Pick the hljs language token for a file. Returns undefined when the file
 // doesn't have a recognizable extension — callers can fall back to a plain
 // `<pre>` render. Kept tiny and ext-driven on purpose: lowlight's `common`
