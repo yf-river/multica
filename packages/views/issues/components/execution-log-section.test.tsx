@@ -257,7 +257,6 @@ describe("ExecutionLogSection trace", () => {
       summary: { 任务数: 1, 子任务数: 0, SOP执行数: 1, 观测事件数: 2, 工具调用数: 1, 唤醒评论数: 0 },
       issue_summary: {
         issue_id: "issue-1",
-        node_count: 2,
         total_duration_ms: 60000,
         total_input_tokens: 10,
         total_output_tokens: 5,
@@ -268,16 +267,13 @@ describe("ExecutionLogSection trace", () => {
         trace_event_count: 2,
         usage_unavailable: false,
         acceptance_status: "completed",
-        full_analysis_deep_link: "/test/run-reviews?issue=issue-1",
       },
       root: {
         issue: { id: "issue-1", title: "历史任务", status: "done" },
         tasks: [makeTask({ status: "completed", completed_at: "2026-06-08T08:07:00Z" })],
-        sop_runs: [],
         trace_events: [{ id: "trace-1" }],
         tool_call_chains: [],
         tool_call_summary: [],
-        wakeup_comments: [],
         children: [],
       },
       timeline_nodes: [],
@@ -306,7 +302,6 @@ describe("ExecutionLogSection trace", () => {
       },
       issue_summary: {
         issue_id: "issue-parent",
-        node_count: 12,
         total_duration_ms: 65000,
         total_input_tokens: 100,
         total_output_tokens: 40,
@@ -318,7 +313,6 @@ describe("ExecutionLogSection trace", () => {
         usage_unavailable: false,
         failure_summary: "验收失败：缺少执行级结论",
         acceptance_status: "failed",
-        full_analysis_deep_link: "/test/run-reviews?issue=issue-parent",
       },
       root: {
         issue: {
@@ -344,7 +338,6 @@ describe("ExecutionLogSection trace", () => {
           metadata: {},
         },
         tasks: [makeTask({ id: "task-parent", status: "completed", issue_id: "issue-parent" })],
-        sop_runs: [{ id: "run-1", events: [{ id: "event-1" }, { id: "event-2" }] }],
         trace_events: [{ id: "trace-1" }, { id: "trace-2" }],
         tool_call_chains: [
           {
@@ -365,17 +358,6 @@ describe("ExecutionLogSection trace", () => {
           },
         ],
         tool_call_summary: [],
-        wakeup_comments: [
-          {
-            id: "comment-1",
-            issue_id: "issue-parent",
-            author_type: "system",
-            type: "system",
-            content: "子任务 [GTD-2]「gateway 子任务」已完成。",
-            parent_id: null,
-            created_at: "2026-06-08T08:03:00Z",
-          },
-        ],
         children: [
           {
             issue: {
@@ -401,11 +383,9 @@ describe("ExecutionLogSection trace", () => {
               metadata: {},
             },
             tasks: [makeTask({ id: "task-child", status: "queued", issue_id: "issue-child" })],
-            sop_runs: [],
             trace_events: [{ id: "trace-child" }],
             tool_call_chains: [],
             tool_call_summary: [],
-            wakeup_comments: [],
             children: [],
           },
         ],

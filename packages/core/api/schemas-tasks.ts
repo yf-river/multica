@@ -34,7 +34,6 @@ export const AgentTaskSchema = z.object({
   chat_session_id: z.string().optional(),
   autopilot_run_id: z.string().optional(),
   parent_task_id: z.string().optional(),
-  is_leader_task: z.boolean().optional(),
   attempt: z.number().optional(),
   trigger_comment_id: z.string().optional(),
   trigger_summary: z.string().optional(),
@@ -154,9 +153,7 @@ const TimelineNodeSchema = z.object({
 
 const IssueTimelineSummarySchema = z.object({
   issue_id: NonEmptyStringSchema,
-  node_count: z.number().default(0),
   total_duration_ms: z.number().default(0),
-  wall_clock_duration_ms: z.number().nullable().optional(),
   agent_execution_duration_ms: z.number().default(0),
   human_confirmation_duration_ms: z.number().nullable().optional(),
   child_issue_wait_duration_ms: z.number().nullable().optional(),
@@ -169,19 +166,16 @@ const IssueTimelineSummarySchema = z.object({
   trace_event_count: z.number().default(0),
   usage_unavailable: z.boolean().default(false),
   acceptance_status: z.string().default(""),
-  full_analysis_deep_link: z.string().default(""),
 }).loose();
 
 const IssueExecutionNodeSchema: z.ZodTypeAny = z.lazy(() => z.object({
   issue: IssueSchema,
   tasks: AgentTaskListSchema.default([]),
-  sop_runs: z.array(z.unknown()).default([]),
   task_messages: TaskMessageListSchema.default([]),
   trace_events: z.array(TaskTraceEventSchema).default([]),
   tool_call_chains: z.array(z.unknown()).default([]),
   tool_call_summary: z.array(z.unknown()).default([]),
   artifacts: z.array(ArtifactSchema).default([]),
-  wakeup_comments: z.array(z.unknown()).default([]),
   children: z.array(IssueExecutionNodeSchema).default([]),
 }).loose());
 
@@ -196,22 +190,18 @@ export const EMPTY_ISSUE_EXECUTION_TREE: IssueExecutionTreeResponse = {
   root: {
     issue: EMPTY_ISSUE,
     tasks: [],
-    sop_runs: [],
     task_messages: [],
     trace_events: [],
     tool_call_chains: [],
     tool_call_summary: [],
     artifacts: [],
-    wakeup_comments: [],
     children: [],
   },
   summary: {},
   timeline_nodes: [],
   issue_summary: {
     issue_id: "",
-    node_count: 0,
     total_duration_ms: 0,
-    wall_clock_duration_ms: null,
     agent_execution_duration_ms: 0,
     human_confirmation_duration_ms: null,
     child_issue_wait_duration_ms: null,
@@ -224,6 +214,5 @@ export const EMPTY_ISSUE_EXECUTION_TREE: IssueExecutionTreeResponse = {
     trace_event_count: 0,
     usage_unavailable: false,
     acceptance_status: "",
-    full_analysis_deep_link: "",
   },
 };

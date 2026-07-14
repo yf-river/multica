@@ -184,7 +184,6 @@ const AgentPlaygroundInputSchema = z.object({
   input: z.string().default(""),
   variables: z.record(z.string(), z.unknown()).default({}),
   expected: z.string().default(""),
-  dataset_row_id: z.string().nullable().optional().transform((v) => v ?? null),
   created_at: z.string().default(""),
 }).loose();
 
@@ -192,8 +191,6 @@ const AgentPlaygroundAgentSchema = z.object({
   id: z.string(),
   agent_id: z.string(),
   agent_name: z.string().default(""),
-  agent_model: z.string().nullable().optional().transform((v) => v ?? null),
-  display_order: z.number().default(0),
 }).loose();
 
 const AgentPlaygroundResultSchema = z.object({
@@ -203,7 +200,6 @@ const AgentPlaygroundResultSchema = z.object({
   agent_id: z.string(),
   chat_session_id: z.string().nullable().optional().transform((v) => v ?? null),
   task_id: z.string().nullable().optional().transform((v) => v ?? null),
-  rendered_input: z.string().default(""),
   status: z.string().default("pending"),
   output: z.string().default(""),
   error: z.string().default(""),

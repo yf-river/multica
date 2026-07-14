@@ -179,9 +179,7 @@ describe("run review duration summary", () => {
   it("uses agent execution plus recorded waiting time instead of wall clock duration", () => {
     const summary = {
       issue_id: "issue-1",
-      node_count: 1,
       total_duration_ms: 120000,
-      wall_clock_duration_ms: 300000,
       agent_execution_duration_ms: 120000,
       human_confirmation_duration_ms: 180000,
       child_issue_wait_duration_ms: 60000,
@@ -194,7 +192,6 @@ describe("run review duration summary", () => {
       trace_event_count: 0,
       usage_unavailable: false,
       acceptance_status: "done",
-      full_analysis_deep_link: "",
     };
 
     expect(runReviewTotalDurationMs(summary)).toBe(360000);
@@ -204,9 +201,7 @@ describe("run review duration summary", () => {
   it("ignores wall clock duration even when unclassified idle gaps exist", () => {
     const summary = {
       issue_id: "issue-1",
-      node_count: 1,
       total_duration_ms: 120000,
-      wall_clock_duration_ms: 600000,
       agent_execution_duration_ms: 120000,
       human_confirmation_duration_ms: 60000,
       total_input_tokens: 0,
@@ -218,7 +213,6 @@ describe("run review duration summary", () => {
       trace_event_count: 0,
       usage_unavailable: false,
       acceptance_status: "done",
-      full_analysis_deep_link: "",
     };
 
     expect(runReviewTotalDurationMs(summary)).toBe(180000);
@@ -285,10 +279,8 @@ describe("run review realtime helpers", () => {
     } as IssueTimelineNode;
     const summary = {
       issue_id: "issue-1",
-      node_count: 2,
       total_duration_ms: 60_000,
       agent_execution_duration_ms: 60_000,
-      wall_clock_duration_ms: 60_000,
       total_input_tokens: 0,
       total_output_tokens: 0,
       total_cache_read_tokens: 0,
@@ -298,7 +290,6 @@ describe("run review realtime helpers", () => {
       trace_event_count: 0,
       usage_unavailable: false,
       acceptance_status: "running",
-      full_analysis_deep_link: "",
     };
 
     expect(buildRunReviewLiveSummary(summary, [runningTask], [runningNode, completedNode], nowMs)).toMatchObject({
@@ -324,7 +315,6 @@ describe("run review realtime helpers", () => {
     });
     const summary = {
       issue_id: "issue-1",
-      node_count: 2,
       total_duration_ms: 60_000,
       agent_execution_duration_ms: 60_000,
       human_confirmation_duration_ms: 0,
@@ -337,7 +327,6 @@ describe("run review realtime helpers", () => {
       trace_event_count: 0,
       usage_unavailable: false,
       acceptance_status: "running",
-      full_analysis_deep_link: "",
     };
 
     expect(buildRunReviewLiveSummary(summary, [], [pendingHumanNode], nowMs)).toMatchObject({
@@ -1186,7 +1175,6 @@ describe("buildRunReviewEventRows", () => {
     } as Issue;
     const summary = {
       issue_id: "issue-1",
-      node_count: 1,
       total_duration_ms: 120000,
       total_input_tokens: 10,
       total_output_tokens: 20,
@@ -1200,7 +1188,6 @@ describe("buildRunReviewEventRows", () => {
       trace_event_count: 1,
       usage_unavailable: false,
       acceptance_status: "done",
-      full_analysis_deep_link: "",
     };
     const node = {
       issue_id: "issue-1",
@@ -1500,7 +1487,6 @@ describe("buildRunReviewEventRows", () => {
       issue_id: "issue-1",
       node_id: "child_issue_ref:child-1",
       node_type: "child_issue_ref",
-      child_issue_id: "child-1",
       status: "done",
       started_at: "2026-06-09T10:06:00.000Z",
       completed_at: "2026-06-09T10:10:00.000Z",
@@ -1737,7 +1723,6 @@ describe("buildRunReviewEventRows", () => {
       },
       issue_summary: {
         issue_id: "issue-1",
-        node_count: 1,
         total_duration_ms: 120000,
         total_input_tokens: 10,
         total_output_tokens: 20,
@@ -1748,7 +1733,6 @@ describe("buildRunReviewEventRows", () => {
         trace_event_count: 1,
         usage_unavailable: false,
         acceptance_status: "done",
-        full_analysis_deep_link: "",
       },
       timeline_nodes: [
         {

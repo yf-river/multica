@@ -79,12 +79,10 @@ const executionTree = {
   root: {
     issue,
     tasks: [],
-    sop_runs: [],
     task_messages: [],
     trace_events: [],
     tool_call_chains: [],
     tool_call_summary: [],
-    wakeup_comments: [],
     children: [],
   },
   summary: {},

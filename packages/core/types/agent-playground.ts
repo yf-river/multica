@@ -21,7 +21,6 @@ export interface AgentPlaygroundInput {
   input: string;
   variables: Record<string, unknown>;
   expected: string;
-  dataset_row_id: string | null;
   created_at: string;
 }
 
@@ -29,8 +28,6 @@ export interface AgentPlaygroundAgent {
   id: string;
   agent_id: string;
   agent_name: string;
-  agent_model: string | null;
-  display_order: number;
 }
 
 export interface AgentPlaygroundResult {
@@ -40,7 +37,6 @@ export interface AgentPlaygroundResult {
   agent_id: string;
   chat_session_id: string | null;
   task_id: string | null;
-  rendered_input: string;
   status: string;
   output: string;
   error: string;

@@ -392,13 +392,11 @@ describe("domain response schema fallbacks", () => {
           workspace_id: "workspace-1",
         },
         tasks: [task],
-        sop_runs: [],
         task_messages: [],
         trace_events: [],
         tool_call_chains: [],
         tool_call_summary: [],
         artifacts: [],
-        wakeup_comments: [],
         children: [],
       },
       summary: { task_count: 1 },
@@ -411,9 +409,7 @@ describe("domain response schema fallbacks", () => {
       }],
       issue_summary: {
         issue_id: "issue-1",
-        node_count: 1,
         total_duration_ms: 0,
-        wall_clock_duration_ms: null,
         agent_execution_duration_ms: 0,
         human_confirmation_duration_ms: null,
         child_issue_wait_duration_ms: null,
@@ -426,7 +422,6 @@ describe("domain response schema fallbacks", () => {
         trace_event_count: 0,
         usage_unavailable: false,
         acceptance_status: "running",
-        full_analysis_deep_link: "/workspace/issues/issue-1",
       },
     });
     expect(parsed.success).toBe(true);
