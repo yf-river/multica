@@ -8,7 +8,7 @@ import {
   type RuntimeConfigEnv,
   type RuntimeConfigResult,
 } from "../shared/runtime-config";
-import { errorMessage } from "./error-message";
+import { errorMessage, isMissingFileError } from "./error-message";
 
 export async function loadRuntimeConfig(options: {
   isDev: boolean;
@@ -42,15 +42,6 @@ export async function loadRuntimeConfig(options: {
 
 function desktopConfigPath(): string {
   return join(app.getPath("home"), ".multica", "desktop.json");
-}
-
-function isMissingFileError(err: unknown): boolean {
-  return Boolean(
-    err &&
-      typeof err === "object" &&
-      "code" in err &&
-      (err as NodeJS.ErrnoException).code === "ENOENT",
-  );
 }
 
 export type { RuntimeConfigResult };

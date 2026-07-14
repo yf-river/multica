@@ -1,5 +1,6 @@
 import { writeFileSync, readFileSync, rmSync } from "node:fs";
 import type { FreezeBreadcrumb } from "../shared/freeze-breadcrumb";
+import { isMissingFileError } from "./error-message";
 
 // When the renderer truly hangs or its process dies, it can't send telemetry
 // itself — the thread is blocked or gone. The main process (always alive) is
@@ -9,15 +10,6 @@ import type { FreezeBreadcrumb } from "../shared/freeze-breadcrumb";
 // This survives even a force-quit, which is the whole point.
 
 export type { FreezeBreadcrumb };
-
-function isMissingFile(error: unknown): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as NodeJS.ErrnoException).code === "ENOENT"
-  );
-}
 
 /**
  * Best-effort write. A breadcrumb we can't persist is lost, never fatal.
@@ -62,7 +54,7 @@ export function readAndClearFreezeBreadcrumb(filePath: string): FreezeBreadcrumb
   try {
     raw = readFileSync(filePath, "utf8");
   } catch (error) {
-    if (!isMissingFile(error)) {
+    if (!isMissingFileError(error)) {
       console.warn("[freeze-breadcrumb] read failed", filePath, error);
     }
     return null;
