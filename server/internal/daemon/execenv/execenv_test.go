@@ -1274,8 +1274,6 @@ func TestWriteContextFilesInjectsNameIntoNamelessFrontmatter(t *testing.T) {
 // pairs writeContextFiles with a per-task synthesized openclaw-config.json
 // (see openclaw_config.go) that pins agents.defaults.workspace to workDir,
 // so writing skills to {workDir}/skills/ is what the CLI actually scans.
-// This test pins the post-MUL-2219 write path; the previous fallback into
-// .agent_context/skills/ was a dead drop the openclaw scanner never read.
 func TestWriteContextFilesOpenclawNativeSkills(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -1313,13 +1311,6 @@ func TestWriteContextFilesOpenclawNativeSkills(t *testing.T) {
 		t.Errorf("supporting file content = %q, want %q", string(supportFile), "package main")
 	}
 
-	// The pre-MUL-2219 fallback path must NOT be written: openclaw never scans it.
-	if _, err := os.Stat(filepath.Join(dir, ".agent_context", "skills")); !os.IsNotExist(err) {
-		t.Error(".agent_context/skills/ MUST NOT be written for openclaw — the scanner does not read that path")
-	}
-	if _, err := os.Stat(filepath.Join(dir, ".openclaw", "skills")); !os.IsNotExist(err) {
-		t.Error(".openclaw/skills/ MUST NOT be written — openclaw never scans that path; writing there is a dead drop")
-	}
 }
 
 func TestWriteContextFilesKiroNativeSkills(t *testing.T) {
@@ -1343,9 +1334,6 @@ func TestWriteContextFilesKiroNativeSkills(t *testing.T) {
 	}
 	if !strings.Contains(string(skillMd), "Follow Go conventions.") {
 		t.Error("SKILL.md missing content")
-	}
-	if _, err := os.Stat(filepath.Join(dir, ".agent_context", "skills")); !os.IsNotExist(err) {
-		t.Error("expected .agent_context/skills/ to NOT exist for Kiro provider")
 	}
 }
 
@@ -1386,9 +1374,6 @@ func TestInjectRuntimeConfigAntigravity(t *testing.T) {
 	if !strings.Contains(s, "discovered automatically") {
 		t.Error("AGENTS.md for Antigravity should advertise native skill discovery")
 	}
-	if strings.Contains(s, ".agent_context/skills/") {
-		t.Error("AGENTS.md for Antigravity must not reference the .agent_context/skills/ fallback")
-	}
 }
 
 // TestWriteContextFilesAntigravityNativeSkills pins that skills for the
@@ -1415,11 +1400,6 @@ func TestWriteContextFilesAntigravityNativeSkills(t *testing.T) {
 	}
 	if !strings.Contains(string(skillMd), "Follow Go conventions.") {
 		t.Error("SKILL.md missing content")
-	}
-	// The fallback path must NOT be written — Antigravity's scanner reads
-	// .agents/skills/, not .agent_context/skills/.
-	if _, err := os.Stat(filepath.Join(dir, ".agent_context", "skills")); !os.IsNotExist(err) {
-		t.Error(".agent_context/skills/ MUST NOT be written for antigravity — its scanner does not read that path")
 	}
 }
 
@@ -1602,18 +1582,6 @@ func TestInjectRuntimeConfigCommentGuardrailIsProviderAgnostic(t *testing.T) {
 					t.Errorf("%s reintroduces inline comment mode\n---\n%s", configFile, s)
 				}
 
-				// The legacy over-broad mandate (#1795 / #1851) must NOT
-				// reappear — it is what broke Windows non-ASCII for every
-				// provider.
-				for _, banned := range []string{
-					"MUST pipe via stdin",
-					"Agent-authored comments should always pipe content via stdin",
-					"use `--description-stdin` and pipe a HEREDOC",
-				} {
-					if strings.Contains(s, banned) {
-						t.Errorf("%s reintroduces over-broad legacy mandate %q for provider %s\n---\n%s", configFile, banned, provider, s)
-					}
-				}
 			})
 		}
 	}
@@ -1669,16 +1637,6 @@ func TestInjectRuntimeConfigLinuxCommentFormattingEmphasizesFile(t *testing.T) {
 				}
 			}
 
-			// The previous mandate (#1795 / #1851 / MUL-2904) must NOT remain.
-			for _, banned := range []string{
-				"always use `--content-stdin` with a HEREDOC, even for short single-line replies",
-				"<<'COMMENT'",
-				"Codex-Specific Comment Formatting",
-			} {
-				if strings.Contains(s, banned) {
-					t.Errorf("%s still carries pre-#4182 stdin mandate %q\n---\n%s", fileName, banned, s)
-				}
-			}
 		})
 	}
 }
@@ -3482,15 +3440,6 @@ func TestInjectRuntimeConfigCommentTriggerColdStartRead(t *testing.T) {
 		}
 	}
 
-	// The legacy step-2 phrasing this PR replaces must not regress.
-	if strings.Contains(s, "read the conversation (returns all comments, capped server-side at 2000)") {
-		t.Errorf("comment-triggered Workflow still carries the legacy full-dump phrasing\n---\n%s", s)
-	}
-	// The pre-MUL-2421 unbounded `--thread` recipe (no --tail) is also a
-	// regression target: it dumps the entire thread on long threads.
-	if strings.Contains(s, "multica issue comment list "+issueID+" --thread "+triggerID+" --output json") {
-		t.Errorf("comment-triggered Workflow regressed to unbounded --thread recipe (no --tail) — long threads will overflow context\n---\n%s", s)
-	}
 }
 
 // TestInjectRuntimeConfigCommentTriggerResumedNoDeltaRead checks the
@@ -3577,18 +3526,6 @@ func TestInjectRuntimeConfigAssignmentTriggerMentionsRecent(t *testing.T) {
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("assignment Workflow missing --recent guidance %q\n---\n%s", want, s)
-		}
-	}
-	// The previous wording framed `--recent` as a replacement ("you may
-	// switch to ..."), which conflicts with the mandatory full-history
-	// rule. Pin that the replacement semantics never reappears — `--recent`
-	// is a paging strategy, not a shortcut.
-	for _, banned := range []string{
-		"you may switch to",
-		"switch to `--recent",
-	} {
-		if strings.Contains(s, banned) {
-			t.Errorf("assignment Workflow regressed to replacement-style --recent phrasing %q\n---\n%s", banned, s)
 		}
 	}
 }

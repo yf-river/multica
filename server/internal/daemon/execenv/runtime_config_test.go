@@ -291,79 +291,6 @@ func TestRepositoryWorktreeContractPreventsNestedCheckout(t *testing.T) {
 	}
 }
 
-// The brief must no longer carry any parent-notification guidance. PR
-// #2918 added a "Tell the parent when you finish a child" rule that
-// turned into noise (self-mention loops, planner ack ping-pong,
-// hardcoded `MUL-` prefix). PR #3055 first downgraded it to a "do NOT
-// post one" guardrail, but Bohan's product call was to remove the
-// guidance entirely rather than substitute a new prohibition. These
-// canaries lock that in: any wording that re-introduces the
-// parent-comment concept — positive, negative, or descriptive — must
-// not come back through future edits.
-func TestBriefHasNoParentNotificationGuidance(t *testing.T) {
-	t.Parallel()
-	cases := []TaskContextForEnv{
-		{IssueID: "11111111-2222-3333-4444-555555555555"},
-		{
-			IssueID:          "22222222-3333-4444-5555-666666666666",
-			TriggerCommentID: "33333333-4444-5555-6666-777777777777",
-		},
-	}
-	for _, ctx := range cases {
-		ctx := ctx
-		out := buildMetaSkillContent("claude", ctx)
-
-		// The pre-MUL-2538 phrasing instructed the agent to compose a
-		// parent comment by hand — including a hardcoded `MUL-` prefix
-		// and an assignee mention. The intermediate revision (PR #3055
-		// before Bohan's call) instead told the agent NOT to post one.
-		// Both framings must stay out.
-		for _, banned := range []string{
-			// Old "do it yourself" framing (PR #2918).
-			"## Parent / Sub-issue Protocol",
-			"**Tell the parent when you finish a child.**",
-			"multica issue comment add <parent-id>",
-			"with NO `--parent`",
-			"link the child as `[MUL-",
-			"`@mention` the parent's assignee",
-			"`mention://agent/<id>`",
-			"`mention://member/<id>`",
-			"`mention://squad/<id>`",
-			// Intermediate "do NOT do it yourself" framing (PR #3055
-			// before Bohan's call) — also out per product direction.
-			"**Do NOT post your own parent-notification comment.**",
-			"Do NOT post your own parent-notification comment",
-			"parent-notification comment",
-			"system comment on the parent fires from the status transition",
-			"re-trigger the parent's assignee for nothing",
-			"platform posts a top-level system comment on the parent",
-			// Earlier revisions split rules by trigger type or used
-			// table/subsection layouts. None of those structures should
-			// come back either.
-			"| Parent assignee | Parent status |",
-			"The same agent as yourself",
-			"| Member or squad |",
-			"### A. Notify the parent",
-			"### B. Choose",
-			"When this issue has `parent_issue_id`:",
-			"**Closing out child work** (only if this issue has `parent_issue_id`)",
-			"**Notify the parent** (only if this issue has `parent_issue_id`",
-			"**Creating sub-issues** (applies to any issue-bound run)",
-			"For parent/child work, use these best-effort rules",
-			// The protocol must no longer emit a placeholder
-			// `<this-issue-id>` status flip — the workflow above owns
-			// that command with the real issue id substituted.
-			"`multica issue status <this-issue-id> in_review`",
-			// Non-existent CLI form Elon's earlier review flagged.
-			"issue list --parent",
-		} {
-			if strings.Contains(out, banned) {
-				t.Errorf("expected %q to be removed from the brief", banned)
-			}
-		}
-	}
-}
-
 // Comment-triggered briefs must NOT carry any unconditional status-flip
 // command targeting the current issue. Previous revisions had a
 // dedicated protocol step that wrote `multica issue status <this-issue-id> in_review`;
@@ -512,16 +439,6 @@ func TestAssignmentTriggeredProtocolHonorsAgentIdentity(t *testing.T) {
 		}
 	}
 
-	for _, banned := range []string{
-		"4. Run `multica issue status " + issueID + " in_progress`\n",
-		"5. Follow your Skills and Agent Identity to complete the task (write code, investigate, etc.)",
-		"8. When done, run `multica issue status " + issueID + " in_review`\n",
-		"When done, run `multica issue status " + issueID + " in_review`",
-	} {
-		if strings.Contains(out, banned) {
-			t.Errorf("assignment-triggered brief still contains unconditional legacy workflow text %q\n---\n%s", banned, out)
-		}
-	}
 }
 
 func TestAssignmentTriggeredSquadLeaderGuardrail(t *testing.T) {

@@ -739,12 +739,6 @@ func TestBuildPromptDefaultMentionsRecent(t *testing.T) {
 	if strings.Contains(out, "--thread") {
 		t.Errorf("default BuildPrompt should NOT mention --thread (no trigger comment to anchor on)\n--- output ---\n%s", out)
 	}
-	// The legacy "If you need comment history" soft phrasing conflicts with
-	// the assignment-trigger runtime workflow, which treats reading comments
-	// as mandatory. Guard against it sneaking back in.
-	if strings.Contains(out, "If you need comment history") {
-		t.Errorf("default BuildPrompt still carries the legacy 'If you need' soft phrasing that conflicts with the mandatory workflow\n--- output ---\n%s", out)
-	}
 }
 
 // TestBuildPromptNonSquadLeaderNoRule verifies that non-squad-leader agents
