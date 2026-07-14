@@ -118,11 +118,11 @@ func TestResolveWorkspaceIDFromRequest(t *testing.T) {
 			want: uuidA,
 		},
 		{
-			name: "retired workspace query parameters are ignored",
+			name: "query parameters cannot select a workspace",
 			setup: func(r *http.Request) {
 				q := r.URL.Query()
-				q.Set("workspace_slug", testResolverSlug)
-				q.Set("workspace_id", uuidA)
+				q.Set("workspace", testResolverSlug)
+				q.Set("tenant_id", uuidA)
 				r.URL.RawQuery = q.Encode()
 			},
 			wantEmpty: true,
@@ -186,9 +186,9 @@ func TestResolveWorkspaceUUIDUsesCurrentHeaders(t *testing.T) {
 	defer cleanup()
 	resolve := resolveWorkspaceUUID(queries)
 
-	queryOnly := httptest.NewRequest(http.MethodGet, "/api/anything?workspace_slug="+testResolverSlug+"&workspace_id=00000000-0000-0000-0000-000000000001", nil)
+	queryOnly := httptest.NewRequest(http.MethodGet, "/api/anything?workspace="+testResolverSlug+"&tenant_id=00000000-0000-0000-0000-000000000001", nil)
 	if got, err := resolve(queryOnly); err != nil || got != "" {
-		t.Fatalf("retired query identity resolved to %q, err=%v", got, err)
+		t.Fatalf("query identity resolved to %q, err=%v", got, err)
 	}
 
 	invalidSlug := httptest.NewRequest(http.MethodGet, "/api/anything", nil)

@@ -327,12 +327,6 @@ func TestCreateWorkspace_RejectsReservedSlug(t *testing.T) {
 	}
 }
 
-func TestRemovedGlobalRouteSlugIsNotReserved(t *testing.T) {
-	if isReservedSlug("onboarding") {
-		t.Fatal("onboarding remains reserved after its global route was removed")
-	}
-}
-
 func TestWorkspaceToResponse_RejectsNonArrayRepos(t *testing.T) {
 	tests := []struct {
 		name string

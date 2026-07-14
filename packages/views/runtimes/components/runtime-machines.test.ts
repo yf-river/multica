@@ -159,7 +159,7 @@ describe("runtime machine grouping", () => {
     const machines = buildRuntimeMachines(
       [
         makeRuntime({
-          daemon_id: "legacy-hostname",
+          daemon_id: "host-daemon-id",
           name: "Claude (My Laptop)",
           device_info: "My Laptop · claude 1.0.0",
         }),
@@ -178,7 +178,7 @@ describe("runtime machine grouping", () => {
       title: "my laptop",
       section: "local",
       isCurrent: true,
-      daemonId: "legacy-hostname",
+      daemonId: "host-daemon-id",
     });
   });
 

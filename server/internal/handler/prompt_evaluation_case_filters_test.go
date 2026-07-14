@@ -19,8 +19,8 @@ func TestParsePromptEvaluationCaseFilters(t *testing.T) {
 	}{
 		{name: "empty", wantOK: true, wantCode: http.StatusOK},
 		{name: "current values", query: "status=active&source=trace&keyword=+needle+", wantOK: true, wantStatus: "active", wantSource: "trace", wantKeyword: "needle", wantCode: http.StatusOK},
-		{name: "invalid status", query: "status=retired", wantCode: http.StatusBadRequest},
-		{name: "invalid source", query: "source=legacy", wantCode: http.StatusBadRequest},
+		{name: "invalid status", query: "status=unsupported", wantCode: http.StatusBadRequest},
+		{name: "invalid source", query: "source=unsupported", wantCode: http.StatusBadRequest},
 	}
 
 	for _, tt := range tests {

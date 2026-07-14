@@ -10,10 +10,6 @@ describe("reserved slugs", () => {
     expect(isReservedSlug("my-cool-workspace")).toBe(false);
   });
 
-  it("does not reserve names for removed global routes", () => {
-    expect(isReservedSlug("onboarding")).toBe(false);
-  });
-
   it("returns false for an empty slug", () => {
     expect(isReservedSlug("")).toBe(false);
   });

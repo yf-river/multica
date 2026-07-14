@@ -47,7 +47,7 @@ func TestResolveInstallationCredentialsRejectsInvalidDependenciesAndData(t *test
 	if _, err := resolveInstallationCredentials(failingCredentialsResolver{err: decryptErr}, db.LarkInstallation{}); !errors.Is(err, decryptErr) {
 		t.Fatalf("decrypt error = %v, want wrapped resolver error", err)
 	}
-	if _, err := resolveInstallationCredentials(staticCredentialsResolver{secret: "secret"}, db.LarkInstallation{Region: "legacy"}); err == nil || !strings.Contains(err.Error(), "legacy") {
+	if _, err := resolveInstallationCredentials(staticCredentialsResolver{secret: "secret"}, db.LarkInstallation{Region: "unsupported"}); err == nil || !strings.Contains(err.Error(), "unsupported") {
 		t.Fatalf("region error = %v, want invalid stored region", err)
 	}
 }

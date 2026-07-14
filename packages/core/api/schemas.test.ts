@@ -328,14 +328,14 @@ describe("PromptEvaluationAssetSchema", () => {
     expect(parsed.total).toBe(0);
   });
 
-  it("rejects removed optimization run assets", () => {
+  it("rejects unsupported asset types", () => {
     expect(() => PromptEvaluationAssetSchema.parse({
       id: "asset-2",
       workspace_id: "ws-1",
       prompt_id: "prompt-1",
-      name: "澄清提示词优化运行",
-      asset_type: "优化运行",
-      payload: { 候选版本数: 3, 指标: ["完整性", "可执行性"] },
+      name: "未知类型资产",
+      asset_type: "未知类型",
+      payload: {},
       status: "启用",
       created_at: "2026-06-21T00:00:00Z",
       updated_at: "2026-06-21T00:00:00Z",

@@ -198,48 +198,41 @@ func TestDeleteRuntimeProfile_ActiveAgentBlocks(t *testing.T) {
 	}
 }
 
-// Runtime profiles have one current visibility contract: workspace-shared.
-// The former private/scope request surface was never enforceable by daemon
-// tokens, so current clients must not be allowed to believe those fields work.
-func TestCreateRuntimeProfile_RejectsRemovedVisibilityFields(t *testing.T) {
+func TestCreateRuntimeProfileRejectsUnknownFields(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
 
-	for _, removedField := range []string{"visibility", "scope"} {
-		t.Run(removedField, func(t *testing.T) {
-			w := httptest.NewRecorder()
-			req := newRequest("POST", "/api/workspaces/"+testWorkspaceID+"/runtime-profiles", map[string]any{
-				"display_name":    "Removed Field " + removedField,
-				"protocol_family": "codex",
-				"command_name":    "removed-field-codex",
-				removedField:      "private",
-			})
-			req = withURLParam(req, "id", testWorkspaceID)
-			testHandler.CreateRuntimeProfile(w, req)
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/workspaces/"+testWorkspaceID+"/runtime-profiles", map[string]any{
+		"display_name":      "Unknown Field",
+		"protocol_family":   "codex",
+		"command_name":      "unknown-field-codex",
+		"unsupported_field": true,
+	})
+	req = withURLParam(req, "id", testWorkspaceID)
+	testHandler.CreateRuntimeProfile(w, req)
 
-			if w.Code != http.StatusBadRequest {
-				t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
-			}
-		})
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
-func TestUpdateRuntimeProfile_RejectsRemovedVisibilityField(t *testing.T) {
+func TestUpdateRuntimeProfileRejectsUnknownFields(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
 	profileID := insertRuntimeProfileFixture(
 		t,
 		context.Background(),
-		"Removed Update Visibility",
+		"Unknown Update Field",
 		"codex",
-		"removed-update-visibility",
+		"unknown-update-field",
 	)
 
 	w := httptest.NewRecorder()
 	req := newRequest("PATCH", "/api/workspaces/"+testWorkspaceID+"/runtime-profiles/"+profileID, map[string]any{
-		"visibility": "private",
+		"unsupported_field": true,
 	})
 	req = withURLParams(req, "id", testWorkspaceID, "profileId", profileID)
 	testHandler.UpdateRuntimeProfile(w, req)

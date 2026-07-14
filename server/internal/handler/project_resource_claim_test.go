@@ -29,7 +29,7 @@ func TestProjectResourcesForClaimRejectsPersistedContractViolations(t *testing.T
 	tests := []db.ProjectResource{
 		{ResourceType: "github_repo", ResourceRef: []byte(`[]`)},
 		{ResourceType: "github_repo", ResourceRef: []byte(`{"url":""}`)},
-		{ResourceType: "retired_repo", ResourceRef: []byte(`{"url":"https://example.com/repo"}`)},
+		{ResourceType: "unsupported_resource", ResourceRef: []byte(`{"url":"https://example.com/repo"}`)},
 	}
 	for _, resource := range tests {
 		if _, _, _, err := projectResourcesForClaim([]db.ProjectResource{resource}); err == nil {

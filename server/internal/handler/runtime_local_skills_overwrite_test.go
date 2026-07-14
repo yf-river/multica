@@ -378,7 +378,7 @@ func TestRuntimeLocalSkillImport_OverwriteRetryIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestRuntimeLocalSkillImportRejectsRemovedSupportsConflictFlag(t *testing.T) {
+func TestRuntimeLocalSkillImportRejectsUnknownFields(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
@@ -388,13 +388,13 @@ func TestRuntimeLocalSkillImportRejectsRemovedSupportsConflictFlag(t *testing.T)
 	req := withURLParams(
 		newRequestAsUser(testUserID, http.MethodPost, "/api/runtimes/"+runtimeID+"/local-skills/import", map[string]any{
 			"skill_key":         "review-helper",
-			"supports_conflict": true,
+			"unsupported_field": true,
 		}),
 		"runtimeId", runtimeID,
 	)
 	testHandler.InitiateImportLocalSkill(w, req)
 	if w.Code != http.StatusBadRequest {
-		t.Fatalf("removed supports_conflict field: expected 400, got %d: %s", w.Code, w.Body.String())
+		t.Fatalf("unknown field: expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

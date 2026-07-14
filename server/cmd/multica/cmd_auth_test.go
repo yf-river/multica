@@ -180,8 +180,8 @@ func TestLoginTokenFlagWiring(t *testing.T) {
 	}
 }
 
-// TestLoginTokenFlagParsing exercises the two current value forms and ensures
-// the obsolete missing-value form cannot silently change meaning.
+// TestLoginTokenFlagParsing exercises the accepted value forms and rejects a
+// missing value.
 func TestLoginTokenFlagParsing(t *testing.T) {
 	cases := []struct {
 		name      string
