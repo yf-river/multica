@@ -17,7 +17,6 @@ import {
   PromptLibraryItemListResponseSchema,
   PromptLibraryItemSchema,
   SquadListSchema,
-  SquadSchema,
   TimelineEntriesSchema,
   UserSchema,
 } from "./schemas";
@@ -196,26 +195,6 @@ describe("SquadListSchema member preview drift", () => {
     member_count: 0,
     member_preview: [],
   };
-
-  it("preserves project SOP profile fields", () => {
-    const parsed = SquadSchema.parse({
-      ...baseSquad,
-      sop_profile: {
-        project: "user-center",
-        repo: "/data/ida/user-center",
-        mode: "stage_chain",
-        stage_skills: ["user-center/01-clarify", "user-center/02-design"],
-        operation_skills: ["user-center/add-api"],
-        acceptance: ["阶段产物完整", "测试证据完整"],
-      },
-    });
-
-    expect(parsed.sop_profile).toMatchObject({
-      project: "user-center",
-      repo: "/data/ida/user-center",
-      mode: "stage_chain",
-    });
-  });
 
   it("preserves lightweight member preview rows", () => {
     const parsed = SquadListSchema.parse([

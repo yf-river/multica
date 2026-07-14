@@ -84,11 +84,9 @@ const SquadMemberPreviewSchema = z.object({
 
 export const SquadSchema = z.object({
   id: z.string(),
-  workspace_id: z.string(),
   name: z.string(),
   description: z.string(),
   instructions: z.string(),
-  sop_profile: z.record(z.string(), z.unknown()),
   avatar_url: z.string().nullable(),
   scope: z.enum(["workspace", "personal"]),
   leader_id: z.string(),
@@ -96,7 +94,6 @@ export const SquadSchema = z.object({
   created_at: z.string(),
   updated_at: z.string(),
   archived_at: z.string().nullable(),
-  archived_by: z.string().nullable(),
   member_count: z.number(),
   member_preview: z.array(SquadMemberPreviewSchema),
 }).loose();
@@ -105,11 +102,9 @@ export const SquadListSchema = z.array(SquadSchema);
 export const EMPTY_SQUAD_LIST: Squad[] = [];
 export const EMPTY_SQUAD: Squad = {
   id: "",
-  workspace_id: "",
   name: "",
   description: "",
   instructions: "",
-  sop_profile: {},
   avatar_url: null,
   scope: "workspace",
   leader_id: "",
@@ -117,46 +112,32 @@ export const EMPTY_SQUAD: Squad = {
   created_at: "",
   updated_at: "",
   archived_at: null,
-  archived_by: null,
   member_count: 0,
   member_preview: [],
 };
 
 export const SquadMemberSchema = z.object({
   id: NonEmptyStringSchema,
-  squad_id: NonEmptyStringSchema,
   member_type: z.string(),
   member_id: NonEmptyStringSchema,
   role: z.string(),
-  created_at: z.string(),
 }).loose();
 
 export const SquadMemberListSchema = z.array(SquadMemberSchema);
 export const EMPTY_SQUAD_MEMBERS: SquadMember[] = [];
 export const EMPTY_SQUAD_MEMBER: SquadMember = {
   id: "",
-  squad_id: "",
   member_type: "agent",
   member_id: "",
   role: "",
-  created_at: "",
 };
 
-const InternalSquadTemplateAgentSchema = z.object({
-  id: NonEmptyStringSchema,
-  name: z.string(),
-  role_key: z.string(),
-  role: z.string(),
-}).loose();
-
 export const InternalSquadTemplateResponseSchema = z.object({
-  squad: SquadSchema,
-  agents: z.array(InternalSquadTemplateAgentSchema),
+  squad: SquadSchema.pick({ id: true, name: true }),
 }).loose();
 
 export const EMPTY_INTERNAL_SQUAD_TEMPLATE_RESPONSE: InternalSquadTemplateResponse = {
-  squad: EMPTY_SQUAD,
-  agents: [],
+  squad: { id: "", name: "" },
 };
 
 const SOPStepEventSchema = z.object({
