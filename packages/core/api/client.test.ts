@@ -713,7 +713,6 @@ describe("ApiClient", () => {
       },
       capabilities: {},
       status: "verified",
-      last_verified_at: "2026-07-11T00:00:00Z",
       created_at: "2026-07-11T00:00:00Z",
       updated_at: "2026-07-11T00:00:00Z",
       token: "must-not-cross-boundary",
@@ -725,7 +724,6 @@ describe("ApiClient", () => {
             provider: "gongfeng",
             secret_binding: profile.secret_binding,
             status: "verified",
-            last_verified_at: "2026-07-11T00:00:00Z",
             token: "must-not-cross-boundary",
           }
         : init?.method
@@ -761,7 +759,7 @@ describe("ApiClient", () => {
     const profile = {
       id: "profile-1", user_id: "user-1", scope: "account", provider: "tapd",
       name: "Current", secret_binding: { configured: true, redacted: true, mode: "secret_ref" },
-      capabilities: {}, status: "unverified", last_verified_at: null,
+      capabilities: {}, status: "unverified",
       created_at: "now", updated_at: "now",
     };
     const fetchMock = vi.fn()
@@ -1107,7 +1105,6 @@ describe("ApiClient", () => {
       agent_id: "agent-1",
       app_id: "app-1",
       bot_open_id: "bot-1",
-      installer_user_id: "user-1",
       status: "active",
       region: "feishu",
       installed_at: "2026-07-11T00:00:00Z",
@@ -1139,12 +1136,10 @@ describe("ApiClient", () => {
       .mockResolvedValueOnce(new Response(JSON.stringify({
         workspace_id: "",
         installation_id: "",
-        lark_open_id: "",
       }), { status: 200, headers: { "Content-Type": "application/json" } }))
       .mockResolvedValueOnce(new Response(JSON.stringify({
         workspace_id: "",
         installation_id: "",
-        lark_open_id: "",
       }), { status: 200, headers: { "Content-Type": "application/json" } }));
     vi.stubGlobal("fetch", fetchMock);
     const client = new ApiClient("https://api.example.test");
@@ -1172,7 +1167,6 @@ describe("ApiClient", () => {
     const response = {
       workspace_id: "workspace-1",
       installation_id: "installation-1",
-      lark_open_id: "open-id-1",
     };
     const fetchMock = vi.fn()
       .mockRejectedValueOnce(new TypeError("response lost"))
@@ -1225,8 +1219,6 @@ describe("ApiClient", () => {
           workspace_id: "workspace-1",
           installation_id: 42,
           account_login: "multica",
-          account_type: "Organization",
-          account_avatar_url: null,
           created_at: "2026-07-11T00:00:00Z",
           private_key: "must-not-cross-boundary",
         }],
@@ -1245,11 +1237,6 @@ describe("ApiClient", () => {
           html_url: "https://git.code.tencent.com/ChainWeaver/ida/user-center/merge_requests/61234",
           branch: null,
           author_login: null,
-          author_avatar_url: null,
-          merged_at: null,
-          closed_at: null,
-          pr_created_at: "",
-          pr_updated_at: "",
           mergeable_state: null,
           checks_conclusion: null,
           checks_passed: 0,
@@ -1272,11 +1259,6 @@ describe("ApiClient", () => {
           html_url: "javascript:alert(1)",
           branch: null,
           author_login: null,
-          author_avatar_url: null,
-          merged_at: null,
-          closed_at: null,
-          pr_created_at: "",
-          pr_updated_at: "",
           mergeable_state: null,
           checks_conclusion: null,
           checks_passed: 0,

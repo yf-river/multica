@@ -19,8 +19,6 @@ export interface GitHubInstallation {
    * integrations (see `ListGitHubInstallationsResponse.can_manage`). */
   installation_id?: number;
   account_login: string;
-  account_type: "User" | "Organization";
-  account_avatar_url: string | null;
   created_at: string;
   /** Display name of the workspace member who connected this installation.
    * Optional because older backends and minimum-visibility deployments may
@@ -39,11 +37,6 @@ export interface GitHubPullRequest {
   html_url: string;
   branch: string | null;
   author_login: string | null;
-  author_avatar_url: string | null;
-  merged_at: string | null;
-  closed_at: string | null;
-  pr_created_at: string;
-  pr_updated_at: string;
   mergeable_state: GitHubMergeableState | null;
   checks_conclusion: GitHubPullRequestChecksConclusion | null;
   checks_passed: number;

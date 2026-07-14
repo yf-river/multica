@@ -12,9 +12,7 @@ const LarkInstallationSchema = z.object({
   workspace_id: NonEmptyStringSchema,
   agent_id: NonEmptyStringSchema,
   app_id: NonEmptyStringSchema,
-  tenant_key: z.string().nullable().optional(),
   bot_open_id: NonEmptyStringSchema,
-  installer_user_id: NonEmptyStringSchema,
   status: NonEmptyStringSchema,
   region: z.string(),
   installed_at: z.string(),
@@ -60,7 +58,6 @@ export const LarkInstallStatusResponseSchema = z.object({
 export const RedeemLarkBindingTokenResponseSchema = z.object({
   workspace_id: NonEmptyStringSchema,
   installation_id: NonEmptyStringSchema,
-  lark_open_id: NonEmptyStringSchema,
 });
 
 export const EMPTY_LARK_INSTALLATION_LIST_RESPONSE: ListLarkInstallationsResponse = {
@@ -84,5 +81,4 @@ export const EMPTY_LARK_INSTALL_STATUS_RESPONSE: LarkInstallStatusResponse = {
 export const EMPTY_REDEEM_LARK_BINDING_TOKEN_RESPONSE: RedeemLarkBindingTokenResponse = {
   workspace_id: "",
   installation_id: "",
-  lark_open_id: "",
 };

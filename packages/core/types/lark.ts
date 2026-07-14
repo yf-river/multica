@@ -8,9 +8,7 @@ export interface LarkInstallation {
   workspace_id: string;
   agent_id: string;
   app_id: string;
-  tenant_key?: string | null;
   bot_open_id: string;
-  installer_user_id: string;
   status: "active" | "revoked" | string;
   /** Which Lark cloud the bot lives on: "feishu" (mainland) or "lark"
    * (international). */
@@ -66,5 +64,4 @@ export interface LarkInstallStatusResponse {
 export interface RedeemLarkBindingTokenResponse {
   workspace_id: string;
   installation_id: string;
-  lark_open_id: string;
 }

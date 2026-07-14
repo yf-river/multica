@@ -22,7 +22,6 @@ export interface ExternalCredentialProfile {
   secret_binding: ExternalCredentialSecretBinding;
   capabilities: Record<string, unknown>;
   status: ExternalCredentialStatus | (string & {});
-  last_verified_at: string | null;
   last_error?: string;
   created_at: string;
   updated_at: string;
@@ -61,6 +60,5 @@ export interface TestExternalCredentialProfileResponse {
   provider: ExternalCredentialProvider | (string & {});
   secret_binding: ExternalCredentialSecretBinding;
   status: ExternalCredentialStatus | (string & {});
-  last_verified_at: string | null;
   last_error?: string;
 }

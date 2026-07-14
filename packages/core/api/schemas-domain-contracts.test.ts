@@ -115,7 +115,6 @@ describe("domain response schema fallbacks", () => {
         agent_id: "agent-1",
         app_id: "app-1",
         bot_open_id: "bot-1",
-        installer_user_id: "user-1",
         status: "active",
       }],
     }).success).toBe(false);
@@ -129,7 +128,6 @@ describe("domain response schema fallbacks", () => {
         agent_id: "agent-1",
         app_id: "app-1",
         bot_open_id: "bot-1",
-        installer_user_id: "user-1",
         status: "active",
         region: "feishu",
         installed_at: "2026-07-01T00:00:00Z",
@@ -469,12 +467,10 @@ describe("domain response schema fallbacks", () => {
       provider: "gongfeng",
       name: "Gongfeng",
       status: "verified",
-      last_verified_at: null,
     }).success).toBe(false);
     expect(TestExternalCredentialProfileResponseSchema.safeParse({
       provider: "gongfeng",
       status: "verified",
-      last_verified_at: null,
     }).success).toBe(false);
   });
 
@@ -504,11 +500,6 @@ describe("domain response schema fallbacks", () => {
         html_url: "https://git.code.tencent.com/ChainWeaver/ida/user-center/merge_requests/61234",
         branch: null,
         author_login: null,
-        author_avatar_url: null,
-        merged_at: null,
-        closed_at: null,
-        pr_created_at: "2026-07-01T00:00:00Z",
-        pr_updated_at: "2026-07-01T00:00:00Z",
         mergeable_state: null,
         checks_conclusion: null,
         checks_passed: 0,
