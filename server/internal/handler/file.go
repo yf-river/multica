@@ -548,14 +548,11 @@ func (h *Handler) loadAttachmentUploadReplay(
 }
 
 func (h *Handler) writeAttachmentUploadReplayError(w http.ResponseWriter, err error) {
-	if errors.Is(err, errResourceCreateIdempotencyConflict) {
-		writeJSON(w, http.StatusConflict, map[string]string{
-			"error": "Idempotency-Key was already used with a different upload",
-			"code":  "idempotency_conflict",
-		})
-		return
-	}
-	writeError(w, http.StatusInternalServerError, "failed to replay upload")
+	writeResourceCreateReplayError(
+		w, err,
+		"Idempotency-Key was already used with a different upload",
+		"failed to replay upload",
+	)
 }
 
 func persistUploadedAttachment(

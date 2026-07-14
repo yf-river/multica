@@ -167,11 +167,11 @@ func (h *Handler) RerunIssue(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 	if replay, found, replayErr := loadReplay(); replayErr != nil {
-		if errors.Is(replayErr, errResourceCreateIdempotencyConflict) {
-			writeJSON(w, http.StatusConflict, map[string]string{"error": "Idempotency-Key was already used with a different request", "code": "idempotency_conflict"})
-		} else {
-			writeError(w, http.StatusInternalServerError, "failed to replay issue rerun")
-		}
+		writeResourceCreateReplayError(
+			w, replayErr,
+			"Idempotency-Key was already used with a different request",
+			"failed to replay issue rerun",
+		)
 		return
 	} else if found {
 		w.Header().Set("Idempotency-Replayed", "true")

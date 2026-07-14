@@ -64,6 +64,14 @@ func writeResourceCreateReplayError(w http.ResponseWriter, err error, conflictMe
 	writeError(w, http.StatusInternalServerError, recoveryMessage)
 }
 
+func writeResourceCreateReplayMessageError(w http.ResponseWriter, err error, conflictMessage, recoveryMessage string) {
+	if errors.Is(err, errResourceCreateIdempotencyConflict) {
+		writeError(w, http.StatusConflict, conflictMessage)
+		return
+	}
+	writeError(w, http.StatusInternalServerError, recoveryMessage)
+}
+
 func reserveResourceCreateRequest(
 	ctx context.Context,
 	queries *db.Queries,

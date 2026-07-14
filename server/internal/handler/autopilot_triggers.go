@@ -62,11 +62,11 @@ func (h *Handler) CreateAutopilotTrigger(w http.ResponseWriter, r *http.Request)
 		)
 	}
 	if replay, found, replayErr := loadReplay(); replayErr != nil {
-		if errors.Is(replayErr, errResourceCreateIdempotencyConflict) {
-			writeJSON(w, http.StatusConflict, map[string]string{"error": "Idempotency-Key was already used with a different request", "code": "idempotency_conflict"})
-		} else {
-			writeError(w, http.StatusInternalServerError, "failed to replay trigger create")
-		}
+		writeResourceCreateReplayError(
+			w, replayErr,
+			"Idempotency-Key was already used with a different request",
+			"failed to replay trigger create",
+		)
 		return
 	} else if found {
 		w.Header().Set("Idempotency-Replayed", "true")

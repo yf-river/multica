@@ -47,11 +47,11 @@ func projectResourceToResponse(r db.ProjectResource) ProjectResourceResponse {
 }
 
 func writeProjectResourceCreateReplayError(w http.ResponseWriter, err error) {
-	if errors.Is(err, errResourceCreateIdempotencyConflict) {
-		writeError(w, http.StatusConflict, "Idempotency-Key was already used with a different project resource request")
-		return
-	}
-	writeError(w, http.StatusInternalServerError, "failed to replay project resource create")
+	writeResourceCreateReplayMessageError(
+		w, err,
+		"Idempotency-Key was already used with a different project resource request",
+		"failed to replay project resource create",
+	)
 }
 
 // CreateProjectResourceRequest is the body for POST /api/projects/{id}/resources.

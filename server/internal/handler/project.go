@@ -481,14 +481,11 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) writeProjectCreateReplayError(w http.ResponseWriter, err error) {
-	if errors.Is(err, errResourceCreateIdempotencyConflict) {
-		writeJSON(w, http.StatusConflict, map[string]string{
-			"error": "Idempotency-Key was already used with a different request",
-			"code":  "idempotency_conflict",
-		})
-		return
-	}
-	writeError(w, http.StatusInternalServerError, "failed to load project request")
+	writeResourceCreateReplayError(
+		w, err,
+		"Idempotency-Key was already used with a different request",
+		"failed to load project request",
+	)
 }
 
 func (h *Handler) UpdateProject(w http.ResponseWriter, r *http.Request) {

@@ -614,7 +614,11 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 			r.Context(), wsUUID, parseUUID(actualCreatorID), issueRequestKey, requestHash,
 		)
 		if replayErr != nil {
-			writeIssueCreateReplayError(w, replayErr)
+			writeResourceCreateReplayError(
+				w, replayErr,
+				"Idempotency-Key was already used with a different request",
+				"failed to recover issue request",
+			)
 			return
 		}
 		if found {

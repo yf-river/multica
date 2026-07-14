@@ -99,12 +99,9 @@ func (h *Handler) recoverQuickCreateResource(
 }
 
 func writeQuickCreateReplayError(w http.ResponseWriter, err error) {
-	if errors.Is(err, errResourceCreateIdempotencyConflict) {
-		writeJSON(w, http.StatusConflict, map[string]string{
-			"error": "Idempotency-Key was already used with a different quick-create request",
-			"code":  "idempotency_conflict",
-		})
-		return
-	}
-	writeError(w, http.StatusInternalServerError, "failed to recover quick-create request")
+	writeResourceCreateReplayError(
+		w, err,
+		"Idempotency-Key was already used with a different quick-create request",
+		"failed to recover quick-create request",
+	)
 }

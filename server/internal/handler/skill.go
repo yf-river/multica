@@ -439,14 +439,11 @@ func (h *Handler) CreateSkill(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) writeSkillCreateReplayError(w http.ResponseWriter, err error) {
-	if errors.Is(err, errResourceCreateIdempotencyConflict) {
-		writeJSON(w, http.StatusConflict, map[string]string{
-			"error": "Idempotency-Key was already used with a different request",
-			"code":  "idempotency_conflict",
-		})
-		return
-	}
-	writeError(w, http.StatusInternalServerError, "failed to replay skill create")
+	writeResourceCreateReplayError(
+		w, err,
+		"Idempotency-Key was already used with a different request",
+		"failed to replay skill create",
+	)
 }
 
 // canManageSkill checks whether the current user can update or delete a skill.

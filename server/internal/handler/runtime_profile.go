@@ -75,11 +75,11 @@ func writeRuntimeProfileDecodeError(w http.ResponseWriter, r *http.Request, prof
 }
 
 func writeRuntimeProfileCreateReplayError(w http.ResponseWriter, err error) {
-	if errors.Is(err, errResourceCreateIdempotencyConflict) {
-		writeError(w, http.StatusConflict, "Idempotency-Key was already used with a different runtime profile request")
-		return
-	}
-	writeError(w, http.StatusInternalServerError, "failed to replay runtime profile create")
+	writeResourceCreateReplayMessageError(
+		w, err,
+		"Idempotency-Key was already used with a different runtime profile request",
+		"failed to replay runtime profile create",
+	)
 }
 
 // marshalFixedArgs validates and JSON-encodes the fixed_args list. Each entry

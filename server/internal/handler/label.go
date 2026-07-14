@@ -51,11 +51,11 @@ func labelsToResponse(list []db.IssueLabel) []LabelResponse {
 }
 
 func writeLabelCreateReplayError(w http.ResponseWriter, err error) {
-	if errors.Is(err, errResourceCreateIdempotencyConflict) {
-		writeError(w, http.StatusConflict, "Idempotency-Key was already used with a different label request")
-		return
-	}
-	writeError(w, http.StatusInternalServerError, "failed to replay label create")
+	writeResourceCreateReplayMessageError(
+		w, err,
+		"Idempotency-Key was already used with a different label request",
+		"failed to replay label create",
+	)
 }
 
 type CreateLabelRequest struct {

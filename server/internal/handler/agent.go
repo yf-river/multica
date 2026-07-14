@@ -973,14 +973,11 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) writeAgentCreateReplayError(w http.ResponseWriter, err error) {
-	if errors.Is(err, errResourceCreateIdempotencyConflict) {
-		writeJSON(w, http.StatusConflict, map[string]string{
-			"error": "Idempotency-Key was already used with a different request",
-			"code":  "idempotency_conflict",
-		})
-		return
-	}
-	writeError(w, http.StatusInternalServerError, "failed to replay agent create")
+	writeResourceCreateReplayError(
+		w, err,
+		"Idempotency-Key was already used with a different request",
+		"failed to replay agent create",
+	)
 }
 
 type UpdateAgentRequest struct {
