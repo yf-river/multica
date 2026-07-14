@@ -56,6 +56,15 @@ func parsePromptEvaluationCaseFilters(w http.ResponseWriter, values url.Values) 
 	return filters, true
 }
 
+func parsePromptEvaluationAssetCaseFilters(w http.ResponseWriter, values url.Values) (pgtype.UUID, promptEvaluationCaseFilters, bool) {
+	assetID, ok := parseOptionalUUIDOrBadRequest(w, values.Get("asset_id"), "asset_id")
+	if !ok {
+		return pgtype.UUID{}, promptEvaluationCaseFilters{}, false
+	}
+	filters, ok := parsePromptEvaluationCaseFilters(w, values)
+	return assetID, filters, ok
+}
+
 func parsePromptEvaluationDimensionFilters(w http.ResponseWriter, values url.Values) (promptEvaluationDimensionFilters, bool) {
 	var filters promptEvaluationDimensionFilters
 	assetID, ok := parseOptionalUUIDOrBadRequest(w, values.Get("asset_id"), "asset_id")
@@ -84,11 +93,7 @@ func (h *Handler) ListPromptEvaluationCases(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	assetID, ok := parseOptionalUUIDOrBadRequest(w, r.URL.Query().Get("asset_id"), "asset_id")
-	if !ok {
-		return
-	}
-	filters, ok := parsePromptEvaluationCaseFilters(w, r.URL.Query())
+	assetID, filters, ok := parsePromptEvaluationAssetCaseFilters(w, r.URL.Query())
 	if !ok {
 		return
 	}
@@ -242,11 +247,7 @@ func (h *Handler) ListPromptEvaluationCaseTagSummaries(w http.ResponseWriter, r 
 	if !ok {
 		return
 	}
-	assetID, ok := parseOptionalUUIDOrBadRequest(w, r.URL.Query().Get("asset_id"), "asset_id")
-	if !ok {
-		return
-	}
-	filters, ok := parsePromptEvaluationCaseFilters(w, r.URL.Query())
+	assetID, filters, ok := parsePromptEvaluationAssetCaseFilters(w, r.URL.Query())
 	if !ok {
 		return
 	}
@@ -753,13 +754,9 @@ func (h *Handler) ListPromptEvaluationDimensionScores(w http.ResponseWriter, r *
 	if !ok {
 		return
 	}
-	var runID pgtype.UUID
-	if value := r.URL.Query().Get("run_id"); value != "" {
-		parsed, ok := parseUUIDOrBadRequest(w, value, "run_id")
-		if !ok {
-			return
-		}
-		runID = parsed
+	runID, ok := parseOptionalUUIDOrBadRequest(w, r.URL.Query().Get("run_id"), "run_id")
+	if !ok {
+		return
 	}
 	filters, ok := parsePromptEvaluationDimensionFilters(w, r.URL.Query())
 	if !ok {

@@ -49,21 +49,13 @@ func (h *Handler) ListPromptEvaluationOptimizationCandidates(w http.ResponseWrit
 	if !ok {
 		return
 	}
-	var runID pgtype.UUID
-	if value := r.URL.Query().Get("run_id"); value != "" {
-		parsed, ok := parseUUIDOrBadRequest(w, value, "run_id")
-		if !ok {
-			return
-		}
-		runID = parsed
+	runID, ok := parseOptionalUUIDOrBadRequest(w, r.URL.Query().Get("run_id"), "run_id")
+	if !ok {
+		return
 	}
-	var promptID pgtype.UUID
-	if value := r.URL.Query().Get("prompt_id"); value != "" {
-		parsed, ok := parseUUIDOrBadRequest(w, value, "prompt_id")
-		if !ok {
-			return
-		}
-		promptID = parsed
+	promptID, ok := parseOptionalUUIDOrBadRequest(w, r.URL.Query().Get("prompt_id"), "prompt_id")
+	if !ok {
+		return
 	}
 	var status pgtype.Text
 	if value := r.URL.Query().Get("status"); value != "" {
