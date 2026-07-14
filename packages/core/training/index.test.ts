@@ -1,12 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
-  DEFAULT_TRAINING_WORKBENCH_VIEW,
   TRAINING_WORKBENCH_VIEWS,
   TRAINING_WORKBENCH_VIEWS_BY_SECTION,
   debugWorkbenchPath,
   evaluationWorkbenchPath,
   trainingWorkbenchCanonicalPath,
-  trainingWorkbenchSectionFromView,
   trainingWorkbenchTabFromView,
   trainingWorkbenchShowsPromptEditor,
   trainingWorkbenchTitleFromView,
@@ -15,7 +13,6 @@ import {
 
 describe("training workbench navigation", () => {
   it("uses the prompt library as the default entry", () => {
-    expect(DEFAULT_TRAINING_WORKBENCH_VIEW).toBe("prompts");
     expect(trainingWorkbenchTabFromView(null)).toBe("提示词库");
     expect(trainingWorkbenchTabFromView("missing-view")).toBe("提示词库");
     expect(trainingWorkbenchTabFromView("evaluation-runs")).toBe("评测记录");
@@ -40,9 +37,6 @@ describe("training workbench navigation", () => {
       "test-suites",
       "evaluation-runs",
     ]);
-    expect(trainingWorkbenchSectionFromView("prompts")).toBe("debug");
-    expect(trainingWorkbenchSectionFromView("agent-playground")).toBe("debug");
-    expect(trainingWorkbenchSectionFromView("datasets")).toBe("evaluation");
   });
 
   it("maps current prompt-library deep links onto the prompt library tab", () => {

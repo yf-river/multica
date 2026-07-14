@@ -53,7 +53,7 @@ export type TrainingWorkbenchViewId = TrainingWorkbenchView["view"];
 export type TrainingWorkbenchCanonicalRoute = TrainingWorkbenchView["canonicalRoute"];
 export type TrainingWorkbenchSection = typeof TRAINING_WORKBENCH_SECTIONS[number]["key"];
 
-export const DEFAULT_TRAINING_WORKBENCH_VIEW: TrainingWorkbenchViewId = "prompts";
+const DEFAULT_TRAINING_WORKBENCH_VIEW: TrainingWorkbenchViewId = "prompts";
 export const DEFAULT_DEBUG_WORKBENCH_VIEW: TrainingWorkbenchViewId = "prompts";
 export const DEFAULT_EVALUATION_WORKBENCH_VIEW: TrainingWorkbenchViewId = "datasets";
 
@@ -110,7 +110,7 @@ export function trainingWorkbenchTabFromView(view: string | null): TrainingWorkb
   return TRAINING_WORKBENCH_TAB_BY_VIEW[normalizeTrainingWorkbenchView(view)];
 }
 
-export function trainingWorkbenchSectionFromView(view: string | null): TrainingWorkbenchSection {
+function trainingWorkbenchSectionFromView(view: string | null): TrainingWorkbenchSection {
   return TRAINING_WORKBENCH_SECTION_BY_VIEW[normalizeTrainingWorkbenchView(view)];
 }
 
