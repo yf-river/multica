@@ -1,7 +1,7 @@
 import type { CreatePromptEvaluationAssetRequest, PromptEvaluationAsset, PromptEvaluationAssetType } from "../types";
 
-export const SKILL_SCENARIO_EVALUATION_SCHEMA = "multica.skill_scenario_eval.v1";
-export const WRITING_MODEL_BENCHMARK_SCHEMA = "multica.writing_model_benchmark.v1";
+const SKILL_SCENARIO_EVALUATION_SCHEMA = "multica.skill_scenario_eval.v1";
+const WRITING_MODEL_BENCHMARK_SCHEMA = "multica.writing_model_benchmark.v1";
 
 export type SkillScenarioRole = "sop" | "operation";
 
@@ -71,7 +71,7 @@ export type WritingModelBenchmarkPayload = {
   };
 };
 
-export const DEFAULT_SKILL_SCENARIO_RUBRIC = [
+const DEFAULT_SKILL_SCENARIO_RUBRIC = [
   { key: "context", label: "上下文读取", pass: "只读取项目要求的 AGENTS、harness、阶段产物和 skill 文件。" },
   { key: "boundary", label: "边界遵守", pass: "不越权修改其他项目，不读取禁读材料。" },
   { key: "artifacts", label: "产物完整", pass: "按 skill 约定生成阶段产物、operation 记录或代码变更摘要。" },
@@ -79,21 +79,13 @@ export const DEFAULT_SKILL_SCENARIO_RUBRIC = [
   { key: "evidence", label: "证据留存", pass: "留下文件、命令、trace、handoff 或 re-eval 证据。" },
 ] as const;
 
-type SkillScenarioPayloadOverrides = {
-  target?: Partial<SkillScenarioTarget>;
-  scenario?: Partial<SkillScenarioPayload["scenario"]>;
-  rubric?: SkillScenarioPayload["rubric"];
-  cases?: SkillScenarioPayload["cases"];
-};
-
-export function buildDefaultSkillScenarioPayload(overrides: SkillScenarioPayloadOverrides = {}): SkillScenarioPayload {
+function buildDefaultSkillScenarioPayload(): SkillScenarioPayload {
   const target = {
     kind: "repo_skill" as const,
     repo_path: "/data/ida/user-center",
     branch: "current-checkout",
     skill_path: ".codebuddy/skills/add-api/SKILL.md",
     skill_role: "operation" as const,
-    ...overrides.target,
   };
   const scenario = {
     project: "user-center",
@@ -125,9 +117,8 @@ export function buildDefaultSkillScenarioPayload(overrides: SkillScenarioPayload
       "阻塞项或 handoff 状态",
     ],
     verification_commands: ["go test ./...", "按 harness/testing.md 执行 V0/V1/V2/V3 中适用的验证"],
-    ...overrides.scenario,
   };
-  const cases = overrides.cases ?? [
+  const cases = [
     {
       case_name: "user-center add-api 场景基线",
       variables: {
@@ -152,7 +143,7 @@ export function buildDefaultSkillScenarioPayload(overrides: SkillScenarioPayload
     schema: SKILL_SCENARIO_EVALUATION_SCHEMA,
     target,
     scenario,
-    rubric: overrides.rubric ?? [...DEFAULT_SKILL_SCENARIO_RUBRIC],
+    rubric: [...DEFAULT_SKILL_SCENARIO_RUBRIC],
     cases,
   };
 }
@@ -172,7 +163,7 @@ export function buildSkillScenarioAssetRequest(
   };
 }
 
-export function buildWritingModelBenchmarkPayload(): WritingModelBenchmarkPayload {
+function buildWritingModelBenchmarkPayload(): WritingModelBenchmarkPayload {
   return {
     schema_version: 1,
     schema: WRITING_MODEL_BENCHMARK_SCHEMA,
@@ -252,7 +243,7 @@ export function isSkillScenarioPayload(payload: unknown): payload is SkillScenar
   );
 }
 
-export function isWritingModelBenchmarkPayload(payload: unknown): payload is WritingModelBenchmarkPayload {
+function isWritingModelBenchmarkPayload(payload: unknown): payload is WritingModelBenchmarkPayload {
   return Boolean(
     payload &&
       typeof payload === "object" &&
