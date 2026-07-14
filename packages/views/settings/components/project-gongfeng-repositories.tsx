@@ -85,10 +85,6 @@ const GONGFENG_REPO_PRESETS = [
 ];
 const BRANCH_PICKER_RENDER_LIMIT = 100;
 
-function workspaceRepoList(workspace: Workspace | null | undefined): WorkspaceRepo[] {
-  return workspace?.repos ?? [];
-}
-
 export function ProjectGongfengRepositories() {
   const { t } = useT("settings");
   const workspace = useCurrentWorkspace();
@@ -120,11 +116,11 @@ export function ProjectGongfengRepositories() {
     }
 
     const rows: RepositoryLibraryRow[] = [];
-    for (const repo of workspaceRepoList(workspace)) {
+    for (const repo of workspace?.repos ?? []) {
       if (!isGongfengURL(repo.url)) continue;
       const resolved = resolvedReposByURL[repo.url];
       const merged = resolved ? { ...repo, ...resolved } : repo;
-      const projectPath = gongfengWorkspaceRepoProjectPath(merged);
+      const projectPath = merged.project_path?.trim() ?? "";
       rows.push({
         url: repo.url,
         repo: merged,
@@ -211,8 +207,8 @@ function AddGongfengRepositoryDialog({
   const probeMatches = Boolean(probe && probe.url === trimmedURL);
   const canSubmit = Boolean(trimmedURL && selectedBranch && probeMatches) && !saving && !probing;
   const existingProjectPaths = new Set(
-    workspaceRepoList(workspace)
-      .map((repo) => gongfengWorkspaceRepoProjectPath(repo))
+    workspace.repos
+      .map((repo) => repo.project_path?.trim() ?? "")
       .filter(Boolean),
   );
 
@@ -263,7 +259,7 @@ function AddGongfengRepositoryDialog({
         url: trimmedURL,
         default_branch: selectedBranch,
       });
-      const repos = [...workspaceRepoList(workspace), resolved];
+      const repos = [...workspace.repos, resolved];
       const updated = await api.updateWorkspace(workspace.id, { repos });
       qc.setQueryData(workspaceKeys.list(), (old: Workspace[] | undefined) =>
         old?.map((ws) => (ws.id === updated.id ? updated : ws)),
@@ -493,7 +489,7 @@ function GongfengRepositoryLibraryRow({
   const { t } = useT("settings");
   const qc = useQueryClient();
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const defaultBranch = repositoryDefaultBranch(row);
+  const defaultBranch = row.repo?.default_branch?.trim() ?? "";
   const displayName = repositoryDisplayName(row);
   const removeBlocked = row.usages.length > 0;
   const showRemoveButton = row.inLibrary || row.usages.length > 0;
@@ -503,7 +499,7 @@ function GongfengRepositoryLibraryRow({
       toast.error(t(($) => $.repositories.gongfeng_inventory.remove_blocked));
       return;
     }
-    const repos = workspaceRepoList(workspace).filter((repo) => repo.url !== row.url);
+    const repos = workspace.repos.filter((repo) => repo.url !== row.url);
     try {
       const updated = await api.updateWorkspace(workspace.id, { repos });
       qc.setQueryData(workspaceKeys.list(), (old: Workspace[] | undefined) =>
@@ -607,9 +603,12 @@ function RepositoryDetailsDialog({
   const [branchOptions, setBranchOptions] = useState<string[]>([]);
   const [selectedBranch, setSelectedBranch] = useState("");
   const [branchError, setBranchError] = useState("");
-  const defaultBranch = repositoryDefaultBranch(row);
-  const projectPath = repositoryProjectPath(row);
-  const commitID = repositoryCommitID(row);
+  const defaultBranch = row.repo?.default_branch?.trim() ?? "";
+  const projectPath = row.repo?.project_path?.trim() ?? "";
+  const commitID = [
+    row.repo?.head_commit,
+    ...row.usages.flatMap((usage) => [usage.resource_ref.head_commit, usage.resource_ref.commit_sha]),
+  ].map((value) => value?.trim()).find((value): value is string => Boolean(value)) ?? "";
   const branchChanged = Boolean(selectedBranch && selectedBranch !== defaultBranch);
   const canEditBranch = row.inLibrary;
 
@@ -656,7 +655,7 @@ function RepositoryDetailsDialog({
         url: row.url,
         default_branch: selectedBranch,
       });
-      const repos = workspaceRepoList(workspace).map((repo) =>
+      const repos = workspace.repos.map((repo) =>
         repo.url === row.url ? { ...repo, ...resolved } : repo,
       );
       onRepoResolved(resolved);
@@ -856,15 +855,15 @@ function RepositoryPrimaryHealthButton({
     if (syncing) return;
     setSyncing(true);
     try {
-      const branch = repositoryDefaultBranch(row);
+      const branch = row.repo?.default_branch?.trim() ?? "";
       const resolved = await api.resolveWorkspaceRepo(workspace.id, {
         url: row.url,
         ...(branch ? { default_branch: branch } : {}),
       });
-      const exists = workspaceRepoList(workspace).some((repo) => repo.url === row.url);
+      const exists = workspace.repos.some((repo) => repo.url === row.url);
       const repos = exists
-        ? workspaceRepoList(workspace).map((repo) => (repo.url === row.url ? { ...repo, ...resolved } : repo))
-        : [...workspaceRepoList(workspace), resolved];
+        ? workspace.repos.map((repo) => (repo.url === row.url ? { ...repo, ...resolved } : repo))
+        : [...workspace.repos, resolved];
       onRepoResolved(resolved);
       const updated = await api.updateWorkspace(workspace.id, { repos });
       qc.setQueryData(workspaceKeys.list(), (old: Workspace[] | undefined) =>
@@ -939,18 +938,6 @@ function MetaBadge({ children }: { children: ReactNode }) {
   );
 }
 
-function repositoryDefaultBranch(row: RepositoryLibraryRow): string {
-  return row.repo?.default_branch?.trim() ?? "";
-}
-
-function repositoryProjectPath(row: RepositoryLibraryRow): string {
-  return gongfengWorkspaceRepoProjectPath(row.repo);
-}
-
-function gongfengWorkspaceRepoProjectPath(repo: WorkspaceRepo | undefined): string {
-  return repo?.project_path?.trim() ?? "";
-}
-
 function gongfengResourceProjectPath(ref: GongfengRepoResourceRef): string {
   const fromRef = ref.project_path?.trim();
   if (fromRef) return fromRef;
@@ -958,16 +945,9 @@ function gongfengResourceProjectPath(ref: GongfengRepoResourceRef): string {
 }
 
 function repositoryDisplayName(row: RepositoryLibraryRow): string {
-  const projectPath = repositoryProjectPath(row);
+  const projectPath = row.repo?.project_path?.trim() ?? "";
   if (projectPath) return projectPath.split("/").filter(Boolean).pop() || projectPath;
   return inferRepoNameFromURL(row.url) || row.url;
-}
-
-function repositoryCommitID(row: RepositoryLibraryRow): string {
-  return firstNonEmpty([
-    row.repo?.head_commit,
-    ...row.usages.flatMap((usage) => [usage.resource_ref.head_commit, usage.resource_ref.commit_sha]),
-  ]);
 }
 
 function buildBranchSyncedResourceRef(
@@ -1002,10 +982,6 @@ function uniqueNonEmpty(values: Array<string | undefined>): string[] {
     out.push(trimmed);
   }
   return out;
-}
-
-function firstNonEmpty(values: Array<string | undefined>): string {
-  return values.map((value) => value?.trim()).find((value): value is string => Boolean(value)) ?? "";
 }
 
 type RepositoryHealth = {
@@ -1064,14 +1040,13 @@ function deriveRepositoryHealth(ref?: RepositoryHealthSource): RepositoryHealth 
   if (statuses.includes("auth_required")) {
     return { label: "需要凭据", summary, tone: "warning" };
   }
-  if (statuses.length > 0 && statuses.every(isPassingStatus)) {
+  if (
+    statuses.length > 0 &&
+    statuses.every((value) => ["ok", "passed", "connected", "synced", "reachable", "credential_backed"].includes(value))
+  ) {
     return { label: "通过", summary, tone: "success" };
   }
   return { label: "待验证", summary, tone: "warning" };
-}
-
-function isPassingStatus(value: string): boolean {
-  return ["ok", "passed", "connected", "synced", "reachable", "credential_backed"].includes(value);
 }
 
 function healthIcon(tone: RepositoryHealth["tone"]) {
