@@ -286,27 +286,40 @@ func (h *Handler) ListRuntimeProfiles(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"runtime_profiles": resp})
 }
 
-// GetRuntimeProfile returns one runtime profile. Member-gated by the router.
-func (h *Handler) GetRuntimeProfile(w http.ResponseWriter, r *http.Request) {
-	wsID := strings.TrimSpace(chi.URLParam(r, "id"))
-	if _, ok := h.requireWorkspaceMember(w, r, wsID, "workspace not found"); !ok {
-		return
-	}
-	wsUUID, ok := parseUUIDOrBadRequest(w, wsID, "workspace id")
+type runtimeProfileScope struct {
+	member        db.Member
+	workspaceID   string
+	workspaceUUID pgtype.UUID
+	profileUUID   pgtype.UUID
+}
+
+func (h *Handler) requireRuntimeProfileScope(w http.ResponseWriter, r *http.Request) (runtimeProfileScope, bool) {
+	workspaceID := strings.TrimSpace(chi.URLParam(r, "id"))
+	member, ok := h.requireWorkspaceMember(w, r, workspaceID, "workspace not found")
 	if !ok {
-		return
+		return runtimeProfileScope{}, false
+	}
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
+	if !ok {
+		return runtimeProfileScope{}, false
 	}
 	profileUUID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "profileId"), "profile id")
+	return runtimeProfileScope{member: member, workspaceID: workspaceID, workspaceUUID: workspaceUUID, profileUUID: profileUUID}, ok
+}
+
+// GetRuntimeProfile returns one runtime profile. Member-gated by the router.
+func (h *Handler) GetRuntimeProfile(w http.ResponseWriter, r *http.Request) {
+	scope, ok := h.requireRuntimeProfileScope(w, r)
 	if !ok {
 		return
 	}
 
 	profile, err := h.Queries.GetRuntimeProfileForWorkspace(r.Context(), db.GetRuntimeProfileForWorkspaceParams{
-		ID:          profileUUID,
-		WorkspaceID: wsUUID,
+		ID:          scope.profileUUID,
+		WorkspaceID: scope.workspaceUUID,
 	})
 	if err != nil {
-		writeEntityLoadError(w, r, err, "runtime profile", "profile_id", chi.URLParam(r, "profileId"), "workspace_id", wsID)
+		writeEntityLoadError(w, r, err, "runtime profile", "profile_id", chi.URLParam(r, "profileId"), "workspace_id", scope.workspaceID)
 		return
 	}
 	resp, err := runtimeProfileToResponse(profile)
@@ -329,16 +342,7 @@ type updateRuntimeProfileRequest struct {
 // (changing it would silently repoint bound agents onto a different backend).
 // Admin-gated by the router.
 func (h *Handler) UpdateRuntimeProfile(w http.ResponseWriter, r *http.Request) {
-	wsID := strings.TrimSpace(chi.URLParam(r, "id"))
-	member, ok := h.requireWorkspaceMember(w, r, wsID, "workspace not found")
-	if !ok {
-		return
-	}
-	wsUUID, ok := parseUUIDOrBadRequest(w, wsID, "workspace id")
-	if !ok {
-		return
-	}
-	profileUUID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "profileId"), "profile id")
+	scope, ok := h.requireRuntimeProfileScope(w, r)
 	if !ok {
 		return
 	}
@@ -351,7 +355,7 @@ func (h *Handler) UpdateRuntimeProfile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	params := db.UpdateRuntimeProfileParams{ID: profileUUID, WorkspaceID: wsUUID}
+	params := db.UpdateRuntimeProfileParams{ID: scope.profileUUID, WorkspaceID: scope.workspaceUUID}
 	if req.DisplayName != nil {
 		name := strings.TrimSpace(*req.DisplayName)
 		if name == "" {
@@ -393,14 +397,14 @@ func (h *Handler) UpdateRuntimeProfile(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "a runtime profile with this display_name already exists")
 			return
 		}
-		slog.Error("UpdateRuntimeProfile failed", "error", err, "profile_id", uuidToString(profileUUID))
+		slog.Error("UpdateRuntimeProfile failed", "error", err, "profile_id", uuidToString(scope.profileUUID))
 		writeError(w, http.StatusInternalServerError, "failed to update runtime profile")
 		return
 	}
 
 	profileID := uuidToString(profile.ID)
-	h.requestDaemonRuntimeProfileRefresh(wsID, profileID)
-	h.publish(protocol.EventDaemonRegister, wsID, "member", uuidToString(member.UserID), map[string]any{
+	h.requestDaemonRuntimeProfileRefresh(scope.workspaceID, profileID)
+	h.publish(protocol.EventDaemonRegister, scope.workspaceID, "member", uuidToString(scope.member.UserID), map[string]any{
 		"runtime_profile_id": profileID,
 	})
 
@@ -418,26 +422,17 @@ func (h *Handler) UpdateRuntimeProfile(w http.ResponseWriter, r *http.Request) {
 // runtime rows. Refuses (409) while active agents are still bound to the
 // profile's runtimes. Admin-gated by the router.
 func (h *Handler) DeleteRuntimeProfile(w http.ResponseWriter, r *http.Request) {
-	wsID := strings.TrimSpace(chi.URLParam(r, "id"))
-	member, ok := h.requireWorkspaceMember(w, r, wsID, "workspace not found")
-	if !ok {
-		return
-	}
-	wsUUID, ok := parseUUIDOrBadRequest(w, wsID, "workspace id")
-	if !ok {
-		return
-	}
-	profileUUID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "profileId"), "profile id")
+	scope, ok := h.requireRuntimeProfileScope(w, r)
 	if !ok {
 		return
 	}
 
 	// Confirm the profile exists in this workspace before mutating anything.
 	if _, err := h.Queries.GetRuntimeProfileForWorkspace(r.Context(), db.GetRuntimeProfileForWorkspaceParams{
-		ID:          profileUUID,
-		WorkspaceID: wsUUID,
+		ID:          scope.profileUUID,
+		WorkspaceID: scope.workspaceUUID,
 	}); err != nil {
-		writeEntityLoadError(w, r, err, "runtime profile", "profile_id", chi.URLParam(r, "profileId"), "workspace_id", wsID)
+		writeEntityLoadError(w, r, err, "runtime profile", "profile_id", chi.URLParam(r, "profileId"), "workspace_id", scope.workspaceID)
 		return
 	}
 
@@ -447,7 +442,7 @@ func (h *Handler) DeleteRuntimeProfile(w http.ResponseWriter, r *http.Request) {
 	// archived agent still pointing at one of these rows would turn a bare
 	// delete into a 500. We refuse active agents (409) and clean archived
 	// agents / their archived squad+autopilot references before deleting.
-	runtimeIDs, err := h.Queries.ListAgentRuntimeIDsByProfile(r.Context(), profileUUID)
+	runtimeIDs, err := h.Queries.ListAgentRuntimeIDsByProfile(r.Context(), scope.profileUUID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to enumerate profile runtimes")
 		return
@@ -456,7 +451,7 @@ func (h *Handler) DeleteRuntimeProfile(w http.ResponseWriter, r *http.Request) {
 	// Guard 1: refuse while any active (non-archived) agent is bound to one of
 	// the profile's runtimes. Keep this a 409 — deleting would orphan live
 	// agents.
-	agentCount, err := h.Queries.CountAgentsByProfile(r.Context(), profileUUID)
+	agentCount, err := h.Queries.CountAgentsByProfile(r.Context(), scope.profileUUID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to check profile usage")
 		return
@@ -518,16 +513,16 @@ func (h *Handler) DeleteRuntimeProfile(w http.ResponseWriter, r *http.Request) {
 
 	// Now the runtime rows have no agent references; remove them, then the
 	// profile itself.
-	if _, err := qtx.DeleteAgentRuntimesByProfile(r.Context(), profileUUID); err != nil {
-		slog.Error("DeleteAgentRuntimesByProfile failed", "error", err, "profile_id", uuidToString(profileUUID))
+	if _, err := qtx.DeleteAgentRuntimesByProfile(r.Context(), scope.profileUUID); err != nil {
+		slog.Error("DeleteAgentRuntimesByProfile failed", "error", err, "profile_id", uuidToString(scope.profileUUID))
 		writeError(w, http.StatusInternalServerError, "failed to clean up runtime instances")
 		return
 	}
 	if err := qtx.DeleteRuntimeProfile(r.Context(), db.DeleteRuntimeProfileParams{
-		ID:          profileUUID,
-		WorkspaceID: wsUUID,
+		ID:          scope.profileUUID,
+		WorkspaceID: scope.workspaceUUID,
 	}); err != nil {
-		slog.Error("DeleteRuntimeProfile failed", "error", err, "profile_id", uuidToString(profileUUID))
+		slog.Error("DeleteRuntimeProfile failed", "error", err, "profile_id", uuidToString(scope.profileUUID))
 		writeError(w, http.StatusInternalServerError, "failed to delete runtime profile")
 		return
 	}
@@ -537,9 +532,9 @@ func (h *Handler) DeleteRuntimeProfile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Tell connected clients to refetch the runtime list (instances vanished).
-	profileID := uuidToString(profileUUID)
-	h.requestDaemonRuntimeProfileRefresh(wsID, profileID)
-	h.publish(protocol.EventDaemonRegister, wsID, "member", uuidToString(member.UserID), map[string]any{
+	profileID := uuidToString(scope.profileUUID)
+	h.requestDaemonRuntimeProfileRefresh(scope.workspaceID, profileID)
+	h.publish(protocol.EventDaemonRegister, scope.workspaceID, "member", uuidToString(scope.member.UserID), map[string]any{
 		"deleted_runtime_profile_id": profileID,
 	})
 
