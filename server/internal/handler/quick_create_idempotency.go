@@ -29,10 +29,6 @@ func completeQuickCreateRequest(
 	requestHash string,
 	response QuickCreateIssueResponse,
 ) error {
-	body, err := json.Marshal(response)
-	if err != nil {
-		return fmt.Errorf("encode quick-create response: %w", err)
-	}
 	resourceIDRaw := response.TaskID
 	if resourceIDRaw == "" {
 		resourceIDRaw = response.IssueID
@@ -41,19 +37,10 @@ func completeQuickCreateRequest(
 	if err != nil {
 		return fmt.Errorf("quick-create response has invalid resource id: %w", err)
 	}
-	_, err = queries.CompleteResourceCreateRequest(ctx, db.CompleteResourceCreateRequestParams{
-		WorkspaceID:    workspaceID,
-		ActorID:        actorID,
-		ResourceType:   resourceTypeQuickCreate,
-		IdempotencyKey: idempotencyKey,
-		RequestHash:    requestHash,
-		ResourceID:     resourceID,
-		ResponseBody:   body,
-	})
-	if err != nil {
-		return fmt.Errorf("complete quick-create request: %w", err)
-	}
-	return nil
+	return completeResourceCreateRequest(
+		ctx, queries, workspaceID, actorID, resourceTypeQuickCreate,
+		idempotencyKey, requestHash, resourceID, response,
+	)
 }
 
 func (h *Handler) recoverQuickCreateResource(

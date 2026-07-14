@@ -949,20 +949,10 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 		addSquadMemberPreview(summary, squadMember.memberType, squadMember.memberID, squadMember.role)
 	}
 	applySquadMemberSummary(&resp, summary)
-	responseBody, err := json.Marshal(resp)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to encode squad response")
-		return
-	}
-	if _, err := qtx.CompleteResourceCreateRequest(r.Context(), db.CompleteResourceCreateRequestParams{
-		WorkspaceID:    wsUUID,
-		ActorID:        member.UserID,
-		ResourceType:   resourceTypeSquad,
-		IdempotencyKey: idempotencyKey,
-		RequestHash:    requestHash,
-		ResourceID:     squad.ID,
-		ResponseBody:   responseBody,
-	}); err != nil {
+	if err := completeResourceCreateRequest(
+		r.Context(), qtx, wsUUID, member.UserID, resourceTypeSquad,
+		idempotencyKey, requestHash, squad.ID, resp,
+	); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to complete squad request")
 		return
 	}

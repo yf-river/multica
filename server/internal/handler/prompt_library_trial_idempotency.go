@@ -1,30 +1,9 @@
 package handler
 
 import (
-	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
-
-	"github.com/jackc/pgx/v5/pgtype"
-	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
-
-func completePromptLibraryTrialRequest(ctx context.Context, queries *db.Queries, workspaceID, actorID, key pgtype.UUID, requestHash string, response PromptLibraryTrialResponse) error {
-	body, err := json.Marshal(response)
-	if err != nil {
-		return fmt.Errorf("encode prompt library trial response: %w", err)
-	}
-	_, err = queries.CompleteResourceCreateRequest(ctx, db.CompleteResourceCreateRequestParams{
-		WorkspaceID: workspaceID, ActorID: actorID, ResourceType: resourceTypePromptLibraryTrial,
-		IdempotencyKey: key, RequestHash: requestHash, ResourceID: parseUUID(response.ID), ResponseBody: body,
-	})
-	if err != nil {
-		return fmt.Errorf("complete prompt library trial request: %w", err)
-	}
-	return nil
-}
 
 func writePromptLibraryTrialReplayError(w http.ResponseWriter, err error) {
 	if errors.Is(err, errResourceCreateIdempotencyConflict) {

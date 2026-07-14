@@ -422,20 +422,10 @@ func (h *Handler) CreateSkill(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to create skill: "+err.Error())
 		return
 	}
-	responseBody, err := json.Marshal(resp)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to encode skill response")
-		return
-	}
-	if _, err := qtx.CompleteResourceCreateRequest(r.Context(), db.CompleteResourceCreateRequestParams{
-		WorkspaceID:    workspaceUUID,
-		ActorID:        creatorUUID,
-		ResourceType:   resourceTypeSkill,
-		IdempotencyKey: idempotencyKey,
-		RequestHash:    requestHash,
-		ResourceID:     parseUUID(resp.ID),
-		ResponseBody:   responseBody,
-	}); err != nil {
+	if err := completeResourceCreateRequest(
+		r.Context(), qtx, workspaceUUID, creatorUUID, resourceTypeSkill,
+		idempotencyKey, requestHash, parseUUID(resp.ID), resp,
+	); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to complete skill request")
 		return
 	}

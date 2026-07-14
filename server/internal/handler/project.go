@@ -458,20 +458,10 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	if len(resourceResp) > 0 {
 		createResp.Resources = resourceResp
 	}
-	responseBody, err := json.Marshal(createResp)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to encode project response")
-		return
-	}
-	if _, err := qtx.CompleteResourceCreateRequest(r.Context(), db.CompleteResourceCreateRequestParams{
-		WorkspaceID:    wsUUID,
-		ActorID:        actorID,
-		ResourceType:   resourceTypeProject,
-		IdempotencyKey: idempotencyKey,
-		RequestHash:    requestHash,
-		ResourceID:     project.ID,
-		ResponseBody:   responseBody,
-	}); err != nil {
+	if err := completeResourceCreateRequest(
+		r.Context(), qtx, wsUUID, actorID, resourceTypeProject,
+		idempotencyKey, requestHash, project.ID, createResp,
+	); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to complete project request")
 		return
 	}

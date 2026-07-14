@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -504,20 +503,10 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	response := h.attachmentToResponse(att)
-	responseBody, err := json.Marshal(response)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to encode upload response")
-		return
-	}
-	if _, err := qtx.CompleteResourceCreateRequest(r.Context(), db.CompleteResourceCreateRequestParams{
-		WorkspaceID:    params.WorkspaceID,
-		ActorID:        operationActorID,
-		ResourceType:   resourceTypeAttachment,
-		IdempotencyKey: idempotencyKey,
-		RequestHash:    requestHash,
-		ResourceID:     att.ID,
-		ResponseBody:   responseBody,
-	}); err != nil {
+	if err := completeResourceCreateRequest(
+		r.Context(), qtx, params.WorkspaceID, operationActorID, resourceTypeAttachment,
+		idempotencyKey, requestHash, att.ID, response,
+	); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to complete upload request")
 		return
 	}

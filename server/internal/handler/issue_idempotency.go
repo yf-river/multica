@@ -2,7 +2,6 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -66,21 +65,11 @@ func (h *Handler) createIssueWithRecovery(
 	}
 	response := issueToResponse(prepared.Result.Issue, prefix)
 	response.Attachments = buildAttachments(prepared.Result.Attachments)
-	body, err := json.Marshal(response)
-	if err != nil {
-		return service.IssueCreateResult{}, nil, fmt.Errorf("encode issue response: %w", err)
-	}
-	_, err = queries.CompleteResourceCreateRequest(ctx, db.CompleteResourceCreateRequestParams{
-		WorkspaceID:    workspaceID,
-		ActorID:        actorID,
-		ResourceType:   resourceTypeIssue,
-		IdempotencyKey: idempotencyKey,
-		RequestHash:    requestHash,
-		ResourceID:     prepared.Result.Issue.ID,
-		ResponseBody:   body,
-	})
-	if err != nil {
-		return service.IssueCreateResult{}, nil, fmt.Errorf("complete issue request: %w", err)
+	if err := completeResourceCreateRequest(
+		ctx, queries, workspaceID, actorID, resourceTypeIssue,
+		idempotencyKey, requestHash, prepared.Result.Issue.ID, response,
+	); err != nil {
+		return service.IssueCreateResult{}, nil, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return service.IssueCreateResult{}, nil, fmt.Errorf("commit issue request: %w", err)

@@ -971,7 +971,10 @@ func (h *Handler) CreatePromptLibraryTrial(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "failed to prepare prompt library trial response")
 		return
 	}
-	if err := completePromptLibraryTrialRequest(r.Context(), qtx, item.WorkspaceID, parseUUID(actorID), idempotencyKey, requestHash, resp); err != nil {
+	if err := completeResourceCreateRequest(
+		r.Context(), qtx, item.WorkspaceID, parseUUID(actorID), resourceTypePromptLibraryTrial,
+		idempotencyKey, requestHash, parseUUID(resp.ID), resp,
+	); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to complete prompt library trial request")
 		return
 	}

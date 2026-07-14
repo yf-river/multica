@@ -581,20 +581,10 @@ func (h *Handler) CreateAgentFromTemplate(w http.ResponseWriter, r *http.Request
 		ImportedSkillIDs: importedIDs,
 		ReusedSkillIDs:   reusedIDs,
 	}
-	responseBody, err := json.Marshal(replayResponse)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to encode agent template response")
-		return
-	}
-	if _, err := qtx.CompleteResourceCreateRequest(r.Context(), db.CompleteResourceCreateRequestParams{
-		WorkspaceID:    wsUUID,
-		ActorID:        operationActorID,
-		ResourceType:   resourceTypeAgent,
-		IdempotencyKey: idempotencyKey,
-		RequestHash:    requestHash,
-		ResourceID:     agent.ID,
-		ResponseBody:   responseBody,
-	}); err != nil {
+	if err := completeResourceCreateRequest(
+		r.Context(), qtx, wsUUID, operationActorID, resourceTypeAgent,
+		idempotencyKey, requestHash, agent.ID, replayResponse,
+	); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to complete agent template request")
 		return
 	}

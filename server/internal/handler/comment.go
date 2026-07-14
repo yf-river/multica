@@ -410,8 +410,9 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to create comment")
 		return
 	}
-	if err := completeCommentCreateRequest(
-		r.Context(), qtx, issue.WorkspaceID, parseUUID(authorID), idempotencyKey, requestHash, resp,
+	if err := completeResourceCreateRequest(
+		r.Context(), qtx, issue.WorkspaceID, parseUUID(authorID), resourceTypeComment,
+		idempotencyKey, requestHash, parseUUID(resp.ID), resp,
 	); err != nil {
 		slog.Warn("complete comment request failed", append(logger.RequestAttrs(r), "error", err, "issue_id", issueID)...)
 		writeError(w, http.StatusInternalServerError, "failed to create comment")
