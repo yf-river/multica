@@ -816,6 +816,7 @@ function RepositoryDetailsDialog({
                   <RepositoryUsageDetailRow
                     key={usage.id}
                     usage={usage}
+                    workspaceId={workspace.id}
                     href={projectHref(usage.project.id)}
                   />
                 ))}
@@ -886,9 +887,17 @@ function RepositoryPrimaryHealthButton({
   );
 }
 
-function RepositoryUsageDetailRow({ usage, href }: { usage: GongfengResourceUsage; href: string }) {
+function RepositoryUsageDetailRow({
+  usage,
+  workspaceId,
+  href,
+}: {
+  usage: GongfengResourceUsage;
+  workspaceId: string;
+  href: string;
+}) {
   const { t } = useT("settings");
-  const deleteResource = useDeleteProjectResource(usage.workspace_id, usage.project.id);
+  const deleteResource = useDeleteProjectResource(workspaceId, usage.project.id);
   const pending = deleteResource.isPending;
 
   const handleDelete = async () => {

@@ -171,11 +171,6 @@ export interface SearchProjectResult extends Project {
   matched_snippet?: string;
 }
 
-export interface SearchProjectsResponse {
-  projects: SearchProjectResult[];
-  total: number;
-}
-
 export interface QuickCreateIssueResponse {
   task_id?: string;
   issue_id?: string;

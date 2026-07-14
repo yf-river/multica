@@ -69,8 +69,8 @@ import {
   GitHubPullRequestListResponseSchema,
 } from "./schemas-github";
 import {
-  EMPTY_PROJECT_LIST_RESPONSE,
-  ListProjectsResponseSchema,
+  EMPTY_PROJECTS,
+  ProjectListSchema,
 } from "./schemas-projects";
 import { EMPTY_SKILL, SkillSchema } from "./schemas-skills";
 import {
@@ -330,10 +330,10 @@ describe("domain response schema fallbacks", () => {
   it("rejects malformed Project and Skill identities", () => {
     expect(parseWithFallback(
       { projects: [{ id: 42 }], total: 1 },
-      ListProjectsResponseSchema,
-      EMPTY_PROJECT_LIST_RESPONSE,
+      ProjectListSchema,
+      EMPTY_PROJECTS,
       { endpoint: "GET /api/projects" },
-    )).toBe(EMPTY_PROJECT_LIST_RESPONSE);
+    )).toBe(EMPTY_PROJECTS);
     expect(parseWithFallback(
       { id: "skill-1", workspace_id: "workspace-1", files: "invalid" },
       SkillSchema,

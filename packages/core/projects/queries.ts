@@ -12,7 +12,6 @@ export function projectListOptions(wsId: string) {
   return queryOptions({
     queryKey: projectKeys.list(wsId),
     queryFn: () => api.listProjects(),
-    select: (data) => data.projects,
   });
 }
 

@@ -238,7 +238,7 @@ describe("SearchCommand", () => {
   beforeEach(() => {
     mockPush.mockReset();
     mockSearchIssues.mockReset().mockResolvedValue({ issues: [] });
-    mockSearchProjects.mockReset().mockResolvedValue({ projects: [] });
+    mockSearchProjects.mockReset().mockResolvedValue([]);
     mockRecentItems.current = [];
     mockAllIssues.current = [];
     mockAgents.current = [];

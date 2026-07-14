@@ -79,7 +79,6 @@ describe("ApiClient", () => {
   it("retries an unknown project create with the same idempotency key", async () => {
     const project = {
       id: "project-1",
-      workspace_id: "workspace-1",
       title: "Roadmap",
       description: null,
       icon: null,
@@ -88,7 +87,6 @@ describe("ApiClient", () => {
       lead_type: null,
       lead_id: null,
       created_at: "2026-07-11T00:00:00Z",
-      updated_at: "2026-07-11T00:00:00Z",
       issue_count: 0,
       done_count: 0,
       resource_count: 0,
@@ -345,7 +343,7 @@ describe("ApiClient", () => {
     const client = new ApiClient("https://api.example.test");
 
     await expect(client.listProjectResources("project-1"))
-      .resolves.toMatchObject({ resources: [], total: 0 });
+      .resolves.toEqual([]);
     await expect(client.createProjectResource("project-1", {
       resource_type: "github_repo",
       resource_ref: { url: "https://example.test/repo" },
@@ -392,7 +390,7 @@ describe("ApiClient", () => {
     )));
     const client = new ApiClient("https://api.example.test");
 
-    await expect(client.listProjects()).resolves.toMatchObject({ projects: [], total: 0 });
+    await expect(client.listProjects()).resolves.toEqual([]);
     await expect(client.getProject("project-1")).resolves.toMatchObject({ id: "" });
     await expect(client.listSkills()).resolves.toEqual([]);
     await expect(client.getSkill("skill-1")).resolves.toMatchObject({ id: "", files: [] });

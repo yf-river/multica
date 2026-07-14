@@ -475,7 +475,7 @@ export function SearchCommand() {
         if (!controller.signal.aborted) {
           setResults({
             issues: issueRes.issues,
-            projects: projectRes.projects,
+            projects: projectRes,
           });
           setIsLoading(false);
           setSearchFailed(false);

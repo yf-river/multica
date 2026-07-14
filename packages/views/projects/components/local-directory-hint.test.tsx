@@ -53,7 +53,6 @@ function makeLocalDirectoryResource(overrides: {
   return {
     id: `res-${overrides.local_path}`,
     project_id: "proj-1",
-    workspace_id: "ws-1",
     resource_type: "local_directory",
     resource_ref: {
       daemon_id: overrides.daemon_id,
@@ -61,9 +60,6 @@ function makeLocalDirectoryResource(overrides: {
       ...(overrides.label ? { label: overrides.label } : {}),
     },
     label: null,
-    position: 0,
-    created_at: new Date(0).toISOString(),
-    created_by: null,
   };
 }
 
@@ -81,16 +77,13 @@ describe("LocalDirectoryHint", () => {
   });
 
   it("renders nothing when there's no local daemon", () => {
-    mockListResources.mockResolvedValue({
-      resources: [
+    mockListResources.mockResolvedValue([
         makeLocalDirectoryResource({
           daemon_id: "daemon-A",
           local_path: "/Users/foo/work",
           label: "work",
         }),
-      ],
-      total: 1,
-    });
+      ]);
     const { container } = renderHint("proj-1");
     expect(container.firstChild).toBeNull();
   });
@@ -98,16 +91,13 @@ describe("LocalDirectoryHint", () => {
   it("renders the hint when a local_directory resource matches this daemon", async () => {
     mockDaemonStatus.daemonId = "daemon-A";
     mockDaemonStatus.running = true;
-    mockListResources.mockResolvedValue({
-      resources: [
+    mockListResources.mockResolvedValue([
         makeLocalDirectoryResource({
           daemon_id: "daemon-A",
           local_path: "/Users/foo/work",
           label: "work",
         }),
-      ],
-      total: 1,
-    });
+      ]);
     renderHint("proj-1");
     await waitFor(() => {
       expect(screen.getByText("work")).toBeInTheDocument();
@@ -118,16 +108,13 @@ describe("LocalDirectoryHint", () => {
   it("ignores resources pinned to a different daemon", async () => {
     mockDaemonStatus.daemonId = "daemon-A";
     mockDaemonStatus.running = true;
-    mockListResources.mockResolvedValue({
-      resources: [
+    mockListResources.mockResolvedValue([
         makeLocalDirectoryResource({
           daemon_id: "daemon-B",
           local_path: "/Users/foo/other-machine",
           label: "elsewhere",
         }),
-      ],
-      total: 1,
-    });
+      ]);
     const { container } = renderHint("proj-1");
     // Allow the query to settle; the hint should still render nothing.
     await Promise.resolve();

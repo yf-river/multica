@@ -175,7 +175,6 @@ vi.mock("@multica/ui/components/ui/tooltip", () => ({
 
 const PROJECT: Project = {
   id: "project-1",
-  workspace_id: "workspace-1",
   title: "Launch Plan",
   description: null,
   icon: null,
@@ -184,7 +183,6 @@ const PROJECT: Project = {
   lead_type: null,
   lead_id: null,
   created_at: "2026-06-01T00:00:00Z",
-  updated_at: "2026-06-01T00:00:00Z",
   issue_count: 3,
   done_count: 1,
   resource_count: 0,

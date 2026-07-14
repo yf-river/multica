@@ -3,7 +3,6 @@ import { api } from "../api";
 import { projectKeys } from "./queries";
 import type {
   CreateProjectResourceRequest,
-  ListProjectResourcesResponse,
   ProjectResource,
   UpdateProjectResourceRequest,
 } from "../types";
@@ -17,7 +16,6 @@ export function projectResourcesOptions(wsId: string, projectId: string) {
   return queryOptions({
     queryKey: projectResourceKeys.list(wsId, projectId),
     queryFn: () => api.listProjectResources(projectId),
-    select: (data) => data.resources,
   });
 }
 
@@ -27,15 +25,11 @@ export function useCreateProjectResource(wsId: string, projectId: string) {
     mutationFn: (data: CreateProjectResourceRequest) =>
       api.createProjectResource(projectId, data),
     onSuccess: (created) => {
-      qc.setQueryData<ListProjectResourcesResponse>(
+      qc.setQueryData<ProjectResource[]>(
         projectResourceKeys.list(wsId, projectId),
         (old) =>
-          old && !old.resources.some((r) => r.id === created.id)
-            ? {
-                ...old,
-                resources: [...old.resources, created],
-                total: old.total + 1,
-              }
+          old && !old.some((r) => r.id === created.id)
+            ? [...old, created]
             : old,
       );
     },
@@ -58,17 +52,10 @@ export function useUpdateProjectResource(wsId: string, projectId: string) {
       data: UpdateProjectResourceRequest;
     }) => api.updateProjectResource(projectId, resourceId, data),
     onSuccess: (updated) => {
-      qc.setQueryData<ListProjectResourcesResponse>(
+      qc.setQueryData<ProjectResource[]>(
         projectResourceKeys.list(wsId, projectId),
         (old) =>
-          old
-            ? {
-                ...old,
-                resources: old.resources.map((r) =>
-                  r.id === updated.id ? updated : r,
-                ),
-              }
-            : old,
+          old?.map((r) => r.id === updated.id ? updated : r),
       );
     },
     onSettled: () => {
@@ -80,17 +67,10 @@ export function useUpdateProjectResource(wsId: string, projectId: string) {
 }
 
 function replaceProjectResource(
-  old: ListProjectResourcesResponse | undefined,
+  old: ProjectResource[] | undefined,
   updated: ProjectResource,
-): ListProjectResourcesResponse | undefined {
-  return old
-    ? {
-        ...old,
-        resources: old.resources.map((r) =>
-          r.id === updated.id ? updated : r,
-        ),
-      }
-    : old;
+): ProjectResource[] | undefined {
+  return old?.map((r) => r.id === updated.id ? updated : r);
 }
 
 export function useSyncProjectResource(wsId: string, projectId: string) {
@@ -99,7 +79,7 @@ export function useSyncProjectResource(wsId: string, projectId: string) {
     mutationFn: (resourceId: string) =>
       api.syncProjectResource(projectId, resourceId),
     onSuccess: (updated) => {
-      qc.setQueryData<ListProjectResourcesResponse>(
+      qc.setQueryData<ProjectResource[]>(
         projectResourceKeys.list(wsId, projectId),
         (old) => replaceProjectResource(old, updated),
       );
@@ -121,22 +101,16 @@ export function useDeleteProjectResource(wsId: string, projectId: string) {
       await qc.cancelQueries({
         queryKey: projectResourceKeys.list(wsId, projectId),
       });
-      const prev = qc.getQueryData<ListProjectResourcesResponse>(
+      const prev = qc.getQueryData<ProjectResource[]>(
         projectResourceKeys.list(wsId, projectId),
       );
-      qc.setQueryData<ListProjectResourcesResponse>(
+      qc.setQueryData<ProjectResource[]>(
         projectResourceKeys.list(wsId, projectId),
         (old) => {
-          if (!old || !old.resources.some((resource) => resource.id === resourceId)) {
+          if (!old || !old.some((resource) => resource.id === resourceId)) {
             return old;
           }
-          return {
-            ...old,
-            resources: old.resources.filter(
-              (resource: ProjectResource) => resource.id !== resourceId,
-            ),
-            total: Math.max(0, old.total - 1),
-          };
+          return old.filter((resource) => resource.id !== resourceId);
         },
       );
       return { prev };

@@ -187,8 +187,7 @@ describe("createMentionSuggestion", () => {
 
   it("loads server issue and project matches when project search is enabled", async () => {
     searchIssuesMock.mockResolvedValue({ issues: [], total: 0 });
-    searchProjectsMock.mockResolvedValue({
-      projects: [
+    searchProjectsMock.mockResolvedValue([
         {
           id: "p-roadmap",
           title: "Roadmap",
@@ -196,9 +195,7 @@ describe("createMentionSuggestion", () => {
           icon: null,
           status: "active",
         },
-      ],
-      total: 1,
-    });
+      ]);
 
     render(
       <I18nWrapper>

@@ -142,7 +142,6 @@ describe("ProjectResourcesSection", () => {
       {
         id: "resource-1",
         project_id: "project-1",
-        workspace_id: "workspace-1",
         resource_type: "gongfeng_repo",
         resource_ref: {
           url: gongfengRepoUrl,
@@ -157,9 +156,6 @@ describe("ProjectResourcesSection", () => {
           test_status: "passed",
         },
         label: null,
-        position: 0,
-        created_at: "2026-07-01T10:00:00Z",
-        updated_at: "2026-07-01T10:00:00Z",
       },
     ]);
 
@@ -177,7 +173,6 @@ describe("ProjectResourcesSection", () => {
       {
         id: "local-resource-1",
         project_id: "project-1",
-        workspace_id: "workspace-1",
         resource_type: "local_directory",
         resource_ref: {
           local_path: "/data/ida/user-center",
@@ -185,9 +180,6 @@ describe("ProjectResourcesSection", () => {
           label: "user-center 本地目录",
         },
         label: "user-center 本地目录",
-        position: 0,
-        created_at: "2026-07-01T10:00:00Z",
-        updated_at: "2026-07-01T10:00:00Z",
       },
     ]);
 

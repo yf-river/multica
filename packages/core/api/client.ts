@@ -8,7 +8,7 @@ import type {
   ListIssueBucketsResponse,
   ListIssuesResponse,
   SearchIssuesResponse,
-  SearchProjectsResponse,
+  SearchProjectResult,
   QuickCreateIssueResponse,
   QuickCreateIssueRequest,
   FeedbackResponse,
@@ -75,11 +75,9 @@ import type {
   Project,
   CreateProjectRequest,
   UpdateProjectRequest,
-  ListProjectsResponse,
   ProjectResource,
   CreateProjectResourceRequest,
   UpdateProjectResourceRequest,
-  ListProjectResourcesResponse,
   Label,
   CreateLabelRequest,
   UpdateLabelRequest,
@@ -263,7 +261,7 @@ import {
   EMPTY_CHAT_PENDING_TASK,
   EMPTY_PENDING_CHAT_TASKS_RESPONSE,
   EMPTY_PROJECT_RESOURCE,
-  EMPTY_PROJECT_RESOURCE_LIST_RESPONSE,
+  EMPTY_PROJECT_RESOURCES,
   EMPTY_EXTERNAL_CREDENTIAL_PROFILE,
   EMPTY_EXTERNAL_CREDENTIAL_PROFILE_LIST_RESPONSE,
   EMPTY_TEST_EXTERNAL_CREDENTIAL_PROFILE_RESPONSE,
@@ -400,10 +398,10 @@ import {
   ChatPendingTaskSchema,
   PendingChatTasksResponseSchema,
   ProjectResourceSchema,
-  ProjectResourceListResponseSchema,
+  ProjectResourceListSchema,
   ProjectSchema,
-  ListProjectsResponseSchema,
-  SearchProjectsResponseSchema,
+  ProjectListSchema,
+  SearchProjectListSchema,
   SkillSchema,
   SkillSummaryListSchema,
   LabelSchema,
@@ -415,8 +413,8 @@ import {
   SquadMemberListSchema,
   InternalSquadTemplateResponseSchema,
   EMPTY_PROJECT,
-  EMPTY_PROJECT_LIST_RESPONSE,
-  EMPTY_SEARCH_PROJECTS_RESPONSE,
+  EMPTY_PROJECTS,
+  EMPTY_SEARCH_PROJECTS,
   EMPTY_SKILL,
   EMPTY_SKILL_SUMMARIES,
   EMPTY_LABEL,
@@ -607,7 +605,7 @@ export class ApiClient extends ApiTransport {
     });
   }
 
-  async searchProjects(params: { q: string; limit?: number; offset?: number; include_closed?: boolean; signal?: AbortSignal }): Promise<SearchProjectsResponse> {
+  async searchProjects(params: { q: string; limit?: number; offset?: number; include_closed?: boolean; signal?: AbortSignal }): Promise<SearchProjectResult[]> {
     const search = new URLSearchParams({ q: params.q });
     if (params.limit !== undefined) search.set("limit", String(params.limit));
     if (params.offset !== undefined) search.set("offset", String(params.offset));
@@ -618,8 +616,8 @@ export class ApiClient extends ApiTransport {
     );
     return parseWithFallback(
       raw,
-      SearchProjectsResponseSchema,
-      EMPTY_SEARCH_PROJECTS_RESPONSE,
+      SearchProjectListSchema,
+      EMPTY_SEARCH_PROJECTS,
       { endpoint: "GET /api/projects/search" },
     );
   }
@@ -1919,11 +1917,11 @@ export class ApiClient extends ApiTransport {
   }
 
   // Projects
-  async listProjects(params?: { status?: string }): Promise<ListProjectsResponse> {
+  async listProjects(params?: { status?: string }): Promise<Project[]> {
     const search = new URLSearchParams();
     if (params?.status) search.set("status", params.status);
     const raw = await this.fetch<unknown>(`/api/projects?${search}`);
-    return parseWithFallback(raw, ListProjectsResponseSchema, EMPTY_PROJECT_LIST_RESPONSE, {
+    return parseWithFallback(raw, ProjectListSchema, EMPTY_PROJECTS, {
       endpoint: "GET /api/projects",
     });
   }
@@ -2526,12 +2524,12 @@ export class ApiClient extends ApiTransport {
   // Project resources
   async listProjectResources(
     projectId: string,
-  ): Promise<ListProjectResourcesResponse> {
+  ): Promise<ProjectResource[]> {
     const raw = await this.fetch<unknown>(`/api/projects/${projectId}/resources`);
     return parseWithFallback(
       raw,
-      ProjectResourceListResponseSchema,
-      EMPTY_PROJECT_RESOURCE_LIST_RESPONSE,
+      ProjectResourceListSchema,
+      EMPTY_PROJECT_RESOURCES,
       { endpoint: "GET /api/projects/:id/resources" },
     );
   }

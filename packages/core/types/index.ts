@@ -102,7 +102,6 @@ export type {
   ProjectPriority,
   CreateProjectRequest,
   UpdateProjectRequest,
-  ListProjectsResponse,
   ProjectResource,
   ProjectResourceType,
   ProjectResourceRef,
@@ -111,7 +110,6 @@ export type {
   LocalDirectoryResourceRef,
   CreateProjectResourceRequest,
   UpdateProjectResourceRequest,
-  ListProjectResourcesResponse,
 } from "./project";
 export type { PinnedItem, PinnedItemType, CreatePinRequest, ReorderPinsRequest } from "./pin";
 export type {

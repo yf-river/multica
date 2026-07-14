@@ -4,7 +4,6 @@ export type ProjectPriority = "urgent" | "high" | "medium" | "low" | "none";
 
 export interface Project {
   id: string;
-  workspace_id: string;
   title: string;
   description: string | null;
   icon: string | null;
@@ -13,7 +12,6 @@ export interface Project {
   lead_type: "member" | "agent" | null;
   lead_id: string | null;
   created_at: string;
-  updated_at: string;
   issue_count: number;
   done_count: number;
   resource_count: number;
@@ -40,11 +38,6 @@ export interface UpdateProjectRequest {
   priority?: ProjectPriority;
   lead_type?: "member" | "agent" | null;
   lead_id?: string | null;
-}
-
-export interface ListProjectsResponse {
-  projects: Project[];
-  total: number;
 }
 
 // ProjectResource is a typed pointer from a project to an external resource.
@@ -100,13 +93,9 @@ export type ProjectResourceRef =
 export interface ProjectResource {
   id: string;
   project_id: string;
-  workspace_id: string;
   resource_type: ProjectResourceType;
   resource_ref: ProjectResourceRef;
   label: string | null;
-  position: number;
-  created_at: string;
-  created_by: string | null;
 }
 
 export interface CreateProjectResourceRequest {
@@ -123,9 +112,4 @@ export interface UpdateProjectResourceRequest {
   resource_ref?: ProjectResourceRef;
   label?: string | null;
   position?: number;
-}
-
-export interface ListProjectResourcesResponse {
-  resources: ProjectResource[];
-  total: number;
 }
