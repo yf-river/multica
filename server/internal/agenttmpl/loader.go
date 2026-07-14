@@ -100,10 +100,8 @@ func validate(t Template, filename string) error {
 	if strings.TrimSpace(t.Instructions) == "" {
 		return fmt.Errorf("missing instructions")
 	}
-	// 0-skill templates are legitimate — most starter templates are
-	// prompt-only (instructions alone, no skill fan-out). See
-	// docs/agent-quick-create-plan.md and the picker UI's "Prompt only"
-	// rendering for zero-length skill arrays.
+	// 0-skill templates are legitimate: prompt-only templates use instructions
+	// without importing skills, and the picker renders that current shape.
 	for i, s := range t.Skills {
 		if strings.TrimSpace(s.SourceURL) == "" {
 			return fmt.Errorf("skill[%d]: missing source_url", i)
