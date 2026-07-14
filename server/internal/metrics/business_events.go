@@ -15,13 +15,6 @@ import (
 // Most provider boots land in 5–60s; the long tail catches stuck pulls.
 var runtimeReadyBuckets = []float64{1, 2.5, 5, 10, 30, 60, 120, 300, 600}
 
-// prMergeSecondsBuckets covers PR-open → PR-merged latency from minutes to weeks.
-var prMergeSecondsBuckets = []float64{
-	300, 900, 1800,
-	3600, 2 * 3600, 6 * 3600, 12 * 3600,
-	24 * 3600, 2 * 24 * 3600, 7 * 24 * 3600, 30 * 24 * 3600,
-}
-
 // businessEventMetrics holds the PR3 collectors. Kept in a separate struct
 // so business.go (PR2 task lifecycle / LLM) stays focused; both are exposed
 // through the same BusinessMetrics receiver and the same Collectors() slice.
@@ -44,9 +37,6 @@ type businessEventMetrics struct {
 	autopilotRunTerminal    *prometheus.CounterVec
 	autopilotRunSkipped     *prometheus.CounterVec
 	webhookDelivery         *prometheus.CounterVec
-	githubEventReceived     *prometheus.CounterVec
-	githubPRReview          *prometheus.CounterVec
-	githubPRMergeSeconds    prometheus.Histogram
 	feedbackSubmitted       *prometheus.CounterVec
 }
 
@@ -125,19 +115,6 @@ func newBusinessEventMetrics() *businessEventMetrics {
 			Name: "multica_webhook_delivery_total",
 			Help: "Total inbound webhook deliveries by provider and outcome.",
 		}, metricLabels("multica_webhook_delivery_total")),
-		githubEventReceived: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "multica_github_event_received_total",
-			Help: "Total GitHub webhook events received by event kind and action.",
-		}, metricLabels("multica_github_event_received_total")),
-		githubPRReview: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "multica_github_pr_review_total",
-			Help: "Total GitHub pull request reviews observed by result.",
-		}, metricLabels("multica_github_pr_review_total")),
-		githubPRMergeSeconds: prometheus.NewHistogram(prometheus.HistogramOpts{
-			Name:    "multica_github_pr_merge_seconds",
-			Help:    "Time from PR opened to merged (seconds).",
-			Buckets: prMergeSecondsBuckets,
-		}),
 		feedbackSubmitted: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "multica_feedback_submitted_total",
 			Help: "Total in-app feedback submissions.",
@@ -168,9 +145,6 @@ func (e *businessEventMetrics) collectors() []prometheus.Collector {
 		e.autopilotRunTerminal,
 		e.autopilotRunSkipped,
 		e.webhookDelivery,
-		e.githubEventReceived,
-		e.githubPRReview,
-		e.githubPRMergeSeconds,
 		e.feedbackSubmitted,
 	}
 }
@@ -306,34 +280,6 @@ func (m *BusinessMetrics) RecordWebhookDelivery(provider, status string) {
 		NormalizeWebhookProvider(provider),
 		NormalizeWebhookDeliveryStatus(status),
 	).Inc()
-}
-
-// RecordGithubEventReceived counts a GitHub webhook event by event kind / action.
-func (m *BusinessMetrics) RecordGithubEventReceived(eventKind, action string) {
-	if m == nil || m.events == nil {
-		return
-	}
-	m.events.githubEventReceived.WithLabelValues(
-		NormalizeGithubEventKind(eventKind),
-		NormalizeGithubAction(action),
-	).Inc()
-}
-
-// RecordGithubPRReview counts a PR review observation by result.
-func (m *BusinessMetrics) RecordGithubPRReview(result string) {
-	if m == nil || m.events == nil {
-		return
-	}
-	m.events.githubPRReview.WithLabelValues(NormalizeGithubPRReviewResult(result)).Inc()
-}
-
-// ObserveGithubPRMergeSeconds records open→merge latency in seconds.
-// Negative or zero values are ignored.
-func (m *BusinessMetrics) ObserveGithubPRMergeSeconds(seconds float64) {
-	if m == nil || m.events == nil || seconds <= 0 {
-		return
-	}
-	m.events.githubPRMergeSeconds.Observe(seconds)
 }
 
 // RecordDaemonWSMessageReceived counts an inbound daemon WS message by handler kind.

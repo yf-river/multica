@@ -29,10 +29,6 @@ func TestNormalizePR3LabelsCollapseUnknownValues(t *testing.T) {
 		{"autopilot_skip_reason_unknown", metrics.NormalizeAutopilotSkipReason, "lunar_phase", "other", "other"},
 		{"webhook_provider_unknown", metrics.NormalizeWebhookProvider, "internal-billing", "other", "other"},
 		{"webhook_status_unknown", metrics.NormalizeWebhookDeliveryStatus, "exotic", "other", "other"},
-		{"github_event_unknown", metrics.NormalizeGithubEventKind, "deploy_status", "other", "other"},
-		{"github_action_empty", metrics.NormalizeGithubAction, "", "none", "none"},
-		{"github_action_unknown", metrics.NormalizeGithubAction, "rerequested_by_user", "other", "other"},
-		{"github_pr_review_unknown", metrics.NormalizeGithubPRReviewResult, "skipped", "other", "other"},
 		{"daemon_ws_kind_unknown", metrics.NormalizeDaemonWSKind, "future_event", "other", "other"},
 		{"feedback_kind_unknown", metrics.NormalizeFeedbackKind, "rant", "other", "other"},
 	}

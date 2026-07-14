@@ -64,48 +64,6 @@ var (
 		"other":      "other",
 	}
 
-	knownGithubEventKinds = map[string]string{
-		"pull_request":              "pull_request",
-		"pull_request_review":       "pull_request_review",
-		"issues":                    "issues",
-		"issue_comment":             "issue_comment",
-		"push":                      "push",
-		"installation":              "installation",
-		"installation_repositories": "installation_repositories",
-		"check_run":                 "check_run",
-		"check_suite":               "check_suite",
-		"ping":                      "ping",
-		"other":                     "other",
-	}
-
-	knownGithubActions = map[string]string{
-		"opened":      "opened",
-		"closed":      "closed",
-		"reopened":    "reopened",
-		"merged":      "merged",
-		"synchronize": "synchronize",
-		"edited":      "edited",
-		"submitted":   "submitted",
-		"created":     "created",
-		"deleted":     "deleted",
-		"labeled":     "labeled",
-		"unlabeled":   "unlabeled",
-		"assigned":    "assigned",
-		"unassigned":  "unassigned",
-		"requested":   "requested",
-		"completed":   "completed",
-		"none":        "none",
-		"other":       "other",
-	}
-
-	knownGithubPRReviewResults = map[string]string{
-		"approved":          "approved",
-		"changes_requested": "changes_requested",
-		"commented":         "commented",
-		"dismissed":         "dismissed",
-		"other":             "other",
-	}
-
 	knownDaemonWSKinds = map[string]string{
 		"heartbeat":     "heartbeat",
 		"task_claim":    "task_claim",
@@ -156,21 +114,6 @@ func NormalizeWebhookProvider(value string) string {
 
 func NormalizeWebhookDeliveryStatus(value string) string {
 	return normalizeFromAllowList(value, knownWebhookDeliveryStatuses, "other")
-}
-
-func NormalizeGithubEventKind(value string) string {
-	return normalizeFromAllowList(value, knownGithubEventKinds, "other")
-}
-
-func NormalizeGithubAction(value string) string {
-	if strings.TrimSpace(value) == "" {
-		return "none"
-	}
-	return normalizeFromAllowList(value, knownGithubActions, "other")
-}
-
-func NormalizeGithubPRReviewResult(value string) string {
-	return normalizeFromAllowList(value, knownGithubPRReviewResults, "other")
 }
 
 func NormalizeDaemonWSKind(value string) string {
