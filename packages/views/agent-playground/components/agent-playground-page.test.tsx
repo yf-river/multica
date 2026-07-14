@@ -70,16 +70,8 @@ const version = {
 const createdDetail = {
   experiment: {
     id: "experiment-1",
-    workspace_id: "workspace-1",
     name: "Agent 对比实验",
-    description: "",
-    dataset_asset_id: dataset.id,
-    dataset_version_id: version.id,
-    judge_agent_id: null,
     status: "draft",
-    created_by: "user-1",
-    created_at: "2026-07-10T00:00:00Z",
-    updated_at: "2026-07-10T00:00:00Z",
     input_count: 3,
     agent_count: 1,
   },

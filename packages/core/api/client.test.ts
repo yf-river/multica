@@ -800,9 +800,7 @@ describe("ApiClient", () => {
   it("retries agent-playground create unknown outcomes with one request identity", async () => {
     const detail = {
       experiment: {
-        id: "experiment-1", workspace_id: "workspace-1", name: "Current", description: "",
-        dataset_asset_id: "asset-1", dataset_version_id: "version-1", judge_agent_id: null,
-        status: "ready", created_by: "user-1", created_at: "now", updated_at: "now",
+        id: "experiment-1", name: "Current", status: "ready",
         input_count: 1, agent_count: 1,
       },
       inputs: [], agents: [], results: [], judgements: [],
@@ -830,9 +828,7 @@ describe("ApiClient", () => {
   ])("retries an unknown agent-playground %s outcome once", async (_operation, invoke) => {
     const detail = {
       experiment: {
-        id: "experiment-1", workspace_id: "workspace-1", name: "Current", description: "",
-        dataset_asset_id: "asset-1", dataset_version_id: "version-1", judge_agent_id: "agent-2",
-        status: "running", created_by: "user-1", created_at: "now", updated_at: "now",
+        id: "experiment-1", name: "Current", status: "running",
         input_count: 1, agent_count: 1,
       },
       inputs: [], agents: [], results: [], judgements: [],
