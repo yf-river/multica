@@ -96,22 +96,13 @@ export const EMPTY_PROMPT_EVALUATION_EVIDENCE_SNAPSHOT: PromptEvaluationEvidence
 };
 
 export const EMPTY_PROMPT_EVALUATION_ASSET_EVIDENCE_SNAPSHOT_RESPONSE: PromptEvaluationAssetEvidenceSnapshotResponse = {
-  asset_id: "",
-  snapshot_type: "验收归档",
   created_count: 0,
   skipped_count: 0,
   items: [],
-  skipped: [],
 };
 
 export const EMPTY_PROMPT_EVALUATION_ASSET_EVIDENCE_ARCHIVE_PACKAGE: PromptEvaluationAssetEvidenceArchivePackage = {
-  schema_version: "multica.prompt_evaluation.asset_evidence_archive.v1",
-  asset_id: "",
-  snapshot_type: "验收归档",
   archived_run_count: 0,
-  asset: EMPTY_PROMPT_EVALUATION_ASSET,
-  items: [],
-  中文摘要: {},
 };
 
 export const EMPTY_PROMPT_EVALUATION_CASE: PromptEvaluationStructuredCase = {

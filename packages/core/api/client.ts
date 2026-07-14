@@ -2134,12 +2134,7 @@ export class ApiClient extends ApiTransport {
         extraHeaders: { "Idempotency-Key": idempotencyKey },
       });
       return parseOrThrow(raw, PromptEvaluationDatasetFromTracesResponseSchema, {
-        asset: EMPTY_PROMPT_EVALUATION_ASSET,
-        cases: [],
-        trace_events: [],
         created_count: 0,
-        skipped_count: 0,
-        source: "trace",
       }, {
         endpoint: "POST /api/prompt-evaluation-assets/:id/dataset-from-traces",
         mayHaveCommitted: true,

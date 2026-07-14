@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { PromptEvaluationAssetSchema } from "./schemas-prompt-evaluation-assets";
 import { NonEmptyStringSchema, TaskTraceEventSchema } from "./schemas-internal";
 
 // Runtime response contracts for prompt evaluation runs.
@@ -100,28 +99,13 @@ export const PromptEvaluationEvidenceSnapshotListResponseSchema = z.object({
 }).loose().transform(({ items }) => items);
 
 export const PromptEvaluationAssetEvidenceSnapshotResponseSchema = z.object({
-  asset_id: NonEmptyStringSchema,
-  snapshot_type: z.enum(["手动归档", "验收归档", "自动归档"]).default("验收归档"),
-  created_count: z.number().default(0),
-  skipped_count: z.number().default(0),
-  items: z.array(PromptEvaluationEvidenceSnapshotSchema).default([]),
-  skipped: z.array(z.object({
-    run_id: z.string().default(""),
-    reason: z.string().default(""),
-  }).loose()).default([]),
+  created_count: z.number(),
+  skipped_count: z.number(),
+  items: z.array(PromptEvaluationEvidenceSnapshotSchema),
 }).loose();
 
 export const PromptEvaluationAssetEvidenceArchivePackageSchema = z.object({
-  schema_version: z.string().default("multica.prompt_evaluation.asset_evidence_archive.v1"),
-  asset_id: z.string().default(""),
-  snapshot_type: z.enum(["手动归档", "验收归档", "自动归档"]).default("验收归档"),
   archived_run_count: z.number().default(0),
-  asset: PromptEvaluationAssetSchema,
-  items: z.array(z.object({
-    run: PromptEvaluationRunSchema,
-    snapshots: z.array(PromptEvaluationEvidenceSnapshotSchema).default([]),
-  }).loose()).default([]),
-  中文摘要: z.record(z.string(), z.unknown()).default({}),
 }).loose();
 
 export const PromptEvaluationRunListResponseSchema = z.object({

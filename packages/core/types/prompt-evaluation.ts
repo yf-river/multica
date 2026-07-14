@@ -114,33 +114,15 @@ export interface PromptEvaluationEvidenceSnapshot {
   created_at: string;
 }
 
-export interface PromptEvaluationAssetEvidenceSnapshotSkip {
-  run_id: string;
-  reason: string;
-}
-
 export interface PromptEvaluationAssetEvidenceSnapshotResponse {
-  asset_id: string;
-  snapshot_type: PromptEvaluationEvidenceSnapshotType;
   created_count: number;
   skipped_count: number;
   items: PromptEvaluationEvidenceSnapshot[];
-  skipped: PromptEvaluationAssetEvidenceSnapshotSkip[];
-}
-
-export interface PromptEvaluationAssetEvidenceArchiveItem {
-  run: PromptEvaluationRun;
-  snapshots: PromptEvaluationEvidenceSnapshot[];
 }
 
 export interface PromptEvaluationAssetEvidenceArchivePackage {
-  schema_version: string;
-  asset_id: string;
-  snapshot_type: PromptEvaluationEvidenceSnapshotType;
   archived_run_count: number;
-  asset: PromptEvaluationAsset;
-  items: PromptEvaluationAssetEvidenceArchiveItem[];
-  中文摘要: Record<string, unknown>;
+  [key: string]: unknown;
 }
 
 export interface PromptEvaluationStructuredCase {
@@ -171,12 +153,7 @@ export interface CreatePromptEvaluationDatasetFromTracesRequest {
 }
 
 export interface PromptEvaluationDatasetFromTracesResponse {
-  asset: PromptEvaluationAsset;
-  cases: PromptEvaluationStructuredCase[];
-  trace_events: TaskTraceEvent[];
   created_count: number;
-  skipped_count: number;
-  source: "trace";
 }
 
 export interface PromptEvaluationOptimizationCandidate {

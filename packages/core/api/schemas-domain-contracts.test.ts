@@ -29,12 +29,15 @@ import {
   PromptEvaluationAssetListResponseSchema,
 } from "./schemas-prompt-evaluation-assets";
 import {
+  PromptEvaluationDatasetFromTracesResponseSchema,
   PromptEvaluationCaseListResponseSchema,
 } from "./schemas-prompt-evaluation-cases";
 import {
   PromptEvaluationOptimizationCandidateListResponseSchema,
 } from "./schemas-prompt-evaluation-optimization";
 import {
+  PromptEvaluationAssetEvidenceArchivePackageSchema,
+  PromptEvaluationAssetEvidenceSnapshotResponseSchema,
   PromptEvaluationRunEvidenceSchema,
   PromptEvaluationRunListResponseSchema,
 } from "./schemas-prompt-evaluation-runs";
@@ -185,6 +188,25 @@ describe("domain response schema fallbacks", () => {
       ...parsed,
       trials: ["not-an-evidence-object"],
     }).success).toBe(false);
+  });
+
+  it("projects mutation counts while preserving the downloaded evidence archive", () => {
+    expect(PromptEvaluationDatasetFromTracesResponseSchema.parse({
+      created_count: 2,
+      future_result: { kept: true },
+    }).created_count).toBe(2);
+    expect(PromptEvaluationAssetEvidenceSnapshotResponseSchema.parse({
+      created_count: 1,
+      skipped_count: 0,
+      items: [],
+    })).toMatchObject({ created_count: 1, skipped_count: 0, items: [] });
+
+    const archive = {
+      archived_run_count: 1,
+      schema_version: "current",
+      items: [{ opaque: { kept: true } }],
+    };
+    expect(PromptEvaluationAssetEvidenceArchivePackageSchema.parse(archive)).toEqual(archive);
   });
 
   it("rejects malformed evaluation cases", () => {
