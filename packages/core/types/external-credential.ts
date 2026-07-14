@@ -15,16 +15,11 @@ export interface ExternalCredentialSecretBinding {
 
 export interface ExternalCredentialProfile {
   id: string;
-  user_id: string;
-  scope: "account" | (string & {});
   provider: ExternalCredentialProvider | (string & {});
   name: string;
   secret_binding: ExternalCredentialSecretBinding;
-  capabilities: Record<string, unknown>;
   status: ExternalCredentialStatus | (string & {});
   last_error?: string;
-  created_at: string;
-  updated_at: string;
 }
 
 export interface CreateExternalCredentialProfileRequest {
@@ -41,8 +36,6 @@ export interface UpdateExternalCredentialProfileRequest {
   secret_ref?: string;
   token?: string;
   capabilities?: Record<string, unknown>;
-  status?: ExternalCredentialStatus;
-  last_error?: string;
   verify_now?: boolean;
 }
 

@@ -1,13 +1,5 @@
 export type PromptLibraryStatus = "启用" | "归档";
 
-export interface PromptLibraryVariable {
-  name: string;
-  label?: string;
-  required?: boolean;
-  description?: string;
-  default_value?: string;
-}
-
 export interface PromptLibraryItem {
   id: string;
   name: string;
@@ -43,25 +35,10 @@ export interface ListPromptLibraryItemsParams {
 }
 
 export interface CreatePromptLibraryItemRequest {
-  project_id?: string | null;
   name: string;
   description?: string;
   prompt_type?: string;
   content: string;
-  variables?: PromptLibraryVariable[];
-  tags?: string[];
-  status?: PromptLibraryStatus;
-}
-
-export interface UpdatePromptLibraryItemRequest {
-  project_id?: string | null;
-  name?: string;
-  description?: string;
-  prompt_type?: string;
-  content?: string;
-  variables?: PromptLibraryVariable[];
-  tags?: string[];
-  status?: PromptLibraryStatus;
 }
 
 export interface CreatePromptLibraryVersionRequest {

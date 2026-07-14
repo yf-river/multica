@@ -14,16 +14,11 @@ const ExternalCredentialSecretBindingSchema = z.object({
 
 export const ExternalCredentialProfileSchema = z.object({
   id: NonEmptyStringSchema,
-  user_id: NonEmptyStringSchema,
-  scope: NonEmptyStringSchema,
   provider: NonEmptyStringSchema,
   name: NonEmptyStringSchema,
   secret_binding: ExternalCredentialSecretBindingSchema,
-  capabilities: z.record(z.string(), z.unknown()).default({}),
   status: NonEmptyStringSchema,
   last_error: z.string().optional(),
-  created_at: z.string().default(""),
-  updated_at: z.string().default(""),
 });
 
 export const ExternalCredentialProfileListResponseSchema = z.object({
@@ -39,15 +34,10 @@ export const TestExternalCredentialProfileResponseSchema = z.object({
 
 export const EMPTY_EXTERNAL_CREDENTIAL_PROFILE: ExternalCredentialProfile = {
   id: "",
-  user_id: "",
-  scope: "account",
   provider: "",
   name: "",
   secret_binding: { configured: false, redacted: true, mode: "missing" },
-  capabilities: {},
   status: "unverified",
-  created_at: "",
-  updated_at: "",
 };
 
 export const EMPTY_TEST_EXTERNAL_CREDENTIAL_PROFILE_RESPONSE: TestExternalCredentialProfileResponse = {

@@ -15,8 +15,6 @@ const mockProfiles = vi.hoisted(() => ({
   current: [
     {
       id: "credential-1",
-      user_id: "user-1",
-      scope: "account",
       provider: "gongfeng",
       name: "gongfeng-default",
       secret_binding: {
@@ -25,10 +23,7 @@ const mockProfiles = vi.hoisted(() => ({
         mode: "encrypted_secret",
         hint: "GONGFENG_PRIVATE_TOKEN",
       },
-      capabilities: {},
       status: "verified",
-      created_at: "2026-06-28T00:00:00Z",
-      updated_at: "2026-06-28T00:00:00Z",
     },
   ] as ExternalCredentialProfile[],
 }));
@@ -80,8 +75,6 @@ describe("TokensTab", () => {
     mockProfiles.current = [
       {
         id: "credential-1",
-        user_id: "user-1",
-        scope: "account",
         provider: "gongfeng",
         name: "gongfeng-default",
         secret_binding: {
@@ -90,15 +83,10 @@ describe("TokensTab", () => {
           mode: "encrypted_secret",
           hint: "GONGFENG_PRIVATE_TOKEN",
         },
-        capabilities: {},
         status: "verified",
-        created_at: "2026-06-28T00:00:00Z",
-        updated_at: "2026-06-28T00:00:00Z",
       },
       {
         id: "credential-2",
-        user_id: "user-1",
-        scope: "account",
         provider: "tapd",
         name: "tapd-default",
         secret_binding: {
@@ -107,10 +95,7 @@ describe("TokensTab", () => {
           mode: "encrypted_secret",
           hint: "TAPD_ACCESS_TOKEN",
         },
-        capabilities: {},
         status: "verified",
-        created_at: "2026-06-28T00:00:00Z",
-        updated_at: "2026-06-28T00:00:00Z",
       },
     ];
   });
@@ -206,8 +191,6 @@ describe("TokensTab", () => {
     mockProfiles.current = [
       {
         id: "credential-1",
-        user_id: "user-1",
-        scope: "account",
         provider: "gongfeng",
         name: "gongfeng-default",
         secret_binding: {
@@ -216,11 +199,8 @@ describe("TokensTab", () => {
           mode: "encrypted_secret",
           hint: "GONGFENG_PRIVATE_TOKEN",
         },
-        capabilities: {},
         status: "failed",
         last_error: "token 无法访问工蜂",
-        created_at: "2026-06-28T00:00:00Z",
-        updated_at: "2026-06-28T00:00:00Z",
       },
     ];
 

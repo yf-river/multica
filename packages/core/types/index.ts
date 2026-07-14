@@ -115,14 +115,12 @@ export type {
   PromptLibraryItem,
   PromptLibraryVersion,
   PromptLibraryTrial,
-  PromptLibraryVariable,
   PromptLibraryStatus,
   ListPromptLibraryItemsParams,
   CreatePromptLibraryItemRequest,
   CreatePromptLibraryVersionRequest,
   CreatePromptLibraryVersionResponse,
   CreatePromptLibraryTrialRequest,
-  UpdatePromptLibraryItemRequest,
 } from "./prompt-library";
 export type {
   AgentPlaygroundExperiment,
