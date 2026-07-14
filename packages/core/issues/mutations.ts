@@ -790,10 +790,8 @@ export function useResolveComment(issueId: string) {
       qc.setQueryData<TimelineCache>(issueKeys.timeline(issueId), (old) => {
         if (!old) return old;
         // Resolving makes this comment the sole resolution in its thread, so
-        // mirror the server (ClearOtherThreadResolutions) and clear every other
-        // resolution in the same thread. Without this the cache shows two
-        // resolutions until the settle refetch, which is exactly the flash the
-        // single-resolution fix removes. Unresolve only clears its own row.
+        // mirror the server and clear the previous resolution in that thread.
+        // Unresolving only clears the selected row.
         const threadIds = resolved ? collectThreadCommentIds(old, commentId) : null;
         return old.map((e) => {
           if (e.id === commentId) {

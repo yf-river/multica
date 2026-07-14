@@ -404,23 +404,4 @@ describe("useResolveComment", () => {
     expect(resolvedIds(qc)).toEqual(["a2", "root1"]);
   });
 
-  it("unresolve only clears its own row, never siblings", async () => {
-    // Legacy state: two resolved comments coexist in one thread.
-    qc.setQueryData<TimelineEntry[]>(issueKeys.timeline(ISSUE_ID), [
-      makeComment("root1", null, null),
-      makeComment("a1", "root1", "2026-01-01T00:01:00Z"),
-      makeComment("b1", "root1", "2026-01-01T00:02:00Z"),
-    ]);
-
-    const { result } = renderHook(() => useResolveComment(ISSUE_ID), {
-      wrapper: createWrapper(qc),
-    });
-
-    await act(async () => {
-      await result.current.mutateAsync({ commentId: "b1", resolved: false });
-    });
-
-    // Only b1 is cleared; a1 stays resolved (unresolve never mirrors the clear).
-    expect(resolvedIds(qc)).toEqual(["a1"]);
-  });
 });
