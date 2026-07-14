@@ -16,9 +16,7 @@ function profile(overrides: Partial<RuntimeProfile> = {}): RuntimeProfile {
     command_name: "team-codex",
     description: null,
     fixed_args: [],
-    created_by: "user-1",
     enabled: true,
-    created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-02T00:00:00Z",
     ...overrides,
   };
@@ -27,7 +25,6 @@ function profile(overrides: Partial<RuntimeProfile> = {}): RuntimeProfile {
 function runtime(overrides: Partial<AgentRuntime> = {}): AgentRuntime {
   return {
     id: "runtime-1",
-    workspace_id: "ws-1",
     daemon_id: "daemon-1",
     name: "Codex (MacBook)",
     runtime_mode: "local",
@@ -40,8 +37,6 @@ function runtime(overrides: Partial<AgentRuntime> = {}): AgentRuntime {
     scope: "personal",
     profile_id: null,
     last_seen_at: "2026-01-01T00:00:00Z",
-    created_at: "2026-01-01T00:00:00Z",
-    updated_at: "2026-01-01T00:00:00Z",
     ...overrides,
   };
 }

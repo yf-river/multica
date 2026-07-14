@@ -18,7 +18,6 @@ const TEST_RESOURCES = { "zh-Hans": { chat: enChat, issues: enIssues } };
 
 function makeAgent(overrides: Partial<Agent> & Pick<Agent, "id" | "name" | "owner_id">): Agent {
   return {
-    workspace_id: "ws-1",
     runtime_id: "runtime-1",
     description: "",
     instructions: "",
@@ -26,12 +25,10 @@ function makeAgent(overrides: Partial<Agent> & Pick<Agent, "id" | "name" | "owne
     runtime_mode: "local",
     runtime_config: {},
     custom_args: [],
-    has_custom_env: false,
     custom_env_key_count: 0,
     mcp_config: null,
     mcp_config_redacted: false,
     scope: "workspace",
-    status: "idle",
     max_concurrent_tasks: 1,
     model: "sonnet",
     thinking_level: "",
@@ -39,7 +36,6 @@ function makeAgent(overrides: Partial<Agent> & Pick<Agent, "id" | "name" | "owne
     created_at: new Date(0).toISOString(),
     updated_at: new Date(0).toISOString(),
     archived_at: null,
-    archived_by: null,
     ...overrides,
     id: overrides.id,
     name: overrides.name,

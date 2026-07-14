@@ -34,7 +34,6 @@ import { SkillsTab } from "./skills-tab";
 
 const agent: Agent = {
   id: "agent-1",
-  workspace_id: "ws-1",
   runtime_id: "runtime-1",
   name: "Agent",
   description: "",
@@ -43,12 +42,10 @@ const agent: Agent = {
   runtime_mode: "local",
   runtime_config: {},
   custom_args: [],
-  has_custom_env: false,
   custom_env_key_count: 0,
   mcp_config: null,
   mcp_config_redacted: false,
   scope: "workspace",
-  status: "idle",
   max_concurrent_tasks: 1,
   model: "",
   thinking_level: "",
@@ -57,7 +54,6 @@ const agent: Agent = {
   created_at: "2026-04-16T00:00:00Z",
   updated_at: "2026-04-16T00:00:00Z",
   archived_at: null,
-  archived_by: null,
 };
 
 function renderSkillsTab() {

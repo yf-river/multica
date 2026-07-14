@@ -21,9 +21,7 @@ function profile(
     command_name: "codex",
     description: null,
     fixed_args: [],
-    created_by: "user-1",
     enabled,
-    created_at: "2026-01-01T00:00:00Z",
     updated_at: updatedAt,
   };
 }

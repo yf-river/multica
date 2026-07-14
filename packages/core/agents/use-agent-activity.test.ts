@@ -30,7 +30,6 @@ function bucket(
 
 const fullHistoryAgent: Agent = {
   id: "a1",
-  workspace_id: "w",
   runtime_id: "r1",
   name: "Old Agent",
   description: "",
@@ -39,12 +38,10 @@ const fullHistoryAgent: Agent = {
   runtime_mode: "cloud",
   runtime_config: {},
   custom_args: [],
-  has_custom_env: false,
   custom_env_key_count: 0,
   mcp_config: null,
   mcp_config_redacted: false,
   scope: "workspace",
-  status: "idle",
   max_concurrent_tasks: 1,
   model: "",
   thinking_level: "",
@@ -54,7 +51,6 @@ const fullHistoryAgent: Agent = {
   created_at: new Date(NOW - 100 * DAY).toISOString(),
   updated_at: new Date(NOW).toISOString(),
   archived_at: null,
-  archived_by: null,
 };
 
 describe("deriveAgentActivity", () => {

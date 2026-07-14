@@ -61,7 +61,7 @@ export function EnvTab({
   onDirtyChange?: (dirty: boolean) => void;
   // Notifier so the parent page can refresh its agent cache after a
   // successful PUT — the parent owns the `Agent` object the rest of
-  // the page reads (name, has_custom_env, etc.). Optional so call
+  // the page reads (name, custom_env_key_count, etc.). Optional so call
   // sites without invalidation logic stay simple.
   onSaved?: () => void;
 }) {

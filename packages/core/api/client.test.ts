@@ -193,7 +193,6 @@ describe("ApiClient", () => {
       .mockRejectedValueOnce(new TypeError("connection reset"))
       .mockResolvedValueOnce(new Response(JSON.stringify({
         id: "agent-1",
-        workspace_id: "workspace-1",
         runtime_id: "runtime-1",
         name: "Reviewer",
         description: "",
@@ -202,12 +201,10 @@ describe("ApiClient", () => {
         runtime_mode: "local",
         runtime_config: {},
         custom_args: [],
-        has_custom_env: false,
         custom_env_key_count: 0,
         mcp_config: null,
         mcp_config_redacted: false,
         scope: "workspace",
-        status: "offline",
         max_concurrent_tasks: 1,
         model: "",
         thinking_level: "",
@@ -216,7 +213,6 @@ describe("ApiClient", () => {
         created_at: "2026-07-13T00:00:00Z",
         updated_at: "2026-07-13T00:00:00Z",
         archived_at: null,
-        archived_by: null,
       }), {
         status: 201,
         headers: { "Content-Type": "application/json" },
@@ -553,7 +549,7 @@ describe("ApiClient", () => {
   it("retries Issue rerun unknown outcomes with one request identity", async () => {
     const response = {
       id: "task-1", agent_id: "agent-1", runtime_id: "runtime-1", issue_id: "issue-1",
-      status: "queued", priority: 1, dispatched_at: null, started_at: null,
+      status: "queued", dispatched_at: null, started_at: null,
       completed_at: null, result: null, error: null, created_at: "now",
     };
     const fetchMock = vi.fn()
@@ -2043,7 +2039,6 @@ describe("ApiClient", () => {
       runtime_id: "runtime-1",
       issue_id: "",
       status: "cancelled",
-      priority: 0,
       dispatched_at: null,
       started_at: null,
       completed_at: "2026-06-12T06:40:00Z",

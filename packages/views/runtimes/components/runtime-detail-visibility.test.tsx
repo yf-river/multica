@@ -113,7 +113,6 @@ import { RuntimeDetail } from "./runtime-detail";
 function makeRuntime(overrides: Partial<AgentRuntime>): AgentRuntime {
   return {
     id: "rt-1",
-    workspace_id: "ws-1",
     daemon_id: null,
     name: "Local Runtime",
     runtime_mode: "local",
@@ -126,8 +125,6 @@ function makeRuntime(overrides: Partial<AgentRuntime>): AgentRuntime {
     scope: "personal",
     profile_id: null,
     last_seen_at: "2026-04-27T11:59:50Z",
-    created_at: "2026-04-01T00:00:00Z",
-    updated_at: "2026-04-01T00:00:00Z",
     ...overrides,
   };
 }

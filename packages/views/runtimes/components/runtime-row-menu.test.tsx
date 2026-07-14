@@ -81,7 +81,6 @@ import { CliCell, RuntimeRowMenu, type RuntimeRow } from "./runtime-list";
 function makeRuntime(overrides: Partial<AgentRuntime>): AgentRuntime {
   return {
     id: "rt-1",
-    workspace_id: "ws-1",
     daemon_id: null,
     name: "rt",
     runtime_mode: "local",
@@ -94,8 +93,6 @@ function makeRuntime(overrides: Partial<AgentRuntime>): AgentRuntime {
     scope: "personal",
     profile_id: null,
     last_seen_at: null,
-    created_at: "2026-01-01T00:00:00Z",
-    updated_at: "2026-01-01T00:00:00Z",
     ...overrides,
   };
 }

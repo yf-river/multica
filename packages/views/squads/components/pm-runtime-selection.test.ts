@@ -9,7 +9,6 @@ import {
 function runtime(input: Partial<AgentRuntime> & { id: string }): AgentRuntime {
   return {
     id: input.id,
-    workspace_id: input.workspace_id ?? "ws-1",
     daemon_id: input.daemon_id ?? null,
     name: input.name ?? input.id,
     runtime_mode: input.runtime_mode ?? "local",
@@ -22,8 +21,6 @@ function runtime(input: Partial<AgentRuntime> & { id: string }): AgentRuntime {
     scope: input.scope ?? "workspace",
     profile_id: input.profile_id ?? null,
     last_seen_at: input.last_seen_at ?? "2026-07-02T01:00:00Z",
-    created_at: input.created_at ?? "2026-07-02T00:00:00Z",
-    updated_at: input.updated_at ?? "2026-07-02T00:00:00Z",
   };
 }
 

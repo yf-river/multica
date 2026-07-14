@@ -137,7 +137,6 @@ function task(overrides: Partial<AgentTask> = {}): AgentTask {
     runtime_id: "runtime-1",
     issue_id: "issue-1",
     status: "completed",
-    priority: 0,
     dispatched_at: "2026-06-09T10:00:00.000Z",
     started_at: "2026-06-09T10:00:00.000Z",
     completed_at: "2026-06-09T10:02:00.000Z",

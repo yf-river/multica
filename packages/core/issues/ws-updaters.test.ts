@@ -99,7 +99,6 @@ function makeTask(issueId = ISSUE_ID): AgentTask {
     runtime_id: "runtime-1",
     issue_id: issueId,
     status: "completed",
-    priority: 0,
     dispatched_at: null,
     started_at: "2025-01-01T00:00:00Z",
     completed_at: "2025-01-01T00:01:00Z",

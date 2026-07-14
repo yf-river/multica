@@ -791,7 +791,6 @@ describe("IssueDetail (shared)", () => {
         runtime_id: "runtime-1",
         issue_id: "issue-1",
         status: "completed",
-        priority: 0,
         dispatched_at: "2026-06-08T08:01:00Z",
         started_at: "2026-06-08T08:02:00Z",
         completed_at: "2026-06-08T08:07:00Z",

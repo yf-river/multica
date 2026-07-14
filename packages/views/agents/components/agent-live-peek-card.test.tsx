@@ -102,7 +102,6 @@ import { AgentLivePeekCard } from "./agent-live-peek-card";
 function makeAgent(overrides: Record<string, unknown> = {}) {
   return {
     id: "agent-1",
-    workspace_id: "ws-1",
     runtime_id: "rt-1",
     name: "Squirtle",
     description: "",
@@ -112,7 +111,6 @@ function makeAgent(overrides: Record<string, unknown> = {}) {
     runtime_config: {},
     custom_args: [],
     scope: "personal" as const,
-    status: "idle" as const,
     max_concurrent_tasks: 1,
     model: "",
     owner_id: "user-me",
@@ -120,7 +118,6 @@ function makeAgent(overrides: Record<string, unknown> = {}) {
     created_at: "2026-04-01T00:00:00Z",
     updated_at: "2026-04-01T00:00:00Z",
     archived_at: null,
-    archived_by: null,
     ...overrides,
   };
 }
@@ -132,7 +129,6 @@ function makeTask(overrides: Record<string, unknown>) {
     runtime_id: "rt-1",
     issue_id: "",
     status: "completed" as const,
-    priority: 0,
     dispatched_at: null,
     started_at: null,
     completed_at: null,

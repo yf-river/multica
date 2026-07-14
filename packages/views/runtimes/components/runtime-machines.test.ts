@@ -12,7 +12,6 @@ const NOW = new Date("2026-05-17T12:00:00Z").getTime();
 function makeRuntime(overrides: Partial<AgentRuntime> = {}): AgentRuntime {
   return {
     id: "runtime-1",
-    workspace_id: "ws-1",
     daemon_id: "daemon-1",
     name: "Claude (dev-machine.local)",
     runtime_mode: "local",
@@ -25,8 +24,6 @@ function makeRuntime(overrides: Partial<AgentRuntime> = {}): AgentRuntime {
     scope: "personal",
     profile_id: null,
     last_seen_at: new Date(NOW - 10_000).toISOString(),
-    created_at: "2026-05-17T11:00:00Z",
-    updated_at: "2026-05-17T11:00:00Z",
     ...overrides,
   };
 }

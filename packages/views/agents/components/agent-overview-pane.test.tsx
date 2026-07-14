@@ -63,7 +63,6 @@ import { AgentOverviewPane, type DetailTab } from "./agent-overview-pane";
 
 const baseAgent: Agent = {
   id: "agent-1",
-  workspace_id: "ws-1",
   runtime_id: "runtime-1",
   name: "Agent",
   description: "",
@@ -72,12 +71,10 @@ const baseAgent: Agent = {
   runtime_mode: "local",
   runtime_config: {},
   custom_args: [],
-  has_custom_env: false,
   custom_env_key_count: 0,
   mcp_config: null,
   mcp_config_redacted: false,
   scope: "workspace",
-  status: "idle",
   max_concurrent_tasks: 1,
   model: "",
   thinking_level: "",
@@ -86,13 +83,11 @@ const baseAgent: Agent = {
   created_at: "2026-05-28T00:00:00Z",
   updated_at: "2026-05-28T00:00:00Z",
   archived_at: null,
-  archived_by: null,
 };
 
 function makeRuntime(provider: string): AgentRuntime {
   return {
     id: "runtime-1",
-    workspace_id: "ws-1",
     daemon_id: null,
     name: "Runtime",
     runtime_mode: "local",
@@ -105,8 +100,6 @@ function makeRuntime(provider: string): AgentRuntime {
     scope: "personal",
     profile_id: null,
     last_seen_at: null,
-    created_at: "2026-05-28T00:00:00Z",
-    updated_at: "2026-05-28T00:00:00Z",
   };
 }
 

@@ -70,7 +70,6 @@ function pendingRuntimeFromProfile({
 
   return {
     id: pendingRuntimeId(profile.id),
-    workspace_id: profile.workspace_id,
     daemon_id: localDaemonId ?? null,
     name: `${profile.display_name} (${machineName})`,
     runtime_mode: "local",
@@ -83,8 +82,6 @@ function pendingRuntimeFromProfile({
     scope: "personal",
     profile_id: profile.id,
     last_seen_at: pendingSince,
-    created_at: pendingSince,
-    updated_at: pendingSince,
   };
 }
 

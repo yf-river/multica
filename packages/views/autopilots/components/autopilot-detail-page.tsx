@@ -127,7 +127,6 @@ function RunRow({ run, agentId, agentName }: { run: AutopilotRun; agentId: strin
           run.status === "completed" ? "completed" :
           run.status === "failed" ? "failed" :
           "queued",
-        priority: 0,
         dispatched_at: null,
         started_at: run.triggered_at || null,
         completed_at: run.completed_at || null,

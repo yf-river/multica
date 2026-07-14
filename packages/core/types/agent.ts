@@ -9,7 +9,6 @@ export type ResourceScope = "personal" | "workspace";
 // runtime for workspace-scoped agents.
 export interface AgentRuntime {
   id: string;
-  workspace_id: string;
   daemon_id: string | null;
   name: string;
   runtime_mode: AgentRuntimeMode;
@@ -27,8 +26,6 @@ export interface AgentRuntime {
    */
   profile_id: string | null;
   last_seen_at: string | null;
-  created_at: string;
-  updated_at: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -72,9 +69,7 @@ export interface RuntimeProfile {
   command_name: string;
   description: string | null;
   fixed_args: string[];
-  created_by: string | null;
   enabled: boolean;
-  created_at: string;
   updated_at: string;
 }
 
@@ -144,7 +139,6 @@ export interface AgentTask {
     | "completed"
     | "failed"
     | "cancelled";
-  priority: number;
   dispatched_at: string | null;
   started_at: string | null;
   completed_at: string | null;
@@ -204,7 +198,6 @@ export interface AgentTask {
 
 export interface Agent {
   id: string;
-  workspace_id: string;
   runtime_id: string;
   name: string;
   description: string;
@@ -214,16 +207,8 @@ export interface Agent {
   runtime_config: Record<string, unknown>;
   custom_args: string[];
   /**
-   * Coarse metadata signalling whether the agent has any custom env
-   * vars configured, without exposing the keys or values. Reads of
-   * the real map go through the dedicated `GET /api/agents/{id}/env`
-   * endpoint (owner/admin only, audited). MUL-2600.
-   *
-   */
-  has_custom_env: boolean;
-  /**
-   * Number of keys in the agent's custom_env map. Always present
-   * alongside `has_custom_env`. MUL-2600.
+   * Number of keys in the agent's custom_env map. This is the only
+   * coarse env summary exposed to the current UI. MUL-2600.
    */
   custom_env_key_count: number;
   /**
@@ -248,7 +233,6 @@ export interface Agent {
    */
   mcp_config_redacted: boolean;
   scope: ResourceScope;
-  status: AgentStatus;
   max_concurrent_tasks: number;
   model: string;
   /**
@@ -266,7 +250,6 @@ export interface Agent {
   created_at: string;
   updated_at: string;
   archived_at: string | null;
-  archived_by: string | null;
 }
 
 /**

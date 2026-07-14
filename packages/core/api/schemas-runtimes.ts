@@ -10,7 +10,6 @@ import { NonEmptyStringSchema } from "./schemas-internal";
 
 export const RuntimeDeviceSchema = z.object({
   id: NonEmptyStringSchema,
-  workspace_id: NonEmptyStringSchema,
   daemon_id: z.string().nullable(),
   name: z.string(),
   runtime_mode: z.string(),
@@ -23,15 +22,12 @@ export const RuntimeDeviceSchema = z.object({
   scope: z.string(),
   profile_id: z.string().nullable(),
   last_seen_at: z.string().nullable(),
-  created_at: z.string(),
-  updated_at: z.string(),
 }).loose();
 
 export const RuntimeDeviceListSchema = z.array(RuntimeDeviceSchema);
 
 export const EMPTY_RUNTIME_DEVICE: AgentRuntime = {
   id: "",
-  workspace_id: "",
   daemon_id: null,
   name: "",
   runtime_mode: "local",
@@ -44,8 +40,6 @@ export const EMPTY_RUNTIME_DEVICE: AgentRuntime = {
   scope: "workspace",
   profile_id: null,
   last_seen_at: null,
-  created_at: "",
-  updated_at: "",
 };
 
 export const RuntimeCascadeDeleteResponseSchema = z.object({
@@ -199,9 +193,7 @@ export const RuntimeProfileSchema = z.object({
   command_name: z.string(),
   description: z.string().nullable().optional().transform((value) => value ?? null),
   fixed_args: z.array(z.string()).default([]),
-  created_by: z.string().nullable().optional().transform((value) => value ?? null),
   enabled: z.boolean().default(true),
-  created_at: z.string().default(""),
   updated_at: z.string().default(""),
 }).loose();
 
@@ -217,9 +209,7 @@ export const EMPTY_RUNTIME_PROFILE: RuntimeProfile = {
   command_name: "",
   description: null,
   fixed_args: [],
-  created_by: null,
   enabled: false,
-  created_at: "",
   updated_at: "",
 };
 

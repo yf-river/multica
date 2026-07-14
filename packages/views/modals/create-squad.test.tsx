@@ -189,7 +189,6 @@ import { CreateSquadModal } from "./create-squad";
 
 function makeAgent(overrides: Partial<Agent> & { id: string; name: string; owner_id: string | null }): Agent {
   return {
-    workspace_id: "ws-1",
     runtime_id: "rt-1",
     description: "",
     instructions: "",
@@ -197,12 +196,10 @@ function makeAgent(overrides: Partial<Agent> & { id: string; name: string; owner
     runtime_mode: "local",
     runtime_config: {},
     custom_args: [],
-    has_custom_env: false,
     custom_env_key_count: 0,
     mcp_config: null,
     mcp_config_redacted: false,
     scope: "personal",
-    status: "idle",
     max_concurrent_tasks: 1,
     model: "",
     thinking_level: "",
@@ -210,7 +207,6 @@ function makeAgent(overrides: Partial<Agent> & { id: string; name: string; owner
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
     archived_at: null,
-    archived_by: null,
     ...overrides,
   };
 }

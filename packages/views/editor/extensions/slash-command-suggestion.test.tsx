@@ -49,7 +49,6 @@ import {
 function agent(overrides: Partial<Agent>): Agent {
   return {
     id: "agent-1",
-    workspace_id: "ws-1",
     runtime_id: "runtime-1",
     name: "Agent",
     description: "",
@@ -58,12 +57,10 @@ function agent(overrides: Partial<Agent>): Agent {
     runtime_mode: "local",
     runtime_config: {},
     custom_args: [],
-    has_custom_env: false,
     custom_env_key_count: 0,
     mcp_config: null,
     mcp_config_redacted: false,
     scope: "workspace",
-    status: "idle",
     max_concurrent_tasks: 1,
     model: "",
     thinking_level: "",
@@ -72,7 +69,6 @@ function agent(overrides: Partial<Agent>): Agent {
     created_at: "",
     updated_at: "",
     archived_at: null,
-    archived_by: null,
     ...overrides,
   };
 }

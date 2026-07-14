@@ -92,7 +92,6 @@ import { UsageSection } from "./usage-section";
 
 const RUNTIME: AgentRuntime = {
   id: "r-1",
-  workspace_id: "ws-1",
   daemon_id: null,
   name: "test-runtime",
   runtime_mode: "cloud",
@@ -105,8 +104,6 @@ const RUNTIME: AgentRuntime = {
   scope: "personal",
   profile_id: null,
   last_seen_at: null,
-  created_at: "2026-05-01T00:00:00Z",
-  updated_at: "2026-05-01T00:00:00Z",
 };
 
 function Wrapper({ children }: { children: ReactNode }) {

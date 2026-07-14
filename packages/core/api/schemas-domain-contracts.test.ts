@@ -352,7 +352,6 @@ describe("domain response schema fallbacks", () => {
       runtime_id: "runtime-1",
       issue_id: "issue-1",
       status: "running",
-      priority: 2,
       dispatched_at: null,
       started_at: null,
       completed_at: null,
@@ -416,7 +415,6 @@ describe("domain response schema fallbacks", () => {
     const parsed = AgentSchema.parse({
       ...EMPTY_AGENT,
       id: "agent-1",
-      workspace_id: "workspace-1",
       runtime_id: "runtime-1",
       custom_env: { TOKEN: "secret" },
       custom_env_redacted: { TOKEN: "****" },

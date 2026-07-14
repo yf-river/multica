@@ -5,7 +5,6 @@ import { buildWorkloadIndex } from "./runtime-list";
 function makeAgent(overrides: Partial<Agent> = {}): Agent {
   return {
     id: "agent-1",
-    workspace_id: "ws-1",
     runtime_id: "runtime-1",
     name: "Agent",
     description: "",
@@ -14,12 +13,10 @@ function makeAgent(overrides: Partial<Agent> = {}): Agent {
     runtime_mode: "local",
     runtime_config: {},
     custom_args: [],
-    has_custom_env: false,
     custom_env_key_count: 0,
     mcp_config: null,
     mcp_config_redacted: false,
     scope: "personal",
-    status: "idle",
     max_concurrent_tasks: 1,
     model: "gpt-5.4",
     thinking_level: "",
@@ -28,7 +25,6 @@ function makeAgent(overrides: Partial<Agent> = {}): Agent {
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
     archived_at: null,
-    archived_by: null,
     ...overrides,
   };
 }
@@ -39,7 +35,6 @@ function makeTask(overrides: Partial<AgentTask> = {}): AgentTask {
     agent_id: "agent-1",
     issue_id: "issue-1",
     status: "running",
-    priority: 1,
     dispatched_at: null,
     started_at: null,
     completed_at: null,

@@ -18,7 +18,6 @@ const AgentSkillSummarySchema = z.object({
 
 const AgentWireSchema = z.object({
   id: NonEmptyStringSchema,
-  workspace_id: NonEmptyStringSchema,
   runtime_id: NonEmptyStringSchema,
   name: z.string(),
   description: z.string(),
@@ -27,12 +26,10 @@ const AgentWireSchema = z.object({
   runtime_mode: z.string(),
   runtime_config: z.record(z.string(), z.unknown()),
   custom_args: z.array(z.string()),
-  has_custom_env: z.boolean(),
   custom_env_key_count: z.number(),
   mcp_config: z.unknown(),
   mcp_config_redacted: z.boolean(),
   scope: z.string(),
-  status: z.string(),
   max_concurrent_tasks: z.number(),
   model: z.string(),
   thinking_level: z.string(),
@@ -41,7 +38,6 @@ const AgentWireSchema = z.object({
   created_at: z.string(),
   updated_at: z.string(),
   archived_at: z.string().nullable(),
-  archived_by: z.string().nullable(),
 }).loose();
 
 export const AgentSchema = AgentWireSchema.transform((wire) => {
@@ -64,11 +60,11 @@ export const AgentTaskCancellationCountSchema = z.object({
 }).loose();
 
 export const EMPTY_AGENT: Agent = {
-  id: "", workspace_id: "", runtime_id: "", name: "", description: "", instructions: "",
+  id: "", runtime_id: "", name: "", description: "", instructions: "",
   avatar_url: null, runtime_mode: "local", runtime_config: {}, custom_args: [], scope: "workspace",
-  has_custom_env: false, custom_env_key_count: 0, mcp_config: null, mcp_config_redacted: false,
-  status: "offline", max_concurrent_tasks: 1, model: "", thinking_level: "", owner_id: null, skills: [],
-  created_at: "", updated_at: "", archived_at: null, archived_by: null,
+  custom_env_key_count: 0, mcp_config: null, mcp_config_redacted: false,
+  max_concurrent_tasks: 1, model: "", thinking_level: "", owner_id: null, skills: [],
+  created_at: "", updated_at: "", archived_at: null,
 };
 
 export const EMPTY_AGENT_ENV_RESPONSE: AgentEnvResponse = { agent_id: "", custom_env: {} };
