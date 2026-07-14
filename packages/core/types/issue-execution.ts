@@ -3,26 +3,11 @@ import type { TaskMessagePayload } from "./events";
 import type { Issue } from "./issue";
 import type { PromptEvaluationToolCallChain } from "./prompt-evaluation";
 
-export interface IssueWakeupCommentBrief {
-  id: string;
-  issue_id: string;
-  author_type: string;
-  type: string;
-  content: string;
-  parent_id: string | null;
-  created_at: string;
-}
-
 export interface AgentTaskArtifact {
   id: string;
-  task_id: string;
-  comment_id: string;
-  issue_id: string;
   filename: string;
   title: string;
   kind: string;
-  content_type: string;
-  size_bytes: number;
   download_url: string;
   markdown_url: string;
   created_at: string;
@@ -34,8 +19,6 @@ export interface IssueExecutionNode {
   task_messages: TaskMessagePayload[];
   trace_events: TaskTraceEvent[];
   tool_call_chains: PromptEvaluationToolCallChain[];
-  tool_call_summary: Record<string, unknown>[];
-  artifacts?: AgentTaskArtifact[];
   children: IssueExecutionNode[];
 }
 
@@ -58,16 +41,12 @@ export type IssueTimelineNodeType =
   | "status_change";
 
 export interface IssueTimelineNode {
-  issue_id: string;
   root_task_id?: string;
   node_id: string;
   node_type: IssueTimelineNodeType;
   agent_id?: string;
   agent_name?: string;
-  squad_id?: string;
-  project_id?: string;
   status: string;
-  failure_reason?: string;
   started_at?: string;
   actual_started_at?: string;
   completed_at?: string;
@@ -83,14 +62,10 @@ export interface IssueTimelineNode {
   summary: string;
   evidence_refs: IssueTimelineEvidenceRef[];
   artifacts?: AgentTaskArtifact[];
-  metadata?: Record<string, unknown>;
 }
 
 export interface IssueTimelineSummary {
-  issue_id: string;
   total_duration_ms: number;
-  work_started_at?: string;
-  work_completed_at?: string;
   agent_execution_duration_ms?: number;
   human_confirmation_duration_ms?: number | null;
   child_issue_wait_duration_ms?: number | null;
@@ -98,10 +73,7 @@ export interface IssueTimelineSummary {
   total_output_tokens: number;
   total_cache_read_tokens: number;
   total_cache_write_tokens: number;
-  message_count: number;
   agent_turn_count: number;
-  trace_event_count: number;
-  usage_unavailable: boolean;
   failure_summary?: string;
   acceptance_status: string;
 }

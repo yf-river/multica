@@ -108,21 +108,15 @@ export const EMPTY_ISSUE_TASK_TRACE_RESPONSE: IssueTaskTraceResponse = { events:
 
 const ArtifactSchema = z.object({
   id: NonEmptyStringSchema,
-  task_id: NonEmptyStringSchema,
-  comment_id: z.string(),
-  issue_id: NonEmptyStringSchema,
   filename: z.string(),
   title: z.string(),
   kind: z.string(),
-  content_type: z.string(),
-  size_bytes: z.number(),
   download_url: z.string(),
   markdown_url: z.string(),
   created_at: z.string(),
 }).loose();
 
 const TimelineNodeSchema = z.object({
-  issue_id: NonEmptyStringSchema,
   node_id: NonEmptyStringSchema,
   node_type: z.string(),
   status: z.string(),
@@ -145,11 +139,9 @@ const TimelineNodeSchema = z.object({
   // serialized an empty Go slice as null. Preserve the valid tree instead of
   // replacing all execution evidence with the empty fallback.
   artifacts: z.array(ArtifactSchema).nullish().transform((value) => value ?? []),
-  metadata: z.record(z.string(), z.unknown()).optional(),
 }).loose();
 
 const IssueTimelineSummarySchema = z.object({
-  issue_id: NonEmptyStringSchema,
   total_duration_ms: z.number().default(0),
   agent_execution_duration_ms: z.number().default(0),
   human_confirmation_duration_ms: z.number().nullable().optional(),
@@ -158,10 +150,7 @@ const IssueTimelineSummarySchema = z.object({
   total_output_tokens: z.number().default(0),
   total_cache_read_tokens: z.number().default(0),
   total_cache_write_tokens: z.number().default(0),
-  message_count: z.number().default(0),
   agent_turn_count: z.number().default(0),
-  trace_event_count: z.number().default(0),
-  usage_unavailable: z.boolean().default(false),
   acceptance_status: z.string().default(""),
 }).loose();
 
@@ -171,8 +160,6 @@ const IssueExecutionNodeSchema: z.ZodTypeAny = z.lazy(() => z.object({
   task_messages: TaskMessageListSchema.default([]),
   trace_events: z.array(TaskTraceEventSchema).default([]),
   tool_call_chains: z.array(z.unknown()).default([]),
-  tool_call_summary: z.array(z.unknown()).default([]),
-  artifacts: z.array(ArtifactSchema).default([]),
   children: z.array(IssueExecutionNodeSchema).default([]),
 }).loose());
 
@@ -190,14 +177,11 @@ export const EMPTY_ISSUE_EXECUTION_TREE: IssueExecutionTreeResponse = {
     task_messages: [],
     trace_events: [],
     tool_call_chains: [],
-    tool_call_summary: [],
-    artifacts: [],
     children: [],
   },
   summary: {},
   timeline_nodes: [],
   issue_summary: {
-    issue_id: "",
     total_duration_ms: 0,
     agent_execution_duration_ms: 0,
     human_confirmation_duration_ms: null,
@@ -206,10 +190,7 @@ export const EMPTY_ISSUE_EXECUTION_TREE: IssueExecutionTreeResponse = {
     total_output_tokens: 0,
     total_cache_read_tokens: 0,
     total_cache_write_tokens: 0,
-    message_count: 0,
     agent_turn_count: 0,
-    trace_event_count: 0,
-    usage_unavailable: false,
     acceptance_status: "",
   },
 };

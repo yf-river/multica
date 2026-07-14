@@ -107,7 +107,6 @@ function tool(overrides: Partial<PromptEvaluationToolCallChain> = {}): PromptEva
 
 function timelineNode(overrides: Partial<IssueTimelineNode> = {}): IssueTimelineNode {
   return {
-    issue_id: "issue-1",
     node_id: "task:task-1",
     node_type: "agent_task",
     agent_id: "agent-1",
@@ -151,14 +150,9 @@ function task(overrides: Partial<AgentTask> = {}): AgentTask {
 function artifact(overrides: Partial<AgentTaskArtifact> = {}): AgentTaskArtifact {
   return {
     id: "att-1",
-    task_id: "task-1",
-    comment_id: "comment-1",
-    issue_id: "issue-1",
     filename: "01-需求澄清.md",
     title: "01-需求澄清",
     kind: "stage_markdown",
-    content_type: "text/markdown",
-    size_bytes: 128,
     download_url: "/api/attachments/att-1/download",
     markdown_url: "/api/attachments/att-1/download",
     created_at: "2026-06-09T10:01:00.000Z",
@@ -1353,7 +1347,6 @@ describe("buildRunReviewEventRows", () => {
       evidence_refs: [],
       artifacts: [artifact({
         id: "att-old",
-        task_id: "task-1",
         filename: "handoff.md",
         title: "handoff",
         created_at: "2026-06-09T10:01:00.000Z",
@@ -1372,7 +1365,6 @@ describe("buildRunReviewEventRows", () => {
         agent_turn_count: 1,
         artifacts: [artifact({
           id: "att-new",
-          task_id: "task-2",
           filename: "handoff.md",
           title: "handoff",
           created_at: "2026-06-09T10:03:00.000Z",

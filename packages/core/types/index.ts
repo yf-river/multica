@@ -7,7 +7,6 @@ export type {
   IssueTimelineNode,
   IssueTimelineNodeType,
   IssueTimelineSummary,
-  IssueWakeupCommentBrief,
 } from "./issue-execution";
 export type {
   Agent,
