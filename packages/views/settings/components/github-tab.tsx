@@ -177,13 +177,6 @@ export function GitHubTab() {
                           login: installations.map((i) => i.account_login).join(", "),
                         })}
                       </p>
-                      {primaryInstallation?.connected_by && (
-                        <p className="text-xs text-muted-foreground">
-                          {t(($) => $.github.connected_by, {
-                            name: primaryInstallation.connected_by!,
-                          })}
-                        </p>
-                      )}
                     </>
                   ) : canManage ? (
                     <p className="text-xs text-muted-foreground">

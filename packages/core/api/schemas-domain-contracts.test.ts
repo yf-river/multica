@@ -92,10 +92,8 @@ describe("domain response schema fallbacks", () => {
       configured: true,
       installations: [{
         id: "installation-1",
-        workspace_id: "workspace-1",
         agent_id: "agent-1",
         app_id: "app-1",
-        bot_open_id: "bot-1",
         status: "active",
       }],
     }).success).toBe(false);
@@ -105,15 +103,11 @@ describe("domain response schema fallbacks", () => {
       install_supported: false,
       installations: [{
         id: "installation-1",
-        workspace_id: "workspace-1",
         agent_id: "agent-1",
         app_id: "app-1",
-        bot_open_id: "bot-1",
         status: "active",
         region: "feishu",
         installed_at: "2026-07-01T00:00:00Z",
-        created_at: "2026-07-01T00:00:00Z",
-        updated_at: "2026-07-01T00:00:00Z",
       }],
     });
     expect(parsed.install_supported).toBe(false);
@@ -445,9 +439,9 @@ describe("domain response schema fallbacks", () => {
     }).success).toBe(false);
   });
 
-  it("requires terminal Lark install states to carry their discriminator data", () => {
+  it("requires failed Lark install states to carry their error discriminator", () => {
     expect(LarkInstallStatusResponseSchema.safeParse({ status: "pending" }).success).toBe(true);
-    expect(LarkInstallStatusResponseSchema.safeParse({ status: "success" }).success).toBe(false);
+    expect(LarkInstallStatusResponseSchema.safeParse({ status: "success" }).success).toBe(true);
     expect(LarkInstallStatusResponseSchema.safeParse({ status: "error" }).success).toBe(false);
   });
 
@@ -462,14 +456,12 @@ describe("domain response schema fallbacks", () => {
     expect(GitHubPullRequestListResponseSchema.parse({
       pull_requests: [{
         id: "pr-61234",
-        workspace_id: "workspace-1",
         repo_owner: "ChainWeaver/ida",
         repo_name: "user-center",
         number: 61234,
         title: "Current Gongfeng merge request",
         state: "open",
         html_url: "https://git.code.tencent.com/ChainWeaver/ida/user-center/merge_requests/61234",
-        branch: null,
         author_login: null,
         mergeable_state: null,
         checks_conclusion: null,

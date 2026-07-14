@@ -31,8 +31,6 @@ const installationsRef = vi.hoisted(() => ({
     installations: [] as {
       id: string;
       account_login: string;
-      installation_id?: number;
-      connected_by?: string;
     }[],
     configured: true,
     can_manage: true as boolean,
@@ -192,7 +190,7 @@ describe("GitHubTab", () => {
     installationsRef.current = {
       configured: true,
       can_manage: true,
-      installations: [{ id: "inst-42", account_login: "acme", installation_id: 42 }],
+      installations: [{ id: "inst-42", account_login: "acme" }],
     };
     mockDeleteInstallation.mockResolvedValue(undefined);
 
@@ -217,7 +215,7 @@ describe("GitHubTab", () => {
     installationsRef.current = {
       configured: true,
       can_manage: true,
-      installations: [{ id: "inst-1", account_login: "acme", installation_id: 1 }],
+      installations: [{ id: "inst-1", account_login: "acme" }],
     };
     render(<GitHubTab />, { wrapper: I18nWrapper });
     expect(screen.getByRole("button", { name: /^断开$/ })).toBeTruthy();
@@ -249,23 +247,6 @@ describe("GitHubTab", () => {
 
     expect(screen.getByText(/请让管理员或所有者/i)).toBeTruthy();
     expect(screen.queryByRole("button", { name: /^连接 GitHub$/ })).toBeNull();
-  });
-
-  it("renders the connected_by line when the backend provides it", () => {
-    installationsRef.current = {
-      configured: true,
-      can_manage: true,
-      installations: [
-        {
-          id: "inst-7",
-          account_login: "acme",
-          installation_id: 7,
-          connected_by: "Jiayuan",
-        },
-      ],
-    };
-    render(<GitHubTab />, { wrapper: I18nWrapper });
-    expect(screen.getByText(/由 Jiayuan 连接/)).toBeTruthy();
   });
 
   it("repositories shortcut navigates to the repositories tab", async () => {

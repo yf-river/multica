@@ -188,28 +188,22 @@ function larkInstallation({
   id = "inst-1",
   agentId = "agent-1",
   appId = "cli_existing_app",
-  botOpenId = "ou_existing_bot",
   status = "active",
   region,
 }: {
   id?: string;
   agentId?: string;
   appId?: string;
-  botOpenId?: string;
   status?: string;
   region?: string;
 } = {}) {
   return {
     id,
-    workspace_id: "ws-1",
     agent_id: agentId,
     app_id: appId,
-    bot_open_id: botOpenId,
     status,
     ...(region ? { region } : {}),
     installed_at: "2026-06-03T00:00:00Z",
-    created_at: "2026-06-03T00:00:00Z",
-    updated_at: "2026-06-03T00:00:00Z",
   };
 }
 
@@ -334,7 +328,6 @@ describe("LarkAgentBindButton (CTA gate)", () => {
       larkInstallation({
         id: "inst-lark",
         appId: "cli_lark_app",
-        botOpenId: "ou_lark_bot",
         region: "lark",
       }),
     );
@@ -350,7 +343,6 @@ describe("LarkAgentBindButton (CTA gate)", () => {
         id: "inst-other",
         agentId: "agent-other",
         appId: "cli_other",
-        botOpenId: "ou_other",
       }),
     );
     renderAgentBindButton();
@@ -381,7 +373,6 @@ describe("LarkAgentBindButton (CTA gate)", () => {
       larkInstallation({
         id: "inst-revoked",
         appId: "cli_revoked",
-        botOpenId: "ou_revoked",
         status: "revoked",
       }),
     );
@@ -630,27 +621,19 @@ describe("LarkInstallDialog (polling terminal errors)", () => {
   });
 });
 
-// The Connected bots list used to surface Lark's raw cli_… app_id and
-// ou_… bot_open_id, which are meaningless to product users. The row now
-// renders the Multica agent's avatar + name (joined via inst.agent_id),
-// since the binding is 1:1 with an Agent. These tests pin that identity
-// rendering so the row never regresses to leaking the cli_ prefix.
+// The connected-bot row uses the bound Multica agent as its product identity.
 describe("LarkTab connected bots list (agent identity rendering)", () => {
   beforeEach(resetFixtures);
 
-  it("renders the Multica agent's name and avatar instead of the raw Lark app_id / bot_open_id", () => {
+  it("renders the bound Multica agent's name and avatar", () => {
     agentNameByIdRef.current = new Map([["agent-1", "Bohan's Helper"]]);
     installationsRef.current.installations = [
       {
         id: "inst-1",
-        workspace_id: "ws-1",
         agent_id: "agent-1",
         app_id: "cli_aa941499d4f95cd9",
-        bot_open_id: "ou_abc123",
         status: "active",
         installed_at: "2026-06-03T00:00:00Z",
-        created_at: "2026-06-03T00:00:00Z",
-        updated_at: "2026-06-03T00:00:00Z",
       },
     ];
 
@@ -659,17 +642,11 @@ describe("LarkTab connected bots list (agent identity rendering)", () => {
     // The agent's display name is the primary identifier.
     expect(screen.getByText("Bohan's Helper")).toBeTruthy();
 
-    // The ActorAvatar stub records the actor it was asked to render —
-    // confirms we joined on agent_id (and didn't accidentally pass the
-    // bot_open_id or installation id).
+    // The ActorAvatar stub confirms the row joined on agent_id.
     const avatar = screen.getByTestId("actor-avatar");
     expect(avatar.getAttribute("data-actor-type")).toBe("agent");
     expect(avatar.getAttribute("data-actor-id")).toBe("agent-1");
 
-    // The raw Lark IDs are explicitly absent — the row must not leak
-    // the cli_ / ou_ prefixes anymore.
-    expect(screen.queryByText(/cli_aa941499d4f95cd9/)).toBeNull();
-    expect(screen.queryByText(/ou_abc123/)).toBeNull();
   });
 
   it("falls back to a stable placeholder when the agent has been deleted (so the row is still actionable for cleanup)", () => {
@@ -678,14 +655,10 @@ describe("LarkTab connected bots list (agent identity rendering)", () => {
     installationsRef.current.installations = [
       {
         id: "inst-orphan",
-        workspace_id: "ws-1",
         agent_id: "agent-deleted",
         app_id: "cli_orphan",
-        bot_open_id: "ou_orphan",
         status: "active",
         installed_at: "2026-06-03T00:00:00Z",
-        created_at: "2026-06-03T00:00:00Z",
-        updated_at: "2026-06-03T00:00:00Z",
       },
     ];
 

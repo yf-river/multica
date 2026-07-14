@@ -29,14 +29,12 @@ let mockPRs: GitHubPullRequest[] = [];
 function makePR(overrides: Partial<GitHubPullRequest> = {}): GitHubPullRequest {
   return {
     id: "pr-1",
-    workspace_id: "ws-1",
     repo_owner: "acme",
     repo_name: "widget",
     number: 1,
     title: "Test PR",
     state: "open",
     html_url: "https://example.test/pr/1",
-    branch: "feat/x",
     author_login: "octocat",
     mergeable_state: null,
     checks_conclusion: null,

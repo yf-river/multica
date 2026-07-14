@@ -5,17 +5,13 @@
  * while fields in the current wire contract stay required. */
 export interface LarkInstallation {
   id: string;
-  workspace_id: string;
   agent_id: string;
   app_id: string;
-  bot_open_id: string;
   status: "active" | "revoked" | string;
   /** Which Lark cloud the bot lives on: "feishu" (mainland) or "lark"
    * (international). */
   region: "feishu" | "lark" | string;
   installed_at: string;
-  created_at: string;
-  updated_at: string;
 }
 
 export interface ListLarkInstallationsResponse {
@@ -47,9 +43,6 @@ export interface BeginLarkInstallResponse {
 /** Status polling result. `status` is the discriminator. */
 export interface LarkInstallStatusResponse {
   status: "pending" | "success" | "error" | string;
-  /** Populated when status === "success". The frontend invalidates the
-   * installations cache so the new row appears in the Settings tab. */
-  installation_id?: string;
   /** Stable code on error — switch on this (NOT error_message) to pick
    * the right copy. Common values: "expired", "access_denied",
    * "lark_protocol_error", "bot_info_failed", "installation_conflict",

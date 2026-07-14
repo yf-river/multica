@@ -25,11 +25,7 @@ const GitHubInstallURLSchema = ExternalHttpsURLSchema.refine((value) => {
 
 const GitHubInstallationSchema = z.object({
   id: NonEmptyStringSchema,
-  workspace_id: NonEmptyStringSchema,
-  installation_id: z.number().optional(),
   account_login: NonEmptyStringSchema,
-  created_at: z.string(),
-  connected_by: z.string().optional(),
 });
 
 export const GitHubInstallationListResponseSchema = z.object({
@@ -57,14 +53,12 @@ export const GitHubConnectResponseSchema = z.object({
 
 const GitHubPullRequestSchema = z.object({
   id: NonEmptyStringSchema,
-  workspace_id: NonEmptyStringSchema,
   repo_owner: NonEmptyStringSchema,
   repo_name: NonEmptyStringSchema,
   number: z.number(),
   title: z.string(),
   state: NonEmptyStringSchema,
   html_url: ExternalHttpsURLSchema,
-  branch: z.string().nullable(),
   author_login: z.string().nullable(),
   mergeable_state: z.string().nullable(),
   checks_conclusion: z.string().nullable(),

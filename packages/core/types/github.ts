@@ -13,29 +13,17 @@ export type GitHubMergeableState = string;
 
 export interface GitHubInstallation {
   id: string;
-  workspace_id: string;
-  /** GitHub's numeric installation id — the management handle used by the
-   * connect / disconnect flows. Omitted when the caller cannot manage
-   * integrations (see `ListGitHubInstallationsResponse.can_manage`). */
-  installation_id?: number;
   account_login: string;
-  created_at: string;
-  /** Display name of the workspace member who connected this installation.
-   * Optional because older backends and minimum-visibility deployments may
-   * omit it; the UI renders the "connected by" line only when present. */
-  connected_by?: string;
 }
 
 export interface GitHubPullRequest {
   id: string;
-  workspace_id: string;
   repo_owner: string;
   repo_name: string;
   number: number;
   title: string;
   state: GitHubPullRequestState;
   html_url: string;
-  branch: string | null;
   author_login: string | null;
   mergeable_state: GitHubMergeableState | null;
   checks_conclusion: GitHubPullRequestChecksConclusion | null;
@@ -52,8 +40,7 @@ export interface ListGitHubInstallationsResponse {
   installations: GitHubInstallation[];
   /** Whether the deployment has GitHub App credentials configured. When false, the Connect button is hidden / disabled. */
   configured: boolean;
-  /** Whether the caller can connect / disconnect installations. Non-admin
-   * members get `false` along with installations that omit `installation_id`. */
+  /** Whether the caller can connect / disconnect installations. */
   can_manage: boolean;
 }
 

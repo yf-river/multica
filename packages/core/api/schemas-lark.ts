@@ -9,15 +9,11 @@ import { NonEmptyStringSchema } from "./schemas-internal";
 
 const LarkInstallationSchema = z.object({
   id: NonEmptyStringSchema,
-  workspace_id: NonEmptyStringSchema,
   agent_id: NonEmptyStringSchema,
   app_id: NonEmptyStringSchema,
-  bot_open_id: NonEmptyStringSchema,
   status: NonEmptyStringSchema,
   region: z.string(),
   installed_at: z.string(),
-  created_at: z.string(),
-  updated_at: z.string(),
 });
 
 export const LarkInstallationListResponseSchema = z.object({
@@ -35,17 +31,9 @@ export const BeginLarkInstallResponseSchema = z.object({
 
 export const LarkInstallStatusResponseSchema = z.object({
   status: NonEmptyStringSchema,
-  installation_id: z.string().optional(),
   error_reason: z.string().optional(),
   error_message: z.string().optional(),
 }).superRefine((response, context) => {
-  if (response.status === "success" && !response.installation_id) {
-    context.addIssue({
-      code: "custom",
-      path: ["installation_id"],
-      message: "successful install status requires installation_id",
-    });
-  }
   if (response.status === "error" && !response.error_reason) {
     context.addIssue({
       code: "custom",
