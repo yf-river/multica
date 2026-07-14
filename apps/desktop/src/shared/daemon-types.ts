@@ -16,7 +16,6 @@ export interface DaemonStatus {
   uptime?: string;
   daemonId?: string;
   deviceName?: string;
-  agents?: string[];
   workspaceCount?: number;
   /** CLI profile this daemon belongs to. Empty string means the default profile. */
   profile?: string;

@@ -39,7 +39,6 @@ function makeAgent(overrides: Partial<Agent> = {}): Agent {
 function makeSkill(createdBy: string | null): Skill {
   return {
     id: "skl_1",
-    workspace_id: "ws_1",
     name: "skill",
     description: "",
     content: "",

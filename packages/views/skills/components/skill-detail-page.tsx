@@ -68,7 +68,7 @@ import { useT } from "../../i18n";
 
 const SKILL_MD = "SKILL.md";
 
-type DraftFile = { id?: string; path: string; content: string };
+type DraftFile = { path: string; content: string };
 
 // ---------------------------------------------------------------------------
 // File path validation + inline add
@@ -324,7 +324,6 @@ export function SkillDetailPage({ skillId }: { skillId: string }) {
     setContent(skill.content);
     setFiles(
       (skill.files ?? []).map((f: SkillFile) => ({
-        id: f.id,
         path: f.path,
         content: f.content,
       })),
@@ -391,7 +390,6 @@ export function SkillDetailPage({ skillId }: { skillId: string }) {
     setContent(s.content);
     setFiles(
       (s.files ?? []).map((f: SkillFile) => ({
-        id: f.id,
         path: f.path,
         content: f.content,
       })),

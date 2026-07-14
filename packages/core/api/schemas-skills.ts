@@ -4,7 +4,6 @@ import { NonEmptyStringSchema } from "./schemas-internal";
 
 const SkillSummarySchema = z.object({
   id: NonEmptyStringSchema,
-  workspace_id: NonEmptyStringSchema,
   name: z.string(),
   description: z.string().default(""),
   config: z.record(z.string(), z.unknown()).default({}),
@@ -14,12 +13,8 @@ const SkillSummarySchema = z.object({
 }).loose();
 
 const SkillFileSchema = z.object({
-  id: NonEmptyStringSchema,
-  skill_id: NonEmptyStringSchema,
   path: z.string(),
   content: z.string(),
-  created_at: z.string(),
-  updated_at: z.string(),
 }).loose();
 
 export const SkillSummaryListSchema = z.array(SkillSummarySchema);
@@ -33,7 +28,6 @@ export const EMPTY_SKILL_SUMMARIES: SkillSummary[] = [];
 
 export const EMPTY_SKILL: Skill = {
   id: "",
-  workspace_id: "",
   name: "",
   description: "",
   config: {},

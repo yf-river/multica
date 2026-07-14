@@ -101,7 +101,6 @@ const MOCK_SKILL_B = {
 
 const MOCK_IMPORTED_SKILL_A = {
   id: "skill-1",
-  workspace_id: "ws-1",
   name: "Review Helper",
   description: "Review pull requests",
   content: "# Review Helper",
@@ -114,7 +113,6 @@ const MOCK_IMPORTED_SKILL_A = {
 
 const MOCK_IMPORTED_SKILL_B = {
   id: "skill-2",
-  workspace_id: "ws-1",
   name: "Code Gen",
   description: "Generate code from specs",
   content: "# Code Gen",

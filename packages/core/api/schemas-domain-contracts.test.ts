@@ -375,7 +375,7 @@ describe("domain response schema fallbacks", () => {
       { endpoint: "GET /api/projects" },
     )).toBe(EMPTY_PROJECTS);
     expect(parseWithFallback(
-      { id: "skill-1", workspace_id: "workspace-1", files: "invalid" },
+      { id: "skill-1", files: "invalid" },
       SkillSchema,
       EMPTY_SKILL,
       { endpoint: "GET /api/skills/:id" },

@@ -5,7 +5,6 @@ import { canEditSkill } from "./use-can-edit-skill";
 function makeSkill(createdBy: string | null): Skill {
   return {
     id: "skl_x",
-    workspace_id: "ws_1",
     name: "x",
     description: "",
     content: "",
@@ -52,7 +51,7 @@ describe("canEditSkill", () => {
     ).toBe(true);
   });
 
-  it("denies when created_by is null (legacy / system-created)", () => {
+  it("denies when created_by is null for system-owned skills", () => {
     expect(
       canEditSkill(makeSkill(null), { userId: "user-alice", role: "member" }),
     ).toBe(false);

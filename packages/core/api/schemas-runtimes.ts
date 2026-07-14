@@ -109,17 +109,12 @@ export const RuntimeLocalSkillListRequestSchema = z.object({
 }).loose();
 
 const RuntimeImportedSkillFileSchema = z.object({
-  id: NonEmptyStringSchema,
-  skill_id: NonEmptyStringSchema,
   path: z.string(),
   content: z.string(),
-  created_at: z.string(),
-  updated_at: z.string(),
 }).loose();
 
 const RuntimeImportedSkillSchema = z.object({
   id: NonEmptyStringSchema,
-  workspace_id: NonEmptyStringSchema,
   name: NonEmptyStringSchema,
   description: z.string().default(""),
   content: z.string(),

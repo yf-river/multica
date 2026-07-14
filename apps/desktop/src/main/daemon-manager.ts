@@ -168,7 +168,6 @@ interface HealthPayload {
   server_url: string;
   cli_version: string;
   active_task_count: number;
-  agents: string[];
   workspaces: unknown[];
 }
 
@@ -369,7 +368,6 @@ async function fetchHealth(): Promise<DaemonStatus> {
     uptime: data.uptime,
     daemonId: data.daemon_id,
     deviceName: data.device_name,
-    agents: data.agents ?? [],
     workspaceCount: Array.isArray(data.workspaces)
       ? data.workspaces.length
       : 0,

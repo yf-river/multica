@@ -355,7 +355,6 @@ export interface UpdateAgentEnvRequest {
  */
 export interface SkillSummary {
   id: string;
-  workspace_id: string;
   name: string;
   description: string;
   config: Record<string, unknown>;
@@ -370,12 +369,8 @@ export interface Skill extends SkillSummary {
 }
 
 export interface SkillFile {
-  id: string;
-  skill_id: string;
   path: string;
   content: string;
-  created_at: string;
-  updated_at: string;
 }
 
 export interface CreateSkillRequest {
@@ -400,18 +395,13 @@ export interface SetAgentSkillsRequest {
 
 export interface TaskTraceEvent {
   id: string;
-  workspace_id: string;
   task_id: string;
-  issue_id: string | null;
   agent_id: string;
   runtime_id: string | null;
-  squad_id: string | null;
-  project_id: string | null;
   source: string;
   event_type: string;
   event_name: string;
   status: string;
-  attempt: number;
   duration_ms?: number | null;
   queue_wait_ms?: number | null;
   run_ms?: number | null;
@@ -424,9 +414,6 @@ export interface TaskTraceEvent {
   cache_write_tokens: number;
   failure_reason: string;
   error_type: string;
-  trigger_comment_id: string | null;
-  autopilot_run_id: string | null;
-  chat_session_id: string | null;
   metadata: Record<string, unknown>;
   created_at: string;
 }

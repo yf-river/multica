@@ -480,7 +480,7 @@ describe("ApiClient", () => {
 
   it("retries Skill import unknown outcomes with one request identity", async () => {
     const response = {
-      id: "skill-1", workspace_id: "workspace-1", name: "review-helper",
+      id: "skill-1", name: "review-helper",
       description: "Imported", content: "# Skill", config: {}, created_by: "user-1",
       created_at: "now", updated_at: "now", files: [],
     };
