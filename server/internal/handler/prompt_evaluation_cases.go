@@ -58,20 +58,16 @@ func parsePromptEvaluationCaseFilters(w http.ResponseWriter, values url.Values) 
 
 func parsePromptEvaluationDimensionFilters(w http.ResponseWriter, values url.Values) (promptEvaluationDimensionFilters, bool) {
 	var filters promptEvaluationDimensionFilters
-	if value := values.Get("asset_id"); value != "" {
-		parsed, ok := parseUUIDOrBadRequest(w, value, "asset_id")
-		if !ok {
-			return filters, false
-		}
-		filters.assetID = parsed
+	assetID, ok := parseOptionalUUIDOrBadRequest(w, values.Get("asset_id"), "asset_id")
+	if !ok {
+		return filters, false
 	}
-	if value := values.Get("prompt_id"); value != "" {
-		parsed, ok := parseUUIDOrBadRequest(w, value, "prompt_id")
-		if !ok {
-			return filters, false
-		}
-		filters.promptID = parsed
+	filters.assetID = assetID
+	promptID, ok := parseOptionalUUIDOrBadRequest(w, values.Get("prompt_id"), "prompt_id")
+	if !ok {
+		return filters, false
 	}
+	filters.promptID = promptID
 	if value := values.Get("status"); value != "" {
 		if !validPromptEvaluationDimensionScoreStatus(value) {
 			writeError(w, http.StatusBadRequest, "status must be 待执行, 已评分 or 无用例")
@@ -88,13 +84,9 @@ func (h *Handler) ListPromptEvaluationCases(w http.ResponseWriter, r *http.Reque
 	if !ok {
 		return
 	}
-	var assetID pgtype.UUID
-	if value := r.URL.Query().Get("asset_id"); value != "" {
-		parsed, ok := parseUUIDOrBadRequest(w, value, "asset_id")
-		if !ok {
-			return
-		}
-		assetID = parsed
+	assetID, ok := parseOptionalUUIDOrBadRequest(w, r.URL.Query().Get("asset_id"), "asset_id")
+	if !ok {
+		return
 	}
 	filters, ok := parsePromptEvaluationCaseFilters(w, r.URL.Query())
 	if !ok {
@@ -250,13 +242,9 @@ func (h *Handler) ListPromptEvaluationCaseTagSummaries(w http.ResponseWriter, r 
 	if !ok {
 		return
 	}
-	var assetID pgtype.UUID
-	if value := r.URL.Query().Get("asset_id"); value != "" {
-		parsed, ok := parseUUIDOrBadRequest(w, value, "asset_id")
-		if !ok {
-			return
-		}
-		assetID = parsed
+	assetID, ok := parseOptionalUUIDOrBadRequest(w, r.URL.Query().Get("asset_id"), "asset_id")
+	if !ok {
+		return
 	}
 	filters, ok := parsePromptEvaluationCaseFilters(w, r.URL.Query())
 	if !ok {

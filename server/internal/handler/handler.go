@@ -257,6 +257,13 @@ func parseUUIDOrBadRequest(w http.ResponseWriter, s, fieldName string) (pgtype.U
 	return u, true
 }
 
+func parseOptionalUUIDOrBadRequest(w http.ResponseWriter, s, fieldName string) (pgtype.UUID, bool) {
+	if s == "" {
+		return pgtype.UUID{}, true
+	}
+	return parseUUIDOrBadRequest(w, s, fieldName)
+}
+
 func parseUUIDSliceOrBadRequest(w http.ResponseWriter, ids []string, fieldName string) ([]pgtype.UUID, bool) {
 	uuids := make([]pgtype.UUID, len(ids))
 	for i, id := range ids {

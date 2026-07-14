@@ -45,13 +45,9 @@ func (h *Handler) ListPromptEvaluationRuns(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	var assetID pgtype.UUID
-	if value := r.URL.Query().Get("asset_id"); value != "" {
-		parsed, ok := parseUUIDOrBadRequest(w, value, "asset_id")
-		if !ok {
-			return
-		}
-		assetID = parsed
+	assetID, ok := parseOptionalUUIDOrBadRequest(w, r.URL.Query().Get("asset_id"), "asset_id")
+	if !ok {
+		return
 	}
 	var status pgtype.Text
 	if value := r.URL.Query().Get("status"); value != "" {
