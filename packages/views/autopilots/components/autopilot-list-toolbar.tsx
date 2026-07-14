@@ -16,6 +16,9 @@ import {
 import { ActorAvatar } from "../../common/actor-avatar";
 import { FILTER_ITEM_CLASS, HoverCheck } from "../../common/hover-check";
 import {
+  countActiveFilters,
+  incrementCount,
+  incrementCountedOption,
   ToolbarCountBadge,
   ToolbarDisplaySettings,
   ToolbarFilterDropdown,
@@ -51,15 +54,6 @@ const SORT_FIELDS: AutopilotSortField[] = [
 
 const MODES = ["create_issue", "run_only"] as const;
 const TRIGGER_KINDS = ["schedule", "webhook"] as const;
-
-function countActiveFilterDimensions(filters: AutopilotListFilters): number {
-  let count = 0;
-  if (filters.assignees.length > 0) count++;
-  if (filters.modes.length > 0) count++;
-  if (filters.triggerKinds.length > 0) count++;
-  if (filters.creators.length > 0) count++;
-  return count;
-}
 
 export function AutopilotListToolbar({
   scope,
@@ -99,7 +93,7 @@ export function AutopilotListToolbar({
   const { t } = useT("autopilots");
   const { getActorName } = useActorName();
 
-  const activeCount = countActiveFilterDimensions(filters);
+  const activeCount = countActiveFilters(filters);
   const hasActiveFilters = activeCount > 0;
 
   // Option lists with counts, derived from the scope's unfiltered rows so
@@ -116,29 +110,18 @@ export function AutopilotListToolbar({
   const triggerKindCounts = new Map<string, number>();
   for (const row of allRows) {
     const aKey = actorFilterValue(row.assignee_type, row.assignee_id);
-    const a = assigneeOptions.get(aKey);
-    if (a) a.count += 1;
-    else
-      assigneeOptions.set(aKey, {
-        type: row.assignee_type,
-        id: row.assignee_id,
-        count: 1,
-      });
+    incrementCountedOption(assigneeOptions, aKey, {
+      type: row.assignee_type,
+      id: row.assignee_id,
+    });
     const cKey = actorFilterValue(row.created_by_type, row.created_by_id);
-    const c = creatorOptions.get(cKey);
-    if (c) c.count += 1;
-    else
-      creatorOptions.set(cKey, {
-        type: row.created_by_type,
-        id: row.created_by_id,
-        count: 1,
-      });
-    modeCounts.set(
-      row.execution_mode,
-      (modeCounts.get(row.execution_mode) ?? 0) + 1,
-    );
+    incrementCountedOption(creatorOptions, cKey, {
+      type: row.created_by_type,
+      id: row.created_by_id,
+    });
+    incrementCount(modeCounts, row.execution_mode);
     for (const kind of row.trigger_kinds ?? []) {
-      triggerKindCounts.set(kind, (triggerKindCounts.get(kind) ?? 0) + 1);
+      incrementCount(triggerKindCounts, kind);
     }
   }
 

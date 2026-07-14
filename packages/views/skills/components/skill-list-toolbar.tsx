@@ -10,6 +10,9 @@ import { Input } from "@multica/ui/components/ui/input";
 import { ActorAvatar } from "@multica/ui/components/common/actor-avatar";
 import { FILTER_ITEM_CLASS, HoverCheck } from "../../common/hover-check";
 import {
+  countActiveFilters,
+  incrementCount,
+  incrementCountedOption,
   ToolbarCountBadge,
   ToolbarDisplaySettings,
   ToolbarFilterDropdown,
@@ -36,15 +39,6 @@ const COLUMN_KEYS: SkillColumnKey[] = [
 ];
 
 const SORT_FIELDS: SkillSortField[] = ["name", "usedBy", "updated", "created"];
-
-function countActiveFilterDimensions(filters: SkillListFilters): number {
-  let count = 0;
-  if (filters.usage.length > 0) count++;
-  if (filters.origins.length > 0) count++;
-  if (filters.agents.length > 0) count++;
-  if (filters.creators.length > 0) count++;
-  return count;
-}
 
 const ORIGIN_TYPES: SkillOriginType[] = [
   "manual",
@@ -93,7 +87,7 @@ export function SkillListToolbar({
 }) {
   const { t } = useT("skills");
 
-  const activeCount = countActiveFilterDimensions(filters);
+  const activeCount = countActiveFilters(filters);
   const hasActiveFilters = activeCount > 0;
 
   // Option lists with counts, derived from the unfiltered rows so toggling
@@ -108,23 +102,15 @@ export function SkillListToolbar({
     { member: MemberWithUser; count: number }
   >();
   for (const row of allRows) {
-    originCounts.set(
-      row.originType,
-      (originCounts.get(row.originType) ?? 0) + 1,
-    );
+    incrementCount(originCounts, row.originType);
     for (const agent of row.agents) {
-      const entry = agentOptions.get(agent.id);
-      if (entry) entry.count += 1;
-      else agentOptions.set(agent.id, { agent, count: 1 });
+      incrementCountedOption(agentOptions, agent.id, { agent });
     }
-    if (row.creator) {
-      const entry = creatorOptions.get(row.creator.user_id);
-      if (entry) entry.count += 1;
-      else
-        creatorOptions.set(row.creator.user_id, {
-          member: row.creator,
-          count: 1,
-        });
+    const creator = row.creator;
+    if (creator) {
+      incrementCountedOption(creatorOptions, creator.user_id, {
+        member: creator,
+      });
     }
   }
 

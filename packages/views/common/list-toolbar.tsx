@@ -27,6 +27,27 @@ import {
 
 type SortDirection = "asc" | "desc";
 
+export function countActiveFilters<T>(
+  filters: { [K in keyof T]: readonly unknown[] },
+): number {
+  const dimensions = Object.values(filters) as (readonly unknown[])[];
+  return dimensions.filter((values) => values.length > 0).length;
+}
+
+export function incrementCount<K>(counts: Map<K, number>, key: K): void {
+  counts.set(key, (counts.get(key) ?? 0) + 1);
+}
+
+export function incrementCountedOption<K, T extends { count: number }>(
+  options: Map<K, T>,
+  key: K,
+  value: Omit<NoInfer<T>, "count">,
+): void {
+  const option = options.get(key);
+  if (option) option.count += 1;
+  else options.set(key, { ...value, count: 1 } as T);
+}
+
 export function ToolbarCountBadge({ count }: { count: number }) {
   return (
     <span className="ml-auto pl-3 text-xs text-muted-foreground">{count}</span>
