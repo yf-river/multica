@@ -70,8 +70,8 @@ export type {
   TestExternalCredentialProfileRequest,
   TestExternalCredentialProfileResponse,
 } from "./external-credential";
-export type { InboxItem, InboxSeverity, InboxItemType } from "./inbox";
-export type { NotificationGroupKey, NotificationGroupValue, NotificationPreferences, NotificationPreferenceResponse } from "./notification-preference";
+export type { InboxItem, InboxItemType } from "./inbox";
+export type { NotificationGroupKey, NotificationGroupValue, NotificationPreferences } from "./notification-preference";
 export type { Comment, CommentType, CommentAuthorType, CommentTriggerPreview, CommentTriggerPreviewAgent, CommentTriggerSource, Reaction } from "./comment";
 export type { Label, CreateLabelRequest, UpdateLabelRequest } from "./label";
 export type {

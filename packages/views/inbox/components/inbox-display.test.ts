@@ -14,7 +14,6 @@ function item(overrides: Partial<InboxItem>): InboxItem {
     actor_type: "agent",
     actor_id: "agent-1",
     type: "new_comment",
-    severity: "info",
     issue_id: "issue-1",
     title: "任务标题",
     body: null,

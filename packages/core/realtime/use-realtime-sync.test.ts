@@ -341,7 +341,6 @@ describe("handleInboxNew", () => {
       actor_type: "member",
       actor_id: "member-2",
       type: "mentioned",
-      severity: "info",
       issue_id: "issue-1",
       title: "Mentioned you",
       body: "in a comment",
@@ -371,7 +370,7 @@ describe("handleInboxNew", () => {
       workspace({ id: "ws-b", slug: "workspace-b" }),
     ]);
     qc.setQueryData(notificationPreferenceKeys.all("ws-a"), {
-      preferences: { system_notifications: "all" },
+      system_notifications: "all",
     });
     const showNotification = stubDesktopAPI();
 
@@ -393,7 +392,7 @@ describe("handleInboxNew", () => {
       workspace(),
     ]);
     qc.setQueryData(notificationPreferenceKeys.all("ws-a"), {
-      preferences: { system_notifications: "all" },
+      system_notifications: "all",
     });
     const invalidate = vi.spyOn(qc, "invalidateQueries");
     const showNotification = stubDesktopAPI();
@@ -412,7 +411,7 @@ describe("handleInboxNew", () => {
     const qc = createQueryClient();
     qc.setQueryData<Workspace[]>(workspaceKeys.list(), [workspace()]);
     qc.setQueryData(notificationPreferenceKeys.all("ws-a"), {
-      preferences: { system_notifications: "muted" },
+      system_notifications: "muted",
     });
     const showNotification = stubDesktopAPI();
 
@@ -439,7 +438,7 @@ describe("handleInboxNew", () => {
     // must target the source workspace's slug, not the active workspace's.
     const getNotificationPreferences = vi
       .fn()
-      .mockResolvedValue({ preferences: { system_notifications: "all" } });
+      .mockResolvedValue({ system_notifications: "all" });
     setApiInstance({ getNotificationPreferences } as unknown as ApiClient);
     const showNotification = stubDesktopAPI();
 
@@ -456,7 +455,7 @@ describe("handleInboxNew", () => {
     qc.setQueryData<Workspace[]>(workspaceKeys.list(), [workspace()]);
     const getNotificationPreferences = vi
       .fn()
-      .mockResolvedValue({ preferences: { system_notifications: "muted" } });
+      .mockResolvedValue({ system_notifications: "muted" });
     setApiInstance({ getNotificationPreferences } as unknown as ApiClient);
     const showNotification = stubDesktopAPI();
 
@@ -474,7 +473,7 @@ describe("handleInboxNew", () => {
     ]);
     const getNotificationPreferences = vi
       .fn()
-      .mockResolvedValue({ preferences: { system_notifications: "muted" } });
+      .mockResolvedValue({ system_notifications: "muted" });
     setApiInstance({ getNotificationPreferences } as unknown as ApiClient);
     const showNotification = stubDesktopAPI();
 
@@ -522,7 +521,7 @@ describe("handleInboxNew", () => {
     const qc = createQueryClient();
     qc.setQueryData<Workspace[]>(workspaceKeys.list(), [workspace()]);
     qc.setQueryData(notificationPreferenceKeys.all("ws-a"), {
-      preferences: { system_notifications: "all" },
+      system_notifications: "all",
     });
     installBrowserNotification("granted");
 
@@ -536,7 +535,7 @@ describe("handleInboxNew", () => {
     const qc = createQueryClient();
     qc.setQueryData<Workspace[]>(workspaceKeys.list(), [workspace()]);
     qc.setQueryData(notificationPreferenceKeys.all("ws-a"), {
-      preferences: { system_notifications: "muted" },
+      system_notifications: "muted",
     });
     installBrowserNotification("granted");
 
@@ -549,7 +548,7 @@ describe("handleInboxNew", () => {
     const qc = createQueryClient();
     qc.setQueryData<Workspace[]>(workspaceKeys.list(), [workspace()]);
     qc.setQueryData(notificationPreferenceKeys.all("ws-a"), {
-      preferences: { system_notifications: "all" },
+      system_notifications: "all",
     });
     installBrowserNotification("default");
 

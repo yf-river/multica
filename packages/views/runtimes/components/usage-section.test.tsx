@@ -52,7 +52,6 @@ vi.mock("@tanstack/react-query", async () => {
     );
   const usageRows = [
     {
-      runtime_id: "r-1",
       date: "2026-05-19",
       provider: "anthropic",
       model: "claude-sonnet-4-6",
@@ -63,7 +62,6 @@ vi.mock("@tanstack/react-query", async () => {
       cost_usd: 0.003,
       input_cost_usd: 0.003,
       output_cost_usd: 0,
-      cache_read_cost_usd: 0,
       cache_write_cost_usd: 0,
       cache_savings_usd: 0,
       priced: true,

@@ -28,7 +28,7 @@ export function NotificationsTab() {
   const { data } = useQuery(notificationPreferenceOptions(wsId));
   const mutation = useUpdateNotificationPreferences();
 
-  const preferences = data?.preferences ?? {};
+  const preferences = data ?? {};
 
   const handleToggle = (key: NotificationGroupKey, enabled: boolean) => {
     const updated: NotificationPreferences = {

@@ -95,7 +95,6 @@ import type {
   UpdateAutopilotTriggerRequest,
   GetAutopilotResponse,
   WebhookDelivery,
-  NotificationPreferenceResponse,
   NotificationPreferences,
   GitHubPullRequest,
   ListGitHubInstallationsResponse,
@@ -244,7 +243,7 @@ import {
   EMPTY_WORKSPACE_REPO_PROBE_RESPONSE,
   EMPTY_MEMBER_WITH_USER,
   EMPTY_INBOX_ITEM,
-  EMPTY_NOTIFICATION_PREFERENCE_RESPONSE,
+  EMPTY_NOTIFICATION_PREFERENCES,
   EMPTY_CHAT_SESSION,
   EMPTY_CHAT_MESSAGES_PAGE,
   EMPTY_SEND_CHAT_MESSAGE_RESPONSE,
@@ -1495,24 +1494,30 @@ export class ApiClient extends ApiTransport {
   // follows the active workspace) so a caller can read a SPECIFIC workspace's
   // preferences — e.g. honoring the mute setting of the workspace an inbox
   // notification came from while the user is viewing a different one (#3766).
-  async getNotificationPreferences(workspaceSlug?: string): Promise<NotificationPreferenceResponse> {
+  async getNotificationPreferences(workspaceSlug?: string): Promise<NotificationPreferences> {
     const raw = await this.fetch<unknown>(
       "/api/notification-preferences",
       workspaceSlug ? { headers: { "X-Workspace-Slug": workspaceSlug } } : undefined,
     );
-    return parseWithFallback(raw, NotificationPreferenceResponseSchema, EMPTY_NOTIFICATION_PREFERENCE_RESPONSE, {
-      endpoint: "GET /api/notification-preferences",
-    });
+    return parseWithFallback(
+      raw,
+      NotificationPreferenceResponseSchema,
+      { preferences: EMPTY_NOTIFICATION_PREFERENCES },
+      { endpoint: "GET /api/notification-preferences" },
+    ).preferences;
   }
 
-  async updateNotificationPreferences(preferences: NotificationPreferences): Promise<NotificationPreferenceResponse> {
+  async updateNotificationPreferences(preferences: NotificationPreferences): Promise<NotificationPreferences> {
     const raw = await this.fetch<unknown>("/api/notification-preferences", {
       method: "PUT",
       body: JSON.stringify({ preferences }),
     });
-    return parseOrThrow(raw, NotificationPreferenceResponseSchema, EMPTY_NOTIFICATION_PREFERENCE_RESPONSE, {
-      endpoint: "PUT /api/notification-preferences",
-    });
+    return parseOrThrow(
+      raw,
+      NotificationPreferenceResponseSchema,
+      { preferences: EMPTY_NOTIFICATION_PREFERENCES },
+      { endpoint: "PUT /api/notification-preferences" },
+    ).preferences;
   }
 
   // App Config

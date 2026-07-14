@@ -19,7 +19,6 @@ function makeItem(
     actor_type: null,
     actor_id: null,
     type: "mentioned",
-    severity: "info",
     issue_id: issueId,
     title: `item ${id}`,
     body: null,

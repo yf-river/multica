@@ -453,41 +453,42 @@ export interface IssueTaskTraceResponse {
   events: TaskTraceEvent[];
 }
 
-interface UsageTotals {
-  provider: string;
-  model: string;
+interface UsageTokens {
   input_tokens: number;
   output_tokens: number;
   cache_read_tokens: number;
   cache_write_tokens: number;
+}
+
+interface AttributedUsage extends UsageTokens {
+  provider: string;
   cost_usd: number;
+}
+
+interface UsageCostBreakdown {
   input_cost_usd: number;
   output_cost_usd: number;
-  cache_read_cost_usd: number;
   cache_write_cost_usd: number;
+}
+
+export interface RuntimeUsage extends AttributedUsage, UsageCostBreakdown {
+  model: string;
+  date: string;
   cache_savings_usd: number;
   priced: boolean;
-}
-
-interface CountedUsageTotals extends UsageTotals {
-  task_count: number;
-}
-
-export interface RuntimeUsage extends UsageTotals {
-  runtime_id: string;
-  date: string;
 }
 
 // One (agent, provider, model) row of the "Cost by agent" tab on the runtime
 // detail page. The backend computes cost per row; the client groups these rows
 // by agent_id and sums cost per agent across models.
-export interface RuntimeUsageByAgent extends CountedUsageTotals {
+export interface RuntimeUsageByAgent extends AttributedUsage {
   agent_id: string;
+  task_count: number;
 }
 
 // One (task, provider, model) row for the "Cost by task" tab on the runtime
 // detail page. The client folds rows by task_id after pricing each model row.
-export interface RuntimeUsageByTask extends UsageTotals {
+export interface RuntimeUsageByTask extends AttributedUsage {
   task_id: string;
   issue_id: string | null;
   issue_number: number;
@@ -501,8 +502,10 @@ export interface RuntimeUsageByTask extends UsageTotals {
 // One (date, provider, model) bucket of token usage for the workspace
 // dashboard. Workspace-scoped (no runtime_id) and optionally narrowed to a
 // single project on the server side. The backend computes cost per row.
-export interface DashboardUsageDaily extends CountedUsageTotals {
+export interface DashboardUsageDaily extends UsageTokens, UsageCostBreakdown {
   date: string;
+  cost_usd: number;
+  task_count: number;
 }
 
 // Per-agent total terminal-task run-time + counts. Powers the workspace

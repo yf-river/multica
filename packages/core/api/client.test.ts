@@ -250,7 +250,7 @@ describe("ApiClient", () => {
     const client = new ApiClient("https://api.example.test");
     await expect(client.listInbox()).resolves.toEqual([]);
     await expect(client.markInboxRead("inbox-1")).rejects.toMatchObject({ code: "api_response_contract_invalid" });
-    await expect(client.getNotificationPreferences()).resolves.toEqual({ workspace_id: "", preferences: {} });
+    await expect(client.getNotificationPreferences()).resolves.toEqual({});
   });
 
   it("validates agent and secret env responses", async () => {

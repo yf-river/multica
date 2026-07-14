@@ -9,14 +9,13 @@ import {
   mergeAgentDashboardRows,
 } from "./utils";
 
-const pricedCost = {
+const totalCost = { cost_usd: 0 };
+
+const dailyCost = {
   cost_usd: 0,
   input_cost_usd: 0,
   output_cost_usd: 0,
-  cache_read_cost_usd: 0,
   cache_write_cost_usd: 0,
-  cache_savings_usd: 0,
-  priced: true,
 };
 
 describe("aggregateDailyCost", () => {
@@ -24,28 +23,24 @@ describe("aggregateDailyCost", () => {
     const result = aggregateDailyCost([
       {
         date: "2026-05-10",
-        provider: "claude",
-        model: "claude-sonnet-4-6",
         input_tokens: 1_000_000,
         output_tokens: 500_000,
         cache_read_tokens: 0,
         cache_write_tokens: 0,
         task_count: 3,
-        ...pricedCost,
+        ...dailyCost,
         cost_usd: 10.5,
         input_cost_usd: 3,
         output_cost_usd: 7.5,
       },
       {
         date: "2026-05-09",
-        provider: "claude",
-        model: "claude-sonnet-4-6",
         input_tokens: 1_000_000,
         output_tokens: 0,
         cache_read_tokens: 0,
         cache_write_tokens: 0,
         task_count: 1,
-        ...pricedCost,
+        ...dailyCost,
         cost_usd: 3,
         input_cost_usd: 3,
       },
@@ -60,19 +55,16 @@ describe("aggregateDailyCost", () => {
     expect(result[1]).toMatchObject({ input: 3, output: 7.5, cacheWrite: 0, total: 10.5 });
   });
 
-  it("treats unmapped models as zero-cost", () => {
+  it("keeps a server-reported zero cost", () => {
     const result = aggregateDailyCost([
       {
         date: "2026-05-10",
-        provider: "claude",
-        model: "made-up-model",
         input_tokens: 999_999_999,
         output_tokens: 0,
         cache_read_tokens: 0,
         cache_write_tokens: 0,
         task_count: 0,
-        ...pricedCost,
-        priced: false,
+        ...dailyCost,
       },
     ]);
     expect(result[0]?.total).toBe(0);
@@ -85,52 +77,45 @@ describe("aggregateAgentTokens", () => {
       {
         agent_id: "small-spender",
         provider: "claude",
-        model: "claude-sonnet-4-6",
         input_tokens: 100_000,
         output_tokens: 0,
         cache_read_tokens: 0,
         cache_write_tokens: 0,
         task_count: 1,
-        ...pricedCost,
+        ...totalCost,
         cost_usd: 0.3,
-        input_cost_usd: 0.3,
       },
       {
         agent_id: "big-spender",
         provider: "claude",
-        model: "claude-sonnet-4-6",
         input_tokens: 5_000_000,
         output_tokens: 0,
         cache_read_tokens: 0,
         cache_write_tokens: 0,
         task_count: 3,
-        ...pricedCost,
+        ...totalCost,
         cost_usd: 15,
-        input_cost_usd: 15,
       },
       {
         agent_id: "big-spender",
         provider: "claude",
-        model: "claude-haiku-4-5",
         input_tokens: 1_000_000,
         output_tokens: 0,
         cache_read_tokens: 0,
         cache_write_tokens: 0,
         task_count: 2,
-        ...pricedCost,
+        ...totalCost,
         cost_usd: 1,
-        input_cost_usd: 1,
       },
       {
         agent_id: "codebuddy-agent",
         provider: "codebuddy",
-        model: "deepseek-v4-pro-ioa",
         input_tokens: 30_897,
         output_tokens: 9,
         cache_read_tokens: 29_440,
         cache_write_tokens: 1_457,
         task_count: 1,
-        ...pricedCost,
+        ...totalCost,
         cost_usd: 0.000748,
       },
     ]);
@@ -152,27 +137,23 @@ describe("computeDailyTotals", () => {
     const totals = computeDailyTotals([
       {
         date: "2026-05-10",
-        provider: "claude",
-        model: "claude-sonnet-4-6",
         input_tokens: 1_000_000,
         output_tokens: 0,
         cache_read_tokens: 0,
         cache_write_tokens: 0,
         task_count: 2,
-        ...pricedCost,
+        ...dailyCost,
         cost_usd: 3,
         input_cost_usd: 3,
       },
       {
         date: "2026-05-09",
-        provider: "claude",
-        model: "claude-sonnet-4-6",
         input_tokens: 2_000_000,
         output_tokens: 0,
         cache_read_tokens: 0,
         cache_write_tokens: 0,
         task_count: 3,
-        ...pricedCost,
+        ...dailyCost,
         cost_usd: 6,
         input_cost_usd: 6,
       },

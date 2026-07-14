@@ -69,18 +69,11 @@ describe("aggregateCostByTask", () => {
         started_at: "2026-05-19T00:00:00Z",
         completed_at: "2026-05-19T00:01:00Z",
         provider: "anthropic",
-        model: "claude-sonnet-4-6",
         input_tokens: 1_000_000,
         output_tokens: 0,
         cache_read_tokens: 0,
         cache_write_tokens: 0,
         cost_usd: 3,
-        input_cost_usd: 3,
-        output_cost_usd: 0,
-        cache_read_cost_usd: 0,
-        cache_write_cost_usd: 0,
-        cache_savings_usd: 0,
-        priced: true,
       },
       {
         task_id: "task-1",
@@ -92,18 +85,11 @@ describe("aggregateCostByTask", () => {
         started_at: "2026-05-19T00:00:00Z",
         completed_at: "2026-05-19T00:01:00Z",
         provider: "cursor",
-        model: "auto",
         input_tokens: 1_000_000,
         output_tokens: 0,
         cache_read_tokens: 0,
         cache_write_tokens: 0,
         cost_usd: 1.25,
-        input_cost_usd: 1.25,
-        output_cost_usd: 0,
-        cache_read_cost_usd: 0,
-        cache_write_cost_usd: 0,
-        cache_savings_usd: 0,
-        priced: true,
       },
       {
         task_id: "task-2",
@@ -115,18 +101,11 @@ describe("aggregateCostByTask", () => {
         started_at: null,
         completed_at: null,
         provider: "fictional",
-        model: "unknown-model",
         input_tokens: 500,
         output_tokens: 0,
         cache_read_tokens: 0,
         cache_write_tokens: 0,
         cost_usd: 0,
-        input_cost_usd: 0,
-        output_cost_usd: 0,
-        cache_read_cost_usd: 0,
-        cache_write_cost_usd: 0,
-        cache_savings_usd: 0,
-        priced: false,
       },
     ];
 
@@ -154,18 +133,11 @@ describe("aggregateCostByTask", () => {
         started_at: "2026-07-09T00:00:00Z",
         completed_at: "2026-07-09T00:01:00Z",
         provider: "codebuddy",
-        model: "deepseek-v4-pro-ioa",
         input_tokens: 59_738,
         output_tokens: 186,
         cache_read_tokens: 29_440,
         cache_write_tokens: 30_298,
         cost_usd: 0.013448,
-        input_cost_usd: 0.01318,
-        output_cost_usd: 0.000162,
-        cache_read_cost_usd: 0.000107,
-        cache_write_cost_usd: 0,
-        cache_savings_usd: 0.0127,
-        priced: true,
       },
     ];
 
@@ -240,7 +212,6 @@ describe("sliceWindow (timezone-aware)", () => {
 
   function makeUsage(date: string): RuntimeUsage {
     return {
-      runtime_id: "r",
       date,
       provider: "anthropic",
       model: "claude-sonnet-4-6",
@@ -251,7 +222,6 @@ describe("sliceWindow (timezone-aware)", () => {
       cost_usd: 0,
       input_cost_usd: 0,
       output_cost_usd: 0,
-      cache_read_cost_usd: 0,
       cache_write_cost_usd: 0,
       cache_savings_usd: 0,
       priced: true,
@@ -304,7 +274,6 @@ describe("aggregateByWeek", () => {
     output: number,
   ): RuntimeUsage {
     return {
-      runtime_id: "r",
       date,
       provider: "anthropic",
       model: "claude-sonnet-4-6",
@@ -315,7 +284,6 @@ describe("aggregateByWeek", () => {
       cost_usd: (input * 3 + output * 15) / 1_000_000,
       input_cost_usd: (input * 3) / 1_000_000,
       output_cost_usd: (output * 15) / 1_000_000,
-      cache_read_cost_usd: 0,
       cache_write_cost_usd: 0,
       cache_savings_usd: 0,
       priced: true,
@@ -453,7 +421,6 @@ describe("computeCostInWindow", () => {
   // 1M input tokens contributes exactly $3.
   function priced(date: string, inputTokens: number): RuntimeUsage {
     return {
-      runtime_id: "r",
       date,
       provider: "anthropic",
       model: "claude-sonnet-4-6",
@@ -464,7 +431,6 @@ describe("computeCostInWindow", () => {
       cost_usd: (inputTokens * 3) / 1_000_000,
       input_cost_usd: (inputTokens * 3) / 1_000_000,
       output_cost_usd: 0,
-      cache_read_cost_usd: 0,
       cache_write_cost_usd: 0,
       cache_savings_usd: 0,
       priced: true,

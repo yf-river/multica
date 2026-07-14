@@ -129,16 +129,16 @@ function pricingKey(model: string, provider?: string): string {
 // providers reporting the same bare id do not merge into one mislabeled row.
 function modelGroupingKey(model: string, provider?: string): string {
   if (!model) return normalizeProvider(provider) || "unknown";
-  return isVendorPrefixedModel(model) ? model : pricingKey(model, provider);
-}
-
-function isVendorPrefixedModel(model: string): boolean {
-  return /^(claude|gpt|o3|o4|glm|deepseek|kimi|gemini|minimax)-/.test(model);
+  return /^(claude|gpt|o3|o4|glm|deepseek|kimi|gemini|minimax)-/.test(model)
+    ? model
+    : pricingKey(model, provider);
 }
 
 // Returns the unique, sorted list of server-unpriced model keys present in
 // `rows`. Empty when everything's priced or there are no rows.
-export function collectUnmappedModels(rows: readonly Priceable[]): string[] {
+export function collectUnmappedModels(
+  rows: readonly (Priceable & Pick<RuntimeUsage, "model">)[],
+): string[] {
   const set = new Set<string>();
   for (const r of rows) {
     if (r.model && r.priced !== true) {
@@ -150,7 +150,6 @@ export function collectUnmappedModels(rows: readonly Priceable[]): string[] {
 
 type Priceable = Pick<
   RuntimeUsage,
-  | "model"
   | "input_tokens"
   | "output_tokens"
   | "cache_read_tokens"
@@ -162,7 +161,6 @@ type Priceable = Pick<
       | "cost_usd"
       | "input_cost_usd"
       | "output_cost_usd"
-      | "cache_read_cost_usd"
       | "cache_write_cost_usd"
       | "cache_savings_usd"
       | "priced"
@@ -173,17 +171,13 @@ export function estimateCost(usage: Priceable): number {
   return usage.cost_usd ?? 0;
 }
 
-function isCodeBuddyUsage(provider?: string | null): boolean {
-  return (provider ?? "").trim().toLowerCase() === "codebuddy";
-}
-
 export function usageTokenTotal(
   usage: Pick<
     RuntimeUsage,
     "input_tokens" | "output_tokens" | "cache_read_tokens" | "cache_write_tokens"
   > & { provider?: string | null },
 ): number {
-  if (isCodeBuddyUsage(usage.provider)) {
+  if ((usage.provider ?? "").trim().toLowerCase() === "codebuddy") {
     return usage.input_tokens + usage.output_tokens;
   }
   return (
@@ -194,18 +188,10 @@ export function usageTokenTotal(
   );
 }
 
-export interface CostBreakdown {
-  input: number;
-  output: number;
-  cacheRead: number;
-  cacheWrite: number;
-}
-
-export function estimateCostBreakdown(usage: Priceable): CostBreakdown {
+export function estimateCostBreakdown(usage: Priceable) {
   return {
     input: usage.input_cost_usd ?? 0,
     output: usage.output_cost_usd ?? 0,
-    cacheRead: usage.cache_read_cost_usd ?? 0,
     cacheWrite: usage.cache_write_cost_usd ?? 0,
   };
 }
@@ -391,7 +377,6 @@ export function aggregateByDate(usage: RuntimeUsage[]): {
 type WeeklyAggregable = Pick<
   RuntimeUsage,
   | "date"
-  | "model"
   | "input_tokens"
   | "output_tokens"
   | "cache_read_tokens"

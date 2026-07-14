@@ -62,7 +62,7 @@ import type {
   IssueMetadataChangedPayload,
   InboxNewPayload,
   InboxItem,
-  NotificationPreferenceResponse,
+  NotificationPreferences,
   TaskMessagePayload,
   TaskQueuedPayload,
   TaskDispatchPayload,
@@ -238,10 +238,10 @@ export async function handleInboxNew(
         ? await qc.ensureQueryData(
             notificationPreferenceOptions(sourceWsId, slug),
           )
-        : qc.getQueryData<NotificationPreferenceResponse>(
+        : qc.getQueryData<NotificationPreferences>(
             notificationPreferenceKeys.all(sourceWsId),
           );
-      if (prefData?.preferences?.system_notifications === "muted") return;
+      if (prefData?.system_notifications === "muted") return;
     } catch {
       // Fall through with default behavior.
     }

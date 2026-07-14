@@ -348,15 +348,15 @@ describe("PromptEvaluationAssetSchema", () => {
 });
 
 // The workspace dashboard and runtime-detail pages were re-pointed at the
-// unified `task_usage_hourly` rollup. Every numeric field drives chart /
-// KPI math, and string keys (date / agent_id / model) bucket the series.
+// unified `task_usage_hourly` rollup. Each projected numeric field drives
+// chart / KPI math, and each projected string key buckets the series.
 // The contract these schemas must hold: a row missing a field degrades
 // that field to a sane default rather than dropping the WHOLE array to
 // the `[]` fallback — one drifted row must not blank the entire chart.
 describe("dashboard + runtime usage schema drift", () => {
   it("coerces a missing numeric field to 0 instead of dropping the array", () => {
     const parsed = DashboardUsageDailyListSchema.parse([
-      { date: "2026-05-19", model: "claude-opus-4-7", input_tokens: 100 },
+      { date: "2026-05-19", input_tokens: 100 },
     ]);
     expect(parsed).toHaveLength(1);
     expect(parsed[0]?.output_tokens).toBe(0);
@@ -366,7 +366,7 @@ describe("dashboard + runtime usage schema drift", () => {
 
   it("coerces a missing date key to \"\" so the rest of the series survives", () => {
     const parsed = DashboardUsageDailyListSchema.parse([
-      { model: "claude-opus-4-7", input_tokens: 5 },
+      { input_tokens: 5 },
     ]);
     expect(parsed).toHaveLength(1);
     expect(parsed[0]?.date).toBe("");
@@ -382,30 +382,23 @@ describe("dashboard + runtime usage schema drift", () => {
 
   it("coerces a missing agent_id key to \"\" for the usage-by-agent panel", () => {
     const parsed = DashboardUsageByAgentListSchema.parse([
-      { model: "claude-opus-4-7", input_tokens: 7 },
+      { provider: "anthropic", input_tokens: 7 },
     ]);
     expect(parsed[0]?.agent_id).toBe("");
   });
 
   it("coerces missing fields on every runtime usage schema", () => {
     expect(RuntimeUsageListSchema.parse([{ date: "2026-05-19" }])[0]?.input_tokens).toBe(0);
-    expect(RuntimeUsageByAgentListSchema.parse([{ model: "x" }])[0]?.agent_id).toBe("");
-    expect(RuntimeUsageByTaskListSchema.parse([{ model: "x" }])[0]?.task_id).toBe("");
+    expect(RuntimeUsageByAgentListSchema.parse([{}])[0]?.agent_id).toBe("");
+    expect(RuntimeUsageByTaskListSchema.parse([{}])[0]?.task_id).toBe("");
   });
 
-  it("defaults a missing provider to \"\" so an older server's rows still price by bare model", () => {
-    // provider was added for cross-provider model disambiguation; a server
-    // predating it omits the field. The schema must fill "" (→ bare-model
-    // pricing lookup) rather than drop the row.
+  it("defaults a missing provider on attribution rows", () => {
     expect(
-      DashboardUsageDailyListSchema.parse([{ date: "2026-05-19", model: "claude-opus-4-7" }])[0]
-        ?.provider,
+      DashboardUsageByAgentListSchema.parse([{}])[0]?.provider,
     ).toBe("");
-    expect(
-      DashboardUsageByAgentListSchema.parse([{ model: "claude-opus-4-7" }])[0]?.provider,
-    ).toBe("");
-    expect(RuntimeUsageByAgentListSchema.parse([{ model: "x" }])[0]?.provider).toBe("");
-    expect(RuntimeUsageByTaskListSchema.parse([{ model: "x" }])[0]?.provider).toBe("");
+    expect(RuntimeUsageByAgentListSchema.parse([{}])[0]?.provider).toBe("");
+    expect(RuntimeUsageByTaskListSchema.parse([{}])[0]?.provider).toBe("");
   });
 
   it("rejects a non-array body so parseWithFallback can return its fallback", () => {
