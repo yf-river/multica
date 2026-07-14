@@ -82,7 +82,7 @@ func TestCreateProjectValidStatusReturns201(t *testing.T) {
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201 for valid status, got %d: %s", w.Code, w.Body.String())
 	}
-	var project ProjectResponse
+	var project projectResponse
 	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
 		t.Fatalf("decode CreateProject: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestUpdateProjectInvalidStatusReturns400(t *testing.T) {
 	if w.Code != http.StatusCreated {
 		t.Fatalf("seed CreateProject: %d %s", w.Code, w.Body.String())
 	}
-	var project ProjectResponse
+	var project projectResponse
 	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
 		t.Fatalf("decode CreateProject: %v", err)
 	}

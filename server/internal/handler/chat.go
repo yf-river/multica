@@ -30,7 +30,7 @@ const chatSessionTitleMaxLen = 200
 // Chat Sessions
 // ---------------------------------------------------------------------------
 
-type CreateChatSessionRequest struct {
+type createChatSessionRequest struct {
 	AgentID string `json:"agent_id"`
 	Title   string `json:"title"`
 }
@@ -46,7 +46,7 @@ func (h *Handler) CreateChatSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req CreateChatSessionRequest
+	var req createChatSessionRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -95,7 +95,7 @@ func (h *Handler) CreateChatSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !created {
-		response, status, err := decodeChatIdempotencyResponse[ChatSessionResponse](record)
+		response, status, err := decodeChatIdempotencyResponse[chatSessionResponse](record)
 		if err != nil {
 			slog.Error("decode create-chat-session replay failed", "error", err)
 			writeChatIdempotencyFailure(w, err)
@@ -170,12 +170,12 @@ func (h *Handler) ListChatSessions(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to list chat sessions")
 		return
 	}
-	resp := make([]ChatSessionResponse, 0, len(rows))
+	resp := make([]chatSessionResponse, 0, len(rows))
 	for _, s := range rows {
 		if _, ok := allowed[uuidToString(s.AgentID)]; !ok {
 			continue
 		}
-		resp = append(resp, ChatSessionResponse{
+		resp = append(resp, chatSessionResponse{
 			ID:          uuidToString(s.ID),
 			WorkspaceID: uuidToString(s.WorkspaceID),
 			AgentID:     uuidToString(s.AgentID),
@@ -414,7 +414,7 @@ func (h *Handler) DeleteChatSession(w http.ResponseWriter, r *http.Request) {
 // Chat Messages
 // ---------------------------------------------------------------------------
 
-type SendChatMessageRequest struct {
+type sendChatMessageRequest struct {
 	Content       string   `json:"content"`
 	AttachmentIDs []string `json:"attachment_ids"`
 }
@@ -446,7 +446,7 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req SendChatMessageRequest
+	var req sendChatMessageRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -681,7 +681,7 @@ type ChatMessagesCursorResponse struct {
 	ID        string `json:"id"`
 }
 
-type ChatMessagesPageResponse struct {
+type chatMessagesPageResponse struct {
 	Messages   []ChatMessageResponse       `json:"messages"`
 	Limit      int                         `json:"limit"`
 	HasMore    bool                        `json:"has_more"`
@@ -780,7 +780,7 @@ func (h *Handler) ListChatMessagesPage(w http.ResponseWriter, r *http.Request) {
 	for i, m := range messages {
 		resp[i] = chatMessageToResponse(m, groupedAtt[uuidToString(m.ID)])
 	}
-	writeJSON(w, http.StatusOK, ChatMessagesPageResponse{
+	writeJSON(w, http.StatusOK, chatMessagesPageResponse{
 		Messages:   resp,
 		Limit:      limit,
 		HasMore:    hasMore,
@@ -848,7 +848,7 @@ type CancelledChatMessageResponse struct {
 	Attachments    []AttachmentResponse `json:"attachments,omitempty"`
 }
 
-type CancelTaskByUserResponse struct {
+type cancelTaskByUserResponse struct {
 	AgentTaskResponse
 	CancelledChatMessage *CancelledChatMessageResponse `json:"cancelled_chat_message,omitempty"`
 }
@@ -1039,7 +1039,7 @@ func (h *Handler) CancelTaskByUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := CancelTaskByUserResponse{
+	resp := cancelTaskByUserResponse{
 		AgentTaskResponse: taskToResponse(cancelled.Task, workspaceID),
 	}
 	if cancelled.CancelledChatMessage != nil {
@@ -1063,7 +1063,7 @@ func (h *Handler) CancelTaskByUser(w http.ResponseWriter, r *http.Request) {
 // Response types & helpers
 // ---------------------------------------------------------------------------
 
-type ChatSessionResponse struct {
+type chatSessionResponse struct {
 	ID          string `json:"id"`
 	WorkspaceID string `json:"workspace_id"`
 	AgentID     string `json:"agent_id"`
@@ -1096,8 +1096,8 @@ type ChatMessageResponse struct {
 	Attachments []AttachmentResponse `json:"attachments,omitempty"`
 }
 
-func chatSessionToResponse(s db.ChatSession) ChatSessionResponse {
-	return ChatSessionResponse{
+func chatSessionToResponse(s db.ChatSession) chatSessionResponse {
+	return chatSessionResponse{
 		ID:          uuidToString(s.ID),
 		WorkspaceID: uuidToString(s.WorkspaceID),
 		AgentID:     uuidToString(s.AgentID),

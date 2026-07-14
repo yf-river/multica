@@ -24,9 +24,9 @@ func newPATCreateRequest(key string, body map[string]any) *http.Request {
 	return req
 }
 
-func decodeCreatePATResponse(t *testing.T, recorder *httptest.ResponseRecorder) CreatePATResponse {
+func decodeCreatePATResponse(t *testing.T, recorder *httptest.ResponseRecorder) createPATResponse {
 	t.Helper()
-	var response CreatePATResponse
+	var response createPATResponse
 	if err := json.NewDecoder(recorder.Body).Decode(&response); err != nil {
 		t.Fatalf("decode PAT create response: %v (body: %s)", err, recorder.Body.String())
 	}
@@ -112,7 +112,7 @@ func TestCreatePersonalAccessTokenConcurrentReplayConverges(t *testing.T) {
 	})
 
 	const concurrency = 8
-	responses := make([]CreatePATResponse, concurrency)
+	responses := make([]createPATResponse, concurrency)
 	statuses := make([]int, concurrency)
 	start := make(chan struct{})
 	var wg sync.WaitGroup

@@ -397,7 +397,7 @@ func TestUpdateAgentRuntime_ScopePatchApplies(t *testing.T) {
 }
 
 // TestUpdateAgentRuntime_IgnoresTimezoneField guards the RFC migration that
-// dropped `timezone` from UpdateAgentRuntimeRequest: a PATCH body still
+// dropped `timezone` from updateAgentRuntimeRequest: a PATCH body still
 // carrying `timezone` must not error, must not echo a `timezone` key back,
 // and must still apply the recognised `scope` field. Timezone is now a
 // user-level preference, not a per-runtime one.

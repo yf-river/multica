@@ -14,13 +14,13 @@ import (
 )
 
 type IssueExecutionTreeResponse struct {
-	Root          IssueExecutionNodeResponse   `json:"root"`
+	Root          issueExecutionNodeResponse   `json:"root"`
 	Summary       map[string]int               `json:"summary"`
-	TimelineNodes []IssueTimelineNodeResponse  `json:"timeline_nodes"`
+	TimelineNodes []issueTimelineNodeResponse  `json:"timeline_nodes"`
 	IssueSummary  IssueTimelineSummaryResponse `json:"issue_summary"`
 }
 
-type IssueTimelineNodeResponse struct {
+type issueTimelineNodeResponse struct {
 	IssueID               string                      `json:"issue_id"`
 	RootTaskID            string                      `json:"root_task_id,omitempty"`
 	NodeID                string                      `json:"node_id"`
@@ -80,7 +80,7 @@ type IssueTimelineSummaryResponse struct {
 	FullAnalysisDeepLink        string `json:"full_analysis_deep_link"`
 }
 
-type IssueExecutionNodeResponse struct {
+type issueExecutionNodeResponse struct {
 	Issue           IssueResponse                             `json:"issue"`
 	Tasks           []AgentTaskResponse                       `json:"tasks"`
 	SOPRuns         []SquadSOPRunResponse                     `json:"sop_runs"`
@@ -90,10 +90,10 @@ type IssueExecutionNodeResponse struct {
 	ToolCallSummary []PromptEvaluationToolCallSummaryResponse `json:"tool_call_summary"`
 	Artifacts       []AgentTaskArtifactResponse               `json:"artifacts"`
 	WakeupComments  []IssueWakeupCommentBrief                 `json:"wakeup_comments"`
-	ManualComments  []IssueCommentBrief                       `json:"manual_comments,omitempty"`
-	AgentComments   []IssueCommentBrief                       `json:"agent_comments,omitempty"`
-	ActivityLogs    []IssueActivityBrief                      `json:"activity_logs,omitempty"`
-	Children        []IssueExecutionNodeResponse              `json:"children"`
+	ManualComments  []issueCommentBriefResponse                       `json:"manual_comments,omitempty"`
+	AgentComments   []issueCommentBriefResponse                       `json:"agent_comments,omitempty"`
+	ActivityLogs    []issueActivityBriefResponse                      `json:"activity_logs,omitempty"`
+	Children        []issueExecutionNodeResponse              `json:"children"`
 }
 
 type AgentTaskArtifactResponse struct {
@@ -121,7 +121,7 @@ type IssueWakeupCommentBrief struct {
 	CreatedAt  string  `json:"created_at"`
 }
 
-type IssueCommentBrief struct {
+type issueCommentBriefResponse struct {
 	ID           string  `json:"id"`
 	IssueID      string  `json:"issue_id"`
 	AuthorType   string  `json:"author_type"`
@@ -132,7 +132,7 @@ type IssueCommentBrief struct {
 	CreatedAt    string  `json:"created_at"`
 }
 
-type IssueActivityBrief struct {
+type issueActivityBriefResponse struct {
 	ID        string         `json:"id"`
 	IssueID   string         `json:"issue_id"`
 	ActorType string         `json:"actor_type"`
@@ -169,10 +169,10 @@ func (h *Handler) GetIssueExecutionTree(w http.ResponseWriter, r *http.Request) 
 
 const issueExecutionTreeMaxDepth = 2
 
-func (h *Handler) buildIssueExecutionNode(ctx context.Context, issue db.Issue, prefix string, depth int) (IssueExecutionNodeResponse, error) {
+func (h *Handler) buildIssueExecutionNode(ctx context.Context, issue db.Issue, prefix string, depth int) (issueExecutionNodeResponse, error) {
 	tasks, err := h.Queries.ListTasksByIssue(ctx, issue.ID)
 	if err != nil {
-		return IssueExecutionNodeResponse{}, err
+		return issueExecutionNodeResponse{}, err
 	}
 	comments, err := h.Queries.ListCommentsForIssue(ctx, db.ListCommentsForIssueParams{
 		IssueID:     issue.ID,
@@ -180,7 +180,7 @@ func (h *Handler) buildIssueExecutionNode(ctx context.Context, issue db.Issue, p
 		Limit:       200,
 	})
 	if err != nil {
-		return IssueExecutionNodeResponse{}, err
+		return issueExecutionNodeResponse{}, err
 	}
 	commentByID := make(map[string]db.Comment, len(comments))
 	for _, comment := range comments {
@@ -209,7 +209,7 @@ func (h *Handler) buildIssueExecutionNode(ctx context.Context, issue db.Issue, p
 		taskResp = append(taskResp, resp)
 		messages, err := h.Queries.ListTaskMessages(ctx, task.ID)
 		if err != nil {
-			return IssueExecutionNodeResponse{}, err
+			return issueExecutionNodeResponse{}, err
 		}
 		taskID := uuidToString(task.ID)
 		issueID := uuidToString(issue.ID)
@@ -225,13 +225,13 @@ func (h *Handler) buildIssueExecutionNode(ctx context.Context, issue db.Issue, p
 		WorkspaceID: issue.WorkspaceID,
 	})
 	if err != nil {
-		return IssueExecutionNodeResponse{}, err
+		return issueExecutionNodeResponse{}, err
 	}
 	runResp := make([]SquadSOPRunResponse, 0, len(runs))
 	for _, run := range runs {
 		events, err := h.Queries.ListSquadSOPStepEventsByRun(ctx, run.ID)
 		if err != nil {
-			return IssueExecutionNodeResponse{}, err
+			return issueExecutionNodeResponse{}, err
 		}
 		eventResp := make([]SquadSOPEventResponse, 0, len(events))
 		for _, event := range events {
@@ -239,18 +239,18 @@ func (h *Handler) buildIssueExecutionNode(ctx context.Context, issue db.Issue, p
 		}
 		enrichedRun, err := h.squadSOPRunToResponseWithStageMetrics(ctx, run, eventResp)
 		if err != nil {
-			return IssueExecutionNodeResponse{}, err
+			return issueExecutionNodeResponse{}, err
 		}
 		runResp = append(runResp, enrichedRun)
 	}
 
 	traces, err := h.Queries.ListIssueTaskTraceEvents(ctx, issue.ID)
 	if err != nil {
-		return IssueExecutionNodeResponse{}, err
+		return issueExecutionNodeResponse{}, err
 	}
 	traceResp, err := taskTraceEventsToResponse(traces)
 	if err != nil {
-		return IssueExecutionNodeResponse{}, err
+		return issueExecutionNodeResponse{}, err
 	}
 
 	commentIDs := make([]pgtype.UUID, 0, len(comments))
@@ -266,7 +266,7 @@ func (h *Handler) buildIssueExecutionNode(ctx context.Context, issue db.Issue, p
 			WorkspaceID: issue.WorkspaceID,
 		})
 		if err != nil {
-			return IssueExecutionNodeResponse{}, err
+			return issueExecutionNodeResponse{}, err
 		}
 		artifactIndexByKey := make(map[string]int, len(attachments))
 		for _, attachment := range attachments {
@@ -287,8 +287,8 @@ func (h *Handler) buildIssueExecutionNode(ctx context.Context, issue db.Issue, p
 		}
 	}
 	wakeupComments := make([]IssueWakeupCommentBrief, 0)
-	manualComments := make([]IssueCommentBrief, 0)
-	agentComments := make([]IssueCommentBrief, 0)
+	manualComments := make([]issueCommentBriefResponse, 0)
+	agentComments := make([]issueCommentBriefResponse, 0)
 	for _, comment := range comments {
 		if comment.AuthorType == "member" {
 			manualComments = append(manualComments, issueCommentBrief(comment))
@@ -313,30 +313,30 @@ func (h *Handler) buildIssueExecutionNode(ctx context.Context, issue db.Issue, p
 		Limit:   200,
 	})
 	if err != nil {
-		return IssueExecutionNodeResponse{}, err
+		return issueExecutionNodeResponse{}, err
 	}
-	activityResp := make([]IssueActivityBrief, 0, len(activities))
+	activityResp := make([]issueActivityBriefResponse, 0, len(activities))
 	for _, activity := range activities {
 		activityResp = append(activityResp, issueActivityBrief(activity))
 	}
 
-	childrenResp := []IssueExecutionNodeResponse{}
+	childrenResp := []issueExecutionNodeResponse{}
 	if depth < issueExecutionTreeMaxDepth {
 		children, err := h.Queries.ListChildIssues(ctx, issue.ID)
 		if err != nil {
-			return IssueExecutionNodeResponse{}, err
+			return issueExecutionNodeResponse{}, err
 		}
-		childrenResp = make([]IssueExecutionNodeResponse, 0, len(children))
+		childrenResp = make([]issueExecutionNodeResponse, 0, len(children))
 		for _, child := range children {
 			childNode, err := h.buildIssueExecutionNode(ctx, child, prefix, depth+1)
 			if err != nil {
-				return IssueExecutionNodeResponse{}, err
+				return issueExecutionNodeResponse{}, err
 			}
 			childrenResp = append(childrenResp, childNode)
 		}
 	}
 
-	return IssueExecutionNodeResponse{
+	return issueExecutionNodeResponse{
 		Issue:           issueToResponse(issue, prefix),
 		Tasks:           taskResp,
 		SOPRuns:         runResp,
@@ -353,8 +353,8 @@ func (h *Handler) buildIssueExecutionNode(ctx context.Context, issue db.Issue, p
 	}, nil
 }
 
-func issueCommentBrief(comment db.Comment) IssueCommentBrief {
-	return IssueCommentBrief{
+func issueCommentBrief(comment db.Comment) issueCommentBriefResponse {
+	return issueCommentBriefResponse{
 		ID:           uuidToString(comment.ID),
 		IssueID:      uuidToString(comment.IssueID),
 		AuthorType:   comment.AuthorType,
@@ -366,9 +366,9 @@ func issueCommentBrief(comment db.Comment) IssueCommentBrief {
 	}
 }
 
-func issueActivityBrief(activity db.ActivityLog) IssueActivityBrief {
+func issueActivityBrief(activity db.ActivityLog) issueActivityBriefResponse {
 	details := mustDecodePersistedJSONObject(activity.Details, "activity log details")
-	return IssueActivityBrief{
+	return issueActivityBriefResponse{
 		ID:        uuidToString(activity.ID),
 		IssueID:   uuidToString(activity.IssueID),
 		ActorType: activity.ActorType.String,
@@ -415,7 +415,7 @@ func artifactCreatedAtAfterOrEqual(left, right AgentTaskArtifactResponse) bool {
 	return left.CreatedAt >= right.CreatedAt
 }
 
-func summarizeIssueExecutionTree(root IssueExecutionNodeResponse) map[string]int {
+func summarizeIssueExecutionTree(root issueExecutionNodeResponse) map[string]int {
 	summary := map[string]int{
 		"任务数":    0,
 		"子任务数":   0,
@@ -429,8 +429,8 @@ func summarizeIssueExecutionTree(root IssueExecutionNodeResponse) map[string]int
 		"失败任务数":  0,
 		"取消任务数":  0,
 	}
-	var walk func(node IssueExecutionNodeResponse, isRoot bool)
-	walk = func(node IssueExecutionNodeResponse, isRoot bool) {
+	var walk func(node issueExecutionNodeResponse, isRoot bool)
+	walk = func(node issueExecutionNodeResponse, isRoot bool) {
 		if !isRoot {
 			summary["子任务数"]++
 		}
@@ -463,8 +463,8 @@ func summarizeIssueExecutionTree(root IssueExecutionNodeResponse) map[string]int
 	return summary
 }
 
-func buildIssueTimelineNodes(root IssueExecutionNodeResponse) []IssueTimelineNodeResponse {
-	nodes := make([]IssueTimelineNodeResponse, 0)
+func buildIssueTimelineNodes(root issueExecutionNodeResponse) []issueTimelineNodeResponse {
+	nodes := make([]issueTimelineNodeResponse, 0)
 	rootTaskID := ""
 	if len(root.Tasks) > 0 {
 		rootTaskID = root.Tasks[0].ID
@@ -490,7 +490,7 @@ func buildIssueTimelineNodes(root IssueExecutionNodeResponse) []IssueTimelineNod
 		taskTraces := traceByTask[task.ID]
 		taskArtifacts := artifactsByTask[task.ID]
 		responsibilityStartedAt := taskResponsibilityStartedAt(task)
-		node := IssueTimelineNodeResponse{
+		node := issueTimelineNodeResponse{
 			IssueID:               root.Issue.ID,
 			RootTaskID:            rootTaskID,
 			NodeID:                "task:" + task.ID,
@@ -539,7 +539,7 @@ func buildIssueTimelineNodes(root IssueExecutionNodeResponse) []IssueTimelineNod
 	}
 	for _, run := range root.SOPRuns {
 		runNodeID := "squad_step:" + run.ID
-		nodes = append(nodes, IssueTimelineNodeResponse{
+		nodes = append(nodes, issueTimelineNodeResponse{
 			IssueID:         root.Issue.ID,
 			RootTaskID:      rootTaskID,
 			NodeID:          runNodeID,
@@ -554,7 +554,7 @@ func buildIssueTimelineNodes(root IssueExecutionNodeResponse) []IssueTimelineNod
 			TraceEventCount: len(run.Events),
 		})
 		for _, event := range run.Events {
-			nodes = append(nodes, IssueTimelineNodeResponse{
+			nodes = append(nodes, issueTimelineNodeResponse{
 				IssueID:         root.Issue.ID,
 				RootTaskID:      rootTaskID,
 				NodeID:          "squad_step_event:" + event.ID,
@@ -572,7 +572,7 @@ func buildIssueTimelineNodes(root IssueExecutionNodeResponse) []IssueTimelineNod
 		}
 	}
 	for _, chain := range root.ToolCallChains {
-		nodes = append(nodes, IssueTimelineNodeResponse{
+		nodes = append(nodes, issueTimelineNodeResponse{
 			IssueID:      root.Issue.ID,
 			RootTaskID:   rootTaskID,
 			NodeID:       "tool_call:" + chain.ID,
@@ -591,7 +591,7 @@ func buildIssueTimelineNodes(root IssueExecutionNodeResponse) []IssueTimelineNod
 		if strings.Contains(event.EventType, "source") || strings.Contains(event.EventType, "fetch") {
 			nodeType = "source_fetch"
 		}
-		nodes = append(nodes, IssueTimelineNodeResponse{
+		nodes = append(nodes, issueTimelineNodeResponse{
 			IssueID:               root.Issue.ID,
 			RootTaskID:            rootTaskID,
 			NodeID:                "trace:" + event.ID,
@@ -615,7 +615,7 @@ func buildIssueTimelineNodes(root IssueExecutionNodeResponse) []IssueTimelineNod
 		})
 	}
 	if status, ok := root.Issue.Metadata["source_fetch_status"].(string); ok && status != "" {
-		nodes = append(nodes, IssueTimelineNodeResponse{
+		nodes = append(nodes, issueTimelineNodeResponse{
 			IssueID:      root.Issue.ID,
 			RootTaskID:   rootTaskID,
 			NodeID:       "source_fetch:" + root.Issue.ID,
@@ -628,7 +628,7 @@ func buildIssueTimelineNodes(root IssueExecutionNodeResponse) []IssueTimelineNod
 		})
 	}
 	for _, child := range root.Children {
-		nodes = append(nodes, IssueTimelineNodeResponse{
+		nodes = append(nodes, issueTimelineNodeResponse{
 			IssueID:      root.Issue.ID,
 			RootTaskID:   rootTaskID,
 			NodeID:       "child_issue_ref:" + child.Issue.ID,
@@ -643,7 +643,7 @@ func buildIssueTimelineNodes(root IssueExecutionNodeResponse) []IssueTimelineNod
 		})
 	}
 	for _, comment := range root.WakeupComments {
-		nodes = append(nodes, IssueTimelineNodeResponse{
+		nodes = append(nodes, issueTimelineNodeResponse{
 			IssueID:      root.Issue.ID,
 			RootTaskID:   rootTaskID,
 			NodeID:       "approval:" + comment.ID,
@@ -675,11 +675,11 @@ func buildIssueTimelineNodes(root IssueExecutionNodeResponse) []IssueTimelineNod
 	return nodes
 }
 
-func buildHumanConfirmationTimelineNodes(root IssueExecutionNodeResponse, rootTaskID string) []IssueTimelineNodeResponse {
+func buildHumanConfirmationTimelineNodes(root issueExecutionNodeResponse, rootTaskID string) []issueTimelineNodeResponse {
 	if len(root.Tasks) == 0 {
 		return nil
 	}
-	commentsByID := make(map[string]IssueCommentBrief, len(root.ManualComments))
+	commentsByID := make(map[string]issueCommentBriefResponse, len(root.ManualComments))
 	for _, comment := range root.ManualComments {
 		commentsByID[comment.ID] = comment
 	}
@@ -706,7 +706,7 @@ func buildHumanConfirmationTimelineNodes(root IssueExecutionNodeResponse, rootTa
 		}
 	}
 
-	nodes := make([]IssueTimelineNodeResponse, 0)
+	nodes := make([]issueTimelineNodeResponse, 0)
 	seenComments := make(map[string]bool, len(commentsByID))
 	if len(root.ManualComments) > 0 && len(root.Tasks) >= 2 {
 		for _, comment := range root.ManualComments {
@@ -726,7 +726,7 @@ func buildHumanConfirmationTimelineNodes(root IssueExecutionNodeResponse, rootTa
 			if !ok || !commentAt.After(startAt) {
 				continue
 			}
-			nodes = append(nodes, IssueTimelineNodeResponse{
+			nodes = append(nodes, issueTimelineNodeResponse{
 				IssueID:     root.Issue.ID,
 				RootTaskID:  rootTaskID,
 				NodeID:      "human_confirmation:" + comment.ID + ":" + task.ID,
@@ -761,7 +761,7 @@ type pendingHumanConfirmationCandidate struct {
 	metadata     map[string]any
 }
 
-func buildPendingHumanConfirmationTimelineNode(root IssueExecutionNodeResponse, rootTaskID string, tasks []AgentTaskResponse) *IssueTimelineNodeResponse {
+func buildPendingHumanConfirmationTimelineNode(root issueExecutionNodeResponse, rootTaskID string, tasks []AgentTaskResponse) *issueTimelineNodeResponse {
 	if isCompletedIssueStatus(root.Issue.Status) {
 		return nil
 	}
@@ -853,7 +853,7 @@ func buildPendingHumanConfirmationTimelineNode(root IssueExecutionNodeResponse, 
 	if selected == nil || !isStillPendingHumanConfirmation(root, selected.task.ID, selected.startAt) {
 		return nil
 	}
-	return &IssueTimelineNodeResponse{
+	return &issueTimelineNodeResponse{
 		IssueID:      root.Issue.ID,
 		RootTaskID:   rootTaskID,
 		NodeID:       "human_confirmation:pending:" + selected.task.ID,
@@ -877,7 +877,7 @@ func laterPendingHumanConfirmationCandidate(current *pendingHumanConfirmationCan
 	return current
 }
 
-func pendingHumanConfirmationStart(root IssueExecutionNodeResponse, task AgentTaskResponse, fallback time.Time) (time.Time, string) {
+func pendingHumanConfirmationStart(root issueExecutionNodeResponse, task AgentTaskResponse, fallback time.Time) (time.Time, string) {
 	if completedAt, ok := parseTaskCompletedAt(task); ok {
 		for _, comment := range root.AgentComments {
 			if ptrString(comment.SourceTaskID) != task.ID || !isPendingHumanConfirmationText(comment.Content) {
@@ -894,7 +894,7 @@ func pendingHumanConfirmationStart(root IssueExecutionNodeResponse, task AgentTa
 	return fallback, ""
 }
 
-func isStillPendingHumanConfirmation(root IssueExecutionNodeResponse, taskID string, startAt time.Time) bool {
+func isStillPendingHumanConfirmation(root issueExecutionNodeResponse, taskID string, startAt time.Time) bool {
 	for _, comment := range root.ManualComments {
 		commentAt, err := time.Parse(time.RFC3339, comment.CreatedAt)
 		if err == nil && commentAt.After(startAt) {
@@ -1061,7 +1061,7 @@ func responsibilityDurationMs(task AgentTaskResponse, startedAt string) int64 {
 	return end.Sub(start).Milliseconds()
 }
 
-func humanConfirmationSummary(comment IssueCommentBrief) string {
+func humanConfirmationSummary(comment issueCommentBriefResponse) string {
 	content := strings.TrimSpace(comment.Content)
 	if content == "" {
 		return "等待人工确认"
@@ -1074,7 +1074,7 @@ func humanConfirmationSummary(comment IssueCommentBrief) string {
 	return "等待人工确认：" + content
 }
 
-func summarizeIssueTimeline(issue IssueResponse, nodes []IssueTimelineNodeResponse) IssueTimelineSummaryResponse {
+func summarizeIssueTimeline(issue IssueResponse, nodes []issueTimelineNodeResponse) IssueTimelineSummaryResponse {
 	summary := IssueTimelineSummaryResponse{
 		IssueID:              issue.ID,
 		NodeCount:            len(nodes),
@@ -1171,11 +1171,11 @@ func summarizeIssueTimeline(issue IssueResponse, nodes []IssueTimelineNodeRespon
 	return summary
 }
 
-func timelineNodeAffectsAcceptance(node IssueTimelineNodeResponse) bool {
+func timelineNodeAffectsAcceptance(node issueTimelineNodeResponse) bool {
 	return node.NodeType == "agent_task" || node.NodeType == "child_issue_ref"
 }
 
-func isRecoveredRuntimeFailure(issue IssueResponse, node IssueTimelineNodeResponse) bool {
+func isRecoveredRuntimeFailure(issue IssueResponse, node issueTimelineNodeResponse) bool {
 	return isCompletedIssueStatus(issue.Status) && strings.TrimSpace(node.FailureReason) == "runtime_recovery"
 }
 
@@ -1206,7 +1206,7 @@ func isCompletedTimelineStatus(status string) bool {
 	}
 }
 
-func timelineAgentWorkBounds(nodes []IssueTimelineNodeResponse) (startedAt string, completedAt string) {
+func timelineAgentWorkBounds(nodes []issueTimelineNodeResponse) (startedAt string, completedAt string) {
 	var started *time.Time
 	var completed *time.Time
 	for _, node := range nodes {
@@ -1240,7 +1240,7 @@ type timelineInterval struct {
 	end   time.Time
 }
 
-func mergedWaitDurationMs(nodes []IssueTimelineNodeResponse, nodeTypes ...string) int64 {
+func mergedWaitDurationMs(nodes []issueTimelineNodeResponse, nodeTypes ...string) int64 {
 	allowed := make(map[string]bool, len(nodeTypes))
 	for _, nodeType := range nodeTypes {
 		allowed[nodeType] = true
@@ -1271,7 +1271,7 @@ func mergedWaitDurationMs(nodes []IssueTimelineNodeResponse, nodeTypes ...string
 	return total
 }
 
-func mergedNodeDurationMs(nodes []IssueTimelineNodeResponse, nodeType string) int64 {
+func mergedNodeDurationMs(nodes []issueTimelineNodeResponse, nodeType string) int64 {
 	return mergedWaitDurationMs(nodes, nodeType)
 }
 

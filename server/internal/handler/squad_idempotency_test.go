@@ -49,7 +49,7 @@ func TestCreateSquad_IdempotentReplayConflictAndDurableRecord(t *testing.T) {
 	if first.Body.String() != replay.Body.String() {
 		t.Fatalf("replay body differs\nfirst:  %s\nreplay: %s", first.Body, replay.Body)
 	}
-	var squad SquadResponse
+	var squad squadResponse
 	if err := json.Unmarshal(first.Body.Bytes(), &squad); err != nil {
 		t.Fatalf("decode squad: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestCreateSquad_ConcurrentReplayCreatesOneSquad(t *testing.T) {
 		if response.Code != http.StatusCreated {
 			t.Fatalf("concurrent create = %d %s", response.Code, response.Body.String())
 		}
-		var squad SquadResponse
+		var squad squadResponse
 		if err := json.Unmarshal(response.Body.Bytes(), &squad); err != nil {
 			t.Fatalf("decode concurrent response: %v", err)
 		}

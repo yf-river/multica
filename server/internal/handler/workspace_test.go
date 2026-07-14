@@ -780,7 +780,7 @@ VALUES ($1, $2, 'owner')
 		if w.Code != http.StatusCreated {
 			t.Fatalf("CreateProject: expected 201, got %d: %s", w.Code, w.Body.String())
 		}
-		var project ProjectResponse
+		var project projectResponse
 		if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
 			t.Fatalf("decode CreateProject: %v", err)
 		}

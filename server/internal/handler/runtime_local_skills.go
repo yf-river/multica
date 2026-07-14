@@ -19,19 +19,19 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-type RuntimeLocalSkillRequestStatus string
+type runtimeLocalSkillRequestStatus string
 
 const (
-	RuntimeLocalSkillPending   RuntimeLocalSkillRequestStatus = "pending"
-	RuntimeLocalSkillRunning   RuntimeLocalSkillRequestStatus = "running"
-	RuntimeLocalSkillCompleted RuntimeLocalSkillRequestStatus = "completed"
-	RuntimeLocalSkillFailed    RuntimeLocalSkillRequestStatus = "failed"
-	RuntimeLocalSkillTimeout   RuntimeLocalSkillRequestStatus = "timeout"
+	RuntimeLocalSkillPending   runtimeLocalSkillRequestStatus = "pending"
+	RuntimeLocalSkillRunning   runtimeLocalSkillRequestStatus = "running"
+	RuntimeLocalSkillCompleted runtimeLocalSkillRequestStatus = "completed"
+	RuntimeLocalSkillFailed    runtimeLocalSkillRequestStatus = "failed"
+	RuntimeLocalSkillTimeout   runtimeLocalSkillRequestStatus = "timeout"
 	// RuntimeLocalSkillConflict is a terminal state set when a fresh import
 	// hits an existing same-name skill. It is not an error: the request carries
 	// structured Conflict metadata so the caller (Desktop UI / CLI) can offer
 	// overwrite / rename / skip instead of silently failing. See MUL-2800.
-	RuntimeLocalSkillConflict RuntimeLocalSkillRequestStatus = "conflict"
+	RuntimeLocalSkillConflict runtimeLocalSkillRequestStatus = "conflict"
 )
 
 // LocalSkillImportAction selects how a runtime-local-skill import resolves when
@@ -161,7 +161,7 @@ type RuntimeLocalSkillSummary struct {
 type runtimeLocalSkillRequestState struct {
 	ID           string                         `json:"id"`
 	RuntimeID    string                         `json:"runtime_id"`
-	Status       RuntimeLocalSkillRequestStatus `json:"status"`
+	Status       runtimeLocalSkillRequestStatus `json:"status"`
 	Error        string                         `json:"error,omitempty"`
 	CreatedAt    time.Time                      `json:"created_at"`
 	UpdatedAt    time.Time                      `json:"updated_at"`
@@ -190,20 +190,20 @@ type RuntimeLocalSkillImportRequest struct {
 var errLocalSkillImportRequestConflict = errors.New("local skill import request conflict")
 var errRuntimeAsyncRequestConflict = errors.New("runtime async request conflict")
 
-// InMemoryLocalSkillListStore is the single-node implementation — good enough
+// inMemoryLocalSkillListStore is the single-node implementation — good enough
 // for local dev and the in-process test suite. Production (multi-node) must
 // use RedisLocalSkillListStore so every API node agrees on the same pending
 // set.
-type InMemoryLocalSkillListStore struct {
+type inMemoryLocalSkillListStore struct {
 	mu       sync.Mutex
 	requests map[string]*RuntimeLocalSkillListRequest
 }
 
-func NewInMemoryLocalSkillListStore() *InMemoryLocalSkillListStore {
-	return &InMemoryLocalSkillListStore{requests: make(map[string]*RuntimeLocalSkillListRequest)}
+func NewInMemoryLocalSkillListStore() *inMemoryLocalSkillListStore {
+	return &inMemoryLocalSkillListStore{requests: make(map[string]*RuntimeLocalSkillListRequest)}
 }
 
-func (s *InMemoryLocalSkillListStore) Create(_ context.Context, runtimeID, requestID string) (*RuntimeLocalSkillListRequest, error) {
+func (s *inMemoryLocalSkillListStore) Create(_ context.Context, runtimeID, requestID string) (*RuntimeLocalSkillListRequest, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -230,7 +230,7 @@ func (s *InMemoryLocalSkillListStore) Create(_ context.Context, runtimeID, reque
 	return req, nil
 }
 
-func (s *InMemoryLocalSkillListStore) Get(_ context.Context, id string) (*RuntimeLocalSkillListRequest, error) {
+func (s *inMemoryLocalSkillListStore) Get(_ context.Context, id string) (*RuntimeLocalSkillListRequest, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -242,7 +242,7 @@ func (s *InMemoryLocalSkillListStore) Get(_ context.Context, id string) (*Runtim
 	return req, nil
 }
 
-func (s *InMemoryLocalSkillListStore) HasPending(_ context.Context, runtimeID string) (bool, error) {
+func (s *inMemoryLocalSkillListStore) HasPending(_ context.Context, runtimeID string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -256,7 +256,7 @@ func (s *InMemoryLocalSkillListStore) HasPending(_ context.Context, runtimeID st
 	return false, nil
 }
 
-func (s *InMemoryLocalSkillListStore) PopPending(_ context.Context, runtimeID string) (*RuntimeLocalSkillListRequest, error) {
+func (s *inMemoryLocalSkillListStore) PopPending(_ context.Context, runtimeID string) (*RuntimeLocalSkillListRequest, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -279,7 +279,7 @@ func (s *InMemoryLocalSkillListStore) PopPending(_ context.Context, runtimeID st
 	return oldest, nil
 }
 
-func (s *InMemoryLocalSkillListStore) Complete(_ context.Context, id string, skills []RuntimeLocalSkillSummary, supported bool) error {
+func (s *inMemoryLocalSkillListStore) Complete(_ context.Context, id string, skills []RuntimeLocalSkillSummary, supported bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -292,7 +292,7 @@ func (s *InMemoryLocalSkillListStore) Complete(_ context.Context, id string, ski
 	return nil
 }
 
-func (s *InMemoryLocalSkillListStore) Fail(_ context.Context, id string, errMsg string) error {
+func (s *inMemoryLocalSkillListStore) Fail(_ context.Context, id string, errMsg string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -304,18 +304,18 @@ func (s *InMemoryLocalSkillListStore) Fail(_ context.Context, id string, errMsg 
 	return nil
 }
 
-// InMemoryLocalSkillImportStore mirrors InMemoryLocalSkillListStore for import
+// inMemoryLocalSkillImportStore mirrors inMemoryLocalSkillListStore for import
 // requests. Same single-node vs. multi-node caveat.
-type InMemoryLocalSkillImportStore struct {
+type inMemoryLocalSkillImportStore struct {
 	mu       sync.Mutex
 	requests map[string]*RuntimeLocalSkillImportRequest
 }
 
-func NewInMemoryLocalSkillImportStore() *InMemoryLocalSkillImportStore {
-	return &InMemoryLocalSkillImportStore{requests: make(map[string]*RuntimeLocalSkillImportRequest)}
+func NewInMemoryLocalSkillImportStore() *inMemoryLocalSkillImportStore {
+	return &inMemoryLocalSkillImportStore{requests: make(map[string]*RuntimeLocalSkillImportRequest)}
 }
 
-func (s *InMemoryLocalSkillImportStore) Create(_ context.Context, input LocalSkillImportRequestInput) (*RuntimeLocalSkillImportRequest, error) {
+func (s *inMemoryLocalSkillImportStore) Create(_ context.Context, input LocalSkillImportRequestInput) (*RuntimeLocalSkillImportRequest, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -348,7 +348,7 @@ func (s *InMemoryLocalSkillImportStore) Create(_ context.Context, input LocalSki
 	return req, nil
 }
 
-func (s *InMemoryLocalSkillImportStore) Get(_ context.Context, id string) (*RuntimeLocalSkillImportRequest, error) {
+func (s *inMemoryLocalSkillImportStore) Get(_ context.Context, id string) (*RuntimeLocalSkillImportRequest, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -360,7 +360,7 @@ func (s *InMemoryLocalSkillImportStore) Get(_ context.Context, id string) (*Runt
 	return req, nil
 }
 
-func (s *InMemoryLocalSkillImportStore) HasPending(_ context.Context, runtimeID string) (bool, error) {
+func (s *inMemoryLocalSkillImportStore) HasPending(_ context.Context, runtimeID string) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -374,7 +374,7 @@ func (s *InMemoryLocalSkillImportStore) HasPending(_ context.Context, runtimeID 
 	return false, nil
 }
 
-func (s *InMemoryLocalSkillImportStore) PopPendingBatch(_ context.Context, runtimeID string, limit int) ([]*RuntimeLocalSkillImportRequest, error) {
+func (s *inMemoryLocalSkillImportStore) PopPendingBatch(_ context.Context, runtimeID string, limit int) ([]*RuntimeLocalSkillImportRequest, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -407,7 +407,7 @@ func (s *InMemoryLocalSkillImportStore) PopPendingBatch(_ context.Context, runti
 	return result, nil
 }
 
-func (s *InMemoryLocalSkillImportStore) Complete(_ context.Context, id string, skill SkillResponse) error {
+func (s *inMemoryLocalSkillImportStore) Complete(_ context.Context, id string, skill SkillResponse) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -419,7 +419,7 @@ func (s *InMemoryLocalSkillImportStore) Complete(_ context.Context, id string, s
 	return nil
 }
 
-func (s *InMemoryLocalSkillImportStore) Conflict(_ context.Context, id string, info LocalSkillImportConflict) error {
+func (s *inMemoryLocalSkillImportStore) Conflict(_ context.Context, id string, info LocalSkillImportConflict) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -432,7 +432,7 @@ func (s *InMemoryLocalSkillImportStore) Conflict(_ context.Context, id string, i
 	return nil
 }
 
-func (s *InMemoryLocalSkillImportStore) Fail(_ context.Context, id string, errMsg string) error {
+func (s *inMemoryLocalSkillImportStore) Fail(_ context.Context, id string, errMsg string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -474,7 +474,7 @@ func cleanOptionalString(value *string) *string {
 	return &trimmed
 }
 
-func runtimeLocalSkillRequestTerminal(status RuntimeLocalSkillRequestStatus) bool {
+func runtimeLocalSkillRequestTerminal(status runtimeLocalSkillRequestStatus) bool {
 	return status == RuntimeLocalSkillCompleted || status == RuntimeLocalSkillFailed ||
 		status == RuntimeLocalSkillTimeout || status == RuntimeLocalSkillConflict
 }

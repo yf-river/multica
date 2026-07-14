@@ -166,7 +166,7 @@ func TestGetTenantInitialAdminStatus(t *testing.T) {
 			}
 
 			if tt.wantExists != nil {
-				var resp GetTenantInitialAdminStatusResponse
+				var resp getTenantInitialAdminStatusResponse
 				if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 					t.Fatalf("decode tenant response: %v", err)
 				}
@@ -229,7 +229,7 @@ func (h *testTenantAdminHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 	owner, err := h.queries.getInitialOwnerFn(r.Context(), wsUUID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			writeJSON(w, http.StatusOK, GetTenantInitialAdminStatusResponse{
+			writeJSON(w, http.StatusOK, getTenantInitialAdminStatusResponse{
 				Exists:      false,
 				WorkspaceID: uuidToString(wsUUID),
 			})
@@ -241,7 +241,7 @@ func (h *testTenantAdminHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 
 	name := owner.UserAccount
 	nickName := owner.UserName
-	writeJSON(w, http.StatusOK, GetTenantInitialAdminStatusResponse{
+	writeJSON(w, http.StatusOK, getTenantInitialAdminStatusResponse{
 		Exists:      true,
 		WorkspaceID: uuidToString(owner.WorkspaceID),
 		UserName:    &name,

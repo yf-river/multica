@@ -17,7 +17,7 @@ import (
 
 const agentPlaygroundMaxInputs = 20
 
-type AgentPlaygroundExperimentResponse struct {
+type agentPlaygroundExperimentResponse struct {
 	ID               string  `json:"id"`
 	WorkspaceID      string  `json:"workspace_id"`
 	Name             string  `json:"name"`
@@ -80,7 +80,7 @@ type AgentPlaygroundJudgementResponse struct {
 }
 
 type AgentPlaygroundDetailResponse struct {
-	Experiment AgentPlaygroundExperimentResponse  `json:"experiment"`
+	Experiment agentPlaygroundExperimentResponse  `json:"experiment"`
 	Inputs     []AgentPlaygroundInputResponse     `json:"inputs"`
 	Agents     []AgentPlaygroundAgentResponse     `json:"agents"`
 	Results    []AgentPlaygroundResultResponse    `json:"results"`
@@ -96,7 +96,7 @@ type CreateAgentPlaygroundExperimentRequest struct {
 	AgentIDs         []string `json:"agent_ids"`
 }
 
-type SetAgentPlaygroundJudgeRequest struct {
+type setAgentPlaygroundJudgeRequest struct {
 	JudgeAgentID string `json:"judge_agent_id"`
 }
 
@@ -123,7 +123,7 @@ func (h *Handler) ListAgentPlaygroundExperiments(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusInternalServerError, "failed to list agent playground experiments")
 		return
 	}
-	resp := make([]AgentPlaygroundExperimentResponse, 0, len(rows))
+	resp := make([]agentPlaygroundExperimentResponse, 0, len(rows))
 	for _, row := range rows {
 		allowed, err := h.agentPlaygroundExperimentUsesOnlyAllowedAgents(r.Context(), row.ID, row.WorkspaceID, row.JudgeAgentID, allowedAgentIDs)
 		if err != nil {
@@ -574,7 +574,7 @@ func (h *Handler) JudgeAgentPlaygroundExperiment(w http.ResponseWriter, r *http.
 		return
 	}
 	actorType, actorID := resolveActor(r, userID)
-	var req SetAgentPlaygroundJudgeRequest
+	var req setAgentPlaygroundJudgeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -1019,8 +1019,8 @@ func latestAssistantMessage(ctx context.Context, queries *db.Queries, chatSessio
 	return "", nil
 }
 
-func agentPlaygroundExperimentRowToResponse(row db.ListAgentPlaygroundExperimentsRow) AgentPlaygroundExperimentResponse {
-	return AgentPlaygroundExperimentResponse{
+func agentPlaygroundExperimentRowToResponse(row db.ListAgentPlaygroundExperimentsRow) agentPlaygroundExperimentResponse {
+	return agentPlaygroundExperimentResponse{
 		ID:               uuidToString(row.ID),
 		WorkspaceID:      uuidToString(row.WorkspaceID),
 		Name:             row.Name,
@@ -1037,8 +1037,8 @@ func agentPlaygroundExperimentRowToResponse(row db.ListAgentPlaygroundExperiment
 	}
 }
 
-func agentPlaygroundExperimentToResponse(experiment db.AgentPlaygroundExperiment, inputCount, agentCount int32) AgentPlaygroundExperimentResponse {
-	return AgentPlaygroundExperimentResponse{
+func agentPlaygroundExperimentToResponse(experiment db.AgentPlaygroundExperiment, inputCount, agentCount int32) agentPlaygroundExperimentResponse {
+	return agentPlaygroundExperimentResponse{
 		ID:               uuidToString(experiment.ID),
 		WorkspaceID:      uuidToString(experiment.WorkspaceID),
 		Name:             experiment.Name,

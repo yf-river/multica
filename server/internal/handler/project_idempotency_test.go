@@ -53,7 +53,7 @@ func TestCreateProject_IdempotentReplayAndConflict(t *testing.T) {
 		t.Fatalf("replay body differs\nfirst:  %s\nreplay: %s", first.Body, replay.Body)
 	}
 
-	var project CreateProjectResponse
+	var project createProjectResponse
 	if err := json.Unmarshal(first.Body.Bytes(), &project); err != nil {
 		t.Fatalf("decode create response: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestCreateProject_ConcurrentReplayCreatesOneProject(t *testing.T) {
 		if response.Code != http.StatusCreated {
 			t.Fatalf("concurrent create = %d %s", response.Code, response.Body.String())
 		}
-		var project CreateProjectResponse
+		var project createProjectResponse
 		if err := json.Unmarshal(response.Body.Bytes(), &project); err != nil {
 			t.Fatalf("decode concurrent response: %v", err)
 		}
@@ -148,7 +148,7 @@ func TestCreateProject_ReplaysBundledResourceResponse(t *testing.T) {
 	if replay.Body.String() != first.Body.String() {
 		t.Fatalf("resource replay body differs\nfirst:  %s\nreplay: %s", first.Body, replay.Body)
 	}
-	var response CreateProjectResponse
+	var response createProjectResponse
 	if err := json.Unmarshal(first.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}

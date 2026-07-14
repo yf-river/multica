@@ -513,7 +513,7 @@ func TestRedisLocalSkillImportStore_PopPendingBatch(t *testing.T) {
 // NewRouter's assignment stays type-safe.
 var (
 	_ LocalSkillListStore   = (*RedisLocalSkillListStore)(nil)
-	_ LocalSkillImportStore = (*RedisLocalSkillImportStore)(nil)
-	_ LocalSkillListStore   = (*InMemoryLocalSkillListStore)(nil)
-	_ LocalSkillImportStore = (*InMemoryLocalSkillImportStore)(nil)
+	_ LocalSkillImportStore = (*redisLocalSkillImportStore)(nil)
+	_ LocalSkillListStore   = (*inMemoryLocalSkillListStore)(nil)
+	_ LocalSkillImportStore = (*inMemoryLocalSkillImportStore)(nil)
 )

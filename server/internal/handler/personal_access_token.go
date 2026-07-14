@@ -38,7 +38,7 @@ type PersonalAccessTokenResponse struct {
 	CreatedAt  string  `json:"created_at"`
 }
 
-type CreatePATResponse struct {
+type createPATResponse struct {
 	PersonalAccessTokenResponse
 	Token string `json:"token"`
 }
@@ -129,7 +129,7 @@ func (h *Handler) CreatePersonalAccessToken(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, CreatePATResponse{
+	writeJSON(w, http.StatusCreated, createPATResponse{
 		PersonalAccessTokenResponse: patToResponse(pat),
 		Token:                       rawToken,
 	})
@@ -164,7 +164,7 @@ func (h *Handler) writePersonalAccessTokenReplay(
 		return
 	}
 	w.Header().Set("Idempotency-Replayed", "true")
-	writeJSON(w, http.StatusCreated, CreatePATResponse{
+	writeJSON(w, http.StatusCreated, createPATResponse{
 		PersonalAccessTokenResponse: patToResponse(pat),
 		Token:                       rawToken,
 	})

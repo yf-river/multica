@@ -110,7 +110,7 @@ func countSkillFiles(t *testing.T, skillID string) int {
 	return count
 }
 
-func assertRuntimeLocalSkillTimeout(t *testing.T, status RuntimeLocalSkillRequestStatus, errMsg string) {
+func assertRuntimeLocalSkillTimeout(t *testing.T, status runtimeLocalSkillRequestStatus, errMsg string) {
 	t.Helper()
 
 	if status != RuntimeLocalSkillTimeout {

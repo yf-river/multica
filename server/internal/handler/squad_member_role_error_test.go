@@ -33,7 +33,7 @@ func TestUpdateSquadMemberRolePreservesDatabaseFailure(t *testing.T) {
 	if createW.Code != http.StatusCreated {
 		t.Fatalf("create squad: expected 201, got %d: %s", createW.Code, createW.Body.String())
 	}
-	var squad SquadResponse
+	var squad squadResponse
 	if err := json.Unmarshal(createW.Body.Bytes(), &squad); err != nil {
 		t.Fatalf("decode squad: %v", err)
 	}

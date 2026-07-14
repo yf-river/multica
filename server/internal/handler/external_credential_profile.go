@@ -24,7 +24,7 @@ const (
 	externalCredentialProviderGongfeng = "gongfeng"
 )
 
-type ExternalCredentialProfileResponse struct {
+type externalCredentialProfileResponse struct {
 	ID             string         `json:"id"`
 	UserID         string         `json:"user_id"`
 	Scope          string         `json:"scope"`
@@ -72,13 +72,13 @@ type TestExternalCredentialProfileResponse struct {
 	LastError      string         `json:"last_error,omitempty"`
 }
 
-func externalCredentialProfileToResponse(profile db.ExternalCredentialProfile) (ExternalCredentialProfileResponse, error) {
+func externalCredentialProfileToResponse(profile db.ExternalCredentialProfile) (externalCredentialProfileResponse, error) {
 	var capabilities map[string]any
 	if err := json.Unmarshal(profile.Capabilities, &capabilities); err != nil {
-		return ExternalCredentialProfileResponse{}, fmt.Errorf("decode credential capabilities: %w", err)
+		return externalCredentialProfileResponse{}, fmt.Errorf("decode credential capabilities: %w", err)
 	}
 	if capabilities == nil {
-		return ExternalCredentialProfileResponse{}, fmt.Errorf("decode credential capabilities: expected JSON object")
+		return externalCredentialProfileResponse{}, fmt.Errorf("decode credential capabilities: expected JSON object")
 	}
 	binding := map[string]any{
 		"configured": profile.SecretRef != "" || len(profile.EncryptedSecret) > 0,
@@ -94,7 +94,7 @@ func externalCredentialProfileToResponse(profile db.ExternalCredentialProfile) (
 	default:
 		binding["mode"] = "missing"
 	}
-	return ExternalCredentialProfileResponse{
+	return externalCredentialProfileResponse{
 		ID:             uuidToString(profile.ID),
 		UserID:         uuidToString(profile.UserID),
 		Scope:          "account",
@@ -137,7 +137,7 @@ func (h *Handler) ListExternalCredentialProfiles(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusInternalServerError, "failed to list credential profiles")
 		return
 	}
-	resp := make([]ExternalCredentialProfileResponse, len(rows))
+	resp := make([]externalCredentialProfileResponse, len(rows))
 	for i, row := range rows {
 		resp[i], err = externalCredentialProfileToResponse(row)
 		if err != nil {

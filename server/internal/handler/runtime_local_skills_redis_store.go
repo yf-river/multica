@@ -269,19 +269,19 @@ func (s *RedisLocalSkillListStore) Fail(ctx context.Context, id string, errMsg s
 	return s.persistListRequest(ctx, req)
 }
 
-// RedisLocalSkillImportStore mirrors RedisLocalSkillListStore for import
+// redisLocalSkillImportStore mirrors RedisLocalSkillListStore for import
 // requests. Kept as a separate type (rather than a generic) because the
 // request shape carries import-specific fields (skill_key, optional rename,
 // creator id) and Go generics don't buy us much for two concrete impls.
-type RedisLocalSkillImportStore struct {
+type redisLocalSkillImportStore struct {
 	rdb *redis.Client
 }
 
-func NewRedisLocalSkillImportStore(rdb *redis.Client) *RedisLocalSkillImportStore {
-	return &RedisLocalSkillImportStore{rdb: rdb}
+func NewRedisLocalSkillImportStore(rdb *redis.Client) *redisLocalSkillImportStore {
+	return &redisLocalSkillImportStore{rdb: rdb}
 }
 
-func (s *RedisLocalSkillImportStore) Create(ctx context.Context, input LocalSkillImportRequestInput) (*RuntimeLocalSkillImportRequest, error) {
+func (s *redisLocalSkillImportStore) Create(ctx context.Context, input LocalSkillImportRequestInput) (*RuntimeLocalSkillImportRequest, error) {
 	now := time.Now()
 	req := &RuntimeLocalSkillImportRequest{
 		runtimeLocalSkillRequestState: runtimeLocalSkillRequestState{
@@ -328,11 +328,11 @@ func (s *RedisLocalSkillImportStore) Create(ctx context.Context, input LocalSkil
 	return req, nil
 }
 
-func (s *RedisLocalSkillImportStore) Get(ctx context.Context, id string) (*RuntimeLocalSkillImportRequest, error) {
+func (s *redisLocalSkillImportStore) Get(ctx context.Context, id string) (*RuntimeLocalSkillImportRequest, error) {
 	return s.loadImportRequest(ctx, id)
 }
 
-func (s *RedisLocalSkillImportStore) loadImportRequest(ctx context.Context, id string) (*RuntimeLocalSkillImportRequest, error) {
+func (s *redisLocalSkillImportStore) loadImportRequest(ctx context.Context, id string) (*RuntimeLocalSkillImportRequest, error) {
 	raw, err := s.rdb.Get(ctx, localSkillImportKey(id)).Bytes()
 	if errors.Is(err, redis.Nil) {
 		return nil, nil
@@ -353,7 +353,7 @@ func (s *RedisLocalSkillImportStore) loadImportRequest(ctx context.Context, id s
 	return req, nil
 }
 
-func (s *RedisLocalSkillImportStore) persistImportRequest(ctx context.Context, req *RuntimeLocalSkillImportRequest) error {
+func (s *redisLocalSkillImportStore) persistImportRequest(ctx context.Context, req *RuntimeLocalSkillImportRequest) error {
 	data, err := s.marshalImport(req)
 	if err != nil {
 		return err
@@ -375,7 +375,7 @@ type redisImportEnvelope struct {
 	RunStartedAt *time.Time                      `json:"s"`
 }
 
-func (s *RedisLocalSkillImportStore) marshalImport(req *RuntimeLocalSkillImportRequest) ([]byte, error) {
+func (s *redisLocalSkillImportStore) marshalImport(req *RuntimeLocalSkillImportRequest) ([]byte, error) {
 	env := redisImportEnvelope{
 		Public:       req,
 		CreatorID:    req.CreatorID,
@@ -389,7 +389,7 @@ func (s *RedisLocalSkillImportStore) marshalImport(req *RuntimeLocalSkillImportR
 	return data, nil
 }
 
-func (s *RedisLocalSkillImportStore) unmarshalImport(raw []byte) (*RuntimeLocalSkillImportRequest, error) {
+func (s *redisLocalSkillImportStore) unmarshalImport(raw []byte) (*RuntimeLocalSkillImportRequest, error) {
 	var env redisImportEnvelope
 	if err := json.Unmarshal(raw, &env); err != nil {
 		return nil, fmt.Errorf("decode import request: %w", err)
@@ -405,7 +405,7 @@ func (s *RedisLocalSkillImportStore) unmarshalImport(raw []byte) (*RuntimeLocalS
 
 // HasPending mirrors RedisLocalSkillListStore.HasPending — cheap ZCARD probe
 // for hot-path gating.
-func (s *RedisLocalSkillImportStore) HasPending(ctx context.Context, runtimeID string) (bool, error) {
+func (s *redisLocalSkillImportStore) HasPending(ctx context.Context, runtimeID string) (bool, error) {
 	cnt, err := s.rdb.ZCard(ctx, localSkillImportPendingKey(runtimeID)).Result()
 	if err != nil {
 		return false, fmt.Errorf("zcard pending: %w", err)
@@ -413,7 +413,7 @@ func (s *RedisLocalSkillImportStore) HasPending(ctx context.Context, runtimeID s
 	return cnt > 0, nil
 }
 
-func (s *RedisLocalSkillImportStore) PopPendingBatch(ctx context.Context, runtimeID string, limit int) ([]*RuntimeLocalSkillImportRequest, error) {
+func (s *redisLocalSkillImportStore) PopPendingBatch(ctx context.Context, runtimeID string, limit int) ([]*RuntimeLocalSkillImportRequest, error) {
 	pendingKey := localSkillImportPendingKey(runtimeID)
 
 	// Fetch up to limit candidate IDs from the sorted set.
@@ -467,7 +467,7 @@ func (s *RedisLocalSkillImportStore) PopPendingBatch(ctx context.Context, runtim
 	return result, nil
 }
 
-func (s *RedisLocalSkillImportStore) Complete(ctx context.Context, id string, skill SkillResponse) error {
+func (s *redisLocalSkillImportStore) Complete(ctx context.Context, id string, skill SkillResponse) error {
 	req, err := s.loadImportRequest(ctx, id)
 	if err != nil {
 		return err
@@ -481,7 +481,7 @@ func (s *RedisLocalSkillImportStore) Complete(ctx context.Context, id string, sk
 	return s.persistImportRequest(ctx, req)
 }
 
-func (s *RedisLocalSkillImportStore) Conflict(ctx context.Context, id string, info LocalSkillImportConflict) error {
+func (s *redisLocalSkillImportStore) Conflict(ctx context.Context, id string, info LocalSkillImportConflict) error {
 	req, err := s.loadImportRequest(ctx, id)
 	if err != nil {
 		return err
@@ -496,7 +496,7 @@ func (s *RedisLocalSkillImportStore) Conflict(ctx context.Context, id string, in
 	return s.persistImportRequest(ctx, req)
 }
 
-func (s *RedisLocalSkillImportStore) Fail(ctx context.Context, id string, errMsg string) error {
+func (s *redisLocalSkillImportStore) Fail(ctx context.Context, id string, errMsg string) error {
 	req, err := s.loadImportRequest(ctx, id)
 	if err != nil {
 		return err

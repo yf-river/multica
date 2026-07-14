@@ -148,7 +148,7 @@ func TestSubscriberAPI(t *testing.T) {
 			t.Fatalf("ListIssueSubscribers: expected 200, got %d: %s", w.Code, w.Body.String())
 		}
 
-		var subscribers []SubscriberResponse
+		var subscribers []subscriberResponse
 		if err := json.NewDecoder(w.Body).Decode(&subscribers); err != nil {
 			t.Fatalf("decode subscribers response: %v", err)
 		}
@@ -318,7 +318,7 @@ func TestSubscriberAPI(t *testing.T) {
 			t.Fatalf("ListIssueSubscribers: expected 200, got %d: %s", w.Code, w.Body.String())
 		}
 
-		var subscribers []SubscriberResponse
+		var subscribers []subscriberResponse
 		if err := json.NewDecoder(w.Body).Decode(&subscribers); err != nil {
 			t.Fatalf("decode subscribers response: %v", err)
 		}

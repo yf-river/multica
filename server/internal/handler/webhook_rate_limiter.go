@@ -8,28 +8,28 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// WebhookRateLimit is a coarse per-token sliding-window limiter.
+// webhookRateLimit is a coarse per-token sliding-window limiter.
 //
 // Defaults: 60 requests per 60s (1 RPS sustained, with bursts up to 60). The
 // goal is "stop a misconfigured or malicious sender from hammering us
 // indefinitely" — not "shape traffic to a precise budget" — so the
 // implementation aims for cheap and good-enough rather than exact.
-type WebhookRateLimit struct {
+type webhookRateLimit struct {
 	Limit  int           // maximum requests per window
 	Window time.Duration // sliding window length
 }
 
-func DefaultWebhookRateLimit() WebhookRateLimit {
-	return WebhookRateLimit{Limit: 60, Window: time.Minute}
+func defaultWebhookRateLimit() webhookRateLimit {
+	return webhookRateLimit{Limit: 60, Window: time.Minute}
 }
 
-// DefaultWebhookIPRateLimit is the per-IP coarse budget applied BEFORE the
+// defaultWebhookIPRateLimit is the per-IP coarse budget applied BEFORE the
 // trigger lookup. Set lower than the per-token budget on purpose: a single
 // IP should rarely sustain more than 30 webhook deliveries / minute across
 // all its tokens, while a malicious IP spraying random tokens hits this
 // gate before it can probe Postgres.
-func DefaultWebhookIPRateLimit() WebhookRateLimit {
-	return WebhookRateLimit{Limit: 30, Window: time.Minute}
+func defaultWebhookIPRateLimit() webhookRateLimit {
+	return webhookRateLimit{Limit: 30, Window: time.Minute}
 }
 
 // WebhookRateLimiter is the contract implemented by both the in-memory and
@@ -48,12 +48,12 @@ type WebhookRateLimiter interface {
 // deployments should use the Redis-backed implementation so rate budgets are
 // shared across pods.
 type memoryWebhookRateLimiter struct {
-	cfg WebhookRateLimit
+	cfg webhookRateLimit
 	mu  sync.Mutex
 	hit map[string][]time.Time
 }
 
-func NewMemoryWebhookRateLimiter(cfg WebhookRateLimit) WebhookRateLimiter {
+func newMemoryWebhookRateLimiter(cfg webhookRateLimit) WebhookRateLimiter {
 	return &memoryWebhookRateLimiter{cfg: cfg, hit: make(map[string][]time.Time)}
 }
 
@@ -127,19 +127,19 @@ return 1
 var webhookLimiterAllowScript = redis.NewScript(webhookLimiterAllowSrc)
 
 type redisWebhookRateLimiter struct {
-	cfg       WebhookRateLimit
+	cfg       webhookRateLimit
 	rdb       *redis.Client
 	keyPrefix string
 }
 
-func NewRedisWebhookRateLimiter(rdb *redis.Client, cfg WebhookRateLimit) WebhookRateLimiter {
-	return &redisWebhookRateLimiter{cfg: cfg, rdb: rdb, keyPrefix: webhookLimiterKeyPrefix}
+func NewRedisWebhookRateLimiter(rdb *redis.Client) WebhookRateLimiter {
+	return &redisWebhookRateLimiter{rdb: rdb, cfg: defaultWebhookRateLimit(), keyPrefix: webhookLimiterKeyPrefix}
 }
 
 // NewRedisWebhookIPRateLimiter is the per-IP variant: same sliding-window
 // Lua script, different key namespace so the two budgets don't interfere.
-func NewRedisWebhookIPRateLimiter(rdb *redis.Client, cfg WebhookRateLimit) WebhookRateLimiter {
-	return &redisWebhookRateLimiter{cfg: cfg, rdb: rdb, keyPrefix: webhookIPLimiterKeyPrefix}
+func NewRedisWebhookIPRateLimiter(rdb *redis.Client) WebhookRateLimiter {
+	return &redisWebhookRateLimiter{rdb: rdb, cfg: defaultWebhookIPRateLimit(), keyPrefix: webhookIPLimiterKeyPrefix}
 }
 
 func (l *redisWebhookRateLimiter) Allow(ctx context.Context, key string) bool {

@@ -34,7 +34,7 @@ func TestCreateSquad_CreatesInitialMembersAtomically(t *testing.T) {
 	if w.Code != http.StatusCreated {
 		t.Fatalf("create = %d %s, want 201", w.Code, w.Body.String())
 	}
-	var resp SquadResponse
+	var resp squadResponse
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}

@@ -104,7 +104,7 @@ func TestAgentCannotMarkGongfengIssueDoneWithoutLinkedMR(t *testing.T) {
 	if w.Code != http.StatusCreated {
 		t.Fatalf("CreateProject: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
-	var project ProjectResponse
+	var project projectResponse
 	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
 		t.Fatalf("decode project: %v", err)
 	}
@@ -660,7 +660,7 @@ func TestCrossProjectChildrenWakeUserCenterParentSquad(t *testing.T) {
 		if w.Code != http.StatusCreated {
 			t.Fatalf("CreateProject %q: expected 201, got %d: %s", title, w.Code, w.Body.String())
 		}
-		var project ProjectResponse
+		var project projectResponse
 		if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
 			t.Fatalf("decode project %q: %v", title, err)
 		}

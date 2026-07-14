@@ -801,7 +801,7 @@ func TestWebhookHandler_RateLimitReturns429(t *testing.T) {
 	trig := createWebhookTriggerViaHandler(t, apID)
 
 	prev := testHandler.WebhookRateLimiter
-	testHandler.WebhookRateLimiter = NewMemoryWebhookRateLimiter(WebhookRateLimit{Limit: 2, Window: 60_000_000_000})
+	testHandler.WebhookRateLimiter = newMemoryWebhookRateLimiter(webhookRateLimit{Limit: 2, Window: 60_000_000_000})
 	t.Cleanup(func() { testHandler.WebhookRateLimiter = prev })
 
 	for i := 0; i < 2; i++ {
@@ -1033,7 +1033,7 @@ func TestWebhookHandler_IPRateLimitReturns429BeforeDBLookup(t *testing.T) {
 	// is empty here, so the bucket is per-connection — exactly the
 	// property the per-IP limiter is meant to provide.
 	prev := testHandler.WebhookIPRateLimiter
-	testHandler.WebhookIPRateLimiter = NewMemoryWebhookRateLimiter(WebhookRateLimit{Limit: 2, Window: 60_000_000_000})
+	testHandler.WebhookIPRateLimiter = newMemoryWebhookRateLimiter(webhookRateLimit{Limit: 2, Window: 60_000_000_000})
 	t.Cleanup(func() { testHandler.WebhookIPRateLimiter = prev })
 
 	post := func(token string) int {
@@ -1064,7 +1064,7 @@ func TestWebhookHandler_IPRateLimitNotBypassedByXFFSpoof(t *testing.T) {
 	// real connection IP — otherwise the per-IP limiter is trivially
 	// bypassable and we're back to one DB index probe per request.
 	prev := testHandler.WebhookIPRateLimiter
-	testHandler.WebhookIPRateLimiter = NewMemoryWebhookRateLimiter(WebhookRateLimit{Limit: 2, Window: 60_000_000_000})
+	testHandler.WebhookIPRateLimiter = newMemoryWebhookRateLimiter(webhookRateLimit{Limit: 2, Window: 60_000_000_000})
 	t.Cleanup(func() { testHandler.WebhookIPRateLimiter = prev })
 
 	post := func(token, xff string) int {

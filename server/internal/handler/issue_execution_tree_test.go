@@ -19,7 +19,7 @@ func TestSummarizeIssueTimelineComputesHumanConfirmationRemainder(t *testing.T) 
 		ID:              "issue-1",
 		WorkStartedAt:   &workStartedAt,
 		WorkCompletedAt: &workCompletedAt,
-	}, []IssueTimelineNodeResponse{
+	}, []issueTimelineNodeResponse{
 		{
 			NodeID:      "task:1",
 			NodeType:    "agent_task",
@@ -53,7 +53,7 @@ func TestSummarizeIssueTimelineComputesHumanConfirmationRemainder(t *testing.T) 
 }
 
 func TestSummarizeIssueTimelineSplitsHumanConfirmationAndChildIssueWait(t *testing.T) {
-	summary := summarizeIssueTimeline(IssueResponse{ID: "issue-1"}, []IssueTimelineNodeResponse{
+	summary := summarizeIssueTimeline(IssueResponse{ID: "issue-1"}, []issueTimelineNodeResponse{
 		{
 			NodeID:      "task:1",
 			NodeType:    "agent_task",
@@ -92,7 +92,7 @@ func TestSummarizeIssueTimelineSplitsHumanConfirmationAndChildIssueWait(t *testi
 }
 
 func TestSummarizeIssueTimelineFallsBackToAgentTaskBoundsWithoutWorkCycle(t *testing.T) {
-	summary := summarizeIssueTimeline(IssueResponse{ID: "issue-1"}, []IssueTimelineNodeResponse{
+	summary := summarizeIssueTimeline(IssueResponse{ID: "issue-1"}, []issueTimelineNodeResponse{
 		{
 			NodeID:      "task:1",
 			NodeType:    "agent_task",
@@ -121,7 +121,7 @@ func TestSummarizeIssueTimelineFallsBackToAgentTaskBoundsWithoutWorkCycle(t *tes
 }
 
 func TestBuildIssueTimelineNodesAddsHumanConfirmationWait(t *testing.T) {
-	root := IssueExecutionNodeResponse{
+	root := issueExecutionNodeResponse{
 		Issue: IssueResponse{ID: "issue-1"},
 		Tasks: []AgentTaskResponse{
 			{
@@ -145,7 +145,7 @@ func TestBuildIssueTimelineNodesAddsHumanConfirmationWait(t *testing.T) {
 				TriggerCommentCreatedAt: "2026-06-09T10:10:00Z",
 			},
 		},
-		ManualComments: []IssueCommentBrief{
+		ManualComments: []issueCommentBriefResponse{
 			{
 				ID:         "comment-1",
 				IssueID:    "issue-1",
@@ -158,7 +158,7 @@ func TestBuildIssueTimelineNodesAddsHumanConfirmationWait(t *testing.T) {
 	}
 
 	nodes := buildIssueTimelineNodes(root)
-	var waitNode IssueTimelineNodeResponse
+	var waitNode issueTimelineNodeResponse
 	for _, node := range nodes {
 		if node.NodeType == "human_confirmation" {
 			waitNode = node
@@ -184,7 +184,7 @@ func TestBuildIssueTimelineNodesAddsHumanConfirmationWait(t *testing.T) {
 			t.Fatalf("human confirmation evidence missing %s: %+v", want, waitNode.EvidenceRefs)
 		}
 	}
-	var taskNode IssueTimelineNodeResponse
+	var taskNode issueTimelineNodeResponse
 	for _, node := range nodes {
 		if node.NodeID == "task:task-2" {
 			taskNode = node
@@ -200,7 +200,7 @@ func TestBuildIssueTimelineNodesAddsHumanConfirmationWait(t *testing.T) {
 }
 
 func TestBuildIssueTimelineNodesAddsPendingHumanConfirmationWait(t *testing.T) {
-	root := IssueExecutionNodeResponse{
+	root := issueExecutionNodeResponse{
 		Issue: IssueResponse{ID: "issue-1"},
 		Tasks: []AgentTaskResponse{
 			{
@@ -216,7 +216,7 @@ func TestBuildIssueTimelineNodesAddsPendingHumanConfirmationWait(t *testing.T) {
 				Agent: &TaskAgentData{Name: "pm-v2 · PM-项目经理"},
 			},
 		},
-		ActivityLogs: []IssueActivityBrief{
+		ActivityLogs: []issueActivityBriefResponse{
 			{
 				ID:        "activity-1",
 				IssueID:   "issue-1",
@@ -236,7 +236,7 @@ func TestBuildIssueTimelineNodesAddsPendingHumanConfirmationWait(t *testing.T) {
 	}
 
 	nodes := buildIssueTimelineNodes(root)
-	var waitNode IssueTimelineNodeResponse
+	var waitNode issueTimelineNodeResponse
 	for _, node := range nodes {
 		if node.NodeType == "human_confirmation" {
 			waitNode = node
@@ -259,7 +259,7 @@ func TestBuildIssueTimelineNodesAddsPendingHumanConfirmationWait(t *testing.T) {
 	if waitNode.Metadata["pending"] != true || waitNode.Metadata["wait_kind"] != "human_confirmation" {
 		t.Fatalf("pending human confirmation metadata = %+v", waitNode.Metadata)
 	}
-	var taskNode IssueTimelineNodeResponse
+	var taskNode issueTimelineNodeResponse
 	for _, node := range nodes {
 		if node.NodeID == "task:task-1" {
 			taskNode = node
@@ -281,7 +281,7 @@ func TestBuildIssueTimelineNodesAddsPendingHumanConfirmationWait(t *testing.T) {
 }
 
 func TestBuildIssueTimelineNodesSkipsMarkdownDividerInPendingHumanConfirmationSummary(t *testing.T) {
-	root := IssueExecutionNodeResponse{
+	root := issueExecutionNodeResponse{
 		Issue: IssueResponse{ID: "issue-1"},
 		Tasks: []AgentTaskResponse{
 			{
@@ -300,8 +300,8 @@ func TestBuildIssueTimelineNodesSkipsMarkdownDividerInPendingHumanConfirmationSu
 	}
 
 	nodes := buildIssueTimelineNodes(root)
-	var taskNode IssueTimelineNodeResponse
-	var waitNode IssueTimelineNodeResponse
+	var taskNode issueTimelineNodeResponse
+	var waitNode issueTimelineNodeResponse
 	for _, node := range nodes {
 		switch node.NodeID {
 		case "task:task-1":
@@ -336,7 +336,7 @@ func TestTimelineTaskSummaryPrefersCompletedStageResultOverTrigger(t *testing.T)
 }
 
 func TestBuildIssueTimelineNodesAssignsQueueTimeToAgentResponsibility(t *testing.T) {
-	root := IssueExecutionNodeResponse{
+	root := issueExecutionNodeResponse{
 		Issue: IssueResponse{ID: "issue-1"},
 		Tasks: []AgentTaskResponse{
 			{
@@ -359,7 +359,7 @@ func TestBuildIssueTimelineNodesAssignsQueueTimeToAgentResponsibility(t *testing
 	}
 
 	nodes := buildIssueTimelineNodes(root)
-	var taskNode IssueTimelineNodeResponse
+	var taskNode issueTimelineNodeResponse
 	for _, node := range nodes {
 		if node.NodeType == "dispatch_wait" {
 			t.Fatalf("dispatch wait should not be emitted after responsibility-window change: %+v", node)
@@ -378,7 +378,7 @@ func TestBuildIssueTimelineNodesAssignsQueueTimeToAgentResponsibility(t *testing
 }
 
 func TestSummarizeIssueTimelineReportsChildIssueRuntimeSeparately(t *testing.T) {
-	root := IssueExecutionNodeResponse{
+	root := issueExecutionNodeResponse{
 		Issue: IssueResponse{ID: "parent-issue"},
 		Tasks: []AgentTaskResponse{
 			{
@@ -398,7 +398,7 @@ func TestSummarizeIssueTimelineReportsChildIssueRuntimeSeparately(t *testing.T) 
 				CreatedAt:   "2026-06-09T10:10:00Z",
 			},
 		},
-		Children: []IssueExecutionNodeResponse{
+		Children: []issueExecutionNodeResponse{
 			{
 				Issue: IssueResponse{
 					ID:        "child-issue",
@@ -411,7 +411,7 @@ func TestSummarizeIssueTimelineReportsChildIssueRuntimeSeparately(t *testing.T) 
 	}
 
 	nodes := buildIssueTimelineNodes(root)
-	var childRef IssueTimelineNodeResponse
+	var childRef issueTimelineNodeResponse
 	for _, node := range nodes {
 		if node.NodeType == "human_confirmation" {
 			t.Fatalf("child issue runtime should be represented by child_issue_ref, not a generic inferred gap: %+v", node)
@@ -445,7 +445,7 @@ func TestSummarizeIssueTimelineUsesExplicitHumanConfirmationNodes(t *testing.T) 
 		ID:              "issue-1",
 		WorkStartedAt:   &workStartedAt,
 		WorkCompletedAt: &workCompletedAt,
-	}, []IssueTimelineNodeResponse{
+	}, []issueTimelineNodeResponse{
 		{
 			NodeID:      "task:1",
 			NodeType:    "agent_task",
@@ -487,7 +487,7 @@ func TestSummarizeIssueTimelineUsesExplicitHumanConfirmationNodes(t *testing.T) 
 }
 
 func TestSummarizeIssueTimelineIgnoresLowLevelFailureForAcceptanceAndTotals(t *testing.T) {
-	summary := summarizeIssueTimeline(IssueResponse{ID: "issue-1"}, []IssueTimelineNodeResponse{
+	summary := summarizeIssueTimeline(IssueResponse{ID: "issue-1"}, []issueTimelineNodeResponse{
 		{
 			NodeID:          "task:1",
 			NodeType:        "agent_task",
@@ -524,7 +524,7 @@ func TestSummarizeIssueTimelineIgnoresLowLevelFailureForAcceptanceAndTotals(t *t
 }
 
 func TestSummarizeIssueTimelineIgnoresRecoveredRuntimeFailureForDoneIssue(t *testing.T) {
-	summary := summarizeIssueTimeline(IssueResponse{ID: "issue-1", Status: "done"}, []IssueTimelineNodeResponse{
+	summary := summarizeIssueTimeline(IssueResponse{ID: "issue-1", Status: "done"}, []issueTimelineNodeResponse{
 		{
 			NodeID:        "task:pm-recovered",
 			NodeType:      "agent_task",
@@ -552,7 +552,7 @@ func TestSummarizeIssueTimelineIgnoresRecoveredRuntimeFailureForDoneIssue(t *tes
 }
 
 func TestSummarizeIssueTimelineUsesDoneIssueStatusOverHistoricalCancelledTask(t *testing.T) {
-	summary := summarizeIssueTimeline(IssueResponse{ID: "issue-1", Status: "done"}, []IssueTimelineNodeResponse{
+	summary := summarizeIssueTimeline(IssueResponse{ID: "issue-1", Status: "done"}, []issueTimelineNodeResponse{
 		{
 			NodeID:      "task:abandoned-implement",
 			NodeType:    "agent_task",
@@ -806,14 +806,14 @@ func TestGetIssueExecutionTreeAggregatesHierarchySOPTraceAndWakeups(t *testing.T
 			t.Fatalf("timeline node type %s missing: %+v", nodeType, nodeTypes)
 		}
 	}
-	var childRef IssueTimelineNodeResponse
+	var childRef issueTimelineNodeResponse
 	for _, node := range resp.TimelineNodes {
 		if node.NodeType == "child_issue_ref" {
 			childRef = node
 			break
 		}
 	}
-	var taskNode IssueTimelineNodeResponse
+	var taskNode issueTimelineNodeResponse
 	for _, node := range resp.TimelineNodes {
 		if node.NodeID == "task:"+taskID {
 			taskNode = node

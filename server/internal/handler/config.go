@@ -9,7 +9,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/analytics"
 )
 
-type AppConfig struct {
+type appConfig struct {
 	CdnDomain string `json:"cdn_domain"`
 	// CdnSigned tells clients that the CDN domain above serves PRIVATE
 	// content through time-bounded signed URLs (CloudFront signing is
@@ -47,7 +47,7 @@ type AppConfig struct {
 // add fields here that are safe to expose to anonymous callers — never user- or
 // tenant-scoped data.
 func (h *Handler) GetConfig(w http.ResponseWriter, r *http.Request) {
-	config := AppConfig{
+	config := appConfig{
 		AllowSignup:               os.Getenv("ALLOW_SIGNUP") != "false",
 		WorkspaceCreationDisabled: os.Getenv("DISABLE_WORKSPACE_CREATION") == "true",
 	}

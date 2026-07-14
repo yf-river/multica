@@ -140,7 +140,7 @@ func TestExternalCredentialProfileSecretRefRedactedAndListed(t *testing.T) {
 		t.Fatalf("response leaked raw secret_ref: %s", w.Body.String())
 	}
 
-	var created ExternalCredentialProfileResponse
+	var created externalCredentialProfileResponse
 	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
 		t.Fatalf("decode create response: %v", err)
 	}
@@ -167,7 +167,7 @@ func TestExternalCredentialProfileSecretRefRedactedAndListed(t *testing.T) {
 		t.Fatalf("ListExternalCredentialProfiles: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 	var listResp struct {
-		Profiles []ExternalCredentialProfileResponse `json:"profiles"`
+		Profiles []externalCredentialProfileResponse `json:"profiles"`
 	}
 	if err := json.NewDecoder(w.Body).Decode(&listResp); err != nil {
 		t.Fatalf("decode list response: %v", err)
@@ -367,7 +367,7 @@ func TestExternalCredentialProfileSupportsGongfengProvider(t *testing.T) {
 		t.Fatalf("response leaked raw gongfeng secret_ref: %s", w.Body.String())
 	}
 
-	var created ExternalCredentialProfileResponse
+	var created externalCredentialProfileResponse
 	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
 		t.Fatalf("decode create response: %v", err)
 	}
@@ -401,7 +401,7 @@ func TestExternalCredentialProfileVerifyMissingEnvSecretRef(t *testing.T) {
 		t.Fatalf("response leaked raw secret_ref: %s", w.Body.String())
 	}
 
-	var created ExternalCredentialProfileResponse
+	var created externalCredentialProfileResponse
 	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
 		t.Fatalf("decode create response: %v", err)
 	}
@@ -506,7 +506,7 @@ func TestCreateTapdIssueInheritsAccountCredentialProfile(t *testing.T) {
 	if w.Code != http.StatusCreated {
 		t.Fatalf("CreateExternalCredentialProfile: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
-	var profile ExternalCredentialProfileResponse
+	var profile externalCredentialProfileResponse
 	if err := json.NewDecoder(w.Body).Decode(&profile); err != nil {
 		t.Fatalf("decode profile response: %v", err)
 	}
@@ -626,7 +626,7 @@ func TestClaimTaskIncludesTapdSourceContextWithAccountCredential(t *testing.T) {
 	if w.Code != http.StatusCreated {
 		t.Fatalf("CreateExternalCredentialProfile: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
-	var profile ExternalCredentialProfileResponse
+	var profile externalCredentialProfileResponse
 	if err := json.NewDecoder(w.Body).Decode(&profile); err != nil {
 		t.Fatalf("decode profile response: %v", err)
 	}

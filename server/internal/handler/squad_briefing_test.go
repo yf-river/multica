@@ -1231,7 +1231,7 @@ func TestEnsureUserCenterInternalSquadRestoresArchivedSquadWithoutArchivingAgent
 	if w.Code != http.StatusOK {
 		t.Fatalf("list active squads status = %d, body = %s", w.Code, w.Body.String())
 	}
-	var activeList []SquadResponse
+	var activeList []squadResponse
 	if err := json.NewDecoder(w.Body).Decode(&activeList); err != nil {
 		t.Fatalf("decode active squad list: %v", err)
 	}
@@ -1247,7 +1247,7 @@ func TestEnsureUserCenterInternalSquadRestoresArchivedSquadWithoutArchivingAgent
 	if w.Code != http.StatusOK {
 		t.Fatalf("list all squads status = %d, body = %s", w.Code, w.Body.String())
 	}
-	var allList []SquadResponse
+	var allList []squadResponse
 	if err := json.NewDecoder(w.Body).Decode(&allList); err != nil {
 		t.Fatalf("decode all squad list: %v", err)
 	}
@@ -1299,7 +1299,7 @@ func TestEnsureUserCenterInternalSquadRestoresArchivedSquadWithoutArchivingAgent
 	if w.Code != http.StatusOK {
 		t.Fatalf("restore pm squad status = %d, body = %s", w.Code, w.Body.String())
 	}
-	var restored SquadResponse
+	var restored squadResponse
 	if err := json.NewDecoder(w.Body).Decode(&restored); err != nil {
 		t.Fatalf("decode restored squad: %v", err)
 	}

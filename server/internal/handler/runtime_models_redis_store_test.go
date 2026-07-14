@@ -18,7 +18,7 @@ import (
 // across nodes (CI failure for TestRedisModelListStore_RunningTimeout
 // before this fix).
 func TestRedisModelListStore_EnvelopePersistsRunStartedAt(t *testing.T) {
-	store := &RedisModelListStore{}
+	store := &redisModelListStore{}
 	now := time.Now().UTC().Truncate(time.Microsecond) // JSON loses sub-µs precision
 	req := &ModelListRequest{
 		ID:           "id-1",

@@ -21,7 +21,7 @@ import (
 
 // ── Response types ──────────────────────────────────────────────────────────
 
-type SquadResponse struct {
+type squadResponse struct {
 	ID            string                       `json:"id"`
 	WorkspaceID   string                       `json:"workspace_id"`
 	Name          string                       `json:"name"`
@@ -83,7 +83,7 @@ type preparedSquadMember struct {
 }
 
 type InternalSquadTemplateResponse struct {
-	Squad  SquadResponse        `json:"squad"`
+	Squad  squadResponse        `json:"squad"`
 	Agents []InternalSquadAgent `json:"agents"`
 }
 
@@ -537,12 +537,12 @@ func userCenterSOPMCPConfig() []byte {
 
 // ── Converters ──────────────────────────────────────────────────────────────
 
-func squadToResponse(s db.Squad) (SquadResponse, error) {
+func squadToResponse(s db.Squad) (squadResponse, error) {
 	profile, err := decodeSquadSOPProfile(s.SopProfile)
 	if err != nil {
-		return SquadResponse{}, err
+		return squadResponse{}, err
 	}
-	return SquadResponse{
+	return squadResponse{
 		ID:            uuidToString(s.ID),
 		WorkspaceID:   uuidToString(s.WorkspaceID),
 		Name:          s.Name,
@@ -605,7 +605,7 @@ func addSquadMemberPreview(summary *squadMemberSummary, memberType string, membe
 	})
 }
 
-func applySquadMemberSummary(resp *SquadResponse, summary *squadMemberSummary) {
+func applySquadMemberSummary(resp *squadResponse, summary *squadMemberSummary) {
 	if summary == nil {
 		return
 	}
@@ -667,10 +667,10 @@ func loadSquadMemberSummary(ctx context.Context, queries *db.Queries, squadID pg
 	return summary, nil
 }
 
-func squadToResponseWithPreview(ctx context.Context, queries *db.Queries, squad db.Squad) (SquadResponse, error) {
+func squadToResponseWithPreview(ctx context.Context, queries *db.Queries, squad db.Squad) (squadResponse, error) {
 	resp, err := squadToResponse(squad)
 	if err != nil {
-		return SquadResponse{}, err
+		return squadResponse{}, err
 	}
 	summary, err := loadSquadMemberSummary(ctx, queries, squad.ID)
 	if err != nil {
@@ -738,7 +738,7 @@ func (h *Handler) ListSquads(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	resp := make([]SquadResponse, 0, len(squads))
+	resp := make([]squadResponse, 0, len(squads))
 	for _, s := range squads {
 		if !memberCanUseSquad(s, member) {
 			continue
@@ -994,11 +994,11 @@ func (h *Handler) loadSquadCreateReplay(
 	actorID pgtype.UUID,
 	idempotencyKey pgtype.UUID,
 	requestHash string,
-) (SquadResponse, bool, error) {
+) (squadResponse, bool, error) {
 	return loadResourceCreateReplay(
 		ctx, h.Queries, workspaceID, actorID, resourceTypeSquad,
 		idempotencyKey, requestHash,
-		func(response SquadResponse) bool { return response.ID != "" },
+		func(response squadResponse) bool { return response.ID != "" },
 	)
 }
 

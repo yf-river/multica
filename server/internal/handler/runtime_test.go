@@ -236,7 +236,7 @@ func TestGetRuntimeUsage_BucketsByUsageTime(t *testing.T) {
 		t.Fatalf("GetRuntimeUsage: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var resp []RuntimeUsageResponse
+	var resp []runtimeUsageResponse
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
@@ -316,12 +316,12 @@ func TestGetRuntimeUsageByTask_GroupsByTaskAndModel(t *testing.T) {
 		t.Fatalf("GetRuntimeUsageByTask: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var resp []RuntimeUsageByTaskResponse
+	var resp []runtimeUsageByTaskResponse
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
 
-	byModel := map[string]RuntimeUsageByTaskResponse{}
+	byModel := map[string]runtimeUsageByTaskResponse{}
 	for _, row := range resp {
 		if row.TaskID == taskID {
 			byModel[row.Model] = row

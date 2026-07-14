@@ -189,8 +189,8 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		Storage:               store,
 		CFSigner:              cfSigner,
 		Analytics:             analyticsClient,
-		WebhookRateLimiter:    NewMemoryWebhookRateLimiter(DefaultWebhookRateLimit()),
-		WebhookIPRateLimiter:  NewMemoryWebhookRateLimiter(DefaultWebhookIPRateLimit()),
+		WebhookRateLimiter:    newMemoryWebhookRateLimiter(defaultWebhookRateLimit()),
+		WebhookIPRateLimiter:  newMemoryWebhookRateLimiter(defaultWebhookIPRateLimit()),
 		cfg:                   cfg,
 	}
 	taskSvc.IssueStatusChanged = h.notifyParentOfChildDone

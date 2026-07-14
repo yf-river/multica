@@ -480,7 +480,7 @@ func TestGetDelivery_ReturnsFullPayload(t *testing.T) {
 	// raw_body is serialised as a JSON string (escaped); decode the response
 	// and assert against the decoded payload so we don't rely on a brittle
 	// substring search against the escaped form.
-	var detail WebhookDeliveryResponse
+	var detail webhookDeliveryResponse
 	if err := json.Unmarshal(wDetail.Body.Bytes(), &detail); err != nil {
 		t.Fatalf("decode detail: %v body=%s", err, wDetail.Body.String())
 	}
@@ -615,7 +615,7 @@ func TestWebhookHandler_InvalidSignatureCountsAgainstRateLimit(t *testing.T) {
 	setSigningSecretViaHandler(t, apID, trig.ID, testSigningSecret)
 
 	prev := testHandler.WebhookRateLimiter
-	testHandler.WebhookRateLimiter = NewMemoryWebhookRateLimiter(WebhookRateLimit{Limit: 2, Window: 60_000_000_000})
+	testHandler.WebhookRateLimiter = newMemoryWebhookRateLimiter(webhookRateLimit{Limit: 2, Window: 60_000_000_000})
 	t.Cleanup(func() { testHandler.WebhookRateLimiter = prev })
 
 	bad := map[string]string{"X-Hub-Signature-256": "sha256=baad"}

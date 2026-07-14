@@ -75,7 +75,7 @@ func TestLinkPullRequestToIssue_GongfengURL(t *testing.T) {
 		t.Fatalf("LinkPullRequestToIssue: %d %s", w.Code, w.Body.String())
 	}
 	var linked struct {
-		PullRequest GitHubPullRequestResponse `json:"pull_request"`
+		PullRequest gitHubPullRequestResponse `json:"pull_request"`
 	}
 	if err := json.NewDecoder(w.Body).Decode(&linked); err != nil {
 		t.Fatalf("decode link response: %v", err)
@@ -98,7 +98,7 @@ func TestLinkPullRequestToIssue_GongfengURL(t *testing.T) {
 		t.Fatalf("ListPullRequestsForIssue: %d %s", w.Code, w.Body.String())
 	}
 	var listed struct {
-		PullRequests []GitHubPullRequestResponse `json:"pull_requests"`
+		PullRequests []gitHubPullRequestResponse `json:"pull_requests"`
 	}
 	if err := json.NewDecoder(w.Body).Decode(&listed); err != nil {
 		t.Fatalf("decode list response: %v", err)
@@ -194,7 +194,7 @@ func TestLinkPullRequestToIssue_NormalizesGongfengDashMergeRequestURL(t *testing
 		t.Fatalf("ListPullRequestsForIssue: %d %s", w.Code, w.Body.String())
 	}
 	var listed struct {
-		PullRequests []GitHubPullRequestResponse `json:"pull_requests"`
+		PullRequests []gitHubPullRequestResponse `json:"pull_requests"`
 	}
 	if err := json.NewDecoder(w.Body).Decode(&listed); err != nil {
 		t.Fatalf("decode list response: %v", err)
@@ -342,7 +342,7 @@ func TestEnsureGongfengMergeRequestReusesExistingOpenBranchPair(t *testing.T) {
 	defer server.Close()
 	t.Setenv("GONGFENG_API_BASE", server.URL)
 
-	mr, err := ensureGongfengMergeRequest(context.Background(), "secret", CreateMergeRequestRequest{
+	mr, err := ensureGongfengMergeRequest(context.Background(), "secret", createMergeRequestRequest{
 		ProjectPath: "42", SourceBranch: "feature/current", TargetBranch: "main", Title: "Current MR",
 	})
 	if err != nil {
@@ -382,7 +382,7 @@ func TestEnsureGongfengMergeRequestRecoversCreateErrorFromProviderState(t *testi
 	defer server.Close()
 	t.Setenv("GONGFENG_API_BASE", server.URL)
 
-	mr, err := ensureGongfengMergeRequest(context.Background(), "secret", CreateMergeRequestRequest{
+	mr, err := ensureGongfengMergeRequest(context.Background(), "secret", createMergeRequestRequest{
 		ProjectPath: "42", SourceBranch: "feature/recovered", TargetBranch: "main", Title: "Recovered MR",
 	})
 	if err != nil {
@@ -1632,7 +1632,7 @@ func TestWebhook_InstallationCreatedRefreshesUnknownLogin(t *testing.T) {
 		if !ok {
 			t.Fatalf("broadcast payload type: %T", ev.Payload)
 		}
-		inst, ok := payload["installation"].(GitHubInstallationResponse)
+		inst, ok := payload["installation"].(gitHubInstallationResponse)
 		if !ok {
 			t.Fatalf("installation payload type: %T", payload["installation"])
 		}

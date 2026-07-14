@@ -49,7 +49,7 @@ func createCommentTriggerPreviewIssue(t *testing.T, title string, assigneeType, 
 	return issueID
 }
 
-func previewCommentTriggersForTest(t *testing.T, issueID string, body any) CommentTriggerPreviewResponse {
+func previewCommentTriggersForTest(t *testing.T, issueID string, body any) commentTriggerPreviewResponse {
 	t.Helper()
 
 	w := httptest.NewRecorder()
@@ -60,7 +60,7 @@ func previewCommentTriggersForTest(t *testing.T, issueID string, body any) Comme
 		t.Fatalf("PreviewCommentTriggers: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var resp CommentTriggerPreviewResponse
+	var resp commentTriggerPreviewResponse
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode preview response: %v", err)
 	}
@@ -141,7 +141,7 @@ func createCommentTriggerPreviewSquad(t *testing.T, name, leaderID string) strin
 	return squadID
 }
 
-func requirePreviewAgents(t *testing.T, preview CommentTriggerPreviewResponse, wantIDs ...string) {
+func requirePreviewAgents(t *testing.T, preview commentTriggerPreviewResponse, wantIDs ...string) {
 	t.Helper()
 	if len(preview.Agents) != len(wantIDs) {
 		t.Fatalf("preview agents = %+v, want ids %v", preview.Agents, wantIDs)
@@ -166,7 +166,7 @@ func TestPreviewCommentTriggers_MatchesCreateForInheritedParentMention(t *testin
 	kimID := createHandlerTestAgent(t, "Preview Inherit Kim", nil)
 	issueID := createCommentTriggerPreviewIssue(t, "comment trigger preview inherits parent mention", "agent", waltID)
 
-	topLevelPreview := previewCommentTriggersForTest(t, issueID, CommentTriggerPreviewRequest{
+	topLevelPreview := previewCommentTriggersForTest(t, issueID, commentTriggerPreviewRequest{
 		Content: "hello from the root composer",
 	})
 	requirePreviewAgents(t, topLevelPreview, waltID)
@@ -186,7 +186,7 @@ func TestPreviewCommentTriggers_MatchesCreateForInheritedParentMention(t *testin
 		"content":   replyContent,
 		"parent_id": rootID,
 	}
-	replyPreview := previewCommentTriggersForTest(t, issueID, CommentTriggerPreviewRequest{
+	replyPreview := previewCommentTriggersForTest(t, issueID, commentTriggerPreviewRequest{
 		Content:  replyContent,
 		ParentID: &replyParentID,
 	})

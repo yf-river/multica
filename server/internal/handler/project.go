@@ -19,7 +19,7 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-type ProjectResponse struct {
+type projectResponse struct {
 	ID          string  `json:"id"`
 	WorkspaceID string  `json:"workspace_id"`
 	Title       string  `json:"title"`
@@ -40,8 +40,8 @@ type ProjectResponse struct {
 	ResourceCount int64 `json:"resource_count"`
 }
 
-func projectToResponse(p db.Project) ProjectResponse {
-	return ProjectResponse{
+func projectToResponse(p db.Project) projectResponse {
+	return projectResponse{
 		ID:          uuidToString(p.ID),
 		WorkspaceID: uuidToString(p.WorkspaceID),
 		Title:       p.Title,
@@ -105,8 +105,8 @@ type CreateProjectResourceRequestPayload struct {
 	Position     *int32          `json:"position"`
 }
 
-type CreateProjectResponse struct {
-	ProjectResponse
+type createProjectResponse struct {
+	projectResponse
 	Resources []ProjectResourceResponse `json:"resources,omitempty"`
 }
 
@@ -173,7 +173,7 @@ func (h *Handler) ListProjects(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	resp := make([]ProjectResponse, len(projects))
+	resp := make([]projectResponse, len(projects))
 	for i, p := range projects {
 		resp[i] = projectToResponse(p)
 		if s, ok := statsMap[resp[i].ID]; ok {
@@ -461,7 +461,7 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := projectToResponse(project)
 	resp.ResourceCount = int64(len(resourceResp))
-	createResp := CreateProjectResponse{ProjectResponse: resp}
+	createResp := createProjectResponse{projectResponse: resp}
 	if len(resourceResp) > 0 {
 		createResp.Resources = resourceResp
 	}
@@ -503,11 +503,11 @@ func (h *Handler) loadProjectCreateReplay(
 	actorID pgtype.UUID,
 	idempotencyKey pgtype.UUID,
 	requestHash string,
-) (CreateProjectResponse, bool, error) {
+) (createProjectResponse, bool, error) {
 	return loadResourceCreateReplay(
 		ctx, h.Queries, workspaceID, actorID, resourceTypeProject,
 		idempotencyKey, requestHash,
-		func(response CreateProjectResponse) bool { return response.ID != "" },
+		func(response createProjectResponse) bool { return response.ID != "" },
 	)
 }
 
@@ -643,9 +643,9 @@ func (h *Handler) DeleteProject(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// SearchProjectResponse extends ProjectResponse with search metadata.
+// SearchProjectResponse extends projectResponse with search metadata.
 type SearchProjectResponse struct {
-	ProjectResponse
+	projectResponse
 	MatchSource    string  `json:"match_source"`
 	MatchedSnippet *string `json:"matched_snippet,omitempty"`
 }
@@ -882,7 +882,7 @@ func (h *Handler) SearchProjects(w http.ResponseWriter, r *http.Request) {
 		}
 		pr.ResourceCount = resourceCountMap[pr.ID]
 		spr := SearchProjectResponse{
-			ProjectResponse: pr,
+			projectResponse: pr,
 			MatchSource:     row.matchSource,
 		}
 		if row.matchSource == "description" {

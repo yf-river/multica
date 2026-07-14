@@ -9,7 +9,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/auth"
 )
 
-func getConfigForTest(t *testing.T) AppConfig {
+func getConfigForTest(t *testing.T) appConfig {
 	t.Helper()
 
 	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
@@ -19,7 +19,7 @@ func getConfigForTest(t *testing.T) AppConfig {
 		t.Fatalf("GetConfig: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var cfg AppConfig
+	var cfg appConfig
 	if err := json.Unmarshal(w.Body.Bytes(), &cfg); err != nil {
 		t.Fatalf("decode config: %v", err)
 	}
@@ -114,7 +114,7 @@ func TestGetConfigOmitsOfficialCloudDaemonSetup(t *testing.T) {
 		t.Fatalf("GetConfig: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var cfg AppConfig
+	var cfg appConfig
 	if err := json.Unmarshal(w.Body.Bytes(), &cfg); err != nil {
 		t.Fatalf("decode config: %v", err)
 	}

@@ -79,7 +79,7 @@ func writeRuntimeResponseDecodeError(w http.ResponseWriter, r *http.Request, run
 // Runtime Usage
 // ---------------------------------------------------------------------------
 
-type RuntimeUsageResponse struct {
+type runtimeUsageResponse struct {
 	RuntimeID        string `json:"runtime_id"`
 	Date             string `json:"date"`
 	Provider         string `json:"provider"`
@@ -143,7 +143,7 @@ func (h *Handler) GetRuntimeUsage(w http.ResponseWriter, r *http.Request) {
 
 // listRuntimeUsage reads the daily-bucketed trend from task_usage_hourly,
 // applying the viewer's tz to project bucket_hour into local days.
-func (h *Handler) listRuntimeUsage(ctx context.Context, runtimeID pgtype.UUID, tz string, since pgtype.Timestamptz) ([]RuntimeUsageResponse, error) {
+func (h *Handler) listRuntimeUsage(ctx context.Context, runtimeID pgtype.UUID, tz string, since pgtype.Timestamptz) ([]runtimeUsageResponse, error) {
 	resolvedRuntimeID := uuidToString(runtimeID)
 	rows, err := h.Queries.ListRuntimeUsage(ctx, db.ListRuntimeUsageParams{
 		RuntimeID: runtimeID,
@@ -153,9 +153,9 @@ func (h *Handler) listRuntimeUsage(ctx context.Context, runtimeID pgtype.UUID, t
 	if err != nil {
 		return nil, err
 	}
-	resp := make([]RuntimeUsageResponse, len(rows))
+	resp := make([]runtimeUsageResponse, len(rows))
 	for i, row := range rows {
-		resp[i] = RuntimeUsageResponse{
+		resp[i] = runtimeUsageResponse{
 			RuntimeID:        resolvedRuntimeID,
 			Date:             row.Date.Time.Format("2006-01-02"),
 			Provider:         row.Provider,
@@ -223,11 +223,11 @@ type RuntimeUsageByAgentResponse struct {
 	UsageCostResponse
 }
 
-// RuntimeUsageByTaskResponse is one (task, provider, model) row of "Cost by
+// runtimeUsageByTaskResponse is one (task, provider, model) row of "Cost by
 // task". task_usage_hourly intentionally does not carry task_id, so this
 // endpoint reads raw task_usage rows and computes cost before the client folds
 // rows by task_id.
-type RuntimeUsageByTaskResponse struct {
+type runtimeUsageByTaskResponse struct {
 	TaskID           string  `json:"task_id"`
 	IssueID          *string `json:"issue_id"`
 	IssueNumber      int32   `json:"issue_number"`
@@ -314,9 +314,9 @@ func (h *Handler) GetRuntimeUsageByTask(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	resp := make([]RuntimeUsageByTaskResponse, len(rows))
+	resp := make([]runtimeUsageByTaskResponse, len(rows))
 	for i, row := range rows {
-		resp[i] = RuntimeUsageByTaskResponse{
+		resp[i] = runtimeUsageByTaskResponse{
 			TaskID:           uuidToString(row.TaskID),
 			IssueID:          uuidToPtr(row.IssueID),
 			IssueNumber:      row.IssueNumber,
@@ -490,10 +490,10 @@ func (h *Handler) resolveViewingTZ(r *http.Request) string {
 	return "UTC"
 }
 
-// UpdateAgentRuntimeRequest is the JSON body accepted by PATCH /api/runtimes/:id.
+// updateAgentRuntimeRequest is the JSON body accepted by PATCH /api/runtimes/:id.
 // Only fields users may legitimately edit are listed; other runtime metadata
 // (provider, daemon_id, status…) flows in from the daemon and is read-only here.
-type UpdateAgentRuntimeRequest struct {
+type updateAgentRuntimeRequest struct {
 	Scope *string `json:"scope,omitempty"`
 }
 
@@ -512,7 +512,7 @@ func (h *Handler) UpdateAgentRuntime(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req UpdateAgentRuntimeRequest
+	var req updateAgentRuntimeRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return

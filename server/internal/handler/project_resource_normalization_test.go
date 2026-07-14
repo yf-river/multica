@@ -27,7 +27,7 @@ func TestCreateProject_NormalizesBundledResourceType(t *testing.T) {
 		t.Fatalf("create = %d %s", w.Code, w.Body.String())
 	}
 
-	var response CreateProjectResponse
+	var response createProjectResponse
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}

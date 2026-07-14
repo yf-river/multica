@@ -199,7 +199,7 @@ func judgeAgentPlaygroundFixture(t *testing.T, fixture agentPlaygroundRunFixture
 	w := httptest.NewRecorder()
 	var body any
 	if judgeAgentID != "" {
-		body = SetAgentPlaygroundJudgeRequest{JudgeAgentID: judgeAgentID}
+		body = setAgentPlaygroundJudgeRequest{JudgeAgentID: judgeAgentID}
 	}
 	req := newRequest(http.MethodPost, "/api/agent-playground/experiments/"+fixture.experimentID+"/judge?workspace_id="+testWorkspaceID, body)
 	req = withURLParam(req, "id", fixture.experimentID)
@@ -427,7 +427,7 @@ func TestAgentPlaygroundHidesInaccessiblePersonalAgentHistory(t *testing.T) {
 		t.Fatalf("list playground experiments: expected 200, got %d: %s", listW.Code, listW.Body.String())
 	}
 	var list struct {
-		Items []AgentPlaygroundExperimentResponse `json:"items"`
+		Items []agentPlaygroundExperimentResponse `json:"items"`
 	}
 	if err := json.NewDecoder(listW.Body).Decode(&list); err != nil {
 		t.Fatalf("decode playground list: %v", err)
@@ -571,7 +571,7 @@ func TestJudgeAgentPlaygroundRejectsInaccessiblePersonalAgent(t *testing.T) {
 	completeAgentPlaygroundRun(t, fixture)
 	restrictedUserID := createAgentPlaygroundRestrictedMember(t)
 	w := httptest.NewRecorder()
-	req := newRequest(http.MethodPost, "/api/agent-playground/experiments/"+fixture.experimentID+"/judge?workspace_id="+testWorkspaceID, SetAgentPlaygroundJudgeRequest{JudgeAgentID: fixture.agentID})
+	req := newRequest(http.MethodPost, "/api/agent-playground/experiments/"+fixture.experimentID+"/judge?workspace_id="+testWorkspaceID, setAgentPlaygroundJudgeRequest{JudgeAgentID: fixture.agentID})
 	req.Header.Set("X-User-ID", restrictedUserID)
 	req = withURLParam(req, "id", fixture.experimentID)
 	testHandler.JudgeAgentPlaygroundExperiment(w, req)

@@ -41,7 +41,7 @@ func TestCreateProjectResource_ReplaysCommittedResponse(t *testing.T) {
 	}
 }
 
-func createProjectResourceTestProject(t *testing.T, title string) ProjectResponse {
+func createProjectResourceTestProject(t *testing.T, title string) projectResponse {
 	t.Helper()
 
 	w := httptest.NewRecorder()
@@ -52,7 +52,7 @@ func createProjectResourceTestProject(t *testing.T, title string) ProjectRespons
 	if w.Code != http.StatusCreated {
 		t.Fatalf("CreateProject: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
-	var project ProjectResponse
+	var project projectResponse
 	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
 		t.Fatalf("decode CreateProject: %v", err)
 	}
@@ -466,7 +466,7 @@ func TestCreateProjectGongfengResourceRequiresWorkspaceInventory(t *testing.T) {
 		t.Fatalf("CreateProject inline registered project_path: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	var project struct {
-		ProjectResponse
+		projectResponse
 		Resources []ProjectResourceResponse `json:"resources"`
 	}
 	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
@@ -798,7 +798,7 @@ func TestParsedGongfengWorkspaceRepoBranch(t *testing.T) {
 // local_path on different projects must be allowed — Bohan explicitly chose
 // not to add a UNIQUE(daemon_id, local_path) constraint.
 func TestProjectResourceLocalDirectoryLifecycle(t *testing.T) {
-	createProject := func(title string) ProjectResponse {
+	createProject := func(title string) projectResponse {
 		w := httptest.NewRecorder()
 		req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
 			"title": title,
@@ -807,7 +807,7 @@ func TestProjectResourceLocalDirectoryLifecycle(t *testing.T) {
 		if w.Code != http.StatusCreated {
 			t.Fatalf("CreateProject(%s): %d %s", title, w.Code, w.Body.String())
 		}
-		var p ProjectResponse
+		var p projectResponse
 		if err := json.NewDecoder(w.Body).Decode(&p); err != nil {
 			t.Fatalf("decode CreateProject: %v", err)
 		}
@@ -1043,7 +1043,7 @@ func TestProjectResourceCountBreadcrumb(t *testing.T) {
 		if w.Code != http.StatusOK {
 			t.Fatalf("GetProject: %d %s", w.Code, w.Body.String())
 		}
-		var resp ProjectResponse
+		var resp projectResponse
 		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 			t.Fatalf("decode GetProject: %v", err)
 		}
@@ -1075,7 +1075,7 @@ func TestProjectResourceCountBreadcrumb(t *testing.T) {
 		t.Fatalf("ListProjects: %d %s", w.Code, w.Body.String())
 	}
 	var list struct {
-		Projects []ProjectResponse `json:"projects"`
+		Projects []projectResponse `json:"projects"`
 	}
 	if err := json.NewDecoder(w.Body).Decode(&list); err != nil {
 		t.Fatalf("decode ListProjects: %v", err)
@@ -1128,7 +1128,7 @@ func TestProjectResourceCountBreadcrumb(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("UpdateProject: %d %s", w.Code, w.Body.String())
 	}
-	var updated ProjectResponse
+	var updated projectResponse
 	if err := json.NewDecoder(w.Body).Decode(&updated); err != nil {
 		t.Fatalf("decode UpdateProject: %v", err)
 	}
@@ -1201,7 +1201,7 @@ func TestCreateProjectRollsBackOnInvalidResource(t *testing.T) {
 		t.Fatalf("ListProjects: %d %s", w.Code, w.Body.String())
 	}
 	var list struct {
-		Projects []ProjectResponse `json:"projects"`
+		Projects []projectResponse `json:"projects"`
 	}
 	if err := json.NewDecoder(w.Body).Decode(&list); err != nil {
 		t.Fatalf("decode list: %v", err)
@@ -1502,7 +1502,7 @@ func TestCreateProjectBundledLocalDirectoryDaemonConflict(t *testing.T) {
 		t.Fatalf("ListProjects: %d %s", w.Code, w.Body.String())
 	}
 	var list struct {
-		Projects []ProjectResponse `json:"projects"`
+		Projects []projectResponse `json:"projects"`
 	}
 	if err := json.NewDecoder(w.Body).Decode(&list); err != nil {
 		t.Fatalf("decode list: %v", err)

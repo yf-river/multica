@@ -73,7 +73,7 @@ func TestSquadPersonalVisibility_IsCreatorOnlyForPlainMembers(t *testing.T) {
 	if listW.Code != http.StatusOK {
 		t.Fatalf("ListSquads: expected 200, got %d: %s", listW.Code, listW.Body.String())
 	}
-	var squads []SquadResponse
+	var squads []squadResponse
 	if err := json.NewDecoder(listW.Body).Decode(&squads); err != nil {
 		t.Fatalf("decode squads: %v", err)
 	}
@@ -124,7 +124,7 @@ func TestCreateSquad_MemberCanCreatePersonalSquad(t *testing.T) {
 	if w.Code != http.StatusCreated {
 		t.Fatalf("CreateSquad: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
-	var created SquadResponse
+	var created squadResponse
 	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
 		t.Fatalf("decode created squad: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestUpdateSquadValidationFailureDoesNotAddLeaderMembership(t *testing.T) {
 	if createW.Code != http.StatusCreated {
 		t.Fatalf("create squad: %d %s", createW.Code, createW.Body.String())
 	}
-	var squad SquadResponse
+	var squad squadResponse
 	if err := json.NewDecoder(createW.Body).Decode(&squad); err != nil {
 		t.Fatalf("decode squad: %v", err)
 	}

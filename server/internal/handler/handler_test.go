@@ -286,8 +286,8 @@ func TestMain(m *testing.M) {
 	// they're asserting. Tests that exercise rate limiting deliberately
 	// swap in a tight limiter with t.Cleanup; this generous default keeps
 	// the rest of the suite hermetic.
-	testHandler.WebhookRateLimiter = NewMemoryWebhookRateLimiter(WebhookRateLimit{Limit: 1_000_000, Window: time.Minute})
-	testHandler.WebhookIPRateLimiter = NewMemoryWebhookRateLimiter(WebhookRateLimit{Limit: 1_000_000, Window: time.Minute})
+	testHandler.WebhookRateLimiter = newMemoryWebhookRateLimiter(webhookRateLimit{Limit: 1_000_000, Window: time.Minute})
+	testHandler.WebhookIPRateLimiter = newMemoryWebhookRateLimiter(webhookRateLimit{Limit: 1_000_000, Window: time.Minute})
 	testPool = pool
 
 	testUserID, testWorkspaceID, err = setupHandlerTestFixture(ctx, pool)
@@ -1184,7 +1184,7 @@ func TestCreateSubIssueInheritsParentProject(t *testing.T) {
 	if w.Code != http.StatusCreated {
 		t.Fatalf("CreateProject: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
-	var project ProjectResponse
+	var project projectResponse
 	_ = json.NewDecoder(w.Body).Decode(&project)
 	projectID = project.ID
 
@@ -1254,7 +1254,7 @@ func TestCreateSubIssueUsesExplicitProjectOverParentProject(t *testing.T) {
 	if w.Code != http.StatusCreated {
 		t.Fatalf("CreateProject parent: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
-	var parentProject ProjectResponse
+	var parentProject projectResponse
 	_ = json.NewDecoder(w.Body).Decode(&parentProject)
 	parentProjectID = parentProject.ID
 
@@ -1266,7 +1266,7 @@ func TestCreateSubIssueUsesExplicitProjectOverParentProject(t *testing.T) {
 	if w.Code != http.StatusCreated {
 		t.Fatalf("CreateProject child: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
-	var childProject ProjectResponse
+	var childProject projectResponse
 	_ = json.NewDecoder(w.Body).Decode(&childProject)
 	childProjectID = childProject.ID
 
@@ -1336,7 +1336,7 @@ func TestCreateIssueAllowsDuplicateOpenChild(t *testing.T) {
 	if w.Code != http.StatusCreated {
 		t.Fatalf("CreateProject: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
-	var project ProjectResponse
+	var project projectResponse
 	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
 		t.Fatalf("decode project response: %v", err)
 	}
@@ -1476,7 +1476,7 @@ func TestCreateIssueDefaultsToProjectLeadAgentAndEnqueues(t *testing.T) {
 	if w.Code != http.StatusCreated {
 		t.Fatalf("CreateProject: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
-	var project ProjectResponse
+	var project projectResponse
 	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
 		t.Fatalf("decode project response: %v", err)
 	}
@@ -1536,7 +1536,7 @@ func TestProjectLeadMemberBacklogIssueRequiresApprovalBeforeSquadRuns(t *testing
 	if w.Code != http.StatusCreated {
 		t.Fatalf("CreateProject: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
-	var project ProjectResponse
+	var project projectResponse
 	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
 		t.Fatalf("decode project response: %v", err)
 	}
@@ -1627,7 +1627,7 @@ func TestProjectLeadMemberIssueMovedToBacklogRequestsApproval(t *testing.T) {
 	if w.Code != http.StatusCreated {
 		t.Fatalf("CreateProject: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
-	var project ProjectResponse
+	var project projectResponse
 	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
 		t.Fatalf("decode project response: %v", err)
 	}
@@ -1708,7 +1708,7 @@ func TestProjectLeadAgentBacklogIssueCreatesReviewTaskBeforeSquadRuns(t *testing
 	if w.Code != http.StatusCreated {
 		t.Fatalf("CreateProject: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
-	var project ProjectResponse
+	var project projectResponse
 	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
 		t.Fatalf("decode project response: %v", err)
 	}

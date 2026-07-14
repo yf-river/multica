@@ -35,7 +35,7 @@ var githubAPIBase = "https://api.github.com"
 
 // ── Response shapes ─────────────────────────────────────────────────────────
 
-// GitHubInstallationResponse is the JSON shape returned by the installation
+// gitHubInstallationResponse is the JSON shape returned by the installation
 // list endpoint and broadcast on installation-related WS events.
 //
 // InstallationID is admin-only: the numeric GitHub installation_id is the
@@ -44,7 +44,7 @@ var githubAPIBase = "https://api.github.com"
 // it by role; realtime broadcasts always omit it because the WS fanout has
 // no per-recipient view (admins re-query the list endpoint on invalidation
 // to recover the management handle).
-type GitHubInstallationResponse struct {
+type gitHubInstallationResponse struct {
 	ID               string  `json:"id"`
 	WorkspaceID      string  `json:"workspace_id"`
 	InstallationID   *int64  `json:"installation_id,omitempty"`
@@ -54,7 +54,7 @@ type GitHubInstallationResponse struct {
 	CreatedAt        string  `json:"created_at"`
 }
 
-type GitHubPullRequestResponse struct {
+type gitHubPullRequestResponse struct {
 	ID              string  `json:"id"`
 	WorkspaceID     string  `json:"workspace_id"`
 	RepoOwner       string  `json:"repo_owner"`
@@ -112,7 +112,7 @@ type LinkPullRequestRequest struct {
 	CloseIntent    bool    `json:"close_intent"`
 }
 
-type CreateMergeRequestRequest struct {
+type createMergeRequestRequest struct {
 	Provider     string `json:"provider"`
 	ProjectPath  string `json:"project_path"`
 	SourceBranch string `json:"source_branch"`
@@ -129,9 +129,9 @@ type GitHubConnectResponse struct {
 	Configured bool   `json:"configured"`
 }
 
-func githubInstallationToResponse(i db.GithubInstallation) GitHubInstallationResponse {
+func githubInstallationToResponse(i db.GithubInstallation) gitHubInstallationResponse {
 	instID := i.InstallationID
-	return GitHubInstallationResponse{
+	return gitHubInstallationResponse{
 		ID:               uuidToString(i.ID),
 		WorkspaceID:      uuidToString(i.WorkspaceID),
 		InstallationID:   &instID,
@@ -149,14 +149,14 @@ func githubInstallationToResponse(i db.GithubInstallation) GitHubInstallationRes
 // the list endpoint to recover the management handle. The frontend uses
 // these events only to invalidate the installations query, so it does not
 // read `installation_id` off the broadcast.
-func githubInstallationToBroadcast(i db.GithubInstallation) GitHubInstallationResponse {
+func githubInstallationToBroadcast(i db.GithubInstallation) gitHubInstallationResponse {
 	resp := githubInstallationToResponse(i)
 	resp.InstallationID = nil
 	return resp
 }
 
-func githubPullRequestToResponse(p db.GithubPullRequest) GitHubPullRequestResponse {
-	return GitHubPullRequestResponse{
+func githubPullRequestToResponse(p db.GithubPullRequest) gitHubPullRequestResponse {
+	return gitHubPullRequestResponse{
 		ID:              uuidToString(p.ID),
 		WorkspaceID:     uuidToString(p.WorkspaceID),
 		RepoOwner:       p.RepoOwner,
@@ -183,7 +183,7 @@ func githubPullRequestToResponse(p db.GithubPullRequest) GitHubPullRequestRespon
 	}
 }
 
-func issuePullRequestRowToResponse(p db.ListPullRequestsByIssueRow) GitHubPullRequestResponse {
+func issuePullRequestRowToResponse(p db.ListPullRequestsByIssueRow) gitHubPullRequestResponse {
 	resp := githubPullRequestToResponse(p.GithubPullRequest)
 	resp.ChecksConclusion = aggregateChecksConclusion(p.ChecksFailed, p.ChecksPassed, p.ChecksPending, p.ChecksTotal)
 	resp.ChecksPassed = p.ChecksPassed
@@ -528,7 +528,7 @@ func (h *Handler) ListGitHubInstallations(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "failed to list installations")
 		return
 	}
-	out := make([]GitHubInstallationResponse, 0, len(rows))
+	out := make([]gitHubInstallationResponse, 0, len(rows))
 	for _, row := range rows {
 		resp := githubInstallationToResponse(row)
 		if !canManage {
@@ -579,7 +579,7 @@ func (h *Handler) ListPullRequestsForIssue(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "failed to list pull requests")
 		return
 	}
-	out := make([]GitHubPullRequestResponse, 0, len(rows))
+	out := make([]gitHubPullRequestResponse, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, issuePullRequestRowToResponse(row))
 	}
@@ -658,7 +658,7 @@ func (h *Handler) CreateMergeRequestForIssue(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	var req CreateMergeRequestRequest
+	var req createMergeRequestRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -860,7 +860,7 @@ func normalizeGongfengPullRequestURL(rawURL, repoOwner, repoName string, number 
 	return fmt.Sprintf("https://git.code.tencent.com/%s/merge_requests/%d", strings.Trim(projectPath, "/"), number)
 }
 
-func normalizeCreateMergeRequestRequest(w http.ResponseWriter, req CreateMergeRequestRequest) (CreateMergeRequestRequest, bool) {
+func normalizeCreateMergeRequestRequest(w http.ResponseWriter, req createMergeRequestRequest) (createMergeRequestRequest, bool) {
 	req.Provider = strings.ToLower(strings.TrimSpace(req.Provider))
 	if req.Provider == "" {
 		req.Provider = "gongfeng"
@@ -992,7 +992,7 @@ func (mr gongfengMergeRequestResponse) URL() string {
 	return firstNonEmpty(mr.WebURL, mr.HTMLURL)
 }
 
-func createGongfengMergeRequestForProject(ctx context.Context, token, projectID string, req CreateMergeRequestRequest) (gongfengMergeRequestResponse, error) {
+func createGongfengMergeRequestForProject(ctx context.Context, token, projectID string, req createMergeRequestRequest) (gongfengMergeRequestResponse, error) {
 	endpoint := strings.TrimRight(gongfengAPIBase(), "/") + "/projects/" + url.PathEscape(projectID) + "/merge_requests"
 	payload := map[string]any{
 		"source_branch": req.SourceBranch,
@@ -1043,7 +1043,7 @@ func createGongfengMergeRequestForProject(ctx context.Context, token, projectID 
 // mean either "not created" or "created but the response was lost". Matching
 // the current open MR by its repository and branch pair makes a retry recover
 // that remote success instead of creating a second MR.
-func ensureGongfengMergeRequest(ctx context.Context, token string, req CreateMergeRequestRequest) (gongfengMergeRequestResponse, error) {
+func ensureGongfengMergeRequest(ctx context.Context, token string, req createMergeRequestRequest) (gongfengMergeRequestResponse, error) {
 	projectID, err := resolveGongfengProjectAPIID(ctx, token, req.ProjectPath)
 	if err != nil {
 		return gongfengMergeRequestResponse{}, err

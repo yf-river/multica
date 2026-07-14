@@ -585,13 +585,13 @@ type CreateCommentRequest struct {
 	SuppressAgentIDs []string `json:"suppress_agent_ids"`
 }
 
-type CommentTriggerPreviewRequest struct {
+type commentTriggerPreviewRequest struct {
 	Content          string  `json:"content"`
 	ParentID         *string `json:"parent_id"`
 	EditingCommentID *string `json:"editing_comment_id"`
 }
 
-type CommentTriggerPreviewResponse struct {
+type commentTriggerPreviewResponse struct {
 	Agents []CommentTriggerAgentResponse `json:"agents"`
 }
 
@@ -666,7 +666,7 @@ func (h *Handler) PreviewCommentTriggers(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	var req CommentTriggerPreviewRequest
+	var req commentTriggerPreviewRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -718,7 +718,7 @@ func (h *Handler) PreviewCommentTriggers(w http.ResponseWriter, r *http.Request)
 
 	content := req.Content
 	if content == "" {
-		writeJSON(w, http.StatusOK, CommentTriggerPreviewResponse{Agents: []CommentTriggerAgentResponse{}})
+		writeJSON(w, http.StatusOK, commentTriggerPreviewResponse{Agents: []CommentTriggerAgentResponse{}})
 		return
 	}
 
@@ -732,7 +732,7 @@ func (h *Handler) PreviewCommentTriggers(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "failed to compute comment triggers")
 		return
 	}
-	resp := CommentTriggerPreviewResponse{Agents: make([]CommentTriggerAgentResponse, 0, len(triggers))}
+	resp := commentTriggerPreviewResponse{Agents: make([]CommentTriggerAgentResponse, 0, len(triggers))}
 	for _, trigger := range triggers {
 		resp.Agents = append(resp.Agents, commentAgentTriggerToResponse(trigger))
 	}

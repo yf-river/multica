@@ -16,11 +16,11 @@ import (
 
 // ── Response types ──────────────────────────────────────────────────────────
 
-// WebhookDeliveryResponse is the authenticated-API view of webhook_delivery.
+// webhookDeliveryResponse is the authenticated-API view of webhook_delivery.
 // The list endpoint returns these without `RawBody` / `SelectedHeaders`
 // populated; the detail endpoint includes both for debugging. We never echo
 // the signing secret or token through this surface.
-type WebhookDeliveryResponse struct {
+type webhookDeliveryResponse struct {
 	ID                     string  `json:"id"`
 	WorkspaceID            string  `json:"workspace_id"`
 	AutopilotID            string  `json:"autopilot_id"`
@@ -50,7 +50,7 @@ type WebhookDeliveryResponse struct {
 }
 
 func setDeliveryOptionalFields(
-	resp *WebhookDeliveryResponse,
+	resp *webhookDeliveryResponse,
 	responseStatus pgtype.Int4,
 	autopilotRunID pgtype.UUID,
 	replayedFromDeliveryID pgtype.UUID,
@@ -76,8 +76,8 @@ func setDeliveryOptionalFields(
 
 // slimDeliveryToResponse maps the projected list row (no raw_body /
 // selected_headers / response_body) into the wire response shape.
-func slimDeliveryToResponse(d db.ListWebhookDeliveriesByAutopilotRow) WebhookDeliveryResponse {
-	resp := WebhookDeliveryResponse{
+func slimDeliveryToResponse(d db.ListWebhookDeliveriesByAutopilotRow) webhookDeliveryResponse {
+	resp := webhookDeliveryResponse{
 		ID:              uuidToString(d.ID),
 		WorkspaceID:     uuidToString(d.WorkspaceID),
 		AutopilotID:     uuidToString(d.AutopilotID),
@@ -98,8 +98,8 @@ func slimDeliveryToResponse(d db.ListWebhookDeliveriesByAutopilotRow) WebhookDel
 	return resp
 }
 
-func deliveryToResponse(d db.WebhookDelivery, detail bool) WebhookDeliveryResponse {
-	resp := WebhookDeliveryResponse{
+func deliveryToResponse(d db.WebhookDelivery, detail bool) webhookDeliveryResponse {
+	resp := webhookDeliveryResponse{
 		ID:              uuidToString(d.ID),
 		WorkspaceID:     uuidToString(d.WorkspaceID),
 		AutopilotID:     uuidToString(d.AutopilotID),
@@ -161,7 +161,7 @@ func (h *Handler) ListAutopilotDeliveries(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	resp := make([]WebhookDeliveryResponse, len(rows))
+	resp := make([]webhookDeliveryResponse, len(rows))
 	for i, row := range rows {
 		resp[i] = slimDeliveryToResponse(row)
 	}

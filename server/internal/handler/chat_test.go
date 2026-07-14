@@ -197,7 +197,7 @@ func TestUpdateChatSession_RenamesTitle(t *testing.T) {
 		t.Fatalf("UpdateChatSession: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var resp ChatSessionResponse
+	var resp chatSessionResponse
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode update: %v", err)
 	}
@@ -230,7 +230,7 @@ func TestListChatSessionsReturnsCreatedSession(t *testing.T) {
 		t.Fatalf("ListChatSessions: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
 
-	var sessions []ChatSessionResponse
+	var sessions []chatSessionResponse
 	if err := json.Unmarshal(w.Body.Bytes(), &sessions); err != nil {
 		t.Fatalf("decode sessions: %v", err)
 	}
@@ -339,7 +339,7 @@ func TestSendChatMessage_InvalidAttachmentIDs(t *testing.T) {
 	}
 }
 
-func fetchChatMessagesPageForTest(t *testing.T, sessionID string, params url.Values) ChatMessagesPageResponse {
+func fetchChatMessagesPageForTest(t *testing.T, sessionID string, params url.Values) chatMessagesPageResponse {
 	t.Helper()
 	target := "/api/chat/sessions/" + sessionID + "/messages/page"
 	if encoded := params.Encode(); encoded != "" {
@@ -354,7 +354,7 @@ func fetchChatMessagesPageForTest(t *testing.T, sessionID string, params url.Val
 	if w.Code != http.StatusOK {
 		t.Fatalf("ListChatMessagesPage: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
-	var page ChatMessagesPageResponse
+	var page chatMessagesPageResponse
 	if err := json.Unmarshal(w.Body.Bytes(), &page); err != nil {
 		t.Fatalf("decode page messages: %v", err)
 	}

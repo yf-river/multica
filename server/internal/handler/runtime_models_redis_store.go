@@ -39,17 +39,17 @@ const (
 func modelListKey(id string) string               { return modelListKeyPrefix + id }
 func modelListPendingKey(runtimeID string) string { return modelListPendingPrefix + runtimeID }
 
-// RedisModelListStore stores model list requests in Redis so every API node
+// redisModelListStore stores model list requests in Redis so every API node
 // agrees on the same pending / running / terminal state.
-type RedisModelListStore struct {
+type redisModelListStore struct {
 	rdb *redis.Client
 }
 
-func NewRedisModelListStore(rdb *redis.Client) *RedisModelListStore {
-	return &RedisModelListStore{rdb: rdb}
+func NewRedisModelListStore(rdb *redis.Client) *redisModelListStore {
+	return &redisModelListStore{rdb: rdb}
 }
 
-func (s *RedisModelListStore) Create(ctx context.Context, runtimeID, requestID string) (*ModelListRequest, error) {
+func (s *redisModelListStore) Create(ctx context.Context, runtimeID, requestID string) (*ModelListRequest, error) {
 	now := time.Now()
 	req := &ModelListRequest{
 		ID:        requestID,
@@ -88,14 +88,14 @@ func (s *RedisModelListStore) Create(ctx context.Context, runtimeID, requestID s
 	return req, nil
 }
 
-func (s *RedisModelListStore) Get(ctx context.Context, id string) (*ModelListRequest, error) {
+func (s *redisModelListStore) Get(ctx context.Context, id string) (*ModelListRequest, error) {
 	return s.loadRequest(ctx, id)
 }
 
 // loadRequest fetches a single record, applies timeout transitions if the
 // stored state has aged past the threshold, and persists the transition so
 // sibling nodes observe the same terminal state.
-func (s *RedisModelListStore) loadRequest(ctx context.Context, id string) (*ModelListRequest, error) {
+func (s *redisModelListStore) loadRequest(ctx context.Context, id string) (*ModelListRequest, error) {
 	raw, err := s.rdb.Get(ctx, modelListKey(id)).Bytes()
 	if errors.Is(err, redis.Nil) {
 		return nil, nil
@@ -119,7 +119,7 @@ func (s *RedisModelListStore) loadRequest(ctx context.Context, id string) (*Mode
 	return req, nil
 }
 
-func (s *RedisModelListStore) persistRequest(ctx context.Context, req *ModelListRequest) error {
+func (s *redisModelListStore) persistRequest(ctx context.Context, req *ModelListRequest) error {
 	data, err := s.marshalRequest(req)
 	if err != nil {
 		return err
@@ -142,7 +142,7 @@ type redisModelListEnvelope struct {
 	RunStartedAt *time.Time        `json:"s,omitempty"`
 }
 
-func (s *RedisModelListStore) marshalRequest(req *ModelListRequest) ([]byte, error) {
+func (s *redisModelListStore) marshalRequest(req *ModelListRequest) ([]byte, error) {
 	env := redisModelListEnvelope{Public: req, RunStartedAt: req.RunStartedAt}
 	data, err := json.Marshal(env)
 	if err != nil {
@@ -151,7 +151,7 @@ func (s *RedisModelListStore) marshalRequest(req *ModelListRequest) ([]byte, err
 	return data, nil
 }
 
-func (s *RedisModelListStore) unmarshalRequest(raw []byte) (*ModelListRequest, error) {
+func (s *redisModelListStore) unmarshalRequest(raw []byte) (*ModelListRequest, error) {
 	var env redisModelListEnvelope
 	if err := json.Unmarshal(raw, &env); err != nil {
 		return nil, fmt.Errorf("decode model list request: %w", err)
@@ -165,7 +165,7 @@ func (s *RedisModelListStore) unmarshalRequest(raw []byte) (*ModelListRequest, e
 
 // HasPending is a cheap read-only ZCARD probe used by the heartbeat hot path
 // to decide whether to invoke the side-effecting PopPending.
-func (s *RedisModelListStore) HasPending(ctx context.Context, runtimeID string) (bool, error) {
+func (s *redisModelListStore) HasPending(ctx context.Context, runtimeID string) (bool, error) {
 	cnt, err := s.rdb.ZCard(ctx, modelListPendingKey(runtimeID)).Result()
 	if err != nil {
 		return false, fmt.Errorf("zcard pending: %w", err)
@@ -173,7 +173,7 @@ func (s *RedisModelListStore) HasPending(ctx context.Context, runtimeID string) 
 	return cnt > 0, nil
 }
 
-func (s *RedisModelListStore) PopPending(ctx context.Context, runtimeID string) (*ModelListRequest, error) {
+func (s *redisModelListStore) PopPending(ctx context.Context, runtimeID string) (*ModelListRequest, error) {
 	pendingKey := modelListPendingKey(runtimeID)
 
 	for attempt := 0; attempt < modelListRedisPopMaxRetries; attempt++ {
@@ -229,7 +229,7 @@ func (s *RedisModelListStore) PopPending(ctx context.Context, runtimeID string) 
 	return nil, nil
 }
 
-func (s *RedisModelListStore) Complete(ctx context.Context, id string, models []ModelEntry, supported bool) error {
+func (s *redisModelListStore) Complete(ctx context.Context, id string, models []ModelEntry, supported bool) error {
 	req, err := s.loadRequest(ctx, id)
 	if err != nil {
 		return err
@@ -244,7 +244,7 @@ func (s *RedisModelListStore) Complete(ctx context.Context, id string, models []
 	return s.persistRequest(ctx, req)
 }
 
-func (s *RedisModelListStore) Fail(ctx context.Context, id string, errMsg string) error {
+func (s *redisModelListStore) Fail(ctx context.Context, id string, errMsg string) error {
 	req, err := s.loadRequest(ctx, id)
 	if err != nil {
 		return err

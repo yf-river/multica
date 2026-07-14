@@ -33,7 +33,7 @@ const (
 	feedbackBodyLimit = 64 * 1024
 )
 
-type CreateFeedbackRequest struct {
+type createFeedbackRequest struct {
 	Message string `json:"message"`
 	URL     string `json:"url"`
 	// Kind is the current feedback category and is validated before persistence.
@@ -57,7 +57,7 @@ func (h *Handler) CreateFeedback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	r.Body = http.MaxBytesReader(w, r.Body, feedbackBodyLimit)
-	var req CreateFeedbackRequest
+	var req createFeedbackRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return

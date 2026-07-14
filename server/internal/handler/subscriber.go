@@ -10,8 +10,8 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// SubscriberResponse is the JSON shape returned for each issue subscriber.
-type SubscriberResponse struct {
+// subscriberResponse is the JSON shape returned for each issue subscriber.
+type subscriberResponse struct {
 	IssueID   string `json:"issue_id"`
 	UserType  string `json:"user_type"`
 	UserID    string `json:"user_id"`
@@ -26,8 +26,8 @@ type subscriberTarget struct {
 	userID     string
 }
 
-func subscriberToResponse(s db.IssueSubscriber) SubscriberResponse {
-	return SubscriberResponse{
+func subscriberToResponse(s db.IssueSubscriber) subscriberResponse {
+	return subscriberResponse{
 		IssueID:   uuidToString(s.IssueID),
 		UserType:  s.UserType,
 		UserID:    uuidToString(s.UserID),
@@ -86,7 +86,7 @@ func (h *Handler) ListIssueSubscribers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := make([]SubscriberResponse, len(subscribers))
+	resp := make([]subscriberResponse, len(subscribers))
 	for i, s := range subscribers {
 		resp[i] = subscriberToResponse(s)
 	}
