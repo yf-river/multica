@@ -142,13 +142,6 @@ func NewRedisWebhookIPRateLimiter(rdb *redis.Client, cfg WebhookRateLimit) Webho
 	return &redisWebhookRateLimiter{cfg: cfg, rdb: rdb, keyPrefix: webhookIPLimiterKeyPrefix}
 }
 
-// NewMemoryWebhookIPRateLimiter is the in-memory per-IP variant used when no
-// Redis client is configured. Same per-key semantics as the per-token memory
-// limiter — single-node only.
-func NewMemoryWebhookIPRateLimiter(cfg WebhookRateLimit) WebhookRateLimiter {
-	return NewMemoryWebhookRateLimiter(cfg)
-}
-
 func (l *redisWebhookRateLimiter) Allow(ctx context.Context, key string) bool {
 	if l.cfg.Limit <= 0 || l.rdb == nil {
 		return true

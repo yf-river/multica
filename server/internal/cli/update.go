@@ -154,10 +154,6 @@ func fetchGitHubRelease(url string) (*GitHubRelease, error) {
 	return &release, nil
 }
 
-func fetchReleaseByTag(tag string) (*GitHubRelease, error) {
-	return fetchGitHubRelease("https://api.github.com/repos/multica-ai/multica/releases/tags/" + tag)
-}
-
 // FetchLatestRelease fetches the latest release tag from the multica GitHub repo.
 func FetchLatestRelease() (*GitHubRelease, error) {
 	return fetchGitHubRelease("https://api.github.com/repos/multica-ai/multica/releases/latest")
@@ -256,7 +252,7 @@ func UpdateViaDownloadWithTimeout(targetVersion string, downloadTimeout time.Dur
 	}
 
 	tag := normalizeReleaseTag(targetVersion)
-	release, err := fetchReleaseByTag(tag)
+	release, err := fetchGitHubRelease("https://api.github.com/repos/multica-ai/multica/releases/tags/" + tag)
 	if err != nil {
 		return "", fmt.Errorf("fetch release metadata: %w", err)
 	}

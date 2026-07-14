@@ -10,7 +10,7 @@ func TestDualWriteBroadcasterFansOutLocallyBeforePublishing(t *testing.T) {
 	hub := NewHub()
 	client := attachRealtimeTestClient(hub, ScopeWorkspace, "workspace-1")
 	publisher := &localFirstPublisher{t: t, client: client}
-	broadcaster := newDualWriteBroadcaster(hub, publisher)
+	broadcaster := NewDualWriteBroadcaster(hub, publisher)
 	message := []byte(`{"type":"issue:updated"}`)
 
 	broadcaster.BroadcastToScope(ScopeWorkspace, "workspace-1", message)
@@ -47,7 +47,7 @@ func TestDualWriteBroadcasterUserExclusionMatchesRelayEnvelope(t *testing.T) {
 	delivered := attachRealtimeTestClient(hub, ScopeUser, "user-1")
 	delivered.workspaceID = "workspace-2"
 	publisher := &localFirstPublisher{t: t, client: delivered}
-	broadcaster := newDualWriteBroadcaster(hub, publisher)
+	broadcaster := NewDualWriteBroadcaster(hub, publisher)
 	message := []byte(`{"type":"member:added"}`)
 
 	broadcaster.BroadcastToUser("user-1", "workspace-1", message)

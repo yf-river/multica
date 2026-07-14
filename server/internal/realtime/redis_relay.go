@@ -162,10 +162,6 @@ type RelayPublisher interface {
 }
 
 func NewDualWriteBroadcaster(local *Hub, relay RelayPublisher) *DualWriteBroadcaster {
-	return newDualWriteBroadcaster(local, relay)
-}
-
-func newDualWriteBroadcaster(local *Hub, relay RelayPublisher) *DualWriteBroadcaster {
 	return &DualWriteBroadcaster{local: local, relay: relay}
 }
 
