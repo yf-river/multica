@@ -14,11 +14,11 @@ export interface UseCommentTriggerPreviewResult {
   agents: CommentTriggerPreviewAgent[];
 }
 
-export function isNoteCommentDraft(content: string): boolean {
+function isNoteCommentDraft(content: string): boolean {
   return NOTE_COMMAND_RE.test(content.replace(/^[ \t\r\n]+/, ""));
 }
 
-export function commentTriggerPreviewSignature(content: string): string {
+function commentTriggerPreviewSignature(content: string): string {
   if (!content.trim() || isNoteCommentDraft(content)) return "empty";
 
   const seen = new Set<string>();
