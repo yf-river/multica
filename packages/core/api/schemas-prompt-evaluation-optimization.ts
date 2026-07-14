@@ -28,10 +28,7 @@ const PromptEvaluationSkillPatchSchema = z.object({
 
 export const PromptEvaluationOptimizationCandidateSchema = z.object({
   id: NonEmptyStringSchema,
-  workspace_id: NonEmptyStringSchema,
-  asset_id: NonEmptyStringSchema,
   run_id: NonEmptyStringSchema,
-  prompt_id: NonEmptyStringSchema,
   candidate_name: z.string(),
   rationale: z.string().default(""),
   failed_case_count: z.number().default(0),
@@ -39,10 +36,7 @@ export const PromptEvaluationOptimizationCandidateSchema = z.object({
   metrics: z.record(z.string(), z.unknown()).default({}),
   skill_patch: PromptEvaluationSkillPatchSchema.nullable().optional().transform((v) => v ?? null),
   status: z.enum(["待确认", "已发布", "已拒绝"]).default("待确认"),
-  created_by: z.string().nullable().optional().transform((v) => v ?? null),
-  created_at: z.string().default(""),
-  updated_at: z.string().default(""),
-}).loose();
+});
 
 export const PromptEvaluationOptimizationCandidateListResponseSchema = z.object({
   items: z.array(PromptEvaluationOptimizationCandidateSchema).default([]),

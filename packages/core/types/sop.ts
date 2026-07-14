@@ -47,14 +47,12 @@ export interface ObservabilitySummary {
 
 interface ObservabilityUsageBreakdown {
   "名称": string;
-  provider: string;
   model: string;
   runtime: string;
   "输入 token": number;
   "输出 token": number;
   "缓存读 token": number;
   "缓存写 token": number;
-  "任务数": number;
   "预估成本": number;
   "价格已知": boolean;
 }

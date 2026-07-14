@@ -744,6 +744,7 @@ describe("ApiClient", () => {
       expect(value).not.toHaveProperty("token");
       expect(value).not.toHaveProperty("encrypted_secret");
     }
+    expect(tested).toEqual({ status: "verified" });
   });
 
   it("retries credential-profile unknown outcomes without changing request identity", async () => {

@@ -61,10 +61,11 @@ const dataset = {
 
 const version = {
   id: "version-1",
-  dataset_asset_id: dataset.id,
   version: 1,
   version_label: "稳定快照",
   row_count: 3,
+  row_fingerprint: "sha256:current",
+  created_at: "2026-07-15T00:00:00Z",
 } as PromptEvaluationDatasetVersion;
 
 const createdDetail = {

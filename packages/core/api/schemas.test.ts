@@ -205,7 +205,10 @@ describe("SquadListSchema member preview drift", () => {
     ]);
     expect(parsed[0]?.member_count).toBe(2);
     expect(parsed[0]?.member_preview).toHaveLength(2);
-    expect(parsed[0]?.member_preview?.[0]?.role).toBe("leader");
+    expect(parsed[0]?.member_preview?.[0]).toEqual({
+      member_type: "agent",
+      member_id: "agent-1",
+    });
   });
 });
 

@@ -156,15 +156,6 @@ export class ApiTransport {
     this.options.onUnauthorized?.();
   }
 
-  protected async parseErrorMessage(res: Response, fallback: string): Promise<string> {
-    try {
-      const data = (await res.json()) as { error?: string };
-      return typeof data.error === "string" && data.error ? data.error : fallback;
-    } catch {
-      return fallback;
-    }
-  }
-
   private async parseErrorBody(res: Response, fallback: string): Promise<{ message: string; body: unknown }> {
     try {
       const data = (await res.json()) as { error?: string };

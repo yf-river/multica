@@ -8,7 +8,6 @@ export type ExternalCredentialStatus =
 
 export interface ExternalCredentialSecretBinding {
   configured: boolean;
-  redacted: boolean;
   mode: "secret_ref" | "encrypted_secret" | "missing" | (string & {});
   hint?: string;
 }
@@ -46,8 +45,6 @@ export interface TestExternalCredentialProfileRequest {
 }
 
 export interface TestExternalCredentialProfileResponse {
-  provider: ExternalCredentialProvider | (string & {});
-  secret_binding: ExternalCredentialSecretBinding;
   status: ExternalCredentialStatus | (string & {});
   last_error?: string;
 }

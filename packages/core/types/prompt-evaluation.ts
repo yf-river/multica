@@ -26,14 +26,10 @@ export interface PromptEvaluationAsset {
 
 export interface PromptEvaluationDatasetVersion {
   id: string;
-  workspace_id: string;
-  dataset_asset_id: string;
   version: number;
   version_label: string;
   row_count: number;
   row_fingerprint: string;
-  metadata: Record<string, unknown>;
-  created_by: string | null;
   created_at: string;
 }
 
@@ -219,10 +215,7 @@ export interface PromptEvaluationDatasetFromTracesResponse {
 
 export interface PromptEvaluationOptimizationCandidate {
   id: string;
-  workspace_id: string;
-  asset_id: string;
   run_id: string;
-  prompt_id: string;
   candidate_name: string;
   rationale: string;
   failed_case_count: number;
@@ -230,9 +223,6 @@ export interface PromptEvaluationOptimizationCandidate {
   metrics: Record<string, unknown>;
   skill_patch?: PromptEvaluationSkillPatch | null;
   status: PromptEvaluationOptimizationCandidateStatus;
-  created_by: string | null;
-  created_at: string;
-  updated_at: string;
 }
 
 export interface PromptEvaluationSkillPatch {

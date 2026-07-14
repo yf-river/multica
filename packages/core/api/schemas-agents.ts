@@ -74,8 +74,7 @@ export const EMPTY_AGENT_ENV_RESPONSE: AgentEnvResponse = { agent_id: "", custom
 const SquadMemberPreviewSchema = z.object({
   member_type: z.string(),
   member_id: z.string(),
-  role: z.string(),
-}).loose();
+});
 
 export const SquadSchema = z.object({
   id: z.string(),
@@ -147,17 +146,15 @@ export const IssueSOPRunsResponseSchema = z.object({
 
 const ObservabilityUsageBreakdownSchema = z.object({
   "名称": z.string().default(""),
-  provider: z.string().default(""),
   model: z.string().default(""),
   runtime: z.string().default(""),
   "输入 token": z.number().default(0),
   "输出 token": z.number().default(0),
   "缓存读 token": z.number().default(0),
   "缓存写 token": z.number().default(0),
-  "任务数": z.number().default(0),
   "预估成本": z.number().default(0),
   "价格已知": z.boolean().default(false),
-}).loose();
+});
 
 export const ObservabilitySummarySchema = z.object({
   指标: z.record(z.string(), z.unknown()).default({}),

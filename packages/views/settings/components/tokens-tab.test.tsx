@@ -19,7 +19,6 @@ const mockProfiles = vi.hoisted(() => ({
       name: "gongfeng-default",
       secret_binding: {
         configured: true,
-        redacted: true,
         mode: "encrypted_secret",
         hint: "GONGFENG_PRIVATE_TOKEN",
       },
@@ -79,7 +78,6 @@ describe("TokensTab", () => {
         name: "gongfeng-default",
         secret_binding: {
           configured: true,
-          redacted: true,
           mode: "encrypted_secret",
           hint: "GONGFENG_PRIVATE_TOKEN",
         },
@@ -91,7 +89,6 @@ describe("TokensTab", () => {
         name: "tapd-default",
         secret_binding: {
           configured: true,
-          redacted: true,
           mode: "encrypted_secret",
           hint: "TAPD_ACCESS_TOKEN",
         },
@@ -195,7 +192,6 @@ describe("TokensTab", () => {
         name: "gongfeng-default",
         secret_binding: {
           configured: true,
-          redacted: true,
           mode: "encrypted_secret",
           hint: "GONGFENG_PRIVATE_TOKEN",
         },

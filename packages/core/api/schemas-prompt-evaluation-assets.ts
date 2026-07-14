@@ -59,16 +59,12 @@ export const PromptEvaluationAssetListResponseSchema = z.object({
 
 export const PromptEvaluationDatasetVersionSchema = z.object({
   id: NonEmptyStringSchema,
-  workspace_id: NonEmptyStringSchema,
-  dataset_asset_id: NonEmptyStringSchema,
   version: z.number().default(0),
   version_label: z.string().default(""),
   row_count: z.number().default(0),
   row_fingerprint: z.string().default(""),
-  metadata: z.record(z.string(), z.unknown()).default({}),
-  created_by: z.string().nullable().optional().transform((v) => v ?? null),
   created_at: z.string().default(""),
-}).loose();
+});
 
 export const PromptEvaluationDatasetVersionListResponseSchema = z.object({
   items: z.array(PromptEvaluationDatasetVersionSchema).default([]),

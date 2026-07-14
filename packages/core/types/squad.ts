@@ -4,7 +4,6 @@ export type SquadScope = "workspace" | "personal";
 export interface SquadMemberPreview {
   member_type: SquadMemberType;
   member_id: string;
-  role: string;
 }
 
 export interface Squad {
@@ -88,7 +87,6 @@ export interface SquadActiveIssueBrief {
 }
 
 export interface SquadMemberStatus {
-  member_type: SquadMemberType;
   member_id: string;
   // Human members are returned with status === null so the UI can render
   // them in the same list without showing a status pill (v1 has no

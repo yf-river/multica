@@ -21,12 +21,11 @@ const SquadActiveIssueBriefSchema = z.object({
 }).loose();
 
 const SquadMemberStatusSchema = z.object({
-  member_type: z.string(),
   member_id: z.string(),
   status: z.string().nullable().optional().transform((v) => v ?? null),
   active_issues: z.array(SquadActiveIssueBriefSchema).default([]),
   last_active_at: z.string().nullable().optional().transform((v) => v ?? null),
-}).loose();
+});
 
 export const SquadMemberStatusListResponseSchema = z.object({
   members: z.array(SquadMemberStatusSchema).default([]),

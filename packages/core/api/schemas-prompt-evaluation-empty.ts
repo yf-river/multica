@@ -135,10 +135,7 @@ export const EMPTY_PROMPT_EVALUATION_CASE: PromptEvaluationStructuredCase = {
 
 export const EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE: PromptEvaluationOptimizationCandidate = {
   id: "",
-  workspace_id: "",
-  asset_id: "",
   run_id: "",
-  prompt_id: "",
   candidate_name: "",
   rationale: "",
   failed_case_count: 0,
@@ -146,9 +143,6 @@ export const EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE: PromptEvaluationOpt
   metrics: {},
   skill_patch: null,
   status: "待确认",
-  created_by: null,
-  created_at: "",
-  updated_at: "",
 };
 
 export const EMPTY_PROMPT_EVALUATION_SKILL_FRESHNESS_RESULT: PromptEvaluationSkillFreshnessResult = {
