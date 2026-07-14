@@ -4,8 +4,6 @@ import {
   buildPresenceMap,
   deriveAgentAvailability,
   deriveAgentPresenceDetail,
-  deriveWorkload,
-  deriveWorkloadDetail,
 } from "./derive-presence";
 
 function makeAgent(overrides: Partial<Agent> = {}): Agent {
@@ -125,105 +123,6 @@ describe("deriveAgentAvailability", () => {
   });
 });
 
-describe("deriveWorkload", () => {
-  // Atomic 3-way classifier — used by both Agent (per-agent task counts)
-  // and Runtime (per-runtime aggregated counts). Pure functional mapping
-  // from a count pair to a workload label.
-
-  it("returns working when runningCount > 0", () => {
-    expect(deriveWorkload({ runningCount: 1, queuedCount: 0 })).toBe("working");
-    expect(deriveWorkload({ runningCount: 3, queuedCount: 5 })).toBe("working");
-  });
-
-  it("returns queued when nothing running but queuedCount > 0", () => {
-    expect(deriveWorkload({ runningCount: 0, queuedCount: 1 })).toBe("queued");
-    expect(deriveWorkload({ runningCount: 0, queuedCount: 5 })).toBe("queued");
-  });
-
-  it("returns idle when both counts are zero", () => {
-    expect(deriveWorkload({ runningCount: 0, queuedCount: 0 })).toBe("idle");
-  });
-});
-
-describe("deriveWorkloadDetail", () => {
-  // Aggregates a task list into running/queued counts before classifying.
-  // Terminal statuses (completed / failed / cancelled) are silently
-  // ignored — workload is "what's on the plate right now", not history.
-
-  it("returns idle when no tasks at all", () => {
-    const r = deriveWorkloadDetail([]);
-    expect(r.workload).toBe("idle");
-    expect(r.runningCount).toBe(0);
-    expect(r.queuedCount).toBe(0);
-  });
-
-  it("returns working when at least one task is running", () => {
-    const r = deriveWorkloadDetail([makeTask({ status: "running" })]);
-    expect(r.workload).toBe("working");
-    expect(r.runningCount).toBe(1);
-    expect(r.queuedCount).toBe(0);
-  });
-
-  it("returns queued when only queued / dispatched tasks exist (no running)", () => {
-    // The "stuck on offline runtime" scenario in isolation: runningCount=0,
-    // queuedCount>0 surfaces as `queued` so the UI can honestly say
-    // "Queued · N" instead of misleading "Running 0/3 +Nq".
-    const r = deriveWorkloadDetail([
-      makeTask({ status: "queued" }),
-      makeTask({ id: "t2", status: "dispatched" }),
-    ]);
-    expect(r.workload).toBe("queued");
-    expect(r.runningCount).toBe(0);
-    expect(r.queuedCount).toBe(2);
-  });
-
-  it("returns working when running coexists with queued (overflow)", () => {
-    // Capacity-saturated agent: still running, but with a queue building.
-    // The chip says "Working" with the queue expressed as a `+Nq` badge.
-    const r = deriveWorkloadDetail([
-      makeTask({ id: "t1", status: "running" }),
-      makeTask({ id: "t2", status: "queued" }),
-      makeTask({ id: "t3", status: "queued" }),
-    ]);
-    expect(r.workload).toBe("working");
-    expect(r.runningCount).toBe(1);
-    expect(r.queuedCount).toBe(2);
-  });
-
-  it("ignores terminal statuses entirely (no historical state in workload)", () => {
-    // Failed / completed / cancelled tasks contribute no count and don't
-    // change the verdict — Recent Work + Inbox handle history, not workload.
-    const r = deriveWorkloadDetail([
-      makeTask({
-        id: "t-failed",
-        status: "failed",
-        completed_at: "2026-04-27T11:30:00Z",
-      }),
-      makeTask({
-        id: "t-completed",
-        status: "completed",
-        completed_at: "2026-04-27T11:00:00Z",
-      }),
-      makeTask({
-        id: "t-cancelled",
-        status: "cancelled",
-        completed_at: "2026-04-27T10:30:00Z",
-      }),
-    ]);
-    expect(r.workload).toBe("idle");
-    expect(r.runningCount).toBe(0);
-    expect(r.queuedCount).toBe(0);
-  });
-
-  it("classifies running over queued when both present, regardless of order", () => {
-    const r = deriveWorkloadDetail([
-      makeTask({ id: "t1", status: "queued" }),
-      makeTask({ id: "t2", status: "running" }),
-    ]);
-    expect(r.workload).toBe("working");
-  });
-});
-
 describe("deriveAgentPresenceDetail", () => {
   // Composition: the two dimensions are derived independently and the
   // detail object exposes both. No cross-axis override — workload never
@@ -259,7 +158,7 @@ describe("deriveAgentPresenceDetail", () => {
       }),
       tasks: [
         makeTask({ status: "queued" }),
-        makeTask({ id: "t2", status: "queued" }),
+        makeTask({ id: "t2", status: "dispatched" }),
       ],
       now: NOW,
     });

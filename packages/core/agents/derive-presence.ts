@@ -34,11 +34,8 @@ export function deriveAgentAvailability(
   return "offline"; // offline | about_to_gc collapse here
 }
 
-// Atomic workload derivation: pure 3-way classification of running/queued
-// counts. Exported so Runtime-level views (which already aggregate counts
-// per-runtime in their own indices) can plug into the same vocabulary
-// without re-deriving from raw task arrays.
-export function deriveWorkload(counts: {
+// Atomic workload derivation from current running/queued counts.
+function deriveWorkload(counts: {
   runningCount: number;
   queuedCount: number;
 }): Workload {
@@ -53,10 +50,8 @@ interface WorkloadDetail {
   queuedCount: number;
 }
 
-// Aggregates a task list into running/queued counts, then classifies via
-// deriveWorkload. Caller pre-filters to the relevant scope (per-agent or
-// per-runtime) — we don't filter again here.
-export function deriveWorkloadDetail(tasks: readonly AgentTask[]): WorkloadDetail {
+// Caller pre-filters tasks to the relevant agent scope.
+function deriveWorkloadDetail(tasks: readonly AgentTask[]): WorkloadDetail {
   let runningCount = 0;
   let queuedCount = 0;
   for (const t of tasks) {
