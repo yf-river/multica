@@ -156,17 +156,14 @@ describe("createMentionSuggestion", () => {
   });
 
   it("loads server issue matches into the popup when the list cache misses", async () => {
-    searchIssuesMock.mockResolvedValue({
-      issues: [
-        {
-          id: "i-1007",
-          identifier: "MUL-1007",
-          title: "多 Agent 协作探索",
-          status: "done",
-        },
-      ],
-      total: 1,
-    });
+    searchIssuesMock.mockResolvedValue([
+      {
+        id: "i-1007",
+        identifier: "MUL-1007",
+        title: "多 Agent 协作探索",
+        status: "done",
+      },
+    ]);
 
     render(<I18nWrapper><MentionList items={[]} query="协作" command={vi.fn()} /></I18nWrapper>);
 
@@ -186,7 +183,7 @@ describe("createMentionSuggestion", () => {
   });
 
   it("loads server issue and project matches when project search is enabled", async () => {
-    searchIssuesMock.mockResolvedValue({ issues: [], total: 0 });
+    searchIssuesMock.mockResolvedValue([]);
     searchProjectsMock.mockResolvedValue([
         {
           id: "p-roadmap",

@@ -7,11 +7,9 @@ import type {
   IssueStatus,
   ListIssueBucketsResponse,
   ListIssuesResponse,
-  SearchIssuesResponse,
+  SearchIssueResult,
   SearchProjectResult,
-  QuickCreateIssueResponse,
   QuickCreateIssueRequest,
-  FeedbackResponse,
   ChildIssueProgressResponse,
   BatchUpdateIssuesResponse,
   BatchDeleteIssuesResponse,
@@ -192,7 +190,7 @@ import {
   TaskMessageListSchema,
   IssueTaskTraceResponseSchema,
   IssueExecutionTreeResponseSchema,
-  SearchIssuesResponseSchema,
+  SearchIssuesSchema,
   QuickCreateIssueResponseSchema,
   FeedbackResponseSchema,
   ChildIssueProgressResponseSchema,
@@ -216,9 +214,7 @@ import {
   EMPTY_TASK_MESSAGES,
   EMPTY_ISSUE_TASK_TRACE_RESPONSE,
   EMPTY_ISSUE_EXECUTION_TREE,
-  EMPTY_SEARCH_ISSUES_RESPONSE,
-  EMPTY_QUICK_CREATE_ISSUE_RESPONSE,
-  EMPTY_FEEDBACK_RESPONSE,
+  EMPTY_SEARCH_ISSUES,
   EMPTY_CHILD_ISSUE_PROGRESS_RESPONSE,
   EMPTY_BATCH_UPDATE_ISSUES_RESPONSE,
   EMPTY_BATCH_DELETE_ISSUES_RESPONSE,
@@ -575,7 +571,7 @@ export class ApiClient extends ApiTransport {
     });
   }
 
-  async searchIssues(params: { q: string; limit?: number; offset?: number; include_closed?: boolean; signal?: AbortSignal }): Promise<SearchIssuesResponse> {
+  async searchIssues(params: { q: string; limit?: number; offset?: number; include_closed?: boolean; signal?: AbortSignal }): Promise<SearchIssueResult[]> {
     const search = new URLSearchParams({ q: params.q });
     if (params.limit !== undefined) search.set("limit", String(params.limit));
     if (params.offset !== undefined) search.set("offset", String(params.offset));
@@ -584,7 +580,7 @@ export class ApiClient extends ApiTransport {
       `/api/issues/search?${search}`,
       params.signal ? { signal: params.signal } : undefined,
     );
-    return parseWithFallback(raw, SearchIssuesResponseSchema, EMPTY_SEARCH_ISSUES_RESPONSE, {
+    return parseWithFallback(raw, SearchIssuesSchema, EMPTY_SEARCH_ISSUES, {
       endpoint: "GET /api/issues/search",
     });
   }
@@ -634,17 +630,17 @@ export class ApiClient extends ApiTransport {
   async quickCreateIssue(
     data: QuickCreateIssueRequest,
     idempotencyKey = generateUUID(),
-  ): Promise<QuickCreateIssueResponse> {
+  ): Promise<void> {
     const attempt = async () => {
       const raw = await this.fetch<unknown>("/api/issues/quick-create", {
         method: "POST",
         body: JSON.stringify(data),
         extraHeaders: { "Idempotency-Key": idempotencyKey },
       });
-      return parseOrThrow(
+      parseOrThrow(
         raw,
         QuickCreateIssueResponseSchema,
-        EMPTY_QUICK_CREATE_ISSUE_RESPONSE,
+        {},
         { endpoint: "POST /api/issues/quick-create", mayHaveCommitted: true },
       );
     };
@@ -656,14 +652,14 @@ export class ApiClient extends ApiTransport {
     kind: "bug" | "feature" | "general" | "praise";
     url?: string;
     workspace_id?: string;
-  }, idempotencyKey = generateUUID()): Promise<FeedbackResponse> {
+  }, idempotencyKey = generateUUID()): Promise<void> {
     const attempt = async () => {
       const raw = await this.fetch<unknown>("/api/feedback", {
         method: "POST",
         body: JSON.stringify(data),
         extraHeaders: { "Idempotency-Key": idempotencyKey },
       });
-      return parseOrThrow(raw, FeedbackResponseSchema, EMPTY_FEEDBACK_RESPONSE, {
+      parseOrThrow(raw, FeedbackResponseSchema, { id: "", created_at: "" }, {
         endpoint: "POST /api/feedback",
         mayHaveCommitted: true,
       });

@@ -474,7 +474,7 @@ export function SearchCommand() {
         ]);
         if (!controller.signal.aborted) {
           setResults({
-            issues: issueRes.issues,
+            issues: issueRes,
             projects: projectRes,
           });
           setIsLoading(false);

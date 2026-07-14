@@ -74,7 +74,7 @@ export function IssuePickerModal({
             signal: controller.signal,
           });
           if (!controller.signal.aborted) {
-            setResults(res.issues.filter((i) => !excludeIds.includes(i.id)));
+            setResults(res.filter((i) => !excludeIds.includes(i.id)));
             setIsLoading(false);
             setSearchFailed(false);
           }

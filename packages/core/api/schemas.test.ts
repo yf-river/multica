@@ -46,7 +46,7 @@ const baseIssue = {
 };
 
 describe("BatchDeleteIssuesResponseSchema", () => {
-  it("preserves explicit per-item failures", () => {
+  it("preserves the failed issue identities used for cache reconciliation", () => {
     expect(BatchDeleteIssuesResponseSchema.parse({
       deleted: 1,
       failed: [{ issue_id: "issue-2", code: "delete_failed" }],
@@ -56,16 +56,16 @@ describe("BatchDeleteIssuesResponseSchema", () => {
     });
   });
 
-  it("rejects unknown failure codes", () => {
+  it("rejects failures without an issue identity", () => {
     expect(BatchDeleteIssuesResponseSchema.safeParse({
       deleted: 0,
-      failed: [{ issue_id: "issue-1", code: "mystery" }],
+      failed: [{ code: "delete_failed" }],
     }).success).toBe(false);
   });
 });
 
 describe("BatchUpdateIssuesResponseSchema", () => {
-  it("preserves blocked and failed item results", () => {
+  it("preserves the result counts used by the batch toolbar", () => {
     const parsed = BatchUpdateIssuesResponseSchema.parse({
       updated: 1,
       blocked: [{
@@ -78,8 +78,8 @@ describe("BatchUpdateIssuesResponseSchema", () => {
       failed: [{ issue_id: "issue-3", code: "event_failed" }],
     });
     expect(parsed.updated).toBe(1);
-    expect(parsed.blocked?.[0]?.issue_id).toBe("issue-2");
-    expect(parsed.failed).toEqual([{ issue_id: "issue-3", code: "event_failed" }]);
+    expect(parsed.blocked).toHaveLength(1);
+    expect(parsed.failed).toHaveLength(1);
   });
 });
 

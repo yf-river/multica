@@ -237,7 +237,7 @@ vi.mock("sonner", () => ({
 describe("SearchCommand", () => {
   beforeEach(() => {
     mockPush.mockReset();
-    mockSearchIssues.mockReset().mockResolvedValue({ issues: [] });
+    mockSearchIssues.mockReset().mockResolvedValue([]);
     mockSearchProjects.mockReset().mockResolvedValue([]);
     mockRecentItems.current = [];
     mockAllIssues.current = [];
@@ -641,8 +641,7 @@ describe("SearchCommand", () => {
         avatar_url: null,
       },
     ];
-    mockSearchIssues.mockResolvedValue({
-      issues: [
+    mockSearchIssues.mockResolvedValue([
         {
           id: "issue-assigned",
           workspace_id: "ws-test",
@@ -663,11 +662,8 @@ describe("SearchCommand", () => {
           due_date: null,
           created_at: "2026-01-01T00:00:00Z",
           updated_at: "2026-01-01T00:00:00Z",
-          match_source: "title",
         },
-      ],
-      total: 1,
-    });
+      ]);
 
     renderSearch();
 
@@ -728,10 +724,9 @@ describe("SearchCommand", () => {
     expect(screen.queryByText("已完成")).not.toBeInTheDocument();
   });
 
-  it("无论 match_source 如何都渲染描述和评论片段", async () => {
+  it("同时渲染描述和评论匹配片段", async () => {
     const user = userEvent.setup();
-    mockSearchIssues.mockResolvedValue({
-      issues: [
+    mockSearchIssues.mockResolvedValue([
         {
           id: "issue-snippet",
           workspace_id: "ws-test",
@@ -752,13 +747,10 @@ describe("SearchCommand", () => {
           due_date: null,
           created_at: "2026-01-01T00:00:00Z",
           updated_at: "2026-01-01T00:00:00Z",
-          match_source: "title",
           matched_description_snippet: "...uses HTML templates for rendering...",
           matched_comment_snippet: "...we should migrate away from HTML...",
         },
-      ],
-      total: 1,
-    });
+      ]);
     renderSearch();
 
     const input = screen.getByPlaceholderText("输入命令或关键词搜索...");
@@ -771,7 +763,7 @@ describe("SearchCommand", () => {
       { timeout: 2000 },
     );
 
-    // Description snippet should render even though match_source is "title"
+    // Both independent snippets remain visible when the backend returns them.
     expect(
       screen.getByText((_, el) =>
         (el?.textContent?.includes("uses HTML templates for rendering") ?? false) &&
@@ -779,7 +771,6 @@ describe("SearchCommand", () => {
       ),
     ).toBeInTheDocument();
 
-    // Comment snippet should render even though match_source is "title"
     expect(
       screen.getByText((_, el) =>
         (el?.textContent?.includes("we should migrate away from HTML") ?? false) &&

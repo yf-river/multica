@@ -156,26 +156,13 @@ export interface ListIssueBucketsResponse {
 }
 
 export interface SearchIssueResult extends Issue {
-  match_source: "title" | "description" | "comment";
   matched_description_snippet?: string;
   matched_comment_snippet?: string;
-}
-
-export interface SearchIssuesResponse {
-  issues: SearchIssueResult[];
-  total: number;
 }
 
 export interface SearchProjectResult extends Project {
   match_source: "title" | "description";
   matched_snippet?: string;
-}
-
-export interface QuickCreateIssueResponse {
-  task_id?: string;
-  issue_id?: string;
-  identifier?: string;
-  source_fetch_status?: string;
 }
 
 export interface QuickCreateIssueRequest {
@@ -191,47 +178,20 @@ export interface QuickCreateIssueRequest {
   attachment_ids?: string[];
 }
 
-export interface FeedbackResponse {
-  id: string;
-  created_at: string;
-}
-
 export interface ChildIssueProgressResponse {
   progress: Array<{ parent_issue_id: string; total: number; done: number }>;
 }
 
 export interface BatchUpdateIssuesResponse {
   updated: number;
-  blocked?: Array<{
-    issue_id: string;
-    identifier: string;
-    title: string;
-    incomplete_children: unknown[];
-  }>;
-  blocked_reason?: string;
-  failed?: Array<{
-    issue_id: string;
-    code:
-      | "invalid_id"
-      | "not_found"
-      | "lookup_failed"
-      | "invalid_assignee"
-      | "invalid_start_date"
-      | "invalid_due_date"
-      | "invalid_parent"
-      | "invalid_project"
-      | "child_check_failed"
-      | "transaction_failed"
-      | "update_failed"
-      | "event_failed";
-  }>;
+  blocked?: unknown[];
+  failed?: unknown[];
 }
 
 export interface BatchDeleteIssuesResponse {
   deleted: number;
   failed?: Array<{
     issue_id: string;
-    code: "invalid_id" | "not_found" | "lookup_failed" | "delete_failed";
   }>;
 }
 

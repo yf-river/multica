@@ -426,7 +426,7 @@ describe("ApiClient", () => {
     const client = new ApiClient("https://api.example.test");
 
     await expect(client.searchIssues({ q: "bug" }))
-      .resolves.toEqual({ issues: [], total: 0 });
+      .resolves.toEqual([]);
     await expect(client.getChildIssueProgress()).resolves.toEqual({ progress: [] });
     await expect(client.getAssigneeFrequency()).resolves.toEqual([]);
     await expect(client.listAttachments("issue-1")).resolves.toEqual([]);
@@ -449,7 +449,7 @@ describe("ApiClient", () => {
 
     const client = new ApiClient("https://api.example.test");
     await expect(client.quickCreateIssue({ prompt: "Create issue", agent_id: "agent-1" }))
-      .resolves.toEqual({ task_id: "task-1" });
+      .resolves.toBeUndefined();
 
     const first = fetchMock.mock.calls[0]?.[1]?.headers as Record<string, string>;
     const second = fetchMock.mock.calls[1]?.[1]?.headers as Record<string, string>;
@@ -469,7 +469,7 @@ describe("ApiClient", () => {
 
     const client = new ApiClient("https://api.example.test");
     await expect(client.createFeedback({ message: "Broken", kind: "bug" }))
-      .resolves.toEqual(response);
+      .resolves.toBeUndefined();
 
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const first = fetchMock.mock.calls[0]![1]!.headers as Record<string, string>;

@@ -194,7 +194,7 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
               ]);
               if (!cancelled && !controller.signal.aborted) {
                 setServerItems([
-                  ...issues.issues.map((issue) => ({ ...issueToMention(issue), group: "search" as const })),
+                  ...issues.map((issue) => ({ ...issueToMention(issue), group: "search" as const })),
                   ...projects.map((project) => ({ ...projectToMention(project), group: "search" as const })),
                 ]);
               }
@@ -206,7 +206,7 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
                 signal: controller.signal,
               });
               if (!cancelled && !controller.signal.aborted) {
-                setServerItems(res.issues.map(issueToMention));
+                setServerItems(res.map(issueToMention));
               }
             }
           } catch {

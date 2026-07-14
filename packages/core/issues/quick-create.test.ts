@@ -16,7 +16,7 @@ describe("quickCreateIssueWithRecovery", () => {
   it("replays the original intent and key after an unknown outcome", async () => {
     const quickCreateIssue = vi.fn()
       .mockRejectedValueOnce(new ApiTransportError("POST /api/issues/quick-create", true, new Error("reset")))
-      .mockResolvedValueOnce({ task_id: "task-1" });
+      .mockResolvedValueOnce(undefined);
     const client = { quickCreateIssue };
 
     await expect(quickCreateIssueWithRecovery(client, { prompt: "Original", agent_id: "agent-1" }))
@@ -24,7 +24,7 @@ describe("quickCreateIssueWithRecovery", () => {
     const pending = useQuickCreateStore.getState().pendingOperation;
 
     await expect(quickCreateIssueWithRecovery(client, { prompt: "Changed", agent_id: "agent-2" }))
-      .resolves.toEqual({ task_id: "task-1" });
+      .resolves.toBeUndefined();
     expect(quickCreateIssue.mock.calls[1]).toEqual([
       { prompt: "Original", agent_id: "agent-1" },
       pending?.idempotencyKey,
@@ -35,7 +35,7 @@ describe("quickCreateIssueWithRecovery", () => {
   it("releases the request identity after a definitive rejection", async () => {
     const quickCreateIssue = vi.fn()
       .mockRejectedValueOnce(new ApiError("invalid", 400, "Bad Request"))
-      .mockResolvedValueOnce({ task_id: "task-2" });
+      .mockResolvedValueOnce(undefined);
     const client = { quickCreateIssue };
 
     await expect(quickCreateIssueWithRecovery(client, { prompt: "First", agent_id: "agent-1" }))

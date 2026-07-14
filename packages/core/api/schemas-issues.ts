@@ -6,15 +6,13 @@ import type {
   BatchUpdateIssuesResponse,
   ChildIssueProgressResponse,
   Comment,
-  FeedbackResponse,
   GroupedIssuesResponse,
   Issue,
   IssueReaction,
   ListIssueBucketsResponse,
   ListIssuesResponse,
   Reaction,
-  QuickCreateIssueResponse,
-  SearchIssuesResponse,
+  SearchIssueResult,
   TimelineEntry,
 } from "../types";
 import { EmbeddedAttachmentSchema, NonEmptyStringSchema } from "./schemas-internal";
@@ -228,17 +226,15 @@ export const EMPTY_ISSUE: Issue = {
 };
 
 const SearchIssueSchema = IssueSchema.extend({
-  match_source: z.string(),
   matched_description_snippet: z.string().optional(),
   matched_comment_snippet: z.string().optional(),
 }).loose();
 
-export const SearchIssuesResponseSchema = z.object({
+export const SearchIssuesSchema = z.object({
   issues: z.array(SearchIssueSchema).default([]),
-  total: z.number().default(0),
-}).loose();
+}).loose().transform((response) => response.issues);
 
-export const EMPTY_SEARCH_ISSUES_RESPONSE: SearchIssuesResponse = { issues: [], total: 0 };
+export const EMPTY_SEARCH_ISSUES: SearchIssueResult[] = [];
 
 export const QuickCreateIssueResponseSchema = z.object({
   task_id: NonEmptyStringSchema.optional(),
@@ -249,14 +245,10 @@ export const QuickCreateIssueResponseSchema = z.object({
   message: "quick create response must identify a task or issue",
 });
 
-export const EMPTY_QUICK_CREATE_ISSUE_RESPONSE: QuickCreateIssueResponse = {};
-
 export const FeedbackResponseSchema = z.object({
   id: NonEmptyStringSchema,
   created_at: z.string(),
 }).loose();
-
-export const EMPTY_FEEDBACK_RESPONSE: FeedbackResponse = { id: "", created_at: "" };
 
 export const ChildIssueProgressResponseSchema = z.object({
   progress: z.array(z.object({
@@ -270,37 +262,14 @@ export const EMPTY_CHILD_ISSUE_PROGRESS_RESPONSE: ChildIssueProgressResponse = {
 
 export const BatchUpdateIssuesResponseSchema = z.object({
   updated: z.number(),
-  blocked: z.array(z.object({
-    issue_id: z.string(),
-    identifier: z.string(),
-    title: z.string(),
-    incomplete_children: z.array(z.unknown()),
-  })).optional(),
-  blocked_reason: z.string().optional(),
-  failed: z.array(z.object({
-    issue_id: z.string(),
-    code: z.enum([
-      "invalid_id",
-      "not_found",
-      "lookup_failed",
-      "invalid_assignee",
-      "invalid_start_date",
-      "invalid_due_date",
-      "invalid_parent",
-      "invalid_project",
-      "child_check_failed",
-      "transaction_failed",
-      "update_failed",
-      "event_failed",
-    ]),
-  })).optional(),
+  blocked: z.array(z.unknown()).optional(),
+  failed: z.array(z.unknown()).optional(),
 }).loose();
 export const BatchDeleteIssuesResponseSchema = z.object({
   deleted: z.number(),
   failed: z.array(z.object({
     issue_id: z.string(),
-    code: z.enum(["invalid_id", "not_found", "lookup_failed", "delete_failed"]),
-  })).optional(),
+  }).loose()).optional(),
 }).loose();
 export const EMPTY_BATCH_UPDATE_ISSUES_RESPONSE: BatchUpdateIssuesResponse = { updated: 0 };
 export const EMPTY_BATCH_DELETE_ISSUES_RESPONSE: BatchDeleteIssuesResponse = { deleted: 0 };
