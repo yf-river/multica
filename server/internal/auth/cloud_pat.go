@@ -99,7 +99,7 @@ type CloudPATIdentity struct {
 	InstanceRecordID string `json:"r"`
 }
 
-// CloudPATInvalidError carries the Fleet-reported reason for a
+// cloudPATInvalidError carries the Fleet-reported reason for a
 // valid=false response. The middleware uses this to log why an mcn_
 // token was rejected without exposing the reason in the 401 body —
 // per the Cloud doc, callers shouldn't differentiate token_not_found
@@ -110,11 +110,11 @@ type CloudPATIdentity struct {
 // a real user in our DB. Treating that as a Cloud-style "invalid"
 // keeps the middleware's response shape uniform — the result is the
 // same: 401, drop the token.
-type CloudPATInvalidError struct {
+type cloudPATInvalidError struct {
 	Reason string
 }
 
-func (e *CloudPATInvalidError) Error() string {
+func (e *cloudPATInvalidError) Error() string {
 	if e == nil || e.Reason == "" {
 		return "cloud pat invalid"
 	}
@@ -122,20 +122,20 @@ func (e *CloudPATInvalidError) Error() string {
 }
 
 // Is lets errors.Is(err, ErrCloudPATInvalid) match any
-// CloudPATInvalidError, so callers can branch on the category without
+// cloudPATInvalidError, so callers can branch on the category without
 // caring about the exact reason string.
-func (e *CloudPATInvalidError) Is(target error) bool {
+func (e *cloudPATInvalidError) Is(target error) bool {
 	return target == ErrCloudPATInvalid
 }
 
-// CloudPATInvalidReasonOwnerUnknown is the synthetic reason emitted
+// cloudPATInvalidReasonOwnerUnknown is the synthetic reason emitted
 // when Cloud verified the token but the returned owner_id was not
 // found in the local users table. The Cloud `owner_id` and our
 // `users.id` share the same UUID space by contract; a mismatch means
 // either the user has been deleted on our side after the node was
 // minted, or (worse) something is impersonating Cloud and trying to
 // surface a forged owner_id. Either way the request must be rejected.
-const CloudPATInvalidReasonOwnerUnknown = "owner_unknown"
+const cloudPATInvalidReasonOwnerUnknown = "owner_unknown"
 
 // OwnerLookupFunc is the user-existence check Verify runs against
 // Cloud's owner_id before caching / returning the identity. The
@@ -218,7 +218,7 @@ func NewCloudPATVerifier(cfg CloudPATVerifierConfig) *CloudPATVerifier {
 //     a fully-validated decision.
 //  2. Fleet POST /api/v1/pat/verify. The response distinguishes:
 //     - HTTP 200 + valid=true   → continues to step 3
-//     - HTTP 200 + valid=false  → CloudPATInvalidError{Reason:...}
+//     - HTTP 200 + valid=false  → cloudPATInvalidError{Reason:...}
 //     (also wraps as ErrCloudPATInvalid via Is)
 //     - HTTP 4xx/5xx, network, timeout, decode failure
 //     → ErrCloudPATUnavailable
@@ -275,7 +275,7 @@ func (v *CloudPATVerifier) Verify(ctx context.Context, token string, lookup Owne
 			// user is created later, the next request must succeed
 			// without waiting for the TTL.
 			slog.Warn("cloud_pat: cloud-verified owner_id has no local user", "owner_id", id.OwnerID)
-			return CloudPATIdentity{}, &CloudPATInvalidError{Reason: CloudPATInvalidReasonOwnerUnknown}
+			return CloudPATIdentity{}, &cloudPATInvalidError{Reason: cloudPATInvalidReasonOwnerUnknown}
 		}
 	}
 
@@ -369,7 +369,7 @@ func (v *CloudPATVerifier) fetch(ctx context.Context, token string) (CloudPATIde
 	if !parsed.Valid {
 		// Surface the reason in the error so the middleware can log
 		// "why" while still returning a generic 401 to the client.
-		return CloudPATIdentity{}, &CloudPATInvalidError{Reason: parsed.Reason}
+		return CloudPATIdentity{}, &cloudPATInvalidError{Reason: parsed.Reason}
 	}
 
 	if parsed.OwnerID == "" {

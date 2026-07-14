@@ -131,7 +131,7 @@ func TestCloudPATVerifier_VerifyEmptyToken(t *testing.T) {
 
 // TestCloudPATVerifier_InvalidReasons walks every documented reason
 // for a valid=false response and confirms each maps onto
-// CloudPATInvalidError + matches errors.Is(ErrCloudPATInvalid). The
+// cloudPATInvalidError + matches errors.Is(ErrCloudPATInvalid). The
 // reason string itself is preserved on the typed error for logging.
 func TestCloudPATVerifier_InvalidReasons(t *testing.T) {
 	reasons := []string{
@@ -154,9 +154,9 @@ func TestCloudPATVerifier_InvalidReasons(t *testing.T) {
 			if !errors.Is(err, ErrCloudPATInvalid) {
 				t.Fatalf("expected ErrCloudPATInvalid for reason %q, got %v", reason, err)
 			}
-			var typed *CloudPATInvalidError
+			var typed *cloudPATInvalidError
 			if !errors.As(err, &typed) {
-				t.Fatalf("expected *CloudPATInvalidError, got %T", err)
+				t.Fatalf("expected *cloudPATInvalidError, got %T", err)
 			}
 			if typed.Reason != reason {
 				t.Errorf("expected Reason=%q, got %q", reason, typed.Reason)
@@ -371,12 +371,12 @@ func TestCloudPATVerifier_LookupRejectsUnknownOwner(t *testing.T) {
 	if !errors.Is(err, ErrCloudPATInvalid) {
 		t.Fatalf("expected ErrCloudPATInvalid, got %v (id=%+v)", err, first)
 	}
-	var typed *CloudPATInvalidError
+	var typed *cloudPATInvalidError
 	if !errors.As(err, &typed) {
-		t.Fatalf("expected *CloudPATInvalidError, got %T", err)
+		t.Fatalf("expected *cloudPATInvalidError, got %T", err)
 	}
-	if typed.Reason != CloudPATInvalidReasonOwnerUnknown {
-		t.Errorf("expected reason=%q, got %q", CloudPATInvalidReasonOwnerUnknown, typed.Reason)
+	if typed.Reason != cloudPATInvalidReasonOwnerUnknown {
+		t.Errorf("expected reason=%q, got %q", cloudPATInvalidReasonOwnerUnknown, typed.Reason)
 	}
 
 	// Second call: lookup now says the user exists. If the previous
