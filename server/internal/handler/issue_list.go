@@ -80,6 +80,7 @@ func (h *Handler) SearchIssues(w http.ResponseWriter, r *http.Request) {
 			&sr.issue.UpdatedAt,
 			&sr.issue.Number,
 			&sr.issue.ProjectID,
+			&sr.issue.Metadata,
 			&sr.totalCount,
 			&sr.matchSource,
 			&sr.matchedCommentContent,

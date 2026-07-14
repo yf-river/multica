@@ -518,7 +518,7 @@ func buildSearchQuery(phrase string, terms []string, queryNum int, hasNum bool, 
 	query := fmt.Sprintf(`SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
 		i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
 		i.parent_issue_id, i.position,
-		i.start_date, i.due_date, i.created_at, i.updated_at, i.number, i.project_id,
+		i.start_date, i.due_date, i.created_at, i.updated_at, i.number, i.project_id, i.metadata,
 		COUNT(*) OVER() AS total_count,
 		%s AS match_source,
 		%s AS matched_comment_content
