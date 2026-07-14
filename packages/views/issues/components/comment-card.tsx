@@ -474,6 +474,36 @@ function useEditAttachmentState(
   };
 }
 
+function CommentEditEditor({
+  issueId,
+  edit,
+}: {
+  issueId: string;
+  edit: ReturnType<typeof useEditAttachmentState>;
+}) {
+  const { t } = useT("issues");
+
+  return (
+    <div className="text-sm leading-relaxed">
+      <ContentEditor
+        ref={edit.editorRef}
+        defaultValue={edit.initialValue}
+        placeholder={t(($) => $.comment.edit_placeholder)}
+        onUpdate={(markdown) => {
+          edit.setContent(markdown);
+          if (markdown.trim().length > 0) edit.setDraft(edit.draftKey, markdown);
+          else edit.clearDraft(edit.draftKey);
+        }}
+        onSubmit={edit.saveEdit}
+        onUploadFile={edit.handleUpload}
+        debounceMs={100}
+        currentIssueId={issueId}
+        attachments={edit.editorAttachments}
+      />
+    </div>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Single comment row (used for both parent and replies within the same Card)
 // ---------------------------------------------------------------------------
@@ -617,23 +647,7 @@ function CommentRow({
           className="relative pl-12 pr-4 pt-1"
           onKeyDown={(e) => { if (e.key === "Escape") edit.cancelEdit(); }}
         >
-          <div className="text-sm leading-relaxed">
-            <ContentEditor
-              ref={edit.editorRef}
-              defaultValue={edit.initialValue}
-              placeholder={t(($) => $.comment.edit_placeholder)}
-              onUpdate={(md) => {
-                edit.setContent(md);
-                if (md.trim().length > 0) edit.setDraft(edit.draftKey, md);
-                else edit.clearDraft(edit.draftKey);
-              }}
-              onSubmit={edit.saveEdit}
-              onUploadFile={edit.handleUpload}
-              debounceMs={100}
-              currentIssueId={issueId}
-              attachments={edit.editorAttachments}
-            />
-          </div>
+          <CommentEditEditor issueId={issueId} edit={edit} />
           {edit.standaloneEditAttachments.length > 0 && (
             <AttachmentList
               attachments={edit.standaloneEditAttachments}
@@ -902,23 +916,7 @@ function CommentCardImpl({
                 className="relative pl-10"
                 onKeyDown={(e) => { if (e.key === "Escape") edit.cancelEdit(); }}
               >
-                <div className="text-sm leading-relaxed">
-                  <ContentEditor
-                    ref={edit.editorRef}
-                    defaultValue={edit.initialValue}
-                    placeholder={t(($) => $.comment.edit_placeholder)}
-                    onUpdate={(md) => {
-                      edit.setContent(md);
-                      if (md.trim().length > 0) edit.setDraft(edit.draftKey, md);
-                      else edit.clearDraft(edit.draftKey);
-                    }}
-                    onSubmit={edit.saveEdit}
-                    onUploadFile={edit.handleUpload}
-                    debounceMs={100}
-                    currentIssueId={issueId}
-                    attachments={edit.editorAttachments}
-                  />
-                </div>
+                <CommentEditEditor issueId={issueId} edit={edit} />
                 <div className="flex items-center justify-between mt-2">
                   <div className="flex min-w-0 flex-1 flex-col gap-1">
                     {edit.standaloneEditAttachments.length > 0 && (
