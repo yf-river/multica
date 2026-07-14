@@ -544,12 +544,6 @@ export interface RuntimeModel {
 export interface RuntimeModelThinking {
   /** Levels the user is allowed to pick for this model. */
   supported_levels: RuntimeModelThinkingLevel[];
-  /** Informational: the level the upstream CLI documents as its built-in
-   *  default when no `--effort` flag is passed. Surfaced by the daemon
-   *  but not actively rendered today — Multica's empty `thinking_level`
-   *  means "no override; let the local CLI config decide", which may
-   *  itself differ from this value. */
-  default_level?: string;
 }
 
 export interface RuntimeModelThinkingLevel {
@@ -576,8 +570,6 @@ export interface RuntimeModelListRequest {
   models?: RuntimeModel[];
   supported: boolean;
   error?: string;
-  created_at: string;
-  updated_at: string;
 }
 
 // Result shape returned by resolveRuntimeModels — includes the
@@ -620,8 +612,6 @@ export interface RuntimeLocalSkillListRequest {
   skills?: RuntimeLocalSkillSummary[];
   supported: boolean;
   error?: string;
-  created_at: string;
-  updated_at: string;
 }
 
 export interface CreateRuntimeLocalSkillImportRequest {
@@ -635,17 +625,11 @@ export interface CreateRuntimeLocalSkillImportRequest {
 export interface RuntimeLocalSkillImportRequest {
   id: string;
   runtime_id: string;
-  skill_key: string;
-  name?: string;
-  description?: string;
   action?: RuntimeLocalSkillImportAction;
-  target_skill_id?: string;
   status: RuntimeLocalSkillStatus;
   skill?: Skill;
   conflict?: RuntimeLocalSkillImportConflict;
   error?: string;
-  created_at: string;
-  updated_at: string;
 }
 
 export interface RuntimeLocalSkillsResult {

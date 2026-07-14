@@ -532,12 +532,10 @@ describe("domain response schema fallbacks", () => {
     }).success).toBe(false);
     expect(RuntimeLocalSkillImportRequestSchema.safeParse({
       ...base,
-      skill_key: "skill-1",
       status: "completed",
     }).success).toBe(false);
     expect(RuntimeLocalSkillImportRequestSchema.safeParse({
       ...base,
-      skill_key: "skill-1",
       status: "conflict",
     }).success).toBe(false);
   });
@@ -546,7 +544,6 @@ describe("domain response schema fallbacks", () => {
     const parsed = RuntimeLocalSkillImportRequestSchema.parse({
       id: "request-1",
       runtime_id: "runtime-1",
-      skill_key: "skill-1",
       status: "completed",
       skill: {
         id: "skill-id",
@@ -559,8 +556,6 @@ describe("domain response schema fallbacks", () => {
         created_at: "2026-07-11T00:00:00Z",
         updated_at: "2026-07-11T00:00:00Z",
       },
-      created_at: "2026-07-11T00:00:00Z",
-      updated_at: "2026-07-11T00:00:00Z",
     });
 
     expect(parsed.skill?.files).toEqual([]);

@@ -1415,7 +1415,11 @@ describe("ApiClient", () => {
 
     const client = new ApiClient("https://api.example.test");
     await expect(client.initiateImportLocalSkill("runtime-1", { skill_key: "review-helper" }))
-      .resolves.toEqual(response);
+      .resolves.toEqual({
+        id: "request-1",
+        runtime_id: "runtime-1",
+        status: "pending",
+      });
     const first = fetchMock.mock.calls[0]![1]!.headers as Record<string, string>;
     const second = fetchMock.mock.calls[1]![1]!.headers as Record<string, string>;
     expect(first["Idempotency-Key"]).toMatch(/^[0-9a-f-]{36}$/);

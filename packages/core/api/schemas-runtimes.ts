@@ -68,7 +68,6 @@ const RuntimeModelThinkingLevelSchema = z.object({
 
 const RuntimeModelThinkingSchema = z.object({
   supported_levels: z.array(RuntimeModelThinkingLevelSchema),
-  default_level: z.string().optional(),
 }).loose();
 
 const RuntimeModelSchema = z.object({
@@ -95,8 +94,6 @@ export const RuntimeModelListRequestSchema = z.object({
   models: z.array(RuntimeModelSchema).optional(),
   supported: z.boolean(),
   error: z.string().optional(),
-  created_at: z.string(),
-  updated_at: z.string(),
 }).loose();
 
 const RuntimeLocalSkillSummarySchema = z.object({
@@ -115,8 +112,6 @@ export const RuntimeLocalSkillListRequestSchema = z.object({
   skills: z.array(RuntimeLocalSkillSummarySchema).optional(),
   supported: z.boolean(),
   error: z.string().optional(),
-  created_at: z.string(),
-  updated_at: z.string(),
 }).loose();
 
 const RuntimeImportedSkillFileSchema = z.object({
@@ -150,17 +145,11 @@ const RuntimeLocalSkillConflictSchema = z.object({
 export const RuntimeLocalSkillImportRequestSchema = z.object({
   id: NonEmptyStringSchema,
   runtime_id: NonEmptyStringSchema,
-  skill_key: NonEmptyStringSchema,
-  name: z.string().optional(),
-  description: z.string().optional(),
   action: z.literal("overwrite").optional(),
-  target_skill_id: z.string().optional(),
   status: RuntimeAsyncRequestStatusSchema,
   skill: RuntimeImportedSkillSchema.optional(),
   conflict: RuntimeLocalSkillConflictSchema.optional(),
   error: z.string().optional(),
-  created_at: z.string(),
-  updated_at: z.string(),
 }).superRefine((request, context) => {
   if (request.status === "completed" && !request.skill) {
     context.addIssue({
@@ -184,8 +173,6 @@ export const EMPTY_RUNTIME_MODEL_LIST_REQUEST: RuntimeModelListRequest = {
   status: "failed",
   supported: false,
   error: "invalid runtime model response",
-  created_at: "",
-  updated_at: "",
 };
 
 export const EMPTY_RUNTIME_LOCAL_SKILL_LIST_REQUEST: RuntimeLocalSkillListRequest = {
@@ -194,18 +181,13 @@ export const EMPTY_RUNTIME_LOCAL_SKILL_LIST_REQUEST: RuntimeLocalSkillListReques
   status: "failed",
   supported: false,
   error: "invalid runtime local skill response",
-  created_at: "",
-  updated_at: "",
 };
 
 export const EMPTY_RUNTIME_LOCAL_SKILL_IMPORT_REQUEST: RuntimeLocalSkillImportRequest = {
   id: "",
   runtime_id: "",
-  skill_key: "",
   status: "failed",
   error: "invalid runtime local skill import response",
-  created_at: "",
-  updated_at: "",
 };
 
 export const RuntimeProfileSchema = z.object({

@@ -46,7 +46,6 @@ const CLAUDE_MODEL: RuntimeModel = {
       { value: "medium", label: "Medium" },
       { value: "high", label: "高" },
     ],
-    default_level: "medium",
   },
 };
 
@@ -66,8 +65,6 @@ function listResult(models: RuntimeModel[]): RuntimeModelListRequest {
     status: "completed",
     models,
     supported: true,
-    created_at: "2026-05-20T00:00:00Z",
-    updated_at: "2026-05-20T00:00:00Z",
   };
 }
 
