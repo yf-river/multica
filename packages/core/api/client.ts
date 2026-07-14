@@ -471,8 +471,7 @@ function issueSearchParams(params?: ListIssuesParams) {
 }
 
 // Flat endpoint registry. Transport/auth/error semantics live in transport.ts;
-// the reviewed reason this method surface remains flat is documented in
-// docs/architecture/api-client.md.
+// docs/architecture/domain-flows.md records the ownership boundary.
 export class ApiClient extends ApiTransport {
   // Auth
   async login(account: string, password: string): Promise<LoginResponse> {

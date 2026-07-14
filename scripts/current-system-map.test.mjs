@@ -138,7 +138,7 @@ test("external and non-page HTTP surfaces are present without Once.Do false posi
   );
 });
 
-test("maintained domain flows stay anchored to current routes, tables and sources", () => {
+test("the current domain ownership map stays anchored to routes, tables and sources", () => {
   const routeKeys = new Set(
     inventory.backend.chiRoutes.map((route) => `${route.method} ${route.path}`),
   );
@@ -147,7 +147,7 @@ test("maintained domain flows stay anchored to current routes, tables and source
   );
   const flows = [
     {
-      file: "chat-send-flow.md",
+      name: "chat send",
       routes: [
         "POST /api/chat/sessions",
         "POST /api/chat/sessions/{sessionId}/messages",
@@ -160,7 +160,7 @@ test("maintained domain flows stay anchored to current routes, tables and source
       ],
     },
     {
-      file: "project-create-flow.md",
+      name: "project create",
       routes: ["POST /api/projects"],
       tables: ["project", "project_resource", "resource_create_request"],
       sources: [
@@ -171,7 +171,7 @@ test("maintained domain flows stay anchored to current routes, tables and source
       ],
     },
     {
-      file: "autopilot-flow.md",
+      name: "autopilot",
       routes: [
         "POST /api/autopilots",
         "POST /api/autopilots/{id}/trigger",
@@ -187,7 +187,7 @@ test("maintained domain flows stay anchored to current routes, tables and source
       ],
     },
     {
-      file: "squad-create-flow.md",
+      name: "squad create",
       routes: ["POST /api/squads"],
       tables: ["resource_create_request", "squad", "squad_member"],
       sources: [
@@ -198,7 +198,7 @@ test("maintained domain flows stay anchored to current routes, tables and source
       ],
     },
     {
-      file: "agent-create-flow.md",
+      name: "agent create",
       routes: ["POST /api/agents"],
       tables: ["agent", "resource_create_request"],
       sources: [
@@ -209,7 +209,7 @@ test("maintained domain flows stay anchored to current routes, tables and source
       ],
     },
     {
-      file: "attachment-upload-flow.md",
+      name: "attachment upload",
       routes: ["POST /api/upload-file"],
       tables: ["attachment", "resource_create_request"],
       sources: [
@@ -220,7 +220,7 @@ test("maintained domain flows stay anchored to current routes, tables and source
       ],
     },
     {
-      file: "quick-create-flow.md",
+      name: "quick create",
       routes: ["POST /api/issues/quick-create"],
       tables: ["agent_task_queue", "issue", "resource_create_request"],
       sources: [
@@ -234,7 +234,7 @@ test("maintained domain flows stay anchored to current routes, tables and source
       ],
     },
     {
-      file: "skill-create-flow.md",
+      name: "skill create",
       routes: ["POST /api/skills"],
       tables: ["resource_create_request", "skill", "skill_file"],
       sources: [
@@ -245,7 +245,7 @@ test("maintained domain flows stay anchored to current routes, tables and source
       ],
     },
     {
-      file: "lark-boundary-flow.md",
+      name: "Lark",
       routes: ["POST /api/lark/binding/redeem"],
       tables: [
         "domain_event_delivery",
@@ -261,7 +261,7 @@ test("maintained domain flows stay anchored to current routes, tables and source
       ],
     },
     {
-      file: "issue-task-lifecycle-flow.md",
+      name: "Issue and Task lifecycle",
       routes: [
         "POST /api/issues",
         "PUT /api/issues/{id}",
@@ -288,7 +288,7 @@ test("maintained domain flows stay anchored to current routes, tables and source
       ],
     },
     {
-      file: "prompt-evaluation-flow.md",
+      name: "Prompt Evaluation",
       routes: [
         "POST /api/prompt-evaluation-assets/{id}/run",
         "POST /api/prompt-evaluation-runs/{id}/sync",
@@ -314,7 +314,7 @@ test("maintained domain flows stay anchored to current routes, tables and source
       ],
     },
     {
-      file: "gongfeng-repository-flow.md",
+      name: "Gongfeng repository",
       routes: [
         "POST /api/workspaces/{id}/repos/probe",
         "POST /api/workspaces/{id}/repos/resolve",
@@ -341,20 +341,16 @@ test("maintained domain flows stay anchored to current routes, tables and source
     },
   ];
 
-  const index = fs.readFileSync(
+  const content = fs.readFileSync(
     path.join(root, "docs/architecture/domain-flows.md"),
     "utf8",
   );
   for (const flow of flows) {
-    const flowPath = path.join(root, "docs/architecture", flow.file);
-    assert.ok(fs.existsSync(flowPath), `missing maintained flow: ${flow.file}`);
-    assert.match(index, new RegExp(flow.file.replaceAll(".", "\\.")));
-    const content = fs.readFileSync(flowPath, "utf8");
-    for (const route of flow.routes) assert.ok(routeKeys.has(route), `${flow.file}: stale route ${route}`);
-    for (const table of flow.tables) assert.ok(tableNames.has(table), `${flow.file}: stale table ${table}`);
+    for (const route of flow.routes) assert.ok(routeKeys.has(route), `${flow.name}: stale route ${route}`);
+    for (const table of flow.tables) assert.ok(tableNames.has(table), `${flow.name}: stale table ${table}`);
     for (const source of flow.sources) {
-      assert.ok(fs.existsSync(path.join(root, source)), `${flow.file}: missing source ${source}`);
-      assert.ok(content.includes(`\`${source}\``), `${flow.file}: undocumented source ${source}`);
+      assert.ok(fs.existsSync(path.join(root, source)), `${flow.name}: missing source ${source}`);
+      assert.ok(content.includes(`\`${source}\``), `${flow.name}: undocumented source ${source}`);
     }
   }
 });
