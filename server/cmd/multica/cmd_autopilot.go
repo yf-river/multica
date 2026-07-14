@@ -300,10 +300,7 @@ func runAutopilotCreate(cmd *cobra.Command, _ []string) error {
 	if v, _ := cmd.Flags().GetString("description"); v != "" {
 		body["description"] = v
 	}
-	if cmd.Flags().Changed("priority") {
-		v, _ := cmd.Flags().GetString("priority")
-		body["priority"] = v
-	}
+	applyChangedStringFlag(cmd, body, "priority", "priority")
 	if v, _ := cmd.Flags().GetString("project"); v != "" {
 		projectRef, err := resolveProjectID(ctx, client, v)
 		if err != nil {
@@ -338,14 +335,8 @@ func runAutopilotUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	body := map[string]any{}
-	if cmd.Flags().Changed("title") {
-		v, _ := cmd.Flags().GetString("title")
-		body["title"] = v
-	}
-	if cmd.Flags().Changed("description") {
-		v, _ := cmd.Flags().GetString("description")
-		body["description"] = v
-	}
+	applyChangedStringFlag(cmd, body, "title", "title")
+	applyChangedStringFlag(cmd, body, "description", "description")
 	if cmd.Flags().Changed("agent") {
 		v, _ := cmd.Flags().GetString("agent")
 		agentID, resolveErr := resolveAgent(ctx, client, v)
@@ -366,14 +357,8 @@ func runAutopilotUpdate(cmd *cobra.Command, args []string) error {
 			body["project_id"] = projectRef.ID
 		}
 	}
-	if cmd.Flags().Changed("priority") {
-		v, _ := cmd.Flags().GetString("priority")
-		body["priority"] = v
-	}
-	if cmd.Flags().Changed("status") {
-		v, _ := cmd.Flags().GetString("status")
-		body["status"] = v
-	}
+	applyChangedStringFlag(cmd, body, "priority", "priority")
+	applyChangedStringFlag(cmd, body, "status", "status")
 	if cmd.Flags().Changed("mode") {
 		v, _ := cmd.Flags().GetString("mode")
 		if v != "create_issue" && v != "run_only" {
@@ -381,10 +366,7 @@ func runAutopilotUpdate(cmd *cobra.Command, args []string) error {
 		}
 		body["execution_mode"] = v
 	}
-	if cmd.Flags().Changed("issue-title-template") {
-		v, _ := cmd.Flags().GetString("issue-title-template")
-		body["issue_title_template"] = v
-	}
+	applyChangedStringFlag(cmd, body, "issue-title-template", "issue_title_template")
 
 	if len(body) == 0 {
 		return fmt.Errorf("no fields to update; use flags like --title, --description, --agent, --status, --mode, etc")

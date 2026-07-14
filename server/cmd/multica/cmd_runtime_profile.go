@@ -216,18 +216,9 @@ func runRuntimeProfileUpdate(cmd *cobra.Command, args []string) error {
 	profileID := args[0]
 
 	body := map[string]any{}
-	if cmd.Flags().Changed("display-name") {
-		v, _ := cmd.Flags().GetString("display-name")
-		body["display_name"] = v
-	}
-	if cmd.Flags().Changed("command-name") {
-		v, _ := cmd.Flags().GetString("command-name")
-		body["command_name"] = v
-	}
-	if cmd.Flags().Changed("description") {
-		v, _ := cmd.Flags().GetString("description")
-		body["description"] = v
-	}
+	applyChangedStringFlag(cmd, body, "display-name", "display_name")
+	applyChangedStringFlag(cmd, body, "command-name", "command_name")
+	applyChangedStringFlag(cmd, body, "description", "description")
 	if cmd.Flags().Changed("fixed-args") {
 		v, _ := cmd.Flags().GetString("fixed-args")
 		fixedArgs, err := parseRuntimeProfileFixedArgs(v)

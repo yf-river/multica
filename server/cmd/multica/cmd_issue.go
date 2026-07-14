@@ -948,10 +948,7 @@ func runIssueUpdate(cmd *cobra.Command, args []string) error {
 	defer cancel()
 
 	body := map[string]any{}
-	if cmd.Flags().Changed("title") {
-		v, _ := cmd.Flags().GetString("title")
-		body["title"] = v
-	}
+	applyChangedStringFlag(cmd, body, "title", "title")
 	if cmd.Flags().Changed("description") || cmd.Flags().Changed("description-stdin") || cmd.Flags().Changed("description-file") {
 		desc, _, err := resolveTextFlag(cmd, "description")
 		if err != nil {
@@ -977,14 +974,8 @@ func runIssueUpdate(cmd *cobra.Command, args []string) error {
 			body["project_id"] = project.ID
 		}
 	}
-	if cmd.Flags().Changed("start-date") {
-		v, _ := cmd.Flags().GetString("start-date")
-		body["start_date"] = v
-	}
-	if cmd.Flags().Changed("due-date") {
-		v, _ := cmd.Flags().GetString("due-date")
-		body["due_date"] = v
-	}
+	applyChangedStringFlag(cmd, body, "start-date", "start_date")
+	applyChangedStringFlag(cmd, body, "due-date", "due_date")
 	if cmd.Flags().Changed("assignee") || cmd.Flags().Changed("assignee-id") {
 		aType, aID, hasAssignee, resolveErr := pickAssigneeFromFlags(ctx, client, cmd, "assignee", "assignee-id", issueAssigneeKinds)
 		if resolveErr != nil {

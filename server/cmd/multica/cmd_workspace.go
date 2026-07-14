@@ -357,10 +357,7 @@ func truncateWorkspaceDetail(value string) string {
 // the caller cannot accidentally clobber a field they did not pass.
 func buildWorkspaceUpdateBody(cmd *cobra.Command) (map[string]any, error) {
 	body := map[string]any{}
-	if cmd.Flags().Changed("name") {
-		v, _ := cmd.Flags().GetString("name")
-		body["name"] = v
-	}
+	applyChangedStringFlag(cmd, body, "name", "name")
 	if cmd.Flags().Changed("description") || cmd.Flags().Changed("description-stdin") {
 		desc, _, err := resolveTextFlag(cmd, "description")
 		if err != nil {

@@ -177,18 +177,9 @@ func runSquadUpdate(cmd *cobra.Command, args []string) error {
 	defer cancel()
 
 	body := map[string]any{}
-	if cmd.Flags().Changed("name") {
-		v, _ := cmd.Flags().GetString("name")
-		body["name"] = v
-	}
-	if cmd.Flags().Changed("description") {
-		v, _ := cmd.Flags().GetString("description")
-		body["description"] = v
-	}
-	if cmd.Flags().Changed("instructions") {
-		v, _ := cmd.Flags().GetString("instructions")
-		body["instructions"] = v
-	}
+	applyChangedStringFlag(cmd, body, "name", "name")
+	applyChangedStringFlag(cmd, body, "description", "description")
+	applyChangedStringFlag(cmd, body, "instructions", "instructions")
 	if cmd.Flags().Changed("leader") {
 		v, _ := cmd.Flags().GetString("leader")
 		leaderID, err := resolveAgent(ctx, client, v)
@@ -197,10 +188,7 @@ func runSquadUpdate(cmd *cobra.Command, args []string) error {
 		}
 		body["leader_id"] = leaderID
 	}
-	if cmd.Flags().Changed("avatar-url") {
-		v, _ := cmd.Flags().GetString("avatar-url")
-		body["avatar_url"] = v
-	}
+	applyChangedStringFlag(cmd, body, "avatar-url", "avatar_url")
 
 	if len(body) == 0 {
 		return fmt.Errorf("no fields to update; use flags like --name, --description, --instructions, --leader")

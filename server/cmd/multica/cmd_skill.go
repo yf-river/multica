@@ -330,14 +330,8 @@ func runSkillUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	body := map[string]any{}
-	if cmd.Flags().Changed("name") {
-		v, _ := cmd.Flags().GetString("name")
-		body["name"] = v
-	}
-	if cmd.Flags().Changed("description") {
-		v, _ := cmd.Flags().GetString("description")
-		body["description"] = v
-	}
+	applyChangedStringFlag(cmd, body, "name", "name")
+	applyChangedStringFlag(cmd, body, "description", "description")
 	content, hasContent, err := resolveSkillContentFlag(cmd)
 	if err != nil {
 		return err

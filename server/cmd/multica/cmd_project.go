@@ -382,14 +382,8 @@ func runProjectUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	body := map[string]any{}
-	if cmd.Flags().Changed("title") {
-		v, _ := cmd.Flags().GetString("title")
-		body["title"] = v
-	}
-	if cmd.Flags().Changed("description") {
-		v, _ := cmd.Flags().GetString("description")
-		body["description"] = v
-	}
+	applyChangedStringFlag(cmd, body, "title", "title")
+	applyChangedStringFlag(cmd, body, "description", "description")
 	if cmd.Flags().Changed("status") {
 		v, _ := cmd.Flags().GetString("status")
 		if err := validateProjectStatus(v); err != nil {
@@ -397,10 +391,7 @@ func runProjectUpdate(cmd *cobra.Command, args []string) error {
 		}
 		body["status"] = v
 	}
-	if cmd.Flags().Changed("icon") {
-		v, _ := cmd.Flags().GetString("icon")
-		body["icon"] = v
-	}
+	applyChangedStringFlag(cmd, body, "icon", "icon")
 	if cmd.Flags().Changed("lead") {
 		v, _ := cmd.Flags().GetString("lead")
 		aType, aID, resolveErr := resolveAssignee(ctx, client, v, memberOrAgentKinds)
