@@ -11,11 +11,6 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-func (h *Handler) loadPromptLibraryTrialReplay(ctx context.Context, workspaceID, actorID, key pgtype.UUID, requestHash string) (PromptLibraryTrialResponse, bool, error) {
-	return loadResourceCreateReplay(ctx, h.Queries, workspaceID, actorID, resourceTypePromptLibraryTrial, key, requestHash,
-		func(response PromptLibraryTrialResponse) bool { return response.ID != "" })
-}
-
 func completePromptLibraryTrialRequest(ctx context.Context, queries *db.Queries, workspaceID, actorID, key pgtype.UUID, requestHash string, response PromptLibraryTrialResponse) error {
 	body, err := json.Marshal(response)
 	if err != nil {

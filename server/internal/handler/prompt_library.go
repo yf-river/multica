@@ -426,7 +426,14 @@ func (h *Handler) CreatePromptLibraryItem(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	replay, found, replayErr := h.loadPromptLibraryItemCreateReplay(r.Context(), workspaceUUID, actorID, idempotencyKey, requestHash)
+	loadReplay := func() (PromptLibraryItemResponse, bool, error) {
+		return loadResourceCreateReplay(
+			r.Context(), h.Queries, workspaceUUID, actorID, resourceTypePromptLibraryItem,
+			idempotencyKey, requestHash,
+			func(response PromptLibraryItemResponse) bool { return response.ID != "" },
+		)
+	}
+	replay, found, replayErr := loadReplay()
 	if replayErr != nil {
 		writePromptLibraryCreateReplayError(w, "prompt library item", replayErr)
 		return
@@ -457,9 +464,7 @@ func (h *Handler) CreatePromptLibraryItem(w http.ResponseWriter, r *http.Request
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, actorID, resourceTypePromptLibraryItem, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, func() (PromptLibraryItemResponse, bool, error) {
-			return h.loadPromptLibraryItemCreateReplay(r.Context(), workspaceUUID, actorID, idempotencyKey, requestHash)
-		})
+		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, loadReplay)
 		if replayErr != nil {
 			writePromptLibraryCreateReplayError(w, "prompt library item", replayErr)
 			return
@@ -635,7 +640,16 @@ func (h *Handler) CreatePromptLibraryVersion(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	replay, found, replayErr := h.loadPromptLibraryVersionCreateReplay(r.Context(), workspaceUUID, actorID, idempotencyKey, requestHash)
+	loadReplay := func() (CreatePromptLibraryVersionResponse, bool, error) {
+		return loadResourceCreateReplay(
+			r.Context(), h.Queries, workspaceUUID, actorID, resourceTypePromptLibraryVersion,
+			idempotencyKey, requestHash,
+			func(response CreatePromptLibraryVersionResponse) bool {
+				return response.Item.ID != "" && response.Version.ID != ""
+			},
+		)
+	}
+	replay, found, replayErr := loadReplay()
 	if replayErr != nil {
 		writePromptLibraryCreateReplayError(w, "prompt library version", replayErr)
 		return
@@ -665,9 +679,7 @@ func (h *Handler) CreatePromptLibraryVersion(w http.ResponseWriter, r *http.Requ
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, existing.WorkspaceID, actorID, resourceTypePromptLibraryVersion, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, func() (CreatePromptLibraryVersionResponse, bool, error) {
-			return h.loadPromptLibraryVersionCreateReplay(r.Context(), existing.WorkspaceID, actorID, idempotencyKey, requestHash)
-		})
+		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, loadReplay)
 		if replayErr != nil {
 			writePromptLibraryCreateReplayError(w, "prompt library version", replayErr)
 			return
@@ -842,7 +854,14 @@ func (h *Handler) CreatePromptLibraryTrial(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	replay, found, replayErr := h.loadPromptLibraryTrialReplay(r.Context(), item.WorkspaceID, parseUUID(actorID), idempotencyKey, requestHash)
+	loadReplay := func() (PromptLibraryTrialResponse, bool, error) {
+		return loadResourceCreateReplay(
+			r.Context(), h.Queries, item.WorkspaceID, parseUUID(actorID), resourceTypePromptLibraryTrial,
+			idempotencyKey, requestHash,
+			func(response PromptLibraryTrialResponse) bool { return response.ID != "" },
+		)
+	}
+	replay, found, replayErr := loadReplay()
 	if replayErr != nil {
 		writePromptLibraryTrialReplayError(w, replayErr)
 		return
@@ -874,9 +893,7 @@ func (h *Handler) CreatePromptLibraryTrial(w http.ResponseWriter, r *http.Reques
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, item.WorkspaceID, parseUUID(actorID), resourceTypePromptLibraryTrial, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, func() (PromptLibraryTrialResponse, bool, error) {
-			return h.loadPromptLibraryTrialReplay(r.Context(), item.WorkspaceID, parseUUID(actorID), idempotencyKey, requestHash)
-		})
+		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, loadReplay)
 		if replayErr != nil {
 			writePromptLibraryTrialReplayError(w, replayErr)
 			return

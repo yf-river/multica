@@ -217,9 +217,14 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	replay, found, replayErr := h.loadCommentCreateReplay(
-		r.Context(), issue.WorkspaceID, parseUUID(authorID), idempotencyKey, requestHash,
-	)
+	loadReplay := func() (CommentResponse, bool, error) {
+		return loadResourceCreateReplay(
+			r.Context(), h.Queries, issue.WorkspaceID, parseUUID(authorID), resourceTypeComment,
+			idempotencyKey, requestHash,
+			func(response CommentResponse) bool { return response.ID != "" },
+		)
+	}
+	replay, found, replayErr := loadReplay()
 	if replayErr != nil {
 		writeCommentCreateReplayError(w, replayErr)
 		return
@@ -326,11 +331,7 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, issue.WorkspaceID, parseUUID(authorID), resourceTypeComment, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, func() (CommentResponse, bool, error) {
-			return h.loadCommentCreateReplay(
-				r.Context(), issue.WorkspaceID, parseUUID(authorID), idempotencyKey, requestHash,
-			)
-		})
+		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, loadReplay)
 		if replayErr != nil {
 			writeCommentCreateReplayError(w, replayErr)
 			return

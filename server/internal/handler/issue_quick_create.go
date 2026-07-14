@@ -244,9 +244,16 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if replayed, found, err := h.loadQuickCreateReplay(
-		r.Context(), wsUUID, requesterUUID, idempotencyKey, requestHash,
-	); err != nil {
+	loadReplay := func() (QuickCreateIssueResponse, bool, error) {
+		return loadResourceCreateReplay(
+			r.Context(), h.Queries, wsUUID, requesterUUID, resourceTypeQuickCreate,
+			idempotencyKey, requestHash,
+			func(response QuickCreateIssueResponse) bool {
+				return response.TaskID != "" || response.IssueID != ""
+			},
+		)
+	}
+	if replayed, found, err := loadReplay(); err != nil {
 		writeQuickCreateReplayError(w, err)
 		return
 	} else if found {
@@ -263,11 +270,7 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 	requestQueries := h.Queries.WithTx(requestTx)
 	err = reserveResourceCreateRequest(r.Context(), requestQueries, wsUUID, requesterUUID, resourceTypeQuickCreate, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		replayed, replayErr := loadReplayAfterReservationConflict(r.Context(), requestTx, func() (QuickCreateIssueResponse, bool, error) {
-			return h.loadQuickCreateReplay(
-				r.Context(), wsUUID, requesterUUID, idempotencyKey, requestHash,
-			)
-		})
+		replayed, replayErr := loadReplayAfterReservationConflict(r.Context(), requestTx, loadReplay)
 		if replayErr != nil {
 			writeQuickCreateReplayError(w, replayErr)
 			return

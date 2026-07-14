@@ -13,22 +13,6 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-func (h *Handler) loadQuickCreateReplay(
-	ctx context.Context,
-	workspaceID pgtype.UUID,
-	actorID pgtype.UUID,
-	idempotencyKey pgtype.UUID,
-	requestHash string,
-) (QuickCreateIssueResponse, bool, error) {
-	return loadResourceCreateReplay(
-		ctx, h.Queries, workspaceID, actorID, resourceTypeQuickCreate,
-		idempotencyKey, requestHash,
-		func(response QuickCreateIssueResponse) bool {
-			return response.TaskID != "" || response.IssueID != ""
-		},
-	)
-}
-
 func quickCreateResponseStatus(response QuickCreateIssueResponse) int {
 	if response.TaskID != "" {
 		return http.StatusAccepted

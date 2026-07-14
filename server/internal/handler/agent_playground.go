@@ -246,9 +246,14 @@ func (h *Handler) CreateAgentPlaygroundExperiment(w http.ResponseWriter, r *http
 		return
 	}
 	requestActorID := parseUUID(userID)
-	if replay, found, err := h.loadAgentPlaygroundCreateReplay(
-		r.Context(), workspaceUUID, requestActorID, idempotencyKey, requestHash,
-	); err != nil {
+	loadReplay := func() (AgentPlaygroundDetailResponse, bool, error) {
+		return loadResourceCreateReplay(
+			r.Context(), h.Queries, workspaceUUID, requestActorID, resourceTypeAgentPlayground,
+			idempotencyKey, requestHash,
+			func(response AgentPlaygroundDetailResponse) bool { return response.Experiment.ID != "" },
+		)
+	}
+	if replay, found, err := loadReplay(); err != nil {
 		writeAgentPlaygroundCreateReplayError(w, err)
 		return
 	} else if found {
@@ -314,11 +319,7 @@ func (h *Handler) CreateAgentPlaygroundExperiment(w http.ResponseWriter, r *http
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, requestActorID, resourceTypeAgentPlayground, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, func() (AgentPlaygroundDetailResponse, bool, error) {
-			return h.loadAgentPlaygroundCreateReplay(
-				r.Context(), workspaceUUID, requestActorID, idempotencyKey, requestHash,
-			)
-		})
+		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, loadReplay)
 		if replayErr != nil {
 			writeAgentPlaygroundCreateReplayError(w, replayErr)
 			return

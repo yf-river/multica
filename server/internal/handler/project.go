@@ -353,9 +353,14 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actorID := parseUUID(userID)
-	if replayed, found, err := h.loadProjectCreateReplay(
-		r.Context(), wsUUID, actorID, idempotencyKey, requestHash,
-	); err != nil {
+	loadReplay := func() (createProjectResponse, bool, error) {
+		return loadResourceCreateReplay(
+			r.Context(), h.Queries, wsUUID, actorID, resourceTypeProject,
+			idempotencyKey, requestHash,
+			func(response createProjectResponse) bool { return response.ID != "" },
+		)
+	}
+	if replayed, found, err := loadReplay(); err != nil {
 		h.writeProjectCreateReplayError(w, err)
 		return
 	} else if found {
@@ -395,11 +400,7 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 
 	err = reserveResourceCreateRequest(r.Context(), qtx, wsUUID, actorID, resourceTypeProject, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		replayed, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, func() (createProjectResponse, bool, error) {
-			return h.loadProjectCreateReplay(
-				r.Context(), wsUUID, actorID, idempotencyKey, requestHash,
-			)
-		})
+		replayed, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, loadReplay)
 		if replayErr != nil {
 			h.writeProjectCreateReplayError(w, replayErr)
 			return
@@ -487,20 +488,6 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, http.StatusCreated, createResp)
-}
-
-func (h *Handler) loadProjectCreateReplay(
-	ctx context.Context,
-	workspaceID pgtype.UUID,
-	actorID pgtype.UUID,
-	idempotencyKey pgtype.UUID,
-	requestHash string,
-) (createProjectResponse, bool, error) {
-	return loadResourceCreateReplay(
-		ctx, h.Queries, workspaceID, actorID, resourceTypeProject,
-		idempotencyKey, requestHash,
-		func(response createProjectResponse) bool { return response.ID != "" },
-	)
 }
 
 func (h *Handler) writeProjectCreateReplayError(w http.ResponseWriter, err error) {

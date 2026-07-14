@@ -11,20 +11,6 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-func (h *Handler) loadCommentCreateReplay(
-	ctx context.Context,
-	workspaceID pgtype.UUID,
-	actorID pgtype.UUID,
-	idempotencyKey pgtype.UUID,
-	requestHash string,
-) (CommentResponse, bool, error) {
-	return loadResourceCreateReplay(
-		ctx, h.Queries, workspaceID, actorID, resourceTypeComment,
-		idempotencyKey, requestHash,
-		func(response CommentResponse) bool { return response.ID != "" },
-	)
-}
-
 func completeCommentCreateRequest(
 	ctx context.Context,
 	queries *db.Queries,

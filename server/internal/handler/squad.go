@@ -864,9 +864,14 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if replayed, found, err := h.loadSquadCreateReplay(
-		r.Context(), wsUUID, member.UserID, idempotencyKey, requestHash,
-	); err != nil {
+	loadReplay := func() (squadResponse, bool, error) {
+		return loadResourceCreateReplay(
+			r.Context(), h.Queries, wsUUID, member.UserID, resourceTypeSquad,
+			idempotencyKey, requestHash,
+			func(response squadResponse) bool { return response.ID != "" },
+		)
+	}
+	if replayed, found, err := loadReplay(); err != nil {
 		h.writeSquadCreateReplayError(w, err)
 		return
 	} else if found {
@@ -883,11 +888,7 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, wsUUID, member.UserID, resourceTypeSquad, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		replayed, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, func() (squadResponse, bool, error) {
-			return h.loadSquadCreateReplay(
-				r.Context(), wsUUID, member.UserID, idempotencyKey, requestHash,
-			)
-		})
+		replayed, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, loadReplay)
 		if replayErr != nil {
 			h.writeSquadCreateReplayError(w, replayErr)
 			return
@@ -978,20 +979,6 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 		resp.MemberCount,
 	))
 	writeJSON(w, http.StatusCreated, resp)
-}
-
-func (h *Handler) loadSquadCreateReplay(
-	ctx context.Context,
-	workspaceID pgtype.UUID,
-	actorID pgtype.UUID,
-	idempotencyKey pgtype.UUID,
-	requestHash string,
-) (squadResponse, bool, error) {
-	return loadResourceCreateReplay(
-		ctx, h.Queries, workspaceID, actorID, resourceTypeSquad,
-		idempotencyKey, requestHash,
-		func(response squadResponse) bool { return response.ID != "" },
-	)
 }
 
 func (h *Handler) writeSquadCreateReplayError(w http.ResponseWriter, err error) {

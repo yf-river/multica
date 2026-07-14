@@ -792,9 +792,14 @@ func (h *Handler) CreateMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actorID := requester.UserID
-	if replay, found, err := h.loadWorkspaceMemberCreateReplay(
-		r.Context(), requester.WorkspaceID, actorID, idempotencyKey, requestHash,
-	); err != nil {
+	loadReplay := func() (MemberWithUserResponse, bool, error) {
+		return loadResourceCreateReplay(
+			r.Context(), h.Queries, requester.WorkspaceID, actorID, resourceTypeWorkspaceMember,
+			idempotencyKey, requestHash,
+			func(response MemberWithUserResponse) bool { return response.ID != "" },
+		)
+	}
+	if replay, found, err := loadReplay(); err != nil {
 		writeWorkspaceMemberCreateReplayError(w, err)
 		return
 	} else if found {
@@ -811,11 +816,7 @@ func (h *Handler) CreateMember(w http.ResponseWriter, r *http.Request) {
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, requester.WorkspaceID, actorID, resourceTypeWorkspaceMember, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, func() (MemberWithUserResponse, bool, error) {
-			return h.loadWorkspaceMemberCreateReplay(
-				r.Context(), requester.WorkspaceID, actorID, idempotencyKey, requestHash,
-			)
-		})
+		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, loadReplay)
 		if replayErr != nil {
 			writeWorkspaceMemberCreateReplayError(w, replayErr)
 			return

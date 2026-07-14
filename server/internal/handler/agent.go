@@ -861,9 +861,14 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	operationActorID := parseUUID(ownerID)
-	if replayed, found, err := h.loadAgentCreateReplay(
-		r.Context(), wsUUID, operationActorID, idempotencyKey, requestHash,
-	); err != nil {
+	loadReplay := func() (AgentResponse, bool, error) {
+		return loadResourceCreateReplay(
+			r.Context(), h.Queries, wsUUID, operationActorID, resourceTypeAgent,
+			idempotencyKey, requestHash,
+			func(response AgentResponse) bool { return response.ID != "" },
+		)
+	}
+	if replayed, found, err := loadReplay(); err != nil {
 		h.writeAgentCreateReplayError(w, err)
 		return
 	} else if found {
@@ -880,11 +885,7 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, wsUUID, operationActorID, resourceTypeAgent, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		replayed, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, func() (AgentResponse, bool, error) {
-			return h.loadAgentCreateReplay(
-				r.Context(), wsUUID, operationActorID, idempotencyKey, requestHash,
-			)
-		})
+		replayed, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, loadReplay)
 		if replayErr != nil {
 			h.writeAgentCreateReplayError(w, replayErr)
 			return
@@ -979,20 +980,6 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	))
 
 	writeJSON(w, http.StatusCreated, replayResponse)
-}
-
-func (h *Handler) loadAgentCreateReplay(
-	ctx context.Context,
-	workspaceID pgtype.UUID,
-	actorID pgtype.UUID,
-	idempotencyKey pgtype.UUID,
-	requestHash string,
-) (AgentResponse, bool, error) {
-	return loadResourceCreateReplay(
-		ctx, h.Queries, workspaceID, actorID, resourceTypeAgent,
-		idempotencyKey, requestHash,
-		func(response AgentResponse) bool { return response.ID != "" },
-	)
 }
 
 func (h *Handler) writeAgentCreateReplayError(w http.ResponseWriter, err error) {

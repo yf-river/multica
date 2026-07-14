@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -369,9 +368,14 @@ func (h *Handler) CreateSkill(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if replayed, found, err := h.loadSkillCreateReplay(
-		r.Context(), workspaceUUID, creatorUUID, idempotencyKey, requestHash,
-	); err != nil {
+	loadReplay := func() (SkillWithFilesResponse, bool, error) {
+		return loadResourceCreateReplay(
+			r.Context(), h.Queries, workspaceUUID, creatorUUID, resourceTypeSkill,
+			idempotencyKey, requestHash,
+			func(response SkillWithFilesResponse) bool { return response.ID != "" },
+		)
+	}
+	if replayed, found, err := loadReplay(); err != nil {
 		h.writeSkillCreateReplayError(w, err)
 		return
 	} else if found {
@@ -388,11 +392,7 @@ func (h *Handler) CreateSkill(w http.ResponseWriter, r *http.Request) {
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, creatorUUID, resourceTypeSkill, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		replayed, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, func() (SkillWithFilesResponse, bool, error) {
-			return h.loadSkillCreateReplay(
-				r.Context(), workspaceUUID, creatorUUID, idempotencyKey, requestHash,
-			)
-		})
+		replayed, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, loadReplay)
 		if replayErr != nil {
 			h.writeSkillCreateReplayError(w, replayErr)
 			return
@@ -446,20 +446,6 @@ func (h *Handler) CreateSkill(w http.ResponseWriter, r *http.Request) {
 	actorType, actorID := resolveActor(r, creatorID)
 	h.publish(protocol.EventSkillCreated, workspaceID, actorType, actorID, map[string]any{"skill": resp})
 	writeJSON(w, http.StatusCreated, resp)
-}
-
-func (h *Handler) loadSkillCreateReplay(
-	ctx context.Context,
-	workspaceID pgtype.UUID,
-	actorID pgtype.UUID,
-	idempotencyKey pgtype.UUID,
-	requestHash string,
-) (SkillWithFilesResponse, bool, error) {
-	return loadResourceCreateReplay(
-		ctx, h.Queries, workspaceID, actorID, resourceTypeSkill,
-		idempotencyKey, requestHash,
-		func(response SkillWithFilesResponse) bool { return response.ID != "" },
-	)
 }
 
 func (h *Handler) writeSkillCreateReplayError(w http.ResponseWriter, err error) {
