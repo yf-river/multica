@@ -56,9 +56,8 @@ export function useUpdateAutopilot() {
       qc.cancelQueries({ queryKey: autopilotKeys.list(wsId) });
       const prevList = qc.getQueryData<Autopilot[]>(autopilotKeys.list(wsId));
       const prevDetail = qc.getQueryData<GetAutopilotResponse>(autopilotKeys.detail(wsId, id));
-      // Request shape (AutopilotSubscriberInput) lacks `created_at`, so it's
-      // not assignable to the response shape. onSettled invalidates the
-      // detail query and refetches the authoritative server payload.
+      // Subscriber membership is refetched authoritatively on settle; keep
+      // the optimistic list/detail patch limited to scalar fields.
       const { subscribers: _omitSubs, ...optimistic } = data;
       qc.setQueryData<Autopilot[]>(autopilotKeys.list(wsId), (old) =>
         old?.map((autopilot) =>

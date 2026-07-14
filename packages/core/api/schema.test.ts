@@ -96,19 +96,16 @@ describe("ApiClient schema fallback", () => {
   describe("listAutopilots", () => {
     const baseAutopilot = {
       id: "ap-1",
-      workspace_id: "ws-1",
       title: "Daily triage",
       description: null,
       assignee_type: "agent",
       assignee_id: "agent-1",
       status: "active",
       execution_mode: "run_only",
-      issue_title_template: null,
       created_by_type: "member",
       created_by_id: "user-1",
       last_run_at: null,
       created_at: "2026-06-01T00:00:00Z",
-      updated_at: "2026-06-01T00:00:00Z",
     };
 
     it("falls back to an empty list when the response is malformed", async () => {
@@ -232,9 +229,6 @@ describe("ApiClient schema fallback", () => {
         deliveries: [
           {
             id: "d-1",
-            workspace_id: "ws-1",
-            autopilot_id: "ap-1",
-            trigger_id: "t-1",
             provider: "github",
             event: "pull_request.opened",
             dedupe_key: "abc",
@@ -244,7 +238,6 @@ describe("ApiClient schema fallback", () => {
             attempt_count: 1,
             content_type: "application/json",
             response_status: 200,
-            autopilot_run_id: null,
             replayed_from_delivery_id: null,
             error: null,
             received_at: "2026-01-01T00:00:00Z",
@@ -267,7 +260,6 @@ describe("ApiClient schema fallback", () => {
       const client = new ApiClient("https://api.example.test");
       const detail = await client.getAutopilotDelivery("ap-1", "d-1");
       expect(detail.id).toBe("d-1");
-      expect(detail.autopilot_id).toBe("ap-1");
     });
   });
 

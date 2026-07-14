@@ -24,7 +24,6 @@ export type AutopilotRunSource = "schedule" | "manual" | "webhook";
 
 export interface Autopilot {
   id: string;
-  workspace_id: string;
   title: string;
   description: string | null;
   project_id?: string | null;
@@ -32,12 +31,10 @@ export interface Autopilot {
   assignee_id: string;
   status: AutopilotStatus;
   execution_mode: AutopilotExecutionMode;
-  issue_title_template: string | null;
   created_by_type: string;
   created_by_id: string;
   last_run_at: string | null;
   created_at: string;
-  updated_at: string;
   // List-endpoint-only derived fields; absent on detail/create/update
   // responses. Enabled triggers only. `trigger_kinds`
   // and `last_run_status` are server-driven strings — render unknown values
@@ -58,12 +55,10 @@ export interface WebhookEventFilter {
 export interface AutopilotSubscriber {
   user_type: "member";
   user_id: string;
-  created_at: string;
 }
 
 export interface AutopilotTrigger {
   id: string;
-  autopilot_id: string;
   kind: AutopilotTriggerKind;
   enabled: boolean;
   cron_expression: string | null;
@@ -82,15 +77,11 @@ export interface AutopilotTrigger {
   // event_filters is only present for webhook triggers. Null/empty means
   // "accept all events".
   event_filters?: WebhookEventFilter[] | null;
-  last_fired_at: string | null;
-  created_at: string;
-  updated_at: string;
 }
 
 export interface AutopilotRun {
   id: string;
   autopilot_id: string;
-  trigger_id: string | null;
   source: AutopilotRunSource;
   status: AutopilotRunStatus;
   issue_id: string | null;
@@ -99,13 +90,7 @@ export interface AutopilotRun {
   completed_at: string | null;
   failure_reason: string | null;
   trigger_payload: unknown;
-  result: unknown;
   created_at: string;
-}
-
-export interface AutopilotSubscriberInput {
-  user_type: "member";
-  user_id: string;
 }
 
 export interface CreateAutopilotRequest {
@@ -116,7 +101,7 @@ export interface CreateAutopilotRequest {
   assignee_id: string;
   execution_mode: AutopilotExecutionMode;
   issue_title_template?: string;
-  subscribers?: AutopilotSubscriberInput[];
+  subscribers?: AutopilotSubscriber[];
   trigger: CreateAutopilotTriggerRequest;
 }
 
@@ -137,7 +122,7 @@ export interface UpdateAutopilotRequest {
   issue_title_template?: string | null;
   // When present, fully replaces the autopilot's subscriber template;
   // omit to leave it untouched.
-  subscribers?: AutopilotSubscriberInput[];
+  subscribers?: AutopilotSubscriber[];
 }
 
 export interface CreateAutopilotTriggerRequest {
@@ -182,9 +167,6 @@ export type WebhookSignatureStatus =
 
 export interface WebhookDelivery {
   id: string;
-  workspace_id: string;
-  autopilot_id: string;
-  trigger_id: string;
   provider: string;
   event: string;
   dedupe_key: string | null;
@@ -194,7 +176,6 @@ export interface WebhookDelivery {
   attempt_count: number;
   content_type: string | null;
   response_status: number | null;
-  autopilot_run_id: string | null;
   replayed_from_delivery_id: string | null;
   error: string | null;
   received_at: string;

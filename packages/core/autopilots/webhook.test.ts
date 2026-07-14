@@ -4,7 +4,6 @@ import type { AutopilotTrigger } from "../types";
 
 const baseTrigger: AutopilotTrigger = {
   id: "t1",
-  autopilot_id: "a1",
   kind: "webhook",
   enabled: true,
   cron_expression: null,
@@ -14,9 +13,6 @@ const baseTrigger: AutopilotTrigger = {
   webhook_path: "/api/webhooks/autopilots/awt_abc",
   webhook_url: null,
   label: null,
-  last_fired_at: null,
-  created_at: "",
-  updated_at: "",
 };
 
 describe("buildAutopilotWebhookUrl", () => {

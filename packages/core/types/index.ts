@@ -207,7 +207,6 @@ export type {
   AutopilotExecutionMode,
   AutopilotAssigneeType,
   AutopilotSubscriber,
-  AutopilotSubscriberInput,
   AutopilotTrigger,
   AutopilotTriggerKind,
   AutopilotRun,

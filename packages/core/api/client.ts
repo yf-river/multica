@@ -3037,7 +3037,7 @@ export class ApiClient extends ApiTransport {
     return parseWithFallback(
       raw,
       WebhookDeliveryResponseSchema,
-      { ...EMPTY_WEBHOOK_DELIVERY, id: deliveryId, autopilot_id: autopilotId },
+      { ...EMPTY_WEBHOOK_DELIVERY, id: deliveryId },
       { endpoint: "GET /api/autopilots/:id/deliveries/:deliveryId" },
     );
   }
@@ -3059,7 +3059,7 @@ export class ApiClient extends ApiTransport {
       return parseOrThrow(
         raw,
         WebhookDeliveryResponseSchema,
-        { ...EMPTY_WEBHOOK_DELIVERY, autopilot_id: autopilotId },
+        EMPTY_WEBHOOK_DELIVERY,
         { endpoint: "POST /api/autopilots/:id/deliveries/:deliveryId/replay", mayHaveCommitted: true },
       );
     };

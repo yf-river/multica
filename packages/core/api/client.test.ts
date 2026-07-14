@@ -502,11 +502,11 @@ describe("ApiClient", () => {
 
   it("retries webhook token rotation unknown outcomes with one request identity", async () => {
     const response = {
-      id: "trigger-1", autopilot_id: "autopilot-1", kind: "webhook", enabled: true,
+      id: "trigger-1", kind: "webhook", enabled: true,
       cron_expression: null, timezone: null, next_run_at: null, webhook_token: "secret-token",
       webhook_path: "/api/webhooks/autopilots/secret-token", webhook_url: null,
       provider: "generic", has_signing_secret: false, signing_secret_hint: null,
-      label: null, event_filters: null, last_fired_at: null, created_at: "now", updated_at: "now",
+      label: null, event_filters: null,
     };
     const fetchMock = vi.fn()
       .mockRejectedValueOnce(new TypeError("response lost"))
@@ -525,11 +525,11 @@ describe("ApiClient", () => {
 
   it("retries Autopilot trigger create unknown outcomes with one request identity", async () => {
     const response = {
-      id: "trigger-1", autopilot_id: "autopilot-1", kind: "webhook", enabled: true,
+      id: "trigger-1", kind: "webhook", enabled: true,
       cron_expression: null, timezone: null, next_run_at: null, webhook_token: "secret-token",
       webhook_path: "/api/webhooks/autopilots/secret-token", webhook_url: null,
       provider: "generic", has_signing_secret: false, signing_secret_hint: null,
-      label: null, event_filters: null, last_fired_at: null, created_at: "now", updated_at: "now",
+      label: null, event_filters: null,
     };
     const fetchMock = vi.fn()
       .mockRejectedValueOnce(new TypeError("response lost"))
@@ -568,11 +568,10 @@ describe("ApiClient", () => {
 
   it("retries webhook replay unknown outcomes with one request identity", async () => {
     const response = {
-      id: "delivery-replay-1", workspace_id: "workspace-1", autopilot_id: "autopilot-1",
-      trigger_id: "trigger-1", provider: "github", event: "push", signature_status: "not_required",
+      id: "delivery-replay-1", provider: "github", event: "push", signature_status: "not_required",
       status: "dispatched", attempt_count: 1, received_at: "now", last_attempt_at: "now", created_at: "now",
       dedupe_key: null, dedupe_source: null, content_type: null, response_status: 201,
-      autopilot_run_id: "run-1", replayed_from_delivery_id: "delivery-1", error: null,
+      replayed_from_delivery_id: "delivery-1", error: null,
     };
     const fetchMock = vi.fn()
       .mockRejectedValueOnce(new TypeError("response lost"))
@@ -1485,7 +1484,6 @@ describe("ApiClient", () => {
   it("uses the expected HTTP contract for autopilot endpoints", async () => {
     const autopilot = {
       id: "ap-1",
-      workspace_id: "workspace-1",
       title: "Daily triage",
       description: null,
       project_id: null,
@@ -1493,17 +1491,14 @@ describe("ApiClient", () => {
       assignee_id: "agent-1",
       status: "active",
       execution_mode: "create_issue",
-      issue_title_template: null,
       created_by_type: "member",
       created_by_id: "user-1",
       last_run_at: null,
       created_at: "2026-07-11T00:00:00Z",
-      updated_at: "2026-07-11T00:00:00Z",
       subscribers: [],
     };
     const trigger = {
       id: "tr-1",
-      autopilot_id: "ap-1",
       kind: "schedule",
       enabled: true,
       cron_expression: "0 9 * * *",
@@ -1511,14 +1506,10 @@ describe("ApiClient", () => {
       next_run_at: null,
       webhook_token: null,
       label: null,
-      last_fired_at: null,
-      created_at: "2026-07-11T00:00:00Z",
-      updated_at: "2026-07-11T00:00:00Z",
     };
     const run = {
       id: "run-1",
       autopilot_id: "ap-1",
-      trigger_id: null,
       source: "manual",
       status: "running",
       issue_id: null,
@@ -1527,7 +1518,6 @@ describe("ApiClient", () => {
       completed_at: null,
       failure_reason: null,
       trigger_payload: null,
-      result: null,
       created_at: "2026-07-11T00:00:00Z",
     };
     const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
@@ -1647,7 +1637,6 @@ describe("ApiClient", () => {
     const run = {
       id: "run-1",
       autopilot_id: "ap-1",
-      trigger_id: null,
       source: "manual",
       status: "running",
       issue_id: null,
@@ -1656,7 +1645,6 @@ describe("ApiClient", () => {
       completed_at: null,
       failure_reason: null,
       trigger_payload: null,
-      result: null,
       created_at: "2026-07-11T00:00:00Z",
     };
     const fetchMock = vi
@@ -1685,7 +1673,6 @@ describe("ApiClient", () => {
   it("retries an unknown autopilot create outcome with the same key", async () => {
     const response = {
       id: "ap-1",
-      workspace_id: "workspace-1",
       title: "Daily triage",
       description: null,
       project_id: null,
@@ -1693,16 +1680,13 @@ describe("ApiClient", () => {
       assignee_id: "agent-1",
       status: "active",
       execution_mode: "run_only",
-      issue_title_template: null,
       created_by_type: "member",
       created_by_id: "user-1",
       last_run_at: null,
       created_at: "2026-07-11T00:00:00Z",
-      updated_at: "2026-07-11T00:00:00Z",
       subscribers: [],
       initial_trigger: {
         id: "trigger-1",
-        autopilot_id: "ap-1",
         kind: "webhook",
         enabled: true,
         cron_expression: null,
@@ -1710,9 +1694,6 @@ describe("ApiClient", () => {
         next_run_at: null,
         webhook_token: "awt_test",
         label: null,
-        last_fired_at: null,
-        created_at: "2026-07-11T00:00:00Z",
-        updated_at: "2026-07-11T00:00:00Z",
       },
     };
     const fetchMock = vi

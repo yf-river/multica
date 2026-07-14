@@ -43,9 +43,6 @@ export const SquadMemberStatusListResponseSchema = z.object({
 
 const WebhookDeliverySchema = z.object({
   id: z.string(),
-  workspace_id: z.string(),
-  autopilot_id: z.string(),
-  trigger_id: z.string(),
   provider: z.string(),
   event: z.string(),
   dedupe_key: z.string().nullable(),
@@ -55,7 +52,6 @@ const WebhookDeliverySchema = z.object({
   attempt_count: z.number().default(0),
   content_type: z.string().nullable(),
   response_status: z.number().nullable(),
-  autopilot_run_id: z.string().nullable(),
   replayed_from_delivery_id: z.string().nullable(),
   error: z.string().nullable(),
   received_at: z.string(),
@@ -87,12 +83,10 @@ export const EMPTY_WEBHOOK_DELIVERIES: WebhookDelivery[] = [];
 const AutopilotSubscriberSchema = z.object({
   user_type: z.string(),
   user_id: NonEmptyStringSchema,
-  created_at: z.string(),
 }).loose();
 
 export const AutopilotSchema = z.object({
   id: NonEmptyStringSchema,
-  workspace_id: NonEmptyStringSchema,
   title: z.string(),
   description: z.string().nullable().optional(),
   project_id: z.string().nullable().optional(),
@@ -100,12 +94,10 @@ export const AutopilotSchema = z.object({
   assignee_id: z.string(),
   status: z.string(),
   execution_mode: z.string(),
-  issue_title_template: z.string().nullable().optional(),
   created_by_type: z.string(),
   created_by_id: z.string(),
   last_run_at: z.string().nullable().optional(),
   created_at: z.string(),
-  updated_at: z.string(),
   trigger_kinds: z.array(z.string()).optional(),
   next_run_at: z.string().nullable().optional(),
   last_run_status: z.string().nullable().optional(),
@@ -120,7 +112,6 @@ export const EMPTY_AUTOPILOTS: Autopilot[] = [];
 
 export const EMPTY_AUTOPILOT: Autopilot = {
   id: "",
-  workspace_id: "",
   title: "",
   description: null,
   project_id: null,
@@ -128,12 +119,10 @@ export const EMPTY_AUTOPILOT: Autopilot = {
   assignee_id: "",
   status: "paused",
   execution_mode: "run_only",
-  issue_title_template: null,
   created_by_type: "member",
   created_by_id: "",
   last_run_at: null,
   created_at: "",
-  updated_at: "",
   subscribers: [],
 };
 
@@ -144,7 +133,6 @@ const WebhookEventFilterSchema = z.object({
 
 const AutopilotTriggerWireSchema = z.object({
   id: NonEmptyStringSchema,
-  autopilot_id: NonEmptyStringSchema,
   kind: z.string(),
   enabled: z.boolean(),
   cron_expression: z.string().nullable(),
@@ -158,9 +146,6 @@ const AutopilotTriggerWireSchema = z.object({
   signing_secret_hint: z.string().nullable().optional(),
   label: z.string().nullable(),
   event_filters: z.array(WebhookEventFilterSchema).nullable().optional(),
-  last_fired_at: z.string().nullable(),
-  created_at: z.string(),
-  updated_at: z.string(),
 }).loose();
 
 export const AutopilotTriggerSchema = AutopilotTriggerWireSchema.transform((wire) => {
@@ -180,7 +165,6 @@ export const CreateAutopilotResponseSchema = AutopilotSchema.extend({
 
 export const EMPTY_AUTOPILOT_TRIGGER: AutopilotTrigger = {
   id: "",
-  autopilot_id: "",
   kind: "schedule",
   enabled: false,
   cron_expression: null,
@@ -191,15 +175,11 @@ export const EMPTY_AUTOPILOT_TRIGGER: AutopilotTrigger = {
   webhook_url: null,
   label: null,
   event_filters: null,
-  last_fired_at: null,
-  created_at: "",
-  updated_at: "",
 };
 
 export const AutopilotRunSchema = z.object({
   id: NonEmptyStringSchema,
   autopilot_id: NonEmptyStringSchema,
-  trigger_id: z.string().nullable(),
   source: z.string(),
   status: z.string(),
   issue_id: z.string().nullable(),
@@ -208,14 +188,12 @@ export const AutopilotRunSchema = z.object({
   completed_at: z.string().nullable(),
   failure_reason: z.string().nullable(),
   trigger_payload: z.unknown().default(null),
-  result: z.unknown().default(null),
   created_at: z.string(),
 }).loose();
 
 export const EMPTY_AUTOPILOT_RUN: AutopilotRun = {
   id: "",
   autopilot_id: "",
-  trigger_id: null,
   source: "manual",
   status: "failed",
   issue_id: null,
@@ -224,7 +202,6 @@ export const EMPTY_AUTOPILOT_RUN: AutopilotRun = {
   completed_at: null,
   failure_reason: null,
   trigger_payload: null,
-  result: null,
   created_at: "",
 };
 
@@ -246,9 +223,6 @@ export const EMPTY_AUTOPILOT_RUNS: AutopilotRun[] = [];
 
 export const EMPTY_WEBHOOK_DELIVERY: WebhookDelivery = {
   id: "",
-  workspace_id: "",
-  autopilot_id: "",
-  trigger_id: "",
   provider: "",
   event: "",
   dedupe_key: null,
@@ -258,7 +232,6 @@ export const EMPTY_WEBHOOK_DELIVERY: WebhookDelivery = {
   attempt_count: 0,
   content_type: null,
   response_status: null,
-  autopilot_run_id: null,
   replayed_from_delivery_id: null,
   error: null,
   received_at: "",

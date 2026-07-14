@@ -238,7 +238,6 @@ describe("domain response schema fallbacks", () => {
   it("strips write-only Autopilot signing secrets", () => {
     const parsed = AutopilotTriggerSchema.parse({
       id: "trigger-1",
-      autopilot_id: "autopilot-1",
       kind: "webhook",
       enabled: true,
       cron_expression: null,
@@ -246,9 +245,6 @@ describe("domain response schema fallbacks", () => {
       next_run_at: null,
       webhook_token: "current-bearer-token",
       label: null,
-      last_fired_at: null,
-      created_at: "2026-07-11T00:00:00Z",
-      updated_at: "2026-07-11T00:00:00Z",
       signing_secret: "must-not-cross-boundary",
       signing_secret_ciphertext: "ciphertext",
     });
