@@ -1,7 +1,7 @@
 "use client";
 
 import { api, type ApiClient } from "../api";
-import { executeRecoverableMutation } from "../api/transport";
+import { executeRecoverableIntent, sameMutationRequest } from "../api/transport";
 import {
   createWorkspaceRecoverableOperationStore,
   type RecoverableOperationStore,
@@ -22,26 +22,16 @@ const useAgentPlaygroundCreateStore: RecoverableOperationStore<PendingAgentPlayg
 
 type AgentPlaygroundCreateClient = Pick<ApiClient, "createAgentPlaygroundExperiment">;
 
-async function execute(
-  client: AgentPlaygroundCreateClient,
-  operation: PendingAgentPlaygroundCreate,
-) {
-  return executeRecoverableMutation(
-    () => client.createAgentPlaygroundExperiment(operation.request, operation.requestKey),
-    () => useAgentPlaygroundCreateStore.getState().setPending(),
-  );
-}
-
 export async function createAgentPlaygroundExperimentWithRecovery(
   request: CreateAgentPlaygroundExperimentRequest,
   client: AgentPlaygroundCreateClient = api,
 ): Promise<AgentPlaygroundDetail> {
   const pending = useAgentPlaygroundCreateStore.getState().pending;
-  if (pending) {
-    const recovered = await execute(client, pending);
-    if (JSON.stringify(pending.request) === JSON.stringify(request)) return recovered;
-  }
-  const operation = { request, requestKey: generateUUID(), createdAt: Date.now() };
-  useAgentPlaygroundCreateStore.getState().setPending(operation);
-  return execute(client, operation);
+  return executeRecoverableIntent(
+    pending,
+    (operation) => sameMutationRequest(operation.request, request),
+    () => ({ request, requestKey: generateUUID(), createdAt: Date.now() }),
+    (operation) => useAgentPlaygroundCreateStore.getState().setPending(operation),
+    (operation) => client.createAgentPlaygroundExperiment(operation.request, operation.requestKey),
+  );
 }

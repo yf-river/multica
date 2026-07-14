@@ -74,6 +74,33 @@ export async function executeRecoverableMutation<Result>(
   }
 }
 
+export function sameMutationRequest(left: unknown, right: unknown): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+export async function executeRecoverableIntent<Operation, Result>(
+  pending: Operation | undefined,
+  isSameIntent: (pending: Operation) => boolean,
+  createOperation: () => Operation,
+  setPending: (operation?: Operation) => void,
+  mutate: (operation: Operation) => Promise<Result>,
+): Promise<Result> {
+  const execute = (operation: Operation) =>
+    executeRecoverableMutation(
+      () => mutate(operation),
+      () => setPending(),
+    );
+
+  if (pending) {
+    const recovered = await execute(pending);
+    if (isSameIntent(pending)) return recovered;
+  }
+
+  const operation = createOperation();
+  setPending(operation);
+  return execute(operation);
+}
+
 export class ApiTransport {
   protected readonly baseUrl: string;
   private token: string | null = null;

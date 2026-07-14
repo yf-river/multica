@@ -1,7 +1,7 @@
 "use client";
 
 import { api, type ApiClient } from "../api";
-import { executeRecoverableMutation } from "../api/transport";
+import { executeRecoverableIntent, sameMutationRequest } from "../api/transport";
 import {
   createWorkspaceRecoverableOperationStore,
   type RecoverableOperationStore,
@@ -23,30 +23,22 @@ const useSkillReEvalRunStore: RecoverableOperationStore<PendingSkillReEvalRun> =
 
 type SkillReEvalRunClient = Pick<ApiClient, "runPromptEvaluationSkillReEval">;
 
-async function execute(client: SkillReEvalRunClient, operation: PendingSkillReEvalRun) {
-  return executeRecoverableMutation(
-    () => client.runPromptEvaluationSkillReEval(
-      operation.candidateId,
-      operation.request,
-      operation.requestKey,
-    ),
-    () => useSkillReEvalRunStore.getState().setPending(),
-  );
-}
-
 export async function runPromptEvaluationSkillReEvalWithRecovery(
   candidateId: string,
   request: RunPromptEvaluationSkillReEvalRequest,
   client: SkillReEvalRunClient = api,
 ): Promise<PromptEvaluationSkillReEvalRunResponse> {
   const pending = useSkillReEvalRunStore.getState().pending;
-  if (pending) {
-    const recovered = await execute(client, pending);
-    if (pending.candidateId === candidateId && JSON.stringify(pending.request) === JSON.stringify(request)) {
-      return recovered;
-    }
-  }
-  const operation = { candidateId, request, requestKey: generateUUID(), createdAt: Date.now() };
-  useSkillReEvalRunStore.getState().setPending(operation);
-  return execute(client, operation);
+  return executeRecoverableIntent(
+    pending,
+    (operation) => operation.candidateId === candidateId
+      && sameMutationRequest(operation.request, request),
+    () => ({ candidateId, request, requestKey: generateUUID(), createdAt: Date.now() }),
+    (operation) => useSkillReEvalRunStore.getState().setPending(operation),
+    (operation) => client.runPromptEvaluationSkillReEval(
+      operation.candidateId,
+      operation.request,
+      operation.requestKey,
+    ),
+  );
 }

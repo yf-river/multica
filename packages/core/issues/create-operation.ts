@@ -1,37 +1,21 @@
 import { api, type ApiClient } from "../api";
-import { executeRecoverableMutation } from "../api/transport";
+import { executeRecoverableIntent, sameMutationRequest } from "../api/transport";
 import type { CreateIssueRequest, Issue } from "../types";
 import { generateUUID } from "../utils";
-import {
-  type PendingIssueCreate,
-  useIssueCreatePendingStore,
-} from "./issue-create-pending-store";
+import { useIssueCreatePendingStore } from "./issue-create-pending-store";
 
 type IssueCreateClient = Pick<ApiClient, "createIssue">;
-
-async function executeIssueCreate(
-  client: IssueCreateClient,
-  operation: PendingIssueCreate,
-): Promise<Issue> {
-  return executeRecoverableMutation(
-    () => client.createIssue(operation.request, operation.requestKey),
-    () => useIssueCreatePendingStore.getState().setPendingCreate(),
-  );
-}
 
 export async function createIssueWithRecovery(
   request: CreateIssueRequest,
   client: IssueCreateClient = api,
 ): Promise<Issue> {
   const pending = useIssueCreatePendingStore.getState().pendingCreate;
-  if (pending) {
-    const recovered = await executeIssueCreate(client, pending);
-    if (JSON.stringify(pending.request) === JSON.stringify(request)) {
-      return recovered;
-    }
-  }
-
-  const operation = { request, requestKey: generateUUID() };
-  useIssueCreatePendingStore.getState().setPendingCreate(operation);
-  return executeIssueCreate(client, operation);
+  return executeRecoverableIntent(
+    pending,
+    (operation) => sameMutationRequest(operation.request, request),
+    () => ({ request, requestKey: generateUUID() }),
+    (operation) => useIssueCreatePendingStore.getState().setPendingCreate(operation),
+    (operation) => client.createIssue(operation.request, operation.requestKey),
+  );
 }

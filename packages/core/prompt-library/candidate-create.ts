@@ -1,7 +1,7 @@
 "use client";
 
 import { api, type ApiClient } from "../api";
-import { executeRecoverableMutation } from "../api/transport";
+import { executeRecoverableIntent } from "../api/transport";
 import {
   createWorkspaceRecoverableOperationStore,
   type RecoverableOperationStore,
@@ -25,26 +25,19 @@ type CandidateCreateClient = Pick<
   "createPromptEvaluationOptimizationCandidate"
 >;
 
-async function execute(client: CandidateCreateClient, operation: PendingCandidateCreate) {
-  return executeRecoverableMutation(
-    () => client.createPromptEvaluationOptimizationCandidate(
-      operation.runId,
-      operation.requestKey,
-    ),
-    () => useCandidateCreateStore.getState().setPending(),
-  );
-}
-
 export async function createPromptEvaluationOptimizationCandidateWithRecovery(
   runId: string,
   client: CandidateCreateClient = api,
 ): Promise<PromptEvaluationOptimizationCandidate> {
   const pending = useCandidateCreateStore.getState().pending;
-  if (pending) {
-    const recovered = await execute(client, pending);
-    if (pending.runId === runId) return recovered;
-  }
-  const operation = { runId, requestKey: generateUUID(), createdAt: Date.now() };
-  useCandidateCreateStore.getState().setPending(operation);
-  return execute(client, operation);
+  return executeRecoverableIntent(
+    pending,
+    (operation) => operation.runId === runId,
+    () => ({ runId, requestKey: generateUUID(), createdAt: Date.now() }),
+    (operation) => useCandidateCreateStore.getState().setPending(operation),
+    (operation) => client.createPromptEvaluationOptimizationCandidate(
+      operation.runId,
+      operation.requestKey,
+    ),
+  );
 }

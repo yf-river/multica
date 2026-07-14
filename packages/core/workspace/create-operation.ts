@@ -1,7 +1,7 @@
 "use client";
 
 import { api, type ApiClient } from "../api";
-import { executeRecoverableMutation } from "../api/transport";
+import { executeRecoverableIntent, sameMutationRequest } from "../api/transport";
 import {
   createAccountRecoverableOperationStore,
   type RecoverableOperationStore,
@@ -29,23 +29,16 @@ const useWorkspaceCreateOperationStore: RecoverableOperationStore<PendingWorkspa
 
 type WorkspaceCreateClient = Pick<ApiClient, "createWorkspace">;
 
-async function execute(client: WorkspaceCreateClient, operation: PendingWorkspaceCreate) {
-  return executeRecoverableMutation(
-    () => client.createWorkspace(operation.request, operation.requestKey),
-    () => useWorkspaceCreateOperationStore.getState().setPending(),
-  );
-}
-
 export async function createWorkspaceWithRecovery(
   request: CreateWorkspaceRequest,
   client: WorkspaceCreateClient = api,
 ): Promise<Workspace> {
   const pending = useWorkspaceCreateOperationStore.getState().pending;
-  if (pending) {
-    const recovered = await execute(client, pending);
-    if (JSON.stringify(pending.request) === JSON.stringify(request)) return recovered;
-  }
-  const operation = { request, requestKey: generateUUID(), createdAt: Date.now() };
-  useWorkspaceCreateOperationStore.getState().setPending(operation);
-  return execute(client, operation);
+  return executeRecoverableIntent(
+    pending,
+    (operation) => sameMutationRequest(operation.request, request),
+    () => ({ request, requestKey: generateUUID(), createdAt: Date.now() }),
+    (operation) => useWorkspaceCreateOperationStore.getState().setPending(operation),
+    (operation) => client.createWorkspace(operation.request, operation.requestKey),
+  );
 }
