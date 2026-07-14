@@ -956,10 +956,7 @@ func (h *Handler) CreatePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
-	_, err = qtx.ReserveResourceCreateRequest(r.Context(), db.ReserveResourceCreateRequestParams{
-		WorkspaceID: workspaceUUID, ActorID: actorID, ResourceType: resourceTypePromptEvalCase,
-		IdempotencyKey: idempotencyKey, RequestHash: requestHash,
-	})
+	err = reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, actorID, resourceTypePromptEvalCase, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		_ = tx.Rollback(r.Context())
 		replay, found, replayErr = loadResourceCreateReplay(

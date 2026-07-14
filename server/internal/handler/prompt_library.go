@@ -455,10 +455,7 @@ func (h *Handler) CreatePromptLibraryItem(w http.ResponseWriter, r *http.Request
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
-	_, err = qtx.ReserveResourceCreateRequest(r.Context(), db.ReserveResourceCreateRequestParams{
-		WorkspaceID: workspaceUUID, ActorID: actorID, ResourceType: resourceTypePromptLibraryItem,
-		IdempotencyKey: idempotencyKey, RequestHash: requestHash,
-	})
+	err = reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, actorID, resourceTypePromptLibraryItem, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		_ = tx.Rollback(r.Context())
 		replay, found, replayErr := h.loadPromptLibraryItemCreateReplay(r.Context(), workspaceUUID, actorID, idempotencyKey, requestHash)
@@ -668,10 +665,7 @@ func (h *Handler) CreatePromptLibraryVersion(w http.ResponseWriter, r *http.Requ
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
-	_, err = qtx.ReserveResourceCreateRequest(r.Context(), db.ReserveResourceCreateRequestParams{
-		WorkspaceID: existing.WorkspaceID, ActorID: actorID, ResourceType: resourceTypePromptLibraryVersion,
-		IdempotencyKey: idempotencyKey, RequestHash: requestHash,
-	})
+	err = reserveResourceCreateRequest(r.Context(), qtx, existing.WorkspaceID, actorID, resourceTypePromptLibraryVersion, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		_ = tx.Rollback(r.Context())
 		replay, found, replayErr := h.loadPromptLibraryVersionCreateReplay(r.Context(), existing.WorkspaceID, actorID, idempotencyKey, requestHash)
@@ -882,13 +876,7 @@ func (h *Handler) CreatePromptLibraryTrial(w http.ResponseWriter, r *http.Reques
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
-	_, err = qtx.ReserveResourceCreateRequest(r.Context(), db.ReserveResourceCreateRequestParams{
-		WorkspaceID:    item.WorkspaceID,
-		ActorID:        parseUUID(actorID),
-		ResourceType:   resourceTypePromptLibraryTrial,
-		IdempotencyKey: idempotencyKey,
-		RequestHash:    requestHash,
-	})
+	err = reserveResourceCreateRequest(r.Context(), qtx, item.WorkspaceID, parseUUID(actorID), resourceTypePromptLibraryTrial, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		_ = tx.Rollback(r.Context())
 		replay, found, replayErr := h.loadPromptLibraryTrialReplay(r.Context(), item.WorkspaceID, parseUUID(actorID), idempotencyKey, requestHash)

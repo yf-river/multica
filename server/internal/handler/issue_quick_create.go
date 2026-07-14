@@ -261,13 +261,7 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = requestTx.Rollback(r.Context()) }()
 	requestQueries := h.Queries.WithTx(requestTx)
-	_, err = requestQueries.ReserveResourceCreateRequest(r.Context(), db.ReserveResourceCreateRequestParams{
-		WorkspaceID:    wsUUID,
-		ActorID:        requesterUUID,
-		ResourceType:   resourceTypeQuickCreate,
-		IdempotencyKey: idempotencyKey,
-		RequestHash:    requestHash,
-	})
+	err = reserveResourceCreateRequest(r.Context(), requestQueries, wsUUID, requesterUUID, resourceTypeQuickCreate, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		_ = requestTx.Rollback(r.Context())
 		replayed, found, replayErr := h.loadQuickCreateReplay(

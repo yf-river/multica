@@ -189,10 +189,7 @@ func (h *Handler) CreateRuntimeProfile(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
-	_, err = qtx.ReserveResourceCreateRequest(r.Context(), db.ReserveResourceCreateRequestParams{
-		WorkspaceID: wsUUID, ActorID: member.UserID, ResourceType: resourceTypeRuntimeProfile,
-		IdempotencyKey: idempotencyKey, RequestHash: requestHash,
-	})
+	err = reserveResourceCreateRequest(r.Context(), qtx, wsUUID, member.UserID, resourceTypeRuntimeProfile, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		_ = tx.Rollback(r.Context())
 		replay, found, replayErr := loadResourceCreateReplay(

@@ -393,13 +393,7 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 
-	_, err = qtx.ReserveResourceCreateRequest(r.Context(), db.ReserveResourceCreateRequestParams{
-		WorkspaceID:    wsUUID,
-		ActorID:        actorID,
-		ResourceType:   resourceTypeProject,
-		IdempotencyKey: idempotencyKey,
-		RequestHash:    requestHash,
-	})
+	err = reserveResourceCreateRequest(r.Context(), qtx, wsUUID, actorID, resourceTypeProject, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		_ = tx.Rollback(r.Context())
 		replayed, found, replayErr := h.loadProjectCreateReplay(

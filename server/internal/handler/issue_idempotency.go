@@ -44,13 +44,7 @@ func (h *Handler) createIssueWithRecovery(
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	queries := h.Queries.WithTx(tx)
-	_, err = queries.ReserveResourceCreateRequest(ctx, db.ReserveResourceCreateRequestParams{
-		WorkspaceID:    workspaceID,
-		ActorID:        actorID,
-		ResourceType:   resourceTypeIssue,
-		IdempotencyKey: idempotencyKey,
-		RequestHash:    requestHash,
-	})
+	err = reserveResourceCreateRequest(ctx, queries, workspaceID, actorID, resourceTypeIssue, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		_ = tx.Rollback(ctx)
 		replay, found, replayErr := h.loadIssueCreateReplay(

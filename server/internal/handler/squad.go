@@ -881,13 +881,7 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
-	_, err = qtx.ReserveResourceCreateRequest(r.Context(), db.ReserveResourceCreateRequestParams{
-		WorkspaceID:    wsUUID,
-		ActorID:        member.UserID,
-		ResourceType:   resourceTypeSquad,
-		IdempotencyKey: idempotencyKey,
-		RequestHash:    requestHash,
-	})
+	err = reserveResourceCreateRequest(r.Context(), qtx, wsUUID, member.UserID, resourceTypeSquad, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		_ = tx.Rollback(r.Context())
 		replayed, found, replayErr := h.loadSquadCreateReplay(

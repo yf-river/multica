@@ -129,10 +129,7 @@ func persistPromptEvaluationSkillAssetMutation[T any](
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	qtx := h.Queries.WithTx(tx)
-	_, err = qtx.ReserveResourceCreateRequest(ctx, db.ReserveResourceCreateRequestParams{
-		WorkspaceID: asset.WorkspaceID, ActorID: actorID, ResourceType: resourceType,
-		IdempotencyKey: idempotencyKey, RequestHash: requestHash,
-	})
+	err = reserveResourceCreateRequest(ctx, qtx, asset.WorkspaceID, actorID, resourceType, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		_ = tx.Rollback(ctx)
 		replay, found, replayErr := loadPromptEvaluationSkillAssetMutationReplay(

@@ -859,10 +859,7 @@ func (h *Handler) CreatePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
-	_, err = qtx.ReserveResourceCreateRequest(r.Context(), db.ReserveResourceCreateRequestParams{
-		WorkspaceID: workspaceUUID, ActorID: actorID, ResourceType: resourceTypePromptEvalAsset,
-		IdempotencyKey: idempotencyKey, RequestHash: requestHash,
-	})
+	err = reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, actorID, resourceTypePromptEvalAsset, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		_ = tx.Rollback(r.Context())
 		replay, found, replayErr = loadResourceCreateReplay(
@@ -1107,10 +1104,7 @@ func (h *Handler) RunPromptEvaluationAsset(w http.ResponseWriter, r *http.Reques
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
-	_, err = qtx.ReserveResourceCreateRequest(r.Context(), db.ReserveResourceCreateRequestParams{
-		WorkspaceID: workspaceID, ActorID: requestActorID, ResourceType: resourceTypePromptLocalRun,
-		IdempotencyKey: idempotencyKey, RequestHash: requestHash,
-	})
+	err = reserveResourceCreateRequest(r.Context(), qtx, workspaceID, requestActorID, resourceTypePromptLocalRun, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		_ = tx.Rollback(r.Context())
 		replay, found, replayErr := loadPromptEvaluationLocalRunReplay(
@@ -1240,10 +1234,7 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
-	_, err = qtx.ReserveResourceCreateRequest(r.Context(), db.ReserveResourceCreateRequestParams{
-		WorkspaceID: workspaceID, ActorID: requestActorID, ResourceType: resourceTypePromptEvaluationRun,
-		IdempotencyKey: idempotencyKey, RequestHash: requestHash,
-	})
+	err = reserveResourceCreateRequest(r.Context(), qtx, workspaceID, requestActorID, resourceTypePromptEvaluationRun, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		_ = tx.Rollback(r.Context())
 		replay, found, replayErr := h.loadPromptEvaluationAgentRunReplay(

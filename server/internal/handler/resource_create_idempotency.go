@@ -52,6 +52,21 @@ const (
 
 var errResourceCreateIdempotencyConflict = errors.New("resource create idempotency conflict")
 
+func reserveResourceCreateRequest(
+	ctx context.Context,
+	queries *db.Queries,
+	workspaceID, actorID pgtype.UUID,
+	resourceType string,
+	idempotencyKey pgtype.UUID,
+	requestHash string,
+) error {
+	_, err := queries.ReserveResourceCreateRequest(ctx, db.ReserveResourceCreateRequestParams{
+		WorkspaceID: workspaceID, ActorID: actorID, ResourceType: resourceType,
+		IdempotencyKey: idempotencyKey, RequestHash: requestHash,
+	})
+	return err
+}
+
 func loadResourceCreateReplay[T any](
 	ctx context.Context,
 	queries *db.Queries,

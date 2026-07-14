@@ -252,10 +252,7 @@ func (h *Handler) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to add workspace owner")
 		return
 	}
-	_, err = qtx.ReserveResourceCreateRequest(r.Context(), db.ReserveResourceCreateRequestParams{
-		WorkspaceID: workspaceRequestID, ActorID: actorID, ResourceType: resourceTypeWorkspace,
-		IdempotencyKey: idempotencyKey, RequestHash: requestHash,
-	})
+	err = reserveResourceCreateRequest(r.Context(), qtx, workspaceRequestID, actorID, resourceTypeWorkspace, idempotencyKey, requestHash)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to reserve workspace request")
 		return
@@ -781,10 +778,7 @@ func (h *Handler) CreateMember(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
-	_, err = qtx.ReserveResourceCreateRequest(r.Context(), db.ReserveResourceCreateRequestParams{
-		WorkspaceID: requester.WorkspaceID, ActorID: actorID, ResourceType: resourceTypeWorkspaceMember,
-		IdempotencyKey: idempotencyKey, RequestHash: requestHash,
-	})
+	err = reserveResourceCreateRequest(r.Context(), qtx, requester.WorkspaceID, actorID, resourceTypeWorkspaceMember, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		_ = tx.Rollback(r.Context())
 		replay, found, replayErr := h.loadWorkspaceMemberCreateReplay(
