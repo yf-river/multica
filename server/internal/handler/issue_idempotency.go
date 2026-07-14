@@ -46,15 +46,13 @@ func (h *Handler) createIssueWithRecovery(
 	queries := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(ctx, queries, workspaceID, actorID, resourceTypeIssue, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		_ = tx.Rollback(ctx)
-		replay, found, replayErr := h.loadIssueCreateReplay(
-			ctx, workspaceID, actorID, idempotencyKey, requestHash,
-		)
+		replay, replayErr := loadReplayAfterReservationConflict(ctx, tx, func() (IssueResponse, bool, error) {
+			return h.loadIssueCreateReplay(
+				ctx, workspaceID, actorID, idempotencyKey, requestHash,
+			)
+		})
 		if replayErr != nil {
 			return service.IssueCreateResult{}, nil, replayErr
-		}
-		if !found {
-			return service.IssueCreateResult{}, nil, errors.New("issue replay disappeared after conflict")
 		}
 		return service.IssueCreateResult{}, &replay, nil
 	}

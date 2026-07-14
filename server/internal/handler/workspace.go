@@ -811,14 +811,12 @@ func (h *Handler) CreateMember(w http.ResponseWriter, r *http.Request) {
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, requester.WorkspaceID, actorID, resourceTypeWorkspaceMember, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		_ = tx.Rollback(r.Context())
-		replay, found, replayErr := h.loadWorkspaceMemberCreateReplay(
-			r.Context(), requester.WorkspaceID, actorID, idempotencyKey, requestHash,
-		)
-		if replayErr != nil || !found {
-			if replayErr == nil {
-				replayErr = errors.New("workspace member create replay disappeared after conflict")
-			}
+		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, func() (MemberWithUserResponse, bool, error) {
+			return h.loadWorkspaceMemberCreateReplay(
+				r.Context(), requester.WorkspaceID, actorID, idempotencyKey, requestHash,
+			)
+		})
+		if replayErr != nil {
 			writeWorkspaceMemberCreateReplayError(w, replayErr)
 			return
 		}

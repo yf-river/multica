@@ -314,14 +314,12 @@ func (h *Handler) CreateAgentPlaygroundExperiment(w http.ResponseWriter, r *http
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, requestActorID, resourceTypeAgentPlayground, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		_ = tx.Rollback(r.Context())
-		replay, found, replayErr := h.loadAgentPlaygroundCreateReplay(
-			r.Context(), workspaceUUID, requestActorID, idempotencyKey, requestHash,
-		)
-		if replayErr != nil || !found {
-			if replayErr == nil {
-				replayErr = errors.New("agent playground replay disappeared after conflict")
-			}
+		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, func() (AgentPlaygroundDetailResponse, bool, error) {
+			return h.loadAgentPlaygroundCreateReplay(
+				r.Context(), workspaceUUID, requestActorID, idempotencyKey, requestHash,
+			)
+		})
+		if replayErr != nil {
 			writeAgentPlaygroundCreateReplayError(w, replayErr)
 			return
 		}

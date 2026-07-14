@@ -586,7 +586,7 @@ func (h *Handler) CreatePromptEvaluationEvidenceSnapshot(w http.ResponseWriter, 
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, actorID, resourceTypePromptEvidenceSnapshot, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		replay, replayErr = loadResourceCreateReplayAfterConflict(r.Context(), tx, loadReplay)
+		replay, replayErr = loadReplayAfterReservationConflict(r.Context(), tx, loadReplay)
 		if replayErr != nil {
 			writePromptEvaluationEvidenceSnapshotReplayError(w, replayErr)
 			return
@@ -712,7 +712,7 @@ func (h *Handler) CreatePromptEvaluationAssetEvidenceSnapshots(w http.ResponseWr
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, asset.WorkspaceID, actorID, resourceTypePromptEvidenceBatch, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		replay, replayErr = loadResourceCreateReplayAfterConflict(r.Context(), tx, loadReplay)
+		replay, replayErr = loadReplayAfterReservationConflict(r.Context(), tx, loadReplay)
 		if replayErr != nil {
 			writePromptEvaluationEvidenceBatchReplayError(w, replayErr)
 			return

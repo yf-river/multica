@@ -263,14 +263,12 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 	requestQueries := h.Queries.WithTx(requestTx)
 	err = reserveResourceCreateRequest(r.Context(), requestQueries, wsUUID, requesterUUID, resourceTypeQuickCreate, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		_ = requestTx.Rollback(r.Context())
-		replayed, found, replayErr := h.loadQuickCreateReplay(
-			r.Context(), wsUUID, requesterUUID, idempotencyKey, requestHash,
-		)
-		if replayErr != nil || !found {
-			if replayErr == nil {
-				replayErr = errors.New("quick-create replay disappeared after conflict")
-			}
+		replayed, replayErr := loadReplayAfterReservationConflict(r.Context(), requestTx, func() (QuickCreateIssueResponse, bool, error) {
+			return h.loadQuickCreateReplay(
+				r.Context(), wsUUID, requesterUUID, idempotencyKey, requestHash,
+			)
+		})
+		if replayErr != nil {
 			writeQuickCreateReplayError(w, replayErr)
 			return
 		}

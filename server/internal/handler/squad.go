@@ -883,14 +883,12 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, wsUUID, member.UserID, resourceTypeSquad, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		_ = tx.Rollback(r.Context())
-		replayed, found, replayErr := h.loadSquadCreateReplay(
-			r.Context(), wsUUID, member.UserID, idempotencyKey, requestHash,
-		)
-		if replayErr != nil || !found {
-			if replayErr == nil {
-				replayErr = errors.New("squad create replay disappeared after conflict")
-			}
+		replayed, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, func() (squadResponse, bool, error) {
+			return h.loadSquadCreateReplay(
+				r.Context(), wsUUID, member.UserID, idempotencyKey, requestHash,
+			)
+		})
+		if replayErr != nil {
 			h.writeSquadCreateReplayError(w, replayErr)
 			return
 		}

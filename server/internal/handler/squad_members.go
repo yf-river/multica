@@ -507,11 +507,13 @@ func (h *Handler) RecordSquadLeaderEvaluation(w http.ResponseWriter, r *http.Req
 		Details:     details,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		_ = tx.Rollback(r.Context())
-		existing, loadErr := h.Queries.GetSquadLeaderEvaluationForTask(r.Context(), db.GetSquadLeaderEvaluationForTaskParams{
-			IssueID: issue.ID,
-			AgentID: squad.LeaderID,
-			TaskID:  util.UUIDToString(taskUUID),
+		existing, loadErr := loadReplayAfterReservationConflict(r.Context(), tx, func() (db.ActivityLog, bool, error) {
+			activity, loadErr := h.Queries.GetSquadLeaderEvaluationForTask(r.Context(), db.GetSquadLeaderEvaluationForTaskParams{
+				IssueID: issue.ID,
+				AgentID: squad.LeaderID,
+				TaskID:  util.UUIDToString(taskUUID),
+			})
+			return activity, loadErr == nil, loadErr
 		})
 		if loadErr != nil {
 			writeError(w, http.StatusInternalServerError, "failed to replay evaluation")

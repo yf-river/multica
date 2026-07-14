@@ -197,9 +197,8 @@ func (h *Handler) RerunIssue(w http.ResponseWriter, r *http.Request) {
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, issue.WorkspaceID, actorID, resourceTypeIssueRerun, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		_ = tx.Rollback(r.Context())
-		replay, found, replayErr := loadReplay()
-		if replayErr != nil || !found {
+		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, loadReplay)
+		if replayErr != nil {
 			writeError(w, http.StatusInternalServerError, "issue rerun replay disappeared after conflict")
 			return
 		}

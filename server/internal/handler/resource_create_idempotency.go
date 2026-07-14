@@ -105,7 +105,7 @@ func loadResourceCreateReplay[T any](
 	return response, true, nil
 }
 
-func loadResourceCreateReplayAfterConflict[T any](
+func loadReplayAfterReservationConflict[T any](
 	ctx context.Context,
 	tx pgx.Tx,
 	loadReplay func() (T, bool, error),

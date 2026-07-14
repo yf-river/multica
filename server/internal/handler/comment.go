@@ -326,14 +326,12 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, issue.WorkspaceID, parseUUID(authorID), resourceTypeComment, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		_ = tx.Rollback(r.Context())
-		replay, found, replayErr := h.loadCommentCreateReplay(
-			r.Context(), issue.WorkspaceID, parseUUID(authorID), idempotencyKey, requestHash,
-		)
-		if replayErr != nil || !found {
-			if replayErr == nil {
-				replayErr = errors.New("comment replay disappeared after conflict")
-			}
+		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, func() (CommentResponse, bool, error) {
+			return h.loadCommentCreateReplay(
+				r.Context(), issue.WorkspaceID, parseUUID(authorID), idempotencyKey, requestHash,
+			)
+		})
+		if replayErr != nil {
 			writeCommentCreateReplayError(w, replayErr)
 			return
 		}

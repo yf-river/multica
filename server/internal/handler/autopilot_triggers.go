@@ -83,9 +83,8 @@ func (h *Handler) CreateAutopilotTrigger(w http.ResponseWriter, r *http.Request)
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, actorUUID, resourceTypeAutopilotTrigger, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		_ = tx.Rollback(r.Context())
-		replay, found, replayErr := loadReplay()
-		if replayErr != nil || !found {
+		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, loadReplay)
+		if replayErr != nil {
 			writeError(w, http.StatusInternalServerError, "trigger create replay disappeared after conflict")
 			return
 		}
@@ -586,9 +585,10 @@ func (h *Handler) RotateAutopilotTriggerWebhookToken(w http.ResponseWriter, r *h
 		TriggerID: prev.ID, RequestHash: requestHash,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		_ = tx.Rollback(r.Context())
-		replay, found, replayErr := loadAutopilotTriggerRotationReplay(r.Context(), h.Queries, workspaceUUID, actorUUID, requestKey, requestHash)
-		if replayErr != nil || !found {
+		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, func() (autopilotTriggerRotationReplay, bool, error) {
+			return loadAutopilotTriggerRotationReplay(r.Context(), h.Queries, workspaceUUID, actorUUID, requestKey, requestHash)
+		})
+		if replayErr != nil {
 			writeError(w, http.StatusInternalServerError, "webhook token rotation replay disappeared after conflict")
 			return
 		}

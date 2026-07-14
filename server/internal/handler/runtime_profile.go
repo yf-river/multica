@@ -171,10 +171,13 @@ func (h *Handler) CreateRuntimeProfile(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if replay, found, replayErr := loadResourceCreateReplay(
-		r.Context(), h.Queries, wsUUID, member.UserID, resourceTypeRuntimeProfile,
-		idempotencyKey, requestHash, func(response RuntimeProfileResponse) bool { return response.ID != "" },
-	); replayErr != nil {
+	loadReplay := func() (RuntimeProfileResponse, bool, error) {
+		return loadResourceCreateReplay(
+			r.Context(), h.Queries, wsUUID, member.UserID, resourceTypeRuntimeProfile,
+			idempotencyKey, requestHash, func(response RuntimeProfileResponse) bool { return response.ID != "" },
+		)
+	}
+	if replay, found, replayErr := loadReplay(); replayErr != nil {
 		writeRuntimeProfileCreateReplayError(w, replayErr)
 		return
 	} else if found {
@@ -191,15 +194,8 @@ func (h *Handler) CreateRuntimeProfile(w http.ResponseWriter, r *http.Request) {
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, wsUUID, member.UserID, resourceTypeRuntimeProfile, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		_ = tx.Rollback(r.Context())
-		replay, found, replayErr := loadResourceCreateReplay(
-			r.Context(), h.Queries, wsUUID, member.UserID, resourceTypeRuntimeProfile,
-			idempotencyKey, requestHash, func(response RuntimeProfileResponse) bool { return response.ID != "" },
-		)
-		if replayErr != nil || !found {
-			if replayErr == nil {
-				replayErr = errors.New("runtime profile create replay disappeared after conflict")
-			}
+		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, loadReplay)
+		if replayErr != nil {
 			writeRuntimeProfileCreateReplayError(w, replayErr)
 			return
 		}

@@ -388,14 +388,12 @@ func (h *Handler) CreateSkill(w http.ResponseWriter, r *http.Request) {
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, creatorUUID, resourceTypeSkill, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		_ = tx.Rollback(r.Context())
-		replayed, found, replayErr := h.loadSkillCreateReplay(
-			r.Context(), workspaceUUID, creatorUUID, idempotencyKey, requestHash,
-		)
-		if replayErr != nil || !found {
-			if replayErr == nil {
-				replayErr = errors.New("skill create replay disappeared after conflict")
-			}
+		replayed, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, func() (SkillWithFilesResponse, bool, error) {
+			return h.loadSkillCreateReplay(
+				r.Context(), workspaceUUID, creatorUUID, idempotencyKey, requestHash,
+			)
+		})
+		if replayErr != nil {
 			h.writeSkillCreateReplayError(w, replayErr)
 			return
 		}

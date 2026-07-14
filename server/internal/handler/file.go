@@ -458,14 +458,12 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, params.WorkspaceID, operationActorID, resourceTypeAttachment, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		_ = tx.Rollback(r.Context())
-		replayed, found, replayErr := h.loadAttachmentUploadReplay(
-			r.Context(), params.WorkspaceID, operationActorID, idempotencyKey, requestHash,
-		)
-		if replayErr != nil || !found {
-			if replayErr == nil {
-				replayErr = errors.New("attachment upload replay disappeared after conflict")
-			}
+		replayed, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, func() (AttachmentResponse, bool, error) {
+			return h.loadAttachmentUploadReplay(
+				r.Context(), params.WorkspaceID, operationActorID, idempotencyKey, requestHash,
+			)
+		})
+		if replayErr != nil {
 			h.writeAttachmentUploadReplayError(w, replayErr)
 			return
 		}

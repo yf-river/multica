@@ -457,12 +457,10 @@ func (h *Handler) CreatePromptLibraryItem(w http.ResponseWriter, r *http.Request
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, actorID, resourceTypePromptLibraryItem, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		_ = tx.Rollback(r.Context())
-		replay, found, replayErr := h.loadPromptLibraryItemCreateReplay(r.Context(), workspaceUUID, actorID, idempotencyKey, requestHash)
-		if replayErr != nil || !found {
-			if replayErr == nil {
-				replayErr = errors.New("prompt library item replay disappeared after conflict")
-			}
+		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, func() (PromptLibraryItemResponse, bool, error) {
+			return h.loadPromptLibraryItemCreateReplay(r.Context(), workspaceUUID, actorID, idempotencyKey, requestHash)
+		})
+		if replayErr != nil {
 			writePromptLibraryCreateReplayError(w, "prompt library item", replayErr)
 			return
 		}
@@ -667,12 +665,10 @@ func (h *Handler) CreatePromptLibraryVersion(w http.ResponseWriter, r *http.Requ
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, existing.WorkspaceID, actorID, resourceTypePromptLibraryVersion, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		_ = tx.Rollback(r.Context())
-		replay, found, replayErr := h.loadPromptLibraryVersionCreateReplay(r.Context(), existing.WorkspaceID, actorID, idempotencyKey, requestHash)
-		if replayErr != nil || !found {
-			if replayErr == nil {
-				replayErr = errors.New("prompt library version replay disappeared after conflict")
-			}
+		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, func() (CreatePromptLibraryVersionResponse, bool, error) {
+			return h.loadPromptLibraryVersionCreateReplay(r.Context(), existing.WorkspaceID, actorID, idempotencyKey, requestHash)
+		})
+		if replayErr != nil {
 			writePromptLibraryCreateReplayError(w, "prompt library version", replayErr)
 			return
 		}
@@ -878,12 +874,10 @@ func (h *Handler) CreatePromptLibraryTrial(w http.ResponseWriter, r *http.Reques
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, item.WorkspaceID, parseUUID(actorID), resourceTypePromptLibraryTrial, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		_ = tx.Rollback(r.Context())
-		replay, found, replayErr := h.loadPromptLibraryTrialReplay(r.Context(), item.WorkspaceID, parseUUID(actorID), idempotencyKey, requestHash)
-		if replayErr != nil || !found {
-			if replayErr == nil {
-				replayErr = errors.New("prompt library trial replay disappeared after conflict")
-			}
+		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, func() (PromptLibraryTrialResponse, bool, error) {
+			return h.loadPromptLibraryTrialReplay(r.Context(), item.WorkspaceID, parseUUID(actorID), idempotencyKey, requestHash)
+		})
+		if replayErr != nil {
 			writePromptLibraryTrialReplayError(w, replayErr)
 			return
 		}

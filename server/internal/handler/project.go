@@ -395,14 +395,12 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 
 	err = reserveResourceCreateRequest(r.Context(), qtx, wsUUID, actorID, resourceTypeProject, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		_ = tx.Rollback(r.Context())
-		replayed, found, replayErr := h.loadProjectCreateReplay(
-			r.Context(), wsUUID, actorID, idempotencyKey, requestHash,
-		)
-		if replayErr != nil || !found {
-			if replayErr == nil {
-				replayErr = errors.New("project create replay disappeared after conflict")
-			}
+		replayed, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, func() (createProjectResponse, bool, error) {
+			return h.loadProjectCreateReplay(
+				r.Context(), wsUUID, actorID, idempotencyKey, requestHash,
+			)
+		})
+		if replayErr != nil {
 			h.writeProjectCreateReplayError(w, replayErr)
 			return
 		}

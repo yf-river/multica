@@ -946,9 +946,10 @@ func (h *Handler) ImportSkill(w http.ResponseWriter, r *http.Request) {
 	qtx := h.Queries.WithTx(tx)
 	_, err = qtx.ReserveSkillImportRequest(r.Context(), db.ReserveSkillImportRequestParams{WorkspaceID: workspaceUUID, ActorID: creatorUUID, IdempotencyKey: idempotencyKey, RequestHash: requestHash})
 	if errors.Is(err, pgx.ErrNoRows) {
-		_ = tx.Rollback(r.Context())
-		replay, found, replayErr := loadSkillImportReplay(r.Context(), h.Queries, workspaceUUID, creatorUUID, idempotencyKey, requestHash)
-		if replayErr != nil || !found {
+		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, func() (skillImportReplay, bool, error) {
+			return loadSkillImportReplay(r.Context(), h.Queries, workspaceUUID, creatorUUID, idempotencyKey, requestHash)
+		})
+		if replayErr != nil {
 			writeError(w, http.StatusInternalServerError, "skill import replay disappeared after conflict")
 			return
 		}

@@ -880,14 +880,12 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, wsUUID, operationActorID, resourceTypeAgent, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		_ = tx.Rollback(r.Context())
-		replayed, found, replayErr := h.loadAgentCreateReplay(
-			r.Context(), wsUUID, operationActorID, idempotencyKey, requestHash,
-		)
-		if replayErr != nil || !found {
-			if replayErr == nil {
-				replayErr = errors.New("agent create replay disappeared after conflict")
-			}
+		replayed, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, func() (AgentResponse, bool, error) {
+			return h.loadAgentCreateReplay(
+				r.Context(), wsUUID, operationActorID, idempotencyKey, requestHash,
+			)
+		})
+		if replayErr != nil {
 			h.writeAgentCreateReplayError(w, replayErr)
 			return
 		}

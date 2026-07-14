@@ -609,12 +609,8 @@ func (h *Handler) CreateProjectResource(w http.ResponseWriter, r *http.Request) 
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, project.WorkspaceID, creator, resourceTypeProjectResource, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		_ = tx.Rollback(r.Context())
-		replay, found, replayErr := loadReplay()
-		if replayErr != nil || !found {
-			if replayErr == nil {
-				replayErr = errors.New("project resource create replay disappeared after conflict")
-			}
+		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, loadReplay)
+		if replayErr != nil {
 			writeProjectResourceCreateReplayError(w, replayErr)
 			return
 		}

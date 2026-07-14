@@ -116,7 +116,7 @@ func persistPromptEvaluationSkillAssetMutation[T any](
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(ctx, qtx, asset.WorkspaceID, actorID, resourceType, idempotencyKey, requestHash)
 	if errors.Is(err, pgx.ErrNoRows) {
-		replay, replayErr := loadResourceCreateReplayAfterConflict(ctx, tx, func() (T, bool, error) {
+		replay, replayErr := loadReplayAfterReservationConflict(ctx, tx, func() (T, bool, error) {
 			return loadResourceCreateReplay(
 				ctx, h.Queries, asset.WorkspaceID, actorID, resourceType, idempotencyKey, requestHash, isValid,
 			)
