@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { spawnSync } from "node:child_process";
+import { mergeNoProxy } from "./lib/goal-test-browser-audit.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const envName = process.env.GOAL_TEST_ENV || "int";
@@ -97,26 +98,6 @@ function splitWords(value) {
 
 function trimSlash(value) {
   return String(value || "").replace(/\/+$/, "");
-}
-
-function mergeNoProxy(current, urls) {
-  const hosts = new Set(
-    String(current || "")
-      .split(",")
-      .map((item) => item.trim())
-      .filter(Boolean),
-  );
-  for (const url of urls) {
-    try {
-      const parsed = new URL(url);
-      if (parsed.hostname) hosts.add(parsed.hostname);
-    } catch {
-      // ignore non-URL values
-    }
-  }
-  hosts.add("127.0.0.1");
-  hosts.add("localhost");
-  return Array.from(hosts).join(",");
 }
 
 function redactDatabaseURL(value) {

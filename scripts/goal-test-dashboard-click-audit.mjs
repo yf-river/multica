@@ -1,28 +1,30 @@
 import { chromium } from "@playwright/test";
-import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { acceptanceDir } from "./lib/acceptance-artifacts.mjs";
 import {
   attachBrowserAuditEvents,
   browserRequestPath as requestPath,
 } from "./lib/browser-audit-events.mjs";
-import { loadGoalTestIntEnv, repoRoot, resolveGoalTestAuditUrls } from "./lib/goal-test-audit-env.mjs";
+import {
+  createBrowserRequestTools,
+  loadGoalTestBrowserAudit,
+  loginGoalTest,
+  verifyGoalTestDeploymentLogs,
+} from "./lib/goal-test-browser-audit.mjs";
 
-const env = loadGoalTestIntEnv();
-const { frontendURL, browserURL, backendURL } = resolveGoalTestAuditUrls(env);
-const workspaceSlug = process.env.GOAL_TEST_WORKSPACE_SLUG || "ai-studio";
-const account = process.env.GOAL_TEST_ACCOUNT || "develop";
-const password = process.env.GOAL_TEST_PASSWORD || "develop123";
+const {
+  env, frontendURL, browserURL, backendURL, workspaceSlug, account, password,
+  artifactRoot, generatedAt, stamp,
+} = loadGoalTestBrowserAudit(process.env.GOAL_TEST_DASHBOARD_CLICK_AUDIT_DIR);
+const { isAuditedRequest, countByPath } = createBrowserRequestTools(
+  [frontendURL, browserURL, backendURL],
+  requestPath,
+);
 const maxClickMs = Number(process.env.GOAL_TEST_DASHBOARD_CLICK_MAX_MS || "3500");
 const maxTotalMs = Number(process.env.GOAL_TEST_DASHBOARD_CLICK_MAX_TOTAL_MS || "6000");
 const maxApiMs = Number(process.env.GOAL_TEST_DASHBOARD_CLICK_MAX_API_MS || "1200");
 const maxApiRequests = Number(process.env.GOAL_TEST_DASHBOARD_CLICK_MAX_API_REQUESTS || "20");
-const artifactRoot = acceptanceDir(repoRoot, process.env.GOAL_TEST_DASHBOARD_CLICK_AUDIT_DIR);
-const generatedAt = new Date().toISOString();
-const stamp = generatedAt.replace(/[:.]/g, "-");
-
 mkdirSync(artifactRoot, { recursive: true });
 
 const dashboardClicks = [
@@ -39,7 +41,7 @@ const dashboardClicks = [
   { id: "training-test-suites", label: "训练与评估/测试套件", link: "测试套件", path: `/${workspaceSlug}/evaluation/test-suites`, ready: { testId: "training-route-test-suites" } },
 ];
 
-const token = await login();
+const token = await loginGoalTest({ backendURL, account, password });
 const browser = await chromium.launch({ headless: true, args: ["--no-proxy-server", "--proxy-server=direct://", "--proxy-bypass-list=*"] });
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, ignoreHTTPSErrors: true });
 await context.addCookies([{ name: "multica_logged_in", value: "1", url: browserURL, sameSite: "Lax" }]);
@@ -53,7 +55,7 @@ const setup = await openStartPage(page);
 const clicks = setup.ok ? await auditClicks(page) : [];
 await browser.close();
 
-const deploymentLogs = runDeploymentLogVerification();
+const deploymentLogs = verifyGoalTestDeploymentLogs(env);
 const summary = summarize(setup, clicks, deploymentLogs);
 const payload = {
   schema: "multica.goal_test.dashboard_click_audit.v1",
@@ -287,20 +289,6 @@ async function waitForReadySignal(page, ready, timeout) {
   throw new Error("ready signal is missing");
 }
 
-async function login() {
-  const response = await fetch(`${backendURL}/auth/login`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ account, password }),
-  });
-  if (!response.ok) {
-    throw new Error(`login failed: ${response.status} ${await response.text()}`);
-  }
-  const data = await response.json();
-  if (!data.token) throw new Error("login response did not include token");
-  return data.token;
-}
-
 function summarize(setup, clicks, logEvidence) {
   const clickFailures = clicks.flatMap((click) => click.failures.map((failure) => `${click.label}: ${failure}`));
   const logFailures = logEvidence.ok ? [] : [`当前部署日志窗口未通过：${logEvidence.error || "verify-logs failed"}`];
@@ -329,28 +317,6 @@ function summarize(setup, clicks, logEvidence) {
     deployment_logs_ok: logEvidence.ok,
     slowest_clicks: slowestClicks,
     failures,
-  };
-}
-
-function runDeploymentLogVerification() {
-  const target = env.GOAL_TEST_ENV || "int";
-  const result = spawnSync("node", ["scripts/goal-test-environments.mjs", "verify-logs", target], {
-    cwd: repoRoot,
-    encoding: "utf8",
-  });
-  const raw = result.stdout || result.stderr || "";
-  let evidence = null;
-  try {
-    evidence = raw ? JSON.parse(raw) : null;
-  } catch {
-    evidence = null;
-  }
-  return {
-    ok: result.status === 0 && evidence?.ok === true,
-    target,
-    exit_code: result.status,
-    evidence,
-    error: result.status === 0 ? "" : (result.stderr || result.stdout || "").slice(0, 2000),
   };
 }
 
@@ -395,19 +361,4 @@ function renderMarkdown(payload) {
     lines.push("");
   }
   return `${lines.join("\n")}\n`;
-}
-
-function countByPath(requests) {
-  const counts = new Map();
-  for (const request of requests) {
-    const key = requestPath(request.url);
-    counts.set(key, (counts.get(key) || 0) + 1);
-  }
-  return Array.from(counts.entries())
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .map(([path, count]) => ({ path, count }));
-}
-
-function isAuditedRequest(url) {
-  return url.startsWith(frontendURL) || url.startsWith(browserURL) || url.startsWith(backendURL);
 }

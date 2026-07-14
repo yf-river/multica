@@ -1,28 +1,31 @@
 import { chromium } from "@playwright/test";
-import { spawnSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
-import { acceptanceDir } from "./lib/acceptance-artifacts.mjs";
 import {
   attachBrowserAuditEvents,
   browserRequestPath as requestPath,
 } from "./lib/browser-audit-events.mjs";
-import { loadGoalTestIntEnv, repoRoot, resolveGoalTestAuditUrls } from "./lib/goal-test-audit-env.mjs";
+import {
+  createBrowserRequestTools,
+  loadGoalTestBrowserAudit,
+  loginGoalTest,
+  verifyGoalTestDeploymentLogs,
+} from "./lib/goal-test-browser-audit.mjs";
 
-const env = loadGoalTestIntEnv();
-const { frontendURL, browserURL, backendURL } = resolveGoalTestAuditUrls(env);
-const workspaceSlug = process.env.GOAL_TEST_WORKSPACE_SLUG || "ai-studio";
-const account = process.env.GOAL_TEST_ACCOUNT || "develop";
-const password = process.env.GOAL_TEST_PASSWORD || "develop123";
+const {
+  env, frontendURL, browserURL, backendURL, workspaceSlug, account, password,
+  artifactRoot, generatedAt, stamp,
+} = loadGoalTestBrowserAudit(process.env.GOAL_TEST_UI_AUDIT_DIR);
+const { isAuditedRequest, countByPath } = createBrowserRequestTools(
+  [frontendURL, browserURL, backendURL],
+  requestPath,
+);
 const warmupEnabled = process.env.GOAL_TEST_UI_AUDIT_WARMUP !== "0";
 const maxRouteMs = Number(process.env.GOAL_TEST_UI_AUDIT_MAX_ROUTE_MS || "3000");
 const maxApiMs = Number(process.env.GOAL_TEST_UI_AUDIT_MAX_API_MS || "1000");
 const maxApiRequests = Number(process.env.GOAL_TEST_UI_AUDIT_MAX_API_REQUESTS || "20");
-const artifactRoot = acceptanceDir(repoRoot, process.env.GOAL_TEST_UI_AUDIT_DIR);
 const screenshotDir = path.join(artifactRoot, "ui-audit-screenshots");
-const generatedAt = new Date().toISOString();
-const stamp = generatedAt.replace(/[:.]/g, "-");
 
 mkdirSync(screenshotDir, { recursive: true });
 
@@ -150,7 +153,7 @@ const forbiddenText = [
   "newsletter",
 ];
 
-const token = await login();
+const token = await loginGoalTest({ backendURL, account, password });
 const warmup = warmupEnabled ? await warmupRoutes(token) : { enabled: false, results: [] };
 const browser = await chromium.launch({ headless: true, args: ["--no-proxy-server"] });
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, ignoreHTTPSErrors: true });
@@ -173,7 +176,7 @@ for (const route of routes) {
 
 await browser.close();
 
-const deploymentLogs = runDeploymentLogVerification();
+const deploymentLogs = verifyGoalTestDeploymentLogs(env);
 const summary = summarize(results, events, deploymentLogs);
 const payload = {
   schema: "multica.goal_test.ui_audit.v1",
@@ -399,20 +402,6 @@ async function warmupRoutes(authToken) {
   return { enabled: true, results };
 }
 
-async function login() {
-  const response = await fetch(`${backendURL}/auth/login`, {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ account, password }),
-  });
-  if (!response.ok) {
-    throw new Error(`login failed: ${response.status} ${await response.text()}`);
-  }
-  const data = await response.json();
-  if (!data.token) throw new Error("login response did not include token");
-  return data.token;
-}
-
 function summarize(routeResults, browserEvents, logEvidence) {
   const routeFailures = routeResults.flatMap((route) => route.failures.map((failure) => `${route.label}: ${failure}`));
   const eventFailures = browserEvents.map((event) => `${event.route}: ${event.type} ${event.text}`);
@@ -426,28 +415,6 @@ function summarize(routeResults, browserEvents, logEvidence) {
     browser_event_count: browserEvents.length,
     deployment_logs_ok: logEvidence.ok,
     failures,
-  };
-}
-
-function runDeploymentLogVerification() {
-  const target = env.GOAL_TEST_ENV || "int";
-  const result = spawnSync("node", ["scripts/goal-test-environments.mjs", "verify-logs", target], {
-    cwd: repoRoot,
-    encoding: "utf8",
-  });
-  const raw = result.stdout || result.stderr || "";
-  let evidence = null;
-  try {
-    evidence = raw ? JSON.parse(raw) : null;
-  } catch {
-    evidence = null;
-  }
-  return {
-    ok: result.status === 0 && evidence?.ok === true,
-    target,
-    exit_code: result.status,
-    evidence,
-    error: result.status === 0 ? "" : (result.stderr || result.stdout || "").slice(0, 2000),
   };
 }
 
@@ -503,19 +470,4 @@ async function waitForRouteText(page, expectedTexts) {
       { timeout: 8_000 },
     )
     .catch(() => {});
-}
-
-function isAuditedRequest(url) {
-  return url.startsWith(frontendURL) || url.startsWith(browserURL) || url.startsWith(backendURL);
-}
-
-function countByPath(requests) {
-  const counts = new Map();
-  for (const request of requests) {
-    const path = requestPath(request.url);
-    counts.set(path, (counts.get(path) || 0) + 1);
-  }
-  return Array.from(counts.entries())
-    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
-    .map(([path, count]) => ({ path, count }));
 }
