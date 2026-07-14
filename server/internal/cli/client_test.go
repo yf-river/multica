@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -169,13 +170,10 @@ func TestPostJSON(t *testing.T) {
 	})
 
 	t.Run("client identity headers fall back to package defaults", func(t *testing.T) {
-		origPlatform, origVersion, origOS := ClientPlatform, ClientVersion, ClientOS
-		ClientPlatform = "cli"
+		origVersion := ClientVersion
 		ClientVersion = "1.2.3-test"
-		ClientOS = "macos"
-		t.Cleanup(func() {
-			ClientPlatform, ClientVersion, ClientOS = origPlatform, origVersion, origOS
-		})
+		t.Cleanup(func() { ClientVersion = origVersion })
+		expectedOS := normalizeGOOS(runtime.GOOS)
 
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if got := r.Header.Get("X-Client-Platform"); got != "cli" {
@@ -184,8 +182,8 @@ func TestPostJSON(t *testing.T) {
 			if got := r.Header.Get("X-Client-Version"); got != "1.2.3-test" {
 				t.Errorf("expected X-Client-Version 1.2.3-test, got %s", got)
 			}
-			if got := r.Header.Get("X-Client-OS"); got != "macos" {
-				t.Errorf("expected X-Client-OS macos, got %s", got)
+			if got := r.Header.Get("X-Client-OS"); got != expectedOS {
+				t.Errorf("expected X-Client-OS %s, got %s", expectedOS, got)
 			}
 			w.WriteHeader(http.StatusNoContent)
 		}))

@@ -22,15 +22,6 @@ import (
 // concrete cmd package. Defaults to "dev" when running unset (e.g. tests).
 var ClientVersion = "dev"
 
-// ClientPlatform identifies this client to the server. Override for tests
-// or alternative entry points; defaults to "cli".
-var ClientPlatform = "cli"
-
-// ClientOS is the normalized operating system string sent as X-Client-OS.
-// Computed once from runtime.GOOS so the server doesn't need to reverse-map
-// Go's os names ("darwin"/"windows"/"linux") into the protocol vocabulary.
-var ClientOS = normalizeGOOS(runtime.GOOS)
-
 func normalizeGOOS(goos string) string {
 	switch goos {
 	case "darwin":
@@ -55,8 +46,8 @@ type APIClient struct {
 	TaskID      string // When set, sent as X-Task-ID for agent-task validation.
 	HTTPClient  *http.Client
 
-	// Identity overrides. Empty values fall back to the package-level
-	// ClientPlatform / ClientVersion / ClientOS.
+	// Identity overrides. Empty values use CLI/runtime defaults; ClientVersion
+	// remains package-level because the binary injects its build version.
 	Platform string
 	Version  string
 	OS       string
@@ -178,7 +169,7 @@ func (c *APIClient) setHeaders(req *http.Request) {
 
 	platform := c.Platform
 	if platform == "" {
-		platform = ClientPlatform
+		platform = "cli"
 	}
 	if platform != "" {
 		req.Header.Set("X-Client-Platform", platform)
@@ -192,7 +183,7 @@ func (c *APIClient) setHeaders(req *http.Request) {
 	}
 	osName := c.OS
 	if osName == "" {
-		osName = ClientOS
+		osName = normalizeGOOS(runtime.GOOS)
 	}
 	if osName != "" {
 		req.Header.Set("X-Client-OS", osName)
