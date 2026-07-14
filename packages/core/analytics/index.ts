@@ -363,7 +363,7 @@ const ISSUE_KEY_SEGMENT = /^[A-Z][A-Z0-9]*-\d+$/;
  *
  * Exported for unit testing; callers should go through capturePageview.
  */
-export function normalizePageviewPath(path?: string): string | undefined {
+function normalizePageviewPath(path?: string): string | undefined {
   if (!path) return path ?? undefined;
   const clean = path.split(/[?#]/)[0] ?? "";
   const segments = clean.split("/").filter((s) => s.length > 0);
