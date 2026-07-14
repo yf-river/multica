@@ -555,23 +555,12 @@ func issueToMap(issue db.Issue, issuePrefix string) map[string]any {
 		"position":          issue.Position,
 		"start_date":        util.DateToPtr(issue.StartDate),
 		"due_date":          util.DateToPtr(issue.DueDate),
-		"metadata":          issueMetadataMap(issue.Metadata),
+		"metadata":          mustDecodePersistedJSONObject(issue.Metadata, "issue metadata"),
 		"created_at":        util.TimestampToString(issue.CreatedAt),
 		"updated_at":        util.TimestampToString(issue.UpdatedAt),
 		"work_started_at":   util.TimestampToPtr(issue.WorkStartedAt),
 		"work_completed_at": util.TimestampToPtr(issue.WorkCompletedAt),
 	}
-}
-
-func issueMetadataMap(raw []byte) map[string]any {
-	if len(raw) == 0 {
-		return map[string]any{}
-	}
-	var metadata map[string]any
-	if err := json.Unmarshal(raw, &metadata); err != nil || metadata == nil {
-		return map[string]any{}
-	}
-	return metadata
 }
 
 // ParseQuickCreateContext returns the quick-create payload if the task's

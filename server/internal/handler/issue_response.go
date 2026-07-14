@@ -64,7 +64,7 @@ func issueToResponse(i db.Issue, issuePrefix string) IssueResponse {
 		UpdatedAt:       timestampToString(i.UpdatedAt),
 		WorkStartedAt:   timestampToPtr(i.WorkStartedAt),
 		WorkCompletedAt: timestampToPtr(i.WorkCompletedAt),
-		Metadata:        parseIssueMetadata(i.Metadata),
+		Metadata:        mustDecodePersistedJSONObject(i.Metadata, "issue metadata"),
 	}
 }
 func openIssueRowToResponse(i db.ListOpenIssuesRow, issuePrefix string) IssueResponse {

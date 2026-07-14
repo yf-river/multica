@@ -125,23 +125,14 @@ export interface WorkspaceDeletedPayload {
 
 export interface MemberAddedPayload {
   member: MemberWithUser;
-  workspace_id: string;
   workspace_name?: string;
 }
 
 export interface MemberRemovedPayload {
-  member_id: string;
-  user_id: string;
-  workspace_id: string;
-}
-
-export interface SubscriberAddedPayload {
-  issue_id: string;
-  user_type: string;
   user_id: string;
 }
 
-export interface SubscriberRemovedPayload {
+export interface SubscriberChangedPayload {
   issue_id: string;
   user_type: string;
   user_id: string;
@@ -175,24 +166,20 @@ export interface ReactionAddedPayload {
   issue_id: string;
 }
 
-export interface ReactionRemovedPayload {
-  comment_id: string;
-  issue_id: string;
-  emoji: string;
-  actor_type: string;
-  actor_id: string;
-}
-
-export interface IssueReactionAddedPayload {
-  reaction: IssueReaction;
-  issue_id: string;
-}
-
 export interface IssueReactionRemovedPayload {
   issue_id: string;
   emoji: string;
   actor_type: string;
   actor_id: string;
+}
+
+export interface ReactionRemovedPayload extends IssueReactionRemovedPayload {
+  comment_id: string;
+}
+
+export interface IssueReactionAddedPayload {
+  reaction: IssueReaction;
+  issue_id: string;
 }
 
 export interface ChatDonePayload {

@@ -53,20 +53,20 @@ func (h *Handler) RecordIssueSourceFetch(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	existing := mustDecodePersistedJSONObject(issue.Metadata, "issue metadata")
 	requestFingerprint := req
 	if req.AutoFetch {
-		fetched, err := h.autoFetchTAPDSource(r.Context(), userID, req, parseIssueMetadata(issue.Metadata))
+		fetched, err := h.autoFetchTAPDSource(r.Context(), userID, req, existing)
 		if err != nil {
 			req.Status = "fetch_failed"
 			req.Error = err.Error()
 			if req.Provider == "" {
 				req.Provider = "tapd"
 			}
-			metadata := parseIssueMetadata(issue.Metadata)
-			req.WorkspaceID = firstNonEmpty(req.WorkspaceID, stringFromMetadata(metadata, "tapd_workspace_id"))
-			req.ResourceType = firstNonEmpty(req.ResourceType, stringFromMetadata(metadata, "tapd_resource_type"))
-			req.ResourceID = firstNonEmpty(req.ResourceID, stringFromMetadata(metadata, "tapd_resource_id"))
-			req.URL = firstNonEmpty(req.URL, stringFromMetadata(metadata, "source_url"))
+			req.WorkspaceID = firstNonEmpty(req.WorkspaceID, stringFromMetadata(existing, "tapd_workspace_id"))
+			req.ResourceType = firstNonEmpty(req.ResourceType, stringFromMetadata(existing, "tapd_resource_type"))
+			req.ResourceID = firstNonEmpty(req.ResourceID, stringFromMetadata(existing, "tapd_resource_id"))
+			req.URL = firstNonEmpty(req.URL, stringFromMetadata(existing, "source_url"))
 		} else {
 			req = fetched
 		}
@@ -77,7 +77,6 @@ func (h *Handler) RecordIssueSourceFetch(w http.ResponseWriter, r *http.Request)
 	}
 
 	metadataUpdates := sourceFetchMetadata(normalized)
-	existing := parseIssueMetadata(issue.Metadata)
 	newKeyCount := 0
 	for key := range metadataUpdates {
 		if _, present := existing[key]; !present {
@@ -217,7 +216,7 @@ func (h *Handler) RecordIssueSourceFetch(w http.ResponseWriter, r *http.Request)
 
 	workspaceID := uuidToString(updated.WorkspaceID)
 	actorType, actorID := resolveActor(r, userID)
-	metadata := parseIssueMetadata(updated.Metadata)
+	metadata := mustDecodePersistedJSONObject(updated.Metadata, "issue metadata")
 	h.publish(protocol.EventIssueMetadataChanged, workspaceID, actorType, actorID, map[string]any{
 		"issue_id": uuidToString(updated.ID),
 		"metadata": metadata,

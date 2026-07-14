@@ -10,8 +10,7 @@ import type {
   IssueSubscriber,
   ReactionAddedPayload,
   ReactionRemovedPayload,
-  SubscriberAddedPayload,
-  SubscriberRemovedPayload,
+  SubscriberChangedPayload,
   TimelineEntry,
   WSEventType,
 } from "../types";
@@ -204,7 +203,7 @@ export function applyIssueDetailEvent(
       return;
     }
     case "subscriber:added": {
-      const added = payload as SubscriberAddedPayload;
+      const added = payload as SubscriberChangedPayload;
       if (!added.issue_id) return;
       qc.setQueryData<IssueSubscriber[]>(
         issueKeys.subscribers(added.issue_id),
@@ -232,7 +231,7 @@ export function applyIssueDetailEvent(
       return;
     }
     case "subscriber:removed": {
-      const removed = payload as SubscriberRemovedPayload;
+      const removed = payload as SubscriberChangedPayload;
       if (!removed.issue_id) return;
       qc.setQueryData<IssueSubscriber[]>(
         issueKeys.subscribers(removed.issue_id),

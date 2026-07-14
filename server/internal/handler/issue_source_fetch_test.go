@@ -157,7 +157,7 @@ func TestRecordIssueSourceFetchWritesMetadataAndTrace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load issue after conflict: %v", err)
 	}
-	if got := parseIssueMetadata(persistedIssue.Metadata)["source_fetch_title"]; got != "用户快捷入口需求" {
+	if got := mustDecodePersistedJSONObject(persistedIssue.Metadata, "issue metadata")["source_fetch_title"]; got != "用户快捷入口需求" {
 		t.Fatalf("conflicting replay changed metadata title to %v", got)
 	}
 

@@ -341,7 +341,7 @@ func TestQuickCreateIssueTapdWikiCreatesFetchedIssueDirectly(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load created issue: %v", err)
 	}
-	metadata := parseIssueMetadata(issue.Metadata)
+	metadata := mustDecodePersistedJSONObject(issue.Metadata, "issue metadata")
 	if metadata["source_fetch_status"] != "fetched" || metadata["source_fetch_title"] != title {
 		t.Fatalf("metadata missing fetched TAPD source: %+v", metadata)
 	}
@@ -458,7 +458,7 @@ func TestQuickCreateIssueTapdWikiCreatesFetchedIssueDirectly(t *testing.T) {
 	if issue.Description.String != summaryOutput {
 		t.Fatalf("description not replaced by source summary output:\n%s", issue.Description.String)
 	}
-	metadata = parseIssueMetadata(issue.Metadata)
+	metadata = mustDecodePersistedJSONObject(issue.Metadata, "issue metadata")
 	if metadata["source_summary_status"] != "completed" {
 		t.Fatalf("source summary status not completed: %+v", metadata)
 	}
@@ -585,7 +585,7 @@ func TestIssueSourceSummaryFailureCommitsFallbackAndNextTaskAtomically(t *testin
 	if err != nil {
 		t.Fatalf("reload source summary issue: %v", err)
 	}
-	metadata := parseIssueMetadata(issue.Metadata)
+	metadata := mustDecodePersistedJSONObject(issue.Metadata, "issue metadata")
 	if metadata["source_summary_status"] != "failed" || metadata["source_summary_error"] != "摘要智能体执行失败" {
 		t.Fatalf("source summary failure metadata = %+v", metadata)
 	}
@@ -638,7 +638,7 @@ func TestIssueSourceSummaryFailureCommitsFallbackAndNextTaskAtomically(t *testin
 	if err != nil {
 		t.Fatalf("reload issue after batch failure: %v", err)
 	}
-	metadata = parseIssueMetadata(issue.Metadata)
+	metadata = mustDecodePersistedJSONObject(issue.Metadata, "issue metadata")
 	if metadata["source_summary_status"] != "failed" || metadata["source_summary_error"] != "task timed out" {
 		t.Fatalf("batch source summary failure metadata = %+v", metadata)
 	}
@@ -751,7 +751,7 @@ func TestQuickCreateIssueTapdStoryPreviewCreatesFetchedIssueDirectly(t *testing.
 		strings.Contains(issue.Description.String, "公告列表提供公告管理查询功能") {
 		t.Fatalf("story description should be a summary placeholder before source summary completion: %s", issue.Description.String)
 	}
-	metadata := parseIssueMetadata(issue.Metadata)
+	metadata := mustDecodePersistedJSONObject(issue.Metadata, "issue metadata")
 	if metadata["source_url"] != "https://www.tapd.cn/51081496/prong/stories/view/1151081496001028216" ||
 		metadata["tapd_workspace_id"] != "51081496" ||
 		metadata["tapd_resource_type"] != "story" ||

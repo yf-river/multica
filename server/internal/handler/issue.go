@@ -1218,7 +1218,7 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	if len(metadataChanges) > 0 {
 		h.publish(protocol.EventIssueMetadataChanged, workspaceID, actorType, actorID, map[string]any{
 			"issue_id": uuidToString(issue.ID),
-			"metadata": parseIssueMetadata(issue.Metadata),
+			"metadata": mustDecodePersistedJSONObject(issue.Metadata, "issue metadata"),
 		})
 	}
 	h.publishEvent(updatedEvent)

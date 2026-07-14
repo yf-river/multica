@@ -7,8 +7,8 @@ import { deriveGitHubSettings, type GitHubSettings } from "./settings";
 /**
  * Reads the GitHub feature flags off the current workspace's settings JSONB.
  * Components downstream should consult this hook rather than poking at
- * `workspace.settings` directly, so the per-flag fallback semantics
- * (see deriveGitHubSettings) stay consistent.
+ * `workspace.settings` directly, so the single current derivation remains
+ * consistent.
  */
 export function useGitHubSettings(): GitHubSettings {
   const workspace = useCurrentWorkspace();
