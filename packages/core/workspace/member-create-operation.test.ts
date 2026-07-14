@@ -8,7 +8,6 @@ import type { MemberWithUser } from "../types";
 import {
   createMemberWithRecovery,
   useMemberCreateOperationStore,
-  type MemberCreateClient,
 } from "./member-create-operation";
 
 const member = (id: string) => ({ id }) as MemberWithUser;
@@ -27,7 +26,7 @@ describe("createMemberWithRecovery", () => {
   });
 
   it("never persists the member password after an unknown outcome", async () => {
-    const client: MemberCreateClient = {
+    const client = {
       createMember: vi.fn().mockRejectedValue(
         new ApiTransportError("POST member", true, new Error("lost")),
       ),
@@ -55,7 +54,7 @@ describe("createMemberWithRecovery", () => {
 	  requestKey = key;
 	  return Promise.reject(new ApiTransportError("POST member", true, new Error("lost")));
 	});
-    const client: MemberCreateClient = {
+    const client = {
 	  createMember,
 	  listMembers: vi.fn().mockImplementation(() => Promise.resolve([member(requestKey)])),
     };
@@ -73,7 +72,7 @@ describe("createMemberWithRecovery", () => {
       requestFingerprint: "b".repeat(64),
       createdAt: Date.now(),
     });
-    const client: MemberCreateClient = {
+    const client = {
       createMember: vi.fn().mockResolvedValue(member("member-current")),
       listMembers: vi.fn().mockResolvedValue([]),
     };

@@ -1,6 +1,6 @@
 "use client";
 
-import { api } from "../api";
+import { api, type ApiClient } from "../api";
 import { executeRecoverableMutation } from "../api/transport";
 import {
   createWorkspaceRecoverableOperationStore,
@@ -20,12 +20,7 @@ export const useAgentPlaygroundCreateStore: RecoverableOperationStore<PendingAge
     "multica_agent_playground_create",
   );
 
-export interface AgentPlaygroundCreateClient {
-  createAgentPlaygroundExperiment(
-    request: CreateAgentPlaygroundExperimentRequest,
-    requestKey: string,
-  ): Promise<AgentPlaygroundDetail>;
-}
+type AgentPlaygroundCreateClient = Pick<ApiClient, "createAgentPlaygroundExperiment">;
 
 async function execute(
   client: AgentPlaygroundCreateClient,

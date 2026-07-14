@@ -8,7 +8,6 @@ import {
   createPromptLibraryItemWithRecovery,
   createPromptLibraryTrialWithRecovery,
   createPromptLibraryVersionWithRecovery,
-  type PromptLibraryTrialCreateClient,
   usePromptLibraryCreateStore,
 } from "./trial-create";
 
@@ -74,7 +73,7 @@ describe("createPromptLibraryTrialWithRecovery", () => {
       createdAt: Date.now(),
     });
     const createPromptLibraryTrial = vi.fn().mockResolvedValueOnce(trial("trial-1")).mockResolvedValueOnce(trial("trial-2"));
-    const client: PromptLibraryTrialCreateClient = { createPromptLibraryTrial };
+    const client = { createPromptLibraryTrial };
     await expect(createPromptLibraryTrialWithRecovery("prompt-1", "version-1", {
       agent_id: "agent-1", variables: { topic: "new" },
     }, client)).resolves.toMatchObject({ id: "trial-2" });

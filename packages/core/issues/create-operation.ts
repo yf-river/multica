@@ -1,4 +1,4 @@
-import { api } from "../api";
+import { api, type ApiClient } from "../api";
 import { executeRecoverableMutation } from "../api/transport";
 import type { CreateIssueRequest, Issue } from "../types";
 import { generateUUID } from "../utils";
@@ -7,9 +7,7 @@ import {
   useIssueCreatePendingStore,
 } from "./issue-create-pending-store";
 
-export interface IssueCreateClient {
-  createIssue(request: CreateIssueRequest, idempotencyKey: string): Promise<Issue>;
-}
+type IssueCreateClient = Pick<ApiClient, "createIssue">;
 
 async function executeIssueCreate(
   client: IssueCreateClient,

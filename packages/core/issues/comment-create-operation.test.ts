@@ -6,7 +6,6 @@ import { setCurrentWorkspace } from "../platform/workspace-storage";
 import type { Comment } from "../types";
 import {
   createCommentWithRecovery,
-  type CommentCreateClient,
 } from "./comment-create-operation";
 import { useCommentDraftStore } from "./stores/comment-draft-store";
 
@@ -41,7 +40,7 @@ describe("createCommentWithRecovery", () => {
     const createComment = vi.fn()
       .mockResolvedValueOnce(comment("comment-1", "earlier"))
       .mockResolvedValueOnce(comment("comment-2", "current"));
-    const client: CommentCreateClient = { createComment };
+    const client = { createComment };
     await expect(createCommentWithRecovery("issue-1", { content: "current" }, client))
       .resolves.toMatchObject({ id: "comment-2" });
     expect(createComment).toHaveBeenCalledTimes(2);

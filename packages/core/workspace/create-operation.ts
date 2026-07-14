@@ -1,6 +1,6 @@
 "use client";
 
-import { api } from "../api";
+import { api, type ApiClient } from "../api";
 import { executeRecoverableMutation } from "../api/transport";
 import {
   createAccountRecoverableOperationStore,
@@ -27,9 +27,7 @@ export const useWorkspaceCreateOperationStore: RecoverableOperationStore<Pending
     "multica_workspace_create_operation",
   );
 
-export interface WorkspaceCreateClient {
-  createWorkspace(request: CreateWorkspaceRequest, requestKey: string): Promise<Workspace>;
-}
+type WorkspaceCreateClient = Pick<ApiClient, "createWorkspace">;
 
 async function execute(client: WorkspaceCreateClient, operation: PendingWorkspaceCreate) {
   return executeRecoverableMutation(

@@ -7,7 +7,6 @@ import type { ExternalCredentialProfile } from "../types";
 import {
   createExternalCredentialProfileWithRecovery,
   useCredentialProfileCreateStore,
-  type CredentialProfileCreateClient,
 } from "./create-operation";
 
 const profile = (id: string) => ({ id }) as ExternalCredentialProfile;
@@ -51,7 +50,7 @@ describe("createExternalCredentialProfileWithRecovery", () => {
     });
     const getExternalCredentialProfile = vi.fn().mockResolvedValue(profile("profile-1"));
     const createExternalCredentialProfile = vi.fn().mockResolvedValue(profile("profile-2"));
-    const client: CredentialProfileCreateClient = {
+    const client = {
       getExternalCredentialProfile,
       createExternalCredentialProfile,
     };
@@ -70,7 +69,7 @@ describe("createExternalCredentialProfileWithRecovery", () => {
       requestFingerprint: "b".repeat(64),
       createdAt: Date.now(),
     });
-    const client: CredentialProfileCreateClient = {
+    const client = {
       getExternalCredentialProfile: vi.fn().mockRejectedValue(new ApiError("missing", 404, "Not Found")),
       createExternalCredentialProfile: vi.fn().mockResolvedValue(profile("profile-2")),
     };

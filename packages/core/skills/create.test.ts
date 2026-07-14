@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, ApiTransportError } from "../api";
 import { setCurrentWorkspace } from "../platform/workspace-storage";
 import type { Skill } from "../types";
-import { createSkillWithRecovery, type SkillCreateClient } from "./create";
+import { createSkillWithRecovery } from "./create";
 import { useSkillPendingOperationStore } from "./pending-operation-store";
 
 const skill = { id: "skill-1" } as Skill;
@@ -20,7 +20,7 @@ describe("createSkillWithRecovery", () => {
     const createSkill = vi.fn()
       .mockRejectedValueOnce(new ApiTransportError("POST /api/skills", true, new Error("reset")))
       .mockResolvedValueOnce(skill);
-    const client: SkillCreateClient = { createSkill };
+    const client = { createSkill };
 
     await expect(createSkillWithRecovery({ name: "Original" }, client))
       .rejects.toBeInstanceOf(ApiTransportError);
@@ -40,7 +40,7 @@ describe("createSkillWithRecovery", () => {
     const createSkill = vi.fn()
       .mockRejectedValueOnce(new ApiError("invalid", 400, "Bad Request"))
       .mockResolvedValueOnce(skill);
-    const client: SkillCreateClient = { createSkill };
+    const client = { createSkill };
 
     await expect(createSkillWithRecovery({ name: "First" }, client))
       .rejects.toBeInstanceOf(ApiError);

@@ -1,4 +1,4 @@
-import { api } from "../api";
+import { api, type ApiClient } from "../api";
 import { executeRecoverableMutation } from "../api/transport";
 import {
   createWorkspaceAwareStorage,
@@ -84,23 +84,7 @@ export const usePromptLibraryCreateStore = create<PromptLibraryCreateState>()(
 
 registerWorkspacePersistStore(usePromptLibraryCreateStore);
 
-export interface PromptLibraryTrialCreateClient {
-  createPromptLibraryTrial(
-    promptId: string,
-    versionId: string,
-    request: CreatePromptLibraryTrialRequest,
-    requestKey: string,
-  ): Promise<PromptLibraryTrial>;
-}
-
-export interface PromptLibraryCreateClient extends PromptLibraryTrialCreateClient {
-  createPromptLibraryItem(request: CreatePromptLibraryItemRequest, requestKey: string): Promise<PromptLibraryItem>;
-  createPromptLibraryVersion(
-    promptId: string,
-    request: CreatePromptLibraryVersionRequest,
-    requestKey: string,
-  ): Promise<CreatePromptLibraryVersionResponse>;
-}
+type PromptLibraryTrialCreateClient = Pick<ApiClient, "createPromptLibraryTrial">;
 
 const scopeFor = (promptId: string, versionId: string, request: CreatePromptLibraryTrialRequest) =>
   `${promptId}:${versionId}:${request.agent_id}`;
@@ -145,7 +129,7 @@ export async function createPromptLibraryTrialWithRecovery(
 }
 
 async function executeItem(
-  client: Pick<PromptLibraryCreateClient, "createPromptLibraryItem">,
+  client: Pick<ApiClient, "createPromptLibraryItem">,
   operation: PendingItemCreate,
 ) {
   return executeRecoverableMutation(
@@ -156,7 +140,7 @@ async function executeItem(
 
 export async function createPromptLibraryItemWithRecovery(
   request: CreatePromptLibraryItemRequest,
-  client: Pick<PromptLibraryCreateClient, "createPromptLibraryItem"> = api,
+  client: Pick<ApiClient, "createPromptLibraryItem"> = api,
 ): Promise<PromptLibraryItem> {
   const pending = usePromptLibraryCreateStore.getState().item;
   if (pending) {
@@ -169,7 +153,7 @@ export async function createPromptLibraryItemWithRecovery(
 }
 
 async function executeVersion(
-  client: Pick<PromptLibraryCreateClient, "createPromptLibraryVersion">,
+  client: Pick<ApiClient, "createPromptLibraryVersion">,
   operation: PendingVersionCreate,
 ) {
   return executeRecoverableMutation(
@@ -181,7 +165,7 @@ async function executeVersion(
 export async function createPromptLibraryVersionWithRecovery(
   promptId: string,
   request: CreatePromptLibraryVersionRequest,
-  client: Pick<PromptLibraryCreateClient, "createPromptLibraryVersion"> = api,
+  client: Pick<ApiClient, "createPromptLibraryVersion"> = api,
 ): Promise<CreatePromptLibraryVersionResponse> {
   const pending = usePromptLibraryCreateStore.getState().versions[promptId];
   if (pending) {

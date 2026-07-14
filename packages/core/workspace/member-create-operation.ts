@@ -1,6 +1,6 @@
 "use client";
 
-import { api } from "../api";
+import { api, type ApiClient } from "../api";
 import { executeRecoverableMutation } from "../api/transport";
 import {
   createWorkspaceRecoverableOperationStore,
@@ -20,10 +20,7 @@ export const useMemberCreateOperationStore: RecoverableOperationStore<PendingMem
     "multica_member_create_operation",
   );
 
-export interface MemberCreateClient {
-  createMember(workspaceId: string, request: CreateMemberRequest, requestKey: string): Promise<MemberWithUser>;
-  listMembers(workspaceId: string): Promise<MemberWithUser[]>;
-}
+type MemberCreateClient = Pick<ApiClient, "createMember" | "listMembers">;
 
 async function fingerprintMemberRequest(request: CreateMemberRequest) {
   const normalized = JSON.stringify({

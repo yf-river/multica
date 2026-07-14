@@ -3,7 +3,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, ApiTransportError } from "../api";
 import { setCurrentWorkspace } from "../platform/workspace-storage";
-import { quickCreateIssueWithRecovery, type QuickCreateClient } from "./quick-create";
+import { quickCreateIssueWithRecovery } from "./quick-create";
 import { useQuickCreateStore } from "./stores/quick-create-store";
 
 describe("quickCreateIssueWithRecovery", () => {
@@ -17,7 +17,7 @@ describe("quickCreateIssueWithRecovery", () => {
     const quickCreateIssue = vi.fn()
       .mockRejectedValueOnce(new ApiTransportError("POST /api/issues/quick-create", true, new Error("reset")))
       .mockResolvedValueOnce({ task_id: "task-1" });
-    const client: QuickCreateClient = { quickCreateIssue };
+    const client = { quickCreateIssue };
 
     await expect(quickCreateIssueWithRecovery(client, { prompt: "Original", agent_id: "agent-1" }))
       .rejects.toBeInstanceOf(ApiTransportError);
@@ -36,7 +36,7 @@ describe("quickCreateIssueWithRecovery", () => {
     const quickCreateIssue = vi.fn()
       .mockRejectedValueOnce(new ApiError("invalid", 400, "Bad Request"))
       .mockResolvedValueOnce({ task_id: "task-2" });
-    const client: QuickCreateClient = { quickCreateIssue };
+    const client = { quickCreateIssue };
 
     await expect(quickCreateIssueWithRecovery(client, { prompt: "First", agent_id: "agent-1" }))
       .rejects.toBeInstanceOf(ApiError);

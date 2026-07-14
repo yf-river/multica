@@ -1,14 +1,10 @@
+import type { ApiClient } from "../api";
 import { executeRecoverableMutation } from "../api/transport";
 import type { QuickCreateIssueRequest, QuickCreateIssueResponse } from "../types";
 import { generateUUID } from "../utils";
 import { useQuickCreateStore } from "./stores/quick-create-store";
 
-export interface QuickCreateClient {
-  quickCreateIssue(
-    request: QuickCreateIssueRequest,
-    idempotencyKey?: string,
-  ): Promise<QuickCreateIssueResponse>;
-}
+type QuickCreateClient = Pick<ApiClient, "quickCreateIssue">;
 
 export async function quickCreateIssueWithRecovery(
   api: QuickCreateClient,

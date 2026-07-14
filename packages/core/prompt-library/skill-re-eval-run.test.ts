@@ -7,7 +7,6 @@ import type { PromptEvaluationSkillReEvalRunResponse } from "../types";
 import {
   runPromptEvaluationSkillReEvalWithRecovery,
   useSkillReEvalRunStore,
-  type SkillReEvalRunClient,
 } from "./skill-re-eval-run";
 
 const response = (id: string) => ({ run: { id } }) as PromptEvaluationSkillReEvalRunResponse;
@@ -24,7 +23,7 @@ describe("runPromptEvaluationSkillReEvalWithRecovery", () => {
     const runPromptEvaluationSkillReEval = vi.fn()
       .mockRejectedValueOnce(new ApiTransportError("POST skill re-eval", true, new Error("lost")))
       .mockResolvedValueOnce(response("run-1"));
-    const client: SkillReEvalRunClient = { runPromptEvaluationSkillReEval };
+    const client = { runPromptEvaluationSkillReEval };
     const request = { asset_id: "asset-1" };
 
     await expect(runPromptEvaluationSkillReEvalWithRecovery("candidate-1", request, client))
@@ -48,7 +47,7 @@ describe("runPromptEvaluationSkillReEvalWithRecovery", () => {
     const runPromptEvaluationSkillReEval = vi.fn()
       .mockResolvedValueOnce(response("run-old"))
       .mockResolvedValueOnce(response("run-new"));
-    const client: SkillReEvalRunClient = { runPromptEvaluationSkillReEval };
+    const client = { runPromptEvaluationSkillReEval };
 
     await expect(runPromptEvaluationSkillReEvalWithRecovery(
       "candidate-new", { asset_id: "asset-new" }, client,

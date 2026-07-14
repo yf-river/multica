@@ -1,4 +1,4 @@
-import { api } from "../api";
+import { api, type ApiClient } from "../api";
 import { executeRecoverableMutation } from "../api/transport";
 import type { Comment, CreateCommentRequest } from "../types";
 import { generateUUID } from "../utils";
@@ -7,9 +7,7 @@ import {
   useCommentDraftStore,
 } from "./stores/comment-draft-store";
 
-export interface CommentCreateClient {
-  createComment(issueId: string, request: CreateCommentRequest, idempotencyKey: string): Promise<Comment>;
-}
+type CommentCreateClient = Pick<ApiClient, "createComment">;
 
 const operationScope = (issueId: string, request: CreateCommentRequest) =>
   `${issueId}:${request.parent_id ?? "root"}`;

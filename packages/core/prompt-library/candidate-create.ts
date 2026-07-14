@@ -1,6 +1,6 @@
 "use client";
 
-import { api } from "../api";
+import { api, type ApiClient } from "../api";
 import { executeRecoverableMutation } from "../api/transport";
 import {
   createWorkspaceRecoverableOperationStore,
@@ -20,12 +20,10 @@ export const useCandidateCreateStore: RecoverableOperationStore<PendingCandidate
     "multica_prompt_candidate_create",
   );
 
-export interface CandidateCreateClient {
-  createPromptEvaluationOptimizationCandidate(
-    runId: string,
-    requestKey: string,
-  ): Promise<PromptEvaluationOptimizationCandidate>;
-}
+type CandidateCreateClient = Pick<
+  ApiClient,
+  "createPromptEvaluationOptimizationCandidate"
+>;
 
 async function execute(client: CandidateCreateClient, operation: PendingCandidateCreate) {
   return executeRecoverableMutation(

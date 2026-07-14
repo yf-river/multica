@@ -7,7 +7,6 @@ import type { AgentPlaygroundDetail, CreateAgentPlaygroundExperimentRequest } fr
 import {
   createAgentPlaygroundExperimentWithRecovery,
   useAgentPlaygroundCreateStore,
-  type AgentPlaygroundCreateClient,
 } from "./create-operation";
 
 const request: CreateAgentPlaygroundExperimentRequest = {
@@ -31,7 +30,7 @@ describe("createAgentPlaygroundExperimentWithRecovery", () => {
     const createAgentPlaygroundExperiment = vi.fn()
       .mockRejectedValueOnce(new ApiTransportError("POST playground", true, new Error("lost")))
       .mockResolvedValueOnce(detail("experiment-1"));
-    const client: AgentPlaygroundCreateClient = { createAgentPlaygroundExperiment };
+    const client = { createAgentPlaygroundExperiment };
 
     await expect(createAgentPlaygroundExperimentWithRecovery(request, client))
       .rejects.toBeInstanceOf(ApiTransportError);
@@ -53,7 +52,7 @@ describe("createAgentPlaygroundExperimentWithRecovery", () => {
     const createAgentPlaygroundExperiment = vi.fn()
       .mockResolvedValueOnce(detail("experiment-old"))
       .mockResolvedValueOnce(detail("experiment-new"));
-    const client: AgentPlaygroundCreateClient = { createAgentPlaygroundExperiment };
+    const client = { createAgentPlaygroundExperiment };
     const changed = { ...request, name: "Changed experiment" };
 
     await expect(createAgentPlaygroundExperimentWithRecovery(changed, client))

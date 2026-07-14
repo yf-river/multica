@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiTransportError } from "../api";
 import { setCurrentWorkspace } from "../platform/workspace-storage";
 import type { Issue } from "../types";
-import { createIssueWithRecovery, type IssueCreateClient } from "./create-operation";
+import { createIssueWithRecovery } from "./create-operation";
 import { useIssueCreatePendingStore } from "./issue-create-pending-store";
 
 const issue = (id: string, title: string) => ({ id, title, identifier: `ISS-${id}` }) as Issue;
@@ -36,7 +36,7 @@ describe("createIssueWithRecovery", () => {
     const createIssue = vi.fn()
       .mockResolvedValueOnce(issue("1", "Earlier"))
       .mockResolvedValueOnce(issue("2", "Current"));
-    const client: IssueCreateClient = { createIssue };
+    const client = { createIssue };
 
     await expect(createIssueWithRecovery({ title: "Current" }, client))
       .resolves.toMatchObject({ id: "2" });

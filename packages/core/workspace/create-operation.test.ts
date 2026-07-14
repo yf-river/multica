@@ -6,7 +6,6 @@ import type { Workspace } from "../types";
 import {
   createWorkspaceWithRecovery,
   useWorkspaceCreateOperationStore,
-  type WorkspaceCreateClient,
 } from "./create-operation";
 
 const workspace = (id: string) => ({ id }) as Workspace;
@@ -40,7 +39,7 @@ describe("createWorkspaceWithRecovery", () => {
     const createWorkspace = vi.fn()
       .mockResolvedValueOnce(workspace("workspace-1"))
       .mockResolvedValueOnce(workspace("workspace-2"));
-    const client: WorkspaceCreateClient = { createWorkspace };
+    const client = { createWorkspace };
     await expect(createWorkspaceWithRecovery({ name: "New", slug: "new" }, client))
       .resolves.toMatchObject({ id: "workspace-2" });
     expect(createWorkspace).toHaveBeenCalledTimes(2);

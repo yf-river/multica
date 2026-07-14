@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError, ApiTransportError } from "../api";
 import { setCurrentWorkspace } from "../platform/workspace-storage";
 import type { Agent } from "../types";
-import { createAgentWithRecovery, type AgentCreateClient } from "./create";
+import { createAgentWithRecovery } from "./create";
 import { useAgentPendingOperationStore } from "./pending-operation-store";
 
 const agent = { id: "agent-1" } as Agent;
@@ -20,7 +20,7 @@ describe("createAgentWithRecovery", () => {
     const createAgent = vi.fn()
       .mockRejectedValueOnce(new ApiTransportError("POST /api/agents", true, new Error("reset")))
       .mockResolvedValueOnce(agent);
-    const client: AgentCreateClient = { createAgent };
+    const client = { createAgent };
 
     await expect(createAgentWithRecovery({ name: "Original", runtime_id: "runtime-1" }, client))
       .rejects.toBeInstanceOf(ApiTransportError);
@@ -39,7 +39,7 @@ describe("createAgentWithRecovery", () => {
     const createAgent = vi.fn()
       .mockRejectedValueOnce(new ApiError("invalid", 400, "Bad Request"))
       .mockResolvedValueOnce(agent);
-    const client: AgentCreateClient = { createAgent };
+    const client = { createAgent };
 
     await expect(createAgentWithRecovery({ name: "First", runtime_id: "runtime-1" }, client))
       .rejects.toBeInstanceOf(ApiError);

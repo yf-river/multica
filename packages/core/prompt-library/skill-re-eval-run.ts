@@ -1,6 +1,6 @@
 "use client";
 
-import { api } from "../api";
+import { api, type ApiClient } from "../api";
 import { executeRecoverableMutation } from "../api/transport";
 import {
   createWorkspaceRecoverableOperationStore,
@@ -21,13 +21,7 @@ export const useSkillReEvalRunStore: RecoverableOperationStore<PendingSkillReEva
     "multica_skill_re_eval_run",
   );
 
-export interface SkillReEvalRunClient {
-  runPromptEvaluationSkillReEval(
-    candidateId: string,
-    request: RunPromptEvaluationSkillReEvalRequest,
-    requestKey: string,
-  ): Promise<PromptEvaluationSkillReEvalRunResponse>;
-}
+type SkillReEvalRunClient = Pick<ApiClient, "runPromptEvaluationSkillReEval">;
 
 async function execute(client: SkillReEvalRunClient, operation: PendingSkillReEvalRun) {
   return executeRecoverableMutation(

@@ -1,15 +1,10 @@
-import { api } from "../api";
+import { api, type ApiClient } from "../api";
 import { executeRecoverableMutation } from "../api/transport";
 import type { CreateSkillRequest, Skill } from "../types";
 import { generateUUID } from "../utils";
 import { useSkillPendingOperationStore } from "./pending-operation-store";
 
-export interface SkillCreateClient {
-  createSkill: (
-    request: CreateSkillRequest,
-    idempotencyKey: string,
-  ) => Promise<Skill>;
-}
+type SkillCreateClient = Pick<ApiClient, "createSkill">;
 
 export async function createSkillWithRecovery(
   request: CreateSkillRequest,

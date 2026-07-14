@@ -1,6 +1,6 @@
 "use client";
 
-import { api, ApiError } from "../api";
+import { api, ApiError, type ApiClient } from "../api";
 import { executeRecoverableMutation } from "../api/transport";
 import {
   createAccountRecoverableOperationStore,
@@ -20,13 +20,10 @@ export const useCredentialProfileCreateStore: RecoverableOperationStore<PendingC
     "multica_credential_profile_create",
   );
 
-export interface CredentialProfileCreateClient {
-  createExternalCredentialProfile(
-    request: CreateExternalCredentialProfileRequest,
-    requestKey: string,
-  ): Promise<ExternalCredentialProfile>;
-  getExternalCredentialProfile(id: string): Promise<ExternalCredentialProfile>;
-}
+type CredentialProfileCreateClient = Pick<
+  ApiClient,
+  "createExternalCredentialProfile" | "getExternalCredentialProfile"
+>;
 
 async function fingerprintCredentialRequest(request: CreateExternalCredentialProfileRequest) {
   const bytes = new TextEncoder().encode(JSON.stringify(request));

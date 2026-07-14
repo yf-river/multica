@@ -1,15 +1,10 @@
-import { api } from "../api";
+import { api, type ApiClient } from "../api";
 import { executeRecoverableMutation } from "../api/transport";
 import type { Agent, CreateAgentRequest } from "../types";
 import { generateUUID } from "../utils";
 import { useAgentPendingOperationStore } from "./pending-operation-store";
 
-export interface AgentCreateClient {
-  createAgent: (
-    request: CreateAgentRequest,
-    idempotencyKey: string,
-  ) => Promise<Agent>;
-}
+type AgentCreateClient = Pick<ApiClient, "createAgent">;
 
 export async function createAgentWithRecovery(
   request: CreateAgentRequest,

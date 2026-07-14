@@ -8,7 +8,6 @@ import {
   publishPromptEvaluationOptimizationCandidateWithRecovery,
   rejectPromptEvaluationOptimizationCandidateWithRecovery,
   useCandidateDecisionStore,
-  type CandidateDecisionClient,
 } from "./candidate-decision";
 
 const candidate = (id: string, status: "已发布" | "已拒绝") => ({ id, status }) as PromptEvaluationOptimizationCandidate;
@@ -28,7 +27,7 @@ describe("candidate decision recovery", () => {
     const client = {
       publishPromptEvaluationOptimizationCandidate,
       rejectPromptEvaluationOptimizationCandidate: vi.fn(),
-    } as unknown as CandidateDecisionClient;
+    };
 
     await expect(publishPromptEvaluationOptimizationCandidateWithRecovery("candidate-1", client))
       .rejects.toBeInstanceOf(ApiTransportError);
@@ -52,7 +51,7 @@ describe("candidate decision recovery", () => {
     const client = {
       publishPromptEvaluationOptimizationCandidate: vi.fn(),
       rejectPromptEvaluationOptimizationCandidate,
-    } as unknown as CandidateDecisionClient;
+    };
 
     await expect(rejectPromptEvaluationOptimizationCandidateWithRecovery("candidate-new", "new reason", client))
       .resolves.toMatchObject({ id: "candidate-new", status: "已拒绝" });

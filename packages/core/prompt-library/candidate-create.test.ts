@@ -7,7 +7,6 @@ import type { PromptEvaluationOptimizationCandidate } from "../types";
 import {
   createPromptEvaluationOptimizationCandidateWithRecovery,
   useCandidateCreateStore,
-  type CandidateCreateClient,
 } from "./candidate-create";
 
 const candidate = (id: string) => ({ id }) as PromptEvaluationOptimizationCandidate;
@@ -24,7 +23,7 @@ describe("createPromptEvaluationOptimizationCandidateWithRecovery", () => {
     const createPromptEvaluationOptimizationCandidate = vi.fn()
       .mockRejectedValueOnce(new ApiTransportError("POST candidate", true, new Error("lost")))
       .mockResolvedValueOnce(candidate("candidate-1"));
-    const client: CandidateCreateClient = { createPromptEvaluationOptimizationCandidate };
+    const client = { createPromptEvaluationOptimizationCandidate };
 
     await expect(createPromptEvaluationOptimizationCandidateWithRecovery("run-1", client))
       .rejects.toBeInstanceOf(ApiTransportError);
@@ -46,7 +45,7 @@ describe("createPromptEvaluationOptimizationCandidateWithRecovery", () => {
     const createPromptEvaluationOptimizationCandidate = vi.fn()
       .mockResolvedValueOnce(candidate("candidate-old"))
       .mockResolvedValueOnce(candidate("candidate-new"));
-    const client: CandidateCreateClient = { createPromptEvaluationOptimizationCandidate };
+    const client = { createPromptEvaluationOptimizationCandidate };
 
     await expect(createPromptEvaluationOptimizationCandidateWithRecovery("run-new", client))
       .resolves.toMatchObject({ id: "candidate-new" });
