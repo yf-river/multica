@@ -92,11 +92,11 @@ claude --model <model> --max-turns 100 --append-system-prompt "always respond in
 ## 可见性
 
 - **工作区可见**（`workspace`）—— 工作区里任何成员都能分配
-- **私有**（`private`）—— 只有工作区的 owner、admin，或智能体的创建者能分配
+- **个人**（`personal`）—— 只有工作区的 owner、admin，或智能体的所有者能查看和使用
 
-新建默认 `private`。
+新建默认 `personal`。
 
-**私有不等于隐藏**——列表里所有成员都能看到私有智能体的名字和描述，只是看不到敏感配置（env 值从不会出现在 agent list/get 响应里；MCP 配置对非 owner 会被打码）。完整含义见 [智能体 → 谁能把智能体分配出去](/agents#谁能把智能体分配出去)。
+个人智能体不会出现在无权成员的列表中。它的所有者以及工作区 owner、admin 可以查看和使用；env 值仍不会出现在普通 agent list/get 响应里。完整含义见 [智能体 → 谁能把智能体分配出去](/agents#谁能把智能体分配出去)。
 
 ## 并发上限
 

@@ -12,7 +12,7 @@ Multica 使用浏览器 JWT 会话和个人访问令牌（PAT）。CLI、脚本�
 | 令牌 | 格式 | 用在哪 | 有效期 |
 |---|---|---|---|
 | **JWT Cookie** | `multica_auth` cookie（HttpOnly） | Web 浏览器 | 30 天 |
-| **个人访问令牌（PAT）** | 以 `mul_` 开头 | CLI / 脚本 / 直接调 API | 默认不过期；用 API 创建时可选传 `expires_in_days` |
+| **个人访问令牌（PAT）** | 以 `mul_` 开头 | CLI / 脚本 / 直接调 API | API 创建时可选有效期；CLI 登录签发 90 天并在临近过期时续期 |
 
 ## 各类凭证能访问哪些 API
 
@@ -39,7 +39,9 @@ PAT 代表完整的当前用户身份。Daemon 访问每个工作区前仍会执
 **创建**有两种方式：
 
 - **Web UI**：Settings → Personal Access Tokens → New token
-- **CLI**：`multica login` 在本地没有 PAT 时会自动创建一个
+- **CLI**：`multica login` 会创建一个 90 天有效的 PAT；daemon 会在剩余有效期进入续期窗口时调用续期接口
+
+直接调用 API 时可以传 `expires_in_days`。省略该字段会创建不设到期时间的 PAT；生产凭证建议明确设置有效期并定期轮换。
 
 <Callout type="warning">
 **PAT 创建时完整内容只显示一次。** 刷新页面或关闭对话框之后就看不到了。
