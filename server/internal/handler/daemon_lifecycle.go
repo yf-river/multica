@@ -368,14 +368,8 @@ type DaemonHeartbeatRequest struct {
 // to claim, so we never start a claim we might have to abort.
 const heartbeatHasPendingTimeout = 1 * time.Second
 
-// maxLocalSkillImportBatch is how many pending import requests the heartbeat
-// handler pops per cycle. Higher values let the daemon process more imports
-// in parallel but increase per-heartbeat latency.
-//
-// Timeout invariant: IMPORT_CONCURRENCY (views/.../runtime-local-skill-import-panel.tsx)
-// × heartbeat period (~15s) must stay within runtimeLocalSkillPendingTimeout
-// (runtime_local_skills.go), and IMPORT_POLL_TIMEOUT_MS (core/runtimes/local-skills.ts)
-// must exceed pendingTimeout + runningTimeout.
+// Match the UI concurrency window so every submitted import is claimed by the
+// next heartbeat instead of waiting for another batch.
 const maxLocalSkillImportBatch = 10
 
 // runtimeLivenessTTL is how long a Redis liveness record stays valid before

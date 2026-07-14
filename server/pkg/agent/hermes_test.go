@@ -123,12 +123,8 @@ func TestResolveResumedSessionIDDifferent(t *testing.T) {
 	}
 }
 
-func TestResolveResumedSessionIDEmptyResponse(t *testing.T) {
+func TestResolveResumedSessionIDMissingResponseInvalidatesRequestedID(t *testing.T) {
 	t.Parallel()
-	// Older / non-conforming server returns no sessionId — defensive
-	// fallback to the requested id. This preserves the legacy happy
-	// path; a stale id will eventually fail downstream and be retried
-	// via the daemon's session-resume fallback (daemon.go).
 	for _, body := range []string{
 		`{}`,
 		`{"sessionId":""}`,
@@ -138,11 +134,11 @@ func TestResolveResumedSessionIDEmptyResponse(t *testing.T) {
 			"ses_alpha",
 			json.RawMessage(body),
 		)
-		if got != "ses_alpha" {
-			t.Errorf("body=%q: got %q, want ses_alpha", body, got)
+		if got != "" {
+			t.Errorf("body=%q: got %q, want empty", body, got)
 		}
-		if changed {
-			t.Errorf("body=%q: changed: got true, want false", body)
+		if !changed {
+			t.Errorf("body=%q: changed: got false, want true", body)
 		}
 	}
 }

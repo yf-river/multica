@@ -40,19 +40,9 @@ type LocalSkillImportConflict struct {
 }
 
 const (
-	// runtimeLocalSkillPendingTimeout bounds how long a request can sit in
-	// pending before the server marks it timed out. The value must accommodate
-	// old daemons that don't support batch import: they pop only one import
-	// per heartbeat cycle (~15s). With maxLocalSkillImportBatch=10, the 10th
-	// queued import waits up to 10×15s = 150s before being claimed. 3 minutes
-	// gives a comfortable margin.
-	//
-	// Timeout invariant: IMPORT_CONCURRENCY (views/.../runtime-local-skill-import-panel.tsx)
-	// × heartbeat period (~15s) ≤ runtimeLocalSkillPendingTimeout, and
-	// IMPORT_POLL_TIMEOUT_MS (core/runtimes/local-skills.ts) must exceed
-	// runtimeLocalSkillPendingTimeout + runtimeAsyncRunningTimeout.
-	// See also maxLocalSkillImportBatch in daemon.go.
-	runtimeLocalSkillPendingTimeout = 3 * time.Minute
+	// The current daemon claims the UI's full ten-request concurrency window
+	// in one heartbeat. Two heartbeat intervals distinguish delay from absence.
+	runtimeLocalSkillPendingTimeout = 30 * time.Second
 	runtimeLocalSkillStoreRetention = 5 * time.Minute
 )
 
@@ -107,7 +97,7 @@ type LocalSkillImportStore interface {
 }
 
 func applyLocalSkillTimeout(req *runtimeAsyncRequestState, now time.Time) bool {
-	return applyRuntimeAsyncTimeout(req, now, runtimeLocalSkillPendingTimeout, "daemon did not respond within 3 minutes")
+	return applyRuntimeAsyncTimeout(req, now, runtimeLocalSkillPendingTimeout, "daemon did not respond within 30 seconds")
 }
 
 type RuntimeLocalSkillSummary struct {

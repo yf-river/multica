@@ -910,21 +910,10 @@ func extractACPCurrentModelID(result json.RawMessage) string {
 	return ""
 }
 
-// resolveResumedSessionID picks which session id we should treat as live
-// after a `session/resume` round-trip. Hermes (and other ACP servers)
-// return the canonical sessionId in the response — when the local
-// state.db has been wiped, the server silently creates a brand-new
-// session and returns its new id rather than failing. If we keep using
-// our requested id in that case, every subsequent session/prompt is
-// addressed to a session the server doesn't know about and fails with
-// JSON-RPC -32603. Returns (chosenID, changed). When the response is
-// malformed or omits sessionId we fall back to the requested id so the
-// happy path keeps working against older / non-conforming servers.
+// A resume response is authoritative. A missing session id invalidates the
+// stale requested id so the daemon can retry with a fresh session.
 func resolveResumedSessionID(requested string, response json.RawMessage) (string, bool) {
 	got := extractACPSessionID(response)
-	if got == "" {
-		return requested, false
-	}
 	return got, got != requested
 }
 

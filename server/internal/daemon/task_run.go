@@ -484,27 +484,8 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		ThinkingLevel:             thinkingLevel,
 		OpenclawMode:              openclawMode,
 	}
-	// Some providers do not reliably load the per-task runtime config files we
-	// write into the task workdir:
-	//   - openclaw is pinned to the task workdir via the per-task config we
-	//     synthesize (see prepareOpenclawConfig), so AGENTS.md / .agent_context/
-	//     in the workdir ARE picked up by the CLI. Inline injection is retained
-	//     as a belt-and-suspenders for older openclaw releases until that load
-	//     path stabilises in production; remove this once a release tracks the
-	//     workdir bootstrap reliably end-to-end.
-	//   - kiro and kimi are wrapped through their own CLIs whose cwd handling
-	//     is opaque enough that we can't trust the file-based path either.
-	// Pass the full runtime brief inline (CLI catalog + workflow steps + agent
-	// identity/persona + skills + project context) so the backend prepends the
-	// same payload that file-based runtimes pick up from disk. Without this,
-	// these providers silently miss the workflow section and never call
-	// `multica issue status` / `multica issue comment add`, leaving issues
-	// stuck in `todo`.
-	//
-	// Hermes is intentionally excluded: ACP sessions start in the task cwd and
-	// Hermes loads AGENTS.md / .agent_context itself. Prepending the full runtime
-	// brief into the ACP user prompt duplicates that context, bloats every turn,
-	// and has triggered upstream safety filters on harmless tasks.
+	// Kiro and Kimi do not reliably load workdir runtime files, so they receive
+	// the brief inline. Other providers load the single workdir copy.
 	if coordinatorNeedsInlineSystemPrompt(provider, toolPolicy) {
 		execOpts.SystemPrompt = runtimeBrief
 	} else if providerNeedsInlineSystemPrompt(provider) {
