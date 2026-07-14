@@ -15,7 +15,8 @@ Read that page before:
 - Naming a new route, package, file, DB column, or TS type
 - Writing Chinese product copy (UI strings, error messages, docs)
 
-The legacy `packages/views/locales/glossary.md` is now a stub redirecting to the docs page; do not rely on it.
+Visual implementation rules live in **`docs/design.md`**. Read them before
+changing colors, typography, spacing, interaction states, icons, or motion.
 
 ## Project Context
 
