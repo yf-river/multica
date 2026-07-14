@@ -137,12 +137,10 @@ export const EMPTY_PROMPT_EVALUATION_ASSET_EVIDENCE_SNAPSHOT_RESPONSE: PromptEva
 
 export const EMPTY_PROMPT_EVALUATION_ASSET_EVIDENCE_ARCHIVE_PACKAGE: PromptEvaluationAssetEvidenceArchivePackage = {
   schema_version: "multica.prompt_evaluation.asset_evidence_archive.v1",
-  generated_at: "",
   asset_id: "",
   snapshot_type: "验收归档",
   total_runs: 0,
   archived_run_count: 0,
-  missing_run_count: 0,
   asset: EMPTY_PROMPT_EVALUATION_ASSET,
   items: [],
   中文摘要: {},
@@ -155,7 +153,6 @@ export const EMPTY_PROMPT_EVALUATION_EVIDENCE_SNAPSHOT_LIST_RESPONSE: ListPrompt
 export const EMPTY_PROMPT_EVALUATION_CASE_LIST_RESPONSE = {
   items: [],
   total: 0,
-  total_count: 0,
   limit: 0,
   offset: 0,
   has_more: false,
@@ -193,13 +190,10 @@ export const EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE: PromptEvaluationOpt
   candidate_content: "",
   rationale: "",
   failed_case_count: 0,
-  source_failure_summary: {},
   source_prompt_snapshot: {},
   metrics: {},
   skill_patch: null,
   status: "待确认",
-  published_prompt_id: null,
-  published_at: "",
   created_by: null,
   created_at: "",
   updated_at: "",
@@ -218,7 +212,6 @@ const EMPTY_PROMPT_EVALUATION_SKILL_SNAPSHOT: PromptEvaluationSkillSnapshot = {
   base_commit: "",
   skill_path: "",
   skill_hash: "",
-  snapshot_time: "",
 };
 
 export const EMPTY_PROMPT_EVALUATION_SKILL_FRESHNESS_RESULT: PromptEvaluationSkillFreshnessResult = {
@@ -229,8 +222,6 @@ export const EMPTY_PROMPT_EVALUATION_SKILL_FRESHNESS_RESULT: PromptEvaluationSki
   head_commit: "",
   base_commit: "",
   skill_path: "",
-  base_skill_hash: "",
-  current_skill_hash: "",
   patch_check: "not_needed",
   checked_at: "",
   snapshot: EMPTY_PROMPT_EVALUATION_SKILL_SNAPSHOT,
@@ -244,12 +235,9 @@ const EMPTY_PROMPT_EVALUATION_SKILL_APPLY_RESULT: PromptEvaluationSkillApplyResu
   target_branch: "",
   head_commit: "",
   skill_path: "",
-  skill_hash_before: "",
-  skill_hash_after: "",
   patch_check: "not_run",
   freshness: EMPTY_PROMPT_EVALUATION_SKILL_FRESHNESS_RESULT,
   changed_files: [],
-  re_eval_required: true,
   re_eval_plan: {},
   checked_at: "",
   snapshot: EMPTY_PROMPT_EVALUATION_SKILL_SNAPSHOT,
@@ -277,7 +265,6 @@ export const EMPTY_PROMPT_EVALUATION_SKILL_RE_EVAL_RUN_RESPONSE: PromptEvaluatio
   source_snapshot: EMPTY_PROMPT_EVALUATION_SKILL_SNAPSHOT,
   re_eval_snapshot: EMPTY_PROMPT_EVALUATION_SKILL_SNAPSHOT,
   case_count: 0,
-  proof_scope: "local_prompt_evaluation_run",
   re_eval_run: {},
 };
 

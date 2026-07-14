@@ -1,7 +1,7 @@
 import type { AgentTask, TaskTraceEvent } from "./agent";
 import type { TaskMessagePayload } from "./events";
 import type { Issue } from "./issue";
-import type { PromptEvaluationToolCallChain, PromptEvaluationToolCallSummary } from "./prompt-evaluation";
+import type { PromptEvaluationToolCallChain } from "./prompt-evaluation";
 import type { SquadSOPRun } from "./sop";
 
 export interface IssueWakeupCommentBrief {
@@ -36,7 +36,7 @@ export interface IssueExecutionNode {
   task_messages: TaskMessagePayload[];
   trace_events: TaskTraceEvent[];
   tool_call_chains: PromptEvaluationToolCallChain[];
-  tool_call_summary: PromptEvaluationToolCallSummary[];
+  tool_call_summary: Record<string, unknown>[];
   artifacts?: AgentTaskArtifact[];
   wakeup_comments: IssueWakeupCommentBrief[];
   children: IssueExecutionNode[];

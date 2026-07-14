@@ -367,22 +367,7 @@ describe("ExecutionLogSection trace", () => {
             completed_at: "2026-06-08T08:02:01Z",
           },
         ],
-        tool_call_summary: [
-          {
-            tool: "curl-check",
-            total_calls: 2,
-            paired_calls: 2,
-            missing_result_calls: 0,
-            orphan_result_calls: 0,
-            average_duration_ms: 900,
-            max_duration_ms: 1200,
-            slowest_tool_call_chain_id: "tool:call-1",
-            result_categories: { 已返回: 1, 异常线索: 1 },
-            failure_signal_calls: 1,
-            needs_attention: true,
-            summary: "curl-check：调用 2 次，异常线索 1 次",
-          },
-        ],
+        tool_call_summary: [],
         wakeup_comments: [
           {
             id: "comment-1",

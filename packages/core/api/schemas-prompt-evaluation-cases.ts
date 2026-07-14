@@ -10,7 +10,6 @@ export { PromptEvaluationCaseSchema } from "./schemas-prompt-evaluation-case-mod
 export const PromptEvaluationCaseListResponseSchema = z.object({
   items: z.array(PromptEvaluationCaseSchema).default([]),
   total: z.number().default(0),
-  total_count: z.number().default(0),
   limit: z.number().default(0),
   offset: z.number().default(0),
   has_more: z.boolean().default(false),

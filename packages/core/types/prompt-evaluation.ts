@@ -172,22 +172,6 @@ export interface PromptEvaluationTaskUsage {
   updated_at: string;
 }
 
-interface PromptEvaluationExecutionSpan {
-  id: string;
-  parent_id?: string;
-  status: string;
-  seq: number;
-  task_id?: string;
-  tool?: string;
-  provider?: string;
-  model?: string;
-  token_total: number;
-  duration_ms: number;
-  summary: string;
-  details?: Record<string, unknown>;
-  created_at?: string;
-}
-
 export interface PromptEvaluationToolCallChain {
   id: string;
   task_id?: string;
@@ -206,30 +190,15 @@ export interface PromptEvaluationToolCallChain {
   completed_at?: string;
 }
 
-export interface PromptEvaluationToolCallSummary {
-  tool: string;
-  total_calls: number;
-  paired_calls: number;
-  missing_result_calls: number;
-  orphan_result_calls: number;
-  average_duration_ms?: number;
-  max_duration_ms?: number;
-  slowest_tool_call_chain_id?: string;
-  result_categories?: Record<string, number>;
-  failure_signal_calls: number;
-  needs_attention: boolean;
-  summary: string;
-}
-
 export interface PromptEvaluationRunEvidence {
   run: PromptEvaluationRun;
   trials: PromptEvaluationTrial[];
   task_usage: PromptEvaluationTaskUsage[];
   task_messages: TaskMessagePayload[];
   trace_events: TaskTraceEvent[];
-  execution_spans: PromptEvaluationExecutionSpan[];
+  execution_spans: Record<string, unknown>[];
   tool_call_chains: PromptEvaluationToolCallChain[];
-  tool_call_summary: PromptEvaluationToolCallSummary[];
+  tool_call_summary: Record<string, unknown>[];
   execution_summary: Record<string, unknown>;
   evidence: Record<string, unknown>;
   上下文: Record<string, unknown>;
@@ -276,12 +245,10 @@ export interface PromptEvaluationAssetEvidenceArchiveItem {
 
 export interface PromptEvaluationAssetEvidenceArchivePackage {
   schema_version: string;
-  generated_at: string;
   asset_id: string;
   snapshot_type: PromptEvaluationEvidenceSnapshotType;
   total_runs: number;
   archived_run_count: number;
-  missing_run_count: number;
   asset: PromptEvaluationAsset;
   items: PromptEvaluationAssetEvidenceArchiveItem[];
   中文摘要: Record<string, unknown>;
@@ -333,13 +300,10 @@ export interface PromptEvaluationOptimizationCandidate {
   candidate_content: string;
   rationale: string;
   failed_case_count: number;
-  source_failure_summary: Record<string, unknown>;
   source_prompt_snapshot: Record<string, unknown>;
   metrics: Record<string, unknown>;
   skill_patch?: PromptEvaluationSkillPatch | null;
   status: PromptEvaluationOptimizationCandidateStatus;
-  published_prompt_id: string | null;
-  published_at: string;
   created_by: string | null;
   created_at: string;
   updated_at: string;
@@ -376,7 +340,6 @@ export interface PromptEvaluationSkillSnapshot {
   base_commit: string;
   skill_path: string;
   skill_hash: string;
-  snapshot_time: string;
   source_resource_id?: string;
 }
 
@@ -405,8 +368,6 @@ export interface PromptEvaluationSkillFreshnessResult {
   head_commit: string;
   base_commit: string;
   skill_path: string;
-  base_skill_hash: string;
-  current_skill_hash: string;
   patch_check: "not_needed" | "missing_patch" | "conflict" | "applies" | "creates_file" | "target_exists" | string;
   checked_at: string;
   snapshot: PromptEvaluationSkillSnapshot;
@@ -439,13 +400,10 @@ export interface PromptEvaluationSkillApplyResult {
   target_branch: string;
   head_commit: string;
   skill_path: string;
-  skill_hash_before: string;
-  skill_hash_after: string;
   changelog_path?: string;
   patch_check: "not_run" | "applies" | "conflict" | string;
   freshness: PromptEvaluationSkillFreshnessResult;
   changed_files: string[];
-  re_eval_required: boolean;
   re_eval_plan: Record<string, unknown>;
   checked_at: string;
   snapshot: PromptEvaluationSkillSnapshot;
@@ -499,7 +457,6 @@ export interface PromptEvaluationSkillReEvalRunResponse {
   source_snapshot: PromptEvaluationSkillSnapshot;
   re_eval_snapshot: PromptEvaluationSkillSnapshot;
   case_count: number;
-  proof_scope: string;
   re_eval_run: Record<string, unknown>;
 }
 
@@ -541,7 +498,6 @@ export interface ListPromptEvaluationRunsResponse {
 export interface ListPromptEvaluationCasesResponse {
   items: PromptEvaluationStructuredCase[];
   total: number;
-  total_count: number;
   limit: number;
   offset: number;
   has_more: boolean;

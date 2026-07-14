@@ -88,22 +88,6 @@ const PromptEvaluationTaskMessageSchema = z.object({
   created_at: z.string().optional(),
 }).loose();
 
-const PromptEvaluationExecutionSpanSchema = z.object({
-  id: z.string(),
-  parent_id: z.string().optional(),
-  status: z.string().default(""),
-  seq: z.number().default(0),
-  task_id: z.string().optional(),
-  tool: z.string().optional(),
-  provider: z.string().optional(),
-  model: z.string().optional(),
-  token_total: z.number().default(0),
-  duration_ms: z.number().default(0),
-  summary: z.string().default(""),
-  details: z.record(z.string(), z.unknown()).optional(),
-  created_at: z.string().optional(),
-}).loose();
-
 const PromptEvaluationToolCallChainSchema = z.object({
   id: z.string(),
   task_id: z.string().optional(),
@@ -122,30 +106,15 @@ const PromptEvaluationToolCallChainSchema = z.object({
   completed_at: z.string().optional(),
 }).loose();
 
-const PromptEvaluationToolCallSummarySchema = z.object({
-  tool: z.string(),
-  total_calls: z.number().default(0),
-  paired_calls: z.number().default(0),
-  missing_result_calls: z.number().default(0),
-  orphan_result_calls: z.number().default(0),
-  average_duration_ms: z.number().optional(),
-  max_duration_ms: z.number().optional(),
-  slowest_tool_call_chain_id: z.string().optional(),
-  result_categories: z.record(z.string(), z.number()).optional(),
-  failure_signal_calls: z.number().default(0),
-  needs_attention: z.boolean().default(false),
-  summary: z.string().default(""),
-}).loose();
-
 export const PromptEvaluationRunEvidenceSchema = z.object({
   run: PromptEvaluationRunSchema,
   trials: z.array(PromptEvaluationTrialSchema).default([]),
   task_usage: z.array(PromptEvaluationTaskUsageSchema).default([]),
   task_messages: z.array(PromptEvaluationTaskMessageSchema).default([]),
   trace_events: z.array(TaskTraceEventSchema).default([]),
-  execution_spans: z.array(PromptEvaluationExecutionSpanSchema).default([]),
+  execution_spans: z.array(z.record(z.string(), z.unknown())).default([]),
   tool_call_chains: z.array(PromptEvaluationToolCallChainSchema).default([]),
-  tool_call_summary: z.array(PromptEvaluationToolCallSummarySchema).default([]),
+  tool_call_summary: z.array(z.record(z.string(), z.unknown())).default([]),
   execution_summary: z.record(z.string(), z.unknown()).default({}),
   evidence: z.record(z.string(), z.unknown()).default({}),
   上下文: z.record(z.string(), z.unknown()).default({}),
@@ -183,12 +152,10 @@ export const PromptEvaluationAssetEvidenceSnapshotResponseSchema = z.object({
 
 export const PromptEvaluationAssetEvidenceArchivePackageSchema = z.object({
   schema_version: z.string().default("multica.prompt_evaluation.asset_evidence_archive.v1"),
-  generated_at: z.string().default(""),
   asset_id: z.string().default(""),
   snapshot_type: z.enum(["手动归档", "验收归档", "自动归档"]).default("验收归档"),
   total_runs: z.number().default(0),
   archived_run_count: z.number().default(0),
-  missing_run_count: z.number().default(0),
   asset: PromptEvaluationAssetSchema,
   items: z.array(z.object({
     run: PromptEvaluationRunSchema,
