@@ -48,17 +48,6 @@ async function recoverPending(
   }
 }
 
-async function execute(
-  client: CredentialProfileCreateClient,
-  request: CreateExternalCredentialProfileRequest,
-  requestKey: string,
-) {
-  return executeRecoverableMutation(
-    () => client.createExternalCredentialProfile(request, requestKey),
-    () => useCredentialProfileCreateStore.getState().setPending(),
-  );
-}
-
 export async function createExternalCredentialProfileWithRecovery(
   request: CreateExternalCredentialProfileRequest,
   client: CredentialProfileCreateClient = api,
@@ -75,5 +64,8 @@ export async function createExternalCredentialProfileWithRecovery(
     requestFingerprint,
     createdAt: Date.now(),
   });
-  return execute(client, request, requestKey);
+  return executeRecoverableMutation(
+    () => client.createExternalCredentialProfile(request, requestKey),
+    () => useCredentialProfileCreateStore.getState().setPending(),
+  );
 }

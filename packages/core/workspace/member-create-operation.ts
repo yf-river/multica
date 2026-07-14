@@ -44,18 +44,6 @@ async function recoverPending(
   return recovered;
 }
 
-async function execute(
-  client: MemberCreateClient,
-  workspaceId: string,
-  request: CreateMemberRequest,
-  requestKey: string,
-) {
-  return executeRecoverableMutation(
-    () => client.createMember(workspaceId, request, requestKey),
-    () => useMemberCreateOperationStore.getState().setPending(),
-  );
-}
-
 export async function createMemberWithRecovery(
   workspaceId: string,
   request: CreateMemberRequest,
@@ -73,5 +61,8 @@ export async function createMemberWithRecovery(
     requestFingerprint,
     createdAt: Date.now(),
   });
-  return execute(client, workspaceId, request, requestKey);
+  return executeRecoverableMutation(
+    () => client.createMember(workspaceId, request, requestKey),
+    () => useMemberCreateOperationStore.getState().setPending(),
+  );
 }
