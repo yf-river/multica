@@ -187,14 +187,11 @@ func (h *Handler) CreatePromptEvaluationDatasetFromTraces(w http.ResponseWriter,
 }
 
 func writePromptEvaluationTraceImportReplayError(w http.ResponseWriter, err error) {
-	if errors.Is(err, errResourceCreateIdempotencyConflict) {
-		writeJSON(w, http.StatusConflict, map[string]string{
-			"error": "Idempotency-Key was already used with a different trace dataset import",
-			"code":  "idempotency_conflict",
-		})
-		return
-	}
-	writeError(w, http.StatusInternalServerError, "failed to recover trace dataset import")
+	writeResourceCreateReplayError(
+		w, err,
+		"Idempotency-Key was already used with a different trace dataset import",
+		"failed to recover trace dataset import",
+	)
 }
 
 func (h *Handler) ListPromptEvaluationDatasetVersions(w http.ResponseWriter, r *http.Request) {
@@ -399,14 +396,11 @@ func (h *Handler) CreatePromptEvaluationDatasetVersion(w http.ResponseWriter, r 
 }
 
 func writePromptEvaluationDatasetVersionReplayError(w http.ResponseWriter, err error) {
-	if errors.Is(err, errResourceCreateIdempotencyConflict) {
-		writeJSON(w, http.StatusConflict, map[string]string{
-			"error": "Idempotency-Key was already used with a different dataset version request",
-			"code":  "idempotency_conflict",
-		})
-		return
-	}
-	writeError(w, http.StatusInternalServerError, "failed to recover dataset version request")
+	writeResourceCreateReplayError(
+		w, err,
+		"Idempotency-Key was already used with a different dataset version request",
+		"failed to recover dataset version request",
+	)
 }
 
 func (h *Handler) createPromptEvaluationDatasetVersionFromCurrent(ctx context.Context, qtx *db.Queries, asset db.PromptEvaluationAsset, createdBy pgtype.UUID, versionLabel string, metadata []byte) (db.PromptEvaluationDatasetVersion, error) {
@@ -779,14 +773,11 @@ func (h *Handler) RestorePromptEvaluationDatasetVersion(w http.ResponseWriter, r
 }
 
 func writePromptEvaluationDatasetRestoreReplayError(w http.ResponseWriter, err error) {
-	if errors.Is(err, errResourceCreateIdempotencyConflict) {
-		writeJSON(w, http.StatusConflict, map[string]string{
-			"error": "Idempotency-Key was already used with a different dataset restore request",
-			"code":  "idempotency_conflict",
-		})
-		return
-	}
-	writeError(w, http.StatusInternalServerError, "failed to recover dataset version restore request")
+	writeResourceCreateReplayError(
+		w, err,
+		"Idempotency-Key was already used with a different dataset restore request",
+		"failed to recover dataset version restore request",
+	)
 }
 
 func (h *Handler) promptEvaluationTraceEventsForDataset(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID, req CreatePromptEvaluationDatasetFromTracesRequest, limit int32) ([]db.TaskTraceEvent, bool) {

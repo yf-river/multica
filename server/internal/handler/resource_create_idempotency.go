@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -51,6 +52,17 @@ const (
 )
 
 var errResourceCreateIdempotencyConflict = errors.New("resource create idempotency conflict")
+
+func writeResourceCreateReplayError(w http.ResponseWriter, err error, conflictMessage, recoveryMessage string) {
+	if errors.Is(err, errResourceCreateIdempotencyConflict) {
+		writeJSON(w, http.StatusConflict, map[string]string{
+			"error": conflictMessage,
+			"code":  "idempotency_conflict",
+		})
+		return
+	}
+	writeError(w, http.StatusInternalServerError, recoveryMessage)
+}
 
 func reserveResourceCreateRequest(
 	ctx context.Context,

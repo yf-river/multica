@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"errors"
 	"net/http"
 )
 
@@ -12,12 +11,9 @@ type promptEvaluationLocalRunFingerprint struct {
 }
 
 func writePromptEvaluationLocalRunReplayError(w http.ResponseWriter, err error) {
-	if errors.Is(err, errResourceCreateIdempotencyConflict) {
-		writeJSON(w, http.StatusConflict, map[string]string{
-			"error": "Idempotency-Key was already used with a different prompt evaluation local run",
-			"code":  "idempotency_conflict",
-		})
-		return
-	}
-	writeError(w, http.StatusInternalServerError, "failed to recover prompt evaluation local run")
+	writeResourceCreateReplayError(
+		w, err,
+		"Idempotency-Key was already used with a different prompt evaluation local run",
+		"failed to recover prompt evaluation local run",
+	)
 }

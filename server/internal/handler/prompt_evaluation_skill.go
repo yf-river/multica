@@ -573,14 +573,11 @@ func (h *Handler) ApplyPromptEvaluationSkillCandidate(w http.ResponseWriter, r *
 }
 
 func writePromptEvaluationSkillApplyReplayError(w http.ResponseWriter, err error) {
-	if errors.Is(err, errResourceCreateIdempotencyConflict) {
-		writeJSON(w, http.StatusConflict, map[string]string{
-			"error": "Idempotency-Key was already used with a different skill apply request",
-			"code":  "idempotency_conflict",
-		})
-		return
-	}
-	writeError(w, http.StatusInternalServerError, "failed to recover skill apply request")
+	writeResourceCreateReplayError(
+		w, err,
+		"Idempotency-Key was already used with a different skill apply request",
+		"failed to recover skill apply request",
+	)
 }
 
 func (h *Handler) PreparePromptEvaluationSkillReEvalAsset(w http.ResponseWriter, r *http.Request) {

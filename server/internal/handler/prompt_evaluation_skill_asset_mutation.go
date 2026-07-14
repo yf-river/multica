@@ -85,14 +85,11 @@ func promptEvaluationSkillAssetMutationScope(
 }
 
 func writePromptEvaluationSkillAssetMutationError(w http.ResponseWriter, err error, operation string) {
-	if errors.Is(err, errResourceCreateIdempotencyConflict) {
-		writeJSON(w, http.StatusConflict, map[string]string{
-			"error": "Idempotency-Key was already used with a different " + operation + " request",
-			"code":  "idempotency_conflict",
-		})
-		return
-	}
-	writeError(w, http.StatusInternalServerError, "failed to persist "+operation)
+	writeResourceCreateReplayError(
+		w, err,
+		"Idempotency-Key was already used with a different "+operation+" request",
+		"failed to persist "+operation,
+	)
 }
 
 func persistPromptEvaluationSkillAssetMutation[T any](

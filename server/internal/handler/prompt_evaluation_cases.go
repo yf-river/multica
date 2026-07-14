@@ -1044,14 +1044,11 @@ func (h *Handler) CreatePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 }
 
 func writePromptEvaluationCaseCreateReplayError(w http.ResponseWriter, err error) {
-	if errors.Is(err, errResourceCreateIdempotencyConflict) {
-		writeJSON(w, http.StatusConflict, map[string]string{
-			"error": "Idempotency-Key was already used with a different prompt evaluation case request",
-			"code":  "idempotency_conflict",
-		})
-		return
-	}
-	writeError(w, http.StatusInternalServerError, "failed to recover prompt evaluation case request")
+	writeResourceCreateReplayError(
+		w, err,
+		"Idempotency-Key was already used with a different prompt evaluation case request",
+		"failed to recover prompt evaluation case request",
+	)
 }
 
 func validPromptEvaluationCaseSortBy(value string) bool {

@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"errors"
 	"net/http"
 )
 
@@ -15,23 +14,17 @@ type promptEvaluationCandidateRejectFingerprint struct {
 }
 
 func writePromptEvaluationCandidatePublishReplayError(w http.ResponseWriter, err error) {
-	if errors.Is(err, errResourceCreateIdempotencyConflict) {
-		writeJSON(w, http.StatusConflict, map[string]string{
-			"error": "Idempotency-Key was already used with a different optimization candidate publish request",
-			"code":  "idempotency_conflict",
-		})
-		return
-	}
-	writeError(w, http.StatusInternalServerError, "failed to recover optimization candidate publish request")
+	writeResourceCreateReplayError(
+		w, err,
+		"Idempotency-Key was already used with a different optimization candidate publish request",
+		"failed to recover optimization candidate publish request",
+	)
 }
 
 func writePromptEvaluationCandidateRejectReplayError(w http.ResponseWriter, err error) {
-	if errors.Is(err, errResourceCreateIdempotencyConflict) {
-		writeJSON(w, http.StatusConflict, map[string]string{
-			"error": "Idempotency-Key was already used with a different optimization candidate reject request",
-			"code":  "idempotency_conflict",
-		})
-		return
-	}
-	writeError(w, http.StatusInternalServerError, "failed to recover optimization candidate reject request")
+	writeResourceCreateReplayError(
+		w, err,
+		"Idempotency-Key was already used with a different optimization candidate reject request",
+		"failed to recover optimization candidate reject request",
+	)
 }

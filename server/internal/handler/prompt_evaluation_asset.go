@@ -930,14 +930,11 @@ func (h *Handler) CreatePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 }
 
 func writePromptEvaluationAssetCreateReplayError(w http.ResponseWriter, err error) {
-	if errors.Is(err, errResourceCreateIdempotencyConflict) {
-		writeJSON(w, http.StatusConflict, map[string]string{
-			"error": "Idempotency-Key was already used with a different prompt evaluation asset request",
-			"code":  "idempotency_conflict",
-		})
-		return
-	}
-	writeError(w, http.StatusInternalServerError, "failed to recover prompt evaluation asset request")
+	writeResourceCreateReplayError(
+		w, err,
+		"Idempotency-Key was already used with a different prompt evaluation asset request",
+		"failed to recover prompt evaluation asset request",
+	)
 }
 
 func (h *Handler) UpdatePromptEvaluationAsset(w http.ResponseWriter, r *http.Request) {

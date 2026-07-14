@@ -619,14 +619,11 @@ func (h *Handler) CreatePromptEvaluationEvidenceSnapshot(w http.ResponseWriter, 
 }
 
 func writePromptEvaluationEvidenceSnapshotReplayError(w http.ResponseWriter, err error) {
-	if errors.Is(err, errResourceCreateIdempotencyConflict) {
-		writeJSON(w, http.StatusConflict, map[string]string{
-			"error": "Idempotency-Key was already used with a different evidence snapshot request",
-			"code":  "idempotency_conflict",
-		})
-		return
-	}
-	writeError(w, http.StatusInternalServerError, "failed to recover prompt evaluation evidence snapshot request")
+	writeResourceCreateReplayError(
+		w, err,
+		"Idempotency-Key was already used with a different evidence snapshot request",
+		"failed to recover prompt evaluation evidence snapshot request",
+	)
 }
 
 func (h *Handler) CreatePromptEvaluationAssetEvidenceSnapshots(w http.ResponseWriter, r *http.Request) {
@@ -788,14 +785,11 @@ func hasPromptEvaluationSnapshotType(items []db.ListPromptEvaluationEvidenceSnap
 }
 
 func writePromptEvaluationEvidenceBatchReplayError(w http.ResponseWriter, err error) {
-	if errors.Is(err, errResourceCreateIdempotencyConflict) {
-		writeJSON(w, http.StatusConflict, map[string]string{
-			"error": "Idempotency-Key was already used with a different asset evidence snapshot request",
-			"code":  "idempotency_conflict",
-		})
-		return
-	}
-	writeError(w, http.StatusInternalServerError, "failed to recover asset evidence snapshot request")
+	writeResourceCreateReplayError(
+		w, err,
+		"Idempotency-Key was already used with a different asset evidence snapshot request",
+		"failed to recover asset evidence snapshot request",
+	)
 }
 
 func (h *Handler) GetPromptEvaluationAssetEvidenceSnapshotPackage(w http.ResponseWriter, r *http.Request) {
