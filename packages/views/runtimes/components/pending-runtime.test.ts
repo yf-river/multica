@@ -1,12 +1,9 @@
 import { describe, expect, it } from "vitest";
 import type { AgentRuntime, RuntimeProfile } from "@multica/core/types";
 import {
-  PENDING_RUNTIME_WARNING_MS,
   isPendingCustomRuntime,
   isPendingCustomRuntimeWarning,
   pendingRuntimeCommandName,
-  pendingRuntimeFromProfile,
-  pendingRuntimeId,
   pendingRuntimesForProfiles,
 } from "./pending-runtime";
 
@@ -52,15 +49,15 @@ function runtime(overrides: Partial<AgentRuntime> = {}): AgentRuntime {
 describe("pending custom runtime rows", () => {
   it("builds a pending runtime from the newly created profile", () => {
     const createdAt = Date.parse("2026-01-01T00:00:00Z");
-    const pending = pendingRuntimeFromProfile({
-      profile: profile(),
-      createdAt,
+    const pending = pendingRuntimesForProfiles({
+      pendingProfiles: [{ profile: profile(), createdAt }],
+      runtimes: [],
       ownerId: "user-1",
       localDaemonId: "daemon-1",
       localMachineName: "MacBook",
-    });
+    })[0]!;
 
-    expect(pending.id).toBe(pendingRuntimeId("profile-1"));
+    expect(pending.id).toBe("pending-runtime-profile:profile-1");
     expect(pending.name).toBe("Team Codex (MacBook)");
     expect(pending.daemon_id).toBe("daemon-1");
     expect(pending.profile_id).toBe("profile-1");
@@ -86,7 +83,7 @@ describe("pending custom runtime rows", () => {
         localDaemonId: "daemon-1",
         localMachineName: "MacBook",
       }).map((item) => item.id),
-    ).toEqual(["runtime-1", pendingRuntimeId(prof.id)]);
+    ).toEqual(["runtime-1", "pending-runtime-profile:profile-1"]);
 
     expect(
       pendingRuntimesForProfiles({
@@ -101,21 +98,21 @@ describe("pending custom runtime rows", () => {
 
   it("marks pending runtimes as waiting after the grace window", () => {
     const createdAt = Date.parse("2026-01-01T00:00:00Z");
-    const pending = pendingRuntimeFromProfile({
-      profile: profile(),
-      createdAt,
-    });
+    const pending = pendingRuntimesForProfiles({
+      pendingProfiles: [{ profile: profile(), createdAt }],
+      runtimes: [],
+    })[0]!;
 
     expect(
       isPendingCustomRuntimeWarning(
         pending,
-        createdAt + PENDING_RUNTIME_WARNING_MS - 1,
+        createdAt + 45_000 - 1,
       ),
     ).toBe(false);
     expect(
       isPendingCustomRuntimeWarning(
         pending,
-        createdAt + PENDING_RUNTIME_WARNING_MS,
+        createdAt + 45_000,
       ),
     ).toBe(true);
   });

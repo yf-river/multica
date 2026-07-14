@@ -1,6 +1,6 @@
 import type { AgentRuntime, RuntimeProfile } from "@multica/core/types";
 
-export const PENDING_RUNTIME_WARNING_MS = 45_000;
+const PENDING_RUNTIME_WARNING_MS = 45_000;
 
 const PENDING_RUNTIME_ID_PREFIX = "pending-runtime-profile:";
 
@@ -16,7 +16,7 @@ export interface PendingRuntimeProfile {
   createdAt: number;
 }
 
-export function pendingRuntimeId(profileId: string): string {
+function pendingRuntimeId(profileId: string): string {
   return `${PENDING_RUNTIME_ID_PREFIX}${profileId}`;
 }
 
@@ -41,7 +41,7 @@ export function isPendingCustomRuntimeWarning(
   return now - startedAt >= PENDING_RUNTIME_WARNING_MS;
 }
 
-export function pendingRuntimeFromProfile({
+function pendingRuntimeFromProfile({
   profile,
   createdAt,
   ownerId,
