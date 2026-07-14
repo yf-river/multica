@@ -215,12 +215,9 @@ func decodeChatIdempotencyResponse[T any](record db.ChatIdempotencyRecord) (T, i
 }
 
 func writeChatIdempotencyFailure(w http.ResponseWriter, err error) {
-	if errors.Is(err, errChatIdempotencyConflict) {
-		writeJSON(w, http.StatusConflict, map[string]string{
-			"error": "Idempotency-Key was already used with a different request",
-			"code":  "idempotency_conflict",
-		})
-		return
-	}
-	writeError(w, http.StatusInternalServerError, "failed to persist chat request")
+	writeIdempotencyReplayError(
+		w, err, errChatIdempotencyConflict,
+		"Idempotency-Key was already used with a different request",
+		"failed to persist chat request",
+	)
 }

@@ -327,7 +327,7 @@ func (h *Handler) InitiateListModels(w http.ResponseWriter, r *http.Request) {
 	req, err := h.ModelListStore.Create(r.Context(), rt.runtimeID, uuidToString(requestID))
 	if err != nil {
 		if errors.Is(err, errRuntimeAsyncRequestConflict) {
-			writeJSON(w, http.StatusConflict, map[string]any{"error": "Idempotency-Key was already used for another runtime", "code": "idempotency_conflict"})
+			writeIdempotencyConflict(w, "Idempotency-Key was already used for another runtime")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "failed to enqueue model list request: "+err.Error())

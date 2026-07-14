@@ -252,10 +252,7 @@ func (h *Handler) writeExternalCredentialProfileReplay(
 	requestHash string,
 ) {
 	if !profile.RequestHash.Valid || profile.RequestHash.String != requestHash {
-		writeJSON(w, http.StatusConflict, map[string]string{
-			"error": "Idempotency-Key was already used with a different credential profile request",
-			"code":  "idempotency_conflict",
-		})
+		writeIdempotencyConflict(w, "Idempotency-Key was already used with a different credential profile request")
 		return
 	}
 	resp, err := externalCredentialProfileToResponse(profile)

@@ -149,10 +149,7 @@ func (h *Handler) writePersonalAccessTokenReplay(
 	requestHash string,
 ) {
 	if !pat.RequestHash.Valid || pat.RequestHash.String != requestHash {
-		writeJSON(w, http.StatusConflict, map[string]any{
-			"error": "Idempotency-Key was already used with a different request",
-			"code":  "idempotency_conflict",
-		})
+		writeIdempotencyConflict(w, "Idempotency-Key was already used with a different request")
 		return
 	}
 	rawToken := auth.DerivePATToken(userID, uuidToString(idempotencyKey))

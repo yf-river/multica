@@ -524,7 +524,7 @@ func (h *Handler) InitiateListLocalSkills(w http.ResponseWriter, r *http.Request
 	req, err := h.LocalSkillListStore.Create(r.Context(), rt.runtimeID, uuidToString(requestID))
 	if err != nil {
 		if errors.Is(err, errRuntimeAsyncRequestConflict) {
-			writeJSON(w, http.StatusConflict, map[string]any{"error": "Idempotency-Key was already used for another runtime", "code": "idempotency_conflict"})
+			writeIdempotencyConflict(w, "Idempotency-Key was already used for another runtime")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "failed to enqueue local skills request: "+err.Error())
@@ -623,10 +623,7 @@ func (h *Handler) InitiateImportLocalSkill(w http.ResponseWriter, r *http.Reques
 	importReq, err := h.LocalSkillImportStore.Create(r.Context(), input)
 	if err != nil {
 		if errors.Is(err, errLocalSkillImportRequestConflict) {
-			writeJSON(w, http.StatusConflict, map[string]any{
-				"error": "Idempotency-Key was already used with a different request",
-				"code":  "idempotency_conflict",
-			})
+			writeIdempotencyConflict(w, "Idempotency-Key was already used with a different request")
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "failed to enqueue local skill import: "+err.Error())

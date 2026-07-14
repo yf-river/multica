@@ -657,14 +657,11 @@ func (h *Handler) loadAutopilotCreateReplay(
 }
 
 func (h *Handler) writeAutopilotCreateReplayError(w http.ResponseWriter, err error) {
-	if errors.Is(err, errAutopilotCreateIdempotencyConflict) {
-		writeJSON(w, http.StatusConflict, map[string]string{
-			"error": "Idempotency-Key was already used with a different request",
-			"code":  "idempotency_conflict",
-		})
-		return
-	}
-	writeError(w, http.StatusInternalServerError, "failed to load autopilot request")
+	writeIdempotencyReplayError(
+		w, err, errAutopilotCreateIdempotencyConflict,
+		"Idempotency-Key was already used with a different request",
+		"failed to load autopilot request",
+	)
 }
 
 func isAutopilotCreateRequestConflict(err error) bool {

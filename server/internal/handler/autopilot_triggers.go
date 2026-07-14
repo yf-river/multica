@@ -562,11 +562,11 @@ func (h *Handler) RotateAutopilotTriggerWebhookToken(w http.ResponseWriter, r *h
 		return
 	}
 	if replay, found, replayErr := loadAutopilotTriggerRotationReplay(r.Context(), h.Queries, workspaceUUID, actorUUID, requestKey, requestHash); replayErr != nil {
-		if errors.Is(replayErr, errAutopilotTriggerRotationIdempotencyConflict) {
-			writeJSON(w, http.StatusConflict, map[string]any{"error": "Idempotency-Key was already used with a different request", "code": "idempotency_conflict"})
-		} else {
-			writeError(w, http.StatusInternalServerError, "failed to load webhook token rotation request")
-		}
+		writeIdempotencyReplayError(
+			w, replayErr, errAutopilotTriggerRotationIdempotencyConflict,
+			"Idempotency-Key was already used with a different request",
+			"failed to load webhook token rotation request",
+		)
 		return
 	} else if found {
 		writeAutopilotTriggerRotationReplay(w, replay)

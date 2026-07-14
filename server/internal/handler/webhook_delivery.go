@@ -389,14 +389,11 @@ func (h *Handler) loadWebhookReplayRequest(ctx context.Context, workspaceID, act
 }
 
 func writeWebhookReplayRequestError(w http.ResponseWriter, err error) {
-	if errors.Is(err, errWebhookReplayConflict) {
-		writeJSON(w, http.StatusConflict, map[string]any{
-			"error": "Idempotency-Key was already used with a different request",
-			"code":  "idempotency_conflict",
-		})
-		return
-	}
-	writeError(w, http.StatusInternalServerError, "failed to load replay request")
+	writeIdempotencyReplayError(
+		w, err, errWebhookReplayConflict,
+		"Idempotency-Key was already used with a different request",
+		"failed to load replay request",
+	)
 }
 
 func writeWebhookReplayResponse(w http.ResponseWriter, delivery db.WebhookDelivery) {

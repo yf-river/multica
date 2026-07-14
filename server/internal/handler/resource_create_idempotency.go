@@ -53,15 +53,23 @@ const (
 
 var errResourceCreateIdempotencyConflict = errors.New("resource create idempotency conflict")
 
-func writeResourceCreateReplayError(w http.ResponseWriter, err error, conflictMessage, recoveryMessage string) {
-	if errors.Is(err, errResourceCreateIdempotencyConflict) {
-		writeJSON(w, http.StatusConflict, map[string]string{
-			"error": conflictMessage,
-			"code":  "idempotency_conflict",
-		})
+func writeIdempotencyConflict(w http.ResponseWriter, message string) {
+	writeJSON(w, http.StatusConflict, map[string]string{
+		"error": message,
+		"code":  "idempotency_conflict",
+	})
+}
+
+func writeIdempotencyReplayError(w http.ResponseWriter, err, conflictErr error, conflictMessage, recoveryMessage string) {
+	if errors.Is(err, conflictErr) {
+		writeIdempotencyConflict(w, conflictMessage)
 		return
 	}
 	writeError(w, http.StatusInternalServerError, recoveryMessage)
+}
+
+func writeResourceCreateReplayError(w http.ResponseWriter, err error, conflictMessage, recoveryMessage string) {
+	writeIdempotencyReplayError(w, err, errResourceCreateIdempotencyConflict, conflictMessage, recoveryMessage)
 }
 
 func writeResourceCreateReplayMessageError(w http.ResponseWriter, err error, conflictMessage, recoveryMessage string) {

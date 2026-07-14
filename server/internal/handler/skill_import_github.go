@@ -885,11 +885,11 @@ func (h *Handler) ImportSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if replay, found, replayErr := loadSkillImportReplay(r.Context(), h.Queries, workspaceUUID, creatorUUID, idempotencyKey, requestHash); replayErr != nil {
-		if errors.Is(replayErr, errSkillImportIdempotencyConflict) {
-			writeJSON(w, http.StatusConflict, map[string]any{"error": "Idempotency-Key was already used with a different request", "code": "idempotency_conflict"})
-		} else {
-			writeError(w, http.StatusInternalServerError, "failed to load skill import request")
-		}
+		writeIdempotencyReplayError(
+			w, replayErr, errSkillImportIdempotencyConflict,
+			"Idempotency-Key was already used with a different request",
+			"failed to load skill import request",
+		)
 		return
 	} else if found {
 		writeSkillImportReplay(w, replay)

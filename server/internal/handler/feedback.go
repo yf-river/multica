@@ -184,10 +184,7 @@ func (h *Handler) CreateFeedback(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) writeFeedbackReplay(w http.ResponseWriter, feedback db.Feedback, requestHash string) {
 	if !feedback.RequestHash.Valid || feedback.RequestHash.String != requestHash {
-		writeJSON(w, http.StatusConflict, map[string]any{
-			"error": "Idempotency-Key was already used with a different request",
-			"code":  "idempotency_conflict",
-		})
+		writeIdempotencyConflict(w, "Idempotency-Key was already used with a different request")
 		return
 	}
 	w.Header().Set("Idempotency-Replayed", "true")
