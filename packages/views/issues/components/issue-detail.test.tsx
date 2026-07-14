@@ -201,7 +201,7 @@ const mockApiObj = vi.hoisted(() => ({
   listTasksByIssue: vi.fn().mockResolvedValue([]),
   listIssueTaskTraceEvents: vi.fn().mockResolvedValue({ events: [] }),
   getIssueExecutionTree: vi.fn().mockResolvedValue(null),
-  listIssueSOPRuns: vi.fn().mockResolvedValue({ items: [] }),
+  listIssueSOPRuns: vi.fn().mockResolvedValue([]),
   rerunIssue: vi.fn(),
   listTaskMessages: vi.fn().mockResolvedValue([]),
   listChildIssues: vi.fn().mockResolvedValue({ issues: [] }),
@@ -499,7 +499,7 @@ describe("IssueDetail (shared)", () => {
     mockApiObj.listTasksByIssue.mockResolvedValue([]);
     mockApiObj.listIssueTaskTraceEvents.mockResolvedValue({ events: [] });
     mockApiObj.getIssueExecutionTree.mockResolvedValue(null);
-    mockApiObj.listIssueSOPRuns.mockResolvedValue({ items: [] });
+    mockApiObj.listIssueSOPRuns.mockResolvedValue([]);
     mockApiObj.rerunIssue.mockResolvedValue({ id: "task-rerun" });
     mockApiObj.listMembers.mockResolvedValue([
       { user_id: "user-1", name: "Test User", account: "test", role: "admin" },

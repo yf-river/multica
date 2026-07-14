@@ -747,7 +747,7 @@ describe("ApiClient", () => {
       token: "input-secret",
     });
 
-    for (const value of [listed.profiles[0], created, updated, tested]) {
+    for (const value of [listed[0], created, updated, tested]) {
       expect(value).not.toHaveProperty("token");
       expect(value).not.toHaveProperty("encrypted_secret");
     }

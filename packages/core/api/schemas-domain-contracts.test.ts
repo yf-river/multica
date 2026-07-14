@@ -44,7 +44,6 @@ import {
   PromptEvaluationRunListResponseSchema,
 } from "./schemas-prompt-evaluation-runs";
 import {
-  EMPTY_PROMPT_LIBRARY_LIST_RESPONSE,
   PromptLibraryItemListResponseSchema,
   PromptLibraryVersionListResponseSchema,
 } from "./schemas-prompt-library";
@@ -166,12 +165,13 @@ describe("domain response schema fallbacks", () => {
   });
 
   it("rejects malformed Prompt Library items", () => {
+    const fallback = { items: [], total: 0 };
     expect(parseWithFallback(
       { items: 1, total: 1 },
       PromptLibraryItemListResponseSchema,
-      EMPTY_PROMPT_LIBRARY_LIST_RESPONSE,
+      fallback,
       { endpoint: "GET /api/prompt-library" },
-    )).toBe(EMPTY_PROMPT_LIBRARY_LIST_RESPONSE);
+    )).toBe(fallback);
   });
 
   it("rejects malformed evaluation assets", () => {

@@ -37,11 +37,9 @@ vi.mock("@tanstack/react-query", () => ({
   useQuery: (options: { queryKey?: readonly unknown[] }) => {
     const provider = options.queryKey?.[2];
     return {
-      data: {
-        profiles: typeof provider === "string"
-          ? mockProfiles.current.filter((profile) => profile.provider === provider)
-          : mockProfiles.current,
-      },
+      data: typeof provider === "string"
+        ? mockProfiles.current.filter((profile) => profile.provider === provider)
+        : mockProfiles.current,
     };
   },
 }));

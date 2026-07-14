@@ -94,15 +94,15 @@ export function SquadDetailPage() {
   // daemon events invalidate this via use-realtime-sync; the staleTime is a
   // tab-focus safety net. Indexed by member_id so SquadMembersTab can look up
   // its row in O(1).
-  const { data: memberStatusResp } = useQuery({
+  const { data: memberStatuses = [] } = useQuery({
     ...squadMemberStatusOptions(wsId, squadId),
     enabled: !!workspace?.id && !!squadId,
   });
   const memberStatusById = useMemo(() => {
     const map = new Map<string, SquadMemberStatus>();
-    for (const s of memberStatusResp?.members ?? []) map.set(s.member_id, s);
+    for (const status of memberStatuses) map.set(status.member_id, status);
     return map;
-  }, [memberStatusResp]);
+  }, [memberStatuses]);
 
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
   const { data: wsMembers = [] } = useQuery(memberListOptions(wsId));

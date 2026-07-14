@@ -97,7 +97,3 @@ export interface SquadMemberStatus {
   active_issues: SquadActiveIssueBrief[];
   last_active_at: string | null;
 }
-
-export interface SquadMemberStatusListResponse {
-  members: SquadMemberStatus[];
-}

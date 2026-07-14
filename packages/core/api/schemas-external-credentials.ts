@@ -1,7 +1,6 @@
 import { z } from "zod";
 import type {
   ExternalCredentialProfile,
-  ListExternalCredentialProfilesResponse,
   TestExternalCredentialProfileResponse,
 } from "../types";
 import { NonEmptyStringSchema } from "./schemas-internal";
@@ -49,10 +48,6 @@ export const EMPTY_EXTERNAL_CREDENTIAL_PROFILE: ExternalCredentialProfile = {
   status: "unverified",
   created_at: "",
   updated_at: "",
-};
-
-export const EMPTY_EXTERNAL_CREDENTIAL_PROFILE_LIST_RESPONSE: ListExternalCredentialProfilesResponse = {
-  profiles: [],
 };
 
 export const EMPTY_TEST_EXTERNAL_CREDENTIAL_PROFILE_RESPONSE: TestExternalCredentialProfileResponse = {

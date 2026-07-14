@@ -4,7 +4,6 @@ import type {
   CreateExternalCredentialProfileRequest,
   ExternalCredentialProvider,
   ExternalCredentialProfile,
-  ListExternalCredentialProfilesResponse,
   TestExternalCredentialProfileRequest,
   TestExternalCredentialProfileResponse,
   UpdateExternalCredentialProfileRequest,
@@ -33,14 +32,10 @@ export function useCreateExternalCredentialProfile(provider?: ExternalCredential
       createExternalCredentialProfileWithRecovery(data),
     onSuccess: (created) => {
       const keyProvider = provider ?? (created.provider as ExternalCredentialProvider);
-      qc.setQueryData<ListExternalCredentialProfilesResponse>(
+      qc.setQueryData<ExternalCredentialProfile[]>(
         externalCredentialProfileKeys.list(keyProvider),
         (old) =>
-          old
-            ? {
-                profiles: [...old.profiles.filter((p) => p.id !== created.id), created],
-              }
-            : old,
+          old ? [...old.filter((p) => p.id !== created.id), created] : old,
       );
     },
     onSettled: () => {
@@ -61,14 +56,10 @@ export function useUpdateExternalCredentialProfile(provider?: ExternalCredential
     }) => api.updateExternalCredentialProfile(id, data),
     onSuccess: (updated) => {
       const keyProvider = provider ?? (updated.provider as ExternalCredentialProvider);
-      qc.setQueryData<ListExternalCredentialProfilesResponse>(
+      qc.setQueryData<ExternalCredentialProfile[]>(
         externalCredentialProfileKeys.list(keyProvider),
         (old) =>
-          old
-            ? {
-                profiles: old.profiles.map((p) => (p.id === updated.id ? updated : p)),
-              }
-            : old,
+          old ? old.map((p) => (p.id === updated.id ? updated : p)) : old,
       );
     },
     onSettled: () => {
@@ -84,14 +75,10 @@ export function useDeleteExternalCredentialProfile(provider?: ExternalCredential
       api.deleteExternalCredentialProfile(profile.id),
     onSuccess: (_deleted, profile) => {
       const keyProvider = provider ?? (profile.provider as ExternalCredentialProvider);
-      qc.setQueryData<ListExternalCredentialProfilesResponse>(
+      qc.setQueryData<ExternalCredentialProfile[]>(
         externalCredentialProfileKeys.list(keyProvider),
         (old) =>
-          old
-            ? {
-                profiles: old.profiles.filter((p) => p.id !== profile.id),
-              }
-            : old,
+          old ? old.filter((p) => p.id !== profile.id) : old,
       );
     },
     onSettled: () => {

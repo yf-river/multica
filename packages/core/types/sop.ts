@@ -45,11 +45,6 @@ export interface SquadSOPRun {
   updated_at: string;
 }
 
-export interface ListIssueSOPRunsResponse {
-  items: SquadSOPRun[];
-  total: number;
-}
-
 export interface ObservabilitySummary {
   指标: {
     "SOP 执行数"?: number;

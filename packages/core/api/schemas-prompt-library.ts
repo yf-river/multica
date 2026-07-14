@@ -1,8 +1,5 @@
 import { z } from "zod";
 import type {
-  ListPromptLibraryItemsResponse,
-  ListPromptLibraryTrialsResponse,
-  ListPromptLibraryVersionsResponse,
   AgentPlaygroundDetail,
   AgentPlaygroundExperiment,
   ListAgentPlaygroundExperimentsResponse,
@@ -110,11 +107,6 @@ export const EMPTY_PROMPT_LIBRARY_ITEM: PromptLibraryItem = {
   updated_at: "",
 };
 
-export const EMPTY_PROMPT_LIBRARY_LIST_RESPONSE: ListPromptLibraryItemsResponse = {
-  items: [],
-  total: 0,
-};
-
 export const EMPTY_PROMPT_LIBRARY_VERSION: PromptLibraryVersion = {
   id: "",
   prompt_id: "",
@@ -134,11 +126,6 @@ export const EMPTY_PROMPT_LIBRARY_VERSION: PromptLibraryVersion = {
   created_at: "",
 };
 
-export const EMPTY_PROMPT_LIBRARY_VERSION_LIST_RESPONSE: ListPromptLibraryVersionsResponse = {
-  items: [],
-  total: 0,
-};
-
 export const EMPTY_PROMPT_LIBRARY_TRIAL: PromptLibraryTrial = {
   id: "",
   workspace_id: "",
@@ -154,11 +141,6 @@ export const EMPTY_PROMPT_LIBRARY_TRIAL: PromptLibraryTrial = {
   created_by: null,
   created_at: "",
   updated_at: "",
-};
-
-export const EMPTY_PROMPT_LIBRARY_TRIAL_LIST_RESPONSE: ListPromptLibraryTrialsResponse = {
-  items: [],
-  total: 0,
 };
 
 const AgentPlaygroundExperimentSchema = z.object({

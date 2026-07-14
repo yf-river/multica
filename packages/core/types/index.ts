@@ -65,7 +65,6 @@ export type {
   ExternalCredentialStatus,
   ExternalCredentialSecretBinding,
   ExternalCredentialProfile,
-  ListExternalCredentialProfilesResponse,
   CreateExternalCredentialProfileRequest,
   UpdateExternalCredentialProfileRequest,
   TestExternalCredentialProfileRequest,
@@ -118,9 +117,6 @@ export type {
   PromptLibraryTrial,
   PromptLibraryVariable,
   PromptLibraryStatus,
-  ListPromptLibraryItemsResponse,
-  ListPromptLibraryVersionsResponse,
-  ListPromptLibraryTrialsResponse,
   ListPromptLibraryItemsParams,
   CreatePromptLibraryItemRequest,
   CreatePromptLibraryVersionRequest,
@@ -195,7 +191,6 @@ export type {
   SOPStepEventType,
   SquadSOPRun,
   SquadSOPStepEvent,
-  ListIssueSOPRunsResponse,
   ObservabilitySummary,
 } from "./sop";
 export type {
@@ -251,5 +246,4 @@ export type {
   SquadMemberStatusValue,
   SquadActiveIssueBrief,
   SquadMemberStatus,
-  SquadMemberStatusListResponse,
 } from "./squad";

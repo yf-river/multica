@@ -51,7 +51,7 @@ import type {
   RuntimeUsage,
   IssueTaskTraceResponse,
   IssueExecutionTreeResponse,
-  ListIssueSOPRunsResponse,
+  SquadSOPRun,
   ObservabilitySummary,
   RuntimeUsageByAgent,
   RuntimeUsageByTask,
@@ -106,13 +106,14 @@ import type {
   RedeemLarkBindingTokenResponse,
   Squad,
   SquadMember,
-  SquadMemberStatusListResponse,
+  SquadMemberStatus,
   InternalSquadTemplateKey,
   EnsureInternalSquadTemplateRequest,
   InternalSquadTemplateResponse,
   CreateSquadRequest,
   UpdateSquadRequest,
   PromptLibraryItem,
+  PromptLibraryVersion,
   PromptLibraryTrial,
   PromptEvaluationAsset,
   PromptEvaluationRun,
@@ -153,9 +154,6 @@ import type {
   CreatePromptEvaluationCaseRequest,
   UpdatePromptEvaluationCaseRequest,
   ListPromptLibraryItemsParams,
-  ListPromptLibraryItemsResponse,
-  ListPromptLibraryTrialsResponse,
-  ListPromptLibraryVersionsResponse,
   CreatePromptLibraryItemRequest,
   CreatePromptLibraryVersionRequest,
   CreatePromptLibraryVersionResponse,
@@ -166,7 +164,6 @@ import type {
   JudgeAgentPlaygroundExperimentRequest,
   ExternalCredentialProvider,
   ExternalCredentialProfile,
-  ListExternalCredentialProfilesResponse,
   CreateExternalCredentialProfileRequest,
   UpdateExternalCredentialProfileRequest,
   TestExternalCredentialProfileRequest,
@@ -239,8 +236,6 @@ import {
   EMPTY_ISSUE_REACTION,
   EMPTY_SQUAD,
   EMPTY_SQUAD_LIST,
-  EMPTY_SQUAD_MEMBER_STATUS_LIST,
-  EMPTY_ISSUE_SOP_RUNS_RESPONSE,
   EMPTY_OBSERVABILITY_SUMMARY,
   EMPTY_TIMELINE_ENTRIES,
   EMPTY_USER,
@@ -258,7 +253,6 @@ import {
   EMPTY_PROJECT_RESOURCE,
   EMPTY_PROJECT_RESOURCES,
   EMPTY_EXTERNAL_CREDENTIAL_PROFILE,
-  EMPTY_EXTERNAL_CREDENTIAL_PROFILE_LIST_RESPONSE,
   EMPTY_TEST_EXTERNAL_CREDENTIAL_PROFILE_RESPONSE,
   EMPTY_LARK_INSTALLATION_LIST_RESPONSE,
   EMPTY_BEGIN_LARK_INSTALL_RESPONSE,
@@ -269,11 +263,8 @@ import {
   EMPTY_GITHUB_PULL_REQUEST_LIST_RESPONSE,
   EMPTY_WEBHOOK_DELIVERIES,
   EMPTY_PROMPT_LIBRARY_ITEM,
-  EMPTY_PROMPT_LIBRARY_LIST_RESPONSE,
   EMPTY_PROMPT_LIBRARY_TRIAL,
-  EMPTY_PROMPT_LIBRARY_TRIAL_LIST_RESPONSE,
   EMPTY_PROMPT_LIBRARY_VERSION,
-  EMPTY_PROMPT_LIBRARY_VERSION_LIST_RESPONSE,
   EMPTY_AGENT_PLAYGROUND_DETAIL,
   EMPTY_AGENT_PLAYGROUND_EXPERIMENT_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_ASSET,
@@ -1430,11 +1421,11 @@ export class ApiClient extends ApiTransport {
     );
   }
 
-  async listIssueSOPRuns(issueId: string): Promise<ListIssueSOPRunsResponse> {
+  async listIssueSOPRuns(issueId: string): Promise<SquadSOPRun[]> {
     const raw = await this.fetch<unknown>(`/api/issues/${issueId}/sop-runs`);
-    return parseWithFallback(raw, IssueSOPRunsResponseSchema, EMPTY_ISSUE_SOP_RUNS_RESPONSE, {
+    return parseWithFallback(raw, IssueSOPRunsResponseSchema, { items: [], total: 0 }, {
       endpoint: "GET /api/issues/:id/sop-runs",
-    }) as ListIssueSOPRunsResponse;
+    }).items;
   }
 
   async cancelTask(issueId: string, taskId: string): Promise<AgentTask> {
@@ -1961,30 +1952,30 @@ export class ApiClient extends ApiTransport {
   }
 
   // Prompt library
-  async listPromptLibraryItems(params?: ListPromptLibraryItemsParams): Promise<ListPromptLibraryItemsResponse> {
+  async listPromptLibraryItems(params?: ListPromptLibraryItemsParams): Promise<PromptLibraryItem[]> {
     const search = new URLSearchParams();
     if (params?.project_id) search.set("project_id", params.project_id);
     if (params?.prompt_type) search.set("prompt_type", params.prompt_type);
     if (params?.status) search.set("status", params.status);
     const query = search.toString();
     const raw = await this.fetch<unknown>(`/api/prompt-library${query ? `?${query}` : ""}`);
-    return parseWithFallback(raw, PromptLibraryItemListResponseSchema, EMPTY_PROMPT_LIBRARY_LIST_RESPONSE, {
+    return parseWithFallback(raw, PromptLibraryItemListResponseSchema, { items: [], total: 0 }, {
       endpoint: "GET /api/prompt-library",
-    }) as ListPromptLibraryItemsResponse;
+    }).items;
   }
 
-  async listPromptLibraryVersions(id: string): Promise<ListPromptLibraryVersionsResponse> {
+  async listPromptLibraryVersions(id: string): Promise<PromptLibraryVersion[]> {
     const raw = await this.fetch<unknown>(`/api/prompt-library/${id}/versions`);
-    return parseWithFallback(raw, PromptLibraryVersionListResponseSchema, EMPTY_PROMPT_LIBRARY_VERSION_LIST_RESPONSE, {
+    return parseWithFallback(raw, PromptLibraryVersionListResponseSchema, { items: [], total: 0 }, {
       endpoint: "GET /api/prompt-library/:id/versions",
-    }) as ListPromptLibraryVersionsResponse;
+    }).items;
   }
 
-  async listPromptLibraryTrials(id: string): Promise<ListPromptLibraryTrialsResponse> {
+  async listPromptLibraryTrials(id: string): Promise<PromptLibraryTrial[]> {
     const raw = await this.fetch<unknown>(`/api/prompt-library/${id}/trials`);
-    return parseWithFallback(raw, PromptLibraryTrialListResponseSchema, EMPTY_PROMPT_LIBRARY_TRIAL_LIST_RESPONSE, {
+    return parseWithFallback(raw, PromptLibraryTrialListResponseSchema, { items: [], total: 0 }, {
       endpoint: "GET /api/prompt-library/:id/trials",
-    }) as ListPromptLibraryTrialsResponse;
+    }).items;
   }
 
   async createPromptLibraryItem(data: CreatePromptLibraryItemRequest, idempotencyKey = generateUUID()): Promise<PromptLibraryItem> {
@@ -2578,7 +2569,7 @@ export class ApiClient extends ApiTransport {
 
   async listExternalCredentialProfiles(
     provider?: ExternalCredentialProvider,
-  ): Promise<ListExternalCredentialProfilesResponse> {
+  ): Promise<ExternalCredentialProfile[]> {
     const search = new URLSearchParams();
     if (provider) search.set("provider", provider);
     const query = search.toString();
@@ -2588,9 +2579,9 @@ export class ApiClient extends ApiTransport {
     return parseWithFallback(
       raw,
       ExternalCredentialProfileListResponseSchema,
-      EMPTY_EXTERNAL_CREDENTIAL_PROFILE_LIST_RESPONSE,
+      { profiles: [] },
       { endpoint: "GET /api/external-credential-profiles" },
-    );
+    ).profiles;
   }
 
   async getExternalCredentialProfile(id: string): Promise<ExternalCredentialProfile> {
@@ -2850,11 +2841,11 @@ export class ApiClient extends ApiTransport {
   // working/idle/offline/unstable plus the issues each agent is currently
   // running. Parsed with a lenient schema so a new server-side status
   // value or extra field can't white-screen the Squad page (#2143).
-  async getSquadMemberStatus(squadId: string): Promise<SquadMemberStatusListResponse> {
+  async getSquadMemberStatus(squadId: string): Promise<SquadMemberStatus[]> {
     const raw = await this.fetch<unknown>(`/api/squads/${squadId}/members/status`);
-    return parseWithFallback(raw, SquadMemberStatusListResponseSchema, EMPTY_SQUAD_MEMBER_STATUS_LIST, {
+    return parseWithFallback(raw, SquadMemberStatusListResponseSchema, { members: [] }, {
       endpoint: "GET /api/squads/:id/members/status",
-    }) as SquadMemberStatusListResponse;
+    }).members;
   }
 
   // Autopilots

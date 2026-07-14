@@ -66,7 +66,7 @@ export function ExecutionLogSection({ issueId }: ExecutionLogSectionProps) {
   const { data: traceData } = useQuery(issueTaskTraceOptions(issueId));
   const traceEvents = useMemo(() => traceData?.events ?? [], [traceData?.events]);
   const { data: sopData } = useQuery(issueSOPRunsOptions(issueId));
-  const sopRuns = useMemo(() => sopData?.items ?? [], [sopData?.items]);
+  const sopRuns = useMemo(() => sopData ?? [], [sopData]);
   const { data: executionTree } = useQuery(issueExecutionTreeOptions(issueId));
   const allTasks = useMemo(
     () => mergeTasks(tasks, collectExecutionTreeTasks(executionTree)),

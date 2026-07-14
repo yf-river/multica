@@ -295,7 +295,7 @@ export function PromptLibraryPage({
         enabled: !!workspaceId && needsSkillResources,
       })),
   });
-  const items = listQuery.data?.items ?? [];
+  const items = listQuery.data ?? [];
   const assets = useMemo(() => assetQuery.data?.items ?? [], [assetQuery.data?.items]);
   const cases = caseQuery.data?.items ?? [];
   const runs = runQuery.data?.items ?? [];
@@ -318,8 +318,8 @@ export function PromptLibraryPage({
     enabled: !!workspaceId && needsPromptVersions && !!selectedFromList,
   });
   const promptVersions = useMemo(
-    () => versionQuery.data?.items ?? [],
-    [versionQuery.data?.items],
+    () => versionQuery.data ?? [],
+    [versionQuery.data],
   );
   const trialQuery = useQuery({
     queryKey: promptLibraryKeys.trials(workspaceId ?? "", selectedFromList?.id ?? null),
@@ -331,7 +331,7 @@ export function PromptLibraryPage({
     queryFn: () => api.listAgents({ workspace_id: workspaceId ?? undefined }),
     enabled: !!workspaceId && needsPromptVersions,
   });
-  const promptTrials = trialQuery.data?.items ?? [];
+  const promptTrials = trialQuery.data ?? [];
   const agents = useMemo(
     () => (agentQuery.data ?? []).filter((agent) => !agent.archived_at),
     [agentQuery.data],

@@ -32,8 +32,6 @@ export const SquadMemberStatusListResponseSchema = z.object({
   members: z.array(SquadMemberStatusSchema).default([]),
 }).loose();
 
-export const EMPTY_SQUAD_MEMBER_STATUS_LIST = { members: [] };
-
 // ---------------------------------------------------------------------------
 // Webhook delivery schemas — backing the Autopilot Deliveries section. Enums
 // (`status`, `signature_status`, `provider`) are kept as `z.string()` so a

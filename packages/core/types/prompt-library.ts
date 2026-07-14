@@ -61,21 +61,6 @@ export interface PromptLibraryTrial {
   updated_at: string;
 }
 
-export interface ListPromptLibraryItemsResponse {
-  items: PromptLibraryItem[];
-  total: number;
-}
-
-export interface ListPromptLibraryVersionsResponse {
-  items: PromptLibraryVersion[];
-  total: number;
-}
-
-export interface ListPromptLibraryTrialsResponse {
-  items: PromptLibraryTrial[];
-  total: number;
-}
-
 export interface ListPromptLibraryItemsParams {
   project_id?: string;
   prompt_type?: string;

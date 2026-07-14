@@ -27,10 +27,6 @@ export interface ExternalCredentialProfile {
   updated_at: string;
 }
 
-export interface ListExternalCredentialProfilesResponse {
-  profiles: ExternalCredentialProfile[];
-}
-
 export interface CreateExternalCredentialProfileRequest {
   provider: ExternalCredentialProvider;
   name?: string;

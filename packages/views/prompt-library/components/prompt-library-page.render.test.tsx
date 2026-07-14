@@ -62,7 +62,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   navigationState.pathname = "/acme/debug/prompts";
   navigationState.search = "";
-  mockApi.listPromptLibraryItems.mockResolvedValue({ items: [], total: 0 });
+  mockApi.listPromptLibraryItems.mockResolvedValue([]);
   mockApi.listAgents.mockResolvedValue([]);
   mockApi.listPromptEvaluationAssets.mockResolvedValue({ items: [], total: 0 });
   mockApi.listPromptEvaluationCases.mockResolvedValue({ items: [], total: 0 });

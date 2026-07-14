@@ -2,7 +2,6 @@ import { z } from "zod";
 import type {
   Agent,
   AgentEnvResponse,
-  ListIssueSOPRunsResponse,
   InternalSquadTemplateResponse,
   ObservabilitySummary,
   Squad,
@@ -180,11 +179,6 @@ export const IssueSOPRunsResponseSchema = z.object({
   items: z.array(SquadSOPRunSchema).default([]),
   total: z.number().default(0),
 }).loose();
-
-export const EMPTY_ISSUE_SOP_RUNS_RESPONSE: ListIssueSOPRunsResponse = {
-  items: [],
-  total: 0,
-};
 
 const ObservabilityUsageBreakdownSchema = z.object({
   "名称": z.string().default(""),

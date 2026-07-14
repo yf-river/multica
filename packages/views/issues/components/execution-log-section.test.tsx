@@ -79,7 +79,7 @@ beforeEach(() => {
   mockState.listTasksByIssue.mockResolvedValue([]);
   mockState.listIssueTaskTraceEvents.mockResolvedValue({ events: [] });
   mockState.getIssueExecutionTree.mockResolvedValue(null);
-  mockState.listIssueSOPRuns.mockResolvedValue({ items: [] });
+  mockState.listIssueSOPRuns.mockResolvedValue([]);
 });
 
 afterEach(() => {
@@ -196,26 +196,24 @@ describe("ExecutionLogSection trace", () => {
         },
       ],
     });
-    mockState.listIssueSOPRuns.mockResolvedValue({
-      items: [
-        {
-          id: "run-1",
-          workspace_id: "workspace-1",
-          issue_id: "issue-1",
-          squad_id: "squad-1",
-          profile: {},
-          status: "进行中",
-          current_step_key: "04-implement",
-          started_at: "2026-06-08T08:00:00Z",
-          completed_at: null,
-          total_duration_ms: null,
-          metrics: {},
-          events: [],
-          created_at: "2026-06-08T08:00:00Z",
-          updated_at: "2026-06-08T08:00:00Z",
-        },
-      ],
-    });
+    mockState.listIssueSOPRuns.mockResolvedValue([
+      {
+        id: "run-1",
+        workspace_id: "workspace-1",
+        issue_id: "issue-1",
+        squad_id: "squad-1",
+        profile: {},
+        status: "进行中",
+        current_step_key: "04-implement",
+        started_at: "2026-06-08T08:00:00Z",
+        completed_at: null,
+        total_duration_ms: null,
+        metrics: {},
+        events: [],
+        created_at: "2026-06-08T08:00:00Z",
+        updated_at: "2026-06-08T08:00:00Z",
+      },
+    ]);
 
     renderWithQuery(<ExecutionLogSection issueId="issue-1" />);
 
