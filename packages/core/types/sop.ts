@@ -15,8 +15,6 @@ export interface SquadSOPStepEvent {
   workspace_id: string;
   issue_id: string;
   squad_id: string;
-  step_key: string;
-  step_name: string;
   role_key: string;
   event_type: SOPStepEventType | string;
   status: SOPRunStatus | string;
@@ -35,8 +33,6 @@ export interface SquadSOPRun {
   workspace_id: string;
   issue_id: string;
   squad_id: string;
-  leader_task_id: string | null;
-  profile_key: string;
   profile: Record<string, unknown>;
   status: SOPRunStatus | string;
   current_step_key: string;
@@ -77,14 +73,8 @@ export interface ObservabilitySummary {
     "汇总完整性"?: string;
     [key: string]: unknown;
   };
-  sop_status_counts: Record<string, number>;
-  squad_counts: Record<string, number>;
-  project_counts: Record<string, number>;
-  issue_counts: Record<string, number>;
   task_trace_total: number;
-  sop_run_sample_total: number;
   task_trace_sample_total: number;
-  sample_limit: number;
   sop_run_maybe_truncated: boolean;
   task_trace_maybe_truncated: boolean;
   summary_completeness: {
@@ -99,7 +89,6 @@ export interface ObservabilitySummary {
   };
   model_breakdown: ObservabilityUsageBreakdown[];
   runtime_breakdown: ObservabilityUsageBreakdown[];
-  sop_stage_breakdown: ObservabilitySOPStageBreakdown[];
 }
 
 interface ObservabilityUsageBreakdown {
@@ -114,22 +103,4 @@ interface ObservabilityUsageBreakdown {
   "任务数": number;
   "预估成本": number;
   "价格已知": boolean;
-}
-
-interface ObservabilitySOPStageBreakdown {
-  step_key: string;
-  step_name: string;
-  role_key: string;
-  status: string;
-  duration_ms: number;
-  event_count: number;
-  evidence_count: number;
-  task_count: number;
-  message_count: number;
-  agent_turn_count: number;
-  input_tokens: number;
-  output_tokens: number;
-  cache_read_tokens: number;
-  cache_write_tokens: number;
-  [key: string]: unknown;
 }

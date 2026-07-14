@@ -203,8 +203,6 @@ describe("ExecutionLogSection trace", () => {
           workspace_id: "workspace-1",
           issue_id: "issue-1",
           squad_id: "squad-1",
-          leader_task_id: "task-1",
-          profile_key: "default",
           profile: {},
           status: "进行中",
           current_step_key: "04-implement",

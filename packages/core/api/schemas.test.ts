@@ -455,7 +455,6 @@ describe("dashboard + runtime usage schema drift", () => {
 describe("ObservabilitySummarySchema full-summary defaults", () => {
   it("defaults missing completeness fields to full-summary semantics", () => {
     const parsed = ObservabilitySummarySchema.parse({});
-    expect(parsed.sample_limit).toBe(0);
     expect(parsed.summary_completeness["采样上限"]).toBe(0);
     expect(parsed.summary_completeness["说明"]).toContain("全量汇总");
     expect(parsed.sop_run_maybe_truncated).toBe(false);

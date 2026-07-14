@@ -165,8 +165,6 @@ const SOPStepEventSchema = z.object({
   workspace_id: z.string(),
   issue_id: z.string(),
   squad_id: z.string(),
-  step_key: z.string().default(""),
-  step_name: z.string().default(""),
   role_key: z.string().default(""),
   event_type: z.string().default("追加证据"),
   status: z.string().default(""),
@@ -185,8 +183,6 @@ const SquadSOPRunSchema = z.object({
   workspace_id: z.string(),
   issue_id: z.string(),
   squad_id: z.string(),
-  leader_task_id: z.string().nullable().optional().transform((v) => v ?? null),
-  profile_key: z.string().default(""),
   profile: z.record(z.string(), z.unknown()).default({}),
   status: z.string().default("进行中"),
   current_step_key: z.string().default(""),
@@ -223,33 +219,10 @@ const ObservabilityUsageBreakdownSchema = z.object({
   "价格已知": z.boolean().default(false),
 }).loose();
 
-const ObservabilitySOPStageBreakdownSchema = z.object({
-  step_key: z.string().default(""),
-  step_name: z.string().default(""),
-  role_key: z.string().default(""),
-  status: z.string().default(""),
-  duration_ms: z.number().default(0),
-  event_count: z.number().default(0),
-  evidence_count: z.number().default(0),
-  task_count: z.number().default(0),
-  message_count: z.number().default(0),
-  agent_turn_count: z.number().default(0),
-  input_tokens: z.number().default(0),
-  output_tokens: z.number().default(0),
-  cache_read_tokens: z.number().default(0),
-  cache_write_tokens: z.number().default(0),
-}).loose();
-
 export const ObservabilitySummarySchema = z.object({
   指标: z.record(z.string(), z.unknown()).default({}),
-  sop_status_counts: z.record(z.string(), z.number()).default({}),
-  squad_counts: z.record(z.string(), z.number()).default({}),
-  project_counts: z.record(z.string(), z.number()).default({}),
-  issue_counts: z.record(z.string(), z.number()).default({}),
   task_trace_total: z.number().default(0),
-  sop_run_sample_total: z.number().default(0),
   task_trace_sample_total: z.number().default(0),
-  sample_limit: z.number().default(0),
   sop_run_maybe_truncated: z.boolean().default(false),
   task_trace_maybe_truncated: z.boolean().default(false),
   summary_completeness: z.object({
@@ -271,19 +244,12 @@ export const ObservabilitySummarySchema = z.object({
   }),
   model_breakdown: z.array(ObservabilityUsageBreakdownSchema).default([]),
   runtime_breakdown: z.array(ObservabilityUsageBreakdownSchema).default([]),
-  sop_stage_breakdown: z.array(ObservabilitySOPStageBreakdownSchema).default([]),
 }).loose();
 
 export const EMPTY_OBSERVABILITY_SUMMARY: ObservabilitySummary = {
   指标: {},
-  sop_status_counts: {},
-  squad_counts: {},
-  project_counts: {},
-  issue_counts: {},
   task_trace_total: 0,
-  sop_run_sample_total: 0,
   task_trace_sample_total: 0,
-  sample_limit: 0,
   sop_run_maybe_truncated: false,
   task_trace_maybe_truncated: false,
   summary_completeness: {
@@ -297,5 +263,4 @@ export const EMPTY_OBSERVABILITY_SUMMARY: ObservabilitySummary = {
   },
   model_breakdown: [],
   runtime_breakdown: [],
-  sop_stage_breakdown: [],
 };
