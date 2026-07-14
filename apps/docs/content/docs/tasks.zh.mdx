@@ -66,7 +66,7 @@ Multica 服务器每 30 秒扫描一次，有两种超时会触发失败：
 <Callout type="warning">
 **Autopilots 任务不自动重试**是刻意设计。Autopilot 有自己的触发周期（例如每天一次）；如果失败又自动重试，会和下一个周期的任务重叠。需要失败后立即重跑，用手动重跑（下一节）。
 
-**怎么知道 Autopilot 失败了**：失败的 Autopilot 任务会在你的 [收件箱](/inbox) 里出现一条通知，关联的 issue 状态也会从 `in_progress` 退回 `todo`。直接打开 [Autopilots](/autopilots) 页面也能看到每条 autopilot 的最近运行结果。
+**怎么知道 Autopilot 失败了**：直接打开 [Autopilots](/autopilots) 页面查看每条 Autopilot 的运行历史。单次失败不会发收件箱通知；系统只会在连续失败达到自动暂停阈值时通知负责人。
 </Callout>
 
 ## 手动重跑和自动重试的区别

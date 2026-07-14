@@ -1,74 +1,49 @@
 ---
-title: 工蜂仓库集成
-description: 在项目资源中绑定工蜂仓库，任务运行和训练评估默认围绕工蜂分支、提交与 MR 形成证据链。
+title: GitHub 集成
+description: 连接 GitHub App，同步 Pull Request 和检查状态，并把 PR 显式关联到 issue。
 ---
 
-import { Callout } from "fumadocs-ui/components/callout";
+Multica 通过 GitHub App 接收 `installation`、`pull_request` 和 `check_suite` webhook。连接后，issue 详情可以显示已关联 PR 的状态、分支、改动统计和 CI 检查结果。
 
-Multica 面向内网团队时，代码仓库主路径默认是 **Gongfeng / 工蜂仓库**。项目、任务、小队运行、训练评估和 skill 优化中看到的“仓库、分支、提交、MR”都按工蜂语义理解。
+## 连接工作区
 
-## 集成做了什么
+工作区 owner 或 admin 在 **Settings → GitHub** 点击 **Connect GitHub**。服务端生成绑定当前工作区的签名 state，浏览器完成 GitHub App 安装后回到同一个设置页。
 
-| 出现位置 | 行为 |
-|---|---|
-| **项目资源** | 绑定 `git.code.tencent.com` 工蜂链接，系统保存为 `gongfeng_repo`，并解析项目路径、资源类型和分支 / commit / MR ref。 |
-| **任务运行上下文** | Agent brief 会把工蜂项目资源写入上下文，并提示使用 `gongfeng` MCP 读取分支、文件和 MR 信息。 |
-| **Issue 详情侧栏** | 展示与任务关联的 MR 状态；历史兼容数据仍可读，但新验收主路径使用工蜂 MR 语义。 |
-| **训练与评估** | Skill 优化从工蜂项目资源选择 repo + branch + skill path，冻结 snapshot 后再进入 eval、candidate patch、freshness、CHANGELOG 和 re-eval。 |
+普通成员可以查看已连接的账号；只有 owner/admin 能连接或断开安装。未配置服务端环境变量时，连接按钮保持禁用。
 
-<Callout type="info">
-本轮验收边界是可演示生产级闭环。真实客户生产发布、正式权限运维和 live 集群变更不在这个页面承诺范围内。
-</Callout>
+## PR 如何关联 issue
 
-## 项目资源链接
+Webhook 只同步 GitHub 事实，不从分支名、标题或正文猜测 issue。PR 与 issue 的关系由平台显式创建，例如：
 
-在项目详情的 **资源** 区域添加工蜂仓库链接：
-
-```text
-https://git.code.tencent.com/ChainWeaver/ida/user-center
-https://git.code.tencent.com/ChainWeaver/ida/user-center/-/commits/v5.0.0_dev
-https://git.code.tencent.com/ChainWeaver/ida/user-center/-/merge_requests/123
+```bash
+multica issue mr link <issue-id> \
+  --provider github \
+  --repo-url https://github.com/owner/repo \
+  --number 123 \
+  --title "Fix issue" \
+  --html-url https://github.com/owner/repo/pull/123
 ```
 
-系统会把这些链接规范化为：
+这样可以避免 webhook 延迟或命名碰撞把 PR 关联到错误的工作区或 issue。PR、检查套件和安装查询都按工作区隔离。
 
-- `provider=gongfeng`
-- `resource_type=gongfeng_repo`
-- `project_path=ChainWeaver/ida/user-center`
-- `resource_kind=project | branch | commits | commit | tag | file | merge_request`
-- `ref=<branch-or-commit-or-mr-ref>`，如链接中包含 ref
+## Self-Host 配置
 
-项目资源只绑定仓库和默认上下文。具体任务或训练运行需要特定分支、tag 或 commit 时，应在任务描述、运行上下文或训练 snapshot 中明确选择和冻结。
+GitHub App 至少需要：
 
-## 运行时读取
+- Setup URL：`https://<你的域名>/api/github/setup`
+- Webhook URL：`https://<你的域名>/api/webhooks/github`
+- Webhook 事件：`Installation`、`Pull request`、`Check suite`
+- 仓库权限：读取 Pull requests、Checks 和 Metadata
 
-外部读取和写入使用触发 run 的人类账号 profile。普通任务默认使用创建者或手动触发者 profile；跨项目子任务经负责人审批后默认使用审批人的 profile，除非显式继承父任务 profile。
+服务端必填：
 
-Agent 读取工蜂上下文时应通过 `gongfeng` MCP 或平台提供的 source-fetch 入口，不能把 URL metadata 当成已经读取正文或代码内容。
-
-## MR 关联
-
-Issue 侧栏使用 MR 语义展示代码合并状态。MR 链接、状态、检查和合入信息必须来自平台已采集的事实数据或明确的工蜂读取证据，不应从分支名、记忆或手写 metadata 推断。
-
-## Skill 优化链路
-
-训练与评估的 skill 主线使用：
-
-```text
-工蜂 repo + branch latest
-  -> snapshot(commit + skill_hash)
-  -> eval
-  -> optimizer patch
-  -> freshness check
-  -> apply/MR 或受控写入
-  -> CHANGELOG
-  -> re-eval
+```dotenv
+GITHUB_APP_SLUG=<github-app-slug>
+GITHUB_WEBHOOK_SECRET=<random-webhook-secret>
 ```
 
-开发联调可以使用本地工蜂 checkout 承载读写，但 artifact 必须明确 proof scope。缺少工蜂 profile-backed checkout 或 MR 证据时，不得把本地 checkout 误报为完整工蜂远端闭环。
+可选配置 `GITHUB_APP_ID` 和 `GITHUB_APP_PRIVATE_KEY`，让 setup 回调立即查询安装账号信息；不配置时，下一条 `installation` webhook 会补齐账号名。
 
-## 已知边界
+`GITHUB_WEBHOOK_SECRET` 同时签名安装 state 和验证 webhook 的 `X-Hub-Signature-256`。缺失 secret 时 webhook 端点返回 503；签名不匹配时拒绝请求，不会更新安装、PR 或检查状态。
 
-- 工蜂 profile-backed checkout / MR 创建仍必须在最终验收中提供证据。
-- 历史兼容表和接口可以保留，但不能出现在用户可见默认路径中作为当前产品心智。
-- 如果 MCP、OpenAPI 或凭据不可用，必须在 artifact 中标记 blocked 或 partial，不能伪造连接成功。
+完整环境变量说明见[环境变量](/environment-variables#github-集成)。
