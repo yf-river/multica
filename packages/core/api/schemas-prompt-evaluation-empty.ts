@@ -26,8 +26,6 @@ export const EMPTY_PROMPT_EVALUATION_ASSET: PromptEvaluationAsset = {
   asset_type: "数据集",
   payload: {},
   status: "启用",
-  created_by: null,
-  created_at: "",
   updated_at: "",
   dataset_row_count: 0,
   test_suite_case_count: 0,
@@ -35,16 +33,11 @@ export const EMPTY_PROMPT_EVALUATION_ASSET: PromptEvaluationAsset = {
 
 export const EMPTY_PROMPT_EVALUATION_RUN: PromptEvaluationRun = {
   id: "",
-  workspace_id: "",
   asset_id: "",
   prompt_id: null,
   run_kind: "模板渲染检查",
   status: "已入队",
-  trigger_source: "手动",
-  agent_id: null,
-  runtime_id: null,
   task_id: null,
-  chat_session_id: null,
   model: "",
   runtime_provider: "",
   total_cases: 0,
@@ -57,13 +50,7 @@ export const EMPTY_PROMPT_EVALUATION_RUN: PromptEvaluationRun = {
   estimated_cost: 0,
   failure_reason: "",
   conclusion: "",
-  metrics: {},
-  evidence: {},
-  started_at: "",
-  completed_at: "",
-  created_by: null,
   created_at: "",
-  updated_at: "",
   review_decision: "",
   review_note: "",
   reviewed_at: "",
@@ -85,13 +72,9 @@ export const EMPTY_PROMPT_EVALUATION_RUN_EVIDENCE: PromptEvaluationRunEvidence =
 
 export const EMPTY_PROMPT_EVALUATION_EVIDENCE_SNAPSHOT: PromptEvaluationEvidenceSnapshot = {
   id: "",
-  workspace_id: "",
   run_id: "",
   snapshot_type: "手动归档",
-  schema_version: "multica.prompt_evaluation.evidence_snapshot.v1",
   summary: {},
-  evidence: {},
-  created_by: null,
   created_at: "",
 };
 
@@ -107,7 +90,6 @@ export const EMPTY_PROMPT_EVALUATION_ASSET_EVIDENCE_ARCHIVE_PACKAGE: PromptEvalu
 
 export const EMPTY_PROMPT_EVALUATION_CASE: PromptEvaluationStructuredCase = {
   id: "",
-  workspace_id: "",
   asset_id: "",
   prompt_id: null,
   case_index: 0,
@@ -119,8 +101,6 @@ export const EMPTY_PROMPT_EVALUATION_CASE: PromptEvaluationStructuredCase = {
   tags: [],
   status: "启用",
   source: "",
-  created_by: null,
-  created_at: "",
   updated_at: "",
 };
 

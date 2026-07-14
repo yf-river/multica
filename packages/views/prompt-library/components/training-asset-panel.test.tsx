@@ -33,8 +33,6 @@ const asset: PromptEvaluationAsset = {
   asset_type: "数据集",
   payload: {},
   status: "启用",
-  created_by: null,
-  created_at: "2026-07-09T00:00:00Z",
   updated_at: "2026-07-10T00:00:00Z",
   dataset_row_count: 0,
   test_suite_case_count: 0,

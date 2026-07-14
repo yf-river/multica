@@ -98,7 +98,6 @@ function tool(overrides: Partial<PromptEvaluationToolCallChain> = {}): PromptEva
     duration_ms: 900,
     failure_signal: true,
     failure_reason: "HTTP 500 from upstream",
-    summary: "工具 curl-check 已配对：调用 #1，结果 #2",
     created_at: "2026-06-09T10:01:00.000Z",
     completed_at: "2026-06-09T10:02:30.000Z",
     ...overrides,

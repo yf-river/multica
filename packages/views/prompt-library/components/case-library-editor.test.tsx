@@ -91,8 +91,6 @@ const asset: PromptEvaluationAsset = {
   asset_type: "数据集",
   payload: {},
   status: "启用",
-  created_by: null,
-  created_at: "2026-07-06T00:00:00Z",
   updated_at: "2026-07-06T01:00:00Z",
   dataset_row_count: 1,
   test_suite_case_count: 0,
@@ -100,7 +98,6 @@ const asset: PromptEvaluationAsset = {
 
 const structuredCase: PromptEvaluationStructuredCase = {
   id: "case-1",
-  workspace_id: "workspace-1",
   asset_id: "asset-1",
   prompt_id: null,
   case_index: 0,
@@ -112,8 +109,6 @@ const structuredCase: PromptEvaluationStructuredCase = {
   tags: ["账号系统"],
   status: "active",
   source: "manual",
-  created_by: null,
-  created_at: "2026-07-06T00:00:00Z",
   updated_at: "2026-07-06T01:00:00Z",
 };
 

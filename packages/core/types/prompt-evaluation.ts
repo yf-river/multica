@@ -17,8 +17,6 @@ export interface PromptEvaluationAsset {
   asset_type: PromptEvaluationAssetType;
   payload: Record<string, unknown>;
   status: PromptEvaluationAssetStatus;
-  created_by: string | null;
-  created_at: string;
   updated_at: string;
   dataset_row_count: number;
   test_suite_case_count: number;
@@ -35,16 +33,11 @@ export interface PromptEvaluationDatasetVersion {
 
 export interface PromptEvaluationRun {
   id: string;
-  workspace_id: string;
   asset_id: string;
   prompt_id: string | null;
   run_kind: "模板渲染检查" | "Agent执行";
   status: "已入队" | "运行中" | "通过" | "未通过" | "失败" | "已取消" | "需人工复核";
-  trigger_source: string;
-  agent_id: string | null;
-  runtime_id: string | null;
   task_id: string | null;
-  chat_session_id: string | null;
   model: string;
   runtime_provider: string;
   total_cases: number;
@@ -57,13 +50,7 @@ export interface PromptEvaluationRun {
   estimated_cost: number;
   failure_reason: string;
   conclusion: string;
-  metrics: Record<string, unknown>;
-  evidence: Record<string, unknown>;
-  started_at: string;
-  completed_at: string;
-  created_by: string | null;
   created_at: string;
-  updated_at: string;
   review_decision: "" | "通过" | "未通过";
   review_note: string;
   reviewed_at: string;
@@ -81,7 +68,6 @@ export interface PromptEvaluationToolCallChain {
   duration_ms?: number;
   failure_signal: boolean;
   failure_reason?: string;
-  summary: string;
   created_at?: string;
   completed_at?: string;
 }
@@ -104,13 +90,9 @@ export type PromptEvaluationEvidenceSnapshotType = "手动归档" | "验收归�
 
 export interface PromptEvaluationEvidenceSnapshot {
   id: string;
-  workspace_id: string;
   run_id: string;
   snapshot_type: PromptEvaluationEvidenceSnapshotType;
-  schema_version: string;
   summary: Record<string, unknown>;
-  evidence?: Record<string, unknown>;
-  created_by: string | null;
   created_at: string;
 }
 
@@ -127,7 +109,6 @@ export interface PromptEvaluationAssetEvidenceArchivePackage {
 
 export interface PromptEvaluationStructuredCase {
   id: string;
-  workspace_id: string;
   asset_id: string;
   prompt_id: string | null;
   case_index: number;
@@ -139,8 +120,6 @@ export interface PromptEvaluationStructuredCase {
   tags: unknown[];
   status: PromptEvaluationCaseStatus;
   source: string;
-  created_by: string | null;
-  created_at: string;
   updated_at: string;
 }
 

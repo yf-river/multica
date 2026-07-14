@@ -164,15 +164,12 @@ describe("case library editor", () => {
     asset_type: "数据集",
     payload: {},
     status: "启用",
-    created_by: null,
-    created_at: "2026-07-06T00:00:00Z",
     updated_at: "2026-07-06T01:00:00Z",
     dataset_row_count: 1,
     test_suite_case_count: 0,
   };
   const baseCase: PromptEvaluationStructuredCase = {
     id: "case-1",
-    workspace_id: "ws-1",
     asset_id: "asset-1",
     prompt_id: null,
     case_index: 0,
@@ -184,8 +181,6 @@ describe("case library editor", () => {
     tags: ["账号系统", "回归"],
     status: "active",
     source: "manual",
-    created_by: null,
-    created_at: "2026-07-06T00:00:00Z",
     updated_at: "2026-07-06T01:00:00Z",
   };
 

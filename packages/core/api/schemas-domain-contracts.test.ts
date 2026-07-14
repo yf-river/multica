@@ -40,6 +40,7 @@ import {
   PromptEvaluationAssetEvidenceSnapshotResponseSchema,
   PromptEvaluationRunEvidenceSchema,
   PromptEvaluationRunListResponseSchema,
+  PromptEvaluationRunSchema,
 } from "./schemas-prompt-evaluation-runs";
 import { EMPTY_PROMPT_EVALUATION_RUN } from "./schemas-prompt-evaluation-empty";
 import {
@@ -184,9 +185,16 @@ describe("domain response schema fallbacks", () => {
 
     expect(parsed.trials).toEqual([trial]);
     expect(parsed.task_usage).toEqual([usage]);
+    expect(parsed.run).toHaveProperty("workspace_id", "workspace-1");
     expect(PromptEvaluationRunEvidenceSchema.safeParse({
       ...parsed,
       trials: ["not-an-evidence-object"],
+    }).success).toBe(false);
+    expect(PromptEvaluationRunSchema.safeParse({
+      ...EMPTY_PROMPT_EVALUATION_RUN,
+      id: "run-1",
+      asset_id: "asset-1",
+      run_kind: "本地渲染",
     }).success).toBe(false);
   });
 

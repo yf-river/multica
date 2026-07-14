@@ -46,8 +46,6 @@ export const PromptEvaluationAssetSchema = z.object({
   asset_type: z.enum(["数据集", "测试套件"]),
   payload: PromptEvaluationPayloadSchema,
   status: z.enum(["启用", "归档"]).default("启用"),
-  created_by: z.string().nullable().optional().transform((v) => v ?? null),
-  created_at: z.string(),
   updated_at: z.string(),
   dataset_row_count: z.number().default(0),
   test_suite_case_count: z.number().default(0),

@@ -4,16 +4,11 @@ import { NonEmptyStringSchema, TaskTraceEventSchema } from "./schemas-internal";
 // Runtime response contracts for prompt evaluation runs.
 export const PromptEvaluationRunSchema = z.object({
   id: NonEmptyStringSchema,
-  workspace_id: NonEmptyStringSchema,
   asset_id: NonEmptyStringSchema,
   prompt_id: z.string().nullable().optional().transform((v) => v ?? null),
-  run_kind: z.enum(["本地渲染", "模板渲染检查", "Agent执行"]).transform((value) => (value === "本地渲染" ? "模板渲染检查" : value)),
+  run_kind: z.enum(["模板渲染检查", "Agent执行"]),
   status: z.enum(["已入队", "运行中", "通过", "未通过", "失败", "已取消", "需人工复核"]),
-  trigger_source: z.string().default("手动"),
-  agent_id: z.string().nullable().optional().transform((v) => v ?? null),
-  runtime_id: z.string().nullable().optional().transform((v) => v ?? null),
   task_id: z.string().nullable().optional().transform((v) => v ?? null),
-  chat_session_id: z.string().nullable().optional().transform((v) => v ?? null),
   model: z.string().default(""),
   runtime_provider: z.string().default(""),
   total_cases: z.number().default(0),
@@ -26,13 +21,7 @@ export const PromptEvaluationRunSchema = z.object({
   estimated_cost: z.number().default(0),
   failure_reason: z.string().default(""),
   conclusion: z.string().default(""),
-  metrics: z.record(z.string(), z.unknown()).default({}),
-  evidence: z.record(z.string(), z.unknown()).default({}),
-  started_at: z.string().default(""),
-  completed_at: z.string().default(""),
-  created_by: z.string().nullable().optional().transform((v) => v ?? null),
   created_at: z.string().default(""),
-  updated_at: z.string().default(""),
   review_decision: z.enum(["", "通过", "未通过"]).default(""),
   review_note: z.string().default(""),
   reviewed_at: z.string().default(""),
@@ -63,7 +52,6 @@ const PromptEvaluationToolCallChainSchema = z.object({
   duration_ms: z.number().optional(),
   failure_signal: z.boolean().default(false),
   failure_reason: z.string().optional(),
-  summary: z.string().default(""),
   created_at: z.string().optional(),
   completed_at: z.string().optional(),
 }).loose();
@@ -84,13 +72,9 @@ export const PromptEvaluationRunEvidenceSchema = z.object({
 
 export const PromptEvaluationEvidenceSnapshotSchema = z.object({
   id: NonEmptyStringSchema,
-  workspace_id: NonEmptyStringSchema,
   run_id: NonEmptyStringSchema,
   snapshot_type: z.enum(["手动归档", "验收归档", "自动归档"]).default("手动归档"),
-  schema_version: z.string().default("multica.prompt_evaluation.evidence_snapshot.v1"),
   summary: z.record(z.string(), z.unknown()).default({}),
-  evidence: z.record(z.string(), z.unknown()).optional(),
-  created_by: z.string().nullable().optional().transform((v) => v ?? null),
   created_at: z.string().default(""),
 }).loose();
 
