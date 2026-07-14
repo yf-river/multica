@@ -304,11 +304,8 @@ describe("onIssueDeleted", () => {
     ]);
     qc.setQueryData<IssueSubscriber[]>(issueKeys.subscribers(ISSUE_ID), [
       {
-        issue_id: ISSUE_ID,
         user_type: "member",
         user_id: "user-1",
-        reason: "manual",
-        created_at: "2025-01-01T00:00:00Z",
       },
     ]);
     qc.setQueryData<Attachment[]>(issueKeys.attachments(ISSUE_ID), [

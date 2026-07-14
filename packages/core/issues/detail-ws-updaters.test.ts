@@ -15,7 +15,6 @@ function comment(id: string, createdAt: string, overrides = {}) {
     content: id,
     parent_id: null,
     created_at: createdAt,
-    updated_at: createdAt,
     type: "comment",
     reactions: [],
     attachments: [],
@@ -158,7 +157,6 @@ describe("applyIssueDetailEvent", () => {
       issue_id: issueId,
       user_type: "member",
       user_id: "user-1",
-      reason: "manual",
     });
     expect(qc.getQueryData<IssueReaction[]>(issueKeys.reactions(issueId))).toHaveLength(1);
     expect(qc.getQueryData<IssueSubscriber[]>(issueKeys.subscribers(issueId))).toHaveLength(1);

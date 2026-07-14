@@ -617,7 +617,7 @@ describe("ApiClient", () => {
     const comment = {
       id: "comment-1", issue_id: "issue-1", author_type: "member", author_id: "user-1",
       content: "hello", type: "comment", parent_id: null, reactions: [], attachments: [],
-      created_at: "now", updated_at: "now", resolved_at: null,
+      created_at: "now", resolved_at: null,
       resolved_by_type: null, resolved_by_id: null,
     };
     const fetchMock = vi.fn()

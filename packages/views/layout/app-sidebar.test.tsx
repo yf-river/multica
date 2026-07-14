@@ -11,12 +11,8 @@ const { detail, deletePin, navigation, pins } = vi.hoisted(() => ({
     current: [
       {
         id: "pin-1",
-        workspace_id: "ws-1",
-        user_id: "user-1",
         item_type: "issue" as const,
         item_id: "issue-1",
-        position: 0,
-        created_at: "2026-05-06T00:00:00Z",
       },
     ],
   },

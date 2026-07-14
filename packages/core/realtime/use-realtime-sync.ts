@@ -55,8 +55,7 @@ import type {
   WorkspaceDeletedPayload,
   WorkspaceUpdatedPayload,
   MemberRemovedPayload,
-  IssueUpdatedPayload,
-  IssueCreatedPayload,
+  IssueChangedPayload,
   IssueDeletedPayload,
   IssueLabelsChangedPayload,
   IssueMetadataChangedPayload,
@@ -540,7 +539,7 @@ export function useRealtimeSync(
     // Instead, both mutations and WS handlers use dedup checks to be idempotent.
 
     const unsubIssueUpdated = ws.on("issue:updated", (p) => {
-      const { issue } = p as IssueUpdatedPayload;
+      const { issue } = p as IssueChangedPayload;
       if (!issue?.id) return;
       const wsId = getCurrentWsId();
       if (wsId) {
@@ -552,7 +551,7 @@ export function useRealtimeSync(
     });
 
     const unsubIssueCreated = ws.on("issue:created", (p) => {
-      const { issue } = p as IssueCreatedPayload;
+      const { issue } = p as IssueChangedPayload;
       if (!issue) return;
       const wsId = getCurrentWsId();
       if (wsId) onIssueCreated(qc, wsId, issue);

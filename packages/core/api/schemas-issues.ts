@@ -130,7 +130,6 @@ export const CommentSchema = z.object({
   reactions: z.array(ReactionSchema).default([]),
   attachments: z.array(EmbeddedAttachmentSchema).default([]),
   created_at: z.string(),
-  updated_at: z.string(),
   source_task_id: z.string().nullable().optional(),
 }).loose();
 
@@ -145,7 +144,6 @@ export const EMPTY_COMMENT: Comment = {
   reactions: [],
   attachments: [],
   created_at: "",
-  updated_at: "",
   resolved_at: null,
   resolved_by_type: null,
   resolved_by_id: null,
@@ -357,11 +355,8 @@ export const EMPTY_GROUPED_ISSUES_RESPONSE: GroupedIssuesResponse = {
 };
 
 const SubscriberSchema = z.object({
-  issue_id: z.string(),
   user_type: z.string(),
   user_id: z.string(),
-  reason: z.string(),
-  created_at: z.string(),
 }).loose();
 
 export const SubscribersListSchema = z.array(SubscriberSchema);

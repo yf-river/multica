@@ -2,11 +2,8 @@ import type { QueryClient } from "@tanstack/react-query";
 import type {
   ActivityCreatedPayload,
   Comment,
-  CommentCreatedPayload,
+  CommentChangedPayload,
   CommentDeletedPayload,
-  CommentResolvedPayload,
-  CommentUnresolvedPayload,
-  CommentUpdatedPayload,
   IssueReaction,
   IssueReactionAddedPayload,
   IssueReactionRemovedPayload,
@@ -85,7 +82,7 @@ export function applyIssueDetailEvent(
 ): void {
   switch (event) {
     case "comment:created": {
-      const { comment } = payload as CommentCreatedPayload;
+      const { comment } = payload as CommentChangedPayload;
       if (!comment?.issue_id) return;
       updateTimeline(qc, comment.issue_id, (old) => {
         const entry = commentToTimelineEntry(comment);
@@ -98,10 +95,7 @@ export function applyIssueDetailEvent(
     case "comment:updated":
     case "comment:resolved":
     case "comment:unresolved": {
-      const { comment } = payload as
-        | CommentUpdatedPayload
-        | CommentResolvedPayload
-        | CommentUnresolvedPayload;
+      const { comment } = payload as CommentChangedPayload;
       if (!comment?.issue_id) return;
       updateTimeline(qc, comment.issue_id, (old) =>
         old?.map((item) =>
@@ -228,11 +222,8 @@ export function applyIssueDetailEvent(
           return [
             ...old,
             {
-              issue_id: added.issue_id,
               user_type: added.user_type as "member" | "agent",
               user_id: added.user_id,
-              reason: added.reason as IssueSubscriber["reason"],
-              created_at: new Date().toISOString(),
             },
           ];
         },

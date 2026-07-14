@@ -84,11 +84,7 @@ export interface WSMessage<T = unknown> {
   actor_type?: string;
 }
 
-export interface IssueCreatedPayload {
-  issue: Issue;
-}
-
-export interface IssueUpdatedPayload {
+export interface IssueChangedPayload {
   issue: Issue;
 }
 
@@ -110,25 +106,13 @@ export interface InboxNewPayload {
   item: InboxItem;
 }
 
-export interface CommentCreatedPayload {
-  comment: Comment;
-}
-
-export interface CommentUpdatedPayload {
+export interface CommentChangedPayload {
   comment: Comment;
 }
 
 export interface CommentDeletedPayload {
   comment_id: string;
   issue_id: string;
-}
-
-export interface CommentResolvedPayload {
-  comment: Comment;
-}
-
-export interface CommentUnresolvedPayload {
-  comment: Comment;
 }
 
 export interface WorkspaceUpdatedPayload {
@@ -155,7 +139,6 @@ export interface SubscriberAddedPayload {
   issue_id: string;
   user_type: string;
   user_id: string;
-  reason: string;
 }
 
 export interface SubscriberRemovedPayload {

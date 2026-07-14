@@ -903,11 +903,8 @@ export function useToggleIssueSubscriber(issueId: string) {
         );
       } else {
         const temp: IssueSubscriber = {
-          issue_id: issueId,
           user_type: userType,
           user_id: userId,
-          reason: "manual",
-          created_at: new Date().toISOString(),
         };
         qc.setQueryData<IssueSubscriber[]>(
           issueKeys.subscribers(issueId),
