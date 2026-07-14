@@ -1,48 +1,7 @@
-export type SOPRunStatus = "待开始" | "进行中" | "已完成" | "已失败" | "已阻塞";
-
-export type SOPStepEventType =
-  | "步骤开始"
-  | "步骤完成"
-  | "步骤失败"
-  | "追加证据"
-  | "人工确认"
-  | "测试结果"
-  | "优化运行";
-
-export interface SquadSOPStepEvent {
-  id: string;
-  run_id: string;
-  workspace_id: string;
-  issue_id: string;
-  squad_id: string;
-  role_key: string;
-  event_type: SOPStepEventType | string;
-  status: SOPRunStatus | string;
-  evidence: Record<string, unknown>;
-  reason: string;
-  duration_ms: number | null;
-  created_by_type: string;
-  created_by_id: string | null;
-  task_id: string | null;
-  created_at: string;
-  metrics: Record<string, unknown>;
-}
-
 export interface SquadSOPRun {
-  id: string;
-  workspace_id: string;
-  issue_id: string;
-  squad_id: string;
-  profile: Record<string, unknown>;
-  status: SOPRunStatus | string;
   current_step_key: string;
   started_at: string;
   completed_at: string | null;
-  total_duration_ms: number | null;
-  metrics: Record<string, unknown>;
-  events: SquadSOPStepEvent[];
-  created_at: string;
-  updated_at: string;
 }
 
 export interface ObservabilitySummary {

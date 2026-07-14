@@ -186,13 +186,7 @@ export type {
   CreatePromptEvaluationCaseRequest,
   UpdatePromptEvaluationCaseRequest,
 } from "./prompt-evaluation";
-export type {
-  SOPRunStatus,
-  SOPStepEventType,
-  SquadSOPRun,
-  SquadSOPStepEvent,
-  ObservabilitySummary,
-} from "./sop";
+export type { SquadSOPRun, ObservabilitySummary } from "./sop";
 export type {
   GitHubInstallation,
   GitHubMergeableState,

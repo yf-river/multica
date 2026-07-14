@@ -139,40 +139,10 @@ export const EMPTY_INTERNAL_SQUAD_TEMPLATE_RESPONSE: InternalSquadTemplateRespon
   squad: { id: "", name: "" },
 };
 
-const SOPStepEventSchema = z.object({
-  id: z.string(),
-  run_id: z.string(),
-  workspace_id: z.string(),
-  issue_id: z.string(),
-  squad_id: z.string(),
-  role_key: z.string().default(""),
-  event_type: z.string().default("追加证据"),
-  status: z.string().default(""),
-  evidence: z.record(z.string(), z.unknown()).default({}),
-  reason: z.string().default(""),
-  duration_ms: z.number().nullable().optional().transform((v) => v ?? null),
-  created_by_type: z.string().default(""),
-  created_by_id: z.string().nullable().optional().transform((v) => v ?? null),
-  task_id: z.string().nullable().optional().transform((v) => v ?? null),
-  created_at: z.string(),
-  metrics: z.record(z.string(), z.unknown()).default({}),
-}).loose();
-
 const SquadSOPRunSchema = z.object({
-  id: z.string(),
-  workspace_id: z.string(),
-  issue_id: z.string(),
-  squad_id: z.string(),
-  profile: z.record(z.string(), z.unknown()).default({}),
-  status: z.string().default("进行中"),
   current_step_key: z.string().default(""),
   started_at: z.string(),
   completed_at: z.string().nullable().optional().transform((v) => v ?? null),
-  total_duration_ms: z.number().nullable().optional().transform((v) => v ?? null),
-  metrics: z.record(z.string(), z.unknown()).default({}),
-  events: z.array(SOPStepEventSchema).default([]),
-  created_at: z.string(),
-  updated_at: z.string(),
 }).loose();
 
 export const IssueSOPRunsResponseSchema = z.object({
