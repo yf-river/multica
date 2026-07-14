@@ -613,11 +613,11 @@ func (h *Handler) ListAttachments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := make([]AttachmentResponse, len(attachments))
-	for i, a := range attachments {
-		resp[i] = h.attachmentToResponse(a)
+	responses := h.attachmentsToResponses(attachments)
+	if responses == nil {
+		responses = []AttachmentResponse{}
 	}
-	writeJSON(w, http.StatusOK, resp)
+	writeJSON(w, http.StatusOK, responses)
 }
 
 // ---------------------------------------------------------------------------

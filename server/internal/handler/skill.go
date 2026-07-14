@@ -189,6 +189,14 @@ func skillFileToResponse(f db.SkillFile) SkillFileResponse {
 	}
 }
 
+func skillFilesToResponses(files []db.SkillFile) []SkillFileResponse {
+	responses := make([]SkillFileResponse, len(files))
+	for i, file := range files {
+		responses[i] = skillFileToResponse(file)
+	}
+	return responses
+}
+
 // --- Request structs ---
 
 type CreateSkillRequest struct {
@@ -311,11 +319,6 @@ func (h *Handler) GetSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fileResps := make([]SkillFileResponse, len(files))
-	for i, f := range files {
-		fileResps[i] = skillFileToResponse(f)
-	}
-
 	skillResp, err := skillToResponse(skill)
 	if err != nil {
 		writeSkillConfigDecodeError(w, r, id, err)
@@ -323,7 +326,7 @@ func (h *Handler) GetSkill(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, SkillWithFilesResponse{
 		SkillResponse: skillResp,
-		Files:         fileResps,
+		Files:         skillFilesToResponses(files),
 	})
 }
 
@@ -579,10 +582,7 @@ func (h *Handler) UpdateSkill(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "failed to list skill files")
 			return
 		}
-		fileResps = make([]SkillFileResponse, len(files))
-		for i, f := range files {
-			fileResps[i] = skillFileToResponse(f)
-		}
+		fileResps = skillFilesToResponses(files)
 	}
 
 	skillResp, err := skillToResponse(skill)

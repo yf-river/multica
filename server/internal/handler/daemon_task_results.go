@@ -491,6 +491,14 @@ func taskMessageToPayload(m db.TaskMessage, taskID, issueID string) protocol.Tas
 	}
 }
 
+func taskMessagesToPayloads(messages []db.TaskMessage, taskID, issueID string) []protocol.TaskMessagePayload {
+	responses := make([]protocol.TaskMessagePayload, len(messages))
+	for i, message := range messages {
+		responses[i] = taskMessageToPayload(message, taskID, issueID)
+	}
+	return responses
+}
+
 // ListTaskMessages returns the persisted messages for a task (for catch-up after reconnect).
 func (h *Handler) ListTaskMessages(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskId")
@@ -525,12 +533,7 @@ func (h *Handler) ListTaskMessages(w http.ResponseWriter, r *http.Request) {
 
 	issueID := uuidToString(task.IssueID)
 
-	resp := make([]protocol.TaskMessagePayload, len(messages))
-	for i, m := range messages {
-		resp[i] = taskMessageToPayload(m, taskID, issueID)
-	}
-
-	writeJSON(w, http.StatusOK, resp)
+	writeJSON(w, http.StatusOK, taskMessagesToPayloads(messages, taskID, issueID))
 }
 
 // GetActiveTaskForIssue returns all currently active tasks for an issue.
@@ -552,12 +555,7 @@ func (h *Handler) GetActiveTaskForIssue(w http.ResponseWriter, r *http.Request) 
 	}
 
 	workspaceID := uuidToString(issue.WorkspaceID)
-	resp := make([]AgentTaskResponse, len(tasks))
-	for i, t := range tasks {
-		resp[i] = taskToResponse(t, workspaceID)
-	}
-
-	writeJSON(w, http.StatusOK, map[string]any{"tasks": resp})
+	writeJSON(w, http.StatusOK, map[string]any{"tasks": agentTasksToResponses(tasks, workspaceID)})
 }
 
 // CancelTask cancels a running or queued task by ID.
@@ -612,12 +610,7 @@ func (h *Handler) ListTasksByIssue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	workspaceID := uuidToString(issue.WorkspaceID)
-	resp := make([]AgentTaskResponse, len(tasks))
-	for i, t := range tasks {
-		resp[i] = taskToResponse(t, workspaceID)
-	}
-
-	writeJSON(w, http.StatusOK, resp)
+	writeJSON(w, http.StatusOK, agentTasksToResponses(tasks, workspaceID))
 }
 
 // ListTaskMessagesByUser returns task messages for a task.
@@ -670,12 +663,7 @@ func (h *Handler) ListTaskMessagesByUser(w http.ResponseWriter, r *http.Request)
 
 	issueID := uuidToString(task.IssueID)
 
-	resp := make([]protocol.TaskMessagePayload, len(messages))
-	for i, m := range messages {
-		resp[i] = taskMessageToPayload(m, taskID, issueID)
-	}
-
-	writeJSON(w, http.StatusOK, resp)
+	writeJSON(w, http.StatusOK, taskMessagesToPayloads(messages, taskID, issueID))
 }
 
 // GetIssueUsage returns aggregated token usage for all tasks belonging to an issue.

@@ -233,10 +233,7 @@ func (h *Handler) buildIssueExecutionNode(ctx context.Context, issue db.Issue, p
 		if err != nil {
 			return issueExecutionNodeResponse{}, err
 		}
-		eventResp := make([]SquadSOPEventResponse, 0, len(events))
-		for _, event := range events {
-			eventResp = append(eventResp, squadSOPEventToResponse(event))
-		}
+		eventResp := squadSOPEventsToResponses(events)
 		enrichedRun, err := h.squadSOPRunToResponseWithStageMetrics(ctx, run, eventResp)
 		if err != nil {
 			return issueExecutionNodeResponse{}, err

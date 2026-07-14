@@ -476,16 +476,6 @@ func (h *Handler) quickCreateTAPDSourceIssue(ctx context.Context, w http.Respons
 	}
 
 	prefix := h.getIssuePrefix(ctx, p.WorkspaceID)
-	buildAttachmentResponses := func(atts []db.Attachment) []AttachmentResponse {
-		if len(atts) == 0 {
-			return nil
-		}
-		out := make([]AttachmentResponse, len(atts))
-		for i, a := range atts {
-			out[i] = h.attachmentToResponse(a)
-		}
-		return out
-	}
 	res, err := h.IssueService.Create(ctx, service.IssueCreateParams{
 		WorkspaceID:   p.WorkspaceID,
 		Title:         title,
@@ -511,7 +501,7 @@ func (h *Handler) quickCreateTAPDSourceIssue(ctx context.Context, w http.Respons
 		SourceSummaryAgentID: sourceSummaryAgentID,
 		BroadcastPayload: func(issue db.Issue, atts []db.Attachment) map[string]any {
 			payload := issueToResponse(issue, prefix)
-			payload.Attachments = buildAttachmentResponses(atts)
+			payload.Attachments = h.attachmentsToResponses(atts)
 			return map[string]any{"issue": payload}
 		},
 	})

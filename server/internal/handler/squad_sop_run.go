@@ -141,6 +141,14 @@ func squadSOPEventToResponse(event db.SquadSopStepEvent) SquadSOPEventResponse {
 	}
 }
 
+func squadSOPEventsToResponses(events []db.SquadSopStepEvent) []SquadSOPEventResponse {
+	responses := make([]SquadSOPEventResponse, len(events))
+	for i, event := range events {
+		responses[i] = squadSOPEventToResponse(event)
+	}
+	return responses
+}
+
 func (h *Handler) squadSOPRunToResponseWithStageMetrics(ctx context.Context, run db.SquadSopRun, events []SquadSOPEventResponse) (SquadSOPRunResponse, error) {
 	resp := squadSOPRunToResponse(run, events)
 	stageMetrics, err := h.buildSOPStageMetrics(ctx, run.Profile, events)
@@ -275,10 +283,7 @@ func (h *Handler) ListIssueSOPRuns(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "failed to list SOP events")
 			return
 		}
-		eventResp := make([]SquadSOPEventResponse, 0, len(events))
-		for _, event := range events {
-			eventResp = append(eventResp, squadSOPEventToResponse(event))
-		}
+		eventResp := squadSOPEventsToResponses(events)
 		runResp, err := h.squadSOPRunToResponseWithStageMetrics(r.Context(), run, eventResp)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to build SOP run metrics")

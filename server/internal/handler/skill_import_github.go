@@ -994,11 +994,7 @@ func (h *Handler) ListSkillFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := make([]SkillFileResponse, len(files))
-	for i, f := range files {
-		resp[i] = skillFileToResponse(f)
-	}
-	writeJSON(w, http.StatusOK, resp)
+	writeJSON(w, http.StatusOK, skillFilesToResponses(files))
 }
 
 func (h *Handler) UpsertSkillFile(w http.ResponseWriter, r *http.Request) {

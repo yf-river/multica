@@ -452,10 +452,7 @@ func (h *Handler) buildPromptEvaluationRunEvidenceResponse(ctx context.Context, 
 		}
 		task = &loadedTask
 		issueID := uuidToString(loadedTask.IssueID)
-		messageResp = make([]protocol.TaskMessagePayload, len(messages))
-		for i, message := range messages {
-			messageResp[i] = taskMessageToPayload(message, uuidToString(run.TaskID), issueID)
-		}
+		messageResp = taskMessagesToPayloads(messages, uuidToString(run.TaskID), issueID)
 
 		traceEvents, err := h.Queries.ListTaskTraceEventsByTask(ctx, run.TaskID)
 		if err != nil {

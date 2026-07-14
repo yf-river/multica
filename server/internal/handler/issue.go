@@ -386,10 +386,7 @@ func (h *Handler) GetIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if len(attachments) > 0 {
-		resp.Attachments = make([]AttachmentResponse, len(attachments))
-		for i, a := range attachments {
-			resp.Attachments[i] = h.attachmentToResponse(a)
-		}
+		resp.Attachments = h.attachmentsToResponses(attachments)
 	}
 
 	writeJSON(w, http.StatusOK, resp)
@@ -774,17 +771,6 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		analyticsAgentID = actualCreatorID
 	}
 
-	buildAttachmentResponses := func(atts []db.Attachment) []AttachmentResponse {
-		if len(atts) == 0 {
-			return nil
-		}
-		out := make([]AttachmentResponse, len(atts))
-		for i, a := range atts {
-			out[i] = h.attachmentToResponse(a)
-		}
-		return out
-	}
-
 	createParams := service.IssueCreateParams{
 		WorkspaceID:   wsUUID,
 		Title:         req.Title,
@@ -810,7 +796,7 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		Platform:         func() string { p, _, _ := middleware.ClientMetadataFromContext(r.Context()); return p }(),
 		BroadcastPayload: func(issue db.Issue, atts []db.Attachment) map[string]any {
 			payload := issueToResponse(issue, prefix)
-			payload.Attachments = buildAttachmentResponses(atts)
+			payload.Attachments = h.attachmentsToResponses(atts)
 			return map[string]any{"issue": payload}
 		},
 	}
@@ -822,7 +808,7 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		var replay *IssueResponse
 		res, replay, err = h.createIssueWithRecovery(
 			r.Context(), wsUUID, parseUUID(actualCreatorID), issueRequestKey, requestHash,
-			createParams, createOpts, prefix, buildAttachmentResponses,
+			createParams, createOpts, prefix, h.attachmentsToResponses,
 		)
 		if replay != nil {
 			writeJSON(w, http.StatusCreated, *replay)
@@ -856,7 +842,7 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	slog.Info("issue created", append(logger.RequestAttrs(r), "issue_id", uuidToString(issue.ID), "title", issue.Title, "status", issue.Status, "workspace_id", workspaceID)...)
 
 	resp := issueToResponse(issue, prefix)
-	resp.Attachments = buildAttachmentResponses(res.Attachments)
+	resp.Attachments = h.attachmentsToResponses(res.Attachments)
 	writeJSON(w, http.StatusCreated, resp)
 }
 

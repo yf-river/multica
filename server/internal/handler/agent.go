@@ -436,6 +436,14 @@ func taskToResponse(t db.AgentTaskQueue, workspaceID string) AgentTaskResponse {
 	}
 }
 
+func agentTasksToResponses(tasks []db.AgentTaskQueue, workspaceID string) []AgentTaskResponse {
+	responses := make([]AgentTaskResponse, len(tasks))
+	for i, task := range tasks {
+		responses[i] = taskToResponse(task, workspaceID)
+	}
+	return responses
+}
+
 // relativeWorkDir produces a privacy-safe display form of the daemon-reported
 // absolute work_dir. The contract: the returned string must never contain
 // the user's home directory prefix or their account name. The chip is
