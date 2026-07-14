@@ -49,16 +49,8 @@ export const PromptEvaluationAssetSchema = z.object({
   created_by: z.string().nullable().optional().transform((v) => v ?? null),
   created_at: z.string(),
   updated_at: z.string(),
-  structure_schema: z.string().default("multica.training_evaluation.asset_profile.v1"),
-  structured_case_count: z.number().default(0),
-  structured_variable_count: z.number().default(0),
-  structured_assertion_count: z.number().default(0),
-  linked_dataset_count: z.number().default(0),
-  linked_prompt_count: z.number().default(0),
-  evaluation_dimension_count: z.number().default(0),
   dataset_row_count: z.number().default(0),
   test_suite_case_count: z.number().default(0),
-  experiment_dimension_count: z.number().default(0),
 }).loose();
 
 export const PromptEvaluationAssetListResponseSchema = z.object({

@@ -170,7 +170,6 @@ export type {
   PromptEvaluationSkillReEvalAssetResponse,
   PromptEvaluationSkillReEvalRunResponse,
   PromptEvaluationCaseSortBy,
-  UpdatePromptEvaluationOptimizationCandidateRequest,
   PublishPromptEvaluationOptimizationCandidateResponse,
   RejectPromptEvaluationOptimizationCandidateRequest,
   PromptEvaluationAssetType,

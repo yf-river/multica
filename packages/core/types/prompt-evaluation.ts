@@ -20,16 +20,8 @@ export interface PromptEvaluationAsset {
   created_by: string | null;
   created_at: string;
   updated_at: string;
-  structure_schema: string;
-  structured_case_count: number;
-  structured_variable_count: number;
-  structured_assertion_count: number;
-  linked_dataset_count: number;
-  linked_prompt_count: number;
-  evaluation_dimension_count: number;
   dataset_row_count: number;
   test_suite_case_count: number;
-  experiment_dimension_count: number;
 }
 
 export interface PromptEvaluationDatasetVersion {
@@ -64,7 +56,6 @@ export interface PromptEvaluationRun {
   failed_cases: number;
   pass_rate: number;
   total_duration_ms: number;
-  average_duration_ms: number;
   input_tokens: number;
   output_tokens: number;
   estimated_cost: number;
@@ -79,7 +70,6 @@ export interface PromptEvaluationRun {
   updated_at: string;
   review_decision: "" | "通过" | "未通过";
   review_note: string;
-  reviewed_by: string | null;
   reviewed_at: string;
 }
 
@@ -127,7 +117,6 @@ export interface PromptEvaluationToolCallChain {
   input?: Record<string, unknown>;
   output?: string;
   duration_ms?: number;
-  result_category?: string;
   failure_signal: boolean;
   failure_reason?: string;
   summary: string;
@@ -176,7 +165,6 @@ export interface PromptEvaluationAssetEvidenceSnapshotSkip {
 export interface PromptEvaluationAssetEvidenceSnapshotResponse {
   asset_id: string;
   snapshot_type: PromptEvaluationEvidenceSnapshotType;
-  total_runs: number;
   created_count: number;
   skipped_count: number;
   items: PromptEvaluationEvidenceSnapshot[];
@@ -192,7 +180,6 @@ export interface PromptEvaluationAssetEvidenceArchivePackage {
   schema_version: string;
   asset_id: string;
   snapshot_type: PromptEvaluationEvidenceSnapshotType;
-  total_runs: number;
   archived_run_count: number;
   asset: PromptEvaluationAsset;
   items: PromptEvaluationAssetEvidenceArchiveItem[];
@@ -242,7 +229,6 @@ export interface PromptEvaluationOptimizationCandidate {
   run_id: string;
   prompt_id: string;
   candidate_name: string;
-  candidate_content: string;
   rationale: string;
   failed_case_count: number;
   source_prompt_snapshot: Record<string, unknown>;
@@ -325,16 +311,6 @@ export interface PromptEvaluationSkillReEvalAssetResponse {
 
 export interface PromptEvaluationSkillReEvalRunResponse {
   run: Pick<PromptEvaluationRun, "id" | "status">;
-}
-
-export interface UpdatePromptEvaluationOptimizationCandidateRequest {
-  candidate_name: string;
-  candidate_content: string;
-  rationale?: string;
-  skill_patch?: Partial<PromptEvaluationSkillPatch> & {
-    patch: string;
-    candidate_intent: PromptEvaluationSkillPatch["candidate_intent"];
-  };
 }
 
 export interface PublishPromptEvaluationOptimizationCandidateResponse {

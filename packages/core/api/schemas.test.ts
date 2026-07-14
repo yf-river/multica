@@ -290,13 +290,6 @@ describe("PromptEvaluationAssetSchema", () => {
         agent_id: "agent-1",
       },
       status: "启用",
-      structure_schema: "multica.training_evaluation.asset_profile.v1",
-      structured_case_count: 1,
-      structured_variable_count: 1,
-      structured_assertion_count: 1,
-      linked_dataset_count: 0,
-      linked_prompt_count: 1,
-      evaluation_dimension_count: 2,
       created_by: "user-1",
       created_at: "2026-06-21T00:00:00Z",
       updated_at: "2026-06-21T00:00:00Z",
@@ -312,8 +305,6 @@ describe("PromptEvaluationAssetSchema", () => {
       baseline_output: "current output",
       agent_id: "agent-1",
     });
-    expect(parsed.structured_case_count).toBe(1);
-    expect(parsed.evaluation_dimension_count).toBe(2);
   });
 
   it("rejects invalid strict training evaluation payloads", () => {

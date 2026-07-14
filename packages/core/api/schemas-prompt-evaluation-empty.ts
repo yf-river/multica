@@ -33,16 +33,8 @@ export const EMPTY_PROMPT_EVALUATION_ASSET: PromptEvaluationAsset = {
   created_by: null,
   created_at: "",
   updated_at: "",
-  structure_schema: "multica.training_evaluation.asset_profile.v1",
-  structured_case_count: 0,
-  structured_variable_count: 0,
-  structured_assertion_count: 0,
-  linked_dataset_count: 0,
-  linked_prompt_count: 0,
-  evaluation_dimension_count: 0,
   dataset_row_count: 0,
   test_suite_case_count: 0,
-  experiment_dimension_count: 0,
 };
 
 export const EMPTY_PROMPT_EVALUATION_ASSET_LIST_RESPONSE: ListPromptEvaluationAssetsResponse = {
@@ -74,7 +66,6 @@ export const EMPTY_PROMPT_EVALUATION_RUN: PromptEvaluationRun = {
   failed_cases: 0,
   pass_rate: 0,
   total_duration_ms: 0,
-  average_duration_ms: 0,
   input_tokens: 0,
   output_tokens: 0,
   estimated_cost: 0,
@@ -89,7 +80,6 @@ export const EMPTY_PROMPT_EVALUATION_RUN: PromptEvaluationRun = {
   updated_at: "",
   review_decision: "",
   review_note: "",
-  reviewed_by: null,
   reviewed_at: "",
 };
 
@@ -127,7 +117,6 @@ export const EMPTY_PROMPT_EVALUATION_EVIDENCE_SNAPSHOT: PromptEvaluationEvidence
 export const EMPTY_PROMPT_EVALUATION_ASSET_EVIDENCE_SNAPSHOT_RESPONSE: PromptEvaluationAssetEvidenceSnapshotResponse = {
   asset_id: "",
   snapshot_type: "验收归档",
-  total_runs: 0,
   created_count: 0,
   skipped_count: 0,
   items: [],
@@ -138,7 +127,6 @@ export const EMPTY_PROMPT_EVALUATION_ASSET_EVIDENCE_ARCHIVE_PACKAGE: PromptEvalu
   schema_version: "multica.prompt_evaluation.asset_evidence_archive.v1",
   asset_id: "",
   snapshot_type: "验收归档",
-  total_runs: 0,
   archived_run_count: 0,
   asset: EMPTY_PROMPT_EVALUATION_ASSET,
   items: [],
@@ -186,7 +174,6 @@ export const EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE: PromptEvaluationOpt
   run_id: "",
   prompt_id: "",
   candidate_name: "",
-  candidate_content: "",
   rationale: "",
   failed_case_count: 0,
   source_prompt_snapshot: {},

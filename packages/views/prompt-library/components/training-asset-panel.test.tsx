@@ -36,16 +36,8 @@ const asset: PromptEvaluationAsset = {
   created_by: null,
   created_at: "2026-07-09T00:00:00Z",
   updated_at: "2026-07-10T00:00:00Z",
-  structure_schema: "",
-  structured_case_count: 0,
-  structured_variable_count: 0,
-  structured_assertion_count: 0,
-  linked_dataset_count: 0,
-  linked_prompt_count: 0,
-  evaluation_dimension_count: 0,
   dataset_row_count: 0,
   test_suite_case_count: 0,
-  experiment_dimension_count: 0,
 };
 
 const originalDraft: ManualCaseDraft = {

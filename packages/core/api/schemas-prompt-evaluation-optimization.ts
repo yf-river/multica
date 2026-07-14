@@ -33,7 +33,6 @@ export const PromptEvaluationOptimizationCandidateSchema = z.object({
   run_id: NonEmptyStringSchema,
   prompt_id: NonEmptyStringSchema,
   candidate_name: z.string(),
-  candidate_content: z.string(),
   rationale: z.string().default(""),
   failed_case_count: z.number().default(0),
   source_prompt_snapshot: z.record(z.string(), z.unknown()).default({}),

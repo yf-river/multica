@@ -26,7 +26,6 @@ const run = {
   failed_cases: 1,
   pass_rate: 0.5,
   total_duration_ms: 1250,
-  average_duration_ms: 625,
   input_tokens: 10,
   output_tokens: 20,
   estimated_cost: 0.01,
@@ -41,7 +40,6 @@ const run = {
   updated_at: "2026-07-10T00:00:01Z",
   review_decision: "",
   review_note: "",
-  reviewed_by: null,
   reviewed_at: "",
 } satisfies PromptEvaluationRun;
 

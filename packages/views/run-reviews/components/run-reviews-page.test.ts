@@ -96,7 +96,6 @@ function tool(overrides: Partial<PromptEvaluationToolCallChain> = {}): PromptEva
     input: { url: "/health" },
     output: "Error: HTTP 500 from upstream",
     duration_ms: 900,
-    result_category: "异常线索",
     failure_signal: true,
     failure_reason: "HTTP 500 from upstream",
     summary: "工具 curl-check 已配对：调用 #1，结果 #2",

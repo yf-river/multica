@@ -22,7 +22,6 @@ export const PromptEvaluationRunSchema = z.object({
   failed_cases: z.number().default(0),
   pass_rate: z.number().default(0),
   total_duration_ms: z.number().default(0),
-  average_duration_ms: z.number().default(0),
   input_tokens: z.number().default(0),
   output_tokens: z.number().default(0),
   estimated_cost: z.number().default(0),
@@ -37,7 +36,6 @@ export const PromptEvaluationRunSchema = z.object({
   updated_at: z.string().default(""),
   review_decision: z.enum(["", "通过", "未通过"]).default(""),
   review_note: z.string().default(""),
-  reviewed_by: z.string().nullable().optional().transform((v) => v ?? null),
   reviewed_at: z.string().default(""),
 }).loose();
 
@@ -98,7 +96,6 @@ const PromptEvaluationToolCallChainSchema = z.object({
   input: z.record(z.string(), z.unknown()).optional(),
   output: z.string().optional(),
   duration_ms: z.number().optional(),
-  result_category: z.string().optional(),
   failure_signal: z.boolean().default(false),
   failure_reason: z.string().optional(),
   summary: z.string().default(""),
@@ -140,7 +137,6 @@ export const PromptEvaluationEvidenceSnapshotListResponseSchema = z.object({
 export const PromptEvaluationAssetEvidenceSnapshotResponseSchema = z.object({
   asset_id: NonEmptyStringSchema,
   snapshot_type: z.enum(["手动归档", "验收归档", "自动归档"]).default("验收归档"),
-  total_runs: z.number().default(0),
   created_count: z.number().default(0),
   skipped_count: z.number().default(0),
   items: z.array(PromptEvaluationEvidenceSnapshotSchema).default([]),
@@ -154,7 +150,6 @@ export const PromptEvaluationAssetEvidenceArchivePackageSchema = z.object({
   schema_version: z.string().default("multica.prompt_evaluation.asset_evidence_archive.v1"),
   asset_id: z.string().default(""),
   snapshot_type: z.enum(["手动归档", "验收归档", "自动归档"]).default("验收归档"),
-  total_runs: z.number().default(0),
   archived_run_count: z.number().default(0),
   asset: PromptEvaluationAssetSchema,
   items: z.array(z.object({
