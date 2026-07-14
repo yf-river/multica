@@ -20,22 +20,21 @@ import (
 	"time"
 )
 
-// ChecksumManifestName is the asset name GoReleaser publishes for the
+// checksumManifestName is the asset name GoReleaser publishes for the
 // checksum manifest (`checksum.name_template: "checksums.txt"` in
 // .goreleaser.yml). Kept as a constant rather than inlined so a future rename
 // changes one place.
-const ChecksumManifestName = "checksums.txt"
+const checksumManifestName = "checksums.txt"
 
 const DefaultUpdateDownloadTimeout = 120 * time.Second
 
 // GitHubRelease is the subset of the GitHub releases API response we need.
 type GitHubRelease struct {
 	TagName string               `json:"tag_name"`
-	HTMLURL string               `json:"html_url"`
-	Assets  []GitHubReleaseAsset `json:"assets"`
+	Assets  []githubReleaseAsset `json:"assets"`
 }
 
-type GitHubReleaseAsset struct {
+type githubReleaseAsset struct {
 	Name               string `json:"name"`
 	BrowserDownloadURL string `json:"browser_download_url"`
 }
@@ -62,7 +61,7 @@ func releaseAssetName(targetVersion, goos, goarch string) string {
 	return fmt.Sprintf("multica-cli-%s-%s-%s.%s", version, goos, goarch, ext)
 }
 
-func findReleaseAsset(assets []GitHubReleaseAsset, targetVersion, goos, goarch string) (*GitHubReleaseAsset, error) {
+func findReleaseAsset(assets []githubReleaseAsset, targetVersion, goos, goarch string) (*githubReleaseAsset, error) {
 	want := releaseAssetName(targetVersion, goos, goarch)
 	for i := range assets {
 		if assets[i].Name == want {
@@ -77,13 +76,13 @@ func findReleaseAsset(assets []GitHubReleaseAsset, targetVersion, goos, goarch s
 // verification — if it is missing we refuse to replace the binary rather
 // than fall back to unverified install, because the auto-update poller runs
 // unattended and an unverified binary swap is a supply-chain risk.
-func findChecksumManifestAsset(assets []GitHubReleaseAsset) (*GitHubReleaseAsset, error) {
+func findChecksumManifestAsset(assets []githubReleaseAsset) (*githubReleaseAsset, error) {
 	for i := range assets {
-		if assets[i].Name == ChecksumManifestName {
+		if assets[i].Name == checksumManifestName {
 			return &assets[i], nil
 		}
 	}
-	return nil, fmt.Errorf("checksum manifest %q not present in release", ChecksumManifestName)
+	return nil, fmt.Errorf("checksum manifest %q not present in release", checksumManifestName)
 }
 
 // parseChecksumManifest reads a GoReleaser-style "<sha256>  <filename>"

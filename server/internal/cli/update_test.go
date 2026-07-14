@@ -50,7 +50,7 @@ func TestReleaseAssetName(t *testing.T) {
 
 func TestFindReleaseAsset(t *testing.T) {
 	t.Run("finds the current versioned asset", func(t *testing.T) {
-		assets := []GitHubReleaseAsset{
+		assets := []githubReleaseAsset{
 			{Name: "multica-cli-1.2.3-darwin-amd64.tar.gz", BrowserDownloadURL: "new"},
 		}
 
@@ -64,7 +64,7 @@ func TestFindReleaseAsset(t *testing.T) {
 	})
 
 	t.Run("returns error when no candidate matches", func(t *testing.T) {
-		_, err := findReleaseAsset([]GitHubReleaseAsset{{Name: "checksums.txt"}}, "1.2.3", "linux", "amd64")
+		_, err := findReleaseAsset([]githubReleaseAsset{{Name: "checksums.txt"}}, "1.2.3", "linux", "amd64")
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
@@ -73,7 +73,7 @@ func TestFindReleaseAsset(t *testing.T) {
 
 func TestFindChecksumManifestAsset(t *testing.T) {
 	t.Run("finds checksums.txt among assets", func(t *testing.T) {
-		assets := []GitHubReleaseAsset{
+		assets := []githubReleaseAsset{
 			{Name: "multica-cli-1.2.3-darwin-arm64.tar.gz"},
 			{Name: "checksums.txt", BrowserDownloadURL: "https://example/checksums.txt"},
 			{Name: "multica-cli-1.2.3-linux-amd64.tar.gz"},
@@ -88,7 +88,7 @@ func TestFindChecksumManifestAsset(t *testing.T) {
 	})
 
 	t.Run("returns error when manifest missing", func(t *testing.T) {
-		_, err := findChecksumManifestAsset([]GitHubReleaseAsset{
+		_, err := findChecksumManifestAsset([]githubReleaseAsset{
 			{Name: "multica-cli-1.2.3-darwin-arm64.tar.gz"},
 		})
 		if err == nil {

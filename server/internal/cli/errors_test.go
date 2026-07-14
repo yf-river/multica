@@ -23,21 +23,21 @@ func TestClassifyNetworkError(t *testing.T) {
 	cases := []struct {
 		name string
 		err  error
-		want ErrorKind
+		want errorKind
 	}{
-		{"context deadline", context.DeadlineExceeded, KindNetworkTimeout},
-		{"wrapped deadline", fmt.Errorf("resolve issue: %w", context.DeadlineExceeded), KindNetworkTimeout},
-		{"net timeout", timeoutErr{}, KindNetworkTimeout},
-		{"dns", &net.DNSError{Err: "no such host", Name: "api.multica.ai", IsNotFound: true}, KindNetworkDNS},
-		{"connection refused", syscall.ECONNREFUSED, KindNetworkRefused},
-		{"x509 unknown authority", x509.UnknownAuthorityError{}, KindNetworkTLS},
-		{"x509 hostname", x509.HostnameError{Host: "api.multica.ai"}, KindNetworkTLS},
-		{"timeout string fallback", errors.New("Get \"https://x\": net/http: request canceled (Client.Timeout exceeded)"), KindNetworkTimeout},
-		{"dns string fallback", errors.New("dial tcp: lookup api.multica.ai: no such host"), KindNetworkDNS},
-		{"refused string fallback", errors.New("dial tcp 127.0.0.1:443: connect: connection refused"), KindNetworkRefused},
-		{"tls string fallback", errors.New("x509: certificate signed by unknown authority"), KindNetworkTLS},
-		{"offline catch-all", errors.New("write: connection reset by peer"), KindNetworkOffline},
-		{"nil", nil, KindUnknown},
+		{"context deadline", context.DeadlineExceeded, errorKindNetworkTimeout},
+		{"wrapped deadline", fmt.Errorf("resolve issue: %w", context.DeadlineExceeded), errorKindNetworkTimeout},
+		{"net timeout", timeoutErr{}, errorKindNetworkTimeout},
+		{"dns", &net.DNSError{Err: "no such host", Name: "api.multica.ai", IsNotFound: true}, errorKindNetworkDNS},
+		{"connection refused", syscall.ECONNREFUSED, errorKindNetworkRefused},
+		{"x509 unknown authority", x509.UnknownAuthorityError{}, errorKindNetworkTLS},
+		{"x509 hostname", x509.HostnameError{Host: "api.multica.ai"}, errorKindNetworkTLS},
+		{"timeout string fallback", errors.New("Get \"https://x\": net/http: request canceled (Client.Timeout exceeded)"), errorKindNetworkTimeout},
+		{"dns string fallback", errors.New("dial tcp: lookup api.multica.ai: no such host"), errorKindNetworkDNS},
+		{"refused string fallback", errors.New("dial tcp 127.0.0.1:443: connect: connection refused"), errorKindNetworkRefused},
+		{"tls string fallback", errors.New("x509: certificate signed by unknown authority"), errorKindNetworkTLS},
+		{"offline catch-all", errors.New("write: connection reset by peer"), errorKindNetworkOffline},
+		{"nil", nil, errorKindUnknown},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -51,36 +51,36 @@ func TestClassifyNetworkError(t *testing.T) {
 func TestHTTPErrorKind(t *testing.T) {
 	cases := []struct {
 		status int
-		want   ErrorKind
+		want   errorKind
 	}{
-		{401, KindAuthRequired},
-		{403, KindForbidden},
-		{404, KindNotFound},
-		{409, KindConflict},
-		{400, KindValidation},
-		{422, KindValidation},
-		{429, KindRateLimited},
-		{500, KindServerError},
-		{502, KindServerError},
-		{418, KindUnknown},
+		{401, errorKindAuthRequired},
+		{403, errorKindForbidden},
+		{404, errorKindNotFound},
+		{409, errorKindConflict},
+		{400, errorKindValidation},
+		{422, errorKindValidation},
+		{429, errorKindRateLimited},
+		{500, errorKindServerError},
+		{502, errorKindServerError},
+		{418, errorKindUnknown},
 	}
 	for _, tc := range cases {
 		t.Run(fmt.Sprintf("status_%d", tc.status), func(t *testing.T) {
 			e := &HTTPError{StatusCode: tc.status}
-			if got := e.Kind(); got != tc.want {
-				t.Errorf("HTTPError{%d}.Kind() = %d, want %d", tc.status, got, tc.want)
+			if got := e.kind(); got != tc.want {
+				t.Errorf("HTTPError{%d}.kind() = %d, want %d", tc.status, got, tc.want)
 			}
 		})
 	}
 }
 
-// TestFormatErrorAllKinds asserts that every ErrorKind produces a non-empty
+// TestFormatErrorAllKinds asserts that every errorKind produces a non-empty
 // Chinese user-facing message.
 func TestFormatErrorAllKinds(t *testing.T) {
-	allKinds := []ErrorKind{
-		KindNetworkTimeout, KindNetworkDNS, KindNetworkRefused, KindNetworkTLS, KindNetworkOffline,
-		KindAuthRequired, KindForbidden, KindNotFound, KindConflict, KindValidation,
-		KindRateLimited, KindServerError, KindUnknown,
+	allKinds := []errorKind{
+		errorKindNetworkTimeout, errorKindNetworkDNS, errorKindNetworkRefused, errorKindNetworkTLS, errorKindNetworkOffline,
+		errorKindAuthRequired, errorKindForbidden, errorKindNotFound, errorKindConflict, errorKindValidation,
+		errorKindRateLimited, errorKindServerError, errorKindUnknown,
 	}
 	for _, k := range allKinds {
 		msg := messageFor(k)
@@ -92,7 +92,7 @@ func TestFormatErrorAllKinds(t *testing.T) {
 
 func TestFormatErrorNetwork(t *testing.T) {
 	raw := errors.New("Get \"https://api.multica.ai/api/issues/abc\": context deadline exceeded")
-	netErr := &NetworkError{Kind: KindNetworkTimeout, Op: "GET /api/issues/abc", Err: raw}
+	netErr := &networkError{kind: errorKindNetworkTimeout, operation: "GET /api/issues/abc", cause: raw}
 	wrapped := fmt.Errorf("resolve issue: %w", netErr)
 
 	got := FormatError(wrapped, false)
@@ -106,7 +106,7 @@ func TestFormatErrorNetwork(t *testing.T) {
 }
 
 func TestFormatErrorChineseOutput(t *testing.T) {
-	netErr := &NetworkError{Kind: KindNetworkDNS, Err: errors.New("no such host")}
+	netErr := &networkError{kind: errorKindNetworkDNS, cause: errors.New("no such host")}
 	got := FormatError(netErr, false)
 	if !strings.Contains(got, "无法解析") {
 		t.Errorf("expected Chinese DNS message, got %q", got)
@@ -158,8 +158,8 @@ func TestExitCodeFor(t *testing.T) {
 		want int
 	}{
 		{"nil", nil, 0},
-		{"network", &NetworkError{Kind: KindNetworkTimeout, Err: errors.New("x")}, ExitNetwork},
-		{"wrapped network", fmt.Errorf("resolve: %w", &NetworkError{Kind: KindNetworkDNS, Err: errors.New("x")}), ExitNetwork},
+		{"network", &networkError{kind: errorKindNetworkTimeout, cause: errors.New("x")}, ExitNetwork},
+		{"wrapped network", fmt.Errorf("resolve: %w", &networkError{kind: errorKindNetworkDNS, cause: errors.New("x")}), ExitNetwork},
 		{"auth 401", &HTTPError{StatusCode: 401}, ExitAuth},
 		{"forbidden 403", &HTTPError{StatusCode: 403}, ExitAuth},
 		{"not found 404", &HTTPError{StatusCode: 404}, ExitNotFound},
@@ -226,22 +226,22 @@ func TestHTTPTimeout(t *testing.T) {
 }
 
 func TestErrorKindString(t *testing.T) {
-	cases := map[ErrorKind]string{
-		KindNetworkTimeout: "network_timeout",
-		KindNetworkDNS:     "network_dns",
-		KindNetworkRefused: "network_refused",
-		KindNetworkTLS:     "network_tls",
-		KindNetworkOffline: "network_offline",
-		KindAuthRequired:   "auth_required",
-		KindForbidden:      "forbidden",
-		KindNotFound:       "not_found",
-		KindConflict:       "conflict",
-		KindValidation:     "validation",
-		KindRateLimited:    "rate_limited",
-		KindServerError:    "server_error",
-		KindUnknown:        "unknown",
+	cases := map[errorKind]string{
+		errorKindNetworkTimeout: "network_timeout",
+		errorKindNetworkDNS:     "network_dns",
+		errorKindNetworkRefused: "network_refused",
+		errorKindNetworkTLS:     "network_tls",
+		errorKindNetworkOffline: "network_offline",
+		errorKindAuthRequired:   "auth_required",
+		errorKindForbidden:      "forbidden",
+		errorKindNotFound:       "not_found",
+		errorKindConflict:       "conflict",
+		errorKindValidation:     "validation",
+		errorKindRateLimited:    "rate_limited",
+		errorKindServerError:    "server_error",
+		errorKindUnknown:        "unknown",
 	}
-	seen := map[string]ErrorKind{}
+	seen := map[string]errorKind{}
 	for k, want := range cases {
 		if got := k.String(); got != want {
 			t.Errorf("ErrorKind(%d).String() = %q, want %q", int(k), got, want)
@@ -252,7 +252,7 @@ func TestErrorKindString(t *testing.T) {
 		seen[k.String()] = k
 	}
 	// Out-of-range value gets a stable fallback rather than an empty string.
-	if got := ErrorKind(999).String(); got != "ErrorKind(999)" {
+	if got := errorKind(999).String(); got != "ErrorKind(999)" {
 		t.Errorf("unexpected fallback String(): %q", got)
 	}
 }
@@ -324,8 +324,8 @@ func TestUserMessageError(t *testing.T) {
 		}
 	})
 
-	t.Run("wrapped NetworkError classifies as network", func(t *testing.T) {
-		underlying := &NetworkError{Kind: KindNetworkTimeout, Op: "GET /api/me", Err: errors.New("context deadline exceeded")}
+	t.Run("wrapped network error classifies as network", func(t *testing.T) {
+		underlying := &networkError{kind: errorKindNetworkTimeout, operation: "GET /api/me", cause: errors.New("context deadline exceeded")}
 		err := WithUserMessage("登录未完成：服务器未接受新的凭证。请重新运行 `multica login`。", underlying)
 
 		if code := ExitCodeFor(err); code != ExitNetwork {
