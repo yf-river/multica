@@ -2003,6 +2003,12 @@ ALTER TABLE ONLY public.task_usage
     ADD CONSTRAINT task_usage_pkey PRIMARY KEY (id);
 ALTER TABLE ONLY public.task_usage
     ADD CONSTRAINT task_usage_task_id_provider_model_key UNIQUE (task_id, provider, model);
+ALTER TABLE ONLY public.task_usage
+    ADD CONSTRAINT task_usage_provider_canonical CHECK ((provider = lower(btrim(provider))));
+ALTER TABLE ONLY public.task_usage_hourly_dirty
+    ADD CONSTRAINT task_usage_hourly_dirty_provider_canonical CHECK ((provider = lower(btrim(provider))));
+ALTER TABLE ONLY public.task_usage_hourly
+    ADD CONSTRAINT task_usage_hourly_provider_canonical CHECK ((provider = lower(btrim(provider))));
 ALTER TABLE ONLY public.issue
     ADD CONSTRAINT uq_issue_workspace_number UNIQUE (workspace_id, number);
 ALTER TABLE ONLY public.sys_cron_executions
