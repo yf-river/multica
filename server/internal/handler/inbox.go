@@ -91,21 +91,41 @@ func enrichInboxResponse(ctx context.Context, queries *db.Queries, resp InboxIte
 	return resp, nil
 }
 
-func (h *Handler) ListInbox(w http.ResponseWriter, r *http.Request) {
+type inboxRecipientScope struct {
+	workspaceID string
+	workspace   pgtype.UUID
+	userID      string
+	recipient   pgtype.UUID
+}
+
+func requireInboxRecipientScope(w http.ResponseWriter, r *http.Request) (inboxRecipientScope, bool) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
-		return
+		return inboxRecipientScope{}, false
 	}
 	workspaceID := ctxWorkspaceID(r.Context())
-	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
+	workspace, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
+	if !ok {
+		return inboxRecipientScope{}, false
+	}
+	return inboxRecipientScope{
+		workspaceID: workspaceID,
+		workspace:   workspace,
+		userID:      userID,
+		recipient:   parseUUID(userID),
+	}, true
+}
+
+func (h *Handler) ListInbox(w http.ResponseWriter, r *http.Request) {
+	scope, ok := requireInboxRecipientScope(w, r)
 	if !ok {
 		return
 	}
 
 	items, err := h.Queries.ListInboxItems(r.Context(), db.ListInboxItemsParams{
-		WorkspaceID:   wsUUID,
+		WorkspaceID:   scope.workspace,
 		RecipientType: "member",
-		RecipientID:   parseUUID(userID),
+		RecipientID:   scope.recipient,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list inbox")
@@ -209,20 +229,15 @@ func (h *Handler) ArchiveInboxItem(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) CountUnreadInbox(w http.ResponseWriter, r *http.Request) {
-	userID, ok := requireUserID(w, r)
-	if !ok {
-		return
-	}
-	workspaceID := ctxWorkspaceID(r.Context())
-	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
+	scope, ok := requireInboxRecipientScope(w, r)
 	if !ok {
 		return
 	}
 
 	count, err := h.Queries.CountUnreadInbox(r.Context(), db.CountUnreadInboxParams{
-		WorkspaceID:   wsUUID,
+		WorkspaceID:   scope.workspace,
 		RecipientType: "member",
-		RecipientID:   parseUUID(userID),
+		RecipientID:   scope.recipient,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to count unread inbox")
@@ -232,118 +247,67 @@ func (h *Handler) CountUnreadInbox(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]int64{"count": count})
 }
 
-func (h *Handler) MarkAllInboxRead(w http.ResponseWriter, r *http.Request) {
-	userID, ok := requireUserID(w, r)
-	if !ok {
-		return
-	}
-	workspaceID := ctxWorkspaceID(r.Context())
-	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
+type inboxBatchMutation func(context.Context, pgtype.UUID, pgtype.UUID) (int64, error)
+
+func (h *Handler) mutateInboxBatch(
+	w http.ResponseWriter,
+	r *http.Request,
+	action string,
+	event string,
+	failure string,
+	mutate inboxBatchMutation,
+) {
+	scope, ok := requireInboxRecipientScope(w, r)
 	if !ok {
 		return
 	}
 
-	count, err := h.Queries.MarkAllInboxRead(r.Context(), db.MarkAllInboxReadParams{
-		WorkspaceID: wsUUID,
-		RecipientID: parseUUID(userID),
-	})
+	count, err := mutate(r.Context(), scope.workspace, scope.recipient)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to mark all inbox read")
+		writeError(w, http.StatusInternalServerError, failure)
 		return
 	}
 
-	slog.Info("inbox: mark all read", append(logger.RequestAttrs(r), "user_id", userID, "count", count)...)
-	h.publish(protocol.EventInboxBatchRead, workspaceID, "member", userID, map[string]any{
-		"recipient_id": userID,
+	slog.Info("inbox: "+action, append(logger.RequestAttrs(r), "user_id", scope.userID, "count", count)...)
+	h.publish(event, scope.workspaceID, "member", scope.userID, map[string]any{
+		"recipient_id": scope.userID,
 		"count":        count,
 	})
-
 	writeJSON(w, http.StatusOK, map[string]any{"count": count})
+}
+
+func (h *Handler) MarkAllInboxRead(w http.ResponseWriter, r *http.Request) {
+	h.mutateInboxBatch(w, r, "mark all read", protocol.EventInboxBatchRead, "failed to mark all inbox read", func(ctx context.Context, workspaceID, recipientID pgtype.UUID) (int64, error) {
+		return h.Queries.MarkAllInboxRead(ctx, db.MarkAllInboxReadParams{
+			WorkspaceID: workspaceID,
+			RecipientID: recipientID,
+		})
+	})
 }
 
 func (h *Handler) ArchiveAllInbox(w http.ResponseWriter, r *http.Request) {
-	userID, ok := requireUserID(w, r)
-	if !ok {
-		return
-	}
-	workspaceID := ctxWorkspaceID(r.Context())
-	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
-	if !ok {
-		return
-	}
-
-	count, err := h.Queries.ArchiveAllInbox(r.Context(), db.ArchiveAllInboxParams{
-		WorkspaceID: wsUUID,
-		RecipientID: parseUUID(userID),
+	h.mutateInboxBatch(w, r, "archive all", protocol.EventInboxBatchArchived, "failed to archive all inbox", func(ctx context.Context, workspaceID, recipientID pgtype.UUID) (int64, error) {
+		return h.Queries.ArchiveAllInbox(ctx, db.ArchiveAllInboxParams{
+			WorkspaceID: workspaceID,
+			RecipientID: recipientID,
+		})
 	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to archive all inbox")
-		return
-	}
-
-	slog.Info("inbox: archive all", append(logger.RequestAttrs(r), "user_id", userID, "count", count)...)
-	h.publish(protocol.EventInboxBatchArchived, workspaceID, "member", userID, map[string]any{
-		"recipient_id": userID,
-		"count":        count,
-	})
-
-	writeJSON(w, http.StatusOK, map[string]any{"count": count})
 }
 
 func (h *Handler) ArchiveAllReadInbox(w http.ResponseWriter, r *http.Request) {
-	userID, ok := requireUserID(w, r)
-	if !ok {
-		return
-	}
-	workspaceID := ctxWorkspaceID(r.Context())
-	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
-	if !ok {
-		return
-	}
-
-	count, err := h.Queries.ArchiveAllReadInbox(r.Context(), db.ArchiveAllReadInboxParams{
-		WorkspaceID: wsUUID,
-		RecipientID: parseUUID(userID),
+	h.mutateInboxBatch(w, r, "archive all read", protocol.EventInboxBatchArchived, "failed to archive all read inbox", func(ctx context.Context, workspaceID, recipientID pgtype.UUID) (int64, error) {
+		return h.Queries.ArchiveAllReadInbox(ctx, db.ArchiveAllReadInboxParams{
+			WorkspaceID: workspaceID,
+			RecipientID: recipientID,
+		})
 	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to archive all read inbox")
-		return
-	}
-
-	slog.Info("inbox: archive all read", append(logger.RequestAttrs(r), "user_id", userID, "count", count)...)
-	h.publish(protocol.EventInboxBatchArchived, workspaceID, "member", userID, map[string]any{
-		"recipient_id": userID,
-		"count":        count,
-	})
-
-	writeJSON(w, http.StatusOK, map[string]any{"count": count})
 }
 
 func (h *Handler) ArchiveCompletedInbox(w http.ResponseWriter, r *http.Request) {
-	userID, ok := requireUserID(w, r)
-	if !ok {
-		return
-	}
-	workspaceID := ctxWorkspaceID(r.Context())
-	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
-	if !ok {
-		return
-	}
-
-	count, err := h.Queries.ArchiveCompletedInbox(r.Context(), db.ArchiveCompletedInboxParams{
-		WorkspaceID: wsUUID,
-		RecipientID: parseUUID(userID),
+	h.mutateInboxBatch(w, r, "archive completed", protocol.EventInboxBatchArchived, "failed to archive completed inbox", func(ctx context.Context, workspaceID, recipientID pgtype.UUID) (int64, error) {
+		return h.Queries.ArchiveCompletedInbox(ctx, db.ArchiveCompletedInboxParams{
+			WorkspaceID: workspaceID,
+			RecipientID: recipientID,
+		})
 	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to archive completed inbox")
-		return
-	}
-
-	slog.Info("inbox: archive completed", append(logger.RequestAttrs(r), "user_id", userID, "count", count)...)
-	h.publish(protocol.EventInboxBatchArchived, workspaceID, "member", userID, map[string]any{
-		"recipient_id": userID,
-		"count":        count,
-	})
-
-	writeJSON(w, http.StatusOK, map[string]any{"count": count})
 }
