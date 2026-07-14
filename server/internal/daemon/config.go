@@ -70,6 +70,29 @@ const (
 // MULTICA_GC_ARTIFACT_PATTERNS to extend the list per deployment.
 var DefaultGCArtifactPatterns = []string{"node_modules", ".next", ".turbo"}
 
+type agentProviderSpec struct {
+	provider string
+	pathEnv  string
+	command  string
+	modelEnv string
+}
+
+var agentProviderSpecs = []agentProviderSpec{
+	{provider: "claude", pathEnv: "MULTICA_CLAUDE_PATH", command: "claude", modelEnv: "MULTICA_CLAUDE_MODEL"},
+	{provider: "codex", pathEnv: "MULTICA_CODEX_PATH", command: "codex", modelEnv: "MULTICA_CODEX_MODEL"},
+	{provider: "opencode", pathEnv: "MULTICA_OPENCODE_PATH", command: "opencode", modelEnv: "MULTICA_OPENCODE_MODEL"},
+	{provider: "openclaw", pathEnv: "MULTICA_OPENCLAW_PATH", command: "openclaw", modelEnv: "MULTICA_OPENCLAW_MODEL"},
+	{provider: "hermes", pathEnv: "MULTICA_HERMES_PATH", command: "hermes", modelEnv: "MULTICA_HERMES_MODEL"},
+	{provider: "gemini", pathEnv: "MULTICA_GEMINI_PATH", command: "gemini", modelEnv: "MULTICA_GEMINI_MODEL"},
+	{provider: "pi", pathEnv: "MULTICA_PI_PATH", command: "pi", modelEnv: "MULTICA_PI_MODEL"},
+	{provider: "cursor", pathEnv: "MULTICA_CURSOR_PATH", command: "cursor-agent", modelEnv: "MULTICA_CURSOR_MODEL"},
+	{provider: "copilot", pathEnv: "MULTICA_COPILOT_PATH", command: "copilot", modelEnv: "MULTICA_COPILOT_MODEL"},
+	{provider: "kimi", pathEnv: "MULTICA_KIMI_PATH", command: "kimi", modelEnv: "MULTICA_KIMI_MODEL"},
+	{provider: "kiro", pathEnv: "MULTICA_KIRO_PATH", command: "kiro-cli", modelEnv: "MULTICA_KIRO_MODEL"},
+	{provider: "codebuddy", pathEnv: "MULTICA_CODEBUDDY_PATH", command: "codebuddy", modelEnv: "MULTICA_CODEBUDDY_MODEL"},
+	{provider: "antigravity", pathEnv: "MULTICA_ANTIGRAVITY_PATH", command: "agy", modelEnv: "MULTICA_ANTIGRAVITY_MODEL"},
+}
+
 // Config holds all daemon configuration.
 type Config struct {
 	ServerBaseURL                  string
@@ -203,13 +226,17 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	// spawning the user's login shell — that touches their rc files and
 	// adds startup latency that scales with whatever they put in there. We
 	// only fork a shell when a bare command name actually missed LookPath.
+	agentCommandNames := make([]string, 0, len(agentProviderSpecs))
+	for _, spec := range agentProviderSpecs {
+		agentCommandNames = append(agentCommandNames, spec.command)
+	}
 	var (
 		shellResolveOnce sync.Once
 		shellResolved    map[string]string
 	)
 	getShellResolved := func() map[string]string {
 		shellResolveOnce.Do(func() {
-			shellResolved = resolveAgentsViaLoginShell(defaultAgentCommandNames)
+			shellResolved = resolveAgentsViaLoginShell(agentCommandNames)
 		})
 		return shellResolved
 	}
@@ -249,49 +276,11 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		return AgentEntry{}, false
 	}
 
-	agents := map[string]AgentEntry{}
-	if e, ok := probe("MULTICA_CLAUDE_PATH", "claude", "MULTICA_CLAUDE_MODEL"); ok {
-		agents["claude"] = e
-	}
-	if e, ok := probe("MULTICA_CODEX_PATH", "codex", "MULTICA_CODEX_MODEL"); ok {
-		agents["codex"] = e
-	}
-	if e, ok := probe("MULTICA_OPENCODE_PATH", "opencode", "MULTICA_OPENCODE_MODEL"); ok {
-		agents["opencode"] = e
-	}
-	if e, ok := probe("MULTICA_OPENCLAW_PATH", "openclaw", "MULTICA_OPENCLAW_MODEL"); ok {
-		agents["openclaw"] = e
-	}
-	if e, ok := probe("MULTICA_HERMES_PATH", "hermes", "MULTICA_HERMES_MODEL"); ok {
-		agents["hermes"] = e
-	}
-	if e, ok := probe("MULTICA_GEMINI_PATH", "gemini", "MULTICA_GEMINI_MODEL"); ok {
-		agents["gemini"] = e
-	}
-	if e, ok := probe("MULTICA_PI_PATH", "pi", "MULTICA_PI_MODEL"); ok {
-		agents["pi"] = e
-	}
-	if e, ok := probe("MULTICA_CURSOR_PATH", "cursor-agent", "MULTICA_CURSOR_MODEL"); ok {
-		agents["cursor"] = e
-	}
-	if e, ok := probe("MULTICA_COPILOT_PATH", "copilot", "MULTICA_COPILOT_MODEL"); ok {
-		agents["copilot"] = e
-	}
-	if e, ok := probe("MULTICA_KIMI_PATH", "kimi", "MULTICA_KIMI_MODEL"); ok {
-		agents["kimi"] = e
-	}
-	if e, ok := probe("MULTICA_KIRO_PATH", "kiro-cli", "MULTICA_KIRO_MODEL"); ok {
-		agents["kiro"] = e
-	}
-	if e, ok := probe("MULTICA_CODEBUDDY_PATH", "codebuddy", "MULTICA_CODEBUDDY_MODEL"); ok {
-		agents["codebuddy"] = e
-	}
-	// agy 1.0.6 added a `--model` flag (MUL-3125), so Antigravity now takes a
-	// model env like every other backend. MULTICA_ANTIGRAVITY_MODEL seeds the
-	// daemon-wide default; its value is the exact `agy models` display string
-	// (e.g. "Claude Opus 4.6 (Thinking)"), not a provider/model slug.
-	if e, ok := probe("MULTICA_ANTIGRAVITY_PATH", "agy", "MULTICA_ANTIGRAVITY_MODEL"); ok {
-		agents["antigravity"] = e
+	agents := make(map[string]AgentEntry, len(agentProviderSpecs))
+	for _, spec := range agentProviderSpecs {
+		if entry, ok := probe(spec.pathEnv, spec.command, spec.modelEnv); ok {
+			agents[spec.provider] = entry
+		}
 	}
 	agents = filterAgentsByProviderEnv(agents)
 	if len(agents) == 0 {
@@ -602,16 +591,6 @@ func shellArgsFromEnv(name string) ([]string, error) {
 	return args, nil
 }
 
-// defaultAgentCommandNames lists the command names the agent probe loop tries
-// before any MULTICA_*_PATH override is applied. Kept in sync with the
-// `probe(...)` calls in LoadConfig — the shell-fallback resolver uses this
-// list to pre-fetch canonical paths for every known agent in a single shell
-// invocation, instead of paying the cost-per-miss.
-var defaultAgentCommandNames = []string{
-	"claude", "codex", "opencode", "openclaw", "hermes",
-	"gemini", "pi", "cursor-agent", "copilot", "kimi", "kiro-cli", "codebuddy", "agy",
-}
-
 var codexDesktopAppBundlePaths = func() []string {
 	paths := []string{
 		"/Applications/Codex.app/Contents/Resources/codex",
@@ -681,7 +660,7 @@ var supportedLoginShells = map[string]struct{}{
 //     fresh exec.LookPath check from the daemon's vantage point. That filters
 //     out aliases (`command -v` prints the alias definition for those, not a
 //     path) and per-shell paths the shell happened not to fully canonicalise.
-//   - Agent names are restricted to the bare set in defaultAgentCommandNames
+//   - Agent names are restricted to the commands in agentProviderSpecs
 //     (`[A-Za-z0-9._-]` only); we inline them into the script unquoted to
 //     keep the script readable. Custom MULTICA_*_PATH values never reach this
 //     resolver — those go through exec.LookPath directly.
