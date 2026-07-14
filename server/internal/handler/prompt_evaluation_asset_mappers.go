@@ -180,7 +180,7 @@ func promptEvaluationCaseToResponse(item db.PromptEvaluationCase, assertions []d
 		CaseName:         item.CaseName,
 		Variables:        mustDecodePersistedJSONObject(item.Variables, "prompt evaluation case variables"),
 		ExpectedContains: mustDecodePersistedJSONArray(item.ExpectedContains, "prompt evaluation case expected_contains"),
-		Assertions:       promptEvaluationCaseAssertionsToResponse(assertions),
+		Assertions:       promptEvaluationCaseAssertionsToResponse(item, assertions),
 		Input:            mustDecodePersistedJSONObject(item.Input, "prompt evaluation case input"),
 		Expected:         mustDecodePersistedJSONObject(item.Expected, "prompt evaluation case expected"),
 		Tags:             mustDecodePersistedJSONArray(item.Tags, "prompt evaluation case tags"),
@@ -213,20 +213,25 @@ func promptEvaluationCaseOperationToResponse(item db.PromptEvaluationCaseOperati
 	}
 }
 
-func promptEvaluationCaseAssertionsToResponse(assertions []db.PromptEvaluationCaseAssertion) []PromptEvaluationCaseAssertionResponse {
+func promptEvaluationCaseAssertionsToResponse(item db.PromptEvaluationCase, assertions []db.PromptEvaluationCaseAssertion) []PromptEvaluationCaseAssertionResponse {
+	expectedTexts := promptEvaluationAssertionTexts(item.ExpectedContains)
 	resp := make([]PromptEvaluationCaseAssertionResponse, 0, len(assertions))
-	for _, item := range assertions {
+	for _, assertion := range assertions {
+		index := int(assertion.AssertionIndex)
+		if index < 0 || index >= len(expectedTexts) {
+			panic("prompt evaluation case assertion index is outside expected_contains")
+		}
 		resp = append(resp, PromptEvaluationCaseAssertionResponse{
-			ID:             uuidToString(item.ID),
+			ID:             uuidToString(assertion.ID),
 			WorkspaceID:    uuidToString(item.WorkspaceID),
 			AssetID:        uuidToString(item.AssetID),
-			CaseID:         uuidToString(item.CaseID),
-			AssertionIndex: item.AssertionIndex,
-			AssertionType:  item.AssertionType,
-			ExpectedText:   item.ExpectedText,
+			CaseID:         uuidToString(item.ID),
+			AssertionIndex: assertion.AssertionIndex,
+			AssertionType:  "包含文本",
+			ExpectedText:   expectedTexts[index],
 			Status:         item.Status,
-			Source:         item.Source,
-			CreatedAt:      timestampToString(item.CreatedAt),
+			Source:         "expected_contains",
+			CreatedAt:      timestampToString(assertion.CreatedAt),
 		})
 	}
 	return resp
@@ -318,38 +323,28 @@ func promptEvaluationDimensionScoreTrendToResponse(item db.ListPromptEvaluationD
 	}
 }
 
-func promptEvaluationExpectedContainsFromAssertions(fallback []byte, assertions []db.PromptEvaluationCaseAssertion) []any {
-	if len(assertions) == 0 {
-		return mustDecodePersistedJSONArray(fallback, "prompt evaluation case expected_contains")
+func promptEvaluationExecutableExpectedContains(raw []byte) []any {
+	values := promptEvaluationAssertionTexts(raw)
+	if len(values) == 0 {
+		return mustDecodePersistedJSONArray(raw, "prompt evaluation case expected_contains")
 	}
-	result := make([]any, 0, len(assertions))
-	for _, item := range assertions {
-		if strings.TrimSpace(item.ExpectedText) != "" {
-			result = append(result, item.ExpectedText)
-		}
+	result := make([]any, len(values))
+	for index, value := range values {
+		result[index] = value
 	}
 	return result
 }
 
-func syncPromptEvaluationCaseAssertions(ctx context.Context, qtx *db.Queries, item db.PromptEvaluationCase, expectedContains []byte) ([]db.PromptEvaluationCaseAssertion, error) {
-	if err := qtx.DeletePromptEvaluationCaseAssertionsByCase(ctx, db.DeletePromptEvaluationCaseAssertionsByCaseParams{
-		WorkspaceID: item.WorkspaceID,
-		CaseID:      item.ID,
-	}); err != nil {
+func syncPromptEvaluationCaseAssertions(ctx context.Context, qtx *db.Queries, item db.PromptEvaluationCase) ([]db.PromptEvaluationCaseAssertion, error) {
+	if err := qtx.DeletePromptEvaluationCaseAssertionsByCase(ctx, item.ID); err != nil {
 		return nil, err
 	}
-	values := promptEvaluationAssertionTexts(expectedContains)
+	values := promptEvaluationAssertionTexts(item.ExpectedContains)
 	assertions := make([]db.PromptEvaluationCaseAssertion, 0, len(values))
-	for idx, value := range values {
+	for idx := range values {
 		assertion, err := qtx.CreatePromptEvaluationCaseAssertion(ctx, db.CreatePromptEvaluationCaseAssertionParams{
-			WorkspaceID:    item.WorkspaceID,
-			AssetID:        item.AssetID,
 			CaseID:         item.ID,
 			AssertionIndex: int32(idx),
-			ExpectedText:   value,
-			AssertionType:  "包含文本",
-			Status:         item.Status,
-			Source:         "expected_contains",
 		})
 		if err != nil {
 			return nil, err

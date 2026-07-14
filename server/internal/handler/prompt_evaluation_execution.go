@@ -260,21 +260,12 @@ func (h *Handler) promptEvaluationCasesForAsset(w http.ResponseWriter, r *http.R
 	if len(executableRows) == 0 {
 		return promptEvaluationCases(decodePayloadObject(asset.Payload)), true
 	}
-	assertions, err := h.Queries.ListPromptEvaluationCaseAssertions(r.Context(), db.ListPromptEvaluationCaseAssertionsParams{
-		WorkspaceID: asset.WorkspaceID,
-		AssetID:     asset.ID,
-	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list prompt evaluation case assertions")
-		return nil, false
-	}
-	assertionsByCase := promptEvaluationAssertionsByCase(assertions)
 	cases := make([]map[string]any, 0, len(executableRows))
 	for _, row := range executableRows {
 		cases = append(cases, map[string]any{
 			"case_name":         row.CaseName,
 			"variables":         mustDecodePersistedJSONObject(row.Variables, "prompt evaluation case variables"),
-			"expected_contains": promptEvaluationExpectedContainsFromAssertions(row.ExpectedContains, assertionsByCase[uuidToString(row.ID)]),
+			"expected_contains": promptEvaluationExecutableExpectedContains(row.ExpectedContains),
 			"tags":              mustDecodePersistedJSONArray(row.Tags, "prompt evaluation case tags"),
 		})
 	}

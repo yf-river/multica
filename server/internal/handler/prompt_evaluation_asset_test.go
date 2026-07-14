@@ -1054,7 +1054,10 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 	if len(created.Assertions) != 2 || created.Assertions[0].ExpectedText != "trace/task id" || created.Assertions[1].ExpectedText != "验收条件" {
 		t.Fatalf("created assertions = %+v", created.Assertions)
 	}
-	assertPromptEvaluationCaseAssertions(t, created.ID, []string{"trace/task id", "验收条件"})
+	if created.Assertions[0].ID == "" || created.Assertions[0].WorkspaceID != testWorkspaceID || created.Assertions[0].AssetID != asset.ID || created.Assertions[0].CaseID != created.ID || created.Assertions[0].AssertionIndex != 0 || created.Assertions[0].AssertionType != "包含文本" || created.Assertions[0].Status != "启用" || created.Assertions[0].Source != "expected_contains" || created.Assertions[0].CreatedAt == "" {
+		t.Fatalf("created assertion contract = %+v", created.Assertions[0])
+	}
+	assertPromptEvaluationCaseAssertionIdentities(t, created.ID, 2)
 	assertPromptEvaluationDatasetRowsContain(t, asset.ID, []string{"登录失败需要 trace"})
 	runW := httptest.NewRecorder()
 	testHandler.RunPromptEvaluationAsset(runW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+asset.ID+"/run", nil), "id", asset.ID))
@@ -1112,7 +1115,7 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 	if len(updated.Assertions) != 1 || updated.Assertions[0].ExpectedText != "可观测证据" || updated.Assertions[0].Status != "归档" {
 		t.Fatalf("updated assertions = %+v", updated.Assertions)
 	}
-	assertPromptEvaluationCaseAssertions(t, created.ID, []string{"可观测证据"})
+	assertPromptEvaluationCaseAssertionIdentities(t, created.ID, 1)
 	assertPromptEvaluationDatasetRowsContain(t, asset.ID, []string{"登录失败需要可观测证据"})
 	listW := httptest.NewRecorder()
 	testHandler.ListPromptEvaluationCases(listW, newRequest(http.MethodGet, "/api/prompt-evaluation-cases?asset_id="+asset.ID, nil))
@@ -1137,7 +1140,7 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 	if listed.Total != 2 || listed.TotalCount != 2 || listedManual == nil {
 		t.Fatalf("listed cases = %+v", listed)
 	}
-	if len(listedManual.Assertions) != 1 || listedManual.Assertions[0].ExpectedText != "可观测证据" {
+	if len(listedManual.Assertions) != 1 || listedManual.Assertions[0].ExpectedText != "可观测证据" || listedManual.Assertions[0].ID != updated.Assertions[0].ID {
 		t.Fatalf("listed assertions = %+v", listedManual.Assertions)
 	}
 	firstPageW := httptest.NewRecorder()
@@ -1536,7 +1539,7 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 	if listed.Total != 1 || listed.Items[0].Source != "payload" {
 		t.Fatalf("cases after delete = %+v", listed)
 	}
-	assertPromptEvaluationCaseAssertions(t, created.ID, nil)
+	assertPromptEvaluationCaseAssertionIdentities(t, created.ID, 0)
 	assertPromptEvaluationDatasetRows(t, asset.ID, []string{"基准载荷用例"})
 
 	createSuiteW := httptest.NewRecorder()
@@ -3442,10 +3445,10 @@ func createPromptEvaluationTestPromptWithContent(t *testing.T, workspaceID, name
 	return promptID
 }
 
-func assertPromptEvaluationCaseAssertions(t *testing.T, caseID string, expected []string) {
+func assertPromptEvaluationCaseAssertionIdentities(t *testing.T, caseID string, expectedCount int) {
 	t.Helper()
 	rows, err := testPool.Query(context.Background(), `
-		SELECT expected_text
+		SELECT assertion_index
 		FROM prompt_evaluation_case_assertion
 		WHERE case_id = $1
 		ORDER BY assertion_index ASC
@@ -3454,23 +3457,23 @@ func assertPromptEvaluationCaseAssertions(t *testing.T, caseID string, expected 
 		t.Fatalf("query case assertions: %v", err)
 	}
 	defer rows.Close()
-	actual := []string{}
+	actual := []int32{}
 	for rows.Next() {
-		var value string
-		if err := rows.Scan(&value); err != nil {
+		var index int32
+		if err := rows.Scan(&index); err != nil {
 			t.Fatalf("scan case assertion: %v", err)
 		}
-		actual = append(actual, value)
+		actual = append(actual, index)
 	}
 	if err := rows.Err(); err != nil {
 		t.Fatalf("iterate case assertions: %v", err)
 	}
-	if len(actual) != len(expected) {
-		t.Fatalf("case assertions = %#v, want %#v", actual, expected)
+	if len(actual) != expectedCount {
+		t.Fatalf("case assertion indexes = %#v, want %d identities", actual, expectedCount)
 	}
-	for idx := range expected {
-		if actual[idx] != expected[idx] {
-			t.Fatalf("case assertions = %#v, want %#v", actual, expected)
+	for index := range actual {
+		if actual[index] != int32(index) {
+			t.Fatalf("case assertion indexes = %#v, want contiguous indexes", actual)
 		}
 	}
 }

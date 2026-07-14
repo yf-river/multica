@@ -739,7 +739,7 @@ func (h *Handler) syncPromptEvaluationCasesFromPayload(w http.ResponseWriter, r 
 			writeError(w, http.StatusInternalServerError, "failed to create prompt evaluation case")
 			return false
 		}
-		if _, err := syncPromptEvaluationCaseAssertions(r.Context(), qtx, created, expectedContains); err != nil {
+		if _, err := syncPromptEvaluationCaseAssertions(r.Context(), qtx, created); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to create prompt evaluation case assertions")
 			return false
 		}

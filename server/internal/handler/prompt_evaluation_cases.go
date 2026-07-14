@@ -1020,7 +1020,7 @@ func (h *Handler) CreatePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, "failed to create prompt evaluation case")
 		return
 	}
-	assertions, err := syncPromptEvaluationCaseAssertions(r.Context(), qtx, created, expectedContains)
+	assertions, err := syncPromptEvaluationCaseAssertions(r.Context(), qtx, created)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create prompt evaluation case assertions")
 		return
@@ -1282,7 +1282,7 @@ func (h *Handler) UpdatePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, "failed to update prompt evaluation case")
 		return
 	}
-	assertions, err := syncPromptEvaluationCaseAssertions(r.Context(), qtx, updated, expectedContains)
+	assertions, err := syncPromptEvaluationCaseAssertions(r.Context(), qtx, updated)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update prompt evaluation case assertions")
 		return

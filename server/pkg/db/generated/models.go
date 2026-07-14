@@ -345,7 +345,7 @@ type DomainEventOutbox struct {
 	ProcessedAt      pgtype.Timestamptz `json:"processed_at"`
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 	StreamKey        pgtype.Text        `json:"stream_key"`
-	SequenceNo       pgtype.Int8        `json:"sequence_no"`
+	SequenceNo       int64              `json:"sequence_no"`
 	DeadLetteredAt   pgtype.Timestamptz `json:"dead_lettered_at"`
 	DeadLetterReason pgtype.Text        `json:"dead_letter_reason"`
 }
@@ -716,14 +716,8 @@ type PromptEvaluationCase struct {
 
 type PromptEvaluationCaseAssertion struct {
 	ID             pgtype.UUID        `json:"id"`
-	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
-	AssetID        pgtype.UUID        `json:"asset_id"`
 	CaseID         pgtype.UUID        `json:"case_id"`
 	AssertionIndex int32              `json:"assertion_index"`
-	AssertionType  string             `json:"assertion_type"`
-	ExpectedText   string             `json:"expected_text"`
-	Status         string             `json:"status"`
-	Source         string             `json:"source"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 }
 

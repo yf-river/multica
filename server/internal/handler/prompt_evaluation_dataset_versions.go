@@ -147,7 +147,7 @@ func (h *Handler) CreatePromptEvaluationDatasetFromTraces(w http.ResponseWriter,
 			writeError(w, http.StatusInternalServerError, "failed to create trace dataset case")
 			return
 		}
-		assertions, err := syncPromptEvaluationCaseAssertions(r.Context(), qtx, created, mustJSONBytes(expectedContains))
+		assertions, err := syncPromptEvaluationCaseAssertions(r.Context(), qtx, created)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to create trace dataset assertions")
 			return
@@ -725,7 +725,7 @@ func (h *Handler) RestorePromptEvaluationDatasetVersion(w http.ResponseWriter, r
 			writeError(w, http.StatusInternalServerError, "failed to recreate dataset case from version")
 			return
 		}
-		assertions, err := syncPromptEvaluationCaseAssertions(r.Context(), qtx, created, row.ExpectedContains)
+		assertions, err := syncPromptEvaluationCaseAssertions(r.Context(), qtx, created)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to recreate dataset case assertions")
 			return
