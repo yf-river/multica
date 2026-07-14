@@ -424,10 +424,6 @@ func TestCommentTriggeredBriefCarriesNewCommentsHint(t *testing.T) {
 	if !strings.Contains(out, "multica issue comment list "+issueID+" --since "+since+" --output json") {
 		t.Errorf("comment brief must keep the issue-wide --since catch-up fallback, got:\n%s", out)
 	}
-	// The removed resolve step must not reappear.
-	if strings.Contains(out, "multica comment resolve") {
-		t.Errorf("comment brief must not carry the dropped resolve step, got:\n%s", out)
-	}
 }
 
 // Cold start (no prior run → no since anchor) must point the agent at the

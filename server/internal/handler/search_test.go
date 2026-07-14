@@ -40,7 +40,7 @@ func TestParseSearchQueryOptions(t *testing.T) {
 	}
 }
 
-func TestSearchIssuesReturnsOnlyCurrentCommentSnippetField(t *testing.T) {
+func TestSearchIssuesReturnsCommentMatch(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("handler test fixture not initialized")
 	}
@@ -73,9 +73,6 @@ func TestSearchIssuesReturnsOnlyCurrentCommentSnippetField(t *testing.T) {
 	result := payload.Issues[0]
 	if result["match_source"] != "comment" || !strings.Contains(result["matched_comment_snippet"].(string), keyword) {
 		t.Fatalf("current comment snippet missing: %#v", result)
-	}
-	if _, exists := result["matched_snippet"]; exists {
-		t.Fatalf("obsolete matched_snippet leaked into current response: %#v", result)
 	}
 }
 

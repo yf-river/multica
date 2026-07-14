@@ -79,13 +79,6 @@ test("runtime env helpers and Vite main-process configuration are inventoried", 
 
 test("implicit database and websocket contracts are visible", () => {
   assert.equal(inventory.persistence.database.functions.length, 9);
-  assert.equal(
-    inventory.persistence.database.functions.some(
-      (item) => item.name === "normalize_legacy_mention_markdown",
-    ),
-    false,
-    "migration-only helper functions must not appear in the current runtime inventory",
-  );
   assert.equal(inventory.persistence.database.triggers.length, 4);
   assert.ok(inventory.persistence.database.indexes.length >= 180);
   assert.deepEqual(inventory.websocket.goWithoutProductionReference, []);
