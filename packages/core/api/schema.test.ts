@@ -153,7 +153,6 @@ describe("ApiClient schema fallback", () => {
       stubFetchJson({
         cdn_domain: "cdn.example.com",
         cdn_signed: false,
-        allow_signup: true,
         posthog_key: "",
         posthog_host: "",
         analytics_environment: "test",
@@ -164,7 +163,6 @@ describe("ApiClient schema fallback", () => {
       const client = new ApiClient("https://api.example.test");
       const config = await client.getConfig();
       expect(config.cdn_domain).toBe("cdn.example.com");
-      expect(config.allow_signup).toBe(true);
       expect(config.daemon_server_url).toBeUndefined();
       expect(config.daemon_app_url).toBeUndefined();
     });

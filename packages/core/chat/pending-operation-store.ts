@@ -4,7 +4,6 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { defaultStorage } from "../platform/storage";
 import { registerAccountPersistStore } from "../platform/workspace-storage";
-import type { Attachment } from "../types";
 
 export type PendingChatOperationStage = "creating-session" | "sending-message";
 
@@ -18,18 +17,14 @@ export interface PendingChatOperation {
   id: string;
   accountId: string;
   workspaceId: string;
-  workspaceSlug: string;
   agentId: string;
-  sourceSessionId: string | null;
   sessionId: string | null;
   title: string;
   content: string;
   attachmentIds: string[];
-  attachments: Attachment[];
   stage: PendingChatOperationStage;
   cancelRequested: boolean;
   createdAt: number;
-  updatedAt: number;
 }
 
 interface PendingChatOperationState {
@@ -58,7 +53,7 @@ export const usePendingChatOperationStore = create<PendingChatOperationState>()(
           return {
             operations: {
               ...state.operations,
-              [id]: { ...current, ...patch, updatedAt: Date.now() },
+              [id]: { ...current, ...patch },
             },
           };
         }),
@@ -75,7 +70,7 @@ export const usePendingChatOperationStore = create<PendingChatOperationState>()(
           return {
             operations: {
               ...state.operations,
-              [id]: { ...current, cancelRequested: true, updatedAt: Date.now() },
+              [id]: { ...current, cancelRequested: true },
             },
           };
         }),

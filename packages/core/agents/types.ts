@@ -64,7 +64,4 @@ export interface AgentPresenceDetail {
   workload: Workload;
   runningCount: number;
   queuedCount: number;
-  // Mirrors agent.max_concurrent_tasks — pulled into the detail so the UI
-  // can render `running / capacity` ratios without re-fetching the agent.
-  capacity: number;
 }

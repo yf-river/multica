@@ -26,10 +26,9 @@ var nonAlpha = regexp.MustCompile(`[^a-zA-Z]`)
 var workspaceSlugPattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
 
 var workspaceBooleanSettingDefaults = map[string]bool{
-	"github_enabled":               true,
-	"github_pr_sidebar_enabled":    true,
-	"co_authored_by_enabled":       true,
-	"github_auto_link_prs_enabled": true,
+	"github_enabled":            true,
+	"github_pr_sidebar_enabled": true,
+	"co_authored_by_enabled":    true,
 }
 
 func canonicalizeWorkspaceSettings(settings map[string]any) (map[string]any, error) {

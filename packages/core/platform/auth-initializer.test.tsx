@@ -96,7 +96,6 @@ describe("AuthInitializer app config", () => {
     mocks.getConfig.mockResolvedValue({
       cdn_domain: "",
       cdn_signed: false,
-      allow_signup: true,
       workspace_creation_disabled: false,
       daemon_server_url: "",
       daemon_app_url: "",

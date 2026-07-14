@@ -95,7 +95,6 @@ export function deriveAgentPresenceDetail(input: DerivePresenceInput): AgentPres
       workload: "idle",
       runningCount: 0,
       queuedCount: 0,
-      capacity: input.agent.max_concurrent_tasks,
     };
   }
 
@@ -107,7 +106,6 @@ export function deriveAgentPresenceDetail(input: DerivePresenceInput): AgentPres
     workload: detail.workload,
     runningCount: detail.runningCount,
     queuedCount: detail.queuedCount,
-    capacity: input.agent.max_concurrent_tasks,
   };
 }
 

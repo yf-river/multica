@@ -1452,7 +1452,6 @@ describe("ApiClient", () => {
         github_enabled: true,
         github_pr_sidebar_enabled: true,
         co_authored_by_enabled: true,
-        github_auto_link_prs_enabled: true,
       },
       repos: [], issue_prefix: "CUR", avatar_url: null,
     };

@@ -23,14 +23,12 @@ export interface WorkspaceSettings extends Record<string, unknown> {
   github_enabled: boolean;
   github_pr_sidebar_enabled: boolean;
   co_authored_by_enabled: boolean;
-  github_auto_link_prs_enabled: boolean;
 }
 
 export const DEFAULT_WORKSPACE_SETTINGS: WorkspaceSettings = {
   github_enabled: true,
   github_pr_sidebar_enabled: true,
   co_authored_by_enabled: true,
-  github_auto_link_prs_enabled: true,
 };
 
 export interface Workspace {

@@ -426,7 +426,6 @@ describe("AppConfigSchema current contract", () => {
     const parsed = AppConfigSchema.parse({
       cdn_domain: "cdn.example.com",
       cdn_signed: true,
-      allow_signup: true,
       posthog_key: "",
       posthog_host: "",
       analytics_environment: "test",

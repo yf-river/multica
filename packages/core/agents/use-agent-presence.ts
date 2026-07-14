@@ -114,7 +114,6 @@ const MISSING_AGENT_DETAIL: AgentPresenceDetail = {
   workload: "idle",
   runningCount: 0,
   queuedCount: 0,
-  capacity: 0,
 };
 
 export function useAgentPresenceDetail(

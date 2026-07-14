@@ -7,7 +7,6 @@ export interface AppConfigResponse {
   // URLs (CloudFront signing) — raw storage URLs on that domain are NOT
   // publicly fetchable and must not be used as native media sources.
   cdn_signed: boolean;
-  allow_signup: boolean;
   posthog_key: string;
   posthog_host: string;
   analytics_environment: string;
@@ -24,7 +23,6 @@ const OptionalStringSchema = z.preprocess(
 export const AppConfigSchema = z.object({
   cdn_domain: z.string(),
   cdn_signed: z.boolean(),
-  allow_signup: z.boolean(),
   posthog_key: z.string(),
   posthog_host: z.string(),
   analytics_environment: z.string(),
@@ -36,7 +34,6 @@ export const AppConfigSchema = z.object({
 export const EMPTY_APP_CONFIG: AppConfigResponse = {
   cdn_domain: "",
   cdn_signed: false,
-  allow_signup: true,
   posthog_key: "",
   posthog_host: "",
   analytics_environment: "",

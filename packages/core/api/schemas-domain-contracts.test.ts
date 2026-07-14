@@ -328,7 +328,6 @@ describe("domain response schema fallbacks", () => {
       github_enabled: false,
       github_pr_sidebar_enabled: true,
       co_authored_by_enabled: true,
-      github_auto_link_prs_enabled: true,
       custom: "kept",
     });
   });

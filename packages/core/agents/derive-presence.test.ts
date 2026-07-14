@@ -134,7 +134,6 @@ describe("deriveAgentPresenceDetail", () => {
     expect(detail.workload).toBe("working");
     expect(detail.runningCount).toBe(1);
     expect(detail.queuedCount).toBe(1);
-    expect(detail.capacity).toBe(6);
   });
 
   it("composes offline + queued — the canonical 'stuck' case (was previously misleading 'running 0/N')", () => {
@@ -216,16 +215,6 @@ describe("deriveAgentPresenceDetail", () => {
     });
     expect(detail.availability).toBe("online");
     expect(detail.workload).toBe("idle");
-  });
-
-  it("mirrors agent.max_concurrent_tasks into capacity", () => {
-    const detail = deriveAgentPresenceDetail({
-      agent: makeAgent({ max_concurrent_tasks: 3 }),
-      runtime: makeRuntime(),
-      tasks: [],
-      now: NOW,
-    });
-    expect(detail.capacity).toBe(3);
   });
 
   it("reports archived over any runtime/task signal for an archived agent", () => {

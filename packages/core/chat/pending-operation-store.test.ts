@@ -11,18 +11,14 @@ function operation(overrides: Partial<PendingChatOperation> = {}): PendingChatOp
     id: "11111111-1111-4111-8111-111111111111",
     accountId: "user-1",
     workspaceId: "ws-1",
-    workspaceSlug: "team-one",
     agentId: "agent-1",
-    sourceSessionId: null,
     sessionId: null,
     title: "hello",
     content: "hello",
     attachmentIds: [],
-    attachments: [],
     stage: "creating-session",
     cancelRequested: false,
     createdAt: 1,
-    updatedAt: 1,
     ...overrides,
   };
 }
@@ -63,7 +59,6 @@ describe("pending chat operation store", () => {
     const second = operation({
       id: "22222222-2222-4222-8222-222222222222",
       workspaceId: "ws-2",
-      workspaceSlug: "team-two",
     });
     usePendingChatOperationStore.getState().start(first);
     usePendingChatOperationStore.getState().start(second);

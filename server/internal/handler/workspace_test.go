@@ -339,7 +339,7 @@ func TestWorkspaceToResponse_RejectsNonArrayRepos(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			workspace := db.Workspace{Settings: []byte(`{"github_enabled":true,"github_pr_sidebar_enabled":true,"co_authored_by_enabled":true,"github_auto_link_prs_enabled":true}`), Repos: tc.raw}
+			workspace := db.Workspace{Settings: []byte(`{"github_enabled":true,"github_pr_sidebar_enabled":true,"co_authored_by_enabled":true}`), Repos: tc.raw}
 			if _, err := workspaceToResponse(workspace); err == nil {
 				t.Fatalf("workspaceToResponse(%s) expected an error", tc.raw)
 			}
@@ -349,7 +349,7 @@ func TestWorkspaceToResponse_RejectsNonArrayRepos(t *testing.T) {
 
 func TestWorkspaceToResponse_AcceptsRepositoryArray(t *testing.T) {
 	workspace := db.Workspace{
-		Settings: []byte(`{"github_enabled":true,"github_pr_sidebar_enabled":true,"co_authored_by_enabled":true,"github_auto_link_prs_enabled":true}`),
+		Settings: []byte(`{"github_enabled":true,"github_pr_sidebar_enabled":true,"co_authored_by_enabled":true}`),
 		Repos:    []byte(`[{"url":"https://git.example.com/repo.git"}]`),
 	}
 	response, err := workspaceToResponse(workspace)
@@ -370,11 +370,10 @@ func TestWorkspaceToResponse_RejectsNonObjectSettings(t *testing.T) {
 
 func TestCanonicalizeWorkspaceSettingsEnforcesCurrentGitHubShape(t *testing.T) {
 	settings := map[string]any{
-		"github_enabled":               false,
-		"github_pr_sidebar_enabled":    true,
-		"co_authored_by_enabled":       true,
-		"github_auto_link_prs_enabled": true,
-		"custom":                       "kept",
+		"github_enabled":            false,
+		"github_pr_sidebar_enabled": true,
+		"co_authored_by_enabled":    true,
+		"custom":                    "kept",
 	}
 	canonical, err := canonicalizeWorkspaceSettings(settings)
 	if err != nil {
@@ -686,9 +685,6 @@ VALUES ($1, $2, 'owner')
 		var settings map[string]any
 		if err := json.Unmarshal(raw, &settings); err != nil {
 			t.Fatalf("decode settings: %v", err)
-		}
-		if len(settings) != len(workspaceBooleanSettingDefaults) {
-			t.Fatalf("invalid settings update changed current settings: %#v", settings)
 		}
 		for key, defaultValue := range workspaceBooleanSettingDefaults {
 			if settings[key] != defaultValue {

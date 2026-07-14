@@ -22,7 +22,6 @@ const workspaceRef = vi.hoisted(() => ({
       github_enabled: true,
       github_pr_sidebar_enabled: true,
       co_authored_by_enabled: true,
-      github_auto_link_prs_enabled: true,
     },
     repos: [{ url: "https://github.com/acme/api" }] as { url: string }[],
   },
@@ -129,7 +128,6 @@ function currentSettings(overrides: Record<string, boolean> = {}) {
     github_enabled: true,
     github_pr_sidebar_enabled: true,
     co_authored_by_enabled: true,
-    github_auto_link_prs_enabled: true,
     ...overrides,
   };
 }

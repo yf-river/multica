@@ -6,18 +6,14 @@ const operation: PendingChatOperation = {
   id: "11111111-1111-4111-8111-111111111111",
   accountId: "user-1",
   workspaceId: "ws-1",
-  workspaceSlug: "team-one",
   agentId: "agent-1",
-  sourceSessionId: null,
   sessionId: null,
   title: "hello",
   content: "hello",
   attachmentIds: ["att-1"],
-  attachments: [],
   stage: "creating-session",
   cancelRequested: false,
   createdAt: 1,
-  updatedAt: 1,
 };
 
 describe("replayPendingChatOperation", () => {

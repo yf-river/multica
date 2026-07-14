@@ -360,8 +360,7 @@ export function ChatWindow() {
       commitInput?: (options?: { extraDraftKeys?: string[]; clearEditor?: boolean }) => void,
       draftAttachments: Attachment[] = [],
     ): Promise<boolean> => {
-      const workspaceSlug = getCurrentSlug();
-      if (!activeAgent || !user || !wsId || !workspaceSlug) {
+      if (!activeAgent || !user || !wsId || !getCurrentSlug()) {
         apiLogger.warn("sendChatMessage skipped: missing active scope");
         return false;
       }
@@ -371,23 +370,18 @@ export function ChatWindow() {
       const operationId = createSafeId();
       if (!claimPendingChatOperation(operationId)) return false;
       activeOperationIdRef.current = operationId;
-      const now = Date.now();
       usePendingChatOperationStore.getState().start({
         id: operationId,
         accountId: user.id,
         workspaceId: wsId,
-        workspaceSlug,
         agentId: activeAgent.id,
-        sourceSessionId: activeSessionId,
         sessionId: activeSessionId,
         title: finalContent.slice(0, 50),
         content: finalContent,
         attachmentIds: requestedAttachmentIds,
-        attachments: draftAttachments,
         stage: activeSessionId ? "sending-message" : "creating-session",
         cancelRequested: false,
-        createdAt: now,
-        updatedAt: now,
+        createdAt: Date.now(),
       });
       const finishOperation = (remove: boolean) => {
         if (remove) usePendingChatOperationStore.getState().remove(operationId);

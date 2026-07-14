@@ -24,13 +24,6 @@ export interface AgentActivity {
    * tail-slice + roll-up).
    */
   buckets: ActivityBucket[];
-  /**
-   * Days the agent has existed, capped at DAYS. Pure cosmetic — used by
-   * tooltip copy ("Created 3 days ago"). The sparkline doesn't change
-   * shape for young agents on purpose; pre-life days look the same as
-   * zero days.
-   */
-  daysSinceCreated: number;
 }
 
 /**
@@ -46,15 +39,12 @@ export interface ActivityWindowSummary {
   totalRuns: number;
   /** Sum of `bucket.failed` across the window. */
   totalFailed: number;
-  /** Echo of the input window — the renderer uses it for copy. */
-  windowDays: number;
 }
 
 const EMPTY_SUMMARY: ActivityWindowSummary = {
   buckets: [],
   totalRuns: 0,
   totalFailed: 0,
-  windowDays: 0,
 };
 
 /**
@@ -104,7 +94,6 @@ export function buildActivityMap(
       agent.id,
       deriveAgentActivity(
         bucketsByAgent.get(agent.id) ?? [],
-        agent.created_at,
         now,
       ),
     );
@@ -120,7 +109,6 @@ export function buildActivityMap(
  */
 export function deriveAgentActivity(
   buckets: readonly AgentActivityBucket[],
-  agentCreatedAt: string,
   now: number,
 ): AgentActivity {
   const series: ActivityBucket[] = Array.from({ length: DAYS }, () => ({
@@ -142,17 +130,7 @@ export function deriveAgentActivity(
     series[slot]!.failed += b.failed_count;
   }
 
-  const createdAt = new Date(agentCreatedAt).getTime();
-  const ageMs = Number.isFinite(createdAt) ? now - createdAt : Infinity;
-  const daysSinceCreated = Math.min(
-    DAYS,
-    Math.max(0, Math.floor(ageMs / DAY_MS)),
-  );
-
-  return {
-    buckets: series,
-    daysSinceCreated,
-  };
+  return { buckets: series };
 }
 
 /**
@@ -168,7 +146,7 @@ export function summarizeActivityWindow(
   activity: AgentActivity | undefined,
   windowDays: number,
 ): ActivityWindowSummary {
-  if (!activity) return { ...EMPTY_SUMMARY, windowDays };
+  if (!activity) return EMPTY_SUMMARY;
   const safeWindow = Math.min(
     Math.max(0, windowDays),
     activity.buckets.length,
@@ -183,7 +161,7 @@ export function summarizeActivityWindow(
     totalRuns += b.total;
     totalFailed += b.failed;
   }
-  return { buckets: slice, totalRuns, totalFailed, windowDays };
+  return { buckets: slice, totalRuns, totalFailed };
 }
 
 function startOfDay(ts: number): number {
