@@ -1,4 +1,4 @@
-.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down migrate-down-all sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-promote-prod goal-test-deploy-prod goal-test-deploy-int goal-test-deploy-all goal-test-verify-env goal-test-verify-logs goal-test-e2e-preflight goal-test-e2e goal-test-e2e-all goal-test-real-agent-e2e goal-test-smoke goal-test-fast-check goal-test-smart-verify goal-test-ui-acceptance goal-test-ui-audit goal-test-dashboard-click-audit goal-test-training-performance-audit goal-test-public-training-performance-audit goal-test-prune-dev-data goal-test-prune-prod-data
+.PHONY: help dev server daemon cli multica build test migrate-up migrate-down migrate-down-all sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-deploy-prod goal-test-deploy-all goal-test-verify-env goal-test-verify-logs goal-test-e2e-preflight goal-test-e2e goal-test-e2e-all goal-test-real-agent-e2e goal-test-smoke goal-test-fast-check goal-test-smart-verify goal-test-ui-acceptance goal-test-ui-audit goal-test-dashboard-click-audit goal-test-training-performance-audit goal-test-public-training-performance-audit goal-test-prune-dev-data goal-test-prune-prod-data
 .PHONY: goal-test-deploy-dev-hot goal-test-dev-ui goal-test-dev-ui-prewarm goal-test-dev-ui-prewarm-full goal-test-dev-ui-start goal-test-dev-server goal-test-dev-daemon goal-test-dev-check
 
 MAIN_ENV_FILE ?= .env
@@ -56,8 +56,6 @@ help: ## Show available make targets and common local workflows
 	@awk 'BEGIN {FS = ":.*## "; printf "\nUsage:\n  make \033[36m<target>\033[0m\n\nQuick start:\n  \033[36mmake dev\033[0m          Bootstrap the current checkout and start everything\n  \033[36mmake check\033[0m        Run the full local verification pipeline\n\nCheckout modes:\n  Main checkout uses \033[36m.env\033[0m\n  Worktrees use \033[36m.env.worktree\033[0m (generate with \033[36mmake worktree-env\033[0m)\n\n"} \
 		/^##@/ {printf "\n\033[1m%s\033[0m\n", substr($$0, 5); next} \
 		/^[a-zA-Z0-9_.-]+:.*## / {printf "  \033[36m%-18s\033[0m %s\n", $$1, $$2}' $(MAKEFILE_LIST)
-
-makehelp: help ## Alias for `make help`
 
 # ---------- Self-hosting (Docker Compose) ----------
 ##@ Self-hosting
@@ -258,15 +256,11 @@ goal-test-sync-prod: ## Sync the already-built goal-test artifact to production,
 	node scripts/goal-test-environments.mjs verify prod
 	node scripts/goal-test-environments.mjs verify-logs prod
 
-goal-test-promote-prod: goal-test-sync-prod ## Alias: promote the current built artifact to production
-
 goal-test-deploy-prod: ## Build and deploy goal-test production stable environment directly
 	@mkdir -p "$(GOAL_TEST_TMPDIR)" "$(GOAL_TEST_GOCACHE)"
 	TMPDIR="$(GOAL_TEST_TMPDIR)" GOCACHE="$(GOAL_TEST_GOCACHE)" node scripts/goal-test-environments.mjs deploy prod --build
 	node scripts/goal-test-environments.mjs verify prod
 	node scripts/goal-test-environments.mjs verify-logs prod
-
-goal-test-deploy-int: goal-test-deploy-dev ## Alias: build and deploy goal-test integration development environment
 
 goal-test-deploy-all: ## Build and deploy dev first, then sync the same artifact to production
 	$(MAKE) goal-test-deploy-dev

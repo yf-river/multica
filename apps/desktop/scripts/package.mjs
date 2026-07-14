@@ -34,20 +34,17 @@ const bundleCliScript = resolve(here, "bundle-cli.mjs");
 
 const PLATFORM_CONFIG = {
   mac: {
-    aliases: new Set(["--mac", "--macos", "-m"]),
-    builderFlag: "--mac",
+    flag: "--mac",
     runtimePlatform: "darwin",
     label: "macOS",
   },
   win: {
-    aliases: new Set(["--win", "--windows", "-w"]),
-    builderFlag: "--win",
+    flag: "--win",
     runtimePlatform: "win32",
     label: "Windows",
   },
   linux: {
-    aliases: new Set(["--linux", "-l"]),
-    builderFlag: "--linux",
+    flag: "--linux",
     runtimePlatform: "linux",
     label: "Linux",
   },
@@ -164,20 +161,9 @@ function hostArchKey(arch = process.arch) {
   );
 }
 
-function expandPlatformShorthand(token) {
-  if (!/^-[mwl]{2,}$/.test(token)) return null;
-  const expanded = [];
-  for (const char of token.slice(1)) {
-    if (char === "m") expanded.push("mac");
-    if (char === "w") expanded.push("win");
-    if (char === "l") expanded.push("linux");
-  }
-  return uniqueOrdered(expanded);
-}
-
 function platformKeyForToken(token) {
   for (const [platform, config] of Object.entries(PLATFORM_CONFIG)) {
-    if (config.aliases.has(token)) return platform;
+    if (config.flag === token) return platform;
   }
   return null;
 }
@@ -197,12 +183,6 @@ export function parsePackageArgs(argv) {
     const token = argv[i];
     if (token === "--all-platforms") {
       allPlatforms = true;
-      continue;
-    }
-
-    const expandedPlatforms = expandPlatformShorthand(token);
-    if (expandedPlatforms) {
-      requestedPlatforms.push(...expandedPlatforms);
       continue;
     }
 
@@ -291,7 +271,7 @@ export function builderArgsForTarget(
   const builderArgs = [];
   if (version) builderArgs.push(`-c.extraMetadata.version=${version}`);
   if (disableMacNotarize) builderArgs.push("-c.mac.notarize=false");
-  builderArgs.push(PLATFORM_CONFIG[target.platform].builderFlag);
+  builderArgs.push(PLATFORM_CONFIG[target.platform].flag);
   const requestedTargets = parsed.platformTargets[target.platform];
   if (
     target.platform === "linux" &&

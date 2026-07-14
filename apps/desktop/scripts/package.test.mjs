@@ -106,13 +106,6 @@ describe("parsePackageArgs", () => {
     });
   });
 
-  it("expands combined short flags", () => {
-    expect(parsePackageArgs(["-mw", "--x64"]).requestedPlatforms).toEqual([
-      "mac",
-      "win",
-    ]);
-  });
-
   it("tracks the all-platforms shortcut", () => {
     expect(parsePackageArgs(["--all-platforms", "--publish", "never"]).allPlatforms).toBe(true);
   });
