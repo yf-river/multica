@@ -27,6 +27,11 @@ import {
   readAndClearFreezeBreadcrumb,
   clearFreezeBreadcrumb,
 } from "./freeze-breadcrumb";
+import type {
+  DesktopAppInfo,
+  InboxNotificationPayload,
+  InboxOpenPayload,
+} from "../shared/ipc-payloads";
 
 // Bundled icon used for dock/taskbar branding. macOS/Windows production
 // builds let the OS pick up the icon from the .app bundle / .exe resources,
@@ -395,7 +400,7 @@ if (!gotTheLock) {
     ipcMain.on("app:get-info", (event) => {
       const p = process.platform;
       const os = p === "darwin" ? "macos" : p === "win32" ? "windows" : p === "linux" ? "linux" : "unknown";
-      event.returnValue = { version: getAppVersion(), os };
+      event.returnValue = { version: getAppVersion(), os } satisfies DesktopAppInfo;
     });
 
     // Sync IPC: read + clear any freeze/crash breadcrumb left by a previous
@@ -443,13 +448,7 @@ if (!gotTheLock) {
           issueKey,
           title,
           body,
-        }: {
-          slug: string;
-          itemId: string;
-          issueKey: string;
-          title: string;
-          body: string;
-        },
+        }: InboxNotificationPayload,
       ) => {
         if (!Notification.isSupported()) return;
         const notification = new Notification({ title, body });
@@ -465,7 +464,7 @@ if (!gotTheLock) {
             slug,
             itemId,
             issueKey,
-          });
+          } satisfies InboxOpenPayload);
         });
         notification.show();
       },

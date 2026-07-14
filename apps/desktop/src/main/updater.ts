@@ -1,5 +1,9 @@
 import { autoUpdater, type UpdateDownloadedEvent } from "electron-updater";
 import { app, type BrowserWindow, ipcMain } from "electron";
+import type {
+  UpdateCheckResult,
+  UpdaterReleaseInfo,
+} from "../shared/ipc-payloads";
 
 // Silent background updates: electron-updater downloads on its own as soon
 // as `update-available` fires; we only surface UI when the package is fully
@@ -20,35 +24,20 @@ if (process.platform === "win32" && process.arch === "arm64") {
 const STARTUP_CHECK_DELAY_MS = 5_000;
 const PERIODIC_CHECK_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 
-type ManualUpdateCheckResult =
-  | {
-      ok: true;
-      currentVersion: string;
-      latestVersion: string;
-      available: boolean;
-    }
-  | { ok: false; error: string };
-
-type RendererChannel =
-  | "updater:update-available"
-  | "updater:download-progress"
-  | "updater:update-downloaded";
-
 function isDestroyedObjectError(err: unknown): boolean {
   return err instanceof Error && err.message.includes("Object has been destroyed");
 }
 
-function sendToLiveRenderer(
+function sendUpdateDownloaded(
   win: BrowserWindow | null,
-  channel: RendererChannel,
-  payload: unknown,
+  payload: UpdaterReleaseInfo,
 ): void {
   if (!win || win.isDestroyed()) return;
 
   try {
     const { webContents } = win;
     if (webContents.isDestroyed()) return;
-    webContents.send(channel, payload);
+    webContents.send("updater:update-downloaded", payload);
   } catch (err) {
     if (isDestroyedObjectError(err)) return;
     throw err;
@@ -85,25 +74,9 @@ function checkForUpdatesOnce(): Promise<unknown> {
 }
 
 export function setupAutoUpdater(getMainWindow: () => BrowserWindow | null): void {
-  autoUpdater.on("update-available", (info) => {
-    // Forwarded for renderer-side state tracking only; the notification UI
-    // does not render an "available" affordance with autoDownload=true.
-    sendToLiveRenderer(getMainWindow(), "updater:update-available", {
-      version: info.version,
-      releaseNotes: info.releaseNotes,
-    });
-  });
-
-  autoUpdater.on("download-progress", (progress) => {
-    sendToLiveRenderer(getMainWindow(), "updater:download-progress", {
-      percent: progress.percent,
-    });
-  });
-
   autoUpdater.on("update-downloaded", (info: UpdateDownloadedEvent) => {
-    sendToLiveRenderer(getMainWindow(), "updater:update-downloaded", {
+    sendUpdateDownloaded(getMainWindow(), {
       version: info.version,
-      releaseNotes: info.releaseNotes,
     });
   });
 
@@ -115,7 +88,7 @@ export function setupAutoUpdater(getMainWindow: () => BrowserWindow | null): voi
     autoUpdater.quitAndInstall(false, true);
   });
 
-  ipcMain.handle("updater:check", async (): Promise<ManualUpdateCheckResult> => {
+  ipcMain.handle("updater:check", async (): Promise<UpdateCheckResult> => {
     try {
       const result = (await checkForUpdatesOnce()) as
         | { updateInfo: { version: string }; isUpdateAvailable?: boolean }

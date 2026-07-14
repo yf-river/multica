@@ -11,23 +11,34 @@ import {
   NAVIGATION_GESTURE_CHANNEL,
   type NavigationGesture,
 } from "../shared/navigation-gestures";
+import type {
+  DaemonPrefs,
+  DaemonReauthResult,
+  DaemonStatus,
+} from "../shared/daemon-types";
+import type {
+  DaemonCommandResult,
+  DesktopAppInfo,
+  InboxNotificationPayload,
+  InboxOpenPayload,
+  UpdateCheckResult,
+  UpdaterReleaseInfo,
+} from "../shared/ipc-payloads";
 
 // Synchronously fetch app metadata from main at preload time so the renderer
 // can pass it into CoreProvider during the initial render — the alternative
 // (async ipc.invoke) would race the ApiClient construction in initCore and
 // the first few HTTP requests would go out without X-Client-Version/OS.
-function fetchAppInfo(): { version: string; os: "macos" | "windows" | "linux" | "unknown" } {
+function fetchAppInfo(): DesktopAppInfo {
   try {
-    const info = ipcRenderer.sendSync("app:get-info") as
-      | { version: string; os: "macos" | "windows" | "linux" | "unknown" }
-      | undefined;
+    const info = ipcRenderer.sendSync("app:get-info") as DesktopAppInfo | undefined;
     if (info && typeof info.version === "string" && typeof info.os === "string") return info;
   } catch {
     // fall through
   }
   // Fallback: derive OS from process.platform; version unknown.
   const p = process.platform;
-  const os: "macos" | "windows" | "linux" | "unknown" =
+  const os: DesktopAppInfo["os"] =
     p === "darwin" ? "macos" : p === "win32" ? "windows" : p === "linux" ? "linux" : "unknown";
   return { version: "unknown", os };
 }
@@ -77,14 +88,16 @@ const desktopAPI = {
     };
   },
   /** Open a URL in the default browser */
-  openExternal: (url: string) => ipcRenderer.invoke("shell:openExternal", url),
+  openExternal: (url: string): Promise<void> =>
+    ipcRenderer.invoke("shell:openExternal", url),
   /** Download a file by URL through Electron's native download system.
    *  Shows a save dialog and saves to disk. Unlike openExternal, this
    *  avoids browser rendering of HTML files on Linux.
    *  On non-desktop platforms this property is undefined. */
-  downloadURL: (url: string) => ipcRenderer.invoke("file:download-url", url),
+  downloadURL: (url: string): Promise<void> =>
+    ipcRenderer.invoke("file:download-url", url),
   /** Toggle immersive mode — hide macOS traffic lights for full-screen modals */
-  setImmersiveMode: (immersive: boolean) =>
+  setImmersiveMode: (immersive: boolean): Promise<void> =>
     ipcRenderer.invoke("window:setImmersive", immersive),
   /**
    * Show a native OS notification for a new inbox item. Fired from the
@@ -95,13 +108,8 @@ const desktopAPI = {
    * lets the renderer mark the row read, issueKey maps to the inbox URL
    * param.
    */
-  showNotification: (payload: {
-    slug: string;
-    itemId: string;
-    issueKey: string;
-    title: string;
-    body: string;
-  }) => ipcRenderer.send("notification:show", payload),
+  showNotification: (payload: InboxNotificationPayload) =>
+    ipcRenderer.send("notification:show", payload),
   /**
    * Update the OS dock / taskbar unread badge. Pass 0 to clear. Values
    * above 99 render as "99+" (capping is handled in the main process).
@@ -115,15 +123,11 @@ const desktopAPI = {
    * were passed to `showNotification`.
    */
   onInboxOpen: (
-    callback: (payload: {
-      slug: string;
-      itemId: string;
-      issueKey: string;
-    }) => void,
+    callback: (payload: InboxOpenPayload) => void,
   ) => {
     const handler = (
       _event: Electron.IpcRendererEvent,
-      payload: { slug: string; itemId: string; issueKey: string },
+      payload: InboxOpenPayload,
     ) => callback(payload);
     ipcRenderer.on("inbox:open", handler);
     return () => {
@@ -157,36 +161,12 @@ const desktopAPI = {
   closeWindow: () => ipcRenderer.send("window:close"),
 };
 
-interface DaemonStatus {
-  state:
-    | "running"
-    | "stopped"
-    | "starting"
-    | "stopping"
-    | "installing_cli"
-    | "cli_not_found"
-    | "auth_expired";
-  pid?: number;
-  uptime?: string;
-  daemonId?: string;
-  deviceName?: string;
-  agents?: string[];
-  workspaceCount?: number;
-  profile?: string;
-  serverUrl?: string;
-}
-
-type DaemonReauthResult =
-  | { ok: true }
-  | { ok: false; reason: "session_invalid" }
-  | { ok: false; reason: "transient"; message: string };
-
 const daemonAPI = {
-  start: (): Promise<{ success: boolean; error?: string }> =>
+  start: (): Promise<DaemonCommandResult> =>
     ipcRenderer.invoke("daemon:start"),
-  stop: (): Promise<{ success: boolean; error?: string }> =>
+  stop: (): Promise<DaemonCommandResult> =>
     ipcRenderer.invoke("daemon:stop"),
-  restart: (): Promise<{ success: boolean; error?: string }> =>
+  restart: (): Promise<DaemonCommandResult> =>
     ipcRenderer.invoke("daemon:restart"),
   getStatus: (): Promise<DaemonStatus> =>
     ipcRenderer.invoke("daemon:get-status"),
@@ -210,9 +190,9 @@ const daemonAPI = {
     ipcRenderer.invoke("daemon:reauthenticate", token, userId),
   isCliInstalled: (): Promise<boolean> =>
     ipcRenderer.invoke("daemon:is-cli-installed"),
-  getPrefs: (): Promise<{ autoStart: boolean; autoStop: boolean }> =>
+  getPrefs: (): Promise<DaemonPrefs> =>
     ipcRenderer.invoke("daemon:get-prefs"),
-  setPrefs: (prefs: Partial<{ autoStart: boolean; autoStop: boolean }>): Promise<{ autoStart: boolean; autoStop: boolean }> =>
+  setPrefs: (prefs: Partial<DaemonPrefs>): Promise<DaemonPrefs> =>
     ipcRenderer.invoke("daemon:set-prefs", prefs),
   autoStart: (): Promise<void> =>
     ipcRenderer.invoke("daemon:auto-start"),
@@ -225,35 +205,26 @@ const daemonAPI = {
     ipcRenderer.on("daemon:log-line", handler);
     return () => ipcRenderer.removeListener("daemon:log-line", handler);
   },
-  openLogFile: (): Promise<{ success: boolean; error?: string }> =>
+  openLogFile: (): Promise<DaemonCommandResult> =>
     ipcRenderer.invoke("daemon:open-log-file"),
 };
 
 const updaterAPI = {
-  onUpdateAvailable: (callback: (info: { version: string; releaseNotes?: string }) => void) => {
-    const handler = (_: unknown, info: { version: string; releaseNotes?: string }) => callback(info);
-    ipcRenderer.on("updater:update-available", handler);
-    return () => ipcRenderer.removeListener("updater:update-available", handler);
-  },
-  onDownloadProgress: (callback: (progress: { percent: number }) => void) => {
-    const handler = (_: unknown, progress: { percent: number }) => callback(progress);
-    ipcRenderer.on("updater:download-progress", handler);
-    return () => ipcRenderer.removeListener("updater:download-progress", handler);
-  },
   onUpdateDownloaded: (
-    callback: (info: { version: string; releaseNotes?: string }) => void,
+    callback: (info: UpdaterReleaseInfo) => void,
   ) => {
-    const handler = (_: unknown, info: { version: string; releaseNotes?: string }) =>
+    const handler = (_: unknown, info: UpdaterReleaseInfo) =>
       callback(info);
     ipcRenderer.on("updater:update-downloaded", handler);
     return () => ipcRenderer.removeListener("updater:update-downloaded", handler);
   },
-  installUpdate: () => ipcRenderer.invoke("updater:install"),
-  checkForUpdates: (): Promise<
-    | { ok: true; currentVersion: string; latestVersion: string; available: boolean }
-    | { ok: false; error: string }
-  > => ipcRenderer.invoke("updater:check"),
+  installUpdate: (): Promise<void> => ipcRenderer.invoke("updater:install"),
+  checkForUpdates: (): Promise<UpdateCheckResult> => ipcRenderer.invoke("updater:check"),
 };
+
+export type DesktopAPI = typeof desktopAPI;
+export type DaemonAPI = typeof daemonAPI;
+export type UpdaterAPI = typeof updaterAPI;
 
 contextBridge.exposeInMainWorld("electron", electronAPI);
 contextBridge.exposeInMainWorld("desktopAPI", desktopAPI);

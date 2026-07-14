@@ -119,40 +119,46 @@ describe("setupAutoUpdater", () => {
     vi.useRealTimers();
   });
 
-  it("forwards update progress to a live renderer", () => {
+  it("forwards a downloaded update to a live renderer", () => {
     const { win, send } = makeWindow();
     setupAutoUpdater(() => win);
 
-    emitUpdater("download-progress", { percent: 42 });
+    emitUpdater("update-downloaded", { version: "0.3.18" });
 
-    expect(send).toHaveBeenCalledWith("updater:download-progress", {
-      percent: 42,
+    expect(send).toHaveBeenCalledWith("updater:update-downloaded", {
+      version: "0.3.18",
     });
   });
 
-  it("skips update progress when the BrowserWindow has already been destroyed", () => {
+  it("skips a downloaded update when the BrowserWindow has already been destroyed", () => {
     setupAutoUpdater(() => makeDestroyedWindow());
 
-    expect(() => emitUpdater("download-progress", { percent: 42 })).not.toThrow();
+    expect(() =>
+      emitUpdater("update-downloaded", { version: "0.3.18" }),
+    ).not.toThrow();
   });
 
-  it("skips update progress when the BrowserWindow webContents has already been destroyed", () => {
+  it("skips a downloaded update when the webContents has already been destroyed", () => {
     const { win, send } = makeWindowWithDestroyedWebContents();
     setupAutoUpdater(() => win);
 
-    expect(() => emitUpdater("download-progress", { percent: 42 })).not.toThrow();
+    expect(() =>
+      emitUpdater("update-downloaded", { version: "0.3.18" }),
+    ).not.toThrow();
     expect(send).not.toHaveBeenCalled();
   });
 
-  it("skips update progress when webContents.send loses a destroy race", () => {
+  it("ignores a destroy race while forwarding a downloaded update", () => {
     const { win, send } = makeWindowWithThrowingSend(
       new TypeError("Object has been destroyed"),
     );
     setupAutoUpdater(() => win);
 
-    expect(() => emitUpdater("download-progress", { percent: 42 })).not.toThrow();
-    expect(send).toHaveBeenCalledWith("updater:download-progress", {
-      percent: 42,
+    expect(() =>
+      emitUpdater("update-downloaded", { version: "0.3.18" }),
+    ).not.toThrow();
+    expect(send).toHaveBeenCalledWith("updater:update-downloaded", {
+      version: "0.3.18",
     });
   });
 
@@ -160,8 +166,8 @@ describe("setupAutoUpdater", () => {
     const { win } = makeWindowWithThrowingSend(new Error("boom"));
     setupAutoUpdater(() => win);
 
-    expect(() => emitUpdater("download-progress", { percent: 42 })).toThrow(
-      "boom",
-    );
+    expect(() =>
+      emitUpdater("update-downloaded", { version: "0.3.18" }),
+    ).toThrow("boom");
   });
 });

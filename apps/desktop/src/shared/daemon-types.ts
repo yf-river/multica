@@ -39,6 +39,11 @@ export interface DaemonPrefs {
   autoStop: boolean;
 }
 
+export type DaemonReauthResult =
+  | { ok: true }
+  | { ok: false; reason: "session_invalid" }
+  | { ok: false; reason: "transient"; message: string };
+
 export const DAEMON_STATE_COLORS: Record<DaemonState, string> = {
   running: "bg-emerald-500",
   stopped: "bg-muted-foreground/40",

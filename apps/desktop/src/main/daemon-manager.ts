@@ -14,7 +14,11 @@ import {
 } from "fs";
 import { join } from "path";
 import { homedir, hostname } from "os";
-import type { DaemonStatus, DaemonPrefs } from "../shared/daemon-types";
+import type {
+  DaemonPrefs,
+  DaemonReauthResult,
+  DaemonStatus,
+} from "../shared/daemon-types";
 import { daemonStatusAlive } from "../shared/daemon-types";
 import { ensureManagedCli, managedCliPath } from "./cli-bootstrap";
 import { decideVersionAction } from "./version-decision";
@@ -720,14 +724,6 @@ async function clearToken(): Promise<void> {
   await removeProfileUserId(active.name);
 }
 
-// Result of a user-initiated daemon re-authentication. The distinction matters:
-// only `session_invalid` justifies signing the user out of the whole app; a
-// `transient` failure must keep them logged in so they can retry.
-type ReauthResult =
-  | { ok: true }
-  | { ok: false; reason: "session_invalid" }
-  | { ok: false; reason: "transient"; message: string };
-
 /**
  * Recover the local daemon from the "auth_expired" state. Drops the stale
  * cached PAT, mints a fresh one from the current session token, and restarts
@@ -742,7 +738,7 @@ type ReauthResult =
 async function reauthenticate(
   token: string,
   userId: string,
-): Promise<ReauthResult> {
+): Promise<DaemonReauthResult> {
   try {
     await clearToken();
     // syncToken mints a fresh PAT because clearToken just removed any cache.

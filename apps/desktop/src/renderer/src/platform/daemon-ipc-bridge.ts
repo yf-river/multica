@@ -4,23 +4,7 @@ import { useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { runtimeKeys } from "@multica/core/runtimes";
 import type { AgentRuntime } from "@multica/core/types";
-
-/**
- * DesktopAPI exposes a richer DaemonStatus shape than the public AgentRuntime
- * type — we redeclare the fields we consume here to avoid coupling the bridge
- * to the desktop preload typings (which live in apps/desktop/src/preload).
- */
-interface DaemonStatusLike {
-  state:
-    | "running"
-    | "stopped"
-    | "starting"
-    | "stopping"
-    | "installing_cli"
-    | "cli_not_found"
-    | "auth_expired";
-  daemonId?: string;
-}
+import type { DaemonStatus } from "../../../shared/daemon-types";
 
 /**
  * Merges a local DaemonStatus into an AgentRuntime row. Only the `status`
@@ -31,7 +15,7 @@ interface DaemonStatusLike {
  * is effectively offline anyway, and the server-side sweeper will mark it
  * within 75s.
  */
-function mergeDaemonStatus(rt: AgentRuntime, status: DaemonStatusLike): AgentRuntime {
+function mergeDaemonStatus(rt: AgentRuntime, status: DaemonStatus): AgentRuntime {
   if (
     status.state === "stopped" ||
     status.state === "stopping" ||
@@ -69,8 +53,7 @@ export function useDaemonIPCBridge(wsId: string | undefined): void {
   useEffect(() => {
     if (!wsId) return;
     if (typeof window === "undefined") return;
-    const daemonAPI = (window as unknown as { daemonAPI?: { onStatusChange?: (cb: (s: DaemonStatusLike) => void) => () => void } }).daemonAPI;
-    if (!daemonAPI?.onStatusChange) return;
+    const daemonAPI = window.daemonAPI;
 
     const unsubscribe = daemonAPI.onStatusChange((status) => {
       if (!status.daemonId) return;
