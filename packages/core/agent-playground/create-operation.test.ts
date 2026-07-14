@@ -4,10 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiTransportError } from "../api";
 import { setCurrentWorkspace } from "../platform/workspace-storage";
 import type { AgentPlaygroundDetail, CreateAgentPlaygroundExperimentRequest } from "../types";
-import {
-  createAgentPlaygroundExperimentWithRecovery,
-  useAgentPlaygroundCreateStore,
-} from "./create-operation";
+import { createAgentPlaygroundExperimentWithRecovery } from "./create-operation";
 
 const request: CreateAgentPlaygroundExperimentRequest = {
   name: "Current experiment",
@@ -17,13 +14,15 @@ const request: CreateAgentPlaygroundExperimentRequest = {
 };
 
 const detail = (id: string) => ({ experiment: { id } }) as AgentPlaygroundDetail;
+let workspaceSequence = 0;
 
 describe("createAgentPlaygroundExperimentWithRecovery", () => {
   beforeEach(async () => {
     localStorage.clear();
-    setCurrentWorkspace("workspace-one", "workspace-1");
+    workspaceSequence += 1;
+    setCurrentWorkspace(`agent-playground-${workspaceSequence}`, `workspace-${workspaceSequence}`);
     await Promise.resolve();
-    useAgentPlaygroundCreateStore.setState({ pending: undefined });
+    await Promise.resolve();
   });
 
   it("replays the persisted current request after an unknown outcome", async () => {
@@ -40,26 +39,23 @@ describe("createAgentPlaygroundExperimentWithRecovery", () => {
     const firstKey = createAgentPlaygroundExperiment.mock.calls[0]?.[1];
     expect(firstKey).toMatch(/^[0-9a-f-]{36}$/);
     expect(createAgentPlaygroundExperiment.mock.calls[1]?.[1]).toBe(firstKey);
-    expect(useAgentPlaygroundCreateStore.getState().pending).toBeUndefined();
   });
 
   it("recovers an older request before starting a changed experiment", async () => {
-    useAgentPlaygroundCreateStore.getState().setPending({
-      request,
-      requestKey: "10000000-0000-4000-8000-000000000011",
-      createdAt: Date.now(),
-    });
     const createAgentPlaygroundExperiment = vi.fn()
+      .mockRejectedValueOnce(new ApiTransportError("POST old playground", true, new Error("lost")))
       .mockResolvedValueOnce(detail("experiment-old"))
       .mockResolvedValueOnce(detail("experiment-new"));
     const client = { createAgentPlaygroundExperiment };
     const changed = { ...request, name: "Changed experiment" };
 
+    await expect(createAgentPlaygroundExperimentWithRecovery(request, client))
+      .rejects.toBeInstanceOf(ApiTransportError);
     await expect(createAgentPlaygroundExperimentWithRecovery(changed, client))
       .resolves.toMatchObject({ experiment: { id: "experiment-new" } });
-    expect(createAgentPlaygroundExperiment.mock.calls[0]?.[0]).toEqual(request);
-    expect(createAgentPlaygroundExperiment.mock.calls[0]?.[1])
-      .toBe("10000000-0000-4000-8000-000000000011");
-    expect(createAgentPlaygroundExperiment.mock.calls[1]?.[0]).toEqual(changed);
+    expect(createAgentPlaygroundExperiment.mock.calls[1]).toEqual([
+      request, createAgentPlaygroundExperiment.mock.calls[0]?.[1],
+    ]);
+    expect(createAgentPlaygroundExperiment.mock.calls[2]?.[0]).toEqual(changed);
   });
 });

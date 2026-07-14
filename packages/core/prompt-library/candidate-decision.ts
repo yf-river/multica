@@ -16,7 +16,7 @@ type CandidateDecision =
   | { kind: "publish"; candidateId: string; requestKey: string; createdAt: number }
   | { kind: "reject"; candidateId: string; reason: string; requestKey: string; createdAt: number };
 
-export const useCandidateDecisionStore: RecoverableOperationStore<CandidateDecision> =
+const useCandidateDecisionStore: RecoverableOperationStore<CandidateDecision> =
   createWorkspaceRecoverableOperationStore<CandidateDecision>(
     "multica_prompt_candidate_decision",
   );

@@ -16,7 +16,7 @@ interface PendingSkillReEvalRun {
   createdAt: number;
 }
 
-export const useSkillReEvalRunStore: RecoverableOperationStore<PendingSkillReEvalRun> =
+const useSkillReEvalRunStore: RecoverableOperationStore<PendingSkillReEvalRun> =
   createWorkspaceRecoverableOperationStore<PendingSkillReEvalRun>(
     "multica_skill_re_eval_run",
   );

@@ -19,7 +19,7 @@ interface PendingSkillReEvalAsset {
   createdAt: number;
 }
 
-export const useSkillReEvalAssetStore: RecoverableOperationStore<PendingSkillReEvalAsset> =
+const useSkillReEvalAssetStore: RecoverableOperationStore<PendingSkillReEvalAsset> =
   createWorkspaceRecoverableOperationStore<PendingSkillReEvalAsset>(
     "multica_skill_re_eval_asset",
   );

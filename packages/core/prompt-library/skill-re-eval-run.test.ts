@@ -4,19 +4,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiTransportError } from "../api";
 import { setCurrentWorkspace } from "../platform/workspace-storage";
 import type { PromptEvaluationSkillReEvalRunResponse } from "../types";
-import {
-  runPromptEvaluationSkillReEvalWithRecovery,
-  useSkillReEvalRunStore,
-} from "./skill-re-eval-run";
+import { runPromptEvaluationSkillReEvalWithRecovery } from "./skill-re-eval-run";
 
 const response = (id: string) => ({ run: { id } }) as PromptEvaluationSkillReEvalRunResponse;
+let workspaceSequence = 0;
 
 describe("runPromptEvaluationSkillReEvalWithRecovery", () => {
   beforeEach(async () => {
     localStorage.clear();
-    setCurrentWorkspace("workspace-one", "workspace-1");
+    workspaceSequence += 1;
+    setCurrentWorkspace(`skill-re-eval-run-${workspaceSequence}`, `workspace-${workspaceSequence}`);
     await Promise.resolve();
-    useSkillReEvalRunStore.setState({ pending: undefined });
+    await Promise.resolve();
   });
 
   it("replays a persisted unknown outcome with the same request identity", async () => {
@@ -34,27 +33,24 @@ describe("runPromptEvaluationSkillReEvalWithRecovery", () => {
     const firstKey = runPromptEvaluationSkillReEval.mock.calls[0]?.[2];
     expect(firstKey).toMatch(/^[0-9a-f-]{36}$/);
     expect(runPromptEvaluationSkillReEval.mock.calls[1]?.[2]).toBe(firstKey);
-    expect(useSkillReEvalRunStore.getState().pending).toBeUndefined();
   });
 
   it("recovers an older operation before starting a changed candidate", async () => {
-    useSkillReEvalRunStore.getState().setPending({
-      candidateId: "candidate-old",
-      request: { asset_id: "asset-old" },
-      requestKey: "10000000-0000-4000-8000-000000000012",
-      createdAt: Date.now(),
-    });
     const runPromptEvaluationSkillReEval = vi.fn()
+      .mockRejectedValueOnce(new ApiTransportError("POST old skill re-eval", true, new Error("lost")))
       .mockResolvedValueOnce(response("run-old"))
       .mockResolvedValueOnce(response("run-new"));
     const client = { runPromptEvaluationSkillReEval };
 
     await expect(runPromptEvaluationSkillReEvalWithRecovery(
+      "candidate-old", { asset_id: "asset-old" }, client,
+    )).rejects.toBeInstanceOf(ApiTransportError);
+    await expect(runPromptEvaluationSkillReEvalWithRecovery(
       "candidate-new", { asset_id: "asset-new" }, client,
     )).resolves.toMatchObject({ run: { id: "run-new" } });
-    expect(runPromptEvaluationSkillReEval.mock.calls[0]).toEqual([
-      "candidate-old", { asset_id: "asset-old" }, "10000000-0000-4000-8000-000000000012",
+    expect(runPromptEvaluationSkillReEval.mock.calls[1]).toEqual([
+      "candidate-old", { asset_id: "asset-old" }, runPromptEvaluationSkillReEval.mock.calls[0]?.[2],
     ]);
-    expect(runPromptEvaluationSkillReEval.mock.calls[1]?.[0]).toBe("candidate-new");
+    expect(runPromptEvaluationSkillReEval.mock.calls[2]?.[0]).toBe("candidate-new");
   });
 });

@@ -15,7 +15,7 @@ interface PendingCandidateCreate {
   createdAt: number;
 }
 
-export const useCandidateCreateStore: RecoverableOperationStore<PendingCandidateCreate> =
+const useCandidateCreateStore: RecoverableOperationStore<PendingCandidateCreate> =
   createWorkspaceRecoverableOperationStore<PendingCandidateCreate>(
     "multica_prompt_candidate_create",
   );

@@ -4,19 +4,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiTransportError } from "../api";
 import { setCurrentWorkspace } from "../platform/workspace-storage";
 import type { PromptEvaluationOptimizationCandidate } from "../types";
-import {
-  createPromptEvaluationOptimizationCandidateWithRecovery,
-  useCandidateCreateStore,
-} from "./candidate-create";
+import { createPromptEvaluationOptimizationCandidateWithRecovery } from "./candidate-create";
 
 const candidate = (id: string) => ({ id }) as PromptEvaluationOptimizationCandidate;
+let workspaceSequence = 0;
 
 describe("createPromptEvaluationOptimizationCandidateWithRecovery", () => {
   beforeEach(async () => {
     localStorage.clear();
-    setCurrentWorkspace("workspace-one", "workspace-1");
+    workspaceSequence += 1;
+    setCurrentWorkspace(`candidate-create-${workspaceSequence}`, `workspace-${workspaceSequence}`);
     await Promise.resolve();
-    useCandidateCreateStore.setState({ pending: undefined });
+    await Promise.resolve();
   });
 
   it("replays the same run and key after an unknown outcome", async () => {
@@ -33,42 +32,52 @@ describe("createPromptEvaluationOptimizationCandidateWithRecovery", () => {
     const firstKey = createPromptEvaluationOptimizationCandidate.mock.calls[0]?.[1];
     expect(firstKey).toMatch(/^[0-9a-f-]{36}$/);
     expect(createPromptEvaluationOptimizationCandidate.mock.calls[1]?.[1]).toBe(firstKey);
-    expect(useCandidateCreateStore.getState().pending).toBeUndefined();
   });
 
   it("recovers an older run before creating a candidate for another run", async () => {
-    useCandidateCreateStore.getState().setPending({
-      runId: "run-old",
-      requestKey: "10000000-0000-4000-8000-000000000016",
-      createdAt: Date.now(),
-    });
     const createPromptEvaluationOptimizationCandidate = vi.fn()
+      .mockRejectedValueOnce(new ApiTransportError("POST old candidate", true, new Error("lost")))
       .mockResolvedValueOnce(candidate("candidate-old"))
       .mockResolvedValueOnce(candidate("candidate-new"));
     const client = { createPromptEvaluationOptimizationCandidate };
 
+    await expect(createPromptEvaluationOptimizationCandidateWithRecovery("run-old", client))
+      .rejects.toBeInstanceOf(ApiTransportError);
     await expect(createPromptEvaluationOptimizationCandidateWithRecovery("run-new", client))
       .resolves.toMatchObject({ id: "candidate-new" });
-    expect(createPromptEvaluationOptimizationCandidate.mock.calls[0]).toEqual([
-      "run-old", "10000000-0000-4000-8000-000000000016",
+    expect(createPromptEvaluationOptimizationCandidate.mock.calls[1]).toEqual([
+      "run-old", createPromptEvaluationOptimizationCandidate.mock.calls[0]?.[1],
     ]);
-    expect(createPromptEvaluationOptimizationCandidate.mock.calls[1]?.[0]).toBe("run-new");
+    expect(createPromptEvaluationOptimizationCandidate.mock.calls[2]?.[0]).toBe("run-new");
   });
 
   it("isolates pending candidate creation by workspace", async () => {
-    const pending = {
-      runId: "run-one",
-      requestKey: "10000000-0000-4000-8000-000000000017",
-      createdAt: Date.now(),
+    const workspaceOneClient = {
+      createPromptEvaluationOptimizationCandidate: vi.fn()
+        .mockRejectedValueOnce(new ApiTransportError("POST workspace one", true, new Error("lost")))
+        .mockResolvedValueOnce(candidate("candidate-one")),
     };
-    useCandidateCreateStore.getState().setPending(pending);
-    setCurrentWorkspace("workspace-two", "workspace-2");
+    await expect(createPromptEvaluationOptimizationCandidateWithRecovery("run-one", workspaceOneClient))
+      .rejects.toBeInstanceOf(ApiTransportError);
+    const firstKey = workspaceOneClient.createPromptEvaluationOptimizationCandidate.mock.calls[0]?.[1];
+
+    setCurrentWorkspace("candidate-create-other", "workspace-other");
     await Promise.resolve();
     await Promise.resolve();
-    expect(useCandidateCreateStore.getState().pending).toBeUndefined();
-    setCurrentWorkspace("workspace-one", "workspace-1");
+    const workspaceTwoClient = {
+      createPromptEvaluationOptimizationCandidate: vi.fn().mockResolvedValue(candidate("candidate-two")),
+    };
+    await expect(createPromptEvaluationOptimizationCandidateWithRecovery("run-two", workspaceTwoClient))
+      .resolves.toMatchObject({ id: "candidate-two" });
+    expect(workspaceTwoClient.createPromptEvaluationOptimizationCandidate.mock.calls[0]?.[0]).toBe("run-two");
+
+    setCurrentWorkspace(`candidate-create-${workspaceSequence}`, `workspace-${workspaceSequence}`);
     await Promise.resolve();
     await Promise.resolve();
-    expect(useCandidateCreateStore.getState().pending).toEqual(pending);
+    await expect(createPromptEvaluationOptimizationCandidateWithRecovery("run-one", workspaceOneClient))
+      .resolves.toMatchObject({ id: "candidate-one" });
+    expect(workspaceOneClient.createPromptEvaluationOptimizationCandidate.mock.calls[1]).toEqual([
+      "run-one", firstKey,
+    ]);
   });
 });

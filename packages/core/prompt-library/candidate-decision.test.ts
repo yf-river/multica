@@ -7,17 +7,18 @@ import type { PromptEvaluationOptimizationCandidate } from "../types";
 import {
   publishPromptEvaluationOptimizationCandidateWithRecovery,
   rejectPromptEvaluationOptimizationCandidateWithRecovery,
-  useCandidateDecisionStore,
 } from "./candidate-decision";
 
 const candidate = (id: string, status: "已发布" | "已拒绝") => ({ id, status }) as PromptEvaluationOptimizationCandidate;
+let workspaceSequence = 0;
 
 describe("candidate decision recovery", () => {
   beforeEach(async () => {
     localStorage.clear();
-    setCurrentWorkspace("workspace-one", "workspace-1");
+    workspaceSequence += 1;
+    setCurrentWorkspace(`candidate-decision-${workspaceSequence}`, `workspace-${workspaceSequence}`);
     await Promise.resolve();
-    useCandidateDecisionStore.setState({ pending: undefined });
+    await Promise.resolve();
   });
 
   it("replays a published candidate with one persisted key", async () => {
@@ -38,14 +39,8 @@ describe("candidate decision recovery", () => {
   });
 
   it("recovers an older reject before accepting a changed decision", async () => {
-    useCandidateDecisionStore.getState().setPending({
-      kind: "reject",
-      candidateId: "candidate-old",
-      reason: "old reason",
-      requestKey: "10000000-0000-4000-8000-000000000018",
-      createdAt: Date.now(),
-    });
     const rejectPromptEvaluationOptimizationCandidate = vi.fn()
+      .mockRejectedValueOnce(new ApiTransportError("POST old rejection", true, new Error("lost")))
       .mockResolvedValueOnce(candidate("candidate-old", "已拒绝"))
       .mockResolvedValueOnce(candidate("candidate-new", "已拒绝"));
     const client = {
@@ -53,11 +48,15 @@ describe("candidate decision recovery", () => {
       rejectPromptEvaluationOptimizationCandidate,
     };
 
+    await expect(rejectPromptEvaluationOptimizationCandidateWithRecovery(
+      "candidate-old", "old reason", client,
+    )).rejects.toBeInstanceOf(ApiTransportError);
     await expect(rejectPromptEvaluationOptimizationCandidateWithRecovery("candidate-new", "new reason", client))
       .resolves.toMatchObject({ id: "candidate-new", status: "已拒绝" });
-    expect(rejectPromptEvaluationOptimizationCandidate.mock.calls[0]).toEqual([
-      "candidate-old", { reason: "old reason" }, "10000000-0000-4000-8000-000000000018",
+    expect(rejectPromptEvaluationOptimizationCandidate.mock.calls[1]).toEqual([
+      "candidate-old", { reason: "old reason" },
+      rejectPromptEvaluationOptimizationCandidate.mock.calls[0]?.[2],
     ]);
-    expect(rejectPromptEvaluationOptimizationCandidate.mock.calls[1]?.[0]).toBe("candidate-new");
+    expect(rejectPromptEvaluationOptimizationCandidate.mock.calls[2]?.[0]).toBe("candidate-new");
   });
 });

@@ -15,7 +15,7 @@ interface PendingAgentPlaygroundCreate {
   createdAt: number;
 }
 
-export const useAgentPlaygroundCreateStore: RecoverableOperationStore<PendingAgentPlaygroundCreate> =
+const useAgentPlaygroundCreateStore: RecoverableOperationStore<PendingAgentPlaygroundCreate> =
   createWorkspaceRecoverableOperationStore<PendingAgentPlaygroundCreate>(
     "multica_agent_playground_create",
   );
