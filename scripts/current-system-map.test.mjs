@@ -203,7 +203,7 @@ test("the current domain ownership map stays anchored to routes, tables and sour
       tables: ["agent", "resource_create_request"],
       sources: [
         "packages/core/agents/create.ts",
-        "packages/core/agents/pending-operation-store.ts",
+        "packages/core/platform/pending-create-store.ts",
         "server/internal/handler/agent.go",
         "server/internal/handler/resource_create_idempotency.go",
       ],
@@ -239,7 +239,7 @@ test("the current domain ownership map stays anchored to routes, tables and sour
       tables: ["resource_create_request", "skill", "skill_file"],
       sources: [
         "packages/core/skills/create.ts",
-        "packages/core/skills/pending-operation-store.ts",
+        "packages/core/platform/pending-create-store.ts",
         "server/internal/handler/skill.go",
         "server/internal/handler/resource_create_idempotency.go",
       ],
