@@ -25,7 +25,7 @@ export interface TriggerConfig {
 // Constants — schema-level (not user-visible)
 // ---------------------------------------------------------------------------
 
-const FREQUENCY_KEYS: TriggerFrequency[] = [
+export const TRIGGER_FREQUENCIES: TriggerFrequency[] = [
   "hourly",
   "daily",
   "weekdays",
@@ -35,7 +35,7 @@ const FREQUENCY_KEYS: TriggerFrequency[] = [
 
 const DAY_SHORT_KEYS = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"] as const;
 
-const COMMON_TIMEZONES = [
+export const COMMON_TIMEZONES = [
   "UTC",
   "America/New_York",
   "America/Chicago",
@@ -68,23 +68,26 @@ export function getLocalTimezone(): string {
   }
 }
 
-function getTimezoneOffset(tz: string): string {
+export function getTimezoneOffset(tz: string): string | null {
   if (tz === "UTC") return "UTC";
   try {
     const parts = new Intl.DateTimeFormat("zh-CN", {
       timeZone: tz,
       timeZoneName: "shortOffset",
     }).formatToParts(new Date());
-    return parts.find((p) => p.type === "timeZoneName")?.value ?? tz;
+    return parts.find((p) => p.type === "timeZoneName")?.value ?? null;
   } catch {
-    return tz;
+    return null;
   }
 }
 
-function getTimezoneLabel(tz: string): string {
+export function getTimezoneCity(tz: string): string {
   if (tz === "UTC") return "UTC";
-  const city = tz.split("/").pop()?.replace(/_/g, " ") ?? tz;
-  return `${city} (${getTimezoneOffset(tz)})`;
+  return tz.split("/").pop()?.replace(/_/g, " ") ?? tz;
+}
+
+function getTimezoneLabel(tz: string): string {
+  return `${getTimezoneCity(tz)} (${getTimezoneOffset(tz) ?? tz})`;
 }
 
 function formatTime12h(time: string): string {
@@ -177,7 +180,7 @@ export function parseCronExpression(cron: string, timezone: string): TriggerConf
 function useDescribeTrigger(): (cfg: TriggerConfig) => string {
   const { t } = useT("autopilots");
   return (cfg) => {
-    const offset = getTimezoneOffset(cfg.timezone);
+    const offset = getTimezoneOffset(cfg.timezone) ?? cfg.timezone;
     switch (cfg.frequency) {
       case "hourly": {
         const min = parseInt(cfg.time.split(":")[1] ?? "0", 10).toString().padStart(2, "0");
@@ -241,7 +244,7 @@ export function TriggerConfigSection({
     <div className="space-y-3">
       {/* Frequency tabs */}
       <div className="flex flex-wrap gap-1">
-        {FREQUENCY_KEYS.map((freq) => (
+        {TRIGGER_FREQUENCIES.map((freq) => (
           <button
             key={freq}
             type="button"

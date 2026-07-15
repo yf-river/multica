@@ -64,6 +64,8 @@ import {
   getDefaultTriggerConfig,
   getLocalTimezone,
   parseCronExpression,
+  COMMON_TIMEZONES,
+  TRIGGER_FREQUENCIES,
   toCronExpression,
   type TriggerConfig,
   type TriggerFrequency,
@@ -87,7 +89,7 @@ interface AutopilotInitial {
   subscriber_user_ids?: string[];
 }
 
-export type AutopilotDialogProps =
+type AutopilotDialogProps =
   | {
       mode: "create";
       open: boolean;
@@ -108,14 +110,6 @@ export type AutopilotDialogProps =
 // Static schema-level data (not user-visible)
 // ---------------------------------------------------------------------------
 
-const FREQUENCY_KEYS: TriggerFrequency[] = [
-  "hourly",
-  "daily",
-  "weekdays",
-  "weekly",
-  "custom",
-];
-
 const DAY_KEYS = [
   "sunday",
   "monday",
@@ -125,27 +119,6 @@ const DAY_KEYS = [
   "friday",
   "saturday",
 ] as const;
-
-const TIMEZONE_OPTIONS = [
-  "UTC",
-  "America/New_York",
-  "America/Chicago",
-  "America/Denver",
-  "America/Los_Angeles",
-  "America/Sao_Paulo",
-  "Europe/London",
-  "Europe/Paris",
-  "Europe/Berlin",
-  "Europe/Moscow",
-  "Asia/Dubai",
-  "Asia/Kolkata",
-  "Asia/Singapore",
-  "Asia/Shanghai",
-  "Asia/Tokyo",
-  "Asia/Seoul",
-  "Australia/Sydney",
-  "Pacific/Auckland",
-];
 
 const OUTPUT_MODE_KEYS: AutopilotExecutionMode[] = ["create_issue", "run_only"];
 
@@ -911,8 +884,8 @@ function ScheduleSection({
   const next = useMemo(() => computeNextRun(config, now), [config, now]);
   const timezones = useMemo(() => {
     const local = getLocalTimezone();
-    if (TIMEZONE_OPTIONS.includes(local)) return TIMEZONE_OPTIONS;
-    return [local, ...TIMEZONE_OPTIONS];
+    if (COMMON_TIMEZONES.includes(local)) return COMMON_TIMEZONES;
+    return [local, ...COMMON_TIMEZONES];
   }, []);
 
   const selectedDay = config.daysOfWeek[0] ?? 1;
@@ -938,7 +911,7 @@ function ScheduleSection({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {FREQUENCY_KEYS.map((freq) => (
+              {TRIGGER_FREQUENCIES.map((freq) => (
                 <SelectItem key={freq} value={freq}>
                   {t(($) => $.dialog.frequency_long[freq])}
                 </SelectItem>

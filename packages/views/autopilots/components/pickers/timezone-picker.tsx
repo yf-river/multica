@@ -8,30 +8,14 @@ import {
   PickerEmpty,
 } from "../../../issues/components/pickers/property-picker";
 import { useT } from "../../../i18n";
+import { getTimezoneCity, getTimezoneOffset } from "../trigger-config";
 
-export interface TimezonePickerProps {
+interface TimezonePickerProps {
   value: string;
   onChange: (tz: string) => void;
   options: string[];
   disabled?: boolean;
   className?: string;
-}
-
-function offsetFor(tz: string): string {
-  try {
-    const parts = new Intl.DateTimeFormat("zh-CN", {
-      timeZone: tz,
-      timeZoneName: "shortOffset",
-    }).formatToParts(new Date());
-    return parts.find((p) => p.type === "timeZoneName")?.value ?? "";
-  } catch {
-    return "";
-  }
-}
-
-function cityLabel(tz: string): string {
-  if (tz === "UTC") return "UTC";
-  return tz.split("/").pop()?.replace(/_/g, " ") ?? tz;
 }
 
 export function TimezonePicker({
@@ -45,14 +29,14 @@ export function TimezonePicker({
   const [open, setOpen] = useState(false);
   const [filter, setFilter] = useState("");
 
-  const selectedCity = cityLabel(value);
-  const selectedOffset = useMemo(() => offsetFor(value), [value]);
+  const selectedCity = getTimezoneCity(value);
+  const selectedOffset = useMemo(() => getTimezoneOffset(value), [value]);
 
   const query = filter.trim().toLowerCase();
   const filteredOptions = useMemo(() => {
     if (!query) return options;
     return options.filter((tz) => {
-      const haystack = `${tz} ${cityLabel(tz)} ${offsetFor(tz)}`.toLowerCase();
+      const haystack = `${tz} ${getTimezoneCity(tz)} ${getTimezoneOffset(tz) ?? ""}`.toLowerCase();
       return haystack.includes(query);
     });
   }, [options, query]);
@@ -100,7 +84,7 @@ export function TimezonePicker({
         <PickerEmpty />
       ) : (
         filteredOptions.map((tz) => {
-          const off = offsetFor(tz);
+          const off = getTimezoneOffset(tz);
           const isSelected = tz === value;
           return (
             <button
@@ -118,7 +102,7 @@ export function TimezonePicker({
                   <Check className="size-3.5 text-foreground" />
                 )}
               </span>
-              <span className="flex-1 truncate text-left">{cityLabel(tz)}</span>
+              <span className="flex-1 truncate text-left">{getTimezoneCity(tz)}</span>
               {off && (
                 <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
                   {off}
