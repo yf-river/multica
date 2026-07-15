@@ -8,7 +8,7 @@ the expanded JSON and Markdown evidence under ignored
 
 | Surface | Count |
 | --- | ---: |
-| Go Chi routes | 316 |
+| Go Chi routes | 313 |
 | Next.js pages | 31 |
 | Next.js route handlers | 1 |
 | Next.js rewrites | 6 |
@@ -19,11 +19,11 @@ the expanded JSON and Markdown evidence under ignored
 | Database indexes | 190 |
 | Migration files | 4 |
 | sqlc modules | 55 |
-| sqlc queries | 546 |
+| sqlc queries | 545 |
 | Go WebSocket events | 79 |
 | TypeScript WebSocket events | 69 |
 | Zustand stores | 24 |
-| React Query consumer files | 179 |
+| React Query consumer files | 178 |
 | Environment variables | 193 |
 | Manually identified external systems | 12 |
 
