@@ -6,6 +6,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
 import { api } from "@multica/core/api";
+import { isActiveAgentTaskStatus } from "@multica/core/agents";
 import { issueExecutionTreeOptions, issueKeys, issueListOptions } from "@multica/core/issues/queries";
 import { useWorkspaceId } from "@multica/core/paths";
 import { useWorkspacePaths } from "@multica/core/paths";
@@ -59,8 +60,6 @@ import {
   buildRunReviewLiveSummary,
   buildRunReviewLiveTimelineNodes,
   hasActiveTimelineNode,
-  isActiveTask,
-  isRetryableTask,
   latestTerminalAgentTask,
   runReviewMessageRefreshDelayMs,
   runReviewTotalDurationMs,
@@ -85,10 +84,6 @@ import {
   type TimelineBarSegment,
   type TimelineNodeRow,
 } from "./run-review-timeline";
-
-export function buildRunReviewOptimizerHref(evaluationView: (view: string) => string, issueId: string): string {
-  return `${evaluationView("runs")}?issue=${encodeURIComponent(issueId)}`;
-}
 
 export function RunReviewsPage() {
   const { t } = useT("run-reviews");
@@ -153,7 +148,7 @@ export function RunReviewsPage() {
               loading={treeQuery.isLoading}
               issueHref={paths.issueDetail(selectedIssue.id)}
               evalDraftHref={`${paths.evaluationView("datasets")}?issue=${encodeURIComponent(selectedIssue.id)}&mode=draft`}
-              optimizerHref={buildRunReviewOptimizerHref(paths.evaluationView, selectedIssue.id)}
+              optimizerHref={`${paths.evaluationView("runs")}?issue=${encodeURIComponent(selectedIssue.id)}`}
             />
           ) : (
             <div className="px-6 py-10 text-sm text-muted-foreground">
@@ -313,7 +308,10 @@ function RunReviewDetail({
     staleTime: 30_000,
     refetchOnWindowFocus: true,
   });
-  const activeTasks = useMemo(() => tasks.filter(isActiveTask), [tasks]);
+  const activeTasks = useMemo(
+    () => tasks.filter((task) => isActiveAgentTaskStatus(task.status)),
+    [tasks],
+  );
   const baseTimelineNodes = useMemo(
     () => tree?.timeline_nodes ?? [],
     [tree?.timeline_nodes],
@@ -387,7 +385,8 @@ function RunReviewDetail({
     });
   }, []);
   const latestTerminalTask = useMemo(() => latestTerminalAgentTask(tasks), [tasks]);
-  const latestFailedTask = activeTasks.length === 0 && latestTerminalTask && isRetryableTask(latestTerminalTask)
+  const latestFailedTask = activeTasks.length === 0 && latestTerminalTask &&
+    (latestTerminalTask.status === "failed" || latestTerminalTask.status === "cancelled")
     ? latestTerminalTask
     : null;
   const taskStatusLabel = activeTasks.length > 0

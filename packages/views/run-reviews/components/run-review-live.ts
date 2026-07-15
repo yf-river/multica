@@ -127,14 +127,6 @@ export function runReviewMessageRefreshDelayMs(
   return Math.min(debounceMs, maxWaitMs - elapsedMs);
 }
 
-export function isActiveTask(task: AgentTask) {
-  return isActiveAgentTaskStatus(task.status);
-}
-
-export function isRetryableTask(task: AgentTask) {
-  return task.status === "failed" || task.status === "cancelled";
-}
-
 export function latestTerminalAgentTask(tasks: AgentTask[]) {
   return tasks
     .filter((task) => task.status === "completed" || task.status === "failed" || task.status === "cancelled")

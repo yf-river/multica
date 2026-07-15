@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { AgentTask, AgentTaskArtifact, Issue, IssueExecutionTreeResponse, IssueTimelineNode, TaskTraceEvent } from "@multica/core/types";
+import type { AgentTask, AgentTaskArtifact, Issue, IssueExecutionTreeResponse, IssueTimelineNode, IssueTimelineSummary, TaskTraceEvent } from "@multica/core/types";
 import type { TaskMessagePayload } from "@multica/core/types/events";
 import type { PromptEvaluationToolCallChain } from "@multica/core/types/prompt-evaluation";
 import { buildIssueReviewDraftCaseRequest } from "./run-review-draft-case";
@@ -33,7 +33,7 @@ import {
   timelineSegmentTooltipRows,
   timelineSegmentWidthPercent,
 } from "./run-review-timeline";
-import { buildRunReviewOptimizerHref, issueRunRowActivity, issueRunRowMeta } from "./run-reviews-page";
+import { issueRunRowActivity, issueRunRowMeta } from "./run-reviews-page";
 import { sopStageDisplayName } from "../../common/sop-stage-labels";
 
 function trace(overrides: Partial<TaskTraceEvent> = {}): TaskTraceEvent {
@@ -120,6 +120,19 @@ function timelineNode(overrides: Partial<IssueTimelineNode> = {}): IssueTimeline
   };
 }
 
+function timelineSummary(overrides: Partial<IssueTimelineSummary> = {}): IssueTimelineSummary {
+  return {
+    total_duration_ms: 0,
+    total_input_tokens: 0,
+    total_output_tokens: 0,
+    total_cache_read_tokens: 0,
+    total_cache_write_tokens: 0,
+    agent_turn_count: 0,
+    acceptance_status: "done",
+    ...overrides,
+  };
+}
+
 function task(overrides: Partial<AgentTask> = {}): AgentTask {
   return {
     id: "task-1",
@@ -151,53 +164,25 @@ function artifact(overrides: Partial<AgentTaskArtifact> = {}): AgentTaskArtifact
   };
 }
 
-describe("buildRunReviewOptimizerHref", () => {
-  it("keeps issue context on the visible test suites route", () => {
-    expect(buildRunReviewOptimizerHref((view) => `/acme/evaluation/${view}`, "issue with space")).toBe(
-      "/acme/evaluation/runs?issue=issue%20with%20space",
-    );
-  });
-});
-
 describe("run review duration summary", () => {
   it("uses agent execution plus recorded waiting time instead of wall clock duration", () => {
-    const summary = {
-      issue_id: "issue-1",
+    const summary = timelineSummary({
       total_duration_ms: 120000,
       agent_execution_duration_ms: 120000,
       human_confirmation_duration_ms: 180000,
       child_issue_wait_duration_ms: 60000,
-      total_input_tokens: 0,
-      total_output_tokens: 0,
-      total_cache_read_tokens: 0,
-      total_cache_write_tokens: 0,
-      message_count: 0,
-      agent_turn_count: 0,
-      trace_event_count: 0,
-      usage_unavailable: false,
-      acceptance_status: "done",
-    };
+    });
 
     expect(runReviewTotalDurationMs(summary)).toBe(360000);
     expect(buildRunReviewDurationSummary(summary)).toBe("Agent 执行 2m · 人工确认 3m · 子任务等待 1m");
   });
 
   it("ignores wall clock duration even when unclassified idle gaps exist", () => {
-    const summary = {
-      issue_id: "issue-1",
+    const summary = timelineSummary({
       total_duration_ms: 120000,
       agent_execution_duration_ms: 120000,
       human_confirmation_duration_ms: 60000,
-      total_input_tokens: 0,
-      total_output_tokens: 0,
-      total_cache_read_tokens: 0,
-      total_cache_write_tokens: 0,
-      message_count: 0,
-      agent_turn_count: 0,
-      trace_event_count: 0,
-      usage_unavailable: false,
-      acceptance_status: "done",
-    };
+    });
 
     expect(runReviewTotalDurationMs(summary)).toBe(180000);
   });
@@ -235,25 +220,14 @@ describe("run review realtime helpers", () => {
       started_at: "2026-06-09T10:00:00.000Z",
       completed_at: null,
     });
-    const runningNode = {
-      issue_id: "issue-1",
+    const runningNode = timelineNode({
       node_id: "task:task-1",
-      node_type: "agent_task",
       status: "running",
       started_at: "2026-06-09T10:01:00.000Z",
       completed_at: "",
       duration_ms: 15_000,
-      input_tokens: 0,
-      output_tokens: 0,
-      cache_read_tokens: 0,
-      cache_write_tokens: 0,
-      message_count: 0,
-      agent_turn_count: 0,
-      trace_event_count: 0,
-      usage_unavailable_trace: false,
       summary: "running",
-      evidence_refs: [],
-    } as IssueTimelineNode;
+    });
     const completedNode = {
       ...runningNode,
       node_id: "task:task-2",
@@ -261,20 +235,11 @@ describe("run review realtime helpers", () => {
       completed_at: "2026-06-09T10:02:00.000Z",
       duration_ms: 60_000,
     } as IssueTimelineNode;
-    const summary = {
-      issue_id: "issue-1",
+    const summary = timelineSummary({
       total_duration_ms: 60_000,
       agent_execution_duration_ms: 60_000,
-      total_input_tokens: 0,
-      total_output_tokens: 0,
-      total_cache_read_tokens: 0,
-      total_cache_write_tokens: 0,
-      message_count: 0,
-      agent_turn_count: 0,
-      trace_event_count: 0,
-      usage_unavailable: false,
       acceptance_status: "running",
-    };
+    });
 
     expect(buildRunReviewLiveSummary(summary, [runningTask], [runningNode, completedNode], nowMs)).toMatchObject({
       total_duration_ms: 180_000,
@@ -297,21 +262,12 @@ describe("run review realtime helpers", () => {
       duration_ms: 0,
       summary: "等待用户确认密码策略边界",
     });
-    const summary = {
-      issue_id: "issue-1",
+    const summary = timelineSummary({
       total_duration_ms: 60_000,
       agent_execution_duration_ms: 60_000,
       human_confirmation_duration_ms: 0,
-      total_input_tokens: 0,
-      total_output_tokens: 0,
-      total_cache_read_tokens: 0,
-      total_cache_write_tokens: 0,
-      message_count: 0,
-      agent_turn_count: 0,
-      trace_event_count: 0,
-      usage_unavailable: false,
       acceptance_status: "running",
-    };
+    });
 
     expect(buildRunReviewLiveSummary(summary, [], [pendingHumanNode], nowMs)).toMatchObject({
       total_duration_ms: 300_000,

@@ -462,54 +462,18 @@ export function semanticToolAction(tool: string | undefined, input: Record<strin
   );
   if (path) {
     const action = semanticFileToolAction(tool);
-    const outputSignal = output ? outputOutcome(output) : null;
-    if (outputSignal?.severity === "error") {
-      return {
-        category: action.category,
-        sourceLabel: action.sourceLabel,
-        object: shortPath(path),
-        title: `${action.titlePrefix}：${shortPath(path)}`,
-        outcome: outputSignal.outcome,
-        summary: outputSignal.summary,
-        severity: outputSignal.severity,
-      };
-    }
-    return {
-      category: action.category,
-      sourceLabel: action.sourceLabel,
-      object: shortPath(path),
-      title: `${action.titlePrefix}：${shortPath(path)}`,
-      outcome: "已记录",
-      summary: "",
-      severity: "normal",
-      suppressFailureSignal: true,
-    };
+    return semanticReferenceAction(
+      action.category,
+      action.sourceLabel,
+      action.titlePrefix,
+      shortPath(path),
+      output,
+    );
   }
 
   const query = firstNonEmpty(stringFromUnknown(input?.query), stringFromUnknown(input?.pattern));
   if (query) {
-    const outputSignal = output ? outputOutcome(output) : null;
-    if (outputSignal?.severity === "error") {
-      return {
-        category: "搜索",
-        sourceLabel: "搜索",
-        object: truncateText(query, 96),
-        title: `搜索：${truncateText(query, 96)}`,
-        outcome: outputSignal.outcome,
-        summary: outputSignal.summary,
-        severity: outputSignal.severity,
-      };
-    }
-    return {
-      category: "搜索",
-      sourceLabel: "搜索",
-      object: truncateText(query, 96),
-      title: `搜索：${truncateText(query, 96)}`,
-      outcome: "已记录",
-      summary: "",
-      severity: "normal",
-      suppressFailureSignal: true,
-    };
+    return semanticReferenceAction("搜索", "搜索", "搜索", truncateText(query, 96), output);
   }
 
   const outputSignal = output ? outputOutcome(output) : null;
@@ -539,108 +503,84 @@ export function semanticToolAction(tool: string | undefined, input: Record<strin
   };
 }
 
+function semanticReferenceAction(
+  category: string,
+  sourceLabel: string,
+  titlePrefix: string,
+  object: string,
+  output: string | undefined,
+): SemanticToolAction {
+  const outputSignal = output ? outputOutcome(output) : null;
+  const base = { category, sourceLabel, object, title: `${titlePrefix}：${object}` };
+  if (outputSignal?.severity === "error") return { ...base, ...outputSignal };
+  return {
+    ...base,
+    outcome: "已记录",
+    summary: "",
+    severity: "normal",
+    suppressFailureSignal: true,
+  };
+}
+
 function semanticCommandAction(command: string, output: string | undefined): SemanticToolAction {
   const normalized = command.trim();
   const segment = meaningfulCommandSegment(normalized);
   const executable = commandExecutable(segment);
 
   if (executable === "rg" || executable === "grep" || executable === "find" || isGitSubcommand(segment, "grep")) {
-    return {
-      category: "搜索",
-      sourceLabel: "代码搜索",
-      object: searchQueryFromCommand(segment) || truncateText(segment, 96),
-      title: `搜索代码：${searchQueryFromCommand(segment) || truncateText(segment, 96)}`,
-      ...semanticOutputState(output, segment),
-    };
+    return semanticCommandResult("搜索", "代码搜索", "搜索代码", searchQueryFromCommand(segment) || truncateText(segment, 96), output, segment);
   }
 
   if (["sed", "cat", "nl", "ls", "head", "tail"].includes(executable) || isGitReadCommand(segment)) {
-    return {
-      category: "查看",
-      sourceLabel: "读取上下文",
-      object: readTargetFromCommand(segment) || truncateText(segment, 96),
-      title: `${readCommandTitlePrefix(segment, executable)}：${readTargetFromCommand(segment) || truncateText(segment, 96)}`,
-      ...semanticOutputState(output, segment),
-    };
+    return semanticCommandResult("查看", "读取上下文", readCommandTitlePrefix(segment, executable), readTargetFromCommand(segment) || truncateText(segment, 96), output, segment);
   }
 
   if (isPnpmTypecheck(segment)) {
-    return {
-      category: "验证",
-      sourceLabel: "类型检查",
-      object: pnpmFilterFromCommand(segment) || "TypeScript",
-      title: `运行类型检查：${pnpmFilterFromCommand(segment) || "TypeScript"}`,
-      ...semanticOutputState(output, segment),
-    };
+    return semanticCommandResult("验证", "类型检查", "运行类型检查", pnpmFilterFromCommand(segment) || "TypeScript", output, segment);
   }
 
   if (isPnpmTest(segment)) {
-    return {
-      category: "验证",
-      sourceLabel: "前端测试",
-      object: testTargetFromCommand(segment) || pnpmFilterFromCommand(segment) || "Vitest",
-      title: `运行前端单测：${testTargetFromCommand(segment) || pnpmFilterFromCommand(segment) || "Vitest"}`,
-      ...semanticOutputState(output, segment),
-    };
+    return semanticCommandResult("验证", "前端测试", "运行前端单测", testTargetFromCommand(segment) || pnpmFilterFromCommand(segment) || "Vitest", output, segment);
   }
 
   if (isGoTest(segment)) {
     const target = goTestTargetFromCommand(segment);
-    return {
-      category: "验证",
-      sourceLabel: "后端测试",
-      object: target,
-      title: `运行后端单测：${target}`,
-      ...semanticOutputState(output, segment),
-    };
+    return semanticCommandResult("验证", "后端测试", "运行后端单测", target, output, segment);
   }
 
   if (isBuildCommand(segment)) {
-    return {
-      category: "构建",
-      sourceLabel: "构建",
-      object: truncateText(segment, 96),
-      title: `运行构建：${truncateText(segment, 96)}`,
-      ...semanticOutputState(output, segment),
-    };
+    return semanticCommandResult("构建", "构建", "运行构建", truncateText(segment, 96), output, segment);
   }
 
   if (executable === "curl" || executable === "http" || executable === "wget") {
-    return {
-      category: "接口",
-      sourceLabel: "接口检查",
-      object: httpTargetFromCommand(segment) || truncateText(segment, 96),
-      title: `检查接口：${httpTargetFromCommand(segment) || truncateText(segment, 96)}`,
-      ...semanticOutputState(output, segment),
-    };
+    return semanticCommandResult("接口", "接口检查", "检查接口", httpTargetFromCommand(segment) || truncateText(segment, 96), output, segment);
   }
 
   if (executable === "make" && (segment.includes("dev") || segment.includes("start") || segment.includes("server"))) {
-    return {
-      category: "服务",
-      sourceLabel: "运行服务",
-      object: truncateText(segment, 96),
-      title: `运行服务：${truncateText(segment, 96)}`,
-      ...semanticOutputState(output, segment),
-    };
+    return semanticCommandResult("服务", "运行服务", "运行服务", truncateText(segment, 96), output, segment);
   }
 
   if (executable === "make" && (segment.includes("check") || segment.includes("verify") || segment.includes("test"))) {
-    return {
-      category: "验证",
-      sourceLabel: "验证",
-      object: truncateText(segment, 96),
-      title: `运行验证：${truncateText(segment, 96)}`,
-      ...semanticOutputState(output, segment),
-    };
+    return semanticCommandResult("验证", "验证", "运行验证", truncateText(segment, 96), output, segment);
   }
 
+  return semanticCommandResult("命令", "命令执行", "执行命令", truncateText(segment || normalized, 96), output, segment);
+}
+
+function semanticCommandResult(
+  category: string,
+  sourceLabel: string,
+  titlePrefix: string,
+  object: string,
+  output: string | undefined,
+  command: string,
+): SemanticToolAction {
   return {
-    category: "命令",
-    sourceLabel: "命令执行",
-    object: truncateText(segment || normalized, 96),
-    title: `执行命令：${truncateText(segment || normalized, 96)}`,
-    ...semanticOutputState(output, segment),
+    category,
+    sourceLabel,
+    object,
+    title: `${titlePrefix}：${object}`,
+    ...semanticOutputState(output, command),
   };
 }
 
