@@ -206,7 +206,7 @@ export function usageTokenTotal(
   );
 }
 
-export function estimateCostBreakdown(usage: Priceable) {
+function estimateCostBreakdown(usage: Priceable) {
   return {
     input: usage.input_cost_usd ?? 0,
     output: usage.output_cost_usd ?? 0,
