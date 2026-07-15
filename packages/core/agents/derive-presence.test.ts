@@ -52,9 +52,6 @@ function makeRuntime(overrides: Partial<AgentRuntime> = {}): AgentRuntime {
   };
 }
 
-// Anchor for all wall-clock comparisons in the suite. Pairs with the
-// runtime fixture's last_seen_at (10s before NOW) so an "online" runtime
-// looks fresh by default.
 const NOW = new Date("2026-04-27T12:00:00Z").getTime();
 
 function makeTask(overrides: Partial<AgentTask> = {}): AgentTask {
@@ -75,9 +72,6 @@ function makeTask(overrides: Partial<AgentTask> = {}): AgentTask {
 }
 
 describe("deriveAgentAvailability", () => {
-  // Reachability dimension only — runtime + clock decide it; tasks are
-  // irrelevant to this axis.
-
   it("returns online when runtime is fresh-online", () => {
     expect(deriveAgentAvailability(makeRuntime(), NOW)).toBe("online");
   });
@@ -103,7 +97,6 @@ describe("deriveAgentAvailability", () => {
   it("collapses about_to_gc into offline (it's a runtime-card concern, not the dot)", () => {
     expect(
       deriveAgentAvailability(
-        // 6.5 days ago — past the 6-day about_to_gc threshold.
         makeRuntime({ status: "offline", last_seen_at: "2026-04-21T00:00:00Z" }),
         NOW,
       ),
@@ -116,10 +109,6 @@ describe("deriveAgentAvailability", () => {
 });
 
 describe("deriveAgentPresenceDetail", () => {
-  // Composition: the two dimensions are derived independently and the
-  // detail object exposes both. No cross-axis override — workload never
-  // colours the dot, availability never overrides workload.
-
   it("composes online + working for the common busy case", () => {
     const detail = deriveAgentPresenceDetail({
       agent: makeAgent(),
@@ -136,11 +125,7 @@ describe("deriveAgentPresenceDetail", () => {
     expect(detail.queuedCount).toBe(1);
   });
 
-  it("composes offline + queued — the canonical 'stuck' case (was previously misleading 'running 0/N')", () => {
-    // The motivation for the redesign: runtime offline + queued tasks
-    // used to surface as `running` with `0/3 +2q` counts (literally false).
-    // Workload now returns `queued` honestly, paired with offline
-    // availability — UI reads "Offline · Queued · 2".
+  it("composes offline + queued for an unreachable agent with pending work", () => {
     const detail = deriveAgentPresenceDetail({
       agent: makeAgent(),
       runtime: makeRuntime({
@@ -160,9 +145,6 @@ describe("deriveAgentPresenceDetail", () => {
   });
 
   it("composes unstable + working — runtime hiccup with tasks still in flight", () => {
-    // Recently-lost runtime, but a task is still recorded as running.
-    // Both signals surface independently — amber dot AND working chip —
-    // so the user sees "connection wobbling" alongside "agent is busy".
     const detail = deriveAgentPresenceDetail({
       agent: makeAgent(),
       runtime: makeRuntime({
@@ -218,11 +200,6 @@ describe("deriveAgentPresenceDetail", () => {
   });
 
   it("reports archived over any runtime/task signal for an archived agent", () => {
-    // Archived wins over presence: a leftover online runtime and a running
-    // task must never make a retired agent read as live. Availability
-    // collapses to "archived" and workload is forced idle with zero counts
-    // so no consumer (dot, hover card, list row) can surface "Online" or
-    // "Working" for an archived agent.
     const detail = deriveAgentPresenceDetail({
       agent: makeAgent({ archived_at: "2026-04-27T10:00:00Z" }),
       runtime: makeRuntime(),
@@ -267,14 +244,10 @@ describe("buildPresenceMap", () => {
     });
     const o = map.get("orphan");
     expect(o?.availability).toBe("offline");
-    // Workload still resolves independently — running task counts.
     expect(o?.workload).toBe("working");
   });
 
   it("threads the same `now` so every agent on a shared runtime gets the same availability", () => {
-    // Multi-agent scenario: one local daemon backs N agents, daemon dies.
-    // All dependent agents should report unstable together — the shared
-    // `now` parameter is what guarantees consistent bucket boundaries.
     const agentA = makeAgent({ id: "a", runtime_id: "rt-1" });
     const agentB = makeAgent({ id: "b", runtime_id: "rt-1" });
     const map = buildPresenceMap({

@@ -5,6 +5,19 @@ import { setCurrentWorkspace } from "../../platform/workspace-storage";
 
 const flush = () => new Promise((resolve) => queueMicrotask(() => resolve(null)));
 
+function persistScope(slug: string, scope: "all" | "mine") {
+  localStorage.setItem(
+    `multica_agents_view:${slug}`,
+    JSON.stringify({ state: { scope }, version: 1 }),
+  );
+}
+
+async function switchWorkspace(slug: string, id: string) {
+  setCurrentWorkspace(slug, id);
+  await flush();
+  await flush();
+}
+
 // Node 25 ships a partial `localStorage` shim under jsdom that's missing
 // `clear`/`removeItem`; replace it with a real in-memory Storage so persist
 // can round-trip values.
@@ -99,40 +112,23 @@ describe("useAgentsViewStore", () => {
   });
 
   it("rehydrates a different saved scope on workspace switch", async () => {
-    localStorage.setItem(
-      "multica_agents_view:acme",
-      JSON.stringify({ state: { scope: "all" }, version: 1 }),
-    );
-    localStorage.setItem(
-      "multica_agents_view:beta",
-      JSON.stringify({ state: { scope: "mine" }, version: 1 }),
-    );
+    persistScope("acme", "all");
+    persistScope("beta", "mine");
 
-    setCurrentWorkspace("acme", "ws_a");
-    await flush();
-    await flush();
+    await switchWorkspace("acme", "ws_a");
     expect(useAgentsViewStore.getState().scope).toBe("all");
 
-    setCurrentWorkspace("beta", "ws_b");
-    await flush();
-    await flush();
+    await switchWorkspace("beta", "ws_b");
     expect(useAgentsViewStore.getState().scope).toBe("mine");
   });
 
   it("resets to 'mine' when switching to a workspace with no persisted value", async () => {
-    localStorage.setItem(
-      "multica_agents_view:acme",
-      JSON.stringify({ state: { scope: "all" }, version: 1 }),
-    );
+    persistScope("acme", "all");
 
-    setCurrentWorkspace("acme", "ws_a");
-    await flush();
-    await flush();
+    await switchWorkspace("acme", "ws_a");
     expect(useAgentsViewStore.getState().scope).toBe("all");
 
-    setCurrentWorkspace("beta", "ws_b");
-    await flush();
-    await flush();
+    await switchWorkspace("beta", "ws_b");
     expect(useAgentsViewStore.getState().scope).toBe("mine");
     expect(localStorage.getItem("multica_agents_view:acme")).not.toBeNull();
   });
