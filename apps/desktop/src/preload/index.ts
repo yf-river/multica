@@ -96,9 +96,6 @@ const desktopAPI = {
    *  On non-desktop platforms this property is undefined. */
   downloadURL: (url: string): Promise<void> =>
     ipcRenderer.invoke("file:download-url", url),
-  /** Toggle immersive mode — hide macOS traffic lights for full-screen modals */
-  setImmersiveMode: (immersive: boolean): Promise<void> =>
-    ipcRenderer.invoke("window:setImmersive", immersive),
   /**
    * Show a native OS notification for a new inbox item. Fired from the
    * renderer only when the app is unfocused — in-focus feedback is the

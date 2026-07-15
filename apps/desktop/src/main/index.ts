@@ -425,14 +425,6 @@ if (!gotTheLock) {
       latestRendererRouteContext = sanitized;
     });
 
-    // IPC: toggle immersive mode — hides the macOS traffic lights so full-screen
-    // modals (e.g. create-workspace) can place UI in the top-left corner
-    // without fighting the native window controls' hit-test.
-    ipcMain.handle("window:setImmersive", (_event, immersive: boolean) => {
-      if (process.platform !== "darwin") return;
-      mainWindow?.setWindowButtonVisibility(!immersive);
-    });
-
     // IPC: show a native OS notification for a new inbox item. The renderer
     // only fires this when the app is unfocused (it gates on
     // `document.hasFocus()`), so we don't fight macOS foreground suppression

@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 
 /** Subset of the daemonAPI status shape that the local_directory UI consumes.
  *  Redeclared here so this hook doesn't depend on the desktop preload types. */
-export interface LocalDaemonStatus {
+interface LocalDaemonStatus {
   daemonId: string | null;
   deviceName: string | null;
   running: boolean;
