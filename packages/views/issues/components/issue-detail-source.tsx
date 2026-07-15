@@ -34,7 +34,6 @@ function tapdResourceTypeLabel(resourceType: string | null, t: IssueDetailT): st
     case "markdown_wiki":
       return t(($) => $.detail.tapd_source_type_markdown_wiki);
     case "story":
-    case "stories":
       return t(($) => $.detail.tapd_source_type_story);
     default:
       return t(($) => $.detail.tapd_source_type_default);
@@ -58,17 +57,11 @@ function sourceFetchStatusLabel(status: string | null, t: IssueDetailT): string 
 
 function getTAPDSourceReference(issue: Issue, t: IssueDetailT): IssueSourceReference | null {
   if (metadataText(issue, "source_provider").toLowerCase() !== "tapd") return null;
-  const url = firstMetadataText(issue, ["source_url", "source_fetch_url"]);
+  const url = metadataText(issue, "source_url");
   if (!url) return null;
 
-  const resourceType = firstMetadataText(issue, [
-    "tapd_resource_type",
-    "source_fetch_resource_type",
-  ]);
-  const sourceId = firstMetadataText(issue, [
-    "tapd_resource_id",
-    "source_fetch_resource_id",
-  ]);
+  const resourceType = metadataText(issue, "tapd_resource_type");
+  const sourceId = metadataText(issue, "tapd_resource_id");
   const title = metadataText(issue, "source_fetch_title") || t(($) => $.detail.tapd_source_title_fallback);
   const summary = firstMetadataText(issue, [
     "source_fetch_summary",

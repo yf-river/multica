@@ -304,11 +304,11 @@ func (h *Handler) autoFetchTAPDSource(ctx context.Context, userID string, req Re
 		sourceURL = ref.URL
 		workspaceID = firstNonEmpty(workspaceID, ref.WorkspaceID)
 		resourceID = firstNonEmpty(resourceID, ref.ResourceID)
-		if resourceType == "" || resourceType == "tapd_resource" {
+		if resourceType == "" {
 			resourceType = ref.ResourceType
 		}
 	}
-	if (resourceType == "" || resourceType == "tapd_resource") && strings.Contains(sourceURL, "/markdown_wikis/") {
+	if resourceType == "" && strings.Contains(sourceURL, "/markdown_wikis/") {
 		resourceType = "markdown_wiki"
 	}
 	if workspaceID == "" || resourceID == "" {
@@ -472,11 +472,11 @@ func fetchTAPDSourceDocument(ctx context.Context, token, workspaceID, resourceTy
 
 func tapdSourceEndpoint(resourceType string) (string, bool) {
 	switch strings.ToLower(strings.TrimSpace(resourceType)) {
-	case "", "markdown_wiki", "wiki", "tapd_wiki":
+	case "", "markdown_wiki":
 		return "tapd_wikis", true
-	case "story", "stories":
+	case "story":
 		return "stories", true
-	case "task", "tasks":
+	case "task":
 		return "tasks", true
 	default:
 		return "", false
