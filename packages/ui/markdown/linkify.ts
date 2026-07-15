@@ -274,7 +274,7 @@ function collectLinkifyMatches(text: string, offset: number, out: DetectedLink[]
 /**
  * Detect all links (URLs and file paths) in text
  */
-export function detectLinks(text: string): DetectedLink[] {
+function detectLinks(text: string): DetectedLink[] {
   const links: DetectedLink[] = []
 
   // 1. Detect URLs with linkify-it, applying CJK boundary handling.

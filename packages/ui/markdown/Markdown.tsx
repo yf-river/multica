@@ -440,23 +440,3 @@ export function Markdown({
     </div>
   )
 }
-
-/**
- * MemoizedMarkdown - Optimized for streaming scenarios
- *
- * Splits content into blocks and memoizes each block separately,
- * so only new/changed blocks re-render during streaming.
- */
-export const MemoizedMarkdown = React.memo(Markdown, (prevProps, nextProps) => {
-  // If id is provided, use it for memoization
-  if (prevProps.id && nextProps.id) {
-    return (
-      prevProps.id === nextProps.id &&
-      prevProps.children === nextProps.children &&
-      prevProps.mode === nextProps.mode
-    )
-  }
-  // Otherwise compare content and mode
-  return prevProps.children === nextProps.children && prevProps.mode === nextProps.mode
-})
-MemoizedMarkdown.displayName = 'MemoizedMarkdown'

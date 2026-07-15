@@ -64,4 +64,4 @@ function SubmitButton({
   );
 }
 
-export { SubmitButton, type SubmitButtonProps };
+export { SubmitButton };
