@@ -107,6 +107,7 @@ import {
 import { useNavigation, useRowLink } from "../../navigation";
 import { PageHeader } from "../../layout/page-header";
 import { useT } from "../../i18n";
+import { createColumnTrackVars } from "../../common/list-grid-columns";
 import { preferredPMModel } from "./pm-model-default";
 import {
   bestRuntimeForPMProvider,
@@ -138,26 +139,20 @@ const DEFAULT_PM_SQUAD_NAME = "pm";
 // gaps).
 const FIXED_TRACKS_WIDTH = 224 + LEADER_WIDTH + 7 * 12;
 
+const baseColumnTrackVars = createColumnTrackVars(COLUMN_WIDTHS, FIXED_TRACKS_WIDTH, {
+  members: "--sqc-members",
+  creator: "--sqc-creator",
+  created: "--sqc-created",
+}, "--sqc-minw");
+
 function columnTrackVars(
   isVisible: (key: SquadColumnKey) => boolean,
   showActions: boolean,
 ): React.CSSProperties {
-  const width = (key: SquadColumnKey) =>
-    isVisible(key) ? `${COLUMN_WIDTHS[key]}px` : "0px";
-  const minWidth =
-    FIXED_TRACKS_WIDTH +
-    (Object.keys(COLUMN_WIDTHS) as SquadColumnKey[]).reduce(
-      (sum, key) => sum + (isVisible(key) ? COLUMN_WIDTHS[key] : 0),
-      0,
-    ) +
-    (showActions ? 28 : 0);
   return {
+    ...baseColumnTrackVars(isVisible, showActions ? 28 : 0),
     "--sqc-leader": `${LEADER_WIDTH}px`,
-    "--sqc-members": width("members"),
-    "--sqc-creator": width("creator"),
-    "--sqc-created": width("created"),
     "--sqc-kebab": showActions ? "1.75rem" : "0px",
-    "--sqc-minw": `${minWidth}px`,
   } as React.CSSProperties;
 }
 

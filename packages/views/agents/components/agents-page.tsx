@@ -71,6 +71,7 @@ import {
   ListGridToggleableHeaderCell,
 } from "../../common/list-grid-selection";
 import { ListBatchToolbar } from "../../common/list-toolbar";
+import { createColumnTrackVars } from "../../common/list-grid-columns";
 import { PageHeader } from "../../layout/page-header";
 import { availabilityConfig } from "../presence";
 import { CreateAgentDialog } from "./create-agent-dialog";
@@ -114,28 +115,15 @@ const COLUMN_WIDTHS: Record<AgentColumnKey, number> = {
 // still carry gaps).
 const FIXED_TRACKS_WIDTH = 268 + 11 * 12;
 
-function columnTrackVars(
-  isVisible: (key: AgentColumnKey) => boolean,
-): React.CSSProperties {
-  const width = (key: AgentColumnKey) =>
-    isVisible(key) ? `${COLUMN_WIDTHS[key]}px` : "0px";
-  const minWidth =
-    FIXED_TRACKS_WIDTH +
-    (Object.keys(COLUMN_WIDTHS) as AgentColumnKey[]).reduce(
-      (sum, key) => sum + (isVisible(key) ? COLUMN_WIDTHS[key] : 0),
-      0,
-    );
-  return {
-    "--agc-status": width("status"),
-    "--agc-owner": width("owner"),
-    "--agc-runtime": width("runtime"),
-    "--agc-lastactive": width("lastActive"),
-    "--agc-runs": width("runs"),
-    "--agc-model": width("model"),
-    "--agc-created": width("created"),
-    "--agc-minw": `${minWidth}px`,
-  } as React.CSSProperties;
-}
+const columnTrackVars = createColumnTrackVars(COLUMN_WIDTHS, FIXED_TRACKS_WIDTH, {
+  status: "--agc-status",
+  owner: "--agc-owner",
+  runtime: "--agc-runtime",
+  lastActive: "--agc-lastactive",
+  runs: "--agc-runs",
+  model: "--agc-model",
+  created: "--agc-created",
+}, "--agc-minw");
 
 export interface AgentListRow {
   agent: Agent;
@@ -196,8 +184,6 @@ function PageHeaderBar({
           </a>
         </p>
       </div>
-      {/* Quiet chrome button (outline, icon-only below md) — primary is
-          reserved for the empty state's CTA. */}
       <Button
         type="button"
         size="sm"

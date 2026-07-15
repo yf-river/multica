@@ -55,6 +55,7 @@ import {
   ListGridSelectAllHeaderCell,
   ListGridToggleableHeaderCell,
 } from "../../common/list-grid-selection";
+import { createColumnTrackVars } from "../../common/list-grid-columns";
 import { PageHeader } from "../../layout/page-header";
 import { canEditSkill } from "../hooks/use-can-edit-skill";
 import { readOrigin, type OriginInfo } from "../lib/origin";
@@ -123,26 +124,13 @@ const COLUMN_WIDTHS: Record<SkillColumnKey, number> = {
 // still carry gaps).
 const FIXED_TRACKS_WIDTH = 268 + 9 * 12;
 
-function columnTrackVars(
-  isVisible: (key: SkillColumnKey) => boolean,
-): React.CSSProperties {
-  const width = (key: SkillColumnKey) =>
-    isVisible(key) ? `${COLUMN_WIDTHS[key]}px` : "0px";
-  const minWidth =
-    FIXED_TRACKS_WIDTH +
-    (Object.keys(COLUMN_WIDTHS) as SkillColumnKey[]).reduce(
-      (sum, key) => sum + (isVisible(key) ? COLUMN_WIDTHS[key] : 0),
-      0,
-    );
-  return {
-    "--lgc-usedby": width("usedBy"),
-    "--lgc-source": width("source"),
-    "--lgc-creator": width("creator"),
-    "--lgc-updated": width("updated"),
-    "--lgc-created": width("created"),
-    "--lgc-minw": `${minWidth}px`,
-  } as React.CSSProperties;
-}
+const columnTrackVars = createColumnTrackVars(COLUMN_WIDTHS, FIXED_TRACKS_WIDTH, {
+  usedBy: "--lgc-usedby",
+  source: "--lgc-source",
+  creator: "--lgc-creator",
+  updated: "--lgc-updated",
+  created: "--lgc-created",
+}, "--lgc-minw");
 
 export interface SkillRow {
   skill: SkillSummary;
@@ -188,8 +176,6 @@ function PageHeaderBar({
           </a>
         </p>
       </div>
-      {/* Quiet chrome button (outline, icon-only below md) — primary is
-          reserved for the empty state's single CTA. */}
       <Button
         type="button"
         size="sm"

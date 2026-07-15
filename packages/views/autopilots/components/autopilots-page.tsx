@@ -49,6 +49,7 @@ import {
   ListGridToggleableHeaderCell,
 } from "../../common/list-grid-selection";
 import { PageHeader } from "../../layout/page-header";
+import { createColumnTrackVars } from "../../common/list-grid-columns";
 import { AutopilotDialog } from "./autopilot-dialog";
 import { AutopilotListToolbar, actorFilterValue } from "./autopilot-list-toolbar";
 import {
@@ -92,28 +93,15 @@ const COLUMN_WIDTHS: Record<AutopilotColumnKey, number> = {
 // still carry gaps).
 const FIXED_TRACKS_WIDTH = 268 + 11 * 12;
 
-function columnTrackVars(
-  isVisible: (key: AutopilotColumnKey) => boolean,
-): React.CSSProperties {
-  const width = (key: AutopilotColumnKey) =>
-    isVisible(key) ? `${COLUMN_WIDTHS[key]}px` : "0px";
-  const minWidth =
-    FIXED_TRACKS_WIDTH +
-    (Object.keys(COLUMN_WIDTHS) as AutopilotColumnKey[]).reduce(
-      (sum, key) => sum + (isVisible(key) ? COLUMN_WIDTHS[key] : 0),
-      0,
-    );
-  return {
-    "--apc-assignee": width("assignee"),
-    "--apc-trigger": width("trigger"),
-    "--apc-lastrun": width("lastRun"),
-    "--apc-nextrun": width("nextRun"),
-    "--apc-mode": width("mode"),
-    "--apc-creator": width("creator"),
-    "--apc-created": width("created"),
-    "--apc-minw": `${minWidth}px`,
-  } as React.CSSProperties;
-}
+const columnTrackVars = createColumnTrackVars(COLUMN_WIDTHS, FIXED_TRACKS_WIDTH, {
+  assignee: "--apc-assignee",
+  trigger: "--apc-trigger",
+  lastRun: "--apc-lastrun",
+  nextRun: "--apc-nextrun",
+  mode: "--apc-mode",
+  creator: "--apc-creator",
+  created: "--apc-created",
+}, "--apc-minw");
 
 // ---------------------------------------------------------------------------
 // Templates for the empty state (unchanged from the previous page version).

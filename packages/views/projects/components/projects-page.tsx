@@ -106,6 +106,7 @@ import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 import { useFormatRelativeDate } from "./labels";
 import { ProjectStatusBadge, ProjectPriorityBadge } from "./project-badge";
 import { ProjectLeadPicker } from "./project-lead-picker";
+import { createColumnTrackVars } from "../../common/list-grid-columns";
 
 // Sort order maps for the enum columns (header sort needs a total order).
 const PRIORITY_ORDER: Record<ProjectPriority, number> = {
@@ -163,26 +164,13 @@ const GRID_COLS =
 
 const stopRowNavigation = (e: MouseEvent) => e.stopPropagation();
 
-function columnTrackVars(
-  isVisible: (key: ProjectColumnKey) => boolean,
-): React.CSSProperties {
-  const width = (key: ProjectColumnKey) =>
-    isVisible(key) ? `${COLUMN_WIDTHS[key]}px` : "0px";
-  const minWidth =
-    FIXED_TRACKS_WIDTH +
-    (Object.keys(COLUMN_WIDTHS) as ProjectColumnKey[]).reduce(
-      (sum, key) => sum + (isVisible(key) ? COLUMN_WIDTHS[key] : 0),
-      0,
-    );
-  return {
-    "--pjc-priority": width("priority"),
-    "--pjc-progress": width("progress"),
-    "--pjc-lead": width("lead"),
-    "--pjc-issues": width("issues"),
-    "--pjc-created": width("created"),
-    "--pjc-minw": `${minWidth}px`,
-  } as React.CSSProperties;
-}
+const columnTrackVars = createColumnTrackVars(COLUMN_WIDTHS, FIXED_TRACKS_WIDTH, {
+  priority: "--pjc-priority",
+  progress: "--pjc-progress",
+  lead: "--pjc-lead",
+  issues: "--pjc-issues",
+  created: "--pjc-created",
+}, "--pjc-minw");
 
 function ProgressRing({ project }: { project: Project }) {
   if (project.issue_count === 0) {
