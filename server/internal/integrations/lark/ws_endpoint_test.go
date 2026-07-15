@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 )
@@ -102,7 +103,7 @@ func TestHTTPConnectionTokenFetcherSurfacesLarkErrorCode(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for non-zero Lark code")
 	}
-	if !contains(err.Error(), "app type not supported") {
+	if !strings.Contains(err.Error(), "app type not supported") {
 		t.Errorf("error should surface Lark msg: %v", err)
 	}
 }
@@ -150,17 +151,4 @@ func TestHTTPConnectionTokenFetcherRejectsURLWithoutServiceID(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error when service_id is missing from response URL")
 	}
-}
-
-func contains(s, sub string) bool {
-	return s != "" && sub != "" && (s == sub || (len(s) > len(sub) && indexOf(s, sub) >= 0))
-}
-
-func indexOf(s, sub string) int {
-	for i := 0; i+len(sub) <= len(s); i++ {
-		if s[i:i+len(sub)] == sub {
-			return i
-		}
-	}
-	return -1
 }

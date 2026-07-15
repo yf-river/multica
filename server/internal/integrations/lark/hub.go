@@ -347,9 +347,7 @@ func (h *Hub) Wait() {
 	// run triggers can be scheduled. Drain the debounced pending triggers
 	// before joining replies: the flush may itself emit an offline/archived
 	// notice, and FlushPendingRuns blocks until those finish.
-	if h.dispatcher != nil {
-		h.dispatcher.FlushPendingRuns()
-	}
+	h.dispatcher.FlushPendingRuns()
 	h.replyWg.Wait()
 }
 

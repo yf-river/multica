@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -264,7 +265,7 @@ func TestWSConnectorEmitsDecodedFramesAndAcks(t *testing.T) {
 		if f.HeaderValue(FrameHeaderTypeKey) != FrameHeaderTypeEvent {
 			t.Errorf("ack[%d] type header = %q", i, f.HeaderValue(FrameHeaderTypeKey))
 		}
-		if len(f.Payload) == 0 || !contains(string(f.Payload), `"code":200`) {
+		if len(f.Payload) == 0 || !strings.Contains(string(f.Payload), `"code":200`) {
 			t.Errorf("ack[%d] payload missing code=200: %s", i, string(f.Payload))
 		}
 	}
@@ -362,7 +363,7 @@ func TestWSConnectorEmitInfraErrorSendsNackAndReturns(t *testing.T) {
 		if err != nil {
 			continue
 		}
-		if f.Method == FrameMethodData && contains(string(f.Payload), `"code":500`) {
+		if f.Method == FrameMethodData && strings.Contains(string(f.Payload), `"code":500`) {
 			found = true
 			break
 		}

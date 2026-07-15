@@ -9,7 +9,6 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -85,23 +84,16 @@ func stubAgentLookup(agent db.Agent) func(context.Context, pgtype.UUID) (db.Agen
 	return func(context.Context, pgtype.UUID) (db.Agent, error) { return agent, nil }
 }
 
-// stubBindingMint is a minimal TxStarter stand-in: the real
-// BindingTokenService.Mint calls qx.CreateLarkBindingToken on the
-// non-tx queries handle when no transaction is started by the caller.
-// We bypass that path by constructing a BindingTokenService with a
-// fake DB query interface — but since BindingTokenService is a
-// concrete struct around *db.Queries, the cleanest seam in tests is
-// to swap the replier's bindingSvc field for a fake that satisfies
-// the narrow Mint method via an in-package alias.
-
-// fakeBindingMinter substitutes for BindingTokenService.Mint in tests
-// — we cannot construct a real BindingTokenService without a live
-// *db.Queries, but the replier only calls .Mint on it, so a typed
-// wrapper around a function works.
-//
-// We monkey-patch by exposing a package-level seam on the replier in
-// the test file: the production path uses bindingSvc directly; the
-// test path wraps the replier so Reply can be exercised end-to-end.
+func newOutcomeReplierForTest(stub *stubAPIClientWithRecorder, agent db.Agent) *LarkOutcomeReplier {
+	return NewLarkOutcomeReplier(OutcomeReplierConfig{
+		APIClient:          stub,
+		BindingSvc:         &BindingTokenService{},
+		ResolveCredentials: testCredentials("s"),
+		GetAgent:           stubAgentLookup(agent),
+		PublicURL:          "https://multica.test",
+		Logger:             slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+}
 
 // TestLarkOutcomeReplierAgentOfflineSendsCard exercises the
 // non-binding path, which doesn't require the BindingTokenService
@@ -109,16 +101,8 @@ func stubAgentLookup(agent db.Agent) func(context.Context, pgtype.UUID) (db.Agen
 // SendInteractiveCard was called with the expected chat_id + body.
 func TestLarkOutcomeReplierAgentOfflineSendsCard(t *testing.T) {
 	t.Parallel()
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	stub := &stubAPIClientWithRecorder{}
-	rep := NewLarkOutcomeReplier(OutcomeReplierConfig{
-		APIClient:          stub,
-		BindingSvc:         &BindingTokenService{},
-		ResolveCredentials: testCredentials("s"),
-		GetAgent:           stubAgentLookup(db.Agent{Name: "Trump"}),
-		PublicURL:          "https://multica.test",
-		Logger:             log,
-	})
+	rep := newOutcomeReplierForTest(stub, db.Agent{Name: "Trump"})
 	inst := db.LarkInstallation{AppID: "cli_x", Region: "feishu"}
 	inst.ID = mustUUID("11111111-1111-1111-1111-111111111111")
 	msg := InboundMessage{ChatID: "oc_chat_1", SenderOpenID: "ou_user_1"}
@@ -137,29 +121,21 @@ func TestLarkOutcomeReplierAgentOfflineSendsCard(t *testing.T) {
 	if got.InstallationID.AppSecret != "s" {
 		t.Errorf("AppSecret = %q", got.InstallationID.AppSecret)
 	}
-	if !contains(got.CardJSON, "离线") || !contains(got.CardJSON, "Trump") {
+	if !strings.Contains(got.CardJSON, "离线") || !strings.Contains(got.CardJSON, "Trump") {
 		t.Errorf("CardJSON should embed offline copy and agent name: %s", got.CardJSON)
 	}
 }
 
 func TestLarkOutcomeReplierAgentArchivedSendsCard(t *testing.T) {
 	t.Parallel()
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	stub := &stubAPIClientWithRecorder{}
-	rep := NewLarkOutcomeReplier(OutcomeReplierConfig{
-		APIClient:          stub,
-		BindingSvc:         &BindingTokenService{},
-		ResolveCredentials: testCredentials("s"),
-		GetAgent:           stubAgentLookup(db.Agent{}),
-		PublicURL:          "https://multica.test",
-		Logger:             log,
-	})
+	rep := newOutcomeReplierForTest(stub, db.Agent{})
 	msg := InboundMessage{ChatID: "oc_chat_arch"}
 	rep.Reply(context.Background(), db.LarkInstallation{Region: "feishu"}, msg, DispatchResult{Outcome: OutcomeAgentArchived})
 	if len(stub.interactiveOut) != 1 {
 		t.Fatalf("expected one SendInteractiveCard call, got %d", len(stub.interactiveOut))
 	}
-	if !contains(stub.interactiveOut[0].CardJSON, "归档") {
+	if !strings.Contains(stub.interactiveOut[0].CardJSON, "归档") {
 		t.Errorf("CardJSON should embed archived copy: %s", stub.interactiveOut[0].CardJSON)
 	}
 }
@@ -169,16 +145,8 @@ func TestLarkOutcomeReplierAgentArchivedSendsCard(t *testing.T) {
 // (Patcher handles Ingested; Dropped is informational only).
 func TestLarkOutcomeReplierIngestedAndDroppedAreSilent(t *testing.T) {
 	t.Parallel()
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	stub := &stubAPIClientWithRecorder{}
-	rep := NewLarkOutcomeReplier(OutcomeReplierConfig{
-		APIClient:          stub,
-		BindingSvc:         &BindingTokenService{},
-		ResolveCredentials: testCredentials("s"),
-		GetAgent:           stubAgentLookup(db.Agent{}),
-		PublicURL:          "https://multica.test",
-		Logger:             log,
-	})
+	rep := newOutcomeReplierForTest(stub, db.Agent{})
 	msg := InboundMessage{ChatID: "oc_x"}
 	rep.Reply(context.Background(), db.LarkInstallation{}, msg, DispatchResult{Outcome: OutcomeIngested})
 	rep.Reply(context.Background(), db.LarkInstallation{}, msg, DispatchResult{Outcome: OutcomeDropped, DropReason: DropReasonDuplicate})
@@ -194,16 +162,8 @@ func TestLarkOutcomeReplierIngestedAndDroppedAreSilent(t *testing.T) {
 // observes the side effect (single attempted SendInteractiveCard).
 func TestLarkOutcomeReplierOfflineSwallowsAPIError(t *testing.T) {
 	t.Parallel()
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	stub := &stubAPIClientWithRecorder{sendErr: errors.New("lark 5xx")}
-	rep := NewLarkOutcomeReplier(OutcomeReplierConfig{
-		APIClient:          stub,
-		BindingSvc:         &BindingTokenService{},
-		ResolveCredentials: testCredentials("s"),
-		GetAgent:           stubAgentLookup(db.Agent{}),
-		PublicURL:          "https://multica.test",
-		Logger:             log,
-	})
+	rep := newOutcomeReplierForTest(stub, db.Agent{})
 	// Should NOT panic.
 	rep.Reply(context.Background(), db.LarkInstallation{}, InboundMessage{ChatID: "oc"}, DispatchResult{Outcome: OutcomeAgentOffline})
 }
@@ -219,16 +179,8 @@ func TestLarkOutcomeReplierOfflineSwallowsAPIError(t *testing.T) {
 // deep link back to Multica.
 func TestLarkOutcomeReplierIssueCreatedSendsConfirmation(t *testing.T) {
 	t.Parallel()
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	stub := &stubAPIClientWithRecorder{}
-	rep := NewLarkOutcomeReplier(OutcomeReplierConfig{
-		APIClient:          stub,
-		BindingSvc:         &BindingTokenService{},
-		ResolveCredentials: testCredentials("s"),
-		GetAgent:           stubAgentLookup(db.Agent{}),
-		PublicURL:          "https://multica.test",
-		Logger:             log,
-	})
+	rep := newOutcomeReplierForTest(stub, db.Agent{})
 
 	inst := db.LarkInstallation{AppID: "cli_x", Region: "feishu"}
 	inst.ID = mustUUID("11111111-1111-1111-1111-111111111111")
@@ -273,16 +225,8 @@ func TestLarkOutcomeReplierIssueCreatedSendsConfirmation(t *testing.T) {
 // reply is delivered separately by the Patcher on EventChatDone).
 func TestLarkOutcomeReplierOutcomeIngestedSilentWithoutIssue(t *testing.T) {
 	t.Parallel()
-	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	stub := &stubAPIClientWithRecorder{}
-	rep := NewLarkOutcomeReplier(OutcomeReplierConfig{
-		APIClient:          stub,
-		BindingSvc:         &BindingTokenService{},
-		ResolveCredentials: testCredentials("s"),
-		GetAgent:           stubAgentLookup(db.Agent{}),
-		PublicURL:          "https://multica.test",
-		Logger:             log,
-	})
+	rep := newOutcomeReplierForTest(stub, db.Agent{})
 
 	rep.Reply(context.Background(), db.LarkInstallation{}, InboundMessage{ChatID: "oc"},
 		DispatchResult{Outcome: OutcomeIngested}) // no IssueID
@@ -302,7 +246,3 @@ func mustUUID(s string) pgtype.UUID {
 	}
 	return u
 }
-
-// silence the unused import warnings for the dependencies we keep
-// reaching for via reflection in future test cases.
-var _ = pgx.ErrNoRows

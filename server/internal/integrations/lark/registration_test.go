@@ -262,7 +262,7 @@ func TestRegistrationClient_Begin_LarkError(t *testing.T) {
 		t.Fatal("expected error from Lark error response")
 	}
 	var re *RegistrationError
-	if !errorsAs(err, &re) {
+	if !errors.As(err, &re) {
 		t.Fatalf("want *RegistrationError, got %T %v", err, err)
 	}
 	if re.Code != "invalid_request" {
@@ -282,7 +282,7 @@ func TestRegistrationClient_Begin_HTTPNon2xx(t *testing.T) {
 		t.Fatal("want error on 500")
 	}
 	var re *RegistrationError
-	if !errorsAs(err, &re) || re.Code != "http_500" {
+	if !errors.As(err, &re) || re.Code != "http_500" {
 		t.Errorf("want http_500 RegistrationError, got %v", err)
 	}
 }
@@ -374,7 +374,7 @@ func TestRegistrationClient_Poll_HTTP500UnparseableIsTerminal(t *testing.T) {
 		t.Fatal("want error on unparseable 502 body")
 	}
 	var re *RegistrationError
-	if !errorsAs(err, &re) || re.Code != "http_502" {
+	if !errors.As(err, &re) || re.Code != "http_502" {
 		t.Errorf("want http_502 RegistrationError, got %v", err)
 	}
 }
@@ -585,7 +585,7 @@ func TestRegistrationClient_Poll_SuccessMissingOpenIDIsProtocolError(t *testing.
 		t.Fatal("want error on success-without-open_id")
 	}
 	var re *RegistrationError
-	if !errorsAs(err, &re) || re.Code != "invalid_response" {
+	if !errors.As(err, &re) || re.Code != "invalid_response" {
 		t.Errorf("want invalid_response, got %v", err)
 	}
 }
@@ -644,7 +644,3 @@ func TestRegistrationClient_Poll_MissingDeviceCode(t *testing.T) {
 		t.Fatal("want error on missing device_code")
 	}
 }
-
-// errorsAs is a tiny wrapper over errors.As so the test source stays
-// terse — call sites read `errorsAs(err, &re)`.
-func errorsAs(err error, target any) bool { return errors.As(err, target) }
