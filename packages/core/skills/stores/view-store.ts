@@ -1,9 +1,6 @@
 "use client";
 
-import {
-  createWorkspaceListViewStore,
-  type WorkspaceListViewStoreState,
-} from "../../platform/workspace-list-view-store";
+import { createWorkspaceListViewStore } from "../../platform/workspace-list-view-store";
 
 // View preferences for the skills list page: sort, column visibility, and
 // filters. Persisted per workspace (workspace-aware storage), per user/device
@@ -16,7 +13,7 @@ export type SkillSortField = "name" | "usedBy" | "updated" | "created";
 export type SkillSortDirection = "asc" | "desc";
 
 /** Per-field direction applied when the user switches TO that field. */
-export const SKILL_SORT_DEFAULT_DIRECTION: Record<
+const SKILL_SORT_DEFAULT_DIRECTION: Record<
   SkillSortField,
   SkillSortDirection
 > = {
@@ -41,7 +38,7 @@ export interface SkillListFilters {
   creators: string[];
 }
 
-export const EMPTY_SKILL_FILTERS: SkillListFilters = {
+const EMPTY_SKILL_FILTERS: SkillListFilters = {
   usage: [],
   origins: [],
   agents: [],
@@ -66,8 +63,6 @@ const DEFAULTS = {
   hiddenColumns: DEFAULT_HIDDEN_COLUMNS,
   filters: EMPTY_SKILL_FILTERS,
 };
-
-export type SkillsViewState = WorkspaceListViewStoreState<typeof DEFAULTS>;
 
 export const useSkillsViewStore = createWorkspaceListViewStore({
   name: "multica_skills_view",

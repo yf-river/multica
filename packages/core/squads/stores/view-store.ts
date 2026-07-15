@@ -1,9 +1,6 @@
 "use client";
 
-import {
-  createWorkspaceListViewStore,
-  type WorkspaceListViewStoreState,
-} from "../../platform/workspace-list-view-store";
+import { createWorkspaceListViewStore } from "../../platform/workspace-list-view-store";
 
 // View preferences for the squads list page: scope, sort, column visibility.
 // Persisted per workspace, per user/device. No filters (the set is tiny);
@@ -20,7 +17,7 @@ export type SquadSortField = "name" | "members" | "created";
 export type SquadSortDirection = "asc" | "desc";
 
 /** Per-field direction applied when the user switches TO that field. */
-export const SQUAD_SORT_DEFAULT_DIRECTION: Record<
+const SQUAD_SORT_DEFAULT_DIRECTION: Record<
   SquadSortField,
   SquadSortDirection
 > = {
@@ -48,7 +45,7 @@ export interface SquadListFilters {
   creators: string[];
 }
 
-export const EMPTY_SQUAD_FILTERS: SquadListFilters = {
+const EMPTY_SQUAD_FILTERS: SquadListFilters = {
   leaders: [],
   creators: [],
 };
@@ -64,11 +61,6 @@ const DEFAULTS = {
   hiddenColumns: SQUAD_DEFAULT_HIDDEN_COLUMNS,
   filters: EMPTY_SQUAD_FILTERS,
 };
-
-export type SquadsViewState = WorkspaceListViewStoreState<
-  typeof DEFAULTS,
-  SquadsViewActions
->;
 
 export const useSquadsViewStore = createWorkspaceListViewStore<
   typeof DEFAULTS,

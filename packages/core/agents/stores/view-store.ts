@@ -1,9 +1,6 @@
 "use client";
 
-import {
-  createWorkspaceListViewStore,
-  type WorkspaceListViewStoreState,
-} from "../../platform/workspace-list-view-store";
+import { createWorkspaceListViewStore } from "../../platform/workspace-list-view-store";
 
 // View preferences for the agents list page: scope, sort, column visibility,
 // and filters. Persisted per workspace, per user/device. Row selection is
@@ -22,7 +19,7 @@ export type AgentSortField = "lastActive" | "name" | "runs" | "created";
 export type AgentSortDirection = "asc" | "desc";
 
 /** Per-field direction applied when the user switches TO that field. */
-export const AGENT_SORT_DEFAULT_DIRECTION: Record<
+const AGENT_SORT_DEFAULT_DIRECTION: Record<
   AgentSortField,
   AgentSortDirection
 > = {
@@ -48,7 +45,7 @@ export interface AgentListFilters {
   models: string[];
 }
 
-export const EMPTY_AGENT_FILTERS: AgentListFilters = {
+const EMPTY_AGENT_FILTERS: AgentListFilters = {
   availability: [],
   runtimes: [],
   owners: [],
@@ -85,11 +82,6 @@ const DEFAULTS = {
   hiddenColumns: AGENT_DEFAULT_HIDDEN_COLUMNS,
   filters: EMPTY_AGENT_FILTERS,
 };
-
-export type AgentsViewState = WorkspaceListViewStoreState<
-  typeof DEFAULTS,
-  AgentsViewActions
->;
 
 export const useAgentsViewStore = createWorkspaceListViewStore<
   typeof DEFAULTS,
