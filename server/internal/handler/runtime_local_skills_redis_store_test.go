@@ -121,7 +121,7 @@ func TestRedisLocalSkillListStore_ReplaysOnePendingRequest(t *testing.T) {
 	if replay.ID != first.ID || !replay.CreatedAt.Equal(first.CreatedAt) {
 		t.Fatalf("replay = %+v, want %+v", replay, first)
 	}
-	if got := rdb.ZCard(ctx, localSkillListPendingKey("runtime-replay")).Val(); got != 1 {
+	if got := rdb.ZCard(ctx, store.pendingKey("runtime-replay")).Val(); got != 1 {
 		t.Fatalf("pending count = %d, want 1", got)
 	}
 	if _, err := store.Create(ctx, "runtime-changed", requestID); !errors.Is(err, errRuntimeAsyncRequestConflict) {
@@ -206,7 +206,7 @@ func TestRedisLocalSkillListStore_PendingTimeout(t *testing.T) {
 	// Rewind CreatedAt so the pending threshold is blown — simulates 31s of
 	// daemon silence without actually blocking the test that long.
 	req.CreatedAt = time.Now().Add(-runtimeLocalSkillPendingTimeout - time.Second)
-	if err := store.persistListRequest(ctx, req); err != nil {
+	if err := store.persist(ctx, req); err != nil {
 		t.Fatalf("persist rewound: %v", err)
 	}
 
@@ -297,7 +297,7 @@ func TestRedisLocalSkillImportStore_ReplaysOnePendingRequest(t *testing.T) {
 	if replay.ID != first.ID || !replay.CreatedAt.Equal(first.CreatedAt) {
 		t.Fatalf("replay = id %s created %s, want id %s created %s", replay.ID, replay.CreatedAt, first.ID, first.CreatedAt)
 	}
-	if got := rdb.ZCard(ctx, localSkillImportPendingKey(input.RuntimeID)).Val(); got != 1 {
+	if got := rdb.ZCard(ctx, store.pendingKey(input.RuntimeID)).Val(); got != 1 {
 		t.Fatalf("pending request count = %d, want 1", got)
 	}
 	changed := input
@@ -401,7 +401,7 @@ func TestRedisLocalSkillListStore_PerRuntimeIsolation(t *testing.T) {
 	}
 
 	// A's request is still pending.
-	ids, err := rdb.ZRange(ctx, localSkillListPendingKey("runtime-A"), 0, -1).Result()
+	ids, err := rdb.ZRange(ctx, store.pendingKey("runtime-A"), 0, -1).Result()
 	if err != nil {
 		t.Fatalf("zrange A: %v", err)
 	}

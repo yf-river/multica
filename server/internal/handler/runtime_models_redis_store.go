@@ -3,256 +3,101 @@ package handler
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 )
 
-// Redis-backed implementation of ModelListStore. The wire layout matches
-// runtime_local_skills_redis_store.go (which solves the same multi-node
-// dispatch problem for skill lists/imports) so the operational story is
-// identical: namespaced keys, ZSET-backed pending queue, atomic claim via
-// the shared Lua script.
-//
-// Key layout:
-//
-//   mul:model_list:req:<request_id>           → JSON-encoded ModelListRequest, TTL = retention
-//   mul:model_list:pending:<runtime_id>       → ZSET { member = request_id, score = created_at UnixNano }
-//                                                TTL = retention*2 (kept alive long enough for
-//                                                lazy sweep on PopPending)
-//
-// PopPending uses claimPendingScript (defined in
-// runtime_local_skills_redis_store.go) to atomically ZREM the pending entry
-// and SET the record to "running" — splitting those two writes would strand
-// requests on a transient Redis hiccup between them.
-
 const (
-	// Namespaced under mul:model_list:* so the key set doesn't collide with
-	// the realtime relay (ws:*) or the local-skill stores (mul:local_skill:*).
-	modelListKeyPrefix          = "mul:model_list:req:"
-	modelListPendingPrefix      = "mul:model_list:pending:"
-	modelListRedisPopMaxRetries = 5
+	modelListKeyPrefix     = "mul:model_list:req:"
+	modelListPendingPrefix = "mul:model_list:pending:"
 )
 
-func modelListKey(id string) string               { return modelListKeyPrefix + id }
-func modelListPendingKey(runtimeID string) string { return modelListPendingPrefix + runtimeID }
+// redisModelListEnvelope persists RunStartedAt without exposing that internal
+// timeout field through the public ModelListRequest JSON contract.
+type redisModelListEnvelope struct {
+	Public       *ModelListRequest `json:"r"`
+	RunStartedAt *time.Time        `json:"s,omitempty"`
+}
 
-// redisModelListStore stores model list requests in Redis so every API node
-// agrees on the same pending / running / terminal state.
 type redisModelListStore struct {
-	rdb *redis.Client
+	*redisRuntimeAsyncStore[ModelListRequest]
 }
 
 func NewRedisModelListStore(rdb *redis.Client) *redisModelListStore {
-	return &redisModelListStore{rdb: rdb}
+	return &redisModelListStore{newRedisRuntimeAsyncStore(
+		rdb,
+		modelListKeyPrefix,
+		modelListPendingPrefix,
+		modelListStoreRetention,
+		func(request *ModelListRequest) *runtimeAsyncRequestState {
+			return &request.runtimeAsyncRequestState
+		},
+		func(request *ModelListRequest) ([]byte, error) {
+			data, err := json.Marshal(redisModelListEnvelope{
+				Public:       request,
+				RunStartedAt: request.RunStartedAt,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("marshal model list request: %w", err)
+			}
+			return data, nil
+		},
+		func(raw []byte) (*ModelListRequest, error) {
+			var envelope redisModelListEnvelope
+			if err := json.Unmarshal(raw, &envelope); err != nil {
+				return nil, fmt.Errorf("decode model list request: %w", err)
+			}
+			if envelope.Public == nil {
+				return nil, fmt.Errorf("decode model list request: missing payload")
+			}
+			envelope.Public.RunStartedAt = envelope.RunStartedAt
+			return envelope.Public, nil
+		},
+		applyModelListTimeout,
+		"model list request",
+	)}
 }
 
 func (s *redisModelListStore) Create(ctx context.Context, runtimeID, requestID string) (*ModelListRequest, error) {
 	now := time.Now()
-	req := &ModelListRequest{
+	request := &ModelListRequest{
 		runtimeAsyncRequestState: runtimeAsyncRequestState{
 			ID: requestID, RuntimeID: runtimeID, Status: runtimeAsyncPending,
 			CreatedAt: now, UpdatedAt: now,
 		},
 		Supported: true,
 	}
-	data, err := s.marshalRequest(req)
-	if err != nil {
-		return nil, err
-	}
-
-	created, err := createPendingScript.Run(ctx, s.rdb,
-		[]string{modelListKey(req.ID), modelListPendingKey(runtimeID)},
-		data, now.UnixNano(), int(modelListStoreRetention/time.Second), req.ID,
-		int((modelListStoreRetention*2)/time.Second),
-	).Int()
-	if err != nil {
-		return nil, fmt.Errorf("persist model list request: %w", err)
-	}
-	if created == 0 {
-		existing, err := s.loadRequest(ctx, req.ID)
-		if err != nil {
-			return nil, err
-		}
-		if existing == nil {
-			return nil, errors.New("model list request disappeared")
-		}
+	return s.create(ctx, request, func(existing *ModelListRequest) error {
 		if existing.RuntimeID != runtimeID {
-			return nil, errRuntimeAsyncRequestConflict
+			return errRuntimeAsyncRequestConflict
 		}
-		return existing, nil
-	}
-	return req, nil
+		return nil
+	}, "model list request disappeared")
 }
 
 func (s *redisModelListStore) Get(ctx context.Context, id string) (*ModelListRequest, error) {
-	return s.loadRequest(ctx, id)
+	return s.load(ctx, id)
 }
 
-// loadRequest fetches a single record, applies timeout transitions if the
-// stored state has aged past the threshold, and persists the transition so
-// sibling nodes observe the same terminal state.
-func (s *redisModelListStore) loadRequest(ctx context.Context, id string) (*ModelListRequest, error) {
-	raw, err := s.rdb.Get(ctx, modelListKey(id)).Bytes()
-	if errors.Is(err, redis.Nil) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("get model list request: %w", err)
-	}
-	req, err := s.unmarshalRequest(raw)
-	if err != nil {
-		return nil, err
-	}
-	if applyModelListTimeout(&req.runtimeAsyncRequestState, time.Now()) {
-		if err := s.persistRequest(ctx, req); err != nil {
-			return nil, err
-		}
-		// Drop from pending zset on terminal transition. PopPending would
-		// also do this, but doing it here keeps the set clean for readers
-		// that never call PopPending.
-		s.rdb.ZRem(ctx, modelListPendingKey(req.RuntimeID), req.ID)
-	}
-	return req, nil
-}
-
-func (s *redisModelListStore) persistRequest(ctx context.Context, req *ModelListRequest) error {
-	data, err := s.marshalRequest(req)
-	if err != nil {
-		return err
-	}
-	if err := s.rdb.Set(ctx, modelListKey(req.ID), data, modelListStoreRetention).Err(); err != nil {
-		return fmt.Errorf("persist model list request: %w", err)
-	}
-	return nil
-}
-
-// ModelListRequest tags RunStartedAt as `json:"-"` so the server-side
-// bookkeeping field doesn't leak into the HTTP response (the UI only
-// needs Status / UpdatedAt to drive its polling loop). Redis persistence
-// has to keep that field, otherwise the running-timeout escape hatch
-// silently breaks across nodes — every reader sees RunStartedAt=nil and
-// applyModelListTimeout's running branch becomes a no-op. Wrap in an
-// internal envelope that re-promotes the field on the wire.
-type redisModelListEnvelope struct {
-	Public       *ModelListRequest `json:"r"`
-	RunStartedAt *time.Time        `json:"s,omitempty"`
-}
-
-func (s *redisModelListStore) marshalRequest(req *ModelListRequest) ([]byte, error) {
-	env := redisModelListEnvelope{Public: req, RunStartedAt: req.RunStartedAt}
-	data, err := json.Marshal(env)
-	if err != nil {
-		return nil, fmt.Errorf("marshal model list request: %w", err)
-	}
-	return data, nil
-}
-
-func (s *redisModelListStore) unmarshalRequest(raw []byte) (*ModelListRequest, error) {
-	var env redisModelListEnvelope
-	if err := json.Unmarshal(raw, &env); err != nil {
-		return nil, fmt.Errorf("decode model list request: %w", err)
-	}
-	if env.Public == nil {
-		return nil, fmt.Errorf("decode model list request: missing payload")
-	}
-	env.Public.RunStartedAt = env.RunStartedAt
-	return env.Public, nil
-}
-
-// HasPending is a cheap read-only ZCARD probe used by the heartbeat hot path
-// to decide whether to invoke the side-effecting PopPending.
 func (s *redisModelListStore) HasPending(ctx context.Context, runtimeID string) (bool, error) {
-	cnt, err := s.rdb.ZCard(ctx, modelListPendingKey(runtimeID)).Result()
-	if err != nil {
-		return false, fmt.Errorf("zcard pending: %w", err)
-	}
-	return cnt > 0, nil
+	return s.hasPending(ctx, runtimeID)
 }
 
 func (s *redisModelListStore) PopPending(ctx context.Context, runtimeID string) (*ModelListRequest, error) {
-	pendingKey := modelListPendingKey(runtimeID)
-
-	for attempt := 0; attempt < modelListRedisPopMaxRetries; attempt++ {
-		ids, err := s.rdb.ZRange(ctx, pendingKey, 0, 0).Result()
-		if err != nil {
-			return nil, fmt.Errorf("zrange pending: %w", err)
-		}
-		if len(ids) == 0 {
-			return nil, nil
-		}
-		id := ids[0]
-
-		req, err := s.loadRequest(ctx, id)
-		if err != nil {
-			return nil, err
-		}
-		if req == nil {
-			// Record expired but the zset still references it — drop and retry.
-			s.rdb.ZRem(ctx, pendingKey, id)
-			continue
-		}
-		if req.Status != runtimeAsyncPending {
-			// Either the timeout fired inside loadRequest or another node
-			// already picked it up. Unlink from the pending set and retry.
-			s.rdb.ZRem(ctx, pendingKey, id)
-			continue
-		}
-
-		now := time.Now()
-		req.Status = runtimeAsyncRunning
-		req.RunStartedAt = &now
-		req.UpdatedAt = now
-		data, err := s.marshalRequest(req)
-		if err != nil {
-			return nil, err
-		}
-
-		result, err := claimPendingScript.Run(
-			ctx, s.rdb,
-			[]string{pendingKey, modelListKey(id)},
-			id, data, int(modelListStoreRetention.Seconds()),
-		).Int64()
-		if err != nil {
-			return nil, fmt.Errorf("claim pending: %w", err)
-		}
-		if result == 0 {
-			// Another node won the race. The record is owned by the winner;
-			// retry to pick up whatever else is queued (or nothing).
-			continue
-		}
-		return req, nil
-	}
-	return nil, nil
+	return s.popPending(ctx, runtimeID)
 }
 
 func (s *redisModelListStore) Complete(ctx context.Context, id string, models []ModelEntry, supported bool) error {
-	req, err := s.loadRequest(ctx, id)
-	if err != nil {
-		return err
-	}
-	if req == nil {
-		return nil
-	}
-	req.Status = runtimeAsyncCompleted
-	req.Models = models
-	req.Supported = supported
-	req.UpdatedAt = time.Now()
-	return s.persistRequest(ctx, req)
+	return s.update(ctx, id, func(request *ModelListRequest, state *runtimeAsyncRequestState, now time.Time) {
+		state.Status = runtimeAsyncCompleted
+		request.Models = models
+		request.Supported = supported
+		state.UpdatedAt = now
+	})
 }
 
-func (s *redisModelListStore) Fail(ctx context.Context, id string, errMsg string) error {
-	req, err := s.loadRequest(ctx, id)
-	if err != nil {
-		return err
-	}
-	if req == nil {
-		return nil
-	}
-	req.Status = runtimeAsyncFailed
-	req.Error = errMsg
-	req.UpdatedAt = time.Now()
-	return s.persistRequest(ctx, req)
+func (s *redisModelListStore) Fail(ctx context.Context, id string, message string) error {
+	return s.fail(ctx, id, message)
 }

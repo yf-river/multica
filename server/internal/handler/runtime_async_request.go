@@ -1,10 +1,14 @@
 package handler
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 type runtimeAsyncRequestStatus string
@@ -17,7 +21,8 @@ const (
 	runtimeAsyncTimeout   runtimeAsyncRequestStatus = "timeout"
 	runtimeAsyncConflict  runtimeAsyncRequestStatus = "conflict"
 
-	runtimeAsyncRunningTimeout = 60 * time.Second
+	runtimeAsyncRunningTimeout  = 60 * time.Second
+	runtimeAsyncRedisPopRetries = 5
 )
 
 var errRuntimeAsyncRequestConflict = errors.New("runtime async request conflict")
@@ -171,6 +176,260 @@ func (s *inMemoryRuntimeAsyncStore[T]) update(id string, apply func(*T, *runtime
 
 func (s *inMemoryRuntimeAsyncStore[T]) fail(id, message string) {
 	s.update(id, func(_ *T, state *runtimeAsyncRequestState, now time.Time) {
+		state.Status = runtimeAsyncFailed
+		state.Error = message
+		state.UpdatedAt = now
+	})
+}
+
+// redisRuntimeAsyncStore owns the Redis lifecycle shared by runtime requests.
+// Domain stores provide only their key namespaces, wire codec, timeout policy,
+// and idempotency rule.
+type redisRuntimeAsyncStore[T any] struct {
+	rdb           *redis.Client
+	recordPrefix  string
+	pendingPrefix string
+	retention     time.Duration
+	state         func(*T) *runtimeAsyncRequestState
+	encode        func(*T) ([]byte, error)
+	decode        func([]byte) (*T, error)
+	applyTimeout  func(*runtimeAsyncRequestState, time.Time) bool
+	errorLabel    string
+}
+
+func newRedisRuntimeAsyncStore[T any](
+	rdb *redis.Client,
+	recordPrefix string,
+	pendingPrefix string,
+	retention time.Duration,
+	state func(*T) *runtimeAsyncRequestState,
+	encode func(*T) ([]byte, error),
+	decode func([]byte) (*T, error),
+	applyTimeout func(*runtimeAsyncRequestState, time.Time) bool,
+	errorLabel string,
+) *redisRuntimeAsyncStore[T] {
+	return &redisRuntimeAsyncStore[T]{
+		rdb:           rdb,
+		recordPrefix:  recordPrefix,
+		pendingPrefix: pendingPrefix,
+		retention:     retention,
+		state:         state,
+		encode:        encode,
+		decode:        decode,
+		applyTimeout:  applyTimeout,
+		errorLabel:    errorLabel,
+	}
+}
+
+func (s *redisRuntimeAsyncStore[T]) recordKey(id string) string {
+	return s.recordPrefix + id
+}
+
+func (s *redisRuntimeAsyncStore[T]) pendingKey(runtimeID string) string {
+	return s.pendingPrefix + runtimeID
+}
+
+var createRuntimeAsyncPendingScript = redis.NewScript(`
+if redis.call('EXISTS', KEYS[1]) == 1 then
+    return 0
+end
+redis.call('SET', KEYS[1], ARGV[1], 'EX', tonumber(ARGV[3]))
+redis.call('ZADD', KEYS[2], ARGV[2], ARGV[4])
+redis.call('EXPIRE', KEYS[2], tonumber(ARGV[5]))
+return 1
+`)
+
+var claimRuntimeAsyncPendingScript = redis.NewScript(`
+local removed = redis.call('ZREM', KEYS[1], ARGV[1])
+if removed == 0 then
+    return 0
+end
+redis.call('SET', KEYS[2], ARGV[2], 'EX', tonumber(ARGV[3]))
+return 1
+`)
+
+func (s *redisRuntimeAsyncStore[T]) create(
+	ctx context.Context,
+	request *T,
+	validateExisting func(*T) error,
+	disappearedMessage string,
+) (*T, error) {
+	state := s.state(request)
+	data, err := s.encode(request)
+	if err != nil {
+		return nil, err
+	}
+
+	created, err := createRuntimeAsyncPendingScript.Run(ctx, s.rdb,
+		[]string{s.recordKey(state.ID), s.pendingKey(state.RuntimeID)},
+		data, state.CreatedAt.UnixNano(), int(s.retention/time.Second), state.ID,
+		int((s.retention*2)/time.Second),
+	).Int()
+	if err != nil {
+		return nil, fmt.Errorf("persist %s: %w", s.errorLabel, err)
+	}
+	if created == 1 {
+		return request, nil
+	}
+
+	existing, err := s.load(ctx, state.ID)
+	if err != nil {
+		return nil, err
+	}
+	if existing == nil {
+		return nil, errors.New(disappearedMessage)
+	}
+	if err := validateExisting(existing); err != nil {
+		return nil, err
+	}
+	return existing, nil
+}
+
+func (s *redisRuntimeAsyncStore[T]) load(ctx context.Context, id string) (*T, error) {
+	raw, err := s.rdb.Get(ctx, s.recordKey(id)).Bytes()
+	if errors.Is(err, redis.Nil) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get %s: %w", s.errorLabel, err)
+	}
+
+	request, err := s.decode(raw)
+	if err != nil {
+		return nil, err
+	}
+	state := s.state(request)
+	if s.applyTimeout(state, time.Now()) {
+		if err := s.persist(ctx, request); err != nil {
+			return nil, err
+		}
+		s.rdb.ZRem(ctx, s.pendingKey(state.RuntimeID), state.ID)
+	}
+	return request, nil
+}
+
+func (s *redisRuntimeAsyncStore[T]) persist(ctx context.Context, request *T) error {
+	data, err := s.encode(request)
+	if err != nil {
+		return err
+	}
+	if err := s.rdb.Set(ctx, s.recordKey(s.state(request).ID), data, s.retention).Err(); err != nil {
+		return fmt.Errorf("persist %s: %w", s.errorLabel, err)
+	}
+	return nil
+}
+
+func (s *redisRuntimeAsyncStore[T]) hasPending(ctx context.Context, runtimeID string) (bool, error) {
+	count, err := s.rdb.ZCard(ctx, s.pendingKey(runtimeID)).Result()
+	if err != nil {
+		return false, fmt.Errorf("zcard pending: %w", err)
+	}
+	return count > 0, nil
+}
+
+func (s *redisRuntimeAsyncStore[T]) claim(
+	ctx context.Context,
+	pendingKey string,
+	id string,
+	errorLabel string,
+) (*T, bool, error) {
+	request, err := s.load(ctx, id)
+	if err != nil {
+		return nil, false, err
+	}
+	if request == nil {
+		s.rdb.ZRem(ctx, pendingKey, id)
+		return nil, false, nil
+	}
+
+	state := s.state(request)
+	if state.Status != runtimeAsyncPending {
+		s.rdb.ZRem(ctx, pendingKey, id)
+		return nil, false, nil
+	}
+
+	now := time.Now()
+	state.Status = runtimeAsyncRunning
+	state.RunStartedAt = &now
+	state.UpdatedAt = now
+	data, err := s.encode(request)
+	if err != nil {
+		return nil, false, err
+	}
+
+	claimed, err := claimRuntimeAsyncPendingScript.Run(
+		ctx,
+		s.rdb,
+		[]string{pendingKey, s.recordKey(id)},
+		id,
+		data,
+		int(s.retention/time.Second),
+	).Int64()
+	if err != nil {
+		return nil, false, fmt.Errorf("%s: %w", errorLabel, err)
+	}
+	return request, claimed == 1, nil
+}
+
+func (s *redisRuntimeAsyncStore[T]) popPending(ctx context.Context, runtimeID string) (*T, error) {
+	pendingKey := s.pendingKey(runtimeID)
+	for range runtimeAsyncRedisPopRetries {
+		ids, err := s.rdb.ZRange(ctx, pendingKey, 0, 0).Result()
+		if err != nil {
+			return nil, fmt.Errorf("zrange pending: %w", err)
+		}
+		if len(ids) == 0 {
+			return nil, nil
+		}
+		request, claimed, err := s.claim(ctx, pendingKey, ids[0], "claim pending")
+		if err != nil {
+			return nil, err
+		}
+		if claimed {
+			return request, nil
+		}
+	}
+	return nil, nil
+}
+
+func (s *redisRuntimeAsyncStore[T]) popPendingBatch(ctx context.Context, runtimeID string, limit int) ([]*T, error) {
+	pendingKey := s.pendingKey(runtimeID)
+	ids, err := s.rdb.ZRange(ctx, pendingKey, 0, int64(limit)-1).Result()
+	if err != nil {
+		return nil, fmt.Errorf("zrange pending batch: %w", err)
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	var requests []*T
+	for _, id := range ids {
+		request, claimed, err := s.claim(ctx, pendingKey, id, "claim pending batch")
+		if err != nil {
+			return requests, err
+		}
+		if claimed {
+			requests = append(requests, request)
+		}
+	}
+	return requests, nil
+}
+
+func (s *redisRuntimeAsyncStore[T]) update(
+	ctx context.Context,
+	id string,
+	apply func(*T, *runtimeAsyncRequestState, time.Time),
+) error {
+	request, err := s.load(ctx, id)
+	if err != nil || request == nil {
+		return err
+	}
+	apply(request, s.state(request), time.Now())
+	return s.persist(ctx, request)
+}
+
+func (s *redisRuntimeAsyncStore[T]) fail(ctx context.Context, id, message string) error {
+	return s.update(ctx, id, func(_ *T, state *runtimeAsyncRequestState, now time.Time) {
 		state.Status = runtimeAsyncFailed
 		state.Error = message
 		state.UpdatedAt = now

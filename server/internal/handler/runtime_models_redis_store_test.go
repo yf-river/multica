@@ -18,7 +18,7 @@ import (
 // across nodes (CI failure for TestRedisModelListStore_RunningTimeout
 // before this fix).
 func TestRedisModelListStore_EnvelopePersistsRunStartedAt(t *testing.T) {
-	store := &redisModelListStore{}
+	store := NewRedisModelListStore(nil)
 	now := time.Now().UTC().Truncate(time.Microsecond) // JSON loses sub-µs precision
 	req := &ModelListRequest{
 		runtimeAsyncRequestState: runtimeAsyncRequestState{
@@ -27,11 +27,11 @@ func TestRedisModelListStore_EnvelopePersistsRunStartedAt(t *testing.T) {
 		},
 		Supported: true,
 	}
-	data, err := store.marshalRequest(req)
+	data, err := store.encode(req)
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	got, err := store.unmarshalRequest(data)
+	got, err := store.decode(data)
 	if err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestRedisModelListStore_ReplaysOnePendingRequest(t *testing.T) {
 	if replay.ID != first.ID || !replay.CreatedAt.Equal(first.CreatedAt) {
 		t.Fatalf("replay = %+v, want %+v", replay, first)
 	}
-	if got := rdb.ZCard(ctx, modelListPendingKey("runtime-replay")).Val(); got != 1 {
+	if got := rdb.ZCard(ctx, store.pendingKey("runtime-replay")).Val(); got != 1 {
 		t.Fatalf("pending count = %d, want 1", got)
 	}
 	if _, err := store.Create(ctx, "runtime-changed", requestID); !errors.Is(err, errRuntimeAsyncRequestConflict) {
@@ -202,7 +202,7 @@ func TestRedisModelListStore_PendingTimeout(t *testing.T) {
 	// Rewind CreatedAt so the pending threshold is blown — simulates 31s of
 	// daemon silence without actually blocking the test that long.
 	req.CreatedAt = time.Now().Add(-modelListPendingTimeout - time.Second)
-	if err := store.persistRequest(ctx, req); err != nil {
+	if err := store.persist(ctx, req); err != nil {
 		t.Fatalf("persist rewound: %v", err)
 	}
 
@@ -248,7 +248,7 @@ func TestRedisModelListStore_RunningTimeout(t *testing.T) {
 	// Rewind RunStartedAt past the running threshold.
 	aged := time.Now().Add(-runtimeAsyncRunningTimeout - time.Second)
 	popped.RunStartedAt = &aged
-	if err := store.persistRequest(ctx, popped); err != nil {
+	if err := store.persist(ctx, popped); err != nil {
 		t.Fatalf("persist rewound: %v", err)
 	}
 
