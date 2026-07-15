@@ -212,7 +212,7 @@ func (c *WSLongConnConnector) Run(ctx context.Context, inst db.LarkInstallation,
 		pingInterval = c.cfg.PingInterval
 	}
 
-	conn, _, err := c.cfg.Dialer.DialContext(ctx, endpoint.URL, endpoint.Headers)
+	conn, _, err := c.cfg.Dialer.DialContext(ctx, endpoint.URL, nil)
 	if err != nil {
 		return fmt.Errorf("dial ws: %w", err)
 	}
@@ -474,18 +474,13 @@ type WSConn interface {
 }
 
 // WSEndpoint is the resolved transport target plus the server-pushed
-// runtime configuration the connector needs to honor (ping cadence,
-// reconnect hints). ServiceID is parsed out of the wss URL's
+// ping cadence. ServiceID is parsed out of the wss URL's
 // `service_id` query parameter — it identifies which Lark backend
 // service ID our outbound frames belong to.
 type WSEndpoint struct {
-	URL               string
-	Headers           http.Header
-	ServiceID         int32
-	PingInterval      time.Duration
-	ReconnectInterval time.Duration
-	ReconnectNonce    time.Duration
-	ReconnectCount    int
+	URL          string
+	ServiceID    int32
+	PingInterval time.Duration
 }
 
 // GorillaDialer is the production WSDialer.

@@ -31,9 +31,7 @@ import (
 // same bootstrap path the official `larksuite/oapi-sdk-go/v3/ws`
 // client uses. The request body carries `{AppID, AppSecret}` plain
 // (no tenant_access_token bearer); the response carries the wss URL
-// (single-use, embedded device_id/service_id auth) and a ClientConfig
-// with PingInterval / ReconnectInterval / ReconnectNonce /
-// ReconnectCount in seconds.
+// (single-use, embedded device_id/service_id auth) and the ping cadence.
 //
 // We do NOT cache the response. The wss URL is single-use by design
 // (the embedded `device_id` is rotated on every bootstrap call), so
@@ -114,10 +112,7 @@ type endpointResponse struct {
 	Data struct {
 		URL          string `json:"URL"`
 		ClientConfig struct {
-			ReconnectCount    int `json:"ReconnectCount"`
-			ReconnectInterval int `json:"ReconnectInterval"`
-			ReconnectNonce    int `json:"ReconnectNonce"`
-			PingInterval      int `json:"PingInterval"`
+			PingInterval int `json:"PingInterval"`
 		} `json:"ClientConfig"`
 	} `json:"data"`
 }
@@ -178,13 +173,9 @@ func (f *HTTPConnectionTokenFetcher) Endpoint(ctx context.Context, creds Install
 		return WSEndpoint{}, fmt.Errorf("parse service_id from wss url: %w", err)
 	}
 	return WSEndpoint{
-		URL:               decoded.Data.URL,
-		Headers:           http.Header{},
-		ServiceID:         serviceID,
-		PingInterval:      time.Duration(decoded.Data.ClientConfig.PingInterval) * time.Second,
-		ReconnectInterval: time.Duration(decoded.Data.ClientConfig.ReconnectInterval) * time.Second,
-		ReconnectNonce:    time.Duration(decoded.Data.ClientConfig.ReconnectNonce) * time.Second,
-		ReconnectCount:    decoded.Data.ClientConfig.ReconnectCount,
+		URL:          decoded.Data.URL,
+		ServiceID:    serviceID,
+		PingInterval: time.Duration(decoded.Data.ClientConfig.PingInterval) * time.Second,
 	}, nil
 }
 

@@ -38,9 +38,6 @@ func TestHTTPConnectionTokenFetcherCallbackEndpointSuccess(t *testing.T) {
 			"data":{
 				"URL":"wss://lark.example/ws/foo?device_id=dev-1&service_id=42",
 				"ClientConfig":{
-					"ReconnectCount":-1,
-					"ReconnectInterval":120,
-					"ReconnectNonce":30,
 					"PingInterval":120
 				}
 			}
@@ -67,15 +64,6 @@ func TestHTTPConnectionTokenFetcherCallbackEndpointSuccess(t *testing.T) {
 	}
 	if ep.PingInterval != 120*time.Second {
 		t.Errorf("PingInterval = %s; want 120s", ep.PingInterval)
-	}
-	if ep.ReconnectInterval != 120*time.Second {
-		t.Errorf("ReconnectInterval = %s", ep.ReconnectInterval)
-	}
-	if ep.ReconnectNonce != 30*time.Second {
-		t.Errorf("ReconnectNonce = %s", ep.ReconnectNonce)
-	}
-	if ep.ReconnectCount != -1 {
-		t.Errorf("ReconnectCount = %d", ep.ReconnectCount)
 	}
 }
 

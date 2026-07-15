@@ -232,7 +232,6 @@ func (s *registrationSession) snapshot() RegistrationSessionState {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return RegistrationSessionState{
-		ID:             s.id,
 		Status:         s.status,
 		InstallationID: s.installationID,
 		ErrorReason:    s.errorReason,
@@ -266,7 +265,6 @@ func (s *registrationSession) markError(reason, msg string, gcAfter time.Time) {
 // RegistrationSessionState is the read-only snapshot the handler
 // serializes to the frontend. Internal mutex is hidden by construction.
 type RegistrationSessionState struct {
-	ID             string
 	Status         RegistrationSessionStatus
 	InstallationID pgtype.UUID
 	ErrorReason    string
