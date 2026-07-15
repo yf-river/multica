@@ -941,37 +941,6 @@ func summarizeProjectResources(resourcesRaw []any) []map[string]any {
 	return summaries
 }
 
-func projectCandidateDetail(project map[string]any) string {
-	detail := strVal(project, "status")
-	resources, _ := project["resource_summaries"].([]map[string]any)
-	if len(resources) == 0 {
-		if raw, ok := project["resource_summaries"].([]any); ok {
-			for _, item := range raw {
-				if summary, ok := item.(map[string]any); ok {
-					resources = append(resources, summary)
-				}
-			}
-		}
-	}
-	parts := make([]string, 0, len(resources))
-	for _, r := range resources {
-		if projectPath, _ := r["project_path"].(string); projectPath != "" {
-			parts = append(parts, projectPath)
-			continue
-		}
-		if summary, _ := r["summary"].(string); summary != "" {
-			parts = append(parts, summary)
-		}
-	}
-	if len(parts) == 0 {
-		return detail
-	}
-	if detail == "" {
-		return strings.Join(parts, ", ")
-	}
-	return detail + " | " + strings.Join(parts, ", ")
-}
-
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------

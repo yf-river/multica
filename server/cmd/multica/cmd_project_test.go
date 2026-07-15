@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/multica-ai/multica/server/internal/cli"
 	"github.com/spf13/cobra"
 )
 
@@ -246,23 +245,6 @@ func TestRunProjectListJSONIncludesResourceSummaries(t *testing.T) {
 	summary, _ := summaries[0].(map[string]any)
 	if got := summary["project_path"]; got != "ChainWeaver/ida/ida-deployment" {
 		t.Fatalf("project_path = %v, want ChainWeaver/ida/ida-deployment", got)
-	}
-}
-
-func TestFetchProjectCandidatesIncludesResourceDetail(t *testing.T) {
-	srv := newProjectResourceListServer(t)
-	defer srv.Close()
-	client := cli.NewAPIClient(srv.URL, "workspace-123", "test-token")
-
-	candidates, err := fetchProjectCandidates(t.Context(), client)
-	if err != nil {
-		t.Fatalf("fetchProjectCandidates: %v", err)
-	}
-	if len(candidates) != 1 {
-		t.Fatalf("candidates len = %d, want 1", len(candidates))
-	}
-	if got := candidates[0].Detail; got != "active | ChainWeaver/ida/ida-deployment" {
-		t.Fatalf("detail = %q, want active | ChainWeaver/ida/ida-deployment", got)
 	}
 }
 

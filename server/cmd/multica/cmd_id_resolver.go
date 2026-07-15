@@ -23,7 +23,6 @@ type resolvedID struct {
 type idCandidate struct {
 	ID      string
 	Display string
-	Detail  string
 }
 
 func displayID(id string, full bool) string {
@@ -48,7 +47,6 @@ func issueCandidate(issue map[string]any) idCandidate {
 	return idCandidate{
 		ID:      strVal(issue, "id"),
 		Display: issueDisplayKey(issue),
-		Detail:  strVal(issue, "title"),
 	}
 }
 
@@ -258,7 +256,6 @@ func fetchAutopilotCandidates(ctx context.Context, client *cli.APIClient) ([]idC
 			candidates = append(candidates, idCandidate{
 				ID:      id,
 				Display: strVal(a, "title"),
-				Detail:  strVal(a, "status"),
 			})
 		}
 		pageLen := len(resp.Autopilots)
@@ -332,14 +329,9 @@ func resolveAutopilotTriggerID(ctx context.Context, client *cli.APIClient, autop
 			if !ok {
 				continue
 			}
-			detail := strVal(t, "kind")
-			if label := strVal(t, "label"); label != "" {
-				detail = label
-			}
 			candidates = append(candidates, idCandidate{
 				ID:      strVal(t, "id"),
 				Display: strVal(t, "id"),
-				Detail:  detail,
 			})
 		}
 		return candidates, nil
@@ -361,9 +353,6 @@ func fetchProjectCandidates(ctx context.Context, client *cli.APIClient) ([]idCan
 		return nil, err
 	}
 	projectsRaw, _ := result["projects"].([]any)
-	if err := enrichProjectsWithResources(ctx, client, projectsRaw); err != nil {
-		return nil, err
-	}
 	candidates := make([]idCandidate, 0, len(projectsRaw))
 	for _, raw := range projectsRaw {
 		p, ok := raw.(map[string]any)
@@ -373,7 +362,6 @@ func fetchProjectCandidates(ctx context.Context, client *cli.APIClient) ([]idCan
 		candidates = append(candidates, idCandidate{
 			ID:      strVal(p, "id"),
 			Display: strVal(p, "title"),
-			Detail:  projectCandidateDetail(p),
 		})
 	}
 	return candidates, nil
@@ -399,7 +387,6 @@ func resolveProjectResourceID(ctx context.Context, client *cli.APIClient, projec
 			candidates = append(candidates, idCandidate{
 				ID:      strVal(r, "id"),
 				Display: display,
-				Detail:  summarizeResourceRef(r["resource_ref"]),
 			})
 		}
 		return candidates, nil
@@ -430,7 +417,6 @@ func fetchLabelCandidates(ctx context.Context, client *cli.APIClient) ([]idCandi
 		candidates = append(candidates, idCandidate{
 			ID:      strVal(l, "id"),
 			Display: strVal(l, "name"),
-			Detail:  strVal(l, "color"),
 		})
 	}
 	return candidates, nil
