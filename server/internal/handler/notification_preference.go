@@ -32,6 +32,23 @@ var validNotifValues = map[string]bool{
 	"muted": true,
 }
 
+func writeNotificationPreferences(w http.ResponseWriter, r *http.Request, workspaceID string, raw json.RawMessage) {
+	var prefs map[string]string
+	err := json.Unmarshal(raw, &prefs)
+	if err == nil && prefs == nil {
+		err = errors.New("preferences must be a JSON object")
+	}
+	if err != nil {
+		slog.Warn("decode notification preferences failed", append(logger.RequestAttrs(r), "error", err)...)
+		writeError(w, http.StatusInternalServerError, "failed to decode notification preferences")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"workspace_id": workspaceID,
+		"preferences":  prefs,
+	})
+}
+
 func (h *Handler) GetNotificationPreferences(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -56,15 +73,7 @@ func (h *Handler) GetNotificationPreferences(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	var prefs map[string]string
-	if err := json.Unmarshal(pref.Preferences, &prefs); err != nil {
-		prefs = map[string]string{}
-	}
-
-	writeJSON(w, http.StatusOK, map[string]any{
-		"workspace_id": workspaceID,
-		"preferences":  prefs,
-	})
+	writeNotificationPreferences(w, r, workspaceID, pref.Preferences)
 }
 
 type updateNotifPrefRequest struct {
@@ -117,13 +126,5 @@ func (h *Handler) UpdateNotificationPreferences(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	var prefs map[string]string
-	if err := json.Unmarshal(pref.Preferences, &prefs); err != nil {
-		prefs = map[string]string{}
-	}
-
-	writeJSON(w, http.StatusOK, map[string]any{
-		"workspace_id": workspaceID,
-		"preferences":  prefs,
-	})
+	writeNotificationPreferences(w, r, workspaceID, pref.Preferences)
 }
