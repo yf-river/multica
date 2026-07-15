@@ -43,10 +43,10 @@ type TypingIndicatorQueries interface {
 // has one simply appends another state entry; clearing a session with
 // no tracked state is a no-op.
 type TypingIndicatorManager struct {
-	client      APIClient
-	credentials CredentialsResolver
-	queries     TypingIndicatorQueries
-	log         *slog.Logger
+	client             APIClient
+	resolveCredentials func(db.LarkInstallation) (InstallationCredentials, error)
+	queries            TypingIndicatorQueries
+	log                *slog.Logger
 
 	mu     sync.RWMutex
 	states map[string][]*TypingIndicatorState // key = chat_session_id string
@@ -54,16 +54,16 @@ type TypingIndicatorManager struct {
 
 // NewTypingIndicatorManager constructs a manager. All dependencies must
 // be non-nil; the manager panics on nil client / credentials / queries.
-func NewTypingIndicatorManager(client APIClient, credentials CredentialsResolver, queries TypingIndicatorQueries, log *slog.Logger) *TypingIndicatorManager {
+func NewTypingIndicatorManager(client APIClient, resolveCredentials func(db.LarkInstallation) (InstallationCredentials, error), queries TypingIndicatorQueries, log *slog.Logger) *TypingIndicatorManager {
 	if log == nil {
 		log = slog.Default()
 	}
 	return &TypingIndicatorManager{
-		client:      client,
-		credentials: credentials,
-		queries:     queries,
-		log:         log,
-		states:      make(map[string][]*TypingIndicatorState),
+		client:             client,
+		resolveCredentials: resolveCredentials,
+		queries:            queries,
+		log:                log,
+		states:             make(map[string][]*TypingIndicatorState),
 	}
 }
 
@@ -87,7 +87,7 @@ func (m *TypingIndicatorManager) Add(ctx context.Context, inst db.LarkInstallati
 		)
 		return
 	}
-	creds, err := m.credentials.Credentials(inst)
+	creds, err := m.resolveCredentials(inst)
 	if err != nil {
 		m.log.Warn("lark typing indicator: failed to resolve credentials",
 			"chat_session_id", util.UUIDToString(chatSessionID),
@@ -159,7 +159,7 @@ func (m *TypingIndicatorManager) Clear(ctx context.Context, chatSessionID pgtype
 		return
 	}
 
-	creds, err := m.credentials.Credentials(inst)
+	creds, err := m.resolveCredentials(inst)
 	if err != nil {
 		m.log.Warn("lark typing indicator: failed to resolve credentials for clear",
 			"chat_session_id", key,

@@ -97,13 +97,6 @@ type IssueCommand struct {
 	Description string
 }
 
-// AuditLogger records dropped inbound events to lark_inbound_audit.
-// The interface deliberately does not accept a message body — see the
-// drop-audit policy in MUL-2671 §4.7.
-type AuditLogger interface {
-	RecordDrop(ctx context.Context, p AuditDropParams) error
-}
-
 type AuditDropParams struct {
 	InstallationID pgtype.UUID // may be invalid for installation-less events
 	ChatID         ChatID

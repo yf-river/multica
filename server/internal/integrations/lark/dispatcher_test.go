@@ -340,7 +340,7 @@ func boundUser() db.LarkUserBinding {
 func TestDispatcher_UnknownAppDropped(t *testing.T) {
 	queries := &fakeQueries{installationErr: pgx.ErrNoRows}
 	audit := &fakeAudit{}
-	d := &Dispatcher{Queries: queries, Audit: audit}
+	d := &Dispatcher{Queries: queries, RecordDrop: audit.RecordDrop}
 
 	res, err := d.Handle(context.Background(), InboundMessage{
 		AppID:     "missing",
@@ -363,8 +363,8 @@ func TestDispatcher_UnknownAppDropped(t *testing.T) {
 func TestDispatcher_UnknownAppAuditFailureIsRetryable(t *testing.T) {
 	auditErr := errors.New("audit unavailable")
 	d := &Dispatcher{
-		Queries: &fakeQueries{installationErr: pgx.ErrNoRows},
-		Audit:   &fakeAudit{err: auditErr},
+		Queries:    &fakeQueries{installationErr: pgx.ErrNoRows},
+		RecordDrop: (&fakeAudit{err: auditErr}).RecordDrop,
 	}
 
 	res, err := d.Handle(context.Background(), InboundMessage{
@@ -382,7 +382,7 @@ func TestDispatcher_RevokedInstallationDropped(t *testing.T) {
 	inst.Status = string(InstallationRevoked)
 	queries := &fakeQueries{installationByApp: inst}
 	audit := &fakeAudit{}
-	d := &Dispatcher{Queries: queries, Audit: audit}
+	d := &Dispatcher{Queries: queries, RecordDrop: audit.RecordDrop}
 
 	res, err := d.Handle(context.Background(), InboundMessage{AppID: "ok"})
 	if err != nil {
@@ -399,7 +399,7 @@ func TestDispatcher_RevokedInstallationDropped(t *testing.T) {
 func TestDispatcher_GroupWithoutMentionDropped(t *testing.T) {
 	queries := &fakeQueries{installationByApp: activeInstallation()}
 	audit := &fakeAudit{}
-	d := &Dispatcher{Queries: queries, Audit: audit}
+	d := &Dispatcher{Queries: queries, RecordDrop: audit.RecordDrop}
 
 	res, _ := d.Handle(context.Background(), InboundMessage{
 		AppID:          "ok",
@@ -417,7 +417,7 @@ func TestDispatcher_GroupWithoutMentionDropped(t *testing.T) {
 func TestDispatcher_GroupDropAuditFailureReleasesClaim(t *testing.T) {
 	auditErr := errors.New("audit unavailable")
 	queries := &fakeQueries{installationByApp: activeInstallation()}
-	d := &Dispatcher{Queries: queries, Audit: &fakeAudit{err: auditErr}}
+	d := &Dispatcher{Queries: queries, RecordDrop: (&fakeAudit{err: auditErr}).RecordDrop}
 
 	res, err := d.Handle(context.Background(), InboundMessage{
 		AppID:          "ok",
@@ -442,7 +442,7 @@ func TestDispatcher_UnboundUserAsksForBinding(t *testing.T) {
 		userBindingErr:    pgx.ErrNoRows,
 	}
 	audit := &fakeAudit{}
-	d := &Dispatcher{Queries: queries, Audit: audit}
+	d := &Dispatcher{Queries: queries, RecordDrop: audit.RecordDrop}
 
 	res, _ := d.Handle(context.Background(), InboundMessage{
 		AppID:        "ok",
@@ -469,7 +469,7 @@ func TestDispatcher_UnboundAuditFailureReleasesClaim(t *testing.T) {
 		installationByApp: activeInstallation(),
 		userBindingErr:    pgx.ErrNoRows,
 	}
-	d := &Dispatcher{Queries: queries, Audit: &fakeAudit{err: auditErr}}
+	d := &Dispatcher{Queries: queries, RecordDrop: (&fakeAudit{err: auditErr}).RecordDrop}
 
 	res, err := d.Handle(context.Background(), InboundMessage{
 		AppID:        "ok",
@@ -501,10 +501,10 @@ func TestDispatcher_PlainMessageEnqueuesTask(t *testing.T) {
 	}
 	enq := &fakeEnqueuer{task: db.AgentTaskQueue{ID: validUUID(0x77)}}
 	d := &Dispatcher{
-		Queries:     queries,
-		Chat:        chat,
-		Audit:       &fakeAudit{},
-		TaskService: enq,
+		Queries:         queries,
+		Chat:            chat,
+		RecordDrop:      (&fakeAudit{}).RecordDrop,
+		EnqueueChatTask: enq.EnqueueChatTask,
 	}
 
 	res, err := d.Handle(context.Background(), InboundMessage{
@@ -551,10 +551,10 @@ func TestDispatcher_GroupMessageUsesInstallerAsCreator(t *testing.T) {
 	}
 	chat := &fakeChat{ensureID: sessionID, appendResult: AppendResult{}}
 	d := &Dispatcher{
-		Queries:     queries,
-		Chat:        chat,
-		Audit:       &fakeAudit{},
-		TaskService: &fakeEnqueuer{task: db.AgentTaskQueue{ID: validUUID(0x77)}},
+		Queries:         queries,
+		Chat:            chat,
+		RecordDrop:      (&fakeAudit{}).RecordDrop,
+		EnqueueChatTask: (&fakeEnqueuer{task: db.AgentTaskQueue{ID: validUUID(0x77)}}).EnqueueChatTask,
 	}
 
 	_, _ = d.Handle(context.Background(), InboundMessage{
@@ -589,10 +589,10 @@ func TestDispatcher_GroupMessageEnqueuesWithSenderAsInitiator(t *testing.T) {
 	chat := &fakeChat{ensureID: sessionID, appendResult: AppendResult{}}
 	enq := &fakeEnqueuer{task: db.AgentTaskQueue{ID: validUUID(0x77)}}
 	d := &Dispatcher{
-		Queries:     queries,
-		Chat:        chat,
-		Audit:       &fakeAudit{},
-		TaskService: enq,
+		Queries:         queries,
+		Chat:            chat,
+		RecordDrop:      (&fakeAudit{}).RecordDrop,
+		EnqueueChatTask: enq.EnqueueChatTask,
 	}
 
 	// Batching is disabled (d.batcher == nil), so the flush fires inline and the
@@ -640,10 +640,10 @@ func TestDispatcher_DedupHitDoesNotEnqueue(t *testing.T) {
 	enq := &fakeEnqueuer{}
 	audit := &fakeAudit{}
 	d := &Dispatcher{
-		Queries:     queries,
-		Chat:        chat,
-		Audit:       audit,
-		TaskService: enq,
+		Queries:         queries,
+		Chat:            chat,
+		RecordDrop:      audit.RecordDrop,
+		EnqueueChatTask: enq.EnqueueChatTask,
 	}
 
 	res, _ := d.Handle(context.Background(), InboundMessage{
@@ -685,7 +685,7 @@ func TestDispatcher_DedupBeforeGroupFilter(t *testing.T) {
 		dedup:             map[string]*fakeDedupRow{seedDedupKey("msg-replay"): {processed: true, token: validUUID(0xAB)}},
 	}
 	audit := &fakeAudit{}
-	d := &Dispatcher{Queries: queries, Audit: audit}
+	d := &Dispatcher{Queries: queries, RecordDrop: audit.RecordDrop}
 
 	res, _ := d.Handle(context.Background(), InboundMessage{
 		AppID:          "ok",
@@ -724,7 +724,7 @@ func TestDispatcher_DedupIsScopedPerInstallation(t *testing.T) {
 		},
 	}
 	audit := &fakeAudit{}
-	d := &Dispatcher{Queries: queries, Audit: audit}
+	d := &Dispatcher{Queries: queries, RecordDrop: audit.RecordDrop}
 
 	res, _ := d.Handle(context.Background(), InboundMessage{
 		AppID:          "ok",
@@ -753,7 +753,7 @@ func TestDispatcher_DedupBeforeIdentityCheck(t *testing.T) {
 		dedup:             map[string]*fakeDedupRow{seedDedupKey("msg-replay"): {processed: true, token: validUUID(0xAB)}},
 	}
 	audit := &fakeAudit{}
-	d := &Dispatcher{Queries: queries, Audit: audit}
+	d := &Dispatcher{Queries: queries, RecordDrop: audit.RecordDrop}
 
 	res, _ := d.Handle(context.Background(), InboundMessage{
 		AppID:        "ok",
@@ -791,11 +791,11 @@ func TestDispatcher_IssueCommandCreatesIssue(t *testing.T) {
 		Title:  "ship it",
 	}}}
 	d := &Dispatcher{
-		Queries:      queries,
-		Chat:         chat,
-		Audit:        &fakeAudit{},
-		IssueService: issueSvc,
-		TaskService:  &fakeEnqueuer{task: db.AgentTaskQueue{ID: validUUID(0x77)}},
+		Queries:         queries,
+		Chat:            chat,
+		RecordDrop:      (&fakeAudit{}).RecordDrop,
+		CreateIssue:     issueSvc.Create,
+		EnqueueChatTask: (&fakeEnqueuer{task: db.AgentTaskQueue{ID: validUUID(0x77)}}).EnqueueChatTask,
 	}
 
 	res, err := d.Handle(context.Background(), InboundMessage{
@@ -862,11 +862,11 @@ func TestDispatcher_IssueIdentifierFallsBackToNumberOnWorkspaceLookupErr(t *test
 		Title:  "fallback path",
 	}}}
 	d := &Dispatcher{
-		Queries:      queries,
-		Chat:         chat,
-		Audit:        &fakeAudit{},
-		IssueService: issueSvc,
-		TaskService:  &fakeEnqueuer{task: db.AgentTaskQueue{ID: validUUID(0x77)}},
+		Queries:         queries,
+		Chat:            chat,
+		RecordDrop:      (&fakeAudit{}).RecordDrop,
+		CreateIssue:     issueSvc.Create,
+		EnqueueChatTask: (&fakeEnqueuer{task: db.AgentTaskQueue{ID: validUUID(0x77)}}).EnqueueChatTask,
 	}
 
 	res, err := d.Handle(context.Background(), InboundMessage{
@@ -900,11 +900,11 @@ func TestDispatcher_EmptyTitleSurfacesError(t *testing.T) {
 	}
 	issueSvc := &fakeIssueCreator{}
 	d := &Dispatcher{
-		Queries:      queries,
-		Chat:         chat,
-		Audit:        &fakeAudit{},
-		IssueService: issueSvc,
-		TaskService:  &fakeEnqueuer{},
+		Queries:         queries,
+		Chat:            chat,
+		RecordDrop:      (&fakeAudit{}).RecordDrop,
+		CreateIssue:     issueSvc.Create,
+		EnqueueChatTask: (&fakeEnqueuer{}).EnqueueChatTask,
 	}
 
 	_, err := d.Handle(context.Background(), InboundMessage{
@@ -950,11 +950,11 @@ func TestDispatcher_AgentOfflineRepliesAtFlush(t *testing.T) {
 	enq := &fakeEnqueuer{err: service.ErrChatTaskAgentNoRuntime}
 	cap := &captureReply{}
 	d := &Dispatcher{
-		Queries:     queries,
-		Chat:        chat,
-		Audit:       &fakeAudit{},
-		TaskService: enq,
-		FlushReply:  cap.reply,
+		Queries:         queries,
+		Chat:            chat,
+		RecordDrop:      (&fakeAudit{}).RecordDrop,
+		EnqueueChatTask: enq.EnqueueChatTask,
+		FlushReply:      cap.reply,
 	}
 
 	res, err := d.Handle(context.Background(), InboundMessage{
@@ -995,11 +995,11 @@ func TestDispatcher_AgentArchivedRepliesAtFlush(t *testing.T) {
 	enq := &fakeEnqueuer{err: service.ErrChatTaskAgentArchived}
 	cap := &captureReply{}
 	d := &Dispatcher{
-		Queries:     queries,
-		Chat:        chat,
-		Audit:       &fakeAudit{},
-		TaskService: enq,
-		FlushReply:  cap.reply,
+		Queries:         queries,
+		Chat:            chat,
+		RecordDrop:      (&fakeAudit{}).RecordDrop,
+		EnqueueChatTask: enq.EnqueueChatTask,
+		FlushReply:      cap.reply,
 	}
 
 	res, err := d.Handle(context.Background(), InboundMessage{
@@ -1038,11 +1038,11 @@ func TestDispatcher_FlushInfraFailureIsNotReplied(t *testing.T) {
 	enq := &fakeEnqueuer{err: infraErr}
 	cap := &captureReply{}
 	d := &Dispatcher{
-		Queries:     queries,
-		Chat:        chat,
-		Audit:       &fakeAudit{},
-		TaskService: enq,
-		FlushReply:  cap.reply,
+		Queries:         queries,
+		Chat:            chat,
+		RecordDrop:      (&fakeAudit{}).RecordDrop,
+		EnqueueChatTask: enq.EnqueueChatTask,
+		FlushReply:      cap.reply,
 	}
 
 	res, err := d.Handle(context.Background(), InboundMessage{
@@ -1081,7 +1081,7 @@ func TestDispatcher_DebounceCoalescesRunTrigger(t *testing.T) {
 	chat := &fakeChat{ensureID: sessionID, appendResult: AppendResult{}}
 	enq := &fakeEnqueuer{task: db.AgentTaskQueue{ID: validUUID(0x77)}}
 	f := &fakeTimerFactory{}
-	d := &Dispatcher{Queries: queries, Chat: chat, Audit: &fakeAudit{}, TaskService: enq}
+	d := &Dispatcher{Queries: queries, Chat: chat, RecordDrop: (&fakeAudit{}).RecordDrop, EnqueueChatTask: enq.EnqueueChatTask}
 	d.batcher = newTestBatcher(f)
 
 	send := func(id string) {
@@ -1142,7 +1142,7 @@ func TestDispatcher_LatestSenderWinsAsInitiator(t *testing.T) {
 	chat := &fakeChat{ensureID: sessionID, appendResult: AppendResult{}}
 	enq := &fakeEnqueuer{task: db.AgentTaskQueue{ID: validUUID(0x77)}}
 	f := &fakeTimerFactory{}
-	d := &Dispatcher{Queries: queries, Chat: chat, Audit: &fakeAudit{}, TaskService: enq}
+	d := &Dispatcher{Queries: queries, Chat: chat, RecordDrop: (&fakeAudit{}).RecordDrop, EnqueueChatTask: enq.EnqueueChatTask}
 	d.batcher = newTestBatcher(f)
 
 	send := func(openID, msgID string) {
@@ -1194,10 +1194,10 @@ func TestDispatcher_EnsureChatSessionFailureReleasesClaim(t *testing.T) {
 		queries:   queries,
 	}
 	d := &Dispatcher{
-		Queries:     queries,
-		Chat:        chat,
-		Audit:       &fakeAudit{},
-		TaskService: &fakeEnqueuer{task: db.AgentTaskQueue{ID: validUUID(0x77)}},
+		Queries:         queries,
+		Chat:            chat,
+		RecordDrop:      (&fakeAudit{}).RecordDrop,
+		EnqueueChatTask: (&fakeEnqueuer{task: db.AgentTaskQueue{ID: validUUID(0x77)}}).EnqueueChatTask,
 	}
 
 	// First attempt — infra error in EnsureChatSession.
@@ -1290,10 +1290,10 @@ func TestDispatcher_AppendUserMessageFailureReleasesClaim(t *testing.T) {
 		appendErr: errors.New("create chat message: connection refused"),
 	}
 	d := &Dispatcher{
-		Queries:     queries,
-		Chat:        chat,
-		Audit:       &fakeAudit{},
-		TaskService: &fakeEnqueuer{task: db.AgentTaskQueue{ID: validUUID(0x77)}},
+		Queries:         queries,
+		Chat:            chat,
+		RecordDrop:      (&fakeAudit{}).RecordDrop,
+		EnqueueChatTask: (&fakeEnqueuer{task: db.AgentTaskQueue{ID: validUUID(0x77)}}).EnqueueChatTask,
 	}
 
 	// First attempt — append fails.
@@ -1359,11 +1359,11 @@ func TestDispatcher_DurableErrorMarksClaim(t *testing.T) {
 	}
 	issueErr := errors.New("create issue: connection refused")
 	d := &Dispatcher{
-		Queries:      queries,
-		Chat:         chat,
-		Audit:        &fakeAudit{},
-		IssueService: &fakeIssueCreator{err: issueErr},
-		TaskService:  &fakeEnqueuer{},
+		Queries:         queries,
+		Chat:            chat,
+		RecordDrop:      (&fakeAudit{}).RecordDrop,
+		CreateIssue:     (&fakeIssueCreator{err: issueErr}).Create,
+		EnqueueChatTask: (&fakeEnqueuer{}).EnqueueChatTask,
 	}
 
 	_, err := d.Handle(context.Background(), InboundMessage{
@@ -1398,7 +1398,7 @@ func TestDispatcher_DropMarksClaim(t *testing.T) {
 		userBindingErr:    pgx.ErrNoRows,
 	}
 	audit := &fakeAudit{}
-	d := &Dispatcher{Queries: queries, Audit: audit}
+	d := &Dispatcher{Queries: queries, RecordDrop: audit.RecordDrop}
 
 	_, _ = d.Handle(context.Background(), InboundMessage{
 		AppID:        "ok",
@@ -1422,7 +1422,7 @@ func TestDispatcher_EmptyMessageIDSkipsDedup(t *testing.T) {
 	queries := &fakeQueries{
 		installationByApp: activeInstallation(),
 	}
-	d := &Dispatcher{Queries: queries, Audit: &fakeAudit{}}
+	d := &Dispatcher{Queries: queries, RecordDrop: (&fakeAudit{}).RecordDrop}
 
 	_, _ = d.Handle(context.Background(), InboundMessage{
 		AppID:    "ok",
@@ -1451,10 +1451,10 @@ func TestDispatcher_InFlightClaimDropsReplay(t *testing.T) {
 	}
 	chat := &fakeChat{}
 	d := &Dispatcher{
-		Queries:     queries,
-		Chat:        chat,
-		Audit:       &fakeAudit{},
-		TaskService: &fakeEnqueuer{},
+		Queries:         queries,
+		Chat:            chat,
+		RecordDrop:      (&fakeAudit{}).RecordDrop,
+		EnqueueChatTask: (&fakeEnqueuer{}).EnqueueChatTask,
 	}
 
 	res, err := d.Handle(context.Background(), InboundMessage{
@@ -1491,10 +1491,10 @@ func TestDispatcher_StaleInFlightClaimReclaimable(t *testing.T) {
 	}
 	chat := &fakeChat{ensureID: sessionID, appendResult: AppendResult{}, queries: queries}
 	d := &Dispatcher{
-		Queries:     queries,
-		Chat:        chat,
-		Audit:       &fakeAudit{},
-		TaskService: &fakeEnqueuer{task: db.AgentTaskQueue{ID: validUUID(0x77)}},
+		Queries:         queries,
+		Chat:            chat,
+		RecordDrop:      (&fakeAudit{}).RecordDrop,
+		EnqueueChatTask: (&fakeEnqueuer{task: db.AgentTaskQueue{ID: validUUID(0x77)}}).EnqueueChatTask,
 	}
 
 	res, err := d.Handle(context.Background(), InboundMessage{
@@ -1543,10 +1543,10 @@ func TestDispatcher_StaleReclaimRaceDoesNotDoubleWrite(t *testing.T) {
 	chat := &fakeChat{ensureID: sessionID, appendResult: AppendResult{}}
 	chat.queries = queries // model the production in-tx Mark
 	d := &Dispatcher{
-		Queries:     queries,
-		Chat:        chat,
-		Audit:       &fakeAudit{},
-		TaskService: &fakeEnqueuer{task: db.AgentTaskQueue{ID: validUUID(0x77)}},
+		Queries:         queries,
+		Chat:            chat,
+		RecordDrop:      (&fakeAudit{}).RecordDrop,
+		EnqueueChatTask: (&fakeEnqueuer{task: db.AgentTaskQueue{ID: validUUID(0x77)}}).EnqueueChatTask,
 	}
 
 	// Inject worker B's reclaim. The hook fires while worker A's
@@ -1660,10 +1660,10 @@ func TestDispatcher_InTxMarkPreventsPostCommitReclaim(t *testing.T) {
 	chat := &fakeChat{ensureID: sessionID, appendResult: AppendResult{}}
 	chat.queries = queries
 	d := &Dispatcher{
-		Queries:     queries,
-		Chat:        chat,
-		Audit:       &fakeAudit{},
-		TaskService: &fakeEnqueuer{task: db.AgentTaskQueue{ID: validUUID(0x77)}},
+		Queries:         queries,
+		Chat:            chat,
+		RecordDrop:      (&fakeAudit{}).RecordDrop,
+		EnqueueChatTask: (&fakeEnqueuer{task: db.AgentTaskQueue{ID: validUUID(0x77)}}).EnqueueChatTask,
 	}
 
 	res, err := d.Handle(context.Background(), InboundMessage{
@@ -1738,10 +1738,10 @@ func TestDispatcher_InTxMarkSucceedsAndSkipsPostFinalize(t *testing.T) {
 	chat := &fakeChat{ensureID: sessionID, appendResult: AppendResult{}}
 	chat.queries = queries
 	d := &Dispatcher{
-		Queries:     queries,
-		Chat:        chat,
-		Audit:       &fakeAudit{},
-		TaskService: &fakeEnqueuer{task: db.AgentTaskQueue{ID: validUUID(0x77)}},
+		Queries:         queries,
+		Chat:            chat,
+		RecordDrop:      (&fakeAudit{}).RecordDrop,
+		EnqueueChatTask: (&fakeEnqueuer{task: db.AgentTaskQueue{ID: validUUID(0x77)}}).EnqueueChatTask,
 	}
 
 	_, err := d.Handle(context.Background(), InboundMessage{

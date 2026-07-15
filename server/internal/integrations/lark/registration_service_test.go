@@ -30,14 +30,6 @@ func TestRegistrationServiceBeginInstallRejectsMissingRegionBeforeDatabaseAccess
 	}
 }
 
-type registrationAuthStub struct {
-	agent db.Agent
-}
-
-func (s registrationAuthStub) GetAgentInWorkspace(context.Context, db.GetAgentInWorkspaceParams) (db.Agent, error) {
-	return s.agent, nil
-}
-
 func TestRegistrationServiceBeginInstallReplaysPendingSession(t *testing.T) {
 	fake := newRegistrationFake(t)
 	fake.stubBegin(map[string]any{
@@ -47,10 +39,12 @@ func TestRegistrationServiceBeginInstallReplaysPendingSession(t *testing.T) {
 		"expire_in":                 1,
 	})
 	service := &RegistrationService{
-		cfg:         RegistrationServiceConfig{}.withDefaults(),
-		client:      NewRegistrationClient(RegistrationConfig{Domain: fake.URL()}),
-		authQueries: registrationAuthStub{agent: db.Agent{Name: "Replay Bot"}},
-		sessions:    make(map[string]*registrationSession),
+		cfg:    RegistrationServiceConfig{}.withDefaults(),
+		client: NewRegistrationClient(RegistrationConfig{Domain: fake.URL()}),
+		getAgentInWorkspace: func(context.Context, db.GetAgentInWorkspaceParams) (db.Agent, error) {
+			return db.Agent{Name: "Replay Bot"}, nil
+		},
+		sessions: make(map[string]*registrationSession),
 	}
 	id := uuidFromStringSvc(t, "11111111-1111-1111-1111-111111111111")
 	params := BeginInstallParams{
@@ -151,35 +145,36 @@ func TestRegistrationServiceBeginInstallReplaysPendingSession(t *testing.T) {
 func TestRegistrationServiceConstructorValidatesDeps(t *testing.T) {
 	client := NewRegistrationClient(RegistrationConfig{})
 	api := NewHTTPAPIClient(HTTPClientConfig{})
+	binder := func(context.Context, *db.Queries, InstallerBindParams) error { return nil }
 	cases := []struct {
 		name   string
 		fn     func() error
 		needle string
 	}{
 		{"missing client", func() error {
-			_, err := NewRegistrationService(RegistrationServiceConfig{}, nil, api, &db.Queries{}, fakeTxStarter{}, &InstallationService{}, &fakeInstallerBinder{})
+			_, err := NewRegistrationService(RegistrationServiceConfig{}, nil, api, &db.Queries{}, fakeTxStarter{}, &InstallationService{}, binder)
 			return err
 		}, "RegistrationClient"},
 		{"missing api", func() error {
-			_, err := NewRegistrationService(RegistrationServiceConfig{}, client, nil, &db.Queries{}, fakeTxStarter{}, &InstallationService{}, &fakeInstallerBinder{})
+			_, err := NewRegistrationService(RegistrationServiceConfig{}, client, nil, &db.Queries{}, fakeTxStarter{}, &InstallationService{}, binder)
 			return err
 		}, "APIClient"},
 		{"missing queries", func() error {
-			_, err := NewRegistrationService(RegistrationServiceConfig{}, client, api, nil, fakeTxStarter{}, &InstallationService{}, &fakeInstallerBinder{})
+			_, err := NewRegistrationService(RegistrationServiceConfig{}, client, api, nil, fakeTxStarter{}, &InstallationService{}, binder)
 			return err
 		}, "queries"},
 		{"missing tx", func() error {
-			_, err := NewRegistrationService(RegistrationServiceConfig{}, client, api, &db.Queries{}, nil, &InstallationService{}, &fakeInstallerBinder{})
+			_, err := NewRegistrationService(RegistrationServiceConfig{}, client, api, &db.Queries{}, nil, &InstallationService{}, binder)
 			return err
 		}, "TxStarter"},
 		{"missing installs", func() error {
-			_, err := NewRegistrationService(RegistrationServiceConfig{}, client, api, &db.Queries{}, fakeTxStarter{}, nil, &fakeInstallerBinder{})
+			_, err := NewRegistrationService(RegistrationServiceConfig{}, client, api, &db.Queries{}, fakeTxStarter{}, nil, binder)
 			return err
 		}, "InstallationService"},
 		{"missing binder", func() error {
 			_, err := NewRegistrationService(RegistrationServiceConfig{}, client, api, &db.Queries{}, fakeTxStarter{}, &InstallationService{}, nil)
 			return err
-		}, "InstallerBinder"},
+		}, "bind installer"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -328,23 +323,6 @@ func TestRegistrationSessionStateSnapshotIsValueCopy(t *testing.T) {
 	}
 }
 
-// TestRandomSessionIDUnique pins the in-process collision risk: 1024
-// rounds with no duplicate is enough headroom for the 24-byte input
-// (~10^57 keyspace) and matches the bar applied to randomToken.
-func TestRandomSessionIDUnique(t *testing.T) {
-	seen := map[string]struct{}{}
-	for i := 0; i < 1024; i++ {
-		id, err := randomSessionID()
-		if err != nil {
-			t.Fatalf("randomSessionID: %v", err)
-		}
-		if _, dup := seen[id]; dup {
-			t.Fatalf("duplicate after %d iterations: %q", i, id)
-		}
-		seen[id] = struct{}{}
-	}
-}
-
 // TestRegistrationServicePublishInstalledEmitsCreatedEvent pins the
 // MUL-3059 fix: a completed install must publish lark_installation:created
 // at the row-write point so every workspace client refreshes its
@@ -402,21 +380,6 @@ func TestRegistrationServicePublishInstalledNilBusIsNoOp(t *testing.T) {
 		uuidFromStringSvc(t, "33333333-3333-3333-3333-333333333333"),
 		uuidFromStringSvc(t, "44444444-4444-4444-4444-444444444444"),
 	)
-}
-
-// fakeInstallerBinder records BindInstallerTx calls for tests that
-// need to assert the bind happened.
-type fakeInstallerBinder struct {
-	mu    sync.Mutex
-	calls []InstallerBindParams
-	err   error
-}
-
-func (f *fakeInstallerBinder) BindInstallerTx(_ context.Context, _ *db.Queries, p InstallerBindParams) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.calls = append(f.calls, p)
-	return f.err
 }
 
 // fakeTxStarter is a TxStarter stub for constructor tests — never

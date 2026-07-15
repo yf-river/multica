@@ -34,11 +34,11 @@ func (f *fakePatcherQueries) GetLarkChatSessionBindingBySession(ctx context.Cont
 	return f.binding, f.bindingErr
 }
 
-type fakeCredentials struct{ secret string }
-
-func (f fakeCredentials) Credentials(inst db.LarkInstallation) (InstallationCredentials, error) {
-	region, err := ParseRegion(inst.Region)
-	return InstallationCredentials{AppID: inst.AppID, AppSecret: f.secret, Region: region}, err
+func testCredentials(secret string) func(db.LarkInstallation) (InstallationCredentials, error) {
+	return func(inst db.LarkInstallation) (InstallationCredentials, error) {
+		region, err := ParseRegion(inst.Region)
+		return InstallationCredentials{AppID: inst.AppID, AppSecret: secret, Region: region}, err
+	}
 }
 
 type fakeAPIClient struct {
@@ -118,7 +118,9 @@ func newTestPatcher(t *testing.T) (*Patcher, *fakePatcherQueries, *fakeAPIClient
 		agent: db.Agent{Name: "TestAgent"},
 	}
 	api := &fakeAPIClient{sendReturn: "lark_card_msg_1", textSendReturn: "lark_text_msg_1"}
-	p := NewPatcher(q, fakeCredentials{secret: "shh"}, api)
+	resolveCredentials := testCredentials("shh")
+	typingIndicator := NewTypingIndicatorManager(api, resolveCredentials, q, newDiscardLogger())
+	p := NewPatcher(q, resolveCredentials, api, typingIndicator)
 	return p, q, api
 }
 

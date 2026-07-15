@@ -32,7 +32,7 @@ func TestLarkJSONFrameDecoderTextMessageInP2P(t *testing.T) {
 		}
 	}`)
 
-	d := NewLarkJSONFrameDecoder()
+	d := new(LarkJSONFrameDecoder)
 	msg, ok, err := d.Decode(raw, db.LarkInstallation{BotOpenID: "ou_bot"})
 	if err != nil || !ok {
 		t.Fatalf("Decode ok=%v err=%v", ok, err)
@@ -76,7 +76,7 @@ func TestLarkJSONFrameDecoderGroupMentionDiscrimination(t *testing.T) {
 			}
 		}`)
 	}
-	d := NewLarkJSONFrameDecoder()
+	d := new(LarkJSONFrameDecoder)
 
 	t.Run("mentions bot", func(t *testing.T) {
 		msg, ok, err := d.Decode(mkRaw("ou_bot"), db.LarkInstallation{BotOpenID: "ou_bot"})
@@ -126,7 +126,7 @@ func TestLarkJSONFrameDecoderGroupMentionUnionID(t *testing.T) {
 			}
 		}`)
 	}
-	d := NewLarkJSONFrameDecoder()
+	d := new(LarkJSONFrameDecoder)
 	pgText := func(s string) pgtype.Text { return pgtype.Text{String: s, Valid: true} }
 
 	t.Run("union_id match wins even when open_id mismatches", func(t *testing.T) {
@@ -212,7 +212,7 @@ func TestLarkJSONFrameDecoderMentionPlaceholderRewrite(t *testing.T) {
 			}
 		}`)
 	}
-	d := NewLarkJSONFrameDecoder()
+	d := new(LarkJSONFrameDecoder)
 
 	t.Run("strips bot self-mention via union_id", func(t *testing.T) {
 		inst := db.LarkInstallation{
@@ -374,7 +374,7 @@ func TestLarkJSONFrameDecoderMentionPlaceholderRewrite(t *testing.T) {
 
 func TestLarkJSONFrameDecoderDropsHeartbeat(t *testing.T) {
 	t.Parallel()
-	d := NewLarkJSONFrameDecoder()
+	d := new(LarkJSONFrameDecoder)
 	cases := [][]byte{
 		[]byte(`{"type":"heartbeat"}`),
 		[]byte(`{"type":"frame_ack","data":{"id":"1"}}`),
@@ -393,7 +393,7 @@ func TestLarkJSONFrameDecoderDropsHeartbeat(t *testing.T) {
 
 func TestLarkJSONFrameDecoderEmptyRaw(t *testing.T) {
 	t.Parallel()
-	msg, ok, err := NewLarkJSONFrameDecoder().Decode(nil, db.LarkInstallation{})
+	msg, ok, err := new(LarkJSONFrameDecoder).Decode(nil, db.LarkInstallation{})
 	if ok || err != nil {
 		t.Fatalf("expected (zero, false, nil) for empty raw; got ok=%v err=%v msg=%+v", ok, err, msg)
 	}
@@ -401,7 +401,7 @@ func TestLarkJSONFrameDecoderEmptyRaw(t *testing.T) {
 
 func TestLarkJSONFrameDecoderMalformedReturnsError(t *testing.T) {
 	t.Parallel()
-	_, ok, err := NewLarkJSONFrameDecoder().Decode([]byte("not-json"), db.LarkInstallation{})
+	_, ok, err := new(LarkJSONFrameDecoder).Decode([]byte("not-json"), db.LarkInstallation{})
 	if err == nil {
 		t.Fatal("expected error on malformed envelope")
 	}
@@ -420,7 +420,7 @@ func TestLarkJSONFrameDecoderMessageContentEmptyOnInvalidContentJSON(t *testing.
 			"message":{"message_id":"m","chat_id":"c","chat_type":"p2p","message_type":"text","content":"not-json"}
 		}
 	}`)
-	msg, ok, err := NewLarkJSONFrameDecoder().Decode(raw, db.LarkInstallation{})
+	msg, ok, err := new(LarkJSONFrameDecoder).Decode(raw, db.LarkInstallation{})
 	if err != nil || !ok {
 		t.Fatalf("ok=%v err=%v", ok, err)
 	}
@@ -439,7 +439,7 @@ func TestLarkJSONFrameDecoderNonTextMessageHasEmptyBody(t *testing.T) {
 			"message":{"message_id":"m","chat_id":"c","chat_type":"p2p","message_type":"image","content":"{\"image_key\":\"img1\"}"}
 		}
 	}`)
-	msg, ok, err := NewLarkJSONFrameDecoder().Decode(raw, db.LarkInstallation{})
+	msg, ok, err := new(LarkJSONFrameDecoder).Decode(raw, db.LarkInstallation{})
 	if err != nil || !ok {
 		t.Fatalf("ok=%v err=%v", ok, err)
 	}
@@ -470,7 +470,7 @@ func TestLarkJSONFrameDecoderPostMessageFlattened(t *testing.T) {
 			"message":{"message_id":"m","chat_id":"c","chat_type":"p2p","message_type":"post","content":` + string(escaped) + `}
 		}
 	}`)
-	msg, ok, err := NewLarkJSONFrameDecoder().Decode(raw, db.LarkInstallation{BotOpenID: "ou_bot"})
+	msg, ok, err := new(LarkJSONFrameDecoder).Decode(raw, db.LarkInstallation{BotOpenID: "ou_bot"})
 	if err != nil || !ok {
 		t.Fatalf("Decode ok=%v err=%v", ok, err)
 	}
@@ -509,7 +509,7 @@ func TestLarkJSONFrameDecoderPostResolvesMentions(t *testing.T) {
 			}
 		}
 	}`)
-	msg, ok, err := NewLarkJSONFrameDecoder().Decode(raw, db.LarkInstallation{BotOpenID: "ou_bot"})
+	msg, ok, err := new(LarkJSONFrameDecoder).Decode(raw, db.LarkInstallation{BotOpenID: "ou_bot"})
 	if err != nil || !ok {
 		t.Fatalf("Decode ok=%v err=%v", ok, err)
 	}
@@ -540,7 +540,7 @@ func TestLarkJSONFrameDecoderCapturesReplyLinkage(t *testing.T) {
 			}
 		}
 	}`)
-	msg, ok, err := NewLarkJSONFrameDecoder().Decode(raw, db.LarkInstallation{BotOpenID: "ou_bot"})
+	msg, ok, err := new(LarkJSONFrameDecoder).Decode(raw, db.LarkInstallation{BotOpenID: "ou_bot"})
 	if err != nil || !ok {
 		t.Fatalf("Decode ok=%v err=%v", ok, err)
 	}

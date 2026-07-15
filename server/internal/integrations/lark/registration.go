@@ -475,14 +475,3 @@ func decorateQRCodeURL(raw, source, namePreset string) (string, error) {
 	u.RawQuery = q.Encode()
 	return u.String(), nil
 }
-
-// ErrRegistrationAccessDenied is returned by RegistrationService when
-// the user explicitly denied the install in the Lark UI. Distinct from
-// other terminal failures so the UI can render "you cancelled the
-// install" instead of a generic error.
-var ErrRegistrationAccessDenied = errors.New("lark registration: access denied by user")
-
-// ErrRegistrationExpired is returned by RegistrationService when the
-// device_code's expiry window elapsed without the user authorizing.
-// Distinct so the UI can prompt "scan again — the previous QR expired".
-var ErrRegistrationExpired = errors.New("lark registration: expired")

@@ -133,7 +133,7 @@ type HubConfig struct {
 	// and tests share the same default.
 	ShutdownTimeout time.Duration
 
-	// ReplyTimeout caps an OutcomeReplier.Reply call. The replier
+	// ReplyTimeout caps the outbound reply callback. The callback
 	// runs in a detached goroutine off the ACK critical path —
 	// dispatch returns the verdict to the connector immediately so
 	// the ACK can be written, then the reply (a NeedsBinding card,
@@ -203,12 +203,12 @@ func (c HubConfig) withDefaults() HubConfig {
 //	... ctx cancellation triggers ...
 //	hub.Wait()                  // joins on every per-installation goroutine
 type Hub struct {
-	queries         HubQueries
-	factory         ConnectorFactory
-	dispatcher      *Dispatcher
-	replier         OutcomeReplier
-	typingIndicator *TypingIndicatorManager
-	cfg             HubConfig
+	queries    HubQueries
+	factory    ConnectorFactory
+	dispatcher *Dispatcher
+	reply      ReplyFunc
+	addTyping  func(context.Context, db.LarkInstallation, pgtype.UUID, string, string)
+	cfg        HubConfig
 
 	// nodeID is the per-process lease ownership token. The CAS
 	// predicate on AcquireLarkWSLease treats matching tokens as
@@ -266,25 +266,26 @@ type supervisorEntry struct {
 // dispatcher, and outbound replier. The Hub does not start any goroutines
 // until Run is called. Reply failures are best-effort and do not interrupt
 // inbound processing.
-func NewHub(queries HubQueries, factory ConnectorFactory, dispatcher *Dispatcher, replier OutcomeReplier, cfg HubConfig) *Hub {
+func NewHub(
+	queries HubQueries,
+	factory ConnectorFactory,
+	dispatcher *Dispatcher,
+	reply ReplyFunc,
+	addTyping func(context.Context, db.LarkInstallation, pgtype.UUID, string, string),
+	cfg HubConfig,
+) *Hub {
 	cfg = cfg.withDefaults()
 	return &Hub{
 		queries:     queries,
 		factory:     factory,
 		dispatcher:  dispatcher,
-		replier:     replier,
+		reply:       reply,
+		addTyping:   addTyping,
 		cfg:         cfg,
 		nodeID:      newNodeID(),
 		supervisors: make(map[string]supervisorEntry),
 		runDone:     make(chan struct{}),
 	}
-}
-
-// SetTypingIndicatorManager installs the typing-indicator manager on
-// the Hub. Must be called BEFORE Run. Nil is safe and disables the
-// typing reaction lifecycle.
-func (h *Hub) SetTypingIndicatorManager(m *TypingIndicatorManager) {
-	h.typingIndicator = m
 }
 
 // Run is the Hub's main loop. It scans installations every
@@ -774,14 +775,14 @@ func (h *Hub) handleEvent(ctx context.Context, inst db.LarkInstallation, log *sl
 		"outcome", string(res.Outcome),
 		"drop_reason", string(res.DropReason),
 	)
-	if res.Outcome == OutcomeIngested && h.typingIndicator != nil {
+	if res.Outcome == OutcomeIngested {
 		// Detached: the typing reaction HTTP call must not block the
 		// connector's ACK path. A short timeout keeps the goroutine
 		// from hanging if Lark is slow.
 		go func() {
 			addCtx, cancel := context.WithTimeout(context.Background(), h.cfg.ReplyTimeout)
 			defer cancel()
-			h.typingIndicator.Add(addCtx, inst, res.ChatSessionID, msg.MessageID, msg.CreateTime)
+			h.addTyping(addCtx, inst, res.ChatSessionID, msg.MessageID, msg.CreateTime)
 		}()
 	}
 	h.scheduleReply(inst, msg, res, log)
@@ -804,7 +805,7 @@ func (h *Hub) scheduleReply(inst db.LarkInstallation, msg InboundMessage, res Di
 		defer h.replyWg.Done()
 		ctx, cancel := context.WithTimeout(context.Background(), h.cfg.ReplyTimeout)
 		defer cancel()
-		h.replier.Reply(ctx, inst, msg, res)
+		h.reply(ctx, inst, msg, res)
 		if ctx.Err() == context.DeadlineExceeded {
 			log.Warn("lark hub: outbound reply timed out",
 				"event_id", msg.EventID,

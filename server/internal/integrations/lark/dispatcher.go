@@ -141,21 +141,6 @@ type DispatchResult struct {
 	IssueTitle string
 }
 
-// IssueCreator is the narrow subset of service.IssueService the
-// Dispatcher needs. Declared here as an interface so this package can
-// be unit-tested without bringing the full service graph along.
-type IssueCreator interface {
-	Create(ctx context.Context, p service.IssueCreateParams, opts service.IssueCreateOpts) (service.IssueCreateResult, error)
-}
-
-// ChatTaskEnqueuer is the narrow subset of service.TaskService the
-// Dispatcher needs. It exists for the same reason as IssueCreator:
-// the Dispatcher is small enough that depending on the whole
-// TaskService struct is gratuitous.
-type ChatTaskEnqueuer interface {
-	EnqueueChatTask(ctx context.Context, session db.ChatSession, initiatorUserID pgtype.UUID) (db.AgentTaskQueue, error)
-}
-
 // DispatcherQueries is the narrow subset of *db.Queries the Dispatcher
 // needs for installation routing, identity lookup, dedup, and session
 // reload. *db.Queries satisfies it directly; tests substitute a fake.
@@ -202,11 +187,11 @@ type DispatcherQueries interface {
 // design's §4.3 safety property ("unbound users never reach
 // chat_session") true at runtime.
 type Dispatcher struct {
-	Queries      DispatcherQueries
-	Chat         ChatSessionService
-	Audit        AuditLogger
-	IssueService IssueCreator
-	TaskService  ChatTaskEnqueuer
+	Queries         DispatcherQueries
+	Chat            ChatSessionService
+	RecordDrop      func(context.Context, AuditDropParams) error
+	CreateIssue     func(context.Context, service.IssueCreateParams, service.IssueCreateOpts) (service.IssueCreateResult, error)
+	EnqueueChatTask func(context.Context, db.ChatSession, pgtype.UUID) (db.AgentTaskQueue, error)
 
 	// FlushReply emits the offline/archived notice that EnqueueChatTask
 	// now produces only at debounce-flush time. Before MUL-2968 those
@@ -214,9 +199,9 @@ type Dispatcher struct {
 	// OutcomeReplier sent the card; with the run trigger debounced, the
 	// verdict is not known until the window closes, so the dispatcher
 	// drives the reply itself via this callback. Wired to
-	// OutcomeReplier.Reply in production; nil disables the notice (the
+	// LarkOutcomeReplier.Reply in production; nil disables the notice (the
 	// message is still durable, only the card is skipped).
-	FlushReply FlushReplyFunc
+	FlushReply ReplyFunc
 
 	// Logger is used by the detached flush path, which cannot return
 	// errors to a caller and must log them. Defaults to slog.Default().
@@ -229,10 +214,10 @@ type Dispatcher struct {
 	batcher *pendingBatcher
 }
 
-// FlushReplyFunc matches OutcomeReplier.Reply so the production replier can
-// be injected directly. It is invoked from the debounced flush goroutine
-// to deliver the agent-offline / agent-archived notice.
-type FlushReplyFunc func(ctx context.Context, inst db.LarkInstallation, msg InboundMessage, res DispatchResult)
+// ReplyFunc is the outbound half of the EventEmitter contract. The Hub and
+// the debounced dispatcher flush both invoke the production replier through
+// this exact callback instead of maintaining parallel one-method interfaces.
+type ReplyFunc func(ctx context.Context, inst db.LarkInstallation, msg InboundMessage, res DispatchResult)
 
 // chatRunFlushTimeout bounds the detached flush (session reload +
 // EnqueueChatTask + offline/archived notice). The flush runs on its own
@@ -294,7 +279,7 @@ func (d *Dispatcher) Handle(ctx context.Context, msg InboundMessage) (DispatchRe
 	inst, err := d.Queries.GetLarkInstallationByAppID(ctx, msg.AppID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			if err := d.Audit.RecordDrop(ctx, AuditDropParams{
+			if err := d.RecordDrop(ctx, AuditDropParams{
 				EventType:     msg.EventType,
 				LarkEventID:   msg.EventID,
 				LarkMessageID: msg.MessageID,
@@ -431,7 +416,7 @@ func (d *Dispatcher) processClaimed(ctx context.Context, msg InboundMessage, ins
 	})
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			if err := d.Audit.RecordDrop(ctx, AuditDropParams{
+			if err := d.RecordDrop(ctx, AuditDropParams{
 				InstallationID: inst.ID,
 				ChatID:         msg.ChatID,
 				EventType:      msg.EventType,
@@ -594,7 +579,7 @@ func (d *Dispatcher) flushChatRun(inst db.LarkInstallation, msg InboundMessage, 
 		)
 		return
 	}
-	if _, err := d.TaskService.EnqueueChatTask(ctx, session, initiatorUserID); err != nil {
+	if _, err := d.EnqueueChatTask(ctx, session, initiatorUserID); err != nil {
 		switch {
 		case errors.Is(err, service.ErrChatTaskAgentNoRuntime):
 			d.emitFlushReply(ctx, inst, msg, sessionID, OutcomeAgentOffline)
@@ -667,7 +652,7 @@ func (d *Dispatcher) applyFinalize(ctx context.Context, installationID pgtype.UU
 }
 
 func (d *Dispatcher) drop(ctx context.Context, msg InboundMessage, instID pgtype.UUID, reason DropReason) (DispatchResult, error) {
-	if err := d.Audit.RecordDrop(ctx, AuditDropParams{
+	if err := d.RecordDrop(ctx, AuditDropParams{
 		InstallationID: instID,
 		ChatID:         msg.ChatID,
 		EventType:      msg.EventType,
@@ -712,7 +697,7 @@ func (d *Dispatcher) createIssueFromCommand(
 		OriginType:   pgtype.Text{String: originLarkChat, Valid: true},
 		OriginID:     sessionID,
 	}
-	return d.IssueService.Create(ctx, params, service.IssueCreateOpts{})
+	return d.CreateIssue(ctx, params, service.IssueCreateOpts{})
 }
 
 // originLarkChat is the issue.origin_type label written for issues

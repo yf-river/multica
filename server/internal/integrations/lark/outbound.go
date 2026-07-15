@@ -15,21 +15,13 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-func renderErrorCard(agentName, errorMessage string) (string, error) {
-	header := "Multica"
-	if agentName != "" {
-		header = agentName
-	}
-	body := "Run failed."
-	if errorMessage != "" {
-		body = "Run failed: " + errorMessage
-	}
+func renderTextCard(template, header, body string) (string, error) {
 	doc := map[string]any{
 		"config": map[string]any{
 			"wide_screen_mode": true,
 		},
 		"header": map[string]any{
-			"template": "blue",
+			"template": template,
 			"title":    map[string]any{"tag": "plain_text", "content": header},
 		},
 		"elements": []any{
@@ -58,12 +50,6 @@ type PatcherQueries interface {
 	GetLarkChatSessionBindingBySession(ctx context.Context, chatSessionID pgtype.UUID) (db.LarkChatSessionBinding, error)
 }
 
-// CredentialsResolver resolves the current transport identity for an
-// installation. *InstallationService satisfies it directly.
-type CredentialsResolver interface {
-	Credentials(inst db.LarkInstallation) (InstallationCredentials, error)
-}
-
 // Patcher reacts to task-lifecycle events on the event bus and forwards
 // chat replies to Lark as plain text IM messages. It is the outbound
 // side of §4.5 — but the original "thinking → streaming → final card"
@@ -86,28 +72,26 @@ type CredentialsResolver interface {
 //     commits. The domain-event lease selects one replica, whose process-local
 //     bus invokes one Patcher for that completion.
 type Patcher struct {
-	queries         PatcherQueries
-	credentials     CredentialsResolver
-	client          APIClient
-	typingIndicator *TypingIndicatorManager
+	queries            PatcherQueries
+	resolveCredentials func(db.LarkInstallation) (InstallationCredentials, error)
+	client             APIClient
+	typingIndicator    *TypingIndicatorManager
 }
 
 // NewPatcher constructs a Patcher bound to its dependencies. The
 // patcher does not subscribe to the bus until Register is called.
-func NewPatcher(queries PatcherQueries, credentials CredentialsResolver, client APIClient) *Patcher {
+func NewPatcher(
+	queries PatcherQueries,
+	resolveCredentials func(db.LarkInstallation) (InstallationCredentials, error),
+	client APIClient,
+	typingIndicator *TypingIndicatorManager,
+) *Patcher {
 	return &Patcher{
-		queries:     queries,
-		credentials: credentials,
-		client:      client,
+		queries:            queries,
+		resolveCredentials: resolveCredentials,
+		client:             client,
+		typingIndicator:    typingIndicator,
 	}
-}
-
-// SetTypingIndicatorManager wires the typing-indicator manager into the
-// patcher so that replies clear the "processing" reaction before they
-// are sent. Call once at boot after both the patcher and manager are
-// constructed. Nil disables the clear step.
-func (p *Patcher) SetTypingIndicatorManager(m *TypingIndicatorManager) {
-	p.typingIndicator = m
 }
 
 const larkOutboundDeliveryConsumer = "lark_outbound_delivery"
@@ -178,7 +162,7 @@ func (p *Patcher) processEvent(ctx context.Context, e events.Event) error {
 		// Revoked between trigger and event; nothing to patch.
 		return nil
 	}
-	creds, err := p.credentials.Credentials(inst)
+	creds, err := p.resolveCredentials(inst)
 	if err != nil {
 		return err
 	}
@@ -192,9 +176,7 @@ func (p *Patcher) processEvent(ctx context.Context, e events.Event) error {
 	// Clear the "processing" reaction before the reply is visible so the
 	// user sees a clean transition. Best-effort: a failure here is logged
 	// but does not block the actual reply.
-	if p.typingIndicator != nil {
-		p.typingIndicator.Clear(ctx, chatSessionID)
-	}
+	p.typingIndicator.Clear(ctx, chatSessionID)
 
 	switch e.Type {
 	case protocol.EventChatDone:
@@ -227,7 +209,13 @@ func (p *Patcher) processEvent(ctx context.Context, e events.Event) error {
 // edge cases like a chat task that just acknowledged a system event;
 // not emitting a message there is the right product call.
 func (p *Patcher) sendChatReply(ctx context.Context, creds InstallationCredentials, binding db.LarkChatSessionBinding, payload any) error {
-	content := chatDoneContent(payload)
+	var content string
+	switch value := payload.(type) {
+	case protocol.ChatDonePayload:
+		content = value.Content
+	case map[string]any:
+		content, _ = value["content"].(string)
+	}
 	if content == "" {
 		return nil
 	}
@@ -260,7 +248,23 @@ func (p *Patcher) sendChatReply(ctx context.Context, creds InstallationCredentia
 // Each delivery attempt is one send (no patching). The durable dispatcher
 // retries provider failures and records the successful consumer receipt.
 func (p *Patcher) fail(ctx context.Context, creds InstallationCredentials, binding db.LarkChatSessionBinding, agentName string, payload any) error {
-	cardJSON, err := renderErrorCard(agentName, errorMessageFromPayload(payload))
+	header := "Multica"
+	if agentName != "" {
+		header = agentName
+	}
+	errorMessage := ""
+	if value, ok := payload.(map[string]any); ok {
+		if message, ok := value["error"].(string); ok {
+			errorMessage = message
+		} else {
+			errorMessage, _ = value["error_message"].(string)
+		}
+	}
+	body := "Run failed."
+	if errorMessage != "" {
+		body = "Run failed: " + errorMessage
+	}
+	cardJSON, err := renderTextCard("blue", header, body)
 	if err != nil {
 		return fmt.Errorf("render error card: %w", err)
 	}
@@ -310,28 +314,4 @@ func taskAndSessionFromEvent(e events.Event) (taskID, chatSessionID pgtype.UUID,
 		}
 	}
 	return taskID, chatSessionID, taskID.Valid
-}
-
-func chatDoneContent(payload any) string {
-	switch p := payload.(type) {
-	case protocol.ChatDonePayload:
-		return p.Content
-	case map[string]any:
-		if s, ok := p["content"].(string); ok {
-			return s
-		}
-	}
-	return ""
-}
-
-func errorMessageFromPayload(payload any) string {
-	if m, ok := payload.(map[string]any); ok {
-		if s, ok := m["error"].(string); ok {
-			return s
-		}
-		if s, ok := m["error_message"].(string); ok {
-			return s
-		}
-	}
-	return ""
 }

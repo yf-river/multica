@@ -2,7 +2,6 @@ package lark
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -14,51 +13,28 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// OutcomeReplier reacts to the Dispatcher's verdict by posting the
-// appropriate Lark-side reply card. This is the outbound half of the
-// `EventEmitter` contract in hub.go: NeedsBinding sends the binding
-// prompt to the sender's open_id, AgentOffline / AgentArchived send
-// a status notice into the chat. OutcomeIngested is owned by the
-// Patcher (task lifecycle); OutcomeDropped is silent.
-//
-// Reply is best-effort by design: a transient Lark outage MUST NOT
-// fail the inbound pipeline (the message is already durable in
-// chat_session by the time we get here for OutcomeIngested, and for
-// the other outcomes there is no durable side effect to undo). Errors
-// are logged and swallowed; the next inbound message for the same
-// user retries the reply on its own.
-type OutcomeReplier interface {
-	Reply(ctx context.Context, inst db.LarkInstallation, msg InboundMessage, res DispatchResult)
-}
-
-// OutcomeReplierQueries is the narrow subset of *db.Queries the
-// replier needs. Pinned via an interface so tests substitute a fake.
-type OutcomeReplierQueries interface {
-	GetAgent(ctx context.Context, id pgtype.UUID) (db.Agent, error)
-}
-
-// LarkOutcomeReplier is the production OutcomeReplier. It composes:
+// LarkOutcomeReplier posts the production reply for a dispatch outcome. It composes:
 //
 //   - APIClient — to send the binding prompt card (open_id-targeted)
 //     and the offline/archived notice cards (chat_id-targeted).
 //   - BindingTokenService — to mint a one-shot binding token for the
 //     NeedsBinding flow.
-//   - CredentialsResolver — to resolve the current transport identity;
+//   - InstallationService.Credentials — to resolve the current transport identity;
 //     plaintext secrets never live on the in-memory installation row.
-//   - OutcomeReplierQueries — for the agent name shown on cards.
+//   - db.Queries.GetAgent — for the agent name shown on cards.
 //
 // The replier is constructed once at boot and shared across the Hub's
 // supervisor goroutines; all dependencies must be goroutine-safe
 // (the standard implementations are).
 type LarkOutcomeReplier struct {
-	client       APIClient
-	bindingSvc   *BindingTokenService
-	credentials  CredentialsResolver
-	queries      OutcomeReplierQueries
-	publicURL    string // e.g. https://multica.example, trailing slash trimmed
-	bindingPath  string // path component of the binding URL, default "/lark/bind"
-	noticeHeader string // header text used by the offline/archived cards
-	log          *slog.Logger
+	client             APIClient
+	bindingSvc         *BindingTokenService
+	resolveCredentials func(db.LarkInstallation) (InstallationCredentials, error)
+	getAgent           func(context.Context, pgtype.UUID) (db.Agent, error)
+	publicURL          string // e.g. https://multica.example, trailing slash trimmed
+	bindingPath        string // path component of the binding URL, default "/lark/bind"
+	noticeHeader       string // header text used by the offline/archived cards
+	log                *slog.Logger
 }
 
 // OutcomeReplierConfig wires the production replier. PublicURL is the
@@ -67,13 +43,13 @@ type LarkOutcomeReplier struct {
 // only log the open_id, not produce a clickable card. The other
 // fields default at construction.
 type OutcomeReplierConfig struct {
-	APIClient   APIClient
-	BindingSvc  *BindingTokenService
-	Credentials CredentialsResolver
-	Queries     OutcomeReplierQueries
-	PublicURL   string
-	BindingPath string
-	Logger      *slog.Logger
+	APIClient          APIClient
+	BindingSvc         *BindingTokenService
+	ResolveCredentials func(db.LarkInstallation) (InstallationCredentials, error)
+	GetAgent           func(context.Context, pgtype.UUID) (db.Agent, error)
+	PublicURL          string
+	BindingPath        string
+	Logger             *slog.Logger
 }
 
 // NewLarkOutcomeReplier returns the production replier. The enabled Lark
@@ -95,19 +71,18 @@ func NewLarkOutcomeReplier(cfg OutcomeReplierConfig) *LarkOutcomeReplier {
 		bindingPath = "/" + bindingPath
 	}
 	return &LarkOutcomeReplier{
-		client:       cfg.APIClient,
-		bindingSvc:   cfg.BindingSvc,
-		credentials:  cfg.Credentials,
-		queries:      cfg.Queries,
-		publicURL:    strings.TrimRight(cfg.PublicURL, "/"),
-		bindingPath:  bindingPath,
-		noticeHeader: "Multica",
-		log:          log,
+		client:             cfg.APIClient,
+		bindingSvc:         cfg.BindingSvc,
+		resolveCredentials: cfg.ResolveCredentials,
+		getAgent:           cfg.GetAgent,
+		publicURL:          strings.TrimRight(cfg.PublicURL, "/"),
+		bindingPath:        bindingPath,
+		noticeHeader:       "Multica",
+		log:                log,
 	}
 }
 
-// Reply implements OutcomeReplier. Reads carefully — the switch is
-// the SOURCE OF TRUTH for which outcomes generate a reply, and a
+// Reply is the source of truth for which outcomes generate a reply; a
 // missing branch silently drops the user-visible side effect.
 func (r *LarkOutcomeReplier) Reply(ctx context.Context, inst db.LarkInstallation, msg InboundMessage, res DispatchResult) {
 	switch res.Outcome {
@@ -172,7 +147,7 @@ func (r *LarkOutcomeReplier) sendBindingPrompt(ctx context.Context, inst db.Lark
 		return fmt.Errorf("mint binding token: %w", err)
 	}
 	bindURL := r.publicURL + r.bindingPath + "?token=" + url.QueryEscape(token.Raw)
-	creds, err := r.credentials.Credentials(inst)
+	creds, err := r.resolveCredentials(inst)
 	if err != nil {
 		return err
 	}
@@ -194,7 +169,7 @@ func (r *LarkOutcomeReplier) sendIssueCreated(ctx context.Context, inst db.LarkI
 	if msg.ChatID == "" {
 		return errors.New("missing chat_id")
 	}
-	creds, err := r.credentials.Credentials(inst)
+	creds, err := r.resolveCredentials(inst)
 	if err != nil {
 		return err
 	}
@@ -237,15 +212,15 @@ func (r *LarkOutcomeReplier) sendChatNotice(ctx context.Context, inst db.LarkIns
 	if msg.ChatID == "" {
 		return errors.New("missing chat_id")
 	}
-	creds, err := r.credentials.Credentials(inst)
+	creds, err := r.resolveCredentials(inst)
 	if err != nil {
 		return err
 	}
 	header := r.noticeHeader
-	if agent, aerr := r.queries.GetAgent(ctx, inst.AgentID); aerr == nil && agent.Name != "" {
+	if agent, aerr := r.getAgent(ctx, inst.AgentID); aerr == nil && agent.Name != "" {
 		header = agent.Name
 	}
-	cardJSON, err := renderNoticeCard(header, body)
+	cardJSON, err := renderTextCard("grey", header, body)
 	if err != nil {
 		return fmt.Errorf("render notice card: %w", err)
 	}
@@ -257,33 +232,6 @@ func (r *LarkOutcomeReplier) sendChatNotice(ctx context.Context, inst db.LarkIns
 		return fmt.Errorf("send notice card: %w", err)
 	}
 	return nil
-}
-
-// renderNoticeCard produces a minimal text-only interactive card for
-// the offline / archived dispatch outcomes. These cards are sent once and
-// remain unchanged. Header / body match the Chinese voice used elsewhere.
-func renderNoticeCard(header, body string) (string, error) {
-	doc := map[string]any{
-		"config": map[string]any{"wide_screen_mode": true},
-		"header": map[string]any{
-			"template": "grey",
-			"title":    map[string]any{"tag": "plain_text", "content": header},
-		},
-		"elements": []any{
-			map[string]any{
-				"tag": "div",
-				"text": map[string]any{
-					"tag":     "plain_text",
-					"content": body,
-				},
-			},
-		},
-	}
-	raw, err := json.Marshal(doc)
-	if err != nil {
-		return "", err
-	}
-	return string(raw), nil
 }
 
 // agentOfflineCopy and agentArchivedCopy are the user-visible Chinese

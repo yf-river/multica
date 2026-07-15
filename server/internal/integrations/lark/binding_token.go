@@ -35,23 +35,6 @@ type RedeemedBindingToken struct {
 	LarkOpenID     OpenID
 }
 
-// InstallerBinder is the narrow surface RegistrationService needs to
-// record the installer's lark_user_binding row in the same business
-// step as the installation insert. Without this step the first inbound
-// message from the installer would be dropped as `unbound_user` and
-// the Bot would reply "you're not bound, click here…" to the person
-// who just authorized the install seconds ago.
-//
-// Implementations MUST be idempotent on (installation_id, lark_open_id):
-// a re-install by the same user should not error.
-//
-// `qtx` is the *db.Queries handle to run the bind against. The caller
-// opens the transaction so the installation insert and the binding
-// write commit together.
-type InstallerBinder interface {
-	BindInstallerTx(ctx context.Context, qtx *db.Queries, p InstallerBindParams) error
-}
-
 // InstallerBindParams carries the complete current binding identity.
 type InstallerBindParams struct {
 	WorkspaceID    pgtype.UUID
@@ -213,13 +196,9 @@ func redeemedBindingToken(row db.LarkBindingToken) RedeemedBindingToken {
 // bot's DM arrives at a `bound` identity check and the user is NOT
 // prompted with a redundant "click here to bind" card.
 //
-// `qtx` is the RegistrationService's transaction-scoped queries
-// handle. The service opens a transaction that wraps the
-// lark_installation insert and this binding write so a half-applied
-// install (installation row without the installer binding) cannot
-// land. When `qtx` is nil the service's own (non-transactional)
-// queries handle is used, which is the right behavior for tests that
-// don't need atomicity.
+// `qtx` is the RegistrationService's transaction-scoped queries handle. The
+// service opens a transaction that wraps the installation insert and this
+// binding write so a half-applied install cannot land.
 //
 // Token redemption deliberately does NOT share this code path:
 //   - RedeemAndBind consumes a server-minted token in the same tx as

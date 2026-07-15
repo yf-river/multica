@@ -2,8 +2,6 @@ package lark
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -104,14 +102,14 @@ func (c RegistrationServiceConfig) withDefaults() RegistrationServiceConfig {
 // into Postgres would add a migration + GC sweep without delivering any
 // product capability the user can re-use across server restarts.
 type RegistrationService struct {
-	cfg         RegistrationServiceConfig
-	client      *RegistrationClient
-	api         APIClient
-	queries     *db.Queries
-	tx          TxStarter
-	installs    *InstallationService
-	binder      InstallerBinder
-	authQueries authQueriesAdapter
+	cfg                 RegistrationServiceConfig
+	client              *RegistrationClient
+	api                 APIClient
+	queries             *db.Queries
+	tx                  TxStarter
+	installs            *InstallationService
+	bindInstaller       func(context.Context, *db.Queries, InstallerBindParams) error
+	getAgentInWorkspace func(context.Context, db.GetAgentInWorkspaceParams) (db.Agent, error)
 
 	// bus is optional. When wired (SetEventBus), a successful install
 	// publishes lark_installation:created the moment the row commits, so
@@ -138,14 +136,6 @@ type beginInstallCall struct {
 	err    error
 }
 
-// authQueriesAdapter is the minimal lookup surface the service needs
-// before kicking off a session: agent ↔ workspace ownership validation.
-// Kept as an interface so tests can drop in a stub instead of a real
-// *db.Queries + Postgres fixture.
-type authQueriesAdapter interface {
-	GetAgentInWorkspace(ctx context.Context, params db.GetAgentInWorkspaceParams) (db.Agent, error)
-}
-
 // NewRegistrationService wires the device-flow client, the APIClient
 // (for the post-success GetBotInfo lookup), and the DB write path. Any
 // required dependency missing surfaces as a constructor error so a
@@ -158,7 +148,7 @@ func NewRegistrationService(
 	queries *db.Queries,
 	tx TxStarter,
 	installs *InstallationService,
-	binder InstallerBinder,
+	bindInstaller func(context.Context, *db.Queries, InstallerBindParams) error,
 ) (*RegistrationService, error) {
 	if client == nil {
 		return nil, errors.New("lark registration: RegistrationClient is required")
@@ -175,20 +165,20 @@ func NewRegistrationService(
 	if installs == nil {
 		return nil, errors.New("lark registration: InstallationService is required")
 	}
-	if binder == nil {
-		return nil, errors.New("lark registration: InstallerBinder is required")
+	if bindInstaller == nil {
+		return nil, errors.New("lark registration: bind installer function is required")
 	}
 	return &RegistrationService{
-		cfg:         cfg.withDefaults(),
-		client:      client,
-		api:         api,
-		queries:     queries,
-		tx:          tx,
-		installs:    installs,
-		binder:      binder,
-		authQueries: queries,
-		sessions:    make(map[string]*registrationSession),
-		begins:      make(map[beginInstallIdentity]*beginInstallCall),
+		cfg:                 cfg.withDefaults(),
+		client:              client,
+		api:                 api,
+		queries:             queries,
+		tx:                  tx,
+		installs:            installs,
+		bindInstaller:       bindInstaller,
+		getAgentInWorkspace: queries.GetAgentInWorkspace,
+		sessions:            make(map[string]*registrationSession),
+		begins:              make(map[beginInstallIdentity]*beginInstallCall),
 	}, nil
 }
 
@@ -351,7 +341,7 @@ func (s *RegistrationService) BeginInstall(ctx context.Context, p BeginInstallPa
 	// We keep the agent: its name pre-fills the bot name on Lark's
 	// PersonalAgent creation form (see botNamePreset) so the installed
 	// bot reads "<agent> - Multica" instead of "{用户姓名}的智能助手".
-	agent, err := s.authQueries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
+	agent, err := s.getAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
 		ID:          p.AgentID,
 		WorkspaceID: p.WorkspaceID,
 	})
@@ -386,7 +376,7 @@ func (s *RegistrationService) openRegistrationSession(ctx context.Context, p Beg
 	}
 
 	now := s.cfg.Now()
-	sessionID, err := randomSessionID()
+	sessionID, err := randomToken(24)
 	if err != nil {
 		return BeginInstallResult{}, fmt.Errorf("lark registration: mint session id: %w", err)
 	}
@@ -646,7 +636,7 @@ func (s *RegistrationService) finishSuccess(ctx context.Context, sess *registrat
 		return
 	}
 
-	if err := s.binder.BindInstallerTx(ctx, qtx, InstallerBindParams{
+	if err := s.bindInstaller(ctx, qtx, InstallerBindParams{
 		WorkspaceID:    sess.workspaceID,
 		InstallationID: inst.ID,
 		MulticaUserID:  sess.initiatorID,
@@ -710,14 +700,6 @@ func (s *RegistrationService) gcExpiredLocked() {
 // ErrRegistrationSessionNotFound is what the service returns for
 // unknown / GC'd sessions. The handler maps it to 404.
 var ErrRegistrationSessionNotFound = errors.New("lark registration: session not found")
-
-func randomSessionID() (string, error) {
-	buf := make([]byte, 24)
-	if _, err := rand.Read(buf); err != nil {
-		return "", err
-	}
-	return base64.RawURLEncoding.EncodeToString(buf), nil
-}
 
 func uuidEqual(a, b pgtype.UUID) bool {
 	return a.Valid && b.Valid && a.Bytes == b.Bytes

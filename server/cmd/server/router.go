@@ -321,7 +321,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					Logger:  slog.Default(),
 				})
 				h.LarkAPIClient = larkClient
-				patcher := lark.NewPatcher(queries, installSvc, larkClient)
+				typingIndicator := lark.NewTypingIndicatorManager(larkClient, installSvc.Credentials, queries, slog.Default())
+				patcher := lark.NewPatcher(queries, installSvc.Credentials, larkClient, typingIndicator)
 				if opts.EventDispatcher == nil {
 					return nil, nil, errors.New("lark integration requires the durable event dispatcher")
 				}
@@ -332,9 +333,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// Typing indicator: shows a "processing" reaction on the user's
 				// message while the agent is working, then removes it before the
 				// reply is sent. Best-effort; failures are logged only.
-				typingIndicator := lark.NewTypingIndicatorManager(larkClient, installSvc, queries, slog.Default())
-				patcher.SetTypingIndicatorManager(typingIndicator)
-
 				// Inbound pipeline: lark_inbound_audit logger,
 				// channel-aware ChatSessionService, and the
 				// Dispatcher that orders identity / dedup / append /
@@ -346,12 +344,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				auditLogger := lark.NewAuditLogger(queries)
 				chatSvc := lark.NewChatSessionService(queries, pool)
 				dispatcher := &lark.Dispatcher{
-					Queries:      queries,
-					Chat:         chatSvc,
-					Audit:        auditLogger,
-					IssueService: h.IssueService,
-					TaskService:  h.TaskService,
-					Logger:       slog.Default(),
+					Queries:         queries,
+					Chat:            chatSvc,
+					RecordDrop:      auditLogger,
+					CreateIssue:     h.IssueService.Create,
+					EnqueueChatTask: h.TaskService.EnqueueChatTask,
+					Logger:          slog.Default(),
 				}
 				// Debounce the per-session run trigger so a burst of
 				// messages (e.g. "forward a transcript, then type a note")
@@ -377,15 +375,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// Requires the real APIClient and binding token service,
 				// both constructed above as part of the enabled integration.
 				replier := lark.NewLarkOutcomeReplier(lark.OutcomeReplierConfig{
-					APIClient:   larkClient,
-					BindingSvc:  h.LarkBindingTokens,
-					Credentials: installSvc,
-					Queries:     queries,
-					PublicURL:   signupConfig.PublicURL,
-					Logger:      slog.Default(),
+					APIClient:          larkClient,
+					BindingSvc:         h.LarkBindingTokens,
+					ResolveCredentials: installSvc.Credentials,
+					GetAgent:           queries.GetAgent,
+					PublicURL:          signupConfig.PublicURL,
+					Logger:             slog.Default(),
 				})
-				h.LarkHub = lark.NewHub(queries, connectorFactory, dispatcher, replier, lark.HubConfig{})
-				h.LarkHub.SetTypingIndicatorManager(typingIndicator)
+				h.LarkHub = lark.NewHub(queries, connectorFactory, dispatcher, replier.Reply, typingIndicator.Add, lark.HubConfig{})
 				// The agent-offline / agent-archived notice is now decided
 				// at debounce-flush time rather than synchronously from
 				// Handle, so the dispatcher drives that reply itself through
@@ -412,7 +409,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					queries,
 					pool,
 					installSvc,
-					h.LarkBindingTokens,
+					h.LarkBindingTokens.BindInstallerTx,
 				)
 				if rerr != nil {
 					return nil, nil, fmt.Errorf("initialize Lark registration service: %w", rerr)
@@ -1120,7 +1117,7 @@ func buildLarkConnectorFactory(installSvc *lark.InstallationService, apiClient l
 	if err != nil {
 		return nil, "", fmt.Errorf("initialize endpoint fetcher: %w", err)
 	}
-	decoder := lark.NewLarkJSONFrameDecoder()
+	decoder := &lark.LarkJSONFrameDecoder{}
 	dialer := lark.NewGorillaDialer()
 	// Inbound enricher: expands quoted replies / forwarded bundles AND
 	// prefetches a window of surrounding group history (MUL-3084) into the

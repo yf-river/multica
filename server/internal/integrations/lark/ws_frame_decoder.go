@@ -33,8 +33,6 @@ import (
 // serves every supervisor goroutine.
 type LarkJSONFrameDecoder struct{}
 
-func NewLarkJSONFrameDecoder() *LarkJSONFrameDecoder { return &LarkJSONFrameDecoder{} }
-
 // Decode implements FrameDecoder.
 func (d *LarkJSONFrameDecoder) Decode(payload []byte, inst db.LarkInstallation) (InboundMessage, bool, error) {
 	if len(payload) == 0 {

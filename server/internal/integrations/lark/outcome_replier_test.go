@@ -81,28 +81,8 @@ func (s *stubAPIClientWithRecorder) DeleteMessageReaction(ctx context.Context, p
 	return nil
 }
 
-// stubCredentialsResolver returns the current installation credentials.
-type stubCredentialsResolver struct{ secret string }
-
-func (s stubCredentialsResolver) Credentials(inst db.LarkInstallation) (InstallationCredentials, error) {
-	if s.secret == "" {
-		return InstallationCredentials{}, errors.New("no secret configured")
-	}
-	region, err := ParseRegion(inst.Region)
-	return InstallationCredentials{AppID: inst.AppID, AppSecret: s.secret, Region: region}, err
-}
-
-// stubReplierQueries returns a fixed agent.
-type stubReplierQueries struct {
-	agent db.Agent
-	err   error
-}
-
-func (s stubReplierQueries) GetAgent(ctx context.Context, id pgtype.UUID) (db.Agent, error) {
-	if s.err != nil {
-		return db.Agent{}, s.err
-	}
-	return s.agent, nil
+func stubAgentLookup(agent db.Agent) func(context.Context, pgtype.UUID) (db.Agent, error) {
+	return func(context.Context, pgtype.UUID) (db.Agent, error) { return agent, nil }
 }
 
 // stubBindingMint is a minimal TxStarter stand-in: the real
@@ -132,12 +112,12 @@ func TestLarkOutcomeReplierAgentOfflineSendsCard(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	stub := &stubAPIClientWithRecorder{}
 	rep := NewLarkOutcomeReplier(OutcomeReplierConfig{
-		APIClient:   stub,
-		BindingSvc:  &BindingTokenService{},
-		Credentials: stubCredentialsResolver{secret: "s"},
-		Queries:     stubReplierQueries{agent: db.Agent{Name: "Trump"}},
-		PublicURL:   "https://multica.test",
-		Logger:      log,
+		APIClient:          stub,
+		BindingSvc:         &BindingTokenService{},
+		ResolveCredentials: testCredentials("s"),
+		GetAgent:           stubAgentLookup(db.Agent{Name: "Trump"}),
+		PublicURL:          "https://multica.test",
+		Logger:             log,
 	})
 	inst := db.LarkInstallation{AppID: "cli_x", Region: "feishu"}
 	inst.ID = mustUUID("11111111-1111-1111-1111-111111111111")
@@ -167,12 +147,12 @@ func TestLarkOutcomeReplierAgentArchivedSendsCard(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	stub := &stubAPIClientWithRecorder{}
 	rep := NewLarkOutcomeReplier(OutcomeReplierConfig{
-		APIClient:   stub,
-		BindingSvc:  &BindingTokenService{},
-		Credentials: stubCredentialsResolver{secret: "s"},
-		Queries:     stubReplierQueries{},
-		PublicURL:   "https://multica.test",
-		Logger:      log,
+		APIClient:          stub,
+		BindingSvc:         &BindingTokenService{},
+		ResolveCredentials: testCredentials("s"),
+		GetAgent:           stubAgentLookup(db.Agent{}),
+		PublicURL:          "https://multica.test",
+		Logger:             log,
 	})
 	msg := InboundMessage{ChatID: "oc_chat_arch"}
 	rep.Reply(context.Background(), db.LarkInstallation{Region: "feishu"}, msg, DispatchResult{Outcome: OutcomeAgentArchived})
@@ -192,12 +172,12 @@ func TestLarkOutcomeReplierIngestedAndDroppedAreSilent(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	stub := &stubAPIClientWithRecorder{}
 	rep := NewLarkOutcomeReplier(OutcomeReplierConfig{
-		APIClient:   stub,
-		BindingSvc:  &BindingTokenService{},
-		Credentials: stubCredentialsResolver{secret: "s"},
-		Queries:     stubReplierQueries{},
-		PublicURL:   "https://multica.test",
-		Logger:      log,
+		APIClient:          stub,
+		BindingSvc:         &BindingTokenService{},
+		ResolveCredentials: testCredentials("s"),
+		GetAgent:           stubAgentLookup(db.Agent{}),
+		PublicURL:          "https://multica.test",
+		Logger:             log,
 	})
 	msg := InboundMessage{ChatID: "oc_x"}
 	rep.Reply(context.Background(), db.LarkInstallation{}, msg, DispatchResult{Outcome: OutcomeIngested})
@@ -217,12 +197,12 @@ func TestLarkOutcomeReplierOfflineSwallowsAPIError(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	stub := &stubAPIClientWithRecorder{sendErr: errors.New("lark 5xx")}
 	rep := NewLarkOutcomeReplier(OutcomeReplierConfig{
-		APIClient:   stub,
-		BindingSvc:  &BindingTokenService{},
-		Credentials: stubCredentialsResolver{secret: "s"},
-		Queries:     stubReplierQueries{},
-		PublicURL:   "https://multica.test",
-		Logger:      log,
+		APIClient:          stub,
+		BindingSvc:         &BindingTokenService{},
+		ResolveCredentials: testCredentials("s"),
+		GetAgent:           stubAgentLookup(db.Agent{}),
+		PublicURL:          "https://multica.test",
+		Logger:             log,
 	})
 	// Should NOT panic.
 	rep.Reply(context.Background(), db.LarkInstallation{}, InboundMessage{ChatID: "oc"}, DispatchResult{Outcome: OutcomeAgentOffline})
@@ -242,12 +222,12 @@ func TestLarkOutcomeReplierIssueCreatedSendsConfirmation(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	stub := &stubAPIClientWithRecorder{}
 	rep := NewLarkOutcomeReplier(OutcomeReplierConfig{
-		APIClient:   stub,
-		BindingSvc:  &BindingTokenService{},
-		Credentials: stubCredentialsResolver{secret: "s"},
-		Queries:     stubReplierQueries{},
-		PublicURL:   "https://multica.test",
-		Logger:      log,
+		APIClient:          stub,
+		BindingSvc:         &BindingTokenService{},
+		ResolveCredentials: testCredentials("s"),
+		GetAgent:           stubAgentLookup(db.Agent{}),
+		PublicURL:          "https://multica.test",
+		Logger:             log,
 	})
 
 	inst := db.LarkInstallation{AppID: "cli_x", Region: "feishu"}
@@ -296,12 +276,12 @@ func TestLarkOutcomeReplierOutcomeIngestedSilentWithoutIssue(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	stub := &stubAPIClientWithRecorder{}
 	rep := NewLarkOutcomeReplier(OutcomeReplierConfig{
-		APIClient:   stub,
-		BindingSvc:  &BindingTokenService{},
-		Credentials: stubCredentialsResolver{secret: "s"},
-		Queries:     stubReplierQueries{},
-		PublicURL:   "https://multica.test",
-		Logger:      log,
+		APIClient:          stub,
+		BindingSvc:         &BindingTokenService{},
+		ResolveCredentials: testCredentials("s"),
+		GetAgent:           stubAgentLookup(db.Agent{}),
+		PublicURL:          "https://multica.test",
+		Logger:             log,
 	})
 
 	rep.Reply(context.Background(), db.LarkInstallation{}, InboundMessage{ChatID: "oc"},

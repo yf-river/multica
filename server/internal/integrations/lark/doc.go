@@ -13,7 +13,7 @@
 //     session → append → /issue → enqueue chat task; typed outcomes
 //     for offline / archived; emit returns DispatchResult + error so
 //     the connector can post the matching Lark-side reply card)
-//  6. AuditLogger (lark_inbound_audit; deliberately no body column)
+//  6. Metadata-only lark_inbound_audit writer (deliberately no body column)
 //  7. APIClient interface + http_client.go (real Lark Open Platform
 //     transport for messages, reactions, binding prompts and bot info)
 //  8. Hub (WS lease + per-installation supervisor goroutines with
@@ -35,7 +35,7 @@
 //  12. RegistrationService (RFC 8628 device-flow scan-to-install: opens
 //     a session against accounts.feishu.cn, polls in the background,
 //     and on success writes through InstallationService + auto-binds
-//     the installer via InstallerBinder so §2.1 "scan to bind, you're
+//     the installer in the same transaction so §2.1 "scan to bind, you're
 //     done" holds end-to-end)
 //
 // Architectural boundaries (frozen from Elon's 二审, MUL-2671 §4.8):
