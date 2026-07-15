@@ -161,18 +161,7 @@ func createClaimReclaimRuntime(t *testing.T, ctx context.Context, name string) s
 func createClaimReclaimAgentAndIssue(t *testing.T, ctx context.Context, runtimeID, name string) (string, string) {
 	t.Helper()
 
-	var agentID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent (
-			workspace_id, name, description, runtime_mode, runtime_config,
-			runtime_id, scope, max_concurrent_tasks, owner_id
-		)
-		VALUES ($1, $2, '', 'cloud', '{}'::jsonb, $3, 'personal', 1, $4)
-		RETURNING id
-	`, testWorkspaceID, name, runtimeID, testUserID).Scan(&agentID); err != nil {
-		t.Fatalf("setup: create agent: %v", err)
-	}
-	t.Cleanup(func() { _, _ = testPool.Exec(ctx, `DELETE FROM agent WHERE id = $1`, agentID) })
+	agentID := createHandlerTestPersonalCloudAgent(t, ctx, runtimeID, name)
 
 	var issueID string
 	if err := testPool.QueryRow(ctx, `
@@ -349,6 +338,29 @@ func claimDaemonTaskRecorder(t *testing.T, runtimeID, daemonID string) *httptest
 		t.Fatalf("ClaimTaskByRuntime: %d %s", w.Code, w.Body.String())
 	}
 	return w
+}
+
+type daemonRepoClaimTask struct {
+	Repos               []RepoData               `json:"repos"`
+	ProjectID           string                   `json:"project_id"`
+	ProjectResources    []ProjectResourceData    `json:"project_resources"`
+	IssueExecutionSpace *IssueExecutionSpaceData `json:"issue_execution_space"`
+	ExecutionPolicy     *TaskExecutionPolicyData `json:"execution_policy"`
+	Agent               *TaskAgentData           `json:"agent"`
+}
+
+func decodeDaemonRepoClaimTask(t *testing.T, w *httptest.ResponseRecorder) *daemonRepoClaimTask {
+	t.Helper()
+	var resp struct {
+		Task *daemonRepoClaimTask `json:"task"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Task == nil {
+		t.Fatal("expected task in response")
+	}
+	return resp.Task
 }
 
 func createDaemonTestAutopilotRun(t *testing.T, title, status string) (agentID, runtimeID, runID string) {
@@ -2208,48 +2220,34 @@ func TestClaimTask_ProjectGithubReposOverrideWorkspaceRepos(t *testing.T) {
 	issueID := createDaemonTestProjectIssue(t, projectID, "project repo override")
 	createDaemonTestQueuedIssueTask(t, agentID, runtimeID, issueID, false)
 	w := claimDaemonTaskRecorder(t, runtimeID, "test-claim-project-repos")
-
-	var resp struct {
-		Task *struct {
-			Repos               []RepoData               `json:"repos"`
-			ProjectID           string                   `json:"project_id"`
-			ProjectResources    []ProjectResourceData    `json:"project_resources"`
-			IssueExecutionSpace *IssueExecutionSpaceData `json:"issue_execution_space"`
-		} `json:"task"`
+	task := decodeDaemonRepoClaimTask(t, w)
+	if task.ProjectID != projectID {
+		t.Errorf("project_id = %q, want %q", task.ProjectID, projectID)
 	}
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
+	if len(task.Repos) != 1 || task.Repos[0].URL != projectRepoURL {
+		t.Fatalf("expected task.Repos to contain only the project repo URL, got %+v", task.Repos)
 	}
-	if resp.Task == nil {
-		t.Fatal("expected task in response")
+	if task.IssueExecutionSpace == nil || !task.IssueExecutionSpace.Enabled {
+		t.Fatalf("expected issue_execution_space to be enabled, got %+v", task.IssueExecutionSpace)
 	}
-	if resp.Task.ProjectID != projectID {
-		t.Errorf("project_id = %q, want %q", resp.Task.ProjectID, projectID)
+	if task.IssueExecutionSpace.PrimaryRepoURL != projectRepoURL || task.IssueExecutionSpace.Ref != "main" || task.IssueExecutionSpace.IssueID != issueID {
+		t.Fatalf("issue_execution_space = %+v, want repo=%q ref=main issue=%s", task.IssueExecutionSpace, projectRepoURL, issueID)
 	}
-	if len(resp.Task.Repos) != 1 || resp.Task.Repos[0].URL != projectRepoURL {
-		t.Fatalf("expected resp.Repos to contain only the project repo URL, got %+v", resp.Task.Repos)
-	}
-	if resp.Task.IssueExecutionSpace == nil || !resp.Task.IssueExecutionSpace.Enabled {
-		t.Fatalf("expected issue_execution_space to be enabled, got %+v", resp.Task.IssueExecutionSpace)
-	}
-	if resp.Task.IssueExecutionSpace.PrimaryRepoURL != projectRepoURL || resp.Task.IssueExecutionSpace.Ref != "main" || resp.Task.IssueExecutionSpace.IssueID != issueID {
-		t.Fatalf("issue_execution_space = %+v, want repo=%q ref=main issue=%s", resp.Task.IssueExecutionSpace, projectRepoURL, issueID)
-	}
-	for _, r := range resp.Task.Repos {
+	for _, r := range task.Repos {
 		if strings.HasSuffix(r.URL, "workspace-repo-a") || strings.HasSuffix(r.URL, "workspace-repo-b") {
 			t.Errorf("workspace repo %q leaked into resp.Repos despite project override", r.URL)
 		}
 	}
-	if len(resp.Task.ProjectResources) != 2 {
-		t.Fatalf("expected 2 project_resources entries, got %d", len(resp.Task.ProjectResources))
+	if len(task.ProjectResources) != 2 {
+		t.Fatalf("expected 2 project_resources entries, got %d", len(task.ProjectResources))
 	}
 	resourcesByType := map[string]ProjectResourceData{}
-	for _, resource := range resp.Task.ProjectResources {
+	for _, resource := range task.ProjectResources {
 		resourcesByType[resource.ResourceType] = resource
 	}
 	repoResource, ok := resourcesByType["github_repo"]
 	if !ok {
-		t.Fatalf("missing github_repo project resource: %+v", resp.Task.ProjectResources)
+		t.Fatalf("missing github_repo project resource: %+v", task.ProjectResources)
 	}
 	if repoResource.Label != "primary repo" {
 		t.Fatalf("github_repo label = %q, want primary repo", repoResource.Label)
@@ -2266,7 +2264,7 @@ func TestClaimTask_ProjectGithubReposOverrideWorkspaceRepos(t *testing.T) {
 	}
 	localResource, ok := resourcesByType["local_directory"]
 	if !ok {
-		t.Fatalf("missing local_directory project resource: %+v", resp.Task.ProjectResources)
+		t.Fatalf("missing local_directory project resource: %+v", task.ProjectResources)
 	}
 	if localResource.Label != "server checkout" {
 		t.Fatalf("local_directory label = %q, want server checkout", localResource.Label)
@@ -2328,43 +2326,27 @@ func TestClaimTask_SquadLeaderDoesNotReceiveIssueRepos(t *testing.T) {
 
 	createDaemonTestQueuedIssueTask(t, leaderID, runtimeID, issueID, true)
 	w := claimDaemonTaskRecorder(t, runtimeID, "test-claim-leader-no-repos")
-
-	var resp struct {
-		Task *struct {
-			Repos               []RepoData               `json:"repos"`
-			ProjectID           string                   `json:"project_id"`
-			ProjectResources    []ProjectResourceData    `json:"project_resources"`
-			IssueExecutionSpace *IssueExecutionSpaceData `json:"issue_execution_space"`
-			ExecutionPolicy     *TaskExecutionPolicyData `json:"execution_policy"`
-			Agent               *TaskAgentData           `json:"agent"`
-		} `json:"task"`
+	task := decodeDaemonRepoClaimTask(t, w)
+	if task.ProjectID != projectID {
+		t.Errorf("project_id = %q, want %q", task.ProjectID, projectID)
 	}
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
+	if len(task.Repos) != 0 {
+		t.Fatalf("squad leader task should not receive repos, got %+v", task.Repos)
 	}
-	if resp.Task == nil {
-		t.Fatal("expected task in response")
+	if len(task.ProjectResources) != 0 {
+		t.Fatalf("squad leader task should not receive project_resources, got %+v", task.ProjectResources)
 	}
-	if resp.Task.ProjectID != projectID {
-		t.Errorf("project_id = %q, want %q", resp.Task.ProjectID, projectID)
+	if task.IssueExecutionSpace != nil {
+		t.Fatalf("squad leader task should not receive issue_execution_space, got %+v", task.IssueExecutionSpace)
 	}
-	if len(resp.Task.Repos) != 0 {
-		t.Fatalf("squad leader task should not receive repos, got %+v", resp.Task.Repos)
+	if task.ExecutionPolicy == nil || task.ExecutionPolicy.RoleKind != "coordinator" || task.ExecutionPolicy.CanAccessRepo || task.ExecutionPolicy.CanEditRepo || task.ExecutionPolicy.ProjectSkillMode != "none" {
+		t.Fatalf("squad leader task execution_policy = %+v, want coordinator without repo access", task.ExecutionPolicy)
 	}
-	if len(resp.Task.ProjectResources) != 0 {
-		t.Fatalf("squad leader task should not receive project_resources, got %+v", resp.Task.ProjectResources)
-	}
-	if resp.Task.IssueExecutionSpace != nil {
-		t.Fatalf("squad leader task should not receive issue_execution_space, got %+v", resp.Task.IssueExecutionSpace)
-	}
-	if resp.Task.ExecutionPolicy == nil || resp.Task.ExecutionPolicy.RoleKind != "coordinator" || resp.Task.ExecutionPolicy.CanAccessRepo || resp.Task.ExecutionPolicy.CanEditRepo || resp.Task.ExecutionPolicy.ProjectSkillMode != "none" {
-		t.Fatalf("squad leader task execution_policy = %+v, want coordinator without repo access", resp.Task.ExecutionPolicy)
-	}
-	if resp.Task.Agent == nil ||
-		!strings.Contains(resp.Task.Agent.Instructions, "## 小队负责人操作协议") ||
-		!strings.Contains(resp.Task.Agent.Instructions, "你的职责是**协调**") ||
-		!strings.Contains(resp.Task.Agent.Instructions, "## 小队名单") {
-		t.Fatalf("expected current squad leader briefing in agent instructions: %+v", resp.Task.Agent)
+	if task.Agent == nil ||
+		!strings.Contains(task.Agent.Instructions, "## 小队负责人操作协议") ||
+		!strings.Contains(task.Agent.Instructions, "你的职责是**协调**") ||
+		!strings.Contains(task.Agent.Instructions, "## 小队名单") {
+		t.Fatalf("expected current squad leader briefing in agent instructions: %+v", task.Agent)
 	}
 }
 
@@ -2402,31 +2384,18 @@ func TestClaimTask_ProjectGongfengRepoIsCheckoutRepo(t *testing.T) {
 	issueID := createDaemonTestProjectIssue(t, projectID, "gongfeng project repo")
 	createDaemonTestQueuedIssueTask(t, agentID, runtimeID, issueID, false)
 	w := claimDaemonTaskRecorder(t, runtimeID, "test-claim-gongfeng-project-repos")
-
-	var resp struct {
-		Task *struct {
-			Repos               []RepoData               `json:"repos"`
-			ProjectResources    []ProjectResourceData    `json:"project_resources"`
-			IssueExecutionSpace *IssueExecutionSpaceData `json:"issue_execution_space"`
-		} `json:"task"`
+	task := decodeDaemonRepoClaimTask(t, w)
+	if len(task.Repos) != 1 || task.Repos[0].URL != cloneURL {
+		t.Fatalf("expected canonical gongfeng clone URL in repos, got %+v", task.Repos)
 	}
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
+	if task.IssueExecutionSpace == nil || !task.IssueExecutionSpace.Enabled {
+		t.Fatalf("expected issue_execution_space to be enabled, got %+v", task.IssueExecutionSpace)
 	}
-	if resp.Task == nil {
-		t.Fatal("expected task in response")
+	if task.IssueExecutionSpace.PrimaryRepoURL != cloneURL || task.IssueExecutionSpace.Ref != "v5.0.0_dev" || task.IssueExecutionSpace.IssueID != issueID {
+		t.Fatalf("issue_execution_space = %+v, want repo=%q ref=v5.0.0_dev issue=%s", task.IssueExecutionSpace, cloneURL, issueID)
 	}
-	if len(resp.Task.Repos) != 1 || resp.Task.Repos[0].URL != cloneURL {
-		t.Fatalf("expected canonical gongfeng clone URL in repos, got %+v", resp.Task.Repos)
-	}
-	if resp.Task.IssueExecutionSpace == nil || !resp.Task.IssueExecutionSpace.Enabled {
-		t.Fatalf("expected issue_execution_space to be enabled, got %+v", resp.Task.IssueExecutionSpace)
-	}
-	if resp.Task.IssueExecutionSpace.PrimaryRepoURL != cloneURL || resp.Task.IssueExecutionSpace.Ref != "v5.0.0_dev" || resp.Task.IssueExecutionSpace.IssueID != issueID {
-		t.Fatalf("issue_execution_space = %+v, want repo=%q ref=v5.0.0_dev issue=%s", resp.Task.IssueExecutionSpace, cloneURL, issueID)
-	}
-	if len(resp.Task.ProjectResources) != 1 || resp.Task.ProjectResources[0].ResourceType != "gongfeng_repo" {
-		t.Fatalf("expected gongfeng project resource to remain visible, got %+v", resp.Task.ProjectResources)
+	if len(task.ProjectResources) != 1 || task.ProjectResources[0].ResourceType != "gongfeng_repo" {
+		t.Fatalf("expected gongfeng project resource to remain visible, got %+v", task.ProjectResources)
 	}
 }
 

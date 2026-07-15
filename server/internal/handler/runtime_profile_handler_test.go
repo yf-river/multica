@@ -123,7 +123,7 @@ func TestDeleteRuntimeProfile_ArchivedAgentCascade(t *testing.T) {
 
 	profileID := insertRuntimeProfileFixture(t, ctx, "Cascade Profile Archived", "codex", "company-codex-arch")
 	runtimeID := insertProfileRuntimeFixture(t, ctx, profileID, "Cascade Profile Runtime", "codex")
-	agentID := createCascadeFixtureAgent(t, ctx, runtimeID, "Cascade Profile Archived Agent")
+	agentID := createHandlerTestPersonalCloudAgent(t, ctx, runtimeID, "Cascade Profile Archived Agent")
 
 	// Archive the agent — the active-agent guard passes, but the FK still pins
 	// the runtime row until the archived cascade clears it.
@@ -172,7 +172,7 @@ func TestDeleteRuntimeProfile_ActiveAgentBlocks(t *testing.T) {
 
 	profileID := insertRuntimeProfileFixture(t, ctx, "Cascade Profile Active", "codex", "company-codex-active")
 	runtimeID := insertProfileRuntimeFixture(t, ctx, profileID, "Cascade Profile Active Runtime", "codex")
-	_ = createCascadeFixtureAgent(t, ctx, runtimeID, "Cascade Profile Active Agent")
+	_ = createHandlerTestPersonalCloudAgent(t, ctx, runtimeID, "Cascade Profile Active Agent")
 
 	w := httptest.NewRecorder()
 	req := newRequest("DELETE", "/api/workspaces/"+testWorkspaceID+"/runtime-profiles/"+profileID, nil)

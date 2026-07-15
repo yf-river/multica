@@ -141,7 +141,7 @@ func TestDeleteAgentRuntime_StructuredConflict(t *testing.T) {
 	ctx := context.Background()
 
 	runtimeID := createCascadeFixtureRuntime(t, ctx, "Cascade 409 Runtime")
-	agentID := createCascadeFixtureAgent(t, ctx, runtimeID, "Cascade 409 Agent")
+	agentID := createHandlerTestPersonalCloudAgent(t, ctx, runtimeID, "Cascade 409 Agent")
 	_ = agentID
 
 	w := httptest.NewRecorder()
@@ -179,7 +179,7 @@ func TestArchiveAgentsAndDeleteRuntime_HappyPath(t *testing.T) {
 	ctx := context.Background()
 
 	runtimeID := createCascadeFixtureRuntime(t, ctx, "Cascade Happy Runtime")
-	agentID := createCascadeFixtureAgent(t, ctx, runtimeID, "Cascade Happy Agent")
+	agentID := createHandlerTestPersonalCloudAgent(t, ctx, runtimeID, "Cascade Happy Agent")
 
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/runtimes/"+runtimeID+"/archive-agents-and-delete",
@@ -221,8 +221,8 @@ func TestArchiveAgentsAndDeleteRuntime_PlanChanged(t *testing.T) {
 	ctx := context.Background()
 
 	runtimeID := createCascadeFixtureRuntime(t, ctx, "Cascade Drift Runtime")
-	agent1 := createCascadeFixtureAgent(t, ctx, runtimeID, "Cascade Drift Agent A")
-	agent2 := createCascadeFixtureAgent(t, ctx, runtimeID, "Cascade Drift Agent B")
+	agent1 := createHandlerTestPersonalCloudAgent(t, ctx, runtimeID, "Cascade Drift Agent A")
+	agent2 := createHandlerTestPersonalCloudAgent(t, ctx, runtimeID, "Cascade Drift Agent B")
 
 	// User confirmed only agent1 — but the live set is {agent1, agent2}.
 	w := httptest.NewRecorder()
@@ -285,7 +285,7 @@ func createCascadeFixtureRuntime(t *testing.T, ctx context.Context, name string)
 	return runtimeID
 }
 
-func createCascadeFixtureAgent(t *testing.T, ctx context.Context, runtimeID, name string) string {
+func createHandlerTestPersonalCloudAgent(t *testing.T, ctx context.Context, runtimeID, name string) string {
 	t.Helper()
 	var agentID string
 	if err := testPool.QueryRow(ctx, `
