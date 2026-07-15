@@ -235,6 +235,18 @@ func validPromptLibraryStatus(status string) bool {
 	return status == promptLibraryStatusActive || status == promptLibraryStatusArchived
 }
 
+func writePromptLibraryItemMutationError(w http.ResponseWriter, err error, action string) {
+	if isUniqueViolation(err) {
+		writeError(w, http.StatusConflict, "a prompt with this name already exists")
+		return
+	}
+	if isCheckViolation(err) {
+		writeError(w, http.StatusBadRequest, "prompt library item rejected: a field value failed a database constraint")
+		return
+	}
+	writeError(w, http.StatusInternalServerError, "failed to "+action+" prompt library item")
+}
+
 func jsonArrayField(w http.ResponseWriter, raw json.RawMessage, field string) ([]byte, bool) {
 	if len(raw) == 0 {
 		return nil, true
@@ -490,15 +502,7 @@ func (h *Handler) CreatePromptLibraryItem(w http.ResponseWriter, r *http.Request
 		Status:      status,
 	})
 	if err != nil {
-		if isUniqueViolation(err) {
-			writeError(w, http.StatusConflict, "a prompt with this name already exists")
-			return
-		}
-		if isCheckViolation(err) {
-			writeError(w, http.StatusBadRequest, "prompt library item rejected: a field value failed a database constraint")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "failed to create prompt library item")
+		writePromptLibraryItemMutationError(w, err, "create")
 		return
 	}
 	if _, err := createPromptLibraryVersion(r.Context(), qtx, item, promptLibraryVersionSourceCreated, pgtype.UUID{}, "初始版本"); err != nil {
@@ -577,15 +581,7 @@ func (h *Handler) UpdatePromptLibraryItem(w http.ResponseWriter, r *http.Request
 		Status:      textParam(req.Status),
 	})
 	if err != nil {
-		if isUniqueViolation(err) {
-			writeError(w, http.StatusConflict, "a prompt with this name already exists")
-			return
-		}
-		if isCheckViolation(err) {
-			writeError(w, http.StatusBadRequest, "prompt library item rejected: a field value failed a database constraint")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "failed to update prompt library item")
+		writePromptLibraryItemMutationError(w, err, "update")
 		return
 	}
 	if _, err := createPromptLibraryVersion(r.Context(), qtx, item, promptLibraryVersionSourceUpdated, pgtype.UUID{}, ""); err != nil {

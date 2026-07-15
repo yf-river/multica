@@ -48,6 +48,18 @@ func promptEvaluationAgentProvider() string {
 	return defaultPromptEvaluationAgentProvider
 }
 
+func writePromptEvaluationAssetMutationError(w http.ResponseWriter, err error, action string) {
+	if isUniqueViolation(err) {
+		writeError(w, http.StatusConflict, "an evaluation asset with this type and name already exists")
+		return
+	}
+	if isCheckViolation(err) {
+		writeError(w, http.StatusBadRequest, "prompt evaluation asset rejected: a field value failed a database constraint")
+		return
+	}
+	writeError(w, http.StatusInternalServerError, "failed to "+action+" prompt evaluation asset")
+}
+
 type PromptEvaluationAssetResponse struct {
 	ID                       string  `json:"id"`
 	WorkspaceID              string  `json:"workspace_id"`
@@ -895,15 +907,7 @@ func (h *Handler) CreatePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 		ExperimentDimensionCount: profile.ExperimentDimensionCount,
 	})
 	if err != nil {
-		if isUniqueViolation(err) {
-			writeError(w, http.StatusConflict, "an evaluation asset with this type and name already exists")
-			return
-		}
-		if isCheckViolation(err) {
-			writeError(w, http.StatusBadRequest, "prompt evaluation asset rejected: a field value failed a database constraint")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "failed to create prompt evaluation asset")
+		writePromptEvaluationAssetMutationError(w, err, "create")
 		return
 	}
 	if ok := h.syncPromptEvaluationCasesFromPayload(w, r, qtx, asset, actorID); !ok {
@@ -994,15 +998,7 @@ func (h *Handler) UpdatePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 	}
 	asset, err := qtx.UpdatePromptEvaluationAsset(r.Context(), assetParams)
 	if err != nil {
-		if isUniqueViolation(err) {
-			writeError(w, http.StatusConflict, "an evaluation asset with this type and name already exists")
-			return
-		}
-		if isCheckViolation(err) {
-			writeError(w, http.StatusBadRequest, "prompt evaluation asset rejected: a field value failed a database constraint")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "failed to update prompt evaluation asset")
+		writePromptEvaluationAssetMutationError(w, err, "update")
 		return
 	}
 	if ok := h.syncPromptEvaluationCasesFromPayload(w, r, qtx, asset, existing.CreatedBy); !ok {

@@ -169,16 +169,15 @@ func TestLarkJSONFrameDecoderGroupMentionUnionID(t *testing.T) {
 	})
 
 	t.Run("falls back to open_id when union_id is unknown", func(t *testing.T) {
-		// Pre-backfill installation row: no union_id yet. Decoder
-		// must keep working in the single-bot case via the legacy
-		// open_id comparison.
+		// Contact-scope-restricted installations have no union_id. Decoder
+		// must keep working in the current single-bot case via open_id.
 		inst := db.LarkInstallation{BotOpenID: "ou_bot_a_canonical"}
 		msg, ok, err := d.Decode(mkRaw("ou_bot_a_canonical", "on_anything"), inst)
 		if err != nil || !ok {
 			t.Fatalf("ok=%v err=%v", ok, err)
 		}
 		if !msg.AddressedToBot {
-			t.Error("AddressedToBot = false; expected true via legacy open_id fallback")
+			t.Error("AddressedToBot = false; expected true via open_id")
 		}
 	})
 }

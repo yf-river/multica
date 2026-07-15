@@ -250,9 +250,9 @@ func resolveMentions(text string, mentions []larkMention, botOpenID, botUnionID 
 // bot. Stays in lockstep with containsMention: when union_id is
 // known we trust it exclusively (open_id is structurally inverted
 // in multi-bot groups — matching on it would re-introduce the
-// MUL-2671 routing bug). Only when union_id is missing do we fall
-// back to open_id, which is correct in single-bot installs and the
-// best we can do in pre-backfill rows.
+// MUL-2671 routing bug). When union_id is unavailable because the
+// installation cannot read the contact scope, open_id remains the
+// current single-bot boundary.
 func isBotMention(m larkMention, botOpenID, botUnionID string) bool {
 	if botUnionID != "" {
 		return m.ID.UnionID == botUnionID
@@ -314,19 +314,8 @@ func normalizeChatType(t string) ChatType {
 // mention; that defends against an installation row that somehow
 // has both identifiers blank.
 func containsMention(mentions []larkMention, botOpenID, botUnionID string) bool {
-	if botUnionID != "" {
-		for _, m := range mentions {
-			if m.ID.UnionID == botUnionID {
-				return true
-			}
-		}
-		return false
-	}
-	if botOpenID == "" {
-		return false
-	}
 	for _, m := range mentions {
-		if m.ID.OpenID == botOpenID {
+		if isBotMention(m, botOpenID, botUnionID) {
 			return true
 		}
 	}
