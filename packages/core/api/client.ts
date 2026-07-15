@@ -197,8 +197,6 @@ import {
   DashboardUsageByAgentListSchema,
   DashboardUsageDailyListSchema,
   EMPTY_AGENT,
-  EMPTY_AGENT_ENV_RESPONSE,
-  EMPTY_AGENT_TASK,
   EMPTY_AGENT_ACTIVITY_BUCKETS,
   EMPTY_AGENT_RUN_COUNTS,
   EMPTY_TASK_MESSAGES,
@@ -206,8 +204,6 @@ import {
   EMPTY_ISSUE_EXECUTION_TREE,
   EMPTY_SEARCH_ISSUES,
   EMPTY_CHILD_ISSUE_PROGRESS_RESPONSE,
-  EMPTY_BATCH_UPDATE_ISSUES_RESPONSE,
-  EMPTY_BATCH_DELETE_ISSUES_RESPONSE,
   EMPTY_ASSIGNEE_FREQUENCY,
   EMPTY_ATTACHMENTS,
   EMPTY_APP_CONFIG,
@@ -216,50 +212,24 @@ import {
   EMPTY_LIST_ISSUE_BUCKETS_RESPONSE,
   EMPTY_LIST_ISSUES_RESPONSE,
   EMPTY_ISSUE,
-  EMPTY_COMMENT,
-  EMPTY_REACTION,
-  EMPTY_ISSUE_REACTION,
   EMPTY_SQUAD,
   EMPTY_SQUAD_LIST,
   EMPTY_OBSERVABILITY_SUMMARY,
   EMPTY_TIMELINE_ENTRIES,
   EMPTY_USER,
-  EMPTY_WORKSPACE,
-  EMPTY_WORKSPACE_REPO,
-  EMPTY_WORKSPACE_REPO_PROBE_RESPONSE,
-  EMPTY_MEMBER_WITH_USER,
-  EMPTY_INBOX_ITEM,
   EMPTY_NOTIFICATION_PREFERENCES,
-  EMPTY_CHAT_SESSION,
   EMPTY_CHAT_MESSAGES_PAGE,
-  EMPTY_SEND_CHAT_MESSAGE_RESPONSE,
   EMPTY_CHAT_PENDING_TASK,
   EMPTY_PENDING_CHAT_TASKS_RESPONSE,
-  EMPTY_PROJECT_RESOURCE,
   EMPTY_PROJECT_RESOURCES,
-  EMPTY_EXTERNAL_CREDENTIAL_PROFILE,
-  EMPTY_TEST_EXTERNAL_CREDENTIAL_PROFILE_RESPONSE,
   EMPTY_LARK_INSTALLATION_LIST_RESPONSE,
-  EMPTY_BEGIN_LARK_INSTALL_RESPONSE,
-  EMPTY_LARK_INSTALL_STATUS_RESPONSE,
-  EMPTY_REDEEM_LARK_BINDING_TOKEN_RESPONSE,
   EMPTY_GITHUB_CONNECT_RESPONSE,
   EMPTY_GITHUB_INSTALLATION_LIST_RESPONSE,
   EMPTY_WEBHOOK_DELIVERIES,
-  EMPTY_PROMPT_LIBRARY_ITEM,
-  EMPTY_PROMPT_LIBRARY_TRIAL,
-  EMPTY_PROMPT_LIBRARY_VERSION,
   EMPTY_AGENT_PLAYGROUND_DETAIL,
   EMPTY_AGENT_PLAYGROUND_EXPERIMENT_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_RUN_EVIDENCE,
   EMPTY_PROMPT_EVALUATION_ASSET_EVIDENCE_ARCHIVE_PACKAGE,
-  EMPTY_PROMPT_EVALUATION_SKILL_FRESHNESS_RESULT,
-  EMPTY_RUNTIME_PROFILE,
-  EMPTY_RUNTIME_DEVICE,
-  EMPTY_RUNTIME_CASCADE_DELETE_RESPONSE,
-  EMPTY_RUNTIME_MODEL_LIST_REQUEST,
-  EMPTY_RUNTIME_LOCAL_SKILL_LIST_REQUEST,
-  EMPTY_RUNTIME_LOCAL_SKILL_IMPORT_REQUEST,
   EMPTY_WEBHOOK_DELIVERY,
   AppConfigSchema,
   type AppConfigResponse,
@@ -273,8 +243,6 @@ import {
   AutopilotRunSchema,
   GetAutopilotResponseSchema,
   AutopilotRunListSchema,
-  EMPTY_AUTOPILOT,
-  EMPTY_AUTOPILOT_TRIGGER,
   EMPTY_AUTOPILOT_RUN,
   EMPTY_GET_AUTOPILOT_RESPONSE,
   EMPTY_AUTOPILOT_RUNS,
@@ -372,13 +340,9 @@ import {
   EMPTY_SEARCH_PROJECTS,
   EMPTY_SKILL,
   EMPTY_SKILL_SUMMARIES,
-  EMPTY_LABEL,
   EMPTY_LABELS,
-  EMPTY_PINNED_ITEM,
   EMPTY_PINNED_ITEM_LIST,
-  EMPTY_SQUAD_MEMBER,
   EMPTY_SQUAD_MEMBERS,
-  EMPTY_INTERNAL_SQUAD_TEMPLATE_RESPONSE,
   ExternalCredentialProfileSchema,
   ExternalCredentialProfileListResponseSchema,
   TestExternalCredentialProfileResponseSchema,
@@ -431,7 +395,6 @@ function usageSearchParams(params?: UsageQueryParams) {
 function parseRuntimeRequest<T extends { id: string; runtime_id: string }>(
   data: unknown,
   schema: ZodType<T>,
-  fallback: T,
   runtimeId: string,
   requestId: string | undefined,
   endpoint: string,
@@ -447,7 +410,7 @@ function parseRuntimeRequest<T extends { id: string; runtime_id: string }>(
     : schema.refine(matchesIdentity, {
         message: "runtime request identity does not match request",
       });
-  return parseOrThrow(data, validatedSchema, fallback, {
+  return parseOrThrow(data, validatedSchema, {
     endpoint,
     mayHaveCommitted,
   });
@@ -491,7 +454,7 @@ export class ApiClient extends ApiTransport {
       method: "POST",
       body: JSON.stringify({ account, password }),
     });
-    return parseOrThrow(raw, LoginResponseSchema, { token: "", user: EMPTY_USER }, {
+    return parseOrThrow(raw, LoginResponseSchema, {
       endpoint: "POST /auth/login",
     });
   }
@@ -502,7 +465,7 @@ export class ApiClient extends ApiTransport {
 
   async issueCliToken(): Promise<{ token: string }> {
     const raw = await this.fetch<unknown>("/api/cli-token", { method: "POST" });
-    return parseOrThrow(raw, CliTokenResponseSchema, { token: "" }, {
+    return parseOrThrow(raw, CliTokenResponseSchema, {
       endpoint: "POST /api/cli-token",
     });
   }
@@ -519,7 +482,7 @@ export class ApiClient extends ApiTransport {
       method: "PATCH",
       body: JSON.stringify(data),
     });
-    return parseOrThrow(raw, UserSchema, EMPTY_USER, {
+    return parseOrThrow(raw, UserSchema, {
       endpoint: "PATCH /api/me",
     });
   }
@@ -616,7 +579,7 @@ export class ApiClient extends ApiTransport {
         body: JSON.stringify(data),
         extraHeaders: { "Idempotency-Key": idempotencyKey },
       });
-      return parseOrThrow(raw, IssueSchema, EMPTY_ISSUE, {
+      return parseOrThrow<Issue>(raw, IssueSchema, {
         endpoint: "POST /api/issues",
         mayHaveCommitted: true,
       });
@@ -637,7 +600,6 @@ export class ApiClient extends ApiTransport {
       parseOrThrow(
         raw,
         QuickCreateIssueResponseSchema,
-        {},
         { endpoint: "POST /api/issues/quick-create", mayHaveCommitted: true },
       );
     };
@@ -656,7 +618,7 @@ export class ApiClient extends ApiTransport {
         body: JSON.stringify(data),
         extraHeaders: { "Idempotency-Key": idempotencyKey },
       });
-      parseOrThrow(raw, FeedbackResponseSchema, { id: "", created_at: "" }, {
+      parseOrThrow(raw, FeedbackResponseSchema, {
         endpoint: "POST /api/feedback",
         mayHaveCommitted: true,
       });
@@ -669,7 +631,7 @@ export class ApiClient extends ApiTransport {
       method: "PUT",
       body: JSON.stringify(data),
     });
-    return parseOrThrow(raw, IssueSchema, EMPTY_ISSUE, {
+    return parseOrThrow(raw, IssueSchema, {
       endpoint: "PUT /api/issues/:id",
     });
   }
@@ -713,7 +675,7 @@ export class ApiClient extends ApiTransport {
       method: "POST",
       body: JSON.stringify({ issue_ids: issueIds, updates }),
     });
-    return parseOrThrow(raw, BatchUpdateIssuesResponseSchema, EMPTY_BATCH_UPDATE_ISSUES_RESPONSE, {
+    return parseOrThrow(raw, BatchUpdateIssuesResponseSchema, {
       endpoint: "POST /api/issues/batch-update",
       mayHaveCommitted: true,
     });
@@ -724,7 +686,7 @@ export class ApiClient extends ApiTransport {
       method: "POST",
       body: JSON.stringify({ issue_ids: issueIds }),
     });
-    return parseOrThrow(raw, BatchDeleteIssuesResponseSchema, EMPTY_BATCH_DELETE_ISSUES_RESPONSE, {
+    return parseOrThrow(raw, BatchDeleteIssuesResponseSchema, {
       endpoint: "POST /api/issues/batch-delete",
       mayHaveCommitted: true,
     });
@@ -743,7 +705,7 @@ export class ApiClient extends ApiTransport {
         body: JSON.stringify(request),
         extraHeaders: { "Idempotency-Key": idempotencyKey },
       });
-      return parseOrThrow(raw, CommentSchema, EMPTY_COMMENT, {
+      return parseOrThrow<Comment>(raw, CommentSchema, {
         endpoint: "POST /api/issues/:id/comments",
         mayHaveCommitted: true,
       });
@@ -790,7 +752,7 @@ export class ApiClient extends ApiTransport {
         ...(suppressAgentIds?.length ? { suppress_agent_ids: suppressAgentIds } : {}),
       }),
     });
-    return parseOrThrow(raw, CommentSchema, EMPTY_COMMENT, {
+    return parseOrThrow(raw, CommentSchema, {
       endpoint: "PUT /api/comments/:id",
     });
   }
@@ -801,14 +763,14 @@ export class ApiClient extends ApiTransport {
 
   async resolveComment(commentId: string): Promise<Comment> {
     const raw = await this.fetch<unknown>(`/api/comments/${commentId}/resolve`, { method: "POST" });
-    return parseOrThrow(raw, CommentSchema, EMPTY_COMMENT, {
+    return parseOrThrow(raw, CommentSchema, {
       endpoint: "POST /api/comments/:id/resolve",
     });
   }
 
   async unresolveComment(commentId: string): Promise<Comment> {
     const raw = await this.fetch<unknown>(`/api/comments/${commentId}/resolve`, { method: "DELETE" });
-    return parseOrThrow(raw, CommentSchema, EMPTY_COMMENT, {
+    return parseOrThrow(raw, CommentSchema, {
       endpoint: "DELETE /api/comments/:id/resolve",
     });
   }
@@ -818,7 +780,7 @@ export class ApiClient extends ApiTransport {
       method: "POST",
       body: JSON.stringify({ emoji }),
     });
-    return parseOrThrow(raw, ReactionSchema, EMPTY_REACTION, {
+    return parseOrThrow(raw, ReactionSchema, {
       endpoint: "POST /api/comments/:id/reactions",
     });
   }
@@ -835,7 +797,7 @@ export class ApiClient extends ApiTransport {
       method: "POST",
       body: JSON.stringify({ emoji }),
     });
-    return parseOrThrow(raw, IssueReactionSchema, EMPTY_ISSUE_REACTION, {
+    return parseOrThrow(raw, IssueReactionSchema, {
       endpoint: "POST /api/issues/:id/reactions",
     });
   }
@@ -893,7 +855,7 @@ export class ApiClient extends ApiTransport {
         body: JSON.stringify(data),
         extraHeaders: { "Idempotency-Key": idempotencyKey },
       });
-      return parseOrThrow(raw, AgentSchema, EMPTY_AGENT, {
+      return parseOrThrow<Agent>(raw, AgentSchema, {
         endpoint: "POST /api/agents",
         mayHaveCommitted: true,
       });
@@ -906,12 +868,12 @@ export class ApiClient extends ApiTransport {
       method: "PUT",
       body: JSON.stringify(data),
     });
-    return parseOrThrow(raw, AgentSchema, EMPTY_AGENT, { endpoint: "PUT /api/agents/:id" });
+    return parseOrThrow(raw, AgentSchema, { endpoint: "PUT /api/agents/:id" });
   }
 
   async archiveAgent(id: string): Promise<Agent> {
     const raw = await this.fetch<unknown>(`/api/agents/${id}/archive`, { method: "POST" });
-    return parseOrThrow(raw, AgentSchema, EMPTY_AGENT, { endpoint: "POST /api/agents/:id/archive" });
+    return parseOrThrow(raw, AgentSchema, { endpoint: "POST /api/agents/:id/archive" });
   }
 
   /**
@@ -928,7 +890,6 @@ export class ApiClient extends ApiTransport {
         path: ["agent_id"],
         message: "agent id does not match request",
       }),
-      EMPTY_AGENT_ENV_RESPONSE,
       {
         endpoint: "GET /api/agents/:id/env",
         mayHaveCommitted: false,
@@ -955,14 +916,13 @@ export class ApiClient extends ApiTransport {
         path: ["agent_id"],
         message: "agent id does not match request",
       }),
-      EMPTY_AGENT_ENV_RESPONSE,
       { endpoint: "PUT /api/agents/:id/env" },
     );
   }
 
   async restoreAgent(id: string): Promise<Agent> {
     const raw = await this.fetch<unknown>(`/api/agents/${id}/restore`, { method: "POST" });
-    return parseOrThrow(raw, AgentSchema, EMPTY_AGENT, { endpoint: "POST /api/agents/:id/restore" });
+    return parseOrThrow(raw, AgentSchema, { endpoint: "POST /api/agents/:id/restore" });
   }
 
   // Bulk-cancel every active task (queued/dispatched/running) for the agent.
@@ -971,7 +931,7 @@ export class ApiClient extends ApiTransport {
   // surfaces can clear their live cards.
   async cancelAgentTasks(id: string): Promise<{ cancelled: number }> {
     const raw = await this.fetch<unknown>(`/api/agents/${id}/cancel-tasks`, { method: "POST" });
-    return parseOrThrow(raw, AgentTaskCancellationCountSchema, { cancelled: 0 }, { endpoint: "POST /api/agents/:id/cancel-tasks" });
+    return parseOrThrow(raw, AgentTaskCancellationCountSchema, { endpoint: "POST /api/agents/:id/cancel-tasks" });
   }
 
   async listRuntimes(params?: { workspace_id?: string; owner?: "me" }): Promise<AgentRuntime[]> {
@@ -1007,7 +967,6 @@ export class ApiClient extends ApiTransport {
     return parseOrThrow(
       raw,
       RuntimeCascadeDeleteResponseSchema,
-      EMPTY_RUNTIME_CASCADE_DELETE_RESPONSE,
       { endpoint: "POST /api/runtimes/:id/archive-agents-and-delete" },
     );
   }
@@ -1026,7 +985,6 @@ export class ApiClient extends ApiTransport {
         path: ["id"],
         message: "runtime id does not match request",
       }),
-      EMPTY_RUNTIME_DEVICE,
       { endpoint: "PATCH /api/runtimes/:id" },
     ) as AgentRuntime;
   }
@@ -1053,7 +1011,7 @@ export class ApiClient extends ApiTransport {
       method: "POST",
       body: JSON.stringify(body),
     });
-    return parseOrThrow(raw, RuntimeProfileSchema, EMPTY_RUNTIME_PROFILE, {
+    return parseOrThrow(raw, RuntimeProfileSchema, {
       endpoint: "POST /api/workspaces/:workspaceId/runtime-profiles",
     });
   }
@@ -1070,7 +1028,7 @@ export class ApiClient extends ApiTransport {
         body: JSON.stringify(patch),
       },
     );
-    return parseOrThrow(raw, RuntimeProfileSchema, EMPTY_RUNTIME_PROFILE, {
+    return parseOrThrow(raw, RuntimeProfileSchema, {
       endpoint: "PATCH /api/workspaces/:workspaceId/runtime-profiles/:profileId",
     });
   }
@@ -1204,7 +1162,6 @@ export class ApiClient extends ApiTransport {
       return parseRuntimeRequest(
         raw,
         RuntimeModelListRequestSchema,
-        EMPTY_RUNTIME_MODEL_LIST_REQUEST,
         runtimeId,
         undefined,
         "POST /api/runtimes/:id/models",
@@ -1222,7 +1179,6 @@ export class ApiClient extends ApiTransport {
     return parseRuntimeRequest(
       raw,
       RuntimeModelListRequestSchema,
-      EMPTY_RUNTIME_MODEL_LIST_REQUEST,
       runtimeId,
       requestId,
       "GET /api/runtimes/:id/models/:requestId",
@@ -1241,7 +1197,6 @@ export class ApiClient extends ApiTransport {
       return parseRuntimeRequest(
         raw,
         RuntimeLocalSkillListRequestSchema,
-        EMPTY_RUNTIME_LOCAL_SKILL_LIST_REQUEST,
         runtimeId,
         undefined,
         "POST /api/runtimes/:id/local-skills",
@@ -1259,7 +1214,6 @@ export class ApiClient extends ApiTransport {
     return parseRuntimeRequest(
       raw,
       RuntimeLocalSkillListRequestSchema,
-      EMPTY_RUNTIME_LOCAL_SKILL_LIST_REQUEST,
       runtimeId,
       requestId,
       "GET /api/runtimes/:id/local-skills/:requestId",
@@ -1281,7 +1235,6 @@ export class ApiClient extends ApiTransport {
       return parseRuntimeRequest(
         raw,
         RuntimeLocalSkillImportRequestSchema,
-        EMPTY_RUNTIME_LOCAL_SKILL_IMPORT_REQUEST,
         runtimeId,
         undefined,
         "POST /api/runtimes/:id/local-skills/import",
@@ -1299,7 +1252,6 @@ export class ApiClient extends ApiTransport {
     return parseRuntimeRequest(
       raw,
       RuntimeLocalSkillImportRequestSchema,
-      EMPTY_RUNTIME_LOCAL_SKILL_IMPORT_REQUEST,
       runtimeId,
       requestId,
       "GET /api/runtimes/:id/local-skills/import/:requestId",
@@ -1390,7 +1342,7 @@ export class ApiClient extends ApiTransport {
     const raw = await this.fetch<unknown>(`/api/issues/${issueId}/tasks/${taskId}/cancel`, {
       method: "POST",
     });
-    return parseOrThrow(raw, AgentTaskSchema, EMPTY_AGENT_TASK, {
+    return parseOrThrow(raw, AgentTaskSchema, {
       endpoint: "POST /api/issues/:id/tasks/:taskId/cancel",
       mayHaveCommitted: true,
     });
@@ -1403,7 +1355,7 @@ export class ApiClient extends ApiTransport {
         body: JSON.stringify({ task_id: taskId }),
         extraHeaders: { "Idempotency-Key": idempotencyKey },
       });
-      return parseOrThrow(raw, AgentTaskSchema, EMPTY_AGENT_TASK, {
+      return parseOrThrow<AgentTask>(raw, AgentTaskSchema, {
         endpoint: "POST /api/issues/:id/rerun",
         mayHaveCommitted: true,
       });
@@ -1419,32 +1371,32 @@ export class ApiClient extends ApiTransport {
 
   async markInboxRead(id: string): Promise<InboxItem> {
     const raw = await this.fetch<unknown>(`/api/inbox/${id}/read`, { method: "POST" });
-    return parseOrThrow(raw, InboxItemSchema, EMPTY_INBOX_ITEM, { endpoint: "POST /api/inbox/:id/read" });
+    return parseOrThrow(raw, InboxItemSchema, { endpoint: "POST /api/inbox/:id/read" });
   }
 
   async archiveInbox(id: string): Promise<InboxItem> {
     const raw = await this.fetch<unknown>(`/api/inbox/${id}/archive`, { method: "POST" });
-    return parseOrThrow(raw, InboxItemSchema, EMPTY_INBOX_ITEM, { endpoint: "POST /api/inbox/:id/archive" });
+    return parseOrThrow(raw, InboxItemSchema, { endpoint: "POST /api/inbox/:id/archive" });
   }
 
   async markAllInboxRead(): Promise<{ count: number }> {
     const raw = await this.fetch<unknown>("/api/inbox/mark-all-read", { method: "POST" });
-    return parseOrThrow(raw, InboxCountResponseSchema, { count: 0 }, { endpoint: "POST /api/inbox/mark-all-read" });
+    return parseOrThrow(raw, InboxCountResponseSchema, { endpoint: "POST /api/inbox/mark-all-read" });
   }
 
   async archiveAllInbox(): Promise<{ count: number }> {
     const raw = await this.fetch<unknown>("/api/inbox/archive-all", { method: "POST" });
-    return parseOrThrow(raw, InboxCountResponseSchema, { count: 0 }, { endpoint: "POST /api/inbox/archive-all" });
+    return parseOrThrow(raw, InboxCountResponseSchema, { endpoint: "POST /api/inbox/archive-all" });
   }
 
   async archiveAllReadInbox(): Promise<{ count: number }> {
     const raw = await this.fetch<unknown>("/api/inbox/archive-all-read", { method: "POST" });
-    return parseOrThrow(raw, InboxCountResponseSchema, { count: 0 }, { endpoint: "POST /api/inbox/archive-all-read" });
+    return parseOrThrow(raw, InboxCountResponseSchema, { endpoint: "POST /api/inbox/archive-all-read" });
   }
 
   async archiveCompletedInbox(): Promise<{ count: number }> {
     const raw = await this.fetch<unknown>("/api/inbox/archive-completed", { method: "POST" });
-    return parseOrThrow(raw, InboxCountResponseSchema, { count: 0 }, { endpoint: "POST /api/inbox/archive-completed" });
+    return parseOrThrow(raw, InboxCountResponseSchema, { endpoint: "POST /api/inbox/archive-completed" });
   }
 
   // Notification preferences
@@ -1471,10 +1423,9 @@ export class ApiClient extends ApiTransport {
       method: "PUT",
       body: JSON.stringify({ preferences }),
     });
-    return parseOrThrow(
+    return parseOrThrow<{ preferences: NotificationPreferences }>(
       raw,
       NotificationPreferenceResponseSchema,
-      { preferences: EMPTY_NOTIFICATION_PREFERENCES },
       { endpoint: "PUT /api/notification-preferences" },
     ).preferences;
   }
@@ -1514,7 +1465,7 @@ export class ApiClient extends ApiTransport {
         body: JSON.stringify(data),
         extraHeaders: { "Idempotency-Key": idempotencyKey },
       });
-      return parseOrThrow(raw, WorkspaceSchema, EMPTY_WORKSPACE, {
+      return parseOrThrow<Workspace>(raw, WorkspaceSchema, {
         endpoint: "POST /api/workspaces",
         mayHaveCommitted: true,
       });
@@ -1527,7 +1478,7 @@ export class ApiClient extends ApiTransport {
       method: "PATCH",
       body: JSON.stringify(data),
     });
-    return parseOrThrow(raw, WorkspaceSchema, EMPTY_WORKSPACE, {
+    return parseOrThrow(raw, WorkspaceSchema, {
       endpoint: "PATCH /api/workspaces/:id",
     });
   }
@@ -1538,7 +1489,7 @@ export class ApiClient extends ApiTransport {
       responseMayHaveCommitted: false,
       body: JSON.stringify(data),
     });
-    return parseOrThrow(raw, WorkspaceRepoSchema, EMPTY_WORKSPACE_REPO, {
+    return parseOrThrow(raw, WorkspaceRepoSchema, {
       endpoint: "POST /api/workspaces/:workspaceId/repos/resolve",
       mayHaveCommitted: false,
     });
@@ -1553,7 +1504,6 @@ export class ApiClient extends ApiTransport {
     return parseOrThrow(
       raw,
       WorkspaceRepoProbeResponseSchema,
-      EMPTY_WORKSPACE_REPO_PROBE_RESPONSE,
       {
         endpoint: "POST /api/workspaces/:workspaceId/repos/probe",
         mayHaveCommitted: false,
@@ -1580,7 +1530,7 @@ export class ApiClient extends ApiTransport {
         body: JSON.stringify(data),
         extraHeaders: { "Idempotency-Key": idempotencyKey },
       });
-      return parseOrThrow(raw, MemberWithUserSchema, EMPTY_MEMBER_WITH_USER, {
+      return parseOrThrow<MemberWithUser>(raw, MemberWithUserSchema, {
         endpoint: "POST /api/workspaces/:workspaceId/members",
         mayHaveCommitted: true,
       });
@@ -1593,7 +1543,7 @@ export class ApiClient extends ApiTransport {
       method: "PATCH",
       body: JSON.stringify(data),
     });
-    return parseOrThrow(raw, MemberWithUserSchema, EMPTY_MEMBER_WITH_USER, {
+    return parseOrThrow(raw, MemberWithUserSchema, {
       endpoint: "PATCH /api/workspaces/:workspaceId/members/:memberId",
     });
   }
@@ -1641,7 +1591,7 @@ export class ApiClient extends ApiTransport {
         body: JSON.stringify(data),
         extraHeaders: { "Idempotency-Key": idempotencyKey },
       });
-      return parseOrThrow(raw, SkillSchema, EMPTY_SKILL, {
+      return parseOrThrow<Skill>(raw, SkillSchema, {
         endpoint: "POST /api/skills",
         mayHaveCommitted: true,
       });
@@ -1654,7 +1604,7 @@ export class ApiClient extends ApiTransport {
       method: "PUT",
       body: JSON.stringify(data),
     });
-    return parseOrThrow(raw, SkillSchema, EMPTY_SKILL, {
+    return parseOrThrow(raw, SkillSchema, {
       endpoint: "PUT /api/skills/:id",
       mayHaveCommitted: true,
     });
@@ -1671,7 +1621,7 @@ export class ApiClient extends ApiTransport {
         body: JSON.stringify(data),
         extraHeaders: { "Idempotency-Key": idempotencyKey },
       });
-      return parseOrThrow(raw, SkillSchema, EMPTY_SKILL, {
+      return parseOrThrow<Skill>(raw, SkillSchema, {
         endpoint: "POST /api/skills/import",
         mayHaveCommitted: true,
       });
@@ -1718,7 +1668,7 @@ export class ApiClient extends ApiTransport {
         extraHeaders: { "Idempotency-Key": idempotencyKey },
       });
       const raw = await this.parseSuccessJson<unknown>(response, "POST /api/upload-file", true);
-      return parseOrThrow(raw, AttachmentResponseSchema, EMPTY_ATTACHMENT, {
+      return parseOrThrow<Attachment>(raw, AttachmentResponseSchema, {
         endpoint: "POST /api/upload-file",
         mayHaveCommitted: true,
       });
@@ -1741,7 +1691,7 @@ export class ApiClient extends ApiTransport {
       extraHeaders: { "Idempotency-Key": idempotencyKey },
       body: JSON.stringify(data),
     });
-    return parseOrThrow(raw, ChatSessionSchema, EMPTY_CHAT_SESSION, { endpoint: "POST /api/chat/sessions" });
+    return parseOrThrow(raw, ChatSessionSchema, { endpoint: "POST /api/chat/sessions" });
   }
 
   async deleteChatSession(id: string): Promise<void> {
@@ -1753,7 +1703,7 @@ export class ApiClient extends ApiTransport {
       method: "PATCH",
       body: JSON.stringify(data),
     });
-    return parseOrThrow(raw, ChatSessionSchema, EMPTY_CHAT_SESSION, { endpoint: "PATCH /api/chat/sessions/:id" });
+    return parseOrThrow(raw, ChatSessionSchema, { endpoint: "PATCH /api/chat/sessions/:id" });
   }
 
   async listChatMessagesPage(
@@ -1789,7 +1739,7 @@ export class ApiClient extends ApiTransport {
       extraHeaders: { "Idempotency-Key": idempotencyKey },
       body: JSON.stringify(body),
     });
-    return parseOrThrow(raw, SendChatMessageResponseSchema, EMPTY_SEND_CHAT_MESSAGE_RESPONSE, {
+    return parseOrThrow(raw, SendChatMessageResponseSchema, {
       endpoint: "POST /api/chat/sessions/:id/messages",
     });
   }
@@ -1810,7 +1760,7 @@ export class ApiClient extends ApiTransport {
 
   async cancelTaskById(taskId: string): Promise<CancelTaskResponse> {
     const raw = await this.fetch<unknown>(`/api/tasks/${taskId}/cancel`, { method: "POST" });
-    return parseOrThrow(raw, CancelTaskResponseSchema, EMPTY_AGENT_TASK, {
+    return parseOrThrow(raw, CancelTaskResponseSchema, {
       endpoint: "POST /api/tasks/{taskId}/cancel",
     });
   }
@@ -1892,7 +1842,7 @@ export class ApiClient extends ApiTransport {
         body: JSON.stringify(data),
         extraHeaders: { "Idempotency-Key": idempotencyKey },
       });
-      return parseOrThrow(raw, ProjectSchema, EMPTY_PROJECT, {
+      return parseOrThrow<Project>(raw, ProjectSchema, {
         endpoint: "POST /api/projects",
         mayHaveCommitted: true,
       });
@@ -1905,7 +1855,7 @@ export class ApiClient extends ApiTransport {
       method: "PUT",
       body: JSON.stringify(data),
     });
-    return parseOrThrow(raw, ProjectSchema, EMPTY_PROJECT, {
+    return parseOrThrow(raw, ProjectSchema, {
       endpoint: "PUT /api/projects/:id",
       mayHaveCommitted: true,
     });
@@ -1949,7 +1899,7 @@ export class ApiClient extends ApiTransport {
         body: JSON.stringify(data),
         extraHeaders: { "Idempotency-Key": idempotencyKey },
       });
-      return parseOrThrow(raw, PromptLibraryItemSchema, EMPTY_PROMPT_LIBRARY_ITEM, {
+      return parseOrThrow(raw, PromptLibraryItemSchema, {
         endpoint: "POST /api/prompt-library",
         mayHaveCommitted: true,
       }) as PromptLibraryItem;
@@ -1967,7 +1917,6 @@ export class ApiClient extends ApiTransport {
       return parseOrThrow(
         raw,
         CreatePromptLibraryVersionResponseSchema,
-        { item: EMPTY_PROMPT_LIBRARY_ITEM, version: EMPTY_PROMPT_LIBRARY_VERSION },
         { endpoint: "POST /api/prompt-library/:id/versions", mayHaveCommitted: true },
       ) as CreatePromptLibraryVersionResponse;
     };
@@ -1981,7 +1930,7 @@ export class ApiClient extends ApiTransport {
         body: JSON.stringify(data),
         extraHeaders: { "Idempotency-Key": idempotencyKey },
       });
-      return parseOrThrow(raw, PromptLibraryTrialSchema, EMPTY_PROMPT_LIBRARY_TRIAL, {
+      return parseOrThrow(raw, PromptLibraryTrialSchema, {
         endpoint: "POST /api/prompt-library/:id/versions/:versionId/trials",
         mayHaveCommitted: true,
       }) as PromptLibraryTrial;
@@ -2018,7 +1967,7 @@ export class ApiClient extends ApiTransport {
         body: JSON.stringify(data),
         extraHeaders: { "Idempotency-Key": idempotencyKey },
       });
-      return parseOrThrow(raw, AgentPlaygroundDetailSchema, EMPTY_AGENT_PLAYGROUND_DETAIL, {
+      return parseOrThrow(raw, AgentPlaygroundDetailSchema, {
         endpoint: "POST /api/agent-playground-experiments",
         mayHaveCommitted: true,
       }) as AgentPlaygroundDetail;
@@ -2029,7 +1978,7 @@ export class ApiClient extends ApiTransport {
   async runAgentPlaygroundExperiment(id: string): Promise<AgentPlaygroundDetail> {
     const attempt = async () => {
       const raw = await this.fetch<unknown>(`/api/agent-playground-experiments/${id}/run`, { method: "POST" });
-      return parseOrThrow(raw, AgentPlaygroundDetailSchema, EMPTY_AGENT_PLAYGROUND_DETAIL, {
+      return parseOrThrow(raw, AgentPlaygroundDetailSchema, {
         endpoint: "POST /api/agent-playground-experiments/:id/run",
         mayHaveCommitted: true,
       }) as AgentPlaygroundDetail;
@@ -2039,7 +1988,7 @@ export class ApiClient extends ApiTransport {
 
   async syncAgentPlaygroundExperiment(id: string): Promise<AgentPlaygroundDetail> {
     const raw = await this.fetch<unknown>(`/api/agent-playground-experiments/${id}/sync`, { method: "POST" });
-    return parseOrThrow(raw, AgentPlaygroundDetailSchema, EMPTY_AGENT_PLAYGROUND_DETAIL, {
+    return parseOrThrow(raw, AgentPlaygroundDetailSchema, {
       endpoint: "POST /api/agent-playground-experiments/:id/sync",
     }) as AgentPlaygroundDetail;
   }
@@ -2050,7 +1999,7 @@ export class ApiClient extends ApiTransport {
         method: "POST",
         body: JSON.stringify(data ?? {}),
       });
-      return parseOrThrow(raw, AgentPlaygroundDetailSchema, EMPTY_AGENT_PLAYGROUND_DETAIL, {
+      return parseOrThrow(raw, AgentPlaygroundDetailSchema, {
         endpoint: "POST /api/agent-playground-experiments/:id/judge",
         mayHaveCommitted: true,
       }) as AgentPlaygroundDetail;
@@ -2081,7 +2030,7 @@ export class ApiClient extends ApiTransport {
         body: JSON.stringify(data),
         extraHeaders: { "Idempotency-Key": idempotencyKey },
       });
-      return parseOrThrow(raw, PromptEvaluationAssetMutationResultSchema, { id: "", prompt_id: null }, {
+      return parseOrThrow<{ id: string; prompt_id: string | null }>(raw, PromptEvaluationAssetMutationResultSchema, {
         endpoint: "POST /api/prompt-evaluation-assets",
         mayHaveCommitted: true,
       });
@@ -2094,7 +2043,7 @@ export class ApiClient extends ApiTransport {
       method: "PUT",
       body: JSON.stringify(data),
     });
-    return parseOrThrow(raw, PromptEvaluationAssetMutationResultSchema, { id: "", prompt_id: null }, {
+    return parseOrThrow(raw, PromptEvaluationAssetMutationResultSchema, {
       endpoint: "PUT /api/prompt-evaluation-assets/:id",
     });
   }
@@ -2114,9 +2063,7 @@ export class ApiClient extends ApiTransport {
         body: JSON.stringify(data),
         extraHeaders: { "Idempotency-Key": idempotencyKey },
       });
-      return parseOrThrow(raw, PromptEvaluationDatasetFromTracesResponseSchema, {
-        created_count: 0,
-      }, {
+      return parseOrThrow<{ created_count: number }>(raw, PromptEvaluationDatasetFromTracesResponseSchema, {
         endpoint: "POST /api/prompt-evaluation-assets/:id/dataset-from-traces",
         mayHaveCommitted: true,
       });
@@ -2145,7 +2092,7 @@ export class ApiClient extends ApiTransport {
         body: JSON.stringify(data),
         extraHeaders: { "Idempotency-Key": idempotencyKey },
       });
-      return parseOrThrow(raw, PromptEvaluationDatasetVersionMutationResultSchema, { version: 0 }, {
+      return parseOrThrow<{ version: number }>(raw, PromptEvaluationDatasetVersionMutationResultSchema, {
         endpoint: "POST /api/prompt-evaluation-assets/:id/dataset-versions",
         mayHaveCommitted: true,
       });
@@ -2181,7 +2128,7 @@ export class ApiClient extends ApiTransport {
         body: JSON.stringify(data),
         extraHeaders: { "Idempotency-Key": idempotencyKey },
       });
-      return parseOrThrow(raw, PromptEvaluationCaseMutationResultSchema, { id: "", case_name: "" }, {
+      return parseOrThrow<{ id: string; case_name: string }>(raw, PromptEvaluationCaseMutationResultSchema, {
         endpoint: "POST /api/prompt-evaluation-cases",
         mayHaveCommitted: true,
       });
@@ -2194,7 +2141,7 @@ export class ApiClient extends ApiTransport {
       method: "PUT",
       body: JSON.stringify(data),
     });
-    return parseOrThrow(raw, PromptEvaluationCaseMutationResultSchema, { id: "", case_name: "" }, {
+    return parseOrThrow(raw, PromptEvaluationCaseMutationResultSchema, {
       endpoint: "PUT /api/prompt-evaluation-cases/:id",
     });
   }
@@ -2245,7 +2192,7 @@ export class ApiClient extends ApiTransport {
         method: "POST",
         extraHeaders: { "Idempotency-Key": idempotencyKey },
       });
-      return parseOrThrow(raw, PromptEvaluationEvidenceSnapshotCreateResultSchema, { run_id: "" }, {
+      return parseOrThrow<{ run_id: string }>(raw, PromptEvaluationEvidenceSnapshotCreateResultSchema, {
         endpoint: "POST /api/prompt-evaluation-runs/:id/evidence-snapshots",
         mayHaveCommitted: true,
       });
@@ -2265,9 +2212,7 @@ export class ApiClient extends ApiTransport {
         method: "POST",
         extraHeaders: { "Idempotency-Key": idempotencyKey },
       });
-      return parseOrThrow(raw, PromptEvaluationAssetEvidenceSnapshotResponseSchema, {
-        created_count: 0, skipped_count: 0, items: [],
-      }, {
+      return parseOrThrow<{ created_count: number; skipped_count: number; items: Array<{ run_id: string }> }>(raw, PromptEvaluationAssetEvidenceSnapshotResponseSchema, {
         endpoint: "POST /api/prompt-evaluation-assets/:id/evidence-snapshots",
         mayHaveCommitted: true,
       });
@@ -2285,7 +2230,7 @@ export class ApiClient extends ApiTransport {
 
   async syncPromptEvaluationRun(runId: string): Promise<{ id: string }> {
     const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/sync`, { method: "POST" });
-    return parseOrThrow(raw, PromptEvaluationRunIDSchema, { id: "" }, {
+    return parseOrThrow(raw, PromptEvaluationRunIDSchema, {
       endpoint: "POST /api/prompt-evaluation-runs/:id/sync",
     });
   }
@@ -2293,7 +2238,7 @@ export class ApiClient extends ApiTransport {
   async cancelPromptEvaluationRun(runId: string): Promise<{ id: string }> {
     const attempt = async () => {
       const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/cancel`, { method: "POST" });
-      return parseOrThrow(raw, PromptEvaluationRunIDSchema, { id: "" }, {
+      return parseOrThrow<{ id: string }>(raw, PromptEvaluationRunIDSchema, {
         endpoint: "POST /api/prompt-evaluation-runs/:id/cancel",
         mayHaveCommitted: true,
       });
@@ -2311,8 +2256,6 @@ export class ApiClient extends ApiTransport {
         body: JSON.stringify(data),
       });
       return parseOrThrow<Pick<PromptEvaluationRun, "id" | "review_decision" | "status">>(raw, PromptEvaluationRunReviewResultSchema, {
-        id: "", review_decision: "", status: "已入队",
-      }, {
         endpoint: "POST /api/prompt-evaluation-runs/:id/review",
         mayHaveCommitted: true,
       });
@@ -2342,7 +2285,7 @@ export class ApiClient extends ApiTransport {
         method: "POST",
         extraHeaders: { "Idempotency-Key": requestId },
       });
-      return parseOrThrow(raw, PromptEvaluationOptimizationCandidateCreateResultSchema, { id: "" }, {
+      return parseOrThrow<{ id: string }>(raw, PromptEvaluationOptimizationCandidateCreateResultSchema, {
         endpoint: "POST /api/prompt-evaluation-runs/:id/optimization-candidates",
         mayHaveCommitted: true,
       });
@@ -2359,10 +2302,9 @@ export class ApiClient extends ApiTransport {
         method: "POST",
         extraHeaders: { "Idempotency-Key": requestId },
       });
-      return parseOrThrow(
+      return parseOrThrow<string>(
         raw,
         PublishPromptEvaluationOptimizationCandidateNameSchema,
-        "",
         {
           endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/publish",
           mayHaveCommitted: true,
@@ -2383,7 +2325,7 @@ export class ApiClient extends ApiTransport {
         body: JSON.stringify(data),
         extraHeaders: { "Idempotency-Key": requestId },
       });
-      return parseOrThrow<PromptEvaluationOptimizationCandidateStatus>(raw, PromptEvaluationOptimizationCandidateDecisionStatusSchema, "待确认", {
+      return parseOrThrow<PromptEvaluationOptimizationCandidateStatus>(raw, PromptEvaluationOptimizationCandidateDecisionStatusSchema, {
         endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/reject",
         mayHaveCommitted: true,
       });
@@ -2399,7 +2341,7 @@ export class ApiClient extends ApiTransport {
       method: "POST",
       body: JSON.stringify(data),
     });
-    return parseOrThrow(raw, PromptEvaluationSkillFreshnessResultSchema, EMPTY_PROMPT_EVALUATION_SKILL_FRESHNESS_RESULT, {
+    return parseOrThrow(raw, PromptEvaluationSkillFreshnessResultSchema, {
       endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/skill-freshness",
     }) as PromptEvaluationSkillFreshnessResult;
   }
@@ -2415,7 +2357,7 @@ export class ApiClient extends ApiTransport {
         body: JSON.stringify(data),
         extraHeaders: { "Idempotency-Key": requestId },
       });
-      return parseOrThrow<"dry_run" | "applied" | "blocked" | "conflict">(raw, PromptEvaluationSkillApplyStatusSchema, "blocked", {
+      return parseOrThrow<"dry_run" | "applied" | "blocked" | "conflict">(raw, PromptEvaluationSkillApplyStatusSchema, {
         endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/skill-apply",
         mayHaveCommitted: true,
       });
@@ -2434,7 +2376,7 @@ export class ApiClient extends ApiTransport {
         body: JSON.stringify(data),
         extraHeaders: { "Idempotency-Key": requestId },
       });
-      return parseOrThrow(raw, PromptEvaluationSkillReEvalAssetResultSchema, { assetId: "", caseCount: 0 }, {
+      return parseOrThrow<{ assetId: string; caseCount: number }>(raw, PromptEvaluationSkillReEvalAssetResultSchema, {
         endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/skill-re-eval-asset",
         mayHaveCommitted: true,
       });
@@ -2453,7 +2395,7 @@ export class ApiClient extends ApiTransport {
         body: JSON.stringify(data),
         extraHeaders: { "Idempotency-Key": requestId },
       });
-      return parseOrThrow<PromptEvaluationRun["status"]>(raw, PromptEvaluationSkillReEvalRunStatusSchema, "已入队", {
+      return parseOrThrow<PromptEvaluationRun["status"]>(raw, PromptEvaluationSkillReEvalRunStatusSchema, {
         endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/skill-re-eval-run",
         mayHaveCommitted: true,
       });
@@ -2482,7 +2424,7 @@ export class ApiClient extends ApiTransport {
       method: "POST",
       body: JSON.stringify(data),
     });
-    return parseOrThrow(raw, ProjectResourceSchema, EMPTY_PROJECT_RESOURCE, {
+    return parseOrThrow(raw, ProjectResourceSchema, {
       endpoint: "POST /api/projects/:id/resources",
     });
   }
@@ -2496,7 +2438,7 @@ export class ApiClient extends ApiTransport {
       method: "PUT",
       body: JSON.stringify(data),
     });
-    return parseOrThrow(raw, ProjectResourceSchema, EMPTY_PROJECT_RESOURCE, {
+    return parseOrThrow(raw, ProjectResourceSchema, {
       endpoint: "PUT /api/projects/:id/resources/:resourceId",
     });
   }
@@ -2508,7 +2450,7 @@ export class ApiClient extends ApiTransport {
     const raw = await this.fetch<unknown>(`/api/projects/${projectId}/resources/${resourceId}/sync`, {
       method: "POST",
     });
-    return parseOrThrow(raw, ProjectResourceSchema, EMPTY_PROJECT_RESOURCE, {
+    return parseOrThrow(raw, ProjectResourceSchema, {
       endpoint: "POST /api/projects/:id/resources/:resourceId/sync",
     });
   }
@@ -2538,7 +2480,7 @@ export class ApiClient extends ApiTransport {
 
   async getExternalCredentialProfile(id: string): Promise<ExternalCredentialProfile> {
     const raw = await this.fetch<unknown>(`/api/external-credential-profiles/${id}`);
-    return parseOrThrow(raw, ExternalCredentialProfileSchema, EMPTY_EXTERNAL_CREDENTIAL_PROFILE, {
+    return parseOrThrow(raw, ExternalCredentialProfileSchema, {
       endpoint: "GET /api/external-credential-profiles/:id",
     });
   }
@@ -2553,7 +2495,7 @@ export class ApiClient extends ApiTransport {
         body: JSON.stringify(data),
         extraHeaders: { "Idempotency-Key": idempotencyKey },
       });
-      return parseOrThrow(raw, ExternalCredentialProfileSchema, EMPTY_EXTERNAL_CREDENTIAL_PROFILE, {
+      return parseOrThrow<ExternalCredentialProfile>(raw, ExternalCredentialProfileSchema, {
         endpoint: "POST /api/external-credential-profiles",
         mayHaveCommitted: true,
       });
@@ -2569,7 +2511,7 @@ export class ApiClient extends ApiTransport {
       method: "PUT",
       body: JSON.stringify(data),
     });
-    return parseOrThrow(raw, ExternalCredentialProfileSchema, EMPTY_EXTERNAL_CREDENTIAL_PROFILE, {
+    return parseOrThrow(raw, ExternalCredentialProfileSchema, {
       endpoint: "PUT /api/external-credential-profiles/:id",
     });
   }
@@ -2584,7 +2526,6 @@ export class ApiClient extends ApiTransport {
     return parseOrThrow(
       raw,
       TestExternalCredentialProfileResponseSchema,
-      EMPTY_TEST_EXTERNAL_CREDENTIAL_PROFILE_RESPONSE,
       { endpoint: "POST /api/external-credential-profiles/test" },
     );
   }
@@ -2608,7 +2549,7 @@ export class ApiClient extends ApiTransport {
       method: "POST",
       body: JSON.stringify(data),
     });
-    return parseOrThrow(raw, LabelSchema, EMPTY_LABEL, {
+    return parseOrThrow(raw, LabelSchema, {
       endpoint: "POST /api/labels",
       mayHaveCommitted: true,
     });
@@ -2619,7 +2560,7 @@ export class ApiClient extends ApiTransport {
       method: "PUT",
       body: JSON.stringify(data),
     });
-    return parseOrThrow(raw, LabelSchema, EMPTY_LABEL, {
+    return parseOrThrow(raw, LabelSchema, {
       endpoint: "PUT /api/labels/:id",
       mayHaveCommitted: true,
     });
@@ -2641,7 +2582,7 @@ export class ApiClient extends ApiTransport {
       method: "POST",
       body: JSON.stringify({ label_id: labelId }),
     });
-    return parseOrThrow(raw, IssueLabelListSchema, EMPTY_LABELS, {
+    return parseOrThrow(raw, IssueLabelListSchema, {
       endpoint: "POST /api/issues/:id/labels",
       mayHaveCommitted: true,
     });
@@ -2651,7 +2592,7 @@ export class ApiClient extends ApiTransport {
     const raw = await this.fetch<unknown>(`/api/issues/${issueId}/labels/${labelId}`, {
       method: "DELETE",
     });
-    return parseOrThrow(raw, IssueLabelListSchema, EMPTY_LABELS, {
+    return parseOrThrow(raw, IssueLabelListSchema, {
       endpoint: "DELETE /api/issues/:id/labels/:labelId",
       mayHaveCommitted: true,
     });
@@ -2670,7 +2611,7 @@ export class ApiClient extends ApiTransport {
       method: "POST",
       body: JSON.stringify(data),
     });
-    return parseOrThrow(raw, PinnedItemSchema, EMPTY_PINNED_ITEM, {
+    return parseOrThrow(raw, PinnedItemSchema, {
       endpoint: "POST /api/pins",
       mayHaveCommitted: true,
     });
@@ -2715,7 +2656,7 @@ export class ApiClient extends ApiTransport {
         body: JSON.stringify(data),
         extraHeaders: { "Idempotency-Key": idempotencyKey },
       });
-      return parseOrThrow(raw, SquadSchema, EMPTY_SQUAD, {
+      return parseOrThrow(raw, SquadSchema, {
         endpoint: "POST /api/squads",
         mayHaveCommitted: true,
       }) as Squad;
@@ -2733,14 +2674,13 @@ export class ApiClient extends ApiTransport {
     return parseOrThrow(
       raw,
       InternalSquadTemplateResponseSchema,
-      EMPTY_INTERNAL_SQUAD_TEMPLATE_RESPONSE,
       { endpoint: "POST /api/squads/internal-template", mayHaveCommitted: true },
     );
   }
 
   async updateSquad(id: string, data: UpdateSquadRequest): Promise<Squad> {
     const raw = await this.fetch<unknown>(`/api/squads/${id}`, { method: "PUT", body: JSON.stringify(data) });
-    return parseOrThrow(raw, SquadSchema, EMPTY_SQUAD, {
+    return parseOrThrow(raw, SquadSchema, {
       endpoint: "PUT /api/squads/:id",
     }) as Squad;
   }
@@ -2751,7 +2691,7 @@ export class ApiClient extends ApiTransport {
 
   async restoreSquad(id: string): Promise<Squad> {
     const raw = await this.fetch<unknown>(`/api/squads/${id}/restore`, { method: "POST" });
-    return parseOrThrow(raw, SquadSchema, EMPTY_SQUAD, {
+    return parseOrThrow(raw, SquadSchema, {
       endpoint: "POST /api/squads/:id/restore",
     }) as Squad;
   }
@@ -2768,7 +2708,7 @@ export class ApiClient extends ApiTransport {
       method: "POST",
       body: JSON.stringify(data),
     });
-    return parseOrThrow(raw, SquadMemberSchema, EMPTY_SQUAD_MEMBER, {
+    return parseOrThrow(raw, SquadMemberSchema, {
       endpoint: "POST /api/squads/:id/members",
       mayHaveCommitted: true,
     });
@@ -2783,7 +2723,7 @@ export class ApiClient extends ApiTransport {
       method: "PATCH",
       body: JSON.stringify(data),
     });
-    return parseOrThrow(raw, SquadMemberSchema, EMPTY_SQUAD_MEMBER, {
+    return parseOrThrow(raw, SquadMemberSchema, {
       endpoint: "PATCH /api/squads/:id/members/role",
       mayHaveCommitted: true,
     });
@@ -2833,10 +2773,9 @@ export class ApiClient extends ApiTransport {
         body: JSON.stringify(data),
         extraHeaders: { "Idempotency-Key": idempotencyKey },
       });
-      return parseOrThrow(
+      return parseOrThrow<CreateAutopilotResponse>(
         raw,
         CreateAutopilotResponseSchema,
-        { ...EMPTY_AUTOPILOT, initial_trigger: EMPTY_AUTOPILOT_TRIGGER },
         {
           endpoint: "POST /api/autopilots",
           mayHaveCommitted: true,
@@ -2852,7 +2791,7 @@ export class ApiClient extends ApiTransport {
       method: "PATCH",
       body: JSON.stringify(data),
     });
-    return parseOrThrow(raw, AutopilotSchema, EMPTY_AUTOPILOT, {
+    return parseOrThrow(raw, AutopilotSchema, {
       endpoint: "PATCH /api/autopilots/:id",
       mayHaveCommitted: true,
     });
@@ -2871,7 +2810,7 @@ export class ApiClient extends ApiTransport {
         method: "POST",
         extraHeaders: { "Idempotency-Key": idempotencyKey },
       });
-      return parseOrThrow(raw, AutopilotRunSchema, EMPTY_AUTOPILOT_RUN, {
+      return parseOrThrow<AutopilotRun>(raw, AutopilotRunSchema, {
         endpoint: "POST /api/autopilots/:id/trigger",
         mayHaveCommitted: true,
       });
@@ -2910,7 +2849,7 @@ export class ApiClient extends ApiTransport {
         body: JSON.stringify(data),
         extraHeaders: { "Idempotency-Key": idempotencyKey },
       });
-      return parseOrThrow(raw, AutopilotTriggerSchema, EMPTY_AUTOPILOT_TRIGGER, {
+      return parseOrThrow<AutopilotTrigger>(raw, AutopilotTriggerSchema, {
         endpoint: "POST /api/autopilots/:id/triggers",
         mayHaveCommitted: true,
       });
@@ -2923,7 +2862,7 @@ export class ApiClient extends ApiTransport {
       method: "PATCH",
       body: JSON.stringify(data),
     });
-    return parseOrThrow(raw, AutopilotTriggerSchema, EMPTY_AUTOPILOT_TRIGGER, {
+    return parseOrThrow(raw, AutopilotTriggerSchema, {
       endpoint: "PATCH /api/autopilots/:id/triggers/:triggerId",
       mayHaveCommitted: true,
     });
@@ -2943,7 +2882,7 @@ export class ApiClient extends ApiTransport {
         `/api/autopilots/${autopilotId}/triggers/${triggerId}/rotate-webhook-token`,
         { method: "POST", extraHeaders: { "Idempotency-Key": idempotencyKey } },
       );
-      return parseOrThrow(raw, AutopilotTriggerSchema, EMPTY_AUTOPILOT_TRIGGER, {
+      return parseOrThrow<AutopilotTrigger>(raw, AutopilotTriggerSchema, {
         endpoint: "POST /api/autopilots/:id/triggers/:triggerId/rotate-webhook-token",
         mayHaveCommitted: true,
       });
@@ -3003,10 +2942,9 @@ export class ApiClient extends ApiTransport {
         `/api/autopilots/${autopilotId}/deliveries/${deliveryId}/replay`,
         { method: "POST", extraHeaders: { "Idempotency-Key": idempotencyKey } },
       );
-      return parseOrThrow(
+      return parseOrThrow<WebhookDelivery>(
         raw,
         WebhookDeliveryResponseSchema,
-        EMPTY_WEBHOOK_DELIVERY,
         { endpoint: "POST /api/autopilots/:id/deliveries/:deliveryId/replay", mayHaveCommitted: true },
       );
     };
@@ -3074,7 +3012,7 @@ export class ApiClient extends ApiTransport {
       const raw = await this.fetch<unknown>(`/api/workspaces/${workspaceId}/lark/install/begin?${search.toString()}`, {
         method: "POST",
       });
-      return parseOrThrow(raw, BeginLarkInstallResponseSchema, EMPTY_BEGIN_LARK_INSTALL_RESPONSE, {
+      return parseOrThrow<BeginLarkInstallResponse>(raw, BeginLarkInstallResponseSchema, {
         endpoint: "POST /api/workspaces/:id/lark/install/begin",
         mayHaveCommitted: true,
       });
@@ -3086,7 +3024,7 @@ export class ApiClient extends ApiTransport {
     const raw = await this.fetch<unknown>(
       `/api/workspaces/${workspaceId}/lark/install/${sessionId}/status`,
     );
-    return parseOrThrow(raw, LarkInstallStatusResponseSchema, EMPTY_LARK_INSTALL_STATUS_RESPONSE, {
+    return parseOrThrow(raw, LarkInstallStatusResponseSchema, {
       endpoint: "GET /api/workspaces/:id/lark/install/:sessionId/status",
       mayHaveCommitted: false,
     });
@@ -3108,10 +3046,9 @@ export class ApiClient extends ApiTransport {
         body: JSON.stringify({ token }),
         extraHeaders: { "Idempotency-Key": idempotencyKey },
       });
-      return parseOrThrow(
+      return parseOrThrow<RedeemLarkBindingTokenResponse>(
         raw,
         RedeemLarkBindingTokenResponseSchema,
-        EMPTY_REDEEM_LARK_BINDING_TOKEN_RESPONSE,
         { endpoint: "POST /api/lark/binding/redeem", mayHaveCommitted: true },
       );
     };

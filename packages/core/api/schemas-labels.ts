@@ -16,10 +16,4 @@ export const IssueLabelListSchema = z.object({
   labels: z.array(LabelSchema),
 }).loose().transform(({ labels }) => labels);
 
-export const EMPTY_LABEL: Label = {
-  id: "",
-  name: "",
-  color: "#000000",
-};
-
 export const EMPTY_LABELS: Label[] = [];

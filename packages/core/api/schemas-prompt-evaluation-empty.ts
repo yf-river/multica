@@ -1,7 +1,6 @@
 import type {
   PromptEvaluationRunEvidence,
   PromptEvaluationRun,
-  PromptEvaluationSkillFreshnessResult,
   PromptEvaluationAssetEvidenceArchivePackage,
 } from "../types";
 
@@ -47,9 +46,4 @@ export const EMPTY_PROMPT_EVALUATION_RUN_EVIDENCE: PromptEvaluationRunEvidence =
 
 export const EMPTY_PROMPT_EVALUATION_ASSET_EVIDENCE_ARCHIVE_PACKAGE: PromptEvaluationAssetEvidenceArchivePackage = {
   archived_run_count: 0,
-};
-
-export const EMPTY_PROMPT_EVALUATION_SKILL_FRESHNESS_RESULT: PromptEvaluationSkillFreshnessResult = {
-  status: "stale",
-  patch_check: "not_needed",
 };

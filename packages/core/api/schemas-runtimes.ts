@@ -1,11 +1,4 @@
 import { z } from "zod";
-import type {
-  AgentRuntime,
-  RuntimeLocalSkillImportRequest,
-  RuntimeLocalSkillListRequest,
-  RuntimeModelListRequest,
-  RuntimeProfile,
-} from "../types";
 import { NonEmptyStringSchema } from "./schemas-internal";
 
 export const RuntimeDeviceSchema = z.object({
@@ -26,33 +19,11 @@ export const RuntimeDeviceSchema = z.object({
 
 export const RuntimeDeviceListSchema = z.array(RuntimeDeviceSchema);
 
-export const EMPTY_RUNTIME_DEVICE: AgentRuntime = {
-  id: "",
-  daemon_id: null,
-  name: "",
-  runtime_mode: "local",
-  provider: "",
-  launch_header: "",
-  status: "offline",
-  device_info: "",
-  metadata: {},
-  owner_id: null,
-  scope: "workspace",
-  profile_id: null,
-  last_seen_at: null,
-};
-
 export const RuntimeCascadeDeleteResponseSchema = z.object({
   status: z.literal("ok"),
   agents_archived: z.number().int().nonnegative(),
   tasks_cancelled: z.number().int().nonnegative(),
 });
-
-export const EMPTY_RUNTIME_CASCADE_DELETE_RESPONSE = {
-  status: "ok" as const,
-  agents_archived: 0,
-  tasks_cancelled: 0,
-};
 
 const RuntimeModelThinkingLevelSchema = z.object({
   value: NonEmptyStringSchema,
@@ -152,26 +123,6 @@ export const RuntimeLocalSkillImportRequestSchema = RuntimeAsyncRequestSchema.ex
   }
 });
 
-const failedRuntimeRequest = (error: string) => ({
-  id: "",
-  runtime_id: "",
-  status: "failed" as const,
-  error,
-});
-
-export const EMPTY_RUNTIME_MODEL_LIST_REQUEST: RuntimeModelListRequest = {
-  ...failedRuntimeRequest("invalid runtime model response"),
-  supported: false,
-};
-
-export const EMPTY_RUNTIME_LOCAL_SKILL_LIST_REQUEST: RuntimeLocalSkillListRequest = {
-  ...failedRuntimeRequest("invalid runtime local skill response"),
-  supported: false,
-};
-
-export const EMPTY_RUNTIME_LOCAL_SKILL_IMPORT_REQUEST: RuntimeLocalSkillImportRequest =
-  failedRuntimeRequest("invalid runtime local skill import response");
-
 export const RuntimeProfileSchema = z.object({
   id: z.string(),
   display_name: z.string(),
@@ -187,14 +138,3 @@ export const RuntimeProfileSchema = z.object({
 export const RuntimeProfileListResponseSchema = z.object({
   runtime_profiles: z.array(RuntimeProfileSchema).default([]),
 }).loose().transform(({ runtime_profiles }) => runtime_profiles);
-
-export const EMPTY_RUNTIME_PROFILE: RuntimeProfile = {
-  id: "",
-  display_name: "",
-  protocol_family: "claude",
-  command_name: "",
-  description: null,
-  fixed_args: [],
-  enabled: false,
-  updated_at: "",
-};

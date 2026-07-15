@@ -1,9 +1,6 @@
 import { z } from "zod";
 import type {
-  BeginLarkInstallResponse,
-  LarkInstallStatusResponse,
   ListLarkInstallationsResponse,
-  RedeemLarkBindingTokenResponse,
 } from "../types";
 import { NonEmptyStringSchema } from "./schemas-internal";
 
@@ -52,21 +49,4 @@ export const EMPTY_LARK_INSTALLATION_LIST_RESPONSE: ListLarkInstallationsRespons
   installations: [],
   configured: false,
   install_supported: false,
-};
-
-export const EMPTY_BEGIN_LARK_INSTALL_RESPONSE: BeginLarkInstallResponse = {
-  session_id: "",
-  qr_code_url: "",
-  expires_in_seconds: 0,
-  poll_interval_seconds: 0,
-};
-
-export const EMPTY_LARK_INSTALL_STATUS_RESPONSE: LarkInstallStatusResponse = {
-  status: "error",
-  error_reason: "invalid_response",
-};
-
-export const EMPTY_REDEEM_LARK_BINDING_TOKEN_RESPONSE: RedeemLarkBindingTokenResponse = {
-  workspace_id: "",
-  installation_id: "",
 };

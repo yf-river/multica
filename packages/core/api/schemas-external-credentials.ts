@@ -1,8 +1,4 @@
 import { z } from "zod";
-import type {
-  ExternalCredentialProfile,
-  TestExternalCredentialProfileResponse,
-} from "../types";
 import { NonEmptyStringSchema } from "./schemas-internal";
 
 const ExternalCredentialSecretBindingSchema = z.object({
@@ -38,15 +34,3 @@ export const TestExternalCredentialProfileResponseSchema = z.object({
   status,
   ...(last_error === undefined ? {} : { last_error }),
 }));
-
-export const EMPTY_EXTERNAL_CREDENTIAL_PROFILE: ExternalCredentialProfile = {
-  id: "",
-  provider: "",
-  name: "",
-  secret_binding: { configured: false, mode: "missing" },
-  status: "unverified",
-};
-
-export const EMPTY_TEST_EXTERNAL_CREDENTIAL_PROFILE_RESPONSE: TestExternalCredentialProfileResponse = {
-  status: "unverified",
-};

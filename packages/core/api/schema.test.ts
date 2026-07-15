@@ -351,7 +351,6 @@ describe("parseOrThrow", () => {
     expect(() => parseOrThrow(
       { id: 42, token: secret },
       z.object({ id: z.string() }),
-      { id: "" },
       { endpoint: "POST /api/items" },
     )).toThrow(ApiResponseValidationError);
 
@@ -359,7 +358,6 @@ describe("parseOrThrow", () => {
       parseOrThrow(
         { id: 42 },
         z.object({ id: z.string() }),
-        { id: "" },
         { endpoint: "POST /api/items" },
       );
     } catch (error) {
@@ -377,7 +375,6 @@ describe("parseOrThrow", () => {
     expect(parseOrThrow(
       { id: "item-1", ignored: true },
       z.object({ id: z.string() }),
-      { id: "" },
       { endpoint: "POST /api/items" },
     )).toEqual({ id: "item-1" });
   });
@@ -386,7 +383,6 @@ describe("parseOrThrow", () => {
     expect(() => parseOrThrow(
       { token: "" },
       z.object({ token: z.string().min(1) }),
-      { token: "" },
       { endpoint: "POST /api/token" },
     )).toThrow(ApiResponseValidationError);
   });

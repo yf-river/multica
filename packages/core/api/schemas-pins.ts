@@ -10,8 +10,3 @@ export const PinnedItemSchema = z.object({
 
 export const PinnedItemListSchema = z.array(PinnedItemSchema);
 export const EMPTY_PINNED_ITEM_LIST: PinnedItem[] = [];
-export const EMPTY_PINNED_ITEM: PinnedItem = {
-  id: "",
-  item_type: "issue",
-  item_id: "",
-};

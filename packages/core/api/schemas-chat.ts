@@ -2,9 +2,7 @@ import { z } from "zod";
 import type {
   ChatMessagesPage,
   ChatPendingTask,
-  ChatSession,
   PendingChatTasksResponse,
-  SendChatMessageResponse,
 } from "../types";
 import { EmbeddedAttachmentSchema, NonEmptyStringSchema } from "./schemas-internal";
 
@@ -51,14 +49,9 @@ export const PendingChatTasksResponseSchema = z.object({
   tasks: z.array(PendingChatTaskItemSchema).default([]),
 }).loose();
 
-export const EMPTY_CHAT_SESSION: ChatSession = {
-  id: "", agent_id: "", title: "", has_unread: false, updated_at: "",
-};
 export const EMPTY_CHAT_MESSAGES_PAGE: ChatMessagesPage = {
   messages: [], has_more: false, next_cursor: null,
 };
-export const EMPTY_SEND_CHAT_MESSAGE_RESPONSE: SendChatMessageResponse = {
-  message_id: "", task_id: "", created_at: "", attachment_ids: [],
-};
+
 export const EMPTY_CHAT_PENDING_TASK: ChatPendingTask = {};
 export const EMPTY_PENDING_CHAT_TASKS_RESPONSE: PendingChatTasksResponse = { tasks: [] };

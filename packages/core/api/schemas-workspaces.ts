@@ -1,10 +1,6 @@
 import { z } from "zod";
 import {
   DEFAULT_WORKSPACE_SETTINGS,
-  type MemberWithUser,
-  type Workspace,
-  type WorkspaceRepo,
-  type WorkspaceRepoProbeResponse,
   type WorkspaceSettings,
 } from "../types";
 
@@ -59,33 +55,3 @@ export const MemberWithUserSchema = z.object({
 }).loose();
 
 export const MemberWithUserListSchema = z.array(MemberWithUserSchema);
-
-export const EMPTY_WORKSPACE: Workspace = {
-  id: "",
-  name: "",
-  slug: "",
-  description: null,
-  context: null,
-  settings: { ...DEFAULT_WORKSPACE_SETTINGS },
-  repos: [],
-  issue_prefix: "",
-  avatar_url: null,
-};
-
-export const EMPTY_WORKSPACE_REPO: WorkspaceRepo = { url: "" };
-
-export const EMPTY_WORKSPACE_REPO_PROBE_RESPONSE: WorkspaceRepoProbeResponse = {
-  url: "",
-  project_path: "",
-  default_branch: "",
-  branches: [],
-};
-
-export const EMPTY_MEMBER_WITH_USER: MemberWithUser = {
-  id: "",
-  user_id: "",
-  role: "member",
-  name: "",
-  account: "",
-  avatar_url: null,
-};

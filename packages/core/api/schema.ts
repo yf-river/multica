@@ -107,16 +107,10 @@ export function parseWithFallback<T>(
   return fallback;
 }
 
-/**
- * Validate a successful mutation response without manufacturing success.
- * `typeWitness` anchors the caller's current TypeScript contract but is never
- * returned. Schemas remain forward-compatible; only genuinely malformed
- * required fields reach this error path.
- */
+/** Validate a successful mutation response without manufacturing success. */
 export function parseOrThrow<T>(
   data: unknown,
   schema: ZodType,
-  _typeWitness: T,
   opts: ParseOptions & { mayHaveCommitted?: boolean },
 ): T {
   const result = schema.safeParse(data);

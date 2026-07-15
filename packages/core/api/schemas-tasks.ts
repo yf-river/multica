@@ -2,7 +2,6 @@ import { z } from "zod";
 import type {
   AgentActivityBucket,
   AgentRunCount,
-  AgentTask,
   IssueExecutionTreeResponse,
   IssueTaskTraceResponse,
   TaskMessagePayload,
@@ -42,20 +41,6 @@ export const AgentTaskSchema = z.object({
 }).loose();
 
 export const AgentTaskListSchema = z.array(AgentTaskSchema);
-
-export const EMPTY_AGENT_TASK: AgentTask = {
-  id: "",
-  agent_id: "",
-  runtime_id: "",
-  issue_id: "",
-  status: "cancelled",
-  dispatched_at: null,
-  started_at: null,
-  completed_at: null,
-  result: null,
-  error: null,
-  created_at: "",
-};
 
 const CancelledChatMessageSchema = z.object({
   chat_session_id: NonEmptyStringSchema,

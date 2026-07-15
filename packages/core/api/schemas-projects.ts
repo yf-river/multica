@@ -18,14 +18,6 @@ export const ProjectResourceListSchema = z.object({
   resources: z.array(ProjectResourceSchema).default([]),
 }).loose().transform(({ resources }) => resources);
 
-export const EMPTY_PROJECT_RESOURCE: ProjectResource = {
-  id: "",
-  project_id: "",
-  resource_type: "",
-  resource_ref: {},
-  label: null,
-};
-
 export const EMPTY_PROJECT_RESOURCES: ProjectResource[] = [];
 
 export const ProjectSchema = z.object({

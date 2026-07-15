@@ -1,8 +1,6 @@
 import { z } from "zod";
 import type {
   Agent,
-  AgentEnvResponse,
-  InternalSquadTemplateResponse,
   ObservabilitySummary,
   Squad,
   SquadMember,
@@ -67,8 +65,6 @@ export const EMPTY_AGENT: Agent = {
   created_at: "", updated_at: "", archived_at: null,
 };
 
-export const EMPTY_AGENT_ENV_RESPONSE: AgentEnvResponse = { agent_id: "", custom_env: {} };
-
 // Squad list responses carry lightweight membership previews used by hover
 // cards.
 const SquadMemberPreviewSchema = z.object({
@@ -119,20 +115,10 @@ export const SquadMemberSchema = z.object({
 
 export const SquadMemberListSchema = z.array(SquadMemberSchema);
 export const EMPTY_SQUAD_MEMBERS: SquadMember[] = [];
-export const EMPTY_SQUAD_MEMBER: SquadMember = {
-  id: "",
-  member_type: "agent",
-  member_id: "",
-  role: "",
-};
 
 export const InternalSquadTemplateResponseSchema = z.object({
   squad: SquadSchema.pick({ id: true, name: true }),
 }).loose();
-
-export const EMPTY_INTERNAL_SQUAD_TEMPLATE_RESPONSE: InternalSquadTemplateResponse = {
-  squad: { id: "", name: "" },
-};
 
 const SquadSOPRunSchema = z.object({
   current_step_key: z.string().default(""),

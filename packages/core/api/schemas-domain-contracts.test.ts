@@ -5,8 +5,6 @@ import {
   AgentEnvResponseSchema,
   AgentSchema,
   EMPTY_AGENT,
-  EMPTY_INTERNAL_SQUAD_TEMPLATE_RESPONSE,
-  InternalSquadTemplateResponseSchema,
 } from "./schemas-agents";
 import { EMPTY_USER, UserSchema } from "./schemas-auth";
 import {
@@ -64,8 +62,8 @@ import {
   RuntimeProfileListResponseSchema,
 } from "./schemas-runtimes";
 import { RuntimeUsageListSchema } from "./schemas-usage";
-import { EMPTY_WORKSPACE, WorkspaceSchema } from "./schemas-workspaces";
-import { EMPTY_INBOX_ITEM, InboxItemSchema } from "./schemas-inbox";
+import { WorkspaceListSchema, WorkspaceSchema } from "./schemas-workspaces";
+import { InboxListSchema } from "./schemas-inbox";
 import { EMPTY_CHAT_MESSAGES_PAGE, ChatMessagesPageSchema } from "./schemas-chat";
 import {
   ExternalCredentialProfileSchema,
@@ -356,12 +354,13 @@ describe("domain response schema fallbacks", () => {
   });
 
   it("rejects a malformed workspace identity", () => {
+    const fallback: never[] = [];
     expect(parseWithFallback(
-      { id: 42, name: "broken" },
-      WorkspaceSchema,
-      EMPTY_WORKSPACE,
-      { endpoint: "GET /api/workspaces/:id" },
-    )).toBe(EMPTY_WORKSPACE);
+      [{ id: 42, name: "broken" }],
+      WorkspaceListSchema,
+      fallback,
+      { endpoint: "GET /api/workspaces" },
+    )).toBe(fallback);
   });
 
   it("normalizes GitHub settings drift at the workspace response boundary", () => {
@@ -380,12 +379,13 @@ describe("domain response schema fallbacks", () => {
   });
 
   it("rejects a malformed inbox identity", () => {
+    const fallback: never[] = [];
     expect(parseWithFallback(
-      { id: 42 },
-      InboxItemSchema,
-      EMPTY_INBOX_ITEM,
+      [{ id: 42 }],
+      InboxListSchema,
+      fallback,
       { endpoint: "GET /api/inbox" },
-    )).toBe(EMPTY_INBOX_ITEM);
+    )).toBe(fallback);
   });
 
   it("rejects a malformed current chat page", () => {
@@ -428,7 +428,7 @@ describe("domain response schema fallbacks", () => {
     )).toBe(EMPTY_SKILL);
   });
 
-  it("rejects malformed Label, Pin and internal Squad identities", () => {
+  it("rejects malformed Label and Pin identities", () => {
     expect(parseWithFallback(
       { labels: [{ id: "label-1", color: "red" }], total: 1 },
       LabelListSchema,
@@ -441,12 +441,6 @@ describe("domain response schema fallbacks", () => {
       EMPTY_PINNED_ITEM_LIST,
       { endpoint: "GET /api/pins" },
     )).toBe(EMPTY_PINNED_ITEM_LIST);
-    expect(parseWithFallback(
-      { squad: { id: 42 }, agents: [] },
-      InternalSquadTemplateResponseSchema,
-      EMPTY_INTERNAL_SQUAD_TEMPLATE_RESPONSE,
-      { endpoint: "POST /api/squads/internal-template" },
-    )).toBe(EMPTY_INTERNAL_SQUAD_TEMPLATE_RESPONSE);
   });
 
   it("accepts the current task execution response and preserves additive fields", () => {

@@ -2,7 +2,6 @@ import { z } from "zod";
 import type {
   Autopilot,
   AutopilotRun,
-  AutopilotTrigger,
   GetAutopilotResponse,
   WebhookDelivery,
 } from "../types";
@@ -109,22 +108,6 @@ export const AutopilotListSchema = z.object({
 
 export const EMPTY_AUTOPILOTS: Autopilot[] = [];
 
-export const EMPTY_AUTOPILOT: Autopilot = {
-  id: "",
-  title: "",
-  description: null,
-  project_id: null,
-  assignee_type: "agent",
-  assignee_id: "",
-  status: "paused",
-  execution_mode: "run_only",
-  created_by_type: "member",
-  created_by_id: "",
-  last_run_at: null,
-  created_at: "",
-  subscribers: [],
-};
-
 const WebhookEventFilterSchema = z.object({
   event: z.string(),
   actions: z.array(z.string()).optional(),
@@ -162,20 +145,6 @@ export const CreateAutopilotResponseSchema = AutopilotSchema.extend({
   initial_trigger: AutopilotTriggerSchema,
 });
 
-export const EMPTY_AUTOPILOT_TRIGGER: AutopilotTrigger = {
-  id: "",
-  kind: "schedule",
-  enabled: false,
-  cron_expression: null,
-  timezone: null,
-  next_run_at: null,
-  webhook_token: null,
-  webhook_path: null,
-  webhook_url: null,
-  label: null,
-  event_filters: null,
-};
-
 export const AutopilotRunSchema = z.object({
   id: NonEmptyStringSchema,
   autopilot_id: NonEmptyStringSchema,
@@ -210,7 +179,21 @@ export const GetAutopilotResponseSchema = z.object({
 }).loose();
 
 export const EMPTY_GET_AUTOPILOT_RESPONSE: GetAutopilotResponse = {
-  autopilot: EMPTY_AUTOPILOT,
+  autopilot: {
+    id: "",
+    title: "",
+    description: null,
+    project_id: null,
+    assignee_type: "agent",
+    assignee_id: "",
+    status: "paused",
+    execution_mode: "run_only",
+    created_by_type: "member",
+    created_by_id: "",
+    last_run_at: null,
+    created_at: "",
+    subscribers: [],
+  },
   triggers: [],
 };
 

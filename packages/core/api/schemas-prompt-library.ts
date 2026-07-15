@@ -3,9 +3,6 @@ import type {
   AgentPlaygroundDetail,
   AgentPlaygroundExperiment,
   ListAgentPlaygroundExperimentsResponse,
-  PromptLibraryItem,
-  PromptLibraryTrial,
-  PromptLibraryVersion,
 } from "../types";
 import { NonEmptyStringSchema } from "./schemas-internal";
 // Runtime response contracts for prompt library.
@@ -53,34 +50,6 @@ export const PromptLibraryTrialSchema = z.object({
 export const PromptLibraryTrialListResponseSchema = z.object({
   items: z.array(PromptLibraryTrialSchema).default([]),
 }).loose().transform(({ items }) => items);
-
-export const EMPTY_PROMPT_LIBRARY_ITEM: PromptLibraryItem = {
-  id: "",
-  name: "",
-  description: "",
-  content: "",
-  version: 1,
-};
-
-export const EMPTY_PROMPT_LIBRARY_VERSION: PromptLibraryVersion = {
-  id: "",
-  version: 1,
-  name: "",
-  description: "",
-  content: "",
-  source_candidate_id: null,
-  change_note: "",
-  created_at: "",
-};
-
-export const EMPTY_PROMPT_LIBRARY_TRIAL: PromptLibraryTrial = {
-  id: "",
-  agent_id: "",
-  variables: {},
-  status: "queued",
-  output_preview: "",
-  created_at: "",
-};
 
 const AgentPlaygroundExperimentSchema = z.object({
   id: z.string(),

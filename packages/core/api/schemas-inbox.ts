@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { InboxItem, NotificationPreferences } from "../types";
+import type { NotificationPreferences } from "../types";
 import { NonEmptyStringSchema } from "./schemas-internal";
 
 export const InboxItemSchema = z.object({
@@ -29,12 +29,5 @@ export const InboxCountResponseSchema = z.object({
 export const NotificationPreferenceResponseSchema = z.object({
   preferences: z.record(z.string(), z.string()).default({}),
 }).loose();
-
-export const EMPTY_INBOX_ITEM: InboxItem = {
-  id: "", workspace_id: "", recipient_type: "member", recipient_id: "",
-  actor_type: null, actor_id: null, type: "issue_subscribed",
-  issue_id: null, title: "", body: null, issue_status: null, read: false,
-  archived: false, created_at: "", details: null,
-};
 
 export const EMPTY_NOTIFICATION_PREFERENCES: NotificationPreferences = {};

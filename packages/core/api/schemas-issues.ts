@@ -2,16 +2,11 @@ import { z } from "zod";
 import type {
   Attachment,
   AssigneeFrequencyEntry,
-  BatchDeleteIssuesResponse,
-  BatchUpdateIssuesResponse,
   ChildIssueProgressResponse,
-  Comment,
   GroupedIssuesResponse,
   Issue,
-  IssueReaction,
   ListIssueBucketsResponse,
   ListIssuesResponse,
-  Reaction,
   SearchIssueResult,
   TimelineEntry,
 } from "../types";
@@ -131,37 +126,6 @@ export const CommentSchema = z.object({
   source_task_id: z.string().nullable().optional(),
 }).loose();
 
-export const EMPTY_COMMENT: Comment = {
-  id: "",
-  issue_id: "",
-  author_type: "member",
-  author_id: "",
-  content: "",
-  type: "comment",
-  parent_id: null,
-  reactions: [],
-  attachments: [],
-  created_at: "",
-  resolved_at: null,
-  resolved_by_type: null,
-  resolved_by_id: null,
-};
-
-export const EMPTY_REACTION: Reaction = {
-  id: "",
-  comment_id: "",
-  actor_type: "",
-  actor_id: "",
-  emoji: "",
-};
-
-export const EMPTY_ISSUE_REACTION: IssueReaction = {
-  id: "",
-  actor_type: "",
-  actor_id: "",
-  emoji: "",
-};
-
 const CommentTriggerPreviewAgentSchema = z.object({
   id: z.string(),
   name: z.string().default(""),
@@ -271,8 +235,6 @@ export const BatchDeleteIssuesResponseSchema = z.object({
     issue_id: z.string(),
   }).loose()).optional(),
 }).loose();
-export const EMPTY_BATCH_UPDATE_ISSUES_RESPONSE: BatchUpdateIssuesResponse = { updated: 0 };
-export const EMPTY_BATCH_DELETE_ISSUES_RESPONSE: BatchDeleteIssuesResponse = { deleted: 0 };
 
 export const AssigneeFrequencyListSchema = z.array(z.object({
   assignee_type: z.string(),
