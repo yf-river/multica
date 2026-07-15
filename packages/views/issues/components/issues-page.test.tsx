@@ -197,16 +197,6 @@ vi.mock("@multica/core/issues/stores/issues-scope-store", () => ({
   ),
 }));
 
-vi.mock("@multica/core/issues/stores/selection-store", () => ({
-  useIssueSelectionStore: Object.assign(
-    (selector?: any) => {
-      const state = { selectedIds: new Set(), toggle: vi.fn(), clear: vi.fn(), setAll: vi.fn() };
-      return selector ? selector(state) : state;
-    },
-    { getState: () => ({ selectedIds: new Set(), toggle: vi.fn(), clear: vi.fn(), setAll: vi.fn() }) },
-  ),
-}));
-
 vi.mock("@multica/core/modals", () => ({
   useModalStore: Object.assign(
     () => ({ open: vi.fn() }),
