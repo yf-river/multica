@@ -7,4 +7,4 @@ export type {
   LocaleResources,
   SupportedLocale,
 } from "./types";
-export { DEFAULT_LOCALE, SUPPORTED_LOCALES } from "./types";
+export { DEFAULT_LOCALE } from "./types";
