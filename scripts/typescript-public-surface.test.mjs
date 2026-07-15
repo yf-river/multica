@@ -99,7 +99,8 @@ test("Core type and schema exports have a cross-file consumer", () => {
 
   const consumed = new Set();
   const visit = (file, node) => {
-    if (ts.isIdentifier(node)) {
+    const isReExport = node.parent && ts.isExportSpecifier(node.parent);
+    if (ts.isIdentifier(node) && !isReExport) {
       const sourceFile = candidates.get(node.text);
       if (sourceFile && sourceFile !== file) consumed.add(node.text);
     }
