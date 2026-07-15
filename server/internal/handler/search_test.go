@@ -12,7 +12,7 @@ import (
 	"github.com/google/uuid"
 )
 
-func TestParseSearchQueryOptions(t *testing.T) {
+func TestParseSearchRequestOptions(t *testing.T) {
 	tests := []struct {
 		name              string
 		query             string
@@ -28,13 +28,17 @@ func TestParseSearchQueryOptions(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			values, err := url.ParseQuery(tt.query)
-			if err != nil {
-				t.Fatalf("ParseQuery() error = %v", err)
+			requestURL := "/api/search?workspace_id=" + testWorkspaceID + "&q=current"
+			if tt.query != "" {
+				requestURL += "&" + tt.query
 			}
-			got := parseSearchQueryOptions(values)
+			w := httptest.NewRecorder()
+			_, _, got, ok := (&Handler{}).parseSearchRequest(w, newRequest(http.MethodGet, requestURL, nil))
+			if !ok {
+				t.Fatalf("parseSearchRequest() status = %d, body = %s", w.Code, w.Body.String())
+			}
 			if got.limit != tt.wantLimit || got.offset != tt.wantOffset || got.includeClosed != tt.wantIncludeClosed {
-				t.Fatalf("parseSearchQueryOptions() = %+v, want limit=%d offset=%d includeClosed=%t", got, tt.wantLimit, tt.wantOffset, tt.wantIncludeClosed)
+				t.Fatalf("parseSearchRequest() options = %+v, want limit=%d offset=%d includeClosed=%t", got, tt.wantLimit, tt.wantOffset, tt.wantIncludeClosed)
 			}
 		})
 	}

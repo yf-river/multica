@@ -747,30 +747,20 @@ func buildProjectSearchQuery(phrase string, terms []string, includeClosed bool) 
 
 func (h *Handler) SearchProjects(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	workspaceID := h.resolveWorkspaceID(r)
-
-	q := r.URL.Query().Get("q")
-	if q == "" {
-		writeError(w, http.StatusBadRequest, "q parameter is required")
-		return
-	}
-
-	options := parseSearchQueryOptions(r.URL.Query())
-
-	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	query, workspaceUUID, options, ok := h.parseSearchRequest(w, r)
 	if !ok {
 		return
 	}
-	terms := splitSearchTerms(q)
+	terms := splitSearchTerms(query)
 
-	sqlQuery, args := buildProjectSearchQuery(q, terms, options.includeClosed)
-	args[1] = wsUUID
+	sqlQuery, args := buildProjectSearchQuery(query, terms, options.includeClosed)
+	args[1] = workspaceUUID
 	args[len(args)-2] = options.limit
 	args[len(args)-1] = options.offset
 
 	rows, err := h.DB.Query(ctx, sqlQuery, args...)
 	if err != nil {
-		slog.Warn("search projects failed", "error", err, "workspace_id", workspaceID, "query", q)
+		slog.Warn("search projects failed", "error", err, "workspace_id", uuidToString(workspaceUUID), "query", query)
 		writeError(w, http.StatusInternalServerError, "failed to search projects")
 		return
 	}
@@ -857,7 +847,7 @@ func (h *Handler) SearchProjects(w http.ResponseWriter, r *http.Request) {
 				desc = row.project.Description.String
 			}
 			if desc != "" {
-				snippet := extractSnippet(desc, q)
+				snippet := extractSnippet(desc, query)
 				spr.MatchedSnippet = &snippet
 			}
 		}

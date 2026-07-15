@@ -1,8 +1,10 @@
 package handler
 
 import (
-	"net/url"
+	"net/http"
 	"strconv"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type searchQueryOptions struct {
@@ -11,7 +13,18 @@ type searchQueryOptions struct {
 	includeClosed bool
 }
 
-func parseSearchQueryOptions(values url.Values) searchQueryOptions {
+func (h *Handler) parseSearchRequest(w http.ResponseWriter, r *http.Request) (string, pgtype.UUID, searchQueryOptions, bool) {
+	query := r.URL.Query().Get("q")
+	if query == "" {
+		writeError(w, http.StatusBadRequest, "q parameter is required")
+		return "", pgtype.UUID{}, searchQueryOptions{}, false
+	}
+	workspaceID := h.resolveWorkspaceID(r)
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return "", pgtype.UUID{}, searchQueryOptions{}, false
+	}
+	values := r.URL.Query()
 	options := searchQueryOptions{
 		limit:         20,
 		includeClosed: values.Get("include_closed") == "true",
@@ -26,5 +39,5 @@ func parseSearchQueryOptions(values url.Values) searchQueryOptions {
 			options.offset = parsed
 		}
 	}
-	return options
+	return query, workspaceUUID, options, true
 }

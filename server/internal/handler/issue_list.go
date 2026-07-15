@@ -27,32 +27,22 @@ func parseIssueListPagination(values url.Values, defaultLimit int) (limit, offse
 
 func (h *Handler) SearchIssues(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	workspaceID := h.resolveWorkspaceID(r)
-
-	q := r.URL.Query().Get("q")
-	if q == "" {
-		writeError(w, http.StatusBadRequest, "q parameter is required")
-		return
-	}
-
-	options := parseSearchQueryOptions(r.URL.Query())
-
-	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	query, workspaceUUID, options, ok := h.parseSearchRequest(w, r)
 	if !ok {
 		return
 	}
-	terms := splitSearchTerms(q)
-	queryNum, hasNum := parseQueryNumber(q)
+	terms := splitSearchTerms(query)
+	queryNum, hasNum := parseQueryNumber(query)
 
-	sqlQuery, args := buildSearchQuery(q, terms, queryNum, hasNum, options.includeClosed)
+	sqlQuery, args := buildSearchQuery(query, terms, queryNum, hasNum, options.includeClosed)
 	// Fill placeholder args: $4 = workspace_id, last two = limit, offset
-	args[3] = wsUUID
+	args[3] = workspaceUUID
 	args[len(args)-2] = options.limit
 	args[len(args)-1] = options.offset
 
 	rows, err := h.DB.Query(ctx, sqlQuery, args...)
 	if err != nil {
-		slog.Warn("search issues failed", "error", err, "workspace_id", workspaceID, "query", q)
+		slog.Warn("search issues failed", "error", err, "workspace_id", uuidToString(workspaceUUID), "query", query)
 		writeError(w, http.StatusInternalServerError, "failed to search issues")
 		return
 	}
@@ -102,7 +92,7 @@ func (h *Handler) SearchIssues(w http.ResponseWriter, r *http.Request) {
 		total = results[0].totalCount
 	}
 
-	prefix := h.getIssuePrefix(ctx, wsUUID)
+	prefix := h.getIssuePrefix(ctx, workspaceUUID)
 	resp := make([]SearchIssueResponse, len(results))
 	for i, sr := range results {
 		sir := SearchIssueResponse{
@@ -111,13 +101,13 @@ func (h *Handler) SearchIssues(w http.ResponseWriter, r *http.Request) {
 		}
 		// Always populate comment snippet when a matching comment exists
 		if sr.matchedCommentContent != "" {
-			snippet := extractSnippet(sr.matchedCommentContent, q)
+			snippet := extractSnippet(sr.matchedCommentContent, query)
 			sir.MatchedCommentSnippet = &snippet
 		}
 		// Populate description snippet when description matches
-		if sr.matchSource == "description" || descriptionContains(sr.issue.Description, q, terms) {
+		if sr.matchSource == "description" || descriptionContains(sr.issue.Description, query, terms) {
 			if sr.issue.Description.Valid && sr.issue.Description.String != "" {
-				snippet := extractSnippet(sr.issue.Description.String, q)
+				snippet := extractSnippet(sr.issue.Description.String, query)
 				sir.MatchedDescriptionSnippet = &snippet
 			}
 		}
