@@ -2,8 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, waitFor } from "@testing-library/react";
 import type { ReactElement } from "react";
 import { readFileSync } from "node:fs";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderWithI18n } from "../test/i18n";
+import { withTestQueryClient } from "../test/query";
 
 const { getAttachmentTextContentMock } = vi.hoisted(() => ({
   getAttachmentTextContentMock: vi.fn(),
@@ -455,12 +455,7 @@ describe("ReadonlyContent file-card → AttachmentBlock HTML routing", () => {
   // dispatcher branch and surface the bare file-card chrome (filename row)
   // instead of the rendered iframe — the exact regression MUL-2330 fixed.
   function renderWithQuery(ui: ReactElement) {
-    const qc = new QueryClient({
-      defaultOptions: { queries: { retry: false, gcTime: 0 } },
-    });
-    return renderWithI18n(
-      <QueryClientProvider client={qc}>{ui}</QueryClientProvider>,
-    );
+    return renderWithI18n(withTestQueryClient(ui));
   }
 
   it("renders the !file[](url) HTML attachment as an iframe (no file-card chrome)", async () => {

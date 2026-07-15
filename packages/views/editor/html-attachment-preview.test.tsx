@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactElement } from "react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { withTestQueryClient } from "../test/query";
 
 const { getAttachmentTextContentMock } = vi.hoisted(() => ({
   getAttachmentTextContentMock: vi.fn(),
@@ -64,10 +64,7 @@ vi.mock("@multica/core/paths", async (importOriginal) => {
 import { HtmlAttachmentPreview } from "./html-attachment-preview";
 
 function renderWithQuery(ui: ReactElement) {
-  const qc = new QueryClient({
-    defaultOptions: { queries: { retry: false, gcTime: 0 } },
-  });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
+  return render(withTestQueryClient(ui));
 }
 
 function renderHtmlPreview({

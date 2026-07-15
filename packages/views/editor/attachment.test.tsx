@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import type { ReactElement, ReactNode } from "react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Attachment as AttachmentRecord } from "@multica/core/types";
+import { withTestQueryClient } from "../test/query";
 
 const {
   getAttachmentTextContentMock,
@@ -135,10 +135,7 @@ function makeRecord(overrides: Partial<AttachmentRecord> = {}): AttachmentRecord
 }
 
 function renderWithQuery(ui: ReactElement) {
-  const qc = new QueryClient({
-    defaultOptions: { queries: { retry: false, gcTime: 0 } },
-  });
-  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
+  return render(withTestQueryClient(ui));
 }
 
 function renderInlineImageURL(url: string) {
