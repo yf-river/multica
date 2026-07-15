@@ -108,10 +108,10 @@ import { useNavigation, useRowLink } from "../../navigation";
 import { PageHeader } from "../../layout/page-header";
 import { useT } from "../../i18n";
 import { createColumnTrackVars } from "../../common/list-grid-columns";
-import { preferredPMModel } from "./pm-model-default";
 import {
   bestRuntimeForPMProvider,
   pmProviderChoices,
+  preferredPMModel,
 } from "./pm-runtime-selection";
 
 // Column template — the simplest member of the ListGrid family (squads are

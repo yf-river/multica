@@ -1,8 +1,9 @@
-import type { AgentRuntime, SquadScope } from "@multica/core/types";
+import type { AgentRuntime, RuntimeModel, SquadScope } from "@multica/core/types";
 
 const DEFAULT_PM_PROVIDER = "codebuddy";
+const PREFERRED_DEEPSEEK_MODEL_IDS = ["deepseek-v4-pro-ioa", "deepseek-v4-pro"];
 
-export function isRuntimeCompatibleWithPMScope(
+function isRuntimeCompatibleWithPMScope(
   runtime: AgentRuntime,
   targetScope: SquadScope,
   currentUserId: string | null,
@@ -15,6 +16,29 @@ export function isRuntimeCompatibleWithPMScope(
     !!currentUserId &&
     runtime.owner_id === currentUserId
   );
+}
+
+export function preferredPMModel(models: RuntimeModel[]) {
+  const exactPreferred = PREFERRED_DEEPSEEK_MODEL_IDS
+    .map((id) => models.find((model) => model.id.toLowerCase() === id))
+    .find(Boolean);
+  const namedV4Pro =
+    exactPreferred ??
+    models.find((model) => {
+      const haystack = `${model.id} ${model.label}`.toLowerCase();
+      return (
+        haystack.includes("deepseek") &&
+        haystack.includes("v4") &&
+        haystack.includes("pro")
+      );
+    });
+  const deepseek =
+    namedV4Pro ??
+    models.find((model) => model.provider?.toLowerCase() === "deepseek") ??
+    models.find((model) =>
+      `${model.id} ${model.label}`.toLowerCase().includes("deepseek"),
+    );
+  return (deepseek ?? models[0])?.id ?? "";
 }
 
 function providerSortRank(provider: string) {
