@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/rand"
@@ -992,6 +993,29 @@ func (mr gongfengMergeRequestResponse) URL() string {
 	return firstNonEmpty(mr.WebURL, mr.HTMLURL)
 }
 
+func gongfengJSONRequest(ctx context.Context, method, endpoint, token string, body []byte) (int, []byte, error) {
+	var reader io.Reader
+	if body != nil {
+		reader = bytes.NewReader(body)
+	}
+	req, err := http.NewRequestWithContext(ctx, method, endpoint, reader)
+	if err != nil {
+		return 0, nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	req.Header.Set("PRIVATE-TOKEN", token)
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	payload, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	return resp.StatusCode, payload, nil
+}
+
 func createGongfengMergeRequestForProject(ctx context.Context, token, projectID string, req createMergeRequestRequest) (gongfengMergeRequestResponse, error) {
 	endpoint := strings.TrimRight(gongfengAPIBase(), "/") + "/projects/" + url.PathEscape(projectID) + "/merge_requests"
 	payload := map[string]any{
@@ -1012,22 +1036,12 @@ func createGongfengMergeRequestForProject(ctx context.Context, token, projectID 
 	if err != nil {
 		return gongfengMergeRequestResponse{}, fmt.Errorf("marshal gongfeng merge request: %w", err)
 	}
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, strings.NewReader(string(body)))
-	if err != nil {
-		return gongfengMergeRequestResponse{}, fmt.Errorf("build gongfeng merge request request: %w", err)
-	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Accept", "application/json")
-	httpReq.Header.Set("PRIVATE-TOKEN", token)
-	client := &http.Client{Timeout: 30 * time.Second}
-	resp, err := client.Do(httpReq)
+	status, respBody, err := gongfengJSONRequest(ctx, http.MethodPost, endpoint, token, body)
 	if err != nil {
 		return gongfengMergeRequestResponse{}, fmt.Errorf("create gongfeng merge request: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return gongfengMergeRequestResponse{}, fmt.Errorf("gongfeng create merge request returned %d: %s", resp.StatusCode, redactGongfengError(respBody))
+	if status < 200 || status >= 300 {
+		return gongfengMergeRequestResponse{}, fmt.Errorf("gongfeng create merge request returned %d: %s", status, redactGongfengError(respBody))
 	}
 	var out gongfengMergeRequestResponse
 	if len(strings.TrimSpace(string(respBody))) > 0 {
@@ -1095,20 +1109,12 @@ func findOpenGongfengMergeRequest(
 		"per_page":      {"100"},
 	}
 	endpoint := strings.TrimRight(gongfengAPIBase(), "/") + "/projects/" + url.PathEscape(projectID) + "/merge_requests?" + values.Encode()
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return gongfengMergeRequestResponse{}, false, fmt.Errorf("build gongfeng merge request lookup: %w", err)
-	}
-	httpReq.Header.Set("Accept", "application/json")
-	httpReq.Header.Set("PRIVATE-TOKEN", token)
-	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(httpReq)
+	status, body, err := gongfengJSONRequest(ctx, http.MethodGet, endpoint, token, nil)
 	if err != nil {
 		return gongfengMergeRequestResponse{}, false, fmt.Errorf("lookup gongfeng merge request: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return gongfengMergeRequestResponse{}, false, fmt.Errorf("gongfeng merge request lookup returned %d: %s", resp.StatusCode, redactGongfengError(body))
+	if status < 200 || status >= 300 {
+		return gongfengMergeRequestResponse{}, false, fmt.Errorf("gongfeng merge request lookup returned %d: %s", status, redactGongfengError(body))
 	}
 	var items []gongfengMergeRequestResponse
 	if err := json.Unmarshal(body, &items); err != nil {
@@ -1143,20 +1149,12 @@ func resolveGongfengProjectAPIID(ctx context.Context, token, projectPath string)
 		query = parts[len(parts)-1]
 	}
 	endpoint := strings.TrimRight(gongfengAPIBase(), "/") + "/projects?search=" + url.QueryEscape(query) + "&per_page=100"
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return "", fmt.Errorf("build gongfeng project search request: %w", err)
-	}
-	httpReq.Header.Set("Accept", "application/json")
-	httpReq.Header.Set("PRIVATE-TOKEN", token)
-	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(httpReq)
+	status, body, err := gongfengJSONRequest(ctx, http.MethodGet, endpoint, token, nil)
 	if err != nil {
 		return "", fmt.Errorf("search gongfeng project: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("gongfeng project search returned %d: %s", resp.StatusCode, redactGongfengError(body))
+	if status < 200 || status >= 300 {
+		return "", fmt.Errorf("gongfeng project search returned %d: %s", status, redactGongfengError(body))
 	}
 	var projects []gongfengProjectResponse
 	if err := json.Unmarshal(body, &projects); err != nil {
@@ -1177,29 +1175,21 @@ type gongfengProjectResponse struct {
 
 func fetchGongfengProjectByID(ctx context.Context, token, projectID string) (gongfengProjectResponse, bool, error) {
 	endpoint := strings.TrimRight(gongfengAPIBase(), "/") + "/projects/" + projectID
-	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return gongfengProjectResponse{}, false, fmt.Errorf("build gongfeng project request: %w", err)
-	}
-	httpReq.Header.Set("Accept", "application/json")
-	httpReq.Header.Set("PRIVATE-TOKEN", token)
-	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(httpReq)
+	status, body, err := gongfengJSONRequest(ctx, http.MethodGet, endpoint, token, nil)
 	if err != nil {
 		return gongfengProjectResponse{}, false, fmt.Errorf("fetch gongfeng project: %w", err)
 	}
-	defer func() { _ = resp.Body.Close() }()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	switch {
-	case resp.StatusCode >= 200 && resp.StatusCode < 300:
+	case status >= 200 && status < 300:
 		var project gongfengProjectResponse
 		if err := json.Unmarshal(body, &project); err != nil {
 			return gongfengProjectResponse{}, false, fmt.Errorf("decode gongfeng project response: %w", err)
 		}
 		return project, project.ID > 0, nil
-	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden || resp.StatusCode == http.StatusNotFound:
+	case status == http.StatusUnauthorized || status == http.StatusForbidden || status == http.StatusNotFound:
 		return gongfengProjectResponse{}, false, nil
 	default:
-		return gongfengProjectResponse{}, false, fmt.Errorf("gongfeng project lookup returned %d: %s", resp.StatusCode, redactGongfengError(body))
+		return gongfengProjectResponse{}, false, fmt.Errorf("gongfeng project lookup returned %d: %s", status, redactGongfengError(body))
 	}
 }
 
