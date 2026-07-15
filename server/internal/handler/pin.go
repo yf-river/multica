@@ -41,12 +41,10 @@ type CreatePinRequest struct {
 }
 
 type ReorderPinsRequest struct {
-	Items []ReorderItem `json:"items"`
-}
-
-type ReorderItem struct {
-	ID       string  `json:"id"`
-	Position float64 `json:"position"`
+	Items []struct {
+		ID       string  `json:"id"`
+		Position float64 `json:"position"`
+	} `json:"items"`
 }
 
 func (h *Handler) ListPins(w http.ResponseWriter, r *http.Request) {

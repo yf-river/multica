@@ -61,18 +61,16 @@ func (h *Handler) RecoverOrphanedTasks(w http.ResponseWriter, r *http.Request) {
 // work_dir as soon as they're known — typically right after the agent
 // emits its first system message — so a crash mid-run doesn't lose the
 // resume pointer needed to continue the conversation on the next attempt.
-type PinTaskSessionRequest struct {
-	SessionID string `json:"session_id,omitempty"`
-	WorkDir   string `json:"work_dir,omitempty"`
-}
-
 func (h *Handler) PinTaskSession(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskId")
 	if _, ok := h.requireDaemonTaskAccess(w, r, taskID); !ok {
 		return
 	}
 
-	var req PinTaskSessionRequest
+	var req struct {
+		SessionID string `json:"session_id,omitempty"`
+		WorkDir   string `json:"work_dir,omitempty"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return

@@ -294,13 +294,6 @@ func (h *Handler) GetTaskStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 // FailTask marks a running task as failed.
-type TaskFailRequest struct {
-	Error         string `json:"error"`
-	SessionID     string `json:"session_id,omitempty"`
-	WorkDir       string `json:"work_dir,omitempty"`
-	FailureReason string `json:"failure_reason,omitempty"`
-}
-
 func (h *Handler) FailTask(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskId")
 
@@ -310,7 +303,12 @@ func (h *Handler) FailTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req TaskFailRequest
+	var req struct {
+		Error         string `json:"error"`
+		SessionID     string `json:"session_id,omitempty"`
+		WorkDir       string `json:"work_dir,omitempty"`
+		FailureReason string `json:"failure_reason,omitempty"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -340,15 +338,13 @@ type TaskMessageRequest struct {
 	Output  string         `json:"output,omitempty"`
 }
 
-type TaskMessageBatchRequest struct {
-	Messages []TaskMessageRequest `json:"messages"`
-}
-
 // ReportTaskMessages receives a batch of agent execution messages from the daemon.
 func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskId")
 
-	var req TaskMessageBatchRequest
+	var req struct {
+		Messages []TaskMessageRequest `json:"messages"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return

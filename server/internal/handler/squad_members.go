@@ -62,10 +62,6 @@ type SquadActiveIssueBrief struct {
 	IssueStatus string `json:"issue_status"`
 }
 
-type SquadMemberStatusListResponse struct {
-	Members []SquadMemberStatusResponse `json:"members"`
-}
-
 // deriveSquadMemberStatus collapses runtime + task signals into the five
 // status buckets used by the squad UI. Mirrors the workload+availability
 // split in packages/core/agents/derive-presence.ts: working wins over
@@ -201,9 +197,7 @@ func (h *Handler) ListSquadMemberStatus(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
-	resp := SquadMemberStatusListResponse{
-		Members: make([]SquadMemberStatusResponse, 0, len(order)),
-	}
+	members := make([]SquadMemberStatusResponse, 0, len(order))
 	for _, id := range order {
 		entry := acc[id]
 		if entry.response.MemberType == "agent" {
@@ -225,10 +219,10 @@ func (h *Handler) ListSquadMemberStatus(w http.ResponseWriter, r *http.Request) 
 				entry.response.LastActiveAt = timestampToPtr(entry.runtimeSeenAt)
 			}
 		}
-		resp.Members = append(resp.Members, entry.response)
+		members = append(members, entry.response)
 	}
 
-	writeJSON(w, http.StatusOK, resp)
+	writeJSON(w, http.StatusOK, map[string]any{"members": members})
 }
 
 func (h *Handler) AddSquadMember(w http.ResponseWriter, r *http.Request) {

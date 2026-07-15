@@ -78,11 +78,6 @@ type LoginResponse struct {
 	User  UserResponse `json:"user"`
 }
 
-type PasswordLoginRequest struct {
-	Account  string `json:"account"`
-	Password string `json:"password"`
-}
-
 const (
 	passwordHashAlgorithm  = "pbkdf2_sha256"
 	passwordHashIterations = 210000
@@ -267,7 +262,10 @@ func contains(slice []string, s string) bool {
 }
 
 func (h *Handler) AccountPasswordLogin(w http.ResponseWriter, r *http.Request) {
-	var req PasswordLoginRequest
+	var req struct {
+		Account  string `json:"account"`
+		Password string `json:"password"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return

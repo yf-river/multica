@@ -351,11 +351,6 @@ func (h *Handler) DaemonDeregister(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
-type DaemonHeartbeatRequest struct {
-	RuntimeID string          `json:"runtime_id"`
-	Metadata  json.RawMessage `json:"metadata,omitempty"`
-}
-
 // heartbeatHasPendingTimeout bounds the cheap HasPending probe on the
 // heartbeat hot path. Probes are read-only (ZCARD in Redis) so a timeout is
 // ack-safe: the worst case is "we didn't find out if anything was queued this
@@ -424,7 +419,10 @@ func (h *Handler) DaemonHeartbeat(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	decodeStart := time.Now()
-	var req DaemonHeartbeatRequest
+	var req struct {
+		RuntimeID string          `json:"runtime_id"`
+		Metadata  json.RawMessage `json:"metadata,omitempty"`
+	}
 	decodeErr := json.NewDecoder(r.Body).Decode(&req)
 	decodeMs = time.Since(decodeStart).Milliseconds()
 	if decodeErr != nil {

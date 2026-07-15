@@ -360,12 +360,10 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-type BatchDeleteIssuesRequest struct {
-	IssueIDs []string `json:"issue_ids"`
-}
-
 func (h *Handler) BatchDeleteIssues(w http.ResponseWriter, r *http.Request) {
-	var req BatchDeleteIssuesRequest
+	var req struct {
+		IssueIDs []string `json:"issue_ids"`
+	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
