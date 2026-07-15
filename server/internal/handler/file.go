@@ -440,10 +440,14 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	operationActorID := parseUUID(uploaderID)
+	writeReplayError := resourceCreateReplayErrorWriter(
+		"Idempotency-Key was already used with a different upload",
+		"failed to replay upload",
+	)
 	if replayed, found, err := h.loadAttachmentUploadReplay(
 		r.Context(), params.WorkspaceID, operationActorID, idempotencyKey, requestHash,
 	); err != nil {
-		h.writeAttachmentUploadReplayError(w, err)
+		writeReplayError(w, err)
 		return
 	} else if found {
 		writeJSON(w, http.StatusOK, replayed)
@@ -465,7 +469,7 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 				r.Context(), params.WorkspaceID, operationActorID, idempotencyKey, requestHash,
 			)
 		},
-		h.writeAttachmentUploadReplayError,
+		writeReplayError,
 		"failed to reserve upload request",
 		http.StatusOK,
 	) {
@@ -542,14 +546,6 @@ func (h *Handler) loadAttachmentUploadReplay(
 		ctx, h.Queries, workspaceID, actorID, resourceTypeAttachment,
 		idempotencyKey, requestHash,
 		func(response AttachmentResponse) bool { return response.ID != "" },
-	)
-}
-
-func (h *Handler) writeAttachmentUploadReplayError(w http.ResponseWriter, err error) {
-	writeResourceCreateReplayError(
-		w, err,
-		"Idempotency-Key was already used with a different upload",
-		"failed to replay upload",
 	)
 }
 

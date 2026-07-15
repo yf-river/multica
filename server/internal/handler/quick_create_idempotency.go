@@ -97,11 +97,3 @@ func (h *Handler) recoverQuickCreateResource(
 		SourceFetchStatus: status,
 	}, true, nil
 }
-
-func writeQuickCreateReplayError(w http.ResponseWriter, err error) {
-	writeResourceCreateReplayError(
-		w, err,
-		"Idempotency-Key was already used with a different quick-create request",
-		"failed to recover quick-create request",
-	)
-}

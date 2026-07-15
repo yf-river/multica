@@ -493,10 +493,15 @@ func (h *Handler) CreateAutopilot(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	creatorID := parseUUID(userID)
+	writeReplayError := idempotencyReplayErrorWriter(
+		errAutopilotCreateIdempotencyConflict,
+		"Idempotency-Key was already used with a different request",
+		"failed to load autopilot request",
+	)
 	if replayed, found, err := h.loadAutopilotCreateReplay(
 		r.Context(), wsUUID, creatorID, idempotencyKey, requestHash,
 	); err != nil {
-		h.writeAutopilotCreateReplayError(w, err)
+		writeReplayError(w, err)
 		return
 	} else if found {
 		writeJSON(w, http.StatusCreated, replayed)
@@ -547,7 +552,7 @@ func (h *Handler) CreateAutopilot(w http.ResponseWriter, r *http.Request) {
 				r.Context(), wsUUID, creatorID, idempotencyKey, requestHash,
 			)
 			if replayErr != nil || !found {
-				h.writeAutopilotCreateReplayError(w, replayErr)
+				writeReplayError(w, replayErr)
 				return
 			}
 			writeJSON(w, http.StatusCreated, replayed)
@@ -654,14 +659,6 @@ func (h *Handler) loadAutopilotCreateReplay(
 	}
 	response.InitialTrigger = &initialTrigger
 	return response, true, nil
-}
-
-func (h *Handler) writeAutopilotCreateReplayError(w http.ResponseWriter, err error) {
-	writeIdempotencyReplayError(
-		w, err, errAutopilotCreateIdempotencyConflict,
-		"Idempotency-Key was already used with a different request",
-		"failed to load autopilot request",
-	)
 }
 
 func isAutopilotCreateRequestConflict(err error) bool {

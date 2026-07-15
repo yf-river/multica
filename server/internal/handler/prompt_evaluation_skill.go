@@ -470,6 +470,10 @@ func (h *Handler) ApplyPromptEvaluationSkillCandidate(w http.ResponseWriter, r *
 		writeError(w, http.StatusInternalServerError, "failed to fingerprint skill apply request")
 		return
 	}
+	writeReplayError := resourceCreateReplayErrorWriter(
+		"Idempotency-Key was already used with a different skill apply request",
+		"failed to recover skill apply request",
+	)
 	loadReplay := func() (PromptEvaluationSkillApplyCandidateResponse, bool, error) {
 		return loadResourceCreateReplay(
 			r.Context(), h.Queries, workspaceUUID, actorID, resourceTypePromptSkillApply,
@@ -478,7 +482,7 @@ func (h *Handler) ApplyPromptEvaluationSkillCandidate(w http.ResponseWriter, r *
 		)
 	}
 	if replay, found, replayErr := loadReplay(); replayErr != nil {
-		writePromptEvaluationSkillApplyReplayError(w, replayErr)
+		writeReplayError(w, replayErr)
 		return
 	} else if found {
 		writeJSON(w, http.StatusOK, replay)
@@ -494,7 +498,7 @@ func (h *Handler) ApplyPromptEvaluationSkillCandidate(w http.ResponseWriter, r *
 	if !handleResourceCreateReservation(
 		w, r.Context(), tx,
 		reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, actorID, resourceTypePromptSkillApply, idempotencyKey, requestHash),
-		loadReplay, writePromptEvaluationSkillApplyReplayError,
+		loadReplay, writeReplayError,
 		"failed to reserve skill apply request", http.StatusOK,
 	) {
 		return
@@ -558,14 +562,6 @@ func (h *Handler) ApplyPromptEvaluationSkillCandidate(w http.ResponseWriter, r *
 		return
 	}
 	writeJSON(w, http.StatusOK, committedResponse)
-}
-
-func writePromptEvaluationSkillApplyReplayError(w http.ResponseWriter, err error) {
-	writeResourceCreateReplayError(
-		w, err,
-		"Idempotency-Key was already used with a different skill apply request",
-		"failed to recover skill apply request",
-	)
 }
 
 func (h *Handler) PreparePromptEvaluationSkillReEvalAsset(w http.ResponseWriter, r *http.Request) {

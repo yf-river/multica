@@ -835,6 +835,10 @@ func (h *Handler) CreatePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
+	writeReplayError := resourceCreateReplayErrorWriter(
+		"Idempotency-Key was already used with a different prompt evaluation asset request",
+		"failed to recover prompt evaluation asset request",
+	)
 	loadReplay := func() (PromptEvaluationAssetResponse, bool, error) {
 		return loadResourceCreateReplay(
 			r.Context(), h.Queries, workspaceUUID, actorID, resourceTypePromptEvalAsset,
@@ -844,7 +848,7 @@ func (h *Handler) CreatePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 	}
 	replay, found, replayErr := loadReplay()
 	if replayErr != nil {
-		writePromptEvaluationAssetCreateReplayError(w, replayErr)
+		writeReplayError(w, replayErr)
 		return
 	}
 	if found {
@@ -870,7 +874,7 @@ func (h *Handler) CreatePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 	if !handleResourceCreateReservation(
 		w, r.Context(), tx,
 		reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, actorID, resourceTypePromptEvalAsset, idempotencyKey, requestHash),
-		loadReplay, writePromptEvaluationAssetCreateReplayError,
+		loadReplay, writeReplayError,
 		"failed to reserve prompt evaluation asset request", http.StatusCreated,
 	) {
 		return
@@ -918,14 +922,6 @@ func (h *Handler) CreatePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 		return
 	}
 	writeJSON(w, http.StatusCreated, response)
-}
-
-func writePromptEvaluationAssetCreateReplayError(w http.ResponseWriter, err error) {
-	writeResourceCreateReplayError(
-		w, err,
-		"Idempotency-Key was already used with a different prompt evaluation asset request",
-		"failed to recover prompt evaluation asset request",
-	)
 }
 
 func (h *Handler) UpdatePromptEvaluationAsset(w http.ResponseWriter, r *http.Request) {

@@ -220,10 +220,14 @@ func (h *Handler) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	writeReplayError := resourceCreateReplayErrorWriter(
+		"Idempotency-Key was already used with a different workspace request",
+		"failed to recover workspace request",
+	)
 	workspaceRequestID := idempotencyKey
 	replay, found, replayErr := h.loadWorkspaceCreateReplay(r.Context(), workspaceRequestID, actorID, idempotencyKey, requestHash)
 	if replayErr != nil {
-		writeWorkspaceCreateReplayError(w, replayErr)
+		writeReplayError(w, replayErr)
 		return
 	}
 	if found {
@@ -252,7 +256,7 @@ func (h *Handler) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 			_ = tx.Rollback(r.Context())
 			replay, found, replayErr := h.loadWorkspaceCreateReplay(r.Context(), workspaceRequestID, actorID, idempotencyKey, requestHash)
 			if replayErr != nil {
-				writeWorkspaceCreateReplayError(w, replayErr)
+				writeReplayError(w, replayErr)
 				return
 			}
 			if found {

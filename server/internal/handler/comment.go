@@ -217,6 +217,10 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	writeReplayError := resourceCreateReplayErrorWriter(
+		"Idempotency-Key was already used with a different comment request",
+		"failed to recover comment request",
+	)
 	loadReplay := func() (CommentResponse, bool, error) {
 		return loadResourceCreateReplay(
 			r.Context(), h.Queries, issue.WorkspaceID, parseUUID(authorID), resourceTypeComment,
@@ -226,7 +230,7 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	}
 	replay, found, replayErr := loadReplay()
 	if replayErr != nil {
-		writeCommentCreateReplayError(w, replayErr)
+		writeReplayError(w, replayErr)
 		return
 	}
 	if found {
@@ -333,7 +337,7 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	if errors.Is(err, pgx.ErrNoRows) {
 		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, loadReplay)
 		if replayErr != nil {
-			writeCommentCreateReplayError(w, replayErr)
+			writeReplayError(w, replayErr)
 			return
 		}
 		writeJSON(w, http.StatusCreated, replay)

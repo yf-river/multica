@@ -44,11 +44,3 @@ func (h *Handler) writeWorkspaceCreateReplay(
 	}
 	writeJSON(w, http.StatusCreated, response)
 }
-
-func writeWorkspaceCreateReplayError(w http.ResponseWriter, err error) {
-	writeResourceCreateReplayError(
-		w, err,
-		"Idempotency-Key was already used with a different workspace request",
-		"failed to recover workspace request",
-	)
-}

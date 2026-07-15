@@ -863,6 +863,10 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	writeReplayError := resourceCreateReplayErrorWriter(
+		"Idempotency-Key was already used with a different request",
+		"failed to load squad request",
+	)
 	loadReplay := func() (squadResponse, bool, error) {
 		return loadResourceCreateReplay(
 			r.Context(), h.Queries, wsUUID, member.UserID, resourceTypeSquad,
@@ -871,7 +875,7 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 	if replayed, found, err := loadReplay(); err != nil {
-		h.writeSquadCreateReplayError(w, err)
+		writeReplayError(w, err)
 		return
 	} else if found {
 		writeJSON(w, http.StatusCreated, replayed)
@@ -888,7 +892,7 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 	err = reserveResourceCreateRequest(r.Context(), qtx, wsUUID, member.UserID, resourceTypeSquad, idempotencyKey, requestHash)
 	if !handleResourceCreateReservation(
 		w, r.Context(), tx, err, loadReplay,
-		h.writeSquadCreateReplayError,
+		writeReplayError,
 		"failed to reserve squad request",
 		http.StatusCreated,
 	) {
@@ -963,14 +967,6 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 		resp.MemberCount,
 	))
 	writeJSON(w, http.StatusCreated, resp)
-}
-
-func (h *Handler) writeSquadCreateReplayError(w http.ResponseWriter, err error) {
-	writeResourceCreateReplayError(
-		w, err,
-		"Idempotency-Key was already used with a different request",
-		"failed to load squad request",
-	)
 }
 
 func (h *Handler) GetSquad(w http.ResponseWriter, r *http.Request) {

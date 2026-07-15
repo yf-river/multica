@@ -244,6 +244,10 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	writeReplayError := resourceCreateReplayErrorWriter(
+		"Idempotency-Key was already used with a different quick-create request",
+		"failed to recover quick-create request",
+	)
 	loadReplay := func() (QuickCreateIssueResponse, bool, error) {
 		return loadResourceCreateReplay(
 			r.Context(), h.Queries, wsUUID, requesterUUID, resourceTypeQuickCreate,
@@ -254,7 +258,7 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 	if replayed, found, err := loadReplay(); err != nil {
-		writeQuickCreateReplayError(w, err)
+		writeReplayError(w, err)
 		return
 	} else if found {
 		writeJSON(w, quickCreateResponseStatus(replayed), replayed)
@@ -272,7 +276,7 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 	if errors.Is(err, pgx.ErrNoRows) {
 		replayed, replayErr := loadReplayAfterReservationConflict(r.Context(), requestTx, loadReplay)
 		if replayErr != nil {
-			writeQuickCreateReplayError(w, replayErr)
+			writeReplayError(w, replayErr)
 			return
 		}
 		writeJSON(w, quickCreateResponseStatus(replayed), replayed)
@@ -285,7 +289,7 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 	if recovered, found, err := h.recoverQuickCreateResource(
 		r.Context(), wsUUID, requesterUUID, idempotencyKey, requestHash,
 	); err != nil {
-		writeQuickCreateReplayError(w, err)
+		writeReplayError(w, err)
 		return
 	} else if found {
 		if err := completeQuickCreateRequest(r.Context(), requestQueries, wsUUID, requesterUUID, idempotencyKey, requestHash, recovered); err != nil {

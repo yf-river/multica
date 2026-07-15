@@ -351,6 +351,10 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actorID := parseUUID(userID)
+	writeReplayError := resourceCreateReplayErrorWriter(
+		"Idempotency-Key was already used with a different request",
+		"failed to load project request",
+	)
 	loadReplay := func() (createProjectResponse, bool, error) {
 		return loadResourceCreateReplay(
 			r.Context(), h.Queries, wsUUID, actorID, resourceTypeProject,
@@ -359,7 +363,7 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 	if replayed, found, err := loadReplay(); err != nil {
-		h.writeProjectCreateReplayError(w, err)
+		writeReplayError(w, err)
 		return
 	} else if found {
 		writeJSON(w, http.StatusCreated, replayed)
@@ -399,7 +403,7 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	err = reserveResourceCreateRequest(r.Context(), qtx, wsUUID, actorID, resourceTypeProject, idempotencyKey, requestHash)
 	if !handleResourceCreateReservation(
 		w, r.Context(), tx, err, loadReplay,
-		h.writeProjectCreateReplayError,
+		writeReplayError,
 		"failed to reserve project request",
 		http.StatusCreated,
 	) {
@@ -471,14 +475,6 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, http.StatusCreated, createResp)
-}
-
-func (h *Handler) writeProjectCreateReplayError(w http.ResponseWriter, err error) {
-	writeResourceCreateReplayError(
-		w, err,
-		"Idempotency-Key was already used with a different request",
-		"failed to load project request",
-	)
 }
 
 func (h *Handler) UpdateProject(w http.ResponseWriter, r *http.Request) {

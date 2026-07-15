@@ -366,6 +366,10 @@ func (h *Handler) CreateSkill(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	writeReplayError := resourceCreateReplayErrorWriter(
+		"Idempotency-Key was already used with a different request",
+		"failed to replay skill create",
+	)
 	loadReplay := func() (SkillWithFilesResponse, bool, error) {
 		return loadResourceCreateReplay(
 			r.Context(), h.Queries, workspaceUUID, creatorUUID, resourceTypeSkill,
@@ -374,7 +378,7 @@ func (h *Handler) CreateSkill(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 	if replayed, found, err := loadReplay(); err != nil {
-		h.writeSkillCreateReplayError(w, err)
+		writeReplayError(w, err)
 		return
 	} else if found {
 		writeJSON(w, http.StatusCreated, replayed)
@@ -391,7 +395,7 @@ func (h *Handler) CreateSkill(w http.ResponseWriter, r *http.Request) {
 	err = reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, creatorUUID, resourceTypeSkill, idempotencyKey, requestHash)
 	if !handleResourceCreateReservation(
 		w, r.Context(), tx, err, loadReplay,
-		h.writeSkillCreateReplayError,
+		writeReplayError,
 		"failed to reserve skill request",
 		http.StatusCreated,
 	) {
@@ -429,14 +433,6 @@ func (h *Handler) CreateSkill(w http.ResponseWriter, r *http.Request) {
 	actorType, actorID := resolveActor(r, creatorID)
 	h.publish(protocol.EventSkillCreated, workspaceID, actorType, actorID, map[string]any{"skill": resp})
 	writeJSON(w, http.StatusCreated, resp)
-}
-
-func (h *Handler) writeSkillCreateReplayError(w http.ResponseWriter, err error) {
-	writeResourceCreateReplayError(
-		w, err,
-		"Idempotency-Key was already used with a different request",
-		"failed to replay skill create",
-	)
 }
 
 // canManageSkill checks whether the current user can update or delete a skill.

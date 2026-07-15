@@ -524,6 +524,10 @@ func (h *Handler) CreatePromptEvaluationEvidenceSnapshot(w http.ResponseWriter, 
 	if !ok {
 		return
 	}
+	writeReplayError := resourceCreateReplayErrorWriter(
+		"Idempotency-Key was already used with a different evidence snapshot request",
+		"failed to recover prompt evaluation evidence snapshot request",
+	)
 	loadReplay := func() (PromptEvaluationEvidenceSnapshotResponse, bool, error) {
 		return loadResourceCreateReplay(
 			r.Context(), h.Queries, workspaceUUID, actorID, resourceTypePromptEvidenceSnapshot,
@@ -533,7 +537,7 @@ func (h *Handler) CreatePromptEvaluationEvidenceSnapshot(w http.ResponseWriter, 
 	}
 	replay, found, replayErr := loadReplay()
 	if replayErr != nil {
-		writePromptEvaluationEvidenceSnapshotReplayError(w, replayErr)
+		writeReplayError(w, replayErr)
 		return
 	}
 	if found {
@@ -559,7 +563,7 @@ func (h *Handler) CreatePromptEvaluationEvidenceSnapshot(w http.ResponseWriter, 
 	if !handleResourceCreateReservation(
 		w, r.Context(), tx,
 		reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, actorID, resourceTypePromptEvidenceSnapshot, idempotencyKey, requestHash),
-		loadReplay, writePromptEvaluationEvidenceSnapshotReplayError,
+		loadReplay, writeReplayError,
 		"failed to reserve prompt evaluation evidence snapshot request", http.StatusCreated,
 	) {
 		return
@@ -582,14 +586,6 @@ func (h *Handler) CreatePromptEvaluationEvidenceSnapshot(w http.ResponseWriter, 
 		return
 	}
 	writeJSON(w, http.StatusCreated, response)
-}
-
-func writePromptEvaluationEvidenceSnapshotReplayError(w http.ResponseWriter, err error) {
-	writeResourceCreateReplayError(
-		w, err,
-		"Idempotency-Key was already used with a different evidence snapshot request",
-		"failed to recover prompt evaluation evidence snapshot request",
-	)
 }
 
 func (h *Handler) CreatePromptEvaluationAssetEvidenceSnapshots(w http.ResponseWriter, r *http.Request) {
@@ -619,6 +615,10 @@ func (h *Handler) CreatePromptEvaluationAssetEvidenceSnapshots(w http.ResponseWr
 	if !ok {
 		return
 	}
+	writeReplayError := resourceCreateReplayErrorWriter(
+		"Idempotency-Key was already used with a different asset evidence snapshot request",
+		"failed to recover asset evidence snapshot request",
+	)
 	loadReplay := func() (PromptEvaluationAssetEvidenceSnapshotResponse, bool, error) {
 		return loadResourceCreateReplay(
 			r.Context(), h.Queries, asset.WorkspaceID, actorID, resourceTypePromptEvidenceBatch,
@@ -628,7 +628,7 @@ func (h *Handler) CreatePromptEvaluationAssetEvidenceSnapshots(w http.ResponseWr
 	}
 	replay, found, replayErr := loadReplay()
 	if replayErr != nil {
-		writePromptEvaluationEvidenceBatchReplayError(w, replayErr)
+		writeReplayError(w, replayErr)
 		return
 	}
 	if found {
@@ -676,7 +676,7 @@ func (h *Handler) CreatePromptEvaluationAssetEvidenceSnapshots(w http.ResponseWr
 	if !handleResourceCreateReservation(
 		w, r.Context(), tx,
 		reserveResourceCreateRequest(r.Context(), qtx, asset.WorkspaceID, actorID, resourceTypePromptEvidenceBatch, idempotencyKey, requestHash),
-		loadReplay, writePromptEvaluationEvidenceBatchReplayError,
+		loadReplay, writeReplayError,
 		"failed to reserve asset evidence snapshot request", http.StatusCreated,
 	) {
 		return
@@ -742,14 +742,6 @@ func hasPromptEvaluationSnapshotType(items []db.ListPromptEvaluationEvidenceSnap
 		}
 	}
 	return false
-}
-
-func writePromptEvaluationEvidenceBatchReplayError(w http.ResponseWriter, err error) {
-	writeResourceCreateReplayError(
-		w, err,
-		"Idempotency-Key was already used with a different asset evidence snapshot request",
-		"failed to recover asset evidence snapshot request",
-	)
 }
 
 func (h *Handler) GetPromptEvaluationAssetEvidenceSnapshotPackage(w http.ResponseWriter, r *http.Request) {
