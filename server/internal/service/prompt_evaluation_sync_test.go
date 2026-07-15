@@ -9,7 +9,7 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-const strictPromptEvaluationAgentVerdictJSON = `{"schema_version":1,"schema":"multica.training_evaluation.agent_verdict.v1","case_results":[{"case_index":0,"status":"通过","output":{"摘要":"完成"},"failure_reason":"无","conclusion":"中文结论","evidence":{"命中":["验收条件"],"缺失":[]}}],"summary":{"total_cases":1,"passed_cases":1,"failed_cases":0,"failure_reason":"无","conclusion":"全部通过"}}`
+const strictPromptEvaluationAgentVerdictJSON = `{"schema_version":1,"schema":"multica.training_evaluation.agent_verdict.v1","case_results":[{"case_index":0,"status":"通过","output":{"摘要":"完成"},"failure_reason":"无","evidence":{"命中":["验收条件"],"缺失":[]}}],"summary":{"total_cases":1,"passed_cases":1,"failed_cases":0,"failure_reason":"无","conclusion":"全部通过"}}`
 
 func TestPromptEvaluationAgentVerdictsFromMarkdownJSON(t *testing.T) {
 	output := strings.Join([]string{
@@ -18,13 +18,9 @@ func TestPromptEvaluationAgentVerdictsFromMarkdownJSON(t *testing.T) {
 		strictPromptEvaluationAgentVerdictJSON,
 		"```",
 	}, "\n")
-	result, err := json.Marshal(map[string]any{"status": "completed", "output": output})
-	if err != nil {
-		t.Fatalf("marshal result: %v", err)
-	}
 	verdicts, ok := promptEvaluationAgentVerdictsFromTask(
 		db.PromptEvaluationRun{TotalCases: 1},
-		db.AgentTaskQueue{Result: result},
+		db.AgentTaskQueue{},
 		[]db.TaskMessage{{Seq: 1, Type: "text", Content: pgtype.Text{String: output, Valid: true}}},
 	)
 	if !ok {

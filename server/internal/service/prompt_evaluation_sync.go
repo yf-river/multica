@@ -766,10 +766,10 @@ func parsePromptEvaluationAgentVerdicts(raw any, totalCases int32) ([]promptEval
 	if !ok {
 		return nil, false
 	}
-	return parsePromptEvaluationAgentVerdictList(list, totalCases, "multica.training_evaluation.agent_verdict.v1")
+	return parsePromptEvaluationAgentVerdictList(list, totalCases)
 }
 
-func parsePromptEvaluationAgentVerdictList(list []any, totalCases int32, contract string) ([]promptEvaluationAgentCaseVerdict, bool) {
+func parsePromptEvaluationAgentVerdictList(list []any, totalCases int32) ([]promptEvaluationAgentCaseVerdict, bool) {
 	if len(list) == 0 {
 		return nil, false
 	}
@@ -783,7 +783,7 @@ func parsePromptEvaluationAgentVerdictList(list []any, totalCases int32, contrac
 		if !ok {
 			continue
 		}
-		verdict.Evidence["解析契约"] = contract
+		verdict.Evidence["解析契约"] = "multica.training_evaluation.agent_verdict.v1"
 		byIndex[verdict.CaseIndex] = verdict
 	}
 	if len(byIndex) == 0 {
@@ -856,7 +856,7 @@ func promptEvaluationTaskResultOutput(raw []byte) string {
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		return ""
 	}
-	return firstNonEmptyString(payload, "output", "输出", "result", "结果")
+	return util.StringFromAny(payload["output"])
 }
 
 func promptEvaluationJSONCandidates(source string) []any {
