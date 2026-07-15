@@ -39,13 +39,6 @@ type githubReleaseAsset struct {
 	BrowserDownloadURL string `json:"browser_download_url"`
 }
 
-func releaseArchiveExtension(goos string) string {
-	if goos == "windows" {
-		return "zip"
-	}
-	return "tar.gz"
-}
-
 func normalizeReleaseTag(targetVersion string) string {
 	tag := strings.TrimSpace(targetVersion)
 	if !strings.HasPrefix(tag, "v") {
@@ -57,7 +50,10 @@ func normalizeReleaseTag(targetVersion string) string {
 func releaseAssetName(targetVersion, goos, goarch string) string {
 	tag := normalizeReleaseTag(targetVersion)
 	version := strings.TrimPrefix(tag, "v")
-	ext := releaseArchiveExtension(goos)
+	ext := "tar.gz"
+	if goos == "windows" {
+		ext = "zip"
+	}
 	return fmt.Sprintf("multica-cli-%s-%s-%s.%s", version, goos, goarch, ext)
 }
 

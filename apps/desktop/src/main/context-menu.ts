@@ -80,12 +80,7 @@ export function installContextMenu(webContents: WebContents): void {
   });
 }
 
-type ContextMenuLabels = {
-  openLink: string;
-  copyLinkAddress: string;
-};
-
-const contextMenuLabels: ContextMenuLabels = {
+const contextMenuLabels = {
   openLink: "在浏览器中打开链接",
   copyLinkAddress: "复制链接地址",
 };
