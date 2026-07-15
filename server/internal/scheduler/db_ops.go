@@ -19,11 +19,6 @@ import (
 // the lost lease.
 var ErrLeaseLost = errors.New("scheduler: lease lost")
 
-// errTerminalIgnored is the sentinel finishSuccess / finishFailure use
-// to convey a successful UPDATE that affected zero rows. Internal to
-// this package.
-var errTerminalIgnored = ErrLeaseLost
-
 // dbNow returns Postgres's notion of "now" as the canonical clock. The
 // scheduler uses DB time for every plan calculation and lease window so
 // instances with skewed clocks still agree on the same plan_time.
@@ -245,7 +240,7 @@ func finishSuccess(
 		return fmt.Errorf("scheduler: finish success: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return errTerminalIgnored
+		return ErrLeaseLost
 	}
 	return nil
 }
@@ -290,7 +285,7 @@ func finishFailure(
 		return fmt.Errorf("scheduler: finish failure: %w", err)
 	}
 	if tag.RowsAffected() == 0 {
-		return errTerminalIgnored
+		return ErrLeaseLost
 	}
 	return nil
 }

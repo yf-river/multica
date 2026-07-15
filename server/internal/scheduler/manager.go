@@ -197,11 +197,6 @@ func (m *Manager) plansForTick(
 ) ([]time.Time, error) {
 	eligible := now.Add(-job.ScheduleDelay)
 	latest := FloorPlan(eligible, job.Cadence)
-	if latest.After(eligible) {
-		// Truncate landed in the future — only happens at very small
-		// cadences with rounding; nothing is due yet.
-		return nil, nil
-	}
 
 	switch job.CatchUpMode {
 	case CatchUpLatestOnly:
@@ -274,14 +269,9 @@ func (m *Manager) processPlan(
 			"plan_time", planTime.Format(time.RFC3339), "error", err)
 		return
 	}
-	if c.Conflicted && !c.Won && !c.Stole {
+	if !c.Won && !c.Stole {
 		// Another runner owns this plan, or it is already terminal.
 		// Silent no-op is the expected case.
-		return
-	}
-	if !c.Won && !c.Stole {
-		// Defensive — should not be reachable but covers future SQL
-		// changes that add a fourth path.
 		return
 	}
 

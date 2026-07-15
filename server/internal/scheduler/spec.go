@@ -226,9 +226,5 @@ func (j *JobSpec) retryDelay(attempt int) time.Duration {
 // FloorPlan returns the canonical UTC plan_time bucket that contains
 // `eligible` for cadence c. Exposed for tests.
 func FloorPlan(eligible time.Time, c time.Duration) time.Time {
-	if c <= 0 {
-		return eligible.UTC()
-	}
-	t := eligible.UTC()
-	return t.Truncate(c)
+	return eligible.UTC().Truncate(c)
 }
