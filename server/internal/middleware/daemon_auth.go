@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
-	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/multica-ai/multica/server/internal/auth"
@@ -116,43 +115,13 @@ func DaemonAuth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.Clo
 
 			// Fallback: PAT tokens ("mul_" prefix).
 			if strings.HasPrefix(tokenString, "mul_") {
-				hash := auth.HashToken(tokenString)
-
-				if userID, ok := patCache.Get(r.Context(), hash); ok {
-					r.Header.Set("X-User-ID", userID)
-					ctx := context.WithValue(r.Context(), ctxKeyDaemonAuthPath, DaemonAuthPathPAT)
-					next.ServeHTTP(w, r.WithContext(ctx))
-					return
-				}
-
-				if queries == nil {
-					writeError(w, http.StatusUnauthorized, "invalid token")
-					return
-				}
-				pat, err := queries.GetPersonalAccessTokenByHash(r.Context(), hash)
+				userID, err := resolveLocalPAT(r.Context(), queries, patCache, tokenString)
 				if err != nil {
 					slog.Warn("daemon_auth: invalid PAT", "path", r.URL.Path, "error", err)
 					writeError(w, http.StatusUnauthorized, "invalid token")
 					return
 				}
-
-				userID := uuidToString(pat.UserID)
 				r.Header.Set("X-User-ID", userID)
-
-				var expiresAt time.Time
-				if pat.ExpiresAt.Valid {
-					expiresAt = pat.ExpiresAt.Time
-				}
-				patCache.Set(r.Context(), hash, userID, auth.TTLForExpiry(time.Now(), expiresAt))
-
-				// Cache miss = first request in this TTL window. Refresh
-				// last_used_at; subsequent hits skip the write entirely.
-				go func() {
-					if err := queries.UpdatePersonalAccessTokenLastUsed(context.Background(), pat.ID); err != nil {
-						slog.Warn("update daemon PAT last-used timestamp failed", "error", err)
-					}
-				}()
-
 				ctx := context.WithValue(r.Context(), ctxKeyDaemonAuthPath, DaemonAuthPathPAT)
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return

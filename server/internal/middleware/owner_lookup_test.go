@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -30,7 +31,7 @@ func seedOwnerLookupUser(t *testing.T, queries *db.Queries) string {
 		// on a different stamp so a leak here doesn't bleed.
 		_ = user
 	})
-	return uuidToString(user.ID)
+	return util.UUIDToString(user.ID)
 }
 
 // pgtypeUniqueAccount builds an account that is guaranteed unique within

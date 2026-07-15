@@ -9,13 +9,36 @@ import (
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-func uuidToString(u pgtype.UUID) string { return util.UUIDToString(u) }
+func resolveLocalPAT(ctx context.Context, queries *db.Queries, cache *auth.PATCache, token string) (string, error) {
+	hash := auth.HashToken(token)
+	if userID, ok := cache.Get(ctx, hash); ok {
+		return userID, nil
+	}
+	if queries == nil {
+		return "", errors.New("PAT store unavailable")
+	}
+	pat, err := queries.GetPersonalAccessTokenByHash(ctx, hash)
+	if err != nil {
+		return "", err
+	}
+	userID := util.UUIDToString(pat.UserID)
+	var expiresAt time.Time
+	if pat.ExpiresAt.Valid {
+		expiresAt = pat.ExpiresAt.Time
+	}
+	cache.Set(ctx, hash, userID, auth.TTLForExpiry(time.Now(), expiresAt))
+	go func() {
+		if err := queries.UpdatePersonalAccessTokenLastUsed(context.Background(), pat.ID); err != nil {
+			slog.Warn("update PAT last-used timestamp failed", "error", err)
+		}
+	}()
+	return userID, nil
+}
 
 // Auth middleware validates JWT tokens or Personal Access Tokens.
 // Token sources (in priority order):
@@ -82,10 +105,10 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 					http.Error(w, `{"error":"invalid token"}`, http.StatusUnauthorized)
 					return
 				}
-				r.Header.Set("X-User-ID", uuidToString(tt.UserID))
-				r.Header.Set("X-Agent-ID", uuidToString(tt.AgentID))
-				r.Header.Set("X-Task-ID", uuidToString(tt.TaskID))
-				r.Header.Set("X-Workspace-ID", uuidToString(tt.WorkspaceID))
+				r.Header.Set("X-User-ID", util.UUIDToString(tt.UserID))
+				r.Header.Set("X-Agent-ID", util.UUIDToString(tt.AgentID))
+				r.Header.Set("X-Task-ID", util.UUIDToString(tt.TaskID))
+				r.Header.Set("X-Workspace-ID", util.UUIDToString(tt.WorkspaceID))
 				// X-Actor-Source flags the auth path so resolveActor and
 				// any owner-only handler can deny without re-querying the
 				// token table. The value "task_token" is the only signal
@@ -153,50 +176,13 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 
 			// PAT: tokens starting with "mul_"
 			if strings.HasPrefix(tokenString, "mul_") {
-				hash := auth.HashToken(tokenString)
-
-				// Cache hit: TTL has not expired, the token was valid the
-				// last time we looked, and nothing has invalidated the
-				// entry since. Skip the DB SELECT and the last_used_at
-				// UPDATE — last_used_at is bumped once per TTL window.
-				if userID, ok := patCache.Get(r.Context(), hash); ok {
-					r.Header.Set("X-User-ID", userID)
-					next.ServeHTTP(w, r)
-					return
-				}
-
-				if queries == nil {
-					http.Error(w, `{"error":"invalid token"}`, http.StatusUnauthorized)
-					return
-				}
-				pat, err := queries.GetPersonalAccessTokenByHash(r.Context(), hash)
+				userID, err := resolveLocalPAT(r.Context(), queries, patCache, tokenString)
 				if err != nil {
 					slog.Warn("auth: invalid PAT", "path", r.URL.Path, "error", err)
 					http.Error(w, `{"error":"invalid token"}`, http.StatusUnauthorized)
 					return
 				}
-
-				userID := uuidToString(pat.UserID)
 				r.Header.Set("X-User-ID", userID)
-
-				// Clamp cache TTL to the token's remaining lifetime so a
-				// PAT expiring in <AuthCacheTTL can't continue passing
-				// auth on a cache hit after expires_at.
-				var expiresAt time.Time
-				if pat.ExpiresAt.Valid {
-					expiresAt = pat.ExpiresAt.Time
-				}
-				patCache.Set(r.Context(), hash, userID, auth.TTLForExpiry(time.Now(), expiresAt))
-
-				// Cache miss = TTL expired (or first use after revoke /
-				// process restart). Refresh last_used_at; subsequent hits
-				// within the TTL window skip this write entirely.
-				go func() {
-					if err := queries.UpdatePersonalAccessTokenLastUsed(context.Background(), pat.ID); err != nil {
-						slog.Warn("update PAT last-used timestamp failed", "error", err)
-					}
-				}()
-
 				next.ServeHTTP(w, r)
 				return
 			}
