@@ -104,7 +104,7 @@ func textMsg(id, sender, text, createTime string) LarkMessage {
 func enrich(t *testing.T, fake *enricherFakeClient, msg InboundMessage, cfg InboundEnricherConfig) InboundMessage {
 	t.Helper()
 	e := NewInboundEnricher(fake, cfg)
-	return e.Enrich(context.Background(), msg, InstallationCredentials{AppID: "a", AppSecret: "s"})
+	return e(context.Background(), msg, InstallationCredentials{AppID: "a", AppSecret: "s"})
 }
 
 // TestEnrichQuotedReply covers the MUL-2951 quoted-reply example: a text

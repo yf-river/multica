@@ -24,7 +24,7 @@ import (
 // MULTICA_LARK_CALLBACK_BASE_URL still overrides every installation when
 // set (staging / mock).
 
-// HTTPConnectionTokenFetcher is the production EndpointFetcher. It
+// HTTPConnectionTokenFetcher resolves the production WebSocket endpoint. It
 // exchanges per-installation app credentials for a short-lived
 // WebSocket URL + ClientConfig by calling
 // `POST /callback/ws/endpoint` on Lark's open-platform host — the
@@ -84,7 +84,7 @@ func (c HTTPConnectionTokenConfig) withDefaults() HTTPConnectionTokenConfig {
 	return c
 }
 
-// NewHTTPConnectionTokenFetcher returns the production EndpointFetcher
+// NewHTTPConnectionTokenFetcher returns the production endpoint resolver
 // bound to the supplied configuration.
 func NewHTTPConnectionTokenFetcher(cfg HTTPConnectionTokenConfig) (*HTTPConnectionTokenFetcher, error) {
 	cfg = cfg.withDefaults()
@@ -122,7 +122,7 @@ type endpointResponse struct {
 	} `json:"data"`
 }
 
-// Endpoint implements EndpointFetcher.
+// Endpoint resolves the current installation's WebSocket bootstrap response.
 func (f *HTTPConnectionTokenFetcher) Endpoint(ctx context.Context, creds InstallationCredentials) (WSEndpoint, error) {
 	if creds.AppID == "" || creds.AppSecret == "" {
 		return WSEndpoint{}, errors.New("lark ws endpoint: missing app_id / app_secret")

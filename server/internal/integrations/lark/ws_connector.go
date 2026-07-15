@@ -22,7 +22,7 @@ import (
 //
 // Protocol layer (aligned with `larksuite/oapi-sdk-go/v3/ws`):
 //
-//  1. EndpointFetcher does the POST /callback/ws/endpoint bootstrap.
+//  1. Endpoint does the POST /callback/ws/endpoint bootstrap.
 //     Lark returns a single-use wss URL with `device_id` + `service_id`
 //     query parameters acting as the credential. The `service_id` is
 //     extracted and used as Frame.Service on every outbound frame.
@@ -75,20 +75,20 @@ type WSConnectorConfig struct {
 	// fake that points at an httptest server.
 	Dialer WSDialer
 
-	// EndpointFetcher resolves the per-installation WS URL + server
+	// Endpoint resolves the per-installation WS URL + server
 	// config (ping interval, service id) via the bootstrap POST. The
 	// connector calls it once per Run, so a transient failure here
 	// causes a Hub-level backoff retry rather than an in-Run reconnect
 	// storm.
-	EndpointFetcher EndpointFetcher
+	Endpoint func(context.Context, InstallationCredentials) (WSEndpoint, error)
 
-	// FrameDecoder turns a single decoded Frame into either a
+	// DecodeFrame turns a single decoded Frame into either a
 	// normalized InboundMessage (to be emitted upstream) or a
 	// "control / heartbeat / unknown" signal that the connector
 	// drops silently. Errors from the decoder do NOT exit the loop
 	// — they log + drop — because one malformed Lark event payload
 	// should not tear down the entire connection.
-	FrameDecoder FrameDecoder
+	DecodeFrame func([]byte, db.LarkInstallation) (InboundMessage, bool, error)
 
 	// Enricher optionally expands a decoded message's body with the
 	// context the user explicitly attached (quoted reply / forwarded
@@ -97,7 +97,7 @@ type WSConnectorConfig struct {
 	// the Lark long-conn ACK budget; on timeout / fetch failure the
 	// enricher degrades to a placeholder rather than blocking. Nil
 	// disables enrichment (the decoded body is emitted as-is).
-	Enricher Enricher
+	Enrich func(context.Context, InboundMessage, InstallationCredentials) InboundMessage
 
 	// EnrichTimeout caps a single message's enrichment (at most two
 	// GetMessage calls). It MUST stay well under Lark's ~3s long-conn
@@ -106,7 +106,7 @@ type WSConnectorConfig struct {
 	EnrichTimeout time.Duration
 
 	// CredentialsProvider returns the InstallationCredentials the
-	// EndpointFetcher needs. Production uses InstallationService.Credentials so
+	// Endpoint needs. Production uses InstallationService.Credentials so
 	// the plaintext secret never sits on the LarkInstallation row in memory.
 	CredentialsProvider func(db.LarkInstallation) (InstallationCredentials, error)
 
@@ -172,11 +172,11 @@ func NewWSLongConnConnector(cfg WSConnectorConfig) (*WSLongConnConnector, error)
 	if cfg.Dialer == nil {
 		return nil, errors.New("lark ws connector: Dialer is required")
 	}
-	if cfg.EndpointFetcher == nil {
-		return nil, errors.New("lark ws connector: EndpointFetcher is required")
+	if cfg.Endpoint == nil {
+		return nil, errors.New("lark ws connector: Endpoint callback is required")
 	}
-	if cfg.FrameDecoder == nil {
-		return nil, errors.New("lark ws connector: FrameDecoder is required")
+	if cfg.DecodeFrame == nil {
+		return nil, errors.New("lark ws connector: DecodeFrame callback is required")
 	}
 	if cfg.CredentialsProvider == nil {
 		return nil, errors.New("lark ws connector: CredentialsProvider is required")
@@ -199,7 +199,7 @@ func (c *WSLongConnConnector) Run(ctx context.Context, inst db.LarkInstallation,
 		return fmt.Errorf("resolve credentials: %w", err)
 	}
 
-	endpoint, err := c.cfg.EndpointFetcher.Endpoint(ctx, creds)
+	endpoint, err := c.cfg.Endpoint(ctx, creds)
 	if err != nil {
 		return fmt.Errorf("resolve ws endpoint: %w", err)
 	}
@@ -355,7 +355,7 @@ func (c *WSLongConnConnector) Run(ctx context.Context, inst db.LarkInstallation,
 
 		// Data frames: hand the (possibly reassembled) JSON payload to
 		// the decoder, emit if it resolved to a message, and ACK back.
-		msg, ok, derr := c.cfg.FrameDecoder.Decode(payload, inst)
+		msg, ok, derr := c.cfg.DecodeFrame(payload, inst)
 		if derr != nil {
 			log.Warn("lark ws connector: frame decode failed",
 				"err", derr.Error(),
@@ -388,9 +388,9 @@ func (c *WSLongConnConnector) Run(ctx context.Context, inst db.LarkInstallation,
 		// degrades to a placeholder on failure rather than blocking the
 		// pipeline. Most messages need no enrichment and return
 		// immediately without any network call.
-		if c.cfg.Enricher != nil {
+		if c.cfg.Enrich != nil {
 			enrichCtx, cancelEnrich := context.WithTimeout(ctx, c.cfg.EnrichTimeout)
-			msg = c.cfg.Enricher.Enrich(enrichCtx, msg, creds)
+			msg = c.cfg.Enrich(enrichCtx, msg, creds)
 			cancelEnrich()
 		}
 
@@ -473,13 +473,6 @@ type WSConn interface {
 	Close() error
 }
 
-// EndpointFetcher resolves the per-installation bootstrap response.
-// The implementation is responsible for the POST /callback/ws/endpoint
-// call and surfacing the server-pushed ClientConfig.
-type EndpointFetcher interface {
-	Endpoint(ctx context.Context, creds InstallationCredentials) (WSEndpoint, error)
-}
-
 // WSEndpoint is the resolved transport target plus the server-pushed
 // runtime configuration the connector needs to honor (ping cadence,
 // reconnect hints). ServiceID is parsed out of the wss URL's
@@ -493,15 +486,6 @@ type WSEndpoint struct {
 	ReconnectInterval time.Duration
 	ReconnectNonce    time.Duration
 	ReconnectCount    int
-}
-
-// FrameDecoder turns the JSON payload of a data Frame into either an
-// InboundMessage (ok=true) or a no-op (ok=false). The connector
-// treats a decoder error as per-frame: log + drop, do not tear down
-// the connection. The decoder receives the JSON payload bytes — the
-// outer binary Frame envelope is stripped by the connector.
-type FrameDecoder interface {
-	Decode(payload []byte, inst db.LarkInstallation) (msg InboundMessage, ok bool, err error)
 }
 
 // GorillaDialer is the production WSDialer.

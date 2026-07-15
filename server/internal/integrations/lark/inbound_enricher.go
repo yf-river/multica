@@ -32,21 +32,6 @@ const defaultMaxForwardChildren = 100
 // ACK budget (one list call, page_size 10).
 const DefaultRecentContextSize = 10
 
-// Enricher expands an inbound message's body with context the user
-// EXPLICITLY attached — a quoted reply or a merged-and-forwarded bundle
-// — by calling back into Lark's IM API. It runs after the (fast,
-// HTTP-free) decoder and before the dispatcher, turning a bare
-// "@bot 总结一下" into a body that already carries the referenced
-// conversation inline.
-//
-// It is best-effort by contract: every fetch failure degrades to a
-// visible placeholder block and Enrich NEVER returns an error or blocks
-// ingestion. A message with nothing to expand (no parent_id, not a
-// merge_forward) is returned untouched without any network call.
-type Enricher interface {
-	Enrich(ctx context.Context, msg InboundMessage, creds InstallationCredentials) InboundMessage
-}
-
 // InboundEnricherConfig tunes the enricher. All fields default.
 type InboundEnricherConfig struct {
 	// MaxForwardChildren caps inlined forward children. <=0 uses
@@ -71,25 +56,26 @@ type inboundEnricher struct {
 	logger             *slog.Logger
 }
 
-// NewInboundEnricher builds an Enricher backed by the given Lark API
-// client. The client supplies GetMessage; everything else (flattening,
-// block assembly, speaker labelling) is local.
-func NewInboundEnricher(client APIClient, cfg InboundEnricherConfig) Enricher {
+// NewInboundEnricher returns the connector callback that expands quoted,
+// forwarded, and recent group context through the Lark API. Fetch failures
+// degrade to visible placeholders and never block ingestion.
+func NewInboundEnricher(client APIClient, cfg InboundEnricherConfig) func(context.Context, InboundMessage, InstallationCredentials) InboundMessage {
 	if cfg.MaxForwardChildren <= 0 {
 		cfg.MaxForwardChildren = defaultMaxForwardChildren
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
 	}
-	return &inboundEnricher{
+	e := &inboundEnricher{
 		client:             client,
 		maxForwardChildren: cfg.MaxForwardChildren,
 		recentContextSize:  cfg.RecentContextSize,
 		logger:             cfg.Logger,
 	}
+	return e.enrich
 }
 
-// Enrich rewrites msg.Body to inline surrounding group context and/or
+// enrich rewrites msg.Body to inline surrounding group context and/or
 // any quoted-reply parent and/or forwarded bundle. Composition order
 // goes broadest-to-narrowest: the surrounding group history first, then
 // the explicitly-quoted parent (a specific reference), then the message's
@@ -125,7 +111,7 @@ func NewInboundEnricher(client APIClient, cfg InboundEnricherConfig) Enricher {
 // never creates its own session row, and is only ever surfaced as read-
 // context attached to a turn a workspace member explicitly directed at
 // the Bot.
-func (e *inboundEnricher) Enrich(ctx context.Context, msg InboundMessage, creds InstallationCredentials) InboundMessage {
+func (e *inboundEnricher) enrich(ctx context.Context, msg InboundMessage, creds InstallationCredentials) InboundMessage {
 	isForward := msg.MessageType == larkMsgTypeMergeForward
 	wantRecent := e.recentContextSize > 0 && msg.ChatType == ChatTypeGroup && msg.AddressedToBot
 	if msg.ParentID == "" && !isForward && !wantRecent {

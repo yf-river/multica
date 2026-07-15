@@ -10,8 +10,8 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// LarkJSONFrameDecoder decodes the JSON event payload Lark nests
-// inside a long-conn data Frame. The outer binary Frame envelope
+// DecodeLarkFrame decodes the JSON event payload Lark nests inside a
+// long-conn data Frame. The outer binary Frame envelope
 // (ws_frame.go) is stripped by the connector; the decoder only sees
 // the bytes from Frame.Payload, which Lark formats as the standard
 // event-subscription envelope: {schema, header, event}.
@@ -29,12 +29,8 @@ import (
 //     connection stays up because one bad payload shouldn't amplify
 //     into a reconnect storm.
 //
-// The decoder is stateless and goroutine-safe — a single instance
-// serves every supervisor goroutine.
-type LarkJSONFrameDecoder struct{}
-
-// Decode implements FrameDecoder.
-func (d *LarkJSONFrameDecoder) Decode(payload []byte, inst db.LarkInstallation) (InboundMessage, bool, error) {
+// The decoder is stateless and goroutine-safe.
+func DecodeLarkFrame(payload []byte, inst db.LarkInstallation) (InboundMessage, bool, error) {
 	if len(payload) == 0 {
 		return InboundMessage{}, false, nil
 	}

@@ -1223,9 +1223,9 @@ func TestHubACKNotBlockedByOutboundReply(t *testing.T) {
 	t.Parallel()
 
 	conn := newFakeWSConn()
-	decoder := FrameDecoderFunc(func(payload []byte, _ db.LarkInstallation) (InboundMessage, bool, error) {
+	decoder := func(payload []byte, _ db.LarkInstallation) (InboundMessage, bool, error) {
 		return InboundMessage{EventID: string(payload)}, true, nil
-	})
+	}
 	c := quietConnector(t, conn, decoder, time.Hour) // disable ping
 
 	// Slow replier that would block ACK if the critical path coupling

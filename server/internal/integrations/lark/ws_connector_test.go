@@ -111,14 +111,14 @@ func (d *fakeWSDialer) DialContext(ctx context.Context, urlStr string, h http.He
 // quietConnector wires a connector with a deterministic decoder + the
 // fakeWSConn. Caller controls the decoder so each test can assert
 // per-payload behaviour.
-func quietConnector(t *testing.T, conn *fakeWSConn, decoder FrameDecoder, pingInterval time.Duration) *WSLongConnConnector {
+func quietConnector(t *testing.T, conn *fakeWSConn, decoder func([]byte, db.LarkInstallation) (InboundMessage, bool, error), pingInterval time.Duration) *WSLongConnConnector {
 	t.Helper()
 	c, err := NewWSLongConnConnector(WSConnectorConfig{
 		Dialer: &fakeWSDialer{conn: conn},
-		EndpointFetcher: EndpointFetcherFunc(func(context.Context, InstallationCredentials) (WSEndpoint, error) {
+		Endpoint: func(context.Context, InstallationCredentials) (WSEndpoint, error) {
 			return WSEndpoint{URL: "wss://test/ignored", ServiceID: 7, PingInterval: pingInterval}, nil
-		}),
-		FrameDecoder: decoder,
+		},
+		DecodeFrame: decoder,
 		CredentialsProvider: func(db.LarkInstallation) (InstallationCredentials, error) {
 			return InstallationCredentials{AppID: "test_app", AppSecret: "secret"}, nil
 		},
@@ -151,9 +151,9 @@ func pushDataFrame(conn *fakeWSConn, payload []byte, messageID string) {
 func TestWSConnectorRunReturnsOnCtxCancelEvenWhenReadIsBlocked(t *testing.T) {
 	t.Parallel()
 	conn := newFakeWSConn()
-	decoder := FrameDecoderFunc(func([]byte, db.LarkInstallation) (InboundMessage, bool, error) {
+	decoder := func([]byte, db.LarkInstallation) (InboundMessage, bool, error) {
 		return InboundMessage{}, false, nil
-	})
+	}
 	c := quietConnector(t, conn, decoder, 10*time.Millisecond)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -188,7 +188,7 @@ func TestWSConnectorRunReturnsOnCtxCancelEvenWhenReadIsBlocked(t *testing.T) {
 func TestWSConnectorEmitsDecodedFramesAndAcks(t *testing.T) {
 	t.Parallel()
 	conn := newFakeWSConn()
-	decoder := FrameDecoderFunc(func(payload []byte, _ db.LarkInstallation) (InboundMessage, bool, error) {
+	decoder := func(payload []byte, _ db.LarkInstallation) (InboundMessage, bool, error) {
 		if string(payload) == "heartbeat" {
 			return InboundMessage{}, false, nil
 		}
@@ -197,7 +197,7 @@ func TestWSConnectorEmitsDecodedFramesAndAcks(t *testing.T) {
 			AppID:     "test_app",
 			MessageID: "msg-" + string(payload),
 		}, true, nil
-	})
+	}
 	c := quietConnector(t, conn, decoder, time.Hour) // disable ping cadence
 
 	var emitted []InboundMessage
@@ -273,9 +273,9 @@ func TestWSConnectorEmitsDecodedFramesAndAcks(t *testing.T) {
 func TestWSConnectorRespondsToServerPingWithPong(t *testing.T) {
 	t.Parallel()
 	conn := newFakeWSConn()
-	decoder := FrameDecoderFunc(func([]byte, db.LarkInstallation) (InboundMessage, bool, error) {
+	decoder := func([]byte, db.LarkInstallation) (InboundMessage, bool, error) {
 		return InboundMessage{}, false, nil
-	})
+	}
 	c := quietConnector(t, conn, decoder, time.Hour)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -327,9 +327,9 @@ func TestWSConnectorRespondsToServerPingWithPong(t *testing.T) {
 func TestWSConnectorEmitInfraErrorSendsNackAndReturns(t *testing.T) {
 	t.Parallel()
 	conn := newFakeWSConn()
-	decoder := FrameDecoderFunc(func([]byte, db.LarkInstallation) (InboundMessage, bool, error) {
+	decoder := func([]byte, db.LarkInstallation) (InboundMessage, bool, error) {
 		return InboundMessage{EventID: "x"}, true, nil
-	})
+	}
 	c := quietConnector(t, conn, decoder, time.Hour)
 
 	infra := errors.New("dispatcher infra failure")
@@ -375,9 +375,9 @@ func TestWSConnectorEmitInfraErrorSendsNackAndReturns(t *testing.T) {
 func TestWSConnectorSendsAppLayerPings(t *testing.T) {
 	t.Parallel()
 	conn := newFakeWSConn()
-	decoder := FrameDecoderFunc(func([]byte, db.LarkInstallation) (InboundMessage, bool, error) {
+	decoder := func([]byte, db.LarkInstallation) (InboundMessage, bool, error) {
 		return InboundMessage{}, false, nil
-	})
+	}
 	c := quietConnector(t, conn, decoder, 10*time.Millisecond)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -421,13 +421,13 @@ func TestWSConnectorDecoderErrorAcksAndContinues(t *testing.T) {
 	t.Parallel()
 	conn := newFakeWSConn()
 	decodeCount := int32(0)
-	decoder := FrameDecoderFunc(func(payload []byte, _ db.LarkInstallation) (InboundMessage, bool, error) {
+	decoder := func(payload []byte, _ db.LarkInstallation) (InboundMessage, bool, error) {
 		n := atomic.AddInt32(&decodeCount, 1)
 		if n == 1 {
 			return InboundMessage{}, false, errors.New("synthetic decode failure")
 		}
 		return InboundMessage{EventID: "good"}, true, nil
-	})
+	}
 	c := quietConnector(t, conn, decoder, time.Hour)
 
 	emits := make(chan InboundMessage, 1)
@@ -462,9 +462,9 @@ func TestWSConnectorDecoderErrorAcksAndContinues(t *testing.T) {
 func TestWSConnectorReadErrorReturnsToHub(t *testing.T) {
 	t.Parallel()
 	conn := newFakeWSConn()
-	decoder := FrameDecoderFunc(func([]byte, db.LarkInstallation) (InboundMessage, bool, error) {
+	decoder := func([]byte, db.LarkInstallation) (InboundMessage, bool, error) {
 		return InboundMessage{}, false, nil
-	})
+	}
 	c := quietConnector(t, conn, decoder, time.Hour)
 
 	ctx := context.Background()
@@ -497,30 +497,30 @@ func TestWSConnectorRequiresAllDeps(t *testing.T) {
 		cfg  WSConnectorConfig
 	}{
 		{"no dialer", WSConnectorConfig{
-			EndpointFetcher: EndpointFetcherFunc(func(context.Context, InstallationCredentials) (WSEndpoint, error) { return WSEndpoint{}, nil }),
-			FrameDecoder:    FrameDecoderFunc(func([]byte, db.LarkInstallation) (InboundMessage, bool, error) { return InboundMessage{}, false, nil }),
+			Endpoint:    func(context.Context, InstallationCredentials) (WSEndpoint, error) { return WSEndpoint{}, nil },
+			DecodeFrame: func([]byte, db.LarkInstallation) (InboundMessage, bool, error) { return InboundMessage{}, false, nil },
 			CredentialsProvider: func(db.LarkInstallation) (InstallationCredentials, error) {
 				return InstallationCredentials{}, nil
 			},
 		}},
 		{"no endpoint fetcher", WSConnectorConfig{
-			Dialer:       &fakeWSDialer{},
-			FrameDecoder: FrameDecoderFunc(func([]byte, db.LarkInstallation) (InboundMessage, bool, error) { return InboundMessage{}, false, nil }),
+			Dialer:      &fakeWSDialer{},
+			DecodeFrame: func([]byte, db.LarkInstallation) (InboundMessage, bool, error) { return InboundMessage{}, false, nil },
 			CredentialsProvider: func(db.LarkInstallation) (InstallationCredentials, error) {
 				return InstallationCredentials{}, nil
 			},
 		}},
 		{"no decoder", WSConnectorConfig{
-			Dialer:          &fakeWSDialer{},
-			EndpointFetcher: EndpointFetcherFunc(func(context.Context, InstallationCredentials) (WSEndpoint, error) { return WSEndpoint{}, nil }),
+			Dialer:   &fakeWSDialer{},
+			Endpoint: func(context.Context, InstallationCredentials) (WSEndpoint, error) { return WSEndpoint{}, nil },
 			CredentialsProvider: func(db.LarkInstallation) (InstallationCredentials, error) {
 				return InstallationCredentials{}, nil
 			},
 		}},
 		{"no credentials provider", WSConnectorConfig{
-			Dialer:          &fakeWSDialer{},
-			EndpointFetcher: EndpointFetcherFunc(func(context.Context, InstallationCredentials) (WSEndpoint, error) { return WSEndpoint{}, nil }),
-			FrameDecoder:    FrameDecoderFunc(func([]byte, db.LarkInstallation) (InboundMessage, bool, error) { return InboundMessage{}, false, nil }),
+			Dialer:      &fakeWSDialer{},
+			Endpoint:    func(context.Context, InstallationCredentials) (WSEndpoint, error) { return WSEndpoint{}, nil },
+			DecodeFrame: func([]byte, db.LarkInstallation) (InboundMessage, bool, error) { return InboundMessage{}, false, nil },
 		}},
 	}
 	for _, tc := range cases {
@@ -539,10 +539,10 @@ func TestWSConnectorDialErrorIsReturned(t *testing.T) {
 	dialErr := errors.New("dial blew up")
 	c, err := NewWSLongConnConnector(WSConnectorConfig{
 		Dialer: &fakeWSDialer{dialErr: dialErr},
-		EndpointFetcher: EndpointFetcherFunc(func(context.Context, InstallationCredentials) (WSEndpoint, error) {
+		Endpoint: func(context.Context, InstallationCredentials) (WSEndpoint, error) {
 			return WSEndpoint{URL: "wss://x", ServiceID: 1}, nil
-		}),
-		FrameDecoder: FrameDecoderFunc(func([]byte, db.LarkInstallation) (InboundMessage, bool, error) { return InboundMessage{}, false, nil }),
+		},
+		DecodeFrame: func([]byte, db.LarkInstallation) (InboundMessage, bool, error) { return InboundMessage{}, false, nil },
 		CredentialsProvider: func(db.LarkInstallation) (InstallationCredentials, error) {
 			return InstallationCredentials{AppID: "a"}, nil
 		},
@@ -592,12 +592,12 @@ func TestWSConnectorReassemblesChunkedDataFrame(t *testing.T) {
 	conn := newFakeWSConn()
 	var decodedPayloads [][]byte
 	var decodeMu sync.Mutex
-	decoder := FrameDecoderFunc(func(payload []byte, _ db.LarkInstallation) (InboundMessage, bool, error) {
+	decoder := func(payload []byte, _ db.LarkInstallation) (InboundMessage, bool, error) {
 		decodeMu.Lock()
 		decodedPayloads = append(decodedPayloads, append([]byte(nil), payload...))
 		decodeMu.Unlock()
 		return InboundMessage{EventID: string(payload)}, true, nil
-	})
+	}
 	c := quietConnector(t, conn, decoder, time.Hour) // disable ping cadence
 
 	emits := make(chan InboundMessage, 4)
@@ -729,10 +729,10 @@ func TestWSConnectorCredentialsErrorIsReturned(t *testing.T) {
 	credsErr := errors.New("decrypt failed")
 	c, err := NewWSLongConnConnector(WSConnectorConfig{
 		Dialer: &fakeWSDialer{conn: newFakeWSConn()},
-		EndpointFetcher: EndpointFetcherFunc(func(context.Context, InstallationCredentials) (WSEndpoint, error) {
+		Endpoint: func(context.Context, InstallationCredentials) (WSEndpoint, error) {
 			return WSEndpoint{URL: "wss://x"}, nil
-		}),
-		FrameDecoder: FrameDecoderFunc(func([]byte, db.LarkInstallation) (InboundMessage, bool, error) { return InboundMessage{}, false, nil }),
+		},
+		DecodeFrame: func([]byte, db.LarkInstallation) (InboundMessage, bool, error) { return InboundMessage{}, false, nil },
 		CredentialsProvider: func(db.LarkInstallation) (InstallationCredentials, error) {
 			return InstallationCredentials{}, credsErr
 		},

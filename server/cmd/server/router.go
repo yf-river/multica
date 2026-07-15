@@ -1111,7 +1111,6 @@ func buildLarkConnectorFactory(installSvc *lark.InstallationService, apiClient l
 	if err != nil {
 		return nil, "", fmt.Errorf("initialize endpoint fetcher: %w", err)
 	}
-	decoder := &lark.LarkJSONFrameDecoder{}
 	dialer := lark.NewGorillaDialer()
 	// Inbound enricher: expands quoted replies / forwarded bundles AND
 	// prefetches a window of surrounding group history (MUL-3084) into the
@@ -1124,9 +1123,9 @@ func buildLarkConnectorFactory(installSvc *lark.InstallationService, apiClient l
 	})
 	conn, err := lark.NewWSLongConnConnector(lark.WSConnectorConfig{
 		Dialer:              dialer,
-		EndpointFetcher:     endpointFetcher,
-		FrameDecoder:        decoder,
-		Enricher:            enricher,
+		Endpoint:            endpointFetcher.Endpoint,
+		DecodeFrame:         lark.DecodeLarkFrame,
+		Enrich:              enricher,
 		CredentialsProvider: installSvc.Credentials,
 		Logger:              slog.Default(),
 	})

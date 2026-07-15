@@ -8,7 +8,7 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-func TestLarkJSONFrameDecoderTextMessageInP2P(t *testing.T) {
+func TestDecodeLarkFrameTextMessageInP2P(t *testing.T) {
 	t.Parallel()
 	raw := []byte(`{
 		"schema":"2.0",
@@ -32,8 +32,7 @@ func TestLarkJSONFrameDecoderTextMessageInP2P(t *testing.T) {
 		}
 	}`)
 
-	d := new(LarkJSONFrameDecoder)
-	msg, ok, err := d.Decode(raw, db.LarkInstallation{BotOpenID: "ou_bot"})
+	msg, ok, err := DecodeLarkFrame(raw, db.LarkInstallation{BotOpenID: "ou_bot"})
 	if err != nil || !ok {
 		t.Fatalf("Decode ok=%v err=%v", ok, err)
 	}
@@ -60,7 +59,7 @@ func TestLarkJSONFrameDecoderTextMessageInP2P(t *testing.T) {
 	}
 }
 
-func TestLarkJSONFrameDecoderGroupMentionDiscrimination(t *testing.T) {
+func TestDecodeLarkFrameGroupMentionDiscrimination(t *testing.T) {
 	t.Parallel()
 	mkRaw := func(mentionOpenID string) []byte {
 		return []byte(`{
@@ -76,10 +75,9 @@ func TestLarkJSONFrameDecoderGroupMentionDiscrimination(t *testing.T) {
 			}
 		}`)
 	}
-	d := new(LarkJSONFrameDecoder)
 
 	t.Run("mentions bot", func(t *testing.T) {
-		msg, ok, err := d.Decode(mkRaw("ou_bot"), db.LarkInstallation{BotOpenID: "ou_bot"})
+		msg, ok, err := DecodeLarkFrame(mkRaw("ou_bot"), db.LarkInstallation{BotOpenID: "ou_bot"})
 		if err != nil || !ok {
 			t.Fatalf("ok=%v err=%v", ok, err)
 		}
@@ -92,7 +90,7 @@ func TestLarkJSONFrameDecoderGroupMentionDiscrimination(t *testing.T) {
 	})
 
 	t.Run("mentions other user", func(t *testing.T) {
-		msg, ok, err := d.Decode(mkRaw("ou_other"), db.LarkInstallation{BotOpenID: "ou_bot"})
+		msg, ok, err := DecodeLarkFrame(mkRaw("ou_other"), db.LarkInstallation{BotOpenID: "ou_bot"})
 		if err != nil || !ok {
 			t.Fatalf("ok=%v err=%v", ok, err)
 		}
@@ -102,14 +100,14 @@ func TestLarkJSONFrameDecoderGroupMentionDiscrimination(t *testing.T) {
 	})
 }
 
-// TestLarkJSONFrameDecoderGroupMentionUnionID exercises the MUL-2671
+// TestDecodeLarkFrameGroupMentionUnionID exercises the MUL-2671
 // fix: in a multi-bot group chat the per-app `mentions[].id.open_id`
 // is structurally inverted across WS perspectives, so we route on
 // `union_id` (the stable, cross-app identifier captured at install
 // time) when the installation row knows it. The open_id path remains
 // as a transitional fallback for installations that haven't been
 // backfilled yet.
-func TestLarkJSONFrameDecoderGroupMentionUnionID(t *testing.T) {
+func TestDecodeLarkFrameGroupMentionUnionID(t *testing.T) {
 	t.Parallel()
 
 	mkRaw := func(mentionOpenID, mentionUnionID string) []byte {
@@ -126,7 +124,6 @@ func TestLarkJSONFrameDecoderGroupMentionUnionID(t *testing.T) {
 			}
 		}`)
 	}
-	d := new(LarkJSONFrameDecoder)
 	pgText := func(s string) pgtype.Text { return pgtype.Text{String: s, Valid: true} }
 
 	t.Run("union_id match wins even when open_id mismatches", func(t *testing.T) {
@@ -140,7 +137,7 @@ func TestLarkJSONFrameDecoderGroupMentionUnionID(t *testing.T) {
 			BotOpenID:  "ou_bot_a_canonical",
 			BotUnionID: pgText("on_bot_a_union"),
 		}
-		msg, ok, err := d.Decode(mkRaw("ou_bot_a_wire", "on_bot_a_union"), inst)
+		msg, ok, err := DecodeLarkFrame(mkRaw("ou_bot_a_wire", "on_bot_a_union"), inst)
 		if err != nil || !ok {
 			t.Fatalf("ok=%v err=%v", ok, err)
 		}
@@ -159,7 +156,7 @@ func TestLarkJSONFrameDecoderGroupMentionUnionID(t *testing.T) {
 			BotOpenID:  "ou_bot_a_canonical",
 			BotUnionID: pgText("on_bot_a_union"),
 		}
-		msg, ok, err := d.Decode(mkRaw("ou_bot_a_canonical", "on_bot_b_union"), inst)
+		msg, ok, err := DecodeLarkFrame(mkRaw("ou_bot_a_canonical", "on_bot_b_union"), inst)
 		if err != nil || !ok {
 			t.Fatalf("ok=%v err=%v", ok, err)
 		}
@@ -172,7 +169,7 @@ func TestLarkJSONFrameDecoderGroupMentionUnionID(t *testing.T) {
 		// Contact-scope-restricted installations have no union_id. Decoder
 		// must keep working in the current single-bot case via open_id.
 		inst := db.LarkInstallation{BotOpenID: "ou_bot_a_canonical"}
-		msg, ok, err := d.Decode(mkRaw("ou_bot_a_canonical", "on_anything"), inst)
+		msg, ok, err := DecodeLarkFrame(mkRaw("ou_bot_a_canonical", "on_anything"), inst)
 		if err != nil || !ok {
 			t.Fatalf("ok=%v err=%v", ok, err)
 		}
@@ -182,13 +179,13 @@ func TestLarkJSONFrameDecoderGroupMentionUnionID(t *testing.T) {
 	})
 }
 
-// TestLarkJSONFrameDecoderMentionPlaceholderRewrite covers the body
+// TestDecodeLarkFrameMentionPlaceholderRewrite covers the body
 // cleanup: Lark inlines `@_user_N` placeholders inside the text and
 // resolves them via the `mentions` array. We strip the bot's own
 // mention (the dispatcher already routes the event), substitute
 // other users with `@<displayName>`, and leave the agent with a
 // natural-looking message body.
-func TestLarkJSONFrameDecoderMentionPlaceholderRewrite(t *testing.T) {
+func TestDecodeLarkFrameMentionPlaceholderRewrite(t *testing.T) {
 	t.Parallel()
 	pgText := func(s string) pgtype.Text { return pgtype.Text{String: s, Valid: true} }
 
@@ -212,7 +209,6 @@ func TestLarkJSONFrameDecoderMentionPlaceholderRewrite(t *testing.T) {
 			}
 		}`)
 	}
-	d := new(LarkJSONFrameDecoder)
 
 	t.Run("strips bot self-mention via union_id", func(t *testing.T) {
 		inst := db.LarkInstallation{
@@ -220,7 +216,7 @@ func TestLarkJSONFrameDecoderMentionPlaceholderRewrite(t *testing.T) {
 			BotUnionID: pgText("on_bot"),
 		}
 		mentions := `[{"key":"@_user_1","name":"My Bot","id":{"open_id":"ou_bot_wire","union_id":"on_bot"}}]`
-		msg, ok, err := d.Decode(mkRaw("@_user_1 ping test", mentions), inst)
+		msg, ok, err := DecodeLarkFrame(mkRaw("@_user_1 ping test", mentions), inst)
 		if err != nil || !ok {
 			t.Fatalf("ok=%v err=%v", ok, err)
 		}
@@ -238,7 +234,7 @@ func TestLarkJSONFrameDecoderMentionPlaceholderRewrite(t *testing.T) {
 			{"key":"@_user_1","name":"My Bot","id":{"open_id":"ou_bot_wire","union_id":"on_bot"}},
 			{"key":"@_user_2","name":"Alice","id":{"open_id":"ou_alice","union_id":"on_alice"}}
 		]`
-		msg, ok, err := d.Decode(mkRaw("@_user_1 hey @_user_2 take a look", mentions), inst)
+		msg, ok, err := DecodeLarkFrame(mkRaw("@_user_1 hey @_user_2 take a look", mentions), inst)
 		if err != nil || !ok {
 			t.Fatalf("ok=%v err=%v", ok, err)
 		}
@@ -257,7 +253,7 @@ func TestLarkJSONFrameDecoderMentionPlaceholderRewrite(t *testing.T) {
 			BotUnionID: pgText("on_bot"),
 		}
 		mentions := `[{"key":"@_user_1","name":"My Bot","id":{"open_id":"ou_bot_wire","union_id":"on_bot"}}]`
-		msg, ok, err := d.Decode(mkRaw("@_user_1  first line\nsecond line", mentions), inst)
+		msg, ok, err := DecodeLarkFrame(mkRaw("@_user_1  first line\nsecond line", mentions), inst)
 		if err != nil || !ok {
 			t.Fatalf("ok=%v err=%v", ok, err)
 		}
@@ -271,7 +267,7 @@ func TestLarkJSONFrameDecoderMentionPlaceholderRewrite(t *testing.T) {
 			BotOpenID:  "ou_bot",
 			BotUnionID: pgText("on_bot"),
 		}
-		msg, ok, err := d.Decode(mkRaw("just a normal message", `[]`), inst)
+		msg, ok, err := DecodeLarkFrame(mkRaw("just a normal message", `[]`), inst)
 		if err != nil || !ok {
 			t.Fatalf("ok=%v err=%v", ok, err)
 		}
@@ -292,7 +288,7 @@ func TestLarkJSONFrameDecoderMentionPlaceholderRewrite(t *testing.T) {
 		mentions := `[{"key":"@_user_1","name":"My Bot","id":{"open_id":"ou_bot_wire","union_id":"on_bot"}}]`
 		raw := "    @_user_1 review this snippet:\n\tfunc add(a, b int) int {\n\t\treturn a + b\n\t}"
 		want := "    review this snippet:\n\tfunc add(a, b int) int {\n\t\treturn a + b\n\t}"
-		msg, ok, err := d.Decode(mkRaw(raw, mentions), inst)
+		msg, ok, err := DecodeLarkFrame(mkRaw(raw, mentions), inst)
 		if err != nil || !ok {
 			t.Fatalf("ok=%v err=%v", ok, err)
 		}
@@ -316,7 +312,7 @@ func TestLarkJSONFrameDecoderMentionPlaceholderRewrite(t *testing.T) {
 		]`
 		raw := "@_user_1 forward this to @_user_10 please"
 		want := "forward this to @Alice please"
-		msg, ok, err := d.Decode(mkRaw(raw, mentions), inst)
+		msg, ok, err := DecodeLarkFrame(mkRaw(raw, mentions), inst)
 		if err != nil || !ok {
 			t.Fatalf("ok=%v err=%v", ok, err)
 		}
@@ -341,7 +337,7 @@ func TestLarkJSONFrameDecoderMentionPlaceholderRewrite(t *testing.T) {
 		]`
 		raw := "@_user_1 @_user_2 please coordinate"
 		want := "@Sibling Bot please coordinate"
-		msg, ok, err := d.Decode(mkRaw(raw, mentions), inst)
+		msg, ok, err := DecodeLarkFrame(mkRaw(raw, mentions), inst)
 		if err != nil || !ok {
 			t.Fatalf("ok=%v err=%v", ok, err)
 		}
@@ -362,7 +358,7 @@ func TestLarkJSONFrameDecoderMentionPlaceholderRewrite(t *testing.T) {
 		mentions := `[{"key":"@_user_1","name":"Sibling Bot","id":{"open_id":"ou_self_canonical","union_id":"on_sibling_union"}}]`
 		raw := "@_user_1 hi"
 		want := "@Sibling Bot hi"
-		msg, ok, err := d.Decode(mkRaw(raw, mentions), inst)
+		msg, ok, err := DecodeLarkFrame(mkRaw(raw, mentions), inst)
 		if err != nil || !ok {
 			t.Fatalf("ok=%v err=%v", ok, err)
 		}
@@ -372,16 +368,15 @@ func TestLarkJSONFrameDecoderMentionPlaceholderRewrite(t *testing.T) {
 	})
 }
 
-func TestLarkJSONFrameDecoderDropsHeartbeat(t *testing.T) {
+func TestDecodeLarkFrameDropsHeartbeat(t *testing.T) {
 	t.Parallel()
-	d := new(LarkJSONFrameDecoder)
 	cases := [][]byte{
 		[]byte(`{"type":"heartbeat"}`),
 		[]byte(`{"type":"frame_ack","data":{"id":"1"}}`),
 		[]byte(`{"schema":"2.0","header":{"event_type":"im.message.unknown_kind"}}`),
 	}
 	for _, raw := range cases {
-		msg, ok, err := d.Decode(raw, db.LarkInstallation{})
+		msg, ok, err := DecodeLarkFrame(raw, db.LarkInstallation{})
 		if err != nil || ok {
 			t.Errorf("Decode(%q) ok=%v err=%v; expected (false, nil)", raw, ok, err)
 		}
@@ -391,17 +386,17 @@ func TestLarkJSONFrameDecoderDropsHeartbeat(t *testing.T) {
 	}
 }
 
-func TestLarkJSONFrameDecoderEmptyRaw(t *testing.T) {
+func TestDecodeLarkFrameEmptyRaw(t *testing.T) {
 	t.Parallel()
-	msg, ok, err := new(LarkJSONFrameDecoder).Decode(nil, db.LarkInstallation{})
+	msg, ok, err := DecodeLarkFrame(nil, db.LarkInstallation{})
 	if ok || err != nil {
 		t.Fatalf("expected (zero, false, nil) for empty raw; got ok=%v err=%v msg=%+v", ok, err, msg)
 	}
 }
 
-func TestLarkJSONFrameDecoderMalformedReturnsError(t *testing.T) {
+func TestDecodeLarkFrameMalformedReturnsError(t *testing.T) {
 	t.Parallel()
-	_, ok, err := new(LarkJSONFrameDecoder).Decode([]byte("not-json"), db.LarkInstallation{})
+	_, ok, err := DecodeLarkFrame([]byte("not-json"), db.LarkInstallation{})
 	if err == nil {
 		t.Fatal("expected error on malformed envelope")
 	}
@@ -410,7 +405,7 @@ func TestLarkJSONFrameDecoderMalformedReturnsError(t *testing.T) {
 	}
 }
 
-func TestLarkJSONFrameDecoderMessageContentEmptyOnInvalidContentJSON(t *testing.T) {
+func TestDecodeLarkFrameMessageContentEmptyOnInvalidContentJSON(t *testing.T) {
 	t.Parallel()
 	raw := []byte(`{
 		"schema":"2.0",
@@ -420,7 +415,7 @@ func TestLarkJSONFrameDecoderMessageContentEmptyOnInvalidContentJSON(t *testing.
 			"message":{"message_id":"m","chat_id":"c","chat_type":"p2p","message_type":"text","content":"not-json"}
 		}
 	}`)
-	msg, ok, err := new(LarkJSONFrameDecoder).Decode(raw, db.LarkInstallation{})
+	msg, ok, err := DecodeLarkFrame(raw, db.LarkInstallation{})
 	if err != nil || !ok {
 		t.Fatalf("ok=%v err=%v", ok, err)
 	}
@@ -429,7 +424,7 @@ func TestLarkJSONFrameDecoderMessageContentEmptyOnInvalidContentJSON(t *testing.
 	}
 }
 
-func TestLarkJSONFrameDecoderNonTextMessageHasEmptyBody(t *testing.T) {
+func TestDecodeLarkFrameNonTextMessageHasEmptyBody(t *testing.T) {
 	t.Parallel()
 	raw := []byte(`{
 		"schema":"2.0",
@@ -439,7 +434,7 @@ func TestLarkJSONFrameDecoderNonTextMessageHasEmptyBody(t *testing.T) {
 			"message":{"message_id":"m","chat_id":"c","chat_type":"p2p","message_type":"image","content":"{\"image_key\":\"img1\"}"}
 		}
 	}`)
-	msg, ok, err := new(LarkJSONFrameDecoder).Decode(raw, db.LarkInstallation{})
+	msg, ok, err := DecodeLarkFrame(raw, db.LarkInstallation{})
 	if err != nil || !ok {
 		t.Fatalf("ok=%v err=%v", ok, err)
 	}
@@ -451,11 +446,11 @@ func TestLarkJSONFrameDecoderNonTextMessageHasEmptyBody(t *testing.T) {
 	}
 }
 
-// TestLarkJSONFrameDecoderPostMessageFlattened verifies that a rich-text
+// TestDecodeLarkFramePostMessageFlattened verifies that a rich-text
 // `post` message is flattened to plain text end-to-end through Decode —
 // the MUL-2951 example. Body.content is the JSON-encoded post object; we
 // marshal a Go string to get the correctly-escaped content field.
-func TestLarkJSONFrameDecoderPostMessageFlattened(t *testing.T) {
+func TestDecodeLarkFramePostMessageFlattened(t *testing.T) {
 	t.Parallel()
 	postContent := `{"title":"周报","content":[[{"tag":"text","text":"本周完成："}],[{"tag":"text","text":"Lark 集成"},{"tag":"a","href":"https://github.com/multica-ai/multica/pull/3277","text":"PR #3277"}]]}`
 	escaped, err := json.Marshal(postContent)
@@ -470,7 +465,7 @@ func TestLarkJSONFrameDecoderPostMessageFlattened(t *testing.T) {
 			"message":{"message_id":"m","chat_id":"c","chat_type":"p2p","message_type":"post","content":` + string(escaped) + `}
 		}
 	}`)
-	msg, ok, err := new(LarkJSONFrameDecoder).Decode(raw, db.LarkInstallation{BotOpenID: "ou_bot"})
+	msg, ok, err := DecodeLarkFrame(raw, db.LarkInstallation{BotOpenID: "ou_bot"})
 	if err != nil || !ok {
 		t.Fatalf("Decode ok=%v err=%v", ok, err)
 	}
@@ -483,11 +478,11 @@ func TestLarkJSONFrameDecoderPostMessageFlattened(t *testing.T) {
 	}
 }
 
-// TestLarkJSONFrameDecoderPostResolvesMentions checks that @-mentions in
+// TestDecodeLarkFramePostResolvesMentions checks that @-mentions in
 // a post (carried as `at` spans with @_user_N placeholders) are resolved
 // through the same mention pipeline as text, including stripping the
 // bot's own mention.
-func TestLarkJSONFrameDecoderPostResolvesMentions(t *testing.T) {
+func TestDecodeLarkFramePostResolvesMentions(t *testing.T) {
 	t.Parallel()
 	postContent := `{"content":[[{"tag":"at","user_id":"@_user_1","user_name":""},{"tag":"text","text":"please review"},{"tag":"at","user_id":"@_user_2","user_name":""}]]}`
 	escaped, err := json.Marshal(postContent)
@@ -509,7 +504,7 @@ func TestLarkJSONFrameDecoderPostResolvesMentions(t *testing.T) {
 			}
 		}
 	}`)
-	msg, ok, err := new(LarkJSONFrameDecoder).Decode(raw, db.LarkInstallation{BotOpenID: "ou_bot"})
+	msg, ok, err := DecodeLarkFrame(raw, db.LarkInstallation{BotOpenID: "ou_bot"})
 	if err != nil || !ok {
 		t.Fatalf("Decode ok=%v err=%v", ok, err)
 	}
@@ -523,10 +518,10 @@ func TestLarkJSONFrameDecoderPostResolvesMentions(t *testing.T) {
 	}
 }
 
-// TestLarkJSONFrameDecoderCapturesReplyLinkage verifies parent_id /
+// TestDecodeLarkFrameCapturesReplyLinkage verifies parent_id /
 // root_id from a quote-reply event land on the InboundMessage so the
 // enricher can expand them.
-func TestLarkJSONFrameDecoderCapturesReplyLinkage(t *testing.T) {
+func TestDecodeLarkFrameCapturesReplyLinkage(t *testing.T) {
 	t.Parallel()
 	raw := []byte(`{
 		"schema":"2.0",
@@ -540,7 +535,7 @@ func TestLarkJSONFrameDecoderCapturesReplyLinkage(t *testing.T) {
 			}
 		}
 	}`)
-	msg, ok, err := new(LarkJSONFrameDecoder).Decode(raw, db.LarkInstallation{BotOpenID: "ou_bot"})
+	msg, ok, err := DecodeLarkFrame(raw, db.LarkInstallation{BotOpenID: "ou_bot"})
 	if err != nil || !ok {
 		t.Fatalf("Decode ok=%v err=%v", ok, err)
 	}

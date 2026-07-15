@@ -34,23 +34,23 @@ func (e *recordingEnricher) Enrich(ctx context.Context, msg InboundMessage, cred
 func TestWSConnectorEnrichesBeforeEmit(t *testing.T) {
 	t.Parallel()
 	conn := newFakeWSConn()
-	decoder := FrameDecoderFunc(func(payload []byte, _ db.LarkInstallation) (InboundMessage, bool, error) {
+	decoder := func(payload []byte, _ db.LarkInstallation) (InboundMessage, bool, error) {
 		return InboundMessage{
 			EventID:   string(payload),
 			AppID:     "test_app",
 			MessageID: "msg-" + string(payload),
 			Body:      "raw-" + string(payload),
 		}, true, nil
-	})
+	}
 	enr := &recordingEnricher{}
 
 	c, err := NewWSLongConnConnector(WSConnectorConfig{
 		Dialer: &fakeWSDialer{conn: conn},
-		EndpointFetcher: EndpointFetcherFunc(func(context.Context, InstallationCredentials) (WSEndpoint, error) {
+		Endpoint: func(context.Context, InstallationCredentials) (WSEndpoint, error) {
 			return WSEndpoint{URL: "wss://test/ignored", ServiceID: 7, PingInterval: time.Hour}, nil
-		}),
-		FrameDecoder: decoder,
-		Enricher:     enr,
+		},
+		DecodeFrame: decoder,
+		Enrich:      enr.Enrich,
 		CredentialsProvider: func(db.LarkInstallation) (InstallationCredentials, error) {
 			return InstallationCredentials{AppID: "test_app", AppSecret: "secret"}, nil
 		},
