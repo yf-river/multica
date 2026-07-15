@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"strconv"
@@ -75,11 +74,10 @@ var squadGetCmd = &cobra.Command{
 }
 
 func runSquadGet(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	var squad map[string]any
@@ -122,11 +120,10 @@ func runSquadCreate(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("--leader is required (agent name or ID)")
 	}
 
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	leaderID, err := resolveAgentID(ctx, client, leader)
@@ -162,11 +159,10 @@ var squadUpdateCmd = &cobra.Command{
 }
 
 func runSquadUpdate(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	body := map[string]any{}
@@ -205,11 +201,10 @@ var squadDeleteCmd = &cobra.Command{
 }
 
 func runSquadDelete(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	if err := client.DeleteJSON(ctx, "/api/squads/"+args[0]); err != nil {
@@ -284,11 +279,10 @@ func runSquadMemberAdd(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--type must be 'agent' or 'member'")
 	}
 
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	body := map[string]any{
@@ -334,11 +328,10 @@ func runSquadMemberSetRole(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--role is required")
 	}
 
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	body := map[string]any{
@@ -380,11 +373,10 @@ func runSquadMemberRemove(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--type must be 'agent' or 'member'")
 	}
 
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	body := map[string]any{
@@ -437,12 +429,10 @@ func runSquadActivity(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("invalid wait-kind %q; valid value: human_confirmation", waitKind)
 	}
 
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	issueRef, err := resolveIssueRef(ctx, client, issueID)

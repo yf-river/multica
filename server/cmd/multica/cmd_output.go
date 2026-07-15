@@ -9,12 +9,20 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func fetchMapList(cmd *cobra.Command, path, action string) ([]map[string]any, error) {
+func newAPIClientContext(cmd *cobra.Command) (*cli.APIClient, context.Context, context.CancelFunc, error) {
 	client, err := newAPIClient(cmd)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	ctx, cancel := cli.APIContext(context.Background())
+	return client, ctx, cancel, nil
+}
+
+func fetchMapList(cmd *cobra.Command, path, action string) ([]map[string]any, error) {
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return nil, err
 	}
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	var items []map[string]any

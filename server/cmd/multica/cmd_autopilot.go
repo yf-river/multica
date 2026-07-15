@@ -221,12 +221,10 @@ func runAutopilotList(cmd *cobra.Command, _ []string) error {
 }
 
 func runAutopilotGet(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	autopilotRef, err := resolveAutopilotID(ctx, client, args[0])
@@ -321,12 +319,10 @@ func runAutopilotCreate(cmd *cobra.Command, _ []string) error {
 }
 
 func runAutopilotUpdate(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	autopilotRef, err := resolveAutopilotID(ctx, client, args[0])
@@ -381,12 +377,10 @@ func runAutopilotUpdate(cmd *cobra.Command, args []string) error {
 }
 
 func runAutopilotDelete(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	autopilotRef, err := resolveAutopilotID(ctx, client, args[0])
@@ -429,12 +423,10 @@ func runAutopilotTrigger(cmd *cobra.Command, args []string) error {
 }
 
 func runAutopilotRuns(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	autopilotRef, err := resolveAutopilotID(ctx, client, args[0])
@@ -555,12 +547,10 @@ func printWebhookURL(client *cli.APIClient, trigger map[string]any) {
 }
 
 func runAutopilotTriggerRotateURL(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	autopilotRef, triggerRef, err := resolveAutopilotTriggerRefs(ctx, client, args[0], args[1])
@@ -663,12 +653,10 @@ func resolveAutopilotTriggerRefs(ctx context.Context, client *cli.APIClient, aut
 }
 
 func runAutopilotTriggerDelete(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	autopilotRef, triggerRef, err := resolveAutopilotTriggerRefs(ctx, client, args[0], args[1])

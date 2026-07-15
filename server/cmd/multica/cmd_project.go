@@ -192,12 +192,10 @@ func init() {
 // ---------------------------------------------------------------------------
 
 func runProjectList(cmd *cobra.Command, _ []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	params := url.Values{}
@@ -255,12 +253,10 @@ func runProjectList(cmd *cobra.Command, _ []string) error {
 }
 
 func runProjectGet(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	projectRef, err := resolveProjectID(ctx, client, args[0])
@@ -306,12 +302,10 @@ func runProjectCreate(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("--title is required")
 	}
 
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	body := map[string]any{"title": title}
@@ -368,12 +362,10 @@ func runProjectCreate(cmd *cobra.Command, _ []string) error {
 }
 
 func runProjectUpdate(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	projectRef, err := resolveProjectID(ctx, client, args[0])
@@ -431,12 +423,10 @@ func printProjectMutationResult(cmd *cobra.Command, result map[string]any) error
 }
 
 func runProjectDelete(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	projectRef, err := resolveProjectID(ctx, client, args[0])
@@ -460,12 +450,10 @@ func runProjectStatus(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	projectRef, err := resolveProjectID(ctx, client, id)
@@ -493,12 +481,10 @@ func runProjectStatus(cmd *cobra.Command, args []string) error {
 // ---------------------------------------------------------------------------
 
 func runProjectResourceList(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	projectRef, err := resolveProjectID(ctx, client, args[0])
@@ -589,12 +575,10 @@ func runProjectResourceAdd(cmd *cobra.Command, args []string) error {
 		body["label"] = label
 	}
 
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	projectRef, err := resolveProjectID(ctx, client, args[0])

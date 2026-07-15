@@ -403,12 +403,10 @@ func runAgentList(cmd *cobra.Command, _ []string) error {
 }
 
 func runAgentGet(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	var agent map[string]any
@@ -574,12 +572,10 @@ func applyChangedStringFlag(cmd *cobra.Command, body map[string]any, flag, key s
 }
 
 func runAgentArchive(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	var result map[string]any
@@ -597,12 +593,10 @@ func runAgentArchive(cmd *cobra.Command, args []string) error {
 }
 
 func runAgentRestore(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	var result map[string]any
@@ -852,12 +846,10 @@ func printAgentSkillsTable(skills []map[string]any) {
 // mode and a key/value table otherwise; we never truncate or mask
 // values here — the security gate is on the server, not the printer.
 func runAgentEnvGet(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	var resp map[string]any

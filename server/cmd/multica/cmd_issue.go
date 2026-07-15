@@ -445,12 +445,10 @@ func init() {
 // ---------------------------------------------------------------------------
 
 func runIssueList(cmd *cobra.Command, _ []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	if client.WorkspaceID == "" {

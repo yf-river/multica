@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"net/url"
 	"os"
@@ -77,11 +76,10 @@ func init() {
 }
 
 func runLabelList(cmd *cobra.Command, _ []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	params := url.Values{}
@@ -128,11 +126,10 @@ func runLabelList(cmd *cobra.Command, _ []string) error {
 }
 
 func runLabelGet(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	labelRef, err := resolveLabelID(ctx, client, args[0])
@@ -174,11 +171,10 @@ func runLabelCreate(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("--color is required (e.g. #3b82f6)")
 	}
 
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	body := map[string]any{"name": name, "color": color}
@@ -191,11 +187,10 @@ func runLabelCreate(cmd *cobra.Command, _ []string) error {
 }
 
 func runLabelUpdate(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	labelRef, err := resolveLabelID(ctx, client, args[0])
@@ -238,11 +233,10 @@ func printLabelMutationResult(cmd *cobra.Command, result map[string]any) error {
 }
 
 func runLabelDelete(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	labelRef, err := resolveLabelID(ctx, client, args[0])

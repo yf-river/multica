@@ -234,12 +234,10 @@ func runIssueCommentAdd(cmd *cobra.Command, args []string) error {
 }
 
 func runIssueCommentDelete(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	if err := client.DeleteJSON(ctx, "/api/comments/"+args[0]); err != nil {
@@ -303,12 +301,10 @@ func runIssueRuns(cmd *cobra.Command, args []string) error {
 }
 
 func runIssueRunMessages(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	issueID := ""
@@ -399,12 +395,10 @@ func runIssueRerun(cmd *cobra.Command, args []string) error {
 // and triggers the daemon-side interrupt path (#2107) so an in-flight agent
 // stops emitting tool calls promptly instead of running until its own timeout.
 func runIssueCancelTask(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	issueScope := ""
@@ -439,12 +433,10 @@ func runIssueCancelTask(cmd *cobra.Command, args []string) error {
 }
 
 func runIssueSearch(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	params := url.Values{}
