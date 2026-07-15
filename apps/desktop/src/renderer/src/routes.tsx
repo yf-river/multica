@@ -102,12 +102,9 @@ function PageShell() {
  * tab store decides which workspace's tabs are visible in the TabBar;
  * workspace-less state (zero-workspace user) shows the overlay instead.
  *
- * The root index route stays as a harmless safety net. With per-workspace
- * tabs, nothing should construct a tab at `/` — but if one ever slips
- * through (malformed persisted state that dodges the migration, direct
- * router.navigate from unforeseen code), the index falls back to null
- * rather than 404; App.tsx's bootstrap repoints activeWorkspaceSlug on the
- * next render pass.
+ * The root index route supports the current workspace-creation overlay,
+ * which parks the active tab router at `/` while no workspace route should
+ * remain mounted.
  */
 const appRoutes: RouteObject[] = [
   {

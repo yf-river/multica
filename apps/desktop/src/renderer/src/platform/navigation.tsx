@@ -5,13 +5,13 @@ import {
   type NavigationAdapter,
 } from "@multica/views/navigation";
 import { useAuthStore } from "@multica/core/auth";
-import { isReservedSlug } from "@multica/core/paths";
 import {
   useTabStore,
   resolveRouteIcon,
   useActiveTabIdentity,
   useActiveTabRouter,
   getActiveTab,
+  workspaceSlugFromPath,
 } from "@/stores/tab-store";
 import { useWorkspaceCreationOverlayStore } from "@/stores/workspace-creation-overlay-store";
 
@@ -23,17 +23,6 @@ function requireRuntimeAppUrl(scope: string): string {
     );
   }
   return runtimeConfig.config.appUrl;
-}
-
-/**
- * Extract the leading workspace slug from a path, or null if the path isn't
- * workspace-scoped (root, login, any reserved prefix).
- */
-function extractWorkspaceSlug(path: string): string | null {
-  const first = path.split("/").filter(Boolean)[0] ?? "";
-  if (!first) return null;
-  if (isReservedSlug(first)) return null;
-  return first;
 }
 
 /**
@@ -82,7 +71,7 @@ function routerLocationPath(router: DataRouter): string {
  * from active" into "switch the tab-group that's visible in the TabBar".
  */
 function tryRouteToOtherWorkspace(path: string): boolean {
-  const targetSlug = extractWorkspaceSlug(path);
+  const targetSlug = workspaceSlugFromPath(path);
   if (!targetSlug) return false;
   const { activeWorkspaceSlug, switchWorkspace } = useTabStore.getState();
   if (targetSlug === activeWorkspaceSlug) return false;
@@ -175,7 +164,7 @@ export function DesktopNavigationProvider({
           useAuthStore.getState().logout();
           return;
         }
-        const active = currentActiveTab();
+        const active = getActiveTab(useTabStore.getState());
         if (tryRouteToWorkspaceCreation(path, active?.router)) return;
         if (active && routerLocationPath(active.router) === path) return;
         if (tryRouteToOtherWorkspace(path)) return;
@@ -183,13 +172,13 @@ export function DesktopNavigationProvider({
         active?.router.navigate(path);
       },
       replace: (path: string) => {
-        const active = currentActiveTab();
+        const active = getActiveTab(useTabStore.getState());
         if (tryRouteToWorkspaceCreation(path, active?.router)) return;
         if (tryRouteToOtherWorkspace(path)) return;
         active?.router.navigate(path, { replace: true });
       },
       back: () => {
-        currentActiveTab()?.router.navigate(-1);
+        getActiveTab(useTabStore.getState())?.router.navigate(-1);
       },
       pathname: location.pathname,
       searchParams: new URLSearchParams(location.search),
@@ -213,10 +202,6 @@ export function DesktopNavigationProvider({
   return <NavigationProvider value={adapter}>{children}</NavigationProvider>;
 }
 
-function currentActiveTab() {
-  return getActiveTab(useTabStore.getState());
-}
-
 type OpenInNewTabOptions = { activate?: boolean };
 
 function openWorkspacePathInNewTab(
@@ -224,7 +209,7 @@ function openWorkspacePathInNewTab(
   title?: string,
   opts?: OpenInNewTabOptions,
 ) {
-  const slug = extractWorkspaceSlug(path);
+  const slug = workspaceSlugFromPath(path);
   const store = useTabStore.getState();
   if (slug && slug !== store.activeWorkspaceSlug) {
     store.switchWorkspace(slug, path);

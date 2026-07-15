@@ -211,7 +211,7 @@ function SortableTabItem({
 }
 
 function NewTabButton() {
-  const addTab = useTabStore((s) => s.addTab);
+  const openTab = useTabStore((s) => s.openTab);
   const setActiveTab = useTabStore((s) => s.setActiveTab);
 
   const handleClick = () => {
@@ -220,7 +220,7 @@ function NewTabButton() {
     const activeSlug = useTabStore.getState().activeWorkspaceSlug;
     if (!activeSlug) return;
     const path = paths.workspace(activeSlug).issues();
-    const tabId = addTab(path, "任务", resolveRouteIcon(path));
+    const tabId = openTab(path, "任务", resolveRouteIcon(path), "new");
     if (tabId) setActiveTab(tabId);
   };
 

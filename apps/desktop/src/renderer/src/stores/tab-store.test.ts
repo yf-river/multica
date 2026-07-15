@@ -33,13 +33,6 @@ describe("tab path boundary", () => {
     expect(useTabStore.getState().byWorkspace.acme.tabs).toHaveLength(1);
   });
 
-  it("silently rejects transition paths", () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    expect(openTestTab("/workspaces/new")).toBe("");
-    expect(warn).not.toHaveBeenCalled();
-    warn.mockRestore();
-  });
-
   it("opens valid workspace-scoped paths", () => {
     for (const path of [
       "/acme/issues",
@@ -56,7 +49,11 @@ describe("tab path boundary", () => {
 
   it("rejects reserved root paths", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    expect(["/issues", "/settings"].map(openTestTab)).toEqual(["", ""]);
+    expect(["/issues", "/settings", "/workspaces/new"].map(openTestTab)).toEqual([
+      "",
+      "",
+      "",
+    ]);
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
   });
@@ -80,7 +77,7 @@ describe("useTabStore actions", () => {
   it("switchWorkspace without openPath restores the group's last active tab", () => {
     const store = useTabStore.getState();
     store.switchWorkspace("acme");
-    store.addTab("/acme/projects", "项目", "FolderKanban");
+    store.openTab("/acme/projects", "项目", "FolderKanban", "new");
     const acmeProjectsId = useTabStore.getState().byWorkspace.acme.tabs[1].id;
     store.setActiveTab(acmeProjectsId);
 
@@ -97,7 +94,7 @@ describe("useTabStore actions", () => {
   it("switchWorkspace with openPath dedupes into an existing tab with same path", () => {
     const store = useTabStore.getState();
     store.switchWorkspace("acme"); // creates default /acme/issues
-    store.addTab("/acme/projects", "项目", "FolderKanban");
+    store.openTab("/acme/projects", "项目", "FolderKanban", "new");
 
     store.switchWorkspace("acme", "/acme/issues");
     const s = useTabStore.getState();
@@ -129,6 +126,16 @@ describe("useTabStore actions", () => {
     expect(useTabStore.getState().byWorkspace.acme.tabs).toHaveLength(2); // default + projects
   });
 
+  it("openTab new mode creates another tab for the same path", () => {
+    const store = useTabStore.getState();
+    store.switchWorkspace("acme");
+
+    const id = store.openTab("/acme/issues", "任务", "ListTodo", "new");
+
+    expect(id).not.toBe(useTabStore.getState().byWorkspace.acme.tabs[0].id);
+    expect(useTabStore.getState().byWorkspace.acme.tabs).toHaveLength(2);
+  });
+
   it("closeTab on the last tab in a workspace reseeds the default tab", () => {
     const store = useTabStore.getState();
     store.switchWorkspace("acme");
@@ -145,7 +152,7 @@ describe("useTabStore actions", () => {
     try {
       const store = useTabStore.getState();
       store.switchWorkspace("acme");
-      const closedTabId = store.addTab("/acme/settings", "Settings", "Settings");
+      const closedTabId = store.openTab("/acme/settings", "Settings", "Settings", "new");
       const closingTab = useTabStore
         .getState()
         .byWorkspace.acme.tabs.find((t) => t.id === closedTabId);
@@ -169,7 +176,7 @@ describe("useTabStore actions", () => {
   it("ignores router-sync updates from a tab after it has been closed", () => {
     const store = useTabStore.getState();
     store.switchWorkspace("acme");
-    const closedTabId = store.addTab("/acme/settings", "Settings", "Settings");
+    const closedTabId = store.openTab("/acme/settings", "Settings", "Settings", "new");
 
     store.closeTab(closedTabId);
     const before = useTabStore.getState().byWorkspace.acme;
@@ -296,8 +303,8 @@ describe("togglePin", () => {
   it("moves a newly-pinned tab to the start of the pinned zone", () => {
     const store = useTabStore.getState();
     store.switchWorkspace("acme"); // creates default unpinned tab at index 0
-    store.addTab("/acme/projects", "项目", "FolderKanban");
-    store.addTab("/acme/agents", "Agents", "Bot");
+    store.openTab("/acme/projects", "项目", "FolderKanban", "new");
+    store.openTab("/acme/agents", "Agents", "Bot", "new");
     const agentsId = useTabStore.getState().byWorkspace.acme.tabs[2].id;
 
     store.togglePin(agentsId);
@@ -311,8 +318,8 @@ describe("togglePin", () => {
   it("appends a second pinned tab after the first pinned tab", () => {
     const store = useTabStore.getState();
     store.switchWorkspace("acme");
-    store.addTab("/acme/projects", "项目", "FolderKanban");
-    store.addTab("/acme/agents", "Agents", "Bot");
+    store.openTab("/acme/projects", "项目", "FolderKanban", "new");
+    store.openTab("/acme/agents", "Agents", "Bot", "new");
     const projectsId = useTabStore.getState().byWorkspace.acme.tabs[1].id;
     const agentsId = useTabStore.getState().byWorkspace.acme.tabs[2].id;
 
@@ -333,7 +340,7 @@ describe("togglePin", () => {
   it("returns an unpinned tab to the start of the unpinned zone", () => {
     const store = useTabStore.getState();
     store.switchWorkspace("acme");
-    store.addTab("/acme/projects", "项目", "FolderKanban");
+    store.openTab("/acme/projects", "项目", "FolderKanban", "new");
     const issuesId = useTabStore.getState().byWorkspace.acme.tabs[0].id;
     const projectsId = useTabStore.getState().byWorkspace.acme.tabs[1].id;
 
@@ -352,8 +359,8 @@ describe("moveTab boundary clamp", () => {
   it("clamps a pinned-tab move so it never crosses into the unpinned zone", () => {
     const store = useTabStore.getState();
     store.switchWorkspace("acme");
-    store.addTab("/acme/projects", "项目", "FolderKanban");
-    store.addTab("/acme/agents", "Agents", "Bot");
+    store.openTab("/acme/projects", "项目", "FolderKanban", "new");
+    store.openTab("/acme/agents", "Agents", "Bot", "new");
     const issuesId = useTabStore.getState().byWorkspace.acme.tabs[0].id;
 
     store.togglePin(issuesId); // [issues(pinned), projects, agents]
@@ -369,8 +376,8 @@ describe("moveTab boundary clamp", () => {
   it("clamps an unpinned-tab move so it never crosses into the pinned zone", () => {
     const store = useTabStore.getState();
     store.switchWorkspace("acme");
-    store.addTab("/acme/projects", "项目", "FolderKanban");
-    store.addTab("/acme/agents", "Agents", "Bot");
+    store.openTab("/acme/projects", "项目", "FolderKanban", "new");
+    store.openTab("/acme/agents", "Agents", "Bot", "new");
     const issuesId = useTabStore.getState().byWorkspace.acme.tabs[0].id;
     const agentsId = useTabStore.getState().byWorkspace.acme.tabs[2].id;
 
@@ -388,8 +395,8 @@ describe("moveTab boundary clamp", () => {
   it("reorders freely within the same zone", () => {
     const store = useTabStore.getState();
     store.switchWorkspace("acme");
-    store.addTab("/acme/projects", "项目", "FolderKanban");
-    store.addTab("/acme/agents", "Agents", "Bot");
+    store.openTab("/acme/projects", "项目", "FolderKanban", "new");
+    store.openTab("/acme/agents", "Agents", "Bot", "new");
 
     // All unpinned; move agents (2) to position 0.
     store.moveTab(2, 0);

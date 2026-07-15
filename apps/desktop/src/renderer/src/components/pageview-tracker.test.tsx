@@ -117,7 +117,7 @@ describe("PageviewTracker", () => {
     expect(state.capturePageview).not.toHaveBeenCalled();
   });
 
-  it("fires pageview when a foreground tab is added (addTab path)", () => {
+  it("fires pageview when a foreground tab is added", () => {
     state.byWorkspace = {
       acme: {
         activeTabId: "tA",

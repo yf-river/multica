@@ -24,7 +24,9 @@ const state = vi.hoisted(() => ({
   closeTab: vi.fn<(tabId: string) => void>(),
   setActiveTab: vi.fn<(tabId: string) => void>(),
   moveTab: vi.fn<(from: number, to: number) => void>(),
-  addTab: vi.fn<(path: string, title: string, icon: string) => string>(),
+  openTab: vi.fn<
+    (path: string, title: string, icon: string, mode?: "reuse" | "new") => string
+  >(),
 }));
 
 vi.mock("@/stores/tab-store", () => {
@@ -39,7 +41,7 @@ vi.mock("@/stores/tab-store", () => {
     closeTab: state.closeTab,
     setActiveTab: state.setActiveTab,
     moveTab: state.moveTab,
-    addTab: state.addTab,
+    openTab: state.openTab,
   };
   const useTabStore = Object.assign(
     (selector?: (s: typeof store) => unknown) =>
@@ -79,7 +81,7 @@ function reset() {
   state.closeTab.mockReset();
   state.setActiveTab.mockReset();
   state.moveTab.mockReset();
-  state.addTab.mockReset();
+  state.openTab.mockReset();
 }
 
 beforeEach(reset);

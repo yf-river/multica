@@ -79,12 +79,17 @@ vi.mock("@/stores/tab-store", () => {
   });
   const useActiveTabRouter = () => null;
   const resolveRouteIcon = () => "File";
+  const workspaceSlugFromPath = (path: string) => {
+    const first = path.split("/").filter(Boolean)[0] ?? "";
+    return first && !["login", "workspaces"].includes(first) ? first : null;
+  };
   return {
     useTabStore,
     getActiveTab,
     useActiveTabIdentity,
     useActiveTabRouter,
     resolveRouteIcon,
+    workspaceSlugFromPath,
   };
 });
 

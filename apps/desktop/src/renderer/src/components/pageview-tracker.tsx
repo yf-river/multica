@@ -31,7 +31,7 @@ import type { RendererRouteContextInput } from "../../../shared/renderer-route-c
  * without adding signal (real-data audit: desktop tab switches were
  * ~50% of all `$pageview` events).
  *
- * Newly opened tabs (`openInNewTab`, `addTab`) and cross-workspace
+ * Newly opened tabs (`openInNewTab`, `openTab(..., "new")`) and cross-workspace
  * `switchWorkspace(slug, path)` to a previously-unseen tab still fire,
  * because their key is not in the observed map yet. The map is seeded
  * from the persisted tab store on first render so tabs restored from a

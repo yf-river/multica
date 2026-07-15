@@ -44,7 +44,7 @@ interface TabStore {
    *   - Logged-out state (reset() wipes it).
    *   - Every workspace the user had access to got deleted / revoked.
    * When null, TabContent renders nothing and the workspace-creation overlay
-   * takes over.
+   * takes over. A non-null slug always names a group in `byWorkspace`.
    */
   activeWorkspaceSlug: string | null;
 
@@ -66,10 +66,13 @@ interface TabStore {
    *     (VSCode / Slack behavior — workspaces resume where you left off).
    */
   switchWorkspace: (slug: string, openPath?: string) => void;
-  /** Open-or-activate (dedupes by path) a tab in the active workspace. */
-  openTab: (path: string, title: string, icon: string) => string;
-  /** Always creates a new tab (no dedupe) in the active workspace. */
-  addTab: (path: string, title: string, icon: string) => string;
+  /** Open a tab in the active workspace, reusing the same path unless mode is `new`. */
+  openTab: (
+    path: string,
+    title: string,
+    icon: string,
+    mode?: "reuse" | "new",
+  ) => string;
   /**
    * Close a tab. Finds it across all workspaces (callers like the X button
    * only know the tab id, not the owning workspace). If this is the last
@@ -161,7 +164,7 @@ export function resolveRouteIcon(pathname: string): string {
 
 /** Extract the leading workspace slug from a path, or null if the path
  *  isn't workspace-scoped (global path, root, or empty). */
-function extractWorkspaceSlug(path: string): string | null {
+export function workspaceSlugFromPath(path: string): string | null {
   const first = path.split("/").filter(Boolean)[0] ?? "";
   if (!first) return null;
   if (isReservedSlug(first)) return null;
@@ -175,32 +178,22 @@ function extractWorkspaceSlug(path: string): string | null {
 /**
  * Defensive: catch paths that don't belong in the tab store.
  *
- * Two kinds of rejects:
- *  1. **Transition paths** (`/workspaces/new`). These are
- *     pre-workspace flows rendered by the window overlay on desktop, not
- *     tab routes. The navigation adapter normally intercepts these before
- *     they reach the store; this guard catches older persisted state.
- *  2. **Malformed workspace-scoped paths** like a stray `/issues/abc` that
+ * Rejects malformed workspace-scoped paths like a stray `/issues/abc` that
  *     was constructed without the workspace prefix. The router would
  *     interpret `issues` as a workspace slug → NoAccessPage.
  *
  * Returns null for rejects (caller decides how to recover — usually by
- * dropping the tab or substituting a default). Unlike the prior design,
- * there is no root "/" sentinel — tabs are always scoped.
+ * dropping the tab or substituting a default). There is no root "/"
+ * sentinel — tabs are always scoped.
  */
 function sanitizeTabPath(path: string): string | null {
   const firstSegment = path.split("/").filter(Boolean)[0] ?? "";
   if (!firstSegment) return null;
   if (isReservedSlug(firstSegment)) {
-    // Don't log for known transition paths — these are legitimate inputs
-    // at the interception boundary (older persisted state or stale callers).
-    const isTransition = path === "/workspaces/new";
-    if (!isTransition) {
-      console.warn(
-        `[tab-store] tab path "${path}" starts with reserved slug "${firstSegment}" — ` +
-          `caller likely forgot the workspace prefix. Dropping.`,
-      );
-    }
+    console.warn(
+      `[tab-store] tab path "${path}" starts with reserved slug "${firstSegment}" — ` +
+        `caller likely forgot the workspace prefix. Dropping.`,
+    );
     return null;
   }
   return path;
@@ -329,43 +322,24 @@ export const useTabStore = create<TabStore>()(
         set({ activeWorkspaceSlug: slug });
       },
 
-      openTab(path, title, icon) {
+      openTab(path, title, icon, mode = "reuse") {
         const { activeWorkspaceSlug, byWorkspace } = get();
         const clean = sanitizeTabPath(path);
         if (!activeWorkspaceSlug || !clean) return "";
         const group = byWorkspace[activeWorkspaceSlug];
-        if (!group) return "";
 
-        const existing = group.tabs.find((t) => t.path === clean);
-        if (existing) {
-          set({
-            byWorkspace: {
-              ...byWorkspace,
-              [activeWorkspaceSlug]: { ...group, activeTabId: existing.id },
-            },
-          });
-          return existing.id;
+        if (mode === "reuse") {
+          const existing = group.tabs.find((t) => t.path === clean);
+          if (existing) {
+            set({
+              byWorkspace: {
+                ...byWorkspace,
+                [activeWorkspaceSlug]: { ...group, activeTabId: existing.id },
+              },
+            });
+            return existing.id;
+          }
         }
-
-        const tab = makeTab(clean, title, icon);
-        set({
-          byWorkspace: {
-            ...byWorkspace,
-            [activeWorkspaceSlug]: {
-              tabs: [...group.tabs, tab],
-              activeTabId: group.activeTabId,
-            },
-          },
-        });
-        return tab.id;
-      },
-
-      addTab(path, title, icon) {
-        const { activeWorkspaceSlug, byWorkspace } = get();
-        const clean = sanitizeTabPath(path);
-        if (!activeWorkspaceSlug || !clean) return "";
-        const group = byWorkspace[activeWorkspaceSlug];
-        if (!group) return "";
 
         const tab = makeTab(clean, title, icon);
         set({
@@ -488,9 +462,7 @@ export const useTabStore = create<TabStore>()(
         const { activeWorkspaceSlug, byWorkspace } = get();
         if (!activeWorkspaceSlug) return;
         const group = byWorkspace[activeWorkspaceSlug];
-        if (!group) return;
         const index = group.tabs.findIndex((t) => t.id === group.activeTabId);
-        if (index < 0) return;
         const current = group.tabs[index];
         const nextTabs = [...group.tabs];
         nextTabs[index] = {
@@ -511,9 +483,7 @@ export const useTabStore = create<TabStore>()(
       closeActiveTab() {
         const { activeWorkspaceSlug, byWorkspace, closeTab } = get();
         if (!activeWorkspaceSlug) return;
-        const group = byWorkspace[activeWorkspaceSlug];
-        if (!group) return;
-        closeTab(group.activeTabId);
+        closeTab(byWorkspace[activeWorkspaceSlug].activeTabId);
       },
 
       moveTab(fromIndex, toIndex) {
@@ -521,7 +491,6 @@ export const useTabStore = create<TabStore>()(
         const { activeWorkspaceSlug, byWorkspace } = get();
         if (!activeWorkspaceSlug) return;
         const group = byWorkspace[activeWorkspaceSlug];
-        if (!group) return;
         if (fromIndex < 0 || fromIndex >= group.tabs.length) return;
 
         // Clamp the drop position to within the source tab's group (pinned vs
@@ -592,26 +561,21 @@ export const useTabStore = create<TabStore>()(
           }
         }
 
-        let nextActive = activeWorkspaceSlug;
-        if (nextActive && !validSlugs.has(nextActive)) {
-          nextActive = Object.keys(nextByWorkspace)[0] ?? null;
-          changed = true;
-        }
+        let nextActive =
+          activeWorkspaceSlug && nextByWorkspace[activeWorkspaceSlug]
+            ? activeWorkspaceSlug
+            : (Object.keys(nextByWorkspace)[0] ?? null);
+        if (nextActive !== activeWorkspaceSlug) changed = true;
 
         if (!nextActive) {
-          nextActive = Object.keys(nextByWorkspace)[0] ?? null;
-          if (nextActive) changed = true;
-        }
-
-        if (!nextActive) {
-          const fallbackSlug = validSlugs.values().next().value;
-          if (fallbackSlug) {
-            const fresh = defaultTabFor(fallbackSlug);
-            nextByWorkspace[fallbackSlug] = {
+          const seedSlug = validSlugs.values().next().value;
+          if (seedSlug) {
+            const fresh = defaultTabFor(seedSlug);
+            nextByWorkspace[seedSlug] = {
               tabs: [fresh],
               activeTabId: fresh.id,
             };
-            nextActive = fallbackSlug;
+            nextActive = seedSlug;
             changed = true;
           }
         }
@@ -663,7 +627,7 @@ export const useTabStore = create<TabStore>()(
             // Persisted storage is an untrusted local boundary and may be
             // manually edited or corrupt. Drop rather than rewrite so we
             // never put users on a path that doesn't match the group's slug.
-            if (!clean || extractWorkspaceSlug(clean) !== slug) {
+            if (!clean || workspaceSlugFromPath(clean) !== slug) {
               console.warn(
                 `[tab-store] dropping persisted tab "${pTab.path}" from ` +
                   `group "${slug}" — path/slug mismatch`,
@@ -737,7 +701,6 @@ interface PersistedTabState {
 export function getActiveTab(s: TabStore): Tab | null {
   if (!s.activeWorkspaceSlug) return null;
   const group = s.byWorkspace[s.activeWorkspaceSlug];
-  if (!group) return null;
   return group.tabs.find((t) => t.id === group.activeTabId) ?? null;
 }
 
@@ -754,7 +717,7 @@ export function getActiveTab(s: TabStore): Tab | null {
  */
 export function useActiveGroup(): WorkspaceTabGroup | null {
   return useTabStore((s) =>
-    s.activeWorkspaceSlug ? (s.byWorkspace[s.activeWorkspaceSlug] ?? null) : null,
+    s.activeWorkspaceSlug ? s.byWorkspace[s.activeWorkspaceSlug] : null,
   );
 }
 
@@ -770,7 +733,7 @@ export function useActiveTabIdentity(): { slug: string | null; tabId: string | n
   const slug = useTabStore((s) => s.activeWorkspaceSlug);
   const tabId = useTabStore((s) =>
     s.activeWorkspaceSlug
-      ? (s.byWorkspace[s.activeWorkspaceSlug]?.activeTabId ?? null)
+      ? s.byWorkspace[s.activeWorkspaceSlug].activeTabId
       : null,
   );
   return { slug, tabId };
