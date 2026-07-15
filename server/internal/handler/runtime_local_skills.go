@@ -301,31 +301,18 @@ func cleanOptionalString(value *string) *string {
 	return &trimmed
 }
 
-func (h *Handler) requireRuntimeLocalSkillAccess(w http.ResponseWriter, r *http.Request, runtimeID string) (runtimeIDAndWorkspace, bool) {
+func (h *Handler) requireRuntimeLocalSkillAccess(w http.ResponseWriter, r *http.Request, runtimeID string) (db.AgentRuntime, bool) {
 	rt, member, ok := h.requireRuntimeAccess(w, r, runtimeID)
 	if !ok {
-		return runtimeIDAndWorkspace{}, false
+		return db.AgentRuntime{}, false
 	}
-	wsID := uuidToString(rt.WorkspaceID)
 
 	if rt.OwnerID.Valid && uuidToString(rt.OwnerID) == uuidToString(member.UserID) {
-		return runtimeIDAndWorkspace{
-			runtimeID:   uuidToString(rt.ID),
-			workspaceID: wsID,
-			provider:    rt.Provider,
-			status:      rt.Status,
-		}, true
+		return rt, true
 	}
 
 	writeError(w, http.StatusForbidden, "insufficient permissions")
-	return runtimeIDAndWorkspace{}, false
-}
-
-type runtimeIDAndWorkspace struct {
-	runtimeID   string
-	workspaceID string
-	provider    string
-	status      string
+	return db.AgentRuntime{}, false
 }
 
 func (h *Handler) InitiateListLocalSkills(w http.ResponseWriter, r *http.Request) {
@@ -334,7 +321,7 @@ func (h *Handler) InitiateListLocalSkills(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
-	if rt.status != "online" {
+	if rt.Status != "online" {
 		writeError(w, http.StatusServiceUnavailable, "runtime is offline")
 		return
 	}
@@ -343,7 +330,7 @@ func (h *Handler) InitiateListLocalSkills(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	req, err := h.LocalSkillListStore.Create(r.Context(), rt.runtimeID, uuidToString(requestID))
+	req, err := h.LocalSkillListStore.Create(r.Context(), uuidToString(rt.ID), uuidToString(requestID))
 	if err != nil {
 		if errors.Is(err, errRuntimeAsyncRequestConflict) {
 			writeIdempotencyConflict(w, "Idempotency-Key was already used for another runtime")
@@ -368,7 +355,7 @@ func (h *Handler) GetLocalSkillListRequest(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusInternalServerError, "failed to load request: "+err.Error())
 		return
 	}
-	if req == nil || req.RuntimeID != rt.runtimeID {
+	if req == nil || req.RuntimeID != uuidToString(rt.ID) {
 		writeError(w, http.StatusNotFound, "request not found")
 		return
 	}
@@ -382,7 +369,7 @@ func (h *Handler) InitiateImportLocalSkill(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
-	if rt.status != "online" {
+	if rt.Status != "online" {
 		writeError(w, http.StatusServiceUnavailable, "runtime is offline")
 		return
 	}
@@ -428,7 +415,7 @@ func (h *Handler) InitiateImportLocalSkill(w http.ResponseWriter, r *http.Reques
 
 	input := LocalSkillImportRequestInput{
 		RequestID:     uuidToString(requestID),
-		RuntimeID:     rt.runtimeID,
+		RuntimeID:     uuidToString(rt.ID),
 		CreatorID:     creatorID,
 		SkillKey:      strings.TrimSpace(req.SkillKey),
 		Name:          cleanOptionalString(req.Name),
@@ -467,7 +454,7 @@ func (h *Handler) GetLocalSkillImportRequest(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, "failed to load request: "+err.Error())
 		return
 	}
-	if req == nil || req.RuntimeID != rt.runtimeID {
+	if req == nil || req.RuntimeID != uuidToString(rt.ID) {
 		writeError(w, http.StatusNotFound, "request not found")
 		return
 	}

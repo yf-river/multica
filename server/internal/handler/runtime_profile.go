@@ -88,16 +88,14 @@ func marshalFixedArgs(args []string) ([]byte, error) {
 	if len(args) == 0 {
 		return []byte("[]"), nil
 	}
-	clean := make([]string, 0, len(args))
 	for _, a := range args {
 		// fixed_args are launch flags inherited by every agent on the runtime;
 		// blank entries are always a client mistake.
 		if strings.TrimSpace(a) == "" {
 			return nil, errors.New("fixed_args entries must be non-empty")
 		}
-		clean = append(clean, a)
 	}
-	return json.Marshal(clean)
+	return json.Marshal(args)
 }
 
 type createRuntimeProfileRequest struct {
@@ -473,28 +471,9 @@ func (h *Handler) DeleteRuntimeProfile(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 
-	// App-layer cascade, per runtime, mirroring DeleteAgentRuntime: pause
-	// autopilots pointing at the archived agents, drop archived squads led by
-	// them, then hard-delete the archived agents so the RESTRICT FK on
-	// agent.runtime_id no longer blocks removing the runtime row.
 	for _, rid := range runtimeIDs {
-		archivedAgentIDs, err := qtx.ListArchivedAgentIDsByRuntime(r.Context(), rid)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to enumerate archived agents")
-			return
-		}
-		if len(archivedAgentIDs) > 0 {
-			if err := qtx.PauseAutopilotsByAgentAssignees(r.Context(), archivedAgentIDs); err != nil {
-				writeError(w, http.StatusInternalServerError, "failed to pause autopilots")
-				return
-			}
-		}
-		if err := qtx.DeleteSquadsByArchivedAgentsOnRuntime(r.Context(), rid); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to clean up squads referencing archived agents")
-			return
-		}
-		if err := qtx.DeleteArchivedAgentsByRuntime(r.Context(), rid); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to clean up archived agents")
+		if err := removeArchivedRuntimeDependents(r.Context(), qtx, rid); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
 	}

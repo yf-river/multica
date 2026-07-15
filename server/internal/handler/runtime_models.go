@@ -196,32 +196,15 @@ func (s *InMemoryModelListStore) Fail(_ context.Context, id string, errMsg strin
 // Handlers
 // ---------------------------------------------------------------------------
 
-type runtimeModelAccess struct {
-	runtimeID string
-	status    string
-}
-
-func (h *Handler) requireRuntimeModelAccess(w http.ResponseWriter, r *http.Request, runtimeID string) (runtimeModelAccess, bool) {
-	rt, _, ok := h.requireRuntimeAccess(w, r, runtimeID)
-	if !ok {
-		return runtimeModelAccess{}, false
-	}
-
-	return runtimeModelAccess{
-		runtimeID: uuidToString(rt.ID),
-		status:    rt.Status,
-	}, true
-}
-
 // InitiateListModels creates a pending model list request for a runtime.
 // Called by the frontend; the daemon picks it up on its next heartbeat.
 func (h *Handler) InitiateListModels(w http.ResponseWriter, r *http.Request) {
 	runtimeID := chi.URLParam(r, "runtimeId")
-	rt, ok := h.requireRuntimeModelAccess(w, r, runtimeID)
+	rt, _, ok := h.requireRuntimeAccess(w, r, runtimeID)
 	if !ok {
 		return
 	}
-	if rt.status != "online" {
+	if rt.Status != "online" {
 		writeError(w, http.StatusServiceUnavailable, "runtime is offline")
 		return
 	}
@@ -230,7 +213,7 @@ func (h *Handler) InitiateListModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	req, err := h.ModelListStore.Create(r.Context(), rt.runtimeID, uuidToString(requestID))
+	req, err := h.ModelListStore.Create(r.Context(), uuidToString(rt.ID), uuidToString(requestID))
 	if err != nil {
 		if errors.Is(err, errRuntimeAsyncRequestConflict) {
 			writeIdempotencyConflict(w, "Idempotency-Key was already used for another runtime")
@@ -245,7 +228,7 @@ func (h *Handler) InitiateListModels(w http.ResponseWriter, r *http.Request) {
 // GetModelListRequest returns the status of a model list request.
 func (h *Handler) GetModelListRequest(w http.ResponseWriter, r *http.Request) {
 	runtimeID := chi.URLParam(r, "runtimeId")
-	rt, ok := h.requireRuntimeModelAccess(w, r, runtimeID)
+	rt, _, ok := h.requireRuntimeAccess(w, r, runtimeID)
 	if !ok {
 		return
 	}
@@ -257,7 +240,7 @@ func (h *Handler) GetModelListRequest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load request: "+err.Error())
 		return
 	}
-	if req == nil || req.RuntimeID != rt.runtimeID {
+	if req == nil || req.RuntimeID != uuidToString(rt.ID) {
 		writeError(w, http.StatusNotFound, "request not found")
 		return
 	}

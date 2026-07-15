@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -130,22 +131,26 @@ func newUsageResponse(provider, model string, inputTokens, outputTokens, cacheRe
 	return response
 }
 
+func (h *Handler) requireRuntimeUsageScope(w http.ResponseWriter, r *http.Request) (pgtype.UUID, string, bool) {
+	runtime, _, ok := h.requireRuntimeAccess(w, r, chi.URLParam(r, "runtimeId"))
+	if !ok {
+		return pgtype.UUID{}, "", false
+	}
+	return runtime.ID, h.resolveViewingTZ(r), true
+}
+
 // GetRuntimeUsage returns daily token usage for a runtime, aggregated from
 // per-task usage records captured by the daemon. This is scoped to
 // Daemon-executed tasks only (i.e. excludes users' local CLI usage of the
 // same tool).
 func (h *Handler) GetRuntimeUsage(w http.ResponseWriter, r *http.Request) {
-	runtimeID := chi.URLParam(r, "runtimeId")
-	rt, _, ok := h.requireRuntimeAccess(w, r, runtimeID)
+	runtimeID, viewTZ, ok := h.requireRuntimeUsageScope(w, r)
 	if !ok {
 		return
 	}
-
-	// All runtime reports render in the viewer's tz.
-	viewTZ := h.resolveViewingTZ(r)
 	since := parseSinceParamInTZ(r, 90, viewTZ)
 
-	resp, err := h.listRuntimeUsage(r.Context(), rt.ID, viewTZ, since)
+	resp, err := h.listRuntimeUsage(r.Context(), runtimeID, viewTZ, since)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list usage")
 		return
@@ -186,15 +191,13 @@ func (h *Handler) listRuntimeUsage(ctx context.Context, runtimeID pgtype.UUID, t
 
 // GetRuntimeTaskActivity returns hourly task activity distribution for a runtime.
 func (h *Handler) GetRuntimeTaskActivity(w http.ResponseWriter, r *http.Request) {
-	runtimeID := chi.URLParam(r, "runtimeId")
-	rt, _, ok := h.requireRuntimeAccess(w, r, runtimeID)
+	runtimeID, viewTZ, ok := h.requireRuntimeUsageScope(w, r)
 	if !ok {
 		return
 	}
 
-	viewTZ := h.resolveViewingTZ(r)
 	rows, err := h.Queries.GetRuntimeTaskHourlyActivity(r.Context(), db.GetRuntimeTaskHourlyActivityParams{
-		RuntimeID: rt.ID,
+		RuntimeID: runtimeID,
 		Tz:        viewTZ,
 	})
 	if err != nil {
@@ -243,19 +246,17 @@ type runtimeUsageByTaskResponse struct {
 // GetRuntimeUsageByAgent returns per-agent token aggregates for a runtime
 // since the cutoff window. Drives the runtime-detail "Cost by agent" tab.
 func (h *Handler) GetRuntimeUsageByAgent(w http.ResponseWriter, r *http.Request) {
-	runtimeID := chi.URLParam(r, "runtimeId")
-	rt, _, ok := h.requireRuntimeAccess(w, r, runtimeID)
+	runtimeID, viewTZ, ok := h.requireRuntimeUsageScope(w, r)
 	if !ok {
 		return
 	}
 
 	// No date bucketing — tz only sets the cutoff boundary so "last 30
 	// days" means 30 of the viewer's days.
-	viewTZ := h.resolveViewingTZ(r)
 	since := parseSinceParamInTZ(r, 30, viewTZ)
 
 	rows, err := h.Queries.ListRuntimeUsageByAgent(r.Context(), db.ListRuntimeUsageByAgentParams{
-		RuntimeID: rt.ID,
+		RuntimeID: runtimeID,
 		Since:     since,
 	})
 	if err != nil {
@@ -285,17 +286,15 @@ func (h *Handler) GetRuntimeUsageByAgent(w http.ResponseWriter, r *http.Request)
 // GetRuntimeUsageByTask returns per-task token aggregates for a runtime since
 // the cutoff window. Drives the runtime-detail "Cost by task" tab.
 func (h *Handler) GetRuntimeUsageByTask(w http.ResponseWriter, r *http.Request) {
-	runtimeID := chi.URLParam(r, "runtimeId")
-	rt, _, ok := h.requireRuntimeAccess(w, r, runtimeID)
+	runtimeID, viewTZ, ok := h.requireRuntimeUsageScope(w, r)
 	if !ok {
 		return
 	}
 
-	viewTZ := h.resolveViewingTZ(r)
 	since := parseSinceParamInTZ(r, 30, viewTZ)
 
 	rows, err := h.Queries.ListRuntimeUsageByTask(r.Context(), db.ListRuntimeUsageByTaskParams{
-		RuntimeID: rt.ID,
+		RuntimeID: runtimeID,
 		Since:     since,
 	})
 	if err != nil {
@@ -344,17 +343,15 @@ type runtimeUsageByHourResponse struct {
 // report — the same timezone resolved by resolveViewingTZ from the request's
 // `?tz=` param or the authenticated user's stored user.timezone.
 func (h *Handler) GetRuntimeUsageByHour(w http.ResponseWriter, r *http.Request) {
-	runtimeID := chi.URLParam(r, "runtimeId")
-	rt, _, ok := h.requireRuntimeAccess(w, r, runtimeID)
+	runtimeID, viewTZ, ok := h.requireRuntimeUsageScope(w, r)
 	if !ok {
 		return
 	}
 
-	viewTZ := h.resolveViewingTZ(r)
 	since := parseSinceParamInTZ(r, 30, viewTZ)
 
 	rows, err := h.Queries.GetRuntimeUsageByHour(r.Context(), db.GetRuntimeUsageByHourParams{
-		RuntimeID: rt.ID,
+		RuntimeID: runtimeID,
 		Since:     since,
 		Tz:        viewTZ,
 	})
@@ -684,38 +681,8 @@ func (h *Handler) DeleteAgentRuntime(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 
-	// Pause autopilots pointing at the archived agents BEFORE we delete
-	// them. The current schema has no autopilot.assignee_id agent FK, so a
-	// hard-delete here would otherwise leave dangling rows that subsequent
-	// scheduler ticks would skip with "assignee agent no longer exists" —
-	// quiet, but burning a run record every tick until an operator notices.
-	// Pausing makes the breakage visible in the autopilot list so the owner
-	// can re-point or delete the row instead. This runs inside the teardown
-	// transaction so a pause that lands but is followed by a failed delete
-	// rolls back with everything else, matching ArchiveAgentsAndDeleteRuntime.
-	archivedAgentIDs, err := qtx.ListArchivedAgentIDsByRuntime(r.Context(), rt.ID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to enumerate archived agents")
-		return
-	}
-	if len(archivedAgentIDs) > 0 {
-		if err := qtx.PauseAutopilotsByAgentAssignees(r.Context(), archivedAgentIDs); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to pause autopilots")
-			return
-		}
-	}
-
-	// Remove archived squads whose leader is an archived agent on this runtime
-	// so the RESTRICT FK on squad.leader_id won't block the subsequent agent
-	// deletion. Active squads are handled by the 409 guard above instead.
-	if err := qtx.DeleteSquadsByArchivedAgentsOnRuntime(r.Context(), rt.ID); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to clean up squads referencing archived agents")
-		return
-	}
-
-	// Remove archived agents so the FK constraint (ON DELETE RESTRICT) won't block deletion.
-	if err := qtx.DeleteArchivedAgentsByRuntime(r.Context(), rt.ID); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to clean up archived agents")
+	if err := removeArchivedRuntimeDependents(r.Context(), qtx, rt.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
@@ -738,6 +705,28 @@ func (h *Handler) DeleteAgentRuntime(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// removeArchivedRuntimeDependents releases every reference that would prevent
+// deleting a runtime. Callers run it inside the deletion transaction after
+// rejecting active agents and active squad leaders.
+func removeArchivedRuntimeDependents(ctx context.Context, queries *db.Queries, runtimeID pgtype.UUID) error {
+	archivedAgentIDs, err := queries.ListArchivedAgentIDsByRuntime(ctx, runtimeID)
+	if err != nil {
+		return errors.New("failed to enumerate archived agents")
+	}
+	if len(archivedAgentIDs) > 0 {
+		if err := queries.PauseAutopilotsByAgentAssignees(ctx, archivedAgentIDs); err != nil {
+			return errors.New("failed to pause autopilots")
+		}
+	}
+	if err := queries.DeleteSquadsByArchivedAgentsOnRuntime(ctx, runtimeID); err != nil {
+		return errors.New("failed to clean up squads referencing archived agents")
+	}
+	if err := queries.DeleteArchivedAgentsByRuntime(ctx, runtimeID); err != nil {
+		return errors.New("failed to clean up archived agents")
+	}
+	return nil
+}
+
 // runtimeHasActiveAgentsResponse builds the structured 409 body shared by
 // DeleteAgentRuntime (light-mode block) and ArchiveAgentsAndDeleteRuntime
 // (cascade-plan-changed). The shape is:
@@ -748,8 +737,8 @@ func (h *Handler) DeleteAgentRuntime(w http.ResponseWriter, r *http.Request) {
 //	  "active_agents": [AgentResponse, ...]
 //	}
 //
-// Front-end branches on `code`. The caller picks which code to send; this
-// helper just normalises the agent serialisation and the error string.
+// Front-end branches on `code`; the cascade endpoint replaces the default
+// code and message when the confirmed deletion plan has changed.
 func runtimeHasActiveAgentsResponse(agents []db.Agent) (map[string]any, error) {
 	resp := make([]AgentResponse, len(agents))
 	for i, a := range agents {
