@@ -959,18 +959,12 @@ func (h *Handler) CreatePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
-	err = reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, actorID, resourceTypePromptEvalCase, idempotencyKey, requestHash)
-	if errors.Is(err, pgx.ErrNoRows) {
-		replay, replayErr = loadReplayAfterReservationConflict(r.Context(), tx, loadReplay)
-		if replayErr != nil {
-			writePromptEvaluationCaseCreateReplayError(w, replayErr)
-			return
-		}
-		writeJSON(w, http.StatusCreated, replay)
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to reserve prompt evaluation case request")
+	if !handleResourceCreateReservation(
+		w, r.Context(), tx,
+		reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, actorID, resourceTypePromptEvalCase, idempotencyKey, requestHash),
+		loadReplay, writePromptEvaluationCaseCreateReplayError,
+		"failed to reserve prompt evaluation case request", http.StatusCreated,
+	) {
 		return
 	}
 	lockedAsset, err := qtx.LockPromptEvaluationAsset(r.Context(), db.LockPromptEvaluationAssetParams{

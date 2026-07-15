@@ -150,6 +150,32 @@ func loadReplayAfterReservationConflict[T any](
 	return replay, nil
 }
 
+func handleResourceCreateReservation[T any](
+	w http.ResponseWriter,
+	ctx context.Context,
+	tx pgx.Tx,
+	reservationErr error,
+	loadReplay func() (T, bool, error),
+	writeReplayError func(http.ResponseWriter, error),
+	reserveError string,
+	replayStatus int,
+) bool {
+	if reservationErr == nil {
+		return true
+	}
+	if !errors.Is(reservationErr, pgx.ErrNoRows) {
+		writeError(w, http.StatusInternalServerError, reserveError)
+		return false
+	}
+	replay, err := loadReplayAfterReservationConflict(ctx, tx, loadReplay)
+	if err != nil {
+		writeReplayError(w, err)
+		return false
+	}
+	writeJSON(w, replayStatus, replay)
+	return false
+}
+
 func completeResourceCreateRequest(
 	ctx context.Context,
 	queries *db.Queries,

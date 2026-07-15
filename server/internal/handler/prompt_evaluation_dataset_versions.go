@@ -89,18 +89,12 @@ func (h *Handler) CreatePromptEvaluationDatasetFromTraces(w http.ResponseWriter,
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
-	err = reserveResourceCreateRequest(r.Context(), qtx, asset.WorkspaceID, actorID, resourceTypePromptTraceImport, idempotencyKey, requestHash)
-	if errors.Is(err, pgx.ErrNoRows) {
-		replay, replayErr = loadReplayAfterReservationConflict(r.Context(), tx, loadReplay)
-		if replayErr != nil {
-			writePromptEvaluationTraceImportReplayError(w, replayErr)
-			return
-		}
-		writeJSON(w, http.StatusCreated, replay)
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to reserve trace dataset import")
+	if !handleResourceCreateReservation(
+		w, r.Context(), tx,
+		reserveResourceCreateRequest(r.Context(), qtx, asset.WorkspaceID, actorID, resourceTypePromptTraceImport, idempotencyKey, requestHash),
+		loadReplay, writePromptEvaluationTraceImportReplayError,
+		"failed to reserve trace dataset import", http.StatusCreated,
+	) {
 		return
 	}
 	lockedAsset, err := qtx.LockPromptEvaluationAsset(r.Context(), db.LockPromptEvaluationAssetParams{
@@ -349,18 +343,12 @@ func (h *Handler) CreatePromptEvaluationDatasetVersion(w http.ResponseWriter, r 
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
-	err = reserveResourceCreateRequest(r.Context(), qtx, asset.WorkspaceID, actorID, resourceTypePromptDatasetVersion, idempotencyKey, requestHash)
-	if errors.Is(err, pgx.ErrNoRows) {
-		replay, replayErr = loadReplayAfterReservationConflict(r.Context(), tx, loadReplay)
-		if replayErr != nil {
-			writePromptEvaluationDatasetVersionReplayError(w, replayErr)
-			return
-		}
-		writeJSON(w, http.StatusCreated, replay)
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to reserve dataset version request")
+	if !handleResourceCreateReservation(
+		w, r.Context(), tx,
+		reserveResourceCreateRequest(r.Context(), qtx, asset.WorkspaceID, actorID, resourceTypePromptDatasetVersion, idempotencyKey, requestHash),
+		loadReplay, writePromptEvaluationDatasetVersionReplayError,
+		"failed to reserve dataset version request", http.StatusCreated,
+	) {
 		return
 	}
 	lockedAsset, err := qtx.LockPromptEvaluationAsset(r.Context(), db.LockPromptEvaluationAssetParams{
@@ -627,18 +615,12 @@ func (h *Handler) RestorePromptEvaluationDatasetVersion(w http.ResponseWriter, r
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
-	err = reserveResourceCreateRequest(r.Context(), qtx, asset.WorkspaceID, actorID, resourceTypePromptDatasetRestore, idempotencyKey, requestHash)
-	if errors.Is(err, pgx.ErrNoRows) {
-		replay, replayErr = loadReplayAfterReservationConflict(r.Context(), tx, loadReplay)
-		if replayErr != nil {
-			writePromptEvaluationDatasetRestoreReplayError(w, replayErr)
-			return
-		}
-		writeJSON(w, http.StatusOK, replay)
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to reserve dataset version restore request")
+	if !handleResourceCreateReservation(
+		w, r.Context(), tx,
+		reserveResourceCreateRequest(r.Context(), qtx, asset.WorkspaceID, actorID, resourceTypePromptDatasetRestore, idempotencyKey, requestHash),
+		loadReplay, writePromptEvaluationDatasetRestoreReplayError,
+		"failed to reserve dataset version restore request", http.StatusOK,
+	) {
 		return
 	}
 	asset, err = qtx.LockPromptEvaluationAsset(r.Context(), db.LockPromptEvaluationAssetParams{

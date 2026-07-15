@@ -193,18 +193,12 @@ func (h *Handler) CreatePromptEvaluationOptimizationCandidate(w http.ResponseWri
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
-	err = reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, requestActorID, resourceTypePromptCandidate, idempotencyKey, requestHash)
-	if errors.Is(err, pgx.ErrNoRows) {
-		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, loadReplay)
-		if replayErr != nil {
-			writePromptEvaluationCandidateCreateReplayError(w, replayErr)
-			return
-		}
-		writeJSON(w, http.StatusCreated, replay)
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to reserve optimization candidate request")
+	if !handleResourceCreateReservation(
+		w, r.Context(), tx,
+		reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, requestActorID, resourceTypePromptCandidate, idempotencyKey, requestHash),
+		loadReplay, writePromptEvaluationCandidateCreateReplayError,
+		"failed to reserve optimization candidate request", http.StatusCreated,
+	) {
 		return
 	}
 	item, err := qtx.CreatePromptEvaluationOptimizationCandidateWithID(r.Context(), db.CreatePromptEvaluationOptimizationCandidateWithIDParams{
@@ -365,18 +359,12 @@ func (h *Handler) PublishPromptEvaluationOptimizationCandidate(w http.ResponseWr
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
-	err = reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, requestActorID, resourceTypePromptPublish, idempotencyKey, requestHash)
-	if errors.Is(err, pgx.ErrNoRows) {
-		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, loadReplay)
-		if replayErr != nil {
-			writePromptEvaluationCandidatePublishReplayError(w, replayErr)
-			return
-		}
-		writeJSON(w, http.StatusOK, replay)
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to reserve optimization candidate publish request")
+	if !handleResourceCreateReservation(
+		w, r.Context(), tx,
+		reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, requestActorID, resourceTypePromptPublish, idempotencyKey, requestHash),
+		loadReplay, writePromptEvaluationCandidatePublishReplayError,
+		"failed to reserve optimization candidate publish request", http.StatusOK,
+	) {
 		return
 	}
 	publishedPrompt, err := qtx.CreatePromptLibraryItemVersionWithID(r.Context(), db.CreatePromptLibraryItemVersionWithIDParams{
@@ -605,18 +593,12 @@ func (h *Handler) RejectPromptEvaluationOptimizationCandidate(w http.ResponseWri
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
-	err = reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, requestActorID, resourceTypePromptReject, idempotencyKey, requestHash)
-	if errors.Is(err, pgx.ErrNoRows) {
-		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, loadReplay)
-		if replayErr != nil {
-			writePromptEvaluationCandidateRejectReplayError(w, replayErr)
-			return
-		}
-		writeJSON(w, http.StatusOK, replay)
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to reserve optimization candidate reject request")
+	if !handleResourceCreateReservation(
+		w, r.Context(), tx,
+		reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, requestActorID, resourceTypePromptReject, idempotencyKey, requestHash),
+		loadReplay, writePromptEvaluationCandidateRejectReplayError,
+		"failed to reserve optimization candidate reject request", http.StatusOK,
+	) {
 		return
 	}
 	updatedCandidate, err := qtx.RejectPromptEvaluationOptimizationCandidate(r.Context(), db.RejectPromptEvaluationOptimizationCandidateParams{

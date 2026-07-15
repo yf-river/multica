@@ -497,18 +497,12 @@ func (h *Handler) ApplyPromptEvaluationSkillCandidate(w http.ResponseWriter, r *
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
-	err = reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, actorID, resourceTypePromptSkillApply, idempotencyKey, requestHash)
-	if errors.Is(err, pgx.ErrNoRows) {
-		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, loadReplay)
-		if replayErr != nil {
-			writePromptEvaluationSkillApplyReplayError(w, replayErr)
-			return
-		}
-		writeJSON(w, http.StatusOK, replay)
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to reserve skill apply request")
+	if !handleResourceCreateReservation(
+		w, r.Context(), tx,
+		reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, actorID, resourceTypePromptSkillApply, idempotencyKey, requestHash),
+		loadReplay, writePromptEvaluationSkillApplyReplayError,
+		"failed to reserve skill apply request", http.StatusOK,
+	) {
 		return
 	}
 	if _, err := tx.Exec(r.Context(), `SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, uuidToString(candidate.ID)); err != nil {
@@ -718,18 +712,12 @@ func (h *Handler) PreparePromptEvaluationSkillReEvalAsset(w http.ResponseWriter,
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
-	err = reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, requestActorID, resourceTypePromptReEvalAsset, idempotencyKey, requestHash)
-	if errors.Is(err, pgx.ErrNoRows) {
-		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, loadReplay)
-		if replayErr != nil {
-			writePromptEvaluationReEvalAssetReplayError(w, replayErr)
-			return
-		}
-		writeJSON(w, http.StatusCreated, replay)
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to reserve skill re-eval asset request")
+	if !handleResourceCreateReservation(
+		w, r.Context(), tx,
+		reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, requestActorID, resourceTypePromptReEvalAsset, idempotencyKey, requestHash),
+		loadReplay, writePromptEvaluationReEvalAssetReplayError,
+		"failed to reserve skill re-eval asset request", http.StatusCreated,
+	) {
 		return
 	}
 	asset, err := qtx.CreatePromptEvaluationAssetWithID(r.Context(), db.CreatePromptEvaluationAssetWithIDParams{
@@ -915,18 +903,12 @@ func (h *Handler) RunPromptEvaluationSkillReEval(w http.ResponseWriter, r *http.
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
-	err = reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, requestActorID, resourceTypePromptLocalRun, idempotencyKey, requestHash)
-	if errors.Is(err, pgx.ErrNoRows) {
-		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, loadReplay)
-		if replayErr != nil {
-			writePromptEvaluationLocalRunReplayError(w, replayErr)
-			return
-		}
-		writeJSON(w, http.StatusOK, replay)
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to reserve skill re-eval run")
+	if !handleResourceCreateReservation(
+		w, r.Context(), tx,
+		reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, requestActorID, resourceTypePromptLocalRun, idempotencyKey, requestHash),
+		loadReplay, writePromptEvaluationLocalRunReplayError,
+		"failed to reserve skill re-eval run", http.StatusOK,
+	) {
 		return
 	}
 	run, ok := h.persistPromptEvaluationLocalRun(w, r, qtx, idempotencyKey, asset, result, requestActorID)

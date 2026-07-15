@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/prompteval"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -874,18 +873,12 @@ func (h *Handler) CreatePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
-	err = reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, actorID, resourceTypePromptEvalAsset, idempotencyKey, requestHash)
-	if errors.Is(err, pgx.ErrNoRows) {
-		replay, replayErr = loadReplayAfterReservationConflict(r.Context(), tx, loadReplay)
-		if replayErr != nil {
-			writePromptEvaluationAssetCreateReplayError(w, replayErr)
-			return
-		}
-		writeJSON(w, http.StatusCreated, replay)
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to reserve prompt evaluation asset request")
+	if !handleResourceCreateReservation(
+		w, r.Context(), tx,
+		reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, actorID, resourceTypePromptEvalAsset, idempotencyKey, requestHash),
+		loadReplay, writePromptEvaluationAssetCreateReplayError,
+		"failed to reserve prompt evaluation asset request", http.StatusCreated,
+	) {
 		return
 	}
 	asset, err := qtx.CreatePromptEvaluationAsset(r.Context(), db.CreatePromptEvaluationAssetParams{
@@ -1096,18 +1089,12 @@ func (h *Handler) RunPromptEvaluationAsset(w http.ResponseWriter, r *http.Reques
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
-	err = reserveResourceCreateRequest(r.Context(), qtx, workspaceID, requestActorID, resourceTypePromptLocalRun, idempotencyKey, requestHash)
-	if errors.Is(err, pgx.ErrNoRows) {
-		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, loadReplay)
-		if replayErr != nil {
-			writePromptEvaluationLocalRunReplayError(w, replayErr)
-			return
-		}
-		writeJSON(w, http.StatusOK, replay)
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to reserve prompt evaluation local run")
+	if !handleResourceCreateReservation(
+		w, r.Context(), tx,
+		reserveResourceCreateRequest(r.Context(), qtx, workspaceID, requestActorID, resourceTypePromptLocalRun, idempotencyKey, requestHash),
+		loadReplay, writePromptEvaluationLocalRunReplayError,
+		"failed to reserve prompt evaluation local run", http.StatusOK,
+	) {
 		return
 	}
 	run, ok := h.persistPromptEvaluationLocalRun(w, r, qtx, idempotencyKey, asset, result, requestActorID)
@@ -1226,18 +1213,12 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
-	err = reserveResourceCreateRequest(r.Context(), qtx, workspaceID, requestActorID, resourceTypePromptEvaluationRun, idempotencyKey, requestHash)
-	if errors.Is(err, pgx.ErrNoRows) {
-		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, loadReplay)
-		if replayErr != nil {
-			writePromptEvaluationAgentRunReplayError(w, replayErr)
-			return
-		}
-		writeJSON(w, http.StatusAccepted, replay)
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to reserve prompt evaluation agent run")
+	if !handleResourceCreateReservation(
+		w, r.Context(), tx,
+		reserveResourceCreateRequest(r.Context(), qtx, workspaceID, requestActorID, resourceTypePromptEvaluationRun, idempotencyKey, requestHash),
+		loadReplay, writePromptEvaluationAgentRunReplayError,
+		"failed to reserve prompt evaluation agent run", http.StatusAccepted,
+	) {
 		return
 	}
 

@@ -584,18 +584,12 @@ func (h *Handler) CreatePromptEvaluationEvidenceSnapshot(w http.ResponseWriter, 
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
-	err = reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, actorID, resourceTypePromptEvidenceSnapshot, idempotencyKey, requestHash)
-	if errors.Is(err, pgx.ErrNoRows) {
-		replay, replayErr = loadReplayAfterReservationConflict(r.Context(), tx, loadReplay)
-		if replayErr != nil {
-			writePromptEvaluationEvidenceSnapshotReplayError(w, replayErr)
-			return
-		}
-		writeJSON(w, http.StatusCreated, replay)
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to reserve prompt evaluation evidence snapshot request")
+	if !handleResourceCreateReservation(
+		w, r.Context(), tx,
+		reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, actorID, resourceTypePromptEvidenceSnapshot, idempotencyKey, requestHash),
+		loadReplay, writePromptEvaluationEvidenceSnapshotReplayError,
+		"failed to reserve prompt evaluation evidence snapshot request", http.StatusCreated,
+	) {
 		return
 	}
 	item, err := qtx.CreatePromptEvaluationEvidenceSnapshot(r.Context(), params)
@@ -707,18 +701,12 @@ func (h *Handler) CreatePromptEvaluationAssetEvidenceSnapshots(w http.ResponseWr
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
-	err = reserveResourceCreateRequest(r.Context(), qtx, asset.WorkspaceID, actorID, resourceTypePromptEvidenceBatch, idempotencyKey, requestHash)
-	if errors.Is(err, pgx.ErrNoRows) {
-		replay, replayErr = loadReplayAfterReservationConflict(r.Context(), tx, loadReplay)
-		if replayErr != nil {
-			writePromptEvaluationEvidenceBatchReplayError(w, replayErr)
-			return
-		}
-		writeJSON(w, http.StatusCreated, replay)
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to reserve asset evidence snapshot request")
+	if !handleResourceCreateReservation(
+		w, r.Context(), tx,
+		reserveResourceCreateRequest(r.Context(), qtx, asset.WorkspaceID, actorID, resourceTypePromptEvidenceBatch, idempotencyKey, requestHash),
+		loadReplay, writePromptEvaluationEvidenceBatchReplayError,
+		"failed to reserve asset evidence snapshot request", http.StatusCreated,
+	) {
 		return
 	}
 	if _, err := qtx.LockPromptEvaluationAsset(r.Context(), db.LockPromptEvaluationAssetParams{
