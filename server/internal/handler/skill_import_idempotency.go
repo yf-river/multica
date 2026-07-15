@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -14,33 +13,28 @@ import (
 
 var errSkillImportIdempotencyConflict = errors.New("skill import idempotency conflict")
 
-type skillImportReplay struct {
-	Status int
-	Body   []byte
-}
-
 func loadSkillImportReplay(
 	ctx context.Context,
 	queries *db.Queries,
 	workspaceID, actorID, key pgtype.UUID,
 	requestHash string,
-) (skillImportReplay, bool, error) {
+) (storedIdempotencyReplay, bool, error) {
 	record, err := queries.GetSkillImportRequest(ctx, db.GetSkillImportRequestParams{
 		WorkspaceID: workspaceID, ActorID: actorID, IdempotencyKey: key,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		return skillImportReplay{}, false, nil
+		return storedIdempotencyReplay{}, false, nil
 	}
 	if err != nil {
-		return skillImportReplay{}, false, err
+		return storedIdempotencyReplay{}, false, err
 	}
 	if record.RequestHash != requestHash {
-		return skillImportReplay{}, false, errSkillImportIdempotencyConflict
+		return storedIdempotencyReplay{}, false, errSkillImportIdempotencyConflict
 	}
 	if !record.CompletedAt.Valid || !record.ResponseStatus.Valid || len(record.ResponseBody) == 0 {
-		return skillImportReplay{}, false, errors.New("skill import request is incomplete")
+		return storedIdempotencyReplay{}, false, errors.New("skill import request is incomplete")
 	}
-	return skillImportReplay{Status: int(record.ResponseStatus.Int32), Body: record.ResponseBody}, true, nil
+	return storedIdempotencyReplay{Status: int(record.ResponseStatus.Int32), Body: record.ResponseBody}, true, nil
 }
 
 func completeSkillImportRequest(
@@ -61,11 +55,4 @@ func completeSkillImportRequest(
 		ResponseBody: body,
 	})
 	return err
-}
-
-func writeSkillImportReplay(w http.ResponseWriter, replay skillImportReplay) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Idempotency-Replayed", "true")
-	w.WriteHeader(replay.Status)
-	_, _ = w.Write(replay.Body)
 }

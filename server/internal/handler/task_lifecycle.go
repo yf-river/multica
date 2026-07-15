@@ -172,8 +172,7 @@ func (h *Handler) RerunIssue(w http.ResponseWriter, r *http.Request) {
 		)
 		return
 	} else if found {
-		w.Header().Set("Idempotency-Replayed", "true")
-		writeJSON(w, http.StatusAccepted, replay)
+		writeIdempotencyReplayJSON(w, http.StatusAccepted, replay)
 		return
 	}
 
@@ -200,8 +199,7 @@ func (h *Handler) RerunIssue(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "issue rerun replay disappeared after conflict")
 			return
 		}
-		w.Header().Set("Idempotency-Replayed", "true")
-		writeJSON(w, http.StatusAccepted, replay)
+		writeIdempotencyReplayJSON(w, http.StatusAccepted, replay)
 		return
 	}
 	if err != nil {

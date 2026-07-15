@@ -160,8 +160,7 @@ func (h *Handler) writePersonalAccessTokenReplay(
 		})
 		return
 	}
-	w.Header().Set("Idempotency-Replayed", "true")
-	writeJSON(w, http.StatusCreated, createPATResponse{
+	writeIdempotencyReplayJSON(w, http.StatusCreated, createPATResponse{
 		PersonalAccessTokenResponse: patToResponse(pat),
 		Token:                       rawToken,
 	})

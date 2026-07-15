@@ -53,6 +53,23 @@ const (
 
 var errResourceCreateIdempotencyConflict = errors.New("resource create idempotency conflict")
 
+type storedIdempotencyReplay struct {
+	Status int
+	Body   []byte
+}
+
+func writeIdempotencyReplayJSON(w http.ResponseWriter, status int, response any) {
+	w.Header().Set("Idempotency-Replayed", "true")
+	writeJSON(w, status, response)
+}
+
+func writeIdempotencyReplayBody(w http.ResponseWriter, replay storedIdempotencyReplay) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Idempotency-Replayed", "true")
+	w.WriteHeader(replay.Status)
+	_, _ = w.Write(replay.Body)
+}
+
 func writeIdempotencyConflict(w http.ResponseWriter, message string) {
 	writeJSON(w, http.StatusConflict, map[string]string{
 		"error": message,

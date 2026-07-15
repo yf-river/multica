@@ -187,8 +187,7 @@ func (h *Handler) writeFeedbackReplay(w http.ResponseWriter, feedback db.Feedbac
 		writeIdempotencyConflict(w, "Idempotency-Key was already used with a different request")
 		return
 	}
-	w.Header().Set("Idempotency-Replayed", "true")
-	writeJSON(w, http.StatusCreated, FeedbackResponse{
+	writeIdempotencyReplayJSON(w, http.StatusCreated, FeedbackResponse{
 		ID: uuidToString(feedback.ID), CreatedAt: timestampToString(feedback.CreatedAt),
 	})
 }

@@ -892,7 +892,7 @@ func (h *Handler) ImportSkill(w http.ResponseWriter, r *http.Request) {
 		)
 		return
 	} else if found {
-		writeSkillImportReplay(w, replay)
+		writeIdempotencyReplayBody(w, replay)
 		return
 	}
 
@@ -946,14 +946,14 @@ func (h *Handler) ImportSkill(w http.ResponseWriter, r *http.Request) {
 	qtx := h.Queries.WithTx(tx)
 	_, err = qtx.ReserveSkillImportRequest(r.Context(), db.ReserveSkillImportRequestParams{WorkspaceID: workspaceUUID, ActorID: creatorUUID, IdempotencyKey: idempotencyKey, RequestHash: requestHash})
 	if errors.Is(err, pgx.ErrNoRows) {
-		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, func() (skillImportReplay, bool, error) {
+		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, func() (storedIdempotencyReplay, bool, error) {
 			return loadSkillImportReplay(r.Context(), h.Queries, workspaceUUID, creatorUUID, idempotencyKey, requestHash)
 		})
 		if replayErr != nil {
 			writeError(w, http.StatusInternalServerError, "skill import replay disappeared after conflict")
 			return
 		}
-		writeSkillImportReplay(w, replay)
+		writeIdempotencyReplayBody(w, replay)
 		return
 	}
 	if err != nil {

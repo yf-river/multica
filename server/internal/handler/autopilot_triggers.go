@@ -69,8 +69,7 @@ func (h *Handler) CreateAutopilotTrigger(w http.ResponseWriter, r *http.Request)
 		)
 		return
 	} else if found {
-		w.Header().Set("Idempotency-Replayed", "true")
-		writeJSON(w, http.StatusCreated, replay)
+		writeIdempotencyReplayJSON(w, http.StatusCreated, replay)
 		return
 	}
 
@@ -88,8 +87,7 @@ func (h *Handler) CreateAutopilotTrigger(w http.ResponseWriter, r *http.Request)
 			writeError(w, http.StatusInternalServerError, "trigger create replay disappeared after conflict")
 			return
 		}
-		w.Header().Set("Idempotency-Replayed", "true")
-		writeJSON(w, http.StatusCreated, replay)
+		writeIdempotencyReplayJSON(w, http.StatusCreated, replay)
 		return
 	}
 	if err != nil {
@@ -569,7 +567,7 @@ func (h *Handler) RotateAutopilotTriggerWebhookToken(w http.ResponseWriter, r *h
 		)
 		return
 	} else if found {
-		writeAutopilotTriggerRotationReplay(w, replay)
+		writeIdempotencyReplayBody(w, replay)
 		return
 	}
 
@@ -585,14 +583,14 @@ func (h *Handler) RotateAutopilotTriggerWebhookToken(w http.ResponseWriter, r *h
 		TriggerID: prev.ID, RequestHash: requestHash,
 	})
 	if errors.Is(err, pgx.ErrNoRows) {
-		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, func() (autopilotTriggerRotationReplay, bool, error) {
+		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, func() (storedIdempotencyReplay, bool, error) {
 			return loadAutopilotTriggerRotationReplay(r.Context(), h.Queries, workspaceUUID, actorUUID, requestKey, requestHash)
 		})
 		if replayErr != nil {
 			writeError(w, http.StatusInternalServerError, "webhook token rotation replay disappeared after conflict")
 			return
 		}
-		writeAutopilotTriggerRotationReplay(w, replay)
+		writeIdempotencyReplayBody(w, replay)
 		return
 	}
 	if err != nil {

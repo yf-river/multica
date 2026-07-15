@@ -120,8 +120,7 @@ func (h *Handler) CreateChatSession(w http.ResponseWriter, r *http.Request) {
 			writeChatIdempotencyFailure(w, err)
 			return
 		}
-		w.Header().Set("Idempotency-Replayed", "true")
-		writeJSON(w, status, response)
+		writeIdempotencyReplayJSON(w, status, response)
 		return
 	}
 
@@ -524,8 +523,7 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 		}
 		_ = tx.Rollback(r.Context())
 		h.TaskService.WakeChatTaskIfQueued(r.Context(), response.TaskID)
-		w.Header().Set("Idempotency-Replayed", "true")
-		writeJSON(w, status, response)
+		writeIdempotencyReplayJSON(w, status, response)
 		return
 	}
 

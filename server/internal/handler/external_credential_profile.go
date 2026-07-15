@@ -261,8 +261,7 @@ func (h *Handler) writeExternalCredentialProfileReplay(
 		writeCredentialCapabilitiesDecodeError(w, r, uuidToString(profile.ID), err)
 		return
 	}
-	w.Header().Set("Idempotency-Replayed", "true")
-	writeJSON(w, http.StatusCreated, resp)
+	writeIdempotencyReplayJSON(w, http.StatusCreated, resp)
 }
 
 func (h *Handler) GetExternalCredentialProfile(w http.ResponseWriter, r *http.Request) {
