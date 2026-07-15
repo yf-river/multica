@@ -46,6 +46,7 @@ import { ActorAvatar } from "../../common/actor-avatar";
 import {
   ListGridCheckboxCell,
   ListGridSelectAllHeaderCell,
+  ListGridToggleableHeaderCell,
 } from "../../common/list-grid-selection";
 import { PageHeader } from "../../layout/page-header";
 import { AutopilotDialog } from "./autopilot-dialog";
@@ -417,67 +418,42 @@ function AutopilotListHeader({
       <ListGridHeaderCell sorted={sorted("name")} onSort={() => onSort("name")}>
         {t(($) => $.page.table.name)}
       </ListGridHeaderCell>
-      {isColVisible("assignee") ? (
-        <ListGridHeaderCell>
-          {t(($) => $.page.table.assignee)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="px-0" />
-      )}
-      {isColVisible("trigger") ? (
-        <ListGridHeaderCell className="hidden @2xl:flex">
-          {t(($) => $.page.table.trigger)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
-      {isColVisible("lastRun") ? (
-        <ListGridHeaderCell
-          className="hidden @2xl:flex"
-          sorted={sorted("lastRun")}
-          onSort={() => onSort("lastRun")}
-        >
-          {t(($) => $.page.table.last_run)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
-      {isColVisible("nextRun") ? (
-        <ListGridHeaderCell
-          className="hidden @2xl:flex"
-          sorted={sorted("nextRun")}
-          onSort={() => onSort("nextRun")}
-        >
-          {t(($) => $.page.table.next_run)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
-      {isColVisible("mode") ? (
-        <ListGridHeaderCell className="hidden @2xl:flex">
-          {t(($) => $.page.table.mode)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
-      {isColVisible("creator") ? (
-        <ListGridHeaderCell className="hidden @2xl:flex">
-          {t(($) => $.page.table.created_by)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
-      {isColVisible("created") ? (
-        <ListGridHeaderCell
-          className="hidden @2xl:flex"
-          sorted={sorted("created")}
-          onSort={() => onSort("created")}
-        >
-          {t(($) => $.page.table.created)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
+      <ListGridToggleableHeaderCell visible={isColVisible("assignee")}>
+        {t(($) => $.page.table.assignee)}
+      </ListGridToggleableHeaderCell>
+      <ListGridToggleableHeaderCell visible={isColVisible("trigger")} className="hidden @2xl:flex">
+        {t(($) => $.page.table.trigger)}
+      </ListGridToggleableHeaderCell>
+      <ListGridToggleableHeaderCell
+        visible={isColVisible("lastRun")}
+        className="hidden @2xl:flex"
+        sorted={sorted("lastRun")}
+        onSort={() => onSort("lastRun")}
+      >
+        {t(($) => $.page.table.last_run)}
+      </ListGridToggleableHeaderCell>
+      <ListGridToggleableHeaderCell
+        visible={isColVisible("nextRun")}
+        className="hidden @2xl:flex"
+        sorted={sorted("nextRun")}
+        onSort={() => onSort("nextRun")}
+      >
+        {t(($) => $.page.table.next_run)}
+      </ListGridToggleableHeaderCell>
+      <ListGridToggleableHeaderCell visible={isColVisible("mode")} className="hidden @2xl:flex">
+        {t(($) => $.page.table.mode)}
+      </ListGridToggleableHeaderCell>
+      <ListGridToggleableHeaderCell visible={isColVisible("creator")} className="hidden @2xl:flex">
+        {t(($) => $.page.table.created_by)}
+      </ListGridToggleableHeaderCell>
+      <ListGridToggleableHeaderCell
+        visible={isColVisible("created")}
+        className="hidden @2xl:flex"
+        sorted={sorted("created")}
+        onSort={() => onSort("created")}
+      >
+        {t(($) => $.page.table.created)}
+      </ListGridToggleableHeaderCell>
       <span aria-hidden="true" />
     </ListGridHeader>
   );

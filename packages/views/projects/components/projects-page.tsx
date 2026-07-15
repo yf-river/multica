@@ -43,9 +43,13 @@ import { AppLink, useRowLink } from "../../navigation";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { FILTER_ITEM_CLASS, HoverCheck } from "../../common/hover-check";
 import { ListBatchToolbar } from "../../common/list-toolbar";
+import {
+  ListGridCheckboxCell,
+  ListGridSelectAllHeaderCell,
+  ListGridToggleableHeaderCell,
+} from "../../common/list-grid-selection";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { Button } from "@multica/ui/components/ui/button";
-import { Checkbox } from "@multica/ui/components/ui/checkbox";
 import { Input } from "@multica/ui/components/ui/input";
 import {
   Dialog,
@@ -310,33 +314,6 @@ function ProjectRowActions({
   );
 }
 
-function CheckboxCell({
-  checked,
-  onToggle,
-}: {
-  checked: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <ListGridCell className="justify-center px-0">
-      <button
-        type="button"
-        aria-pressed={checked}
-        onClick={(e) => {
-          stopRowNavigation(e);
-          onToggle();
-        }}
-        onAuxClick={stopRowNavigation}
-        className={`-m-1.5 flex items-center p-1.5 ${
-          checked ? "" : "opacity-0 transition-opacity group-hover/row:opacity-100"
-        }`}
-      >
-        <Checkbox checked={checked} tabIndex={-1} className="pointer-events-none" />
-      </button>
-    </ListGridCell>
-  );
-}
-
 function ProjectTableRow({
   project,
   pinned,
@@ -368,7 +345,7 @@ function ProjectTableRow({
       className={`h-11 cursor-pointer ${selected ? "bg-accent/30" : ""}`}
       {...rowLink(rowHref)}
     >
-      <CheckboxCell checked={selected} onToggle={onToggleSelect} />
+      <ListGridCheckboxCell checked={selected} onToggle={onToggleSelect} />
       <ListGridCell className="gap-2">
         <ProjectIcon project={project} size="sm" />
         <span className="min-w-0 truncate text-sm font-medium">
@@ -469,79 +446,53 @@ function ProjectTableHeader({
   const { t } = useT("projects");
   const sorted = (field: ProjectSortField) =>
     sortField === field ? sortDirection : false;
-  const anySelected = allSelected || someSelected;
   return (
     <ListGridHeader>
-      <div className="flex items-center justify-center">
-        <button
-          type="button"
-          aria-pressed={allSelected}
-          onClick={onToggleAll}
-          className={`-m-1.5 flex items-center p-1.5 ${
-            anySelected ? "" : "opacity-0 transition-opacity group-hover/header:opacity-100"
-          }`}
-        >
-          <Checkbox
-            checked={allSelected}
-            indeterminate={someSelected && !allSelected}
-            tabIndex={-1}
-            className="pointer-events-none"
-          />
-        </button>
-      </div>
+      <ListGridSelectAllHeaderCell
+        allSelected={allSelected}
+        someSelected={someSelected}
+        onToggleAll={onToggleAll}
+      />
       <ListGridHeaderCell sorted={sorted("name")} onSort={() => onSort("name")}>
         {t(($) => $.table.name)}
       </ListGridHeaderCell>
       <ListGridHeaderCell sorted={sorted("status")} onSort={() => onSort("status")}>
         {t(($) => $.table.status)}
       </ListGridHeaderCell>
-      {isColVisible("priority") ? (
-        <ListGridHeaderCell
-          className="hidden @2xl:flex"
-          sorted={sorted("priority")}
-          onSort={() => onSort("priority")}
-        >
-          {t(($) => $.table.priority)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
-      {isColVisible("progress") ? (
-        <ListGridHeaderCell
-          className="hidden @2xl:flex"
-          sorted={sorted("progress")}
-          onSort={() => onSort("progress")}
-        >
-          {t(($) => $.table.progress)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
-      {isColVisible("lead") ? (
-        <ListGridHeaderCell className="hidden @2xl:flex">
-          {t(($) => $.table.lead)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
-      {isColVisible("issues") ? (
-        <ListGridHeaderCell className="hidden justify-end @2xl:flex" align="right">
-          {t(($) => $.table.issues)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
-      {isColVisible("created") ? (
-        <ListGridHeaderCell
-          className="hidden @2xl:flex"
-          sorted={sorted("created")}
-          onSort={() => onSort("created")}
-        >
-          {t(($) => $.table.created)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
+      <ListGridToggleableHeaderCell
+        visible={isColVisible("priority")}
+        className="hidden @2xl:flex"
+        sorted={sorted("priority")}
+        onSort={() => onSort("priority")}
+      >
+        {t(($) => $.table.priority)}
+      </ListGridToggleableHeaderCell>
+      <ListGridToggleableHeaderCell
+        visible={isColVisible("progress")}
+        className="hidden @2xl:flex"
+        sorted={sorted("progress")}
+        onSort={() => onSort("progress")}
+      >
+        {t(($) => $.table.progress)}
+      </ListGridToggleableHeaderCell>
+      <ListGridToggleableHeaderCell visible={isColVisible("lead")} className="hidden @2xl:flex">
+        {t(($) => $.table.lead)}
+      </ListGridToggleableHeaderCell>
+      <ListGridToggleableHeaderCell
+        visible={isColVisible("issues")}
+        className="hidden justify-end @2xl:flex"
+        align="right"
+      >
+        {t(($) => $.table.issues)}
+      </ListGridToggleableHeaderCell>
+      <ListGridToggleableHeaderCell
+        visible={isColVisible("created")}
+        className="hidden @2xl:flex"
+        sorted={sorted("created")}
+        onSort={() => onSort("created")}
+      >
+        {t(($) => $.table.created)}
+      </ListGridToggleableHeaderCell>
       <span aria-hidden="true" />
     </ListGridHeader>
   );

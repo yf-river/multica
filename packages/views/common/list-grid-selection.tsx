@@ -1,7 +1,11 @@
 "use client";
 
 import { Checkbox } from "@multica/ui/components/ui/checkbox";
-import { ListGridCell } from "@multica/ui/components/ui/list-grid";
+import {
+  ListGridCell,
+  ListGridHeaderCell,
+} from "@multica/ui/components/ui/list-grid";
+import type { ComponentProps } from "react";
 
 export function ListGridCheckboxCell({
   checked,
@@ -19,6 +23,7 @@ export function ListGridCheckboxCell({
           e.stopPropagation();
           onToggle();
         }}
+        onAuxClick={(e) => e.stopPropagation()}
         className={`-m-1.5 flex items-center p-1.5 ${
           checked ? "" : "opacity-0 transition-opacity group-hover/row:opacity-100"
         }`}
@@ -30,6 +35,21 @@ export function ListGridCheckboxCell({
         />
       </button>
     </ListGridCell>
+  );
+}
+
+export function ListGridToggleableHeaderCell({
+  visible,
+  className,
+  ...props
+}: ComponentProps<typeof ListGridHeaderCell> & { visible: boolean }) {
+  if (visible) {
+    return <ListGridHeaderCell className={className} {...props} />;
+  }
+  return (
+    <ListGridHeaderCell
+      className={className ? `${className} px-0` : "px-0"}
+    />
   );
 }
 

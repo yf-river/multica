@@ -53,6 +53,7 @@ import { useNavigation, useRowLink } from "../../navigation";
 import {
   ListGridCheckboxCell,
   ListGridSelectAllHeaderCell,
+  ListGridToggleableHeaderCell,
 } from "../../common/list-grid-selection";
 import { PageHeader } from "../../layout/page-header";
 import { canEditSkill } from "../hooks/use-can-edit-skill";
@@ -405,52 +406,35 @@ function SkillListHeader({
       <ListGridHeaderCell sorted={sorted("name")} onSort={() => onSort("name")}>
         {t(($) => $.table.name)}
       </ListGridHeaderCell>
-      {isColVisible("usedBy") ? (
-        <ListGridHeaderCell
-          sorted={sorted("usedBy")}
-          onSort={() => onSort("usedBy")}
-        >
-          {t(($) => $.table.used_by)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="px-0" />
-      )}
-      {isColVisible("source") ? (
-        <ListGridHeaderCell className="hidden @2xl:flex">
-          {t(($) => $.table.source)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
-      {isColVisible("creator") ? (
-        <ListGridHeaderCell className="hidden @2xl:flex">
-          {t(($) => $.table.created_by)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
-      {isColVisible("updated") ? (
-        <ListGridHeaderCell
-          className="hidden @2xl:flex"
-          sorted={sorted("updated")}
-          onSort={() => onSort("updated")}
-        >
-          {t(($) => $.table.updated)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
-      {isColVisible("created") ? (
-        <ListGridHeaderCell
-          className="hidden @2xl:flex"
-          sorted={sorted("created")}
-          onSort={() => onSort("created")}
-        >
-          {t(($) => $.table.created)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
+      <ListGridToggleableHeaderCell
+        visible={isColVisible("usedBy")}
+        sorted={sorted("usedBy")}
+        onSort={() => onSort("usedBy")}
+      >
+        {t(($) => $.table.used_by)}
+      </ListGridToggleableHeaderCell>
+      <ListGridToggleableHeaderCell visible={isColVisible("source")} className="hidden @2xl:flex">
+        {t(($) => $.table.source)}
+      </ListGridToggleableHeaderCell>
+      <ListGridToggleableHeaderCell visible={isColVisible("creator")} className="hidden @2xl:flex">
+        {t(($) => $.table.created_by)}
+      </ListGridToggleableHeaderCell>
+      <ListGridToggleableHeaderCell
+        visible={isColVisible("updated")}
+        className="hidden @2xl:flex"
+        sorted={sorted("updated")}
+        onSort={() => onSort("updated")}
+      >
+        {t(($) => $.table.updated)}
+      </ListGridToggleableHeaderCell>
+      <ListGridToggleableHeaderCell
+        visible={isColVisible("created")}
+        className="hidden @2xl:flex"
+        sorted={sorted("created")}
+        onSort={() => onSort("created")}
+      >
+        {t(($) => $.table.created)}
+      </ListGridToggleableHeaderCell>
       <span aria-hidden="true" />
     </ListGridHeader>
   );

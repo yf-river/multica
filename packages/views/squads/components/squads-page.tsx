@@ -97,6 +97,7 @@ import {
 } from "@multica/ui/components/ui/tooltip";
 import { ActorAvatar as ActorAvatarBase } from "@multica/ui/components/common/actor-avatar";
 import { ActorAvatar } from "../../common/actor-avatar";
+import { ListGridToggleableHeaderCell } from "../../common/list-grid-selection";
 import { ModelDropdown } from "../../agents/components/model-dropdown";
 import { FILTER_ITEM_CLASS, HoverCheck } from "../../common/hover-check";
 import {
@@ -477,35 +478,25 @@ function SquadListHeader({
         {t(($) => $.page.table.name)}
       </ListGridHeaderCell>
       <ListGridHeaderCell>{t(($) => $.page.table.leader)}</ListGridHeaderCell>
-      {isColVisible("members") ? (
-        <ListGridHeaderCell
-          className="hidden @2xl:flex"
-          sorted={sorted("members")}
-          onSort={() => onSort("members")}
-        >
-          {t(($) => $.page.table.members)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
-      {isColVisible("creator") ? (
-        <ListGridHeaderCell className="hidden @2xl:flex">
-          {t(($) => $.page.table.creator)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
-      {isColVisible("created") ? (
-        <ListGridHeaderCell
-          className="hidden @2xl:flex"
-          sorted={sorted("created")}
-          onSort={() => onSort("created")}
-        >
-          {t(($) => $.page.table.created)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
+      <ListGridToggleableHeaderCell
+        visible={isColVisible("members")}
+        className="hidden @2xl:flex"
+        sorted={sorted("members")}
+        onSort={() => onSort("members")}
+      >
+        {t(($) => $.page.table.members)}
+      </ListGridToggleableHeaderCell>
+      <ListGridToggleableHeaderCell visible={isColVisible("creator")} className="hidden @2xl:flex">
+        {t(($) => $.page.table.creator)}
+      </ListGridToggleableHeaderCell>
+      <ListGridToggleableHeaderCell
+        visible={isColVisible("created")}
+        className="hidden @2xl:flex"
+        sorted={sorted("created")}
+        onSort={() => onSort("created")}
+      >
+        {t(($) => $.page.table.created)}
+      </ListGridToggleableHeaderCell>
       {/* kebab track placeholder (track width collapses when no actions) */}
       <span aria-hidden="true" />
     </ListGridHeader>

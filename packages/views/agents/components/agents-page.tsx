@@ -68,6 +68,7 @@ import { ActorAvatar } from "../../common/actor-avatar";
 import {
   ListGridCheckboxCell,
   ListGridSelectAllHeaderCell,
+  ListGridToggleableHeaderCell,
 } from "../../common/list-grid-selection";
 import { ListBatchToolbar } from "../../common/list-toolbar";
 import { PageHeader } from "../../layout/page-header";
@@ -435,66 +436,43 @@ function AgentListHeader({
       <ListGridHeaderCell sorted={sorted("name")} onSort={() => onSort("name")}>
         {t(($) => $.columns.agent)}
       </ListGridHeaderCell>
-      {isColVisible("status") ? (
-        <ListGridHeaderCell>{t(($) => $.columns.status)}</ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="px-0" />
-      )}
-      {isColVisible("owner") ? (
-        <ListGridHeaderCell className="hidden @2xl:flex">
-          {t(($) => $.columns.owner)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
-      {isColVisible("runtime") ? (
-        <ListGridHeaderCell className="hidden @2xl:flex">
-          {t(($) => $.columns.runtime)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
-      {isColVisible("lastActive") ? (
-        <ListGridHeaderCell
-          className="hidden @2xl:flex"
-          sorted={sorted("lastActive")}
-          onSort={() => onSort("lastActive")}
-        >
-          {t(($) => $.columns.last_active)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
-      {isColVisible("runs") ? (
-        <ListGridHeaderCell
-          className="hidden @2xl:flex"
-          align="right"
-          sorted={sorted("runs")}
-          onSort={() => onSort("runs")}
-        >
-          {t(($) => $.columns.runs)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
-      {isColVisible("model") ? (
-        <ListGridHeaderCell className="hidden @2xl:flex">
-          {t(($) => $.columns.model)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
-      {isColVisible("created") ? (
-        <ListGridHeaderCell
-          className="hidden @2xl:flex"
-          sorted={sorted("created")}
-          onSort={() => onSort("created")}
-        >
-          {t(($) => $.columns.created)}
-        </ListGridHeaderCell>
-      ) : (
-        <ListGridHeaderCell className="hidden px-0 @2xl:flex" />
-      )}
+      <ListGridToggleableHeaderCell visible={isColVisible("status")}>
+        {t(($) => $.columns.status)}
+      </ListGridToggleableHeaderCell>
+      <ListGridToggleableHeaderCell visible={isColVisible("owner")} className="hidden @2xl:flex">
+        {t(($) => $.columns.owner)}
+      </ListGridToggleableHeaderCell>
+      <ListGridToggleableHeaderCell visible={isColVisible("runtime")} className="hidden @2xl:flex">
+        {t(($) => $.columns.runtime)}
+      </ListGridToggleableHeaderCell>
+      <ListGridToggleableHeaderCell
+        visible={isColVisible("lastActive")}
+        className="hidden @2xl:flex"
+        sorted={sorted("lastActive")}
+        onSort={() => onSort("lastActive")}
+      >
+        {t(($) => $.columns.last_active)}
+      </ListGridToggleableHeaderCell>
+      <ListGridToggleableHeaderCell
+        visible={isColVisible("runs")}
+        className="hidden @2xl:flex"
+        align="right"
+        sorted={sorted("runs")}
+        onSort={() => onSort("runs")}
+      >
+        {t(($) => $.columns.runs)}
+      </ListGridToggleableHeaderCell>
+      <ListGridToggleableHeaderCell visible={isColVisible("model")} className="hidden @2xl:flex">
+        {t(($) => $.columns.model)}
+      </ListGridToggleableHeaderCell>
+      <ListGridToggleableHeaderCell
+        visible={isColVisible("created")}
+        className="hidden @2xl:flex"
+        sorted={sorted("created")}
+        onSort={() => onSort("created")}
+      >
+        {t(($) => $.columns.created)}
+      </ListGridToggleableHeaderCell>
       <span aria-hidden="true" />
     </ListGridHeader>
   );
