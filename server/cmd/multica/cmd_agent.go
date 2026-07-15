@@ -620,17 +620,9 @@ func runAgentRestore(cmd *cobra.Command, args []string) error {
 }
 
 func runAgentTasks(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	tasks, err := fetchMapList(cmd, "/api/agents/"+args[0]+"/tasks", "list agent tasks")
 	if err != nil {
 		return err
-	}
-
-	ctx, cancel := cli.APIContext(context.Background())
-	defer cancel()
-
-	var tasks []map[string]any
-	if err := client.GetJSON(ctx, "/api/agents/"+args[0]+"/tasks", &tasks); err != nil {
-		return fmt.Errorf("list agent tasks: %w", err)
 	}
 
 	output, _ := cmd.Flags().GetString("output")
@@ -737,17 +729,9 @@ func runAgentAvatar(cmd *cobra.Command, args []string) error {
 // ---------------------------------------------------------------------------
 
 func runAgentSkillsList(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	skills, err := fetchMapList(cmd, "/api/agents/"+args[0]+"/skills", "list agent skills")
 	if err != nil {
 		return err
-	}
-
-	ctx, cancel := cli.APIContext(context.Background())
-	defer cancel()
-
-	var skills []map[string]any
-	if err := client.GetJSON(ctx, "/api/agents/"+args[0]+"/skills", &skills); err != nil {
-		return fmt.Errorf("list agent skills: %w", err)
 	}
 
 	output, _ := cmd.Flags().GetString("output")

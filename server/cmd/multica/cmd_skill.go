@@ -217,17 +217,9 @@ func skillContentBytesToString(data []byte, label string) (string, bool, error) 
 }
 
 func runSkillList(cmd *cobra.Command, _ []string) error {
-	client, err := newAPIClient(cmd)
+	skills, err := fetchMapList(cmd, "/api/skills", "list skills")
 	if err != nil {
 		return err
-	}
-
-	ctx, cancel := cli.APIContext(context.Background())
-	defer cancel()
-
-	var skills []map[string]any
-	if err := client.GetJSON(ctx, "/api/skills", &skills); err != nil {
-		return fmt.Errorf("list skills: %w", err)
 	}
 
 	output, _ := cmd.Flags().GetString("output")
@@ -549,17 +541,9 @@ func runSkillSearch(cmd *cobra.Command, args []string) error {
 // ---------------------------------------------------------------------------
 
 func runSkillFilesList(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	files, err := fetchMapList(cmd, "/api/skills/"+args[0]+"/files", "list skill files")
 	if err != nil {
 		return err
-	}
-
-	ctx, cancel := cli.APIContext(context.Background())
-	defer cancel()
-
-	var files []map[string]any
-	if err := client.GetJSON(ctx, "/api/skills/"+args[0]+"/files", &files); err != nil {
-		return fmt.Errorf("list skill files: %w", err)
 	}
 
 	output, _ := cmd.Flags().GetString("output")

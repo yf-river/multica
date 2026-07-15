@@ -75,17 +75,9 @@ func init() {
 // ---------------------------------------------------------------------------
 
 func runRuntimeList(cmd *cobra.Command, _ []string) error {
-	client, err := newAPIClient(cmd)
+	runtimes, err := fetchMapList(cmd, "/api/runtimes", "list runtimes")
 	if err != nil {
 		return err
-	}
-
-	ctx, cancel := cli.APIContext(context.Background())
-	defer cancel()
-
-	var runtimes []map[string]any
-	if err := client.GetJSON(ctx, "/api/runtimes", &runtimes); err != nil {
-		return fmt.Errorf("list runtimes: %w", err)
 	}
 
 	output, _ := cmd.Flags().GetString("output")
@@ -110,23 +102,15 @@ func runRuntimeList(cmd *cobra.Command, _ []string) error {
 }
 
 func runRuntimeUsage(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
-	if err != nil {
-		return err
-	}
-
 	days, _ := cmd.Flags().GetInt("days")
 	if days < 1 || days > 365 {
 		return fmt.Errorf("--days must be between 1 and 365")
 	}
 
-	ctx, cancel := cli.APIContext(context.Background())
-	defer cancel()
-
-	var usage []map[string]any
 	path := fmt.Sprintf("/api/runtimes/%s/usage?days=%d", args[0], days)
-	if err := client.GetJSON(ctx, path, &usage); err != nil {
-		return fmt.Errorf("get runtime usage: %w", err)
+	usage, err := fetchMapList(cmd, path, "get runtime usage")
+	if err != nil {
+		return err
 	}
 
 	output, _ := cmd.Flags().GetString("output")
@@ -152,17 +136,9 @@ func runRuntimeUsage(cmd *cobra.Command, args []string) error {
 }
 
 func runRuntimeActivity(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	activity, err := fetchMapList(cmd, "/api/runtimes/"+args[0]+"/activity", "get runtime activity")
 	if err != nil {
 		return err
-	}
-
-	ctx, cancel := cli.APIContext(context.Background())
-	defer cancel()
-
-	var activity []map[string]any
-	if err := client.GetJSON(ctx, "/api/runtimes/"+args[0]+"/activity", &activity); err != nil {
-		return fmt.Errorf("get runtime activity: %w", err)
 	}
 
 	output, _ := cmd.Flags().GetString("output")

@@ -433,17 +433,9 @@ func runWorkspaceMembers(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("workspace ID is required: pass an id/slug/prefix as argument or set MULTICA_WORKSPACE_ID")
 	}
 
-	client, err := newAPIClient(cmd)
+	members, err := fetchMapList(cmd, "/api/workspaces/"+wsID+"/members", "list members")
 	if err != nil {
 		return err
-	}
-
-	ctx, cancel := cli.APIContext(context.Background())
-	defer cancel()
-
-	var members []map[string]any
-	if err := client.GetJSON(ctx, "/api/workspaces/"+wsID+"/members", &members); err != nil {
-		return fmt.Errorf("list members: %w", err)
 	}
 
 	output, _ := cmd.Flags().GetString("output")

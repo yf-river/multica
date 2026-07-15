@@ -28,16 +28,9 @@ var squadListCmd = &cobra.Command{
 }
 
 func runSquadList(cmd *cobra.Command, _ []string) error {
-	client, err := newAPIClient(cmd)
+	squads, err := fetchMapList(cmd, "/api/squads", "list squads")
 	if err != nil {
 		return err
-	}
-	ctx, cancel := cli.APIContext(context.Background())
-	defer cancel()
-
-	var squads []map[string]any
-	if err := client.GetJSON(ctx, "/api/squads", &squads); err != nil {
-		return fmt.Errorf("list squads: %w", err)
 	}
 
 	output, _ := cmd.Flags().GetString("output")
@@ -246,16 +239,9 @@ var squadMemberListCmd = &cobra.Command{
 }
 
 func runSquadMemberList(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	members, err := fetchMapList(cmd, "/api/squads/"+args[0]+"/members", "list members")
 	if err != nil {
 		return err
-	}
-	ctx, cancel := cli.APIContext(context.Background())
-	defer cancel()
-
-	var members []map[string]any
-	if err := client.GetJSON(ctx, "/api/squads/"+args[0]+"/members", &members); err != nil {
-		return fmt.Errorf("list members: %w", err)
 	}
 
 	output, _ := cmd.Flags().GetString("output")
