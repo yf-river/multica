@@ -47,8 +47,7 @@ type promptEvaluationRunScope struct {
 }
 
 func (h *Handler) parsePromptEvaluationRunScope(w http.ResponseWriter, r *http.Request) (promptEvaluationRunScope, bool) {
-	workspaceID := h.resolveWorkspaceID(r)
-	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	workspaceID, workspaceUUID, ok := h.promptEvaluationWorkspace(w, r)
 	if !ok {
 		return promptEvaluationRunScope{}, false
 	}
@@ -60,8 +59,7 @@ func (h *Handler) parsePromptEvaluationRunScope(w http.ResponseWriter, r *http.R
 }
 
 func (h *Handler) ListPromptEvaluationRuns(w http.ResponseWriter, r *http.Request) {
-	workspaceID := h.resolveWorkspaceID(r)
-	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	workspaceID, workspaceUUID, ok := h.promptEvaluationWorkspace(w, r)
 	if !ok {
 		return
 	}
@@ -73,23 +71,13 @@ func (h *Handler) ListPromptEvaluationRuns(w http.ResponseWriter, r *http.Reques
 	if value := r.URL.Query().Get("status"); value != "" {
 		status = pgtype.Text{String: value, Valid: true}
 	}
-	var since pgtype.Timestamptz
-	if value := r.URL.Query().Get("since"); value != "" {
-		parsed, err := time.Parse(time.RFC3339, value)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "since must be RFC3339")
-			return
-		}
-		since = pgtype.Timestamptz{Time: parsed, Valid: true}
+	since, ok := parseRFC3339OrBadRequest(w, r.URL.Query().Get("since"), "since")
+	if !ok {
+		return
 	}
-	limit := int32(50)
-	if value := r.URL.Query().Get("limit"); value != "" {
-		parsed, err := strconv.Atoi(value)
-		if err != nil || parsed < 1 || parsed > 200 {
-			writeError(w, http.StatusBadRequest, "limit must be between 1 and 200")
-			return
-		}
-		limit = int32(parsed)
+	limit, ok := parseBoundedInt32OrBadRequest(w, r.URL.Query().Get("limit"), "limit", 50, 1, 200)
+	if !ok {
+		return
 	}
 	offset := int32(0)
 	if value := r.URL.Query().Get("offset"); value != "" {
@@ -132,19 +120,13 @@ func (h *Handler) ListPromptEvaluationRuns(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *Handler) GetPromptEvaluationSummary(w http.ResponseWriter, r *http.Request) {
-	workspaceID := h.resolveWorkspaceID(r)
-	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	workspaceID, workspaceUUID, ok := h.promptEvaluationWorkspace(w, r)
 	if !ok {
 		return
 	}
-	var since pgtype.Timestamptz
-	if raw := r.URL.Query().Get("since"); raw != "" {
-		parsed, err := time.Parse(time.RFC3339, raw)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "since must be RFC3339")
-			return
-		}
-		since = pgtype.Timestamptz{Time: parsed, Valid: true}
+	since, ok := parseRFC3339OrBadRequest(w, r.URL.Query().Get("since"), "since")
+	if !ok {
+		return
 	}
 	row, err := h.Queries.GetPromptEvaluationSummary(r.Context(), db.GetPromptEvaluationSummaryParams{
 		WorkspaceID: workspaceUUID,
@@ -166,8 +148,7 @@ func (h *Handler) GetPromptEvaluationSummary(w http.ResponseWriter, r *http.Requ
 }
 
 func (h *Handler) GetPromptEvaluationRuntimeReadiness(w http.ResponseWriter, r *http.Request) {
-	workspaceID := h.resolveWorkspaceID(r)
-	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	workspaceID, workspaceUUID, ok := h.promptEvaluationWorkspace(w, r)
 	if !ok {
 		return
 	}
@@ -493,14 +474,9 @@ func (h *Handler) ListPromptEvaluationEvidenceSnapshots(w http.ResponseWriter, r
 	if _, ok := loadPromptEvaluationRun(w, r, h.Queries, scope.workspaceUUID, scope.runID); !ok {
 		return
 	}
-	limit := int32(20)
-	if value := r.URL.Query().Get("limit"); value != "" {
-		parsed, err := strconv.Atoi(value)
-		if err != nil || parsed < 1 || parsed > 100 {
-			writeError(w, http.StatusBadRequest, "limit must be between 1 and 100")
-			return
-		}
-		limit = int32(parsed)
+	limit, ok := parseBoundedInt32OrBadRequest(w, r.URL.Query().Get("limit"), "limit", 20, 1, 100)
+	if !ok {
+		return
 	}
 	items, err := h.Queries.ListPromptEvaluationEvidenceSnapshotsByRun(r.Context(), db.ListPromptEvaluationEvidenceSnapshotsByRunParams{
 		WorkspaceID: scope.workspaceUUID,
@@ -866,14 +842,9 @@ func parsePromptEvaluationAssetSnapshotQuery(w http.ResponseWriter, values url.V
 		return "", 0, false
 	}
 
-	limit := int32(20)
-	if value := values.Get("limit"); value != "" {
-		parsed, err := strconv.Atoi(value)
-		if err != nil || parsed < 1 || parsed > 100 {
-			writeError(w, http.StatusBadRequest, "limit must be between 1 and 100")
-			return "", 0, false
-		}
-		limit = int32(parsed)
+	limit, ok := parseBoundedInt32OrBadRequest(w, values.Get("limit"), "limit", 20, 1, 100)
+	if !ok {
+		return "", 0, false
 	}
 	return snapshotType, limit, true
 }

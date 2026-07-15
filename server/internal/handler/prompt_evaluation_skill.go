@@ -384,8 +384,7 @@ func (h *Handler) resolvePromptEvaluationSkillCandidateRequest(
 }
 
 func (h *Handler) CheckPromptEvaluationSkillCandidateFreshness(w http.ResponseWriter, r *http.Request) {
-	workspaceID := h.resolveWorkspaceID(r)
-	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	_, workspaceUUID, ok := h.promptEvaluationWorkspace(w, r)
 	if !ok {
 		return
 	}
@@ -959,8 +958,7 @@ func (h *Handler) applyPromptEvaluationSkillSourceResourceDefaults(
 	if id == "" {
 		return true
 	}
-	workspaceID := h.resolveWorkspaceID(r)
-	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	_, workspaceUUID, ok := h.promptEvaluationWorkspace(w, r)
 	if !ok {
 		return false
 	}

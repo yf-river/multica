@@ -22,8 +22,7 @@ import (
 )
 
 func (h *Handler) loadPromptEvaluationAsset(w http.ResponseWriter, r *http.Request) (db.PromptEvaluationAsset, bool) {
-	workspaceID := h.resolveWorkspaceID(r)
-	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	_, workspaceUUID, ok := h.promptEvaluationWorkspace(w, r)
 	if !ok {
 		return db.PromptEvaluationAsset{}, false
 	}

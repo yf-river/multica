@@ -234,24 +234,16 @@ func (h *Handler) ListPromptEvaluationDatasetVersionTagTrends(w http.ResponseWri
 		writeError(w, http.StatusBadRequest, "only 数据集 assets have version tag trends")
 		return
 	}
-	limit := pgtype.Int4{Int32: 200, Valid: true}
-	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
-		parsed, err := strconv.Atoi(raw)
-		if err != nil || parsed < 1 || parsed > 500 {
-			writeError(w, http.StatusBadRequest, "limit must be between 1 and 500")
-			return
-		}
-		limit = pgtype.Int4{Int32: int32(parsed), Valid: true}
+	limitValue, ok := parseBoundedInt32OrBadRequest(w, strings.TrimSpace(r.URL.Query().Get("limit")), "limit", 200, 1, 500)
+	if !ok {
+		return
 	}
-	versionLimit := pgtype.Int4{Int32: 20, Valid: true}
-	if raw := strings.TrimSpace(r.URL.Query().Get("version_limit")); raw != "" {
-		parsed, err := strconv.Atoi(raw)
-		if err != nil || parsed < 1 || parsed > 100 {
-			writeError(w, http.StatusBadRequest, "version_limit must be between 1 and 100")
-			return
-		}
-		versionLimit = pgtype.Int4{Int32: int32(parsed), Valid: true}
+	versionLimitValue, ok := parseBoundedInt32OrBadRequest(w, strings.TrimSpace(r.URL.Query().Get("version_limit")), "version_limit", 20, 1, 100)
+	if !ok {
+		return
 	}
+	limit := pgtype.Int4{Int32: limitValue, Valid: true}
+	versionLimit := pgtype.Int4{Int32: versionLimitValue, Valid: true}
 	rows, err := h.Queries.ListPromptEvaluationDatasetVersionTagTrends(r.Context(), db.ListPromptEvaluationDatasetVersionTagTrendsParams{
 		WorkspaceID:    asset.WorkspaceID,
 		DatasetAssetID: asset.ID,

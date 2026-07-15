@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/netip"
+	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -262,6 +263,30 @@ func parseOptionalUUIDOrBadRequest(w http.ResponseWriter, s, fieldName string) (
 		return pgtype.UUID{}, true
 	}
 	return parseUUIDOrBadRequest(w, s, fieldName)
+}
+
+func parseBoundedInt32OrBadRequest(w http.ResponseWriter, raw, fieldName string, fallback, minValue, maxValue int32) (int32, bool) {
+	if raw == "" {
+		return fallback, true
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil || parsed < int(minValue) || parsed > int(maxValue) {
+		writeError(w, http.StatusBadRequest, fieldName+" must be between "+strconv.Itoa(int(minValue))+" and "+strconv.Itoa(int(maxValue)))
+		return 0, false
+	}
+	return int32(parsed), true
+}
+
+func parseRFC3339OrBadRequest(w http.ResponseWriter, raw, fieldName string) (pgtype.Timestamptz, bool) {
+	if raw == "" {
+		return pgtype.Timestamptz{}, true
+	}
+	parsed, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, fieldName+" must be RFC3339")
+		return pgtype.Timestamptz{}, false
+	}
+	return pgtype.Timestamptz{Time: parsed, Valid: true}, true
 }
 
 func parseUUIDSliceOrBadRequest(w http.ResponseWriter, ids []string, fieldName string) ([]pgtype.UUID, bool) {

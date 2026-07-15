@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"sort"
 	"strings"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -324,14 +323,9 @@ func (h *Handler) GetWorkspaceObservabilitySummary(w http.ResponseWriter, r *htt
 	if !ok {
 		return
 	}
-	var since pgtype.Timestamptz
-	if raw := r.URL.Query().Get("since"); raw != "" {
-		parsed, err := time.Parse(time.RFC3339, raw)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "since must be RFC3339")
-			return
-		}
-		since = pgtype.Timestamptz{Time: parsed, Valid: true}
+	since, ok := parseRFC3339OrBadRequest(w, r.URL.Query().Get("since"), "since")
+	if !ok {
+		return
 	}
 	squadID, ok := optionalUUIDParam(w, r.URL.Query().Get("squad_id"), "squad_id")
 	if !ok {

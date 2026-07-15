@@ -88,8 +88,7 @@ func parsePromptEvaluationDimensionFilters(w http.ResponseWriter, values url.Val
 }
 
 func (h *Handler) ListPromptEvaluationCases(w http.ResponseWriter, r *http.Request) {
-	workspaceID := h.resolveWorkspaceID(r)
-	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	_, workspaceUUID, ok := h.promptEvaluationWorkspace(w, r)
 	if !ok {
 		return
 	}
@@ -242,8 +241,7 @@ func (h *Handler) ListPromptEvaluationCases(w http.ResponseWriter, r *http.Reque
 }
 
 func (h *Handler) ListPromptEvaluationCaseTagSummaries(w http.ResponseWriter, r *http.Request) {
-	workspaceID := h.resolveWorkspaceID(r)
-	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	_, workspaceUUID, ok := h.promptEvaluationWorkspace(w, r)
 	if !ok {
 		return
 	}
@@ -251,15 +249,11 @@ func (h *Handler) ListPromptEvaluationCaseTagSummaries(w http.ResponseWriter, r 
 	if !ok {
 		return
 	}
-	limit := pgtype.Int4{Int32: 50, Valid: true}
-	if value := strings.TrimSpace(r.URL.Query().Get("limit")); value != "" {
-		parsed, err := strconv.Atoi(value)
-		if err != nil || parsed < 1 || parsed > 200 {
-			writeError(w, http.StatusBadRequest, "limit must be between 1 and 200")
-			return
-		}
-		limit = pgtype.Int4{Int32: int32(parsed), Valid: true}
+	limitValue, ok := parseBoundedInt32OrBadRequest(w, strings.TrimSpace(r.URL.Query().Get("limit")), "limit", 50, 1, 200)
+	if !ok {
+		return
 	}
+	limit := pgtype.Int4{Int32: limitValue, Valid: true}
 	rows, err := h.Queries.ListPromptEvaluationCaseTagSummaries(r.Context(), db.ListPromptEvaluationCaseTagSummariesParams{
 		WorkspaceID: workspaceUUID,
 		AssetID:     assetID,
@@ -286,8 +280,7 @@ func (h *Handler) ListPromptEvaluationCaseTagSummaries(w http.ResponseWriter, r 
 }
 
 func (h *Handler) ListPromptEvaluationCaseTagDatasetSummaries(w http.ResponseWriter, r *http.Request) {
-	workspaceID := h.resolveWorkspaceID(r)
-	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	_, workspaceUUID, ok := h.promptEvaluationWorkspace(w, r)
 	if !ok {
 		return
 	}
@@ -295,24 +288,16 @@ func (h *Handler) ListPromptEvaluationCaseTagDatasetSummaries(w http.ResponseWri
 	if !ok {
 		return
 	}
-	limit := pgtype.Int4{Int32: 20, Valid: true}
-	if value := strings.TrimSpace(r.URL.Query().Get("limit")); value != "" {
-		parsed, err := strconv.Atoi(value)
-		if err != nil || parsed < 1 || parsed > 100 {
-			writeError(w, http.StatusBadRequest, "limit must be between 1 and 100")
-			return
-		}
-		limit = pgtype.Int4{Int32: int32(parsed), Valid: true}
+	limitValue, ok := parseBoundedInt32OrBadRequest(w, strings.TrimSpace(r.URL.Query().Get("limit")), "limit", 20, 1, 100)
+	if !ok {
+		return
 	}
-	topDatasetLimit := pgtype.Int4{Int32: 3, Valid: true}
-	if value := strings.TrimSpace(r.URL.Query().Get("top_dataset_limit")); value != "" {
-		parsed, err := strconv.Atoi(value)
-		if err != nil || parsed < 1 || parsed > 10 {
-			writeError(w, http.StatusBadRequest, "top_dataset_limit must be between 1 and 10")
-			return
-		}
-		topDatasetLimit = pgtype.Int4{Int32: int32(parsed), Valid: true}
+	topDatasetLimitValue, ok := parseBoundedInt32OrBadRequest(w, strings.TrimSpace(r.URL.Query().Get("top_dataset_limit")), "top_dataset_limit", 3, 1, 10)
+	if !ok {
+		return
 	}
+	limit := pgtype.Int4{Int32: limitValue, Valid: true}
+	topDatasetLimit := pgtype.Int4{Int32: topDatasetLimitValue, Valid: true}
 	rows, err := h.Queries.ListPromptEvaluationCaseTagDatasetSummaries(r.Context(), db.ListPromptEvaluationCaseTagDatasetSummariesParams{
 		WorkspaceID:     workspaceUUID,
 		Status:          filters.status,
@@ -361,15 +346,12 @@ func (h *Handler) ListPromptEvaluationCaseOperations(w http.ResponseWriter, r *h
 	if !ok {
 		return
 	}
-	var limit pgtype.Int4
-	if value := strings.TrimSpace(r.URL.Query().Get("limit")); value != "" {
-		parsed, err := strconv.Atoi(value)
-		if err != nil || parsed < 1 || parsed > 100 {
-			writeError(w, http.StatusBadRequest, "limit must be between 1 and 100")
-			return
-		}
-		limit = pgtype.Int4{Int32: int32(parsed), Valid: true}
+	rawLimit := strings.TrimSpace(r.URL.Query().Get("limit"))
+	limitValue, ok := parseBoundedInt32OrBadRequest(w, rawLimit, "limit", 0, 1, 100)
+	if !ok {
+		return
 	}
+	limit := pgtype.Int4{Int32: limitValue, Valid: rawLimit != ""}
 	rows, err := h.Queries.ListPromptEvaluationCaseOperations(r.Context(), db.ListPromptEvaluationCaseOperationsParams{
 		WorkspaceID: asset.WorkspaceID,
 		AssetID:     asset.ID,
@@ -744,8 +726,7 @@ func executePromptEvaluationCaseBulkTagsInTx(ctx context.Context, queries *db.Qu
 }
 
 func (h *Handler) ListPromptEvaluationDimensionScores(w http.ResponseWriter, r *http.Request) {
-	workspaceID := h.resolveWorkspaceID(r)
-	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	_, workspaceUUID, ok := h.promptEvaluationWorkspace(w, r)
 	if !ok {
 		return
 	}
@@ -776,8 +757,7 @@ func (h *Handler) ListPromptEvaluationDimensionScores(w http.ResponseWriter, r *
 }
 
 func (h *Handler) ListPromptEvaluationDimensionScoreSummaries(w http.ResponseWriter, r *http.Request) {
-	workspaceID := h.resolveWorkspaceID(r)
-	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	_, workspaceUUID, ok := h.promptEvaluationWorkspace(w, r)
 	if !ok {
 		return
 	}
@@ -803,8 +783,7 @@ func (h *Handler) ListPromptEvaluationDimensionScoreSummaries(w http.ResponseWri
 }
 
 func (h *Handler) ListPromptEvaluationDimensionScoreTrends(w http.ResponseWriter, r *http.Request) {
-	workspaceID := h.resolveWorkspaceID(r)
-	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	_, workspaceUUID, ok := h.promptEvaluationWorkspace(w, r)
 	if !ok {
 		return
 	}
@@ -812,14 +791,9 @@ func (h *Handler) ListPromptEvaluationDimensionScoreTrends(w http.ResponseWriter
 	if !ok {
 		return
 	}
-	var since pgtype.Timestamptz
-	if value := r.URL.Query().Get("since"); value != "" {
-		parsed, err := time.Parse(time.RFC3339, value)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "since must be RFC3339")
-			return
-		}
-		since = pgtype.Timestamptz{Time: parsed, Valid: true}
+	since, ok := parseRFC3339OrBadRequest(w, r.URL.Query().Get("since"), "since")
+	if !ok {
+		return
 	}
 	items, err := h.Queries.ListPromptEvaluationDimensionScoreTrends(r.Context(), db.ListPromptEvaluationDimensionScoreTrendsParams{
 		WorkspaceID: workspaceUUID,
@@ -1149,8 +1123,7 @@ func promptEvaluationPayloadCasesFromCaseRows(rows []db.PromptEvaluationCase) []
 }
 
 func (h *Handler) UpdatePromptEvaluationCase(w http.ResponseWriter, r *http.Request) {
-	workspaceID := h.resolveWorkspaceID(r)
-	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	_, workspaceUUID, ok := h.promptEvaluationWorkspace(w, r)
 	if !ok {
 		return
 	}
@@ -1279,8 +1252,7 @@ func (h *Handler) UpdatePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 }
 
 func (h *Handler) DeletePromptEvaluationCase(w http.ResponseWriter, r *http.Request) {
-	workspaceID := h.resolveWorkspaceID(r)
-	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	_, workspaceUUID, ok := h.promptEvaluationWorkspace(w, r)
 	if !ok {
 		return
 	}

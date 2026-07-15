@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -44,8 +43,7 @@ func loadPromptEvaluationOptimizationCandidate(
 }
 
 func (h *Handler) ListPromptEvaluationOptimizationCandidates(w http.ResponseWriter, r *http.Request) {
-	workspaceID := h.resolveWorkspaceID(r)
-	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	_, workspaceUUID, ok := h.promptEvaluationWorkspace(w, r)
 	if !ok {
 		return
 	}
@@ -65,14 +63,9 @@ func (h *Handler) ListPromptEvaluationOptimizationCandidates(w http.ResponseWrit
 		}
 		status = pgtype.Text{String: value, Valid: true}
 	}
-	limit := int32(50)
-	if value := r.URL.Query().Get("limit"); value != "" {
-		parsed, err := strconv.Atoi(value)
-		if err != nil || parsed < 1 || parsed > 200 {
-			writeError(w, http.StatusBadRequest, "limit must be between 1 and 200")
-			return
-		}
-		limit = int32(parsed)
+	limit, ok := parseBoundedInt32OrBadRequest(w, r.URL.Query().Get("limit"), "limit", 50, 1, 200)
+	if !ok {
+		return
 	}
 	items, err := h.Queries.ListPromptEvaluationOptimizationCandidates(r.Context(), db.ListPromptEvaluationOptimizationCandidatesParams{
 		WorkspaceID: workspaceUUID,
@@ -611,8 +604,7 @@ func (h *Handler) RejectPromptEvaluationOptimizationCandidate(w http.ResponseWri
 }
 
 func (h *Handler) SyncPromptEvaluationRunFromTask(w http.ResponseWriter, r *http.Request) {
-	workspaceID := h.resolveWorkspaceID(r)
-	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	_, workspaceUUID, ok := h.promptEvaluationWorkspace(w, r)
 	if !ok {
 		return
 	}
