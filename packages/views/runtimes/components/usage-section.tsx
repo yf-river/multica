@@ -14,7 +14,9 @@ import {
 } from "@multica/core/runtimes/queries";
 import { useViewingTimezone } from "../../common/use-viewing-timezone";
 import {
+  DEFAULT_USAGE_DAYS_BY_DIM,
   formatTokens,
+  formatUsageCost,
   estimateCost,
   estimateCacheSavings,
   aggregateByDate,
@@ -26,9 +28,11 @@ import {
   pctChange,
   sliceWindow,
   usageTokenTotal,
+  usageRangesForDimension,
   type CostByKey,
   type CostByTask,
 } from "../utils";
+import { SegmentedControl } from "../../common/segmented-control";
 import { KpiCard } from "./shared";
 import { ActorAvatar } from "../../common/actor-avatar";
 import {
@@ -56,66 +60,6 @@ const TIME_RANGES = [
 
 type TimeRange = (typeof TIME_RANGES)[number]["days"];
 type WhenTab = "daily" | "weekly" | "heatmap";
-
-// Default time range per dimension. Switching dimensions resets the period
-// to its default rather than keeping a now-invalid value.
-const DEFAULT_DAYS_BY_DIM: Record<Exclude<WhenTab, "heatmap">, TimeRange> = {
-  daily: 30,
-  weekly: 90,
-};
-
-function rangesForDim(dim: Exclude<WhenTab, "heatmap">) {
-  return TIME_RANGES.filter((r) =>
-    (r.dims as readonly string[]).includes(dim),
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Local segmented control. shadcn's Tabs is wired for full tab pages with
-// keyboard nav and ARIA semantics that a compact toolbar pill doesn't need.
-// Visual: light-grey track + white "raised" active pill.
-// ---------------------------------------------------------------------------
-
-function Segmented<T extends string | number>({
-  value,
-  onChange,
-  options,
-  disabled,
-}: {
-  value: T;
-  onChange: (v: T) => void;
-  options: readonly { label: string; value: T }[];
-  disabled?: boolean;
-}) {
-  return (
-    <div
-      className={`inline-flex items-center gap-0.5 rounded-md bg-muted p-0.5 ${
-        disabled ? "opacity-50" : ""
-      }`}
-    >
-      {options.map((o) => (
-        <button
-          key={String(o.value)}
-          type="button"
-          disabled={disabled}
-          onClick={() => onChange(o.value)}
-          className={`rounded-sm px-2.5 py-1 text-xs font-medium transition-colors disabled:cursor-not-allowed ${
-            o.value === value
-              ? "bg-background text-foreground shadow-sm"
-              : "text-muted-foreground hover:text-foreground"
-          }`}
-        >
-          {o.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-function fmtMoney(n: number): string {
-  if (n >= 100) return `$${n.toFixed(0)}`;
-  return `$${n.toFixed(2)}`;
-}
 
 // ---------------------------------------------------------------------------
 // Top-level orchestrator. Owns the time window, fetches a 180-day usage
@@ -151,14 +95,14 @@ export function UsageSection({ runtime }: { runtime: AgentRuntime }) {
   // boundary the backend used when bucketing rows.
   const { filtered, prevFiltered } = sliceWindow(usage, days, tz);
 
-  const allowedRanges = rangesForDim(dim);
+  const allowedRanges = usageRangesForDimension(TIME_RANGES, dim);
   const handleDimChange = (next: Exclude<WhenTab, "heatmap">) => {
     setDim(next);
-    const stillAllowed = (rangesForDim(next) as readonly { days: number }[]).some(
+    const stillAllowed = usageRangesForDimension(TIME_RANGES, next).some(
       (r) => r.days === days,
     );
     if (!stillAllowed) {
-      setDays(DEFAULT_DAYS_BY_DIM[next]);
+      setDays(DEFAULT_USAGE_DAYS_BY_DIM[next]);
     }
   };
   const totals = computeTotals(filtered);
@@ -184,7 +128,7 @@ export function UsageSection({ runtime }: { runtime: AgentRuntime }) {
           <span className="text-xs uppercase tracking-wider text-muted-foreground">
             {t(($) => $.usage.dimension_label)}
           </span>
-          <Segmented
+          <SegmentedControl
             value={dim}
             onChange={handleDimChange}
             options={
@@ -199,7 +143,7 @@ export function UsageSection({ runtime }: { runtime: AgentRuntime }) {
           <span className="text-xs uppercase tracking-wider text-muted-foreground">
             {t(($) => $.usage.period_label)}
           </span>
-          <Segmented
+          <SegmentedControl
             value={days}
             onChange={setDays}
             options={allowedRanges.map((r) => ({
@@ -218,7 +162,7 @@ export function UsageSection({ runtime }: { runtime: AgentRuntime }) {
       <div className="grid grid-cols-3 divide-x rounded-lg border bg-card">
         <KpiCard
           label={t(($) => $.usage.kpi_cost_label, { days })}
-          value={fmtMoney(totals.cost)}
+          value={formatUsageCost(totals.cost)}
           hint={
             costDelta == null ? undefined : (
               <span
@@ -240,7 +184,7 @@ export function UsageSection({ runtime }: { runtime: AgentRuntime }) {
         />
         <KpiCard
           label={t(($) => $.usage.kpi_cache_label, { days })}
-          value={fmtMoney(totals.cacheSavings)}
+          value={formatUsageCost(totals.cacheSavings)}
           accent={totals.cacheSavings > 0 ? "success" : "default"}
           hint={
             <span>
@@ -344,7 +288,7 @@ function WhenChart({
           {/* Cost / Tokens metric toggle — only meaningful when the chart
               actually has two series-types to switch between. */}
           {metricToggleVisible && (
-            <Segmented
+            <SegmentedControl
               value={chartMetric}
               onChange={setChartMetric}
               options={
@@ -623,7 +567,7 @@ function CostByBlock({
                 ? t(($) => $.usage.cost_by_title_model)
                 : t(($) => $.usage.cost_by_title_task)}
           </h4>
-          <Segmented
+          <SegmentedControl
             value={tab}
             onChange={setTab}
             options={

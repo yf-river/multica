@@ -49,6 +49,7 @@ import { DeleteRuntimeDialog } from "./delete-runtime-dialog";
 import {
   computeCostInWindow,
   formatLastSeen,
+  formatUsageCost,
   pctChange,
 } from "../utils";
 import { splitRuntimeName } from "./runtime-machines";
@@ -312,7 +313,7 @@ function CostCell({ runtimeId }: { runtimeId: string }) {
       </div>
     );
   }
-  const fmt = cost7d >= 100 ? `$${cost7d.toFixed(0)}` : `$${cost7d.toFixed(2)}`;
+  const fmt = formatUsageCost(cost7d);
   const deltaTone =
     delta == null
       ? "text-muted-foreground"

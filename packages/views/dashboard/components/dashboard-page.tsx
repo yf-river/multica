@@ -36,11 +36,15 @@ import {
 import { ProjectIcon } from "../../projects/components/project-icon";
 import { ActorAvatar } from "../../common/actor-avatar";
 import {
+  DEFAULT_USAGE_DAYS_BY_DIM,
   addDaysIso,
   aggregateByWeek,
+  formatUsageCost,
   formatTokens,
   todayIso,
+  usageRangesForDimension,
 } from "../../runtimes/utils";
+import { SegmentedControl } from "../../common/segmented-control";
 import { useT } from "../../i18n";
 import {
   aggregateAgentTokens,
@@ -77,15 +81,6 @@ const TIME_RANGES = [
 type TimeRange = (typeof TIME_RANGES)[number]["days"];
 type Dim = "daily" | "weekly";
 
-const DEFAULT_DAYS_BY_DIM: Record<Dim, TimeRange> = {
-  daily: 30,
-  weekly: 90,
-};
-
-function rangesForDim(dim: Dim) {
-  return TIME_RANGES.filter((r) => (r.dims as readonly string[]).includes(dim));
-}
-
 // Sentinel for "no project filter" — kept distinct from the empty string
 // so it survives a refactor that ever lets a project be slug-keyed.
 const ALL_PROJECTS = "__all__";
@@ -97,43 +92,6 @@ const EMPTY_DAILY: import("@multica/core/types").DashboardUsageDaily[] = [];
 const EMPTY_BY_AGENT: import("@multica/core/types").RuntimeUsageByAgent[] = [];
 const EMPTY_RUNTIME: import("@multica/core/types").DashboardAgentRunTime[] = [];
 const EMPTY_RUNTIME_DAILY: import("@multica/core/types").DashboardRunTimeDaily[] = [];
-
-function fmtMoney(n: number): string {
-  if (n >= 100) return `$${n.toFixed(0)}`;
-  return `$${n.toFixed(2)}`;
-}
-
-// Local segmented control — same visual language the runtime usage section
-// uses for its period / tab toggles. shadcn's Tabs is wired for full tab
-// pages with ARIA semantics the compact toolbar pill doesn't need.
-function Segmented<T extends string | number>({
-  value,
-  onChange,
-  options,
-}: {
-  value: T;
-  onChange: (v: T) => void;
-  options: readonly { label: string; value: T }[];
-}) {
-  return (
-    <div className="inline-flex items-center gap-0.5 rounded-md bg-muted p-0.5">
-      {options.map((o) => (
-        <button
-          key={String(o.value)}
-          type="button"
-          onClick={() => onChange(o.value)}
-          className={`rounded-sm px-2.5 py-1 text-xs font-medium transition-colors ${
-            o.value === value
-              ? "bg-background text-foreground shadow-sm"
-              : "text-muted-foreground hover:text-foreground"
-          }`}
-        >
-          {o.label}
-        </button>
-      ))}
-    </div>
-  );
-}
 
 /**
  * Workspace + project token / run-time dashboard.
@@ -154,13 +112,13 @@ export function DashboardPage() {
   const [days, setDays] = useState<TimeRange>(30);
   const [projectValue, setProjectValue] = useState<string>(ALL_PROJECTS);
 
-  const allowedRanges = rangesForDim(dim);
+  const allowedRanges = usageRangesForDimension(TIME_RANGES, dim);
   const handleDimChange = (next: Dim) => {
     setDim(next);
-    const stillAllowed = (rangesForDim(next) as readonly { days: number }[]).some(
+    const stillAllowed = usageRangesForDimension(TIME_RANGES, next).some(
       (r) => r.days === days,
     );
-    if (!stillAllowed) setDays(DEFAULT_DAYS_BY_DIM[next]);
+    if (!stillAllowed) setDays(DEFAULT_USAGE_DAYS_BY_DIM[next]);
   };
 
   const { data: projects = [] } = useQuery(projectListOptions(wsId));
@@ -322,7 +280,7 @@ export function DashboardPage() {
             value={projectValue}
             onChange={setProjectValue}
           />
-          <Segmented
+          <SegmentedControl
             value={dim}
             onChange={handleDimChange}
             options={[
@@ -330,7 +288,7 @@ export function DashboardPage() {
               { label: t(($) => $.dim.weekly), value: "weekly" as const },
             ]}
           />
-          <Segmented
+          <SegmentedControl
             value={days}
             onChange={setDays}
             options={allowedRanges.map((r) => ({ label: r.label, value: r.days }))}
@@ -353,7 +311,7 @@ export function DashboardPage() {
               <div className="grid grid-cols-1 divide-y rounded-lg border bg-card sm:grid-cols-2 sm:divide-x sm:divide-y-0 lg:grid-cols-4">
                 <KpiCard
                   label={t(($) => $.kpi.cost_label, { days })}
-                  value={fmtMoney(totals.cost)}
+                  value={formatUsageCost(totals.cost)}
                 />
                 <KpiCard
                   label={t(($) => $.kpi.tokens_label, { days })}
@@ -551,7 +509,7 @@ function TrendBlock({
     <div className="rounded-lg border bg-card p-4">
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <h4 className="text-sm font-semibold">{title}</h4>
-        <Segmented
+        <SegmentedControl
           value={metric}
           onChange={setMetric}
           options={[
@@ -659,7 +617,7 @@ function Leaderboard({
       <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 pt-4 pb-3">
         <h4 className="text-sm font-semibold">{t(($) => $.leaderboard.title)}</h4>
         <div className="flex items-center gap-3">
-          <Segmented value={sortBy} onChange={setSortBy} options={sortOptions} />
+          <SegmentedControl value={sortBy} onChange={setSortBy} options={sortOptions} />
           <span className="text-xs text-muted-foreground">
             {t(($) => $.leaderboard.caption, { count: rows.length })}
           </span>

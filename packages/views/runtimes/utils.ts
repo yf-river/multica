@@ -97,6 +97,23 @@ export function formatTokens(n: number): string {
   return n.toLocaleString();
 }
 
+export type UsageTimeDimension = "daily" | "weekly";
+
+export const DEFAULT_USAGE_DAYS_BY_DIM = {
+  daily: 30,
+  weekly: 90,
+} as const;
+
+export function usageRangesForDimension<
+  T extends { dims: readonly UsageTimeDimension[] },
+>(ranges: readonly T[], dimension: UsageTimeDimension): T[] {
+  return ranges.filter((range) => range.dims.includes(dimension));
+}
+
+export function formatUsageCost(value: number): string {
+  return value >= 100 ? `$${value.toFixed(0)}` : `$${value.toFixed(2)}`;
+}
+
 // ---------------------------------------------------------------------------
 // Cost estimation
 // ---------------------------------------------------------------------------
