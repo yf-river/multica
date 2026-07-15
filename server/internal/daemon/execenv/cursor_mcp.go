@@ -23,7 +23,8 @@ type cursorMcpConfigFile struct {
 // have an explicit managed mcp_config saved. A nil/null mcp_config means "let
 // Cursor behave normally", so no .cursor/mcp.json or CURSOR_DATA_DIR is created.
 func prepareCursorMcpConfig(envRoot, workDir string, mcpConfig json.RawMessage, manifest *sidecarManifest) (string, error) {
-	if !hasManagedCursorMcpConfig(mcpConfig) {
+	trimmed := bytes.TrimSpace(mcpConfig)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
 		return "", nil
 	}
 	if envRoot == "" {
@@ -86,11 +87,6 @@ func prepareCursorMcpConfig(envRoot, workDir string, mcpConfig json.RawMessage, 
 	}
 
 	return cursorDataDir, nil
-}
-
-func hasManagedCursorMcpConfig(raw json.RawMessage) bool {
-	trimmed := bytes.TrimSpace(raw)
-	return len(trimmed) > 0 && !bytes.Equal(trimmed, []byte("null"))
 }
 
 func parseCursorManagedMcpServers(raw json.RawMessage) (map[string]json.RawMessage, error) {

@@ -2850,7 +2850,7 @@ func TestWriteReadGCMeta(t *testing.T) {
 		Kind:        GCKindIssue,
 		IssueID:     issueID,
 		WorkspaceID: wsID,
-	}, discardLogger()); err != nil {
+	}); err != nil {
 		t.Fatalf("WriteGCMeta: %v", err)
 	}
 
@@ -2870,25 +2870,6 @@ func TestWriteReadGCMeta(t *testing.T) {
 	}
 	if meta.CompletedAt.IsZero() {
 		t.Error("CompletedAt should not be zero")
-	}
-}
-
-func TestWriteGCMeta_EmptyRoot(t *testing.T) {
-	t.Parallel()
-	if err := WriteGCMeta("", GCMeta{Kind: GCKindIssue, IssueID: "x", WorkspaceID: "ws"}, discardLogger()); err != nil {
-		t.Fatalf("expected nil for empty root, got %v", err)
-	}
-}
-
-func TestWriteGCMeta_EmptyKind(t *testing.T) {
-	t.Parallel()
-	dir := t.TempDir()
-
-	if err := WriteGCMeta(dir, GCMeta{WorkspaceID: "ws"}, discardLogger()); err != nil {
-		t.Fatalf("expected nil for empty kind, got %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(dir, gcMetaFile)); !os.IsNotExist(err) {
-		t.Fatalf("expected gc meta file to be absent, got err=%v", err)
 	}
 }
 
@@ -2922,7 +2903,7 @@ func TestWriteReadGCMeta_KindRoundTrip(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
-			if err := WriteGCMeta(dir, tc.meta, discardLogger()); err != nil {
+			if err := WriteGCMeta(dir, tc.meta); err != nil {
 				t.Fatalf("WriteGCMeta: %v", err)
 			}
 			got, err := ReadGCMeta(dir)

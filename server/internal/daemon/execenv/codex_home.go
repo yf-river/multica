@@ -8,15 +8,6 @@ import (
 	"path/filepath"
 )
 
-// Files to symlink from the shared ~/.codex/ into the per-task CODEX_HOME.
-// The daemon points CODEX_HOME at a runtime profile before tasks are prepared,
-// so this links to the runtime profile, not the user's interactive Codex home.
-// Auth stays shared at the runtime level so token refreshes propagate across
-// task-local homes without pushing session/log/state writes into the user home.
-var codexSymlinkedFiles = []string{
-	"auth.json",
-}
-
 // Files to copy from the shared ~/.codex/ into the per-task CODEX_HOME.
 // Copies are isolated — changes don't affect the shared home.
 var codexCopiedFiles = []string{
@@ -37,13 +28,10 @@ func prepareCodexHome(codexHome string, logger *slog.Logger) error {
 		return fmt.Errorf("create codex-home dir: %w", err)
 	}
 
-	// Symlink shared files (auth).
-	for _, name := range codexSymlinkedFiles {
-		src := filepath.Join(sharedHome, name)
-		dst := filepath.Join(codexHome, name)
-		if err := ensureSymlink(src, dst); err != nil {
-			logger.Warn("execenv: codex-home symlink failed", "file", name, "error", err)
-		}
+	// Auth stays shared at the runtime level so token refreshes propagate
+	// without pushing session/log/state writes into the runtime profile.
+	if err := ensureSymlink(filepath.Join(sharedHome, "auth.json"), filepath.Join(codexHome, "auth.json")); err != nil {
+		logger.Warn("execenv: codex-home symlink failed", "file", "auth.json", "error", err)
 	}
 
 	// Surface the resulting auth.json state (file kind only, never contents)

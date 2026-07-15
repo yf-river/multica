@@ -520,17 +520,7 @@ const gcMetaFile = ".gc_meta.json"
 // WriteGCMeta writes GC metadata into the given directory. The caller is
 // responsible for choosing Kind and populating the matching ID field;
 // CompletedAt is stamped here so callers don't have to think about clocks.
-func WriteGCMeta(envRoot string, meta GCMeta, logger *slog.Logger) error {
-	if envRoot == "" {
-		return nil
-	}
-	if meta.Kind == "" {
-		// Defensive: a task that doesn't fit any known kind would write a
-		// meta file the GC loop can't dispatch on. Skip silently — the
-		// directory falls back to the orphan-by-mtime path.
-		logger.Debug("execenv: skipping .gc_meta.json write: kind is empty", "envRoot", envRoot)
-		return nil
-	}
+func WriteGCMeta(envRoot string, meta GCMeta) error {
 	meta.CompletedAt = time.Now().UTC()
 	data, err := json.Marshal(meta)
 	if err != nil {

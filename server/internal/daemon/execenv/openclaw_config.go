@@ -33,15 +33,11 @@ const openclawUserSnapshotFile = "openclaw-user-snapshot.json"
 // node start without letting a hung CLI stall task dispatch indefinitely.
 const openclawCLITimeout = 5 * time.Second
 
-// OpenclawConfigPrep is the input to prepareOpenclawConfig. Only OpenclawBin
-// is meaningful in production — Timeout is here for tests that need a tight
-// cap to assert error paths.
+// OpenclawConfigPrep is the input to prepareOpenclawConfig.
 type OpenclawConfigPrep struct {
 	// OpenclawBin is the openclaw CLI binary to invoke for config introspection.
 	// Empty means resolve "openclaw" from PATH at exec time.
 	OpenclawBin string
-	// Timeout caps each CLI invocation. Zero falls back to openclawCLITimeout.
-	Timeout time.Duration
 	// McpConfig is the agent's saved `mcp_config` JSON (Claude-style
 	// `{"mcpServers": {"<name>": {...}}}`). When non-null the wrapper pins
 	// `mcp.servers` to the managed set so OpenClaw resolves MCP from the
@@ -69,11 +65,6 @@ type OpenclawGatewayPin struct {
 	Port  int
 	Token string
 	TLS   bool
-}
-
-// IsZero reports whether every field is zero, i.e. there is nothing to pin.
-func (p OpenclawGatewayPin) IsZero() bool {
-	return p == OpenclawGatewayPin{}
 }
 
 // OpenclawConfigResult is what prepareOpenclawConfig returns to its callers
@@ -148,10 +139,7 @@ func prepareOpenclawConfig(envRoot, workDir string, opts OpenclawConfigPrep) (Op
 	if bin == "" {
 		bin = "openclaw"
 	}
-	timeout := opts.Timeout
-	if timeout <= 0 {
-		timeout = openclawCLITimeout
-	}
+	timeout := openclawCLITimeout
 
 	activePath, exists, err := openclawActiveConfigPath(bin, timeout)
 	if err != nil {
@@ -321,7 +309,7 @@ func buildPerTaskOpenclawConfig(activePath string, exists bool, snapshotPath str
 // host, port, tls at the top level and an `auth: {mode, token}` sub-object).
 // Returns nil when nothing is populated so the caller can skip emission.
 func buildGatewayOverride(p OpenclawGatewayPin) map[string]any {
-	if p.IsZero() {
+	if p == (OpenclawGatewayPin{}) {
 		return nil
 	}
 	out := map[string]any{}

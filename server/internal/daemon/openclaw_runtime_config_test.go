@@ -17,7 +17,7 @@ func TestDecodeOpenclawRuntimeConfigEmpty(t *testing.T) {
 	if mode != "" {
 		t.Errorf("mode for nil payload: got %q, want \"\"", mode)
 	}
-	if !gw.IsZero() {
+	if gw != (execenv.OpenclawGatewayPin{}) {
 		t.Errorf("gateway for nil payload: got %+v, want zero", gw)
 	}
 }
@@ -72,7 +72,7 @@ func TestDecodeOpenclawRuntimeConfigModeOnly(t *testing.T) {
 	if mode != "gateway" {
 		t.Errorf("mode: got %q, want %q", mode, "gateway")
 	}
-	if !gw.IsZero() {
+	if gw != (execenv.OpenclawGatewayPin{}) {
 		t.Errorf("gateway: got %+v, want zero", gw)
 	}
 }
@@ -95,7 +95,7 @@ func TestDecodeOpenclawRuntimeConfigLocalModeDropsGatewayPin(t *testing.T) {
 	if mode != "local" {
 		t.Errorf("mode: got %q, want %q", mode, "local")
 	}
-	if !gw.IsZero() {
+	if gw != (execenv.OpenclawGatewayPin{}) {
 		t.Errorf("gateway for local mode: got %+v, want zero", gw)
 	}
 }

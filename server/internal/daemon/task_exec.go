@@ -147,7 +147,7 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 	// crash leaves the directory as an orphan (cleaned up by GCOrphanTTL).
 	if result.EnvRoot != "" {
 		if meta, ok := gcMetaForTask(task); ok {
-			if err := execenv.WriteGCMeta(result.EnvRoot, meta, taskLog); err != nil {
+			if err := execenv.WriteGCMeta(result.EnvRoot, meta); err != nil {
 				taskLog.Warn("write gc meta failed (non-fatal)", "error", err)
 			}
 		}
