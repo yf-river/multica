@@ -21,35 +21,12 @@ const (
 	DefaultServerURL         = "ws://localhost:8080/ws"
 	DefaultPollInterval      = 30 * time.Second
 	DefaultHeartbeatInterval = 15 * time.Second
-	// DefaultAgentTimeout is the optional absolute wall-clock cap on a single
-	// agent run. 0 = no cap: a run is bounded only by the inactivity watchdogs
-	// (DefaultAgentIdleWatchdog / DefaultAgentToolWatchdog), so a session that keeps emitting events is
-	// never killed merely for running long (MUL-3064). Operators who want a
-	// hard ceiling for cost/resource control can set MULTICA_AGENT_TIMEOUT.
+	// A zero agent timeout leaves liveness to the idle and tool watchdogs.
 	DefaultAgentTimeout                   = 0
 	DefaultCodexSemanticInactivityTimeout = 10 * time.Minute
-	// DefaultAgentIdleWatchdog is the per-task safety net that force-stops a
-	// run when the backend has emitted no message for this long AND its
-	// message queue is empty. Backends like Claude Code can hang indefinitely
-	// on a stuck child process (e.g. `docker ps` against a frozen dockerd),
-	// in which case `cmd.Wait()` never returns. With no wall-clock cap
-	// (DefaultAgentTimeout = 0) such a run would otherwise sit at "running"
-	// forever, so this watchdog is its sole liveness net. The previous 5 min default
-	// killed legitimate long assistant outputs (e.g. RFC-length writeups)
-	// where the model streams a single message for many minutes without any
-	// daemon-visible activity — see MUL-2300. 30 min keeps the safety net for
-	// truly stuck runs (dockerd hang) while leaving headroom for long writes.
-	// Set MULTICA_AGENT_IDLE_WATCHDOG=0 to disable.
+	// Idle applies only when no message is emitted and the queue is empty.
 	DefaultAgentIdleWatchdog = 30 * time.Minute
-	// DefaultAgentToolWatchdog bounds how long a single tool call may stay in
-	// flight (tool_use emitted, no tool_result and no other message) before the
-	// idle watchdog force-stops the run. The idle watchdog ignores its normal
-	// window while a tool is in flight, because a real build/install/test
-	// legitimately runs silently for many minutes — but with no wall-clock cap
-	// (DefaultAgentTimeout = 0) a backend that emits tool_use and never the
-	// matching tool_result would otherwise run forever. This is the backstop for
-	// that stuck-tool case (MUL-3064). Set MULTICA_AGENT_TOOL_WATCHDOG=0 to
-	// disable, in which case an in-flight tool never force-stops the run.
+	// Tool watchdog applies while a tool_use awaits its matching tool_result.
 	DefaultAgentToolWatchdog     = 2 * time.Hour
 	DefaultRuntimeName           = "Local Agent"
 	DefaultWorkspaceSyncInterval = 30 * time.Second
@@ -165,41 +142,17 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		return Config{}, err
 	}
 
-	// Apply backend overrides from the CLI config file (issue #3875).
-	//
-	// CLIConfig.Backends.OpenClaw lets users record "which OpenClaw on this
-	// machine, and where its state lives" in a versioned, UI-editable file
-	// instead of a launchctl env hack. We translate those fields into the
-	// same env vars the rest of LoadConfig already honors:
-	//
-	//   - MULTICA_OPENCLAW_PATH: read by probe() via envOrDefault for the
-	//     binary lookup; pre-existing path.
-	//   - OPENCLAW_STATE_DIR:    OpenClaw's own env var; the daemon already
-	//     forwards it to spawned children via mergeEnv (server/pkg/agent/...).
-	//
-	// Precedence is "env wins over config wins over default" — same shape
-	// users already get with MULTICA_OPENCLAW_PATH today. We achieve it with
-	// LookupEnv guards: if the user already exported the env var (in their
-	// shell, via launchctl, or via the systemd unit), we leave it alone;
-	// otherwise we Setenv from the config file. This keeps every downstream
-	// consumer (probe, buildEnv, child processes) on the existing code path
-	// without inventing a new plumbing channel.
-	//
-	// Errors loading CLIConfig are non-fatal: a missing or malformed config
-	// file should not prevent daemon startup, since the daemon can still run
-	// purely from env-var configuration. We log a warning and proceed with
-	// no overrides.
+	// Local config is optional. Explicit process environment still wins over
+	// OpenClaw config, and a malformed config does not prevent daemon startup.
 	var profileCommandOverrides map[string]string
 	if cliCfg, err := cli.LoadCLIConfigForProfile(overrides.Profile); err != nil {
 		slog.Warn("could not load CLI config for backend overrides; proceeding without",
 			"profile", overrides.Profile, "err", err)
 	} else {
-		if oc := openclawOverrideFrom(cliCfg); oc != nil {
-			applyOpenclawOverride(oc)
+		if cliCfg.Backends != nil {
+			applyOpenclawOverride(cliCfg.Backends.OpenClaw)
 		}
-		// Per-machine custom-runtime command path overrides (MUL-3284).
-		// Copy into our own map so later mutation of the loaded config can't
-		// alias daemon state, and so an empty map normalizes to nil.
+		// Copy machine-local paths so loaded config cannot alias daemon state.
 		if len(cliCfg.ProfileCommandOverrides) > 0 {
 			profileCommandOverrides = make(map[string]string, len(cliCfg.ProfileCommandOverrides))
 			for id, path := range cliCfg.ProfileCommandOverrides {
@@ -211,21 +164,8 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		}
 	}
 
-	// Probe available agent CLIs. exec.LookPath is the primary path, but on
-	// macOS/Linux a GUI-launched daemon (Electron, Launchpad) does not
-	// inherit the user's interactive shell PATH — fnm/nvm/volta multishells,
-	// the Anthropic native installer prefix, and per-user npm prefixes all
-	// live in dirs that only get added to PATH by ~/.zshrc or ~/.bashrc.
-	// shellResolvedAgents asks the user's login shell, lazily on first miss,
-	// to resolve every standard agent name to its canonical absolute path,
-	// so we can find binaries the bare daemon process can't see. See
-	// resolveAgentsViaLoginShell for the details and constraints.
-	//
-	// Laziness matters: the happy path (every agent on the daemon's PATH or
-	// pinned to an explicit MULTICA_*_PATH) must not pay the cost of
-	// spawning the user's login shell — that touches their rc files and
-	// adds startup latency that scales with whatever they put in there. We
-	// only fork a shell when a bare command name actually missed LookPath.
+	// Resolve normal PATH entries first. Query a login shell lazily only when
+	// a bare command is absent from a GUI-launched daemon's PATH.
 	agentCommandNames := make([]string, 0, len(agentProviderSpecs))
 	for _, spec := range agentProviderSpecs {
 		agentCommandNames = append(agentCommandNames, spec.command)
@@ -248,10 +188,7 @@ func LoadConfig(overrides Overrides) (Config, error) {
 				Model: strings.TrimSpace(os.Getenv(modelEnv)),
 			}, true
 		}
-		// The shell fallback only rescues bare command names. An operator
-		// who pinned MULTICA_*_PATH to an absolute or relative path that
-		// doesn't exist should hard-miss, not silently get a different
-		// binary.
+		// An invalid explicit path must not silently select another binary.
 		if strings.ContainsAny(cmd, "/\\") {
 			return AgentEntry{}, false
 		}
@@ -601,23 +538,10 @@ var codexDesktopAppBundlePaths = func() []string {
 	return paths
 }
 
-// loginShellResolveTimeout caps how long the daemon will wait for the user's
-// login shell to print canonical agent paths. A broken rc file should not
-// block startup — if the shell takes longer than this, we proceed without
-// shell-resolved fallbacks and the daemon falls back to the same behaviour
-// it had before this code was added.
+// A slow or broken shell configuration must not block daemon startup.
 const loginShellResolveTimeout = 3 * time.Second
 
-// loginShellResolveWaitDelay is the hard cap that runs *after*
-// loginShellResolveTimeout has elapsed and `CommandContext` has signalled the
-// shell to exit. The context kills the shell process itself, but rc files in
-// the wild routinely background things that inherit stdout (`nvm` shims,
-// `direnv hook`, `eval $(starship init)`, plain `&`). Those survivors keep
-// the stdout pipe open and `cmd.Output()` will block on EOF for as long as
-// they live. Cmd.WaitDelay (Go 1.20+) forcibly closes the pipes and returns
-// once this delay elapses, so the total daemon-startup penalty caused by a
-// pathological rc file is bounded by `timeout + waitDelay`, not by however
-// long the user's background processes happen to run.
+// WaitDelay also bounds inherited pipes kept open by background rc processes.
 const loginShellResolveWaitDelay = 2 * time.Second
 
 // supportedLoginShells limits which interpreters we will invoke via
@@ -632,38 +556,9 @@ var supportedLoginShells = map[string]struct{}{
 	"ksh":  {},
 }
 
-// resolveAgentsViaLoginShell asks the user's login shell to print the canonical
-// (symlink-resolved) absolute path to each name in `names`. It returns a map
-// of name → path for whatever the shell could find, and an empty map if the
-// shell is unavailable / unsupported / times out / produces no usable output.
-//
-// Why we need this:
-//
-// Daemon-style processes on macOS/Linux do not inherit the user's interactive
-// PATH. `claude --version` working in Terminal.app is no guarantee that
-// exec.LookPath("claude") will work from a binary spawned by Launchpad, the
-// Electron app, or `launchctl`. The most common offenders are fnm/nvm/volta
-// "multishell" prefix dirs (per-shell, ephemeral) and the Anthropic native
-// installer (`~/.claude/local/`) — both leave their binaries on a path that
-// only `.zshrc` knows about.
-//
-// Implementation notes:
-//
-//   - We invoke `$SHELL -ilc <script>` with both -i (interactive) and -l
-//     (login) so we pick up PATH set in either ~/.zshrc / ~/.bashrc OR
-//     ~/.zprofile / ~/.bash_profile. Real users put it in both places.
-//   - The script resolves symlinks via `cd "$dirname" && pwd -P` while the
-//     spawned shell is still alive. fnm/nvm "multishell" directories vanish
-//     on shell exit, so the canonical path must be captured before stdout is
-//     returned to Go — by then the original path is already gone.
-//   - We only trust outputs that look like an absolute path AND still pass a
-//     fresh exec.LookPath check from the daemon's vantage point. That filters
-//     out aliases (`command -v` prints the alias definition for those, not a
-//     path) and per-shell paths the shell happened not to fully canonicalise.
-//   - Agent names are restricted to the commands in agentProviderSpecs
-//     (`[A-Za-z0-9._-]` only); we inline them into the script unquoted to
-//     keep the script readable. Custom MULTICA_*_PATH values never reach this
-//     resolver — those go through exec.LookPath directly.
+// resolveAgentsViaLoginShell discovers canonical executable paths from a
+// supported interactive login shell. Names are allowlisted before entering
+// the script, and results must remain absolute and executable afterward.
 func resolveAgentsViaLoginShell(names []string) map[string]string {
 	out := map[string]string{}
 	if len(names) == 0 {
@@ -706,12 +601,7 @@ func resolveAgentsViaLoginShell(names []string) map[string]string {
 		if !filepath.IsAbs(path) {
 			continue
 		}
-		// Final reality check: the path the shell gave us must still be
-		// executable from the daemon's perspective right now. fnm
-		// multishells are the motivating example — pwd -P inside the
-		// helper shell can fail to break out of the per-session bin dir,
-		// and we'd rather report "not found" than hand back a path that
-		// vanishes between detection and execution.
+		// Reject paths that disappeared with the helper shell.
 		if _, err := exec.LookPath(path); err != nil {
 			continue
 		}
@@ -720,34 +610,9 @@ func resolveAgentsViaLoginShell(names []string) map[string]string {
 	return out
 }
 
-// buildLoginShellResolveScript returns the shell script that resolveAgentsViaLoginShell
-// runs inside `$SHELL -ilc`. The script:
-//
-//  1. iterates the provided command names,
-//  2. strips any locally-defined alias and shell function with that name so
-//     `command -v` reaches through to a real binary on PATH (see below),
-//  3. uses POSIX `command -v` to find each one on the interactive PATH,
-//  4. rejects results that are not absolute paths (defence in depth — if the
-//     unalias/unset -f pair somehow didn't take effect, `command -v` would
-//     still print the alias/function definition, and we'd rather drop it
-//     than hand back garbage),
-//  5. canonicalises the directory via `cd ... && pwd -P` so symlinked prefix
-//     dirs (fnm/nvm/volta) collapse to stable paths,
-//  6. prints `<name>\t<canonical_path>` one entry per line for the caller.
-//
-// Why steps 2 is important — and why this PR's first revision missed #2512:
-// the motivating case has `alias claude=...` in ~/.zshrc *and* fnm's real
-// claude binary further down on PATH. With `-i` set, the alias loads, and
-// `command -v claude` returns `claude: aliased to ...` (zsh) or `alias
-// claude='...'` (bash) — neither starts with `/`, so step 4 drops them, and
-// the loop never looks at PATH again. Unaliasing inside the same shell makes
-// `command -v` fall back to the PATH search the daemon actually wants.
-// Shell functions exhibit the same shadowing in bash/zsh, hence `unset -f`.
-// Both calls are wrapped in `2>/dev/null` so the harmless "no such alias"
-// error never reaches stderr.
-//
-// All input names are vetted by isSafeAgentName before they reach this
-// function, so inlining them unquoted into the for-loop word list is safe.
+// buildLoginShellResolveScript removes alias/function shadows, resolves each
+// allowlisted name through PATH, canonicalizes its directory and prints a
+// tab-separated name/path pair. Non-absolute results are rejected.
 func buildLoginShellResolveScript(names []string) string {
 	var b strings.Builder
 	b.WriteString("for n in")
@@ -767,11 +632,7 @@ func buildLoginShellResolveScript(names []string) string {
 	return b.String()
 }
 
-// isSafeAgentName checks that `s` is a bare command name composed only of
-// characters that are safe to inline into a shell script (ASCII letters,
-// digits, dot, dash, underscore). The agent names this daemon ships with all
-// satisfy the predicate; it exists to guard against future drift, not to
-// constrain operator-supplied paths (those never reach the shell resolver).
+// isSafeAgentName restricts shell-script input to a bare ASCII command name.
 func isSafeAgentName(s string) bool {
 	if s == "" {
 		return false
@@ -789,32 +650,8 @@ func isSafeAgentName(s string) bool {
 	return true
 }
 
-// openclawOverrideFrom returns the OpenClaw override block from a loaded
-// CLIConfig, or nil when no override is configured. Centralized here so
-// the LoadConfig path and tests share one navigation predicate over the
-// nullable-pointer chain.
-func openclawOverrideFrom(cfg cli.CLIConfig) *cli.OpenClawOverride {
-	if cfg.Backends == nil {
-		return nil
-	}
-	return cfg.Backends.OpenClaw
-}
-
-// applyOpenclawOverride translates the config-file overrides into process
-// env vars, which the existing probe() / buildEnv code paths already honor.
-// Env-set-by-user wins over config-set-by-file: we only Setenv when the var
-// is not already present, matching the precedence on cli.OpenClawOverride.
-//
-// Side-effecting on os.Setenv is intentional and scoped:
-//
-//   - The two vars touched (MULTICA_OPENCLAW_PATH, OPENCLAW_STATE_DIR) are
-//     OpenClaw-specific. Other backends do not read them; setting them in the
-//     daemon process has no observable effect on, e.g., Claude Code or Codex
-//     spawn behavior.
-//   - LoadConfig runs once during daemon startup, before any backend Execute.
-//     Concurrent reads of os.Environ() in spawned children see a stable view.
-//   - We deliberately do not unset on later reload: the daemon's lifecycle is
-//     "exit and respawn" (cmd_daemon.go), not in-process reconfigure.
+// applyOpenclawOverride exposes machine-local config through the environment
+// already consumed by discovery and child processes. Explicit env wins.
 func applyOpenclawOverride(oc *cli.OpenClawOverride) {
 	if oc == nil {
 		return

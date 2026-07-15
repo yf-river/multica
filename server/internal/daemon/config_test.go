@@ -190,19 +190,8 @@ func TestBuildLoginShellResolveScript_ShapeAndContent(t *testing.T) {
 	}
 }
 
-// TestResolveAgentsViaLoginShell_ResolvesViaInteractiveShell verifies the
-// motivating bug scenario: a binary that lives in a directory which is NOT on
-// the daemon's PATH but IS added to PATH by the user's interactive shell rc
-// file gets resolved to a canonical absolute path.
-//
-// We simulate this by:
-//   - creating a temp dir containing an executable named "fakeclaude"
-//   - removing every other dir from PATH (so exec.LookPath misses)
-//   - pointing SHELL at /bin/sh and using ENV (sourced on -i) to add the dir
-//
-// Skipped on Windows (no POSIX shell), and skipped if /bin/sh is missing or
-// doesn't honour ENV (which would defeat the simulation — not the function's
-// fault).
+// A command available only through interactive shell setup must resolve to a
+// canonical executable path.
 func TestResolveAgentsViaLoginShell_ResolvesViaInteractiveShell(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX shell not available on Windows")
@@ -307,12 +296,7 @@ func stageFakeAgent(t *testing.T) string {
 	return binDir
 }
 
-// TestResolveAgentsViaLoginShell_StripsAliasShadowing locks down the fix for
-// #2512: when the user's rc file declares an alias with the same name as the
-// agent CLI, the resolver must still return the real binary on PATH, not the
-// alias text. The previous revision of this code passed the rest of the test
-// suite but silently dropped this case (alias text is not absolute, so the
-// `case "$p" in /*)` filter rejected it).
+// Alias shadows must not hide the real executable on PATH.
 func TestResolveAgentsViaLoginShell_StripsAliasShadowing(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX shell not available on Windows")
@@ -567,13 +551,6 @@ func pinNonCodexAgentsToMissingPaths(t *testing.T) {
 	}
 }
 
-// =============================================================================
-// CLI config Backends.OpenClaw overrides (issue #3875)
-// =============================================================================
-
-// TestApplyOpenclawOverride_DoesNothingWhenNil verifies the early-return
-// path. A daemon started with no override should not Setenv anything; the
-// existing probe / spawn flow remains undisturbed.
 func TestApplyOpenclawOverride_DoesNothingWhenNil(t *testing.T) {
 	// Pre-set both env vars to known values; verify they survive untouched.
 	t.Setenv("MULTICA_OPENCLAW_PATH", "/before/openclaw")
@@ -589,9 +566,6 @@ func TestApplyOpenclawOverride_DoesNothingWhenNil(t *testing.T) {
 	}
 }
 
-// TestApplyOpenclawOverride_SetsBothWhenEnvUnset verifies the happy path:
-// neither env var is set, the override has both fields, both env vars get
-// set to the override values.
 func TestApplyOpenclawOverride_SetsBothWhenEnvUnset(t *testing.T) {
 	t.Setenv("MULTICA_OPENCLAW_PATH", "")
 	t.Setenv("OPENCLAW_STATE_DIR", "")
@@ -615,12 +589,7 @@ func TestApplyOpenclawOverride_SetsBothWhenEnvUnset(t *testing.T) {
 	}
 }
 
-// TestApplyOpenclawOverride_EnvWinsOverConfig is the precedence test
-// agreed with @YOMXXX in #3875 review: an env var set upstream by the user
-// (shell export, launchctl, systemd unit) MUST take precedence over the
-// config-file value. This is the back-compat contract — anyone with
-// MULTICA_OPENCLAW_PATH already in their environment must not see the
-// daemon silently change its meaning when they later add a config file.
+// Explicit process environment takes precedence over local config.
 func TestApplyOpenclawOverride_EnvWinsOverConfig(t *testing.T) {
 	// User has already exported these in their shell.
 	t.Setenv("MULTICA_OPENCLAW_PATH", "/from/env/openclaw")
@@ -639,11 +608,7 @@ func TestApplyOpenclawOverride_EnvWinsOverConfig(t *testing.T) {
 	}
 }
 
-// TestApplyOpenclawOverride_PartialFields_OnlySetsConfigured verifies that
-// an override with only one field set leaves the other env var alone (does
-// not Setenv to ""). This matters: a user who only configures state_dir
-// must not have their MULTICA_OPENCLAW_PATH discovery path forcibly
-// short-circuited to an empty string.
+// Empty override fields must not mask normal discovery.
 func TestApplyOpenclawOverride_PartialFields_OnlySetsConfigured(t *testing.T) {
 	_ = os.Unsetenv("MULTICA_OPENCLAW_PATH")
 	_ = os.Unsetenv("OPENCLAW_STATE_DIR")
@@ -665,34 +630,10 @@ func TestApplyOpenclawOverride_PartialFields_OnlySetsConfigured(t *testing.T) {
 	}
 }
 
-// TestOpenclawOverrideFrom_NavigationCases verifies the nullable-pointer
-// chain into Backends.OpenClaw. Three cases that all must safely return
-// nil without panicking: nil Backends, nil OpenClaw inside Backends, and
-// the happy path (returns the inner override unchanged).
-func TestOpenclawOverrideFrom_NavigationCases(t *testing.T) {
-	if got := openclawOverrideFrom(cli.CLIConfig{}); got != nil {
-		t.Errorf("nil Backends should produce nil override, got %+v", got)
-	}
-	if got := openclawOverrideFrom(cli.CLIConfig{Backends: &cli.BackendOverrides{}}); got != nil {
-		t.Errorf("nil OpenClaw inside Backends should produce nil override, got %+v", got)
-	}
-	want := &cli.OpenClawOverride{StateDir: "/x"}
-	got := openclawOverrideFrom(cli.CLIConfig{Backends: &cli.BackendOverrides{OpenClaw: want}})
-	if got != want {
-		t.Errorf("happy path should return inner pointer; got %p want %p", got, want)
-	}
-}
-
-// TestLoadConfig_AppliesBackendOverridesFromConfigFile is the integration
-// test that ties commit 1's schema to commit 2's wire-up: write a config
-// file with backends.openclaw.{binary_path,state_dir}, call LoadConfig
-// (with no env vars set), and verify the openclaw probe picked up the
-// configured BinaryPath and the OPENCLAW_STATE_DIR env var was injected.
+// Local backend config feeds discovery and the spawned tool environment.
 func TestLoadConfig_AppliesBackendOverridesFromConfigFile(t *testing.T) {
 	stageFakeAgent(t)
-	// stageFakeAgent left "claude" on PATH; we also need a fake "openclaw"
-	// at a custom path that the config file points at (mimicking a non-default
-	// installation: another bundled / isolated / CI deployment, etc).
+	// Add an OpenClaw executable outside normal PATH discovery.
 	customDir := t.TempDir()
 	customOpenclaw := filepath.Join(customDir, "non-default-openclaw")
 	if err := os.WriteFile(customOpenclaw, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
@@ -707,8 +648,6 @@ func TestLoadConfig_AppliesBackendOverridesFromConfigFile(t *testing.T) {
 		_ = os.Unsetenv("OPENCLAW_STATE_DIR")
 	})
 
-	// Drop a CLI config under the user's HOME (already pointed at TempDir
-	// by stageFakeAgent's t.Setenv chain — but reassert here for clarity).
 	homeForCLIConfig := t.TempDir()
 	t.Setenv("HOME", homeForCLIConfig)
 	cfg := cli.CLIConfig{
@@ -744,11 +683,7 @@ func TestLoadConfig_AppliesBackendOverridesFromConfigFile(t *testing.T) {
 	}
 }
 
-// TestLoadConfig_BackendOverrides_BackwardCompat_NoConfigFile verifies that
-// the override mechanism is purely additive: a daemon started without any
-// CLI config file (or with an empty one) behaves identically to before
-// commit 1 — agents discovered from PATH, no env injection.
-func TestLoadConfig_BackendOverrides_BackwardCompat_NoConfigFile(t *testing.T) {
+func TestLoadConfig_WithoutBackendConfigUsesPathDiscovery(t *testing.T) {
 	stageFakeAgent(t)
 
 	// Point HOME at an empty dir — no config.json present.
