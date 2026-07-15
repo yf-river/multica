@@ -3,10 +3,8 @@ package handler
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"sync"
 	"testing"
 
 	"github.com/google/uuid"
@@ -39,42 +37,18 @@ func TestCreateSkill_IdempotentReplayConflictAndConcurrentCreate(t *testing.T) {
 		"files": []map[string]any{{"path": "guide.md", "content": "current guide"}},
 	}
 
-	const callers = 8
-	responses := make(chan *httptest.ResponseRecorder, callers)
-	var wg sync.WaitGroup
-	for range callers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			responses <- createSkillWithKey(t, key, body)
-		}()
-	}
-	wg.Wait()
-	close(responses)
-
-	ids := map[string]struct{}{}
-	var firstBody string
-	for response := range responses {
-		if response.Code != http.StatusCreated {
-			t.Fatalf("create = %d %s", response.Code, response.Body.String())
-		}
-		if firstBody == "" {
-			firstBody = response.Body.String()
-		} else if response.Body.String() != firstBody {
-			t.Fatalf("replay body differs\nfirst: %s\nnext: %s", firstBody, response.Body.String())
-		}
+	assertConcurrentCreateReplay(t, func() *httptest.ResponseRecorder {
+		return createSkillWithKey(t, key, body)
+	}, func(response *httptest.ResponseRecorder) string {
 		var skill SkillWithFilesResponse
 		if err := json.Unmarshal(response.Body.Bytes(), &skill); err != nil {
 			t.Fatal(err)
 		}
-		ids[skill.ID] = struct{}{}
 		if len(skill.Files) != 1 || skill.Files[0].Path != "guide.md" {
 			t.Fatalf("replayed files=%v", skill.Files)
 		}
-	}
-	if len(ids) != 1 {
-		t.Fatalf("responses returned %d skill ids: %v", len(ids), ids)
-	}
+		return skill.ID
+	})
 
 	conflict := createSkillWithKey(t, key, map[string]any{"name": name + " changed"})
 	if conflict.Code != http.StatusConflict || conflict.Body.String() != "{\"code\":\"idempotency_conflict\",\"error\":\"Idempotency-Key was already used with a different request\"}\n" {
@@ -92,27 +66,8 @@ func TestCreateSkill_ResponseCompletionFailureRollsBackFiles(t *testing.T) {
 	key := uuid.NewString()
 	name := "failed skill " + uuid.NewString()
 	cleanupSkillCreateRequest(t, key, name)
-	suffix := uuid.NewString()
-	functionName := quoteIdentifier("fail_skill_create_completion_" + suffix)
-	triggerName := quoteIdentifier("fail_skill_create_completion_trigger_" + suffix)
+	installResourceCreateCompletionFailure(t, "skill", key)
 	ctx := context.Background()
-	if _, err := testPool.Exec(ctx, fmt.Sprintf(`
-		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
-		BEGIN
-			IF NEW.resource_type = 'skill' AND NEW.idempotency_key = %s::uuid AND NEW.response_body IS NOT NULL THEN
-				RAISE EXCEPTION 'forced skill request completion failure';
-			END IF;
-			RETURN NEW;
-		END $$;
-		CREATE TRIGGER %s BEFORE UPDATE ON resource_create_request
-		FOR EACH ROW EXECUTE FUNCTION %s();
-	`, functionName, quoteSQLLiteral(key), triggerName, functionName)); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON resource_create_request`, triggerName))
-		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, functionName))
-	})
 
 	response := createSkillWithKey(t, key, map[string]any{
 		"name":  name,

@@ -30,15 +30,12 @@ func cleanupAgentCreateRequest(t *testing.T, key, name string) {
 	})
 }
 
-func TestCreateAgent_IdempotentReplayConflictAndConcurrentCreate(t *testing.T) {
-	key := uuid.NewString()
-	name := "idempotent agent " + uuid.NewString()
-	cleanupAgentCreateRequest(t, key, name)
-	body := map[string]any{
-		"name": name, "runtime_id": testRuntimeID, "scope": "personal",
-		"instructions": "Use the current contract",
-	}
-
+func assertConcurrentCreateReplay(
+	t *testing.T,
+	create func() *httptest.ResponseRecorder,
+	responseID func(*httptest.ResponseRecorder) string,
+) {
+	t.Helper()
 	const callers = 8
 	responses := make(chan *httptest.ResponseRecorder, callers)
 	var wg sync.WaitGroup
@@ -46,7 +43,7 @@ func TestCreateAgent_IdempotentReplayConflictAndConcurrentCreate(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			responses <- createAgentWithKey(t, key, body)
+			responses <- create()
 		}()
 	}
 	wg.Wait()
@@ -63,15 +60,56 @@ func TestCreateAgent_IdempotentReplayConflictAndConcurrentCreate(t *testing.T) {
 		} else if response.Body.String() != firstBody {
 			t.Fatalf("replay body differs\nfirst: %s\nnext: %s", firstBody, response.Body.String())
 		}
+		ids[responseID(response)] = struct{}{}
+	}
+	if len(ids) != 1 {
+		t.Fatalf("responses returned %d resource ids: %v", len(ids), ids)
+	}
+}
+
+func installResourceCreateCompletionFailure(t *testing.T, resourceType, key string) {
+	t.Helper()
+	suffix := uuid.NewString()
+	functionName := quoteIdentifier("fail_" + resourceType + "_create_completion_" + suffix)
+	triggerName := quoteIdentifier("fail_" + resourceType + "_create_completion_trigger_" + suffix)
+	ctx := context.Background()
+	if _, err := testPool.Exec(ctx, fmt.Sprintf(`
+		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			IF NEW.resource_type = %s AND NEW.idempotency_key = %s::uuid AND NEW.response_body IS NOT NULL THEN
+				RAISE EXCEPTION 'forced resource request completion failure';
+			END IF;
+			RETURN NEW;
+		END $$;
+		CREATE TRIGGER %s BEFORE UPDATE ON resource_create_request
+		FOR EACH ROW EXECUTE FUNCTION %s();
+	`, functionName, quoteSQLLiteral(resourceType), quoteSQLLiteral(key), triggerName, functionName)); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON resource_create_request`, triggerName))
+		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, functionName))
+	})
+}
+
+func TestCreateAgent_IdempotentReplayConflictAndConcurrentCreate(t *testing.T) {
+	key := uuid.NewString()
+	name := "idempotent agent " + uuid.NewString()
+	cleanupAgentCreateRequest(t, key, name)
+	body := map[string]any{
+		"name": name, "runtime_id": testRuntimeID, "scope": "personal",
+		"instructions": "Use the current contract",
+	}
+
+	assertConcurrentCreateReplay(t, func() *httptest.ResponseRecorder {
+		return createAgentWithKey(t, key, body)
+	}, func(response *httptest.ResponseRecorder) string {
 		var agent AgentResponse
 		if err := json.Unmarshal(response.Body.Bytes(), &agent); err != nil {
 			t.Fatal(err)
 		}
-		ids[agent.ID] = struct{}{}
-	}
-	if len(ids) != 1 {
-		t.Fatalf("responses returned %d agent ids: %v", len(ids), ids)
-	}
+		return agent.ID
+	})
 
 	conflict := createAgentWithKey(t, key, map[string]any{
 		"name": name + " changed", "runtime_id": testRuntimeID, "scope": "personal",
@@ -91,27 +129,8 @@ func TestCreateAgent_ResponseCompletionFailureRollsBackAgent(t *testing.T) {
 	key := uuid.NewString()
 	name := "failed agent " + uuid.NewString()
 	cleanupAgentCreateRequest(t, key, name)
-	suffix := uuid.NewString()
-	functionName := quoteIdentifier("fail_agent_create_completion_" + suffix)
-	triggerName := quoteIdentifier("fail_agent_create_completion_trigger_" + suffix)
+	installResourceCreateCompletionFailure(t, "agent", key)
 	ctx := context.Background()
-	if _, err := testPool.Exec(ctx, fmt.Sprintf(`
-		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
-		BEGIN
-			IF NEW.resource_type = 'agent' AND NEW.idempotency_key = %s::uuid AND NEW.response_body IS NOT NULL THEN
-				RAISE EXCEPTION 'forced agent request completion failure';
-			END IF;
-			RETURN NEW;
-		END $$;
-		CREATE TRIGGER %s BEFORE UPDATE ON resource_create_request
-		FOR EACH ROW EXECUTE FUNCTION %s();
-	`, functionName, quoteSQLLiteral(key), triggerName, functionName)); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON resource_create_request`, triggerName))
-		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, functionName))
-	})
 
 	response := createAgentWithKey(t, key, map[string]any{
 		"name": name, "runtime_id": testRuntimeID, "scope": "personal",
