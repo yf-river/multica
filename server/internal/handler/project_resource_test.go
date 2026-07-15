@@ -494,7 +494,7 @@ func TestGongfengResourceCredentialBackedProbeKeepsSecretsRedacted(t *testing.T)
 		db.ExternalCredentialProfile{
 			ID:        profileID,
 			Provider:  externalCredentialProviderGongfeng,
-			SecretRef: "env:GONGFENG_ACCESS_TOKEN",
+			SecretRef: "env:GONGFENG_PRIVATE_TOKEN",
 			Status:    "unverified",
 		},
 		true,
@@ -512,7 +512,7 @@ func TestGongfengResourceCredentialBackedProbeKeepsSecretsRedacted(t *testing.T)
 		t.Fatalf("credential probe proof not recorded: %+v", ref)
 	}
 	raw := string(mustMarshalRaw(ref))
-	if strings.Contains(raw, "GONGFENG_ACCESS_TOKEN") {
+	if strings.Contains(raw, "GONGFENG_PRIVATE_TOKEN") {
 		t.Fatalf("resource_ref leaked secret ref name: %s", raw)
 	}
 	if !strings.Contains(raw, "secret_ref") {
@@ -575,7 +575,7 @@ func TestGongfengResourceProfileWithoutSuccessfulCredentialProbeStaysAuthRequire
 		db.ExternalCredentialProfile{
 			ID:        profileID,
 			Provider:  externalCredentialProviderGongfeng,
-			SecretRef: "env:GONGFENG_ACCESS_TOKEN",
+			SecretRef: "env:GONGFENG_PRIVATE_TOKEN",
 			Status:    "unverified",
 		},
 		true,

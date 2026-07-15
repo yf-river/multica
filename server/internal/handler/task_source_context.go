@@ -246,7 +246,6 @@ func (h *Handler) externalCredentialProfileEnv(profile db.ExternalCredentialProf
 	case externalCredentialProviderGongfeng:
 		env := map[string]string{}
 		if token != "" {
-			env["GONGFENG_ACCESS_TOKEN"] = token
 			env["GONGFENG_PRIVATE_TOKEN"] = token
 		}
 		for _, key := range []string{"GONGFENG_API_BASE", "GONGFENG_WORKDIR", "GONGFENG_SSH_KEY_PATH", "GONGFENG_KNOWN_HOSTS_PATH"} {
@@ -281,11 +280,8 @@ func (h *Handler) resolveExternalCredentialToken(profile db.ExternalCredentialPr
 	if strings.HasPrefix(ref, "server-managed:") {
 		parts := strings.Split(ref, ":")
 		if len(parts) >= 2 {
-			switch parts[1] {
-			case externalCredentialProviderTAPD:
-				return strings.TrimSpace(os.Getenv("TAPD_ACCESS_TOKEN")), nil
-			case externalCredentialProviderGongfeng:
-				return firstNonEmpty(os.Getenv("GONGFENG_ACCESS_TOKEN"), os.Getenv("GONGFENG_PRIVATE_TOKEN")), nil
+			if key := externalCredentialProviderEnvKey(parts[1]); key != "" {
+				return strings.TrimSpace(os.Getenv(key)), nil
 			}
 		}
 	}

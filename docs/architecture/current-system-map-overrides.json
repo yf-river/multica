@@ -44,19 +44,7 @@
     "go": [],
     "typescript": []
   },
-  "environmentAliases": [
-    {
-      "canonical": "GONGFENG_ACCESS_TOKEN",
-      "aliases": [
-        "GONGFENG_PRIVATE_TOKEN"
-      ],
-      "reason": "Task source context accepts either token name and exports both names to the Gongfeng MCP process.",
-      "disposition": "external-protocol-required",
-      "sources": [
-        "server/internal/handler/task_source_context.go"
-      ]
-    }
-  ],
+  "environmentAliases": [],
   "externalSystems": [
     {
       "id": "agent-cli-runtimes",
@@ -115,7 +103,6 @@
       "id": "gongfeng",
       "kind": "REST API and MCP subprocess",
       "environment": [
-        "GONGFENG_ACCESS_TOKEN",
         "GONGFENG_API_BASE",
         "GONGFENG_MCP_SERVER_ENTRYPOINT",
         "GONGFENG_PRIVATE_TOKEN"

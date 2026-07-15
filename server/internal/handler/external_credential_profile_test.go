@@ -383,21 +383,21 @@ func TestExternalCredentialProfileSupportsGongfengProvider(t *testing.T) {
 }
 
 func TestExternalCredentialProfileVerifyMissingEnvSecretRef(t *testing.T) {
-	t.Setenv("GONGFENG_ACCESS_TOKEN_EXPECTED_MISSING", "")
+	t.Setenv("GONGFENG_PRIVATE_TOKEN_EXPECTED_MISSING", "")
 	name := fmt.Sprintf("gongfeng-missing-env-%d", time.Now().UnixNano())
 
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/external-credential-profiles", map[string]any{
 		"provider":   "gongfeng",
 		"name":       name,
-		"secret_ref": "env:GONGFENG_ACCESS_TOKEN_EXPECTED_MISSING",
+		"secret_ref": "env:GONGFENG_PRIVATE_TOKEN_EXPECTED_MISSING",
 		"verify_now": true,
 	})
 	testHandler.CreateExternalCredentialProfile(w, req)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("CreateExternalCredentialProfile(gongfeng): expected 201, got %d: %s", w.Code, w.Body.String())
 	}
-	if strings.Contains(w.Body.String(), "env:GONGFENG_ACCESS_TOKEN_EXPECTED_MISSING") {
+	if strings.Contains(w.Body.String(), "env:GONGFENG_PRIVATE_TOKEN_EXPECTED_MISSING") {
 		t.Fatalf("response leaked raw secret_ref: %s", w.Body.String())
 	}
 
@@ -411,13 +411,13 @@ func TestExternalCredentialProfileVerifyMissingEnvSecretRef(t *testing.T) {
 	if created.Status != "failed" {
 		t.Fatalf("status = %q, want failed; response=%+v", created.Status, created)
 	}
-	if !strings.Contains(created.LastError, "服务器环境变量 GONGFENG_ACCESS_TOKEN_EXPECTED_MISSING 未设置") {
+	if !strings.Contains(created.LastError, "服务器环境变量 GONGFENG_PRIVATE_TOKEN_EXPECTED_MISSING 未设置") {
 		t.Fatalf("last_error = %q", created.LastError)
 	}
 }
 
 func TestExternalCredentialProfileTestMissingEnvDoesNotPersist(t *testing.T) {
-	t.Setenv("GONGFENG_ACCESS_TOKEN_TEST_MISSING", "")
+	t.Setenv("GONGFENG_PRIVATE_TOKEN_TEST_MISSING", "")
 	var before int
 	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM external_credential_profile WHERE user_id = $1 AND provider = 'gongfeng'`, testUserID).Scan(&before); err != nil {
 		t.Fatalf("count profiles before: %v", err)
@@ -426,13 +426,13 @@ func TestExternalCredentialProfileTestMissingEnvDoesNotPersist(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/external-credential-profiles/test", map[string]any{
 		"provider":   "gongfeng",
-		"secret_ref": "env:GONGFENG_ACCESS_TOKEN_TEST_MISSING",
+		"secret_ref": "env:GONGFENG_PRIVATE_TOKEN_TEST_MISSING",
 	})
 	testHandler.TestExternalCredentialProfile(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("TestExternalCredentialProfile: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
-	if strings.Contains(w.Body.String(), "env:GONGFENG_ACCESS_TOKEN_TEST_MISSING") {
+	if strings.Contains(w.Body.String(), "env:GONGFENG_PRIVATE_TOKEN_TEST_MISSING") {
 		t.Fatalf("response leaked raw secret_ref: %s", w.Body.String())
 	}
 	var result TestExternalCredentialProfileResponse
@@ -442,7 +442,7 @@ func TestExternalCredentialProfileTestMissingEnvDoesNotPersist(t *testing.T) {
 	if result.Status != "failed" {
 		t.Fatalf("status = %q, want failed; response=%+v", result.Status, result)
 	}
-	if !strings.Contains(result.LastError, "服务器环境变量 GONGFENG_ACCESS_TOKEN_TEST_MISSING 未设置") {
+	if !strings.Contains(result.LastError, "服务器环境变量 GONGFENG_PRIVATE_TOKEN_TEST_MISSING 未设置") {
 		t.Fatalf("last_error = %q", result.LastError)
 	}
 	var after int
@@ -467,18 +467,18 @@ func TestExternalCredentialProfileTestGongfengEnvTokenHitsAPI(t *testing.T) {
 	}))
 	t.Cleanup(api.Close)
 	t.Setenv("GONGFENG_API_BASE", api.URL)
-	t.Setenv("GONGFENG_ACCESS_TOKEN_TEST_OK", "gongfeng-ok")
+	t.Setenv("GONGFENG_PRIVATE_TOKEN_TEST_OK", "gongfeng-ok")
 
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/external-credential-profiles/test", map[string]any{
 		"provider":   "gongfeng",
-		"secret_ref": "env:GONGFENG_ACCESS_TOKEN_TEST_OK",
+		"secret_ref": "env:GONGFENG_PRIVATE_TOKEN_TEST_OK",
 	})
 	testHandler.TestExternalCredentialProfile(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("TestExternalCredentialProfile: expected 200, got %d: %s", w.Code, w.Body.String())
 	}
-	if strings.Contains(w.Body.String(), "env:GONGFENG_ACCESS_TOKEN_TEST_OK") || strings.Contains(w.Body.String(), "gongfeng-ok") {
+	if strings.Contains(w.Body.String(), "env:GONGFENG_PRIVATE_TOKEN_TEST_OK") || strings.Contains(w.Body.String(), "gongfeng-ok") {
 		t.Fatalf("response leaked credential material: %s", w.Body.String())
 	}
 	var result TestExternalCredentialProfileResponse

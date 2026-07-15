@@ -14,7 +14,7 @@ export function GongfengCredentialPanel() {
         description: t(($) => $.tokens.gongfeng_credential.description),
         defaultName: "gongfeng-default",
         mcpServer: "gongfeng",
-        defaultEnvName: "GONGFENG_ACCESS_TOKEN",
+        defaultEnvName: "GONGFENG_PRIVATE_TOKEN",
         tokenPlaceholder: "粘贴工蜂 access token",
         replaceTokenPlaceholder: "输入新 token 可替换当前凭据",
         emptyTokenMessage: "请输入工蜂访问令牌",

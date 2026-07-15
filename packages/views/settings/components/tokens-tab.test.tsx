@@ -108,7 +108,7 @@ describe("TokensTab", () => {
     const panel = within(screen.getByTestId("settings-gongfeng-credential-panel"));
     expect(panel.getByRole("heading", { name: "工蜂访问凭据" })).toBeTruthy();
     expect(panel.getByText("已设置 · GONGFENG_PRIVATE_TOKEN")).toBeTruthy();
-    expect(panel.getByText(/GONGFENG_ACCESS_TOKEN \/ GONGFENG_PRIVATE_TOKEN/)).toBeTruthy();
+    expect(panel.getByText(/注入 GONGFENG_PRIVATE_TOKEN/)).toBeTruthy();
     expect(panel.getByText("注入变量")).toBeTruthy();
     expect(panel.getByText("当前绑定")).toBeTruthy();
     expect(panel.getByText("凭据方式")).toBeTruthy();
@@ -161,7 +161,7 @@ describe("TokensTab", () => {
     await user.click(panel.getByRole("button", { name: "测试连接" }));
 
     expect(mockTestProfile).toHaveBeenCalledWith(
-      { provider: "gongfeng", secret_ref: "env:GONGFENG_ACCESS_TOKEN" },
+      { provider: "gongfeng", secret_ref: "env:GONGFENG_PRIVATE_TOKEN" },
       expect.any(Object),
     );
     expect(mockUpdateProfile).not.toHaveBeenCalled();

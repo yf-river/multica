@@ -107,7 +107,7 @@
     },
     "gongfeng_credential": {
       "title": "工蜂访问凭据",
-      "description": "配置账号级工蜂 token 后，智能体运行时会注入 GONGFENG_ACCESS_TOKEN / GONGFENG_PRIVATE_TOKEN，用于读取私有工蜂仓库和执行工蜂 MCP 操作。"
+      "description": "配置账号级工蜂 token 后，智能体运行时会注入 GONGFENG_PRIVATE_TOKEN，用于读取私有工蜂仓库和执行工蜂 MCP 操作。"
     },
     "tapd_credential": {
       "title": "TAPD 访问凭据",
