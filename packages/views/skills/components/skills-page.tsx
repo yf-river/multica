@@ -57,7 +57,7 @@ import {
 } from "../../common/list-grid-selection";
 import { createColumnTrackVars } from "../../common/list-grid-columns";
 import { PageHeader } from "../../layout/page-header";
-import { canEditSkill } from "../hooks/use-can-edit-skill";
+import { canEditSkill } from "@multica/core/permissions";
 import { readOrigin, type OriginInfo } from "../lib/origin";
 import { CreateSkillDialog } from "./create-skill-dialog";
 import {
@@ -581,7 +581,10 @@ export default function SkillsPage() {
           : null,
         runtime,
         originType: origin.type,
-        canEdit: canEditSkill(skill, { userId: currentUserId, role: myRole }),
+        canEdit: canEditSkill(skill, {
+          userId: currentUserId,
+          role: myRole,
+        }).allowed,
       };
     });
   }, [skills, assignments, membersById, runtimesById, currentUserId, myRole]);

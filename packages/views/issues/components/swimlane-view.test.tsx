@@ -60,9 +60,6 @@ const { mockActorNameResult } = vi.hoisted(() => ({
     getActorName: (_type: string, _id: string) => "模拟负责人",
     getActorInitials: () => "MA",
     getActorAvatarUrl: () => null,
-    getMemberName: () => "Mock Member",
-    getAgentName: () => "Mock Agent",
-    getSquadName: () => "Mock Squad",
   },
 }));
 vi.mock("@multica/core/workspace/hooks", () => ({
@@ -79,8 +76,6 @@ vi.mock("@multica/core/auth", () => ({
     },
     { getState: () => ({ user: mockAuthUser, isAuthenticated: true }) },
   ),
-  registerAuthStore: vi.fn(),
-  createAuthStore: vi.fn(),
 }));
 
 // Mock navigation

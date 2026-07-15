@@ -29,15 +29,11 @@ vi.mock("@multica/core/auth", () => ({
     },
     { getState: () => ({ user: mockAuthUser, isAuthenticated: true }) },
   ),
-  registerAuthStore: vi.fn(),
-  createAuthStore: vi.fn(),
 }));
 
 // Mock @multica/core/workspace/hooks
 vi.mock("@multica/core/workspace/hooks", () => ({
   useActorName: () => ({
-    getMemberName: (id: string) => (id === "user-1" ? "Test User" : "Unknown"),
-    getAgentName: (id: string) => (id === "agent-1" ? "Claude Agent" : "Unknown Agent"),
     getActorName: (type: string, id: string) => {
       if (type === "member" && id === "user-1") return "Test User";
       if (type === "agent" && id === "agent-1") return "Claude Agent";

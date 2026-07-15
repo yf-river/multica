@@ -5,15 +5,9 @@
  * public API should follow the same minimum-surface pattern — only add it when
  * there is a current caller.
  */
-export type {
-  Decision,
-  DecisionReason,
-  PermissionContext,
-} from "./types";
-
-export { canAssignAgentToIssue, canEditAgent } from "./rules";
+export { canAssignAgentToIssue, canEditAgent, canEditSkill } from "./rules";
 
 export {
-  useAgentPermissions,
-  useSkillPermissions,
+  useAgentEditPermission,
+  useSkillEditPermission,
 } from "./use-resource-permissions";

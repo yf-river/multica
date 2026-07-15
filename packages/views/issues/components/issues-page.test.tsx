@@ -21,8 +21,6 @@ vi.mock("@multica/core/auth", () => ({
     },
     { getState: () => ({ user: mockAuthUser, isAuthenticated: true }) },
   ),
-  registerAuthStore: vi.fn(),
-  createAuthStore: vi.fn(),
 }));
 
 // Mock @multica/core/paths — after the URL-driven workspace refactor,

@@ -50,7 +50,7 @@ interface InspectorProps {
   members: MemberWithUser[];
   currentUserId: string | null;
   /**
-   * Computed by the parent via `useAgentPermissions(agent).canEdit.allowed`.
+   * Computed by the parent via `useAgentEditPermission(agent).allowed`.
    * When false the inspector renders all editable surfaces as static
    * read-only displays — pickers become text/badges, name/description lose
    * their pencil affordance, the avatar is no longer clickable, and the

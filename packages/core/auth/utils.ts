@@ -22,7 +22,7 @@ export function sanitizeNextUrl(raw: string | null): string | null {
 
 const PASSWORD_SPECIAL_CHARS = "!\"#$%&'()*+,-./:;<=>?@[]^_`{|}~";
 
-export interface PasswordValidation {
+interface PasswordValidation {
   valid: boolean;
   message: string;
 }

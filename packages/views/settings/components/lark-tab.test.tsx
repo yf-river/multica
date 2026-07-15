@@ -76,13 +76,10 @@ const agentNameByIdRef = vi.hoisted(() => ({
 }));
 vi.mock("@multica/core/workspace/hooks", () => ({
   useActorName: () => ({
-    getAgentName: (agentId: string) =>
-      agentNameByIdRef.current.get(agentId) ?? "Unknown Agent",
-    getMemberName: () => "Unknown",
-    getSquadName: () => "Unknown Squad",
-    getActorName: () => "Unknown",
-    getActorInitials: () => "??",
-    getActorAvatarUrl: () => null,
+    getActorName: (type: string, id: string) =>
+      type === "agent"
+        ? agentNameByIdRef.current.get(id) ?? "未知智能体"
+        : "系统",
   }),
 }));
 
@@ -650,7 +647,7 @@ describe("LarkTab connected bots list (agent identity rendering)", () => {
   });
 
   it("falls back to a stable placeholder when the agent has been deleted (so the row is still actionable for cleanup)", () => {
-    // Empty map → useActorName.getAgentName returns "Unknown Agent".
+    // Empty map → useActorName returns "未知智能体" for a missing Agent.
     // The row must still render so admins can hit 断开连接.
     installationsRef.current.installations = [
       {
@@ -664,7 +661,7 @@ describe("LarkTab connected bots list (agent identity rendering)", () => {
 
     render(<LarkTab />, { wrapper: I18nWrapper });
 
-    expect(screen.getByText(/Unknown Agent/)).toBeTruthy();
+    expect(screen.getByText(/未知智能体/)).toBeTruthy();
     // 断开连接 stays reachable so the orphan row can be cleaned up.
     expect(screen.getByRole("button", { name: /断开连接/i })).toBeTruthy();
   });

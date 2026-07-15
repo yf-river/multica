@@ -2,8 +2,8 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useAuthStore } from "../auth";
-import type { MemberRole, MemberWithUser } from "../types";
 import { memberListOptions } from "../workspace/queries";
+import type { PermissionContext } from "./types";
 
 /**
  * Resolves the current user's membership in the given workspace. Single source
@@ -13,19 +13,12 @@ import { memberListOptions } from "../workspace/queries";
  * `wsId` is explicit so this hook stays usable before a workspace route has
  * resolved.
  */
-export function useCurrentMember(wsId: string): {
-  userId: string | null;
-  role: MemberRole | null;
-  member: MemberWithUser | null;
-  isLoading: boolean;
-} {
+export function useCurrentMember(wsId: string): PermissionContext {
   const userId = useAuthStore((s) => s.user?.id ?? null);
-  const { data: members, isLoading } = useQuery(memberListOptions(wsId));
+  const { data: members } = useQuery(memberListOptions(wsId));
   const member = members?.find((m) => m.user_id === userId) ?? null;
   return {
     userId,
     role: member?.role ?? null,
-    member,
-    isLoading,
   };
 }

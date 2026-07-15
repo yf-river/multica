@@ -195,12 +195,12 @@ function InstallationRow({
   // The bot is bound 1:1 to a Multica Agent (per the (workspace_id,
   // agent_id) UNIQUE in lark_installation). Render the Multica agent's
   // identity here rather than the raw Lark app_id / bot_open_id — those
-  // mean nothing to product users. getAgentName falls back to
-  // "Unknown Agent" when the agent has been deleted; the Disconnect
+  // mean nothing to product users. getActorName falls back to
+  // "未知智能体" when the agent has been deleted; the Disconnect
   // affordance below is the recovery path for that orphan row.
-  const { getAgentName } = useActorName();
+  const { getActorName } = useActorName();
   const isActive = installation.status === "active";
-  const agentName = getAgentName(installation.agent_id);
+  const agentName = getActorName("agent", installation.agent_id);
   return (
     <div className="flex items-start justify-between gap-4 py-3 first:pt-0 last:pb-0">
       <div className="flex items-start gap-3">

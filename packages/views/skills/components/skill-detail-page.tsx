@@ -58,8 +58,7 @@ import {
 } from "@multica/ui/components/ui/tooltip";
 import { AppLink, useNavigation } from "../../navigation";
 import { BreadcrumbHeader } from "../../layout/breadcrumb-header";
-import { useCanEditSkill } from "../hooks/use-can-edit-skill";
-import { useSkillPermissions } from "@multica/core/permissions";
+import { useSkillEditPermission } from "@multica/core/permissions";
 import { CapabilityBanner } from "@multica/ui/components/common/capability-banner";
 import { readOrigin, totalFileCount, type OriginInfo } from "../lib/origin";
 import { FileTree } from "./file-tree";
@@ -270,8 +269,8 @@ export function SkillDetailPage({ skillId }: { skillId: string }) {
     [agents],
   );
 
-  const canEdit = useCanEditSkill(skill, wsId);
-  const skillPermissions = useSkillPermissions(skill ?? null, wsId);
+  const canEditDecision = useSkillEditPermission(skill ?? null, wsId);
+  const canEdit = canEditDecision.allowed;
 
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -591,7 +590,7 @@ export function SkillDetailPage({ skillId }: { skillId: string }) {
       {!canEdit && (
         <div className="px-4 pt-3">
           <CapabilityBanner
-            reason={skillPermissions.canEdit.reason}
+            reason={canEditDecision.reason}
             resource="skill"
             ownerName={creator?.name}
           />

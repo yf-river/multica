@@ -4,7 +4,7 @@ import { useEffect, useMemo } from "react";
 import { ApiClient } from "../api/client";
 import { installFreezeWatchdog } from "../diagnostics/freeze-watchdog";
 import { setApiInstance, setSchemaLogger } from "../api";
-import { createAuthStore, registerAuthStore } from "../auth";
+import { createAuthStore, registerAuthStore } from "../auth/store";
 import { createChatStore, registerChatStore } from "../chat";
 import {
   I18nProvider,

@@ -30,22 +30,26 @@ export function useCreateWorkspace() {
   });
 }
 
-export function useLeaveWorkspace() {
+function useWorkspaceExitMutation(
+  mutationFn: (workspaceId: string) => Promise<void>,
+) {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (workspaceId: string) => api.leaveWorkspace(workspaceId),
+    mutationFn,
     onSettled: () => {
       qc.invalidateQueries({ queryKey: workspaceKeys.list() });
     },
   });
 }
 
+export function useLeaveWorkspace() {
+  return useWorkspaceExitMutation((workspaceId) =>
+    api.leaveWorkspace(workspaceId),
+  );
+}
+
 export function useDeleteWorkspace() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (workspaceId: string) => api.deleteWorkspace(workspaceId),
-    onSettled: () => {
-      qc.invalidateQueries({ queryKey: workspaceKeys.list() });
-    },
-  });
+  return useWorkspaceExitMutation((workspaceId) =>
+    api.deleteWorkspace(workspaceId),
+  );
 }

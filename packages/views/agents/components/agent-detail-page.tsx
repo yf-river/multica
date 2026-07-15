@@ -25,7 +25,7 @@ import {
   workspaceKeys,
 } from "@multica/core/workspace/queries";
 import { runtimeListOptions } from "@multica/core/runtimes";
-import { useAgentPermissions } from "@multica/core/permissions";
+import { useAgentEditPermission } from "@multica/core/permissions";
 import { Button } from "@multica/ui/components/ui/button";
 import { CapabilityBanner } from "@multica/ui/components/common/capability-banner";
 import {
@@ -98,7 +98,7 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
   // signature handles the not-found / loading case internally so the early
   // returns below don't violate the rules of hooks. Backend gates archive
   // and restore identically to edit, so a single `canEdit` covers them all.
-  const { canEdit } = useAgentPermissions(agent, wsId);
+  const canEdit = useAgentEditPermission(agent, wsId);
 
   const [confirmArchive, setConfirmArchive] = useState(false);
 

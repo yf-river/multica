@@ -12,7 +12,7 @@ interface ConfigState {
   // Self-host gate (#3433): when true, every "Create workspace" affordance
   // must be hidden.
   workspaceCreationDisabled: boolean;
-  setCdnConfig: (config: { cdnDomain: string; cdnSigned?: boolean }) => void;
+  setCdnConfig: (config: { cdnDomain: string; cdnSigned: boolean }) => void;
   setWorkspaceCreationDisabled: (disabled: boolean) => void;
   setDaemonConfig: (config: {
     daemonServerUrl?: string;
@@ -26,15 +26,13 @@ export const configStore = createStore<ConfigState>((set) => ({
   daemonServerUrl: "",
   daemonAppUrl: "",
   workspaceCreationDisabled: false,
-  setCdnConfig: ({ cdnDomain, cdnSigned = false }) => set({ cdnDomain, cdnSigned }),
+  setCdnConfig: ({ cdnDomain, cdnSigned }) => set({ cdnDomain, cdnSigned }),
   setWorkspaceCreationDisabled: (workspaceCreationDisabled) =>
     set({ workspaceCreationDisabled }),
   setDaemonConfig: ({ daemonServerUrl = "", daemonAppUrl = "" }) =>
     set({ daemonServerUrl, daemonAppUrl }),
 }));
 
-export function useConfigStore(): ConfigState;
-export function useConfigStore<T>(selector: (state: ConfigState) => T): T;
-export function useConfigStore<T>(selector?: (state: ConfigState) => T) {
-  return useStore(configStore, selector as (state: ConfigState) => T);
+export function useConfigStore<T>(selector: (state: ConfigState) => T): T {
+  return useStore(configStore, selector);
 }

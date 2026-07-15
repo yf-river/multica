@@ -23,7 +23,6 @@ vi.mock("@multica/core/auth", () => ({
     (selector?: any) => (selector ? selector(mockAuthState) : mockAuthState),
     { getState: () => mockAuthState },
   ),
-  registerAuthStore: vi.fn(),
 }));
 
 vi.mock("@multica/core/workspace/queries", () => ({

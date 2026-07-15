@@ -9,7 +9,7 @@ import {
 import type { Workspace } from "../types";
 import { generateUUID } from "../utils";
 
-export interface CreateWorkspaceRequest {
+interface CreateWorkspaceRequest {
   name: string;
   slug: string;
   description?: string;
