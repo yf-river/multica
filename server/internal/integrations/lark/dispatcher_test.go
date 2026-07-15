@@ -521,11 +521,11 @@ func TestDispatcher_PlainMessageEnqueuesTask(t *testing.T) {
 		t.Fatalf("expected ingested, got %q", res.Outcome)
 	}
 	// The run trigger is debounced (MUL-2968): no TaskID is surfaced
-	// synchronously anymore, and with batching disabled the flush fires
-	// inline so the enqueue is observable right here.
+	// synchronously. Drain the pending trigger as graceful shutdown does.
 	if res.TaskID.Valid {
 		t.Fatalf("TaskID must not be set synchronously after debounce; got %+v", res.TaskID)
 	}
+	d.FlushPendingRuns()
 	if enq.called != 1 {
 		t.Fatalf("expected exactly one EnqueueChatTask at flush; called=%d", enq.called)
 	}
@@ -595,8 +595,6 @@ func TestDispatcher_GroupMessageEnqueuesWithSenderAsInitiator(t *testing.T) {
 		EnqueueChatTask: enq.EnqueueChatTask,
 	}
 
-	// Batching is disabled (d.batcher == nil), so the flush fires inline and the
-	// enqueue is observable synchronously.
 	_, err := d.Handle(context.Background(), InboundMessage{
 		AppID:          "ok",
 		ChatType:       ChatTypeGroup,
@@ -608,6 +606,7 @@ func TestDispatcher_GroupMessageEnqueuesWithSenderAsInitiator(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	d.FlushPendingRuns()
 	if enq.called != 1 {
 		t.Fatalf("expected exactly one EnqueueChatTask at flush; called=%d", enq.called)
 	}
@@ -939,7 +938,7 @@ func TestDispatcher_AgentOfflineRepliesAtFlush(t *testing.T) {
 	// With the run trigger debounced (MUL-2968), the agent-offline verdict
 	// is only known at flush time. Handle itself returns OutcomeIngested
 	// (the message is durable + ACKed); the offline notice is delivered
-	// through FlushReply. With batching disabled the flush fires inline.
+	// through FlushReply. Drain the pending trigger deterministically.
 	sessionID := validUUID(0x66)
 	queries := &fakeQueries{
 		installationByApp: activeInstallation(),
@@ -970,6 +969,7 @@ func TestDispatcher_AgentOfflineRepliesAtFlush(t *testing.T) {
 	if res.Outcome != OutcomeIngested {
 		t.Fatalf("synchronous outcome must be ingested, got %q", res.Outcome)
 	}
+	d.FlushPendingRuns()
 	if enq.called != 1 {
 		t.Fatalf("flush must call EnqueueChatTask exactly once; called=%d", enq.called)
 	}
@@ -1015,6 +1015,7 @@ func TestDispatcher_AgentArchivedRepliesAtFlush(t *testing.T) {
 	if res.Outcome != OutcomeIngested {
 		t.Fatalf("synchronous outcome must be ingested, got %q", res.Outcome)
 	}
+	d.FlushPendingRuns()
 	if cap.count != 1 || cap.results[0].Outcome != OutcomeAgentArchived {
 		t.Fatalf("expected OutcomeAgentArchived at flush, got count=%d results=%+v", cap.count, cap.results)
 	}
@@ -1058,6 +1059,7 @@ func TestDispatcher_FlushInfraFailureIsNotReplied(t *testing.T) {
 	if res.Outcome != OutcomeIngested {
 		t.Fatalf("synchronous outcome must be ingested, got %q", res.Outcome)
 	}
+	d.FlushPendingRuns()
 	if enq.called != 1 {
 		t.Fatalf("flush must attempt EnqueueChatTask once; called=%d", enq.called)
 	}
@@ -1107,7 +1109,7 @@ func TestDispatcher_DebounceCoalescesRunTrigger(t *testing.T) {
 	if enq.called != 0 {
 		t.Fatalf("run trigger must be debounced; enqueue called=%d before window closed", enq.called)
 	}
-	if got := pendingBatchCount(d.batcher); got != 1 {
+	if got := pendingBatchCount(&d.batcher); got != 1 {
 		t.Fatalf("both messages share one session window; pending=%d", got)
 	}
 

@@ -351,12 +351,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					EnqueueChatTask: h.TaskService.EnqueueChatTask,
 					Logger:          slog.Default(),
 				}
-				// Debounce the per-session run trigger so a burst of
-				// messages (e.g. "forward a transcript, then type a note")
-				// collapses into one agent run instead of one per message.
-				// MUL-2968.
-				dispatcher.EnableRunBatching(lark.DefaultChatRunBatchWindow)
-
 				// WS Hub: lease + supervisor goroutines per installation.
 				// The WSLongConnConnector talks Lark's long-conn protocol
 				// over gorilla/websocket. The connector wraps every read

@@ -207,11 +207,9 @@ type Dispatcher struct {
 	// errors to a caller and must log them. Defaults to slog.Default().
 	Logger *slog.Logger
 
-	// batcher debounces the per-session run trigger. Installed via
-	// EnableRunBatching in production; when nil (unit tests / degenerate
-	// config) the run fires inline with no debounce — a zero-length
-	// window, not a separate code path.
-	batcher *pendingBatcher
+	// batcher debounces the per-session run trigger. Its zero value is the
+	// production configuration, with the default silence window and real timer.
+	batcher pendingBatcher
 }
 
 // ReplyFunc is the outbound half of the EventEmitter contract. The Hub and
@@ -225,23 +223,12 @@ type ReplyFunc func(ctx context.Context, inst db.LarkInstallation, msg InboundMe
 // time the window closes.
 const chatRunFlushTimeout = 10 * time.Second
 
-// EnableRunBatching installs the in-memory debouncer in front of the
-// per-session run trigger. Call once at boot. A non-positive window uses
-// DefaultChatRunBatchWindow. Without this, the dispatcher triggers runs
-// inline (used by unit tests that assert the immediate effect).
-func (d *Dispatcher) EnableRunBatching(window time.Duration) {
-	d.batcher = newPendingBatcher(window)
-}
-
 // FlushPendingRuns drains every still-pending run trigger immediately and
 // blocks until in-flight flushes finish. The hub calls this on graceful
 // shutdown, after inbound delivery has stopped, so a normal restart does
-// not silently drop a window's worth of messages. No-op when batching is
-// disabled.
+// not silently drop a window's worth of messages.
 func (d *Dispatcher) FlushPendingRuns() {
-	if d.batcher != nil {
-		d.batcher.FlushAll()
-	}
+	d.batcher.FlushAll()
 }
 
 func (d *Dispatcher) logger() *slog.Logger {
@@ -542,19 +529,12 @@ func (d *Dispatcher) processClaimed(ctx context.Context, msg InboundMessage, ins
 	return res, finalizeNone, nil
 }
 
-// scheduleRun hands the per-session run trigger to the debouncer (or fires
-// it inline when batching is disabled). The flush closure captures this
-// message's installation + InboundMessage so the offline/archived notice,
-// if any, targets the right chat; the latest message in a window wins.
+// scheduleRun hands the per-session run trigger to the debouncer. The flush
+// closure captures this message's installation + InboundMessage so the
+// offline/archived notice, if any, targets the right chat; the latest message
+// in a window wins.
 func (d *Dispatcher) scheduleRun(inst db.LarkInstallation, msg InboundMessage, sessionID pgtype.UUID, initiatorUserID pgtype.UUID) {
 	flush := func() { d.flushChatRun(inst, msg, sessionID, initiatorUserID) }
-	if d.batcher == nil {
-		// Batching disabled (unit tests / degenerate config): trigger the
-		// run immediately. Production always installs a batcher via
-		// EnableRunBatching, so this branch does not run in prod.
-		flush()
-		return
-	}
 	d.batcher.Schedule(string(sessionID.Bytes[:]), flush)
 }
 
