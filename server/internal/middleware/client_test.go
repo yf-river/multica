@@ -13,9 +13,9 @@ func TestClientMetadataExtractsHeaders(t *testing.T) {
 	}))
 
 	req := httptest.NewRequest(http.MethodGet, "/", nil)
-	req.Header.Set(HeaderClientPlatform, "desktop")
-	req.Header.Set(HeaderClientVersion, "1.2.3")
-	req.Header.Set(HeaderClientOS, "macos")
+	req.Header.Set(headerClientPlatform, "desktop")
+	req.Header.Set(headerClientVersion, "1.2.3")
+	req.Header.Set(headerClientOS, "macos")
 
 	handler.ServeHTTP(httptest.NewRecorder(), req)
 

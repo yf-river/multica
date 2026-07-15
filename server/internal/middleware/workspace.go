@@ -64,28 +64,8 @@ var errWorkspaceNotFound = errors.New("workspace not found")
 // internal resolver instead — this helper collapses both cases to "" for
 // simpler handler-level checks.
 func ResolveWorkspaceIDFromRequest(r *http.Request, queries *db.Queries) string {
-	// A mat_ task token is bound to exactly one workspace by the token
-	// row. Auth middleware writes that workspace into X-Workspace-ID
-	// after stripping any client-supplied X-Actor-Source. Any other
-	// workspace identifier on the request (slug header/query, ID
-	// query, URL param) is the agent trying to widen its blast
-	// radius — ignore it.
-	if r.Header.Get("X-Actor-Source") == "task_token" {
-		return r.Header.Get("X-Workspace-ID")
-	}
-	if id := WorkspaceIDFromContext(r.Context()); id != "" {
-		return id
-	}
-	if slug := r.Header.Get("X-Workspace-Slug"); slug != "" {
-		if ws, err := queries.GetWorkspaceBySlug(r.Context(), slug); err == nil {
-			return util.UUIDToString(ws.ID)
-		}
-		return ""
-	}
-	if id := r.Header.Get("X-Workspace-ID"); id != "" {
-		return id
-	}
-	return ""
+	id, _ := resolveWorkspaceTarget(r, queries, true)
+	return id
 }
 
 // workspaceResolver extracts a workspace UUID from the request.
@@ -106,31 +86,31 @@ type workspaceResolver func(r *http.Request) (string, error)
 // TODO: cache slug→UUID lookup (slug is immutable, safe to cache with short TTL)
 func resolveWorkspaceUUID(queries *db.Queries) workspaceResolver {
 	return func(r *http.Request) (string, error) {
-		// Task-token-authenticated requests must operate on the
-		// token's bound workspace. The auth middleware wrote that ID
-		// into X-Workspace-ID; nothing the agent can put on the wire
-		// (slug header/query, id query, URL param) can override it.
-		if r.Header.Get("X-Actor-Source") == "task_token" {
-			id := r.Header.Get("X-Workspace-ID")
-			if id == "" {
-				return "", errWorkspaceNotFound
-			}
-			return id, nil
-		}
-		// Slug path (Web/Desktop).
-		if slug := r.Header.Get("X-Workspace-Slug"); slug != "" {
-			ws, err := queries.GetWorkspaceBySlug(r.Context(), slug)
-			if err != nil {
-				return "", errWorkspaceNotFound
-			}
-			return util.UUIDToString(ws.ID), nil
-		}
-		// UUID path (CLI and daemon).
-		if id := r.Header.Get("X-Workspace-ID"); id != "" {
-			return id, nil
-		}
-		return "", nil
+		return resolveWorkspaceTarget(r, queries, false)
 	}
+}
+
+func resolveWorkspaceTarget(r *http.Request, queries *db.Queries, useContext bool) (string, error) {
+	if r.Header.Get("X-Actor-Source") == "task_token" {
+		id := r.Header.Get("X-Workspace-ID")
+		if id == "" {
+			return "", errWorkspaceNotFound
+		}
+		return id, nil
+	}
+	if useContext {
+		if id := WorkspaceIDFromContext(r.Context()); id != "" {
+			return id, nil
+		}
+	}
+	if slug := r.Header.Get("X-Workspace-Slug"); slug != "" {
+		workspace, err := queries.GetWorkspaceBySlug(r.Context(), slug)
+		if err != nil {
+			return "", errWorkspaceNotFound
+		}
+		return util.UUIDToString(workspace.ID), nil
+	}
+	return r.Header.Get("X-Workspace-ID"), nil
 }
 
 func writeError(w http.ResponseWriter, status int, msg string) {

@@ -15,20 +15,20 @@ import (
 // All three values are best-effort: handlers must treat missing values as
 // "unknown" and never make security decisions based on them — these headers
 // are client-controlled and trivial to spoof.
-type clientMetadataKey int
+type clientMetadata struct {
+	platform string
+	version  string
+	os       string
+}
 
-const (
-	ctxKeyClientPlatform clientMetadataKey = iota
-	ctxKeyClientVersion
-	ctxKeyClientOS
-)
+type clientMetadataKey struct{}
 
 // Header names — exported so other packages (request logger, realtime hub)
 // can stay in sync without re-declaring magic strings.
 const (
-	HeaderClientPlatform = "X-Client-Platform"
-	HeaderClientVersion  = "X-Client-Version"
-	HeaderClientOS       = "X-Client-OS"
+	headerClientPlatform = "X-Client-Platform"
+	headerClientVersion  = "X-Client-Version"
+	headerClientOS       = "X-Client-OS"
 )
 
 // ClientMetadata extracts X-Client-Platform / X-Client-Version / X-Client-OS
@@ -39,17 +39,16 @@ const (
 // unauthenticated handler benefits from the same observability dimensions.
 func ClientMetadata(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ctx := r.Context()
-		if v := r.Header.Get(HeaderClientPlatform); v != "" {
-			ctx = context.WithValue(ctx, ctxKeyClientPlatform, v)
+		metadata := clientMetadata{
+			platform: r.Header.Get(headerClientPlatform),
+			version:  r.Header.Get(headerClientVersion),
+			os:       r.Header.Get(headerClientOS),
 		}
-		if v := r.Header.Get(HeaderClientVersion); v != "" {
-			ctx = context.WithValue(ctx, ctxKeyClientVersion, v)
+		if metadata == (clientMetadata{}) {
+			next.ServeHTTP(w, r)
+			return
 		}
-		if v := r.Header.Get(HeaderClientOS); v != "" {
-			ctx = context.WithValue(ctx, ctxKeyClientOS, v)
-		}
-		next.ServeHTTP(w, r.WithContext(ctx))
+		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), clientMetadataKey{}, metadata)))
 	})
 }
 
@@ -57,8 +56,6 @@ func ClientMetadata(next http.Handler) http.Handler {
 // X-Client-* headers. Empty strings are returned for any value that wasn't
 // sent — callers must treat missing values as "unknown" rather than failing.
 func ClientMetadataFromContext(ctx context.Context) (platform, version, os string) {
-	platform, _ = ctx.Value(ctxKeyClientPlatform).(string)
-	version, _ = ctx.Value(ctxKeyClientVersion).(string)
-	os, _ = ctx.Value(ctxKeyClientOS).(string)
-	return platform, version, os
+	metadata, _ := ctx.Value(clientMetadataKey{}).(clientMetadata)
+	return metadata.platform, metadata.version, metadata.os
 }
