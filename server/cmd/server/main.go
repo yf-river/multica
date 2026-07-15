@@ -352,7 +352,7 @@ func main() {
 	go runDBStatsLogger(sweepCtx, pool)
 
 	// Lark inbound supervisor: holds the §4.4 WS lease per installation
-	// and runs the EventConnector for each. Nil when the Lark master
+	// and runs the event connector for each. Nil when the Lark master
 	// key is unset — self-host deployments that have not opted in to
 	// Lark do not pay any goroutine cost. Lifecycle is bound to
 	// sweepCtx so the Hub winds down alongside the other long-running
@@ -437,7 +437,7 @@ func main() {
 	// otherwise the next replica would have to wait the full LeaseTTL
 	// before picking up the installation on the other side of the
 	// redeploy. The wait is bounded — if a supervisor is wedged (DB
-	// pool stalled, a future real EventConnector ignoring ctx, etc.)
+	// pool stalled, a future connector ignoring ctx, etc.)
 	// the fallback is the natural LeaseTTL expiry on the other side,
 	// which is strictly better than holding shutdown open forever.
 	if h.LarkHub != nil {

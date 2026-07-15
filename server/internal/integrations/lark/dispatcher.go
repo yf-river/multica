@@ -199,8 +199,7 @@ type Dispatcher struct {
 	// OutcomeReplier sent the card; with the run trigger debounced, the
 	// verdict is not known until the window closes, so the dispatcher
 	// drives the reply itself via this callback. Wired to
-	// LarkOutcomeReplier.Reply in production; nil disables the notice (the
-	// message is still durable, only the card is skipped).
+	// LarkOutcomeReplier.Reply in production.
 	FlushReply ReplyFunc
 
 	// Logger is used by the detached flush path, which cannot return
@@ -580,9 +579,6 @@ func (d *Dispatcher) flushChatRun(inst db.LarkInstallation, msg InboundMessage, 
 
 // emitFlushReply delivers an offline/archived notice for a flushed run.
 func (d *Dispatcher) emitFlushReply(ctx context.Context, inst db.LarkInstallation, msg InboundMessage, sessionID pgtype.UUID, outcome Outcome) {
-	if d.FlushReply == nil {
-		return
-	}
 	d.FlushReply(ctx, inst, msg, DispatchResult{
 		Outcome:        outcome,
 		InstallationID: inst.ID,

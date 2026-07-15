@@ -127,7 +127,7 @@ type Handler struct {
 	// configured. Its presence means the install transport is ready.
 	LarkAPIClient lark.APIClient
 	// LarkHub owns the per-installation supervisor goroutines that
-	// hold the §4.4 WS lease and run the EventConnector. Nil only
+	// hold the §4.4 WS lease and run the event connector. Nil only
 	// when the master at-rest key (MULTICA_LARK_SECRET_KEY) is unset.
 	// The router constructs the Hub but does NOT call Run on it; the
 	// process owner (main.go) starts it under a long-running context

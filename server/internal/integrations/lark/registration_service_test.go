@@ -152,29 +152,33 @@ func TestRegistrationServiceConstructorValidatesDeps(t *testing.T) {
 		needle string
 	}{
 		{"missing client", func() error {
-			_, err := NewRegistrationService(RegistrationServiceConfig{}, nil, api, &db.Queries{}, fakeTxStarter{}, &InstallationService{}, binder)
+			_, err := NewRegistrationService(RegistrationServiceConfig{}, nil, api, &db.Queries{}, fakeTxStarter{}, &InstallationService{}, binder, events.New())
 			return err
 		}, "RegistrationClient"},
 		{"missing api", func() error {
-			_, err := NewRegistrationService(RegistrationServiceConfig{}, client, nil, &db.Queries{}, fakeTxStarter{}, &InstallationService{}, binder)
+			_, err := NewRegistrationService(RegistrationServiceConfig{}, client, nil, &db.Queries{}, fakeTxStarter{}, &InstallationService{}, binder, events.New())
 			return err
 		}, "APIClient"},
 		{"missing queries", func() error {
-			_, err := NewRegistrationService(RegistrationServiceConfig{}, client, api, nil, fakeTxStarter{}, &InstallationService{}, binder)
+			_, err := NewRegistrationService(RegistrationServiceConfig{}, client, api, nil, fakeTxStarter{}, &InstallationService{}, binder, events.New())
 			return err
 		}, "queries"},
 		{"missing tx", func() error {
-			_, err := NewRegistrationService(RegistrationServiceConfig{}, client, api, &db.Queries{}, nil, &InstallationService{}, binder)
+			_, err := NewRegistrationService(RegistrationServiceConfig{}, client, api, &db.Queries{}, nil, &InstallationService{}, binder, events.New())
 			return err
 		}, "TxStarter"},
 		{"missing installs", func() error {
-			_, err := NewRegistrationService(RegistrationServiceConfig{}, client, api, &db.Queries{}, fakeTxStarter{}, nil, binder)
+			_, err := NewRegistrationService(RegistrationServiceConfig{}, client, api, &db.Queries{}, fakeTxStarter{}, nil, binder, events.New())
 			return err
 		}, "InstallationService"},
 		{"missing binder", func() error {
-			_, err := NewRegistrationService(RegistrationServiceConfig{}, client, api, &db.Queries{}, fakeTxStarter{}, &InstallationService{}, nil)
+			_, err := NewRegistrationService(RegistrationServiceConfig{}, client, api, &db.Queries{}, fakeTxStarter{}, &InstallationService{}, nil, events.New())
 			return err
 		}, "bind installer"},
+		{"missing event bus", func() error {
+			_, err := NewRegistrationService(RegistrationServiceConfig{}, client, api, &db.Queries{}, fakeTxStarter{}, &InstallationService{}, binder, nil)
+			return err
+		}, "event bus"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -340,7 +344,7 @@ func TestRegistrationServicePublishInstalledEmitsCreatedEvent(t *testing.T) {
 	})
 
 	svc := newRegistrationServiceForTest(t)
-	svc.SetEventBus(bus)
+	svc.bus = bus
 
 	ws := uuidFromStringSvc(t, "11111111-1111-1111-1111-111111111111")
 	inst := uuidFromStringSvc(t, "22222222-2222-2222-2222-222222222222")
@@ -370,18 +374,6 @@ func TestRegistrationServicePublishInstalledEmitsCreatedEvent(t *testing.T) {
 	}
 }
 
-// TestRegistrationServicePublishInstalledNilBusIsNoOp pins that an install
-// still completes when no bus is wired — the bus is optional (SetEventBus
-// is never called in self-host builds that disable realtime), so the
-// publish must be a silent no-op rather than a nil-deref panic.
-func TestRegistrationServicePublishInstalledNilBusIsNoOp(t *testing.T) {
-	svc := newRegistrationServiceForTest(t) // no SetEventBus
-	svc.publishInstalled(
-		uuidFromStringSvc(t, "33333333-3333-3333-3333-333333333333"),
-		uuidFromStringSvc(t, "44444444-4444-4444-4444-444444444444"),
-	)
-}
-
 // fakeTxStarter is a TxStarter stub for constructor tests — never
 // actually called.
 type fakeTxStarter struct{}
@@ -397,6 +389,7 @@ func newRegistrationServiceForTest(t *testing.T) *RegistrationService {
 	t.Helper()
 	return &RegistrationService{
 		cfg:      RegistrationServiceConfig{}.withDefaults(),
+		bus:      events.New(),
 		sessions: make(map[string]*registrationSession),
 	}
 }

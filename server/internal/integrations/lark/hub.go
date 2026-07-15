@@ -54,7 +54,7 @@ type HubQueries interface {
 // the connector's concern — the connector only sees the verdict.
 type EventEmitter func(ctx context.Context, msg InboundMessage) (DispatchResult, error)
 
-// EventConnector is the per-installation transport. The Hub owns the
+// EventConnector runs the per-installation transport. The Hub owns the
 // lifecycle (when to start, when to stop, when to back off), and the
 // connector owns the actual wire protocol — opening the Lark long
 // connection, decoding events, normalizing them into InboundMessage.
@@ -77,9 +77,7 @@ type EventEmitter func(ctx context.Context, msg InboundMessage) (DispatchResult,
 // offline card, etc.) and / or decide to disconnect on a hard failure.
 // The connector MUST NOT bypass the Dispatcher by writing to the DB
 // directly; emit is the only ingress path.
-type EventConnector interface {
-	Run(ctx context.Context, inst db.LarkInstallation, emit EventEmitter) error
-}
+type EventConnector func(ctx context.Context, inst db.LarkInstallation, emit EventEmitter) error
 
 // ConnectorFactory builds an EventConnector for a specific installation
 // row. The factory exists so the Hub doesn't need to know about Lark
@@ -592,7 +590,7 @@ func (h *Hub) supervise(ctx context.Context, inst db.LarkInstallation, id string
 		}()
 
 		startedAt := h.cfg.Now()
-		runErr := conn.Run(runCtx, inst, func(emitCtx context.Context, msg InboundMessage) (DispatchResult, error) {
+		runErr := conn(runCtx, inst, func(emitCtx context.Context, msg InboundMessage) (DispatchResult, error) {
 			return h.handleEvent(emitCtx, inst, log, msg)
 		})
 		runCancel()
@@ -756,12 +754,6 @@ func (h *Hub) releaseLease(instID pgtype.UUID, token string) {
 // fresh context bounded by ReplyTimeout (strictly under 3s). Hub.Wait
 // joins on replyWg so shutdown still drains in-flight replies.
 func (h *Hub) handleEvent(ctx context.Context, inst db.LarkInstallation, log *slog.Logger, msg InboundMessage) (DispatchResult, error) {
-	if h.dispatcher == nil {
-		log.Warn("lark hub: dispatcher not configured; dropping event",
-			"event_id", msg.EventID,
-		)
-		return DispatchResult{}, ErrDispatcherNotConfigured
-	}
 	res, err := h.dispatcher.Handle(ctx, msg)
 	if err != nil {
 		log.Error("lark hub: dispatcher error",
@@ -815,12 +807,6 @@ func (h *Hub) scheduleReply(inst db.LarkInstallation, msg InboundMessage, res Di
 		}
 	}()
 }
-
-// ErrDispatcherNotConfigured is surfaced to the connector when emit is
-// called on a Hub that was constructed without a Dispatcher. Returning
-// it (instead of silently dropping) lets the connector log and / or
-// disconnect so the misconfiguration is visible in production.
-var ErrDispatcherNotConfigured = errors.New("lark hub: dispatcher not configured")
 
 func (h *Hub) cancelAll() {
 	h.mu.Lock()

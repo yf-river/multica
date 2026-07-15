@@ -15,7 +15,7 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// WSLongConnConnector is the production EventConnector that holds the
+// WSLongConnConnector holds the production Lark long connection and
 // Lark long-conn WebSocket open, decodes the binary Frame envelope
 // the open-platform server pushes, and forwards normalized inbound
 // events to the Hub's Dispatcher.
@@ -184,7 +184,7 @@ func NewWSLongConnConnector(cfg WSConnectorConfig) (*WSLongConnConnector, error)
 	return &WSLongConnConnector{cfg: cfg.withDefaults()}, nil
 }
 
-// Run satisfies EventConnector. Opens one WebSocket session, reads
+// Run opens one WebSocket session, reads
 // binary Frame envelopes until either the ctx is cancelled or the
 // connection errors, and returns. Nil return = clean exit; non-nil
 // return = connection failed (Hub steps up backoff).

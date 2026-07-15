@@ -343,14 +343,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// agent-enqueue with the rest of the product.
 				auditLogger := lark.NewAuditLogger(queries)
 				chatSvc := lark.NewChatSessionService(queries, pool)
-				dispatcher := &lark.Dispatcher{
-					Queries:         queries,
-					Chat:            chatSvc,
-					RecordDrop:      auditLogger,
-					CreateIssue:     h.IssueService.Create,
-					EnqueueChatTask: h.TaskService.EnqueueChatTask,
-					Logger:          slog.Default(),
-				}
 				// WS Hub: lease + supervisor goroutines per installation.
 				// The WSLongConnConnector talks Lark's long-conn protocol
 				// over gorilla/websocket. The connector wraps every read
@@ -376,12 +368,16 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					PublicURL:          signupConfig.PublicURL,
 					Logger:             slog.Default(),
 				})
+				dispatcher := &lark.Dispatcher{
+					Queries:         queries,
+					Chat:            chatSvc,
+					RecordDrop:      auditLogger,
+					CreateIssue:     h.IssueService.Create,
+					EnqueueChatTask: h.TaskService.EnqueueChatTask,
+					FlushReply:      replier.Reply,
+					Logger:          slog.Default(),
+				}
 				h.LarkHub = lark.NewHub(queries, connectorFactory, dispatcher, replier.Reply, typingIndicator.Add, lark.HubConfig{})
-				// The agent-offline / agent-archived notice is now decided
-				// at debounce-flush time rather than synchronously from
-				// Handle, so the dispatcher drives that reply itself through
-				// the same replier. MUL-2968.
-				dispatcher.FlushReply = replier.Reply
 				slog.Info("lark inbound pipeline wired", "connector", connectorLabel)
 
 				// Device-flow registration service: end-to-end install
@@ -404,6 +400,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					pool,
 					installSvc,
 					h.LarkBindingTokens.BindInstallerTx,
+					bus,
 				)
 				if rerr != nil {
 					return nil, nil, fmt.Errorf("initialize Lark registration service: %w", rerr)
@@ -411,7 +408,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// Publish lark_installation:created at row-commit time so the
 					// connection badge refreshes on every workspace client, not just
 					// the tab that polls the install status to success.
-					regSvc.SetEventBus(bus)
 					h.LarkRegistration = regSvc
 					slog.Info("lark device-flow install enabled")
 				}
@@ -1133,7 +1129,7 @@ func buildLarkConnectorFactory(installSvc *lark.InstallationService, apiClient l
 		return nil, "", fmt.Errorf("initialize websocket connector: %w", err)
 	}
 	return func(_ db.LarkInstallation) (lark.EventConnector, error) {
-		return conn, nil
+		return conn.Run, nil
 	}, "ws-long-conn", nil
 }
 

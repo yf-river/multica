@@ -111,11 +111,6 @@ type RegistrationService struct {
 	bindInstaller       func(context.Context, *db.Queries, InstallerBindParams) error
 	getAgentInWorkspace func(context.Context, db.GetAgentInWorkspaceParams) (db.Agent, error)
 
-	// bus is optional. When wired (SetEventBus), a successful install
-	// publishes lark_installation:created the moment the row commits, so
-	// every workspace client refreshes its connection badge without
-	// waiting for a browser to poll the status endpoint to success. Nil
-	// is valid — install still works, it just won't push the WS frame.
 	bus *events.Bus
 
 	mu       sync.Mutex
@@ -149,6 +144,7 @@ func NewRegistrationService(
 	tx TxStarter,
 	installs *InstallationService,
 	bindInstaller func(context.Context, *db.Queries, InstallerBindParams) error,
+	bus *events.Bus,
 ) (*RegistrationService, error) {
 	if client == nil {
 		return nil, errors.New("lark registration: RegistrationClient is required")
@@ -168,6 +164,9 @@ func NewRegistrationService(
 	if bindInstaller == nil {
 		return nil, errors.New("lark registration: bind installer function is required")
 	}
+	if bus == nil {
+		return nil, errors.New("lark registration: event bus is required")
+	}
 	return &RegistrationService{
 		cfg:                 cfg.withDefaults(),
 		client:              client,
@@ -176,23 +175,14 @@ func NewRegistrationService(
 		tx:                  tx,
 		installs:            installs,
 		bindInstaller:       bindInstaller,
+		bus:                 bus,
 		getAgentInWorkspace: queries.GetAgentInWorkspace,
 		sessions:            make(map[string]*registrationSession),
 		begins:              make(map[beginInstallIdentity]*beginInstallCall),
 	}, nil
 }
 
-// SetEventBus wires the optional event bus AFTER construction so the
-// six positional constructor-validation cases stay untouched and the
-// bus remains nil-safe. With it set, finishSuccess publishes
-// lark_installation:created at the row-commit point — the authoritative
-// moment of truth — instead of relying on the HTTP status-poll handler
-// to emit it only when a browser happens to poll to success.
-func (s *RegistrationService) SetEventBus(bus *events.Bus) {
-	s.bus = bus
-}
-
-// publishInstalled emits lark_installation:created on the optional bus.
+// publishInstalled emits lark_installation:created at the row-commit point.
 // Mirrors the revoke path (RevokeLarkInstallation publishes
 // lark_installation:revoked from its handler): both events broadcast to
 // the whole workspace via the SubscribeAll fanout, and the frontend
@@ -200,11 +190,8 @@ func (s *RegistrationService) SetEventBus(bus *events.Bus) {
 // every mounted surface (agent Integrations tab, inspector, Settings)
 // refreshes its connection badge with no page reload. Covers fresh
 // installs and revoked→active re-installs alike — both ride the same
-// UpsertLarkInstallation write. Nil-safe.
+// UpsertLarkInstallation write.
 func (s *RegistrationService) publishInstalled(workspaceID, installationID pgtype.UUID) {
-	if s.bus == nil {
-		return
-	}
 	s.bus.Publish(events.Event{
 		Type:        protocol.EventLarkInstallationCreated,
 		WorkspaceID: util.UUIDToString(workspaceID),

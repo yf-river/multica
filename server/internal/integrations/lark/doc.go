@@ -19,7 +19,7 @@
 //  8. Hub (WS lease + per-installation supervisor goroutines with
 //     exponential backoff + jitter; renewer cancels the connector's
 //     run ctx on lease loss to keep §4.4 ownership safe across
-//     replicas; EventConnector interface is the seam for the real
+//     replicas; EventConnector is the callback for the real
 //     wire protocol)
 //  9. WSLongConnConnector (real long-conn over gorilla/websocket; the
 //     wire protocol is the binary Frame envelope from the official Go
