@@ -32,20 +32,15 @@ interface IssueDraftStore {
   draft: IssueDraft;
   setDraft: (patch: Partial<IssueDraft>) => void;
   clearDraft: () => void;
-  hasDraft: () => boolean;
 }
 
 export const useIssueDraftStore = create<IssueDraftStore>()(
   persist(
-    (set, get) => ({
+    (set) => ({
       draft: { ...EMPTY_DRAFT },
       setDraft: (patch) =>
         set((s) => ({ draft: { ...s.draft, ...patch } })),
       clearDraft: () => set({ draft: { ...EMPTY_DRAFT } }),
-      hasDraft: () => {
-        const { draft } = get();
-        return !!(draft.title || draft.description);
-      },
     }),
     {
       name: "multica_issue_draft",

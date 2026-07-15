@@ -143,30 +143,8 @@ export interface PromptEvaluationOptimizationCandidate {
   failed_case_count: number;
   source_prompt_snapshot: Record<string, unknown>;
   metrics: Record<string, unknown>;
-  skill_patch?: PromptEvaluationSkillPatch | null;
+  skill_patch?: Record<string, unknown> | null;
   status: PromptEvaluationOptimizationCandidateStatus;
-}
-
-export interface PromptEvaluationSkillPatch {
-  schema_version: "multica.skill.patch.v1" | string;
-  patch: string;
-  patch_hash: string;
-  candidate_intent: "update_existing_skill" | "create_operation_skill" | string;
-  operation_skill_key?: string;
-  operation_skill_path?: string;
-  operation_skill_reason?: string;
-  source_snapshot?: Record<string, unknown>;
-  source_resource_id?: string;
-  repo_path?: string;
-  target_branch?: string;
-  skill_path?: string;
-  changelog_path?: string;
-  expected_improvement?: string;
-  risk?: string;
-  verification_plan?: string;
-  publication_status: string;
-  created_at?: string;
-  updated_at?: string;
 }
 
 export interface CheckPromptEvaluationSkillFreshnessRequest {

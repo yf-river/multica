@@ -1,21 +1,21 @@
 import { describe, it, expect } from "vitest";
 import type { ChatMessage } from "@multica/core/types";
-import type { ChatTimelineItem } from "@multica/core/chat";
+import type { TimelineItem } from "../../common/task-transcript";
 import { splitTimeline, extractCopyText } from "./copy-text";
 
-const text = (seq: number, content: string): ChatTimelineItem => ({
+const text = (seq: number, content: string): TimelineItem => ({
   seq,
   type: "text",
   content,
 });
 
-const thinking = (seq: number, content = "..."): ChatTimelineItem => ({
+const thinking = (seq: number, content = "..."): TimelineItem => ({
   seq,
   type: "thinking",
   content,
 });
 
-const tool = (seq: number, name = "Read"): ChatTimelineItem => ({
+const tool = (seq: number, name = "Read"): TimelineItem => ({
   seq,
   type: "tool_use",
   tool: name,

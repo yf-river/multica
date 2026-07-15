@@ -22,12 +22,6 @@ export interface IssueExecutionNode {
   children: IssueExecutionNode[];
 }
 
-export interface IssueTimelineEvidenceRef {
-  type: string;
-  id: string;
-  href?: string;
-}
-
 export type IssueTimelineNodeType =
   | "agent_task"
   | "squad_step"
@@ -60,7 +54,7 @@ export interface IssueTimelineNode {
   trace_event_count: number;
   usage_unavailable_trace: boolean;
   summary: string;
-  evidence_refs: IssueTimelineEvidenceRef[];
+  evidence_refs: Record<string, unknown>[];
   artifacts?: AgentTaskArtifact[];
 }
 

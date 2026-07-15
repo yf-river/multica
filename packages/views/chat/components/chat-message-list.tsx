@@ -25,13 +25,13 @@ import { copyText } from "@multica/ui/lib/clipboard";
 import { AttachmentList } from "../../issues/components/comment-card";
 import type { AgentAvailability } from "@multica/core/agents";
 import type { ChatMessage, ChatPendingTask, TaskFailureReason } from "@multica/core/types";
-import type { ChatTimelineItem } from "@multica/core/chat";
 import { failureReasonLabel } from "../../agents/components/tabs/task-failure";
 import {
   buildTimeline,
   formatToolName,
   localizeTranscriptOutput,
   summarizeToolInput,
+  type TimelineItem,
   transcriptTruncatedSuffix,
   truncateTranscriptText,
 } from "../../common/task-transcript";
@@ -94,7 +94,7 @@ export function ChatMessageList({
     ...taskMessagesOptions(pendingTaskId ?? ""),
     enabled: canFetchLiveTimeline,
   });
-  const liveTimeline: ChatTimelineItem[] = buildTimeline(liveTaskMessages ?? []);
+  const liveTimeline: TimelineItem[] = buildTimeline(liveTaskMessages ?? []);
   const hasLive = showLiveTimeline && liveTimeline.length > 0;
   const showStatusPill = !!pendingTaskId && !pendingAlreadyPersisted && !!pendingTask;
 
@@ -238,7 +238,7 @@ function AssistantMessage({
     enabled: canFetchTaskMessages,
   });
 
-  const timeline: ChatTimelineItem[] = buildTimeline(taskMessages ?? []);
+  const timeline: TimelineItem[] = buildTimeline(taskMessages ?? []);
 
   // Failure bubble path: when the server's FailTask wrote a failure
   // chat_message (failure_reason set), render a destructive bubble with the
@@ -288,7 +288,7 @@ function MessageFooter({
   isPending,
 }: {
   message: ChatMessage;
-  timeline: ChatTimelineItem[];
+  timeline: TimelineItem[];
   isPending: boolean;
 }) {
   const showCopy = !isPending;
@@ -308,7 +308,7 @@ function MessageCopyButton({
   timeline,
 }: {
   message: ChatMessage;
-  timeline: ChatTimelineItem[];
+  timeline: TimelineItem[];
 }) {
   const { t } = useT("chat");
   const handleCopy = async () => {
@@ -373,7 +373,7 @@ function FailureBubble({
 }: {
   reason: string;
   rawError: string;
-  timeline: ChatTimelineItem[];
+  timeline: TimelineItem[];
   elapsedMs?: number | null;
 }) {
   const { t } = useT("chat");
@@ -442,7 +442,7 @@ function TimelineView({
   isStreaming,
   attachments,
 }: {
-  items: ChatTimelineItem[];
+  items: TimelineItem[];
   isStreaming?: boolean;
   attachments?: import("@multica/core/types").Attachment[];
 }) {
@@ -480,7 +480,7 @@ function OuterProcessFold({
   defaultOpen,
   attachments,
 }: {
-  items: ChatTimelineItem[];
+  items: TimelineItem[];
   defaultOpen?: boolean;
   attachments?: import("@multica/core/types").Attachment[];
 }) {
@@ -522,7 +522,7 @@ function MiddleTextRow({
   item,
   attachments,
 }: {
-  item: ChatTimelineItem;
+  item: TimelineItem;
   attachments?: import("@multica/core/types").Attachment[];
 }) {
   return (
@@ -534,7 +534,7 @@ function MiddleTextRow({
 
 // ─── Individual item rows ────────────────────────────────────────────────
 
-function ItemRow({ item }: { item: ChatTimelineItem }) {
+function ItemRow({ item }: { item: TimelineItem }) {
   switch (item.type) {
     case "tool_use":
       return <ToolCallRow item={item} />;
@@ -549,7 +549,7 @@ function ItemRow({ item }: { item: ChatTimelineItem }) {
   }
 }
 
-function ToolCallRow({ item }: { item: ChatTimelineItem }) {
+function ToolCallRow({ item }: { item: TimelineItem }) {
   const [open, setOpen] = useState(false);
   const summary = summarizeToolInput(item.input, 100);
   const hasInput = item.input && Object.keys(item.input).length > 0;
@@ -579,7 +579,7 @@ function ToolCallRow({ item }: { item: ChatTimelineItem }) {
   );
 }
 
-function ToolResultRow({ item }: { item: ChatTimelineItem }) {
+function ToolResultRow({ item }: { item: TimelineItem }) {
   const { t } = useT("chat");
   const [open, setOpen] = useState(false);
   const output = item.output ?? "";
@@ -613,7 +613,7 @@ function ToolResultRow({ item }: { item: ChatTimelineItem }) {
   );
 }
 
-function ThinkingRow({ item }: { item: ChatTimelineItem }) {
+function ThinkingRow({ item }: { item: TimelineItem }) {
   const [open, setOpen] = useState(false);
   const text = item.content ?? "";
   if (!text) return null;
@@ -635,7 +635,7 @@ function ThinkingRow({ item }: { item: ChatTimelineItem }) {
   );
 }
 
-function ErrorRow({ item }: { item: ChatTimelineItem }) {
+function ErrorRow({ item }: { item: TimelineItem }) {
   return (
     <div className="flex items-start gap-1.5 px-1 -mx-1 py-0.5 text-xs">
       <AlertCircle className="h-3 w-3 shrink-0 text-destructive mt-0.5" />

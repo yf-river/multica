@@ -7,8 +7,14 @@ import { renderWithI18n } from "../../test/i18n";
 import type { SkillCandidateWorkflowDraft, SkillCandidateWorkflowEvidence } from "./skill-candidate-model";
 import { SkillCandidateWorkflowPanel } from "./skill-candidate-workflow";
 
-const candidate = {
+const candidate: PromptEvaluationOptimizationCandidate = {
   id: "candidate-1",
+  run_id: "run-1",
+  candidate_name: "候选一",
+  rationale: "减少重复步骤",
+  failed_case_count: 1,
+  source_prompt_snapshot: {},
+  metrics: {},
   skill_patch: {
     candidate_intent: "update_existing_skill",
     patch_hash: "1234567890abcdef",
@@ -16,7 +22,8 @@ const candidate = {
     risk: "低",
     verification_plan: "运行回归测试",
   },
-} as PromptEvaluationOptimizationCandidate;
+  status: "待确认",
+};
 
 const draft: SkillCandidateWorkflowDraft = {
   sourceResourceId: "",

@@ -33,21 +33,16 @@ interface ProjectDraftStore {
   draft: ProjectDraft;
   setDraft: (patch: Partial<ProjectDraft>) => void;
   clearDraft: () => void;
-  hasDraft: () => boolean;
 }
 
 export const useProjectDraftStore = create<ProjectDraftStore>()(
   persist(
-    (set, get) => ({
+    (set) => ({
       draft: { ...EMPTY_DRAFT },
       setDraft: (patch) =>
         set((s) => ({ draft: { ...s.draft, ...patch } })),
       clearDraft: () =>
         set({ draft: { ...EMPTY_DRAFT } }),
-      hasDraft: () => {
-        const { draft } = get();
-        return !!(draft.title || draft.description);
-      },
     }),
     {
       name: "multica_project_draft",

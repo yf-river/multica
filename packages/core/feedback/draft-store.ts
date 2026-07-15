@@ -15,21 +15,16 @@ interface FeedbackDraftStore {
   draft: FeedbackDraft;
   setDraft: (patch: Partial<FeedbackDraft>) => void;
   clearDraft: () => void;
-  hasDraft: () => boolean;
 }
 
 export const useFeedbackDraftStore = create<FeedbackDraftStore>()(
   persist(
-    (set, get) => ({
+    (set) => ({
       draft: { ...EMPTY_DRAFT },
       setDraft: (patch) =>
         set((s) => ({ draft: { ...s.draft, ...patch } })),
       clearDraft: () =>
         set({ draft: { ...EMPTY_DRAFT } }),
-      hasDraft: () => {
-        const { draft } = get();
-        return !!draft.message;
-      },
     }),
     {
       name: "multica_feedback_draft",
