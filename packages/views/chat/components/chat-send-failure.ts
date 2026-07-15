@@ -4,7 +4,7 @@ import {
   ApiTransportError,
 } from "@multica/core/api";
 
-export type ChatSendFailureDisposition = "failed" | "outcome-unknown";
+type ChatSendFailureDisposition = "failed" | "outcome-unknown";
 
 export function isOutcomeUnknownMutationError(error: unknown): boolean {
   return (

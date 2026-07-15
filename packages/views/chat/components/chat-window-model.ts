@@ -48,7 +48,7 @@ export function appendChatMessageToLatestPageCache(
   );
 }
 
-function removeChatMessageFromPageCache(
+export function removeChatMessageFromCache(
   qc: QueryClient,
   sessionId: string,
   messageId: string,
@@ -66,14 +66,6 @@ function removeChatMessageFromPageCache(
       };
     },
   );
-}
-
-export function removeChatMessageFromCaches(
-  qc: QueryClient,
-  sessionId: string,
-  messageId: string,
-) {
-  removeChatMessageFromPageCache(qc, sessionId, messageId);
 }
 
 export function replaceOptimisticChatMessageId(

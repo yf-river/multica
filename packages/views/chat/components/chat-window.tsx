@@ -62,7 +62,7 @@ import { ChatEmptyState } from "./chat-empty-state";
 import {
   appendChatMessageToLatestPageCache,
   getVisibleChatAgents,
-  removeChatMessageFromCaches,
+  removeChatMessageFromCache,
   replaceOptimisticChatMessageId,
 } from "./chat-window-model";
 
@@ -321,7 +321,7 @@ export function ChatWindow() {
         const result = await api.cancelTaskById(taskId);
         const restored = result.cancelled_chat_message;
         if (restored?.restore_to_input) {
-          removeChatMessageFromCaches(qc, restored.chat_session_id, restored.message_id);
+          removeChatMessageFromCache(qc, restored.chat_session_id, restored.message_id);
           if (options.restoreDraftToInput && restored.chat_session_id === sessionId) {
             setRestoreDraftRequest({
               id: restored.message_id,
@@ -514,7 +514,7 @@ export function ChatWindow() {
           },
           rollbackOptimisticState: () => {
             stopRequestedBeforeTaskRef.current = false;
-            removeChatMessageFromCaches(qc, sessionId, optimistic.id);
+            removeChatMessageFromCache(qc, sessionId, optimistic.id);
             qc.setQueryData(chatKeys.pendingTask(sessionId), {});
           },
         });
@@ -1030,7 +1030,7 @@ function SessionDropdown({
       (result) => {
         const restored = result.cancelled_chat_message;
         if (restored?.restore_to_input) {
-          removeChatMessageFromCaches(queryClient, restored.chat_session_id, restored.message_id);
+          removeChatMessageFromCache(queryClient, restored.chat_session_id, restored.message_id);
         }
         apiLogger.info("cancelTask.success (history row)", { taskId: task.task_id, sessionId: session.id });
       },
