@@ -7,7 +7,7 @@ describe("prompt evaluation schema module boundaries", () => {
     const assets = await import("./schemas-prompt-evaluation-assets");
 
     expect(cases.PromptEvaluationCaseListResponseSchema).toBeDefined();
-    expect(assets.PromptEvaluationAssetSchema).toBeDefined();
+    expect(assets.PromptEvaluationAssetListResponseSchema).toBeDefined();
   });
 
   it("initializes asset contracts before case contracts", async () => {
@@ -15,7 +15,7 @@ describe("prompt evaluation schema module boundaries", () => {
     const assets = await import("./schemas-prompt-evaluation-assets");
     const cases = await import("./schemas-prompt-evaluation-cases");
 
-    expect(assets.PromptEvaluationDatasetVersionSchema).toBeDefined();
+    expect(assets.PromptEvaluationDatasetVersionListResponseSchema).toBeDefined();
     expect(cases.PromptEvaluationCaseSchema).toBeDefined();
   });
 });

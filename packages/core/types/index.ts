@@ -37,7 +37,6 @@ export type {
   RuntimeModel,
   RuntimeModelThinkingLevel,
   RuntimeModelListRequest,
-  RuntimeModelsResult,
   RuntimeLocalSkillImportConflict,
   RuntimeLocalSkillSummary,
   RuntimeLocalSkillListRequest,
@@ -61,7 +60,7 @@ export type {
 } from "./external-credential";
 export type { InboxItem, InboxItemType } from "./inbox";
 export type { NotificationGroupKey, NotificationPreferences } from "./notification-preference";
-export type { Comment, CommentAuthorType, CommentTriggerPreview, CommentTriggerPreviewAgent, Reaction } from "./comment";
+export type { Comment, CommentTriggerPreview, CommentTriggerPreviewAgent, Reaction } from "./comment";
 export type { Label, CreateLabelRequest, UpdateLabelRequest } from "./label";
 export type {
   TimelineEntry,
@@ -71,7 +70,7 @@ export type { IssueSubscriber } from "./subscriber";
 export type * from "./events";
 export type * from "./api";
 export type { Attachment } from "./attachment";
-export { attachmentDownloadPath, attachmentIdFromDownloadURL, contentReferencesAttachment } from "./attachment-url";
+export { contentReferencesAttachment } from "./attachment-url";
 export type {
   ChatSession,
   ChatMessage,

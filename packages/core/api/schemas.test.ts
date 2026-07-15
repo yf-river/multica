@@ -13,7 +13,6 @@ import {
   RuntimeUsageListSchema,
   ObservabilitySummarySchema,
   PromptEvaluationAssetListResponseSchema,
-  PromptEvaluationAssetSchema,
   PromptLibraryItemListResponseSchema,
   PromptLibraryItemSchema,
   SquadListSchema,
@@ -236,8 +235,11 @@ describe("PromptLibraryItemSchema", () => {
 });
 
 describe("PromptEvaluationAssetSchema", () => {
+  const parseAsset = (asset: unknown) => PromptEvaluationAssetListResponseSchema.parse({ items: [asset] })[0]!;
+  const acceptsAsset = (asset: unknown) => PromptEvaluationAssetListResponseSchema.safeParse({ items: [asset] }).success;
+
   it("preserves Chinese evaluation asset semantics", () => {
-    const parsed = PromptEvaluationAssetSchema.parse({
+    const parsed = parseAsset({
       id: "asset-1",
       workspace_id: "ws-1",
       prompt_id: "prompt-1",
@@ -276,7 +278,7 @@ describe("PromptEvaluationAssetSchema", () => {
 
   it("rejects invalid strict training evaluation payloads", () => {
     expect(
-      PromptEvaluationAssetSchema.safeParse({
+      acceptsAsset({
         id: "asset-invalid",
         workspace_id: "ws-1",
         name: "坏数据集",
@@ -288,7 +290,7 @@ describe("PromptEvaluationAssetSchema", () => {
         },
         created_at: "2026-06-21T00:00:00Z",
         updated_at: "2026-06-21T00:00:00Z",
-      }).success,
+      }),
     ).toBe(false);
   });
 
@@ -306,22 +308,22 @@ describe("PromptEvaluationAssetSchema", () => {
       created_at: "2026-06-21T00:00:00Z",
       updated_at: "2026-06-21T00:00:00Z",
     };
-    expect(PromptEvaluationAssetSchema.safeParse({
+    expect(acceptsAsset({
       ...base,
       payload: { ...base.payload, metric_notes: "not-an-array" },
-    }).success).toBe(false);
-    expect(PromptEvaluationAssetSchema.safeParse({
+    })).toBe(false);
+    expect(acceptsAsset({
       ...base,
       payload: { ...base.payload, experiment_dimensions: [{ weight: 2 }] },
-    }).success).toBe(false);
-    expect(PromptEvaluationAssetSchema.safeParse({
+    })).toBe(false);
+    expect(acceptsAsset({
       ...base,
       payload: { ...base.payload, baseline_output: { text: "not-a-string" } },
-    }).success).toBe(false);
-    expect(PromptEvaluationAssetSchema.safeParse({
+    })).toBe(false);
+    expect(acceptsAsset({
       ...base,
       payload: { ...base.payload, agent_id: "" },
-    }).success).toBe(false);
+    })).toBe(false);
   });
 
   it("defaults evaluation asset list response shape", () => {
@@ -330,7 +332,7 @@ describe("PromptEvaluationAssetSchema", () => {
   });
 
   it("rejects unsupported asset types", () => {
-    expect(() => PromptEvaluationAssetSchema.parse({
+    expect(() => parseAsset({
       id: "asset-2",
       workspace_id: "ws-1",
       prompt_id: "prompt-1",

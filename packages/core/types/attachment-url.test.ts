@@ -1,17 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
-  attachmentDownloadPath,
   attachmentIdFromDownloadURL,
   contentReferencesAttachment,
 } from "./attachment-url";
 
 const ID = "11111111-2222-3333-4444-555555555555";
-
-describe("attachmentDownloadPath", () => {
-  it("returns the stable per-attachment download path", () => {
-    expect(attachmentDownloadPath(ID)).toBe(`/api/attachments/${ID}/download`);
-  });
-});
 
 describe("attachmentIdFromDownloadURL", () => {
   it("extracts the id from a site-relative path", () => {
@@ -70,7 +63,7 @@ describe("contentReferencesAttachment", () => {
   const att = { id: ID };
 
   it("matches when the markdown uses the stable download path", () => {
-    const md = `body\n\n![file](${attachmentDownloadPath(ID)})\n`;
+    const md = `body\n\n![file](/api/attachments/${ID}/download)\n`;
     expect(contentReferencesAttachment(md, att)).toBe(true);
   });
 

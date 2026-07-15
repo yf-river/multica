@@ -46,7 +46,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  * (e.g. a download click handler that re-signs the URL on every press)
  * the server-returned `download_url` is still appropriate.
  */
-export function attachmentDownloadPath(attachmentId: string): string {
+function attachmentDownloadPath(attachmentId: string): string {
   return `${DOWNLOAD_PREFIX}${attachmentId}${DOWNLOAD_SUFFIX}`;
 }
 

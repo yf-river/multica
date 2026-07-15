@@ -37,7 +37,7 @@ const PromptEvaluationPayloadSchema = z.record(z.string(), z.unknown()).default(
   }
 });
 
-export const PromptEvaluationAssetSchema = z.object({
+const PromptEvaluationAssetSchema = z.object({
   id: NonEmptyStringSchema,
   workspace_id: NonEmptyStringSchema,
   prompt_id: z.string().nullable().optional().transform((v) => v ?? null),
@@ -57,7 +57,7 @@ export const PromptEvaluationAssetListResponseSchema = z.object({
 
 export const PromptEvaluationAssetMutationResultSchema = PromptEvaluationAssetSchema.pick({ id: true, prompt_id: true }).strip();
 
-export const PromptEvaluationDatasetVersionSchema = z.object({
+const PromptEvaluationDatasetVersionSchema = z.object({
   id: NonEmptyStringSchema,
   version: z.number().default(0),
   version_label: z.string().default(""),
