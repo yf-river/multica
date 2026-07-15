@@ -17,23 +17,12 @@ import { useT } from "../../i18n";
 
 const BACKLOG_HINT_LS_KEY = "multica:backlog-agent-hint-dismissed";
 
-export interface UseIssueActionsResult {
-  isPinned: boolean;
-  updateField: (updates: Partial<UpdateIssueRequest>) => void;
-  togglePin: () => void;
-  copyLink: () => Promise<void>;
-  openCreateSubIssue: () => void;
-  openSetParent: () => void;
-  openAddChild: () => void;
-  openDeleteConfirm: (opts?: { onDeletedNavigateTo?: string }) => void;
-}
-
 /**
  * Accepts a nullable issue so callers can invoke the hook before they've
  * early-returned on a missing issue. Returned handlers are safe no-ops when
  * `issue` is null.
  */
-export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
+export function useIssueActions(issue: Issue | null) {
   const { t } = useT("issues");
   const wsId = useWorkspaceId();
   const paths = useWorkspacePaths();

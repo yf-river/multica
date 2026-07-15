@@ -43,7 +43,7 @@ import {
   ContextMenuSeparator,
 } from "@multica/ui/components/ui/context-menu";
 import { copyText } from "@multica/ui/lib/clipboard";
-import type { UseIssueActionsResult } from "./use-issue-actions";
+import type { useIssueActions } from "./use-issue-actions";
 import { useT } from "../../i18n";
 
 // Both Dropdown and Context menu wrappers expose an API-compatible surface
@@ -78,7 +78,7 @@ export const contextPrimitives: MenuPrimitives = {
 
 interface IssueActionsMenuItemsProps {
   issue: Issue;
-  actions: UseIssueActionsResult;
+  actions: ReturnType<typeof useIssueActions>;
   primitives: MenuPrimitives;
   /** Called when the user clicks the Assignee menu item. The parent should
    *  close the surrounding menu and open the shared `AssigneePicker` popover.
