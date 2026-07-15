@@ -287,7 +287,7 @@ func runAutopilotCreate(cmd *cobra.Command, _ []string) error {
 	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
-	agentID, err := resolveAgent(ctx, client, agent)
+	agentID, err := resolveAgentID(ctx, client, agent)
 	if err != nil {
 		return fmt.Errorf("resolve agent: %w", err)
 	}
@@ -339,7 +339,7 @@ func runAutopilotUpdate(cmd *cobra.Command, args []string) error {
 	applyChangedStringFlag(cmd, body, "description", "description")
 	if cmd.Flags().Changed("agent") {
 		v, _ := cmd.Flags().GetString("agent")
-		agentID, resolveErr := resolveAgent(ctx, client, v)
+		agentID, resolveErr := resolveAgentID(ctx, client, v)
 		if resolveErr != nil {
 			return fmt.Errorf("resolve agent: %w", resolveErr)
 		}
@@ -691,42 +691,13 @@ func runAutopilotTriggerDelete(cmd *cobra.Command, args []string) error {
 // uuidRegexp matches a canonical UUID (8-4-4-4-12 hex).
 var uuidRegexp = regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
 
-// resolveAgent accepts either a UUID or an agent name (case-insensitive substring)
-// and returns the agent's UUID. Errors on no match or ambiguous match.
-func resolveAgent(ctx context.Context, client *cli.APIClient, nameOrID string) (string, error) {
+// resolveAgentID preserves the direct UUID input accepted by Agent-only flags;
+// names use the canonical assignee resolver so matching and ambiguity rules
+// have one owner across the CLI.
+func resolveAgentID(ctx context.Context, client *cli.APIClient, nameOrID string) (string, error) {
 	if uuidRegexp.MatchString(nameOrID) {
 		return nameOrID, nil
 	}
-	if client.WorkspaceID == "" {
-		return "", fmt.Errorf("workspace ID is required to resolve agents; use --workspace-id or set MULTICA_WORKSPACE_ID")
-	}
-
-	var agents []map[string]any
-	agentPath := "/api/agents?" + url.Values{"workspace_id": {client.WorkspaceID}}.Encode()
-	if err := client.GetJSON(ctx, agentPath, &agents); err != nil {
-		return "", fmt.Errorf("fetch agents: %w", err)
-	}
-
-	nameLower := strings.ToLower(nameOrID)
-	type match struct{ ID, Name string }
-	var matches []match
-	for _, a := range agents {
-		aName := strVal(a, "name")
-		if strings.Contains(strings.ToLower(aName), nameLower) {
-			matches = append(matches, match{ID: strVal(a, "id"), Name: aName})
-		}
-	}
-
-	switch len(matches) {
-	case 0:
-		return "", fmt.Errorf("no agent found matching %q", nameOrID)
-	case 1:
-		return matches[0].ID, nil
-	default:
-		var parts []string
-		for _, m := range matches {
-			parts = append(parts, fmt.Sprintf("  %q (%s)", m.Name, truncateID(m.ID)))
-		}
-		return "", fmt.Errorf("ambiguous agent %q; matches:\n%s", nameOrID, strings.Join(parts, "\n"))
-	}
+	_, agentID, err := resolveAssignee(ctx, client, nameOrID, assigneeKinds{agent: true})
+	return agentID, err
 }

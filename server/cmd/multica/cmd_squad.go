@@ -129,7 +129,7 @@ func runSquadCreate(cmd *cobra.Command, _ []string) error {
 	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
-	leaderID, err := resolveAgent(ctx, client, leader)
+	leaderID, err := resolveAgentID(ctx, client, leader)
 	if err != nil {
 		return fmt.Errorf("resolve leader: %w", err)
 	}
@@ -175,7 +175,7 @@ func runSquadUpdate(cmd *cobra.Command, args []string) error {
 	applyChangedStringFlag(cmd, body, "instructions", "instructions")
 	if cmd.Flags().Changed("leader") {
 		v, _ := cmd.Flags().GetString("leader")
-		leaderID, err := resolveAgent(ctx, client, v)
+		leaderID, err := resolveAgentID(ctx, client, v)
 		if err != nil {
 			return fmt.Errorf("resolve leader: %w", err)
 		}
