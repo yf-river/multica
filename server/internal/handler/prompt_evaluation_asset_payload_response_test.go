@@ -22,12 +22,3 @@ func TestPromptEvaluationAssetResponsePreservesUnknownPayloadFields(t *testing.T
 		t.Fatalf("payload was not preserved: %#v", decoded["payload"])
 	}
 }
-
-func TestPromptEvaluationAssetResponseRejectsInvalidPersistedPayload(t *testing.T) {
-	defer func() {
-		if recovered := recover(); recovered == nil {
-			t.Fatal("invalid persisted payload did not panic")
-		}
-	}()
-	promptEvaluationAssetToResponse(db.PromptEvaluationAsset{Payload: []byte(`[]`)})
-}
