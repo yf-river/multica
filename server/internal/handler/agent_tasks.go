@@ -8,6 +8,8 @@ import (
 	"github.com/multica-ai/multica/server/internal/logger"
 )
 
+// CancelAgentTasks bulk-cancels active tasks for an Agent. It uses the same
+// manage permission as archive and publishes cancellation through TaskService.
 func (h *Handler) CancelAgentTasks(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	agent, ok := h.loadAgentForUser(w, r, id)
@@ -27,7 +29,9 @@ func (h *Handler) CancelAgentTasks(w http.ResponseWriter, r *http.Request) {
 
 	slog.Info("agent tasks cancelled",
 		append(logger.RequestAttrs(r), "agent_id", id, "count", len(cancelled))...)
-	writeJSON(w, http.StatusOK, cancelAgentTasksResponse{Cancelled: len(cancelled)})
+	writeJSON(w, http.StatusOK, struct {
+		Cancelled int `json:"cancelled"`
+	}{Cancelled: len(cancelled)})
 }
 
 func (h *Handler) ListAgentTasks(w http.ResponseWriter, r *http.Request) {

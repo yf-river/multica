@@ -1137,7 +1137,9 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
-	requestHash, err := hashRequestFingerprint(promptEvaluationAgentRunFingerprint{AssetID: uuidToString(assetID)})
+	requestHash, err := hashRequestFingerprint(struct {
+		AssetID string `json:"asset_id"`
+	}{AssetID: uuidToString(assetID)})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to fingerprint prompt evaluation agent run")
 		return

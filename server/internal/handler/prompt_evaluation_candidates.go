@@ -94,7 +94,9 @@ func (h *Handler) CreatePromptEvaluationOptimizationCandidate(w http.ResponseWri
 	if !ok {
 		return
 	}
-	requestHash, err := hashRequestFingerprint(promptEvaluationCandidateCreateFingerprint{
+	requestHash, err := hashRequestFingerprint(struct {
+		RunID string `json:"run_id"`
+	}{
 		RunID: uuidToString(runID),
 	})
 	if err != nil {
@@ -295,7 +297,9 @@ func (h *Handler) PublishPromptEvaluationOptimizationCandidate(w http.ResponseWr
 	if !ok {
 		return
 	}
-	requestHash, err := hashRequestFingerprint(promptEvaluationCandidatePublishFingerprint{
+	requestHash, err := hashRequestFingerprint(struct {
+		CandidateID string `json:"candidate_id"`
+	}{
 		CandidateID: uuidToString(candidateID),
 	})
 	if err != nil {
@@ -532,7 +536,10 @@ func (h *Handler) RejectPromptEvaluationOptimizationCandidate(w http.ResponseWri
 	if reason == "" {
 		reason = "验收者人工判定该优化候选暂不采纳。"
 	}
-	requestHash, err := hashRequestFingerprint(promptEvaluationCandidateRejectFingerprint{
+	requestHash, err := hashRequestFingerprint(struct {
+		CandidateID string `json:"candidate_id"`
+		Reason      string `json:"reason"`
+	}{
 		CandidateID: uuidToString(candidateID),
 		Reason:      reason,
 	})

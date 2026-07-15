@@ -578,7 +578,10 @@ func (h *Handler) PreparePromptEvaluationSkillReEvalAsset(w http.ResponseWriter,
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	requestHash, err := hashRequestFingerprint(promptEvaluationReEvalAssetFingerprint{
+	requestHash, err := hashRequestFingerprint(struct {
+		CandidateID string                                    `json:"candidate_id"`
+		Request     PreparePromptEvaluationSkillReEvalRequest `json:"request"`
+	}{
 		CandidateID: uuidToString(candidateID),
 		Request:     req,
 	})

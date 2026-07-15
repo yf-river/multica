@@ -90,7 +90,11 @@ func (h *Handler) CreateChatSession(w http.ResponseWriter, r *http.Request) {
 		parseUUID(actorID),
 		chatCreateSessionOperation,
 		idempotencyKey,
-		createChatSessionRequestFingerprint{Version: 1, AgentID: req.AgentID, Title: req.Title},
+		struct {
+			Version int    `json:"version"`
+			AgentID string `json:"agent_id"`
+			Title   string `json:"title"`
+		}{Version: 1, AgentID: req.AgentID, Title: req.Title},
 	)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to prepare chat session request")
@@ -482,7 +486,12 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 		parseUUID(actorID),
 		chatSendMessageOperation,
 		idempotencyKey,
-		sendChatMessageRequestFingerprint{
+		struct {
+			Version       int      `json:"version"`
+			SessionID     string   `json:"session_id"`
+			Content       string   `json:"content"`
+			AttachmentIDs []string `json:"attachment_ids"`
+		}{
 			Version:       1,
 			SessionID:     sessionID,
 			Content:       req.Content,

@@ -140,11 +140,6 @@ type CreateAgentFromTemplateResponse struct {
 	ReusedSkillIDs   []string      `json:"reused_skill_ids"`
 }
 
-type fetchFailureResponse struct {
-	Error      string   `json:"error"`
-	FailedURLs []string `json:"failed_urls"`
-}
-
 func (h *Handler) CreateAgentFromTemplate(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 
@@ -292,7 +287,10 @@ func (h *Handler) CreateAgentFromTemplate(w http.ResponseWriter, r *http.Request
 			"failed_urls", failedURLs,
 		)...)
 	if len(failedURLs) > 0 {
-		writeJSON(w, http.StatusUnprocessableEntity, fetchFailureResponse{
+		writeJSON(w, http.StatusUnprocessableEntity, struct {
+			Error      string   `json:"error"`
+			FailedURLs []string `json:"failed_urls"`
+		}{
 			Error:      "one or more skill sources are unavailable",
 			FailedURLs: failedURLs,
 		})

@@ -1526,19 +1526,3 @@ func (h *Handler) RestoreAgent(w http.ResponseWriter, r *http.Request) {
 	redactAgentResponseForActor(&resp, actorType)
 	writeJSON(w, http.StatusOK, resp)
 }
-
-// CancelAgentTasks bulk-cancels every active task (queued/dispatched/running)
-// belonging to an agent. Powers the agents-list "Cancel all tasks" row
-// action. Same permission gate as archive (canManageAgent — owner or
-// workspace admin/owner). Each cancelled row triggers a task:cancelled WS
-// event so connected clients clear their live cards immediately.
-//
-// Note: a `running` task on the daemon side won't actually halt for up to
-// ~5 seconds (daemon polls GetTaskStatus on that interval). The DB row is
-// marked cancelled instantly, but the child process keeps going briefly;
-// see daemon/daemon.go:919-942 for the polling loop. Surface this in the
-// confirm-dialog copy so users aren't surprised by trailing transcript
-// lines.
-type cancelAgentTasksResponse struct {
-	Cancelled int `json:"cancelled"`
-}

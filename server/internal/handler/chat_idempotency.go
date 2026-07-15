@@ -34,19 +34,6 @@ type chatIdempotencyScope struct {
 	requestHash    string
 }
 
-type createChatSessionRequestFingerprint struct {
-	Version int    `json:"version"`
-	AgentID string `json:"agent_id"`
-	Title   string `json:"title"`
-}
-
-type sendChatMessageRequestFingerprint struct {
-	Version       int      `json:"version"`
-	SessionID     string   `json:"session_id"`
-	Content       string   `json:"content"`
-	AttachmentIDs []string `json:"attachment_ids"`
-}
-
 func requireIdempotencyKey(w http.ResponseWriter, r *http.Request) (pgtype.UUID, bool) {
 	values := r.Header.Values("Idempotency-Key")
 	if len(values) == 0 || strings.TrimSpace(values[0]) == "" {
