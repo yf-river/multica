@@ -56,21 +56,8 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 		// Keep resume-unsafe sessions on the task row for observability, but
 		// do not promote them to the chat-level resume pointer.
 		if t.ChatSessionID.Valid && !taskfailure.IsResumeUnsafe(failureReason) {
-			// Pin the chat_session's runtime_id alongside the session_id so the
-			// next claim can apply the runtime-guard. Both fields move together:
-			// when there's no session_id to record, leave runtime_id untouched
-			// (NULL → COALESCE keeps the existing value).
-			var sessionRuntimeID pgtype.UUID
-			if sessionID != "" {
-				sessionRuntimeID = t.RuntimeID
-			}
-			if err := qtx.UpdateChatSessionSession(ctx, db.UpdateChatSessionSessionParams{
-				ID:        t.ChatSessionID,
-				SessionID: pgtype.Text{String: sessionID, Valid: sessionID != ""},
-				WorkDir:   pgtype.Text{String: workDir, Valid: workDir != ""},
-				RuntimeID: sessionRuntimeID,
-			}); err != nil {
-				return fmt.Errorf("update chat session resume pointer: %w", err)
+			if err := s.updateChatSessionResumePointer(ctx, qtx, t, sessionID, workDir); err != nil {
+				return err
 			}
 		}
 		retried, retryCreated, err = s.materializeRetryTask(ctx, qtx, task)
@@ -133,30 +120,7 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 		issueStatus, err = s.projectTaskFailureIssueStatus(ctx, qtx, task, deliveryCommentPosted)
 		return err
 	}); err != nil {
-		if existing, lookupErr := s.Queries.GetAgentTask(ctx, taskID); lookupErr == nil {
-			if !terminalTransitioned && errors.Is(err, pgx.ErrNoRows) && isTerminalTaskStatus(existing.Status) {
-				slog.Info("fail task: already finalized",
-					"task_id", util.UUIDToString(taskID),
-					"current_status", existing.Status,
-					"agent_id", util.UUIDToString(existing.AgentID),
-				)
-				return &existing, nil
-			}
-			slog.Warn("fail task failed",
-				"task_id", util.UUIDToString(taskID),
-				"current_status", existing.Status,
-				"issue_id", util.UUIDToString(existing.IssueID),
-				"chat_session_id", util.UUIDToString(existing.ChatSessionID),
-				"agent_id", util.UUIDToString(existing.AgentID),
-				"error", err,
-			)
-		} else {
-			slog.Warn("fail task failed: task not found",
-				"task_id", util.UUIDToString(taskID),
-				"lookup_error", lookupErr,
-			)
-		}
-		return nil, fmt.Errorf("fail task: %w", err)
+		return s.handleTerminalTransitionError(ctx, "fail", taskID, terminalTransitioned, err)
 	}
 
 	slog.Warn("task failed", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID), "error", errMsg, "failure_reason", failureReason)

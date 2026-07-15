@@ -212,15 +212,9 @@ func (s *TaskService) CancelTasksForIssueInTx(
 	queries *db.Queries,
 	issueID pgtype.UUID,
 ) ([]db.AgentTaskQueue, []events.Event, error) {
-	cancelled, err := queries.CancelAgentTasksByIssue(ctx, issueID)
-	if err != nil {
-		return nil, nil, err
-	}
-	persistedEvents, err := s.EnqueueCancelledTaskEvents(ctx, queries, cancelled)
-	if err != nil {
-		return nil, nil, err
-	}
-	return cancelled, persistedEvents, nil
+	return s.cancelTasksInTx(ctx, queries, func() ([]db.AgentTaskQueue, error) {
+		return queries.CancelAgentTasksByIssue(ctx, issueID)
+	})
 }
 
 // CancelTasksForAgent cancels every active task belonging to an agent
@@ -247,7 +241,32 @@ func (s *TaskService) CancelTasksByTriggerCommentInTx(
 	queries *db.Queries,
 	commentID pgtype.UUID,
 ) ([]db.AgentTaskQueue, []events.Event, error) {
-	cancelled, err := queries.CancelAgentTasksByTriggerComment(ctx, commentID)
+	return s.cancelTasksInTx(ctx, queries, func() ([]db.AgentTaskQueue, error) {
+		return queries.CancelAgentTasksByTriggerComment(ctx, commentID)
+	})
+}
+
+// CancelTasksForIssueAndAgentInTx persists cancellation state and terminal
+// events in the caller's transaction. The caller publishes only after commit.
+func (s *TaskService) CancelTasksForIssueAndAgentInTx(
+	ctx context.Context,
+	queries *db.Queries,
+	issueID, agentID pgtype.UUID,
+) ([]db.AgentTaskQueue, []events.Event, error) {
+	return s.cancelTasksInTx(ctx, queries, func() ([]db.AgentTaskQueue, error) {
+		return queries.CancelAgentTasksByIssueAndAgent(ctx, db.CancelAgentTasksByIssueAndAgentParams{
+			IssueID: issueID,
+			AgentID: agentID,
+		})
+	})
+}
+
+func (s *TaskService) cancelTasksInTx(
+	ctx context.Context,
+	queries *db.Queries,
+	cancel func() ([]db.AgentTaskQueue, error),
+) ([]db.AgentTaskQueue, []events.Event, error) {
+	cancelled, err := cancel()
 	if err != nil {
 		return nil, nil, err
 	}
@@ -258,25 +277,59 @@ func (s *TaskService) CancelTasksByTriggerCommentInTx(
 	return cancelled, persistedEvents, nil
 }
 
-// CancelTasksForIssueAndAgentInTx persists cancellation state and terminal
-// events in the caller's transaction. The caller publishes only after commit.
-func (s *TaskService) CancelTasksForIssueAndAgentInTx(
+func (s *TaskService) updateChatSessionResumePointer(
 	ctx context.Context,
 	queries *db.Queries,
-	issueID, agentID pgtype.UUID,
-) ([]db.AgentTaskQueue, []events.Event, error) {
-	cancelled, err := queries.CancelAgentTasksByIssueAndAgent(ctx, db.CancelAgentTasksByIssueAndAgentParams{
-		IssueID: issueID,
-		AgentID: agentID,
-	})
-	if err != nil {
-		return nil, nil, err
+	task db.AgentTaskQueue,
+	sessionID, workDir string,
+) error {
+	var runtimeID pgtype.UUID
+	if sessionID != "" {
+		runtimeID = task.RuntimeID
 	}
-	persistedEvents, err := s.EnqueueCancelledTaskEvents(ctx, queries, cancelled)
-	if err != nil {
-		return nil, nil, err
+	if err := queries.UpdateChatSessionSession(ctx, db.UpdateChatSessionSessionParams{
+		ID:        task.ChatSessionID,
+		SessionID: pgtype.Text{String: sessionID, Valid: sessionID != ""},
+		WorkDir:   pgtype.Text{String: workDir, Valid: workDir != ""},
+		RuntimeID: runtimeID,
+	}); err != nil {
+		return fmt.Errorf("update chat session resume pointer: %w", err)
 	}
-	return cancelled, persistedEvents, nil
+	return nil
+}
+
+func (s *TaskService) handleTerminalTransitionError(
+	ctx context.Context,
+	operation string,
+	taskID pgtype.UUID,
+	terminalTransitioned bool,
+	transitionErr error,
+) (*db.AgentTaskQueue, error) {
+	existing, lookupErr := s.Queries.GetAgentTask(ctx, taskID)
+	if lookupErr == nil {
+		if !terminalTransitioned && errors.Is(transitionErr, pgx.ErrNoRows) && isTerminalTaskStatus(existing.Status) {
+			slog.Info(operation+" task: already finalized",
+				"task_id", util.UUIDToString(taskID),
+				"current_status", existing.Status,
+				"agent_id", util.UUIDToString(existing.AgentID),
+			)
+			return &existing, nil
+		}
+		slog.Warn(operation+" task failed",
+			"task_id", util.UUIDToString(taskID),
+			"current_status", existing.Status,
+			"issue_id", util.UUIDToString(existing.IssueID),
+			"chat_session_id", util.UUIDToString(existing.ChatSessionID),
+			"agent_id", util.UUIDToString(existing.AgentID),
+			"error", transitionErr,
+		)
+	} else {
+		slog.Warn(operation+" task failed: task not found",
+			"task_id", util.UUIDToString(taskID),
+			"lookup_error", lookupErr,
+		)
+	}
+	return nil, fmt.Errorf("%s task: %w", operation, transitionErr)
 }
 
 type CancelledChatMessageResult struct {

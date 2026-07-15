@@ -464,14 +464,9 @@ func (s *IssueService) createIssueProjectionInTx(
 			if err != nil {
 				return projection, err
 			}
-			updated, err := queries.SetIssueMetadataKey(ctx, db.SetIssueMetadataKeyParams{
-				ID:          issue.ID,
-				WorkspaceID: issue.WorkspaceID,
-				Key:         "project_owner_review_task_id",
-				Value:       mustJSONStringBytes(util.UUIDToString(task.ID)),
-			})
+			updated, err := setProjectOwnerReviewTask(ctx, queries, issue, task.ID)
 			if err != nil {
-				return projection, fmt.Errorf("set project owner review task metadata: %w", err)
+				return projection, err
 			}
 			projection.approvalTask = &task
 			projection.approvalProject = project
@@ -685,14 +680,9 @@ func (s *IssueService) ReconcileProjectOwnerApprovalInTx(
 		if err != nil {
 			return projection, err
 		}
-		issue, err = queries.SetIssueMetadataKey(ctx, db.SetIssueMetadataKeyParams{
-			ID:          issue.ID,
-			WorkspaceID: issue.WorkspaceID,
-			Key:         "project_owner_review_task_id",
-			Value:       mustJSONStringBytes(util.UUIDToString(task.ID)),
-		})
+		issue, err = setProjectOwnerReviewTask(ctx, queries, issue, task.ID)
 		if err != nil {
-			return projection, fmt.Errorf("set project owner review task metadata: %w", err)
+			return projection, err
 		}
 		projection.task = &task
 		projection.project = project
@@ -825,27 +815,49 @@ func (s *IssueService) publishProjectLeadApprovalInbox(item db.InboxItem, issueS
 		WorkspaceID: util.UUIDToString(item.WorkspaceID),
 		ActorType:   actorType,
 		ActorID:     actorID,
-		Payload: map[string]any{
-			"item": map[string]any{
-				"id":             util.UUIDToString(item.ID),
-				"workspace_id":   util.UUIDToString(item.WorkspaceID),
-				"recipient_type": item.RecipientType,
-				"recipient_id":   util.UUIDToString(item.RecipientID),
-				"type":           item.Type,
-				"severity":       item.Severity,
-				"issue_id":       util.UUIDToPtr(item.IssueID),
-				"issue_status":   issueStatus,
-				"title":          item.Title,
-				"body":           util.TextToPtr(item.Body),
-				"read":           item.Read,
-				"archived":       item.Archived,
-				"created_at":     util.TimestampToString(item.CreatedAt),
-				"actor_type":     util.TextToPtr(item.ActorType),
-				"actor_id":       util.UUIDToPtr(item.ActorID),
-				"details":        json.RawMessage(item.Details),
-			},
-		},
+		Payload:     inboxItemEventPayload(item, issueStatus),
 	})
+}
+
+func setProjectOwnerReviewTask(ctx context.Context, queries *db.Queries, issue db.Issue, taskID pgtype.UUID) (db.Issue, error) {
+	updated, err := queries.SetIssueMetadataKey(ctx, db.SetIssueMetadataKeyParams{
+		ID:          issue.ID,
+		WorkspaceID: issue.WorkspaceID,
+		Key:         "project_owner_review_task_id",
+		Value:       mustJSONStringBytes(util.UUIDToString(taskID)),
+	})
+	if err != nil {
+		return db.Issue{}, fmt.Errorf("set project owner review task metadata: %w", err)
+	}
+	return updated, nil
+}
+
+func inboxItemEventPayload(item db.InboxItem, issueStatus string) map[string]any {
+	fields := InboxItemEventFields(item)
+	fields["issue_status"] = issueStatus
+	return map[string]any{"item": fields}
+}
+
+// InboxItemEventFields is the canonical JSON projection for persisted inbox
+// rows published through the event bus.
+func InboxItemEventFields(item db.InboxItem) map[string]any {
+	return map[string]any{
+		"id":             util.UUIDToString(item.ID),
+		"workspace_id":   util.UUIDToString(item.WorkspaceID),
+		"recipient_type": item.RecipientType,
+		"recipient_id":   util.UUIDToString(item.RecipientID),
+		"type":           item.Type,
+		"severity":       item.Severity,
+		"issue_id":       util.UUIDToPtr(item.IssueID),
+		"title":          item.Title,
+		"body":           util.TextToPtr(item.Body),
+		"read":           item.Read,
+		"archived":       item.Archived,
+		"created_at":     util.TimestampToString(item.CreatedAt),
+		"actor_type":     util.TextToPtr(item.ActorType),
+		"actor_id":       util.UUIDToPtr(item.ActorID),
+		"details":        json.RawMessage(item.Details),
+	}
 }
 
 func parseServiceUUID(value string) pgtype.UUID {

@@ -43,23 +43,8 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 		terminalTransitioned = true
 
 		if t.ChatSessionID.Valid {
-			// Pin the chat_session's runtime_id alongside the session_id so the
-			// next claim can apply the runtime-guard. Both fields move together:
-			// when there's no session_id to record, leave runtime_id untouched
-			// (NULL → COALESCE keeps the existing value).
-			var sessionRuntimeID pgtype.UUID
-			if sessionID != "" {
-				sessionRuntimeID = t.RuntimeID
-			}
-			// COALESCE in SQL guarantees empty inputs don't wipe the
-			// existing resume pointer; we still surface DB errors.
-			if err := qtx.UpdateChatSessionSession(ctx, db.UpdateChatSessionSessionParams{
-				ID:        t.ChatSessionID,
-				SessionID: pgtype.Text{String: sessionID, Valid: sessionID != ""},
-				WorkDir:   pgtype.Text{String: workDir, Valid: workDir != ""},
-				RuntimeID: sessionRuntimeID,
-			}); err != nil {
-				return fmt.Errorf("update chat session resume pointer: %w", err)
+			if err := s.updateChatSessionResumePointer(ctx, qtx, t, sessionID, workDir); err != nil {
+				return err
 			}
 		}
 		if err := lockIssueForTaskTerminalProjection(ctx, qtx, task); err != nil {
@@ -95,30 +80,7 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 		// cancelled, or failed by the time this call runs. The UPDATE
 		// … WHERE status = 'running' returns no rows in that case.
 		// Treat it as an idempotent success — same pattern as CancelTask.
-		if existing, lookupErr := s.Queries.GetAgentTask(ctx, taskID); lookupErr == nil {
-			if !terminalTransitioned && errors.Is(err, pgx.ErrNoRows) && isTerminalTaskStatus(existing.Status) {
-				slog.Info("complete task: already finalized",
-					"task_id", util.UUIDToString(taskID),
-					"current_status", existing.Status,
-					"agent_id", util.UUIDToString(existing.AgentID),
-				)
-				return &existing, nil
-			}
-			slog.Warn("complete task failed",
-				"task_id", util.UUIDToString(taskID),
-				"current_status", existing.Status,
-				"issue_id", util.UUIDToString(existing.IssueID),
-				"chat_session_id", util.UUIDToString(existing.ChatSessionID),
-				"agent_id", util.UUIDToString(existing.AgentID),
-				"error", err,
-			)
-		} else {
-			slog.Warn("complete task failed: task not found",
-				"task_id", util.UUIDToString(taskID),
-				"lookup_error", lookupErr,
-			)
-		}
-		return nil, fmt.Errorf("complete task: %w", err)
+		return s.handleTerminalTransitionError(ctx, "complete", taskID, terminalTransitioned, err)
 	}
 
 	slog.Info("task completed", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID))

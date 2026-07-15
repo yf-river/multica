@@ -232,7 +232,7 @@ func quickCreateSubscriberEvent(event events.Event, projection quickCreateProjec
 }
 
 func quickCreateInboxEvent(event events.Event, task db.AgentTaskQueue, item db.InboxItem, issueStatus string) events.Event {
-	response := inboxItemToResponse(item)
+	response := service.InboxItemEventFields(item)
 	response["issue_status"] = issueStatus
 	return events.Event{
 		Type:        protocol.EventInboxNew,

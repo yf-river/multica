@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -260,7 +261,7 @@ func emitAutopilotPausedNotifications(
 			WorkspaceID: workspaceID,
 			ActorType:   "system",
 			ActorID:     "",
-			Payload:     map[string]any{"item": inboxItemToResponse(item)},
+			Payload:     map[string]any{"item": service.InboxItemEventFields(item)},
 		})
 	}
 }

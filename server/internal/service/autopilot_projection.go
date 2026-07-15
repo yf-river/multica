@@ -94,11 +94,7 @@ func projectDirectAutopilotTask(ctx context.Context, queries *db.Queries, task d
 		})
 		return terminalAutopilotRunEvent(autopilot, updated, "completed", err)
 	case "failed", "cancelled":
-		reason := taskFailureReasonForAutopilotRun(task)
-		updated, err := queries.UpdateAutopilotRunFailed(ctx, db.UpdateAutopilotRunFailedParams{
-			ID:            run.ID,
-			FailureReason: pgtype.Text{String: reason, Valid: reason != ""},
-		})
+		updated, err := updateAutopilotRunFailed(ctx, queries, run.ID, task)
 		return terminalAutopilotRunEvent(autopilot, updated, "failed", err)
 	default:
 		return nil, nil
@@ -131,12 +127,16 @@ func projectLinkedIssueAutopilotTask(ctx context.Context, queries *db.Queries, t
 	if err != nil {
 		return nil, fmt.Errorf("load autopilot for linked issue run: %w", err)
 	}
+	updated, err := updateAutopilotRunFailed(ctx, queries, run.ID, task)
+	return terminalAutopilotRunEvent(autopilot, updated, "failed", err)
+}
+
+func updateAutopilotRunFailed(ctx context.Context, queries *db.Queries, runID pgtype.UUID, task db.AgentTaskQueue) (db.AutopilotRun, error) {
 	reason := taskFailureReasonForAutopilotRun(task)
-	updated, err := queries.UpdateAutopilotRunFailed(ctx, db.UpdateAutopilotRunFailedParams{
-		ID:            run.ID,
+	return queries.UpdateAutopilotRunFailed(ctx, db.UpdateAutopilotRunFailedParams{
+		ID:            runID,
 		FailureReason: pgtype.Text{String: reason, Valid: reason != ""},
 	})
-	return terminalAutopilotRunEvent(autopilot, updated, "failed", err)
 }
 
 func terminalAutopilotRunEvent(autopilot db.Autopilot, run db.AutopilotRun, status string, err error) (*events.Event, error) {

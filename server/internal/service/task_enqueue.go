@@ -28,15 +28,9 @@ func (s *TaskService) CreateIssueTaskInTx(
 		return db.AgentTaskQueue{}, fmt.Errorf("issue has no assignee")
 	}
 
-	agent, err := queries.GetAgent(ctx, issue.AssigneeID)
+	agent, err := loadRunnableAgent(ctx, queries, issue.AssigneeID)
 	if err != nil {
-		return db.AgentTaskQueue{}, fmt.Errorf("load agent: %w", err)
-	}
-	if agent.ArchivedAt.Valid {
-		return db.AgentTaskQueue{}, fmt.Errorf("agent is archived")
-	}
-	if !agent.RuntimeID.Valid {
-		return db.AgentTaskQueue{}, fmt.Errorf("agent has no runtime")
+		return db.AgentTaskQueue{}, err
 	}
 
 	task, err := queries.CreateAgentTask(ctx, db.CreateAgentTaskParams{
@@ -165,15 +159,9 @@ func (s *TaskService) CreateMentionTaskInTx(
 	isLeader bool,
 	forceFreshSession bool,
 ) (db.AgentTaskQueue, error) {
-	agent, err := queries.GetAgent(ctx, agentID)
+	agent, err := loadRunnableAgent(ctx, queries, agentID)
 	if err != nil {
-		return db.AgentTaskQueue{}, fmt.Errorf("load agent: %w", err)
-	}
-	if agent.ArchivedAt.Valid {
-		return db.AgentTaskQueue{}, fmt.Errorf("agent is archived")
-	}
-	if !agent.RuntimeID.Valid {
-		return db.AgentTaskQueue{}, fmt.Errorf("agent has no runtime")
+		return db.AgentTaskQueue{}, err
 	}
 
 	task, err := queries.CreateAgentTask(ctx, db.CreateAgentTaskParams{
@@ -204,6 +192,20 @@ func (s *TaskService) PublishMentionTaskEnqueued(ctx context.Context, task db.Ag
 	// dispatch observable before the queued event.
 	s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, task)
 	s.NotifyTaskEnqueued(ctx, task)
+}
+
+func loadRunnableAgent(ctx context.Context, queries *db.Queries, agentID pgtype.UUID) (db.Agent, error) {
+	agent, err := queries.GetAgent(ctx, agentID)
+	if err != nil {
+		return db.Agent{}, fmt.Errorf("load agent: %w", err)
+	}
+	if agent.ArchivedAt.Valid {
+		return db.Agent{}, errors.New("agent is archived")
+	}
+	if !agent.RuntimeID.Valid {
+		return db.Agent{}, errors.New("agent has no runtime")
+	}
+	return agent, nil
 }
 
 func (s *TaskService) createSquadSOPRunForLeaderTask(ctx context.Context, queries *db.Queries, issue db.Issue, task db.AgentTaskQueue) error {
@@ -406,15 +408,9 @@ func (s *TaskService) EnqueueQuickCreateTask(ctx context.Context, p EnqueueQuick
 	if strings.TrimSpace(p.RequestHash) == "" {
 		return db.AgentTaskQueue{}, fmt.Errorf("quick-create request hash is required")
 	}
-	agent, err := s.Queries.GetAgent(ctx, p.AgentID)
+	agent, err := loadRunnableAgent(ctx, s.Queries, p.AgentID)
 	if err != nil {
-		return db.AgentTaskQueue{}, fmt.Errorf("load agent: %w", err)
-	}
-	if agent.ArchivedAt.Valid {
-		return db.AgentTaskQueue{}, fmt.Errorf("agent is archived")
-	}
-	if !agent.RuntimeID.Valid {
-		return db.AgentTaskQueue{}, fmt.Errorf("agent has no runtime")
+		return db.AgentTaskQueue{}, err
 	}
 
 	payload := QuickCreateContext{

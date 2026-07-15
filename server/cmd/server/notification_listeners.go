@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -300,7 +301,7 @@ func notifyIssueSubscribers(
 		}
 
 		notified[subID] = true
-		resp := inboxItemToResponse(item)
+		resp := service.InboxItemEventFields(item)
 		resp["issue_status"] = issueStatus
 		bus.Publish(events.Event{
 			Type:        protocol.EventInboxNew,
@@ -366,7 +367,7 @@ func notifyDirect(
 		return err
 	}
 
-	resp := inboxItemToResponse(item)
+	resp := service.InboxItemEventFields(item)
 	resp["issue_status"] = issueStatus
 	bus.Publish(events.Event{
 		Type:        protocol.EventInboxNew,
@@ -480,7 +481,7 @@ func notifyMentionedMembers(
 		if err != nil {
 			return err
 		}
-		resp := inboxItemToResponse(item)
+		resp := service.InboxItemEventFields(item)
 		resp["issue_status"] = issueStatus
 		bus.Publish(events.Event{
 			Type:        protocol.EventInboxNew,
@@ -695,27 +696,5 @@ func projectTaskFailedNotifications(ctx context.Context, queries *db.Queries, ev
 func setAnyOptionalDetail(details map[string]any, key string, value *string) {
 	if value != nil {
 		details[key] = *value
-	}
-}
-
-// inboxItemToResponse converts a db.InboxItem into a map suitable for
-// JSON-serializable event payloads (mirrors handler.inboxToResponse fields).
-func inboxItemToResponse(item db.InboxItem) map[string]any {
-	return map[string]any{
-		"id":             util.UUIDToString(item.ID),
-		"workspace_id":   util.UUIDToString(item.WorkspaceID),
-		"recipient_type": item.RecipientType,
-		"recipient_id":   util.UUIDToString(item.RecipientID),
-		"type":           item.Type,
-		"severity":       item.Severity,
-		"issue_id":       util.UUIDToPtr(item.IssueID),
-		"title":          item.Title,
-		"body":           util.TextToPtr(item.Body),
-		"read":           item.Read,
-		"archived":       item.Archived,
-		"created_at":     util.TimestampToString(item.CreatedAt),
-		"actor_type":     util.TextToPtr(item.ActorType),
-		"actor_id":       util.UUIDToPtr(item.ActorID),
-		"details":        json.RawMessage(item.Details),
 	}
 }
