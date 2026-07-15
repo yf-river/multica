@@ -1,51 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { mockIssue, wrapIssueActionsMenu } from "./issue-actions-test-helpers";
+import { mockOpenModal } from "./issue-actions-test-mocks";
 
 // ---------------------------------------------------------------------------
 // Mocks — same pattern as the issue-detail test suite.
 // ---------------------------------------------------------------------------
-
-const mockOpenModal = vi.fn();
-vi.mock("@multica/core/modals", () => ({
-  useModalStore: Object.assign(
-    (selector?: any) => {
-      const state = { open: mockOpenModal };
-      return selector ? selector(state) : state;
-    },
-    { getState: () => ({ open: mockOpenModal }) },
-  ),
-}));
-
-const mockAuthState = { user: { id: "user-1" }, isAuthenticated: true };
-vi.mock("@multica/core/auth", () => ({
-  useAuthStore: Object.assign(
-    (selector?: any) => (selector ? selector(mockAuthState) : mockAuthState),
-    { getState: () => mockAuthState },
-  ),
-}));
-
-vi.mock("@multica/core/workspace/queries", () => ({
-  memberListOptions: () => ({
-    queryKey: ["workspaces", "ws-1", "members"],
-    queryFn: () =>
-      Promise.resolve([
-        { user_id: "user-1", name: "Test User", account: "test", role: "admin" },
-      ]),
-  }),
-  agentListOptions: () => ({
-    queryKey: ["workspaces", "ws-1", "agents"],
-    queryFn: () => Promise.resolve([]),
-  }),
-  squadListOptions: () => ({
-    queryKey: ["workspaces", "ws-1", "squads"],
-    queryFn: () => Promise.resolve([]),
-  }),
-  assigneeFrequencyOptions: () => ({
-    queryKey: ["workspaces", "ws-1", "assignee-frequency"],
-    queryFn: () => Promise.resolve([]),
-  }),
-}));
 
 vi.mock("@multica/core/workspace/hooks", () => ({
   useActorName: () => ({ getActorName: (_t: string, _id: string) => "" }),
@@ -62,32 +22,6 @@ vi.mock("@multica/core/pins", () => ({
 
 vi.mock("@multica/core/issues/mutations", () => ({
   useUpdateIssue: () => ({ mutate: vi.fn() }),
-}));
-
-vi.mock("@multica/core/paths", async () => {
-  const actual = await vi.importActual<typeof import("@multica/core/paths")>(
-    "@multica/core/paths",
-  );
-  return {
-    ...actual,
-    useWorkspaceId: () => "ws-1",
-    useCurrentWorkspace: () => ({ id: "ws-1", name: "Test", slug: "test" }),
-    useWorkspacePaths: () => actual.paths.workspace("test"),
-  };
-});
-
-vi.mock("../../../navigation", () => ({
-  useNavigation: () => ({
-    push: vi.fn(),
-    pathname: "/test/issues/issue-1",
-    searchParams: new URLSearchParams(),
-    back: vi.fn(),
-    replace: vi.fn(),
-  }),
-}));
-
-vi.mock("sonner", () => ({
-  toast: { success: vi.fn(), error: vi.fn() },
 }));
 
 vi.mock("../../../common/actor-avatar", () => ({

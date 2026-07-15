@@ -1,7 +1,6 @@
 import type { ReactNode } from "react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Issue } from "@multica/core/types";
-import { TestI18nProvider } from "../../../test/i18n";
+import { IssueTestProviders } from "../../test/issue-test-providers";
 
 export const mockIssue: Issue = {
   id: "issue-1",
@@ -29,12 +28,7 @@ export function IssueActionsQueryProvider({
 }: {
   children: ReactNode;
 }) {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return (
-    <TestI18nProvider>
-      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-    </TestI18nProvider>
-  );
+  return <IssueTestProviders>{children}</IssueTestProviders>;
 }
 
 export function wrapIssueActionsMenu(ui: ReactNode) {

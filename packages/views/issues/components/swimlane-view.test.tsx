@@ -1,13 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { screen, fireEvent, act, waitFor } from "@testing-library/react";
 import { SwimLaneView } from "./swimlane-view";
 import type { Issue } from "@multica/core/types";
-import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../locales/zh-Hans/common.json";
-import enIssues from "../../locales/zh-Hans/issues.json";
-
-const TEST_RESOURCES = { "zh-Hans": { common: enCommon, issues: enIssues } };
+import { renderIssueTest } from "../test/issue-test-providers";
 
 // Mock the API so childrenByParentsOptions doesn't fire real HTTP.
 // Individual tests can override listChildrenByParents via mockResolvedValueOnce.
@@ -55,6 +50,16 @@ vi.mock("@multica/core/projects/queries", () => ({
     queryFn: () => Promise.resolve([]),
   }),
 }));
+
+vi.mock("../../navigation", () => ({
+  AppLink: ({ children, href, ...props }: any) => (
+    <a href={href} {...props}>
+      {children}
+    </a>
+  ),
+  useNavigation: () => ({ push: vi.fn(), pathname: "/issues" }),
+  NavigationProvider: ({ children }: { children: React.ReactNode }) => children,
+}));
 const { mockActorNameResult } = vi.hoisted(() => ({
   mockActorNameResult: {
     getActorName: (_type: string, _id: string) => "模拟负责人",
@@ -66,7 +71,6 @@ vi.mock("@multica/core/workspace/hooks", () => ({
   useActorName: () => mockActorNameResult,
 }));
 
-// Mock @multica/core/auth
 const mockAuthUser = { id: "user-1", account: "test", name: "Test User" };
 vi.mock("@multica/core/auth", () => ({
   useAuthStore: Object.assign(
@@ -76,17 +80,6 @@ vi.mock("@multica/core/auth", () => ({
     },
     { getState: () => ({ user: mockAuthUser, isAuthenticated: true }) },
   ),
-}));
-
-// Mock navigation
-vi.mock("../../navigation", () => ({
-  AppLink: ({ children, href, ...props }: any) => (
-    <a href={href} {...props}>
-      {children}
-    </a>
-  ),
-  useNavigation: () => ({ push: vi.fn(), pathname: "/issues" }),
-  NavigationProvider: ({ children }: { children: React.ReactNode }) => children,
 }));
 
 // Mock issue config
@@ -310,16 +303,7 @@ const mockIssues: Issue[] = [
 ];
 
 function renderWithI18n(ui: React.ReactNode) {
-  const qc = new QueryClient({
-    defaultOptions: { queries: { retry: false, gcTime: 0 } },
-  });
-  return render(
-    <QueryClientProvider client={qc}>
-      <I18nProvider resources={TEST_RESOURCES} locale="zh-Hans">
-        {ui}
-      </I18nProvider>
-    </QueryClientProvider>,
-  );
+  return renderIssueTest(ui as React.ReactElement);
 }
 
 describe("SwimLaneView", () => {

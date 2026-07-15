@@ -5,25 +5,7 @@ import {
   IssueActionsQueryProvider,
   mockIssue,
 } from "./issue-actions-test-helpers";
-
-const mockOpenModal = vi.fn();
-vi.mock("@multica/core/modals", () => ({
-  useModalStore: Object.assign(
-    (selector?: any) => {
-      const state = { open: mockOpenModal };
-      return selector ? selector(state) : state;
-    },
-    { getState: () => ({ open: mockOpenModal }) },
-  ),
-}));
-
-const mockAuthState = { user: { id: "user-1" }, isAuthenticated: true };
-vi.mock("@multica/core/auth", () => ({
-  useAuthStore: Object.assign(
-    (selector?: any) => (selector ? selector(mockAuthState) : mockAuthState),
-    { getState: () => mockAuthState },
-  ),
-}));
+import { mockOpenModal } from "./issue-actions-test-mocks";
 
 // Mutable so individual tests can seed the pin list.
 const pinListRef: { value: Array<{ item_type: string; item_id: string }> } = {
@@ -43,33 +25,6 @@ vi.mock("@multica/core/pins", () => ({
 const mockUpdateMutate = vi.fn();
 vi.mock("@multica/core/issues/mutations", () => ({
   useUpdateIssue: () => ({ mutate: mockUpdateMutate }),
-}));
-
-vi.mock("@multica/core/paths", async () => {
-  const actual = await vi.importActual<typeof import("@multica/core/paths")>(
-    "@multica/core/paths",
-  );
-  return {
-    ...actual,
-    useWorkspaceId: () => "ws-1",
-    useCurrentWorkspace: () => ({ id: "ws-1", name: "Test", slug: "test" }),
-    useWorkspacePaths: () => actual.paths.workspace("test"),
-  };
-});
-
-vi.mock("../../../navigation", () => ({
-  useNavigation: () => ({
-    push: vi.fn(),
-    pathname: "/test/issues/issue-1",
-    searchParams: new URLSearchParams(),
-    back: vi.fn(),
-    replace: vi.fn(),
-    getShareableUrl: (p: string) => `https://app.multica.com${p}`,
-  }),
-}));
-
-vi.mock("sonner", () => ({
-  toast: { success: vi.fn(), error: vi.fn() },
 }));
 
 // Import AFTER mocks are registered.

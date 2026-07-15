@@ -1,13 +1,14 @@
 import { forwardRef, useRef, useState, useImperativeHandle } from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { fireEvent, screen, waitFor, within } from "@testing-library/react";
 import type { Issue, TimelineEntry } from "@multica/core/types";
-import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../locales/zh-Hans/common.json";
-import enIssues from "../../locales/zh-Hans/issues.json";
-
-const TEST_RESOURCES = { "zh-Hans": { common: enCommon, issues: enIssues } };
+import {
+  createIssueTestQueryClient,
+  renderIssueTest,
+} from "../test/issue-test-providers";
+import "../test/current-issue-boundary-mocks";
+import "../test/current-issue-config-mock";
+import "../test/current-workspace-query-mock";
 
 const mockViewport = vi.hoisted(() => ({ isMobile: false }));
 
@@ -18,18 +19,6 @@ vi.mock("@multica/ui/hooks/use-mobile", () => ({
 // ---------------------------------------------------------------------------
 // Mocks
 // ---------------------------------------------------------------------------
-
-// Mock @multica/core/auth
-const mockAuthUser = { id: "user-1", account: "test", name: "Test User" };
-vi.mock("@multica/core/auth", () => ({
-  useAuthStore: Object.assign(
-    (selector?: any) => {
-      const state = { user: mockAuthUser, isAuthenticated: true };
-      return selector ? selector(state) : state;
-    },
-    { getState: () => ({ user: mockAuthUser, isAuthenticated: true }) },
-  ),
-}));
 
 // Mock @multica/core/workspace/hooks
 vi.mock("@multica/core/workspace/hooks", () => ({
@@ -43,45 +32,6 @@ vi.mock("@multica/core/workspace/hooks", () => ({
     getActorAvatarUrl: () => null,
   }),
 }));
-
-// Mock workspace queries
-vi.mock("@multica/core/workspace/queries", () => ({
-  memberListOptions: () => ({
-    queryKey: ["workspaces", "ws-1", "members"],
-    queryFn: () => Promise.resolve([{ user_id: "user-1", name: "Test User", account: "test", role: "admin" }]),
-  }),
-  agentListOptions: () => ({
-    queryKey: ["workspaces", "ws-1", "agents"],
-    queryFn: () => Promise.resolve([]),
-  }),
-  squadListOptions: () => ({
-    queryKey: ["workspaces", "ws-1", "squads"],
-    queryFn: () => Promise.resolve([]),
-  }),
-  assigneeFrequencyOptions: () => ({
-    queryKey: ["workspaces", "ws-1", "assignee-frequency"],
-    queryFn: () => Promise.resolve([]),
-  }),
-  workspaceListOptions: () => ({
-    queryKey: ["workspaces"],
-    queryFn: () => Promise.resolve([{ id: "ws-1", name: "Test WS", slug: "test" }]),
-  }),
-}));
-
-// Mock @multica/core/paths — after the URL-driven workspace refactor,
-// useCurrentWorkspace / useWorkspacePaths derive from the workspace slug in
-// URL Context. Tests don't mount a real route, so we short-circuit to fixtures.
-vi.mock("@multica/core/paths", async () => {
-  const actual = await vi.importActual<typeof import("@multica/core/paths")>(
-    "@multica/core/paths",
-  );
-  return {
-    ...actual,
-    useWorkspaceId: () => "ws-1",
-    useCurrentWorkspace: () => ({ id: "ws-1", name: "Test WS", slug: "test" }),
-    useWorkspacePaths: () => actual.paths.workspace("test"),
-  };
-});
 
 // Mock navigation
 vi.mock("../../navigation", () => ({
@@ -203,30 +153,6 @@ vi.mock("@multica/core/api", () => ({
   api: mockApiObj,
   getApi: () => mockApiObj,
   setApiInstance: vi.fn(),
-}));
-
-// Mock issue config
-vi.mock("@multica/core/issues/config", () => ({
-  ALL_STATUSES: ["backlog", "todo", "in_progress", "in_review", "done", "blocked", "cancelled"],
-  BOARD_STATUSES: ["backlog", "todo", "in_progress", "in_review", "done", "blocked"],
-  STATUS_ORDER: ["backlog", "todo", "in_progress", "in_review", "done", "blocked", "cancelled"],
-  STATUS_CONFIG: {
-    backlog: { label: "待办池", iconColor: "text-muted-foreground", hoverBg: "hover:bg-accent" },
-    todo: { label: "待处理", iconColor: "text-muted-foreground", hoverBg: "hover:bg-accent" },
-    in_progress: { label: "进行中", iconColor: "text-warning", hoverBg: "hover:bg-warning/10" },
-    in_review: { label: "评审中", iconColor: "text-success", hoverBg: "hover:bg-success/10" },
-    done: { label: "已完成", iconColor: "text-info", hoverBg: "hover:bg-info/10" },
-    blocked: { label: "已阻塞", iconColor: "text-destructive", hoverBg: "hover:bg-destructive/10" },
-    cancelled: { label: "已取消", iconColor: "text-muted-foreground", hoverBg: "hover:bg-accent" },
-  },
-  PRIORITY_ORDER: ["urgent", "high", "medium", "low", "none"],
-  PRIORITY_CONFIG: {
-    urgent: { label: "Urgent", bars: 4, color: "text-destructive", badgeBg: "bg-destructive/10", badgeText: "text-destructive" },
-    high: { label: "High", bars: 3, color: "text-warning", badgeBg: "bg-warning/10", badgeText: "text-warning" },
-    medium: { label: "Medium", bars: 2, color: "text-warning", badgeBg: "bg-warning/10", badgeText: "text-warning" },
-    low: { label: "Low", bars: 1, color: "text-info", badgeBg: "bg-info/10", badgeText: "text-info" },
-    none: { label: "No priority", bars: 0, color: "text-muted-foreground", badgeBg: "bg-muted", badgeText: "text-muted-foreground" },
-  },
 }));
 
 vi.mock("@multica/core/issues/stores", () => ({
@@ -412,24 +338,8 @@ import { IssueDetail } from "./issue-detail";
 // Helpers
 // ---------------------------------------------------------------------------
 
-function createTestQueryClient() {
-  return new QueryClient({
-    defaultOptions: {
-      queries: { retry: false, gcTime: 0 },
-      mutations: { retry: false },
-    },
-  });
-}
-
 function renderIssueDetail(issueId = "issue-1") {
-  const queryClient = createTestQueryClient();
-  return render(
-    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
-      <QueryClientProvider client={queryClient}>
-        <IssueDetail issueId={issueId} />
-      </QueryClientProvider>
-    </I18nProvider>,
-  );
+  return renderIssueTest(<IssueDetail issueId={issueId} />);
 }
 
 function renderIssueDetailWithHighlight(
@@ -437,7 +347,7 @@ function renderIssueDetailWithHighlight(
   issueId = "issue-1",
   options: { seedTimeline?: boolean } = {},
 ) {
-  const queryClient = createTestQueryClient();
+  const queryClient = createIssueTestQueryClient();
   if (options.seedTimeline) {
     // Pre-populate the timeline cache so the first render sees timeline.length>0.
     // This reproduces the inbox-click race: timeline data is available before
@@ -446,14 +356,10 @@ function renderIssueDetailWithHighlight(
     // no comment DOM) and must re-fire when `loading` flips to false.
     queryClient.setQueryData(["issues", "timeline", issueId], mockTimeline);
   }
-  const result = render(
-    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
-      <QueryClientProvider client={queryClient}>
-        <IssueDetail issueId={issueId} highlightCommentId={highlightCommentId} />
-      </QueryClientProvider>
-    </I18nProvider>,
+  return renderIssueTest(
+    <IssueDetail issueId={issueId} highlightCommentId={highlightCommentId} />,
+    queryClient,
   );
-  return { ...result, queryClient };
 }
 
 // ---------------------------------------------------------------------------
@@ -1246,13 +1152,8 @@ describe("IssueDetail (shared)", () => {
       ];
       mockApiObj.listTimeline.mockResolvedValue(timelineWithResolvedThread);
 
-      const queryClient = createTestQueryClient();
-      render(
-        <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
-          <QueryClientProvider client={queryClient}>
-            <IssueDetail issueId="issue-1" highlightCommentId="reply-1" />
-          </QueryClientProvider>
-        </I18nProvider>,
+      renderIssueTest(
+        <IssueDetail issueId="issue-1" highlightCommentId="reply-1" />,
       );
 
       // After expansion, the reply must appear in the DOM (inside the now
