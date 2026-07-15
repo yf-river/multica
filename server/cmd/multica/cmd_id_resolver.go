@@ -313,10 +313,6 @@ func fetchTaskRunCandidatesForIssue(ctx context.Context, client *cli.APIClient, 
 }
 
 func resolveAutopilotTriggerID(ctx context.Context, client *cli.APIClient, autopilotID, input string) (resolvedID, error) {
-	trimmed := strings.TrimSpace(input)
-	if uuidRegexp.MatchString(trimmed) {
-		return resolvedID{ID: trimmed, Display: trimmed}, nil
-	}
 	fetch := func(ctx context.Context, client *cli.APIClient) ([]idCandidate, error) {
 		var resp map[string]any
 		if err := client.GetJSON(ctx, "/api/autopilots/"+url.PathEscape(autopilotID), &resp); err != nil {
@@ -446,12 +442,12 @@ func loadActorDisplayLookup(ctx context.Context, client *cli.APIClient) actorDis
 }
 
 func (l actorDisplayLookup) loadMembers() {
-	if l.state == nil || l.state.membersLoaded {
+	if l.state.membersLoaded {
 		return
 	}
 	l.state.membersLoaded = true
 	l.state.members = map[string]string{}
-	if l.client == nil || l.client.WorkspaceID == "" {
+	if l.client.WorkspaceID == "" {
 		return
 	}
 	var members []map[string]any
@@ -465,12 +461,12 @@ func (l actorDisplayLookup) loadMembers() {
 }
 
 func (l actorDisplayLookup) loadAgents() {
-	if l.state == nil || l.state.agentsLoaded {
+	if l.state.agentsLoaded {
 		return
 	}
 	l.state.agentsLoaded = true
 	l.state.agents = map[string]string{}
-	if l.client == nil || l.client.WorkspaceID == "" {
+	if l.client.WorkspaceID == "" {
 		return
 	}
 	var agents []map[string]any
@@ -485,12 +481,12 @@ func (l actorDisplayLookup) loadAgents() {
 }
 
 func (l actorDisplayLookup) loadSquads() {
-	if l.state == nil || l.state.squadsLoaded {
+	if l.state.squadsLoaded {
 		return
 	}
 	l.state.squadsLoaded = true
 	l.state.squads = map[string]string{}
-	if l.client == nil || l.client.WorkspaceID == "" {
+	if l.client.WorkspaceID == "" {
 		return
 	}
 	var squads []map[string]any
@@ -510,24 +506,18 @@ func (l actorDisplayLookup) actor(actorType, id string) string {
 	switch actorType {
 	case "member":
 		l.loadMembers()
-		if l.state != nil && l.state.members != nil {
-			if name := l.state.members[id]; name != "" {
-				return "member:" + name
-			}
+		if name := l.state.members[id]; name != "" {
+			return "member:" + name
 		}
 	case "agent":
 		l.loadAgents()
-		if l.state != nil && l.state.agents != nil {
-			if name := l.state.agents[id]; name != "" {
-				return "agent:" + name
-			}
+		if name := l.state.agents[id]; name != "" {
+			return "agent:" + name
 		}
 	case "squad":
 		l.loadSquads()
-		if l.state != nil && l.state.squads != nil {
-			if name := l.state.squads[id]; name != "" {
-				return "squad:" + name
-			}
+		if name := l.state.squads[id]; name != "" {
+			return "squad:" + name
 		}
 	}
 	return actorType + ":" + id
@@ -538,10 +528,8 @@ func (l actorDisplayLookup) agent(id string) string {
 		return ""
 	}
 	l.loadAgents()
-	if l.state != nil && l.state.agents != nil {
-		if name := l.state.agents[id]; name != "" {
-			return name
-		}
+	if name := l.state.agents[id]; name != "" {
+		return name
 	}
 	return id
 }
