@@ -20,7 +20,7 @@ func loadSquadAgent(
 		WorkspaceID: workspaceID,
 	})
 	if err != nil {
-		writeValidationLookupError(w, r, err, invalidMessage, "squad agent", "agent_id", uuidToString(agentID))
+		writeValidationLookupError(w, err, invalidMessage, "squad agent", "agent_id", uuidToString(agentID))
 		return db.Agent{}, false
 	}
 	return agent, true
@@ -33,14 +33,14 @@ func loadSquadMember(
 	workspaceID pgtype.UUID,
 	userID pgtype.UUID,
 	invalidMessage string,
-) (db.Member, bool) {
-	member, err := queries.GetMemberByUserAndWorkspace(r.Context(), db.GetMemberByUserAndWorkspaceParams{
+) bool {
+	_, err := queries.GetMemberByUserAndWorkspace(r.Context(), db.GetMemberByUserAndWorkspaceParams{
 		UserID:      userID,
 		WorkspaceID: workspaceID,
 	})
 	if err != nil {
-		writeValidationLookupError(w, r, err, invalidMessage, "squad member", "user_id", uuidToString(userID))
-		return db.Member{}, false
+		writeValidationLookupError(w, err, invalidMessage, "squad member", "user_id", uuidToString(userID))
+		return false
 	}
-	return member, true
+	return true
 }

@@ -26,11 +26,9 @@ func TestWriteValidationLookupErrorPreservesFailureClass(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			t.Parallel()
 			w := httptest.NewRecorder()
-			r := httptest.NewRequest(http.MethodPost, "/api/prompt-evaluation-assets/run", nil)
 
 			writeValidationLookupError(
 				w,
-				r,
 				test.err,
 				"prompt_id does not belong to this workspace",
 				"prompt",

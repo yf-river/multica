@@ -572,7 +572,7 @@ func (h *Handler) CancelTask(w http.ResponseWriter, r *http.Request) {
 	}
 	existing, err := h.Queries.GetAgentTask(r.Context(), taskUUID)
 	if err != nil {
-		writeEntityLoadError(w, r, err, "task", "task_id", taskID)
+		writeEntityLoadError(w, err, "task", "task_id", taskID)
 		return
 	}
 	if uuidToString(existing.IssueID) != uuidToString(issue.ID) {
@@ -621,7 +621,7 @@ func (h *Handler) ListTaskMessagesByUser(w http.ResponseWriter, r *http.Request)
 
 	task, err := h.Queries.GetAgentTask(r.Context(), taskUUID)
 	if err != nil {
-		writeEntityLoadError(w, r, err, "task", "task_id", taskID)
+		writeEntityLoadError(w, err, "task", "task_id", taskID)
 		return
 	}
 

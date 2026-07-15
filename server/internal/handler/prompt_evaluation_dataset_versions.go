@@ -224,11 +224,11 @@ func (h *Handler) ListPromptEvaluationDatasetVersionTagTrends(w http.ResponseWri
 		writeError(w, http.StatusBadRequest, "only 数据集 assets have version tag trends")
 		return
 	}
-	limitValue, ok := parseBoundedInt32OrBadRequest(w, strings.TrimSpace(r.URL.Query().Get("limit")), "limit", 200, 1, 500)
+	limitValue, ok := parseBoundedInt32OrBadRequest(w, strings.TrimSpace(r.URL.Query().Get("limit")), "limit", 200, 500)
 	if !ok {
 		return
 	}
-	versionLimitValue, ok := parseBoundedInt32OrBadRequest(w, strings.TrimSpace(r.URL.Query().Get("version_limit")), "version_limit", 20, 1, 100)
+	versionLimitValue, ok := parseBoundedInt32OrBadRequest(w, strings.TrimSpace(r.URL.Query().Get("version_limit")), "version_limit", 20, 100)
 	if !ok {
 		return
 	}

@@ -215,7 +215,7 @@ func (h *Handler) loadProjectForRequest(w http.ResponseWriter, r *http.Request, 
 		ID: idUUID, WorkspaceID: wsUUID,
 	})
 	if err != nil {
-		writeEntityLoadError(w, r, err, "project", "project_id", id)
+		writeEntityLoadError(w, err, "project", "project_id", id)
 		return db.Project{}, false
 	}
 	return project, true

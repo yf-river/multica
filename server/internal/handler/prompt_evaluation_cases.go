@@ -249,7 +249,7 @@ func (h *Handler) ListPromptEvaluationCaseTagSummaries(w http.ResponseWriter, r 
 	if !ok {
 		return
 	}
-	limitValue, ok := parseBoundedInt32OrBadRequest(w, strings.TrimSpace(r.URL.Query().Get("limit")), "limit", 50, 1, 200)
+	limitValue, ok := parseBoundedInt32OrBadRequest(w, strings.TrimSpace(r.URL.Query().Get("limit")), "limit", 50, 200)
 	if !ok {
 		return
 	}
@@ -288,11 +288,11 @@ func (h *Handler) ListPromptEvaluationCaseTagDatasetSummaries(w http.ResponseWri
 	if !ok {
 		return
 	}
-	limitValue, ok := parseBoundedInt32OrBadRequest(w, strings.TrimSpace(r.URL.Query().Get("limit")), "limit", 20, 1, 100)
+	limitValue, ok := parseBoundedInt32OrBadRequest(w, strings.TrimSpace(r.URL.Query().Get("limit")), "limit", 20, 100)
 	if !ok {
 		return
 	}
-	topDatasetLimitValue, ok := parseBoundedInt32OrBadRequest(w, strings.TrimSpace(r.URL.Query().Get("top_dataset_limit")), "top_dataset_limit", 3, 1, 10)
+	topDatasetLimitValue, ok := parseBoundedInt32OrBadRequest(w, strings.TrimSpace(r.URL.Query().Get("top_dataset_limit")), "top_dataset_limit", 3, 10)
 	if !ok {
 		return
 	}
@@ -347,7 +347,7 @@ func (h *Handler) ListPromptEvaluationCaseOperations(w http.ResponseWriter, r *h
 		return
 	}
 	rawLimit := strings.TrimSpace(r.URL.Query().Get("limit"))
-	limitValue, ok := parseBoundedInt32OrBadRequest(w, rawLimit, "limit", 0, 1, 100)
+	limitValue, ok := parseBoundedInt32OrBadRequest(w, rawLimit, "limit", 0, 100)
 	if !ok {
 		return
 	}
@@ -791,7 +791,7 @@ func (h *Handler) ListPromptEvaluationDimensionScoreTrends(w http.ResponseWriter
 	if !ok {
 		return
 	}
-	since, ok := parseRFC3339OrBadRequest(w, r.URL.Query().Get("since"), "since")
+	since, ok := parseRFC3339OrBadRequest(w, r.URL.Query().Get("since"))
 	if !ok {
 		return
 	}
@@ -849,7 +849,7 @@ func (h *Handler) CreatePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 	}
 	asset, err := h.Queries.GetPromptEvaluationAssetInWorkspace(r.Context(), db.GetPromptEvaluationAssetInWorkspaceParams{ID: assetID, WorkspaceID: workspaceUUID})
 	if err != nil {
-		writeValidationLookupError(w, r, err, "asset_id does not belong to this workspace", "evaluation asset", "asset_id", uuidToString(assetID))
+		writeValidationLookupError(w, err, "asset_id does not belong to this workspace", "evaluation asset", "asset_id", uuidToString(assetID))
 		return
 	}
 	promptID, ok := h.promptEvaluationPromptID(w, r, workspaceUUID, req.PromptID, asset.PromptID)
@@ -1145,7 +1145,7 @@ func (h *Handler) UpdatePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 	}
 	asset, err := h.Queries.GetPromptEvaluationAssetInWorkspace(r.Context(), db.GetPromptEvaluationAssetInWorkspaceParams{ID: assetID, WorkspaceID: workspaceUUID})
 	if err != nil {
-		writeValidationLookupError(w, r, err, "asset_id does not belong to this workspace", "evaluation asset", "asset_id", uuidToString(assetID))
+		writeValidationLookupError(w, err, "asset_id does not belong to this workspace", "evaluation asset", "asset_id", uuidToString(assetID))
 		return
 	}
 	promptID, ok := h.promptEvaluationPromptID(w, r, workspaceUUID, req.PromptID, current.PromptID)

@@ -116,7 +116,7 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 		WorkspaceID: wsUUID,
 	})
 	if err != nil {
-		writeEntityLoadError(w, r, err, "agent", "agent_id", uuidToString(agentUUID))
+		writeEntityLoadError(w, err, "agent", "agent_id", uuidToString(agentUUID))
 		return
 	}
 	if !agent.RuntimeID.Valid {

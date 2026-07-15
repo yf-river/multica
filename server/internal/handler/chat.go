@@ -228,7 +228,7 @@ func (h *Handler) loadChatSessionForUser(w http.ResponseWriter, r *http.Request,
 		WorkspaceID: workspaceUUID,
 	})
 	if err != nil {
-		writeEntityLoadError(w, r, err, "chat session", "session_id", sessionID)
+		writeEntityLoadError(w, err, "chat session", "session_id", sessionID)
 		return db.ChatSession{}, false
 	}
 	if uuidToString(session.CreatorID) != scope.userID {
@@ -250,7 +250,7 @@ func (h *Handler) gateChatSessionForUser(w http.ResponseWriter, r *http.Request,
 	}
 	agent, err := h.Queries.GetAgent(r.Context(), session.AgentID)
 	if err != nil {
-		writeEntityLoadError(w, r, err, "agent", "agent_id", uuidToString(session.AgentID))
+		writeEntityLoadError(w, err, "agent", "agent_id", uuidToString(session.AgentID))
 		return db.ChatSession{}, false
 	}
 	actorType, actorID := resolveActor(r, scope.userID)
@@ -326,7 +326,7 @@ func (h *Handler) UpdateChatSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resolvedSessionID := uuidToString(updated.ID)
-	h.publishChat(protocol.EventChatSessionUpdated, scope.workspaceID, "member", scope.userID, resolvedSessionID, protocol.ChatSessionUpdatedPayload{
+	h.publishChat(protocol.EventChatSessionUpdated, scope.workspaceID, scope.userID, resolvedSessionID, protocol.ChatSessionUpdatedPayload{
 		ChatSessionID: resolvedSessionID,
 		Title:         updated.Title,
 		UpdatedAt:     timestampToString(updated.UpdatedAt),
@@ -410,7 +410,7 @@ func (h *Handler) DeleteChatSession(w http.ResponseWriter, r *http.Request) {
 	h.TaskService.NotifyCancelledTasks(r.Context(), cancelled, cancelledEvents)
 
 	resolvedSessionID := uuidToString(session.ID)
-	h.publishChat(protocol.EventChatSessionDeleted, scope.workspaceID, "member", scope.userID, resolvedSessionID, protocol.ChatSessionDeletedPayload{
+	h.publishChat(protocol.EventChatSessionDeleted, scope.workspaceID, scope.userID, resolvedSessionID, protocol.ChatSessionDeletedPayload{
 		ChatSessionID: resolvedSessionID,
 	})
 
@@ -673,7 +673,7 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 
 	// Broadcast the user message.
 	resolvedSessionID := uuidToString(lockedSession.ID)
-	h.publishChat(protocol.EventChatMessage, requestScope.workspaceID, "member", requestScope.userID, resolvedSessionID, protocol.ChatMessagePayload{
+	h.publishChat(protocol.EventChatMessage, requestScope.workspaceID, requestScope.userID, resolvedSessionID, protocol.ChatMessagePayload{
 		ChatSessionID: resolvedSessionID,
 		MessageID:     uuidToString(msg.ID),
 		Role:          "user",
@@ -818,7 +818,7 @@ func (h *Handler) MarkChatSessionRead(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resolvedSessionID := uuidToString(session.ID)
-	h.publishChat(protocol.EventChatSessionRead, scope.workspaceID, "member", scope.userID, resolvedSessionID, protocol.ChatSessionReadPayload{
+	h.publishChat(protocol.EventChatSessionRead, scope.workspaceID, scope.userID, resolvedSessionID, protocol.ChatSessionReadPayload{
 		ChatSessionID: resolvedSessionID,
 	})
 
@@ -984,7 +984,7 @@ func (h *Handler) CancelTaskByUser(w http.ResponseWriter, r *http.Request) {
 		WorkspaceID: workspaceUUID,
 	})
 	if err != nil {
-		writeEntityLoadError(w, r, err, "task", "task_id", taskID)
+		writeEntityLoadError(w, err, "task", "task_id", taskID)
 		return
 	}
 
@@ -996,7 +996,7 @@ func (h *Handler) CancelTaskByUser(w http.ResponseWriter, r *http.Request) {
 			WorkspaceID: workspaceUUID,
 		})
 		if err != nil {
-			writeEntityLoadError(w, r, err, "task", "task_id", taskID, "chat_session_id", uuidToString(task.ChatSessionID))
+			writeEntityLoadError(w, err, "task", "task_id", taskID, "chat_session_id", uuidToString(task.ChatSessionID))
 			return
 		}
 		if uuidToString(cs.CreatorID) != scope.userID {
@@ -1012,7 +1012,7 @@ func (h *Handler) CancelTaskByUser(w http.ResponseWriter, r *http.Request) {
 			WorkspaceID: workspaceUUID,
 		})
 		if err != nil {
-			writeEntityLoadError(w, r, err, "task", "task_id", taskID, "agent_id", uuidToString(task.AgentID))
+			writeEntityLoadError(w, err, "task", "task_id", taskID, "agent_id", uuidToString(task.AgentID))
 			return
 		}
 		actorType, actorID := resolveActor(r, scope.userID)

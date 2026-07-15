@@ -52,7 +52,6 @@ func consumeIssueReactionNotification(ctx context.Context, queries *db.Queries, 
 		"reaction_added",
 		"info",
 		issue.Title,
-		"",
 		details,
 	); err != nil {
 		return nil, fmt.Errorf("notify issue reaction recipient: %w", err)
@@ -115,7 +114,6 @@ func consumeCommentReactionNotification(ctx context.Context, queries *db.Queries
 		"reaction_added",
 		"info",
 		issue.Title,
-		"",
 		details,
 	); err != nil {
 		return nil, fmt.Errorf("notify comment reaction recipient: %w", err)

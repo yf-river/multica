@@ -1053,7 +1053,7 @@ func (h *Handler) RunPromptEvaluationAsset(w http.ResponseWriter, r *http.Reques
 		WorkspaceID: asset.WorkspaceID,
 	})
 	if err != nil {
-		writeValidationLookupError(w, r, err, "prompt_id does not belong to this workspace", "prompt", "prompt_id", uuidToString(asset.PromptID))
+		writeValidationLookupError(w, err, "prompt_id does not belong to this workspace", "prompt", "prompt_id", uuidToString(asset.PromptID))
 		return
 	}
 	payload := decodePayloadObject(asset.Payload)
@@ -1169,7 +1169,7 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 		WorkspaceID: asset.WorkspaceID,
 	})
 	if err != nil {
-		writeValidationLookupError(w, r, err, "prompt_id does not belong to this workspace", "prompt", "prompt_id", uuidToString(asset.PromptID))
+		writeValidationLookupError(w, err, "prompt_id does not belong to this workspace", "prompt", "prompt_id", uuidToString(asset.PromptID))
 		return
 	}
 	member, ok := h.workspaceMember(w, r, uuidToString(asset.WorkspaceID))

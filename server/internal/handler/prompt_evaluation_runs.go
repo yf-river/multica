@@ -71,11 +71,11 @@ func (h *Handler) ListPromptEvaluationRuns(w http.ResponseWriter, r *http.Reques
 	if value := r.URL.Query().Get("status"); value != "" {
 		status = pgtype.Text{String: value, Valid: true}
 	}
-	since, ok := parseRFC3339OrBadRequest(w, r.URL.Query().Get("since"), "since")
+	since, ok := parseRFC3339OrBadRequest(w, r.URL.Query().Get("since"))
 	if !ok {
 		return
 	}
-	limit, ok := parseBoundedInt32OrBadRequest(w, r.URL.Query().Get("limit"), "limit", 50, 1, 200)
+	limit, ok := parseBoundedInt32OrBadRequest(w, r.URL.Query().Get("limit"), "limit", 50, 200)
 	if !ok {
 		return
 	}
@@ -124,7 +124,7 @@ func (h *Handler) GetPromptEvaluationSummary(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	since, ok := parseRFC3339OrBadRequest(w, r.URL.Query().Get("since"), "since")
+	since, ok := parseRFC3339OrBadRequest(w, r.URL.Query().Get("since"))
 	if !ok {
 		return
 	}
@@ -353,7 +353,7 @@ func (h *Handler) canCancelPromptEvaluationTask(w http.ResponseWriter, r *http.R
 		WorkspaceID: workspaceUUID,
 	})
 	if err != nil {
-		writeEntityLoadError(w, r, err, "task", "task_id", uuidToString(taskID))
+		writeEntityLoadError(w, err, "task", "task_id", uuidToString(taskID))
 		return false
 	}
 	if task.ChatSessionID.Valid {
@@ -363,7 +363,7 @@ func (h *Handler) canCancelPromptEvaluationTask(w http.ResponseWriter, r *http.R
 		})
 		if err != nil {
 			writeEntityLoadError(
-				w, r, err, "task",
+				w, err, "task",
 				"task_id", uuidToString(taskID),
 				"dependency", "chat_session",
 				"chat_session_id", uuidToString(task.ChatSessionID),
@@ -382,7 +382,7 @@ func (h *Handler) canCancelPromptEvaluationTask(w http.ResponseWriter, r *http.R
 	})
 	if err != nil {
 		writeEntityLoadError(
-			w, r, err, "task",
+			w, err, "task",
 			"task_id", uuidToString(taskID),
 			"dependency", "agent",
 			"agent_id", uuidToString(task.AgentID),
@@ -474,7 +474,7 @@ func (h *Handler) ListPromptEvaluationEvidenceSnapshots(w http.ResponseWriter, r
 	if _, ok := loadPromptEvaluationRun(w, r, h.Queries, scope.workspaceUUID, scope.runID); !ok {
 		return
 	}
-	limit, ok := parseBoundedInt32OrBadRequest(w, r.URL.Query().Get("limit"), "limit", 20, 1, 100)
+	limit, ok := parseBoundedInt32OrBadRequest(w, r.URL.Query().Get("limit"), "limit", 20, 100)
 	if !ok {
 		return
 	}
@@ -822,7 +822,7 @@ func parsePromptEvaluationAssetSnapshotQuery(w http.ResponseWriter, values url.V
 		return "", 0, false
 	}
 
-	limit, ok := parseBoundedInt32OrBadRequest(w, values.Get("limit"), "limit", 20, 1, 100)
+	limit, ok := parseBoundedInt32OrBadRequest(w, values.Get("limit"), "limit", 20, 100)
 	if !ok {
 		return "", 0, false
 	}

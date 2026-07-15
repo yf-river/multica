@@ -275,25 +275,25 @@ func parseOptionalUUIDOrBadRequest(w http.ResponseWriter, s, fieldName string) (
 	return parseUUIDOrBadRequest(w, s, fieldName)
 }
 
-func parseBoundedInt32OrBadRequest(w http.ResponseWriter, raw, fieldName string, fallback, minValue, maxValue int32) (int32, bool) {
+func parseBoundedInt32OrBadRequest(w http.ResponseWriter, raw, fieldName string, fallback, maxValue int32) (int32, bool) {
 	if raw == "" {
 		return fallback, true
 	}
 	parsed, err := strconv.Atoi(raw)
-	if err != nil || parsed < int(minValue) || parsed > int(maxValue) {
-		writeError(w, http.StatusBadRequest, fieldName+" must be between "+strconv.Itoa(int(minValue))+" and "+strconv.Itoa(int(maxValue)))
+	if err != nil || parsed < 1 || parsed > int(maxValue) {
+		writeError(w, http.StatusBadRequest, fieldName+" must be between 1 and "+strconv.Itoa(int(maxValue)))
 		return 0, false
 	}
 	return int32(parsed), true
 }
 
-func parseRFC3339OrBadRequest(w http.ResponseWriter, raw, fieldName string) (pgtype.Timestamptz, bool) {
+func parseRFC3339OrBadRequest(w http.ResponseWriter, raw string) (pgtype.Timestamptz, bool) {
 	if raw == "" {
 		return pgtype.Timestamptz{}, true
 	}
 	parsed, err := time.Parse(time.RFC3339, raw)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, fieldName+" must be RFC3339")
+		writeError(w, http.StatusBadRequest, "since must be RFC3339")
 		return pgtype.Timestamptz{}, false
 	}
 	return pgtype.Timestamptz{Time: parsed, Valid: true}, true
@@ -348,11 +348,11 @@ func (h *Handler) publishTask(eventType, workspaceID, actorType, actorID, taskID
 
 // publishChat is publish() plus a ChatSessionID hint so the realtime layer
 // can route the event to the per-chat-session scope.
-func (h *Handler) publishChat(eventType, workspaceID, actorType, actorID, chatSessionID string, payload any) {
+func (h *Handler) publishChat(eventType, workspaceID, actorID, chatSessionID string, payload any) {
 	h.Bus.Publish(events.Event{
 		Type:          eventType,
 		WorkspaceID:   workspaceID,
-		ActorType:     actorType,
+		ActorType:     "member",
 		ActorID:       actorID,
 		ChatSessionID: chatSessionID,
 		Payload:       payload,
@@ -575,7 +575,7 @@ func writeWorkspaceEntityLookupError(w http.ResponseWriter, r *http.Request, err
 	writeError(w, http.StatusInternalServerError, "failed to verify workspace entity")
 }
 
-func writeEntityLoadError(w http.ResponseWriter, r *http.Request, err error, entity string, attrs ...any) {
+func writeEntityLoadError(w http.ResponseWriter, err error, entity string, attrs ...any) {
 	if writeClientClosedIfCanceled(w, err) {
 		return
 	}
@@ -595,7 +595,6 @@ func writeEntityLoadError(w http.ResponseWriter, r *http.Request, err error, ent
 // request that would have succeeded on retry.
 func writeValidationLookupError(
 	w http.ResponseWriter,
-	r *http.Request,
 	err error,
 	invalidMessage string,
 	entity string,
@@ -637,7 +636,7 @@ func (h *Handler) loadIssueForUser(w http.ResponseWriter, r *http.Request, issue
 			WorkspaceID: wsUUID,
 		})
 		if err != nil {
-			writeEntityLoadError(w, r, err, "issue", "issue_id", issueID)
+			writeEntityLoadError(w, err, "issue", "issue_id", issueID)
 			return db.Issue{}, false
 		}
 		return issue, true
@@ -647,7 +646,7 @@ func (h *Handler) loadIssueForUser(w http.ResponseWriter, r *http.Request, issue
 	// lookup errors instead of falling through to a misleading not-found result.
 	if issue, matched, err := h.resolveIssueByIdentifier(r.Context(), issueID, workspaceID); matched {
 		if err != nil {
-			writeEntityLoadError(w, r, err, "issue", "issue_id", issueID)
+			writeEntityLoadError(w, err, "issue", "issue_id", issueID)
 			return db.Issue{}, false
 		}
 		return issue, true
@@ -749,7 +748,7 @@ func (h *Handler) loadAgentForUser(w http.ResponseWriter, r *http.Request, agent
 		WorkspaceID: wsUUID,
 	})
 	if err != nil {
-		writeEntityLoadError(w, r, err, "agent", "agent_id", agentID)
+		writeEntityLoadError(w, err, "agent", "agent_id", agentID)
 		return db.Agent{}, false
 	}
 	return agent, true
@@ -781,7 +780,7 @@ func (h *Handler) loadInboxItemForUser(w http.ResponseWriter, r *http.Request, i
 		WorkspaceID: wsUUID,
 	})
 	if err != nil {
-		writeEntityLoadError(w, r, err, "inbox item", "inbox_item_id", itemID)
+		writeEntityLoadError(w, err, "inbox item", "inbox_item_id", itemID)
 		return db.InboxItem{}, false
 	}
 

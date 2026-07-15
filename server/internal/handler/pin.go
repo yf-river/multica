@@ -106,14 +106,14 @@ func (h *Handler) CreatePin(w http.ResponseWriter, r *http.Request) {
 		if _, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
 			ID: itemUUID, WorkspaceID: wsUUID,
 		}); err != nil {
-			writeEntityLoadError(w, r, err, "issue", "issue_id", req.ItemID)
+			writeEntityLoadError(w, err, "issue", "issue_id", req.ItemID)
 			return
 		}
 	case "project":
 		if _, err := h.Queries.GetProjectInWorkspace(r.Context(), db.GetProjectInWorkspaceParams{
 			ID: itemUUID, WorkspaceID: wsUUID,
 		}); err != nil {
-			writeEntityLoadError(w, r, err, "project", "project_id", req.ItemID)
+			writeEntityLoadError(w, err, "project", "project_id", req.ItemID)
 			return
 		}
 	}

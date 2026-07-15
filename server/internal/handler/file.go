@@ -633,7 +633,7 @@ func (h *Handler) loadAttachmentForRequest(w http.ResponseWriter, r *http.Reques
 		WorkspaceID: wsUUID,
 	})
 	if err != nil {
-		writeEntityLoadError(w, r, err, "attachment", "attachment_id", attachmentID)
+		writeEntityLoadError(w, err, "attachment", "attachment_id", attachmentID)
 		return db.Attachment{}, false
 	}
 
@@ -668,7 +668,7 @@ func (h *Handler) loadAttachmentForDownload(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		// A true not-found remains the same 404 shape as a membership denial;
 		// operational failures are classified by the shared loader boundary.
-		writeEntityLoadError(w, r, err, "attachment", "attachment_id", attachmentID)
+		writeEntityLoadError(w, err, "attachment", "attachment_id", attachmentID)
 		return db.Attachment{}, false
 	}
 

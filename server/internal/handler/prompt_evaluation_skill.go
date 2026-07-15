@@ -863,7 +863,7 @@ func (h *Handler) RunPromptEvaluationSkillReEval(w http.ResponseWriter, r *http.
 		WorkspaceID: workspaceUUID,
 	})
 	if err != nil {
-		writeValidationLookupError(w, r, err, "prompt_id does not belong to this workspace", "prompt", "prompt_id", uuidToString(asset.PromptID))
+		writeValidationLookupError(w, err, "prompt_id does not belong to this workspace", "prompt", "prompt_id", uuidToString(asset.PromptID))
 		return
 	}
 	cases, ok := h.promptEvaluationCasesForAsset(w, r, asset)

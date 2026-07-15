@@ -485,7 +485,7 @@ func (h *Handler) loadProjectResourceForMutation(w http.ResponseWriter, r *http.
 		WorkspaceID: project.WorkspaceID,
 	})
 	if err != nil {
-		writeEntityLoadError(w, r, err, "project resource", "resource_id", resourceID, "project_id", uuidToString(project.ID))
+		writeEntityLoadError(w, err, "project resource", "resource_id", resourceID, "project_id", uuidToString(project.ID))
 		return db.ProjectResource{}, "", false
 	}
 	if uuidToString(resource.ProjectID) != uuidToString(project.ID) {

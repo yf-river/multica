@@ -297,7 +297,7 @@ func (h *Handler) GetRuntimeProfile(w http.ResponseWriter, r *http.Request) {
 		WorkspaceID: scope.workspaceUUID,
 	})
 	if err != nil {
-		writeEntityLoadError(w, r, err, "runtime profile", "profile_id", chi.URLParam(r, "profileId"), "workspace_id", scope.workspaceID)
+		writeEntityLoadError(w, err, "runtime profile", "profile_id", chi.URLParam(r, "profileId"), "workspace_id", scope.workspaceID)
 		return
 	}
 	resp, err := runtimeProfileToResponse(profile)
@@ -410,7 +410,7 @@ func (h *Handler) DeleteRuntimeProfile(w http.ResponseWriter, r *http.Request) {
 		ID:          scope.profileUUID,
 		WorkspaceID: scope.workspaceUUID,
 	}); err != nil {
-		writeEntityLoadError(w, r, err, "runtime profile", "profile_id", chi.URLParam(r, "profileId"), "workspace_id", scope.workspaceID)
+		writeEntityLoadError(w, err, "runtime profile", "profile_id", chi.URLParam(r, "profileId"), "workspace_id", scope.workspaceID)
 		return
 	}
 

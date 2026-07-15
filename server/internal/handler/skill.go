@@ -252,7 +252,7 @@ func (h *Handler) loadSkillForUser(w http.ResponseWriter, r *http.Request, id st
 		WorkspaceID: parseUUID(workspaceID),
 	})
 	if err != nil {
-		writeEntityLoadError(w, r, err, "skill", "skill_id", id)
+		writeEntityLoadError(w, err, "skill", "skill_id", id)
 		return db.Skill{}, false
 	}
 	return skill, true

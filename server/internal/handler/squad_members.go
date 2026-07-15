@@ -277,7 +277,7 @@ func (h *Handler) AddSquadMember(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		if _, ok := loadSquadMember(w, r, h.Queries, wsUUID, memberUUID, "member not found in this workspace"); !ok {
+		if ok := loadSquadMember(w, r, h.Queries, wsUUID, memberUUID, "member not found in this workspace"); !ok {
 			return
 		}
 	}
@@ -445,7 +445,7 @@ func (h *Handler) RecordSquadLeaderEvaluation(w http.ResponseWriter, r *http.Req
 		WorkspaceID: issue.WorkspaceID,
 	})
 	if err != nil {
-		writeEntityLoadError(w, r, err, "squad", "squad_id", uuidToString(issue.AssigneeID))
+		writeEntityLoadError(w, err, "squad", "squad_id", uuidToString(issue.AssigneeID))
 		return
 	}
 
@@ -464,7 +464,7 @@ func (h *Handler) RecordSquadLeaderEvaluation(w http.ResponseWriter, r *http.Req
 	}
 	task, err := h.Queries.GetAgentTask(r.Context(), taskUUID)
 	if err != nil {
-		writeValidationLookupError(w, r, err, "task is not this issue's squad leader task", "squad leader task", "task_id", taskID)
+		writeValidationLookupError(w, err, "task is not this issue's squad leader task", "squad leader task", "task_id", taskID)
 		return
 	}
 	if !task.IssueID.Valid || uuidToString(task.IssueID) != uuidToString(issue.ID) ||

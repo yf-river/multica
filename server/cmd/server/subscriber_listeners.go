@@ -26,7 +26,7 @@ func consumeIssueCreatedAudience(ctx context.Context, queries *db.Queries, event
 	if err != nil || !exists {
 		return nil, err
 	}
-	subscriberEvents, err := projectIssueCreatedSubscribers(ctx, queries, event, payload)
+	subscriberEvents, err := projectIssueCreatedSubscribers(ctx, queries, payload)
 	if err != nil {
 		return nil, err
 	}
@@ -42,7 +42,7 @@ func consumeIssueUpdatedAudience(ctx context.Context, queries *db.Queries, event
 	if err != nil || !exists {
 		return nil, err
 	}
-	subscriberEvents, err := projectIssueUpdatedSubscribers(ctx, queries, event, payload)
+	subscriberEvents, err := projectIssueUpdatedSubscribers(ctx, queries, payload)
 	if err != nil {
 		return nil, err
 	}
@@ -91,7 +91,7 @@ func subscriberEventAppender(
 	}
 }
 
-func projectIssueCreatedSubscribers(ctx context.Context, queries *db.Queries, event events.Event, payload issueEventPayload) ([]events.Event, error) {
+func projectIssueCreatedSubscribers(ctx context.Context, queries *db.Queries, payload issueEventPayload) ([]events.Event, error) {
 	issue := payload.Issue
 	emitted := make([]events.Event, 0, 4)
 	appendSubscriber := subscriberEventAppender(ctx, queries, issue.WorkspaceID, issue.ID, &emitted)
@@ -114,7 +114,7 @@ func projectIssueCreatedSubscribers(ctx context.Context, queries *db.Queries, ev
 	return emitted, nil
 }
 
-func projectIssueUpdatedSubscribers(ctx context.Context, queries *db.Queries, event events.Event, payload issueEventPayload) ([]events.Event, error) {
+func projectIssueUpdatedSubscribers(ctx context.Context, queries *db.Queries, payload issueEventPayload) ([]events.Event, error) {
 	issue := payload.Issue
 	emitted := make([]events.Event, 0, 4)
 	appendSubscriber := subscriberEventAppender(ctx, queries, issue.WorkspaceID, issue.ID, &emitted)

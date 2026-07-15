@@ -631,7 +631,7 @@ func (h *Handler) loadSquadInWorkspace(w http.ResponseWriter, r *http.Request) (
 		WorkspaceID: wsUUID,
 	})
 	if err != nil {
-		writeEntityLoadError(w, r, err, "squad", "squad_id", squadID)
+		writeEntityLoadError(w, err, "squad", "squad_id", squadID)
 		return db.Squad{}, "", false
 	}
 	return squad, workspaceID, true
@@ -832,7 +832,7 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		} else {
-			if _, ok := loadSquadMember(w, r, h.Queries, wsUUID, memberUUID, fmt.Sprintf("members[%d] member not found in this workspace", i)); !ok {
+			if ok := loadSquadMember(w, r, h.Queries, wsUUID, memberUUID, fmt.Sprintf("members[%d] member not found in this workspace", i)); !ok {
 				return
 			}
 		}

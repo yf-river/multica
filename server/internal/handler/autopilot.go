@@ -426,7 +426,7 @@ func (h *Handler) loadAutopilotInWorkspace(w http.ResponseWriter, r *http.Reques
 		WorkspaceID: wsUUID,
 	})
 	if err != nil {
-		writeEntityLoadError(w, r, err, "autopilot", "autopilot_id", autopilotID)
+		writeEntityLoadError(w, err, "autopilot", "autopilot_id", autopilotID)
 		return db.Autopilot{}, false
 	}
 	return autopilot, true

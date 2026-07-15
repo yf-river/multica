@@ -323,7 +323,7 @@ func (h *Handler) GetWorkspaceObservabilitySummary(w http.ResponseWriter, r *htt
 	if !ok {
 		return
 	}
-	since, ok := parseRFC3339OrBadRequest(w, r.URL.Query().Get("since"), "since")
+	since, ok := parseRFC3339OrBadRequest(w, r.URL.Query().Get("since"))
 	if !ok {
 		return
 	}

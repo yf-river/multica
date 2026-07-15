@@ -59,7 +59,7 @@ func (h *Handler) ListPromptEvaluationOptimizationCandidates(w http.ResponseWrit
 		}
 		status = pgtype.Text{String: value, Valid: true}
 	}
-	limit, ok := parseBoundedInt32OrBadRequest(w, r.URL.Query().Get("limit"), "limit", 50, 1, 200)
+	limit, ok := parseBoundedInt32OrBadRequest(w, r.URL.Query().Get("limit"), "limit", 50, 200)
 	if !ok {
 		return
 	}
@@ -132,7 +132,7 @@ func (h *Handler) CreatePromptEvaluationOptimizationCandidate(w http.ResponseWri
 	}
 	prompt, err := h.Queries.GetPromptLibraryItemInWorkspace(r.Context(), db.GetPromptLibraryItemInWorkspaceParams{ID: run.PromptID, WorkspaceID: workspaceUUID})
 	if err != nil {
-		writeValidationLookupError(w, r, err, "prompt_id does not belong to this workspace", "prompt", "prompt_id", uuidToString(run.PromptID))
+		writeValidationLookupError(w, err, "prompt_id does not belong to this workspace", "prompt", "prompt_id", uuidToString(run.PromptID))
 		return
 	}
 	trials, err := h.Queries.ListPromptEvaluationTrialsByRun(r.Context(), db.ListPromptEvaluationTrialsByRunParams{RunID: run.ID, WorkspaceID: workspaceUUID})
@@ -332,7 +332,7 @@ func (h *Handler) PublishPromptEvaluationOptimizationCandidate(w http.ResponseWr
 		WorkspaceID: workspaceUUID,
 	})
 	if err != nil {
-		writeValidationLookupError(w, r, err, "source prompt not found in this workspace", "source prompt", "prompt_id", uuidToString(candidate.PromptID))
+		writeValidationLookupError(w, err, "source prompt not found in this workspace", "source prompt", "prompt_id", uuidToString(candidate.PromptID))
 		return
 	}
 	tx, err := h.TxStarter.Begin(r.Context())

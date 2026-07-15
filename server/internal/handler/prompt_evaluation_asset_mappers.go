@@ -854,7 +854,7 @@ func (h *Handler) promptEvaluationPromptID(w http.ResponseWriter, r *http.Reques
 		return pgtype.UUID{}, false
 	}
 	if _, err := h.Queries.GetPromptLibraryItemInWorkspace(r.Context(), db.GetPromptLibraryItemInWorkspaceParams{ID: promptUUID, WorkspaceID: workspaceID}); err != nil {
-		writeValidationLookupError(w, r, err, "prompt_id does not belong to this workspace", "prompt", "prompt_id", promptID)
+		writeValidationLookupError(w, err, "prompt_id does not belong to this workspace", "prompt", "prompt_id", promptID)
 		return pgtype.UUID{}, false
 	}
 	return promptUUID, true

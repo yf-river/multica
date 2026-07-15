@@ -184,7 +184,7 @@ func (h *Handler) selectPromptEvaluationExecutionAgent(w http.ResponseWriter, r 
 		WorkspaceID: workspaceID,
 	})
 	if err != nil {
-		writeValidationLookupError(w, r, err, "执行智能体不属于当前工作区", "execution agent", "agent_id", requestedAgentID)
+		writeValidationLookupError(w, err, "执行智能体不属于当前工作区", "execution agent", "agent_id", requestedAgentID)
 		return db.Agent{}, db.AgentRuntime{}, false
 	}
 	if agent.ArchivedAt.Valid {
@@ -196,7 +196,7 @@ func (h *Handler) selectPromptEvaluationExecutionAgent(w http.ResponseWriter, r 
 		WorkspaceID: workspaceID,
 	})
 	if err != nil {
-		writeValidationLookupError(w, r, err, "执行智能体绑定的运行时不可用", "execution runtime", "runtime_id", uuidToString(agent.RuntimeID))
+		writeValidationLookupError(w, err, "执行智能体绑定的运行时不可用", "execution runtime", "runtime_id", uuidToString(agent.RuntimeID))
 		return db.Agent{}, db.AgentRuntime{}, false
 	}
 	if !canAccessRuntime(member, runtime) {

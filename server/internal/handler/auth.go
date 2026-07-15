@@ -369,7 +369,7 @@ func (h *Handler) loadCurrentUser(w http.ResponseWriter, r *http.Request, userID
 	if err == nil {
 		return user, true
 	}
-	writeEntityLoadError(w, r, err, "user", "user_id", userID)
+	writeEntityLoadError(w, err, "user", "user_id", userID)
 	return db.User{}, false
 }
 

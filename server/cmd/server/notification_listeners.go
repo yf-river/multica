@@ -329,7 +329,6 @@ func notifyDirect(
 	notifType string,
 	severity string,
 	title string,
-	body string,
 	details []byte,
 ) error {
 	if !isMemberOrAgentActorType(recipientType) {
@@ -359,7 +358,6 @@ func notifyDirect(
 		Severity:      severity,
 		IssueID:       util.MustParseUUID(issueID),
 		Title:         title,
-		Body:          util.StrToText(body),
 		ActorType:     util.StrToText(e.ActorType),
 		ActorID:       optionalUUID(e.ActorID),
 		Details:       details,
@@ -394,7 +392,6 @@ func notifyMentionedMembers(
 	e events.Event,
 	mentions []util.Mention,
 	issueID string,
-	issueTitle string,
 	issueStatus string,
 	title string,
 	skip map[string]bool,
@@ -521,14 +518,14 @@ func projectIssueCreatedNotifications(ctx context.Context, queries *db.Queries, 
 		if err := notifyDirect(ctx, queries, collector.bus,
 			*issue.AssigneeType, *issue.AssigneeID,
 			issue.WorkspaceID, event, issue.ID, issue.Status,
-			"issue_assigned", "action_required", issue.Title, "", emptyDetails,
+			"issue_assigned", "action_required", issue.Title, emptyDetails,
 		); err != nil {
 			return nil, err
 		}
 	}
 	if issue.Description != nil {
 		if err := notifyMentionedMembers(ctx, collector.bus, queries, event, util.ParseMentions(*issue.Description),
-			issue.ID, issue.Title, issue.Status, issue.Title, skip, emptyDetails); err != nil {
+			issue.ID, issue.Status, issue.Title, skip, emptyDetails); err != nil {
 			return nil, err
 		}
 	}
@@ -551,7 +548,7 @@ func projectIssueUpdatedNotifications(ctx context.Context, queries *db.Queries, 
 			if err := notifyDirect(ctx, queries, collector.bus,
 				*issue.AssigneeType, *issue.AssigneeID,
 				event.WorkspaceID, event, issue.ID, issue.Status,
-				"issue_assigned", "action_required", issue.Title, "", assigneeDetails,
+				"issue_assigned", "action_required", issue.Title, assigneeDetails,
 			); err != nil {
 				return nil, err
 			}
@@ -560,7 +557,7 @@ func projectIssueUpdatedNotifications(ctx context.Context, queries *db.Queries, 
 			if err := notifyDirect(ctx, queries, collector.bus,
 				"member", *payload.PrevAssigneeID,
 				event.WorkspaceID, event, issue.ID, issue.Status,
-				"unassigned", "info", issue.Title, "", assigneeDetails,
+				"unassigned", "info", issue.Title, assigneeDetails,
 			); err != nil {
 				return nil, err
 			}
@@ -625,7 +622,7 @@ func projectIssueUpdatedNotifications(ctx context.Context, queries *db.Queries, 
 			}
 		}
 		if err := notifyMentionedMembers(ctx, collector.bus, queries, event, added,
-			issue.ID, issue.Title, issue.Status, issue.Title,
+			issue.ID, issue.Status, issue.Title,
 			map[string]bool{event.ActorID: true}, emptyDetails); err != nil {
 			return nil, err
 		}
@@ -649,7 +646,7 @@ func projectCommentCreatedNotifications(ctx context.Context, queries *db.Queries
 	mentions := util.ParseMentions(comment.Content)
 	if len(mentions) > 0 {
 		if err := notifyMentionedMembers(ctx, collector.bus, queries, event, mentions,
-			comment.IssueID, payload.IssueTitle, payload.IssueStatus, payload.IssueTitle,
+			comment.IssueID, payload.IssueStatus, payload.IssueTitle,
 			map[string]bool{event.ActorID: true}, details); err != nil {
 			return nil, err
 		}

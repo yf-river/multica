@@ -265,7 +265,7 @@ func (h *Handler) CreateAgentPlaygroundExperiment(w http.ResponseWriter, r *http
 	for _, agentID := range agentIDs {
 		agent, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{ID: agentID, WorkspaceID: workspaceUUID})
 		if err != nil {
-			writeEntityLoadError(w, r, err, "agent", "agent_id", uuidToString(agentID))
+			writeEntityLoadError(w, err, "agent", "agent_id", uuidToString(agentID))
 			return
 		}
 		if agent.ArchivedAt.Valid {
@@ -279,7 +279,7 @@ func (h *Handler) CreateAgentPlaygroundExperiment(w http.ResponseWriter, r *http
 	if judgeAgentID.Valid {
 		judgeAgent, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{ID: judgeAgentID, WorkspaceID: workspaceUUID})
 		if err != nil {
-			writeEntityLoadError(w, r, err, "judge agent", "agent_id", uuidToString(judgeAgentID))
+			writeEntityLoadError(w, err, "judge agent", "agent_id", uuidToString(judgeAgentID))
 			return
 		}
 		if !h.requirePersonalAgentAccess(w, r, judgeAgent, actorType, actorID, workspaceID, "you do not have access to the judge agent") {
@@ -291,7 +291,7 @@ func (h *Handler) CreateAgentPlaygroundExperiment(w http.ResponseWriter, r *http
 		DatasetAssetID: datasetAssetID,
 		ID:             datasetVersionID,
 	}); err != nil {
-		writeEntityLoadError(w, r, err, "dataset version", "dataset_asset_id", req.DatasetAssetID, "dataset_version_id", req.DatasetVersionID)
+		writeEntityLoadError(w, err, "dataset version", "dataset_asset_id", req.DatasetAssetID, "dataset_version_id", req.DatasetVersionID)
 		return
 	}
 	datasetRows, err := h.Queries.ListPromptEvaluationDatasetVersionRows(r.Context(), db.ListPromptEvaluationDatasetVersionRowsParams{

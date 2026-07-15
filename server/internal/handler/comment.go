@@ -690,7 +690,7 @@ func (h *Handler) loadCommentForRequest(w http.ResponseWriter, r *http.Request) 
 		WorkspaceID: workspaceUUID,
 	})
 	if err != nil {
-		writeEntityLoadError(w, r, err, "comment", "comment_id", commentID)
+		writeEntityLoadError(w, err, "comment", "comment_id", commentID)
 		return db.Comment{}, "", pgtype.UUID{}, false
 	}
 	return comment, workspaceID, workspaceUUID, true

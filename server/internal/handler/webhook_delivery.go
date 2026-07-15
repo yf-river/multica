@@ -246,7 +246,7 @@ func (h *Handler) ReplayAutopilotDelivery(w http.ResponseWriter, r *http.Request
 
 	trigRow, err := h.Queries.GetAutopilotTrigger(r.Context(), original.TriggerID)
 	if err != nil {
-		writeEntityLoadError(w, r, err, "trigger", "trigger_id", uuidToString(original.TriggerID), "delivery_id", deliveryID)
+		writeEntityLoadError(w, err, "trigger", "trigger_id", uuidToString(original.TriggerID), "delivery_id", deliveryID)
 		return
 	}
 	if !trigRow.Enabled {

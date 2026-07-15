@@ -808,7 +808,7 @@ func (h *Handler) CreatePromptLibraryTrial(w http.ResponseWriter, r *http.Reques
 		PromptID:    item.ID,
 	})
 	if err != nil {
-		writeEntityLoadError(w, r, err, "prompt version", "version_id", chi.URLParam(r, "versionId"), "prompt_id", uuidToString(item.ID))
+		writeEntityLoadError(w, err, "prompt version", "version_id", chi.URLParam(r, "versionId"), "prompt_id", uuidToString(item.ID))
 		return
 	}
 
@@ -886,7 +886,7 @@ func (h *Handler) CreatePromptLibraryTrial(w http.ResponseWriter, r *http.Reques
 		WorkspaceID: item.WorkspaceID,
 	})
 	if err != nil {
-		writeEntityLoadError(w, r, err, "agent", "agent_id", req.AgentID)
+		writeEntityLoadError(w, err, "agent", "agent_id", req.AgentID)
 		return
 	}
 	if agent.ArchivedAt.Valid {

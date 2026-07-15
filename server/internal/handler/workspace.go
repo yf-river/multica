@@ -141,7 +141,7 @@ func (h *Handler) GetWorkspace(w http.ResponseWriter, r *http.Request) {
 
 	ws, err := h.Queries.GetWorkspace(r.Context(), idUUID)
 	if err != nil {
-		writeEntityLoadError(w, r, err, "workspace", "workspace_id", id)
+		writeEntityLoadError(w, err, "workspace", "workspace_id", id)
 		return
 	}
 	resp, err := workspaceToResponse(ws)
@@ -895,7 +895,7 @@ func (h *Handler) workspaceMemberTarget(w http.ResponseWriter, r *http.Request, 
 	}
 	target, err := h.Queries.GetMember(r.Context(), memberUUID)
 	if err != nil {
-		writeEntityLoadError(w, r, err, "member", "member_id", memberID)
+		writeEntityLoadError(w, err, "member", "member_id", memberID)
 		return db.Member{}, false
 	}
 	if uuidToString(target.WorkspaceID) != uuidToString(requester.WorkspaceID) {

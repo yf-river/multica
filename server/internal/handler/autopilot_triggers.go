@@ -150,7 +150,7 @@ func (h *Handler) loadAutopilotTriggerFromRoute(w http.ResponseWriter, r *http.R
 	}
 	trigger, err := h.Queries.GetAutopilotTrigger(r.Context(), triggerID)
 	if err != nil {
-		writeEntityLoadError(w, r, err, "trigger", "trigger_id", chi.URLParam(r, "triggerId"), "autopilot_id", uuidToString(ap.ID))
+		writeEntityLoadError(w, err, "trigger", "trigger_id", chi.URLParam(r, "triggerId"), "autopilot_id", uuidToString(ap.ID))
 		return "", db.Autopilot{}, db.AutopilotTrigger{}, false
 	}
 	if uuidToString(trigger.AutopilotID) != uuidToString(ap.ID) {
@@ -774,7 +774,7 @@ func (h *Handler) GetAutopilotRun(w http.ResponseWriter, r *http.Request) {
 
 	run, err := h.Queries.GetAutopilotRun(r.Context(), runUUID)
 	if err != nil {
-		writeEntityLoadError(w, r, err, "run", "run_id", runID, "autopilot_id", uuidToString(autopilot.ID))
+		writeEntityLoadError(w, err, "run", "run_id", runID, "autopilot_id", uuidToString(autopilot.ID))
 		return
 	}
 	if uuidToString(run.AutopilotID) != uuidToString(autopilot.ID) {

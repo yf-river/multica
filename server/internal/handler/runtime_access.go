@@ -18,7 +18,7 @@ func (h *Handler) requireRuntimeAccess(w http.ResponseWriter, r *http.Request, r
 
 	runtime, err := h.Queries.GetAgentRuntime(r.Context(), runtimeUUID)
 	if err != nil {
-		writeEntityLoadError(w, r, err, "runtime", "runtime_id", runtimeID)
+		writeEntityLoadError(w, err, "runtime", "runtime_id", runtimeID)
 		return db.AgentRuntime{}, db.Member{}, false
 	}
 

@@ -185,7 +185,7 @@ func (h *Handler) ensureInternalSquadAgents(ctx context.Context, workspaceID pgt
 					return nil, err
 				}
 			}
-			if internalSquadAgentNeedsSync(agentRow, runtime, template, role, runtimeConfig, instructions, description, model, agentScope) {
+			if internalSquadAgentNeedsSync(agentRow, runtime, role, runtimeConfig, instructions, description, model, agentScope) {
 				agentRow, err = h.Queries.UpdateAgent(ctx, db.UpdateAgentParams{
 					ID:                 agentRow.ID,
 					Description:        pgtype.Text{String: description, Valid: true},
@@ -279,7 +279,7 @@ func matchesInternalSquadAgent(agent db.Agent, name string, template internalSqu
 	return squadScope != squadScopePersonal || util.StringFromAny(scope["owner_id"]) == uuidToString(ownerID)
 }
 
-func internalSquadAgentNeedsSync(agent db.Agent, runtime db.AgentRuntime, template internalSquadTemplate, role internalSquadRole, runtimeConfig []byte, instructions string, description string, model pgtype.Text, scope string) bool {
+func internalSquadAgentNeedsSync(agent db.Agent, runtime db.AgentRuntime, role internalSquadRole, runtimeConfig []byte, instructions string, description string, model pgtype.Text, scope string) bool {
 	if agent.Description != description ||
 		agent.RuntimeMode != runtime.RuntimeMode ||
 		uuidToString(agent.RuntimeID) != uuidToString(runtime.ID) ||
