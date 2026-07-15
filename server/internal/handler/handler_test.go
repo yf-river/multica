@@ -546,6 +546,20 @@ func createHandlerTestAgent(t *testing.T, name string, mcpConfig []byte) string 
 	return agentID
 }
 
+func createHandlerTestSquad(t *testing.T, name, leaderAgentID string) string {
+	t.Helper()
+	var squadID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id)
+		VALUES ($1, $2, '', $3, $4)
+		RETURNING id
+	`, testWorkspaceID, name, leaderAgentID, testUserID).Scan(&squadID); err != nil {
+		t.Fatalf("create squad: %v", err)
+	}
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, squadID) })
+	return squadID
+}
+
 func createHandlerTestSOPAgent(t *testing.T, name, roleKey string) string {
 	t.Helper()
 	agentID := createHandlerTestAgent(t, name, nil)
@@ -815,6 +829,66 @@ func assertJSONEqual(t *testing.T, got []byte, want string) {
 	if string(gotJSON) != string(wantJSON) {
 		t.Fatalf("expected JSON %s, got %s", string(wantJSON), string(gotJSON))
 	}
+}
+
+func createIssueThroughHandler(t *testing.T, body map[string]any) IssueResponse {
+	t.Helper()
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, body)
+	testHandler.CreateIssue(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var issue IssueResponse
+	if err := json.NewDecoder(w.Body).Decode(&issue); err != nil {
+		t.Fatalf("decode issue response: %v", err)
+	}
+	return issue
+}
+
+func createProjectThroughHandler(t *testing.T, body map[string]any) projectResponse {
+	t.Helper()
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, body)
+	testHandler.CreateProject(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateProject: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var project projectResponse
+	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
+		t.Fatalf("decode project response: %v", err)
+	}
+	return project
+}
+
+func updateIssueThroughHandler(t *testing.T, issueID string, body map[string]any) IssueResponse {
+	t.Helper()
+	w := httptest.NewRecorder()
+	req := withURLParam(newRequest("PUT", "/api/issues/"+issueID, body), "id", issueID)
+	testHandler.UpdateIssue(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("UpdateIssue: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var issue IssueResponse
+	if err := json.NewDecoder(w.Body).Decode(&issue); err != nil {
+		t.Fatalf("decode issue response: %v", err)
+	}
+	return issue
+}
+
+func updateAgentThroughHandler(t *testing.T, agentID string, body map[string]any) AgentResponse {
+	t.Helper()
+	w := httptest.NewRecorder()
+	req := withURLParam(newRequest("PUT", "/api/agents/"+agentID, body), "id", agentID)
+	testHandler.UpdateAgent(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("UpdateAgent: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var agent AgentResponse
+	if err := json.NewDecoder(w.Body).Decode(&agent); err != nil {
+		t.Fatalf("decode agent response: %v", err)
+	}
+	return agent
 }
 
 func TestIssueCRUD(t *testing.T) {
@@ -1515,51 +1589,22 @@ func TestProjectLeadMemberBacklogIssueRequiresApprovalBeforeSquadRuns(t *testing
 	}
 	ctx := context.Background()
 	leaderAgentID := createHandlerTestAgent(t, "Project Approval Squad Leader", nil)
-
-	var squadID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id)
-		VALUES ($1, $2, '', $3, $4)
-		RETURNING id
-	`, testWorkspaceID, "Project Approval Squad "+fmt.Sprint(time.Now().UnixNano()), leaderAgentID, testUserID).Scan(&squadID); err != nil {
-		t.Fatalf("create squad: %v", err)
-	}
-	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, squadID) })
-
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
+	squadID := createHandlerTestSquad(t, "Project Approval Squad "+fmt.Sprint(time.Now().UnixNano()), leaderAgentID)
+	project := createProjectThroughHandler(t, map[string]any{
 		"title":     "Human lead approval project " + fmt.Sprint(time.Now().UnixNano()),
 		"lead_type": "member",
 		"lead_id":   testUserID,
 	})
-	testHandler.CreateProject(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateProject: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var project projectResponse
-	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
-		t.Fatalf("decode project response: %v", err)
-	}
 	t.Cleanup(func() {
 		mustExec(t, context.Background(), `DELETE FROM project WHERE id = $1`, project.ID)
 	})
-
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+	issue := createIssueThroughHandler(t, map[string]any{
 		"title":         "Cross-service child waiting for owner approval",
 		"project_id":    project.ID,
 		"status":        "backlog",
 		"assignee_type": "squad",
 		"assignee_id":   squadID,
 	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var issue IssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&issue); err != nil {
-		t.Fatalf("decode issue response: %v", err)
-	}
 	t.Cleanup(func() {
 		mustExec(t, context.Background(), `DELETE FROM inbox_item WHERE issue_id = $1`, issue.ID)
 		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issue.ID)
@@ -1585,13 +1630,7 @@ func TestProjectLeadMemberBacklogIssueRequiresApprovalBeforeSquadRuns(t *testing
 		t.Fatalf("squad leader tasks before approval = %d, want 0", got)
 	}
 
-	w = httptest.NewRecorder()
-	req = newRequest("PUT", "/api/issues/"+issue.ID, map[string]any{"status": "todo"})
-	req = withURLParam(req, "id", issue.ID)
-	testHandler.UpdateIssue(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("UpdateIssue approval: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
+	updateIssueThroughHandler(t, issue.ID, map[string]any{"status": "todo"})
 	if got := countQueuedOrDispatched(t, leaderAgentID, issue.ID); got != 1 {
 		t.Fatalf("squad leader tasks after approval = %d, want 1", got)
 	}
@@ -1606,64 +1645,29 @@ func TestProjectLeadMemberIssueMovedToBacklogRequestsApproval(t *testing.T) {
 	}
 	ctx := context.Background()
 	leaderAgentID := createHandlerTestAgent(t, "Project Approval Update Squad Leader", nil)
-
-	var squadID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id)
-		VALUES ($1, $2, '', $3, $4)
-		RETURNING id
-	`, testWorkspaceID, "Project Approval Update Squad "+fmt.Sprint(time.Now().UnixNano()), leaderAgentID, testUserID).Scan(&squadID); err != nil {
-		t.Fatalf("create squad: %v", err)
-	}
-	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, squadID) })
-
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
+	squadID := createHandlerTestSquad(t, "Project Approval Update Squad "+fmt.Sprint(time.Now().UnixNano()), leaderAgentID)
+	project := createProjectThroughHandler(t, map[string]any{
 		"title":     "Human lead update approval project " + fmt.Sprint(time.Now().UnixNano()),
 		"lead_type": "member",
 		"lead_id":   testUserID,
 	})
-	testHandler.CreateProject(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateProject: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var project projectResponse
-	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
-		t.Fatalf("decode project response: %v", err)
-	}
 	t.Cleanup(func() {
 		mustExec(t, context.Background(), `DELETE FROM project WHERE id = $1`, project.ID)
 	})
-
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+	issue := createIssueThroughHandler(t, map[string]any{
 		"title":         "Cross-service child corrected into backlog",
 		"project_id":    project.ID,
 		"status":        "todo",
 		"assignee_type": "squad",
 		"assignee_id":   squadID,
 	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var issue IssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&issue); err != nil {
-		t.Fatalf("decode issue response: %v", err)
-	}
 	t.Cleanup(func() {
 		mustExec(t, context.Background(), `DELETE FROM inbox_item WHERE issue_id = $1`, issue.ID)
 		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issue.ID)
 		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issue.ID)
 	})
 
-	w = httptest.NewRecorder()
-	req = newRequest("PUT", "/api/issues/"+issue.ID, map[string]any{"status": "backlog"})
-	req = withURLParam(req, "id", issue.ID)
-	testHandler.UpdateIssue(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("UpdateIssue backlog: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
+	updateIssueThroughHandler(t, issue.ID, map[string]any{"status": "backlog"})
 
 	var inboxCount int
 	if err := testPool.QueryRow(ctx, `
@@ -1687,51 +1691,22 @@ func TestProjectLeadAgentBacklogIssueCreatesReviewTaskBeforeSquadRuns(t *testing
 	ctx := context.Background()
 	projectLeadAgentID := createHandlerTestAgent(t, "Project Review Approval Lead", nil)
 	leaderAgentID := createHandlerTestAgent(t, "Project Review Approval Squad Leader", nil)
-
-	var squadID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id)
-		VALUES ($1, $2, '', $3, $4)
-		RETURNING id
-	`, testWorkspaceID, "Project Review Approval Squad "+fmt.Sprint(time.Now().UnixNano()), leaderAgentID, testUserID).Scan(&squadID); err != nil {
-		t.Fatalf("create squad: %v", err)
-	}
-	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, squadID) })
-
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
+	squadID := createHandlerTestSquad(t, "Project Review Approval Squad "+fmt.Sprint(time.Now().UnixNano()), leaderAgentID)
+	project := createProjectThroughHandler(t, map[string]any{
 		"title":     "Agent review approval project " + fmt.Sprint(time.Now().UnixNano()),
 		"lead_type": "agent",
 		"lead_id":   projectLeadAgentID,
 	})
-	testHandler.CreateProject(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateProject: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var project projectResponse
-	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
-		t.Fatalf("decode project response: %v", err)
-	}
 	t.Cleanup(func() {
 		mustExec(t, context.Background(), `DELETE FROM project WHERE id = $1`, project.ID)
 	})
-
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+	issue := createIssueThroughHandler(t, map[string]any{
 		"title":         "Cross-service child reviewed by agent owner",
 		"project_id":    project.ID,
 		"status":        "backlog",
 		"assignee_type": "squad",
 		"assignee_id":   squadID,
 	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var issue IssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&issue); err != nil {
-		t.Fatalf("decode issue response: %v", err)
-	}
 	t.Cleanup(func() {
 		mustExec(t, context.Background(), `DELETE FROM inbox_item WHERE issue_id = $1`, issue.ID)
 		mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issue.ID)
@@ -1774,8 +1749,8 @@ func TestProjectLeadAgentBacklogIssueCreatesReviewTaskBeforeSquadRuns(t *testing
 	`, issue.ID, projectLeadAgentID).Scan(&reviewTaskID); err != nil {
 		t.Fatalf("load review task id: %v", err)
 	}
-	w = httptest.NewRecorder()
-	req = newRequest("PUT", "/api/issues/"+issue.ID, map[string]any{"status": "todo"})
+	w := httptest.NewRecorder()
+	req := newRequest("PUT", "/api/issues/"+issue.ID, map[string]any{"status": "todo"})
 	req = withURLParam(req, "id", issue.ID)
 	setTaskTokenActor(req, projectLeadAgentID, reviewTaskID)
 	testHandler.UpdateIssue(w, req)
@@ -3337,42 +3312,18 @@ func TestAgentCRUD(t *testing.T) {
 
 func TestUpdateAgentMcpConfigAbsentPreservesValue(t *testing.T) {
 	agentID := createHandlerTestAgent(t, "Handler Mcp Preserve", []byte(`{"preset":"keep"}`))
-
-	w := httptest.NewRecorder()
-	req := newRequest("PUT", "/api/agents/"+agentID, map[string]any{
+	updated := updateAgentThroughHandler(t, agentID, map[string]any{
 		"name": "Handler Mcp Preserve Updated",
 	})
-	req = withURLParam(req, "id", agentID)
-	testHandler.UpdateAgent(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("UpdateAgent: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	var updated AgentResponse
-	if err := json.NewDecoder(w.Body).Decode(&updated); err != nil {
-		t.Fatalf("UpdateAgent: decode response: %v", err)
-	}
 	assertJSONEqual(t, updated.McpConfig, `{"preset":"keep"}`)
 	assertJSONEqual(t, fetchAgentMcpConfig(t, agentID), `{"preset":"keep"}`)
 }
 
 func TestUpdateAgentMcpConfigNullClearsValue(t *testing.T) {
 	agentID := createHandlerTestAgent(t, "Handler Mcp Clear", []byte(`{"preset":"clear"}`))
-
-	w := httptest.NewRecorder()
-	req := newRequest("PUT", "/api/agents/"+agentID, map[string]any{
+	updated := updateAgentThroughHandler(t, agentID, map[string]any{
 		"mcp_config": nil,
 	})
-	req = withURLParam(req, "id", agentID)
-	testHandler.UpdateAgent(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("UpdateAgent: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	var updated AgentResponse
-	if err := json.NewDecoder(w.Body).Decode(&updated); err != nil {
-		t.Fatalf("UpdateAgent: decode response: %v", err)
-	}
 	assertJSONEqual(t, updated.McpConfig, `null`)
 	if fetchAgentMcpConfig(t, agentID) != nil {
 		t.Fatalf("UpdateAgent: expected DB mcp_config to be SQL NULL")
@@ -3381,21 +3332,9 @@ func TestUpdateAgentMcpConfigNullClearsValue(t *testing.T) {
 
 func TestUpdateAgentMcpConfigObjectUpdatesValue(t *testing.T) {
 	agentID := createHandlerTestAgent(t, "Handler Mcp Update", []byte(`{"preset":"old"}`))
-
-	w := httptest.NewRecorder()
-	req := newRequest("PUT", "/api/agents/"+agentID, map[string]any{
+	updated := updateAgentThroughHandler(t, agentID, map[string]any{
 		"mcp_config": map[string]any{"preset": "new"},
 	})
-	req = withURLParam(req, "id", agentID)
-	testHandler.UpdateAgent(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("UpdateAgent: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	var updated AgentResponse
-	if err := json.NewDecoder(w.Body).Decode(&updated); err != nil {
-		t.Fatalf("UpdateAgent: decode response: %v", err)
-	}
 	assertJSONEqual(t, updated.McpConfig, `{"preset":"new"}`)
 	assertJSONEqual(t, fetchAgentMcpConfig(t, agentID), `{"preset":"new"}`)
 }
@@ -3686,22 +3625,12 @@ func TestBacklogNoTriggerOnCreate(t *testing.T) {
 		t.Fatalf("failed to find test agent: %v", err)
 	}
 
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+	created := createIssueThroughHandler(t, map[string]any{
 		"title":         "Backlog no-trigger test",
 		"status":        "backlog",
 		"assignee_type": "agent",
 		"assignee_id":   agentID,
 	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-
-	var created IssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
-		t.Fatalf("decode created response: %v", err)
-	}
 
 	var taskCount int
 	err = testPool.QueryRow(ctx,
@@ -3736,34 +3665,13 @@ func TestBacklogToTodoTriggersAgent(t *testing.T) {
 		t.Fatalf("failed to find test agent: %v", err)
 	}
 
-	// Create a backlog issue assigned to the agent — should NOT trigger.
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+	created := createIssueThroughHandler(t, map[string]any{
 		"title":         "Backlog trigger test",
 		"status":        "backlog",
 		"assignee_type": "agent",
 		"assignee_id":   agentID,
 	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-
-	var created IssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
-		t.Fatalf("decode created response: %v", err)
-	}
-
-	// Move the issue from backlog to todo — should trigger.
-	w = httptest.NewRecorder()
-	req = newRequest("PUT", "/api/issues/"+created.ID, map[string]any{
-		"status": "todo",
-	})
-	req = withURLParam(req, "id", created.ID)
-	testHandler.UpdateIssue(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("UpdateIssue: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
+	updateIssueThroughHandler(t, created.ID, map[string]any{"status": "todo"})
 
 	// Verify exactly one task was enqueued (from the status transition, not creation).
 	var taskCount int
@@ -3802,23 +3710,12 @@ func TestBacklogToTodoByAgentTriggersDifferentAssignee(t *testing.T) {
 	childAgent := createHandlerTestAgent(t, "Backlog Child Agent", nil)
 	parentTask := createHandlerTestTaskForAgent(t, parentAgent)
 
-	// Create a backlog issue assigned to the child agent — should NOT trigger
-	// on creation (backlog parking-lot rule).
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+	created := createIssueThroughHandler(t, map[string]any{
 		"title":         "Serial sub-task Step 2",
 		"status":        "backlog",
 		"assignee_type": "agent",
 		"assignee_id":   childAgent,
 	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var created IssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
-		t.Fatalf("decode created response: %v", err)
-	}
 	t.Cleanup(func() {
 		mustExec(t, ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, created.ID)
 		mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, created.ID)
@@ -3826,8 +3723,8 @@ func TestBacklogToTodoByAgentTriggersDifferentAssignee(t *testing.T) {
 
 	// Parent agent promotes backlog → todo on behalf of the X-Task it is
 	// currently running. Must enqueue exactly one task for the child agent.
-	w = httptest.NewRecorder()
-	req = newRequest("PUT", "/api/issues/"+created.ID, map[string]any{"status": "todo"})
+	w := httptest.NewRecorder()
+	req := newRequest("PUT", "/api/issues/"+created.ID, map[string]any{"status": "todo"})
 	req = withURLParam(req, "id", created.ID)
 	setTaskTokenActor(req, parentAgent, parentTask)
 	testHandler.UpdateIssue(w, req)
@@ -3866,21 +3763,12 @@ func TestBacklogToTodoByAgentSameIssueDoesNotSelfTrigger(t *testing.T) {
 
 	selfAgent := createHandlerTestAgent(t, "Backlog Self Agent", nil)
 
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+	created := createIssueThroughHandler(t, map[string]any{
 		"title":         "Self-promoted backlog",
 		"status":        "backlog",
 		"assignee_type": "agent",
 		"assignee_id":   selfAgent,
 	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var created IssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
-		t.Fatalf("decode created response: %v", err)
-	}
 	t.Cleanup(func() {
 		mustExec(t, ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, created.ID)
 		mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, created.ID)
@@ -3889,8 +3777,8 @@ func TestBacklogToTodoByAgentSameIssueDoesNotSelfTrigger(t *testing.T) {
 	// Task bound to the SAME issue being promoted — true self-loop.
 	selfTask := createHandlerTestTaskForAgentOnIssue(t, selfAgent, created.ID)
 
-	w = httptest.NewRecorder()
-	req = newRequest("PUT", "/api/issues/"+created.ID, map[string]any{"status": "todo"})
+	w := httptest.NewRecorder()
+	req := newRequest("PUT", "/api/issues/"+created.ID, map[string]any{"status": "todo"})
 	req = withURLParam(req, "id", created.ID)
 	setTaskTokenActor(req, selfAgent, selfTask)
 	testHandler.UpdateIssue(w, req)
@@ -3924,43 +3812,23 @@ func TestBacklogToTodoByAgentSameAgentDifferentIssue(t *testing.T) {
 
 	agentID := createHandlerTestAgent(t, "Backlog Same-Agent Chain", nil)
 
-	// Step 1 issue — the one the agent is currently working on.
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+	step1 := createIssueThroughHandler(t, map[string]any{
 		"title":         "Step 1 (running)",
 		"status":        "in_progress",
 		"assignee_type": "agent",
 		"assignee_id":   agentID,
 	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue step1: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var step1 IssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&step1); err != nil {
-		t.Fatalf("decode first step response: %v", err)
-	}
 	t.Cleanup(func() {
 		mustExec(t, ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, step1.ID)
 		mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, step1.ID)
 	})
 
-	// Step 2 issue — backlog, also assigned to the same agent.
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+	step2 := createIssueThroughHandler(t, map[string]any{
 		"title":         "Step 2 (backlog)",
 		"status":        "backlog",
 		"assignee_type": "agent",
 		"assignee_id":   agentID,
 	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue step2: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var step2 IssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&step2); err != nil {
-		t.Fatalf("decode second step response: %v", err)
-	}
 	t.Cleanup(func() {
 		mustExec(t, ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, step2.ID)
 		mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, step2.ID)
@@ -3969,8 +3837,8 @@ func TestBacklogToTodoByAgentSameAgentDifferentIssue(t *testing.T) {
 	// Task is running on step1 — promoting step2 is NOT a self-loop.
 	step1Task := createHandlerTestTaskForAgentOnIssue(t, agentID, step1.ID)
 
-	w = httptest.NewRecorder()
-	req = newRequest("PUT", "/api/issues/"+step2.ID, map[string]any{"status": "todo"})
+	w := httptest.NewRecorder()
+	req := newRequest("PUT", "/api/issues/"+step2.ID, map[string]any{"status": "todo"})
 	req = withURLParam(req, "id", step2.ID)
 	setTaskTokenActor(req, agentID, step1Task)
 	testHandler.UpdateIssue(w, req)
@@ -4005,29 +3873,20 @@ func TestBatchBacklogToTodoByAgentTriggersAssignee(t *testing.T) {
 	childAgent := createHandlerTestAgent(t, "Batch Child Agent", nil)
 	parentTask := createHandlerTestTaskForAgent(t, parentAgent)
 
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+	created := createIssueThroughHandler(t, map[string]any{
 		"title":         "Batch backlog child",
 		"status":        "backlog",
 		"assignee_type": "agent",
 		"assignee_id":   childAgent,
 	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var created IssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
-		t.Fatalf("decode created response: %v", err)
-	}
 	t.Cleanup(func() {
 		mustExec(t, ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, created.ID)
 		mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, created.ID)
 	})
 
 	// Drive the batch endpoint with the same agent identity headers.
-	w = httptest.NewRecorder()
-	req = newRequest("PATCH", "/api/issues/batch?workspace_id="+testWorkspaceID, map[string]any{
+	w := httptest.NewRecorder()
+	req := newRequest("PATCH", "/api/issues/batch?workspace_id="+testWorkspaceID, map[string]any{
 		"issue_ids": []string{created.ID},
 		"updates":   map[string]any{"status": "todo"},
 	})
@@ -4065,31 +3924,13 @@ func TestBacklogToTodoByAgentTriggersSquadLeader(t *testing.T) {
 	driverAgent := createHandlerTestAgent(t, "Backlog Squad Driver", nil)
 	driverTask := createHandlerTestTaskForAgent(t, driverAgent)
 
-	var squadID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id)
-		VALUES ($1, $2, '', $3, $4)
-		RETURNING id
-	`, testWorkspaceID, "Backlog Trigger Squad", leaderAgent, testUserID).Scan(&squadID); err != nil {
-		t.Fatalf("create squad: %v", err)
-	}
-	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM squad WHERE id = $1`, squadID) })
-
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+	squadID := createHandlerTestSquad(t, "Backlog Trigger Squad", leaderAgent)
+	created := createIssueThroughHandler(t, map[string]any{
 		"title":         "Squad backlog issue",
 		"status":        "backlog",
 		"assignee_type": "squad",
 		"assignee_id":   squadID,
 	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var created IssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
-		t.Fatalf("decode created response: %v", err)
-	}
 	t.Cleanup(func() {
 		mustExec(t, ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, created.ID)
 		mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, created.ID)
@@ -4097,8 +3938,8 @@ func TestBacklogToTodoByAgentTriggersSquadLeader(t *testing.T) {
 
 	// Driver agent (not the leader, task is on no specific issue) promotes
 	// the squad-assigned backlog issue. Squad leader must be enqueued.
-	w = httptest.NewRecorder()
-	req = newRequest("PUT", "/api/issues/"+created.ID, map[string]any{"status": "todo"})
+	w := httptest.NewRecorder()
+	req := newRequest("PUT", "/api/issues/"+created.ID, map[string]any{"status": "todo"})
 	req = withURLParam(req, "id", created.ID)
 	setTaskTokenActor(req, driverAgent, driverTask)
 	testHandler.UpdateIssue(w, req)
