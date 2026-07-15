@@ -2,7 +2,6 @@ package handler
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -11,7 +10,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/logger"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -391,17 +389,12 @@ func (h *Handler) CreateSkill(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, creatorUUID, resourceTypeSkill, idempotencyKey, requestHash)
-	if errors.Is(err, pgx.ErrNoRows) {
-		replayed, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, loadReplay)
-		if replayErr != nil {
-			h.writeSkillCreateReplayError(w, replayErr)
-			return
-		}
-		writeJSON(w, http.StatusCreated, replayed)
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to reserve skill request")
+	if !handleResourceCreateReservation(
+		w, r.Context(), tx, err, loadReplay,
+		h.writeSkillCreateReplayError,
+		"failed to reserve skill request",
+		http.StatusCreated,
+	) {
 		return
 	}
 

@@ -16,7 +16,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/storage"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -459,21 +458,17 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, params.WorkspaceID, operationActorID, resourceTypeAttachment, idempotencyKey, requestHash)
-	if errors.Is(err, pgx.ErrNoRows) {
-		replayed, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, func() (AttachmentResponse, bool, error) {
+	if !handleResourceCreateReservation(
+		w, r.Context(), tx, err,
+		func() (AttachmentResponse, bool, error) {
 			return h.loadAttachmentUploadReplay(
 				r.Context(), params.WorkspaceID, operationActorID, idempotencyKey, requestHash,
 			)
-		})
-		if replayErr != nil {
-			h.writeAttachmentUploadReplayError(w, replayErr)
-			return
-		}
-		writeJSON(w, http.StatusOK, replayed)
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to reserve upload request")
+		},
+		h.writeAttachmentUploadReplayError,
+		"failed to reserve upload request",
+		http.StatusOK,
+	) {
 		return
 	}
 

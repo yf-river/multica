@@ -193,17 +193,12 @@ func (h *Handler) CreateRuntimeProfile(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, wsUUID, member.UserID, resourceTypeRuntimeProfile, idempotencyKey, requestHash)
-	if errors.Is(err, pgx.ErrNoRows) {
-		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, loadReplay)
-		if replayErr != nil {
-			writeRuntimeProfileCreateReplayError(w, replayErr)
-			return
-		}
-		writeJSON(w, http.StatusCreated, replay)
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to create runtime profile")
+	if !handleResourceCreateReservation(
+		w, r.Context(), tx, err, loadReplay,
+		writeRuntimeProfileCreateReplayError,
+		"failed to create runtime profile",
+		http.StatusCreated,
+	) {
 		return
 	}
 

@@ -608,17 +608,12 @@ func (h *Handler) CreateProjectResource(w http.ResponseWriter, r *http.Request) 
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, project.WorkspaceID, creator, resourceTypeProjectResource, idempotencyKey, requestHash)
-	if errors.Is(err, pgx.ErrNoRows) {
-		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, loadReplay)
-		if replayErr != nil {
-			writeProjectResourceCreateReplayError(w, replayErr)
-			return
-		}
-		writeJSON(w, http.StatusCreated, replay)
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to create project resource")
+	if !handleResourceCreateReservation(
+		w, r.Context(), tx, err, loadReplay,
+		writeProjectResourceCreateReplayError,
+		"failed to create project resource",
+		http.StatusCreated,
+	) {
 		return
 	}
 

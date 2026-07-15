@@ -3,7 +3,6 @@ package handler
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -12,7 +11,6 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/logger"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -399,17 +397,12 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	qtx := h.Queries.WithTx(tx)
 
 	err = reserveResourceCreateRequest(r.Context(), qtx, wsUUID, actorID, resourceTypeProject, idempotencyKey, requestHash)
-	if errors.Is(err, pgx.ErrNoRows) {
-		replayed, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, loadReplay)
-		if replayErr != nil {
-			h.writeProjectCreateReplayError(w, replayErr)
-			return
-		}
-		writeJSON(w, http.StatusCreated, replayed)
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to reserve project request")
+	if !handleResourceCreateReservation(
+		w, r.Context(), tx, err, loadReplay,
+		h.writeProjectCreateReplayError,
+		"failed to reserve project request",
+		http.StatusCreated,
+	) {
 		return
 	}
 	project, err := qtx.CreateProject(r.Context(), createParams)

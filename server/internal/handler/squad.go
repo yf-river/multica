@@ -10,7 +10,6 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/logger"
@@ -887,17 +886,12 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, wsUUID, member.UserID, resourceTypeSquad, idempotencyKey, requestHash)
-	if errors.Is(err, pgx.ErrNoRows) {
-		replayed, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, loadReplay)
-		if replayErr != nil {
-			h.writeSquadCreateReplayError(w, replayErr)
-			return
-		}
-		writeJSON(w, http.StatusCreated, replayed)
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to reserve squad request")
+	if !handleResourceCreateReservation(
+		w, r.Context(), tx, err, loadReplay,
+		h.writeSquadCreateReplayError,
+		"failed to reserve squad request",
+		http.StatusCreated,
+	) {
 		return
 	}
 

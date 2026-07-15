@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -14,7 +13,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/logger"
@@ -884,17 +882,12 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, wsUUID, operationActorID, resourceTypeAgent, idempotencyKey, requestHash)
-	if errors.Is(err, pgx.ErrNoRows) {
-		replayed, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, loadReplay)
-		if replayErr != nil {
-			h.writeAgentCreateReplayError(w, replayErr)
-			return
-		}
-		writeJSON(w, http.StatusCreated, replayed)
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to reserve agent request")
+	if !handleResourceCreateReservation(
+		w, r.Context(), tx, err, loadReplay,
+		h.writeAgentCreateReplayError,
+		"failed to reserve agent request",
+		http.StatusCreated,
+	) {
 		return
 	}
 

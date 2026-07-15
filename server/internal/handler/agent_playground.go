@@ -318,17 +318,12 @@ func (h *Handler) CreateAgentPlaygroundExperiment(w http.ResponseWriter, r *http
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, requestActorID, resourceTypeAgentPlayground, idempotencyKey, requestHash)
-	if errors.Is(err, pgx.ErrNoRows) {
-		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, loadReplay)
-		if replayErr != nil {
-			writeAgentPlaygroundCreateReplayError(w, replayErr)
-			return
-		}
-		writeJSON(w, http.StatusCreated, replay)
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to reserve agent playground request")
+	if !handleResourceCreateReservation(
+		w, r.Context(), tx, err, loadReplay,
+		writeAgentPlaygroundCreateReplayError,
+		"failed to reserve agent playground request",
+		http.StatusCreated,
+	) {
 		return
 	}
 

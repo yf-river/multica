@@ -814,17 +814,12 @@ func (h *Handler) CreateMember(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, requester.WorkspaceID, actorID, resourceTypeWorkspaceMember, idempotencyKey, requestHash)
-	if errors.Is(err, pgx.ErrNoRows) {
-		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, loadReplay)
-		if replayErr != nil {
-			writeWorkspaceMemberCreateReplayError(w, replayErr)
-			return
-		}
-		writeJSON(w, http.StatusCreated, replay)
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to reserve workspace member request")
+	if !handleResourceCreateReservation(
+		w, r.Context(), tx, err, loadReplay,
+		writeWorkspaceMemberCreateReplayError,
+		"failed to reserve workspace member request",
+		http.StatusCreated,
+	) {
 		return
 	}
 

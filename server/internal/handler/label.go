@@ -208,17 +208,12 @@ func (h *Handler) CreateLabel(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, actorID, resourceTypeLabel, idempotencyKey, requestHash)
-	if errors.Is(err, pgx.ErrNoRows) {
-		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, loadReplay)
-		if replayErr != nil {
-			writeLabelCreateReplayError(w, replayErr)
-			return
-		}
-		writeJSON(w, http.StatusCreated, replay)
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to create label")
+	if !handleResourceCreateReservation(
+		w, r.Context(), tx, err, loadReplay,
+		writeLabelCreateReplayError,
+		"failed to create label",
+		http.StatusCreated,
+	) {
 		return
 	}
 
