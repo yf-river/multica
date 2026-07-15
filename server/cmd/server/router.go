@@ -516,7 +516,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		slog.Warn("Redis rate-limit coordination disabled: using per-process login budget")
 	}
 	trustedProxies := middleware.ParseTrustedProxies(os.Getenv("RATE_LIMIT_TRUSTED_PROXIES"))
-	authLoginRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_AUTH_LOGIN", 20), time.Minute, trustedProxies)
+	authLoginRL := middleware.RateLimit(rdb, envPositiveInteger("RATE_LIMIT_AUTH_LOGIN", 20), time.Minute, trustedProxies)
 	r.With(authLoginRL).Post("/auth/login", h.AccountPasswordLogin)
 	r.Post("/auth/logout", h.Logout)
 

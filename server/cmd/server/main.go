@@ -60,37 +60,25 @@ func closeRedisClient(label string, client *redis.Client) {
 
 func shardedRelayConfigFromEnv() realtime.ShardedStreamRelayConfig {
 	cfg := realtime.DefaultShardedStreamRelayConfig()
-	cfg.Shards = envPositiveInt("REALTIME_RELAY_SHARDS", cfg.Shards)
-	cfg.StreamMaxLen = envPositiveInt64("REALTIME_RELAY_STREAM_MAXLEN", cfg.StreamMaxLen)
-	cfg.ReadCount = envPositiveInt64("REALTIME_RELAY_XREAD_COUNT", cfg.ReadCount)
+	cfg.Shards = envPositiveInteger("REALTIME_RELAY_SHARDS", cfg.Shards)
+	cfg.StreamMaxLen = envPositiveInteger("REALTIME_RELAY_STREAM_MAXLEN", cfg.StreamMaxLen)
+	cfg.ReadCount = envPositiveInteger("REALTIME_RELAY_XREAD_COUNT", cfg.ReadCount)
 	cfg.ReadBlock = envDuration("REALTIME_RELAY_XREAD_BLOCK", cfg.ReadBlock)
 	return cfg
 }
 
-func envPositiveInt(name string, def int) int {
-	raw := os.Getenv(name)
-	if raw == "" {
-		return def
-	}
-	v, err := strconv.Atoi(raw)
-	if err != nil || v <= 0 {
-		slog.Warn("invalid env var, using default", "name", name, "value", raw, "default", def, "error", err)
-		return def
-	}
-	return v
-}
-
-func envPositiveInt64(name string, def int64) int64 {
+func envPositiveInteger[T ~int | ~int32 | ~int64](name string, def T) T {
 	raw := os.Getenv(name)
 	if raw == "" {
 		return def
 	}
 	v, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil || v <= 0 {
+	converted := T(v)
+	if err != nil || v <= 0 || int64(converted) != v {
 		slog.Warn("invalid env var, using default", "name", name, "value", raw, "default", def, "error", err)
 		return def
 	}
-	return v
+	return converted
 }
 
 func envDuration(name string, def time.Duration) time.Duration {

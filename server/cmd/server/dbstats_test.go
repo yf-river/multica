@@ -2,8 +2,6 @@ package main
 
 import (
 	"testing"
-
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // applyPoolSizing mirrors the env+URL precedence logic in newDBPool but
@@ -11,32 +9,15 @@ import (
 // asserted in unit tests.
 func applyPoolSizing(t *testing.T, dbURL string, envMax, envMin string) (max, min int32) {
 	t.Helper()
-	cfg, err := pgxpool.ParseConfig(dbURL)
-	if err != nil {
-		t.Fatalf("ParseConfig: %v", err)
-	}
-	urlParams := poolParamsFromURL(dbURL)
-
-	maxFallback := defaultMaxConns
-	if urlParams["pool_max_conns"] {
-		maxFallback = cfg.MaxConns
-	}
 	if envMax != "" {
 		t.Setenv("DATABASE_MAX_CONNS", envMax)
-	}
-	cfg.MaxConns = envInt32("DATABASE_MAX_CONNS", maxFallback)
-
-	minFallback := defaultMinConns
-	if urlParams["pool_min_conns"] {
-		minFallback = cfg.MinConns
 	}
 	if envMin != "" {
 		t.Setenv("DATABASE_MIN_CONNS", envMin)
 	}
-	cfg.MinConns = envInt32("DATABASE_MIN_CONNS", minFallback)
-
-	if cfg.MinConns > cfg.MaxConns {
-		cfg.MinConns = cfg.MaxConns
+	cfg, err := dbPoolConfig(dbURL)
+	if err != nil {
+		t.Fatalf("dbPoolConfig: %v", err)
 	}
 	return cfg.MaxConns, cfg.MinConns
 }

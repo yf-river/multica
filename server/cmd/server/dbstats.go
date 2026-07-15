@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
-	"os"
-	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -53,6 +51,14 @@ const (
 // pgx's own built-in default (max(4, NumCPU)) is intentionally NOT used as a
 // fallback — it is the value that caused the prod incident.
 func newDBPool(ctx context.Context, dbURL string) (*pgxpool.Pool, error) {
+	cfg, err := dbPoolConfig(dbURL)
+	if err != nil {
+		return nil, err
+	}
+	return pgxpool.NewWithConfig(ctx, cfg)
+}
+
+func dbPoolConfig(dbURL string) (*pgxpool.Config, error) {
 	cfg, err := pgxpool.ParseConfig(dbURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse database url: %w", err)
@@ -68,19 +74,19 @@ func newDBPool(ctx context.Context, dbURL string) (*pgxpool.Pool, error) {
 	if urlParams["pool_max_conns"] {
 		maxFallback = cfg.MaxConns
 	}
-	cfg.MaxConns = envInt32("DATABASE_MAX_CONNS", maxFallback)
+	cfg.MaxConns = envPositiveInteger("DATABASE_MAX_CONNS", maxFallback)
 
 	minFallback := defaultMinConns
 	if urlParams["pool_min_conns"] {
 		minFallback = cfg.MinConns
 	}
-	cfg.MinConns = envInt32("DATABASE_MIN_CONNS", minFallback)
+	cfg.MinConns = envPositiveInteger("DATABASE_MIN_CONNS", minFallback)
 
 	if cfg.MinConns > cfg.MaxConns {
 		cfg.MinConns = cfg.MaxConns
 	}
 
-	return pgxpool.NewWithConfig(ctx, cfg)
+	return cfg, nil
 }
 
 // poolParamsFromURL returns the set of pool_* query params present on the
@@ -97,22 +103,6 @@ func poolParamsFromURL(dbURL string) map[string]bool {
 		out[k] = true
 	}
 	return out
-}
-
-// envInt32 reads an int32 from the named env var. Empty / invalid values fall
-// back to def and emit a warn so misconfiguration is visible in startup logs.
-func envInt32(name string, def int32) int32 {
-	raw := os.Getenv(name)
-	if raw == "" {
-		return def
-	}
-	v, err := strconv.ParseInt(raw, 10, 32)
-	if err != nil || v <= 0 {
-		slog.Warn("invalid env var, using default",
-			"name", name, "value", raw, "default", def, "error", err)
-		return def
-	}
-	return int32(v)
 }
 
 // logPoolConfig prints the effective pgxpool configuration once at startup.

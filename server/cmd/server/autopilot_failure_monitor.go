@@ -47,7 +47,7 @@ func defaultFailureMonitorConfig() failureMonitorConfig {
 func envFailureMonitorConfig() failureMonitorConfig {
 	cfg := defaultFailureMonitorConfig()
 	cfg.Interval = envDurationOrZero("AUTOPILOT_FAIL_MONITOR_INTERVAL", cfg.Interval)
-	cfg.Lookback = envDurationPositive("AUTOPILOT_FAIL_MONITOR_LOOKBACK", cfg.Lookback)
+	cfg.Lookback = envDuration("AUTOPILOT_FAIL_MONITOR_LOOKBACK", cfg.Lookback)
 	cfg.StartupDelay = envDurationNonNegative("AUTOPILOT_FAIL_MONITOR_STARTUP_DELAY", cfg.StartupDelay)
 	if v, ok := envInt64Positive("AUTOPILOT_FAIL_MONITOR_MIN_RUNS"); ok {
 		cfg.MinRuns = v
@@ -358,19 +358,6 @@ func envDurationOrZero(name string, def time.Duration) time.Duration {
 	}
 	v, err := time.ParseDuration(raw)
 	if err != nil {
-		slog.Warn("invalid env var, using default", "name", name, "value", raw, "default", def.String(), "error", err)
-		return def
-	}
-	return v
-}
-
-func envDurationPositive(name string, def time.Duration) time.Duration {
-	raw := os.Getenv(name)
-	if raw == "" {
-		return def
-	}
-	v, err := time.ParseDuration(raw)
-	if err != nil || v <= 0 {
 		slog.Warn("invalid env var, using default", "name", name, "value", raw, "default", def.String(), "error", err)
 		return def
 	}
