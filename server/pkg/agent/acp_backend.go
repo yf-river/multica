@@ -23,6 +23,7 @@ type acpRuntimeSpec struct {
 	baseArgs                 []string
 	blockedArgs              map[string]blockedArgMode
 	resumeMethod             string
+	resumeResponseOmitsID    bool
 	extraEnv                 []string
 	gateHistoryReplay        bool
 	passModelOnSessionNew    bool
@@ -198,7 +199,11 @@ func executeACPBackend(ctx context.Context, prompt string, opts ExecOptions, cfg
 				return
 			}
 			var changed bool
-			sessionID, changed = resolveResumedSessionID(opts.ResumeSessionID, result)
+			if spec.resumeResponseOmitsID && extractACPSessionID(result) == "" {
+				sessionID = opts.ResumeSessionID
+			} else {
+				sessionID, changed = resolveResumedSessionID(opts.ResumeSessionID, result)
+			}
 			if changed {
 				cfg.Logger.Warn("agent returned a different session id on resume — original was likely lost; continuing with the new id",
 					"backend", spec.provider, "requested", opts.ResumeSessionID, "actual", sessionID)

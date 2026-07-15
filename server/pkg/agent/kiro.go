@@ -23,6 +23,7 @@ func (b *kiroBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 		baseArgs:                 []string{"acp", "--trust-all-tools"},
 		blockedArgs:              kiroBlockedArgs,
 		resumeMethod:             "session/load",
+		resumeResponseOmitsID:    true,
 		gateHistoryReplay:        true,
 		prependSystemPrompt:      true,
 		duplicatePromptAsContent: true,
