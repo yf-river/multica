@@ -90,6 +90,71 @@ function shouldShowBubbleMenu(editor: Editor): boolean {
   return true;
 }
 
+interface DropdownItemConfig {
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+  active: boolean;
+  action: () => void;
+}
+
+function DropdownItem({ label, icon: Icon, active, action }: DropdownItemConfig) {
+  return (
+    <button
+      type="button"
+      className="flex w-full cursor-default items-center gap-2 rounded-md px-1.5 py-1 text-xs outline-hidden select-none hover:bg-accent hover:text-accent-foreground"
+      onMouseDown={(event) => {
+        event.preventDefault();
+        action();
+      }}
+    >
+      <Icon className="size-3.5" />
+      {label}
+      {active && <Check className="ml-auto size-3.5" />}
+    </button>
+  );
+}
+
+function EditorDropdown({
+  items,
+  onOpenChange,
+  children,
+}: {
+  items: DropdownItemConfig[];
+  onOpenChange: (open: boolean) => void;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  const handleOpenChange = useCallback((next: boolean) => {
+    setOpen(next);
+    onOpenChange(next);
+  }, [onOpenChange]);
+
+  return (
+    <Popover modal={false} open={open} onOpenChange={handleOpenChange}>
+      {children}
+      <PopoverContent
+        side="bottom"
+        sideOffset={8}
+        align="start"
+        className="w-auto min-w-32 p-1"
+        initialFocus={false}
+        finalFocus={false}
+      >
+        {items.map((item) => (
+          <DropdownItem
+            key={item.label}
+            {...item}
+            action={() => {
+              item.action();
+              handleOpenChange(false);
+            }}
+          />
+        ))}
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Mark Toggle Button
 // ---------------------------------------------------------------------------
@@ -240,7 +305,6 @@ function LinkEditBar({
 
 function HeadingDropdown({ editor, onOpenChange, activeLevel }: { editor: Editor; onOpenChange: (open: boolean) => void; activeLevel: number | undefined }) {
   const { t } = useT("editor");
-  const [open, setOpen] = useState(false);
   const label = activeLevel ? `H${activeLevel}` : t(($) => $.bubble_menu.heading_dropdown.text);
   const items = [
     { label: t(($) => $.bubble_menu.heading_dropdown.normal_text), icon: Type, active: !activeLevel, action: () => editor.chain().focus().setParagraph().run() },
@@ -249,13 +313,8 @@ function HeadingDropdown({ editor, onOpenChange, activeLevel }: { editor: Editor
     { label: t(($) => $.bubble_menu.heading_dropdown.heading_3), icon: Heading3, active: activeLevel === 3, action: () => editor.chain().focus().toggleHeading({ level: 3 }).run() },
   ];
 
-  const handleOpenChange = useCallback((next: boolean) => {
-    setOpen(next);
-    onOpenChange(next);
-  }, [onOpenChange]);
-
   return (
-    <Popover modal={false} open={open} onOpenChange={handleOpenChange}>
+    <EditorDropdown items={items} onOpenChange={onOpenChange}>
       <PopoverTrigger
         className="inline-flex h-7 items-center gap-0.5 rounded-md px-1.5 text-xs font-medium hover:bg-muted"
         onMouseDown={(e) => e.preventDefault()}
@@ -263,32 +322,7 @@ function HeadingDropdown({ editor, onOpenChange, activeLevel }: { editor: Editor
         {label}
         <ChevronDown className="size-3" />
       </PopoverTrigger>
-      <PopoverContent
-        side="bottom"
-        sideOffset={8}
-        align="start"
-        className="w-auto min-w-32 p-1"
-        initialFocus={false}
-        finalFocus={false}
-      >
-        {items.map((item) => (
-          <button
-            type="button"
-            key={item.label}
-            className="flex w-full cursor-default items-center gap-2 rounded-md px-1.5 py-1 text-xs outline-hidden select-none hover:bg-accent hover:text-accent-foreground"
-            onMouseDown={(e) => {
-              e.preventDefault();
-              item.action();
-              handleOpenChange(false);
-            }}
-          >
-            <item.icon className="size-3.5" />
-            {item.label}
-            {item.active && <Check className="ml-auto size-3.5" />}
-          </button>
-        ))}
-      </PopoverContent>
-    </Popover>
+    </EditorDropdown>
   );
 }
 
@@ -298,15 +332,14 @@ function HeadingDropdown({ editor, onOpenChange, activeLevel }: { editor: Editor
 
 function ListDropdown({ editor, onOpenChange, isBullet, isOrdered, isTask }: { editor: Editor; onOpenChange: (open: boolean) => void; isBullet: boolean; isOrdered: boolean; isTask: boolean }) {
   const { t } = useT("editor");
-  const [open, setOpen] = useState(false);
-
-  const handleOpenChange = useCallback((next: boolean) => {
-    setOpen(next);
-    onOpenChange(next);
-  }, [onOpenChange]);
+  const items = [
+    { label: t(($) => $.bubble_menu.list_dropdown.bullet_list), icon: List, active: isBullet, action: () => editor.chain().focus().toggleBulletList().run() },
+    { label: t(($) => $.bubble_menu.list_dropdown.ordered_list), icon: ListOrdered, active: isOrdered, action: () => editor.chain().focus().toggleOrderedList().run() },
+    { label: t(($) => $.bubble_menu.list_dropdown.task_list), icon: ListTodo, active: isTask, action: () => editor.chain().focus().toggleTaskList().run() },
+  ];
 
   return (
-    <Popover modal={false} open={open} onOpenChange={handleOpenChange}>
+    <EditorDropdown items={items} onOpenChange={onOpenChange}>
       <Tooltip>
         <TooltipTrigger render={
           <PopoverTrigger className="inline-flex h-7 items-center gap-0.5 rounded-md px-1.5 text-xs font-medium hover:bg-muted aria-pressed:bg-muted" aria-pressed={isBullet || isOrdered || isTask} onMouseDown={(e) => e.preventDefault()} />
@@ -316,52 +349,7 @@ function ListDropdown({ editor, onOpenChange, isBullet, isOrdered, isTask }: { e
         </TooltipTrigger>
         <TooltipContent side="top" sideOffset={8}>{t(($) => $.bubble_menu.list)}</TooltipContent>
       </Tooltip>
-      <PopoverContent
-        side="bottom"
-        sideOffset={8}
-        align="start"
-        className="w-auto min-w-32 p-1"
-        initialFocus={false}
-        finalFocus={false}
-      >
-        <button
-          type="button"
-          className="flex w-full cursor-default items-center gap-2 rounded-md px-1.5 py-1 text-xs outline-hidden select-none hover:bg-accent hover:text-accent-foreground"
-          onMouseDown={(e) => {
-            e.preventDefault();
-            editor.chain().focus().toggleBulletList().run();
-            handleOpenChange(false);
-          }}
-        >
-          <List className="size-3.5" /> {t(($) => $.bubble_menu.list_dropdown.bullet_list)}
-          {isBullet && <Check className="ml-auto size-3.5" />}
-        </button>
-        <button
-          type="button"
-          className="flex w-full cursor-default items-center gap-2 rounded-md px-1.5 py-1 text-xs outline-hidden select-none hover:bg-accent hover:text-accent-foreground"
-          onMouseDown={(e) => {
-            e.preventDefault();
-            editor.chain().focus().toggleOrderedList().run();
-            handleOpenChange(false);
-          }}
-        >
-          <ListOrdered className="size-3.5" /> {t(($) => $.bubble_menu.list_dropdown.ordered_list)}
-          {isOrdered && <Check className="ml-auto size-3.5" />}
-        </button>
-        <button
-          type="button"
-          className="flex w-full cursor-default items-center gap-2 rounded-md px-1.5 py-1 text-xs outline-hidden select-none hover:bg-accent hover:text-accent-foreground"
-          onMouseDown={(e) => {
-            e.preventDefault();
-            editor.chain().focus().toggleTaskList().run();
-            handleOpenChange(false);
-          }}
-        >
-          <ListTodo className="size-3.5" /> {t(($) => $.bubble_menu.list_dropdown.task_list)}
-          {isTask && <Check className="ml-auto size-3.5" />}
-        </button>
-      </PopoverContent>
-    </Popover>
+    </EditorDropdown>
   );
 }
 

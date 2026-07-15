@@ -39,7 +39,8 @@
   50% { opacity: 0.3; }
 }
 
-.image-toolbar {
+.image-toolbar,
+.rich-text-editor .mermaid-diagram-toolbar {
   position: absolute;
   top: 0.5rem;
   right: 0.5rem;
@@ -58,7 +59,8 @@
   opacity: 1;
 }
 
-.image-toolbar button {
+.image-toolbar button,
+.rich-text-editor .mermaid-diagram-toolbar button {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -69,6 +71,7 @@
   transition: background 0.15s;
 }
 
-.image-toolbar button:hover {
+.image-toolbar button:hover,
+.rich-text-editor .mermaid-diagram-toolbar button:hover {
   background: color-mix(in srgb, white 15%, transparent);
 }

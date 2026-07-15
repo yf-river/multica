@@ -222,16 +222,7 @@ export function createSlashCommandSuggestion(qc: QueryClient): Omit<
 
       window.getSelection()?.collapseToEnd();
     },
-    render: createSuggestionPopupRender<SlashCommandItem, SlashCommandItem, SlashCommandListRef, SlashCommandListProps>({
-      pluginKey,
-      component: SlashCommandList,
-      getProps: (props) => ({
-        items: props.items,
-        query: props.query,
-        command: props.command,
-      }),
-      onKeyDown: (ref, props) => ref?.onKeyDown(props) ?? false,
-    }),
+    render: createSlashCommandPopup(pluginKey),
   };
 }
 
@@ -281,16 +272,20 @@ export function createBuiltinCommandSuggestion(): Omit<
 
       window.getSelection()?.collapseToEnd();
     },
-    render: createSuggestionPopupRender<SlashCommandItem, SlashCommandItem, SlashCommandListRef, SlashCommandListProps>({
-      pluginKey,
-      component: SlashCommandList,
-      getProps: (props) => ({
-        items: props.items,
-        query: props.query,
-        command: props.command,
-        hideOnEmpty: true,
-      }),
-      onKeyDown: (ref, props) => ref?.onKeyDown(props) ?? false,
-    }),
+    render: createSlashCommandPopup(pluginKey, true),
   };
+}
+
+function createSlashCommandPopup(pluginKey: PluginKey, hideOnEmpty = false) {
+  return createSuggestionPopupRender<SlashCommandItem, SlashCommandItem, SlashCommandListRef, SlashCommandListProps>({
+    pluginKey,
+    component: SlashCommandList,
+    getProps: (props) => ({
+      items: props.items,
+      query: props.query,
+      command: props.command,
+      ...(hideOnEmpty ? { hideOnEmpty: true } : {}),
+    }),
+    onKeyDown: (ref, props) => ref?.onKeyDown(props) ?? false,
+  });
 }

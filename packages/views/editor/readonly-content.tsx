@@ -108,51 +108,49 @@ function urlTransform(url: string): string {
 // Custom react-markdown components
 // ---------------------------------------------------------------------------
 
-function IssueMentionLink({ issueId, label }: { issueId: string; label?: string }) {
+function MentionLink({
+  path,
+  label,
+  children,
+}: {
+  path: string;
+  label?: string;
+  children: React.ReactNode;
+}) {
   const { push, openInNewTab } = useNavigation();
-  const p = useWorkspacePaths();
-  const path = p.issueDetail(issueId);
   return (
     <span
       className="inline align-middle"
-      onClick={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        if (e.metaKey || e.ctrlKey || e.shiftKey) {
-          if (openInNewTab) {
-            openInNewTab(path, label);
-          }
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.metaKey || event.ctrlKey || event.shiftKey) {
+          openInNewTab?.(path, label);
           return;
         }
         push(path);
       }}
     >
-      <IssueMentionCard issueId={issueId} fallbackLabel={label} />
+      {children}
     </span>
   );
 }
 
-function ProjectMentionLink({ projectId, label }: { projectId: string; label?: string }) {
-  const { push, openInNewTab } = useNavigation();
+function IssueMentionLink({ issueId, label }: { issueId: string; label?: string }) {
   const p = useWorkspacePaths();
-  const path = p.projectDetail(projectId);
   return (
-    <span
-      className="inline align-middle"
-      onClick={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        if (e.metaKey || e.ctrlKey || e.shiftKey) {
-          if (openInNewTab) {
-            openInNewTab(path, label);
-          }
-          return;
-        }
-        push(path);
-      }}
-    >
+    <MentionLink path={p.issueDetail(issueId)} label={label}>
+      <IssueMentionCard issueId={issueId} fallbackLabel={label} />
+    </MentionLink>
+  );
+}
+
+function ProjectMentionLink({ projectId, label }: { projectId: string; label?: string }) {
+  const p = useWorkspacePaths();
+  return (
+    <MentionLink path={p.projectDetail(projectId)} label={label}>
       <ProjectChip projectId={projectId} fallbackLabel={label} className="cursor-pointer hover:bg-accent transition-colors" />
-    </span>
+    </MentionLink>
   );
 }
 
