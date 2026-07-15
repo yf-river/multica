@@ -3,7 +3,7 @@ import { cn } from "@multica/ui/lib/utils";
 
 type ProjectIconSize = "sm" | "md" | "lg";
 
-export interface ProjectIconProps {
+interface ProjectIconProps {
   project?: Pick<Project, "icon"> | null;
   size?: ProjectIconSize;
   className?: string;

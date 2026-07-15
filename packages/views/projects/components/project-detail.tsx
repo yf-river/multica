@@ -33,7 +33,6 @@ import { BOARD_STATUSES } from "@multica/core/issues/config";
 import { createIssueViewStore } from "@multica/core/issues/stores/view-store";
 import { ViewStoreProvider, useViewStore } from "@multica/core/issues/stores/view-store-context";
 import { filterIssues, projectIssueViews } from "../../issues/utils/filter";
-import { getProjectIssueMetrics } from "./project-issue-metrics";
 import { filterRunningAssigneeGroups } from "./project-issue-filters";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { useNavigation } from "../../navigation";
@@ -536,7 +535,8 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
     return <div className="flex items-center justify-center h-full text-muted-foreground">{t(($) => $.detail.not_found)}</div>;
   }
 
-  const issueMetrics = getProjectIssueMetrics(project);
+  const totalIssueCount = project.issue_count;
+  const completedIssueCount = project.done_count;
   const statusCfg = PROJECT_STATUS_CONFIG[project.status];
 
   const sidebarContent = (
@@ -707,8 +707,8 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
       </div>
 
       {/* Progress */}
-      {issueMetrics.totalCount > 0 && (() => {
-        const pct = Math.round((issueMetrics.completedCount / issueMetrics.totalCount) * 100);
+      {totalIssueCount > 0 && (() => {
+        const pct = Math.round((completedIssueCount / totalIssueCount) * 100);
         return (
           <div>
             <button
@@ -727,7 +727,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
                 />
               </div>
               <span className="text-xs text-muted-foreground tabular-nums shrink-0">
-                {issueMetrics.completedCount}/{issueMetrics.totalCount}
+                {completedIssueCount}/{totalIssueCount}
               </span>
             </div>}
           </div>
