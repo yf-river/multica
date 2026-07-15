@@ -1,6 +1,5 @@
 "use client";
 
-import { STATUS_CONFIG, PRIORITY_CONFIG } from "@multica/core/issues/config";
 import { formatDateOnly } from "@multica/core/issues/date";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { PriorityIcon } from "../../issues/components/priority-icon";
@@ -44,6 +43,7 @@ function shortDate(dateStr: string): string {
 
 export function InboxDetailLabel({ item }: { item: InboxItem }) {
   const { t } = useT("inbox");
+  const { t: issueT } = useT("issues");
   const typeLabels = useTypeLabels();
   const { getActorName } = useActorName();
   const details = item.details ?? {};
@@ -51,7 +51,7 @@ export function InboxDetailLabel({ item }: { item: InboxItem }) {
   switch (item.type) {
     case "status_changed": {
       if (!details.to) return <span>{typeLabels[item.type]}</span>;
-      const label = STATUS_CONFIG[details.to as IssueStatus]?.label ?? details.to;
+      const label = issueT(($) => $.status[details.to as IssueStatus]);
       return (
         <span className="inline-flex items-center gap-1">
           {t(($) => $.labels.set_status_to)}
@@ -62,7 +62,7 @@ export function InboxDetailLabel({ item }: { item: InboxItem }) {
     }
     case "priority_changed": {
       if (!details.to) return <span>{typeLabels[item.type]}</span>;
-      const label = PRIORITY_CONFIG[details.to as IssuePriority]?.label ?? details.to;
+      const label = issueT(($) => $.priority[details.to as IssuePriority]);
       return (
         <span className="inline-flex items-center gap-1">
           {t(($) => $.labels.set_priority_to)}
