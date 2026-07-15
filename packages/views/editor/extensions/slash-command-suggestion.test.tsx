@@ -90,108 +90,56 @@ function items(qc: QueryClient, query = ""): SlashCommandItem[] {
   return config.items!({ query, editor: {} as never }) as SlashCommandItem[];
 }
 
+function activeAgentItems(skills: Agent["skills"], query = "") {
+  chatState.selectedAgentId = "agent-1";
+  return items(fakeQc({
+    members: [{ user_id: "u1", name: "Alice", role: "member" }],
+    agents: [agent({ id: "agent-1", skills })],
+  }), query);
+}
+
 describe("slash command suggestion items", () => {
   it("returns all active agent skills when query is empty", () => {
-    chatState.selectedAgentId = "agent-1";
-    const qc = fakeQc({
-      members: [{ user_id: "u1", name: "Alice", role: "member" }],
-      agents: [
-        agent({
-          id: "agent-1",
-          skills: [
-            { id: "s1", name: "deploy", description: "Ship changes" },
-            { id: "s2", name: "review", description: "Review code" },
-          ],
-        }),
-      ],
-    });
-
-    expect(items(qc).map((i) => i.label)).toEqual(["deploy", "review"]);
+    expect(activeAgentItems([
+      { id: "s1", name: "deploy", description: "Ship changes" },
+      { id: "s2", name: "review", description: "Review code" },
+    ]).map((i) => i.label)).toEqual(["deploy", "review"]);
   });
 
   it("filters skills by name case-insensitively", () => {
-    chatState.selectedAgentId = "agent-1";
-    const qc = fakeQc({
-      members: [{ user_id: "u1", name: "Alice", role: "member" }],
-      agents: [
-        agent({
-          id: "agent-1",
-          skills: [
-            { id: "s1", name: "Deploy", description: "" },
-            { id: "s2", name: "Review", description: "" },
-          ],
-        }),
-      ],
-    });
-
-    expect(items(qc, "dep").map((i) => i.id)).toEqual(["s1"]);
+    expect(activeAgentItems([
+      { id: "s1", name: "Deploy", description: "" },
+      { id: "s2", name: "Review", description: "" },
+    ], "dep").map((i) => i.id)).toEqual(["s1"]);
   });
 
   it("filters skills by description", () => {
-    chatState.selectedAgentId = "agent-1";
-    const qc = fakeQc({
-      members: [{ user_id: "u1", name: "Alice", role: "member" }],
-      agents: [
-        agent({
-          id: "agent-1",
-          skills: [
-            { id: "s1", name: "deploy", description: "Ship changes" },
-            { id: "s2", name: "review", description: "Read a pull request" },
-          ],
-        }),
-      ],
-    });
-
-    expect(items(qc, "pull").map((i) => i.id)).toEqual(["s2"]);
+    expect(activeAgentItems([
+      { id: "s1", name: "deploy", description: "Ship changes" },
+      { id: "s2", name: "review", description: "Read a pull request" },
+    ], "pull").map((i) => i.id)).toEqual(["s2"]);
   });
 
   it("tolerates skills with missing descriptions from cached API data", () => {
-    chatState.selectedAgentId = "agent-1";
-    const qc = fakeQc({
-      members: [{ user_id: "u1", name: "Alice", role: "member" }],
-      agents: [
-        agent({
-          id: "agent-1",
-          skills: [
-            { id: "s1", name: "deploy" } as Agent["skills"][number],
-          ],
-        }),
-      ],
-    });
-
-    expect(() => items(qc, "dep")).not.toThrow();
-    expect(items(qc, "dep")).toEqual([
+    const skills = [
+      { id: "s1", name: "deploy" } as Agent["skills"][number],
+    ];
+    expect(() => activeAgentItems(skills, "dep")).not.toThrow();
+    expect(activeAgentItems(skills, "dep")).toEqual([
       { id: "s1", label: "deploy", description: "" },
     ]);
   });
 
   it("returns empty when the active agent has no skills", () => {
-    chatState.selectedAgentId = "agent-1";
-    const qc = fakeQc({
-      members: [{ user_id: "u1", name: "Alice", role: "member" }],
-      agents: [agent({ id: "agent-1", skills: [] })],
-    });
-
-    expect(items(qc)).toEqual([]);
+    expect(activeAgentItems([])).toEqual([]);
   });
 
   it("caps results at 20", () => {
-    chatState.selectedAgentId = "agent-1";
-    const qc = fakeQc({
-      members: [{ user_id: "u1", name: "Alice", role: "member" }],
-      agents: [
-        agent({
-          id: "agent-1",
-          skills: Array.from({ length: 25 }, (_, i) => ({
-            id: `s${i}`,
-            name: `skill-${i}`,
-            description: "",
-          })),
-        }),
-      ],
-    });
-
-    expect(items(qc)).toHaveLength(20);
+    expect(activeAgentItems(Array.from({ length: 25 }, (_, i) => ({
+      id: `s${i}`,
+      name: `skill-${i}`,
+      description: "",
+    })))).toHaveLength(20);
   });
 
   it("falls back to the first available agent when selectedAgentId is stale", () => {
