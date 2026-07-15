@@ -16,18 +16,14 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-type promptEvaluationOptimizationCandidateReader interface {
-	GetPromptEvaluationOptimizationCandidateInWorkspace(context.Context, db.GetPromptEvaluationOptimizationCandidateInWorkspaceParams) (db.PromptEvaluationOptimizationCandidate, error)
-}
-
 func loadPromptEvaluationOptimizationCandidate(
 	w http.ResponseWriter,
 	r *http.Request,
-	reader promptEvaluationOptimizationCandidateReader,
+	queries *db.Queries,
 	workspaceID pgtype.UUID,
 	candidateID pgtype.UUID,
 ) (db.PromptEvaluationOptimizationCandidate, bool) {
-	candidate, err := reader.GetPromptEvaluationOptimizationCandidateInWorkspace(r.Context(), db.GetPromptEvaluationOptimizationCandidateInWorkspaceParams{
+	candidate, err := queries.GetPromptEvaluationOptimizationCandidateInWorkspace(r.Context(), db.GetPromptEvaluationOptimizationCandidateInWorkspaceParams{
 		ID:          candidateID,
 		WorkspaceID: workspaceID,
 	})

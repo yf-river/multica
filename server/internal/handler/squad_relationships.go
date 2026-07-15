@@ -1,26 +1,21 @@
 package handler
 
 import (
-	"context"
 	"net/http"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-type squadAgentReader interface {
-	GetAgentInWorkspace(context.Context, db.GetAgentInWorkspaceParams) (db.Agent, error)
-}
-
 func loadSquadAgent(
 	w http.ResponseWriter,
 	r *http.Request,
-	reader squadAgentReader,
+	queries *db.Queries,
 	workspaceID pgtype.UUID,
 	agentID pgtype.UUID,
 	invalidMessage string,
 ) (db.Agent, bool) {
-	agent, err := reader.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
+	agent, err := queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
 		ID:          agentID,
 		WorkspaceID: workspaceID,
 	})
@@ -31,19 +26,15 @@ func loadSquadAgent(
 	return agent, true
 }
 
-type squadMemberReader interface {
-	GetMemberByUserAndWorkspace(context.Context, db.GetMemberByUserAndWorkspaceParams) (db.Member, error)
-}
-
 func loadSquadMember(
 	w http.ResponseWriter,
 	r *http.Request,
-	reader squadMemberReader,
+	queries *db.Queries,
 	workspaceID pgtype.UUID,
 	userID pgtype.UUID,
 	invalidMessage string,
 ) (db.Member, bool) {
-	member, err := reader.GetMemberByUserAndWorkspace(r.Context(), db.GetMemberByUserAndWorkspaceParams{
+	member, err := queries.GetMemberByUserAndWorkspace(r.Context(), db.GetMemberByUserAndWorkspaceParams{
 		UserID:      userID,
 		WorkspaceID: workspaceID,
 	})
