@@ -3,7 +3,7 @@ import {
   pointerWithin,
   type CollisionDetection,
 } from "@dnd-kit/core";
-import type { Issue, IssueStatus } from "@multica/core/types";
+import type { IssueStatus } from "@multica/core/types";
 import type { SwimlaneGrouping } from "@multica/core/issues/stores/view-store";
 
 export const NONE_LANE_ID = "none";
@@ -79,14 +79,4 @@ export function parseLaneId(id: string): { grouping: string; rawId: string } | n
     grouping: rest.slice(0, firstColon),
     rawId: rest.slice(firstColon + 1),
   };
-}
-
-export function computePosition(ids: string[], activeId: string, issueMap: Map<string, Issue>): number {
-  const index = ids.indexOf(activeId);
-  if (index === -1) return 0;
-  const position = (id: string) => issueMap.get(id)?.position ?? 0;
-  if (ids.length === 1) return issueMap.get(activeId)?.position ?? 0;
-  if (index === 0) return position(ids[1]!) - 1;
-  if (index === ids.length - 1) return position(ids[index - 1]!) + 1;
-  return (position(ids[index - 1]!) + position(ids[index + 1]!)) / 2;
 }

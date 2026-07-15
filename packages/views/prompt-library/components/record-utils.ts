@@ -12,6 +12,16 @@ export function stringFromUnknown(value: unknown): string {
   return "";
 }
 
+export function stringFromRecord(
+  record: Record<string, unknown>,
+  key: string,
+): string {
+  const value = record[key];
+  if (typeof value === "string") return value;
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  return "";
+}
+
 export function shortId(value: string): string {
   if (!value) return "";
   return value.length > 10 ? value.slice(0, 10) : value;

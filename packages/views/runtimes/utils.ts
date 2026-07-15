@@ -516,7 +516,7 @@ export function sliceWindow(
   };
 }
 
-function diffDaysIso(from: string, to: string): number {
+export function diffDaysIso(from: string, to: string): number {
   const [y1, m1, d1] = from.split("-").map(Number);
   const [y2, m2, d2] = to.split("-").map(Number);
   const a = Date.UTC(y1 ?? 1970, (m1 ?? 1) - 1, d1 ?? 1);

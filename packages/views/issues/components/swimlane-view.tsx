@@ -39,6 +39,7 @@ import {
   DropdownMenuItem,
 } from "@multica/ui/components/ui/dropdown-menu";
 import { sortIssues } from "../utils/sort";
+import { computePosition } from "../utils/drag-utils";
 import { BOARD_STATUSES, STATUS_CONFIG } from "@multica/core/issues/config";
 import {
   openCreateIssue,
@@ -60,7 +61,6 @@ import {
   NONE_LANE_ID,
   ORPHAN_LANE_ID,
   cellId,
-  computePosition,
   findCellIn,
   laneIdFor,
   makeSwimLaneCollision,

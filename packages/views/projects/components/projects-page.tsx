@@ -25,7 +25,6 @@ import {
   useDeleteProject,
   useProjectViewStore,
   type ProjectColumnKey,
-  type ProjectListFilters,
   type ProjectSortField,
 } from "@multica/core/projects";
 import {
@@ -42,7 +41,10 @@ import { useModalStore } from "@multica/core/modals";
 import { AppLink, useRowLink } from "../../navigation";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { FILTER_ITEM_CLASS, HoverCheck } from "../../common/hover-check";
-import { ListBatchToolbar } from "../../common/list-toolbar";
+import {
+  countActiveFilters,
+  ListBatchToolbar,
+} from "../../common/list-toolbar";
 import {
   ListGridCheckboxCell,
   ListGridSelectAllHeaderCell,
@@ -599,14 +601,6 @@ const STATUS_VALUES: ProjectStatus[] = [
 const PRIORITY_VALUES: ProjectPriority[] = ["urgent", "high", "medium", "low", "none"];
 const COLUMN_KEYS: ProjectColumnKey[] = ["priority", "progress", "lead", "issues", "created"];
 const SORT_FIELDS: ProjectSortField[] = ["name", "priority", "status", "progress", "created"];
-
-function countActiveFilters(f: ProjectListFilters): number {
-  let c = 0;
-  if (f.statuses.length) c++;
-  if (f.priorities.length) c++;
-  if (f.leads.length) c++;
-  return c;
-}
 
 // Batch toolbar — page-anchored (not viewport). Pin all selected (any
 // member) + Delete (workspace admin). Mirrors the other lists.

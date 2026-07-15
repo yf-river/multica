@@ -6,7 +6,7 @@ import type {
   UpdatePromptEvaluationCaseRequest,
 } from "@multica/core/types";
 import { parseDebugValues, splitList } from "./prompt-library-request-builders";
-import { asRecord, stringFromUnknown } from "./record-utils";
+import { asRecord, stringFromRecord, stringFromUnknown } from "./record-utils";
 
 export type ManualCaseDraft = {
   caseName: string;
@@ -377,13 +377,6 @@ function summarizeJsonValue(value: unknown): string {
     return "";
   }
   return JSON.stringify(value) ?? "";
-}
-
-function stringFromRecord(record: Record<string, unknown>, key: string): string {
-  const value = record[key];
-  if (typeof value === "string") return value;
-  if (typeof value === "number" && Number.isFinite(value)) return String(value);
-  return "";
 }
 
 function nullableString(value: unknown): string | null {

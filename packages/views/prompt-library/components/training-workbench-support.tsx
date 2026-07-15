@@ -17,6 +17,7 @@ import {
   summarizeWritingModelBenchmark,
   type TrainingWorkbenchTab,
 } from "@multica/core/training";
+import { stringFromRecord } from "./record-utils";
 
 export function emptyTrainingRouteText(activeTab: TrainingWorkbenchTab) {
   switch (activeTab) {
@@ -374,13 +375,6 @@ export function summarizeLinkedDatasetVersions(asset: PromptEvaluationAsset): st
     })
     .filter(Boolean);
   return parts.length > 0 ? `绑定用例库版本：${parts.join("；")}` : null;
-}
-
-function stringFromRecord(record: Record<string, unknown>, key: string): string {
-  const value = record[key];
-  if (typeof value === "string") return value;
-  if (typeof value === "number" && Number.isFinite(value)) return String(value);
-  return "";
 }
 
 export function formatNumber(value: unknown): string {

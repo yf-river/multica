@@ -6,6 +6,7 @@ import type {
 } from "@multica/core/types";
 import {
   addDaysIso,
+  diffDaysIso,
   estimateCost,
   estimateCostBreakdown,
   formatShortDate,
@@ -270,14 +271,6 @@ function buildWeekShells(tz: string, weekCount: number): WeekShell[] {
     });
   }
   return shells;
-}
-
-function diffDaysIso(from: string, to: string): number {
-  const [y1, m1, d1] = from.split("-").map(Number);
-  const [y2, m2, d2] = to.split("-").map(Number);
-  const a = Date.UTC(y1 ?? 1970, (m1 ?? 1) - 1, d1 ?? 1);
-  const b = Date.UTC(y2 ?? 1970, (m2 ?? 1) - 1, d2 ?? 1);
-  return Math.round((b - a) / 86_400_000);
 }
 
 export function aggregateWeeklyTime(
