@@ -11,10 +11,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@multica/ui/components/ui/dialog"
-import {
-  InputGroup,
-  InputGroupAddon,
-} from "@multica/ui/components/ui/input-group"
 import { SearchIcon, CheckIcon } from "lucide-react"
 
 function Command({
@@ -72,7 +68,7 @@ function CommandInput({
 }: React.ComponentProps<typeof CommandPrimitive.Input>) {
   return (
     <div data-slot="command-input-wrapper" className="p-1 pb-0">
-      <InputGroup className="h-8! rounded-lg! border-input/30 bg-input/30 shadow-none! *:data-[slot=input-group-addon]:pl-2!">
+      <div className="group/input-group relative flex h-8! w-full min-w-0 items-center rounded-lg! border border-input/30 bg-input/30 shadow-none! transition-colors outline-none has-disabled:bg-input/50 has-disabled:opacity-50 has-[[data-slot][aria-invalid=true]]:border-destructive has-[[data-slot][aria-invalid=true]]:ring-3 has-[[data-slot][aria-invalid=true]]:ring-destructive/20 has-[>[data-align=inline-start]]:[&>input]:pl-1.5 dark:has-disabled:bg-input/80 dark:has-[[data-slot][aria-invalid=true]]:ring-destructive/40">
         <CommandPrimitive.Input
           data-slot="command-input"
           className={cn(
@@ -81,10 +77,17 @@ function CommandInput({
           )}
           {...props}
         />
-        <InputGroupAddon>
+        <div
+          data-slot="input-group-addon"
+          data-align="inline-start"
+          className="order-first flex h-auto cursor-text items-center justify-center gap-2 py-1.5 pl-2! text-sm font-medium text-muted-foreground select-none [&>svg:not([class*='size-'])]:size-4"
+          onClick={(event) => {
+            event.currentTarget.parentElement?.querySelector("input")?.focus()
+          }}
+        >
           <SearchIcon className="size-4 shrink-0 opacity-50" />
-        </InputGroupAddon>
-      </InputGroup>
+        </div>
+      </div>
     </div>
   )
 }
@@ -134,19 +137,6 @@ function CommandGroup({
   )
 }
 
-function CommandSeparator({
-  className,
-  ...props
-}: React.ComponentProps<typeof CommandPrimitive.Separator>) {
-  return (
-    <CommandPrimitive.Separator
-      data-slot="command-separator"
-      className={cn("-mx-1 h-px bg-border", className)}
-      {...props}
-    />
-  )
-}
-
 function CommandItem({
   className,
   children,
@@ -162,24 +152,8 @@ function CommandItem({
       {...props}
     >
       {children}
-      <CheckIcon className="ml-auto opacity-0 group-has-data-[slot=command-shortcut]/command-item:hidden group-data-[checked=true]/command-item:opacity-100" />
+      <CheckIcon className="ml-auto opacity-0 group-data-[checked=true]/command-item:opacity-100" />
     </CommandPrimitive.Item>
-  )
-}
-
-function CommandShortcut({
-  className,
-  ...props
-}: React.ComponentProps<"span">) {
-  return (
-    <span
-      data-slot="command-shortcut"
-      className={cn(
-        "ml-auto text-xs tracking-widest text-muted-foreground group-data-selected/command-item:text-foreground",
-        className
-      )}
-      {...props}
-    />
   )
 }
 
@@ -191,6 +165,4 @@ export {
   CommandEmpty,
   CommandGroup,
   CommandItem,
-  CommandShortcut,
-  CommandSeparator,
 }

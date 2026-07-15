@@ -31,7 +31,6 @@ import {
   TooltipContent,
 } from "@multica/ui/components/ui/tooltip";
 import { Popover, PopoverTrigger } from "@multica/ui/components/ui/popover";
-import { AvatarGroup, AvatarGroupCount } from "@multica/ui/components/ui/avatar";
 import { ActorAvatar } from "../../common/actor-avatar";
 import type { Attachment, ListIssuesCache, TimelineEntry } from "@multica/core/types";
 import { contentReferencesAttachment } from "@multica/core/types";
@@ -1266,7 +1265,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                 <Popover>
                   <PopoverTrigger className="cursor-pointer hover:opacity-80 transition-opacity">
                     {subscribers.length > 0 ? (
-                      <AvatarGroup>
+                      <div className="group/avatar-group flex -space-x-2 *:data-[slot=avatar]:ring-2 *:data-[slot=avatar]:ring-background">
                         {subscribers.slice(0, 4).map((sub) => (
                           <ActorAvatar
                             key={`${sub.user_type}-${sub.user_id}`}
@@ -1277,9 +1276,11 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                           />
                         ))}
                         {subscribers.length > 4 && (
-                          <AvatarGroupCount>+{subscribers.length - 4}</AvatarGroupCount>
+                          <div className="relative flex size-8 shrink-0 items-center justify-center rounded-full bg-muted text-sm text-muted-foreground ring-2 ring-background group-has-data-[size=lg]/avatar-group:size-10 group-has-data-[size=sm]/avatar-group:size-6 [&>svg]:size-4 group-has-data-[size=lg]/avatar-group:[&>svg]:size-5 group-has-data-[size=sm]/avatar-group:[&>svg]:size-3">
+                            +{subscribers.length - 4}
+                          </div>
                         )}
-                      </AvatarGroup>
+                      </div>
                     ) : (
                       <span className="flex items-center justify-center h-6 w-6 rounded-full border border-dashed border-muted-foreground/30 text-muted-foreground">
                         <Users className="h-3 w-3" />
