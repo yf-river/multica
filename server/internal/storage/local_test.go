@@ -253,7 +253,7 @@ func TestLocalStorage_KeyFromURL_WithBaseURL(t *testing.T) {
 	}
 }
 
-func TestLocalStorage_DeleteKeys(t *testing.T) {
+func TestDeleteKeys(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("LOCAL_UPLOAD_DIR", tmpDir)
 
@@ -273,7 +273,7 @@ func TestLocalStorage_DeleteKeys(t *testing.T) {
 		}
 	}
 
-	store.DeleteKeys(ctx, keys)
+	DeleteKeys(ctx, store, keys)
 
 	for _, key := range keys {
 		filePath := filepath.Join(tmpDir, key)

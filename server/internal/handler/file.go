@@ -1115,5 +1115,5 @@ func (h *Handler) deleteStorageObjects(ctx context.Context, urls []string) {
 	for i, u := range urls {
 		keys[i] = h.Storage.KeyFromURL(u)
 	}
-	h.Storage.DeleteKeys(ctx, keys)
+	storage.DeleteKeys(ctx, h.Storage, keys)
 }

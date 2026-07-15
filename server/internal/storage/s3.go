@@ -211,15 +211,6 @@ func (s *S3Storage) Delete(ctx context.Context, key string) error {
 	return nil
 }
 
-// DeleteKeys removes multiple objects from S3. Best-effort, errors are logged.
-func (s *S3Storage) DeleteKeys(ctx context.Context, keys []string) {
-	for _, key := range keys {
-		if err := s.Delete(ctx, key); err != nil {
-			slog.Error("s3 DeleteObject failed", "key", key, "error", err)
-		}
-	}
-}
-
 func (s *S3Storage) Upload(ctx context.Context, key string, data []byte, contentType string, filename string) (string, error) {
 	_, err := s.client.PutObject(ctx, &s3.PutObjectInput{
 		Bucket:             aws.String(s.bucket),

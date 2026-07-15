@@ -1,12 +1,8 @@
 package protocol
 
 func NormalizeGOOS(goos string) string {
-	switch goos {
-	case "darwin":
+	if goos == "darwin" {
 		return "macos"
-	case "windows", "linux":
-		return goos
-	default:
-		return goos
 	}
+	return goos
 }

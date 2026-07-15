@@ -119,14 +119,6 @@ func (s *LocalStorage) Delete(ctx context.Context, key string) error {
 	return deleteErr
 }
 
-func (s *LocalStorage) DeleteKeys(ctx context.Context, keys []string) {
-	for _, key := range keys {
-		if err := s.Delete(ctx, key); err != nil {
-			slog.Error("local storage Delete failed", "key", key, "error", err)
-		}
-	}
-}
-
 func (s *LocalStorage) Upload(ctx context.Context, key string, data []byte, contentType string, filename string) (string, error) {
 	if strings.TrimSpace(filename) == "" {
 		return "", errors.New("local Upload: filename is required")

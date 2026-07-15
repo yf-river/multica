@@ -8,14 +8,6 @@ type Message struct {
 	Payload json.RawMessage `json:"payload"`
 }
 
-// TaskDispatchPayload is sent from server to daemon when a task is assigned.
-type TaskDispatchPayload struct {
-	TaskID      string `json:"task_id"`
-	IssueID     string `json:"issue_id"`
-	Title       string `json:"title"`
-	Description string `json:"description"`
-}
-
 // TaskAvailablePayload is sent from server to daemon as a wakeup hint. The
 // daemon still claims work through the existing HTTP claim endpoint.
 type TaskAvailablePayload struct {
@@ -58,20 +50,6 @@ type TaskMessagePayload struct {
 	Input     map[string]any `json:"input,omitempty"`   // tool input (tool_use only)
 	Output    string         `json:"output,omitempty"`  // tool output (tool_result only)
 	CreatedAt string         `json:"created_at,omitempty"`
-}
-
-// DaemonRegisterPayload is sent from daemon to server on connection.
-type DaemonRegisterPayload struct {
-	DaemonID string        `json:"daemon_id"`
-	AgentID  string        `json:"agent_id"`
-	Runtimes []RuntimeInfo `json:"runtimes"`
-}
-
-// RuntimeInfo describes an available agent runtime on the daemon's machine.
-type RuntimeInfo struct {
-	Type    string `json:"type"`
-	Version string `json:"version"`
-	Status  string `json:"status"`
 }
 
 // ChatMessagePayload is broadcast when a new chat message is created.
