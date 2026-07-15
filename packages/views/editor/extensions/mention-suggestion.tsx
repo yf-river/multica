@@ -140,7 +140,7 @@ function mergeMentionItems(
   return merged;
 }
 
-export const MentionList = forwardRef<SuggestionSelectionRef, MentionListProps>(
+const MentionList = forwardRef<SuggestionSelectionRef, MentionListProps>(
   function MentionList({ items, query, command, includeProjectSearch = false }, ref) {
     const { t } = useT("editor");
     const [serverItems, setServerItems] = useState<MentionItem[]>([]);

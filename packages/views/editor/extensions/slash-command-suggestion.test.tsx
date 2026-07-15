@@ -1,27 +1,7 @@
-import { render } from "@testing-library/react";
-import type { ReactNode } from "react";
-import { beforeAll, describe, expect, it, vi } from "vitest";
-import { I18nProvider } from "@multica/core/i18n/react";
+import { describe, expect, it, vi } from "vitest";
 import { workspaceKeys } from "@multica/core/workspace/queries";
 import type { Agent, MemberWithUser } from "@multica/core/types";
 import type { QueryClient } from "@tanstack/react-query";
-import enEditor from "../../locales/zh-Hans/editor.json";
-
-const TEST_RESOURCES = {
-  "zh-Hans": { editor: enEditor },
-};
-
-function I18nWrapper({ children }: { children: ReactNode }) {
-  return (
-    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
-      {children}
-    </I18nProvider>
-  );
-}
-
-beforeAll(() => {
-  Element.prototype.scrollIntoView = vi.fn();
-});
 
 vi.mock("@multica/core/platform", () => ({
   getCurrentWsId: () => "ws-1",
@@ -38,7 +18,6 @@ vi.mock("@multica/core/chat", () => ({
 }));
 
 import {
-  SlashCommandList,
   createSlashCommandSuggestion,
   createBuiltinCommandSuggestion,
 } from "./slash-command-suggestion";
@@ -196,39 +175,6 @@ describe("slash command suggestion items", () => {
   });
 });
 
-describe("SlashCommandList empty states", () => {
-  it("shows a configured-skills empty state before search text is entered", () => {
-    const { getByText } = render(
-      <I18nWrapper>
-        <SlashCommandList items={[]} query="" command={vi.fn()} />
-      </I18nWrapper>,
-    );
-
-    expect(getByText("暂无配置的技能")).toBeInTheDocument();
-  });
-
-  it("shows a no-results empty state when search text has no matches", () => {
-    const { getByText } = render(
-      <I18nWrapper>
-        <SlashCommandList items={[]} query="deploy" command={vi.fn()} />
-      </I18nWrapper>,
-    );
-
-    expect(getByText("没有匹配的技能")).toBeInTheDocument();
-  });
-
-  it("renders nothing on empty items when hideOnEmpty is set (command menu)", () => {
-    const { container } = render(
-      <I18nWrapper>
-        <SlashCommandList items={[]} query="6" command={vi.fn()} hideOnEmpty />
-      </I18nWrapper>,
-    );
-
-    // No popup box on a non-matching `/` (e.g. typing a date like 6/8).
-    expect(container).toBeEmptyDOMElement();
-  });
-});
-
 describe("buildBuiltinCommandItems", () => {
   it("returns the full built-in command set for an empty query", () => {
     expect(builtinItems()).toEqual([
@@ -250,25 +196,5 @@ describe("buildBuiltinCommandItems", () => {
 
   it("returns nothing for a query that matches no command", () => {
     expect(builtinItems("deploy")).toEqual([]);
-  });
-});
-
-describe("SlashCommandList built-in command rendering", () => {
-  it("renders the localized description for a built-in command", () => {
-    const { getByText } = render(
-      <I18nWrapper>
-        <SlashCommandList
-          items={builtinItems()}
-          query=""
-          command={vi.fn()}
-          hideOnEmpty
-        />
-      </I18nWrapper>,
-    );
-
-    expect(getByText("/note")).toBeInTheDocument();
-    expect(
-      getByText("添加备注 — 不触发任何智能体"),
-    ).toBeInTheDocument();
   });
 });

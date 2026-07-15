@@ -52,7 +52,7 @@ interface SlashCommandListProps {
   hideOnEmpty?: boolean;
 }
 
-export const SlashCommandList = forwardRef<
+const SlashCommandList = forwardRef<
   SuggestionSelectionRef,
   SlashCommandListProps
 >(function SlashCommandList({ items, query, command, hideOnEmpty = false }, ref) {

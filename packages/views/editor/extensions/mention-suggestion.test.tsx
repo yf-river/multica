@@ -1,5 +1,5 @@
 import { render, screen, waitFor } from "@testing-library/react";
-import type { ReactNode } from "react";
+import type { ComponentType, ReactNode } from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { workspaceKeys } from "@multica/core/workspace/queries";
 import { issueKeys, PAGINATED_STATUSES } from "@multica/core/issues/queries";
@@ -14,6 +14,34 @@ import enEditor from "../../locales/zh-Hans/editor.json";
 const TEST_RESOURCES = {
   "zh-Hans": { common: enCommon, auth: enAuth, settings: enSettings, editor: enEditor },
 };
+
+interface CapturedMentionListProps {
+  items: MentionItem[];
+  query: string;
+  command: (item: MentionItem) => void;
+  includeProjectSearch?: boolean;
+}
+
+const mentionPopupState = vi.hoisted(() => ({
+  component: null as ComponentType<CapturedMentionListProps> | null,
+}));
+
+vi.mock("./suggestion-popup", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./suggestion-popup")>();
+  return {
+    ...actual,
+    createSuggestionPopupRender: (options: { component: unknown }) => {
+      mentionPopupState.component =
+        options.component as ComponentType<CapturedMentionListProps>;
+      return () => ({
+        onStart() {},
+        onUpdate() {},
+        onKeyDown: () => false,
+        onExit() {},
+      });
+    },
+  };
+});
 
 function I18nWrapper({ children }: { children: ReactNode }) {
   return (
@@ -51,9 +79,14 @@ vi.mock("@multica/core/auth", () => ({
 
 import {
   createMentionSuggestion,
-  MentionList,
   type MentionItem,
 } from "./mention-suggestion";
+
+function MentionList(props: CapturedMentionListProps) {
+  if (!mentionPopupState.component) createMentionSuggestion(fakeQc({}));
+  const Component = mentionPopupState.component!;
+  return <Component {...props} />;
+}
 
 function fakeQc(data: {
   members?: Array<{ user_id: string; name: string; role?: string }>;
