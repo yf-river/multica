@@ -95,12 +95,6 @@ export interface PromptEvaluationEvidenceSnapshot {
   created_at: string;
 }
 
-export interface PromptEvaluationAssetEvidenceSnapshotResponse {
-  created_count: number;
-  skipped_count: number;
-  items: PromptEvaluationEvidenceSnapshot[];
-}
-
 export interface PromptEvaluationAssetEvidenceArchivePackage {
   archived_run_count: number;
   [key: string]: unknown;
@@ -130,10 +124,6 @@ export interface CreatePromptEvaluationDatasetFromTracesRequest {
   tags?: string[];
 }
 
-export interface PromptEvaluationDatasetFromTracesResponse {
-  created_count: number;
-}
-
 export interface PromptEvaluationOptimizationCandidate {
   id: string;
   run_id: string;
@@ -146,33 +136,27 @@ export interface PromptEvaluationOptimizationCandidate {
   status: PromptEvaluationOptimizationCandidateStatus;
 }
 
-export interface CheckPromptEvaluationSkillFreshnessRequest {
+interface PromptEvaluationSkillTargetRequest {
   source_resource_id?: string;
   repo_path?: string;
   target_branch?: string;
   skill_path?: string;
 }
+
+export type CheckPromptEvaluationSkillFreshnessRequest = PromptEvaluationSkillTargetRequest;
 
 export interface PromptEvaluationSkillFreshnessResult {
   status: "fresh" | "branch_changed_skill_unchanged" | "stale" | "conflict" | "rebaseable";
   patch_check: "not_needed" | "missing_patch" | "conflict" | "applies" | "creates_file" | "target_exists" | string;
 }
 
-export interface ApplyPromptEvaluationSkillCandidateRequest {
-  source_resource_id?: string;
-  repo_path?: string;
-  target_branch?: string;
-  skill_path?: string;
+export interface ApplyPromptEvaluationSkillCandidateRequest extends PromptEvaluationSkillTargetRequest {
   changelog_path?: string;
   allow_dirty?: boolean;
   skip_changelog?: boolean;
 }
 
-export interface PreparePromptEvaluationSkillReEvalRequest {
-  source_resource_id?: string;
-  repo_path?: string;
-  target_branch?: string;
-  skill_path?: string;
+export interface PreparePromptEvaluationSkillReEvalRequest extends PromptEvaluationSkillTargetRequest {
   include_draft?: boolean;
 }
 
@@ -228,18 +212,7 @@ export interface CreatePromptEvaluationCaseRequest {
   status?: PromptEvaluationCaseStatus;
 }
 
-export interface UpdatePromptEvaluationCaseRequest {
-  asset_id?: string;
-  prompt_id?: string | null;
-  case_index?: number;
-  case_name?: string;
-  variables?: Record<string, unknown>;
-  expected_contains?: unknown[];
-  input?: Record<string, unknown>;
-  expected?: Record<string, unknown>;
-  tags?: unknown[];
-  status?: PromptEvaluationCaseStatus;
-}
+export type UpdatePromptEvaluationCaseRequest = Partial<CreatePromptEvaluationCaseRequest>;
 
 export interface ListPromptEvaluationOptimizationCandidatesParams {
   run_id?: string;
@@ -257,14 +230,7 @@ export interface CreatePromptEvaluationAssetRequest {
   status?: PromptEvaluationAssetStatus;
 }
 
-export interface UpdatePromptEvaluationAssetRequest {
-  prompt_id?: string | null;
-  name?: string;
-  description?: string;
-  asset_type?: PromptEvaluationAssetType;
-  payload?: Record<string, unknown>;
-  status?: PromptEvaluationAssetStatus;
-}
+export type UpdatePromptEvaluationAssetRequest = Partial<CreatePromptEvaluationAssetRequest>;
 
 export interface CreatePromptEvaluationDatasetVersionRequest {
   version_label?: string;

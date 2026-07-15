@@ -6,7 +6,6 @@ import {
   createWorkspaceRecoverableOperationStore,
   type RecoverableOperationStore,
 } from "../platform/recoverable-operation-store";
-import type { PromptEvaluationOptimizationCandidate } from "../types";
 import { generateUUID } from "../utils";
 
 interface PendingCandidateCreate {
@@ -28,7 +27,7 @@ type CandidateCreateClient = Pick<
 export async function createPromptEvaluationOptimizationCandidateWithRecovery(
   runId: string,
   client: CandidateCreateClient = api,
-): Promise<PromptEvaluationOptimizationCandidate> {
+): Promise<{ id: string }> {
   const pending = useCandidateCreateStore.getState().pending;
   return executeRecoverableIntent(
     pending,

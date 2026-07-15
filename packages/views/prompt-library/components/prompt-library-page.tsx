@@ -24,7 +24,6 @@ import {
 import type {
   PromptEvaluationAsset,
   PromptEvaluationRun,
-  PromptEvaluationAssetEvidenceArchivePackage,
   PromptEvaluationAssetType,
   IssueExecutionTreeResponse,
   PromptLibraryItem,
@@ -441,7 +440,7 @@ export function PromptLibraryPage({
   const handleDownloadAssetEvidencePackage = async (assetId: string) => {
     setExportingAssetEvidencePackageAssetId(assetId);
     try {
-      const archivePackage: PromptEvaluationAssetEvidenceArchivePackage = await api.getPromptEvaluationAssetEvidenceArchivePackage(assetId, "验收归档", 20);
+      const archivePackage = await api.getPromptEvaluationAssetEvidenceArchivePackage(assetId, "验收归档", 20);
       const filename = `multica-training-asset-evidence-${assetId}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
       downloadTextFile(JSON.stringify(archivePackage, null, 2), filename, "application/json;charset=utf-8");
       if (archivePackage.archived_run_count > 0) {

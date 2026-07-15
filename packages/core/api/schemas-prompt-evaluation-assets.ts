@@ -55,7 +55,7 @@ export const PromptEvaluationAssetListResponseSchema = z.object({
   items: z.array(PromptEvaluationAssetSchema).default([]),
 }).loose().transform(({ items }) => items);
 
-export const PromptEvaluationAssetMutationResultSchema = PromptEvaluationAssetSchema.pick({ id: true, prompt_id: true });
+export const PromptEvaluationAssetMutationResultSchema = PromptEvaluationAssetSchema.pick({ id: true, prompt_id: true }).strip();
 
 export const PromptEvaluationDatasetVersionSchema = z.object({
   id: NonEmptyStringSchema,

@@ -3,10 +3,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiTransportError } from "../api";
 import { setCurrentWorkspace } from "../platform/workspace-storage";
-import type { PromptEvaluationOptimizationCandidate } from "../types";
 import { createPromptEvaluationOptimizationCandidateWithRecovery } from "./candidate-create";
 
-const candidate = (id: string) => ({ id }) as PromptEvaluationOptimizationCandidate;
+const candidate = (id: string) => ({ id });
 let workspaceSequence = 0;
 
 describe("createPromptEvaluationOptimizationCandidateWithRecovery", () => {

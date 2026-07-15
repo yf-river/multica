@@ -37,6 +37,7 @@ import {
 import { PromptEvaluationCaseMutationResultSchema } from "./schemas-prompt-evaluation-case-model";
 import {
   PromptEvaluationOptimizationCandidateDecisionStatusSchema,
+  PromptEvaluationOptimizationCandidateCreateResultSchema,
   PromptEvaluationOptimizationCandidateListResponseSchema,
   PromptEvaluationSkillApplyStatusSchema,
   PromptEvaluationSkillReEvalAssetResultSchema,
@@ -47,6 +48,7 @@ import {
   PromptEvaluationAssetEvidenceArchivePackageSchema,
   PromptEvaluationAssetEvidenceSnapshotResponseSchema,
   PromptEvaluationRunEvidenceSchema,
+  PromptEvaluationEvidenceSnapshotCreateResultSchema,
   PromptEvaluationRunIDSchema,
   PromptEvaluationRunListResponseSchema,
   PromptEvaluationRunReviewResultSchema,
@@ -216,8 +218,11 @@ describe("domain response schema fallbacks", () => {
     expect(PromptEvaluationAssetEvidenceSnapshotResponseSchema.parse({
       created_count: 1,
       skipped_count: 0,
-      items: [],
-    })).toMatchObject({ created_count: 1, skipped_count: 0, items: [] });
+      items: [{ run_id: "run-1", summary: { ignored: true } }],
+    })).toEqual({ created_count: 1, skipped_count: 0, items: [{ run_id: "run-1" }] });
+    expect(PromptEvaluationEvidenceSnapshotCreateResultSchema.parse({
+      id: "snapshot-1", run_id: "run-1", summary: {}, snapshot_type: "验收归档", created_at: "now",
+    })).toEqual({ run_id: "run-1" });
 
     const archive = {
       archived_run_count: 1,
@@ -248,6 +253,9 @@ describe("domain response schema fallbacks", () => {
   });
 
   it("projects evaluation mutations to the values current callers consume", () => {
+    expect(PromptEvaluationOptimizationCandidateCreateResultSchema.parse({
+      id: "candidate-1", run_id: "run-1", candidate_name: "Current",
+    })).toEqual({ id: "candidate-1" });
     expect(PromptEvaluationAssetMutationResultSchema.parse({
       id: "asset-1", prompt_id: "prompt-1",
     })).toEqual({ id: "asset-1", prompt_id: "prompt-1" });

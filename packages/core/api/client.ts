@@ -117,13 +117,11 @@ import type {
   PromptEvaluationRun,
   PromptEvaluationRunEvidence,
   PromptEvaluationAssetEvidenceArchivePackage,
-  PromptEvaluationAssetEvidenceSnapshotResponse,
   PromptEvaluationEvidenceSnapshot,
   PromptEvaluationEvidenceSnapshotType,
   PromptEvaluationStructuredCase,
   CreatePromptEvaluationDatasetFromTracesRequest,
   CreatePromptEvaluationDatasetVersionRequest,
-  PromptEvaluationDatasetFromTracesResponse,
   PromptEvaluationDatasetVersion,
   PromptEvaluationOptimizationCandidate,
   PromptEvaluationOptimizationCandidateStatus,
@@ -254,9 +252,6 @@ import {
   EMPTY_AGENT_PLAYGROUND_EXPERIMENT_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_RUN_EVIDENCE,
   EMPTY_PROMPT_EVALUATION_ASSET_EVIDENCE_ARCHIVE_PACKAGE,
-  EMPTY_PROMPT_EVALUATION_ASSET_EVIDENCE_SNAPSHOT_RESPONSE,
-  EMPTY_PROMPT_EVALUATION_EVIDENCE_SNAPSHOT,
-  EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE,
   EMPTY_PROMPT_EVALUATION_SKILL_FRESHNESS_RESULT,
   EMPTY_RUNTIME_PROFILE,
   EMPTY_RUNTIME_DEVICE,
@@ -310,11 +305,11 @@ import {
   PromptEvaluationRunEvidenceSchema,
   PromptEvaluationAssetEvidenceArchivePackageSchema,
   PromptEvaluationAssetEvidenceSnapshotResponseSchema,
-  PromptEvaluationEvidenceSnapshotSchema,
+  PromptEvaluationEvidenceSnapshotCreateResultSchema,
   PromptEvaluationEvidenceSnapshotListResponseSchema,
   PromptEvaluationCaseMutationResultSchema,
   PromptEvaluationCaseListResponseSchema,
-  PromptEvaluationOptimizationCandidateSchema,
+  PromptEvaluationOptimizationCandidateCreateResultSchema,
   PromptEvaluationOptimizationCandidateListResponseSchema,
   PublishPromptEvaluationOptimizationCandidateNameSchema,
   PromptEvaluationOptimizationCandidateDecisionStatusSchema,
@@ -2118,7 +2113,7 @@ export class ApiClient extends ApiTransport {
     id: string,
     data: CreatePromptEvaluationDatasetFromTracesRequest = {},
     idempotencyKey = generateUUID(),
-  ): Promise<PromptEvaluationDatasetFromTracesResponse> {
+  ): Promise<{ created_count: number }> {
     const attempt = async () => {
       const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/dataset-from-traces`, {
         method: "POST",
@@ -2130,7 +2125,7 @@ export class ApiClient extends ApiTransport {
       }, {
         endpoint: "POST /api/prompt-evaluation-assets/:id/dataset-from-traces",
         mayHaveCommitted: true,
-      }) as PromptEvaluationDatasetFromTracesResponse;
+      });
     };
     return this.retryUnknownMutationOnce(attempt);
   }
@@ -2249,17 +2244,17 @@ export class ApiClient extends ApiTransport {
     runId: string,
     snapshotType: PromptEvaluationEvidenceSnapshotType = "手动归档",
     idempotencyKey = generateUUID(),
-  ): Promise<PromptEvaluationEvidenceSnapshot> {
+  ): Promise<{ run_id: string }> {
     const search = new URLSearchParams({ snapshot_type: snapshotType });
     const attempt = async () => {
       const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/evidence-snapshots?${search.toString()}`, {
         method: "POST",
         extraHeaders: { "Idempotency-Key": idempotencyKey },
       });
-      return parseOrThrow(raw, PromptEvaluationEvidenceSnapshotSchema, EMPTY_PROMPT_EVALUATION_EVIDENCE_SNAPSHOT, {
+      return parseOrThrow(raw, PromptEvaluationEvidenceSnapshotCreateResultSchema, { run_id: "" }, {
         endpoint: "POST /api/prompt-evaluation-runs/:id/evidence-snapshots",
         mayHaveCommitted: true,
-      }) as PromptEvaluationEvidenceSnapshot;
+      });
     };
     return this.retryUnknownMutationOnce(attempt);
   }
@@ -2269,17 +2264,19 @@ export class ApiClient extends ApiTransport {
     snapshotType: PromptEvaluationEvidenceSnapshotType = "验收归档",
     limit = 20,
     idempotencyKey = generateUUID(),
-  ): Promise<PromptEvaluationAssetEvidenceSnapshotResponse> {
+  ): Promise<{ created_count: number; skipped_count: number; items: Array<{ run_id: string }> }> {
     const search = new URLSearchParams({ snapshot_type: snapshotType, limit: String(limit) });
     const attempt = async () => {
       const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${assetId}/evidence-snapshots?${search.toString()}`, {
         method: "POST",
         extraHeaders: { "Idempotency-Key": idempotencyKey },
       });
-      return parseOrThrow(raw, PromptEvaluationAssetEvidenceSnapshotResponseSchema, EMPTY_PROMPT_EVALUATION_ASSET_EVIDENCE_SNAPSHOT_RESPONSE, {
+      return parseOrThrow(raw, PromptEvaluationAssetEvidenceSnapshotResponseSchema, {
+        created_count: 0, skipped_count: 0, items: [],
+      }, {
         endpoint: "POST /api/prompt-evaluation-assets/:id/evidence-snapshots",
         mayHaveCommitted: true,
-      }) as PromptEvaluationAssetEvidenceSnapshotResponse;
+      });
     };
     return this.retryUnknownMutationOnce(attempt);
   }
@@ -2345,16 +2342,16 @@ export class ApiClient extends ApiTransport {
   async createPromptEvaluationOptimizationCandidate(
     runId: string,
     requestId = generateUUID(),
-  ): Promise<PromptEvaluationOptimizationCandidate> {
+  ): Promise<{ id: string }> {
     const attempt = async () => {
       const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/optimization-candidates`, {
         method: "POST",
         extraHeaders: { "Idempotency-Key": requestId },
       });
-      return parseOrThrow(raw, PromptEvaluationOptimizationCandidateSchema, EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE, {
+      return parseOrThrow(raw, PromptEvaluationOptimizationCandidateCreateResultSchema, { id: "" }, {
         endpoint: "POST /api/prompt-evaluation-runs/:id/optimization-candidates",
         mayHaveCommitted: true,
-      }) as PromptEvaluationOptimizationCandidate;
+      });
     };
     return this.retryUnknownMutationOnce(attempt);
   }

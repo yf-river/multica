@@ -28,7 +28,7 @@ const PromptEvaluationSkillPatchSchema = z.object({
 
 const PromptEvaluationOptimizationCandidateStatusSchema = z.enum(["待确认", "已发布", "已拒绝"]);
 
-export const PromptEvaluationOptimizationCandidateSchema = z.object({
+const PromptEvaluationOptimizationCandidateSchema = z.object({
   id: NonEmptyStringSchema,
   run_id: NonEmptyStringSchema,
   candidate_name: z.string(),
@@ -39,6 +39,8 @@ export const PromptEvaluationOptimizationCandidateSchema = z.object({
   skill_patch: PromptEvaluationSkillPatchSchema.nullable().optional().transform((v) => v ?? null),
   status: PromptEvaluationOptimizationCandidateStatusSchema.default("待确认"),
 });
+
+export const PromptEvaluationOptimizationCandidateCreateResultSchema = PromptEvaluationOptimizationCandidateSchema.pick({ id: true }).strip();
 
 export const PromptEvaluationOptimizationCandidateListResponseSchema = z.object({
   items: z.array(PromptEvaluationOptimizationCandidateSchema).default([]),

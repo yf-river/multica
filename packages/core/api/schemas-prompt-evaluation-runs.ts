@@ -27,9 +27,9 @@ export const PromptEvaluationRunSchema = z.object({
   reviewed_at: z.string().default(""),
 }).loose();
 
-export const PromptEvaluationRunIDSchema = PromptEvaluationRunSchema.pick({ id: true });
+export const PromptEvaluationRunIDSchema = PromptEvaluationRunSchema.pick({ id: true }).strip();
 
-export const PromptEvaluationRunReviewResultSchema = PromptEvaluationRunSchema.pick({ id: true, review_decision: true, status: true });
+export const PromptEvaluationRunReviewResultSchema = PromptEvaluationRunSchema.pick({ id: true, review_decision: true, status: true }).strip();
 
 const PromptEvaluationTaskMessageSchema = z.object({
   task_id: z.string(),
@@ -74,13 +74,15 @@ export const PromptEvaluationRunEvidenceSchema = z.object({
   上下文: z.record(z.string(), z.unknown()).default({}),
 }).loose();
 
-export const PromptEvaluationEvidenceSnapshotSchema = z.object({
+const PromptEvaluationEvidenceSnapshotSchema = z.object({
   id: NonEmptyStringSchema,
   run_id: NonEmptyStringSchema,
   snapshot_type: z.enum(["手动归档", "验收归档", "自动归档"]).default("手动归档"),
   summary: z.record(z.string(), z.unknown()).default({}),
   created_at: z.string().default(""),
 }).loose();
+
+export const PromptEvaluationEvidenceSnapshotCreateResultSchema = PromptEvaluationEvidenceSnapshotSchema.pick({ run_id: true }).strip();
 
 export const PromptEvaluationEvidenceSnapshotListResponseSchema = z.object({
   items: z.array(PromptEvaluationEvidenceSnapshotSchema).default([]),
@@ -89,8 +91,8 @@ export const PromptEvaluationEvidenceSnapshotListResponseSchema = z.object({
 export const PromptEvaluationAssetEvidenceSnapshotResponseSchema = z.object({
   created_count: z.number(),
   skipped_count: z.number(),
-  items: z.array(PromptEvaluationEvidenceSnapshotSchema),
-}).loose();
+  items: z.array(PromptEvaluationEvidenceSnapshotSchema.pick({ run_id: true }).strip()),
+});
 
 export const PromptEvaluationAssetEvidenceArchivePackageSchema = z.object({
   archived_run_count: z.number().default(0),

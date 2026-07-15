@@ -1,9 +1,6 @@
 import type {
-  PromptEvaluationAssetEvidenceSnapshotResponse,
-  PromptEvaluationEvidenceSnapshot,
   PromptEvaluationRunEvidence,
   PromptEvaluationRun,
-  PromptEvaluationOptimizationCandidate,
   PromptEvaluationSkillFreshnessResult,
   PromptEvaluationAssetEvidenceArchivePackage,
 } from "../types";
@@ -48,34 +45,8 @@ export const EMPTY_PROMPT_EVALUATION_RUN_EVIDENCE: PromptEvaluationRunEvidence =
   上下文: {},
 };
 
-export const EMPTY_PROMPT_EVALUATION_EVIDENCE_SNAPSHOT: PromptEvaluationEvidenceSnapshot = {
-  id: "",
-  run_id: "",
-  snapshot_type: "手动归档",
-  summary: {},
-  created_at: "",
-};
-
-export const EMPTY_PROMPT_EVALUATION_ASSET_EVIDENCE_SNAPSHOT_RESPONSE: PromptEvaluationAssetEvidenceSnapshotResponse = {
-  created_count: 0,
-  skipped_count: 0,
-  items: [],
-};
-
 export const EMPTY_PROMPT_EVALUATION_ASSET_EVIDENCE_ARCHIVE_PACKAGE: PromptEvaluationAssetEvidenceArchivePackage = {
   archived_run_count: 0,
-};
-
-export const EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE: PromptEvaluationOptimizationCandidate = {
-  id: "",
-  run_id: "",
-  candidate_name: "",
-  rationale: "",
-  failed_case_count: 0,
-  source_prompt_snapshot: {},
-  metrics: {},
-  skill_patch: null,
-  status: "待确认",
 };
 
 export const EMPTY_PROMPT_EVALUATION_SKILL_FRESHNESS_RESULT: PromptEvaluationSkillFreshnessResult = {

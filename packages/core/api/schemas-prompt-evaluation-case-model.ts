@@ -17,4 +17,4 @@ export const PromptEvaluationCaseSchema = z.object({
   updated_at: z.string().default(""),
 }).loose();
 
-export const PromptEvaluationCaseMutationResultSchema = PromptEvaluationCaseSchema.pick({ id: true, case_name: true });
+export const PromptEvaluationCaseMutationResultSchema = PromptEvaluationCaseSchema.pick({ id: true, case_name: true }).strip();
