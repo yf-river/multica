@@ -41,6 +41,29 @@ vi.mock("@tiptap/react", () => ({
 
 import { TitleEditor } from "./title-editor";
 
+function renderTitle(value: string) {
+  editorState.text = value;
+  return render(<TitleEditor defaultValue={value} />);
+}
+
+function expectTitleContent(value: string) {
+  expect(mockSetContent).toHaveBeenCalledTimes(1);
+  expect(mockSetContent).toHaveBeenCalledWith(
+    value
+      ? {
+          type: "doc",
+          content: [
+            {
+              type: "paragraph",
+              content: [{ type: "text", text: value }],
+            },
+          ],
+        }
+      : "",
+    { emitUpdate: false },
+  );
+}
+
 describe("TitleEditor", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -51,31 +74,17 @@ describe("TitleEditor", () => {
   });
 
   it("syncs editor content when defaultValue changes externally and editor is unfocused", () => {
-    editorState.text = "old title";
-    const { rerender } = render(<TitleEditor defaultValue="old title" />);
+    const { rerender } = renderTitle("old title");
 
     expect(mockSetContent).not.toHaveBeenCalled();
 
     rerender(<TitleEditor defaultValue="new title from server" />);
 
-    expect(mockSetContent).toHaveBeenCalledTimes(1);
-    expect(mockSetContent).toHaveBeenCalledWith(
-      {
-        type: "doc",
-        content: [
-          {
-            type: "paragraph",
-            content: [{ type: "text", text: "new title from server" }],
-          },
-        ],
-      },
-      { emitUpdate: false },
-    );
+    expectTitleContent("new title from server");
   });
 
   it("does not overwrite the user's in-flight edits when the editor is focused and dirty", () => {
-    editorState.text = "old title";
-    const { rerender } = render(<TitleEditor defaultValue="old title" />);
+    const { rerender } = renderTitle("old title");
 
     editorState.isFocused = true;
     editorState.text = "user typed but not yet blurred";
@@ -90,8 +99,7 @@ describe("TitleEditor", () => {
   // compare stale editor text to the new server value and silently roll the
   // external update back.
   it("syncs to new defaultValue when editor is focused but clean", () => {
-    editorState.text = "old title";
-    const { rerender } = render(<TitleEditor defaultValue="old title" />);
+    const { rerender } = renderTitle("old title");
 
     // User clicked into the title field but has not typed anything yet:
     // editor text still equals the previous defaultValue.
@@ -100,24 +108,11 @@ describe("TitleEditor", () => {
 
     rerender(<TitleEditor defaultValue="new title from server" />);
 
-    expect(mockSetContent).toHaveBeenCalledTimes(1);
-    expect(mockSetContent).toHaveBeenCalledWith(
-      {
-        type: "doc",
-        content: [
-          {
-            type: "paragraph",
-            content: [{ type: "text", text: "new title from server" }],
-          },
-        ],
-      },
-      { emitUpdate: false },
-    );
+    expectTitleContent("new title from server");
   });
 
   it("short-circuits when editor text already equals incoming defaultValue", () => {
-    editorState.text = "same title";
-    const { rerender } = render(<TitleEditor defaultValue="same title" />);
+    const { rerender } = renderTitle("same title");
 
     // Force the effect to re-run by rendering with a different prop, then
     // back to the same value. Even an identity-equal prop should be skipped.
@@ -127,12 +122,10 @@ describe("TitleEditor", () => {
   });
 
   it("clears the editor when defaultValue transitions to empty", () => {
-    editorState.text = "old title";
-    const { rerender } = render(<TitleEditor defaultValue="old title" />);
+    const { rerender } = renderTitle("old title");
 
     rerender(<TitleEditor defaultValue="" />);
 
-    expect(mockSetContent).toHaveBeenCalledTimes(1);
-    expect(mockSetContent).toHaveBeenCalledWith("", { emitUpdate: false });
+    expectTitleContent("");
   });
 });

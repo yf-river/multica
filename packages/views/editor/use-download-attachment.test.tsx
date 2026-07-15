@@ -31,6 +31,40 @@ import { toast } from "sonner";
 const SIGNED_URL =
   "https://static.example.test/file.md?Policy=p&Signature=s&Key-Pair-Id=k";
 
+const DEFAULT_ATTACHMENT = {
+  id: "att-1",
+  url: "https://static.example.test/file.md",
+  download_url: SIGNED_URL,
+  filename: "file.md",
+};
+
+function mockAttachment(overrides: Partial<typeof DEFAULT_ATTACHMENT> = {}) {
+  getAttachmentMock.mockResolvedValueOnce({
+    ...DEFAULT_ATTACHMENT,
+    ...overrides,
+  });
+}
+
+function installDesktopBridge() {
+  const downloadURL = vi.fn();
+  (window as unknown as { desktopAPI: { downloadURL: typeof downloadURL } }).desktopAPI = {
+    downloadURL,
+  };
+  return downloadURL;
+}
+
+async function runDownload(id = "att-1") {
+  const appendSpy = vi.spyOn(document.body, "appendChild");
+  const { result } = renderHook(() => useDownloadAttachment());
+  await act(async () => {
+    await result.current(id);
+  });
+  const anchor = appendSpy.mock.calls
+    .map(([node]) => node)
+    .find((node): node is HTMLAnchorElement => node instanceof HTMLAnchorElement);
+  return anchor;
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   // Default: web with same-origin API (empty base). Each test that needs
@@ -48,37 +82,16 @@ afterEach(() => {
 
 describe("useDownloadAttachment (web)", () => {
   it("clicks the unified download endpoint without opening a blank tab or buffering a Blob", async () => {
-    getAttachmentMock.mockResolvedValueOnce({
-      id: "att-1",
-      url: "https://static.example.test/file.md",
-      // CloudFront mode may still return a signed CDN URL from metadata;
-      // Web download must ignore it and enter through the same-origin
-      // endpoint so the server owns cloudfront/presign/proxy selection.
-      download_url: SIGNED_URL,
-      filename: "file.md",
-    });
-
+    mockAttachment();
     const openSpy = vi.spyOn(window, "open");
     const clickSpy = vi
       .spyOn(HTMLAnchorElement.prototype, "click")
       .mockImplementation(() => {});
-    const appendSpy = vi.spyOn(document.body, "appendChild");
-
-    const { result } = renderHook(() => useDownloadAttachment());
-
-    await act(async () => {
-      await result.current("att-1");
-    });
+    const anchor = await runDownload();
 
     expect(getAttachmentMock).toHaveBeenCalledWith("att-1");
     expect(openSpy).not.toHaveBeenCalled();
     expect(clickSpy).toHaveBeenCalledOnce();
-
-    const anchor = appendSpy.mock.calls
-      .map(([node]) => node)
-      .find((node): node is HTMLAnchorElement =>
-        node instanceof HTMLAnchorElement,
-      );
     expect(anchor).toBeDefined();
     expect(anchor!.getAttribute("href")).toBe(
       "/api/attachments/att-1/download?workspace_slug=acme",
@@ -94,29 +107,15 @@ describe("useDownloadAttachment (web)", () => {
 
   it("resolves the unified download endpoint against a configured API base", async () => {
     getBaseUrlMock.mockReturnValue("https://api.example.test/");
-    getAttachmentMock.mockResolvedValueOnce({
+    mockAttachment({
       id: "att 1/slash",
-      url: "https://static.example.test/file.md",
-      download_url: SIGNED_URL,
-      filename: "file.md",
     });
     const clickSpy = vi
       .spyOn(HTMLAnchorElement.prototype, "click")
       .mockImplementation(() => {});
-    const appendSpy = vi.spyOn(document.body, "appendChild");
-
-    const { result } = renderHook(() => useDownloadAttachment());
-
-    await act(async () => {
-      await result.current("att 1/slash");
-    });
+    const anchor = await runDownload("att 1/slash");
 
     expect(clickSpy).toHaveBeenCalledOnce();
-    const anchor = appendSpy.mock.calls
-      .map(([node]) => node)
-      .find((node): node is HTMLAnchorElement =>
-        node instanceof HTMLAnchorElement,
-      );
     expect(anchor).toBeDefined();
     expect(anchor!.href).toBe(
       "https://api.example.test/api/attachments/att%201%2Fslash/download?workspace_slug=acme",
@@ -125,29 +124,13 @@ describe("useDownloadAttachment (web)", () => {
 
   it("encodes the workspace slug into the bare navigation URL instead of relying on custom headers", async () => {
     useWorkspaceSlugMock.mockReturnValueOnce("team/space");
-    getAttachmentMock.mockResolvedValueOnce({
-      id: "att-1",
-      url: "https://static.example.test/file.md",
-      download_url: SIGNED_URL,
-      filename: "file.md",
-    });
+    mockAttachment();
     const clickSpy = vi
       .spyOn(HTMLAnchorElement.prototype, "click")
       .mockImplementation(() => {});
-    const appendSpy = vi.spyOn(document.body, "appendChild");
-
-    const { result } = renderHook(() => useDownloadAttachment());
-
-    await act(async () => {
-      await result.current("att-1");
-    });
+    const anchor = await runDownload();
 
     expect(clickSpy).toHaveBeenCalledOnce();
-    const anchor = appendSpy.mock.calls
-      .map(([node]) => node)
-      .find((node): node is HTMLAnchorElement =>
-        node instanceof HTMLAnchorElement,
-      );
     expect(anchor).toBeDefined();
     expect(anchor!.getAttribute("href")).toBe(
       "/api/attachments/att-1/download?workspace_slug=team%2Fspace",
@@ -156,21 +139,11 @@ describe("useDownloadAttachment (web)", () => {
 
   it("shows a toast and does not click a download link when the workspace slug is missing", async () => {
     useWorkspaceSlugMock.mockReturnValueOnce(null);
-    getAttachmentMock.mockResolvedValueOnce({
-      id: "att-1",
-      url: "https://static.example.test/file.md",
-      download_url: SIGNED_URL,
-      filename: "file.md",
-    });
+    mockAttachment();
     const clickSpy = vi
       .spyOn(HTMLAnchorElement.prototype, "click")
       .mockImplementation(() => {});
-
-    const { result } = renderHook(() => useDownloadAttachment());
-
-    await act(async () => {
-      await result.current("att-1");
-    });
+    await runDownload();
 
     expect(clickSpy).not.toHaveBeenCalled();
     await waitFor(() => expect(toast.error).toHaveBeenCalled());
@@ -182,12 +155,7 @@ describe("useDownloadAttachment (web)", () => {
     const clickSpy = vi
       .spyOn(HTMLAnchorElement.prototype, "click")
       .mockImplementation(() => {});
-
-    const { result } = renderHook(() => useDownloadAttachment());
-
-    await act(async () => {
-      await result.current("att-1");
-    });
+    await runDownload();
 
     expect(openSpy).not.toHaveBeenCalled();
     expect(clickSpy).not.toHaveBeenCalled();
@@ -197,23 +165,10 @@ describe("useDownloadAttachment (web)", () => {
 
 describe("useDownloadAttachment (desktop)", () => {
   it("skips the placeholder tab and hands the signed URL to the desktop download bridge", async () => {
-    const downloadURL = vi.fn();
-    (window as unknown as { desktopAPI: { downloadURL: typeof downloadURL } }).desktopAPI = {
-      downloadURL,
-    };
-    getAttachmentMock.mockResolvedValueOnce({
-      id: "att-1",
-      url: "https://static.example.test/file.md",
-      download_url: SIGNED_URL,
-      filename: "file.md",
-    });
+    const downloadURL = installDesktopBridge();
+    mockAttachment();
     const openSpy = vi.spyOn(window, "open");
-
-    const { result } = renderHook(() => useDownloadAttachment());
-
-    await act(async () => {
-      await result.current("att-1");
-    });
+    await runDownload();
 
     // No placeholder — Electron's setWindowOpenHandler would reject
     // about:blank, so we go straight to the platform's IPC bridge.
@@ -222,17 +177,9 @@ describe("useDownloadAttachment (desktop)", () => {
   });
 
   it("shows a toast when the API rejects on desktop", async () => {
-    const downloadURL = vi.fn();
-    (window as unknown as { desktopAPI: { downloadURL: typeof downloadURL } }).desktopAPI = {
-      downloadURL,
-    };
+    const downloadURL = installDesktopBridge();
     getAttachmentMock.mockRejectedValueOnce(new Error("network failure"));
-
-    const { result } = renderHook(() => useDownloadAttachment());
-
-    await act(async () => {
-      await result.current("att-1");
-    });
+    await runDownload();
 
     expect(downloadURL).not.toHaveBeenCalled();
     await waitFor(() => expect(toast.error).toHaveBeenCalled());
@@ -244,23 +191,12 @@ describe("useDownloadAttachment (desktop)", () => {
   // http(s) URL or it drops the request — so the renderer must resolve
   // the path against the configured API base before crossing the bridge.
   it("resolves a server-relative download_url against the API base before handing it to the desktop bridge", async () => {
-    const downloadURL = vi.fn();
-    (window as unknown as { desktopAPI: { downloadURL: typeof downloadURL } }).desktopAPI = {
-      downloadURL,
-    };
+    const downloadURL = installDesktopBridge();
     getBaseUrlMock.mockReturnValue("https://api.example.test");
-    getAttachmentMock.mockResolvedValueOnce({
-      id: "att-1",
-      url: "https://static.example.test/file.md",
+    mockAttachment({
       download_url: "/api/attachments/att-1/download",
-      filename: "file.md",
     });
-
-    const { result } = renderHook(() => useDownloadAttachment());
-
-    await act(async () => {
-      await result.current("att-1");
-    });
+    await runDownload();
 
     expect(downloadURL).toHaveBeenCalledWith(
       "https://api.example.test/api/attachments/att-1/download",
@@ -268,23 +204,13 @@ describe("useDownloadAttachment (desktop)", () => {
   });
 
   it("trims a trailing slash on the API base when resolving a relative download_url", async () => {
-    const downloadURL = vi.fn();
-    (window as unknown as { desktopAPI: { downloadURL: typeof downloadURL } }).desktopAPI = {
-      downloadURL,
-    };
+    const downloadURL = installDesktopBridge();
     getBaseUrlMock.mockReturnValue("https://api.example.test/");
-    getAttachmentMock.mockResolvedValueOnce({
-      id: "att-1",
+    mockAttachment({
       url: "/api/attachments/att-1/content",
       download_url: "/api/attachments/att-1/download",
-      filename: "file.md",
     });
-
-    const { result } = renderHook(() => useDownloadAttachment());
-
-    await act(async () => {
-      await result.current("att-1");
-    });
+    await runDownload();
 
     expect(downloadURL).toHaveBeenCalledWith(
       "https://api.example.test/api/attachments/att-1/download",
@@ -292,25 +218,14 @@ describe("useDownloadAttachment (desktop)", () => {
   });
 
   it("passes an already-absolute download_url through unchanged when the bridge is present", async () => {
-    const downloadURL = vi.fn();
-    (window as unknown as { desktopAPI: { downloadURL: typeof downloadURL } }).desktopAPI = {
-      downloadURL,
-    };
+    const downloadURL = installDesktopBridge();
     // Even with a non-empty base configured, a CloudFront signed URL
     // must not be re-prefixed.
     getBaseUrlMock.mockReturnValue("https://api.example.test");
-    getAttachmentMock.mockResolvedValueOnce({
-      id: "att-1",
+    mockAttachment({
       url: "https://cdn.example.test/att-1.bin",
-      download_url: SIGNED_URL,
-      filename: "file.md",
     });
-
-    const { result } = renderHook(() => useDownloadAttachment());
-
-    await act(async () => {
-      await result.current("att-1");
-    });
+    await runDownload();
 
     expect(downloadURL).toHaveBeenCalledWith(SIGNED_URL);
   });
