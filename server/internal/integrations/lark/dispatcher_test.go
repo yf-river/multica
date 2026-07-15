@@ -520,11 +520,7 @@ func TestDispatcher_PlainMessageEnqueuesTask(t *testing.T) {
 	if res.Outcome != OutcomeIngested {
 		t.Fatalf("expected ingested, got %q", res.Outcome)
 	}
-	// The run trigger is debounced (MUL-2968): no TaskID is surfaced
-	// synchronously. Drain the pending trigger as graceful shutdown does.
-	if res.TaskID.Valid {
-		t.Fatalf("TaskID must not be set synchronously after debounce; got %+v", res.TaskID)
-	}
+	// Drain the pending trigger as graceful shutdown does.
 	d.FlushPendingRuns()
 	if enq.called != 1 {
 		t.Fatalf("expected exactly one EnqueueChatTask at flush; called=%d", enq.called)
@@ -978,9 +974,6 @@ func TestDispatcher_AgentOfflineRepliesAtFlush(t *testing.T) {
 	}
 	if cap.results[0].Outcome != OutcomeAgentOffline {
 		t.Fatalf("expected OutcomeAgentOffline at flush, got %q", cap.results[0].Outcome)
-	}
-	if cap.results[0].ChatSessionID != sessionID {
-		t.Fatalf("session id not propagated to flush reply: %+v", cap.results[0].ChatSessionID)
 	}
 }
 

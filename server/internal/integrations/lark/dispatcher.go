@@ -77,9 +77,8 @@ const (
 
 	// OutcomeNeedsBinding — the open_id is unbound; the WS adapter
 	// should mint a binding token via BindingTokenService and send
-	// the "click here to bind" card. DispatchResult.SenderOpenID and
-	// .InstallationID are populated so the adapter can target the
-	// reply.
+	// the "click here to bind" card. DispatchResult.SenderOpenID is
+	// populated so the adapter can target the reply.
 	OutcomeNeedsBinding Outcome = "needs_binding"
 
 	// OutcomeIngested — the message landed in chat_session and an
@@ -97,7 +96,7 @@ const (
 	// IMPORTANT: this is NOT triggered when a daemon is merely
 	// disconnected. If agent.runtime_id IS set, the chat task is
 	// enqueued and waits for the daemon to claim it on next online;
-	// that path returns OutcomeIngested with a TaskID.
+	// that path returns OutcomeIngested.
 	OutcomeAgentOffline Outcome = "agent_offline"
 
 	// OutcomeAgentArchived — the message landed in chat_session, but
@@ -112,20 +111,12 @@ const (
 // (the WS adapter) consume this to drive their outbound side; nothing
 // here implies the adapter MUST reply, only that it CAN.
 type DispatchResult struct {
-	Outcome        Outcome
-	DropReason     DropReason
-	InstallationID pgtype.UUID
-	ChatSessionID  pgtype.UUID
-	SenderOpenID   OpenID
-	// TaskID was populated when the dispatcher enqueued the chat task
-	// synchronously. With the short-window debounce (MUL-2968) the run is
-	// triggered asynchronously at flush time, so Handle no longer knows a
-	// task id — this field is left zero for the chat path. Kept on the
-	// struct because the emit contract still carries it for any future
-	// synchronous enqueue (e.g. /issue follow-ups).
-	TaskID      pgtype.UUID
-	IssueID     pgtype.UUID
-	IssueNumber int32
+	Outcome       Outcome
+	DropReason    DropReason
+	ChatSessionID pgtype.UUID
+	SenderOpenID  OpenID
+	IssueID       pgtype.UUID
+	IssueNumber   int32
 	// IssueIdentifier is the workspace-qualified human key for the
 	// created issue ("MUL-42"). Populated only when /issue produced a
 	// new row. The OutcomeReplier uses this verbatim in the "Created
@@ -409,10 +400,9 @@ func (d *Dispatcher) processClaimed(ctx context.Context, msg InboundMessage, ins
 				return DispatchResult{}, finalizeRelease, fmt.Errorf("record unbound-user drop: %w", err)
 			}
 			return DispatchResult{
-				Outcome:        OutcomeNeedsBinding,
-				DropReason:     DropReasonUnboundUser,
-				InstallationID: inst.ID,
-				SenderOpenID:   msg.SenderOpenID,
+				Outcome:      OutcomeNeedsBinding,
+				DropReason:   DropReasonUnboundUser,
+				SenderOpenID: msg.SenderOpenID,
 			}, finalizeMark, nil
 		}
 		return DispatchResult{}, finalizeRelease, fmt.Errorf("load user binding: %w", err)
@@ -473,10 +463,8 @@ func (d *Dispatcher) processClaimed(ctx context.Context, msg InboundMessage, ins
 	}
 
 	res := DispatchResult{
-		Outcome:        OutcomeIngested,
-		InstallationID: inst.ID,
-		ChatSessionID:  sessionID,
-		SenderOpenID:   msg.SenderOpenID,
+		Outcome:       OutcomeIngested,
+		ChatSessionID: sessionID,
 	}
 
 	// 7. /issue command, if present. chat_message is already durable
@@ -506,8 +494,7 @@ func (d *Dispatcher) processClaimed(ctx context.Context, msg InboundMessage, ins
 	//    already durable; the agent run reads the WHOLE session at
 	//    execution time, so a burst of messages in this session is
 	//    collapsed into ONE run by deferring EnqueueChatTask behind a
-	//    short silence window (MUL-2968). The synchronous outcome is
-	//    OutcomeIngested with NO TaskID — the task row is created later,
+	//    short silence window (MUL-2968). The task row is created later,
 	//    at flush. EnqueueChatTask's productizable verdicts (agent
 	//    offline / archived) and infra errors are now handled inside the
 	//    flush (see flushChatRun), not returned here.
@@ -557,9 +544,9 @@ func (d *Dispatcher) flushChatRun(inst db.LarkInstallation, msg InboundMessage, 
 	if _, err := d.EnqueueChatTask(ctx, session, initiatorUserID); err != nil {
 		switch {
 		case errors.Is(err, service.ErrChatTaskAgentNoRuntime):
-			d.emitFlushReply(ctx, inst, msg, sessionID, OutcomeAgentOffline)
+			d.emitFlushReply(ctx, inst, msg, OutcomeAgentOffline)
 		case errors.Is(err, service.ErrChatTaskAgentArchived):
-			d.emitFlushReply(ctx, inst, msg, sessionID, OutcomeAgentArchived)
+			d.emitFlushReply(ctx, inst, msg, OutcomeAgentArchived)
 		default:
 			// Infra failure (DB down, etc.). Nothing to retry against —
 			// the inbound frame was ACKed long ago. Log so the gap is
@@ -574,12 +561,9 @@ func (d *Dispatcher) flushChatRun(inst db.LarkInstallation, msg InboundMessage, 
 }
 
 // emitFlushReply delivers an offline/archived notice for a flushed run.
-func (d *Dispatcher) emitFlushReply(ctx context.Context, inst db.LarkInstallation, msg InboundMessage, sessionID pgtype.UUID, outcome Outcome) {
+func (d *Dispatcher) emitFlushReply(ctx context.Context, inst db.LarkInstallation, msg InboundMessage, outcome Outcome) {
 	d.FlushReply(ctx, inst, msg, DispatchResult{
-		Outcome:        outcome,
-		InstallationID: inst.ID,
-		ChatSessionID:  sessionID,
-		SenderOpenID:   msg.SenderOpenID,
+		Outcome: outcome,
 	})
 }
 
@@ -635,9 +619,8 @@ func (d *Dispatcher) drop(ctx context.Context, msg InboundMessage, instID pgtype
 		return DispatchResult{}, fmt.Errorf("record %s drop: %w", reason, err)
 	}
 	return DispatchResult{
-		Outcome:        OutcomeDropped,
-		DropReason:     reason,
-		InstallationID: instID,
+		Outcome:    OutcomeDropped,
+		DropReason: reason,
 	}, nil
 }
 
