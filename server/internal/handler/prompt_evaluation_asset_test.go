@@ -1820,19 +1820,9 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 	if completeW.Code != http.StatusOK {
 		t.Fatalf("complete status = %d, body = %s", completeW.Code, completeW.Body.String())
 	}
-	if _, err := projectPromptEvaluationTerminalTask(context.Background(), resp.TaskID); err != nil {
-		t.Fatalf("project completed prompt evaluation task: %v", err)
-	}
+	projectPromptEvaluationTask(t, resp.TaskID)
 
-	evidenceW := httptest.NewRecorder()
-	testHandler.GetPromptEvaluationRunEvidence(evidenceW, withURLParam(newRequest(http.MethodGet, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/evidence", nil), "id", resp.Run.ID))
-	if evidenceW.Code != http.StatusOK {
-		t.Fatalf("evidence status = %d, body = %s", evidenceW.Code, evidenceW.Body.String())
-	}
-	var evidence PromptEvaluationRunEvidenceResponse
-	if err := json.Unmarshal(evidenceW.Body.Bytes(), &evidence); err != nil {
-		t.Fatalf("decode evidence response: %v", err)
-	}
+	evidence := readPromptEvaluationRunEvidence(t, resp.Run.ID)
 	if evidence.Run.ID != resp.Run.ID || len(evidence.Trials) != 1 || evidence.Trials[0].CaseName != "登录失败" {
 		t.Fatalf("evidence trials = %+v", evidence)
 	}
@@ -2092,9 +2082,7 @@ func TestPromptEvaluationRuntimeReadinessReportsRecentCapacityFailure(t *testing
 	if failW.Code != http.StatusOK {
 		t.Fatalf("fail status = %d, body = %s", failW.Code, failW.Body.String())
 	}
-	if _, err := projectPromptEvaluationTerminalTask(context.Background(), resp.TaskID); err != nil {
-		t.Fatalf("project failed prompt evaluation task: %v", err)
-	}
+	projectPromptEvaluationTask(t, resp.TaskID)
 
 	readiness := readPromptEvaluationRuntimeReadiness(t, newRequest(http.MethodGet, "/api/prompt-evaluation-runtime-readiness", nil))
 	if readiness.Status != "容量受限" || readiness.Runtime == nil || !strings.Contains(readiness.Detail, "429 当前无可用Token额度") {
@@ -2187,14 +2175,7 @@ func TestRunPromptEvaluationAssetAgentCompletedWithoutStructuredVerdictNeedsRevi
 	cleanupPromptEvaluationAgentRunTest(t)
 	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "真实智能体人工复核实验", "缺少结构化评估")
 
-	if _, err := testPool.Exec(context.Background(), `
-		UPDATE agent_task_queue
-		SET status = 'running',
-		    started_at = now() - interval '1 second'
-		WHERE id = $1
-	`, resp.TaskID); err != nil {
-		t.Fatalf("start agent task: %v", err)
-	}
+	markPromptEvaluationTaskRunning(t, resp.TaskID)
 	if _, err := testHandler.Queries.CreateTaskMessageIdempotent(context.Background(), db.CreateTaskMessageIdempotentParams{
 		TaskID:  parseUUID(resp.TaskID),
 		Seq:     1,
@@ -2214,19 +2195,9 @@ func TestRunPromptEvaluationAssetAgentCompletedWithoutStructuredVerdictNeedsRevi
 	if completeW.Code != http.StatusOK {
 		t.Fatalf("complete status = %d, body = %s", completeW.Code, completeW.Body.String())
 	}
-	if _, err := projectPromptEvaluationTerminalTask(context.Background(), resp.TaskID); err != nil {
-		t.Fatalf("project completed prompt evaluation task: %v", err)
-	}
+	projectPromptEvaluationTask(t, resp.TaskID)
 
-	evidenceW := httptest.NewRecorder()
-	testHandler.GetPromptEvaluationRunEvidence(evidenceW, withURLParam(newRequest(http.MethodGet, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/evidence", nil), "id", resp.Run.ID))
-	if evidenceW.Code != http.StatusOK {
-		t.Fatalf("evidence status = %d, body = %s", evidenceW.Code, evidenceW.Body.String())
-	}
-	var evidence PromptEvaluationRunEvidenceResponse
-	if err := json.Unmarshal(evidenceW.Body.Bytes(), &evidence); err != nil {
-		t.Fatalf("decode evidence response: %v", err)
-	}
+	evidence := readPromptEvaluationRunEvidence(t, resp.Run.ID)
 	if evidence.Run.Status != "需人工复核" || evidence.Run.PassedCases != 0 || evidence.Run.FailedCases != 1 || evidence.Run.FailureReason != "缺少结构化逐用例评估结果" {
 		t.Fatalf("completed run without structured verdict = %+v", evidence.Run)
 	}
@@ -2265,15 +2236,7 @@ func TestRunPromptEvaluationAssetAgentCompletedWithoutStructuredVerdictNeedsRevi
 	if changedReviewW.Code != http.StatusConflict {
 		t.Fatalf("changed review replay = %d %s, want 409", changedReviewW.Code, changedReviewW.Body.String())
 	}
-	reviewedEvidenceW := httptest.NewRecorder()
-	testHandler.GetPromptEvaluationRunEvidence(reviewedEvidenceW, withURLParam(newRequest(http.MethodGet, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/evidence", nil), "id", resp.Run.ID))
-	if reviewedEvidenceW.Code != http.StatusOK {
-		t.Fatalf("reviewed evidence status = %d, body = %s", reviewedEvidenceW.Code, reviewedEvidenceW.Body.String())
-	}
-	var reviewedEvidence PromptEvaluationRunEvidenceResponse
-	if err := json.Unmarshal(reviewedEvidenceW.Body.Bytes(), &reviewedEvidence); err != nil {
-		t.Fatalf("decode reviewed evidence response: %v", err)
-	}
+	reviewedEvidence := readPromptEvaluationRunEvidence(t, resp.Run.ID)
 	if len(reviewedEvidence.Trials) != 1 || reviewedEvidence.Trials[0].Status != "通过" || reviewedEvidence.Trials[0].FailureReason != "无" {
 		t.Fatalf("reviewed trial = %+v", reviewedEvidence.Trials)
 	}
@@ -2290,14 +2253,7 @@ func TestRunPromptEvaluationAssetAgentAutoSyncsFailedTask(t *testing.T) {
 	cleanupPromptEvaluationAgentRunTest(t)
 	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "真实智能体失败实验", "部署失败")
 
-	if _, err := testPool.Exec(context.Background(), `
-		UPDATE agent_task_queue
-		SET status = 'running',
-		    started_at = now() - interval '1 second'
-		WHERE id = $1
-	`, resp.TaskID); err != nil {
-		t.Fatalf("start agent task: %v", err)
-	}
+	markPromptEvaluationTaskRunning(t, resp.TaskID)
 	if _, err := testPool.Exec(context.Background(), `
 		INSERT INTO task_usage (task_id, provider, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, updated_at)
 		VALUES ($1, 'codebuddy', 'deepseek-v4-pro-ioa', 5, 1, 0, 0, now())
@@ -2316,19 +2272,9 @@ func TestRunPromptEvaluationAssetAgentAutoSyncsFailedTask(t *testing.T) {
 	if failW.Code != http.StatusOK {
 		t.Fatalf("fail status = %d, body = %s", failW.Code, failW.Body.String())
 	}
-	if _, err := projectPromptEvaluationTerminalTask(context.Background(), resp.TaskID); err != nil {
-		t.Fatalf("project failed prompt evaluation task: %v", err)
-	}
+	projectPromptEvaluationTask(t, resp.TaskID)
 
-	evidenceW := httptest.NewRecorder()
-	testHandler.GetPromptEvaluationRunEvidence(evidenceW, withURLParam(newRequest(http.MethodGet, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/evidence", nil), "id", resp.Run.ID))
-	if evidenceW.Code != http.StatusOK {
-		t.Fatalf("evidence status = %d, body = %s", evidenceW.Code, evidenceW.Body.String())
-	}
-	var evidence PromptEvaluationRunEvidenceResponse
-	if err := json.Unmarshal(evidenceW.Body.Bytes(), &evidence); err != nil {
-		t.Fatalf("decode evidence response: %v", err)
-	}
+	evidence := readPromptEvaluationRunEvidence(t, resp.Run.ID)
 	if evidence.Run.Status != "失败" || evidence.Run.PassedCases != 0 || evidence.Run.FailedCases != 1 || evidence.Run.FailureReason != "智能体执行超时" {
 		t.Fatalf("auto-synced failed run = %+v", evidence.Run)
 	}
@@ -2356,9 +2302,7 @@ func TestPromptEvaluationEvidenceSnapshotArchivesRunEvidence(t *testing.T) {
 	if failW.Code != http.StatusOK {
 		t.Fatalf("fail status = %d, body = %s", failW.Code, failW.Body.String())
 	}
-	if _, err := projectPromptEvaluationTerminalTask(context.Background(), resp.TaskID); err != nil {
-		t.Fatalf("project failed prompt evaluation task: %v", err)
-	}
+	projectPromptEvaluationTask(t, resp.TaskID)
 
 	createSnapshotW := httptest.NewRecorder()
 	requestKey := uuid.NewString()
@@ -2651,9 +2595,7 @@ func TestPromptEvaluationOptimizationCandidateUsesAgentEvidence(t *testing.T) {
 	if failW.Code != http.StatusOK {
 		t.Fatalf("fail status = %d, body = %s", failW.Code, failW.Body.String())
 	}
-	if _, err := projectPromptEvaluationTerminalTask(context.Background(), resp.TaskID); err != nil {
-		t.Fatalf("project failed prompt evaluation task: %v", err)
-	}
+	projectPromptEvaluationTask(t, resp.TaskID)
 
 	candidateW := httptest.NewRecorder()
 	testHandler.CreatePromptEvaluationOptimizationCandidate(candidateW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/optimization-candidates", nil), "id", resp.Run.ID))
@@ -2701,19 +2643,9 @@ func TestRunPromptEvaluationAssetAgentAutoSyncsCancelledTask(t *testing.T) {
 	if _, err := testHandler.TaskService.CancelTask(context.Background(), parseUUID(resp.TaskID)); err != nil {
 		t.Fatalf("cancel task: %v", err)
 	}
-	if _, err := projectPromptEvaluationTerminalTask(context.Background(), resp.TaskID); err != nil {
-		t.Fatalf("project cancelled prompt evaluation task: %v", err)
-	}
+	projectPromptEvaluationTask(t, resp.TaskID)
 
-	evidenceW := httptest.NewRecorder()
-	testHandler.GetPromptEvaluationRunEvidence(evidenceW, withURLParam(newRequest(http.MethodGet, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/evidence", nil), "id", resp.Run.ID))
-	if evidenceW.Code != http.StatusOK {
-		t.Fatalf("evidence status = %d, body = %s", evidenceW.Code, evidenceW.Body.String())
-	}
-	var evidence PromptEvaluationRunEvidenceResponse
-	if err := json.Unmarshal(evidenceW.Body.Bytes(), &evidence); err != nil {
-		t.Fatalf("decode evidence response: %v", err)
-	}
+	evidence := readPromptEvaluationRunEvidence(t, resp.Run.ID)
 	if evidence.Run.Status != "已取消" || evidence.Run.Conclusion != "智能体执行已取消" || evidence.Run.FailureReason != "任务被取消" {
 		t.Fatalf("auto-synced cancelled run = %+v", evidence.Run)
 	}
@@ -2840,19 +2772,9 @@ func TestRunPromptEvaluationAssetAgentBatchFailureAutoSyncsTask(t *testing.T) {
 		t.Fatalf("fail task row: %v", err)
 	}
 	testHandler.TaskService.HandleFailedTasks(context.Background(), []db.AgentTaskQueue{failed})
-	if _, err := projectPromptEvaluationTerminalTask(context.Background(), resp.TaskID); err != nil {
-		t.Fatalf("project batch failed evaluation task: %v", err)
-	}
+	projectPromptEvaluationTask(t, resp.TaskID)
 
-	evidenceW := httptest.NewRecorder()
-	testHandler.GetPromptEvaluationRunEvidence(evidenceW, withURLParam(newRequest(http.MethodGet, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/evidence", nil), "id", resp.Run.ID))
-	if evidenceW.Code != http.StatusOK {
-		t.Fatalf("evidence status = %d, body = %s", evidenceW.Code, evidenceW.Body.String())
-	}
-	var evidence PromptEvaluationRunEvidenceResponse
-	if err := json.Unmarshal(evidenceW.Body.Bytes(), &evidence); err != nil {
-		t.Fatalf("decode evidence response: %v", err)
-	}
+	evidence := readPromptEvaluationRunEvidence(t, resp.Run.ID)
 	if evidence.Run.Status != "失败" || evidence.Run.FailureReason != "后台扫描判定任务失败" || evidence.Run.TaskID == nil || *evidence.Run.TaskID != resp.TaskID {
 		t.Fatalf("auto-synced batch failed run = %+v", evidence.Run)
 	}
@@ -2887,9 +2809,7 @@ func TestRunPromptEvaluationAssetAgentRetryReassignsRunTask(t *testing.T) {
 		t.Fatalf("failed task batch = %+v, want one task and one retry", batch)
 	}
 	testHandler.TaskService.HandleFailedTasks(ctx, batch.Tasks)
-	if _, err := projectPromptEvaluationTerminalTask(ctx, resp.TaskID); err != nil {
-		t.Fatalf("project retrying evaluation task: %v", err)
-	}
+	projectPromptEvaluationTask(t, resp.TaskID)
 
 	var childTaskID string
 	if err := testPool.QueryRow(context.Background(), `
@@ -2898,15 +2818,7 @@ func TestRunPromptEvaluationAssetAgentRetryReassignsRunTask(t *testing.T) {
 	`, resp.TaskID).Scan(&childTaskID); err != nil {
 		t.Fatalf("load retry child: %v", err)
 	}
-	evidenceW := httptest.NewRecorder()
-	testHandler.GetPromptEvaluationRunEvidence(evidenceW, withURLParam(newRequest(http.MethodGet, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/evidence", nil), "id", resp.Run.ID))
-	if evidenceW.Code != http.StatusOK {
-		t.Fatalf("evidence status = %d, body = %s", evidenceW.Code, evidenceW.Body.String())
-	}
-	var evidence PromptEvaluationRunEvidenceResponse
-	if err := json.Unmarshal(evidenceW.Body.Bytes(), &evidence); err != nil {
-		t.Fatalf("decode evidence response: %v", err)
-	}
+	evidence := readPromptEvaluationRunEvidence(t, resp.Run.ID)
 	if evidence.Run.Status != "已入队" || evidence.Run.TaskID == nil || *evidence.Run.TaskID != childTaskID {
 		t.Fatalf("retry did not reassign prompt evaluation run: child=%s run=%+v", childTaskID, evidence.Run)
 	}
@@ -2960,6 +2872,27 @@ func markPromptEvaluationTaskRunning(t *testing.T, taskID string) {
 	`, taskID); err != nil {
 		t.Fatalf("start agent task: %v", err)
 	}
+}
+
+func projectPromptEvaluationTask(t *testing.T, taskID string) {
+	t.Helper()
+	if _, err := projectPromptEvaluationTerminalTask(context.Background(), taskID); err != nil {
+		t.Fatalf("project terminal prompt evaluation task: %v", err)
+	}
+}
+
+func readPromptEvaluationRunEvidence(t *testing.T, runID string) PromptEvaluationRunEvidenceResponse {
+	t.Helper()
+	w := httptest.NewRecorder()
+	testHandler.GetPromptEvaluationRunEvidence(w, withURLParam(newRequest(http.MethodGet, "/api/prompt-evaluation-runs/"+runID+"/evidence", nil), "id", runID))
+	if w.Code != http.StatusOK {
+		t.Fatalf("evidence status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var evidence PromptEvaluationRunEvidenceResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &evidence); err != nil {
+		t.Fatalf("decode evidence response: %v", err)
+	}
+	return evidence
 }
 
 func TestRunPromptEvaluationAssetAgentUsesRequestedAgent(t *testing.T) {
