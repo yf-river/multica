@@ -9,16 +9,14 @@ import { notFound } from "next/navigation";
 import defaultMdxComponents from "fumadocs-ui/mdx";
 import type { Metadata } from "next";
 import { docsAlternates } from "@/lib/site";
-import { resolveDocsLang } from "@/lib/i18n";
-import { DocsLocaleProvider, LocaleLink } from "@/components/locale-link";
-import { docsSlugStaticParams } from "@/lib/static-params";
+import { i18n } from "@/lib/i18n";
+import { LocaleLink } from "@/components/locale-link";
 
 export default async function Page(props: {
   params: Promise<{ lang: string; slug: string[] }>;
 }) {
-  const params = await props.params;
-  const lang = resolveDocsLang(params.lang);
-  const page = source.getPage(params.slug, lang);
+  const { slug } = await props.params;
+  const page = source.getPage(slug, i18n.defaultLanguage);
   if (!page) notFound();
 
   const MDX = page.data.body;
@@ -28,29 +26,26 @@ export default async function Page(props: {
       <DocsTitle>{page.data.title}</DocsTitle>
       <DocsDescription>{page.data.description}</DocsDescription>
       <DocsBody>
-        <DocsLocaleProvider lang={lang}>
-          <MDX components={{ ...defaultMdxComponents, a: LocaleLink }} />
-        </DocsLocaleProvider>
+        <MDX components={{ ...defaultMdxComponents, a: LocaleLink }} />
       </DocsBody>
     </DocsPage>
   );
 }
 
 export function generateStaticParams() {
-  return docsSlugStaticParams(source.generateParams());
+  return source.generateParams().filter(({ slug }) => slug.length > 0);
 }
 
 export async function generateMetadata(props: {
   params: Promise<{ lang: string; slug: string[] }>;
 }): Promise<Metadata> {
-  const params = await props.params;
-  const lang = resolveDocsLang(params.lang);
-  const page = source.getPage(params.slug, lang);
+  const { slug } = await props.params;
+  const page = source.getPage(slug, i18n.defaultLanguage);
   if (!page) notFound();
 
   return {
     title: page.data.title,
     description: page.data.description,
-    alternates: docsAlternates(params.slug),
+    alternates: docsAlternates(slug),
   };
 }
