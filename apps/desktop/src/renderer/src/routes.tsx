@@ -25,7 +25,7 @@ import { RunReviewsPage } from "@multica/views/run-reviews";
 import { SkillsPage } from "@multica/views/skills";
 import { AgentsPage } from "@multica/views/agents";
 import { DesktopRuntimesPage } from "./components/desktop-runtimes-page";
-import { SquadsPage, SquadDetailPage as SquadDetailPageView } from "@multica/views/squads/components";
+import { SquadsPage, SquadDetailPage as SquadDetailPageView } from "@multica/views/squads";
 import { InboxPage } from "@multica/views/inbox";
 import { SettingsPage } from "@multica/views/settings";
 import { useT } from "@multica/views/i18n";
