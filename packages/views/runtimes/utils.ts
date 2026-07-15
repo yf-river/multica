@@ -97,7 +97,7 @@ export function formatTokens(n: number): string {
   return n.toLocaleString();
 }
 
-export type UsageTimeDimension = "daily" | "weekly";
+type UsageTimeDimension = "daily" | "weekly";
 
 export const DEFAULT_USAGE_DAYS_BY_DIM = {
   daily: 30,
@@ -231,12 +231,6 @@ export interface DailyTokenData {
   cacheWrite: number;
 }
 
-export interface DailyCostData {
-  date: string;
-  label: string;
-  cost: number;
-}
-
 // Stacked variant — splits the daily $ figure into the three components that
 // drive billing (cache reads excluded; their cost is tracked separately as
 // "savings" since they're typically dominated by the cached-input discount).
@@ -247,12 +241,6 @@ export interface DailyCostStackData {
   output: number;
   cacheWrite: number;
   total: number;
-}
-
-export interface ModelDistribution {
-  model: string;
-  tokens: number;
-  cost: number;
 }
 
 export interface WeeklyTokenData {
@@ -288,17 +276,13 @@ export interface WeeklyCostStackData {
 
 export function aggregateByDate(usage: RuntimeUsage[]): {
   dailyTokens: DailyTokenData[];
-  dailyCost: DailyCostData[];
   dailyCostStack: DailyCostStackData[];
-  modelDist: ModelDistribution[];
 } {
   const dateMap = new Map<string, Omit<DailyTokenData, "label">>();
-  const costMap = new Map<string, number>();
   const stackMap = new Map<
     string,
     { input: number; output: number; cacheWrite: number }
   >();
-  const modelMap = new Map<string, { tokens: number; cost: number }>();
 
   for (const u of usage) {
     const existing = dateMap.get(u.date) ?? {
@@ -314,9 +298,6 @@ export function aggregateByDate(usage: RuntimeUsage[]): {
     existing.cacheWrite += u.cache_write_tokens;
     dateMap.set(u.date, existing);
 
-    const dayCost = (costMap.get(u.date) ?? 0) + estimateCost(u);
-    costMap.set(u.date, dayCost);
-
     const breakdown = estimateCostBreakdown(u);
     const stack = stackMap.get(u.date) ?? {
       input: 0,
@@ -327,12 +308,6 @@ export function aggregateByDate(usage: RuntimeUsage[]): {
     stack.output += breakdown.output;
     stack.cacheWrite += breakdown.cacheWrite;
     stackMap.set(u.date, stack);
-
-    const modelName = modelGroupingKey(u.model, u.provider);
-    const m = modelMap.get(modelName) ?? { tokens: 0, cost: 0 };
-    m.tokens += usageTokenTotal(u);
-    m.cost += estimateCost(u);
-    modelMap.set(modelName, m);
   }
 
   const formatLabel = (d: string) => {
@@ -343,14 +318,6 @@ export function aggregateByDate(usage: RuntimeUsage[]): {
   const dailyTokens = Array.from(dateMap.values())
     .toSorted((a, b) => a.date.localeCompare(b.date))
     .map((d) => ({ ...d, label: formatLabel(d.date) }));
-
-  const dailyCost = Array.from(costMap.entries())
-    .toSorted(([a], [b]) => a.localeCompare(b))
-    .map(([date, cost]) => ({
-      date,
-      label: formatLabel(date),
-      cost: Math.round(cost * 100) / 100,
-    }));
 
   const dailyCostStack = Array.from(stackMap.entries())
     .toSorted(([a], [b]) => a.localeCompare(b))
@@ -369,11 +336,7 @@ export function aggregateByDate(usage: RuntimeUsage[]): {
       };
     });
 
-  const modelDist = [...modelMap.entries()]
-    .map(([model, data]) => ({ model, ...data }))
-    .sort((a, b) => b.tokens - a.tokens);
-
-  return { dailyTokens, dailyCost, dailyCostStack, modelDist };
+  return { dailyTokens, dailyCostStack };
 }
 
 // Fold daily-grain rows into ISO calendar weeks (Mon–Sun). Reuses the same

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import {
   Trash2,
   ChevronRight,
@@ -15,7 +15,7 @@ import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/paths";
 import { memberListOptions, agentListOptions } from "@multica/core/workspace/queries";
 import { useUpdateRuntime } from "@multica/core/runtimes/mutations";
-import { deriveRuntimeHealth } from "@multica/core/runtimes";
+import { deriveRuntimeHealth, useRuntimeNow } from "@multica/core/runtimes";
 import {
   type AgentPresenceDetail,
   useWorkspacePresenceMap,
@@ -63,15 +63,6 @@ function shortDaemonId(id: string | null): string | null {
 // query data arriving. Agent presence has no time windows anymore, so it
 // doesn't need this — but useWorkspacePresenceMap is the dependency we
 // already mounted on this page, and that's wired to query data, not `now`.
-function useNowTick(intervalMs = 30_000): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), intervalMs);
-    return () => clearInterval(id);
-  }, [intervalMs]);
-  return now;
-}
-
 export function RuntimeDetail({ runtime }: { runtime: AgentRuntime }) {
   const { t } = useT("runtimes");
   const cliVersion =
@@ -84,7 +75,7 @@ export function RuntimeDetail({ runtime }: { runtime: AgentRuntime }) {
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
   const { byAgent: presenceMap } = useWorkspacePresenceMap(wsId);
-  const now = useNowTick();
+  const now = useRuntimeNow();
 
   const [deleteOpen, setDeleteOpen] = useState(false);
 
@@ -491,9 +482,8 @@ function DiagnosticsCard({
 
 // VisibilityEditor lets the runtime owner (or workspace admin) flip
 // personal↔workspace. The PATCH endpoint also re-checks; this is a UI gate, not
-// a security boundary. Per-choice description text lives in the hover
-// tooltip so the two buttons stay a tight icon+label pair instead of the
-// previous two-line block that competed with the surrounding cards.
+// a security boundary. Per-choice descriptions live in hover tooltips so the
+// controls remain compact.
 function VisibilityEditor({ runtime }: { runtime: AgentRuntime }) {
   const { t } = useT("runtimes");
   const wsId = useWorkspaceId();
@@ -503,7 +493,7 @@ function VisibilityEditor({ runtime }: { runtime: AgentRuntime }) {
   const flip = (next: "personal" | "workspace") => {
     if (next === current) return;
     updateRuntime.mutate(
-      { runtimeId: runtime.id, patch: { scope: next } },
+      { runtimeId: runtime.id, scope: next },
       {
         onSuccess: () =>
           toast.success(

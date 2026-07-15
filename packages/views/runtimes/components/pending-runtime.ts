@@ -6,7 +6,6 @@ const PENDING_RUNTIME_ID_PREFIX = "pending-runtime-profile:";
 
 interface PendingRuntimeMetadata extends Record<string, unknown> {
   pending_custom_runtime: true;
-  runtime_profile_id: string;
   command_name: string;
   pending_since: string;
 }
@@ -63,7 +62,6 @@ function pendingRuntimeFromProfile({
     "Pending custom runtimes";
   const metadata: PendingRuntimeMetadata = {
     pending_custom_runtime: true,
-    runtime_profile_id: profile.id,
     command_name: profile.command_name,
     pending_since: pendingSince,
   };

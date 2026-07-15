@@ -54,7 +54,7 @@ import { isSelfHealingRuntime } from "../utils";
 // owner click through, and this dialog raises a self_heal warning banner
 // so the user knows the daemon will re-register a fresh runtime row
 // unless they stop the daemon process first. Confirm proceeds.
-export interface DeleteRuntimeDialogProps {
+interface DeleteRuntimeDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   runtime: AgentRuntime;
@@ -228,12 +228,8 @@ export function DeleteRuntimeDialog({
 }
 
 // ---------------------------------------------------------------------------
-// Self-heal notice — informational banner shown when the runtime is a live
-// local daemon that re-registers itself within seconds of a server-side
-// delete. Replaces the old "block the affordance and toast on attempt"
-// dance (MUL-3352): the owner now sees the warning *before* confirming
-// rather than discovering it only after they've been told they cannot
-// proceed.
+// Live local daemons re-register shortly after deletion, so confirmation
+// must explain that consequence without weakening the owner's permission.
 // ---------------------------------------------------------------------------
 
 function SelfHealNotice({ runtime }: { runtime: AgentRuntime }) {

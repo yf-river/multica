@@ -4,7 +4,6 @@ import { api } from "../api";
 export const runtimeKeys = {
   all: (wsId: string) => ["runtimes", wsId] as const,
   list: (wsId: string) => [...runtimeKeys.all(wsId), "list"] as const,
-  listMine: (wsId: string) => [...runtimeKeys.all(wsId), "list", "mine"] as const,
   usage: (rid: string, days: number, tz: string) =>
     ["runtimes", "usage", rid, days, tz] as const,
   usageByAgent: (rid: string, days: number, tz: string) =>
@@ -50,9 +49,9 @@ export function runtimeUsageByTaskOptions(
   });
 }
 
-export function runtimeListOptions(wsId: string, owner?: "me") {
+export function runtimeListOptions(wsId: string) {
   return queryOptions({
-    queryKey: owner === "me" ? runtimeKeys.listMine(wsId) : runtimeKeys.list(wsId),
-    queryFn: () => api.listRuntimes({ workspace_id: wsId, owner }),
+    queryKey: runtimeKeys.list(wsId),
+    queryFn: () => api.listRuntimes({ workspace_id: wsId }),
   });
 }

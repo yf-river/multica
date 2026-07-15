@@ -12,6 +12,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/paths";
 import { agentTaskSnapshotOptions } from "@multica/core/agents";
+import { useRuntimeNow } from "@multica/core/runtimes";
 import { runtimeListOptions, runtimeKeys } from "@multica/core/runtimes/queries";
 import { useWSEvent } from "@multica/core/realtime";
 import { agentListOptions } from "@multica/core/workspace/queries";
@@ -71,17 +72,6 @@ interface RuntimesPageProps {
   bootstrapping?: boolean;
 }
 
-// Re-render every 30s so derived health (recently_lost → offline transitions)
-// catches up even when no underlying query data has changed.
-function useNowTick(intervalMs = 30_000): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), intervalMs);
-    return () => clearInterval(id);
-  }, [intervalMs]);
-  return now;
-}
-
 function RuntimesPage({
   localDaemonId,
   localMachineName,
@@ -139,7 +129,7 @@ function RuntimesPage({
   }, [qc, wsId]);
   useWSEvent("daemon:register", handleDaemonEvent);
 
-  const now = useNowTick();
+  const now = useRuntimeNow();
 
   useEffect(() => {
     if (pendingProfiles.length === 0) return;
@@ -692,9 +682,7 @@ function MachineDetail({
   const runtimesMeta = t(($) => $.machine.metrics.runtimes_hint, {
     count: machine.onlineCount,
   });
-  // Single inline meta strip replaces the old 4-card grid. Health is already
-  // shown as a chip in the title row; CLI / daemon id are scanning-grade
-  // info, not headline numbers — they belong in muted secondary text.
+  // Health stays in the title row; CLI and daemon id are secondary metadata.
   const metaParts: React.ReactNode[] = [
     <span key="runtimes">
       <span className="font-medium tabular-nums text-foreground">

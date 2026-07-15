@@ -24,79 +24,27 @@ function makeRuntime(overrides: Partial<AgentRuntime> = {}): AgentRuntime {
 }
 
 describe("deriveRuntimeHealth", () => {
-  it("returns online when status is online (regardless of last_seen_at)", () => {
-    expect(
-      deriveRuntimeHealth(makeRuntime({ status: "online", last_seen_at: null }), FIXED_NOW),
-    ).toBe("online");
-  });
-
-  it("returns recently_lost when offline less than 5 minutes", () => {
-    expect(
-      deriveRuntimeHealth(
-        makeRuntime({
-          status: "offline",
-          last_seen_at: new Date(FIXED_NOW - 2 * 60_000).toISOString(),
-        }),
-        FIXED_NOW,
-      ),
-    ).toBe("recently_lost");
-  });
-
-  it("returns offline when offline between 5 minutes and 6 days", () => {
+  it.each([
+    ["online ignores missing heartbeat", "online", null, "online"],
+    ["recent loss", "offline", 2 * 60_000, "recently_lost"],
+    ["ordinary offline", "offline", 60 * 60_000, "offline"],
+    ["approaching GC", "offline", 6.5 * 24 * 3600_000, "about_to_gc"],
+    ["missing heartbeat", "offline", null, "about_to_gc"],
+    [
+      "inside five-minute boundary",
+      "offline",
+      5 * 60_000 - 1_000,
+      "recently_lost",
+    ],
+    ["outside five-minute boundary", "offline", 5 * 60_000 + 1_000, "offline"],
+  ] as const)("derives %s", (_case, status, ageMs, expected) => {
+    const lastSeenAt =
+      ageMs === null ? null : new Date(FIXED_NOW - ageMs).toISOString();
     expect(
       deriveRuntimeHealth(
-        makeRuntime({
-          status: "offline",
-          last_seen_at: new Date(FIXED_NOW - 60 * 60_000).toISOString(), // 1 hour
-        }),
+        makeRuntime({ status, last_seen_at: lastSeenAt }),
         FIXED_NOW,
       ),
-    ).toBe("offline");
-  });
-
-  it("returns about_to_gc when offline beyond 6 days (within 1 day of GC)", () => {
-    expect(
-      deriveRuntimeHealth(
-        makeRuntime({
-          status: "offline",
-          last_seen_at: new Date(FIXED_NOW - 6.5 * 24 * 3600_000).toISOString(),
-        }),
-        FIXED_NOW,
-      ),
-    ).toBe("about_to_gc");
-  });
-
-  it("treats null last_seen_at as long-offline (about_to_gc)", () => {
-    // last_seen_at = null means lastSeen = 0 (epoch), so offlineFor is huge.
-    expect(
-      deriveRuntimeHealth(
-        makeRuntime({ status: "offline", last_seen_at: null }),
-        FIXED_NOW,
-      ),
-    ).toBe("about_to_gc");
-  });
-
-  it("respects the 5-minute boundary (just inside → recently_lost)", () => {
-    expect(
-      deriveRuntimeHealth(
-        makeRuntime({
-          status: "offline",
-          last_seen_at: new Date(FIXED_NOW - (5 * 60_000 - 1_000)).toISOString(),
-        }),
-        FIXED_NOW,
-      ),
-    ).toBe("recently_lost");
-  });
-
-  it("respects the 5-minute boundary (just outside → offline)", () => {
-    expect(
-      deriveRuntimeHealth(
-        makeRuntime({
-          status: "offline",
-          last_seen_at: new Date(FIXED_NOW - (5 * 60_000 + 1_000)).toISOString(),
-        }),
-        FIXED_NOW,
-      ),
-    ).toBe("offline");
+    ).toBe(expected);
   });
 });

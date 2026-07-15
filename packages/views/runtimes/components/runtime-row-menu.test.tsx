@@ -127,34 +127,19 @@ function renderActionsCell(row: RuntimeRow) {
 describe("runtime list row menu", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("renders the kebab menu for an online local runtime (self-healing is no longer hidden)", () => {
-    // MUL-3352: hiding the kebab on a self-healing row left owners reading
-    // it as a missing permission. The action stays available; the dialog
-    // surfaces the self-heal warning instead.
-    renderActionsCell(
-      makeRow(makeRuntime({ runtime_mode: "local", status: "online" })),
-    );
-    expect(screen.getByLabelText("行操作")).toBeInTheDocument();
-  });
-
-  it("renders the kebab menu for an offline local runtime", () => {
-    renderActionsCell(
-      makeRow(makeRuntime({ runtime_mode: "local", status: "offline" })),
-    );
-    expect(screen.getByLabelText("行操作")).toBeInTheDocument();
-  });
-
-  it("renders the kebab menu for a cloud runtime regardless of status", () => {
-    renderActionsCell(
-      makeRow(makeRuntime({ runtime_mode: "cloud", status: "online" })),
-    );
-    expect(screen.getByLabelText("行操作")).toBeInTheDocument();
-  });
+  it.each([
+    ["online local", { runtime_mode: "local", status: "online" }],
+    ["offline local", { runtime_mode: "local", status: "offline" }],
+    ["online cloud", { runtime_mode: "cloud", status: "online" }],
+  ] as const)(
+    "renders the kebab menu for an editable %s runtime",
+    (_case, fields) => {
+      renderActionsCell(makeRow(makeRuntime(fields)));
+      expect(screen.getByLabelText("行操作")).toBeInTheDocument();
+    },
+  );
 
   it("hides the kebab menu when the caller lacks delete permission", () => {
-    // Pre-existing behavior — re-asserted so the new self-healing guard
-    // doesn't accidentally regress it (both paths return the same empty
-    // span).
     renderActionsCell(
       makeRow(
         makeRuntime({ runtime_mode: "local", status: "offline" }),
@@ -165,8 +150,6 @@ describe("runtime list row menu", () => {
   });
 });
 
-// The CLI cell is a plain exported component — render it in isolation,
-// mirroring renderActionsCell.
 function renderCliCell(row: RuntimeRow) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
@@ -182,9 +165,6 @@ function renderCliCell(row: RuntimeRow) {
 describe("runtime list CLI column", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  // #3838: every agent showed the same number because the column rendered the
-  // shared multica daemon `cli_version`. It must instead show the agent's own
-  // tool version from `metadata.version`.
   it("shows the agent's own CLI tool version, not the shared daemon version", () => {
     renderCliCell(
       makeRow(

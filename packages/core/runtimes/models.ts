@@ -1,14 +1,14 @@
 import { queryOptions } from "@tanstack/react-query";
 import { api } from "../api";
 import type { RuntimeModelsResult } from "../types/agent";
+import { pollRuntimeRequest } from "./poll-request";
 
-export const runtimeModelsKeys = {
+const runtimeModelsKeys = {
   all: () => ["runtimes", "models"] as const,
   forRuntime: (runtimeId: string) =>
     [...runtimeModelsKeys.all(), runtimeId] as const,
 };
 
-const POLL_INTERVAL_MS = 500;
 const POLL_TIMEOUT_MS = 30_000;
 
 // resolveRuntimeModels initiates a list-models request against the daemon
@@ -18,19 +18,16 @@ const POLL_TIMEOUT_MS = 30_000;
 // per-agent model selection entirely (hermes today) — the UI uses
 // this to disable its dropdown instead of accepting a value that
 // wouldn't be honoured at runtime.
-export async function resolveRuntimeModels(
+async function resolveRuntimeModels(
   runtimeId: string,
 ): Promise<RuntimeModelsResult> {
   const initial = await api.initiateListModels(runtimeId);
-  const start = Date.now();
-  let current = initial;
-  while (current.status === "pending" || current.status === "running") {
-    if (Date.now() - start > POLL_TIMEOUT_MS) {
-      throw new Error("model discovery timed out");
-    }
-    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
-    current = await api.getListModelsResult(runtimeId, initial.id);
-  }
+  const current = await pollRuntimeRequest(
+    initial,
+    (requestId) => api.getListModelsResult(runtimeId, requestId),
+    POLL_TIMEOUT_MS,
+    "model discovery timed out",
+  );
   if (current.status === "failed" || current.status === "timeout") {
     throw new Error(current.error || "model discovery failed");
   }

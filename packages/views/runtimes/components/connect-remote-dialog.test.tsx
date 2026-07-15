@@ -91,23 +91,13 @@ describe("ConnectRemoteDialog", () => {
     );
   });
 
-  it("disables font ligatures in setup command code", () => {
+  it("disables font ligatures in generated commands", () => {
     const { baseElement } = renderDialog();
-
-    const setupCode = Array.from(baseElement.querySelectorAll("code")).find((node) =>
-      node.textContent?.includes("multica setup"),
-    );
-
-    expect(setupCode).toHaveClass(...ligatureClasses);
-  });
-
-  it("disables font ligatures in fallback token command code", () => {
-    const { baseElement } = renderDialog();
-
-    const tokenCode = Array.from(baseElement.querySelectorAll("code")).find((node) =>
-      node.textContent?.includes("multica login --token <YOUR_TOKEN>"),
-    );
-
-    expect(tokenCode).toHaveClass(...ligatureClasses);
+    const commands = Array.from(baseElement.querySelectorAll("code"));
+    for (const text of ["multica setup", "multica login --token <YOUR_TOKEN>"]) {
+      expect(
+        commands.find((node) => node.textContent?.includes(text)),
+      ).toHaveClass(...ligatureClasses);
+    }
   });
 });

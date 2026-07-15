@@ -224,9 +224,7 @@ export function UsageSection({ runtime }: { runtime: AgentRuntime }) {
       {/* Layer 3 — WHO/WHAT burned the spend. */}
       <CostByBlock runtimeId={runtimeId} days={days} usage={filtered} tz={tz} />
 
-      {/* Layer 4 — Folded raw view. The Heatmap used to live here too; it
-          was promoted into the WHEN chart's toggle, leaving only the
-          breakdown table behind. */}
+      {/* Layer 4 — folded raw breakdown. */}
       <FoldedRow usage={filtered} />
     </div>
   );
@@ -702,9 +700,7 @@ function CostByList({
 }
 
 // ---------------------------------------------------------------------------
-// Folded row — single chevron-toggle link revealing the raw breakdown
-// table. The Activity heatmap used to live here too; it was promoted to a
-// WhenChart toggle, leaving only the breakdown table behind.
+// Folded row — single chevron-toggle link revealing the raw breakdown table.
 // ---------------------------------------------------------------------------
 
 function FoldedRow({ usage }: { usage: RuntimeUsage[] }) {

@@ -5,33 +5,30 @@ import type {
   RuntimeLocalSkillImportResult,
   RuntimeLocalSkillsResult,
 } from "../types";
+import { pollRuntimeRequest } from "./poll-request";
+
+const runtimeLocalSkillsRootKey = ["runtimes", "local-skills"] as const;
 
 export const runtimeLocalSkillsKeys = {
-  all: () => ["runtimes", "local-skills"] as const,
   forRuntime: (runtimeId: string) =>
-    [...runtimeLocalSkillsKeys.all(), runtimeId] as const,
+    [...runtimeLocalSkillsRootKey, runtimeId] as const,
 };
 
-const POLL_INTERVAL_MS = 500;
 const POLL_TIMEOUT_MS = 30_000;
 // The server claims one full UI concurrency window per heartbeat, then allows
 // 60 seconds for execution. Two minutes covers both phases with retry margin.
 const IMPORT_POLL_TIMEOUT_MS = 2 * 60_000;
 
-export async function resolveRuntimeLocalSkills(
+async function resolveRuntimeLocalSkills(
   runtimeId: string,
 ): Promise<RuntimeLocalSkillsResult> {
   const initial = await api.initiateListLocalSkills(runtimeId);
-  const start = Date.now();
-  let current = initial;
-
-  while (current.status === "pending" || current.status === "running") {
-    if (Date.now() - start > POLL_TIMEOUT_MS) {
-      throw new Error("runtime local skill discovery timed out");
-    }
-    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
-    current = await api.getListLocalSkillsResult(runtimeId, initial.id);
-  }
+  const current = await pollRuntimeRequest(
+    initial,
+    (requestId) => api.getListLocalSkillsResult(runtimeId, requestId),
+    POLL_TIMEOUT_MS,
+    "runtime local skill discovery timed out",
+  );
 
   if (current.status === "failed" || current.status === "timeout") {
     throw new Error(current.error || "runtime local skill discovery failed");
@@ -48,16 +45,12 @@ export async function resolveRuntimeLocalSkillImport(
   payload: CreateRuntimeLocalSkillImportRequest,
 ): Promise<RuntimeLocalSkillImportResult> {
   const initial = await api.initiateImportLocalSkill(runtimeId, payload);
-  const start = Date.now();
-  let current = initial;
-
-  while (current.status === "pending" || current.status === "running") {
-    if (Date.now() - start > IMPORT_POLL_TIMEOUT_MS) {
-      throw new Error("runtime local skill import timed out");
-    }
-    await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
-    current = await api.getImportLocalSkillResult(runtimeId, initial.id);
-  }
+  const current = await pollRuntimeRequest(
+    initial,
+    (requestId) => api.getImportLocalSkillResult(runtimeId, requestId),
+    IMPORT_POLL_TIMEOUT_MS,
+    "runtime local skill import timed out",
+  );
 
   if (current.status === "conflict") {
     if (!current.conflict) {
@@ -86,7 +79,7 @@ export function runtimeLocalSkillsOptions(runtimeId: string | null | undefined) 
   return queryOptions({
     queryKey: runtimeId
       ? runtimeLocalSkillsKeys.forRuntime(runtimeId)
-      : runtimeLocalSkillsKeys.all(),
+      : runtimeLocalSkillsRootKey,
     queryFn: () => resolveRuntimeLocalSkills(runtimeId as string),
     enabled: Boolean(runtimeId),
     staleTime: 30_000,

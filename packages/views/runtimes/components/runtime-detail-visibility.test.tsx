@@ -28,15 +28,6 @@ vi.mock("sonner", () => ({
   toast: { error: vi.fn(), success: vi.fn() },
 }));
 
-// Pull the bits we want to test directly from the detail file. They aren't
-// exported, so we exercise them through RuntimeDetail's DiagnosticsCard.
-// Easier path: import the inner components by re-exporting them from a
-// shared module. They live in the same file as RuntimeDetail; rather than
-// touching the prod file just to ease testing, we test by rendering
-// `RuntimeDetail` with a runtime fixture and asserting on the visibility
-// UI. To avoid pulling in the entire detail page (which would need
-// presence maps, member lists, paths, agents queries, etc.) we stub the
-// heavy queries below.
 vi.mock("@tanstack/react-query", async () => {
   const actual =
     await vi.importActual<typeof import("@tanstack/react-query")>(
@@ -55,6 +46,7 @@ vi.mock("@multica/core/auth", () => ({
 
 vi.mock("@multica/core/runtimes", () => ({
   deriveRuntimeHealth: () => "online",
+  useRuntimeNow: () => Date.parse("2026-04-27T12:00:00Z"),
 }));
 
 vi.mock("@multica/core/agents", () => ({
@@ -72,10 +64,10 @@ vi.mock("@multica/core/paths", () => ({
 vi.mock("@multica/core/runtimes/mutations", () => ({
   useUpdateRuntime: () => ({
     mutate: (
-      args: { runtimeId: string; patch: Record<string, unknown> },
+      args: { runtimeId: string; scope: "personal" | "workspace" },
       opts?: { onSuccess?: () => void; onError?: () => void },
     ) => {
-      mockUpdateRuntime(args.runtimeId, args.patch);
+      mockUpdateRuntime(args.runtimeId, { scope: args.scope });
       opts?.onSuccess?.();
     },
     isPending: false,
@@ -165,10 +157,6 @@ describe("RuntimeDetail visibility section", () => {
     expect(screen.queryByText("个人")).not.toBeInTheDocument();
   });
 
-  // MUL-3352: an owner viewing an online local (self-healing) runtime
-  // used to see a disabled Delete button with only a hover tooltip
-  // explaining why. The new contract: the button is always clickable
-  // for owner/admin; the dialog now carries the self-heal warning.
   it("renders an enabled Delete runtime button for an owner on a self-healing local runtime", () => {
     renderDetail(
       makeRuntime({
