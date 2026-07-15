@@ -72,61 +72,47 @@ beforeEach(() => {
   reset();
 });
 
+function setWorkspace(
+  activeTabId: string,
+  tabs: { id: string; path: string }[],
+  slug = "acme",
+) {
+  state.byWorkspace = { [slug]: { activeTabId, tabs } };
+  state.activeWorkspaceSlug = slug;
+}
+
+function renderWorkspace(
+  activeTabId = "tA",
+  tabs = [{ id: "tA", path: "/acme/issues" }],
+) {
+  setWorkspace(activeTabId, tabs);
+  return render(<PageviewTracker />);
+}
+
 describe("PageviewTracker", () => {
   it("suppresses pageview when switching to a previously-visible tab on its existing path", () => {
-    state.byWorkspace = {
-      acme: {
-        activeTabId: "tA",
-        tabs: [
-          { id: "tA", path: "/acme/issues" },
-          { id: "tB", path: "/acme/inbox" },
-        ],
-      },
-    };
-    state.activeWorkspaceSlug = "acme";
-
-    const { rerender } = render(<PageviewTracker />);
+    const tabs = [
+      { id: "tA", path: "/acme/issues" },
+      { id: "tB", path: "/acme/inbox" },
+    ];
+    const { rerender } = renderWorkspace("tA", tabs);
     // Initial mount on tA — seeded as observed, no pageview because both
     // tabs were already in the persisted store before the tracker mounted.
     expect(state.capturePageview).not.toHaveBeenCalled();
 
     // Switch to tB (already-known tab on its already-known path).
-    state.byWorkspace = {
-      acme: {
-        activeTabId: "tB",
-        tabs: [
-          { id: "tA", path: "/acme/issues" },
-          { id: "tB", path: "/acme/inbox" },
-        ],
-      },
-    };
+    setWorkspace("tB", tabs);
     rerender(<PageviewTracker />);
     expect(state.capturePageview).not.toHaveBeenCalled();
 
     // Switch back to tA — still no pageview.
-    state.byWorkspace = {
-      acme: {
-        activeTabId: "tA",
-        tabs: [
-          { id: "tA", path: "/acme/issues" },
-          { id: "tB", path: "/acme/inbox" },
-        ],
-      },
-    };
+    setWorkspace("tA", tabs);
     rerender(<PageviewTracker />);
     expect(state.capturePageview).not.toHaveBeenCalled();
   });
 
   it("fires pageview when a foreground tab is added", () => {
-    state.byWorkspace = {
-      acme: {
-        activeTabId: "tA",
-        tabs: [{ id: "tA", path: "/acme/issues" }],
-      },
-    };
-    state.activeWorkspaceSlug = "acme";
-
-    const { rerender } = render(<PageviewTracker />);
+    const { rerender } = renderWorkspace();
     state.capturePageview.mockClear();
 
     // Simulate a foreground new-tab action (e.g. an explicit "Open in new
@@ -150,15 +136,7 @@ describe("PageviewTracker", () => {
   });
 
   it("fires pageview when switchWorkspace opens a new path in another workspace", () => {
-    state.byWorkspace = {
-      acme: {
-        activeTabId: "tA",
-        tabs: [{ id: "tA", path: "/acme/issues" }],
-      },
-    };
-    state.activeWorkspaceSlug = "acme";
-
-    const { rerender } = render(<PageviewTracker />);
+    const { rerender } = renderWorkspace();
     state.capturePageview.mockClear();
 
     // Cross-workspace navigation: switchWorkspace("butter", "/butter/inbox")
@@ -178,23 +156,10 @@ describe("PageviewTracker", () => {
   });
 
   it("fires pageview on intra-tab navigation (path changes for the same tabId)", () => {
-    state.byWorkspace = {
-      acme: {
-        activeTabId: "tA",
-        tabs: [{ id: "tA", path: "/acme/issues" }],
-      },
-    };
-    state.activeWorkspaceSlug = "acme";
-
-    const { rerender } = render(<PageviewTracker />);
+    const { rerender } = renderWorkspace();
     state.capturePageview.mockClear();
 
-    state.byWorkspace = {
-      acme: {
-        activeTabId: "tA",
-        tabs: [{ id: "tA", path: "/acme/issues/123" }],
-      },
-    };
+    setWorkspace("tA", [{ id: "tA", path: "/acme/issues/123" }]);
     rerender(<PageviewTracker />);
 
     expect(state.capturePageview).toHaveBeenCalledTimes(1);
@@ -202,15 +167,7 @@ describe("PageviewTracker", () => {
   });
 
   it("fires overlay and login pageviews and suppresses re-entry into the same tab afterward", () => {
-    state.byWorkspace = {
-      acme: {
-        activeTabId: "tA",
-        tabs: [{ id: "tA", path: "/acme/issues" }],
-      },
-    };
-    state.activeWorkspaceSlug = "acme";
-
-    const { rerender } = render(<PageviewTracker />);
+    const { rerender } = renderWorkspace();
     state.capturePageview.mockClear();
 
     // Open workspace-creation overlay.
@@ -232,15 +189,7 @@ describe("PageviewTracker", () => {
   });
 
   it("suppresses on initial mount when the active tab was restored from persistence", () => {
-    state.byWorkspace = {
-      acme: {
-        activeTabId: "tA",
-        tabs: [{ id: "tA", path: "/acme/issues" }],
-      },
-    };
-    state.activeWorkspaceSlug = "acme";
-
-    render(<PageviewTracker />);
+    renderWorkspace();
     // Restored tab — seeded, treated as a re-activation.
     expect(state.capturePageview).not.toHaveBeenCalled();
   });

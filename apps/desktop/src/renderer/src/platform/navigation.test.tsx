@@ -173,51 +173,39 @@ function push(
   act(() => adapter.push(path));
 }
 
+function renderDesktopProvider() {
+  let adapter: ReturnType<typeof useNavigation> | null = null;
+  const Probe = captureAdapter((value) => {
+    adapter = value;
+  });
+  render(
+    <DesktopNavigationProvider>
+      <Probe />
+    </DesktopNavigationProvider>,
+  );
+  return () => adapter!;
+}
+
 describe("DesktopNavigationProvider.openInNewTab", () => {
   it("opens a background tab (no setActiveTab) for a same-workspace path", () => {
-    let adapter: ReturnType<typeof useNavigation> | null = null;
-    const Probe = captureAdapter((a) => {
-      adapter = a;
-    });
-    render(
-      <DesktopNavigationProvider>
-        <Probe />
-      </DesktopNavigationProvider>,
-    );
-    expect(adapter).not.toBeNull();
-    adapter!.openInNewTab!("/acme/agents", "Agents");
+    const getAdapter = renderDesktopProvider();
+    getAdapter().openInNewTab!("/acme/agents", "Agents");
     expect(state.openTab).toHaveBeenCalledWith("/acme/agents", "Agents", "File");
     expect(state.setActiveTab).not.toHaveBeenCalled();
     expect(state.switchWorkspace).not.toHaveBeenCalled();
   });
 
   it("activates the new tab when opts.activate is true (foreground)", () => {
-    let adapter: ReturnType<typeof useNavigation> | null = null;
-    const Probe = captureAdapter((a) => {
-      adapter = a;
-    });
-    render(
-      <DesktopNavigationProvider>
-        <Probe />
-      </DesktopNavigationProvider>,
-    );
-    adapter!.openInNewTab!("/acme/agents", "Agents", { activate: true });
+    const getAdapter = renderDesktopProvider();
+    getAdapter().openInNewTab!("/acme/agents", "Agents", { activate: true });
     expect(state.openTab).toHaveBeenCalledWith("/acme/agents", "Agents", "File");
     expect(state.setActiveTab).toHaveBeenCalledWith("tNew");
     expect(state.switchWorkspace).not.toHaveBeenCalled();
   });
 
   it("delegates to switchWorkspace for a cross-workspace path", () => {
-    let adapter: ReturnType<typeof useNavigation> | null = null;
-    const Probe = captureAdapter((a) => {
-      adapter = a;
-    });
-    render(
-      <DesktopNavigationProvider>
-        <Probe />
-      </DesktopNavigationProvider>,
-    );
-    adapter!.openInNewTab!("/butter/inbox");
+    const getAdapter = renderDesktopProvider();
+    getAdapter().openInNewTab!("/butter/inbox");
     expect(state.switchWorkspace).toHaveBeenCalledWith("butter", "/butter/inbox");
     expect(state.openTab).not.toHaveBeenCalled();
     expect(state.setActiveTab).not.toHaveBeenCalled();
@@ -236,32 +224,16 @@ describe("DesktopNavigationProvider.push with pinned active tab", () => {
 
   it("redirects push to a new foreground tab when pathname differs", () => {
     pinActive("/acme/issues");
-    let adapter: ReturnType<typeof useNavigation> | null = null;
-    const Probe = captureAdapter((a) => {
-      adapter = a;
-    });
-    render(
-      <DesktopNavigationProvider>
-        <Probe />
-      </DesktopNavigationProvider>,
-    );
-    push(adapter!, "/acme/projects");
+    const getAdapter = renderDesktopProvider();
+    push(getAdapter(), "/acme/projects");
     expect(state.openTab).toHaveBeenCalledWith("/acme/projects", "/acme/projects", "File");
     expect(state.setActiveTab).toHaveBeenCalledWith("tNew");
   });
 
   it("allows in-tab navigation when only search/hash changes", () => {
     pinActive("/acme/issues");
-    let adapter: ReturnType<typeof useNavigation> | null = null;
-    const Probe = captureAdapter((a) => {
-      adapter = a;
-    });
-    render(
-      <DesktopNavigationProvider>
-        <Probe />
-      </DesktopNavigationProvider>,
-    );
-    push(adapter!, "/acme/issues?filter=open");
+    const getAdapter = renderDesktopProvider();
+    push(getAdapter(), "/acme/issues?filter=open");
     // Pathname unchanged → pinned interception declines and falls through to
     // the router's own navigate — openTab / setActiveTab must not fire.
     expect(state.openTab).not.toHaveBeenCalled();
@@ -270,16 +242,8 @@ describe("DesktopNavigationProvider.push with pinned active tab", () => {
 
   it("leaves cross-workspace push to the workspace switcher (not pin)", () => {
     pinActive("/acme/issues");
-    let adapter: ReturnType<typeof useNavigation> | null = null;
-    const Probe = captureAdapter((a) => {
-      adapter = a;
-    });
-    render(
-      <DesktopNavigationProvider>
-        <Probe />
-      </DesktopNavigationProvider>,
-    );
-    push(adapter!, "/butter/inbox");
+    const getAdapter = renderDesktopProvider();
+    push(getAdapter(), "/butter/inbox");
     // Cross-workspace push runs through tryRouteToOtherWorkspace before
     // tryRouteToPinnedNewTab, so switchWorkspace wins.
     expect(state.switchWorkspace).toHaveBeenCalledWith("butter", "/butter/inbox");
@@ -289,17 +253,8 @@ describe("DesktopNavigationProvider.push with pinned active tab", () => {
 
 describe("DesktopNavigationProvider workspace creation", () => {
   it("opens the workspace-creation overlay instead of a tab route", () => {
-    let adapter: ReturnType<typeof useNavigation> | null = null;
-    const Probe = captureAdapter((value) => {
-      adapter = value;
-    });
-    render(
-      <DesktopNavigationProvider>
-        <Probe />
-      </DesktopNavigationProvider>,
-    );
-
-    push(adapter!, "/workspaces/new");
+    const getAdapter = renderDesktopProvider();
+    push(getAdapter(), "/workspaces/new");
 
     expect(state.openWorkspaceCreation).toHaveBeenCalledOnce();
     expect(state.openTab).not.toHaveBeenCalled();
@@ -316,17 +271,8 @@ describe("DesktopNavigationProvider.push duplicate path guard", () => {
       router: activeRouter,
     };
 
-    let adapter: ReturnType<typeof useNavigation> | null = null;
-    const Probe = captureAdapter((a) => {
-      adapter = a;
-    });
-    render(
-      <DesktopNavigationProvider>
-        <Probe />
-      </DesktopNavigationProvider>,
-    );
-
-    push(adapter!, "/acme/issues/child");
+    const getAdapter = renderDesktopProvider();
+    push(getAdapter(), "/acme/issues/child");
 
     expect(activeRouter.navigate).not.toHaveBeenCalled();
   });
