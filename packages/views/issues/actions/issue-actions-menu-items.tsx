@@ -49,7 +49,7 @@ import { useT } from "../../i18n";
 // Both Dropdown and Context menu wrappers expose an API-compatible surface
 // (variant, inset, onClick, etc.). We bundle the primitives we need into a
 // single object so `IssueActionsMenuItems` can render the same JSX for both.
-export interface MenuPrimitives {
+interface MenuPrimitives {
   Item: typeof DropdownMenuItem;
   Sub: typeof DropdownMenuSub;
   SubTrigger: typeof DropdownMenuSubTrigger;

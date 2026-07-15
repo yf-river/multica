@@ -19,7 +19,7 @@ export interface IssueFilters {
   runningIssueIds?: ReadonlySet<string>;
 }
 
-export interface IssueViewProjection {
+interface IssueViewProjection {
   issues: Issue[];
   swimlaneIssues: Issue[];
   activeFilters: Omit<IssueFilters, "statusFilters">;

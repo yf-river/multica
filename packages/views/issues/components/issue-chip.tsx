@@ -24,7 +24,7 @@ import { StatusIcon } from "./status-icon";
  * Size budget: must fit within a 14px line-box when used inline — hence
  * `py-0.5` + text-xs (see MentionView docstring for the math).
  */
-export interface IssueChipProps {
+interface IssueChipProps {
   issueId: string;
   /** Shown when the issue can't be resolved (deleted, other workspace, …). */
   fallbackLabel?: string;

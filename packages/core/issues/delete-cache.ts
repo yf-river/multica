@@ -11,7 +11,7 @@ import type { Issue, ListIssuesCache } from "../types";
 import { findIssueLocation, removeIssueFromBuckets } from "./cache-helpers";
 import { issueKeys } from "./queries";
 
-export type DeletedIssueCacheMetadata = {
+type DeletedIssueCacheMetadata = {
   parentIssueIds: string[];
 };
 
