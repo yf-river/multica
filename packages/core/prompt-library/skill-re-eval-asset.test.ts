@@ -3,10 +3,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiTransportError } from "../api";
 import { setCurrentWorkspace } from "../platform/workspace-storage";
-import type { PromptEvaluationSkillReEvalAssetResponse } from "../types";
 import { preparePromptEvaluationSkillReEvalAssetWithRecovery } from "./skill-re-eval-asset";
 
-const response = (id: string) => ({ asset: { id }, case_count: 0 }) as PromptEvaluationSkillReEvalAssetResponse;
+const response = (id: string) => ({ assetId: id, caseCount: 0 });
 let workspaceSequence = 0;
 
 describe("preparePromptEvaluationSkillReEvalAssetWithRecovery", () => {
@@ -28,7 +27,7 @@ describe("preparePromptEvaluationSkillReEvalAssetWithRecovery", () => {
     await expect(preparePromptEvaluationSkillReEvalAssetWithRecovery("candidate-1", request, client))
       .rejects.toBeInstanceOf(ApiTransportError);
     await expect(preparePromptEvaluationSkillReEvalAssetWithRecovery("candidate-1", request, client))
-      .resolves.toMatchObject({ asset: { id: "asset-1" } });
+      .resolves.toEqual({ assetId: "asset-1", caseCount: 0 });
 
     const firstKey = preparePromptEvaluationSkillReEvalAsset.mock.calls[0]?.[2];
     expect(firstKey).toMatch(/^[0-9a-f-]{36}$/);
@@ -47,7 +46,7 @@ describe("preparePromptEvaluationSkillReEvalAssetWithRecovery", () => {
     )).rejects.toBeInstanceOf(ApiTransportError);
     await expect(preparePromptEvaluationSkillReEvalAssetWithRecovery(
       "candidate-new", { repo_path: "/new" }, client,
-    )).resolves.toMatchObject({ asset: { id: "asset-new" } });
+    )).resolves.toEqual({ assetId: "asset-new", caseCount: 0 });
     expect(preparePromptEvaluationSkillReEvalAsset.mock.calls[1]).toEqual([
       "candidate-old", { repo_path: "/old" }, preparePromptEvaluationSkillReEvalAsset.mock.calls[0]?.[2],
     ]);
@@ -73,7 +72,7 @@ describe("preparePromptEvaluationSkillReEvalAssetWithRecovery", () => {
     };
     await expect(preparePromptEvaluationSkillReEvalAssetWithRecovery(
       "candidate-two", { repo_path: "/workspace-two" }, workspaceTwoClient,
-    )).resolves.toMatchObject({ asset: { id: "asset-two" } });
+    )).resolves.toEqual({ assetId: "asset-two", caseCount: 0 });
     expect(workspaceTwoClient.preparePromptEvaluationSkillReEvalAsset.mock.calls[0]?.[0])
       .toBe("candidate-two");
 
@@ -82,7 +81,7 @@ describe("preparePromptEvaluationSkillReEvalAssetWithRecovery", () => {
     await Promise.resolve();
     await expect(preparePromptEvaluationSkillReEvalAssetWithRecovery(
       "candidate-one", { repo_path: "/workspace-one" }, workspaceOneClient,
-    )).resolves.toMatchObject({ asset: { id: "asset-one" } });
+    )).resolves.toEqual({ assetId: "asset-one", caseCount: 0 });
     expect(workspaceOneClient.preparePromptEvaluationSkillReEvalAsset.mock.calls[1]).toEqual([
       "candidate-one", { repo_path: "/workspace-one" }, firstKey,
     ]);

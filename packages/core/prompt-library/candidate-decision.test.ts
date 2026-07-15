@@ -3,13 +3,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiTransportError } from "../api";
 import { setCurrentWorkspace } from "../platform/workspace-storage";
-import type { PromptEvaluationOptimizationCandidate } from "../types";
 import {
   publishPromptEvaluationOptimizationCandidateWithRecovery,
   rejectPromptEvaluationOptimizationCandidateWithRecovery,
 } from "./candidate-decision";
 
-const candidate = (id: string, status: "已发布" | "已拒绝") => ({ id, status }) as PromptEvaluationOptimizationCandidate;
 let workspaceSequence = 0;
 
 describe("candidate decision recovery", () => {
@@ -24,7 +22,7 @@ describe("candidate decision recovery", () => {
   it("replays a published candidate with one persisted key", async () => {
     const publishPromptEvaluationOptimizationCandidate = vi.fn()
       .mockRejectedValueOnce(new ApiTransportError("POST publish", true, new Error("lost")))
-      .mockResolvedValueOnce({ candidate: candidate("candidate-1", "已发布"), prompt: { id: "prompt-1" } });
+      .mockResolvedValueOnce("Prompt One");
     const client = {
       publishPromptEvaluationOptimizationCandidate,
       rejectPromptEvaluationOptimizationCandidate: vi.fn(),
@@ -33,7 +31,7 @@ describe("candidate decision recovery", () => {
     await expect(publishPromptEvaluationOptimizationCandidateWithRecovery("candidate-1", client))
       .rejects.toBeInstanceOf(ApiTransportError);
     await expect(publishPromptEvaluationOptimizationCandidateWithRecovery("candidate-1", client))
-      .resolves.toMatchObject({ prompt: { id: "prompt-1" } });
+      .resolves.toBe("Prompt One");
     expect(publishPromptEvaluationOptimizationCandidate.mock.calls[1]?.[1])
       .toBe(publishPromptEvaluationOptimizationCandidate.mock.calls[0]?.[1]);
   });
@@ -41,8 +39,8 @@ describe("candidate decision recovery", () => {
   it("recovers an older reject before accepting a changed decision", async () => {
     const rejectPromptEvaluationOptimizationCandidate = vi.fn()
       .mockRejectedValueOnce(new ApiTransportError("POST old rejection", true, new Error("lost")))
-      .mockResolvedValueOnce(candidate("candidate-old", "已拒绝"))
-      .mockResolvedValueOnce(candidate("candidate-new", "已拒绝"));
+      .mockResolvedValueOnce("已拒绝")
+      .mockResolvedValueOnce("已拒绝");
     const client = {
       publishPromptEvaluationOptimizationCandidate: vi.fn(),
       rejectPromptEvaluationOptimizationCandidate,
@@ -52,7 +50,7 @@ describe("candidate decision recovery", () => {
       "candidate-old", "old reason", client,
     )).rejects.toBeInstanceOf(ApiTransportError);
     await expect(rejectPromptEvaluationOptimizationCandidateWithRecovery("candidate-new", "new reason", client))
-      .resolves.toMatchObject({ id: "candidate-new", status: "已拒绝" });
+      .resolves.toBe("已拒绝");
     expect(rejectPromptEvaluationOptimizationCandidate.mock.calls[1]).toEqual([
       "candidate-old", { reason: "old reason" },
       rejectPromptEvaluationOptimizationCandidate.mock.calls[0]?.[2],

@@ -6,10 +6,7 @@ import {
   createWorkspaceRecoverableOperationStore,
   type RecoverableOperationStore,
 } from "../platform/recoverable-operation-store";
-import type {
-  PreparePromptEvaluationSkillReEvalRequest,
-  PromptEvaluationSkillReEvalAssetResponse,
-} from "../types";
+import type { PreparePromptEvaluationSkillReEvalRequest } from "../types";
 import { generateUUID } from "../utils";
 
 interface PendingSkillReEvalAsset {
@@ -33,7 +30,7 @@ export async function preparePromptEvaluationSkillReEvalAssetWithRecovery(
   candidateId: string,
   request: PreparePromptEvaluationSkillReEvalRequest,
   client: SkillReEvalAssetClient = api,
-): Promise<PromptEvaluationSkillReEvalAssetResponse> {
+): Promise<{ assetId: string; caseCount: number }> {
   const pending = useSkillReEvalAssetStore.getState().pending;
   return executeRecoverableIntent(
     pending,

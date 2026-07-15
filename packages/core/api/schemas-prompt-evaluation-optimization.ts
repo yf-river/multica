@@ -26,6 +26,8 @@ const PromptEvaluationSkillPatchSchema = z.object({
   updated_at: z.string().optional(),
 }).loose();
 
+const PromptEvaluationOptimizationCandidateStatusSchema = z.enum(["待确认", "已发布", "已拒绝"]);
+
 export const PromptEvaluationOptimizationCandidateSchema = z.object({
   id: NonEmptyStringSchema,
   run_id: NonEmptyStringSchema,
@@ -35,12 +37,17 @@ export const PromptEvaluationOptimizationCandidateSchema = z.object({
   source_prompt_snapshot: z.record(z.string(), z.unknown()).default({}),
   metrics: z.record(z.string(), z.unknown()).default({}),
   skill_patch: PromptEvaluationSkillPatchSchema.nullable().optional().transform((v) => v ?? null),
-  status: z.enum(["待确认", "已发布", "已拒绝"]).default("待确认"),
+  status: PromptEvaluationOptimizationCandidateStatusSchema.default("待确认"),
 });
 
 export const PromptEvaluationOptimizationCandidateListResponseSchema = z.object({
   items: z.array(PromptEvaluationOptimizationCandidateSchema).default([]),
 }).loose().transform(({ items }) => items);
+
+export const PromptEvaluationOptimizationCandidateDecisionStatusSchema = z.object({
+  id: NonEmptyStringSchema,
+  status: PromptEvaluationOptimizationCandidateStatusSchema,
+}).loose().transform(({ status }) => status);
 
 export const PromptEvaluationSkillFreshnessResultSchema = z.object({
   status: z.enum(["fresh", "branch_changed_skill_unchanged", "stale", "conflict", "rebaseable"]).default("stale"),
@@ -51,20 +58,22 @@ const PromptEvaluationSkillApplyResultSchema = z.object({
   status: z.enum(["dry_run", "applied", "blocked", "conflict"]).default("blocked"),
 }).loose();
 
-export const PromptEvaluationSkillApplyCandidateResponseSchema = z.object({
+export const PromptEvaluationSkillApplyStatusSchema = z.object({
   apply: PromptEvaluationSkillApplyResultSchema,
-}).loose();
+}).loose().transform(({ apply }) => apply.status);
 
-export const PromptEvaluationSkillReEvalAssetResponseSchema = z.object({
+export const PromptEvaluationSkillReEvalAssetResultSchema = z.object({
   asset: z.object({ id: NonEmptyStringSchema }).loose(),
   case_count: z.number().default(0),
-}).loose();
+}).loose().transform(({ asset, case_count }) => ({
+  assetId: asset.id,
+  caseCount: case_count,
+}));
 
-export const PromptEvaluationSkillReEvalRunResponseSchema = z.object({
+export const PromptEvaluationSkillReEvalRunStatusSchema = z.object({
   run: PromptEvaluationRunSchema.pick({ id: true, status: true }),
-}).loose();
+}).loose().transform(({ run }) => run.status);
 
-export const PublishPromptEvaluationOptimizationCandidateResponseSchema = z.object({
-  candidate: PromptEvaluationOptimizationCandidateSchema,
-  prompt: PromptLibraryItemSchema,
-}).loose();
+export const PublishPromptEvaluationOptimizationCandidateNameSchema = z.object({
+  prompt: PromptLibraryItemSchema.pick({ name: true }),
+}).loose().transform(({ prompt }) => prompt.name);

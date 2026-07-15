@@ -6,15 +6,9 @@ import type {
   PromptEvaluationStructuredCase,
   PromptEvaluationRun,
   PromptEvaluationOptimizationCandidate,
-  PromptEvaluationSkillApplyCandidateResponse,
-  PromptEvaluationSkillApplyResult,
   PromptEvaluationSkillFreshnessResult,
-  PromptEvaluationSkillReEvalAssetResponse,
-  PromptEvaluationSkillReEvalRunResponse,
   PromptEvaluationAssetEvidenceArchivePackage,
-  PublishPromptEvaluationOptimizationCandidateResponse,
 } from "../types";
-import { EMPTY_PROMPT_LIBRARY_ITEM } from "./schemas-prompt-library";
 
 // Runtime response contracts for prompt evaluation empty.
 export const EMPTY_PROMPT_EVALUATION_ASSET: PromptEvaluationAsset = {
@@ -119,26 +113,4 @@ export const EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE: PromptEvaluationOpt
 export const EMPTY_PROMPT_EVALUATION_SKILL_FRESHNESS_RESULT: PromptEvaluationSkillFreshnessResult = {
   status: "stale",
   patch_check: "not_needed",
-};
-
-const EMPTY_PROMPT_EVALUATION_SKILL_APPLY_RESULT: PromptEvaluationSkillApplyResult = {
-  status: "blocked",
-};
-
-export const EMPTY_PROMPT_EVALUATION_SKILL_APPLY_CANDIDATE_RESPONSE: PromptEvaluationSkillApplyCandidateResponse = {
-  apply: EMPTY_PROMPT_EVALUATION_SKILL_APPLY_RESULT,
-};
-
-export const EMPTY_PROMPT_EVALUATION_SKILL_RE_EVAL_ASSET_RESPONSE: PromptEvaluationSkillReEvalAssetResponse = {
-  asset: { id: "" },
-  case_count: 0,
-};
-
-export const EMPTY_PROMPT_EVALUATION_SKILL_RE_EVAL_RUN_RESPONSE: PromptEvaluationSkillReEvalRunResponse = {
-  run: { id: "", status: "已入队" },
-};
-
-export const EMPTY_PUBLISH_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE_RESPONSE: PublishPromptEvaluationOptimizationCandidateResponse = {
-  candidate: EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE,
-  prompt: EMPTY_PROMPT_LIBRARY_ITEM,
 };

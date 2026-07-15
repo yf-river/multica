@@ -33,7 +33,12 @@ import {
   PromptEvaluationCaseListResponseSchema,
 } from "./schemas-prompt-evaluation-cases";
 import {
+  PromptEvaluationOptimizationCandidateDecisionStatusSchema,
   PromptEvaluationOptimizationCandidateListResponseSchema,
+  PromptEvaluationSkillApplyStatusSchema,
+  PromptEvaluationSkillReEvalAssetResultSchema,
+  PromptEvaluationSkillReEvalRunStatusSchema,
+  PublishPromptEvaluationOptimizationCandidateNameSchema,
 } from "./schemas-prompt-evaluation-optimization";
 import {
   PromptEvaluationAssetEvidenceArchivePackageSchema,
@@ -235,6 +240,24 @@ describe("domain response schema fallbacks", () => {
       fallback,
       { endpoint: "GET /api/prompt-evaluation-optimization-candidates" },
     )).toBe(fallback);
+  });
+
+  it("projects optimization mutations to the values current callers consume", () => {
+    expect(PromptEvaluationOptimizationCandidateDecisionStatusSchema.parse({
+      id: "candidate-1", status: "已拒绝",
+    })).toBe("已拒绝");
+    expect(PublishPromptEvaluationOptimizationCandidateNameSchema.parse({
+      prompt: { name: "Prompt One" },
+    })).toBe("Prompt One");
+    expect(PromptEvaluationSkillApplyStatusSchema.parse({
+      apply: { status: "applied" },
+    })).toBe("applied");
+    expect(PromptEvaluationSkillReEvalAssetResultSchema.parse({
+      asset: { id: "asset-1" }, case_count: 2,
+    })).toEqual({ assetId: "asset-1", caseCount: 2 });
+    expect(PromptEvaluationSkillReEvalRunStatusSchema.parse({
+      run: { id: "run-1", status: "已入队" },
+    })).toBe("已入队");
   });
 
   it("rejects a malformed usage collection", () => {

@@ -35,7 +35,7 @@ describe("skill candidate workflow actions", () => {
   beforeEach(() => vi.clearAllMocks());
 
   it("owns apply mutation feedback and cache invalidation", async () => {
-    mocks.apply.mockResolvedValue({ apply: { status: "applied" } });
+    mocks.apply.mockResolvedValue("applied");
     const queryClient = new QueryClient();
     const invalidateQueries = vi.spyOn(queryClient, "invalidateQueries");
     const wrapper = ({ children }: PropsWithChildren) => (

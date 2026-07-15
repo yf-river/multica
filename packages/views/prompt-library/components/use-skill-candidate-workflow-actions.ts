@@ -60,7 +60,7 @@ export function useSkillCandidateWorkflowActions(workspaceId: string, runId: str
             allow_dirty: draft.allowDirty,
             skip_changelog: draft.skipChangelog,
           });
-          toast.success(t(($) => $.run_evidence.toast.skill_apply, { status: result.apply.status }));
+          toast.success(t(($) => $.run_evidence.toast.skill_apply, { status: result }));
         } else if (action === "prepare-re-eval") {
           const result = await preparePromptEvaluationSkillReEvalAssetWithRecovery(candidate.id, {
             source_resource_id: draft.sourceResourceId || undefined,
@@ -71,14 +71,14 @@ export function useSkillCandidateWorkflowActions(workspaceId: string, runId: str
           });
           setDrafts((current) => ({
             ...current,
-            [candidate.id]: { ...draft, reEvalAssetId: result.asset.id },
+            [candidate.id]: { ...draft, reEvalAssetId: result.assetId },
           }));
-          toast.success(t(($) => $.run_evidence.toast.re_eval_ready, { count: result.case_count }));
+          toast.success(t(($) => $.run_evidence.toast.re_eval_ready, { count: result.caseCount }));
         } else {
           const result = await runPromptEvaluationSkillReEvalWithRecovery(candidate.id, {
             asset_id: draft.reEvalAssetId.trim() || undefined,
           });
-          toast.success(t(($) => $.run_evidence.toast.re_eval_run, { status: result.run.status }));
+          toast.success(t(($) => $.run_evidence.toast.re_eval_run, { status: result }));
         }
         invalidate();
       } catch (cause) {

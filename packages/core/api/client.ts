@@ -126,16 +126,13 @@ import type {
   PromptEvaluationDatasetFromTracesResponse,
   PromptEvaluationDatasetVersion,
   PromptEvaluationOptimizationCandidate,
-  PublishPromptEvaluationOptimizationCandidateResponse,
+  PromptEvaluationOptimizationCandidateStatus,
   RejectPromptEvaluationOptimizationCandidateRequest,
   ApplyPromptEvaluationSkillCandidateRequest,
   CheckPromptEvaluationSkillFreshnessRequest,
   PreparePromptEvaluationSkillReEvalRequest,
   RunPromptEvaluationSkillReEvalRequest,
-  PromptEvaluationSkillApplyCandidateResponse,
   PromptEvaluationSkillFreshnessResult,
-  PromptEvaluationSkillReEvalAssetResponse,
-  PromptEvaluationSkillReEvalRunResponse,
   ListPromptEvaluationAssetsParams,
   ListPromptEvaluationRunsParams,
   ListPromptEvaluationCasesParams,
@@ -263,11 +260,7 @@ import {
   EMPTY_PROMPT_EVALUATION_EVIDENCE_SNAPSHOT,
   EMPTY_PROMPT_EVALUATION_CASE,
   EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE,
-  EMPTY_PUBLISH_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE_RESPONSE,
-  EMPTY_PROMPT_EVALUATION_SKILL_APPLY_CANDIDATE_RESPONSE,
   EMPTY_PROMPT_EVALUATION_SKILL_FRESHNESS_RESULT,
-  EMPTY_PROMPT_EVALUATION_SKILL_RE_EVAL_ASSET_RESPONSE,
-  EMPTY_PROMPT_EVALUATION_SKILL_RE_EVAL_RUN_RESPONSE,
   EMPTY_RUNTIME_PROFILE,
   EMPTY_RUNTIME_DEVICE,
   EMPTY_RUNTIME_CASCADE_DELETE_RESPONSE,
@@ -325,11 +318,12 @@ import {
   PromptEvaluationCaseListResponseSchema,
   PromptEvaluationOptimizationCandidateSchema,
   PromptEvaluationOptimizationCandidateListResponseSchema,
-  PublishPromptEvaluationOptimizationCandidateResponseSchema,
-  PromptEvaluationSkillApplyCandidateResponseSchema,
+  PublishPromptEvaluationOptimizationCandidateNameSchema,
+  PromptEvaluationOptimizationCandidateDecisionStatusSchema,
+  PromptEvaluationSkillApplyStatusSchema,
   PromptEvaluationSkillFreshnessResultSchema,
-  PromptEvaluationSkillReEvalAssetResponseSchema,
-  PromptEvaluationSkillReEvalRunResponseSchema,
+  PromptEvaluationSkillReEvalAssetResultSchema,
+  PromptEvaluationSkillReEvalRunStatusSchema,
   PromptLibraryItemSchema,
   PromptLibraryItemListResponseSchema,
   PromptLibraryTrialListResponseSchema,
@@ -2376,7 +2370,7 @@ export class ApiClient extends ApiTransport {
   async publishPromptEvaluationOptimizationCandidate(
     candidateId: string,
     requestId = generateUUID(),
-  ): Promise<PublishPromptEvaluationOptimizationCandidateResponse> {
+  ): Promise<string> {
     const attempt = async () => {
       const raw = await this.fetch<unknown>(`/api/prompt-evaluation-optimization-candidates/${candidateId}/publish`, {
         method: "POST",
@@ -2384,13 +2378,13 @@ export class ApiClient extends ApiTransport {
       });
       return parseOrThrow(
         raw,
-        PublishPromptEvaluationOptimizationCandidateResponseSchema,
-        EMPTY_PUBLISH_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE_RESPONSE,
+        PublishPromptEvaluationOptimizationCandidateNameSchema,
+        "",
         {
           endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/publish",
           mayHaveCommitted: true,
         },
-      ) as PublishPromptEvaluationOptimizationCandidateResponse;
+      );
     };
     return this.retryUnknownMutationOnce(attempt);
   }
@@ -2399,17 +2393,17 @@ export class ApiClient extends ApiTransport {
     candidateId: string,
     data: RejectPromptEvaluationOptimizationCandidateRequest = {},
     requestId = generateUUID(),
-  ): Promise<PromptEvaluationOptimizationCandidate> {
+  ): Promise<PromptEvaluationOptimizationCandidateStatus> {
     const attempt = async () => {
       const raw = await this.fetch<unknown>(`/api/prompt-evaluation-optimization-candidates/${candidateId}/reject`, {
         method: "POST",
         body: JSON.stringify(data),
         extraHeaders: { "Idempotency-Key": requestId },
       });
-      return parseOrThrow(raw, PromptEvaluationOptimizationCandidateSchema, EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE, {
+      return parseOrThrow<PromptEvaluationOptimizationCandidateStatus>(raw, PromptEvaluationOptimizationCandidateDecisionStatusSchema, "待确认", {
         endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/reject",
         mayHaveCommitted: true,
-      }) as PromptEvaluationOptimizationCandidate;
+      });
     };
     return this.retryUnknownMutationOnce(attempt);
   }
@@ -2431,17 +2425,17 @@ export class ApiClient extends ApiTransport {
     candidateId: string,
     data: ApplyPromptEvaluationSkillCandidateRequest,
     requestId = generateUUID(),
-  ): Promise<PromptEvaluationSkillApplyCandidateResponse> {
+  ): Promise<"dry_run" | "applied" | "blocked" | "conflict"> {
     const attempt = async () => {
       const raw = await this.fetch<unknown>(`/api/prompt-evaluation-optimization-candidates/${candidateId}/skill-apply`, {
         method: "POST",
         body: JSON.stringify(data),
         extraHeaders: { "Idempotency-Key": requestId },
       });
-      return parseOrThrow(raw, PromptEvaluationSkillApplyCandidateResponseSchema, EMPTY_PROMPT_EVALUATION_SKILL_APPLY_CANDIDATE_RESPONSE, {
+      return parseOrThrow<"dry_run" | "applied" | "blocked" | "conflict">(raw, PromptEvaluationSkillApplyStatusSchema, "blocked", {
         endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/skill-apply",
         mayHaveCommitted: true,
-      }) as PromptEvaluationSkillApplyCandidateResponse;
+      });
     };
     return this.retryUnknownMutationOnce(attempt);
   }
@@ -2450,17 +2444,17 @@ export class ApiClient extends ApiTransport {
     candidateId: string,
     data: PreparePromptEvaluationSkillReEvalRequest = {},
     requestId = generateUUID(),
-  ): Promise<PromptEvaluationSkillReEvalAssetResponse> {
+  ): Promise<{ assetId: string; caseCount: number }> {
     const attempt = async () => {
       const raw = await this.fetch<unknown>(`/api/prompt-evaluation-optimization-candidates/${candidateId}/skill-re-eval-asset`, {
         method: "POST",
         body: JSON.stringify(data),
         extraHeaders: { "Idempotency-Key": requestId },
       });
-      return parseOrThrow(raw, PromptEvaluationSkillReEvalAssetResponseSchema, EMPTY_PROMPT_EVALUATION_SKILL_RE_EVAL_ASSET_RESPONSE, {
+      return parseOrThrow(raw, PromptEvaluationSkillReEvalAssetResultSchema, { assetId: "", caseCount: 0 }, {
         endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/skill-re-eval-asset",
         mayHaveCommitted: true,
-      }) as PromptEvaluationSkillReEvalAssetResponse;
+      });
     };
     return this.retryUnknownMutationOnce(attempt);
   }
@@ -2469,17 +2463,17 @@ export class ApiClient extends ApiTransport {
     candidateId: string,
     data: RunPromptEvaluationSkillReEvalRequest = {},
     requestId = generateUUID(),
-  ): Promise<PromptEvaluationSkillReEvalRunResponse> {
+  ): Promise<PromptEvaluationRun["status"]> {
     const attempt = async () => {
       const raw = await this.fetch<unknown>(`/api/prompt-evaluation-optimization-candidates/${candidateId}/skill-re-eval-run`, {
         method: "POST",
         body: JSON.stringify(data),
         extraHeaders: { "Idempotency-Key": requestId },
       });
-      return parseOrThrow(raw, PromptEvaluationSkillReEvalRunResponseSchema, EMPTY_PROMPT_EVALUATION_SKILL_RE_EVAL_RUN_RESPONSE, {
+      return parseOrThrow<PromptEvaluationRun["status"]>(raw, PromptEvaluationSkillReEvalRunStatusSchema, "已入队", {
         endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/skill-re-eval-run",
         mayHaveCommitted: true,
-      }) as PromptEvaluationSkillReEvalRunResponse;
+      });
     };
     return this.retryUnknownMutationOnce(attempt);
   }

@@ -6,10 +6,7 @@ import {
   createWorkspaceRecoverableOperationStore,
   type RecoverableOperationStore,
 } from "../platform/recoverable-operation-store";
-import type {
-  PromptEvaluationOptimizationCandidate,
-  PublishPromptEvaluationOptimizationCandidateResponse,
-} from "../types";
+import type { PromptEvaluationOptimizationCandidateStatus } from "../types";
 import { generateUUID } from "../utils";
 
 type CandidateDecision =
@@ -30,14 +27,8 @@ type CandidateDecisionClient = Pick<
 async function execute(
   client: CandidateDecisionClient,
   decision: CandidateDecision,
-): Promise<
-  | PromptEvaluationOptimizationCandidate
-  | PublishPromptEvaluationOptimizationCandidateResponse
-> {
-  return executeRecoverableMutation<
-    | PromptEvaluationOptimizationCandidate
-    | PublishPromptEvaluationOptimizationCandidateResponse
-  >(
+): Promise<string> {
+  return executeRecoverableMutation<string>(
     () => decision.kind === "publish"
       ? client.publishPromptEvaluationOptimizationCandidate(decision.candidateId, decision.requestKey)
       : client.rejectPromptEvaluationOptimizationCandidate(
@@ -56,32 +47,32 @@ async function recoverPending(client: CandidateDecisionClient) {
 export async function publishPromptEvaluationOptimizationCandidateWithRecovery(
   candidateId: string,
   client: CandidateDecisionClient = api,
-): Promise<PublishPromptEvaluationOptimizationCandidateResponse> {
+): Promise<string> {
   const recovered = await recoverPending(client);
   if (recovered?.pending.kind === "publish" && recovered.pending.candidateId === candidateId) {
-    return recovered.response as PublishPromptEvaluationOptimizationCandidateResponse;
+    return recovered.response;
   }
   const decision: CandidateDecision = {
     kind: "publish", candidateId, requestKey: generateUUID(), createdAt: Date.now(),
   };
   useCandidateDecisionStore.getState().setPending(decision);
-  return execute(client, decision) as Promise<PublishPromptEvaluationOptimizationCandidateResponse>;
+  return execute(client, decision);
 }
 
 export async function rejectPromptEvaluationOptimizationCandidateWithRecovery(
   candidateId: string,
   reason: string,
   client: CandidateDecisionClient = api,
-): Promise<PromptEvaluationOptimizationCandidate> {
+): Promise<PromptEvaluationOptimizationCandidateStatus> {
   const recovered = await recoverPending(client);
   if (recovered?.pending.kind === "reject"
     && recovered.pending.candidateId === candidateId
     && recovered.pending.reason === reason) {
-    return recovered.response as PromptEvaluationOptimizationCandidate;
+    return recovered.response as PromptEvaluationOptimizationCandidateStatus;
   }
   const decision: CandidateDecision = {
     kind: "reject", candidateId, reason, requestKey: generateUUID(), createdAt: Date.now(),
   };
   useCandidateDecisionStore.getState().setPending(decision);
-  return execute(client, decision) as Promise<PromptEvaluationOptimizationCandidate>;
+  return execute(client, decision) as Promise<PromptEvaluationOptimizationCandidateStatus>;
 }

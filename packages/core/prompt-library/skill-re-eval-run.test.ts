@@ -3,10 +3,8 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiTransportError } from "../api";
 import { setCurrentWorkspace } from "../platform/workspace-storage";
-import type { PromptEvaluationSkillReEvalRunResponse } from "../types";
 import { runPromptEvaluationSkillReEvalWithRecovery } from "./skill-re-eval-run";
 
-const response = (id: string) => ({ run: { id, status: "已入队" } }) as PromptEvaluationSkillReEvalRunResponse;
 let workspaceSequence = 0;
 
 describe("runPromptEvaluationSkillReEvalWithRecovery", () => {
@@ -21,14 +19,14 @@ describe("runPromptEvaluationSkillReEvalWithRecovery", () => {
   it("replays a persisted unknown outcome with the same request identity", async () => {
     const runPromptEvaluationSkillReEval = vi.fn()
       .mockRejectedValueOnce(new ApiTransportError("POST skill re-eval", true, new Error("lost")))
-      .mockResolvedValueOnce(response("run-1"));
+      .mockResolvedValueOnce("已入队");
     const client = { runPromptEvaluationSkillReEval };
     const request = { asset_id: "asset-1" };
 
     await expect(runPromptEvaluationSkillReEvalWithRecovery("candidate-1", request, client))
       .rejects.toBeInstanceOf(ApiTransportError);
     await expect(runPromptEvaluationSkillReEvalWithRecovery("candidate-1", request, client))
-      .resolves.toMatchObject({ run: { id: "run-1" } });
+      .resolves.toBe("已入队");
 
     const firstKey = runPromptEvaluationSkillReEval.mock.calls[0]?.[2];
     expect(firstKey).toMatch(/^[0-9a-f-]{36}$/);
@@ -38,8 +36,8 @@ describe("runPromptEvaluationSkillReEvalWithRecovery", () => {
   it("recovers an older operation before starting a changed candidate", async () => {
     const runPromptEvaluationSkillReEval = vi.fn()
       .mockRejectedValueOnce(new ApiTransportError("POST old skill re-eval", true, new Error("lost")))
-      .mockResolvedValueOnce(response("run-old"))
-      .mockResolvedValueOnce(response("run-new"));
+      .mockResolvedValueOnce("运行中")
+      .mockResolvedValueOnce("通过");
     const client = { runPromptEvaluationSkillReEval };
 
     await expect(runPromptEvaluationSkillReEvalWithRecovery(
@@ -47,7 +45,7 @@ describe("runPromptEvaluationSkillReEvalWithRecovery", () => {
     )).rejects.toBeInstanceOf(ApiTransportError);
     await expect(runPromptEvaluationSkillReEvalWithRecovery(
       "candidate-new", { asset_id: "asset-new" }, client,
-    )).resolves.toMatchObject({ run: { id: "run-new" } });
+    )).resolves.toBe("通过");
     expect(runPromptEvaluationSkillReEval.mock.calls[1]).toEqual([
       "candidate-old", { asset_id: "asset-old" }, runPromptEvaluationSkillReEval.mock.calls[0]?.[2],
     ]);

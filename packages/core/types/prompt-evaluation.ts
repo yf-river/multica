@@ -1,4 +1,3 @@
-import type { PromptLibraryItem } from "./prompt-library";
 import type { TaskMessagePayload } from "./events";
 import type { TaskTraceEvent } from "./agent";
 
@@ -169,14 +168,6 @@ export interface ApplyPromptEvaluationSkillCandidateRequest {
   skip_changelog?: boolean;
 }
 
-export interface PromptEvaluationSkillApplyResult {
-  status: "dry_run" | "applied" | "blocked" | "conflict";
-}
-
-export interface PromptEvaluationSkillApplyCandidateResponse {
-  apply: PromptEvaluationSkillApplyResult;
-}
-
 export interface PreparePromptEvaluationSkillReEvalRequest {
   source_resource_id?: string;
   repo_path?: string;
@@ -187,20 +178,6 @@ export interface PreparePromptEvaluationSkillReEvalRequest {
 
 export interface RunPromptEvaluationSkillReEvalRequest {
   asset_id?: string;
-}
-
-export interface PromptEvaluationSkillReEvalAssetResponse {
-  asset: Pick<PromptEvaluationAsset, "id">;
-  case_count: number;
-}
-
-export interface PromptEvaluationSkillReEvalRunResponse {
-  run: Pick<PromptEvaluationRun, "id" | "status">;
-}
-
-export interface PublishPromptEvaluationOptimizationCandidateResponse {
-  candidate: PromptEvaluationOptimizationCandidate;
-  prompt: PromptLibraryItem;
 }
 
 export interface RejectPromptEvaluationOptimizationCandidateRequest {

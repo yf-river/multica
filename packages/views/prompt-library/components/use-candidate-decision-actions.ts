@@ -24,8 +24,8 @@ export function useCandidateDecisionActions(workspaceId: string, runId: string) 
   const publish = async (candidateId: string) => {
     setActiveDecision("publish");
     try {
-      const result = await publishPromptEvaluationOptimizationCandidateWithRecovery(candidateId);
-      toast.success(t(($) => $.run_evidence.candidate_published, { name: result.prompt.name }));
+      const promptName = await publishPromptEvaluationOptimizationCandidateWithRecovery(candidateId);
+      toast.success(t(($) => $.run_evidence.candidate_published, { name: promptName }));
       invalidate();
     } catch (cause) {
       toast.error(cause instanceof Error ? cause.message : t(($) => $.page.toast.action_failed));
