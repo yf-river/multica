@@ -297,6 +297,60 @@ func claimTaskByRuntimeForTest(t *testing.T, runtimeID string) (*struct {
 	return resp.Task, w.Body.String()
 }
 
+func createDaemonTestProject(t *testing.T, title string) string {
+	t.Helper()
+	var projectID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO project (workspace_id, title) VALUES ($1, $2) RETURNING id
+	`, testWorkspaceID, title).Scan(&projectID); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM project WHERE id = $1`, projectID) })
+	return projectID
+}
+
+func createDaemonTestProjectIssue(t *testing.T, projectID, title string) string {
+	t.Helper()
+	var issueID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO issue (
+			workspace_id, project_id, title, status, priority, creator_id, creator_type, number, position
+		) VALUES ($1, $2, $3, 'todo', 'medium', $4, 'member', $5, 0)
+		RETURNING id
+	`, testWorkspaceID, projectID, title, testUserID, nextHandlerTestIssueNumber(t)).Scan(&issueID); err != nil {
+		t.Fatalf("create issue: %v", err)
+	}
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID) })
+	return issueID
+}
+
+func createDaemonTestQueuedIssueTask(t *testing.T, agentID, runtimeID, issueID string, leader bool) string {
+	t.Helper()
+	var taskID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, issue_id, status, priority, is_leader_task
+		) VALUES ($1, $2, $3, 'queued', 0, $4)
+		RETURNING id
+	`, agentID, runtimeID, issueID, leader).Scan(&taskID); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+	return taskID
+}
+
+func claimDaemonTaskRecorder(t *testing.T, runtimeID, daemonID string) *httptest.ResponseRecorder {
+	t.Helper()
+	w := httptest.NewRecorder()
+	req := newDaemonUserRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/claim", nil, testWorkspaceID, daemonID)
+	req = withURLParam(req, "runtimeId", runtimeID)
+	testHandler.ClaimTaskByRuntime(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ClaimTaskByRuntime: %d %s", w.Code, w.Body.String())
+	}
+	return w
+}
+
 func TestClaimTaskByRuntime_ReclaimsStaleDispatchedTask(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
@@ -2107,13 +2161,7 @@ func TestClaimTask_ProjectGithubReposOverrideWorkspaceRepos(t *testing.T) {
 
 	// Project + project_resource(github_repo) with a URL that is NOT in the
 	// workspace's repos list.
-	var projectID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO project (workspace_id, title) VALUES ($1, $2) RETURNING id
-	`, testWorkspaceID, "Claim project repo override").Scan(&projectID); err != nil {
-		t.Fatalf("create project: %v", err)
-	}
-	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM project WHERE id = $1`, projectID) })
+	projectID := createDaemonTestProject(t, "Claim project repo override")
 
 	const projectRepoURL = "https://github.com/example/project-only-repo"
 	if _, err := testPool.Exec(ctx, `
@@ -2147,35 +2195,9 @@ func TestClaimTask_ProjectGithubReposOverrideWorkspaceRepos(t *testing.T) {
 		t.Fatalf("create local_directory project_resource: %v", err)
 	}
 
-	var issueID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (
-			workspace_id, project_id, title, status, priority, creator_id, creator_type, number, position
-		) VALUES ($1, $2, 'project repo override', 'todo', 'medium', $3, 'member', 88001, 0)
-		RETURNING id
-	`, testWorkspaceID, projectID, testUserID).Scan(&issueID); err != nil {
-		t.Fatalf("create issue: %v", err)
-	}
-	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID) })
-
-	var taskID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_task_queue (
-			agent_id, runtime_id, issue_id, status, priority
-		) VALUES ($1, $2, $3, 'queued', 0)
-		RETURNING id
-	`, agentID, runtimeID, issueID).Scan(&taskID); err != nil {
-		t.Fatalf("create task: %v", err)
-	}
-	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
-
-	w := httptest.NewRecorder()
-	req := newDaemonUserRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/claim", nil, testWorkspaceID, "test-claim-project-repos")
-	req = withURLParam(req, "runtimeId", runtimeID)
-	testHandler.ClaimTaskByRuntime(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("ClaimTaskByRuntime: %d %s", w.Code, w.Body.String())
-	}
+	issueID := createDaemonTestProjectIssue(t, projectID, "project repo override")
+	createDaemonTestQueuedIssueTask(t, agentID, runtimeID, issueID, false)
+	w := claimDaemonTaskRecorder(t, runtimeID, "test-claim-project-repos")
 
 	var resp struct {
 		Task *struct {
@@ -2259,13 +2281,7 @@ func TestClaimTask_SquadLeaderDoesNotReceiveIssueRepos(t *testing.T) {
 
 	ctx := context.Background()
 
-	var projectID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO project (workspace_id, title) VALUES ($1, $2) RETURNING id
-	`, testWorkspaceID, "Squad leader repo suppression").Scan(&projectID); err != nil {
-		t.Fatalf("create project: %v", err)
-	}
-	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM project WHERE id = $1`, projectID) })
+	projectID := createDaemonTestProject(t, "Squad leader repo suppression")
 
 	const projectRepoURL = "https://github.com/example/squad-leader-should-not-see"
 	if _, err := testPool.Exec(ctx, `
@@ -2284,15 +2300,7 @@ func TestClaimTask_SquadLeaderDoesNotReceiveIssueRepos(t *testing.T) {
 		t.Fatalf("get leader agent: %v", err)
 	}
 
-	var squadID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id)
-		VALUES ($1, 'Repo Suppression Squad', '', $2, $3)
-		RETURNING id
-	`, testWorkspaceID, leaderID, testUserID).Scan(&squadID); err != nil {
-		t.Fatalf("create squad: %v", err)
-	}
-	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, squadID) })
+	squadID := createHandlerTestSquad(t, "Repo Suppression Squad", leaderID)
 
 	var issueID string
 	issueNumber := nextHandlerTestIssueNumber(t)
@@ -2308,24 +2316,8 @@ func TestClaimTask_SquadLeaderDoesNotReceiveIssueRepos(t *testing.T) {
 	}
 	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID) })
 
-	var taskID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_task_queue (
-			agent_id, runtime_id, issue_id, status, priority, is_leader_task
-		) VALUES ($1, $2, $3, 'queued', 0, true)
-		RETURNING id
-	`, leaderID, runtimeID, issueID).Scan(&taskID); err != nil {
-		t.Fatalf("create task: %v", err)
-	}
-	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
-
-	w := httptest.NewRecorder()
-	req := newDaemonUserRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/claim", nil, testWorkspaceID, "test-claim-leader-no-repos")
-	req = withURLParam(req, "runtimeId", runtimeID)
-	testHandler.ClaimTaskByRuntime(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("ClaimTaskByRuntime: %d %s", w.Code, w.Body.String())
-	}
+	createDaemonTestQueuedIssueTask(t, leaderID, runtimeID, issueID, true)
+	w := claimDaemonTaskRecorder(t, runtimeID, "test-claim-leader-no-repos")
 
 	var resp struct {
 		Task *struct {
@@ -2377,13 +2369,7 @@ func TestClaimTask_ProjectGongfengRepoIsCheckoutRepo(t *testing.T) {
 		{"url": "https://github.com/example/workspace-fallback", "description": "ws"},
 	})
 
-	var projectID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO project (workspace_id, title) VALUES ($1, $2) RETURNING id
-	`, testWorkspaceID, "Claim gongfeng project repo").Scan(&projectID); err != nil {
-		t.Fatalf("create project: %v", err)
-	}
-	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM project WHERE id = $1`, projectID) })
+	projectID := createDaemonTestProject(t, "Claim gongfeng project repo")
 
 	const pageURL = "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev"
 	const cloneURL = "https://git.code.tencent.com/ChainWeaver/ida/user-center.git"
@@ -2403,35 +2389,9 @@ func TestClaimTask_ProjectGongfengRepoIsCheckoutRepo(t *testing.T) {
 		t.Fatalf("get agent: %v", err)
 	}
 
-	var issueID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (
-			workspace_id, project_id, title, status, priority, creator_id, creator_type, number, position
-		) VALUES ($1, $2, 'gongfeng project repo', 'todo', 'medium', $3, 'member', 88003, 0)
-		RETURNING id
-	`, testWorkspaceID, projectID, testUserID).Scan(&issueID); err != nil {
-		t.Fatalf("create issue: %v", err)
-	}
-	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID) })
-
-	var taskID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_task_queue (
-			agent_id, runtime_id, issue_id, status, priority
-		) VALUES ($1, $2, $3, 'queued', 0)
-		RETURNING id
-	`, agentID, runtimeID, issueID).Scan(&taskID); err != nil {
-		t.Fatalf("create task: %v", err)
-	}
-	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
-
-	w := httptest.NewRecorder()
-	req := newDaemonUserRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/claim", nil, testWorkspaceID, "test-claim-gongfeng-project-repos")
-	req = withURLParam(req, "runtimeId", runtimeID)
-	testHandler.ClaimTaskByRuntime(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("ClaimTaskByRuntime: %d %s", w.Code, w.Body.String())
-	}
+	issueID := createDaemonTestProjectIssue(t, projectID, "gongfeng project repo")
+	createDaemonTestQueuedIssueTask(t, agentID, runtimeID, issueID, false)
+	w := claimDaemonTaskRecorder(t, runtimeID, "test-claim-gongfeng-project-repos")
 
 	var resp struct {
 		Task *struct {
@@ -2473,13 +2433,7 @@ func TestClaimTask_ProjectWithoutRepos_FallsBackToWorkspaceRepos(t *testing.T) {
 		{"url": "https://github.com/example/workspace-fallback", "description": "ws"},
 	})
 
-	var projectID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO project (workspace_id, title) VALUES ($1, $2) RETURNING id
-	`, testWorkspaceID, "Claim project without repos").Scan(&projectID); err != nil {
-		t.Fatalf("create project: %v", err)
-	}
-	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM project WHERE id = $1`, projectID) })
+	projectID := createDaemonTestProject(t, "Claim project without repos")
 
 	var agentID, runtimeID string
 	if err := testPool.QueryRow(ctx,
@@ -2489,35 +2443,9 @@ func TestClaimTask_ProjectWithoutRepos_FallsBackToWorkspaceRepos(t *testing.T) {
 		t.Fatalf("get agent: %v", err)
 	}
 
-	var issueID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (
-			workspace_id, project_id, title, status, priority, creator_id, creator_type, number, position
-		) VALUES ($1, $2, 'no project repos', 'todo', 'medium', $3, 'member', 88002, 0)
-		RETURNING id
-	`, testWorkspaceID, projectID, testUserID).Scan(&issueID); err != nil {
-		t.Fatalf("create issue: %v", err)
-	}
-	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID) })
-
-	var taskID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_task_queue (
-			agent_id, runtime_id, issue_id, status, priority
-		) VALUES ($1, $2, $3, 'queued', 0)
-		RETURNING id
-	`, agentID, runtimeID, issueID).Scan(&taskID); err != nil {
-		t.Fatalf("create task: %v", err)
-	}
-	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
-
-	w := httptest.NewRecorder()
-	req := newDaemonUserRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/claim", nil, testWorkspaceID, "test-claim-fallback")
-	req = withURLParam(req, "runtimeId", runtimeID)
-	testHandler.ClaimTaskByRuntime(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("ClaimTaskByRuntime: %d %s", w.Code, w.Body.String())
-	}
+	issueID := createDaemonTestProjectIssue(t, projectID, "no project repos")
+	createDaemonTestQueuedIssueTask(t, agentID, runtimeID, issueID, false)
+	w := claimDaemonTaskRecorder(t, runtimeID, "test-claim-fallback")
 
 	var resp struct {
 		Task *struct {
