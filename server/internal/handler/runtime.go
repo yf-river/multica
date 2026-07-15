@@ -465,10 +465,9 @@ type updateAgentRuntimeRequest struct {
 	Scope *string `json:"scope,omitempty"`
 }
 
-// UpdateAgentRuntime handles PATCH /api/runtimes/:id. Currently scope
-// is editable; the request shape is open-ended so future fields (display
-// name, description) can be added without a route change.
-// Workspace-membership-checked; write access is gated by canEditRuntime.
+// UpdateAgentRuntime handles PATCH /api/runtimes/:id. Scope is the only
+// editable field; daemon-owned runtime metadata is rejected at this boundary.
+// Workspace membership and canEditRuntime gate the write.
 func (h *Handler) UpdateAgentRuntime(w http.ResponseWriter, r *http.Request) {
 	runtimeID := chi.URLParam(r, "runtimeId")
 	rt, member, ok := h.requireRuntimeAccess(w, r, runtimeID)
@@ -481,7 +480,9 @@ func (h *Handler) UpdateAgentRuntime(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req updateAgentRuntimeRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}

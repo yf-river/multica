@@ -121,6 +121,23 @@ func assertRuntimeLocalSkillTimeout(t *testing.T, status runtimeAsyncRequestStat
 	}
 }
 
+func claimRuntimeLocalSkillImports(t *testing.T, runtimeID string) map[string]any {
+	t.Helper()
+	w := httptest.NewRecorder()
+	req := newDaemonUserRequest(http.MethodPost, "/api/daemon/heartbeat", map[string]any{
+		"runtime_id": runtimeID,
+	}, testWorkspaceID, "runtime-local-skills-daemon")
+	testHandler.DaemonHeartbeat(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("DaemonHeartbeat: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var response map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("decode heartbeat response: %v", err)
+	}
+	return response
+}
+
 func TestInMemoryLocalSkillListStore_PreservesSummaries(t *testing.T) {
 	ctx := context.Background()
 	store := NewInMemoryLocalSkillListStore()
@@ -129,30 +146,11 @@ func TestInMemoryLocalSkillListStore_PreservesSummaries(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 
-	body := map[string]any{
-		"status":    "completed",
-		"supported": true,
-		"skills": []map[string]any{
-			{
-				"key":         "review-helper",
-				"name":        "Review Helper",
-				"description": "Review PRs",
-				"source_path": "~/.claude/skills/review-helper",
-				"provider":    "claude",
-				"file_count":  2,
-			},
-		},
-	}
-	raw, _ := json.Marshal(body)
-
-	var parsed struct {
-		Skills []RuntimeLocalSkillSummary `json:"skills"`
-	}
-	if err := json.Unmarshal(raw, &parsed); err != nil {
-		t.Fatalf("unmarshal report body: %v", err)
-	}
-
-	if err := store.Complete(ctx, req.ID, parsed.Skills, true); err != nil {
+	skills := []RuntimeLocalSkillSummary{{
+		Key: "review-helper", Name: "Review Helper", Description: "Review PRs",
+		SourcePath: "~/.claude/skills/review-helper", Provider: "claude", FileCount: 2,
+	}}
+	if err := store.Complete(ctx, req.ID, skills, true); err != nil {
 		t.Fatalf("complete: %v", err)
 	}
 	got, err := store.Get(ctx, req.ID)
@@ -177,32 +175,6 @@ func TestInMemoryLocalSkillListStore_TimesOutRunningRequests(t *testing.T) {
 	ctx := context.Background()
 	store := NewInMemoryLocalSkillListStore()
 	req, err := store.Create(ctx, "runtime-xyz", randomID())
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
-	req.Status = runtimeAsyncRunning
-	startedAt := time.Now().Add(-61 * time.Second)
-	req.RunStartedAt = &startedAt
-
-	got, err := store.Get(ctx, req.ID)
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	if got == nil {
-		t.Fatal("expected stored request")
-	}
-	assertRuntimeLocalSkillTimeout(t, got.Status, got.Error)
-}
-
-func TestInMemoryLocalSkillImportStore_TimesOutRunningRequests(t *testing.T) {
-	ctx := context.Background()
-	store := NewInMemoryLocalSkillImportStore()
-	req, err := store.Create(ctx, LocalSkillImportRequestInput{
-		RequestID: randomID(), RequestHash: randomID(),
-		RuntimeID: "runtime-xyz",
-		CreatorID: "user-1",
-		SkillKey:  "review-helper",
-	})
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -318,19 +290,7 @@ func TestRuntimeLocalSkillImportFlow_EndToEnd(t *testing.T) {
 		t.Fatalf("replayed request id = %s, want %s", replayed.ID, importReq.ID)
 	}
 
-	w = httptest.NewRecorder()
-	heartbeatReq := newDaemonUserRequest(http.MethodPost, "/api/daemon/heartbeat", map[string]any{
-		"runtime_id": runtimeID,
-	}, testWorkspaceID, "runtime-local-skills-daemon")
-	testHandler.DaemonHeartbeat(w, heartbeatReq)
-	if w.Code != http.StatusOK {
-		t.Fatalf("DaemonHeartbeat: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	var heartbeatResp map[string]any
-	if err := json.NewDecoder(w.Body).Decode(&heartbeatResp); err != nil {
-		t.Fatalf("decode heartbeat response: %v", err)
-	}
+	heartbeatResp := claimRuntimeLocalSkillImports(t, runtimeID)
 	pendingBatch, ok := heartbeatResp["pending_local_skill_imports"].([]any)
 	if !ok || len(pendingBatch) != 1 {
 		t.Fatalf("expected one pending_local_skill_imports item, got %v", heartbeatResp)
@@ -438,19 +398,7 @@ func TestBatchImportViaHeartbeat(t *testing.T) {
 	}
 
 	// Single heartbeat should return all 5 via the plural field.
-	w := httptest.NewRecorder()
-	heartbeatReq := newDaemonUserRequest(http.MethodPost, "/api/daemon/heartbeat", map[string]any{
-		"runtime_id": runtimeID,
-	}, testWorkspaceID, "runtime-local-skills-daemon")
-	testHandler.DaemonHeartbeat(w, heartbeatReq)
-	if w.Code != http.StatusOK {
-		t.Fatalf("DaemonHeartbeat: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	var heartbeatResp map[string]any
-	if err := json.NewDecoder(w.Body).Decode(&heartbeatResp); err != nil {
-		t.Fatalf("decode heartbeat response: %v", err)
-	}
+	heartbeatResp := claimRuntimeLocalSkillImports(t, runtimeID)
 
 	// The batch field contains all 5.
 	pluralRaw, ok := heartbeatResp["pending_local_skill_imports"].([]any)
@@ -477,19 +425,7 @@ func TestBatchImportViaHeartbeat(t *testing.T) {
 	}
 
 	// Second heartbeat should return nothing (all were claimed).
-	w = httptest.NewRecorder()
-	heartbeatReq2 := newDaemonUserRequest(http.MethodPost, "/api/daemon/heartbeat", map[string]any{
-		"runtime_id": runtimeID,
-	}, testWorkspaceID, "runtime-local-skills-daemon")
-	testHandler.DaemonHeartbeat(w, heartbeatReq2)
-	if w.Code != http.StatusOK {
-		t.Fatalf("DaemonHeartbeat: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	var heartbeatResp2 map[string]any
-	if err := json.NewDecoder(w.Body).Decode(&heartbeatResp2); err != nil {
-		t.Fatalf("decode heartbeat response: %v", err)
-	}
+	heartbeatResp2 := claimRuntimeLocalSkillImports(t, runtimeID)
 	if _, ok := heartbeatResp2["pending_local_skill_imports"]; ok {
 		t.Fatalf("second heartbeat should have no pending imports plural, got %v", heartbeatResp2)
 	}

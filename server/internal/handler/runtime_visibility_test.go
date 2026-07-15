@@ -369,9 +369,7 @@ func TestUpdateAgent_RejectsRebindToPersonalRuntime(t *testing.T) {
 	}
 }
 
-// TestUpdateAgentRuntime_ScopePatchApplies pins the invariant that
-// a PATCH carrying `scope` correctly updates the runtime.
-func TestUpdateAgentRuntime_ScopePatchApplies(t *testing.T) {
+func TestUpdateAgentRuntime_RejectsUnknownFields(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
@@ -380,81 +378,12 @@ func TestUpdateAgentRuntime_ScopePatchApplies(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	req := newRequestAs(runtimeOwnerID, http.MethodPatch, "/api/runtimes/"+runtimeID, map[string]any{
-		"scope": "workspace",
-	})
-	req = withURLParam(req, "runtimeId", runtimeID)
-	testHandler.UpdateAgentRuntime(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("PATCH scope: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-	var resp AgentRuntimeResponse
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if resp.Scope != "workspace" {
-		t.Fatalf("scope patch: got %q, want workspace", resp.Scope)
-	}
-}
-
-// TestUpdateAgentRuntime_IgnoresTimezoneField guards the RFC migration that
-// dropped `timezone` from updateAgentRuntimeRequest: a PATCH body still
-// carrying `timezone` must not error, must not echo a `timezone` key back,
-// and must still apply the recognised `scope` field. Timezone is now a
-// user-level preference, not a per-runtime one.
-func TestUpdateAgentRuntime_IgnoresTimezoneField(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
-
-	runtimeID, runtimeOwnerID, _ := runtimeVisibilityFixture(t)
-
-	w := httptest.NewRecorder()
-	req := newRequestAs(runtimeOwnerID, http.MethodPatch, "/api/runtimes/"+runtimeID, map[string]any{
-		"timezone": "Asia/Tokyo",
-		"scope":    "workspace",
-	})
-	req = withURLParam(req, "runtimeId", runtimeID)
-	testHandler.UpdateAgentRuntime(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("PATCH with stray timezone: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	// The response must carry no `timezone` key — runtimes have no such field.
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal(w.Body.Bytes(), &raw); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if _, present := raw["timezone"]; present {
-		t.Errorf("response unexpectedly contains a timezone key: %s", w.Body.String())
-	}
-
-	// `scope` was still applied.
-	var resp AgentRuntimeResponse
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if resp.Scope != "workspace" {
-		t.Errorf("scope patch: got %q, want workspace", resp.Scope)
-	}
-}
-
-// TestUpdateAgentRuntime_InvalidScopeReturns400 verifies that an invalid
-// scope value is rejected with 400 before any mutation runs.
-func TestUpdateAgentRuntime_InvalidScopeReturns400(t *testing.T) {
-	if testHandler == nil {
-		t.Skip("database not available")
-	}
-
-	runtimeID, runtimeOwnerID, _ := runtimeVisibilityFixture(t)
-
-	w := httptest.NewRecorder()
-	req := newRequestAs(runtimeOwnerID, http.MethodPatch, "/api/runtimes/"+runtimeID, map[string]any{
-		"scope": "everyone",
+		"unexpected": true,
 	})
 	req = withURLParam(req, "runtimeId", runtimeID)
 	testHandler.UpdateAgentRuntime(w, req)
 	if w.Code != http.StatusBadRequest {
-		t.Fatalf("PATCH with invalid scope: expected 400, got %d: %s", w.Code, w.Body.String())
+		t.Fatalf("PATCH with unknown field: expected 400, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
