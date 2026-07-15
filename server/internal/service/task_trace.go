@@ -387,23 +387,20 @@ func firstNonEmpty(values ...string) string {
 }
 
 func (s *TaskService) captureTaskDispatched(ctx context.Context, task db.AgentTaskQueue) {
+	queueWaitMs := durationMilliseconds(task.CreatedAt, task.DispatchedAt)
 	s.recordTaskTraceEvent(ctx, task, "task.dispatched", "任务已领取", taskTraceOptions{
-		DurationMs:  taskQueueWaitMilliseconds(task),
-		QueueWaitMs: taskQueueWaitMilliseconds(task),
+		DurationMs:  queueWaitMs,
+		QueueWaitMs: queueWaitMs,
 	})
 	if s.Metrics != nil {
 		source, runtimeMode, _ := s.taskMetricsContext(ctx, task)
-		s.Metrics.RecordTaskDispatched(util.UUIDToString(task.ID), source, runtimeMode, taskQueueWaitSeconds(task))
+		s.Metrics.RecordTaskDispatched(util.UUIDToString(task.ID), source, runtimeMode, durationSeconds(task.CreatedAt, task.DispatchedAt))
 	}
-}
-
-func (s *TaskService) AnalyticsContextForTask(ctx context.Context, task db.AgentTaskQueue) analytics.CoreProperties {
-	return s.taskAnalyticsContext(ctx, task)
 }
 
 func (s *TaskService) captureTaskStarted(ctx context.Context, task db.AgentTaskQueue) {
 	s.recordTaskTraceEvent(ctx, task, "task.started", "任务已开始", taskTraceOptions{
-		QueueWaitMs: taskQueueWaitMilliseconds(task),
+		QueueWaitMs: durationMilliseconds(task.CreatedAt, task.DispatchedAt),
 	})
 	if s.Metrics != nil {
 		source, runtimeMode, provider := s.taskMetricsContext(ctx, task)
@@ -412,33 +409,33 @@ func (s *TaskService) captureTaskStarted(ctx context.Context, task db.AgentTaskQ
 }
 
 func (s *TaskService) captureTaskCompleted(ctx context.Context, task db.AgentTaskQueue) {
-	runMs := taskRunMilliseconds(task)
+	runMs := durationMilliseconds(task.StartedAt, task.CompletedAt)
 	s.recordTaskTraceEvent(ctx, task, "task.completed", "任务已完成", taskTraceOptions{
 		DurationMs:  runMs,
-		QueueWaitMs: taskQueueWaitMilliseconds(task),
+		QueueWaitMs: durationMilliseconds(task.CreatedAt, task.DispatchedAt),
 		RunMs:       runMs,
-		TotalMs:     taskTotalMilliseconds(task),
+		TotalMs:     durationMilliseconds(task.CreatedAt, task.CompletedAt),
 	})
 	if s.Metrics != nil {
 		source, runtimeMode, _ := s.taskMetricsContext(ctx, task)
-		s.Metrics.RecordTaskTerminal(util.UUIDToString(task.ID), source, runtimeMode, task.Status, taskRunSeconds(task), taskTotalSeconds(task), task.Attempt)
+		s.Metrics.RecordTaskTerminal(util.UUIDToString(task.ID), source, runtimeMode, task.Status, durationSeconds(task.StartedAt, task.CompletedAt), durationSeconds(task.CreatedAt, task.CompletedAt), task.Attempt)
 	}
 }
 
 func (s *TaskService) captureTaskFailed(ctx context.Context, task db.AgentTaskQueue) {
 	failureReason := taskFailureReason(task)
-	runMs := taskRunMilliseconds(task)
+	runMs := durationMilliseconds(task.StartedAt, task.CompletedAt)
 	s.recordTaskTraceEvent(ctx, task, "task.failed", "任务已失败", taskTraceOptions{
 		DurationMs:    runMs,
-		QueueWaitMs:   taskQueueWaitMilliseconds(task),
+		QueueWaitMs:   durationMilliseconds(task.CreatedAt, task.DispatchedAt),
 		RunMs:         runMs,
-		TotalMs:       taskTotalMilliseconds(task),
+		TotalMs:       durationMilliseconds(task.CreatedAt, task.CompletedAt),
 		FailureReason: failureReason,
 		ErrorType:     taskErrorType(failureReason),
 	})
 	if s.Metrics != nil {
 		source, runtimeMode, _ := s.taskMetricsContext(ctx, task)
-		s.Metrics.RecordTaskTerminal(util.UUIDToString(task.ID), source, runtimeMode, task.Status, taskRunSeconds(task), taskTotalSeconds(task), task.Attempt)
+		s.Metrics.RecordTaskTerminal(util.UUIDToString(task.ID), source, runtimeMode, task.Status, durationSeconds(task.StartedAt, task.CompletedAt), durationSeconds(task.CreatedAt, task.CompletedAt), task.Attempt)
 		s.Metrics.RecordTaskFailed(source, runtimeMode, failureReason)
 	}
 }
@@ -468,11 +465,12 @@ func (s *TaskService) recordTaskCancelledTrace(ctx context.Context, q *db.Querie
 			return
 		}
 	}
+	totalMs := durationMilliseconds(task.CreatedAt, task.CompletedAt)
 	opts := taskTraceOptions{
-		DurationMs:    taskTotalMilliseconds(task),
-		QueueWaitMs:   taskQueueWaitMilliseconds(task),
-		RunMs:         taskRunMilliseconds(task),
-		TotalMs:       taskTotalMilliseconds(task),
+		DurationMs:    totalMs,
+		QueueWaitMs:   durationMilliseconds(task.CreatedAt, task.DispatchedAt),
+		RunMs:         durationMilliseconds(task.StartedAt, task.CompletedAt),
+		TotalMs:       totalMs,
 		FailureReason: "cancelled",
 		ErrorType:     "cancelled",
 		Metadata:      metadata,
@@ -493,7 +491,7 @@ func (s *TaskService) recordTaskCancelledTrace(ctx context.Context, q *db.Querie
 func (s *TaskService) recordTaskCancelledMetrics(ctx context.Context, task db.AgentTaskQueue) {
 	if s.Metrics != nil {
 		source, runtimeMode, _ := s.taskMetricsContext(ctx, task)
-		s.Metrics.RecordTaskTerminal(util.UUIDToString(task.ID), source, runtimeMode, task.Status, taskRunSeconds(task), taskTotalSeconds(task), task.Attempt)
+		s.Metrics.RecordTaskTerminal(util.UUIDToString(task.ID), source, runtimeMode, task.Status, durationSeconds(task.StartedAt, task.CompletedAt), durationSeconds(task.CreatedAt, task.CompletedAt), task.Attempt)
 	}
 }
 
@@ -630,7 +628,7 @@ func taskAnalyticsContextKey(task db.AgentTaskQueue) string {
 }
 
 func (s *TaskService) taskMetricsContext(ctx context.Context, task db.AgentTaskQueue) (source, runtimeMode, provider string) {
-	tc := s.taskAnalyticsContext(ctx, task)
+	tc := s.AnalyticsContextForTask(ctx, task)
 	source = "other"
 	switch {
 	case task.ChatSessionID.Valid:
@@ -653,7 +651,7 @@ func (s *TaskService) taskMetricsContext(ctx context.Context, task db.AgentTaskQ
 	return source, tc.RuntimeMode, tc.Provider
 }
 
-func (s *TaskService) taskAnalyticsContext(ctx context.Context, task db.AgentTaskQueue) analytics.CoreProperties {
+func (s *TaskService) AnalyticsContextForTask(ctx context.Context, task db.AgentTaskQueue) analytics.CoreProperties {
 	if tc, ok := s.cachedTaskAnalyticsContext(task); ok {
 		return tc
 	}
@@ -835,7 +833,7 @@ func (s *TaskService) buildTaskTraceEventParams(ctx context.Context, task db.Age
 		}
 	}
 	if !workspaceID.Valid {
-		tc := s.taskAnalyticsContext(ctx, task)
+		tc := s.AnalyticsContextForTask(ctx, task)
 		if parsed, err := util.ParseUUID(tc.WorkspaceID); err == nil {
 			workspaceID = parsed
 		}
@@ -921,18 +919,6 @@ func mergeTaskTraceMetadata(raw []byte, extra map[string]any) ([]byte, error) {
 	return encoded, nil
 }
 
-func taskQueueWaitSeconds(task db.AgentTaskQueue) float64 {
-	return durationSeconds(task.CreatedAt, task.DispatchedAt)
-}
-
-func taskRunSeconds(task db.AgentTaskQueue) float64 {
-	return durationSeconds(task.StartedAt, task.CompletedAt)
-}
-
-func taskTotalSeconds(task db.AgentTaskQueue) float64 {
-	return durationSeconds(task.CreatedAt, task.CompletedAt)
-}
-
 func durationSeconds(start, end pgtype.Timestamptz) float64 {
 	if !start.Valid || !end.Valid {
 		return -1
@@ -942,18 +928,6 @@ func durationSeconds(start, end pgtype.Timestamptz) float64 {
 		return 0
 	}
 	return seconds
-}
-
-func taskQueueWaitMilliseconds(task db.AgentTaskQueue) pgtype.Int8 {
-	return durationMilliseconds(task.CreatedAt, task.DispatchedAt)
-}
-
-func taskRunMilliseconds(task db.AgentTaskQueue) pgtype.Int8 {
-	return durationMilliseconds(task.StartedAt, task.CompletedAt)
-}
-
-func taskTotalMilliseconds(task db.AgentTaskQueue) pgtype.Int8 {
-	return durationMilliseconds(task.CreatedAt, task.CompletedAt)
 }
 
 func durationMilliseconds(start, end pgtype.Timestamptz) pgtype.Int8 {
