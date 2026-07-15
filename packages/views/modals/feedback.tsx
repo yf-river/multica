@@ -70,7 +70,7 @@ export function FeedbackModal({
   // Workspace id is captured from the closure at mount time — the modal
   // is short-lived, so there's no meaningful workspace switch to track.
   useEffect(() => {
-    captureFeedbackOpened("help_menu", workspace?.id);
+    captureFeedbackOpened(workspace?.id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 

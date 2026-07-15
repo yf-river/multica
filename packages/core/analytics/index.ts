@@ -48,10 +48,7 @@ const pendingOps: PendingOp[] = [];
 // event until a full reload.
 let superProperties: Record<string, unknown> = {};
 
-export {
-  captureFeedbackOpened,
-  type FeedbackOpenedSource,
-} from "./feedback";
+export { captureFeedbackOpened } from "./feedback";
 
 interface AnalyticsConfig {
   key: string;

@@ -4,7 +4,6 @@ import { projectKeys } from "./queries";
 import type {
   CreateProjectResourceRequest,
   ProjectResource,
-  UpdateProjectResourceRequest,
 } from "../types";
 
 export const projectResourceKeys = {
@@ -41,38 +40,6 @@ export function useCreateProjectResource(wsId: string, projectId: string) {
   });
 }
 
-export function useUpdateProjectResource(wsId: string, projectId: string) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: ({
-      resourceId,
-      data,
-    }: {
-      resourceId: string;
-      data: UpdateProjectResourceRequest;
-    }) => api.updateProjectResource(projectId, resourceId, data),
-    onSuccess: (updated) => {
-      qc.setQueryData<ProjectResource[]>(
-        projectResourceKeys.list(wsId, projectId),
-        (old) =>
-          old?.map((r) => r.id === updated.id ? updated : r),
-      );
-    },
-    onSettled: () => {
-      qc.invalidateQueries({
-        queryKey: projectResourceKeys.list(wsId, projectId),
-      });
-    },
-  });
-}
-
-function replaceProjectResource(
-  old: ProjectResource[] | undefined,
-  updated: ProjectResource,
-): ProjectResource[] | undefined {
-  return old?.map((r) => r.id === updated.id ? updated : r);
-}
-
 export function useSyncProjectResource(wsId: string, projectId: string) {
   const qc = useQueryClient();
   return useMutation({
@@ -81,7 +48,9 @@ export function useSyncProjectResource(wsId: string, projectId: string) {
     onSuccess: (updated) => {
       qc.setQueryData<ProjectResource[]>(
         projectResourceKeys.list(wsId, projectId),
-        (old) => replaceProjectResource(old, updated),
+        (old) => old?.map((resource) =>
+          resource.id === updated.id ? updated : resource,
+        ),
       );
     },
     onSettled: () => {
