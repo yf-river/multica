@@ -98,7 +98,7 @@ func newNotificationBus(t *testing.T, queries *db.Queries) *events.Bus {
 		projectDurableEventForTest(t, queries, bus, event, consumeCommentCreatedAudience)
 	})
 	bus.Subscribe(protocol.EventTaskFailed, func(event events.Event) {
-		payload, ok := decodeTaskEvent(event)
+		payload, ok := decodeEventPayload[taskEventPayload](event)
 		if !ok {
 			t.Fatalf("decode task failure notification test event")
 		}

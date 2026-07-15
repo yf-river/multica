@@ -45,7 +45,7 @@ func consumeTaskTerminalIssueProjection(ctx context.Context, queries *db.Queries
 }
 
 func loadTaskProjectionRow(ctx context.Context, queries *db.Queries, event events.Event) (taskEventPayload, db.AgentTaskQueue, bool, error) {
-	payload, ok := decodeTaskEvent(event)
+	payload, ok := decodeEventPayload[taskEventPayload](event)
 	if !ok || payload.TaskID == "" {
 		return taskEventPayload{}, db.AgentTaskQueue{}, false, fmt.Errorf("decode terminal task projection payload")
 	}

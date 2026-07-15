@@ -62,7 +62,7 @@ func (fixture activityIssueTestFixture) publish(event events.Event) {
 	case protocol.EventIssueUpdated:
 		emitted, err = consumeIssueUpdatedActivities(context.Background(), fixture.queries, event)
 	case protocol.EventTaskCompleted, protocol.EventTaskFailed:
-		payload, ok := decodeTaskEvent(event)
+		payload, ok := decodeEventPayload[taskEventPayload](event)
 		if !ok {
 			fixture.t.Fatalf("decode task activity event")
 		}

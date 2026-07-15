@@ -116,11 +116,6 @@ func decodeCommentEvent(event events.Event) (commentEventPayload, bool) {
 	return payload, ok && payload.Comment.ID != "" && payload.Comment.IssueID != ""
 }
 
-func decodeTaskEvent(event events.Event) (taskEventPayload, bool) {
-	payload, ok := decodeEventPayload[taskEventPayload](event)
-	return payload, ok
-}
-
 func decodeIssueReactionEvent(event events.Event) (issueReactionEventPayload, bool) {
 	payload, ok := decodeEventPayload[issueReactionEventPayload](event)
 	reaction := payload.Reaction

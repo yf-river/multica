@@ -29,7 +29,7 @@ func registerListeners(bus *events.Bus, b realtime.Broadcaster) {
 	}
 
 	// Helper: marshal event and send to a specific user.
-	sendToRecipient := func(b realtime.Broadcaster, e events.Event, recipientID string) {
+	sendToRecipient := func(e events.Event, recipientID string) {
 		if recipientID == "" {
 			return
 		}
@@ -52,7 +52,7 @@ func registerListeners(bus *events.Bus, b realtime.Broadcaster) {
 			return
 		}
 		recipientID, _ := item["recipient_id"].(string)
-		sendToRecipient(b, e, recipientID)
+		sendToRecipient(e, recipientID)
 	})
 
 	// inbox:read, inbox:archived, inbox:batch-read, inbox:batch-archived
@@ -67,7 +67,7 @@ func registerListeners(bus *events.Bus, b realtime.Broadcaster) {
 				return
 			}
 			recipientID, _ := payload["recipient_id"].(string)
-			sendToRecipient(b, e, recipientID)
+			sendToRecipient(e, recipientID)
 		})
 	}
 
@@ -118,21 +118,8 @@ func registerListeners(bus *events.Bus, b realtime.Broadcaster) {
 			return
 		}
 
-		// Phase 1 (MUL-1138): the per-resource scope routing for high-frequency
-		// task/chat events is intentionally NOT enabled yet. The server-side
-		// pieces — Hub.subscribe/unsubscribe protocol, ScopeAuthorizer, Redis
-		// Streams relay — have all landed, but the client (WSClient + the
-		// per-page chat/task hooks) does not yet send `subscribe` frames or
-		// replay subscriptions on reconnect. Routing these events through
-		// `BroadcastToScope("task"|"chat", ...)` today would silently drop
-		// every chat/task message on the floor, breaking the live chat
-		// timeline, chat unread badges, and pending-task UI.
-		//
-		// Until the client lands its scope-subscription PR, we keep
-		// task/chat events on workspace fanout (same behavior as before this
-		// PR). The `Event.TaskID` / `Event.ChatSessionID` hints are still
-		// populated by producers so that flipping the switch later is a
-		// one-line change here. See review on PR #1429 for context.
+		// Current clients subscribe only to workspace/user rooms, so task and
+		// chat events stay on workspace fanout to avoid dropping live updates.
 
 		if e.WorkspaceID != "" {
 			realtime.M.RecordEvent(e.Type)

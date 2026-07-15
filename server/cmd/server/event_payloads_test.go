@@ -59,7 +59,7 @@ func TestEventPayloadContractsSurviveJSONReplay(t *testing.T) {
 		"issue_id": "issue-1",
 		"agent_id": "agent-1",
 	})
-	task, ok := decodeTaskEvent(events.Event{Payload: taskPayload})
+	task, ok := decodeEventPayload[taskEventPayload](events.Event{Payload: taskPayload})
 	if !ok || task.TaskID != "task-1" || task.AgentID != "agent-1" {
 		t.Fatalf("decoded task payload = %#v, ok=%v", task, ok)
 	}
