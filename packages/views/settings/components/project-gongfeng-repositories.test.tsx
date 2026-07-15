@@ -135,7 +135,7 @@ vi.mock("../../navigation", () => ({
   ),
 }));
 
-import { RepositoriesTab } from "./repositories-tab";
+import { ProjectGongfengRepositories } from "./project-gongfeng-repositories";
 
 const TEST_RESOURCES = {
   "zh-Hans": { common: enCommon, settings: enSettings },
@@ -149,7 +149,7 @@ function I18nWrapper({ children }: { children: ReactNode }) {
   );
 }
 
-describe("RepositoriesTab", () => {
+describe("ProjectGongfengRepositories", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     Element.prototype.scrollIntoView = vi.fn();
@@ -251,9 +251,8 @@ describe("RepositoriesTab", () => {
   });
 
   it("展示工蜂仓库资源库和项目使用情况", () => {
-    render(<RepositoriesTab />, { wrapper: I18nWrapper });
+    render(<ProjectGongfengRepositories />, { wrapper: I18nWrapper });
 
-    expect(screen.getByRole("heading", { name: "代码仓库" })).toBeTruthy();
     expect(screen.getByRole("heading", { name: "工蜂仓库资源库" })).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "工作区 Git 仓库" })).toBeNull();
     expect(screen.getByText("资源库")).toBeTruthy();
@@ -288,14 +287,14 @@ describe("RepositoriesTab", () => {
     };
     resourcesRef.current = [];
 
-    render(<RepositoriesTab />, { wrapper: I18nWrapper });
+    render(<ProjectGongfengRepositories />, { wrapper: I18nWrapper });
 
     expect(screen.queryByTestId("settings-gongfeng-repository-row")).toBeNull();
   });
 
   it("添加工蜂仓库时先快捷填充并检测分支，再按选中默认分支更新 workspace.repos", async () => {
     const user = userEvent.setup();
-    render(<RepositoriesTab />, { wrapper: I18nWrapper });
+    render(<ProjectGongfengRepositories />, { wrapper: I18nWrapper });
 
     await user.click(screen.getByRole("button", { name: "添加仓库" }));
     expect(screen.getByRole("dialog")).toBeTruthy();
@@ -360,7 +359,7 @@ describe("RepositoriesTab", () => {
 
   it("工蜂仓库链接改动后会清空检测结果并禁止直接添加", async () => {
     const user = userEvent.setup();
-    render(<RepositoriesTab />, { wrapper: I18nWrapper });
+    render(<ProjectGongfengRepositories />, { wrapper: I18nWrapper });
 
     await user.click(screen.getByRole("button", { name: "添加仓库" }));
     await user.click(screen.getByRole("button", { name: "gateway" }));
@@ -377,7 +376,7 @@ describe("RepositoriesTab", () => {
 
   it("详情中区分资源库信息和项目关联删除", async () => {
     const user = userEvent.setup();
-    render(<RepositoriesTab />, { wrapper: I18nWrapper });
+    render(<ProjectGongfengRepositories />, { wrapper: I18nWrapper });
 
     await user.click(screen.getByRole("button", { name: "删除" }));
     expect(mockUpdateWorkspace).not.toHaveBeenCalled();
@@ -396,7 +395,7 @@ describe("RepositoriesTab", () => {
 
   it("不再把仅项目侧存在的 Gongfeng 资源展示成资源库行", () => {
     workspaceRef.current = { ...workspaceRef.current, repos: [] };
-    render(<RepositoriesTab />, { wrapper: I18nWrapper });
+    render(<ProjectGongfengRepositories />, { wrapper: I18nWrapper });
 
     expect(screen.getByText("暂无工蜂仓库。")).toBeTruthy();
     expect(screen.queryByRole("link", { name: "user-center" })).toBeNull();
@@ -407,7 +406,7 @@ describe("RepositoriesTab", () => {
   it("未绑定项目的资源库仓库主行仍显示仓库身份，详情中不提供绑定入口", async () => {
     const user = userEvent.setup();
     resourcesRef.current = [[]];
-    render(<RepositoriesTab />, { wrapper: I18nWrapper });
+    render(<ProjectGongfengRepositories />, { wrapper: I18nWrapper });
 
     expect(screen.queryByText("尚未被项目使用")).toBeNull();
     expect(screen.getByRole("link", { name: "user-center" })).toHaveAttribute(
@@ -426,7 +425,7 @@ describe("RepositoriesTab", () => {
   it("主行健康按钮按仓库资源同步，不依赖项目绑定", async () => {
     const user = userEvent.setup();
     resourcesRef.current = [[]];
-    render(<RepositoriesTab />, { wrapper: I18nWrapper });
+    render(<ProjectGongfengRepositories />, { wrapper: I18nWrapper });
 
     await user.click(screen.getByRole("button", { name: /测试并同步工蜂仓库/ }));
 
@@ -545,7 +544,7 @@ describe("RepositoriesTab", () => {
       ],
     ] as any;
 
-    render(<RepositoriesTab />, { wrapper: I18nWrapper });
+    render(<ProjectGongfengRepositories />, { wrapper: I18nWrapper });
 
     await user.click(screen.getByRole("button", { name: "详情" }));
     await user.click(screen.getByRole("button", { name: "修改默认分支" }));
@@ -605,7 +604,7 @@ describe("RepositoriesTab", () => {
   it("修改默认分支解析失败时不更新资源库和项目关联", async () => {
     const user = userEvent.setup();
     mockResolveWorkspaceRepo.mockRejectedValueOnce(new Error("branch missing"));
-    render(<RepositoriesTab />, { wrapper: I18nWrapper });
+    render(<ProjectGongfengRepositories />, { wrapper: I18nWrapper });
 
     await user.click(screen.getByRole("button", { name: "详情" }));
     await user.click(screen.getByRole("button", { name: "修改默认分支" }));
@@ -633,7 +632,7 @@ describe("RepositoriesTab", () => {
         },
       ],
     };
-    render(<RepositoriesTab />, { wrapper: I18nWrapper });
+    render(<ProjectGongfengRepositories />, { wrapper: I18nWrapper });
 
     await user.click(screen.getByRole("button", { name: "删除" }));
 

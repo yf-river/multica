@@ -40,14 +40,14 @@ vi.mock("./tokens-tab", () => ({
 vi.mock("./workspace-tab", () => ({
   WorkspaceTab: () => <div>Workspace general content</div>,
 }));
-vi.mock("./repositories-tab", () => ({
-  RepositoriesTab: () => <div>Repositories content</div>,
+vi.mock("./project-gongfeng-repositories", () => ({
+  ProjectGongfengRepositories: () => <div>Repositories content</div>,
 }));
 vi.mock("./github-tab", () => ({
   GitHubTab: () => <div>GitHub content</div>,
 }));
-vi.mock("./integrations-tab", () => ({
-  IntegrationsTab: () => <div>Integrations content</div>,
+vi.mock("./lark-tab", () => ({
+  LarkTab: () => <div>Integrations content</div>,
 }));
 vi.mock("./members-tab", () => ({
   MembersTab: () => <div>Members content</div>,
@@ -90,5 +90,12 @@ describe("SettingsPage tabs", () => {
     expect(screen.getByRole("tab", { name: "GitHub" })).toBeTruthy();
     expect(screen.getByText("GitHub content")).toBeTruthy();
     expect(screen.queryByText("Profile content")).toBeNull();
+  });
+
+  it("owns the repository section heading around the current repository surface", () => {
+    renderSettingsPage("tab=repositories");
+
+    expect(screen.getByRole("heading", { name: "代码仓库" })).toBeTruthy();
+    expect(screen.getByText("Repositories content")).toBeTruthy();
   });
 });

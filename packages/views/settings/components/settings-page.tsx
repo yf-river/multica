@@ -19,10 +19,10 @@ import { PreferencesTab } from "./preferences-tab";
 import { TokensTab } from "./tokens-tab";
 import { WorkspaceTab } from "./workspace-tab";
 import { MembersTab } from "./members-tab";
-import { RepositoriesTab } from "./repositories-tab";
+import { ProjectGongfengRepositories } from "./project-gongfeng-repositories";
 import { GitHubTab } from "./github-tab";
 import { GitHubMark } from "./github-mark";
-import { IntegrationsTab } from "./integrations-tab";
+import { LarkTab } from "./lark-tab";
 import { NotificationsTab } from "./notifications-tab";
 import { useT } from "../../i18n";
 
@@ -156,9 +156,19 @@ export function SettingsPage({ extraAccountTabs }: SettingsPageProps = {}) {
           <TabsContent value="notifications"><NotificationsTab /></TabsContent>
           <TabsContent value="tokens"><TokensTab /></TabsContent>
           <TabsContent value="workspace"><WorkspaceTab /></TabsContent>
-          <TabsContent value="repositories"><RepositoriesTab /></TabsContent>
+          <TabsContent value="repositories">
+            <section className="space-y-4">
+              <h2 className="text-sm font-semibold">{t(($) => $.repositories.section_title)}</h2>
+              <ProjectGongfengRepositories />
+            </section>
+          </TabsContent>
           <TabsContent value="github"><GitHubTab /></TabsContent>
-          <TabsContent value="integrations"><IntegrationsTab /></TabsContent>
+          <TabsContent value="integrations">
+            <section className="space-y-4">
+              <h2 className="text-sm font-semibold">{t(($) => $.lark.section_title)}</h2>
+              <LarkTab />
+            </section>
+          </TabsContent>
           <TabsContent value="members"><MembersTab /></TabsContent>
           {extraAccountTabs?.map((tab) => (
             <TabsContent key={tab.value} value={tab.value}>{tab.content}</TabsContent>
