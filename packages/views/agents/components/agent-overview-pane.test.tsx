@@ -3,10 +3,11 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { Agent, AgentRuntime } from "@multica/core/types";
+import type { AgentRuntime } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../../locales/zh-Hans/common.json";
 import enAgents from "../../locales/zh-Hans/agents.json";
+import { makeAgent } from "../../test/agent-fixtures";
 
 const TEST_RESOURCES = { "zh-Hans": { common: enCommon, agents: enAgents } };
 
@@ -61,29 +62,7 @@ vi.mock("@multica/core/lark", () => ({
 
 import { AgentOverviewPane, type DetailTab } from "./agent-overview-pane";
 
-const baseAgent: Agent = {
-  id: "agent-1",
-  runtime_id: "runtime-1",
-  name: "Agent",
-  description: "",
-  instructions: "",
-  avatar_url: null,
-  runtime_mode: "local",
-  runtime_config: {},
-  custom_args: [],
-  custom_env_key_count: 0,
-  mcp_config: null,
-  mcp_config_redacted: false,
-  scope: "workspace",
-  max_concurrent_tasks: 1,
-  model: "",
-  thinking_level: "",
-  owner_id: "user-1",
-  skills: [],
-  created_at: "2026-05-28T00:00:00Z",
-  updated_at: "2026-05-28T00:00:00Z",
-  archived_at: null,
-};
+const baseAgent = makeAgent();
 
 function makeRuntime(provider: string): AgentRuntime {
   return {

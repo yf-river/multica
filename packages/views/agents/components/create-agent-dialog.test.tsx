@@ -9,6 +9,7 @@ import { WorkspaceSlugProvider } from "@multica/core/paths";
 import { NavigationProvider, type NavigationAdapter } from "../../navigation";
 import enCommon from "../../locales/zh-Hans/common.json";
 import enAgents from "../../locales/zh-Hans/agents.json";
+import { makeAgent } from "../../test/agent-fixtures";
 
 const navigationStub: NavigationAdapter = {
   push: vi.fn(),
@@ -92,29 +93,13 @@ function makeRuntime(overrides: Partial<AgentRuntime>): AgentRuntime {
 }
 
 function makeTemplate(runtimeId: string): Agent {
-  return {
+  return makeAgent({
     id: "agent-template",
     runtime_id: runtimeId,
     name: "Template Agent",
-    description: "",
-    instructions: "",
-    avatar_url: null,
-    runtime_mode: "local",
-    runtime_config: {},
-    custom_args: [],
-    custom_env_key_count: 0,
-    mcp_config: null,
-    mcp_config_redacted: false,
     scope: "personal",
-    max_concurrent_tasks: 1,
-    model: "",
-    thinking_level: "",
     owner_id: ME,
-    skills: [],
-    created_at: "2026-04-01T00:00:00Z",
-    updated_at: "2026-04-01T00:00:00Z",
-    archived_at: null,
-  };
+  });
 }
 
 function renderDialog(runtimes: AgentRuntime[], template?: Agent) {

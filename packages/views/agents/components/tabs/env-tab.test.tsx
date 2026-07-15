@@ -3,10 +3,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { Agent } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
 import common from "../../../locales/zh-Hans/common.json";
 import agents from "../../../locales/zh-Hans/agents.json";
+import { makeAgent } from "../../../test/agent-fixtures";
 
 const apiMock = vi.hoisted(() => ({
   getAgentEnv: vi.fn(),
@@ -23,29 +23,7 @@ vi.mock("sonner", () => ({ toast: toastMock }));
 
 import { EnvTab } from "./env-tab";
 
-const agent: Agent = {
-  id: "agent-1",
-  runtime_id: "runtime-1",
-  name: "Agent",
-  description: "",
-  instructions: "",
-  avatar_url: null,
-  runtime_mode: "local",
-  runtime_config: {},
-  custom_args: [],
-  custom_env_key_count: 1,
-  mcp_config: null,
-  mcp_config_redacted: false,
-  scope: "workspace",
-  max_concurrent_tasks: 1,
-  model: "",
-  thinking_level: "",
-  owner_id: "user-1",
-  skills: [],
-  created_at: "2026-07-11T00:00:00Z",
-  updated_at: "2026-07-11T00:00:00Z",
-  archived_at: null,
-};
+const agent = makeAgent({ custom_env_key_count: 1 });
 
 function renderEnvTab(props: { onSaved?: () => void } = {}) {
   return render(

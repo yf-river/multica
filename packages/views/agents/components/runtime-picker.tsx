@@ -17,7 +17,7 @@ import {
 import { Label } from "@multica/ui/components/ui/label";
 import { useT } from "../../i18n";
 
-export type RuntimeFilter = "mine" | "all";
+type RuntimeFilter = "mine" | "all";
 
 export function RuntimePicker({
   runtimes,

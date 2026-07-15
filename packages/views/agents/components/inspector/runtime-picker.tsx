@@ -15,6 +15,7 @@ import {
 import { ProviderLogo } from "../../../runtimes/components/provider-logo";
 import { CHIP_CLASS } from "./chip";
 import { useT } from "../../../i18n";
+import { isRuntimeUsableForUser } from "../runtime-picker";
 
 type Filter = "mine" | "all";
 
@@ -51,17 +52,6 @@ export function RuntimePicker({
 
   // Compute filtered list unconditionally — the early `!canEdit` return
   // below would otherwise re-order this hook across renders.
-  const isDisabled = (r: AgentRuntime): boolean => {
-    if (targetScope === "workspace") return r.scope !== "workspace";
-    if (targetScope === "personal") {
-      if (r.scope !== "personal") return true;
-      if (!currentUserId) return false;
-      return r.owner_id !== currentUserId;
-    }
-    if (!currentUserId) return false;
-    if (r.owner_id === currentUserId) return false;
-    return r.scope !== "workspace";
-  };
   const filtered = useMemo(() => {
     const list =
       filter === "mine" && currentUserId
@@ -72,8 +62,8 @@ export function RuntimePicker({
       const bMine = b.owner_id === currentUserId;
       if (aMine && !bMine) return -1;
       if (!aMine && bMine) return 1;
-      const aDisabled = isDisabled(a);
-      const bDisabled = isDisabled(b);
+      const aDisabled = !isRuntimeUsableForUser(a, currentUserId, targetScope);
+      const bDisabled = !isRuntimeUsableForUser(b, currentUserId, targetScope);
       if (!aDisabled && bDisabled) return -1;
       if (aDisabled && !bDisabled) return 1;
       return 0;
@@ -179,7 +169,7 @@ export function RuntimePicker({
         filtered.map((rt) => {
           const owner = getOwner(rt.owner_id);
           const rtOnline = rt.status === "online";
-          const locked = isDisabled(rt);
+          const locked = !isRuntimeUsableForUser(rt, currentUserId, targetScope);
           const tooltip = [
             rt.name,
             owner ? t(($) => $.pickers.runtime_owned_by, { name: owner.name }) : null,

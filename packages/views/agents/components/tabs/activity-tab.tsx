@@ -4,11 +4,16 @@ import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
 import {
   ArrowUpRight,
+  CheckCircle2,
   CircleHelp,
+  Clock,
   Hash,
+  Loader2,
   MessageSquare,
+  Play,
   Workflow,
   X,
+  XCircle,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -36,12 +41,22 @@ import { useWorkspacePaths } from "@multica/core/paths";
 import { issueDetailOptions } from "@multica/core/issues/queries";
 import { AppLink } from "../../../navigation";
 import { TranscriptButton } from "../../../common/task-transcript";
-import { taskStatusConfig } from "../../config";
 import { failureReasonLabel } from "./task-failure";
 import { Sparkline } from "../sparkline";
 import { useT, useTimeAgo } from "../../../i18n";
 
 const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
+const TASK_STATUS_VISUAL: Record<
+  string,
+  { icon: typeof CheckCircle2; color: string }
+> = {
+  queued: { icon: Clock, color: "text-muted-foreground" },
+  dispatched: { icon: Play, color: "text-info" },
+  running: { icon: Loader2, color: "text-brand" },
+  completed: { icon: CheckCircle2, color: "text-success" },
+  failed: { icon: XCircle, color: "text-destructive" },
+  cancelled: { icon: XCircle, color: "text-muted-foreground" },
+};
 // Recent work pagination: small initial cohort to keep the section
 // scannable, then "Show more" reveals 20 at a time. Tasks are already
 // fully cached client-side (one listAgentTasks for the whole agent), so
@@ -355,7 +370,7 @@ function TaskRow({
   const timeAgo = useTimeAgo();
   const paths = useWorkspacePaths();
   const [cancelling, setCancelling] = useState(false);
-  const cfg = taskStatusConfig[task.status] ?? taskStatusConfig.queued!;
+  const cfg = TASK_STATUS_VISUAL[task.status] ?? TASK_STATUS_VISUAL.queued!;
   const Icon = cfg.icon;
   const hasIssue = task.issue_id !== "";
   const issue = hasIssue ? issueMap.get(task.issue_id) : undefined;

@@ -5,6 +5,7 @@ import { render, screen, cleanup } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../../locales/zh-Hans/common.json";
 import enAgents from "../../locales/zh-Hans/agents.json";
+import { makeAgent } from "../../test/agent-fixtures";
 
 const TEST_RESOURCES = { "zh-Hans": { common: enCommon, agents: enAgents } };
 
@@ -99,29 +100,6 @@ vi.mock("@multica/core/agents", async () => {
 
 import { AgentLivePeekCard } from "./agent-live-peek-card";
 
-function makeAgent(overrides: Record<string, unknown> = {}) {
-  return {
-    id: "agent-1",
-    runtime_id: "rt-1",
-    name: "Squirtle",
-    description: "",
-    instructions: "",
-    avatar_url: null,
-    runtime_mode: "local" as const,
-    runtime_config: {},
-    custom_args: [],
-    scope: "personal" as const,
-    max_concurrent_tasks: 1,
-    model: "",
-    owner_id: "user-me",
-    skills: [],
-    created_at: "2026-04-01T00:00:00Z",
-    updated_at: "2026-04-01T00:00:00Z",
-    archived_at: null,
-    ...overrides,
-  };
-}
-
 function makeTask(overrides: Record<string, unknown>) {
   return {
     id: "task-x",
@@ -150,7 +128,14 @@ function renderCard() {
 beforeEach(() => {
   vi.clearAllMocks();
   cleanup();
-  mockAgents.current = [makeAgent()];
+  mockAgents.current = [
+    makeAgent({
+      runtime_id: "rt-1",
+      name: "Squirtle",
+      scope: "personal",
+      owner_id: "user-me",
+    }),
+  ];
   mockSnapshot.current = [];
   mockIssue.current = null;
   mockPresence.current = {
