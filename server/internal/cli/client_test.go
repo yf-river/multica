@@ -373,11 +373,9 @@ func TestUploadFileWithURL(t *testing.T) {
 			}
 
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(AttachmentResponse{
-				ID:        "att-123",
-				URL:       "https://cdn.example.com/file.txt",
-				Filename:  "test.txt",
-				SizeBytes: 5,
+			_ = json.NewEncoder(w).Encode(uploadResponse{
+				ID:  "att-123",
+				URL: "https://cdn.example.com/file.txt",
 			})
 		}))
 		defer srv.Close()
@@ -438,7 +436,7 @@ func TestUploadFileWithURL(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			gotWorkspace = r.Header.Get("X-Workspace-ID")
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(AttachmentResponse{ID: "att-1", URL: "https://example.com"})
+			_ = json.NewEncoder(w).Encode(uploadResponse{ID: "att-1", URL: "https://example.com"})
 		}))
 		defer srv.Close()
 
@@ -455,7 +453,7 @@ func TestUploadFileWithURL(t *testing.T) {
 	t.Run("missing url in response", func(t *testing.T) {
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(AttachmentResponse{ID: "att-123"})
+			_ = json.NewEncoder(w).Encode(uploadResponse{ID: "att-123"})
 		}))
 		defer srv.Close()
 

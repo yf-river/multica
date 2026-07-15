@@ -179,6 +179,25 @@ func (c *APIClient) setHeaders(req *http.Request) {
 	}
 }
 
+func (c *APIClient) executeJSON(client *http.Client, req *http.Request, errorPath string, out any) (http.Header, error) {
+	resp, err := client.Do(req)
+	err = wrapTransport(req, err)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode >= 400 {
+		return nil, newHTTPError(req.Method, errorPath, resp)
+	}
+	if out != nil {
+		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
+			return resp.Header, err
+		}
+	}
+	return resp.Header, nil
+}
+
 // GetJSON performs a GET request and decodes the JSON response.
 //
 // On an HTTP error response (status >= 400) the returned error is a
@@ -187,26 +206,8 @@ func (c *APIClient) setHeaders(req *http.Request) {
 // given endpoint and degrade gracefully). The error string format
 // ("GET <path> returned <code>: <body>") is preserved by HTTPError.Error().
 func (c *APIClient) GetJSON(ctx context.Context, path string, out any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.BaseURL+path, nil)
-	if err != nil {
-		return err
-	}
-	c.setHeaders(req)
-
-	resp, err := c.HTTPClient.Do(req)
-	err = wrapTransport(req, err)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode >= 400 {
-		return newHTTPError(http.MethodGet, path, resp)
-	}
-	if out == nil {
-		return nil
-	}
-	return json.NewDecoder(resp.Body).Decode(out)
+	_, err := c.GetJSONWithHeaders(ctx, path, out)
+	return err
 }
 
 // GetJSONWithHeaders performs a GET request, decodes the JSON response, and
@@ -218,23 +219,7 @@ func (c *APIClient) GetJSONWithHeaders(ctx context.Context, path string, out any
 		return nil, err
 	}
 	c.setHeaders(req)
-
-	resp, err := c.HTTPClient.Do(req)
-	err = wrapTransport(req, err)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode >= 400 {
-		return nil, newHTTPError(http.MethodGet, path, resp)
-	}
-	if out != nil {
-		if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
-			return resp.Header, err
-		}
-	}
-	return resp.Header, nil
+	return c.executeJSON(c.HTTPClient, req, path, out)
 }
 
 // DeleteJSON performs a DELETE request.
@@ -244,18 +229,8 @@ func (c *APIClient) DeleteJSON(ctx context.Context, path string) error {
 		return err
 	}
 	c.setHeaders(req)
-
-	resp, err := c.HTTPClient.Do(req)
-	err = wrapTransport(req, err)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode >= 400 {
-		return newHTTPError(http.MethodDelete, path, resp)
-	}
-	return nil
+	_, err = c.executeJSON(c.HTTPClient, req, path, nil)
+	return err
 }
 
 // DeleteJSONWithBody performs a DELETE request with a JSON body.
@@ -265,7 +240,7 @@ func (c *APIClient) DeleteJSONWithBody(ctx context.Context, path string, body an
 
 // PostJSON performs a POST request with a JSON body.
 func (c *APIClient) PostJSON(ctx context.Context, path string, body any, out any) error {
-	return c.postJSON(ctx, path, body, "", out)
+	return c.sendJSON(ctx, http.MethodPost, path, body, "", out)
 }
 
 // PostJSONWithIdempotencyKey performs a POST for a caller-owned logical
@@ -279,18 +254,18 @@ func (c *APIClient) PostJSONWithIdempotencyKey(
 	out any,
 ) error {
 	if out == nil {
-		err := c.postJSON(ctx, path, body, idempotencyKey, nil)
+		err := c.sendJSON(ctx, http.MethodPost, path, body, idempotencyKey, nil)
 		if err == nil || isHTTPResponseError(err) {
 			return err
 		}
-		return c.postJSON(ctx, path, body, idempotencyKey, nil)
+		return c.sendJSON(ctx, http.MethodPost, path, body, idempotencyKey, nil)
 	}
 
 	var raw json.RawMessage
-	err := c.postJSON(ctx, path, body, idempotencyKey, &raw)
+	err := c.sendJSON(ctx, http.MethodPost, path, body, idempotencyKey, &raw)
 	if err != nil && !isHTTPResponseError(err) {
 		raw = nil
-		err = c.postJSON(ctx, path, body, idempotencyKey, &raw)
+		err = c.sendJSON(ctx, http.MethodPost, path, body, idempotencyKey, &raw)
 	}
 	if err != nil {
 		return err
@@ -301,16 +276,6 @@ func (c *APIClient) PostJSONWithIdempotencyKey(
 func isHTTPResponseError(err error) bool {
 	var httpErr *HTTPError
 	return errors.As(err, &httpErr)
-}
-
-func (c *APIClient) postJSON(
-	ctx context.Context,
-	path string,
-	body any,
-	idempotencyKey string,
-	out any,
-) error {
-	return c.sendJSON(ctx, http.MethodPost, path, body, idempotencyKey, out)
 }
 
 // sendJSON is the single transport path for HTTP methods that carry a JSON
@@ -340,20 +305,8 @@ func (c *APIClient) sendJSON(
 		req.Header.Set("Idempotency-Key", idempotencyKey)
 	}
 
-	resp, err := c.HTTPClient.Do(req)
-	err = wrapTransport(req, err)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode >= 400 {
-		return newHTTPError(method, path, resp)
-	}
-	if out == nil {
-		return nil
-	}
-	return json.NewDecoder(resp.Body).Decode(out)
+	_, err = c.executeJSON(c.HTTPClient, req, path, out)
+	return err
 }
 
 // PutJSON performs a PUT request with a JSON body.
@@ -366,100 +319,68 @@ func (c *APIClient) PatchJSON(ctx context.Context, path string, body any, out an
 	return c.sendJSON(ctx, http.MethodPatch, path, body, "", out)
 }
 
-// AttachmentResponse mirrors the server's upload-file response.
-type AttachmentResponse struct {
-	ID          string `json:"id"`
-	URL         string `json:"url"`
-	DownloadURL string `json:"download_url"`
-	Filename    string `json:"filename"`
-	ContentType string `json:"content_type"`
-	SizeBytes   int64  `json:"size_bytes"`
-	CreatedAt   string `json:"created_at"`
+type uploadResponse struct {
+	ID  string `json:"id"`
+	URL string `json:"url"`
+}
+
+func (c *APIClient) uploadFile(ctx context.Context, client *http.Client, fileData []byte, filename, issueID string) (uploadResponse, error) {
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+
+	part, err := writer.CreateFormFile("file", filepath.Base(filename))
+	if err != nil {
+		return uploadResponse{}, fmt.Errorf("create form file: %w", err)
+	}
+	if _, err := part.Write(fileData); err != nil {
+		return uploadResponse{}, fmt.Errorf("write file data: %w", err)
+	}
+
+	if issueID != "" {
+		if err := writer.WriteField("issue_id", issueID); err != nil {
+			return uploadResponse{}, fmt.Errorf("write issue_id field: %w", err)
+		}
+	}
+
+	if err := writer.Close(); err != nil {
+		return uploadResponse{}, fmt.Errorf("close multipart writer: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/api/upload-file", &body)
+	if err != nil {
+		return uploadResponse{}, err
+	}
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	c.setHeaders(req)
+
+	var result uploadResponse
+	if _, err := c.executeJSON(client, req, "/api/upload-file", &result); err != nil {
+		var networkErr *networkError
+		if isHTTPResponseError(err) || errors.As(err, &networkErr) {
+			return uploadResponse{}, err
+		}
+		return uploadResponse{}, fmt.Errorf("decode upload response: %w", err)
+	}
+	return result, nil
 }
 
 // UploadFile uploads a file via multipart form to /api/upload-file.
 // It returns the attachment ID from the server response.
 func (c *APIClient) UploadFile(ctx context.Context, fileData []byte, filename string, issueID string) (string, error) {
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-
-	part, err := writer.CreateFormFile("file", filepath.Base(filename))
-	if err != nil {
-		return "", fmt.Errorf("create form file: %w", err)
-	}
-	if _, err := part.Write(fileData); err != nil {
-		return "", fmt.Errorf("write file data: %w", err)
-	}
-
-	if issueID != "" {
-		if err := writer.WriteField("issue_id", issueID); err != nil {
-			return "", fmt.Errorf("write issue_id field: %w", err)
-		}
-	}
-
-	if err := writer.Close(); err != nil {
-		return "", fmt.Errorf("close multipart writer: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/api/upload-file", &body)
+	result, err := c.uploadFile(ctx, c.HTTPClient, fileData, filename, issueID)
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	c.setHeaders(req)
-
-	resp, err := c.HTTPClient.Do(req)
-	err = wrapTransport(req, err)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode >= 400 {
-		return "", newHTTPError(http.MethodPost, "/api/upload-file", resp)
-	}
-
-	var result map[string]any
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", fmt.Errorf("decode upload response: %w", err)
-	}
-
-	id, _ := result["id"].(string)
-	if id == "" {
+	if result.ID == "" {
 		return "", fmt.Errorf("upload response missing attachment id")
 	}
-	return id, nil
+	return result.ID, nil
 }
 
 // UploadFileWithURL uploads a file via multipart form to /api/upload-file
-// without associating it with an issue or comment. It decodes the full
-// AttachmentResponse and returns the attachment ID and URL.
+// without associating it with an issue or comment. It returns the attachment
+// ID and URL.
 func (c *APIClient) UploadFileWithURL(ctx context.Context, fileData []byte, filename string) (string, string, error) {
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-
-	part, err := writer.CreateFormFile("file", filepath.Base(filename))
-	if err != nil {
-		return "", "", fmt.Errorf("create form file: %w", err)
-	}
-	if _, err := part.Write(fileData); err != nil {
-		return "", "", fmt.Errorf("write file data: %w", err)
-	}
-
-	if err := writer.Close(); err != nil {
-		return "", "", fmt.Errorf("close multipart writer: %w", err)
-	}
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/api/upload-file", &body)
-	if err != nil {
-		return "", "", err
-	}
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	c.setHeaders(req)
-
-	// Use a client that respects the context deadline for slow uploads
-	// (e.g. avatar uploads with 5MB files). The default HTTP client timeout
-	// shadows any longer context deadline.
 	httpClient := c.HTTPClient
 	if deadline, ok := ctx.Deadline(); ok {
 		remaining := time.Until(deadline)
@@ -469,21 +390,9 @@ func (c *APIClient) UploadFileWithURL(ctx context.Context, fileData []byte, file
 			httpClient = &clientCopy
 		}
 	}
-
-	resp, err := httpClient.Do(req)
-	err = wrapTransport(req, err)
+	result, err := c.uploadFile(ctx, httpClient, fileData, filename, "")
 	if err != nil {
 		return "", "", err
-	}
-	defer func() { _ = resp.Body.Close() }()
-
-	if resp.StatusCode >= 400 {
-		return "", "", newHTTPError(http.MethodPost, "/api/upload-file", resp)
-	}
-
-	var result AttachmentResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return "", "", fmt.Errorf("decode upload response: %w", err)
 	}
 	if result.URL == "" {
 		return "", "", fmt.Errorf("upload response missing attachment url")
