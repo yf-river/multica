@@ -109,21 +109,14 @@ export type CreateAutopilotResponse = Autopilot & {
   initial_trigger: AutopilotTrigger;
 };
 
-export interface UpdateAutopilotRequest {
-  title?: string;
+// Assignee type and ID must still be sent together when changing assignee.
+export type UpdateAutopilotRequest = Partial<
+  Omit<CreateAutopilotRequest, "trigger" | "description" | "issue_title_template">
+> & {
   description?: string | null;
-  project_id?: string | null;
-  // Send `assignee_type` together with `assignee_id` whenever you change the
-  // assignee — the server requires both for a type swap.
-  assignee_type?: AutopilotAssigneeType;
-  assignee_id?: string;
   status?: AutopilotStatus;
-  execution_mode?: AutopilotExecutionMode;
   issue_title_template?: string | null;
-  // When present, fully replaces the autopilot's subscriber template;
-  // omit to leave it untouched.
-  subscribers?: AutopilotSubscriber[];
-}
+};
 
 export interface CreateAutopilotTriggerRequest {
   kind: AutopilotTriggerKind;
@@ -134,14 +127,13 @@ export interface CreateAutopilotTriggerRequest {
   event_filters?: WebhookEventFilter[];
 }
 
-export interface UpdateAutopilotTriggerRequest {
+export type UpdateAutopilotTriggerRequest = Partial<
+  Omit<CreateAutopilotTriggerRequest, "kind" | "event_filters">
+> & {
   enabled?: boolean;
-  cron_expression?: string;
-  timezone?: string;
-  label?: string;
   // event_filters is only meaningful for webhook triggers.
   event_filters?: WebhookEventFilter[] | null;
-}
+};
 
 export interface GetAutopilotResponse {
   autopilot: Autopilot;

@@ -86,13 +86,11 @@ export interface CreateRuntimeProfileRequest {
 
 // PATCH body — every field optional; `protocol_family` is intentionally
 // absent because it is immutable.
-export interface UpdateRuntimeProfileRequest {
-  display_name?: string;
-  command_name?: string;
+export type UpdateRuntimeProfileRequest = Partial<
+  Omit<CreateRuntimeProfileRequest, "protocol_family" | "description">
+> & {
   description?: string | null;
-  fixed_args?: string[];
-  enabled?: boolean;
-}
+};
 
 // Coarse classifier set by the backend when a task transitions to "failed".
 // Mirrors the migration-055 enum in agent_task_queue.failure_reason. Used by
@@ -280,46 +278,19 @@ export interface CreateAgentRequest {
   thinking_level?: string;
 }
 
-export interface UpdateAgentRequest {
-  name?: string;
-  description?: string;
-  instructions?: string;
-  avatar_url?: string;
-  runtime_id?: string;
-  runtime_config?: Record<string, unknown>;
-  /**
-   * NOTE: `custom_env` is intentionally NOT updatable through this
-   * request shape. Env edits flow through `client.updateAgentEnv` /
-   * `PUT /api/agents/{id}/env` — that path is owner/admin only,
-   * denies agent actors, and writes a persistent audit row. The
-   * server REJECTS any `PUT /api/agents/{id}` body that includes
-   * `custom_env` with a 400; do not put the field in this payload.
-   * MUL-2600.
-   */
-  custom_args?: string[];
-  /**
-   * MCP server configuration. Tri-state semantics (MUL-2764):
-   *   - field omitted → no change
-   *   - `null` → clear the column; the daemon falls back to the CLI's
-   *     built-in default at launch
-   *   - object → replace the stored JSON verbatim; runtime backends
-   *     validate / translate it according to their own MCP integration
-   */
+/**
+ * `custom_env` is deliberately excluded: env writes use the audited,
+ * owner/admin-only `updateAgentEnv` endpoint.
+ */
+export type UpdateAgentRequest = Partial<
+  Omit<CreateAgentRequest, "custom_env" | "thinking_level">
+> & {
+  /** Omit to preserve, pass null to clear, or pass an object to replace. */
   mcp_config?: unknown | null;
-  scope?: ResourceScope;
   status?: AgentStatus;
-  max_concurrent_tasks?: number;
-  model?: string;
-  /**
-   * Runtime-native reasoning/effort token. Tri-state semantics (MUL-2339):
-   *   - field omitted → no change
-   *   - "" → clear the override; backend omits the effort flag and the
-   *     local CLI config / built-in default decides what the model runs at
-   *   - non-empty → set; validated server-side against the target
-   *     runtime's provider enum, rejected with 400 if not recognised
-   */
+  /** Omit to preserve, pass "" to clear, or pass a provider-native value. */
   thinking_level?: string;
-}
+};
 
 /**
  * Wire shape for the dedicated env-management endpoints
@@ -381,13 +352,7 @@ export interface CreateSkillRequest {
   files?: { path: string; content: string }[];
 }
 
-export interface UpdateSkillRequest {
-  name?: string;
-  description?: string;
-  content?: string;
-  config?: Record<string, unknown>;
-  files?: { path: string; content: string }[];
-}
+export type UpdateSkillRequest = Partial<CreateSkillRequest>;
 
 export interface SetAgentSkillsRequest {
   skill_ids: string[];

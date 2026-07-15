@@ -57,15 +57,9 @@ export interface InternalSquadTemplateResponse {
   squad: Pick<Squad, "id" | "name">;
 }
 
-export interface UpdateSquadRequest {
-  name?: string;
-  description?: string;
+export type UpdateSquadRequest = Partial<Omit<CreateSquadRequest, "members">> & {
   instructions?: string;
-  sop_profile?: Record<string, unknown>;
-  leader_id?: string;
-  avatar_url?: string;
-  scope?: SquadScope;
-}
+};
 
 // SquadMemberStatus mirrors the five-way bucket the back-end derives in
 // handler/squad.go::deriveSquadMemberStatus. Kept as a string union here

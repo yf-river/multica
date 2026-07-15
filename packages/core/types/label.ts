@@ -17,7 +17,4 @@ export interface CreateLabelRequest {
   color: string;
 }
 
-export interface UpdateLabelRequest {
-  name?: string;
-  color?: string;
-}
+export type UpdateLabelRequest = Partial<CreateLabelRequest>;

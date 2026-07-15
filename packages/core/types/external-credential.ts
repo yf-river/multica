@@ -30,13 +30,9 @@ export interface CreateExternalCredentialProfileRequest {
   verify_now?: boolean;
 }
 
-export interface UpdateExternalCredentialProfileRequest {
-  name?: string;
-  secret_ref?: string;
-  token?: string;
-  capabilities?: Record<string, unknown>;
-  verify_now?: boolean;
-}
+export type UpdateExternalCredentialProfileRequest = Partial<
+  Omit<CreateExternalCredentialProfileRequest, "provider">
+>;
 
 export interface TestExternalCredentialProfileRequest {
   provider: ExternalCredentialProvider;

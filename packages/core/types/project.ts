@@ -30,15 +30,14 @@ export interface CreateProjectRequest {
   resources?: CreateProjectResourceRequest[];
 }
 
-export interface UpdateProjectRequest {
-  title?: string;
+export type UpdateProjectRequest = Partial<
+  Omit<CreateProjectRequest, "resources" | "description" | "icon" | "lead_type" | "lead_id">
+> & {
   description?: string | null;
   icon?: string | null;
-  status?: ProjectStatus;
-  priority?: ProjectPriority;
   lead_type?: "member" | "agent" | null;
   lead_id?: string | null;
-}
+};
 
 // ProjectResource is a typed pointer from a project to an external resource.
 // The resource_ref shape depends on resource_type. New types add a case in
@@ -108,8 +107,8 @@ export interface CreateProjectResourceRequest {
 // resource_type is immutable server-side; partial-update payload mirrors that.
 // Sending only the field(s) you want to change is fine — the server merges
 // the request body with the existing row, including resource_ref shortcuts.
-export interface UpdateProjectResourceRequest {
-  resource_ref?: ProjectResourceRef;
+export type UpdateProjectResourceRequest = Partial<
+  Omit<CreateProjectResourceRequest, "resource_type" | "label">
+> & {
   label?: string | null;
-  position?: number;
-}
+};
