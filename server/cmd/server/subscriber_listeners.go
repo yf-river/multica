@@ -144,7 +144,7 @@ func projectIssueUpdatedSubscribers(ctx context.Context, queries *db.Queries, pa
 
 func projectCommentCreatedSubscriber(ctx context.Context, queries *db.Queries, event events.Event, payload commentEventPayload) ([]events.Event, error) {
 	comment := payload.Comment
-	if comment.AuthorType == "system" || comment.AuthorID == "" {
+	if comment.AuthorID == "" {
 		return nil, nil
 	}
 	created, ok, err := addSubscriber(ctx, queries, event.WorkspaceID, comment.IssueID, comment.AuthorType, comment.AuthorID, "commenter")

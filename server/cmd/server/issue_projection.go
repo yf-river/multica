@@ -24,7 +24,7 @@ func loadIssueProjection(
 	if err := validateIssueProjectionScope(event, payload.Issue); err != nil {
 		return issueEventPayload{}, false, err
 	}
-	exists, err := issueExistsForProjection(ctx, queries, payload.Issue)
+	_, exists, err := getIssueForProjection(ctx, queries, payload.Issue)
 	return payload, exists, err
 }
 
@@ -33,11 +33,6 @@ func validateIssueProjectionScope(event events.Event, issue eventIssue) error {
 		return fmt.Errorf("event workspace %s does not match issue workspace %s", event.WorkspaceID, issue.WorkspaceID)
 	}
 	return nil
-}
-
-func issueExistsForProjection(ctx context.Context, queries *db.Queries, issue eventIssue) (bool, error) {
-	_, exists, err := getIssueForProjection(ctx, queries, issue)
-	return exists, err
 }
 
 func getIssueForProjection(ctx context.Context, queries *db.Queries, issue eventIssue) (db.Issue, bool, error) {

@@ -30,7 +30,7 @@ func consumeIssueCreatedActivity(ctx context.Context, queries *db.Queries, event
 	if !ok {
 		return nil, fmt.Errorf("decode issue-created activity payload")
 	}
-	exists, err := issueExistsForProjection(ctx, queries, payload.Issue)
+	_, exists, err := getIssueForProjection(ctx, queries, payload.Issue)
 	if err != nil || !exists {
 		return nil, err
 	}
@@ -52,7 +52,7 @@ func consumeIssueUpdatedActivities(ctx context.Context, queries *db.Queries, eve
 		return nil, fmt.Errorf("decode issue-updated activity payload")
 	}
 	issue := payload.Issue
-	exists, err := issueExistsForProjection(ctx, queries, issue)
+	_, exists, err := getIssueForProjection(ctx, queries, issue)
 	if err != nil || !exists {
 		return nil, err
 	}
@@ -150,7 +150,6 @@ func activityCreatedEvent(original events.Event, activity db.ActivityLog) events
 	if activity.ActorType.Valid {
 		actorType = activity.ActorType.String
 	}
-	action := activity.Action
 	return events.Event{
 		Type:        protocol.EventActivityCreated,
 		WorkspaceID: original.WorkspaceID,
@@ -163,7 +162,7 @@ func activityCreatedEvent(original events.Event, activity db.ActivityLog) events
 				"id":         util.UUIDToString(activity.ID),
 				"actor_type": actorType,
 				"actor_id":   util.UUIDToString(activity.ActorID),
-				"action":     action,
+				"action":     activity.Action,
 				"details":    json.RawMessage(activity.Details),
 				"created_at": util.TimestampToString(activity.CreatedAt),
 			},
