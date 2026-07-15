@@ -1,11 +1,11 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"runtime"
 
+	"github.com/multica-ai/multica/server/internal/cli"
 	"github.com/spf13/cobra"
 )
 
@@ -31,9 +31,7 @@ func runVersion(cmd *cobra.Command, _ []string) error {
 			"os":      runtime.GOOS,
 			"arch":    runtime.GOARCH,
 		}
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(info)
+		return cli.PrintJSON(os.Stdout, info)
 	}
 
 	fmt.Printf("multica %s (commit: %s, built: %s)\n", version, commit, date)

@@ -82,7 +82,6 @@ func runAttachmentDownload(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Fprintln(os.Stderr, "Downloaded:", abs)
 
-	// Also print as JSON for --output json compatibility.
 	return cli.PrintJSON(os.Stdout, map[string]any{
 		"id":       strVal(att, "id"),
 		"filename": filename,
