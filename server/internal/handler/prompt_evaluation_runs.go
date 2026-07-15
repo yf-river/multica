@@ -547,13 +547,11 @@ func (h *Handler) CreatePromptEvaluationEvidenceSnapshot(w http.ResponseWriter, 
 		writeError(w, http.StatusInternalServerError, "failed to create prompt evaluation evidence snapshot")
 		return
 	}
-	tx, err := h.TxStarter.Begin(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to start prompt evaluation evidence snapshot transaction")
+	tx, qtx, ok := h.beginResourceCreateTransaction(w, r.Context(), "failed to start prompt evaluation evidence snapshot transaction")
+	if !ok {
 		return
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
-	qtx := h.Queries.WithTx(tx)
 	if !handleResourceCreateReservation(
 		w, r.Context(), tx,
 		reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, actorID, resourceTypePromptEvidenceSnapshot, idempotencyKey, requestHash),
@@ -654,13 +652,11 @@ func (h *Handler) CreatePromptEvaluationAssetEvidenceSnapshots(w http.ResponseWr
 		}
 		paramsByRun[run.ID] = params
 	}
-	tx, err := h.TxStarter.Begin(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to start asset evidence snapshot transaction")
+	tx, qtx, ok := h.beginResourceCreateTransaction(w, r.Context(), "failed to start asset evidence snapshot transaction")
+	if !ok {
 		return
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
-	qtx := h.Queries.WithTx(tx)
 	if !handleResourceCreateReservation(
 		w, r.Context(), tx,
 		reserveResourceCreateRequest(r.Context(), qtx, asset.WorkspaceID, actorID, resourceTypePromptEvidenceBatch, idempotencyKey, requestHash),

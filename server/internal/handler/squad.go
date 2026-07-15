@@ -878,13 +878,11 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx, err := h.TxStarter.Begin(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to start squad create")
+	tx, qtx, ok := h.beginResourceCreateTransaction(w, r.Context(), "failed to start squad create")
+	if !ok {
 		return
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
-	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, wsUUID, member.UserID, resourceTypeSquad, idempotencyKey, requestHash)
 	if !handleResourceCreateReservation(
 		w, r.Context(), tx, err, loadReplay,

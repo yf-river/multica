@@ -173,13 +173,11 @@ func (h *Handler) CreatePromptEvaluationOptimizationCandidate(w http.ResponseWri
 		candidateMetrics["候选优先级依据"] = "基于实验维度评分摘要自动计算，待执行或低分维度优先处理。"
 	}
 	candidateContent, rationale := buildPromptEvaluationCandidateContent(prompt, run, sourceSummary)
-	tx, err := h.TxStarter.Begin(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to start optimization candidate transaction")
+	tx, qtx, ok := h.beginResourceCreateTransaction(w, r.Context(), "failed to start optimization candidate transaction")
+	if !ok {
 		return
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
-	qtx := h.Queries.WithTx(tx)
 	if !handleResourceCreateReservation(
 		w, r.Context(), tx,
 		reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, requestActorID, resourceTypePromptCandidate, idempotencyKey, requestHash),
@@ -336,13 +334,11 @@ func (h *Handler) PublishPromptEvaluationOptimizationCandidate(w http.ResponseWr
 		writeValidationLookupError(w, err, "source prompt not found in this workspace", "source prompt", "prompt_id", uuidToString(candidate.PromptID))
 		return
 	}
-	tx, err := h.TxStarter.Begin(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to start optimization candidate publish transaction")
+	tx, qtx, ok := h.beginResourceCreateTransaction(w, r.Context(), "failed to start optimization candidate publish transaction")
+	if !ok {
 		return
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
-	qtx := h.Queries.WithTx(tx)
 	if !handleResourceCreateReservation(
 		w, r.Context(), tx,
 		reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, requestActorID, resourceTypePromptPublish, idempotencyKey, requestHash),
@@ -563,13 +559,11 @@ func (h *Handler) RejectPromptEvaluationOptimizationCandidate(w http.ResponseWri
 		writeError(w, http.StatusConflict, "only 待确认 optimization candidates can be rejected")
 		return
 	}
-	tx, err := h.TxStarter.Begin(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to start optimization candidate reject transaction")
+	tx, qtx, ok := h.beginResourceCreateTransaction(w, r.Context(), "failed to start optimization candidate reject transaction")
+	if !ok {
 		return
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
-	qtx := h.Queries.WithTx(tx)
 	if !handleResourceCreateReservation(
 		w, r.Context(), tx,
 		reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, requestActorID, resourceTypePromptReject, idempotencyKey, requestHash),

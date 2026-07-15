@@ -914,13 +914,11 @@ func (h *Handler) CreatePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 	if handleResourceCreateReplay(w, http.StatusCreated, loadReplay, writeReplayError) {
 		return
 	}
-	tx, err := h.TxStarter.Begin(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to start prompt evaluation case transaction")
+	tx, qtx, ok := h.beginResourceCreateTransaction(w, r.Context(), "failed to start prompt evaluation case transaction")
+	if !ok {
 		return
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
-	qtx := h.Queries.WithTx(tx)
 	if !handleResourceCreateReservation(
 		w, r.Context(), tx,
 		reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, actorID, resourceTypePromptEvalCase, idempotencyKey, requestHash),

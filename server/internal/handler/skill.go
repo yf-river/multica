@@ -381,13 +381,11 @@ func (h *Handler) CreateSkill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx, err := h.TxStarter.Begin(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to start skill create")
+	tx, qtx, ok := h.beginResourceCreateTransaction(w, r.Context(), "failed to start skill create")
+	if !ok {
 		return
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
-	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, creatorUUID, resourceTypeSkill, idempotencyKey, requestHash)
 	if !handleResourceCreateReservation(
 		w, r.Context(), tx, err, loadReplay,

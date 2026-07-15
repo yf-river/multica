@@ -184,6 +184,19 @@ func handleResourceCreateReplay[T any](
 	return true
 }
 
+func (h *Handler) beginResourceCreateTransaction(
+	w http.ResponseWriter,
+	ctx context.Context,
+	errorMessage string,
+) (pgx.Tx, *db.Queries, bool) {
+	tx, err := h.TxStarter.Begin(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, errorMessage)
+		return nil, nil, false
+	}
+	return tx, h.Queries.WithTx(tx), true
+}
+
 func loadReplayAfterReservationConflict[T any](
 	ctx context.Context,
 	tx pgx.Tx,

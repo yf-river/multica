@@ -454,13 +454,11 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx, err := h.TxStarter.Begin(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to start upload")
+	tx, qtx, ok := h.beginResourceCreateTransaction(w, r.Context(), "failed to start upload")
+	if !ok {
 		return
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
-	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, params.WorkspaceID, operationActorID, resourceTypeAttachment, idempotencyKey, requestHash)
 	if !handleResourceCreateReservation(
 		w, r.Context(), tx, err,

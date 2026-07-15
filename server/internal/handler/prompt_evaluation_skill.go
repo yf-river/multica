@@ -484,13 +484,11 @@ func (h *Handler) ApplyPromptEvaluationSkillCandidate(w http.ResponseWriter, r *
 	if handleResourceCreateReplay(w, http.StatusOK, loadReplay, writeReplayError) {
 		return
 	}
-	tx, err := h.TxStarter.Begin(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to start skill apply transaction")
+	tx, qtx, ok := h.beginResourceCreateTransaction(w, r.Context(), "failed to start skill apply transaction")
+	if !ok {
 		return
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
-	qtx := h.Queries.WithTx(tx)
 	if !handleResourceCreateReservation(
 		w, r.Context(), tx,
 		reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, actorID, resourceTypePromptSkillApply, idempotencyKey, requestHash),
@@ -689,13 +687,11 @@ func (h *Handler) PreparePromptEvaluationSkillReEvalAsset(w http.ResponseWriter,
 	if description == "" {
 		description = "Skill candidate re-eval suite generated from approved git-history case drafts."
 	}
-	tx, err := h.TxStarter.Begin(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to start skill re-eval transaction")
+	tx, qtx, ok := h.beginResourceCreateTransaction(w, r.Context(), "failed to start skill re-eval transaction")
+	if !ok {
 		return
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
-	qtx := h.Queries.WithTx(tx)
 	if !handleResourceCreateReservation(
 		w, r.Context(), tx,
 		reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, requestActorID, resourceTypePromptReEvalAsset, idempotencyKey, requestHash),
@@ -871,13 +867,11 @@ func (h *Handler) RunPromptEvaluationSkillReEval(w http.ResponseWriter, r *http.
 		return
 	}
 	result := buildPromptEvaluationRunResult(asset, prompt, payload, cases)
-	tx, err := h.TxStarter.Begin(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to start skill re-eval run")
+	tx, qtx, ok := h.beginResourceCreateTransaction(w, r.Context(), "failed to start skill re-eval run")
+	if !ok {
 		return
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
-	qtx := h.Queries.WithTx(tx)
 	if !handleResourceCreateReservation(
 		w, r.Context(), tx,
 		reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, requestActorID, resourceTypePromptLocalRun, idempotencyKey, requestHash),

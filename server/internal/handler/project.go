@@ -388,13 +388,11 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 	// Project, optional resources, and the exact replay response share one
 	// transaction. This is deliberately the only create path: a response lost
 	// after commit can be retried without creating a duplicate Project.
-	tx, err := h.TxStarter.Begin(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to start transaction")
+	tx, qtx, ok := h.beginResourceCreateTransaction(w, r.Context(), "failed to start transaction")
+	if !ok {
 		return
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
-	qtx := h.Queries.WithTx(tx)
 
 	err = reserveResourceCreateRequest(r.Context(), qtx, wsUUID, actorID, resourceTypeProject, idempotencyKey, requestHash)
 	if !handleResourceCreateReservation(

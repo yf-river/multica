@@ -861,13 +861,11 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tx, err := h.TxStarter.Begin(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to start agent create")
+	tx, qtx, ok := h.beginResourceCreateTransaction(w, r.Context(), "failed to start agent create")
+	if !ok {
 		return
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
-	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, wsUUID, operationActorID, resourceTypeAgent, idempotencyKey, requestHash)
 	if !handleResourceCreateReservation(
 		w, r.Context(), tx, err, loadReplay,

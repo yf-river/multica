@@ -592,13 +592,11 @@ func (h *Handler) CreateProjectResource(w http.ResponseWriter, r *http.Request) 
 		Label:        label,
 		CreatedBy:    creator,
 	}
-	tx, err := h.TxStarter.Begin(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to create project resource")
+	tx, qtx, ok := h.beginResourceCreateTransaction(w, r.Context(), "failed to create project resource")
+	if !ok {
 		return
 	}
 	defer func() { _ = tx.Rollback(r.Context()) }()
-	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, project.WorkspaceID, creator, resourceTypeProjectResource, idempotencyKey, requestHash)
 	if !handleResourceCreateReservation(
 		w, r.Context(), tx, err, loadReplay,
