@@ -1,6 +1,6 @@
-export type AgentStatus = "idle" | "working" | "blocked" | "error" | "offline";
+type AgentStatus = "idle" | "working" | "blocked" | "error" | "offline";
 
-export type AgentRuntimeMode = "local" | "cloud";
+type AgentRuntimeMode = "local" | "cloud";
 
 export type ResourceScope = "personal" | "workspace";
 
@@ -478,7 +478,7 @@ export interface RuntimeModel {
   thinking?: RuntimeModelThinking;
 }
 
-export interface RuntimeModelThinking {
+interface RuntimeModelThinking {
   /** Levels the user is allowed to pick for this model. */
   supported_levels: RuntimeModelThinkingLevel[];
 }
@@ -493,7 +493,7 @@ export interface RuntimeModelThinkingLevel {
   description?: string;
 }
 
-export type RuntimeModelListStatus =
+type RuntimeModelListStatus =
   | "pending"
   | "running"
   | "completed"
@@ -520,7 +520,7 @@ export interface RuntimeModelsResult {
   supported: boolean;
 }
 
-export type RuntimeLocalSkillStatus =
+type RuntimeLocalSkillStatus =
   | "pending"
   | "running"
   | "completed"
@@ -528,7 +528,7 @@ export type RuntimeLocalSkillStatus =
   | "failed"
   | "timeout";
 
-export type RuntimeLocalSkillImportAction = "overwrite";
+type RuntimeLocalSkillImportAction = "overwrite";
 
 export interface RuntimeLocalSkillImportConflict {
   existing_skill_id: string;

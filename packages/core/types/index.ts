@@ -1,16 +1,13 @@
-export type { Issue, IssueStatus, IssuePriority, IssueAssigneeType, IssueMetadata, IssueMetadataValue, IssueReaction } from "./issue";
+export type { Issue, IssueStatus, IssuePriority, IssueAssigneeType, IssueMetadata, IssueReaction } from "./issue";
 export type {
   AgentTaskArtifact,
   IssueExecutionNode,
   IssueExecutionTreeResponse,
   IssueTimelineNode,
-  IssueTimelineNodeType,
   IssueTimelineSummary,
 } from "./issue-execution";
 export type {
   Agent,
-  AgentStatus,
-  AgentRuntimeMode,
   ResourceScope,
   AgentTask,
   AgentActivityBucket,
@@ -39,13 +36,9 @@ export type {
   DashboardAgentRunTime,
   DashboardRunTimeDaily,
   RuntimeModel,
-  RuntimeModelThinking,
   RuntimeModelThinkingLevel,
   RuntimeModelListRequest,
-  RuntimeModelListStatus,
   RuntimeModelsResult,
-  RuntimeLocalSkillStatus,
-  RuntimeLocalSkillImportAction,
   RuntimeLocalSkillImportConflict,
   RuntimeLocalSkillSummary,
   RuntimeLocalSkillListRequest,
@@ -61,8 +54,6 @@ export { DEFAULT_WORKSPACE_SETTINGS } from "./workspace";
 export type { Workspace, WorkspaceSettings, WorkspaceRepo, WorkspaceRepoProbeResponse, MemberRole, User, MemberWithUser } from "./workspace";
 export type {
   ExternalCredentialProvider,
-  ExternalCredentialStatus,
-  ExternalCredentialSecretBinding,
   ExternalCredentialProfile,
   CreateExternalCredentialProfileRequest,
   UpdateExternalCredentialProfileRequest,
@@ -70,8 +61,8 @@ export type {
   TestExternalCredentialProfileResponse,
 } from "./external-credential";
 export type { InboxItem, InboxItemType } from "./inbox";
-export type { NotificationGroupKey, NotificationGroupValue, NotificationPreferences } from "./notification-preference";
-export type { Comment, CommentType, CommentAuthorType, CommentTriggerPreview, CommentTriggerPreviewAgent, CommentTriggerSource, Reaction } from "./comment";
+export type { NotificationGroupKey, NotificationPreferences } from "./notification-preference";
+export type { Comment, CommentType, CommentAuthorType, CommentTriggerPreview, CommentTriggerPreviewAgent, Reaction } from "./comment";
 export type { Label, CreateLabelRequest, UpdateLabelRequest } from "./label";
 export type {
   TimelineEntry,
@@ -102,8 +93,6 @@ export type {
   UpdateProjectRequest,
   ProjectResource,
   ProjectResourceType,
-  ProjectResourceRef,
-  GithubRepoResourceRef,
   GongfengRepoResourceRef,
   LocalDirectoryResourceRef,
   CreateProjectResourceRequest,
@@ -114,7 +103,6 @@ export type {
   PromptLibraryItem,
   PromptLibraryVersion,
   PromptLibraryTrial,
-  PromptLibraryStatus,
   ListPromptLibraryItemsParams,
   CreatePromptLibraryItemRequest,
   CreatePromptLibraryVersionRequest,
@@ -149,11 +137,8 @@ export type {
   ApplyPromptEvaluationSkillCandidateRequest,
   PreparePromptEvaluationSkillReEvalRequest,
   RunPromptEvaluationSkillReEvalRequest,
-  PromptEvaluationCaseSortBy,
   RejectPromptEvaluationOptimizationCandidateRequest,
   PromptEvaluationAssetType,
-  PromptEvaluationAssetStatus,
-  PromptEvaluationCaseStatus,
   ListPromptEvaluationAssetsParams,
   ListPromptEvaluationRunsParams,
   ListPromptEvaluationCasesParams,
@@ -167,8 +152,6 @@ export type {
 } from "./prompt-evaluation";
 export type { SquadSOPRun, ObservabilitySummary } from "./sop";
 export type {
-  GitHubInstallation,
-  GitHubMergeableState,
   GitHubPullRequest,
   GitHubPullRequestChecksConclusion,
   GitHubPullRequestState,
@@ -184,15 +167,11 @@ export type {
 } from "./lark";
 export type {
   Autopilot,
-  AutopilotStatus,
   AutopilotExecutionMode,
   AutopilotAssigneeType,
   AutopilotSubscriber,
   AutopilotTrigger,
-  AutopilotTriggerKind,
   AutopilotRun,
-  AutopilotRunStatus,
-  AutopilotRunSource,
   WebhookEventFilter,
   CreateAutopilotRequest,
   CreateAutopilotResponse,
@@ -207,7 +186,6 @@ export type {
 export type {
   Squad,
   SquadMember,
-  SquadMemberType,
   SquadScope,
   SquadMemberPreview,
   CreateSquadRequest,

@@ -6,6 +6,4 @@ export type NotificationGroupKey =
   | "agent_activity"
   | "system_notifications";
 
-export type NotificationGroupValue = "all" | "muted";
-
-export type NotificationPreferences = Partial<Record<NotificationGroupKey, NotificationGroupValue>>;
+export type NotificationPreferences = Partial<Record<NotificationGroupKey, "all" | "muted">>;

@@ -1,4 +1,4 @@
-export type SquadMemberType = "agent" | "member";
+type SquadMemberType = "agent" | "member";
 export type SquadScope = "workspace" | "personal";
 
 export interface SquadMemberPreview {

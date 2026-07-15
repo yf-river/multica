@@ -55,7 +55,7 @@ export type ProjectResourceType =
   | "local_directory"
   | (string & {});
 
-export interface GithubRepoResourceRef {
+interface GithubRepoResourceRef {
   url: string;
   default_branch_hint?: string;
 }
@@ -83,7 +83,7 @@ export interface GongfengRepoResourceRef {
   title?: string;
 }
 
-export type ProjectResourceRef =
+type ProjectResourceRef =
   | GithubRepoResourceRef
   | GongfengRepoResourceRef
   | LocalDirectoryResourceRef

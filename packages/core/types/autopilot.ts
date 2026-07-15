@@ -1,4 +1,4 @@
-export type AutopilotStatus = "active" | "paused" | "archived";
+type AutopilotStatus = "active" | "paused" | "archived";
 
 export type AutopilotExecutionMode = "create_issue" | "run_only";
 
@@ -7,20 +7,20 @@ export type AutopilotExecutionMode = "create_issue" | "run_only";
 // squad(id) and dispatch resolves to squad.leader_id at run time.
 export type AutopilotAssigneeType = "agent" | "squad";
 
-export type AutopilotTriggerKind = "schedule" | "webhook";
+type AutopilotTriggerKind = "schedule" | "webhook";
 
 // `skipped` is emitted by the backend pre-flight admission check
 // (assignee runtime offline at dispatch time, MUL-1899). The frontend MUST
 // handle it explicitly — falling through to a generic case used to show
 // the run as still-pending which masked the no-op.
-export type AutopilotRunStatus =
+type AutopilotRunStatus =
   | "issue_created"
   | "running"
   | "completed"
   | "failed"
   | "skipped";
 
-export type AutopilotRunSource = "schedule" | "manual" | "webhook";
+type AutopilotRunSource = "schedule" | "manual" | "webhook";
 
 export interface Autopilot {
   id: string;

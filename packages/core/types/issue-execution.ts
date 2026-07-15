@@ -22,7 +22,7 @@ export interface IssueExecutionNode {
   children: IssueExecutionNode[];
 }
 
-export type IssueTimelineNodeType =
+type IssueTimelineNodeType =
   | "agent_task"
   | "squad_step"
   | "tool_call"

@@ -27,8 +27,7 @@ export interface IssueReaction {
  * present in responses (empty object when unset) so reads don't need a
  * nil guard on the parent field.
  */
-export type IssueMetadataValue = string | number | boolean;
-export type IssueMetadata = Record<string, IssueMetadataValue>;
+export type IssueMetadata = Record<string, string | number | boolean>;
 
 export interface Issue {
   id: string;

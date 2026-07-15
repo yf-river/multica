@@ -2,9 +2,9 @@ import type { TaskMessagePayload } from "./events";
 import type { TaskTraceEvent } from "./agent";
 
 export type PromptEvaluationAssetType = "数据集" | "测试套件";
-export type PromptEvaluationAssetStatus = "启用" | "归档";
-export type PromptEvaluationCaseStatus = PromptEvaluationAssetStatus | "draft" | "approved" | "active";
-export type PromptEvaluationCaseSortBy = "case_index" | "case_name" | "source" | "created_at" | "updated_at";
+type PromptEvaluationAssetStatus = "启用" | "归档";
+type PromptEvaluationCaseStatus = PromptEvaluationAssetStatus | "draft" | "approved" | "active";
+type PromptEvaluationCaseSortBy = "case_index" | "case_name" | "source" | "created_at" | "updated_at";
 export type PromptEvaluationOptimizationCandidateStatus = "待确认" | "已发布" | "已拒绝";
 
 export interface PromptEvaluationAsset {

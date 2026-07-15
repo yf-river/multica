@@ -1,5 +1,3 @@
-export type PromptLibraryStatus = "启用" | "归档";
-
 export interface PromptLibraryItem {
   id: string;
   name: string;
@@ -31,7 +29,7 @@ export interface PromptLibraryTrial {
 export interface ListPromptLibraryItemsParams {
   project_id?: string;
   prompt_type?: string;
-  status?: PromptLibraryStatus;
+  status?: "启用" | "归档";
 }
 
 export interface CreatePromptLibraryItemRequest {

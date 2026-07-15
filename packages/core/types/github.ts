@@ -5,13 +5,7 @@ export type GitHubPullRequestState = "open" | "closed" | "merged" | "draft";
  * yet (e.g. PR just opened, or repository has no CI configured). */
 export type GitHubPullRequestChecksConclusion = "passed" | "failed" | "pending";
 
-/** Raw mirror of GitHub's `mergeable_state`. The UI only surfaces `clean` and
- * `dirty`; the other values (`blocked`, `behind`, `unstable`, `unknown`,
- * `has_hooks`, `draft`) round-trip but render as unknown to avoid asserting
- * "conflicts" for blocking reasons that aren't actual conflicts. */
-export type GitHubMergeableState = string;
-
-export interface GitHubInstallation {
+interface GitHubInstallation {
   id: string;
   account_login: string;
 }
@@ -25,7 +19,8 @@ export interface GitHubPullRequest {
   state: GitHubPullRequestState;
   html_url: string;
   author_login: string | null;
-  mergeable_state: GitHubMergeableState | null;
+  /** Raw GitHub value. The UI only treats `clean` and `dirty` as known. */
+  mergeable_state: string | null;
   checks_conclusion: GitHubPullRequestChecksConclusion | null;
   checks_passed: number;
   checks_failed: number;

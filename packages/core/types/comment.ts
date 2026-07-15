@@ -30,7 +30,7 @@ export interface Comment {
   source_task_id?: string | null;
 }
 
-export type CommentTriggerSource =
+type CommentTriggerSource =
   | "issue_assignee"
   | "mention_agent"
   | "mention_squad_leader";

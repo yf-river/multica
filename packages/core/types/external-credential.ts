@@ -1,12 +1,12 @@
 export type ExternalCredentialProvider = "tapd" | "gongfeng";
 
-export type ExternalCredentialStatus =
+type ExternalCredentialStatus =
   | "unverified"
   | "verified"
   | "failed"
   | "disabled";
 
-export interface ExternalCredentialSecretBinding {
+interface ExternalCredentialSecretBinding {
   configured: boolean;
   mode: "secret_ref" | "encrypted_secret" | "missing" | (string & {});
   hint?: string;
