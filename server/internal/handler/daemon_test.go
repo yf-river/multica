@@ -1217,6 +1217,20 @@ func TestListTaskMessagesByUser_InvalidTaskIDReturnsBadRequest(t *testing.T) {
 	}
 }
 
+func TestSanitizeTaskMessageInputRedactsNestedSecrets(t *testing.T) {
+	input := map[string]any{
+		"nested": map[string]any{
+			"token": "sk-abcdefghijklmnopqrstuvwxyz",
+		},
+	}
+
+	sanitized := sanitizeTaskMessageInput(input)
+	nested := sanitized["nested"].(map[string]any)
+	if got := nested["token"]; got != "[REDACTED API KEY]" {
+		t.Fatalf("nested token = %q, want redacted", got)
+	}
+}
+
 func TestReportTaskMessagesSanitizesNullBytesBeforePersisting(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")

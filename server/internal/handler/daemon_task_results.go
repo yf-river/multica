@@ -370,7 +370,7 @@ func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 		msg.Tool = sanitizePostgresText(msg.Tool)
 		msg.Content = sanitizePostgresText(redact.Text(msg.Content))
 		msg.Output = sanitizePostgresText(redact.Text(msg.Output))
-		msg.Input = sanitizeTaskMessageInput(redact.InputMap(msg.Input))
+		msg.Input = sanitizeTaskMessageInput(msg.Input)
 
 		var inputJSON []byte
 		if msg.Input != nil {
@@ -445,7 +445,7 @@ func sanitizeTaskMessageInput(input map[string]any) map[string]any {
 func sanitizeTaskMessageValue(value any) any {
 	switch typed := value.(type) {
 	case string:
-		return sanitizePostgresText(typed)
+		return sanitizePostgresText(redact.Text(typed))
 	case map[string]any:
 		out := make(map[string]any, len(typed))
 		for key, item := range typed {

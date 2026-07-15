@@ -173,36 +173,6 @@ func TestRedactPasswordEnvVar(t *testing.T) {
 	}
 }
 
-func TestInputMap(t *testing.T) {
-	t.Parallel()
-	m := map[string]any{
-		"command":   "echo sk-proj-abc123def456ghi789jkl012mno345",
-		"file_path": "/tmp/test.txt",
-		"count":     42,
-	}
-	got := InputMap(m)
-	if s, ok := got["command"].(string); ok {
-		if strings.Contains(s, "sk-proj") {
-			t.Fatalf("API key in input map not redacted: %s", s)
-		}
-	}
-	// Non-string values preserved
-	if got["count"] != 42 {
-		t.Fatalf("non-string value altered: %v", got["count"])
-	}
-	// Clean strings unchanged
-	if got["file_path"] != "/tmp/test.txt" {
-		t.Fatalf("clean string altered: %v", got["file_path"])
-	}
-}
-
-func TestInputMapNil(t *testing.T) {
-	t.Parallel()
-	if got := InputMap(nil); got != nil {
-		t.Fatalf("expected nil, got: %v", got)
-	}
-}
-
 func TestRedactMultipleSecrets(t *testing.T) {
 	t.Parallel()
 	input := "Keys: AKIAIOSFODNN7EXAMPLE and ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmn"
