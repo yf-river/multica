@@ -2,7 +2,7 @@ import { Activity, useEffect } from "react";
 import { RouterProvider } from "react-router-dom";
 import { useActiveGroup } from "@/stores/tab-store";
 import { TabNavigationProvider } from "@/platform/navigation";
-import { useTabRouterSync } from "@/hooks/use-tab-router-sync";
+import { useTabRouterSync } from "@/hooks/use-tab-history";
 import { useTabScrollRestore } from "@/hooks/use-tab-scroll-restore";
 import type { Tab } from "@/stores/tab-store";
 
