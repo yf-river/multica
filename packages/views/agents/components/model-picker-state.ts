@@ -23,11 +23,21 @@ export function useRuntimeModelPickerState({
   );
 
   const trimmedSearch = search.trim();
+  const filteredModels = useMemo(() => {
+    const needle = trimmedSearch.toLowerCase();
+    if (!needle) return models;
+    return models.filter(
+      (model) =>
+        model.id.toLowerCase().includes(needle) ||
+        model.label.toLowerCase().includes(needle),
+    );
+  }, [models, trimmedSearch]);
   const exactMatch = hasExactModelMatch(models, trimmedSearch);
   const canCreate = trimmedSearch.length > 0 && !exactMatch;
 
   return {
     canCreate,
+    filteredModels,
     models,
     modelsQuery,
     search,

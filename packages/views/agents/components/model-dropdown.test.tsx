@@ -10,6 +10,7 @@ import { ModelDropdown } from "./model-dropdown";
 const pickerState = vi.hoisted(() => ({
   current: {
     canCreate: false,
+    filteredModels: [],
     models: [],
     modelsQuery: { isLoading: true, isError: false },
     search: "",
