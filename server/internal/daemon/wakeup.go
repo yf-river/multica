@@ -79,7 +79,7 @@ func (d *Daemon) runTaskWakeupConnection(ctx context.Context, runtimeIDs []strin
 	}
 
 	headers := http.Header{}
-	if token := d.client.Token(); token != "" {
+	if token := d.client.token; token != "" {
 		headers.Set("Authorization", "Bearer "+token)
 	}
 	if d.client.platform != "" {

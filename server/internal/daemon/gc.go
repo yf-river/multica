@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"os/exec"
@@ -263,7 +264,7 @@ func (d *Daemon) gcDecisionIssue(ctx context.Context, taskDir string, meta *exec
 		return d.orphanByMTime(taskDir, "empty issue id")
 	}
 
-	status, err := d.client.GetIssueGCCheck(ctx, meta.IssueID)
+	status, err := d.client.getGCStatus(ctx, fmt.Sprintf("/api/daemon/issues/%s/gc-check", meta.IssueID))
 	if err != nil {
 		if isAccessNotFound(err) {
 			// 404 is ambiguous: server returns it for both "issue deleted"
@@ -307,7 +308,7 @@ func (d *Daemon) gcDecisionChat(ctx context.Context, taskDir string, meta *exece
 		return d.orphanByMTime(taskDir, "empty chat session id")
 	}
 
-	status, err := d.client.GetChatSessionGCCheck(ctx, meta.ChatSessionID)
+	status, err := d.client.getGCStatus(ctx, fmt.Sprintf("/api/daemon/chat-sessions/%s/gc-check", meta.ChatSessionID))
 	if err != nil {
 		if isAccessNotFound(err) {
 			// 404 means the chat_session row is gone — DeleteChatSession is
@@ -357,7 +358,7 @@ func (d *Daemon) gcDecisionAutopilotRun(ctx context.Context, taskDir string, met
 		return d.orphanByMTime(taskDir, "empty autopilot run id")
 	}
 
-	status, err := d.client.GetAutopilotRunGCCheck(ctx, meta.AutopilotRunID)
+	status, err := d.client.getGCStatus(ctx, fmt.Sprintf("/api/daemon/autopilot-runs/%s/gc-check", meta.AutopilotRunID))
 	if err != nil {
 		if isAccessNotFound(err) {
 			return d.orphanByMTime(taskDir, "autopilot run not accessible")
@@ -412,7 +413,7 @@ func (d *Daemon) gcDecisionQuickCreate(ctx context.Context, taskDir string, meta
 		return d.orphanByMTime(taskDir, "empty task id")
 	}
 
-	status, err := d.client.GetTaskGCCheck(ctx, meta.TaskID)
+	status, err := d.client.getGCStatus(ctx, fmt.Sprintf("/api/daemon/tasks/%s/gc-check", meta.TaskID))
 	if err != nil {
 		if isAccessNotFound(err) {
 			// Task row was hard-deleted, or token can't see it. Either way,

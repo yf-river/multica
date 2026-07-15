@@ -8,13 +8,8 @@ import (
 	"testing"
 )
 
-// TestReportModelListResult_RetriesOn500AndEventuallySucceeds pins the
-// regression GPT-Boy flagged on PR #2022: handleModelList used to call
-// d.client.ReportModelListResult directly and swallow any 5xx, leaving the
-// pending request stranded in "running" until its 60s server-side timeout —
-// which is exactly the failure mode the multi-node store fix was meant to
-// eliminate. With the retry helper in place a transient store failure on
-// the server side gets re-tried until it lands.
+// TestReportModelListResult_RetriesOn500AndEventuallySucceeds protects async
+// report delivery across transient server failures.
 func TestReportModelListResult_RetriesOn500AndEventuallySucceeds(t *testing.T) {
 	withFastLocalSkillReportBackoffs(t)
 

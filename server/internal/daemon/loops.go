@@ -454,7 +454,7 @@ var runtimeReportBackoffs = []time.Duration{0, 500 * time.Millisecond, 2 * time.
 // on transient failures. See reportRuntimeResultWithRetry for semantics.
 func (d *Daemon) reportLocalSkillListResult(ctx context.Context, rt Runtime, requestID string, payload map[string]any) {
 	d.reportRuntimeResultWithRetry(ctx, "local_skill_list", rt.ID, requestID, func(ctx context.Context) error {
-		return d.client.ReportLocalSkillListResult(ctx, rt.ID, requestID, payload)
+		return d.client.postJSON(ctx, fmt.Sprintf("/api/daemon/runtimes/%s/local-skills/%s/result", rt.ID, requestID), payload, nil)
 	})
 }
 
@@ -462,31 +462,23 @@ func (d *Daemon) reportLocalSkillListResult(ctx context.Context, rt Runtime, req
 // retry on transient failures.
 func (d *Daemon) reportLocalSkillImportResult(ctx context.Context, rt Runtime, requestID string, payload map[string]any) {
 	d.reportRuntimeResultWithRetry(ctx, "local_skill_import", rt.ID, requestID, func(ctx context.Context) error {
-		return d.client.ReportLocalSkillImportResult(ctx, rt.ID, requestID, payload)
+		return d.client.postJSON(ctx, fmt.Sprintf("/api/daemon/runtimes/%s/local-skills/import/%s/result", rt.ID, requestID), payload, nil)
 	})
 }
 
-// reportModelListResult delivers a model-list report to the server with retry
-// on transient failures. Without this the daemon used to fire once and
-// swallow any 5xx, leaving the request stranded in "running" on the server
-// until its 60s timeout — defeating the multi-node store fix.
+// reportModelListResult delivers a model-list report with transient retries.
 func (d *Daemon) reportModelListResult(ctx context.Context, rt Runtime, requestID string, payload map[string]any) {
 	d.reportRuntimeResultWithRetry(ctx, "model_list", rt.ID, requestID, func(ctx context.Context) error {
-		return d.client.ReportModelListResult(ctx, rt.ID, requestID, payload)
+		return d.client.postJSON(ctx, fmt.Sprintf("/api/daemon/runtimes/%s/models/%s/result", rt.ID, requestID), payload, nil)
 	})
 }
 
 // reportRuntimeResultWithRetry retries `fn` on 5xx / network errors and
 // stops on success, 4xx, or after exhausting runtimeReportBackoffs.
 //
-// Why this exists: the server persists the report through a Redis / DB
-// write; on a transient store failure it correctly returns 500. Without a
-// client-side retry the daemon would fire once, swallow the error, and the
-// pending request stays in "running" on the server until its timeout — which
-// is exactly the "daemon did not respond" failure mode the multi-node store
-// fix was meant to eliminate. 4xx is treated as permanent (request-not-found,
-// cross-workspace token rejected, bad body) — retrying those just wastes
-// heartbeat cycles.
+// The server persists reports through Redis or the database, so transient
+// store failures are retryable. Request, authorization and validation errors
+// are permanent and stop immediately.
 func (d *Daemon) reportRuntimeResultWithRetry(ctx context.Context, kind, runtimeID, requestID string, fn func(context.Context) error) {
 	var lastErr error
 	for attempt, wait := range runtimeReportBackoffs {

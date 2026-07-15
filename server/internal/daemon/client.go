@@ -132,11 +132,6 @@ func (c *Client) SetToken(token string) {
 	c.token = token
 }
 
-// Token returns the current auth token.
-func (c *Client) Token() string {
-	return c.token
-}
-
 func (c *Client) ClaimTask(ctx context.Context, runtimeID string) (*Task, error) {
 	var resp struct {
 		Task *Task `json:"task"`
@@ -262,21 +257,6 @@ func (c *Client) SendHeartbeat(ctx context.Context, runtimeID string, metadata j
 	return &resp, nil
 }
 
-// ReportModelListResult sends the model-discovery result back to the server.
-func (c *Client) ReportModelListResult(ctx context.Context, runtimeID, requestID string, result map[string]any) error {
-	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/runtimes/%s/models/%s/result", runtimeID, requestID), result, nil)
-}
-
-// ReportLocalSkillListResult sends the runtime-local-skill inventory back to the server.
-func (c *Client) ReportLocalSkillListResult(ctx context.Context, runtimeID, requestID string, result map[string]any) error {
-	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/runtimes/%s/local-skills/%s/result", runtimeID, requestID), result, nil)
-}
-
-// ReportLocalSkillImportResult sends a runtime-local-skill bundle back to the server.
-func (c *Client) ReportLocalSkillImportResult(ctx context.Context, runtimeID, requestID string, result map[string]any) error {
-	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/runtimes/%s/local-skills/import/%s/result", runtimeID, requestID), result, nil)
-}
-
 // WorkspaceInfo holds minimal workspace metadata returned by the API.
 type WorkspaceInfo struct {
 	ID   string `json:"id"`
@@ -313,64 +293,14 @@ func (c *Client) ListWorkspaces(ctx context.Context) ([]WorkspaceInfo, error) {
 	return workspaces, nil
 }
 
-// IssueGCStatus holds the minimal issue info returned by the GC check endpoint.
-type IssueGCStatus struct {
+type gcStatus struct {
 	Status    string    `json:"status"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
-// GetIssueGCCheck returns the status and updated_at of an issue for GC decisions.
-func (c *Client) GetIssueGCCheck(ctx context.Context, issueID string) (*IssueGCStatus, error) {
-	var resp IssueGCStatus
-	if err := c.getJSON(ctx, fmt.Sprintf("/api/daemon/issues/%s/gc-check", issueID), &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-// ChatSessionGCStatus mirrors IssueGCStatus for chat sessions.
-type ChatSessionGCStatus struct {
-	Status    string    `json:"status"`
-	UpdatedAt time.Time `json:"updated_at"`
-}
-
-// GetChatSessionGCCheck returns the status of a chat session for GC decisions.
-// A 404 from this endpoint indicates the session row was hard-deleted (the
-// user explicitly removed it), which the caller treats as an immediate-clean
-// signal.
-func (c *Client) GetChatSessionGCCheck(ctx context.Context, sessionID string) (*ChatSessionGCStatus, error) {
-	var resp ChatSessionGCStatus
-	if err := c.getJSON(ctx, fmt.Sprintf("/api/daemon/chat-sessions/%s/gc-check", sessionID), &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-// AutopilotRunGCStatus carries the only value the GC decision consumes.
-type AutopilotRunGCStatus struct {
-	Status string `json:"status"`
-}
-
-// GetAutopilotRunGCCheck returns the status of an autopilot run for GC decisions.
-func (c *Client) GetAutopilotRunGCCheck(ctx context.Context, runID string) (*AutopilotRunGCStatus, error) {
-	var resp AutopilotRunGCStatus
-	if err := c.getJSON(ctx, fmt.Sprintf("/api/daemon/autopilot-runs/%s/gc-check", runID), &resp); err != nil {
-		return nil, err
-	}
-	return &resp, nil
-}
-
-// TaskGCStatus carries the agent_task_queue status for quick-create cleanup.
-// Quick-create tasks have no separate parent record, so GC keys directly on
-// the task itself.
-type TaskGCStatus struct {
-	Status string `json:"status"`
-}
-
-// GetTaskGCCheck returns the status of an agent task for GC decisions.
-func (c *Client) GetTaskGCCheck(ctx context.Context, taskID string) (*TaskGCStatus, error) {
-	var resp TaskGCStatus
-	if err := c.getJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/gc-check", taskID), &resp); err != nil {
+func (c *Client) getGCStatus(ctx context.Context, path string) (*gcStatus, error) {
+	var resp gcStatus
+	if err := c.getJSON(ctx, path, &resp); err != nil {
 		return nil, err
 	}
 	return &resp, nil
