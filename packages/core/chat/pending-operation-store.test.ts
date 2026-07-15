@@ -3,12 +3,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   replayPendingChatOperation,
-  type PendingChatOperationClient,
-} from "./pending-operation";
-import {
   usePendingChatOperationStore,
-  type PendingChatOperation,
 } from "./pending-operation-store";
+
+type PendingChatOperation = Parameters<
+  ReturnType<typeof usePendingChatOperationStore.getState>["start"]
+>[0];
 
 function operation(overrides: Partial<PendingChatOperation> = {}): PendingChatOperation {
   return {
@@ -75,7 +75,7 @@ describe("pending chat operation store", () => {
 describe("replayPendingChatOperation", () => {
   it("reuses one logical operation id across create and send recovery", async () => {
     const pending = operation({ attachmentIds: ["att-1"] });
-    const client: PendingChatOperationClient = {
+    const client = {
       createChatSession: vi.fn().mockResolvedValue({ id: "session-1" }),
       sendChatMessage: vi.fn().mockResolvedValue({
         message_id: "message-1",
@@ -104,7 +104,7 @@ describe("replayPendingChatOperation", () => {
   });
 
   it("does not send when account cleanup rejects the post-create continuation", async () => {
-    const client: PendingChatOperationClient = {
+    const client = {
       createChatSession: vi.fn().mockResolvedValue({ id: "session-1" }),
       sendChatMessage: vi.fn(),
     };

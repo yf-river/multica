@@ -14,7 +14,7 @@ const DRAFTS_KEY = "multica:chat:drafts";
 /** Draft attachment records per workspace: { [sessionId]: Attachment[] }. */
 const DRAFT_ATTACHMENTS_KEY = "multica:chat:draft-attachments";
 /** Placeholder sessionId for a chat that hasn't been created yet. */
-export const DRAFT_NEW_SESSION = "__new__";
+const DRAFT_NEW_SESSION = "__new__";
 
 /**
  * Draft storage key for an as-yet-uncreated chat with the given agent.
@@ -106,8 +106,8 @@ function writeDraftAttachments(
 
 export const CHAT_MIN_W = 360;
 export const CHAT_MIN_H = 480;
-export const CHAT_DEFAULT_W = 380;
-export const CHAT_DEFAULT_H = 600;
+const CHAT_DEFAULT_W = 380;
+const CHAT_DEFAULT_H = 600;
 
 interface ChatState {
   isOpen: boolean;

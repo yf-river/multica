@@ -4,8 +4,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { defaultStorage } from "../platform/storage";
 import { registerAccountPersistStore } from "../platform/workspace-storage";
-
-export type PendingChatOperationStage = "creating-session" | "sending-message";
+import type { ChatSession, SendChatMessageResponse } from "../types";
 
 /**
  * Durable client intent for one logical send. The operation id is also the
@@ -13,7 +12,7 @@ export type PendingChatOperationStage = "creating-session" | "sending-message";
  * two operations separately). Keeping the full intent lets a reload retry the
  * exact same request instead of asking the user to guess whether it committed.
  */
-export interface PendingChatOperation {
+interface PendingChatOperation {
   id: string;
   accountId: string;
   workspaceId: string;
@@ -22,7 +21,7 @@ export interface PendingChatOperation {
   title: string;
   content: string;
   attachmentIds: string[];
-  stage: PendingChatOperationStage;
+  stage: "creating-session" | "sending-message";
   cancelRequested: boolean;
   createdAt: number;
 }
@@ -101,4 +100,44 @@ export function claimPendingChatOperation(id: string): boolean {
 
 export function releasePendingChatOperation(id: string): void {
   inFlightOperationIds.delete(id);
+}
+
+interface PendingChatOperationClient {
+  createChatSession: (
+    data: { agent_id: string; title?: string },
+    idempotencyKey: string,
+  ) => Promise<ChatSession>;
+  sendChatMessage: (
+    sessionId: string,
+    content: string,
+    idempotencyKey: string,
+    attachmentIds?: string[],
+  ) => Promise<SendChatMessageResponse>;
+}
+
+/** Execute the exact persisted intent; both requests reuse its stable UUID. */
+export async function replayPendingChatOperation(
+  operation: PendingChatOperation,
+  client: PendingChatOperationClient,
+  onSessionCreated: (sessionId: string) => void,
+): Promise<{ sessionId: string; response: SendChatMessageResponse }> {
+  let sessionId = operation.sessionId;
+  if (operation.stage === "creating-session") {
+    const session = await client.createChatSession(
+      { agent_id: operation.agentId, title: operation.title },
+      operation.id,
+    );
+    sessionId = session.id;
+    onSessionCreated(sessionId);
+  }
+  if (!sessionId) {
+    throw new Error("pending chat send has no session id");
+  }
+  const response = await client.sendChatMessage(
+    sessionId,
+    operation.content,
+    operation.id,
+    operation.attachmentIds,
+  );
+  return { sessionId, response };
 }

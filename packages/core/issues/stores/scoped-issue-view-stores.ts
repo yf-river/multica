@@ -43,16 +43,14 @@ function createScopedIssueViewStore<Scope extends string>(
 }
 
 export type ActorIssuesScope = "assigned" | "created";
-export type ActorIssuesViewState = ScopedIssueViewState<ActorIssuesScope>;
-export const actorIssuesViewStore = createScopedIssueViewStore(
+export const actorIssuesViewStore = createScopedIssueViewStore<ActorIssuesScope>(
   "multica_actor_issues_view",
   "assigned" as ActorIssuesScope,
   "list",
 );
 
 export type MyIssuesScope = "all" | "assigned" | "created" | "agents";
-export type MyIssuesViewState = ScopedIssueViewState<MyIssuesScope>;
-export const myIssuesViewStore = createScopedIssueViewStore(
+export const myIssuesViewStore = createScopedIssueViewStore<MyIssuesScope>(
   "multica_my_issues_view",
   "assigned" as MyIssuesScope,
 );

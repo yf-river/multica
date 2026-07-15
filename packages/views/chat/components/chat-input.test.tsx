@@ -112,7 +112,6 @@ vi.mock("@multica/core/chat", () => {
     clearInputDraftForWorkspace: vi.fn(),
   };
   return {
-    DRAFT_NEW_SESSION: "__draft_new__",
     newSessionDraftKey: (agentId: string | null) => `__draft_new__:${agentId ?? ""}`,
     useChatStore: Object.assign(
       (selector?: (s: typeof state) => unknown) =>

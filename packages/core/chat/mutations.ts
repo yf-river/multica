@@ -7,21 +7,6 @@ import type { ChatSession } from "../types";
 
 const logger = createLogger("chat.mut");
 
-function useInvalidatingSessionMutation<Variables, Result>(
-  operation: string,
-  mutationFn: (variables: Variables) => Promise<Result>,
-) {
-  const qc = useQueryClient();
-  const wsId = useWorkspaceId();
-  return useMutation({
-    mutationFn,
-    onError: (error) => logger.error(`${operation}.error`, error),
-    onSettled: () => {
-      qc.invalidateQueries({ queryKey: chatKeys.sessions(wsId) });
-    },
-  });
-}
-
 function useOptimisticSessionMutation<Variables, Result>(
   operation: string,
   mutationFn: (variables: Variables) => Promise<Result>,
@@ -52,13 +37,18 @@ function useOptimisticSessionMutation<Variables, Result>(
 }
 
 export function useCreateChatSession() {
-  return useInvalidatingSessionMutation(
-    "createChatSession",
-    (data: { agent_id: string; title?: string; idempotencyKey: string }) => {
+  const qc = useQueryClient();
+  const wsId = useWorkspaceId();
+  return useMutation({
+    mutationFn: (data: { agent_id: string; title?: string; idempotencyKey: string }) => {
       const { idempotencyKey, ...request } = data;
       return api.createChatSession(request, idempotencyKey);
     },
-  );
+    onError: (error) => logger.error("createChatSession.error", error),
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: chatKeys.sessions(wsId) });
+    },
+  });
 }
 
 /**
