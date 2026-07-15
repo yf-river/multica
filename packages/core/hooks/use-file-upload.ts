@@ -3,7 +3,8 @@
 import { useState, useCallback } from "react";
 import type { ApiClient } from "../api/client";
 import type { Attachment } from "../types";
-import { MAX_FILE_SIZE } from "../constants/upload";
+
+const MAX_FILE_SIZE = 100 * 1024 * 1024;
 
 interface UploadContext {
   issueId?: string;
