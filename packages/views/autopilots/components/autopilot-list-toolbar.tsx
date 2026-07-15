@@ -24,8 +24,7 @@ import {
   ToolbarFilterDropdown,
   ToolbarFilterSubmenu,
   ToolbarFrame,
-  ToolbarResultCount,
-  ToolbarScopeSelector,
+  ToolbarScopeAndResult,
 } from "../../common/list-toolbar";
 import { useT } from "../../i18n";
 
@@ -151,28 +150,17 @@ export function AutopilotListToolbar({
   return (
     <ToolbarFrame
       left={
-        <>
-          {/* Scope is the promoted status
-          dimension (it does NOT appear in the filter dropdown). No search
-          box: scope buttons already partition the (small) set, so search
-          was dropped by product call. The count only appears while filters
-          narrow the list. Button styling and the <md dropdown collapse
-          follow the issues header's scope buttons. */}
-          <ToolbarScopeSelector
-            scopes={AUTOPILOT_SCOPES}
-            scope={scope}
-            scopeCounts={scopeCounts}
-            scopeLabels={SCOPE_LABELS}
-            onScopeChange={onScopeChange}
-          />
-
-          <ToolbarResultCount
-            active={hasActiveFilters}
-            title={t(($) => $.toolbar.result_count_title)}
-            visibleCount={visibleCount}
-            totalCount={allRows.length}
-          />
-        </>
+        <ToolbarScopeAndResult
+          scopes={AUTOPILOT_SCOPES}
+          scope={scope}
+          scopeCounts={scopeCounts}
+          scopeLabels={SCOPE_LABELS}
+          onScopeChange={onScopeChange}
+          resultActive={hasActiveFilters}
+          resultTitle={t(($) => $.toolbar.result_count_title)}
+          visibleCount={visibleCount}
+          totalCount={allRows.length}
+        />
       }
     >
       {/* Filter */}

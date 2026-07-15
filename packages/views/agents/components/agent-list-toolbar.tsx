@@ -23,8 +23,7 @@ import {
   ToolbarFilterDropdown,
   ToolbarFilterSubmenu,
   ToolbarFrame,
-  ToolbarResultCount,
-  ToolbarScopeSelector,
+  ToolbarScopeAndResult,
 } from "../../common/list-toolbar";
 import { ActorAvatar } from "@multica/ui/components/common/actor-avatar";
 import { FILTER_ITEM_CLASS, HoverCheck } from "../../common/hover-check";
@@ -143,26 +142,17 @@ export function AgentListToolbar({
   return (
     <ToolbarFrame
       left={
-        <>
-          {/* Scope mixes the ownership lens
-          (mine/all) with the archived lifecycle stage; no search box (scope
-          partitions the small set). Button styling and the <md dropdown
-          collapse follow the issues header's scope buttons. */}
-          <ToolbarScopeSelector
-            scopes={AGENT_SCOPES}
-            scope={scope}
-            scopeCounts={scopeCounts}
-            scopeLabels={SCOPE_LABELS}
-            onScopeChange={onScopeChange}
-          />
-
-          <ToolbarResultCount
-            active={hasActiveFilters}
-            title={t(($) => $.toolbar.result_count_title)}
-            visibleCount={visibleCount}
-            totalCount={allRows.length}
-          />
-        </>
+        <ToolbarScopeAndResult
+          scopes={AGENT_SCOPES}
+          scope={scope}
+          scopeCounts={scopeCounts}
+          scopeLabels={SCOPE_LABELS}
+          onScopeChange={onScopeChange}
+          resultActive={hasActiveFilters}
+          resultTitle={t(($) => $.toolbar.result_count_title)}
+          visibleCount={visibleCount}
+          totalCount={allRows.length}
+        />
       }
     >
       {/* Filter */}

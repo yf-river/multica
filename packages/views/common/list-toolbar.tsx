@@ -240,18 +240,26 @@ export function ToolbarFilterSubmenu({
   );
 }
 
-export function ToolbarScopeSelector<TScope extends string>({
+export function ToolbarScopeAndResult<TScope extends string>({
   scopes,
   scope,
   scopeCounts,
   scopeLabels,
   onScopeChange,
+  resultActive,
+  resultTitle,
+  visibleCount,
+  totalCount,
 }: {
   scopes: readonly TScope[];
   scope: TScope;
   scopeCounts: Record<TScope, number>;
   scopeLabels: Record<TScope, string>;
   onScopeChange: (scope: TScope) => void;
+  resultActive: boolean;
+  resultTitle: string;
+  visibleCount: number;
+  totalCount: number;
 }) {
   return (
     <>
@@ -305,6 +313,12 @@ export function ToolbarScopeSelector<TScope extends string>({
           </DropdownMenuRadioGroup>
         </DropdownMenuContent>
       </DropdownMenu>
+      <ToolbarResultCount
+        active={resultActive}
+        title={resultTitle}
+        visibleCount={visibleCount}
+        totalCount={totalCount}
+      />
     </>
   );
 }
