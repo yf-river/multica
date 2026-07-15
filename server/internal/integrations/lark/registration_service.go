@@ -581,11 +581,8 @@ func (s *RegistrationService) finishSuccess(ctx context.Context, sess *registrat
 		return
 	}
 
-	// Encrypt the app_secret before the transaction so the seal cost
-	// doesn't sit inside the DB lock. The InstallationService's Upsert
-	// would do this for us, but we need the encrypted blob inside the
-	// transaction-scoped queries handle so the installer-bind commits
-	// alongside the installation insert — replicate the Seal here.
+	// Encrypt before opening the transaction so the crypto work does not hold
+	// database locks. Installation and installer binding then commit together.
 	sealed, err := s.installs.box.Seal([]byte(res.ClientSecret))
 	if err != nil {
 		s.cfg.Logger.Error("lark registration: seal app_secret",
@@ -704,8 +701,3 @@ func botNamePreset(agentName string) string {
 	}
 	return name + " - Multica"
 }
-
-// InstallationService.box is unexported but reachable from this file
-// because both live in package `lark`; we read it directly in
-// finishSuccess so the Seal happens outside the DB transaction (which
-// would otherwise hold a row lock across the crypto call).

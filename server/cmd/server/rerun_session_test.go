@@ -487,23 +487,3 @@ func TestRerunIssueInheritsTriggerCommentFromSourceTask(t *testing.T) {
 		t.Fatalf("trigger_comment_id mismatch: got %s, want %s", got, triggerCommentID)
 	}
 }
-
-// TestEnqueueTaskForIssueDoesNotForceFreshSession is the negative control
-// for the rerun flag: the normal enqueue path must leave the flag false so
-// auto-retry / comment-triggered tasks keep resuming the prior session
-// (MUL-1128 contract).
-func TestEnqueueTaskForIssueDoesNotForceFreshSession(t *testing.T) {
-	f := setupRerunSessionTest(t)
-
-	issue, err := f.queries.GetIssue(f.ctx, pgtype.UUID{Bytes: parseUUIDBytes(f.issueID), Valid: true})
-	if err != nil {
-		t.Fatalf("load issue: %v", err)
-	}
-	task, err := f.taskService().EnqueueTaskForIssue(f.ctx, issue)
-	if err != nil {
-		t.Fatalf("EnqueueTaskForIssue failed: %v", err)
-	}
-	if task.ForceFreshSession {
-		t.Fatal("expected normal enqueue to leave force_fresh_session=false")
-	}
-}

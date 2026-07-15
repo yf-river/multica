@@ -962,7 +962,3 @@ func taskErrorType(reason string) string {
 		return "agent_error"
 	}
 }
-
-// EnqueueTaskForIssue creates a queued task for an agent-assigned issue.
-// No context snapshot is stored — the agent fetches all data it needs at
-// runtime via the multica CLI.

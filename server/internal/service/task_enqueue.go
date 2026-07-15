@@ -14,33 +14,6 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-func (s *TaskService) EnqueueTaskForIssue(ctx context.Context, issue db.Issue, triggerCommentID ...pgtype.UUID) (db.AgentTaskQueue, error) {
-	var commentID pgtype.UUID
-	if len(triggerCommentID) > 0 {
-		commentID = triggerCommentID[0]
-	}
-	return s.enqueueIssueTask(ctx, issue, commentID, false)
-}
-
-// enqueueIssueTask is the shared implementation behind EnqueueTaskForIssue
-// and the manual rerun path. forceFreshSession=true marks the task so the
-// daemon claim handler skips the (agent_id, issue_id) resume lookup — the
-// user already judged the prior output bad, a fresh agent session is the
-// expected behavior.
-func (s *TaskService) enqueueIssueTask(ctx context.Context, issue db.Issue, triggerCommentID pgtype.UUID, forceFreshSession bool) (db.AgentTaskQueue, error) {
-	var task db.AgentTaskQueue
-	err := s.runInTx(ctx, func(queries *db.Queries) error {
-		var err error
-		task, err = s.CreateIssueTaskInTx(ctx, queries, issue, triggerCommentID, forceFreshSession)
-		return err
-	})
-	if err != nil {
-		return db.AgentTaskQueue{}, err
-	}
-	s.PublishIssueTaskEnqueued(ctx, task)
-	return task, nil
-}
-
 // CreateIssueTaskInTx validates the assigned agent and inserts the task using
 // the caller's transaction. The caller must publish the task only after the
 // transaction commits.
@@ -99,9 +72,8 @@ func (s *TaskService) PublishIssueTaskEnqueued(ctx context.Context, task db.Agen
 	s.NotifyTaskEnqueued(ctx, task)
 }
 
-// EnqueueTaskForMention creates a queued task for a mentioned agent on an issue.
-// Unlike EnqueueTaskForIssue, this takes an explicit agent ID rather than
-// deriving it from the issue assignee.
+// EnqueueTaskForMention creates a queued task for an explicitly mentioned
+// agent rather than deriving the agent from the issue assignee.
 func (s *TaskService) EnqueueTaskForMention(ctx context.Context, issue db.Issue, agentID pgtype.UUID, triggerCommentID pgtype.UUID) (db.AgentTaskQueue, error) {
 	return s.enqueueMentionTask(ctx, issue, agentID, triggerCommentID, false, false)
 }
@@ -228,7 +200,8 @@ func (s *TaskService) CreateMentionTaskInTx(
 // PublishMentionTaskEnqueued emits only post-commit effects for a mention task.
 func (s *TaskService) PublishMentionTaskEnqueued(ctx context.Context, task db.AgentTaskQueue) {
 	slog.Info("mention task enqueued", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID), "agent_id", util.UUIDToString(task.AgentID), "is_leader_task", task.IsLeaderTask)
-	// See EnqueueTaskForIssue for ordering rationale.
+	// Preserve event-before-wakeup ordering; a fast daemon claim must not make
+	// dispatch observable before the queued event.
 	s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, task)
 	s.NotifyTaskEnqueued(ctx, task)
 }
@@ -677,7 +650,7 @@ func (s *TaskService) CreateChatTaskInTx(
 // task already durably inserted by CreateChatTaskInTx.
 func (s *TaskService) PublishChatTaskEnqueued(ctx context.Context, task db.AgentTaskQueue) {
 	slog.Info("chat task enqueued", "task_id", util.UUIDToString(task.ID), "chat_session_id", util.UUIDToString(task.ChatSessionID), "agent_id", util.UUIDToString(task.AgentID))
-	// See EnqueueTaskForIssue for ordering rationale.
+	// Preserve event-before-wakeup ordering for chat tasks too.
 	s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, task)
 	s.NotifyTaskEnqueued(ctx, task)
 }
@@ -697,13 +670,3 @@ func (s *TaskService) WakeChatTaskIfQueued(ctx context.Context, taskID string) {
 	}
 	s.notifyTaskAvailable(task)
 }
-
-// CancelTasksForIssue cancels every active task on the issue, reconciles each
-// affected agent's status, and broadcasts task:cancelled events so frontends
-// clear their live cards.
-//
-// Before #1587 this path was "cancel rows and return" — issue-status flips
-// (e.g. user marks the issue `done` or `cancelled` while a task is still
-// running) left the agent stuck at status="working" indefinitely, requiring a
-// manual `multica agent update <id> --status idle` to unwedge. Matches the
-// pattern already used by CancelTask and RerunIssue.

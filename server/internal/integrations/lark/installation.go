@@ -11,28 +11,9 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// InstallationParams is the input shape RegistrationService assembles
-// after a successful device-flow scan-to-install. The credentials are
-// supplied here as plaintext — encryption happens inside
-// InstallationService.Upsert via the supplied *secretbox.Box, so
-// callers never see (and therefore cannot leak) the ciphertext that
-// lands in the DB.
-type InstallationParams struct {
-	WorkspaceID     pgtype.UUID
-	AgentID         pgtype.UUID
-	AppID           string
-	AppSecret       string // plaintext; encrypted at the service boundary
-	TenantKey       string // optional, "" treated as NULL
-	BotOpenID       string
-	InstallerUserID pgtype.UUID
-	Region          Region // required cloud: feishu or lark
-}
-
-// InstallationService creates, refreshes and revokes per-agent Lark
-// installations. It owns the at-rest encryption of `app_secret` so
-// that no caller (and no test fixture) can accidentally insert a row
-// with plaintext credentials — the only path to writing
-// lark_installation goes through here.
+// InstallationService reads and revokes per-agent Lark installations. Its
+// secret box is also used by RegistrationService to encrypt credentials before
+// atomically inserting the installation and installer binding.
 type InstallationService struct {
 	queries *db.Queries
 	box     *secretbox.Box
@@ -50,37 +31,10 @@ func NewInstallationService(queries *db.Queries, box *secretbox.Box) (*Installat
 	return &InstallationService{queries: queries, box: box}, nil
 }
 
-// Upsert creates a new installation or refreshes an existing one in
-// place (matching on the (workspace_id, agent_id) UNIQUE). Re-install
-// resets status to 'active' but does NOT touch the WS lease — that is
-// the hub's concern, not ours. The returned row is the post-write
-// state; the encrypted secret column is included for completeness but
-// callers SHOULD NOT log or persist it elsewhere.
-func (s *InstallationService) Upsert(ctx context.Context, p InstallationParams) (db.LarkInstallation, error) {
-	if err := validateInstallationParams(p); err != nil {
-		return db.LarkInstallation{}, err
-	}
-	sealed, err := s.box.Seal([]byte(p.AppSecret))
-	if err != nil {
-		return db.LarkInstallation{}, fmt.Errorf("encrypt app_secret: %w", err)
-	}
-	return s.queries.UpsertLarkInstallation(ctx, db.UpsertLarkInstallationParams{
-		WorkspaceID:        p.WorkspaceID,
-		AgentID:            p.AgentID,
-		AppID:              p.AppID,
-		AppSecretEncrypted: sealed,
-		TenantKey:          textOrNull(p.TenantKey),
-		BotOpenID:          p.BotOpenID,
-		InstallerUserID:    p.InstallerUserID,
-		Region:             string(p.Region),
-	})
-}
-
 // Revoke flips status to 'revoked' so the WS hub tears the connection
 // down on its next sweep and the dispatcher drops any in-flight
 // events. The row is preserved (no DELETE) so audit history remains
-// queryable; a subsequent re-install via Upsert flips status back to
-// 'active' atomically.
+// queryable; the registration transaction can reactivate it atomically.
 func (s *InstallationService) Revoke(ctx context.Context, id pgtype.UUID) error {
 	return s.queries.SetLarkInstallationStatus(ctx, db.SetLarkInstallationStatusParams{
 		ID:     id,
@@ -142,26 +96,6 @@ func (s *InstallationService) ListByWorkspace(ctx context.Context, workspaceID p
 // — used by the HTTP layer to return 404. Distinct from a plain
 // pgx.ErrNoRows so handlers do not need to import pgx.
 var ErrInstallationNotFound = errors.New("lark installation not found")
-
-func validateInstallationParams(p InstallationParams) error {
-	switch {
-	case !p.WorkspaceID.Valid:
-		return errors.New("workspace_id is required")
-	case !p.AgentID.Valid:
-		return errors.New("agent_id is required")
-	case !p.InstallerUserID.Valid:
-		return errors.New("installer_user_id is required")
-	case p.AppID == "":
-		return errors.New("app_id is required")
-	case p.AppSecret == "":
-		return errors.New("app_secret is required")
-	case p.BotOpenID == "":
-		return errors.New("bot_open_id is required")
-	case !isSupportedRegion(p.Region):
-		return errors.New("region must be feishu or lark")
-	}
-	return nil
-}
 
 func textOrNull(s string) pgtype.Text {
 	return pgtype.Text{String: s, Valid: s != ""}

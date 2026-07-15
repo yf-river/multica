@@ -292,9 +292,8 @@ func (s *TaskService) publishRetryTask(ctx context.Context, child db.AgentTaskQu
 		"attempt", child.Attempt,
 		"max_attempts", child.MaxAttempts,
 	)
-	// Retry creates a fresh queued row, same status transition (∅ → queued)
-	// as EnqueueTaskFor*. Broadcast queued first, then notify the daemon —
-	// see EnqueueTaskForIssue for ordering rationale.
+	// A retry creates a fresh queued row. Broadcast it before waking the daemon
+	// so a fast claim cannot make dispatch observable first.
 	s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, child)
 	s.NotifyTaskEnqueued(ctx, child)
 }
