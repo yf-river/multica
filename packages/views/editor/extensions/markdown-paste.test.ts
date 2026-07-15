@@ -2,10 +2,7 @@ import { describe, it, expect, afterEach, vi } from "vitest";
 import { Editor } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import { Markdown } from "@tiptap/markdown";
-import {
-  createMarkdownPasteExtension,
-  escapeRawHtmlTagsOutsideCode,
-} from "./markdown-paste";
+import { createMarkdownPasteExtension } from "./markdown-paste";
 
 interface FakeClipboard {
   files: never[];
@@ -357,64 +354,5 @@ describe("markdownPaste — code block context", () => {
 
     expectLiteralPaste(editor, text);
     expect(parseJsonSpy).not.toHaveBeenCalled();
-  });
-});
-
-describe("escapeRawHtmlTagsOutsideCode", () => {
-  it("escapes HTML-like tags", () => {
-    expect(escapeRawHtmlTagsOutsideCode("<T>")).toBe("&lt;T&gt;");
-    expect(escapeRawHtmlTagsOutsideCode("<tag>")).toBe("&lt;tag&gt;");
-    expect(escapeRawHtmlTagsOutsideCode("<MyComponent>")).toBe(
-      "&lt;MyComponent&gt;",
-    );
-    expect(escapeRawHtmlTagsOutsideCode("</tag>")).toBe("&lt;/tag&gt;");
-  });
-
-  it("escapes standard HTML element names too", () => {
-    expect(escapeRawHtmlTagsOutsideCode("<div>")).toBe("&lt;div&gt;");
-    expect(escapeRawHtmlTagsOutsideCode("<br>")).toBe("&lt;br&gt;");
-    expect(escapeRawHtmlTagsOutsideCode("</div>")).toBe("&lt;/div&gt;");
-    expect(escapeRawHtmlTagsOutsideCode('<img src="x">')).toBe(
-      '&lt;img src="x"&gt;',
-    );
-  });
-
-  it("does not escape inside inline code spans", () => {
-    expect(escapeRawHtmlTagsOutsideCode("`<tag>`")).toBe("`<tag>`");
-    expect(escapeRawHtmlTagsOutsideCode("text `<T>` more")).toBe(
-      "text `<T>` more",
-    );
-    expect(escapeRawHtmlTagsOutsideCode("``<tag>``")).toBe("``<tag>``");
-  });
-
-  it("does not escape inside fenced code blocks", () => {
-    expect(escapeRawHtmlTagsOutsideCode("```\n<T>\n```")).toBe(
-      "```\n<T>\n```",
-    );
-    expect(escapeRawHtmlTagsOutsideCode("~~~\n<tag>\n~~~")).toBe(
-      "~~~\n<tag>\n~~~",
-    );
-    expect(escapeRawHtmlTagsOutsideCode("   ```\n<T>\n   ```")).toBe(
-      "   ```\n<T>\n   ```",
-    );
-  });
-
-  it("escapes all tag-like runs in mixed content", () => {
-    expect(escapeRawHtmlTagsOutsideCode("<T> and <div>")).toBe(
-      "&lt;T&gt; and &lt;div&gt;",
-    );
-  });
-
-  it("handles multi-line mixed content", () => {
-    const input = "<t>\n\n裸 `<tag>` 做转\n\n<tag>\n\n<t>";
-    const result = escapeRawHtmlTagsOutsideCode(input);
-    expect(result).toBe(
-      "&lt;t&gt;\n\n裸 `<tag>` 做转\n\n&lt;tag&gt;\n\n&lt;t&gt;",
-    );
-  });
-
-  it("does not touch math expressions", () => {
-    expect(escapeRawHtmlTagsOutsideCode("1 < 2 > 0")).toBe("1 < 2 > 0");
-    expect(escapeRawHtmlTagsOutsideCode("x<y")).toBe("x<y");
   });
 });

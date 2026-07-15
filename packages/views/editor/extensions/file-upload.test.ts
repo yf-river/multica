@@ -3,8 +3,12 @@ import { Editor } from "@tiptap/core";
 import StarterKit from "@tiptap/starter-kit";
 import { Markdown } from "@tiptap/markdown";
 import type { Attachment } from "@multica/core/types";
-import { ImageExtension } from "./index";
+import { createEditorExtensions } from "./index";
 import { uploadAndInsertFile } from "./file-upload";
+
+const ImageExtension = createEditorExtensions({}).find(
+  ({ name }) => name === "image",
+)!;
 
 const BLOB_URL = "blob:test-image";
 const FINAL_URL = "https://cdn.example.com/photo.png";

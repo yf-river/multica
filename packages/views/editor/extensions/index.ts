@@ -82,7 +82,7 @@ function shouldAutoLinkUrl(url: string): boolean {
   return true;
 }
 
-export const LinkExtension = Link.extend({ inclusive: false }).configure({
+const LinkExtension = Link.extend({ inclusive: false }).configure({
   openOnClick: false,
   autolink: true,
   linkOnPaste: true,
@@ -90,7 +90,7 @@ export const LinkExtension = Link.extend({ inclusive: false }).configure({
   shouldAutoLink: shouldAutoLinkUrl,
 });
 
-export const ImageExtension = Image.extend({
+const ImageExtension = Image.extend({
   addAttributes() {
     return {
       ...this.parent?.(),
@@ -143,7 +143,7 @@ export const ImageExtension = Image.extend({
   allowBase64: false,
 });
 
-export interface EditorExtensionsOptions {
+interface EditorExtensionsOptions {
   placeholder?: string;
   queryClient?: import("@tanstack/react-query").QueryClient;
   onSubmitRef?: RefObject<(() => void) | undefined>;

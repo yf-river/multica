@@ -164,7 +164,7 @@ function collectTagsOutsideCodeSpans(line: string): string[] {
   return tags;
 }
 
-export function escapeRawHtmlTagsOutsideCode(text: string): string {
+function escapeRawHtmlTagsOutsideCode(text: string): string {
   const lines = text.split("\n");
   let inFencedBlock = false;
   let fenceChar = "";

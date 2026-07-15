@@ -1,7 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { FileCardExtension } from "./file-card";
-import { ImageExtension } from "./index";
+import { createEditorExtensions } from "./index";
 import { preprocessFileCards } from "@multica/ui/markdown";
+
+const ImageExtension = createEditorExtensions({}).find(
+  ({ name }) => name === "image",
+)!;
 
 const fileCardRenderMarkdown = FileCardExtension.config.renderMarkdown as (
   node: { attrs: Record<string, string> },
