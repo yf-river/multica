@@ -130,7 +130,7 @@ func (b *opencodeBackend) Execute(ctx context.Context, prompt string, opts ExecO
 			// attribute all usage to the configured model (or "unknown").
 			var usage map[string]TokenUsage
 			u := scanResult.usage
-			if u.InputTokens > 0 || u.OutputTokens > 0 || u.CacheReadTokens > 0 || u.CacheWriteTokens > 0 {
+			if u.hasTokens() {
 				model := opts.Model
 				if model == "" {
 					model = "unknown"

@@ -89,7 +89,7 @@ func (b *openclawBackend) Execute(ctx context.Context, prompt string, opts ExecO
 			// daemon's `unknown` placeholder.
 			var usage map[string]TokenUsage
 			u := scanResult.usage
-			if u.InputTokens > 0 || u.OutputTokens > 0 || u.CacheReadTokens > 0 || u.CacheWriteTokens > 0 {
+			if u.hasTokens() {
 				model := scanResult.model
 				if model == "" {
 					model = opts.Model

@@ -445,10 +445,13 @@ func TestParseCodebuddyModelList_DedupesAndGroups(t *testing.T) {
 	}
 }
 
-func TestCodebuddyModelsFromEnv(t *testing.T) {
+func TestDiscoverCodebuddyModelsUsesEnv(t *testing.T) {
 	t.Setenv("MULTICA_CODEBUDDY_MODELS", "glm-5.1-ioa, minimax-m2.7-ioa")
 
-	models := codebuddyModelsFromEnv()
+	models, err := discoverCodebuddyModels(context.Background(), filepath.Join(t.TempDir(), "missing-codebuddy"))
+	if err != nil {
+		t.Fatalf("discoverCodebuddyModels: %v", err)
+	}
 	if len(models) != 2 {
 		t.Fatalf("expected 2 models from MULTICA_CODEBUDDY_MODELS, got %d: %+v", len(models), models)
 	}

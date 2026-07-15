@@ -187,7 +187,7 @@ func shouldDisableCodexImageGenerationForCatalog(policy codexImageGenerationPoli
 	if !ok {
 		return true
 	}
-	return !codexModelCapabilitySupportsImageGeneration(capability)
+	return !containsCaseInsensitive(capability.ExperimentalSupportedTools, "image_generation")
 }
 
 func resolveCodexImageGenerationPolicy(env map[string]string, logger *slog.Logger) codexImageGenerationPolicy {
@@ -208,10 +208,6 @@ func resolveCodexImageGenerationPolicy(env map[string]string, logger *slog.Logge
 		}
 		return codexImageGenerationAuto
 	}
-}
-
-func codexModelCapabilitySupportsImageGeneration(capability codexModelCapability) bool {
-	return containsCaseInsensitive(capability.ExperimentalSupportedTools, "image_generation")
 }
 
 func containsCaseInsensitive(values []string, want string) bool {

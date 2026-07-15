@@ -859,7 +859,7 @@ func isCursorModelIdentifier(s string) bool {
 // operator-provided catalog takes precedence, then ACP discovery, then the
 // maintained static catalog.
 func discoverCodebuddyModels(ctx context.Context, executablePath string) ([]Model, error) {
-	if models := codebuddyModelsFromEnv(); len(models) > 0 {
+	if models := parseCodebuddyModelList(os.Getenv("MULTICA_CODEBUDDY_MODELS")); len(models) > 0 {
 		return models, nil
 	}
 	if executablePath == "" {
@@ -891,10 +891,6 @@ func discoverCodebuddyACPModels(ctx context.Context, executablePath string) ([]M
 		}
 	}
 	return models, nil
-}
-
-func codebuddyModelsFromEnv() []Model {
-	return parseCodebuddyModelList(os.Getenv("MULTICA_CODEBUDDY_MODELS"))
 }
 
 func parseCodebuddyModelList(rawList string) []Model {

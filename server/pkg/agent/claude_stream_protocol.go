@@ -74,15 +74,16 @@ func claudeStreamResultUsage(msg claudeStreamMessage, fallbackModel string) map[
 	if len(msg.ModelUsage) > 0 {
 		usage := make(map[string]TokenUsage, len(msg.ModelUsage))
 		for model, item := range msg.ModelUsage {
-			if model == "" || !claudeStreamUsageHasTokens(item.InputTokens, item.OutputTokens, item.CacheReadInputTokens, item.CacheCreationInputTokens) {
-				continue
-			}
-			usage[model] = TokenUsage{
+			itemUsage := TokenUsage{
 				InputTokens:      item.InputTokens,
 				OutputTokens:     item.OutputTokens,
 				CacheReadTokens:  item.CacheReadInputTokens,
 				CacheWriteTokens: item.CacheCreationInputTokens,
 			}
+			if model == "" || !itemUsage.hasTokens() {
+				continue
+			}
+			usage[model] = itemUsage
 		}
 		if len(usage) > 0 {
 			return usage
@@ -93,26 +94,19 @@ func claudeStreamResultUsage(msg claudeStreamMessage, fallbackModel string) map[
 	if model == "" {
 		model = fallbackModel
 	}
-	if msg.Usage == nil || model == "" || !claudeStreamUsageHasTokens(
-		msg.Usage.InputTokens,
-		msg.Usage.OutputTokens,
-		msg.Usage.CacheReadInputTokens,
-		msg.Usage.CacheCreationInputTokens,
-	) {
+	if msg.Usage == nil || model == "" {
 		return nil
 	}
-	return map[string]TokenUsage{
-		model: {
-			InputTokens:      msg.Usage.InputTokens,
-			OutputTokens:     msg.Usage.OutputTokens,
-			CacheReadTokens:  msg.Usage.CacheReadInputTokens,
-			CacheWriteTokens: msg.Usage.CacheCreationInputTokens,
-		},
+	usage := TokenUsage{
+		InputTokens:      msg.Usage.InputTokens,
+		OutputTokens:     msg.Usage.OutputTokens,
+		CacheReadTokens:  msg.Usage.CacheReadInputTokens,
+		CacheWriteTokens: msg.Usage.CacheCreationInputTokens,
 	}
-}
-
-func claudeStreamUsageHasTokens(input, output, cacheRead, cacheWrite int64) bool {
-	return input > 0 || output > 0 || cacheRead > 0 || cacheWrite > 0
+	if !usage.hasTokens() {
+		return nil
+	}
+	return map[string]TokenUsage{model: usage}
 }
 
 func handleClaudeStreamAssistant(

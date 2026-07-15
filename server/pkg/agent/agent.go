@@ -119,6 +119,10 @@ type TokenUsage struct {
 	CacheWriteTokens int64
 }
 
+func (u TokenUsage) hasTokens() bool {
+	return u.InputTokens > 0 || u.OutputTokens > 0 || u.CacheReadTokens > 0 || u.CacheWriteTokens > 0
+}
+
 // Result is the final outcome after an agent session completes.
 type Result struct {
 	Status     string // "completed", "failed", "aborted", "timeout", "cancelled"

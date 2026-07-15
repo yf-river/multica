@@ -329,7 +329,7 @@ func (b *CodexBrokerBackend) runTurn(ctx context.Context, proc *codexBrokerProce
 			}
 		}
 	}
-	if u.InputTokens > 0 || u.OutputTokens > 0 || u.CacheReadTokens > 0 || u.CacheWriteTokens > 0 {
+	if u.hasTokens() {
 		model := opts.Model
 		if model == "" {
 			model = "unknown"

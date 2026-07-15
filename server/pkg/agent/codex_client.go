@@ -706,7 +706,7 @@ func (c *codexClient) handleItemNotification(method string, params map[string]an
 	item, _ := params["item"].(map[string]any)
 	itemType, _ := item["type"].(string)
 	itemID, _ := item["id"].(string)
-	if isCodexItemProgressActivity(method) && c.onSemanticActivity != nil {
+	if strings.HasPrefix(method, "item/") && c.onSemanticActivity != nil {
 		c.onSemanticActivity(describeCodexItemProgressActivity(method, itemType, itemID))
 	}
 	if item == nil {
@@ -766,10 +766,6 @@ func (c *codexClient) handleItemNotification(method string, params map[string]an
 			}
 		}
 	}
-}
-
-func isCodexItemProgressActivity(method string) bool {
-	return strings.HasPrefix(method, "item/")
 }
 
 func describeCodexItemProgressActivity(method, itemType, itemID string) string {
@@ -875,17 +871,13 @@ func scanCodexSessionUsage(startTime time.Time, codexHome string) *codexSessionU
 		}
 	}
 
-	if usageHasTokens(result.usage) {
+	if result.usage.hasTokens() {
 		return &result
 	}
 	if scanned := scanCodexLogUsage(startTime, codexHome); scanned != nil {
 		return scanned
 	}
 	return nil
-}
-
-func usageHasTokens(u TokenUsage) bool {
-	return u.InputTokens > 0 || u.OutputTokens > 0 || u.CacheReadTokens > 0 || u.CacheWriteTokens > 0
 }
 
 func scanCodexLogUsage(startTime time.Time, codexHome string) *codexSessionUsage {
@@ -911,7 +903,7 @@ func scanCodexLogUsage(startTime time.Time, codexHome string) *codexSessionUsage
 			result = *u
 		}
 	}
-	if !usageHasTokens(result.usage) {
+	if !result.usage.hasTokens() {
 		return nil
 	}
 	return &result
@@ -1090,7 +1082,7 @@ func parseCodexSessionFile(path string) *codexSessionUsage {
 		line := scanner.Bytes()
 
 		// Fast pre-filter.
-		if !bytesContainsStr(line, "token_count") && !bytesContainsStr(line, "turn_context") {
+		if !bytes.Contains(line, []byte("token_count")) && !bytes.Contains(line, []byte("turn_context")) {
 			continue
 		}
 
@@ -1133,11 +1125,6 @@ func parseCodexSessionFile(path string) *codexSessionUsage {
 		return nil
 	}
 	return &result
-}
-
-// bytesContainsStr checks if b contains the string s (without allocating).
-func bytesContainsStr(b []byte, s string) bool {
-	return strings.Contains(string(b), s)
 }
 
 // ── Helpers ──

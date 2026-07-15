@@ -1696,13 +1696,13 @@ func TestParseCodexModelCapabilities(t *testing.T) {
 	}`)
 	got := parseCodexModelCapabilities(raw)
 
-	if codexModelCapabilitySupportsImageGeneration(got["gpt-5.5"]) {
+	if !shouldDisableCodexImageGenerationForCatalog(codexImageGenerationAuto, "gpt-5.5", got, true) {
 		t.Fatalf("expected image input alone not to support image_generation: %+v", got["gpt-5.5"])
 	}
-	if codexModelCapabilitySupportsImageGeneration(got["gpt-5.3-codex-spark"]) {
+	if !shouldDisableCodexImageGenerationForCatalog(codexImageGenerationAuto, "gpt-5.3-codex-spark", got, true) {
 		t.Fatalf("expected spark fixture to disable image_generation: %+v", got["gpt-5.3-codex-spark"])
 	}
-	if !codexModelCapabilitySupportsImageGeneration(got["image-tool"]) {
+	if shouldDisableCodexImageGenerationForCatalog(codexImageGenerationAuto, "image-tool", got, true) {
 		t.Fatalf("expected explicit tool fixture to support image_generation: %+v", got["image-tool"])
 	}
 }
