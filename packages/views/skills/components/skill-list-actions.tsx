@@ -48,8 +48,6 @@ import { ListBatchToolbar } from "../../common/list-toolbar";
 import { useT } from "../../i18n";
 import type { SkillRow } from "./skills-page";
 
-// Shared context the row kebab and the batch toolbar both need. Assembled
-// once at the page level.
 export interface SkillActionsContext {
   wsId: string;
   agents: Agent[];
@@ -57,10 +55,6 @@ export interface SkillActionsContext {
   /** Workspace owner/admin — may manage every agent, not only their own. */
   isAdmin: boolean;
 }
-
-// ---------------------------------------------------------------------------
-// Add-to-agent dialog (multi-select; shared by row kebab and batch toolbar)
-// ---------------------------------------------------------------------------
 
 // Attaching is permission-gated by the TARGET agent (its owner, or a
 // workspace owner/admin — server/internal/handler/agent.go canManageAgent).
@@ -112,7 +106,6 @@ function AgentPickerRow({
             : "hover:bg-accent/50",
       )}
     >
-      {/* Indicator only — the wrapping <button> handles clicks. */}
       <Checkbox
         checked={hasAll || selected}
         tabIndex={-1}
@@ -137,9 +130,6 @@ function AgentPickerRow({
   );
 }
 
-// Shows the first few skill names as chips so the dialog says WHAT is being
-// added; the overflow collapses into a "+N" badge with the remaining names
-// in a tooltip. Number-agnostic, so single-row and batch share the layout.
 const MAX_SKILL_CHIPS = 3;
 const MAX_TOOLTIP_NAMES = 10;
 
@@ -177,8 +167,6 @@ function SkillChips({ skills }: { skills: SkillSummary[] }) {
   );
 }
 
-// Collapsible agent group; "my agents" opens by default, other people's
-// agents start collapsed.
 function AgentGroup({
   label,
   agents,
@@ -359,10 +347,6 @@ function AddToAgentDialog({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Delete confirmation (single row and batch share one dialog)
-// ---------------------------------------------------------------------------
-
 function DeleteSkillsDialog({
   rows,
   ctx,
@@ -467,10 +451,6 @@ function DeleteSkillsDialog({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Row kebab
-// ---------------------------------------------------------------------------
-
 // The row is a plain `<div>` whose whole-row navigation is a mouse `onClick`
 // (see `useRowLink`), not an ancestor `<a>`. The wrapper span stops click
 // propagation so opening this menu never navigates the row — just
@@ -537,10 +517,6 @@ export function SkillRowActions({
     </span>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Batch toolbar (floating bottom bar, same shape as the issues batch bar)
-// ---------------------------------------------------------------------------
 
 export function SkillBatchToolbar({
   rows,

@@ -12,10 +12,6 @@ import {
 import { cn } from "@multica/ui/lib/utils";
 import { useT } from "../../i18n";
 
-// ---------------------------------------------------------------------------
-// Tree data structures
-// ---------------------------------------------------------------------------
-
 interface FileTreeNode {
   name: string;
   path: string;
@@ -73,10 +69,6 @@ function getFileIcon(name: string) {
   if (name.endsWith(".md") || name.endsWith(".mdx")) return FileText;
   return File;
 }
-
-// ---------------------------------------------------------------------------
-// Tree node renderer
-// ---------------------------------------------------------------------------
 
 function TreeNodeItem({
   node,
@@ -144,10 +136,6 @@ function TreeNodeItem({
     </button>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Public component
-// ---------------------------------------------------------------------------
 
 export function FileTree({
   filePaths,

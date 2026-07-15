@@ -46,6 +46,28 @@ import { isNameConflictError } from "../lib/utils";
 
 type Method = "chooser" | "manual" | "url" | "runtime";
 
+function FormError({
+  message,
+  conflictHint,
+}: {
+  message: string;
+  conflictHint: string;
+}) {
+  if (!message) return null;
+  return (
+    <div
+      role="alert"
+      className="flex items-start gap-2 rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive"
+    >
+      <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+      <span>
+        {message}
+        {isNameConflictError(message) && conflictHint}
+      </span>
+    </div>
+  );
+}
+
 function seedAfterCreate(
   qc: ReturnType<typeof useQueryClient>,
   wsId: string,
@@ -55,10 +77,6 @@ function seedAfterCreate(
   qc.invalidateQueries({ queryKey: workspaceKeys.skills(wsId) });
   qc.invalidateQueries({ queryKey: workspaceKeys.agents(wsId) });
 }
-
-// ---------------------------------------------------------------------------
-// Chooser — initial method picker (3 cards)
-// ---------------------------------------------------------------------------
 
 function MethodChooser({ onChoose }: { onChoose: (m: Method) => void }) {
   const { t } = useT("skills");
@@ -97,10 +115,6 @@ function MethodChooser({ onChoose }: { onChoose: (m: Method) => void }) {
     </div>
   );
 }
-
-// ---------------------------------------------------------------------------
-// Manual form
-// ---------------------------------------------------------------------------
 
 function ManualForm({
   onCreated,
@@ -190,20 +204,10 @@ function ManualForm({
           />
         </div>
 
-        {error && (
-          <div
-            role="alert"
-            className="flex items-start gap-2 rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive"
-          >
-            <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            <span>
-              {error}
-              {isNameConflictError(error) && (
-                <>{t(($) => $.create.manual.name_conflict_hint)}</>
-              )}
-            </span>
-          </div>
-        )}
+        <FormError
+          message={error}
+          conflictHint={t(($) => $.create.manual.name_conflict_hint)}
+        />
       </div>
 
       <div className="flex shrink-0 items-center justify-end gap-2 border-t bg-muted/30 px-5 py-3">
@@ -235,10 +239,6 @@ function ManualForm({
     </>
   );
 }
-
-// ---------------------------------------------------------------------------
-// URL import form
-// ---------------------------------------------------------------------------
 
 type DetectedSource = "clawhub" | "skills.sh" | "github" | null;
 
@@ -373,20 +373,10 @@ function UrlForm({
           </div>
         </div>
 
-        {error && (
-          <div
-            role="alert"
-            className="flex items-start gap-2 rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive"
-          >
-            <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-            <span>
-              {error}
-              {isNameConflictError(error) && (
-                <>{t(($) => $.create.url.name_conflict_hint)}</>
-              )}
-            </span>
-          </div>
-        )}
+        <FormError
+          message={error}
+          conflictHint={t(($) => $.create.url.name_conflict_hint)}
+        />
       </div>
 
       <div className="flex shrink-0 items-center justify-end gap-2 border-t bg-muted/30 px-5 py-3">
@@ -422,10 +412,6 @@ function UrlForm({
   );
 }
 
-// ---------------------------------------------------------------------------
-// Root dialog
-// ---------------------------------------------------------------------------
-
 export function CreateSkillDialog({
   onClose,
   onCreated,
@@ -455,7 +441,6 @@ export function CreateSkillDialog({
             : "!h-auto !max-h-[85vh] !max-w-md !w-full",
         )}
       >
-        {/* Header */}
         <div className="flex shrink-0 items-start justify-between gap-3 border-b px-5 pt-4 pb-3">
           <div className="flex items-center gap-2 min-w-0">
             {method !== "chooser" && (
@@ -501,7 +486,6 @@ export function CreateSkillDialog({
           </Tooltip>
         </div>
 
-        {/* Method body — each form owns its scroll middle + footer */}
         {method === "chooser" && <MethodChooser onChoose={setMethod} />}
         {method === "manual" && (
           <ManualForm

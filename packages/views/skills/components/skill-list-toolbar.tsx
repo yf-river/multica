@@ -90,8 +90,6 @@ export function SkillListToolbar({
   const activeCount = countActiveFilters(filters);
   const hasActiveFilters = activeCount > 0;
 
-  // Option lists with counts, derived from the unfiltered rows so toggling
-  // one dimension doesn't make the others' options vanish.
   const usedCount = allRows.filter((r) => r.agents.length > 0).length;
   const unusedCount = allRows.length - usedCount;
 
@@ -141,11 +139,6 @@ export function SkillListToolbar({
     <ToolbarFrame
       left={
         <>
-          {/* Name search + result count. The count only appears while
-          search/filters narrow the list — in the idle state it would just
-          duplicate the total already shown in the page header. Below md the
-          search (and its count) disappear entirely, following the issues
-          header's small-screen treatment. */}
           <div className="relative hidden md:block">
             <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
             <Input
@@ -164,13 +157,11 @@ export function SkillListToolbar({
         </>
       }
     >
-      {/* Filter */}
       <ToolbarFilterDropdown
         hasActiveFilters={hasActiveFilters}
         activeCount={activeCount}
         onClearFilters={onClearFilters}
       >
-        {/* Usage */}
         <ToolbarFilterSubmenu
           label={t(($) => $.toolbar.section_usage)}
           selectedCount={filters.usage.length}
@@ -193,7 +184,6 @@ export function SkillListToolbar({
           ))}
         </ToolbarFilterSubmenu>
 
-          {/* Source */}
         <ToolbarFilterSubmenu
           label={t(($) => $.table.source)}
           selectedCount={filters.origins.length}
@@ -216,7 +206,6 @@ export function SkillListToolbar({
           )}
         </ToolbarFilterSubmenu>
 
-          {/* Used by */}
         <ToolbarFilterSubmenu
           label={t(($) => $.table.used_by)}
           selectedCount={filters.agents.length}
@@ -243,7 +232,6 @@ export function SkillListToolbar({
           ))}
         </ToolbarFilterSubmenu>
 
-          {/* Creator */}
         <ToolbarFilterSubmenu
           label={t(($) => $.table.created_by)}
           selectedCount={filters.creators.length}
