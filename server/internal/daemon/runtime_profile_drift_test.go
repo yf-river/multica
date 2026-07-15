@@ -89,20 +89,22 @@ func TestProfileSetSignature_DetectsRegistrationAffectingChanges(t *testing.T) {
 	}
 }
 
-// driftFixture wires a Daemon against a fake server whose runtime-profiles
+// runtimeProfileFixture wires a Daemon against a fake server whose runtime-profiles
 // response can be swapped at runtime. It also tracks how many times the
 // server saw a /api/daemon/register, /api/daemon/runtimes/:id/recover-orphans,
 // and /api/daemon/deregister call so tests can assert exactly which side
 // effects the drift refresh triggered (or didn't).
-type driftFixture struct {
+type runtimeProfileFixture struct {
 	daemon              *Daemon
 	server              *httptest.Server
 	registerCalls       atomic.Int32
+	sentRuntimes        []map[string]any
 	recoverOrphansCalls []string // runtime IDs the server received recover-orphans for, in order
 	recoverOrphansMu    sync.Mutex
 	deregisterCalls     [][]string // each entry is one Deregister call's runtime_ids payload, in order
 	deregisterMu        sync.Mutex
 	currentProfiles     []RuntimeProfile
+	profilesStatus      int
 }
 
 // setProfiles swaps the profile set returned by the fake server. The
@@ -110,13 +112,13 @@ type driftFixture struct {
 // drive the fixture from a single goroutine, so the field is unguarded;
 // add a mutex if a future test publishes profile updates concurrently with
 // daemon background work.
-func (fx *driftFixture) setProfiles(profiles []RuntimeProfile) {
+func (fx *runtimeProfileFixture) setProfiles(profiles []RuntimeProfile) {
 	fx.currentProfiles = profiles
 }
 
 // recordedRecoverOrphans returns a copy of the runtime IDs the fake server
 // received /recover-orphans calls for since the fixture was created.
-func (fx *driftFixture) recordedRecoverOrphans() []string {
+func (fx *runtimeProfileFixture) recordedRecoverOrphans() []string {
 	fx.recoverOrphansMu.Lock()
 	defer fx.recoverOrphansMu.Unlock()
 	out := make([]string, len(fx.recoverOrphansCalls))
@@ -126,7 +128,7 @@ func (fx *driftFixture) recordedRecoverOrphans() []string {
 
 // recordedDeregisters returns a copy of every Deregister call's runtime_ids
 // payload, in the order the fake server received them.
-func (fx *driftFixture) recordedDeregisters() [][]string {
+func (fx *runtimeProfileFixture) recordedDeregisters() [][]string {
 	fx.deregisterMu.Lock()
 	defer fx.deregisterMu.Unlock()
 	out := make([][]string, len(fx.deregisterCalls))
@@ -138,9 +140,9 @@ func (fx *driftFixture) recordedDeregisters() [][]string {
 	return out
 }
 
-func newDriftFixture(t *testing.T, initial []RuntimeProfile) *driftFixture {
+func newRuntimeProfileFixture(t *testing.T, initial []RuntimeProfile) *runtimeProfileFixture {
 	t.Helper()
-	fx := &driftFixture{currentProfiles: initial}
+	fx := &runtimeProfileFixture{currentProfiles: initial, profilesStatus: http.StatusOK}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.URL.Path == "/api/daemon/register":
@@ -149,6 +151,7 @@ func newDriftFixture(t *testing.T, initial []RuntimeProfile) *driftFixture {
 				Runtimes []map[string]any `json:"runtimes"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&body)
+			fx.sentRuntimes = body.Runtimes
 			var resp RegisterResponse
 			for i, rt := range body.Runtimes {
 				id := "rt-" + strconv.Itoa(i)
@@ -181,6 +184,10 @@ func newDriftFixture(t *testing.T, initial []RuntimeProfile) *driftFixture {
 			fx.deregisterMu.Unlock()
 			w.WriteHeader(http.StatusOK)
 		case strings.HasSuffix(r.URL.Path, "/runtime-profiles"):
+			if fx.profilesStatus != http.StatusOK {
+				w.WriteHeader(fx.profilesStatus)
+				return
+			}
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(RuntimeProfilesResponse{
 				WorkspaceID:     "ws-1",
@@ -211,7 +218,7 @@ func TestRefreshWorkspaceRuntimeProfiles_NoDrift_DoesNotReregister(t *testing.T)
 		ProtocolFamily: "codex", CommandName: "company-codex",
 		Enabled: true,
 	}}
-	fx := newDriftFixture(t, profiles)
+	fx := newRuntimeProfileFixture(t, profiles)
 	d := fx.daemon
 	d.cfg.Agents = map[string]AgentEntry{}
 
@@ -253,7 +260,7 @@ func TestRefreshWorkspaceRuntimeProfiles_NewProfileTriggersReregister(t *testing
 		ProtocolFamily: "codex", CommandName: "company-codex",
 		Enabled: true,
 	}}
-	fx := newDriftFixture(t, initial)
+	fx := newRuntimeProfileFixture(t, initial)
 	d := fx.daemon
 	d.cfg.Agents = map[string]AgentEntry{}
 
@@ -348,7 +355,7 @@ func TestRefreshWorkspaceRuntimeProfiles_DriftWithRunningRuntimeSkipsOrphanRecov
 		ProtocolFamily: "codex", CommandName: "company-codex",
 		Enabled: true,
 	}}
-	fx := newDriftFixture(t, initial)
+	fx := newRuntimeProfileFixture(t, initial)
 	d := fx.daemon
 	d.cfg.Agents = map[string]AgentEntry{"claude": {Path: "/usr/bin/true"}}
 
@@ -404,7 +411,7 @@ func TestRefreshWorkspaceRuntimeProfiles_DisableConvergesCustomOnlyDaemon(t *tes
 		ProtocolFamily: "codex", CommandName: "company-codex",
 		Enabled: true,
 	}}
-	fx := newDriftFixture(t, initial)
+	fx := newRuntimeProfileFixture(t, initial)
 	d := fx.daemon
 	// Custom-only daemon: no built-in agents at all.
 	d.cfg.Agents = map[string]AgentEntry{}
@@ -503,7 +510,7 @@ func TestRefreshWorkspaceRuntimeProfiles_DisableOneOfManyDeregistersDroppedID(t 
 		ProtocolFamily: "codex", CommandName: "company-codex",
 		Enabled: true,
 	}}
-	fx := newDriftFixture(t, initial)
+	fx := newRuntimeProfileFixture(t, initial)
 	d := fx.daemon
 	// Mixed: one built-in + one custom.
 	d.cfg.Agents = map[string]AgentEntry{"claude": {Path: "/usr/bin/true"}}

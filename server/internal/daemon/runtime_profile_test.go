@@ -2,11 +2,9 @@ package daemon
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"strings"
 	"testing"
 )
@@ -86,65 +84,6 @@ func TestClient_GetRuntimeProfiles_RequestShape(t *testing.T) {
 	}
 }
 
-// profileRegisterFixture wires a Daemon against a fake server that serves a
-// configurable set of runtime profiles and captures the runtimes array sent
-// to /api/daemon/register.
-type profileRegisterFixture struct {
-	daemon       *Daemon
-	server       *httptest.Server
-	sentRuntimes []map[string]any
-}
-
-func newProfileRegisterFixture(t *testing.T, profiles []RuntimeProfile, profilesStatus int) *profileRegisterFixture {
-	t.Helper()
-	fx := &profileRegisterFixture{}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/api/daemon/register":
-			var body struct {
-				Runtimes []map[string]any `json:"runtimes"`
-			}
-			_ = json.NewDecoder(r.Body).Decode(&body)
-			fx.sentRuntimes = body.Runtimes
-			// Echo back a Runtime row per requested runtime, threading
-			// profile_id so the caller can populate runtimeIndex from it.
-			var resp RegisterResponse
-			for i, rt := range body.Runtimes {
-				id := "rt-" + strconv.Itoa(i)
-				profileID, _ := rt["profile_id"].(string)
-				typ, _ := rt["type"].(string)
-				resp.Runtimes = append(resp.Runtimes, Runtime{
-					ID:        id,
-					Name:      "n",
-					Provider:  typ,
-					Status:    "online",
-					ProfileID: profileID,
-				})
-			}
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(resp)
-		case len(r.URL.Path) > len("/runtime-profiles") && strings.HasSuffix(r.URL.Path, "/runtime-profiles"):
-			if profilesStatus != 0 && profilesStatus != http.StatusOK {
-				w.WriteHeader(profilesStatus)
-				return
-			}
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(RuntimeProfilesResponse{
-				WorkspaceID:     "ws-1",
-				RuntimeProfiles: profiles,
-			})
-		default:
-			w.WriteHeader(http.StatusOK)
-		}
-	}))
-	t.Cleanup(srv.Close)
-	d := freshDaemon(srv.URL)
-	d.profileLaunches = make(map[string]runtimeProfileLaunch)
-	fx.daemon = d
-	fx.server = srv
-	return fx
-}
-
 // TestRegisterRuntimes_AppendsProfileRuntime verifies that a custom profile
 // whose command resolves on PATH is appended as a runtime entry carrying
 // profile_id, and that its resolved command path is recorded for runTask.
@@ -163,7 +102,7 @@ func TestRegisterRuntimes_AppendsProfileRuntime(t *testing.T) {
 		FixedArgs:      []string{"--profile-mode", "team"},
 		Enabled:        true,
 	}}
-	fx := newProfileRegisterFixture(t, profiles, http.StatusOK)
+	fx := newRuntimeProfileFixture(t, profiles)
 	d := fx.daemon
 	// Custom-only host: no built-in agents configured.
 	d.cfg.Agents = map[string]AgentEntry{}
@@ -220,7 +159,7 @@ func TestRegisterRuntimes_SkipsProfileNotOnPath(t *testing.T) {
 		CommandName:    "company-codex",
 		Enabled:        true,
 	}}
-	fx := newProfileRegisterFixture(t, profiles, http.StatusOK)
+	fx := newRuntimeProfileFixture(t, profiles)
 	d := fx.daemon
 	d.cfg.Agents = map[string]AgentEntry{}
 
@@ -242,7 +181,8 @@ func TestRegisterRuntimes_ProfilesFetchErrorIsBestEffort(t *testing.T) {
 	t.Cleanup(stubAgentVersion(t))
 	stubLookPath(t, map[string]string{})
 
-	fx := newProfileRegisterFixture(t, nil, http.StatusNotFound)
+	fx := newRuntimeProfileFixture(t, nil)
+	fx.profilesStatus = http.StatusNotFound
 	d := fx.daemon
 	// Built-in agent present so registration has something to register.
 	d.cfg.Agents = map[string]AgentEntry{"claude": {Path: "/usr/bin/true"}}
@@ -277,7 +217,7 @@ func TestRegisterRuntimes_PrefersCommandPathOverride(t *testing.T) {
 		CommandName:    "company-codex",
 		Enabled:        true,
 	}}
-	fx := newProfileRegisterFixture(t, profiles, http.StatusOK)
+	fx := newRuntimeProfileFixture(t, profiles)
 	d := fx.daemon
 	d.cfg.Agents = map[string]AgentEntry{}
 	d.cfg.ProfileCommandOverrides = map[string]string{"prof-1": "/opt/custom/company-codex"}
@@ -311,7 +251,7 @@ func TestRegisterRuntimes_OverrideNotExecutableFallsBackToPath(t *testing.T) {
 		CommandName:    "company-codex",
 		Enabled:        true,
 	}}
-	fx := newProfileRegisterFixture(t, profiles, http.StatusOK)
+	fx := newRuntimeProfileFixture(t, profiles)
 	d := fx.daemon
 	d.cfg.Agents = map[string]AgentEntry{}
 	d.cfg.ProfileCommandOverrides = map[string]string{"prof-1": "/opt/stale/company-codex"}
