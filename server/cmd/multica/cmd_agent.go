@@ -271,7 +271,7 @@ func newAPIClient(cmd *cobra.Command) (*cli.APIClient, error) {
 }
 
 func resolveServerURL(cmd *cobra.Command) (string, error) {
-	val := cli.FlagOrEnv(cmd, "server-url", "MULTICA_SERVER_URL", "")
+	val := cli.FlagOrEnv(cmd, "server-url", "MULTICA_SERVER_URL")
 	if val == "" {
 		val = taskContextValue("MULTICA_SERVER_URL")
 	}
@@ -309,7 +309,7 @@ func inAgentExecutionContext() bool {
 }
 
 func resolveWorkspaceID(cmd *cobra.Command) (string, error) {
-	val := cli.FlagOrEnv(cmd, "workspace-id", "MULTICA_WORKSPACE_ID", "")
+	val := cli.FlagOrEnv(cmd, "workspace-id", "MULTICA_WORKSPACE_ID")
 	if val == "" {
 		val = taskContextValue("MULTICA_WORKSPACE_ID")
 	}

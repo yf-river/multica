@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 )
 
-const defaultCLIConfigPath = ".multica/config.json"
-
 // CLIConfig holds persistent CLI settings.
 type CLIConfig struct {
 	ServerURL   string `json:"server_url,omitempty"`
@@ -40,14 +38,11 @@ type OpenClawOverride struct {
 // An empty profile returns the default path (~/.multica/config.json).
 // A named profile returns ~/.multica/profiles/<name>/config.json.
 func CLIConfigPathForProfile(profile string) (string, error) {
-	home, err := os.UserHomeDir()
+	dir, err := ProfileDir(profile)
 	if err != nil {
-		return "", fmt.Errorf("resolve CLI config path: %w", err)
+		return "", err
 	}
-	if profile == "" {
-		return filepath.Join(home, defaultCLIConfigPath), nil
-	}
-	return filepath.Join(home, ".multica", "profiles", profile, "config.json"), nil
+	return filepath.Join(dir, "config.json"), nil
 }
 
 // ProfileDir returns the base directory for a profile's state files (pid, log).

@@ -161,7 +161,7 @@ func TestSelfHostAppURLHonorsEnv(t *testing.T) {
 
 	t.Run("env honored when flag absent", func(t *testing.T) {
 		t.Setenv("MULTICA_APP_URL", "https://app.internal.co")
-		if got := cli.FlagOrEnv(cmd, "app-url", "MULTICA_APP_URL", ""); got != "https://app.internal.co" {
+		if got := cli.FlagOrEnv(cmd, "app-url", "MULTICA_APP_URL"); got != "https://app.internal.co" {
 			t.Fatalf("app_url: want env value, got %q", got)
 		}
 	})
@@ -171,7 +171,7 @@ func TestSelfHostAppURLHonorsEnv(t *testing.T) {
 		if err := cmd.Flags().Set("app-url", "https://flag.example"); err != nil {
 			t.Fatalf("set flag: %v", err)
 		}
-		if got := cli.FlagOrEnv(cmd, "app-url", "MULTICA_APP_URL", ""); got != "https://flag.example" {
+		if got := cli.FlagOrEnv(cmd, "app-url", "MULTICA_APP_URL"); got != "https://flag.example" {
 			t.Fatalf("app_url: want flag value, got %q", got)
 		}
 	})

@@ -158,7 +158,7 @@ func runSetupSelfHost(cmd *cobra.Command, args []string) error {
 	// MULTICA_SERVER_URL still got the localhost default and an "unreachable"
 	// error (GitHub #3912).
 	serverURL, userProvidedServerURL := resolveSelfHostServerURL(cmd)
-	appURL := cli.FlagOrEnv(cmd, "app-url", "MULTICA_APP_URL", "")
+	appURL := cli.FlagOrEnv(cmd, "app-url", "MULTICA_APP_URL")
 	frontendPort, _ := cmd.Flags().GetInt("frontend-port")
 
 	if appURL == "" {
@@ -245,7 +245,7 @@ func persistSelfHostConfigIfReachable(serverURL, appURL, profile string, probe f
 // are accepted and converted to the http(s) base that the reachability probe
 // and the stored server_url expect.
 func resolveSelfHostServerURL(cmd *cobra.Command) (serverURL string, userProvided bool) {
-	if v := cli.FlagOrEnv(cmd, "server-url", "MULTICA_SERVER_URL", ""); v != "" {
+	if v := cli.FlagOrEnv(cmd, "server-url", "MULTICA_SERVER_URL"); v != "" {
 		return normalizeAPIBaseURL(v), true
 	}
 	port, _ := cmd.Flags().GetInt("port")

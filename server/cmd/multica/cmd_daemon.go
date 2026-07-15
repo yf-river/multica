@@ -331,7 +331,7 @@ func runDaemonForeground(cmd *cobra.Command) error {
 
 	profile := resolveProfile(cmd)
 
-	serverURL := cli.FlagOrEnv(cmd, "server-url", "MULTICA_SERVER_URL", "")
+	serverURL := cli.FlagOrEnv(cmd, "server-url", "MULTICA_SERVER_URL")
 	if serverURL == "" {
 		if c, err := cli.LoadCLIConfigForProfile(profile); err == nil && c.ServerURL != "" {
 			serverURL = c.ServerURL
