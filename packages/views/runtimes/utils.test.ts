@@ -1,8 +1,14 @@
 import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
-import type { AgentRuntime, RuntimeUsage, RuntimeUsageByTask } from "@multica/core/types";
+import type {
+  AgentRuntime,
+  DashboardUsageDaily,
+  RuntimeUsage,
+  RuntimeUsageByTask,
+} from "@multica/core/types";
 
 import {
   addDaysIso,
+  aggregateByDate,
   aggregateByWeek,
   aggregateCostByTask,
   computeCostInWindow,
@@ -12,6 +18,82 @@ import {
   usageTokenTotal,
   weekStartIso,
 } from "./utils";
+
+const dashboardDailyCost = {
+  cost_usd: 0,
+  input_cost_usd: 0,
+  output_cost_usd: 0,
+  cache_write_cost_usd: 0,
+};
+
+describe("aggregateByDate", () => {
+  it("folds dashboard rows into sorted token and cost buckets", () => {
+    const rows: DashboardUsageDaily[] = [
+      {
+        date: "2026-05-10",
+        input_tokens: 1_000_000,
+        output_tokens: 500_000,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        task_count: 3,
+        ...dashboardDailyCost,
+        cost_usd: 10.5,
+        input_cost_usd: 3,
+        output_cost_usd: 7.5,
+      },
+      {
+        date: "2026-05-09",
+        input_tokens: 1_000_000,
+        output_tokens: 0,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        task_count: 1,
+        ...dashboardDailyCost,
+        cost_usd: 3,
+        input_cost_usd: 3,
+      },
+    ];
+
+    const result = aggregateByDate(rows);
+
+    expect(result.dailyCostStack.map((row) => row.date)).toEqual([
+      "2026-05-09",
+      "2026-05-10",
+    ]);
+    expect(result.dailyCostStack[0]).toMatchObject({
+      input: 3,
+      output: 0,
+      cacheWrite: 0,
+      total: 3,
+    });
+    expect(result.dailyCostStack[1]).toMatchObject({
+      input: 3,
+      output: 7.5,
+      cacheWrite: 0,
+      total: 10.5,
+    });
+    expect(result.dailyTokens[1]).toMatchObject({
+      input: 1_000_000,
+      output: 500_000,
+    });
+  });
+
+  it("keeps a server-reported zero cost", () => {
+    const [cost] = aggregateByDate([
+      {
+        date: "2026-05-10",
+        input_tokens: 999_999_999,
+        output_tokens: 0,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        task_count: 0,
+        ...dashboardDailyCost,
+      },
+    ]).dailyCostStack;
+
+    expect(cost?.total).toBe(0);
+  });
+});
 
 describe("isSelfHealingRuntime", () => {
   function makeRuntime(overrides: Partial<AgentRuntime>): AgentRuntime {

@@ -38,6 +38,7 @@ import { ActorAvatar } from "../../common/actor-avatar";
 import {
   DEFAULT_USAGE_DAYS_BY_DIM,
   addDaysIso,
+  aggregateByDate,
   aggregateByWeek,
   formatUsageCost,
   formatTokens,
@@ -48,10 +49,8 @@ import { SegmentedControl } from "../../common/segmented-control";
 import { useT } from "../../i18n";
 import {
   aggregateAgentTokens,
-  aggregateDailyCost,
   aggregateDailyTasks,
   aggregateDailyTime,
-  aggregateDailyTokens,
   aggregateWeeklyTasks,
   aggregateWeeklyTime,
   computeDailyTotals,
@@ -203,12 +202,8 @@ export function DashboardPage() {
     () => computeDailyTotals(dailyUsageInWindow),
     [dailyUsageInWindow],
   );
-  const dailyCost = useMemo(
-    () => aggregateDailyCost(dailyUsageInWindow),
-    [dailyUsageInWindow],
-  );
-  const dailyTokens = useMemo(
-    () => aggregateDailyTokens(dailyUsageInWindow),
+  const { dailyCostStack: dailyCost, dailyTokens } = useMemo(
+    () => aggregateByDate(dailyUsageInWindow),
     [dailyUsageInWindow],
   );
   const dailyTime = useMemo(
@@ -448,8 +443,8 @@ function TrendBlock({
   lessThanMinuteLabel,
 }: {
   dim: Dim;
-  dailyCost: ReturnType<typeof aggregateDailyCost>;
-  dailyTokens: ReturnType<typeof aggregateDailyTokens>;
+  dailyCost: ReturnType<typeof aggregateByDate>["dailyCostStack"];
+  dailyTokens: ReturnType<typeof aggregateByDate>["dailyTokens"];
   dailyTime: ReturnType<typeof aggregateDailyTime>;
   dailyTasks: ReturnType<typeof aggregateDailyTasks>;
   weeklyCost: ReturnType<typeof aggregateByWeek>["weeklyCostStack"];

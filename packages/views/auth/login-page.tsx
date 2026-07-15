@@ -51,7 +51,7 @@ interface LoginPageProps {
 // Helpers
 // ---------------------------------------------------------------------------
 
-export function redirectToCliCallback(url: string, token: string, state: string) {
+function redirectToCliCallback(url: string, token: string, state: string) {
   const separator = url.includes("?") ? "&" : "?";
   window.location.href = `${url}${separator}token=${encodeURIComponent(token)}&state=${encodeURIComponent(state)}`;
 }

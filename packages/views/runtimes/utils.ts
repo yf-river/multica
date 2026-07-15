@@ -1,5 +1,6 @@
 import type {
   AgentRuntime,
+  DashboardUsageDaily,
   RuntimeUsage,
   RuntimeUsageByAgent,
   RuntimeUsageByTask,
@@ -274,7 +275,9 @@ export interface WeeklyCostStackData {
   total: number;
 }
 
-export function aggregateByDate(usage: RuntimeUsage[]): {
+export function aggregateByDate(
+  usage: Array<RuntimeUsage | DashboardUsageDaily>,
+): {
   dailyTokens: DailyTokenData[];
   dailyCostStack: DailyCostStackData[];
 } {

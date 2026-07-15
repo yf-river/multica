@@ -8,12 +8,10 @@ import {
   addDaysIso,
   diffDaysIso,
   estimateCost,
-  estimateCostBreakdown,
   formatShortDate,
   todayIso,
   usageTokenTotal,
   weekStartIso,
-  type DailyTokenData,
 } from "../runtimes/utils";
 import type {
   DailyTimeData,
@@ -30,15 +28,6 @@ import type {
 // by the backend; the helpers here only fold rows for charts and lists.
 // ---------------------------------------------------------------------------
 
-export interface DailyCostStack {
-  date: string;
-  label: string;
-  input: number;
-  output: number;
-  cacheWrite: number;
-  total: number;
-}
-
 function formatDateLabel(d: string): string {
   // Anchor to local midnight so the formatted label matches the bucket the
   // server picked (which is already in workspace time). Pasting the raw
@@ -48,74 +37,7 @@ function formatDateLabel(d: string): string {
   return `${date.getMonth() + 1}/${date.getDate()}`;
 }
 
-// Per-(date, model) rows → 1 row per date with cost broken into the three
-// segments the stacked bar chart consumes. Stable sort by date asc so the
-// chart x-axis is left-to-right oldest-to-newest.
-export function aggregateDailyCost(usage: DashboardUsageDaily[]): DailyCostStack[] {
-  const map = new Map<string, { input: number; output: number; cacheWrite: number }>();
-  for (const u of usage) {
-    const b = estimateCostBreakdown(u);
-    const entry = map.get(u.date) ?? { input: 0, output: 0, cacheWrite: 0 };
-    entry.input += b.input;
-    entry.output += b.output;
-    entry.cacheWrite += b.cacheWrite;
-    map.set(u.date, entry);
-  }
-  const round = (n: number) => Math.round(n * 100) / 100;
-  return Array.from(map.entries())
-    .toSorted(([a], [b]) => a.localeCompare(b))
-    .map(([date, s]) => {
-      const input = round(s.input);
-      const output = round(s.output);
-      const cacheWrite = round(s.cacheWrite);
-      return {
-        date,
-        label: formatDateLabel(date),
-        input,
-        output,
-        cacheWrite,
-        total: round(input + output + cacheWrite),
-      };
-    });
-}
-
-// Per-(date, model) rows → 1 row per date with raw token counts split
-// across the four chart segments. Independent of pricing — unmapped
-// models still contribute here, even if they're excluded from cost.
-// Mirrors `aggregateByDate(...).dailyTokens` from the runtimes utils so
-// the Tokens chart on the Usage page consumes the same shape as the one
-// on the runtime-detail page.
-export function aggregateDailyTokens(usage: DashboardUsageDaily[]): DailyTokenData[] {
-  const map = new Map<
-    string,
-    { input: number; output: number; cacheRead: number; cacheWrite: number }
-  >();
-  for (const u of usage) {
-    const entry = map.get(u.date) ?? {
-      input: 0,
-      output: 0,
-      cacheRead: 0,
-      cacheWrite: 0,
-    };
-    entry.input += u.input_tokens;
-    entry.output += u.output_tokens;
-    entry.cacheRead += u.cache_read_tokens;
-    entry.cacheWrite += u.cache_write_tokens;
-    map.set(u.date, entry);
-  }
-  return Array.from(map.entries())
-    .toSorted(([a], [b]) => a.localeCompare(b))
-    .map(([date, t]) => ({
-      date,
-      label: formatDateLabel(date),
-      input: t.input,
-      output: t.output,
-      cacheRead: t.cacheRead,
-      cacheWrite: t.cacheWrite,
-    }));
-}
-
-export interface DashboardTokenTotals {
+interface DashboardTokenTotals {
   input: number;
   output: number;
   cacheRead: number;
@@ -143,7 +65,7 @@ export function computeDailyTotals(usage: DashboardUsageDaily[]): DashboardToken
   );
 }
 
-export interface AgentCostRow {
+interface AgentCostRow {
   agentId: string;
   tokens: number;
   cost: number;
