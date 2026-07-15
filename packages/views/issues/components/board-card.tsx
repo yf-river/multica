@@ -2,8 +2,7 @@
 
 import { useCallback, memo } from "react";
 import { AppLink } from "../../navigation";
-import { useSortable, defaultAnimateLayoutChanges } from "@dnd-kit/sortable";
-import type { AnimateLayoutChanges } from "@dnd-kit/sortable";
+import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { toast } from "sonner";
 import type { Issue, UpdateIssueRequest } from "@multica/core/types";
@@ -28,6 +27,7 @@ import { LabelChip } from "../../labels/label-chip";
 import { IssueAgentActivityIndicator } from "./issue-agent-activity-indicator";
 import { useT } from "../../i18n";
 import { TAPDSourceBadge } from "./tapd-source-badge";
+import { issueAnimateLayoutChanges } from "../utils/drag-utils";
 
 function formatDate(date: string): string {
   return formatDateOnly(date, { month: "short", day: "numeric" }, "zh-CN");
@@ -323,12 +323,6 @@ export const BoardCardContent = memo(function BoardCardContent({
   );
 });
 
-const animateLayoutChanges: AnimateLayoutChanges = (args) => {
-  const { isSorting, wasDragging } = args;
-  if (isSorting || wasDragging) return false;
-  return defaultAnimateLayoutChanges(args);
-};
-
 export const DraggableBoardCard = memo(function DraggableBoardCard({ issue, childProgress, disableSorting }: { issue: Issue; childProgress?: ChildProgress; disableSorting?: boolean }) {
   const p = useWorkspacePaths();
   const {
@@ -341,7 +335,7 @@ export const DraggableBoardCard = memo(function DraggableBoardCard({ issue, chil
   } = useSortable({
     id: issue.id,
     data: { status: issue.status },
-    animateLayoutChanges,
+    animateLayoutChanges: issueAnimateLayoutChanges,
     disabled: disableSorting ? { droppable: true } : undefined,
   });
 

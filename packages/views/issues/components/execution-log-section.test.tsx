@@ -46,10 +46,6 @@ vi.mock("../../common/task-transcript", () => ({
   ),
 }));
 
-vi.mock("./terminate-task-confirm-dialog", () => ({
-  TerminateTaskConfirmDialog: () => null,
-}));
-
 import { ActiveTaskRow, ExecutionLogSection, IssueRunReviewSummaryCard } from "./execution-log-section";
 
 function makeTask(overrides: Partial<AgentTask> = {}): AgentTask {

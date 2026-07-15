@@ -2,8 +2,7 @@
 
 import { memo, type Ref } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { useSortable, defaultAnimateLayoutChanges } from "@dnd-kit/sortable";
-import type { AnimateLayoutChanges } from "@dnd-kit/sortable";
+import { useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import { AppLink } from "../../navigation";
 import type { Issue } from "@multica/core/types";
@@ -21,6 +20,7 @@ import { IssueActionsContextMenu } from "../actions/issue-actions-context-menu";
 import { LabelChip } from "../../labels/label-chip";
 import { IssueAgentActivityIndicator } from "./issue-agent-activity-indicator";
 import { TAPDSourceBadge } from "./tapd-source-badge";
+import { issueAnimateLayoutChanges } from "../utils/drag-utils";
 
 export interface ChildProgress {
   done: number;
@@ -177,12 +177,6 @@ export const ListRow = memo(function ListRow({
   return <ListRowContent issue={issue} childProgress={childProgress} />;
 });
 
-const animateLayoutChanges: AnimateLayoutChanges = (args) => {
-  const { isSorting, wasDragging } = args;
-  if (isSorting || wasDragging) return false;
-  return defaultAnimateLayoutChanges(args);
-};
-
 const stopDrag = (e: React.SyntheticEvent) => {
   e.stopPropagation();
 };
@@ -206,7 +200,7 @@ export const DraggableListRow = memo(function DraggableListRow({
   } = useSortable({
     id: issue.id,
     data: { status: issue.status },
-    animateLayoutChanges,
+    animateLayoutChanges: issueAnimateLayoutChanges,
     disabled: disableSorting ? { droppable: true } : undefined,
   });
 

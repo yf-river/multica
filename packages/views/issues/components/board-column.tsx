@@ -5,7 +5,7 @@ import { EyeOff, MoreHorizontal, Plus, UserMinus } from "lucide-react";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@multica/ui/components/ui/tooltip";
 import { useDroppable } from "@dnd-kit/core";
 import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
-import type { Issue, IssueAssigneeType, IssueStatus } from "@multica/core/types";
+import type { Issue } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
 import {
   DropdownMenu,
@@ -14,16 +14,14 @@ import {
   DropdownMenuItem,
 } from "@multica/ui/components/ui/dropdown-menu";
 import { STATUS_CONFIG } from "@multica/core/issues/config";
-import {
-  openCreateIssue,
-  type CreateIssueSeed,
-} from "@multica/core/issues";
+import { openCreateIssue } from "@multica/core/issues";
 import { useViewStoreApi } from "@multica/core/issues/stores/view-store-context";
 import { StatusHeading } from "./status-heading";
 import { DraggableBoardCard } from "./board-card";
 import type { ChildProgress } from "./list-row";
 import { useT } from "../../i18n";
 import { ActorAvatar } from "../../common/actor-avatar";
+import type { BoardColumnGroup } from "../utils/drag-utils";
 
 // Insertion-position prediction intentionally omitted. The server's
 // ORDER BY uses PostgreSQL's en_US.utf8 collation (glibc), which
@@ -32,16 +30,6 @@ import { ActorAvatar } from "../../common/actor-avatar";
 
 const BOARD_COL_WIDTH = 280;
 export const BOARD_CARD_WIDTH = BOARD_COL_WIDTH - 16 - 8; // col(280) - col p-2(16) - droppable p-1(8)
-
-export interface BoardColumnGroup {
-  id: string;
-  title: string;
-  status?: IssueStatus;
-  assigneeType?: IssueAssigneeType | null;
-  assigneeId?: string | null;
-  totalCount?: number;
-  createData?: CreateIssueSeed;
-}
 
 export const BoardColumn = memo(function BoardColumn({
   group,

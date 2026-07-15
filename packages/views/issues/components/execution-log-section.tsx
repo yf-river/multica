@@ -14,12 +14,21 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@multica/ui/components/ui/tooltip";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@multica/ui/components/ui/alert-dialog";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { formatDuration } from "../../agents/components/agent-activity-hover-content";
 import { TranscriptButton } from "../../common/task-transcript";
 import { useT } from "../../i18n";
 import { usageTokenTotal } from "../../runtimes/utils";
-import { TerminateTaskConfirmDialog } from "./terminate-task-confirm-dialog";
 
 // Right-panel section for the issue's live/debug surface. Active runs stay
 // visible with recent events; terminal runs are summarized into one compact
@@ -711,6 +720,47 @@ function useStatusLabel(status: AgentTask["status"]): string {
     case "failed": return t(($) => $.execution_log.status_failed);
     case "cancelled": return t(($) => $.execution_log.status_cancelled);
   }
+}
+
+function TerminateTaskConfirmDialog({
+  open,
+  onOpenChange,
+  onConfirm,
+  showRunningNote,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onConfirm: () => void;
+  showRunningNote: boolean;
+}) {
+  const { t } = useT("issues");
+  if (!open) return null;
+
+  return (
+    <AlertDialog open onOpenChange={onOpenChange}>
+      <AlertDialogContent onClick={(event) => event.stopPropagation()}>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{t(($) => $.terminate_dialog.title)}</AlertDialogTitle>
+          <AlertDialogDescription>
+            {t(($) => $.terminate_dialog.body)}
+            {showRunningNote && t(($) => $.terminate_dialog.running_note)}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>{t(($) => $.terminate_dialog.keep)}</AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            onClick={() => {
+              onOpenChange(false);
+              onConfirm();
+            }}
+          >
+            {t(($) => $.terminate_dialog.confirm)}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
 }
 
 // One active (running / queued / dispatched / parked) task row. Running rows

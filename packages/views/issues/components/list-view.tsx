@@ -24,21 +24,12 @@ import { useIssueDragColumns } from "./use-issue-drag-columns";
 import { useT } from "../../i18n";
 import {
   type DragMoveUpdates,
+  buildStatusGroups,
   statusGroupId,
 } from "../utils/drag-utils";
-import type { BoardColumnGroup } from "./board-column";
 
 const EMPTY_PROGRESS_MAP = new Map<string, ChildProgress>();
 const EMPTY_IDS: string[] = [];
-
-function buildListGroups(visibleStatuses: IssueStatus[]): BoardColumnGroup[] {
-  return visibleStatuses.map((status) => ({
-    id: statusGroupId(status),
-    title: status,
-    status,
-    createData: { status },
-  }));
-}
 
 export function ListView({
   issues,
@@ -88,7 +79,7 @@ export function ListView({
   const dragEnabled = !!onMoveIssue;
 
   const groups = useMemo(
-    () => buildListGroups(visibleStatuses),
+    () => buildStatusGroups(visibleStatuses),
     [visibleStatuses],
   );
   const {

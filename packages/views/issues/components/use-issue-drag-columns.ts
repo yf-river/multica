@@ -15,8 +15,8 @@ import type {
   IssueGrouping,
   SortField,
 } from "@multica/core/issues/stores/view-store";
-import type { BoardColumnGroup } from "./board-column";
 import {
+  type BoardColumnGroup,
   buildColumns,
   computePosition,
   findColumn,
