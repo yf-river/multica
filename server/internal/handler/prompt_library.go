@@ -475,17 +475,14 @@ func (h *Handler) CreatePromptLibraryItem(w http.ResponseWriter, r *http.Request
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, actorID, resourceTypePromptLibraryItem, idempotencyKey, requestHash)
-	if errors.Is(err, pgx.ErrNoRows) {
-		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, loadReplay)
-		if replayErr != nil {
-			writePromptLibraryCreateReplayError(w, "prompt library item", replayErr)
-			return
-		}
-		writeJSON(w, http.StatusCreated, replay)
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to reserve prompt library item request")
+	if !handleResourceCreateReservation(
+		w, r.Context(), tx, err, loadReplay,
+		func(w http.ResponseWriter, err error) {
+			writePromptLibraryCreateReplayError(w, "prompt library item", err)
+		},
+		"failed to reserve prompt library item request",
+		http.StatusCreated,
+	) {
 		return
 	}
 
@@ -674,17 +671,14 @@ func (h *Handler) CreatePromptLibraryVersion(w http.ResponseWriter, r *http.Requ
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, existing.WorkspaceID, actorID, resourceTypePromptLibraryVersion, idempotencyKey, requestHash)
-	if errors.Is(err, pgx.ErrNoRows) {
-		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, loadReplay)
-		if replayErr != nil {
-			writePromptLibraryCreateReplayError(w, "prompt library version", replayErr)
-			return
-		}
-		writeJSON(w, http.StatusCreated, replay)
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to reserve prompt library version request")
+	if !handleResourceCreateReservation(
+		w, r.Context(), tx, err, loadReplay,
+		func(w http.ResponseWriter, err error) {
+			writePromptLibraryCreateReplayError(w, "prompt library version", err)
+		},
+		"failed to reserve prompt library version request",
+		http.StatusCreated,
+	) {
 		return
 	}
 
@@ -888,17 +882,12 @@ func (h *Handler) CreatePromptLibraryTrial(w http.ResponseWriter, r *http.Reques
 	defer func() { _ = tx.Rollback(r.Context()) }()
 	qtx := h.Queries.WithTx(tx)
 	err = reserveResourceCreateRequest(r.Context(), qtx, item.WorkspaceID, parseUUID(actorID), resourceTypePromptLibraryTrial, idempotencyKey, requestHash)
-	if errors.Is(err, pgx.ErrNoRows) {
-		replay, replayErr := loadReplayAfterReservationConflict(r.Context(), tx, loadReplay)
-		if replayErr != nil {
-			writePromptLibraryTrialReplayError(w, replayErr)
-			return
-		}
-		writeJSON(w, http.StatusAccepted, replay)
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to reserve prompt library trial request")
+	if !handleResourceCreateReservation(
+		w, r.Context(), tx, err, loadReplay,
+		writePromptLibraryTrialReplayError,
+		"failed to reserve prompt library trial request",
+		http.StatusAccepted,
+	) {
 		return
 	}
 
