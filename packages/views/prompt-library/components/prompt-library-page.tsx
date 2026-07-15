@@ -46,7 +46,6 @@ import {
   setDraftField,
   type PromptDraft,
 } from "./prompt-library-request-builders";
-import { trainingSelectedPromptStorageKey } from "./prompt-selection-storage";
 import { PromptTrialPanel, PromptVersionHistory } from "./prompt-editor-panels";
 import { Field } from "./form-field";
 import { extractPromptVariables } from "./prompt-trial-model";
@@ -339,7 +338,9 @@ export function PromptLibraryPage({
     if (!selectedFromList) return null;
     return promptVersions.find((version) => version.id === activeVersionId) ?? promptVersions[0] ?? null;
   }, [activeVersionId, promptVersions, selectedFromList]);
-  const selectedPromptStorageKey = trainingSelectedPromptStorageKey(workspaceId);
+  const selectedPromptStorageKey = workspaceId
+    ? `multica:training:selected-prompt:${workspaceId}`
+    : null;
 
   useEffect(() => {
     if (!selectedPromptStorageKey || !selectedId) return;
