@@ -10,7 +10,7 @@ const DAYS = 30;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /** One day's tally for the sparkline. */
-export interface ActivityBucket {
+interface ActivityBucket {
   total: number;
   failed: number;
 }
@@ -32,7 +32,7 @@ export interface AgentActivity {
  * read through this so the totals can never drift from the bars they
  * label.
  */
-export interface ActivityWindowSummary {
+interface ActivityWindowSummary {
   /** Trailing-N buckets from the activity series (newest end). */
   buckets: ActivityBucket[];
   /** Sum of `bucket.total` across the window. */
@@ -103,9 +103,7 @@ export function buildActivityMap(
 
 /**
  * Pure derivation: filter the workspace-wide buckets to one agent and
- * normalise to a fixed 30-element series ending at `now`. Exported for
- * unit-testing and direct reuse on surfaces that already have the
- * workspace-wide buckets in hand.
+ * normalise to a fixed 30-element series ending at `now`.
  */
 export function deriveAgentActivity(
   buckets: readonly AgentActivityBucket[],

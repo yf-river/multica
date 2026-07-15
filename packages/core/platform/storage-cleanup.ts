@@ -53,12 +53,12 @@ const ACCOUNT_SESSION_PREFIXES = [
   "multica_cmdF_warned:",
 ] as const;
 
-export interface WorkspaceStorageScope {
+interface WorkspaceStorageScope {
   slug: string;
   id: string;
 }
 
-export interface AccountStorageAdapters {
+interface AccountStorageAdapters {
   local: StorageAdapter;
   session: StorageAdapter;
 }

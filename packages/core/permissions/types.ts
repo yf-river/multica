@@ -18,7 +18,7 @@ export interface PermissionContext {
  * different copy / disabled states / banner variants without parsing the
  * `message` string. Tests assert on `reason`.
  */
-export type DecisionReason =
+type DecisionReason =
   | "allowed"
   | "not_authenticated"
   | "not_member"

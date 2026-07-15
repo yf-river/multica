@@ -3,7 +3,7 @@ import type { CreatePromptEvaluationAssetRequest, PromptEvaluationAsset, PromptE
 const SKILL_SCENARIO_EVALUATION_SCHEMA = "multica.skill_scenario_eval.v1";
 const WRITING_MODEL_BENCHMARK_SCHEMA = "multica.writing_model_benchmark.v1";
 
-export type SkillScenarioTarget = {
+type SkillScenarioTarget = {
   kind: "repo_skill";
   repo_path: string;
   branch: string;
@@ -11,7 +11,7 @@ export type SkillScenarioTarget = {
   skill_role: "sop" | "operation";
 };
 
-export type SkillScenarioPayload = {
+type SkillScenarioPayload = {
   schema_version: 1;
   schema: typeof SKILL_SCENARIO_EVALUATION_SCHEMA;
   target: SkillScenarioTarget;

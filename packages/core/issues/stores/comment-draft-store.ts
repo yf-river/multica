@@ -26,7 +26,7 @@ interface CommentDraft {
   updatedAt: number;
 }
 
-export interface PendingCommentCreate {
+interface PendingCommentCreate {
   requestKey: string;
   issueId: string;
   request: CreateCommentRequest;

@@ -25,7 +25,7 @@ export interface IssueDateFilter {
 
 export const SWIMLANE_GROUPINGS: SwimlaneGrouping[] = ["parent", "project", "assignee"];
 
-export interface CardProperties {
+interface CardProperties {
   priority: boolean;
   description: boolean;
   assignee: boolean;

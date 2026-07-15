@@ -11,7 +11,7 @@ interface PendingCreateOperation<Request> {
   request: Request;
 }
 
-export interface PendingCreateState<Request> {
+interface PendingCreateState<Request> {
   pendingCreate?: PendingCreateOperation<Request>;
   setPendingCreate: (
     pendingCreate?: PendingCreateOperation<Request>,

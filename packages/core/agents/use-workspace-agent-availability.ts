@@ -21,7 +21,7 @@ import { canAssignAgentToIssue } from "../permissions";
  *   "none"      — both queries resolved, user has zero assignable agents
  *   "available" — at least one agent passes archive + scope filters
  */
-export type WorkspaceAgentAvailability = "loading" | "none" | "available";
+type WorkspaceAgentAvailability = "loading" | "none" | "available";
 
 /**
  * Mirrors the per-agent scope/archived filter used by AssigneePicker

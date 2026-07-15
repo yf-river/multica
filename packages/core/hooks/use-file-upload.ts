@@ -5,7 +5,7 @@ import type { ApiClient } from "../api/client";
 import type { Attachment } from "../types";
 import { MAX_FILE_SIZE } from "../constants/upload";
 
-export interface UploadContext {
+interface UploadContext {
   issueId?: string;
   commentId?: string;
   chatSessionId?: string;

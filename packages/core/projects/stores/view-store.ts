@@ -7,13 +7,13 @@ import { createWorkspaceListViewStore } from "../../platform/workspace-list-view
 // hiddenColumns only applies to the table. No scope (lead is optional and
 // often an agent, so there's no strong personal axis; status is a 5-value
 // lifecycle better expressed as a filter). Search stays session-local.
-export type ProjectViewMode = "compact" | "comfortable";
+type ProjectViewMode = "compact" | "comfortable";
 
 export type ProjectSortField = "name" | "priority" | "status" | "progress" | "created";
 
-export type ProjectSortDirection = "asc" | "desc";
+type ProjectSortDirection = "asc" | "desc";
 
-export const PROJECT_SORT_DEFAULT_DIRECTION: Record<
+const PROJECT_SORT_DEFAULT_DIRECTION: Record<
   ProjectSortField,
   ProjectSortDirection
 > = {
@@ -25,7 +25,7 @@ export const PROJECT_SORT_DEFAULT_DIRECTION: Record<
 };
 
 /** Multi-select filters. Empty array per dimension = inactive. */
-export interface ProjectListFilters {
+interface ProjectListFilters {
   /** ProjectStatus values. */
   statuses: string[];
   /** ProjectPriority values. */
@@ -34,7 +34,7 @@ export interface ProjectListFilters {
   leads: string[];
 }
 
-export const EMPTY_PROJECT_FILTERS: ProjectListFilters = {
+const EMPTY_PROJECT_FILTERS: ProjectListFilters = {
   statuses: [],
   priorities: [],
   leads: [],
@@ -46,7 +46,7 @@ export type ProjectColumnKey = "priority" | "progress" | "lead" | "issues" | "cr
 
 /** Issues count is opt-in; the rest show by default (matching the prior
  *  compact table). */
-export const PROJECT_DEFAULT_HIDDEN_COLUMNS: ProjectColumnKey[] = ["issues"];
+const PROJECT_DEFAULT_HIDDEN_COLUMNS: ProjectColumnKey[] = ["issues"];
 
 interface ProjectViewActions {
   setViewMode: (mode: ProjectViewMode) => void;
