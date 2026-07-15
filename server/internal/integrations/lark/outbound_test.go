@@ -6,11 +6,11 @@ import (
 	"strings"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -36,8 +36,9 @@ func (f *fakePatcherQueries) GetLarkChatSessionBindingBySession(ctx context.Cont
 
 type fakeCredentials struct{ secret string }
 
-func (f fakeCredentials) DecryptAppSecret(inst db.LarkInstallation) (string, error) {
-	return f.secret, nil
+func (f fakeCredentials) Credentials(inst db.LarkInstallation) (InstallationCredentials, error) {
+	region, err := ParseRegion(inst.Region)
+	return InstallationCredentials{AppID: inst.AppID, AppSecret: f.secret, Region: region}, err
 }
 
 type fakeAPIClient struct {
@@ -117,10 +118,7 @@ func newTestPatcher(t *testing.T) (*Patcher, *fakePatcherQueries, *fakeAPIClient
 		agent: db.Agent{Name: "TestAgent"},
 	}
 	api := &fakeAPIClient{sendReturn: "lark_card_msg_1", textSendReturn: "lark_text_msg_1"}
-	p := NewPatcher(q, fakeCredentials{secret: "shh"}, api, PatcherConfig{
-		Logger: newDiscardLogger(),
-		Now:    time.Now,
-	})
+	p := NewPatcher(q, fakeCredentials{secret: "shh"}, api)
 	return p, q, api
 }
 
@@ -139,11 +137,11 @@ func TestPatcherSendsPlainTextOnChatDone(t *testing.T) {
 
 	deliverPatcherTestEvent(p, events.Event{
 		Type:          protocol.EventChatDone,
-		TaskID:        uuidString(taskID),
-		ChatSessionID: uuidString(q.binding.ChatSessionID),
+		TaskID:        util.UUIDToString(taskID),
+		ChatSessionID: util.UUIDToString(q.binding.ChatSessionID),
 		Payload: protocol.ChatDonePayload{
-			TaskID:        uuidString(taskID),
-			ChatSessionID: uuidString(q.binding.ChatSessionID),
+			TaskID:        util.UUIDToString(taskID),
+			ChatSessionID: util.UUIDToString(q.binding.ChatSessionID),
 			Content:       "Hello! I'm cc, a coding agent…",
 		},
 	})
@@ -181,11 +179,11 @@ func TestPatcherRoutesMarkdownReplyToCard(t *testing.T) {
 	body := "# Summary\n\n- bullet one\n- bullet two\n\n```go\nfunc f() {}\n```\n"
 	deliverPatcherTestEvent(p, events.Event{
 		Type:          protocol.EventChatDone,
-		TaskID:        uuidString(taskID),
-		ChatSessionID: uuidString(q.binding.ChatSessionID),
+		TaskID:        util.UUIDToString(taskID),
+		ChatSessionID: util.UUIDToString(q.binding.ChatSessionID),
 		Payload: protocol.ChatDonePayload{
-			TaskID:        uuidString(taskID),
-			ChatSessionID: uuidString(q.binding.ChatSessionID),
+			TaskID:        util.UUIDToString(taskID),
+			ChatSessionID: util.UUIDToString(q.binding.ChatSessionID),
 			Content:       body,
 		},
 	})
@@ -219,11 +217,11 @@ func TestPatcherRoutesPlainReplyToText(t *testing.T) {
 
 	deliverPatcherTestEvent(p, events.Event{
 		Type:          protocol.EventChatDone,
-		TaskID:        uuidString(taskID),
-		ChatSessionID: uuidString(q.binding.ChatSessionID),
+		TaskID:        util.UUIDToString(taskID),
+		ChatSessionID: util.UUIDToString(q.binding.ChatSessionID),
 		Payload: protocol.ChatDonePayload{
-			TaskID:        uuidString(taskID),
-			ChatSessionID: uuidString(q.binding.ChatSessionID),
+			TaskID:        util.UUIDToString(taskID),
+			ChatSessionID: util.UUIDToString(q.binding.ChatSessionID),
 			Content:       "Sure, on it.",
 		},
 	})
@@ -249,11 +247,11 @@ func TestPatcherDropsEmptyChatReply(t *testing.T) {
 
 	deliverPatcherTestEvent(p, events.Event{
 		Type:          protocol.EventChatDone,
-		TaskID:        uuidString(taskID),
-		ChatSessionID: uuidString(q.binding.ChatSessionID),
+		TaskID:        util.UUIDToString(taskID),
+		ChatSessionID: util.UUIDToString(q.binding.ChatSessionID),
 		Payload: protocol.ChatDonePayload{
-			TaskID:        uuidString(taskID),
-			ChatSessionID: uuidString(q.binding.ChatSessionID),
+			TaskID:        util.UUIDToString(taskID),
+			ChatSessionID: util.UUIDToString(q.binding.ChatSessionID),
 			Content:       "",
 		},
 	})
@@ -271,8 +269,8 @@ func TestPatcherSkipsWhenNoChatSessionBinding(t *testing.T) {
 
 	deliverPatcherTestEvent(p, events.Event{
 		Type:          protocol.EventChatDone,
-		TaskID:        uuidString(uuidFromString(t, "ee222222-ee22-ee22-ee22-eeeeeeeeeeee")),
-		ChatSessionID: uuidString(uuidFromString(t, "cc222222-cc22-cc22-cc22-cccccccccccc")),
+		TaskID:        util.UUIDToString(uuidFromString(t, "ee222222-ee22-ee22-ee22-eeeeeeeeeeee")),
+		ChatSessionID: util.UUIDToString(uuidFromString(t, "cc222222-cc22-cc22-cc22-cccccccccccc")),
 		Payload: protocol.ChatDonePayload{
 			Content: "irrelevant — no binding",
 		},
@@ -297,11 +295,11 @@ func TestPatcherFailEventSendsErrorCard(t *testing.T) {
 
 	deliverPatcherTestEvent(p, events.Event{
 		Type:          protocol.EventTaskFailed,
-		TaskID:        uuidString(taskID),
-		ChatSessionID: uuidString(q.binding.ChatSessionID),
+		TaskID:        util.UUIDToString(taskID),
+		ChatSessionID: util.UUIDToString(q.binding.ChatSessionID),
 		Payload: map[string]any{
-			"task_id":         uuidString(taskID),
-			"chat_session_id": uuidString(q.binding.ChatSessionID),
+			"task_id":         util.UUIDToString(taskID),
+			"chat_session_id": util.UUIDToString(q.binding.ChatSessionID),
 			"error":           "boom",
 		},
 	})
@@ -322,8 +320,8 @@ func TestPatcherSwallowsInstallationLoadErrors(t *testing.T) {
 
 	deliverPatcherTestEvent(p, events.Event{
 		Type:          protocol.EventChatDone,
-		TaskID:        uuidString(uuidFromString(t, "ee555555-ee55-ee55-ee55-eeeeeeeeeeee")),
-		ChatSessionID: uuidString(q.binding.ChatSessionID),
+		TaskID:        util.UUIDToString(uuidFromString(t, "ee555555-ee55-ee55-ee55-eeeeeeeeeeee")),
+		ChatSessionID: util.UUIDToString(q.binding.ChatSessionID),
 		Payload: protocol.ChatDonePayload{
 			Content: "would-be reply",
 		},
@@ -355,11 +353,11 @@ func TestPatcherIgnoresEventTaskCompletedForChatTasks(t *testing.T) {
 	// is sent to Lark.
 	deliverPatcherTestEvent(p, events.Event{
 		Type:          protocol.EventChatDone,
-		TaskID:        uuidString(taskID),
-		ChatSessionID: uuidString(q.binding.ChatSessionID),
+		TaskID:        util.UUIDToString(taskID),
+		ChatSessionID: util.UUIDToString(q.binding.ChatSessionID),
 		Payload: protocol.ChatDonePayload{
-			TaskID:        uuidString(taskID),
-			ChatSessionID: uuidString(q.binding.ChatSessionID),
+			TaskID:        util.UUIDToString(taskID),
+			ChatSessionID: util.UUIDToString(q.binding.ChatSessionID),
 			Content:       "Hello! I'm cc, a coding agent…",
 		},
 	})
@@ -369,11 +367,11 @@ func TestPatcherIgnoresEventTaskCompletedForChatTasks(t *testing.T) {
 	// duplicate of the reply nor the "Done." fallback.
 	deliverPatcherTestEvent(p, events.Event{
 		Type:          protocol.EventTaskCompleted,
-		TaskID:        uuidString(taskID),
-		ChatSessionID: uuidString(q.binding.ChatSessionID),
+		TaskID:        util.UUIDToString(taskID),
+		ChatSessionID: util.UUIDToString(q.binding.ChatSessionID),
 		Payload: map[string]any{
-			"task_id":         uuidString(taskID),
-			"chat_session_id": uuidString(q.binding.ChatSessionID),
+			"task_id":         util.UUIDToString(taskID),
+			"chat_session_id": util.UUIDToString(q.binding.ChatSessionID),
 			"status":          "completed",
 		},
 	})
@@ -398,11 +396,11 @@ func TestPatcherDurableConsumerReturnsProviderFailureForRetry(t *testing.T) {
 
 	_, err := p.consumeEvent(context.Background(), nil, events.Event{
 		Type:          protocol.EventChatDone,
-		TaskID:        uuidString(taskID),
-		ChatSessionID: uuidString(q.binding.ChatSessionID),
+		TaskID:        util.UUIDToString(taskID),
+		ChatSessionID: util.UUIDToString(q.binding.ChatSessionID),
 		Payload: protocol.ChatDonePayload{
-			TaskID:        uuidString(taskID),
-			ChatSessionID: uuidString(q.binding.ChatSessionID),
+			TaskID:        util.UUIDToString(taskID),
+			ChatSessionID: util.UUIDToString(q.binding.ChatSessionID),
 			Content:       "retry me",
 		},
 	})

@@ -51,9 +51,9 @@ func TestWSConnectorEnrichesBeforeEmit(t *testing.T) {
 		}),
 		FrameDecoder: decoder,
 		Enricher:     enr,
-		CredentialsProvider: CredentialsProviderFunc(func(context.Context, db.LarkInstallation) (InstallationCredentials, error) {
+		CredentialsProvider: func(db.LarkInstallation) (InstallationCredentials, error) {
 			return InstallationCredentials{AppID: "test_app", AppSecret: "secret"}, nil
-		}),
+		},
 		PingInterval:  time.Hour,
 		ReadDeadline:  time.Second,
 		WriteTimeout:  time.Second,

@@ -72,21 +72,11 @@ type InstallerBindParams struct {
 type BindingTokenService struct {
 	queries *db.Queries
 	tx      TxStarter
-	now     func() time.Time
 }
 
-// NewBindingTokenService constructs the default service. The clock
-// is injectable so tests can pin time for deterministic expiry
-// behavior; production callers use NewBindingTokenServiceWithClock
-// with time.Now.
+// NewBindingTokenService constructs the binding-token service.
 func NewBindingTokenService(queries *db.Queries, tx TxStarter) *BindingTokenService {
-	return NewBindingTokenServiceWithClock(queries, tx, time.Now)
-}
-
-// NewBindingTokenServiceWithClock is the seam for tests; production
-// callers should use NewBindingTokenService.
-func NewBindingTokenServiceWithClock(queries *db.Queries, tx TxStarter, now func() time.Time) *BindingTokenService {
-	return &BindingTokenService{queries: queries, tx: tx, now: now}
+	return &BindingTokenService{queries: queries, tx: tx}
 }
 
 // Mint creates a new single-use binding token and returns the raw
@@ -100,7 +90,7 @@ func (s *BindingTokenService) Mint(ctx context.Context, workspaceID, installatio
 		return BindingToken{}, fmt.Errorf("generate token: %w", err)
 	}
 	hash := hashToken(raw)
-	expiresAt := s.now().Add(BindingTokenTTL)
+	expiresAt := time.Now().Add(BindingTokenTTL)
 
 	if _, err := s.queries.CreateLarkBindingToken(ctx, db.CreateLarkBindingTokenParams{
 		TokenHash:      hash,

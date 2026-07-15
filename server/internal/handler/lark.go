@@ -18,8 +18,8 @@ import (
 // LarkInstallationResponse is the wire shape for an installation row.
 // `app_secret_encrypted` is INTENTIONALLY absent — the encrypted blob
 // is server-internal and there is no product reason to expose it (the
-// only consumer that needs the plaintext is the WS hub, which calls
-// InstallationService.DecryptAppSecret server-side). Likewise, the WS
+// only consumers that need the plaintext resolve it server-side through
+// InstallationService.Credentials). Likewise, the WS
 // lease columns are omitted; they are runtime state, not API surface.
 type LarkInstallationResponse struct {
 	ID              string  `json:"id"`

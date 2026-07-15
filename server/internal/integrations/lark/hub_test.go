@@ -11,7 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -73,7 +75,7 @@ func (f *fakeHubQueries) AcquireLarkWSLease(ctx context.Context, arg db.AcquireL
 	if f.acquireErr != nil {
 		return db.LarkInstallation{}, f.acquireErr
 	}
-	id := uuidString(arg.ID)
+	id := util.UUIDToString(arg.ID)
 	owner, hasOwner := f.leaseOwner[id]
 	exp := f.leaseExpiresAt[id]
 	now := f.now()
@@ -86,7 +88,7 @@ func (f *fakeHubQueries) AcquireLarkWSLease(ctx context.Context, arg db.AcquireL
 		return db.LarkInstallation{ID: arg.ID}, nil
 	}
 	// Live lease held by someone else.
-	return db.LarkInstallation{}, errPgxNoRows
+	return db.LarkInstallation{}, pgx.ErrNoRows
 }
 
 func (f *fakeHubQueries) ReleaseLarkWSLease(ctx context.Context, arg db.ReleaseLarkWSLeaseParams) error {
@@ -109,7 +111,7 @@ func (f *fakeHubQueries) ReleaseLarkWSLease(ctx context.Context, arg db.ReleaseL
 	if f.releaseErr != nil {
 		return f.releaseErr
 	}
-	id := uuidString(arg.ID)
+	id := util.UUIDToString(arg.ID)
 	if f.leaseOwner[id] == arg.CurrentToken.String {
 		delete(f.leaseOwner, id)
 		delete(f.leaseExpiresAt, id)
@@ -122,8 +124,8 @@ func (f *fakeHubQueries) ReleaseLarkWSLease(ctx context.Context, arg db.ReleaseL
 func (f *fakeHubQueries) presetLease(id pgtype.UUID, token string, expires time.Time) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.leaseOwner[uuidString(id)] = token
-	f.leaseExpiresAt[uuidString(id)] = expires
+	f.leaseOwner[util.UUIDToString(id)] = token
+	f.leaseExpiresAt[util.UUIDToString(id)] = expires
 }
 
 // fakeConnector counts how many times Run was invoked and behaves
@@ -205,8 +207,8 @@ func TestHubAcquiresLeaseAndStartsSupervisor(t *testing.T) {
 	// can take over without waiting for the TTL to elapse.
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	if _, ok := q.leaseOwner[uuidString(instID)]; ok {
-		t.Fatalf("lease should be released after shutdown, got owner %q", q.leaseOwner[uuidString(instID)])
+	if _, ok := q.leaseOwner[util.UUIDToString(instID)]; ok {
+		t.Fatalf("lease should be released after shutdown, got owner %q", q.leaseOwner[util.UUIDToString(instID)])
 	}
 }
 
@@ -311,7 +313,7 @@ func TestHubReapsSupervisorWhenInstallationRevoked(t *testing.T) {
 	if !waitFor(500*time.Millisecond, func() bool {
 		q.mu.Lock()
 		defer q.mu.Unlock()
-		_, stillHeld := q.leaseOwner[uuidString(instID)]
+		_, stillHeld := q.leaseOwner[util.UUIDToString(instID)]
 		return !stillHeld
 	}) {
 		t.Fatalf("expected lease to be released after revocation")
@@ -494,7 +496,7 @@ func TestHubRotationStaleReleaseDoesNotClearSuccessorLease(t *testing.T) {
 		t.Fatalf("old acquire: %v", err)
 	}
 	q.mu.Lock()
-	if got := q.leaseOwner[uuidString(instID)]; got != tokenA {
+	if got := q.leaseOwner[util.UUIDToString(instID)]; got != tokenA {
 		t.Fatalf("after old acquire, owner = %q; want %q", got, tokenA)
 	}
 	q.mu.Unlock()
@@ -509,8 +511,8 @@ func TestHubRotationStaleReleaseDoesNotClearSuccessorLease(t *testing.T) {
 	// the old supervisor's defer eventually calls releaseLease — let
 	// the new supervisor acquire BEFORE that release lands).
 	q.mu.Lock()
-	delete(q.leaseOwner, uuidString(instID))
-	delete(q.leaseExpiresAt, uuidString(instID))
+	delete(q.leaseOwner, util.UUIDToString(instID))
+	delete(q.leaseExpiresAt, util.UUIDToString(instID))
 	q.mu.Unlock()
 	if _, err := q.AcquireLarkWSLease(context.Background(), db.AcquireLarkWSLeaseParams{
 		ID:           instID,
@@ -520,7 +522,7 @@ func TestHubRotationStaleReleaseDoesNotClearSuccessorLease(t *testing.T) {
 		t.Fatalf("new acquire: %v", err)
 	}
 	q.mu.Lock()
-	if got := q.leaseOwner[uuidString(instID)]; got != tokenB {
+	if got := q.leaseOwner[util.UUIDToString(instID)]; got != tokenB {
 		t.Fatalf("after new acquire, owner = %q; want %q", got, tokenB)
 	}
 	q.mu.Unlock()
@@ -536,7 +538,7 @@ func TestHubRotationStaleReleaseDoesNotClearSuccessorLease(t *testing.T) {
 
 	// Successor's lease must still be held by tokenB.
 	q.mu.Lock()
-	got, ok := q.leaseOwner[uuidString(instID)]
+	got, ok := q.leaseOwner[util.UUIDToString(instID)]
 	q.mu.Unlock()
 	if !ok {
 		t.Fatalf("successor lease silently cleared by stale release — the rotation race is back")
@@ -598,7 +600,7 @@ func TestHubRotationEndToEndKeepsSuccessorLeased(t *testing.T) {
 		t.Fatalf("expected sup1 to start; got %d factory calls", factoryCalls)
 	}
 	q.mu.Lock()
-	sup1Token := q.leaseOwner[uuidString(instID)]
+	sup1Token := q.leaseOwner[util.UUIDToString(instID)]
 	q.mu.Unlock()
 	if sup1Token == "" {
 		t.Fatalf("sup1 did not write a lease token")
@@ -620,11 +622,11 @@ func TestHubRotationEndToEndKeepsSuccessorLeased(t *testing.T) {
 		}
 		q.mu.Lock()
 		defer q.mu.Unlock()
-		curr, ok := q.leaseOwner[uuidString(instID)]
+		curr, ok := q.leaseOwner[util.UUIDToString(instID)]
 		return ok && curr != sup1Token
 	}) {
 		q.mu.Lock()
-		got, ok := q.leaseOwner[uuidString(instID)]
+		got, ok := q.leaseOwner[util.UUIDToString(instID)]
 		q.mu.Unlock()
 		t.Fatalf("successor lease never present; ok=%v owner=%q factoryCalls=%d",
 			ok, got, atomic.LoadInt32(&factoryCalls))
@@ -633,7 +635,7 @@ func TestHubRotationEndToEndKeepsSuccessorLeased(t *testing.T) {
 	// Give sup1's deferred release a chance to land, then re-check.
 	time.Sleep(150 * time.Millisecond)
 	q.mu.Lock()
-	owner, ok := q.leaseOwner[uuidString(instID)]
+	owner, ok := q.leaseOwner[util.UUIDToString(instID)]
 	q.mu.Unlock()
 	if !ok {
 		t.Fatalf("successor lease cleared after sup1's stale release — rotation fencing broken")

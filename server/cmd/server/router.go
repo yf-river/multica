@@ -321,7 +321,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					Logger:  slog.Default(),
 				})
 				h.LarkAPIClient = larkClient
-				patcher := lark.NewPatcher(queries, installSvc, larkClient, lark.PatcherConfig{})
+				patcher := lark.NewPatcher(queries, installSvc, larkClient)
 				if opts.EventDispatcher == nil {
 					return nil, nil, errors.New("lark integration requires the durable event dispatcher")
 				}
@@ -1122,25 +1122,6 @@ func buildLarkConnectorFactory(installSvc *lark.InstallationService, apiClient l
 	}
 	decoder := lark.NewLarkJSONFrameDecoder()
 	dialer := lark.NewGorillaDialer()
-	credsProvider := lark.CredentialsProviderFunc(func(ctx context.Context, inst db.LarkInstallation) (lark.InstallationCredentials, error) {
-		secret, err := installSvc.DecryptAppSecret(inst)
-		if err != nil {
-			return lark.InstallationCredentials{}, err
-		}
-		region, err := lark.ParseRegion(inst.Region)
-		if err != nil {
-			return lark.InstallationCredentials{}, err
-		}
-		creds := lark.InstallationCredentials{
-			AppID:     inst.AppID,
-			AppSecret: secret,
-			Region:    region,
-		}
-		if inst.TenantKey.Valid {
-			creds.TenantKey = inst.TenantKey.String
-		}
-		return creds, nil
-	})
 	// Inbound enricher: expands quoted replies / forwarded bundles AND
 	// prefetches a window of surrounding group history (MUL-3084) into the
 	// agent's body via the IM API before dispatch. It shares the
@@ -1155,7 +1136,7 @@ func buildLarkConnectorFactory(installSvc *lark.InstallationService, apiClient l
 		EndpointFetcher:     endpointFetcher,
 		FrameDecoder:        decoder,
 		Enricher:            enricher,
-		CredentialsProvider: credsProvider,
+		CredentialsProvider: installSvc.Credentials,
 		Logger:              slog.Default(),
 	})
 	if err != nil {

@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -42,8 +43,8 @@ type OutcomeReplierQueries interface {
 //     and the offline/archived notice cards (chat_id-targeted).
 //   - BindingTokenService — to mint a one-shot binding token for the
 //     NeedsBinding flow.
-//   - CredentialsResolver — to decrypt app_secret per call (the
-//     plaintext secret never lives on the in-memory installation row).
+//   - CredentialsResolver — to resolve the current transport identity;
+//     plaintext secrets never live on the in-memory installation row.
 //   - OutcomeReplierQueries — for the agent name shown on cards.
 //
 // The replier is constructed once at boot and shared across the Hub's
@@ -113,7 +114,7 @@ func (r *LarkOutcomeReplier) Reply(ctx context.Context, inst db.LarkInstallation
 	case OutcomeNeedsBinding:
 		if err := r.sendBindingPrompt(ctx, inst, res); err != nil {
 			r.log.Warn("lark outcome replier: binding prompt failed",
-				"installation_id", uuidString(inst.ID),
+				"installation_id", util.UUIDToString(inst.ID),
 				"open_id", string(res.SenderOpenID),
 				"err", err.Error(),
 			)
@@ -121,7 +122,7 @@ func (r *LarkOutcomeReplier) Reply(ctx context.Context, inst db.LarkInstallation
 	case OutcomeAgentOffline:
 		if err := r.sendChatNotice(ctx, inst, msg, agentOfflineCopy); err != nil {
 			r.log.Warn("lark outcome replier: offline notice failed",
-				"installation_id", uuidString(inst.ID),
+				"installation_id", util.UUIDToString(inst.ID),
 				"chat_id", string(msg.ChatID),
 				"err", err.Error(),
 			)
@@ -129,7 +130,7 @@ func (r *LarkOutcomeReplier) Reply(ctx context.Context, inst db.LarkInstallation
 	case OutcomeAgentArchived:
 		if err := r.sendChatNotice(ctx, inst, msg, agentArchivedCopy); err != nil {
 			r.log.Warn("lark outcome replier: archived notice failed",
-				"installation_id", uuidString(inst.ID),
+				"installation_id", util.UUIDToString(inst.ID),
 				"chat_id", string(msg.ChatID),
 				"err", err.Error(),
 			)
@@ -147,9 +148,9 @@ func (r *LarkOutcomeReplier) Reply(ctx context.Context, inst db.LarkInstallation
 		if res.IssueID.Valid {
 			if err := r.sendIssueCreated(ctx, inst, msg, res); err != nil {
 				r.log.Warn("lark outcome replier: issue-created confirmation failed",
-					"installation_id", uuidString(inst.ID),
+					"installation_id", util.UUIDToString(inst.ID),
 					"chat_id", string(msg.ChatID),
-					"issue_id", uuidString(res.IssueID),
+					"issue_id", util.UUIDToString(res.IssueID),
 					"err", err.Error(),
 				)
 			}
@@ -171,7 +172,7 @@ func (r *LarkOutcomeReplier) sendBindingPrompt(ctx context.Context, inst db.Lark
 		return fmt.Errorf("mint binding token: %w", err)
 	}
 	bindURL := r.publicURL + r.bindingPath + "?token=" + url.QueryEscape(token.Raw)
-	creds, err := r.installationCredentials(inst)
+	creds, err := r.credentials.Credentials(inst)
 	if err != nil {
 		return err
 	}
@@ -193,7 +194,7 @@ func (r *LarkOutcomeReplier) sendIssueCreated(ctx context.Context, inst db.LarkI
 	if msg.ChatID == "" {
 		return errors.New("missing chat_id")
 	}
-	creds, err := r.installationCredentials(inst)
+	creds, err := r.credentials.Credentials(inst)
 	if err != nil {
 		return err
 	}
@@ -236,7 +237,7 @@ func (r *LarkOutcomeReplier) sendChatNotice(ctx context.Context, inst db.LarkIns
 	if msg.ChatID == "" {
 		return errors.New("missing chat_id")
 	}
-	creds, err := r.installationCredentials(inst)
+	creds, err := r.credentials.Credentials(inst)
 	if err != nil {
 		return err
 	}
@@ -256,10 +257,6 @@ func (r *LarkOutcomeReplier) sendChatNotice(ctx context.Context, inst db.LarkIns
 		return fmt.Errorf("send notice card: %w", err)
 	}
 	return nil
-}
-
-func (r *LarkOutcomeReplier) installationCredentials(inst db.LarkInstallation) (InstallationCredentials, error) {
-	return resolveInstallationCredentials(r.credentials, inst)
 }
 
 // renderNoticeCard produces a minimal text-only interactive card for

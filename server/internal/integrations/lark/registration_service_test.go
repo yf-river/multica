@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -376,8 +377,8 @@ func TestRegistrationServicePublishInstalledEmitsCreatedEvent(t *testing.T) {
 	if got.Type != protocol.EventLarkInstallationCreated {
 		t.Errorf("type = %q, want %q", got.Type, protocol.EventLarkInstallationCreated)
 	}
-	if got.WorkspaceID != uuidString(ws) {
-		t.Errorf("workspace_id = %q, want %q", got.WorkspaceID, uuidString(ws))
+	if got.WorkspaceID != util.UUIDToString(ws) {
+		t.Errorf("workspace_id = %q, want %q", got.WorkspaceID, util.UUIDToString(ws))
 	}
 	if got.ActorType != "system" {
 		t.Errorf("actor_type = %q, want \"system\"", got.ActorType)
@@ -386,8 +387,8 @@ func TestRegistrationServicePublishInstalledEmitsCreatedEvent(t *testing.T) {
 	if !ok {
 		t.Fatalf("payload type = %T, want map[string]any", got.Payload)
 	}
-	if payload["installation_id"] != uuidString(inst) {
-		t.Errorf("installation_id = %v, want %q", payload["installation_id"], uuidString(inst))
+	if payload["installation_id"] != util.UUIDToString(inst) {
+		t.Errorf("installation_id = %v, want %q", payload["installation_id"], util.UUIDToString(inst))
 	}
 }
 

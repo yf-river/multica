@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -80,16 +81,16 @@ func (m *TypingIndicatorManager) Add(ctx context.Context, inst db.LarkInstallati
 	}
 	if isMessageTooOld(createTime) {
 		m.log.Debug("lark typing indicator: message too old, skipping",
-			"chat_session_id", uuidString(chatSessionID),
+			"chat_session_id", util.UUIDToString(chatSessionID),
 			"message_id", messageID,
 			"create_time", createTime,
 		)
 		return
 	}
-	creds, err := m.resolveCredentials(inst)
+	creds, err := m.credentials.Credentials(inst)
 	if err != nil {
 		m.log.Warn("lark typing indicator: failed to resolve credentials",
-			"chat_session_id", uuidString(chatSessionID),
+			"chat_session_id", util.UUIDToString(chatSessionID),
 			"message_id", messageID,
 			"err", err,
 		)
@@ -103,14 +104,14 @@ func (m *TypingIndicatorManager) Add(ctx context.Context, inst db.LarkInstallati
 	})
 	if err != nil {
 		m.log.Warn("lark typing indicator: add reaction failed",
-			"chat_session_id", uuidString(chatSessionID),
+			"chat_session_id", util.UUIDToString(chatSessionID),
 			"message_id", messageID,
 			"err", err,
 		)
 		return
 	}
 
-	key := uuidString(chatSessionID)
+	key := util.UUIDToString(chatSessionID)
 	m.mu.Lock()
 	m.states[key] = append(m.states[key], &TypingIndicatorState{
 		MessageID:  messageID,
@@ -130,7 +131,7 @@ func (m *TypingIndicatorManager) Add(ctx context.Context, inst db.LarkInstallati
 // the agent's reply is sent, giving the user a clean visual transition.
 // Individual delete failures are logged but do not abort the loop.
 func (m *TypingIndicatorManager) Clear(ctx context.Context, chatSessionID pgtype.UUID) {
-	key := uuidString(chatSessionID)
+	key := util.UUIDToString(chatSessionID)
 	m.mu.Lock()
 	states := m.states[key]
 	delete(m.states, key)
@@ -158,7 +159,7 @@ func (m *TypingIndicatorManager) Clear(ctx context.Context, chatSessionID pgtype
 		return
 	}
 
-	creds, err := m.resolveCredentials(inst)
+	creds, err := m.credentials.Credentials(inst)
 	if err != nil {
 		m.log.Warn("lark typing indicator: failed to resolve credentials for clear",
 			"chat_session_id", key,
@@ -201,8 +202,4 @@ func isMessageTooOld(createTime string) bool {
 		return false
 	}
 	return time.Since(time.UnixMilli(ms)) > typingIndicatorMaxAge
-}
-
-func (m *TypingIndicatorManager) resolveCredentials(inst db.LarkInstallation) (InstallationCredentials, error) {
-	return resolveInstallationCredentials(m.credentials, inst)
 }

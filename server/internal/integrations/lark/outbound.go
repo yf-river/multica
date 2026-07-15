@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -16,44 +15,14 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-// CardRender is the rendered card body the Renderer produces. The
-// patcher serializes the JSON before handing it to APIClient.
-type CardRender struct {
-	JSON string
-}
-
-// RenderInput contains the current task-failure card data.
-type RenderInput struct {
-	AgentName    string
-	ErrorMessage string
-}
-
-// Renderer turns a typed RenderInput into the actual Lark card JSON.
-// Centralizing this lets us swap card templates (or A/B them) without
-// touching event subscription or persistence code.
-type Renderer interface {
-	Render(in RenderInput) (CardRender, error)
-}
-
-// defaultRenderer produces minimal text-only cards that work against
-// Lark's generic interactive-card schema. The exact JSON layout will
-// be refined when the real product card design lands; this default
-// keeps the wiring real (the JSON deserializes against Lark's schema)
-// without committing the product to a particular template.
-type defaultRenderer struct{}
-
-// NewDefaultRenderer returns the production-default Renderer. Override
-// via PatcherConfig.Renderer when a custom template is needed.
-func NewDefaultRenderer() Renderer { return &defaultRenderer{} }
-
-func (defaultRenderer) Render(in RenderInput) (CardRender, error) {
+func renderErrorCard(agentName, errorMessage string) (string, error) {
 	header := "Multica"
-	if in.AgentName != "" {
-		header = in.AgentName
+	if agentName != "" {
+		header = agentName
 	}
 	body := "Run failed."
-	if in.ErrorMessage != "" {
-		body = "Run failed: " + in.ErrorMessage
+	if errorMessage != "" {
+		body = "Run failed: " + errorMessage
 	}
 	doc := map[string]any{
 		"config": map[string]any{
@@ -75,9 +44,9 @@ func (defaultRenderer) Render(in RenderInput) (CardRender, error) {
 	}
 	raw, err := json.Marshal(doc)
 	if err != nil {
-		return CardRender{}, err
+		return "", err
 	}
-	return CardRender{JSON: string(raw)}, nil
+	return string(raw), nil
 }
 
 // PatcherQueries is the narrow subset of *db.Queries the Patcher
@@ -89,36 +58,10 @@ type PatcherQueries interface {
 	GetLarkChatSessionBindingBySession(ctx context.Context, chatSessionID pgtype.UUID) (db.LarkChatSessionBinding, error)
 }
 
-// CredentialsResolver decrypts an installation's app_secret for the
-// transport layer. *InstallationService satisfies it directly; tests
-// substitute a fake.
+// CredentialsResolver resolves the current transport identity for an
+// installation. *InstallationService satisfies it directly.
 type CredentialsResolver interface {
-	DecryptAppSecret(inst db.LarkInstallation) (string, error)
-}
-
-// PatcherConfig tunes the outbound Patcher. Defaults via withDefaults;
-// tests typically override Renderer / Now / Logger.
-type PatcherConfig struct {
-	// Renderer drives the error card template used on the EventTaskFailed
-	// path. The success path (EventChatDone) bypasses the renderer
-	// entirely — it sends the raw assistant reply as a plain text IM
-	// message — so this only matters for the failure branch.
-	Renderer Renderer
-	Now      func() time.Time
-	Logger   *slog.Logger
-}
-
-func (c PatcherConfig) withDefaults() PatcherConfig {
-	if c.Renderer == nil {
-		c.Renderer = NewDefaultRenderer()
-	}
-	if c.Now == nil {
-		c.Now = time.Now
-	}
-	if c.Logger == nil {
-		c.Logger = slog.Default()
-	}
-	return c
+	Credentials(inst db.LarkInstallation) (InstallationCredentials, error)
 }
 
 // Patcher reacts to task-lifecycle events on the event bus and forwards
@@ -147,18 +90,15 @@ type Patcher struct {
 	credentials     CredentialsResolver
 	client          APIClient
 	typingIndicator *TypingIndicatorManager
-	cfg             PatcherConfig
 }
 
 // NewPatcher constructs a Patcher bound to its dependencies. The
 // patcher does not subscribe to the bus until Register is called.
-func NewPatcher(queries PatcherQueries, credentials CredentialsResolver, client APIClient, cfg PatcherConfig) *Patcher {
-	cfg = cfg.withDefaults()
+func NewPatcher(queries PatcherQueries, credentials CredentialsResolver, client APIClient) *Patcher {
 	return &Patcher{
 		queries:     queries,
 		credentials: credentials,
 		client:      client,
-		cfg:         cfg,
 	}
 }
 
@@ -238,7 +178,7 @@ func (p *Patcher) processEvent(ctx context.Context, e events.Event) error {
 		// Revoked between trigger and event; nothing to patch.
 		return nil
 	}
-	creds, err := p.installationCredentials(inst)
+	creds, err := p.credentials.Credentials(inst)
 	if err != nil {
 		return err
 	}
@@ -311,10 +251,6 @@ func (p *Patcher) sendChatReply(ctx context.Context, creds InstallationCredentia
 	return nil
 }
 
-func (p *Patcher) installationCredentials(inst db.LarkInstallation) (InstallationCredentials, error) {
-	return resolveInstallationCredentials(p.credentials, inst)
-}
-
 // fail surfaces a short error card on task failure. Unlike the
 // success path (plain text via sendChatReply), failures stay as cards
 // because the user benefits from the visual distinction — a red /
@@ -324,17 +260,14 @@ func (p *Patcher) installationCredentials(inst db.LarkInstallation) (Installatio
 // Each delivery attempt is one send (no patching). The durable dispatcher
 // retries provider failures and records the successful consumer receipt.
 func (p *Patcher) fail(ctx context.Context, creds InstallationCredentials, binding db.LarkChatSessionBinding, agentName string, payload any) error {
-	render, err := p.cfg.Renderer.Render(RenderInput{
-		AgentName:    agentName,
-		ErrorMessage: errorMessageFromPayload(payload),
-	})
+	cardJSON, err := renderErrorCard(agentName, errorMessageFromPayload(payload))
 	if err != nil {
 		return fmt.Errorf("render error card: %w", err)
 	}
 	if _, err := p.client.SendInteractiveCard(ctx, SendCardParams{
 		InstallationID: creds,
 		ChatID:         ChatID(binding.LarkChatID),
-		CardJSON:       render.JSON,
+		CardJSON:       cardJSON,
 	}); err != nil {
 		return fmt.Errorf("send error card: %w", err)
 	}

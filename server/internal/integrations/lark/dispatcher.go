@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -569,7 +570,7 @@ func (d *Dispatcher) scheduleRun(inst db.LarkInstallation, msg InboundMessage, s
 		flush()
 		return
 	}
-	d.batcher.Schedule(keyForSession(sessionID), flush)
+	d.batcher.Schedule(string(sessionID.Bytes[:]), flush)
 }
 
 // flushChatRun is the debounced run-trigger. It runs once per silence
@@ -588,7 +589,7 @@ func (d *Dispatcher) flushChatRun(inst db.LarkInstallation, msg InboundMessage, 
 	session, err := d.Queries.GetChatSession(ctx, sessionID)
 	if err != nil {
 		d.logger().Error("lark dispatcher: flush reload chat session failed",
-			"chat_session_id", uuidString(sessionID),
+			"chat_session_id", util.UUIDToString(sessionID),
 			"err", err.Error(),
 		)
 		return
@@ -605,7 +606,7 @@ func (d *Dispatcher) flushChatRun(inst db.LarkInstallation, msg InboundMessage, 
 			// visible; the next message in this session re-triggers a run
 			// that will read this message too.
 			d.logger().Error("lark dispatcher: flush enqueue chat task failed",
-				"chat_session_id", uuidString(sessionID),
+				"chat_session_id", util.UUIDToString(sessionID),
 				"err", err.Error(),
 			)
 		}
@@ -623,12 +624,6 @@ func (d *Dispatcher) emitFlushReply(ctx context.Context, inst db.LarkInstallatio
 		ChatSessionID:  sessionID,
 		SenderOpenID:   msg.SenderOpenID,
 	})
-}
-
-// keyForSession is the batcher key. chat_session_id is a globally-unique
-// UUID, so it alone disambiguates sessions across installations.
-func keyForSession(sessionID pgtype.UUID) string {
-	return string(sessionID.Bytes[:])
 }
 
 // applyFinalize flips the in-flight claim row to its terminal state,
@@ -650,9 +645,9 @@ func (d *Dispatcher) applyFinalize(ctx context.Context, installationID pgtype.UU
 			ClaimToken:     claimToken,
 		})
 		if err != nil {
-			d.logger().Error("lark dispatcher: finalize dedup mark failed", "installation_id", uuidString(installationID), "message_id", messageID, "err", err)
+			d.logger().Error("lark dispatcher: finalize dedup mark failed", "installation_id", util.UUIDToString(installationID), "message_id", messageID, "err", err)
 		} else if rows == 0 {
-			d.logger().Warn("lark dispatcher: finalize dedup mark lost claim", "installation_id", uuidString(installationID), "message_id", messageID)
+			d.logger().Warn("lark dispatcher: finalize dedup mark lost claim", "installation_id", util.UUIDToString(installationID), "message_id", messageID)
 		}
 	case finalizeRelease:
 		rows, err := d.Queries.ReleaseLarkInboundDedup(ctx, db.ReleaseLarkInboundDedupParams{
@@ -661,9 +656,9 @@ func (d *Dispatcher) applyFinalize(ctx context.Context, installationID pgtype.UU
 			ClaimToken:     claimToken,
 		})
 		if err != nil {
-			d.logger().Error("lark dispatcher: finalize dedup release failed", "installation_id", uuidString(installationID), "message_id", messageID, "err", err)
+			d.logger().Error("lark dispatcher: finalize dedup release failed", "installation_id", util.UUIDToString(installationID), "message_id", messageID, "err", err)
 		} else if rows == 0 {
-			d.logger().Warn("lark dispatcher: finalize dedup release lost claim", "installation_id", uuidString(installationID), "message_id", messageID)
+			d.logger().Warn("lark dispatcher: finalize dedup release lost claim", "installation_id", util.UUIDToString(installationID), "message_id", messageID)
 		}
 	case finalizeNone:
 		// AppendUserMessage already finalized the row in-tx, or our

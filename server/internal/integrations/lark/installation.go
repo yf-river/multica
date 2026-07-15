@@ -88,17 +88,27 @@ func (s *InstallationService) Revoke(ctx context.Context, id pgtype.UUID) error 
 	})
 }
 
-// DecryptAppSecret returns the plaintext app_secret for the supplied
-// installation row. Used by the WebSocket hub when it needs to
-// authenticate against the Lark API on behalf of an installation; do
-// NOT use this for read-only display surfaces. The plaintext value
-// must never round-trip through an HTTP response.
-func (s *InstallationService) DecryptAppSecret(inst db.LarkInstallation) (string, error) {
+// Credentials resolves the complete current transport identity for an
+// installation. Plaintext secrets stay inside the Lark integration and must
+// never be logged or returned through an HTTP response.
+func (s *InstallationService) Credentials(inst db.LarkInstallation) (InstallationCredentials, error) {
 	plain, err := s.box.Open(inst.AppSecretEncrypted)
 	if err != nil {
-		return "", fmt.Errorf("decrypt app_secret: %w", err)
+		return InstallationCredentials{}, fmt.Errorf("decrypt app_secret: %w", err)
 	}
-	return string(plain), nil
+	region, err := ParseRegion(inst.Region)
+	if err != nil {
+		return InstallationCredentials{}, err
+	}
+	creds := InstallationCredentials{
+		AppID:     inst.AppID,
+		AppSecret: string(plain),
+		Region:    region,
+	}
+	if inst.TenantKey.Valid {
+		creds.TenantKey = inst.TenantKey.String
+	}
+	return creds, nil
 }
 
 // GetInWorkspace is the workspace-scoped lookup helper. Internal
@@ -154,8 +164,5 @@ func validateInstallationParams(p InstallationParams) error {
 }
 
 func textOrNull(s string) pgtype.Text {
-	if s == "" {
-		return pgtype.Text{}
-	}
-	return pgtype.Text{String: s, Valid: true}
+	return pgtype.Text{String: s, Valid: s != ""}
 }

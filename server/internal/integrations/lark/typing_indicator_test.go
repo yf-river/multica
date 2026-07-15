@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -81,8 +82,9 @@ func (f *fakeTypingQueries) GetLarkInstallation(context.Context, pgtype.UUID) (d
 
 type fakeTypingCreds struct{ secret string }
 
-func (f fakeTypingCreds) DecryptAppSecret(inst db.LarkInstallation) (string, error) {
-	return f.secret, nil
+func (f fakeTypingCreds) Credentials(inst db.LarkInstallation) (InstallationCredentials, error) {
+	region, err := ParseRegion(inst.Region)
+	return InstallationCredentials{AppID: inst.AppID, AppSecret: f.secret, Region: region}, err
 }
 
 func TestTypingIndicatorAddRecordsState(t *testing.T) {
@@ -102,7 +104,7 @@ func TestTypingIndicatorAddRecordsState(t *testing.T) {
 		t.Fatalf("unexpected add call params: %+v", api.addCalled[0])
 	}
 
-	key := uuidString(session)
+	key := util.UUIDToString(session)
 	mgr.mu.RLock()
 	states := mgr.states[key]
 	mgr.mu.RUnlock()
@@ -153,7 +155,7 @@ func TestTypingIndicatorAddLogsOnAPIError(t *testing.T) {
 		t.Fatalf("expected 1 add call, got %d", len(api.addCalled))
 	}
 
-	key := uuidString(session)
+	key := util.UUIDToString(session)
 	mgr.mu.RLock()
 	states := mgr.states[key]
 	mgr.mu.RUnlock()
@@ -193,7 +195,7 @@ func TestTypingIndicatorClearDeletesReactions(t *testing.T) {
 		t.Fatalf("unexpected delete params: %+v", api.deleteCalled[0])
 	}
 
-	key := uuidString(session)
+	key := util.UUIDToString(session)
 	mgr.mu.RLock()
 	states := mgr.states[key]
 	mgr.mu.RUnlock()

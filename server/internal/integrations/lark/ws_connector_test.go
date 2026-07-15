@@ -114,14 +114,14 @@ func (d *fakeWSDialer) DialContext(ctx context.Context, urlStr string, h http.He
 func quietConnector(t *testing.T, conn *fakeWSConn, decoder FrameDecoder, pingInterval time.Duration) *WSLongConnConnector {
 	t.Helper()
 	c, err := NewWSLongConnConnector(WSConnectorConfig{
-		Dialer:          &fakeWSDialer{conn: conn},
+		Dialer: &fakeWSDialer{conn: conn},
 		EndpointFetcher: EndpointFetcherFunc(func(context.Context, InstallationCredentials) (WSEndpoint, error) {
 			return WSEndpoint{URL: "wss://test/ignored", ServiceID: 7, PingInterval: pingInterval}, nil
 		}),
-		FrameDecoder:    decoder,
-		CredentialsProvider: CredentialsProviderFunc(func(context.Context, db.LarkInstallation) (InstallationCredentials, error) {
+		FrameDecoder: decoder,
+		CredentialsProvider: func(db.LarkInstallation) (InstallationCredentials, error) {
 			return InstallationCredentials{AppID: "test_app", AppSecret: "secret"}, nil
-		}),
+		},
 		PingInterval: pingInterval,
 		ReadDeadline: time.Second,
 		WriteTimeout: time.Second,
@@ -497,19 +497,25 @@ func TestWSConnectorRequiresAllDeps(t *testing.T) {
 		cfg  WSConnectorConfig
 	}{
 		{"no dialer", WSConnectorConfig{
-			EndpointFetcher:     EndpointFetcherFunc(func(context.Context, InstallationCredentials) (WSEndpoint, error) { return WSEndpoint{}, nil }),
-			FrameDecoder:        FrameDecoderFunc(func([]byte, db.LarkInstallation) (InboundMessage, bool, error) { return InboundMessage{}, false, nil }),
-			CredentialsProvider: CredentialsProviderFunc(func(context.Context, db.LarkInstallation) (InstallationCredentials, error) { return InstallationCredentials{}, nil }),
+			EndpointFetcher: EndpointFetcherFunc(func(context.Context, InstallationCredentials) (WSEndpoint, error) { return WSEndpoint{}, nil }),
+			FrameDecoder:    FrameDecoderFunc(func([]byte, db.LarkInstallation) (InboundMessage, bool, error) { return InboundMessage{}, false, nil }),
+			CredentialsProvider: func(db.LarkInstallation) (InstallationCredentials, error) {
+				return InstallationCredentials{}, nil
+			},
 		}},
 		{"no endpoint fetcher", WSConnectorConfig{
-			Dialer:              &fakeWSDialer{},
-			FrameDecoder:        FrameDecoderFunc(func([]byte, db.LarkInstallation) (InboundMessage, bool, error) { return InboundMessage{}, false, nil }),
-			CredentialsProvider: CredentialsProviderFunc(func(context.Context, db.LarkInstallation) (InstallationCredentials, error) { return InstallationCredentials{}, nil }),
+			Dialer:       &fakeWSDialer{},
+			FrameDecoder: FrameDecoderFunc(func([]byte, db.LarkInstallation) (InboundMessage, bool, error) { return InboundMessage{}, false, nil }),
+			CredentialsProvider: func(db.LarkInstallation) (InstallationCredentials, error) {
+				return InstallationCredentials{}, nil
+			},
 		}},
 		{"no decoder", WSConnectorConfig{
-			Dialer:              &fakeWSDialer{},
-			EndpointFetcher:     EndpointFetcherFunc(func(context.Context, InstallationCredentials) (WSEndpoint, error) { return WSEndpoint{}, nil }),
-			CredentialsProvider: CredentialsProviderFunc(func(context.Context, db.LarkInstallation) (InstallationCredentials, error) { return InstallationCredentials{}, nil }),
+			Dialer:          &fakeWSDialer{},
+			EndpointFetcher: EndpointFetcherFunc(func(context.Context, InstallationCredentials) (WSEndpoint, error) { return WSEndpoint{}, nil }),
+			CredentialsProvider: func(db.LarkInstallation) (InstallationCredentials, error) {
+				return InstallationCredentials{}, nil
+			},
 		}},
 		{"no credentials provider", WSConnectorConfig{
 			Dialer:          &fakeWSDialer{},
@@ -532,12 +538,14 @@ func TestWSConnectorDialErrorIsReturned(t *testing.T) {
 	t.Parallel()
 	dialErr := errors.New("dial blew up")
 	c, err := NewWSLongConnConnector(WSConnectorConfig{
-		Dialer:          &fakeWSDialer{dialErr: dialErr},
-		EndpointFetcher: EndpointFetcherFunc(func(context.Context, InstallationCredentials) (WSEndpoint, error) { return WSEndpoint{URL: "wss://x", ServiceID: 1}, nil }),
-		FrameDecoder:    FrameDecoderFunc(func([]byte, db.LarkInstallation) (InboundMessage, bool, error) { return InboundMessage{}, false, nil }),
-		CredentialsProvider: CredentialsProviderFunc(func(context.Context, db.LarkInstallation) (InstallationCredentials, error) {
-			return InstallationCredentials{AppID: "a"}, nil
+		Dialer: &fakeWSDialer{dialErr: dialErr},
+		EndpointFetcher: EndpointFetcherFunc(func(context.Context, InstallationCredentials) (WSEndpoint, error) {
+			return WSEndpoint{URL: "wss://x", ServiceID: 1}, nil
 		}),
+		FrameDecoder: FrameDecoderFunc(func([]byte, db.LarkInstallation) (InboundMessage, bool, error) { return InboundMessage{}, false, nil }),
+		CredentialsProvider: func(db.LarkInstallation) (InstallationCredentials, error) {
+			return InstallationCredentials{AppID: "a"}, nil
+		},
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	if err != nil {
@@ -720,12 +728,14 @@ func TestWSConnectorCredentialsErrorIsReturned(t *testing.T) {
 	t.Parallel()
 	credsErr := errors.New("decrypt failed")
 	c, err := NewWSLongConnConnector(WSConnectorConfig{
-		Dialer:          &fakeWSDialer{conn: newFakeWSConn()},
-		EndpointFetcher: EndpointFetcherFunc(func(context.Context, InstallationCredentials) (WSEndpoint, error) { return WSEndpoint{URL: "wss://x"}, nil }),
-		FrameDecoder:    FrameDecoderFunc(func([]byte, db.LarkInstallation) (InboundMessage, bool, error) { return InboundMessage{}, false, nil }),
-		CredentialsProvider: CredentialsProviderFunc(func(context.Context, db.LarkInstallation) (InstallationCredentials, error) {
-			return InstallationCredentials{}, credsErr
+		Dialer: &fakeWSDialer{conn: newFakeWSConn()},
+		EndpointFetcher: EndpointFetcherFunc(func(context.Context, InstallationCredentials) (WSEndpoint, error) {
+			return WSEndpoint{URL: "wss://x"}, nil
 		}),
+		FrameDecoder: FrameDecoderFunc(func([]byte, db.LarkInstallation) (InboundMessage, bool, error) { return InboundMessage{}, false, nil }),
+		CredentialsProvider: func(db.LarkInstallation) (InstallationCredentials, error) {
+			return InstallationCredentials{}, credsErr
+		},
 		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	if err != nil {

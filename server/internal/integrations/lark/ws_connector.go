@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -105,10 +106,9 @@ type WSConnectorConfig struct {
 	EnrichTimeout time.Duration
 
 	// CredentialsProvider returns the InstallationCredentials the
-	// EndpointFetcher needs. Typically wraps
-	// InstallationService.DecryptAppSecret so the plaintext secret
-	// never sits on the LarkInstallation row in memory.
-	CredentialsProvider CredentialsProvider
+	// EndpointFetcher needs. Production uses InstallationService.Credentials so
+	// the plaintext secret never sits on the LarkInstallation row in memory.
+	CredentialsProvider func(db.LarkInstallation) (InstallationCredentials, error)
 
 	// PingInterval is the fallback cadence for the app-layer ping.
 	// In production it is overridden per-installation by the
@@ -190,11 +190,11 @@ func NewWSLongConnConnector(cfg WSConnectorConfig) (*WSLongConnConnector, error)
 // return = connection failed (Hub steps up backoff).
 func (c *WSLongConnConnector) Run(ctx context.Context, inst db.LarkInstallation, emit EventEmitter) error {
 	log := c.cfg.Logger.With(
-		"installation_id", uuidString(inst.ID),
+		"installation_id", util.UUIDToString(inst.ID),
 		"app_id", inst.AppID,
 	)
 
-	creds, err := c.cfg.CredentialsProvider.Credentials(ctx, inst)
+	creds, err := c.cfg.CredentialsProvider(inst)
 	if err != nil {
 		return fmt.Errorf("resolve credentials: %w", err)
 	}
@@ -502,19 +502,6 @@ type WSEndpoint struct {
 // outer binary Frame envelope is stripped by the connector.
 type FrameDecoder interface {
 	Decode(payload []byte, inst db.LarkInstallation) (msg InboundMessage, ok bool, err error)
-}
-
-// CredentialsProvider supplies the plaintext InstallationCredentials a
-// connector needs for its EndpointFetcher call.
-type CredentialsProvider interface {
-	Credentials(ctx context.Context, inst db.LarkInstallation) (InstallationCredentials, error)
-}
-
-// CredentialsProviderFunc adapts a free function.
-type CredentialsProviderFunc func(ctx context.Context, inst db.LarkInstallation) (InstallationCredentials, error)
-
-func (f CredentialsProviderFunc) Credentials(ctx context.Context, inst db.LarkInstallation) (InstallationCredentials, error) {
-	return f(ctx, inst)
 }
 
 // GorillaDialer is the production WSDialer.

@@ -81,14 +81,15 @@ func (s *stubAPIClientWithRecorder) DeleteMessageReaction(ctx context.Context, p
 	return nil
 }
 
-// stubCredentialsResolver returns a fixed plaintext secret.
+// stubCredentialsResolver returns the current installation credentials.
 type stubCredentialsResolver struct{ secret string }
 
-func (s stubCredentialsResolver) DecryptAppSecret(inst db.LarkInstallation) (string, error) {
+func (s stubCredentialsResolver) Credentials(inst db.LarkInstallation) (InstallationCredentials, error) {
 	if s.secret == "" {
-		return "", errors.New("no secret configured")
+		return InstallationCredentials{}, errors.New("no secret configured")
 	}
-	return s.secret, nil
+	region, err := ParseRegion(inst.Region)
+	return InstallationCredentials{AppID: inst.AppID, AppSecret: s.secret, Region: region}, err
 }
 
 // stubReplierQueries returns a fixed agent.

@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -361,7 +362,6 @@ func (h *Hub) Wait() {
 // LeaseTTL on the next replica, and in-flight replies abort at their
 // own ReplyTimeout (already strictly under 3s, so well under any
 // reasonable ShutdownTimeout).
-//
 func (h *Hub) WaitWithTimeout(timeout time.Duration) bool {
 	done := make(chan struct{})
 	go func() {
@@ -398,7 +398,7 @@ func (h *Hub) sweep(ctx context.Context) {
 	}
 	active := make(map[string]struct{}, len(rows))
 	for _, row := range rows {
-		id := uuidString(row.ID)
+		id := util.UUIDToString(row.ID)
 		active[id] = struct{}{}
 		h.maybeRestartOnRotation(id, row)
 		h.startSupervisor(ctx, row)
@@ -442,7 +442,7 @@ func (h *Hub) maybeRestartOnRotation(id string, row db.LarkInstallation) {
 }
 
 func (h *Hub) startSupervisor(parent context.Context, inst db.LarkInstallation) {
-	id := uuidString(inst.ID)
+	id := util.UUIDToString(inst.ID)
 	h.mu.Lock()
 	if h.stopped {
 		h.mu.Unlock()
@@ -643,7 +643,7 @@ func (h *Hub) acquireLease(ctx context.Context, instID pgtype.UUID, token string
 	if err == nil {
 		return true, nil
 	}
-	if isNoRowsErr(err) {
+	if errors.Is(err, pgx.ErrNoRows) {
 		// CAS predicate didn't match — someone else (another replica
 		// OR a sibling supervisor mid-rotation) holds the lease. We
 		// back off and let the renewer / supervise loop re-poll on its
@@ -681,14 +681,14 @@ func (h *Hub) renewLeaseUntil(ctx context.Context, cancelRun context.CancelFunc,
 			leased, err := h.acquireLease(ctx, instID, token)
 			if err != nil {
 				h.cfg.Logger.Warn("lark hub: lease renewal error",
-					"installation_id", uuidString(instID),
+					"installation_id", util.UUIDToString(instID),
 					"error", err,
 				)
 				continue
 			}
 			if !leased {
 				h.cfg.Logger.Warn("lark hub: lease lost; tearing down connector",
-					"installation_id", uuidString(instID),
+					"installation_id", util.UUIDToString(instID),
 				)
 				cancelRun()
 				return
@@ -725,7 +725,7 @@ func (h *Hub) releaseLease(instID pgtype.UUID, token string) {
 		CurrentToken: pgtype.Text{String: token, Valid: true},
 	}); err != nil {
 		h.cfg.Logger.Warn("lark hub: release lease failed",
-			"installation_id", uuidString(instID),
+			"installation_id", util.UUIDToString(instID),
 			"error", err,
 		)
 	}
@@ -889,23 +889,3 @@ func sleep(ctx context.Context, d time.Duration) bool {
 		return false
 	}
 }
-
-// isNoRowsErr is the local equivalent of errors.Is(err, pgx.ErrNoRows)
-// without importing pgx into this file. The CAS predicate on
-// AcquireLarkWSLease surfaces "lease held by someone else" as a
-// no-rows return, not a structured error type.
-func isNoRowsErr(err error) bool {
-	if err == nil {
-		return false
-	}
-	// pgx.ErrNoRows is the sentinel; matching by message is
-	// sufficient and avoids importing pgx purely for this comparison.
-	return errors.Is(err, errPgxNoRows) || err.Error() == "no rows in result set"
-}
-
-// errPgxNoRows is initialized in hub_pgx.go to pgx.ErrNoRows so the
-// no-rows check above works under both the real pgx import path and
-// the string-matched fallback (test fakes return that string directly).
-var errPgxNoRows error
-
-func uuidString(u pgtype.UUID) string { return util.UUIDToString(u) }

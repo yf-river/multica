@@ -13,6 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -216,9 +217,9 @@ func (s *RegistrationService) publishInstalled(workspaceID, installationID pgtyp
 	}
 	s.bus.Publish(events.Event{
 		Type:        protocol.EventLarkInstallationCreated,
-		WorkspaceID: uuidString(workspaceID),
+		WorkspaceID: util.UUIDToString(workspaceID),
 		ActorType:   "system",
-		Payload:     map[string]any{"installation_id": uuidString(installationID)},
+		Payload:     map[string]any{"installation_id": util.UUIDToString(installationID)},
 	})
 }
 
@@ -518,7 +519,7 @@ func (s *RegistrationService) runPolling(sess *registrationSession) {
 		case <-ctx.Done():
 			s.cfg.Logger.Info("lark registration: session expired",
 				"session_id", sess.id,
-				"workspace_id", uuidString(sess.workspaceID))
+				"workspace_id", util.UUIDToString(sess.workspaceID))
 			sess.markError(RegistrationReasonExpired, "QR expired before authorization", s.gcDeadline())
 			return
 		case <-time.After(interval):
@@ -670,9 +671,9 @@ func (s *RegistrationService) finishSuccess(ctx context.Context, sess *registrat
 	s.publishInstalled(sess.workspaceID, inst.ID)
 	s.cfg.Logger.Info("lark registration: install complete",
 		"session_id", sess.id,
-		"workspace_id", uuidString(sess.workspaceID),
-		"agent_id", uuidString(sess.agentID),
-		"installation_id", uuidString(inst.ID))
+		"workspace_id", util.UUIDToString(sess.workspaceID),
+		"agent_id", util.UUIDToString(sess.agentID),
+		"installation_id", util.UUIDToString(inst.ID))
 }
 
 func (s *RegistrationService) gcDeadline() time.Time {
@@ -719,10 +720,7 @@ func randomSessionID() (string, error) {
 }
 
 func uuidEqual(a, b pgtype.UUID) bool {
-	if !a.Valid || !b.Valid {
-		return false
-	}
-	return a.Bytes == b.Bytes
+	return a.Valid && b.Valid && a.Bytes == b.Bytes
 }
 
 // botNamePreset builds the display name we pre-fill on Lark's
@@ -740,10 +738,6 @@ func botNamePreset(agentName string) string {
 	return name + " - Multica"
 }
 
-// uuidString is the package-local UUID-to-string helper defined in
-// hub.go; redeclared `func uuidString(u pgtype.UUID) string` removed
-// to avoid the symbol collision.
-//
 // InstallationService.box is unexported but reachable from this file
 // because both live in package `lark`; we read it directly in
 // finishSuccess so the Seal happens outside the DB transaction (which

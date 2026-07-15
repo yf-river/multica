@@ -848,10 +848,7 @@ func truncate(s string, n int) string {
 // card. Single primary CTA pointing at the redemption URL; the rest
 // of the body is plain-text Chinese copy matching the in-app voice.
 //
-// Kept here (not in defaultRenderer) so the binding card template can
-// evolve independently of the streaming-status cards the Patcher
-// renders — they have different lifecycles (binding card is one-shot,
-// status cards are patched in place).
+// This one-shot card has a separate lifecycle from task-failure replies.
 func bindingPromptTemplate(bindURL string) (string, error) {
 	doc := map[string]any{
 		"config": map[string]any{"wide_screen_mode": true},
