@@ -172,7 +172,7 @@ type TaskMessageData struct {
 func (c *Client) ReportTaskMessages(ctx context.Context, taskID string, messages []TaskMessageData) error {
 	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/messages", taskID), map[string]any{
 		"messages": messages,
-	}, nil, taskReportRetrySchedule)
+	}, taskReportRetrySchedule)
 }
 
 func (c *Client) CompleteTask(ctx context.Context, taskID, output, branchName, sessionID, workDir string) error {
@@ -186,7 +186,7 @@ func (c *Client) CompleteTask(ctx context.Context, taskID, output, branchName, s
 	if workDir != "" {
 		body["work_dir"] = workDir
 	}
-	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/complete", taskID), body, nil, defaultTerminalRetrySchedule)
+	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/complete", taskID), body, defaultTerminalRetrySchedule)
 }
 
 func (c *Client) ReportTaskUsage(ctx context.Context, taskID string, usage []TaskUsageEntry) error {
@@ -195,7 +195,7 @@ func (c *Client) ReportTaskUsage(ctx context.Context, taskID string, usage []Tas
 	}
 	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/usage", taskID), map[string]any{
 		"usage": usage,
-	}, nil, taskReportRetrySchedule)
+	}, taskReportRetrySchedule)
 }
 
 func (c *Client) FailTask(ctx context.Context, taskID, errMsg, sessionID, workDir, failureReason string) error {
@@ -209,7 +209,7 @@ func (c *Client) FailTask(ctx context.Context, taskID, errMsg, sessionID, workDi
 	if failureReason != "" {
 		body["failure_reason"] = failureReason
 	}
-	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/fail", taskID), body, nil, defaultTerminalRetrySchedule)
+	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/fail", taskID), body, defaultTerminalRetrySchedule)
 }
 
 // PinTaskSession persists the agent's session_id and work_dir on the task
@@ -529,7 +529,7 @@ func isTransientError(err error) bool {
 // The server-side CompleteTask / FailTask treat "already terminal" as an
 // idempotent success (see service/task.go), so a duplicate replay from a
 // retry is safe even if the server's prior response was lost in transit.
-func (c *Client) postJSONWithRetry(ctx context.Context, path string, reqBody any, respBody any, schedule []time.Duration) error {
+func (c *Client) postJSONWithRetry(ctx context.Context, path string, reqBody any, schedule []time.Duration) error {
 	var lastErr error
 	for attempt := 0; ; attempt++ {
 		if err := ctx.Err(); err != nil {
@@ -538,7 +538,7 @@ func (c *Client) postJSONWithRetry(ctx context.Context, path string, reqBody any
 			}
 			return err
 		}
-		err := c.postJSON(ctx, path, reqBody, respBody)
+		err := c.postJSON(ctx, path, reqBody, nil)
 		if err == nil {
 			return nil
 		}

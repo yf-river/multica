@@ -160,7 +160,7 @@ func runIssueCommentList(cmd *cobra.Command, args []string) error {
 }
 
 func runIssueCommentAdd(cmd *cobra.Command, args []string) error {
-	content, hasContent, err := resolveFileOrStdinTextFlag(cmd, "content")
+	content, hasContent, err := resolveFileOrStdinTextFlag(cmd)
 	if err != nil {
 		return err
 	}

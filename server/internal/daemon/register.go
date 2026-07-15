@@ -921,7 +921,8 @@ func (d *Daemon) refreshWorkspaceRuntimeProfiles(ctx context.Context, workspaceI
 			// proactively Deregister the orphaned server-side rows so the
 			// runtime list converges to empty without waiting on the 150 s
 			// stale-heartbeat sweep.
-			return d.convergeWorkspaceRuntimesToZero(ctx, workspaceID, profileSig)
+			d.convergeWorkspaceRuntimesToZero(ctx, workspaceID, profileSig)
+			return nil
 		}
 		return err
 	}
@@ -965,12 +966,12 @@ func (d *Daemon) refreshWorkspaceRuntimeProfiles(ctx context.Context, workspaceI
 // daemon for the moment. If the user re-enables a profile or installs a
 // built-in agent, the next sync tick's profile-drift detection (or a daemon
 // restart) will register it again.
-func (d *Daemon) convergeWorkspaceRuntimesToZero(ctx context.Context, workspaceID, profileSig string) error {
+func (d *Daemon) convergeWorkspaceRuntimesToZero(ctx context.Context, workspaceID, profileSig string) {
 	d.mu.Lock()
 	ws, ok := d.workspaces[workspaceID]
 	if !ok {
 		d.mu.Unlock()
-		return nil
+		return
 	}
 	oldRuntimeIDs := append([]string(nil), ws.runtimeIDs...)
 	for _, rid := range oldRuntimeIDs {
@@ -997,7 +998,6 @@ func (d *Daemon) convergeWorkspaceRuntimesToZero(ctx context.Context, workspaceI
 		}
 	}
 	d.notifyRuntimeSetChanged()
-	return nil
 }
 
 func (d *Daemon) ensureRepoReady(ctx context.Context, workspaceID, repoURL string) error {

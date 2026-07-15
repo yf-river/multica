@@ -28,11 +28,11 @@ type Registry struct {
 // slug/filename mismatch) aborts startup — we'd rather fail loudly at boot
 // than serve a half-broken picker.
 func Load() (*Registry, error) {
-	return loadFromFS(templateFS, "templates")
+	return loadFromFS(templateFS)
 }
 
-func loadFromFS(fsys fs.FS, dir string) (*Registry, error) {
-	entries, err := fs.ReadDir(fsys, dir)
+func loadFromFS(fsys fs.FS) (*Registry, error) {
+	entries, err := fs.ReadDir(fsys, "templates")
 	if err != nil {
 		return nil, fmt.Errorf("agenttmpl: read templates dir: %w", err)
 	}
@@ -53,7 +53,7 @@ func loadFromFS(fsys fs.FS, dir string) (*Registry, error) {
 	sort.Strings(names)
 
 	for _, name := range names {
-		path := dir + "/" + name
+		path := "templates/" + name
 		data, err := fs.ReadFile(fsys, path)
 		if err != nil {
 			return nil, fmt.Errorf("agenttmpl: read %s: %w", path, err)

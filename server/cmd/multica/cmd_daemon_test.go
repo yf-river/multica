@@ -211,10 +211,7 @@ func TestEnumerateDiskUsageRoots(t *testing.T) {
 	writeDiskUsageTaskFile(t, home, "desktop-host", "ws1", "task1", "workdir/main.go")
 	writeDefaultDiskUsageTaskFile(t, home, "ws0", "task0", "workdir/main.go")
 
-	roots, err := enumerateDiskUsageRoots()
-	if err != nil {
-		t.Fatalf("enumerateDiskUsageRoots: %v", err)
-	}
+	roots := enumerateDiskUsageRoots()
 
 	if len(roots) != 2 {
 		t.Fatalf("roots = %+v, want default + desktop-host only", roots)

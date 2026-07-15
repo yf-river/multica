@@ -417,7 +417,7 @@ func runDaemonRestart(cmd *cobra.Command, args []string) error {
 				}
 			}
 			// Wait until the port is fully released (not merely past "running"),
-	// otherwise the fresh start below races the previous daemon's listener.
+			// otherwise the fresh start below races the previous daemon's listener.
 			for i := 0; i < 10; i++ {
 				time.Sleep(500 * time.Millisecond)
 				sctx, scancel := context.WithTimeout(context.Background(), 1*time.Second)
@@ -702,10 +702,7 @@ func runDaemonDiskUsage(cmd *cobra.Command, _ []string) error {
 // combined grand total. This is the path that surfaces the Desktop app's
 // `desktop-<host>` root, which the default single-root scan never sees.
 func runDaemonDiskUsageAggregate(byWorkspace bool, top int, output string) error {
-	roots, err := enumerateDiskUsageRoots()
-	if err != nil {
-		return err
-	}
+	roots := enumerateDiskUsageRoots()
 	agg, err := daemon.ScanDiskUsageRoots(roots, daemon.ArtifactPatternsFromEnv())
 	if err != nil {
 		return err
@@ -739,7 +736,7 @@ func runDaemonDiskUsageAggregate(byWorkspace bool, top int, output string) error
 // exists on disk, sorted by profile name. Roots that resolve to the same path
 // (e.g. when MULTICA_WORKSPACES_ROOT pins every profile to one directory) are
 // collapsed to a single entry.
-func enumerateDiskUsageRoots() ([]daemon.DiskUsageRoot, error) {
+func enumerateDiskUsageRoots() []daemon.DiskUsageRoot {
 	seen := map[string]bool{}
 	out := make([]daemon.DiskUsageRoot, 0)
 
@@ -750,11 +747,11 @@ func enumerateDiskUsageRoots() ([]daemon.DiskUsageRoot, error) {
 
 	profilesRoot, err := profilesRootDir()
 	if err != nil {
-		return out, nil
+		return out
 	}
 	entries, err := os.ReadDir(profilesRoot)
 	if err != nil {
-		return out, nil
+		return out
 	}
 	names := make([]string, 0, len(entries))
 	for _, entry := range entries {
@@ -776,7 +773,7 @@ func enumerateDiskUsageRoots() ([]daemon.DiskUsageRoot, error) {
 		seen[root] = true
 		out = append(out, daemon.DiskUsageRoot{Profile: name, Root: root})
 	}
-	return out, nil
+	return out
 }
 
 func printAggregateDiskUsage(w io.Writer, agg daemon.AggregateDiskUsageReport, byWorkspace bool) {

@@ -320,7 +320,7 @@ func issueExecutionSpaceEnabled(task Task) bool {
 		strings.TrimSpace(task.IssueExecutionSpace.PrimaryRepoURL) != ""
 }
 
-func (d *Daemon) prepareIssueExecutionSpace(ctx context.Context, task Task, agentName string) (*preparedIssueExecutionSpace, error) {
+func (d *Daemon) prepareIssueExecutionSpace(task Task, agentName string) (*preparedIssueExecutionSpace, error) {
 	if !issueExecutionSpaceEnabled(task) {
 		return nil, nil
 	}

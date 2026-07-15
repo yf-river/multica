@@ -485,7 +485,7 @@ func TestCleanupSidecarsDoesNotRemovePreExistingDirs(t *testing.T) {
 
 	manifest := &sidecarManifest{}
 	target := filepath.Join(userDir, "skills", "ours")
-	if err := recordMkdirAll(target, 0o755, manifest); err != nil {
+	if err := recordMkdirAll(target, manifest); err != nil {
 		t.Fatalf("recordMkdirAll: %v", err)
 	}
 	for _, d := range manifest.Dirs {
@@ -524,7 +524,7 @@ func TestRecordWriteFileRefusesToOverwritePreExistingFile(t *testing.T) {
 	}
 
 	m := &sidecarManifest{}
-	err := recordWriteFile(target, []byte("ours"), 0o644, m)
+	err := recordWriteFile(target, []byte("ours"), m)
 	if !errors.Is(err, errPathPreExists) {
 		t.Fatalf("recordWriteFile must return errPathPreExists for a pre-existing target, got: %v", err)
 	}
@@ -561,7 +561,7 @@ func TestRecordWriteFileRefusesToOverwriteSymlinkOrDir(t *testing.T) {
 	if err := os.Symlink(filepath.Join(dir, "does-not-exist"), symlinkPath); err != nil {
 		t.Skipf("symlink not supported on this platform: %v", err)
 	}
-	if err := recordWriteFile(symlinkPath, []byte("ours"), 0o644, &sidecarManifest{}); !errors.Is(err, errPathPreExists) {
+	if err := recordWriteFile(symlinkPath, []byte("ours"), &sidecarManifest{}); !errors.Is(err, errPathPreExists) {
 		t.Errorf("recordWriteFile on dangling symlink should refuse, got: %v", err)
 	}
 
@@ -570,7 +570,7 @@ func TestRecordWriteFileRefusesToOverwriteSymlinkOrDir(t *testing.T) {
 	if err := os.Mkdir(dirPath, 0o755); err != nil {
 		t.Fatalf("seed dir: %v", err)
 	}
-	if err := recordWriteFile(dirPath, []byte("ours"), 0o644, &sidecarManifest{}); !errors.Is(err, errPathPreExists) {
+	if err := recordWriteFile(dirPath, []byte("ours"), &sidecarManifest{}); !errors.Is(err, errPathPreExists) {
 		t.Errorf("recordWriteFile on pre-existing directory should refuse, got: %v", err)
 	}
 }

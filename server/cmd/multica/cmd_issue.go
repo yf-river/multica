@@ -36,8 +36,8 @@ func resolveTextFlag(cmd *cobra.Command, flagName string) (string, bool, error) 
 	return resolveTextInput(cmd, flagName, true)
 }
 
-func resolveFileOrStdinTextFlag(cmd *cobra.Command, flagName string) (string, bool, error) {
-	return resolveTextInput(cmd, flagName, false)
+func resolveFileOrStdinTextFlag(cmd *cobra.Command) (string, bool, error) {
+	return resolveTextInput(cmd, "content", false)
 }
 
 func resolveTextInput(cmd *cobra.Command, flagName string, allowInline bool) (string, bool, error) {

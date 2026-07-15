@@ -145,7 +145,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	var issueSpace *preparedIssueExecutionSpace
 	if issueExecutionSpaceEnabled(task) && executionPolicy.CanAccessRepo {
 		var err error
-		issueSpace, err = d.prepareIssueExecutionSpace(ctx, task, agentName)
+		issueSpace, err = d.prepareIssueExecutionSpace(task, agentName)
 		if err != nil {
 			return TaskResult{}, fmt.Errorf("prepare issue execution space: %w", err)
 		}

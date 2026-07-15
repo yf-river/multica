@@ -35,13 +35,13 @@ import (
 // pass nil to skip the bookkeeping entirely.
 func writeContextFiles(workDir, provider string, ctx TaskContextForEnv, manifest *sidecarManifest) error {
 	contextDir := filepath.Join(workDir, ".agent_context")
-	if err := recordMkdirAll(contextDir, 0o755, manifest); err != nil {
+	if err := recordMkdirAll(contextDir, manifest); err != nil {
 		return fmt.Errorf("create .agent_context dir: %w", err)
 	}
 
-	content := renderIssueContext(provider, ctx)
+	content := renderIssueContext(ctx)
 	path := filepath.Join(contextDir, "issue_context.md")
-	if err := recordWriteFile(path, []byte(content), 0o644, manifest); err != nil {
+	if err := recordWriteFile(path, []byte(content), manifest); err != nil {
 		// A pre-existing path means the user already owns
 		// .agent_context/issue_context.md — either they created it
 		// themselves or it survived from a crashed prior run we can't
@@ -121,7 +121,7 @@ func writeProjectResources(workDir string, ctx TaskContextForEnv, manifest *side
 		return nil
 	}
 	dir := filepath.Join(workDir, ".multica", "project")
-	if err := recordMkdirAll(dir, 0o755, manifest); err != nil {
+	if err := recordMkdirAll(dir, manifest); err != nil {
 		return err
 	}
 	resources := ctx.ProjectResources
@@ -137,7 +137,7 @@ func writeProjectResources(workDir string, ctx TaskContextForEnv, manifest *side
 	if err != nil {
 		return err
 	}
-	if err := recordWriteFile(filepath.Join(dir, "resources.json"), data, 0o644, manifest); err != nil {
+	if err := recordWriteFile(filepath.Join(dir, "resources.json"), data, manifest); err != nil {
 		// .multica/project/resources.json is Multica-owned and a
 		// pre-existing path is almost certainly user content the
 		// manifest must not destroy. The runtime brief already lists
@@ -156,7 +156,7 @@ func writeProjectResources(workDir string, ctx TaskContextForEnv, manifest *side
 // CleanupSidecars can rmdir them on local_directory teardown.
 func resolveSkillsDir(workDir, provider string, manifest *sidecarManifest) (string, error) {
 	skillsDir := skillsDirPath(workDir, provider)
-	if err := recordMkdirAll(skillsDir, 0o755, manifest); err != nil {
+	if err := recordMkdirAll(skillsDir, manifest); err != nil {
 		return "", err
 	}
 	return skillsDir, nil
@@ -419,7 +419,7 @@ func sanitizeSkillName(name string) string {
 // skill entirely (which would silently drop a Multica skill the agent
 // expects to see).
 func writeSkillFiles(skillsDir string, skills []SkillContextForEnv, manifest *sidecarManifest) error {
-	if err := recordMkdirAll(skillsDir, 0o755, manifest); err != nil {
+	if err := recordMkdirAll(skillsDir, manifest); err != nil {
 		return fmt.Errorf("create skills dir: %w", err)
 	}
 
@@ -429,7 +429,7 @@ func writeSkillFiles(skillsDir string, skills []SkillContextForEnv, manifest *si
 		if err != nil {
 			return fmt.Errorf("allocate skill dir for %q: %w", skill.Name, err)
 		}
-		if err := recordMkdirAll(dir, 0o755, manifest); err != nil {
+		if err := recordMkdirAll(dir, manifest); err != nil {
 			return err
 		}
 
@@ -439,7 +439,7 @@ func writeSkillFiles(skillsDir string, skills []SkillContextForEnv, manifest *si
 		// matches the directory name; runtimes that key on either
 		// stay consistent.
 		body := ensureSkillFrontmatter(skill.Content, slug, skill.Description)
-		if err := recordWriteFile(filepath.Join(dir, "SKILL.md"), []byte(body), 0o644, manifest); err != nil {
+		if err := recordWriteFile(filepath.Join(dir, "SKILL.md"), []byte(body), manifest); err != nil {
 			return err
 		}
 
@@ -461,10 +461,10 @@ func writeSkillFiles(skillsDir string, skills []SkillContextForEnv, manifest *si
 				continue
 			}
 			fpath := filepath.Join(dir, f.Path)
-			if err := recordMkdirAll(filepath.Dir(fpath), 0o755, manifest); err != nil {
+			if err := recordMkdirAll(filepath.Dir(fpath), manifest); err != nil {
 				return err
 			}
-			if err := recordWriteFile(fpath, []byte(f.Content), 0o644, manifest); err != nil {
+			if err := recordWriteFile(fpath, []byte(f.Content), manifest); err != nil {
 				return err
 			}
 		}
@@ -474,7 +474,7 @@ func writeSkillFiles(skillsDir string, skills []SkillContextForEnv, manifest *si
 }
 
 // renderIssueContext builds the markdown content for issue_context.md.
-func renderIssueContext(provider string, ctx TaskContextForEnv) string {
+func renderIssueContext(ctx TaskContextForEnv) string {
 	if ctx.AutopilotRunID != "" {
 		return renderAutopilotContext(ctx)
 	}

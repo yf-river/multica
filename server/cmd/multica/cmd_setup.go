@@ -79,13 +79,13 @@ func printConfigLocation(profile string) {
 
 // confirmOverwrite checks for an existing config and prompts the user.
 // Returns true if we should proceed, false if the user declined.
-func confirmOverwrite(profile string) (bool, error) {
+func confirmOverwrite(profile string) bool {
 	cfg, err := cli.LoadCLIConfigForProfile(profile)
 	if err != nil {
-		return true, nil // can't load → treat as no config
+		return true // can't load → treat as no config
 	}
 	if cfg.ServerURL == "" {
-		return true, nil // no server configured → fresh config
+		return true // no server configured → fresh config
 	}
 
 	fmt.Fprintln(os.Stderr, "Current configuration:")
@@ -102,18 +102,15 @@ func confirmOverwrite(profile string) (bool, error) {
 	answer = strings.TrimSpace(strings.ToLower(answer))
 	if answer != "y" && answer != "yes" {
 		fmt.Fprintln(os.Stderr, "Aborted.")
-		return false, nil
+		return false
 	}
-	return true, nil
+	return true
 }
 
 func runSetupCloud(cmd *cobra.Command, args []string) error {
 	profile := resolveProfile(cmd)
 
-	ok, err := confirmOverwrite(profile)
-	if err != nil {
-		return err
-	}
+	ok := confirmOverwrite(profile)
 	if !ok {
 		return nil
 	}
@@ -149,10 +146,7 @@ func runSetupCloud(cmd *cobra.Command, args []string) error {
 func runSetupSelfHost(cmd *cobra.Command, args []string) error {
 	profile := resolveProfile(cmd)
 
-	ok, err := confirmOverwrite(profile)
-	if err != nil {
-		return err
-	}
+	ok := confirmOverwrite(profile)
 	if !ok {
 		return nil
 	}
@@ -172,10 +166,7 @@ func runSetupSelfHost(cmd *cobra.Command, args []string) error {
 			// We can't guess the frontend URL for a remote server: api.x.co
 			// and app.x.co, or an https-fronted deployment, would silently
 			// produce a broken login URL. Ask the user instead.
-			entered, err := promptAppURL(serverURL)
-			if err != nil {
-				return err
-			}
+			entered := promptAppURL(serverURL)
 			if entered == "" {
 				return fmt.Errorf("--app-url is required when --server-url points at a remote host (e.g. --app-url https://app.internal.co)")
 			}
@@ -283,15 +274,15 @@ func serverHostIsLocal(serverURL string) bool {
 // derive it from a remote server_url — api.example.com ≠ app.example.com in
 // most production setups — so guessing would just defer the failure to the
 // browser login step. Returns an empty string if the user hits enter.
-func promptAppURL(serverURL string) (string, error) {
+func promptAppURL(serverURL string) string {
 	fmt.Fprintf(os.Stderr, "No --app-url provided, and --server-url (%s) is remote.\n", serverURL)
 	fmt.Fprint(os.Stderr, "Enter the frontend app URL (e.g. https://app.internal.co): ")
 	reader := bufio.NewReader(os.Stdin)
 	line, err := reader.ReadString('\n')
 	if err != nil && line == "" {
-		return "", nil
+		return ""
 	}
-	return strings.TrimRight(strings.TrimSpace(line), "/"), nil
+	return strings.TrimRight(strings.TrimSpace(line), "/")
 }
 
 // probeServer checks whether a Multica backend is reachable at the given URL.

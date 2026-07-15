@@ -65,7 +65,7 @@ func TestBuildMetaSkillContentSourceSummaryMode(t *testing.T) {
 }
 
 func TestRenderIssueContextSourceSummaryMode(t *testing.T) {
-	out := renderIssueContext("codex", TaskContextForEnv{
+	out := renderIssueContext(TaskContextForEnv{
 		IssueID:             "issue-summary-1",
 		SourceSummaryPrompt: "基于任务的 TAPD 来源内容生成结构化需求摘要。",
 		AgentSkills: []SkillContextForEnv{{

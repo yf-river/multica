@@ -37,7 +37,7 @@ func TestLoadFromFS_Valid(t *testing.T) {
 		}`)},
 	}
 
-	reg, err := loadFromFS(fsys, "templates")
+	reg, err := loadFromFS(fsys)
 	if err != nil {
 		t.Fatalf("loadFromFS: %v", err)
 	}
@@ -68,32 +68,32 @@ func TestLoadFromFS_Invalid(t *testing.T) {
 			wantErr: "parse",
 		},
 		{
-			name: "missing slug",
+			name:    "missing slug",
 			content: `{"name": "X", "instructions": "do", "skills": [{"source_url":"u"}]}`,
 			wantErr: "missing slug",
 		},
 		{
-			name: "slug mismatches filename",
+			name:    "slug mismatches filename",
 			content: `{"slug":"other","name":"X","instructions":"do","skills":[{"source_url":"u"}]}`,
 			wantErr: "does not match filename",
 		},
 		{
-			name: "bad slug",
+			name:    "bad slug",
 			content: `{"slug":"Bad_Slug","name":"X","instructions":"do","skills":[{"source_url":"u"}]}`,
 			wantErr: "kebab-case",
 		},
 		{
-			name: "missing name",
+			name:    "missing name",
 			content: `{"slug":"x","instructions":"do","skills":[{"source_url":"u"}]}`,
 			wantErr: "missing name",
 		},
 		{
-			name: "missing instructions",
+			name:    "missing instructions",
 			content: `{"slug":"x","name":"X","skills":[{"source_url":"u"}]}`,
 			wantErr: "missing instructions",
 		},
 		{
-			name: "skill missing url",
+			name:    "skill missing url",
 			content: `{"slug":"x","name":"X","instructions":"do","skills":[{}]}`,
 			wantErr: "missing source_url",
 		},
@@ -108,7 +108,7 @@ func TestLoadFromFS_Invalid(t *testing.T) {
 			fsys := fstest.MapFS{
 				"templates/" + filename: &fstest.MapFile{Data: []byte(tc.content)},
 			}
-			_, err := loadFromFS(fsys, "templates")
+			_, err := loadFromFS(fsys)
 			if err == nil {
 				t.Fatalf("expected error containing %q, got nil", tc.wantErr)
 			}
@@ -132,7 +132,7 @@ func TestLoadFromFS_PromptOnlyTemplate(t *testing.T) {
 			"skills":[]
 		}`)},
 	}
-	reg, err := loadFromFS(fsys, "templates")
+	reg, err := loadFromFS(fsys)
 	if err != nil {
 		t.Fatalf("loadFromFS: %v", err)
 	}
@@ -156,7 +156,7 @@ func TestLoadFromFS_DuplicateSlug(t *testing.T) {
 			"slug":"a","name":"A2","instructions":"do","skills":[{"source_url":"u"}]
 		}`)},
 	}
-	_, err := loadFromFS(fsys, "templates")
+	_, err := loadFromFS(fsys)
 	if err == nil || !strings.Contains(err.Error(), "duplicate slug") {
 		// Note: this test will fail validation first (slug "a" vs filename
 		// "b.json") because we check filename-slug match before duplicate.

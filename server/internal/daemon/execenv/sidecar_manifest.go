@@ -68,7 +68,7 @@ type sidecarManifest struct {
 	Dirs  []string `json:"dirs,omitempty"`
 }
 
-// recordMkdirAll behaves like os.MkdirAll(path, perm) but additionally
+// recordMkdirAll creates directories with the sidecar directory mode (0755) and
 // records every parent directory it had to create (skipping any that
 // already existed) into m so CleanupSidecars can rmdir them later. The
 // recorded paths are appended in root-first order; Cleanup iterates in
@@ -78,12 +78,12 @@ type sidecarManifest struct {
 // the nil mode because Reuse runs on cloud workdirs that the GC loop
 // wipes wholesale, so per-file cleanup is irrelevant and tracking the
 // dirs would just leave stale manifest bytes around.
-func recordMkdirAll(path string, perm os.FileMode, m *sidecarManifest) error {
+func recordMkdirAll(path string, m *sidecarManifest) error {
 	if path == "" {
-		return os.MkdirAll(path, perm)
+		return os.MkdirAll(path, 0o755)
 	}
 	if m == nil {
-		return os.MkdirAll(path, perm)
+		return os.MkdirAll(path, 0o755)
 	}
 	// Walk leaf-first, collecting ancestors that don't currently exist.
 	// We stop at the first existing ancestor (or the filesystem root) so
@@ -104,7 +104,7 @@ func recordMkdirAll(path string, perm os.FileMode, m *sidecarManifest) error {
 		}
 		cur = parent
 	}
-	if err := os.MkdirAll(path, perm); err != nil {
+	if err := os.MkdirAll(path, 0o755); err != nil {
 		return err
 	}
 	// Reverse leaf-first → root-first so Cleanup can reverse-iterate
@@ -116,9 +116,9 @@ func recordMkdirAll(path string, perm os.FileMode, m *sidecarManifest) error {
 	return nil
 }
 
-// recordWriteFile writes data to path with perm and records the path in
-// m for later cleanup, but ONLY when path does not already exist. When
-// path is occupied — by a regular file, a symlink, a directory, or any
+// recordWriteFile writes data to path with the sidecar file mode (0644) and
+// records the path in m for later cleanup, but ONLY when path does not already
+// exist. When path is occupied — by a regular file, a symlink, a directory, or any
 // other filesystem entry — the function returns errPathPreExists
 // without touching the path. The user's bytes (or pre-existing entry
 // type) are preserved exactly.
@@ -134,9 +134,9 @@ func recordMkdirAll(path string, perm os.FileMode, m *sidecarManifest) error {
 // path uses the nil mode because Reuse runs on cloud workdirs that
 // the GC loop wipes wholesale, so per-file collision avoidance is
 // irrelevant.
-func recordWriteFile(path string, data []byte, perm os.FileMode, m *sidecarManifest) error {
+func recordWriteFile(path string, data []byte, m *sidecarManifest) error {
 	if m == nil {
-		return os.WriteFile(path, data, perm)
+		return os.WriteFile(path, data, 0o644)
 	}
 	_, statErr := os.Lstat(path)
 	if statErr == nil {
@@ -147,7 +147,7 @@ func recordWriteFile(path string, data []byte, perm os.FileMode, m *sidecarManif
 	if !errors.Is(statErr, fs.ErrNotExist) {
 		return fmt.Errorf("stat target %s: %w", path, statErr)
 	}
-	if err := os.WriteFile(path, data, perm); err != nil {
+	if err := os.WriteFile(path, data, 0o644); err != nil {
 		return err
 	}
 	m.Files = append(m.Files, path)

@@ -160,7 +160,7 @@ func TestPostJSONWithRetry_TransientThenSuccess(t *testing.T) {
 
 	c := NewClient(srv.URL)
 	schedule := []time.Duration{time.Nanosecond, time.Nanosecond, time.Nanosecond}
-	if err := c.postJSONWithRetry(context.Background(), "/x", map[string]any{}, nil, schedule); err != nil {
+	if err := c.postJSONWithRetry(context.Background(), "/x", map[string]any{}, schedule); err != nil {
 		t.Fatalf("postJSONWithRetry: %v", err)
 	}
 	if got := calls.Load(); got != 3 {
@@ -230,7 +230,7 @@ func TestPostJSONWithRetry_TransientExhausts(t *testing.T) {
 
 	c := NewClient(srv.URL)
 	schedule := []time.Duration{time.Nanosecond, time.Nanosecond}
-	err := c.postJSONWithRetry(context.Background(), "/x", map[string]any{}, nil, schedule)
+	err := c.postJSONWithRetry(context.Background(), "/x", map[string]any{}, schedule)
 	if err == nil {
 		t.Fatal("expected error after schedule exhausted, got nil")
 	}
@@ -254,7 +254,7 @@ func TestPostJSONWithRetry_PermanentBailsImmediately(t *testing.T) {
 
 	c := NewClient(srv.URL)
 	schedule := []time.Duration{time.Nanosecond, time.Nanosecond, time.Nanosecond}
-	err := c.postJSONWithRetry(context.Background(), "/x", map[string]any{}, nil, schedule)
+	err := c.postJSONWithRetry(context.Background(), "/x", map[string]any{}, schedule)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -282,7 +282,7 @@ func TestPostJSONWithRetry_CtxCancelStopsRetries(t *testing.T) {
 	c := NewClient(srv.URL)
 	schedule := []time.Duration{time.Second, time.Second, time.Second}
 	start := time.Now()
-	err := c.postJSONWithRetry(ctx, "/x", map[string]any{}, nil, schedule)
+	err := c.postJSONWithRetry(ctx, "/x", map[string]any{}, schedule)
 	elapsed := time.Since(start)
 	if err == nil {
 		t.Fatal("expected error after ctx cancel, got nil")

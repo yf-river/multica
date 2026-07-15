@@ -311,7 +311,7 @@ func TestResolveFileOrStdinTextFlag(t *testing.T) {
 		c.Flags().String("content-file", "", "")
 		_ = c.Flags().Set("content-stdin", "true")
 		pipeStdin(t, "line one\nline two\n", func() {
-			got, ok, err := resolveFileOrStdinTextFlag(c, "content")
+			got, ok, err := resolveFileOrStdinTextFlag(c)
 			if err != nil || !ok {
 				t.Fatalf("unexpected: ok=%v err=%v", ok, err)
 			}
@@ -325,7 +325,7 @@ func TestResolveFileOrStdinTextFlag(t *testing.T) {
 		c := &cobra.Command{Use: "test"}
 		c.Flags().Bool("content-stdin", false, "")
 		c.Flags().String("content-file", "", "")
-		got, ok, err := resolveFileOrStdinTextFlag(c, "content")
+		got, ok, err := resolveFileOrStdinTextFlag(c)
 		if err != nil {
 			t.Fatalf("unexpected err: %v", err)
 		}
@@ -345,7 +345,7 @@ func TestResolveFileOrStdinTextFlag(t *testing.T) {
 		c.Flags().String("content-file", "", "")
 		_ = c.Flags().Set("content-stdin", "true")
 		_ = c.Flags().Set("content-file", path)
-		if _, _, err := resolveFileOrStdinTextFlag(c, "content"); err == nil {
+		if _, _, err := resolveFileOrStdinTextFlag(c); err == nil {
 			t.Fatalf("expected mutually-exclusive error")
 		}
 	})

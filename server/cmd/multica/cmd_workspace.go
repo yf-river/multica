@@ -322,13 +322,14 @@ func runWorkspaceGet(cmd *cobra.Command, args []string) error {
 
 	output, _ := cmd.Flags().GetString("output")
 	if output == "table" {
-		return printWorkspaceDetailsTable(ws)
+		printWorkspaceDetailsTable(ws)
+		return nil
 	}
 
 	return cli.PrintJSON(os.Stdout, ws)
 }
 
-func printWorkspaceDetailsTable(ws map[string]any) error {
+func printWorkspaceDetailsTable(ws map[string]any) {
 	desc := truncateWorkspaceDetail(strVal(ws, "description"))
 	wsContext := truncateWorkspaceDetail(strVal(ws, "context"))
 	headers := []string{"ID", "NAME", "SLUG", "DESCRIPTION", "CONTEXT"}
@@ -340,7 +341,6 @@ func printWorkspaceDetailsTable(ws map[string]any) error {
 		wsContext,
 	}}
 	cli.PrintTable(os.Stdout, headers, rows)
-	return nil
 }
 
 func truncateWorkspaceDetail(value string) string {
@@ -417,7 +417,8 @@ func runWorkspaceUpdate(cmd *cobra.Command, args []string) error {
 
 	output, _ := cmd.Flags().GetString("output")
 	if output == "table" {
-		return printWorkspaceDetailsTable(ws)
+		printWorkspaceDetailsTable(ws)
+		return nil
 	}
 
 	return cli.PrintJSON(os.Stdout, ws)

@@ -437,7 +437,7 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	if err != nil {
 		return Config{}, err
 	}
-	gcArtifactPatterns := patternsFromEnv("MULTICA_GC_ARTIFACT_PATTERNS", DefaultGCArtifactPatterns)
+	gcArtifactPatterns := patternsFromEnv(DefaultGCArtifactPatterns)
 
 	return Config{
 		ServerBaseURL:                  serverBaseURL,
@@ -528,15 +528,15 @@ func ResolveWorkspacesRoot(profile, override string) (string, error) {
 // disk-usage CLI uses this to make sure the "artifact size" it reports
 // matches what the GC would actually reclaim.
 func ArtifactPatternsFromEnv() []string {
-	return patternsFromEnv("MULTICA_GC_ARTIFACT_PATTERNS", DefaultGCArtifactPatterns)
+	return patternsFromEnv(DefaultGCArtifactPatterns)
 }
 
 // patternsFromEnv reads a comma-separated list from env. Patterns containing
 // path separators are silently dropped — the GC artifact cleanup only matches
 // directory basenames, never paths, so a pattern like "foo/bar" is meaningless
 // and accepting it would just be a footgun.
-func patternsFromEnv(name string, defaults []string) []string {
-	raw := strings.TrimSpace(os.Getenv(name))
+func patternsFromEnv(defaults []string) []string {
+	raw := strings.TrimSpace(os.Getenv("MULTICA_GC_ARTIFACT_PATTERNS"))
 	if raw == "" {
 		out := make([]string, len(defaults))
 		copy(out, defaults)

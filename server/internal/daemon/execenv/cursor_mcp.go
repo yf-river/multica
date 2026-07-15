@@ -43,7 +43,7 @@ func prepareCursorMcpConfig(envRoot, workDir string, mcpConfig json.RawMessage, 
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", fmt.Errorf("stat .cursor/mcp.json: %w", err)
 	}
-	if err := recordMkdirAll(cursorDir, 0o755, manifest); err != nil {
+	if err := recordMkdirAll(cursorDir, manifest); err != nil {
 		return "", fmt.Errorf("create .cursor dir: %w", err)
 	}
 	configData, err := marshalCursorMcpConfig(servers)
