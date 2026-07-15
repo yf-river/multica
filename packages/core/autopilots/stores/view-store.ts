@@ -1,9 +1,6 @@
 "use client";
 
-import {
-  createWorkspaceListViewStore,
-  type WorkspaceListViewStoreState,
-} from "../../platform/workspace-list-view-store";
+import { createWorkspaceListViewStore } from "../../platform/workspace-list-view-store";
 
 // View preferences for the autopilots list page: scope, sort, column
 // visibility, and filters. Persisted per workspace (workspace-aware storage),
@@ -24,7 +21,7 @@ export type AutopilotSortField = "name" | "lastRun" | "nextRun" | "created";
 export type AutopilotSortDirection = "asc" | "desc";
 
 /** Per-field direction applied when the user switches TO that field. */
-export const AUTOPILOT_SORT_DEFAULT_DIRECTION: Record<
+const AUTOPILOT_SORT_DEFAULT_DIRECTION: Record<
   AutopilotSortField,
   AutopilotSortDirection
 > = {
@@ -42,7 +39,7 @@ export interface AutopilotListFilters {
   creators: string[];
 }
 
-export const EMPTY_AUTOPILOT_FILTERS: AutopilotListFilters = {
+const EMPTY_AUTOPILOT_FILTERS: AutopilotListFilters = {
   assignees: [],
   modes: [],
   triggerKinds: [],
@@ -78,11 +75,6 @@ const DEFAULTS = {
   hiddenColumns: AUTOPILOT_DEFAULT_HIDDEN_COLUMNS,
   filters: EMPTY_AUTOPILOT_FILTERS,
 };
-
-export type AutopilotsViewState = WorkspaceListViewStoreState<
-  typeof DEFAULTS,
-  AutopilotsViewActions
->;
 
 export const useAutopilotsViewStore = createWorkspaceListViewStore<
   typeof DEFAULTS,

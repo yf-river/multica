@@ -55,7 +55,7 @@
     "./projects/config": "./projects/config.ts",
     "./labels": "./labels/index.ts",
     "./labels/queries": "./labels/queries.ts",
-    "./autopilots": "./autopilots/index.ts",
+    "./autopilots/webhook": "./autopilots/webhook.ts",
     "./autopilots/queries": "./autopilots/queries.ts",
     "./autopilots/mutations": "./autopilots/mutations.ts",
     "./pins": "./pins/index.ts",
@@ -84,7 +84,7 @@
     "./skills": "./skills/index.ts",
     "./skills/frontmatter": "./skills/frontmatter.ts",
     "./skills/stores": "./skills/stores/index.ts",
-    "./autopilots/stores": "./autopilots/stores/index.ts"
+    "./autopilots/stores": "./autopilots/stores/view-store.ts"
   },
   "dependencies": {
     "@tanstack/react-query": "catalog:",

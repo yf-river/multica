@@ -13,7 +13,7 @@ import type { Autopilot } from "@multica/core/types";
 import {
   useDeleteAutopilot,
   useUpdateAutopilot,
-} from "@multica/core/autopilots";
+} from "@multica/core/autopilots/mutations";
 import { Button } from "@multica/ui/components/ui/button";
 import {
   Dialog,

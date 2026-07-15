@@ -17,8 +17,8 @@ import { useQuery } from "@tanstack/react-query";
 import {
   autopilotDeliveriesOptions,
   autopilotDeliveryOptions,
-  useReplayAutopilotDelivery,
-} from "@multica/core/autopilots";
+} from "@multica/core/autopilots/queries";
+import { useReplayAutopilotDelivery } from "@multica/core/autopilots/mutations";
 import { useWorkspaceId } from "@multica/core/paths";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { Button } from "@multica/ui/components/ui/button";

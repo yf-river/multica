@@ -47,7 +47,7 @@ import {
   useUpdateAutopilot,
   useUpdateAutopilotTrigger,
 } from "@multica/core/autopilots/mutations";
-import { buildAutopilotWebhookUrl } from "@multica/core/autopilots";
+import { buildAutopilotWebhookUrl } from "@multica/core/autopilots/webhook";
 import { api } from "@multica/core/api";
 import type {
   AutopilotAssigneeType,

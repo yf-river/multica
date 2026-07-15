@@ -17,7 +17,7 @@ import {
   useDeleteAutopilotTrigger,
   useRotateAutopilotTriggerWebhookToken,
 } from "@multica/core/autopilots/mutations";
-import { buildAutopilotWebhookUrl } from "@multica/core/autopilots";
+import { buildAutopilotWebhookUrl } from "@multica/core/autopilots/webhook";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/paths";
 import { useWorkspacePaths } from "@multica/core/paths";
