@@ -169,11 +169,27 @@ describe("ApiClient schema fallback", () => {
   });
 
   describe("listGroupedIssues", () => {
-    it("falls back to empty groups when the response is malformed", async () => {
+    it("reuses list filters and falls back to empty groups when the response is malformed", async () => {
       stubFetchJson({ groups: "not-an-array" });
       const client = new ApiClient("https://api.example.test");
-      const res = await client.listGroupedIssues({ group_by: "assignee" });
+      const res = await client.listGroupedIssues({
+        group_by: "assignee",
+        limit: 12,
+        assignee_ids: ["agent-1", "agent-2"],
+        metadata: { source: "tapd" },
+        date_start: "2026-07-01",
+        sort_direction: "desc",
+      });
       expect(res).toEqual({ groups: [] });
+      const url = new URL(String(vi.mocked(fetch).mock.calls[0]?.[0]));
+      expect(Object.fromEntries(url.searchParams)).toMatchObject({
+        group_by: "assignee",
+        limit: "12",
+        assignee_ids: "agent-1,agent-2",
+        metadata: JSON.stringify({ source: "tapd" }),
+        date_start: "2026-07-01",
+        direction: "desc",
+      });
     });
   });
 

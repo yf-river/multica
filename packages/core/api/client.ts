@@ -1,3 +1,4 @@
+import type { ZodType } from "zod";
 import type {
   Issue,
   CreateIssueRequest,
@@ -417,6 +418,45 @@ export class PreviewUnsupportedError extends Error {
   }
 }
 
+type UsageQueryParams = { days?: number; project_id?: string | null; tz?: string };
+
+function usageSearchParams(params?: UsageQueryParams) {
+  const search = new URLSearchParams();
+  if (params?.days) search.set("days", String(params.days));
+  if (params?.project_id) search.set("project_id", params.project_id);
+  if (params?.tz) search.set("tz", params.tz);
+  return search;
+}
+
+function parseRuntimeRequest<T extends { id: string; runtime_id: string }>(
+  data: unknown,
+  schema: ZodType<T>,
+  fallback: T,
+  runtimeId: string,
+  requestId: string | undefined,
+  endpoint: string,
+  mayHaveCommitted: boolean,
+): T {
+  const matchesIdentity = (request: T) =>
+    request.runtime_id === runtimeId && (requestId === undefined || request.id === requestId);
+  const validatedSchema = requestId === undefined
+    ? schema.refine(matchesIdentity, {
+        path: ["runtime_id"],
+        message: "runtime request identity does not match request",
+      })
+    : schema.refine(matchesIdentity, {
+        message: "runtime request identity does not match request",
+      });
+  return parseOrThrow(data, validatedSchema, fallback, {
+    endpoint,
+    mayHaveCommitted,
+  });
+}
+
+function issueSubscriptionBody(userId?: string, userType?: string) {
+  return JSON.stringify({ user_id: userId || undefined, user_type: userType || undefined });
+}
+
 function issueSearchParams(params?: ListIssuesParams) {
   const search = new URLSearchParams();
   if (params?.limit) search.set("limit", String(params.limit));
@@ -505,21 +545,11 @@ export class ApiClient extends ApiTransport {
   }
 
   async listGroupedIssues(params: ListGroupedIssuesParams): Promise<GroupedIssuesResponse> {
-    const search = new URLSearchParams({ group_by: params.group_by });
-    if (params.limit) search.set("limit", String(params.limit));
-    if (params.offset) search.set("offset", String(params.offset));
-    if (params.workspace_id) search.set("workspace_id", params.workspace_id);
+    const search = issueSearchParams(params);
+    search.set("group_by", params.group_by);
     if (params.statuses?.length) search.set("statuses", params.statuses.join(","));
     if (params.priorities?.length) search.set("priorities", params.priorities.join(","));
     if (params.assignee_types?.length) search.set("assignee_types", params.assignee_types.join(","));
-    if (params.assignee_id) search.set("assignee_id", params.assignee_id);
-    if (params.assignee_ids?.length) search.set("assignee_ids", params.assignee_ids.join(","));
-    if (params.creator_id) search.set("creator_id", params.creator_id);
-    if (params.project_id) search.set("project_id", params.project_id);
-    if (params.involves_user_id) search.set("involves_user_id", params.involves_user_id);
-    if (params.metadata && Object.keys(params.metadata).length > 0) {
-      search.set("metadata", JSON.stringify(params.metadata));
-    }
     if (params.assignee_filters?.length) {
       search.set("assignee_filters", params.assignee_filters.map((f) => `${f.type}:${f.id}`).join(","));
     }
@@ -532,11 +562,6 @@ export class ApiClient extends ApiTransport {
     if (params.label_ids?.length) search.set("label_ids", params.label_ids.join(","));
     if (params.group_assignee_type) search.set("group_assignee_type", params.group_assignee_type);
     if (params.group_assignee_id) search.set("group_assignee_id", params.group_assignee_id);
-    if (params.date_field) search.set("date_field", params.date_field);
-    if (params.date_start) search.set("date_start", params.date_start);
-    if (params.date_end) search.set("date_end", params.date_end);
-    if (params.sort_by) search.set("sort", params.sort_by);
-    if (params.sort_direction) search.set("direction", params.sort_direction);
     const raw = await this.fetch<unknown>(`/api/issues/grouped?${search}`);
     return parseWithFallback(raw, GroupedIssuesResponseSchema, EMPTY_GROUPED_ISSUES_RESPONSE, {
       endpoint: "GET /api/issues/grouped",
@@ -831,22 +856,16 @@ export class ApiClient extends ApiTransport {
   }
 
   async subscribeToIssue(issueId: string, userId?: string, userType?: string): Promise<void> {
-    const body: Record<string, string> = {};
-    if (userId) body.user_id = userId;
-    if (userType) body.user_type = userType;
     await this.fetch(`/api/issues/${issueId}/subscribe`, {
       method: "POST",
-      body: JSON.stringify(body),
+      body: issueSubscriptionBody(userId, userType),
     });
   }
 
   async unsubscribeFromIssue(issueId: string, userId?: string, userType?: string): Promise<void> {
-    const body: Record<string, string> = {};
-    if (userId) body.user_id = userId;
-    if (userType) body.user_type = userType;
     await this.fetch(`/api/issues/${issueId}/unsubscribe`, {
       method: "POST",
-      body: JSON.stringify(body),
+      body: issueSubscriptionBody(userId, userType),
     });
   }
 
@@ -1070,12 +1089,10 @@ export class ApiClient extends ApiTransport {
     runtimeId: string,
     params?: { days?: number; tz?: string },
   ): Promise<RuntimeUsage[]> {
-    const search = new URLSearchParams();
-    if (params?.days) search.set("days", String(params.days));
+    const search = usageSearchParams(params);
     // `tz` drives the calendar-day boundary for the trend chart (Viewing
     // layer). Caller-supplied; the backend falls back to user.timezone /
     // UTC if omitted.
-    if (params?.tz) search.set("tz", params.tz);
     const raw = await this.fetch<unknown>(
       `/api/runtimes/${runtimeId}/usage?${search}`,
     );
@@ -1088,9 +1105,7 @@ export class ApiClient extends ApiTransport {
     runtimeId: string,
     params?: { days?: number; tz?: string },
   ): Promise<RuntimeUsageByAgent[]> {
-    const search = new URLSearchParams();
-    if (params?.days) search.set("days", String(params.days));
-    if (params?.tz) search.set("tz", params.tz);
+    const search = usageSearchParams(params);
     const raw = await this.fetch<unknown>(
       `/api/runtimes/${runtimeId}/usage/by-agent?${search}`,
     );
@@ -1106,9 +1121,7 @@ export class ApiClient extends ApiTransport {
     runtimeId: string,
     params?: { days?: number; tz?: string },
   ): Promise<RuntimeUsageByTask[]> {
-    const search = new URLSearchParams();
-    if (params?.days) search.set("days", String(params.days));
-    if (params?.tz) search.set("tz", params.tz);
+    const search = usageSearchParams(params);
     const raw = await this.fetch<unknown>(
       `/api/runtimes/${runtimeId}/usage/by-task?${search}`,
     );
@@ -1130,10 +1143,7 @@ export class ApiClient extends ApiTransport {
   async getDashboardUsageDaily(
     params: { days?: number; project_id?: string | null; tz?: string },
   ): Promise<DashboardUsageDaily[]> {
-    const search = new URLSearchParams();
-    if (params.days) search.set("days", String(params.days));
-    if (params.project_id) search.set("project_id", params.project_id);
-    if (params.tz) search.set("tz", params.tz);
+    const search = usageSearchParams(params);
     const raw = await this.fetch<unknown>(`/api/dashboard/usage/daily?${search}`);
     return parseWithFallback<DashboardUsageDaily[]>(
       raw,
@@ -1146,10 +1156,7 @@ export class ApiClient extends ApiTransport {
   async getDashboardUsageByAgent(
     params: { days?: number; project_id?: string | null; tz?: string },
   ): Promise<RuntimeUsageByAgent[]> {
-    const search = new URLSearchParams();
-    if (params.days) search.set("days", String(params.days));
-    if (params.project_id) search.set("project_id", params.project_id);
-    if (params.tz) search.set("tz", params.tz);
+    const search = usageSearchParams(params);
     const raw = await this.fetch<unknown>(`/api/dashboard/usage/by-agent?${search}`);
     return parseWithFallback<RuntimeUsageByAgent[]>(
       raw,
@@ -1162,12 +1169,9 @@ export class ApiClient extends ApiTransport {
   async getDashboardAgentRunTime(
     params: { days?: number; project_id?: string | null; tz?: string },
   ): Promise<DashboardAgentRunTime[]> {
-    const search = new URLSearchParams();
-    if (params.days) search.set("days", String(params.days));
-    if (params.project_id) search.set("project_id", params.project_id);
+    const search = usageSearchParams(params);
     // `tz` aligns the "last N days" cutoff with the viewer's calendar,
     // matching the per-agent token card.
-    if (params.tz) search.set("tz", params.tz);
     const raw = await this.fetch<unknown>(`/api/dashboard/agent-runtime?${search}`);
     return parseWithFallback<DashboardAgentRunTime[]>(
       raw,
@@ -1180,12 +1184,9 @@ export class ApiClient extends ApiTransport {
   async getDashboardRunTimeDaily(
     params: { days?: number; project_id?: string | null; tz?: string },
   ): Promise<DashboardRunTimeDaily[]> {
-    const search = new URLSearchParams();
-    if (params.days) search.set("days", String(params.days));
-    if (params.project_id) search.set("project_id", params.project_id);
+    const search = usageSearchParams(params);
     // `tz` cuts the day buckets in the viewer's calendar so Time / Tasks
     // align with the Cost / Tokens charts.
-    if (params.tz) search.set("tz", params.tz);
     const raw = await this.fetch<unknown>(`/api/dashboard/runtime/daily?${search}`);
     return parseWithFallback<DashboardRunTimeDaily[]>(
       raw,
@@ -1200,14 +1201,15 @@ export class ApiClient extends ApiTransport {
       const raw = await this.fetch<unknown>(`/api/runtimes/${runtimeId}/models`, {
         method: "POST", extraHeaders: { "Idempotency-Key": idempotencyKey },
       });
-      return parseOrThrow(
+      return parseRuntimeRequest(
         raw,
-        RuntimeModelListRequestSchema.refine((request) => request.runtime_id === runtimeId, {
-          path: ["runtime_id"], message: "runtime id does not match request",
-        }),
+        RuntimeModelListRequestSchema,
         EMPTY_RUNTIME_MODEL_LIST_REQUEST,
-        { endpoint: "POST /api/runtimes/:id/models", mayHaveCommitted: true },
-      ) as RuntimeModelListRequest;
+        runtimeId,
+        undefined,
+        "POST /api/runtimes/:id/models",
+        true,
+      );
     };
     return this.retryUnknownMutationOnce(attempt);
   }
@@ -1217,18 +1219,15 @@ export class ApiClient extends ApiTransport {
     requestId: string,
   ): Promise<RuntimeModelListRequest> {
     const raw = await this.fetch<unknown>(`/api/runtimes/${runtimeId}/models/${requestId}`);
-    return parseOrThrow(
+    return parseRuntimeRequest(
       raw,
-      RuntimeModelListRequestSchema.refine(
-        (request) => request.runtime_id === runtimeId && request.id === requestId,
-        { message: "runtime model request identity does not match request" },
-      ),
+      RuntimeModelListRequestSchema,
       EMPTY_RUNTIME_MODEL_LIST_REQUEST,
-      {
-        endpoint: "GET /api/runtimes/:id/models/:requestId",
-        mayHaveCommitted: false,
-      },
-    ) as RuntimeModelListRequest;
+      runtimeId,
+      requestId,
+      "GET /api/runtimes/:id/models/:requestId",
+      false,
+    );
   }
 
   async initiateListLocalSkills(
@@ -1239,14 +1238,15 @@ export class ApiClient extends ApiTransport {
       const raw = await this.fetch<unknown>(`/api/runtimes/${runtimeId}/local-skills`, {
         method: "POST", extraHeaders: { "Idempotency-Key": idempotencyKey },
       });
-      return parseOrThrow(
+      return parseRuntimeRequest(
         raw,
-        RuntimeLocalSkillListRequestSchema.refine((request) => request.runtime_id === runtimeId, {
-          path: ["runtime_id"], message: "runtime id does not match request",
-        }),
+        RuntimeLocalSkillListRequestSchema,
         EMPTY_RUNTIME_LOCAL_SKILL_LIST_REQUEST,
-        { endpoint: "POST /api/runtimes/:id/local-skills", mayHaveCommitted: true },
-      ) as RuntimeLocalSkillListRequest;
+        runtimeId,
+        undefined,
+        "POST /api/runtimes/:id/local-skills",
+        true,
+      );
     };
     return this.retryUnknownMutationOnce(attempt);
   }
@@ -1256,18 +1256,15 @@ export class ApiClient extends ApiTransport {
     requestId: string,
   ): Promise<RuntimeLocalSkillListRequest> {
     const raw = await this.fetch<unknown>(`/api/runtimes/${runtimeId}/local-skills/${requestId}`);
-    return parseOrThrow(
+    return parseRuntimeRequest(
       raw,
-      RuntimeLocalSkillListRequestSchema.refine(
-        (request) => request.runtime_id === runtimeId && request.id === requestId,
-        { message: "runtime local skill request identity does not match request" },
-      ),
+      RuntimeLocalSkillListRequestSchema,
       EMPTY_RUNTIME_LOCAL_SKILL_LIST_REQUEST,
-      {
-        endpoint: "GET /api/runtimes/:id/local-skills/:requestId",
-        mayHaveCommitted: false,
-      },
-    ) as RuntimeLocalSkillListRequest;
+      runtimeId,
+      requestId,
+      "GET /api/runtimes/:id/local-skills/:requestId",
+      false,
+    );
   }
 
   async initiateImportLocalSkill(
@@ -1281,15 +1278,15 @@ export class ApiClient extends ApiTransport {
         body: JSON.stringify(data),
         extraHeaders: { "Idempotency-Key": idempotencyKey },
       });
-      return parseOrThrow(
+      return parseRuntimeRequest(
         raw,
-        RuntimeLocalSkillImportRequestSchema.refine((request) => request.runtime_id === runtimeId, {
-          path: ["runtime_id"],
-          message: "runtime id does not match request",
-        }),
+        RuntimeLocalSkillImportRequestSchema,
         EMPTY_RUNTIME_LOCAL_SKILL_IMPORT_REQUEST,
-        { endpoint: "POST /api/runtimes/:id/local-skills/import", mayHaveCommitted: true },
-      ) as RuntimeLocalSkillImportRequest;
+        runtimeId,
+        undefined,
+        "POST /api/runtimes/:id/local-skills/import",
+        true,
+      );
     };
     return this.retryUnknownMutationOnce(attempt);
   }
@@ -1299,18 +1296,15 @@ export class ApiClient extends ApiTransport {
     requestId: string,
   ): Promise<RuntimeLocalSkillImportRequest> {
     const raw = await this.fetch<unknown>(`/api/runtimes/${runtimeId}/local-skills/import/${requestId}`);
-    return parseOrThrow(
+    return parseRuntimeRequest(
       raw,
-      RuntimeLocalSkillImportRequestSchema.refine(
-        (request) => request.runtime_id === runtimeId && request.id === requestId,
-        { message: "runtime local skill import identity does not match request" },
-      ),
+      RuntimeLocalSkillImportRequestSchema,
       EMPTY_RUNTIME_LOCAL_SKILL_IMPORT_REQUEST,
-      {
-        endpoint: "GET /api/runtimes/:id/local-skills/import/:requestId",
-        mayHaveCommitted: false,
-      },
-    ) as RuntimeLocalSkillImportRequest;
+      runtimeId,
+      requestId,
+      "GET /api/runtimes/:id/local-skills/import/:requestId",
+      false,
+    );
   }
 
   async listAgentTasks(agentId: string): Promise<AgentTask[]> {

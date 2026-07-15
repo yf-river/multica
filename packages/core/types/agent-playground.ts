@@ -56,6 +56,7 @@ export interface CreateAgentPlaygroundExperimentRequest {
   agent_ids: string[];
 }
 
-export interface JudgeAgentPlaygroundExperimentRequest {
-  judge_agent_id?: string;
-}
+export type JudgeAgentPlaygroundExperimentRequest = Pick<
+  CreateAgentPlaygroundExperimentRequest,
+  "judge_agent_id"
+>;

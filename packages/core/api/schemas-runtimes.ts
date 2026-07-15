@@ -81,13 +81,17 @@ const RuntimeAsyncRequestStatusSchema = z.enum([
   "timeout",
 ]);
 
-export const RuntimeModelListRequestSchema = z.object({
+const RuntimeAsyncRequestSchema = z.object({
   id: NonEmptyStringSchema,
   runtime_id: NonEmptyStringSchema,
+  status: RuntimeAsyncRequestStatusSchema,
+  error: z.string().optional(),
+});
+
+export const RuntimeModelListRequestSchema = RuntimeAsyncRequestSchema.extend({
   status: RuntimeAsyncRequestStatusSchema.exclude(["conflict"]),
   models: z.array(RuntimeModelSchema).optional(),
   supported: z.boolean(),
-  error: z.string().optional(),
 }).loose();
 
 const RuntimeLocalSkillSummarySchema = z.object({
@@ -99,13 +103,9 @@ const RuntimeLocalSkillSummarySchema = z.object({
   file_count: z.number().int().nonnegative(),
 }).loose();
 
-export const RuntimeLocalSkillListRequestSchema = z.object({
-  id: NonEmptyStringSchema,
-  runtime_id: NonEmptyStringSchema,
-  status: RuntimeAsyncRequestStatusSchema,
+export const RuntimeLocalSkillListRequestSchema = RuntimeAsyncRequestSchema.extend({
   skills: z.array(RuntimeLocalSkillSummarySchema).optional(),
   supported: z.boolean(),
-  error: z.string().optional(),
 }).loose();
 
 const RuntimeImportedSkillFileSchema = z.object({
@@ -131,14 +131,10 @@ const RuntimeLocalSkillConflictSchema = z.object({
   can_overwrite: z.boolean(),
 }).loose();
 
-export const RuntimeLocalSkillImportRequestSchema = z.object({
-  id: NonEmptyStringSchema,
-  runtime_id: NonEmptyStringSchema,
+export const RuntimeLocalSkillImportRequestSchema = RuntimeAsyncRequestSchema.extend({
   action: z.literal("overwrite").optional(),
-  status: RuntimeAsyncRequestStatusSchema,
   skill: RuntimeImportedSkillSchema.optional(),
   conflict: RuntimeLocalSkillConflictSchema.optional(),
-  error: z.string().optional(),
 }).superRefine((request, context) => {
   if (request.status === "completed" && !request.skill) {
     context.addIssue({
@@ -156,28 +152,25 @@ export const RuntimeLocalSkillImportRequestSchema = z.object({
   }
 });
 
-export const EMPTY_RUNTIME_MODEL_LIST_REQUEST: RuntimeModelListRequest = {
+const failedRuntimeRequest = (error: string) => ({
   id: "",
   runtime_id: "",
-  status: "failed",
+  status: "failed" as const,
+  error,
+});
+
+export const EMPTY_RUNTIME_MODEL_LIST_REQUEST: RuntimeModelListRequest = {
+  ...failedRuntimeRequest("invalid runtime model response"),
   supported: false,
-  error: "invalid runtime model response",
 };
 
 export const EMPTY_RUNTIME_LOCAL_SKILL_LIST_REQUEST: RuntimeLocalSkillListRequest = {
-  id: "",
-  runtime_id: "",
-  status: "failed",
+  ...failedRuntimeRequest("invalid runtime local skill response"),
   supported: false,
-  error: "invalid runtime local skill response",
 };
 
-export const EMPTY_RUNTIME_LOCAL_SKILL_IMPORT_REQUEST: RuntimeLocalSkillImportRequest = {
-  id: "",
-  runtime_id: "",
-  status: "failed",
-  error: "invalid runtime local skill import response",
-};
+export const EMPTY_RUNTIME_LOCAL_SKILL_IMPORT_REQUEST: RuntimeLocalSkillImportRequest =
+  failedRuntimeRequest("invalid runtime local skill import response");
 
 export const RuntimeProfileSchema = z.object({
   id: z.string(),

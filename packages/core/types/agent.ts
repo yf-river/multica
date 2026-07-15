@@ -500,13 +500,16 @@ export type RuntimeModelListStatus =
   | "failed"
   | "timeout";
 
-export interface RuntimeModelListRequest {
+interface RuntimeAsyncRequest<TStatus> {
   id: string;
   runtime_id: string;
-  status: RuntimeModelListStatus;
+  status: TStatus;
+  error?: string;
+}
+
+export interface RuntimeModelListRequest extends RuntimeAsyncRequest<RuntimeModelListStatus> {
   models?: RuntimeModel[];
   supported: boolean;
-  error?: string;
 }
 
 // Result shape returned by resolveRuntimeModels — includes the
@@ -542,13 +545,9 @@ export interface RuntimeLocalSkillSummary {
   file_count: number;
 }
 
-export interface RuntimeLocalSkillListRequest {
-  id: string;
-  runtime_id: string;
-  status: RuntimeLocalSkillStatus;
+export interface RuntimeLocalSkillListRequest extends RuntimeAsyncRequest<RuntimeLocalSkillStatus> {
   skills?: RuntimeLocalSkillSummary[];
   supported: boolean;
-  error?: string;
 }
 
 export interface CreateRuntimeLocalSkillImportRequest {
@@ -559,14 +558,10 @@ export interface CreateRuntimeLocalSkillImportRequest {
   target_skill_id?: string;
 }
 
-export interface RuntimeLocalSkillImportRequest {
-  id: string;
-  runtime_id: string;
+export interface RuntimeLocalSkillImportRequest extends RuntimeAsyncRequest<RuntimeLocalSkillStatus> {
   action?: RuntimeLocalSkillImportAction;
-  status: RuntimeLocalSkillStatus;
   skill?: Skill;
   conflict?: RuntimeLocalSkillImportConflict;
-  error?: string;
 }
 
 export interface RuntimeLocalSkillsResult {

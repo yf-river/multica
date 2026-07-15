@@ -41,12 +41,12 @@ export interface CreatePromptLibraryItemRequest {
   content: string;
 }
 
-export interface CreatePromptLibraryVersionRequest {
-  name?: string;
-  description?: string;
-  content: string;
+export type CreatePromptLibraryVersionRequest = Partial<Pick<
+  CreatePromptLibraryItemRequest,
+  "name" | "description"
+>> & Pick<CreatePromptLibraryItemRequest, "content"> & {
   change_note?: string;
-}
+};
 
 export interface CreatePromptLibraryVersionResponse {
   item: PromptLibraryItem;

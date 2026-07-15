@@ -34,11 +34,10 @@ export type UpdateExternalCredentialProfileRequest = Partial<
   Omit<CreateExternalCredentialProfileRequest, "provider">
 >;
 
-export interface TestExternalCredentialProfileRequest {
-  provider: ExternalCredentialProvider;
-  secret_ref?: string;
-  token?: string;
-}
+export type TestExternalCredentialProfileRequest = Pick<
+  CreateExternalCredentialProfileRequest,
+  "provider" | "secret_ref" | "token"
+>;
 
 export interface TestExternalCredentialProfileResponse {
   status: ExternalCredentialStatus | (string & {});
