@@ -812,15 +812,11 @@ func taskExecutionPolicyForRole(roleKey string, isSquadLeader bool) TaskExecutio
 	return TaskExecutionPolicyData{RoleKind: "agent", CanAccessRepo: true, CanEditRepo: true, ProjectSkillMode: "all"}
 }
 
-func taskExecutionPolicyForAgent(agent db.Agent, isSquadLeader bool) TaskExecutionPolicyData {
-	return taskExecutionPolicyForRole(service.AgentRoleKey(agent.RuntimeConfig), isSquadLeader)
-}
-
 func filterAgentSkillsForExecutionPolicy(skills []service.AgentSkillData, policy TaskExecutionPolicyData) []service.AgentSkillData {
 	if policy.ProjectSkillMode == "" || policy.ProjectSkillMode == "all" {
 		return skills
 	}
-	coordinatorNoRepo := isCoordinatorWithoutRepoPolicy(policy)
+	coordinatorNoRepo := policy.IsCoordinatorWithoutRepo()
 	allowed := make(map[string]struct{}, len(policy.AllowedProjectSkills))
 	for _, name := range policy.AllowedProjectSkills {
 		allowed[strings.ToLower(strings.TrimSpace(name))] = struct{}{}
@@ -843,7 +839,7 @@ func filterAgentSkillsForExecutionPolicy(skills []service.AgentSkillData, policy
 }
 
 func filterBuiltinSkillsForExecutionPolicy(skills []service.AgentSkillData, policy TaskExecutionPolicyData) []service.AgentSkillData {
-	if !isCoordinatorWithoutRepoPolicy(policy) {
+	if !policy.IsCoordinatorWithoutRepo() {
 		return skills
 	}
 	out := make([]service.AgentSkillData, 0, len(skills))
@@ -854,22 +850,6 @@ func filterBuiltinSkillsForExecutionPolicy(skills []service.AgentSkillData, poli
 		}
 	}
 	return out
-}
-
-func isCoordinatorWithoutRepoPolicy(policy TaskExecutionPolicyData) bool {
-	return strings.EqualFold(strings.TrimSpace(policy.RoleKind), "coordinator") && !policy.CanAccessRepo
-}
-
-func isNoRepoBoundedPolicy(policy *TaskExecutionPolicyData) bool {
-	if policy == nil {
-		return false
-	}
-	switch strings.ToLower(strings.TrimSpace(policy.RoleKind)) {
-	case "planning_stage", "verification_stage":
-		return !policy.CanAccessRepo
-	default:
-		return false
-	}
 }
 
 func coordinatorBuiltinSkillAllowed(name string) bool {

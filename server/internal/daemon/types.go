@@ -3,6 +3,7 @@ package daemon
 import (
 	"encoding/json"
 
+	"github.com/multica-ai/multica/server/internal/executionpolicy"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -51,17 +52,7 @@ type IssueExecutionSpaceData struct {
 	Ref            string `json:"ref,omitempty"`
 }
 
-// TaskExecutionPolicy is the server-derived capability envelope for this task.
-// It is role/profile scoped and intentionally independent of the runtime
-// provider.
-type TaskExecutionPolicy struct {
-	RoleKey              string   `json:"role_key,omitempty"`
-	RoleKind             string   `json:"role_kind,omitempty"`
-	CanAccessRepo        bool     `json:"can_access_repo"`
-	CanEditRepo          bool     `json:"can_edit_repo"`
-	ProjectSkillMode     string   `json:"project_skill_mode,omitempty"`
-	AllowedProjectSkills []string `json:"allowed_project_skills,omitempty"`
-}
+type TaskExecutionPolicy = executionpolicy.Policy
 
 // Task represents a claimed task from the server.
 // Agent data (name, skills) is populated by the claim endpoint.

@@ -271,7 +271,7 @@ func providerNeedsInlineSystemPrompt(provider string) bool {
 }
 
 func coordinatorNeedsInlineSystemPrompt(provider string, policy TaskExecutionPolicy) bool {
-	return supportsClaudeFamilyToolEnvelope(provider) && isCoordinatorWithoutRepoAccess(policy)
+	return supportsClaudeFamilyToolEnvelope(provider) && policy.IsCoordinatorWithoutRepo()
 }
 
 // gateResumeToReusedWorkdir clears the task's prior session unless the task

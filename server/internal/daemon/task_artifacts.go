@@ -190,7 +190,7 @@ func shouldPersistFinalOutputAsArtifact(task Task, result TaskResult, output str
 	if strings.TrimSpace(task.IssueID) == "" || strings.TrimSpace(output) == "" || result.Status != "completed" {
 		return false
 	}
-	if task.ExecutionPolicy == nil || !isBoundedReviewStage(*task.ExecutionPolicy) || task.ExecutionPolicy.CanEditRepo {
+	if task.ExecutionPolicy == nil || !task.ExecutionPolicy.IsBoundedStage() || task.ExecutionPolicy.CanEditRepo {
 		return false
 	}
 	if strings.HasPrefix(output, "# ") || strings.Contains(output, "\n# ") || strings.Contains(output, "\n## ") {

@@ -15,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
+	"github.com/multica-ai/multica/server/internal/executionpolicy"
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/service"
@@ -233,17 +234,7 @@ type IssueExecutionSpaceData struct {
 	Ref            string `json:"ref,omitempty"`
 }
 
-// TaskExecutionPolicyData is a daemon-facing capability policy for the current
-// task. It is derived from the agent's role in a squad/profile, not from the
-// runtime provider.
-type TaskExecutionPolicyData struct {
-	RoleKey              string   `json:"role_key,omitempty"`
-	RoleKind             string   `json:"role_kind,omitempty"`
-	CanAccessRepo        bool     `json:"can_access_repo"`
-	CanEditRepo          bool     `json:"can_edit_repo"`
-	ProjectSkillMode     string   `json:"project_skill_mode,omitempty"` // none, stage, implementation, verification, all
-	AllowedProjectSkills []string `json:"allowed_project_skills,omitempty"`
-}
+type TaskExecutionPolicyData = executionpolicy.Policy
 
 type AgentTaskResponse struct {
 	ID          string `json:"id"`

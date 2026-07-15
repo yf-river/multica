@@ -30,15 +30,15 @@ a separate server surface and are not taught by this skill.
 
 | Contract | Current source |
 |---|---|
-| Response redacts custom_env and MCP secrets | server/internal/handler/agent.go:79-135 |
-| CreateAgentRequest current fields | server/internal/handler/agent.go:729 |
-| CreateAgent boundary | server/internal/handler/agent.go:766 |
-| Required name/runtime, description cap, runtime access | server/internal/handler/agent.go:781-832 |
-| Provider thinking-level validation | server/internal/handler/agent.go:834-841 |
-| Current defaults and database insert | server/internal/handler/agent.go:851-894 |
-| UpdateAgent boundary | server/internal/handler/agent.go:1061 |
-| custom_env rejected in generic update; use env endpoint | server/internal/handler/agent.go:1078-1088 |
-| MCP tri-state update/clear | server/internal/handler/agent.go:1122-1126,1282-1292 |
+| Response redacts custom_env and MCP secrets | server/internal/handler/agent.go:80-145 |
+| CreateAgentRequest current fields | server/internal/handler/agent.go:696-710 |
+| CreateAgent boundary | server/internal/handler/agent.go:733 |
+| Required name/runtime, description cap, runtime access | server/internal/handler/agent.go:748-782 |
+| Provider thinking-level validation | server/internal/handler/agent.go:784-791 |
+| Current defaults and database insert | server/internal/handler/agent.go:766-903 |
+| UpdateAgent boundary | server/internal/handler/agent.go:1093 |
+| custom_env rejected in generic update; use env endpoint | server/internal/handler/agent.go:1110-1120 |
+| MCP tri-state update/clear | server/internal/handler/agent.go:1162-1170,1318 |
 
 ## Env authorization
 

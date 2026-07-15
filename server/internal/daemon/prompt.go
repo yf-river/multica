@@ -35,7 +35,7 @@ func BuildPrompt(task Task) string {
 	var b strings.Builder
 	b.WriteString("You are running as a local coding agent for a Multica workspace.\n\n")
 	fmt.Fprintf(&b, "Your assigned issue ID is: %s\n\n", task.IssueID)
-	if isNoRepoBoundedPromptTask(task) {
+	if task.ExecutionPolicy != nil && task.ExecutionPolicy.IsNoRepoBoundedStage() {
 		b.WriteString("This is a no-repository planning/verification stage. Do not call tools or CLI commands.\n\n")
 		b.WriteString("Use only the issue, source, and Agent Identity context already supplied in this prompt and runtime brief. If a needed fact is absent, record it as an assumption or handoff question instead of trying to inspect the issue, comments, repository, CLI, working directory, or agent roster.\n\n")
 		writeSourceContextPrompt(&b, task)
@@ -213,7 +213,7 @@ func buildCommentPrompt(task Task) string {
 			fmt.Fprintf(&b, "⚠️ **小队负责人 no_action 规则：** 如果你判断无需行动，调用 `multica squad activity %s no_action --reason \"...\"` 后直接退出。不要发布任何评论，包括“无需行动”或“静默退出”这类评论。squad activity 已经记录了你的决策，额外评论只会制造噪声。阶段等待、阻断、返工、需要用户补充、child issue 等待或下一步调度不是 no_action；这些都必须发布用户可见评论，并按 action/failed 记录 activity。\n\n", task.IssueID)
 		}
 	}
-	if isNoRepoBoundedPromptTask(task) {
+	if task.ExecutionPolicy != nil && task.ExecutionPolicy.IsNoRepoBoundedStage() {
 		b.WriteString("This is a no-repository planning/verification stage. Do not call tools or CLI commands.\n\n")
 		b.WriteString("Use only the issue, source, triggering comment, and Agent Identity context already supplied in this prompt and runtime brief. If a needed fact is absent, record it as an assumption or handoff question instead of trying to inspect the issue, comments, repository, CLI, working directory, or agent roster.\n\n")
 		writeSourceContextPrompt(&b, task)
@@ -245,39 +245,13 @@ func buildTaskCommentReplyInstructions(task Task) string {
 	if task.TriggerCommentID == "" {
 		return ""
 	}
-	if isFinalOutputAutoCommentTask(task) {
+	if task.ExecutionPolicy != nil && task.ExecutionPolicy.UsesFinalOutput() {
 		return "Do not call `multica issue comment add` and do not create `reply.md` or local `.md` files. Write the complete stage result as your final assistant output; the platform will automatically post it as a reply under the triggering comment when this task completes.\n"
 	}
-	if task.ExecutionPolicy == nil || !strings.EqualFold(strings.TrimSpace(task.ExecutionPolicy.RoleKind), "coordinator") || task.ExecutionPolicy.CanAccessRepo {
+	if task.ExecutionPolicy == nil || !task.ExecutionPolicy.IsCoordinatorWithoutRepo() {
 		return execenv.BuildCommentReplyInstructions(task.IssueID, task.TriggerCommentID)
 	}
 	return "Do not call `multica issue comment add` and do not create `reply.md` or local `.md` files. Coordinator mode has no native file-write tool, so write the complete Markdown reply as your final assistant output; the platform will automatically post it as a reply under the triggering comment when this task completes.\n"
-}
-
-func isNoRepoBoundedPromptTask(task Task) bool {
-	if task.ExecutionPolicy == nil {
-		return false
-	}
-	switch strings.ToLower(strings.TrimSpace(task.ExecutionPolicy.RoleKind)) {
-	case "planning_stage", "verification_stage":
-		return !task.ExecutionPolicy.CanAccessRepo
-	default:
-		return false
-	}
-}
-
-func isFinalOutputAutoCommentTask(task Task) bool {
-	if task.ExecutionPolicy == nil {
-		return false
-	}
-	switch strings.ToLower(strings.TrimSpace(task.ExecutionPolicy.RoleKind)) {
-	case "planning_stage", "verification_stage":
-		return !task.ExecutionPolicy.CanEditRepo
-	case "coordinator":
-		return !task.ExecutionPolicy.CanAccessRepo
-	default:
-		return false
-	}
 }
 
 func writeSourceContextPrompt(b *strings.Builder, task Task) {

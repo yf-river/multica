@@ -137,7 +137,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 		outcome = "error_build"
 		return
 	}
-	executionPolicy := taskExecutionPolicyForAgent(agent, false)
+	executionPolicy := taskExecutionPolicyForRole(service.AgentRoleKey(agent.RuntimeConfig), false)
 	// Workspace-bound skills first, then platform built-in skills. Built-in
 	// names carry a "multica-" prefix so their on-disk slugs never collide
 	// with a user-authored workspace skill (see writeSkillFiles).
@@ -439,7 +439,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 		// the user just judged the prior output bad, so the daemon must start a
 		// fresh agent session in a fresh workdir instead of resuming anything
 		// from the same conversation that produced that output.
-		if !task.ForceFreshSession && !isNoRepoBoundedPolicy(resp.ExecutionPolicy) {
+		if !task.ForceFreshSession && (resp.ExecutionPolicy == nil || !resp.ExecutionPolicy.IsNoRepoBoundedStage()) {
 			if prior, err := h.Queries.GetLastTaskSession(r.Context(), db.GetLastTaskSessionParams{
 				AgentID: task.AgentID,
 				IssueID: task.IssueID,

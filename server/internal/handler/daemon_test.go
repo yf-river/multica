@@ -227,25 +227,22 @@ func TestTaskExecutionPolicyForSOPRoles(t *testing.T) {
 	}
 	custom := taskExecutionPolicyForRole("developer", false)
 	if !custom.CanAccessRepo || !custom.CanEditRepo || custom.ProjectSkillMode != "all" {
-		t.Fatalf("custom policy = %+v, want backward-compatible full project skill visibility", custom)
+		t.Fatalf("custom policy = %+v, want full project skill visibility", custom)
 	}
 }
 
-func TestNoRepoBoundedPolicySkipsPriorSession(t *testing.T) {
+func TestNoRepoBoundedStageSkipsPriorSession(t *testing.T) {
 	stage01 := taskExecutionPolicyForRole("01-clarify", false)
-	if !isNoRepoBoundedPolicy(&stage01) {
+	if !stage01.IsNoRepoBoundedStage() {
 		t.Fatalf("01 policy should skip prior provider session: %+v", stage01)
 	}
 	stage03 := taskExecutionPolicyForRole("03-task-split", false)
-	if isNoRepoBoundedPolicy(&stage03) {
+	if stage03.IsNoRepoBoundedStage() {
 		t.Fatalf("03 policy should keep normal provider session behavior: %+v", stage03)
 	}
 	pm := taskExecutionPolicyForRole("pm", true)
-	if isNoRepoBoundedPolicy(&pm) {
+	if pm.IsNoRepoBoundedStage() {
 		t.Fatalf("PM coordinator policy should not be treated as no-repo bounded stage: %+v", pm)
-	}
-	if isNoRepoBoundedPolicy(nil) {
-		t.Fatal("nil policy should not be treated as no-repo bounded stage")
 	}
 }
 
@@ -254,7 +251,7 @@ func TestTaskExecutionPolicyReadsInternalSquadRoleKey(t *testing.T) {
 		Name:          "任意显示名",
 		RuntimeConfig: []byte(`{"internal_squad":{"template_key":"user-center-sop-flow","role_key":"05-verify"}}`),
 	}
-	policy := taskExecutionPolicyForAgent(agent, false)
+	policy := taskExecutionPolicyForRole(service.AgentRoleKey(agent.RuntimeConfig), false)
 	if policy.RoleKey != "05-verify" || policy.RoleKind != "verification_stage" || !policy.CanAccessRepo || policy.CanEditRepo || policy.ProjectSkillMode != "verification" {
 		t.Fatalf("policy from runtime_config role_key = %+v, want 05 verification policy", policy)
 	}

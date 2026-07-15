@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/multica-ai/multica/server/internal/executionpolicy"
 )
 
 // shortID returns the first eight characters of an identifier after removing
@@ -128,13 +130,7 @@ type TaskContextForEnv struct {
 	InitiatorAccount string
 }
 
-type TaskExecutionPolicyForEnv struct {
-	RoleKey          string
-	RoleKind         string
-	CanAccessRepo    bool
-	CanEditRepo      bool
-	ProjectSkillMode string
-}
+type TaskExecutionPolicyForEnv = executionpolicy.Policy
 
 // SkillContextForEnv represents a skill to be written into the execution environment.
 type SkillContextForEnv struct {
