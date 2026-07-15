@@ -82,30 +82,6 @@ vi.mock("@multica/core/auth", () => ({
   ),
 }));
 
-// Mock issue config
-vi.mock("@multica/core/issues/config", () => ({
-  ALL_STATUSES: ["backlog", "todo", "in_progress", "in_review", "done", "blocked", "cancelled"],
-  BOARD_STATUSES: ["backlog", "todo", "in_progress", "in_review", "done", "blocked"],
-  STATUS_ORDER: ["backlog", "todo", "in_progress", "in_review", "done", "blocked", "cancelled"],
-  STATUS_CONFIG: {
-    backlog: { label: "待规划", iconColor: "text-muted-foreground", hoverBg: "hover:bg-accent" },
-    todo: { label: "待办", iconColor: "text-muted-foreground", hoverBg: "hover:bg-accent" },
-    in_progress: { label: "进行中", iconColor: "text-warning", hoverBg: "hover:bg-warning/10" },
-    in_review: { label: "评审中", iconColor: "text-success", hoverBg: "hover:bg-success/10" },
-    done: { label: "已完成", iconColor: "text-info", hoverBg: "hover:bg-info/10" },
-    blocked: { label: "已阻塞", iconColor: "text-destructive", hoverBg: "hover:bg-destructive/10" },
-    cancelled: { label: "已取消", iconColor: "text-muted-foreground", hoverBg: "hover:bg-accent" },
-  },
-  PRIORITY_ORDER: ["urgent", "high", "medium", "low", "none"],
-  PRIORITY_CONFIG: {
-    urgent: { label: "紧急", bars: 4, color: "text-destructive" },
-    high: { label: "高", bars: 3, color: "text-warning" },
-    medium: { label: "中", bars: 2, color: "text-warning" },
-    low: { label: "低", bars: 1, color: "text-info" },
-    none: { label: "无优先级", bars: 0, color: "text-muted-foreground" },
-  },
-}));
-
 // Default mock returns hasMore=false so the load-more sentinels render
 // as no-op divs and don't pull IntersectionObserver into JSDOM.
 const mockLoadMore = vi.fn();

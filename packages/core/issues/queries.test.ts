@@ -6,12 +6,12 @@ import type { ApiClient } from "../api/client";
 import type { Issue, ListIssueBucketsResponse, ListIssuesParams, ListIssuesResponse } from "../types";
 import {
   ISSUE_PAGE_SIZE,
-  PAGINATED_STATUSES,
   childrenByParentsOptions,
   issueKeys,
   issueListOptions,
   projectGanttIssuesOptions,
 } from "./queries";
+import { BOARD_STATUSES } from "./config";
 
 const WS_ID = "ws-1";
 const PROJECT_ID = "project-1";
@@ -87,7 +87,7 @@ describe("issueListOptions", () => {
     expect(listIssues).not.toHaveBeenCalled();
     expect(listIssueBuckets).toHaveBeenCalledTimes(1);
     expect(listIssueBuckets).toHaveBeenCalledWith({
-      statuses: [...PAGINATED_STATUSES],
+      statuses: [...BOARD_STATUSES],
       limit: ISSUE_PAGE_SIZE,
       offset: 0,
       sort_by: "position",

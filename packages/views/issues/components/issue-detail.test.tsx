@@ -7,7 +7,6 @@ import {
   renderIssueTest,
 } from "../test/issue-test-providers";
 import "../test/current-issue-boundary-mocks";
-import "../test/current-issue-config-mock";
 import "../test/current-workspace-query-mock";
 
 const mockViewport = vi.hoisted(() => ({ isMobile: false }));

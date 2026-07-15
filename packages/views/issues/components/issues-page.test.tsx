@@ -3,7 +3,6 @@ import { screen, waitFor } from "@testing-library/react";
 import type { Issue } from "@multica/core/types";
 import { renderIssueTest } from "../test/issue-test-providers";
 import "../test/current-issue-boundary-mocks";
-import "../test/current-issue-config-mock";
 
 vi.mock("../../navigation", () => ({
   AppLink: ({ children, href, ...props }: any) => (

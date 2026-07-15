@@ -1,15 +1,5 @@
 import type { IssueStatus } from "../../types";
 
-export const STATUS_ORDER: IssueStatus[] = [
-  "backlog",
-  "todo",
-  "in_progress",
-  "in_review",
-  "done",
-  "blocked",
-  "cancelled",
-];
-
 export const ALL_STATUSES: IssueStatus[] = [
   "backlog",
   "todo",

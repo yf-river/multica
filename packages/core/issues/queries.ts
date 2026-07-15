@@ -3,7 +3,6 @@ import { api } from "../api";
 import type {
   GroupedIssuesResponse,
   Issue,
-  IssueStatus,
   ListGroupedIssuesParams,
   ListIssuesParams,
   ListIssuesCache,
@@ -122,13 +121,10 @@ export type AssigneeGroupedIssuesFilter = Omit<
 /** Page size per status column. */
 export const ISSUE_PAGE_SIZE = 50;
 
-/** Statuses the issues/my-issues pages paginate. Cancelled is intentionally excluded — it has never been surfaced in the list/board views. */
-export const PAGINATED_STATUSES: readonly IssueStatus[] = BOARD_STATUSES;
-
 /** Flatten a bucketed response to a single Issue[] for consumers that want the whole list. */
 export function flattenIssueBuckets(data: ListIssuesCache) {
   const out = [];
-  for (const status of PAGINATED_STATUSES) {
+  for (const status of BOARD_STATUSES) {
     const bucket = data.byStatus[status];
     if (bucket) out.push(...bucket.issues);
   }
@@ -137,14 +133,14 @@ export function flattenIssueBuckets(data: ListIssuesCache) {
 
 async function fetchFirstPages(filter: MyIssuesFilter = {}, sort?: IssueSortParam): Promise<ListIssuesCache> {
   const response = await api.listIssueBuckets({
-    statuses: [...PAGINATED_STATUSES],
+    statuses: [...BOARD_STATUSES],
     limit: ISSUE_PAGE_SIZE,
     offset: 0,
     ...sort,
     ...filter,
   });
   const byStatus: ListIssuesCache["byStatus"] = {};
-  PAGINATED_STATUSES.forEach((status) => {
+  BOARD_STATUSES.forEach((status) => {
     byStatus[status] = response.by_status[status] ?? { issues: [], total: 0 };
   });
   return { byStatus };
@@ -175,7 +171,7 @@ async function fetchAllMyFirstPages(userId: string, sort?: IssueSortParam): Prom
     fetchFirstPages({ involves_user_id: userId }, sort),
   ]);
   const byStatus: ListIssuesCache["byStatus"] = {};
-  for (const status of PAGINATED_STATUSES) {
+  for (const status of BOARD_STATUSES) {
     const seen = new Set<string>();
     const merged: Issue[] = [];
     for (const cache of [byAssignee, byCreator, byInvolves]) {

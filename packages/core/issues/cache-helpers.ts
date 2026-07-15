@@ -4,7 +4,7 @@ import type {
   IssueStatusBucket,
   ListIssuesCache,
 } from "../types";
-import { PAGINATED_STATUSES } from "./queries";
+import { BOARD_STATUSES } from "./config";
 
 const EMPTY_BUCKET: IssueStatusBucket = { issues: [], total: 0 };
 
@@ -28,7 +28,7 @@ export function findIssueLocation(
   resp: ListIssuesCache,
   id: string,
 ): { status: IssueStatus; issue: Issue } | null {
-  for (const status of PAGINATED_STATUSES) {
+  for (const status of BOARD_STATUSES) {
     const bucket = resp.byStatus[status];
     const found = bucket?.issues.find((i) => i.id === id);
     if (found) return { status, issue: found };
