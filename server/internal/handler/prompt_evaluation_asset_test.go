@@ -1776,7 +1776,7 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 	}
 	structuredOutput := `Agent 输出：
 ` + "```json" + `
-{"schema_version":1,"schema":"multica.training_evaluation.agent_verdict.v1","case_results":[{"case_index":0,"status":"通过","output":"登录失败：已覆盖验收条件和 trace/任务标识","failure_reason":"无","conclusion":"通过","命中":["登录失败","验收条件","trace/任务标识"],"缺失":[],"evidence":{"命中":["登录失败","验收条件","trace/任务标识"]}}],"summary":{"total_cases":1,"passed_cases":1,"failed_cases":0,"failure_reason":"无","conclusion":"Agent 已返回结构化逐用例评估"}}
+{"schema_version":1,"schema":"multica.training_evaluation.agent_verdict.v1","case_results":[{"case_index":0,"status":"通过","output":"登录失败：已覆盖验收条件和 trace/任务标识","failure_reason":"无","evidence":{"命中":["登录失败","验收条件","trace/任务标识"],"缺失":[]}}],"summary":{"total_cases":1,"passed_cases":1,"failed_cases":0,"failure_reason":"无","conclusion":"Agent 已返回结构化逐用例评估"}}
 ` + "```"
 	if _, err := testHandler.Queries.CreateTaskMessageIdempotent(context.Background(), db.CreateTaskMessageIdempotentParams{
 		TaskID:  parseUUID(resp.TaskID),

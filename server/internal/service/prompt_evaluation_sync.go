@@ -836,13 +836,17 @@ func promptEvaluationAgentVerdictFromMap(row map[string]any, fallbackIndex int32
 	if output == nil {
 		output = map[string]any{}
 	}
+	evidence, _ := row["evidence"].(map[string]any)
+	if evidence == nil {
+		evidence = map[string]any{}
+	}
 	return promptEvaluationAgentCaseVerdict{
 		CaseIndex:     caseIndex,
 		Status:        status,
 		FailureReason: failureReason,
 		Conclusion:    conclusion,
 		Output:        output,
-		Evidence:      row,
+		Evidence:      evidence,
 	}
 }
 
