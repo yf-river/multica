@@ -1,5 +1,5 @@
-import { act, render } from "@testing-library/react";
-import { createRef, type ReactNode } from "react";
+import { render } from "@testing-library/react";
+import type { ReactNode } from "react";
 import { beforeAll, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "@multica/core/i18n/react";
 import { workspaceKeys } from "@multica/core/workspace/queries";
@@ -39,12 +39,16 @@ vi.mock("@multica/core/chat", () => ({
 
 import {
   SlashCommandList,
-  type SlashCommandListRef,
   createSlashCommandSuggestion,
-  type SlashCommandItem,
-  buildBuiltinCommandItems,
-  BUILTIN_COMMANDS,
+  createBuiltinCommandSuggestion,
 } from "./slash-command-suggestion";
+
+interface SlashCommandItem {
+  id: string;
+  label: string;
+  description?: string;
+  descriptionKey?: "note";
+}
 
 function agent(overrides: Partial<Agent>): Agent {
   return {
@@ -87,6 +91,11 @@ function fakeQc(data: {
 
 function items(qc: QueryClient, query = ""): SlashCommandItem[] {
   const config = createSlashCommandSuggestion(qc);
+  return config.items!({ query, editor: {} as never }) as SlashCommandItem[];
+}
+
+function builtinItems(query = ""): SlashCommandItem[] {
+  const config = createBuiltinCommandSuggestion();
   return config.items!({ query, editor: {} as never }) as SlashCommandItem[];
 }
 
@@ -187,78 +196,6 @@ describe("slash command suggestion items", () => {
   });
 });
 
-describe("SlashCommandList keyboard handling", () => {
-  it("lets Enter and arrow keys fall through when there are no selectable items", () => {
-    const ref = createRef<SlashCommandListRef>();
-
-    render(
-      <I18nWrapper>
-        <SlashCommandList ref={ref} items={[]} query="" command={vi.fn()} />
-      </I18nWrapper>,
-    );
-
-    expect(
-      ref.current?.onKeyDown({
-        event: new KeyboardEvent("keydown", { key: "Enter" }),
-      }),
-    ).toBe(false);
-    expect(
-      ref.current?.onKeyDown({
-        event: new KeyboardEvent("keydown", { key: "Enter", metaKey: true }),
-      }),
-    ).toBe(false);
-    expect(
-      ref.current?.onKeyDown({
-        event: new KeyboardEvent("keydown", { key: "ArrowUp" }),
-      }),
-    ).toBe(false);
-    expect(
-      ref.current?.onKeyDown({
-        event: new KeyboardEvent("keydown", { key: "ArrowDown" }),
-      }),
-    ).toBe(false);
-  });
-
-  it("handles Enter and arrow keys when selectable items exist", () => {
-    const ref = createRef<SlashCommandListRef>();
-    const command = vi.fn();
-    const selectableItems: SlashCommandItem[] = [
-      { id: "s1", label: "deploy", description: "Ship changes" },
-      { id: "s2", label: "review", description: "Review code" },
-    ];
-
-    render(
-      <I18nWrapper>
-        <SlashCommandList
-          ref={ref}
-          items={selectableItems}
-          query=""
-          command={command}
-        />
-      </I18nWrapper>,
-    );
-
-    act(() => {
-      expect(
-        ref.current?.onKeyDown({
-          event: new KeyboardEvent("keydown", { key: "ArrowUp" }),
-        }),
-      ).toBe(true);
-      expect(
-        ref.current?.onKeyDown({
-          event: new KeyboardEvent("keydown", { key: "ArrowDown" }),
-        }),
-      ).toBe(true);
-      expect(
-        ref.current?.onKeyDown({
-          event: new KeyboardEvent("keydown", { key: "Enter" }),
-        }),
-      ).toBe(true);
-    });
-    expect(command).toHaveBeenCalledWith(selectableItems[0]);
-  });
-});
-
 describe("SlashCommandList empty states", () => {
   it("shows a configured-skills empty state before search text is entered", () => {
     const { getByText } = render(
@@ -294,23 +231,25 @@ describe("SlashCommandList empty states", () => {
 
 describe("buildBuiltinCommandItems", () => {
   it("returns the full built-in command set for an empty query", () => {
-    expect(buildBuiltinCommandItems("")).toEqual(BUILTIN_COMMANDS);
+    expect(builtinItems()).toEqual([
+      { id: "note", label: "note", descriptionKey: "note" },
+    ]);
   });
 
   it("includes /note while the query is a prefix of the label", () => {
-    expect(buildBuiltinCommandItems("no").map((c) => c.id)).toEqual(["note"]);
-    expect(buildBuiltinCommandItems("NOTE").map((c) => c.id)).toEqual(["note"]);
+    expect(builtinItems("no").map((c) => c.id)).toEqual(["note"]);
+    expect(builtinItems("NOTE").map((c) => c.id)).toEqual(["note"]);
   });
 
   it("matches the label as a prefix only — not the description", () => {
     // "agent" appears in the description but is not a label prefix.
-    expect(buildBuiltinCommandItems("agent")).toEqual([]);
+    expect(builtinItems("agent")).toEqual([]);
     // A non-prefix substring of the label does not match either.
-    expect(buildBuiltinCommandItems("ote")).toEqual([]);
+    expect(builtinItems("ote")).toEqual([]);
   });
 
   it("returns nothing for a query that matches no command", () => {
-    expect(buildBuiltinCommandItems("deploy")).toEqual([]);
+    expect(builtinItems("deploy")).toEqual([]);
   });
 });
 
@@ -319,7 +258,7 @@ describe("SlashCommandList built-in command rendering", () => {
     const { getByText } = render(
       <I18nWrapper>
         <SlashCommandList
-          items={buildBuiltinCommandItems("")}
+          items={builtinItems()}
           query=""
           command={vi.fn()}
           hideOnEmpty

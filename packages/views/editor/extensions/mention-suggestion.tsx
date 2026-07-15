@@ -2,11 +2,9 @@
 
 import {
   forwardRef,
-  useCallback,
   useEffect,
   useImperativeHandle,
   useMemo,
-  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -17,7 +15,6 @@ import { workspaceKeys } from "@multica/core/workspace/queries";
 import { useAuthStore } from "@multica/core/auth";
 import { canAssignAgentToIssue } from "@multica/core/permissions";
 import { api } from "@multica/core/api";
-import { isImeComposing } from "@multica/core/utils";
 import type {
   Issue,
   ListIssuesCache,
@@ -42,7 +39,11 @@ import {
   sortUserItemsByRecency,
 } from "./mention-recency";
 import { matchesPinyin } from "./pinyin-match";
-import { createSuggestionPopupRender } from "./suggestion-popup";
+import {
+  createSuggestionPopupRender,
+  useSuggestionSelection,
+  type SuggestionSelectionRef,
+} from "./suggestion-popup";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -69,10 +70,6 @@ interface MentionListProps {
   query: string;
   command: (item: MentionItem) => void;
   includeProjectSearch?: boolean;
-}
-
-export interface MentionListRef {
-  onKeyDown: (props: { event: KeyboardEvent }) => boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -143,14 +140,12 @@ function mergeMentionItems(
   return merged;
 }
 
-export const MentionList = forwardRef<MentionListRef, MentionListProps>(
+export const MentionList = forwardRef<SuggestionSelectionRef, MentionListProps>(
   function MentionList({ items, query, command, includeProjectSearch = false }, ref) {
     const { t } = useT("editor");
-    const [selectedIndex, setSelectedIndex] = useState(0);
     const [serverItems, setServerItems] = useState<MentionItem[]>([]);
     const [isSearching, setIsSearching] = useState(false);
     const [searchedQuery, setSearchedQuery] = useState("");
-    const itemRefs = useRef<(HTMLButtonElement | null)[]>([]);
     const normalizedQuery = query.trim();
 
     useEffect(() => {
@@ -232,50 +227,17 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
       return mergeMentionItems(items, currentServerItems).slice(0, MAX_ITEMS);
     }, [items, normalizedQuery, searchedQuery, serverItems]);
 
-    useEffect(() => {
-      setSelectedIndex(0);
-    }, [displayItems]);
-
-    useEffect(() => {
-      itemRefs.current[selectedIndex]?.scrollIntoView({ block: "nearest" });
-    }, [selectedIndex]);
-
-    const selectItem = useCallback(
-      (index: number) => {
-        const item = displayItems[index];
-        if (!item) return;
+    const selection = useSuggestionSelection(
+      displayItems,
+      (item) => {
         const wsId = getCurrentWsId();
         if (wsId) recordMentionUsage(wsId, item);
         command(item);
       },
-      [displayItems, command],
+      true,
     );
 
-    useImperativeHandle(ref, () => ({
-      onKeyDown: ({ event }) => {
-        // IME is composing — don't intercept Enter/Arrow as picker actions;
-        // those keys belong to the IME (Enter commits composition, etc).
-        if (isImeComposing(event)) return false;
-        if (event.key === "ArrowUp") {
-          if (displayItems.length === 0) return true;
-          setSelectedIndex(
-            (i) => (i + displayItems.length - 1) % displayItems.length,
-          );
-          return true;
-        }
-        if (event.key === "ArrowDown") {
-          if (displayItems.length === 0) return true;
-          setSelectedIndex((i) => (i + 1) % displayItems.length);
-          return true;
-        }
-        if (event.key === "Enter") {
-          if (displayItems.length === 0) return true;
-          selectItem(selectedIndex);
-          return true;
-        }
-        return false;
-      },
-    }));
+    useImperativeHandle(ref, () => ({ onKeyDown: selection.onKeyDown }), [selection.onKeyDown]);
 
     if (displayItems.length === 0) {
       const isWaitingForServer =
@@ -313,9 +275,9 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
           <MentionRow
             key={`${item.type}-${item.id}`}
             item={item}
-            selected={idx === selectedIndex}
-            onSelect={() => selectItem(idx)}
-            buttonRef={(el) => { itemRefs.current[idx] = el; }}
+            selected={idx === selection.selectedIndex}
+            onSelect={() => selection.selectItem(idx)}
+            buttonRef={(el) => { selection.itemRefs.current[idx] = el; }}
           />
         );
       });
@@ -599,7 +561,7 @@ export function createMentionSuggestion(
       return buildSyncItems(query);
     },
 
-    render: createSuggestionPopupRender<MentionItem, MentionItem, MentionListRef, MentionListProps>({
+    render: createSuggestionPopupRender<MentionItem, MentionItem, SuggestionSelectionRef, MentionListProps>({
       pluginKey,
       component: MentionList,
       getProps: (props) => ({

@@ -1,5 +1,5 @@
 import { render, screen, waitFor } from "@testing-library/react";
-import { createRef, type ReactNode } from "react";
+import type { ReactNode } from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { workspaceKeys } from "@multica/core/workspace/queries";
 import { issueKeys, PAGINATED_STATUSES } from "@multica/core/issues/queries";
@@ -52,7 +52,6 @@ vi.mock("@multica/core/auth", () => ({
 import {
   createMentionSuggestion,
   MentionList,
-  type MentionListRef,
   type MentionItem,
 } from "./mention-suggestion";
 
@@ -212,16 +211,6 @@ describe("createMentionSuggestion", () => {
 
     expect(searchIssuesMock).not.toHaveBeenCalled();
     expect(searchProjectsMock).not.toHaveBeenCalled();
-  });
-
-  it("captures Enter while the popup has no selectable items", () => {
-    const ref = createRef<MentionListRef>();
-
-    render(<I18nWrapper><MentionList ref={ref} items={[]} query="协作" command={vi.fn()} /></I18nWrapper>);
-
-    expect(
-      ref.current?.onKeyDown({ event: new KeyboardEvent("keydown", { key: "Enter" }) }),
-    ).toBe(true);
   });
 
   it("hides personal agents owned by someone else from a regular member", () => {

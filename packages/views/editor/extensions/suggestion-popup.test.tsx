@@ -3,35 +3,44 @@ import { EditorContent } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import { Suggestion, type SuggestionProps } from "@tiptap/suggestion";
 import { PluginKey } from "@tiptap/pm/state";
-import { forwardRef, useImperativeHandle } from "react";
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { createRef, forwardRef, useImperativeHandle } from "react";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { createSuggestionPopupRender } from "./suggestion-popup";
+import {
+  createSuggestionPopupRender,
+  useSuggestionSelection,
+  type SuggestionSelectionRef,
+} from "./suggestion-popup";
 
 interface TestItem {
   id: string;
   label: string;
 }
 
-interface TestListRef {
-  onKeyDown: (props: { event: KeyboardEvent }) => boolean;
-}
-
 interface TestListProps {
   items: TestItem[];
   command: (item: TestItem) => void;
+  handleEmptyKeys?: boolean;
 }
 
-const TestSuggestionList = forwardRef<TestListRef, TestListProps>(
-  function TestSuggestionList({ items, command }, ref) {
-    useImperativeHandle(ref, () => ({
-      onKeyDown: () => false,
-    }));
+const TestSuggestionList = forwardRef<SuggestionSelectionRef, TestListProps>(
+  function TestSuggestionList({ items, command, handleEmptyKeys }, ref) {
+    const selection = useSuggestionSelection(items, command, handleEmptyKeys);
+    useImperativeHandle(
+      ref,
+      () => ({ onKeyDown: selection.onKeyDown }),
+      [selection.onKeyDown],
+    );
 
     return (
       <div data-testid="suggestion-popup">
-        {items.map((item) => (
-          <button key={item.id} type="button" onClick={() => command(item)}>
+        {items.map((item, index) => (
+          <button
+            key={item.id}
+            ref={(element) => { selection.itemRefs.current[index] = element; }}
+            type="button"
+            onClick={() => selection.selectItem(index)}
+          >
             {item.label}
           </button>
         ))}
@@ -43,6 +52,7 @@ const TestSuggestionList = forwardRef<TestListRef, TestListProps>(
 let editor: Editor | null = null;
 
 beforeAll(() => {
+  Element.prototype.scrollIntoView = vi.fn();
   const rect = () => new DOMRect(0, 0, 0, 0);
   const rectList = () => ({ length: 0, item: () => null, [Symbol.iterator]: function* () {} }) as DOMRectList;
   Object.defineProperty(Range.prototype, "getBoundingClientRect", {
@@ -89,7 +99,7 @@ function makeEditor(char: "@" | "/") {
           command: ({ editor: ed, range, props }) => {
             ed.commands.insertContentAt(range, `${char}${props.label}`);
           },
-          render: createSuggestionPopupRender<TestItem, TestItem, TestListRef, TestListProps>({
+          render: createSuggestionPopupRender<TestItem, TestItem, SuggestionSelectionRef, TestListProps>({
             pluginKey,
             component: TestSuggestionList,
             getProps: (props: SuggestionProps<TestItem, TestItem>) => ({
@@ -213,4 +223,45 @@ describe("createSuggestionPopupRender", () => {
       });
     },
   );
+});
+
+describe("useSuggestionSelection", () => {
+  it("honors each popup's empty-list key policy", () => {
+    const passThroughRef = createRef<SuggestionSelectionRef>();
+    const handledRef = createRef<SuggestionSelectionRef>();
+    render(
+      <>
+        <TestSuggestionList ref={passThroughRef} items={[]} command={vi.fn()} />
+        <TestSuggestionList
+          ref={handledRef}
+          items={[]}
+          command={vi.fn()}
+          handleEmptyKeys
+        />
+      </>,
+    );
+
+    for (const key of ["ArrowUp", "ArrowDown", "Enter"]) {
+      const props = { event: new KeyboardEvent("keydown", { key }) };
+      expect(passThroughRef.current?.onKeyDown(props)).toBe(false);
+      expect(handledRef.current?.onKeyDown(props)).toBe(true);
+    }
+  });
+
+  it("wraps selection and invokes the current item on Enter", () => {
+    const ref = createRef<SuggestionSelectionRef>();
+    const command = vi.fn();
+    const items = [
+      { id: "one", label: "One" },
+      { id: "two", label: "Two" },
+    ];
+    render(<TestSuggestionList ref={ref} items={items} command={command} />);
+
+    act(() => {
+      expect(ref.current?.onKeyDown({ event: new KeyboardEvent("keydown", { key: "ArrowUp" }) })).toBe(true);
+      expect(ref.current?.onKeyDown({ event: new KeyboardEvent("keydown", { key: "ArrowDown" }) })).toBe(true);
+      expect(ref.current?.onKeyDown({ event: new KeyboardEvent("keydown", { key: "Enter" }) })).toBe(true);
+    });
+    expect(command).toHaveBeenCalledWith(items[0]);
+  });
 });
