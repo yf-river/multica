@@ -1,36 +1,30 @@
 import { queryOptions } from "@tanstack/react-query";
 import { api } from "../api";
 
-const dashboardKeys = {
-  all: (wsId: string) => ["dashboard", wsId] as const,
-  daily: (
-    wsId: string,
-    days: number,
-    projectId: string | null,
-    tz: string,
-  ) => [...dashboardKeys.all(wsId), "daily", days, projectId, tz] as const,
-  byAgent: (
-    wsId: string,
-    days: number,
-    projectId: string | null,
-    tz: string,
-  ) => [...dashboardKeys.all(wsId), "by-agent", days, projectId, tz] as const,
-  agentRuntime: (
-    wsId: string,
-    days: number,
-    projectId: string | null,
-    tz: string,
-  ) => [...dashboardKeys.all(wsId), "agent-runtime", days, projectId, tz] as const,
-  runTimeDaily: (
-    wsId: string,
-    days: number,
-    projectId: string | null,
-    tz: string,
-  ) => [...dashboardKeys.all(wsId), "runtime-daily", days, projectId, tz] as const,
-};
+type DashboardSeries =
+  | "daily"
+  | "by-agent"
+  | "agent-runtime"
+  | "runtime-daily";
 
 // 5-min rollup cadence on the server, 60s background refetch on the client.
 const STALE_TIME = 60 * 1000;
+
+function dashboardOptions<Result>(
+  series: DashboardSeries,
+  wsId: string,
+  days: number,
+  projectId: string | null,
+  tz: string,
+  queryFn: () => Promise<Result>,
+) {
+  return queryOptions({
+    queryKey: ["dashboard", wsId, series, days, projectId, tz] as const,
+    queryFn,
+    enabled: !!wsId,
+    staleTime: STALE_TIME,
+  });
+}
 
 // `tz` participates in every dashboard key so a Preferences change
 // repoints the cache. All four series — token rollups and the
@@ -42,17 +36,13 @@ export function dashboardUsageDailyOptions(
   projectId: string | null,
   tz: string,
 ) {
-  return queryOptions({
-    queryKey: dashboardKeys.daily(wsId, days, projectId, tz),
-    queryFn: () =>
+  return dashboardOptions("daily", wsId, days, projectId, tz, () =>
       api.getDashboardUsageDaily({
         days,
         project_id: projectId ?? undefined,
         tz,
       }),
-    enabled: !!wsId,
-    staleTime: STALE_TIME,
-  });
+  );
 }
 
 export function dashboardUsageByAgentOptions(
@@ -61,17 +51,13 @@ export function dashboardUsageByAgentOptions(
   projectId: string | null,
   tz: string,
 ) {
-  return queryOptions({
-    queryKey: dashboardKeys.byAgent(wsId, days, projectId, tz),
-    queryFn: () =>
+  return dashboardOptions("by-agent", wsId, days, projectId, tz, () =>
       api.getDashboardUsageByAgent({
         days,
         project_id: projectId ?? undefined,
         tz,
       }),
-    enabled: !!wsId,
-    staleTime: STALE_TIME,
-  });
+  );
 }
 
 export function dashboardAgentRunTimeOptions(
@@ -80,17 +66,13 @@ export function dashboardAgentRunTimeOptions(
   projectId: string | null,
   tz: string,
 ) {
-  return queryOptions({
-    queryKey: dashboardKeys.agentRuntime(wsId, days, projectId, tz),
-    queryFn: () =>
+  return dashboardOptions("agent-runtime", wsId, days, projectId, tz, () =>
       api.getDashboardAgentRunTime({
         days,
         project_id: projectId ?? undefined,
         tz,
       }),
-    enabled: !!wsId,
-    staleTime: STALE_TIME,
-  });
+  );
 }
 
 export function dashboardRunTimeDailyOptions(
@@ -99,15 +81,11 @@ export function dashboardRunTimeDailyOptions(
   projectId: string | null,
   tz: string,
 ) {
-  return queryOptions({
-    queryKey: dashboardKeys.runTimeDaily(wsId, days, projectId, tz),
-    queryFn: () =>
+  return dashboardOptions("runtime-daily", wsId, days, projectId, tz, () =>
       api.getDashboardRunTimeDaily({
         days,
         project_id: projectId ?? undefined,
         tz,
       }),
-    enabled: !!wsId,
-    staleTime: STALE_TIME,
-  });
+  );
 }
