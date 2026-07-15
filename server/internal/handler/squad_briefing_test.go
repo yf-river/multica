@@ -92,7 +92,7 @@ func TestEnsureInternalSquadTemplateCreatesCodingSquadIdempotently(t *testing.T)
 	if first.Squad.Name != "Multica 编码小队" || first.Squad.MemberCount != 6 || len(first.Agents) != 6 {
 		t.Fatalf("first internal squad response = %+v", first)
 	}
-	if stringFromAny(first.Squad.SOPProfile["profile_key"]) != "multica-coding" {
+	if profileKey, _ := first.Squad.SOPProfile["profile_key"].(string); profileKey != "multica-coding" {
 		t.Fatalf("sop profile = %#v", first.Squad.SOPProfile)
 	}
 	second := create()
@@ -762,7 +762,7 @@ func TestEnsureUserCenterInternalSquadPersistsMCPConfig(t *testing.T) {
 		if !ok {
 			t.Fatalf("%s runtime_config missing internal_squad: %s", name, string(runtimeConfigRaw))
 		}
-		roleKey := stringFromAny(internalSquad["role_key"])
+		roleKey, _ := internalSquad["role_key"].(string)
 		count++
 		if roleKey == "pm" {
 			for _, want := range []string{

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -706,17 +707,17 @@ func skillCaseDraftsFromAsset(asset db.PromptEvaluationAsset) []PromptEvaluation
 func skillReEvalAssetIDFromCandidate(candidate db.PromptEvaluationOptimizationCandidate) string {
 	metrics := decodePayloadObject(candidate.Metrics)
 	reEvalPlan := asMap(metrics["skill_re_eval"])
-	return stringFromAny(reEvalPlan["asset_id"])
+	return util.StringFromAny(reEvalPlan["asset_id"])
 }
 
 func validatePromptEvaluationSkillReEvalAsset(candidate db.PromptEvaluationOptimizationCandidate, asset db.PromptEvaluationAsset, payload map[string]any) error {
 	if asset.AssetType != promptEvaluationAssetTestSuite {
 		return errors.New("skill re-eval asset must be a test suite")
 	}
-	if stringFromAny(payload["skill_re_eval_contract"]) != "multica.skill.re_eval.v1" {
+	if util.StringFromAny(payload["skill_re_eval_contract"]) != "multica.skill.re_eval.v1" {
 		return errors.New("asset is not a skill re-eval asset")
 	}
-	if sourceCandidateID := stringFromAny(payload["source_candidate_id"]); sourceCandidateID != "" && sourceCandidateID != uuidToString(candidate.ID) {
+	if sourceCandidateID := util.StringFromAny(payload["source_candidate_id"]); sourceCandidateID != "" && sourceCandidateID != uuidToString(candidate.ID) {
 		return errors.New("skill re-eval asset does not belong to this candidate")
 	}
 	if _, ok := decodeSkillSnapshotAny(payload["re_eval_snapshot"]); !ok {

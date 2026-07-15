@@ -622,7 +622,7 @@ func AgentRoleKey(raw []byte) string {
 		return ""
 	}
 	if scope, ok := runtimeConfig["internal_squad"].(map[string]any); ok {
-		return stringFromAny(scope["role_key"])
+		return util.StringFromAny(scope["role_key"])
 	}
 	return ""
 }

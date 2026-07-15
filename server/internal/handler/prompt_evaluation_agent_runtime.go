@@ -16,6 +16,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/prompteval"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -171,7 +172,7 @@ func promptEvaluationSOPVerifier(agents []db.Agent) (db.Agent, bool) {
 }
 
 func (h *Handler) selectPromptEvaluationExecutionAgent(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID, ownerID pgtype.UUID, member db.Member, payload map[string]any) (db.Agent, db.AgentRuntime, bool) {
-	requestedAgentID := strings.TrimSpace(stringFromAny(payload["agent_id"]))
+	requestedAgentID := strings.TrimSpace(util.StringFromAny(payload["agent_id"]))
 	if requestedAgentID == "" {
 		return h.ensurePromptEvaluationAgent(w, r, workspaceID, ownerID, member)
 	}
@@ -287,7 +288,7 @@ func (h *Handler) promptEvaluationRuntimeReadiness(ctx context.Context, workspac
 	if err == nil {
 		detail := providerName + " runtime「" + best.Name + "」在线且心跳新鲜，但最近任务 " + uuidToString(recentCapacityFailure.ID) + " 返回模型容量或额度限制，当前不能证明 " + promptEvaluationAgentModel() + " 可执行。"
 		if recentCapacityFailure.Error.Valid && strings.TrimSpace(recentCapacityFailure.Error.String) != "" {
-			detail += " 最近错误：" + truncatePromptEvaluationEvidence(recentCapacityFailure.Error.String, 180)
+			detail += " 最近错误：" + prompteval.TruncateEvidence(recentCapacityFailure.Error.String, 180)
 		}
 		resp := promptEvaluationRuntimeReadinessResponse("容量受限", "模型额度受限", detail, "如果持续出现 429/529，请申请 "+fallbackPromptEvaluationAgentModel+" 模型额度或让管理员调整 Agent 模型配置。", &respRuntime, checkedAt)
 		resp.LastSeenAgeSeconds = ageSeconds
@@ -435,7 +436,7 @@ func buildPromptEvaluationRunResult(asset db.PromptEvaluationAsset, prompt db.Pr
 	inputTokens := 0
 	outputTokens := 0
 	for idx, c := range cases {
-		name := stringFromAny(c["case_name"])
+		name := util.StringFromAny(c["case_name"])
 		if name == "" {
 			name = "用例 " + strconv.Itoa(idx+1)
 		}
@@ -674,7 +675,7 @@ func normalizePromptEvaluationPayloadObject(payload map[string]any) map[string]a
 }
 
 func normalizePromptEvaluationCase(index int, item map[string]any) normalizedPromptEvaluationCase {
-	name := stringFromAny(item["case_name"])
+	name := util.StringFromAny(item["case_name"])
 	if name == "" {
 		name = "用例 " + strconv.Itoa(index+1)
 	}
@@ -739,12 +740,12 @@ func promptVariableDefaults(raw []byte) map[string]string {
 		if !ok {
 			continue
 		}
-		name := stringFromAny(variable["name"])
+		name := util.StringFromAny(variable["name"])
 		if name == "" {
 			continue
 		}
 		if value, ok := variable["default_value"]; ok {
-			defaults[name] = stringFromAny(value)
+			defaults[name] = util.StringFromAny(value)
 		}
 	}
 	return defaults
@@ -1003,11 +1004,11 @@ func promptEvaluationExplicitDatasetVersionRefs(payload map[string]any) []prompt
 		if !ok {
 			continue
 		}
-		versionID := strings.TrimSpace(stringFromAny(m["dataset_version_id"]))
+		versionID := strings.TrimSpace(util.StringFromAny(m["dataset_version_id"]))
 		if versionID == "" {
 			continue
 		}
-		datasetID := strings.TrimSpace(stringFromAny(m["dataset_asset_id"]))
+		datasetID := strings.TrimSpace(util.StringFromAny(m["dataset_asset_id"]))
 		if datasetID == "" {
 			result = append(result, promptEvaluationDatasetVersionRef{DatasetVersionID: versionID})
 			continue
@@ -1015,7 +1016,7 @@ func promptEvaluationExplicitDatasetVersionRefs(payload map[string]any) []prompt
 		result = append(result, promptEvaluationDatasetVersionRef{
 			DatasetAssetID:   datasetID,
 			DatasetVersionID: versionID,
-			DatasetName:      strings.TrimSpace(stringFromAny(m["dataset_name"])),
+			DatasetName:      strings.TrimSpace(util.StringFromAny(m["dataset_name"])),
 		})
 	}
 	return result
@@ -1039,7 +1040,7 @@ func promptEvaluationLinkedDatasetIDs(payload map[string]any) []string {
 			}
 		case []any:
 			for _, item := range v {
-				if s := strings.TrimSpace(stringFromAny(item)); s != "" {
+				if s := strings.TrimSpace(util.StringFromAny(item)); s != "" {
 					result = append(result, s)
 				}
 			}
@@ -1070,28 +1071,6 @@ func asMap(value any) map[string]any {
 	return map[string]any{}
 }
 
-func stringFromAny(value any) string {
-	switch v := value.(type) {
-	case string:
-		return v
-	case int:
-		return strconv.Itoa(v)
-	case int32:
-		return strconv.Itoa(int(v))
-	case int64:
-		return strconv.FormatInt(v, 10)
-	case float64:
-		return strconv.FormatFloat(v, 'f', -1, 64)
-	case bool:
-		if v {
-			return "true"
-		}
-		return "false"
-	default:
-		return ""
-	}
-}
-
 func firstNonEmptyPromptEvaluationString(values ...string) string {
 	for _, value := range values {
 		if trimmed := strings.TrimSpace(value); trimmed != "" {
@@ -1105,7 +1084,7 @@ func stringMapFromAny(value any) map[string]string {
 	result := map[string]string{}
 	if m, ok := value.(map[string]any); ok {
 		for key, raw := range m {
-			result[key] = stringFromAny(raw)
+			result[key] = util.StringFromAny(raw)
 		}
 	}
 	return result
@@ -1121,7 +1100,7 @@ func stringListFromAny(value any) []string {
 	case []any:
 		out := make([]string, 0, len(v))
 		for _, item := range v {
-			if s := strings.TrimSpace(stringFromAny(item)); s != "" {
+			if s := strings.TrimSpace(util.StringFromAny(item)); s != "" {
 				out = append(out, s)
 			}
 		}

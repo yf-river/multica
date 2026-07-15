@@ -1909,7 +1909,8 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 	}
 	syncedPayload := syncedAsset.Payload.(map[string]any)
 	agentRun := syncedPayload["最近Agent运行"].(map[string]any)
-	if agentRun["状态"] != "通过" || agentRun["run_id"] != resp.Run.ID || !strings.Contains(stringFromAny(agentRun["评估结论"]), "结构化逐用例评估") {
+	conclusion, _ := agentRun["评估结论"].(string)
+	if agentRun["状态"] != "通过" || agentRun["run_id"] != resp.Run.ID || !strings.Contains(conclusion, "结构化逐用例评估") {
 		t.Fatalf("auto-synced asset agent run = %#v", agentRun)
 	}
 }

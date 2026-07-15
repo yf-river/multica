@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/prompteval"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -173,7 +175,7 @@ func (h *Handler) persistPromptEvaluationQueuedAgentRun(w http.ResponseWriter, r
 		return db.PromptEvaluationRun{}, false
 	}
 	for idx, c := range cases {
-		name := stringFromAny(c["case_name"])
+		name := util.StringFromAny(c["case_name"])
 		if name == "" {
 			name = "用例 " + strconv.Itoa(idx+1)
 		}
@@ -333,8 +335,8 @@ func promptEvaluationWeakDimensionSummaries(rows []db.ListPromptEvaluationDimens
 	}
 	sort.Slice(result, func(i, j int) bool {
 		priorityRank := map[string]int{"高": 0, "中": 1, "低": 2}
-		leftPriority := priorityRank[stringFromAny(result[i]["优先级"])]
-		rightPriority := priorityRank[stringFromAny(result[j]["优先级"])]
+		leftPriority := priorityRank[util.StringFromAny(result[i]["优先级"])]
+		rightPriority := priorityRank[util.StringFromAny(result[j]["优先级"])]
 		if leftPriority != rightPriority {
 			return leftPriority < rightPriority
 		}
@@ -343,14 +345,14 @@ func promptEvaluationWeakDimensionSummaries(rows []db.ListPromptEvaluationDimens
 		if leftScore != rightScore {
 			return leftScore < rightScore
 		}
-		return stringFromAny(result[i]["维度名称"]) < stringFromAny(result[j]["维度名称"])
+		return util.StringFromAny(result[i]["维度名称"]) < util.StringFromAny(result[j]["维度名称"])
 	})
 	return result
 }
 
 func promptEvaluationCandidatePriority(weakDimensions []map[string]any) string {
 	for _, item := range weakDimensions {
-		if stringFromAny(item["优先级"]) == "高" {
+		if util.StringFromAny(item["优先级"]) == "高" {
 			return "高"
 		}
 	}
@@ -464,8 +466,8 @@ func buildPromptEvaluationCandidateContent(prompt db.PromptLibraryItem, run db.P
 	if len(failedCases) > 0 {
 		lines = append(lines, "", "失败用例摘要：")
 		for _, item := range failedCases {
-			name := stringFromAny(item["用例名称"])
-			reason := stringFromAny(item["失败原因"])
+			name := util.StringFromAny(item["用例名称"])
+			reason := util.StringFromAny(item["失败原因"])
 			if name == "" {
 				name = "未命名用例"
 			}
@@ -478,11 +480,11 @@ func buildPromptEvaluationCandidateContent(prompt db.PromptLibraryItem, run db.P
 	if weakDimensions, ok := sourceSummary["失败维度"].([]map[string]any); ok && len(weakDimensions) > 0 {
 		lines = append(lines, "", "维度优先级：")
 		for _, item := range weakDimensions {
-			name := stringFromAny(item["维度名称"])
+			name := util.StringFromAny(item["维度名称"])
 			if name == "" {
 				name = "未命名维度"
 			}
-			lines = append(lines, "- "+name+"："+stringFromAny(item["优先级"])+"优先级，得分 "+stringFromAny(item["得分"])+"，证据："+truncatePromptEvaluationEvidence(stringFromAny(item["最新证据"]), 160))
+			lines = append(lines, "- "+name+"："+util.StringFromAny(item["优先级"])+"优先级，得分 "+util.StringFromAny(item["得分"])+"，证据："+prompteval.TruncateEvidence(util.StringFromAny(item["最新证据"]), 160))
 		}
 		rationale = "基于失败用例、维度评分弱项和真实运行证据补充中文输出约束、失败处理要求、证据字段和验收口径；原提示词不被自动替换，必须人工确认后发布。"
 	}
@@ -490,21 +492,21 @@ func buildPromptEvaluationCandidateContent(prompt db.PromptLibraryItem, run db.P
 		lines = append(lines, "", "真实智能体输出摘要：")
 		if messages, ok := runtimeEvidence["task消息"].([]map[string]any); ok && len(messages) > 0 {
 			for _, message := range messages {
-				content := strings.TrimSpace(stringFromAny(message["content"]))
+				content := strings.TrimSpace(util.StringFromAny(message["content"]))
 				if content == "" {
-					content = strings.TrimSpace(stringFromAny(message["output"]))
+					content = strings.TrimSpace(util.StringFromAny(message["output"]))
 				}
 				if content == "" {
 					continue
 				}
-				lines = append(lines, "- task消息 #"+stringFromAny(message["seq"])+"："+truncatePromptEvaluationEvidence(content, 240))
+				lines = append(lines, "- task消息 #"+util.StringFromAny(message["seq"])+"："+prompteval.TruncateEvidence(content, 240))
 			}
 		}
 		if traces, ok := runtimeEvidence["trace事件"].([]map[string]any); ok && len(traces) > 0 {
 			for _, trace := range traces {
-				name := stringFromAny(firstValue(trace, "event_name", "event_type"))
-				status := stringFromAny(trace["status"])
-				reason := stringFromAny(trace["failure_reason"])
+				name := util.StringFromAny(firstValue(trace, "event_name", "event_type"))
+				status := util.StringFromAny(trace["status"])
+				reason := util.StringFromAny(trace["failure_reason"])
 				if name == "" {
 					name = "未命名 trace"
 				}
@@ -516,7 +518,7 @@ func buildPromptEvaluationCandidateContent(prompt db.PromptLibraryItem, run db.P
 		}
 		if usages, ok := runtimeEvidence["task用量"].([]map[string]any); ok && len(usages) > 0 {
 			for _, usage := range usages {
-				lines = append(lines, "- 用量 "+stringFromAny(usage["provider"])+"/"+stringFromAny(usage["model"])+"：输入 "+stringFromAny(usage["input_tokens"])+"，输出 "+stringFromAny(usage["output_tokens"])+"，预估成本 "+stringFromAny(usage["estimated_cost"]))
+				lines = append(lines, "- 用量 "+util.StringFromAny(usage["provider"])+"/"+util.StringFromAny(usage["model"])+"：输入 "+util.StringFromAny(usage["input_tokens"])+"，输出 "+util.StringFromAny(usage["output_tokens"])+"，预估成本 "+util.StringFromAny(usage["estimated_cost"]))
 			}
 		}
 	}
@@ -537,7 +539,7 @@ func buildPromptEvaluationSourcePromptSnapshot(prompt db.PromptLibraryItem) map[
 		"状态":        prompt.Status,
 		"变量":        mustDecodePersistedJSONArray(prompt.Variables, "prompt library item variables"),
 		"标签":        mustDecodePersistedJSONArray(prompt.Tags, "prompt library item tags"),
-		"内容摘要":      truncatePromptEvaluationEvidence(prompt.Content, 1200),
+		"内容摘要":      prompteval.TruncateEvidence(prompt.Content, 1200),
 	}
 }
 
@@ -569,12 +571,4 @@ func buildPromptEvaluationPublishedPromptTags(raw []byte) []byte {
 		next = append(next, tag)
 	}
 	return mustJSONBytes(next)
-}
-
-func truncatePromptEvaluationEvidence(value string, maxRunes int) string {
-	runes := []rune(value)
-	if len(runes) <= maxRunes {
-		return value
-	}
-	return string(runes[:maxRunes]) + "..."
 }

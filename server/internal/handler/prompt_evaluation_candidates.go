@@ -259,8 +259,8 @@ func (h *Handler) promptEvaluationCandidateRuntimeEvidence(ctx context.Context, 
 			"seq":     message.Seq,
 			"type":    message.Type,
 			"tool":    message.Tool.String,
-			"content": truncatePromptEvaluationEvidence(message.Content.String, 800),
-			"output":  truncatePromptEvaluationEvidence(message.Output.String, 800),
+			"content": prompteval.TruncateEvidence(message.Content.String, 800),
+			"output":  prompteval.TruncateEvidence(message.Output.String, 800),
 		})
 	}
 	traceRows := make([]map[string]any, 0, len(traceEvents))

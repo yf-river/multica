@@ -11,6 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/metrics"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -716,15 +717,15 @@ func collectPromptEvaluationProfileValues(seen map[string]bool, value any) {
 			collectPromptEvaluationProfileValues(seen, item)
 		}
 	default:
-		if item := strings.TrimSpace(stringFromAny(v)); item != "" {
+		if item := strings.TrimSpace(util.StringFromAny(v)); item != "" {
 			seen[item] = true
 		}
 	}
 }
 
 func promptEvaluationExperimentDimensions(payload map[string]any) []normalizedPromptEvaluationExperimentDimension {
-	target := stringFromAny(payload["experiment_target"])
-	baseline := stringFromAny(payload["baseline_output"])
+	target := util.StringFromAny(payload["experiment_target"])
+	baseline := util.StringFromAny(payload["baseline_output"])
 	raw := payload["experiment_dimensions"]
 	values := promptEvaluationDimensionValues(raw)
 	result := make([]normalizedPromptEvaluationExperimentDimension, 0, len(values))
@@ -775,7 +776,7 @@ func promptEvaluationDimensionValues(value any) []promptEvaluationDimensionValue
 		}
 		return result
 	case map[string]any:
-		if name := strings.TrimSpace(stringFromAny(v["name"])); name != "" {
+		if name := strings.TrimSpace(util.StringFromAny(v["name"])); name != "" {
 			payload := make(map[string]any, len(v))
 			for key, item := range v {
 				payload[key] = item
@@ -801,7 +802,7 @@ func promptEvaluationDimensionValues(value any) []promptEvaluationDimensionValue
 		}
 		return result
 	default:
-		if item := strings.TrimSpace(stringFromAny(v)); item != "" {
+		if item := strings.TrimSpace(util.StringFromAny(v)); item != "" {
 			return []promptEvaluationDimensionValue{{Name: item, Payload: map[string]any{}}}
 		}
 	}

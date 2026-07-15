@@ -12,6 +12,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/logger"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -269,13 +270,13 @@ func matchesInternalSquadAgent(agent db.Agent, name string, template internalSqu
 	}
 	scope, ok := runtimeConfig["internal_squad"].(map[string]any)
 	if !ok ||
-		stringFromAny(scope["template_key"]) != template.Key ||
-		stringFromAny(scope["role_key"]) != role.Key ||
-		stringFromAny(scope["squad_scope"]) != squadScope ||
-		stringFromAny(scope["agent_scope"]) != agentScope {
+		util.StringFromAny(scope["template_key"]) != template.Key ||
+		util.StringFromAny(scope["role_key"]) != role.Key ||
+		util.StringFromAny(scope["squad_scope"]) != squadScope ||
+		util.StringFromAny(scope["agent_scope"]) != agentScope {
 		return false
 	}
-	return squadScope != squadScopePersonal || stringFromAny(scope["owner_id"]) == uuidToString(ownerID)
+	return squadScope != squadScopePersonal || util.StringFromAny(scope["owner_id"]) == uuidToString(ownerID)
 }
 
 func internalSquadAgentNeedsSync(agent db.Agent, runtime db.AgentRuntime, template internalSquadTemplate, role internalSquadRole, runtimeConfig []byte, instructions string, description string, model pgtype.Text, scope string) bool {
@@ -445,12 +446,12 @@ func matchesInternalSquadTemplate(squad db.Squad, template internalSquadTemplate
 
 func internalSquadProfileKey(squad db.Squad) string {
 	profile := mustDecodePersistedJSONObject(squad.SopProfile, "squad SOP profile")
-	return stringFromAny(profile["profile_key"])
+	return util.StringFromAny(profile["profile_key"])
 }
 
 func matchesInternalSquadProfileKey(squad db.Squad, template internalSquadTemplate) bool {
 	key := internalSquadProfileKey(squad)
-	return key != "" && (key == template.Key || key == stringFromAny(template.Profile["profile_key"]))
+	return key != "" && (key == template.Key || key == util.StringFromAny(template.Profile["profile_key"]))
 }
 
 func matchesInternalSquadTarget(squad db.Squad, template internalSquadTemplate, scope string, creatorID pgtype.UUID, requireName bool) bool {

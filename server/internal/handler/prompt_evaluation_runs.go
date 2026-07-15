@@ -15,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -1064,9 +1065,9 @@ func (h *Handler) buildPromptEvaluationEvidenceSnapshotInsight(ctx context.Conte
 			"prompt_id": resp.PromptID,
 			"状态":        resp.Status,
 			"失败用例数":     resp.FailedCaseCount,
-			"候选优先级":     stringFromAny(metrics["候选优先级"]),
+			"候选优先级":     util.StringFromAny(metrics["候选优先级"]),
 			"失败维度":      metrics["失败维度"],
-			"优先级依据":     stringFromAny(metrics["候选优先级依据"]),
+			"优先级依据":     util.StringFromAny(metrics["候选优先级依据"]),
 			"修改依据":      resp.Rationale,
 		})
 	}

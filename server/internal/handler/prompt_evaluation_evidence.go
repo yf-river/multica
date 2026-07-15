@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/prompteval"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -159,7 +160,7 @@ func buildPromptEvaluationExecutionEvidence(
 			Seq:       seq,
 			TaskID:    message.TaskID,
 			Tool:      message.Tool,
-			Summary:   truncatePromptEvaluationEvidence(firstNonEmptyPromptEvaluationString(message.Content, message.Output, promptEvaluationEvidenceSummaryString(message.Input), message.Type), 240),
+			Summary:   prompteval.TruncateEvidence(firstNonEmptyPromptEvaluationString(message.Content, message.Output, promptEvaluationEvidenceSummaryString(message.Input), message.Type), 240),
 			Details:   details,
 			CreatedAt: message.CreatedAt,
 		})
@@ -222,7 +223,7 @@ func buildPromptEvaluationToolCallChains(messages []protocol.TaskMessagePayload)
 				UseSpanID:      fmt.Sprintf("message:%d", message.Seq),
 				Input:          message.Input,
 				ResultCategory: "未返回",
-				Summary:        truncatePromptEvaluationEvidence("工具调用："+firstNonEmptyPromptEvaluationString(tool, promptEvaluationEvidenceSummaryString(message.Input)), 240),
+				Summary:        prompteval.TruncateEvidence("工具调用："+firstNonEmptyPromptEvaluationString(tool, promptEvaluationEvidenceSummaryString(message.Input)), 240),
 				CreatedAt:      message.CreatedAt,
 			}
 			chains = append(chains, chain)
@@ -248,7 +249,7 @@ func buildPromptEvaluationToolCallChains(messages []protocol.TaskMessagePayload)
 					chains[index].ResultCategory = "异常线索"
 				}
 				chains[index].CompletedAt = message.CreatedAt
-				chains[index].Summary = truncatePromptEvaluationEvidence(
+				chains[index].Summary = prompteval.TruncateEvidence(
 					fmt.Sprintf("工具 %s 已配对：调用 #%d，结果 #%d", tool, chains[index].UseSeq, message.Seq),
 					240,
 				)
@@ -267,7 +268,7 @@ func buildPromptEvaluationToolCallChains(messages []protocol.TaskMessagePayload)
 				ResultSpanID:   fmt.Sprintf("message:%d", message.Seq),
 				Output:         message.Output,
 				ResultCategory: "孤立返回",
-				Summary:        truncatePromptEvaluationEvidence("工具结果没有找到对应调用："+firstNonEmptyPromptEvaluationString(message.Output, tool), 240),
+				Summary:        prompteval.TruncateEvidence("工具结果没有找到对应调用："+firstNonEmptyPromptEvaluationString(message.Output, tool), 240),
 				CompletedAt:    message.CreatedAt,
 			})
 		}
@@ -616,7 +617,7 @@ func promptEvaluationToolExitCode(output string) (int, bool) {
 
 func promptEvaluationToolCallID(message protocol.TaskMessagePayload) string {
 	for _, key := range []string{"tool_call_id", "call_id", "id", "工具调用ID", "调用ID"} {
-		if value := strings.TrimSpace(stringFromAny(message.Input[key])); value != "" {
+		if value := strings.TrimSpace(util.StringFromAny(message.Input[key])); value != "" {
 			return value
 		}
 	}
@@ -659,7 +660,7 @@ func promptEvaluationTraceSpanSummary(event TaskTraceEventResponse) string {
 	if tokenTotal := event.InputTokens + event.OutputTokens + event.CacheReadTokens + event.CacheWriteTokens; tokenTotal > 0 {
 		parts = append(parts, fmt.Sprintf("token：%d", tokenTotal))
 	}
-	return truncatePromptEvaluationEvidence(strings.Join(nonEmptyStrings(parts...), "；"), 240)
+	return prompteval.TruncateEvidence(strings.Join(nonEmptyStrings(parts...), "；"), 240)
 }
 
 func nonEmptyStrings(values ...string) []string {
@@ -808,12 +809,12 @@ func buildPromptEvaluationIOContext(trials []PromptEvaluationTrialResponse, mess
 		"消息摘要":   "未记录",
 	}
 	if len(trials) > 0 {
-		context["用例输入摘要"] = truncatePromptEvaluationEvidence(promptEvaluationEvidenceSummaryString(trials[0].Input), 300)
-		context["用例输出摘要"] = truncatePromptEvaluationEvidence(promptEvaluationEvidenceSummaryString(trials[0].Output), 300)
+		context["用例输入摘要"] = prompteval.TruncateEvidence(promptEvaluationEvidenceSummaryString(trials[0].Input), 300)
+		context["用例输出摘要"] = prompteval.TruncateEvidence(promptEvaluationEvidenceSummaryString(trials[0].Output), 300)
 	}
 	if len(messages) > 0 {
 		message := messages[len(messages)-1]
-		context["消息摘要"] = truncatePromptEvaluationEvidence(firstNonEmptyPromptEvaluationString(message.Content, message.Output, message.Type), 300)
+		context["消息摘要"] = prompteval.TruncateEvidence(firstNonEmptyPromptEvaluationString(message.Content, message.Output, message.Type), 300)
 	}
 	return context
 }
@@ -862,9 +863,9 @@ func buildPromptEvaluationEvidenceSnapshotSummary(evidence PromptEvaluationRunEv
 	}
 	if insight != nil {
 		summary["服务端解释"] = map[string]any{
-			"质量判断":   stringFromAny(insight["质量判断"]),
-			"建议动作":   stringFromAny(insight["建议动作"]),
-			"失败主因":   stringFromAny(insight["失败主因"]),
+			"质量判断":   util.StringFromAny(insight["质量判断"]),
+			"建议动作":   util.StringFromAny(insight["建议动作"]),
+			"失败主因":   util.StringFromAny(insight["失败主因"]),
 			"维度摘要数":  len(anySliceFromRecord(insight, "维度评分摘要")),
 			"维度趋势数":  len(anySliceFromRecord(insight, "维度评分趋势")),
 			"优化候选数":  len(anySliceFromRecord(insight, "优化候选证据")),
@@ -873,7 +874,6 @@ func buildPromptEvaluationEvidenceSnapshotSummary(evidence PromptEvaluationRunEv
 	}
 	return summary
 }
-
 
 func anySliceFromRecord(record map[string]any, key string) []any {
 	if record == nil {
