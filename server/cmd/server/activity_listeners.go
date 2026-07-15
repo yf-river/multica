@@ -71,8 +71,8 @@ func consumeIssueUpdatedActivities(ctx context.Context, queries *db.Queries, eve
 	}
 	appendChange(payload.StatusChanged, "status_changed", payload.PrevStatus, issue.Status)
 	appendChange(payload.PriorityChanged, "priority_changed", payload.PrevPriority, issue.Priority)
-	appendChange(payload.StartDateChanged, "start_date_changed", valueOrEmpty(payload.PrevStartDate), valueOrEmpty(issue.StartDate))
-	appendChange(payload.DueDateChanged, "due_date_changed", valueOrEmpty(payload.PrevDueDate), valueOrEmpty(issue.DueDate))
+	appendChange(payload.StartDateChanged, "start_date_changed", util.ValueOrEmpty(payload.PrevStartDate), util.ValueOrEmpty(issue.StartDate))
+	appendChange(payload.DueDateChanged, "due_date_changed", util.ValueOrEmpty(payload.PrevDueDate), util.ValueOrEmpty(issue.DueDate))
 	appendChange(payload.TitleChanged, "title_changed", payload.PrevTitle, issue.Title)
 	if payload.AssigneeChanged {
 		details := map[string]string{}
@@ -111,13 +111,6 @@ func createIssueActivity(ctx context.Context, queries *db.Queries, event events.
 		return events.Event{}, fmt.Errorf("record %s activity for issue %s: %w", action, issue.ID, err)
 	}
 	return activityCreatedEvent(event, activity), nil
-}
-
-func valueOrEmpty(value *string) string {
-	if value == nil {
-		return ""
-	}
-	return *value
 }
 
 func setOptionalDetail(details map[string]string, key string, value *string) {

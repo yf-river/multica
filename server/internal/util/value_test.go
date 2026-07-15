@@ -19,4 +19,8 @@ func TestStringFromAny(t *testing.T) {
 			t.Errorf("StringFromAny(%v) = %q, want %q", test.value, got, test.want)
 		}
 	}
+	value := "present"
+	if ValueOrEmpty(nil) != "" || ValueOrEmpty(&value) != value {
+		t.Fatal("ValueOrEmpty() did not preserve pointer semantics")
+	}
 }

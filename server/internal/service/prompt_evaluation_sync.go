@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -634,7 +633,7 @@ func promptEvaluationAgentDimensionVerdictPassed(dimensionName string, verdict p
 	case strings.Contains(normalized, "缺失变量") || strings.Contains(normalized, "变量"):
 		return verdict.Status == "通过" && promptEvaluationAgentEvidenceListEmpty(verdict.Evidence, "缺失", "missing", "missing_variables")
 	case strings.Contains(normalized, "中文"):
-		return containsHanRune(util.StringFromAny(verdict.Output)) || containsHanRune(verdict.Conclusion)
+		return prompteval.ContainsHan(util.StringFromAny(verdict.Output)) || prompteval.ContainsHan(verdict.Conclusion)
 	case strings.Contains(normalized, "命中") || strings.Contains(normalized, "覆盖") || strings.Contains(normalized, "期望"):
 		return verdict.Status == "通过" && promptEvaluationAgentEvidenceListNonEmpty(verdict.Evidence, "命中", "matched", "matched_contains")
 	default:
@@ -676,15 +675,6 @@ func promptEvaluationAgentEvidenceListNonEmpty(record map[string]any, keys ...st
 		return len(list) > 0
 	}
 	return strings.TrimSpace(util.StringFromAny(value)) != ""
-}
-
-func containsHanRune(value string) bool {
-	for _, r := range value {
-		if unicode.Is(unicode.Han, r) {
-			return true
-		}
-	}
-	return false
 }
 
 func promptEvaluationAgentVerdictsFromTask(run db.PromptEvaluationRun, task db.AgentTaskQueue, messages []db.TaskMessage) ([]promptEvaluationAgentCaseVerdict, bool) {

@@ -9,4 +9,7 @@ func TestTextProjections(t *testing.T) {
 	if got := TruncateEvidence("ok", 2); got != "ok" {
 		t.Fatalf("TruncateEvidence() unchanged = %q", got)
 	}
+	if !ContainsHan("agent 证据") || ContainsHan("agent evidence") {
+		t.Fatal("ContainsHan() did not preserve the Han-script boundary")
+	}
 }

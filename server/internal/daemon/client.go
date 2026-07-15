@@ -104,22 +104,7 @@ func NewClient(baseURL string) *Client {
 		baseURL:  baseURL,
 		client:   &http.Client{Timeout: 30 * time.Second},
 		platform: "daemon",
-		os:       normalizeGOOS(runtime.GOOS),
-	}
-}
-
-// normalizeGOOS maps Go's runtime.GOOS values to the protocol vocabulary
-// used by X-Client-OS / client_os ("macos" / "windows" / "linux").
-func normalizeGOOS(goos string) string {
-	switch goos {
-	case "darwin":
-		return "macos"
-	case "windows":
-		return "windows"
-	case "linux":
-		return "linux"
-	default:
-		return goos
+		os:       protocol.NormalizeGOOS(runtime.GOOS),
 	}
 }
 

@@ -10,6 +10,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 func TestPostJSON(t *testing.T) {
@@ -173,7 +175,7 @@ func TestPostJSON(t *testing.T) {
 		origVersion := ClientVersion
 		ClientVersion = "1.2.3-test"
 		t.Cleanup(func() { ClientVersion = origVersion })
-		expectedOS := normalizeGOOS(runtime.GOOS)
+		expectedOS := protocol.NormalizeGOOS(runtime.GOOS)
 
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if got := r.Header.Get("X-Client-Platform"); got != "cli" {
@@ -466,18 +468,4 @@ func TestUploadFileWithURL(t *testing.T) {
 			t.Errorf("unexpected error message: %s", err.Error())
 		}
 	})
-}
-
-func TestNormalizeGOOS(t *testing.T) {
-	cases := map[string]string{
-		"darwin":  "macos",
-		"windows": "windows",
-		"linux":   "linux",
-		"freebsd": "freebsd",
-	}
-	for in, want := range cases {
-		if got := normalizeGOOS(in); got != want {
-			t.Errorf("normalizeGOOS(%q) = %q, want %q", in, got, want)
-		}
-	}
 }

@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 func TestClient_IdentityHeaders_PostJSON(t *testing.T) {
@@ -20,8 +22,8 @@ func TestClient_IdentityHeaders_PostJSON(t *testing.T) {
 		if got := r.Header.Get("X-Client-Version"); got != "9.9.9" {
 			t.Errorf("expected X-Client-Version 9.9.9, got %q", got)
 		}
-		if got := r.Header.Get("X-Client-OS"); got != normalizeGOOS(runtime.GOOS) {
-			t.Errorf("expected X-Client-OS %q, got %q", normalizeGOOS(runtime.GOOS), got)
+		if got := r.Header.Get("X-Client-OS"); got != protocol.NormalizeGOOS(runtime.GOOS) {
+			t.Errorf("expected X-Client-OS %q, got %q", protocol.NormalizeGOOS(runtime.GOOS), got)
 		}
 		if got := r.Header.Get("Authorization"); got != "Bearer tok" {
 			t.Errorf("expected Authorization Bearer tok, got %q", got)
@@ -304,20 +306,6 @@ func TestDefaultTerminalRetrySchedule_MatchesAgreedPlan(t *testing.T) {
 	for i, d := range want {
 		if defaultTerminalRetrySchedule[i] != d {
 			t.Errorf("schedule[%d]: got %s, want %s", i, defaultTerminalRetrySchedule[i], d)
-		}
-	}
-}
-
-func TestNormalizeGOOS(t *testing.T) {
-	cases := map[string]string{
-		"darwin":  "macos",
-		"windows": "windows",
-		"linux":   "linux",
-		"freebsd": "freebsd",
-	}
-	for in, want := range cases {
-		if got := normalizeGOOS(in); got != want {
-			t.Errorf("normalizeGOOS(%q) = %q, want %q", in, got, want)
 		}
 	}
 }

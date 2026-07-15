@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/logger"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -331,7 +332,7 @@ func (h *Handler) UpdateExternalCredentialProfile(w http.ResponseWriter, r *http
 		params.LastError = pgtype.Text{String: strings.TrimSpace(*req.LastError), Valid: true}
 	}
 	if req.SecretRef != nil || req.Token != nil {
-		secretRef, encrypted, hint, statusCode, msg := h.prepareExternalCredentialSecret(valueOrEmpty(req.SecretRef), valueOrEmpty(req.Token))
+		secretRef, encrypted, hint, statusCode, msg := h.prepareExternalCredentialSecret(util.ValueOrEmpty(req.SecretRef), util.ValueOrEmpty(req.Token))
 		if statusCode != 0 {
 			writeError(w, statusCode, msg)
 			return
@@ -735,11 +736,4 @@ func secretRefHint(ref string) string {
 		last = string(runes[:32])
 	}
 	return last
-}
-
-func valueOrEmpty(value *string) string {
-	if value == nil {
-		return ""
-	}
-	return *value
 }

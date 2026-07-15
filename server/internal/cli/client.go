@@ -15,25 +15,14 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 // ClientVersion is the CLI version sent on every request as X-Client-Version.
 // Set by the multica binary at init() so the package doesn't depend on the
 // concrete cmd package. Defaults to "dev" when running unset (e.g. tests).
 var ClientVersion = "dev"
-
-func normalizeGOOS(goos string) string {
-	switch goos {
-	case "darwin":
-		return "macos"
-	case "windows":
-		return "windows"
-	case "linux":
-		return "linux"
-	default:
-		return goos
-	}
-}
 
 // APIClient is a REST client for the Multica server API.
 // Used by ctrl subcommands (agent, runtime, status, etc.). Requests
@@ -183,7 +172,7 @@ func (c *APIClient) setHeaders(req *http.Request) {
 	}
 	osName := c.OS
 	if osName == "" {
-		osName = normalizeGOOS(runtime.GOOS)
+		osName = protocol.NormalizeGOOS(runtime.GOOS)
 	}
 	if osName != "" {
 		req.Header.Set("X-Client-OS", osName)

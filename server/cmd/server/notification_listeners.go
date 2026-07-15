@@ -598,14 +598,14 @@ func projectIssueUpdatedNotifications(ctx context.Context, queries *db.Queries, 
 		}
 	}
 	if payload.StartDateChanged {
-		details, _ := json.Marshal(map[string]string{"from": valueOrEmpty(payload.PrevStartDate), "to": valueOrEmpty(issue.StartDate)})
+		details, _ := json.Marshal(map[string]string{"from": util.ValueOrEmpty(payload.PrevStartDate), "to": util.ValueOrEmpty(issue.StartDate)})
 		if err := notifySubscribers(ctx, queries, collector.bus, issue.ID, issue.Status, event.WorkspaceID, event,
 			nil, "start_date_changed", "info", issue.Title, "", details); err != nil {
 			return nil, err
 		}
 	}
 	if payload.DueDateChanged {
-		details, _ := json.Marshal(map[string]string{"from": valueOrEmpty(payload.PrevDueDate), "to": valueOrEmpty(issue.DueDate)})
+		details, _ := json.Marshal(map[string]string{"from": util.ValueOrEmpty(payload.PrevDueDate), "to": util.ValueOrEmpty(issue.DueDate)})
 		if err := notifySubscribers(ctx, queries, collector.bus, issue.ID, issue.Status, event.WorkspaceID, event,
 			nil, "due_date_changed", "info", issue.Title, "", details); err != nil {
 			return nil, err

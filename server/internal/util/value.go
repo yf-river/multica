@@ -20,3 +20,10 @@ func StringFromAny(value any) string {
 		return ""
 	}
 }
+
+func ValueOrEmpty(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
