@@ -803,12 +803,7 @@ func (h *Handler) GetPromptEvaluationAsset(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *Handler) CreatePromptEvaluationAsset(w http.ResponseWriter, r *http.Request) {
-	workspaceID := h.resolveWorkspaceID(r)
-	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
-	if !ok {
-		return
-	}
-	userID, ok := requireUserID(w, r)
+	_, workspaceUUID, userID, ok := h.requirePromptEvaluationWorkspaceUser(w, r)
 	if !ok {
 		return
 	}

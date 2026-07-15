@@ -93,12 +93,7 @@ func (h *Handler) ListPromptEvaluationOptimizationCandidates(w http.ResponseWrit
 }
 
 func (h *Handler) CreatePromptEvaluationOptimizationCandidate(w http.ResponseWriter, r *http.Request) {
-	workspaceID := h.resolveWorkspaceID(r)
-	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
-	if !ok {
-		return
-	}
-	userID, ok := requireUserID(w, r)
+	_, workspaceUUID, userID, ok := h.requirePromptEvaluationWorkspaceUser(w, r)
 	if !ok {
 		return
 	}
@@ -295,12 +290,7 @@ func (h *Handler) promptEvaluationCandidateRuntimeEvidence(ctx context.Context, 
 }
 
 func (h *Handler) PublishPromptEvaluationOptimizationCandidate(w http.ResponseWriter, r *http.Request) {
-	workspaceID := h.resolveWorkspaceID(r)
-	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
-	if !ok {
-		return
-	}
-	userID, ok := requireUserID(w, r)
+	_, workspaceUUID, userID, ok := h.requirePromptEvaluationWorkspaceUser(w, r)
 	if !ok {
 		return
 	}
@@ -430,12 +420,7 @@ func (h *Handler) PublishPromptEvaluationOptimizationCandidate(w http.ResponseWr
 }
 
 func (h *Handler) UpdatePromptEvaluationOptimizationCandidate(w http.ResponseWriter, r *http.Request) {
-	workspaceID := h.resolveWorkspaceID(r)
-	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
-	if !ok {
-		return
-	}
-	userID, ok := requireUserID(w, r)
+	_, workspaceUUID, userID, ok := h.requirePromptEvaluationWorkspaceUser(w, r)
 	if !ok {
 		return
 	}
@@ -529,12 +514,7 @@ func (h *Handler) UpdatePromptEvaluationOptimizationCandidate(w http.ResponseWri
 }
 
 func (h *Handler) RejectPromptEvaluationOptimizationCandidate(w http.ResponseWriter, r *http.Request) {
-	workspaceID := h.resolveWorkspaceID(r)
-	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
-	if !ok {
-		return
-	}
-	userID, ok := requireUserID(w, r)
+	_, workspaceUUID, userID, ok := h.requirePromptEvaluationWorkspaceUser(w, r)
 	if !ok {
 		return
 	}

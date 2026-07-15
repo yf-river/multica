@@ -519,12 +519,7 @@ func (h *Handler) ListPromptEvaluationEvidenceSnapshots(w http.ResponseWriter, r
 }
 
 func (h *Handler) CreatePromptEvaluationEvidenceSnapshot(w http.ResponseWriter, r *http.Request) {
-	workspaceID := h.resolveWorkspaceID(r)
-	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
-	if !ok {
-		return
-	}
-	userID, ok := requireUserID(w, r)
+	_, workspaceUUID, userID, ok := h.requirePromptEvaluationWorkspaceUser(w, r)
 	if !ok {
 		return
 	}

@@ -433,12 +433,7 @@ func (h *Handler) CheckPromptEvaluationSkillCandidateFreshness(w http.ResponseWr
 }
 
 func (h *Handler) ApplyPromptEvaluationSkillCandidate(w http.ResponseWriter, r *http.Request) {
-	workspaceID := h.resolveWorkspaceID(r)
-	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
-	if !ok {
-		return
-	}
-	userID, ok := requireUserID(w, r)
+	_, workspaceUUID, userID, ok := h.requirePromptEvaluationWorkspaceUser(w, r)
 	if !ok {
 		return
 	}
@@ -575,12 +570,7 @@ func writePromptEvaluationSkillApplyReplayError(w http.ResponseWriter, err error
 }
 
 func (h *Handler) PreparePromptEvaluationSkillReEvalAsset(w http.ResponseWriter, r *http.Request) {
-	workspaceID := h.resolveWorkspaceID(r)
-	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
-	if !ok {
-		return
-	}
-	userID, ok := requireUserID(w, r)
+	_, workspaceUUID, userID, ok := h.requirePromptEvaluationWorkspaceUser(w, r)
 	if !ok {
 		return
 	}
@@ -802,12 +792,7 @@ func (h *Handler) PreparePromptEvaluationSkillReEvalAsset(w http.ResponseWriter,
 }
 
 func (h *Handler) RunPromptEvaluationSkillReEval(w http.ResponseWriter, r *http.Request) {
-	workspaceID := h.resolveWorkspaceID(r)
-	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
-	if !ok {
-		return
-	}
-	userID, ok := requireUserID(w, r)
+	_, workspaceUUID, userID, ok := h.requirePromptEvaluationWorkspaceUser(w, r)
 	if !ok {
 		return
 	}

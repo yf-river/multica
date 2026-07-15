@@ -387,12 +387,7 @@ func (h *Handler) ListPromptEvaluationCaseOperations(w http.ResponseWriter, r *h
 }
 
 func (h *Handler) BulkUpdatePromptEvaluationCaseTags(w http.ResponseWriter, r *http.Request) {
-	workspaceID := h.resolveWorkspaceID(r)
-	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
-	if !ok {
-		return
-	}
-	userID, ok := requireUserID(w, r)
+	workspaceID, workspaceUUID, userID, ok := h.requirePromptEvaluationWorkspaceUser(w, r)
 	if !ok {
 		return
 	}
@@ -865,12 +860,7 @@ func validPromptEvaluationCaseStatus(status string) bool {
 const promptEvaluationCaseStatusError = "status must be 启用, 归档, draft, approved, or active"
 
 func (h *Handler) CreatePromptEvaluationCase(w http.ResponseWriter, r *http.Request) {
-	workspaceID := h.resolveWorkspaceID(r)
-	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
-	if !ok {
-		return
-	}
-	userID, ok := requireUserID(w, r)
+	_, workspaceUUID, userID, ok := h.requirePromptEvaluationWorkspaceUser(w, r)
 	if !ok {
 		return
 	}
