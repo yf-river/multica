@@ -85,13 +85,8 @@ func (h *Handler) GetWorkspaceAgentRunCounts(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	actorType, actorID := resolveActor(r, requestUserID(r))
-	allowed, err := h.accessibleAgentIDs(r.Context(), workspaceID, actorType, actorID, member.Role)
-	if err != nil {
-		if writeClientClosedIfCanceled(w, err) {
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "failed to resolve agent access")
+	allowed, ok := h.requestAccessibleAgentIDs(w, r, workspaceID, requestUserID(r), member.Role)
+	if !ok {
 		return
 	}
 
@@ -129,13 +124,8 @@ func (h *Handler) GetWorkspaceAgentActivity30d(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	actorType, actorID := resolveActor(r, requestUserID(r))
-	allowed, err := h.accessibleAgentIDs(r.Context(), workspaceID, actorType, actorID, member.Role)
-	if err != nil {
-		if writeClientClosedIfCanceled(w, err) {
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "failed to resolve agent access")
+	allowed, ok := h.requestAccessibleAgentIDs(w, r, workspaceID, requestUserID(r), member.Role)
+	if !ok {
 		return
 	}
 
@@ -181,13 +171,8 @@ func (h *Handler) ListWorkspaceAgentTaskSnapshot(w http.ResponseWriter, r *http.
 		return
 	}
 
-	actorType, actorID := resolveActor(r, requestUserID(r))
-	allowed, err := h.accessibleAgentIDs(r.Context(), workspaceID, actorType, actorID, member.Role)
-	if err != nil {
-		if writeClientClosedIfCanceled(w, err) {
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "failed to resolve agent access")
+	allowed, ok := h.requestAccessibleAgentIDs(w, r, workspaceID, requestUserID(r), member.Role)
+	if !ok {
 		return
 	}
 

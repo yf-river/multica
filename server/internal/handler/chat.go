@@ -208,15 +208,7 @@ func (h *Handler) chatAccessibleAgentIDs(w http.ResponseWriter, r *http.Request,
 	if !ok {
 		return nil, false
 	}
-	actorType, actorID := resolveActor(r, scope.userID)
-	allowed, err := h.accessibleAgentIDs(r.Context(), scope.workspaceID, actorType, actorID, member.Role)
-	if err != nil {
-		if !writeClientClosedIfCanceled(w, err) {
-			writeError(w, http.StatusInternalServerError, "failed to resolve agent access")
-		}
-		return nil, false
-	}
-	return allowed, true
+	return h.requestAccessibleAgentIDs(w, r, scope.workspaceID, scope.userID, member.Role)
 }
 
 func (h *Handler) loadChatSessionForUser(w http.ResponseWriter, r *http.Request, scope chatRequestScope, sessionID string) (db.ChatSession, bool) {

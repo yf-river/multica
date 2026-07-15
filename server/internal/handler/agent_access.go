@@ -159,10 +159,7 @@ func (h *Handler) requireSquadAccess(w http.ResponseWriter, r *http.Request, squ
 	return false
 }
 
-// accessibleAgentIDs returns the set of agent IDs in the workspace the actor
-// is allowed to see, for use by workspace-wide aggregation endpoints
-// (run counts, activity histograms, task snapshots) that need to filter out
-// personal agents the member can't access.
+// accessibleAgentIDs returns the workspace agents visible to the actor.
 func (h *Handler) accessibleAgentIDs(ctx context.Context, workspaceID, actorType, actorID, role string) (map[string]struct{}, error) {
 	wsUUID, err := util.ParseUUID(workspaceID)
 	if err != nil {
@@ -182,6 +179,22 @@ func (h *Handler) accessibleAgentIDs(ctx context.Context, workspaceID, actorType
 		allowed[uuidToString(a.ID)] = struct{}{}
 	}
 	return allowed, nil
+}
+
+func (h *Handler) requestAccessibleAgentIDs(
+	w http.ResponseWriter,
+	r *http.Request,
+	workspaceID, userID, role string,
+) (map[string]struct{}, bool) {
+	actorType, actorID := resolveActor(r, userID)
+	allowed, err := h.accessibleAgentIDs(r.Context(), workspaceID, actorType, actorID, role)
+	if err != nil {
+		if !writeClientClosedIfCanceled(w, err) {
+			writeError(w, http.StatusInternalServerError, "failed to resolve agent access")
+		}
+		return nil, false
+	}
+	return allowed, true
 }
 
 // canEnqueueSquadLeader returns true when the given actor is allowed to

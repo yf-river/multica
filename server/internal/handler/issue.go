@@ -281,13 +281,8 @@ func (h *Handler) visibleAgentUUIDsForIssueList(w http.ResponseWriter, r *http.R
 	if !ok {
 		return nil, false
 	}
-	actorType, actorID := resolveActor(r, requestUserID(r))
-	allowed, err := h.accessibleAgentIDs(r.Context(), workspaceID, actorType, actorID, member.Role)
-	if err != nil {
-		if writeClientClosedIfCanceled(w, err) {
-			return nil, false
-		}
-		writeError(w, http.StatusInternalServerError, "failed to resolve agent access")
+	allowed, ok := h.requestAccessibleAgentIDs(w, r, workspaceID, requestUserID(r), member.Role)
+	if !ok {
 		return nil, false
 	}
 	ids := make([]pgtype.UUID, 0, len(allowed))
