@@ -84,7 +84,7 @@ func (s *InstallationService) Upsert(ctx context.Context, p InstallationParams) 
 func (s *InstallationService) Revoke(ctx context.Context, id pgtype.UUID) error {
 	return s.queries.SetLarkInstallationStatus(ctx, db.SetLarkInstallationStatusParams{
 		ID:     id,
-		Status: string(InstallationRevoked),
+		Status: installationStatusRevoked,
 	})
 }
 

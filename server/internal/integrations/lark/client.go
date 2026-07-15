@@ -131,7 +131,6 @@ type LarkMessage struct {
 	SenderType     string // sender.sender_type: user / app / anonymous / …
 	CreateTime     string // epoch milliseconds, as Lark returns it (a string)
 	ParentID       string
-	RootID         string
 	UpperMessageID string // the merge_forward parent a child hangs under
 	Deleted        bool
 	Mentions       []LarkMessageMention

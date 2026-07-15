@@ -542,9 +542,6 @@ func TestDecodeLarkFrameCapturesReplyLinkage(t *testing.T) {
 	if msg.ParentID != "om_parent" {
 		t.Errorf("ParentID = %q want om_parent", msg.ParentID)
 	}
-	if msg.RootID != "om_root" {
-		t.Errorf("RootID = %q want om_root", msg.RootID)
-	}
 	if msg.MessageType != "text" {
 		t.Errorf("MessageType = %q want text", msg.MessageType)
 	}

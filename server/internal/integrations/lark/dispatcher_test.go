@@ -315,7 +315,7 @@ func activeInstallation() db.LarkInstallation {
 		WorkspaceID:     validUUID(0x22),
 		AgentID:         validUUID(0x33),
 		InstallerUserID: validUUID(0x99),
-		Status:          string(InstallationActive),
+		Status:          installationStatusActive,
 	}
 }
 
@@ -379,7 +379,7 @@ func TestDispatcher_UnknownAppAuditFailureIsRetryable(t *testing.T) {
 
 func TestDispatcher_RevokedInstallationDropped(t *testing.T) {
 	inst := activeInstallation()
-	inst.Status = string(InstallationRevoked)
+	inst.Status = installationStatusRevoked
 	queries := &fakeQueries{installationByApp: inst}
 	audit := &fakeAudit{}
 	d := &Dispatcher{Queries: queries, RecordDrop: audit.RecordDrop}

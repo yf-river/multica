@@ -66,12 +66,9 @@ func DecodeLarkFrame(payload []byte, inst db.LarkInstallation) (InboundMessage, 
 		SenderOpenID: OpenID(evt.Sender.SenderID.OpenID),
 		MessageType:  evt.Message.MessageType,
 		CreateTime:   evt.Message.CreateTime,
-		// parent_id / root_id are populated by Lark only in reply
-		// scenarios. The enricher keys quoted-reply expansion off
-		// ParentID (the directly quoted message); RootID is carried for
-		// completeness / future thread handling.
+		// parent_id is populated by Lark for replies. The enricher keys
+		// quoted-reply expansion off the directly quoted message.
 		ParentID: evt.Message.ParentID,
-		RootID:   evt.Message.RootID,
 	}
 
 	botUnionID := ""
@@ -112,11 +109,9 @@ type larkEventEnvelope struct {
 }
 
 type larkEventHeader struct {
-	EventID    string `json:"event_id"`
-	EventType  string `json:"event_type"`
-	CreateTime string `json:"create_time"`
-	AppID      string `json:"app_id"`
-	TenantKey  string `json:"tenant_key"`
+	EventID   string `json:"event_id"`
+	EventType string `json:"event_type"`
+	AppID     string `json:"app_id"`
 }
 
 // larkMessageReceiveEvent is the documented payload of
@@ -124,12 +119,8 @@ type larkEventHeader struct {
 type larkMessageReceiveEvent struct {
 	Sender struct {
 		SenderID struct {
-			OpenID  string `json:"open_id"`
-			UnionID string `json:"union_id"`
-			UserID  string `json:"user_id"`
+			OpenID string `json:"open_id"`
 		} `json:"sender_id"`
-		SenderType string `json:"sender_type"`
-		TenantKey  string `json:"tenant_key"`
 	} `json:"sender"`
 	Message struct {
 		MessageID   string        `json:"message_id"`
@@ -139,11 +130,8 @@ type larkMessageReceiveEvent struct {
 		Content     string        `json:"content"`
 		Mentions    []larkMention `json:"mentions"`
 		CreateTime  string        `json:"create_time"`
-		// ParentID / RootID are only present when the message is a
-		// reply / quote. ParentID is the directly quoted message;
-		// RootID is the root of the reply tree.
+		// ParentID is present when the message quotes another message.
 		ParentID string `json:"parent_id"`
-		RootID   string `json:"root_id"`
 	} `json:"message"`
 }
 
@@ -152,7 +140,6 @@ type larkMention struct {
 	ID  struct {
 		OpenID  string `json:"open_id"`
 		UnionID string `json:"union_id"`
-		UserID  string `json:"user_id"`
 	} `json:"id"`
 	Name string `json:"name"`
 }

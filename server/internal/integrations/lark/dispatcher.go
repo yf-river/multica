@@ -51,12 +51,8 @@ type InboundMessage struct {
 	// ParentID is the message_id of the message this one quote-replies
 	// to, taken verbatim from the receive event's `parent_id`. Empty
 	// when the message is not a reply. The enricher fetches it and
-	// prepends a <quoted_message> block. RootID is the thread/root
-	// anchor Lark also reports; we keep it for completeness but the
-	// quoted-reply expansion keys off ParentID (the immediate parent),
-	// not the root.
+	// prepends a <quoted_message> block.
 	ParentID string
-	RootID   string
 
 	// CommandBody is the user's OWN typed text (the decoded Body before
 	// the enricher prepends any <quoted_message> / <forwarded_messages>
@@ -278,7 +274,7 @@ func (d *Dispatcher) Handle(ctx context.Context, msg InboundMessage) (DispatchRe
 		}
 		return DispatchResult{}, fmt.Errorf("load installation: %w", err)
 	}
-	if InstallationStatus(inst.Status) != InstallationActive {
+	if inst.Status != installationStatusActive {
 		return d.drop(ctx, msg, inst.ID, DropReasonRevokedInstallation)
 	}
 

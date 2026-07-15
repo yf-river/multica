@@ -27,15 +27,9 @@ const (
 	ChatTypeGroup ChatType = "group"
 )
 
-// InstallationStatus mirrors the lark_installation.status check
-// constraint. A revoked installation accepts no further events; its
-// WebSocket is torn down and inbound events are dropped with an
-// audit row.
-type InstallationStatus string
-
 const (
-	InstallationActive  InstallationStatus = "active"
-	InstallationRevoked InstallationStatus = "revoked"
+	installationStatusActive  = "active"
+	installationStatusRevoked = "revoked"
 )
 
 // Region identifies which Lark open-platform cloud an installation lives
