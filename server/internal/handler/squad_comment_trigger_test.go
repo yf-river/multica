@@ -530,102 +530,32 @@ func TestCompleteTask_WorkerStageCompletionEnqueuesSquadLeader(t *testing.T) {
 	}
 }
 
-func TestCompleteTask_FinalSOPStepAutoClosesIssueWithoutPullRequest(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
-	ctx := context.Background()
-	leaderID := createHandlerTestAgent(t, "SOP Final Auto Close Leader", nil)
-	verifyID := createHandlerTestSOPAgent(t, "SOP Final Auto Close 05-verify", "05-verify")
+const finalSOPTestProfile = `{
+	"profile_key":"test-final-sop",
+	"steps":[
+		{"key":"pm","name":"pm","role_key":"pm"},
+		{"key":"05-verify","name":"05-测试","role_key":"05-verify"}
+	]
+}`
 
-	var verifyRuntimeID string
-	if err := testPool.QueryRow(ctx, `SELECT runtime_id FROM agent WHERE id = $1`, verifyID).Scan(&verifyRuntimeID); err != nil {
-		t.Fatalf("load verify runtime: %v", err)
-	}
-
-	profile := `{
-		"profile_key":"test-final-sop",
-		"steps":[
-			{"key":"pm","name":"pm","role_key":"pm"},
-			{"key":"05-verify","name":"05-测试","role_key":"05-verify"}
-		]
-	}`
-	var squadID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id, sop_profile)
-		VALUES ($1, $2, '', $3, $4, $5)
-		RETURNING id
-	`, testWorkspaceID, "SOP Final Auto Close Squad", leaderID, testUserID, profile).Scan(&squadID); err != nil {
-		t.Fatalf("create squad: %v", err)
-	}
-	t.Cleanup(func() {
-		mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
-	})
-
-	var issueID string
-	issueNumber := nextHandlerTestIssueNumber(t)
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, creator_type, creator_id, title, status, assignee_type, assignee_id, number)
-		VALUES ($1, 'member', $2, $3, 'in_progress', 'squad', $4, $5)
-		RETURNING id
-	`, testWorkspaceID, testUserID, "sop final auto close", squadID, issueNumber).Scan(&issueID); err != nil {
-		t.Fatalf("create issue: %v", err)
-	}
-	t.Cleanup(func() {
-		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
-	})
-
-	if _, err := testHandler.Queries.CreateSquadSOPRun(ctx, db.CreateSquadSOPRunParams{
-		WorkspaceID:    util.MustParseUUID(testWorkspaceID),
-		IssueID:        util.MustParseUUID(issueID),
-		SquadID:        util.MustParseUUID(squadID),
-		ProfileKey:     "test-final-sop",
-		Profile:        []byte(profile),
-		Status:         "进行中",
-		CurrentStepKey: "05-verify",
-	}); err != nil {
-		t.Fatalf("create sop run: %v", err)
-	}
-
-	var taskID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, dispatched_at, started_at)
-		VALUES ($1, $2, $3, 'running', 2, now(), now())
-		RETURNING id
-	`, verifyID, verifyRuntimeID, issueID).Scan(&taskID); err != nil {
-		t.Fatalf("insert verify task: %v", err)
-	}
-	if _, err := testHandler.TaskService.CompleteTask(ctx, util.MustParseUUID(taskID), []byte(`{}`), "", ""); err != nil {
-		t.Fatalf("complete verify task: %v", err)
-	}
-
-	issue, err := testHandler.Queries.GetIssue(ctx, util.MustParseUUID(issueID))
-	if err != nil {
-		t.Fatalf("load issue: %v", err)
-	}
-	if issue.Status != "done" {
-		t.Fatalf("issue status = %q, want done", issue.Status)
-	}
-	var runStatus string
-	if err := testPool.QueryRow(ctx, `
-		SELECT status FROM squad_sop_run
-		WHERE issue_id = $1 AND workspace_id = $2
-		ORDER BY created_at DESC LIMIT 1
-	`, issueID, testWorkspaceID).Scan(&runStatus); err != nil {
-		t.Fatalf("load sop run: %v", err)
-	}
-	if runStatus != "已完成" {
-		t.Fatalf("sop run status = %q, want 已完成", runStatus)
-	}
+type finalSOPTaskFixture struct {
+	Ctx             context.Context
+	LeaderID        string
+	LeaderRuntimeID string
+	VerifyID        string
+	VerifyRuntimeID string
+	IssueID         string
+	RunID           pgtype.UUID
 }
 
-func TestCompleteTask_FinalSOPStepBlockedOutputDoesNotAutoCloseIssue(t *testing.T) {
+func newFinalSOPTaskFixture(t *testing.T, name, issueStatus string, projectID pgtype.UUID) finalSOPTaskFixture {
+	t.Helper()
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
 	}
 	ctx := context.Background()
-	leaderID := createHandlerTestAgent(t, "SOP Final Blocked Leader", nil)
-	verifyID := createHandlerTestSOPAgent(t, "SOP Final Blocked 05-verify", "05-verify")
+	leaderID := createHandlerTestAgent(t, name+" Leader", nil)
+	verifyID := createHandlerTestSOPAgent(t, name+" 05-verify", "05-verify")
 
 	var leaderRuntimeID, verifyRuntimeID string
 	if err := testPool.QueryRow(ctx, `SELECT runtime_id FROM agent WHERE id = $1`, leaderID).Scan(&leaderRuntimeID); err != nil {
@@ -635,19 +565,12 @@ func TestCompleteTask_FinalSOPStepBlockedOutputDoesNotAutoCloseIssue(t *testing.
 		t.Fatalf("load verify runtime: %v", err)
 	}
 
-	profile := `{
-		"profile_key":"test-final-sop-blocked",
-		"steps":[
-			{"key":"pm","name":"pm","role_key":"pm"},
-			{"key":"05-verify","name":"05-测试","role_key":"05-verify"}
-		]
-	}`
 	var squadID string
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id, sop_profile)
 		VALUES ($1, $2, '', $3, $4, $5)
 		RETURNING id
-	`, testWorkspaceID, "SOP Final Blocked Squad", leaderID, testUserID, profile).Scan(&squadID); err != nil {
+	`, testWorkspaceID, name+" Squad", leaderID, testUserID, finalSOPTestProfile).Scan(&squadID); err != nil {
 		t.Fatalf("create squad: %v", err)
 	}
 	t.Cleanup(func() {
@@ -657,44 +580,90 @@ func TestCompleteTask_FinalSOPStepBlockedOutputDoesNotAutoCloseIssue(t *testing.
 	var issueID string
 	issueNumber := nextHandlerTestIssueNumber(t)
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, creator_type, creator_id, title, status, assignee_type, assignee_id, number)
-		VALUES ($1, 'member', $2, $3, 'in_progress', 'squad', $4, $5)
+		INSERT INTO issue (workspace_id, creator_type, creator_id, title, status, project_id, assignee_type, assignee_id, number)
+		VALUES ($1, 'member', $2, $3, $4, $5, 'squad', $6, $7)
 		RETURNING id
-	`, testWorkspaceID, testUserID, "sop final blocked output", squadID, issueNumber).Scan(&issueID); err != nil {
+	`, testWorkspaceID, testUserID, name, issueStatus, projectID, squadID, issueNumber).Scan(&issueID); err != nil {
 		t.Fatalf("create issue: %v", err)
 	}
 	t.Cleanup(func() {
 		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
 	})
 
-	var runID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO squad_sop_run (workspace_id, issue_id, squad_id, profile_key, profile, status, current_step_key)
-		VALUES ($1, $2, $3, 'test-final-sop-blocked', $4, '进行中', '05-verify')
-		RETURNING id
-	`, testWorkspaceID, issueID, squadID, profile).Scan(&runID); err != nil {
+	run, err := testHandler.Queries.CreateSquadSOPRun(ctx, db.CreateSquadSOPRunParams{
+		WorkspaceID:    util.MustParseUUID(testWorkspaceID),
+		IssueID:        util.MustParseUUID(issueID),
+		SquadID:        util.MustParseUUID(squadID),
+		ProfileKey:     "test-final-sop",
+		Profile:        []byte(finalSOPTestProfile),
+		Status:         "进行中",
+		CurrentStepKey: "05-verify",
+	})
+	if err != nil {
 		t.Fatalf("create sop run: %v", err)
 	}
 
+	return finalSOPTaskFixture{
+		Ctx:             ctx,
+		LeaderID:        leaderID,
+		LeaderRuntimeID: leaderRuntimeID,
+		VerifyID:        verifyID,
+		VerifyRuntimeID: verifyRuntimeID,
+		IssueID:         issueID,
+		RunID:           run.ID,
+	}
+}
+
+func (fx finalSOPTaskFixture) completeFinalTask(t *testing.T, result []byte) {
+	t.Helper()
 	var taskID string
-	if err := testPool.QueryRow(ctx, `
+	if err := testPool.QueryRow(fx.Ctx, `
 		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, dispatched_at, started_at)
 		VALUES ($1, $2, $3, 'running', 2, now(), now())
 		RETURNING id
-	`, verifyID, verifyRuntimeID, issueID).Scan(&taskID); err != nil {
+	`, fx.VerifyID, fx.VerifyRuntimeID, fx.IssueID).Scan(&taskID); err != nil {
 		t.Fatalf("insert verify task: %v", err)
 	}
+	if _, err := testHandler.TaskService.CompleteTask(fx.Ctx, util.MustParseUUID(taskID), result, "", ""); err != nil {
+		t.Fatalf("complete verify task: %v", err)
+	}
+}
+
+func TestCompleteTask_FinalSOPStepAutoClosesIssueWithoutPullRequest(t *testing.T) {
+	fx := newFinalSOPTaskFixture(t, "SOP Final Auto Close", "in_progress", pgtype.UUID{})
+	fx.completeFinalTask(t, []byte(`{}`))
+
+	issue, err := testHandler.Queries.GetIssue(fx.Ctx, util.MustParseUUID(fx.IssueID))
+	if err != nil {
+		t.Fatalf("load issue: %v", err)
+	}
+	if issue.Status != "done" {
+		t.Fatalf("issue status = %q, want done", issue.Status)
+	}
+	var runStatus string
+	if err := testPool.QueryRow(fx.Ctx, `
+		SELECT status FROM squad_sop_run
+		WHERE issue_id = $1 AND workspace_id = $2
+		ORDER BY created_at DESC LIMIT 1
+	`, fx.IssueID, testWorkspaceID).Scan(&runStatus); err != nil {
+		t.Fatalf("load sop run: %v", err)
+	}
+	if runStatus != "已完成" {
+		t.Fatalf("sop run status = %q, want 已完成", runStatus)
+	}
+}
+
+func TestCompleteTask_FinalSOPStepBlockedOutputDoesNotAutoCloseIssue(t *testing.T) {
+	fx := newFinalSOPTaskFixture(t, "SOP Final Blocked", "in_progress", pgtype.UUID{})
 	result, err := json.Marshal(map[string]string{
 		"output": "# 05-验证测试\n\n**最终判定：V0/V1 通过，V2 BLOCKED（环境缺失）**",
 	})
 	if err != nil {
 		t.Fatalf("marshal result: %v", err)
 	}
-	if _, err := testHandler.TaskService.CompleteTask(ctx, util.MustParseUUID(taskID), result, "", ""); err != nil {
-		t.Fatalf("complete verify task: %v", err)
-	}
+	fx.completeFinalTask(t, result)
 
-	issue, err := testHandler.Queries.GetIssue(ctx, util.MustParseUUID(issueID))
+	issue, err := testHandler.Queries.GetIssue(fx.Ctx, util.MustParseUUID(fx.IssueID))
 	if err != nil {
 		t.Fatalf("load issue: %v", err)
 	}
@@ -702,20 +671,20 @@ func TestCompleteTask_FinalSOPStepBlockedOutputDoesNotAutoCloseIssue(t *testing.
 		t.Fatalf("issue status = %q, want blocked", issue.Status)
 	}
 	var runStatus string
-	if err := testPool.QueryRow(ctx, `
+	if err := testPool.QueryRow(fx.Ctx, `
 		SELECT status FROM squad_sop_run WHERE id = $1 AND workspace_id = $2
-	`, runID, testWorkspaceID).Scan(&runStatus); err != nil {
+	`, fx.RunID, testWorkspaceID).Scan(&runStatus); err != nil {
 		t.Fatalf("load sop run: %v", err)
 	}
 	if runStatus != "已阻塞" {
 		t.Fatalf("sop run status = %q, want 已阻塞", runStatus)
 	}
 	var queuedLeaderCount int
-	if err := testPool.QueryRow(ctx, `
+	if err := testPool.QueryRow(fx.Ctx, `
 		SELECT count(*)
 		FROM agent_task_queue
 		WHERE issue_id = $1 AND agent_id = $2 AND runtime_id = $3 AND status = 'queued' AND is_leader_task = TRUE
-	`, issueID, leaderID, leaderRuntimeID).Scan(&queuedLeaderCount); err != nil {
+	`, fx.IssueID, fx.LeaderID, fx.LeaderRuntimeID).Scan(&queuedLeaderCount); err != nil {
 		t.Fatalf("count queued leader tasks: %v", err)
 	}
 	if queuedLeaderCount != 1 {
@@ -728,14 +697,6 @@ func TestCompleteTask_FinalSOPStepBlocksGongfengIssueWithoutPullRequestAndCommen
 		t.Skip("database not available")
 	}
 	ctx := context.Background()
-	leaderID := createHandlerTestAgent(t, "SOP Final MR Gate Leader", nil)
-	verifyID := createHandlerTestSOPAgent(t, "SOP Final MR Gate 05-verify", "05-verify")
-
-	var verifyRuntimeID string
-	if err := testPool.QueryRow(ctx, `SELECT runtime_id FROM agent WHERE id = $1`, verifyID).Scan(&verifyRuntimeID); err != nil {
-		t.Fatalf("load verify runtime: %v", err)
-	}
-
 	project, err := testHandler.Queries.CreateProject(ctx, db.CreateProjectParams{
 		WorkspaceID: util.MustParseUUID(testWorkspaceID),
 		Title:       "SOP Final MR Gate Gongfeng Project",
@@ -761,63 +722,10 @@ func TestCompleteTask_FinalSOPStepBlocksGongfengIssueWithoutPullRequestAndCommen
 		t.Fatalf("create project resource: %v", err)
 	}
 
-	profile := `{
-		"profile_key":"test-final-sop-mr-gate",
-		"steps":[
-			{"key":"pm","name":"pm","role_key":"pm"},
-			{"key":"05-verify","name":"05-测试","role_key":"05-verify"}
-		]
-	}`
-	var squadID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id, sop_profile)
-		VALUES ($1, $2, '', $3, $4, $5)
-		RETURNING id
-	`, testWorkspaceID, "SOP Final MR Gate Squad", leaderID, testUserID, profile).Scan(&squadID); err != nil {
-		t.Fatalf("create squad: %v", err)
-	}
-	t.Cleanup(func() {
-		mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
-	})
+	fx := newFinalSOPTaskFixture(t, "SOP Final MR Gate", "in_progress", project.ID)
+	fx.completeFinalTask(t, []byte(`{}`))
 
-	var issueID string
-	issueNumber := nextHandlerTestIssueNumber(t)
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, creator_type, creator_id, title, status, project_id, assignee_type, assignee_id, number)
-		VALUES ($1, 'member', $2, $3, 'in_progress', $4, 'squad', $5, $6)
-		RETURNING id
-	`, testWorkspaceID, testUserID, "sop final blocks without gongfeng MR", project.ID, squadID, issueNumber).Scan(&issueID); err != nil {
-		t.Fatalf("create issue: %v", err)
-	}
-	t.Cleanup(func() {
-		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
-	})
-
-	if _, err := testHandler.Queries.CreateSquadSOPRun(ctx, db.CreateSquadSOPRunParams{
-		WorkspaceID:    util.MustParseUUID(testWorkspaceID),
-		IssueID:        util.MustParseUUID(issueID),
-		SquadID:        util.MustParseUUID(squadID),
-		ProfileKey:     "test-final-sop-mr-gate",
-		Profile:        []byte(profile),
-		Status:         "进行中",
-		CurrentStepKey: "05-verify",
-	}); err != nil {
-		t.Fatalf("create sop run: %v", err)
-	}
-
-	var taskID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, dispatched_at, started_at)
-		VALUES ($1, $2, $3, 'running', 2, now(), now())
-		RETURNING id
-	`, verifyID, verifyRuntimeID, issueID).Scan(&taskID); err != nil {
-		t.Fatalf("insert verify task: %v", err)
-	}
-	if _, err := testHandler.TaskService.CompleteTask(ctx, util.MustParseUUID(taskID), []byte(`{}`), "", ""); err != nil {
-		t.Fatalf("complete verify task: %v", err)
-	}
-
-	issue, err := testHandler.Queries.GetIssue(ctx, util.MustParseUUID(issueID))
+	issue, err := testHandler.Queries.GetIssue(fx.Ctx, util.MustParseUUID(fx.IssueID))
 	if err != nil {
 		t.Fatalf("load issue: %v", err)
 	}
@@ -826,13 +734,13 @@ func TestCompleteTask_FinalSOPStepBlocksGongfengIssueWithoutPullRequestAndCommen
 	}
 
 	var authorID, content string
-	if err := testPool.QueryRow(ctx, `
+	if err := testPool.QueryRow(fx.Ctx, `
 		SELECT author_id::text, content
 		FROM comment
 		WHERE issue_id = $1 AND author_type = 'system'
 		ORDER BY created_at DESC
 		LIMIT 1
-	`, issueID).Scan(&authorID, &content); err != nil {
+	`, fx.IssueID).Scan(&authorID, &content); err != nil {
 		t.Fatalf("load missing MR gate comment: %v", err)
 	}
 	if authorID != "00000000-0000-0000-0000-000000000000" {
@@ -844,75 +752,10 @@ func TestCompleteTask_FinalSOPStepBlocksGongfengIssueWithoutPullRequestAndCommen
 }
 
 func TestCompleteTask_FinalSOPStepClosesIssueAlreadyInReview(t *testing.T) {
-	if testHandler == nil || testPool == nil {
-		t.Skip("database not available")
-	}
-	ctx := context.Background()
-	leaderID := createHandlerTestAgent(t, "SOP Final InReview Leader", nil)
-	verifyID := createHandlerTestSOPAgent(t, "SOP Final InReview 05-verify", "05-verify")
+	fx := newFinalSOPTaskFixture(t, "SOP Final InReview", "in_review", pgtype.UUID{})
+	fx.completeFinalTask(t, []byte(`{}`))
 
-	var verifyRuntimeID string
-	if err := testPool.QueryRow(ctx, `SELECT runtime_id FROM agent WHERE id = $1`, verifyID).Scan(&verifyRuntimeID); err != nil {
-		t.Fatalf("load verify runtime: %v", err)
-	}
-
-	profile := `{
-		"profile_key":"test-final-sop-in-review",
-		"steps":[
-			{"key":"pm","name":"pm","role_key":"pm"},
-			{"key":"05-verify","name":"05-测试","role_key":"05-verify"}
-		]
-	}`
-	var squadID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id, sop_profile)
-		VALUES ($1, $2, '', $3, $4, $5)
-		RETURNING id
-	`, testWorkspaceID, "SOP Final InReview Squad", leaderID, testUserID, profile).Scan(&squadID); err != nil {
-		t.Fatalf("create squad: %v", err)
-	}
-	t.Cleanup(func() {
-		mustExec(t, context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
-	})
-
-	var issueID string
-	issueNumber := nextHandlerTestIssueNumber(t)
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, creator_type, creator_id, title, status, assignee_type, assignee_id, number)
-		VALUES ($1, 'member', $2, $3, 'in_review', 'squad', $4, $5)
-		RETURNING id
-	`, testWorkspaceID, testUserID, "sop final auto close from in_review", squadID, issueNumber).Scan(&issueID); err != nil {
-		t.Fatalf("create issue: %v", err)
-	}
-	t.Cleanup(func() {
-		mustExec(t, context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
-	})
-
-	if _, err := testHandler.Queries.CreateSquadSOPRun(ctx, db.CreateSquadSOPRunParams{
-		WorkspaceID:    util.MustParseUUID(testWorkspaceID),
-		IssueID:        util.MustParseUUID(issueID),
-		SquadID:        util.MustParseUUID(squadID),
-		ProfileKey:     "test-final-sop-in-review",
-		Profile:        []byte(profile),
-		Status:         "进行中",
-		CurrentStepKey: "05-verify",
-	}); err != nil {
-		t.Fatalf("create sop run: %v", err)
-	}
-
-	var taskID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, dispatched_at, started_at)
-		VALUES ($1, $2, $3, 'running', 2, now(), now())
-		RETURNING id
-	`, verifyID, verifyRuntimeID, issueID).Scan(&taskID); err != nil {
-		t.Fatalf("insert verify task: %v", err)
-	}
-	if _, err := testHandler.TaskService.CompleteTask(ctx, util.MustParseUUID(taskID), []byte(`{}`), "", ""); err != nil {
-		t.Fatalf("complete verify task: %v", err)
-	}
-
-	issue, err := testHandler.Queries.GetIssue(ctx, util.MustParseUUID(issueID))
+	issue, err := testHandler.Queries.GetIssue(fx.Ctx, util.MustParseUUID(fx.IssueID))
 	if err != nil {
 		t.Fatalf("load issue: %v", err)
 	}
