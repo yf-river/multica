@@ -1,9 +1,7 @@
 import type {
-  PromptEvaluationAsset,
   PromptEvaluationAssetEvidenceSnapshotResponse,
   PromptEvaluationEvidenceSnapshot,
   PromptEvaluationRunEvidence,
-  PromptEvaluationStructuredCase,
   PromptEvaluationRun,
   PromptEvaluationOptimizationCandidate,
   PromptEvaluationSkillFreshnessResult,
@@ -11,21 +9,7 @@ import type {
 } from "../types";
 
 // Runtime response contracts for prompt evaluation empty.
-export const EMPTY_PROMPT_EVALUATION_ASSET: PromptEvaluationAsset = {
-  id: "",
-  workspace_id: "",
-  prompt_id: null,
-  name: "",
-  description: "",
-  asset_type: "数据集",
-  payload: {},
-  status: "启用",
-  updated_at: "",
-  dataset_row_count: 0,
-  test_suite_case_count: 0,
-};
-
-export const EMPTY_PROMPT_EVALUATION_RUN: PromptEvaluationRun = {
+const EMPTY_PROMPT_EVALUATION_RUN: PromptEvaluationRun = {
   id: "",
   asset_id: "",
   prompt_id: null,
@@ -80,22 +64,6 @@ export const EMPTY_PROMPT_EVALUATION_ASSET_EVIDENCE_SNAPSHOT_RESPONSE: PromptEva
 
 export const EMPTY_PROMPT_EVALUATION_ASSET_EVIDENCE_ARCHIVE_PACKAGE: PromptEvaluationAssetEvidenceArchivePackage = {
   archived_run_count: 0,
-};
-
-export const EMPTY_PROMPT_EVALUATION_CASE: PromptEvaluationStructuredCase = {
-  id: "",
-  asset_id: "",
-  prompt_id: null,
-  case_index: 0,
-  case_name: "",
-  variables: {},
-  expected_contains: [],
-  input: {},
-  expected: {},
-  tags: [],
-  status: "启用",
-  source: "",
-  updated_at: "",
 };
 
 export const EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE: PromptEvaluationOptimizationCandidate = {

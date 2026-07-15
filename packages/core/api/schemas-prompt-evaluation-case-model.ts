@@ -16,3 +16,5 @@ export const PromptEvaluationCaseSchema = z.object({
   source: z.string().default("payload"),
   updated_at: z.string().default(""),
 }).loose();
+
+export const PromptEvaluationCaseMutationResultSchema = PromptEvaluationCaseSchema.pick({ id: true, case_name: true });

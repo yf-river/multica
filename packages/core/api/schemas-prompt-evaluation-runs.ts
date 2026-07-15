@@ -27,6 +27,10 @@ export const PromptEvaluationRunSchema = z.object({
   reviewed_at: z.string().default(""),
 }).loose();
 
+export const PromptEvaluationRunIDSchema = PromptEvaluationRunSchema.pick({ id: true });
+
+export const PromptEvaluationRunReviewResultSchema = PromptEvaluationRunSchema.pick({ id: true, review_decision: true, status: true });
+
 const PromptEvaluationTaskMessageSchema = z.object({
   task_id: z.string(),
   issue_id: z.string().default(""),

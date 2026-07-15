@@ -26,12 +26,15 @@ import {
   SearchIssuesSchema,
 } from "./schemas-issues";
 import {
+  PromptEvaluationAssetMutationResultSchema,
   PromptEvaluationAssetListResponseSchema,
+  PromptEvaluationDatasetVersionMutationResultSchema,
 } from "./schemas-prompt-evaluation-assets";
 import {
   PromptEvaluationDatasetFromTracesResponseSchema,
   PromptEvaluationCaseListResponseSchema,
 } from "./schemas-prompt-evaluation-cases";
+import { PromptEvaluationCaseMutationResultSchema } from "./schemas-prompt-evaluation-case-model";
 import {
   PromptEvaluationOptimizationCandidateDecisionStatusSchema,
   PromptEvaluationOptimizationCandidateListResponseSchema,
@@ -44,10 +47,11 @@ import {
   PromptEvaluationAssetEvidenceArchivePackageSchema,
   PromptEvaluationAssetEvidenceSnapshotResponseSchema,
   PromptEvaluationRunEvidenceSchema,
+  PromptEvaluationRunIDSchema,
   PromptEvaluationRunListResponseSchema,
+  PromptEvaluationRunReviewResultSchema,
   PromptEvaluationRunSchema,
 } from "./schemas-prompt-evaluation-runs";
-import { EMPTY_PROMPT_EVALUATION_RUN } from "./schemas-prompt-evaluation-empty";
 import {
   PromptLibraryItemListResponseSchema,
 } from "./schemas-prompt-library";
@@ -179,10 +183,11 @@ describe("domain response schema fallbacks", () => {
     const usage = { provider_payload: ["kept", 2] };
     const parsed = PromptEvaluationRunEvidenceSchema.parse({
       run: {
-        ...EMPTY_PROMPT_EVALUATION_RUN,
         id: "run-1",
         workspace_id: "workspace-1",
         asset_id: "asset-1",
+        run_kind: "模板渲染检查",
+        status: "通过",
       },
       trials: [trial],
       task_usage: [usage],
@@ -196,10 +201,10 @@ describe("domain response schema fallbacks", () => {
       trials: ["not-an-evidence-object"],
     }).success).toBe(false);
     expect(PromptEvaluationRunSchema.safeParse({
-      ...EMPTY_PROMPT_EVALUATION_RUN,
       id: "run-1",
       asset_id: "asset-1",
       run_kind: "本地渲染",
+      status: "通过",
     }).success).toBe(false);
   });
 
@@ -242,7 +247,18 @@ describe("domain response schema fallbacks", () => {
     )).toBe(fallback);
   });
 
-  it("projects optimization mutations to the values current callers consume", () => {
+  it("projects evaluation mutations to the values current callers consume", () => {
+    expect(PromptEvaluationAssetMutationResultSchema.parse({
+      id: "asset-1", prompt_id: "prompt-1",
+    })).toEqual({ id: "asset-1", prompt_id: "prompt-1" });
+    expect(PromptEvaluationDatasetVersionMutationResultSchema.parse({ version: 3 })).toEqual({ version: 3 });
+    expect(PromptEvaluationCaseMutationResultSchema.parse({
+      id: "case-1", case_name: "Current case",
+    })).toEqual({ id: "case-1", case_name: "Current case" });
+    expect(PromptEvaluationRunIDSchema.parse({ id: "run-1" })).toEqual({ id: "run-1" });
+    expect(PromptEvaluationRunReviewResultSchema.parse({
+      id: "run-1", review_decision: "通过", status: "通过",
+    })).toEqual({ id: "run-1", review_decision: "通过", status: "通过" });
     expect(PromptEvaluationOptimizationCandidateDecisionStatusSchema.parse({
       id: "candidate-1", status: "已拒绝",
     })).toBe("已拒绝");

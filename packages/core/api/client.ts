@@ -252,13 +252,10 @@ import {
   EMPTY_PROMPT_LIBRARY_VERSION,
   EMPTY_AGENT_PLAYGROUND_DETAIL,
   EMPTY_AGENT_PLAYGROUND_EXPERIMENT_LIST_RESPONSE,
-  EMPTY_PROMPT_EVALUATION_ASSET,
-  EMPTY_PROMPT_EVALUATION_RUN,
   EMPTY_PROMPT_EVALUATION_RUN_EVIDENCE,
   EMPTY_PROMPT_EVALUATION_ASSET_EVIDENCE_ARCHIVE_PACKAGE,
   EMPTY_PROMPT_EVALUATION_ASSET_EVIDENCE_SNAPSHOT_RESPONSE,
   EMPTY_PROMPT_EVALUATION_EVIDENCE_SNAPSHOT,
-  EMPTY_PROMPT_EVALUATION_CASE,
   EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE,
   EMPTY_PROMPT_EVALUATION_SKILL_FRESHNESS_RESULT,
   EMPTY_RUNTIME_PROFILE,
@@ -302,19 +299,20 @@ import {
   RuntimeModelListRequestSchema,
   RuntimeLocalSkillListRequestSchema,
   RuntimeLocalSkillImportRequestSchema,
-  PromptEvaluationAssetSchema,
+  PromptEvaluationAssetMutationResultSchema,
   PromptEvaluationAssetListResponseSchema,
   PromptEvaluationDatasetFromTracesResponseSchema,
   PromptEvaluationDatasetVersionListResponseSchema,
-  PromptEvaluationDatasetVersionSchema,
+  PromptEvaluationDatasetVersionMutationResultSchema,
   PromptEvaluationRunListResponseSchema,
-  PromptEvaluationRunSchema,
+  PromptEvaluationRunIDSchema,
+  PromptEvaluationRunReviewResultSchema,
   PromptEvaluationRunEvidenceSchema,
   PromptEvaluationAssetEvidenceArchivePackageSchema,
   PromptEvaluationAssetEvidenceSnapshotResponseSchema,
   PromptEvaluationEvidenceSnapshotSchema,
   PromptEvaluationEvidenceSnapshotListResponseSchema,
-  PromptEvaluationCaseSchema,
+  PromptEvaluationCaseMutationResultSchema,
   PromptEvaluationCaseListResponseSchema,
   PromptEvaluationOptimizationCandidateSchema,
   PromptEvaluationOptimizationCandidateListResponseSchema,
@@ -2087,29 +2085,29 @@ export class ApiClient extends ApiTransport {
   async createPromptEvaluationAsset(
     data: CreatePromptEvaluationAssetRequest,
     idempotencyKey = generateUUID(),
-  ): Promise<PromptEvaluationAsset> {
+  ): Promise<{ id: string; prompt_id: string | null }> {
     const attempt = async () => {
       const raw = await this.fetch<unknown>("/api/prompt-evaluation-assets", {
         method: "POST",
         body: JSON.stringify(data),
         extraHeaders: { "Idempotency-Key": idempotencyKey },
       });
-      return parseOrThrow(raw, PromptEvaluationAssetSchema, EMPTY_PROMPT_EVALUATION_ASSET, {
+      return parseOrThrow(raw, PromptEvaluationAssetMutationResultSchema, { id: "", prompt_id: null }, {
         endpoint: "POST /api/prompt-evaluation-assets",
         mayHaveCommitted: true,
-      }) as PromptEvaluationAsset;
+      });
     };
     return this.retryUnknownMutationOnce(attempt);
   }
 
-  async updatePromptEvaluationAsset(id: string, data: UpdatePromptEvaluationAssetRequest): Promise<PromptEvaluationAsset> {
+  async updatePromptEvaluationAsset(id: string, data: UpdatePromptEvaluationAssetRequest): Promise<{ id: string; prompt_id: string | null }> {
     const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}`, {
       method: "PUT",
       body: JSON.stringify(data),
     });
-    return parseOrThrow(raw, PromptEvaluationAssetSchema, EMPTY_PROMPT_EVALUATION_ASSET, {
+    return parseOrThrow(raw, PromptEvaluationAssetMutationResultSchema, { id: "", prompt_id: null }, {
       endpoint: "PUT /api/prompt-evaluation-assets/:id",
-    }) as PromptEvaluationAsset;
+    });
   }
 
   async deletePromptEvaluationAsset(id: string): Promise<void> {
@@ -2151,28 +2149,17 @@ export class ApiClient extends ApiTransport {
     id: string,
     data: CreatePromptEvaluationDatasetVersionRequest = {},
     idempotencyKey = generateUUID(),
-  ): Promise<PromptEvaluationDatasetVersion> {
+  ): Promise<{ version: number }> {
     const attempt = async () => {
       const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/dataset-versions`, {
         method: "POST",
         body: JSON.stringify(data),
         extraHeaders: { "Idempotency-Key": idempotencyKey },
       });
-      return parseOrThrow(raw, PromptEvaluationDatasetVersionSchema, {
-        id: "",
-        workspace_id: "",
-        dataset_asset_id: id,
-        version: 0,
-        version_label: "",
-        row_count: 0,
-        row_fingerprint: "",
-        metadata: {},
-        created_by: null,
-        created_at: "",
-      }, {
+      return parseOrThrow(raw, PromptEvaluationDatasetVersionMutationResultSchema, { version: 0 }, {
         endpoint: "POST /api/prompt-evaluation-assets/:id/dataset-versions",
         mayHaveCommitted: true,
-      }) as PromptEvaluationDatasetVersion;
+      });
     };
     return this.retryUnknownMutationOnce(attempt);
   }
@@ -2198,29 +2185,29 @@ export class ApiClient extends ApiTransport {
   async createPromptEvaluationCase(
     data: CreatePromptEvaluationCaseRequest,
     idempotencyKey = generateUUID(),
-  ): Promise<PromptEvaluationStructuredCase> {
+  ): Promise<{ id: string; case_name: string }> {
     const attempt = async () => {
       const raw = await this.fetch<unknown>("/api/prompt-evaluation-cases", {
         method: "POST",
         body: JSON.stringify(data),
         extraHeaders: { "Idempotency-Key": idempotencyKey },
       });
-      return parseOrThrow(raw, PromptEvaluationCaseSchema, EMPTY_PROMPT_EVALUATION_CASE, {
+      return parseOrThrow(raw, PromptEvaluationCaseMutationResultSchema, { id: "", case_name: "" }, {
         endpoint: "POST /api/prompt-evaluation-cases",
         mayHaveCommitted: true,
-      }) as PromptEvaluationStructuredCase;
+      });
     };
     return this.retryUnknownMutationOnce(attempt);
   }
 
-  async updatePromptEvaluationCase(id: string, data: UpdatePromptEvaluationCaseRequest): Promise<PromptEvaluationStructuredCase> {
+  async updatePromptEvaluationCase(id: string, data: UpdatePromptEvaluationCaseRequest): Promise<{ id: string; case_name: string }> {
     const raw = await this.fetch<unknown>(`/api/prompt-evaluation-cases/${id}`, {
       method: "PUT",
       body: JSON.stringify(data),
     });
-    return parseOrThrow(raw, PromptEvaluationCaseSchema, EMPTY_PROMPT_EVALUATION_CASE, {
+    return parseOrThrow(raw, PromptEvaluationCaseMutationResultSchema, { id: "", case_name: "" }, {
       endpoint: "PUT /api/prompt-evaluation-cases/:id",
-    }) as PromptEvaluationStructuredCase;
+    });
   }
 
   async deletePromptEvaluationCase(id: string): Promise<void> {
@@ -2305,34 +2292,39 @@ export class ApiClient extends ApiTransport {
     }) as PromptEvaluationAssetEvidenceArchivePackage;
   }
 
-  async syncPromptEvaluationRun(runId: string): Promise<PromptEvaluationRun> {
+  async syncPromptEvaluationRun(runId: string): Promise<{ id: string }> {
     const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/sync`, { method: "POST" });
-    return parseOrThrow(raw, PromptEvaluationRunSchema, EMPTY_PROMPT_EVALUATION_RUN, {
+    return parseOrThrow(raw, PromptEvaluationRunIDSchema, { id: "" }, {
       endpoint: "POST /api/prompt-evaluation-runs/:id/sync",
-    }) as PromptEvaluationRun;
+    });
   }
 
-  async cancelPromptEvaluationRun(runId: string): Promise<PromptEvaluationRun> {
+  async cancelPromptEvaluationRun(runId: string): Promise<{ id: string }> {
     const attempt = async () => {
       const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/cancel`, { method: "POST" });
-      return parseOrThrow(raw, PromptEvaluationRunSchema, EMPTY_PROMPT_EVALUATION_RUN, {
+      return parseOrThrow(raw, PromptEvaluationRunIDSchema, { id: "" }, {
         endpoint: "POST /api/prompt-evaluation-runs/:id/cancel",
         mayHaveCommitted: true,
-      }) as PromptEvaluationRun;
+      });
     };
     return this.retryUnknownMutationOnce(attempt);
   }
 
-  async reviewPromptEvaluationRun(runId: string, data: ReviewPromptEvaluationRunRequest): Promise<PromptEvaluationRun> {
+  async reviewPromptEvaluationRun(
+    runId: string,
+    data: ReviewPromptEvaluationRunRequest,
+  ): Promise<Pick<PromptEvaluationRun, "id" | "review_decision" | "status">> {
     const attempt = async () => {
       const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/review`, {
         method: "POST",
         body: JSON.stringify(data),
       });
-      return parseOrThrow(raw, PromptEvaluationRunSchema, EMPTY_PROMPT_EVALUATION_RUN, {
+      return parseOrThrow<Pick<PromptEvaluationRun, "id" | "review_decision" | "status">>(raw, PromptEvaluationRunReviewResultSchema, {
+        id: "", review_decision: "", status: "已入队",
+      }, {
         endpoint: "POST /api/prompt-evaluation-runs/:id/review",
         mayHaveCommitted: true,
-      }) as PromptEvaluationRun;
+      });
     };
     return this.retryUnknownMutationOnce(attempt);
   }

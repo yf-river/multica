@@ -2,7 +2,10 @@ import { z } from "zod";
 import type { PromptEvaluationDatasetFromTracesResponse } from "../types";
 import { PromptEvaluationCaseSchema } from "./schemas-prompt-evaluation-case-model";
 
-export { PromptEvaluationCaseSchema } from "./schemas-prompt-evaluation-case-model";
+export {
+  PromptEvaluationCaseMutationResultSchema,
+  PromptEvaluationCaseSchema,
+} from "./schemas-prompt-evaluation-case-model";
 
 // Runtime response contracts for prompt evaluation cases.
 export const PromptEvaluationCaseListResponseSchema = z.object({
