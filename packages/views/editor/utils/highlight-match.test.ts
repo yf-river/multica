@@ -15,45 +15,22 @@ describe("matchHighlightAt", () => {
     expect(m).toEqual({ end: 6, inner: "hi" });
   });
 
+  it.each([
+    ["== x ==", null],
+    ["====", null],
+    ["==a `b==c` d==", "a `b==c` d"],
+    ["==a $b==c$ d==", "a $b==c$ d"],
+    ["`x==y==z`", null],
+    ["==a\n\nb==", null],
+    ["==a\nb==", "a\nb"],
+    ["==a\r\n\r\nb==", null],
+    ["==a\r\nb==", "a\r\nb"],
+  ])("matches %j with current fence rules", (input, expected) => {
+    expect(inner(input)).toBe(expected);
+  });
+
   it("returns null when the opening fence is not at i", () => {
     expect(matchHighlightAt("x==hi==", 0)).toBeNull();
-  });
-
-  it("rejects whitespace directly inside the fences", () => {
-    expect(inner("== x ==")).toBeNull();
-  });
-
-  it("rejects empty content", () => {
-    expect(inner("====")).toBeNull();
-  });
-
-  it("skips a closing == that sits inside inline code", () => {
-    // ==a `b==c` d== → inner is the whole `a `b==c` d`, not `a `b`
-    expect(inner("==a `b==c` d==")).toBe("a `b==c` d");
-  });
-
-  it("skips a closing == that sits inside inline math", () => {
-    expect(inner("==a $b==c$ d==")).toBe("a $b==c$ d");
-  });
-
-  it("does not open a highlight whose opening == is inside inline code", () => {
-    expect(inner("`x==y==z`")).toBeNull();
-  });
-
-  it("does not cross a blank line", () => {
-    expect(inner("==a\n\nb==")).toBeNull();
-  });
-
-  it("allows a soft line break inside a block", () => {
-    expect(inner("==a\nb==")).toBe("a\nb");
-  });
-
-  it("does not cross a CRLF blank line", () => {
-    expect(inner("==a\r\n\r\nb==")).toBeNull();
-  });
-
-  it("allows a CRLF soft line break inside a block", () => {
-    expect(inner("==a\r\nb==")).toBe("a\r\nb");
   });
 
   it("matches the nearest valid closing fence", () => {

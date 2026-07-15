@@ -111,7 +111,7 @@ function baseOf(filename: string): string {
 }
 
 function normalizeContentType(contentType: string): string {
-  const ct = (contentType ?? "").toLowerCase().trim();
+  const ct = contentType.toLowerCase().trim();
   const semi = ct.indexOf(";");
   return (semi >= 0 ? ct.slice(0, semi) : ct).trim();
 }

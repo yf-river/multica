@@ -17,7 +17,7 @@ import { isOffsetInRanges } from "@multica/ui/markdown/linkify";
  *     literal paragraphs, matching how the editor lexes it)
  */
 
-export interface Range {
+interface Range {
   start: number;
   end: number;
 }

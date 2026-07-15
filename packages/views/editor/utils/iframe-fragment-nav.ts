@@ -44,6 +44,6 @@ const FRAGMENT_NAV_SHIM = `<script>
 })();
 </script>`;
 
-export function withFragmentNavShim(html: string | undefined): string {
-  return (html ?? "") + FRAGMENT_NAV_SHIM;
+export function withFragmentNavShim(html: string): string {
+  return html + FRAGMENT_NAV_SHIM;
 }

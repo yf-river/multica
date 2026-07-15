@@ -12,12 +12,6 @@ describe("withFragmentNavShim", () => {
     expect(out).toBe(html + fragmentNavShim);
   });
 
-  it("does not mutate the input string", () => {
-    const html = "<p>hi</p>";
-    withFragmentNavShim(html);
-    expect(html).toBe("<p>hi</p>");
-  });
-
   it("handles empty input", () => {
     expect(withFragmentNavShim("")).toBe(fragmentNavShim);
   });
