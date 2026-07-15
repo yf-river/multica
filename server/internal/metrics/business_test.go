@@ -110,7 +110,7 @@ func TestBusinessMetricsRegistryExposesAllFamilies(t *testing.T) {
 	m.RecordLLMUsage("issue", "local", "codex", "gpt-5.4", 1, 1, 1, 1)
 	m.RecordLLMUsage("issue", "local", "custom-provider", "custom-model", 1, 0, 0, 0)
 
-	// PR3 funnel / community / commercial events. Drive every counter
+	// Drive every event counter
 	// with one synthetic value so the gather loop below sees the family.
 	exerciseEvent(m, analytics.EventSignup, nil)
 	exerciseEvent(m, analytics.EventWorkspaceCreated, map[string]any{"source": "manual"})

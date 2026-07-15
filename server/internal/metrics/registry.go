@@ -18,11 +18,8 @@ type RegistryOptions struct {
 	Version  string
 	Commit   string
 
-	// BusinessSampler, when non-nil, opts the registry into the
-	// scrape-time SQL sampler from PR4 (MUL-2947). It is intentionally
-	// separate from Pool so existing tests (and any deployment without
-	// METRICS_ADDR) cannot accidentally start hitting the database on
-	// every /metrics scrape.
+	// BusinessSampler uses a dedicated pool so metrics scrapes cannot
+	// exhaust the application's database connections.
 	BusinessSampler *BusinessSamplerOptions
 	OutboxPool      *pgxpool.Pool
 }
@@ -31,11 +28,6 @@ type Registry struct {
 	Gatherer prometheus.Gatherer
 	HTTP     *HTTPMetrics
 	Business *BusinessMetrics
-	// Sampler is non-nil only when RegistryOptions.BusinessSampler was
-	// supplied with a valid Pool. Exposed so the cmd/server entrypoint
-	// can plumb the same instance into health checks if it ever wants to.
-	Sampler *BusinessSamplerCollector
-	Outbox  *OutboxCollector
 }
 
 func NewRegistry(opts RegistryOptions) *Registry {
@@ -70,8 +62,7 @@ func NewRegistry(opts RegistryOptions) *Registry {
 	if sampler != nil {
 		reg.MustRegister(sampler.Collectors()...)
 	}
-	outbox := NewOutboxCollector(opts.OutboxPool)
-	if outbox != nil {
+	if outbox := NewOutboxCollector(opts.OutboxPool); outbox != nil {
 		reg.MustRegister(outbox)
 	}
 
@@ -79,8 +70,6 @@ func NewRegistry(opts RegistryOptions) *Registry {
 		Gatherer: reg,
 		HTTP:     httpMetrics,
 		Business: businessMetrics,
-		Sampler:  sampler,
-		Outbox:   outbox,
 	}
 }
 

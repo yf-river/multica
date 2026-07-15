@@ -17,7 +17,6 @@ const (
 	labelModel          = "model"
 	labelModelAlias     = "model_alias"
 
-	// PR3 labels (team usage and runtime observability).
 	labelPlatform    = "platform"
 	labelCadence     = "cadence"
 	labelTriggerKind = "trigger_kind"
@@ -46,7 +45,6 @@ var businessMetricLabels = map[string][]string{
 	"multica_task_queued_expired_total":     {labelSource, labelRuntimeMode},
 	"multica_task_lease_expired_total":      {labelSource},
 
-	// PR3 funnel / community / commercial.
 	"multica_signup_total":                     {},
 	"multica_workspace_created_total":          {labelSource},
 	"multica_issue_created_total":              {labelSource, labelPlatform},
@@ -80,58 +78,62 @@ var forbiddenMetricLabels = map[string]struct{}{
 }
 
 var (
-	knownSources = map[string]string{
-		"issue":           "issue",
-		"chat":            "chat",
-		"autopilot":       "autopilot",
-		"autopilot_issue": "autopilot_issue",
-		"quick_create":    "quick_create",
-		"manual":          "manual",
-		"api":             "api",
-		"other":           "other",
+	knownSources = map[string]struct{}{
+		"issue": {}, "chat": {}, "autopilot": {}, "autopilot_issue": {},
+		"quick_create": {}, "manual": {}, "api": {}, "other": {},
 	}
-	knownRuntimeModes = map[string]string{
-		"local":   "local",
-		"cloud":   "cloud",
-		"unknown": "unknown",
+	knownRuntimeModes = map[string]struct{}{
+		"local": {}, "cloud": {}, "unknown": {},
 	}
-	knownRuntimeProviders = map[string]string{
-		"antigravity":   "antigravity",
-		"claude":        "claude",
-		"codebuddy":     "codebuddy",
-		"codex":         "codex",
-		"copilot":       "copilot",
-		"cursor":        "cursor",
-		"gemini":        "gemini",
-		"hermes":        "hermes",
-		"kiro":          "kiro",
-		"kimi":          "kimi",
-		"multica_agent": "multica_agent",
-		"openclaw":      "openclaw",
-		"opencode":      "opencode",
-		"pi":            "pi",
-		"other":         "other",
+	knownRuntimeProviders = map[string]struct{}{
+		"antigravity": {}, "claude": {}, "codebuddy": {}, "codex": {},
+		"copilot": {}, "cursor": {}, "gemini": {}, "hermes": {}, "kiro": {},
+		"kimi": {}, "multica_agent": {}, "openclaw": {}, "opencode": {},
+		"pi": {}, "other": {},
 	}
-	knownTerminalStatuses = map[string]string{
-		"completed": "completed",
-		"failed":    "failed",
-		"cancelled": "cancelled",
-		"blocked":   "blocked",
-		"other":     "other",
+	knownTerminalStatuses = map[string]struct{}{
+		"completed": {}, "failed": {}, "cancelled": {}, "blocked": {}, "other": {},
 	}
-	knownTokenTypes = map[string]string{
-		"input":       "input",
-		"output":      "output",
-		"cache_read":  "cache_read",
-		"cache_write": "cache_write",
+	knownTokenTypes = map[string]struct{}{
+		"input": {}, "output": {}, "cache_read": {}, "cache_write": {},
 	}
-	knownFailureReasons = map[string]string{}
+	knownPlatforms = map[string]struct{}{
+		"server": {}, "web": {}, "desktop": {}, "cli": {},
+		"mobile": {}, "ios": {}, "unknown": {},
+	}
+	knownAutopilotCadences = map[string]struct{}{
+		"hourly": {}, "daily": {}, "weekly": {}, "monthly": {},
+		"manual": {}, "webhook": {}, "unknown": {},
+	}
+	knownAutopilotTriggers = map[string]struct{}{
+		"schedule": {}, "webhook": {}, "manual": {}, "unknown": {},
+	}
+	knownAutopilotSkipReasons = map[string]struct{}{
+		"already_running": {}, "recent_run": {}, "runtime_offline": {},
+		"throttled": {}, "max_concurrency": {}, "trigger_disabled": {},
+		"signature_invalid": {}, "unknown": {}, "other": {},
+	}
+	knownWebhookProviders = map[string]struct{}{
+		"github": {}, "generic": {}, "gitlab": {}, "stripe": {}, "other": {},
+	}
+	knownWebhookDeliveryStatuses = map[string]struct{}{
+		"queued": {}, "dispatched": {}, "failed": {}, "rejected": {},
+		"ignored": {}, "duplicate": {}, "other": {},
+	}
+	knownDaemonWSKinds = map[string]struct{}{
+		"heartbeat": {}, "task_claim": {}, "task_complete": {}, "task_usage": {},
+		"task_progress": {}, "task_messages": {}, "log": {}, "other": {},
+	}
+	knownFeedbackKinds = map[string]struct{}{
+		"bug": {}, "feature": {}, "general": {}, "praise": {}, "other": {},
+	}
+	knownFailureReasons = map[string]struct{}{}
 	modelAliasUnsafeRe  = regexp.MustCompile(`[^a-z0-9._:/+-]+`)
 )
 
 func init() {
 	for _, reason := range taskfailure.AllReasons() {
-		knownFailureReasons[reason.String()] = reason.String()
+		knownFailureReasons[reason.String()] = struct{}{}
 	}
 }
 
@@ -153,55 +155,43 @@ func metricLabels(metric string) []string {
 	return labels
 }
 
-func NormalizeTaskSource(value string) string {
+func normalizeFromAllowList(value string, allowList map[string]struct{}, fallback string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
-	if normalized, ok := knownSources[value]; ok {
-		return normalized
+	if _, ok := allowList[value]; ok {
+		return value
 	}
-	return "other"
+	return fallback
 }
 
-func NormalizeRuntimeMode(value string) string {
-	value = strings.ToLower(strings.TrimSpace(value))
-	if normalized, ok := knownRuntimeModes[value]; ok {
-		return normalized
-	}
-	return "unknown"
+func normalizeTaskSource(value string) string {
+	return normalizeFromAllowList(value, knownSources, "other")
 }
 
-func NormalizeRuntimeProvider(value string) string {
-	value = strings.ToLower(strings.TrimSpace(value))
-	if normalized, ok := knownRuntimeProviders[value]; ok {
-		return normalized
-	}
-	return "other"
+func normalizeRuntimeMode(value string) string {
+	return normalizeFromAllowList(value, knownRuntimeModes, "unknown")
 }
 
-func NormalizeTerminalStatus(value string) string {
-	value = strings.ToLower(strings.TrimSpace(value))
-	if normalized, ok := knownTerminalStatuses[value]; ok {
-		return normalized
-	}
-	return "other"
+func normalizeRuntimeProvider(value string) string {
+	return normalizeFromAllowList(value, knownRuntimeProviders, "other")
 }
 
-func NormalizeFailureReason(value string) string {
+func normalizeTerminalStatus(value string) string {
+	return normalizeFromAllowList(value, knownTerminalStatuses, "other")
+}
+
+func normalizeFailureReason(value string) string {
 	value = strings.TrimSpace(value)
-	if normalized, ok := knownFailureReasons[value]; ok {
-		return normalized
+	if _, ok := knownFailureReasons[value]; ok {
+		return value
 	}
 	return taskfailure.Classify(value).String()
 }
 
-func NormalizeTokenType(value string) string {
-	value = strings.ToLower(strings.TrimSpace(value))
-	if normalized, ok := knownTokenTypes[value]; ok {
-		return normalized
-	}
-	return "input"
+func normalizeTokenType(value string) string {
+	return normalizeFromAllowList(value, knownTokenTypes, "input")
 }
 
-func NormalizeModelAlias(value string) string {
+func normalizeModelAlias(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
 	if value == "" {
 		return "unknown"
@@ -211,4 +201,36 @@ func NormalizeModelAlias(value string) string {
 		return value[:128]
 	}
 	return value
+}
+
+func normalizePlatform(value string) string {
+	return normalizeFromAllowList(value, knownPlatforms, "unknown")
+}
+
+func normalizeAutopilotCadence(value string) string {
+	return normalizeFromAllowList(value, knownAutopilotCadences, "unknown")
+}
+
+func normalizeAutopilotTrigger(value string) string {
+	return normalizeFromAllowList(value, knownAutopilotTriggers, "unknown")
+}
+
+func normalizeAutopilotSkipReason(value string) string {
+	return normalizeFromAllowList(value, knownAutopilotSkipReasons, "other")
+}
+
+func normalizeWebhookProvider(value string) string {
+	return normalizeFromAllowList(value, knownWebhookProviders, "other")
+}
+
+func normalizeWebhookDeliveryStatus(value string) string {
+	return normalizeFromAllowList(value, knownWebhookDeliveryStatuses, "other")
+}
+
+func normalizeDaemonWSKind(value string) string {
+	return normalizeFromAllowList(value, knownDaemonWSKinds, "other")
+}
+
+func normalizeFeedbackKind(value string) string {
+	return normalizeFromAllowList(value, knownFeedbackKinds, "other")
 }

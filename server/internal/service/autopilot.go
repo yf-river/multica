@@ -956,7 +956,7 @@ func (s *AutopilotService) captureAutopilotRunStarted(ap db.Autopilot, run db.Au
 		util.UUIDToString(ap.WorkspaceID),
 		util.UUIDToString(ap.ID),
 		util.UUIDToString(run.ID),
-		triggerSource, // cadence proxy: see autopilot cadence note in metrics/labels_pr3.go
+		triggerSource,
 		s.autopilotAssigneeAnalytics(ap),
 		triggerSource,
 	))

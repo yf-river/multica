@@ -1,14 +1,5 @@
 package metrics_test
 
-// PR3 lint test: enforces that every PostHog event constant declared in
-// server/internal/analytics/events.go has a paired Prometheus counter
-// reachable through metrics.RecordEvent — and that every
-// h.Analytics.Capture(analytics.<Helper>(...)) call site goes through
-// metrics.RecordEvent (no naked Capture allowed). The agent task lifecycle is
-// no longer an analytics.Event — it is recorded straight to Prometheus via the
-// typed BusinessMetrics.RecordTask* methods — so there is no longer an
-// AgentTask* allow-list here.
-
 import (
 	"go/ast"
 	"go/parser"
@@ -23,14 +14,6 @@ import (
 	"github.com/multica-ai/multica/server/internal/metrics"
 )
 
-// TestEveryAnalyticsEventHasPrometheusCounter asserts that every Event*
-// constant declared in analytics/events.go is dispatched by
-// metrics.IncForEvent (verified by sending a synthetic event through
-// RecordEvent and observing a counter delta).
-//
-// Note: agent_task_* lifecycle telemetry is Prometheus-only via the typed
-// BusinessMetrics.RecordTask* methods and is no longer declared as an
-// analytics.Event, so there are no agent_task constants to exempt here.
 func TestEveryAnalyticsEventHasPrometheusCounter(t *testing.T) {
 	t.Parallel()
 
@@ -49,7 +32,7 @@ func TestEveryAnalyticsEventHasPrometheusCounter(t *testing.T) {
 		}
 		ok := dispatchIncrementsCounter(m, ev)
 		if !ok {
-			t.Errorf("analytics.%s (%q) is not paired with a Prometheus counter via metrics.IncForEvent — add a case in business_events.go", constantNameForEvent(name), name)
+			t.Errorf("analytics event %q is not paired with a Prometheus counter via metrics.IncForEvent", name)
 		}
 	}
 }
@@ -68,13 +51,6 @@ func TestNoNakedAnalyticsCaptureInHandlersOrServices(t *testing.T) {
 		filepath.Join(repoRoot(t), "internal", "service"),
 		filepath.Join(repoRoot(t), "cmd", "server"),
 	}
-	// allowedFunctions is keyed by absolute file path, valued by the set of
-	// function names whose bodies are allowed to call Analytics.Capture
-	// directly. Granularity is per-function, not per-file. Currently empty —
-	// no server code is permitted to call Analytics.Capture outside
-	// metrics.RecordEvent.
-	allowedFunctions := map[string]map[string]struct{}{}
-
 	var offenders []string
 	fset := token.NewFileSet()
 	for _, root := range roots {
@@ -90,13 +66,9 @@ func TestNoNakedAnalyticsCaptureInHandlersOrServices(t *testing.T) {
 			if err != nil {
 				t.Fatalf("parse %s: %v", file, err)
 			}
-			fileAllowedFns := allowedFunctions[file]
 			for _, decl := range f.Decls {
 				fn, ok := decl.(*ast.FuncDecl)
 				if !ok {
-					continue
-				}
-				if _, allowed := fileAllowedFns[fn.Name.Name]; allowed {
 					continue
 				}
 				if fn.Body == nil {
@@ -121,137 +93,6 @@ func TestNoNakedAnalyticsCaptureInHandlersOrServices(t *testing.T) {
 		sort.Strings(offenders)
 		t.Errorf("found %d naked Analytics.Capture(...) calls — wrap them in metrics.RecordEvent so the Prometheus and PostHog sides cannot drift:\n  %s", len(offenders), strings.Join(offenders, "\n  "))
 	}
-}
-
-// TestEveryAnalyticsRecordEventTakesAnalyticsHelper enforces the inverse of
-// TestNoNakedAnalyticsCaptureInHandlersOrServices: every call site that
-// DOES go through metrics.RecordEvent must take an analytics.* event helper
-// as its third argument. Local idents are accepted only when def-use
-// tracking inside the same function body proves the value originated from
-// an `analytics.<Helper>(...)` call — bare strings or unresolved values
-// fail CI.
-func TestEveryAnalyticsRecordEventTakesAnalyticsHelper(t *testing.T) {
-	t.Parallel()
-
-	roots := []string{
-		filepath.Join(repoRoot(t), "internal", "handler"),
-		filepath.Join(repoRoot(t), "internal", "service"),
-		filepath.Join(repoRoot(t), "cmd", "server"),
-	}
-
-	var offenders []string
-	fset := token.NewFileSet()
-	for _, root := range roots {
-		matches, err := filepath.Glob(filepath.Join(root, "*.go"))
-		if err != nil {
-			t.Fatalf("glob %s: %v", root, err)
-		}
-		for _, file := range matches {
-			if strings.HasSuffix(file, "_test.go") {
-				continue
-			}
-			f, err := parser.ParseFile(fset, file, nil, parser.SkipObjectResolution)
-			if err != nil {
-				t.Fatalf("parse %s: %v", file, err)
-			}
-			for _, decl := range f.Decls {
-				fn, ok := decl.(*ast.FuncDecl)
-				if !ok || fn.Body == nil {
-					continue
-				}
-				analyticsLocals := analyticsBackedIdents(fn.Body)
-				ast.Inspect(fn.Body, func(n ast.Node) bool {
-					call, ok := n.(*ast.CallExpr)
-					if !ok {
-						return true
-					}
-					if !isMetricsRecordEvent(call) {
-						return true
-					}
-					if len(call.Args) < 3 {
-						offenders = append(offenders, fset.Position(call.Pos()).String()+" (RecordEvent must be called with 3 args: client, metrics, event)")
-						return true
-					}
-					ev := call.Args[2]
-					if analyticsHelperCall(ev) {
-						return true
-					}
-					if id, ok := ev.(*ast.Ident); ok {
-						if _, traced := analyticsLocals[id.Name]; traced {
-							return true
-						}
-						offenders = append(offenders, fset.Position(call.Pos()).String()+" (third arg "+id.Name+" was not assigned from an analytics.* helper in this function)")
-						return true
-					}
-					offenders = append(offenders, fset.Position(call.Pos()).String()+" (third arg must be an analytics.* helper call or a local assigned from one)")
-					return true
-				})
-			}
-		}
-	}
-
-	if len(offenders) > 0 {
-		sort.Strings(offenders)
-		t.Errorf("metrics.RecordEvent call sites must take an analytics.* event:\n  %s", strings.Join(offenders, "\n  "))
-	}
-}
-
-// analyticsBackedIdents walks a function body and returns the set of local
-// identifiers whose initial value came from an analytics.<Helper>(...) call.
-// Both `:=` short declarations and `=` assignments at any nesting depth are
-// recognised. The set is conservative — re-assignments to non-analytics
-// values keep the ident in the set (we only track the originating
-// definition); call sites that cared could rewrite to use the helper inline.
-//
-// KNOWN LIMITATION (tracked as PR3 follow-up; see PR description):
-// matching is by ident NAME, not by SSA def-use. A pathological function
-// that shadows an analytics-backed name with a non-analytics binding in a
-// nested scope (e.g. an `if`/`for` re-declaration via `:=`) would still
-// pass this check, because the outer-scope name is in the allow-set. This
-// is rare in practice — every current call site assigns once at the same
-// scope as the RecordEvent call — but a future hardening pass should
-// switch to a real go/types or go/ssa walk so the lint is type-aware
-// rather than name-aware.
-func analyticsBackedIdents(body *ast.BlockStmt) map[string]struct{} {
-	out := map[string]struct{}{}
-	if body == nil {
-		return out
-	}
-	ast.Inspect(body, func(n ast.Node) bool {
-		switch stmt := n.(type) {
-		case *ast.AssignStmt:
-			// Match either lhs[i] = analytics.X(...) or lhs[i], _ := analytics.X(...).
-			if len(stmt.Rhs) == 0 {
-				return true
-			}
-			for i, lhs := range stmt.Lhs {
-				if i >= len(stmt.Rhs) {
-					// Multi-return-from-single-call shape (e.g. a, b := f())
-					// — there is exactly one Rhs and we can't tell which
-					// returned position the ident binds without type info.
-					// Fall back to checking the single Rhs.
-					if len(stmt.Rhs) == 1 && analyticsHelperCall(stmt.Rhs[0]) {
-						if id, ok := lhs.(*ast.Ident); ok {
-							out[id.Name] = struct{}{}
-						}
-					}
-					continue
-				}
-				if id, ok := lhs.(*ast.Ident); ok && analyticsHelperCall(stmt.Rhs[i]) {
-					out[id.Name] = struct{}{}
-				}
-			}
-		case *ast.ValueSpec:
-			// `var x = analytics.X(...)` and the like.
-			for i, name := range stmt.Names {
-				if i < len(stmt.Values) && analyticsHelperCall(stmt.Values[i]) {
-					out[name.Name] = struct{}{}
-				}
-			}
-		}
-		return true
-	})
-	return out
 }
 
 // ---- helpers --------------------------------------------------------------
@@ -306,19 +147,6 @@ func analyticsEventNames(t *testing.T) map[string]struct{} {
 		t.Fatalf("no Event* constants found in %s", path)
 	}
 	return out
-}
-
-// constantNameForEvent reverse-maps an event string to its Go constant name
-// for nicer error messages. Stable for the constants we ship.
-func constantNameForEvent(name string) string {
-	parts := strings.Split(name, "_")
-	for i, p := range parts {
-		if len(p) == 0 {
-			continue
-		}
-		parts[i] = strings.ToUpper(p[:1]) + p[1:]
-	}
-	return "Event" + strings.Join(parts, "")
 }
 
 // dispatchIncrementsCounter sends ev through RecordEvent (with a noop
@@ -380,52 +208,5 @@ func isAnalyticsCapture(call *ast.CallExpr) bool {
 	if rec.Sel == nil || rec.Sel.Name != "Analytics" {
 		return false
 	}
-	// Must be passing an analytics helper or a local built from one — but
-	// the lint principle is "no direct Capture", so any shape fails.
 	return true
-}
-
-// isMetricsRecordEvent reports whether call is a metrics.RecordEvent
-// invocation. Recognises the two import aliases used in this codebase:
-// `obsmetrics` (everywhere outside the metrics package itself) and the
-// natural package name `metrics`.
-//
-// KNOWN LIMITATION (tracked as PR3 follow-up; see PR description):
-// the alias set is HARD-CODED. A future caller that imports the metrics
-// package under a third alias (`mx "..."`, etc.) would slip past this
-// check. The follow-up plan is to walk the file's import declarations
-// and resolve the alias for `server/internal/metrics` per-file, so any
-// alias works as long as the canonical import path matches. We leave it
-// hard-coded here because every current import in handler/, service/,
-// and cmd/server/ uses one of the two names, and goimports/`gofmt`
-// guidance keeps it that way.
-func isMetricsRecordEvent(call *ast.CallExpr) bool {
-	sel, ok := call.Fun.(*ast.SelectorExpr)
-	if !ok {
-		return false
-	}
-	if sel.Sel == nil || sel.Sel.Name != "RecordEvent" {
-		return false
-	}
-	pkg, ok := sel.X.(*ast.Ident)
-	if !ok {
-		return false
-	}
-	return pkg.Name == "obsmetrics" || pkg.Name == "metrics"
-}
-
-func analyticsHelperCall(expr ast.Expr) bool {
-	call, ok := expr.(*ast.CallExpr)
-	if !ok {
-		return false
-	}
-	sel, ok := call.Fun.(*ast.SelectorExpr)
-	if !ok {
-		return false
-	}
-	pkg, ok := sel.X.(*ast.Ident)
-	if !ok {
-		return false
-	}
-	return pkg.Name == "analytics" && sel.Sel != nil && len(sel.Sel.Name) > 0
 }

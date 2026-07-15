@@ -87,7 +87,7 @@ func bucketsFor(observations []float64) map[float64]uint64 {
 }
 
 // TestBusinessSamplerCollectorEmitsExpectedMetrics asserts every metric
-// family from the PR4 spec is present on /metrics with the expected
+// family is present on /metrics with the expected
 // values, AND that we always emit a known-source/runtime-mode zero series
 // so dashboards don't show "no data" right after a restart.
 func TestBusinessSamplerCollectorEmitsExpectedMetrics(t *testing.T) {
@@ -198,12 +198,12 @@ func TestBusinessSamplerCollectorBoundedCardinality(t *testing.T) {
 		// pre-normalizing here exactly the way refreshFromDB would.
 		snap := newSamplerSnapshot(refreshAt)
 		for i := 0; i < 50; i++ {
-			snap.taskQueued[NormalizeTaskSource("provider-from-user-input-"+string(rune('A'+i%26)))] += 1
+			snap.taskQueued[normalizeTaskSource("provider-from-user-input-"+string(rune('A'+i%26)))] += 1
 		}
 		for i := 0; i < 50; i++ {
 			snap.runtimeOnline[runtimeOnlineKey{
-				runtimeMode: NormalizeRuntimeMode("rogue-mode"),
-				provider:    NormalizeRuntimeProvider("attacker-provider"),
+				runtimeMode: normalizeRuntimeMode("rogue-mode"),
+				provider:    normalizeRuntimeProvider("attacker-provider"),
 			}] += 1
 		}
 		return snap
@@ -230,9 +230,6 @@ func TestBusinessSamplerCollectorBoundedCardinality(t *testing.T) {
 // series leak into /metrics, and existing collectors stay registered.
 func TestBusinessSamplerCollectorDisabledWithoutOptions(t *testing.T) {
 	registry := NewRegistry(RegistryOptions{})
-	if registry.Sampler != nil {
-		t.Fatalf("Sampler must be nil when BusinessSampler option is absent")
-	}
 	rec := httptest.NewRecorder()
 	NewHandler(registry.Gatherer).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	body := rec.Body.String()

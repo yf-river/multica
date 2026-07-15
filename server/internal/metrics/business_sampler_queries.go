@@ -129,7 +129,7 @@ LIMIT 100
 		if err := rows.Scan(&rawSource, &n); err != nil {
 			return fmt.Errorf("task_queued scan: %w", err)
 		}
-		snap.taskQueued[NormalizeTaskSource(rawSource)] += float64(n)
+		snap.taskQueued[normalizeTaskSource(rawSource)] += float64(n)
 	}
 	return rows.Err()
 }
@@ -180,8 +180,8 @@ LIMIT 100
 			return fmt.Errorf("task_running scan: %w", err)
 		}
 		key := taskRunningKey{
-			source:      NormalizeTaskSource(rawSource),
-			runtimeMode: NormalizeRuntimeMode(rawMode),
+			source:      normalizeTaskSource(rawSource),
+			runtimeMode: normalizeRuntimeMode(rawMode),
 		}
 		snap.taskRunning[key] += float64(n)
 	}
@@ -220,7 +220,7 @@ LIMIT 100
 		if err := rows.Scan(&rawSource, &n); err != nil {
 			return fmt.Errorf("task_stuck scan: %w", err)
 		}
-		snap.taskStuck[NormalizeTaskSource(rawSource)] += float64(n)
+		snap.taskStuck[normalizeTaskSource(rawSource)] += float64(n)
 	}
 	return rows.Err()
 }
@@ -252,8 +252,8 @@ LIMIT 100
 			return fmt.Errorf("runtime_online scan: %w", err)
 		}
 		key := runtimeOnlineKey{
-			runtimeMode: NormalizeRuntimeMode(rawMode),
-			provider:    NormalizeRuntimeProvider(rawProvider),
+			runtimeMode: normalizeRuntimeMode(rawMode),
+			provider:    normalizeRuntimeProvider(rawProvider),
 		}
 		snap.runtimeOnline[key] += float64(n)
 	}
@@ -291,7 +291,7 @@ LIMIT 100
 		if age < 0 {
 			age = 0
 		}
-		mode := NormalizeRuntimeMode(rawMode)
+		mode := normalizeRuntimeMode(rawMode)
 		perMode[mode] = append(perMode[mode], age)
 	}
 	if err := rows.Err(); err != nil {

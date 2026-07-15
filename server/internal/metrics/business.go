@@ -37,7 +37,7 @@ type BusinessMetrics struct {
 	activeMu    sync.Mutex
 	activeTasks map[string]activeTaskLabels
 
-	// PR3 funnel / community / commercial counters. See business_events.go
+	// Product and operational event counters. See business_events.go.
 	// for the field-level docs and labels.
 	events *businessEventMetrics
 }
@@ -177,15 +177,15 @@ func (m *BusinessMetrics) RecordTaskEnqueued(source, runtimeMode string) {
 	if m == nil {
 		return
 	}
-	m.taskEnqueued.WithLabelValues(NormalizeTaskSource(source), NormalizeRuntimeMode(runtimeMode)).Inc()
+	m.taskEnqueued.WithLabelValues(normalizeTaskSource(source), normalizeRuntimeMode(runtimeMode)).Inc()
 }
 
 func (m *BusinessMetrics) RecordTaskDispatched(taskID, source, runtimeMode string, queueWaitSeconds float64) {
 	if m == nil {
 		return
 	}
-	source = NormalizeTaskSource(source)
-	runtimeMode = NormalizeRuntimeMode(runtimeMode)
+	source = normalizeTaskSource(source)
+	runtimeMode = normalizeRuntimeMode(runtimeMode)
 	m.taskDispatched.WithLabelValues(source, runtimeMode).Inc()
 	if queueWaitSeconds >= 0 {
 		m.taskQueueWait.WithLabelValues(source, runtimeMode).Observe(queueWaitSeconds)
@@ -198,9 +198,9 @@ func (m *BusinessMetrics) RecordTaskStarted(source, runtimeMode, provider string
 		return
 	}
 	m.taskStarted.WithLabelValues(
-		NormalizeTaskSource(source),
-		NormalizeRuntimeMode(runtimeMode),
-		NormalizeRuntimeProvider(provider),
+		normalizeTaskSource(source),
+		normalizeRuntimeMode(runtimeMode),
+		normalizeRuntimeProvider(provider),
 	).Inc()
 }
 
@@ -208,9 +208,9 @@ func (m *BusinessMetrics) RecordTaskTerminal(taskID, source, runtimeMode, termin
 	if m == nil {
 		return
 	}
-	source = NormalizeTaskSource(source)
-	runtimeMode = NormalizeRuntimeMode(runtimeMode)
-	terminalStatus = NormalizeTerminalStatus(terminalStatus)
+	source = normalizeTaskSource(source)
+	runtimeMode = normalizeRuntimeMode(runtimeMode)
+	terminalStatus = normalizeTerminalStatus(terminalStatus)
 	m.taskTerminal.WithLabelValues(source, runtimeMode, terminalStatus).Inc()
 	if runSeconds >= 0 {
 		m.taskRunSeconds.WithLabelValues(source, runtimeMode, terminalStatus).Observe(runSeconds)
@@ -230,9 +230,9 @@ func (m *BusinessMetrics) RecordTaskFailed(source, runtimeMode, failureReason st
 		return
 	}
 	m.taskFailed.WithLabelValues(
-		NormalizeTaskSource(source),
-		NormalizeRuntimeMode(runtimeMode),
-		NormalizeFailureReason(failureReason),
+		normalizeTaskSource(source),
+		normalizeRuntimeMode(runtimeMode),
+		normalizeFailureReason(failureReason),
 	).Inc()
 }
 
@@ -240,26 +240,26 @@ func (m *BusinessMetrics) RecordTaskQueuedExpired(source, runtimeMode string) {
 	if m == nil {
 		return
 	}
-	m.taskQueuedExpired.WithLabelValues(NormalizeTaskSource(source), NormalizeRuntimeMode(runtimeMode)).Inc()
+	m.taskQueuedExpired.WithLabelValues(normalizeTaskSource(source), normalizeRuntimeMode(runtimeMode)).Inc()
 }
 
 func (m *BusinessMetrics) RecordTaskLeaseExpired(source string) {
 	if m == nil {
 		return
 	}
-	m.taskLeaseExpired.WithLabelValues(NormalizeTaskSource(source)).Inc()
+	m.taskLeaseExpired.WithLabelValues(normalizeTaskSource(source)).Inc()
 }
 
 func (m *BusinessMetrics) RecordLLMUsage(source, runtimeMode, rawProvider, modelAlias string, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens int64) {
 	if m == nil {
 		return
 	}
-	source = NormalizeTaskSource(source)
-	runtimeMode = NormalizeRuntimeMode(runtimeMode)
+	source = normalizeTaskSource(source)
+	runtimeMode = normalizeRuntimeMode(runtimeMode)
 	price, priced := PriceForProviderModel(rawProvider, modelAlias)
 	if !priced {
-		provider := NormalizeRuntimeProvider(rawProvider)
-		alias := NormalizeModelAlias(modelAlias)
+		provider := normalizeRuntimeProvider(rawProvider)
+		alias := normalizeModelAlias(modelAlias)
 		m.recordUnpricedTokens(provider, alias, "input", inputTokens)
 		m.recordUnpricedTokens(provider, alias, "output", outputTokens)
 		m.recordUnpricedTokens(provider, alias, "cache_read", cacheReadTokens)
@@ -291,7 +291,7 @@ func (m *BusinessMetrics) recordPricedTokens(provider, model, tokenType, runtime
 	if tokens <= 0 {
 		return
 	}
-	tokenType = NormalizeTokenType(tokenType)
+	tokenType = normalizeTokenType(tokenType)
 	m.llmTokens.WithLabelValues(provider, model, tokenType, runtimeMode, source).Add(float64(tokens))
 	if cost > 0 {
 		m.llmCostUSD.WithLabelValues(provider, model, tokenType, runtimeMode, source).Add(cost)
@@ -302,7 +302,7 @@ func (m *BusinessMetrics) recordUnpricedTokens(provider, modelAlias, tokenType s
 	if tokens <= 0 {
 		return
 	}
-	m.llmUnpricedTokens.WithLabelValues(provider, modelAlias, NormalizeTokenType(tokenType)).Add(float64(tokens))
+	m.llmUnpricedTokens.WithLabelValues(provider, modelAlias, normalizeTokenType(tokenType)).Add(float64(tokens))
 }
 
 func (m *BusinessMetrics) markTaskInProgress(taskID, source, runtimeMode string) {

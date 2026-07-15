@@ -1,5 +1,5 @@
-// Package-level note for PR4 (MUL-2947): the sampler runs at /metrics scrape
-// time, hits the read replica via the existing pgxpool, and is opt-in. Every
+// The sampler runs at /metrics scrape time, hits the read replica via the
+// existing pgxpool, and is opt-in. Every
 // individual SQL statement runs in its own short read-only transaction with
 // `SET LOCAL statement_timeout = '500ms'` and a hard `LIMIT 100` so a slow
 // table or a hung connection cannot drag /metrics — and by extension the
@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -30,7 +31,7 @@ const (
 	samplerRowLimit            = 100
 
 	// Active-user / active-workspace DB windows. Keep this DB-sampled path
-	// to the short window only: PR2's counters do not carry user/workspace
+	// to the short window only: request counters do not carry user/workspace
 	// IDs, so PromQL cannot derive distinct 1h/24h active estimates without
 	// adding high-cardinality labels. Long-window actives need a separate
 	// counter-derived aggregation, not expanding this sampler over history.
@@ -228,8 +229,7 @@ func (c *BusinessSamplerCollector) Describe(ch chan<- *prometheus.Desc) {
 // Collect implements prometheus.Collector. It returns the cached snapshot
 // when fresh; otherwise it triggers a refresh under the mutex so concurrent
 // scrapes share one DB round-trip. A refresh failure is logged and the last
-// known snapshot is reused — this is the "metric briefly stale, sampler
-// does not crash" behavior the PR4 spec requires under DB hangs.
+// known snapshot is reused so a degraded database cannot break metric scrapes.
 func (c *BusinessSamplerCollector) Collect(ch chan<- prometheus.Metric) {
 	if c == nil || c.pool == nil {
 		return
@@ -313,8 +313,6 @@ func (c *BusinessSamplerCollector) emit(ch chan<- prometheus.Metric, snap *sampl
 }
 
 // knownSourceLabels enumerates the source values we always emit a zero for.
-// Pulled from the existing BusinessMetrics whitelist so the sampler never
-// invents a new bucket.
 func knownSourceLabels() []string {
 	return []string{"chat", "issue", "autopilot", "autopilot_issue", "quick_create", "manual", "api", "other"}
 }
@@ -504,20 +502,8 @@ func isStatementTimeout(err error) bool {
 		return true
 	}
 	// pgx surfaces SQLSTATE 57014 ("query_canceled") on statement_timeout.
-	// We don't import the pgconn type just to type-assert here; a
-	// substring check is good enough for a log-level decision.
+	// This only selects a log level, so matching the stable SQLSTATE/message
+	// avoids coupling the sampler to a concrete pgconn error type.
 	msg := err.Error()
-	return contains(msg, "57014") || contains(msg, "canceling statement due to statement timeout")
-}
-
-func contains(haystack, needle string) bool {
-	if len(needle) == 0 {
-		return true
-	}
-	for i := 0; i+len(needle) <= len(haystack); i++ {
-		if haystack[i:i+len(needle)] == needle {
-			return true
-		}
-	}
-	return false
+	return strings.Contains(msg, "57014") || strings.Contains(msg, "canceling statement due to statement timeout")
 }
