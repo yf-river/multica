@@ -10,7 +10,7 @@ const MAX_RECENT_CONTEXTS = 20;
 const MAX_WORKSPACES = 50;
 const EMPTY: RecentContextEntry[] = [];
 
-export type RecentContextType = "issue" | "project";
+type RecentContextType = "issue" | "project";
 
 export interface RecentContextEntry {
   type: RecentContextType;

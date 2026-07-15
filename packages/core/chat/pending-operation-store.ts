@@ -38,7 +38,7 @@ interface PendingChatOperationState {
 
 export const usePendingChatOperationStore = create<PendingChatOperationState>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       operations: {},
       start: (operation) =>
         set((state) => ({
@@ -63,17 +63,7 @@ export const usePendingChatOperationStore = create<PendingChatOperationState>()(
           const { [id]: _, ...operations } = state.operations;
           return { operations };
         }),
-      requestCancel: (id) =>
-        set((state) => {
-          const current = state.operations[id];
-          if (!current) return state;
-          return {
-            operations: {
-              ...state.operations,
-              [id]: { ...current, cancelRequested: true },
-            },
-          };
-        }),
+      requestCancel: (id) => get().update(id, { cancelRequested: true }),
       pruneWorkspaces: (activeWorkspaceIds) =>
         set((state) => {
           const active = new Set(activeWorkspaceIds);

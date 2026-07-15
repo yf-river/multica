@@ -1,6 +1,10 @@
 // @vitest-environment jsdom
 
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  replayPendingChatOperation,
+  type PendingChatOperationClient,
+} from "./pending-operation";
 import {
   usePendingChatOperationStore,
   type PendingChatOperation,
@@ -65,5 +69,52 @@ describe("pending chat operation store", () => {
 
     usePendingChatOperationStore.getState().pruneWorkspaces(["ws-2"]);
     expect(Object.keys(usePendingChatOperationStore.getState().operations)).toEqual([second.id]);
+  });
+});
+
+describe("replayPendingChatOperation", () => {
+  it("reuses one logical operation id across create and send recovery", async () => {
+    const pending = operation({ attachmentIds: ["att-1"] });
+    const client: PendingChatOperationClient = {
+      createChatSession: vi.fn().mockResolvedValue({ id: "session-1" }),
+      sendChatMessage: vi.fn().mockResolvedValue({
+        message_id: "message-1",
+        task_id: "task-1",
+        created_at: "2026-07-11T00:00:00Z",
+        attachment_ids: ["att-1"],
+      }),
+    };
+    const onSessionCreated = vi.fn();
+
+    await expect(
+      replayPendingChatOperation(pending, client, onSessionCreated),
+    ).resolves.toMatchObject({ sessionId: "session-1" });
+
+    expect(client.createChatSession).toHaveBeenCalledWith(
+      { agent_id: "agent-1", title: "hello" },
+      pending.id,
+    );
+    expect(onSessionCreated).toHaveBeenCalledWith("session-1");
+    expect(client.sendChatMessage).toHaveBeenCalledWith(
+      "session-1",
+      "hello",
+      pending.id,
+      ["att-1"],
+    );
+  });
+
+  it("does not send when account cleanup rejects the post-create continuation", async () => {
+    const client: PendingChatOperationClient = {
+      createChatSession: vi.fn().mockResolvedValue({ id: "session-1" }),
+      sendChatMessage: vi.fn(),
+    };
+
+    await expect(
+      replayPendingChatOperation(operation(), client, () => {
+        throw new Error("operation cleared on logout");
+      }),
+    ).rejects.toThrow("operation cleared on logout");
+
+    expect(client.sendChatMessage).not.toHaveBeenCalled();
   });
 });
