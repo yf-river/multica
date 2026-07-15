@@ -68,7 +68,7 @@
     "./github/queries": "./github/queries.ts",
     "./lark": "./lark/index.ts",
     "./feedback": "./feedback/index.ts",
-    "./external-credentials": "./external-credentials/index.ts",
+    "./external-credentials": "./external-credentials/queries.ts",
     "./realtime": "./realtime/index.ts",
     "./search": "./search/index.ts",
     "./navigation": "./navigation/index.ts",
