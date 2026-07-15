@@ -18,12 +18,10 @@ const (
 	defaultShardedRelayStreamMaxLen = 100000
 	defaultShardedRelayReadCount    = 128
 	defaultShardedRelayReadBlock    = 5 * time.Second
+	shardedStreamKeyFormat          = "ws:relay:shard:%d"
+	heartbeatKeyPrefix              = "ws:node:"
+	heartbeatKeySuffix              = ":heartbeat"
 )
-
-// ShardedStreamKey returns the Redis Stream key used by a fixed relay shard.
-func ShardedStreamKey(shard int) string {
-	return fmt.Sprintf("ws:relay:shard:%d", shard)
-}
 
 // ShardedStreamRelayConfig controls the fixed-reader Redis Stream relay.
 type ShardedStreamRelayConfig struct {
@@ -104,12 +102,12 @@ func (r *ShardedStreamRelay) Start(ctx context.Context) {
 	if err := r.writeRDB.Ping(ctx).Err(); err != nil {
 		slog.Error("realtime/sharded-redis: initial ping failed", "error", err)
 		M.RedisConnected.Store(false)
-		M.SetRedisLastError(err.Error())
+		M.setRedisLastError(err.Error())
 	} else if r.readRDB != r.writeRDB {
 		if err := r.readRDB.Ping(ctx).Err(); err != nil {
 			slog.Error("realtime/sharded-redis: initial read-client ping failed", "error", err)
 			M.RedisConnected.Store(false)
-			M.SetRedisLastError(err.Error())
+			M.setRedisLastError(err.Error())
 		} else {
 			M.RedisConnected.Store(true)
 		}
@@ -141,21 +139,9 @@ func (r *ShardedStreamRelay) Wait() {
 	r.wg.Wait()
 }
 
-func (r *ShardedStreamRelay) BroadcastToScope(scopeType, scopeID string, message []byte) {
-	_ = r.PublishWithID(scopeType, scopeID, "", message, ulid.Make().String())
-}
-
-func (r *ShardedStreamRelay) BroadcastToUser(userID, excludeWorkspaceID string, message []byte) {
-	_ = r.PublishWithID(ScopeUser, userID, excludeWorkspaceID, message, ulid.Make().String())
-}
-
-func (r *ShardedStreamRelay) Broadcast(message []byte) {
-	_ = r.PublishWithID("global", "all", "", message, ulid.Make().String())
-}
-
 func (r *ShardedStreamRelay) PublishWithID(scopeType, scopeID, exclude string, frame []byte, id string) error {
 	ev := newEnvelope(r.nodeID, scopeType, scopeID, exclude, frame, id)
-	stream := ShardedStreamKey(r.shardFor(scopeType, scopeID))
+	stream := fmt.Sprintf(shardedStreamKeyFormat, r.shardFor(scopeType, scopeID))
 	args := &redis.XAddArgs{
 		Stream: stream,
 		MaxLen: r.config.StreamMaxLen,
@@ -168,7 +154,7 @@ func (r *ShardedStreamRelay) PublishWithID(scopeType, scopeID, exclude string, f
 	defer cancel()
 	if err := r.writeRDB.XAdd(ctx, args).Err(); err != nil {
 		M.RedisXAddErrors.Add(1)
-		M.SetRedisLastError(err.Error())
+		M.setRedisLastError(err.Error())
 		slog.Warn("realtime/sharded-redis: XADD failed", "error", err, "scope", scopeType, "scope_id", scopeID, "stream", stream)
 		return err
 	}
@@ -186,7 +172,7 @@ func (r *ShardedStreamRelay) shardFor(scopeType, scopeID string) int {
 }
 
 func (r *ShardedStreamRelay) readShard(ctx context.Context, shard int) {
-	stream := ShardedStreamKey(shard)
+	stream := fmt.Sprintf(shardedStreamKeyFormat, shard)
 	lastID := "$"
 	for {
 		if ctx.Err() != nil || r.isStopping() {
@@ -206,7 +192,7 @@ func (r *ShardedStreamRelay) readShard(ctx context.Context, shard int) {
 		}
 		if err != nil {
 			M.RedisXReadErrors.Add(1)
-			M.SetRedisLastError(err.Error())
+			M.setRedisLastError(err.Error())
 			slog.Warn("realtime/sharded-redis: XREAD failed", "error", err, "shard", shard, "stream", stream)
 			select {
 			case <-ctx.Done():
@@ -250,9 +236,10 @@ func (r *ShardedStreamRelay) heartbeatLoop(ctx context.Context) {
 func (r *ShardedStreamRelay) heartbeatOnce(ctx context.Context) {
 	hbCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	if err := r.writeRDB.Set(hbCtx, HeartbeatKey(r.nodeID), time.Now().UTC().Format(time.RFC3339Nano), heartbeatTTL).Err(); err != nil {
+	heartbeatKey := heartbeatKeyPrefix + r.nodeID + heartbeatKeySuffix
+	if err := r.writeRDB.Set(hbCtx, heartbeatKey, time.Now().UTC().Format(time.RFC3339Nano), heartbeatTTL).Err(); err != nil {
 		M.RedisConnected.Store(false)
-		M.SetRedisLastError(err.Error())
+		M.setRedisLastError(err.Error())
 		return
 	}
 	M.RedisConnected.Store(true)
@@ -264,5 +251,4 @@ func (r *ShardedStreamRelay) isStopping() bool {
 	return r.stopping
 }
 
-var _ Broadcaster = (*ShardedStreamRelay)(nil)
 var _ RelayPublisher = (*ShardedStreamRelay)(nil)

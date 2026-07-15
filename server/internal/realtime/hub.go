@@ -218,9 +218,8 @@ type Client struct {
 	// currently in. Used to clean up rooms on disconnect.
 	subscriptions map[scopeKey]bool
 
-	// lastSeenEventIDs is used by the dual-write broadcaster (and any
-	// future deliverer) to dedup messages that arrived first via the local
-	// fast path and are then re-played from Redis. Bounded LRU semantics
+	// lastSeenEventIDs deduplicates messages that arrive through the local
+	// fast path before being replayed from Redis. Bounded LRU semantics
 	// are not required because event IDs are ULIDs and we only keep the
 	// last few.
 	dedupMu  sync.Mutex
@@ -307,7 +306,7 @@ func (h *Hub) Run() {
 			h.removeClient(client)
 
 		case message := <-h.broadcast:
-			h.fanoutAll(message)
+			h.fanoutAllDedup(message, "")
 		}
 	}
 }
@@ -339,7 +338,7 @@ func (h *Hub) removeClient(client *Client) {
 	M.DisconnectsTotal.Add(1)
 	M.ActiveConnections.Add(-1)
 	for _, key := range emptied {
-		M.DecRoom(key.Type)
+		loadOrInitCounter(&M.scopeRooms, key.Type).Add(-1)
 	}
 	slog.Info("ws client disconnected", "workspace_id", client.workspaceID, "user_id", client.userID, "total_clients", total)
 }
@@ -375,9 +374,9 @@ func (h *Hub) subscribe(client *Client, scopeType, scopeID string) bool {
 	room[client] = true
 	h.mu.Unlock()
 
-	M.SubscribesTotal(scopeType).Add(1)
+	loadOrInitCounter(&M.subscribeTotal, scopeType).Add(1)
 	if first {
-		M.IncRoom(scopeType)
+		loadOrInitCounter(&M.scopeRooms, scopeType).Add(1)
 	}
 	return true
 }
@@ -409,9 +408,9 @@ func (h *Hub) unsubscribe(client *Client, scopeType, scopeID string) bool {
 	}
 	h.mu.Unlock()
 
-	M.UnsubscribesTotal(scopeType).Add(1)
+	loadOrInitCounter(&M.unsubscribeTotal, scopeType).Add(1)
 	if emptied {
-		M.DecRoom(scopeType)
+		loadOrInitCounter(&M.scopeRooms, scopeType).Add(-1)
 	}
 	return true
 }
@@ -454,11 +453,6 @@ func (h *Hub) BroadcastToScopeDedup(scopeType, scopeID string, message []byte, e
 	if len(slow) > 0 {
 		h.evictSlow(slow)
 	}
-}
-
-// fanoutAll delivers message to every connected client.
-func (h *Hub) fanoutAll(message []byte) {
-	h.fanoutAllDedup(message, "")
 }
 
 func (h *Hub) fanoutAllDedup(message []byte, eventID string) {
@@ -565,7 +559,7 @@ func (h *Hub) evictSlow(slow []*Client) {
 		M.DisconnectsTotal.Add(int64(evicted))
 	}
 	for _, r := range drainedRooms {
-		M.DecRoom(r.Type)
+		loadOrInitCounter(&M.scopeRooms, r.Type).Add(-1)
 	}
 }
 
@@ -828,7 +822,7 @@ func (c *Client) handleFrame(raw []byte) {
 	case "ping":
 		c.sendJSON(map[string]string{"type": "pong"})
 	default:
-		// Unknown frame — ignore silently for forward compat.
+		// Unknown frame types do not change connection state.
 		slog.Debug("ws inbound: unknown frame", "type", f.Type, "user_id", c.userID)
 	}
 }
@@ -838,7 +832,7 @@ func (c *Client) handleSubscribe(scope, id string) {
 	case ScopeWorkspace, ScopeUser:
 		// Implicit scopes — only allowed if it matches the connection identity.
 		if (scope == ScopeWorkspace && id != c.workspaceID) || (scope == ScopeUser && id != c.userID) {
-			M.SubscribeDeniedTotal(scope).Add(1)
+			loadOrInitCounter(&M.subscribeDeniedTotal, scope).Add(1)
 			c.sendJSON(map[string]any{
 				"type": "subscribe_error",
 				"payload": map[string]string{
@@ -856,7 +850,7 @@ func (c *Client) handleSubscribe(scope, id string) {
 		if auth != nil {
 			ok, err := auth.AuthorizeScope(context.Background(), c.userID, c.workspaceID, scope, id)
 			if err != nil || !ok {
-				M.SubscribeDeniedTotal(scope).Add(1)
+				loadOrInitCounter(&M.subscribeDeniedTotal, scope).Add(1)
 				reason := "forbidden"
 				if err != nil {
 					reason = "lookup_failed"
@@ -874,7 +868,7 @@ func (c *Client) handleSubscribe(scope, id string) {
 		}
 		c.hub.subscribe(c, scope, id)
 	default:
-		M.SubscribeDeniedTotal(scope).Add(1)
+		loadOrInitCounter(&M.subscribeDeniedTotal, scope).Add(1)
 		c.sendJSON(map[string]any{
 			"type": "subscribe_error",
 			"payload": map[string]string{

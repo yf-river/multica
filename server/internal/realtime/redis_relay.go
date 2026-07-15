@@ -2,16 +2,11 @@ package realtime
 
 import (
 	"encoding/json"
-	"fmt"
 	"time"
 
 	"github.com/oklog/ulid/v2"
 	"github.com/redis/go-redis/v9"
 )
-
-func HeartbeatKey(nodeID string) string {
-	return fmt.Sprintf("ws:node:%s:heartbeat", nodeID)
-}
 
 const (
 	heartbeatTTL    = 90 * time.Second

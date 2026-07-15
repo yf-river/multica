@@ -20,7 +20,6 @@ type RealtimeCollector struct {
 	redisXAddErrors    *prometheus.Desc
 	redisXReadTotal    *prometheus.Desc
 	redisXReadErrors   *prometheus.Desc
-	redisAckTotal      *prometheus.Desc
 }
 
 func NewRealtimeCollector(m *realtime.Metrics) *RealtimeCollector {
@@ -38,7 +37,6 @@ func NewRealtimeCollector(m *realtime.Metrics) *RealtimeCollector {
 		redisXAddErrors:    newRealtimeDesc("redis_xadd_errors_total", "Total Redis XADD errors by the realtime relay."),
 		redisXReadTotal:    newRealtimeDesc("redis_xread_total", "Total Redis XREAD operations by the realtime relay."),
 		redisXReadErrors:   newRealtimeDesc("redis_xread_errors_total", "Total Redis XREAD errors by the realtime relay."),
-		redisAckTotal:      newRealtimeDesc("redis_ack_total", "Total Redis stream acknowledgements by the realtime relay."),
 	}
 }
 
@@ -59,7 +57,6 @@ func (c *RealtimeCollector) Describe(ch chan<- *prometheus.Desc) {
 		c.redisXAddErrors,
 		c.redisXReadTotal,
 		c.redisXReadErrors,
-		c.redisAckTotal,
 	} {
 		ch <- desc
 	}
@@ -81,7 +78,6 @@ func (c *RealtimeCollector) Collect(ch chan<- prometheus.Metric) {
 	ch <- prometheus.MustNewConstMetric(c.redisXAddErrors, prometheus.CounterValue, float64(m.RedisXAddErrors.Load()))
 	ch <- prometheus.MustNewConstMetric(c.redisXReadTotal, prometheus.CounterValue, float64(m.RedisXReadTotal.Load()))
 	ch <- prometheus.MustNewConstMetric(c.redisXReadErrors, prometheus.CounterValue, float64(m.RedisXReadErrors.Load()))
-	ch <- prometheus.MustNewConstMetric(c.redisAckTotal, prometheus.CounterValue, float64(m.RedisAckTotal.Load()))
 }
 
 func boolFloat(v bool) float64 {

@@ -160,7 +160,7 @@ func main() {
 	var storeRedis *redis.Client
 	var relayWriteRedis *redis.Client
 	var relayReadRedis *redis.Client
-	var relay realtime.ManagedRelay
+	var relay *realtime.ShardedStreamRelay
 	defer func() {
 		if relay != nil {
 			relay.Stop()

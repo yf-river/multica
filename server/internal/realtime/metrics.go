@@ -7,10 +7,8 @@ import (
 )
 
 // Metrics collects lightweight counters describing the realtime subsystem.
-//
-// Phase 1 (MUL-1138) extends the phase-0 counter set with subscribe / Redis /
-// per-scope-room counters. We keep using std-library atomics rather than a
-// Prometheus dependency; a future phase can re-export the same numbers.
+// Prometheus adapts the same atomics without coupling this package to the
+// Prometheus client.
 type Metrics struct {
 	ConnectsTotal        atomic.Int64
 	DisconnectsTotal     atomic.Int64
@@ -36,7 +34,6 @@ type Metrics struct {
 	RedisXAddErrors        atomic.Int64
 	RedisXReadTotal        atomic.Int64
 	RedisXReadErrors       atomic.Int64
-	RedisAckTotal          atomic.Int64
 	RedisLastXAddLagMicros atomic.Int64
 
 	// RedisConnected is set by the relay on startup / reconnect.
@@ -71,28 +68,7 @@ func (m *Metrics) RecordEvent(eventType string) {
 	loadOrInitCounter(&m.eventSent, eventType).Add(1)
 }
 
-// SubscribesTotal returns the per-scope-type counter for successful subscribes.
-func (m *Metrics) SubscribesTotal(scopeType string) *atomic.Int64 {
-	return loadOrInitCounter(&m.subscribeTotal, scopeType)
-}
-
-// UnsubscribesTotal returns the per-scope-type counter for unsubscribes.
-func (m *Metrics) UnsubscribesTotal(scopeType string) *atomic.Int64 {
-	return loadOrInitCounter(&m.unsubscribeTotal, scopeType)
-}
-
-// SubscribeDeniedTotal returns the per-scope-type counter for denied subscribes.
-func (m *Metrics) SubscribeDeniedTotal(scopeType string) *atomic.Int64 {
-	return loadOrInitCounter(&m.subscribeDeniedTotal, scopeType)
-}
-
-// IncRoom / DecRoom adjust the active-rooms gauge for scopeType.
-func (m *Metrics) IncRoom(scopeType string) { loadOrInitCounter(&m.scopeRooms, scopeType).Add(1) }
-func (m *Metrics) DecRoom(scopeType string) { loadOrInitCounter(&m.scopeRooms, scopeType).Add(-1) }
-
-// SetRedisLastError stores msg as the most recent Redis consumer error. An
-// empty msg clears it.
-func (m *Metrics) SetRedisLastError(msg string) {
+func (m *Metrics) setRedisLastError(msg string) {
 	m.redisLastErrMu.Lock()
 	m.redisLastErr = msg
 	m.redisLastErrMu.Unlock()
@@ -147,32 +123,8 @@ func (m *Metrics) Snapshot() map[string]any {
 			"xadd_errors":          m.RedisXAddErrors.Load(),
 			"xread_total":          m.RedisXReadTotal.Load(),
 			"xread_errors":         m.RedisXReadErrors.Load(),
-			"ack_total":            m.RedisAckTotal.Load(),
 			"last_xadd_lag_micros": m.RedisLastXAddLagMicros.Load(),
 			"last_error":           m.lastRedisErr(),
 		},
 	}
-}
-
-// Reset zeroes all counters. Tests only.
-func (m *Metrics) Reset() {
-	m.ConnectsTotal.Store(0)
-	m.DisconnectsTotal.Store(0)
-	m.ActiveConnections.Store(0)
-	m.SlowEvictionsTotal.Store(0)
-	m.MessagesSentTotal.Store(0)
-	m.MessagesDroppedTotal.Store(0)
-	m.eventSent.Range(func(k, _ any) bool { m.eventSent.Delete(k); return true })
-	m.subscribeTotal.Range(func(k, _ any) bool { m.subscribeTotal.Delete(k); return true })
-	m.unsubscribeTotal.Range(func(k, _ any) bool { m.unsubscribeTotal.Delete(k); return true })
-	m.subscribeDeniedTotal.Range(func(k, _ any) bool { m.subscribeDeniedTotal.Delete(k); return true })
-	m.scopeRooms.Range(func(k, _ any) bool { m.scopeRooms.Delete(k); return true })
-	m.RedisXAddTotal.Store(0)
-	m.RedisXAddErrors.Store(0)
-	m.RedisXReadTotal.Store(0)
-	m.RedisXReadErrors.Store(0)
-	m.RedisAckTotal.Store(0)
-	m.RedisLastXAddLagMicros.Store(0)
-	m.RedisConnected.Store(false)
-	m.SetRedisLastError("")
 }
