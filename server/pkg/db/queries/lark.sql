@@ -1,6 +1,4 @@
--- Lark (飞书) Bot integration queries. The current schema baseline defines
--- these tables; the architectural boundaries the package enforces on top are
--- documented in server/internal/integrations/lark/doc.go.
+-- Lark (飞书) Bot integration queries.
 --
 -- Scoping convention: every public-facing read goes through a
 -- workspace-scoped variant where one exists. The lookups that take only
