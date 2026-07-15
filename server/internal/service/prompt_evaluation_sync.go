@@ -774,12 +774,15 @@ func parsePromptEvaluationAgentVerdictList(list []any, totalCases int32, contrac
 		return nil, false
 	}
 	byIndex := map[int32]promptEvaluationAgentCaseVerdict{}
-	for index, item := range list {
+	for _, item := range list {
 		row, ok := item.(map[string]any)
 		if !ok {
 			continue
 		}
-		verdict := promptEvaluationAgentVerdictFromMap(row, int32(index))
+		verdict, ok := promptEvaluationAgentVerdictFromMap(row)
+		if !ok {
+			continue
+		}
 		verdict.Evidence["解析契约"] = contract
 		byIndex[verdict.CaseIndex] = verdict
 	}
@@ -808,16 +811,18 @@ func parsePromptEvaluationAgentVerdictList(list []any, totalCases int32, contrac
 	return verdicts, true
 }
 
-func promptEvaluationAgentVerdictFromMap(row map[string]any, fallbackIndex int32) promptEvaluationAgentCaseVerdict {
-	caseIndex := promptEvaluationCaseIndexFromMap(row, fallbackIndex)
-	status := normalizePromptEvaluationAgentStatus(firstNonEmptyString(row, "状态", "status", "结论", "result"))
-	if status == "" {
-		status = statusFromPromptEvaluationPassedValue(firstValue(row, "passed", "通过", "pass"))
+func promptEvaluationAgentVerdictFromMap(row map[string]any) (promptEvaluationAgentCaseVerdict, bool) {
+	caseIndex, ok := intFromAny(row["case_index"])
+	if !ok || caseIndex < 0 {
+		return promptEvaluationAgentCaseVerdict{}, false
 	}
-	if status == "" {
+	status := util.StringFromAny(row["status"])
+	switch status {
+	case "通过", "未通过", "需人工复核":
+	default:
 		status = "需人工复核"
 	}
-	failureReason := firstNonEmptyString(row, "失败原因", "failure_reason", "reason", "error", "问题")
+	failureReason := util.StringFromAny(row["failure_reason"])
 	if failureReason == "" {
 		switch status {
 		case "通过":
@@ -828,11 +833,7 @@ func promptEvaluationAgentVerdictFromMap(row map[string]any, fallbackIndex int32
 			failureReason = "Agent 判定未通过"
 		}
 	}
-	conclusion := firstNonEmptyString(row, "评估结论", "conclusion", "summary", "说明")
-	if conclusion == "" {
-		conclusion = status
-	}
-	output := firstValue(row, "输出", "output", "actual", "实际输出")
+	output := row["output"]
 	if output == nil {
 		output = map[string]any{}
 	}
@@ -841,50 +842,13 @@ func promptEvaluationAgentVerdictFromMap(row map[string]any, fallbackIndex int32
 		evidence = map[string]any{}
 	}
 	return promptEvaluationAgentCaseVerdict{
-		CaseIndex:     caseIndex,
+		CaseIndex:     int32(caseIndex),
 		Status:        status,
 		FailureReason: failureReason,
-		Conclusion:    conclusion,
+		Conclusion:    status,
 		Output:        output,
 		Evidence:      evidence,
-	}
-}
-
-func promptEvaluationCaseIndexFromMap(row map[string]any, fallback int32) int32 {
-	if value, ok := intFromAny(firstValue(row, "case_index", "caseIndex")); ok && value >= 0 {
-		return int32(value)
-	}
-	if value, ok := intFromAny(firstValue(row, "用例序号", "序号", "index", "case_number")); ok && value > 0 {
-		return int32(value - 1)
-	}
-	return fallback
-}
-
-func normalizePromptEvaluationAgentStatus(raw string) string {
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "通过", "pass", "passed", "ok", "success", "succeeded", "true":
-		return "通过"
-	case "失败", "未通过", "不通过", "fail", "failed", "failure", "false":
-		return "未通过"
-	case "需人工复核", "人工复核", "待人工复核", "needs_review", "review", "manual_review":
-		return "需人工复核"
-	default:
-		return ""
-	}
-}
-
-func statusFromPromptEvaluationPassedValue(value any) string {
-	switch v := value.(type) {
-	case bool:
-		if v {
-			return "通过"
-		}
-		return "未通过"
-	case string:
-		return normalizePromptEvaluationAgentStatus(v)
-	default:
-		return ""
-	}
+	}, true
 }
 
 func promptEvaluationTaskResultOutput(raw []byte) string {
