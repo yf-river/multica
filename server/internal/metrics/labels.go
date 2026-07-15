@@ -77,56 +77,55 @@ var forbiddenMetricLabels = map[string]struct{}{
 	"ip":           {},
 }
 
+type labelNormalizer struct {
+	allowed  map[string]struct{}
+	fallback string
+}
+
+func newLabelNormalizer(fallback string, values ...string) labelNormalizer {
+	allowed := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		allowed[value] = struct{}{}
+	}
+	return labelNormalizer{allowed: allowed, fallback: fallback}
+}
+
+func (n labelNormalizer) normalize(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	if _, ok := n.allowed[value]; ok {
+		return value
+	}
+	return n.fallback
+}
+
 var (
-	knownSources = map[string]struct{}{
-		"issue": {}, "chat": {}, "autopilot": {}, "autopilot_issue": {},
-		"quick_create": {}, "manual": {}, "api": {}, "other": {},
-	}
-	knownRuntimeModes = map[string]struct{}{
-		"local": {}, "cloud": {}, "unknown": {},
-	}
-	knownRuntimeProviders = map[string]struct{}{
-		"antigravity": {}, "claude": {}, "codebuddy": {}, "codex": {},
-		"copilot": {}, "cursor": {}, "gemini": {}, "hermes": {}, "kiro": {},
-		"kimi": {}, "multica_agent": {}, "openclaw": {}, "opencode": {},
-		"pi": {}, "other": {},
-	}
-	knownTerminalStatuses = map[string]struct{}{
-		"completed": {}, "failed": {}, "cancelled": {}, "blocked": {}, "other": {},
-	}
-	knownTokenTypes = map[string]struct{}{
-		"input": {}, "output": {}, "cache_read": {}, "cache_write": {},
-	}
-	knownPlatforms = map[string]struct{}{
-		"server": {}, "web": {}, "desktop": {}, "cli": {},
-		"mobile": {}, "ios": {}, "unknown": {},
-	}
-	knownAutopilotCadences = map[string]struct{}{
-		"hourly": {}, "daily": {}, "weekly": {}, "monthly": {},
-		"manual": {}, "webhook": {}, "unknown": {},
-	}
-	knownAutopilotTriggers = map[string]struct{}{
-		"schedule": {}, "webhook": {}, "manual": {}, "unknown": {},
-	}
-	knownAutopilotSkipReasons = map[string]struct{}{
-		"already_running": {}, "recent_run": {}, "runtime_offline": {},
-		"throttled": {}, "max_concurrency": {}, "trigger_disabled": {},
-		"signature_invalid": {}, "unknown": {}, "other": {},
-	}
-	knownWebhookProviders = map[string]struct{}{
-		"github": {}, "generic": {}, "gitlab": {}, "stripe": {}, "other": {},
-	}
-	knownWebhookDeliveryStatuses = map[string]struct{}{
-		"queued": {}, "dispatched": {}, "failed": {}, "rejected": {},
-		"ignored": {}, "duplicate": {}, "other": {},
-	}
-	knownDaemonWSKinds = map[string]struct{}{
-		"heartbeat": {}, "task_claim": {}, "task_complete": {}, "task_usage": {},
-		"task_progress": {}, "task_messages": {}, "log": {}, "other": {},
-	}
-	knownFeedbackKinds = map[string]struct{}{
-		"bug": {}, "feature": {}, "general": {}, "praise": {}, "other": {},
-	}
+	taskSourceLabels = newLabelNormalizer(
+		"other", "issue", "chat", "autopilot", "autopilot_issue", "quick_create", "manual", "api",
+	)
+	runtimeModeLabels     = newLabelNormalizer("unknown", "local", "cloud")
+	runtimeProviderLabels = newLabelNormalizer(
+		"other", "antigravity", "claude", "codebuddy", "codex", "copilot", "cursor", "gemini",
+		"hermes", "kiro", "kimi", "multica_agent", "openclaw", "opencode", "pi",
+	)
+	terminalStatusLabels   = newLabelNormalizer("other", "completed", "failed", "cancelled", "blocked")
+	tokenTypeLabels        = newLabelNormalizer("input", "output", "cache_read", "cache_write")
+	platformLabels         = newLabelNormalizer("unknown", "server", "web", "desktop", "cli", "mobile", "ios")
+	autopilotCadenceLabels = newLabelNormalizer(
+		"unknown", "hourly", "daily", "weekly", "monthly", "manual", "webhook",
+	)
+	autopilotTriggerLabels    = newLabelNormalizer("unknown", "schedule", "webhook", "manual")
+	autopilotSkipReasonLabels = newLabelNormalizer(
+		"other", "already_running", "recent_run", "runtime_offline", "throttled", "max_concurrency",
+		"trigger_disabled", "signature_invalid", "unknown",
+	)
+	webhookProviderLabels       = newLabelNormalizer("other", "github", "generic", "gitlab", "stripe")
+	webhookDeliveryStatusLabels = newLabelNormalizer(
+		"other", "queued", "dispatched", "failed", "rejected", "ignored", "duplicate",
+	)
+	daemonWSKindLabels = newLabelNormalizer(
+		"other", "heartbeat", "task_claim", "task_complete", "task_usage", "task_progress", "task_messages", "log",
+	)
+	feedbackKindLabels  = newLabelNormalizer("other", "bug", "feature", "general", "praise")
 	knownFailureReasons = map[string]struct{}{}
 	modelAliasUnsafeRe  = regexp.MustCompile(`[^a-z0-9._:/+-]+`)
 )
@@ -155,40 +154,12 @@ func metricLabels(metric string) []string {
 	return labels
 }
 
-func normalizeFromAllowList(value string, allowList map[string]struct{}, fallback string) string {
-	value = strings.ToLower(strings.TrimSpace(value))
-	if _, ok := allowList[value]; ok {
-		return value
-	}
-	return fallback
-}
-
-func normalizeTaskSource(value string) string {
-	return normalizeFromAllowList(value, knownSources, "other")
-}
-
-func normalizeRuntimeMode(value string) string {
-	return normalizeFromAllowList(value, knownRuntimeModes, "unknown")
-}
-
-func normalizeRuntimeProvider(value string) string {
-	return normalizeFromAllowList(value, knownRuntimeProviders, "other")
-}
-
-func normalizeTerminalStatus(value string) string {
-	return normalizeFromAllowList(value, knownTerminalStatuses, "other")
-}
-
 func normalizeFailureReason(value string) string {
 	value = strings.TrimSpace(value)
 	if _, ok := knownFailureReasons[value]; ok {
 		return value
 	}
 	return taskfailure.Classify(value).String()
-}
-
-func normalizeTokenType(value string) string {
-	return normalizeFromAllowList(value, knownTokenTypes, "input")
 }
 
 func normalizeModelAlias(value string) string {
@@ -201,36 +172,4 @@ func normalizeModelAlias(value string) string {
 		return value[:128]
 	}
 	return value
-}
-
-func normalizePlatform(value string) string {
-	return normalizeFromAllowList(value, knownPlatforms, "unknown")
-}
-
-func normalizeAutopilotCadence(value string) string {
-	return normalizeFromAllowList(value, knownAutopilotCadences, "unknown")
-}
-
-func normalizeAutopilotTrigger(value string) string {
-	return normalizeFromAllowList(value, knownAutopilotTriggers, "unknown")
-}
-
-func normalizeAutopilotSkipReason(value string) string {
-	return normalizeFromAllowList(value, knownAutopilotSkipReasons, "other")
-}
-
-func normalizeWebhookProvider(value string) string {
-	return normalizeFromAllowList(value, knownWebhookProviders, "other")
-}
-
-func normalizeWebhookDeliveryStatus(value string) string {
-	return normalizeFromAllowList(value, knownWebhookDeliveryStatuses, "other")
-}
-
-func normalizeDaemonWSKind(value string) string {
-	return normalizeFromAllowList(value, knownDaemonWSKinds, "other")
-}
-
-func normalizeFeedbackKind(value string) string {
-	return normalizeFromAllowList(value, knownFeedbackKinds, "other")
 }

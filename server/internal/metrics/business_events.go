@@ -181,70 +181,70 @@ func (m *BusinessMetrics) IncForEvent(ev analytics.Event) {
 	case analytics.EventSignup:
 		m.events.signup.WithLabelValues().Inc()
 	case analytics.EventWorkspaceCreated:
-		m.events.workspaceCreated.WithLabelValues(normalizeTaskSource(stringProp(ev.Properties, "source"))).Inc()
+		m.events.workspaceCreated.WithLabelValues(taskSourceLabels.normalize(stringProp(ev.Properties, "source"))).Inc()
 	case analytics.EventIssueCreated:
 		m.events.issueCreated.WithLabelValues(
-			normalizeTaskSource(stringProp(ev.Properties, "source")),
-			normalizePlatform(stringProp(ev.Properties, "platform")),
+			taskSourceLabels.normalize(stringProp(ev.Properties, "source")),
+			platformLabels.normalize(stringProp(ev.Properties, "platform")),
 		).Inc()
 	case analytics.EventChatMessageSent:
-		m.events.chatMessageSent.WithLabelValues(normalizePlatform(stringProp(ev.Properties, "platform"))).Inc()
+		m.events.chatMessageSent.WithLabelValues(platformLabels.normalize(stringProp(ev.Properties, "platform"))).Inc()
 	case analytics.EventAgentCreated:
 		m.events.agentCreated.WithLabelValues(
-			normalizeRuntimeMode(stringProp(ev.Properties, "runtime_mode")),
-			normalizeTaskSource(stringProp(ev.Properties, "source")),
+			runtimeModeLabels.normalize(stringProp(ev.Properties, "runtime_mode")),
+			taskSourceLabels.normalize(stringProp(ev.Properties, "source")),
 		).Inc()
 	case analytics.EventSquadCreated:
 		m.events.squadCreated.WithLabelValues().Inc()
 	case analytics.EventAutopilotCreated:
-		m.events.autopilotCreated.WithLabelValues(normalizeAutopilotCadence(stringProp(ev.Properties, "cadence"))).Inc()
+		m.events.autopilotCreated.WithLabelValues(autopilotCadenceLabels.normalize(stringProp(ev.Properties, "cadence"))).Inc()
 	case analytics.EventIssueExecuted:
-		m.events.issueExecuted.WithLabelValues(normalizeTaskSource(stringProp(ev.Properties, "source"))).Inc()
+		m.events.issueExecuted.WithLabelValues(taskSourceLabels.normalize(stringProp(ev.Properties, "source"))).Inc()
 	case analytics.EventRuntimeRegistered:
 		m.events.runtimeRegistered.WithLabelValues(
-			normalizeRuntimeMode(stringProp(ev.Properties, "runtime_mode")),
-			normalizeRuntimeProvider(stringProp(ev.Properties, "provider")),
+			runtimeModeLabels.normalize(stringProp(ev.Properties, "runtime_mode")),
+			runtimeProviderLabels.normalize(stringProp(ev.Properties, "provider")),
 		).Inc()
 	case analytics.EventRuntimeReady:
-		runtimeMode := normalizeRuntimeMode(stringProp(ev.Properties, "runtime_mode"))
-		provider := normalizeRuntimeProvider(stringProp(ev.Properties, "provider"))
+		runtimeMode := runtimeModeLabels.normalize(stringProp(ev.Properties, "runtime_mode"))
+		provider := runtimeProviderLabels.normalize(stringProp(ev.Properties, "provider"))
 		m.events.runtimeReady.WithLabelValues(runtimeMode, provider).Inc()
 		if d := int64Prop(ev.Properties, "ready_duration_ms"); d > 0 {
 			m.events.runtimeReadySeconds.WithLabelValues(runtimeMode, provider).Observe(float64(d) / 1000.0)
 		}
 	case analytics.EventRuntimeFailed:
 		m.events.runtimeFailed.WithLabelValues(
-			normalizeRuntimeMode(stringProp(ev.Properties, "runtime_mode")),
-			normalizeRuntimeProvider(stringProp(ev.Properties, "provider")),
+			runtimeModeLabels.normalize(stringProp(ev.Properties, "runtime_mode")),
+			runtimeProviderLabels.normalize(stringProp(ev.Properties, "provider")),
 			normalizeFailureReason(stringProp(ev.Properties, "failure_reason")),
 			boolLabel(boolProp(ev.Properties, "recoverable")),
 		).Inc()
 	case analytics.EventRuntimeOffline:
 		m.events.runtimeOffline.WithLabelValues(
-			normalizeRuntimeMode(stringProp(ev.Properties, "runtime_mode")),
-			normalizeRuntimeProvider(stringProp(ev.Properties, "provider")),
+			runtimeModeLabels.normalize(stringProp(ev.Properties, "runtime_mode")),
+			runtimeProviderLabels.normalize(stringProp(ev.Properties, "provider")),
 		).Inc()
 	case analytics.EventAutopilotRunStarted:
 		m.events.autopilotRunStarted.WithLabelValues(
-			normalizeAutopilotCadence(stringProp(ev.Properties, "cadence")),
-			normalizeAutopilotTrigger(stringProp(ev.Properties, "trigger_kind")),
+			autopilotCadenceLabels.normalize(stringProp(ev.Properties, "cadence")),
+			autopilotTriggerLabels.normalize(stringProp(ev.Properties, "trigger_kind")),
 		).Inc()
 	case analytics.EventAutopilotRunCompleted:
 		m.events.autopilotRunTerminal.WithLabelValues(
-			normalizeAutopilotCadence(stringProp(ev.Properties, "cadence")),
-			normalizeAutopilotTrigger(stringProp(ev.Properties, "trigger_kind")),
+			autopilotCadenceLabels.normalize(stringProp(ev.Properties, "cadence")),
+			autopilotTriggerLabels.normalize(stringProp(ev.Properties, "trigger_kind")),
 			"completed",
 		).Inc()
 	case analytics.EventAutopilotRunFailed:
 		m.events.autopilotRunTerminal.WithLabelValues(
-			normalizeAutopilotCadence(stringProp(ev.Properties, "cadence")),
-			normalizeAutopilotTrigger(stringProp(ev.Properties, "trigger_kind")),
+			autopilotCadenceLabels.normalize(stringProp(ev.Properties, "cadence")),
+			autopilotTriggerLabels.normalize(stringProp(ev.Properties, "trigger_kind")),
 			"failed",
 		).Inc()
 	case analytics.EventFeedbackSubmitted:
 		m.events.feedbackSubmitted.WithLabelValues(
-			normalizeFeedbackKind(stringProp(ev.Properties, "kind")),
-			normalizePlatform(stringProp(ev.Properties, "platform")),
+			feedbackKindLabels.normalize(stringProp(ev.Properties, "kind")),
+			platformLabels.normalize(stringProp(ev.Properties, "platform")),
 		).Inc()
 	default:
 		// agent_task_* lifecycle telemetry is recorded straight to Prometheus
@@ -263,8 +263,8 @@ func (m *BusinessMetrics) RecordAutopilotRunSkipped(cadence, reason string) {
 		return
 	}
 	m.events.autopilotRunSkipped.WithLabelValues(
-		normalizeAutopilotCadence(cadence),
-		normalizeAutopilotSkipReason(reason),
+		autopilotCadenceLabels.normalize(cadence),
+		autopilotSkipReasonLabels.normalize(reason),
 	).Inc()
 }
 
@@ -274,8 +274,8 @@ func (m *BusinessMetrics) RecordWebhookDelivery(provider, status string) {
 		return
 	}
 	m.events.webhookDelivery.WithLabelValues(
-		normalizeWebhookProvider(provider),
-		normalizeWebhookDeliveryStatus(status),
+		webhookProviderLabels.normalize(provider),
+		webhookDeliveryStatusLabels.normalize(status),
 	).Inc()
 }
 
@@ -284,7 +284,7 @@ func (m *BusinessMetrics) RecordDaemonWSMessageReceived(kind string) {
 	if m == nil || m.events == nil {
 		return
 	}
-	m.events.daemonWSMessageReceived.WithLabelValues(normalizeDaemonWSKind(kind)).Inc()
+	m.events.daemonWSMessageReceived.WithLabelValues(daemonWSKindLabels.normalize(kind)).Inc()
 }
 
 // ---- property accessors ---------------------------------------------------

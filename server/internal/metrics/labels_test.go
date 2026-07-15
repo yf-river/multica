@@ -19,18 +19,18 @@ func TestNormalizeLabelsCollapseUnknownValues(t *testing.T) {
 		input string
 		want  string
 	}{
-		{"runtime_provider", normalizeRuntimeProvider, "provider-from-user-input", "other"},
-		{"runtime_mode", normalizeRuntimeMode, "workspace-123", "unknown"},
-		{"task_source", normalizeTaskSource, "task-123", "other"},
-		{"platform", normalizePlatform, "iphone-internal-build-9", "unknown"},
-		{"platform_known", normalizePlatform, "web", "web"},
-		{"autopilot_cadence", normalizeAutopilotCadence, "every_5_min", "unknown"},
-		{"autopilot_trigger", normalizeAutopilotTrigger, "future_kind", "unknown"},
-		{"autopilot_skip_reason", normalizeAutopilotSkipReason, "lunar_phase", "other"},
-		{"webhook_provider", normalizeWebhookProvider, "internal-billing", "other"},
-		{"webhook_status", normalizeWebhookDeliveryStatus, "exotic", "other"},
-		{"daemon_ws_kind", normalizeDaemonWSKind, "future_event", "other"},
-		{"feedback_kind", normalizeFeedbackKind, "rant", "other"},
+		{"runtime_provider", runtimeProviderLabels.normalize, "provider-from-user-input", "other"},
+		{"runtime_mode", runtimeModeLabels.normalize, "workspace-123", "unknown"},
+		{"task_source", taskSourceLabels.normalize, "task-123", "other"},
+		{"platform", platformLabels.normalize, "iphone-internal-build-9", "unknown"},
+		{"platform_known", platformLabels.normalize, "web", "web"},
+		{"autopilot_cadence", autopilotCadenceLabels.normalize, "every_5_min", "unknown"},
+		{"autopilot_trigger", autopilotTriggerLabels.normalize, "future_kind", "unknown"},
+		{"autopilot_skip_reason", autopilotSkipReasonLabels.normalize, "lunar_phase", "other"},
+		{"webhook_provider", webhookProviderLabels.normalize, "internal-billing", "other"},
+		{"webhook_status", webhookDeliveryStatusLabels.normalize, "exotic", "other"},
+		{"daemon_ws_kind", daemonWSKindLabels.normalize, "future_event", "other"},
+		{"feedback_kind", feedbackKindLabels.normalize, "rant", "other"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
