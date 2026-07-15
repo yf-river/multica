@@ -17,11 +17,7 @@ import { toast } from "sonner";
 import { useT } from "../../../i18n";
 import { AgentTabSaveBar } from "./agent-tab-save-bar";
 
-// Form state mirrors OpenclawRuntimeConfig, but always carries a defined
-// mode value so the radio group is fully controlled. Empty-string mode
-// shouldn't be reachable in this form because the field defaults to "local"
-// the first time an openclaw agent's tab opens — equivalent to the daemon's
-// fail-soft default — but the union accepts it as a defensive belt.
+// The form always resolves optional persisted mode to a controlled value.
 interface FormState {
   mode: OpenclawRoutingMode;
   host: string;

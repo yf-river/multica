@@ -8,22 +8,8 @@ import { useT } from "../../../i18n";
 import { ThinkingPicker } from "./thinking-picker";
 
 /**
- * Thinking row for the agent inspector. Hidden when the active model has
- * no `supported_levels` advertised AND nothing is persisted, so providers
- * that don't expose reasoning never surface an empty row. If the agent
- * already has a `thinking_level` saved (model swap into a non-thinking
- * runtime, or the daemon / CLI catalog shrank and dropped the entry),
- * we still render the row so the user can see the orphan token the
- * backend is still sending and explicit-clear it via the picker footer.
- * PR1's per-model invalid behavior is daemon-side warn/drop, not a
- * synchronous DB clear, so the frontend has to surface the persisted
- * state honestly.
- *
- * Reuses the shared runtime-models query so it hits the same 60s cache
- * as the model picker; no extra round-trip on the inspector's hot path.
- * The sibling ModelPicker mounts unconditionally next to this row, so
- * the shared query subscription is established by the inspector mount
- * itself — returning null here does NOT cancel discovery.
+ * Hides unsupported empty state, but exposes a persisted orphan value so the
+ * user can clear it. Model discovery shares the inspector's cached query.
  */
 export function ThinkingPropRow({
   runtimeId,

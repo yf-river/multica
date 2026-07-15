@@ -126,17 +126,17 @@ export function AgentDetailInspector({
         <PropRow label={t(($) => $.inspector.prop_model)} interactive={false}>
           <ModelPicker
             runtimeId={agent.runtime_id}
-            runtimeOnline={!!isOnline}
-            value={agent.model ?? ""}
+            runtimeOnline={isOnline}
+            value={agent.model}
             canEdit={canEdit}
             onChange={(m) => update({ model: m })}
           />
         </PropRow>
         <ThinkingPropRow
           runtimeId={agent.runtime_id}
-          runtimeOnline={!!isOnline}
-          model={agent.model ?? ""}
-          value={agent.thinking_level ?? ""}
+          runtimeOnline={isOnline}
+          model={agent.model}
+          value={agent.thinking_level}
           canEdit={canEdit}
           onChange={(v) => update({ thinking_level: v })}
         />
@@ -389,7 +389,7 @@ function NameAndDescription({
       </InlineEditPopover>
 
       <DescriptionEditor
-        value={agent.description ?? ""}
+        value={agent.description}
         onSave={(v) => onUpdate({ description: v })}
       />
     </div>

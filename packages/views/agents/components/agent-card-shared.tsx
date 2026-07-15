@@ -26,13 +26,13 @@ export function AgentCardAvatar({
   avatarUrl,
 }: {
   name: string;
-  avatarUrl: string | null | undefined;
+  avatarUrl: string | null;
 }) {
   return (
     <ActorAvatarBase
       name={name}
       initials={nameInitials(name)}
-      avatarUrl={resolvePublicFileUrl(avatarUrl ?? null)}
+      avatarUrl={resolvePublicFileUrl(avatarUrl)}
       isAgent
       size={40}
       className="rounded-md"

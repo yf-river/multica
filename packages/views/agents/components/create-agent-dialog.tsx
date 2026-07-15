@@ -36,8 +36,6 @@ import {
 import { CharCounter } from "./char-counter";
 import { useT } from "../../i18n";
 
-const DEFAULT_CODEBUDDY_AGENT_MODEL = "deepseek-v4-pro-ioa";
-
 export function CreateAgentDialog({
   runtimes,
   runtimesLoading,
@@ -160,30 +158,18 @@ export function CreateAgentDialog({
     try {
       const trimmedInstructions = instructions.trim();
       const trimmedModel = model.trim();
-      const effectiveModel =
-        trimmedModel ||
-        (selectedRuntime.provider.toLowerCase() === "codebuddy"
-          ? DEFAULT_CODEBUDDY_AGENT_MODEL
-          : "");
       const data: CreateAgentRequest = {
         name: name.trim(),
         description: description.trim(),
         runtime_id: selectedRuntime.id,
         scope,
-        model: effectiveModel || undefined,
         instructions: trimmedInstructions || undefined,
         avatar_url: avatarUrl ?? undefined,
       };
+      if (trimmedModel) data.model = trimmedModel;
       if (template) {
-        // Duplicate path: forward the hidden config fields the source
-        // agent had so the clone is functional out of the box (args /
-        // concurrency). Skills flow through the dialog form. As of
-        // MUL-2600 the agent resource shape no longer carries
-        // custom_env values, so duplication cannot copy env at all —
-        // the user has to re-set env on the clone via the env tab
-        // (which now goes through the audited `/env` endpoint). The
-        // dialog's create call still accepts custom_env at create
-        // time, but the source values aren't available here.
+        // Environment secrets are never present on Agent resources and
+        // therefore cannot be copied from a template.
         if (template.custom_args.length) data.custom_args = template.custom_args;
         if (template.max_concurrent_tasks) {
           data.max_concurrent_tasks = template.max_concurrent_tasks;
@@ -211,11 +197,8 @@ export function CreateAgentDialog({
           );
         }
       }
-      // Squad context: attach the agent after skills land so the
-      // squad's Members tab shows the agent with its skills already
-      // in place. Atomicity is best-effort by design (see plan in
-      // MUL-2178) — a partial failure surfaces a warning toast and
-      // the user can retry from the Add Member dialog.
+      // Squad attachment is a separate write; its helper reports a partial
+      // failure without discarding the Agent that was already created.
       if (squadId) {
         await attachToSquad(createdAgent.id, createdAgent.name);
       }

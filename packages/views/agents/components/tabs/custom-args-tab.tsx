@@ -41,12 +41,12 @@ export function CustomArgsTab({
 }) {
   const { t } = useT("agents");
   const [entries, setEntries] = useState<ArgEntry[]>(
-    argsToEntries(agent.custom_args ?? []),
+    argsToEntries(agent.custom_args),
   );
   const [saving, setSaving] = useState(false);
 
   const currentArgs = entriesToArgs(entries);
-  const originalArgs = agent.custom_args ?? [];
+  const originalArgs = agent.custom_args;
   const dirty = JSON.stringify(currentArgs) !== JSON.stringify(originalArgs);
 
   useEffect(() => {

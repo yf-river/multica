@@ -17,11 +17,8 @@ import { toast } from "sonner";
 import { useT } from "../../../i18n";
 import { AgentTabSaveBar } from "./agent-tab-save-bar";
 
-// Env values never reach this component until the user clicks
-// "Reveal & edit" — the agent resource feed no longer carries
-// custom_env at all after MUL-2600. Until then we display only the
-// configured-key count from `agent.custom_env_key_count`, which is
-// safe because it's not the values themselves.
+// Secret values are fetched only after explicit reveal; Agent resources
+// expose the non-sensitive configured-key count.
 
 let nextEnvId = 0;
 
@@ -78,7 +75,7 @@ export function EnvTab({
   const [revealing, setRevealing] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  const keyCount = agent.custom_env_key_count ?? 0;
+  const keyCount = agent.custom_env_key_count;
 
   const currentEnvMap = revealed ? entriesToEnvMap(revealed) : originalMap;
   const dirty =

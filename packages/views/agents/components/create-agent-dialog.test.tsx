@@ -239,7 +239,7 @@ describe("CreateAgentDialog runtime scope gate", () => {
     expect(screen.getByText("My Runtime", { selector: "span.truncate" })).toBeInTheDocument();
   });
 
-  it("prefers codebuddy and submits the DeepSeek default model", async () => {
+  it("prefers codebuddy and leaves default-model selection to the server", async () => {
     const claude = makeRuntime({
       id: "rt-claude",
       name: "Claude Runtime",
@@ -265,10 +265,9 @@ describe("CreateAgentDialog runtime scope gate", () => {
     });
     fireEvent.click(screen.getByText("创建"));
     await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
-    expect(onCreate.mock.calls[0]?.[0]).toMatchObject({
-      runtime_id: "rt-codebuddy",
-      model: "deepseek-v4-pro-ioa",
-    });
+    const request = onCreate.mock.calls[0]?.[0];
+    expect(request).toMatchObject({ runtime_id: "rt-codebuddy" });
+    expect(request).not.toHaveProperty("model");
   });
 
   it("in duplicate mode, does not pre-fill the template's runtime when it's now locked", async () => {
@@ -288,7 +287,10 @@ describe("CreateAgentDialog runtime scope gate", () => {
       owner_id: ME,
       scope: "personal",
     });
-    const template = makeTemplate("rt-others-private");
+    const template = {
+      ...makeTemplate("rt-others-private"),
+      model: "explicit-model",
+    };
     const { onCreate } = renderDialog([othersPrivate, mine], template);
 
     expect(
@@ -303,6 +305,7 @@ describe("CreateAgentDialog runtime scope gate", () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(onCreate).toHaveBeenCalledTimes(1);
     expect(onCreate.mock.calls[0]?.[0].runtime_id).toBe("rt-mine");
+    expect(onCreate.mock.calls[0]?.[0].model).toBe("explicit-model");
   });
 
   it("disables 创建 when the selected runtime is locked (template + no usable fallback)", () => {

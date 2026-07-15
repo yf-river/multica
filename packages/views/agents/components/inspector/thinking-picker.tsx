@@ -10,18 +10,8 @@ import { CHIP_CLASS } from "./chip";
 import { useT } from "../../../i18n";
 
 /**
- * Per-agent reasoning/effort picker (MUL-2339). Renders only when the
- * current model exposes a non-empty `supported_levels` set — Claude, Codex,
- * and OpenCode today; every other provider gets nothing. The catalog is daemon-
- * discovered, so the value/label pairs match each CLI's own UI (`Low`,
- * `Extra high`, …) verbatim; never normalised across providers.
- *
- * Empty string is the "no override" sentinel: the backend omits the
- * effort flag entirely and the upstream CLI's own config / built-in
- * default decides what the model runs at. We render that state as
- * "Follow CLI config" rather than singling out one level as the
- * factory default, because the actual default at runtime is owned by
- * the user's local CLI install, not by Multica's catalog.
+ * Displays daemon-discovered CLI labels. An empty value leaves effort to the
+ * local CLI; an unknown persisted value remains visible so it can be cleared.
  */
 export function ThinkingPicker({
   value,
@@ -44,10 +34,6 @@ export function ThinkingPicker({
   const [open, setOpen] = useState(false);
 
   const selected = value ? levels.find((l) => l.value === value) : undefined;
-  // Unknown-but-set value (model swap that dropped the option, CLI upgrade
-  // that trimmed the catalog): show the raw token so the user can see what
-  // is actually persisted and clear it, rather than silently labelling it
-  // "Default" when the backend would still send the stale value.
   const triggerLabel = selected
     ? selected.label
     : value || t(($) => $.pickers.thinking_default);
@@ -97,17 +83,6 @@ export function ThinkingPicker({
           selected={l.value === value}
           onClick={() => void select(l.value)}
         >
-          {/* PickerItem wraps children in a flex `<span>`. Putting a
-              `<div>` inside that <span> is block-in-inline (invalid HTML5)
-              and triggers browser quirks that shift descendant x-position.
-              Use a `<span>` with explicit `block` + `text-left` so layout
-              is deterministic across rows regardless of whether the label
-              row has the `default` badge sibling. */}
-          {/* No model-factory-default badge here on purpose: when the
-              picker is "Follow CLI config" (value === ""), Multica omits
-              `--effort` and the local CLI config decides — the model's
-              factory default is irrelevant to what actually fires, so
-              flagging one option as "default" was misleading. */}
           <span className="block min-w-0 flex-1 text-left">
             <span className="truncate text-[13px] font-medium">{l.label}</span>
             {l.description && (
