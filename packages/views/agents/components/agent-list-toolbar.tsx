@@ -12,21 +12,17 @@ import {
   type AgentSortField,
 } from "@multica/core/agents/stores";
 import {
-  DropdownMenuCheckboxItem,
-} from "@multica/ui/components/ui/dropdown-menu";
-import {
   countActiveFilters,
   incrementCount,
   incrementCountedOption,
-  ToolbarCountBadge,
   ToolbarDisplaySettings,
   ToolbarFilterDropdown,
+  ToolbarFilterOption,
   ToolbarFilterSubmenu,
   ToolbarFrame,
   ToolbarScopeAndResult,
 } from "../../common/list-toolbar";
 import { ActorAvatar } from "@multica/ui/components/common/actor-avatar";
-import { FILTER_ITEM_CLASS, HoverCheck } from "../../common/hover-check";
 import { availabilityConfig } from "../presence";
 import { useT } from "../../i18n";
 import type { AgentListRow } from "./agents-page";
@@ -169,46 +165,42 @@ export function AgentListToolbar({
           {AVAILABILITY_VALUES.map((value) => {
             const visual = availabilityConfig[value];
             return (
-              <DropdownMenuCheckboxItem
+              <ToolbarFilterOption
                 key={value}
                 checked={filters.availability.includes(value)}
-                onCheckedChange={() => onToggleFilter("availability", value)}
-                className={FILTER_ITEM_CLASS}
+                onToggle={() => onToggleFilter("availability", value)}
+                count={availabilityCounts.get(value) ?? 0}
               >
-                <HoverCheck checked={filters.availability.includes(value)} />
                 <span
                   className={`size-1.5 shrink-0 rounded-full ${visual.dotClass}`}
                 />
                 {t(($) => $.availability[value])}
-                <ToolbarCountBadge count={availabilityCounts.get(value) ?? 0} />
-              </DropdownMenuCheckboxItem>
+              </ToolbarFilterOption>
             );
           })}
         </ToolbarFilterSubmenu>
 
-          {/* Runtime */}
+        {/* Runtime */}
         <ToolbarFilterSubmenu
           label={t(($) => $.toolbar.section_runtime)}
           selectedCount={filters.runtimes.length}
           contentClassName="max-h-72 w-auto min-w-48 overflow-y-auto"
         >
           {[...runtimeOptions.entries()].map(([id, { name, count }]) => (
-            <DropdownMenuCheckboxItem
+            <ToolbarFilterOption
               key={id}
               checked={filters.runtimes.includes(id)}
-              onCheckedChange={() => onToggleFilter("runtimes", id)}
-              className={FILTER_ITEM_CLASS}
+              onToggle={() => onToggleFilter("runtimes", id)}
+              count={count}
             >
-              <HoverCheck checked={filters.runtimes.includes(id)} />
               <span className="min-w-0 truncate">{name}</span>
-              <ToolbarCountBadge count={count} />
-            </DropdownMenuCheckboxItem>
+            </ToolbarFilterOption>
           ))}
         </ToolbarFilterSubmenu>
 
-          {/* Owner — the same person-axis as the Mine scope. Picking an
-                owner here leaves the clean "mine" view for "all" (store
-                rule), so Mine + owner never coexist. */}
+        {/* Owner — the same person-axis as the Mine scope. Picking an
+            owner here leaves the clean "mine" view for "all" (store
+            rule), so Mine + owner never coexist. */}
         <ToolbarFilterSubmenu
           label={t(($) => $.toolbar.section_owner)}
           selectedCount={filters.owners.length}
@@ -217,13 +209,12 @@ export function AgentListToolbar({
           {[...ownerCounts.entries()].map(([userId, count]) => {
             const m = memberById.get(userId);
             return (
-              <DropdownMenuCheckboxItem
+              <ToolbarFilterOption
                 key={userId}
                 checked={filters.owners.includes(userId)}
-                onCheckedChange={() => onToggleFilter("owners", userId)}
-                className={FILTER_ITEM_CLASS}
+                onToggle={() => onToggleFilter("owners", userId)}
+                count={count}
               >
-                <HoverCheck checked={filters.owners.includes(userId)} />
                 <ActorAvatar
                   name={m?.name ?? userId.slice(0, 8)}
                   initials={(m?.name ?? "?").slice(0, 2).toUpperCase()}
@@ -233,30 +224,27 @@ export function AgentListToolbar({
                 <span className="min-w-0 truncate">
                   {m?.name ?? userId.slice(0, 8)}
                 </span>
-                <ToolbarCountBadge count={count} />
-              </DropdownMenuCheckboxItem>
+              </ToolbarFilterOption>
             );
           })}
         </ToolbarFilterSubmenu>
 
-          {/* Model — runtime-native model id (categorical column → filter) */}
-          {modelCounts.size > 0 && (
+        {/* Model — runtime-native model id (categorical column → filter) */}
+        {modelCounts.size > 0 && (
           <ToolbarFilterSubmenu
             label={t(($) => $.toolbar.section_model)}
             selectedCount={filters.models.length}
             contentClassName="max-h-72 w-auto min-w-44 overflow-y-auto"
           >
             {[...modelCounts.entries()].map(([model, count]) => (
-              <DropdownMenuCheckboxItem
+              <ToolbarFilterOption
                 key={model}
                 checked={filters.models.includes(model)}
-                onCheckedChange={() => onToggleFilter("models", model)}
-                className={FILTER_ITEM_CLASS}
+                onToggle={() => onToggleFilter("models", model)}
+                count={count}
               >
-                <HoverCheck checked={filters.models.includes(model)} />
                 <span className="min-w-0 truncate">{model}</span>
-                <ToolbarCountBadge count={count} />
-              </DropdownMenuCheckboxItem>
+              </ToolbarFilterOption>
             ))}
           </ToolbarFilterSubmenu>
         )}

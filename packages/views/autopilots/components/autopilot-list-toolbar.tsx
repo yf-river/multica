@@ -10,18 +10,14 @@ import {
   type AutopilotSortField,
 } from "@multica/core/autopilots/stores";
 import { useActorName } from "@multica/core/workspace/hooks";
-import {
-  DropdownMenuCheckboxItem,
-} from "@multica/ui/components/ui/dropdown-menu";
 import { ActorAvatar } from "../../common/actor-avatar";
-import { FILTER_ITEM_CLASS, HoverCheck } from "../../common/hover-check";
 import {
   countActiveFilters,
   incrementCount,
   incrementCountedOption,
-  ToolbarCountBadge,
   ToolbarDisplaySettings,
   ToolbarFilterDropdown,
+  ToolbarFilterOption,
   ToolbarFilterSubmenu,
   ToolbarFrame,
   ToolbarScopeAndResult,
@@ -177,64 +173,58 @@ export function AutopilotListToolbar({
         >
           {[...assigneeOptions.entries()].map(
             ([value, { type, id, count }]) => (
-              <DropdownMenuCheckboxItem
+              <ToolbarFilterOption
                 key={value}
                 checked={filters.assignees.includes(value)}
-                onCheckedChange={() => onToggleFilter("assignees", value)}
-                className={FILTER_ITEM_CLASS}
+                onToggle={() => onToggleFilter("assignees", value)}
+                count={count}
               >
-                <HoverCheck checked={filters.assignees.includes(value)} />
                 <ActorAvatar actorType={type} actorId={id} size={16} />
                 <span className="min-w-0 truncate">
                   {getActorName(type, id)}
                 </span>
-                <ToolbarCountBadge count={count} />
-              </DropdownMenuCheckboxItem>
+              </ToolbarFilterOption>
             ),
           )}
         </ToolbarFilterSubmenu>
 
-          {/* Trigger kind */}
+        {/* Trigger kind */}
         <ToolbarFilterSubmenu
           label={t(($) => $.toolbar.section_trigger)}
           selectedCount={filters.triggerKinds.length}
         >
           {TRIGGER_KINDS.filter((kind) => triggerKindCounts.has(kind)).map(
             (kind) => (
-              <DropdownMenuCheckboxItem
+              <ToolbarFilterOption
                 key={kind}
                 checked={filters.triggerKinds.includes(kind)}
-                onCheckedChange={() => onToggleFilter("triggerKinds", kind)}
-                className={FILTER_ITEM_CLASS}
+                onToggle={() => onToggleFilter("triggerKinds", kind)}
+                count={triggerKindCounts.get(kind) ?? 0}
               >
-                <HoverCheck checked={filters.triggerKinds.includes(kind)} />
                 {t(($) => $.trigger_kind[kind])}
-                <ToolbarCountBadge count={triggerKindCounts.get(kind) ?? 0} />
-              </DropdownMenuCheckboxItem>
+              </ToolbarFilterOption>
             ),
           )}
         </ToolbarFilterSubmenu>
 
-          {/* Mode */}
+        {/* Mode */}
         <ToolbarFilterSubmenu
           label={t(($) => $.toolbar.section_mode)}
           selectedCount={filters.modes.length}
         >
           {MODES.map((mode) => (
-            <DropdownMenuCheckboxItem
+            <ToolbarFilterOption
               key={mode}
               checked={filters.modes.includes(mode)}
-              onCheckedChange={() => onToggleFilter("modes", mode)}
-              className={FILTER_ITEM_CLASS}
+              onToggle={() => onToggleFilter("modes", mode)}
+              count={modeCounts.get(mode) ?? 0}
             >
-              <HoverCheck checked={filters.modes.includes(mode)} />
               {t(($) => $.execution_mode[mode])}
-              <ToolbarCountBadge count={modeCounts.get(mode) ?? 0} />
-            </DropdownMenuCheckboxItem>
+            </ToolbarFilterOption>
           ))}
         </ToolbarFilterSubmenu>
 
-          {/* Creator */}
+        {/* Creator */}
         <ToolbarFilterSubmenu
           label={t(($) => $.toolbar.section_creator)}
           selectedCount={filters.creators.length}
@@ -242,19 +232,17 @@ export function AutopilotListToolbar({
         >
           {[...creatorOptions.entries()].map(
             ([value, { type, id, count }]) => (
-              <DropdownMenuCheckboxItem
+              <ToolbarFilterOption
                 key={value}
                 checked={filters.creators.includes(value)}
-                onCheckedChange={() => onToggleFilter("creators", value)}
-                className={FILTER_ITEM_CLASS}
+                onToggle={() => onToggleFilter("creators", value)}
+                count={count}
               >
-                <HoverCheck checked={filters.creators.includes(value)} />
                 <ActorAvatar actorType={type} actorId={id} size={16} />
                 <span className="min-w-0 truncate">
                   {getActorName(type, id)}
                 </span>
-                <ToolbarCountBadge count={count} />
-              </DropdownMenuCheckboxItem>
+              </ToolbarFilterOption>
             ),
           )}
         </ToolbarFilterSubmenu>

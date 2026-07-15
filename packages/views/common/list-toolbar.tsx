@@ -5,6 +5,7 @@ import { ArrowDown, ArrowUp, ChevronDown, Filter, X } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
@@ -24,6 +25,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@multica/ui/components/ui/tooltip";
+import { FILTER_ITEM_CLASS, HoverCheck } from "./hover-check";
 import { useT } from "../i18n";
 
 type SortDirection = "asc" | "desc";
@@ -52,6 +54,30 @@ export function incrementCountedOption<K, T extends { count: number }>(
 export function ToolbarCountBadge({ count }: { count: number }) {
   return (
     <span className="ml-auto pl-3 text-xs text-muted-foreground">{count}</span>
+  );
+}
+
+export function ToolbarFilterOption({
+  checked,
+  onToggle,
+  count,
+  children,
+}: {
+  checked: boolean;
+  onToggle: () => void;
+  count: number;
+  children: ReactNode;
+}) {
+  return (
+    <DropdownMenuCheckboxItem
+      checked={checked}
+      onCheckedChange={onToggle}
+      className={FILTER_ITEM_CLASS}
+    >
+      <HoverCheck checked={checked} />
+      {children}
+      <ToolbarCountBadge count={count} />
+    </DropdownMenuCheckboxItem>
   );
 }
 

@@ -3,19 +3,15 @@
 import { Download, HardDrive, Pencil, Search } from "lucide-react";
 import type { Agent, MemberWithUser } from "@multica/core/types";
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
-import {
-  DropdownMenuCheckboxItem,
-} from "@multica/ui/components/ui/dropdown-menu";
 import { Input } from "@multica/ui/components/ui/input";
 import { ActorAvatar } from "@multica/ui/components/common/actor-avatar";
-import { FILTER_ITEM_CLASS, HoverCheck } from "../../common/hover-check";
 import {
   countActiveFilters,
   incrementCount,
   incrementCountedOption,
-  ToolbarCountBadge,
   ToolbarDisplaySettings,
   ToolbarFilterDropdown,
+  ToolbarFilterOption,
   ToolbarFilterSubmenu,
   ToolbarFrame,
   ToolbarResultCount,
@@ -167,20 +163,16 @@ export function SkillListToolbar({
           selectedCount={filters.usage.length}
         >
           {(["used", "unused"] as const).map((value) => (
-            <DropdownMenuCheckboxItem
+            <ToolbarFilterOption
               key={value}
               checked={filters.usage.includes(value)}
-              onCheckedChange={() => onToggleFilter("usage", value)}
-              className={FILTER_ITEM_CLASS}
+              onToggle={() => onToggleFilter("usage", value)}
+              count={value === "used" ? usedCount : unusedCount}
             >
-              <HoverCheck checked={filters.usage.includes(value)} />
               {value === "used"
                 ? t(($) => $.page.scopes.used.label)
                 : t(($) => $.page.scopes.unused.label)}
-              <ToolbarCountBadge
-                count={value === "used" ? usedCount : unusedCount}
-              />
-            </DropdownMenuCheckboxItem>
+            </ToolbarFilterOption>
           ))}
         </ToolbarFilterSubmenu>
 
@@ -191,17 +183,15 @@ export function SkillListToolbar({
         >
           {ORIGIN_TYPES.filter((type) => originCounts.has(type)).map(
             (type) => (
-              <DropdownMenuCheckboxItem
+              <ToolbarFilterOption
                 key={type}
                 checked={filters.origins.includes(type)}
-                onCheckedChange={() => onToggleFilter("origins", type)}
-                className={FILTER_ITEM_CLASS}
+                onToggle={() => onToggleFilter("origins", type)}
+                count={originCounts.get(type) ?? 0}
               >
-                <HoverCheck checked={filters.origins.includes(type)} />
                 {originIcon(type)}
                 {ORIGIN_LABELS[type]}
-                <ToolbarCountBadge count={originCounts.get(type) ?? 0} />
-              </DropdownMenuCheckboxItem>
+              </ToolbarFilterOption>
             ),
           )}
         </ToolbarFilterSubmenu>
@@ -212,13 +202,12 @@ export function SkillListToolbar({
           contentClassName="max-h-72 w-auto min-w-48 overflow-y-auto"
         >
           {[...agentOptions.values()].map(({ agent, count }) => (
-            <DropdownMenuCheckboxItem
+            <ToolbarFilterOption
               key={agent.id}
               checked={filters.agents.includes(agent.id)}
-              onCheckedChange={() => onToggleFilter("agents", agent.id)}
-              className={FILTER_ITEM_CLASS}
+              onToggle={() => onToggleFilter("agents", agent.id)}
+              count={count}
             >
-              <HoverCheck checked={filters.agents.includes(agent.id)} />
               <ActorAvatar
                 name={agent.name}
                 initials={agent.name.slice(0, 2).toUpperCase()}
@@ -227,8 +216,7 @@ export function SkillListToolbar({
                 size={16}
               />
               <span className="min-w-0 truncate">{agent.name}</span>
-              <ToolbarCountBadge count={count} />
-            </DropdownMenuCheckboxItem>
+            </ToolbarFilterOption>
           ))}
         </ToolbarFilterSubmenu>
 
@@ -238,15 +226,12 @@ export function SkillListToolbar({
           contentClassName="max-h-72 w-auto min-w-48 overflow-y-auto"
         >
           {[...creatorOptions.values()].map(({ member, count }) => (
-            <DropdownMenuCheckboxItem
+            <ToolbarFilterOption
               key={member.user_id}
               checked={filters.creators.includes(member.user_id)}
-              onCheckedChange={() =>
-                onToggleFilter("creators", member.user_id)
-              }
-              className={FILTER_ITEM_CLASS}
+              onToggle={() => onToggleFilter("creators", member.user_id)}
+              count={count}
             >
-              <HoverCheck checked={filters.creators.includes(member.user_id)} />
               <ActorAvatar
                 name={member.name}
                 initials={member.name.slice(0, 2).toUpperCase()}
@@ -254,8 +239,7 @@ export function SkillListToolbar({
                 size={16}
               />
               <span className="min-w-0 truncate">{member.name}</span>
-              <ToolbarCountBadge count={count} />
-            </DropdownMenuCheckboxItem>
+            </ToolbarFilterOption>
           ))}
         </ToolbarFilterSubmenu>
       </ToolbarFilterDropdown>
