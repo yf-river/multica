@@ -11,7 +11,7 @@
  * missing credential) is treated as auth-expired.
  */
 
-export interface AuthProbeOutcome {
+interface AuthProbeOutcome {
   /** HTTP status code returned by the probe request, if one completed. */
   status?: number;
   /** The daemon profile has no token at all — there is nothing to validate. */

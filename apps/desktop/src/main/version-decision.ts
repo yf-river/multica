@@ -2,13 +2,13 @@
 // module so it can be unit-tested without mocking Electron, execFile, or
 // the HTTP health probe.
 
-export interface VersionCheckHealth {
+interface VersionCheckHealth {
   status: string;
   cli_version: string;
   active_task_count: number;
 }
 
-export type VersionAction = "restart" | "defer" | "ok" | "not_running";
+type VersionAction = "restart" | "defer" | "ok" | "not_running";
 
 /**
  * Decides what the daemon-manager should do given the currently-resolved

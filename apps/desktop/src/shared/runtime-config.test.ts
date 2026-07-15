@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   DEFAULT_RUNTIME_CONFIG,
-  deriveWsUrl,
   parseRuntimeConfig,
   runtimeConfigFromDevEnv,
 } from "./runtime-config";
@@ -43,10 +42,6 @@ describe("runtime config", () => {
       wsUrl: "wss://api.multica.ai/ws",
       appUrl: "https://multica.ai",
     });
-  });
-
-  it("derives ws for http api URLs", () => {
-    expect(deriveWsUrl("http://localhost:8080")).toBe("ws://localhost:8080/ws");
   });
 
   it("accepts explicit appUrl and wsUrl", () => {

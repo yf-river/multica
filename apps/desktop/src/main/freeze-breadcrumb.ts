@@ -9,8 +9,6 @@ import { isMissingFileError } from "./error-message";
 // time a renderer boots, it reads + clears the file and reports the event.
 // This survives even a force-quit, which is the whole point.
 
-export type { FreezeBreadcrumb };
-
 /**
  * Best-effort write. A breadcrumb we can't persist is lost, never fatal.
  *

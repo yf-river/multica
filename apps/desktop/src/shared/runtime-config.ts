@@ -82,7 +82,7 @@ export function parseRuntimeConfig(raw: string): RuntimeConfig {
   };
 }
 
-export function deriveWsUrl(apiUrl: string): string {
+function deriveWsUrl(apiUrl: string): string {
   const url = new URL(apiUrl);
   if (url.protocol === "https:") url.protocol = "wss:";
   else if (url.protocol === "http:") url.protocol = "ws:";

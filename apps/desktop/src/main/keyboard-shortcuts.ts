@@ -12,7 +12,7 @@ type ShortcutInput = {
 };
 
 // Subset of WebContents the zoom handler needs. Keeps the test mock tiny.
-export type ZoomTarget = Pick<WebContents, "getZoomLevel" | "setZoomLevel">;
+type ZoomTarget = Pick<WebContents, "getZoomLevel" | "setZoomLevel">;
 
 // Match Electron's built-in zoomIn/zoomOut roles (Chromium default of 0.5
 // per step). Clamp to a range that keeps the UI legible — values outside
@@ -41,7 +41,7 @@ const ZOOM_MAX = 4.5;
  * - `true`: handled (preventDefault), no further action
  * - `"close-tab"`: Cmd/Ctrl+W intercepted — caller should send IPC to renderer
  */
-export type ShortcutResult = boolean | "close-tab";
+type ShortcutResult = boolean | "close-tab";
 
 export function handleAppShortcut(
   input: ShortcutInput,

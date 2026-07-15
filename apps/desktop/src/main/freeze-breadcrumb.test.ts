@@ -7,8 +7,8 @@ import {
   writeFreezeBreadcrumb,
   readAndClearFreezeBreadcrumb,
   clearFreezeBreadcrumb,
-  type FreezeBreadcrumb,
 } from "./freeze-breadcrumb";
+import type { FreezeBreadcrumb } from "../shared/freeze-breadcrumb";
 
 // Each test gets its own temp dir so the on-disk breadcrumb is isolated.
 const dirs: string[] = [];

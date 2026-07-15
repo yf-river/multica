@@ -43,5 +43,3 @@ export async function loadRuntimeConfig(options: {
 function desktopConfigPath(): string {
   return join(app.getPath("home"), ".multica", "desktop.json");
 }
-
-export type { RuntimeConfigResult };
