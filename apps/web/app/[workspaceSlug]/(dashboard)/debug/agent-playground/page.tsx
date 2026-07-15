@@ -1,5 +1,1 @@
-import { AgentPlaygroundPage } from "@multica/views/agent-playground";
-
-export default function DebugAgentPlaygroundPage() {
-  return <AgentPlaygroundPage />;
-}
+export { AgentPlaygroundPage as default } from "@multica/views/agent-playground";
