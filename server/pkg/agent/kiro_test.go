@@ -121,19 +121,7 @@ func TestKiroBackendSetModelFailureFailsTask(t *testing.T) {
 		Model:   "bogus-model",
 		Timeout: 5 * time.Second,
 	})
-
-	if result.Status != "failed" {
-		t.Fatalf("expected status=failed, got %q (error=%q)", result.Status, result.Error)
-	}
-	if !strings.Contains(result.Error, `could not switch to model "bogus-model"`) {
-		t.Errorf("expected error to name the requested model, got %q", result.Error)
-	}
-	if !strings.Contains(result.Error, "model not available") {
-		t.Errorf("expected error to surface upstream message, got %q", result.Error)
-	}
-	if result.SessionID != "ses_new" {
-		t.Errorf("expected session id to be preserved on failure, got %q", result.SessionID)
-	}
+	assertACPModelFailure(t, result, "ses_new")
 }
 
 // fakeKiroACPStaleLoadSetModelScript impersonates kiro when a resumed

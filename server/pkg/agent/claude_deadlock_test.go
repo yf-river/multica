@@ -207,62 +207,43 @@ func TestClaudeExecuteDoesNotDeadlockOnStartupStdoutBurst(t *testing.T) {
 func TestClaudeExecuteRespondsToControlRequest(t *testing.T) {
 	t.Parallel()
 
-	self, err := os.Executable()
-	if err != nil {
-		t.Fatalf("os.Executable: %v", err)
+	result := executeClaudeFakeMode(t, "control_request", "run a command")
+	if result.Status != "completed" {
+		t.Fatalf("expected status=completed, got %q (error=%q)", result.Status, result.Error)
 	}
-
-	backend, err := New("claude", Config{
-		ExecutablePath: self,
-		Env:            map[string]string{"CLAUDE_FAKE_MODE": "control_request"},
-		Logger:         slog.Default(),
-	})
-	if err != nil {
-		t.Fatalf("new claude backend: %v", err)
+	if result.Output != "done after control" {
+		t.Fatalf("expected result output from fake claude, got %q", result.Output)
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	session, err := backend.Execute(ctx, "run a command", ExecOptions{Timeout: 8 * time.Second})
-	if err != nil {
-		t.Fatalf("execute returned error: %v", err)
-	}
-	go func() {
-		for range session.Messages {
-		}
-	}()
-
-	select {
-	case result, ok := <-session.Result:
-		if !ok {
-			t.Fatal("result channel closed without a value")
-		}
-		if result.Status != "completed" {
-			t.Fatalf("expected status=completed, got %q (error=%q)", result.Status, result.Error)
-		}
-		if result.Output != "done after control" {
-			t.Fatalf("expected result output from fake claude, got %q", result.Output)
-		}
-		if result.SessionID != "sess-control" {
-			t.Fatalf("expected session id sess-control, got %q", result.SessionID)
-		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("timeout waiting for result — claude backend did not answer control_request")
+	if result.SessionID != "sess-control" {
+		t.Fatalf("expected session id sess-control, got %q", result.SessionID)
 	}
 }
 
 func TestClaudeExecuteForcesBackgroundControlRequestForeground(t *testing.T) {
 	t.Parallel()
 
+	result := executeClaudeFakeMode(t, "background_control_request", "run a background command")
+	if result.Status != "completed" {
+		t.Fatalf("expected status=completed, got %q (error=%q)", result.Status, result.Error)
+	}
+	if result.Output != "done after foreground rewrite" {
+		t.Fatalf("expected foreground rewrite result, got %q", result.Output)
+	}
+	if result.SessionID != "sess-background-control" {
+		t.Fatalf("expected session id sess-background-control, got %q", result.SessionID)
+	}
+}
+
+func executeClaudeFakeMode(t *testing.T, mode, prompt string) Result {
+	t.Helper()
+
 	self, err := os.Executable()
 	if err != nil {
 		t.Fatalf("os.Executable: %v", err)
 	}
-
 	backend, err := New("claude", Config{
 		ExecutablePath: self,
-		Env:            map[string]string{"CLAUDE_FAKE_MODE": "background_control_request"},
+		Env:            map[string]string{"CLAUDE_FAKE_MODE": mode},
 		Logger:         slog.Default(),
 	})
 	if err != nil {
@@ -271,8 +252,7 @@ func TestClaudeExecuteForcesBackgroundControlRequestForeground(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-
-	session, err := backend.Execute(ctx, "run a background command", ExecOptions{Timeout: 8 * time.Second})
+	session, err := backend.Execute(ctx, prompt, ExecOptions{Timeout: 8 * time.Second})
 	if err != nil {
 		t.Fatalf("execute returned error: %v", err)
 	}
@@ -286,17 +266,10 @@ func TestClaudeExecuteForcesBackgroundControlRequestForeground(t *testing.T) {
 		if !ok {
 			t.Fatal("result channel closed without a value")
 		}
-		if result.Status != "completed" {
-			t.Fatalf("expected status=completed, got %q (error=%q)", result.Status, result.Error)
-		}
-		if result.Output != "done after foreground rewrite" {
-			t.Fatalf("expected foreground rewrite result, got %q", result.Output)
-		}
-		if result.SessionID != "sess-background-control" {
-			t.Fatalf("expected session id sess-background-control, got %q", result.SessionID)
-		}
+		return result
 	case <-time.After(5 * time.Second):
-		t.Fatal("timeout waiting for result — claude backend did not foreground background control_request")
+		t.Fatalf("timeout waiting for result in fake mode %q", mode)
+		return Result{}
 	}
 }
 

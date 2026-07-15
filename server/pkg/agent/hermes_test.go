@@ -1574,46 +1574,18 @@ done
 // loops on the dead session.
 func TestHermesBackendClearsSessionIDWhenResumedSessionNotFound(t *testing.T) {
 	t.Parallel()
-
-	fakePath := filepath.Join(t.TempDir(), "hermes")
-	writeTestExecutable(t, fakePath, []byte(fakeHermesACPStaleResumeScript()))
-
-	backend, err := New("hermes", Config{ExecutablePath: fakePath, Logger: slog.Default()})
-	if err != nil {
-		t.Fatalf("new hermes backend: %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	session, err := backend.Execute(ctx, "prompt-ignored", ExecOptions{
+	result := executeHermesScript(t, fakeHermesACPStaleResumeScript(), ExecOptions{
 		Timeout:         5 * time.Second,
 		ResumeSessionID: "ses_stale",
 	})
-	if err != nil {
-		t.Fatalf("execute: %v", err)
+	if result.Status != "failed" {
+		t.Fatalf("expected status=failed, got %q (error=%q)", result.Status, result.Error)
 	}
-	go func() {
-		for range session.Messages {
-		}
-	}()
-
-	select {
-	case result, ok := <-session.Result:
-		if !ok {
-			t.Fatal("result channel closed without a value")
-		}
-		if result.Status != "failed" {
-			t.Fatalf("expected status=failed, got %q (error=%q)", result.Status, result.Error)
-		}
-		if !strings.Contains(result.Error, "Session not found") {
-			t.Errorf("expected error to surface the session-not-found message, got %q", result.Error)
-		}
-		if result.SessionID != "" {
-			t.Errorf("expected empty session id so the daemon's fresh-session retry fires, got %q", result.SessionID)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("timeout waiting for result")
+	if !strings.Contains(result.Error, "Session not found") {
+		t.Errorf("expected error to surface the session-not-found message, got %q", result.Error)
+	}
+	if result.SessionID != "" {
+		t.Errorf("expected empty session id so the daemon's fresh-session retry fires, got %q", result.SessionID)
 	}
 }
 
@@ -1651,47 +1623,19 @@ done
 // fires for any agent configured with a model.
 func TestHermesBackendClearsSessionIDWhenSetModelSessionNotFound(t *testing.T) {
 	t.Parallel()
-
-	fakePath := filepath.Join(t.TempDir(), "hermes")
-	writeTestExecutable(t, fakePath, []byte(fakeHermesACPStaleResumeSetModelScript()))
-
-	backend, err := New("hermes", Config{ExecutablePath: fakePath, Logger: slog.Default()})
-	if err != nil {
-		t.Fatalf("new hermes backend: %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	session, err := backend.Execute(ctx, "prompt-ignored", ExecOptions{
+	result := executeHermesScript(t, fakeHermesACPStaleResumeSetModelScript(), ExecOptions{
 		Timeout:         5 * time.Second,
 		ResumeSessionID: "ses_stale",
 		Model:           "some-model",
 	})
-	if err != nil {
-		t.Fatalf("execute: %v", err)
+	if result.Status != "failed" {
+		t.Fatalf("expected status=failed, got %q (error=%q)", result.Status, result.Error)
 	}
-	go func() {
-		for range session.Messages {
-		}
-	}()
-
-	select {
-	case result, ok := <-session.Result:
-		if !ok {
-			t.Fatal("result channel closed without a value")
-		}
-		if result.Status != "failed" {
-			t.Fatalf("expected status=failed, got %q (error=%q)", result.Status, result.Error)
-		}
-		if !strings.Contains(result.Error, `could not switch to model "some-model"`) {
-			t.Errorf("expected error to name the requested model, got %q", result.Error)
-		}
-		if result.SessionID != "" {
-			t.Errorf("expected empty session id so the daemon's fresh-session retry fires, got %q", result.SessionID)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("timeout waiting for result")
+	if !strings.Contains(result.Error, `could not switch to model "some-model"`) {
+		t.Errorf("expected error to name the requested model, got %q", result.Error)
+	}
+	if result.SessionID != "" {
+		t.Errorf("expected empty session id so the daemon's fresh-session retry fires, got %q", result.SessionID)
 	}
 }
 

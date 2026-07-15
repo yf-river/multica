@@ -1,9 +1,7 @@
 package agent
 
 import (
-	"context"
 	"log/slog"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -76,7 +74,6 @@ func TestPiExecuteAttachesStdinPipe(t *testing.T) {
 		t.Skip("stdin fd inspection relies on /proc/self/fd/0")
 	}
 
-	fakePath := filepath.Join(t.TempDir(), "pi")
 	script := "#!/bin/sh\n" +
 		"kind=$(stat -c '%F' -L /proc/self/fd/0 2>/dev/null || echo unknown)\n" +
 		"case \"$kind\" in\n" +
@@ -88,34 +85,9 @@ func TestPiExecuteAttachesStdinPipe(t *testing.T) {
 		"esac\n" +
 		"printf 'stdin was %s; expected fifo\\n' \"$kind\" >&2\n" +
 		"exit 1\n"
-	writeTestExecutable(t, fakePath, []byte(script))
-
-	backend, err := New("pi", Config{ExecutablePath: fakePath, Logger: slog.Default()})
-	if err != nil {
-		t.Fatalf("new pi backend: %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	session, err := backend.Execute(ctx, "prompt-ignored", ExecOptions{Timeout: 5 * time.Second})
-	if err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	go func() {
-		for range session.Messages {
-		}
-	}()
-
-	select {
-	case result, ok := <-session.Result:
-		if !ok {
-			t.Fatal("result channel closed without a value")
-		}
-		if result.Status != "completed" {
-			t.Fatalf("expected status=completed (stdin attached as fifo), got %q (error=%q)", result.Status, result.Error)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("timeout waiting for result")
+	result := executeBackendScript(t, "pi", "pi", script, ExecOptions{Timeout: 5 * time.Second})
+	if result.Status != "completed" {
+		t.Fatalf("expected status=completed (stdin attached as fifo), got %q (error=%q)", result.Status, result.Error)
 	}
 }
 

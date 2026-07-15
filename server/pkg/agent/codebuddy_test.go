@@ -113,25 +113,7 @@ func TestBuildCodebuddyArgs_ExtraArgsBeforeCustomArgs(t *testing.T) {
 		ExtraArgs:  []string{"--output-format", "text", "--max-budget-usd", "1.00"},
 		CustomArgs: []string{"--max-budget-usd", "2.00", "--permission-mode", "plan"},
 	}, slog.Default())
-
-	joined := strings.Join(args, " ")
-	// Blocked flags should be filtered from both layers.
-	if strings.Contains(joined, "--output-format text") || strings.Contains(joined, "--permission-mode plan") {
-		t.Fatalf("blocked args should be filtered from both layers: %v", args)
-	}
-
-	extraIdx, customIdx := -1, -1
-	for i := 0; i+1 < len(args); i++ {
-		if args[i] == "--max-budget-usd" && args[i+1] == "1.00" {
-			extraIdx = i
-		}
-		if args[i] == "--max-budget-usd" && args[i+1] == "2.00" {
-			customIdx = i
-		}
-	}
-	if extraIdx == -1 || customIdx == -1 || extraIdx > customIdx {
-		t.Fatalf("expected extra args before custom args, got %v", args)
-	}
+	assertFilteredArgsPreserveLayerOrder(t, args)
 }
 
 func TestBuildCodebuddyArgs_Resume(t *testing.T) {
@@ -272,48 +254,22 @@ func TestCodebuddyExecuteSurfacesStderr(t *testing.T) {
 		t.Skip("shell-script fixture is POSIX-only")
 	}
 
-	fakePath := filepath.Join(t.TempDir(), "codebuddy")
 	script := "#!/bin/sh\n" +
 		"IFS= read -r _\n" +
 		"echo \"FATAL ERROR: segfault in codebuddy runtime\" >&2\n" +
 		"exit 1\n"
-	writeTestExecutable(t, fakePath, []byte(script))
-
-	b := &codebuddyBackend{cfg: Config{ExecutablePath: fakePath, Logger: slog.Default()}}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	session, err := b.Execute(ctx, "prompt-ignored", ExecOptions{Timeout: 5 * time.Second})
-	if err != nil {
-		t.Fatalf("execute: %v", err)
+	result := executeBackendScript(t, "codebuddy", "codebuddy", script, ExecOptions{Timeout: 5 * time.Second})
+	if result.Status != "failed" {
+		t.Fatalf("expected status=failed, got %q (error=%q)", result.Status, result.Error)
 	}
-
-	// Drain messages.
-	go func() {
-		for range session.Messages {
-		}
-	}()
-
-	select {
-	case result, ok := <-session.Result:
-		if !ok {
-			t.Fatal("result channel closed without a value")
-		}
-		if result.Status != "failed" {
-			t.Fatalf("expected status=failed, got %q (error=%q)", result.Status, result.Error)
-		}
-		if !strings.Contains(result.Error, "codebuddy exited with error") {
-			t.Fatalf("expected error to mention exit, got %q", result.Error)
-		}
-		if !strings.Contains(result.Error, "segfault in codebuddy runtime") {
-			t.Fatalf("expected error to include stderr content, got %q", result.Error)
-		}
-		if !strings.Contains(result.Error, "codebuddy stderr:") {
-			t.Fatalf("expected stderr label in error, got %q", result.Error)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("timeout waiting for result")
+	if !strings.Contains(result.Error, "codebuddy exited with error") {
+		t.Fatalf("expected error to mention exit, got %q", result.Error)
+	}
+	if !strings.Contains(result.Error, "segfault in codebuddy runtime") {
+		t.Fatalf("expected error to include stderr content, got %q", result.Error)
+	}
+	if !strings.Contains(result.Error, "codebuddy stderr:") {
+		t.Fatalf("expected stderr label in error, got %q", result.Error)
 	}
 }
 

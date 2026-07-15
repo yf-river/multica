@@ -1213,45 +1213,18 @@ func TestCodexExecuteSurfacesStderrWhenChildExitsEarly(t *testing.T) {
 	// real os/exec stderr pipe-copy goroutine — without drainAndWait joining
 	// cmd.Wait() before sampling stderrBuf.Tail(), Result.Error would come
 	// back empty or truncated here.
-	fakePath := filepath.Join(t.TempDir(), "codex")
 	script := "#!/bin/sh\n" +
 		"echo \"error: unexpected argument '-m' found\" >&2\n" +
 		"exit 2\n"
-	writeTestExecutable(t, fakePath, []byte(script))
-
-	backend, err := New("codex", Config{ExecutablePath: fakePath, Logger: slog.Default()})
-	if err != nil {
-		t.Fatalf("new codex backend: %v", err)
+	result := executeBackendScript(t, "codex", "codex", script, ExecOptions{Timeout: 5 * time.Second})
+	if result.Status != "failed" {
+		t.Fatalf("expected status=failed, got %q (error=%q)", result.Status, result.Error)
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	session, err := backend.Execute(ctx, "prompt-ignored", ExecOptions{Timeout: 5 * time.Second})
-	if err != nil {
-		t.Fatalf("execute: %v", err)
+	if !strings.Contains(result.Error, "codex initialize failed") {
+		t.Fatalf("expected error to mention initialize failure, got %q", result.Error)
 	}
-	// Drain message stream so the lifecycle goroutine can progress.
-	go func() {
-		for range session.Messages {
-		}
-	}()
-
-	select {
-	case result, ok := <-session.Result:
-		if !ok {
-			t.Fatal("result channel closed without a value")
-		}
-		if result.Status != "failed" {
-			t.Fatalf("expected status=failed, got %q (error=%q)", result.Status, result.Error)
-		}
-		if !strings.Contains(result.Error, "codex initialize failed") {
-			t.Fatalf("expected error to mention initialize failure, got %q", result.Error)
-		}
-		if !strings.Contains(result.Error, "unexpected argument '-m' found") {
-			t.Fatalf("expected error to include stderr hint, got %q", result.Error)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("timeout waiting for result")
+	if !strings.Contains(result.Error, "unexpected argument '-m' found") {
+		t.Fatalf("expected error to include stderr hint, got %q", result.Error)
 	}
 }
 
@@ -2141,22 +2114,8 @@ func TestEnsureCodexMcpConfigIdempotent(t *testing.T) {
 	// Running ensure twice with the same input must produce byte-identical
 	// output — needed because Prepare and Reuse may both call into this on
 	// the same per-task config.toml across a task's lifetime.
-	tmp := filepath.Join(t.TempDir(), "config.toml")
 	raw := json.RawMessage(`{"mcpServers":{"fetch":{"command":"uvx","args":["a","b"]}}}`)
-
-	if err := ensureCodexMcpConfig(tmp, raw, slog.Default()); err != nil {
-		t.Fatalf("first ensure: %v", err)
-	}
-	first, _ := os.ReadFile(tmp)
-
-	if err := ensureCodexMcpConfig(tmp, raw, slog.Default()); err != nil {
-		t.Fatalf("second ensure: %v", err)
-	}
-	second, _ := os.ReadFile(tmp)
-
-	if string(first) != string(second) {
-		t.Fatalf("non-idempotent write:\nfirst:\n%s\nsecond:\n%s", first, second)
-	}
+	assertEnsureCodexMcpConfigIdempotent(t, nil, raw)
 }
 
 func TestEnsureCodexMcpConfigRejectsBadShapes(t *testing.T) {
@@ -2192,17 +2151,9 @@ func TestEnsureCodexMcpConfigAbsentLeavesUserTablesAlone(t *testing.T) {
 	// inherited `[mcp_servers.*]` tables — the run falls back to the
 	// user's global CLI config.
 	for _, raw := range []json.RawMessage{nil, json.RawMessage(`null`)} {
-		tmp := filepath.Join(t.TempDir(), "config.toml")
 		initial := "sandbox_mode = \"workspace-write\"\n\n" +
 			"[mcp_servers.user_global]\ncommand = \"keep\"\n"
-		if err := os.WriteFile(tmp, []byte(initial), 0o600); err != nil {
-			t.Fatalf("seed: %v", err)
-		}
-		if err := ensureCodexMcpConfig(tmp, raw, slog.Default()); err != nil {
-			t.Fatalf("ensure (%q): %v", string(raw), err)
-		}
-		data, _ := os.ReadFile(tmp)
-		got := string(data)
+		got := ensureCodexMcpConfigFromInitial(t, initial, raw)
 		if !strings.Contains(got, "[mcp_servers.user_global]") {
 			t.Fatalf("absent mcp_config (%q) must leave user MCP tables alone, got:\n%s", string(raw), got)
 		}
@@ -2225,17 +2176,9 @@ func TestEnsureCodexMcpConfigEmptyManagedSetStripsUserMcp(t *testing.T) {
 		json.RawMessage(`{}`),
 		json.RawMessage(`{"mcpServers":{}}`),
 	} {
-		tmp := filepath.Join(t.TempDir(), "config.toml")
 		initial := "sandbox_mode = \"workspace-write\"\n\n" +
 			"[mcp_servers.user_global]\ncommand = \"keep\"\n"
-		if err := os.WriteFile(tmp, []byte(initial), 0o600); err != nil {
-			t.Fatalf("seed: %v", err)
-		}
-		if err := ensureCodexMcpConfig(tmp, raw, slog.Default()); err != nil {
-			t.Fatalf("ensure (%q): %v", string(raw), err)
-		}
-		data, _ := os.ReadFile(tmp)
-		got := string(data)
+		got := ensureCodexMcpConfigFromInitial(t, initial, raw)
 		if strings.Contains(got, "user_global") {
 			t.Fatalf("managed empty set (%q) must strip user MCP tables, got:\n%s", string(raw), got)
 		}
@@ -2248,17 +2191,42 @@ func TestEnsureCodexMcpConfigEmptyManagedSetStripsUserMcp(t *testing.T) {
 	}
 }
 
+func ensureCodexMcpConfigFromInitial(t *testing.T, initial string, raw json.RawMessage) string {
+	t.Helper()
+
+	tmp := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(tmp, []byte(initial), 0o600); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := ensureCodexMcpConfig(tmp, raw, slog.Default()); err != nil {
+		t.Fatalf("ensure (%q): %v", string(raw), err)
+	}
+	data, err := os.ReadFile(tmp)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	return string(data)
+}
+
 func TestEnsureCodexMcpConfigEmptyManagedSetIdempotent(t *testing.T) {
 	t.Parallel()
 
 	// Running ensure twice with the same `{}` input must produce
 	// byte-identical output — guards against the empty-marker block
 	// accreting blank lines or duplicate markers across reruns.
-	tmp := filepath.Join(t.TempDir(), "config.toml")
-	if err := os.WriteFile(tmp, []byte("sandbox_mode = \"workspace-write\"\n"), 0o600); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
 	raw := json.RawMessage(`{}`)
+	assertEnsureCodexMcpConfigIdempotent(t, []byte("sandbox_mode = \"workspace-write\"\n"), raw)
+}
+
+func assertEnsureCodexMcpConfigIdempotent(t *testing.T, initial []byte, raw json.RawMessage) {
+	t.Helper()
+
+	tmp := filepath.Join(t.TempDir(), "config.toml")
+	if initial != nil {
+		if err := os.WriteFile(tmp, initial, 0o600); err != nil {
+			t.Fatalf("seed: %v", err)
+		}
+	}
 	if err := ensureCodexMcpConfig(tmp, raw, slog.Default()); err != nil {
 		t.Fatalf("first ensure: %v", err)
 	}
