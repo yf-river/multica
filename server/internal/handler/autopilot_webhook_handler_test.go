@@ -43,7 +43,12 @@ func createWebhookTestAgent(t *testing.T, name string) string {
 	return agentID
 }
 
-func createWebhookTestAutopilot(t *testing.T, agentID, status, mode string) string {
+func createWebhookTestAutopilot(t *testing.T, status string) string {
+	t.Helper()
+	return createWebhookTestAutopilotForAgent(t, createWebhookTestAgent(t, "Webhook test "+uuid.NewString()), status)
+}
+
+func createWebhookTestAutopilotForAgent(t *testing.T, agentID, status string) string {
 	t.Helper()
 	var apID string
 	if err := testPool.QueryRow(context.Background(), `
@@ -52,7 +57,7 @@ func createWebhookTestAutopilot(t *testing.T, agentID, status, mode string) stri
 			created_by_type, created_by_id
 		) VALUES ($1, $2, $3, $4, $5, 'member', $6)
 		RETURNING id
-	`, testWorkspaceID, "Webhook test "+status, agentID, status, mode, testUserID).Scan(&apID); err != nil {
+	`, testWorkspaceID, "Webhook test "+status, agentID, status, "run_only", testUserID).Scan(&apID); err != nil {
 		t.Fatalf("create autopilot: %v", err)
 	}
 	t.Cleanup(func() {
@@ -61,12 +66,14 @@ func createWebhookTestAutopilot(t *testing.T, agentID, status, mode string) stri
 	return apID
 }
 
-func createWebhookTriggerViaHandler(t *testing.T, autopilotID string) AutopilotTriggerResponse {
+func createWebhookTrigger(t *testing.T, autopilotID string, filters ...WebhookEventFilter) AutopilotTriggerResponse {
 	t.Helper()
 	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/autopilots/"+autopilotID+"/triggers", map[string]any{
-		"kind": "webhook",
-	})
+	body := map[string]any{"kind": "webhook"}
+	if len(filters) > 0 {
+		body["event_filters"] = filters
+	}
+	req := newRequest("POST", "/api/autopilots/"+autopilotID+"/triggers", body)
 	req = withURLParam(req, "id", autopilotID)
 	testHandler.CreateAutopilotTrigger(w, req)
 	if w.Code != http.StatusCreated {
@@ -80,8 +87,7 @@ func createWebhookTriggerViaHandler(t *testing.T, autopilotID string) AutopilotT
 }
 
 func TestCreateAutopilotTrigger_ReplaysCommittedCreate(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "WebhookCreateReplay Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
+	apID := createWebhookTestAutopilot(t, "active")
 	requestKey := uuid.NewString()
 	create := func() AutopilotTriggerResponse {
 		t.Helper()
@@ -118,8 +124,7 @@ func TestCreateAutopilotTrigger_ReplaysCommittedCreate(t *testing.T) {
 }
 
 func TestCreateAutopilotTrigger_ConcurrentReplayCreatesOnce(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "WebhookCreateConcurrent Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
+	apID := createWebhookTestAutopilot(t, "active")
 	requestKey := uuid.NewString()
 
 	const workers = 8
@@ -176,8 +181,7 @@ func TestCreateAutopilotTrigger_ConcurrentReplayCreatesOnce(t *testing.T) {
 }
 
 func TestCreateAutopilotTrigger_CompletionFailureRollsBackCreate(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "WebhookCreateRollback Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
+	apID := createWebhookTestAutopilot(t, "active")
 	requestKey := uuid.NewString()
 	suffix := uuid.NewString()
 	functionName := quoteIdentifier("fail_trigger_create_completion_" + suffix)
@@ -221,39 +225,12 @@ func TestCreateAutopilotTrigger_CompletionFailureRollsBackCreate(t *testing.T) {
 	}
 }
 
-// createWebhookTriggerWithFilters builds the request body with a real JSON
-// array — the same shape the frontend sends. Earlier revisions of this
-// helper marshaled the filters separately and assigned the resulting
-// []byte to the "event_filters" map key, which encoding/json then encoded
-// as a base64 string (since []byte → JSON-string). The base64 path
-// happened to work against an []byte server-side field but masked the
-// actual contract bug fixed in PR #3231 review.
-func createWebhookTriggerWithFilters(t *testing.T, autopilotID string, filters []WebhookEventFilter) AutopilotTriggerResponse {
-	t.Helper()
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/autopilots/"+autopilotID+"/triggers", map[string]any{
-		"kind":          "webhook",
-		"event_filters": filters,
-	})
-	req = withURLParam(req, "id", autopilotID)
-	testHandler.CreateAutopilotTrigger(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateAutopilotTrigger: expected 201, got %d body=%s", w.Code, w.Body.String())
-	}
-	var resp AutopilotTriggerResponse
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	return resp
-}
-
 func TestWebhookHandler_FiltersUndeclaredEvent(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "WebhookFilter Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
-	trig := createWebhookTriggerWithFilters(t, apID, []WebhookEventFilter{
-		{Event: "workflow_run", Actions: []string{"completed"}},
-		{Event: "check_suite", Actions: []string{"completed"}},
-	})
+	apID := createWebhookTestAutopilot(t, "active")
+	trig := createWebhookTrigger(t, apID,
+		WebhookEventFilter{Event: "workflow_run", Actions: []string{"completed"}},
+		WebhookEventFilter{Event: "check_suite", Actions: []string{"completed"}},
+	)
 
 	w := postWebhook(t, *trig.WebhookToken, map[string]any{
 		"action":       "in_progress",
@@ -287,11 +264,10 @@ func TestWebhookHandler_FiltersUndeclaredEvent(t *testing.T) {
 }
 
 func TestWebhookHandler_AllowsDeclaredEvent(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "WebhookAllow Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
-	trig := createWebhookTriggerWithFilters(t, apID, []WebhookEventFilter{
-		{Event: "workflow_run", Actions: []string{"completed"}},
-	})
+	apID := createWebhookTestAutopilot(t, "active")
+	trig := createWebhookTrigger(t, apID,
+		WebhookEventFilter{Event: "workflow_run", Actions: []string{"completed"}},
+	)
 
 	w := postWebhook(t, *trig.WebhookToken, map[string]any{
 		"action":       "completed",
@@ -310,9 +286,8 @@ func TestWebhookHandler_AllowsDeclaredEvent(t *testing.T) {
 }
 
 func TestWebhookHandler_EmptyFiltersAllowsAll(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "WebhookEmptyFilter Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
-	trig := createWebhookTriggerViaHandler(t, apID)
+	apID := createWebhookTestAutopilot(t, "active")
+	trig := createWebhookTrigger(t, apID)
 
 	w := postWebhook(t, *trig.WebhookToken, map[string]any{
 		"action":       "in_progress",
@@ -332,16 +307,11 @@ func TestWebhookHandler_EmptyFiltersAllowsAll(t *testing.T) {
 
 // ── HTTP contract: event_filters JSON shape & PATCH semantics ──────────────
 //
-// These tests pin the wire contract the frontend depends on: a real JSON
-// array of {event, actions} objects flows in on create, comes back as the
-// same array on read, and update accepts tri-state semantics (omitted =
-// preserve, explicit [] = clear, explicit [...] = replace). Earlier
-// revisions used []byte at the HTTP boundary and the round-trip silently
-// passed via base64 — which the frontend cannot parse. See PR #3231 review.
+// The frontend contract uses JSON arrays and tri-state updates: omitted
+// preserves filters, [] clears them, and a populated array replaces them.
 
 func TestCreateWebhookTrigger_EventFiltersRoundTripAsJSONArray(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "EventFilterRT Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
+	apID := createWebhookTestAutopilot(t, "active")
 
 	body := map[string]any{
 		"kind": "webhook",
@@ -358,7 +328,6 @@ func TestCreateWebhookTrigger_EventFiltersRoundTripAsJSONArray(t *testing.T) {
 		t.Fatalf("expected 201, got %d body=%s", w.Code, w.Body.String())
 	}
 
-	// Decode against the strongly-typed response to verify shape.
 	var typed AutopilotTriggerResponse
 	if err := json.Unmarshal(w.Body.Bytes(), &typed); err != nil {
 		t.Fatalf("decode typed: %v", err)
@@ -375,10 +344,7 @@ func TestCreateWebhookTrigger_EventFiltersRoundTripAsJSONArray(t *testing.T) {
 		t.Fatalf("second filter mismatch: %#v", typed.EventFilters[1])
 	}
 
-	// Decode against json.RawMessage to confirm we serialize as an array,
-	// not a base64-encoded string. A regression here is exactly the bug
-	// PR #3231 review flagged: []byte through encoding/json produced
-	// `"event_filters": "W3si..."` which the UI can't .map() over.
+	// Confirm the wire value is an array rather than a base64 string.
 	var raw struct {
 		EventFilters json.RawMessage `json:"event_filters"`
 	}
@@ -392,12 +358,11 @@ func TestCreateWebhookTrigger_EventFiltersRoundTripAsJSONArray(t *testing.T) {
 }
 
 func TestUpdateWebhookTrigger_ExplicitEmptyArrayClearsFilters(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "EventFilterClear Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
+	apID := createWebhookTestAutopilot(t, "active")
 
-	created := createWebhookTriggerWithFilters(t, apID, []WebhookEventFilter{
-		{Event: "workflow_run", Actions: []string{"completed"}},
-	})
+	created := createWebhookTrigger(t, apID,
+		WebhookEventFilter{Event: "workflow_run", Actions: []string{"completed"}},
+	)
 	if len(created.EventFilters) != 1 {
 		t.Fatalf("seed should have 1 filter, got %d", len(created.EventFilters))
 	}
@@ -434,12 +399,11 @@ func TestUpdateWebhookTrigger_ExplicitEmptyArrayClearsFilters(t *testing.T) {
 }
 
 func TestUpdateWebhookTrigger_OmittedFiltersPreserveExisting(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "EventFilterPreserve Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
+	apID := createWebhookTestAutopilot(t, "active")
 
-	created := createWebhookTriggerWithFilters(t, apID, []WebhookEventFilter{
-		{Event: "workflow_run", Actions: []string{"completed"}},
-	})
+	created := createWebhookTrigger(t, apID,
+		WebhookEventFilter{Event: "workflow_run", Actions: []string{"completed"}},
+	)
 
 	// PATCH that does NOT include event_filters at all. Must leave the
 	// existing filter set untouched (omitted ≠ clear).
@@ -462,12 +426,11 @@ func TestUpdateWebhookTrigger_OmittedFiltersPreserveExisting(t *testing.T) {
 }
 
 func TestUpdateWebhookTrigger_ReplacesFilters(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "EventFilterReplace Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
+	apID := createWebhookTestAutopilot(t, "active")
 
-	created := createWebhookTriggerWithFilters(t, apID, []WebhookEventFilter{
-		{Event: "workflow_run", Actions: []string{"completed"}},
-	})
+	created := createWebhookTrigger(t, apID,
+		WebhookEventFilter{Event: "workflow_run", Actions: []string{"completed"}},
+	)
 
 	w := httptest.NewRecorder()
 	req := newRequest("PATCH", "/api/autopilots/"+apID+"/triggers/"+created.ID, map[string]any{
@@ -494,8 +457,7 @@ func TestUpdateWebhookTrigger_ReplacesFilters(t *testing.T) {
 }
 
 func TestCreateAutopilotTrigger_RejectsInvalidEventFilter(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "EventFilterInvalid Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
+	apID := createWebhookTestAutopilot(t, "active")
 
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/autopilots/"+apID+"/triggers", map[string]any{
@@ -512,8 +474,7 @@ func TestCreateAutopilotTrigger_RejectsInvalidEventFilter(t *testing.T) {
 }
 
 func TestCreateAutopilotTrigger_RejectsEventFiltersOnSchedule(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "EventFilterSched Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
+	apID := createWebhookTestAutopilot(t, "active")
 
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/autopilots/"+apID+"/triggers", map[string]any{
@@ -559,10 +520,9 @@ func postWebhook(t *testing.T, token string, body any, headers map[string]string
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 func TestCreateWebhookTrigger_GeneratesToken(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "WebhookGen Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
+	apID := createWebhookTestAutopilot(t, "active")
 
-	resp := createWebhookTriggerViaHandler(t, apID)
+	resp := createWebhookTrigger(t, apID)
 	if resp.Kind != "webhook" {
 		t.Fatalf("kind: %q", resp.Kind)
 	}
@@ -581,11 +541,10 @@ func TestCreateWebhookTrigger_GeneratesToken(t *testing.T) {
 }
 
 func TestCreateWebhookTrigger_TwoUniqueTokens(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "WebhookUnique Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
+	apID := createWebhookTestAutopilot(t, "active")
 
-	a := createWebhookTriggerViaHandler(t, apID)
-	b := createWebhookTriggerViaHandler(t, apID)
+	a := createWebhookTrigger(t, apID)
+	b := createWebhookTrigger(t, apID)
 	if a.WebhookToken == nil || b.WebhookToken == nil {
 		t.Fatal("missing tokens")
 	}
@@ -595,20 +554,19 @@ func TestCreateWebhookTrigger_TwoUniqueTokens(t *testing.T) {
 }
 
 func TestCreateWebhookTrigger_PublicURLAffectsResponse(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "WebhookURL Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
+	apID := createWebhookTestAutopilot(t, "active")
 
 	prev := testHandler.cfg.PublicURL
 	t.Cleanup(func() { testHandler.cfg.PublicURL = prev })
 
 	testHandler.cfg.PublicURL = ""
-	respNoURL := createWebhookTriggerViaHandler(t, apID)
+	respNoURL := createWebhookTrigger(t, apID)
 	if respNoURL.WebhookURL != nil {
 		t.Fatalf("webhook_url should be nil when PublicURL unset, got %q", *respNoURL.WebhookURL)
 	}
 
 	testHandler.cfg.PublicURL = "https://app.example"
-	respURL := createWebhookTriggerViaHandler(t, apID)
+	respURL := createWebhookTrigger(t, apID)
 	if respURL.WebhookURL == nil {
 		t.Fatal("webhook_url should be present when PublicURL set")
 	}
@@ -624,32 +582,27 @@ func TestWebhookHandler_404OnUnknownToken(t *testing.T) {
 	}
 }
 
-func TestWebhookHandler_RejectsInvalidJSON(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "WebhookBadJSON Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
-	trig := createWebhookTriggerViaHandler(t, apID)
+func TestWebhookHandler_RejectsInvalidBodies(t *testing.T) {
+	apID := createWebhookTestAutopilot(t, "active")
+	trig := createWebhookTrigger(t, apID)
 
-	w := postWebhook(t, *trig.WebhookToken, []byte(`not json`), nil)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d body=%s", w.Code, w.Body.String())
-	}
-}
-
-func TestWebhookHandler_RejectsScalarBody(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "WebhookScalar Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
-	trig := createWebhookTriggerViaHandler(t, apID)
-
-	w := postWebhook(t, *trig.WebhookToken, []byte(`"hello"`), nil)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d body=%s", w.Code, w.Body.String())
+	for name, body := range map[string][]byte{
+		"empty":   {},
+		"invalid": []byte(`not json`),
+		"scalar":  []byte(`"hello"`),
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := postWebhook(t, *trig.WebhookToken, body, nil)
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d body=%s", w.Code, w.Body.String())
+			}
+		})
 	}
 }
 
 func TestWebhookHandler_RejectsOversized(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "WebhookSize Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
-	trig := createWebhookTriggerViaHandler(t, apID)
+	apID := createWebhookTestAutopilot(t, "active")
+	trig := createWebhookTrigger(t, apID)
 
 	big := make([]byte, maxWebhookBodyBytes+10)
 	for i := range big {
@@ -665,9 +618,8 @@ func TestWebhookHandler_RejectsOversized(t *testing.T) {
 }
 
 func TestWebhookHandler_DisabledTriggerReturnsIgnored(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "WebhookDisabled Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
-	trig := createWebhookTriggerViaHandler(t, apID)
+	apID := createWebhookTestAutopilot(t, "active")
+	trig := createWebhookTrigger(t, apID)
 
 	if _, err := testHandler.Queries.UpdateAutopilotTrigger(context.Background(), db.UpdateAutopilotTriggerParams{
 		ID:      parseUUID(trig.ID),
@@ -691,9 +643,8 @@ func TestWebhookHandler_DisabledTriggerReturnsIgnored(t *testing.T) {
 }
 
 func TestWebhookHandler_PausedAutopilotReturnsIgnored(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "WebhookPaused Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "paused", "run_only")
-	trig := createWebhookTriggerViaHandler(t, apID)
+	apID := createWebhookTestAutopilot(t, "paused")
+	trig := createWebhookTrigger(t, apID)
 
 	w := postWebhook(t, *trig.WebhookToken, map[string]any{"x": 1}, nil)
 	if w.Code != http.StatusOK {
@@ -707,9 +658,8 @@ func TestWebhookHandler_PausedAutopilotReturnsIgnored(t *testing.T) {
 }
 
 func TestWebhookHandler_ActiveDispatchesRunWithPayload(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "WebhookDispatch Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
-	trig := createWebhookTriggerViaHandler(t, apID)
+	apID := createWebhookTestAutopilot(t, "active")
+	trig := createWebhookTrigger(t, apID)
 
 	w := postWebhook(t, *trig.WebhookToken, map[string]any{
 		"event":        "demo.received",
@@ -766,9 +716,8 @@ func TestWebhookHandler_ActiveDispatchesRunWithPayload(t *testing.T) {
 }
 
 func TestWebhookHandler_GitHubHeaderInferredEvent(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "WebhookGH Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
-	trig := createWebhookTriggerViaHandler(t, apID)
+	apID := createWebhookTestAutopilot(t, "active")
+	trig := createWebhookTrigger(t, apID)
 
 	w := postWebhook(t, *trig.WebhookToken, map[string]any{
 		"action": "opened",
@@ -796,9 +745,8 @@ func TestWebhookHandler_GitHubHeaderInferredEvent(t *testing.T) {
 }
 
 func TestWebhookHandler_RateLimitReturns429(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "WebhookRate Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "paused", "run_only") // paused → cheap ignored path
-	trig := createWebhookTriggerViaHandler(t, apID)
+	apID := createWebhookTestAutopilot(t, "paused") // paused → cheap ignored path
+	trig := createWebhookTrigger(t, apID)
 
 	prev := testHandler.WebhookRateLimiter
 	testHandler.WebhookRateLimiter = newMemoryWebhookRateLimiter(webhookRateLimit{Limit: 2, Window: 60_000_000_000})
@@ -817,9 +765,8 @@ func TestWebhookHandler_RateLimitReturns429(t *testing.T) {
 }
 
 func TestRotateWebhookToken_ReplacesOldToken(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "WebhookRotate Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
-	trig := createWebhookTriggerViaHandler(t, apID)
+	apID := createWebhookTestAutopilot(t, "active")
+	trig := createWebhookTrigger(t, apID)
 	oldToken := *trig.WebhookToken
 
 	w := httptest.NewRecorder()
@@ -849,9 +796,8 @@ func TestRotateWebhookToken_ReplacesOldToken(t *testing.T) {
 }
 
 func TestRotateWebhookToken_ReplaysCommittedRotation(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "WebhookRotateReplay Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
-	trig := createWebhookTriggerViaHandler(t, apID)
+	apID := createWebhookTestAutopilot(t, "active")
+	trig := createWebhookTrigger(t, apID)
 	requestKey := uuid.NewString()
 
 	rotate := func() AutopilotTriggerResponse {
@@ -876,7 +822,7 @@ func TestRotateWebhookToken_ReplaysCommittedRotation(t *testing.T) {
 	if !reflect.DeepEqual(replay, first) {
 		t.Fatalf("replayed rotation = %#v, want exact %#v", replay, first)
 	}
-	other := createWebhookTriggerViaHandler(t, apID)
+	other := createWebhookTrigger(t, apID)
 	conflict := httptest.NewRecorder()
 	conflictReq := newRequest("POST", fmt.Sprintf("/api/autopilots/%s/triggers/%s/rotate-webhook-token", apID, other.ID), nil)
 	conflictReq = withURLParams(conflictReq, "id", apID, "triggerId", other.ID)
@@ -888,9 +834,8 @@ func TestRotateWebhookToken_ReplaysCommittedRotation(t *testing.T) {
 }
 
 func TestRotateWebhookToken_ConcurrentReplayRotatesOnce(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "WebhookRotateConcurrent Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
-	trig := createWebhookTriggerViaHandler(t, apID)
+	apID := createWebhookTestAutopilot(t, "active")
+	trig := createWebhookTrigger(t, apID)
 	requestKey := uuid.NewString()
 
 	const workers = 8
@@ -943,9 +888,8 @@ func TestRotateWebhookToken_ConcurrentReplayRotatesOnce(t *testing.T) {
 }
 
 func TestRotateWebhookToken_CompletionFailureRollsBackToken(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "WebhookRotateRollback Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
-	trig := createWebhookTriggerViaHandler(t, apID)
+	apID := createWebhookTestAutopilot(t, "active")
+	trig := createWebhookTrigger(t, apID)
 	oldToken := *trig.WebhookToken
 	requestKey := uuid.NewString()
 	suffix := uuid.NewString()
@@ -991,23 +935,9 @@ func TestRotateWebhookToken_CompletionFailureRollsBackToken(t *testing.T) {
 	}
 }
 
-// ── Additional coverage (PR #2348 review) ──────────────────────────────────
-
-func TestWebhookHandler_EmptyBodyReturns400(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "WebhookEmpty Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
-	trig := createWebhookTriggerViaHandler(t, apID)
-
-	w := postWebhook(t, *trig.WebhookToken, []byte(``), nil)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 for empty body, got %d body=%s", w.Code, w.Body.String())
-	}
-}
-
 func TestWebhookHandler_ArchivedAutopilotReturnsIgnored(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "WebhookArchived Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
-	trig := createWebhookTriggerViaHandler(t, apID)
+	apID := createWebhookTestAutopilot(t, "active")
+	trig := createWebhookTrigger(t, apID)
 
 	if _, err := testPool.Exec(context.Background(),
 		`UPDATE autopilot SET status = 'archived' WHERE id = $1`, apID); err != nil {
@@ -1059,10 +989,8 @@ func TestWebhookHandler_IPRateLimitReturns429BeforeDBLookup(t *testing.T) {
 }
 
 func TestWebhookHandler_IPRateLimitNotBypassedByXFFSpoof(t *testing.T) {
-	// Round-2 fix: with the default empty TrustedProxies, an attacker who
-	// rotates X-Forwarded-For per request must still get bucketed by the
-	// real connection IP — otherwise the per-IP limiter is trivially
-	// bypassable and we're back to one DB index probe per request.
+	// With no trusted proxies, spoofed X-Forwarded-For values must not
+	// bypass the real source IP's rate-limit bucket.
 	prev := testHandler.WebhookIPRateLimiter
 	testHandler.WebhookIPRateLimiter = newMemoryWebhookRateLimiter(webhookRateLimit{Limit: 2, Window: 60_000_000_000})
 	t.Cleanup(func() { testHandler.WebhookIPRateLimiter = prev })
@@ -1094,8 +1022,7 @@ func TestWebhookHandler_IPRateLimitNotBypassedByXFFSpoof(t *testing.T) {
 }
 
 func TestCreateAutopilotTrigger_RejectsUnknownKind(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "WebhookUnknownKind Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
+	apID := createWebhookTestAutopilot(t, "active")
 
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/autopilots/"+apID+"/triggers", map[string]any{
@@ -1112,8 +1039,7 @@ func TestCreateAutopilotTrigger_RejectsUnknownKind(t *testing.T) {
 }
 
 func TestCreateAutopilotTrigger_RejectsWebhookWithTimezone(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "WebhookTZReject Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
+	apID := createWebhookTestAutopilot(t, "active")
 
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/autopilots/"+apID+"/triggers", map[string]any{
@@ -1128,12 +1054,8 @@ func TestCreateAutopilotTrigger_RejectsWebhookWithTimezone(t *testing.T) {
 }
 
 func TestUpdateAutopilotTrigger_RejectsCronExpressionOnWebhookKind(t *testing.T) {
-	// Round-2 should-fix: UpdateAutopilotTrigger must mirror create-path
-	// strictness — cron_expression on a non-schedule trigger is rejected
-	// with 400 rather than silently persisted.
-	agentID := createWebhookTestAgent(t, "WebhookUpdCron Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
-	trig := createWebhookTriggerViaHandler(t, apID)
+	apID := createWebhookTestAutopilot(t, "active")
+	trig := createWebhookTrigger(t, apID)
 
 	w := httptest.NewRecorder()
 	req := newRequest("PATCH", "/api/autopilots/"+apID+"/triggers/"+trig.ID, map[string]any{
@@ -1150,9 +1072,8 @@ func TestUpdateAutopilotTrigger_RejectsCronExpressionOnWebhookKind(t *testing.T)
 }
 
 func TestUpdateAutopilotTrigger_RejectsTimezoneOnWebhookKind(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "WebhookUpdTZ Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
-	trig := createWebhookTriggerViaHandler(t, apID)
+	apID := createWebhookTestAutopilot(t, "active")
+	trig := createWebhookTrigger(t, apID)
 
 	w := httptest.NewRecorder()
 	req := newRequest("PATCH", "/api/autopilots/"+apID+"/triggers/"+trig.ID, map[string]any{
@@ -1169,11 +1090,8 @@ func TestUpdateAutopilotTrigger_RejectsTimezoneOnWebhookKind(t *testing.T) {
 }
 
 func TestUpdateAutopilotTrigger_AcceptsEnabledAndLabelOnWebhookKind(t *testing.T) {
-	// Counter-test: enabled and label remain valid on every kind. Without
-	// this, the kind-aware guard could regress to a blanket reject.
-	agentID := createWebhookTestAgent(t, "WebhookUpdAllowed Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
-	trig := createWebhookTriggerViaHandler(t, apID)
+	apID := createWebhookTestAutopilot(t, "active")
+	trig := createWebhookTrigger(t, apID)
 
 	w := httptest.NewRecorder()
 	req := newRequest("PATCH", "/api/autopilots/"+apID+"/triggers/"+trig.ID, map[string]any{
@@ -1188,13 +1106,9 @@ func TestUpdateAutopilotTrigger_AcceptsEnabledAndLabelOnWebhookKind(t *testing.T
 }
 
 func TestGetAutopilotRun_ReturnsFullPayload(t *testing.T) {
-	// List endpoint omits trigger_payload; the new GET /runs/{runId}
-	// endpoint must return it intact.
-	agentID := createWebhookTestAgent(t, "WebhookGetRun Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
-	trig := createWebhookTriggerViaHandler(t, apID)
+	apID := createWebhookTestAutopilot(t, "active")
+	trig := createWebhookTrigger(t, apID)
 
-	// Fire one webhook so there's a run with a payload.
 	post := postWebhook(t, *trig.WebhookToken, map[string]any{
 		"event":        "demo.x",
 		"eventPayload": map[string]any{"answer": 42},
@@ -1206,7 +1120,6 @@ func TestGetAutopilotRun_ReturnsFullPayload(t *testing.T) {
 	_ = json.Unmarshal(post.Body.Bytes(), &seedResp)
 	runID := seedResp["run_id"].(string)
 
-	// LIST: trigger_payload should be omitted (slim response).
 	wList := httptest.NewRecorder()
 	reqList := newRequest("GET", "/api/autopilots/"+apID+"/runs", nil)
 	reqList = withURLParam(reqList, "id", apID)
@@ -1218,7 +1131,6 @@ func TestGetAutopilotRun_ReturnsFullPayload(t *testing.T) {
 		t.Fatalf("list response should NOT carry trigger_payload, body=%s", wList.Body.String())
 	}
 
-	// DETAIL: trigger_payload should be present.
 	wDetail := httptest.NewRecorder()
 	reqDetail := newRequest("GET", "/api/autopilots/"+apID+"/runs/"+runID, nil)
 	reqDetail = withURLParams(reqDetail, "id", apID, "runId", runID)
@@ -1230,13 +1142,3 @@ func TestGetAutopilotRun_ReturnsFullPayload(t *testing.T) {
 		t.Fatalf("detail response should carry full trigger_payload, body=%s", wDetail.Body.String())
 	}
 }
-
-// NOTE: the cross-workspace paranoia branch in autopilot_webhook.go
-// (uuidToString(autopilot.WorkspaceID) != uuidToString(trigRow.AutopilotWorkspaceID))
-// is defense-in-depth against a TOCTOU race between the joined token
-// lookup and the follow-up GetAutopilot read. It is not reachable from
-// any valid SQL state — the two reads compute against the same
-// autopilot.workspace_id column — and would require a mock-able
-// Queries interface to drive deterministically. We pin the behaviour
-// via code review rather than a brittle race test. See PR #2348 review
-// item under "Test coverage gaps."

@@ -29,8 +29,7 @@ func TestGetAutopilotPreservesDatabaseFailures(t *testing.T) {
 		}
 	})
 
-	agentID := createWebhookTestAgent(t, "autopilot-read-failure-"+randomID()[:8])
-	autopilotID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
+	autopilotID := createWebhookTestAutopilot(t, "active")
 	for _, queryName := range []string{"ListAutopilotSubscribers", "ListAutopilotTriggers"} {
 		t.Run(queryName, func(t *testing.T) {
 			h := *testHandler

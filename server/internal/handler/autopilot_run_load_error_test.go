@@ -14,8 +14,7 @@ func TestGetAutopilotRunPreservesReadFailure(t *testing.T) {
 		t.Skip("database not available")
 	}
 
-	agentID := createWebhookTestAgent(t, "run-read-failure-"+randomID()[:8])
-	autopilotID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
+	autopilotID := createWebhookTestAutopilot(t, "active")
 	var runID string
 	if err := testPool.QueryRow(context.Background(), `
 		INSERT INTO autopilot_run (autopilot_id, source, status)

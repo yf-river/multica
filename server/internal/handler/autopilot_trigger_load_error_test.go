@@ -13,9 +13,8 @@ func TestUpdateAutopilotTriggerPreservesReadFailure(t *testing.T) {
 		t.Skip("database not available")
 	}
 
-	agentID := createWebhookTestAgent(t, "trigger-read-failure-"+randomID()[:8])
-	autopilotID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
-	trigger := createWebhookTriggerViaHandler(t, autopilotID)
+	autopilotID := createWebhookTestAutopilot(t, "active")
+	trigger := createWebhookTrigger(t, autopilotID)
 
 	h := *testHandler
 	h.Queries = db.New(failNamedQueryDB{DBTX: testPool, queryName: "GetAutopilotTrigger"})

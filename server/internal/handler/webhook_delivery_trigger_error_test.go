@@ -15,9 +15,8 @@ func TestReplayAutopilotDeliveryPreservesTriggerReadFailures(t *testing.T) {
 		t.Skip("database not available")
 	}
 
-	agentID := createWebhookTestAgent(t, "Replay Trigger Read Failure")
-	autopilotID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
-	trigger := createWebhookTriggerViaHandler(t, autopilotID)
+	autopilotID := createWebhookTestAutopilot(t, "active")
+	trigger := createWebhookTrigger(t, autopilotID)
 	original := postWebhook(t, *trigger.WebhookToken, map[string]any{"event": "trigger.read.failure"}, nil)
 	if original.Code != http.StatusOK {
 		t.Fatalf("create original delivery: %d: %s", original.Code, original.Body.String())

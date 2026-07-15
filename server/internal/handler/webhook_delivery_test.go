@@ -69,9 +69,8 @@ func listDeliveries(t *testing.T, apID string) []map[string]any {
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 func TestWebhookHandler_PersistsDeliveryOnAccept(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "DeliveryPersist Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
-	trig := createWebhookTriggerViaHandler(t, apID)
+	apID := createWebhookTestAutopilot(t, "active")
+	trig := createWebhookTrigger(t, apID)
 
 	w := postWebhook(t, *trig.WebhookToken, map[string]any{"hello": "world"}, nil)
 	if w.Code != http.StatusOK {
@@ -103,9 +102,8 @@ func TestWebhookHandler_PersistsDeliveryOnAccept(t *testing.T) {
 }
 
 func TestWebhookHandler_DedupeViaIdempotencyKey(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "DeliveryIdem Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
-	trig := createWebhookTriggerViaHandler(t, apID)
+	apID := createWebhookTestAutopilot(t, "active")
+	trig := createWebhookTrigger(t, apID)
 
 	body := map[string]any{"event": "demo.x", "eventPayload": map[string]any{"k": "v"}}
 	headers := map[string]string{"Idempotency-Key": "demo-key-1"}
@@ -150,9 +148,8 @@ func TestWebhookHandler_DedupeViaIdempotencyKey(t *testing.T) {
 }
 
 func TestWebhookHandler_DedupeViaGitHubDelivery(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "DeliveryGH Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
-	trig := createWebhookTriggerViaHandler(t, apID)
+	apID := createWebhookTestAutopilot(t, "active")
+	trig := createWebhookTrigger(t, apID)
 	setTriggerProvider(t, trig.ID, "github")
 
 	body := map[string]any{"action": "opened"}
@@ -190,9 +187,8 @@ func TestWebhookHandler_DedupeViaGitHubDelivery(t *testing.T) {
 }
 
 func TestWebhookHandler_InvalidSignatureReturns401AndPersistsRejected(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "SigInvalid Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
-	trig := createWebhookTriggerViaHandler(t, apID)
+	apID := createWebhookTestAutopilot(t, "active")
+	trig := createWebhookTrigger(t, apID)
 	setSigningSecretViaHandler(t, apID, trig.ID, testSigningSecret)
 
 	body := map[string]any{"hello": "world"}
@@ -229,9 +225,8 @@ func TestWebhookHandler_InvalidSignatureReturns401AndPersistsRejected(t *testing
 }
 
 func TestWebhookHandler_MissingSignatureReturns401WhenSecretSet(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "SigMissing Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
-	trig := createWebhookTriggerViaHandler(t, apID)
+	apID := createWebhookTestAutopilot(t, "active")
+	trig := createWebhookTrigger(t, apID)
 	setSigningSecretViaHandler(t, apID, trig.ID, testSigningSecret)
 
 	w := postWebhook(t, *trig.WebhookToken, map[string]any{"hello": "world"}, nil)
@@ -252,9 +247,8 @@ func TestWebhookHandler_MissingSignatureReturns401WhenSecretSet(t *testing.T) {
 }
 
 func TestWebhookHandler_ValidSignatureDispatches(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "SigValid Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
-	trig := createWebhookTriggerViaHandler(t, apID)
+	apID := createWebhookTestAutopilot(t, "active")
+	trig := createWebhookTrigger(t, apID)
 	setSigningSecretViaHandler(t, apID, trig.ID, testSigningSecret)
 
 	bodyBytes := []byte(`{"hello":"world"}`)
@@ -283,9 +277,8 @@ func TestWebhookHandler_ValidSignatureDispatches(t *testing.T) {
 }
 
 func TestSigningSecretNotEchoedInTriggerResponse(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "SigEcho Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
-	trig := createWebhookTriggerViaHandler(t, apID)
+	apID := createWebhookTestAutopilot(t, "active")
+	trig := createWebhookTrigger(t, apID)
 	setSigningSecretViaHandler(t, apID, trig.ID, testSigningSecret)
 
 	// GET the autopilot — trigger response embedded.
@@ -308,9 +301,8 @@ func TestSigningSecretNotEchoedInTriggerResponse(t *testing.T) {
 }
 
 func TestSigningSecret_MinLengthEnforced(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "SigMinLen Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
-	trig := createWebhookTriggerViaHandler(t, apID)
+	apID := createWebhookTestAutopilot(t, "active")
+	trig := createWebhookTrigger(t, apID)
 
 	w := httptest.NewRecorder()
 	req := newRequest("PUT", "/api/autopilots/"+apID+"/triggers/"+trig.ID+"/signing-secret", map[string]any{
@@ -324,9 +316,8 @@ func TestSigningSecret_MinLengthEnforced(t *testing.T) {
 }
 
 func TestSigningSecret_EmptyClearsSecret(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "SigClear Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
-	trig := createWebhookTriggerViaHandler(t, apID)
+	apID := createWebhookTestAutopilot(t, "active")
+	trig := createWebhookTrigger(t, apID)
 	setSigningSecretViaHandler(t, apID, trig.ID, testSigningSecret)
 
 	// Now clear with empty string.
@@ -347,9 +338,8 @@ func TestSigningSecret_EmptyClearsSecret(t *testing.T) {
 }
 
 func TestReplay_CreatesNewDeliveryAndDispatchesRun(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "Replay Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
-	trig := createWebhookTriggerViaHandler(t, apID)
+	apID := createWebhookTestAutopilot(t, "active")
+	trig := createWebhookTrigger(t, apID)
 
 	// Original delivery (with dedupe key) → accepted + dispatched.
 	w := postWebhook(t, *trig.WebhookToken, map[string]any{"hello": "world"}, map[string]string{
@@ -416,9 +406,8 @@ func TestReplay_CreatesNewDeliveryAndDispatchesRun(t *testing.T) {
 }
 
 func TestReplay_RejectsInvalidSignatureDelivery(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "ReplayReject Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
-	trig := createWebhookTriggerViaHandler(t, apID)
+	apID := createWebhookTestAutopilot(t, "active")
+	trig := createWebhookTrigger(t, apID)
 	setSigningSecretViaHandler(t, apID, trig.ID, testSigningSecret)
 
 	// Send an invalid-signature request → rejected delivery created.
@@ -446,9 +435,8 @@ func TestReplay_RejectsInvalidSignatureDelivery(t *testing.T) {
 }
 
 func TestGetDelivery_ReturnsFullPayload(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "DeliveryDetail Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
-	trig := createWebhookTriggerViaHandler(t, apID)
+	apID := createWebhookTestAutopilot(t, "active")
+	trig := createWebhookTrigger(t, apID)
 
 	w := postWebhook(t, *trig.WebhookToken, map[string]any{"event": "demo", "eventPayload": map[string]any{"answer": 42}}, nil)
 	if w.Code != http.StatusOK {
@@ -505,9 +493,9 @@ func TestGetDelivery_CrossAutopilotReturns404(t *testing.T) {
 	// autopilot's URL — defense in depth even though both rows are in the
 	// same workspace.
 	agentID := createWebhookTestAgent(t, "CrossAP Agent")
-	apA := createWebhookTestAutopilot(t, agentID, "active", "run_only")
-	apB := createWebhookTestAutopilot(t, agentID, "active", "run_only")
-	trig := createWebhookTriggerViaHandler(t, apA)
+	apA := createWebhookTestAutopilotForAgent(t, agentID, "active")
+	apB := createWebhookTestAutopilotForAgent(t, agentID, "active")
+	trig := createWebhookTrigger(t, apA)
 
 	w := postWebhook(t, *trig.WebhookToken, map[string]any{"x": 1}, nil)
 	var seed map[string]any
@@ -527,8 +515,7 @@ func TestGetDelivery_CrossAutopilotReturns404(t *testing.T) {
 }
 
 func TestCreateAutopilotTrigger_RejectsUnknownProvider(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "ProviderInvalid Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
+	apID := createWebhookTestAutopilot(t, "active")
 
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/autopilots/"+apID+"/triggers", map[string]any{
@@ -543,8 +530,7 @@ func TestCreateAutopilotTrigger_RejectsUnknownProvider(t *testing.T) {
 }
 
 func TestCreateAutopilotTrigger_AcceptsGitHubProvider(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "ProviderGH Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
+	apID := createWebhookTestAutopilot(t, "active")
 
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/autopilots/"+apID+"/triggers", map[string]any{
@@ -570,9 +556,8 @@ func TestCreateAutopilotTrigger_AcceptsGitHubProvider(t *testing.T) {
 // from re-running the agent. This regression test pins that path
 // explicitly — it's the largest concrete win over the v1 ingress flow.
 func TestWebhookHandler_RunOnlyDedupeOnGitHubDelivery(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "RunOnlyDedupe Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
-	trig := createWebhookTriggerViaHandler(t, apID)
+	apID := createWebhookTestAutopilot(t, "active")
+	trig := createWebhookTrigger(t, apID)
 	setTriggerProvider(t, trig.ID, "github")
 
 	headers := map[string]string{
@@ -609,9 +594,8 @@ func TestWebhookHandler_InvalidSignatureCountsAgainstRateLimit(t *testing.T) {
 	// A stream of bad-signature attempts must not let an attacker bypass
 	// per-token rate limiting; the limiter increment happens before
 	// signature check.
-	agentID := createWebhookTestAgent(t, "SigRateLimit Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
-	trig := createWebhookTriggerViaHandler(t, apID)
+	apID := createWebhookTestAutopilot(t, "active")
+	trig := createWebhookTrigger(t, apID)
 	setSigningSecretViaHandler(t, apID, trig.ID, testSigningSecret)
 
 	prev := testHandler.WebhookRateLimiter
@@ -634,9 +618,8 @@ func TestWebhookHandler_InvalidSignatureCountsAgainstRateLimit(t *testing.T) {
 func TestWebhookHandler_IgnoredPathStillPersistsDelivery(t *testing.T) {
 	// An ignored delivery (paused autopilot) must still leave a row so the
 	// operator can see "yes the request arrived, here's why we did nothing".
-	agentID := createWebhookTestAgent(t, "IgnoredPersist Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "paused", "run_only")
-	trig := createWebhookTriggerViaHandler(t, apID)
+	apID := createWebhookTestAutopilot(t, "paused")
+	trig := createWebhookTrigger(t, apID)
 
 	w := postWebhook(t, *trig.WebhookToken, map[string]any{"x": 1}, nil)
 	if w.Code != http.StatusOK {
@@ -665,9 +648,8 @@ func TestWebhookHandler_IgnoredPathStillPersistsDelivery(t *testing.T) {
 // succeed.
 func TestWebhookDelivery_FailedRowDoesNotBlockDedupe(t *testing.T) {
 	ctx := context.Background()
-	agentID := createWebhookTestAgent(t, "FailedRetry Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
-	trig := createWebhookTriggerViaHandler(t, apID)
+	apID := createWebhookTestAutopilot(t, "active")
+	trig := createWebhookTrigger(t, apID)
 
 	first, err := testHandler.Queries.CreateWebhookDelivery(ctx, db.CreateWebhookDeliveryParams{
 		WorkspaceID:     parseUUID(testWorkspaceID),
@@ -727,9 +709,8 @@ func TestWebhookDelivery_FailedRowDoesNotBlockDedupe(t *testing.T) {
 // Confirm a column-level write — sqlc params for narg('signing_secret')
 // must allow nullable NULL to clear the column, not just non-NULL strings.
 func TestSetSigningSecretParams_NullableWrite(t *testing.T) {
-	agentID := createWebhookTestAgent(t, "SigSqlcNull Agent")
-	apID := createWebhookTestAutopilot(t, agentID, "active", "run_only")
-	trig := createWebhookTriggerViaHandler(t, apID)
+	apID := createWebhookTestAutopilot(t, "active")
+	trig := createWebhookTrigger(t, apID)
 
 	if _, err := testHandler.Queries.SetAutopilotTriggerSigningSecret(context.Background(),
 		db.SetAutopilotTriggerSigningSecretParams{
