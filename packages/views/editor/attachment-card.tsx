@@ -10,8 +10,50 @@
  */
 
 import { Download, Eye, FileText, Loader2, Trash2 } from "lucide-react";
+import type { ReactNode } from "react";
+import { cn } from "@multica/ui/lib/utils";
 import { useT } from "../i18n";
 import { getPreviewKind } from "./utils/preview";
+
+export function AttachmentActionButton({
+  label,
+  onAction,
+  overlay = false,
+  destructive = false,
+  children,
+}: {
+  label: string;
+  onAction: () => void;
+  overlay?: boolean;
+  destructive?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      className={cn(
+        overlay
+          ? "flex h-6 w-6 items-center justify-center rounded"
+          : "shrink-0 rounded-md p-1",
+        "text-muted-foreground transition-colors",
+        destructive
+          ? "hover:bg-destructive/10 hover:text-destructive"
+          : overlay
+            ? "hover:bg-muted hover:text-foreground"
+            : "hover:bg-secondary hover:text-foreground",
+      )}
+      title={label}
+      aria-label={label}
+      onMouseDown={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onAction();
+      }}
+    >
+      {children}
+    </button>
+  );
+}
 
 interface AttachmentCardChromeProps {
   filename: string;
@@ -53,49 +95,29 @@ function AttachmentCardChrome({
         </p>
       </div>
       {!uploading && canPreview && (
-        <button
-          type="button"
-          className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-          title={t(($) => $.attachment.preview)}
-          aria-label={t(($) => $.attachment.preview)}
-          onMouseDown={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            onPreview();
-          }}
+        <AttachmentActionButton
+          label={t(($) => $.attachment.preview)}
+          onAction={onPreview}
         >
           <Eye className="size-3.5" />
-        </button>
+        </AttachmentActionButton>
       )}
       {!uploading && canDownload && (
-        <button
-          type="button"
-          className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
-          title={t(($) => $.image.download)}
-          aria-label={t(($) => $.image.download)}
-          onMouseDown={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            onDownload();
-          }}
+        <AttachmentActionButton
+          label={t(($) => $.image.download)}
+          onAction={onDownload}
         >
           <Download className="size-3.5" />
-        </button>
+        </AttachmentActionButton>
       )}
       {!uploading && canDelete && onDelete && (
-        <button
-          type="button"
-          className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
-          title={t(($) => $.attachment.remove)}
-          aria-label={t(($) => $.attachment.remove)}
-          onMouseDown={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            onDelete();
-          }}
+        <AttachmentActionButton
+          label={t(($) => $.attachment.remove)}
+          onAction={onDelete}
+          destructive
         >
           <Trash2 className="size-3.5" />
-        </button>
+        </AttachmentActionButton>
       )}
     </div>
   );

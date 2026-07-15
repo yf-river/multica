@@ -28,11 +28,13 @@
 
 import { Download, ExternalLink, Maximize2, Trash2 } from "lucide-react";
 import { cn } from "@multica/ui/lib/utils";
-import { paths, useWorkspaceSlug } from "@multica/core/paths";
+import { useWorkspaceSlug } from "@multica/core/paths";
 import { useT } from "../i18n";
 import { useNavigation } from "../navigation";
 import { useAttachmentHtmlText } from "./hooks/use-attachment-html-text";
 import { HtmlPreviewBody } from "./html-preview-body";
+import { AttachmentActionButton } from "./attachment-card";
+import { openAttachmentPreviewPage } from "./attachment-preview-navigation";
 
 const PREVIEW_HEIGHT = "h-[480px]";
 const ERROR_PLACEHOLDER_HEIGHT = "h-20";
@@ -69,18 +71,7 @@ export function HtmlAttachmentPreview({
   // outside a workspace context the path is meaningless. Prefer desktop's
   // tab system; on web fall back to window.open against the public shareable
   // URL (auth is handled by the cookie session on the new page).
-  const canOpenInNewTab = !!slug && !!attachmentId;
-  const handleOpenInNewTab = () => {
-    if (!slug) return;
-    const nameQuery = filename ? `?name=${encodeURIComponent(filename)}` : "";
-    const path = `${paths.workspace(slug).attachmentPreview(attachmentId)}${nameQuery}`;
-    if (navigation.openInNewTab) {
-      navigation.openInNewTab(path, filename, { activate: true });
-      return;
-    }
-    const url = navigation.getShareableUrl(path);
-    window.open(url, "_blank", "noopener,noreferrer");
-  };
+  const canOpenInNewTab = !!slug;
 
   return (
     <div
@@ -104,61 +95,45 @@ export function HtmlAttachmentPreview({
             : "opacity-0 group-hover/html-preview:opacity-100",
         )}
       >
-        <button
-          type="button"
-          className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          title={t(($) => $.attachment.preview)}
-          aria-label={t(($) => $.attachment.preview)}
-          onMouseDown={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            onPreview();
-          }}
+        <AttachmentActionButton
+          label={t(($) => $.attachment.preview)}
+          onAction={onPreview}
+          overlay
         >
           <Maximize2 className="h-3.5 w-3.5" />
-        </button>
+        </AttachmentActionButton>
         {canOpenInNewTab && (
-          <button
-            type="button"
-            className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-            title={t(($) => $.attachment.open_in_new_tab)}
-            aria-label={t(($) => $.attachment.open_in_new_tab)}
-            onMouseDown={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              handleOpenInNewTab();
-            }}
+          <AttachmentActionButton
+            label={t(($) => $.attachment.open_in_new_tab)}
+            onAction={() =>
+              openAttachmentPreviewPage(
+                navigation,
+                slug!,
+                attachmentId,
+                filename,
+              )
+            }
+            overlay
           >
             <ExternalLink className="h-3.5 w-3.5" />
-          </button>
+          </AttachmentActionButton>
         )}
-        <button
-          type="button"
-          className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-          title={t(($) => $.image.download)}
-          aria-label={t(($) => $.image.download)}
-          onMouseDown={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            onDownload();
-          }}
+        <AttachmentActionButton
+          label={t(($) => $.image.download)}
+          onAction={onDownload}
+          overlay
         >
           <Download className="h-3.5 w-3.5" />
-        </button>
+        </AttachmentActionButton>
         {onDelete && (
-          <button
-            type="button"
-            className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
-            title={t(($) => $.attachment.remove)}
-            aria-label={t(($) => $.attachment.remove)}
-            onMouseDown={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              onDelete();
-            }}
+          <AttachmentActionButton
+            label={t(($) => $.attachment.remove)}
+            onAction={onDelete}
+            overlay
+            destructive
           >
             <Trash2 className="h-3.5 w-3.5" />
-          </button>
+          </AttachmentActionButton>
         )}
       </div>
     </div>

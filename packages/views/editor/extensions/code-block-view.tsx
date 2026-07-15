@@ -3,12 +3,11 @@
 import { useEffect, useState } from "react";
 import { NodeViewWrapper, NodeViewContent } from "@tiptap/react";
 import type { NodeViewProps } from "@tiptap/react";
-import { Code as CodeIcon, Copy, Check, Eye } from "lucide-react";
 import { cn } from "@multica/ui/lib/utils";
 import { copyText } from "@multica/ui/lib/clipboard";
-import { useT } from "../../i18n";
 import { MermaidDiagram } from "../mermaid-diagram";
 import { CodeBlockIframe } from "../code-block-iframe";
+import { CodeBlockToolbar } from "../code-block-toolbar";
 
 // Coalesces fast keystrokes before re-rendering live previews.
 // `mermaid.initialize()` mutates a process-global config, so back-to-back
@@ -31,7 +30,6 @@ function useDebouncedValue<T>(value: T, delayMs: number): T {
 }
 
 function CodeBlockView({ node }: NodeViewProps) {
-  const { t } = useT("editor");
   const [copied, setCopied] = useState(false);
   // HTML blocks default to "preview"; the user can flip to "source" to
   // edit the markup directly. Note: the source `<pre>` MUST stay mounted
@@ -86,51 +84,14 @@ function CodeBlockView({ node }: NodeViewProps) {
           />
         </div>
       )}
-      <div
-        contentEditable={false}
-        className="code-block-header absolute top-0 right-0 z-10 flex items-center gap-1.5 px-2 py-1.5 opacity-0 transition-opacity group-hover/code:opacity-100"
-      >
-        {language && (
-          <span className="text-xs text-muted-foreground select-none">
-            {language}
-          </span>
-        )}
-        {isHtml && (
-          <button
-            type="button"
-            onClick={toggleView}
-            className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-            title={
-              view === "preview"
-                ? t(($) => $.code_block.show_source)
-                : t(($) => $.code_block.show_preview)
-            }
-            aria-label={
-              view === "preview"
-                ? t(($) => $.code_block.show_source)
-                : t(($) => $.code_block.show_preview)
-            }
-          >
-            {view === "preview" ? (
-              <CodeIcon className="h-3.5 w-3.5" />
-            ) : (
-              <Eye className="h-3.5 w-3.5" />
-            )}
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={handleCopy}
-          className="flex h-6 w-6 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-          title={t(($) => $.code_block.copy_code)}
-        >
-          {copied ? (
-            <Check className="h-3.5 w-3.5" />
-          ) : (
-            <Copy className="h-3.5 w-3.5" />
-          )}
-        </button>
-      </div>
+      <CodeBlockToolbar
+        language={language}
+        view={isHtml ? view : undefined}
+        copied={copied}
+        onToggleView={isHtml ? toggleView : undefined}
+        onCopy={handleCopy}
+        className="code-block-header"
+      />
       {/* `<pre>` + NodeViewContent must remain mounted so the user can keep
           editing the code block contents. When the HTML preview is showing
           we just visually hide it — ProseMirror still tracks it. */}

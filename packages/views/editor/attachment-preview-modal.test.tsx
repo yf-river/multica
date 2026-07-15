@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, render as rtlRender, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { ReactElement } from "react";
+import { useEffect, type ReactElement } from "react";
 import type { Attachment } from "@multica/core/types";
 
 const openExternalMock = vi.hoisted(() => vi.fn());
@@ -115,11 +115,22 @@ vi.mock("../i18n", () => ({
   }),
 }));
 
-import {
-  AttachmentPreviewModal,
-  useAttachmentPreview,
-} from "./attachment-preview-modal";
+import { useAttachmentPreview } from "./attachment-preview-modal";
 import { renderHook, act as hookAct } from "@testing-library/react";
+
+type PreviewSource = Parameters<
+  ReturnType<typeof useAttachmentPreview>["tryOpen"]
+>[0];
+
+function AttachmentPreviewModal({ source }: {
+  source: PreviewSource;
+}) {
+  const { tryOpen, modal } = useAttachmentPreview();
+  useEffect(() => {
+    tryOpen(source);
+  }, [source, tryOpen]);
+  return modal;
+}
 
 // Fresh QueryClient per render — no retries (preview errors are typed,
 // not transient) and no caching across tests so each scenario is hermetic.
@@ -159,7 +170,7 @@ afterEach(() => {
 describe("AttachmentPreviewModal — dispatch", () => {
   it("renders an <img> centered in the modal for image content types", () => {
     const att = makeAttachment({ filename: "shot.png", content_type: "image/png" });
-    render(<AttachmentPreviewModal source={{ kind: "full", attachment: att }} open onClose={() => {}} />);
+    render(<AttachmentPreviewModal source={{ kind: "full", attachment: att }} />);
     const img = document.querySelector("img");
     expect(img).toBeTruthy();
     expect(img?.getAttribute("src")).toBe(att.download_url);
@@ -177,8 +188,6 @@ describe("AttachmentPreviewModal — dispatch", () => {
     render(
       <AttachmentPreviewModal
         source={{ kind: "full", attachment: att }}
-        open
-        onClose={() => {}}
       />,
     );
     const img = document.querySelector("img");
@@ -191,8 +200,6 @@ describe("AttachmentPreviewModal — dispatch", () => {
     render(
       <AttachmentPreviewModal
         source={{ kind: "url", url, filename: "orphan.png" }}
-        open
-        onClose={() => {}}
       />,
     );
     const img = document.querySelector("img");
@@ -201,7 +208,7 @@ describe("AttachmentPreviewModal — dispatch", () => {
 
   it("renders a PDF iframe pointing at the signed download URL", () => {
     const att = makeAttachment({ filename: "manual.pdf", content_type: "application/pdf" });
-    render(<AttachmentPreviewModal source={{ kind: "full", attachment: att }} open onClose={() => {}} />);
+    render(<AttachmentPreviewModal source={{ kind: "full", attachment: att }} />);
     const iframe = document.querySelector("iframe");
     expect(iframe).toBeTruthy();
     expect(iframe?.getAttribute("src")).toBe(att.download_url);
@@ -209,7 +216,7 @@ describe("AttachmentPreviewModal — dispatch", () => {
 
   it("renders a <video> for video/* content types", () => {
     const att = makeAttachment({ filename: "clip.mp4", content_type: "video/mp4" });
-    render(<AttachmentPreviewModal source={{ kind: "full", attachment: att }} open onClose={() => {}} />);
+    render(<AttachmentPreviewModal source={{ kind: "full", attachment: att }} />);
     const video = document.querySelector("video");
     expect(video).toBeTruthy();
     expect(video?.getAttribute("src")).toBe(att.download_url);
@@ -217,7 +224,7 @@ describe("AttachmentPreviewModal — dispatch", () => {
 
   it("renders an <audio> for audio/* content types", () => {
     const att = makeAttachment({ filename: "note.mp3", content_type: "audio/mpeg" });
-    render(<AttachmentPreviewModal source={{ kind: "full", attachment: att }} open onClose={() => {}} />);
+    render(<AttachmentPreviewModal source={{ kind: "full", attachment: att }} />);
     const audio = document.querySelector("audio");
     expect(audio).toBeTruthy();
   });
@@ -228,7 +235,7 @@ describe("AttachmentPreviewModal — dispatch", () => {
       originalContentType: "text/markdown",
     });
     const att = makeAttachment({ filename: "README.md", content_type: "text/markdown" });
-    render(<AttachmentPreviewModal source={{ kind: "full", attachment: att }} open onClose={() => {}} />);
+    render(<AttachmentPreviewModal source={{ kind: "full", attachment: att }} />);
 
     expect(getAttachmentTextContentMock).toHaveBeenCalledWith("att-1");
 
@@ -244,7 +251,7 @@ describe("AttachmentPreviewModal — dispatch", () => {
       originalContentType: "text/html",
     });
     const att = makeAttachment({ filename: "page.html", content_type: "text/html" });
-    render(<AttachmentPreviewModal source={{ kind: "full", attachment: att }} open onClose={() => {}} />);
+    render(<AttachmentPreviewModal source={{ kind: "full", attachment: att }} />);
 
     await waitFor(() => {
       const frame = document.querySelector("iframe[sandbox]") as HTMLIFrameElement | null;
@@ -267,7 +274,7 @@ describe("AttachmentPreviewModal — dispatch", () => {
       originalContentType: "text/plain",
     });
     const att = makeAttachment({ filename: "main.go", content_type: "text/plain" });
-    render(<AttachmentPreviewModal source={{ kind: "full", attachment: att }} open onClose={() => {}} />);
+    render(<AttachmentPreviewModal source={{ kind: "full", attachment: att }} />);
 
     await waitFor(() => {
       const code = document.querySelector("code.hljs");
@@ -276,11 +283,6 @@ describe("AttachmentPreviewModal — dispatch", () => {
     });
   });
 
-  it("shows unsupported fallback when no PreviewKind matches", () => {
-    const att = makeAttachment({ filename: "blob.zip", content_type: "application/zip" });
-    render(<AttachmentPreviewModal source={{ kind: "full", attachment: att }} open onClose={() => {}} />);
-    expect(screen.getByText("This file type can't be previewed.")).toBeTruthy();
-  });
 });
 
 describe("AttachmentPreviewModal — server-relative download_url resolution (MUL-2976)", () => {
@@ -300,8 +302,6 @@ describe("AttachmentPreviewModal — server-relative download_url resolution (MU
     render(
       <AttachmentPreviewModal
         source={{ kind: "full", attachment: att }}
-        open
-        onClose={() => {}}
       />,
     );
     const img = document.querySelector("img");
@@ -320,8 +320,6 @@ describe("AttachmentPreviewModal — server-relative download_url resolution (MU
     render(
       <AttachmentPreviewModal
         source={{ kind: "full", attachment: att }}
-        open
-        onClose={() => {}}
       />,
     );
     const iframe = document.querySelector("iframe");
@@ -341,8 +339,6 @@ describe("AttachmentPreviewModal — server-relative download_url resolution (MU
     render(
       <AttachmentPreviewModal
         source={{ kind: "full", attachment: att }}
-        open
-        onClose={() => {}}
       />,
     );
     const img = document.querySelector("img");
@@ -359,8 +355,6 @@ describe("AttachmentPreviewModal — server-relative download_url resolution (MU
     render(
       <AttachmentPreviewModal
         source={{ kind: "full", attachment: att }}
-        open
-        onClose={() => {}}
       />,
     );
     const img = document.querySelector("img");
@@ -379,8 +373,6 @@ describe("AttachmentPreviewModal — server-relative download_url resolution (MU
     render(
       <AttachmentPreviewModal
         source={{ kind: "full", attachment: att }}
-        open
-        onClose={() => {}}
       />,
     );
     const img = document.querySelector("img");
@@ -394,7 +386,7 @@ describe("AttachmentPreviewModal — error states", () => {
   it("shows the too-large fallback on PreviewTooLargeError", async () => {
     getAttachmentTextContentMock.mockRejectedValueOnce(new FakePreviewTooLargeError());
     const att = makeAttachment({ filename: "huge.txt", content_type: "text/plain" });
-    render(<AttachmentPreviewModal source={{ kind: "full", attachment: att }} open onClose={() => {}} />);
+    render(<AttachmentPreviewModal source={{ kind: "full", attachment: att }} />);
     await waitFor(() => {
       expect(screen.getByText("File is too large to preview. Please download.")).toBeTruthy();
     });
@@ -403,7 +395,7 @@ describe("AttachmentPreviewModal — error states", () => {
   it("shows the unsupported fallback on PreviewUnsupportedError (server/client drift)", async () => {
     getAttachmentTextContentMock.mockRejectedValueOnce(new FakePreviewUnsupportedError());
     const att = makeAttachment({ filename: "weird.txt", content_type: "text/plain" });
-    render(<AttachmentPreviewModal source={{ kind: "full", attachment: att }} open onClose={() => {}} />);
+    render(<AttachmentPreviewModal source={{ kind: "full", attachment: att }} />);
     await waitFor(() => {
       expect(screen.getByText("This file type can't be previewed.")).toBeTruthy();
     });
@@ -412,7 +404,7 @@ describe("AttachmentPreviewModal — error states", () => {
   it("shows the generic failed fallback on a transport error", async () => {
     getAttachmentTextContentMock.mockRejectedValueOnce(new Error("network down"));
     const att = makeAttachment({ filename: "x.md", content_type: "text/markdown" });
-    render(<AttachmentPreviewModal source={{ kind: "full", attachment: att }} open onClose={() => {}} />);
+    render(<AttachmentPreviewModal source={{ kind: "full", attachment: att }} />);
     await waitFor(() => {
       expect(screen.getByText("Couldn't load preview")).toBeTruthy();
     });
@@ -421,18 +413,17 @@ describe("AttachmentPreviewModal — error states", () => {
 
 describe("AttachmentPreviewModal — controls", () => {
   it("ESC closes the modal", () => {
-    const onClose = vi.fn();
     const att = makeAttachment({ filename: "manual.pdf", content_type: "application/pdf" });
-    render(<AttachmentPreviewModal source={{ kind: "full", attachment: att }} open onClose={onClose} />);
+    render(<AttachmentPreviewModal source={{ kind: "full", attachment: att }} />);
     act(() => {
       document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
     });
-    expect(onClose).toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("Download button invokes useDownloadAttachment with the attachment id", () => {
     const att = makeAttachment({ filename: "manual.pdf", content_type: "application/pdf" });
-    render(<AttachmentPreviewModal source={{ kind: "full", attachment: att }} open onClose={() => {}} />);
+    render(<AttachmentPreviewModal source={{ kind: "full", attachment: att }} />);
     // Two Download CTAs may exist (header + unsupported fallback). The header
     // button is always present, look it up by aria-label/title.
     const buttons = screen.getAllByTitle("Download");
@@ -442,12 +433,11 @@ describe("AttachmentPreviewModal — controls", () => {
   });
 
   it("clicking the backdrop closes the modal", () => {
-    const onClose = vi.fn();
     const att = makeAttachment({ filename: "manual.pdf", content_type: "application/pdf" });
-    render(<AttachmentPreviewModal source={{ kind: "full", attachment: att }} open onClose={onClose} />);
+    render(<AttachmentPreviewModal source={{ kind: "full", attachment: att }} />);
     const dialog = screen.getByRole("dialog");
     fireEvent.click(dialog);
-    expect(onClose).toHaveBeenCalled();
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 });
 
@@ -457,8 +447,6 @@ describe("AttachmentPreviewModal — URL-only source", () => {
     render(
       <AttachmentPreviewModal
         source={{ kind: "url", url, filename: "orphan.pdf" }}
-        open
-        onClose={() => {}}
       />,
     );
     const iframe = document.querySelector("iframe");
@@ -471,25 +459,10 @@ describe("AttachmentPreviewModal — URL-only source", () => {
     render(
       <AttachmentPreviewModal
         source={{ kind: "url", url, filename: "clip.mp4" }}
-        open
-        onClose={() => {}}
       />,
     );
     const video = document.querySelector("video");
     expect(video?.getAttribute("src")).toBe(url);
-  });
-
-  it("falls back to unsupported when a text kind is forced through a URL source", () => {
-    // The tryOpen gate normally prevents this; direct mount tests the
-    // defensive branch inside PreviewContent.
-    render(
-      <AttachmentPreviewModal
-        source={{ kind: "url", url: "https://x/y.md", filename: "y.md" }}
-        open
-        onClose={() => {}}
-      />,
-    );
-    expect(screen.getByText("This file type can't be previewed.")).toBeTruthy();
   });
 
   it("Download button opens the raw URL externally when no attachment id is available", () => {
@@ -497,8 +470,6 @@ describe("AttachmentPreviewModal — URL-only source", () => {
     render(
       <AttachmentPreviewModal
         source={{ kind: "url", url, filename: "orphan.pdf" }}
-        open
-        onClose={() => {}}
       />,
     );
     const button = screen.getAllByTitle("Download")[0]!;
@@ -521,8 +492,6 @@ describe("AttachmentPreviewModal — open-in-new-tab (HTML only)", () => {
     render(
       <AttachmentPreviewModal
         source={{ kind: "full", attachment: att }}
-        open
-        onClose={() => {}}
       />,
     );
     expect(screen.getByTitle("Open in new tab")).toBeTruthy();
@@ -537,12 +506,9 @@ describe("AttachmentPreviewModal — open-in-new-tab (HTML only)", () => {
       filename: "report.html",
       content_type: "text/html",
     });
-    const onClose = vi.fn();
     render(
       <AttachmentPreviewModal
         source={{ kind: "full", attachment: att }}
-        open
-        onClose={onClose}
       />,
     );
     fireEvent.click(screen.getByTitle("Open in new tab"));
@@ -551,7 +517,7 @@ describe("AttachmentPreviewModal — open-in-new-tab (HTML only)", () => {
       "report.html",
       { activate: true },
     );
-    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("falls back to window.open against the shareable URL and closes the modal (web)", async () => {
@@ -567,12 +533,9 @@ describe("AttachmentPreviewModal — open-in-new-tab (HTML only)", () => {
       filename: "report.html",
       content_type: "text/html",
     });
-    const onClose = vi.fn();
     render(
       <AttachmentPreviewModal
         source={{ kind: "full", attachment: att }}
-        open
-        onClose={onClose}
       />,
     );
     fireEvent.click(screen.getByTitle("Open in new tab"));
@@ -582,7 +545,7 @@ describe("AttachmentPreviewModal — open-in-new-tab (HTML only)", () => {
       "_blank",
       "noopener,noreferrer",
     );
-    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("does not render the new-tab button for non-HTML kinds", () => {
@@ -593,8 +556,6 @@ describe("AttachmentPreviewModal — open-in-new-tab (HTML only)", () => {
     render(
       <AttachmentPreviewModal
         source={{ kind: "full", attachment: att }}
-        open
-        onClose={() => {}}
       />,
     );
     expect(screen.queryByTitle("Open in new tab")).toBeNull();
@@ -613,8 +574,6 @@ describe("AttachmentPreviewModal — open-in-new-tab (HTML only)", () => {
     render(
       <AttachmentPreviewModal
         source={{ kind: "full", attachment: att }}
-        open
-        onClose={() => {}}
       />,
     );
     expect(screen.queryByTitle("Open in new tab")).toBeNull();
