@@ -49,7 +49,7 @@ export type UpdateProjectRequest = Partial<
 //     ref = { provider, url, project_path, resource_kind, ref? }
 //   - local_directory: in-place agent execution on a specific daemon,
 //     ref = { local_path, daemon_id, label? }
-export type ProjectResourceType =
+type ProjectResourceType =
   | "github_repo"
   | "gongfeng_repo"
   | "local_directory"

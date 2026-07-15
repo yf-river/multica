@@ -73,7 +73,7 @@ export type SquadMemberStatusValue =
   | "unstable"
   | "archived";
 
-export interface SquadActiveIssueBrief {
+interface SquadActiveIssueBrief {
   issue_id: string;
   identifier: string;
   title: string;

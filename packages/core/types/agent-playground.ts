@@ -6,19 +6,19 @@ export interface AgentPlaygroundExperiment {
   agent_count: number;
 }
 
-export interface AgentPlaygroundInput {
+interface AgentPlaygroundInput {
   id: string;
   row_index: number;
   name: string;
   input: string;
 }
 
-export interface AgentPlaygroundAgent {
+interface AgentPlaygroundAgent {
   id: string;
   agent_name: string;
 }
 
-export interface AgentPlaygroundResult {
+interface AgentPlaygroundResult {
   input_id: string;
   experiment_agent_id: string;
   task_id: string | null;
@@ -27,7 +27,7 @@ export interface AgentPlaygroundResult {
   error: string;
 }
 
-export interface AgentPlaygroundJudgement {
+interface AgentPlaygroundJudgement {
   input_id: string;
   task_id: string | null;
   status: string;

@@ -9,7 +9,7 @@ export interface ChatSession {
   updated_at: string;
 }
 
-export interface PendingChatTaskItem {
+interface PendingChatTaskItem {
   task_id: string;
   chat_session_id: string;
 }
@@ -75,7 +75,7 @@ export interface SendChatMessageResponse {
   attachment_ids: string[];
 }
 
-export interface CancelledChatMessage {
+interface CancelledChatMessage {
   chat_session_id: string;
   message_id: string;
   content: string;

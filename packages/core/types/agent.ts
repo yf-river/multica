@@ -256,7 +256,7 @@ export interface Agent {
  * info, use `GET /api/agents/:id/skills` (returns `SkillSummary[]`) or
  * `GET /api/skills/:id` (returns the full `Skill`).
  */
-export interface AgentSkillSummary {
+interface AgentSkillSummary {
   id: string;
   name: string;
   description: string;

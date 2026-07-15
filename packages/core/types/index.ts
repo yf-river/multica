@@ -24,7 +24,6 @@ export type {
   UpdateAgentEnvRequest,
   Skill,
   SkillSummary,
-  AgentSkillSummary,
   SkillFile,
   CreateSkillRequest,
   UpdateSkillRequest,
@@ -62,7 +61,7 @@ export type {
 } from "./external-credential";
 export type { InboxItem, InboxItemType } from "./inbox";
 export type { NotificationGroupKey, NotificationPreferences } from "./notification-preference";
-export type { Comment, CommentType, CommentAuthorType, CommentTriggerPreview, CommentTriggerPreviewAgent, Reaction } from "./comment";
+export type { Comment, CommentAuthorType, CommentTriggerPreview, CommentTriggerPreviewAgent, Reaction } from "./comment";
 export type { Label, CreateLabelRequest, UpdateLabelRequest } from "./label";
 export type {
   TimelineEntry,
@@ -78,10 +77,8 @@ export type {
   ChatMessage,
   ChatMessagesPage,
   ChatPendingTask,
-  PendingChatTaskItem,
   PendingChatTasksResponse,
   SendChatMessageResponse,
-  CancelledChatMessage,
   CancelTaskResponse,
 } from "./chat";
 export type { StorageAdapter } from "./storage";
@@ -92,7 +89,6 @@ export type {
   CreateProjectRequest,
   UpdateProjectRequest,
   ProjectResource,
-  ProjectResourceType,
   GongfengRepoResourceRef,
   LocalDirectoryResourceRef,
   CreateProjectResourceRequest,
@@ -111,10 +107,6 @@ export type {
 } from "./prompt-library";
 export type {
   AgentPlaygroundExperiment,
-  AgentPlaygroundInput,
-  AgentPlaygroundAgent,
-  AgentPlaygroundResult,
-  AgentPlaygroundJudgement,
   AgentPlaygroundDetail,
   ListAgentPlaygroundExperimentsResponse,
   CreateAgentPlaygroundExperimentRequest,
@@ -194,6 +186,5 @@ export type {
   InternalSquadTemplateResponse,
   UpdateSquadRequest,
   SquadMemberStatusValue,
-  SquadActiveIssueBrief,
   SquadMemberStatus,
 } from "./squad";
