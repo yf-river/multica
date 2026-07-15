@@ -106,6 +106,10 @@ func (h *Handler) CreatePromptEvaluationOptimizationCandidate(w http.ResponseWri
 		return
 	}
 	requestActorID := parseUUID(userID)
+	writeReplayError := resourceCreateReplayErrorWriter(
+		"Idempotency-Key was already used with a different optimization candidate request",
+		"failed to recover optimization candidate request",
+	)
 	loadReplay := func() (PromptEvaluationOptimizationCandidateResponse, bool, error) {
 		return loadResourceCreateReplay(
 			r.Context(), h.Queries, workspaceUUID, requestActorID, resourceTypePromptCandidate,
@@ -114,7 +118,7 @@ func (h *Handler) CreatePromptEvaluationOptimizationCandidate(w http.ResponseWri
 		)
 	}
 	if replay, found, err := loadReplay(); err != nil {
-		writePromptEvaluationCandidateCreateReplayError(w, err)
+		writeReplayError(w, err)
 		return
 	} else if found {
 		writeJSON(w, http.StatusCreated, replay)
@@ -184,7 +188,7 @@ func (h *Handler) CreatePromptEvaluationOptimizationCandidate(w http.ResponseWri
 	if !handleResourceCreateReservation(
 		w, r.Context(), tx,
 		reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, requestActorID, resourceTypePromptCandidate, idempotencyKey, requestHash),
-		loadReplay, writePromptEvaluationCandidateCreateReplayError,
+		loadReplay, writeReplayError,
 		"failed to reserve optimization candidate request", http.StatusCreated,
 	) {
 		return
@@ -303,6 +307,10 @@ func (h *Handler) PublishPromptEvaluationOptimizationCandidate(w http.ResponseWr
 		return
 	}
 	requestActorID := parseUUID(userID)
+	writeReplayError := resourceCreateReplayErrorWriter(
+		"Idempotency-Key was already used with a different optimization candidate publish request",
+		"failed to recover optimization candidate publish request",
+	)
 	loadReplay := func() (PublishPromptEvaluationOptimizationCandidateResponse, bool, error) {
 		return loadResourceCreateReplay(
 			r.Context(), h.Queries, workspaceUUID, requestActorID, resourceTypePromptPublish,
@@ -313,7 +321,7 @@ func (h *Handler) PublishPromptEvaluationOptimizationCandidate(w http.ResponseWr
 		)
 	}
 	if replay, found, err := loadReplay(); err != nil {
-		writePromptEvaluationCandidatePublishReplayError(w, err)
+		writeReplayError(w, err)
 		return
 	} else if found {
 		writeJSON(w, http.StatusOK, replay)
@@ -345,7 +353,7 @@ func (h *Handler) PublishPromptEvaluationOptimizationCandidate(w http.ResponseWr
 	if !handleResourceCreateReservation(
 		w, r.Context(), tx,
 		reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, requestActorID, resourceTypePromptPublish, idempotencyKey, requestHash),
-		loadReplay, writePromptEvaluationCandidatePublishReplayError,
+		loadReplay, writeReplayError,
 		"failed to reserve optimization candidate publish request", http.StatusOK,
 	) {
 		return
@@ -537,6 +545,10 @@ func (h *Handler) RejectPromptEvaluationOptimizationCandidate(w http.ResponseWri
 		return
 	}
 	requestActorID := parseUUID(userID)
+	writeReplayError := resourceCreateReplayErrorWriter(
+		"Idempotency-Key was already used with a different optimization candidate reject request",
+		"failed to recover optimization candidate reject request",
+	)
 	loadReplay := func() (PromptEvaluationOptimizationCandidateResponse, bool, error) {
 		return loadResourceCreateReplay(
 			r.Context(), h.Queries, workspaceUUID, requestActorID, resourceTypePromptReject,
@@ -545,7 +557,7 @@ func (h *Handler) RejectPromptEvaluationOptimizationCandidate(w http.ResponseWri
 		)
 	}
 	if replay, found, err := loadReplay(); err != nil {
-		writePromptEvaluationCandidateRejectReplayError(w, err)
+		writeReplayError(w, err)
 		return
 	} else if found {
 		writeJSON(w, http.StatusOK, replay)
@@ -569,7 +581,7 @@ func (h *Handler) RejectPromptEvaluationOptimizationCandidate(w http.ResponseWri
 	if !handleResourceCreateReservation(
 		w, r.Context(), tx,
 		reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, requestActorID, resourceTypePromptReject, idempotencyKey, requestHash),
-		loadReplay, writePromptEvaluationCandidateRejectReplayError,
+		loadReplay, writeReplayError,
 		"failed to reserve optimization candidate reject request", http.StatusOK,
 	) {
 		return

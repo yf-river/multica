@@ -791,6 +791,10 @@ func (h *Handler) CreateMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	actorID := requester.UserID
+	writeReplayError := resourceCreateReplayErrorWriter(
+		"Idempotency-Key was already used with a different workspace member request",
+		"failed to recover workspace member request",
+	)
 	loadReplay := func() (MemberWithUserResponse, bool, error) {
 		return loadResourceCreateReplay(
 			r.Context(), h.Queries, requester.WorkspaceID, actorID, resourceTypeWorkspaceMember,
@@ -799,7 +803,7 @@ func (h *Handler) CreateMember(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 	if replay, found, err := loadReplay(); err != nil {
-		writeWorkspaceMemberCreateReplayError(w, err)
+		writeReplayError(w, err)
 		return
 	} else if found {
 		writeJSON(w, http.StatusCreated, replay)
@@ -816,7 +820,7 @@ func (h *Handler) CreateMember(w http.ResponseWriter, r *http.Request) {
 	err = reserveResourceCreateRequest(r.Context(), qtx, requester.WorkspaceID, actorID, resourceTypeWorkspaceMember, idempotencyKey, requestHash)
 	if !handleResourceCreateReservation(
 		w, r.Context(), tx, err, loadReplay,
-		writeWorkspaceMemberCreateReplayError,
+		writeReplayError,
 		"failed to reserve workspace member request",
 		http.StatusCreated,
 	) {

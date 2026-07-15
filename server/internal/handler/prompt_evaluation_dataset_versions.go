@@ -58,6 +58,10 @@ func (h *Handler) CreatePromptEvaluationDatasetFromTraces(w http.ResponseWriter,
 	if !ok {
 		return
 	}
+	writeReplayError := resourceCreateReplayErrorWriter(
+		"Idempotency-Key was already used with a different trace dataset import",
+		"failed to recover trace dataset import",
+	)
 	loadReplay := func() (PromptEvaluationDatasetFromTracesResponse, bool, error) {
 		return loadResourceCreateReplay(
 			r.Context(), h.Queries, asset.WorkspaceID, actorID, resourceTypePromptTraceImport,
@@ -67,7 +71,7 @@ func (h *Handler) CreatePromptEvaluationDatasetFromTraces(w http.ResponseWriter,
 	}
 	replay, found, replayErr := loadReplay()
 	if replayErr != nil {
-		writePromptEvaluationTraceImportReplayError(w, replayErr)
+		writeReplayError(w, replayErr)
 		return
 	}
 	if found {
@@ -92,7 +96,7 @@ func (h *Handler) CreatePromptEvaluationDatasetFromTraces(w http.ResponseWriter,
 	if !handleResourceCreateReservation(
 		w, r.Context(), tx,
 		reserveResourceCreateRequest(r.Context(), qtx, asset.WorkspaceID, actorID, resourceTypePromptTraceImport, idempotencyKey, requestHash),
-		loadReplay, writePromptEvaluationTraceImportReplayError,
+		loadReplay, writeReplayError,
 		"failed to reserve trace dataset import", http.StatusCreated,
 	) {
 		return
@@ -178,14 +182,6 @@ func (h *Handler) CreatePromptEvaluationDatasetFromTraces(w http.ResponseWriter,
 		return
 	}
 	writeJSON(w, http.StatusCreated, response)
-}
-
-func writePromptEvaluationTraceImportReplayError(w http.ResponseWriter, err error) {
-	writeResourceCreateReplayError(
-		w, err,
-		"Idempotency-Key was already used with a different trace dataset import",
-		"failed to recover trace dataset import",
-	)
 }
 
 func (h *Handler) ListPromptEvaluationDatasetVersions(w http.ResponseWriter, r *http.Request) {
@@ -312,6 +308,10 @@ func (h *Handler) CreatePromptEvaluationDatasetVersion(w http.ResponseWriter, r 
 	if !ok {
 		return
 	}
+	writeReplayError := resourceCreateReplayErrorWriter(
+		"Idempotency-Key was already used with a different dataset version request",
+		"failed to recover dataset version request",
+	)
 	loadReplay := func() (PromptEvaluationDatasetVersionResponse, bool, error) {
 		return loadResourceCreateReplay(
 			r.Context(), h.Queries, asset.WorkspaceID, actorID, resourceTypePromptDatasetVersion,
@@ -321,7 +321,7 @@ func (h *Handler) CreatePromptEvaluationDatasetVersion(w http.ResponseWriter, r 
 	}
 	replay, found, replayErr := loadReplay()
 	if replayErr != nil {
-		writePromptEvaluationDatasetVersionReplayError(w, replayErr)
+		writeReplayError(w, replayErr)
 		return
 	}
 	if found {
@@ -338,7 +338,7 @@ func (h *Handler) CreatePromptEvaluationDatasetVersion(w http.ResponseWriter, r 
 	if !handleResourceCreateReservation(
 		w, r.Context(), tx,
 		reserveResourceCreateRequest(r.Context(), qtx, asset.WorkspaceID, actorID, resourceTypePromptDatasetVersion, idempotencyKey, requestHash),
-		loadReplay, writePromptEvaluationDatasetVersionReplayError,
+		loadReplay, writeReplayError,
 		"failed to reserve dataset version request", http.StatusCreated,
 	) {
 		return
@@ -373,14 +373,6 @@ func (h *Handler) CreatePromptEvaluationDatasetVersion(w http.ResponseWriter, r 
 		return
 	}
 	writeJSON(w, http.StatusCreated, response)
-}
-
-func writePromptEvaluationDatasetVersionReplayError(w http.ResponseWriter, err error) {
-	writeResourceCreateReplayError(
-		w, err,
-		"Idempotency-Key was already used with a different dataset version request",
-		"failed to recover dataset version request",
-	)
 }
 
 func (h *Handler) createPromptEvaluationDatasetVersionFromCurrent(ctx context.Context, qtx *db.Queries, asset db.PromptEvaluationAsset, createdBy pgtype.UUID, versionLabel string, metadata []byte) (db.PromptEvaluationDatasetVersion, error) {
@@ -581,6 +573,10 @@ func (h *Handler) RestorePromptEvaluationDatasetVersion(w http.ResponseWriter, r
 	if !ok {
 		return
 	}
+	writeReplayError := resourceCreateReplayErrorWriter(
+		"Idempotency-Key was already used with a different dataset restore request",
+		"failed to recover dataset version restore request",
+	)
 	loadReplay := func() (RestorePromptEvaluationDatasetVersionResponse, bool, error) {
 		return loadResourceCreateReplay(
 			r.Context(), h.Queries, asset.WorkspaceID, actorID, resourceTypePromptDatasetRestore,
@@ -592,7 +588,7 @@ func (h *Handler) RestorePromptEvaluationDatasetVersion(w http.ResponseWriter, r
 	}
 	replay, found, replayErr := loadReplay()
 	if replayErr != nil {
-		writePromptEvaluationDatasetRestoreReplayError(w, replayErr)
+		writeReplayError(w, replayErr)
 		return
 	}
 	if found {
@@ -610,7 +606,7 @@ func (h *Handler) RestorePromptEvaluationDatasetVersion(w http.ResponseWriter, r
 	if !handleResourceCreateReservation(
 		w, r.Context(), tx,
 		reserveResourceCreateRequest(r.Context(), qtx, asset.WorkspaceID, actorID, resourceTypePromptDatasetRestore, idempotencyKey, requestHash),
-		loadReplay, writePromptEvaluationDatasetRestoreReplayError,
+		loadReplay, writeReplayError,
 		"failed to reserve dataset version restore request", http.StatusOK,
 	) {
 		return
@@ -744,14 +740,6 @@ func (h *Handler) RestorePromptEvaluationDatasetVersion(w http.ResponseWriter, r
 		return
 	}
 	writeJSON(w, http.StatusOK, response)
-}
-
-func writePromptEvaluationDatasetRestoreReplayError(w http.ResponseWriter, err error) {
-	writeResourceCreateReplayError(
-		w, err,
-		"Idempotency-Key was already used with a different dataset restore request",
-		"failed to recover dataset version restore request",
-	)
 }
 
 func (h *Handler) promptEvaluationTraceEventsForDataset(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID, req CreatePromptEvaluationDatasetFromTracesRequest, limit int32) ([]db.TaskTraceEvent, bool) {

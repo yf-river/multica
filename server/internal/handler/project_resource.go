@@ -46,14 +46,6 @@ func projectResourceToResponse(r db.ProjectResource) ProjectResourceResponse {
 	}
 }
 
-func writeProjectResourceCreateReplayError(w http.ResponseWriter, err error) {
-	writeResourceCreateReplayMessageError(
-		w, err,
-		"Idempotency-Key was already used with a different project resource request",
-		"failed to replay project resource create",
-	)
-}
-
 // CreateProjectResourceRequest is the body for POST /api/projects/{id}/resources.
 type CreateProjectResourceRequest struct {
 	ResourceType string          `json:"resource_type"`
@@ -566,6 +558,10 @@ func (h *Handler) CreateProjectResource(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
+	writeReplayError := resourceCreateReplayMessageErrorWriter(
+		"Idempotency-Key was already used with a different project resource request",
+		"failed to replay project resource create",
+	)
 	loadReplay := func() (ProjectResourceResponse, bool, error) {
 		return loadResourceCreateReplay(
 			r.Context(), h.Queries, project.WorkspaceID, creator, resourceTypeProjectResource,
@@ -573,7 +569,7 @@ func (h *Handler) CreateProjectResource(w http.ResponseWriter, r *http.Request) 
 		)
 	}
 	if replay, found, replayErr := loadReplay(); replayErr != nil {
-		writeProjectResourceCreateReplayError(w, replayErr)
+		writeReplayError(w, replayErr)
 		return
 	} else if found {
 		writeJSON(w, http.StatusCreated, replay)
@@ -610,7 +606,7 @@ func (h *Handler) CreateProjectResource(w http.ResponseWriter, r *http.Request) 
 	err = reserveResourceCreateRequest(r.Context(), qtx, project.WorkspaceID, creator, resourceTypeProjectResource, idempotencyKey, requestHash)
 	if !handleResourceCreateReservation(
 		w, r.Context(), tx, err, loadReplay,
-		writeProjectResourceCreateReplayError,
+		writeReplayError,
 		"failed to create project resource",
 		http.StatusCreated,
 	) {

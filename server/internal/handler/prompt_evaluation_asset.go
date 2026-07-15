@@ -1151,6 +1151,10 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 		return
 	}
 	requestActorID := parseUUID(userID)
+	writeReplayError := resourceCreateReplayErrorWriter(
+		"Idempotency-Key was already used with a different prompt evaluation agent run",
+		"failed to recover prompt evaluation agent run",
+	)
 	loadReplay := func() (PromptEvaluationAgentRunResponse, bool, error) {
 		return loadResourceCreateReplay(
 			r.Context(), h.Queries, workspaceID, requestActorID, resourceTypePromptEvaluationRun,
@@ -1161,7 +1165,7 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 		)
 	}
 	if replay, found, err := loadReplay(); err != nil {
-		writePromptEvaluationAgentRunReplayError(w, err)
+		writeReplayError(w, err)
 		return
 	} else if found {
 		writeJSON(w, http.StatusAccepted, replay)
@@ -1210,7 +1214,7 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 	if !handleResourceCreateReservation(
 		w, r.Context(), tx,
 		reserveResourceCreateRequest(r.Context(), qtx, workspaceID, requestActorID, resourceTypePromptEvaluationRun, idempotencyKey, requestHash),
-		loadReplay, writePromptEvaluationAgentRunReplayError,
+		loadReplay, writeReplayError,
 		"failed to reserve prompt evaluation agent run", http.StatusAccepted,
 	) {
 		return

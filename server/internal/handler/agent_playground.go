@@ -246,6 +246,10 @@ func (h *Handler) CreateAgentPlaygroundExperiment(w http.ResponseWriter, r *http
 		return
 	}
 	requestActorID := parseUUID(userID)
+	writeReplayError := resourceCreateReplayErrorWriter(
+		"Idempotency-Key was already used with a different agent playground request",
+		"failed to recover agent playground request",
+	)
 	loadReplay := func() (AgentPlaygroundDetailResponse, bool, error) {
 		return loadResourceCreateReplay(
 			r.Context(), h.Queries, workspaceUUID, requestActorID, resourceTypeAgentPlayground,
@@ -254,7 +258,7 @@ func (h *Handler) CreateAgentPlaygroundExperiment(w http.ResponseWriter, r *http
 		)
 	}
 	if replay, found, err := loadReplay(); err != nil {
-		writeAgentPlaygroundCreateReplayError(w, err)
+		writeReplayError(w, err)
 		return
 	} else if found {
 		writeJSON(w, http.StatusCreated, replay)
@@ -320,7 +324,7 @@ func (h *Handler) CreateAgentPlaygroundExperiment(w http.ResponseWriter, r *http
 	err = reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, requestActorID, resourceTypeAgentPlayground, idempotencyKey, requestHash)
 	if !handleResourceCreateReservation(
 		w, r.Context(), tx, err, loadReplay,
-		writeAgentPlaygroundCreateReplayError,
+		writeReplayError,
 		"failed to reserve agent playground request",
 		http.StatusCreated,
 	) {

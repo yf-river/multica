@@ -595,6 +595,10 @@ func (h *Handler) PreparePromptEvaluationSkillReEvalAsset(w http.ResponseWriter,
 		return
 	}
 	requestActorID := parseUUID(userID)
+	writeReplayError := resourceCreateReplayErrorWriter(
+		"Idempotency-Key was already used with a different skill re-eval asset request",
+		"failed to recover skill re-eval asset request",
+	)
 	loadReplay := func() (PromptEvaluationSkillReEvalAssetResponse, bool, error) {
 		return loadResourceCreateReplay(
 			r.Context(), h.Queries, workspaceUUID, requestActorID, resourceTypePromptReEvalAsset,
@@ -603,7 +607,7 @@ func (h *Handler) PreparePromptEvaluationSkillReEvalAsset(w http.ResponseWriter,
 		)
 	}
 	if replay, found, err := loadReplay(); err != nil {
-		writePromptEvaluationReEvalAssetReplayError(w, err)
+		writeReplayError(w, err)
 		return
 	} else if found {
 		writeJSON(w, http.StatusCreated, replay)
@@ -704,7 +708,7 @@ func (h *Handler) PreparePromptEvaluationSkillReEvalAsset(w http.ResponseWriter,
 	if !handleResourceCreateReservation(
 		w, r.Context(), tx,
 		reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, requestActorID, resourceTypePromptReEvalAsset, idempotencyKey, requestHash),
-		loadReplay, writePromptEvaluationReEvalAssetReplayError,
+		loadReplay, writeReplayError,
 		"failed to reserve skill re-eval asset request", http.StatusCreated,
 	) {
 		return

@@ -844,6 +844,10 @@ func (h *Handler) CreatePromptLibraryTrial(w http.ResponseWriter, r *http.Reques
 	if !ok {
 		return
 	}
+	writeReplayError := resourceCreateReplayErrorWriter(
+		"Idempotency-Key was already used with a different prompt trial request",
+		"failed to recover prompt library trial request",
+	)
 	loadReplay := func() (PromptLibraryTrialResponse, bool, error) {
 		return loadResourceCreateReplay(
 			r.Context(), h.Queries, item.WorkspaceID, parseUUID(actorID), resourceTypePromptLibraryTrial,
@@ -853,7 +857,7 @@ func (h *Handler) CreatePromptLibraryTrial(w http.ResponseWriter, r *http.Reques
 	}
 	replay, found, replayErr := loadReplay()
 	if replayErr != nil {
-		writePromptLibraryTrialReplayError(w, replayErr)
+		writeReplayError(w, replayErr)
 		return
 	}
 	if found {
@@ -884,7 +888,7 @@ func (h *Handler) CreatePromptLibraryTrial(w http.ResponseWriter, r *http.Reques
 	err = reserveResourceCreateRequest(r.Context(), qtx, item.WorkspaceID, parseUUID(actorID), resourceTypePromptLibraryTrial, idempotencyKey, requestHash)
 	if !handleResourceCreateReservation(
 		w, r.Context(), tx, err, loadReplay,
-		writePromptLibraryTrialReplayError,
+		writeReplayError,
 		"failed to reserve prompt library trial request",
 		http.StatusAccepted,
 	) {

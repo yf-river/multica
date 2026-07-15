@@ -900,6 +900,10 @@ func (h *Handler) CreatePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
+	writeReplayError := resourceCreateReplayErrorWriter(
+		"Idempotency-Key was already used with a different prompt evaluation case request",
+		"failed to recover prompt evaluation case request",
+	)
 	loadReplay := func() (PromptEvaluationCaseResponse, bool, error) {
 		return loadResourceCreateReplay(
 			r.Context(), h.Queries, workspaceUUID, actorID, resourceTypePromptEvalCase,
@@ -909,7 +913,7 @@ func (h *Handler) CreatePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 	}
 	replay, found, replayErr := loadReplay()
 	if replayErr != nil {
-		writePromptEvaluationCaseCreateReplayError(w, replayErr)
+		writeReplayError(w, replayErr)
 		return
 	}
 	if found {
@@ -926,7 +930,7 @@ func (h *Handler) CreatePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 	if !handleResourceCreateReservation(
 		w, r.Context(), tx,
 		reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, actorID, resourceTypePromptEvalCase, idempotencyKey, requestHash),
-		loadReplay, writePromptEvaluationCaseCreateReplayError,
+		loadReplay, writeReplayError,
 		"failed to reserve prompt evaluation case request", http.StatusCreated,
 	) {
 		return
@@ -999,14 +1003,6 @@ func (h *Handler) CreatePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	writeJSON(w, http.StatusCreated, response)
-}
-
-func writePromptEvaluationCaseCreateReplayError(w http.ResponseWriter, err error) {
-	writeResourceCreateReplayError(
-		w, err,
-		"Idempotency-Key was already used with a different prompt evaluation case request",
-		"failed to recover prompt evaluation case request",
-	)
 }
 
 func validPromptEvaluationCaseSortBy(value string) bool {

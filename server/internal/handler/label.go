@@ -51,14 +51,6 @@ func labelsToResponse(list []db.IssueLabel) []LabelResponse {
 	return out
 }
 
-func writeLabelCreateReplayError(w http.ResponseWriter, err error) {
-	writeResourceCreateReplayMessageError(
-		w, err,
-		"Idempotency-Key was already used with a different label request",
-		"failed to replay label create",
-	)
-}
-
 // 6-digit hex, with or without leading '#'.
 var hexColorRE = regexp.MustCompile(`^#?[0-9a-fA-F]{6}$`)
 
@@ -186,6 +178,10 @@ func (h *Handler) CreateLabel(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	writeReplayError := resourceCreateReplayMessageErrorWriter(
+		"Idempotency-Key was already used with a different label request",
+		"failed to replay label create",
+	)
 	loadReplay := func() (LabelResponse, bool, error) {
 		return loadResourceCreateReplay(
 			r.Context(), h.Queries, workspaceUUID, actorID, resourceTypeLabel,
@@ -193,7 +189,7 @@ func (h *Handler) CreateLabel(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 	if replay, found, replayErr := loadReplay(); replayErr != nil {
-		writeLabelCreateReplayError(w, replayErr)
+		writeReplayError(w, replayErr)
 		return
 	} else if found {
 		writeJSON(w, http.StatusCreated, replay)
@@ -210,7 +206,7 @@ func (h *Handler) CreateLabel(w http.ResponseWriter, r *http.Request) {
 	err = reserveResourceCreateRequest(r.Context(), qtx, workspaceUUID, actorID, resourceTypeLabel, idempotencyKey, requestHash)
 	if !handleResourceCreateReservation(
 		w, r.Context(), tx, err, loadReplay,
-		writeLabelCreateReplayError,
+		writeReplayError,
 		"failed to create label",
 		http.StatusCreated,
 	) {

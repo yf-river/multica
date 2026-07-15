@@ -74,14 +74,6 @@ func writeRuntimeProfileDecodeError(w http.ResponseWriter, r *http.Request, prof
 	writeError(w, http.StatusInternalServerError, "failed to decode runtime profile")
 }
 
-func writeRuntimeProfileCreateReplayError(w http.ResponseWriter, err error) {
-	writeResourceCreateReplayMessageError(
-		w, err,
-		"Idempotency-Key was already used with a different runtime profile request",
-		"failed to replay runtime profile create",
-	)
-}
-
 // marshalFixedArgs validates and JSON-encodes the fixed_args list. Each entry
 // must be a non-empty string; the column defaults to an empty array.
 func marshalFixedArgs(args []string) ([]byte, error) {
@@ -169,6 +161,10 @@ func (h *Handler) CreateRuntimeProfile(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	writeReplayError := resourceCreateReplayMessageErrorWriter(
+		"Idempotency-Key was already used with a different runtime profile request",
+		"failed to replay runtime profile create",
+	)
 	loadReplay := func() (RuntimeProfileResponse, bool, error) {
 		return loadResourceCreateReplay(
 			r.Context(), h.Queries, wsUUID, member.UserID, resourceTypeRuntimeProfile,
@@ -176,7 +172,7 @@ func (h *Handler) CreateRuntimeProfile(w http.ResponseWriter, r *http.Request) {
 		)
 	}
 	if replay, found, replayErr := loadReplay(); replayErr != nil {
-		writeRuntimeProfileCreateReplayError(w, replayErr)
+		writeReplayError(w, replayErr)
 		return
 	} else if found {
 		writeJSON(w, http.StatusCreated, replay)
@@ -193,7 +189,7 @@ func (h *Handler) CreateRuntimeProfile(w http.ResponseWriter, r *http.Request) {
 	err = reserveResourceCreateRequest(r.Context(), qtx, wsUUID, member.UserID, resourceTypeRuntimeProfile, idempotencyKey, requestHash)
 	if !handleResourceCreateReservation(
 		w, r.Context(), tx, err, loadReplay,
-		writeRuntimeProfileCreateReplayError,
+		writeReplayError,
 		"failed to create runtime profile",
 		http.StatusCreated,
 	) {

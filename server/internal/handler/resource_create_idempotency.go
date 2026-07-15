@@ -72,12 +72,24 @@ func writeResourceCreateReplayError(w http.ResponseWriter, err error, conflictMe
 	writeIdempotencyReplayError(w, err, errResourceCreateIdempotencyConflict, conflictMessage, recoveryMessage)
 }
 
+func resourceCreateReplayErrorWriter(conflictMessage, recoveryMessage string) func(http.ResponseWriter, error) {
+	return func(w http.ResponseWriter, err error) {
+		writeResourceCreateReplayError(w, err, conflictMessage, recoveryMessage)
+	}
+}
+
 func writeResourceCreateReplayMessageError(w http.ResponseWriter, err error, conflictMessage, recoveryMessage string) {
 	if errors.Is(err, errResourceCreateIdempotencyConflict) {
 		writeError(w, http.StatusConflict, conflictMessage)
 		return
 	}
 	writeError(w, http.StatusInternalServerError, recoveryMessage)
+}
+
+func resourceCreateReplayMessageErrorWriter(conflictMessage, recoveryMessage string) func(http.ResponseWriter, error) {
+	return func(w http.ResponseWriter, err error) {
+		writeResourceCreateReplayMessageError(w, err, conflictMessage, recoveryMessage)
+	}
 }
 
 func reserveResourceCreateRequest(
