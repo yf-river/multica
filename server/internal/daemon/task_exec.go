@@ -89,7 +89,7 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 	}()
 
 	artifactCollectionCutoff := time.Now().Add(-1 * time.Second)
-	result, err := d.runner.run(runCtx, task, provider, slot, taskLog)
+	result, err := d.runner(runCtx, task, provider, slot, taskLog)
 
 	// Report usage before any early return — the agent accumulates tokens
 	// whether the task completes, errors, or is cancelled mid-run by the poll

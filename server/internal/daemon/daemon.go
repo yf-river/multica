@@ -53,19 +53,7 @@ func taskScopedAuthToken(task Task) (string, error) {
 	return token, nil
 }
 
-// taskRunner executes a single agent task and returns the result.
-// Extracted as an interface so tests can inject a fake without spawning real
-// agent processes, while keeping test scaffolding out of the production struct.
-type taskRunner interface {
-	run(ctx context.Context, task Task, provider string, slot int, log *slog.Logger) (TaskResult, error)
-}
-
-// taskRunnerFunc adapts a plain function to the taskRunner interface.
-type taskRunnerFunc func(context.Context, Task, string, int, *slog.Logger) (TaskResult, error)
-
-func (f taskRunnerFunc) run(ctx context.Context, task Task, provider string, slot int, log *slog.Logger) (TaskResult, error) {
-	return f(ctx, task, provider, slot, log)
-}
+type taskRunner func(context.Context, Task, string, int, *slog.Logger) (TaskResult, error)
 
 var (
 	// detectAgentVersion / checkAgentMinVersion are indirections over the
@@ -116,7 +104,7 @@ type workspaceState struct {
 	// workspaceSyncLoop compares the live signature with this cached value;
 	// any drift triggers a re-register so newly-added (or edited / disabled)
 	// custom runtimes appear without a daemon restart. Empty before the
-	// first successful profile fetch (older server / network blip); guarded
+	// first successful profile fetch (endpoint unavailable / network blip); guarded
 	// by Daemon.mu like every other field on this struct.
 	profileSetSig string
 }
@@ -206,7 +194,7 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 		cancelPollInterval:        5 * time.Second,
 		codexBrokers:              make(map[string]*agent.CodexBrokerBackend),
 	}
-	d.runner = taskRunnerFunc(d.runTask)
+	d.runner = d.runTask
 	return d
 }
 

@@ -500,14 +500,7 @@ func renderIssueContext(ctx TaskContextForEnv) string {
 	b.WriteString("## Quick Start\n\n")
 	fmt.Fprintf(&b, "Run `multica issue get %s --output json` to fetch the full issue details.\n\n", ctx.IssueID)
 
-	if len(ctx.AgentSkills) > 0 {
-		b.WriteString("## Agent Skills\n\n")
-		b.WriteString("The following skills are available to you:\n\n")
-		for _, skill := range ctx.AgentSkills {
-			fmt.Fprintf(&b, "- **%s**\n", skill.Name)
-		}
-		b.WriteString("\n")
-	}
+	writeAgentSkills(&b, ctx.AgentSkills, "The following skills are available to you:\n\n")
 
 	return b.String()
 }
@@ -518,13 +511,7 @@ func renderSourceSummaryContext(ctx TaskContextForEnv) string {
 	b.WriteString("**Trigger:** TAPD source summary generation\n\n")
 	fmt.Fprintf(&b, "**Issue ID:** %s\n\n", ctx.IssueID)
 	b.WriteString("Return only the requested Markdown summary in your final output. The platform will write it back to the issue description.\n\n")
-	if len(ctx.AgentSkills) > 0 {
-		b.WriteString("## Agent Skills\n\n")
-		for _, skill := range ctx.AgentSkills {
-			fmt.Fprintf(&b, "- **%s**\n", skill.Name)
-		}
-		b.WriteString("\n")
-	}
+	writeAgentSkills(&b, ctx.AgentSkills, "")
 	return b.String()
 }
 
@@ -540,13 +527,7 @@ func renderQuickCreateContext(ctx TaskContextForEnv) string {
 	b.WriteString("> ")
 	b.WriteString(ctx.QuickCreatePrompt)
 	b.WriteString("\n\n")
-	if len(ctx.AgentSkills) > 0 {
-		b.WriteString("## Agent Skills\n\n")
-		for _, skill := range ctx.AgentSkills {
-			fmt.Fprintf(&b, "- **%s**\n", skill.Name)
-		}
-		b.WriteString("\n")
-	}
+	writeAgentSkills(&b, ctx.AgentSkills, "")
 	return b.String()
 }
 
@@ -579,14 +560,19 @@ func renderAutopilotContext(ctx TaskContextForEnv) string {
 		b.WriteString("\n\n")
 	}
 
-	if len(ctx.AgentSkills) > 0 {
-		b.WriteString("## Agent Skills\n\n")
-		b.WriteString("The following skills are available to you:\n\n")
-		for _, skill := range ctx.AgentSkills {
-			fmt.Fprintf(&b, "- **%s**\n", skill.Name)
-		}
-		b.WriteString("\n")
-	}
+	writeAgentSkills(&b, ctx.AgentSkills, "The following skills are available to you:\n\n")
 
 	return b.String()
+}
+
+func writeAgentSkills(b *strings.Builder, skills []SkillContextForEnv, intro string) {
+	if len(skills) == 0 {
+		return
+	}
+	b.WriteString("## Agent Skills\n\n")
+	b.WriteString(intro)
+	for _, skill := range skills {
+		fmt.Fprintf(b, "- **%s**\n", skill.Name)
+	}
+	b.WriteString("\n")
 }

@@ -2311,7 +2311,7 @@ func TestHandleTask_ReportsUsageBeforeCancel(t *testing.T) {
 
 	// Inject a fake runner that returns a result with usage tokens, bypassing
 	// real agent process execution.
-	runner := taskRunnerFunc(func(_ context.Context, _ Task, _ string, _ int, _ *slog.Logger) (TaskResult, error) {
+	runner := taskRunner(func(_ context.Context, _ Task, _ string, _ int, _ *slog.Logger) (TaskResult, error) {
 		return TaskResult{
 			Status: "completed",
 			Usage: []TaskUsageEntry{
@@ -2389,7 +2389,7 @@ func TestHandleTask_ReportsUsageWhenCancelledByPoll(t *testing.T) {
 
 	// Inject a runner that blocks until runCtx is cancelled (simulating a real
 	// agent being interrupted), then returns usage tokens as claude.go does.
-	runner := taskRunnerFunc(func(runCtx context.Context, _ Task, _ string, _ int, _ *slog.Logger) (TaskResult, error) {
+	runner := taskRunner(func(runCtx context.Context, _ Task, _ string, _ int, _ *slog.Logger) (TaskResult, error) {
 		<-runCtx.Done()
 		return TaskResult{
 			Status: "aborted",

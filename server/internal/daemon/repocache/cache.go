@@ -837,23 +837,14 @@ git interpret-trailers --in-place --trailer "$TRAILER" "$COMMIT_MSG_FILE"
 // git common directory (the bare repo for worktrees) so it applies to all
 // worktrees created from this cache.
 func installCoAuthoredByHook(worktreePath string) error {
-	cmd := exec.Command("git", "-C", worktreePath, "rev-parse", "--git-common-dir")
-
-	out, err := cmd.Output()
+	hookPath, err := prepareCommitMsgHookPath(worktreePath)
 	if err != nil {
-		return fmt.Errorf("resolve git common dir: %w", err)
+		return err
 	}
-	commonDir := strings.TrimSpace(string(out))
-	if !filepath.IsAbs(commonDir) {
-		commonDir = filepath.Join(worktreePath, commonDir)
-	}
-
-	hooksDir := filepath.Join(commonDir, "hooks")
+	hooksDir := filepath.Dir(hookPath)
 	if err := os.MkdirAll(hooksDir, 0o755); err != nil {
 		return fmt.Errorf("create hooks dir: %w", err)
 	}
-
-	hookPath := filepath.Join(hooksDir, "prepare-commit-msg")
 	contents, err := os.ReadFile(hookPath)
 	if err == nil && !isDaemonInstalledHook(contents) {
 		return fmt.Errorf("prepare-commit-msg hook already exists and is not managed by Multica")
@@ -881,18 +872,10 @@ func isDaemonInstalledHook(contents []byte) bool {
 // Returns nil when no hook is present or when an unrelated hook occupies
 // the path.
 func removeCoAuthoredByHook(worktreePath string) error {
-	cmd := exec.Command("git", "-C", worktreePath, "rev-parse", "--git-common-dir")
-
-	out, err := cmd.Output()
+	hookPath, err := prepareCommitMsgHookPath(worktreePath)
 	if err != nil {
-		return fmt.Errorf("resolve git common dir: %w", err)
+		return err
 	}
-	commonDir := strings.TrimSpace(string(out))
-	if !filepath.IsAbs(commonDir) {
-		commonDir = filepath.Join(worktreePath, commonDir)
-	}
-
-	hookPath := filepath.Join(commonDir, "hooks", "prepare-commit-msg")
 	contents, err := os.ReadFile(hookPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -901,13 +884,25 @@ func removeCoAuthoredByHook(worktreePath string) error {
 		return fmt.Errorf("read prepare-commit-msg hook: %w", err)
 	}
 	if !isDaemonInstalledHook(contents) {
-		// Unrelated hook (user or third-party): leave it alone.
 		return nil
 	}
 	if err := os.Remove(hookPath); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove prepare-commit-msg hook: %w", err)
 	}
 	return nil
+}
+
+func prepareCommitMsgHookPath(worktreePath string) (string, error) {
+	cmd := exec.Command("git", "-C", worktreePath, "rev-parse", "--git-common-dir")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("resolve git common dir: %w", err)
+	}
+	commonDir := strings.TrimSpace(string(out))
+	if !filepath.IsAbs(commonDir) {
+		commonDir = filepath.Join(worktreePath, commonDir)
+	}
+	return filepath.Join(commonDir, "hooks", "prepare-commit-msg"), nil
 }
 
 // excludeFromGit adds a pattern to the worktree's .git/info/exclude file.

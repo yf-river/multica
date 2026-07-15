@@ -18,7 +18,7 @@ import (
 
 // TestHandleTask_DoesNotCallStartTaskItself is the regression guard for
 // issue #3999 race A. handleTask must not call /tasks/{id}/start before
-// runner.run — the runner is now responsible for calling StartTask only
+// runner — the runner is now responsible for calling StartTask only
 // after execenv.Prepare/Reuse has put env.WorkDir on disk, so consumers
 // that read status==running can resolve the workdir path without racing
 // the daemon's os.MkdirAll.
@@ -56,10 +56,10 @@ func TestHandleTask_DoesNotCallStartTaskItself(t *testing.T) {
 
 	// Fake runner that does NOT call StartTask — production runTask does
 	// the call itself, after Prepare/Reuse confirms env.WorkDir on disk.
-	d.runner = taskRunnerFunc(func(_ context.Context, _ Task, _ string, _ int, _ *slog.Logger) (TaskResult, error) {
+	d.runner = func(_ context.Context, _ Task, _ string, _ int, _ *slog.Logger) (TaskResult, error) {
 		runnerCalled.Store(true)
 		return TaskResult{Status: "completed"}, nil
-	})
+	}
 
 	task := Task{
 		ID:          "task-no-start",
@@ -72,7 +72,7 @@ func TestHandleTask_DoesNotCallStartTaskItself(t *testing.T) {
 	d.handleTask(context.Background(), task, 0)
 
 	if !runnerCalled.Load() {
-		t.Fatal("fake runner was never invoked — handleTask aborted before runner.run, can't assert ordering")
+		t.Fatal("fake runner was never invoked — handleTask aborted before runner, can't assert ordering")
 	}
 	if got := startCalls.Load(); got != 0 {
 		t.Fatalf("handleTask called /start %d time(s); StartTask must be runTask's responsibility now (issue #3999 race A)", got)
@@ -249,7 +249,7 @@ func TestRunTaskFailsWhenRuntimeConfigCannotBeInjected(t *testing.T) {
 }
 
 // TestHandleTask_KeepsEnvRootActiveAcrossCompletion is the regression guard
-// for issue #3999 race B. After runner.run returns, the in-process active
+// for issue #3999 race B. After runner returns, the in-process active
 // guard installed inside runTask (defer unmarkActiveEnvRoot at the
 // goroutine's exit) has already fired by the time handleTask calls
 // reportTaskResult and execenv.WriteGCMeta. Without an outer guard at the
@@ -258,7 +258,7 @@ func TestRunTaskFailsWhenRuntimeConfigCannotBeInjected(t *testing.T) {
 // orphanByMTime, gated only by the 72h GCOrphanTTL.
 //
 // This test fakes the inner guard's lifecycle (mark + deferred unmark),
-// then asserts that at the moment /complete is hit (i.e. between runner.run
+// then asserts that at the moment /complete is hit (i.e. between runner
 // returning and WriteGCMeta running), isActiveEnvRoot(envRoot) is still
 // true thanks to the outer guard handleTask installs.
 func TestHandleTask_KeepsEnvRootActiveAcrossCompletion(t *testing.T) {
@@ -302,7 +302,7 @@ func TestHandleTask_KeepsEnvRootActiveAcrossCompletion(t *testing.T) {
 	// Fake runner mimics the real runTask's mark/defer-unmark pair. Without
 	// the outer guard added in handleTask, the deferred unmark would bring
 	// isActiveEnvRoot back to false before reportTaskResult fires.
-	d.runner = taskRunnerFunc(func(_ context.Context, tk Task, _ string, _ int, _ *slog.Logger) (TaskResult, error) {
+	d.runner = func(_ context.Context, tk Task, _ string, _ int, _ *slog.Logger) (TaskResult, error) {
 		predicted := execenv.PredictRootDir(d.cfg.WorkspacesRoot, tk.WorkspaceID, tk.ID)
 		d.markActiveEnvRoot(predicted)
 		defer d.unmarkActiveEnvRoot(predicted)
@@ -310,7 +310,7 @@ func TestHandleTask_KeepsEnvRootActiveAcrossCompletion(t *testing.T) {
 			Status:  "completed",
 			EnvRoot: predicted,
 		}, nil
-	})
+	}
 
 	task := Task{
 		ID:          taskID,
@@ -326,7 +326,7 @@ func TestHandleTask_KeepsEnvRootActiveAcrossCompletion(t *testing.T) {
 		t.Fatal("/complete was never hit — handleTask did not reach reportTaskResult")
 	}
 	if !activeAtComplete.Load() {
-		t.Fatal("env root was NOT in the active set at /complete time — issue #3999 race B regression: GC could reclaim the directory between runner.run returning and WriteGCMeta landing on disk")
+		t.Fatal("env root was NOT in the active set at /complete time — issue #3999 race B regression: GC could reclaim the directory between runner returning and WriteGCMeta landing on disk")
 	}
 	// And the outer guard must have been released by the time handleTask
 	// returned, otherwise we'd be leaking active marks across tasks.

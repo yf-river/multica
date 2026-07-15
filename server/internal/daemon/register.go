@@ -180,9 +180,7 @@ func (d *Daemon) applyRegisterResponseInPlace(workspaceID string, resp *Register
 	// for a surviving provider (e.g. schema change); the daemon converges on
 	// what the server says without leaving stale heartbeat goroutines.
 	ws.runtimeIDs = newIDs
-	if resp.ReposVersion != "" {
-		ws.allowedRepoURLs = repoAllowlist(resp.Repos)
-	}
+	ws.allowedRepoURLs = repoAllowlist(resp.Repos)
 	if len(resp.Settings) > 0 {
 		ws.settings = resp.Settings
 	}
@@ -853,7 +851,7 @@ func (d *Daemon) refreshWorkspaceRepos(ctx context.Context, workspaceID string) 
 // runtime list within one workspaceSyncLoop tick instead of requiring a
 // daemon restart.
 //
-// Best-effort: a fetch error (older server, network blip) is logged and
+// Best-effort: an unavailable endpoint or network error is logged and
 // swallowed — the cached signature is preserved so the next tick can still
 // detect a real drift. A successfully-fetched-but-unchanged signature is the
 // expected steady state and short-circuits without any further work.

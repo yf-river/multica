@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"mime/multipart"
 	"net/http"
@@ -636,18 +635,9 @@ func (c *Client) UploadTaskArtifact(ctx context.Context, token, workspaceID, age
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 	c.setTaskHeaders(req, token, workspaceID, agentID, taskID)
 
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return uploadedTaskArtifact{}, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode >= 400 {
-		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return uploadedTaskArtifact{}, &requestError{Method: http.MethodPost, Path: "/api/upload-file", StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(data))}
-	}
 	var out uploadedTaskArtifact
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return uploadedTaskArtifact{}, fmt.Errorf("decode upload response: %w", err)
+	if err := c.executeRequest(req, "/api/upload-file", &out, "decode upload response"); err != nil {
+		return uploadedTaskArtifact{}, err
 	}
 	return out, nil
 }
@@ -672,17 +662,7 @@ func (c *Client) CreateTaskArtifactComment(ctx context.Context, token, workspace
 	req.Header.Set("Content-Type", "application/json")
 	c.setTaskHeaders(req, token, workspaceID, agentID, taskID)
 
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode >= 400 {
-		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return &requestError{Method: http.MethodPost, Path: path, StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(data))}
-	}
-	_, _ = io.Copy(io.Discard, resp.Body)
-	return nil
+	return c.executeRequest(req, path, nil, "")
 }
 
 func (c *Client) setTaskHeaders(req *http.Request, token, workspaceID, agentID, taskID string) {

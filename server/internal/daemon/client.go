@@ -33,25 +33,19 @@ func (e *requestError) Error() string {
 // running, so it can interrupt the agent rather than letting it keep
 // emitting tool calls against a dead task.
 func isTaskNotFoundError(err error) bool {
-	var reqErr *requestError
-	if !errors.As(err, &reqErr) {
-		return false
-	}
-	if reqErr.StatusCode != http.StatusNotFound {
-		return false
-	}
-	return strings.Contains(strings.ToLower(reqErr.Body), "task not found")
+	return matchesRequestError(err, http.StatusNotFound, "task not found")
 }
 
 func isTaskStartConflictError(err error) bool {
+	return matchesRequestError(err, http.StatusConflict, "task is no longer startable")
+}
+
+func matchesRequestError(err error, status int, bodySubstring string) bool {
 	var reqErr *requestError
 	if !errors.As(err, &reqErr) {
 		return false
 	}
-	if reqErr.StatusCode != http.StatusConflict {
-		return false
-	}
-	return strings.Contains(strings.ToLower(reqErr.Body), "task is no longer startable")
+	return reqErr.StatusCode == status && strings.Contains(strings.ToLower(reqErr.Body), bodySubstring)
 }
 
 // isUnauthorizedError returns true if the error is a 401 from the server.
@@ -75,14 +69,7 @@ func isUnauthorizedError(err error) bool {
 // errors return 500), so a transient DB hiccup cannot make the daemon
 // self-cleanup.
 func isRuntimeNotFoundError(err error) bool {
-	var reqErr *requestError
-	if !errors.As(err, &reqErr) {
-		return false
-	}
-	if reqErr.StatusCode != http.StatusNotFound {
-		return false
-	}
-	return strings.Contains(strings.ToLower(reqErr.Body), "runtime not found")
+	return matchesRequestError(err, http.StatusNotFound, "runtime not found")
 }
 
 // Client handles HTTP communication with the Multica server daemon API.
@@ -507,21 +494,32 @@ func (c *Client) doJSON(ctx context.Context, method, path string, reqBody any, r
 	}
 	c.setIdentityHeaders(req)
 
+	return c.executeRequest(req, path, respBody, "")
+}
+
+func requestResponseError(resp *http.Response, method, path string) error {
+	data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+	return &requestError{Method: method, Path: path, StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(data))}
+}
+
+func (c *Client) executeRequest(req *http.Request, path string, respBody any, decodeContext string) error {
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = resp.Body.Close() }()
-
 	if resp.StatusCode >= 400 {
-		data, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return &requestError{Method: method, Path: path, StatusCode: resp.StatusCode, Body: strings.TrimSpace(string(data))}
+		return requestResponseError(resp, req.Method, path)
 	}
 	if respBody == nil {
 		_, _ = io.Copy(io.Discard, resp.Body)
 		return nil
 	}
-	return json.NewDecoder(resp.Body).Decode(respBody)
+	err = json.NewDecoder(resp.Body).Decode(respBody)
+	if err != nil && decodeContext != "" {
+		return fmt.Errorf("%s: %w", decodeContext, err)
+	}
+	return err
 }
 
 func (c *Client) postJSON(ctx context.Context, path string, reqBody any, respBody any) error {

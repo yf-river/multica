@@ -480,14 +480,7 @@ func (d *Daemon) cleanTaskArtifacts(taskDir string, patterns []string) (removed 
 	if taskDir == "" || len(patterns) == 0 {
 		return
 	}
-	patternSet := make(map[string]struct{}, len(patterns))
-	for _, p := range patterns {
-		p = strings.TrimSpace(p)
-		if p == "" || strings.ContainsAny(p, "/\\") {
-			continue
-		}
-		patternSet[p] = struct{}{}
-	}
+	patternSet := buildPatternSet(patterns)
 	if len(patternSet) == 0 {
 		return
 	}
