@@ -15,10 +15,8 @@ SELECT * FROM skill
 WHERE id = $1 AND workspace_id = $2;
 
 -- name: GetSkillByWorkspaceAndName :one
--- Used by agent-template materialization to implement find-or-create: when a
--- template references a skill by name that already exists in the workspace,
--- reuse the existing skill_id rather than INSERT (which would fail the
--- UNIQUE(workspace_id, name) constraint from the current schema).
+-- Shared by GitHub and Runtime-local imports to reuse the current workspace
+-- Skill instead of violating UNIQUE(workspace_id, name).
 SELECT * FROM skill
 WHERE workspace_id = $1 AND name = $2;
 

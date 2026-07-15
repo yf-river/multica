@@ -354,10 +354,6 @@ func TestCreatingAgentsSkillCoversAgentCreationContracts(t *testing.T) {
 	}
 
 	mustNotContain := []string{
-		"--from-template",
-		"/api/agent-templates",
-		"template_slug",
-		"curated template",
 		"copy this parameter list",
 		// De-coaching: this skill states source-backed contracts, it does not
 		// teach a generic how-to methodology.
