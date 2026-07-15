@@ -25,7 +25,6 @@ interface QuickCreateState {
   setLastProjectId: (id: string | null) => void;
   prompt: string;
   setPrompt: (prompt: string) => void;
-  clearPrompt: () => void;
   keepOpen: boolean;
   setKeepOpen: (v: boolean) => void;
   pendingOperation: { request: QuickCreateIssueRequest; idempotencyKey: string } | null;
@@ -43,7 +42,6 @@ export const useQuickCreateStore = create<QuickCreateState>()(
       setLastProjectId: (id) => set({ lastProjectId: id }),
       prompt: "",
       setPrompt: (prompt) => set({ prompt }),
-      clearPrompt: () => set({ prompt: "" }),
       keepOpen: false,
       setKeepOpen: (v) => set({ keepOpen: v }),
       pendingOperation: null,

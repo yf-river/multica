@@ -7,7 +7,6 @@ const mockQuickCreateIssue = vi.hoisted(() => vi.fn());
 const mockSetLastActor = vi.hoisted(() => vi.fn());
 const mockSetLastProjectId = vi.hoisted(() => vi.fn());
 const mockSetPrompt = vi.hoisted(() => vi.fn());
-const mockClearPrompt = vi.hoisted(() => vi.fn());
 const mockSetKeepOpen = vi.hoisted(() => vi.fn());
 const mockToastSuccess = vi.hoisted(() => vi.fn());
 const mockUploadWithToast = vi.hoisted(() => vi.fn());
@@ -20,7 +19,6 @@ const mockQuickCreateStore = {
   setLastProjectId: mockSetLastProjectId,
   prompt: "Persisted draft prompt",
   setPrompt: mockSetPrompt,
-  clearPrompt: mockClearPrompt,
   keepOpen: false,
   setKeepOpen: mockSetKeepOpen,
   pendingOperation: null as { request: Record<string, unknown>; idempotencyKey: string } | null,
@@ -367,7 +365,7 @@ describe("AgentCreatePanel", () => {
     // No project picked → persisted project preference is cleared so the
     // store stays in sync with the actual outgoing request.
     expect(mockSetLastProjectId).toHaveBeenCalledWith(null);
-    expect(mockClearPrompt).toHaveBeenCalled();
+    expect(mockSetPrompt).toHaveBeenLastCalledWith("");
     expect(onClose).toHaveBeenCalled();
   });
 

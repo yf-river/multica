@@ -150,7 +150,6 @@ export function AgentCreatePanel({
   const setLastProjectId = useQuickCreateStore((s) => s.setLastProjectId);
   const promptDraft = useQuickCreateStore((s) => s.prompt);
   const setPrompt = useQuickCreateStore((s) => s.setPrompt);
-  const clearPrompt = useQuickCreateStore((s) => s.clearPrompt);
   const keepOpen = useQuickCreateStore((s) => s.keepOpen);
   const setKeepOpen = useQuickCreateStore((s) => s.setKeepOpen);
   const hasExplicitActorSeed = Boolean(data?.agent_id || data?.squad_id);
@@ -161,7 +160,7 @@ export function AgentCreatePanel({
   // through to the next seed in the chain.
   const resolveActor = useCallback(
     (
-      type: QuickCreateActorType | "agent" | "squad" | null | undefined,
+      type: QuickCreateActorType | null | undefined,
       id: string | null | undefined,
     ): ActorSelection | null => {
       if (!type || !id) return null;
@@ -357,7 +356,7 @@ export function AgentCreatePanel({
       });
       setLastActor(actor.type, actor.id);
       setLastProjectId(projectId);
-      clearPrompt();
+      setPrompt("");
       toast.success(t(($) => $.create_issue.agent.toast_sent), {
         duration: 4000,
       });
