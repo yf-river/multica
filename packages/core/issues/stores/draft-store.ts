@@ -1,8 +1,5 @@
-import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
 import type { IssueStatus, IssuePriority, IssueAssigneeType, Attachment } from "../../types";
-import { createWorkspaceAwareStorage, registerWorkspacePersistStore } from "../../platform/workspace-storage";
-import { defaultStorage } from "../../platform/storage";
+import { createWorkspaceDraftStore } from "../../platform/workspace-storage";
 
 interface IssueDraft {
   title: string;
@@ -28,25 +25,7 @@ const EMPTY_DRAFT: IssueDraft = {
   attachments: [],
 };
 
-interface IssueDraftStore {
-  draft: IssueDraft;
-  setDraft: (patch: Partial<IssueDraft>) => void;
-  clearDraft: () => void;
-}
-
-export const useIssueDraftStore = create<IssueDraftStore>()(
-  persist(
-    (set) => ({
-      draft: { ...EMPTY_DRAFT },
-      setDraft: (patch) =>
-        set((s) => ({ draft: { ...s.draft, ...patch } })),
-      clearDraft: () => set({ draft: { ...EMPTY_DRAFT } }),
-    }),
-    {
-      name: "multica_issue_draft",
-      storage: createJSONStorage(() => createWorkspaceAwareStorage(defaultStorage)),
-    },
-  ),
+export const useIssueDraftStore = createWorkspaceDraftStore(
+  "multica_issue_draft",
+  EMPTY_DRAFT,
 );
-
-registerWorkspacePersistStore(useIssueDraftStore);

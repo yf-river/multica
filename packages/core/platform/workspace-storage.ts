@@ -1,6 +1,13 @@
-import type { PersistOptions, PersistStorage } from "zustand/middleware";
+import { create } from "zustand";
+import {
+  createJSONStorage,
+  persist,
+  type PersistOptions,
+  type PersistStorage,
+} from "zustand/middleware";
 import type { StoreApi } from "zustand/vanilla";
 import type { StorageAdapter } from "../types/storage";
+import { defaultStorage } from "./storage";
 
 // Paired module vars — always set/cleared together by the workspace layout.
 // _currentSlug is the primary identifier (matches the URL segment).
@@ -188,4 +195,34 @@ export function createWorkspaceAwareStorage(adapter: StorageAdapter): StorageAda
       if (_currentSlug) adapter.removeItem(`${key}:${_currentSlug}`);
     },
   };
+}
+
+export interface WorkspaceDraftState<Draft extends object> {
+  draft: Draft;
+  setDraft: (patch: Partial<Draft>) => void;
+  clearDraft: () => void;
+}
+
+export function createWorkspaceDraftStore<Draft extends object>(
+  name: string,
+  emptyDraft: Draft,
+) {
+  const store = create<WorkspaceDraftState<Draft>>()(
+    persist(
+      (set) => ({
+        draft: { ...emptyDraft },
+        setDraft: (patch) =>
+          set((state) => ({ draft: { ...state.draft, ...patch } })),
+        clearDraft: () => set({ draft: { ...emptyDraft } }),
+      }),
+      {
+        name,
+        storage: createJSONStorage(() =>
+          createWorkspaceAwareStorage(defaultStorage),
+        ),
+      },
+    ),
+  );
+  registerWorkspacePersistStore(store);
+  return store;
 }

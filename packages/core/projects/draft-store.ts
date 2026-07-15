@@ -1,8 +1,5 @@
-import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
 import type { CreateProjectRequest, ProjectStatus, ProjectPriority } from "../types";
-import { createWorkspaceAwareStorage, registerWorkspacePersistStore } from "../platform/workspace-storage";
-import { defaultStorage } from "../platform/storage";
+import { createWorkspaceDraftStore } from "../platform/workspace-storage";
 
 interface ProjectDraft {
   title: string;
@@ -29,26 +26,7 @@ const EMPTY_DRAFT: ProjectDraft = {
   pendingCreate: undefined,
 };
 
-interface ProjectDraftStore {
-  draft: ProjectDraft;
-  setDraft: (patch: Partial<ProjectDraft>) => void;
-  clearDraft: () => void;
-}
-
-export const useProjectDraftStore = create<ProjectDraftStore>()(
-  persist(
-    (set) => ({
-      draft: { ...EMPTY_DRAFT },
-      setDraft: (patch) =>
-        set((s) => ({ draft: { ...s.draft, ...patch } })),
-      clearDraft: () =>
-        set({ draft: { ...EMPTY_DRAFT } }),
-    }),
-    {
-      name: "multica_project_draft",
-      storage: createJSONStorage(() => createWorkspaceAwareStorage(defaultStorage)),
-    },
-  ),
+export const useProjectDraftStore = createWorkspaceDraftStore(
+  "multica_project_draft",
+  EMPTY_DRAFT,
 );
-
-registerWorkspacePersistStore(useProjectDraftStore);
