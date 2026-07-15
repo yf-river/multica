@@ -199,7 +199,7 @@ func main() {
 	defer analyticsClient.Close()
 
 	queries := db.New(pool)
-	hub.SetAuthorizer(newScopeAuthorizer(queries))
+	hub.SetAuthorizer(&dbScopeAuthorizer{q: queries})
 	eventDispatcher, err := eventoutbox.NewDispatcher(
 		queries,
 		pool,

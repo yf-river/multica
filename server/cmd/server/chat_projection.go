@@ -21,10 +21,6 @@ const chatCompletionProjectionConsumer = "chat_completion_projection"
 
 const chatFailureProjectionConsumer = "chat_failure_projection"
 
-type chatTerminalProjection struct {
-	task db.AgentTaskQueue
-}
-
 func registerDurableChatConsumers(dispatcher *eventoutbox.Dispatcher) error {
 	if err := dispatcher.Register(protocol.EventTaskCompleted, chatCompletionProjectionConsumer, consumeChatCompletionProjection); err != nil {
 		return err
@@ -33,17 +29,17 @@ func registerDurableChatConsumers(dispatcher *eventoutbox.Dispatcher) error {
 }
 
 func consumeChatCompletionProjection(ctx context.Context, queries *db.Queries, event events.Event) ([]events.Event, error) {
-	projection, exists, err := loadChatTerminalProjection(ctx, queries, event)
+	task, exists, err := loadChatTerminalTask(ctx, queries, event)
 	if err != nil || !exists {
 		return nil, err
 	}
-	message, err := projectCompletedChatMessage(ctx, queries, projection.task)
+	message, err := projectCompletedChatMessage(ctx, queries, task)
 	if err != nil {
 		return nil, err
 	}
-	chatEvent := completedChatEvent(event, projection.task, message)
+	chatEvent := completedChatEvent(event, task, message)
 	if message != nil && message.Content != "" {
-		_, bindingErr := queries.GetLarkChatSessionBindingBySession(ctx, projection.task.ChatSessionID)
+		_, bindingErr := queries.GetLarkChatSessionBindingBySession(ctx, task.ChatSessionID)
 		switch {
 		case bindingErr == nil:
 			if _, err := eventoutbox.Enqueue(ctx, queries, chatEvent); err != nil {
@@ -59,52 +55,52 @@ func consumeChatCompletionProjection(ctx context.Context, queries *db.Queries, e
 }
 
 func consumeChatFailureProjection(ctx context.Context, queries *db.Queries, event events.Event) ([]events.Event, error) {
-	projection, exists, err := loadChatTerminalProjection(ctx, queries, event)
+	task, exists, err := loadChatTerminalTask(ctx, queries, event)
 	if err != nil || !exists {
 		return nil, err
 	}
-	_, err = queries.GetRetryTaskForParent(ctx, projection.task.ID)
+	_, err = queries.GetRetryTaskForParent(ctx, task.ID)
 	if err == nil {
 		return nil, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("load chat failure retry decision: %w", err)
 	}
-	message, err := projectFailedChatMessage(ctx, queries, projection.task)
+	message, err := projectFailedChatMessage(ctx, queries, task)
 	if err != nil {
 		return nil, err
 	}
-	return []events.Event{failedChatMessageEvent(event, projection.task, message)}, nil
+	return []events.Event{failedChatMessageEvent(event, task, message)}, nil
 }
 
-func loadChatTerminalProjection(
+func loadChatTerminalTask(
 	ctx context.Context,
 	queries *db.Queries,
 	event events.Event,
-) (chatTerminalProjection, bool, error) {
+) (db.AgentTaskQueue, bool, error) {
 	payload, task, exists, err := loadTaskProjectionRow(ctx, queries, event)
 	if err != nil || !exists || payload.ChatSessionID == "" {
-		return chatTerminalProjection{}, false, err
+		return db.AgentTaskQueue{}, false, err
 	}
 	if !task.ChatSessionID.Valid {
 		// Deleting a chat session clears the task FK. Its terminal event is then
 		// intentionally a no-op because there is no conversation left to update.
-		return chatTerminalProjection{}, false, nil
+		return db.AgentTaskQueue{}, false, nil
 	}
 	if util.UUIDToString(task.ChatSessionID) != payload.ChatSessionID {
-		return chatTerminalProjection{}, false, fmt.Errorf("chat terminal projection session mismatch")
+		return db.AgentTaskQueue{}, false, fmt.Errorf("chat terminal projection session mismatch")
 	}
 	session, err := queries.GetChatSession(ctx, task.ChatSessionID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return chatTerminalProjection{}, false, nil
+		return db.AgentTaskQueue{}, false, nil
 	}
 	if err != nil {
-		return chatTerminalProjection{}, false, fmt.Errorf("load chat terminal session: %w", err)
+		return db.AgentTaskQueue{}, false, fmt.Errorf("load chat terminal session: %w", err)
 	}
 	if util.UUIDToString(session.WorkspaceID) != event.WorkspaceID {
-		return chatTerminalProjection{}, false, fmt.Errorf("chat terminal projection workspace mismatch")
+		return db.AgentTaskQueue{}, false, fmt.Errorf("chat terminal projection workspace mismatch")
 	}
-	return chatTerminalProjection{task: task}, true, nil
+	return task, true, nil
 }
 
 func projectCompletedChatMessage(ctx context.Context, queries *db.Queries, task db.AgentTaskQueue) (*db.ChatMessage, error) {

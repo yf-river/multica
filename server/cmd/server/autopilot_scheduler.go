@@ -48,20 +48,7 @@ func recoverLostTriggers(ctx context.Context, queries *db.Queries) {
 		if !t.CronExpression.Valid || t.CronExpression.String == "" {
 			continue
 		}
-		tz := service.DefaultAutopilotTriggerTimezone
-		if t.Timezone.Valid && t.Timezone.String != "" {
-			tz = t.Timezone.String
-		}
-		next, err := service.ComputeNextRun(t.CronExpression.String, tz)
-		if err != nil {
-			slog.Warn("autopilot scheduler: failed to compute next run for recovery",
-				"trigger_id", util.UUIDToString(t.ID), "error", err)
-			continue
-		}
-		if err := queries.AdvanceTriggerNextRun(ctx, db.AdvanceTriggerNextRunParams{
-			ID:        t.ID,
-			NextRunAt: pgtype.Timestamptz{Time: next, Valid: true},
-		}); err != nil {
+		if err := advanceTriggerNextRun(ctx, queries, t.ID, t.CronExpression.String, t.Timezone); err != nil {
 			slog.Warn("autopilot scheduler: failed to recover trigger",
 				"trigger_id", util.UUIDToString(t.ID), "error", err)
 		}
@@ -102,38 +89,29 @@ func tickScheduledAutopilots(ctx context.Context, queries *db.Queries, svc *serv
 		}
 
 		// Advance next_run_at for this trigger.
-		advanceNextRun(ctx, queries, t)
+		if t.CronExpression.Valid && t.CronExpression.String != "" {
+			if err := advanceTriggerNextRun(ctx, queries, t.ID, t.CronExpression.String, t.Timezone); err != nil {
+				slog.Warn("autopilot scheduler: failed to advance next_run_at",
+					"trigger_id", util.UUIDToString(t.ID),
+					"cron", t.CronExpression.String,
+					"error", err,
+				)
+			}
+		}
 	}
 }
 
-// advanceNextRun computes the next fire time and updates the trigger.
-func advanceNextRun(ctx context.Context, queries *db.Queries, t db.ClaimDueScheduleTriggersRow) {
-	if !t.CronExpression.Valid || t.CronExpression.String == "" {
-		return
-	}
-
+func advanceTriggerNextRun(ctx context.Context, queries *db.Queries, id pgtype.UUID, cron string, timezone pgtype.Text) error {
 	tz := service.DefaultAutopilotTriggerTimezone
-	if t.Timezone.Valid && t.Timezone.String != "" {
-		tz = t.Timezone.String
+	if timezone.Valid && timezone.String != "" {
+		tz = timezone.String
 	}
-
-	next, err := service.ComputeNextRun(t.CronExpression.String, tz)
+	next, err := service.ComputeNextRun(cron, tz)
 	if err != nil {
-		slog.Warn("autopilot scheduler: failed to compute next run",
-			"trigger_id", util.UUIDToString(t.ID),
-			"cron", t.CronExpression.String,
-			"error", err,
-		)
-		return
+		return err
 	}
-
-	if err := queries.AdvanceTriggerNextRun(ctx, db.AdvanceTriggerNextRunParams{
-		ID:        t.ID,
+	return queries.AdvanceTriggerNextRun(ctx, db.AdvanceTriggerNextRunParams{
+		ID:        id,
 		NextRunAt: pgtype.Timestamptz{Time: next, Valid: true},
-	}); err != nil {
-		slog.Warn("autopilot scheduler: failed to advance next_run_at",
-			"trigger_id", util.UUIDToString(t.ID),
-			"error", err,
-		)
-	}
+	})
 }

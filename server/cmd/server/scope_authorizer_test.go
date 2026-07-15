@@ -53,7 +53,7 @@ func TestScopeAuthorizerPropagatesStorageFailure(t *testing.T) {
 	userID, _ := mustUUID(t)
 	taskID, _ := mustUUID(t)
 	wantErr := errors.New("database unavailable")
-	a := newScopeAuthorizer(&fakeScopeQuerier{err: wantErr})
+	a := &dbScopeAuthorizer{q: &fakeScopeQuerier{err: wantErr}}
 
 	ok, err := a.AuthorizeScope(context.Background(), userID, workspaceID, realtime.ScopeTask, taskID)
 	if ok || !errors.Is(err, wantErr) {
@@ -92,7 +92,7 @@ func TestScopeAuthorizer_ChatRequiresCreator(t *testing.T) {
 			},
 		},
 	}
-	a := newScopeAuthorizer(q)
+	a := &dbScopeAuthorizer{q: q}
 	ctx := context.Background()
 
 	// Creator in matching workspace → allowed.
@@ -158,7 +158,7 @@ func TestScopeAuthorizer_ChatTaskRequiresCreator(t *testing.T) {
 			},
 		},
 	}
-	a := newScopeAuthorizer(q)
+	a := &dbScopeAuthorizer{q: q}
 	ctx := context.Background()
 
 	ok, err := a.AuthorizeScope(ctx, creatorStr, wsStr, realtime.ScopeTask, taskStr)
@@ -195,7 +195,7 @@ func TestScopeAuthorizer_IssueTaskWorkspaceOnly(t *testing.T) {
 			},
 		},
 	}
-	a := newScopeAuthorizer(q)
+	a := &dbScopeAuthorizer{q: q}
 	ctx := context.Background()
 
 	ok, err := a.AuthorizeScope(ctx, memberStr, wsStr, realtime.ScopeTask, taskStr)

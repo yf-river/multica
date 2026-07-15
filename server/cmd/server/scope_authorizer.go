@@ -29,8 +29,6 @@ type scopeAuthQuerier interface {
 // access model).
 type dbScopeAuthorizer struct{ q scopeAuthQuerier }
 
-func newScopeAuthorizer(q scopeAuthQuerier) *dbScopeAuthorizer { return &dbScopeAuthorizer{q: q} }
-
 func scopeLookupFailure(resource string, err error) (bool, error) {
 	if errors.Is(err, pgx.ErrNoRows) {
 		return false, nil
