@@ -978,20 +978,19 @@ func parseCustomArgs(raw string) ([]string, error) {
 	return ca, nil
 }
 
-// resolveCustomEnv collects the --custom-env, --custom-env-stdin, and
-// --custom-env-file flags and returns the parsed map, a bool indicating
-// whether the caller supplied any of them, and any error. The three input
-// channels are mutually exclusive so callers can't accidentally provide a
-// secret twice. Stdin and file inputs exist to keep secret material out of
-// shell history and 'ps' / /proc/<pid>/cmdline.
-func resolveCustomEnv(cmd *cobra.Command) (map[string]string, bool, error) {
-	inline := cmd.Flags().Changed("custom-env")
-	fromStdin, _ := cmd.Flags().GetBool("custom-env-stdin")
-	filePath, _ := cmd.Flags().GetString("custom-env-file")
-	// Note: an explicit --custom-env-file "" is honored as "the user asked
-	// for this channel with an empty path" and surfaces a real error below,
-	// rather than being silently swallowed.
-	fromFile := cmd.Flags().Changed("custom-env-file")
+// resolveSecretJSONFlag owns the shared inline/stdin/file boundary for
+// secret-bearing JSON flags. Domain parsers remain responsible for the JSON
+// shape and clear sentinel; this function only prevents ambiguous sources,
+// shell-history exposure, and accidental clears caused by empty pipes/files.
+func resolveSecretJSONFlag(cmd *cobra.Command, flagName, clearHint string) (string, bool, error) {
+	stdinFlag := flagName + "-stdin"
+	fileFlag := flagName + "-file"
+	inline := cmd.Flags().Changed(flagName)
+	fromStdin, _ := cmd.Flags().GetBool(stdinFlag)
+	filePath, _ := cmd.Flags().GetString(fileFlag)
+	// Changed intentionally distinguishes an explicit empty file path from an
+	// omitted flag so the former surfaces a real error.
+	fromFile := cmd.Flags().Changed(fileFlag)
 
 	count := 0
 	if inline {
@@ -1003,42 +1002,54 @@ func resolveCustomEnv(cmd *cobra.Command) (map[string]string, bool, error) {
 	if fromFile {
 		count++
 	}
-	switch {
-	case count == 0:
-		return nil, false, nil
-	case count > 1:
-		return nil, false, fmt.Errorf("--custom-env, --custom-env-stdin, and --custom-env-file are mutually exclusive; pick one")
+	if count == 0 {
+		return "", false, nil
+	}
+	if count > 1 {
+		return "", false, fmt.Errorf("--%s, --%s, and --%s are mutually exclusive; pick one", flagName, stdinFlag, fileFlag)
 	}
 
-	var raw string
-	switch {
-	case inline:
-		raw, _ = cmd.Flags().GetString("custom-env")
-	case fromStdin:
+	if inline {
+		raw, _ := cmd.Flags().GetString(flagName)
+		return raw, true, nil
+	}
+	if fromStdin {
 		buf, err := io.ReadAll(cmd.InOrStdin())
 		if err != nil {
-			return nil, false, fmt.Errorf("read --custom-env-stdin: %w", err)
+			return "", false, fmt.Errorf("read --%s: %w", stdinFlag, err)
 		}
-		raw = string(buf)
+		raw := string(buf)
 		if strings.TrimSpace(raw) == "" {
-			return nil, false, fmt.Errorf("--custom-env-stdin: empty input; pass '{}' to clear")
+			return "", false, fmt.Errorf("--%s: empty input; %s", stdinFlag, clearHint)
 		}
-	case fromFile:
-		if filePath == "" {
-			return nil, false, fmt.Errorf("--custom-env-file: path must not be empty")
-		}
-		buf, err := os.ReadFile(filePath)
-		if err != nil {
-			// Filesystem errors may include the path but not the contents —
-			// safe to surface via %w.
-			return nil, false, fmt.Errorf("read --custom-env-file: %w", err)
-		}
-		raw = string(buf)
-		if strings.TrimSpace(raw) == "" {
-			return nil, false, fmt.Errorf("--custom-env-file %q: empty contents; pass '{}' to clear", filePath)
-		}
+		return raw, true, nil
 	}
+	if filePath == "" {
+		return "", false, fmt.Errorf("--%s: path must not be empty", fileFlag)
+	}
+	buf, err := os.ReadFile(filePath)
+	if err != nil {
+		// Filesystem errors may include the path but not the secret contents.
+		return "", false, fmt.Errorf("read --%s: %w", fileFlag, err)
+	}
+	raw := string(buf)
+	if strings.TrimSpace(raw) == "" {
+		return "", false, fmt.Errorf("--%s %q: empty contents; %s", fileFlag, filePath, clearHint)
+	}
+	return raw, true, nil
+}
 
+// resolveCustomEnv collects the --custom-env, --custom-env-stdin, and
+// --custom-env-file flags and returns the parsed map, a bool indicating
+// whether the caller supplied any of them, and any error. The three input
+// channels are mutually exclusive so callers can't accidentally provide a
+// secret twice. Stdin and file inputs exist to keep secret material out of
+// shell history and 'ps' / /proc/<pid>/cmdline.
+func resolveCustomEnv(cmd *cobra.Command) (map[string]string, bool, error) {
+	raw, provided, err := resolveSecretJSONFlag(cmd, "custom-env", "pass '{}' to clear")
+	if err != nil || !provided {
+		return nil, provided, err
+	}
 	ce, err := parseCustomEnv(raw)
 	if err != nil {
 		return nil, false, err
@@ -1088,57 +1099,10 @@ func parseMcpConfig(raw string) (json.RawMessage, error) {
 // (`null` here vs `{}` for custom_env), because mcp_config distinguishes an
 // explicit empty object from an absent config server-side.
 func resolveMcpConfig(cmd *cobra.Command) (json.RawMessage, bool, error) {
-	inline := cmd.Flags().Changed("mcp-config")
-	fromStdin, _ := cmd.Flags().GetBool("mcp-config-stdin")
-	filePath, _ := cmd.Flags().GetString("mcp-config-file")
-	fromFile := cmd.Flags().Changed("mcp-config-file")
-
-	count := 0
-	if inline {
-		count++
+	raw, provided, err := resolveSecretJSONFlag(cmd, "mcp-config", "pass 'null' to clear")
+	if err != nil || !provided {
+		return nil, provided, err
 	}
-	if fromStdin {
-		count++
-	}
-	if fromFile {
-		count++
-	}
-	switch {
-	case count == 0:
-		return nil, false, nil
-	case count > 1:
-		return nil, false, fmt.Errorf("--mcp-config, --mcp-config-stdin, and --mcp-config-file are mutually exclusive; pick one")
-	}
-
-	var raw string
-	switch {
-	case inline:
-		raw, _ = cmd.Flags().GetString("mcp-config")
-	case fromStdin:
-		buf, err := io.ReadAll(cmd.InOrStdin())
-		if err != nil {
-			return nil, false, fmt.Errorf("read --mcp-config-stdin: %w", err)
-		}
-		raw = string(buf)
-		if strings.TrimSpace(raw) == "" {
-			return nil, false, fmt.Errorf("--mcp-config-stdin: empty input; pass 'null' to clear")
-		}
-	case fromFile:
-		if filePath == "" {
-			return nil, false, fmt.Errorf("--mcp-config-file: path must not be empty")
-		}
-		buf, err := os.ReadFile(filePath)
-		if err != nil {
-			// Filesystem errors may include the path but not the contents —
-			// safe to surface via %w.
-			return nil, false, fmt.Errorf("read --mcp-config-file: %w", err)
-		}
-		raw = string(buf)
-		if strings.TrimSpace(raw) == "" {
-			return nil, false, fmt.Errorf("--mcp-config-file %q: empty contents; pass 'null' to clear", filePath)
-		}
-	}
-
 	mc, err := parseMcpConfig(raw)
 	if err != nil {
 		return nil, false, err
