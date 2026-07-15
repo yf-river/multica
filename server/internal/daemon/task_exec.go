@@ -116,12 +116,7 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 			return
 		}
 		taskLog.Error("task failed", "error", err)
-		// runTask returned without a TaskResult, so we don't have a SessionID
-		// to forward — best we can do is record the failure.
-		// MUL-2946: route the bare error string through the canonical
-		// classifier so the failure_reason column reflects the actual
-		// shape of the failure (provider 5xx, network, process crash,
-		// …).
+		// runTask returned without session state; classify the transport error.
 		reason := taskfailure.Classify(err.Error())
 		if failErr := d.client.FailTask(ctx, task.ID, err.Error(), "", "", reason.String()); failErr != nil {
 			taskLog.Error("fail task callback failed", "error", failErr)
@@ -193,12 +188,7 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 			return
 		}
 		taskLog.Error("complete task rejected by server, falling back to fail", "error", err)
-		// MUL-2946: this fallback fires when a server-side complete
-		// callback was permanently rejected (4xx other than 408/429)
-		// — the agent itself succeeded, so the err here describes the
-		// server response rather than an agent failure. The classifier
-		// is unlikely to match anything in the server's error text and
-		// will land at ReasonAgentUnknown ("agent_error.unknown").
+		// This is a server rejection, so unmatched text becomes unknown.
 		fallbackErrMsg := fmt.Sprintf("complete task failed: %s", err.Error())
 		if failErr := d.client.FailTask(ctx, taskID, fallbackErrMsg, result.SessionID, result.WorkDir, taskfailure.Classify(fallbackErrMsg).String()); failErr != nil {
 			taskLog.Error("fail task fallback also failed", "error", failErr)
@@ -213,11 +203,7 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 				// it differently from a real failure.
 				failureReason = "cancelled"
 			} else {
-				// MUL-2946: classify the agent's comment text so the
-				// failure_reason lands in the refined taxonomy
-				// (provider_auth_or_access, context_overflow,
-				// process_failure, …). Empty comment lands in
-				// ReasonAgentUnknown.
+				// Empty or unmatched comments become ReasonAgentUnknown.
 				failureReason = taskfailure.Classify(result.Comment).String()
 			}
 		}

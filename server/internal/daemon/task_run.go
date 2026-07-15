@@ -208,17 +208,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		defer d.unmarkActiveEnvRoot(issueSpace.RootDir)
 	}
 
-	// Issue #3999 race A: now that env.WorkDir is on disk, transition the
-	// server-side state machine dispatched → running. Calling StartTask before
-	// Prepare/Reuse let any consumer
-	// that read status==running and resolved
-	// /multica_workspaces/{ws}/{short-id}/workdir hit FileNotFoundError in
-	// the microsecond window before os.MkdirAll ran.
-	//
-	// On error we return early so handleTask's existing FailTask +
-	// taskfailure.Classify path records the failure with the same
-	// "start task failed: <…>" string and the same failure_reason
-	// taxonomy as before — see MUL-2946 for the classifier contract.
+	// Expose running state only after the work directory exists.
 	if err := d.client.StartTask(ctx, task.ID); err != nil {
 		if isTaskStartConflictError(err) {
 			return TaskResult{}, errTaskStartConflict
@@ -717,25 +707,14 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		// would either be left stale or overwritten with NULL on the
 		// server, causing the next chat turn to lose context.
 		//
-		// Classify upstream API 400 invalid_request_error failures with a
-		// dedicated failure_reason so GetLastTaskSession excludes the
-		// task from the (agent_id, issue_id) resume lookup. Without this
-		// classifier a corrupt image or oversized payload baked into the
-		// conversation permanently blocks the issue: every follow-up
-		// task resumes the same poisoned session and hits the same 400.
+		// Request bodies embedded in a rejected session are not resumable.
 		failureReason, _ := classifyPoisonedError(errMsg)
 		if failureReason != "" {
 			taskLog.Warn("agent failed with poisoned API error, classifying as blocked",
 				"failure_reason", failureReason,
 			)
 		} else {
-			// MUL-2946: classifyPoisonedError only matches the
-			// session-poisoning Anthropic 400 shape. Everything else
-			// falls through to taskfailure.Classify, which maps the
-			// raw error string to one of the 14 agent_error.*
-			// sub-reasons (provider auth, capacity, context overflow,
-			// runner crash, …) or to ReasonAgentUnknown before the row
-			// is persisted.
+			// All other failures use the canonical agent-error classifier.
 			failureReason = taskfailure.Classify(errMsg).String()
 		}
 		return TaskResult{

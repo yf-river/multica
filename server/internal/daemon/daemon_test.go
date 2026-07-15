@@ -2034,11 +2034,6 @@ func TestReportTaskResult_NonCompletedHitsFailEndpoint(t *testing.T) {
 			wantFailureReason: "iteration_limit",
 		},
 		{
-			// MUL-2946: when the daemon doesn't supply a refined
-			// reason, the comment text is run through
-			// taskfailure.Classify so the failure_reason column
-			// lands in the canonical refined taxonomy instead of
-			// the legacy "agent_error" coarse bucket.
 			name:              "blocked without reason classifies comment as rate-limit",
 			status:            "blocked",
 			comment:           "rate limit reached",
