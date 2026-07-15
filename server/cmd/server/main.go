@@ -58,6 +58,15 @@ func closeRedisClient(label string, client *redis.Client) {
 	}
 }
 
+func registerDurableEvents(dispatcher *eventoutbox.Dispatcher, name string, consumer eventoutbox.Consumer, eventTypes ...string) error {
+	for _, eventType := range eventTypes {
+		if err := dispatcher.Register(eventType, name, consumer); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func shardedRelayConfigFromEnv() realtime.ShardedStreamRelayConfig {
 	cfg := realtime.DefaultShardedStreamRelayConfig()
 	cfg.Shards = envPositiveInteger("REALTIME_RELAY_SHARDS", cfg.Shards)

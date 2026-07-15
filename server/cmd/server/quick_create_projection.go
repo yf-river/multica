@@ -29,12 +29,8 @@ type quickCreateProjection struct {
 }
 
 func registerDurableQuickCreateConsumers(dispatcher *eventoutbox.Dispatcher) error {
-	for _, eventType := range []string{protocol.EventTaskCompleted, protocol.EventTaskFailed} {
-		if err := dispatcher.Register(eventType, quickCreateProjectionConsumer, consumeQuickCreateTerminalProjection); err != nil {
-			return err
-		}
-	}
-	return nil
+	return registerDurableEvents(dispatcher, quickCreateProjectionConsumer, consumeQuickCreateTerminalProjection,
+		protocol.EventTaskCompleted, protocol.EventTaskFailed)
 }
 
 func consumeQuickCreateTerminalProjection(ctx context.Context, queries *db.Queries, event events.Event) ([]events.Event, error) {

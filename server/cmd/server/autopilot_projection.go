@@ -12,17 +12,8 @@ import (
 )
 
 func registerDurableAutopilotConsumers(dispatcher *eventoutbox.Dispatcher) error {
-	for _, eventType := range []string{
-		protocol.EventIssueUpdated,
-		protocol.EventTaskCompleted,
-		protocol.EventTaskFailed,
-		protocol.EventTaskCancelled,
-	} {
-		if err := dispatcher.Register(eventType, "autopilot_run_projection", consumeAutopilotRunProjection); err != nil {
-			return err
-		}
-	}
-	return nil
+	return registerDurableEvents(dispatcher, "autopilot_run_projection", consumeAutopilotRunProjection,
+		protocol.EventIssueUpdated, protocol.EventTaskCompleted, protocol.EventTaskFailed, protocol.EventTaskCancelled)
 }
 
 func consumeAutopilotRunProjection(ctx context.Context, queries *db.Queries, event events.Event) ([]events.Event, error) {

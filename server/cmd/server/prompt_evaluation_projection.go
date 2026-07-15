@@ -14,16 +14,8 @@ import (
 const promptEvaluationProjectionConsumer = "prompt_evaluation_projection"
 
 func registerDurablePromptEvaluationConsumers(dispatcher *eventoutbox.Dispatcher) error {
-	for _, eventType := range []string{
-		protocol.EventTaskCompleted,
-		protocol.EventTaskFailed,
-		protocol.EventTaskCancelled,
-	} {
-		if err := dispatcher.Register(eventType, promptEvaluationProjectionConsumer, consumePromptEvaluationProjection); err != nil {
-			return err
-		}
-	}
-	return nil
+	return registerDurableEvents(dispatcher, promptEvaluationProjectionConsumer, consumePromptEvaluationProjection,
+		protocol.EventTaskCompleted, protocol.EventTaskFailed, protocol.EventTaskCancelled)
 }
 
 func consumePromptEvaluationProjection(ctx context.Context, queries *db.Queries, event events.Event) ([]events.Event, error) {
