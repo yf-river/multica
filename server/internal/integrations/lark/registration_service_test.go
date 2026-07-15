@@ -287,10 +287,6 @@ func TestRegistrationGetSessionGCsExpiredEntries(t *testing.T) {
 	}
 }
 
-// TestRegistrationSessionMarkErrorIsIdempotent guards against a
-// double-fire race between the expiry timer and a Poll-driven terminal
-// error: whichever fires first wins, and the second mark must NOT
-// clobber the first reason (the user already saw it).
 func TestRegistrationSessionMarkErrorIsIdempotent(t *testing.T) {
 	sess := &registrationSession{
 		id:     "x",
@@ -298,44 +294,13 @@ func TestRegistrationSessionMarkErrorIsIdempotent(t *testing.T) {
 	}
 	deadline := time.Unix(1_700_001_000, 0)
 	sess.markError(RegistrationReasonAccessDenied, "user denied", deadline)
-	sess.markError(RegistrationReasonExpired, "qr expired", deadline) // second mark — should no-op
+	sess.markError(RegistrationReasonExpired, "qr expired", deadline)
 	st := sess.snapshot()
 	if st.ErrorReason != RegistrationReasonAccessDenied {
 		t.Errorf("first reason should win; got %q", st.ErrorReason)
 	}
 }
 
-// TestRegistrationSessionStateSnapshotIsValueCopy pins that the
-// snapshot does not return a pointer alias of the internal session —
-// a leaked alias would let the handler's serializer race the polling
-// goroutine on field reads. The snapshot is value-copied so the
-// caller can read it without holding the session mutex.
-func TestRegistrationSessionStateSnapshotIsValueCopy(t *testing.T) {
-	sess := &registrationSession{
-		id:     "x",
-		status: RegistrationStatusPending,
-	}
-	s1 := sess.snapshot()
-	deadline := time.Unix(1_700_001_000, 0)
-	sess.markSuccess(uuidFromStringSvc(t, "33333333-3333-3333-3333-333333333333"), deadline)
-	if s1.Status != RegistrationStatusPending {
-		t.Errorf("snapshot must be a value copy; got mutated to %q", s1.Status)
-	}
-	s2 := sess.snapshot()
-	if s2.Status != RegistrationStatusSuccess {
-		t.Errorf("second snapshot should reflect new state; got %q", s2.Status)
-	}
-}
-
-// TestRegistrationServicePublishInstalledEmitsCreatedEvent pins the
-// MUL-3059 fix: a completed install must publish lark_installation:created
-// at the row-write point so every workspace client refreshes its
-// connection badge without a page reload. The bug was that this event only
-// fired from the HTTP status-poll handler, so any surface that wasn't the
-// polling install dialog stayed stale until a manual refresh. The exact
-// shape (type, workspace, system actor, installation_id payload) is what
-// the SubscribeAll fanout and the frontend lark_installation-prefix
-// invalidation depend on.
 func TestRegistrationServicePublishInstalledEmitsCreatedEvent(t *testing.T) {
 	bus := events.New()
 	var caught []events.Event

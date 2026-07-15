@@ -128,11 +128,6 @@ func deliverPatcherTestEvent(p *Patcher, event events.Event) {
 	_ = p.processEvent(context.Background(), event)
 }
 
-// TestPatcherSendsPlainTextOnChatDone pins the new behaviour Bohan asked
-// for: when the agent finishes replying, the Patcher posts the reply as
-// a plain Lark IM text message (msg_type=text), not nested inside an
-// interactive card. This is the load-bearing UX call — the prior card
-// chrome made every reply look like a system notification.
 func TestPatcherSendsPlainTextOnChatDone(t *testing.T) {
 	p, q, api := newTestPatcher(t)
 	taskID := uuidFromString(t, "ee333333-ee33-ee33-ee33-eeeeeeeeeeee")
@@ -168,12 +163,6 @@ func TestPatcherSendsPlainTextOnChatDone(t *testing.T) {
 	}
 }
 
-// TestPatcherRoutesMarkdownReplyToCard pins the two-path chat reply:
-// when the agent's body contains markdown syntax, the Patcher MUST
-// route to SendMarkdownCard (schema-2.0 interactive card with a
-// `tag: "markdown"` body element) so Lark renders the formatting
-// instead of leaving raw `**bold**` / `# heading` characters in the
-// transcript. Plain prose continues to go through SendTextMessage.
 func TestPatcherRoutesMarkdownReplyToCard(t *testing.T) {
 	p, q, api := newTestPatcher(t)
 	taskID := uuidFromString(t, "ee444444-ee44-ee44-ee44-eeeeeeeeeeee")
@@ -210,39 +199,6 @@ func TestPatcherRoutesMarkdownReplyToCard(t *testing.T) {
 	}
 }
 
-// TestPatcherRoutesPlainReplyToText is the inverse: a short prose
-// reply without any markdown syntax should stay on the cheap
-// msg_type=text path so the user sees a normal IM bubble.
-func TestPatcherRoutesPlainReplyToText(t *testing.T) {
-	p, q, api := newTestPatcher(t)
-	taskID := uuidFromString(t, "ee555555-ee55-ee55-ee55-eeeeeeeeeeee")
-
-	deliverPatcherTestEvent(p, events.Event{
-		Type:          protocol.EventChatDone,
-		TaskID:        util.UUIDToString(taskID),
-		ChatSessionID: util.UUIDToString(q.binding.ChatSessionID),
-		Payload: protocol.ChatDonePayload{
-			TaskID:        util.UUIDToString(taskID),
-			ChatSessionID: util.UUIDToString(q.binding.ChatSessionID),
-			Content:       "Sure, on it.",
-		},
-	})
-
-	api.mu.Lock()
-	defer api.mu.Unlock()
-	if len(api.textSent) != 1 {
-		t.Fatalf("plain prose must take the text path; got %d text sends", len(api.textSent))
-	}
-	if len(api.mdCardSent) != 0 {
-		t.Errorf("plain prose must NOT wrap in a markdown card; got %d card sends", len(api.mdCardSent))
-	}
-}
-
-// TestPatcherDropsEmptyChatReply guards the fallback we deliberately
-// removed: the previous design rendered "Done." when content was
-// empty. Now an empty Content is silently dropped (no text message
-// sent at all). Showing nothing is better than showing the misleading
-// "Done." fallback, which Bohan reported confused him in the live env.
 func TestPatcherDropsEmptyChatReply(t *testing.T) {
 	p, q, api := newTestPatcher(t)
 	taskID := uuidFromString(t, "ee777777-ee77-ee77-ee77-eeeeeeeeeeee")
@@ -261,7 +217,7 @@ func TestPatcherDropsEmptyChatReply(t *testing.T) {
 	api.mu.Lock()
 	defer api.mu.Unlock()
 	if len(api.textSent) != 0 {
-		t.Errorf("empty content must drop, not render the Done. fallback; got %d text sends", len(api.textSent))
+		t.Errorf("empty content must not send a text message; got %d", len(api.textSent))
 	}
 }
 
@@ -286,11 +242,6 @@ func TestPatcherSkipsWhenNoChatSessionBinding(t *testing.T) {
 	}
 }
 
-// TestPatcherFailEventSendsErrorCard verifies the failure path still
-// surfaces a card. The visual distinction between a successful reply
-// (plain text bubble) and a failure (red header card) is genuinely
-// useful — and failures are rare enough that the card chrome isn't
-// noisy.
 func TestPatcherFailEventSendsErrorCard(t *testing.T) {
 	p, q, api := newTestPatcher(t)
 	taskID := uuidFromString(t, "ee444444-ee44-ee44-ee44-eeeeeeeeeeee")
@@ -338,21 +289,10 @@ func TestPatcherSwallowsInstallationLoadErrors(t *testing.T) {
 	}
 }
 
-// TestPatcherIgnoresEventTaskCompletedForChatTasks pins the no-extra-send
-// invariant. TaskService publishes ChatDone (with content) immediately
-// before TaskCompleted (without content) for every chat task. The
-// Patcher must NOT react to TaskCompleted — doing so would either
-// re-send the same text reply (duplicate bubble) or send the "Done."
-// fallback (the original bug Bohan reported). The fix is to leave
-// EventTaskCompleted unsubscribed; this test asserts exactly one
-// outbound text message from the sequence. In production ChatDone is emitted
-// by the durable chat projection and consumed from the outbox.
 func TestPatcherIgnoresEventTaskCompletedForChatTasks(t *testing.T) {
 	p, q, api := newTestPatcher(t)
 	taskID := uuidFromString(t, "ee666666-ee66-ee66-ee66-eeeeeeeeeeee")
 
-	// Step 1: ChatDone arrives with the real agent reply. Plain text
-	// is sent to Lark.
 	deliverPatcherTestEvent(p, events.Event{
 		Type:          protocol.EventChatDone,
 		TaskID:        util.UUIDToString(taskID),
@@ -364,9 +304,6 @@ func TestPatcherIgnoresEventTaskCompletedForChatTasks(t *testing.T) {
 		},
 	})
 
-	// Step 2: TaskCompleted fires immediately after with no content.
-	// The Patcher MUST NOT send a second message — neither a
-	// duplicate of the reply nor the "Done." fallback.
 	deliverPatcherTestEvent(p, events.Event{
 		Type:          protocol.EventTaskCompleted,
 		TaskID:        util.UUIDToString(taskID),

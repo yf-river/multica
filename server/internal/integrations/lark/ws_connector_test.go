@@ -95,6 +95,32 @@ func (f *fakeWSConn) snapshot() [][]byte {
 	return out
 }
 
+type inboundMessageRecorder struct {
+	mu       sync.Mutex
+	messages []InboundMessage
+}
+
+func (r *inboundMessageRecorder) emit(_ context.Context, msg InboundMessage) (DispatchResult, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.messages = append(r.messages, msg)
+	return DispatchResult{Outcome: OutcomeIngested}, nil
+}
+
+func waitForEmits(t *testing.T, recorder *inboundMessageRecorder, want int) []InboundMessage {
+	t.Helper()
+	if !waitFor(2*time.Second, func() bool {
+		recorder.mu.Lock()
+		defer recorder.mu.Unlock()
+		return len(recorder.messages) >= want
+	}) {
+		t.Fatalf("received fewer than %d messages", want)
+	}
+	recorder.mu.Lock()
+	defer recorder.mu.Unlock()
+	return append([]InboundMessage(nil), recorder.messages...)
+}
+
 // fakeWSDialer hands back a pre-built fakeWSConn so tests can drive
 // frames + observe closes deterministically.
 type fakeWSDialer struct {
@@ -112,9 +138,15 @@ func (d *fakeWSDialer) DialContext(ctx context.Context, urlStr string, h http.He
 // quietConnector wires a connector with a deterministic decoder + the
 // fakeWSConn. Caller controls the decoder so each test can assert
 // per-payload behaviour.
-func quietConnector(t *testing.T, conn *fakeWSConn, decoder func([]byte, db.LarkInstallation) (InboundMessage, bool, error), pingInterval time.Duration) *WSLongConnConnector {
+func quietConnector(
+	t *testing.T,
+	conn *fakeWSConn,
+	decoder func([]byte, db.LarkInstallation) (InboundMessage, bool, error),
+	pingInterval time.Duration,
+	enrich ...func(context.Context, InboundMessage, InstallationCredentials) InboundMessage,
+) *WSLongConnConnector {
 	t.Helper()
-	c, err := NewWSLongConnConnector(WSConnectorConfig{
+	cfg := WSConnectorConfig{
 		Dialer: &fakeWSDialer{conn: conn},
 		Endpoint: func(context.Context, InstallationCredentials) (WSEndpoint, error) {
 			return WSEndpoint{URL: "wss://test/ignored", ServiceID: 7, PingInterval: pingInterval}, nil
@@ -127,7 +159,12 @@ func quietConnector(t *testing.T, conn *fakeWSConn, decoder func([]byte, db.Lark
 		ReadDeadline: time.Second,
 		WriteTimeout: time.Second,
 		Logger:       slog.New(slog.NewTextHandler(io.Discard, nil)),
-	})
+	}
+	if len(enrich) > 0 {
+		cfg.Enrich = enrich[0]
+		cfg.EnrichTimeout = time.Second
+	}
+	c, err := NewWSLongConnConnector(cfg)
 	if err != nil {
 		t.Fatalf("NewWSLongConnConnector: %v", err)
 	}
@@ -201,41 +238,21 @@ func TestWSConnectorEmitsDecodedFramesAndAcks(t *testing.T) {
 	}
 	c := quietConnector(t, conn, decoder, time.Hour) // disable ping cadence
 
-	var emitted []InboundMessage
-	var emitMu sync.Mutex
-	emit := func(_ context.Context, msg InboundMessage) (DispatchResult, error) {
-		emitMu.Lock()
-		emitted = append(emitted, msg)
-		emitMu.Unlock()
-		return DispatchResult{Outcome: OutcomeIngested}, nil
-	}
+	emitted := &inboundMessageRecorder{}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	done := make(chan error, 1)
 	go func() {
-		done <- c.Run(ctx, db.LarkInstallation{AppID: "test_app"}, emit)
+		done <- c.Run(ctx, db.LarkInstallation{AppID: "test_app"}, emitted.emit)
 	}()
 
 	pushDataFrame(conn, []byte("evt-1"), "m1")
 	pushDataFrame(conn, []byte("heartbeat"), "m2")
 	pushDataFrame(conn, []byte("evt-2"), "m3")
 
-	deadline := time.After(2 * time.Second)
-	for {
-		emitMu.Lock()
-		n := len(emitted)
-		emitMu.Unlock()
-		if n >= 2 {
-			break
-		}
-		select {
-		case <-deadline:
-			t.Fatalf("only %d emits in 2s", n)
-		case <-time.After(5 * time.Millisecond):
-		}
-	}
+	messages := waitForEmits(t, emitted, 2)
 
 	cancel()
 	select {
@@ -244,8 +261,8 @@ func TestWSConnectorEmitsDecodedFramesAndAcks(t *testing.T) {
 		t.Fatal("Run did not return after cancel")
 	}
 
-	if emitted[0].EventID != "evt-1" || emitted[1].EventID != "evt-2" {
-		t.Errorf("emit ordering wrong: %+v", emitted)
+	if messages[0].EventID != "evt-1" || messages[1].EventID != "evt-2" {
+		t.Errorf("emit ordering wrong: %+v", messages)
 	}
 
 	// Every data frame should have produced an ACK frame on the wire

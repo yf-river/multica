@@ -173,6 +173,22 @@ func newDiscardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
+func newTestHub(q HubQueries, factory ConnectorFactory, configure ...func(*HubConfig)) *Hub {
+	cfg := HubConfig{
+		LeaseTTL:           500 * time.Millisecond,
+		LeaseRenewInterval: 20 * time.Millisecond,
+		PollInterval:       20 * time.Millisecond,
+		MinBackoff:         5 * time.Millisecond,
+		MaxBackoff:         20 * time.Millisecond,
+		ResetBackoffAfter:  time.Second,
+		Logger:             newDiscardLogger(),
+	}
+	for _, apply := range configure {
+		apply(&cfg)
+	}
+	return NewHub(q, factory, &Dispatcher{}, discardOutcomeReply, discardTyping, cfg)
+}
+
 func TestHubAcquiresLeaseAndStartsSupervisor(t *testing.T) {
 	q := newFakeHubQueries()
 	instID := uuidFromString(t, "11111111-1111-1111-1111-111111111111")
@@ -181,14 +197,10 @@ func TestHubAcquiresLeaseAndStartsSupervisor(t *testing.T) {
 	conn := &fakeConnector{}
 	factory := func(_ db.LarkInstallation) (EventConnector, error) { return conn.Run, nil }
 
-	hub := NewHub(q, factory, &Dispatcher{}, discardOutcomeReply, discardTyping, HubConfig{
-		LeaseTTL:           500 * time.Millisecond,
-		LeaseRenewInterval: 50 * time.Millisecond,
-		PollInterval:       10 * time.Millisecond,
-		MinBackoff:         5 * time.Millisecond,
-		MaxBackoff:         50 * time.Millisecond,
-		ResetBackoffAfter:  1 * time.Second,
-		Logger:             newDiscardLogger(),
+	hub := newTestHub(q, factory, func(cfg *HubConfig) {
+		cfg.LeaseRenewInterval = 50 * time.Millisecond
+		cfg.PollInterval = 10 * time.Millisecond
+		cfg.MaxBackoff = 50 * time.Millisecond
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -221,15 +233,7 @@ func TestHubSkipsInstallationWhenAnotherReplicaHoldsLease(t *testing.T) {
 	conn := &fakeConnector{}
 	factory := func(_ db.LarkInstallation) (EventConnector, error) { return conn.Run, nil }
 
-	hub := NewHub(q, factory, &Dispatcher{}, discardOutcomeReply, discardTyping, HubConfig{
-		LeaseTTL:           500 * time.Millisecond,
-		LeaseRenewInterval: 20 * time.Millisecond,
-		PollInterval:       20 * time.Millisecond,
-		MinBackoff:         5 * time.Millisecond,
-		MaxBackoff:         20 * time.Millisecond,
-		ResetBackoffAfter:  1 * time.Second,
-		Logger:             newDiscardLogger(),
-	})
+	hub := newTestHub(q, factory)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go hub.Run(ctx)
@@ -256,15 +260,7 @@ func TestHubReclaimsLeaseAfterAnotherReplicaExpires(t *testing.T) {
 	conn := &fakeConnector{}
 	factory := func(_ db.LarkInstallation) (EventConnector, error) { return conn.Run, nil }
 
-	hub := NewHub(q, factory, &Dispatcher{}, discardOutcomeReply, discardTyping, HubConfig{
-		LeaseTTL:           500 * time.Millisecond,
-		LeaseRenewInterval: 20 * time.Millisecond,
-		PollInterval:       20 * time.Millisecond,
-		MinBackoff:         5 * time.Millisecond,
-		MaxBackoff:         20 * time.Millisecond,
-		ResetBackoffAfter:  1 * time.Second,
-		Logger:             newDiscardLogger(),
-	})
+	hub := newTestHub(q, factory)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go hub.Run(ctx)
@@ -284,15 +280,7 @@ func TestHubReapsSupervisorWhenInstallationRevoked(t *testing.T) {
 	conn := &fakeConnector{}
 	factory := func(_ db.LarkInstallation) (EventConnector, error) { return conn.Run, nil }
 
-	hub := NewHub(q, factory, &Dispatcher{}, discardOutcomeReply, discardTyping, HubConfig{
-		LeaseTTL:           500 * time.Millisecond,
-		LeaseRenewInterval: 20 * time.Millisecond,
-		PollInterval:       20 * time.Millisecond,
-		MinBackoff:         5 * time.Millisecond,
-		MaxBackoff:         20 * time.Millisecond,
-		ResetBackoffAfter:  1 * time.Second,
-		Logger:             newDiscardLogger(),
-	})
+	hub := newTestHub(q, factory)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go hub.Run(ctx)
@@ -354,14 +342,8 @@ func TestHubRestartsSupervisorOnCredentialsRotation(t *testing.T) {
 		return (&fakeConnector{}).Run, nil
 	}
 
-	hub := NewHub(q, factory, &Dispatcher{}, discardOutcomeReply, discardTyping, HubConfig{
-		LeaseTTL:           500 * time.Millisecond,
-		LeaseRenewInterval: 50 * time.Millisecond,
-		PollInterval:       20 * time.Millisecond,
-		MinBackoff:         5 * time.Millisecond,
-		MaxBackoff:         20 * time.Millisecond,
-		ResetBackoffAfter:  1 * time.Second,
-		Logger:             newDiscardLogger(),
+	hub := newTestHub(q, factory, func(cfg *HubConfig) {
+		cfg.LeaseRenewInterval = 50 * time.Millisecond
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -581,14 +563,9 @@ func TestHubRotationEndToEndKeepsSuccessorLeased(t *testing.T) {
 		return (&fakeConnector{}).Run, nil
 	}
 
-	hub := NewHub(q, factory, &Dispatcher{}, discardOutcomeReply, discardTyping, HubConfig{
-		LeaseTTL:           500 * time.Millisecond,
-		LeaseRenewInterval: 30 * time.Millisecond,
-		PollInterval:       15 * time.Millisecond,
-		MinBackoff:         5 * time.Millisecond,
-		MaxBackoff:         20 * time.Millisecond,
-		ResetBackoffAfter:  1 * time.Second,
-		Logger:             newDiscardLogger(),
+	hub := newTestHub(q, factory, func(cfg *HubConfig) {
+		cfg.LeaseRenewInterval = 30 * time.Millisecond
+		cfg.PollInterval = 15 * time.Millisecond
 	})
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -655,15 +632,7 @@ func TestHubBacksOffOnFactoryError(t *testing.T) {
 		return nil, errors.New("boom")
 	}
 
-	hub := NewHub(q, factory, &Dispatcher{}, discardOutcomeReply, discardTyping, HubConfig{
-		LeaseTTL:           500 * time.Millisecond,
-		LeaseRenewInterval: 20 * time.Millisecond,
-		PollInterval:       20 * time.Millisecond,
-		MinBackoff:         5 * time.Millisecond,
-		MaxBackoff:         20 * time.Millisecond,
-		ResetBackoffAfter:  1 * time.Second,
-		Logger:             newDiscardLogger(),
-	})
+	hub := newTestHub(q, factory)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	go hub.Run(ctx)

@@ -80,13 +80,19 @@ func (f *fakeTypingQueries) GetLarkInstallation(context.Context, pgtype.UUID) (d
 	return f.installation, f.installErr
 }
 
+func newTypingIndicatorFixture(api *fakeTypingAPIClient) (*TypingIndicatorManager, db.LarkInstallation, pgtype.UUID) {
+	installationID := validUUID(9)
+	queries := &fakeTypingQueries{
+		binding:      db.LarkChatSessionBinding{InstallationID: installationID},
+		installation: db.LarkInstallation{ID: installationID, AppID: "cli_test", Region: "feishu"},
+	}
+	manager := NewTypingIndicatorManager(api, testCredentials("shh"), queries, newDiscardLogger())
+	return manager, db.LarkInstallation{AppID: "cli_test", Region: "feishu"}, validUUID(1)
+}
+
 func TestTypingIndicatorAddRecordsState(t *testing.T) {
 	api := &fakeTypingAPIClient{addReturn: "reaction-123"}
-	queries := &fakeTypingQueries{}
-	mgr := NewTypingIndicatorManager(api, testCredentials("shh"), queries, newDiscardLogger())
-
-	inst := db.LarkInstallation{AppID: "cli_test", Region: "feishu"}
-	session := pgtype.UUID{Bytes: [16]byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16}, Valid: true}
+	mgr, inst, session := newTypingIndicatorFixture(api)
 
 	mgr.Add(context.Background(), inst, session, "msg-1", "")
 
@@ -108,10 +114,7 @@ func TestTypingIndicatorAddRecordsState(t *testing.T) {
 
 func TestTypingIndicatorAddSkipsOnEmptyMessageID(t *testing.T) {
 	api := &fakeTypingAPIClient{addReturn: "reaction-123"}
-	mgr := NewTypingIndicatorManager(api, testCredentials("shh"), &fakeTypingQueries{}, newDiscardLogger())
-
-	inst := db.LarkInstallation{AppID: "cli_test", Region: "feishu"}
-	session := pgtype.UUID{Bytes: [16]byte{1}, Valid: true}
+	mgr, inst, session := newTypingIndicatorFixture(api)
 
 	mgr.Add(context.Background(), inst, session, "", "")
 
@@ -122,10 +125,7 @@ func TestTypingIndicatorAddSkipsOnEmptyMessageID(t *testing.T) {
 
 func TestTypingIndicatorAddSkipsOldMessages(t *testing.T) {
 	api := &fakeTypingAPIClient{addReturn: "reaction-123"}
-	mgr := NewTypingIndicatorManager(api, testCredentials("shh"), &fakeTypingQueries{}, newDiscardLogger())
-
-	inst := db.LarkInstallation{AppID: "cli_test", Region: "feishu"}
-	session := pgtype.UUID{Bytes: [16]byte{1}, Valid: true}
+	mgr, inst, session := newTypingIndicatorFixture(api)
 
 	oldTime := time.Now().Add(-3 * time.Minute).UnixMilli()
 	mgr.Add(context.Background(), inst, session, "msg-old", strconv.FormatInt(oldTime, 10))
@@ -137,10 +137,7 @@ func TestTypingIndicatorAddSkipsOldMessages(t *testing.T) {
 
 func TestTypingIndicatorAddLogsOnAPIError(t *testing.T) {
 	api := &fakeTypingAPIClient{addErr: errors.New("lark down")}
-	mgr := NewTypingIndicatorManager(api, testCredentials("shh"), &fakeTypingQueries{}, newDiscardLogger())
-
-	inst := db.LarkInstallation{AppID: "cli_test", Region: "feishu"}
-	session := pgtype.UUID{Bytes: [16]byte{1}, Valid: true}
+	mgr, inst, session := newTypingIndicatorFixture(api)
 
 	mgr.Add(context.Background(), inst, session, "msg-1", "")
 
@@ -159,20 +156,7 @@ func TestTypingIndicatorAddLogsOnAPIError(t *testing.T) {
 
 func TestTypingIndicatorClearDeletesReactions(t *testing.T) {
 	api := &fakeTypingAPIClient{addReturn: "reaction-abc"}
-	queries := &fakeTypingQueries{
-		binding: db.LarkChatSessionBinding{
-			InstallationID: pgtype.UUID{Bytes: [16]byte{9, 9, 9, 9}, Valid: true},
-		},
-		installation: db.LarkInstallation{
-			ID:     pgtype.UUID{Bytes: [16]byte{9, 9, 9, 9}, Valid: true},
-			AppID:  "cli_test",
-			Region: "feishu",
-		},
-	}
-	mgr := NewTypingIndicatorManager(api, testCredentials("shh"), queries, newDiscardLogger())
-
-	inst := db.LarkInstallation{AppID: "cli_test", Region: "feishu"}
-	session := pgtype.UUID{Bytes: [16]byte{1, 2, 3, 4}, Valid: true}
+	mgr, inst, session := newTypingIndicatorFixture(api)
 
 	mgr.Add(context.Background(), inst, session, "msg-1", "")
 	if len(api.addCalled) != 1 {
@@ -199,19 +183,7 @@ func TestTypingIndicatorClearDeletesReactions(t *testing.T) {
 
 func TestTypingIndicatorClearNoOpWhenEmpty(t *testing.T) {
 	api := &fakeTypingAPIClient{}
-	queries := &fakeTypingQueries{
-		binding: db.LarkChatSessionBinding{
-			InstallationID: pgtype.UUID{Bytes: [16]byte{9}, Valid: true},
-		},
-		installation: db.LarkInstallation{
-			ID:     pgtype.UUID{Bytes: [16]byte{9}, Valid: true},
-			AppID:  "cli_test",
-			Region: "feishu",
-		},
-	}
-	mgr := NewTypingIndicatorManager(api, testCredentials("shh"), queries, newDiscardLogger())
-
-	session := pgtype.UUID{Bytes: [16]byte{1, 2, 3, 4}, Valid: true}
+	mgr, _, session := newTypingIndicatorFixture(api)
 	mgr.Clear(context.Background(), session)
 
 	if len(api.deleteCalled) != 0 {
@@ -221,20 +193,7 @@ func TestTypingIndicatorClearNoOpWhenEmpty(t *testing.T) {
 
 func TestTypingIndicatorClearLogsOnDeleteError(t *testing.T) {
 	api := &fakeTypingAPIClient{addReturn: "reaction-xyz", deleteErr: errors.New("delete failed")}
-	queries := &fakeTypingQueries{
-		binding: db.LarkChatSessionBinding{
-			InstallationID: pgtype.UUID{Bytes: [16]byte{9}, Valid: true},
-		},
-		installation: db.LarkInstallation{
-			ID:     pgtype.UUID{Bytes: [16]byte{9}, Valid: true},
-			AppID:  "cli_test",
-			Region: "feishu",
-		},
-	}
-	mgr := NewTypingIndicatorManager(api, testCredentials("shh"), queries, newDiscardLogger())
-
-	inst := db.LarkInstallation{AppID: "cli_test", Region: "feishu"}
-	session := pgtype.UUID{Bytes: [16]byte{1, 2, 3, 4}, Valid: true}
+	mgr, inst, session := newTypingIndicatorFixture(api)
 
 	mgr.Add(context.Background(), inst, session, "msg-1", "")
 	mgr.Clear(context.Background(), session)
@@ -246,20 +205,7 @@ func TestTypingIndicatorClearLogsOnDeleteError(t *testing.T) {
 
 func TestTypingIndicatorMultipleMessagesPerSession(t *testing.T) {
 	api := &fakeTypingAPIClient{addReturn: "reaction-n"}
-	queries := &fakeTypingQueries{
-		binding: db.LarkChatSessionBinding{
-			InstallationID: pgtype.UUID{Bytes: [16]byte{9}, Valid: true},
-		},
-		installation: db.LarkInstallation{
-			ID:     pgtype.UUID{Bytes: [16]byte{9}, Valid: true},
-			AppID:  "cli_test",
-			Region: "feishu",
-		},
-	}
-	mgr := NewTypingIndicatorManager(api, testCredentials("shh"), queries, newDiscardLogger())
-
-	inst := db.LarkInstallation{AppID: "cli_test", Region: "feishu"}
-	session := pgtype.UUID{Bytes: [16]byte{1, 2, 3, 4}, Valid: true}
+	mgr, inst, session := newTypingIndicatorFixture(api)
 
 	mgr.Add(context.Background(), inst, session, "msg-a", "")
 	mgr.Add(context.Background(), inst, session, "msg-b", "")
@@ -277,20 +223,7 @@ func TestTypingIndicatorMultipleMessagesPerSession(t *testing.T) {
 
 func TestTypingIndicatorConcurrentAddAndClear(t *testing.T) {
 	api := &fakeTypingAPIClient{addReturn: "reaction-concurrent"}
-	queries := &fakeTypingQueries{
-		binding: db.LarkChatSessionBinding{
-			InstallationID: pgtype.UUID{Bytes: [16]byte{9}, Valid: true},
-		},
-		installation: db.LarkInstallation{
-			ID:     pgtype.UUID{Bytes: [16]byte{9}, Valid: true},
-			AppID:  "cli_test",
-			Region: "feishu",
-		},
-	}
-	mgr := NewTypingIndicatorManager(api, testCredentials("shh"), queries, newDiscardLogger())
-
-	inst := db.LarkInstallation{AppID: "cli_test", Region: "feishu"}
-	session := pgtype.UUID{Bytes: [16]byte{1, 2, 3, 4}, Valid: true}
+	mgr, inst, session := newTypingIndicatorFixture(api)
 
 	done := make(chan struct{})
 	go func() {

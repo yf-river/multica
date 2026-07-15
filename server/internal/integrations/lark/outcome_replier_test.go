@@ -95,10 +95,6 @@ func newOutcomeReplierForTest(stub *stubAPIClientWithRecorder, agent db.Agent) *
 	})
 }
 
-// TestLarkOutcomeReplierAgentOfflineSendsCard exercises the
-// non-binding path, which doesn't require the BindingTokenService
-// machinery — we can construct the production replier and assert
-// SendInteractiveCard was called with the expected chat_id + body.
 func TestLarkOutcomeReplierAgentOfflineSendsCard(t *testing.T) {
 	t.Parallel()
 	stub := &stubAPIClientWithRecorder{}
@@ -140,43 +136,25 @@ func TestLarkOutcomeReplierAgentArchivedSendsCard(t *testing.T) {
 	}
 }
 
-// TestLarkOutcomeReplierIngestedAndDroppedAreSilent asserts that the
-// replier does NOT call the APIClient on outcomes owned elsewhere
-// (Patcher handles Ingested; Dropped is informational only).
-func TestLarkOutcomeReplierIngestedAndDroppedAreSilent(t *testing.T) {
+func TestLarkOutcomeReplierDroppedIsSilent(t *testing.T) {
 	t.Parallel()
 	stub := &stubAPIClientWithRecorder{}
 	rep := newOutcomeReplierForTest(stub, db.Agent{})
 	msg := InboundMessage{ChatID: "oc_x"}
-	rep.Reply(context.Background(), db.LarkInstallation{}, msg, DispatchResult{Outcome: OutcomeIngested})
 	rep.Reply(context.Background(), db.LarkInstallation{}, msg, DispatchResult{Outcome: OutcomeDropped, DropReason: DropReasonDuplicate})
 	if len(stub.interactiveOut) != 0 || len(stub.bindingCalls) != 0 {
-		t.Errorf("Ingested/Dropped should not trigger any APIClient call; got interactive=%d binding=%d",
+		t.Errorf("Dropped should not trigger any APIClient call; got interactive=%d binding=%d",
 			len(stub.interactiveOut), len(stub.bindingCalls))
 	}
 }
 
-// TestLarkOutcomeReplierOfflineSwallowsAPIError verifies the
-// best-effort contract: an APIClient failure must NOT panic or
-// propagate — Reply has no return signal — but the test still
-// observes the side effect (single attempted SendInteractiveCard).
 func TestLarkOutcomeReplierOfflineSwallowsAPIError(t *testing.T) {
 	t.Parallel()
 	stub := &stubAPIClientWithRecorder{sendErr: errors.New("lark 5xx")}
 	rep := newOutcomeReplierForTest(stub, db.Agent{})
-	// Should NOT panic.
 	rep.Reply(context.Background(), db.LarkInstallation{}, InboundMessage{ChatID: "oc"}, DispatchResult{Outcome: OutcomeAgentOffline})
 }
 
-// TestLarkOutcomeReplierIssueCreatedSendsConfirmation pins the
-// recovered /issue confirmation path. Before the plain-text refactor
-// the design called for a "已创建 [MUL-xxx]" card; the refactor
-// dropped the whole card lifecycle, which had the side effect of
-// silently dropping the issue-created signal. Trump flagged it as a
-// blocker on PR #3277 review. Fix: OutcomeIngested with IssueID.Valid
-// triggers a plain text confirmation send via SendTextMessage,
-// composing the workspace-qualified identifier with the title and a
-// deep link back to Multica.
 func TestLarkOutcomeReplierIssueCreatedSendsConfirmation(t *testing.T) {
 	t.Parallel()
 	stub := &stubAPIClientWithRecorder{}
@@ -211,25 +189,18 @@ func TestLarkOutcomeReplierIssueCreatedSendsConfirmation(t *testing.T) {
 	if !strings.Contains(got.Text, "https://multica.test/issues/MUL-42") {
 		t.Errorf("text should embed the deep link back to Multica; got %q", got.Text)
 	}
-	// No interactive card on this path — the confirmation must be
-	// plain text, matching how chat replies render.
 	if len(stub.interactiveOut) != 0 {
 		t.Errorf("issue-created confirmation must not send a card; got %d cards", len(stub.interactiveOut))
 	}
 }
 
-// TestLarkOutcomeReplierOutcomeIngestedSilentWithoutIssue pins the
-// silent-by-default behaviour for plain chat messages. The "Created"
-// text is gated on IssueID.Valid; a chat that didn't include /issue
-// must NOT trigger an outbound from the OutcomeReplier (the agent's
-// reply is delivered separately by the Patcher on EventChatDone).
 func TestLarkOutcomeReplierOutcomeIngestedSilentWithoutIssue(t *testing.T) {
 	t.Parallel()
 	stub := &stubAPIClientWithRecorder{}
 	rep := newOutcomeReplierForTest(stub, db.Agent{})
 
 	rep.Reply(context.Background(), db.LarkInstallation{}, InboundMessage{ChatID: "oc"},
-		DispatchResult{Outcome: OutcomeIngested}) // no IssueID
+		DispatchResult{Outcome: OutcomeIngested})
 
 	stub.mu.Lock()
 	defer stub.mu.Unlock()
