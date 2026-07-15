@@ -17,7 +17,7 @@ import { projectListOptions } from "@multica/core/projects/queries";
 import { ProjectIcon } from "../../projects/components/project-icon";
 import { PriorityIcon } from "./priority-icon";
 import { ProgressRing } from "./progress-ring";
-import { IssueActionsContextMenu } from "../actions";
+import { IssueActionsContextMenu } from "../actions/issue-actions-context-menu";
 import { LabelChip } from "../../labels/label-chip";
 import { IssueAgentActivityIndicator } from "./issue-agent-activity-indicator";
 import { TAPDSourceBadge } from "./tapd-source-badge";

@@ -20,7 +20,7 @@ import {
   useArchiveCompletedInbox,
 } from "@multica/core/inbox/mutations";
 
-import { IssueDetail } from "../../issues/components";
+import { IssueDetail } from "../../issues/components/issue-detail";
 import { ErrorBoundary } from "@multica/ui/components/common/error-boundary";
 import { useNavigation } from "../../navigation";
 import { toast } from "sonner";

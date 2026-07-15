@@ -49,7 +49,8 @@ import {
   ALL_STATUSES,
   PRIORITY_ORDER,
 } from "@multica/core/issues/config";
-import { StatusIcon, PriorityIcon } from ".";
+import { PriorityIcon } from "./priority-icon";
+import { StatusIcon } from "./status-icon";
 import { useQuery } from "@tanstack/react-query";
 import { useWorkspaceId } from "@multica/core/paths";
 import { memberListOptions, agentListOptions, squadListOptions } from "@multica/core/workspace/queries";

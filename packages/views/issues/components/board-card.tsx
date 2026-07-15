@@ -23,7 +23,7 @@ import { PriorityPicker, AssigneePicker, StartDatePicker, DueDatePicker } from "
 import { useViewStore } from "@multica/core/issues/stores/view-store-context";
 import { ProgressRing } from "./progress-ring";
 import type { ChildProgress } from "./list-row";
-import { IssueActionsContextMenu } from "../actions";
+import { IssueActionsContextMenu } from "../actions/issue-actions-context-menu";
 import { LabelChip } from "../../labels/label-chip";
 import { IssueAgentActivityIndicator } from "./issue-agent-activity-indicator";
 import { useT } from "../../i18n";

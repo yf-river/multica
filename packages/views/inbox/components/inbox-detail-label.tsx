@@ -3,7 +3,8 @@
 import { STATUS_CONFIG, PRIORITY_CONFIG } from "@multica/core/issues/config";
 import { formatDateOnly } from "@multica/core/issues/date";
 import { useActorName } from "@multica/core/workspace/hooks";
-import { StatusIcon, PriorityIcon } from "../../issues/components";
+import { PriorityIcon } from "../../issues/components/priority-icon";
+import { StatusIcon } from "../../issues/components/status-icon";
 import type { InboxItem, InboxItemType, IssueStatus, IssuePriority } from "@multica/core/types";
 import { getQuickCreateFailureDetail } from "./inbox-display";
 import { useT } from "../../i18n";

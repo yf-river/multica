@@ -21,7 +21,7 @@ import { ActorAvatar } from "../../common/actor-avatar";
 import { ProjectIcon } from "../../projects/components/project-icon";
 import { StatusIcon } from "./status-icon";
 import { PriorityIcon } from "./priority-icon";
-import { IssueActionsContextMenu } from "../actions";
+import { IssueActionsContextMenu } from "../actions/issue-actions-context-menu";
 import { sortIssues } from "../utils/sort";
 import { useT } from "../../i18n";
 import { TAPDSourceBadge } from "./tapd-source-badge";

@@ -6,7 +6,7 @@ import { useFileUpload } from "@multica/core/hooks/use-file-upload";
 import {
   useCommentDraftStore,
   type CommentDraftKey,
-} from "@multica/core/issues/stores";
+} from "@multica/core/issues/stores/comment-draft-store";
 import type { Attachment } from "@multica/core/types";
 import { contentReferencesAttachment } from "@multica/core/types";
 import {

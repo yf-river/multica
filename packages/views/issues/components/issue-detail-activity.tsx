@@ -4,7 +4,8 @@ import { STATUS_CONFIG, PRIORITY_CONFIG } from "@multica/core/issues/config";
 import { formatDateOnly } from "@multica/core/issues/date";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@multica/ui/components/ui/tooltip";
 import { ActorAvatar } from "../../common/actor-avatar";
-import { StatusIcon, PriorityIcon } from ".";
+import { PriorityIcon } from "./priority-icon";
+import { StatusIcon } from "./status-icon";
 import type { IssueDetailT } from "./issue-detail-source";
 
 function statusLabel(status: string, t: IssueDetailT): string {

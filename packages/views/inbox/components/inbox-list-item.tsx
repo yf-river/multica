@@ -1,6 +1,6 @@
 "use client";
 
-import { StatusIcon } from "../../issues/components";
+import { StatusIcon } from "../../issues/components/status-icon";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { Archive } from "lucide-react";
 import type { InboxItem } from "@multica/core/types";

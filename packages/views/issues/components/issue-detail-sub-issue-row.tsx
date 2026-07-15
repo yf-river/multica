@@ -8,7 +8,8 @@ import { toast } from "sonner";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { useT } from "../../i18n";
 import { AppLink } from "../../navigation";
-import { AssigneePicker, StatusIcon, StatusPicker } from ".";
+import { AssigneePicker, StatusPicker } from "./pickers";
+import { StatusIcon } from "./status-icon";
 
 export function SubIssueRow({ child }: { child: Issue }) {
   const { t } = useT("issues");

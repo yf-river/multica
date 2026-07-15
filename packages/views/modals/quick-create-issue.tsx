@@ -48,7 +48,12 @@ import {
 import { ActorAvatar } from "../common/actor-avatar";
 import { PillButton } from "../common/pill-button";
 import { ProjectPicker } from "../projects/components/project-picker";
-import { DueDatePicker, PriorityPicker, StartDatePicker, StatusPicker } from "../issues/components";
+import {
+  DueDatePicker,
+  PriorityPicker,
+  StartDatePicker,
+  StatusPicker,
+} from "../issues/components/pickers";
 import {
   PropertyPicker,
   PickerItem,

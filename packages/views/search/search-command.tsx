@@ -56,7 +56,7 @@ import { useModalStore } from "@multica/core/modals";
 import { memberListOptions } from "@multica/core/workspace/queries";
 import { nameInitials } from "@multica/core/workspace/actor-display";
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
-import { StatusIcon } from "../issues/components";
+import { StatusIcon } from "../issues/components/status-icon";
 import { ProjectIcon } from "../projects/components/project-icon";
 import { PROJECT_STATUS_CONFIG } from "@multica/core/projects/config";
 import type { ProjectStatus } from "@multica/core/types";

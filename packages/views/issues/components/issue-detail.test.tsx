@@ -155,7 +155,7 @@ vi.mock("@multica/core/api", () => ({
   setApiInstance: vi.fn(),
 }));
 
-vi.mock("@multica/core/issues/stores", () => ({
+vi.mock("@multica/core/issues/stores/comment-collapse-store", () => ({
   useCommentCollapseStore: (selector?: any) => {
     const state = {
       collapsedByIssue: {},
@@ -164,6 +164,9 @@ vi.mock("@multica/core/issues/stores", () => ({
     };
     return selector ? selector(state) : state;
   },
+}));
+
+vi.mock("@multica/core/issues/stores/comment-draft-store", () => ({
   useCommentDraftStore: Object.assign(
     (selector?: any) => {
       const state = {

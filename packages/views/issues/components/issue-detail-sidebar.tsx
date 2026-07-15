@@ -10,12 +10,12 @@ import {
   AssigneePicker,
   DueDatePicker,
   LabelPicker,
-  PriorityIcon,
   PriorityPicker,
   StartDatePicker,
-  StatusIcon,
   StatusPicker,
-} from ".";
+} from "./pickers";
+import { PriorityIcon } from "./priority-icon";
+import { StatusIcon } from "./status-icon";
 import { ProjectPicker } from "../../projects/components/project-picker";
 import { ExecutionLogSection, IssueRunReviewSummaryCard } from "./execution-log-section";
 import { PullRequestList } from "./pull-request-list";
