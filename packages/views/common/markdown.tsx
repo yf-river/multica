@@ -4,7 +4,6 @@ import * as React from "react";
 import {
   Markdown as MarkdownBase,
   type MarkdownProps as MarkdownBaseProps,
-  type RenderMode,
 } from "@multica/ui/markdown";
 import type { Attachment as AttachmentRecord } from "@multica/core/types";
 import { useWorkspacePaths } from "@multica/core/paths";
@@ -16,9 +15,7 @@ import {
   AttachmentDownloadProvider,
 } from "../editor";
 
-export type { RenderMode };
-
-export interface MarkdownProps extends MarkdownBaseProps {
+interface MarkdownProps extends MarkdownBaseProps {
   /**
    * Attachments associated with the surrounding entity (chat message, skill
    * file). When passed, the renderer resolves inline image / file-card URLs
@@ -111,6 +108,3 @@ export function Markdown(props: MarkdownProps): React.JSX.Element {
     </AttachmentDownloadProvider>
   );
 }
-
-export const MemoizedMarkdown = React.memo(Markdown);
-MemoizedMarkdown.displayName = "MemoizedMarkdown";
