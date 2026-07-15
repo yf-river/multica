@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -193,7 +194,7 @@ func (h *Handler) CreatePromptEvaluationOptimizationCandidate(w http.ResponseWri
 		AssetID:              run.AssetID,
 		RunID:                run.ID,
 		PromptID:             run.PromptID,
-		CandidateName:        buildPromptEvaluationCandidateName(prompt, run),
+		CandidateName:        prompt.Name + " 优化候选 " + run.CreatedAt.Time.Format("20060102") + "-" + strconv.FormatInt(time.Now().UnixNano(), 10),
 		CandidateContent:     candidateContent,
 		FailedCaseCount:      promptEvaluationRunFailedCaseCount(run, trials),
 		Rationale:            rationale,
@@ -353,7 +354,7 @@ func (h *Handler) PublishPromptEvaluationOptimizationCandidate(w http.ResponseWr
 	publishedPrompt, err := qtx.CreatePromptLibraryItemVersionWithID(r.Context(), db.CreatePromptLibraryItemVersionWithIDParams{
 		ID:          idempotencyKey,
 		WorkspaceID: workspaceUUID,
-		Name:        buildPromptEvaluationPublishedPromptName(sourcePrompt),
+		Name:        sourcePrompt.Name + " 优化发布 " + strconv.FormatInt(time.Now().UnixNano(), 10),
 		Description: buildPromptEvaluationPublishedPromptDescription(candidate, sourcePrompt),
 		PromptType:  sourcePrompt.PromptType,
 		Content:     candidate.CandidateContent,

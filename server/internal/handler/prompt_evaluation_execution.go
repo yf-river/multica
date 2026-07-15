@@ -526,10 +526,6 @@ func buildPromptEvaluationCandidateContent(prompt db.PromptLibraryItem, run db.P
 	return strings.Join(lines, "\n"), rationale
 }
 
-func buildPromptEvaluationCandidateName(prompt db.PromptLibraryItem, run db.PromptEvaluationRun) string {
-	return prompt.Name + " 优化候选 " + run.CreatedAt.Time.Format("20060102") + "-" + strconv.FormatInt(time.Now().UnixNano(), 10)
-}
-
 func buildPromptEvaluationSourcePromptSnapshot(prompt db.PromptLibraryItem) map[string]any {
 	return map[string]any{
 		"prompt_id": uuidToString(prompt.ID),
@@ -541,10 +537,6 @@ func buildPromptEvaluationSourcePromptSnapshot(prompt db.PromptLibraryItem) map[
 		"标签":        mustDecodePersistedJSONArray(prompt.Tags, "prompt library item tags"),
 		"内容摘要":      prompteval.TruncateEvidence(prompt.Content, 1200),
 	}
-}
-
-func buildPromptEvaluationPublishedPromptName(prompt db.PromptLibraryItem) string {
-	return prompt.Name + " 优化发布 " + strconv.FormatInt(time.Now().UnixNano(), 10)
 }
 
 func buildPromptEvaluationPublishedPromptDescription(candidate db.PromptEvaluationOptimizationCandidate, prompt db.PromptLibraryItem) string {

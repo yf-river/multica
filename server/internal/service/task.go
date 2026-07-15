@@ -159,10 +159,6 @@ func isTrivialDoneOutput(output string) bool {
 
 var agentMentionURLPattern = regexp.MustCompile(`mention://agent/[0-9a-fA-F-]{36}`)
 
-func containsAgentMention(content string) bool {
-	return agentMentionURLPattern.MatchString(content)
-}
-
 func isDispatchLikeTaskMessage(content string) bool {
 	normalized := strings.ToLower(strings.TrimSpace(content))
 	if normalized == "" {

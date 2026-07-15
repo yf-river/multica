@@ -179,7 +179,7 @@ func projectTaskCompletionFallbackComment(
 		return nil, nil
 	}
 	body := util.UnescapeBackslashEscapes(payload.Output)
-	if !containsAgentMention(body) {
+	if !agentMentionURLPattern.MatchString(body) {
 		dispatchBody, err := fallbackDispatchCommentFromMessages(ctx, queries, task.ID)
 		if err != nil {
 			return nil, err

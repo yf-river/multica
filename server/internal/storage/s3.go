@@ -173,10 +173,6 @@ func (s *S3Storage) GetReader(ctx context.Context, key string) (io.ReadCloser, e
 	return out.Body, nil
 }
 
-func (s *S3Storage) PresignGet(ctx context.Context, key string, ttl time.Duration) (string, error) {
-	return s.PresignGetWithContentDisposition(ctx, key, ttl, "")
-}
-
 func (s *S3Storage) PresignGetWithContentDisposition(ctx context.Context, key string, ttl time.Duration, contentDisposition string) (string, error) {
 	if key == "" {
 		return "", fmt.Errorf("s3 PresignGet: empty key")

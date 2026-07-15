@@ -131,12 +131,6 @@ func (m *mockStorage) GetReader(_ context.Context, key string) (io.ReadCloser, e
 	}
 	return nil, fmt.Errorf("mockStorage GetReader: key not found: %q", key)
 }
-func (m *mockStorage) PresignGet(_ context.Context, key string, _ time.Duration) (string, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.presignCalls = append(m.presignCalls, key)
-	return "https://signed.example.com/" + key + "?X-Amz-Signature=mock", nil
-}
 func (m *mockStorage) PresignGetWithContentDisposition(_ context.Context, key string, _ time.Duration, contentDisposition string) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
