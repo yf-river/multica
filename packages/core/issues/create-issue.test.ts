@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { useModalStore } from "../modals";
+import { useModalStore } from "../modals/store";
 import { openCreateIssue, type CreateIssueSeed } from "./create-issue";
 
 describe("openCreateIssue", () => {

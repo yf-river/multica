@@ -1,7 +1,7 @@
 "use client";
 
 import type { IssuePriority, IssueStatus } from "../types";
-import { useModalStore } from "../modals";
+import { useModalStore } from "../modals/store";
 
 /** Values that current issue-creation entry points may pin for the agent flow. */
 export type CreateIssueSeed = {
