@@ -137,7 +137,7 @@ func tickAutopilotFailureMonitor(ctx context.Context, queries *db.Queries, bus *
 			// pgx returns ErrNoRows when the WHERE status='active' clause
 			// matched zero rows — i.e. another caller (manual UI action,
 			// concurrent monitor) paused it first. Treat as a benign no-op.
-			if isNoRows(err) {
+			if errors.Is(err, pgx.ErrNoRows) {
 				continue
 			}
 			slog.Warn("autopilot failure monitor: pause failed",
@@ -325,14 +325,6 @@ func autopilotEventPayload(a db.Autopilot) map[string]any {
 		"created_at":           util.TimestampToString(a.CreatedAt),
 		"updated_at":           util.TimestampToString(a.UpdatedAt),
 	}
-}
-
-// isNoRows wraps the sentinel for pgx :one queries that match no rows. The
-// SystemPauseAutopilot UPDATE returns no rows when the autopilot was already
-// paused/archived, which we want to treat as a benign no-op rather than an
-// error to log.
-func isNoRows(err error) bool {
-	return errors.Is(err, pgx.ErrNoRows)
 }
 
 func formatLookback(d time.Duration) string {

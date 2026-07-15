@@ -13,7 +13,7 @@ import (
 )
 
 func consumeTaskTerminalIssueProjection(ctx context.Context, queries *db.Queries, event events.Event) ([]events.Event, error) {
-	payload, exists, err := loadTaskProjection(ctx, queries, event)
+	payload, _, exists, err := loadTaskProjectionRow(ctx, queries, event)
 	if err != nil || !exists || payload.IssueID == "" {
 		return nil, err
 	}
@@ -42,11 +42,6 @@ func consumeTaskTerminalIssueProjection(ctx context.Context, queries *db.Queries
 		emitted = append(emitted, notifications...)
 	}
 	return emitted, nil
-}
-
-func loadTaskProjection(ctx context.Context, queries *db.Queries, event events.Event) (taskEventPayload, bool, error) {
-	payload, _, exists, err := loadTaskProjectionRow(ctx, queries, event)
-	return payload, exists, err
 }
 
 func loadTaskProjectionRow(ctx context.Context, queries *db.Queries, event events.Event) (taskEventPayload, db.AgentTaskQueue, bool, error) {

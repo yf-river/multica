@@ -24,6 +24,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/scheduler"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -222,33 +223,22 @@ func main() {
 		slog.Error("initialize domain event dispatcher", "error", err)
 		os.Exit(1)
 	}
-	if err := registerDurableAudienceConsumers(eventDispatcher); err != nil {
-		slog.Error("register durable audience consumers", "error", err)
-		os.Exit(1)
-	}
-	if err := registerDurableActivityConsumers(eventDispatcher); err != nil {
-		slog.Error("register durable activity consumers", "error", err)
-		os.Exit(1)
-	}
-	if err := registerDurableChatConsumers(eventDispatcher); err != nil {
-		slog.Error("register durable chat consumers", "error", err)
-		os.Exit(1)
-	}
-	if err := registerDurablePromptEvaluationConsumers(eventDispatcher); err != nil {
-		slog.Error("register durable prompt evaluation consumers", "error", err)
-		os.Exit(1)
-	}
-	if err := registerDurableQuickCreateConsumers(eventDispatcher); err != nil {
-		slog.Error("register durable quick-create consumers", "error", err)
-		os.Exit(1)
-	}
-	if err := registerDurableAutopilotConsumers(eventDispatcher); err != nil {
-		slog.Error("register durable autopilot consumers", "error", err)
-		os.Exit(1)
-	}
-	if err := registerDurableReactionConsumers(eventDispatcher); err != nil {
-		slog.Error("register durable reaction consumers", "error", err)
-		os.Exit(1)
+	for _, registration := range []struct {
+		failureMessage string
+		run            func(*eventoutbox.Dispatcher) error
+	}{
+		{"register durable audience consumers", registerDurableAudienceConsumers},
+		{"register durable activity consumers", registerDurableActivityConsumers},
+		{"register durable chat consumers", registerDurableChatConsumers},
+		{"register durable prompt evaluation consumers", registerDurablePromptEvaluationConsumers},
+		{"register durable quick-create consumers", registerDurableQuickCreateConsumers},
+		{"register durable autopilot consumers", registerDurableAutopilotConsumers},
+		{"register durable reaction consumers", registerDurableReactionConsumers},
+	} {
+		if err := registration.run(eventDispatcher); err != nil {
+			slog.Error(registration.failureMessage, "error", err)
+			os.Exit(1)
+		}
 	}
 
 	metricsConfig := obsmetrics.ConfigFromEnv()
@@ -332,7 +322,10 @@ func main() {
 	taskSvc.Analytics = analyticsClient
 	taskSvc.Metrics = businessMetrics
 	autopilotSvc := service.NewAutopilotService(queries, pool, bus, taskSvc)
-	registerAutopilotAnalyticsListener(bus, autopilotSvc)
+	// Analytics stays outside the durable projection transaction.
+	bus.Subscribe(protocol.EventAutopilotRunDone, func(event events.Event) {
+		autopilotSvc.CaptureAutopilotRunDone(context.Background(), event)
+	})
 
 	// Construct a LivenessStore that mirrors the one wired into the HTTP
 	// handler. Both the heartbeat write path (handler) and the sweeper read
