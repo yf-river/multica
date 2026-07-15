@@ -115,7 +115,11 @@ func (h *Handler) GetAgentEnv(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	revealedKeys := sortedKeys(customEnv)
+	revealedKeys := make([]string, 0, len(customEnv))
+	for key := range customEnv {
+		revealedKeys = append(revealedKeys, key)
+	}
+	sort.Strings(revealedKeys)
 	details, err := json.Marshal(map[string]any{
 		"agent_id":      uuidToString(agent.ID),
 		"agent_name":    agent.Name,
@@ -344,13 +348,4 @@ func unmarshalCustomEnv(a db.Agent) (map[string]string, error) {
 		return nil, fmt.Errorf("decode custom_env: expected JSON object")
 	}
 	return out, nil
-}
-
-func sortedKeys(m map[string]string) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
 }

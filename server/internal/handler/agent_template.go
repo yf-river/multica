@@ -85,13 +85,6 @@ func templateToSummary(t agenttmpl.Template) AgentTemplateSummaryResponse {
 	}
 }
 
-func templateToDetail(t agenttmpl.Template) AgentTemplateResponse {
-	return AgentTemplateResponse{
-		AgentTemplateSummaryResponse: templateToSummary(t),
-		Instructions:                 t.Instructions,
-	}
-}
-
 // --- List + Get handlers ---
 
 func (h *Handler) ListAgentTemplates(w http.ResponseWriter, r *http.Request) {
@@ -110,7 +103,10 @@ func (h *Handler) GetAgentTemplate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "template not found")
 		return
 	}
-	writeJSON(w, http.StatusOK, templateToDetail(t))
+	writeJSON(w, http.StatusOK, AgentTemplateResponse{
+		AgentTemplateSummaryResponse: templateToSummary(t),
+		Instructions:                 t.Instructions,
+	})
 }
 
 // --- Create-from-template handler ---

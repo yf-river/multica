@@ -739,7 +739,7 @@ func (h *Handler) ListSquads(w http.ResponseWriter, r *http.Request) {
 
 	resp := make([]squadResponse, 0, len(squads))
 	for _, s := range squads {
-		if !memberCanUseSquad(s, member) {
+		if s.Scope == scopePersonal && !memberCanManageSquad(s, member) {
 			continue
 		}
 		item, err := squadToResponse(s)

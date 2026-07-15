@@ -93,13 +93,6 @@ func memberCanManageSquad(squad db.Squad, member db.Member) bool {
 	return uuidToString(squad.CreatorID) == uuidToString(member.UserID)
 }
 
-func memberCanUseSquad(squad db.Squad, member db.Member) bool {
-	if squad.Scope != scopePersonal {
-		return true
-	}
-	return memberCanManageSquad(squad, member)
-}
-
 func (h *Handler) squadAccess(ctx context.Context, squad db.Squad, actorType, actorID, workspaceID string) (bool, error) {
 	if squad.Scope != scopePersonal {
 		return true, nil
