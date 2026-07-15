@@ -1,14 +1,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { screen, waitFor } from "@testing-library/react";
-import type { ReactElement } from "react";
+import type { ComponentType, ReactElement } from "react";
 import { renderWithI18n } from "../../test/i18n";
 import { withTestQueryClient } from "../../test/query";
 
 // Tiptap NodeView primitives can't be instantiated without a full editor.
 // Stub the wrapper so FileCardView renders as a plain React component and
 // the DOM can be inspected directly.
+const nodeViewState = vi.hoisted(() => ({
+  component: null as ComponentType<any> | null,
+}));
+
 vi.mock("@tiptap/react", () => ({
   NodeViewWrapper: ({ children, ...rest }: any) => <div {...rest}>{children}</div>,
+  ReactNodeViewRenderer: (component: ComponentType<any>) => {
+    nodeViewState.component = component;
+    return vi.fn();
+  },
 }));
 
 const { getAttachmentTextContentMock, resolveAttachmentMock, openByUrlMock, tryOpenMock } =
@@ -76,10 +84,18 @@ vi.mock("../i18n", () => ({
   }),
 }));
 
-import { FileCardView } from "./file-card";
+import { FileCardExtension } from "./file-card";
 
 function renderWithQuery(ui: ReactElement) {
   return renderWithI18n(withTestQueryClient(ui));
+}
+
+function renderFileCard(node: any) {
+  if (!nodeViewState.component) {
+    FileCardExtension.config.addNodeView?.call({} as never);
+  }
+  const FileCardView = nodeViewState.component!;
+  return renderWithQuery(<FileCardView node={node} />);
 }
 
 beforeEach(() => vi.clearAllMocks());
@@ -110,7 +126,7 @@ describe("FileCardView — HTML attachment routes through AttachmentBlock to ifr
       },
     } as any;
 
-    renderWithQuery(<FileCardView node={node} {...({} as any)} />);
+    renderFileCard(node);
 
     const frame = await waitFor(() => {
       const f = document.querySelector("iframe") as HTMLIFrameElement | null;

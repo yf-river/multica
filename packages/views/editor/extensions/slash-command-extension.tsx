@@ -1,8 +1,23 @@
-import Mention from "@tiptap/extension-mention";
+"use client";
+
 import { mergeAttributes } from "@tiptap/core";
-import { ReactNodeViewRenderer } from "@tiptap/react";
-import { SlashCommandView } from "./slash-command-view";
-import { formatSlashCommandLabel } from "./slash-command-utils";
+import Mention from "@tiptap/extension-mention";
+import { NodeViewWrapper, ReactNodeViewRenderer } from "@tiptap/react";
+import type { NodeViewProps } from "@tiptap/react";
+
+function formatSlashCommandLabel(label: unknown): string {
+  return typeof label === "string" && label.trim().length > 0 ? label : "?";
+}
+
+function SlashCommandView({ node }: NodeViewProps) {
+  return (
+    <NodeViewWrapper as="span" className="inline">
+      <span className="slash-command">
+        /{formatSlashCommandLabel(node.attrs.label)}
+      </span>
+    </NodeViewWrapper>
+  );
+}
 
 export const SlashCommandExtension = Mention.extend({
   name: "slashCommand",
