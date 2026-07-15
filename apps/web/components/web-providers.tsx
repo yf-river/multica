@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useMemo } from "react";
+import { Suspense } from "react";
 import { CoreProvider } from "@multica/core/platform";
 import type { LocaleResources, SupportedLocale } from "@multica/core/i18n";
 import packageJson from "../package.json";
@@ -24,8 +24,10 @@ function deriveWsUrl(): string | undefined {
 // Build-time version preferred (CI sets NEXT_PUBLIC_APP_VERSION to a git tag
 // or sha so different deploys are distinguishable in server logs); fall back
 // to the package.json version so local dev still reports something useful.
-const WEB_VERSION =
-  process.env.NEXT_PUBLIC_APP_VERSION || packageJson.version || "dev";
+const WEB_IDENTITY = {
+  platform: "web",
+  version: process.env.NEXT_PUBLIC_APP_VERSION || packageJson.version,
+} as const;
 
 export function WebProviders({
   children,
@@ -36,22 +38,14 @@ export function WebProviders({
   locale: SupportedLocale;
   resources: Record<string, LocaleResources>;
 }) {
-  // Stable identity reference so downstream effects keyed on it don't see a
-  // new object on every parent render.
-  const identity = useMemo(
-    () => ({ platform: "web", version: WEB_VERSION }),
-    [],
-  );
   return (
     <CoreProvider
       apiBaseUrl={process.env.NEXT_PUBLIC_API_URL}
       wsUrl={deriveWsUrl()}
       cookieAuth
       onLogin={setLoggedInCookie}
-      onLogout={() => {
-        clearLoggedInCookie();
-      }}
-      identity={identity}
+      onLogout={clearLoggedInCookie}
+      identity={WEB_IDENTITY}
       locale={locale}
       resources={resources}
     >

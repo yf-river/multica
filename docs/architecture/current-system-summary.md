@@ -24,7 +24,7 @@ the expanded JSON and Markdown evidence under ignored
 | TypeScript WebSocket events | 69 |
 | Zustand stores | 24 |
 | React Query consumer files | 178 |
-| Environment variables | 193 |
+| Environment variables | 192 |
 | Manually identified external systems | 12 |
 
 The maintained domain and transaction narratives live in

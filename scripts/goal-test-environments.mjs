@@ -365,7 +365,7 @@ function buildEnvironmentRuntime(item) {
     ...readEnvFile(envFile),
     HOSTNAME: "0.0.0.0",
     NEXT_PUBLIC_APP_VERSION: deploymentCommit,
-    GOAL_TEST_REMOTE_API_URL: `http://127.0.0.1:${item.backendPort}`,
+    REMOTE_API_URL: `http://127.0.0.1:${item.backendPort}`,
   };
   applyCodexRunnerRuntimeEnv(env);
   return { envFile, env };
