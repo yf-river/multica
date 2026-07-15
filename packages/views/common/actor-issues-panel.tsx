@@ -14,7 +14,7 @@ import {
 import {
   actorIssuesViewStore,
   type ActorIssuesScope,
-} from "@multica/core/issues/stores/actor-issues-view-store";
+} from "@multica/core/issues/stores/scoped-issue-view-stores";
 import { useIssueSelectionStore } from "@multica/core/issues/stores/selection-store";
 import { useClearFiltersOnWorkspaceChange } from "@multica/core/issues/stores/view-store";
 import { ViewStoreProvider } from "@multica/core/issues/stores/view-store-context";

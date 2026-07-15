@@ -17,7 +17,7 @@ import { BatchActionToolbar } from "../../issues/components/batch-action-toolbar
 import { useClearFiltersOnWorkspaceChange } from "@multica/core/issues/stores/view-store";
 import { useWorkspaceId } from "@multica/core/paths";
 import { myIssueAssigneeGroupsOptions, myIssueListOptions, childIssueProgressOptions, type AssigneeGroupedIssuesFilter, type MyIssuesFilter } from "@multica/core/issues/queries";
-import { myIssuesViewStore } from "@multica/core/issues/stores/my-issues-view-store";
+import { myIssuesViewStore } from "@multica/core/issues/stores/scoped-issue-view-stores";
 import { PageHeader } from "../../layout/page-header";
 import { useT } from "../../i18n";
 import { MyIssuesHeader } from "./my-issues-header";
