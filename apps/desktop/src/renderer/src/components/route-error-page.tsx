@@ -4,11 +4,7 @@ import { AlertTriangle, RotateCw, Send, X } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import { useModalStore } from "@multica/core/modals";
 import { useTabStore } from "@/stores/tab-store";
-
-type DesktopAppInfo = {
-  version?: string;
-  os?: string;
-};
+import type { DesktopAppInfo } from "../../../shared/ipc-payloads";
 
 function formatRouteErrorReport({
   error,

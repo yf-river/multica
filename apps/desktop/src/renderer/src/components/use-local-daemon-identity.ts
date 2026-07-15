@@ -6,7 +6,7 @@ interface DaemonIdentity {
   deviceName: string | null;
 }
 
-export interface LocalDaemonIdentity {
+interface LocalDaemonIdentity {
   status: DaemonStatus;
   localDaemonId: string | null;
   localMachineName: string | null;
