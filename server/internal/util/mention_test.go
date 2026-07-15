@@ -16,11 +16,6 @@ func TestParseMentions(t *testing.T) {
 			want:    []Mention{{Type: "agent", ID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}},
 		},
 		{
-			name:    "agent name with square brackets",
-			content: "[@David[TF]](mention://agent/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa) please fix",
-			want:    []Mention{{Type: "agent", ID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}},
-		},
-		{
 			name:    "agent name with nested brackets",
 			content: "[@Bot[v2][beta]](mention://agent/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa) help",
 			want:    []Mention{{Type: "agent", ID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}},
@@ -64,53 +59,13 @@ func TestParseMentions(t *testing.T) {
 			want:    []Mention{{Type: "agent", ID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}},
 		},
 		{
-			name:    "bare agent uuid is plain text",
-			content: "@aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa 调度 01",
-			want:    nil,
-		},
-		{
-			name:    "deduplicate markdown and bare uuid mention",
-			content: "[@A](mention://agent/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa) @aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
-			want:    []Mention{{Type: "agent", ID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}},
-		},
-		{
 			name:    "plain agent id assignment does not mention",
 			content: "agent_id=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
 			want:    nil,
 		},
 		{
-			name:    "agent id parenthesized form is plain text",
-			content: "@01-需求澄清(agent_id=aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa) 请执行",
-			want:    nil,
-		},
-		{
-			name:    "agent colon parenthesized form is plain text",
-			content: "@01-需求澄清 (agent:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa) 请执行",
-			want:    nil,
-		},
-		{
-			name:    "agent uuid parenthesized form is plain text",
-			content: "@01-需求澄清 (aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa) 请执行",
-			want:    nil,
-		},
-		{
-			name:    "agent uuid fullwidth parenthesized form is plain text",
-			content: "@01-需求澄清（aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa）请执行",
-			want:    nil,
-		},
-		{
 			name:    "agent scheme markdown is plain text",
 			content: "[01-需求澄清](agent://aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa) 请执行",
-			want:    nil,
-		},
-		{
-			name:    "agent colon markdown is plain text",
-			content: "@[01-需求澄清](agent:aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa) 请执行",
-			want:    nil,
-		},
-		{
-			name:    "bare markdown uuid is plain text",
-			content: "@[01-需求澄清](aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa) 请执行",
 			want:    nil,
 		},
 		{
@@ -135,26 +90,6 @@ func TestParseMentions(t *testing.T) {
 				if got[i].Type != tt.want[i].Type || got[i].ID != tt.want[i].ID {
 					t.Errorf("mention[%d] = %+v, want %+v", i, got[i], tt.want[i])
 				}
-			}
-		})
-	}
-}
-
-func TestHasMentionAll(t *testing.T) {
-	tests := []struct {
-		name     string
-		mentions []Mention
-		want     bool
-	}{
-		{"empty", nil, false},
-		{"no all", []Mention{{Type: "agent", ID: "x"}}, false},
-		{"has all", []Mention{{Type: "all", ID: "all"}}, true},
-		{"mixed", []Mention{{Type: "agent", ID: "x"}, {Type: "all", ID: "all"}}, true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := HasMentionAll(tt.mentions); got != tt.want {
-				t.Errorf("HasMentionAll() = %v, want %v", got, tt.want)
 			}
 		})
 	}

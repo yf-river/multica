@@ -588,6 +588,9 @@ func (h *Handler) commentMentionsOthersButNotAssignee(content string, issue db.I
 	// Filter out issue mentions — they are cross-references, not @people.
 	filtered := mentions[:0]
 	for _, m := range mentions {
+		if m.Type == "all" {
+			return true
+		}
 		if m.Type != "issue" {
 			filtered = append(filtered, m)
 		}
@@ -595,10 +598,6 @@ func (h *Handler) commentMentionsOthersButNotAssignee(content string, issue db.I
 	mentions = filtered
 	if len(mentions) == 0 {
 		return false // No mentions (or only issue refs) — normal on_comment behavior
-	}
-	// @all is a broadcast to all members — suppress agent trigger.
-	if util.HasMentionAll(mentions) {
-		return true
 	}
 	if !issue.AssigneeID.Valid {
 		return true // No assignee — mentions target others

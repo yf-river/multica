@@ -63,13 +63,6 @@ func TextToPtr(t pgtype.Text) *string {
 	return &t.String
 }
 
-func PtrToText(s *string) pgtype.Text {
-	if s == nil {
-		return pgtype.Text{}
-	}
-	return pgtype.Text{String: *s, Valid: true}
-}
-
 func StrToText(s string) pgtype.Text {
 	if s == "" {
 		return pgtype.Text{}
@@ -119,11 +112,4 @@ func UUIDToPtr(u pgtype.UUID) *string {
 	}
 	s := UUIDToString(u)
 	return &s
-}
-
-func Int8ToPtr(v pgtype.Int8) *int64 {
-	if !v.Valid {
-		return nil
-	}
-	return &v.Int64
 }

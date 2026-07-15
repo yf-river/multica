@@ -15,11 +15,6 @@ type Mention struct {
 // enough to prevent over-matching.
 var MentionRe = regexp.MustCompile(`\[@?(.+?)\]\(mention://(member|agent|squad|issue|all)/([0-9a-fA-F-]+|all)\)`)
 
-// IsMentionAll returns true if the mention is an @all mention.
-func (m Mention) IsMentionAll() bool {
-	return m.Type == "all"
-}
-
 // ParseMentions extracts deduplicated mentions from markdown content.
 func ParseMentions(content string) []Mention {
 	matches := MentionRe.FindAllStringSubmatch(content, -1)
@@ -46,14 +41,4 @@ func ParseMentions(content string) []Mention {
 		add(m[2], m[3])
 	}
 	return result
-}
-
-// HasMentionAll returns true if any mention in the slice is an @all mention.
-func HasMentionAll(mentions []Mention) bool {
-	for _, m := range mentions {
-		if m.IsMentionAll() {
-			return true
-		}
-	}
-	return false
 }

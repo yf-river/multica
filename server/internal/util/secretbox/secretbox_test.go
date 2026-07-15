@@ -37,9 +37,6 @@ func TestRoundTrip(t *testing.T) {
 }
 
 func TestSealIsNonDeterministic(t *testing.T) {
-	// Same plaintext + same box → different ciphertext on each Seal,
-	// because the nonce is random. This prevents content-fingerprinting
-	// (e.g. confirming that two installations share the same secret).
 	box := mustNewBox(t)
 	plaintext := []byte("repeat")
 	a, _ := box.Seal(plaintext)
@@ -52,7 +49,6 @@ func TestSealIsNonDeterministic(t *testing.T) {
 func TestOpenRejectsTampered(t *testing.T) {
 	box := mustNewBox(t)
 	sealed, _ := box.Seal([]byte("important"))
-	// Flip a bit in the ciphertext portion (skip nonce).
 	tampered := append([]byte(nil), sealed...)
 	tampered[len(tampered)-1] ^= 0x01
 	if _, err := box.Open(tampered); err == nil {

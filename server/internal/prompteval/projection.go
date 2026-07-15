@@ -1,13 +1,14 @@
 package prompteval
 
 import (
+	"unicode"
+
 	"github.com/multica-ai/multica/server/internal/metrics"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// UsageEvidenceRows projects persisted task usage into the current evaluation
-// evidence contract. Keep this projection shared so candidate and run evidence
-// cannot drift in fields or cost precision.
+const agentRunHistoryLimit = 20
+
 func UsageEvidenceRows(usages []db.TaskUsage) []map[string]any {
 	rows := make([]map[string]any, 0, len(usages))
 	for _, usage := range usages {
@@ -31,4 +32,39 @@ func UsageEvidenceRows(usages []db.TaskUsage) []map[string]any {
 		})
 	}
 	return rows
+}
+
+func PrependAgentRunHistory(raw any, latest map[string]any) []any {
+	history, _ := raw.([]any)
+	runID, _ := latest["run_id"].(string)
+	next := []any{latest}
+	for _, item := range history {
+		if runID != "" {
+			if existing, ok := item.(map[string]any); ok && existing["run_id"] == runID {
+				continue
+			}
+		}
+		next = append(next, item)
+	}
+	if len(next) > agentRunHistoryLimit {
+		next = next[:agentRunHistoryLimit]
+	}
+	return next
+}
+
+func TruncateEvidence(value string, maxRunes int) string {
+	runes := []rune(value)
+	if len(runes) <= maxRunes {
+		return value
+	}
+	return string(runes[:maxRunes]) + "..."
+}
+
+func ContainsHan(value string) bool {
+	for _, current := range value {
+		if unicode.Is(unicode.Han, current) {
+			return true
+		}
+	}
+	return false
 }
