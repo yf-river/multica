@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"encoding/json"
 	"log/slog"
 	"net/http"
 
@@ -36,9 +35,7 @@ type issueReactionRequest struct {
 	issueID     string
 	workspaceID string
 	issue       db.Issue
-	emoji       string
-	actorType   string
-	actorID     string
+	reactionActor
 }
 
 func (h *Handler) loadIssueReactionRequest(w http.ResponseWriter, r *http.Request) (issueReactionRequest, bool) {
@@ -53,27 +50,17 @@ func (h *Handler) loadIssueReactionRequest(w http.ResponseWriter, r *http.Reques
 		return issueReactionRequest{}, false
 	}
 
-	var req struct {
-		Emoji string `json:"emoji"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return issueReactionRequest{}, false
-	}
-	if req.Emoji == "" {
-		writeError(w, http.StatusBadRequest, "emoji is required")
+	actor, ok := loadReactionActor(w, r, userID)
+	if !ok {
 		return issueReactionRequest{}, false
 	}
 
 	workspaceID := uuidToString(issue.WorkspaceID)
-	actorType, actorID := resolveActor(r, userID)
 	return issueReactionRequest{
-		issueID:     issueID,
-		workspaceID: workspaceID,
-		issue:       issue,
-		emoji:       req.Emoji,
-		actorType:   actorType,
-		actorID:     actorID,
+		issueID:       issueID,
+		workspaceID:   workspaceID,
+		issue:         issue,
+		reactionActor: actor,
 	}, true
 }
 

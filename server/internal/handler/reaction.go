@@ -21,6 +21,28 @@ type ReactionResponse struct {
 	CreatedAt string `json:"created_at"`
 }
 
+type reactionActor struct {
+	emoji     string
+	actorType string
+	actorID   string
+}
+
+func loadReactionActor(w http.ResponseWriter, r *http.Request, userID string) (reactionActor, bool) {
+	var req struct {
+		Emoji string `json:"emoji"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return reactionActor{}, false
+	}
+	if req.Emoji == "" {
+		writeError(w, http.StatusBadRequest, "emoji is required")
+		return reactionActor{}, false
+	}
+	actorType, actorID := resolveActor(r, userID)
+	return reactionActor{emoji: req.Emoji, actorType: actorType, actorID: actorID}, true
+}
+
 func reactionToResponse(r db.CommentReaction) ReactionResponse {
 	return ReactionResponse{
 		ID:        uuidToString(r.ID),
@@ -37,9 +59,7 @@ type reactionRequest struct {
 	workspaceID string
 	workspace   pgtype.UUID
 	comment     db.Comment
-	emoji       string
-	actorType   string
-	actorID     string
+	reactionActor
 }
 
 func (h *Handler) loadReactionRequest(w http.ResponseWriter, r *http.Request) (reactionRequest, bool) {
@@ -51,26 +71,16 @@ func (h *Handler) loadReactionRequest(w http.ResponseWriter, r *http.Request) (r
 	if !ok {
 		return reactionRequest{}, false
 	}
-	var req struct {
-		Emoji string `json:"emoji"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	actor, ok := loadReactionActor(w, r, userID)
+	if !ok {
 		return reactionRequest{}, false
 	}
-	if req.Emoji == "" {
-		writeError(w, http.StatusBadRequest, "emoji is required")
-		return reactionRequest{}, false
-	}
-	actorType, actorID := resolveActor(r, userID)
 	return reactionRequest{
-		commentID:   uuidToString(comment.ID),
-		workspaceID: workspaceID,
-		workspace:   workspaceUUID,
-		comment:     comment,
-		emoji:       req.Emoji,
-		actorType:   actorType,
-		actorID:     actorID,
+		commentID:     uuidToString(comment.ID),
+		workspaceID:   workspaceID,
+		workspace:     workspaceUUID,
+		comment:       comment,
+		reactionActor: actor,
 	}, true
 }
 
