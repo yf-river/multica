@@ -911,13 +911,7 @@ func (h *Handler) CreatePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 			func(response PromptEvaluationCaseResponse) bool { return response.ID != "" },
 		)
 	}
-	replay, found, replayErr := loadReplay()
-	if replayErr != nil {
-		writeReplayError(w, replayErr)
-		return
-	}
-	if found {
-		writeJSON(w, http.StatusCreated, replay)
+	if handleResourceCreateReplay(w, http.StatusCreated, loadReplay, writeReplayError) {
 		return
 	}
 	tx, err := h.TxStarter.Begin(r.Context())

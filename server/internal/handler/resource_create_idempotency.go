@@ -166,6 +166,24 @@ func loadResourceCreateReplay[T any](
 	return response, true, nil
 }
 
+func handleResourceCreateReplay[T any](
+	w http.ResponseWriter,
+	status int,
+	loadReplay func() (T, bool, error),
+	writeReplayError func(http.ResponseWriter, error),
+) bool {
+	replay, found, err := loadReplay()
+	if err != nil {
+		writeReplayError(w, err)
+		return true
+	}
+	if !found {
+		return false
+	}
+	writeJSON(w, status, replay)
+	return true
+}
+
 func loadReplayAfterReservationConflict[T any](
 	ctx context.Context,
 	tx pgx.Tx,

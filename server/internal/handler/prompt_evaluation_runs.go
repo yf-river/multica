@@ -535,13 +535,7 @@ func (h *Handler) CreatePromptEvaluationEvidenceSnapshot(w http.ResponseWriter, 
 			func(response PromptEvaluationEvidenceSnapshotResponse) bool { return response.ID != "" },
 		)
 	}
-	replay, found, replayErr := loadReplay()
-	if replayErr != nil {
-		writeReplayError(w, replayErr)
-		return
-	}
-	if found {
-		writeJSON(w, http.StatusCreated, replay)
+	if handleResourceCreateReplay(w, http.StatusCreated, loadReplay, writeReplayError) {
 		return
 	}
 	params, err := h.buildPromptEvaluationEvidenceSnapshotRecord(r.Context(), workspaceUUID, runID, snapshotType, actorID)
@@ -626,13 +620,7 @@ func (h *Handler) CreatePromptEvaluationAssetEvidenceSnapshots(w http.ResponseWr
 			func(response PromptEvaluationAssetEvidenceSnapshotResponse) bool { return response.AssetID != "" },
 		)
 	}
-	replay, found, replayErr := loadReplay()
-	if replayErr != nil {
-		writeReplayError(w, replayErr)
-		return
-	}
-	if found {
-		writeJSON(w, http.StatusCreated, replay)
+	if handleResourceCreateReplay(w, http.StatusCreated, loadReplay, writeReplayError) {
 		return
 	}
 	runs, err := h.Queries.ListPromptEvaluationRuns(r.Context(), db.ListPromptEvaluationRunsParams{

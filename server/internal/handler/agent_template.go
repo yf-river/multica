@@ -213,11 +213,7 @@ func (h *Handler) CreateAgentFromTemplate(w http.ResponseWriter, r *http.Request
 			func(response CreateAgentFromTemplateResponse) bool { return response.Agent.ID != "" },
 		)
 	}
-	if replayed, found, err := loadReplay(); err != nil {
-		h.writeAgentCreateReplayError(w, err)
-		return
-	} else if found {
-		writeJSON(w, http.StatusCreated, replayed)
+	if handleResourceCreateReplay(w, http.StatusCreated, loadReplay, h.writeAgentCreateReplayError) {
 		return
 	}
 

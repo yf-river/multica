@@ -115,11 +115,7 @@ func (h *Handler) CreatePromptEvaluationOptimizationCandidate(w http.ResponseWri
 			func(response PromptEvaluationOptimizationCandidateResponse) bool { return response.ID != "" },
 		)
 	}
-	if replay, found, err := loadReplay(); err != nil {
-		writeReplayError(w, err)
-		return
-	} else if found {
-		writeJSON(w, http.StatusCreated, replay)
+	if handleResourceCreateReplay(w, http.StatusCreated, loadReplay, writeReplayError) {
 		return
 	}
 	run, ok := loadPromptEvaluationRun(w, r, h.Queries, workspaceUUID, runID)
@@ -320,11 +316,7 @@ func (h *Handler) PublishPromptEvaluationOptimizationCandidate(w http.ResponseWr
 			},
 		)
 	}
-	if replay, found, err := loadReplay(); err != nil {
-		writeReplayError(w, err)
-		return
-	} else if found {
-		writeJSON(w, http.StatusOK, replay)
+	if handleResourceCreateReplay(w, http.StatusOK, loadReplay, writeReplayError) {
 		return
 	}
 	candidate, ok := loadPromptEvaluationOptimizationCandidate(w, r, h.Queries, workspaceUUID, candidateID)
@@ -559,11 +551,7 @@ func (h *Handler) RejectPromptEvaluationOptimizationCandidate(w http.ResponseWri
 			func(response PromptEvaluationOptimizationCandidateResponse) bool { return response.ID != "" },
 		)
 	}
-	if replay, found, err := loadReplay(); err != nil {
-		writeReplayError(w, err)
-		return
-	} else if found {
-		writeJSON(w, http.StatusOK, replay)
+	if handleResourceCreateReplay(w, http.StatusOK, loadReplay, writeReplayError) {
 		return
 	}
 	candidate, ok := loadPromptEvaluationOptimizationCandidate(w, r, h.Queries, workspaceUUID, candidateID)

@@ -874,11 +874,7 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 			func(response squadResponse) bool { return response.ID != "" },
 		)
 	}
-	if replayed, found, err := loadReplay(); err != nil {
-		writeReplayError(w, err)
-		return
-	} else if found {
-		writeJSON(w, http.StatusCreated, replayed)
+	if handleResourceCreateReplay(w, http.StatusCreated, loadReplay, writeReplayError) {
 		return
 	}
 

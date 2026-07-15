@@ -568,11 +568,7 @@ func (h *Handler) CreateProjectResource(w http.ResponseWriter, r *http.Request) 
 			idempotencyKey, requestHash, func(response ProjectResourceResponse) bool { return response.ID != "" },
 		)
 	}
-	if replay, found, replayErr := loadReplay(); replayErr != nil {
-		writeReplayError(w, replayErr)
-		return
-	} else if found {
-		writeJSON(w, http.StatusCreated, replay)
+	if handleResourceCreateReplay(w, http.StatusCreated, loadReplay, writeReplayError) {
 		return
 	}
 	if err := h.ensureGongfengProjectPathRegistered(r.Context(), project.WorkspaceID, req.ResourceType, normalizedRef); err != nil {

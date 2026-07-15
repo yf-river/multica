@@ -846,13 +846,7 @@ func (h *Handler) CreatePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 			func(response PromptEvaluationAssetResponse) bool { return response.ID != "" },
 		)
 	}
-	replay, found, replayErr := loadReplay()
-	if replayErr != nil {
-		writeReplayError(w, replayErr)
-		return
-	}
-	if found {
-		writeJSON(w, http.StatusCreated, replay)
+	if handleResourceCreateReplay(w, http.StatusCreated, loadReplay, writeReplayError) {
 		return
 	}
 	promptID, ok := h.promptEvaluationPromptID(w, r, workspaceUUID, req.PromptID, pgtype.UUID{})
@@ -1043,11 +1037,7 @@ func (h *Handler) RunPromptEvaluationAsset(w http.ResponseWriter, r *http.Reques
 			func(response PromptEvaluationAssetResponse) bool { return response.ID != "" },
 		)
 	}
-	if replay, found, err := loadReplay(); err != nil {
-		writePromptEvaluationLocalRunReplayError(w, err)
-		return
-	} else if found {
-		writeJSON(w, http.StatusOK, replay)
+	if handleResourceCreateReplay(w, http.StatusOK, loadReplay, writePromptEvaluationLocalRunReplayError) {
 		return
 	}
 	asset, ok := h.loadPromptEvaluationAsset(w, r)
@@ -1162,11 +1152,7 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 			},
 		)
 	}
-	if replay, found, err := loadReplay(); err != nil {
-		writeReplayError(w, err)
-		return
-	} else if found {
-		writeJSON(w, http.StatusAccepted, replay)
+	if handleResourceCreateReplay(w, http.StatusAccepted, loadReplay, writeReplayError) {
 		return
 	}
 

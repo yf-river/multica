@@ -806,11 +806,7 @@ func (h *Handler) CreateMember(w http.ResponseWriter, r *http.Request) {
 			func(response MemberWithUserResponse) bool { return response.ID != "" },
 		)
 	}
-	if replay, found, err := loadReplay(); err != nil {
-		writeReplayError(w, err)
-		return
-	} else if found {
-		writeJSON(w, http.StatusCreated, replay)
+	if handleResourceCreateReplay(w, http.StatusCreated, loadReplay, writeReplayError) {
 		return
 	}
 

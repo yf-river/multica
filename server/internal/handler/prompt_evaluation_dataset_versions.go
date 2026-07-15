@@ -69,13 +69,7 @@ func (h *Handler) CreatePromptEvaluationDatasetFromTraces(w http.ResponseWriter,
 			func(response PromptEvaluationDatasetFromTracesResponse) bool { return response.Asset.ID != "" },
 		)
 	}
-	replay, found, replayErr := loadReplay()
-	if replayErr != nil {
-		writeReplayError(w, replayErr)
-		return
-	}
-	if found {
-		writeJSON(w, http.StatusCreated, replay)
+	if handleResourceCreateReplay(w, http.StatusCreated, loadReplay, writeReplayError) {
 		return
 	}
 	traceEvents, ok := h.promptEvaluationTraceEventsForDataset(w, r, asset.WorkspaceID, req, limit)
@@ -319,13 +313,7 @@ func (h *Handler) CreatePromptEvaluationDatasetVersion(w http.ResponseWriter, r 
 			func(response PromptEvaluationDatasetVersionResponse) bool { return response.ID != "" },
 		)
 	}
-	replay, found, replayErr := loadReplay()
-	if replayErr != nil {
-		writeReplayError(w, replayErr)
-		return
-	}
-	if found {
-		writeJSON(w, http.StatusCreated, replay)
+	if handleResourceCreateReplay(w, http.StatusCreated, loadReplay, writeReplayError) {
 		return
 	}
 	tx, err := h.TxStarter.Begin(r.Context())
@@ -586,13 +574,7 @@ func (h *Handler) RestorePromptEvaluationDatasetVersion(w http.ResponseWriter, r
 			},
 		)
 	}
-	replay, found, replayErr := loadReplay()
-	if replayErr != nil {
-		writeReplayError(w, replayErr)
-		return
-	}
-	if found {
-		writeJSON(w, http.StatusOK, replay)
+	if handleResourceCreateReplay(w, http.StatusOK, loadReplay, writeReplayError) {
 		return
 	}
 

@@ -445,13 +445,9 @@ func (h *Handler) CreatePromptLibraryItem(w http.ResponseWriter, r *http.Request
 			func(response PromptLibraryItemResponse) bool { return response.ID != "" },
 		)
 	}
-	replay, found, replayErr := loadReplay()
-	if replayErr != nil {
-		writePromptLibraryCreateReplayError(w, "prompt library item", replayErr)
-		return
-	}
-	if found {
-		writeJSON(w, http.StatusCreated, replay)
+	if handleResourceCreateReplay(w, http.StatusCreated, loadReplay, func(w http.ResponseWriter, err error) {
+		writePromptLibraryCreateReplayError(w, "prompt library item", err)
+	}) {
 		return
 	}
 	projectID, ok := h.promptLibraryProjectID(w, r, workspaceUUID, req.ProjectID, pgtype.UUID{})
@@ -642,13 +638,9 @@ func (h *Handler) CreatePromptLibraryVersion(w http.ResponseWriter, r *http.Requ
 			},
 		)
 	}
-	replay, found, replayErr := loadReplay()
-	if replayErr != nil {
-		writePromptLibraryCreateReplayError(w, "prompt library version", replayErr)
-		return
-	}
-	if found {
-		writeJSON(w, http.StatusCreated, replay)
+	if handleResourceCreateReplay(w, http.StatusCreated, loadReplay, func(w http.ResponseWriter, err error) {
+		writePromptLibraryCreateReplayError(w, "prompt library version", err)
+	}) {
 		return
 	}
 	existing, err := h.Queries.GetPromptLibraryItemInWorkspace(r.Context(), db.GetPromptLibraryItemInWorkspaceParams{
@@ -855,13 +847,7 @@ func (h *Handler) CreatePromptLibraryTrial(w http.ResponseWriter, r *http.Reques
 			func(response PromptLibraryTrialResponse) bool { return response.ID != "" },
 		)
 	}
-	replay, found, replayErr := loadReplay()
-	if replayErr != nil {
-		writeReplayError(w, replayErr)
-		return
-	}
-	if found {
-		writeJSON(w, http.StatusAccepted, replay)
+	if handleResourceCreateReplay(w, http.StatusAccepted, loadReplay, writeReplayError) {
 		return
 	}
 	if missingVariables := missingPromptLibraryTrialVariables(version.Content, req.Variables); len(missingVariables) > 0 {

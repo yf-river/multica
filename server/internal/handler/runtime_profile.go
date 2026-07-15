@@ -171,11 +171,7 @@ func (h *Handler) CreateRuntimeProfile(w http.ResponseWriter, r *http.Request) {
 			idempotencyKey, requestHash, func(response RuntimeProfileResponse) bool { return response.ID != "" },
 		)
 	}
-	if replay, found, replayErr := loadReplay(); replayErr != nil {
-		writeReplayError(w, replayErr)
-		return
-	} else if found {
-		writeJSON(w, http.StatusCreated, replay)
+	if handleResourceCreateReplay(w, http.StatusCreated, loadReplay, writeReplayError) {
 		return
 	}
 

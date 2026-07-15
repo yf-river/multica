@@ -257,11 +257,7 @@ func (h *Handler) CreateAgentPlaygroundExperiment(w http.ResponseWriter, r *http
 			func(response AgentPlaygroundDetailResponse) bool { return response.Experiment.ID != "" },
 		)
 	}
-	if replay, found, err := loadReplay(); err != nil {
-		writeReplayError(w, err)
-		return
-	} else if found {
-		writeJSON(w, http.StatusCreated, replay)
+	if handleResourceCreateReplay(w, http.StatusCreated, loadReplay, writeReplayError) {
 		return
 	}
 

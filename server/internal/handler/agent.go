@@ -857,11 +857,7 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 			func(response AgentResponse) bool { return response.ID != "" },
 		)
 	}
-	if replayed, found, err := loadReplay(); err != nil {
-		h.writeAgentCreateReplayError(w, err)
-		return
-	} else if found {
-		writeJSON(w, http.StatusCreated, replayed)
+	if handleResourceCreateReplay(w, http.StatusCreated, loadReplay, h.writeAgentCreateReplayError) {
 		return
 	}
 

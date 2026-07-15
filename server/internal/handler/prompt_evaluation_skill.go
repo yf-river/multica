@@ -481,11 +481,7 @@ func (h *Handler) ApplyPromptEvaluationSkillCandidate(w http.ResponseWriter, r *
 			func(response PromptEvaluationSkillApplyCandidateResponse) bool { return response.Candidate.ID != "" },
 		)
 	}
-	if replay, found, replayErr := loadReplay(); replayErr != nil {
-		writeReplayError(w, replayErr)
-		return
-	} else if found {
-		writeJSON(w, http.StatusOK, replay)
+	if handleResourceCreateReplay(w, http.StatusOK, loadReplay, writeReplayError) {
 		return
 	}
 	tx, err := h.TxStarter.Begin(r.Context())
@@ -605,11 +601,7 @@ func (h *Handler) PreparePromptEvaluationSkillReEvalAsset(w http.ResponseWriter,
 			func(response PromptEvaluationSkillReEvalAssetResponse) bool { return response.Asset.ID != "" },
 		)
 	}
-	if replay, found, err := loadReplay(); err != nil {
-		writeReplayError(w, err)
-		return
-	} else if found {
-		writeJSON(w, http.StatusCreated, replay)
+	if handleResourceCreateReplay(w, http.StatusCreated, loadReplay, writeReplayError) {
 		return
 	}
 	candidate, ok := loadPromptEvaluationOptimizationCandidate(w, r, h.Queries, workspaceUUID, candidateID)
@@ -826,11 +818,7 @@ func (h *Handler) RunPromptEvaluationSkillReEval(w http.ResponseWriter, r *http.
 			func(response PromptEvaluationSkillReEvalRunResponse) bool { return response.Run.ID != "" },
 		)
 	}
-	if replay, found, err := loadReplay(); err != nil {
-		writePromptEvaluationLocalRunReplayError(w, err)
-		return
-	} else if found {
-		writeJSON(w, http.StatusOK, replay)
+	if handleResourceCreateReplay(w, http.StatusOK, loadReplay, writePromptEvaluationLocalRunReplayError) {
 		return
 	}
 	candidate, ok := loadPromptEvaluationOptimizationCandidate(w, r, h.Queries, workspaceUUID, candidateID)
