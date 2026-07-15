@@ -1924,6 +1924,59 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 	}
 }
 
+func createPromptEvaluationAgentAssetFixture(t *testing.T, assetName, caseName, expected string, dimensions []string) PromptEvaluationAssetResponse {
+	t.Helper()
+	promptID := createPromptEvaluationTestPromptWithContent(t, testWorkspaceID, assetName+"提示词", "请评估 {{issue_title}}。", `[]`)
+	payload := map[string]any{
+		"cases": []map[string]any{{
+			"case_name":         caseName,
+			"variables":         map[string]any{"issue_title": caseName},
+			"expected_contains": []string{expected},
+		}},
+	}
+	if dimensions != nil {
+		payload["experiment_dimensions"] = dimensions
+	}
+	w := httptest.NewRecorder()
+	testHandler.CreatePromptEvaluationAsset(w, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
+		"prompt_id":  promptID,
+		"name":       assetName,
+		"asset_type": "测试套件",
+		"payload":    payload,
+	}))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var asset PromptEvaluationAssetResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &asset); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	return asset
+}
+
+func readPromptEvaluationRuntimeReadiness(t *testing.T, req *http.Request) PromptEvaluationRuntimeReadinessResponse {
+	t.Helper()
+	w := httptest.NewRecorder()
+	testHandler.GetPromptEvaluationRuntimeReadiness(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("readiness status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var readiness PromptEvaluationRuntimeReadinessResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &readiness); err != nil {
+		t.Fatalf("decode readiness response: %v", err)
+	}
+	return readiness
+}
+
+func assertPromptEvaluationAgentRunUnavailable(t *testing.T, assetID, detail string) {
+	t.Helper()
+	w := httptest.NewRecorder()
+	testHandler.RunPromptEvaluationAssetAgent(w, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+assetID+"/agent-run", nil), "id", assetID))
+	if w.Code != http.StatusServiceUnavailable || !strings.Contains(w.Body.String(), detail) {
+		t.Fatalf("agent run availability status = %d, body = %s; want 503 containing %q", w.Code, w.Body.String(), detail)
+	}
+}
+
 func TestRunPromptEvaluationAssetAgentRestoresArchivedTrainingAgent(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("handler test fixture not initialized")
@@ -1962,23 +2015,7 @@ func TestRunPromptEvaluationAssetAgentRestoresArchivedTrainingAgent(t *testing.T
 		t.Fatalf("archive training agent fixture: %v", err)
 	}
 
-	promptID := createPromptEvaluationTestPromptWithContent(t, testWorkspaceID, "恢复归档训练智能体提示词", "请评估 {{issue_title}}。", `[]`)
-	createW := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
-		"prompt_id":  promptID,
-		"name":       "恢复归档训练智能体实验",
-		"asset_type": "测试套件",
-		"payload": map[string]any{
-			"cases": []map[string]any{{"case_name": "恢复归档", "variables": map[string]any{"issue_title": "恢复归档"}, "expected_contains": []string{"恢复"}}},
-		},
-	}))
-	if createW.Code != http.StatusCreated {
-		t.Fatalf("create status = %d, body = %s", createW.Code, createW.Body.String())
-	}
-	var created PromptEvaluationAssetResponse
-	if err := json.Unmarshal(createW.Body.Bytes(), &created); err != nil {
-		t.Fatalf("decode create response: %v", err)
-	}
+	created := createPromptEvaluationAgentAssetFixture(t, "恢复归档训练智能体实验", "恢复归档", "恢复", nil)
 
 	runW := httptest.NewRecorder()
 	testHandler.RunPromptEvaluationAssetAgent(runW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+created.ID+"/agent-run", nil), "id", created.ID))
@@ -2027,42 +2064,13 @@ func TestPromptEvaluationRuntimeReadinessRejectsStaleRuntime(t *testing.T) {
 		t.Fatalf("create stale codex runtime: %v", err)
 	}
 
-	readinessW := httptest.NewRecorder()
-	testHandler.GetPromptEvaluationRuntimeReadiness(readinessW, newRequest(http.MethodGet, "/api/prompt-evaluation-runtime-readiness", nil))
-	if readinessW.Code != http.StatusOK {
-		t.Fatalf("readiness status = %d, body = %s", readinessW.Code, readinessW.Body.String())
-	}
-	var readiness PromptEvaluationRuntimeReadinessResponse
-	if err := json.Unmarshal(readinessW.Body.Bytes(), &readiness); err != nil {
-		t.Fatalf("decode readiness response: %v", err)
-	}
+	readiness := readPromptEvaluationRuntimeReadiness(t, newRequest(http.MethodGet, "/api/prompt-evaluation-runtime-readiness", nil))
 	if readiness.Status != "过期" || readiness.LastSeenAgeSeconds < 120 || readiness.Runtime == nil {
 		t.Fatalf("readiness = %+v", readiness)
 	}
 
-	promptID := createPromptEvaluationTestPromptWithContent(t, testWorkspaceID, "过期 runtime 提示词", "请评估 {{issue_title}}。", `[]`)
-	createW := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
-		"prompt_id":  promptID,
-		"name":       "过期 runtime Agent 实验",
-		"asset_type": "测试套件",
-		"payload": map[string]any{
-			"cases": []map[string]any{{"case_name": "过期 runtime", "variables": map[string]any{"issue_title": "过期 runtime"}, "expected_contains": []string{"过期"}}},
-		},
-	}))
-	if createW.Code != http.StatusCreated {
-		t.Fatalf("create status = %d, body = %s", createW.Code, createW.Body.String())
-	}
-	var created PromptEvaluationAssetResponse
-	if err := json.Unmarshal(createW.Body.Bytes(), &created); err != nil {
-		t.Fatalf("decode create response: %v", err)
-	}
-
-	runW := httptest.NewRecorder()
-	testHandler.RunPromptEvaluationAssetAgent(runW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+created.ID+"/agent-run", nil), "id", created.ID))
-	if runW.Code != http.StatusServiceUnavailable || !strings.Contains(runW.Body.String(), "last_seen_at") {
-		t.Fatalf("agent run with stale runtime status = %d, body = %s", runW.Code, runW.Body.String())
-	}
+	created := createPromptEvaluationAgentAssetFixture(t, "过期 runtime Agent 实验", "过期 runtime", "过期", nil)
+	assertPromptEvaluationAgentRunUnavailable(t, created.ID, "last_seen_at")
 }
 
 func TestPromptEvaluationRuntimeReadinessReportsRecentCapacityFailure(t *testing.T) {
@@ -2088,42 +2096,13 @@ func TestPromptEvaluationRuntimeReadinessReportsRecentCapacityFailure(t *testing
 		t.Fatalf("project failed prompt evaluation task: %v", err)
 	}
 
-	readinessW := httptest.NewRecorder()
-	testHandler.GetPromptEvaluationRuntimeReadiness(readinessW, newRequest(http.MethodGet, "/api/prompt-evaluation-runtime-readiness", nil))
-	if readinessW.Code != http.StatusOK {
-		t.Fatalf("readiness status = %d, body = %s", readinessW.Code, readinessW.Body.String())
-	}
-	var readiness PromptEvaluationRuntimeReadinessResponse
-	if err := json.Unmarshal(readinessW.Body.Bytes(), &readiness); err != nil {
-		t.Fatalf("decode readiness response: %v", err)
-	}
+	readiness := readPromptEvaluationRuntimeReadiness(t, newRequest(http.MethodGet, "/api/prompt-evaluation-runtime-readiness", nil))
 	if readiness.Status != "容量受限" || readiness.Runtime == nil || !strings.Contains(readiness.Detail, "429 当前无可用Token额度") {
 		t.Fatalf("capacity readiness = %+v", readiness)
 	}
 
-	promptID := createPromptEvaluationTestPromptWithContent(t, testWorkspaceID, "容量受限提示词", "请评估 {{issue_title}}。", `[]`)
-	createW := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
-		"prompt_id":  promptID,
-		"name":       "容量受限 Agent 实验",
-		"asset_type": "测试套件",
-		"payload": map[string]any{
-			"cases": []map[string]any{{"case_name": "容量受限", "variables": map[string]any{"issue_title": "容量受限"}, "expected_contains": []string{"容量"}}},
-		},
-	}))
-	if createW.Code != http.StatusCreated {
-		t.Fatalf("create status = %d, body = %s", createW.Code, createW.Body.String())
-	}
-	var created PromptEvaluationAssetResponse
-	if err := json.Unmarshal(createW.Body.Bytes(), &created); err != nil {
-		t.Fatalf("decode create response: %v", err)
-	}
-
-	runW := httptest.NewRecorder()
-	testHandler.RunPromptEvaluationAssetAgent(runW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+created.ID+"/agent-run", nil), "id", created.ID))
-	if runW.Code != http.StatusServiceUnavailable || !strings.Contains(runW.Body.String(), "429") {
-		t.Fatalf("agent run with capacity-limited runtime status = %d, body = %s", runW.Code, runW.Body.String())
-	}
+	created := createPromptEvaluationAgentAssetFixture(t, "容量受限 Agent 实验", "容量受限", "容量", nil)
+	assertPromptEvaluationAgentRunUnavailable(t, created.ID, "429")
 }
 
 func TestPromptEvaluationRuntimeReadinessReportsUnavailableStates(t *testing.T) {
@@ -2135,15 +2114,7 @@ func TestPromptEvaluationRuntimeReadinessReportsUnavailableStates(t *testing.T) 
 		t.Fatalf("cleanup codebuddy runtime: %v", err)
 	}
 
-	readinessW := httptest.NewRecorder()
-	testHandler.GetPromptEvaluationRuntimeReadiness(readinessW, newRequest(http.MethodGet, "/api/prompt-evaluation-runtime-readiness", nil))
-	if readinessW.Code != http.StatusOK {
-		t.Fatalf("missing readiness status = %d, body = %s", readinessW.Code, readinessW.Body.String())
-	}
-	var missing PromptEvaluationRuntimeReadinessResponse
-	if err := json.Unmarshal(readinessW.Body.Bytes(), &missing); err != nil {
-		t.Fatalf("decode missing readiness response: %v", err)
-	}
+	missing := readPromptEvaluationRuntimeReadiness(t, newRequest(http.MethodGet, "/api/prompt-evaluation-runtime-readiness", nil))
 	if missing.Status != "缺失" || !strings.Contains(missing.Fix, "启动 multica 守护进程") || missing.Runtime != nil {
 		t.Fatalf("missing readiness = %+v", missing)
 	}
@@ -2157,41 +2128,13 @@ func TestPromptEvaluationRuntimeReadinessReportsUnavailableStates(t *testing.T) 
 		t.Fatalf("create offline codex runtime: %v", err)
 	}
 
-	offlineW := httptest.NewRecorder()
-	testHandler.GetPromptEvaluationRuntimeReadiness(offlineW, newRequest(http.MethodGet, "/api/prompt-evaluation-runtime-readiness", nil))
-	if offlineW.Code != http.StatusOK {
-		t.Fatalf("offline readiness status = %d, body = %s", offlineW.Code, offlineW.Body.String())
-	}
-	var offline PromptEvaluationRuntimeReadinessResponse
-	if err := json.Unmarshal(offlineW.Body.Bytes(), &offline); err != nil {
-		t.Fatalf("decode offline readiness response: %v", err)
-	}
+	offline := readPromptEvaluationRuntimeReadiness(t, newRequest(http.MethodGet, "/api/prompt-evaluation-runtime-readiness", nil))
 	if offline.Status != "离线" || offline.Runtime == nil || offline.Runtime.ID != offlineRuntimeID || !strings.Contains(offline.Fix, "启动 multica daemon") {
 		t.Fatalf("offline readiness = %+v", offline)
 	}
 
-	promptID := createPromptEvaluationTestPromptWithContent(t, testWorkspaceID, "离线 runtime 提示词", "请评估 {{issue_title}}。", `[]`)
-	createW := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
-		"prompt_id":  promptID,
-		"name":       "离线 runtime Agent 实验",
-		"asset_type": "测试套件",
-		"payload": map[string]any{
-			"cases": []map[string]any{{"case_name": "离线 runtime", "variables": map[string]any{"issue_title": "离线 runtime"}, "expected_contains": []string{"离线"}}},
-		},
-	}))
-	if createW.Code != http.StatusCreated {
-		t.Fatalf("create status = %d, body = %s", createW.Code, createW.Body.String())
-	}
-	var created PromptEvaluationAssetResponse
-	if err := json.Unmarshal(createW.Body.Bytes(), &created); err != nil {
-		t.Fatalf("decode create response: %v", err)
-	}
-	runW := httptest.NewRecorder()
-	testHandler.RunPromptEvaluationAssetAgent(runW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+created.ID+"/agent-run", nil), "id", created.ID))
-	if runW.Code != http.StatusServiceUnavailable || !strings.Contains(runW.Body.String(), "启动 multica daemon") {
-		t.Fatalf("agent run with offline runtime status = %d, body = %s", runW.Code, runW.Body.String())
-	}
+	created := createPromptEvaluationAgentAssetFixture(t, "离线 runtime Agent 实验", "离线 runtime", "离线", nil)
+	assertPromptEvaluationAgentRunUnavailable(t, created.ID, "启动 multica daemon")
 
 	if _, err := testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, offlineRuntimeID); err != nil {
 		t.Fatalf("delete offline runtime: %v", err)
@@ -2231,15 +2174,7 @@ func TestPromptEvaluationRuntimeReadinessReportsUnavailableStates(t *testing.T) 
 		t.Fatalf("create private codex runtime: %v", err)
 	}
 
-	noPermissionW := httptest.NewRecorder()
-	testHandler.GetPromptEvaluationRuntimeReadiness(noPermissionW, newRequestAs(plainMemberID, http.MethodGet, "/api/prompt-evaluation-runtime-readiness", nil))
-	if noPermissionW.Code != http.StatusOK {
-		t.Fatalf("no permission readiness status = %d, body = %s", noPermissionW.Code, noPermissionW.Body.String())
-	}
-	var noPermission PromptEvaluationRuntimeReadinessResponse
-	if err := json.Unmarshal(noPermissionW.Body.Bytes(), &noPermission); err != nil {
-		t.Fatalf("decode no permission readiness response: %v", err)
-	}
+	noPermission := readPromptEvaluationRuntimeReadiness(t, newRequestAs(plainMemberID, http.MethodGet, "/api/prompt-evaluation-runtime-readiness", nil))
 	if noPermission.Status != "无权限" || !strings.Contains(noPermission.Fix, "运行时所有者") || noPermission.Runtime != nil {
 		t.Fatalf("no permission readiness = %+v", noPermission)
 	}
@@ -3141,31 +3076,7 @@ func createPromptEvaluationAgentRunAssetFixture(t *testing.T, assetName string, 
 		t.Fatalf("create codebuddy runtime: %v", err)
 	}
 
-	promptID := createPromptEvaluationTestPromptWithContent(
-		t,
-		testWorkspaceID,
-		assetName+"提示词",
-		"请评估 {{issue_title}}。",
-		`[]`,
-	)
-	createW := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
-		"prompt_id":  promptID,
-		"name":       assetName,
-		"asset_type": "测试套件",
-		"payload": map[string]any{
-			"experiment_dimensions": []string{"命中率", "缺失变量", "中文一致性"},
-			"cases":                 []map[string]any{{"case_name": caseName, "variables": map[string]any{"issue_title": caseName}, "expected_contains": []string{caseName}}},
-		},
-	}))
-	if createW.Code != http.StatusCreated {
-		t.Fatalf("create status = %d, body = %s", createW.Code, createW.Body.String())
-	}
-	var created PromptEvaluationAssetResponse
-	if err := json.Unmarshal(createW.Body.Bytes(), &created); err != nil {
-		t.Fatalf("decode create response: %v", err)
-	}
-	return created, runtimeID
+	return createPromptEvaluationAgentAssetFixture(t, assetName, caseName, caseName, []string{"命中率", "缺失变量", "中文一致性"}), runtimeID
 }
 
 func TestPromptEvaluationOptimizationCandidatePublishKeepsSourcePrompt(t *testing.T) {
