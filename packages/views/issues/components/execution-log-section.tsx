@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ChevronRight, Loader2, Square } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
+import { isActiveAgentTaskStatus } from "@multica/core/agents";
 import { issueKeys, issueExecutionTreeOptions, issueTaskTraceOptions, issueSOPRunsOptions } from "@multica/core/issues/queries";
 import { useWorkspacePaths } from "@multica/core/paths";
 import type { AgentTask, IssueExecutionTreeResponse, TaskTraceEvent } from "@multica/core/types";
@@ -78,14 +79,7 @@ export function ExecutionLogSection({ issueId }: ExecutionLogSectionProps) {
   );
 
   const activeTasks = useMemo(
-    () =>
-      tasks.filter(
-        (t) =>
-          t.status === "queued" ||
-          t.status === "dispatched" ||
-          // Daemon-parked task on a busy local_directory — still active
-          t.status === "running",
-      ),
+    () => tasks.filter((task) => isActiveAgentTaskStatus(task.status)),
     [tasks],
   );
 
@@ -406,7 +400,9 @@ function buildExecutionSummary(
     if (event.agent_id) agentIds.add(event.agent_id);
   });
 
-  const activeTasks = tasks.filter((task) => isActiveStatus(task.status)).length;
+  const activeTasks = tasks.filter(
+    (task) => isActiveAgentTaskStatus(task.status),
+  ).length;
   const firstClaimedAt = earliest(
     tasks.map((task) => task.dispatched_at),
     traceEvents
@@ -516,14 +512,6 @@ const MACRO_TRACE_EVENT_TYPES = new Set([
   "task.cancelled",
   "user_input.received",
 ]);
-
-function isActiveStatus(status: AgentTask["status"]): boolean {
-  return (
-    status === "queued" ||
-    status === "dispatched" ||
-    status === "running"
-  );
-}
 
 function terminalTaskEventType(status: AgentTask["status"]): string {
   if (status === "failed") return "task.failed";

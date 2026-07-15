@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { isActiveAgentTaskStatus } from "@multica/core/agents";
 import type { AgentTask, IssueTimelineNode, IssueTimelineSummary } from "@multica/core/types";
 import type {
   TaskLifecyclePayload,
@@ -104,7 +105,7 @@ export function hasActiveTimelineNode(timelineNodes: IssueTimelineNode[]) {
 }
 
 export function isActiveTimelineNode(node: Pick<IssueTimelineNode, "status" | "started_at" | "completed_at">) {
-  return isActiveStatus(node.status) && Boolean(node.started_at) && !node.completed_at;
+  return isActiveAgentTaskStatus(node.status) && Boolean(node.started_at) && !node.completed_at;
 }
 
 export function shouldRefreshRunReviewForTaskEvent(
@@ -126,14 +127,8 @@ export function runReviewMessageRefreshDelayMs(
   return Math.min(debounceMs, maxWaitMs - elapsedMs);
 }
 
-export function isActiveStatus(status: string | undefined) {
-  return status === "queued" ||
-    status === "dispatched" ||
-    status === "running";
-}
-
 export function isActiveTask(task: AgentTask) {
-  return isActiveStatus(task.status);
+  return isActiveAgentTaskStatus(task.status);
 }
 
 export function isRetryableTask(task: AgentTask) {

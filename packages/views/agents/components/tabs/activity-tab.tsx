@@ -32,6 +32,7 @@ import {
   type AgentActivity,
   agentTaskSnapshotOptions,
   agentTasksOptions,
+  isActiveAgentTaskStatus,
   summarizeActivityWindow,
   useWorkspaceActivityMap,
 } from "@multica/core/agents";
@@ -102,9 +103,7 @@ export function ActivityTab({ agent }: ActivityTabProps) {
       (t) =>
         t.agent_id === agent.id &&
         isWorkflowTask(t) &&
-        (t.status === "running" ||
-          t.status === "queued" ||
-          t.status === "dispatched"),
+        isActiveAgentTaskStatus(t.status),
     );
   }, [snapshot, agent.id]);
 
@@ -382,9 +381,7 @@ function TaskRow({
   // (completed / failed / cancelled) hide the button entirely.
   const showCancel =
     timeMode === "active" &&
-    (task.status === "queued" ||
-      task.status === "dispatched" ||
-      task.status === "running");
+    isActiveAgentTaskStatus(task.status);
 
   const handleCancel = async () => {
     if (cancelling) return;

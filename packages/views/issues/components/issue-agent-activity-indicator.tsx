@@ -8,7 +8,10 @@ import {
   HoverCardContent,
 } from "@multica/ui/components/ui/hover-card";
 import { useWorkspaceId } from "@multica/core/paths";
-import { agentTaskSnapshotOptions } from "@multica/core/agents";
+import {
+  agentTaskSnapshotOptions,
+  partitionActiveAgentTasks,
+} from "@multica/core/agents";
 import type { AgentTask, Issue } from "@multica/core/types";
 import { cn } from "@multica/ui/lib/utils";
 import { AgentAvatarStack } from "../../agents/components/agent-avatar-stack";
@@ -72,16 +75,10 @@ export const IssueAgentActivityIndicator = memo(function IssueAgentActivityIndic
         opacity: (running > 0 ? "full" : queued > 0 ? "half" : "none") as "full" | "half" | "none",
       };
     }
-    const running: AgentTask[] = [];
-    const queued: AgentTask[] = [];
-    for (const task of snapshot) {
-      if (task.issue_id !== issueId) continue;
-      if (task.status === "running") running.push(task);
-      else if (task.status === "queued" || task.status === "dispatched")
-        queued.push(task);
-      // Terminal statuses are intentionally ignored — they belong on the
-      // issue history, not the live indicator.
-    }
+    const { running, queued } = partitionActiveAgentTasks(
+      snapshot,
+      (task) => task.issue_id === issueId,
+    );
     // Stack heads: prefer running. If 0 running, fall back to queued.
     // Each case is visually distinct (running gets shimmer, queued gets
     // muted text) so the indicator always offers a face to hover.
@@ -97,15 +94,10 @@ export const IssueAgentActivityIndicator = memo(function IssueAgentActivityIndic
 
   const hoverTasks = useMemo(() => {
     if (!hasSummary) return [...runningTasks, ...queuedTasks];
-    const running: AgentTask[] = [];
-    const queued: AgentTask[] = [];
-    for (const task of snapshot) {
-      if (task.issue_id !== issueId) continue;
-      if (task.status === "running") running.push(task);
-      else if (task.status === "queued" || task.status === "dispatched") {
-        queued.push(task);
-      }
-    }
+    const { running, queued } = partitionActiveAgentTasks(
+      snapshot,
+      (task) => task.issue_id === issueId,
+    );
     return [...running, ...queued];
   }, [hasSummary, issueId, queuedTasks, runningTasks, snapshot]);
 

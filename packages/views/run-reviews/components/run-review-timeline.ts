@@ -1,6 +1,7 @@
 import type { AgentTaskArtifact, IssueExecutionTreeResponse, IssueTimelineNode } from "@multica/core/types";
+import { isActiveAgentTaskStatus } from "@multica/core/agents";
 import { SOP_STAGE_DEFINITIONS, normalizeSopStageName, sopStageDisplayName } from "../../common/sop-stage-labels";
-import { isActiveStatus, isActiveTimelineNode } from "./run-review-live";
+import { isActiveTimelineNode } from "./run-review-live";
 import { formatDateTime, formatDuration, formatNumber, parseTimeMs, statusLabel } from "./run-review-format";
 
 const STAGES = SOP_STAGE_DEFINITIONS;
@@ -367,7 +368,7 @@ function mergeTimelineNode(left: IssueTimelineNode, right: IssueTimelineNode): I
 
 function mergeNodeStatus(left: string, right: string) {
   if (left === "failed" || right === "failed" || left === "blocked" || right === "blocked") return "failed";
-  if (isActiveStatus(left) || isActiveStatus(right)) return "running";
+  if (isActiveAgentTaskStatus(left) || isActiveAgentTaskStatus(right)) return "running";
   if (left === "completed" && right === "completed") return "completed";
   return right || left;
 }

@@ -50,22 +50,38 @@ interface WorkloadDetail {
   queuedCount: number;
 }
 
+export function agentTaskWorkloadKind(
+  status: string | undefined,
+): "running" | "queued" | null {
+  if (status === "running") return "running";
+  if (status === "queued" || status === "dispatched") return "queued";
+  return null;
+}
+
+export function isActiveAgentTaskStatus(status: string | undefined): boolean {
+  return agentTaskWorkloadKind(status) !== null;
+}
+
+export function partitionActiveAgentTasks(
+  tasks: readonly AgentTask[],
+  include: (task: AgentTask) => boolean = () => true,
+): { running: AgentTask[]; queued: AgentTask[] } {
+  const running: AgentTask[] = [];
+  const queued: AgentTask[] = [];
+  for (const task of tasks) {
+    if (!include(task)) continue;
+    const kind = agentTaskWorkloadKind(task.status);
+    if (kind === "running") running.push(task);
+    else if (kind === "queued") queued.push(task);
+  }
+  return { running, queued };
+}
+
 // Caller pre-filters tasks to the relevant agent scope.
 function deriveWorkloadDetail(tasks: readonly AgentTask[]): WorkloadDetail {
-  let runningCount = 0;
-  let queuedCount = 0;
-  for (const t of tasks) {
-    if (t.status === "running") {
-      runningCount += 1;
-    } else if (
-      t.status === "queued" ||
-      t.status === "dispatched"
-    ) {
-      queuedCount += 1;
-    }
-    // Terminal statuses (completed / failed / cancelled) intentionally
-    // ignored — workload is "what's on the plate right now", not history.
-  }
+  const { running, queued } = partitionActiveAgentTasks(tasks);
+  const runningCount = running.length;
+  const queuedCount = queued.length;
   return {
     workload: deriveWorkload({ runningCount, queuedCount }),
     runningCount,

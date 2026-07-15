@@ -21,7 +21,10 @@ import {
   agentListOptions,
   memberListOptions,
 } from "@multica/core/workspace/queries";
-import { agentTaskSnapshotOptions } from "@multica/core/agents";
+import {
+  agentTaskSnapshotOptions,
+  agentTaskWorkloadKind,
+} from "@multica/core/agents";
 import {
   deriveRuntimeHealth,
   runtimeUsageOptions,
@@ -161,9 +164,9 @@ export function buildWorkloadIndex(
     if (!rid) continue;
     const entry = result.get(rid);
     if (!entry) continue;
-    if (t.status === "running") entry.runningCount += 1;
-    else if (t.status === "queued" || t.status === "dispatched")
-      entry.queuedCount += 1;
+    const kind = agentTaskWorkloadKind(t.status);
+    if (kind === "running") entry.runningCount += 1;
+    else if (kind === "queued") entry.queuedCount += 1;
   }
   return result;
 }
