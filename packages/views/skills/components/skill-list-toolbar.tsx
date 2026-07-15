@@ -168,11 +168,6 @@ export function SkillListToolbar({
       <ToolbarFilterDropdown
         hasActiveFilters={hasActiveFilters}
         activeCount={activeCount}
-        activeLabel={t(($) => $.toolbar.filter_active_count, {
-          count: activeCount,
-        })}
-        filterLabel={t(($) => $.toolbar.filter_label)}
-        clearLabel={t(($) => $.toolbar.clear_filters)}
         onClearFilters={onClearFilters}
       >
         {/* Usage */}
@@ -288,10 +283,6 @@ export function SkillListToolbar({
         columnLabels={COLUMN_LABELS}
         hiddenColumns={hiddenColumns}
         onToggleColumn={onToggleColumn}
-        displayLabel={t(($) => $.toolbar.display)}
-        sortByLabel={t(($) => $.toolbar.sort_by)}
-        directionAscLabel={t(($) => $.toolbar.direction_asc)}
-        directionDescLabel={t(($) => $.toolbar.direction_desc)}
         columnsLabel={t(($) => $.toolbar.section_columns)}
       />
     </ToolbarFrame>

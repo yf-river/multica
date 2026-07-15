@@ -762,6 +762,7 @@ function ProjectBatchToolbar({
 
 export function ProjectsPage() {
   const { t } = useT("projects");
+  const { t: tCommon } = useT("common");
   const wsId = useWorkspaceId();
   const wsPaths = useWorkspacePaths();
   const rowLink = useRowLink();
@@ -978,18 +979,18 @@ export function ProjectsPage() {
                       {hasActiveFilters ? (
                         <>
                           <span className="hidden md:inline">
-                            {t(($) => $.toolbar.filter_active_count, { count: activeFilterCount })}
+                            {tCommon(($) => $.list_toolbar.filter_active_count, { count: activeFilterCount })}
                           </span>
                           <span className="tabular-nums md:hidden">{activeFilterCount}</span>
                         </>
                       ) : (
-                        <span className="hidden md:inline">{t(($) => $.toolbar.filter_label)}</span>
+                        <span className="hidden md:inline">{tCommon(($) => $.list_toolbar.filter_label)}</span>
                       )}
                       {hasActiveFilters && (
                         <span
                           role="button"
                           tabIndex={-1}
-                          aria-label={t(($) => $.toolbar.clear_filters)}
+                          aria-label={tCommon(($) => $.list_toolbar.clear_filters)}
                           className="-mr-1 ml-0.5 hidden rounded-sm p-0.5 hover:bg-white/20 md:inline-flex"
                           onClick={(e) => {
                             e.preventDefault();
@@ -1091,11 +1092,11 @@ export function ProjectsPage() {
                         />
                       }
                     />
-                    <TooltipContent side="bottom">{t(($) => $.toolbar.display)}</TooltipContent>
+                    <TooltipContent side="bottom">{tCommon(($) => $.list_toolbar.display)}</TooltipContent>
                   </Tooltip>
                   <PopoverContent align="end" className="w-64 p-0">
                     <div className="border-b px-3 py-2.5">
-                      <span className="text-xs font-medium text-muted-foreground">{t(($) => $.toolbar.sort_by)}</span>
+                      <span className="text-xs font-medium text-muted-foreground">{tCommon(($) => $.list_toolbar.sort_by)}</span>
                       <div className="mt-2 flex items-center gap-1.5">
                         <DropdownMenu>
                           <DropdownMenuTrigger
@@ -1123,7 +1124,7 @@ export function ProjectsPage() {
                           variant="outline"
                           size="icon-sm"
                           onClick={() => setSortDirection(sortDirection === "asc" ? "desc" : "asc")}
-                          title={sortDirection === "asc" ? t(($) => $.toolbar.direction_asc) : t(($) => $.toolbar.direction_desc)}
+                          title={sortDirection === "asc" ? tCommon(($) => $.list_toolbar.direction_asc) : tCommon(($) => $.list_toolbar.direction_desc)}
                         >
                           {sortDirection === "asc" ? <ArrowUp className="size-3.5" /> : <ArrowDown className="size-3.5" />}
                         </Button>

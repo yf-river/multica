@@ -557,6 +557,7 @@ function SquadListToolbar({
   onToggleColumn: (key: SquadColumnKey) => void;
 }) {
   const { t } = useT("squads");
+  const { t: tCommon } = useT("common");
   const activeFilterCount =
     (filters.leaders.length > 0 ? 1 : 0) +
     (filters.creators.length > 0 ? 1 : 0);
@@ -662,18 +663,18 @@ function SquadListToolbar({
               {hasActiveFilters ? (
                 <>
                   <span className="hidden md:inline">
-                    {t(($) => $.toolbar.filter_active_count, { count: activeFilterCount })}
+                    {tCommon(($) => $.list_toolbar.filter_active_count, { count: activeFilterCount })}
                   </span>
                   <span className="tabular-nums md:hidden">{activeFilterCount}</span>
                 </>
               ) : (
-                <span className="hidden md:inline">{t(($) => $.toolbar.filter_label)}</span>
+                <span className="hidden md:inline">{tCommon(($) => $.list_toolbar.filter_label)}</span>
               )}
               {hasActiveFilters && (
                 <span
                   role="button"
                   tabIndex={-1}
-                  aria-label={t(($) => $.toolbar.clear_filters)}
+                  aria-label={tCommon(($) => $.list_toolbar.clear_filters)}
                   className="-mr-1 ml-0.5 hidden rounded-sm p-0.5 hover:bg-white/20 md:inline-flex"
                   onClick={(e) => {
                     e.preventDefault();
@@ -762,13 +763,13 @@ function SquadListToolbar({
             }
           />
           <TooltipContent side="bottom">
-            {t(($) => $.toolbar.display)}
+            {tCommon(($) => $.list_toolbar.display)}
           </TooltipContent>
         </Tooltip>
         <PopoverContent align="end" className="w-64 p-0">
           <div className="border-b px-3 py-2.5">
             <span className="text-xs font-medium text-muted-foreground">
-              {t(($) => $.toolbar.sort_by)}
+              {tCommon(($) => $.list_toolbar.sort_by)}
             </span>
             <div className="mt-2 flex items-center gap-1.5">
               <DropdownMenu>
@@ -809,8 +810,8 @@ function SquadListToolbar({
                 }
                 title={
                   sortDirection === "asc"
-                    ? t(($) => $.toolbar.direction_asc)
-                    : t(($) => $.toolbar.direction_desc)
+                    ? tCommon(($) => $.list_toolbar.direction_asc)
+                    : tCommon(($) => $.list_toolbar.direction_desc)
                 }
               >
                 {sortDirection === "asc" ? (

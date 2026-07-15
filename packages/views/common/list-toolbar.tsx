@@ -24,6 +24,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@multica/ui/components/ui/tooltip";
+import { useT } from "../i18n";
 
 type SortDirection = "asc" | "desc";
 
@@ -178,20 +179,16 @@ function ToolbarFilterButton({
 export function ToolbarFilterDropdown({
   hasActiveFilters,
   activeCount,
-  activeLabel,
-  filterLabel,
-  clearLabel,
   onClearFilters,
   children,
 }: {
   hasActiveFilters: boolean;
   activeCount: number;
-  activeLabel: ReactNode;
-  filterLabel: ReactNode;
-  clearLabel: string;
   onClearFilters: () => void;
   children: ReactNode;
 }) {
+  const { t } = useT("common");
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -199,9 +196,11 @@ export function ToolbarFilterDropdown({
           <ToolbarFilterButton
             hasActiveFilters={hasActiveFilters}
             activeCount={activeCount}
-            activeLabel={activeLabel}
-            filterLabel={filterLabel}
-            clearLabel={clearLabel}
+            activeLabel={t(($) => $.list_toolbar.filter_active_count, {
+              count: activeCount,
+            })}
+            filterLabel={t(($) => $.list_toolbar.filter_label)}
+            clearLabel={t(($) => $.list_toolbar.clear_filters)}
             onClearFilters={onClearFilters}
           />
         }
@@ -324,10 +323,6 @@ export function ToolbarDisplaySettings<
   columnLabels,
   hiddenColumns,
   onToggleColumn,
-  displayLabel,
-  sortByLabel,
-  directionAscLabel,
-  directionDescLabel,
   columnsLabel,
 }: {
   sortField: TSortField;
@@ -340,12 +335,9 @@ export function ToolbarDisplaySettings<
   columnLabels: Record<TColumnKey, string>;
   hiddenColumns: readonly TColumnKey[];
   onToggleColumn: (key: TColumnKey) => void;
-  displayLabel: string;
-  sortByLabel: string;
-  directionAscLabel: string;
-  directionDescLabel: string;
   columnsLabel: string;
 }) {
+  const { t } = useT("common");
   const sortLabel = sortLabels[sortField];
 
   return (
@@ -371,12 +363,14 @@ export function ToolbarDisplaySettings<
             />
           }
         />
-        <TooltipContent side="bottom">{displayLabel}</TooltipContent>
+        <TooltipContent side="bottom">
+          {t(($) => $.list_toolbar.display)}
+        </TooltipContent>
       </Tooltip>
       <PopoverContent align="end" className="w-64 p-0">
         <div className="border-b px-3 py-2.5">
           <span className="text-xs font-medium text-muted-foreground">
-            {sortByLabel}
+            {t(($) => $.list_toolbar.sort_by)}
           </span>
           <div className="mt-2 flex items-center gap-1.5">
             <DropdownMenu>
@@ -414,7 +408,9 @@ export function ToolbarDisplaySettings<
                 onSortDirectionChange(sortDirection === "asc" ? "desc" : "asc")
               }
               title={
-                sortDirection === "asc" ? directionAscLabel : directionDescLabel
+                sortDirection === "asc"
+                  ? t(($) => $.list_toolbar.direction_asc)
+                  : t(($) => $.list_toolbar.direction_desc)
               }
             >
               {sortDirection === "asc" ? (

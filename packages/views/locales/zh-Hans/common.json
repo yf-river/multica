@@ -4,6 +4,16 @@
   "delete": "删除",
   "confirm": "确认",
   "loading": "加载中...",
+  "list_toolbar": {
+    "filter_label": "筛选",
+    "filter_active_count_one": "{{count}} 项筛选",
+    "filter_active_count_other": "{{count}} 项筛选",
+    "clear_filters": "清除筛选",
+    "display": "显示",
+    "sort_by": "排序",
+    "direction_asc": "升序",
+    "direction_desc": "降序"
+  },
   "time": {
     "just_now": "刚刚",
     "minutes_ago": "{{count}} 分钟前",
