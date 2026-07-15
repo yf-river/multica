@@ -417,6 +417,41 @@ func assertDaemonGCCheckStatus(
 	return w
 }
 
+func claimWorkspaceContextTask(t *testing.T, runtimeID, daemonID string) (taskID, workspaceContext string) {
+	t.Helper()
+	w := httptest.NewRecorder()
+	req := newDaemonUserRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/tasks/claim", nil, testWorkspaceID, daemonID)
+	req = withURLParam(req, "runtimeId", runtimeID)
+	testHandler.ClaimTaskByRuntime(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ClaimTaskByRuntime: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Task *struct {
+			ID               string `json:"id"`
+			WorkspaceContext string `json:"workspace_context"`
+		} `json:"task"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode claim response: %v", err)
+	}
+	if resp.Task == nil {
+		t.Fatalf("expected a claimed task, got nil: %s", w.Body.String())
+	}
+	return resp.Task.ID, resp.Task.WorkspaceContext
+}
+
+func assertDaemonGCStatusOnlyResponse(t *testing.T, w *httptest.ResponseRecorder, want string) {
+	t.Helper()
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp["status"] != want || len(resp) != 1 {
+		t.Fatalf("gc-check response = %#v, want status %q only", resp, want)
+	}
+}
+
 func TestClaimTaskByRuntime_ReclaimsStaleDispatchedTask(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
@@ -551,32 +586,12 @@ func TestClaimTaskByRuntime_PopulatesWorkspaceContext(t *testing.T) {
 	agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, "Workspace context claim agent")
 	taskID := createDispatchedClaimFixtureTask(t, ctx, agentID, runtimeID, issueID, "120 seconds", false)
 
-	w := httptest.NewRecorder()
-	req := newDaemonUserRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/tasks/claim", nil,
-		testWorkspaceID, "workspace-context-claim")
-	req = withURLParam(req, "runtimeId", runtimeID)
-	testHandler.ClaimTaskByRuntime(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("ClaimTaskByRuntime: expected 200, got %d: %s", w.Code, w.Body.String())
+	claimedTaskID, claimedContext := claimWorkspaceContextTask(t, runtimeID, "workspace-context-claim")
+	if claimedTaskID != taskID {
+		t.Fatalf("claimed task id = %s, want %s", claimedTaskID, taskID)
 	}
-
-	var resp struct {
-		Task *struct {
-			ID               string `json:"id"`
-			WorkspaceContext string `json:"workspace_context"`
-		} `json:"task"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode claim response: %v", err)
-	}
-	if resp.Task == nil {
-		t.Fatalf("expected dispatched task %s to be claimed, got nil response: %s", taskID, w.Body.String())
-	}
-	if resp.Task.ID != taskID {
-		t.Fatalf("claimed task id = %s, want %s", resp.Task.ID, taskID)
-	}
-	if resp.Task.WorkspaceContext != wsContext {
-		t.Errorf("workspace_context = %q, want %q", resp.Task.WorkspaceContext, wsContext)
+	if claimedContext != wsContext {
+		t.Errorf("workspace_context = %q, want %q", claimedContext, wsContext)
 	}
 }
 
@@ -597,29 +612,12 @@ func TestClaimTaskByRuntime_WorkspaceContextEmptyWhenUnset(t *testing.T) {
 	agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, "Workspace context empty claim agent")
 	taskID := createDispatchedClaimFixtureTask(t, ctx, agentID, runtimeID, issueID, "120 seconds", false)
 
-	w := httptest.NewRecorder()
-	req := newDaemonUserRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/tasks/claim", nil,
-		testWorkspaceID, "workspace-context-empty-claim")
-	req = withURLParam(req, "runtimeId", runtimeID)
-	testHandler.ClaimTaskByRuntime(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("ClaimTaskByRuntime: expected 200, got %d: %s", w.Code, w.Body.String())
+	claimedTaskID, claimedContext := claimWorkspaceContextTask(t, runtimeID, "workspace-context-empty-claim")
+	if claimedTaskID != taskID {
+		t.Fatalf("claimed task id = %s, want %s", claimedTaskID, taskID)
 	}
-
-	var resp struct {
-		Task *struct {
-			ID               string `json:"id"`
-			WorkspaceContext string `json:"workspace_context"`
-		} `json:"task"`
-	}
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode claim response: %v", err)
-	}
-	if resp.Task == nil {
-		t.Fatalf("expected dispatched task %s to be claimed, got nil: %s", taskID, w.Body.String())
-	}
-	if resp.Task.WorkspaceContext != "" {
-		t.Errorf("workspace_context = %q, want empty string when workspace.context is NULL", resp.Task.WorkspaceContext)
+	if claimedContext != "" {
+		t.Errorf("workspace_context = %q, want empty string when workspace.context is NULL", claimedContext)
 	}
 }
 
@@ -2626,7 +2624,7 @@ type runningCompleteTaskFixture struct {
 	TaskID           string
 }
 
-func createRunningCommentTriggeredCompleteTask(t *testing.T, ctx context.Context, issueTitle string, issueNumber int, triggerContent string) runningCompleteTaskFixture {
+func createRunningCompleteTask(t *testing.T, ctx context.Context, issueTitle string, issueNumber int, triggerContent string) runningCompleteTaskFixture {
 	t.Helper()
 
 	var fixture runningCompleteTaskFixture
@@ -2645,12 +2643,16 @@ func createRunningCommentTriggeredCompleteTask(t *testing.T, ctx context.Context
 	}
 	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, fixture.IssueID) })
 
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO comment (issue_id, workspace_id, author_type, author_id, content, type)
-		VALUES ($1, $2, 'member', $3, $4, 'comment')
-		RETURNING id
-	`, fixture.IssueID, testWorkspaceID, testUserID, triggerContent).Scan(&fixture.TriggerCommentID); err != nil {
-		t.Fatalf("setup: create trigger comment: %v", err)
+	var triggerCommentID any
+	if triggerContent != "" {
+		if err := testPool.QueryRow(ctx, `
+			INSERT INTO comment (issue_id, workspace_id, author_type, author_id, content, type)
+			VALUES ($1, $2, 'member', $3, $4, 'comment')
+			RETURNING id
+		`, fixture.IssueID, testWorkspaceID, testUserID, triggerContent).Scan(&fixture.TriggerCommentID); err != nil {
+			t.Fatalf("setup: create trigger comment: %v", err)
+		}
+		triggerCommentID = fixture.TriggerCommentID
 	}
 
 	if err := testPool.QueryRow(ctx, `
@@ -2660,42 +2662,8 @@ func createRunningCommentTriggeredCompleteTask(t *testing.T, ctx context.Context
 		)
 		VALUES ($1, $2, $3, $4, 'running', 0, now())
 		RETURNING id
-	`, fixture.AgentID, fixture.RuntimeID, fixture.IssueID, fixture.TriggerCommentID).Scan(&fixture.TaskID); err != nil {
-		t.Fatalf("setup: create comment-triggered task: %v", err)
-	}
-	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM agent_task_queue WHERE id = $1`, fixture.TaskID) })
-
-	return fixture
-}
-
-func createRunningAssignmentCompleteTask(t *testing.T, ctx context.Context, issueTitle string, issueNumber int) runningCompleteTaskFixture {
-	t.Helper()
-
-	var fixture runningCompleteTaskFixture
-	if err := testPool.QueryRow(ctx, `
-		SELECT a.id, a.runtime_id FROM agent a WHERE a.workspace_id = $1 LIMIT 1
-	`, testWorkspaceID).Scan(&fixture.AgentID, &fixture.RuntimeID); err != nil {
-		t.Fatalf("setup: get agent: %v", err)
-	}
-
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, title, status, priority, creator_id, creator_type, number, position)
-		VALUES ($1, $2, 'in_progress', 'none', $3, 'member', $4, 0)
-		RETURNING id
-	`, testWorkspaceID, issueTitle, testUserID, issueNumber).Scan(&fixture.IssueID); err != nil {
-		t.Fatalf("setup: create issue: %v", err)
-	}
-	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM issue WHERE id = $1`, fixture.IssueID) })
-
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_task_queue (
-			agent_id, runtime_id, issue_id,
-			status, priority, started_at
-		)
-		VALUES ($1, $2, $3, 'running', 0, now())
-		RETURNING id
-	`, fixture.AgentID, fixture.RuntimeID, fixture.IssueID).Scan(&fixture.TaskID); err != nil {
-		t.Fatalf("setup: create assignment-triggered task: %v", err)
+	`, fixture.AgentID, fixture.RuntimeID, fixture.IssueID, triggerCommentID).Scan(&fixture.TaskID); err != nil {
+		t.Fatalf("setup: create running task: %v", err)
 	}
 	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM agent_task_queue WHERE id = $1`, fixture.TaskID) })
 
@@ -2811,7 +2779,7 @@ func TestCompleteTask_CommentTriggered_SynthesizesCommentWhenAgentSilent(t *test
 
 	setWorkspaceIssuePrefixForTest(t, "MUL")
 
-	fixture := createRunningCommentTriggeredCompleteTask(t, ctx, "mul-3310 agent output fixture", 3310, "please take a look")
+	fixture := createRunningCompleteTask(t, ctx, "mul-3310 agent output fixture", 3310, "please take a look")
 
 	agentFinalOutput := fmt.Sprintf(
 		"sure, see MUL-3310, issue/MUL-3310, feature/MUL-3310, and [MUL-3310](mention://issue/%s)",
@@ -2878,7 +2846,7 @@ func TestCompleteTask_CommentTriggered_SynthesizedMentionDispatchesAgent(t *test
 
 	ctx := context.Background()
 
-	fixture := createRunningCommentTriggeredCompleteTask(t, ctx, "mul-3312 synthesized mention fixture", 3312, "please advance")
+	fixture := createRunningCompleteTask(t, ctx, "mul-3312 synthesized mention fixture", 3312, "please advance")
 	targetAgentID := createHandlerTestMentionTargetAgent(t, "Synthesized Mention Target 02 "+uuid.NewString())
 	agentFinalOutput := "调度 02-方案设计：请继续。 [@02-方案设计](mention://agent/" + targetAgentID + ")"
 
@@ -2922,7 +2890,7 @@ func TestCompleteTask_AssignmentTriggered_SynthesizedMentionDispatchesAgent(t *t
 
 	ctx := context.Background()
 
-	fixture := createRunningAssignmentCompleteTask(t, ctx, "mul-3313 synthesized top-level mention fixture", 3313)
+	fixture := createRunningCompleteTask(t, ctx, "mul-3313 synthesized top-level mention fixture", 3313, "")
 	if _, err := testPool.Exec(ctx, `
 		UPDATE issue SET assignee_type = 'agent', assignee_id = $2 WHERE id = $1
 	`, fixture.IssueID, fixture.AgentID); err != nil {
@@ -2986,7 +2954,7 @@ func TestCompleteTask_AssignmentTriggered_UsesIntermediateDispatchMentionWhenFin
 
 	ctx := context.Background()
 
-	fixture := createRunningAssignmentCompleteTask(t, ctx, "mul-3314 intermediate dispatch mention fixture", 3314)
+	fixture := createRunningCompleteTask(t, ctx, "mul-3314 intermediate dispatch mention fixture", 3314, "")
 	targetAgentID := createHandlerTestMentionTargetAgent(t, "Intermediate Dispatch Target 01 "+uuid.NewString())
 	dispatchOutput := "调度 01-需求澄清：请补齐需求边界。 [@01-需求澄清](mention://agent/" + targetAgentID + ")"
 	finalSummary := "已完成 PM 首轮调度，活动记录已写入。等待 01-需求澄清完成后继续推进。"
@@ -3045,7 +3013,7 @@ func TestCompleteTask_CommentTriggered_SkipsSynthesisWhenAgentAlreadyCommented(t
 
 	ctx := context.Background()
 
-	fixture := createRunningCommentTriggeredCompleteTask(t, ctx, "mul-1198 dedup fixture", 81199, "please take a look")
+	fixture := createRunningCompleteTask(t, ctx, "mul-1198 dedup fixture", 81199, "please take a look")
 
 	// Agent posts its own reply during the run — exactly the compliant path.
 	if _, err := testPool.Exec(ctx, `
@@ -3076,7 +3044,7 @@ func TestCompleteTask_CommentTriggered_SuppressesTrivialDoneOutput(t *testing.T)
 
 	ctx := context.Background()
 
-	fixture := createRunningCommentTriggeredCompleteTask(t, ctx, "trivial-done-suppression fixture", 81200, "please follow up")
+	fixture := createRunningCompleteTask(t, ctx, "trivial-done-suppression fixture", 81200, "please follow up")
 
 	completeDaemonTaskForTest(t, fixture.TaskID, "Done.")
 
@@ -3099,7 +3067,7 @@ func TestCompleteTask_AssignmentTriggered_DoesNotSuppressTrivialDoneOutput(t *te
 
 	ctx := context.Background()
 
-	fixture := createRunningAssignmentCompleteTask(t, ctx, "assignment-trivial-done fixture", 81201)
+	fixture := createRunningCompleteTask(t, ctx, "assignment-trivial-done fixture", 81201, "")
 
 	completeDaemonTaskForTest(t, fixture.TaskID, "Done.")
 
@@ -3997,16 +3965,7 @@ func TestGetAutopilotRunGCCheck(t *testing.T) {
 	// Same-workspace probe.
 	w := assertDaemonGCCheckStatus(t, testHandler.GetAutopilotRunGCCheck, "autopilot-runs", "runId", runID,
 		testWorkspaceID, "legit-daemon", http.StatusOK)
-	var resp map[string]any
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if resp["status"] != "completed" {
-		t.Fatalf("expected status %q, got %q", "completed", resp["status"])
-	}
-	if len(resp) != 1 {
-		t.Fatalf("gc-check response = %#v, want status only", resp)
-	}
+	assertDaemonGCStatusOnlyResponse(t, w, "completed")
 }
 
 // TestGetTaskGCCheck verifies the task gc-check endpoint that quick-create
@@ -4053,16 +4012,7 @@ func TestGetTaskGCCheck(t *testing.T) {
 	// Same-workspace probe — terminal task returns its status.
 	w := assertDaemonGCCheckStatus(t, testHandler.GetTaskGCCheck, "tasks", "taskId", taskID,
 		testWorkspaceID, "legit-daemon", http.StatusOK)
-	var resp map[string]any
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
-	if resp["status"] != "completed" {
-		t.Fatalf("expected status %q, got %q", "completed", resp["status"])
-	}
-	if len(resp) != 1 {
-		t.Fatalf("gc-check response = %#v, want status only", resp)
-	}
+	assertDaemonGCStatusOnlyResponse(t, w, "completed")
 }
 
 // ---------------------------------------------------------------------------
@@ -4351,6 +4301,19 @@ func createCommentTriggeredClaimTask(t *testing.T, ctx context.Context, agentID,
 	return taskID, commentID
 }
 
+func createCompletedPriorTask(t *testing.T, ctx context.Context, agentID, runtimeID, issueID string) {
+	t.Helper()
+	var taskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, completed_at)
+		VALUES ($1, $2, $3, 'completed', 0, now() - interval '1 hour', now() - interval '50 minutes')
+		RETURNING id
+	`, agentID, runtimeID, issueID).Scan(&taskID); err != nil {
+		t.Fatalf("insert prior task: %v", err)
+	}
+	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+}
+
 type claimCommentTaskResp struct {
 	Task *struct {
 		ID               string `json:"id"`
@@ -4395,15 +4358,7 @@ func TestClaimTaskByRuntime_CommentTaskPopulatesNewCommentCount(t *testing.T) {
 	agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, "Comment newcount agent")
 
 	// A prior run establishes the "since" anchor (its started_at, in the past).
-	var priorTaskID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, completed_at)
-		VALUES ($1, $2, $3, 'completed', 0, now() - interval '1 hour', now() - interval '50 minutes')
-		RETURNING id
-	`, agentID, runtimeID, issueID).Scan(&priorTaskID); err != nil {
-		t.Fatalf("insert prior task: %v", err)
-	}
-	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM agent_task_queue WHERE id = $1`, priorTaskID) })
+	createCompletedPriorTask(t, ctx, agentID, runtimeID, issueID)
 
 	var threadRootID string
 	if err := testPool.QueryRow(ctx, `
@@ -4511,15 +4466,7 @@ func TestClaimTaskByRuntime_CommentTaskOmitsDeltaWhenOnlyTriggerIsNew(t *testing
 	runtimeID := createClaimReclaimRuntime(t, ctx, "Comment trigger-only runtime")
 	agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, "Comment trigger-only agent")
 
-	var priorTaskID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, completed_at)
-		VALUES ($1, $2, $3, 'completed', 0, now() - interval '1 hour', now() - interval '50 minutes')
-		RETURNING id
-	`, agentID, runtimeID, issueID).Scan(&priorTaskID); err != nil {
-		t.Fatalf("insert prior task: %v", err)
-	}
-	t.Cleanup(func() { mustExec(t, ctx, `DELETE FROM agent_task_queue WHERE id = $1`, priorTaskID) })
+	createCompletedPriorTask(t, ctx, agentID, runtimeID, issueID)
 
 	_, triggerID := createCommentTriggeredClaimTask(t, ctx, agentID, runtimeID, issueID, nil)
 
