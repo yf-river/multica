@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -94,9 +95,15 @@ func (h *Handler) ListIssueSubscribers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// SubscribeToIssue subscribes a user to an issue with reason "manual".
-// If request body contains user_id, subscribes that user; otherwise subscribes the caller.
-func (h *Handler) SubscribeToIssue(w http.ResponseWriter, r *http.Request) {
+type issueSubscriberMutation func(context.Context, db.Issue, subscriberTarget) error
+
+func (h *Handler) mutateIssueSubscriber(
+	w http.ResponseWriter,
+	r *http.Request,
+	event, failure string,
+	subscribed bool,
+	mutate issueSubscriberMutation,
+) {
 	issueID := chi.URLParam(r, "id")
 	issue, ok := h.loadIssueForUser(w, r, issueID)
 	if !ok {
@@ -109,57 +116,35 @@ func (h *Handler) SubscribeToIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err := h.Queries.AddIssueSubscriber(r.Context(), db.AddIssueSubscriberParams{
-		IssueID:  issue.ID,
-		UserType: target.userType,
-		UserID:   parseUUID(target.userID),
-		Reason:   "manual",
-	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to subscribe")
+	if err := mutate(r.Context(), issue, target); err != nil {
+		writeError(w, http.StatusInternalServerError, failure)
 		return
 	}
 
-	h.publish(protocol.EventSubscriberAdded, workspaceID, target.callerType, target.callerID, map[string]any{
+	payload := map[string]any{
 		"issue_id":  issueID,
 		"user_type": target.userType,
 		"user_id":   target.userID,
-		"reason":    "manual",
-	})
-
-	writeJSON(w, http.StatusOK, map[string]bool{"subscribed": true})
+	}
+	if subscribed {
+		payload["reason"] = "manual"
+	}
+	h.publish(event, workspaceID, target.callerType, target.callerID, payload)
+	writeJSON(w, http.StatusOK, map[string]bool{"subscribed": subscribed})
 }
 
-// UnsubscribeFromIssue removes a user's subscription from an issue.
-// If request body contains user_id, unsubscribes that user; otherwise unsubscribes the caller.
+func (h *Handler) SubscribeToIssue(w http.ResponseWriter, r *http.Request) {
+	h.mutateIssueSubscriber(w, r, protocol.EventSubscriberAdded, "failed to subscribe", true, func(ctx context.Context, issue db.Issue, target subscriberTarget) error {
+		return h.Queries.AddIssueSubscriber(ctx, db.AddIssueSubscriberParams{
+			IssueID: issue.ID, UserType: target.userType, UserID: parseUUID(target.userID), Reason: "manual",
+		})
+	})
+}
+
 func (h *Handler) UnsubscribeFromIssue(w http.ResponseWriter, r *http.Request) {
-	issueID := chi.URLParam(r, "id")
-	issue, ok := h.loadIssueForUser(w, r, issueID)
-	if !ok {
-		return
-	}
-
-	workspaceID := uuidToString(issue.WorkspaceID)
-	target, ok := h.resolveSubscriberTarget(w, r, workspaceID)
-	if !ok {
-		return
-	}
-
-	err := h.Queries.RemoveIssueSubscriber(r.Context(), db.RemoveIssueSubscriberParams{
-		IssueID:  issue.ID,
-		UserType: target.userType,
-		UserID:   parseUUID(target.userID),
+	h.mutateIssueSubscriber(w, r, protocol.EventSubscriberRemoved, "failed to unsubscribe", false, func(ctx context.Context, issue db.Issue, target subscriberTarget) error {
+		return h.Queries.RemoveIssueSubscriber(ctx, db.RemoveIssueSubscriberParams{
+			IssueID: issue.ID, UserType: target.userType, UserID: parseUUID(target.userID),
+		})
 	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to unsubscribe")
-		return
-	}
-
-	h.publish(protocol.EventSubscriberRemoved, workspaceID, target.callerType, target.callerID, map[string]any{
-		"issue_id":  issueID,
-		"user_type": target.userType,
-		"user_id":   target.userID,
-	})
-
-	writeJSON(w, http.StatusOK, map[string]bool{"subscribed": false})
 }
