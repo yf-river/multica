@@ -10,7 +10,7 @@ import type {
 } from "../types";
 import { createExternalCredentialProfileWithRecovery } from "./create-operation";
 
-export const externalCredentialProfileKeys = {
+const externalCredentialProfileKeys = {
   all: ["external-credential-profiles"] as const,
   list: (provider: ExternalCredentialProvider) =>
     [...externalCredentialProfileKeys.all, "list", provider] as const,

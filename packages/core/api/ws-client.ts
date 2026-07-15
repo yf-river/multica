@@ -18,7 +18,7 @@ function summarizeUnparseable(data: unknown): string {
  *  `client_version`, and `client_os` query parameters on the upgrade URL —
  *  browsers cannot set custom headers on WebSocket handshakes, so query
  *  params are the only portable channel. */
-export interface WSClientIdentity {
+interface WSClientIdentity {
   platform?: string;
   version?: string;
   os?: string;

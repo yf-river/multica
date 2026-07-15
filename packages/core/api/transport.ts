@@ -15,7 +15,7 @@ export interface ApiClientOptions {
   };
 }
 
-export type JsonRequestInit = RequestInit & {
+type JsonRequestInit = RequestInit & {
   responseMayHaveCommitted?: boolean;
   extraHeaders?: Record<string, string>;
 };

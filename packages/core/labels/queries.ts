@@ -4,8 +4,6 @@ import { api } from "../api";
 export const labelKeys = {
   all: (wsId: string) => ["labels", wsId] as const,
   list: (wsId: string) => [...labelKeys.all(wsId), "list"] as const,
-  detail: (wsId: string, id: string) =>
-    [...labelKeys.all(wsId), "detail", id] as const,
   byIssue: (wsId: string, issueId: string) =>
     [...labelKeys.all(wsId), "issue", issueId] as const,
 };

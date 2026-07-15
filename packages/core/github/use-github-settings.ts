@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 import { useCurrentWorkspace } from "../paths";
-import { deriveGitHubSettings, type GitHubSettings } from "./settings";
+import { deriveGitHubSettings } from "./settings";
 
 /**
  * Reads the GitHub feature flags off the current workspace's settings JSONB.
@@ -10,7 +10,7 @@ import { deriveGitHubSettings, type GitHubSettings } from "./settings";
  * `workspace.settings` directly, so the single current derivation remains
  * consistent.
  */
-export function useGitHubSettings(): GitHubSettings {
+export function useGitHubSettings(): ReturnType<typeof deriveGitHubSettings> {
   const workspace = useCurrentWorkspace();
   return useMemo(() => deriveGitHubSettings(workspace), [workspace]);
 }
