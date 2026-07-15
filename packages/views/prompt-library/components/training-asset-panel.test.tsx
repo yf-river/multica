@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { PromptEvaluationAsset } from "@multica/core/types";
 import { TrainingAssetPanel } from "./training-asset-panel";
 import type { ManualCaseDraft } from "./case-model";
+import { promptLibraryTestTranslation } from "./test/translation";
 
 vi.mock("@multica/core/paths", () => ({
   useWorkspacePaths: () => ({ runReviews: () => "/workspaces/acme/run-reviews" }),
@@ -11,16 +12,7 @@ vi.mock("@multica/core/paths", () => ({
 
 vi.mock("../../i18n/use-t", () => ({
   useT: () => ({
-    t: (selector: (value: unknown) => unknown) => {
-      const pathProxy = (path: string[]): unknown =>
-        new Proxy(() => undefined, {
-          get: (_target, property) => {
-            if (property === Symbol.toPrimitive) return () => path.join(".");
-            return pathProxy([...path, String(property)]);
-          },
-        });
-      return String(selector(pathProxy([])));
-    },
+    t: promptLibraryTestTranslation,
   }),
 }));
 

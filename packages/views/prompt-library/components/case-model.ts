@@ -73,19 +73,27 @@ export function buildManualCaseRequest(
   draft: ManualCaseDraft,
   existingCount: number,
 ): CreatePromptEvaluationCaseRequest {
-  const variables = parseDebugValues(draft.variablesText);
-  const expectedContains = splitList(draft.expectedText);
-  const skillScenario = isSkillScenarioPayload(asset.payload) ? asset.payload : null;
   return {
     asset_id: asset.id,
     prompt_id: asset.prompt_id,
     case_index: existingCount,
+    ...manualCaseFields(asset, draft),
+    status: "active",
+  };
+}
+
+function manualCaseFields(asset: PromptEvaluationAsset, draft: ManualCaseDraft, maintainedAt?: string) {
+  const variables = parseDebugValues(draft.variablesText);
+  const expectedContains = splitList(draft.expectedText);
+  const skillScenario = isSkillScenarioPayload(asset.payload) ? asset.payload : null;
+  return {
     case_name: draft.caseName.trim(),
     variables,
     expected_contains: expectedContains,
     input: {
       变量: variables,
       来源: "训练与评估手工用例",
+      ...(maintainedAt ? { 最近人工维护: maintainedAt } : {}),
       ...(skillScenario
         ? {
             skill_scenario: {
@@ -108,7 +116,6 @@ export function buildManualCaseRequest(
         : {}),
     },
     tags: splitList(draft.tagsText),
-    status: "active",
   };
 }
 
@@ -117,25 +124,11 @@ export function buildCaseLibraryCreateRequest(
   draft: ManualCaseDraft,
   existingCount: number,
 ): CreatePromptEvaluationCaseRequest {
-  const inputText = draft.variablesText.trim();
-  const expectedText = draft.expectedText.trim();
-  const expectedContains = splitExpectationLines(expectedText);
   return {
     asset_id: asset.id,
     prompt_id: asset.prompt_id,
     case_index: existingCount,
-    case_name: draft.caseName.trim(),
-    variables: inputText ? { input: inputText } : {},
-    expected_contains: expectedContains,
-    input: {
-      内容: inputText,
-      来源: "用例库手工维护",
-    },
-    expected: {
-      内容: expectedText,
-      期望包含: expectedContains,
-    },
-    tags: splitList(draft.tagsText),
+    ...caseLibraryFields(draft),
     status: "active",
   };
 }
@@ -145,27 +138,33 @@ export function buildCaseLibraryUpdateRequest(
   draft: ManualCaseDraft,
   now: Date = new Date(),
 ): UpdatePromptEvaluationCaseRequest {
-  const inputText = draft.variablesText.trim();
-  const expectedText = draft.expectedText.trim();
-  const expectedContains = splitExpectationLines(expectedText);
   return {
     asset_id: item.asset_id,
     prompt_id: item.prompt_id,
     case_index: item.case_index,
+    ...caseLibraryFields(draft, now.toISOString()),
+    status: item.status,
+  };
+}
+
+function caseLibraryFields(draft: ManualCaseDraft, maintainedAt?: string) {
+  const inputText = draft.variablesText.trim();
+  const expectedText = draft.expectedText.trim();
+  const expectedContains = splitExpectationLines(expectedText);
+  return {
     case_name: draft.caseName.trim(),
     variables: inputText ? { input: inputText } : {},
     expected_contains: expectedContains,
     input: {
       内容: inputText,
       来源: "用例库手工维护",
-      最近人工维护: now.toISOString(),
+      ...(maintainedAt ? { 最近人工维护: maintainedAt } : {}),
     },
     expected: {
       内容: expectedText,
       期望包含: expectedContains,
     },
     tags: splitList(draft.tagsText),
-    status: item.status,
   };
 }
 
@@ -175,42 +174,11 @@ export function buildManualCaseUpdateRequest(
   draft: ManualCaseDraft,
   now: Date = new Date(),
 ): UpdatePromptEvaluationCaseRequest {
-  const variables = parseDebugValues(draft.variablesText);
-  const expectedContains = splitList(draft.expectedText);
-  const skillScenario = isSkillScenarioPayload(asset.payload) ? asset.payload : null;
   return {
     asset_id: asset.id,
     prompt_id: asset.prompt_id,
     case_index: item.case_index,
-    case_name: draft.caseName.trim(),
-    variables,
-    expected_contains: expectedContains,
-    input: {
-      变量: variables,
-      来源: "训练与评估手工用例",
-      最近人工维护: now.toISOString(),
-      ...(skillScenario
-        ? {
-            skill_scenario: {
-              target: skillScenario.target,
-              scenario: skillScenario.scenario,
-              rubric: skillScenario.rubric,
-            },
-          }
-        : {}),
-    },
-    expected: {
-      期望包含: expectedContains,
-      ...(skillScenario
-        ? {
-            skill_scenario: {
-              rubric_keys: skillScenario.rubric.map((entry) => entry.key),
-              target_skill_path: skillScenario.target.skill_path,
-            },
-          }
-        : {}),
-    },
-    tags: splitList(draft.tagsText),
+    ...manualCaseFields(asset, draft, now.toISOString()),
     status: item.status,
   };
 }

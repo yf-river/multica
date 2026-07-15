@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { PromptLibraryItem } from "@multica/core/types";
 import { promptLibraryKeys } from "./prompt-library-query-keys";
 import { usePromptLibraryMutations } from "./use-prompt-library-mutations";
+import { promptLibraryTestTranslation } from "./test/translation";
 
 const mocks = vi.hoisted(() => ({
   createPromptLibraryItem: vi.fn(),
@@ -37,16 +38,7 @@ vi.mock("sonner", () => ({
 
 vi.mock("../../i18n/use-t", () => ({
   useT: () => ({
-    t: (selector: (value: unknown) => unknown) => {
-      const pathProxy = (path: string[]): unknown =>
-        new Proxy(() => undefined, {
-          get: (_target, property) => {
-            if (property === Symbol.toPrimitive) return () => path.join(".");
-            return pathProxy([...path, String(property)]);
-          },
-        });
-      return String(selector(pathProxy([])));
-    },
+    t: promptLibraryTestTranslation,
   }),
 }));
 
