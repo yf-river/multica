@@ -2,9 +2,10 @@ package handler
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 // Reuses the newRedisTestClient helper from
@@ -49,179 +50,27 @@ func TestRedisModelListStore_EnvelopePersistsRunStartedAt(t *testing.T) {
 	}
 }
 
-func TestRedisModelListStore_CreateGetComplete(t *testing.T) {
-	rdb := newRedisTestClient(t)
-	ctx := context.Background()
-	store := NewRedisModelListStore(rdb)
-
-	req, err := store.Create(ctx, "runtime-1", randomID())
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
-	if req.Status != runtimeAsyncPending {
-		t.Fatalf("initial status = %s", req.Status)
-	}
-
-	got, err := store.Get(ctx, req.ID)
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	if got == nil || got.ID != req.ID {
-		t.Fatalf("round trip lost id: got=%v", got)
-	}
-
-	models := []ModelEntry{
-		{ID: "claude-sonnet-4-6", Label: "Claude Sonnet 4.6", Provider: "anthropic", Default: true},
-		{ID: "claude-opus-4-7", Label: "Claude Opus 4.7", Provider: "anthropic"},
-	}
-	if err := store.Complete(ctx, req.ID, models, true); err != nil {
-		t.Fatalf("complete: %v", err)
-	}
-
-	got, err = store.Get(ctx, req.ID)
-	if err != nil {
-		t.Fatalf("get after complete: %v", err)
-	}
-	if got.Status != runtimeAsyncCompleted {
-		t.Fatalf("status after complete = %s", got.Status)
-	}
-	if len(got.Models) != 2 {
-		t.Fatalf("models not persisted: %+v", got.Models)
-	}
-	if !got.Models[0].Default {
-		t.Fatalf("default flag lost on round trip: %+v", got.Models[0])
-	}
-	if !got.Supported {
-		t.Fatalf("supported flag lost on round trip")
-	}
-}
-
-func TestRedisModelListStore_ReplaysOnePendingRequest(t *testing.T) {
-	rdb := newRedisTestClient(t)
-	store := NewRedisModelListStore(rdb)
-	ctx := context.Background()
-	const requestID = "model-list-replay"
-	first, err := store.Create(ctx, "runtime-replay", requestID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	replay, err := store.Create(ctx, "runtime-replay", requestID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if replay.ID != first.ID || !replay.CreatedAt.Equal(first.CreatedAt) {
-		t.Fatalf("replay = %+v, want %+v", replay, first)
-	}
-	if got := rdb.ZCard(ctx, store.pendingKey("runtime-replay")).Val(); got != 1 {
-		t.Fatalf("pending count = %d, want 1", got)
-	}
-	if _, err := store.Create(ctx, "runtime-changed", requestID); !errors.Is(err, errRuntimeAsyncRequestConflict) {
-		t.Fatalf("changed runtime error = %v, want conflict", err)
-	}
-}
-
-// TestRedisModelListStore_PopPendingAcrossInstances is the regression test
-// for the exact bug this PR fixes: two API replicas share one Redis, one
-// receives the POST that creates the request, the other receives the daemon
-// heartbeat that PopPending-s it. Before this change the in-memory store made
-// node B see nothing, the request timed out, and the picker showed
-// "No models available" forever.
-func TestRedisModelListStore_PopPendingAcrossInstances(t *testing.T) {
-	rdb := newRedisTestClient(t)
-	ctx := context.Background()
-
-	nodeA := NewRedisModelListStore(rdb)
-	nodeB := NewRedisModelListStore(rdb)
-
-	req, err := nodeA.Create(ctx, "runtime-cross", randomID())
-	if err != nil {
-		t.Fatalf("node A create: %v", err)
-	}
-
-	popped, err := nodeB.PopPending(ctx, "runtime-cross")
-	if err != nil {
-		t.Fatalf("node B pop: %v", err)
-	}
-	if popped == nil {
-		t.Fatal("node B did not see node A's pending request")
-	}
-	if popped.ID != req.ID {
-		t.Fatalf("popped id = %s, want %s", popped.ID, req.ID)
-	}
-	if popped.Status != runtimeAsyncRunning {
-		t.Fatalf("popped status = %s, want running", popped.Status)
-	}
-	if popped.RunStartedAt == nil {
-		t.Fatal("run_started_at not set after pop")
-	}
-
-	// A third pop must see nothing (claim was atomic).
-	again, err := nodeB.PopPending(ctx, "runtime-cross")
-	if err != nil {
-		t.Fatalf("node B second pop: %v", err)
-	}
-	if again != nil {
-		t.Fatalf("expected no more pending, got %+v", again)
-	}
-}
-
-// TestRedisModelListStore_PopPendingConcurrent asserts the ZREM-wins race
-// guard: N concurrent PopPending calls against a single pending request
-// return exactly one winner.
-func TestRedisModelListStore_PopPendingConcurrent(t *testing.T) {
-	rdb := newRedisTestClient(t)
-	ctx := context.Background()
-	store := NewRedisModelListStore(rdb)
-
-	req, err := store.Create(ctx, "runtime-race", randomID())
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
-
-	assertSingleConcurrentPopWinner(t, req.ID, func() (*ModelListRequest, error) {
-		return store.PopPending(ctx, "runtime-race")
-	}, func(req *ModelListRequest) string {
-		return req.ID
+func TestRedisModelListStore_SharedLifecycle(t *testing.T) {
+	assertRedisSingleRequestStoreContract(t, modelListPendingTimeout, func(rdb *redis.Client) redisSingleRequestTestHarness[ModelListRequest] {
+		store := NewRedisModelListStore(rdb)
+		return redisSingleRequestTestHarness[ModelListRequest]{
+			store:  store.redisRuntimeAsyncStore,
+			create: store.Create,
+			get:    store.Get,
+			pop:    store.PopPending,
+			complete: func(ctx context.Context, id string) error {
+				return store.Complete(ctx, id, []ModelEntry{
+					{ID: "claude-sonnet-4-6", Label: "Claude Sonnet 4.6", Provider: "anthropic", Default: true},
+					{ID: "claude-opus-4-7", Label: "Claude Opus 4.7", Provider: "anthropic"},
+				}, true)
+			},
+			assertCompleted: func(t *testing.T, request *ModelListRequest) {
+				if len(request.Models) != 2 || !request.Models[0].Default || !request.Supported {
+					t.Fatalf("model completion not persisted: %+v", request)
+				}
+			},
+		}
 	})
-}
-
-// TestRedisModelListStore_PendingTimeout pins the lazy timeout sweep — a
-// pending request whose CreatedAt has aged past the 30s threshold MUST
-// transition to Timeout on the next Get and be evicted from the pending
-// zset so a subsequent PopPending doesn't re-claim it.
-func TestRedisModelListStore_PendingTimeout(t *testing.T) {
-	rdb := newRedisTestClient(t)
-	ctx := context.Background()
-	store := NewRedisModelListStore(rdb)
-
-	req, err := store.Create(ctx, "runtime-timeout", randomID())
-	if err != nil {
-		t.Fatalf("create: %v", err)
-	}
-
-	// Rewind CreatedAt so the pending threshold is blown — simulates 31s of
-	// daemon silence without actually blocking the test that long.
-	req.CreatedAt = time.Now().Add(-modelListPendingTimeout - time.Second)
-	if err := store.persist(ctx, req); err != nil {
-		t.Fatalf("persist rewound: %v", err)
-	}
-
-	got, err := store.Get(ctx, req.ID)
-	if err != nil {
-		t.Fatalf("get: %v", err)
-	}
-	if got.Status != runtimeAsyncTimeout {
-		t.Fatalf("status = %s, want timeout", got.Status)
-	}
-
-	// A subsequent PopPending must NOT return a timed-out request.
-	popped, err := store.PopPending(ctx, "runtime-timeout")
-	if err != nil {
-		t.Fatalf("pop after timeout: %v", err)
-	}
-	if popped != nil {
-		t.Fatalf("expected no pending after timeout, got %+v", popped)
-	}
 }
 
 // TestRedisModelListStore_RunningTimeout pins the second escape hatch — a
