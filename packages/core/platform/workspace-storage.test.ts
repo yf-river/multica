@@ -5,8 +5,6 @@ import {
   createWorkspaceAwareStorage,
   registerWorkspacePersistStore,
   registerWorkspaceStoreLifecycle,
-  registerAccountStateReset,
-  resetAccountState,
   setCurrentWorkspace,
 } from "./workspace-storage";
 import type { StorageAdapter } from "../types/storage";
@@ -141,14 +139,6 @@ describe("setCurrentWorkspace — rehydrate side effect", () => {
     await flush();
 
     expect(rehydrate).toHaveBeenCalledTimes(3);
-    unregister();
-  });
-
-  it("resets account state without rehydrating it", () => {
-    const reset = vi.fn();
-    const unregister = registerAccountStateReset(reset);
-    resetAccountState();
-    expect(reset).toHaveBeenCalledTimes(1);
     unregister();
   });
 

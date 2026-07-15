@@ -126,17 +126,13 @@ export function registerWorkspacePersistStore<State, PersistedState>(
   });
 }
 
-/** Register non-workspace state that still belongs to the signed-in account. */
-export function registerAccountStateReset(reset: () => void): () => void {
-  _accountStateResetters.add(reset);
-  return () => _accountStateResetters.delete(reset);
-}
-
 /** Register a global persist store whose contents belong to the account. */
 export function registerAccountPersistStore<State, PersistedState>(
   store: PersistedClientStore<State, PersistedState>,
 ): () => void {
-  return registerAccountStateReset(() => resetPersistedStore(store));
+  const reset = () => resetPersistedStore(store);
+  _accountStateResetters.add(reset);
+  return () => _accountStateResetters.delete(reset);
 }
 
 /** Reset every loaded client store that can contain account-owned data. */

@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { arrayMove } from "@dnd-kit/sortable";
-import { createPersistStorage, defaultStorage } from "@multica/core/platform";
+import { defaultStorage } from "@multica/core/platform";
 import { createSafeId } from "@multica/core/utils";
 import { isReservedSlug } from "@multica/core/paths";
 import type { DataRouter } from "react-router-dom";
@@ -595,7 +595,7 @@ export const useTabStore = create<TabStore>()(
     {
       name: "multica_tabs",
       version: 3,
-      storage: createJSONStorage(() => createPersistStorage(defaultStorage)),
+      storage: createJSONStorage(() => defaultStorage),
       partialize: (state) => ({
         activeWorkspaceSlug: state.activeWorkspaceSlug,
         byWorkspace: Object.fromEntries(

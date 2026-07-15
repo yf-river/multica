@@ -2,10 +2,15 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
 import { executePendingMutation } from "../api/transport";
 import { useWorkspaceId } from "../paths";
+import { createWorkspacePendingCreateStore } from "../platform/pending-create-store";
 import type { CreateSquadRequest, Squad } from "../types";
 import { generateUUID } from "../utils";
 import { workspaceKeys } from "../workspace/queries";
-import { useSquadPendingOperationStore } from "./pending-operation-store";
+
+const useSquadPendingOperationStore =
+  createWorkspacePendingCreateStore<CreateSquadRequest>(
+    "multica_squad_pending_operations",
+  );
 
 export function useCreateSquad() {
   const queryClient = useQueryClient();

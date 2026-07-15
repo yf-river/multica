@@ -1,8 +1,13 @@
 import { api, type ApiClient } from "../api";
 import { executePendingMutation } from "../api/transport";
+import { createWorkspacePendingCreateStore } from "../platform/pending-create-store";
 import type { Agent, CreateAgentRequest } from "../types";
 import { generateUUID } from "../utils";
-import { useAgentPendingOperationStore } from "./pending-operation-store";
+
+const useAgentPendingOperationStore =
+  createWorkspacePendingCreateStore<CreateAgentRequest>(
+    "multica_agent_pending_operations",
+  );
 
 type AgentCreateClient = Pick<ApiClient, "createAgent">;
 

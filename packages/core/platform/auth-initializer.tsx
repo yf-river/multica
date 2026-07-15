@@ -87,6 +87,12 @@ export function AuthInitializer({
       useAuthStore.setState({ user: null, isLoading: false });
     };
 
+    const loadSession = () =>
+      Promise.all([api.getMe(), api.listWorkspaces()]).then(([user, wsList]) => {
+        onAuthSuccess(user);
+        qc.setQueryData(workspaceKeys.list(), wsList);
+      });
+
     if (cookieAuth) {
       // Cookie mode: the HttpOnly cookie is sent automatically by the browser.
       // Call the API to check if the session is still valid.
@@ -95,11 +101,7 @@ export function AuthInitializer({
       // resolve the slug without a second fetch. The active workspace itself
       // is derived from the URL by [workspaceSlug]/layout.tsx — no imperative
       // selection here.
-      Promise.all([api.getMe(), api.listWorkspaces()])
-        .then(([user, wsList]) => {
-          onAuthSuccess(user);
-          qc.setQueryData(workspaceKeys.list(), wsList);
-        })
+      loadSession()
         .catch((err) => {
           if (isExpectedCookieAuthMiss(err)) {
             logger.debug("cookie auth session unavailable", err);
@@ -121,13 +123,7 @@ export function AuthInitializer({
 
     api.setToken(token);
 
-    Promise.all([api.getMe(), api.listWorkspaces()])
-      .then(([user, wsList]) => {
-        onAuthSuccess(user);
-        // Seed React Query cache so the URL-driven layout can resolve the
-        // slug without a second fetch.
-        qc.setQueryData(workspaceKeys.list(), wsList);
-      })
+    loadSession()
       .catch((err) => {
         logger.error("auth init failed", err);
         api.setToken(null);

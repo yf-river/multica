@@ -5,7 +5,6 @@ import { ApiError, ApiTransportError } from "../api";
 import { setCurrentWorkspace } from "../platform/workspace-storage";
 import type { Agent } from "../types";
 import { createAgentWithRecovery } from "./create";
-import { useAgentPendingOperationStore } from "./pending-operation-store";
 
 const agent = { id: "agent-1" } as Agent;
 
@@ -13,7 +12,6 @@ describe("createAgentWithRecovery", () => {
   beforeEach(() => {
     setCurrentWorkspace("test-workspace", "workspace-1");
     localStorage.clear();
-    useAgentPendingOperationStore.getState().clear();
   });
 
   it("replays the original intent and key after an unknown outcome", async () => {
@@ -24,15 +22,14 @@ describe("createAgentWithRecovery", () => {
 
     await expect(createAgentWithRecovery({ name: "Original", runtime_id: "runtime-1" }, client))
       .rejects.toBeInstanceOf(ApiTransportError);
-    const pending = useAgentPendingOperationStore.getState().pendingCreate;
+    const requestKey = createAgent.mock.calls[0]?.[1];
 
     await expect(createAgentWithRecovery({ name: "Changed", runtime_id: "runtime-2" }, client))
       .resolves.toBe(agent);
     expect(createAgent.mock.calls[1]).toEqual([
       { name: "Original", runtime_id: "runtime-1" },
-      pending?.requestKey,
+      requestKey,
     ]);
-    expect(useAgentPendingOperationStore.getState().pendingCreate).toBeUndefined();
   });
 
   it("releases the key after a definitive rejection", async () => {

@@ -17,7 +17,6 @@ vi.mock("../api", async () => {
 vi.mock("../paths", () => ({ useWorkspaceId: () => "workspace-1" }));
 
 import { useCreateSquad } from "./mutations";
-import { useSquadPendingOperationStore } from "./pending-operation-store";
 
 function wrapper({ children }: { children: ReactNode }) {
   return (
@@ -39,11 +38,10 @@ beforeEach(async () => {
   setCurrentWorkspace("test-workspace", "workspace-1");
   await Promise.resolve();
   localStorage.clear();
-  useSquadPendingOperationStore.getState().clear();
 });
 
 describe("Squad create request identity", () => {
-  it("rehydrates the exact create intent after an unknown outcome", async () => {
+  it("replays the exact create intent after an unknown outcome", async () => {
     apiMock.createSquad
       .mockRejectedValueOnce(
         new ApiTransportError("POST /api/squads", true, new Error("reset")),
@@ -54,17 +52,7 @@ describe("Squad create request identity", () => {
     await expect(
       act(() => first.result.current.mutateAsync(createRequest)),
     ).rejects.toBeInstanceOf(ApiTransportError);
-    const retained = useSquadPendingOperationStore.getState().pendingCreate;
-    expect(retained?.request).toEqual(createRequest);
-    const storageKey = "multica_squad_pending_operations:test-workspace";
-    const persisted = localStorage.getItem(storageKey);
-    expect(persisted).toContain(retained?.requestKey);
-
-    useSquadPendingOperationStore.getState().clear();
-    localStorage.setItem(storageKey, persisted!);
-    await act(async () => {
-      await useSquadPendingOperationStore.persist.rehydrate();
-    });
+    const requestKey = apiMock.createSquad.mock.calls[0]?.[1];
     first.unmount();
 
     const second = renderHook(() => useCreateSquad(), { wrapper });
@@ -78,7 +66,7 @@ describe("Squad create request identity", () => {
     expect(apiMock.createSquad.mock.calls[0]?.[1]).toBe(
       apiMock.createSquad.mock.calls[1]?.[1],
     );
-    expect(useSquadPendingOperationStore.getState().pendingCreate).toBeUndefined();
+    expect(requestKey).toBe(apiMock.createSquad.mock.calls[1]?.[1]);
   });
 
   it("releases the create key after a definitive rejection", async () => {

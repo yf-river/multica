@@ -2,7 +2,6 @@ export { CoreProvider } from "./core-provider";
 export type { CoreProviderProps, ClientIdentity } from "./types";
 export { AuthInitializer } from "./auth-initializer";
 export { defaultStorage, defaultSessionStorage } from "./storage";
-export { createPersistStorage } from "./persist-storage";
 export {
   createWorkspaceAwareStorage,
   setCurrentWorkspace,
@@ -11,7 +10,6 @@ export {
   subscribeToCurrentSlug,
   registerWorkspaceStoreLifecycle,
   registerWorkspacePersistStore,
-  registerAccountStateReset,
   registerAccountPersistStore,
   resetAccountState,
 } from "./workspace-storage";

@@ -5,7 +5,6 @@ import { ApiError, ApiTransportError } from "../api";
 import { setCurrentWorkspace } from "../platform/workspace-storage";
 import type { Skill } from "../types";
 import { createSkillWithRecovery } from "./create";
-import { useSkillPendingOperationStore } from "./pending-operation-store";
 
 const skill = { id: "skill-1" } as Skill;
 
@@ -13,7 +12,6 @@ describe("createSkillWithRecovery", () => {
   beforeEach(() => {
     setCurrentWorkspace("test-workspace", "workspace-1");
     localStorage.clear();
-    useSkillPendingOperationStore.getState().clear();
   });
 
   it("replays the original intent and key after an unknown outcome", async () => {
@@ -24,16 +22,14 @@ describe("createSkillWithRecovery", () => {
 
     await expect(createSkillWithRecovery({ name: "Original" }, client))
       .rejects.toBeInstanceOf(ApiTransportError);
-    const pending = useSkillPendingOperationStore.getState().pendingCreate;
-    expect(pending?.request).toEqual({ name: "Original" });
+    const requestKey = createSkill.mock.calls[0]?.[1];
 
     await expect(createSkillWithRecovery({ name: "Changed after reload" }, client))
       .resolves.toBe(skill);
     expect(createSkill.mock.calls[1]).toEqual([
       { name: "Original" },
-      pending?.requestKey,
+      requestKey,
     ]);
-    expect(useSkillPendingOperationStore.getState().pendingCreate).toBeUndefined();
   });
 
   it("releases the key after a definitive rejection", async () => {

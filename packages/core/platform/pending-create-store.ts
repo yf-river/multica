@@ -16,7 +16,6 @@ export interface PendingCreateState<Request> {
   setPendingCreate: (
     pendingCreate?: PendingCreateOperation<Request>,
   ) => void;
-  clear: () => void;
 }
 
 export function createWorkspacePendingCreateStore<Request>(name: string) {
@@ -25,7 +24,6 @@ export function createWorkspacePendingCreateStore<Request>(name: string) {
       (set) => ({
         pendingCreate: undefined,
         setPendingCreate: (pendingCreate) => set({ pendingCreate }),
-        clear: () => set({ pendingCreate: undefined }),
       }),
       {
         name,

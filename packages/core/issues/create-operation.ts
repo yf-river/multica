@@ -1,8 +1,13 @@
 import { api, type ApiClient } from "../api";
 import { executeRecoverableIntent, sameMutationRequest } from "../api/transport";
+import { createWorkspacePendingCreateStore } from "../platform/pending-create-store";
 import type { CreateIssueRequest, Issue } from "../types";
 import { generateUUID } from "../utils";
-import { useIssueCreatePendingStore } from "./issue-create-pending-store";
+
+const useIssueCreatePendingStore =
+  createWorkspacePendingCreateStore<CreateIssueRequest>(
+    "multica_issue_create_pending",
+  );
 
 type IssueCreateClient = Pick<ApiClient, "createIssue">;
 

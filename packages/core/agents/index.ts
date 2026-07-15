@@ -6,7 +6,6 @@ export * from "./use-agent-activity";
 export * from "./use-workspace-presence-prefetch";
 export * from "./constants";
 export * from "./create";
-export * from "./pending-operation-store";
 export * from "./use-workspace-agent-availability";
 export * from "./mcp-support";
 export * from "./openclaw-runtime-config";
