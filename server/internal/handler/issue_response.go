@@ -67,13 +67,6 @@ func issueToResponse(i db.Issue, issuePrefix string) IssueResponse {
 		Metadata:        mustDecodePersistedJSONObject(i.Metadata, "issue metadata"),
 	}
 }
-func openIssueRowToResponse(i db.ListOpenIssuesRow, issuePrefix string) IssueResponse {
-	resp := issueToResponse(i.Issue, issuePrefix)
-	// The open-only list contract predates work timing fields and omits them.
-	resp.WorkStartedAt = nil
-	resp.WorkCompletedAt = nil
-	return resp
-}
 func issueListJoinSQL(visibleAgentIDsRef string) string {
 	return fmt.Sprintf(`LEFT JOIN "user" assignee_member
        ON i.assignee_type = 'member'

@@ -175,7 +175,6 @@ describe("ApiClient schema fallback", () => {
       const res = await client.listGroupedIssues({
         group_by: "assignee",
         limit: 12,
-        assignee_ids: ["agent-1", "agent-2"],
         metadata: { source: "tapd" },
         date_start: "2026-07-01",
         sort_direction: "desc",
@@ -185,7 +184,6 @@ describe("ApiClient schema fallback", () => {
       expect(Object.fromEntries(url.searchParams)).toMatchObject({
         group_by: "assignee",
         limit: "12",
-        assignee_ids: "agent-1,agent-2",
         metadata: JSON.stringify({ source: "tapd" }),
         date_start: "2026-07-01",
         direction: "desc",

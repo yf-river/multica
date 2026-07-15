@@ -1,57 +1,15 @@
 package handler
 
 import (
-	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
-
-func TestListIssuesOpenOnlyKeepsCurrentResponseContract(t *testing.T) {
-	ctx := context.Background()
-	activeID := insertIssueTo(t, ctx, testWorkspaceID, "open-only-active", "member", testUserID)
-	doneID := insertIssueTo(t, ctx, testWorkspaceID, "open-only-done", "member", testUserID)
-	mustExec(t, ctx, `UPDATE issue SET status = 'in_progress', work_started_at = $2 WHERE id = $1`, activeID, time.Now())
-	mustExec(t, ctx, `UPDATE issue SET status = 'done' WHERE id = $1`, doneID)
-
-	w := httptest.NewRecorder()
-	testHandler.ListIssues(w, newRequest("GET", "/api/issues?workspace_id="+testWorkspaceID+"&open_only=true&creator_id="+testUserID, nil))
-	if w.Code != http.StatusOK {
-		t.Fatalf("ListIssues open_only: status = %d, body = %s", w.Code, w.Body.String())
-	}
-	var payload struct {
-		Issues []map[string]json.RawMessage `json:"issues"`
-	}
-	if err := json.NewDecoder(w.Body).Decode(&payload); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	foundActive := false
-	for _, issue := range payload.Issues {
-		var id string
-		if err := json.Unmarshal(issue["id"], &id); err != nil {
-			t.Fatalf("decode issue id: %v", err)
-		}
-		if id == doneID {
-			t.Fatal("open_only returned a completed issue")
-		}
-		if id == activeID {
-			foundActive = true
-			if _, exists := issue["work_started_at"]; exists {
-				t.Fatal("open_only response unexpectedly included work_started_at")
-			}
-		}
-	}
-	if !foundActive {
-		t.Fatal("open_only did not return the active issue")
-	}
-}
 
 func TestParseIssueOrder(t *testing.T) {
 	tests := []struct {
@@ -118,13 +76,12 @@ func TestAppendIssueInvolvesUserFilterKeepsIndirectAssignmentContract(t *testing
 func TestAppendCommonIssueListFilters(t *testing.T) {
 	values := url.Values{
 		"assignee_id":      {"11111111-1111-4111-8111-111111111111"},
-		"assignee_ids":     {"22222222-2222-4222-8222-222222222222,33333333-3333-4333-8333-333333333333"},
 		"creator_id":       {"44444444-4444-4444-8444-444444444444"},
 		"project_id":       {"55555555-5555-4555-8555-555555555555"},
 		"involves_user_id": {"66666666-6666-4666-8666-666666666666"},
 		"metadata":         {`{"source_provider":"tapd"}`},
 	}
-	arguments := make([]any, 0, 6)
+	arguments := make([]any, 0, 5)
 	w := httptest.NewRecorder()
 	where, ok := appendCommonIssueListFilters(w, values, []string{"base"}, func(value any) string {
 		arguments = append(arguments, value)
@@ -133,17 +90,16 @@ func TestAppendCommonIssueListFilters(t *testing.T) {
 	if !ok {
 		t.Fatalf("appendCommonIssueListFilters failed: %s", w.Body.String())
 	}
-	if len(arguments) != 6 || len(where) != 7 {
-		t.Fatalf("arguments=%d clauses=%d, want 6/7: %#v", len(arguments), len(where), where)
+	if len(arguments) != 5 || len(where) != 6 {
+		t.Fatalf("arguments=%d clauses=%d, want 5/6: %#v", len(arguments), len(where), where)
 	}
 	joined := strings.Join(where, "\n")
 	for _, required := range []string{
 		"i.assignee_id = $2::uuid",
-		"i.assignee_id = ANY($3::uuid[])",
-		"i.creator_id = $4::uuid",
-		"i.project_id = $5::uuid",
-		"a.owner_id     = $6::uuid",
-		"i.metadata @> $7::jsonb",
+		"i.creator_id = $3::uuid",
+		"i.project_id = $4::uuid",
+		"a.owner_id     = $5::uuid",
+		"i.metadata @> $6::jsonb",
 	} {
 		if !strings.Contains(joined, required) {
 			t.Fatalf("common filters missing %q:\n%s", required, joined)
@@ -154,7 +110,6 @@ func TestAppendCommonIssueListFilters(t *testing.T) {
 func TestAppendCommonIssueListFiltersRejectsMalformedValues(t *testing.T) {
 	tests := []url.Values{
 		{"assignee_id": {"bad"}},
-		{"assignee_ids": {"bad"}},
 		{"creator_id": {"bad"}},
 		{"project_id": {"bad"}},
 		{"involves_user_id": {"bad"}},

@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
-	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 func parseIssueListPagination(values url.Values, defaultLimit int) (limit, offset int) {
@@ -145,18 +144,6 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 		}
 		assigneeFilter = id
 	}
-	var assigneeIdsFilter []pgtype.UUID
-	if ids := r.URL.Query().Get("assignee_ids"); ids != "" {
-		for _, raw := range strings.Split(ids, ",") {
-			if s := strings.TrimSpace(raw); s != "" {
-				id, ok := parseUUIDOrBadRequest(w, s, "assignee_ids")
-				if !ok {
-					return
-				}
-				assigneeIdsFilter = append(assigneeIdsFilter, id)
-			}
-		}
-	}
 	var creatorFilter pgtype.UUID
 	if c := r.URL.Query().Get("creator_id"); c != "" {
 		id, ok := parseUUIDOrBadRequest(w, c, "creator_id")
@@ -196,50 +183,6 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// open_only=true returns all non-done/cancelled issues (no limit).
-	if r.URL.Query().Get("open_only") == "true" {
-		issues, err := h.Queries.ListOpenIssues(ctx, db.ListOpenIssuesParams{
-			WorkspaceID:    wsUUID,
-			Priority:       priorityFilter,
-			AssigneeID:     assigneeFilter,
-			AssigneeIds:    assigneeIdsFilter,
-			CreatorID:      creatorFilter,
-			ProjectID:      projectFilter,
-			InvolvesUserID: involvesUserFilter,
-			MetadataFilter: metadataFilter,
-		})
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to list issues")
-			return
-		}
-
-		prefix := h.getIssuePrefix(ctx, wsUUID)
-		ids := make([]pgtype.UUID, len(issues))
-		for i, issue := range issues {
-			ids[i] = issue.Issue.ID
-		}
-		labelsMap, err := h.labelsByIssue(ctx, wsUUID, ids)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to load issue labels")
-			return
-		}
-		resp := make([]IssueResponse, len(issues))
-		for i, issue := range issues {
-			resp[i] = openIssueRowToResponse(issue, prefix)
-			labels := labelsMap[resp[i].ID]
-			if labels == nil {
-				labels = []LabelResponse{}
-			}
-			resp[i].Labels = &labels
-		}
-
-		writeJSON(w, http.StatusOK, map[string]any{
-			"issues": resp,
-			"total":  len(resp),
-		})
-		return
-	}
-
 	limit, offset := parseIssueListPagination(r.URL.Query(), 100)
 
 	var statusFilter pgtype.Text
@@ -276,9 +219,6 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 	}
 	if assigneeFilter.Valid {
 		where = append(where, fmt.Sprintf("i.assignee_id = %s::uuid", addArg(assigneeFilter)))
-	}
-	if len(assigneeIdsFilter) > 0 {
-		where = append(where, fmt.Sprintf("i.assignee_id = ANY(%s::uuid[])", addArg(assigneeIdsFilter)))
 	}
 	if creatorFilter.Valid {
 		where = append(where, fmt.Sprintf("i.creator_id = %s::uuid", addArg(creatorFilter)))
@@ -612,15 +552,6 @@ func appendCommonIssueListFilters(
 			return where, false
 		}
 		where = append(where, fmt.Sprintf("i.assignee_id = %s::uuid", addArg(id)))
-	}
-	if raw := values.Get("assignee_ids"); raw != "" {
-		ids, ok := parseUUIDParamList(w, raw, "assignee_ids")
-		if !ok {
-			return where, false
-		}
-		if len(ids) > 0 {
-			where = append(where, fmt.Sprintf("i.assignee_id = ANY(%s::uuid[])", addArg(ids)))
-		}
 	}
 	if raw := values.Get("creator_id"); raw != "" {
 		id, ok := parseUUIDOrBadRequest(w, raw, "creator_id")

@@ -49,7 +49,6 @@ interface IssueListQueryParams {
   offset?: number;
   workspace_id?: string;
   assignee_id?: string;
-  assignee_ids?: string[];
   creator_id?: string;
   project_id?: string;
   /**
@@ -73,7 +72,6 @@ interface IssueListQueryParams {
 export interface ListIssuesParams extends IssueListQueryParams {
   status?: IssueStatus;
   priority?: IssuePriority;
-  open_only?: boolean;
   /**
    * Restrict the result to issues with at least one of `start_date` /
    * `due_date` set. Used by the Project Gantt view so it doesn't have to

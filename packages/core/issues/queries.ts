@@ -110,7 +110,7 @@ export const issueKeys = {
 
 export type MyIssuesFilter = Pick<
   ListIssuesParams,
-  "assignee_id" | "assignee_ids" | "creator_id" | "project_id" | "involves_user_id"
+  "assignee_id" | "creator_id" | "project_id" | "involves_user_id"
 >;
 
 export type AssigneeGroupedIssuesFilter = Omit<

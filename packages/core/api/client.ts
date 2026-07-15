@@ -428,14 +428,12 @@ function issueSearchParams(params?: ListIssuesParams) {
   if (params?.status) search.set("status", params.status);
   if (params?.priority) search.set("priority", params.priority);
   if (params?.assignee_id) search.set("assignee_id", params.assignee_id);
-  if (params?.assignee_ids?.length) search.set("assignee_ids", params.assignee_ids.join(","));
   if (params?.creator_id) search.set("creator_id", params.creator_id);
   if (params?.project_id) search.set("project_id", params.project_id);
   if (params?.involves_user_id) search.set("involves_user_id", params.involves_user_id);
   if (params?.metadata && Object.keys(params.metadata).length > 0) {
     search.set("metadata", JSON.stringify(params.metadata));
   }
-  if (params?.open_only) search.set("open_only", "true");
   if (params?.scheduled) search.set("scheduled", "true");
   if (params?.date_field) search.set("date_field", params.date_field);
   if (params?.date_start) search.set("date_start", params.date_start);
