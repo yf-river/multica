@@ -146,17 +146,10 @@ func parseRSAPrivateKey(pemBytes []byte) (*rsa.PrivateKey, error) {
 // SignedCookies generates the three CloudFront signed cookies with the given expiry.
 func (s *CloudFrontSigner) SignedCookies(expiry time.Time) []*http.Cookie {
 	policy := fmt.Sprintf(`{"Statement":[{"Resource":"https://%s/*","Condition":{"DateLessThan":{"AWS:EpochTime":%d}}}]}`, s.domain, expiry.Unix())
-
-	encodedPolicy := cfBase64Encode([]byte(policy))
-
-	h := sha1.New()
-	h.Write([]byte(policy))
-	sig, err := rsa.SignPKCS1v15(rand.Reader, s.privateKey, crypto.SHA1, h.Sum(nil))
-	if err != nil {
-		slog.Error("failed to sign CloudFront policy", "error", err)
+	encodedPolicy, encodedSig, ok := s.signPolicy(policy)
+	if !ok {
 		return nil
 	}
-	encodedSig := cfBase64Encode(sig)
 
 	cookieAttrs := func(name, value string) *http.Cookie {
 		return &http.Cookie{
@@ -182,23 +175,26 @@ func (s *CloudFrontSigner) SignedCookies(expiry time.Time) []*http.Cookie {
 // Used by CLI/API clients that don't have browser cookies.
 func (s *CloudFrontSigner) SignedURL(rawURL string, expiry time.Time) string {
 	policy := fmt.Sprintf(`{"Statement":[{"Resource":"%s","Condition":{"DateLessThan":{"AWS:EpochTime":%d}}}]}`, rawURL, expiry.Unix())
-
-	encodedPolicy := cfBase64Encode([]byte(policy))
-
-	h := sha1.New()
-	h.Write([]byte(policy))
-	sig, err := rsa.SignPKCS1v15(rand.Reader, s.privateKey, crypto.SHA1, h.Sum(nil))
-	if err != nil {
-		slog.Error("failed to sign CloudFront URL", "error", err)
+	encodedPolicy, encodedSig, ok := s.signPolicy(policy)
+	if !ok {
 		return rawURL
 	}
-	encodedSig := cfBase64Encode(sig)
-
 	separator := "?"
 	if strings.Contains(rawURL, "?") {
 		separator = "&"
 	}
 	return fmt.Sprintf("%s%sPolicy=%s&Signature=%s&Key-Pair-Id=%s", rawURL, separator, encodedPolicy, encodedSig, s.keyPairID)
+}
+
+func (s *CloudFrontSigner) signPolicy(policy string) (string, string, bool) {
+	h := sha1.New()
+	_, _ = h.Write([]byte(policy))
+	sig, err := rsa.SignPKCS1v15(rand.Reader, s.privateKey, crypto.SHA1, h.Sum(nil))
+	if err != nil {
+		slog.Error("failed to sign CloudFront policy", "error", err)
+		return "", "", false
+	}
+	return cfBase64Encode([]byte(policy)), cfBase64Encode(sig), true
 }
 
 func (s *CloudFrontSigner) SignedURLWithContentDisposition(rawURL string, contentDisposition string, expiry time.Time) string {

@@ -81,22 +81,9 @@ var (
 	ErrCloudPATNotConfigured = errors.New("cloud pat verifier not configured")
 )
 
-// CloudPATIdentity is what a successful verify resolves to. We keep
-// only the fields the auth path actually needs:
-//
-//   - OwnerID is the user whose request this is (mapped to X-User-ID).
-//   - InstanceID / InstanceRecordID are recorded so downstream code can
-//     correlate the request with a specific cloud node; they are not
-//     used for authorization today, but stashing them now keeps the
-//     wire shape stable for callers that later want to assert a
-//     particular instance binding.
-//
-// We deliberately drop token_last4, status, issued_at, etc. — those
-// are diagnostic fields that don't belong in cached auth state.
+// CloudPATIdentity is the current authenticated identity returned by Fleet.
 type CloudPATIdentity struct {
-	OwnerID          string `json:"o"`
-	InstanceID       string `json:"i"`
-	InstanceRecordID string `json:"r"`
+	OwnerID string `json:"o"`
 }
 
 // cloudPATInvalidError carries the Fleet-reported reason for a
@@ -168,10 +155,7 @@ type CloudPATVerifier struct {
 	rdb     *redis.Client // may be nil — disables caching
 }
 
-// CloudPATVerifierConfig assembles the dependencies for
-// NewCloudPATVerifier. Keeping this a struct (vs positional args)
-// leaves room for future knobs (custom TTL, expected_owner_id binding)
-// without churning every call site.
+// CloudPATVerifierConfig assembles the current Fleet verification dependencies.
 type CloudPATVerifierConfig struct {
 	// FleetBaseURL is the Cloud Fleet base URL (e.g.
 	// https://fleet.multica.cloud). Trailing slashes are trimmed.
@@ -283,11 +267,7 @@ func (v *CloudPATVerifier) Verify(ctx context.Context, token string, lookup Owne
 	return id, nil
 }
 
-// fleetVerifyRequest mirrors the Cloud doc's request schema. We only
-// send `token` today — `expected_owner_id` / `expected_instance_id`
-// would let the verifier fail a token bound to a different user than
-// the request claims, but at this layer we don't yet know the
-// "claimed" user. Wiring those in is a future hardening step.
+// fleetVerifyRequest mirrors the current Fleet request schema.
 type fleetVerifyRequest struct {
 	Token string `json:"token"`
 }
@@ -297,11 +277,9 @@ type fleetVerifyRequest struct {
 // Cloud doc, mismatch responses deliberately omit binding info to
 // avoid serving as a probing oracle).
 type fleetVerifyResponse struct {
-	Valid            bool   `json:"valid"`
-	Reason           string `json:"reason,omitempty"`
-	OwnerID          string `json:"owner_id,omitempty"`
-	InstanceID       string `json:"instance_id,omitempty"`
-	InstanceRecordID string `json:"instance_record_id,omitempty"`
+	Valid   bool   `json:"valid"`
+	Reason  string `json:"reason,omitempty"`
+	OwnerID string `json:"owner_id,omitempty"`
 }
 
 func (v *CloudPATVerifier) fetch(ctx context.Context, token string) (CloudPATIdentity, error) {
@@ -381,11 +359,7 @@ func (v *CloudPATVerifier) fetch(ctx context.Context, token string) (CloudPATIde
 		return CloudPATIdentity{}, ErrCloudPATUnavailable
 	}
 
-	return CloudPATIdentity{
-		OwnerID:          parsed.OwnerID,
-		InstanceID:       parsed.InstanceID,
-		InstanceRecordID: parsed.InstanceRecordID,
-	}, nil
+	return CloudPATIdentity{OwnerID: parsed.OwnerID}, nil
 }
 
 func cloudPATCacheKey(hash string) string { return cloudPATCachePrefix + hash }

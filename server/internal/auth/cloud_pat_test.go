@@ -110,12 +110,6 @@ func TestCloudPATVerifier_VerifySuccess(t *testing.T) {
 	if id.OwnerID != "01972f7e-7e8d-77ef-a13d-1b0ce3e9c001" {
 		t.Errorf("unexpected owner_id: %q", id.OwnerID)
 	}
-	if id.InstanceID != "i-0123456789abcdef0" {
-		t.Errorf("unexpected instance_id: %q", id.InstanceID)
-	}
-	if id.InstanceRecordID != "01972f7e-8a13-72a1-bbb0-0874ed4e8e67" {
-		t.Errorf("unexpected instance_record_id: %q", id.InstanceRecordID)
-	}
 }
 
 // TestCloudPATVerifier_VerifyEmptyToken pins an early-out: the middleware
