@@ -269,6 +269,29 @@ func createTestRepo(t *testing.T) string {
 	return createTestRepoAt(t, t.TempDir())
 }
 
+func createSyncedCache(t *testing.T) (*Cache, string) {
+	t.Helper()
+	sourceRepo := createTestRepo(t)
+	cache := New(t.TempDir(), testLogger())
+	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
+		t.Fatalf("sync failed: %v", err)
+	}
+	return cache, sourceRepo
+}
+
+func issueWorktreeParams(t *testing.T, sourceRepo string) WorktreeParams {
+	t.Helper()
+	return WorktreeParams{
+		WorkspaceID:        "ws-1",
+		RepoURL:            sourceRepo,
+		WorkDir:            t.TempDir(),
+		AgentName:          "PM",
+		TaskID:             "task-1",
+		BranchNameOverride: "agent/issue/issue123",
+		PreserveExisting:   true,
+	}
+}
+
 // createTestRepoAt initializes a git repo at the given directory (which
 // must already exist). Used to craft repo URLs at paths chosen by the test
 // — e.g. to reproduce collision classes in name derivation.
@@ -482,13 +505,7 @@ func gitHead(t *testing.T, repoPath string) string {
 
 func TestWorktreeFromCache(t *testing.T) {
 	t.Parallel()
-	sourceRepo := createTestRepo(t)
-	cacheRoot := t.TempDir()
-
-	cache := New(cacheRoot, testLogger())
-	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
-		t.Fatalf("sync failed: %v", err)
-	}
+	cache, sourceRepo := createSyncedCache(t)
 
 	barePath := cache.Lookup("ws-1", sourceRepo)
 	if barePath == "" {
@@ -516,13 +533,7 @@ func TestWorktreeFromCache(t *testing.T) {
 
 func TestCreateWorktree(t *testing.T) {
 	t.Parallel()
-	sourceRepo := createTestRepo(t)
-	cacheRoot := t.TempDir()
-
-	cache := New(cacheRoot, testLogger())
-	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
-		t.Fatalf("sync failed: %v", err)
-	}
+	cache, sourceRepo := createSyncedCache(t)
 
 	workDir := t.TempDir()
 	result, err := cache.CreateWorktree(WorktreeParams{
@@ -558,12 +569,7 @@ func TestCreateWorktree(t *testing.T) {
 }
 
 func TestCreateWorktreeFailsWhenRemoteCannotBeRefreshed(t *testing.T) {
-	sourceRepo := createTestRepo(t)
-	cacheRoot := t.TempDir()
-	cache := New(cacheRoot, testLogger())
-	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
-		t.Fatalf("sync failed: %v", err)
-	}
+	cache, sourceRepo := createSyncedCache(t)
 	offlinePath := sourceRepo + "-offline"
 	if err := os.Rename(sourceRepo, offlinePath); err != nil {
 		t.Fatal(err)
@@ -638,24 +644,9 @@ func TestWorkspaceCacheDirRejectsTraversal(t *testing.T) {
 
 func TestCreateWorktreePreserveExistingKeepsIssueWorktreeChanges(t *testing.T) {
 	t.Parallel()
-	sourceRepo := createTestRepo(t)
-	cacheRoot := t.TempDir()
+	cache, sourceRepo := createSyncedCache(t)
 
-	cache := New(cacheRoot, testLogger())
-	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
-		t.Fatalf("sync failed: %v", err)
-	}
-
-	workDir := t.TempDir()
-	params := WorktreeParams{
-		WorkspaceID:        "ws-1",
-		RepoURL:            sourceRepo,
-		WorkDir:            workDir,
-		AgentName:          "PM",
-		TaskID:             "task-1",
-		BranchNameOverride: "agent/issue/issue123",
-		PreserveExisting:   true,
-	}
+	params := issueWorktreeParams(t, sourceRepo)
 	result, err := cache.CreateWorktree(params)
 	if err != nil {
 		t.Fatalf("CreateWorktree first call failed: %v", err)
@@ -681,11 +672,7 @@ func TestCreateWorktreePreserveExistingKeepsIssueWorktreeChanges(t *testing.T) {
 }
 
 func TestCreateWorktreeReportsExistingWorktreeExcludeFailure(t *testing.T) {
-	sourceRepo := createTestRepo(t)
-	cache := New(t.TempDir(), testLogger())
-	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
-		t.Fatalf("sync failed: %v", err)
-	}
+	cache, sourceRepo := createSyncedCache(t)
 
 	params := WorktreeParams{
 		WorkspaceID:      "ws-1",
@@ -716,11 +703,7 @@ func TestCreateWorktreeReportsExistingWorktreeExcludeFailure(t *testing.T) {
 }
 
 func TestCreateWorktreeRollsBackWhenHookConfigurationFails(t *testing.T) {
-	sourceRepo := createTestRepo(t)
-	cache := New(t.TempDir(), testLogger())
-	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
-		t.Fatalf("sync failed: %v", err)
-	}
+	cache, sourceRepo := createSyncedCache(t)
 	barePath := cache.Lookup("ws-1", sourceRepo)
 	hooksPath := filepath.Join(barePath, "hooks")
 	if err := os.RemoveAll(hooksPath); err != nil {
@@ -776,24 +759,9 @@ func gitAgentBranches(t *testing.T, barePath string) string {
 
 func TestCreateWorktreePreserveExistingRestoresIssueBranch(t *testing.T) {
 	t.Parallel()
-	sourceRepo := createTestRepo(t)
-	cacheRoot := t.TempDir()
+	cache, sourceRepo := createSyncedCache(t)
 
-	cache := New(cacheRoot, testLogger())
-	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
-		t.Fatalf("sync failed: %v", err)
-	}
-
-	workDir := t.TempDir()
-	params := WorktreeParams{
-		WorkspaceID:        "ws-1",
-		RepoURL:            sourceRepo,
-		WorkDir:            workDir,
-		AgentName:          "PM",
-		TaskID:             "task-1",
-		BranchNameOverride: "agent/issue/issue123",
-		PreserveExisting:   true,
-	}
+	params := issueWorktreeParams(t, sourceRepo)
 	result, err := cache.CreateWorktree(params)
 	if err != nil {
 		t.Fatalf("CreateWorktree first call failed: %v", err)
@@ -822,13 +790,7 @@ func TestCreateWorktreePreserveExistingRestoresIssueBranch(t *testing.T) {
 
 func TestCreateWorktreeEmptyTaskIDUsesValidManualBranch(t *testing.T) {
 	t.Parallel()
-	sourceRepo := createTestRepo(t)
-	cacheRoot := t.TempDir()
-
-	cache := New(cacheRoot, testLogger())
-	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
-		t.Fatalf("sync failed: %v", err)
-	}
+	cache, sourceRepo := createSyncedCache(t)
 
 	result, err := cache.CreateWorktree(WorktreeParams{
 		WorkspaceID: "ws-1",
@@ -847,13 +809,7 @@ func TestCreateWorktreeEmptyTaskIDUsesValidManualBranch(t *testing.T) {
 
 func TestCreateWorktreeExcludesOpenCodeSkills(t *testing.T) {
 	t.Parallel()
-	sourceRepo := createTestRepo(t)
-	cacheRoot := t.TempDir()
-
-	cache := New(cacheRoot, testLogger())
-	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
-		t.Fatalf("sync failed: %v", err)
-	}
+	cache, sourceRepo := createSyncedCache(t)
 
 	workDir := t.TempDir()
 	result, err := cache.CreateWorktree(WorktreeParams{
@@ -1030,11 +986,7 @@ func TestCreateWorktreeWithRequestedTagRef(t *testing.T) {
 
 func TestCreateWorktreeWithUnknownRequestedRef(t *testing.T) {
 	t.Parallel()
-	sourceRepo := createTestRepo(t)
-	cache := New(t.TempDir(), testLogger())
-	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
-		t.Fatalf("sync failed: %v", err)
-	}
+	cache, sourceRepo := createSyncedCache(t)
 
 	_, err := cache.CreateWorktree(WorktreeParams{
 		WorkspaceID: "ws-1",
@@ -1182,11 +1134,7 @@ func currentBranchName(t *testing.T, repoPath string) string {
 
 func TestValidateBareCloneLayoutRejectsNonCurrentRefspec(t *testing.T) {
 	t.Parallel()
-	sourceRepo := createTestRepo(t)
-	cache := New(t.TempDir(), testLogger())
-	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
-		t.Fatalf("sync failed: %v", err)
-	}
+	cache, sourceRepo := createSyncedCache(t)
 	barePath := cache.Lookup("ws-1", sourceRepo)
 	if err := validateBareCloneLayout(barePath); err != nil {
 		t.Fatalf("new clone did not establish current layout: %v", err)
@@ -1212,12 +1160,7 @@ func TestValidateBareCloneLayoutRejectsNonCurrentRefspec(t *testing.T) {
 // timestamp-suffixed branch before hitting the same path error.
 func TestCreateWorktreePathCollisionDoesNotLeakBranch(t *testing.T) {
 	t.Parallel()
-	sourceRepo := createTestRepo(t)
-	cacheRoot := t.TempDir()
-	cache := New(cacheRoot, testLogger())
-	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
-		t.Fatalf("sync failed: %v", err)
-	}
+	cache, sourceRepo := createSyncedCache(t)
 	barePath := cache.Lookup("ws-1", sourceRepo)
 
 	// Pre-create the target worktree path as a plain non-empty directory.
@@ -1257,12 +1200,7 @@ func TestCreateWorktreePathCollisionDoesNotLeakBranch(t *testing.T) {
 // caches require the origin/HEAD established by a successful remote refresh.
 func TestGetRemoteDefaultBranchRequiresOriginHeadForCustomBranch(t *testing.T) {
 	t.Parallel()
-	sourceRepo := createTestRepo(t)
-	cacheRoot := t.TempDir()
-	cache := New(cacheRoot, testLogger())
-	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
-		t.Fatalf("sync failed: %v", err)
-	}
+	cache, sourceRepo := createSyncedCache(t)
 	barePath := cache.Lookup("ws-1", sourceRepo)
 
 	// Resolve the existing default branch's commit so we can repoint a
@@ -1290,12 +1228,7 @@ func TestGetRemoteDefaultBranchRequiresOriginHeadForCustomBranch(t *testing.T) {
 
 func TestGetRemoteDefaultBranchRejectsLocalBareHead(t *testing.T) {
 	t.Parallel()
-	sourceRepo := createTestRepo(t)
-	cacheRoot := t.TempDir()
-	cache := New(cacheRoot, testLogger())
-	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
-		t.Fatalf("sync failed: %v", err)
-	}
+	cache, sourceRepo := createSyncedCache(t)
 	barePath := cache.Lookup("ws-1", sourceRepo)
 
 	// Remove current remote metadata while leaving an unrelated local HEAD.
@@ -1370,12 +1303,7 @@ func TestGitFetchRefreshesOriginHeadAfterDefaultChange(t *testing.T) {
 
 func TestGetRemoteDefaultBranchDoesNotUseBareHeadHint(t *testing.T) {
 	t.Parallel()
-	sourceRepo := createTestRepo(t)
-	cacheRoot := t.TempDir()
-	cache := New(cacheRoot, testLogger())
-	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
-		t.Fatalf("sync failed: %v", err)
-	}
+	cache, sourceRepo := createSyncedCache(t)
 	barePath := cache.Lookup("ws-1", sourceRepo)
 
 	existing := getRemoteDefaultBranch(barePath)
@@ -1412,13 +1340,7 @@ func TestGetRemoteDefaultBranchDoesNotUseBareHeadHint(t *testing.T) {
 // for the Multica Agent to every commit made in the worktree.
 func TestCreateWorktreeInstallsCoAuthoredByHook(t *testing.T) {
 	t.Parallel()
-	sourceRepo := createTestRepo(t)
-	cacheRoot := t.TempDir()
-
-	cache := New(cacheRoot, testLogger())
-	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
-		t.Fatalf("sync failed: %v", err)
-	}
+	cache, sourceRepo := createSyncedCache(t)
 
 	workDir := t.TempDir()
 	result, err := cache.CreateWorktree(WorktreeParams{
@@ -1456,13 +1378,7 @@ func TestCreateWorktreeInstallsCoAuthoredByHook(t *testing.T) {
 // duplicate Co-authored-by trailer if one is already present in the message.
 func TestCoAuthoredByHookIdempotent(t *testing.T) {
 	t.Parallel()
-	sourceRepo := createTestRepo(t)
-	cacheRoot := t.TempDir()
-
-	cache := New(cacheRoot, testLogger())
-	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
-		t.Fatalf("sync failed: %v", err)
-	}
+	cache, sourceRepo := createSyncedCache(t)
 
 	workDir := t.TempDir()
 	result, err := cache.CreateWorktree(WorktreeParams{
@@ -1506,13 +1422,7 @@ func TestCoAuthoredByHookIdempotent(t *testing.T) {
 // workspace setting.
 func TestCreateWorktreeRemovesCoAuthoredByHookWhenDisabled(t *testing.T) {
 	t.Parallel()
-	sourceRepo := createTestRepo(t)
-	cacheRoot := t.TempDir()
-
-	cache := New(cacheRoot, testLogger())
-	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
-		t.Fatalf("sync failed: %v", err)
-	}
+	cache, sourceRepo := createSyncedCache(t)
 
 	// First worktree: setting enabled → hook installed in the bare cache's
 	// shared hooks dir.
@@ -1576,13 +1486,7 @@ func TestCreateWorktreeRemovesCoAuthoredByHookWhenDisabled(t *testing.T) {
 // untouched even when CoAuthoredByEnabled=false.
 func TestRemoveCoAuthoredByHookPreservesUserHook(t *testing.T) {
 	t.Parallel()
-	sourceRepo := createTestRepo(t)
-	cacheRoot := t.TempDir()
-
-	cache := New(cacheRoot, testLogger())
-	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
-		t.Fatalf("sync failed: %v", err)
-	}
+	cache, sourceRepo := createSyncedCache(t)
 
 	barePath := cache.Lookup("ws-1", sourceRepo)
 	hooksDir := filepath.Join(barePath, "hooks")
@@ -1617,11 +1521,7 @@ func TestRemoveCoAuthoredByHookPreservesUserHook(t *testing.T) {
 }
 
 func TestInstallCoAuthoredByHookDoesNotOverwriteUserHook(t *testing.T) {
-	sourceRepo := createTestRepo(t)
-	cache := New(t.TempDir(), testLogger())
-	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
-		t.Fatalf("sync failed: %v", err)
-	}
+	cache, sourceRepo := createSyncedCache(t)
 
 	barePath := cache.Lookup("ws-1", sourceRepo)
 	hookPath := filepath.Join(barePath, "hooks", "prepare-commit-msg")
@@ -1659,12 +1559,7 @@ func TestInstallCoAuthoredByHookDoesNotOverwriteUserHook(t *testing.T) {
 // on an arbitrary refname-order-first candidate.
 func TestGetRemoteDefaultBranchAmbiguousOriginReturnsEmpty(t *testing.T) {
 	t.Parallel()
-	sourceRepo := createTestRepo(t)
-	cacheRoot := t.TempDir()
-	cache := New(cacheRoot, testLogger())
-	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
-		t.Fatalf("sync failed: %v", err)
-	}
+	cache, sourceRepo := createSyncedCache(t)
 	barePath := cache.Lookup("ws-1", sourceRepo)
 
 	existing := getRemoteDefaultBranch(barePath)
