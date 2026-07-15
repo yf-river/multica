@@ -1272,33 +1272,23 @@ describe("buildRunReviewEventRows", () => {
   });
 
   it("aggregates repeated runs from the same agent node", () => {
-    const baseNode = {
-      issue_id: "issue-1",
+    const baseNode = timelineNode({
       node_id: "task:base",
-      node_type: "agent_task",
       agent_id: "agent-pm",
       agent_name: "PM-项目经理",
-      status: "completed",
-      started_at: "2026-06-09T10:00:00.000Z",
-      completed_at: "2026-06-09T10:01:00.000Z",
-      duration_ms: 60_000,
       input_tokens: 10,
       output_tokens: 20,
-      cache_read_tokens: 0,
-      cache_write_tokens: 0,
       message_count: 1,
       agent_turn_count: 2,
       trace_event_count: 1,
-      usage_unavailable_trace: false,
       summary: "pm run",
-      evidence_refs: [],
       artifacts: [artifact({
         id: "att-old",
         filename: "handoff.md",
         title: "handoff",
         created_at: "2026-06-09T10:01:00.000Z",
       })],
-    } as IssueTimelineNode;
+    });
 
     const rows = buildAgentNodeRows([
       { ...baseNode, node_id: "task:task-1" },
@@ -1335,28 +1325,18 @@ describe("buildRunReviewEventRows", () => {
   });
 
   it("keeps repeated PM runs on one horizontal timeline row while keeping node aggregation available", () => {
-    const baseNode = {
-      issue_id: "issue-1",
+    const baseNode = timelineNode({
       node_id: "task:pm-1",
-      node_type: "agent_task",
       agent_id: "agent-pm",
       agent_name: "PM-项目经理",
-      status: "completed",
-      started_at: "2026-06-09T10:00:00.000Z",
-      completed_at: "2026-06-09T10:01:00.000Z",
-      duration_ms: 60_000,
       input_tokens: 10,
       output_tokens: 20,
-      cache_read_tokens: 0,
-      cache_write_tokens: 0,
       message_count: 1,
       agent_turn_count: 2,
       trace_event_count: 1,
-      usage_unavailable_trace: false,
       summary: "pm run",
-      evidence_refs: [],
       artifacts: [],
-    } as IssueTimelineNode;
+    });
 
     const timelineRows = buildTimelineAgentRows([
       baseNode,
@@ -1380,66 +1360,37 @@ describe("buildRunReviewEventRows", () => {
   });
 
   it("keeps human confirmation and child waits on dedicated horizontal timeline rows", () => {
-    const agentNode = {
-      issue_id: "issue-1",
+    const agentNode = timelineNode({
       node_id: "task:pm-1",
-      node_type: "agent_task",
       agent_id: "agent-pm",
       agent_name: "PM-项目经理",
-      status: "completed",
-      started_at: "2026-06-09T10:00:00.000Z",
-      completed_at: "2026-06-09T10:01:00.000Z",
-      duration_ms: 60_000,
       input_tokens: 10,
       output_tokens: 20,
-      cache_read_tokens: 0,
-      cache_write_tokens: 0,
       message_count: 1,
       agent_turn_count: 2,
       trace_event_count: 1,
-      usage_unavailable_trace: false,
       summary: "pm run",
-      evidence_refs: [],
       artifacts: [],
-    } as IssueTimelineNode;
-    const waitNode = {
-      issue_id: "issue-1",
+    });
+    const waitNode = timelineNode({
       node_id: "human_confirmation:comment-1:pm-2",
       node_type: "human_confirmation",
-      status: "completed",
       started_at: "2026-06-09T10:01:00.000Z",
       completed_at: "2026-06-09T10:06:00.000Z",
       duration_ms: 300_000,
-      input_tokens: 0,
-      output_tokens: 0,
-      cache_read_tokens: 0,
-      cache_write_tokens: 0,
-      message_count: 0,
-      agent_turn_count: 0,
-      trace_event_count: 0,
-      usage_unavailable_trace: false,
       summary: "等待人工确认：确认继续",
       evidence_refs: [{ type: "comment", id: "comment-1" }],
-    } as IssueTimelineNode;
-    const childNode = {
-      issue_id: "issue-1",
+    });
+    const childNode = timelineNode({
       node_id: "child_issue_ref:child-1",
       node_type: "child_issue_ref",
       status: "done",
       started_at: "2026-06-09T10:06:00.000Z",
       completed_at: "2026-06-09T10:10:00.000Z",
       duration_ms: 240_000,
-      input_tokens: 0,
-      output_tokens: 0,
-      cache_read_tokens: 0,
-      cache_write_tokens: 0,
-      message_count: 0,
-      agent_turn_count: 0,
-      trace_event_count: 0,
-      usage_unavailable_trace: false,
       summary: "跨项目验收标记：gateway request id / middleware acceptance marker",
       evidence_refs: [{ type: "child_issue", id: "child-1" }],
-    } as IssueTimelineNode;
+    });
 
     const rows = buildTimelineBarRows(
       buildTimelineAgentRows([agentNode]),
@@ -1490,29 +1441,19 @@ describe("buildRunReviewEventRows", () => {
   });
 
   it("uses agent responsibility windows without separate dispatch wait segments", () => {
-    const firstRun = {
-      issue_id: "issue-1",
+    const firstRun = timelineNode({
       node_id: "task:pm-1",
-      node_type: "agent_task",
       agent_id: "agent-pm",
       agent_name: "PM-项目经理",
-      status: "completed",
-      started_at: "2026-06-09T10:00:00.000Z",
       actual_started_at: "2026-06-09T10:00:00.000Z",
-      completed_at: "2026-06-09T10:01:00.000Z",
-      duration_ms: 60_000,
       input_tokens: 10,
       output_tokens: 20,
-      cache_read_tokens: 0,
-      cache_write_tokens: 0,
       message_count: 1,
       agent_turn_count: 1,
       trace_event_count: 1,
-      usage_unavailable_trace: false,
       summary: "pm first run",
-      evidence_refs: [],
       artifacts: [],
-    } as IssueTimelineNode;
+    });
     const secondRun = {
       ...firstRun,
       node_id: "task:pm-2",
@@ -1556,28 +1497,16 @@ describe("buildRunReviewEventRows", () => {
   });
 
   it("does not inflate short timeline runs to one minute", () => {
-    const timing = timelineTiming({
-      issue_id: "issue-1",
+    const timing = timelineTiming(timelineNode({
       node_id: "task:short-run",
-      node_type: "agent_task",
       agent_id: "agent-pm",
       agent_name: "PM-项目经理",
-      status: "completed",
       started_at: "2026-06-09T10:00:00.000Z",
       completed_at: "2026-06-09T10:00:20.000Z",
       duration_ms: 20_000,
-      input_tokens: 0,
-      output_tokens: 0,
-      cache_read_tokens: 0,
-      cache_write_tokens: 0,
-      message_count: 0,
-      agent_turn_count: 0,
-      trace_event_count: 0,
-      usage_unavailable_trace: false,
       summary: "",
-      evidence_refs: [],
       artifacts: [],
-    } as IssueTimelineNode);
+    }));
 
     expect(timing.durationMs).toBe(20_000);
     expect((timing.endMs ?? 0) - (timing.startMs ?? 0)).toBe(20_000);

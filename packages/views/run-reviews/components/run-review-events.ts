@@ -658,30 +658,26 @@ function toolOutputHasSuccessfulExitCode(output: string) {
 }
 
 function toolOutputExitCode(output: string) {
-  const patterns = [
+  return matchedInteger(output, [
     /\bExit Code:\s*(\d+)\b/i,
     /\bexit\s+(?:status|code)\s*[:=]?\s*(\d+)\b/i,
     /\bexited\s+with\s+(?:status|code)\s*[:=]?\s*(\d+)\b/i,
-  ];
-  for (const pattern of patterns) {
-    const match = pattern.exec(output);
-    if (!match?.[1]) continue;
-    const value = Number.parseInt(match[1], 10);
-    if (Number.isFinite(value)) return value;
-  }
-  return null;
+  ]);
 }
 
 function toolOutputHTTPStatusCode(output: string) {
-  const patterns = [
+  return matchedInteger(output, [
     /\bhttp(?:\/[\d.]+)?\s*(?:status\s*)?([45]\d{2})\b/i,
     /\bstatus(?:\s*code)?\s*[:=]?\s*([45]\d{2})\b/i,
-  ];
+  ]);
+}
+
+function matchedInteger(value: string, patterns: RegExp[]) {
   for (const pattern of patterns) {
-    const match = pattern.exec(output);
+    const match = pattern.exec(value);
     if (!match?.[1]) continue;
-    const value = Number.parseInt(match[1], 10);
-    if (Number.isFinite(value)) return value;
+    const number = Number.parseInt(match[1], 10);
+    if (Number.isFinite(number)) return number;
   }
   return null;
 }
