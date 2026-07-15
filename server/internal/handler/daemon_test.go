@@ -351,6 +351,72 @@ func claimDaemonTaskRecorder(t *testing.T, runtimeID, daemonID string) *httptest
 	return w
 }
 
+func createDaemonTestAutopilotRun(t *testing.T, title, status string) (agentID, runtimeID, runID string) {
+	t.Helper()
+	ctx := context.Background()
+	if err := testPool.QueryRow(ctx, `
+		SELECT a.id, a.runtime_id FROM agent a WHERE a.workspace_id = $1 LIMIT 1
+	`, testWorkspaceID).Scan(&agentID, &runtimeID); err != nil {
+		t.Fatalf("setup: get agent: %v", err)
+	}
+	var autopilotID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO autopilot (
+			workspace_id, title, assignee_id, execution_mode,
+			created_by_type, created_by_id
+		)
+		VALUES ($1, $2, $3, 'run_only', 'member', $4)
+		RETURNING id
+	`, testWorkspaceID, title, agentID, testUserID).Scan(&autopilotID); err != nil {
+		t.Fatalf("setup: create autopilot: %v", err)
+	}
+	t.Cleanup(func() { mustExec(t, context.Background(), `DELETE FROM autopilot WHERE id = $1`, autopilotID) })
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO autopilot_run (autopilot_id, source, status)
+		VALUES ($1, 'manual', $2)
+		RETURNING id
+	`, autopilotID, status).Scan(&runID); err != nil {
+		t.Fatalf("setup: create autopilot_run: %v", err)
+	}
+	return agentID, runtimeID, runID
+}
+
+func setHandlerTestWorkspaceContext(t *testing.T, value *string) {
+	t.Helper()
+	ctx := context.Background()
+	var previous string
+	if err := testPool.QueryRow(ctx, `SELECT COALESCE(context, '') FROM workspace WHERE id = $1`, testWorkspaceID).Scan(&previous); err != nil {
+		t.Fatalf("read workspace.context: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `UPDATE workspace SET context = $1 WHERE id = $2`, value, testWorkspaceID); err != nil {
+		t.Fatalf("set workspace.context: %v", err)
+	}
+	t.Cleanup(func() {
+		if previous == "" {
+			mustExec(t, context.Background(), `UPDATE workspace SET context = NULL WHERE id = $1`, testWorkspaceID)
+		} else {
+			mustExec(t, context.Background(), `UPDATE workspace SET context = $1 WHERE id = $2`, previous, testWorkspaceID)
+		}
+	})
+}
+
+func assertDaemonGCCheckStatus(
+	t *testing.T,
+	handler func(http.ResponseWriter, *http.Request),
+	resourcePath, param, id, workspaceID, daemonID string,
+	want int,
+) *httptest.ResponseRecorder {
+	t.Helper()
+	w := httptest.NewRecorder()
+	req := newDaemonUserRequest("GET", "/api/daemon/"+resourcePath+"/"+id+"/gc-check", nil, workspaceID, daemonID)
+	req = withURLParam(req, param, id)
+	handler(w, req)
+	if w.Code != want {
+		t.Fatalf("gc-check: expected %d, got %d: %s", want, w.Code, w.Body.String())
+	}
+	return w
+}
+
 func TestClaimTaskByRuntime_ReclaimsStaleDispatchedTask(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
@@ -478,21 +544,8 @@ func TestClaimTaskByRuntime_PopulatesWorkspaceContext(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	const wsContext = "All comments must be in English. Prefer concise PR descriptions."
-	var prior string
-	if err := testPool.QueryRow(ctx, `SELECT COALESCE(context, '') FROM workspace WHERE id = $1`, testWorkspaceID).Scan(&prior); err != nil {
-		t.Fatalf("read workspace.context: %v", err)
-	}
-	if _, err := testPool.Exec(ctx, `UPDATE workspace SET context = $1 WHERE id = $2`, wsContext, testWorkspaceID); err != nil {
-		t.Fatalf("set workspace.context: %v", err)
-	}
-	t.Cleanup(func() {
-		if prior == "" {
-			_, _ = testPool.Exec(ctx, `UPDATE workspace SET context = NULL WHERE id = $1`, testWorkspaceID)
-		} else {
-			_, _ = testPool.Exec(ctx, `UPDATE workspace SET context = $1 WHERE id = $2`, prior, testWorkspaceID)
-		}
-	})
+	wsContext := "All comments must be in English. Prefer concise PR descriptions."
+	setHandlerTestWorkspaceContext(t, &wsContext)
 
 	runtimeID := createClaimReclaimRuntime(t, ctx, "Workspace context claim runtime")
 	agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, "Workspace context claim agent")
@@ -538,20 +591,7 @@ func TestClaimTaskByRuntime_WorkspaceContextEmptyWhenUnset(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	var prior string
-	if err := testPool.QueryRow(ctx, `SELECT COALESCE(context, '') FROM workspace WHERE id = $1`, testWorkspaceID).Scan(&prior); err != nil {
-		t.Fatalf("read workspace.context: %v", err)
-	}
-	if _, err := testPool.Exec(ctx, `UPDATE workspace SET context = NULL WHERE id = $1`, testWorkspaceID); err != nil {
-		t.Fatalf("clear workspace.context: %v", err)
-	}
-	t.Cleanup(func() {
-		if prior == "" {
-			mustExec(t, ctx, `UPDATE workspace SET context = NULL WHERE id = $1`, testWorkspaceID)
-		} else {
-			mustExec(t, ctx, `UPDATE workspace SET context = $1 WHERE id = $2`, prior, testWorkspaceID)
-		}
-	})
+	setHandlerTestWorkspaceContext(t, nil)
 
 	runtimeID := createClaimReclaimRuntime(t, ctx, "Workspace context empty claim runtime")
 	agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, "Workspace context empty claim agent")
@@ -2066,35 +2106,7 @@ func TestStartTask_AutopilotRunOnlyTask_ResolvesWorkspace(t *testing.T) {
 	}
 
 	ctx := context.Background()
-
-	var agentID, runtimeID string
-	if err := testPool.QueryRow(ctx, `
-		SELECT a.id, a.runtime_id FROM agent a WHERE a.workspace_id = $1 LIMIT 1
-	`, testWorkspaceID).Scan(&agentID, &runtimeID); err != nil {
-		t.Fatalf("setup: get agent: %v", err)
-	}
-
-	var autopilotID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO autopilot (
-			workspace_id, title, assignee_id, execution_mode,
-			created_by_type, created_by_id
-		)
-		VALUES ($1, 'run_only fixture', $2, 'run_only', 'member', $3)
-		RETURNING id
-	`, testWorkspaceID, agentID, testUserID).Scan(&autopilotID); err != nil {
-		t.Fatalf("setup: create autopilot: %v", err)
-	}
-	defer mustExec(t, ctx, `DELETE FROM autopilot WHERE id = $1`, autopilotID)
-
-	var runID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO autopilot_run (autopilot_id, source, status)
-		VALUES ($1, 'manual', 'running')
-		RETURNING id
-	`, autopilotID).Scan(&runID); err != nil {
-		t.Fatalf("setup: create autopilot_run: %v", err)
-	}
+	agentID, runtimeID, runID := createDaemonTestAutopilotRun(t, "run_only fixture", "running")
 
 	// issue_id is explicitly NULL — the condition that used to trigger 404.
 	var taskID string
@@ -2474,35 +2486,7 @@ func TestClaimTask_AutopilotRunOnly_PopulatesWorkspaceID(t *testing.T) {
 	}
 
 	ctx := context.Background()
-
-	var agentID, runtimeID string
-	if err := testPool.QueryRow(ctx, `
-		SELECT a.id, a.runtime_id FROM agent a WHERE a.workspace_id = $1 LIMIT 1
-	`, testWorkspaceID).Scan(&agentID, &runtimeID); err != nil {
-		t.Fatalf("setup: get agent: %v", err)
-	}
-
-	var autopilotID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO autopilot (
-			workspace_id, title, assignee_id, execution_mode,
-			created_by_type, created_by_id
-		)
-		VALUES ($1, 'claim workspace fixture', $2, 'run_only', 'member', $3)
-		RETURNING id
-	`, testWorkspaceID, agentID, testUserID).Scan(&autopilotID); err != nil {
-		t.Fatalf("setup: create autopilot: %v", err)
-	}
-	defer mustExec(t, ctx, `DELETE FROM autopilot WHERE id = $1`, autopilotID)
-
-	var runID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO autopilot_run (autopilot_id, source, status)
-		VALUES ($1, 'manual', 'running')
-		RETURNING id
-	`, autopilotID).Scan(&runID); err != nil {
-		t.Fatalf("setup: create autopilot_run: %v", err)
-	}
+	agentID, runtimeID, runID := createDaemonTestAutopilotRun(t, "claim workspace fixture", "running")
 
 	// Create a queued task with only AutopilotRunID (no IssueID, no ChatSessionID).
 	var taskID string
@@ -3964,24 +3948,12 @@ func TestGetChatSessionGCCheck(t *testing.T) {
 	defer mustExec(t, ctx, `DELETE FROM chat_session WHERE id = $1`, sessionID)
 
 	// A user outside the workspace must receive 404 with no oracle.
-	w := httptest.NewRecorder()
-	req := newDaemonUserRequest("GET", "/api/daemon/chat-sessions/"+sessionID+"/gc-check", nil,
-		"00000000-0000-0000-0000-000000000000", "attacker-daemon")
-	req = withURLParam(req, "sessionId", sessionID)
-	testHandler.GetChatSessionGCCheck(w, req)
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("cross-workspace token: expected 404, got %d: %s", w.Code, w.Body.String())
-	}
+	assertDaemonGCCheckStatus(t, testHandler.GetChatSessionGCCheck, "chat-sessions", "sessionId", sessionID,
+		"00000000-0000-0000-0000-000000000000", "attacker-daemon", http.StatusNotFound)
 
 	// A same-workspace user sees the live row.
-	w = httptest.NewRecorder()
-	req = newDaemonUserRequest("GET", "/api/daemon/chat-sessions/"+sessionID+"/gc-check", nil,
-		testWorkspaceID, "legit-daemon")
-	req = withURLParam(req, "sessionId", sessionID)
-	testHandler.GetChatSessionGCCheck(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("same-workspace token: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
+	w := assertDaemonGCCheckStatus(t, testHandler.GetChatSessionGCCheck, "chat-sessions", "sessionId", sessionID,
+		testWorkspaceID, "legit-daemon", http.StatusOK)
 	var resp struct {
 		Status    string `json:"status"`
 		UpdatedAt string `json:"updated_at"`
@@ -4001,14 +3973,8 @@ func TestGetChatSessionGCCheck(t *testing.T) {
 	if _, err := testPool.Exec(ctx, `DELETE FROM chat_session WHERE id = $1`, sessionID); err != nil {
 		t.Fatalf("delete chat session: %v", err)
 	}
-	w = httptest.NewRecorder()
-	req = newDaemonUserRequest("GET", "/api/daemon/chat-sessions/"+sessionID+"/gc-check", nil,
-		testWorkspaceID, "legit-daemon")
-	req = withURLParam(req, "sessionId", sessionID)
-	testHandler.GetChatSessionGCCheck(w, req)
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("hard-deleted session: expected 404, got %d: %s", w.Code, w.Body.String())
-	}
+	assertDaemonGCCheckStatus(t, testHandler.GetChatSessionGCCheck, "chat-sessions", "sessionId", sessionID,
+		testWorkspaceID, "legit-daemon", http.StatusNotFound)
 }
 
 // TestGetAutopilotRunGCCheck verifies the autopilot-run gc-check endpoint:
@@ -4019,53 +3985,18 @@ func TestGetAutopilotRunGCCheck(t *testing.T) {
 	}
 
 	ctx := context.Background()
-
-	var agentID string
-	if err := testPool.QueryRow(ctx, `SELECT id FROM agent WHERE workspace_id = $1 LIMIT 1`, testWorkspaceID).Scan(&agentID); err != nil {
-		t.Fatalf("setup: get agent: %v", err)
-	}
-
-	var autopilotID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO autopilot (
-			workspace_id, title, assignee_id, execution_mode,
-			created_by_type, created_by_id
-		)
-		VALUES ($1, 'gc-check autopilot', $2, 'run_only', 'member', $3)
-		RETURNING id
-	`, testWorkspaceID, agentID, testUserID).Scan(&autopilotID); err != nil {
-		t.Fatalf("setup: create autopilot: %v", err)
-	}
-	defer mustExec(t, ctx, `DELETE FROM autopilot WHERE id = $1`, autopilotID)
-
-	var runID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO autopilot_run (autopilot_id, source, status, completed_at)
-		VALUES ($1, 'manual', 'completed', NOW() - INTERVAL '6 days')
-		RETURNING id
-	`, autopilotID).Scan(&runID); err != nil {
-		t.Fatalf("setup: create autopilot_run: %v", err)
+	_, _, runID := createDaemonTestAutopilotRun(t, "gc-check autopilot", "completed")
+	if _, err := testPool.Exec(ctx, `UPDATE autopilot_run SET completed_at = NOW() - INTERVAL '6 days' WHERE id = $1`, runID); err != nil {
+		t.Fatalf("setup: age autopilot_run: %v", err)
 	}
 
 	// Cross-workspace probe.
-	w := httptest.NewRecorder()
-	req := newDaemonUserRequest("GET", "/api/daemon/autopilot-runs/"+runID+"/gc-check", nil,
-		"00000000-0000-0000-0000-000000000000", "attacker-daemon")
-	req = withURLParam(req, "runId", runID)
-	testHandler.GetAutopilotRunGCCheck(w, req)
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("cross-workspace token: expected 404, got %d: %s", w.Code, w.Body.String())
-	}
+	assertDaemonGCCheckStatus(t, testHandler.GetAutopilotRunGCCheck, "autopilot-runs", "runId", runID,
+		"00000000-0000-0000-0000-000000000000", "attacker-daemon", http.StatusNotFound)
 
 	// Same-workspace probe.
-	w = httptest.NewRecorder()
-	req = newDaemonUserRequest("GET", "/api/daemon/autopilot-runs/"+runID+"/gc-check", nil,
-		testWorkspaceID, "legit-daemon")
-	req = withURLParam(req, "runId", runID)
-	testHandler.GetAutopilotRunGCCheck(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("same-workspace token: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
+	w := assertDaemonGCCheckStatus(t, testHandler.GetAutopilotRunGCCheck, "autopilot-runs", "runId", runID,
+		testWorkspaceID, "legit-daemon", http.StatusOK)
 	var resp map[string]any
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
@@ -4116,24 +4047,12 @@ func TestGetTaskGCCheck(t *testing.T) {
 	defer mustExec(t, ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
 
 	// Cross-workspace probe.
-	w := httptest.NewRecorder()
-	req := newDaemonUserRequest("GET", "/api/daemon/tasks/"+taskID+"/gc-check", nil,
-		"00000000-0000-0000-0000-000000000000", "attacker-daemon")
-	req = withURLParam(req, "taskId", taskID)
-	testHandler.GetTaskGCCheck(w, req)
-	if w.Code != http.StatusNotFound {
-		t.Fatalf("cross-workspace token: expected 404, got %d: %s", w.Code, w.Body.String())
-	}
+	assertDaemonGCCheckStatus(t, testHandler.GetTaskGCCheck, "tasks", "taskId", taskID,
+		"00000000-0000-0000-0000-000000000000", "attacker-daemon", http.StatusNotFound)
 
 	// Same-workspace probe — terminal task returns its status.
-	w = httptest.NewRecorder()
-	req = newDaemonUserRequest("GET", "/api/daemon/tasks/"+taskID+"/gc-check", nil,
-		testWorkspaceID, "legit-daemon")
-	req = withURLParam(req, "taskId", taskID)
-	testHandler.GetTaskGCCheck(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("same-workspace token: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
+	w := assertDaemonGCCheckStatus(t, testHandler.GetTaskGCCheck, "tasks", "taskId", taskID,
+		testWorkspaceID, "legit-daemon", http.StatusOK)
 	var resp map[string]any
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode: %v", err)
