@@ -21,12 +21,6 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-type squadMemberMutationRequest struct {
-	MemberType string `json:"member_type"`
-	MemberID   string `json:"member_id"`
-	Role       string `json:"role"`
-}
-
 func (h *Handler) ListSquadMembers(w http.ResponseWriter, r *http.Request) {
 	squad, workspaceID, ok := h.loadSquadInWorkspace(w, r)
 	if !ok {
@@ -242,7 +236,7 @@ func (h *Handler) AddSquadMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req squadMemberMutationRequest
+	var req createSquadMemberInput
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -307,7 +301,7 @@ func (h *Handler) RemoveSquadMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req squadMemberMutationRequest
+	var req createSquadMemberInput
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -350,7 +344,7 @@ func (h *Handler) UpdateSquadMemberRole(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	var req squadMemberMutationRequest
+	var req createSquadMemberInput
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
