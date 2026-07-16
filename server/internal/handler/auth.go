@@ -111,13 +111,15 @@ func validatePassword(password string) string {
 		case ch >= 0x20 && ch <= 0x7E:
 			// Check against the allowed special character set
 			// ! " # $ % & ' ( ) * + , - . / : ; < = > ? @ [ ] ^ _ ` { | } ~
+			allowedSpecial := false
 			for _, sc := range `!"#$%&'()*+,-./:;<=>?@[]^_\` + "`{|}~" {
 				if ch == sc {
 					hasSpecial = true
+					allowedSpecial = true
 					break
 				}
 			}
-			if !hasSpecial {
+			if !allowedSpecial {
 				return "password contains invalid characters"
 			}
 		default:

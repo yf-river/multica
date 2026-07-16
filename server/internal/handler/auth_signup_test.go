@@ -42,6 +42,12 @@ func TestSignupGating(t *testing.T) {
 	}
 }
 
+func TestValidatePasswordRejectsDisallowedCharacterAfterAllowedSpecial(t *testing.T) {
+	if got := validatePassword("Aa1! password"); got != "password contains invalid characters" {
+		t.Fatalf("validatePassword accepted a space after a valid special character: %q", got)
+	}
+}
+
 type mockDB struct {
 	db.DBTX
 	getUserErr error
