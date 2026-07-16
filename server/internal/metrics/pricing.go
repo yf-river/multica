@@ -171,7 +171,7 @@ func EstimateUsageCostBreakdownUSD(provider, model string, inputTokens, outputTo
 		return UsageCostBreakdown{}, false
 	}
 	if isCodeBuddyUsage(provider, model) {
-		return estimateCodeBuddyUsageCostBreakdownUSD(price, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens), true
+		return estimateCodeBuddyUsageCostBreakdownUSD(price, inputTokens, outputTokens, cacheReadTokens), true
 	}
 	breakdown := UsageCostBreakdown{
 		InputCostUSD:      RoundCostUSD(tokenCostUSD(inputTokens, price.InputPerM)),
@@ -209,7 +209,7 @@ func isCodeBuddyUsage(provider, model string) bool {
 	return provider == "codebuddy" || strings.HasPrefix(model, "codebuddy/")
 }
 
-func estimateCodeBuddyUsageCostBreakdownUSD(price ModelPrice, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens int64) UsageCostBreakdown {
+func estimateCodeBuddyUsageCostBreakdownUSD(price ModelPrice, inputTokens, outputTokens, cacheReadTokens int64) UsageCostBreakdown {
 	uncachedInputTokens := inputTokens - cacheReadTokens
 	if uncachedInputTokens < 0 {
 		uncachedInputTokens = 0

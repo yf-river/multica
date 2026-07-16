@@ -661,7 +661,7 @@ func (h *Handler) requireSquadVisible(w http.ResponseWriter, r *http.Request, sq
 	return h.requireSquadAccess(w, r, squad, actorType, actorID, workspaceID, http.StatusNotFound, "squad not found")
 }
 
-func (h *Handler) requireSquadManager(w http.ResponseWriter, r *http.Request, squad db.Squad, workspaceID string) (db.Member, bool) {
+func (h *Handler) requireSquadManager(w http.ResponseWriter, r *http.Request, squad db.Squad) (db.Member, bool) {
 	member, ok := requireWorkspaceMemberContext(w, r)
 	if !ok {
 		return db.Member{}, false
@@ -678,7 +678,7 @@ func (h *Handler) loadManagedSquad(w http.ResponseWriter, r *http.Request) (db.S
 	if !ok {
 		return db.Squad{}, "", db.Member{}, false
 	}
-	member, ok := h.requireSquadManager(w, r, squad, workspaceID)
+	member, ok := h.requireSquadManager(w, r, squad)
 	return squad, workspaceID, member, ok
 }
 

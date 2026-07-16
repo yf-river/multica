@@ -379,7 +379,7 @@ func (h *Handler) GetWorkspaceObservabilitySummary(w http.ResponseWriter, r *htt
 		writeError(w, http.StatusInternalServerError, "failed to list task messages")
 		return
 	}
-	summary := buildObservabilitySummary(runs, events, traces, taskMessages, int64(len(events)), 0)
+	summary := buildObservabilitySummary(runs, events, traces, taskMessages, int64(len(events)))
 	writeJSON(w, http.StatusOK, summary)
 }
 
@@ -523,8 +523,8 @@ func buildObservabilitySummary(
 	traces []db.TaskTraceEvent,
 	taskMessages map[string][]db.TaskMessage,
 	sopEventCount int64,
-	sampleLimit int32,
 ) map[string]any {
+	const sampleLimit int32 = 0
 	runMaybeTruncated := false
 	traceMaybeTruncated := false
 	completenessStatus := "完整"

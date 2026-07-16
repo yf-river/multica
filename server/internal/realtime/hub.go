@@ -295,25 +295,24 @@ func (h *Hub) removeClient(client *Client) {
 	slog.Info("ws client disconnected", "workspace_id", client.workspaceID, "user_id", client.userID, "total_clients", total)
 }
 
-// subscribe adds client to scope (scopeType, scopeID). Returns true if the
-// subscription was newly added.
-func (h *Hub) subscribe(client *Client, scopeType, scopeID string) bool {
+// subscribe adds client to scope (scopeType, scopeID).
+func (h *Hub) subscribe(client *Client, scopeType, scopeID string) {
 	if scopeType == "" || scopeID == "" {
-		return false
+		return
 	}
 	key := sk(scopeType, scopeID)
 
 	h.mu.Lock()
 	if !h.clients[client] {
 		h.mu.Unlock()
-		return false
+		return
 	}
 	if client.subscriptions == nil {
 		client.subscriptions = map[scopeKey]bool{}
 	}
 	if client.subscriptions[key] {
 		h.mu.Unlock()
-		return false
+		return
 	}
 	client.subscriptions[key] = true
 	room, ok := h.rooms[key]
@@ -330,7 +329,6 @@ func (h *Hub) subscribe(client *Client, scopeType, scopeID string) bool {
 	if first {
 		loadOrInitCounter(&M.scopeRooms, scopeType).Add(1)
 	}
-	return true
 }
 
 // unsubscribe removes client from a scope room.

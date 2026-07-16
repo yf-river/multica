@@ -926,7 +926,7 @@ func (s *IssueService) captureCreatedAnalytics(issue db.Issue, creatorType, acto
 	if s.Analytics == nil {
 		return
 	}
-	source, taskID, autopilotRunID := classifyOrigin(issue, opts)
+	source, taskID, autopilotRunID := classifyOrigin(issue)
 	analyticsActorID := actorID
 	if creatorType == "agent" {
 		analyticsActorID = "agent:" + actorID
@@ -944,7 +944,7 @@ func (s *IssueService) captureCreatedAnalytics(issue db.Issue, creatorType, acto
 }
 
 // classifyOrigin maps the database-constrained origin values to analytics.
-func classifyOrigin(issue db.Issue, opts IssueCreateOpts) (source, taskID, autopilotRunID string) {
+func classifyOrigin(issue db.Issue) (source, taskID, autopilotRunID string) {
 	source = analytics.SourceManual
 	if !issue.OriginType.Valid {
 		return source, "", ""

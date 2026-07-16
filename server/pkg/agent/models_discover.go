@@ -858,21 +858,21 @@ func isCursorModelIdentifier(s string) bool {
 // discoverCodebuddyModels returns the current CodeBuddy model catalog. An
 // operator-provided catalog takes precedence, then ACP discovery, then the
 // maintained static catalog.
-func discoverCodebuddyModels(ctx context.Context, executablePath string) ([]Model, error) {
+func discoverCodebuddyModels(ctx context.Context, executablePath string) []Model {
 	if models := parseCodebuddyModelList(os.Getenv("MULTICA_CODEBUDDY_MODELS")); len(models) > 0 {
-		return models, nil
+		return models
 	}
 	if executablePath == "" {
 		executablePath = "codebuddy"
 	}
 	if _, err := exec.LookPath(executablePath); err != nil {
-		return codebuddyStaticModels(), nil
+		return codebuddyStaticModels()
 	}
 	models, err := discoverCodebuddyACPModels(ctx, executablePath)
 	if err == nil && len(models) > 0 {
-		return models, nil
+		return models
 	}
-	return codebuddyStaticModels(), nil
+	return codebuddyStaticModels()
 }
 
 func discoverCodebuddyACPModels(ctx context.Context, executablePath string) ([]Model, error) {

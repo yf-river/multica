@@ -136,10 +136,7 @@ func ListModels(ctx context.Context, providerType, executablePath string) ([]Mod
 		})
 	case "codebuddy":
 		return cachedDiscovery(providerType, func() ([]Model, error) {
-			models, err := discoverCodebuddyModels(ctx, executablePath)
-			if err != nil {
-				return nil, err
-			}
+			models := discoverCodebuddyModels(ctx, executablePath)
 			annotateCodebuddyThinking(models)
 			return models, nil
 		})

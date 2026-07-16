@@ -762,7 +762,7 @@ func TestBuildObservabilitySummaryIncludesCostBreakdown(t *testing.T) {
 			OutputTokens: 5,
 		},
 	}
-	summary := buildObservabilitySummary(nil, nil, traces, nil, 0, 0)
+	summary := buildObservabilitySummary(nil, nil, traces, nil, 0)
 	metricsMap := summary["指标"].(map[string]any)
 	if cost, ok := metricsMap["预估成本"].(float64); !ok || cost <= 0 {
 		t.Fatalf("预估成本 = %v, want > 0", metricsMap["预估成本"])
@@ -811,7 +811,7 @@ func TestBuildObservabilitySummaryDedupesRepeatedUsageReports(t *testing.T) {
 			CreatedAt:        pgtype.Timestamptz{Time: base.Add(time.Minute), Valid: true},
 		},
 	}
-	summary := buildObservabilitySummary(nil, nil, traces, nil, 0, 0)
+	summary := buildObservabilitySummary(nil, nil, traces, nil, 0)
 	metricsMap := summary["指标"].(map[string]any)
 	if got := metricsMap["输入 token"]; got != int64(30) {
 		t.Fatalf("输入 token = %v, want latest usage report 30", got)
@@ -833,7 +833,7 @@ func TestBuildObservabilitySummaryDedupesRepeatedUsageReports(t *testing.T) {
 
 func TestBuildObservabilitySummaryMarksFullCompleteness(t *testing.T) {
 	traces := make([]db.TaskTraceEvent, observabilitySummaryPageSize)
-	summary := buildObservabilitySummary(nil, nil, traces, nil, int64(len(traces)), 0)
+	summary := buildObservabilitySummary(nil, nil, traces, nil, int64(len(traces)))
 	metricsMap := summary["指标"].(map[string]any)
 	if got := summary["task_trace_maybe_truncated"]; got != false {
 		t.Fatalf("task_trace_maybe_truncated = %v, want false", got)

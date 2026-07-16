@@ -362,10 +362,7 @@ sleep 1
 `
 	writeTestExecutable(t, fakePath, []byte(script))
 
-	models, err := discoverCodebuddyModels(context.Background(), fakePath)
-	if err != nil {
-		t.Fatalf("discoverCodebuddyModels: %v", err)
-	}
+	models := discoverCodebuddyModels(context.Background(), fakePath)
 	if len(models) != 3 {
 		t.Fatalf("expected 3 ACP models, got %d: %+v", len(models), models)
 	}
@@ -404,10 +401,7 @@ func TestParseCodebuddyModelList_DedupesAndGroups(t *testing.T) {
 func TestDiscoverCodebuddyModelsUsesEnv(t *testing.T) {
 	t.Setenv("MULTICA_CODEBUDDY_MODELS", "glm-5.1-ioa, minimax-m2.7-ioa")
 
-	models, err := discoverCodebuddyModels(context.Background(), filepath.Join(t.TempDir(), "missing-codebuddy"))
-	if err != nil {
-		t.Fatalf("discoverCodebuddyModels: %v", err)
-	}
+	models := discoverCodebuddyModels(context.Background(), filepath.Join(t.TempDir(), "missing-codebuddy"))
 	if len(models) != 2 {
 		t.Fatalf("expected 2 models from MULTICA_CODEBUDDY_MODELS, got %d: %+v", len(models), models)
 	}

@@ -720,7 +720,7 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	runtime, ok := h.authorizeAgentCreationRuntime(w, r, workspaceID, wsUUID, ownerID, runtimeUUID, req.Scope)
+	runtime, ok := h.authorizeAgentCreationRuntime(w, r, wsUUID, ownerID, runtimeUUID, req.Scope)
 	if !ok {
 		return
 	}

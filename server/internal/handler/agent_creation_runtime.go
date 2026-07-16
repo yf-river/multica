@@ -10,7 +10,6 @@ import (
 func (h *Handler) authorizeAgentCreationRuntime(
 	w http.ResponseWriter,
 	r *http.Request,
-	workspaceID string,
 	workspaceUUID pgtype.UUID,
 	ownerID string,
 	runtimeID pgtype.UUID,
