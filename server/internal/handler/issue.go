@@ -790,7 +790,7 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		Metadata:      metadata,
 	}
 	createOpts := service.IssueCreateOpts{
-		ActorID:          actualCreatorID,
+		ActorID:          parseUUID(actualCreatorID),
 		AnalyticsAgentID: analyticsAgentID,
 		Platform:         func() string { p, _, _ := middleware.ClientMetadataFromContext(r.Context()); return p }(),
 		BroadcastPayload: func(issue db.Issue, atts []db.Attachment) map[string]any {
@@ -1192,7 +1192,7 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	}
 	approvalProjection := service.IssueApprovalProjection{}
 	if statusChanged || projectChanged {
-		approvalProjection, err = h.IssueService.ReconcileProjectOwnerApprovalInTx(r.Context(), qtx, issue, actorType, actorID)
+		approvalProjection, err = h.IssueService.ReconcileProjectOwnerApprovalInTx(r.Context(), qtx, issue, actorType, parseUUID(actorID))
 		if err != nil {
 			slog.Warn("project owner approval projection failed", append(logger.RequestAttrs(r), "error", err, "issue_id", id, "workspace_id", workspaceID)...)
 			writeError(w, http.StatusInternalServerError, "failed to reconcile project owner approval")

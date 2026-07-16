@@ -315,7 +315,7 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		}
 		approvalProjection := service.IssueApprovalProjection{}
 		if statusChanged || projectChanged {
-			approvalProjection, err = h.IssueService.ReconcileProjectOwnerApprovalInTx(r.Context(), qtx, issue, actorType, actorID)
+			approvalProjection, err = h.IssueService.ReconcileProjectOwnerApprovalInTx(r.Context(), qtx, issue, actorType, parseUUID(actorID))
 			if err != nil {
 				_ = tx.Rollback(r.Context())
 				slog.Warn("batch project owner approval projection failed", "issue_id", issueID, "error", err)

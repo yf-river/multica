@@ -501,7 +501,7 @@ func (h *Handler) quickCreateTAPDSourceIssue(ctx context.Context, w http.Respons
 		OriginType:    pgtype.Text{String: "quick_create", Valid: true},
 		OriginID:      p.RequestID,
 	}, service.IssueCreateOpts{
-		ActorID:              p.RequesterIDRaw,
+		ActorID:              p.RequesterID,
 		Platform:             "web",
 		SuppressAutoEnqueue:  true,
 		SourceSummaryAgentID: sourceSummaryAgentID,

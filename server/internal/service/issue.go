@@ -89,7 +89,7 @@ type IssueCreateOpts struct {
 	// when it differs from the creator on the row. Agent-created issues
 	// use the agent UUID here (the creator_id column is the daemon
 	// owner). Empty falls back to CreatorID.
-	ActorID string
+	ActorID pgtype.UUID
 
 	// AnalyticsAgentID is the agent associated with the issue for
 	// analytics purposes (assignee agent or, for agent-created issues,
@@ -351,8 +351,8 @@ func (s *IssueService) PrepareCreateInTx(
 	}
 
 	actorID := opts.ActorID
-	if actorID == "" {
-		actorID = util.UUIDToString(issue.CreatorID)
+	if !actorID.Valid {
+		actorID = issue.CreatorID
 	}
 	projection, err := s.createIssueProjectionInTx(
 		ctx,
@@ -375,7 +375,8 @@ func (s *IssueService) PrepareCreateInTx(
 		issue = *projection.sourceSummaryIssue
 	}
 
-	createdEvent := s.buildIssueCreatedEvent(issue, attachments, p.CreatorType, actorID, opts)
+	actorIDString := util.UUIDToString(actorID)
+	createdEvent := s.buildIssueCreatedEvent(issue, attachments, p.CreatorType, actorIDString, opts)
 	createdEvent, err = eventoutbox.Enqueue(ctx, qtx, createdEvent)
 	if err != nil {
 		return PreparedIssueCreate{}, fmt.Errorf("enqueue issue-created event: %w", err)
@@ -385,7 +386,7 @@ func (s *IssueService) PrepareCreateInTx(
 		projection:   projection,
 		createdEvent: createdEvent,
 		creatorType:  p.CreatorType,
-		actorID:      actorID,
+		actorID:      actorIDString,
 		opts:         opts,
 	}, nil
 }
@@ -407,7 +408,7 @@ func (s *IssueService) createIssueProjectionInTx(
 	hasProject bool,
 	agentLeadReviewRequested bool,
 	actorType string,
-	actorID string,
+	actorID pgtype.UUID,
 	suppressAutoEnqueue bool,
 	sourceSummaryAgentID pgtype.UUID,
 ) (issueCreateProjection, error) {
@@ -572,7 +573,7 @@ func (s *IssueService) ReconcileProjectOwnerApprovalInTx(
 	queries *db.Queries,
 	issue db.Issue,
 	actorType string,
-	actorID string,
+	actorID pgtype.UUID,
 ) (IssueApprovalProjection, error) {
 	projection := IssueApprovalProjection{}
 	archived, err := queries.ArchiveInboxByIssueAndType(ctx, db.ArchiveInboxByIssueAndTypeParams{
@@ -753,7 +754,7 @@ func createProjectLeadApprovalInbox(
 	project db.Project,
 	issue db.Issue,
 	actorType string,
-	actorID string,
+	actorID pgtype.UUID,
 ) (db.InboxItem, error) {
 	if !project.LeadType.Valid || !project.LeadID.Valid || project.LeadType.String != "member" {
 		return db.InboxItem{}, errors.New("project lead is not a member")
@@ -776,7 +777,7 @@ func createProjectLeadApprovalInbox(
 		Title:         issue.Title,
 		Body:          pgtype.Text{String: "Project backlog issue is waiting for owner approval.", Valid: true},
 		ActorType:     pgtype.Text{String: actorType, Valid: actorType != ""},
-		ActorID:       parseServiceUUID(actorID),
+		ActorID:       actorID,
 		Details:       details,
 	})
 	if err != nil {
@@ -837,14 +838,6 @@ func InboxItemEventFields(item db.InboxItem) map[string]any {
 		"actor_id":       util.UUIDToPtr(item.ActorID),
 		"details":        json.RawMessage(item.Details),
 	}
-}
-
-func parseServiceUUID(value string) pgtype.UUID {
-	id, err := util.ParseUUID(value)
-	if err != nil {
-		return pgtype.UUID{}
-	}
-	return id
 }
 
 func (s *IssueService) defaultProjectLeadAssignee(ctx context.Context, q *db.Queries, project db.Project) (pgtype.Text, pgtype.UUID) {
