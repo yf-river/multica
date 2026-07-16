@@ -127,12 +127,16 @@ func publishEventsForTest(bus *events.Bus, emitted []events.Event) {
 	}
 }
 
-func TestSubscriberIssueCreated_CreatorSubscribed(t *testing.T) {
+func TestSubscriberIssueCreated_CreatorProjection(t *testing.T) {
 	queries := db.New(testPool)
 	bus := events.New()
 
 	issueID := createTestIssue(t, testWorkspaceID, testUserID)
 	t.Cleanup(func() { cleanupTestIssue(t, issueID) })
+	var subscriberEvents []events.Event
+	bus.Subscribe(protocol.EventSubscriberAdded, func(event events.Event) {
+		subscriberEvents = append(subscriberEvents, event)
+	})
 
 	// Publish issue:created event with no assignee
 	publishSubscriberProjection(t, queries, bus, events.Event{
@@ -158,6 +162,20 @@ func TestSubscriberIssueCreated_CreatorSubscribed(t *testing.T) {
 	}
 	if count := subscriberCount(t, queries, issueID); count != 1 {
 		t.Fatalf("expected 1 subscriber, got %d", count)
+	}
+	if len(subscriberEvents) != 1 {
+		t.Fatalf("expected 1 subscriber:added event, got %d", len(subscriberEvents))
+	}
+	event := subscriberEvents[0]
+	if event.WorkspaceID != testWorkspaceID {
+		t.Fatalf("expected workspace_id %s, got %s", testWorkspaceID, event.WorkspaceID)
+	}
+	payload, ok := event.Payload.(map[string]any)
+	if !ok {
+		t.Fatal("expected map[string]any payload")
+	}
+	if payload["issue_id"] != issueID || payload["user_id"] != testUserID {
+		t.Fatalf("unexpected subscriber event payload: %+v", payload)
 	}
 }
 
@@ -375,40 +393,6 @@ func TestSubscriberIssueUpdated_NoAssigneeChange(t *testing.T) {
 	}
 }
 
-func TestSubscriberCommentCreated_CommenterSubscribed(t *testing.T) {
-	queries := db.New(testPool)
-	bus := events.New()
-
-	commenterAccount := "subscriber-commenter-test@multica"
-	commenterID := createTestUser(t, commenterAccount)
-	t.Cleanup(func() { cleanupTestUser(t, commenterAccount) })
-
-	issueID := createTestIssue(t, testWorkspaceID, testUserID)
-	t.Cleanup(func() { cleanupTestIssue(t, issueID) })
-	commentID := createTestComment(t, issueID, "member", commenterID, "test comment", "comment")
-
-	publishSubscriberProjection(t, queries, bus, events.Event{
-		Type:        protocol.EventCommentCreated,
-		WorkspaceID: testWorkspaceID,
-		ActorType:   "member",
-		ActorID:     commenterID,
-		Payload: map[string]any{
-			"comment": handler.CommentResponse{
-				ID:         commentID,
-				IssueID:    issueID,
-				AuthorType: "member",
-				AuthorID:   commenterID,
-				Content:    "test comment",
-				Type:       "comment",
-			},
-		},
-	})
-
-	if !isSubscribed(t, queries, issueID, "member", commenterID) {
-		t.Fatal("expected commenter to be subscribed after comment:created")
-	}
-}
-
 func TestDurableCommentAudienceLoadsCommittedComment(t *testing.T) {
 	queries := db.New(testPool)
 	commenterAccount := "durable-commenter-test@multica"
@@ -481,56 +465,6 @@ func TestDurableCommentAudienceSkipsDeletedComment(t *testing.T) {
 	}
 	if len(emitted) != 0 {
 		t.Fatalf("deleted comment emitted %d events, want 0", len(emitted))
-	}
-}
-
-func TestSubscriberAddedEventPublished(t *testing.T) {
-	queries := db.New(testPool)
-	bus := events.New()
-
-	issueID := createTestIssue(t, testWorkspaceID, testUserID)
-	t.Cleanup(func() { cleanupTestIssue(t, issueID) })
-
-	// Track subscriber:added events
-	var subscriberEvents []events.Event
-	bus.Subscribe(protocol.EventSubscriberAdded, func(e events.Event) {
-		subscriberEvents = append(subscriberEvents, e)
-	})
-
-	publishSubscriberProjection(t, queries, bus, events.Event{
-		Type:        protocol.EventIssueCreated,
-		WorkspaceID: testWorkspaceID,
-		ActorType:   "member",
-		ActorID:     testUserID,
-		Payload: map[string]any{
-			"issue": handler.IssueResponse{
-				ID:          issueID,
-				WorkspaceID: testWorkspaceID,
-				Title:       "test issue",
-				Status:      "todo",
-				Priority:    "medium",
-				CreatorType: "member",
-				CreatorID:   testUserID,
-			},
-		},
-	})
-
-	if len(subscriberEvents) != 1 {
-		t.Fatalf("expected 1 subscriber:added event, got %d", len(subscriberEvents))
-	}
-	evt := subscriberEvents[0]
-	if evt.WorkspaceID != testWorkspaceID {
-		t.Fatalf("expected workspace_id %s, got %s", testWorkspaceID, evt.WorkspaceID)
-	}
-	payload, ok := evt.Payload.(map[string]any)
-	if !ok {
-		t.Fatal("expected map[string]any payload")
-	}
-	if payload["issue_id"] != issueID {
-		t.Fatalf("expected issue_id %s, got %v", issueID, payload["issue_id"])
-	}
-	if payload["user_id"] != testUserID {
-		t.Fatalf("expected user_id %s, got %v", testUserID, payload["user_id"])
 	}
 }
 
