@@ -20,25 +20,32 @@ func TestSignupGating(t *testing.T) {
 		name    string
 		cfg     Config
 		account string
-		isNew   bool
-		wantErr bool
+		want    string
 	}{
-		{"allow_signup_true_new", Config{AllowSignup: true}, "alice", true, false},
-		{"allow_signup_false_new", Config{AllowSignup: false}, "alice", true, true},
-		{"allow_signup_false_existing", Config{AllowSignup: false}, "alice", false, false},
-		{"account_allowlist_match", Config{AllowSignup: false, AllowedAccounts: []string{"alice"}}, "alice", true, false},
-		{"account_allowlist_case_insensitive", Config{AllowSignup: false, AllowedAccounts: []string{"Alice"}}, "alice", true, false},
-		{"account_allowlist_mismatch", Config{AllowSignup: true, AllowedAccounts: []string{"alice"}}, "bob", true, true},
+		{"signup enabled", Config{AllowSignup: true}, "alice", ""},
+		{"signup disabled", Config{AllowSignup: false}, "alice", "user registration is disabled on this self-hosted instance"},
+		{"allowlist match", Config{AllowSignup: false, AllowedAccounts: []string{"alice"}}, "alice", ""},
+		{"allowlist case insensitive", Config{AllowSignup: false, AllowedAccounts: []string{"Alice"}}, "alice", ""},
+		{"allowlist mismatch", Config{AllowSignup: true, AllowedAccounts: []string{"alice"}}, "bob", "account not allowed on this instance"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			h := newTestHandler(tt.cfg)
-			err := h.checkSignupAllowed(tt.account, tt.isNew)
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("got err=%v wantErr=%v", err, tt.wantErr)
+			if got := h.signupRestriction(tt.account); got != tt.want {
+				t.Fatalf("signupRestriction() = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestVerifyPasswordCurrentEncoding(t *testing.T) {
+	const encoded = "pbkdf2_sha256$210000$bXVsdGljYS1jdXJyZW50IQ$P2O4EHC/ii6Tw0uTqYTYlM8ub0Vc0Fhc0Kzf+1SHSVA"
+	if !verifyPassword("Strong1!", encoded) {
+		t.Fatal("current PBKDF2-SHA256 encoding did not verify")
+	}
+	if verifyPassword("wrong password", encoded) {
+		t.Fatal("wrong password verified against current encoding")
 	}
 }
 
