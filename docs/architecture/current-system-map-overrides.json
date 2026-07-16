@@ -1,6 +1,5 @@
 {
   "schemaVersion": 1,
-  "chiRoutes": [],
   "auxiliaryHttpRoutes": [
     {
       "method": "GET",
@@ -38,13 +37,6 @@
       "notes": "Creates a task worktree from a configured workspace repository after request validation."
     }
   ],
-  "webPages": [],
-  "desktopRoutes": [],
-  "websocketEvents": {
-    "go": [],
-    "typescript": []
-  },
-  "environmentAliases": [],
   "externalSystems": [
     {
       "id": "agent-cli-runtimes",

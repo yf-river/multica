@@ -77,27 +77,8 @@ function loadOverrides() {
     throw new Error(`${OVERRIDES_FILE}: schemaVersion must be 1`);
   }
 
-  for (const key of ["chiRoutes", "auxiliaryHttpRoutes", "webPages", "desktopRoutes", "externalSystems", "environmentAliases", "notes"]) {
+  for (const key of ["auxiliaryHttpRoutes", "externalSystems", "notes"]) {
     if (!Array.isArray(parsed[key])) throw new Error(`${OVERRIDES_FILE}: ${key} must be an array`);
-  }
-  if (!parsed.websocketEvents || !Array.isArray(parsed.websocketEvents.go) || !Array.isArray(parsed.websocketEvents.typescript)) {
-    throw new Error(`${OVERRIDES_FILE}: websocketEvents.go/typescript must be arrays`);
-  }
-
-  const aliasDispositions = new Set([
-    "intentional-role-specific",
-    "external-protocol-required",
-    "legacy-removal-candidate",
-  ]);
-  for (const alias of parsed.environmentAliases) {
-    if (!alias.canonical || !Array.isArray(alias.aliases) || !Array.isArray(alias.sources) || !aliasDispositions.has(alias.disposition)) {
-      throw new Error(`${OVERRIDES_FILE}: every environment alias needs canonical, aliases, sources, and a valid disposition`);
-    }
-    for (const evidencePath of alias.sources) {
-      if (!repositoryFiles.has(evidencePath) || !fs.existsSync(absolute(evidencePath))) {
-        throw new Error(`${OVERRIDES_FILE}: environment alias source does not exist: ${evidencePath}`);
-      }
-    }
   }
 
   for (const route of parsed.auxiliaryHttpRoutes) {
@@ -205,7 +186,7 @@ function resolveHandler(handlerExpression, functionIndex) {
   return { handler: named[1], implementation: locations[0] ?? null };
 }
 
-function parseChiRoutes(overrides, functionIndex) {
+function parseChiRoutes(functionIndex) {
   const routerFile = "server/cmd/server/router.go";
   const lines = read(routerFile).split("\n");
   const routes = [];
@@ -229,7 +210,6 @@ function parseChiRoutes(overrides, functionIndex) {
           implementation: resolved.implementation,
           registration: source(routerFile, `${methodMatch[1].toUpperCase()} ${joinRoute(prefix, methodMatch[2])}`),
           middlewareWrapper: line.includes(".With("),
-          origin: "static",
         });
       }
     }
@@ -241,10 +221,6 @@ function parseChiRoutes(overrides, functionIndex) {
     }
     depth = nextDepth;
   });
-
-  for (const override of overrides.chiRoutes) {
-    routes.push({ ...override, origin: "manual-override" });
-  }
 
   return routes.sort((a, b) =>
     compareText(a.path, b.path) || compareText(a.method, b.method) || compareText(a.registration, b.registration),
@@ -268,10 +244,9 @@ function webRouteFromPage(file) {
   return `/${segments.join("/")}`.replace(/\/$/, "") || "/";
 }
 
-function parseWebPages(overrides) {
+function parseWebPages() {
   const pages = walk("apps/web/app", (file) => file.endsWith("/page.tsx") || file === "apps/web/app/page.tsx")
-    .map((file) => ({ path: webRouteFromPage(file), source: file, origin: "static" }));
-  for (const override of overrides.webPages) pages.push({ ...override, origin: "manual-override" });
+    .map((file) => ({ path: webRouteFromPage(file), source: file }));
   return pages.sort((a, b) => compareText(a.path, b.path) || compareText(a.source, b.source));
 }
 
@@ -324,7 +299,7 @@ function parseWebRewrites() {
   return rewrites.sort((a, b) => compareText(a.lane, b.lane) || compareText(a.source, b.source));
 }
 
-function parseDesktopRoutes(overrides) {
+function parseDesktopRoutes() {
   const routeFile = "apps/desktop/src/renderer/src/routes.tsx";
   const lines = read(routeFile).split("\n");
   const routes = [];
@@ -352,12 +327,11 @@ function parseDesktopRoutes(overrides) {
         const parents = stack.slice(0, -1).map((entry) => entry.path).filter(Boolean);
         current.path = literal;
         const fullPath = [...parents, literal].reduce((prefix, part) => joinRoute(prefix, part), "");
-        routes.push({ literal, path: fullPath, source: source(routeFile, fullPath), origin: "static" });
+        routes.push({ literal, path: fullPath, source: source(routeFile, fullPath) });
       }
     }
   });
 
-  for (const override of overrides.desktopRoutes) routes.push({ ...override, origin: "manual-override" });
   return routes.sort((a, b) => compareText(a.path, b.path) || compareText(a.source, b.source));
 }
 
@@ -499,7 +473,7 @@ function parseSqlc() {
   };
 }
 
-function parseWebsocketEvents(overrides) {
+function parseWebsocketEvents() {
   const goFile = "server/pkg/protocol/events.go";
   const tsFile = "packages/core/types/events.ts";
   const goEvents = [];
@@ -507,18 +481,15 @@ function parseWebsocketEvents(overrides) {
 
   read(goFile).split("\n").forEach((line) => {
     const match = line.match(/^\s*(Event[A-Za-z0-9_]+)\s*=\s*"([^"]+)"/);
-    if (match) goEvents.push({ name: match[2], constant: match[1], source: source(goFile, match[1]), origin: "static" });
+    if (match) goEvents.push({ name: match[2], constant: match[1], source: source(goFile, match[1]) });
   });
 
   const tsContent = read(tsFile);
   const union = tsContent.match(/export\s+type\s+WSEventType\s*=([\s\S]*?);/);
   if (!union) throw new Error(`Unable to find WSEventType in ${tsFile}`);
   for (const match of union[1].matchAll(/"([^"]+)"/g)) {
-    tsEvents.push({ name: match[1], source: source(tsFile, match[1]), origin: "static" });
+    tsEvents.push({ name: match[1], source: source(tsFile, match[1]) });
   }
-
-  for (const event of overrides.websocketEvents.go) goEvents.push({ ...event, origin: "manual-override" });
-  for (const event of overrides.websocketEvents.typescript) tsEvents.push({ ...event, origin: "manual-override" });
 
   const goReferenceFiles = walk("server", (file) =>
     file.endsWith(".go") && !isTestFile(file) && file !== goFile,
@@ -650,7 +621,7 @@ function environmentClassification(references) {
   return "tooling-or-test";
 }
 
-function parseEnvironment(overrides) {
+function parseEnvironment() {
   const references = new Map();
   const runtimeFiles = [
     ...walk("server", (file) => file.endsWith(".go") && !isTestFile(file)),
@@ -729,10 +700,7 @@ function parseEnvironment(overrides) {
     classification: environmentClassification(variable.references),
   })).sort((a, b) => compareText(a.name, b.name));
 
-  return {
-    variables,
-    aliases: [...overrides.environmentAliases].sort((a, b) => compareText(a.canonical, b.canonical)),
-  };
+  return { variables };
 }
 
 function firstEvidence(file, content, pattern) {
@@ -789,16 +757,16 @@ function aggregateByScope(items) {
 
 function buildMap(overrides) {
   const functionIndex = buildFunctionIndex();
-  const chiRoutes = parseChiRoutes(overrides, functionIndex);
-  const webPages = parseWebPages(overrides);
+  const chiRoutes = parseChiRoutes(functionIndex);
+  const webPages = parseWebPages();
   const webRouteHandlers = parseWebRouteHandlers();
   const webRewrites = parseWebRewrites();
-  const desktopRoutes = parseDesktopRoutes(overrides);
+  const desktopRoutes = parseDesktopRoutes();
   const database = parseDatabase();
   const sqlc = parseSqlc();
-  const websocket = parseWebsocketEvents(overrides);
+  const websocket = parseWebsocketEvents();
   const stateManagement = parseStateManagement();
-  const environment = parseEnvironment(overrides);
+  const environment = parseEnvironment();
   const externalIo = parseExternalIo(overrides);
   const webPaths = new Set(webPages.map((page) => page.path));
   const desktopPaths = new Set(desktopRoutes.map((route) => route.path));
@@ -1090,16 +1058,6 @@ ${table(["Variable", "Class", "References", "Representative sources"], systemMap
   variable.classification,
   variable.references.length,
   variable.references.slice(0, 3).map((reference) => `\`${reference.source}\` (${reference.kind})`).join(", "),
-]))}
-
-### Explicit aliases and fallback names
-
-${table(["Canonical", "Aliases", "Disposition", "Reason", "Sources"], systemMap.environment.aliases.map((alias) => [
-  `\`${alias.canonical}\``,
-  alias.aliases.map((name) => `\`${name}\``).join(", "),
-  alias.disposition,
-  alias.reason,
-  alias.sources.map((item) => `\`${item}\``).join(", "),
 ]))}
 
 ## External I/O

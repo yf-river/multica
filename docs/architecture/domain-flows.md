@@ -91,10 +91,12 @@ identity and retention live in
   `packages/core/squads/mutations.ts` and
   `packages/core/squads/mutations.test.tsx`.
 - Agent owner: `packages/core/agents/create.ts`,
-  `packages/core/platform/pending-create-store.ts`, and
+  `packages/core/api/transport.ts`,
+  `packages/core/platform/recoverable-operation-store.ts`, and
   `server/internal/handler/agent.go`.
 - Skill owner: `packages/core/skills/create.ts`,
-  `packages/core/platform/pending-create-store.ts`, and
+  `packages/core/api/transport.ts`,
+  `packages/core/platform/recoverable-operation-store.ts`, and
   `server/internal/handler/skill.go`.
 - Boundary: initial members, initial Agent status, or Skill files commit with
   the resource and `server/internal/handler/resource_create_idempotency.go`;
