@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -159,15 +158,13 @@ func runRuntimeActivity(cmd *cobra.Command, args []string) error {
 }
 
 func runRuntimeDelete(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-
-	runtimeID := args[0]
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
+	runtimeID := args[0]
 	err = client.DeleteJSON(ctx, "/api/runtimes/"+runtimeID)
 	if err == nil {
 		return printRuntimeDeleteResult(cmd, map[string]any{

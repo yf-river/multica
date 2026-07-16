@@ -140,25 +140,23 @@ func patchWorkspaceRepos(ctx context.Context, client *cli.APIClient, workspaceID
 	return ws, nil
 }
 
-func repoCommandClient(cmd *cobra.Command) (*cli.APIClient, string, error) {
+func repoCommandContext(cmd *cobra.Command) (*cli.APIClient, context.Context, context.CancelFunc, string, error) {
 	workspaceID, err := requireWorkspaceID(cmd)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, nil, "", err
 	}
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
-		return nil, "", err
+		return nil, nil, nil, "", err
 	}
-	return client, workspaceID, nil
+	return client, ctx, cancel, workspaceID, nil
 }
 
 func runRepoList(cmd *cobra.Command, _ []string) error {
-	client, workspaceID, err := repoCommandClient(cmd)
+	client, ctx, cancel, workspaceID, err := repoCommandContext(cmd)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	ws, err := fetchRepoWorkspace(ctx, client, workspaceID)
@@ -193,12 +191,10 @@ func runRepoAdd(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--description can only be used when adding one repository URL")
 	}
 
-	client, workspaceID, err := repoCommandClient(cmd)
+	client, ctx, cancel, workspaceID, err := repoCommandContext(cmd)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	ws, err := fetchRepoWorkspace(ctx, client, workspaceID)
@@ -271,12 +267,10 @@ func runRepoRemove(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	client, workspaceID, err := repoCommandClient(cmd)
+	client, ctx, cancel, workspaceID, err := repoCommandContext(cmd)
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	ws, err := fetchRepoWorkspace(ctx, client, workspaceID)

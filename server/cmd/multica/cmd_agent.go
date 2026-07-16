@@ -351,17 +351,10 @@ func requireWorkspaceID(cmd *cobra.Command) (string, error) {
 // ---------------------------------------------------------------------------
 
 func runAgentList(cmd *cobra.Command, _ []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, _, err := newWorkspaceAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-	if client.WorkspaceID == "" {
-		if _, err := requireWorkspaceID(cmd); err != nil {
-			return err
-		}
-	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	var agents []map[string]any

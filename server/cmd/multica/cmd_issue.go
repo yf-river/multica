@@ -642,11 +642,10 @@ func printIssueMutationResult(cmd *cobra.Command, result map[string]any) error {
 }
 
 func newIssueClientAndRef(cmd *cobra.Command, issueArg string) (*cli.APIClient, context.Context, context.CancelFunc, resolvedID, error) {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return nil, nil, nil, resolvedID{}, err
 	}
-	ctx, cancel := cli.APIContext(context.Background())
 	issueRef, err := resolveIssueRef(ctx, client, issueArg)
 	if err != nil {
 		cancel()

@@ -173,15 +173,10 @@ func init() {
 // ---------------------------------------------------------------------------
 
 func runAutopilotList(cmd *cobra.Command, _ []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, _, err := newWorkspaceAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-	if _, err := requireWorkspaceID(cmd); err != nil {
-		return err
-	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	path := "/api/autopilots"
@@ -258,13 +253,11 @@ func runAutopilotGet(cmd *cobra.Command, args []string) error {
 }
 
 func runAutopilotCreate(cmd *cobra.Command, _ []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, _, err := newWorkspaceAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-	if _, err := requireWorkspaceID(cmd); err != nil {
-		return err
-	}
+	defer cancel()
 
 	title, _ := cmd.Flags().GetString("title")
 	if title == "" {
@@ -281,9 +274,6 @@ func runAutopilotCreate(cmd *cobra.Command, _ []string) error {
 	if mode != "create_issue" && mode != "run_only" {
 		return fmt.Errorf("--mode must be create_issue or run_only")
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
-	defer cancel()
 
 	agentID, err := resolveAgentID(ctx, client, agent)
 	if err != nil {

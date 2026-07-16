@@ -697,12 +697,10 @@ func runProjectResourceUpdate(cmd *cobra.Command, args []string) error {
 }
 
 func newProjectResourceClientAndRefs(cmd *cobra.Command, projectArg, resourceArg string) (*cli.APIClient, context.Context, context.CancelFunc, resolvedID, resolvedID, error) {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, err := newAPIClientContext(cmd)
 	if err != nil {
 		return nil, nil, nil, resolvedID{}, resolvedID{}, err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	projectRef, err := resolveProjectID(ctx, client, projectArg)
 	if err != nil {
 		cancel()

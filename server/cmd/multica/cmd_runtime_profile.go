@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -128,16 +127,10 @@ func validateProtocolFamily(family string) error {
 }
 
 func runRuntimeProfileList(cmd *cobra.Command, _ []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, workspaceID, err := newWorkspaceAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-	workspaceID, err := requireWorkspaceID(cmd)
-	if err != nil {
-		return err
-	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	var resp struct {
@@ -175,14 +168,11 @@ func runRuntimeProfileCreate(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, workspaceID, err := newWorkspaceAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-	workspaceID, err := requireWorkspaceID(cmd)
-	if err != nil {
-		return err
-	}
+	defer cancel()
 
 	body := map[string]any{
 		"display_name":    displayName,
@@ -199,9 +189,6 @@ func runRuntimeProfileCreate(cmd *cobra.Command, _ []string) error {
 		}
 		body["fixed_args"] = fixedArgs
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
-	defer cancel()
 
 	var profile map[string]any
 	if err := client.PostJSONWithIdempotencyKey(
@@ -236,16 +223,10 @@ func runRuntimeProfileUpdate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no fields to update: pass at least one of --display-name, --command-name, --description, --fixed-args, --enabled")
 	}
 
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, workspaceID, err := newWorkspaceAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-	workspaceID, err := requireWorkspaceID(cmd)
-	if err != nil {
-		return err
-	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	path := runtimeProfilesPath(workspaceID) + "/" + profileID
@@ -275,16 +256,10 @@ func parseRuntimeProfileFixedArgs(raw string) ([]string, error) {
 func runRuntimeProfileDelete(cmd *cobra.Command, args []string) error {
 	profileID := args[0]
 
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, workspaceID, err := newWorkspaceAPIClientContext(cmd)
 	if err != nil {
 		return err
 	}
-	workspaceID, err := requireWorkspaceID(cmd)
-	if err != nil {
-		return err
-	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
 	path := runtimeProfilesPath(workspaceID) + "/" + profileID
