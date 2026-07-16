@@ -67,12 +67,11 @@ func (h *Handler) EnsureInternalSquadTemplate(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	agentScope := scope
-	runtime, ok := h.selectInternalSquadRuntime(w, r, wsUUID, member, provider, agentScope)
+	runtime, ok := h.selectInternalSquadRuntime(w, r, wsUUID, member, provider, scope)
 	if !ok {
 		return
 	}
-	if err := validateAgentRuntimeScope(agentScope, member.UserID, runtime); err != nil {
+	if err := validateAgentRuntimeScope(scope, member.UserID, runtime); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -96,7 +95,7 @@ func (h *Handler) EnsureInternalSquadTemplate(w http.ResponseWriter, r *http.Req
 	writeJSON(w, http.StatusOK, InternalSquadTemplateResponse{Squad: resp, Agents: agents})
 }
 
-func (h *Handler) selectInternalSquadRuntime(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID, member db.Member, provider string, agentScope string) (db.AgentRuntime, bool) {
+func (h *Handler) selectInternalSquadRuntime(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID, member db.Member, provider, scope string) (db.AgentRuntime, bool) {
 	runtimes, err := h.Queries.ListAgentRuntimes(r.Context(), workspaceID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list runtimes")
@@ -117,7 +116,7 @@ func (h *Handler) selectInternalSquadRuntime(w http.ResponseWriter, r *http.Requ
 		if !strings.EqualFold(runtime.Provider, provider) || !canAccessRuntime(member, runtime) {
 			continue
 		}
-		if !agentRuntimeScopeCompatible(agentScope, member.UserID, runtime) {
+		if !agentRuntimeScopeCompatible(scope, member.UserID, runtime) {
 			continue
 		}
 		if best == nil || runtimeReadinessRank(runtime, checkedAt) > runtimeReadinessRank(*best, checkedAt) {
@@ -125,7 +124,11 @@ func (h *Handler) selectInternalSquadRuntime(w http.ResponseWriter, r *http.Requ
 		}
 	}
 	if best == nil {
-		writeError(w, http.StatusServiceUnavailable, "当前 workspace 没有可用于"+internalSquadRuntimeScopeLabel(agentScope)+"小队的 "+providerName+" runtime，无法创建真实可执行的内部小队。请先启动 multica daemon，并确认 /api/runtimes 出现 provider="+provider+" 且范围匹配的在线 runtime。")
+		scopeLabel := "工作区"
+		if scope == scopePersonal {
+			scopeLabel = "个人"
+		}
+		writeError(w, http.StatusServiceUnavailable, "当前 workspace 没有可用于"+scopeLabel+"小队的 "+providerName+" runtime，无法创建真实可执行的内部小队。请先启动 multica daemon，并确认 /api/runtimes 出现 provider="+provider+" 且范围匹配的在线 runtime。")
 		return db.AgentRuntime{}, false
 	}
 	if best.Status != "online" || !best.LastSeenAt.Valid || checkedAt.Sub(best.LastSeenAt.Time) > promptEvaluationRuntimeFreshTTL {
@@ -133,13 +136,6 @@ func (h *Handler) selectInternalSquadRuntime(w http.ResponseWriter, r *http.Requ
 		return db.AgentRuntime{}, false
 	}
 	return *best, true
-}
-
-func internalSquadRuntimeScopeLabel(agentScope string) string {
-	if agentScope == scopePersonal {
-		return "个人"
-	}
-	return "工作区"
 }
 
 func (h *Handler) ensureInternalSquadAgents(ctx context.Context, workspaceID pgtype.UUID, ownerID pgtype.UUID, runtime db.AgentRuntime, template internalSquadTemplate, squadScope string) ([]InternalSquadAgent, error) {
@@ -151,17 +147,19 @@ func (h *Handler) ensureInternalSquadAgents(ctx context.Context, workspaceID pgt
 		return nil, err
 	}
 	result := make([]InternalSquadAgent, 0, len(template.Roles))
-	agentScope := squadScope
 	for _, role := range template.Roles {
 		name := strings.TrimSpace(role.AgentName)
 		if name == "" {
 			name = template.Name + " · " + role.Name
 		}
-		runtimeConfig := internalSquadAgentRuntimeConfig(runtime, template, role, squadScope, agentScope, ownerID)
+		runtimeConfig := internalSquadAgentRuntimeConfig(runtime, template, role)
 		instructions := "你是" + template.Name + "小队的" + role.Name + "。" + role.Instruction + "所有输出必须使用中文，并保留可验收证据。"
-		description := internalSquadRoleDescription(template, role)
+		description := strings.TrimSpace(role.Description)
+		if description == "" {
+			description = template.Description
+		}
 		model := pgtype.Text{String: template.Model, Valid: true}
-		agentRow, ok := findInternalSquadAgent(existing, name, template, role, squadScope, agentScope, ownerID)
+		agentRow, ok := findInternalSquadAgent(existing, name, template, role, squadScope, ownerID)
 		if !ok {
 			agentRow, err = h.Queries.CreateAgent(ctx, db.CreateAgentParams{
 				WorkspaceID:        workspaceID,
@@ -171,7 +169,7 @@ func (h *Handler) ensureInternalSquadAgents(ctx context.Context, workspaceID pgt
 				RuntimeMode:        runtime.RuntimeMode,
 				RuntimeConfig:      runtimeConfig,
 				RuntimeID:          runtime.ID,
-				Scope:              agentScope,
+				Scope:              squadScope,
 				MaxConcurrentTasks: defaultAgentMaxConcurrentTasks,
 				OwnerID:            ownerID,
 				CustomEnv:          []byte("{}"),
@@ -189,14 +187,14 @@ func (h *Handler) ensureInternalSquadAgents(ctx context.Context, workspaceID pgt
 					return nil, err
 				}
 			}
-			if internalSquadAgentNeedsSync(agentRow, runtime, role, runtimeConfig, instructions, description, model, agentScope) {
+			if internalSquadAgentNeedsSync(agentRow, runtime, role, runtimeConfig, instructions, description, model, squadScope) {
 				agentRow, err = h.Queries.UpdateAgent(ctx, db.UpdateAgentParams{
 					ID:                 agentRow.ID,
 					Description:        pgtype.Text{String: description, Valid: true},
 					RuntimeConfig:      runtimeConfig,
 					RuntimeMode:        pgtype.Text{String: runtime.RuntimeMode, Valid: true},
 					RuntimeID:          runtime.ID,
-					Scope:              pgtype.Text{String: agentScope, Valid: true},
+					Scope:              pgtype.Text{String: squadScope, Valid: true},
 					MaxConcurrentTasks: pgtype.Int4{Int32: defaultAgentMaxConcurrentTasks, Valid: true},
 					Instructions:       pgtype.Text{String: instructions, Valid: true},
 					CustomArgs:         []byte("[]"),
@@ -218,27 +216,20 @@ func (h *Handler) ensureInternalSquadAgents(ctx context.Context, workspaceID pgt
 	return result, nil
 }
 
-func internalSquadAgentRuntimeConfig(runtime db.AgentRuntime, template internalSquadTemplate, role internalSquadRole, squadScope string, agentScope string, ownerID pgtype.UUID) []byte {
-	scopeOwnerID := ""
-	if squadScope == scopePersonal {
-		scopeOwnerID = uuidToString(ownerID)
-	}
+func internalSquadAgentRuntimeConfig(runtime db.AgentRuntime, template internalSquadTemplate, role internalSquadRole) []byte {
 	return mustJSONBytes(map[string]any{
 		"provider": runtime.Provider,
 		"internal_squad": map[string]any{
 			"template_key": template.Key,
 			"role_key":     role.Key,
-			"squad_scope":  squadScope,
-			"agent_scope":  agentScope,
-			"owner_id":     scopeOwnerID,
 		},
 	})
 }
 
-func findInternalSquadAgent(agents []db.Agent, name string, template internalSquadTemplate, role internalSquadRole, squadScope string, agentScope string, ownerID pgtype.UUID) (db.Agent, bool) {
+func findInternalSquadAgent(agents []db.Agent, name string, template internalSquadTemplate, role internalSquadRole, scope string, ownerID pgtype.UUID) (db.Agent, bool) {
 	var archivedMatch db.Agent
 	for _, agent := range agents {
-		if !matchesInternalSquadAgent(agent, name, template, role, squadScope, agentScope, ownerID) {
+		if !matchesInternalSquadAgent(agent, name, template, role, scope, ownerID) {
 			continue
 		}
 		if !agent.ArchivedAt.Valid {
@@ -254,26 +245,24 @@ func findInternalSquadAgent(agents []db.Agent, name string, template internalSqu
 	return db.Agent{}, false
 }
 
-func matchesInternalSquadAgent(agent db.Agent, name string, template internalSquadTemplate, role internalSquadRole, squadScope string, agentScope string, ownerID pgtype.UUID) bool {
-	if agent.Name != name || agent.Scope != agentScope {
+func matchesInternalSquadAgent(agent db.Agent, name string, template internalSquadTemplate, role internalSquadRole, scope string, ownerID pgtype.UUID) bool {
+	if agent.Name != name || agent.Scope != scope {
 		return false
 	}
-	if squadScope == scopePersonal && uuidToString(agent.OwnerID) != uuidToString(ownerID) {
+	if scope == scopePersonal && uuidToString(agent.OwnerID) != uuidToString(ownerID) {
 		return false
 	}
 	var runtimeConfig map[string]any
 	if len(bytes.TrimSpace(agent.RuntimeConfig)) == 0 || json.Unmarshal(agent.RuntimeConfig, &runtimeConfig) != nil {
 		return false
 	}
-	scope, ok := runtimeConfig["internal_squad"].(map[string]any)
+	metadata, ok := runtimeConfig["internal_squad"].(map[string]any)
 	if !ok ||
-		util.StringFromAny(scope["template_key"]) != template.Key ||
-		util.StringFromAny(scope["role_key"]) != role.Key ||
-		util.StringFromAny(scope["squad_scope"]) != squadScope ||
-		util.StringFromAny(scope["agent_scope"]) != agentScope {
+		util.StringFromAny(metadata["template_key"]) != template.Key ||
+		util.StringFromAny(metadata["role_key"]) != role.Key {
 		return false
 	}
-	return squadScope != scopePersonal || util.StringFromAny(scope["owner_id"]) == uuidToString(ownerID)
+	return true
 }
 
 func internalSquadAgentNeedsSync(agent db.Agent, runtime db.AgentRuntime, role internalSquadRole, runtimeConfig []byte, instructions string, description string, model pgtype.Text, scope string) bool {
@@ -295,13 +284,6 @@ func internalSquadAgentNeedsSync(agent db.Agent, runtime db.AgentRuntime, role i
 		return true
 	}
 	return false
-}
-
-func internalSquadRoleDescription(template internalSquadTemplate, role internalSquadRole) string {
-	if strings.TrimSpace(role.Description) != "" {
-		return strings.TrimSpace(role.Description)
-	}
-	return template.Description
 }
 
 func (h *Handler) ensureInternalSquad(ctx context.Context, workspaceID pgtype.UUID, creatorID pgtype.UUID, template internalSquadTemplate, scope string, agents []InternalSquadAgent, archiveSuperseded bool) (db.Squad, error) {

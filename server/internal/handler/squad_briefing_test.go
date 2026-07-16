@@ -763,6 +763,11 @@ func TestEnsureUserCenterInternalSquadPersistsMCPConfig(t *testing.T) {
 			t.Fatalf("%s runtime_config missing internal_squad: %s", name, string(runtimeConfigRaw))
 		}
 		roleKey, _ := internalSquad["role_key"].(string)
+		for _, duplicateScopeField := range []string{"squad_scope", "agent_scope", "owner_id"} {
+			if _, exists := internalSquad[duplicateScopeField]; exists {
+				t.Fatalf("%s runtime_config must not mirror agent scope in internal_squad.%s: %s", name, duplicateScopeField, string(runtimeConfigRaw))
+			}
+		}
 		count++
 		if roleKey == "pm" {
 			for _, want := range []string{
