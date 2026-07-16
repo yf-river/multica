@@ -382,8 +382,7 @@ func TestPromptEvaluationAssetCRUD(t *testing.T) {
 	})
 	promptID := createPromptEvaluationTestPrompt(t, testWorkspaceID, "评测提示词")
 
-	createW := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
+	created := createPromptEvaluationAssetFixture(t, map[string]any{
 		"prompt_id":   promptID,
 		"name":        "user-center 澄清数据集",
 		"description": "用于验证澄清提示词",
@@ -392,14 +391,7 @@ func TestPromptEvaluationAssetCRUD(t *testing.T) {
 			"case_name": "用例 1", "variables": map[string]any{}, "expected_contains": []string{"询问边界和验收"},
 		}}},
 		"status": "启用",
-	}))
-	if createW.Code != http.StatusCreated {
-		t.Fatalf("create status = %d, body = %s", createW.Code, createW.Body.String())
-	}
-	var created PromptEvaluationAssetResponse
-	if err := json.Unmarshal(createW.Body.Bytes(), &created); err != nil {
-		t.Fatalf("decode create response: %v", err)
-	}
+	})
 	if created.AssetType != "数据集" || created.PromptID == nil || *created.PromptID != promptID {
 		t.Fatalf("created = %+v", created)
 	}
@@ -530,8 +522,7 @@ func TestPromptEvaluationAssetExperimentDimensionsDoNotBlockCreateOrUpdate(t *te
 	})
 	promptID := createPromptEvaluationTestPrompt(t, testWorkspaceID, "实验维度提示词")
 
-	createW := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
+	created := createPromptEvaluationAssetFixture(t, map[string]any{
 		"prompt_id":  promptID,
 		"name":       "实验维度不阻塞创建",
 		"asset_type": "测试套件",
@@ -544,14 +535,7 @@ func TestPromptEvaluationAssetExperimentDimensionsDoNotBlockCreateOrUpdate(t *te
 			"experiment_dimensions": []string{"命中率", "中文一致性"},
 		},
 		"status": "启用",
-	}))
-	if createW.Code != http.StatusCreated {
-		t.Fatalf("create status = %d, body = %s", createW.Code, createW.Body.String())
-	}
-	var created PromptEvaluationAssetResponse
-	if err := json.Unmarshal(createW.Body.Bytes(), &created); err != nil {
-		t.Fatalf("decode create response: %v", err)
-	}
+	})
 	if created.ExperimentDimensionCount != 2 {
 		t.Fatalf("created experiment dimension count = %d, want 2", created.ExperimentDimensionCount)
 	}
@@ -588,22 +572,14 @@ func TestPromptEvaluationDatasetFromTraces(t *testing.T) {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_library_item WHERE workspace_id = $1`, testWorkspaceID)
 	})
 	promptID := createPromptEvaluationTestPromptWithContent(t, testWorkspaceID, "trace 数据集提示词", "请复盘 {{event_name}}。", `["event_name"]`)
-	assetW := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationAsset(assetW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
+	asset := createPromptEvaluationAssetFixture(t, map[string]any{
 		"prompt_id":   promptID,
 		"name":        "trace 导入数据集",
 		"description": "从真实任务 trace 沉淀评估样本",
 		"asset_type":  "数据集",
 		"payload":     map[string]any{"cases": []map[string]any{}},
 		"status":      "启用",
-	}))
-	if assetW.Code != http.StatusCreated {
-		t.Fatalf("create asset status = %d, body = %s", assetW.Code, assetW.Body.String())
-	}
-	var asset PromptEvaluationAssetResponse
-	if err := json.Unmarshal(assetW.Body.Bytes(), &asset); err != nil {
-		t.Fatalf("decode asset: %v", err)
-	}
+	})
 	agentID := createHandlerTestAgent(t, "trace dataset agent", nil)
 	taskID := createHandlerTestTaskForAgent(t, agentID)
 	trace, err := testHandler.Queries.CreateTaskTraceEvent(context.Background(), db.CreateTaskTraceEventParams{
@@ -699,8 +675,7 @@ func TestRunPromptEvaluationAssetWritesChineseResult(t *testing.T) {
 		`[{"name":"repo","default_value":"user-center"}]`,
 	)
 
-	createW := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
+	created := createPromptEvaluationAssetFixture(t, map[string]any{
 		"prompt_id":  promptID,
 		"name":       "澄清渲染测试套件",
 		"asset_type": "测试套件",
@@ -714,14 +689,7 @@ func TestRunPromptEvaluationAssetWritesChineseResult(t *testing.T) {
 				},
 			},
 		},
-	}))
-	if createW.Code != http.StatusCreated {
-		t.Fatalf("create status = %d, body = %s", createW.Code, createW.Body.String())
-	}
-	var created PromptEvaluationAssetResponse
-	if err := json.Unmarshal(createW.Body.Bytes(), &created); err != nil {
-		t.Fatalf("decode create response: %v", err)
-	}
+	})
 
 	runW := httptest.NewRecorder()
 	testHandler.RunPromptEvaluationAsset(runW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+created.ID+"/run", nil), "id", created.ID))
@@ -962,8 +930,7 @@ func TestRunPromptEvaluationAssetReadsDatasetPayload(t *testing.T) {
 		`[]`,
 	)
 
-	createW := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
+	created := createPromptEvaluationAssetFixture(t, map[string]any{
 		"prompt_id":  promptID,
 		"name":       "中文数据集可运行",
 		"asset_type": "数据集",
@@ -979,14 +946,7 @@ func TestRunPromptEvaluationAssetReadsDatasetPayload(t *testing.T) {
 				},
 			},
 		},
-	}))
-	if createW.Code != http.StatusCreated {
-		t.Fatalf("create status = %d, body = %s", createW.Code, createW.Body.String())
-	}
-	var created PromptEvaluationAssetResponse
-	if err := json.Unmarshal(createW.Body.Bytes(), &created); err != nil {
-		t.Fatalf("decode create response: %v", err)
-	}
+	})
 
 	runW := httptest.NewRecorder()
 	testHandler.RunPromptEvaluationAsset(runW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+created.ID+"/run", nil), "id", created.ID))
@@ -1013,8 +973,7 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_library_item WHERE workspace_id = $1`, testWorkspaceID)
 	})
 	promptID := createPromptEvaluationTestPromptWithContent(t, testWorkspaceID, "评测用例 CRUD 提示词", "请处理 {{issue_title}}。", `[]`)
-	createAssetW := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationAsset(createAssetW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
+	asset := createPromptEvaluationAssetFixture(t, map[string]any{
 		"prompt_id":  promptID,
 		"name":       "评测用例 CRUD 数据集",
 		"asset_type": "数据集",
@@ -1024,14 +983,7 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 			"expected_contains": []any{},
 			"tags":              []any{},
 		}}},
-	}))
-	if createAssetW.Code != http.StatusCreated {
-		t.Fatalf("create asset status = %d, body = %s", createAssetW.Code, createAssetW.Body.String())
-	}
-	var asset PromptEvaluationAssetResponse
-	if err := json.Unmarshal(createAssetW.Body.Bytes(), &asset); err != nil {
-		t.Fatalf("decode asset: %v", err)
-	}
+	})
 	createCaseW := httptest.NewRecorder()
 	testHandler.CreatePromptEvaluationCase(createCaseW, newRequest(http.MethodPost, "/api/prompt-evaluation-cases", map[string]any{
 		"asset_id":          asset.ID,
@@ -1218,20 +1170,12 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 	if tagSummary.Total == 0 || !promptEvaluationTagSummaryContains(tagSummary.Items, "user-center", 1) {
 		t.Fatalf("tag summary = %+v", tagSummary)
 	}
-	createSecondAssetW := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationAsset(createSecondAssetW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
+	secondAsset := createPromptEvaluationAssetFixture(t, map[string]any{
 		"prompt_id":  promptID,
 		"name":       "评测用例 CRUD 第二数据集",
 		"asset_type": "数据集",
 		"payload":    map[string]any{"cases": []any{}},
-	}))
-	if createSecondAssetW.Code != http.StatusCreated {
-		t.Fatalf("create second asset status = %d, body = %s", createSecondAssetW.Code, createSecondAssetW.Body.String())
-	}
-	var secondAsset PromptEvaluationAssetResponse
-	if err := json.Unmarshal(createSecondAssetW.Body.Bytes(), &secondAsset); err != nil {
-		t.Fatalf("decode second asset: %v", err)
-	}
+	})
 	createSecondCaseW := httptest.NewRecorder()
 	testHandler.CreatePromptEvaluationCase(createSecondCaseW, newRequest(http.MethodPost, "/api/prompt-evaluation-cases", map[string]any{
 		"asset_id":          secondAsset.ID,
@@ -1542,8 +1486,7 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 	assertPromptEvaluationCaseAssertionIdentities(t, created.ID, 0)
 	assertPromptEvaluationDatasetRows(t, asset.ID, []string{"基准载荷用例"})
 
-	createSuiteW := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationAsset(createSuiteW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
+	testSuite := createPromptEvaluationAssetFixture(t, map[string]any{
 		"prompt_id":  promptID,
 		"name":       "评测用例 CRUD 测试套件",
 		"asset_type": "测试套件",
@@ -1553,14 +1496,7 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 			"expected_contains": []any{},
 			"tags":              []any{},
 		}}},
-	}))
-	if createSuiteW.Code != http.StatusCreated {
-		t.Fatalf("create test suite status = %d, body = %s", createSuiteW.Code, createSuiteW.Body.String())
-	}
-	var testSuite PromptEvaluationAssetResponse
-	if err := json.Unmarshal(createSuiteW.Body.Bytes(), &testSuite); err != nil {
-		t.Fatalf("decode test suite: %v", err)
-	}
+	})
 	createSuiteCaseW := httptest.NewRecorder()
 	testHandler.CreatePromptEvaluationCase(createSuiteCaseW, newRequest(http.MethodPost, "/api/prompt-evaluation-cases", map[string]any{
 		"asset_id":          testSuite.ID,
@@ -1601,19 +1537,11 @@ func TestPromptEvaluationEmptyCanonicalCasesStayEmpty(t *testing.T) {
 	t.Cleanup(func() {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_evaluation_asset WHERE workspace_id = $1`, testWorkspaceID)
 	})
-	w := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationAsset(w, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
+	asset := createPromptEvaluationAssetFixture(t, map[string]any{
 		"name":       "空 Canonical 数据集",
 		"asset_type": "数据集",
 		"payload":    map[string]any{"cases": []any{}},
-	}))
-	if w.Code != http.StatusCreated {
-		t.Fatalf("create status = %d, body = %s", w.Code, w.Body.String())
-	}
-	var asset PromptEvaluationAssetResponse
-	if err := json.Unmarshal(w.Body.Bytes(), &asset); err != nil {
-		t.Fatal(err)
-	}
+	})
 	if asset.StructuredCaseCount != 0 || asset.DatasetRowCount != 0 {
 		t.Fatalf("empty canonical dataset created ghost cases: %+v", asset)
 	}
@@ -1629,22 +1557,14 @@ func TestUpdatePromptEvaluationAssetPreservesManualCases(t *testing.T) {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_library_item WHERE workspace_id = $1`, testWorkspaceID)
 	})
 	promptID := createPromptEvaluationTestPromptWithContent(t, testWorkspaceID, "保留人工用例提示词", "请处理 {{issue_title}}。", `[]`)
-	createAssetW := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationAsset(createAssetW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
+	asset := createPromptEvaluationAssetFixture(t, map[string]any{
 		"prompt_id":  promptID,
 		"name":       "保留人工用例数据集",
 		"asset_type": "数据集",
 		"payload": map[string]any{
 			"cases": []map[string]any{{"case_name": "旧 payload 用例", "variables": map[string]any{"issue_title": "旧问题"}, "expected_contains": []string{"旧 payload 断言"}}},
 		},
-	}))
-	if createAssetW.Code != http.StatusCreated {
-		t.Fatalf("create asset status = %d, body = %s", createAssetW.Code, createAssetW.Body.String())
-	}
-	var asset PromptEvaluationAssetResponse
-	if err := json.Unmarshal(createAssetW.Body.Bytes(), &asset); err != nil {
-		t.Fatalf("decode asset: %v", err)
-	}
+	})
 
 	createCaseW := httptest.NewRecorder()
 	testHandler.CreatePromptEvaluationCase(createCaseW, newRequest(http.MethodPost, "/api/prompt-evaluation-cases", map[string]any{
@@ -1928,21 +1848,12 @@ func createPromptEvaluationAgentAssetFixture(t *testing.T, assetName, caseName, 
 	if dimensions != nil {
 		payload["experiment_dimensions"] = dimensions
 	}
-	w := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationAsset(w, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
+	return createPromptEvaluationAssetFixture(t, map[string]any{
 		"prompt_id":  promptID,
 		"name":       assetName,
 		"asset_type": "测试套件",
 		"payload":    payload,
-	}))
-	if w.Code != http.StatusCreated {
-		t.Fatalf("create status = %d, body = %s", w.Code, w.Body.String())
-	}
-	var asset PromptEvaluationAssetResponse
-	if err := json.Unmarshal(w.Body.Bytes(), &asset); err != nil {
-		t.Fatalf("decode create response: %v", err)
-	}
-	return asset
+	})
 }
 
 func readPromptEvaluationRuntimeReadiness(t *testing.T, req *http.Request) PromptEvaluationRuntimeReadinessResponse {
@@ -2943,8 +2854,7 @@ func TestRunPromptEvaluationAssetAgentUsesRequestedAgent(t *testing.T) {
 		"请评估 {{issue_title}}。",
 		`[]`,
 	)
-	createW := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
+	created := createPromptEvaluationAssetFixture(t, map[string]any{
 		"prompt_id":  promptID,
 		"name":       "指定执行智能体实验",
 		"asset_type": "测试套件",
@@ -2956,14 +2866,7 @@ func TestRunPromptEvaluationAssetAgentUsesRequestedAgent(t *testing.T) {
 				"expected_contains": []string{"登录失败"},
 			}},
 		},
-	}))
-	if createW.Code != http.StatusCreated {
-		t.Fatalf("create status = %d, body = %s", createW.Code, createW.Body.String())
-	}
-	var created PromptEvaluationAssetResponse
-	if err := json.Unmarshal(createW.Body.Bytes(), &created); err != nil {
-		t.Fatalf("decode create response: %v", err)
-	}
+	})
 	runW := httptest.NewRecorder()
 	testHandler.RunPromptEvaluationAssetAgent(runW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+created.ID+"/agent-run", nil), "id", created.ID))
 	if runW.Code != http.StatusAccepted {
@@ -3029,8 +2932,7 @@ func TestPromptEvaluationOptimizationCandidatePublishKeepsSourcePrompt(t *testin
 		sourceContent,
 		`[]`,
 	)
-	createW := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
+	asset := createPromptEvaluationAssetFixture(t, map[string]any{
 		"prompt_id":  promptID,
 		"name":       "失败用例优化运行",
 		"asset_type": "测试套件",
@@ -3043,14 +2945,7 @@ func TestPromptEvaluationOptimizationCandidatePublishKeepsSourcePrompt(t *testin
 				},
 			},
 		},
-	}))
-	if createW.Code != http.StatusCreated {
-		t.Fatalf("create status = %d, body = %s", createW.Code, createW.Body.String())
-	}
-	var asset PromptEvaluationAssetResponse
-	if err := json.Unmarshal(createW.Body.Bytes(), &asset); err != nil {
-		t.Fatalf("decode asset: %v", err)
-	}
+	})
 
 	runW := httptest.NewRecorder()
 	testHandler.RunPromptEvaluationAsset(runW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+asset.ID+"/run", nil), "id", asset.ID))
@@ -3177,8 +3072,7 @@ func TestPromptEvaluationOptimizationCandidateCanBeRejected(t *testing.T) {
 		"请澄清 {{issue_title}}，输出必须使用中文。",
 		`[]`,
 	)
-	createW := httptest.NewRecorder()
-	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
+	asset := createPromptEvaluationAssetFixture(t, map[string]any{
 		"prompt_id":  promptID,
 		"name":       "拒绝优化候选运行",
 		"asset_type": "测试套件",
@@ -3191,14 +3085,7 @@ func TestPromptEvaluationOptimizationCandidateCanBeRejected(t *testing.T) {
 				},
 			},
 		},
-	}))
-	if createW.Code != http.StatusCreated {
-		t.Fatalf("create status = %d, body = %s", createW.Code, createW.Body.String())
-	}
-	var asset PromptEvaluationAssetResponse
-	if err := json.Unmarshal(createW.Body.Bytes(), &asset); err != nil {
-		t.Fatalf("decode asset: %v", err)
-	}
+	})
 	runW := httptest.NewRecorder()
 	testHandler.RunPromptEvaluationAsset(runW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+asset.ID+"/run", nil), "id", asset.ID))
 	if runW.Code != http.StatusOK {
@@ -3248,6 +3135,20 @@ func TestPromptEvaluationOptimizationCandidateCanBeRejected(t *testing.T) {
 	if publishW.Code != http.StatusConflict {
 		t.Fatalf("publish after reject status = %d, body = %s", publishW.Code, publishW.Body.String())
 	}
+}
+
+func createPromptEvaluationAssetFixture(t *testing.T, requestBody map[string]any) PromptEvaluationAssetResponse {
+	t.Helper()
+	w := httptest.NewRecorder()
+	testHandler.CreatePromptEvaluationAsset(w, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", requestBody))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create prompt evaluation asset status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var asset PromptEvaluationAssetResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &asset); err != nil {
+		t.Fatalf("decode prompt evaluation asset: %v", err)
+	}
+	return asset
 }
 
 func TestPromptEvaluationAssetRejectsForeignPrompt(t *testing.T) {
