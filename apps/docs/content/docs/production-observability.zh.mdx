@@ -3,8 +3,6 @@ title: 部署验证与运行观测
 description: 验证 Multica 服务就绪，并从当前页面和 API 检查任务、评测、trace 与用量证据。
 ---
 
-import { Callout } from "fumadocs-ui/components/callout";
-
 部署完成后，先确认服务就绪，再用实际工作区验证 Agent 和评测链路。不要只把“进程已启动”当成可用证据。
 
 ## 健康与就绪检查
@@ -45,10 +43,6 @@ curl -fsS \
 ```
 
 可选过滤参数为 `since`、`squad_id`、`project_id` 和 `agent_id`。响应汇总 SOP 执行、任务状态、队列和执行耗时、token、预估成本、失败原因、模型及运行时分布。
-
-<Callout type="warning">
-观测摘要有查询上限。`summary_completeness` 表示结果是否可能被截断；结果不完整时，应缩小时间或资源范围后再判断。
-</Callout>
 
 ## 评测与运行证据 API
 

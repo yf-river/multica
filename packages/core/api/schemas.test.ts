@@ -11,7 +11,6 @@ import {
   RuntimeUsageByAgentListSchema,
   RuntimeUsageByTaskListSchema,
   RuntimeUsageListSchema,
-  ObservabilitySummarySchema,
   PromptEvaluationAssetListResponseSchema,
   PromptLibraryItemListResponseSchema,
   PromptLibraryItemSchema,
@@ -409,16 +408,6 @@ describe("dashboard + runtime usage schema drift", () => {
       { date: "2026-05-19", region: "us-east" },
     ]);
     expect((parsed[0] as Record<string, unknown>).region).toBe("us-east");
-  });
-});
-
-describe("ObservabilitySummarySchema full-summary defaults", () => {
-  it("defaults missing completeness fields to full-summary semantics", () => {
-    const parsed = ObservabilitySummarySchema.parse({});
-    expect(parsed.summary_completeness["采样上限"]).toBe(0);
-    expect(parsed.summary_completeness["说明"]).toContain("全量汇总");
-    expect(parsed.sop_run_maybe_truncated).toBe(false);
-    expect(parsed.task_trace_maybe_truncated).toBe(false);
   });
 });
 

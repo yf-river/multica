@@ -379,7 +379,7 @@ func (h *Handler) GetWorkspaceObservabilitySummary(w http.ResponseWriter, r *htt
 		writeError(w, http.StatusInternalServerError, "failed to list task messages")
 		return
 	}
-	summary := buildObservabilitySummary(runs, events, traces, taskMessages, int64(len(events)))
+	summary := buildObservabilitySummary(runs, events, traces, taskMessages)
 	writeJSON(w, http.StatusOK, summary)
 }
 
@@ -522,13 +522,7 @@ func buildObservabilitySummary(
 	events []db.SquadSopStepEvent,
 	traces []db.TaskTraceEvent,
 	taskMessages map[string][]db.TaskMessage,
-	sopEventCount int64,
 ) map[string]any {
-	const sampleLimit int32 = 0
-	runMaybeTruncated := false
-	traceMaybeTruncated := false
-	completenessStatus := "完整"
-	completenessReason := "当前筛选条件下的 SOP 执行和任务观测已按全量汇总。"
 	statusCounts := map[string]int{}
 	squadCounts := map[string]int{}
 	issueCounts := map[string]int{}
@@ -635,7 +629,7 @@ func buildObservabilitySummary(
 	return map[string]any{
 		"指标": map[string]any{
 			"SOP 执行数":   len(runs),
-			"SOP 事件数":   sopEventCount,
+			"SOP 事件数":   len(events),
 			"阶段耗时":      avgInt64(totalDuration, durationCount),
 			"队列等待":      queueWait,
 			"执行耗时":      runMs,
@@ -647,32 +641,14 @@ func buildObservabilitySummary(
 			"预估成本":      metrics.RoundCostUSD(estimatedCost),
 			"失败原因":      sortedReasonCounts(failureReasons),
 			"重试次数":      retryCount,
-			"证据数":       sopEventCount,
+			"证据数":       len(events),
 			"缺少模型价格":    sortedReasonCounts(unpricedModels),
-			"采样上限":      sampleLimit,
-			"SOP 执行样本数": len(runs),
-			"任务观测样本数":   len(traces),
-			"汇总完整性":     completenessStatus,
 		},
-		"sop_status_counts":          statusCounts,
-		"squad_counts":               squadCounts,
-		"project_counts":             projectCounts,
-		"issue_counts":               issueCounts,
-		"task_trace_total":           len(traces),
-		"sop_run_sample_total":       len(runs),
-		"task_trace_sample_total":    len(traces),
-		"sample_limit":               sampleLimit,
-		"sop_run_maybe_truncated":    runMaybeTruncated,
-		"task_trace_maybe_truncated": traceMaybeTruncated,
-		"summary_completeness": map[string]any{
-			"状态":         completenessStatus,
-			"说明":         completenessReason,
-			"采样上限":       sampleLimit,
-			"SOP 执行样本数":  len(runs),
-			"任务观测样本数":    len(traces),
-			"SOP 执行可能截断": runMaybeTruncated,
-			"任务观测可能截断":   traceMaybeTruncated,
-		},
+		"sop_status_counts":   statusCounts,
+		"squad_counts":        squadCounts,
+		"project_counts":      projectCounts,
+		"issue_counts":        issueCounts,
+		"task_trace_total":    len(traces),
 		"model_breakdown":     observabilityBreakdownRows(modelBreakdown),
 		"runtime_breakdown":   observabilityBreakdownRows(runtimeBreakdown),
 		"sop_stage_breakdown": stageBreakdown,

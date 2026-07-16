@@ -22,8 +22,6 @@
   },
   "observability": {
     "task_trace_count": "任务观测 {{count}}",
-    "complete": "完整",
-    "truncated_hint": "当前指标只代表最近样本；请缩小时间、项目、小队或 Agent 范围后再用于汇报。",
     "metric_sop_runs": "SOP 执行数",
     "metric_sop_events": "SOP 事件数",
     "metric_queue_wait": "队列等待",

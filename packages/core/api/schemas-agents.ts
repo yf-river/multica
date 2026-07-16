@@ -145,26 +145,6 @@ const ObservabilityUsageBreakdownSchema = z.object({
 export const ObservabilitySummarySchema = z.object({
   指标: z.record(z.string(), z.unknown()).default({}),
   task_trace_total: z.number().default(0),
-  task_trace_sample_total: z.number().default(0),
-  sop_run_maybe_truncated: z.boolean().default(false),
-  task_trace_maybe_truncated: z.boolean().default(false),
-  summary_completeness: z.object({
-    状态: z.string().default("完整"),
-    说明: z.string().default("当前筛选条件下的 SOP 执行和任务观测已按全量汇总。"),
-    采样上限: z.number().default(0),
-    "SOP 执行样本数": z.number().default(0),
-    "任务观测样本数": z.number().default(0),
-    "SOP 执行可能截断": z.boolean().default(false),
-    "任务观测可能截断": z.boolean().default(false),
-  }).loose().default({
-    状态: "完整",
-    说明: "当前筛选条件下的 SOP 执行和任务观测已按全量汇总。",
-    采样上限: 0,
-    "SOP 执行样本数": 0,
-    "任务观测样本数": 0,
-    "SOP 执行可能截断": false,
-    "任务观测可能截断": false,
-  }),
   model_breakdown: z.array(ObservabilityUsageBreakdownSchema).default([]),
   runtime_breakdown: z.array(ObservabilityUsageBreakdownSchema).default([]),
 }).loose();
@@ -172,18 +152,6 @@ export const ObservabilitySummarySchema = z.object({
 export const EMPTY_OBSERVABILITY_SUMMARY: ObservabilitySummary = {
   指标: {},
   task_trace_total: 0,
-  task_trace_sample_total: 0,
-  sop_run_maybe_truncated: false,
-  task_trace_maybe_truncated: false,
-  summary_completeness: {
-    状态: "完整",
-    说明: "当前筛选条件下的 SOP 执行和任务观测已按全量汇总。",
-    采样上限: 0,
-    "SOP 执行样本数": 0,
-    "任务观测样本数": 0,
-    "SOP 执行可能截断": false,
-    "任务观测可能截断": false,
-  },
   model_breakdown: [],
   runtime_breakdown: [],
 };
