@@ -22,7 +22,7 @@ import (
 )
 
 func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
-	var req DaemonRegisterRequest
+	var req protocol.DaemonRegisterRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -382,10 +382,7 @@ func (h *Handler) DaemonHeartbeat(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	decodeStart := time.Now()
-	var req struct {
-		RuntimeID string          `json:"runtime_id"`
-		Metadata  json.RawMessage `json:"metadata,omitempty"`
-	}
+	var req protocol.DaemonHeartbeatRequestPayload
 	decodeErr := json.NewDecoder(r.Body).Decode(&req)
 	decodeMs = time.Since(decodeStart).Milliseconds()
 	if decodeErr != nil {

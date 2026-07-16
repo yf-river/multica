@@ -457,7 +457,7 @@ func (d *Daemon) customLaunchForRuntime(runtimeID string) (runtimeProfileLaunch,
 
 func (d *Daemon) registerRuntimesForWorkspace(ctx context.Context, workspaceID string) (*RegisterResponse, string, error) {
 	d.logger.Debug("registering runtimes for workspace", "workspace_id", workspaceID, "agent_count", len(d.cfg.Agents))
-	var runtimes []map[string]any
+	var runtimes []protocol.DaemonRuntimeRegistration
 	for name, entry := range d.cfg.Agents {
 		version, err := detectAgentVersion(ctx, entry.Path)
 		if err != nil {
@@ -473,11 +473,11 @@ func (d *Daemon) registerRuntimesForWorkspace(ctx context.Context, workspaceID s
 		if d.cfg.DeviceName != "" {
 			displayName = fmt.Sprintf("%s (%s)", displayName, d.cfg.DeviceName)
 		}
-		runtimes = append(runtimes, map[string]any{
-			"name":    displayName,
-			"type":    name,
-			"version": version,
-			"status":  "online",
+		runtimes = append(runtimes, protocol.DaemonRuntimeRegistration{
+			Name:    displayName,
+			Type:    name,
+			Version: version,
+			Status:  "online",
 		})
 	}
 
@@ -503,13 +503,13 @@ func (d *Daemon) registerRuntimesForWorkspace(ctx context.Context, workspaceID s
 		return nil, profileSig, ErrNoRuntimesToRegister
 	}
 
-	req := map[string]any{
-		"workspace_id": workspaceID,
-		"daemon_id":    d.cfg.DaemonID,
-		"device_name":  d.cfg.DeviceName,
-		"cli_version":  d.cfg.CLIVersion,
-		"launched_by":  d.cfg.LaunchedBy,
-		"runtimes":     runtimes,
+	req := protocol.DaemonRegisterRequest{
+		WorkspaceID: workspaceID,
+		DaemonID:    d.cfg.DaemonID,
+		DeviceName:  d.cfg.DeviceName,
+		CLIVersion:  d.cfg.CLIVersion,
+		LaunchedBy:  d.cfg.LaunchedBy,
+		Runtimes:    runtimes,
 	}
 
 	resp, err := d.client.Register(ctx, req)
@@ -546,7 +546,7 @@ func (d *Daemon) registerRuntimesForWorkspace(ctx context.Context, workspaceID s
 // treat that as "unknown, do not overwrite a previously-stored signature"
 // (otherwise a transient 5xx would silently flip the daemon into thinking the
 // workspace has zero profiles).
-func (d *Daemon) appendProfileRuntimes(ctx context.Context, workspaceID string, runtimes *[]map[string]any) string {
+func (d *Daemon) appendProfileRuntimes(ctx context.Context, workspaceID string, runtimes *[]protocol.DaemonRuntimeRegistration) string {
 	resp, err := d.client.GetRuntimeProfiles(ctx, workspaceID)
 	if err != nil {
 		// Keep built-in runtimes available when the profile endpoint is
@@ -616,12 +616,12 @@ func (d *Daemon) appendProfileRuntimes(ctx context.Context, workspaceID string, 
 		d.logger.Info("registering custom runtime profile",
 			"workspace_id", workspaceID, "profile_id", profile.ID,
 			"protocol_family", profile.ProtocolFamily, "command_path", resolved)
-		*runtimes = append(*runtimes, map[string]any{
-			"name":       displayName,
-			"type":       profile.ProtocolFamily,
-			"version":    version,
-			"status":     "online",
-			"profile_id": profile.ID,
+		*runtimes = append(*runtimes, protocol.DaemonRuntimeRegistration{
+			Name:      displayName,
+			Type:      profile.ProtocolFamily,
+			Version:   version,
+			Status:    "online",
+			ProfileID: profile.ID,
 		})
 	}
 	return profileSetSignature(resp.RuntimeProfiles)
@@ -820,7 +820,7 @@ func (d *Daemon) syncWorkspaceRepos(workspaceID string, repos []protocol.TaskRep
 	d.setWorkspaceRepoSyncError(workspaceID, "")
 }
 
-func (d *Daemon) refreshWorkspaceRepos(ctx context.Context, workspaceID string) (*WorkspaceReposResponse, error) {
+func (d *Daemon) refreshWorkspaceRepos(ctx context.Context, workspaceID string) (*protocol.DaemonWorkspaceReposResponse, error) {
 	refreshCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 

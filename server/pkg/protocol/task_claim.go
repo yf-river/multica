@@ -75,6 +75,64 @@ type TaskMessage struct {
 	Output  string         `json:"output,omitempty"`
 }
 
+type DaemonTaskProgressRequest struct {
+	Summary string `json:"summary"`
+	Step    int    `json:"step"`
+	Total   int    `json:"total"`
+}
+
+type DaemonTaskMessagesRequest struct {
+	Messages []TaskMessage `json:"messages"`
+}
+
+type DaemonTaskCompleteRequest struct {
+	Output     string `json:"output"`
+	BranchName string `json:"branch_name,omitempty"`
+	SessionID  string `json:"session_id,omitempty"`
+	WorkDir    string `json:"work_dir,omitempty"`
+}
+
+type DaemonTaskUsageRequest struct {
+	Usage []TaskUsage `json:"usage"`
+}
+
+type DaemonTaskFailureRequest struct {
+	Error         string `json:"error"`
+	SessionID     string `json:"session_id,omitempty"`
+	WorkDir       string `json:"work_dir,omitempty"`
+	FailureReason string `json:"failure_reason,omitempty"`
+}
+
+type DaemonTaskSessionRequest struct {
+	SessionID string `json:"session_id,omitempty"`
+	WorkDir   string `json:"work_dir,omitempty"`
+}
+
+type DaemonRuntimeRegistration struct {
+	Name      string          `json:"name"`
+	Type      string          `json:"type"`
+	Version   string          `json:"version"`
+	Status    string          `json:"status"`
+	Metadata  json.RawMessage `json:"metadata,omitempty"`
+	ProfileID string          `json:"profile_id,omitempty"`
+}
+
+type DaemonRegisterRequest struct {
+	WorkspaceID string                      `json:"workspace_id"`
+	DaemonID    string                      `json:"daemon_id"`
+	DeviceName  string                      `json:"device_name"`
+	CLIVersion  string                      `json:"cli_version"`
+	LaunchedBy  string                      `json:"launched_by"`
+	Runtimes    []DaemonRuntimeRegistration `json:"runtimes"`
+}
+
+type DaemonWorkspaceReposResponse struct {
+	WorkspaceID  string           `json:"workspace_id"`
+	Repos        []TaskRepository `json:"repos"`
+	ReposVersion string           `json:"repos_version"`
+	Settings     json.RawMessage  `json:"settings,omitempty"`
+}
+
 // TaskSourceContext is the source and credential context carried by the task
 // claim response from the server to the daemon.
 type TaskSourceContext struct {

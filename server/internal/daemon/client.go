@@ -134,30 +134,19 @@ func (c *Client) StartTask(ctx context.Context, taskID string) error {
 }
 
 func (c *Client) ReportProgress(ctx context.Context, taskID, summary string, step, total int) error {
-	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/progress", taskID), map[string]any{
-		"summary": summary,
-		"step":    step,
-		"total":   total,
+	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/progress", taskID), protocol.DaemonTaskProgressRequest{
+		Summary: summary,
+		Step:    step,
+		Total:   total,
 	}, nil)
 }
 
 func (c *Client) ReportTaskMessages(ctx context.Context, taskID string, messages []protocol.TaskMessage) error {
-	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/messages", taskID), map[string]any{
-		"messages": messages,
-	}, taskReportRetrySchedule)
+	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/messages", taskID), protocol.DaemonTaskMessagesRequest{Messages: messages}, taskReportRetrySchedule)
 }
 
 func (c *Client) CompleteTask(ctx context.Context, taskID, output, branchName, sessionID, workDir string) error {
-	body := map[string]any{"output": output}
-	if branchName != "" {
-		body["branch_name"] = branchName
-	}
-	if sessionID != "" {
-		body["session_id"] = sessionID
-	}
-	if workDir != "" {
-		body["work_dir"] = workDir
-	}
+	body := protocol.DaemonTaskCompleteRequest{Output: output, BranchName: branchName, SessionID: sessionID, WorkDir: workDir}
 	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/complete", taskID), body, defaultTerminalRetrySchedule)
 }
 
@@ -165,22 +154,11 @@ func (c *Client) ReportTaskUsage(ctx context.Context, taskID string, usage []pro
 	if len(usage) == 0 {
 		return nil
 	}
-	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/usage", taskID), map[string]any{
-		"usage": usage,
-	}, taskReportRetrySchedule)
+	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/usage", taskID), protocol.DaemonTaskUsageRequest{Usage: usage}, taskReportRetrySchedule)
 }
 
 func (c *Client) FailTask(ctx context.Context, taskID, errMsg, sessionID, workDir, failureReason string) error {
-	body := map[string]any{"error": errMsg}
-	if sessionID != "" {
-		body["session_id"] = sessionID
-	}
-	if workDir != "" {
-		body["work_dir"] = workDir
-	}
-	if failureReason != "" {
-		body["failure_reason"] = failureReason
-	}
+	body := protocol.DaemonTaskFailureRequest{Error: errMsg, SessionID: sessionID, WorkDir: workDir, FailureReason: failureReason}
 	return c.postJSONWithRetry(ctx, fmt.Sprintf("/api/daemon/tasks/%s/fail", taskID), body, defaultTerminalRetrySchedule)
 }
 
@@ -190,13 +168,7 @@ func (c *Client) PinTaskSession(ctx context.Context, taskID, sessionID, workDir 
 	if sessionID == "" && workDir == "" {
 		return nil
 	}
-	body := map[string]any{}
-	if sessionID != "" {
-		body["session_id"] = sessionID
-	}
-	if workDir != "" {
-		body["work_dir"] = workDir
-	}
+	body := protocol.DaemonTaskSessionRequest{SessionID: sessionID, WorkDir: workDir}
 	return c.postJSON(ctx, fmt.Sprintf("/api/daemon/tasks/%s/session", taskID), body, nil)
 }
 
@@ -222,12 +194,7 @@ func (c *Client) GetTaskStatus(ctx context.Context, taskID string) (string, erro
 
 func (c *Client) SendHeartbeat(ctx context.Context, runtimeID string, metadata json.RawMessage) (*protocol.DaemonHeartbeatAckPayload, error) {
 	var resp protocol.DaemonHeartbeatAckPayload
-	body := map[string]any{
-		"runtime_id": runtimeID,
-	}
-	if len(metadata) > 0 {
-		body["metadata"] = metadata
-	}
+	body := protocol.DaemonHeartbeatRequestPayload{RuntimeID: runtimeID, Metadata: metadata}
 	if err := c.postJSON(ctx, "/api/daemon/heartbeat", body, &resp); err != nil {
 		return nil, err
 	}
@@ -297,7 +264,7 @@ type RegisterResponse struct {
 	Settings     json.RawMessage           `json:"settings,omitempty"`
 }
 
-func (c *Client) Register(ctx context.Context, req map[string]any) (*RegisterResponse, error) {
+func (c *Client) Register(ctx context.Context, req protocol.DaemonRegisterRequest) (*RegisterResponse, error) {
 	var resp RegisterResponse
 	if err := c.postJSON(ctx, "/api/daemon/register", req, &resp); err != nil {
 		return nil, err
@@ -305,15 +272,8 @@ func (c *Client) Register(ctx context.Context, req map[string]any) (*RegisterRes
 	return &resp, nil
 }
 
-type WorkspaceReposResponse struct {
-	WorkspaceID  string                    `json:"workspace_id"`
-	Repos        []protocol.TaskRepository `json:"repos"`
-	ReposVersion string                    `json:"repos_version"`
-	Settings     json.RawMessage           `json:"settings,omitempty"`
-}
-
-func (c *Client) GetWorkspaceRepos(ctx context.Context, workspaceID string) (*WorkspaceReposResponse, error) {
-	var resp WorkspaceReposResponse
+func (c *Client) GetWorkspaceRepos(ctx context.Context, workspaceID string) (*protocol.DaemonWorkspaceReposResponse, error) {
+	var resp protocol.DaemonWorkspaceReposResponse
 	if err := c.getJSON(ctx, fmt.Sprintf("/api/daemon/workspaces/%s/repos", workspaceID), &resp); err != nil {
 		return nil, err
 	}

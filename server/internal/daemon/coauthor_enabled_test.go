@@ -78,7 +78,7 @@ func TestSyncWorkspacesRefreshesSettingsOnExistingWorkspace(t *testing.T) {
 			_ = json.NewEncoder(w).Encode([]WorkspaceInfo{{ID: workspaceID, Name: "ws"}})
 		case "/api/daemon/workspaces/" + workspaceID + "/repos":
 			raw, _ := settingsPayload.Load().(json.RawMessage)
-			_ = json.NewEncoder(w).Encode(WorkspaceReposResponse{
+			_ = json.NewEncoder(w).Encode(protocol.DaemonWorkspaceReposResponse{
 				WorkspaceID:  workspaceID,
 				Repos:        []protocol.TaskRepository{},
 				ReposVersion: "v1",

@@ -136,33 +136,6 @@ func (h *Handler) verifyDaemonWorkspaceAccess(r *http.Request, workspaceID strin
 // Daemon Registration & Heartbeat
 // ---------------------------------------------------------------------------
 
-type DaemonRegisterRequest struct {
-	WorkspaceID string `json:"workspace_id"`
-	DaemonID    string `json:"daemon_id"`
-	DeviceName  string `json:"device_name"`
-	CLIVersion  string `json:"cli_version"` // multica CLI version
-	LaunchedBy  string `json:"launched_by"` // "desktop" when spawned by the Electron app
-	Runtimes    []struct {
-		Name     string          `json:"name"`
-		Type     string          `json:"type"`
-		Version  string          `json:"version"` // agent CLI version (claude/codex)
-		Status   string          `json:"status"`
-		Metadata json.RawMessage `json:"metadata,omitempty"`
-		// ProfileID, when non-empty, marks this as an instance of a custom
-		// runtime_profile (MUL-3284). Empty means a built-in runtime.
-		// Type carries the protocol family for both built-in and custom rows
-		// so task routing (agent.New) is unchanged.
-		ProfileID string `json:"profile_id"`
-	} `json:"runtimes"`
-}
-
-type daemonWorkspaceReposResponse struct {
-	WorkspaceID  string                    `json:"workspace_id"`
-	Repos        []protocol.TaskRepository `json:"repos"`
-	ReposVersion string                    `json:"repos_version"`
-	Settings     json.RawMessage           `json:"settings,omitempty"`
-}
-
 func normalizeWorkspaceRepos(repos []protocol.TaskRepository) []protocol.TaskRepository {
 	if len(repos) == 0 {
 		return []protocol.TaskRepository{}
@@ -209,9 +182,9 @@ func parseWorkspaceRepos(raw []byte) []protocol.TaskRepository {
 	return normalizeWorkspaceRepos(repos)
 }
 
-func workspaceReposResponse(workspaceID string, raw []byte, settingsRaw []byte) daemonWorkspaceReposResponse {
+func workspaceReposResponse(workspaceID string, raw []byte, settingsRaw []byte) protocol.DaemonWorkspaceReposResponse {
 	repos := parseWorkspaceRepos(raw)
-	resp := daemonWorkspaceReposResponse{
+	resp := protocol.DaemonWorkspaceReposResponse{
 		WorkspaceID:  workspaceID,
 		Repos:        repos,
 		ReposVersion: workspaceReposVersion(repos),

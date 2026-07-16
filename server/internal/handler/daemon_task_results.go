@@ -29,13 +29,26 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req TaskCompleteRequest
+	var req protocol.DaemonTaskCompleteRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
-	result, _ := json.Marshal(req)
+	// The task result projection predates the transport's omission rules:
+	// session_id and work_dir remain explicit empty strings for current API and
+	// persisted-data readers, while branch_name follows its optional wire form.
+	result, _ := json.Marshal(struct {
+		Output     string `json:"output"`
+		BranchName string `json:"branch_name,omitempty"`
+		SessionID  string `json:"session_id"`
+		WorkDir    string `json:"work_dir"`
+	}{
+		Output:     req.Output,
+		BranchName: req.BranchName,
+		SessionID:  req.SessionID,
+		WorkDir:    req.WorkDir,
+	})
 	task, err := h.TaskService.CompleteTask(r.Context(), parseUUID(taskID), result, req.SessionID, req.WorkDir)
 	if err != nil {
 		slog.Warn("complete task failed", "task_id", taskID, "error", err)
@@ -118,9 +131,7 @@ func (h *Handler) ReportTaskUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req struct {
-		Usage []protocol.TaskUsage `json:"usage"`
-	}
+	var req protocol.DaemonTaskUsageRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -294,12 +305,7 @@ func (h *Handler) FailTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req struct {
-		Error         string `json:"error"`
-		SessionID     string `json:"session_id,omitempty"`
-		WorkDir       string `json:"work_dir,omitempty"`
-		FailureReason string `json:"failure_reason,omitempty"`
-	}
+	var req protocol.DaemonTaskFailureRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -324,9 +330,7 @@ func (h *Handler) FailTask(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskId")
 
-	var req struct {
-		Messages []protocol.TaskMessage `json:"messages"`
-	}
+	var req protocol.DaemonTaskMessagesRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return

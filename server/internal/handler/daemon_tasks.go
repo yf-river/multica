@@ -926,16 +926,10 @@ func (h *Handler) StartTask(w http.ResponseWriter, r *http.Request) {
 }
 
 // ReportTaskProgress broadcasts a progress update.
-type TaskProgressRequest struct {
-	Summary string `json:"summary"`
-	Step    int    `json:"step"`
-	Total   int    `json:"total"`
-}
-
 func (h *Handler) ReportTaskProgress(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskId")
 
-	var req TaskProgressRequest
+	var req protocol.DaemonTaskProgressRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -956,12 +950,4 @@ func (h *Handler) ReportTaskProgress(w http.ResponseWriter, r *http.Request) {
 
 	h.TaskService.ReportProgress(r.Context(), taskID, workspaceID, req.Summary, req.Step, req.Total)
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-}
-
-// CompleteTask marks a running task as completed.
-type TaskCompleteRequest struct {
-	Output     string `json:"output"`
-	BranchName string `json:"branch_name,omitempty"`
-	SessionID  string `json:"session_id"` // Claude session ID for future resumption
-	WorkDir    string `json:"work_dir"`   // working directory used during execution
 }
