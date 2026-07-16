@@ -48,23 +48,20 @@ defaults guarantee this:
 - Operators who want their own analytics can set `POSTHOG_API_KEY` and
   `POSTHOG_HOST` to point at their own PostHog project (Cloud or
   self-hosted PostHog).
-- The frontend receives the key via `/api/config` (planned for PR 2), so
-  self-hosts' blank server config also disables frontend event shipping
-  automatically — no separate frontend opt-out plumbing required.
+- The frontend receives the key via `/api/config`, so self-hosts' blank server
+  config also disables frontend event shipping automatically.
 
 ## Architecture
 
 ```
-handler → analytics.Client.Capture(Event)   ← non-blocking, returns immediately
-                    │
-                    ▼
-           bounded queue (1024 events)
-                    │
-                    ▼
-     background worker: batch + POST /batch/
-                    │
-                    ▼
-                PostHog
+handler/service → metrics.RecordEvent
+                         │
+             ┌───────────┴───────────┐
+             ▼                       ▼
+       Prometheus counter     analytics.Client.Capture
+                                     │ product events only
+                                     ▼
+                           bounded queue → POST /batch/
 ```
 
 - `analytics.Capture` is **never allowed to block a request handler**. A
@@ -88,11 +85,6 @@ handler → analytics.Client.Capture(Event)   ← non-blocking, returns immediat
 - **`user_id`** — added to event properties for authenticated human users.
   It is available for individual debugging but may be absent from agent or
   system events.
-- **Person properties (`$set`)** — use for mutable cohort signals
-  (role, use_case, team_size, platform_preference) that a user can
-  legitimately change over time. `Event.Set` on the backend
-  maps to `$set`; the frontend helper is
-  `setPersonProperties()` in `@multica/core/analytics`.
 - **Initial person properties (`$set_once`)** — use for immutable acquisition
   attribution so later events cannot overwrite the user's origin.
 

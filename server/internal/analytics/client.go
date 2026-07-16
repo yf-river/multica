@@ -45,11 +45,6 @@ type Event struct {
 	// so later events don't overwrite the origin.
 	SetOnce map[string]any
 
-	// Set properties attach to the person record and overwrite on every write.
-	// Use this for mutable cohort signals (role, use_case, platform_preference)
-	// that users can legitimately change over time.
-	Set map[string]any
-
 	// Timestamp is optional; when zero the client fills in time.Now().
 	Timestamp time.Time
 }
