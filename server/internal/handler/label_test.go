@@ -11,6 +11,26 @@ import (
 	"github.com/google/uuid"
 )
 
+func createLabelThroughHandler(t *testing.T, body map[string]any) LabelResponse {
+	t.Helper()
+	w := httptest.NewRecorder()
+	testHandler.CreateLabel(w, newRequest("POST", "/api/labels", body))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateLabel: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var label LabelResponse
+	if err := json.NewDecoder(w.Body).Decode(&label); err != nil {
+		t.Fatalf("decode label response: %v", err)
+	}
+	return label
+}
+
+func deleteLabelThroughHandler(t *testing.T, labelID string) {
+	t.Helper()
+	req := withURLParam(newRequest("DELETE", "/api/labels/"+labelID, nil), "id", labelID)
+	testHandler.DeleteLabel(httptest.NewRecorder(), req)
+}
+
 func TestCreateLabel_ReplaysCommittedResponse(t *testing.T) {
 	key := uuid.NewString()
 	create := func() (int, LabelResponse) {
@@ -41,35 +61,22 @@ func TestCreateLabel_ReplaysCommittedResponse(t *testing.T) {
 
 // TestLabelCRUD exercises label create/list/get/update/delete.
 func TestLabelCRUD(t *testing.T) {
-	// Create
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/labels", map[string]any{
+	created := createLabelThroughHandler(t, map[string]any{
 		"name":  "bug",
 		"color": "#ef4444",
 	})
-	testHandler.CreateLabel(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateLabel: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var created LabelResponse
-	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
-		t.Fatalf("decode created label response: %v", err)
-	}
 	if created.Name != "bug" || created.Color != "#ef4444" {
 		t.Fatalf("CreateLabel: unexpected payload: %+v", created)
 	}
 	labelID := created.ID
 
 	t.Cleanup(func() {
-		w := httptest.NewRecorder()
-		req := newRequest("DELETE", "/api/labels/"+labelID, nil)
-		req = withURLParam(req, "id", labelID)
-		testHandler.DeleteLabel(w, req)
+		deleteLabelThroughHandler(t, labelID)
 	})
 
 	// Duplicate name → 409
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/labels", map[string]any{
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/labels", map[string]any{
 		"name":  "BUG", // case-insensitive unique
 		"color": "#000000",
 	})
@@ -138,46 +145,26 @@ func TestLabelCRUD(t *testing.T) {
 
 // TestIssueLabelAttachDetach exercises attach/detach + the issue-scoped endpoints.
 func TestIssueLabelAttachDetach(t *testing.T) {
-	// Create issue
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+	issue := createIssueThroughHandler(t, map[string]any{
 		"title":    "Issue for label attach test",
 		"status":   "todo",
 		"priority": "medium",
 	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var issue IssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&issue); err != nil {
-		t.Fatalf("decode issue response: %v", err)
-	}
 	issueID := issue.ID
 
-	// Create label
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/labels", map[string]any{
+	label := createLabelThroughHandler(t, map[string]any{
 		"name":  "feature",
 		"color": "#3b82f6",
 	})
-	testHandler.CreateLabel(w, req)
-	var label LabelResponse
-	if err := json.NewDecoder(w.Body).Decode(&label); err != nil {
-		t.Fatalf("decode label response: %v", err)
-	}
 	labelID := label.ID
 
 	t.Cleanup(func() {
-		w := httptest.NewRecorder()
-		req := newRequest("DELETE", "/api/labels/"+labelID, nil)
-		req = withURLParam(req, "id", labelID)
-		testHandler.DeleteLabel(w, req)
+		deleteLabelThroughHandler(t, labelID)
 	})
 
 	// Attach
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/issues/"+issueID+"/labels", map[string]any{
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/issues/"+issueID+"/labels", map[string]any{
 		"label_id": labelID,
 	})
 	req = withURLParam(req, "id", issueID)
@@ -243,31 +230,19 @@ func TestIssueLabelAttachDetach(t *testing.T) {
 // TestLabelNotFoundAcrossWorkspaces ensures GET with a foreign workspace
 // header returns 404 — the query's `WHERE workspace_id = $2` does the work.
 func TestLabelNotFoundAcrossWorkspaces(t *testing.T) {
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/labels", map[string]any{
+	label := createLabelThroughHandler(t, map[string]any{
 		"name":  "cross-ws-test",
 		"color": "#a855f7",
 	})
-	testHandler.CreateLabel(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateLabel: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var label LabelResponse
-	if err := json.NewDecoder(w.Body).Decode(&label); err != nil {
-		t.Fatalf("decode label response: %v", err)
-	}
 	labelID := label.ID
 
 	t.Cleanup(func() {
-		w := httptest.NewRecorder()
-		req := newRequest("DELETE", "/api/labels/"+labelID, nil)
-		req = withURLParam(req, "id", labelID)
-		testHandler.DeleteLabel(w, req)
+		deleteLabelThroughHandler(t, labelID)
 	})
 
 	// GET with a different workspace ID → 404
-	w = httptest.NewRecorder()
-	req = newRequest("GET", "/api/labels/"+labelID, nil)
+	w := httptest.NewRecorder()
+	req := newRequest("GET", "/api/labels/"+labelID, nil)
 	req.Header.Set("X-Workspace-ID", "00000000-0000-0000-0000-000000000000")
 	req = withURLParam(req, "id", labelID)
 	testHandler.GetLabel(w, req)
@@ -280,32 +255,19 @@ func TestLabelNotFoundAcrossWorkspaces(t *testing.T) {
 // allow updating a label in another workspace (404 via pgx.ErrNoRows from the
 // UPDATE ... WHERE id = $1 AND workspace_id = $2 clause).
 func TestUpdateLabelCrossWorkspace(t *testing.T) {
-	// Create in real workspace
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/labels", map[string]any{
+	label := createLabelThroughHandler(t, map[string]any{
 		"name":  "cross-ws-update-test",
 		"color": "#10b981",
 	})
-	testHandler.CreateLabel(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateLabel: expected 201, got %d", w.Code)
-	}
-	var label LabelResponse
-	if err := json.NewDecoder(w.Body).Decode(&label); err != nil {
-		t.Fatalf("decode label response: %v", err)
-	}
 	labelID := label.ID
 
 	t.Cleanup(func() {
-		w := httptest.NewRecorder()
-		req := newRequest("DELETE", "/api/labels/"+labelID, nil)
-		req = withURLParam(req, "id", labelID)
-		testHandler.DeleteLabel(w, req)
+		deleteLabelThroughHandler(t, labelID)
 	})
 
 	// PUT with a foreign workspace ID → 404
-	w = httptest.NewRecorder()
-	req = newRequest("PUT", "/api/labels/"+labelID, map[string]any{"name": "hacked"})
+	w := httptest.NewRecorder()
+	req := newRequest("PUT", "/api/labels/"+labelID, map[string]any{"name": "hacked"})
 	req.Header.Set("X-Workspace-ID", "00000000-0000-0000-0000-000000000000")
 	req = withURLParam(req, "id", labelID)
 	testHandler.UpdateLabel(w, req)
@@ -335,21 +297,11 @@ func TestUpdateLabelCrossWorkspace(t *testing.T) {
 // Directly exercises the GetLabel workspace precheck and the SQL-layer
 // defense-in-depth guard.
 func TestAttachLabelCrossWorkspaceLabel(t *testing.T) {
-	// Issue in the test workspace
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+	issue := createIssueThroughHandler(t, map[string]any{
 		"title":    "cross-ws-attach-issue",
 		"status":   "todo",
 		"priority": "medium",
 	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue: expected 201, got %d", w.Code)
-	}
-	var issue IssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&issue); err != nil {
-		t.Fatalf("decode issue response: %v", err)
-	}
 
 	// Label in a second workspace — insert directly via the pool to avoid
 	// the public API (which would require creating a full second workspace
@@ -367,8 +319,8 @@ func TestAttachLabelCrossWorkspaceLabel(t *testing.T) {
 	}
 
 	// Try to attach the foreign label to the test-workspace issue.
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/issues/"+issue.ID+"/labels", map[string]any{
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/issues/"+issue.ID+"/labels", map[string]any{
 		"label_id": otherLabelID,
 	})
 	req = withURLParam(req, "id", issue.ID)
@@ -408,24 +360,12 @@ func TestLabelNameTooLong(t *testing.T) {
 
 	// Exactly 32 chars is fine.
 	okName := strings.Repeat("b", 32)
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/labels", map[string]any{
+	created := createLabelThroughHandler(t, map[string]any{
 		"name":  okName,
 		"color": "#123456",
 	})
-	testHandler.CreateLabel(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateLabel 32-character name: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var created LabelResponse
-	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
-		t.Fatalf("decode created label response: %v", err)
-	}
 	t.Cleanup(func() {
-		w := httptest.NewRecorder()
-		req := newRequest("DELETE", "/api/labels/"+created.ID, nil)
-		req = withURLParam(req, "id", created.ID)
-		testHandler.DeleteLabel(w, req)
+		deleteLabelThroughHandler(t, created.ID)
 	})
 }
 
@@ -457,28 +397,16 @@ func TestColorCaseNormalization(t *testing.T) {
 		{"lower", "#123abc", "#123abc"},
 	}
 	for _, tc := range cases {
-		w := httptest.NewRecorder()
 		name := "color-norm-" + tc.nameSuffix // unique & case-independent
-		req := newRequest("POST", "/api/labels", map[string]any{
+		got := createLabelThroughHandler(t, map[string]any{
 			"name":  name,
 			"color": tc.input,
 		})
-		testHandler.CreateLabel(w, req)
-		if w.Code != http.StatusCreated {
-			t.Fatalf("CreateLabel %q: expected 201, got %d: %s", tc.input, w.Code, w.Body.String())
-		}
-		var got LabelResponse
-		if err := json.NewDecoder(w.Body).Decode(&got); err != nil {
-			t.Fatalf("decode label response: %v", err)
-		}
 		if got.Color != tc.want {
 			t.Errorf("color normalization %q: got %q, want %q", tc.input, got.Color, tc.want)
 		}
 		t.Cleanup(func() {
-			w := httptest.NewRecorder()
-			req := newRequest("DELETE", "/api/labels/"+got.ID, nil)
-			req = withURLParam(req, "id", got.ID)
-			testHandler.DeleteLabel(w, req)
+			deleteLabelThroughHandler(t, got.ID)
 		})
 	}
 }

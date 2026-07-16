@@ -33,23 +33,32 @@ func newPatchMeRequest(userID, body string) *http.Request {
 	return req
 }
 
-func TestUpdateMeAcceptsTimezone(t *testing.T) {
-	userID := newTimezoneTestUser(t, "tz-set@multica.ai")
-
+func patchMe(t *testing.T, userID, body string, wantStatus int) *httptest.ResponseRecorder {
+	t.Helper()
 	w := httptest.NewRecorder()
-	req := newPatchMeRequest(userID, `{"timezone":"Asia/Shanghai"}`)
-	testHandler.UpdateMe(w, req)
-
-	if w.Code != 200 {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	testHandler.UpdateMe(w, newPatchMeRequest(userID, body))
+	if w.Code != wantStatus {
+		t.Fatalf("UpdateMe: expected %d, got %d: %s", wantStatus, w.Code, w.Body.String())
 	}
+	return w
+}
 
+func storedUserTimezone(t *testing.T, userID string) *string {
+	t.Helper()
 	var stored *string
 	if err := testPool.QueryRow(context.Background(),
 		`SELECT timezone FROM "user" WHERE id = $1`, userID,
 	).Scan(&stored); err != nil {
 		t.Fatalf("lookup user: %v", err)
 	}
+	return stored
+}
+
+func TestUpdateMeAcceptsTimezone(t *testing.T) {
+	userID := newTimezoneTestUser(t, "tz-set@multica.ai")
+
+	w := patchMe(t, userID, `{"timezone":"Asia/Shanghai"}`, http.StatusOK)
+	stored := storedUserTimezone(t, userID)
 	if stored == nil || *stored != "Asia/Shanghai" {
 		t.Fatalf("expected timezone=Asia/Shanghai, got %v", stored)
 	}
@@ -66,26 +75,13 @@ func TestUpdateMeAcceptsTimezone(t *testing.T) {
 func TestUpdateMeRejectsInvalidTimezone(t *testing.T) {
 	userID := newTimezoneTestUser(t, "tz-reject@multica.ai")
 
-	w := httptest.NewRecorder()
-	req := newPatchMeRequest(userID, `{"timezone":"Not/A/Real/Zone"}`)
-	testHandler.UpdateMe(w, req)
-
-	if w.Code != 400 {
-		t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
-	}
-
-	var stored *string
-	if err := testPool.QueryRow(context.Background(),
-		`SELECT timezone FROM "user" WHERE id = $1`, userID,
-	).Scan(&stored); err != nil {
-		t.Fatalf("lookup user: %v", err)
-	}
+	patchMe(t, userID, `{"timezone":"Not/A/Real/Zone"}`, http.StatusBadRequest)
+	stored := storedUserTimezone(t, userID)
 	if stored != nil {
 		t.Fatalf("expected timezone unchanged (NULL), got %v", *stored)
 	}
 }
 
-// COALESCE semantics — omitting timezone must NOT clear an existing value.
 func TestUpdateMePreservesTimezoneWhenNotProvided(t *testing.T) {
 	userID := newTimezoneTestUser(t, "tz-preserve@multica.ai")
 
@@ -95,29 +91,13 @@ func TestUpdateMePreservesTimezoneWhenNotProvided(t *testing.T) {
 		t.Fatalf("preset timezone: %v", err)
 	}
 
-	w := httptest.NewRecorder()
-	req := newPatchMeRequest(userID, `{"name":"Updated Name"}`)
-	testHandler.UpdateMe(w, req)
-
-	if w.Code != 200 {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	var stored *string
-	if err := testPool.QueryRow(context.Background(),
-		`SELECT timezone FROM "user" WHERE id = $1`, userID,
-	).Scan(&stored); err != nil {
-		t.Fatalf("lookup user: %v", err)
-	}
+	patchMe(t, userID, `{"name":"Updated Name"}`, http.StatusOK)
+	stored := storedUserTimezone(t, userID)
 	if stored == nil || *stored != "America/Los_Angeles" {
 		t.Fatalf("expected timezone preserved, got %v", stored)
 	}
 }
 
-// Explicit clear: `"timezone": ""` should NULL the column so the frontend
-// falls back to the browser-detected tz again. Without the CASE branch in
-// the UPDATE query this would either be a no-op (COALESCE) or a validation
-// error.
 func TestUpdateMeClearsTimezoneOnEmptyString(t *testing.T) {
 	userID := newTimezoneTestUser(t, "tz-clear@multica.ai")
 
@@ -127,20 +107,8 @@ func TestUpdateMeClearsTimezoneOnEmptyString(t *testing.T) {
 		t.Fatalf("preset timezone: %v", err)
 	}
 
-	w := httptest.NewRecorder()
-	req := newPatchMeRequest(userID, `{"timezone":""}`)
-	testHandler.UpdateMe(w, req)
-
-	if w.Code != 200 {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	var stored *string
-	if err := testPool.QueryRow(context.Background(),
-		`SELECT timezone FROM "user" WHERE id = $1`, userID,
-	).Scan(&stored); err != nil {
-		t.Fatalf("lookup user: %v", err)
-	}
+	w := patchMe(t, userID, `{"timezone":""}`, http.StatusOK)
+	stored := storedUserTimezone(t, userID)
 	if stored != nil {
 		t.Fatalf("expected timezone cleared to NULL, got %v", *stored)
 	}
@@ -149,9 +117,6 @@ func TestUpdateMeClearsTimezoneOnEmptyString(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	// JSON null marshals from *string nil — confirm the response reflects
-	// the cleared state, so the frontend can switch its picker back to
-	// "(browser)" without a refetch.
 	if resp["timezone"] != nil {
 		t.Fatalf("expected response timezone=null, got %v", resp["timezone"])
 	}
