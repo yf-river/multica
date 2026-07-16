@@ -75,7 +75,7 @@ test.describe("Multica 编码小队页面证据", () => {
           seq: 2,
           type: "tool_use",
           tool: "multica squad activity",
-          input: { tool_call_id: "coding-squad-tool-1", action: "record_design_gate" },
+          input: { action: "record_design_gate" },
         },
         {
           seq: 3,

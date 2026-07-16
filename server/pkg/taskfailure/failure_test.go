@@ -118,26 +118,6 @@ func TestAllReasonsContents(t *testing.T) {
 	}
 }
 
-func TestIsResumeUnsafe(t *testing.T) {
-	t.Parallel()
-
-	for _, reason := range []Reason{
-		ReasonIterationLimit,
-		ReasonAgentFallbackMessage,
-		ReasonAPIInvalidRequest,
-		ReasonCodexSemanticInactivity,
-	} {
-		if !IsResumeUnsafe(reason.String()) {
-			t.Errorf("IsResumeUnsafe(%q) = false", reason)
-		}
-	}
-	for _, reason := range []Reason{ReasonTimeout, ReasonAgentBlocked, ReasonAgentProviderNetwork} {
-		if IsResumeUnsafe(reason.String()) {
-			t.Errorf("IsResumeUnsafe(%q) = true", reason)
-		}
-	}
-}
-
 // TestAllReasonsIsDefensiveCopy guards the contract that mutating the
 // returned slice cannot corrupt the package-level fixture. Without
 // this, two callers (e.g. two Prometheus collectors at startup) could

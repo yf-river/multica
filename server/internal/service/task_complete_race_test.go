@@ -11,7 +11,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/events"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
-	"github.com/multica-ai/multica/server/pkg/taskfailure"
 )
 
 func TestSquadSOPTaskStepMatchingAndState(t *testing.T) {
@@ -191,30 +190,26 @@ func TestFailTask_AlreadyFinalized(t *testing.T) {
 
 func TestTaskFailureClassifiers(t *testing.T) {
 	cases := []struct {
-		reason       string
-		wantType     string
-		wantResumeOK bool
-		wantRetry    bool
+		reason    string
+		wantType  string
+		wantRetry bool
 	}{
-		{reason: "timeout", wantType: "timeout", wantResumeOK: true, wantRetry: true},
-		{reason: "codex_semantic_inactivity", wantType: "timeout", wantResumeOK: false, wantRetry: true},
-		{reason: "runtime_recovery", wantType: "runtime", wantResumeOK: true, wantRetry: true},
-		{reason: "agent_error.provider_capacity_or_rate_limit", wantType: "agent_error", wantResumeOK: true, wantRetry: true},
-		{reason: "agent_error.provider_server_error", wantType: "agent_error", wantResumeOK: true, wantRetry: true},
-		{reason: "agent_error.provider_network", wantType: "agent_error", wantResumeOK: true, wantRetry: true},
-		{reason: "agent_error.model_not_found_or_unavailable", wantType: "agent_error", wantResumeOK: true, wantRetry: true},
-		{reason: "iteration_limit", wantType: "agent_output", wantResumeOK: false, wantRetry: false},
-		{reason: "api_invalid_request", wantType: "agent_error", wantResumeOK: false, wantRetry: false},
-		{reason: "agent_error", wantType: "agent_error", wantResumeOK: true, wantRetry: false},
+		{reason: "timeout", wantType: "timeout", wantRetry: true},
+		{reason: "codex_semantic_inactivity", wantType: "timeout", wantRetry: true},
+		{reason: "runtime_recovery", wantType: "runtime", wantRetry: true},
+		{reason: "agent_error.provider_capacity_or_rate_limit", wantType: "agent_error", wantRetry: true},
+		{reason: "agent_error.provider_server_error", wantType: "agent_error", wantRetry: true},
+		{reason: "agent_error.provider_network", wantType: "agent_error", wantRetry: true},
+		{reason: "agent_error.model_not_found_or_unavailable", wantType: "agent_error", wantRetry: true},
+		{reason: "iteration_limit", wantType: "agent_output", wantRetry: false},
+		{reason: "api_invalid_request", wantType: "agent_error", wantRetry: false},
+		{reason: "agent_error", wantType: "agent_error", wantRetry: false},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.reason, func(t *testing.T) {
 			if got := taskErrorType(tc.reason); got != tc.wantType {
 				t.Fatalf("taskErrorType(%q) = %q, want %q", tc.reason, got, tc.wantType)
-			}
-			if got := !taskfailure.IsResumeUnsafe(tc.reason); got != tc.wantResumeOK {
-				t.Fatalf("resume-safe(%q) = %v, want %v", tc.reason, got, tc.wantResumeOK)
 			}
 			if got := retryableReasons[tc.reason]; got != tc.wantRetry {
 				t.Fatalf("retryableReasons[%q] = %v, want %v", tc.reason, got, tc.wantRetry)

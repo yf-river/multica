@@ -210,12 +210,8 @@ func buildPromptEvaluationToolCallChains(messages []protocol.TaskMessagePayload)
 			if tool == "" {
 				tool = "未记录工具"
 			}
-			callID := promptEvaluationToolCallID(message)
-			if callID == "" {
-				callID = fmt.Sprintf("%s:%d", tool, message.Seq)
-			}
 			chain := PromptEvaluationToolCallChainResponse{
-				ID:             "tool:" + callID,
+				ID:             fmt.Sprintf("tool:%s:%d", tool, message.Seq),
 				TaskID:         message.TaskID,
 				Tool:           tool,
 				Status:         "缺少结果",
@@ -255,12 +251,8 @@ func buildPromptEvaluationToolCallChains(messages []protocol.TaskMessagePayload)
 				)
 				continue
 			}
-			callID := promptEvaluationToolCallID(message)
-			if callID == "" {
-				callID = fmt.Sprintf("%s:result:%d", tool, message.Seq)
-			}
 			chains = append(chains, PromptEvaluationToolCallChainResponse{
-				ID:             "tool:" + callID,
+				ID:             fmt.Sprintf("tool:%s:result:%d", tool, message.Seq),
 				TaskID:         message.TaskID,
 				Tool:           tool,
 				Status:         "孤立结果",
@@ -574,15 +566,6 @@ func promptEvaluationToolExitCode(output string) (int, bool) {
 		}
 	}
 	return 0, false
-}
-
-func promptEvaluationToolCallID(message protocol.TaskMessagePayload) string {
-	for _, key := range []string{"tool_call_id", "call_id", "id", "工具调用ID", "调用ID"} {
-		if value := strings.TrimSpace(util.StringFromAny(message.Input[key])); value != "" {
-			return value
-		}
-	}
-	return ""
 }
 
 func incrementPromptEvaluationSummary(summary map[string]any, key string) {

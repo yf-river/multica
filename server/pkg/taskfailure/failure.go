@@ -67,17 +67,3 @@ func (r Reason) String() string { return string(r) }
 func AllReasons() []Reason {
 	return append([]Reason(nil), allReasons...)
 }
-
-// IsResumeUnsafe reports whether the recorded provider session would repeat
-// the same terminal failure.
-func IsResumeUnsafe(reason string) bool {
-	switch Reason(reason) {
-	case ReasonIterationLimit,
-		ReasonAgentFallbackMessage,
-		ReasonAPIInvalidRequest,
-		ReasonCodexSemanticInactivity:
-		return true
-	default:
-		return false
-	}
-}

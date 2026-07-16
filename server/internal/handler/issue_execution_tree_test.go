@@ -627,7 +627,7 @@ func TestGetIssueExecutionTreeAggregatesHierarchySOPTraceAndWakeups(t *testing.T
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO task_message (task_id, seq, type, tool, content, input, output, created_at)
 		VALUES
-			($1, 1, 'tool_use', 'curl-check', '', '{"tool_call_id":"tree-call-1","url":"/health"}'::jsonb, NULL, now() - interval '2 seconds'),
+			($1, 1, 'tool_use', 'curl-check', '', '{"url":"/health"}'::jsonb, NULL, now() - interval '2 seconds'),
 			($1, 2, 'tool_result', 'curl-check', '', '{}'::jsonb, 'Error: HTTP 500 from upstream', now() - interval '1 seconds')
 	`, taskID); err != nil {
 		t.Fatalf("create task messages: %v", err)

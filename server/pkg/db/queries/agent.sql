@@ -167,8 +167,8 @@ WHERE id = $1 AND issue_id IS NULL;
 -- agent's resume context (session_id/work_dir) so the child can continue
 -- the conversation when the backend supports it. Resume-unsafe failures are
 -- retried as fresh sessions so the child does not inherit a stuck agent
--- conversation. Keep the CASE WHEN predicates in sync with
--- taskfailure.IsResumeUnsafe and the resume lookup blacklists. attempt is
+-- conversation. Keep the CASE WHEN predicates in sync with the resume lookup
+-- blacklists. attempt is
 -- incremented; max_attempts, trigger_comment_id, and is_leader_task are
 -- inherited so the retried task keeps the same squad-role provenance as its
 -- parent and the self-trigger guard in shouldEnqueueSquadLeaderOnComment

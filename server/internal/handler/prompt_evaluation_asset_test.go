@@ -41,7 +41,7 @@ func TestBuildPromptEvaluationExecutionEvidencePairsToolCalls(t *testing.T) {
 			Seq:       1,
 			Type:      "tool_use",
 			Tool:      "shell",
-			Input:     map[string]any{"tool_call_id": "call-1", "cmd": "echo ok"},
+			Input:     map[string]any{"cmd": "echo ok"},
 			CreatedAt: "2026-06-24T00:00:01Z",
 		},
 		{
@@ -64,7 +64,7 @@ func TestBuildPromptEvaluationExecutionEvidencePairsToolCalls(t *testing.T) {
 			Seq:       4,
 			Type:      "tool_use",
 			Tool:      "curl",
-			Input:     map[string]any{"tool_call_id": "call-2", "url": "https://example.test"},
+			Input:     map[string]any{"url": "https://example.test"},
 			CreatedAt: "2026-06-24T00:00:03Z",
 		},
 		{
@@ -81,7 +81,7 @@ func TestBuildPromptEvaluationExecutionEvidencePairsToolCalls(t *testing.T) {
 	if len(chains) != 3 {
 		t.Fatalf("tool call chains = %+v, want 3", chains)
 	}
-	if chains[0].ID != "tool:call-1" || chains[0].Status != "已配对" || chains[0].UseSeq != 1 || chains[0].ResultSeq != 2 || chains[0].Output != "ok" {
+	if chains[0].ID != "tool:shell:1" || chains[0].Status != "已配对" || chains[0].UseSeq != 1 || chains[0].ResultSeq != 2 || chains[0].Output != "ok" {
 		t.Fatalf("paired chain = %+v", chains[0])
 	}
 	if chains[0].DurationMs != 1000 || chains[0].ResultCategory != "已返回" {
@@ -105,7 +105,7 @@ func TestBuildPromptEvaluationExecutionEvidencePairsToolCalls(t *testing.T) {
 	if toolSummary[1].Tool != "browser" || !toolSummary[1].NeedsAttention || toolSummary[1].OrphanResultCalls != 1 {
 		t.Fatalf("orphan summary row = %+v", toolSummary[1])
 	}
-	if toolSummary[2].Tool != "shell" || toolSummary[2].AverageDurationMs != 1000 || toolSummary[2].MaxDurationMs != 1000 || toolSummary[2].SlowestToolCallChainID != "tool:call-1" {
+	if toolSummary[2].Tool != "shell" || toolSummary[2].AverageDurationMs != 1000 || toolSummary[2].MaxDurationMs != 1000 || toolSummary[2].SlowestToolCallChainID != "tool:shell:1" {
 		t.Fatalf("shell summary row = %+v", toolSummary[2])
 	}
 	if summary["工具调用链数"] != 3 || summary["已配对工具调用数"] != 2 || summary["孤立工具结果数"] != 1 {
@@ -123,7 +123,7 @@ func TestBuildPromptEvaluationExecutionEvidencePairsToolCalls(t *testing.T) {
 	if useSpan == nil || resultSpan == nil {
 		t.Fatalf("message spans missing: %+v", spans)
 	}
-	if useSpan.Details["工具调用链ID"] != "tool:call-1" || resultSpan.Details["工具调用链ID"] != "tool:call-1" {
+	if useSpan.Details["工具调用链ID"] != "tool:shell:1" || resultSpan.Details["工具调用链ID"] != "tool:shell:1" {
 		t.Fatalf("span chain details: use=%+v result=%+v", useSpan.Details, resultSpan.Details)
 	}
 }
