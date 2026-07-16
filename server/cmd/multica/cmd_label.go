@@ -97,8 +97,7 @@ func runLabelList(cmd *cobra.Command, _ []string) error {
 	}
 	labelsRaw, _ := result["labels"].([]any)
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, labelsRaw)
 	}
 
@@ -233,7 +232,7 @@ func runLabelDelete(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("delete label: %w", err)
 	}
 	// JSON consumers get machine-readable output; humans get natural language.
-	if output, _ := cmd.Flags().GetString("output"); output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, map[string]any{"id": labelRef.ID, "deleted": true})
 	}
 	_, err = fmt.Fprintf(os.Stdout, "Label %s deleted.\n", labelRef.Display)

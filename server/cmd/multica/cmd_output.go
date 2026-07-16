@@ -63,9 +63,13 @@ func fetchMapList(cmd *cobra.Command, path, action string) ([]map[string]any, er
 	return items, nil
 }
 
-func printNamedMutationResult(cmd *cobra.Command, entity, action, nameKey string, result map[string]any) error {
+func wantsJSONOutput(cmd *cobra.Command) bool {
 	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	return output == "json"
+}
+
+func printNamedMutationResult(cmd *cobra.Command, entity, action, nameKey string, result map[string]any) error {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, result)
 	}
 

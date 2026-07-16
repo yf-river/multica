@@ -371,8 +371,7 @@ func runAgentList(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("list agents: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, agents)
 	}
 
@@ -407,8 +406,7 @@ func runAgentGet(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("get agent: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, agent)
 	}
 
@@ -572,8 +570,7 @@ func runAgentArchive(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("archive agent: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, result)
 	}
 
@@ -593,8 +590,7 @@ func runAgentRestore(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("restore agent: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, result)
 	}
 
@@ -608,8 +604,7 @@ func runAgentTasks(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, tasks)
 	}
 
@@ -688,8 +683,7 @@ func runAgentAvatar(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("update agent avatar: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, map[string]any{
 			"id":         id,
 			"agent_id":   args[0],
@@ -717,8 +711,7 @@ func runAgentSkillsList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, skills)
 	}
 
@@ -788,8 +781,7 @@ func cleanSkillIDsFlag(cmd *cobra.Command) []string {
 }
 
 func printAgentSkillsMutationResult(cmd *cobra.Command, agentID string, result json.RawMessage) error {
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		var pretty any
 		if err := json.Unmarshal(result, &pretty); err != nil {
 			return fmt.Errorf("decode avatar update response: %w", err)
@@ -842,8 +834,7 @@ func runAgentEnvGet(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("get agent env: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, resp)
 	}
 
@@ -885,8 +876,7 @@ func runAgentEnvSet(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("update agent env: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, result)
 	}
 

@@ -106,9 +106,8 @@ func runIssueLabelRemove(cmd *cobra.Command, args []string) error {
 	// If the refresh fails, still print a clear success message — the
 	// detach itself already succeeded.
 	var result map[string]any
-	output, _ := cmd.Flags().GetString("output")
 	if err := client.GetJSON(ctx, "/api/issues/"+issueRef.ID+"/labels", &result); err != nil {
-		if output == "json" {
+		if wantsJSONOutput(cmd) {
 			return cli.PrintJSON(os.Stdout, map[string]any{"detached": true})
 		}
 		_, _ = fmt.Fprintln(os.Stdout, "Label detached.")
@@ -119,8 +118,7 @@ func runIssueLabelRemove(cmd *cobra.Command, args []string) error {
 
 func printIssueLabelsResult(cmd *cobra.Command, result map[string]any) error {
 	labelsRaw, _ := result["labels"].([]any)
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, labelsRaw)
 	}
 	fullID, _ := cmd.Flags().GetBool("full-id")

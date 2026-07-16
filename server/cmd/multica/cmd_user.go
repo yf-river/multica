@@ -74,8 +74,7 @@ func runUserProfileGet(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("get user profile: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, me)
 	}
 
@@ -117,8 +116,7 @@ func runUserProfileUpdate(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("update user profile: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, me)
 	}
 

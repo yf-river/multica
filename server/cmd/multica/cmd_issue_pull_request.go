@@ -156,8 +156,7 @@ func runIssueMRCreate(cmd *cobra.Command, args []string) error {
 }
 
 func printIssuePullRequestMutationResult(cmd *cobra.Command, result map[string]any) error {
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, result)
 	}
 	pr, _ := result["pull_request"].(map[string]any)

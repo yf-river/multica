@@ -192,8 +192,7 @@ func runAutopilotList(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("list autopilots: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, resp)
 	}
 
@@ -227,8 +226,7 @@ func runAutopilotGet(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("get autopilot: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, resp)
 	}
 
@@ -389,8 +387,7 @@ func runAutopilotTrigger(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("trigger autopilot: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, run)
 	}
 	fmt.Printf("Autopilot triggered: run %s (status: %s)\n", strVal(run, "id"), strVal(run, "status"))
@@ -424,8 +421,7 @@ func runAutopilotRuns(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("list runs: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, resp)
 	}
 
@@ -489,8 +485,7 @@ func runAutopilotTriggerAdd(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("create trigger: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, result)
 	}
 	fmt.Printf("Trigger created: %s (kind=%s)\n", strVal(result, "id"), strVal(result, "kind"))
@@ -548,8 +543,7 @@ func runAutopilotTriggerRotateURL(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("rotate webhook url: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, result)
 	}
 	fmt.Printf("Webhook URL rotated for trigger %s\n", strVal(result, "id"))
@@ -587,8 +581,7 @@ func runAutopilotTriggerUpdate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("update trigger: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, result)
 	}
 	fmt.Printf("Trigger updated: %s\n", strVal(result, "id"))

@@ -498,8 +498,7 @@ func runIssueList(cmd *cobra.Command, _ []string) error {
 
 	issuesRaw, _ := result["issues"].([]any)
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		total, _ := result["total"].(float64)
 		limit, _ := cmd.Flags().GetInt("limit")
 		offset, _ := cmd.Flags().GetInt("offset")
@@ -574,8 +573,7 @@ func runIssuePullRequests(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("list issue pull requests: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, result)
 	}
 
@@ -691,8 +689,7 @@ func runIssueChildren(cmd *cobra.Command, args []string) error {
 	}
 	children := resp.Issues
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, map[string]any{
 			"parent_issue_id": issueRef.ID,
 			"children":        children,
@@ -1064,8 +1061,7 @@ func runIssueStatus(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintf(os.Stderr, "Issue %s status changed to %s.\n", issueDisplayKey(result), status)
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, result)
 	}
 	return nil

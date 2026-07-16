@@ -79,8 +79,7 @@ func runRuntimeList(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, runtimes)
 	}
 
@@ -112,8 +111,7 @@ func runRuntimeUsage(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, usage)
 	}
 
@@ -140,8 +138,7 @@ func runRuntimeActivity(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, activity)
 	}
 
@@ -248,8 +245,7 @@ func (p runtimeDeleteConflictPayload) AgentDisplays() []string {
 }
 
 func printRuntimeDeleteResult(cmd *cobra.Command, result map[string]any) error {
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, result)
 	}
 

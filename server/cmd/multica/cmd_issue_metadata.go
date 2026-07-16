@@ -197,8 +197,7 @@ func runIssueMetadataGet(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("key %q not found on issue", key)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, value)
 	}
 	headers := []string{"KEY", "VALUE", "TYPE"}
@@ -256,9 +255,8 @@ func runIssueMetadataDelete(cmd *cobra.Command, args []string) error {
 
 	// Refresh the metadata so the user sees the result.
 	var result map[string]any
-	output, _ := cmd.Flags().GetString("output")
 	if err := client.GetJSON(ctx, "/api/issues/"+issueRef.ID+"/metadata", &result); err != nil {
-		if output == "json" {
+		if wantsJSONOutput(cmd) {
 			return cli.PrintJSON(os.Stdout, map[string]any{"deleted": true})
 		}
 		_, _ = fmt.Fprintln(os.Stdout, "Key deleted.")
@@ -273,8 +271,7 @@ func resultMetadataMap(result map[string]any) map[string]any {
 }
 
 func printMetadataMapResult(cmd *cobra.Command, metadata map[string]any) error {
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, metadata)
 	}
 	printMetadataTable(metadata)

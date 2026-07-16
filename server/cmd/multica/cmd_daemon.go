@@ -521,8 +521,7 @@ func runDaemonStatus(cmd *cobra.Command, _ []string) error {
 
 	health := checkDaemonHealthOnPort(ctx, healthPort)
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, health)
 	}
 
@@ -677,7 +676,7 @@ func runDaemonDiskUsage(cmd *cobra.Command, _ []string) error {
 		}
 	}
 
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, report)
 	}
 

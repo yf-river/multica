@@ -140,8 +140,7 @@ func runRuntimeProfileList(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("list runtime profiles: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, resp.RuntimeProfiles)
 	}
 	printRuntimeProfileTable(resp.RuntimeProfiles)
@@ -336,8 +335,7 @@ func runRuntimeProfileUnsetPath(cmd *cobra.Command, args []string) error {
 
 // outputRuntimeProfile renders a single profile honoring --output.
 func outputRuntimeProfile(cmd *cobra.Command, profile map[string]any) error {
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, profile)
 	}
 	printRuntimeProfileTable([]map[string]any{profile})

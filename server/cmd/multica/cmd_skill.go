@@ -222,8 +222,7 @@ func runSkillList(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, skills)
 	}
 
@@ -253,8 +252,7 @@ func runSkillGet(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("get skill: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, skill)
 	}
 
@@ -446,8 +444,7 @@ func handleSkillImportError(cmd *cobra.Command, err error) error {
 }
 
 func printSkillImportResult(cmd *cobra.Command, result map[string]any) error {
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, result)
 	}
 
@@ -508,8 +505,7 @@ func runSkillSearch(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("search skills: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, results)
 	}
 
@@ -538,8 +534,7 @@ func runSkillFilesList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, files)
 	}
 
@@ -586,8 +581,7 @@ func runSkillFilesUpsert(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("upsert skill file: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, result)
 	}
 

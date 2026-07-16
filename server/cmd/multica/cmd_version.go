@@ -20,9 +20,7 @@ var versionCmd = &cobra.Command{
 }
 
 func runVersion(cmd *cobra.Command, _ []string) error {
-	output, _ := cmd.Flags().GetString("output")
-
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		info := map[string]string{
 			"version": version,
 			"commit":  commit,

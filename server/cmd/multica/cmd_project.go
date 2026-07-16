@@ -218,8 +218,7 @@ func runProjectList(cmd *cobra.Command, _ []string) error {
 
 	projectsRaw, _ := result["projects"].([]any)
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		if err := enrichProjectsWithResources(ctx, client, projectsRaw); err != nil {
 			return fmt.Errorf("load project resources: %w", err)
 		}
@@ -449,8 +448,7 @@ func runProjectStatus(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintf(os.Stderr, "Project %s status changed to %s.\n", strVal(result, "title"), status)
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, result)
 	}
 	return nil
@@ -473,8 +471,7 @@ func runProjectResourceList(cmd *cobra.Command, args []string) error {
 	}
 	resourcesRaw, _ := result["resources"].([]any)
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, resourcesRaw)
 	}
 

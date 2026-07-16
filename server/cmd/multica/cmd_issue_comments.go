@@ -124,8 +124,7 @@ func runIssueCommentList(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, comments)
 	}
 
@@ -264,8 +263,7 @@ func runIssueRuns(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("list runs: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, runs)
 	}
 
@@ -330,8 +328,7 @@ func runIssueRunMessages(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("list run messages: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, messages)
 	}
 
@@ -377,8 +374,7 @@ func runIssueRerun(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("rerun issue: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, task)
 	}
 	agent := loadActorDisplayLookup(ctx, client).agent(strVal(task, "agent_id"))
@@ -420,8 +416,7 @@ func runIssueCancelTask(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("cancel task: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, result)
 	}
 	status := strVal(result, "status")
@@ -457,8 +452,7 @@ func runIssueSearch(cmd *cobra.Command, args []string) error {
 
 	issuesRaw, _ := result["issues"].([]any)
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, result)
 	}
 
@@ -504,8 +498,7 @@ func runIssueSubscriberList(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("list subscribers: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, subscribers)
 	}
 

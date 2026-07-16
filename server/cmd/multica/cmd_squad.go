@@ -32,8 +32,7 @@ func runSquadList(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, squads)
 	}
 
@@ -85,8 +84,7 @@ func runSquadGet(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("get squad: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, squad)
 	}
 
@@ -211,8 +209,7 @@ func runSquadDelete(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("delete squad: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, map[string]any{"id": args[0], "deleted": true})
 	}
 	fmt.Fprintf(os.Stderr, "Squad %s deleted.\n", args[0])
@@ -239,8 +236,7 @@ func runSquadMemberList(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, members)
 	}
 
@@ -284,8 +280,7 @@ func runSquadMemberAdd(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("add member: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, result)
 	}
 	fmt.Printf("Member %s added to squad.\n", memberID)
@@ -321,8 +316,7 @@ func runSquadMemberSetRole(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("set member role: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, result)
 	}
 	fmt.Fprintf(os.Stderr, "Member %s role updated to %s.\n", memberID, role)
@@ -354,8 +348,7 @@ func runSquadMemberRemove(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("remove member: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, map[string]any{"squad_id": args[0], "member_id": memberID, "removed": true})
 	}
 	fmt.Fprintf(os.Stderr, "Member %s removed from squad.\n", memberID)
@@ -443,8 +436,7 @@ func runSquadActivity(cmd *cobra.Command, args []string) error {
 
 	fmt.Fprintf(os.Stderr, "Squad evaluation recorded: %s (issue %s)\n", outcome, issueRef.Display)
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, result)
 	}
 	return nil

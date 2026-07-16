@@ -164,8 +164,7 @@ func runRepoList(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, ws.Repos)
 	}
 	if len(ws.Repos) == 0 {
@@ -242,8 +241,7 @@ func runRepoAdd(cmd *cobra.Command, args []string) error {
 		Updated:     updated,
 		Repos:       ws.Repos,
 	}
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, result)
 	}
 	if len(added) == 0 && len(updated) == 0 {
@@ -313,8 +311,7 @@ func runRepoRemove(cmd *cobra.Command, args []string) error {
 		Removed:     removed,
 		Repos:       ws.Repos,
 	}
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, result)
 	}
 	rows := make([][]string, 0, len(removed))

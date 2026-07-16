@@ -56,8 +56,7 @@ func runIssueSourceFetch(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("record source fetch: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
+	if wantsJSONOutput(cmd) {
 		return cli.PrintJSON(os.Stdout, result)
 	}
 	metadata, _ := result["metadata"].(map[string]any)
