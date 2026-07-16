@@ -17,14 +17,6 @@ import (
 	"github.com/multica-ai/multica/server/pkg/taskfailure"
 )
 
-func (s *TaskService) captureTaskQueued(ctx context.Context, task db.AgentTaskQueue) {
-	s.recordTaskTraceEvent(ctx, task, "task.queued", "任务已入队", taskTraceOptions{})
-	if s.Metrics != nil {
-		source, runtimeMode, _ := s.taskMetricsContext(ctx, task)
-		s.Metrics.RecordTaskEnqueued(source, runtimeMode)
-	}
-}
-
 func (s *TaskService) captureTaskUserInput(ctx context.Context, task db.AgentTaskQueue) {
 	events, err := s.Queries.ListTaskTraceEventsByTask(ctx, task.ID)
 	if err != nil {

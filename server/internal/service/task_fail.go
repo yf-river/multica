@@ -541,7 +541,11 @@ func priorityToInt(p string) int32 {
 // waiting for the next poll.
 func (s *TaskService) NotifyTaskEnqueued(ctx context.Context, task db.AgentTaskQueue) {
 	s.captureTaskUserInput(ctx, task)
-	s.captureTaskQueued(ctx, task)
+	s.recordTaskTraceEvent(ctx, task, "task.queued", "任务已入队", taskTraceOptions{})
+	if s.Metrics != nil {
+		source, runtimeMode, _ := s.taskMetricsContext(ctx, task)
+		s.Metrics.RecordTaskEnqueued(source, runtimeMode)
+	}
 	s.notifyTaskAvailable(task)
 }
 

@@ -311,46 +311,25 @@ func (s *IssueService) PrepareCreateInTx(
 		return PreparedIssueCreate{}, fmt.Errorf("next top position: %w", err)
 	}
 
-	var issue db.Issue
-	if p.OriginType.Valid {
-		issue, err = qtx.CreateIssueWithOrigin(ctx, db.CreateIssueWithOriginParams{
-			WorkspaceID:   p.WorkspaceID,
-			Title:         p.Title,
-			Description:   p.Description,
-			Status:        p.Status,
-			Priority:      p.Priority,
-			AssigneeType:  assigneeType,
-			AssigneeID:    assigneeID,
-			CreatorType:   p.CreatorType,
-			CreatorID:     p.CreatorID,
-			ParentIssueID: p.ParentIssueID,
-			Position:      newPosition,
-			StartDate:     p.StartDate,
-			DueDate:       p.DueDate,
-			Number:        issueNumber,
-			ProjectID:     projectID,
-			OriginType:    p.OriginType,
-			OriginID:      p.OriginID,
-		})
-	} else {
-		issue, err = qtx.CreateIssue(ctx, db.CreateIssueParams{
-			WorkspaceID:   p.WorkspaceID,
-			Title:         p.Title,
-			Description:   p.Description,
-			Status:        p.Status,
-			Priority:      p.Priority,
-			AssigneeType:  assigneeType,
-			AssigneeID:    assigneeID,
-			CreatorType:   p.CreatorType,
-			CreatorID:     p.CreatorID,
-			ParentIssueID: p.ParentIssueID,
-			Position:      newPosition,
-			StartDate:     p.StartDate,
-			DueDate:       p.DueDate,
-			Number:        issueNumber,
-			ProjectID:     projectID,
-		})
-	}
+	issue, err := qtx.CreateIssueWithOrigin(ctx, db.CreateIssueWithOriginParams{
+		WorkspaceID:   p.WorkspaceID,
+		Title:         p.Title,
+		Description:   p.Description,
+		Status:        p.Status,
+		Priority:      p.Priority,
+		AssigneeType:  assigneeType,
+		AssigneeID:    assigneeID,
+		CreatorType:   p.CreatorType,
+		CreatorID:     p.CreatorID,
+		ParentIssueID: p.ParentIssueID,
+		Position:      newPosition,
+		StartDate:     p.StartDate,
+		DueDate:       p.DueDate,
+		Number:        issueNumber,
+		ProjectID:     projectID,
+		OriginType:    p.OriginType,
+		OriginID:      p.OriginID,
+	})
 	if err != nil {
 		return PreparedIssueCreate{}, fmt.Errorf("create issue: %w", err)
 	}

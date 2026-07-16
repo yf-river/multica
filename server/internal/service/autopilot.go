@@ -310,7 +310,10 @@ func (s *AutopilotService) dispatchCreateIssue(ctx context.Context, ap db.Autopi
 		return fmt.Errorf("link run to issue: %w", err)
 	}
 
-	prefix := s.getIssuePrefix(ap.WorkspaceID)
+	workspace, err := qtx.GetWorkspace(ctx, ap.WorkspaceID)
+	if err != nil {
+		return fmt.Errorf("load workspace issue prefix: %w", err)
+	}
 	createdEvent := events.Event{
 		Type:        protocol.EventIssueCreated,
 		StreamKey:   "issue:" + util.UUIDToString(issue.ID),
@@ -318,7 +321,7 @@ func (s *AutopilotService) dispatchCreateIssue(ctx context.Context, ap db.Autopi
 		ActorType:   "agent",
 		ActorID:     util.UUIDToString(leader.ID),
 		Payload: map[string]any{
-			"issue": issueToMap(issue, prefix),
+			"issue": issueToMap(issue, workspace.IssuePrefix),
 		},
 	}
 	createdEvent, err = eventoutbox.Enqueue(ctx, qtx, createdEvent)
@@ -1138,14 +1141,6 @@ func isSupportedIssueTitleVariable(name string) bool {
 		}
 	}
 	return false
-}
-
-func (s *AutopilotService) getIssuePrefix(workspaceID pgtype.UUID) string {
-	ws, err := s.Queries.GetWorkspace(context.Background(), workspaceID)
-	if err != nil {
-		return ""
-	}
-	return ws.IssuePrefix
 }
 
 // canCreatorAccessPrivateLeader checks whether the autopilot's creator still

@@ -15,19 +15,6 @@ FOR UPDATE;
 SELECT * FROM issue
 WHERE id = $1 AND workspace_id = $2;
 
--- name: CreateIssue :one
-INSERT INTO issue (
-    workspace_id, title, description, status, priority,
-    assignee_type, assignee_id, creator_type, creator_id,
-    parent_issue_id, position, start_date, due_date, number, project_id,
-    scope, owner_id, work_started_at, work_completed_at
-) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-    COALESCE(sqlc.narg('scope'), 'workspace'), sqlc.narg('owner_id'),
-    CASE WHEN $4 IN ('in_progress', 'done') THEN now() ELSE NULL END,
-    CASE WHEN $4 = 'done' THEN now() ELSE NULL END
-) RETURNING *;
-
 -- name: GetIssueByNumber :one
 SELECT * FROM issue
 WHERE workspace_id = $1 AND number = $2;
