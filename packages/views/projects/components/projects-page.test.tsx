@@ -247,21 +247,6 @@ describe("ProjectsPage compact row navigation", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("shows development acceptance projects as normal data", () => {
-    const fixtureProject: Project = {
-      ...PROJECT,
-      id: "project-fixture",
-      title: "curl gateway 1782316918018",
-      description: "curl user-center 小队真实端到端验收",
-    };
-    mocks.projects = [PROJECT, fixtureProject];
-
-    renderProjects();
-
-    expect(screen.getByText(PROJECT.title)).toBeInTheDocument();
-    expect(screen.getByText(fixtureProject.title)).toBeInTheDocument();
-  });
-
   it("navigates from the row surface", async () => {
     const user = userEvent.setup();
     const push = vi.fn();

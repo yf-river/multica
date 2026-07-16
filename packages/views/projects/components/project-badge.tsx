@@ -18,7 +18,21 @@ import type { Project, ProjectStatus, ProjectPriority, UpdateProjectRequest } fr
 import { PriorityIcon } from "../../issues/components/priority-icon";
 import { useProjectStatusLabels, useProjectPriorityLabels } from "./labels";
 
-export function ProjectStatusBadge({ project, handleUpdate, triggerClassName, align = "end" }: { project: Project; handleUpdate: (data: UpdateProjectRequest) => void; triggerClassName?: string; align?: "start" | "end" | "center" }) {
+type ProjectBadgeProps = {
+  project: Project;
+  handleUpdate: (data: UpdateProjectRequest) => void;
+  triggerClassName?: string;
+  align?: "start" | "end" | "center";
+  variant?: "badge" | "plain";
+};
+
+export function ProjectStatusBadge({
+  project,
+  handleUpdate,
+  triggerClassName,
+  align = "end",
+  variant = "badge",
+}: ProjectBadgeProps) {
   const statusLabels = useProjectStatusLabels();
   const statusCfg = PROJECT_STATUS_CONFIG[project.status];
 
@@ -27,10 +41,16 @@ export function ProjectStatusBadge({ project, handleUpdate, triggerClassName, al
       <DropdownMenuTrigger
         render={
           <button type="button" className={cn(
-            "inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-medium cursor-pointer hover:opacity-80 transition-opacity",
-            statusCfg.badgeBg, statusCfg.badgeText,
+            variant === "badge"
+              ? "inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-medium cursor-pointer hover:opacity-80 transition-opacity"
+              : "inline-flex items-center gap-1.5 text-xs hover:text-foreground transition-colors",
+            variant === "badge" && statusCfg.badgeBg,
+            variant === "badge" && statusCfg.badgeText,
             triggerClassName
           )}>
+            {variant === "plain" && (
+              <span className={cn("size-2 rounded-full", statusCfg.dotColor)} />
+            )}
             {statusLabels[project.status]}
           </button>
         }
@@ -48,7 +68,13 @@ export function ProjectStatusBadge({ project, handleUpdate, triggerClassName, al
   );
 }
 
-export function ProjectPriorityBadge({ project, handleUpdate, triggerClassName, align = "end" }: { project: Project; handleUpdate: (data: UpdateProjectRequest) => void; triggerClassName?: string; align?: "start" | "end" | "center" }) {
+export function ProjectPriorityBadge({
+  project,
+  handleUpdate,
+  triggerClassName,
+  align = "end",
+  variant = "badge",
+}: ProjectBadgeProps) {
   const priorityLabels = useProjectPriorityLabels();
   const priorityCfg = PROJECT_PRIORITY_CONFIG[project.priority];
 
@@ -57,11 +83,15 @@ export function ProjectPriorityBadge({ project, handleUpdate, triggerClassName, 
       <DropdownMenuTrigger
         render={
           <button type="button" className={cn(
-            "inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-medium hover:bg-accent/60 transition-colors cursor-pointer",
+            variant === "badge"
+              ? "inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-xs font-medium hover:bg-accent/60 transition-colors cursor-pointer"
+              : "inline-flex items-center gap-1.5 text-xs hover:text-foreground transition-colors",
             triggerClassName
           )}>
             <PriorityIcon priority={project.priority} />
-            <span className={cn("text-xs", priorityCfg.color)}>{priorityLabels[project.priority]}</span>
+            <span className={cn("text-xs", variant === "badge" && priorityCfg.color)}>
+              {priorityLabels[project.priority]}
+            </span>
           </button>
         }
       />

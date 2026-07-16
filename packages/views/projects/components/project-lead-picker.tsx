@@ -12,11 +12,18 @@ import { useT } from "../../i18n";
 import { matchesTextQuery } from "../../editor/extensions/pinyin-match";
 import { ActorAvatar } from "../../common/actor-avatar";
 
-export function ProjectLeadPicker({ project, handleUpdate, renderTrigger, align = "start" }: {
+export function ProjectLeadPicker({
+  project,
+  handleUpdate,
+  renderTrigger,
+  align = "start",
+  listClassName = "max-h-48",
+}: {
   project: Project;
   handleUpdate: (data: UpdateProjectRequest) => void;
   renderTrigger: (leadName: string | null) => React.ReactElement;
-  align?: "start" | "end" | "center"
+  align?: "start" | "end" | "center";
+  listClassName?: string;
 }) {
   const { t } = useT("projects");
   const wsId = useWorkspaceId();
@@ -48,7 +55,7 @@ export function ProjectLeadPicker({ project, handleUpdate, renderTrigger, align 
             className="w-full bg-transparent text-sm placeholder:text-muted-foreground outline-none"
           />
         </div>
-        <div className="p-1 max-h-48 overflow-y-auto">
+        <div className={`p-1 overflow-y-auto ${listClassName}`}>
           <button
             type="button"
             onClick={() => { handleUpdate({ lead_type: null, lead_id: null }); setLeadOpen(false); }}

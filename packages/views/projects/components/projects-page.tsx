@@ -31,8 +31,7 @@ import {
   useCreatePin,
   useDeletePin,
 } from "@multica/core/pins";
-import { useWorkspaceId } from "@multica/core/paths";
-import { useWorkspacePaths } from "@multica/core/paths";
+import { useWorkspaceId, useWorkspacePaths } from "@multica/core/paths";
 import { useAuthStore } from "@multica/core/auth";
 import { canManageWorkspace, useCurrentMember } from "@multica/core/permissions";
 import { useActorName } from "@multica/core/workspace/hooks";
@@ -166,6 +165,14 @@ const GRID_COLS =
   "@2xl:grid-cols-[0.75rem_1rem_minmax(200px,1fr)_116px_var(--pjc-priority)_var(--pjc-progress)_var(--pjc-lead)_var(--pjc-issues)_var(--pjc-created)_1.75rem_0.75rem]";
 
 const stopRowNavigation = (e: MouseEvent) => e.stopPropagation();
+
+function useProjectUpdater(projectId: string) {
+  const updateProject = useUpdateProject();
+  return useCallback(
+    (data: UpdateProjectRequest) => updateProject.mutate({ id: projectId, ...data }),
+    [projectId, updateProject],
+  );
+}
 
 const columnTrackVars = createColumnTrackVars(COLUMN_WIDTHS, FIXED_TRACKS_WIDTH, {
   priority: "--pjc-priority",
@@ -332,11 +339,7 @@ function ProjectTableRow({
   rowLink: ReturnType<typeof useRowLink>;
 }) {
   const formatRelativeDate = useFormatRelativeDate();
-  const updateProject = useUpdateProject();
-  const handleUpdate = useCallback(
-    (data: UpdateProjectRequest) => updateProject.mutate({ id: project.id, ...data }),
-    [project.id, updateProject],
-  );
+  const handleUpdate = useProjectUpdater(project.id);
 
   return (
     <ListGridRow
@@ -518,11 +521,7 @@ function ProjectCard({
   const { t } = useT("projects");
   const wsPaths = useWorkspacePaths();
   const formatRelativeDate = useFormatRelativeDate();
-  const updateProject = useUpdateProject();
-  const handleUpdate = useCallback(
-    (data: UpdateProjectRequest) => updateProject.mutate({ id: project.id, ...data }),
-    [project.id, updateProject],
-  );
+  const handleUpdate = useProjectUpdater(project.id);
   return (
     <div className="group/card group/row flex flex-col rounded-md border bg-card transition-colors hover:border-primary/50">
       <div className="p-3 pb-2">
@@ -715,13 +714,11 @@ export function ProjectsPage() {
 
   const activeFilterCount = countActiveFilters(filters);
   const hasActiveFilters = activeFilterCount > 0;
-  const displayProjects = projects;
-
   // Filter option counts derive from the full set so toggling one dimension
   // doesn't make the others vanish.
   const leadOptions = useMemo(() => {
     const m = new Map<string, { type: string; id: string; count: number }>();
-    for (const p of displayProjects) {
+    for (const p of projects) {
       const v = leadFilterValue(p);
       if (!v || !p.lead_type || !p.lead_id) continue;
       const e = m.get(v);
@@ -729,11 +726,11 @@ export function ProjectsPage() {
       else m.set(v, { type: p.lead_type, id: p.lead_id, count: 1 });
     }
     return m;
-  }, [displayProjects]);
+  }, [projects]);
 
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const filtered = displayProjects.filter((p) => {
+    const filtered = projects.filter((p) => {
       if (q && !matchesTextQuery(p.title, q)) {
         return false;
       }
@@ -769,7 +766,7 @@ export function ProjectsPage() {
       return (Date.parse(a.created_at) - Date.parse(b.created_at)) * dir;
     });
     return sorted;
-  }, [displayProjects, search, filters, sortField, sortDirection]);
+  }, [projects, search, filters, sortField, sortDirection]);
 
   const toggleSelected = (id: string) =>
     setSelectedIds((ids) => toggleSelectedId(ids, id));
@@ -803,7 +800,7 @@ export function ProjectsPage() {
             ? t(($) => $.table.issues)
             : t(($) => $.table.created);
 
-  const showEmpty = !isLoading && displayProjects.length === 0 && projects.length === 0;
+  const showEmpty = !isLoading && projects.length === 0;
   const countBadge = (n: number) => (
     <span className="ml-auto pl-3 text-xs text-muted-foreground">{n}</span>
   );
@@ -815,9 +812,9 @@ export function ProjectsPage() {
         <div className="flex items-center gap-2">
           <FolderKanban className="h-4 w-4 text-muted-foreground" />
           <h1 className="text-sm font-medium">{t(($) => $.page.title)}</h1>
-          {displayProjects.length > 0 && (
+          {projects.length > 0 && (
             <span className="font-mono text-xs tabular-nums text-muted-foreground/70">
-              {displayProjects.length}
+              {projects.length}
             </span>
           )}
         </div>
@@ -860,7 +857,7 @@ export function ProjectsPage() {
                   title={t(($) => $.toolbar.result_count_title)}
                   className="hidden shrink-0 text-xs tabular-nums text-muted-foreground md:inline"
                 >
-                  {visible.length} / {displayProjects.length}
+                  {visible.length} / {projects.length}
                 </span>
               )}
             </div>
