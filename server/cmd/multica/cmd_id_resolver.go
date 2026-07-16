@@ -189,7 +189,6 @@ func fetchIssueCandidates(ctx context.Context, client *cli.APIClient) ([]idCandi
 	candidates := []idCandidate{}
 	for offset := 0; ; {
 		params := url.Values{}
-		params.Set("workspace_id", client.WorkspaceID)
 		params.Set("include_closed", "true")
 		params.Set("limit", strconv.Itoa(limit))
 		if offset > 0 {
@@ -229,7 +228,6 @@ func fetchAutopilotCandidates(ctx context.Context, client *cli.APIClient) ([]idC
 	seen := map[string]struct{}{}
 	for offset := 0; ; {
 		params := url.Values{}
-		params.Set("workspace_id", client.WorkspaceID)
 		params.Set("limit", strconv.Itoa(limit))
 		if offset > 0 {
 			params.Set("offset", strconv.Itoa(offset))

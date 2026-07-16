@@ -199,9 +199,6 @@ func runProjectList(cmd *cobra.Command, _ []string) error {
 	defer cancel()
 
 	params := url.Values{}
-	if client.WorkspaceID != "" {
-		params.Set("workspace_id", client.WorkspaceID)
-	}
 	if v, _ := cmd.Flags().GetString("status"); v != "" {
 		params.Set("status", v)
 	}

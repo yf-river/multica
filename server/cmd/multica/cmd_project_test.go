@@ -257,8 +257,8 @@ func newProjectResourceListServer(t *testing.T) *httptest.Server {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/projects":
-			if got := r.URL.Query().Get("workspace_id"); got != "workspace-123" {
-				t.Fatalf("workspace_id = %q, want workspace-123", got)
+			if got := r.URL.Query().Get("workspace_id"); got != "" {
+				t.Fatalf("workspace_id query = %q, want omitted", got)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"projects": []map[string]any{

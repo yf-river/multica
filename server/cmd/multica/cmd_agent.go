@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -358,14 +357,9 @@ func runAgentList(cmd *cobra.Command, _ []string) error {
 	defer cancel()
 
 	var agents []map[string]any
-	params := url.Values{}
-	params.Set("workspace_id", client.WorkspaceID)
-	if v, _ := cmd.Flags().GetBool("include-archived"); v {
-		params.Set("include_archived", "true")
-	}
 	path := "/api/agents"
-	if len(params) > 0 {
-		path += "?" + params.Encode()
+	if v, _ := cmd.Flags().GetBool("include-archived"); v {
+		path += "?include_archived=true"
 	}
 	if err := client.GetJSON(ctx, path, &agents); err != nil {
 		return fmt.Errorf("list agents: %w", err)
@@ -576,12 +570,7 @@ func runAgentArchive(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("archive agent: %w", err)
 	}
 
-	if wantsJSONOutput(cmd) {
-		return cli.PrintJSON(os.Stdout, result)
-	}
-
-	fmt.Printf("Agent archived: %s (%s)\n", strVal(result, "name"), strVal(result, "id"))
-	return nil
+	return printNamedMutationResult(cmd, "Agent", "archived", "name", result)
 }
 
 func runAgentRestore(cmd *cobra.Command, args []string) error {
@@ -596,12 +585,7 @@ func runAgentRestore(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("restore agent: %w", err)
 	}
 
-	if wantsJSONOutput(cmd) {
-		return cli.PrintJSON(os.Stdout, result)
-	}
-
-	fmt.Printf("Agent restored: %s (%s)\n", strVal(result, "name"), strVal(result, "id"))
-	return nil
+	return printNamedMutationResult(cmd, "Agent", "restored", "name", result)
 }
 
 func runAgentTasks(cmd *cobra.Command, args []string) error {

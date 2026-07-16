@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"net/url"
 	"os"
 
 	"github.com/google/uuid"
@@ -82,17 +81,8 @@ func runLabelList(cmd *cobra.Command, _ []string) error {
 	}
 	defer cancel()
 
-	params := url.Values{}
-	if client.WorkspaceID != "" {
-		params.Set("workspace_id", client.WorkspaceID)
-	}
-	path := "/api/labels"
-	if len(params) > 0 {
-		path += "?" + params.Encode()
-	}
-
 	var result map[string]any
-	if err := client.GetJSON(ctx, path, &result); err != nil {
+	if err := client.GetJSON(ctx, "/api/labels", &result); err != nil {
 		return fmt.Errorf("list labels: %w", err)
 	}
 	labelsRaw, _ := result["labels"].([]any)

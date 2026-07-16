@@ -1053,8 +1053,11 @@ func TestResolveIssueRef(t *testing.T) {
 				http.NotFound(w, r)
 				return
 			}
-			if got := r.URL.Query().Get("workspace_id"); got != "ws-1" {
-				t.Errorf("workspace_id = %q, want ws-1", got)
+			if got := r.Header.Get("X-Workspace-ID"); got != "ws-1" {
+				t.Errorf("X-Workspace-ID = %q, want ws-1", got)
+			}
+			if got := r.URL.Query().Get("workspace_id"); got != "" {
+				t.Errorf("workspace_id query = %q, want omitted", got)
 			}
 			if got := r.URL.Query().Get("include_closed"); got != "true" {
 				t.Errorf("include_closed = %q, want true", got)
@@ -1128,8 +1131,11 @@ func TestFetchAutopilotCandidatesPaginates(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		if got := r.URL.Query().Get("workspace_id"); got != "ws-1" {
-			t.Errorf("workspace_id = %q, want ws-1", got)
+		if got := r.Header.Get("X-Workspace-ID"); got != "ws-1" {
+			t.Errorf("X-Workspace-ID = %q, want ws-1", got)
+		}
+		if got := r.URL.Query().Get("workspace_id"); got != "" {
+			t.Errorf("workspace_id query = %q, want omitted", got)
 		}
 		if got := r.URL.Query().Get("limit"); got != strconv.Itoa(resolverListPageLimit) {
 			t.Errorf("limit = %q, want %d", got, resolverListPageLimit)
