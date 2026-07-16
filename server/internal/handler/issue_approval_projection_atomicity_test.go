@@ -137,20 +137,12 @@ func TestBatchUpdateCreatesBacklogApprovalProjection(t *testing.T) {
 	agentID := createHandlerTestAgent(t, "batch-backlog-agent-"+uuid.NewString(), nil)
 	issue := createApprovalProjectionIssue(t, projectID, "todo", agentID)
 
-	w := httptest.NewRecorder()
-	req := newRequest(http.MethodPost, "/api/issues/batch-update", map[string]any{
+	updated := batchUpdateIssueCount(t, map[string]any{
 		"issue_ids": []string{issue.ID},
 		"updates":   map[string]any{"status": "backlog"},
 	})
-	testHandler.BatchUpdateIssues(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("batch update: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-	var response struct {
-		Updated int `json:"updated"`
-	}
-	if err := json.NewDecoder(w.Body).Decode(&response); err != nil || response.Updated != 1 {
-		t.Fatalf("batch response = %s, decode error = %v", w.Body.String(), err)
+	if updated != 1 {
+		t.Fatalf("updated = %d, want 1", updated)
 	}
 	assertIssueAndTaskStatus(t, issue.ID, agentID, "backlog", "cancelled")
 	if got := countActiveApprovalInbox(t, issue.ID, testUserID); got != 1 {
@@ -170,22 +162,7 @@ func TestBatchUpdateRollsBackWhenBacklogApprovalFails(t *testing.T) {
 		"updates":   map[string]any{"status": "backlog"},
 	})
 	testHandler.BatchUpdateIssues(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("batch update: expected 200 envelope, got %d: %s", w.Code, w.Body.String())
-	}
-	var response struct {
-		Updated int `json:"updated"`
-		Failed  []struct {
-			IssueID string `json:"issue_id"`
-			Code    string `json:"code"`
-		} `json:"failed"`
-	}
-	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
-		t.Fatalf("decode batch response: %v", err)
-	}
-	if response.Updated != 0 || len(response.Failed) != 1 || response.Failed[0].IssueID != issue.ID || response.Failed[0].Code != "approval_projection_failed" {
-		t.Fatalf("unexpected batch response: %+v", response)
-	}
+	assertBatchIssueFailure(t, w, issue.ID, "approval_projection_failed")
 	assertIssueAndTaskStatus(t, issue.ID, agentID, "todo", "queued")
 	if got := countActiveApprovalInbox(t, issue.ID, testUserID); got != 0 {
 		t.Fatalf("batch approval inbox survived rollback: %d", got)

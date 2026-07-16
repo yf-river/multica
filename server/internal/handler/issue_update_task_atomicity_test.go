@@ -118,6 +118,20 @@ func TestBatchUpdateReportsTaskProjectionFailureWithoutCommitting(t *testing.T) 
 		},
 	})
 	testHandler.BatchUpdateIssues(w, req)
+	assertBatchIssueFailure(t, w, issueID, "task_projection_failed")
+
+	var assigneeID *string
+	if err := testPool.QueryRow(context.Background(), `SELECT assignee_id::text FROM issue WHERE id = $1`, issueID).Scan(&assigneeID); err != nil {
+		t.Fatalf("reload issue: %v", err)
+	}
+	if assigneeID != nil {
+		t.Fatalf("batch assignment committed despite task failure: %v", assigneeID)
+	}
+	assertNoIssueUpdateEvent(t, issueID)
+}
+
+func assertBatchIssueFailure(t *testing.T, w *httptest.ResponseRecorder, issueID, code string) {
+	t.Helper()
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200 batch envelope, got %d: %s", w.Code, w.Body.String())
 	}
@@ -131,18 +145,9 @@ func TestBatchUpdateReportsTaskProjectionFailureWithoutCommitting(t *testing.T) 
 	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
 		t.Fatalf("decode batch response: %v", err)
 	}
-	if response.Updated != 0 || len(response.Failed) != 1 || response.Failed[0].IssueID != issueID || response.Failed[0].Code != "task_projection_failed" {
+	if response.Updated != 0 || len(response.Failed) != 1 || response.Failed[0].IssueID != issueID || response.Failed[0].Code != code {
 		t.Fatalf("unexpected batch result: %+v", response)
 	}
-
-	var assigneeID *string
-	if err := testPool.QueryRow(context.Background(), `SELECT assignee_id::text FROM issue WHERE id = $1`, issueID).Scan(&assigneeID); err != nil {
-		t.Fatalf("reload issue: %v", err)
-	}
-	if assigneeID != nil {
-		t.Fatalf("batch assignment committed despite task failure: %v", assigneeID)
-	}
-	assertNoIssueUpdateEvent(t, issueID)
 }
 
 func assertNoIssueUpdateEvent(t *testing.T, issueID string) {

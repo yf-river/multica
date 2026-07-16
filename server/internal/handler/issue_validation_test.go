@@ -142,23 +142,12 @@ func TestBatchUpdateIssuesSkipsCrossWorkspaceProject(t *testing.T) {
 	t.Cleanup(func() { deleteTestIssue(t, issueID) })
 	_, foreignProjectID := createForeignProjectForIssueValidation(t, "batch-foreign-project")
 
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/issues/batch-update", map[string]any{
+	updated := batchUpdateIssueCount(t, map[string]any{
 		"issue_ids": []string{issueID},
 		"updates":   map[string]any{"project_id": foreignProjectID},
 	})
-	testHandler.BatchUpdateIssues(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-	var resp struct {
-		Updated int `json:"updated"`
-	}
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if resp.Updated != 0 {
-		t.Fatalf("expected updated=0 for skipped foreign project, got %d", resp.Updated)
+	if updated != 0 {
+		t.Fatalf("expected updated=0 for skipped foreign project, got %d", updated)
 	}
 
 	got := getIssueForValidationTest(t, issueID)
@@ -172,29 +161,34 @@ func TestBatchUpdateIssuesSkipsDeepAncestorCycle(t *testing.T) {
 	rootID := ids[0]
 	deepChildID := ids[len(ids)-1]
 
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/issues/batch-update", map[string]any{
+	updated := batchUpdateIssueCount(t, map[string]any{
 		"issue_ids": []string{rootID},
 		"updates":   map[string]any{"parent_issue_id": deepChildID},
 	})
-	testHandler.BatchUpdateIssues(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-	var resp struct {
-		Updated int `json:"updated"`
-	}
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if resp.Updated != 0 {
-		t.Fatalf("expected updated=0 for skipped deep cycle, got %d", resp.Updated)
+	if updated != 0 {
+		t.Fatalf("expected updated=0 for skipped deep cycle, got %d", updated)
 	}
 
 	got := getIssueForValidationTest(t, rootID)
 	if got.ParentIssueID != nil {
 		t.Fatalf("deep cycle batch update persisted parent_issue_id=%v", *got.ParentIssueID)
 	}
+}
+
+func batchUpdateIssueCount(t *testing.T, body map[string]any) int {
+	t.Helper()
+	w := httptest.NewRecorder()
+	testHandler.BatchUpdateIssues(w, newRequest(http.MethodPost, "/api/issues/batch-update", body))
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 batch envelope, got %d: %s", w.Code, w.Body.String())
+	}
+	var response struct {
+		Updated int `json:"updated"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&response); err != nil {
+		t.Fatalf("decode batch response: %v", err)
+	}
+	return response.Updated
 }
 
 func createForeignProjectForIssueValidation(t *testing.T, slugSuffix string) (string, string) {

@@ -65,6 +65,17 @@ func assertIssueTitleAbsent(t *testing.T, title string) {
 	}
 }
 
+func assertIssueCreateProjectionFailure(t *testing.T, title string, body map[string]any) {
+	t.Helper()
+	body["title"] = title
+	w := httptest.NewRecorder()
+	testHandler.CreateIssue(w, newRequest(http.MethodPost, "/api/issues?workspace_id="+testWorkspaceID, body))
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d: %s", w.Code, w.Body.String())
+	}
+	assertIssueTitleAbsent(t, title)
+}
+
 func installIssueMetadataFailureForTitle(t *testing.T, title string) {
 	t.Helper()
 	ctx := context.Background()
@@ -96,17 +107,10 @@ func TestCreateIssueRollsBackWhenAssignedAgentTaskFails(t *testing.T) {
 	installIssueTaskFailureTrigger(t, "INSERT", fmt.Sprintf("NEW.agent_id = '%s'::uuid", agentID))
 	title := "atomic assigned task " + uuid.NewString()
 
-	w := httptest.NewRecorder()
-	req := newRequest(http.MethodPost, "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
-		"title":         title,
+	assertIssueCreateProjectionFailure(t, title, map[string]any{
 		"assignee_type": "agent",
 		"assignee_id":   agentID,
 	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusInternalServerError {
-		t.Fatalf("expected 500, got %d: %s", w.Code, w.Body.String())
-	}
-	assertIssueTitleAbsent(t, title)
 }
 
 func TestCreateIssueRollsBackWhenMemberApprovalInboxFails(t *testing.T) {
@@ -114,17 +118,10 @@ func TestCreateIssueRollsBackWhenMemberApprovalInboxFails(t *testing.T) {
 	installApprovalInboxFailureTrigger(t)
 	title := "atomic member approval " + uuid.NewString()
 
-	w := httptest.NewRecorder()
-	req := newRequest(http.MethodPost, "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
-		"title":      title,
+	assertIssueCreateProjectionFailure(t, title, map[string]any{
 		"status":     "backlog",
 		"project_id": projectID,
 	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusInternalServerError {
-		t.Fatalf("expected 500, got %d: %s", w.Code, w.Body.String())
-	}
-	assertIssueTitleAbsent(t, title)
 }
 
 func TestCreateIssueRollsBackWhenAgentApprovalTaskFails(t *testing.T) {
@@ -133,17 +130,10 @@ func TestCreateIssueRollsBackWhenAgentApprovalTaskFails(t *testing.T) {
 	installIssueTaskFailureTrigger(t, "INSERT", fmt.Sprintf("NEW.agent_id = '%s'::uuid", leadAgentID))
 	title := "atomic agent approval " + uuid.NewString()
 
-	w := httptest.NewRecorder()
-	req := newRequest(http.MethodPost, "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
-		"title":      title,
+	assertIssueCreateProjectionFailure(t, title, map[string]any{
 		"status":     "backlog",
 		"project_id": projectID,
 	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusInternalServerError {
-		t.Fatalf("expected 500, got %d: %s", w.Code, w.Body.String())
-	}
-	assertIssueTitleAbsent(t, title)
 }
 
 func TestCreateIssueRollsBackSourceSummaryTaskWhenMetadataFails(t *testing.T) {
