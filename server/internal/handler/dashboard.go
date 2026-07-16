@@ -9,28 +9,9 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// ---------------------------------------------------------------------------
-// Workspace / Project dashboard
-//
-// Four read endpoints power the workspace dashboard:
-//
-//   GET /api/dashboard/usage/daily       per-(date, model) token rows
-//   GET /api/dashboard/usage/by-agent    per-(agent, model) token rows
-//   GET /api/dashboard/agent-runtime     per-agent run-time + task counts
-//   GET /api/dashboard/runtime/daily     per-date run-time + task counts
-//
-// All four accept ?days=N (defaults to 30, capped at 365) and an optional
-// ?project_id=<uuid> to scope the rollup to a single project. With no
-// project_id the data spans the whole workspace.
-//
-// Cost is computed server-side from the maintained pricing catalog. The model
-// dimension remains on the wire so clients can show which rows were unpriced.
-//
-// Access control: workspace membership only — we don't filter by per-agent
-// visibility on the dashboard because token spend / run time are workspace-
-// level operational metrics. Agent-detail pages still gate on per-agent
-// access (see GetWorkspaceAgentRunCounts).
-// ---------------------------------------------------------------------------
+// Dashboard endpoints share a bounded time window and optional Project scope.
+// Workspace membership grants aggregate operational metrics; Agent detail
+// remains subject to per-Agent access. Cost is derived from the server catalog.
 
 type dashboardQueryScope struct {
 	workspaceID pgtype.UUID
@@ -65,16 +46,14 @@ func (h *Handler) dashboardScope(w http.ResponseWriter, r *http.Request) (dashbo
 	}, true
 }
 
-// dashboardUsageDailyResponse is one (date, provider, model) bucket.
+// dashboardUsageDailyResponse is one date/provider/model bucket.
 type dashboardUsageDailyResponse struct {
 	Date      string `json:"date"`
 	TaskCount int32  `json:"task_count"`
 	usageResponse
 }
 
-// GetDashboardUsageDaily returns per-(date, model) token rows for the
-// workspace, optionally scoped to a project. Backed by task_usage_hourly,
-// sliced into calendar days under the viewer's tz.
+// GetDashboardUsageDaily returns token rows in the viewer's calendar days.
 func (h *Handler) GetDashboardUsageDaily(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.dashboardScope(w, r)
 	if !ok {
@@ -120,9 +99,7 @@ func (h *Handler) listDashboardUsageDaily(
 	return resp, nil
 }
 
-// GetDashboardUsageByAgent returns per-(agent, model) token aggregates
-// for the workspace, optionally scoped to a project. Backed by
-// task_usage_hourly with the viewer's tz applied to the `?days=` cutoff.
+// GetDashboardUsageByAgent returns per-Agent/model token aggregates.
 func (h *Handler) GetDashboardUsageByAgent(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.dashboardScope(w, r)
 	if !ok {
@@ -167,9 +144,7 @@ func (h *Handler) listDashboardUsageByAgent(
 	return resp, nil
 }
 
-// dashboardAgentRunTimeResponse is one agent's total terminal-task run time
-// over the window. Includes failed tasks so the dashboard can surface how
-// much execution time was spent on runs that didn't succeed.
+// dashboardAgentRunTimeResponse includes failed terminal-task runtime.
 type dashboardAgentRunTimeResponse struct {
 	AgentID      string `json:"agent_id"`
 	TotalSeconds int64  `json:"total_seconds"`
@@ -177,11 +152,7 @@ type dashboardAgentRunTimeResponse struct {
 	FailedCount  int32  `json:"failed_count"`
 }
 
-// GetDashboardAgentRunTime returns per-agent total task run time (seconds)
-// and task counts for the workspace, optionally scoped to a project. Only
-// terminal tasks (completed or failed) with both started_at and
-// completed_at populated contribute, since queued/running tasks have no
-// finite duration.
+// GetDashboardAgentRunTime returns finite terminal-task runtime per Agent.
 func (h *Handler) GetDashboardAgentRunTime(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.dashboardScope(w, r)
 	if !ok {
@@ -210,9 +181,7 @@ func (h *Handler) GetDashboardAgentRunTime(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// dashboardRunTimeDailyResponse is one (date) bucket of terminal-task run
-// time and counts. Powers the workspace dashboard's daily Time and Tasks
-// charts — same toggle as Tokens / Cost, different metric.
+// dashboardRunTimeDailyResponse is one day of terminal-task runtime.
 type dashboardRunTimeDailyResponse struct {
 	Date         string `json:"date"`
 	TotalSeconds int64  `json:"total_seconds"`
@@ -220,11 +189,7 @@ type dashboardRunTimeDailyResponse struct {
 	FailedCount  int32  `json:"failed_count"`
 }
 
-// GetDashboardRunTimeDaily returns per-date total task run time and task
-// counts for the workspace, optionally scoped to a project. Only terminal
-// tasks (completed or failed) with both started_at and completed_at
-// populated contribute. Bucketed by completed_at so the day boundaries
-// line up with the per-agent run-time card.
+// GetDashboardRunTimeDaily groups terminal-task runtime by completion day.
 func (h *Handler) GetDashboardRunTimeDaily(w http.ResponseWriter, r *http.Request) {
 	scope, ok := h.dashboardScope(w, r)
 	if !ok {

@@ -40,8 +40,7 @@ func (h *Handler) ListAgentTasks(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// Run history is part of the personal-agent gate ("查看历史会话"). Same
-	// 403 semantics as GetAgent.
+	// Run history uses the same personal-Agent boundary as Agent detail.
 	workspaceID := uuidToString(agent.WorkspaceID)
 	actorType, actorID := resolveActor(r, requestUserID(r))
 	if !h.requirePersonalAgentAccess(w, r, agent, actorType, actorID, workspaceID, "you do not have access to this agent") {
@@ -57,8 +56,7 @@ func (h *Handler) ListAgentTasks(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, agentTasksToResponses(tasks, workspaceID))
 }
 
-// AgentActivityBucket is one day-bucketed throughput sample for the
-// Agents-list ACTIVITY sparkline. bucket_at is midnight UTC of the day.
+// AgentActivityBucket is one UTC day of Agent throughput.
 type AgentActivityBucket struct {
 	AgentID     string `json:"agent_id"`
 	BucketAt    string `json:"bucket_at"`
@@ -66,16 +64,13 @@ type AgentActivityBucket struct {
 	FailedCount int32  `json:"failed_count"`
 }
 
-// AgentRunCount is the trailing-30-day total task run count per agent,
-// powering the Agents-list RUNS column.
+// AgentRunCount is the trailing 30-day total per Agent.
 type AgentRunCount struct {
 	AgentID  string `json:"agent_id"`
 	RunCount int32  `json:"run_count"`
 }
 
-// GetWorkspaceAgentRunCounts returns 30-day total run counts for every
-// agent in the workspace. Same single-fetch pattern as live-tasks /
-// activity to keep the Agents list cheap regardless of agent count.
+// GetWorkspaceAgentRunCounts returns accessible per-Agent totals in one read.
 func (h *Handler) GetWorkspaceAgentRunCounts(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 	member, ok := requireWorkspaceMemberContext(w, r)
@@ -109,12 +104,8 @@ func (h *Handler) GetWorkspaceAgentRunCounts(w http.ResponseWriter, r *http.Requ
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// GetWorkspaceAgentActivity30d returns per-agent daily task counts for the
-// last 30 days, anchored on completed_at. Single workspace-wide read backs
-// both the Agents list sparkline (uses the trailing 7 buckets) and the
-// agent detail "Last 30 days" panel (uses all 30) — one fetch is cheaper
-// than two. Front-end fills missing days with zero; the back-end omits
-// empty buckets to keep the response small.
+// GetWorkspaceAgentActivity30d returns accessible completed-task buckets. The
+// client fills omitted empty days.
 func (h *Handler) GetWorkspaceAgentActivity30d(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 	member, ok := requireWorkspaceMemberContext(w, r)
@@ -150,15 +141,8 @@ func (h *Handler) GetWorkspaceAgentActivity30d(w http.ResponseWriter, r *http.Re
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// ListWorkspaceAgentTaskSnapshot returns the task data the front-end needs to
-// derive each agent's presence: every active task (queued/dispatched/running)
-// plus each agent's most recent OUTCOME task (completed/failed only). Cancelled
-// tasks are excluded from the outcome half by design — cancel is a procedural
-// signal ("attempt aborted"), not an outcome, so it must not mask a prior
-// failure. The front-end picks "active wins, else latest outcome"; a failed
-// outcome stays sticky until the user starts a new task or one succeeds.
-// Per-agent filtering happens in the front-end against this workspace-wide
-// snapshot.
+// ListWorkspaceAgentTaskSnapshot returns active tasks plus each Agent's latest
+// completed/failed outcome. Cancellation does not replace the last outcome.
 func (h *Handler) ListWorkspaceAgentTaskSnapshot(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 	member, ok := requireWorkspaceMemberContext(w, r)

@@ -45,15 +45,8 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 		"reuse_workdir", task.PriorWorkDir != "",
 	)
 
-	// Hold a process-wide active-root guard for the rest of this task so
-	// the GC loop never sees a window where the env root has neither the
-	// in-process guard nor .gc_meta.json (issue #3999 race B). runTask
-	// installs its own ref-counted mark/unmark internally; without this
-	// outer guard the inner unmark fires when runTask returns, leaving
-	// the directory protected only by the 72h orphan TTL through
-	// reportTaskResult and execenv.WriteGCMeta below. markActiveEnvRoot
-	// is reference-counted, so the duplicate marks runTask installs are
-	// correctly nested within these.
+	// Keep the environment protected until result reporting and GC metadata
+	// finish. The guard is reference-counted with runTask's inner guard.
 	predictedEnvRoot := execenv.PredictRootDir(d.cfg.WorkspacesRoot, task.WorkspaceID, task.ID)
 	if predictedEnvRoot != "" {
 		d.markActiveEnvRoot(predictedEnvRoot)
@@ -73,9 +66,7 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 	runCtx, runCancel := context.WithCancel(ctx)
 	defer runCancel()
 
-	// Poll interval is d.cancelPollInterval (5s in production, reduced in tests
-	// via direct field override). Guard against zero so a misconfigured daemon
-	// doesn't panic time.NewTicker.
+	// Guard against a zero interval before constructing the cancellation ticker.
 	pollInterval := d.cancelPollInterval
 	if pollInterval == 0 {
 		pollInterval = 5 * time.Second
@@ -92,11 +83,7 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 	artifactCollectionCutoff := time.Now().Add(-1 * time.Second)
 	result, err := d.runner(runCtx, task, provider, slot, taskLog)
 
-	// Report usage before any early return — the agent accumulates tokens
-	// whether the task completes, errors, or is cancelled mid-run by the poll
-	// goroutine. Both claude.go and codex.go populate result.Usage even when
-	// runCtx is cancelled, so dropping this on the cancelled path silently
-	// under-reports billing.
+	// Usage is billable even when execution is cancelled or fails.
 	if len(result.Usage) > 0 {
 		if usageErr := d.client.ReportTaskUsage(ctx, task.ID, result.Usage); usageErr != nil {
 			taskLog.Warn("report task usage failed", "error", usageErr)
@@ -127,11 +114,7 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 
 	_ = d.client.ReportProgress(ctx, task.ID, "Finishing task", 2, 2)
 
-	// Final pre-completion check: if the server already moved the task to a
-	// terminal state (completed/failed/cancelled) or deleted the row
-	// outright, skip reporting — the complete/fail callbacks would fail
-	// anyway. Reuse shouldInterruptAgent so this guard honors the same
-	// signals as the in-flight watcher.
+	// Recheck terminal state after the runner to avoid reporting a stale result.
 	if status, err := d.client.GetTaskStatus(ctx, task.ID); shouldInterruptAgent(status, err) {
 		taskLog.Info("task cancelled during execution, discarding result", "status", status, "error", err)
 		return
@@ -142,10 +125,7 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 
 	d.reportTaskResult(ctx, task.ID, result, taskLog)
 
-	// Write GC metadata after the task finishes so the periodic GC loop
-	// can look up the parent record (issue / chat session / autopilot run /
-	// task itself for quick-create) later. Written last so that a mid-task
-	// crash leaves the directory as an orphan (cleaned up by GCOrphanTTL).
+	// Metadata is written last; a mid-task crash remains an orphan for TTL GC.
 	if result.EnvRoot != "" {
 		if meta, ok := gcMetaForTask(task); ok {
 			if err := execenv.WriteGCMeta(result.EnvRoot, meta); err != nil {
@@ -155,16 +135,8 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 	}
 }
 
-// reportTaskResult writes the final task disposition back to the server.
-//
-// Fail closed: only an explicit "completed" status is reported as success.
-// Anything else — "blocked", "cancelled", or any future status we forget to
-// enumerate — must go through FailTask, so a run that never produced a real
-// result can never be displayed as "Completed" in the UI (e.g. provider 429 /
-// out-of-credit / runtime crash). Forward SessionID/WorkDir on every path:
-// the agent may have built a real session before getting stuck, and we want
-// the next chat turn to resume there rather than start over and "forget"
-// the conversation.
+// reportTaskResult fails closed: only completed is success. Every failure path
+// preserves session/workdir so a recoverable conversation can resume.
 func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result TaskResult, taskLog *slog.Logger) {
 	switch result.Status {
 	case "completed":
@@ -173,23 +145,13 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 		if err == nil {
 			return
 		}
-		// CompleteTask retries transient errors internally. A transient
-		// error reaching us here means the schedule was exhausted while
-		// the upstream was still 5xx / unreachable. Converting that into
-		// a fail would lose the agent's actual result and surface a
-		// misleading red badge in the UI — leave the task in running
-		// instead so a future fix (server-side stuck-task reaper, or a
-		// daemon-side persistent pending queue) can recover it. Only
-		// Permanent server-side rejections (4xx other than 408/429)
-		// warrant a failure callback, because at that point the server
-		// has already refused this task and the only useful UI signal
-		// left is a concrete failure.
+		// A transient callback failure leaves the successful result recoverable;
+		// only a permanent server rejection becomes a failed task.
 		if isTransientError(err) {
 			taskLog.Error("complete task failed after retries; leaving task in running rather than falling back to fail", "error", err)
 			return
 		}
 		taskLog.Error("complete task rejected by server, falling back to fail", "error", err)
-		// This is a server rejection, so unmatched text becomes unknown.
 		fallbackErrMsg := fmt.Sprintf("complete task failed: %s", err.Error())
 		if failErr := d.client.FailTask(ctx, taskID, fallbackErrMsg, result.SessionID, result.WorkDir, taskfailure.Classify(fallbackErrMsg).String()); failErr != nil {
 			taskLog.Error("fail task fallback also failed", "error", failErr)
@@ -198,13 +160,9 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 		failureReason := result.FailureReason
 		if failureReason == "" {
 			if result.Status == "cancelled" {
-				// "cancelled" is a deliberate non-failure terminal
-				// state masquerading as a failure_reason — preserved
-				// outside the canonical taxonomy so the UI can render
-				// it differently from a real failure.
+				// Cancellation stays outside the failure taxonomy for UI semantics.
 				failureReason = "cancelled"
 			} else {
-				// Empty or unmatched comments become ReasonAgentUnknown.
 				failureReason = taskfailure.Classify(result.Comment).String()
 			}
 		}
@@ -215,14 +173,8 @@ func (d *Daemon) reportTaskResult(ctx context.Context, taskID string, result Tas
 	}
 }
 
-// gcMetaForTask classifies a finished task and produces a GCMeta of the right
-// kind. The discriminator order matters: a task carrying both an issue_id
-// and a chat_session_id (theoretical, not produced today) should be treated
-// as a chat task because the chat session is the longer-lived parent record.
-//
-// Returns ok=false when the task has no recognizable parent (e.g. an
-// internal task with no IDs at all). The caller skips writing a meta file
-// in that case so the directory falls back to mtime-based orphan cleanup.
+// gcMetaForTask records the longest-lived parent, with Chat and Autopilot
+// taking precedence over Issue. Unclassified roots fall back to TTL cleanup.
 func gcMetaForTask(task Task) (execenv.GCMeta, bool) {
 	meta := execenv.GCMeta{WorkspaceID: task.WorkspaceID}
 	switch {
@@ -236,10 +188,7 @@ func gcMetaForTask(task Task) (execenv.GCMeta, bool) {
 		meta.Kind = execenv.GCKindIssue
 		meta.IssueID = task.IssueID
 	case task.QuickCreatePrompt != "":
-		// Quick-create tasks reach WriteGCMeta before the server runs
-		// LinkTaskToIssue, so IssueID is always empty here. Persist the
-		// task ID instead and let the GC loop ask the server for terminal
-		// state via the task gc-check endpoint.
+		// Quick Create has no Issue ID until after this callback.
 		meta.Kind = execenv.GCKindQuickCreate
 		meta.TaskID = task.ID
 	default:
@@ -261,16 +210,8 @@ func coordinatorNeedsInlineSystemPrompt(provider string, policy executionpolicy.
 	return supportsClaudeFamilyToolEnvelope(provider) && policy.IsCoordinatorWithoutRepo()
 }
 
-// gateResumeToReusedWorkdir clears the task's prior session unless the task
-// runs in the exact workdir the session was recorded against, and reports
-// whether that workdir was reused. CLI backends key their session stores to
-// the cwd (Claude Code looks sessions up under ~/.claude/projects/<encoded-cwd>/),
-// so a session id from a different workdir can never resolve: the CLI exits
-// within a second and the run fails before doing any work — permanently,
-// because the failed run records no session and the next claim serves the
-// same stale pointer again. This fires whenever the prior workdir no longer
-// exists (GC'd after the issue went done, daemon reinstall, manual cleanup)
-// and execenv.Reuse fell back to a fresh Prepare (GitHub #3854).
+// gateResumeToReusedWorkdir drops a cwd-scoped provider session unless its
+// original workdir was actually reused.
 func gateResumeToReusedWorkdir(task *Task, taskCtx *execenv.TaskContextForEnv, envWorkDir string, taskLog *slog.Logger) bool {
 	reused := task.PriorWorkDir != "" && envWorkDir == task.PriorWorkDir
 	if !reused && task.PriorSessionID != "" {

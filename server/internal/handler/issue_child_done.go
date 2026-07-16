@@ -12,42 +12,11 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-// notifyParentOfChildDone posts a top-level system comment on the parent
-// issue when a child issue transitions from non-done into done. This replaces
-// the agent-prompt rule that previously made child agents post the
-// notification themselves (PR #2918 user feedback — the agent rule caused
-// self-mention loops, planner ping-pong, and accidental `MUL-` prefix
-// hardcoding because the agent did not always know the workspace prefix).
-//
-// Guards on whether the comment fires at all:
-//   - prev.Status must not already be "done" (idempotent — repeat saves of
-//     done do not re-fire; only the transition fires)
-//   - issue.Status must be "done"
-//   - issue.ParentIssueID must be set
-//   - parent must not be "done" or "cancelled" — the parent is already
-//     closed and a notification has no follow-up to drive
-//   - parent assignee must not be a member (human). Humans read their
-//     issues manually; an automated system comment is pure noise for them
-//     and there is nothing to "trigger" on a human assignee. Skipping the
-//     comment entirely (Bohan's call on MUL-2538) also sidesteps the
-//     mention question — no comment, no mention, no inbox row.
-//
-// The comment is inserted directly via db.Queries (not through the
-// CreateComment HTTP handler) so it bypasses the generic on_comment trigger
-// path. When the parent has an agent or squad assignee, the comment body
-// embeds a single `mention://{agent,squad}/<id>` link that targets the
-// parent assignee — Bohan's product call on MUL-2538 ("system child-done
-// comment 无脑 mention parent assignee，member/squad/agent 都覆盖", later
-// narrowed to skip member assignees outright). To keep the platform in
-// control of side effects, the cmd/server notification + subscriber
-// listeners still skip system comments wholesale, so smuggled mentions from
-// the child title cannot light up unrelated members. The parent assignee's
-// own trigger is fired explicitly by dispatchParentAssigneeTrigger below,
-// with the loop and idempotency guards documented there.
-//
-// Errors are logged at warn level and swallowed: this is a best-effort
-// notification on the side of a successful status update; failing it must
-// not roll back the user's status change.
+// notifyParentOfChildDone records a system comment after the last open child
+// reaches done, then explicitly wakes an Agent or Squad assignee. System
+// comments bypass generic mention listeners, so this function owns both the
+// safe mention text and the single permitted trigger. Notification failure is
+// best-effort and must not roll back the completed Issue update.
 func (h *Handler) notifyParentOfChildDone(ctx context.Context, prev, issue db.Issue, actorType, actorID string) {
 	if !issue.ParentIssueID.Valid {
 		return
@@ -69,9 +38,7 @@ func (h *Handler) notifyParentOfChildDone(ctx context.Context, prev, issue db.Is
 	if !h.allSiblingChildrenResolved(ctx, parent.ID, issue.ID) {
 		return
 	}
-	// Human-assigned parents read their own timeline; an automated system
-	// comment is just noise and there is no agent task to trigger. Skip the
-	// whole notification (comment + mention + inbox row) — MUL-2538.
+	// Human assignees have no automated task to wake.
 	if parent.AssigneeType.Valid && parent.AssigneeType.String == "member" {
 		return
 	}
@@ -81,9 +48,6 @@ func (h *Handler) notifyParentOfChildDone(ctx context.Context, prev, issue db.Is
 	childID := uuidToString(issue.ID)
 	title := sanitizeChildTitleForSystemComment(issue.Title)
 
-	// Build the parent-assignee mention prefix. Empty when the parent has no
-	// assignee or the assignee row is missing (deleted member, archived
-	// agent the workspace lost track of, etc.).
 	mentionPrefix := h.buildParentAssigneeMention(ctx, parent)
 
 	content := fmt.Sprintf(
@@ -91,9 +55,7 @@ func (h *Handler) notifyParentOfChildDone(ctx context.Context, prev, issue db.Is
 		mentionPrefix, identifier, childID, title,
 	)
 
-	// author_type='system', author_id=zero UUID. The zero UUID is a valid 16
-	// byte value and the column is NOT NULL; frontend code should branch on
-	// author_type === 'system' rather than on the UUID value.
+	// author_id is required even though author_type identifies this as system.
 	tx, err := h.TxStarter.Begin(ctx)
 	if err != nil {
 		slog.Warn("child done: begin system comment transaction failed", "error", err, "child_id", childID, "parent_id", uuidToString(parent.ID))
@@ -129,12 +91,6 @@ func (h *Handler) notifyParentOfChildDone(ctx context.Context, prev, issue db.Is
 	}
 	h.publishEvent(createdEvent)
 
-	// Dispatch the explicit trigger / inbox row for the parent assignee.
-	// Listener-level mention parsing is intentionally NOT involved (the
-	// notification + subscriber listeners both short-circuit on
-	// author_type='system'); this keeps smuggled mentions from the child
-	// title inert and gives the platform a single place to apply the loop
-	// and idempotency guards.
 	h.dispatchParentAssigneeTrigger(ctx, parent, issue, comment, actorType, actorID)
 }
 
@@ -156,26 +112,14 @@ func (h *Handler) allSiblingChildrenResolved(ctx context.Context, parentID, comp
 	return openSiblings == 0
 }
 
-// sanitizeChildTitleForSystemComment removes mention-style markdown from a
-// child issue's title before it is embedded into the parent's system
-// comment. Smuggled mentions are already harmless on the listener path
-// (notification + subscriber listeners both skip system comments), but the
-// timeline still renders the title verbatim — stripping the markdown keeps
-// the rendered comment readable and stops a maliciously titled child issue
-// from looking like a directive ("@all please look").
+// sanitizeChildTitleForSystemComment prevents untrusted titles from rendering
+// an active mention inside the parent system comment.
 func sanitizeChildTitleForSystemComment(title string) string {
-	// Replace any markdown link target so the regex no longer matches it,
-	// while preserving the human-readable label text. `]` and `(` are the
-	// minimum delimiters of the mention regex; replacing the `(` is enough
-	// to break the match without mangling the label.
-	cleaned := strings.ReplaceAll(title, "](mention://", "] (mention-stripped://")
-	return cleaned
+	return strings.ReplaceAll(title, "](mention://", "] (mention-stripped://")
 }
 
-// buildParentAssigneeMention returns the markdown prefix that the system
-// comment should lead with, including a trailing space, so the body reads
-// like a normal mention-led comment. Returns the empty string when the
-// parent has no assignee or the assignee row could not be loaded.
+// buildParentAssigneeMention returns an empty prefix when the assignee is
+// absent or no longer belongs to the workspace.
 func (h *Handler) buildParentAssigneeMention(ctx context.Context, parent db.Issue) string {
 	if !parent.AssigneeType.Valid || !parent.AssigneeID.Valid {
 		return ""
@@ -187,12 +131,8 @@ func (h *Handler) buildParentAssigneeMention(ctx context.Context, parent db.Issu
 	return fmt.Sprintf("[@%s](mention://%s/%s) ", label, parent.AssigneeType.String, uuidToString(parent.AssigneeID))
 }
 
-// resolveAssigneeMentionLabel returns the label text to render inside the
-// mention link. The label is for human display only — the mention regex
-// keys off the URL path, not the label — but a sensible fallback keeps the
-// rendered comment legible if the frontend has not pre-loaded the assignee.
-// Returns ok=false when the assignee row cannot be loaded; the caller
-// should then omit the mention entirely rather than emit a broken link.
+// resolveAssigneeMentionLabel loads display text without weakening the
+// workspace boundary used by the mention target.
 func (h *Handler) resolveAssigneeMentionLabel(ctx context.Context, workspaceID pgtype.UUID, assigneeType string, assigneeID pgtype.UUID) (string, bool) {
 	switch assigneeType {
 	case "agent":
@@ -217,10 +157,7 @@ func (h *Handler) resolveAssigneeMentionLabel(ctx context.Context, workspaceID p
 	return "", false
 }
 
-// sanitizeMentionLabel strips characters that would break the mention
-// markdown if a name contained them. The mention regex is non-greedy on the
-// label, so a stray `]` would short-circuit it. Names with `]` are
-// vanishingly rare but cheap to defend against.
+// sanitizeMentionLabel keeps user-controlled names inside the Markdown label.
 func sanitizeMentionLabel(name string) string {
 	cleaned := strings.ReplaceAll(name, "]", "")
 	cleaned = strings.TrimSpace(cleaned)
@@ -230,50 +167,10 @@ func sanitizeMentionLabel(name string) string {
 	return cleaned
 }
 
-// dispatchParentAssigneeTrigger fires the explicit side effect that pairs
-// with the @mention link in the system comment body — an agent task for
-// agent or squad-leader assignees. Member assignees never reach this code
-// path; notifyParentOfChildDone skips them outright. The generic comment
-// listener is intentionally bypassed (it short-circuits on
-// author_type='system'), so this is the single place where the platform
-// applies loop and idempotency guards for the child-done notification.
-//
-// Side-effect semantics (intentionally narrower than a normal @mention):
-//   - agent parent: one EnqueueTaskForMention on the parent assignee, same
-//     trigger surface as a real @-mention so dedupe and readiness checks
-//     match what users already rely on.
-//   - squad parent: one EnqueueTaskForSquadLeader on the squad LEADER only.
-//     Unlike a human @squad mention, this does NOT fan out to squad members
-//     — child-done is a coordination signal, the leader decides whether
-//     and how to wake the rest of the squad. Documented here so reviewers
-//     don't read "system mention" as inheriting the full member fan-out.
-//   - notification_preference is not consulted: this is a platform routing
-//     signal targeted at the assignee that already owns the parent, not a
-//     general notification. Per-user mute settings are evaluated by the
-//     downstream agent_task / inbox pipeline once the task is dispatched.
-//   - notification_listeners.go short-circuits on author_type='system', so
-//     subscriber emails and member-inbox rows from smuggled mentions in the
-//     child title are inert — only the explicit dispatch below runs.
-//
-// Guards applied here:
-//   - No-op when the parent has no assignee row.
-//   - Squad loop guard (squad parent only): skip when the finished child is
-//     the same squad, or its effective owner is the parent squad's leader. A
-//     squad leader already observes same-squad work through its own
-//     coordination cycle — the worker's completion comment wakes the leader
-//     via computeAssignedSquadLeaderCommentTrigger — so the child-done trigger would
-//     be redundant; this also closes the cross-squad shared-leader loop. The
-//     AGENT parent path intentionally has NO such guard (MUL-2808): a lone
-//     agent that decomposes its parent into sub-issues it owns itself has no
-//     other wake path, and waking the parent agent when its child finishes is
-//     a serial sub-task handoff across two DIFFERENT issues — explicitly not a
-//     self-loop per isAgentRunningOnIssue, and consistent with the @mention
-//     self-trigger path (computeMentionedAgentCommentTriggers). Runaway re-triggering is
-//     bounded by the idempotency guard below, not by suppressing the trigger.
-//   - Idempotency: HasPendingTaskForIssueAndAgent dedupes rapid-fire enqueues
-//     for the same parent (e.g. two children finishing back-to-back).
-//   - Readiness: archived agents / missing runtimes are silently skipped
-//     so a closed-out agent does not surface as a phantom assignee.
+// dispatchParentAssigneeTrigger wakes an Agent directly or a Squad leader.
+// Both paths reject archived targets and deduplicate pending parent work; the
+// Squad path additionally prevents distinct child owners with the same leader
+// from forming a trigger loop.
 func (h *Handler) dispatchParentAssigneeTrigger(ctx context.Context, parent, child db.Issue, systemComment db.Comment, actorType, actorID string) {
 	if !parent.AssigneeType.Valid || !parent.AssigneeID.Valid {
 		return
@@ -287,19 +184,8 @@ func (h *Handler) dispatchParentAssigneeTrigger(ctx context.Context, parent, chi
 	}
 }
 
-// triggerChildDoneAgent enqueues a mention-style task for the parent's
-// agent assignee.
-//
-// There is intentionally NO same-agent self-trigger guard here, unlike the
-// squad path. Waking the parent agent when one of its children finishes is a
-// serial sub-task handoff between two DIFFERENT issues, which the platform
-// loop model treats as legitimate ("not a loop and must fire" — see
-// isAgentRunningOnIssue); only re-entering the SAME issue is a loop. A lone
-// agent that decomposes its parent into sub-issues it owns itself has no
-// other wake path, so the old "child owner == parent agent" guard silently
-// stranded those parents (MUL-2808). Runaway re-triggering is prevented by
-// the HasPendingTaskForIssueAndAgent dedup below, exactly as the @mention
-// self-trigger path relies on it (see computeMentionedAgentCommentTriggers).
+// triggerChildDoneAgent permits the same Agent to own parent and child: this
+// is a handoff between Issues, not re-entry into one Issue.
 func (h *Handler) triggerChildDoneAgent(ctx context.Context, parent db.Issue, triggerCommentID pgtype.UUID) {
 	agent, err := h.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
 		ID:          parent.AssigneeID,
@@ -325,13 +211,8 @@ func (h *Handler) triggerChildDoneAgent(ctx context.Context, parent db.Issue, tr
 	}
 }
 
-// triggerChildDoneSquad enqueues a leader-role task for the parent's squad
-// assignee. A child finishing and waking its parent is a serial sub-task
-// handoff between two different issues, so same-squad children must wake the
-// parent leader; without that, canonical squad-owned parent/child plans strand
-// the parent after all children finish. The loop guard remains for distinct
-// child owners with the same effective leader — child agent == leader, or a
-// different child squad's leader == this squad's leader.
+// triggerChildDoneSquad wakes the leader for same-Squad children but rejects a
+// distinct child Agent or Squad that resolves to that same leader.
 func (h *Handler) triggerChildDoneSquad(ctx context.Context, parent, child db.Issue, triggerCommentID pgtype.UUID, actorType, actorID string) {
 	squad, err := h.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
 		ID:          parent.AssigneeID,
@@ -385,20 +266,8 @@ func (h *Handler) triggerChildDoneSquad(ctx context.Context, parent, child db.Is
 	}
 }
 
-// effectiveChildAgentOwner returns the agent identity that effectively
-// "owns" the child issue from the perspective of the child-done trigger:
-//
-//   - child agent assignee → that agent
-//   - child squad assignee → that squad's leader (the agent that would
-//     actually act on a leader task and is the entry point for any squad
-//     work; a shared leader across two squads is the loop vector the
-//     callers above defend against)
-//   - anything else (member assignee, no assignee, missing squad row) →
-//     invalid UUID, signalling "no shared owner to compare against"
-//
-// Callers compare this against the agent they are about to trigger; equality
-// means we'd be enqueueing the same agent that just finished the child,
-// which is the loop case.
+// effectiveChildAgentOwner resolves an Agent assignee directly and a Squad
+// assignee to its leader. Other or missing assignees return an invalid UUID.
 func (h *Handler) effectiveChildAgentOwner(ctx context.Context, child db.Issue) pgtype.UUID {
 	if !child.AssigneeType.Valid || !child.AssigneeID.Valid {
 		return pgtype.UUID{}
