@@ -6,6 +6,8 @@ import (
 	"testing"
 )
 
+const FrameHeaderTypeEvent = "event"
+
 // TestFrameRoundTripPreservesAllFields ensures every set field on the
 // outbound Frame survives marshal+unmarshal. This catches symmetric
 // bugs (where our marshal and unmarshal agree but neither matches the
@@ -95,7 +97,7 @@ func TestFrameMarshalIsSDKByteCompatible(t *testing.T) {
 			expected: "08001000182a20002a0c0a04747970651204706f6e6732003a004a00",
 		},
 		{
-			name:  "ack_data_frame",
+			name: "ack_data_frame",
 			frame: NewAckFrame(&Frame{
 				Method:  FrameMethodData,
 				Service: 7,

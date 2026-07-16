@@ -51,7 +51,7 @@ export function incrementCountedOption<K, T extends { count: number }>(
   else options.set(key, { ...value, count: 1 } as T);
 }
 
-export function ToolbarCountBadge({ count }: { count: number }) {
+function ToolbarCountBadge({ count }: { count: number }) {
   return (
     <span className="ml-auto pl-3 text-xs text-muted-foreground">{count}</span>
   );

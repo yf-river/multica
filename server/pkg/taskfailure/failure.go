@@ -5,8 +5,6 @@ package taskfailure
 // Reason is a persisted failure_reason value.
 type Reason string
 
-const agentErrorPrefix = "agent_error."
-
 const (
 	// Platform, scheduler, runtime, or deliberate workflow outcomes.
 	ReasonQueuedExpired           Reason = "queued_expired"

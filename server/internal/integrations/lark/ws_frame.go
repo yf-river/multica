@@ -47,11 +47,10 @@ const (
 // FrameHeaderType enumerates the values Lark puts in the Frame
 // header keyed `type`. These drive per-frame routing logic.
 const (
-	FrameHeaderTypeKey   = "type"
-	FrameHeaderTypeEvent = "event"
-	FrameHeaderTypeCard  = "card"
-	FrameHeaderTypePing  = "ping"
-	FrameHeaderTypePong  = "pong"
+	FrameHeaderTypeKey  = "type"
+	FrameHeaderTypeCard = "card"
+	FrameHeaderTypePing = "ping"
+	FrameHeaderTypePong = "pong"
 
 	// FrameHeaderMessageIDKey is the dedup / chunk key Lark sets on
 	// each data frame; reused as-is in the ACK so server can correlate.
