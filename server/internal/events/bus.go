@@ -70,22 +70,16 @@ func (b *Bus) Publish(e Event) {
 	globals := b.globalHandlers
 	b.mu.RUnlock()
 
+	dispatch(handlers, e, "event")
+	dispatch(globals, e, "global event")
+}
+
+func dispatch(handlers []Handler, e Event, scope string) {
 	for _, h := range handlers {
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
-					slog.Error("panic in event listener", "event_type", e.Type, "recovered", r)
-				}
-			}()
-			h(e)
-		}()
-	}
-
-	for _, h := range globals {
-		func() {
-			defer func() {
-				if r := recover(); r != nil {
-					slog.Error("panic in global event listener", "event_type", e.Type, "recovered", r)
+					slog.Error("panic in "+scope+" listener", "event_type", e.Type, "recovered", r)
 				}
 			}()
 			h(e)

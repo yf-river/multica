@@ -320,19 +320,16 @@ func (h *Hub) DeliverDaemonRuntime(scopeID string, frame []byte, eventID string)
 }
 
 func (h *Hub) notifyFrame(runtimeID string, data []byte, eventID string) (delivered bool, deduped bool) {
-	h.mu.RLock()
-	clients := h.byRuntime[runtimeID]
-	delivered, deduped, slow := notifyClients(clients, data, eventID)
-	h.mu.RUnlock()
-
-	h.evictSlowClients(slow)
-	return delivered, deduped
+	return h.notifyIndexedClients(h.byRuntime, runtimeID, data, eventID)
 }
 
 func (h *Hub) notifyWorkspaceFrame(workspaceID string, data []byte, eventID string) (delivered bool, deduped bool) {
+	return h.notifyIndexedClients(h.byWorkspace, workspaceID, data, eventID)
+}
+
+func (h *Hub) notifyIndexedClients(index map[string]map[*client]bool, key string, data []byte, eventID string) (delivered bool, deduped bool) {
 	h.mu.RLock()
-	clients := h.byWorkspace[workspaceID]
-	delivered, deduped, slow := notifyClients(clients, data, eventID)
+	delivered, deduped, slow := notifyClients(index[key], data, eventID)
 	h.mu.RUnlock()
 
 	h.evictSlowClients(slow)

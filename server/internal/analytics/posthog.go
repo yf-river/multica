@@ -24,12 +24,6 @@ type PostHogConfig struct {
 	APIKey      string
 	Host        string
 	Environment string
-
-	// Optional overrides. Zero values fall back to sensible defaults.
-	QueueSize  int
-	BatchSize  int
-	FlushEvery time.Duration
-	HTTPClient *http.Client
 }
 
 // PostHogClient ships events to PostHog's /batch/ endpoint. It enqueues events
@@ -40,6 +34,7 @@ type PostHogClient struct {
 	ch   chan Event
 	done chan struct{}
 	wg   sync.WaitGroup
+	http *http.Client
 
 	dropped atomic.Uint64 // events dropped because the queue was full
 	sent    atomic.Uint64
@@ -49,25 +44,14 @@ type PostHogClient struct {
 // NewPostHogClient starts the background flush worker. Caller must call Close
 // on shutdown to drain pending events.
 func NewPostHogClient(cfg PostHogConfig) *PostHogClient {
-	if cfg.QueueSize <= 0 {
-		cfg.QueueSize = defaultQueueSize
-	}
-	if cfg.BatchSize <= 0 {
-		cfg.BatchSize = defaultBatchSize
-	}
-	if cfg.FlushEvery <= 0 {
-		cfg.FlushEvery = defaultFlushEvery
-	}
-	if cfg.HTTPClient == nil {
-		cfg.HTTPClient = &http.Client{Timeout: defaultFlushTimeout}
-	}
 	if cfg.Environment == "" {
 		cfg.Environment = EnvironmentFromEnv()
 	}
 	c := &PostHogClient{
 		cfg:  cfg,
-		ch:   make(chan Event, cfg.QueueSize),
+		ch:   make(chan Event, defaultQueueSize),
 		done: make(chan struct{}),
+		http: &http.Client{Timeout: defaultFlushTimeout},
 	}
 	c.wg.Add(1)
 	go c.run()
@@ -105,10 +89,10 @@ func (c *PostHogClient) Close() {
 
 func (c *PostHogClient) run() {
 	defer c.wg.Done()
-	ticker := time.NewTicker(c.cfg.FlushEvery)
+	ticker := time.NewTicker(defaultFlushEvery)
 	defer ticker.Stop()
 
-	batch := make([]Event, 0, c.cfg.BatchSize)
+	batch := make([]Event, 0, defaultBatchSize)
 	flush := func() {
 		if len(batch) == 0 {
 			return
@@ -116,14 +100,17 @@ func (c *PostHogClient) run() {
 		c.send(batch)
 		batch = batch[:0]
 	}
+	appendEvent := func(e Event) {
+		batch = append(batch, e)
+		if len(batch) >= defaultBatchSize {
+			flush()
+		}
+	}
 
 	for {
 		select {
 		case e := <-c.ch:
-			batch = append(batch, e)
-			if len(batch) >= c.cfg.BatchSize {
-				flush()
-			}
+			appendEvent(e)
 		case <-ticker.C:
 			flush()
 		case <-c.done:
@@ -132,10 +119,7 @@ func (c *PostHogClient) run() {
 			for {
 				select {
 				case e := <-c.ch:
-					batch = append(batch, e)
-					if len(batch) >= c.cfg.BatchSize {
-						flush()
-					}
+					appendEvent(e)
 				default:
 					flush()
 					return
@@ -207,7 +191,7 @@ func (c *PostHogClient) send(batch []Event) {
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.cfg.HTTPClient.Do(req)
+	resp, err := c.http.Do(req)
 	if err != nil {
 		c.failed.Add(uint64(len(batch)))
 		slog.Warn("analytics: send batch failed", "error", err, "events", len(batch))
