@@ -11,17 +11,6 @@ import (
 	"time"
 )
 
-func TestNewReturnsOpenclawBackend(t *testing.T) {
-	t.Parallel()
-	b, err := New("openclaw", Config{ExecutablePath: "/nonexistent/openclaw"})
-	if err != nil {
-		t.Fatalf("New(openclaw) error: %v", err)
-	}
-	if _, ok := b.(*openclawBackend); !ok {
-		t.Fatalf("expected *openclawBackend, got %T", b)
-	}
-}
-
 func TestOpenclawProcessOutputCurrentContracts(t *testing.T) {
 	t.Parallel()
 

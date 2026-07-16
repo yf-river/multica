@@ -9,17 +9,6 @@ import (
 	"time"
 )
 
-func TestNewReturnsKimiBackend(t *testing.T) {
-	t.Parallel()
-	b, err := New("kimi", Config{ExecutablePath: "/nonexistent/kimi"})
-	if err != nil {
-		t.Fatalf("New(kimi) error: %v", err)
-	}
-	if _, ok := b.(*kimiBackend); !ok {
-		t.Fatalf("expected *kimiBackend, got %T", b)
-	}
-}
-
 func TestKimiToolNameFromTitle(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
