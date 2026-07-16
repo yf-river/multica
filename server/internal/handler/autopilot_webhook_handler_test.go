@@ -68,14 +68,11 @@ func createWebhookTestAutopilotForAgent(t *testing.T, agentID, status string) st
 
 func createWebhookTrigger(t *testing.T, autopilotID string, filters ...WebhookEventFilter) AutopilotTriggerResponse {
 	t.Helper()
-	w := httptest.NewRecorder()
 	body := map[string]any{"kind": "webhook"}
 	if len(filters) > 0 {
 		body["event_filters"] = filters
 	}
-	req := newRequest("POST", "/api/autopilots/"+autopilotID+"/triggers", body)
-	req = withURLParam(req, "id", autopilotID)
-	testHandler.CreateAutopilotTrigger(w, req)
+	w := requestCreateAutopilotTrigger(t, autopilotID, body, "")
 	if w.Code != http.StatusCreated {
 		t.Fatalf("CreateAutopilotTrigger: expected 201, got %d body=%s", w.Code, w.Body.String())
 	}
@@ -86,24 +83,65 @@ func createWebhookTrigger(t *testing.T, autopilotID string, filters ...WebhookEv
 	return resp
 }
 
+func requestCreateAutopilotTrigger(t *testing.T, autopilotID string, body any, idempotencyKey string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := newRequest("POST", "/api/autopilots/"+autopilotID+"/triggers", body)
+	req = withURLParams(req, "id", autopilotID)
+	if idempotencyKey != "" {
+		req.Header.Set("Idempotency-Key", idempotencyKey)
+	}
+	w := httptest.NewRecorder()
+	testHandler.CreateAutopilotTrigger(w, req)
+	return w
+}
+
+func requestUpdateAutopilotTrigger(t *testing.T, autopilotID, triggerID string, body any) *httptest.ResponseRecorder {
+	t.Helper()
+	req := newRequest("PATCH", "/api/autopilots/"+autopilotID+"/triggers/"+triggerID, body)
+	req = withURLParams(req, "id", autopilotID, "triggerId", triggerID)
+	w := httptest.NewRecorder()
+	testHandler.UpdateAutopilotTrigger(w, req)
+	return w
+}
+
+func requestRotateWebhookToken(t *testing.T, autopilotID, triggerID, idempotencyKey string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := newRequest("POST", fmt.Sprintf("/api/autopilots/%s/triggers/%s/rotate-webhook-token", autopilotID, triggerID), nil)
+	req = withURLParams(req, "id", autopilotID, "triggerId", triggerID)
+	req.Header.Set("Idempotency-Key", idempotencyKey)
+	w := httptest.NewRecorder()
+	testHandler.RotateAutopilotTriggerWebhookToken(w, req)
+	return w
+}
+
+func decodeAutopilotTriggerResponse(t *testing.T, w *httptest.ResponseRecorder) AutopilotTriggerResponse {
+	t.Helper()
+	var response AutopilotTriggerResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	return response
+}
+
+func decodeWebhookResponse(t *testing.T, w *httptest.ResponseRecorder) map[string]any {
+	t.Helper()
+	var response map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode webhook response: %v", err)
+	}
+	return response
+}
+
 func TestCreateAutopilotTrigger_ReplaysCommittedCreate(t *testing.T) {
 	apID := createWebhookTestAutopilot(t, "active")
 	requestKey := uuid.NewString()
 	create := func() AutopilotTriggerResponse {
 		t.Helper()
-		w := httptest.NewRecorder()
-		req := newRequest("POST", "/api/autopilots/"+apID+"/triggers", map[string]any{"kind": "webhook"})
-		req = withURLParams(req, "id", apID)
-		req.Header.Set("Idempotency-Key", requestKey)
-		testHandler.CreateAutopilotTrigger(w, req)
+		w := requestCreateAutopilotTrigger(t, apID, map[string]any{"kind": "webhook"}, requestKey)
 		if w.Code != http.StatusCreated {
 			t.Fatalf("create trigger status = %d: %s", w.Code, w.Body.String())
 		}
-		var response AutopilotTriggerResponse
-		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-			t.Fatal(err)
-		}
-		return response
+		return decodeAutopilotTriggerResponse(t, w)
 	}
 
 	first := create()
@@ -111,13 +149,9 @@ func TestCreateAutopilotTrigger_ReplaysCommittedCreate(t *testing.T) {
 	if !reflect.DeepEqual(replay, first) {
 		t.Fatalf("replayed trigger create = %#v, want exact %#v", replay, first)
 	}
-	conflict := httptest.NewRecorder()
-	conflictReq := newRequest("POST", "/api/autopilots/"+apID+"/triggers", map[string]any{
+	conflict := requestCreateAutopilotTrigger(t, apID, map[string]any{
 		"kind": "schedule", "cron_expression": "0 9 * * *", "timezone": "UTC",
-	})
-	conflictReq = withURLParams(conflictReq, "id", apID)
-	conflictReq.Header.Set("Idempotency-Key", requestKey)
-	testHandler.CreateAutopilotTrigger(conflict, conflictReq)
+	}, requestKey)
 	if conflict.Code != http.StatusConflict {
 		t.Fatalf("changed trigger create with same key = %d %s, want 409", conflict.Code, conflict.Body.String())
 	}
@@ -138,13 +172,8 @@ func TestCreateAutopilotTrigger_ConcurrentReplayCreatesOnce(t *testing.T) {
 		go func() {
 			defer done.Done()
 			start.Wait()
-			w := httptest.NewRecorder()
-			req := newRequest("POST", "/api/autopilots/"+apID+"/triggers", map[string]any{"kind": "webhook"})
-			req = withURLParams(req, "id", apID)
-			req.Header.Set("Idempotency-Key", requestKey)
-			testHandler.CreateAutopilotTrigger(w, req)
-			var response AutopilotTriggerResponse
-			_ = json.Unmarshal(w.Body.Bytes(), &response)
+			w := requestCreateAutopilotTrigger(t, apID, map[string]any{"kind": "webhook"}, requestKey)
+			response := decodeAutopilotTriggerResponse(t, w)
 			statuses <- w.Code
 			responses <- response
 		}()
@@ -185,11 +214,7 @@ func TestCreateAutopilotTrigger_CompletionFailureRollsBackCreate(t *testing.T) {
 	requestKey := uuid.NewString()
 	installResourceCreateCompletionFailure(t, resourceTypeAutopilotTrigger, requestKey)
 
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/autopilots/"+apID+"/triggers", map[string]any{"kind": "webhook"})
-	req = withURLParams(req, "id", apID)
-	req.Header.Set("Idempotency-Key", requestKey)
-	testHandler.CreateAutopilotTrigger(w, req)
+	w := requestCreateAutopilotTrigger(t, apID, map[string]any{"kind": "webhook"}, requestKey)
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("forced trigger create completion failure = %d %s, want 500", w.Code, w.Body.String())
 	}
@@ -220,10 +245,7 @@ func TestWebhookHandler_FiltersUndeclaredEvent(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
 	}
-	var resp map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	resp := decodeWebhookResponse(t, w)
 	if resp["status"] != "ignored" || resp["reason"] != "event_filtered" {
 		t.Fatalf("expected ignored/event_filtered, got %#v body=%s", resp, w.Body.String())
 	}
@@ -257,10 +279,7 @@ func TestWebhookHandler_AllowsDeclaredEvent(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
 	}
-	var resp map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	resp := decodeWebhookResponse(t, w)
 	if resp["status"] != "accepted" && resp["status"] != "skipped" {
 		t.Fatalf("expected accepted or skipped, got %#v", resp)
 	}
@@ -277,10 +296,7 @@ func TestWebhookHandler_EmptyFiltersAllowsAll(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
 	}
-	var resp map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	resp := decodeWebhookResponse(t, w)
 	if resp["status"] != "accepted" && resp["status"] != "skipped" {
 		t.Fatalf("expected accepted or skipped, got %#v", resp)
 	}
@@ -301,10 +317,7 @@ func TestCreateWebhookTrigger_EventFiltersRoundTripAsJSONArray(t *testing.T) {
 			{"event": "pull_request", "actions": []string{"opened", "synchronize"}},
 		},
 	}
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/autopilots/"+apID+"/triggers", body)
-	req = withURLParam(req, "id", apID)
-	testHandler.CreateAutopilotTrigger(w, req)
+	w := requestCreateAutopilotTrigger(t, apID, body, "")
 	if w.Code != http.StatusCreated {
 		t.Fatalf("expected 201, got %d body=%s", w.Code, w.Body.String())
 	}
@@ -348,12 +361,9 @@ func TestUpdateWebhookTrigger_ExplicitEmptyArrayClearsFilters(t *testing.T) {
 		t.Fatalf("seed should have 1 filter, got %d", len(created.EventFilters))
 	}
 
-	w := httptest.NewRecorder()
-	req := newRequest("PATCH", "/api/autopilots/"+apID+"/triggers/"+created.ID, map[string]any{
+	w := requestUpdateAutopilotTrigger(t, apID, created.ID, map[string]any{
 		"event_filters": []any{},
 	})
-	req = withURLParams(req, "id", apID, "triggerId", created.ID)
-	testHandler.UpdateAutopilotTrigger(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
 	}
@@ -388,12 +398,9 @@ func TestUpdateWebhookTrigger_OmittedFiltersPreserveExisting(t *testing.T) {
 
 	// PATCH that does NOT include event_filters at all. Must leave the
 	// existing filter set untouched (omitted ≠ clear).
-	w := httptest.NewRecorder()
-	req := newRequest("PATCH", "/api/autopilots/"+apID+"/triggers/"+created.ID, map[string]any{
+	w := requestUpdateAutopilotTrigger(t, apID, created.ID, map[string]any{
 		"label": "renamed-but-keep-filters",
 	})
-	req = withURLParams(req, "id", apID, "triggerId", created.ID)
-	testHandler.UpdateAutopilotTrigger(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
 	}
@@ -413,15 +420,12 @@ func TestUpdateWebhookTrigger_ReplacesFilters(t *testing.T) {
 		WebhookEventFilter{Event: "workflow_run", Actions: []string{"completed"}},
 	)
 
-	w := httptest.NewRecorder()
-	req := newRequest("PATCH", "/api/autopilots/"+apID+"/triggers/"+created.ID, map[string]any{
+	w := requestUpdateAutopilotTrigger(t, apID, created.ID, map[string]any{
 		"event_filters": []map[string]any{
 			{"event": "pull_request", "actions": []string{"opened"}},
 			{"event": "issues"},
 		},
 	})
-	req = withURLParams(req, "id", apID, "triggerId", created.ID)
-	testHandler.UpdateAutopilotTrigger(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
 	}
@@ -440,15 +444,12 @@ func TestUpdateWebhookTrigger_ReplacesFilters(t *testing.T) {
 func TestCreateAutopilotTrigger_RejectsInvalidEventFilter(t *testing.T) {
 	apID := createWebhookTestAutopilot(t, "active")
 
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/autopilots/"+apID+"/triggers", map[string]any{
+	w := requestCreateAutopilotTrigger(t, apID, map[string]any{
 		"kind": "webhook",
 		"event_filters": []map[string]any{
 			{"event": "", "actions": []string{"completed"}},
 		},
-	})
-	req = withURLParam(req, "id", apID)
-	testHandler.CreateAutopilotTrigger(w, req)
+	}, "")
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 on empty event name, got %d body=%s", w.Code, w.Body.String())
 	}
@@ -457,16 +458,13 @@ func TestCreateAutopilotTrigger_RejectsInvalidEventFilter(t *testing.T) {
 func TestCreateAutopilotTrigger_RejectsEventFiltersOnSchedule(t *testing.T) {
 	apID := createWebhookTestAutopilot(t, "active")
 
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/autopilots/"+apID+"/triggers", map[string]any{
+	w := requestCreateAutopilotTrigger(t, apID, map[string]any{
 		"kind":            "schedule",
 		"cron_expression": "0 9 * * *",
 		"event_filters": []map[string]any{
 			{"event": "workflow_run"},
 		},
-	})
-	req = withURLParam(req, "id", apID)
-	testHandler.CreateAutopilotTrigger(w, req)
+	}, "")
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 on event_filters for schedule trigger, got %d body=%s", w.Code, w.Body.String())
 	}
@@ -613,8 +611,7 @@ func TestWebhookHandler_DisabledTriggerReturnsIgnored(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
 	}
-	var resp map[string]any
-	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	resp := decodeWebhookResponse(t, w)
 	if resp["status"] != "ignored" {
 		t.Fatalf("status: %v", resp["status"])
 	}
@@ -631,8 +628,7 @@ func TestWebhookHandler_PausedAutopilotReturnsIgnored(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
 	}
-	var resp map[string]any
-	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	resp := decodeWebhookResponse(t, w)
 	if resp["reason"] != "autopilot_paused" {
 		t.Fatalf("reason: %v", resp["reason"])
 	}
@@ -649,10 +645,7 @@ func TestWebhookHandler_ActiveDispatchesRunWithPayload(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
 	}
-	var resp map[string]any
-	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode: %v", err)
-	}
+	resp := decodeWebhookResponse(t, w)
 	if resp["status"] != "accepted" {
 		t.Fatalf("expected accepted, got %v body=%s", resp["status"], w.Body.String())
 	}
@@ -709,8 +702,7 @@ func TestWebhookHandler_GitHubHeaderInferredEvent(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
 	}
-	var resp map[string]any
-	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	resp := decodeWebhookResponse(t, w)
 	runID := resp["run_id"].(string)
 	run, err := testHandler.Queries.GetAutopilotRun(context.Background(), parseUUID(runID))
 	if err != nil {
@@ -750,11 +742,7 @@ func TestRotateWebhookToken_ReplacesOldToken(t *testing.T) {
 	trig := createWebhookTrigger(t, apID)
 	oldToken := *trig.WebhookToken
 
-	w := httptest.NewRecorder()
-	req := newRequest("POST", fmt.Sprintf("/api/autopilots/%s/triggers/%s/rotate-webhook-token", apID, trig.ID), nil)
-	req = withURLParams(req, "id", apID, "triggerId", trig.ID)
-	req.Header.Set("Idempotency-Key", uuid.NewString())
-	testHandler.RotateAutopilotTriggerWebhookToken(w, req)
+	w := requestRotateWebhookToken(t, apID, trig.ID, uuid.NewString())
 	if w.Code != http.StatusOK {
 		t.Fatalf("rotate: expected 200, got %d body=%s", w.Code, w.Body.String())
 	}
@@ -783,19 +771,11 @@ func TestRotateWebhookToken_ReplaysCommittedRotation(t *testing.T) {
 
 	rotate := func() AutopilotTriggerResponse {
 		t.Helper()
-		w := httptest.NewRecorder()
-		req := newRequest("POST", fmt.Sprintf("/api/autopilots/%s/triggers/%s/rotate-webhook-token", apID, trig.ID), nil)
-		req = withURLParams(req, "id", apID, "triggerId", trig.ID)
-		req.Header.Set("Idempotency-Key", requestKey)
-		testHandler.RotateAutopilotTriggerWebhookToken(w, req)
+		w := requestRotateWebhookToken(t, apID, trig.ID, requestKey)
 		if w.Code != http.StatusOK {
 			t.Fatalf("rotate status = %d: %s", w.Code, w.Body.String())
 		}
-		var response AutopilotTriggerResponse
-		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
-			t.Fatal(err)
-		}
-		return response
+		return decodeAutopilotTriggerResponse(t, w)
 	}
 
 	first := rotate()
@@ -804,11 +784,7 @@ func TestRotateWebhookToken_ReplaysCommittedRotation(t *testing.T) {
 		t.Fatalf("replayed rotation = %#v, want exact %#v", replay, first)
 	}
 	other := createWebhookTrigger(t, apID)
-	conflict := httptest.NewRecorder()
-	conflictReq := newRequest("POST", fmt.Sprintf("/api/autopilots/%s/triggers/%s/rotate-webhook-token", apID, other.ID), nil)
-	conflictReq = withURLParams(conflictReq, "id", apID, "triggerId", other.ID)
-	conflictReq.Header.Set("Idempotency-Key", requestKey)
-	testHandler.RotateAutopilotTriggerWebhookToken(conflict, conflictReq)
+	conflict := requestRotateWebhookToken(t, apID, other.ID, requestKey)
 	if conflict.Code != http.StatusConflict {
 		t.Fatalf("same key for another trigger = %d %s, want 409", conflict.Code, conflict.Body.String())
 	}
@@ -830,11 +806,7 @@ func TestRotateWebhookToken_ConcurrentReplayRotatesOnce(t *testing.T) {
 		go func() {
 			defer done.Done()
 			start.Wait()
-			w := httptest.NewRecorder()
-			req := newRequest("POST", fmt.Sprintf("/api/autopilots/%s/triggers/%s/rotate-webhook-token", apID, trig.ID), nil)
-			req = withURLParams(req, "id", apID, "triggerId", trig.ID)
-			req.Header.Set("Idempotency-Key", requestKey)
-			testHandler.RotateAutopilotTriggerWebhookToken(w, req)
+			w := requestRotateWebhookToken(t, apID, trig.ID, requestKey)
 			var response AutopilotTriggerResponse
 			_ = json.Unmarshal(w.Body.Bytes(), &response)
 			statuses <- w.Code
@@ -894,11 +866,7 @@ func TestRotateWebhookToken_CompletionFailureRollsBackToken(t *testing.T) {
 		_, _ = testPool.Exec(context.Background(), fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, functionName))
 	})
 
-	w := httptest.NewRecorder()
-	req := newRequest("POST", fmt.Sprintf("/api/autopilots/%s/triggers/%s/rotate-webhook-token", apID, trig.ID), nil)
-	req = withURLParams(req, "id", apID, "triggerId", trig.ID)
-	req.Header.Set("Idempotency-Key", requestKey)
-	testHandler.RotateAutopilotTriggerWebhookToken(w, req)
+	w := requestRotateWebhookToken(t, apID, trig.ID, requestKey)
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("forced completion failure = %d %s, want 500", w.Code, w.Body.String())
 	}
@@ -929,8 +897,7 @@ func TestWebhookHandler_ArchivedAutopilotReturnsIgnored(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", w.Code, w.Body.String())
 	}
-	var resp map[string]any
-	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	resp := decodeWebhookResponse(t, w)
 	if resp["status"] != "ignored" || resp["reason"] != "autopilot_archived" {
 		t.Fatalf("expected ignored/autopilot_archived, got %#v", resp)
 	}
@@ -1005,12 +972,9 @@ func TestWebhookHandler_IPRateLimitNotBypassedByXFFSpoof(t *testing.T) {
 func TestCreateAutopilotTrigger_RejectsUnknownKind(t *testing.T) {
 	apID := createWebhookTestAutopilot(t, "active")
 
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/autopilots/"+apID+"/triggers", map[string]any{
+	w := requestCreateAutopilotTrigger(t, apID, map[string]any{
 		"kind": "poll",
-	})
-	req = withURLParam(req, "id", apID)
-	testHandler.CreateAutopilotTrigger(w, req)
+	}, "")
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 on unknown kind, got %d body=%s", w.Code, w.Body.String())
 	}
@@ -1022,13 +986,10 @@ func TestCreateAutopilotTrigger_RejectsUnknownKind(t *testing.T) {
 func TestCreateAutopilotTrigger_RejectsWebhookWithTimezone(t *testing.T) {
 	apID := createWebhookTestAutopilot(t, "active")
 
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/autopilots/"+apID+"/triggers", map[string]any{
+	w := requestCreateAutopilotTrigger(t, apID, map[string]any{
 		"kind":     "webhook",
 		"timezone": "Europe/Berlin",
-	})
-	req = withURLParam(req, "id", apID)
-	testHandler.CreateAutopilotTrigger(w, req)
+	}, "")
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 on webhook+timezone, got %d body=%s", w.Code, w.Body.String())
 	}
@@ -1038,12 +999,9 @@ func TestUpdateAutopilotTrigger_RejectsCronExpressionOnWebhookKind(t *testing.T)
 	apID := createWebhookTestAutopilot(t, "active")
 	trig := createWebhookTrigger(t, apID)
 
-	w := httptest.NewRecorder()
-	req := newRequest("PATCH", "/api/autopilots/"+apID+"/triggers/"+trig.ID, map[string]any{
+	w := requestUpdateAutopilotTrigger(t, apID, trig.ID, map[string]any{
 		"cron_expression": "0 0 * * *",
 	})
-	req = withURLParams(req, "id", apID, "triggerId", trig.ID)
-	testHandler.UpdateAutopilotTrigger(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 on cron_expression for webhook trigger, got %d body=%s", w.Code, w.Body.String())
 	}
@@ -1056,12 +1014,9 @@ func TestUpdateAutopilotTrigger_RejectsTimezoneOnWebhookKind(t *testing.T) {
 	apID := createWebhookTestAutopilot(t, "active")
 	trig := createWebhookTrigger(t, apID)
 
-	w := httptest.NewRecorder()
-	req := newRequest("PATCH", "/api/autopilots/"+apID+"/triggers/"+trig.ID, map[string]any{
+	w := requestUpdateAutopilotTrigger(t, apID, trig.ID, map[string]any{
 		"timezone": "Europe/Berlin",
 	})
-	req = withURLParams(req, "id", apID, "triggerId", trig.ID)
-	testHandler.UpdateAutopilotTrigger(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 on timezone for webhook trigger, got %d body=%s", w.Code, w.Body.String())
 	}
@@ -1074,13 +1029,10 @@ func TestUpdateAutopilotTrigger_AcceptsEnabledAndLabelOnWebhookKind(t *testing.T
 	apID := createWebhookTestAutopilot(t, "active")
 	trig := createWebhookTrigger(t, apID)
 
-	w := httptest.NewRecorder()
-	req := newRequest("PATCH", "/api/autopilots/"+apID+"/triggers/"+trig.ID, map[string]any{
+	w := requestUpdateAutopilotTrigger(t, apID, trig.ID, map[string]any{
 		"enabled": false,
 		"label":   "renamed",
 	})
-	req = withURLParams(req, "id", apID, "triggerId", trig.ID)
-	testHandler.UpdateAutopilotTrigger(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200 on enabled+label PATCH, got %d body=%s", w.Code, w.Body.String())
 	}
@@ -1097,8 +1049,7 @@ func TestGetAutopilotRun_ReturnsFullPayload(t *testing.T) {
 	if post.Code != http.StatusOK {
 		t.Fatalf("seed webhook: %d body=%s", post.Code, post.Body.String())
 	}
-	var seedResp map[string]any
-	_ = json.Unmarshal(post.Body.Bytes(), &seedResp)
+	seedResp := decodeWebhookResponse(t, post)
 	runID := seedResp["run_id"].(string)
 
 	wList := httptest.NewRecorder()
