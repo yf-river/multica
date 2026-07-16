@@ -383,7 +383,7 @@ func TestRunAgentPlaygroundRejectsInaccessiblePersonalAgent(t *testing.T) {
 	restrictedUserID := createAgentPlaygroundRestrictedMember(t)
 	w := httptest.NewRecorder()
 	req := newRequest(http.MethodPost, "/api/agent-playground/experiments/"+fixture.experimentID+"/run?workspace_id="+testWorkspaceID, nil)
-	req.Header.Set("X-User-ID", restrictedUserID)
+	req = withTestWorkspaceMember(req, testWorkspaceID, restrictedUserID)
 	req = withURLParam(req, "id", fixture.experimentID)
 	testHandler.RunAgentPlaygroundExperiment(w, req)
 	if w.Code != http.StatusForbidden {
@@ -412,7 +412,7 @@ func TestAgentPlaygroundHidesInaccessiblePersonalAgentHistory(t *testing.T) {
 
 	getW := httptest.NewRecorder()
 	getReq := newRequest(http.MethodGet, "/api/agent-playground/experiments/"+fixture.experimentID+"?workspace_id="+testWorkspaceID, nil)
-	getReq.Header.Set("X-User-ID", restrictedUserID)
+	getReq = withTestWorkspaceMember(getReq, testWorkspaceID, restrictedUserID)
 	getReq = withURLParam(getReq, "id", fixture.experimentID)
 	testHandler.GetAgentPlaygroundExperiment(getW, getReq)
 	if getW.Code != http.StatusForbidden {
@@ -421,7 +421,7 @@ func TestAgentPlaygroundHidesInaccessiblePersonalAgentHistory(t *testing.T) {
 
 	listW := httptest.NewRecorder()
 	listReq := newRequest(http.MethodGet, "/api/agent-playground/experiments?workspace_id="+testWorkspaceID, nil)
-	listReq.Header.Set("X-User-ID", restrictedUserID)
+	listReq = withTestWorkspaceMember(listReq, testWorkspaceID, restrictedUserID)
 	testHandler.ListAgentPlaygroundExperiments(listW, listReq)
 	if listW.Code != http.StatusOK {
 		t.Fatalf("list playground experiments: expected 200, got %d: %s", listW.Code, listW.Body.String())
@@ -440,7 +440,7 @@ func TestAgentPlaygroundHidesInaccessiblePersonalAgentHistory(t *testing.T) {
 
 	syncW := httptest.NewRecorder()
 	syncReq := newRequest(http.MethodPost, "/api/agent-playground/experiments/"+fixture.experimentID+"/sync?workspace_id="+testWorkspaceID, nil)
-	syncReq.Header.Set("X-User-ID", restrictedUserID)
+	syncReq = withTestWorkspaceMember(syncReq, testWorkspaceID, restrictedUserID)
 	syncReq = withURLParam(syncReq, "id", fixture.experimentID)
 	testHandler.SyncAgentPlaygroundExperiment(syncW, syncReq)
 	if syncW.Code != http.StatusForbidden {
@@ -572,7 +572,7 @@ func TestJudgeAgentPlaygroundRejectsInaccessiblePersonalAgent(t *testing.T) {
 	restrictedUserID := createAgentPlaygroundRestrictedMember(t)
 	w := httptest.NewRecorder()
 	req := newRequest(http.MethodPost, "/api/agent-playground/experiments/"+fixture.experimentID+"/judge?workspace_id="+testWorkspaceID, setAgentPlaygroundJudgeRequest{JudgeAgentID: fixture.agentID})
-	req.Header.Set("X-User-ID", restrictedUserID)
+	req = withTestWorkspaceMember(req, testWorkspaceID, restrictedUserID)
 	req = withURLParam(req, "id", fixture.experimentID)
 	testHandler.JudgeAgentPlaygroundExperiment(w, req)
 	if w.Code != http.StatusForbidden {

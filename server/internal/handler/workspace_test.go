@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/multica-ai/multica/server/internal/middleware"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -223,7 +224,9 @@ func TestCreateMemberFailureDoesNotLeaveLoginCapableOrphanUser(t *testing.T) {
 	req.Header.Set("Idempotency-Key", uuid.NewString())
 	req = withURLParam(req, "id", testWorkspaceID)
 	w := httptest.NewRecorder()
-	testHandler.CreateMember(w, req)
+	middleware.RequireWorkspaceRoleFromURL(testHandler.Queries, "id", "owner", "admin")(
+		http.HandlerFunc(testHandler.CreateMember),
+	).ServeHTTP(w, req)
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("member failure = %d %s, want 500", w.Code, w.Body.String())
 	}
@@ -267,12 +270,13 @@ func TestCreateMemberRejectsPlainWorkspaceMember(t *testing.T) {
 	req := newRequest(http.MethodPost, "/api/workspaces/"+testWorkspaceID+"/members", map[string]any{
 		"account": targetAccount, "name": "Unauthorized Admin", "password": "UnauthorizedAdmin1!", "role": "admin",
 	})
-	req.Header.Set("X-User-ID", requesterID)
-	req.Header.Set("X-Workspace-ID", testWorkspaceID)
+	req = withTestWorkspaceMember(req, testWorkspaceID, requesterID)
 	req.Header.Set("Idempotency-Key", requestKey)
 	req = withURLParam(req, "id", testWorkspaceID)
 	w := httptest.NewRecorder()
-	testHandler.CreateMember(w, req)
+	middleware.RequireWorkspaceRoleFromURL(testHandler.Queries, "id", "owner", "admin")(
+		http.HandlerFunc(testHandler.CreateMember),
+	).ServeHTTP(w, req)
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("plain member create = %d %s, want 403", w.Code, w.Body.String())
 	}
@@ -428,12 +432,7 @@ func TestCreateWorkspace_DisabledByConfig(t *testing.T) {
 	}
 }
 
-// TestDeleteWorkspace_RequiresOwner exercises the in-handler authorization
-// added to DeleteWorkspace by calling the handler directly (bypassing the
-// router-level RequireWorkspaceRoleFromURL middleware). Without the handler
-// check, a non-owner member request would reach DeleteWorkspace and erase the
-// workspace; with it, the handler must return 403 and leave the workspace
-// intact.
+// TestDeleteWorkspace_RequiresOwner exercises the owner-only route boundary.
 func TestDeleteWorkspace_RequiresOwner(t *testing.T) {
 	ctx := context.Background()
 
@@ -462,7 +461,9 @@ VALUES ($1, $2, 'admin')
 	w := httptest.NewRecorder()
 	req := newRequest("DELETE", "/api/workspaces/"+wsID, nil)
 	req = withURLParam(req, "id", wsID)
-	testHandler.DeleteWorkspace(w, req)
+	middleware.RequireWorkspaceRoleFromURL(testHandler.Queries, "id", "owner")(
+		http.HandlerFunc(testHandler.DeleteWorkspace),
+	).ServeHTTP(w, req)
 
 	if w.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 from DeleteWorkspace handler for admin (non-owner), got %d: %s", w.Code, w.Body.String())
@@ -473,13 +474,11 @@ VALUES ($1, $2, 'admin')
 		t.Fatalf("verify workspace: %v", err)
 	}
 	if !exists {
-		t.Fatal("workspace was deleted despite non-owner request — handler-level check did not fire")
+		t.Fatal("workspace was deleted despite the owner-only route boundary")
 	}
 }
 
-// TestDeleteWorkspace_OwnerSucceeds is the positive counterpart: an owner
-// calling DeleteWorkspace directly must succeed (204) and the workspace must
-// be gone. This guards the handler check against being too strict.
+// TestDeleteWorkspace_OwnerSucceeds is the positive route-boundary counterpart.
 func TestDeleteWorkspace_OwnerSucceeds(t *testing.T) {
 	ctx := context.Background()
 
@@ -517,7 +516,9 @@ VALUES ($1, 123456789, 'multica-ai', 'multica', 3366, 987654321, 'abc123', 15368
 	w := httptest.NewRecorder()
 	req := newRequest("DELETE", "/api/workspaces/"+wsID, nil)
 	req = withURLParam(req, "id", wsID)
-	testHandler.DeleteWorkspace(w, req)
+	middleware.RequireWorkspaceRoleFromURL(testHandler.Queries, "id", "owner")(
+		http.HandlerFunc(testHandler.DeleteWorkspace),
+	).ServeHTTP(w, req)
 
 	if w.Code != http.StatusNoContent {
 		t.Fatalf("expected 204 from DeleteWorkspace handler for owner, got %d: %s", w.Code, w.Body.String())
@@ -577,6 +578,7 @@ VALUES ($1, $2, 'owner')
 	req := newRequest("PATCH", "/api/workspaces/"+wsID, map[string]any{
 		"avatar_url": avatarURL,
 	})
+	req = withTestWorkspaceMember(req, wsID, testUserID)
 	req = withURLParam(req, "id", wsID)
 	testHandler.UpdateWorkspace(w, req)
 
@@ -608,6 +610,7 @@ VALUES ($1, $2, 'owner')
 	req2 := newRequest("PATCH", "/api/workspaces/"+wsID, map[string]any{
 		"description": "new description",
 	})
+	req2 = withTestWorkspaceMember(req2, wsID, testUserID)
 	req2 = withURLParam(req2, "id", wsID)
 	testHandler.UpdateWorkspace(w2, req2)
 
@@ -654,6 +657,7 @@ VALUES ($1, $2, 'owner')
 		req := newRequest("PATCH", "/api/workspaces/"+wsID, map[string]any{
 			"settings": []any{"not", "an", "object"},
 		})
+		req = withTestWorkspaceMember(req, wsID, testUserID)
 		req = withURLParam(req, "id", wsID)
 		testHandler.UpdateWorkspace(w, req)
 
@@ -683,6 +687,7 @@ VALUES ($1, $2, 'owner')
 				{"url": "not-a-url"},
 			},
 		})
+		req = withTestWorkspaceMember(req, wsID, testUserID)
 		req = withURLParam(req, "id", wsID)
 		testHandler.UpdateWorkspace(w, req)
 
@@ -715,6 +720,7 @@ VALUES ($1, $2, 'owner')
 				},
 			},
 		})
+		req = withTestWorkspaceMember(req, wsID, testUserID)
 		req = withURLParam(req, "id", wsID)
 		testHandler.UpdateWorkspace(w, req)
 
@@ -757,6 +763,7 @@ VALUES ($1, $2, 'owner')
 			req := newRequest("PATCH", "/api/workspaces/"+wsID, map[string]any{
 				"repos": []map[string]any{repo},
 			})
+			req = withTestWorkspaceMember(req, wsID, testUserID)
 			req = withURLParam(req, "id", wsID)
 			testHandler.UpdateWorkspace(w, req)
 			if w.Code != http.StatusBadRequest {
@@ -783,6 +790,7 @@ VALUES ($1, $2, 'owner')
 				},
 			},
 		})
+		req = withTestWorkspaceMember(req, wsID, testUserID)
 		req = withURLParam(req, "id", wsID)
 		testHandler.UpdateWorkspace(w, req)
 		if w.Code != http.StatusOK {
@@ -793,7 +801,7 @@ VALUES ($1, $2, 'owner')
 		req = newRequest("POST", "/api/projects?workspace_id="+wsID, map[string]any{
 			"title": "Workspace repo removal guard",
 		})
-		req.Header.Set("X-Workspace-ID", wsID)
+		req = withTestWorkspaceMember(req, wsID, testUserID)
 		testHandler.CreateProject(w, req)
 		if w.Code != http.StatusCreated {
 			t.Fatalf("CreateProject: expected 201, got %d: %s", w.Code, w.Body.String())
@@ -804,6 +812,7 @@ VALUES ($1, $2, 'owner')
 		}
 		t.Cleanup(func() {
 			r := newRequest("DELETE", "/api/projects/"+project.ID, nil)
+			r = withTestWorkspaceMember(r, wsID, testUserID)
 			r = withURLParam(r, "id", project.ID)
 			testHandler.DeleteProject(httptest.NewRecorder(), r)
 		})
@@ -815,7 +824,7 @@ VALUES ($1, $2, 'owner')
 				"url": "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
 			},
 		})
-		req.Header.Set("X-Workspace-ID", wsID)
+		req = withTestWorkspaceMember(req, wsID, testUserID)
 		req = withURLParam(req, "id", project.ID)
 		testHandler.CreateProjectResource(w, req)
 		if w.Code != http.StatusCreated {
@@ -833,6 +842,7 @@ VALUES ($1, $2, 'owner')
 				},
 			},
 		})
+		req = withTestWorkspaceMember(req, wsID, testUserID)
 		req = withURLParam(req, "id", wsID)
 		testHandler.UpdateWorkspace(w, req)
 		if w.Code != http.StatusOK {
@@ -843,6 +853,7 @@ VALUES ($1, $2, 'owner')
 		req = newRequest("PATCH", "/api/workspaces/"+wsID, map[string]any{
 			"repos": []map[string]any{},
 		})
+		req = withTestWorkspaceMember(req, wsID, testUserID)
 		req = withURLParam(req, "id", wsID)
 		testHandler.UpdateWorkspace(w, req)
 		if w.Code != http.StatusConflict {
@@ -998,7 +1009,7 @@ func TestDeleteMember_RevokesTargetRuntimes(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	req := newRequest("DELETE", "/api/workspaces/"+fx.WorkspaceID+"/members/"+fx.MemberID, nil)
-	req.Header.Set("X-Workspace-ID", fx.WorkspaceID)
+	req = withTestWorkspaceMember(req, fx.WorkspaceID, testUserID)
 	req = withURLParams(req, "id", fx.WorkspaceID, "memberId", fx.MemberID)
 	testHandler.DeleteMember(w, req)
 
@@ -1019,8 +1030,7 @@ func TestLeaveWorkspace_RevokesOwnRuntimes(t *testing.T) {
 	// leaver is the request actor, not the workspace owner.
 	w := httptest.NewRecorder()
 	req := newRequest("DELETE", "/api/workspaces/"+fx.WorkspaceID+"/leave", nil)
-	req.Header.Set("X-User-ID", fx.TargetUserID)
-	req.Header.Set("X-Workspace-ID", fx.WorkspaceID)
+	req = withTestWorkspaceMember(req, fx.WorkspaceID, fx.TargetUserID)
 	req = withURLParam(req, "id", fx.WorkspaceID)
 	testHandler.LeaveWorkspace(w, req)
 
@@ -1072,7 +1082,7 @@ RETURNING id
 
 	w := httptest.NewRecorder()
 	req := newRequest("DELETE", "/api/workspaces/"+fx.WorkspaceID+"/members/"+fx.MemberID, nil)
-	req.Header.Set("X-Workspace-ID", fx.WorkspaceID)
+	req = withTestWorkspaceMember(req, fx.WorkspaceID, testUserID)
 	req = withURLParams(req, "id", fx.WorkspaceID, "memberId", fx.MemberID)
 	testHandler.DeleteMember(w, req)
 
@@ -1148,7 +1158,7 @@ INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, 'admin') RETURN
 
 	w := httptest.NewRecorder()
 	req := newRequest("DELETE", "/api/workspaces/"+wsID+"/members/"+memberID, nil)
-	req.Header.Set("X-Workspace-ID", wsID)
+	req = withTestWorkspaceMember(req, wsID, testUserID)
 	req = withURLParams(req, "id", wsID, "memberId", memberID)
 	testHandler.DeleteMember(w, req)
 

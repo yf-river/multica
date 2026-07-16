@@ -17,6 +17,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/storage"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -958,7 +959,7 @@ func (h *Handler) DeleteAttachment(w http.ResponseWriter, r *http.Request) {
 	// Only the uploader (or workspace admin) can delete
 	uploaderID := uuidToString(att.UploaderID)
 	isUploader := att.UploaderType == "member" && uploaderID == userID
-	member, hasMember := ctxMember(r.Context())
+	member, hasMember := middleware.MemberFromContext(r.Context())
 	isAdmin := hasMember && (member.Role == "admin" || member.Role == "owner")
 
 	if !isUploader && !isAdmin {

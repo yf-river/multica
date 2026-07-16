@@ -18,6 +18,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/executionpolicy"
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
+	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/pkg/agent"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -508,7 +509,7 @@ func computeTaskKind(t db.AgentTaskQueue) string {
 
 func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
-	member, ok := h.workspaceMember(w, r, workspaceID)
+	member, ok := requireWorkspaceMemberContext(w, r)
 	if !ok {
 		return
 	}
@@ -627,7 +628,7 @@ func (h *Handler) GetAgent(w http.ResponseWriter, r *http.Request) {
 	// Agent actors NEVER see mcp_config (see ListAgents for the rationale).
 	if actorType == "agent" || alwaysRedact {
 		redactMcpConfig(&resp)
-	} else if member, ok := ctxMember(r.Context()); ok {
+	} else if member, ok := middleware.MemberFromContext(r.Context()); ok {
 		if !canViewAgentSecrets(agent, userID, member.Role) {
 			redactMcpConfig(&resp)
 		}
@@ -1132,7 +1133,7 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 		// Same gate as CreateAgent — prevents UpdateAgent from being used to
 		// re-bind an agent onto someone else's personal runtime, which would
 		// otherwise be a quiet end-run around the CreateAgent check.
-		member, ok := h.workspaceMember(w, r, uuidToString(existing.WorkspaceID))
+		member, ok := requireWorkspaceMemberContext(w, r)
 		if !ok {
 			return
 		}

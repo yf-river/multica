@@ -277,7 +277,7 @@ const issueListSelectSQL = `i.id, i.workspace_id, i.title, i.description, i.stat
        COALESCE(agent_activity.agent_ids, ARRAY[]::uuid[]) AS agent_ids`
 
 func (h *Handler) visibleAgentUUIDsForIssueList(w http.ResponseWriter, r *http.Request, workspaceID string) ([]pgtype.UUID, bool) {
-	member, ok := h.workspaceMember(w, r, workspaceID)
+	member, ok := requireWorkspaceMemberContext(w, r)
 	if !ok {
 		return nil, false
 	}

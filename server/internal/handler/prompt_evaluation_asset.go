@@ -1168,7 +1168,7 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 		writeValidationLookupError(w, err, "prompt_id does not belong to this workspace", "prompt", "prompt_id", uuidToString(asset.PromptID))
 		return
 	}
-	member, ok := h.workspaceMember(w, r, uuidToString(asset.WorkspaceID))
+	member, ok := requireWorkspaceMemberContext(w, r)
 	if !ok {
 		return
 	}

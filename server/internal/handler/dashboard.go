@@ -41,7 +41,7 @@ type dashboardQueryScope struct {
 
 func (h *Handler) dashboardScope(w http.ResponseWriter, r *http.Request) (dashboardQueryScope, bool) {
 	workspaceID := h.resolveWorkspaceID(r)
-	if _, ok := h.workspaceMember(w, r, workspaceID); !ok {
+	if _, ok := requireWorkspaceMemberContext(w, r); !ok {
 		return dashboardQueryScope{}, false
 	}
 

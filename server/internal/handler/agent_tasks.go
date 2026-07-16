@@ -78,7 +78,7 @@ type AgentRunCount struct {
 // activity to keep the Agents list cheap regardless of agent count.
 func (h *Handler) GetWorkspaceAgentRunCounts(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
-	member, ok := h.workspaceMember(w, r, workspaceID)
+	member, ok := requireWorkspaceMemberContext(w, r)
 	if !ok {
 		return
 	}
@@ -117,7 +117,7 @@ func (h *Handler) GetWorkspaceAgentRunCounts(w http.ResponseWriter, r *http.Requ
 // empty buckets to keep the response small.
 func (h *Handler) GetWorkspaceAgentActivity30d(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
-	member, ok := h.workspaceMember(w, r, workspaceID)
+	member, ok := requireWorkspaceMemberContext(w, r)
 	if !ok {
 		return
 	}
@@ -161,7 +161,7 @@ func (h *Handler) GetWorkspaceAgentActivity30d(w http.ResponseWriter, r *http.Re
 // snapshot.
 func (h *Handler) ListWorkspaceAgentTaskSnapshot(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
-	member, ok := h.workspaceMember(w, r, workspaceID)
+	member, ok := requireWorkspaceMemberContext(w, r)
 	if !ok {
 		return
 	}

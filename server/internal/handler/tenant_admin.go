@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -22,7 +23,7 @@ type getTenantInitialAdminStatusResponse struct {
 // not a business error. When the workspace itself does not exist, it returns
 // 404.
 func (h *Handler) GetTenantInitialAdminStatus(w http.ResponseWriter, r *http.Request) {
-	workspaceID := workspaceIDFromURL(r, "workspaceId")
+	workspaceID := chi.URLParam(r, "workspaceId")
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
 	if !ok {
 		return

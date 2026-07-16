@@ -22,6 +22,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/events"
+	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/realtime"
 	"github.com/multica-ai/multica/server/internal/util/secretbox"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -205,6 +206,7 @@ var testPool *pgxpool.Pool
 var testUserID string
 var testWorkspaceID string
 var testRuntimeID string
+var testMember db.Member
 
 func mustExec(t testing.TB, ctx context.Context, query string, args ...any) {
 	t.Helper()
@@ -296,6 +298,7 @@ func TestMain(m *testing.M) {
 		pool.Close()
 		os.Exit(1)
 	}
+	testMember = loadTestWorkspaceMember(testWorkspaceID, testUserID)
 
 	code := m.Run()
 	if err := cleanupHandlerTestFixture(context.Background(), pool); err != nil {
@@ -450,7 +453,33 @@ func newRequest(method, path string, body any) *http.Request {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-User-ID", testUserID)
 	req.Header.Set("X-Workspace-ID", testWorkspaceID)
-	return req
+	return req.WithContext(middleware.SetMemberContext(req.Context(), testWorkspaceID, testMember))
+}
+
+func loadTestWorkspaceMember(workspaceID, userID string) db.Member {
+	var member db.Member
+	err := testPool.QueryRow(context.Background(), `
+		SELECT id, workspace_id, user_id, role, created_at
+		FROM member
+		WHERE workspace_id = $1 AND user_id = $2
+	`, workspaceID, userID).Scan(
+		&member.ID,
+		&member.WorkspaceID,
+		&member.UserID,
+		&member.Role,
+		&member.CreatedAt,
+	)
+	if err != nil {
+		panic(fmt.Sprintf("load test workspace member: %v", err))
+	}
+	return member
+}
+
+func withTestWorkspaceMember(req *http.Request, workspaceID, userID string) *http.Request {
+	member := loadTestWorkspaceMember(workspaceID, userID)
+	req.Header.Set("X-User-ID", userID)
+	req.Header.Set("X-Workspace-ID", workspaceID)
+	return req.WithContext(middleware.SetMemberContext(req.Context(), workspaceID, member))
 }
 
 // setTaskTokenActor models the request state after auth middleware resolves a
@@ -2721,18 +2750,6 @@ func TestCreatePinRejectsMalformedItemID(t *testing.T) {
 	testHandler.CreatePin(w, req)
 	if w.Code != http.StatusBadRequest {
 		t.Fatalf("CreatePin: expected 400 for malformed item_id, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestUpdateWorkspaceRejectsMalformedID(t *testing.T) {
-	w := httptest.NewRecorder()
-	req := newRequest("PATCH", "/api/workspaces/not-a-uuid", map[string]any{
-		"name": "Malformed workspace id",
-	})
-	req = withURLParam(req, "id", "not-a-uuid")
-	testHandler.UpdateWorkspace(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("UpdateWorkspace: expected 400 for malformed id, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

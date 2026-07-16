@@ -26,14 +26,14 @@ func TestGetTenantInitialAdminStatus(t *testing.T) {
 	noAdminUUID := util.MustParseUUID(noAdminWS)
 
 	tests := []struct {
-		name           string
-		workspaceID    string
-		setupQueries   func(q *fakeQueries)
-		wantStatus     int
-		wantExists     *bool
-		wantUserName   *string
-		wantNickName   *string
-		wantError      string
+		name         string
+		workspaceID  string
+		setupQueries func(q *fakeQueries)
+		wantStatus   int
+		wantExists   *bool
+		wantUserName *string
+		wantNickName *string
+		wantError    string
 	}{
 		{
 			name:        "T1: workspace exists with initial admin (normal)",
@@ -50,8 +50,8 @@ func TestGetTenantInitialAdminStatus(t *testing.T) {
 					}, nil
 				}
 			},
-			wantStatus: http.StatusOK,
-			wantExists: boolPtr(true),
+			wantStatus:   http.StatusOK,
+			wantExists:   boolPtr(true),
 			wantUserName: strPtr("testuser"),
 			wantNickName: strPtr("Test User"),
 		},
@@ -70,8 +70,8 @@ func TestGetTenantInitialAdminStatus(t *testing.T) {
 					}, nil
 				}
 			},
-			wantStatus: http.StatusOK,
-			wantExists: boolPtr(true),
+			wantStatus:   http.StatusOK,
+			wantExists:   boolPtr(true),
 			wantUserName: strPtr("disableduser"),
 			wantNickName: strPtr("Disabled User"),
 		},
@@ -288,7 +288,7 @@ func TestGetTenantInitialAdminStatus_Unauthenticated(t *testing.T) {
 	r := chi.NewRouter()
 	r.Use(middleware.Auth(nil, nil, nil))
 	r.Get("/api/workspaces/{workspaceId}/initial-admin-status", func(w http.ResponseWriter, req *http.Request) {
-		wsID := workspaceIDFromURL(req, "workspaceId")
+		wsID := chi.URLParam(req, "workspaceId")
 		th.ServeHTTP(w, req, wsID)
 	})
 

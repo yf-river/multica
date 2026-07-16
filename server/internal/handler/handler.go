@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -425,31 +424,16 @@ func (h *Handler) resolveWorkspaceID(r *http.Request) string {
 	return middleware.ResolveWorkspaceIDFromRequest(r, h.Queries)
 }
 
-// ctxMember returns the workspace member from context (set by workspace middleware).
-func ctxMember(ctx context.Context) (db.Member, bool) {
-	return middleware.MemberFromContext(ctx)
-}
-
-// ctxWorkspaceID returns the workspace ID from context (set by workspace middleware).
-func ctxWorkspaceID(ctx context.Context) string {
-	return middleware.WorkspaceIDFromContext(ctx)
-}
-
-// workspaceIDFromURL returns the workspace ID from context (preferred) or chi URL param (fallback).
-func workspaceIDFromURL(r *http.Request, param string) string {
-	if id := middleware.WorkspaceIDFromContext(r.Context()); id != "" {
-		return id
+// requireWorkspaceMemberContext consumes the invariant established by every
+// workspace-scoped route. A missing member means the route was wired without
+// the required middleware; handlers must not silently recreate authorization.
+func requireWorkspaceMemberContext(w http.ResponseWriter, r *http.Request) (db.Member, bool) {
+	member, ok := middleware.MemberFromContext(r.Context())
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "workspace member context missing")
+		return db.Member{}, false
 	}
-	return chi.URLParam(r, param)
-}
-
-// workspaceMember returns the member from middleware context, or falls back to a DB
-// lookup when the handler is called directly (e.g. in tests).
-func (h *Handler) workspaceMember(w http.ResponseWriter, r *http.Request, workspaceID string) (db.Member, bool) {
-	if m, ok := ctxMember(r.Context()); ok {
-		return m, true
-	}
-	return h.requireWorkspaceMember(w, r, workspaceID, "workspace not found")
+	return member, true
 }
 
 func roleAllowed(role string, roles ...string) bool {

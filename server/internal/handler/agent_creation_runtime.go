@@ -24,7 +24,7 @@ func (h *Handler) authorizeAgentCreationRuntime(
 		writeValidationLookupError(w, err, "invalid runtime_id", "agent creation runtime", "runtime_id", uuidToString(runtimeID))
 		return db.AgentRuntime{}, false
 	}
-	member, ok := h.workspaceMember(w, r, workspaceID)
+	member, ok := requireWorkspaceMemberContext(w, r)
 	if !ok {
 		return db.AgentRuntime{}, false
 	}

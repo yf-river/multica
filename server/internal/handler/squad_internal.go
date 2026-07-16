@@ -12,13 +12,14 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/logger"
+	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 func (h *Handler) EnsureInternalSquadTemplate(w http.ResponseWriter, r *http.Request) {
-	workspaceID := workspaceIDFromURL(r, "workspaceId")
-	member, ok := h.workspaceMember(w, r, workspaceID)
+	workspaceID := middleware.WorkspaceIDFromContext(r.Context())
+	member, ok := requireWorkspaceMemberContext(w, r)
 	if !ok {
 		return
 	}

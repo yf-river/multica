@@ -45,7 +45,7 @@ func requireChatRequestScope(w http.ResponseWriter, r *http.Request) (chatReques
 	if !ok {
 		return chatRequestScope{}, false
 	}
-	workspaceID := ctxWorkspaceID(r.Context())
+	workspaceID := middleware.WorkspaceIDFromContext(r.Context())
 	return chatRequestScope{
 		userID:      userID,
 		workspaceID: workspaceID,
@@ -200,7 +200,7 @@ func (h *Handler) ListChatSessions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) chatAccessibleAgentIDs(w http.ResponseWriter, r *http.Request, scope chatRequestScope) (map[string]struct{}, bool) {
-	member, ok := h.workspaceMember(w, r, scope.workspaceID)
+	member, ok := requireWorkspaceMemberContext(w, r)
 	if !ok {
 		return nil, false
 	}

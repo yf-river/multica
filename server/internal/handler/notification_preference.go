@@ -8,6 +8,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/logger"
+	"github.com/multica-ai/multica/server/internal/middleware"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -54,7 +55,7 @@ func (h *Handler) GetNotificationPreferences(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	workspaceID := ctxWorkspaceID(r.Context())
+	workspaceID := middleware.WorkspaceIDFromContext(r.Context())
 
 	pref, err := h.Queries.GetNotificationPreference(r.Context(), db.GetNotificationPreferenceParams{
 		WorkspaceID: parseUUID(workspaceID),
@@ -85,7 +86,7 @@ func (h *Handler) UpdateNotificationPreferences(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
-	workspaceID := ctxWorkspaceID(r.Context())
+	workspaceID := middleware.WorkspaceIDFromContext(r.Context())
 
 	var req updateNotifPrefRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

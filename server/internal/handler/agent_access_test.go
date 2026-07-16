@@ -193,8 +193,7 @@ func personalAgentTestFixture(t *testing.T) (agentID, ownerID, memberID string) 
 
 func newRequestAs(userID, method, path string, body any) *http.Request {
 	req := newRequest(method, path, body)
-	req.Header.Set("X-User-ID", userID)
-	return req
+	return withTestWorkspaceMember(req, testWorkspaceID, userID)
 }
 
 // TestGetAgent_PrivateAgentForbidsPlainMember verifies the personal-agent

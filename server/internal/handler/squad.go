@@ -14,6 +14,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
+	"github.com/multica-ai/multica/server/internal/middleware"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -640,7 +641,7 @@ func applySquadMemberSummary(resp *squadResponse, summary *squadMemberSummary) {
 
 // loadSquadInWorkspace loads a squad scoped to the current workspace.
 func (h *Handler) loadSquadInWorkspace(w http.ResponseWriter, r *http.Request) (db.Squad, string, bool) {
-	workspaceID := workspaceIDFromURL(r, "workspaceId")
+	workspaceID := middleware.WorkspaceIDFromContext(r.Context())
 	squadID := chi.URLParam(r, "id")
 	squadUUID, ok := parseUUIDOrBadRequest(w, squadID, "squad id")
 	if !ok {
@@ -667,7 +668,7 @@ func (h *Handler) requireSquadVisible(w http.ResponseWriter, r *http.Request, sq
 }
 
 func (h *Handler) requireSquadManager(w http.ResponseWriter, r *http.Request, squad db.Squad, workspaceID string) (db.Member, bool) {
-	member, ok := h.workspaceMember(w, r, workspaceID)
+	member, ok := requireWorkspaceMemberContext(w, r)
 	if !ok {
 		return db.Member{}, false
 	}
@@ -715,8 +716,8 @@ func squadToResponseWithPreview(ctx context.Context, queries *db.Queries, squad 
 // ── Handlers ────────────────────────────────────────────────────────────────
 
 func (h *Handler) ListSquads(w http.ResponseWriter, r *http.Request) {
-	workspaceID := workspaceIDFromURL(r, "workspaceId")
-	member, ok := h.workspaceMember(w, r, workspaceID)
+	workspaceID := middleware.WorkspaceIDFromContext(r.Context())
+	member, ok := requireWorkspaceMemberContext(w, r)
 	if !ok {
 		return
 	}
@@ -771,8 +772,8 @@ func (h *Handler) ListSquads(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
-	workspaceID := workspaceIDFromURL(r, "workspaceId")
-	member, ok := h.workspaceMember(w, r, workspaceID)
+	workspaceID := middleware.WorkspaceIDFromContext(r.Context())
+	member, ok := requireWorkspaceMemberContext(w, r)
 	if !ok {
 		return
 	}

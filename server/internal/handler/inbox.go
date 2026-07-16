@@ -11,6 +11,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/logger"
+	"github.com/multica-ai/multica/server/internal/middleware"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -88,7 +89,7 @@ func requireInboxRecipientScope(w http.ResponseWriter, r *http.Request) (inboxRe
 	if !ok {
 		return inboxRecipientScope{}, false
 	}
-	workspaceID := ctxWorkspaceID(r.Context())
+	workspaceID := middleware.WorkspaceIDFromContext(r.Context())
 	workspace, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
 	if !ok {
 		return inboxRecipientScope{}, false

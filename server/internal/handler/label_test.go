@@ -230,6 +230,7 @@ func TestIssueLabelAttachDetach(t *testing.T) {
 // TestLabelNotFoundAcrossWorkspaces ensures GET with a foreign workspace
 // header returns 404 — the query's `WHERE workspace_id = $2` does the work.
 func TestLabelNotFoundAcrossWorkspaces(t *testing.T) {
+	otherWorkspaceID := createOtherTestWorkspace(t)
 	label := createLabelThroughHandler(t, map[string]any{
 		"name":  "cross-ws-test",
 		"color": "#a855f7",
@@ -243,7 +244,7 @@ func TestLabelNotFoundAcrossWorkspaces(t *testing.T) {
 	// GET with a different workspace ID → 404
 	w := httptest.NewRecorder()
 	req := newRequest("GET", "/api/labels/"+labelID, nil)
-	req.Header.Set("X-Workspace-ID", "00000000-0000-0000-0000-000000000000")
+	req = withTestWorkspaceMember(req, otherWorkspaceID, testUserID)
 	req = withURLParam(req, "id", labelID)
 	testHandler.GetLabel(w, req)
 	if w.Code != http.StatusNotFound {
@@ -255,6 +256,7 @@ func TestLabelNotFoundAcrossWorkspaces(t *testing.T) {
 // allow updating a label in another workspace (404 via pgx.ErrNoRows from the
 // UPDATE ... WHERE id = $1 AND workspace_id = $2 clause).
 func TestUpdateLabelCrossWorkspace(t *testing.T) {
+	otherWorkspaceID := createOtherTestWorkspace(t)
 	label := createLabelThroughHandler(t, map[string]any{
 		"name":  "cross-ws-update-test",
 		"color": "#10b981",
@@ -268,7 +270,7 @@ func TestUpdateLabelCrossWorkspace(t *testing.T) {
 	// PUT with a foreign workspace ID → 404
 	w := httptest.NewRecorder()
 	req := newRequest("PUT", "/api/labels/"+labelID, map[string]any{"name": "hacked"})
-	req.Header.Set("X-Workspace-ID", "00000000-0000-0000-0000-000000000000")
+	req = withTestWorkspaceMember(req, otherWorkspaceID, testUserID)
 	req = withURLParam(req, "id", labelID)
 	testHandler.UpdateLabel(w, req)
 	if w.Code != http.StatusNotFound {

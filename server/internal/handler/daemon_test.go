@@ -4242,6 +4242,7 @@ func TestMembershipCache_InvalidatedOnLeaveWorkspace(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	req := newRequestAsUser(targetUserID, "DELETE", "/api/workspaces/"+testWorkspaceID+"/leave", nil)
+	req = withTestWorkspaceMember(req, testWorkspaceID, targetUserID)
 	req = withURLParam(req, "id", testWorkspaceID)
 	testHandler.LeaveWorkspace(w, req)
 	if w.Code != http.StatusNoContent {
@@ -4292,6 +4293,7 @@ func TestMembershipCache_InvalidatedOnDeleteWorkspace(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	req := newRequest("DELETE", "/api/workspaces/"+wsID, nil)
+	req = withTestWorkspaceMember(req, wsID, testUserID)
 	req = withURLParam(req, "id", wsID)
 	testHandler.DeleteWorkspace(w, req)
 	if w.Code != http.StatusNoContent {

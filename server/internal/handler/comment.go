@@ -447,13 +447,13 @@ func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	existing, workspaceID, wsUUID, ok := h.loadCommentForRequest(w, r)
+	existing, _, wsUUID, ok := h.loadCommentForRequest(w, r)
 	if !ok {
 		return
 	}
 	commentID := uuidToString(existing.ID)
 
-	member, ok := h.workspaceMember(w, r, workspaceID)
+	member, ok := requireWorkspaceMemberContext(w, r)
 	if !ok {
 		return
 	}
@@ -603,13 +603,13 @@ func (h *Handler) DeleteComment(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	comment, workspaceID, _, ok := h.loadCommentForRequest(w, r)
+	comment, _, _, ok := h.loadCommentForRequest(w, r)
 	if !ok {
 		return
 	}
 	commentID := uuidToString(comment.ID)
 
-	member, ok := h.workspaceMember(w, r, workspaceID)
+	member, ok := requireWorkspaceMemberContext(w, r)
 	if !ok {
 		return
 	}
@@ -712,7 +712,7 @@ func (h *Handler) loadCommentForActor(w http.ResponseWriter, r *http.Request) (d
 	if !ok {
 		return db.Comment{}, "", "", "", false
 	}
-	if _, ok := h.workspaceMember(w, r, workspaceID); !ok {
+	if _, ok := requireWorkspaceMemberContext(w, r); !ok {
 		return db.Comment{}, "", "", "", false
 	}
 	actorType, actorID := resolveActor(r, userID)

@@ -572,7 +572,7 @@ func canAccessRuntime(member db.Member, rt db.AgentRuntime) bool {
 
 func (h *Handler) ListAgentRuntimes(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
-	member, ok := h.workspaceMember(w, r, workspaceID)
+	member, ok := requireWorkspaceMemberContext(w, r)
 	if !ok {
 		return
 	}

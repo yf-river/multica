@@ -18,6 +18,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
+	"github.com/multica-ai/multica/server/internal/middleware"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -134,7 +135,7 @@ func (h *Handler) ListWorkspaces(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) GetWorkspace(w http.ResponseWriter, r *http.Request) {
-	id := workspaceIDFromURL(r, "id")
+	id := middleware.WorkspaceIDFromContext(r.Context())
 	idUUID, ok := parseUUIDOrBadRequest(w, id, "workspace id")
 	if !ok {
 		return
@@ -452,7 +453,7 @@ func (h *Handler) prepareGongfengWorkspaceRepo(w http.ResponseWriter, r *http.Re
 }
 
 func (h *Handler) ProbeWorkspaceRepo(w http.ResponseWriter, r *http.Request) {
-	id := workspaceIDFromURL(r, "id")
+	id := middleware.WorkspaceIDFromContext(r.Context())
 	if _, ok := parseUUIDOrBadRequest(w, id, "workspace id"); !ok {
 		return
 	}
@@ -509,7 +510,7 @@ func (h *Handler) ProbeWorkspaceRepo(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) ResolveWorkspaceRepo(w http.ResponseWriter, r *http.Request) {
-	id := workspaceIDFromURL(r, "id")
+	id := middleware.WorkspaceIDFromContext(r.Context())
 	if _, ok := parseUUIDOrBadRequest(w, id, "workspace id"); !ok {
 		return
 	}
@@ -587,7 +588,7 @@ func parsedGongfengWorkspaceRepoBranch(parsed parsedGongfengURL) string {
 }
 
 func (h *Handler) UpdateWorkspace(w http.ResponseWriter, r *http.Request) {
-	id := workspaceIDFromURL(r, "id")
+	id := middleware.WorkspaceIDFromContext(r.Context())
 	idUUID, ok := parseUUIDOrBadRequest(w, id, "workspace id")
 	if !ok {
 		return
@@ -683,7 +684,7 @@ type MemberWithUserResponse struct {
 }
 
 func (h *Handler) ListMembersWithUser(w http.ResponseWriter, r *http.Request) {
-	workspaceID := workspaceIDFromURL(r, "id")
+	workspaceID := middleware.WorkspaceIDFromContext(r.Context())
 	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace id")
 	if !ok {
 		return
@@ -747,13 +748,9 @@ func normalizeMemberRole(role string) (string, bool) {
 }
 
 func (h *Handler) CreateMember(w http.ResponseWriter, r *http.Request) {
-	workspaceID := workspaceIDFromURL(r, "id")
-	requester, ok := h.workspaceMember(w, r, workspaceID)
+	workspaceID := middleware.WorkspaceIDFromContext(r.Context())
+	requester, ok := requireWorkspaceMemberContext(w, r)
 	if !ok {
-		return
-	}
-	if requester.Role != "owner" && requester.Role != "admin" {
-		writeError(w, http.StatusForbidden, "insufficient permissions")
 		return
 	}
 
@@ -918,8 +915,8 @@ func (h *Handler) ensureWorkspaceHasAnotherOwner(w http.ResponseWriter, r *http.
 }
 
 func (h *Handler) UpdateMember(w http.ResponseWriter, r *http.Request) {
-	workspaceID := workspaceIDFromURL(r, "id")
-	requester, ok := h.workspaceMember(w, r, workspaceID)
+	workspaceID := middleware.WorkspaceIDFromContext(r.Context())
+	requester, ok := requireWorkspaceMemberContext(w, r)
 	if !ok {
 		return
 	}
@@ -983,8 +980,8 @@ func (h *Handler) UpdateMember(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) DeleteMember(w http.ResponseWriter, r *http.Request) {
-	workspaceID := workspaceIDFromURL(r, "id")
-	requester, ok := h.workspaceMember(w, r, workspaceID)
+	workspaceID := middleware.WorkspaceIDFromContext(r.Context())
+	requester, ok := requireWorkspaceMemberContext(w, r)
 	if !ok {
 		return
 	}
@@ -1031,8 +1028,8 @@ func (h *Handler) DeleteMember(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) LeaveWorkspace(w http.ResponseWriter, r *http.Request) {
-	workspaceID := workspaceIDFromURL(r, "id")
-	member, ok := h.workspaceMember(w, r, workspaceID)
+	workspaceID := middleware.WorkspaceIDFromContext(r.Context())
+	member, ok := requireWorkspaceMemberContext(w, r)
 	if !ok {
 		return
 	}
@@ -1067,18 +1064,9 @@ func (h *Handler) LeaveWorkspace(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) DeleteWorkspace(w http.ResponseWriter, r *http.Request) {
-	workspaceID := workspaceIDFromURL(r, "id")
-
-	// Defense in depth: the route is already gated by the
-	// RequireWorkspaceRoleFromURL("owner") middleware, but we re-check here
-	// so that the handler is safe regardless of how it gets wired up
-	// (direct calls in tests, future router refactors, etc.).
-	requester, ok := h.workspaceMember(w, r, workspaceID)
+	workspaceID := middleware.WorkspaceIDFromContext(r.Context())
+	requester, ok := requireWorkspaceMemberContext(w, r)
 	if !ok {
-		return
-	}
-	if requester.Role != "owner" {
-		writeError(w, http.StatusForbidden, "insufficient permissions")
 		return
 	}
 
