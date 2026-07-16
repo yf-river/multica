@@ -21,6 +21,12 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
+type squadMemberMutationRequest struct {
+	MemberType string `json:"member_type"`
+	MemberID   string `json:"member_id"`
+	Role       string `json:"role"`
+}
+
 func (h *Handler) ListSquadMembers(w http.ResponseWriter, r *http.Request) {
 	squad, workspaceID, ok := h.loadSquadInWorkspace(w, r)
 	if !ok {
@@ -227,12 +233,7 @@ func (h *Handler) ListSquadMemberStatus(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *Handler) AddSquadMember(w http.ResponseWriter, r *http.Request) {
-	workspaceID := workspaceIDFromURL(r, "workspaceId")
-	squad, _, ok := h.loadSquadInWorkspace(w, r)
-	if !ok {
-		return
-	}
-	member, ok := h.requireSquadManager(w, r, squad, workspaceID)
+	squad, workspaceID, member, ok := h.loadManagedSquad(w, r)
 	if !ok {
 		return
 	}
@@ -241,11 +242,7 @@ func (h *Handler) AddSquadMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req struct {
-		MemberType string `json:"member_type"`
-		MemberID   string `json:"member_id"`
-		Role       string `json:"role"`
-	}
+	var req squadMemberMutationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -305,19 +302,12 @@ func (h *Handler) AddSquadMember(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) RemoveSquadMember(w http.ResponseWriter, r *http.Request) {
-	workspaceID := workspaceIDFromURL(r, "workspaceId")
-	squad, _, ok := h.loadSquadInWorkspace(w, r)
+	squad, workspaceID, _, ok := h.loadManagedSquad(w, r)
 	if !ok {
 		return
 	}
-	if _, ok := h.requireSquadManager(w, r, squad, workspaceID); !ok {
-		return
-	}
 
-	var req struct {
-		MemberType string `json:"member_type"`
-		MemberID   string `json:"member_id"`
-	}
+	var req squadMemberMutationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
@@ -355,20 +345,12 @@ func (h *Handler) RemoveSquadMember(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) UpdateSquadMemberRole(w http.ResponseWriter, r *http.Request) {
-	workspaceID := workspaceIDFromURL(r, "workspaceId")
-	squad, _, ok := h.loadSquadInWorkspace(w, r)
+	squad, workspaceID, _, ok := h.loadManagedSquad(w, r)
 	if !ok {
 		return
 	}
-	if _, ok := h.requireSquadManager(w, r, squad, workspaceID); !ok {
-		return
-	}
 
-	var req struct {
-		MemberType string `json:"member_type"`
-		MemberID   string `json:"member_id"`
-		Role       string `json:"role"`
-	}
+	var req squadMemberMutationRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return

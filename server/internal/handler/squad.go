@@ -678,6 +678,15 @@ func (h *Handler) requireSquadManager(w http.ResponseWriter, r *http.Request, sq
 	return member, true
 }
 
+func (h *Handler) loadManagedSquad(w http.ResponseWriter, r *http.Request) (db.Squad, string, db.Member, bool) {
+	squad, workspaceID, ok := h.loadSquadInWorkspace(w, r)
+	if !ok {
+		return db.Squad{}, "", db.Member{}, false
+	}
+	member, ok := h.requireSquadManager(w, r, squad, workspaceID)
+	return squad, workspaceID, member, ok
+}
+
 func loadSquadMemberSummary(ctx context.Context, queries *db.Queries, squadID pgtype.UUID) (*squadMemberSummary, error) {
 	rows, err := queries.ListSquadMemberPreviewRowsBySquad(ctx, squadID)
 	if err != nil {
@@ -1005,12 +1014,7 @@ func (h *Handler) GetSquad(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) UpdateSquad(w http.ResponseWriter, r *http.Request) {
-	workspaceID := workspaceIDFromURL(r, "workspaceId")
-	squad, _, ok := h.loadSquadInWorkspace(w, r)
-	if !ok {
-		return
-	}
-	member, ok := h.requireSquadManager(w, r, squad, workspaceID)
+	squad, workspaceID, member, ok := h.loadManagedSquad(w, r)
 	if !ok {
 		return
 	}
@@ -1144,12 +1148,8 @@ func (h *Handler) UpdateSquad(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) DeleteSquad(w http.ResponseWriter, r *http.Request) {
-	workspaceID := workspaceIDFromURL(r, "workspaceId")
-	squad, _, ok := h.loadSquadInWorkspace(w, r)
+	squad, workspaceID, _, ok := h.loadManagedSquad(w, r)
 	if !ok {
-		return
-	}
-	if _, ok := h.requireSquadManager(w, r, squad, workspaceID); !ok {
 		return
 	}
 
@@ -1217,12 +1217,8 @@ func (h *Handler) DeleteSquad(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) RestoreSquad(w http.ResponseWriter, r *http.Request) {
-	workspaceID := workspaceIDFromURL(r, "workspaceId")
-	squad, _, ok := h.loadSquadInWorkspace(w, r)
+	squad, workspaceID, _, ok := h.loadManagedSquad(w, r)
 	if !ok {
-		return
-	}
-	if _, ok := h.requireSquadManager(w, r, squad, workspaceID); !ok {
 		return
 	}
 	if !squad.ArchivedAt.Valid {
