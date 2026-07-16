@@ -725,49 +725,32 @@ func (h *Handler) ListSquads(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	includeArchived := r.URL.Query().Get("include_archived") == "true"
-	var squads []db.Squad
-	var err error
-	if includeArchived {
-		squads, err = h.Queries.ListAllSquads(r.Context(), wsUUID)
-	} else {
-		squads, err = h.Queries.ListSquads(r.Context(), wsUUID)
-	}
+	squads, err := h.Queries.ListSquads(r.Context(), db.ListSquadsParams{
+		WorkspaceID:     wsUUID,
+		IncludeArchived: includeArchived,
+	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list squads")
 		return
 	}
 
 	summaries := make(map[string]*squadMemberSummary, len(squads))
-	if includeArchived {
-		previewRows, err := h.Queries.ListAllSquadMemberPreviewRows(r.Context(), wsUUID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to list squad member preview")
-			return
+	previewRows, err := h.Queries.ListSquadMemberPreviewRows(r.Context(), db.ListSquadMemberPreviewRowsParams{
+		WorkspaceID:     wsUUID,
+		IncludeArchived: includeArchived,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list squad member preview")
+		return
+	}
+	for _, row := range previewRows {
+		squadID := uuidToString(row.SquadID)
+		summary := summaries[squadID]
+		if summary == nil {
+			summary = &squadMemberSummary{}
+			summaries[squadID] = summary
 		}
-		for _, row := range previewRows {
-			squadID := uuidToString(row.SquadID)
-			summary := summaries[squadID]
-			if summary == nil {
-				summary = &squadMemberSummary{}
-				summaries[squadID] = summary
-			}
-			addSquadMemberPreview(summary, row.MemberType, row.MemberID, row.Role)
-		}
-	} else {
-		previewRows, err := h.Queries.ListSquadMemberPreviewRows(r.Context(), wsUUID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to list squad member preview")
-			return
-		}
-		for _, row := range previewRows {
-			squadID := uuidToString(row.SquadID)
-			summary := summaries[squadID]
-			if summary == nil {
-				summary = &squadMemberSummary{}
-				summaries[squadID] = summary
-			}
-			addSquadMemberPreview(summary, row.MemberType, row.MemberID, row.Role)
-		}
+		addSquadMemberPreview(summary, row.MemberType, row.MemberID, row.Role)
 	}
 
 	resp := make([]squadResponse, 0, len(squads))

@@ -50,7 +50,10 @@ func (h *Handler) ensurePromptEvaluationAgent(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return db.Agent{}, db.AgentRuntime{}, false
 	}
-	agents, err := h.Queries.ListAllAgents(r.Context(), workspaceID)
+	agents, err := h.Queries.ListAgents(r.Context(), db.ListAgentsParams{
+		WorkspaceID:     workspaceID,
+		IncludeArchived: true,
+	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list agents for training evaluation")
 		return db.Agent{}, db.AgentRuntime{}, false

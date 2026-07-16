@@ -158,7 +158,10 @@ func (h *Handler) accessibleAgentIDs(ctx context.Context, workspaceID, actorType
 	if err != nil {
 		return nil, err
 	}
-	agents, err := h.Queries.ListAllAgents(ctx, wsUUID)
+	agents, err := h.Queries.ListAgents(ctx, db.ListAgentsParams{
+		WorkspaceID:     wsUUID,
+		IncludeArchived: true,
+	})
 	if err != nil {
 		return nil, err
 	}

@@ -142,7 +142,10 @@ func internalSquadRuntimeScopeLabel(agentScope string) string {
 }
 
 func (h *Handler) ensureInternalSquadAgents(ctx context.Context, workspaceID pgtype.UUID, ownerID pgtype.UUID, runtime db.AgentRuntime, template internalSquadTemplate, squadScope string) ([]InternalSquadAgent, error) {
-	existing, err := h.Queries.ListAllAgents(ctx, workspaceID)
+	existing, err := h.Queries.ListAgents(ctx, db.ListAgentsParams{
+		WorkspaceID:     workspaceID,
+		IncludeArchived: true,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -304,7 +307,10 @@ func (h *Handler) ensureInternalSquad(ctx context.Context, workspaceID pgtype.UU
 	if len(agents) == 0 {
 		return db.Squad{}, pgx.ErrNoRows
 	}
-	squads, err := h.Queries.ListAllSquads(ctx, workspaceID)
+	squads, err := h.Queries.ListSquads(ctx, db.ListSquadsParams{
+		WorkspaceID:     workspaceID,
+		IncludeArchived: true,
+	})
 	if err != nil {
 		return db.Squad{}, err
 	}

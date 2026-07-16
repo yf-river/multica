@@ -514,13 +514,10 @@ func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 	}
 	userID := requestUserID(r)
 
-	var agents []db.Agent
-	var err error
-	if r.URL.Query().Get("include_archived") == "true" {
-		agents, err = h.Queries.ListAllAgents(r.Context(), parseUUID(workspaceID))
-	} else {
-		agents, err = h.Queries.ListAgents(r.Context(), parseUUID(workspaceID))
-	}
+	agents, err := h.Queries.ListAgents(r.Context(), db.ListAgentsParams{
+		WorkspaceID:     parseUUID(workspaceID),
+		IncludeArchived: r.URL.Query().Get("include_archived") == "true",
+	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list agents")
 		return
@@ -740,7 +737,9 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 	// the first agent in a workspace. This read is non-fatal: creation remains
 	// the primary operation if the count cannot be loaded.
 	isFirstAgent := false
-	if existing, listErr := h.Queries.ListAgents(r.Context(), wsUUID); listErr == nil {
+	if existing, listErr := h.Queries.ListAgents(r.Context(), db.ListAgentsParams{
+		WorkspaceID: wsUUID,
+	}); listErr == nil {
 		isFirstAgent = len(existing) == 0
 	}
 

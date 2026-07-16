@@ -901,7 +901,7 @@ func (h *Handler) parseSquadSOPRoleKeyMentions(ctx context.Context, issue db.Iss
 			memberIDs[uuidToString(member.MemberID)] = struct{}{}
 		}
 	}
-	agents, err := h.Queries.ListAgents(ctx, issue.WorkspaceID)
+	agents, err := h.Queries.ListAgents(ctx, db.ListAgentsParams{WorkspaceID: issue.WorkspaceID})
 	if err != nil {
 		return nil, fmt.Errorf("list agents for SOP role mention: %w", err)
 	}

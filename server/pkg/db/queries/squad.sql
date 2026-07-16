@@ -10,7 +10,10 @@ SELECT * FROM squad WHERE id = $1;
 SELECT * FROM squad WHERE id = $1 AND workspace_id = $2;
 
 -- name: ListSquads :many
-SELECT * FROM squad WHERE workspace_id = $1 AND archived_at IS NULL ORDER BY created_at ASC;
+SELECT * FROM squad
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND (sqlc.arg('include_archived')::boolean OR archived_at IS NULL)
+ORDER BY created_at ASC;
 
 -- name: ListSquadMemberPreviewRows :many
 -- Static squad membership summary for list/hover previews. This deliberately
@@ -23,21 +26,8 @@ SELECT
     sm.role
 FROM squad_member sm
 JOIN squad s ON s.id = sm.squad_id
-WHERE s.workspace_id = $1 AND s.archived_at IS NULL
-ORDER BY
-    sm.squad_id ASC,
-    (sm.member_type = 'agent' AND sm.member_id = s.leader_id) DESC,
-    sm.created_at ASC;
-
--- name: ListAllSquadMemberPreviewRows :many
-SELECT
-    sm.squad_id,
-    sm.member_type,
-    sm.member_id,
-    sm.role
-FROM squad_member sm
-JOIN squad s ON s.id = sm.squad_id
-WHERE s.workspace_id = $1
+WHERE s.workspace_id = sqlc.arg('workspace_id')
+  AND (sqlc.arg('include_archived')::boolean OR s.archived_at IS NULL)
 ORDER BY
     sm.squad_id ASC,
     (sm.member_type = 'agent' AND sm.member_id = s.leader_id) DESC,
@@ -55,9 +45,6 @@ WHERE sm.squad_id = $1
 ORDER BY
     (sm.member_type = 'agent' AND sm.member_id = s.leader_id) DESC,
     sm.created_at ASC;
-
--- name: ListAllSquads :many
-SELECT * FROM squad WHERE workspace_id = $1 ORDER BY created_at ASC;
 
 -- name: UpdateSquad :one
 UPDATE squad SET

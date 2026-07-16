@@ -1,11 +1,7 @@
 -- name: ListAgents :many
 SELECT * FROM agent
-WHERE workspace_id = $1 AND archived_at IS NULL
-ORDER BY created_at ASC;
-
--- name: ListAllAgents :many
-SELECT * FROM agent
-WHERE workspace_id = $1
+WHERE workspace_id = sqlc.arg('workspace_id')
+  AND (sqlc.arg('include_archived')::boolean OR archived_at IS NULL)
 ORDER BY created_at ASC;
 
 -- name: GetAgent :one
