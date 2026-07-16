@@ -48,8 +48,7 @@ func (h *Handler) RecordIssueSourceFetch(w http.ResponseWriter, r *http.Request)
 	}
 
 	var req RecordIssueSourceFetchRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 	existing := mustDecodePersistedJSONObject(issue.Metadata, "issue metadata")

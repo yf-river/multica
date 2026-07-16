@@ -212,6 +212,14 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 
+func decodeRequiredJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
+	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return false
+	}
+	return true
+}
+
 func writeClientClosedIfCanceled(w http.ResponseWriter, err error) bool {
 	if !errors.Is(err, context.Canceled) {
 		return false
