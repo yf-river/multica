@@ -588,8 +588,8 @@ type promptEvaluationCaseBulkTagsJob struct {
 	SourceTag     string
 	TargetTag     string
 	OperationType string
-	FilterPayload map[string]any
-	InputPayload  map[string]any
+	FilterPayload []byte
+	InputPayload  []byte
 }
 
 type promptEvaluationCaseBulkTagsResult struct {

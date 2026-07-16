@@ -138,34 +138,21 @@ func promptEvaluationCaseBulkTagsJobFromOperation(operation db.PromptEvaluationC
 	if input.Mode != "追加" && input.Mode != "移除" && input.Mode != "重命名" {
 		return promptEvaluationCaseBulkTagsJob{}, fmt.Errorf("prompt evaluation case operation mode %q is invalid", input.Mode)
 	}
-	filterPayload := map[string]any{}
-	inputPayload := map[string]any{}
-	if err := json.Unmarshal(operation.Filter, &filterPayload); err != nil {
-		return promptEvaluationCaseBulkTagsJob{}, fmt.Errorf("decode prompt evaluation case operation filter payload: %w", err)
-	}
-	if err := json.Unmarshal(operation.Input, &inputPayload); err != nil {
-		return promptEvaluationCaseBulkTagsJob{}, fmt.Errorf("decode prompt evaluation case operation input payload: %w", err)
-	}
 	return promptEvaluationCaseBulkTagsJob{
 		WorkspaceID:   operation.WorkspaceID,
 		Asset:         asset,
 		CreatedBy:     operation.CreatedBy,
-		Source:        optionalPromptEvaluationCaseOperationText(filter.Source),
-		Status:        optionalPromptEvaluationCaseOperationText(filter.Status),
-		Tag:           optionalPromptEvaluationCaseOperationText(filter.Tag),
-		Keyword:       optionalPromptEvaluationCaseOperationText(filter.Keyword),
+		Source:        textFromNonEmpty(filter.Source),
+		Status:        textFromNonEmpty(filter.Status),
+		Tag:           textFromNonEmpty(filter.Tag),
+		Keyword:       textFromNonEmpty(filter.Keyword),
 		Limit:         filter.Limit,
 		Mode:          input.Mode,
 		TargetTags:    input.Tags,
 		SourceTag:     input.SourceTag,
 		TargetTag:     input.TargetTag,
 		OperationType: operation.OperationType,
-		FilterPayload: filterPayload,
-		InputPayload:  inputPayload,
+		FilterPayload: operation.Filter,
+		InputPayload:  operation.Input,
 	}, nil
-}
-
-func optionalPromptEvaluationCaseOperationText(value string) pgtype.Text {
-	value = strings.TrimSpace(value)
-	return pgtype.Text{String: value, Valid: value != ""}
 }

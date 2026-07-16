@@ -24,12 +24,23 @@ func executePromptEvaluationSkillAssetMutation[Result, Response any](
 	mutatePayload func(map[string]any, Result),
 	buildResponse func(db.PromptEvaluationAsset, Result) Response,
 ) {
-	actorID, idempotencyKey, requestHash, ok := promptEvaluationSkillAssetMutationScope(
-		w, r, asset, resourceType, request,
-	)
+	userID, ok := requireUserID(w, r)
 	if !ok {
 		return
 	}
+	idempotencyKey, ok := optionalIdempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	requestHash, err := hashRequestFingerprint(struct {
+		AssetID string `json:"asset_id"`
+		Request any    `json:"request"`
+	}{AssetID: uuidToString(asset.ID), Request: request})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to fingerprint "+resourceType+" request")
+		return
+	}
+	actorID := parseUUID(userID)
 	replay, found, err := loadResourceCreateReplay(
 		r.Context(), h.Queries, asset.WorkspaceID, actorID, resourceType, idempotencyKey, requestHash, isValid,
 	)
@@ -56,32 +67,6 @@ func executePromptEvaluationSkillAssetMutation[Result, Response any](
 		return
 	}
 	writeJSON(w, http.StatusCreated, response)
-}
-
-func promptEvaluationSkillAssetMutationScope(
-	w http.ResponseWriter,
-	r *http.Request,
-	asset db.PromptEvaluationAsset,
-	resourceType string,
-	request any,
-) (pgtype.UUID, pgtype.UUID, string, bool) {
-	userID, ok := requireUserID(w, r)
-	if !ok {
-		return pgtype.UUID{}, pgtype.UUID{}, "", false
-	}
-	idempotencyKey, ok := optionalIdempotencyKey(w, r)
-	if !ok {
-		return pgtype.UUID{}, pgtype.UUID{}, "", false
-	}
-	requestHash, err := hashRequestFingerprint(struct {
-		AssetID string `json:"asset_id"`
-		Request any    `json:"request"`
-	}{AssetID: uuidToString(asset.ID), Request: request})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to fingerprint "+resourceType+" request")
-		return pgtype.UUID{}, pgtype.UUID{}, "", false
-	}
-	return parseUUID(userID), idempotencyKey, requestHash, true
 }
 
 func writePromptEvaluationSkillAssetMutationError(w http.ResponseWriter, err error, operation string) {
@@ -134,9 +119,12 @@ func persistPromptEvaluationSkillAssetMutation[T any](
 	}
 	payload := decodePayloadObject(lockedAsset.Payload)
 	mutatePayload(payload)
-	updated, err := updatePromptEvaluationAssetPayload(ctx, qtx, lockedAsset, payload)
+	updated, err := qtx.UpdatePromptEvaluationAsset(
+		ctx,
+		promptEvaluationAssetPayloadUpdateParams(lockedAsset, mustJSONBytes(payload)),
+	)
 	if err != nil {
-		return zero, err
+		return zero, fmt.Errorf("update prompt evaluation asset payload: %w", err)
 	}
 	response := buildResponse(updated)
 	if err := completeResourceCreateRequest(
@@ -149,20 +137,4 @@ func persistPromptEvaluationSkillAssetMutation[T any](
 		return zero, fmt.Errorf("commit %s request: %w", resourceType, err)
 	}
 	return response, nil
-}
-
-func updatePromptEvaluationAssetPayload(
-	ctx context.Context,
-	queries *db.Queries,
-	asset db.PromptEvaluationAsset,
-	payload map[string]any,
-) (db.PromptEvaluationAsset, error) {
-	updated, err := queries.UpdatePromptEvaluationAsset(
-		ctx,
-		promptEvaluationAssetPayloadUpdateParams(asset, mustJSONBytes(payload)),
-	)
-	if err != nil {
-		return db.PromptEvaluationAsset{}, fmt.Errorf("update prompt evaluation asset payload: %w", err)
-	}
-	return updated, nil
 }

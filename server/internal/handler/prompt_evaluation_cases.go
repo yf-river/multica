@@ -491,8 +491,8 @@ func (h *Handler) BulkUpdatePromptEvaluationCaseTags(w http.ResponseWriter, r *h
 		SourceTag:     sourceTag,
 		TargetTag:     targetTag,
 		OperationType: operationType,
-		FilterPayload: filterPayload,
-		InputPayload:  inputPayload,
+		FilterPayload: mustJSONBytes(filterPayload),
+		InputPayload:  mustJSONBytes(inputPayload),
 	}
 	executionMode := strings.TrimSpace(req.ExecutionMode)
 	if executionMode == "" {
@@ -514,8 +514,8 @@ func (h *Handler) BulkUpdatePromptEvaluationCaseTags(w http.ResponseWriter, r *h
 			WorkspaceID:   workspaceUUID,
 			AssetID:       asset.ID,
 			OperationType: operationType,
-			Filter:        mustJSONBytes(filterPayload),
-			Input:         mustJSONBytes(inputPayload),
+			Filter:        job.FilterPayload,
+			Input:         job.InputPayload,
 			ChangedCount:  0,
 			SkippedCount:  0,
 			SampleCaseIds: mustJSONBytes([]string{}),
@@ -703,8 +703,8 @@ func executePromptEvaluationCaseBulkTagsInTx(ctx context.Context, queries *db.Qu
 			WorkspaceID:   job.WorkspaceID,
 			AssetID:       job.Asset.ID,
 			OperationType: job.OperationType,
-			Filter:        mustJSONBytes(job.FilterPayload),
-			Input:         mustJSONBytes(job.InputPayload),
+			Filter:        job.FilterPayload,
+			Input:         job.InputPayload,
 			ChangedCount:  int32(len(changed)),
 			SkippedCount:  skippedCount,
 			SampleCaseIds: mustJSONBytes(sampleIDs),
