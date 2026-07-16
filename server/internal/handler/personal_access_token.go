@@ -71,8 +71,7 @@ func (h *Handler) CreatePersonalAccessToken(w http.ResponseWriter, r *http.Reque
 	}
 
 	var req CreatePATRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 	if req.Name == "" {

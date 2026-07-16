@@ -89,8 +89,7 @@ func (h *Handler) UpdateNotificationPreferences(w http.ResponseWriter, r *http.R
 	workspaceID := middleware.WorkspaceIDFromContext(r.Context())
 
 	var req updateNotifPrefRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 

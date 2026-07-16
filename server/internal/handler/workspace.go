@@ -166,8 +166,7 @@ func (h *Handler) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req CreateWorkspaceRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 
@@ -448,8 +447,7 @@ func (h *Handler) ProbeWorkspaceRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req probeWorkspaceRepoRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 	rawURL := strings.TrimSpace(req.URL)
@@ -505,8 +503,7 @@ func (h *Handler) ResolveWorkspaceRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req resolveWorkspaceRepoRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 	rawURL := strings.TrimSpace(req.URL)
@@ -581,8 +578,7 @@ func (h *Handler) UpdateWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req UpdateWorkspaceRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 
@@ -741,8 +737,7 @@ func (h *Handler) CreateMember(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req CreateMemberRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 
@@ -914,8 +909,7 @@ func (h *Handler) UpdateMember(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req UpdateMemberRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 	if strings.TrimSpace(req.Role) == "" {

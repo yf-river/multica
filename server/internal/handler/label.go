@@ -2,7 +2,6 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -146,8 +145,7 @@ func (h *Handler) CreateLabel(w http.ResponseWriter, r *http.Request) {
 		Name  string `json:"name"`
 		Color string `json:"color"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 	name, err := validateLabelName(req.Name)
@@ -242,8 +240,7 @@ func (h *Handler) UpdateLabel(w http.ResponseWriter, r *http.Request) {
 		Name  *string `json:"name"`
 		Color *string `json:"color"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 	userID, ok := requireUserID(w, r)
@@ -427,8 +424,7 @@ func (h *Handler) AttachLabel(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		LabelID string `json:"label_id"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 	if req.LabelID == "" {

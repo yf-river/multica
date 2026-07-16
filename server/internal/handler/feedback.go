@@ -58,8 +58,7 @@ func (h *Handler) CreateFeedback(w http.ResponseWriter, r *http.Request) {
 
 	r.Body = http.MaxBytesReader(w, r.Body, feedbackBodyLimit)
 	var req createFeedbackRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 

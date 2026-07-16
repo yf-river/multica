@@ -222,8 +222,7 @@ func (h *Handler) AccountPasswordLogin(w http.ResponseWriter, r *http.Request) {
 		Account  string `json:"account"`
 		Password string `json:"password"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 
@@ -368,8 +367,7 @@ func (h *Handler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req UpdateMeRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 

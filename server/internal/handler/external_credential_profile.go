@@ -155,8 +155,7 @@ func (h *Handler) CreateExternalCredentialProfile(w http.ResponseWriter, r *http
 		return
 	}
 	var req CreateExternalCredentialProfileRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 	provider, name, capabilities, statusCode, msg := h.normalizeExternalCredentialInput(req.Provider, req.Name, req.Capabilities)
@@ -299,8 +298,7 @@ func (h *Handler) UpdateExternalCredentialProfile(w http.ResponseWriter, r *http
 		return
 	}
 	var req UpdateExternalCredentialProfileRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 	params := db.UpdateExternalCredentialProfileParams{ID: id, UserID: parseUUID(userID)}
@@ -379,8 +377,7 @@ func (h *Handler) TestExternalCredentialProfile(w http.ResponseWriter, r *http.R
 		return
 	}
 	var req TestExternalCredentialProfileRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 	provider := strings.TrimSpace(strings.ToLower(req.Provider))
