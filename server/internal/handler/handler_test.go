@@ -876,6 +876,18 @@ func updateIssueThroughHandler(t *testing.T, issueID string, body map[string]any
 	return issue
 }
 
+func deleteIssueThroughHandler(t *testing.T, issueID string) {
+	t.Helper()
+	req := withURLParam(newRequest("DELETE", "/api/issues/"+issueID, nil), "id", issueID)
+	testHandler.DeleteIssue(httptest.NewRecorder(), req)
+}
+
+func deleteProjectThroughHandler(t *testing.T, projectID string) {
+	t.Helper()
+	req := withURLParam(newRequest("DELETE", "/api/projects/"+projectID, nil), "id", projectID)
+	testHandler.DeleteProject(httptest.NewRecorder(), req)
+}
+
 func updateAgentThroughHandler(t *testing.T, agentID string, body map[string]any) AgentResponse {
 	t.Helper()
 	w := httptest.NewRecorder()
@@ -1239,56 +1251,31 @@ func TestCreateSubIssueInheritsParentProject(t *testing.T) {
 			if issueID == "" {
 				continue
 			}
-			req := newRequest("DELETE", "/api/issues/"+issueID, nil)
-			req = withURLParam(req, "id", issueID)
-			testHandler.DeleteIssue(httptest.NewRecorder(), req)
+			deleteIssueThroughHandler(t, issueID)
 		}
 		if projectID != "" {
-			req := newRequest("DELETE", "/api/projects/"+projectID, nil)
-			req = withURLParam(req, "id", projectID)
-			testHandler.DeleteProject(httptest.NewRecorder(), req)
+			deleteProjectThroughHandler(t, projectID)
 		}
 	}()
 
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
+	project := createProjectThroughHandler(t, map[string]any{
 		"title": "Sub-issue inheritance project",
 	})
-	testHandler.CreateProject(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateProject: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var project projectResponse
-	_ = json.NewDecoder(w.Body).Decode(&project)
 	projectID = project.ID
 
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+	parent := createIssueThroughHandler(t, map[string]any{
 		"title":      "Parent with project",
 		"project_id": projectID,
 	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue parent: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var parent IssueResponse
-	_ = json.NewDecoder(w.Body).Decode(&parent)
 	parentID = parent.ID
 	if parent.ProjectID == nil || *parent.ProjectID != projectID {
 		t.Fatalf("CreateIssue parent: expected project_id %q, got %v", projectID, parent.ProjectID)
 	}
 
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+	child := createIssueThroughHandler(t, map[string]any{
 		"title":           "Child without explicit project",
 		"parent_issue_id": parentID,
 	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue child: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var child IssueResponse
-	_ = json.NewDecoder(w.Body).Decode(&child)
 	childID = child.ID
 
 	if child.ParentIssueID == nil || *child.ParentIssueID != parentID {
@@ -1306,74 +1293,40 @@ func TestCreateSubIssueUsesExplicitProjectOverParentProject(t *testing.T) {
 			if issueID == "" {
 				continue
 			}
-			req := newRequest("DELETE", "/api/issues/"+issueID, nil)
-			req = withURLParam(req, "id", issueID)
-			testHandler.DeleteIssue(httptest.NewRecorder(), req)
+			deleteIssueThroughHandler(t, issueID)
 		}
 		for _, projectID := range []string{childProjectID, parentProjectID} {
 			if projectID == "" {
 				continue
 			}
-			req := newRequest("DELETE", "/api/projects/"+projectID, nil)
-			req = withURLParam(req, "id", projectID)
-			testHandler.DeleteProject(httptest.NewRecorder(), req)
+			deleteProjectThroughHandler(t, projectID)
 		}
 	}()
 
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
+	parentProject := createProjectThroughHandler(t, map[string]any{
 		"title": "Parent project",
 	})
-	testHandler.CreateProject(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateProject parent: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var parentProject projectResponse
-	_ = json.NewDecoder(w.Body).Decode(&parentProject)
 	parentProjectID = parentProject.ID
 
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
+	childProject := createProjectThroughHandler(t, map[string]any{
 		"title": "Child explicit project",
 	})
-	testHandler.CreateProject(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateProject child: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var childProject projectResponse
-	_ = json.NewDecoder(w.Body).Decode(&childProject)
 	childProjectID = childProject.ID
 
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+	parent := createIssueThroughHandler(t, map[string]any{
 		"title":      "Parent with project",
 		"project_id": parentProjectID,
 	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue parent: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var parent IssueResponse
-	_ = json.NewDecoder(w.Body).Decode(&parent)
 	parentID = parent.ID
 	if parent.ProjectID == nil || *parent.ProjectID != parentProjectID {
 		t.Fatalf("CreateIssue parent: expected project_id %q, got %v", parentProjectID, parent.ProjectID)
 	}
 
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+	child := createIssueThroughHandler(t, map[string]any{
 		"title":           "Child with explicit project",
 		"parent_issue_id": parentID,
 		"project_id":      childProjectID,
 	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue child: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var child IssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&child); err != nil {
-		t.Fatalf("decode child response: %v", err)
-	}
 	childID = child.ID
 
 	if child.ParentIssueID == nil || *child.ParentIssueID != parentID {
@@ -1391,9 +1344,7 @@ func TestCreateIssueAllowsDuplicateOpenChild(t *testing.T) {
 			mustExec(t, context.Background(), `DELETE FROM issue WHERE parent_issue_id = $1 OR id = $1`, parentID)
 		}
 		if projectID != "" {
-			req := newRequest("DELETE", "/api/projects/"+projectID, nil)
-			req = withURLParam(req, "id", projectID)
-			testHandler.DeleteProject(httptest.NewRecorder(), req)
+			deleteProjectThroughHandler(t, projectID)
 		}
 	}()
 
@@ -1402,32 +1353,14 @@ func TestCreateIssueAllowsDuplicateOpenChild(t *testing.T) {
 		t.Fatalf("load agent: %v", err)
 	}
 
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
+	project := createProjectThroughHandler(t, map[string]any{
 		"title": "Duplicate child project",
 	})
-	testHandler.CreateProject(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateProject: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var project projectResponse
-	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
-		t.Fatalf("decode project response: %v", err)
-	}
 	projectID = project.ID
 
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+	parent := createIssueThroughHandler(t, map[string]any{
 		"title": "Duplicate child parent",
 	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue parent: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var parent IssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&parent); err != nil {
-		t.Fatalf("decode parent response: %v", err)
-	}
 	parentID = parent.ID
 
 	body := map[string]any{
@@ -1437,28 +1370,10 @@ func TestCreateIssueAllowsDuplicateOpenChild(t *testing.T) {
 		"assignee_type":   "agent",
 		"assignee_id":     agentID,
 	}
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, body)
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue child: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var child IssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&child); err != nil {
-		t.Fatalf("decode child response: %v", err)
-	}
+	child := createIssueThroughHandler(t, body)
 	childID = child.ID
 
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, body)
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue duplicate child: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var duplicate IssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&duplicate); err != nil {
-		t.Fatalf("decode duplicate response: %v", err)
-	}
+	duplicate := createIssueThroughHandler(t, body)
 	duplicateID = duplicate.ID
 	if duplicateID == childID {
 		t.Fatalf("duplicate child reused existing issue id %s", duplicateID)
@@ -1529,47 +1444,25 @@ func TestCreateIssueDefaultsToProjectLeadAgentAndEnqueues(t *testing.T) {
 	var projectID, issueID string
 	defer func() {
 		if issueID != "" {
-			req := newRequest("DELETE", "/api/issues/"+issueID, nil)
-			req = withURLParam(req, "id", issueID)
-			testHandler.DeleteIssue(httptest.NewRecorder(), req)
+			deleteIssueThroughHandler(t, issueID)
 		}
 		if projectID != "" {
-			req := newRequest("DELETE", "/api/projects/"+projectID, nil)
-			req = withURLParam(req, "id", projectID)
-			testHandler.DeleteProject(httptest.NewRecorder(), req)
+			deleteProjectThroughHandler(t, projectID)
 		}
 	}()
 
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
+	project := createProjectThroughHandler(t, map[string]any{
 		"title":     "Project lead default assignee",
 		"lead_type": "agent",
 		"lead_id":   leadAgentID,
 	})
-	testHandler.CreateProject(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateProject: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var project projectResponse
-	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
-		t.Fatalf("decode project response: %v", err)
-	}
 	projectID = project.ID
 
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+	issue := createIssueThroughHandler(t, map[string]any{
 		"title":      "Issue should route to project lead",
 		"project_id": projectID,
 		"status":     "todo",
 	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var issue IssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&issue); err != nil {
-		t.Fatalf("decode issue response: %v", err)
-	}
 	issueID = issue.ID
 
 	if issue.AssigneeType == nil || *issue.AssigneeType != "agent" {
@@ -1800,52 +1693,25 @@ func TestCreateIssueAllowsActiveDuplicate(t *testing.T) {
 		t.Fatalf("create project fixture: %v", err)
 	}
 
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+	parent := createIssueThroughHandler(t, map[string]any{
 		"title": "Duplicate guard parent " + suffix,
 	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue parent: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var parent IssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&parent); err != nil {
-		t.Fatalf("decode parent: %v", err)
-	}
 	parentID = parent.ID
 
 	title := "SH-PM-SYNTH-01 Synthesize recommendation-to-shortlist planning outputs " + suffix
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+	original := createIssueThroughHandler(t, map[string]any{
 		"title":           title,
 		"status":          "in_progress",
 		"parent_issue_id": parentID,
 		"project_id":      projectID,
 	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue original: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var original IssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&original); err != nil {
-		t.Fatalf("decode original: %v", err)
-	}
 	issueID = original.ID
 
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+	duplicate := createIssueThroughHandler(t, map[string]any{
 		"title":           "  sh-pm-synth-01   synthesize recommendation-to-shortlist planning outputs " + suffix + "  ",
 		"parent_issue_id": parentID,
 		"project_id":      projectID,
 	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue duplicate: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var duplicate IssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&duplicate); err != nil {
-		t.Fatalf("decode duplicate: %v", err)
-	}
 	duplicateID = duplicate.ID
 	if duplicateID == issueID {
 		t.Fatalf("duplicate create reused original issue id %s", duplicateID)
@@ -1854,20 +1720,11 @@ func TestCreateIssueAllowsActiveDuplicate(t *testing.T) {
 		t.Fatalf("duplicate title was not preserved distinctly: %q", duplicate.Title)
 	}
 
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+	third := createIssueThroughHandler(t, map[string]any{
 		"title":           title,
 		"parent_issue_id": parentID,
 		"project_id":      projectID,
 	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue third duplicate: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var third IssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&third); err != nil {
-		t.Fatalf("decode third duplicate: %v", err)
-	}
 	thirdID = third.ID
 	if thirdID == issueID || thirdID == duplicateID {
 		t.Fatalf("third duplicate reused existing issue id %s", thirdID)
@@ -1886,33 +1743,15 @@ func TestCreateIssueAllowsDuplicateAfterCancelled(t *testing.T) {
 		}
 	}()
 
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+	first := createIssueThroughHandler(t, map[string]any{
 		"title":  title,
 		"status": "cancelled",
 	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue cancelled: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var first IssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&first); err != nil {
-		t.Fatalf("decode cancelled: %v", err)
-	}
 	firstID = first.ID
 
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+	second := createIssueThroughHandler(t, map[string]any{
 		"title": title,
 	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue after cancelled: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var second IssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&second); err != nil {
-		t.Fatalf("decode second: %v", err)
-	}
 	secondID = second.ID
 	if secondID == firstID {
 		t.Fatalf("new issue reused cancelled issue id %s", secondID)
@@ -1931,33 +1770,15 @@ func TestCreateIssueAllowsDuplicateAfterDone(t *testing.T) {
 		}
 	}()
 
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+	first := createIssueThroughHandler(t, map[string]any{
 		"title":  title,
 		"status": "done",
 	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue done: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var first IssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&first); err != nil {
-		t.Fatalf("decode done: %v", err)
-	}
 	firstID = first.ID
 
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+	second := createIssueThroughHandler(t, map[string]any{
 		"title": title,
 	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue after done: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var second IssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&second); err != nil {
-		t.Fatalf("decode second: %v", err)
-	}
 	secondID = second.ID
 	if secondID == firstID {
 		t.Fatalf("new issue reused done issue id %s", secondID)
@@ -2448,24 +2269,12 @@ func TestCreateIssueRejectsUnknownAssigneeType(t *testing.T) {
 // TestCreateIssueAcceptsValidMemberAssignee is the positive control — the
 // validator must not block legitimate workspace members.
 func TestCreateIssueAcceptsValidMemberAssignee(t *testing.T) {
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+	created := createIssueThroughHandler(t, map[string]any{
 		"title":         "Valid member assignee",
 		"assignee_type": "member",
 		"assignee_id":   testUserID,
 	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue: expected 201 for valid member assignee, got %d: %s", w.Code, w.Body.String())
-	}
-
-	var created IssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
-		t.Fatalf("decode created response: %v", err)
-	}
-	cleanupReq := newRequest("DELETE", "/api/issues/"+created.ID, nil)
-	cleanupReq = withURLParam(cleanupReq, "id", created.ID)
-	testHandler.DeleteIssue(httptest.NewRecorder(), cleanupReq)
+	deleteIssueThroughHandler(t, created.ID)
 }
 
 // TestCreateIssueRejectsMalformedAssigneeID covers the case where parseUUID
@@ -2589,24 +2398,12 @@ func TestCreateIssueCommitsAttachmentWithIssue(t *testing.T) {
 		mustExec(t, context.Background(), `DELETE FROM attachment WHERE id = $1`, attachmentID)
 	})
 
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+	created := createIssueThroughHandler(t, map[string]any{
 		"title":          "Issue with atomic attachment",
 		"attachment_ids": []string{attachmentID, attachmentID},
 	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-
-	var created IssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
 	t.Cleanup(func() {
-		cleanupReq := newRequest("DELETE", "/api/issues/"+created.ID, nil)
-		cleanupReq = withURLParam(cleanupReq, "id", created.ID)
-		testHandler.DeleteIssue(httptest.NewRecorder(), cleanupReq)
+		deleteIssueThroughHandler(t, created.ID)
 	})
 	if len(created.Attachments) != 1 || created.Attachments[0].ID != attachmentID {
 		t.Fatalf("CreateIssue: attachment response = %#v, want only %s", created.Attachments, attachmentID)
@@ -2625,26 +2422,15 @@ func TestCreateIssueCommitsAttachmentWithIssue(t *testing.T) {
 // path, where the same parseUUID-shaped gap existed on a previously-unassigned
 // issue.
 func TestUpdateIssueRejectsMalformedAssigneeID(t *testing.T) {
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+	created := createIssueThroughHandler(t, map[string]any{
 		"title": "Update malformed assignee target",
 	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var created IssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
-		t.Fatalf("decode created response: %v", err)
-	}
 	defer func() {
-		cleanupReq := newRequest("DELETE", "/api/issues/"+created.ID, nil)
-		cleanupReq = withURLParam(cleanupReq, "id", created.ID)
-		testHandler.DeleteIssue(httptest.NewRecorder(), cleanupReq)
+		deleteIssueThroughHandler(t, created.ID)
 	}()
 
-	w = httptest.NewRecorder()
-	req = newRequest("PUT", "/api/issues/"+created.ID, map[string]any{
+	w := httptest.NewRecorder()
+	req := newRequest("PUT", "/api/issues/"+created.ID, map[string]any{
 		"assignee_id": "not-a-uuid",
 	})
 	req = withURLParam(req, "id", created.ID)
@@ -2657,26 +2443,15 @@ func TestUpdateIssueRejectsMalformedAssigneeID(t *testing.T) {
 // TestUpdateIssueRejectsNonexistentMemberAssignee verifies the same gap is
 // closed on the update path — UpdateIssue previously only validated agents.
 func TestUpdateIssueRejectsNonexistentMemberAssignee(t *testing.T) {
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+	created := createIssueThroughHandler(t, map[string]any{
 		"title": "Update assignee target",
 	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var created IssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
-		t.Fatalf("decode created response: %v", err)
-	}
 	defer func() {
-		cleanupReq := newRequest("DELETE", "/api/issues/"+created.ID, nil)
-		cleanupReq = withURLParam(cleanupReq, "id", created.ID)
-		testHandler.DeleteIssue(httptest.NewRecorder(), cleanupReq)
+		deleteIssueThroughHandler(t, created.ID)
 	}()
 
-	w = httptest.NewRecorder()
-	req = newRequest("PUT", "/api/issues/"+created.ID, map[string]any{
+	w := httptest.NewRecorder()
+	req := newRequest("PUT", "/api/issues/"+created.ID, map[string]any{
 		"assignee_type": "member",
 		"assignee_id":   "00000000-0000-0000-0000-000000000000",
 	})
@@ -2691,40 +2466,19 @@ func TestUpdateIssueRejectsNonexistentMemberAssignee(t *testing.T) {
 // fields still works after the new validator landed — clearing the assignee
 // must not be misclassified as a mismatched pair.
 func TestUpdateIssueAllowsExplicitUnassign(t *testing.T) {
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+	created := createIssueThroughHandler(t, map[string]any{
 		"title":         "Issue to unassign",
 		"assignee_type": "member",
 		"assignee_id":   testUserID,
 	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var created IssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
-		t.Fatalf("decode created response: %v", err)
-	}
 	defer func() {
-		cleanupReq := newRequest("DELETE", "/api/issues/"+created.ID, nil)
-		cleanupReq = withURLParam(cleanupReq, "id", created.ID)
-		testHandler.DeleteIssue(httptest.NewRecorder(), cleanupReq)
+		deleteIssueThroughHandler(t, created.ID)
 	}()
 
-	w = httptest.NewRecorder()
-	req = newRequest("PUT", "/api/issues/"+created.ID, map[string]any{
+	updated := updateIssueThroughHandler(t, created.ID, map[string]any{
 		"assignee_type": nil,
 		"assignee_id":   nil,
 	})
-	req = withURLParam(req, "id", created.ID)
-	testHandler.UpdateIssue(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("UpdateIssue: expected 200 for unassign, got %d: %s", w.Code, w.Body.String())
-	}
-	var updated IssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&updated); err != nil {
-		t.Fatalf("decode updated response: %v", err)
-	}
 	if updated.AssigneeType != nil || updated.AssigneeID != nil {
 		t.Fatalf("UpdateIssue: expected assignee cleared, got type=%v id=%v", updated.AssigneeType, updated.AssigneeID)
 	}
