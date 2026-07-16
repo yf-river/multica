@@ -1,12 +1,12 @@
-import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { spawnSync } from "node:child_process";
 import { mergeNoProxy } from "./lib/goal-test-browser-audit.mjs";
+import { readGoalTestEnvFile } from "./lib/goal-test-audit-env.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const envName = process.env.GOAL_TEST_ENV || "int";
-const runEnv = readEnvFile(path.join(repoRoot, ".run/env", `goal-test-${envName}.env`));
+const runEnv = readGoalTestEnvFile(path.join(repoRoot, ".run/env", `goal-test-${envName}.env`));
 
 const cliArgs = process.argv.slice(2);
 const specArgs = splitWords(process.env.SPEC || "");
@@ -76,18 +76,6 @@ const result = spawnSync("pnpm", ["exec", "playwright", "test", ...args], {
   stdio: "inherit",
 });
 process.exit(result.status ?? 1);
-
-function readEnvFile(file) {
-  if (!existsSync(file)) return {};
-  const values = {};
-  for (const raw of readFileSync(file, "utf8").split(/\r?\n/)) {
-    const line = raw.trim();
-    if (!line || line.startsWith("#")) continue;
-    const match = line.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
-    if (match) values[match[1]] = match[2].replace(/^['"]|['"]$/g, "");
-  }
-  return values;
-}
 
 function splitWords(value) {
   return String(value || "")

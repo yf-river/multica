@@ -17,7 +17,7 @@ const {
   env, frontendURL, browserURL, backendURL, workspaceSlug, account, password,
   artifactRoot, generatedAt, stamp,
 } = loadGoalTestBrowserAudit(process.env.GOAL_TEST_UI_AUDIT_DIR);
-const { isAuditedRequest, countByPath } = createBrowserRequestTools(
+const { isAuditedRequest, countByPath, buildApiRequestBudget } = createBrowserRequestTools(
   [frontendURL, browserURL, backendURL],
   requestPath,
 );
@@ -314,21 +314,6 @@ async function auditRoute(page, route) {
     loading_residue: loadingResidue,
     screenshot,
     body_excerpt: bodyText.split("\n").filter(Boolean).slice(0, 40),
-  };
-}
-
-function buildApiRequestBudget(requests) {
-  const projectResourceRequests = requests.filter((item) => /^\/api\/projects\/[^/]+\/resources$/.test(requestPath(item.url)));
-  const projectResourcePathCounts = countByPath(projectResourceRequests);
-  const uniqueProjectResourcePaths = projectResourcePathCounts.length;
-  const duplicateProjectResourceRequests = projectResourceRequests.length - uniqueProjectResourcePaths;
-  const projectResourceBudget = Math.min(uniqueProjectResourcePaths, 3) + duplicateProjectResourceRequests;
-  return {
-    count: requests.length - projectResourceRequests.length + projectResourceBudget,
-    actual_count: requests.length,
-    project_resource_actual_count: projectResourceRequests.length,
-    project_resource_unique_paths: uniqueProjectResourcePaths,
-    project_resource_budget: projectResourceBudget,
   };
 }
 

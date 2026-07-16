@@ -1,12 +1,13 @@
 import pg from "pg";
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { writeFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { acceptanceDir } from "./lib/acceptance-artifacts.mjs";
+import { readGoalTestEnvFile } from "./lib/goal-test-audit-env.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const envName = process.env.GOAL_TEST_ENV || "int";
-const runEnv = readEnvFile(path.join(repoRoot, ".run/env", `goal-test-${envName}.env`));
+const runEnv = readGoalTestEnvFile(path.join(repoRoot, ".run/env", `goal-test-${envName}.env`));
 const startedAt = Date.now();
 
 const frontendURL = trimSlash(process.env.PLAYWRIGHT_BASE_URL || runEnv.PLAYWRIGHT_BASE_URL || "");
@@ -155,18 +156,6 @@ async function fetchWithRetry(url, init = {}) {
     }
   }
   throw lastError;
-}
-
-function readEnvFile(file) {
-  if (!existsSync(file)) return {};
-  const values = {};
-  for (const raw of readFileSync(file, "utf8").split(/\r?\n/)) {
-    const line = raw.trim();
-    if (!line || line.startsWith("#")) continue;
-    const match = line.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
-    if (match) values[match[1]] = match[2].replace(/^['"]|['"]$/g, "");
-  }
-  return values;
 }
 
 function trimSlash(value) {

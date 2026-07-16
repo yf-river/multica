@@ -1,4 +1,3 @@
-import { chromium } from "@playwright/test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
@@ -10,6 +9,7 @@ import {
 import {
   configureGoalTestNoProxy,
   createBrowserRequestTools,
+  launchGoalTestBrowser,
   loadGoalTestBrowserAudit,
   loginGoalTest,
   verifyGoalTestDeploymentLogs,
@@ -20,7 +20,7 @@ const {
   artifactRoot, generatedAt, stamp,
 } = loadGoalTestBrowserAudit(process.env.GOAL_TEST_TRAINING_AUDIT_DIR);
 configureGoalTestNoProxy([browserURL, frontendURL, backendURL]);
-const { isAuditedRequest, countByPath } = createBrowserRequestTools(
+const { isAuditedRequest, countByPath, buildApiRequestBudget } = createBrowserRequestTools(
   [frontendURL, browserURL, backendURL],
   requestPath,
 );
@@ -42,13 +42,7 @@ const routes = [
 ];
 
 const token = await loginGoalTest({ backendURL, account, password });
-const browser = await chromium.launch({ headless: true, args: ["--no-proxy-server", "--proxy-server=direct://", "--proxy-bypass-list=*"] });
-const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, ignoreHTTPSErrors: true });
-await context.addCookies([{ name: "multica_logged_in", value: "1", url: browserURL, sameSite: "Lax" }]);
-await context.addInitScript((authToken) => {
-  localStorage.setItem("multica_token", authToken);
-  localStorage.setItem("multica:chat:isOpen", "false");
-}, token);
+const { browser, context } = await launchGoalTestBrowser(browserURL, token);
 
 const results = [];
 for (const route of routes) {
@@ -173,21 +167,6 @@ async function auditTrainingRoute(page, route) {
     console_errors: consoleErrors,
     page_errors: pageErrors,
     body_excerpt: bodyText.split("\n").filter(Boolean).slice(0, 24),
-  };
-}
-
-function buildApiRequestBudget(requests) {
-  const projectResourceRequests = requests.filter((item) => /^\/api\/projects\/[^/]+\/resources$/.test(requestPath(item.url)));
-  const projectResourcePathCounts = countByPath(projectResourceRequests);
-  const uniqueProjectResourcePaths = projectResourcePathCounts.length;
-  const duplicateProjectResourceRequests = projectResourceRequests.length - uniqueProjectResourcePaths;
-  const projectResourceBudget = Math.min(uniqueProjectResourcePaths, 3) + duplicateProjectResourceRequests;
-  return {
-    count: requests.length - projectResourceRequests.length + projectResourceBudget,
-    actual_count: requests.length,
-    project_resource_actual_count: projectResourceRequests.length,
-    project_resource_unique_paths: uniqueProjectResourcePaths,
-    project_resource_budget: projectResourceBudget,
   };
 }
 
