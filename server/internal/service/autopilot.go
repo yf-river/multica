@@ -965,31 +965,19 @@ func (s *AutopilotService) resolveAutopilotTriggerTimezone(ctx context.Context, 
 }
 
 func formatAutopilotRunTimestamp(run db.AutopilotRun, timezone string) (string, error) {
-	triggeredAt := autopilotRunTriggeredAt(run)
 	loc, label, err := autopilotTriggerLocation(timezone)
 	if err != nil {
 		return "", err
 	}
-	return triggeredAt.In(loc).Format("2006-01-02 15:04") + " " + label, nil
+	return run.TriggeredAt.Time.In(loc).Format("2006-01-02 15:04") + " " + label, nil
 }
 
 func formatAutopilotRunDate(run db.AutopilotRun, timezone string) (string, error) {
-	triggeredAt := autopilotRunTriggeredAt(run)
 	loc, _, err := autopilotTriggerLocation(timezone)
 	if err != nil {
 		return "", err
 	}
-	return triggeredAt.In(loc).Format("2006-01-02"), nil
-}
-
-func autopilotRunTriggeredAt(run db.AutopilotRun) time.Time {
-	if run.TriggeredAt.Valid {
-		return run.TriggeredAt.Time
-	}
-	if run.CreatedAt.Valid {
-		return run.CreatedAt.Time
-	}
-	return time.Now().UTC()
+	return run.TriggeredAt.Time.In(loc).Format("2006-01-02"), nil
 }
 
 func autopilotTriggerLocation(timezone string) (*time.Location, string, error) {
