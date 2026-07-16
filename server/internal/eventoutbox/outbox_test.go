@@ -243,18 +243,8 @@ func TestStreamKeySerializesEventsAcrossDispatchers(t *testing.T) {
 	ctx := context.Background()
 	eventType := "test:ordered:" + uuid.NewString()
 	streamKey := "issue:" + fixture.issueID
-	enqueue := func(sequence int) events.Event {
-		event := fixture.event(eventType)
-		event.StreamKey = streamKey
-		event.Payload = map[string]any{"issue_id": fixture.issueID, "sequence": sequence}
-		created, err := Enqueue(ctx, fixture.queries, event)
-		if err != nil {
-			t.Fatalf("enqueue sequence %d: %v", sequence, err)
-		}
-		return created
-	}
-	first := enqueue(1)
-	second := enqueue(2)
+	first := enqueueStreamSequence(t, fixture, eventType, streamKey, 1)
+	second := enqueueStreamSequence(t, fixture, eventType, streamKey, 2)
 
 	var failFirst atomic.Bool
 	failFirst.Store(true)
@@ -325,18 +315,8 @@ func TestDeadLetterUnblocksStreamAndCanBeRequeued(t *testing.T) {
 	ctx := context.Background()
 	eventType := "test:dead-letter:" + uuid.NewString()
 	streamKey := "issue:" + fixture.issueID
-	enqueue := func(sequence int) events.Event {
-		event := fixture.event(eventType)
-		event.StreamKey = streamKey
-		event.Payload = map[string]any{"issue_id": fixture.issueID, "sequence": sequence}
-		created, err := Enqueue(ctx, fixture.queries, event)
-		if err != nil {
-			t.Fatalf("enqueue sequence %d: %v", sequence, err)
-		}
-		return created
-	}
-	first := enqueue(1)
-	second := enqueue(2)
+	first := enqueueStreamSequence(t, fixture, eventType, streamKey, 1)
+	second := enqueueStreamSequence(t, fixture, eventType, streamKey, 2)
 
 	poisonFirst := true
 	var mu sync.Mutex
@@ -528,6 +508,18 @@ func assertActivityCount(t *testing.T, issueID, action string, want int) {
 	if count != want {
 		t.Fatalf("activity count for %s = %d, want %d", action, count, want)
 	}
+}
+
+func enqueueStreamSequence(t *testing.T, fixture outboxFixture, eventType, streamKey string, sequence int) events.Event {
+	t.Helper()
+	event := fixture.event(eventType)
+	event.StreamKey = streamKey
+	event.Payload = map[string]any{"issue_id": fixture.issueID, "sequence": sequence}
+	created, err := Enqueue(context.Background(), fixture.queries, event)
+	if err != nil {
+		t.Fatalf("enqueue sequence %d: %v", sequence, err)
+	}
+	return created
 }
 
 func assertDeliveryCount(t *testing.T, eventID, consumer string, want int) {
