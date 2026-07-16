@@ -14,7 +14,7 @@ import {
   PickerEmpty,
 } from "../../../issues/components/pickers/property-picker";
 import { useT } from "../../../i18n";
-import { matchesPinyin } from "../../../editor/extensions/pinyin-match";
+import { matchesTextQuery } from "../../../editor/extensions/pinyin-match";
 
 export interface AssigneeSelection {
   type: AutopilotAssigneeType;
@@ -51,10 +51,8 @@ export function AgentPicker({
   const selectedName = selectedAgent?.name ?? selectedSquad?.name;
 
   const query = filter.trim().toLowerCase();
-  const matches = (name: string) =>
-    !query || name.toLowerCase().includes(query) || matchesPinyin(name, query);
-  const filteredAgents = activeAgents.filter((a) => matches(a.name));
-  const filteredSquads = activeSquads.filter((s) => matches(s.name));
+  const filteredAgents = activeAgents.filter((a) => matchesTextQuery(a.name, query));
+  const filteredSquads = activeSquads.filter((s) => matchesTextQuery(s.name, query));
 
   const isSelected = (type: AutopilotAssigneeType, id: string) =>
     assignee?.type === type && assignee?.id === id;

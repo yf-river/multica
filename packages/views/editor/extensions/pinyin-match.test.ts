@@ -1,5 +1,16 @@
 import { describe, it, expect } from "vitest";
-import { matchesPinyin } from "./pinyin-match";
+import { matchesPinyin, matchesTextQuery } from "./pinyin-match";
+
+describe("matchesTextQuery", () => {
+  it.each([
+    ["Alice", "ali"],
+    ["Alice", "ALI"],
+    ["李云龙", "lyl"],
+    ["李云龙", "云龙"],
+  ])("matches %s with %s", (text, query) => {
+    expect(matchesTextQuery(text, query)).toBe(true);
+  });
+});
 
 describe("matchesPinyin", () => {
   it.each([

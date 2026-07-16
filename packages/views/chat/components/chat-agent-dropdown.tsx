@@ -8,7 +8,7 @@ import {
   PickerSection,
   PropertyPicker,
 } from "../../issues/components/pickers/property-picker";
-import { matchesPinyin } from "../../editor/extensions/pinyin-match";
+import { matchesTextQuery } from "../../editor/extensions/pinyin-match";
 import { useT } from "../../i18n";
 
 export function AgentDropdown({
@@ -38,10 +38,8 @@ export function AgentDropdown({
   }, [agents, userId]);
 
   const query = filter.trim().toLowerCase();
-  const matches = (name: string) =>
-    !query || name.toLowerCase().includes(query) || matchesPinyin(name, query);
-  const filteredMine = mine.filter((agent) => matches(agent.name));
-  const filteredOthers = others.filter((agent) => matches(agent.name));
+  const filteredMine = mine.filter((agent) => matchesTextQuery(agent.name, query));
+  const filteredOthers = others.filter((agent) => matchesTextQuery(agent.name, query));
 
   const handlePick = (agent: Agent) => {
     onSelect(agent);

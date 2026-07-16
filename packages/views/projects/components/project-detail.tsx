@@ -86,7 +86,7 @@ import {
 } from "@multica/ui/components/ui/alert-dialog";
 import { useT } from "../../i18n";
 import { useProjectStatusLabels, useProjectPriorityLabels } from "./labels";
-import { matchesPinyin } from "../../editor/extensions/pinyin-match";
+import { matchesTextQuery } from "../../editor/extensions/pinyin-match";
 import { useMoveIssue } from "../../issues/hooks/use-move-issue";
 import { useRunningIssueIds } from "../../issues/hooks/use-running-issue-ids";
 
@@ -499,8 +499,8 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
   const [leadOpen, setLeadOpen] = useState(false);
   const [leadFilter, setLeadFilter] = useState("");
   const leadQuery = leadFilter.toLowerCase();
-  const filteredMembers = members.filter((m) => m.name.toLowerCase().includes(leadQuery) || matchesPinyin(m.name, leadQuery));
-  const filteredAgents = agents.filter((a) => !a.archived_at && (a.name.toLowerCase().includes(leadQuery) || matchesPinyin(a.name, leadQuery)));
+  const filteredMembers = members.filter((m) => matchesTextQuery(m.name, leadQuery));
+  const filteredAgents = agents.filter((a) => !a.archived_at && matchesTextQuery(a.name, leadQuery));
 
   const handleUpdateField = useCallback(
     (data: Parameters<typeof updateProject.mutate>[0] extends { id: string } & infer R ? R : never) => {

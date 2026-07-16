@@ -81,7 +81,7 @@ import {
 import { Tooltip, TooltipTrigger, TooltipContent } from "@multica/ui/components/ui/tooltip";
 import type { Issue } from "@multica/core/types";
 import { useT } from "../../i18n";
-import { matchesPinyin } from "../../editor/extensions/pinyin-match";
+import { matchesTextQuery } from "../../editor/extensions/pinyin-match";
 import { FILTER_ITEM_CLASS, HoverCheck } from "../../common/hover-check";
 import { WorkspaceAgentWorkingChip } from "./workspace-agent-working-chip";
 
@@ -291,14 +291,12 @@ function ActorSubContent({
     enabled: enabled && !!wsId,
   });
   const query = search.trim().toLowerCase();
-  const filteredMembers = members.filter((m) =>
-    m.name.toLowerCase().includes(query) || matchesPinyin(m.name, query),
-  );
+  const filteredMembers = members.filter((m) => matchesTextQuery(m.name, query));
   const filteredAgents = agents.filter((a) =>
-    !a.archived_at && (a.name.toLowerCase().includes(query) || matchesPinyin(a.name, query)),
+    !a.archived_at && matchesTextQuery(a.name, query),
   );
   const filteredSquads = squads.filter((s) =>
-    !s.archived_at && (s.name.toLowerCase().includes(query) || matchesPinyin(s.name, query)),
+    !s.archived_at && matchesTextQuery(s.name, query),
   );
 
   const isSelected = (type: "member" | "agent" | "squad", id: string) =>

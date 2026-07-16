@@ -38,7 +38,7 @@ import {
   recordMentionUsage,
   sortUserItemsByRecency,
 } from "./mention-recency";
-import { matchesPinyin } from "./pinyin-match";
+import { matchesTextQuery } from "./pinyin-match";
 import {
   createSuggestionPopupRender,
   useSuggestionSelection,
@@ -453,10 +453,8 @@ function matchesMentionQuery(item: MentionItem, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
   return (
-    item.label.toLowerCase().includes(q) ||
-    item.description?.toLowerCase().includes(q) === true ||
-    matchesPinyin(item.label, q) ||
-    (item.description ? matchesPinyin(item.description, q) : false)
+    matchesTextQuery(item.label, q) ||
+    (item.description ? matchesTextQuery(item.description, q) : false)
   );
 }
 
@@ -506,7 +504,7 @@ export function createMentionSuggestion(
         : [];
 
     const memberItems: MentionItem[] = members
-      .filter((m) => m.name.toLowerCase().includes(q) || matchesPinyin(m.name, q))
+      .filter((m) => matchesTextQuery(m.name, q))
       .map((m) => ({
         id: m.user_id,
         label: m.name,
@@ -517,13 +515,13 @@ export function createMentionSuggestion(
       .filter(
         (a) =>
           !a.archived_at &&
-          (a.name.toLowerCase().includes(q) || matchesPinyin(a.name, q)) &&
+          matchesTextQuery(a.name, q) &&
           canAssignAgentToIssue(a, { userId, role: myRole }).allowed,
       )
       .map((a) => ({ id: a.id, label: a.name, type: "agent" as const }));
 
     const squadItems: MentionItem[] = squads
-      .filter((s) => !s.archived_at && (s.name.toLowerCase().includes(q) || matchesPinyin(s.name, q)))
+      .filter((s) => !s.archived_at && matchesTextQuery(s.name, q))
       .map((s) => ({ id: s.id, label: s.name, type: "squad" as const }));
 
     // Members and agents share a single ranked list — recently mentioned

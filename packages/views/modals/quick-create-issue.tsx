@@ -70,7 +70,7 @@ import {
 import { FileUploadButton } from "@multica/ui/components/common/file-upload-button";
 import { IssuePickerModal } from "./issue-picker-modal";
 import { useT } from "../i18n";
-import { matchesPinyin } from "../editor/extensions/pinyin-match";
+import { matchesTextQuery } from "../editor/extensions/pinyin-match";
 
 type ActorSelection =
   | { type: "agent"; id: string }
@@ -668,11 +668,11 @@ function ActorPicker({
   const query = filter.trim().toLowerCase();
 
   const filteredAgents = useMemo(
-    () => visibleAgents.filter((a) => a.name.toLowerCase().includes(query) || matchesPinyin(a.name, query)),
+    () => visibleAgents.filter((a) => matchesTextQuery(a.name, query)),
     [visibleAgents, query],
   );
   const filteredSquads = useMemo(
-    () => visibleSquads.filter((s) => s.name.toLowerCase().includes(query) || matchesPinyin(s.name, query)),
+    () => visibleSquads.filter((s) => matchesTextQuery(s.name, query)),
     [visibleSquads, query],
   );
 

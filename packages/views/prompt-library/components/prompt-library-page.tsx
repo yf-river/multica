@@ -36,7 +36,7 @@ import { Textarea } from "@multica/ui/components/ui/textarea";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { PageHeader } from "../../layout/page-header";
 import { useNavigation } from "../../navigation";
-import { matchesPinyin } from "../../editor/extensions/pinyin-match";
+import { matchesTextQuery } from "../../editor/extensions/pinyin-match";
 import { useT } from "../../i18n/use-t";
 import {
   buildAssetPayload,
@@ -372,7 +372,7 @@ export function PromptLibraryPage({
     return visiblePromptItems.filter((item) => {
       if (!q) return true;
       const haystack = [item.name, item.description, item.content].join(" ");
-      return haystack.toLowerCase().includes(q) || matchesPinyin(haystack, q);
+      return matchesTextQuery(haystack, q);
     });
   }, [query, visiblePromptItems]);
 

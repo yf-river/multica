@@ -12,7 +12,7 @@ import {
   PickerItem,
   PickerEmpty,
 } from "../../issues/components/pickers/property-picker";
-import { matchesPinyin } from "../../editor/extensions/pinyin-match";
+import { matchesTextQuery } from "../../editor/extensions/pinyin-match";
 import { useT } from "../../i18n";
 
 // Fully controlled — parent owns the selection state and ships it to the
@@ -38,10 +38,7 @@ export function SubscriberMultiSelect({
   const filteredMembers = useMemo(
     () =>
       members.filter(
-        (m) =>
-          query === "" ||
-          m.name.toLowerCase().includes(query) ||
-          matchesPinyin(m.name, query),
+        (m) => matchesTextQuery(m.name, query),
       ),
     [members, query],
   );

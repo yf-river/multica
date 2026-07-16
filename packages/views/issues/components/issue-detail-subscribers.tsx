@@ -10,7 +10,7 @@ import {
 } from "@multica/ui/components/ui/command";
 import { PopoverContent } from "@multica/ui/components/ui/popover";
 import { ActorAvatar } from "../../common/actor-avatar";
-import { matchesPinyin } from "../../editor/extensions/pinyin-match";
+import { matchesTextQuery } from "../../editor/extensions/pinyin-match";
 import type { IssueDetailT } from "./issue-detail-source";
 
 export function SubscriberPopoverContent({
@@ -33,10 +33,10 @@ export function SubscriberPopoverContent({
   const activeAgents = agents.filter((a) => !a.archived_at);
 
   const filteredMembers = q
-    ? uniqueMembers.filter((m) => m.name.toLowerCase().includes(q) || matchesPinyin(m.name, q))
+    ? uniqueMembers.filter((m) => matchesTextQuery(m.name, q))
     : uniqueMembers;
   const filteredAgents = q
-    ? activeAgents.filter((a) => a.name.toLowerCase().includes(q) || matchesPinyin(a.name, q))
+    ? activeAgents.filter((a) => matchesTextQuery(a.name, q))
     : activeAgents;
 
   return (

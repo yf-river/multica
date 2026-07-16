@@ -26,7 +26,7 @@ import { ListView } from "../issues/components/list-view";
 import { BatchActionToolbar } from "../issues/components/batch-action-toolbar";
 import { IssueDisplayControls } from "../issues/components/issues-header";
 import { filterIssues } from "../issues/utils/filter";
-import { matchesPinyin } from "../editor/extensions/pinyin-match";
+import { matchesTextQuery } from "../editor/extensions/pinyin-match";
 import { useT } from "../i18n";
 
 export type TaskActorType = "member" | "agent";
@@ -125,9 +125,8 @@ export function ActorIssuesPanel({
     return filteredIssues.filter((issue) => {
       const title = issue.title ?? "";
       return (
-        title.toLowerCase().includes(query) ||
-        issue.identifier.toLowerCase().includes(query) ||
-        matchesPinyin(title, query)
+        matchesTextQuery(title, query) ||
+        issue.identifier.toLowerCase().includes(query)
       );
     });
   }, [filteredIssues, search]);

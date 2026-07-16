@@ -73,7 +73,7 @@ import { useTheme } from "@multica/ui/components/common/theme-provider";
 import { copyText } from "@multica/ui/lib/clipboard";
 import { useNavigation } from "../navigation";
 import { useT } from "../i18n";
-import { matchesPinyin } from "../editor/extensions/pinyin-match";
+import { matchesTextQuery } from "../editor/extensions/pinyin-match";
 import { HighlightText } from "./highlight-text";
 import { useSearchStore } from "@multica/core/search";
 
@@ -104,10 +104,9 @@ type ThemeValue = "light" | "dark" | "system";
 
 function matchesMember(member: MemberWithUser, query: string) {
   return (
-    member.name.toLowerCase().includes(query) ||
+    matchesTextQuery(member.name, query) ||
     member.account.toLowerCase().includes(query) ||
-    (query.length >= 3 && member.role.startsWith(query)) ||
-    matchesPinyin(member.name, query)
+    (query.length >= 3 && member.role.startsWith(query))
   );
 }
 

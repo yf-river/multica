@@ -175,7 +175,7 @@ vi.mock("@multica/ui/components/ui/label", () => ({
 }));
 
 vi.mock("../editor/extensions/pinyin-match", () => ({
-  matchesPinyin: () => false,
+  matchesTextQuery: () => true,
 }));
 
 vi.mock("sonner", () => ({

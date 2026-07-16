@@ -1,5 +1,9 @@
 import { pinyin } from "pinyin-pro";
 
+export function matchesTextQuery(text: string, query: string): boolean {
+  return text.toLowerCase().includes(query.toLowerCase()) || matchesPinyin(text, query);
+}
+
 /**
  * Check if a query matches a name via pinyin.
  * Supports:

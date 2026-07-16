@@ -15,7 +15,7 @@ import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
 import { Textarea } from "@multica/ui/components/ui/textarea";
-import { matchesPinyin } from "../../editor/extensions/pinyin-match";
+import { matchesTextQuery } from "../../editor/extensions/pinyin-match";
 import {
   buildCaseLibraryUpdateRequest,
   buildCaseSearchText,
@@ -215,7 +215,7 @@ export function CaseLibraryEditorPanel({
       ]
         .join(" ")
         .toLowerCase();
-      return text.includes(datasetFilter) || matchesPinyin(text, datasetFilter);
+      return matchesTextQuery(text, datasetFilter);
     });
   }, [copy, datasetAssets, datasetFilter]);
 

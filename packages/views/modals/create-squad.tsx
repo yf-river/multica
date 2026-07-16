@@ -41,7 +41,7 @@ import {
   PickerItem,
   PickerSection,
 } from "../issues/components/pickers/property-picker";
-import { matchesPinyin } from "../editor/extensions/pinyin-match";
+import { matchesTextQuery } from "../editor/extensions/pinyin-match";
 import { useT } from "../i18n";
 
 type SelectedMember = {
@@ -325,10 +325,8 @@ function LeaderPicker({
   );
 
   const q = filter.trim().toLowerCase();
-  const matches = (a: Agent) =>
-    !q || a.name.toLowerCase().includes(q) || matchesPinyin(a.name, q);
-  const filteredMine = myAgents.filter(matches);
-  const filteredOthers = otherAgents.filter(matches);
+  const filteredMine = myAgents.filter((agent) => matchesTextQuery(agent.name, q));
+  const filteredOthers = otherAgents.filter((agent) => matchesTextQuery(agent.name, q));
 
   const selected = agents.find((a) => a.id === value) ?? null;
   const noAgents = agents.length === 0;
@@ -477,14 +475,9 @@ function AdditionalMembersPicker({
   );
 
   const q = filter.trim().toLowerCase();
-  const agentMatches = (a: Agent) =>
-    !q || a.name.toLowerCase().includes(q) || matchesPinyin(a.name, q);
-  const memberMatches = (m: MemberWithUser) =>
-    !q || m.name.toLowerCase().includes(q) || matchesPinyin(m.name, q);
-
-  const filteredMine = myAgents.filter(agentMatches);
-  const filteredOthers = otherAgents.filter(agentMatches);
-  const filteredMembers = members.filter(memberMatches);
+  const filteredMine = myAgents.filter((agent) => matchesTextQuery(agent.name, q));
+  const filteredOthers = otherAgents.filter((agent) => matchesTextQuery(agent.name, q));
+  const filteredMembers = members.filter((member) => matchesTextQuery(member.name, q));
   const anyResults =
     filteredMine.length + filteredOthers.length + filteredMembers.length > 0;
 

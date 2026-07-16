@@ -107,7 +107,7 @@ import type {
 import { PageHeader } from "../../layout/page-header";
 import { ProjectIcon } from "./project-icon";
 import { useT } from "../../i18n";
-import { matchesPinyin } from "../../editor/extensions/pinyin-match";
+import { matchesTextQuery } from "../../editor/extensions/pinyin-match";
 import { useFormatRelativeDate } from "./labels";
 import { ProjectStatusBadge, ProjectPriorityBadge } from "./project-badge";
 import { ProjectLeadPicker } from "./project-lead-picker";
@@ -740,7 +740,7 @@ export function ProjectsPage() {
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
     const filtered = displayProjects.filter((p) => {
-      if (q && !p.title.toLowerCase().includes(q) && !matchesPinyin(p.title, q)) {
+      if (q && !matchesTextQuery(p.title, q)) {
         return false;
       }
       if (filters.statuses.length && !filters.statuses.includes(p.status)) return false;
