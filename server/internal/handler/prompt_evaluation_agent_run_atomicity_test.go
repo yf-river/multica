@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -186,26 +185,7 @@ func TestRunPromptEvaluationAssetAgentCompletionFailureRollsBackEveryWrite(t *te
 	assetName := "agent run completion rollback " + uuid.NewString()
 	asset, _ := createPromptEvaluationAgentRunAssetFixture(t, assetName, "completion failure")
 	key := uuid.NewString()
-	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
-	functionName := "prompt_eval_completion_fail_fn_" + suffix
-	triggerName := "prompt_eval_completion_fail_" + suffix
-	if _, err := testPool.Exec(context.Background(), fmt.Sprintf(`
-		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
-		BEGIN
-			IF NEW.resource_type='prompt_evaluation_agent_run' AND NEW.idempotency_key='%s'::uuid AND NEW.response_body IS NOT NULL THEN
-				RAISE EXCEPTION 'forced agent run completion failure';
-			END IF;
-			RETURN NEW;
-		END;
-		$$;
-		CREATE TRIGGER %s BEFORE UPDATE ON resource_create_request
-		FOR EACH ROW EXECUTE FUNCTION %s();
-	`, functionName, key, triggerName, functionName)); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(context.Background(), fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON resource_create_request; DROP FUNCTION IF EXISTS %s()`, triggerName, functionName))
-	})
+	installResourceCreateCompletionFailure(t, resourceTypePromptEvaluationRun, key)
 	req := withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+asset.ID+"/agent-run", nil), "id", asset.ID)
 	req.Header.Set("Idempotency-Key", key)
 	w := httptest.NewRecorder()

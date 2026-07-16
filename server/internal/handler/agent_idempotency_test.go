@@ -67,7 +67,7 @@ func assertConcurrentCreateReplay(
 	}
 }
 
-func installResourceCreateCompletionFailure(t *testing.T, resourceType, key string) {
+func installResourceCreateCompletionFailure(t *testing.T, resourceType, key string) func() {
 	t.Helper()
 	suffix := uuid.NewString()
 	functionName := quoteIdentifier("fail_" + resourceType + "_create_completion_" + suffix)
@@ -86,10 +86,12 @@ func installResourceCreateCompletionFailure(t *testing.T, resourceType, key stri
 	`, functionName, quoteSQLLiteral(resourceType), quoteSQLLiteral(key), triggerName, functionName)); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
+	cleanup := func() {
 		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON resource_create_request`, triggerName))
 		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, functionName))
-	})
+	}
+	t.Cleanup(cleanup)
+	return cleanup
 }
 
 func TestCreateAgent_IdempotentReplayConflictAndConcurrentCreate(t *testing.T) {

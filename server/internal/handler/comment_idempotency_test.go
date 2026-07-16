@@ -3,10 +3,8 @@ package handler
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync"
 	"testing"
 
@@ -84,31 +82,11 @@ func TestCreateComment_ConcurrentReplayCreatesOneComment(t *testing.T) {
 }
 
 func TestCreateComment_RequestCompletionFailureRollsBackComment(t *testing.T) {
+	ctx := context.Background()
 	fixture := createHandlerCommentIssueFixture(t, "comment rollback "+uuid.NewString())
 	key := uuid.NewString()
 	content := "must roll back " + uuid.NewString()
-	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
-	functionName := "fail_comment_request_completion_" + suffix
-	triggerName := "fail_comment_request_completion_trigger_" + suffix
-	ctx := context.Background()
-	if _, err := testPool.Exec(ctx, fmt.Sprintf(`
-		CREATE FUNCTION %s() RETURNS trigger AS $$
-		BEGIN
-			IF NEW.resource_type = 'comment' AND NEW.idempotency_key = '%s'::uuid AND NEW.response_body IS NOT NULL THEN
-				RAISE EXCEPTION 'forced comment request completion failure';
-			END IF;
-			RETURN NEW;
-		END;
-		$$ LANGUAGE plpgsql;
-		CREATE TRIGGER %s BEFORE UPDATE ON resource_create_request
-		FOR EACH ROW EXECUTE FUNCTION %s();
-	`, functionName, key, triggerName, functionName)); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(context.Background(), fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON resource_create_request`, triggerName))
-		_, _ = testPool.Exec(context.Background(), fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, functionName))
-	})
+	installResourceCreateCompletionFailure(t, resourceTypeComment, key)
 	response := createCommentWithKey(t, fixture.ID, key, map[string]any{"content": content})
 	if response.Code != http.StatusInternalServerError {
 		t.Fatalf("create = %d %s, want 500", response.Code, response.Body.String())

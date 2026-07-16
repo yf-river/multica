@@ -3,7 +3,6 @@ package handler
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -85,25 +84,7 @@ func TestApplyPromptEvaluationSkillCandidateRecoversFilesAfterDatabaseRollback(t
 		return w
 	}
 
-	suffix := strings.ReplaceAll(uuid.NewString(), "-", "_")
-	functionName := "fail_skill_apply_complete_" + suffix
-	triggerName := "fail_skill_apply_complete_" + suffix
-	if _, err := testPool.Exec(ctx, fmt.Sprintf(`
-		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
-		BEGIN RAISE EXCEPTION 'injected skill apply completion failure'; END $$;
-		CREATE TRIGGER %s BEFORE UPDATE ON resource_create_request
-		FOR EACH ROW WHEN (NEW.idempotency_key = '%s'::uuid)
-		EXECUTE FUNCTION %s()
-	`, functionName, triggerName, requestKey, functionName)); err != nil {
-		t.Fatal(err)
-	}
-	dropFailureWitness := func() {
-		_, _ = testPool.Exec(context.Background(), fmt.Sprintf(
-			`DROP TRIGGER IF EXISTS %s ON resource_create_request; DROP FUNCTION IF EXISTS %s()`,
-			triggerName, functionName,
-		))
-	}
-	t.Cleanup(dropFailureWitness)
+	dropFailureWitness := installResourceCreateCompletionFailure(t, resourceTypePromptSkillApply, requestKey)
 	failed := apply()
 	dropFailureWitness()
 	if failed.Code != http.StatusInternalServerError {

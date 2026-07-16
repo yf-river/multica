@@ -3,7 +3,6 @@ package handler
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -166,26 +165,7 @@ func TestRerunIssueCompletionFailureRollsBackCancellationAndTask(t *testing.T) {
 		t.Fatal(err)
 	}
 	requestKey := newIssueRerunKey(t)
-	suffix := uuid.NewString()
-	functionName := quoteIdentifier("fail_issue_rerun_completion_" + suffix)
-	triggerName := quoteIdentifier("fail_issue_rerun_completion_trigger_" + suffix)
-	if _, err := testPool.Exec(context.Background(), fmt.Sprintf(`
-		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
-		BEGIN
-			IF NEW.resource_type = 'issue_rerun' AND NEW.idempotency_key = %s::uuid THEN
-				RAISE EXCEPTION 'forced issue rerun completion failure';
-			END IF;
-			RETURN NEW;
-		END $$;
-		CREATE TRIGGER %s BEFORE UPDATE ON resource_create_request
-		FOR EACH ROW EXECUTE FUNCTION %s();
-	`, functionName, quoteSQLLiteral(requestKey), triggerName, functionName)); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(context.Background(), fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON resource_create_request`, triggerName))
-		_, _ = testPool.Exec(context.Background(), fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, functionName))
-	})
+	installResourceCreateCompletionFailure(t, resourceTypeIssueRerun, requestKey)
 
 	w := httptest.NewRecorder()
 	req := withURLParam(newRequest(http.MethodPost, "/api/issues/"+issueID+"/rerun", map[string]any{"target": "current_assignee"}), "id", issueID)

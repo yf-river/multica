@@ -183,26 +183,7 @@ func TestCreateAutopilotTrigger_ConcurrentReplayCreatesOnce(t *testing.T) {
 func TestCreateAutopilotTrigger_CompletionFailureRollsBackCreate(t *testing.T) {
 	apID := createWebhookTestAutopilot(t, "active")
 	requestKey := uuid.NewString()
-	suffix := uuid.NewString()
-	functionName := quoteIdentifier("fail_trigger_create_completion_" + suffix)
-	triggerName := quoteIdentifier("fail_trigger_create_completion_trigger_" + suffix)
-	if _, err := testPool.Exec(context.Background(), fmt.Sprintf(`
-		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
-		BEGIN
-			IF NEW.resource_type = 'autopilot_trigger' AND NEW.idempotency_key = %s::uuid THEN
-				RAISE EXCEPTION 'forced trigger create completion failure';
-			END IF;
-			RETURN NEW;
-		END $$;
-		CREATE TRIGGER %s BEFORE UPDATE ON resource_create_request
-		FOR EACH ROW EXECUTE FUNCTION %s();
-	`, functionName, quoteSQLLiteral(requestKey), triggerName, functionName)); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(context.Background(), fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON resource_create_request`, triggerName))
-		_, _ = testPool.Exec(context.Background(), fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, functionName))
-	})
+	installResourceCreateCompletionFailure(t, resourceTypeAutopilotTrigger, requestKey)
 
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/autopilots/"+apID+"/triggers", map[string]any{"kind": "webhook"})

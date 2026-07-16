@@ -91,27 +91,10 @@ func TestCreateWorkspaceCompletionFailureRollsBackWorkspaceOwnerAndRequest(t *te
 	ctx := context.Background()
 	key := uuid.NewString()
 	slug := "workspace-rollback-" + uuid.NewString()[:8]
-	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
-	functionName := "workspace_completion_fail_fn_" + suffix
-	triggerName := "workspace_completion_fail_" + suffix
 	t.Cleanup(func() {
-		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON resource_create_request; DROP FUNCTION IF EXISTS %s()`, triggerName, functionName))
 		_, _ = testPool.Exec(ctx, `DELETE FROM workspace WHERE slug = $1`, slug)
 	})
-	if _, err := testPool.Exec(ctx, fmt.Sprintf(`
-		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
-		BEGIN
-			IF NEW.resource_type = 'workspace' AND NEW.idempotency_key = '%s'::uuid AND NEW.response_body IS NOT NULL THEN
-				RAISE EXCEPTION 'forced workspace completion failure';
-			END IF;
-			RETURN NEW;
-		END;
-		$$;
-		CREATE TRIGGER %s BEFORE UPDATE ON resource_create_request
-		FOR EACH ROW EXECUTE FUNCTION %s();
-	`, functionName, key, triggerName, functionName)); err != nil {
-		t.Fatal(err)
-	}
+	installResourceCreateCompletionFailure(t, resourceTypeWorkspace, key)
 	req := newRequest(http.MethodPost, "/api/workspaces", map[string]any{"name": "Rollback Workspace", "slug": slug})
 	req.Header.Set("Idempotency-Key", key)
 	w := httptest.NewRecorder()

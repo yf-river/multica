@@ -3,10 +3,8 @@ package handler
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync"
 	"testing"
 
@@ -110,31 +108,11 @@ func TestCreateIssue_ConcurrentReplayCreatesOneIssue(t *testing.T) {
 }
 
 func TestCreateIssue_RequestCompletionFailureRollsBackEverything(t *testing.T) {
+	ctx := context.Background()
 	key := uuid.NewString()
 	title := "issue completion rollback " + uuid.NewString()
 	cleanupIssueCreateRequest(t, key, title)
-	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")
-	functionName := "fail_issue_request_completion_" + suffix
-	triggerName := "fail_issue_request_completion_trigger_" + suffix
-	ctx := context.Background()
-	if _, err := testPool.Exec(ctx, fmt.Sprintf(`
-		CREATE FUNCTION %s() RETURNS trigger AS $$
-		BEGIN
-			IF NEW.resource_type = 'issue' AND NEW.idempotency_key = '%s'::uuid AND NEW.response_body IS NOT NULL THEN
-				RAISE EXCEPTION 'forced issue request completion failure';
-			END IF;
-			RETURN NEW;
-		END;
-		$$ LANGUAGE plpgsql;
-		CREATE TRIGGER %s BEFORE UPDATE ON resource_create_request
-		FOR EACH ROW EXECUTE FUNCTION %s();
-	`, functionName, key, triggerName, functionName)); err != nil {
-		t.Fatalf("install completion failure: %v", err)
-	}
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(context.Background(), fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON resource_create_request`, triggerName))
-		_, _ = testPool.Exec(context.Background(), fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, functionName))
-	})
+	installResourceCreateCompletionFailure(t, resourceTypeIssue, key)
 
 	response := createIssueWithKey(t, key, map[string]any{"title": title})
 	if response.Code != http.StatusInternalServerError {

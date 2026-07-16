@@ -108,27 +108,11 @@ func TestCreateAgentPlaygroundExperimentCompletionFailureRollsBackCompoundRows(t
 	key := uuid.NewString()
 	agentID := createHandlerTestAgent(t, fmt.Sprintf("agent-playground-rollback-%d", suffix), nil)
 	assetID, versionID := createAgentPlaygroundDatasetSnapshot(t, suffix)
-	functionName := fmt.Sprintf("playground_completion_fail_fn_%d", suffix)
-	triggerName := fmt.Sprintf("playground_completion_fail_%d", suffix)
 	t.Cleanup(func() {
-		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON resource_create_request; DROP FUNCTION IF EXISTS %s()`, triggerName, functionName))
 		_, _ = testPool.Exec(ctx, `DELETE FROM resource_create_request WHERE resource_type='agent_playground_experiment' AND idempotency_key=$1`, key)
 		_, _ = testPool.Exec(ctx, `DELETE FROM agent_playground_experiment WHERE name=$1`, name)
 	})
-	if _, err := testPool.Exec(ctx, fmt.Sprintf(`
-		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
-		BEGIN
-			IF NEW.resource_type='agent_playground_experiment' AND NEW.idempotency_key='%s'::uuid AND NEW.response_body IS NOT NULL THEN
-				RAISE EXCEPTION 'forced playground completion failure';
-			END IF;
-			RETURN NEW;
-		END;
-		$$;
-		CREATE TRIGGER %s BEFORE UPDATE ON resource_create_request
-		FOR EACH ROW EXECUTE FUNCTION %s();
-	`, functionName, key, triggerName, functionName)); err != nil {
-		t.Fatal(err)
-	}
+	installResourceCreateCompletionFailure(t, resourceTypeAgentPlayground, key)
 	req := newRequest(http.MethodPost, "/api/agent-playground-experiments", map[string]any{
 		"name": name, "dataset_asset_id": assetID, "dataset_version_id": versionID,
 		"agent_ids": []string{agentID},

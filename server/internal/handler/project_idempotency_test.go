@@ -3,7 +3,6 @@ package handler
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -165,30 +164,11 @@ func TestCreateProject_ReplaysBundledResourceResponse(t *testing.T) {
 }
 
 func TestCreateProject_FailedResponseCompletionRollsBackProject(t *testing.T) {
+	ctx := context.Background()
 	key := uuid.NewString()
 	title := "forced project failure " + uuid.NewString()
 	cleanupProjectCreateRequest(t, key, title)
-	suffix := uuid.NewString()
-	functionName := `fail_project_create_completion_` + suffix
-	triggerName := `fail_project_create_completion_trigger_` + suffix
-	ctx := context.Background()
-	if _, err := testPool.Exec(ctx, fmt.Sprintf(`
-		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
-		BEGIN
-			IF NEW.resource_type = 'project' AND NEW.idempotency_key = %s::uuid AND NEW.response_body IS NOT NULL THEN
-				RAISE EXCEPTION 'forced project request completion failure';
-			END IF;
-			RETURN NEW;
-		END $$;
-		CREATE TRIGGER %s BEFORE UPDATE ON resource_create_request
-		FOR EACH ROW EXECUTE FUNCTION %s();
-	`, quoteIdentifier(functionName), quoteSQLLiteral(key), quoteIdentifier(triggerName), quoteIdentifier(functionName))); err != nil {
-		t.Fatalf("install failure trigger: %v", err)
-	}
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON resource_create_request`, quoteIdentifier(triggerName)))
-		_, _ = testPool.Exec(ctx, fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, quoteIdentifier(functionName)))
-	})
+	installResourceCreateCompletionFailure(t, resourceTypeProject, key)
 
 	response := createProjectWithKey(t, key, map[string]any{"title": title})
 	if response.Code != http.StatusInternalServerError {

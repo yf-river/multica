@@ -3,37 +3,12 @@ package handler
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/google/uuid"
 )
-
-func installPromptLibraryCompletionFailure(t *testing.T, resourceType, key string) {
-	t.Helper()
-	suffix := fmt.Sprintf("%x", uuid.New().ID())
-	functionName := "prompt_create_completion_fail_fn_" + suffix
-	triggerName := "prompt_create_completion_fail_" + suffix
-	if _, err := testPool.Exec(context.Background(), fmt.Sprintf(`
-		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
-		BEGIN
-			IF NEW.resource_type = '%s' AND NEW.idempotency_key = '%s'::uuid AND NEW.response_body IS NOT NULL THEN
-				RAISE EXCEPTION 'forced prompt library request completion failure';
-			END IF;
-			RETURN NEW;
-		END;
-		$$;
-		CREATE TRIGGER %s BEFORE UPDATE ON resource_create_request
-		FOR EACH ROW EXECUTE FUNCTION %s();
-	`, functionName, resourceType, key, triggerName, functionName)); err != nil {
-		t.Fatalf("install %s completion failure: %v", resourceType, err)
-	}
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(context.Background(), fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON resource_create_request; DROP FUNCTION IF EXISTS %s()`, triggerName, functionName))
-	})
-}
 
 func TestPromptLibraryCreateCompletionFailuresRollbackDomainWrites(t *testing.T) {
 	if testHandler == nil || testPool == nil {
@@ -46,7 +21,7 @@ func TestPromptLibraryCreateCompletionFailuresRollbackDomainWrites(t *testing.T)
 
 	itemKey := uuid.NewString()
 	itemName := "atomic-item-" + uuid.NewString()
-	installPromptLibraryCompletionFailure(t, resourceTypePromptLibraryItem, itemKey)
+	installResourceCreateCompletionFailure(t, resourceTypePromptLibraryItem, itemKey)
 	itemReq := newRequest(http.MethodPost, "/api/prompt-library", map[string]any{
 		"name": itemName, "content": "must roll back",
 	})
@@ -79,7 +54,7 @@ func TestPromptLibraryCreateCompletionFailuresRollbackDomainWrites(t *testing.T)
 		t.Fatalf("decode fixture: %v", err)
 	}
 	versionKey := uuid.NewString()
-	installPromptLibraryCompletionFailure(t, resourceTypePromptLibraryVersion, versionKey)
+	installResourceCreateCompletionFailure(t, resourceTypePromptLibraryVersion, versionKey)
 	versionReq := withURLParam(newRequest(http.MethodPost, "/api/prompt-library/"+item.ID+"/versions", map[string]any{
 		"content": "version two", "change_note": "must roll back",
 	}), "id", item.ID)

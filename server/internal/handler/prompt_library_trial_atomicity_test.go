@@ -119,22 +119,7 @@ func TestCreatePromptLibraryTrialRollsBackEveryWrite(t *testing.T) {
 	}
 
 	completionKey := uuid.NewString()
-	completionFunction := "prompt_trial_completion_fail_fn_" + suffix
-	completionTrigger := "prompt_trial_completion_fail_" + suffix
-	if _, err := testPool.Exec(context.Background(), fmt.Sprintf(`
-		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
-		BEGIN
-			IF NEW.resource_type = 'prompt_library_trial' AND NEW.idempotency_key = '%s'::uuid AND NEW.response_body IS NOT NULL THEN
-				RAISE EXCEPTION 'forced prompt trial request completion failure';
-			END IF;
-			RETURN NEW;
-		END;
-		$$;
-		CREATE TRIGGER %s BEFORE UPDATE ON resource_create_request
-		FOR EACH ROW EXECUTE FUNCTION %s();
-	`, completionFunction, completionKey, completionTrigger, completionFunction)); err != nil {
-		t.Fatalf("install completion failure: %v", err)
-	}
+	dropCompletionFailure := installResourceCreateCompletionFailure(t, resourceTypePromptLibraryTrial, completionKey)
 	completionReq := newRequest(http.MethodPost, "/api/prompt-library/"+item.ID+"/versions/"+versionID+"/trials", map[string]any{
 		"agent_id": agentID,
 	})
@@ -145,9 +130,7 @@ func TestCreatePromptLibraryTrialRollsBackEveryWrite(t *testing.T) {
 	if completionW.Code != http.StatusInternalServerError {
 		t.Fatalf("completion failure = %d %s, want 500", completionW.Code, completionW.Body.String())
 	}
-	if _, err := testPool.Exec(context.Background(), fmt.Sprintf(`DROP TRIGGER %s ON resource_create_request; DROP FUNCTION %s()`, completionTrigger, completionFunction)); err != nil {
-		t.Fatalf("remove completion failure: %v", err)
-	}
+	dropCompletionFailure()
 
 	successReq := newRequest(http.MethodPost, "/api/prompt-library/"+item.ID+"/versions/"+versionID+"/trials", map[string]any{
 		"agent_id": agentID,
