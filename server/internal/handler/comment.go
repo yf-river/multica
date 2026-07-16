@@ -33,17 +33,10 @@ type CommentResponse struct {
 	SourceTaskID   *string              `json:"source_task_id,omitempty"`
 	Reactions      []ReactionResponse   `json:"reactions"`
 	Attachments    []AttachmentResponse `json:"attachments"`
-	// Orientation stats — populated only on the roots_only path and omitted in
-	// every other mode, so the default response shape stays byte-identical for
-	// existing callers. ReplyCount is the number of descendants in the thread;
-	// LastActivityAt is the MAX(created_at) across the whole subtree. Together
-	// they let an agent triage which thread to drill into without fetching any
-	// replies.
+	// Orientation stats exist only for roots_only responses.
 	ReplyCount     *int    `json:"reply_count,omitempty"`
 	LastActivityAt *string `json:"last_activity_at,omitempty"`
-	// ContentTruncated is set only under summary=true: true when Content was
-	// clipped to the summary budget, false when it fit. nil (omitted) means the
-	// caller did not request a summary projection, so Content is verbatim.
+	// ContentTruncated exists only for summary responses.
 	ContentTruncated *bool `json:"content_truncated,omitempty"`
 }
 
@@ -73,22 +66,12 @@ func commentToResponse(c db.Comment, reactions []ReactionResponse, attachments [
 	}
 }
 
-// summaryContentRunes bounds comment content under summary=true. 200 runes is
-// enough to tell what a comment is about (its opening) while cutting the bulk
-// of a long body out of an agent's context budget. Counted in runes, not bytes,
-// so multi-byte (e.g. CJK) content is clipped on a character boundary.
+// Summary limits are measured in runes so clipping cannot split UTF-8 text.
 const summaryContentRunes = 200
 
-// summarizeContent clips content to summaryContentRunes for the summary
-// projection. Returns the (possibly clipped) content and whether it was
-// truncated. An ellipsis marks a clip so the reader knows more text exists.
-//
-// It scans by rune and stops at the (budget+1)th rune rather than allocating a
-// full []rune for the whole body — so a pathologically long comment costs only
-// the budget, not its full length, under summary mode.
 func summarizeContent(content string) (string, bool) {
 	count := 0
-	for byteOffset := range content { // range over a string yields rune start offsets
+	for byteOffset := range content {
 		if count == summaryContentRunes {
 			return content[:byteOffset] + "…", true
 		}
@@ -97,84 +80,9 @@ func summarizeContent(content string) (string, bool) {
 	return content, false
 }
 
-// commentHardCap bounds the comments returned per issue. Sized as a defensive
-// safety net rather than a UX paging window: prod p99 is ~30 comments and
-// the all-time max observed is ~1.1k, so 2000 leaves ~2x headroom while still
-// preventing a runaway response if some user manages to accumulate a wild
-// number of rows on a single issue.
+// commentHardCap bounds unpaginated issue reads without acting as a UI page.
 const commentHardCap = 2000
 
-// ListComments returns comments for an issue. The default behaviour is
-// unchanged — full chronological dump capped at commentHardCap — so existing
-// callers and the desktop UI keep working as-is. Optional query params give
-// agent-style readers bounded views that scale to long issues without dragging
-// every prior reply into context:
-//
-//   - roots_only=true — return only top-level comments (parent_id IS NULL),
-//     each annotated with reply_count + last_activity_at so the caller can
-//     triage which thread to drill into. May combine with since for incremental
-//     polling of newly created roots, but is exclusive with thread/recent/tail/
-//     cursor modes because those have their own grouping or pagination semantics.
-//
-//   - summary=true — orthogonal content projection. Clips each returned
-//     comment's content to a fixed budget and sets content_truncated, so an
-//     agent can scan a list cheaply before pulling a full body. Composes with
-//     every mode (default, since, thread, recent, roots_only).
-//
-//   - thread=<comment-uuid> — return the root of the thread containing this
-//     comment plus every descendant. The anchor may be a root or any reply;
-//     the server walks up to the root via a recursive CTE, so callers do not
-//     need to know whether the id they have is a root.
-//
-//   - tail=<N> — only valid with thread. Cap the reply count at the N most
-//     recent replies (per (created_at, id)). The thread root is always
-//     returned, even when N=0, so the reader keeps the "what is this thread
-//     about" context. Without tail, thread returns the entire thread (the
-//     pre-MUL-2421 behavior).
-//
-//   - recent=<N> — return the N most recently active threads (root + every
-//     descendant per thread). A thread's recency is MAX(created_at) across
-//     the whole subtree, so a stale-but-recently-replied thread ranks ahead
-//     of an active-but-quiet one. Row-based "newest N comments" is
-//     deliberately NOT exposed — it surfaces unrelated thread tails and
-//     hides relevant history (#2340).
-//
-//   - before=<RFC3339> + before-id=<uuid> — cursor. The pair's meaning is
-//     context-dependent so the flag surface stays small:
-//
-//   - with recent: a *thread* cursor — (last_activity_at, root_id) — and
-//     the next page returns threads strictly less recent.
-//
-//   - with thread + tail: a *reply* cursor — (created_at, id) — and the
-//     next page returns replies in the same thread strictly older than
-//     that reply.
-//
-// Both values must be set together so the cursor can tie-break entries
-// landing in the same microsecond. The cursor for the next page is
-// emitted via the X-Multica-Next-Before / X-Multica-Next-Before-Id
-// response headers.
-//
-// Combination rules (kept narrow on purpose — Elon flagged the matrix risk):
-//
-//   - roots_only is exclusive with thread, recent, tail, and before/before-id.
-//     It may combine with since. This keeps "list issue roots" separate from
-//     "read a specific thread" and "read recently active threads".
-//   - thread is exclusive with recent. Asking for "the most recent N within
-//     thread X" mixes two different navigation models and is rejected.
-//   - thread + before/before-id requires tail. Without tail, thread returns
-//     the entire thread and a cursor would be ignored — reject loudly so
-//     the documented "cursor scrolls within a tailed window" rule holds.
-//   - tail requires thread (it is a thread-scoped limit; outside of thread
-//     it has no defined behavior).
-//   - thread may combine with since (incremental polling of one thread),
-//     and the since filter is applied after the tail/cursor cut so the
-//     thread root is still emitted but stale rows drop out.
-//   - recent may combine with before/before-id (scroll older threads) and
-//     with since (recent activity in a window).
-//
-// The response body is always chronological (oldest → newest); under recent
-// that means threads are listed oldest-active first and the freshest thread
-// sits at the tail, closest to "now" in an agent prompt.
 func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	issueID := chi.URLParam(r, "id")
 	issue, ok := h.loadIssueForUser(w, r, issueID)
@@ -187,7 +95,7 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req CreateCommentRequest
+	var req createCommentRequest
 	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
@@ -205,7 +113,7 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	authorType, authorID := resolveActor(r, userID)
 	requestHash, err := hashRequestFingerprint(struct {
 		IssueID string               `json:"issue_id"`
-		Request CreateCommentRequest `json:"request"`
+		Request createCommentRequest `json:"request"`
 	}{IssueID: issueID, Request: req})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to fingerprint comment request")
@@ -297,11 +205,8 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// NOTE: Comment content is stored as Markdown source. XSS is handled at the
-	// rendering layer (rehype-sanitize) and at the editor layer
-	// (@tiptap/markdown with html:false). Running an HTML sanitizer here would
-	// entity-encode Markdown syntax characters (>, ", &, <) and corrupt the
-	// source. See issue #1303 / discussion in MUL-1119, MUL-1125.
+	// Store Markdown source unchanged; rendering and editor boundaries sanitize
+	// HTML so request-time sanitization cannot corrupt Markdown syntax.
 
 	// parent_id stores the exact comment being replied to. Thread-level behavior
 	// (for example auto-unresolving a resolved thread) resolves the root
@@ -763,15 +668,9 @@ func (h *Handler) ResolveComment(w http.ResponseWriter, r *http.Request) {
 	for _, clearedComment := range cleared {
 		enrichmentIDs = append(enrichmentIDs, clearedComment.ID)
 	}
-	groupedReactions, err := loadCommentReactions(r.Context(), qtx, enrichmentIDs)
+	enrichment, err := h.loadCommentEnrichment(r.Context(), qtx, comment.WorkspaceID, enrichmentIDs)
 	if err != nil {
-		slog.Warn("load reactions for resolved comments failed", append(logger.RequestAttrs(r), "error", err, "comment_id", uuidToString(comment.ID))...)
-		writeError(w, http.StatusInternalServerError, "failed to resolve comment")
-		return
-	}
-	groupedAttachments, err := h.loadCommentAttachments(r.Context(), qtx, comment.WorkspaceID, enrichmentIDs)
-	if err != nil {
-		slog.Warn("load attachments for resolved comments failed", append(logger.RequestAttrs(r), "error", err, "comment_id", uuidToString(comment.ID))...)
+		slog.Warn("load enrichment for resolved comments failed", append(logger.RequestAttrs(r), "error", err, "comment_id", uuidToString(comment.ID))...)
 		writeError(w, http.StatusInternalServerError, "failed to resolve comment")
 		return
 	}
@@ -788,13 +687,13 @@ func (h *Handler) ResolveComment(w http.ResponseWriter, r *http.Request) {
 	// describes an uncommitted state.
 	for _, c := range cleared {
 		clearedID := uuidToString(c.ID)
-		clearedResp := commentToResponse(c, groupedReactions[clearedID], groupedAttachments[clearedID])
+		clearedResp := enrichment.response(c)
 		slog.Info("comment unresolved (replaced)", append(logger.RequestAttrs(r), "comment_id", clearedID)...)
 		h.publish(protocol.EventCommentUnresolved, workspaceID, actorType, actorID, map[string]any{"comment": clearedResp})
 	}
 
 	cid := uuidToString(updated.ID)
-	resp := commentToResponse(updated, groupedReactions[cid], groupedAttachments[cid])
+	resp := enrichment.response(updated)
 
 	// Suppress the target event on a re-resolve no-op so consumers do not
 	// re-process an unchanged thread (notifications, log spam). Cleared siblings
@@ -813,15 +712,9 @@ func (h *Handler) UnresolveComment(w http.ResponseWriter, r *http.Request) {
 	}
 	wasResolved := comment.ResolvedAt.Valid
 
-	groupedReactions, err := loadCommentReactions(r.Context(), h.Queries, []pgtype.UUID{comment.ID})
+	enrichment, err := h.loadCommentEnrichment(r.Context(), h.Queries, comment.WorkspaceID, []pgtype.UUID{comment.ID})
 	if err != nil {
-		slog.Warn("load reactions for comment unresolve failed", append(logger.RequestAttrs(r), "error", err, "comment_id", uuidToString(comment.ID))...)
-		writeError(w, http.StatusInternalServerError, "failed to unresolve comment")
-		return
-	}
-	groupedAttachments, err := h.loadCommentAttachments(r.Context(), h.Queries, comment.WorkspaceID, []pgtype.UUID{comment.ID})
-	if err != nil {
-		slog.Warn("load attachments for comment unresolve failed", append(logger.RequestAttrs(r), "error", err, "comment_id", uuidToString(comment.ID))...)
+		slog.Warn("load enrichment for comment unresolve failed", append(logger.RequestAttrs(r), "error", err, "comment_id", uuidToString(comment.ID))...)
 		writeError(w, http.StatusInternalServerError, "failed to unresolve comment")
 		return
 	}
@@ -834,7 +727,7 @@ func (h *Handler) UnresolveComment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cid := uuidToString(updated.ID)
-	resp := commentToResponse(updated, groupedReactions[cid], groupedAttachments[cid])
+	resp := enrichment.response(updated)
 
 	if wasResolved {
 		slog.Info("comment unresolved", append(logger.RequestAttrs(r), "comment_id", cid)...)

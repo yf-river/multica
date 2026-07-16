@@ -8,6 +8,28 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
+type commentEnrichment struct {
+	reactions   map[string][]ReactionResponse
+	attachments map[string][]AttachmentResponse
+}
+
+func (e commentEnrichment) response(comment db.Comment) CommentResponse {
+	id := uuidToString(comment.ID)
+	return commentToResponse(comment, e.reactions[id], e.attachments[id])
+}
+
+func (h *Handler) loadCommentEnrichment(ctx context.Context, queries *db.Queries, workspaceID pgtype.UUID, commentIDs []pgtype.UUID) (commentEnrichment, error) {
+	reactions, err := loadCommentReactions(ctx, queries, commentIDs)
+	if err != nil {
+		return commentEnrichment{}, err
+	}
+	attachments, err := h.loadCommentAttachments(ctx, queries, workspaceID, commentIDs)
+	if err != nil {
+		return commentEnrichment{}, err
+	}
+	return commentEnrichment{reactions: reactions, attachments: attachments}, nil
+}
+
 func loadCommentReactions(ctx context.Context, queries *db.Queries, commentIDs []pgtype.UUID) (map[string][]ReactionResponse, error) {
 	if len(commentIDs) == 0 {
 		return nil, nil

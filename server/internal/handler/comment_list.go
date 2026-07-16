@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"regexp"
@@ -15,6 +16,8 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
+// ListComments serves chronological, incremental, root, thread and recent
+// thread views. Summary projection can be combined with every view.
 func (h *Handler) ListComments(w http.ResponseWriter, r *http.Request) {
 	issueID := chi.URLParam(r, "id")
 	issue, ok := h.loadIssueForUser(w, r, issueID)
@@ -39,35 +42,13 @@ func (h *Handler) ListComments(w http.ResponseWriter, r *http.Request) {
 	tailStr := q.Get("tail")
 	beforeTimeStr := q.Get("before")
 	beforeIDStr := q.Get("before_id")
-	rootsOnlyStr := q.Get("roots_only")
-
-	rootsOnly := false
-	if rootsOnlyStr != "" {
-		switch rootsOnlyStr {
-		case "true":
-			rootsOnly = true
-		case "false":
-		default:
-			writeError(w, http.StatusBadRequest, "invalid roots_only parameter; expected boolean")
-			return
-		}
+	rootsOnly, ok := parseOptionalBoolQuery(w, q.Get("roots_only"), "roots_only")
+	if !ok {
+		return
 	}
-
-	// summary=true is an orthogonal content projection: it clips each comment's
-	// content to a fixed budget so an agent can scan a list without pulling full
-	// bodies into context. It is intentionally NOT mutually exclusive with any
-	// mode — it composes with the default list, since, thread, recent, and
-	// roots_only alike.
-	summary := false
-	if summaryStr := q.Get("summary"); summaryStr != "" {
-		switch summaryStr {
-		case "true":
-			summary = true
-		case "false":
-		default:
-			writeError(w, http.StatusBadRequest, "invalid summary parameter; expected boolean")
-			return
-		}
+	summary, ok := parseOptionalBoolQuery(w, q.Get("summary"), "summary")
+	if !ok {
+		return
 	}
 
 	// --- combination validation ----------------------------------------
@@ -194,15 +175,9 @@ func (h *Handler) ListComments(w http.ResponseWriter, r *http.Request) {
 	for i, c := range result.Comments {
 		commentIDs[i] = c.ID
 	}
-	grouped, err := loadCommentReactions(r.Context(), h.Queries, commentIDs)
+	enrichment, err := h.loadCommentEnrichment(r.Context(), h.Queries, issue.WorkspaceID, commentIDs)
 	if err != nil {
-		slog.Error("load comment reactions failed", append(logger.RequestAttrs(r), "error", err, "issue_id", issueID)...)
-		writeError(w, http.StatusInternalServerError, "failed to list comments")
-		return
-	}
-	groupedAtt, err := h.loadCommentAttachments(r.Context(), h.Queries, issue.WorkspaceID, commentIDs)
-	if err != nil {
-		slog.Error("load comment attachments failed", append(logger.RequestAttrs(r), "error", err, "issue_id", issueID)...)
+		slog.Error("load comment enrichment failed", append(logger.RequestAttrs(r), "error", err, "issue_id", issueID)...)
 		writeError(w, http.StatusInternalServerError, "failed to list comments")
 		return
 	}
@@ -210,7 +185,7 @@ func (h *Handler) ListComments(w http.ResponseWriter, r *http.Request) {
 	resp := make([]CommentResponse, len(result.Comments))
 	for i, c := range result.Comments {
 		cid := uuidToString(c.ID)
-		resp[i] = commentToResponse(c, grouped[cid], groupedAtt[cid])
+		resp[i] = enrichment.response(c)
 		// Attach roots_only orientation stats when present (nil map elsewhere).
 		if st, ok := result.RootStats[cid]; ok {
 			rc := st.ReplyCount
@@ -229,19 +204,26 @@ func (h *Handler) ListComments(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Emit the next cursor as response headers when the page is likely not
-	// the last one. The cursor's meaning is context-dependent: under recent
-	// it points at the oldest thread in the page (next page = older threads);
-	// under thread + tail it points at the oldest reply in the page (next
-	// page = older replies in the same thread). Headers stay out of the JSON
-	// body so the default flat-array response shape — which the desktop UI
-	// and existing callers depend on — is unchanged.
+	// Cursor headers preserve the flat-array response contract. Under recent the
+	// cursor points to the oldest thread; under thread+tail, the oldest reply.
 	if result.NextBefore != "" && result.NextBeforeID != "" {
 		w.Header().Set("X-Multica-Next-Before", result.NextBefore)
 		w.Header().Set("X-Multica-Next-Before-Id", result.NextBeforeID)
 	}
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func parseOptionalBoolQuery(w http.ResponseWriter, raw, name string) (bool, bool) {
+	switch raw {
+	case "", "false":
+		return false, true
+	case "true":
+		return true, true
+	default:
+		writeError(w, http.StatusBadRequest, "invalid "+name+" parameter; expected boolean")
+		return false, false
+	}
 }
 
 // fetchCommentsArgs bundles the parsed query params so fetchCommentsForList
@@ -286,13 +268,9 @@ type rootStat struct {
 }
 
 var (
-	errCommentThreadNotFound = &commentFetchError{"thread anchor not found"}
-	errCommentThreadBadID    = &commentFetchError{"invalid thread anchor id"}
+	errCommentThreadNotFound = errors.New("thread anchor not found")
+	errCommentThreadBadID    = errors.New("invalid thread anchor id")
 )
-
-type commentFetchError struct{ msg string }
-
-func (e *commentFetchError) Error() string { return e.msg }
 
 func (h *Handler) fetchCommentsForList(ctx context.Context, args fetchCommentsArgs) (fetchCommentsResult, error) {
 	issue := args.Issue
@@ -316,9 +294,7 @@ func (h *Handler) fetchCommentsForList(ctx context.Context, args fetchCommentsAr
 			// there is at least one older reply still on disk; if we get
 			// back ≤tail the page is the tail of the thread and there is
 			// nothing older to scroll to (so we must NOT emit a cursor —
-			// otherwise the next page is wasted round-trip that returns
-			// just the root). This is the exact-boundary fix called out
-			// in the MUL-2421 review.
+			// otherwise the next page is a root-only wasted round-trip).
 			rows, err := h.Queries.ListThreadCommentsForIssuePaged(ctx, db.ListThreadCommentsForIssuePagedParams{
 				AnchorID:    anchor,
 				IssueID:     issue.ID,
@@ -383,10 +359,7 @@ func (h *Handler) fetchCommentsForList(ctx context.Context, args fetchCommentsAr
 			// so every older reply has created_at strictly less — if the
 			// cursor target itself can't satisfy `> since`, no older
 			// reply can either, and continuing to paginate would only
-			// return root-only pages until the agent walks the entire
-			// pre-`since` history. This mirrors the head-thread guard on
-			// the recent + since path. Flagged by Elon's second review on
-			// MUL-2421.
+			// return root-only pages through the entire pre-`since` history.
 			res := fetchCommentsResult{Comments: out}
 			emitCursor := hasMore && len(replies) > 0
 			if emitCursor && args.Since.Valid && !replies[0].CreatedAt.Time.After(args.Since.Time) {
@@ -476,9 +449,8 @@ func (h *Handler) fetchCommentsForList(ctx context.Context, args fetchCommentsAr
 		// older page has last_activity_at strictly less than the head's —
 		// if the head itself can't satisfy `> since`, no older thread can
 		// either. Predicating on the head (not on whether `comments` is
-		// empty) also catches the mixed case where this page keeps rows
-		// from fresher threads but the head thread is already past `since`.
-		// Flagged by Elon in #2787's second review (MUL-2340 nit).
+		// empty) also catches a page with fresher rows whose head thread is
+		// already past `since`.
 		out := fetchCommentsResult{Comments: comments}
 		emitCursor := len(seenRoot) >= args.RecentN && headRoot.Valid && headLast.Valid
 		if emitCursor && args.Since.Valid && !headLast.Time.After(args.Since.Time) {
@@ -515,8 +487,7 @@ func (h *Handler) fetchCommentsForList(ctx context.Context, args fetchCommentsAr
 		return fetchCommentsResult{Comments: comments, RootStats: stats}, nil
 	}
 
-	// Default + since paths preserved verbatim (no behavioural change for
-	// existing callers).
+	// Default and since paths return the flat chronological contract.
 	if args.Since.Valid {
 		comments, err := h.Queries.ListCommentsSinceForIssue(ctx, db.ListCommentsSinceForIssueParams{
 			IssueID:     issue.ID,
@@ -534,7 +505,7 @@ func (h *Handler) fetchCommentsForList(ctx context.Context, args fetchCommentsAr
 	return fetchCommentsResult{Comments: comments}, err
 }
 
-type CreateCommentRequest struct {
+type createCommentRequest struct {
 	Content          string   `json:"content"`
 	Type             string   `json:"type"`
 	ParentID         *string  `json:"parent_id"`
@@ -549,10 +520,10 @@ type commentTriggerPreviewRequest struct {
 }
 
 type commentTriggerPreviewResponse struct {
-	Agents []CommentTriggerAgentResponse `json:"agents"`
+	Agents []commentTriggerAgentResponse `json:"agents"`
 }
 
-type CommentTriggerAgentResponse struct {
+type commentTriggerAgentResponse struct {
 	ID        string  `json:"id"`
 	Name      string  `json:"name"`
 	AvatarURL *string `json:"avatar_url,omitempty"`
@@ -601,8 +572,8 @@ func commentAgentTriggerReason(trigger commentAgentTrigger) string {
 	}
 }
 
-func commentAgentTriggerToResponse(trigger commentAgentTrigger) CommentTriggerAgentResponse {
-	return CommentTriggerAgentResponse{
+func commentAgentTriggerToResponse(trigger commentAgentTrigger) commentTriggerAgentResponse {
+	return commentTriggerAgentResponse{
 		ID:        uuidToString(trigger.Agent.ID),
 		Name:      trigger.Agent.Name,
 		AvatarURL: textToPtr(trigger.Agent.AvatarUrl),
@@ -674,7 +645,7 @@ func (h *Handler) PreviewCommentTriggers(w http.ResponseWriter, r *http.Request)
 
 	content := req.Content
 	if content == "" {
-		writeJSON(w, http.StatusOK, commentTriggerPreviewResponse{Agents: []CommentTriggerAgentResponse{}})
+		writeJSON(w, http.StatusOK, commentTriggerPreviewResponse{Agents: []commentTriggerAgentResponse{}})
 		return
 	}
 
@@ -688,7 +659,7 @@ func (h *Handler) PreviewCommentTriggers(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "failed to compute comment triggers")
 		return
 	}
-	resp := commentTriggerPreviewResponse{Agents: make([]CommentTriggerAgentResponse, 0, len(triggers))}
+	resp := commentTriggerPreviewResponse{Agents: make([]commentTriggerAgentResponse, 0, len(triggers))}
 	for _, trigger := range triggers {
 		resp.Agents = append(resp.Agents, commentAgentTriggerToResponse(trigger))
 	}

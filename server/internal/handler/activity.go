@@ -39,9 +39,7 @@ type TimelineEntry struct {
 	SourceTaskID   *string              `json:"source_task_id,omitempty"`
 }
 
-// timelineHardCap bounds the per-issue timeline payload. Sized as a defensive
-// safety net, not a UX page window: see commentHardCap in comment.go for the
-// data-shape rationale (#1929).
+// timelineHardCap bounds the per-issue timeline payload without acting as a UI page.
 const timelineHardCap = 2000
 
 // ListTimeline returns the full issue timeline (comments + activities merged).
@@ -78,20 +76,14 @@ func (h *Handler) ListTimeline(w http.ResponseWriter, r *http.Request) {
 	for i, comment := range comments {
 		commentIDs[i] = comment.ID
 	}
-	reactions, err := loadCommentReactions(ctx, h.Queries, commentIDs)
+	enrichment, err := h.loadCommentEnrichment(ctx, h.Queries, issue.WorkspaceID, commentIDs)
 	if err != nil {
-		slog.Error("load timeline comment reactions failed", append(logger.RequestAttrs(r), "error", err, "issue_id", id)...)
-		writeError(w, http.StatusInternalServerError, "failed to list timeline")
-		return
-	}
-	attachments, err := h.loadCommentAttachments(ctx, h.Queries, issue.WorkspaceID, commentIDs)
-	if err != nil {
-		slog.Error("load timeline comment attachments failed", append(logger.RequestAttrs(r), "error", err, "issue_id", id)...)
+		slog.Error("load timeline comment enrichment failed", append(logger.RequestAttrs(r), "error", err, "issue_id", id)...)
 		writeError(w, http.StatusInternalServerError, "failed to list timeline")
 		return
 	}
 
-	entries := mergeTimeline(comments, activities, reactions, attachments)
+	entries := mergeTimeline(comments, activities, enrichment.reactions, enrichment.attachments)
 	if entries == nil {
 		entries = []TimelineEntry{}
 	}
