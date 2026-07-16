@@ -311,7 +311,7 @@ export function canManageStructuredCases(asset: PromptEvaluationAsset): boolean 
 
 export function summarizeAssetPayload(asset: PromptEvaluationAsset, caseSummary?: CaseSummary): string {
   const payload = asset.payload ?? {};
-  const cases = Array.isArray(payload.cases) ? payload.cases.length : Array.isArray(payload["数据集"]) ? payload["数据集"].length : 0;
+  const cases = Array.isArray(payload.cases) ? payload.cases.length : 0;
   const skillTarget = summarizeSkillScenarioTarget(asset);
   if (skillTarget) return `Skill 场景评测 · ${skillTarget}`;
   const writingBenchmark = summarizeWritingModelBenchmark(asset);

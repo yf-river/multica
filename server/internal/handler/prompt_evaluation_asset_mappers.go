@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"sort"
 	"strings"
 	"time"
 
@@ -644,7 +643,7 @@ func promptEvaluationAssetProfileFromPayload(raw []byte, promptID pgtype.UUID) p
 		variableCount += len(normalized.Variables)
 		assertionCount += len(normalized.ExpectedContains)
 	}
-	linkedPromptCount := countPromptEvaluationProfileValues(payload, "prompt_ids", "提示词版本", "关联提示词", "候选提示词", "对比提示词", "baseline_prompt_id", "基线提示词")
+	linkedPromptCount := 0
 	if promptID.Valid {
 		linkedPromptCount++
 	}
@@ -654,9 +653,9 @@ func promptEvaluationAssetProfileFromPayload(raw []byte, promptID pgtype.UUID) p
 		StructuredCaseCount:      int32(len(cases)),
 		StructuredVariableCount:  int32(variableCount),
 		StructuredAssertionCount: int32(assertionCount),
-		LinkedDatasetCount:       int32(countPromptEvaluationProfileValues(payload, "dataset_ids", "数据集ID", "关联数据集", "包含数据集", "linked_dataset_ids")),
+		LinkedDatasetCount:       int32(countPromptEvaluationProfileValues(payload["linked_dataset_ids"])),
 		LinkedPromptCount:        int32(linkedPromptCount),
-		EvaluationDimensionCount: int32(countPromptEvaluationProfileValues(payload, "metric_contract")),
+		EvaluationDimensionCount: int32(countPromptEvaluationProfileValues(payload["metric_contract"])),
 		ExperimentDimensionCount: int32(len(experimentDimensions)),
 	}
 }
@@ -689,11 +688,9 @@ func withPromptEvaluationAssetProfile(
 	return params
 }
 
-func countPromptEvaluationProfileValues(payload map[string]any, keys ...string) int {
+func countPromptEvaluationProfileValues(value any) int {
 	seen := map[string]bool{}
-	for _, key := range keys {
-		collectPromptEvaluationProfileValues(seen, firstValue(payload, key))
-	}
+	collectPromptEvaluationProfileValues(seen, value)
 	return len(seen)
 }
 
@@ -726,11 +723,18 @@ func collectPromptEvaluationProfileValues(seen map[string]bool, value any) {
 func promptEvaluationExperimentDimensions(payload map[string]any) []normalizedPromptEvaluationExperimentDimension {
 	target := util.StringFromAny(payload["experiment_target"])
 	baseline := util.StringFromAny(payload["baseline_output"])
-	raw := payload["experiment_dimensions"]
-	values := promptEvaluationDimensionValues(raw)
+	values, _ := payload["experiment_dimensions"].([]any)
 	result := make([]normalizedPromptEvaluationExperimentDimension, 0, len(values))
 	for _, value := range values {
-		name := strings.TrimSpace(value.Name)
+		var name string
+		comparisonPayload := map[string]any{}
+		switch item := value.(type) {
+		case string:
+			name = strings.TrimSpace(item)
+		case map[string]any:
+			name = strings.TrimSpace(util.StringFromAny(item["name"]))
+			comparisonPayload = item
+		}
 		if name == "" {
 			continue
 		}
@@ -738,7 +742,7 @@ func promptEvaluationExperimentDimensions(payload map[string]any) []normalizedPr
 			Name:              name,
 			ExperimentTarget:  target,
 			BaselineOutput:    baseline,
-			ComparisonPayload: value.Payload,
+			ComparisonPayload: comparisonPayload,
 		})
 	}
 	return result
@@ -754,59 +758,6 @@ func promptEvaluationDefaultExperimentDimensions() []normalizedPromptEvaluationE
 		})
 	}
 	return result
-}
-
-type promptEvaluationDimensionValue struct {
-	Name    string
-	Payload map[string]any
-}
-
-func promptEvaluationDimensionValues(value any) []promptEvaluationDimensionValue {
-	switch v := value.(type) {
-	case nil:
-		return nil
-	case string:
-		if item := strings.TrimSpace(v); item != "" {
-			return []promptEvaluationDimensionValue{{Name: item, Payload: map[string]any{}}}
-		}
-	case []any:
-		result := make([]promptEvaluationDimensionValue, 0, len(v))
-		for _, item := range v {
-			result = append(result, promptEvaluationDimensionValues(item)...)
-		}
-		return result
-	case map[string]any:
-		if name := strings.TrimSpace(util.StringFromAny(v["name"])); name != "" {
-			payload := make(map[string]any, len(v))
-			for key, item := range v {
-				payload[key] = item
-			}
-			return []promptEvaluationDimensionValue{{Name: name, Payload: payload}}
-		}
-		keys := make([]string, 0, len(v))
-		for key := range v {
-			if strings.TrimSpace(key) != "" {
-				keys = append(keys, key)
-			}
-		}
-		sort.Strings(keys)
-		result := make([]promptEvaluationDimensionValue, 0, len(keys))
-		for _, key := range keys {
-			payload := map[string]any{}
-			if nested, ok := v[key].(map[string]any); ok {
-				payload = nested
-			} else if v[key] != nil {
-				payload = map[string]any{"值": v[key]}
-			}
-			result = append(result, promptEvaluationDimensionValue{Name: key, Payload: payload})
-		}
-		return result
-	default:
-		if item := strings.TrimSpace(util.StringFromAny(v)); item != "" {
-			return []promptEvaluationDimensionValue{{Name: item, Payload: map[string]any{}}}
-		}
-	}
-	return nil
 }
 
 func jsonObjectBytesOrDefault(w http.ResponseWriter, raw json.RawMessage, field string, fallback []byte) ([]byte, bool) {

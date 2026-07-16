@@ -83,15 +83,16 @@ func TestPromptEvaluationMetricsAndExperimentDimensionsHaveDistinctContracts(t *
 	payload := map[string]any{
 		"metric_contract":       []any{"case_count", "pass_rate"},
 		"metric_notes":          []any{"按当前快照统计"},
+		"linked_dataset_ids":    []any{"dataset-1", "dataset-2"},
 		"experiment_dimensions": []any{"命中率", map[string]any{"name": "中文一致性", "weight": 2}},
 	}
 	dimensions := promptEvaluationExperimentDimensions(payload)
 	if len(dimensions) != 2 || dimensions[0].Name != "命中率" || dimensions[1].Name != "中文一致性" {
 		t.Fatalf("canonical experiment dimensions = %#v", dimensions)
 	}
-	profile := promptEvaluationAssetProfileFromPayload(mustJSONBytes(payload), pgtype.UUID{})
-	if profile.EvaluationDimensionCount != 2 || profile.ExperimentDimensionCount != 2 {
-		t.Fatalf("profile metric=%d experiment=%d", profile.EvaluationDimensionCount, profile.ExperimentDimensionCount)
+	profile := promptEvaluationAssetProfileFromPayload(mustJSONBytes(payload), pgtype.UUID{Bytes: [16]byte{1}, Valid: true})
+	if profile.EvaluationDimensionCount != 2 || profile.ExperimentDimensionCount != 2 || profile.LinkedDatasetCount != 2 || profile.LinkedPromptCount != 1 {
+		t.Fatalf("profile = %#v", profile)
 	}
 }
 
