@@ -790,8 +790,7 @@ func (h *Handler) ArchiveAgentsAndDeleteRuntime(w http.ResponseWriter, r *http.R
 	runtimeID := chi.URLParam(r, "runtimeId")
 
 	var req archiveAgentsAndDeleteRuntimeRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 	expected, ok := parseExpectedActiveAgentIDs(req.ExpectedActiveAgentIDs)

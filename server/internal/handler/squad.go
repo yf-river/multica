@@ -773,8 +773,7 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req createSquadRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 	if req.Name == "" {
@@ -1010,8 +1009,7 @@ func (h *Handler) UpdateSquad(w http.ResponseWriter, r *http.Request) {
 		Scope        *string         `json:"scope"`
 		SOPProfile   json.RawMessage `json:"sop_profile"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 

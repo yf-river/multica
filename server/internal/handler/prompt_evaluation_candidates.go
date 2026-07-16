@@ -419,8 +419,7 @@ func (h *Handler) UpdatePromptEvaluationOptimizationCandidate(w http.ResponseWri
 		return
 	}
 	var req UpdatePromptEvaluationOptimizationCandidateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 	name := strings.TrimSpace(req.CandidateName)

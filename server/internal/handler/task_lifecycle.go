@@ -53,8 +53,7 @@ func (h *Handler) PinTaskSession(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req protocol.DaemonTaskSessionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+	if !decodeRequiredJSON(w, r, &req) {
 		return
 	}
 	if req.SessionID == "" && req.WorkDir == "" {
