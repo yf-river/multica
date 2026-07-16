@@ -55,6 +55,7 @@ import { InfiniteScrollSentinel } from "./infinite-scroll-sentinel";
 import { AppLink } from "../../navigation";
 import { ProjectIcon } from "../../projects/components/project-icon";
 import { ActorAvatar } from "../../common/actor-avatar";
+import { indexBy } from "../../common/collections";
 import type { ChildProgress } from "./list-row";
 import { useT } from "../../i18n";
 import {
@@ -637,11 +638,7 @@ export function SwimLaneView({
     return result;
   }, [issues, displayIssues, laneGroups, sortedStatuses, sortBy, sortDirection, headerIssueIds, swimlaneGrouping]);
 
-  const laneByKey = useMemo(() => {
-    const map = new Map<string, LaneGroup>();
-    for (const lane of laneGroups) map.set(lane.key, lane);
-    return map;
-  }, [laneGroups]);
+  const laneByKey = useMemo(() => indexBy(laneGroups, (lane) => lane.key), [laneGroups]);
 
   const cellSet = useMemo(() => {
     const ids = new Set<string>();
@@ -694,11 +691,10 @@ export function SwimLaneView({
   const [activeIssue, setActiveIssue] = useState<Issue | null>(null);
   const isDraggingRef = useRef(false);
 
-  const issueMap = useMemo(() => {
-    const map = new Map<string, Issue>();
-    for (const issue of displayIssues) map.set(issue.id, issue);
-    return map;
-  }, [displayIssues]);
+  const issueMap = useMemo(
+    () => indexBy(displayIssues, (issue) => issue.id),
+    [displayIssues],
+  );
 
   const issueMapRef = useRef(issueMap);
   if (!isDraggingRef.current) {

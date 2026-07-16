@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Webhook } from "lucide-react";
 import type { Agent } from "@multica/core/types";
 import { useAuthStore } from "@multica/core/auth";
+import { canManageWorkspace } from "@multica/core/permissions";
 import { useWorkspaceId } from "@multica/core/paths";
 import { larkInstallationsOptions } from "@multica/core/lark";
 import { memberListOptions } from "@multica/core/workspace/queries";
@@ -45,8 +46,7 @@ export function IntegrationsTab({ agent }: { agent: Agent }) {
   const configured = listing?.configured === true;
   const installSupported = listing?.install_supported === true;
   const currentMember = members.find((m) => m.user_id === user?.id) ?? null;
-  const canManage =
-    currentMember?.role === "owner" || currentMember?.role === "admin";
+  const canManage = canManageWorkspace(currentMember?.role);
   const hasActiveInstall =
     listing?.installations.some(
       (inst) => inst.agent_id === agent.id && inst.status === "active",

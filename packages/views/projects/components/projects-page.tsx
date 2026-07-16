@@ -35,6 +35,7 @@ import {
 import { useWorkspaceId } from "@multica/core/paths";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { useAuthStore } from "@multica/core/auth";
+import { canManageWorkspace } from "@multica/core/permissions";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { memberListOptions } from "@multica/core/workspace/queries";
 import { useModalStore } from "@multica/core/modals";
@@ -49,6 +50,8 @@ import {
   ListGridCheckboxCell,
   ListGridSelectAllHeaderCell,
   ListGridToggleableHeaderCell,
+  getListGridSelectionState,
+  toggleSelectedId,
 } from "../../common/list-grid-selection";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { Button } from "@multica/ui/components/ui/button";
@@ -728,7 +731,7 @@ export function ProjectsPage() {
   const isWorkspaceAdmin = useMemo(() => {
     if (!currentUser) return false;
     const me = members.find((m: MemberWithUser) => m.user_id === currentUser.id);
-    return me?.role === "owner" || me?.role === "admin";
+    return canManageWorkspace(me?.role);
   }, [members, currentUser]);
 
   const pinnedProjectIds = useMemo(() => {
@@ -739,13 +742,6 @@ export function ProjectsPage() {
 
   const [search, setSearch] = useState("");
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
-  const toggleSelected = (id: string) =>
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
 
   const activeFilterCount = countActiveFilters(filters);
   const hasActiveFilters = activeFilterCount > 0;
@@ -805,11 +801,16 @@ export function ProjectsPage() {
     return sorted;
   }, [displayProjects, search, filters, sortField, sortDirection]);
 
-  const selectedProjects = visible.filter((p) => selectedIds.has(p.id));
-  const allSelected = visible.length > 0 && selectedProjects.length === visible.length;
-  const someSelected = selectedProjects.length > 0 && !allSelected;
+  const toggleSelected = (id: string) =>
+    setSelectedIds((ids) => toggleSelectedId(ids, id));
+  const selectedProjects = visible.filter((project) => selectedIds.has(project.id));
+  const visibleProjectIds = visible.map((project) => project.id);
+  const { allSelected, someSelected } = getListGridSelectionState(
+    visibleProjectIds,
+    selectedIds,
+  );
   const handleToggleAll = () =>
-    setSelectedIds(allSelected ? new Set() : new Set(visible.map((p) => p.id)));
+    setSelectedIds(allSelected ? new Set() : new Set(visibleProjectIds));
 
   const sortLabel = (f: ProjectSortField) =>
     f === "name"

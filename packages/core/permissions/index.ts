@@ -5,7 +5,7 @@
  * public API should follow the same minimum-surface pattern — only add it when
  * there is a current caller.
  */
-export { canAssignAgentToIssue, canEditAgent, canEditSkill } from "./rules";
+export { canAssignAgentToIssue, canEditAgent, canEditSkill, canManageWorkspace } from "./rules";
 
 export {
   useAgentEditPermission,

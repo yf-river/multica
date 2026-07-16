@@ -25,6 +25,7 @@ import {
   makeKanbanCollision,
   type DragMoveUpdates,
 } from "../utils/drag-utils";
+import { indexBy } from "../../common/collections";
 
 interface UseIssueDragColumnsOptions {
   issues: Issue[];
@@ -70,11 +71,7 @@ export function useIssueDragColumns({
     return () => cancelAnimationFrame(id);
   }, [columns]);
 
-  const issueMap = useMemo(() => {
-    const map = new Map<string, Issue>();
-    for (const issue of issues) map.set(issue.id, issue);
-    return map;
-  }, [issues]);
+  const issueMap = useMemo(() => indexBy(issues, (issue) => issue.id), [issues]);
 
   const issueMapRef = useRef(issueMap);
   if (!isDraggingRef.current && !isSettlingRef.current) {

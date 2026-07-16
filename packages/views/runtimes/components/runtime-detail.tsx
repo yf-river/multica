@@ -12,6 +12,7 @@ import { toast } from "sonner";
 import { useQuery } from "@tanstack/react-query";
 import type { AgentRuntime, Agent, MemberWithUser } from "@multica/core/types";
 import { useAuthStore } from "@multica/core/auth";
+import { canManageWorkspace } from "@multica/core/permissions";
 import { useWorkspaceId } from "@multica/core/paths";
 import { memberListOptions, agentListOptions } from "@multica/core/workspace/queries";
 import { useUpdateRuntime } from "@multica/core/runtimes/mutations";
@@ -87,9 +88,7 @@ export function RuntimeDetail({ runtime }: { runtime: AgentRuntime }) {
   const currentMember = user
     ? members.find((m) => m.user_id === user.id)
     : null;
-  const isAdmin = currentMember
-    ? currentMember.role === "owner" || currentMember.role === "admin"
-    : false;
+  const isAdmin = canManageWorkspace(currentMember?.role);
   const isRuntimeOwner = user && runtime.owner_id === user.id;
   const canDelete = isAdmin || isRuntimeOwner;
 

@@ -5,6 +5,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@multica/core/api";
 import { createAgentWithRecovery } from "@multica/core/agents";
 import { useAuthStore } from "@multica/core/auth";
+import { canManageWorkspace } from "@multica/core/permissions";
 import { useCurrentWorkspace, useWorkspacePaths } from "@multica/core/paths";
 import { useWorkspaceId } from "@multica/core/paths";
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
@@ -65,6 +66,7 @@ import { ChevronDown, UserPlus } from "lucide-react";
 import { toast } from "sonner";
 import type { Squad, SquadMember, SquadMemberStatus, SquadMemberStatusValue, Agent, CreateAgentRequest, MemberWithUser } from "@multica/core/types";
 import { useT } from "../../i18n";
+import { indexBy } from "../../common/collections";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 import { sopStageDisplayName } from "../../common/sop-stage-labels";
 import { ResourceScopeBadge } from "../../common/resource-scope";
@@ -98,11 +100,10 @@ export function SquadDetailPage() {
     ...squadMemberStatusOptions(wsId, squadId),
     enabled: !!workspace?.id && !!squadId,
   });
-  const memberStatusById = useMemo(() => {
-    const map = new Map<string, SquadMemberStatus>();
-    for (const status of memberStatuses) map.set(status.member_id, status);
-    return map;
-  }, [memberStatuses]);
+  const memberStatusById = useMemo(
+    () => indexBy(memberStatuses, (status) => status.member_id),
+    [memberStatuses],
+  );
 
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
   const { data: wsMembers = [] } = useQuery(memberListOptions(wsId));
@@ -116,7 +117,7 @@ export function SquadDetailPage() {
     if (!currentUser) return null;
     return wsMembers.find((m) => m.user_id === currentUser.id)?.role ?? null;
   }, [wsMembers, currentUser]);
-  const isWorkspaceAdmin = myRole === "owner" || myRole === "admin";
+  const isWorkspaceAdmin = canManageWorkspace(myRole);
 
   const { data: runtimes = [], isLoading: runtimesLoading } = useQuery({
     ...runtimeListOptions(wsId),

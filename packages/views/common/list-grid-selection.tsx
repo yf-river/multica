@@ -7,6 +7,25 @@ import {
 } from "@multica/ui/components/ui/list-grid";
 import type { ComponentProps } from "react";
 
+export function toggleSelectedId(selectedIds: ReadonlySet<string>, id: string) {
+  const next = new Set(selectedIds);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  return next;
+}
+
+export function getListGridSelectionState(
+  visibleIds: readonly string[],
+  selectedIds: ReadonlySet<string>,
+) {
+  const selectedVisibleCount = visibleIds.filter((id) => selectedIds.has(id)).length;
+  const allSelected = visibleIds.length > 0 && selectedVisibleCount === visibleIds.length;
+  return {
+    allSelected,
+    someSelected: selectedVisibleCount > 0 && !allSelected,
+  };
+}
+
 export function ListGridCheckboxCell({
   checked,
   onToggle,

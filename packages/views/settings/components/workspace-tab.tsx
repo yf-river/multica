@@ -20,6 +20,7 @@ import {
 import { toast } from "sonner";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthStore } from "@multica/core/auth";
+import { canManageWorkspace as hasWorkspaceManagementRole } from "@multica/core/permissions";
 import { useLeaveWorkspace, useDeleteWorkspace } from "@multica/core/workspace/mutations";
 import { useWorkspaceId } from "@multica/core/paths";
 import {
@@ -111,7 +112,7 @@ export function WorkspaceTab() {
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
   const currentMember = members.find((m) => m.user_id === user?.id) ?? null;
-  const canManageWorkspace = currentMember?.role === "owner" || currentMember?.role === "admin";
+  const canManageWorkspace = hasWorkspaceManagementRole(currentMember?.role);
   const isOwner = currentMember?.role === "owner";
   // Mirror the backend invariant (server/internal/handler/workspace.go:569):
   // a workspace must always have at least one owner, so the sole owner can't

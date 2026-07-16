@@ -288,6 +288,17 @@ describe("ProjectsPage compact row navigation", () => {
     expect(push).not.toHaveBeenCalled();
   });
 
+  it("selects and clears a visible project through the shared list rules", async () => {
+    const user = userEvent.setup();
+    renderProjects();
+
+    await user.click(within(projectRow()).getByRole("button", { pressed: false }));
+    expect(screen.getByText("已选 1 项")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "清除选择" }));
+    expect(screen.queryByText("已选 1 项")).not.toBeInTheDocument();
+  });
+
   it("uses the rowLink modifier and middle-click paths when openInNewTab is available", () => {
     const push = vi.fn();
     const openInNewTab = vi.fn();

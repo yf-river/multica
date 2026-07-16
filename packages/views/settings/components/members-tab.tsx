@@ -38,6 +38,7 @@ import {
 import { toast } from "sonner";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthStore, validatePassword } from "@multica/core/auth";
+import { canManageWorkspace as hasWorkspaceManagementRole } from "@multica/core/permissions";
 import { useWorkspaceId } from "@multica/core/paths";
 import { useCurrentWorkspace } from "@multica/core/paths";
 import { memberListOptions, workspaceKeys } from "@multica/core/workspace/queries";
@@ -205,7 +206,7 @@ export function MembersTab() {
   } | null>(null);
 
   const currentMember = members.find((m) => m.user_id === user?.id) ?? null;
-  const canManageWorkspace = currentMember?.role === "owner" || currentMember?.role === "admin";
+  const canManageWorkspace = hasWorkspaceManagementRole(currentMember?.role);
   const isOwner = currentMember?.role === "owner";
   const ownerCount = members.filter((m) => m.role === "owner").length;
 

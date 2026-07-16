@@ -35,6 +35,7 @@ import {
 } from "@multica/core/agents/stores";
 import { api } from "@multica/core/api";
 import { useAuthStore } from "@multica/core/auth";
+import { canManageWorkspace } from "@multica/core/permissions";
 import { useWorkspaceId } from "@multica/core/paths";
 import { useWorkspacePaths } from "@multica/core/paths";
 import {
@@ -65,10 +66,13 @@ import {
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { useNavigation, useRowLink } from "../../navigation";
 import { ActorAvatar } from "../../common/actor-avatar";
+import { indexBy, mapBy } from "../../common/collections";
 import {
   ListGridCheckboxCell,
   ListGridSelectAllHeaderCell,
   ListGridToggleableHeaderCell,
+  getListGridSelectionState,
+  toggleSelectedId,
 } from "../../common/list-grid-selection";
 import { ListBatchToolbar } from "../../common/list-toolbar";
 import { createColumnTrackVars } from "../../common/list-grid-columns";
@@ -694,9 +698,7 @@ export function AgentsPage() {
   const [duplicateTemplate, setDuplicateTemplate] = useState<Agent | null>(
     null,
   );
-  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(
-    new Set(),
-  );
+  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
 
   const scope = useAgentsViewStore((s) => s.scope);
   const setScope = useAgentsViewStore((s) => s.setScope);
@@ -713,37 +715,18 @@ export function AgentsPage() {
 
   const isColVisible = (key: AgentColumnKey) => !hiddenColumns.includes(key);
 
-  const toggleSelected = (id: string) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
 
-  const runtimesById = useMemo(() => {
-    const m = new Map<string, AgentRuntime>();
-    for (const r of runtimes) m.set(r.id, r);
-    return m;
-  }, [runtimes]);
-
-  const runCountsById = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const r of runCountsRaw) m.set(r.agent_id, r.run_count);
-    return m;
-  }, [runCountsRaw]);
-
-  const membersById = useMemo(() => {
-    const m = new Map<string, MemberWithUser>();
-    for (const mem of members) m.set(mem.user_id, mem);
-    return m;
-  }, [members]);
+  const runtimesById = useMemo(() => indexBy(runtimes, (runtime) => runtime.id), [runtimes]);
+  const runCountsById = useMemo(
+    () => mapBy(runCountsRaw, (count) => count.agent_id, (count) => count.run_count),
+    [runCountsRaw],
+  );
+  const membersById = useMemo(() => indexBy(members, (member) => member.user_id), [members]);
 
   const isWorkspaceAdmin = useMemo(() => {
     if (!currentUser) return false;
     const me = members.find((m) => m.user_id === currentUser.id);
-    return me?.role === "owner" || me?.role === "admin";
+    return canManageWorkspace(me?.role);
   }, [members, currentUser]);
 
   // Scope counts come from the FULL set (filters never affect them).
@@ -901,14 +884,15 @@ export function AgentsPage() {
     setShowCreate(true);
   }, []);
 
+  const toggleSelected = (id: string) =>
+    setSelectedIds((ids) => toggleSelectedId(ids, id));
   const selectedRows = rows.filter((row) => selectedIds.has(row.agent.id));
-  const allSelected = rows.length > 0 && selectedRows.length === rows.length;
-  const someSelected = selectedRows.length > 0 && !allSelected;
-  const handleToggleAll = () => {
-    setSelectedIds(
-      allSelected ? new Set() : new Set(rows.map((r) => r.agent.id)),
-    );
-  };
+  const { allSelected, someSelected } = getListGridSelectionState(
+    rows.map((row) => row.agent.id),
+    selectedIds,
+  );
+  const handleToggleAll = () =>
+    setSelectedIds(allSelected ? new Set() : new Set(rows.map((row) => row.agent.id)));
 
   const virtualItems = rowVirtualizer.getVirtualItems();
   const firstVirtual = virtualItems[0];

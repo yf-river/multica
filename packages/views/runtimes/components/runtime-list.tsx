@@ -16,6 +16,7 @@ import type {
   MemberWithUser,
 } from "@multica/core/types";
 import { useAuthStore } from "@multica/core/auth";
+import { canManageWorkspace } from "@multica/core/permissions";
 import { useWorkspaceId } from "@multica/core/paths";
 import {
   agentListOptions,
@@ -45,6 +46,7 @@ import {
 } from "@multica/ui/components/ui/list-grid";
 import { useRowLink } from "../../navigation";
 import { ActorAvatar } from "../../common/actor-avatar";
+import { indexBy } from "../../common/collections";
 import { useViewingTimezone } from "../../common/use-viewing-timezone";
 import { ProviderLogo } from "./provider-logo";
 import { HealthIcon, RuntimeVisibilityBadge, useHealthLabel } from "./shared";
@@ -506,20 +508,17 @@ export function RuntimeList({
   const currentMember = user
     ? members.find((m) => m.user_id === user.id)
     : null;
-  const isAdmin = currentMember
-    ? currentMember.role === "owner" || currentMember.role === "admin"
-    : false;
+  const isAdmin = canManageWorkspace(currentMember?.role);
 
   const workloadIndex = useMemo(
     () => buildWorkloadIndex(agents, snapshot),
     [agents, snapshot],
   );
 
-  const memberById = useMemo(() => {
-    const map = new Map<string, MemberWithUser>();
-    for (const m of members) map.set(m.user_id, m);
-    return map;
-  }, [members]);
+  const memberById = useMemo(
+    () => indexBy(members, (member) => member.user_id),
+    [members],
+  );
 
   // Owner column only earns its space when the page actually has multiple
   // distinct owners — otherwise it would just be a column of identical

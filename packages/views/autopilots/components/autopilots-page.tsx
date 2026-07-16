@@ -47,6 +47,8 @@ import {
   ListGridCheckboxCell,
   ListGridSelectAllHeaderCell,
   ListGridToggleableHeaderCell,
+  getListGridSelectionState,
+  toggleSelectedId,
 } from "../../common/list-grid-selection";
 import { PageHeader } from "../../layout/page-header";
 import { createColumnTrackVars } from "../../common/list-grid-columns";
@@ -527,9 +529,7 @@ export function AutopilotsPage() {
   const [createOpen, setCreateOpen] = useState(false);
   const [selectedTemplate, setSelectedTemplate] =
     useState<AutopilotTemplate | null>(null);
-  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(
-    new Set(),
-  );
+  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
   const scope = useAutopilotsViewStore((s) => s.scope);
   const setScope = useAutopilotsViewStore((s) => s.setScope);
   const sortField = useAutopilotsViewStore((s) => s.sortField);
@@ -545,15 +545,6 @@ export function AutopilotsPage() {
 
   const isColVisible = (key: AutopilotColumnKey) =>
     !hiddenColumns.includes(key);
-
-  const toggleSelected = (id: string) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
 
   // Scope counts come from the FULL set (filters never affect them — they
   // are stage inventories, not result counts). API-archived rows (no UI
@@ -649,12 +640,16 @@ export function AutopilotsPage() {
     setCreateOpen(true);
   };
 
-  const selectedRows = rows.filter((a) => selectedIds.has(a.id));
-  const allSelected = rows.length > 0 && selectedRows.length === rows.length;
-  const someSelected = selectedRows.length > 0 && !allSelected;
-  const handleToggleAll = () => {
-    setSelectedIds(allSelected ? new Set() : new Set(rows.map((a) => a.id)));
-  };
+  const toggleSelected = (id: string) =>
+    setSelectedIds((ids) => toggleSelectedId(ids, id));
+  const selectedRows = rows.filter((autopilot) => selectedIds.has(autopilot.id));
+  const rowIds = rows.map((autopilot) => autopilot.id);
+  const { allSelected, someSelected } = getListGridSelectionState(
+    rowIds,
+    selectedIds,
+  );
+  const handleToggleAll = () =>
+    setSelectedIds(allSelected ? new Set() : new Set(rowIds));
 
   const virtualItems = rowVirtualizer.getVirtualItems();
   const firstVirtual = virtualItems[0];

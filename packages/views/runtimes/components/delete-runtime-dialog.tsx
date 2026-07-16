@@ -26,6 +26,7 @@ import {
 import { Button } from "@multica/ui/components/ui/button";
 import { Checkbox } from "@multica/ui/components/ui/checkbox";
 import { ActorAvatar } from "../../common/actor-avatar";
+import { indexBy } from "../../common/collections";
 import { ResourceScopeBadge } from "../../common/resource-scope";
 import { availabilityConfig, workloadConfig } from "../../agents/presence";
 import { useT } from "../../i18n";
@@ -433,11 +434,10 @@ function AgentPlanTable({
   currentUserId: string | null;
 }) {
   const { t } = useT("runtimes");
-  const memberById = useMemo(() => {
-    const map = new Map<string, MemberWithUser>();
-    for (const m of members) map.set(m.user_id, m);
-    return map;
-  }, [members]);
+  const memberById = useMemo(
+    () => indexBy(members, (member) => member.user_id),
+    [members],
+  );
 
   return (
     <div className="mt-3 overflow-hidden rounded-md border">

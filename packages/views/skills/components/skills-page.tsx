@@ -50,14 +50,17 @@ import {
 } from "@multica/ui/components/ui/tooltip";
 import { ActorAvatar } from "@multica/ui/components/common/actor-avatar";
 import { useNavigation, useRowLink } from "../../navigation";
+import { indexBy } from "../../common/collections";
 import {
   ListGridCheckboxCell,
   ListGridSelectAllHeaderCell,
   ListGridToggleableHeaderCell,
+  getListGridSelectionState,
+  toggleSelectedId,
 } from "../../common/list-grid-selection";
 import { createColumnTrackVars } from "../../common/list-grid-columns";
 import { PageHeader } from "../../layout/page-header";
-import { canEditSkill } from "@multica/core/permissions";
+import { canEditSkill, canManageWorkspace } from "@multica/core/permissions";
 import { readOrigin, type OriginInfo } from "../lib/origin";
 import { CreateSkillDialog } from "./create-skill-dialog";
 import {
@@ -508,9 +511,7 @@ export default function SkillsPage() {
   );
 
   const [createOpen, setCreateOpen] = useState(false);
-  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(
-    new Set(),
-  );
+  const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
   const [search, setSearch] = useState("");
 
   // Persisted view preferences (per workspace, per user/device). Header sort
@@ -530,33 +531,15 @@ export default function SkillsPage() {
 
   const isColVisible = (key: SkillColumnKey) => !hiddenColumns.includes(key);
 
-  const toggleSelected = (id: string) => {
-    setSelectedIds((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-  };
-
   const assignments = useMemo(() => selectSkillAssignments(agents), [agents]);
 
-  const membersById = useMemo(() => {
-    const map = new Map<string, MemberWithUser>();
-    for (const m of members) map.set(m.user_id, m);
-    return map;
-  }, [members]);
-
-  const runtimesById = useMemo(() => {
-    const map = new Map<string, AgentRuntime>();
-    for (const r of runtimes) map.set(r.id, r);
-    return map;
-  }, [runtimes]);
+  const membersById = useMemo(() => indexBy(members, (member) => member.user_id), [members]);
+  const runtimesById = useMemo(() => indexBy(runtimes, (runtime) => runtime.id), [runtimes]);
 
   const myRole =
     members.find((m: MemberWithUser) => m.user_id === currentUserId)?.role ??
     null;
-  const isAdmin = myRole === "owner" || myRole === "admin";
+  const isAdmin = canManageWorkspace(myRole);
 
   const actionsCtx: SkillActionsContext = {
     wsId,
@@ -663,14 +646,15 @@ export default function SkillsPage() {
     navigation.push(paths.skillDetail(skill.id));
   };
 
+  const toggleSelected = (id: string) =>
+    setSelectedIds((ids) => toggleSelectedId(ids, id));
   const selectedRows = rows.filter((row) => selectedIds.has(row.skill.id));
-  const allSelected = rows.length > 0 && selectedRows.length === rows.length;
-  const someSelected = selectedRows.length > 0 && !allSelected;
-  const handleToggleAll = () => {
-    setSelectedIds(
-      allSelected ? new Set() : new Set(rows.map((r) => r.skill.id)),
-    );
-  };
+  const { allSelected, someSelected } = getListGridSelectionState(
+    rows.map((row) => row.skill.id),
+    selectedIds,
+  );
+  const handleToggleAll = () =>
+    setSelectedIds(allSelected ? new Set() : new Set(rows.map((row) => row.skill.id)));
 
   // --- List request error ---
   if (listError) {

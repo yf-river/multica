@@ -16,13 +16,13 @@ import { ALLOW, deny, type Decision, type PermissionContext } from "./types";
  * sprinkling copy through the view layer.
  */
 
-const isAdminLike = (role: MemberRole | null) =>
+export const canManageWorkspace = (role: MemberRole | null | undefined) =>
   role === "owner" || role === "admin";
 
 const canManageOwnedResource = (
   ownerId: string | null,
   ctx: PermissionContext,
-) => isAdminLike(ctx.role) || (ownerId !== null && ownerId === ctx.userId);
+) => canManageWorkspace(ctx.role) || (ownerId !== null && ownerId === ctx.userId);
 
 type EditDecisionReason =
   | "allowed"

@@ -27,6 +27,7 @@ import { runtimeListOptions, runtimeModelsOptions } from "@multica/core/runtimes
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
 import { nameInitials } from "@multica/core/workspace/actor-display";
 import { useAuthStore } from "@multica/core/auth";
+import { canManageWorkspace } from "@multica/core/permissions";
 import { api } from "@multica/core/api";
 import { useModalStore } from "@multica/core/modals";
 import {
@@ -107,6 +108,7 @@ import {
 import { useNavigation, useRowLink } from "../../navigation";
 import { PageHeader } from "../../layout/page-header";
 import { useT } from "../../i18n";
+import { indexBy } from "../../common/collections";
 import { createColumnTrackVars } from "../../common/list-grid-columns";
 import {
   bestRuntimeForPMProvider,
@@ -860,22 +862,13 @@ export function SquadsPage() {
     enabled: !!wsId,
   });
 
-  const agentsById = useMemo(() => {
-    const m = new Map<string, Agent>();
-    for (const a of agents) m.set(a.id, a);
-    return m;
-  }, [agents]);
-
-  const membersById = useMemo(() => {
-    const m = new Map<string, MemberWithUser>();
-    for (const mem of members) m.set(mem.user_id, mem);
-    return m;
-  }, [members]);
+  const agentsById = useMemo(() => indexBy(agents, (agent) => agent.id), [agents]);
+  const membersById = useMemo(() => indexBy(members, (member) => member.user_id), [members]);
 
   const isWorkspaceAdmin = useMemo(() => {
     if (!currentUser) return false;
     const me = members.find((mem: MemberWithUser) => mem.user_id === currentUser.id);
-    return me?.role === "owner" || me?.role === "admin";
+    return canManageWorkspace(me?.role);
   }, [members, currentUser]);
   const [pmDialogOpen, setPmDialogOpen] = useState(false);
   const [pmName, setPmName] = useState(DEFAULT_PM_SQUAD_NAME);

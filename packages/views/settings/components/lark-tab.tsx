@@ -34,6 +34,7 @@ import {
   DialogFooter,
 } from "@multica/ui/components/ui/dialog";
 import { useAuthStore } from "@multica/core/auth";
+import { canManageWorkspace } from "@multica/core/permissions";
 import { useWorkspaceId } from "@multica/core/paths";
 import { memberListOptions } from "@multica/core/workspace/queries";
 import { useActorName } from "@multica/core/workspace/hooks";
@@ -61,8 +62,7 @@ export function LarkTab() {
 
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const currentMember = members.find((m) => m.user_id === user?.id) ?? null;
-  const canManage =
-    currentMember?.role === "owner" || currentMember?.role === "admin";
+  const canManage = canManageWorkspace(currentMember?.role);
 
   const { data, isLoading } = useQuery({
     ...larkInstallationsOptions(wsId),
@@ -299,8 +299,7 @@ export function LarkAgentBindButton({
     enabled: !!wsId,
   });
   const currentMember = members.find((m) => m.user_id === user?.id) ?? null;
-  const canManage =
-    currentMember?.role === "owner" || currentMember?.role === "admin";
+  const canManage = canManageWorkspace(currentMember?.role);
 
   if (!canManage) return null;
 

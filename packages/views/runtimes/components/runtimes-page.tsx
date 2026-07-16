@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthStore } from "@multica/core/auth";
+import { canManageWorkspace } from "@multica/core/permissions";
 import { useWorkspaceId } from "@multica/core/paths";
 import { agentTaskSnapshotOptions } from "@multica/core/agents";
 import { useRuntimeNow } from "@multica/core/runtimes";
@@ -120,8 +121,7 @@ function RuntimesPage({
   const currentMember = currentUserId
     ? members.find((m) => m.user_id === currentUserId)
     : null;
-  const canManageProfiles =
-    currentMember?.role === "owner" || currentMember?.role === "admin";
+  const canManageProfiles = canManageWorkspace(currentMember?.role);
   const [showProfilesDialog, setShowProfilesDialog] = useState(false);
 
   const handleDaemonEvent = useCallback(() => {
