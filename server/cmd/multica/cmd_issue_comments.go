@@ -416,9 +416,6 @@ func runIssueCancelTask(cmd *cobra.Command, args []string) error {
 		return cli.PrintJSON(os.Stdout, result)
 	}
 	status := strVal(result, "status")
-	if status == "" {
-		status = "cancelled"
-	}
 	_, err = fmt.Fprintf(os.Stdout, "Task %s -> status=%s\n", taskRef.ID, status)
 	return err
 }

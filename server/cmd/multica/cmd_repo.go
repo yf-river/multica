@@ -55,19 +55,15 @@ var repoCheckoutCmd = &cobra.Command{
 	RunE:  runRepoCheckout,
 }
 
-var repoCheckoutRef string
-
 func init() {
 	repoListCmd.Flags().String("output", "table", "Output format: table or json")
 
-	repoAddCmd.Flags().StringArray("url", nil, "Repository URL to add (may be repeated)")
 	repoAddCmd.Flags().String("description", "", "Optional description; only valid when adding one URL")
 	repoAddCmd.Flags().String("output", "json", "Output format: table or json")
 
-	repoRemoveCmd.Flags().StringArray("url", nil, "Repository URL to remove (may be repeated)")
 	repoRemoveCmd.Flags().String("output", "json", "Output format: table or json")
 
-	repoCheckoutCmd.Flags().StringVar(&repoCheckoutRef, "ref", "", "branch, tag, or commit to check out instead of the remote default branch")
+	repoCheckoutCmd.Flags().String("ref", "", "branch, tag, or commit to check out instead of the remote default branch")
 
 	repoCmd.AddCommand(repoListCmd)
 	repoCmd.AddCommand(repoAddCmd)
@@ -77,8 +73,6 @@ func init() {
 
 type repoWorkspaceResponse struct {
 	ID    string                    `json:"id"`
-	Name  string                    `json:"name"`
-	Slug  string                    `json:"slug"`
 	Repos []protocol.TaskRepository `json:"repos"`
 }
 
@@ -90,17 +84,14 @@ type repoMutationResult struct {
 	Repos       []protocol.TaskRepository `json:"repos"`
 }
 
-func repoURLsFromArgsAndFlags(cmd *cobra.Command, args []string) ([]string, error) {
-	flagURLs, _ := cmd.Flags().GetStringArray("url")
-	raw := append([]string{}, flagURLs...)
-	raw = append(raw, args...)
-	if len(raw) == 0 {
+func repoURLsFromArgs(args []string) ([]string, error) {
+	if len(args) == 0 {
 		return nil, fmt.Errorf("at least one repository URL is required")
 	}
 
-	urls := make([]string, 0, len(raw))
-	seen := make(map[string]struct{}, len(raw))
-	for _, u := range raw {
+	urls := make([]string, 0, len(args))
+	seen := make(map[string]struct{}, len(args))
+	for _, u := range args {
 		u = strings.TrimSpace(u)
 		if u == "" {
 			return nil, fmt.Errorf("repository URL cannot be empty")
@@ -119,9 +110,6 @@ func fetchRepoWorkspace(ctx context.Context, client *cli.APIClient, workspaceID 
 	if err := client.GetJSON(ctx, "/api/workspaces/"+workspaceID, &ws); err != nil {
 		return repoWorkspaceResponse{}, fmt.Errorf("get workspace: %w", err)
 	}
-	if ws.Repos == nil {
-		ws.Repos = []protocol.TaskRepository{}
-	}
 	return ws, nil
 }
 
@@ -129,9 +117,6 @@ func patchWorkspaceRepos(ctx context.Context, client *cli.APIClient, workspaceID
 	var ws repoWorkspaceResponse
 	if err := client.PatchJSON(ctx, "/api/workspaces/"+workspaceID, map[string]any{"repos": repos}, &ws); err != nil {
 		return repoWorkspaceResponse{}, fmt.Errorf("update workspace repos: %w", err)
-	}
-	if ws.Repos == nil {
-		ws.Repos = []protocol.TaskRepository{}
 	}
 	return ws, nil
 }
@@ -176,7 +161,7 @@ func runRepoList(cmd *cobra.Command, _ []string) error {
 }
 
 func runRepoAdd(cmd *cobra.Command, args []string) error {
-	urls, err := repoURLsFromArgsAndFlags(cmd, args)
+	urls, err := repoURLsFromArgs(args)
 	if err != nil {
 		return err
 	}
@@ -256,7 +241,7 @@ func runRepoAdd(cmd *cobra.Command, args []string) error {
 }
 
 func runRepoRemove(cmd *cobra.Command, args []string) error {
-	urls, err := repoURLsFromArgsAndFlags(cmd, args)
+	urls, err := repoURLsFromArgs(args)
 	if err != nil {
 		return err
 	}
@@ -320,7 +305,8 @@ func runRepoRemove(cmd *cobra.Command, args []string) error {
 
 func runRepoCheckout(cmd *cobra.Command, args []string) error {
 	repoURL := args[0]
-	ref := strings.TrimSpace(repoCheckoutRef)
+	refValue, _ := cmd.Flags().GetString("ref")
+	ref := strings.TrimSpace(refValue)
 	if normalizedURL, normalizedRef := normalizeRepoCheckoutURL(repoURL); normalizedURL != "" {
 		repoURL = normalizedURL
 		if ref == "" {

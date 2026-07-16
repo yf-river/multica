@@ -197,7 +197,6 @@ func runRuntimeDelete(cmd *cobra.Command, args []string) error {
 
 type runtimeDeleteConflictPayload struct {
 	Code         string `json:"code"`
-	Error        string `json:"error"`
 	ActiveAgents []struct {
 		ID   string `json:"id"`
 		Name string `json:"name"`

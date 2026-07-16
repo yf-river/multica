@@ -16,7 +16,6 @@ func newRepoRegistryTestCmd(serverURL string) *cobra.Command {
 	cmd.Flags().String("server-url", "", "")
 	cmd.Flags().String("workspace-id", "", "")
 	cmd.Flags().String("profile", "", "")
-	cmd.Flags().StringArray("url", nil, "")
 	cmd.Flags().String("description", "", "")
 	cmd.Flags().String("output", "json", "")
 	_ = cmd.Flags().Set("server-url", serverURL)
@@ -68,9 +67,6 @@ func TestRunRepoAddAppendsAndDedupes(t *testing.T) {
 	defer srv.close()
 
 	cmd := newRepoRegistryTestCmd(srv.url())
-	if err := cmd.Flags().Set("url", "https://git.example.com/web.git"); err != nil {
-		t.Fatal(err)
-	}
 	err := runRepoAdd(cmd, []string{
 		"https://git.example.com/api.git",
 		"https://git.example.com/api.git",
@@ -130,10 +126,10 @@ func TestRunRepoRemoveDeletesExistingRepos(t *testing.T) {
 	defer srv.close()
 
 	cmd := newRepoRegistryTestCmd(srv.url())
-	if err := cmd.Flags().Set("url", "https://git.example.com/mobile.git"); err != nil {
-		t.Fatal(err)
-	}
-	if err := runRepoRemove(cmd, []string{"https://git.example.com/web.git"}); err != nil {
+	if err := runRepoRemove(cmd, []string{
+		"https://git.example.com/web.git",
+		"https://git.example.com/mobile.git",
+	}); err != nil {
 		t.Fatalf("runRepoRemove: %v", err)
 	}
 	if len(srv.patched) != 1 || srv.patched[0].URL != "https://git.example.com/api.git" {
