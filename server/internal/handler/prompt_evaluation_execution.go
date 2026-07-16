@@ -21,22 +21,22 @@ func (h *Handler) persistPromptEvaluationLocalRun(w http.ResponseWriter, r *http
 		status = "未通过"
 	}
 	metrics := map[string]any{
-		"总用例数":    result.TotalCases,
-		"通过数":     result.PassedCases,
-		"失败数":     result.FailedCases,
-		"通过率":     result.PassRate,
-		"总耗时":     result.TotalDurationMs,
-		"平均耗时":    result.AverageDurationMs,
-		"输入token": result.InputTokens,
-		"输出token": result.OutputTokens,
-		"预估成本":    result.EstimatedCost,
-		"执行Agent": result.AgentName,
-		"模型":      result.Model,
-		"runtime": result.Runtime,
-		"提示词版本":   result.PromptVersion,
-		"实验维度评分":  result.DimensionScores,
-		"失败原因":    result.FailureReason,
-		"评估结论":    result.Conclusion,
+		"总用例数":     result.TotalCases,
+		"通过数":      result.PassedCases,
+		"失败数":      result.FailedCases,
+		"通过率":      result.PassRate,
+		"总耗时":      result.TotalDurationMs,
+		"平均耗时":     result.AverageDurationMs,
+		"输入 token": result.InputTokens,
+		"输出 token": result.OutputTokens,
+		"预估成本":     result.EstimatedCost,
+		"执行Agent":  result.AgentName,
+		"模型":       result.Model,
+		"runtime":  result.Runtime,
+		"提示词版本":    result.PromptVersion,
+		"实验维度评分":   result.DimensionScores,
+		"失败原因":     result.FailureReason,
+		"评估结论":     result.Conclusion,
 	}
 	datasetVersionBindings, ok := h.promptEvaluationDatasetVersionBindings(w, r, asset.WorkspaceID, decodePayloadObject(asset.Payload))
 	if !ok {

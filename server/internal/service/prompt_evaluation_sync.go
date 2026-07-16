@@ -131,8 +131,6 @@ func syncPromptEvaluationRunWithTask(ctx context.Context, q *db.Queries, run db.
 		"平均耗时":          averageMs,
 		"输入 token":      inputTokens,
 		"输出 token":      outputTokens,
-		"输入token":       inputTokens,
-		"输出token":       outputTokens,
 		"预估成本":          estimatedCost,
 		"缺少模型价格":        unpricedModels,
 		"执行Agent":       agentName,
@@ -187,7 +185,11 @@ func syncPromptEvaluationRunWithTask(ctx context.Context, q *db.Queries, run db.
 	if trialStatus == "通过" {
 		trialFailureReason = "无"
 	}
-	perCaseInput, perCaseOutput := promptEvaluationPerCaseUsage(run.TotalCases, inputTokens, outputTokens)
+	perCaseInput, perCaseOutput := int32(0), int32(0)
+	if run.TotalCases > 0 {
+		perCaseInput = inputTokens / run.TotalCases
+		perCaseOutput = outputTokens / run.TotalCases
+	}
 	if err := q.UpdatePromptEvaluationTrialsFromTask(ctx, db.UpdatePromptEvaluationTrialsFromTaskParams{
 		RunID:         run.ID,
 		WorkspaceID:   run.WorkspaceID,
@@ -477,14 +479,10 @@ type promptEvaluationAgentCaseVerdict struct {
 
 func promptEvaluationPreservedRunFacts(run db.PromptEvaluationRun) map[string]any {
 	result := map[string]any{}
-	for _, raw := range []any{
+	for _, record := range []map[string]any{
 		mustDecodePersistedJSONObject(run.Metrics, "prompt evaluation run metrics"),
 		mustDecodePersistedJSONObject(run.Evidence, "prompt evaluation run evidence"),
 	} {
-		record, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
 		for _, key := range []string{"提示词版本", "数据集版本"} {
 			if value, exists := record[key]; exists && value != nil {
 				result[key] = value
@@ -554,6 +552,12 @@ func persistPromptEvaluationAgentDimensionScores(ctx context.Context, q *db.Quer
 		if dimensionName == "" {
 			dimensionName = "维度 " + strconv.Itoa(int(score.DimensionIndex)+1)
 		}
+		status := score.Status
+		switch status {
+		case "待执行", "已评分", "无用例":
+		default:
+			status = "待执行"
+		}
 		if _, err := q.UpsertPromptEvaluationDimensionScore(ctx, db.UpsertPromptEvaluationDimensionScoreParams{
 			WorkspaceID:    run.WorkspaceID,
 			RunID:          run.ID,
@@ -564,7 +568,7 @@ func persistPromptEvaluationAgentDimensionScores(ctx context.Context, q *db.Quer
 			Score:          score.Score,
 			PassedCases:    int32(score.PassedCases),
 			TotalCases:     int32(score.TotalCases),
-			Status:         promptEvaluationAgentDimensionScoreStatus(score.Status),
+			Status:         status,
 			Rule:           score.Rule,
 			Evidence:       score.Evidence,
 			Source:         "agent_sync",
@@ -573,15 +577,6 @@ func persistPromptEvaluationAgentDimensionScores(ctx context.Context, q *db.Quer
 		}
 	}
 	return nil
-}
-
-func promptEvaluationAgentDimensionScoreStatus(status string) string {
-	switch status {
-	case "待执行", "已评分", "无用例":
-		return status
-	default:
-		return "待执行"
-	}
 }
 
 func promptEvaluationDimensionScoresFromRaw(raw any) []promptEvaluationAgentDimensionScore {
@@ -631,11 +626,11 @@ func promptEvaluationAgentDimensionVerdictPassed(dimensionName string, verdict p
 	normalized := strings.ToLower(strings.TrimSpace(dimensionName))
 	switch {
 	case strings.Contains(normalized, "缺失变量") || strings.Contains(normalized, "变量"):
-		return verdict.Status == "通过" && promptEvaluationAgentEvidenceListEmpty(verdict.Evidence, "缺失")
+		return verdict.Status == "通过" && promptEvaluationAgentEvidenceListMatches(verdict.Evidence, "缺失", false)
 	case strings.Contains(normalized, "中文"):
 		return prompteval.ContainsHan(util.StringFromAny(verdict.Output)) || prompteval.ContainsHan(verdict.Conclusion)
 	case strings.Contains(normalized, "命中") || strings.Contains(normalized, "覆盖") || strings.Contains(normalized, "期望"):
-		return verdict.Status == "通过" && promptEvaluationAgentEvidenceListNonEmpty(verdict.Evidence, "命中")
+		return verdict.Status == "通过" && promptEvaluationAgentEvidenceListMatches(verdict.Evidence, "命中", true)
 	default:
 		return verdict.Status == "通过"
 	}
@@ -655,34 +650,27 @@ func promptEvaluationAgentDimensionRule(dimensionName string) string {
 	}
 }
 
-func promptEvaluationAgentEvidenceListEmpty(record map[string]any, key string) bool {
-	value := record[key]
-	if value == nil {
-		return true
-	}
-	if list, ok := value.([]any); ok {
-		return len(list) == 0
-	}
-	if text := strings.TrimSpace(util.StringFromAny(value)); text != "" {
-		return text == "无" || text == "[]"
-	}
-	return true
-}
-
-func promptEvaluationAgentEvidenceListNonEmpty(record map[string]any, key string) bool {
+func promptEvaluationAgentEvidenceListMatches(record map[string]any, key string, wantItems bool) bool {
 	value := record[key]
 	if list, ok := value.([]any); ok {
-		return len(list) > 0
+		return (len(list) > 0) == wantItems
 	}
-	return strings.TrimSpace(util.StringFromAny(value)) != ""
+	text := strings.TrimSpace(util.StringFromAny(value))
+	if wantItems {
+		return text != ""
+	}
+	return text == "" || text == "无" || text == "[]"
 }
 
 func promptEvaluationAgentVerdictsFromTask(run db.PromptEvaluationRun, task db.AgentTaskQueue, messages []db.TaskMessage) ([]promptEvaluationAgentCaseVerdict, bool) {
 	sources := make([]string, 0, len(messages)+2)
 	if len(task.Result) > 0 {
 		sources = append(sources, string(task.Result))
-		if output := promptEvaluationTaskResultOutput(task.Result); output != "" {
-			sources = append(sources, output)
+		var result map[string]any
+		if json.Unmarshal(task.Result, &result) == nil {
+			if output := util.StringFromAny(result["output"]); output != "" {
+				sources = append(sources, output)
+			}
 		}
 	}
 	for _, message := range messages {
@@ -744,7 +732,16 @@ func promptEvaluationRunStatusFromAgentVerdicts(run db.PromptEvaluationRun, verd
 	}
 	failureReason := "无"
 	if len(reasons) > 0 {
-		failureReason = strings.Join(uniquePromptEvaluationStrings(reasons), "；")
+		seen := make(map[string]bool, len(reasons))
+		unique := make([]string, 0, len(reasons))
+		for _, reason := range reasons {
+			reason = strings.TrimSpace(reason)
+			if reason != "" && !seen[reason] {
+				seen[reason] = true
+				unique = append(unique, reason)
+			}
+		}
+		failureReason = strings.Join(unique, "；")
 	} else if status == "需人工复核" {
 		failureReason = "部分用例需要人工复核"
 	} else if status == "未通过" {
@@ -766,10 +763,6 @@ func parsePromptEvaluationAgentVerdicts(raw any, totalCases int32) ([]promptEval
 	if !ok {
 		return nil, false
 	}
-	return parsePromptEvaluationAgentVerdictList(list, totalCases)
-}
-
-func parsePromptEvaluationAgentVerdictList(list []any, totalCases int32) ([]promptEvaluationAgentCaseVerdict, bool) {
 	if len(list) == 0 {
 		return nil, false
 	}
@@ -851,14 +844,6 @@ func promptEvaluationAgentVerdictFromMap(row map[string]any) (promptEvaluationAg
 	}, true
 }
 
-func promptEvaluationTaskResultOutput(raw []byte) string {
-	var payload map[string]any
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		return ""
-	}
-	return util.StringFromAny(payload["output"])
-}
-
 func promptEvaluationJSONCandidates(source string) []any {
 	source = strings.TrimSpace(source)
 	if source == "" {
@@ -890,27 +875,6 @@ func promptEvaluationJSONCandidates(source string) []any {
 		}
 	}
 	return parsed
-}
-
-func uniquePromptEvaluationStrings(values []string) []string {
-	seen := map[string]bool{}
-	result := make([]string, 0, len(values))
-	for _, value := range values {
-		value = strings.TrimSpace(value)
-		if value == "" || seen[value] {
-			continue
-		}
-		seen[value] = true
-		result = append(result, value)
-	}
-	return result
-}
-
-func promptEvaluationPerCaseUsage(totalCases int32, inputTokens int32, outputTokens int32) (int32, int32) {
-	if totalCases <= 0 {
-		return 0, 0
-	}
-	return inputTokens / totalCases, outputTokens / totalCases
 }
 
 func mustDecodePersistedJSONObject(raw []byte, field string) map[string]any {

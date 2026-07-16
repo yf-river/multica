@@ -1760,6 +1760,15 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 	if !ok || len(dimensionScores) != 3 {
 		t.Fatalf("run metrics missing agent dimension scores: %#v", runMetrics)
 	}
+	if runMetrics["输入 token"] != float64(11) || runMetrics["输出 token"] != float64(7) {
+		t.Fatalf("run metrics missing canonical token fields: %#v", runMetrics)
+	}
+	if _, exists := runMetrics["输入token"]; exists {
+		t.Fatalf("run metrics retained old unspaced token field: %#v", runMetrics)
+	}
+	if _, exists := runMetrics["输出token"]; exists {
+		t.Fatalf("run metrics retained old unspaced token field: %#v", runMetrics)
+	}
 	firstDimensionScore, _ := dimensionScores[0].(map[string]any)
 	if firstDimensionScore["维度名称"] != "命中率" || firstDimensionScore["状态"] != "已评分" || firstDimensionScore["通过用例数"] != float64(1) {
 		t.Fatalf("first agent dimension score = %#v", firstDimensionScore)

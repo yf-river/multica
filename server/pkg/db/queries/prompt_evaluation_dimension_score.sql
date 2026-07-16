@@ -131,8 +131,8 @@ WITH filtered_scores AS (
         s.updated_at,
         to_char(date_trunc('day', r.created_at), 'YYYY-MM-DD') AS period,
         CASE
-            WHEN COALESCE(r.metrics->>'提示词版本', r.metrics->>'prompt_version', '') ~ '^[0-9]+$'
-                THEN COALESCE(r.metrics->>'提示词版本', r.metrics->>'prompt_version')::int
+            WHEN COALESCE(r.metrics->>'提示词版本', '') ~ '^[0-9]+$'
+                THEN (r.metrics->>'提示词版本')::int
             ELSE 0
         END AS prompt_version
     FROM prompt_evaluation_dimension_score s
