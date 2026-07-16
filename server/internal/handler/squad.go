@@ -575,8 +575,32 @@ func normalizeSquadSOPProfile(raw json.RawMessage) ([]byte, error) {
 	if len(raw) == 0 {
 		return nil, nil
 	}
-	if _, err := decodeSquadSOPProfile(raw); err != nil {
+	profile, err := decodeSquadSOPProfile(raw)
+	if err != nil {
 		return nil, errors.New("sop_profile must be a JSON object")
+	}
+	rawSteps, exists := profile["steps"]
+	if !exists {
+		return raw, nil
+	}
+	steps, ok := rawSteps.([]any)
+	if !ok {
+		return nil, errors.New("sop_profile.steps must be an array")
+	}
+	for index, rawStep := range steps {
+		step, ok := rawStep.(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("sop_profile.steps[%d] must be an object", index)
+		}
+		for _, retired := range []string{"step_key", "id", "title", "label", "role"} {
+			if _, exists := step[retired]; exists {
+				return nil, fmt.Errorf("sop_profile.steps[%d].%s is not supported", index, retired)
+			}
+		}
+		key, ok := step["key"].(string)
+		if !ok || strings.TrimSpace(key) == "" {
+			return nil, fmt.Errorf("sop_profile.steps[%d].key is required", index)
+		}
 	}
 	return raw, nil
 }

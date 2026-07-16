@@ -275,7 +275,8 @@ type squadSOPProfileStep struct {
 }
 
 type squadSOPProfile struct {
-	Steps []squadSOPProfileStep `json:"steps"`
+	ProfileKey string                `json:"profile_key"`
+	Steps      []squadSOPProfileStep `json:"steps"`
 }
 
 func (s *TaskService) projectSquadSOPTaskStarted(

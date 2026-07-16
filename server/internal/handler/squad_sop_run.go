@@ -78,9 +78,9 @@ type sopStageMetricResponse struct {
 }
 
 type sopProfileStep struct {
-	Key     string
-	Name    string
-	RoleKey string
+	Key     string `json:"key"`
+	Name    string `json:"name"`
+	RoleKey string `json:"role_key"`
 }
 
 func squadSOPRunToResponse(run db.SquadSopRun, events []SquadSOPEventResponse) SquadSOPRunResponse {
@@ -294,26 +294,21 @@ func (h *Handler) ListIssueSOPRuns(w http.ResponseWriter, r *http.Request) {
 }
 
 func sopProfileStepsForHandler(profile []byte) []sopProfileStep {
-	var obj map[string]any
-	if json.Unmarshal(profile, &obj) != nil || obj == nil {
+	var parsed struct {
+		Steps []sopProfileStep `json:"steps"`
+	}
+	if json.Unmarshal(profile, &parsed) != nil {
 		return nil
 	}
-	rawSteps, _ := obj["steps"].([]any)
-	steps := make([]sopProfileStep, 0, len(rawSteps))
-	for _, raw := range rawSteps {
-		step, _ := raw.(map[string]any)
-		if step == nil {
+	steps := make([]sopProfileStep, 0, len(parsed.Steps))
+	for _, step := range parsed.Steps {
+		step.Key = strings.TrimSpace(step.Key)
+		if step.Key == "" {
 			continue
 		}
-		key := firstStringField(step, "key", "step_key", "id")
-		if key == "" {
-			continue
-		}
-		steps = append(steps, sopProfileStep{
-			Key:     key,
-			Name:    firstStringField(step, "name", "title", "label"),
-			RoleKey: firstStringField(step, "role_key", "role"),
-		})
+		step.Name = strings.TrimSpace(step.Name)
+		step.RoleKey = strings.TrimSpace(step.RoleKey)
+		steps = append(steps, step)
 	}
 	return steps
 }
@@ -470,15 +465,6 @@ func (h *Handler) loadSOPIssue(w http.ResponseWriter, r *http.Request) (db.Issue
 		return db.Issue{}, false
 	}
 	return issue, true
-}
-
-func firstStringField(obj map[string]any, keys ...string) string {
-	for _, key := range keys {
-		if v, ok := obj[key].(string); ok && strings.TrimSpace(v) != "" {
-			return strings.TrimSpace(v)
-		}
-	}
-	return ""
 }
 
 func optionalUUIDParam(w http.ResponseWriter, raw string, field string) (pgtype.UUID, bool) {

@@ -274,40 +274,18 @@ func normalizeSquadSOPProfile(raw []byte) ([]byte, error) {
 
 func squadSOPProfileSummary(profile []byte) (profileKey, currentStepKey, currentStepName, roleKey string) {
 	profileKey = "custom"
-	var obj map[string]any
-	if err := json.Unmarshal(profile, &obj); err != nil || obj == nil {
+	var parsed squadSOPProfile
+	if err := json.Unmarshal(profile, &parsed); err != nil {
 		return profileKey, "", "", ""
 	}
-	if v, ok := obj["profile_key"].(string); ok && strings.TrimSpace(v) != "" {
-		profileKey = strings.TrimSpace(v)
+	if value := strings.TrimSpace(parsed.ProfileKey); value != "" {
+		profileKey = value
 	}
-	steps, _ := obj["steps"].([]any)
-	if len(steps) == 0 {
+	if len(parsed.Steps) == 0 {
 		return profileKey, "", "", ""
 	}
-	step, _ := steps[0].(map[string]any)
-	if step == nil {
-		return profileKey, "", "", ""
-	}
-	for _, key := range []string{"key", "step_key", "id"} {
-		if v, ok := step[key].(string); ok && strings.TrimSpace(v) != "" {
-			currentStepKey = strings.TrimSpace(v)
-			break
-		}
-	}
-	for _, key := range []string{"name", "title", "label"} {
-		if v, ok := step[key].(string); ok && strings.TrimSpace(v) != "" {
-			currentStepName = strings.TrimSpace(v)
-			break
-		}
-	}
-	for _, key := range []string{"role_key", "role"} {
-		if v, ok := step[key].(string); ok && strings.TrimSpace(v) != "" {
-			roleKey = strings.TrimSpace(v)
-			break
-		}
-	}
-	return profileKey, currentStepKey, currentStepName, roleKey
+	step := parsed.Steps[0]
+	return profileKey, strings.TrimSpace(step.Key), strings.TrimSpace(step.Name), strings.TrimSpace(step.RoleKey)
 }
 
 // QuickCreateContext is the JSON payload stored on a quick-create task's
