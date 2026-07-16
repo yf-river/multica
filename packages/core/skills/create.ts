@@ -1,8 +1,7 @@
 import { api, type ApiClient } from "../api";
-import { executePendingMutation } from "../api/transport";
-import { createWorkspacePendingCreateStore } from "../platform/pending-create-store";
+import { executePendingCreateMutation } from "../api/transport";
+import { createWorkspacePendingCreateStore } from "../platform/recoverable-operation-store";
 import type { CreateSkillRequest, Skill } from "../types";
-import { generateUUID } from "../utils";
 
 const useSkillPendingOperationStore =
   createWorkspacePendingCreateStore<CreateSkillRequest>(
@@ -15,11 +14,9 @@ export async function createSkillWithRecovery(
   request: CreateSkillRequest,
   client: SkillCreateClient = api,
 ): Promise<Skill> {
-  const operations = useSkillPendingOperationStore.getState();
-  return executePendingMutation(
-    operations.pendingCreate,
-    () => ({ requestKey: generateUUID(), request }),
-    operations.setPendingCreate,
+  return executePendingCreateMutation(
+    useSkillPendingOperationStore,
+    request,
     (operation) => client.createSkill(operation.request, operation.requestKey),
   );
 }

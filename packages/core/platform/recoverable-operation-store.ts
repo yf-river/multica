@@ -13,7 +13,12 @@ interface RecoverableOperation {
   createdAt: number;
 }
 
-interface RecoverableOperationState<Operation> {
+export interface PendingCreateOperation<Request> extends RecoverableOperation {
+  requestKey: string;
+  request: Request;
+}
+
+export interface RecoverableOperationState<Operation> {
   pending?: Operation;
   setPending: (pending?: Operation) => void;
 }
@@ -33,6 +38,11 @@ function createRecoverableOperationStore<Operation extends RecoverableOperation>
             : defaultStorage,
         ),
         partialize: ({ pending }) => ({ pending }),
+        merge: (persisted, current) => ({
+          ...current,
+          pending: (persisted as Partial<RecoverableOperationState<Operation>>)
+            ?.pending,
+        }),
         onRehydrateStorage: () => (state) => {
           if (
             state?.pending &&
@@ -57,6 +67,10 @@ export function createWorkspaceRecoverableOperationStore<
   Operation extends RecoverableOperation,
 >(name: string): RecoverableOperationStore<Operation> {
   return createRecoverableOperationStore<Operation>(name, true);
+}
+
+export function createWorkspacePendingCreateStore<Request>(name: string) {
+  return createWorkspaceRecoverableOperationStore<PendingCreateOperation<Request>>(name);
 }
 
 export function createAccountRecoverableOperationStore<

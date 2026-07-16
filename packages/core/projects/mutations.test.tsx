@@ -16,7 +16,7 @@ vi.mock("../api", async () => {
 
 vi.mock("../paths", () => ({ useWorkspaceId: () => "workspace-1" }));
 
-import { useProjectDraftStore } from "./draft-store";
+import { useProjectCreateOperationStore } from "./draft-store";
 import { useCreateProject } from "./mutations";
 
 function wrapper({ children }: { children: ReactNode }) {
@@ -32,7 +32,7 @@ beforeEach(async () => {
   setCurrentWorkspace("test-workspace", "workspace-1");
   await Promise.resolve();
   localStorage.clear();
-  useProjectDraftStore.getState().clearDraft();
+  useProjectCreateOperationStore.getState().setPending();
 });
 
 describe("Project create request identity", () => {
@@ -47,21 +47,21 @@ describe("Project create request identity", () => {
     await expect(
       act(() => first.result.current.mutateAsync({ title: "Roadmap" })),
     ).rejects.toBeInstanceOf(ApiTransportError);
-    const retained = useProjectDraftStore.getState().draft.pendingCreate;
+    const retained = useProjectCreateOperationStore.getState().pending;
     const retainedKey = retained?.requestKey;
     expect(retainedKey).toBeTruthy();
     expect(retained?.request).toEqual({ title: "Roadmap" });
-    const storageKey = "multica_project_draft:test-workspace";
-    const persistedDraft = localStorage.getItem(storageKey);
-    expect(persistedDraft).toContain(retainedKey);
+    const storageKey = "multica_project_create_operation:test-workspace";
+    const persistedOperation = localStorage.getItem(storageKey);
+    expect(persistedOperation).toContain(retainedKey);
 
     // Recreate the store state from persisted storage, as a page reload would.
-    useProjectDraftStore.getState().clearDraft();
-    localStorage.setItem(storageKey, persistedDraft!);
+    useProjectCreateOperationStore.getState().setPending();
+    localStorage.setItem(storageKey, persistedOperation!);
     await act(async () => {
-      await useProjectDraftStore.persist.rehydrate();
+      await useProjectCreateOperationStore.persist.rehydrate();
     });
-    expect(useProjectDraftStore.getState().draft.pendingCreate).toEqual(retained);
+    expect(useProjectCreateOperationStore.getState().pending).toEqual(retained);
     first.unmount();
 
     const second = renderHook(() => useCreateProject(), { wrapper });
@@ -70,7 +70,7 @@ describe("Project create request identity", () => {
     expect(apiMock.createProject.mock.calls[1]?.[0]).toEqual({ title: "Roadmap" });
     expect(apiMock.createProject.mock.calls[0]?.[1]).toBe(retainedKey);
     expect(apiMock.createProject.mock.calls[1]?.[1]).toBe(retainedKey);
-    expect(useProjectDraftStore.getState().draft.pendingCreate).toBeUndefined();
+    expect(useProjectCreateOperationStore.getState().pending).toBeUndefined();
   });
 
   it("releases the key after a definitive rejection", async () => {

@@ -1,7 +1,11 @@
 import type { Logger } from "../logger";
 import { noopLogger } from "../logger";
+import type {
+  PendingCreateOperation,
+  RecoverableOperationStore,
+} from "../platform/recoverable-operation-store";
 import { getCurrentSlug } from "../platform/workspace-storage";
-import { createRequestId } from "../utils";
+import { createRequestId, generateUUID } from "../utils";
 import { ApiResponseValidationError } from "./schema";
 
 export interface ApiClientOptions {
@@ -85,6 +89,20 @@ export async function executePendingMutation<Operation, Result>(
   return executeRecoverableMutation(
     () => mutate(operation),
     () => clearPending(operation),
+  );
+}
+
+export function executePendingCreateMutation<Request, Result>(
+  store: RecoverableOperationStore<PendingCreateOperation<Request>>,
+  request: Request,
+  mutate: (operation: PendingCreateOperation<Request>) => Promise<Result>,
+): Promise<Result> {
+  const state = store.getState();
+  return executePendingMutation(
+    state.pending,
+    () => ({ requestKey: generateUUID(), request, createdAt: Date.now() }),
+    state.setPending,
+    mutate,
   );
 }
 

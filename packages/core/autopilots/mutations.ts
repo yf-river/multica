@@ -1,6 +1,9 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
-import { executePendingMutation } from "../api/transport";
+import {
+  executePendingCreateMutation,
+  executePendingMutation,
+} from "../api/transport";
 import { generateUUID } from "../utils";
 import { autopilotKeys } from "./queries";
 import { useWorkspaceId } from "../paths";
@@ -12,18 +15,19 @@ import type {
   CreateAutopilotTriggerRequest,
   UpdateAutopilotTriggerRequest,
 } from "../types";
-import { useAutopilotPendingOperationStore } from "./pending-operation-store";
+import {
+  useAutopilotCreateOperationStore,
+  useAutopilotManualTriggerStore,
+} from "./pending-operation-store";
 
 export function useCreateAutopilot() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
   return useMutation({
     mutationFn: async (data: CreateAutopilotRequest) => {
-      const operations = useAutopilotPendingOperationStore.getState();
-      return executePendingMutation(
-        operations.pendingCreate,
-        () => ({ requestKey: generateUUID(), request: data }),
-        operations.setPendingCreate,
+      return executePendingCreateMutation(
+        useAutopilotCreateOperationStore,
+        data,
         (operation) => api.createAutopilot(operation.request, operation.requestKey),
       );
     },
@@ -102,7 +106,7 @@ export function useTriggerAutopilot() {
   const wsId = useWorkspaceId();
   return useMutation({
     mutationFn: async (id: string) => {
-      const operations = useAutopilotPendingOperationStore.getState();
+      const operations = useAutopilotManualTriggerStore.getState();
       return executePendingMutation(
         operations.manualTriggerKeys[id],
         generateUUID,

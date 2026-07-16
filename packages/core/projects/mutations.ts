@@ -1,23 +1,20 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "../api";
-import { executePendingMutation } from "../api/transport";
+import { executePendingCreateMutation } from "../api/transport";
 import { projectKeys } from "./queries";
 import { useWorkspaceId } from "../paths";
 import { useRecentContextStore } from "../chat/recent-context-store";
 import type { Project, CreateProjectRequest, UpdateProjectRequest } from "../types";
-import { generateUUID } from "../utils";
-import { useProjectDraftStore } from "./draft-store";
+import { useProjectCreateOperationStore } from "./draft-store";
 
 export function useCreateProject() {
   const qc = useQueryClient();
   const wsId = useWorkspaceId();
   return useMutation({
     mutationFn: async (data: CreateProjectRequest) => {
-      const draftStore = useProjectDraftStore.getState();
-      return executePendingMutation(
-        draftStore.draft.pendingCreate,
-        () => ({ requestKey: generateUUID(), request: data }),
-        (operation) => draftStore.setDraft({ pendingCreate: operation }),
+      return executePendingCreateMutation(
+        useProjectCreateOperationStore,
+        data,
         (operation) => api.createProject(operation.request, operation.requestKey),
       );
     },

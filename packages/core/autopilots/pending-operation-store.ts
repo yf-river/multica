@@ -1,40 +1,30 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
-import type { CreateAutopilotRequest } from "../types";
 import {
   createWorkspaceAwareStorage,
   registerWorkspacePersistStore,
 } from "../platform/workspace-storage";
 import { defaultStorage } from "../platform/storage";
+import { createWorkspacePendingCreateStore } from "../platform/recoverable-operation-store";
+import type { CreateAutopilotRequest } from "../types";
 
-interface PendingAutopilotCreate {
-  requestKey: string;
-  request: CreateAutopilotRequest;
-}
-
-interface AutopilotPendingOperationState {
-  pendingCreate?: PendingAutopilotCreate;
+interface AutopilotManualTriggerState {
   manualTriggerKeys: Record<string, string>;
-  setPendingCreate: (pendingCreate?: PendingAutopilotCreate) => void;
   setManualTriggerKey: (autopilotId: string, requestKey: string) => void;
   clearManualTriggerKey: (autopilotId: string) => void;
   clear: () => void;
 }
 
-const EMPTY_OPERATIONS = {
-  pendingCreate: undefined,
-  manualTriggerKeys: {},
-} satisfies Pick<
-  AutopilotPendingOperationState,
-  "pendingCreate" | "manualTriggerKeys"
->;
+export const useAutopilotCreateOperationStore =
+  createWorkspacePendingCreateStore<CreateAutopilotRequest>(
+    "multica_autopilot_create_operation",
+  );
 
-export const useAutopilotPendingOperationStore =
-  create<AutopilotPendingOperationState>()(
+export const useAutopilotManualTriggerStore =
+  create<AutopilotManualTriggerState>()(
     persist(
       (set) => ({
-        ...EMPTY_OPERATIONS,
-        setPendingCreate: (pendingCreate) => set({ pendingCreate }),
+        manualTriggerKeys: {},
         setManualTriggerKey: (autopilotId, requestKey) =>
           set((state) => ({
             manualTriggerKeys: {
@@ -48,26 +38,22 @@ export const useAutopilotPendingOperationStore =
             delete manualTriggerKeys[autopilotId];
             return { manualTriggerKeys };
           }),
-        clear: () => set({ ...EMPTY_OPERATIONS }),
+        clear: () => set({ manualTriggerKeys: {} }),
       }),
       {
         name: "multica_autopilot_pending_operations",
         storage: createJSONStorage(() =>
           createWorkspaceAwareStorage(defaultStorage),
         ),
-        partialize: ({ pendingCreate, manualTriggerKeys }) => ({
-          pendingCreate,
-          manualTriggerKeys,
-        }),
+        partialize: ({ manualTriggerKeys }) => ({ manualTriggerKeys }),
         merge: (persisted, current) => ({
           ...current,
-          ...(persisted as Partial<AutopilotPendingOperationState> | undefined),
           manualTriggerKeys:
-            (persisted as Partial<AutopilotPendingOperationState> | undefined)
+            (persisted as Partial<AutopilotManualTriggerState> | undefined)
               ?.manualTriggerKeys ?? {},
         }),
       },
     ),
   );
 
-registerWorkspacePersistStore(useAutopilotPendingOperationStore);
+registerWorkspacePersistStore(useAutopilotManualTriggerStore);
