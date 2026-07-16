@@ -526,9 +526,7 @@ picked AS (
     ORDER BY ts.last_activity_at DESC, ts.root_id DESC
     LIMIT $6
 )
-SELECT c.id, c.issue_id, c.author_type, c.author_id, c.content, c.type,
-       c.created_at, c.updated_at, c.parent_id, c.workspace_id,
-       c.resolved_at, c.resolved_by_type, c.resolved_by_id,
+SELECT c.id, c.issue_id, c.author_type, c.author_id, c.content, c.type, c.created_at, c.updated_at, c.parent_id, c.workspace_id, c.resolved_at, c.resolved_by_type, c.resolved_by_id, c.source_task_id,
        p.root_id AS thread_root_id,
        p.last_activity_at AS thread_last_activity_at
 FROM picked p
@@ -547,19 +545,7 @@ type ListRecentThreadCommentsForIssueParams struct {
 }
 
 type ListRecentThreadCommentsForIssueRow struct {
-	ID                   pgtype.UUID        `json:"id"`
-	IssueID              pgtype.UUID        `json:"issue_id"`
-	AuthorType           string             `json:"author_type"`
-	AuthorID             pgtype.UUID        `json:"author_id"`
-	Content              string             `json:"content"`
-	Type                 string             `json:"type"`
-	CreatedAt            pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
-	ParentID             pgtype.UUID        `json:"parent_id"`
-	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
-	ResolvedAt           pgtype.Timestamptz `json:"resolved_at"`
-	ResolvedByType       pgtype.Text        `json:"resolved_by_type"`
-	ResolvedByID         pgtype.UUID        `json:"resolved_by_id"`
+	Comment              Comment            `json:"comment"`
 	ThreadRootID         pgtype.UUID        `json:"thread_root_id"`
 	ThreadLastActivityAt pgtype.Timestamptz `json:"thread_last_activity_at"`
 }
@@ -609,19 +595,20 @@ func (q *Queries) ListRecentThreadCommentsForIssue(ctx context.Context, arg List
 	for rows.Next() {
 		var i ListRecentThreadCommentsForIssueRow
 		if err := rows.Scan(
-			&i.ID,
-			&i.IssueID,
-			&i.AuthorType,
-			&i.AuthorID,
-			&i.Content,
-			&i.Type,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.ParentID,
-			&i.WorkspaceID,
-			&i.ResolvedAt,
-			&i.ResolvedByType,
-			&i.ResolvedByID,
+			&i.Comment.ID,
+			&i.Comment.IssueID,
+			&i.Comment.AuthorType,
+			&i.Comment.AuthorID,
+			&i.Comment.Content,
+			&i.Comment.Type,
+			&i.Comment.CreatedAt,
+			&i.Comment.UpdatedAt,
+			&i.Comment.ParentID,
+			&i.Comment.WorkspaceID,
+			&i.Comment.ResolvedAt,
+			&i.Comment.ResolvedByType,
+			&i.Comment.ResolvedByID,
+			&i.Comment.SourceTaskID,
 			&i.ThreadRootID,
 			&i.ThreadLastActivityAt,
 		); err != nil {
@@ -759,24 +746,19 @@ descendants AS (
     -- Start from the root, then keep adding any comment whose parent is
     -- already in the set. Cycle-safe under PK constraint (a comment cannot
     -- be its own ancestor).
-    SELECT c.id, c.issue_id, c.author_type, c.author_id, c.content, c.type,
-           c.created_at, c.updated_at, c.parent_id, c.workspace_id,
-           c.resolved_at, c.resolved_by_type, c.resolved_by_id
+    SELECT c.id
     FROM comment c
     JOIN thread_root tr ON c.id = tr.id
     UNION
-    SELECT c.id, c.issue_id, c.author_type, c.author_id, c.content, c.type,
-           c.created_at, c.updated_at, c.parent_id, c.workspace_id,
-           c.resolved_at, c.resolved_by_type, c.resolved_by_id
+    SELECT c.id
     FROM comment c
     JOIN descendants d ON c.parent_id = d.id
     WHERE c.issue_id = $3 AND c.workspace_id = $4
 )
-SELECT id, issue_id, author_type, author_id, content, type,
-       created_at, updated_at, parent_id, workspace_id,
-       resolved_at, resolved_by_type, resolved_by_id
-FROM descendants
-ORDER BY created_at ASC, id ASC
+SELECT c.id, c.issue_id, c.author_type, c.author_id, c.content, c.type, c.created_at, c.updated_at, c.parent_id, c.workspace_id, c.resolved_at, c.resolved_by_type, c.resolved_by_id, c.source_task_id
+FROM descendants d
+JOIN comment c ON c.id = d.id
+ORDER BY c.created_at ASC, c.id ASC
 LIMIT $1
 `
 
@@ -788,19 +770,7 @@ type ListThreadCommentsForIssueParams struct {
 }
 
 type ListThreadCommentsForIssueRow struct {
-	ID             pgtype.UUID        `json:"id"`
-	IssueID        pgtype.UUID        `json:"issue_id"`
-	AuthorType     string             `json:"author_type"`
-	AuthorID       pgtype.UUID        `json:"author_id"`
-	Content        string             `json:"content"`
-	Type           string             `json:"type"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
-	ParentID       pgtype.UUID        `json:"parent_id"`
-	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
-	ResolvedAt     pgtype.Timestamptz `json:"resolved_at"`
-	ResolvedByType pgtype.Text        `json:"resolved_by_type"`
-	ResolvedByID   pgtype.UUID        `json:"resolved_by_id"`
+	Comment Comment `json:"comment"`
 }
 
 // Returns the root of the thread containing @anchor_id plus every descendant
@@ -822,19 +792,20 @@ func (q *Queries) ListThreadCommentsForIssue(ctx context.Context, arg ListThread
 	for rows.Next() {
 		var i ListThreadCommentsForIssueRow
 		if err := rows.Scan(
-			&i.ID,
-			&i.IssueID,
-			&i.AuthorType,
-			&i.AuthorID,
-			&i.Content,
-			&i.Type,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.ParentID,
-			&i.WorkspaceID,
-			&i.ResolvedAt,
-			&i.ResolvedByType,
-			&i.ResolvedByID,
+			&i.Comment.ID,
+			&i.Comment.IssueID,
+			&i.Comment.AuthorType,
+			&i.Comment.AuthorID,
+			&i.Comment.Content,
+			&i.Comment.Type,
+			&i.Comment.CreatedAt,
+			&i.Comment.UpdatedAt,
+			&i.Comment.ParentID,
+			&i.Comment.WorkspaceID,
+			&i.Comment.ResolvedAt,
+			&i.Comment.ResolvedByType,
+			&i.Comment.ResolvedByID,
+			&i.Comment.SourceTaskID,
 		); err != nil {
 			return nil, err
 		}
@@ -860,48 +831,38 @@ thread_root AS (
     SELECT id FROM root_of WHERE parent_id IS NULL LIMIT 1
 ),
 descendants AS (
-    SELECT c.id, c.issue_id, c.author_type, c.author_id, c.content, c.type,
-           c.created_at, c.updated_at, c.parent_id, c.workspace_id,
-           c.resolved_at, c.resolved_by_type, c.resolved_by_id
+    SELECT c.id
     FROM comment c
     JOIN thread_root tr ON c.id = tr.id
     UNION
-    SELECT c.id, c.issue_id, c.author_type, c.author_id, c.content, c.type,
-           c.created_at, c.updated_at, c.parent_id, c.workspace_id,
-           c.resolved_at, c.resolved_by_type, c.resolved_by_id
+    SELECT c.id
     FROM comment c
     JOIN descendants d ON c.parent_id = d.id
     WHERE c.issue_id = $2 AND c.workspace_id = $3
 ),
 reply_page AS (
-    SELECT d.id, d.issue_id, d.author_type, d.author_id, d.content, d.type,
-           d.created_at, d.updated_at, d.parent_id, d.workspace_id,
-           d.resolved_at, d.resolved_by_type, d.resolved_by_id
+    SELECT c.id
     FROM descendants d
-    WHERE d.id NOT IN (SELECT id FROM thread_root)
+    JOIN comment c ON c.id = d.id
+    WHERE c.id NOT IN (SELECT id FROM thread_root)
       AND (
           $4::boolean = FALSE
-          OR (d.created_at, d.id) < ($5::timestamptz, $6::uuid)
+          OR (c.created_at, c.id) < ($5::timestamptz, $6::uuid)
       )
-    ORDER BY d.created_at DESC, d.id DESC
+    ORDER BY c.created_at DESC, c.id DESC
     LIMIT $7
-)
-SELECT id, issue_id, author_type, author_id, content, type,
-       created_at, updated_at, parent_id, workspace_id,
-       resolved_at, resolved_by_type, resolved_by_id
-FROM (
-    SELECT d.id, d.issue_id, d.author_type, d.author_id, d.content, d.type,
-           d.created_at, d.updated_at, d.parent_id, d.workspace_id,
-           d.resolved_at, d.resolved_by_type, d.resolved_by_id
+),
+selected AS (
+    SELECT d.id
     FROM descendants d
     JOIN thread_root tr ON d.id = tr.id
     UNION ALL
-    SELECT id, issue_id, author_type, author_id, content, type,
-           created_at, updated_at, parent_id, workspace_id,
-           resolved_at, resolved_by_type, resolved_by_id
-    FROM reply_page
-) combined
-ORDER BY created_at ASC, id ASC
+    SELECT id FROM reply_page
+)
+SELECT c.id, c.issue_id, c.author_type, c.author_id, c.content, c.type, c.created_at, c.updated_at, c.parent_id, c.workspace_id, c.resolved_at, c.resolved_by_type, c.resolved_by_id, c.source_task_id
+FROM selected s
+JOIN comment c ON c.id = s.id
+ORDER BY c.created_at ASC, c.id ASC
 `
 
 type ListThreadCommentsForIssuePagedParams struct {
@@ -915,19 +876,7 @@ type ListThreadCommentsForIssuePagedParams struct {
 }
 
 type ListThreadCommentsForIssuePagedRow struct {
-	ID             pgtype.UUID        `json:"id"`
-	IssueID        pgtype.UUID        `json:"issue_id"`
-	AuthorType     string             `json:"author_type"`
-	AuthorID       pgtype.UUID        `json:"author_id"`
-	Content        string             `json:"content"`
-	Type           string             `json:"type"`
-	CreatedAt      pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
-	ParentID       pgtype.UUID        `json:"parent_id"`
-	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
-	ResolvedAt     pgtype.Timestamptz `json:"resolved_at"`
-	ResolvedByType pgtype.Text        `json:"resolved_by_type"`
-	ResolvedByID   pgtype.UUID        `json:"resolved_by_id"`
+	Comment Comment `json:"comment"`
 }
 
 // Same root-walk + descendants expansion as ListThreadCommentsForIssue, but
@@ -963,19 +912,20 @@ func (q *Queries) ListThreadCommentsForIssuePaged(ctx context.Context, arg ListT
 	for rows.Next() {
 		var i ListThreadCommentsForIssuePagedRow
 		if err := rows.Scan(
-			&i.ID,
-			&i.IssueID,
-			&i.AuthorType,
-			&i.AuthorID,
-			&i.Content,
-			&i.Type,
-			&i.CreatedAt,
-			&i.UpdatedAt,
-			&i.ParentID,
-			&i.WorkspaceID,
-			&i.ResolvedAt,
-			&i.ResolvedByType,
-			&i.ResolvedByID,
+			&i.Comment.ID,
+			&i.Comment.IssueID,
+			&i.Comment.AuthorType,
+			&i.Comment.AuthorID,
+			&i.Comment.Content,
+			&i.Comment.Type,
+			&i.Comment.CreatedAt,
+			&i.Comment.UpdatedAt,
+			&i.Comment.ParentID,
+			&i.Comment.WorkspaceID,
+			&i.Comment.ResolvedAt,
+			&i.Comment.ResolvedByType,
+			&i.Comment.ResolvedByID,
+			&i.Comment.SourceTaskID,
 		); err != nil {
 			return nil, err
 		}

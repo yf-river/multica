@@ -342,22 +342,8 @@ func (h *Handler) fetchCommentsForList(ctx context.Context, args fetchCommentsAr
 			var rootComment *db.Comment
 			replies := make([]db.Comment, 0, len(rows))
 			for _, r := range rows {
-				c := db.Comment{
-					ID:             r.ID,
-					IssueID:        r.IssueID,
-					AuthorType:     r.AuthorType,
-					AuthorID:       r.AuthorID,
-					Content:        r.Content,
-					Type:           r.Type,
-					CreatedAt:      r.CreatedAt,
-					UpdatedAt:      r.UpdatedAt,
-					ParentID:       r.ParentID,
-					WorkspaceID:    r.WorkspaceID,
-					ResolvedAt:     r.ResolvedAt,
-					ResolvedByType: r.ResolvedByType,
-					ResolvedByID:   r.ResolvedByID,
-				}
-				if !r.ParentID.Valid {
+				c := r.Comment
+				if !c.ParentID.Valid {
 					root := c
 					rootComment = &root
 					continue
@@ -428,24 +414,10 @@ func (h *Handler) fetchCommentsForList(ctx context.Context, args fetchCommentsAr
 		}
 		out := make([]db.Comment, 0, len(rows))
 		for _, r := range rows {
-			if args.Since.Valid && !r.CreatedAt.Time.After(args.Since.Time) {
+			if args.Since.Valid && !r.Comment.CreatedAt.Time.After(args.Since.Time) {
 				continue
 			}
-			out = append(out, db.Comment{
-				ID:             r.ID,
-				IssueID:        r.IssueID,
-				AuthorType:     r.AuthorType,
-				AuthorID:       r.AuthorID,
-				Content:        r.Content,
-				Type:           r.Type,
-				CreatedAt:      r.CreatedAt,
-				UpdatedAt:      r.UpdatedAt,
-				ParentID:       r.ParentID,
-				WorkspaceID:    r.WorkspaceID,
-				ResolvedAt:     r.ResolvedAt,
-				ResolvedByType: r.ResolvedByType,
-				ResolvedByID:   r.ResolvedByID,
-			})
+			out = append(out, r.Comment)
 		}
 		return fetchCommentsResult{Comments: out}, nil
 	}
@@ -489,24 +461,10 @@ func (h *Handler) fetchCommentsForList(ctx context.Context, args fetchCommentsAr
 			// semantics from the query (don't pre-filter rows before the
 			// MAX(created_at) ranking — that would silently downgrade a
 			// thread whose most recent activity falls inside the window).
-			if args.Since.Valid && !r.CreatedAt.Time.After(args.Since.Time) {
+			if args.Since.Valid && !r.Comment.CreatedAt.Time.After(args.Since.Time) {
 				continue
 			}
-			comments = append(comments, db.Comment{
-				ID:             r.ID,
-				IssueID:        r.IssueID,
-				AuthorType:     r.AuthorType,
-				AuthorID:       r.AuthorID,
-				Content:        r.Content,
-				Type:           r.Type,
-				CreatedAt:      r.CreatedAt,
-				UpdatedAt:      r.UpdatedAt,
-				ParentID:       r.ParentID,
-				WorkspaceID:    r.WorkspaceID,
-				ResolvedAt:     r.ResolvedAt,
-				ResolvedByType: r.ResolvedByType,
-				ResolvedByID:   r.ResolvedByID,
-			})
+			comments = append(comments, r.Comment)
 		}
 
 		// Only emit a cursor when the page is full. Fewer threads than
