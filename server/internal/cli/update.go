@@ -158,19 +158,6 @@ func FetchLatestRelease() (*GitHubRelease, error) {
 // Order is irrelevant — the prefixes do not nest.
 var knownBrewPrefixes = []string{"/opt/homebrew", "/usr/local", "/home/linuxbrew/.linuxbrew"}
 
-// MatchKnownBrewPrefix returns the Homebrew prefix whose Cellar contains path,
-// or "" if path is not under a known Cellar. It is the offline equivalent of
-// `brew --prefix`: callers reach for it when `brew --prefix` is unavailable
-// (brew not on PATH) but the binary's path still betrays its install root.
-func MatchKnownBrewPrefix(path string) string {
-	for _, prefix := range knownBrewPrefixes {
-		if strings.HasPrefix(path, prefix+"/Cellar/") {
-			return prefix
-		}
-	}
-	return ""
-}
-
 // IsBrewInstall checks whether the running multica binary was installed via Homebrew.
 func IsBrewInstall() bool {
 	exePath, err := os.Executable()
@@ -182,21 +169,18 @@ func IsBrewInstall() bool {
 		resolved = exePath
 	}
 
-	brewPrefix := GetBrewPrefix()
-	if brewPrefix != "" && strings.HasPrefix(resolved, brewPrefix) {
-		return true
+	if brewPrefix, err := exec.Command("brew", "--prefix").Output(); err == nil {
+		if prefix := strings.TrimSpace(string(brewPrefix)); prefix != "" && strings.HasPrefix(resolved, prefix) {
+			return true
+		}
 	}
 
-	return MatchKnownBrewPrefix(resolved) != ""
-}
-
-// GetBrewPrefix returns the Homebrew prefix by running `brew --prefix`, or empty string.
-func GetBrewPrefix() string {
-	out, err := exec.Command("brew", "--prefix").Output()
-	if err != nil {
-		return ""
+	for _, prefix := range knownBrewPrefixes {
+		if strings.HasPrefix(resolved, prefix+"/Cellar/") {
+			return true
+		}
 	}
-	return strings.TrimSpace(string(out))
+	return false
 }
 
 // UpdateViaBrew runs `brew upgrade multica-ai/tap/multica`.
@@ -210,19 +194,12 @@ func UpdateViaBrew() (string, error) {
 	return string(out), nil
 }
 
-func updateDownloadTimeoutOrDefault(timeout time.Duration) time.Duration {
-	if timeout <= 0 {
-		return DefaultUpdateDownloadTimeout
-	}
-	return timeout
-}
-
 // fetchURLBytes does a GET with the given timeout and returns the response
 // body in full. Used for the checksum manifest (tiny) and the release
 // archive (single-digit MB). The checksum verification path requires buffered
 // bytes so streaming would just push the buffer into the caller anyway.
 func fetchURLBytes(url string, timeout time.Duration) ([]byte, error) {
-	client := &http.Client{Timeout: updateDownloadTimeoutOrDefault(timeout)}
+	client := &http.Client{Timeout: timeout}
 	resp, err := client.Get(url)
 	if err != nil {
 		return nil, err
@@ -265,8 +242,7 @@ func UpdateViaDownloadWithTimeout(targetVersion string, downloadTimeout time.Dur
 	// Pull the checksum manifest first so a release that is half-published
 	// (archives uploaded but checksums.txt not yet) fails before we eat the
 	// archive's bandwidth.
-	timeout := updateDownloadTimeoutOrDefault(downloadTimeout)
-	manifestData, err := fetchURLBytes(manifestAsset.BrowserDownloadURL, timeout)
+	manifestData, err := fetchURLBytes(manifestAsset.BrowserDownloadURL, downloadTimeout)
 	if err != nil {
 		return "", fmt.Errorf("download checksum manifest: %w", err)
 	}
@@ -281,7 +257,7 @@ func UpdateViaDownloadWithTimeout(targetVersion string, downloadTimeout time.Dur
 	// requirement), so this is not a new memory cost on Windows. For tar.gz
 	// it adds a single in-RAM copy, which is preferable to running the
 	// untrusted bytes through gzip+tar extraction before the SHA-256 check.
-	archiveData, err := fetchURLBytes(downloadURL, timeout)
+	archiveData, err := fetchURLBytes(downloadURL, downloadTimeout)
 	if err != nil {
 		return "", fmt.Errorf("download failed: %w", err)
 	}
