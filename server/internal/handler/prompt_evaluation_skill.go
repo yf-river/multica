@@ -349,7 +349,7 @@ func (h *Handler) CreatePromptEvaluationSkillCaseDrafts(w http.ResponseWriter, r
 		func() ([]PromptEvaluationSkillCaseDraft, error) { return buildPromptEvaluationSkillCaseDrafts(req) },
 		func(payload map[string]any, drafts []PromptEvaluationSkillCaseDraft) {
 			payload["skill_case_draft_contract"] = promptEvaluationSkillCaseDraftSchema
-			payload["skill_case_drafts"] = appendJSONList(payload["skill_case_drafts"], skillCaseDraftsAsAny(drafts)...)
+			payload["skill_case_drafts"] = appendJSONList(payload["skill_case_drafts"], drafts...)
 		},
 		func(updated db.PromptEvaluationAsset, drafts []PromptEvaluationSkillCaseDraft) PromptEvaluationSkillCaseDraftsResult {
 			return PromptEvaluationSkillCaseDraftsResult{
@@ -905,7 +905,8 @@ func (h *Handler) RunPromptEvaluationSkillReEval(w http.ResponseWriter, r *http.
 		writeError(w, http.StatusInternalServerError, "failed to persist skill re-eval run evidence")
 		return
 	}
-	sourceSnapshot, reEvalSnapshot := skillSnapshotsFromReEvalPayload(payload)
+	sourceSnapshot, _ := decodeSkillSnapshotAny(payload["source_skill_snapshot"])
+	reEvalSnapshot, _ := decodeSkillSnapshotAny(payload["re_eval_snapshot"])
 	response := PromptEvaluationSkillReEvalRunResponse{
 		Candidate:      promptEvaluationOptimizationCandidateToResponse(updatedCandidate),
 		Asset:          promptEvaluationAssetToResponse(updatedAsset),

@@ -265,7 +265,10 @@ func (h *Handler) promptEvaluationRuntimeReadiness(ctx context.Context, workspac
 		}
 		return promptEvaluationRuntimeReadinessResponse("缺失", providerName+" 缺失", "当前工作区未发现 "+providerName+" 运行时，评测运行不能执行 "+promptEvaluationAgentModel()+"。", "安装并配置 "+provider+"，启动 multica 守护进程，等待 /api/runtimes 出现 provider="+provider+" 且 status=online 的运行时。", nil, checkedAt), nil
 	}
-	ageSeconds := promptEvaluationRuntimeAgeSeconds(*best, checkedAt)
+	ageSeconds := int64(-1)
+	if best.LastSeenAt.Valid {
+		ageSeconds = int64(checkedAt.Sub(best.LastSeenAt.Time).Seconds())
+	}
 	respRuntime, err := runtimeToResponse(*best)
 	if err != nil {
 		return PromptEvaluationRuntimeReadinessResponse{}, err
@@ -326,13 +329,6 @@ func runtimeReadinessRank(runtime db.AgentRuntime, now time.Time) int {
 		return 2
 	}
 	return 1
-}
-
-func promptEvaluationRuntimeAgeSeconds(runtime db.AgentRuntime, now time.Time) int64 {
-	if !runtime.LastSeenAt.Valid {
-		return -1
-	}
-	return int64(now.Sub(runtime.LastSeenAt.Time).Seconds())
 }
 
 func promptEvaluationAgentInstructions() string {
@@ -1041,22 +1037,6 @@ func promptEvaluationLinkedDatasetIDs(payload map[string]any) []string {
 		}
 	}
 	return result
-}
-
-func firstValue(m map[string]any, keys ...string) any {
-	for _, key := range keys {
-		if value, ok := m[key]; ok {
-			return value
-		}
-	}
-	return nil
-}
-
-func asMap(value any) map[string]any {
-	if m, ok := value.(map[string]any); ok {
-		return m
-	}
-	return map[string]any{}
 }
 
 func firstNonEmptyPromptEvaluationString(values ...string) string {

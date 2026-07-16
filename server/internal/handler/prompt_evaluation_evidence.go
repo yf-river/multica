@@ -401,7 +401,12 @@ func promptEvaluationToolFailureSignal(tool string, output string) (bool, string
 	if statusCode := promptEvaluationToolHTTPStatusCode(normalized); statusCode >= 400 {
 		return true, fmt.Sprintf("工具结果包含 HTTP 状态码 %d", statusCode)
 	}
-	if promptEvaluationToolResultIsContentOnly(tool) || promptEvaluationToolOutputIsReadOnlyCommand(normalized) {
+	contentOnly := false
+	switch strings.ToLower(strings.TrimSpace(tool)) {
+	case "read", "grep", "glob":
+		contentOnly = true
+	}
+	if contentOnly || promptEvaluationToolOutputIsReadOnlyCommand(normalized) {
 		return false, ""
 	}
 	if promptEvaluationToolOutputHasOnlySuccessFailureCounters(normalized) {
@@ -439,58 +444,55 @@ func promptEvaluationToolOutputText(output string) string {
 }
 
 func promptEvaluationToolOutputIsReadOnlyCommand(output string) bool {
-	command := promptEvaluationToolMeaningfulCommand(promptEvaluationToolOutputCommand(output))
+	command := ""
+	for _, rawLine := range strings.Split(output, "\n") {
+		line := strings.TrimSpace(rawLine)
+		if strings.HasPrefix(line, "command:") {
+			command = strings.TrimSpace(strings.TrimPrefix(line, "command:"))
+			break
+		}
+	}
+	segments := regexp.MustCompile(`\s+(?:&&|\|\|)\s+|;\s*`).Split(command, -1)
+	for _, segment := range segments {
+		segment = strings.TrimSpace(segment)
+		if segment != "" && !strings.HasPrefix(segment, "cd ") && !strings.HasPrefix(segment, "export ") {
+			command = segment
+			break
+		}
+	}
 	if command == "" {
 		return false
 	}
-	if promptEvaluationToolOutputHasNonEmptyStderr(output) {
-		return false
+	for _, rawLine := range strings.Split(output, "\n") {
+		line := strings.TrimSpace(rawLine)
+		if strings.HasPrefix(line, "stderr:") {
+			value := strings.TrimSpace(strings.TrimPrefix(line, "stderr:"))
+			if value != "" && value != "(empty)" {
+				return false
+			}
+		}
 	}
+	fields := strings.Fields(command)
+	executable := ""
+	if len(fields) > 0 {
+		executable = fields[0]
+		if slash := strings.LastIndex(executable, "/"); slash >= 0 {
+			executable = executable[slash+1:]
+		}
+	}
+	readOnlyShell := false
+	switch executable {
+	case "cat", "sed", "nl", "ls", "head", "tail", "rg", "grep", "find":
+		readOnlyShell = true
+	}
+	readsLocalArtifact := (executable == "curl" || executable == "wget") &&
+		(strings.Contains(command, "/uploads/") || strings.Contains(command, "/api/attachments/"))
 	return strings.HasPrefix(command, "git diff") ||
 		strings.HasPrefix(command, "git branch") ||
 		strings.HasPrefix(command, "git show") ||
 		strings.HasPrefix(command, "git status") ||
 		strings.HasPrefix(command, "git log") ||
-		strings.HasPrefix(command, "multica issue comment list") ||
-		promptEvaluationToolCommandIsReadOnlyShell(command) ||
-		promptEvaluationToolCommandReadsLocalArtifact(command)
-}
-
-func promptEvaluationToolOutputCommand(output string) string {
-	for _, rawLine := range strings.Split(output, "\n") {
-		line := strings.TrimSpace(rawLine)
-		if !strings.HasPrefix(line, "command:") {
-			continue
-		}
-		return strings.TrimSpace(strings.TrimPrefix(line, "command:"))
-	}
-	return ""
-}
-
-func promptEvaluationToolMeaningfulCommand(command string) string {
-	segments := regexp.MustCompile(`\s+(?:&&|\|\|)\s+|;\s*`).Split(command, -1)
-	for _, segment := range segments {
-		segment = strings.TrimSpace(segment)
-		if segment == "" || strings.HasPrefix(segment, "cd ") || strings.HasPrefix(segment, "export ") {
-			continue
-		}
-		return segment
-	}
-	return strings.TrimSpace(command)
-}
-
-func promptEvaluationToolOutputHasNonEmptyStderr(output string) bool {
-	for _, rawLine := range strings.Split(output, "\n") {
-		line := strings.TrimSpace(rawLine)
-		if !strings.HasPrefix(line, "stderr:") {
-			continue
-		}
-		value := strings.TrimSpace(strings.TrimPrefix(line, "stderr:"))
-		if value != "" && value != "(empty)" {
-			return true
-		}
-	}
-	return false
+		strings.HasPrefix(command, "multica issue comment list") || readOnlyShell || readsLocalArtifact
 }
 
 func promptEvaluationToolStructuredFailureReason(output string) string {
@@ -519,35 +521,6 @@ func promptEvaluationToolStructuredFailureReason(output string) string {
 	return ""
 }
 
-func promptEvaluationToolCommandIsReadOnlyShell(command string) bool {
-	switch promptEvaluationToolCommandExecutable(command) {
-	case "cat", "sed", "nl", "ls", "head", "tail", "rg", "grep", "find":
-		return true
-	default:
-		return false
-	}
-}
-
-func promptEvaluationToolCommandReadsLocalArtifact(command string) bool {
-	executable := promptEvaluationToolCommandExecutable(command)
-	if executable != "curl" && executable != "wget" {
-		return false
-	}
-	return strings.Contains(command, "/uploads/") || strings.Contains(command, "/api/attachments/")
-}
-
-func promptEvaluationToolCommandExecutable(command string) string {
-	fields := strings.Fields(command)
-	if len(fields) == 0 {
-		return ""
-	}
-	executable := fields[0]
-	if slash := strings.LastIndex(executable, "/"); slash >= 0 {
-		executable = executable[slash+1:]
-	}
-	return executable
-}
-
 func promptEvaluationToolOutputHasOnlySuccessFailureCounters(output string) bool {
 	for _, fatalNeedle := range []string{"error:", "exception", "panic", "timeout", "timed out", "permission denied", "http 500", "status 500", "错误", "异常", "超时", "无权限"} {
 		if strings.Contains(output, fatalNeedle) {
@@ -565,15 +538,6 @@ func promptEvaluationToolOutputHasOnlySuccessFailureCounters(output string) bool
 		}
 	}
 	return false
-}
-
-func promptEvaluationToolResultIsContentOnly(tool string) bool {
-	switch strings.ToLower(strings.TrimSpace(tool)) {
-	case "read", "grep", "glob":
-		return true
-	default:
-		return false
-	}
 }
 
 func promptEvaluationToolHTTPStatusCode(output string) int {

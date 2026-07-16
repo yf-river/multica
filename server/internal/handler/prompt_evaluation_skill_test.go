@@ -706,8 +706,9 @@ func TestPromptEvaluationSkillReEvalRunHelpersValidateAssetAndEvidence(t *testin
 	if err := validatePromptEvaluationSkillReEvalAsset(candidate, asset, payload); err != nil {
 		t.Fatalf("validate re-eval asset: %v", err)
 	}
-	sourceSnapshot, reEvalSnapshot := skillSnapshotsFromReEvalPayload(payload)
-	if sourceSnapshot.SkillHash != "hash-after" || reEvalSnapshot.SkillHash != "hash-after" {
+	sourceSnapshot, sourceOK := decodeSkillSnapshotAny(payload["source_skill_snapshot"])
+	reEvalSnapshot, reEvalOK := decodeSkillSnapshotAny(payload["re_eval_snapshot"])
+	if !sourceOK || !reEvalOK || sourceSnapshot.SkillHash != "hash-after" || reEvalSnapshot.SkillHash != "hash-after" {
 		t.Fatalf("snapshots = source %+v re-eval %+v", sourceSnapshot, reEvalSnapshot)
 	}
 

@@ -500,7 +500,11 @@ func buildPromptEvaluationCandidateContent(prompt db.PromptLibraryItem, run db.P
 		}
 		if traces, ok := runtimeEvidence["trace事件"].([]map[string]any); ok && len(traces) > 0 {
 			for _, trace := range traces {
-				name := util.StringFromAny(firstValue(trace, "event_name", "event_type"))
+				nameValue, exists := trace["event_name"]
+				if !exists {
+					nameValue = trace["event_type"]
+				}
+				name := util.StringFromAny(nameValue)
 				status := util.StringFromAny(trace["status"])
 				reason := util.StringFromAny(trace["failure_reason"])
 				if name == "" {

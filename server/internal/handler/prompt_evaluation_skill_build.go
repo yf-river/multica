@@ -688,7 +688,7 @@ func skillCaseDraftsFromAsset(asset db.PromptEvaluationAsset) []PromptEvaluation
 
 func skillReEvalAssetIDFromCandidate(candidate db.PromptEvaluationOptimizationCandidate) string {
 	metrics := decodePayloadObject(candidate.Metrics)
-	reEvalPlan := asMap(metrics["skill_re_eval"])
+	reEvalPlan, _ := metrics["skill_re_eval"].(map[string]any)
 	return util.StringFromAny(reEvalPlan["asset_id"])
 }
 
@@ -706,12 +706,6 @@ func validatePromptEvaluationSkillReEvalAsset(candidate db.PromptEvaluationOptim
 		return errors.New("skill re-eval asset is missing re_eval_snapshot")
 	}
 	return nil
-}
-
-func skillSnapshotsFromReEvalPayload(payload map[string]any) (PromptEvaluationSkillSnapshotResponse, PromptEvaluationSkillSnapshotResponse) {
-	sourceSnapshot, _ := decodeSkillSnapshotAny(payload["source_skill_snapshot"])
-	reEvalSnapshot, _ := decodeSkillSnapshotAny(payload["re_eval_snapshot"])
-	return sourceSnapshot, reEvalSnapshot
 }
 
 func buildPromptEvaluationSkillReEvalRunEvidence(candidate db.PromptEvaluationOptimizationCandidate, asset db.PromptEvaluationAsset, run db.PromptEvaluationRun, result promptEvaluationRunResult, caseCount int) map[string]any {
@@ -949,14 +943,6 @@ func sha256Hex(content []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func skillCaseDraftsAsAny(drafts []PromptEvaluationSkillCaseDraft) []any {
-	values := make([]any, 0, len(drafts))
-	for _, draft := range drafts {
-		values = append(values, draft)
-	}
-	return values
-}
-
 func normalizePromptEvaluationChangelogPath(skillPath string, requested string) (string, error) {
 	if strings.TrimSpace(requested) == "" {
 		return filepath.ToSlash(filepath.Join(filepath.Dir(skillPath), "CHANGELOG.md")), nil
@@ -1038,11 +1024,13 @@ func buildPromptEvaluationSkillReEvalPlan(snapshot PromptEvaluationSkillSnapshot
 	return plan
 }
 
-func appendJSONList(existing any, values ...any) []any {
+func appendJSONList[T any](existing any, values ...T) []any {
 	items := []any{}
 	if raw, ok := existing.([]any); ok {
 		items = append(items, raw...)
 	}
-	items = append(items, values...)
+	for _, value := range values {
+		items = append(items, value)
+	}
 	return items
 }
