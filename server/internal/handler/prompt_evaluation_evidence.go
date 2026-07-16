@@ -827,42 +827,30 @@ func buildPromptEvaluationEvidenceSnapshotSummary(evidence PromptEvaluationRunEv
 			"质量判断":   util.StringFromAny(insight["质量判断"]),
 			"建议动作":   util.StringFromAny(insight["建议动作"]),
 			"失败主因":   util.StringFromAny(insight["失败主因"]),
-			"维度摘要数":  len(anySliceFromRecord(insight, "维度评分摘要")),
-			"维度趋势数":  len(anySliceFromRecord(insight, "维度评分趋势")),
-			"优化候选数":  len(anySliceFromRecord(insight, "优化候选证据")),
+			"维度摘要数":  recordSliceLength(insight, "维度评分摘要"),
+			"维度趋势数":  recordSliceLength(insight, "维度评分趋势"),
+			"优化候选数":  recordSliceLength(insight, "优化候选证据"),
 			"单位通过成本": insight["单位通过成本"],
 		}
 	}
 	return summary
 }
 
-func anySliceFromRecord(record map[string]any, key string) []any {
+func recordSliceLength(record map[string]any, key string) int {
 	if record == nil {
-		return nil
+		return 0
 	}
 	switch value := record[key].(type) {
 	case []any:
-		return value
+		return len(value)
 	case []PromptEvaluationDimensionScoreSummaryResponse:
-		result := make([]any, len(value))
-		for i := range value {
-			result[i] = value[i]
-		}
-		return result
+		return len(value)
 	case []PromptEvaluationDimensionScoreTrendResponse:
-		result := make([]any, len(value))
-		for i := range value {
-			result[i] = value[i]
-		}
-		return result
+		return len(value)
 	case []map[string]any:
-		result := make([]any, len(value))
-		for i := range value {
-			result[i] = value[i]
-		}
-		return result
+		return len(value)
 	default:
-		return nil
+		return 0
 	}
 }
 

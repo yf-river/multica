@@ -203,7 +203,7 @@ describe("domain response schema fallbacks", () => {
     expect(PromptEvaluationRunSchema.safeParse({
       id: "run-1",
       asset_id: "asset-1",
-      run_kind: "本地渲染",
+      run_kind: "unknown",
       status: "通过",
     }).success).toBe(false);
   });

@@ -433,7 +433,7 @@ case_summary AS (
 run_summary AS (
     SELECT
         COUNT(*)::bigint AS total_runs,
-        COUNT(*) FILTER (WHERE per.run_kind = '本地渲染')::bigint AS local_runs,
+        COUNT(*) FILTER (WHERE per.run_kind = '模板渲染检查')::bigint AS local_runs,
         COUNT(*) FILTER (WHERE per.run_kind = 'Agent执行')::bigint AS agent_runs,
         COUNT(*) FILTER (WHERE per.status = '已入队')::bigint AS queued_runs,
         COUNT(*) FILTER (WHERE per.status = '运行中')::bigint AS running_runs,

@@ -493,11 +493,7 @@ export function PromptLibraryPage({
       payload: {
         schema_version: 1,
         schema: "multica.training_evaluation.payload.v1",
-        语义版本: "multica.training_evaluation.v1",
         cases: [],
-        payload_contract: {
-          source: "case-library-editor",
-        },
       },
     });
 

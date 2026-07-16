@@ -50,7 +50,7 @@ func (h *Handler) persistPromptEvaluationLocalRun(w http.ResponseWriter, r *http
 		WorkspaceID:       asset.WorkspaceID,
 		AssetID:           asset.ID,
 		PromptID:          asset.PromptID,
-		RunKind:           "本地渲染",
+		RunKind:           "模板渲染检查",
 		Status:            status,
 		TriggerSource:     "手动",
 		Model:             result.Model,

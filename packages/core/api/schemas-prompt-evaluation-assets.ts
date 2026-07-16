@@ -12,9 +12,7 @@ const PromptEvaluationPayloadCaseSchema = z.object({
 const PromptEvaluationStrictPayloadSchema = z.object({
   schema_version: z.literal(1),
   schema: z.literal("multica.training_evaluation.payload.v1"),
-  语义版本: z.literal("multica.training_evaluation.v1").optional(),
   cases: z.array(PromptEvaluationPayloadCaseSchema).default([]),
-  payload_contract: z.record(z.string(), z.unknown()).optional(),
   metric_contract: z.array(z.string()).optional(),
   metric_notes: z.array(z.string()).optional(),
   experiment_dimensions: z.array(z.union([

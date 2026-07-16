@@ -409,9 +409,13 @@ func TestPromptEvaluationAssetCRUD(t *testing.T) {
 		t.Fatalf("created payload is not object: %#v", created.Payload)
 	}
 	if createdPayload["schema_version"] != float64(1) ||
-		createdPayload["schema"] != "multica.training_evaluation.payload.v1" ||
-		createdPayload["语义版本"] != "multica.training_evaluation.v1" {
+		createdPayload["schema"] != "multica.training_evaluation.payload.v1" {
 		t.Fatalf("created payload missing contract fields: %#v", createdPayload)
+	}
+	for _, retired := range []string{"用例", "语义版本", "payload_contract"} {
+		if _, exists := createdPayload[retired]; exists {
+			t.Fatalf("created payload retained %q: %#v", retired, createdPayload)
+		}
 	}
 	canonicalCases, ok := createdPayload["cases"].([]any)
 	if !ok || len(canonicalCases) != 1 {
@@ -475,7 +479,7 @@ func TestPromptEvaluationAssetCRUD(t *testing.T) {
 	}
 	assertPromptEvaluationDatasetRows(t, created.ID, nil)
 	updatedPayload, ok := updated.Payload.(map[string]any)
-	if !ok || updatedPayload["schema_version"] != float64(1) || updatedPayload["payload_contract"] == nil {
+	if !ok || updatedPayload["schema_version"] != float64(1) || updatedPayload["schema"] != "multica.training_evaluation.payload.v1" {
 		t.Fatalf("updated payload missing contract: %#v", updated.Payload)
 	}
 	if _, ok := updatedPayload["cases"].([]any); !ok {
@@ -733,7 +737,7 @@ func TestRunPromptEvaluationAssetWritesChineseResult(t *testing.T) {
 	`, testWorkspaceID, created.ID).Scan(&runID, &runStatus, &runKind, &trialStatus, &renderedPrompt); err != nil {
 		t.Fatalf("load structured prompt evaluation run: %v", err)
 	}
-	if recent["trace/task id"] != runID || runStatus != "通过" || runKind != "本地渲染" || trialStatus != "通过" {
+	if recent["trace/task id"] != runID || runStatus != "通过" || runKind != "模板渲染检查" || trialStatus != "通过" {
 		t.Fatalf("structured run mismatch: runID=%s status=%s kind=%s trial=%s recent=%#v", runID, runStatus, runKind, trialStatus, recent)
 	}
 	if renderedPrompt != "请澄清 登录失败，仓库是 user-center。" {
@@ -892,9 +896,9 @@ func TestGetPromptEvaluationSummaryIncludesDevelopmentFixtures(t *testing.T) {
 	if _, err := testPool.Exec(context.Background(), `
 		INSERT INTO prompt_evaluation_run (workspace_id, asset_id, run_kind, status, total_cases, passed_cases, input_tokens, output_tokens, estimated_cost)
 		VALUES
-			($1, $2, '本地渲染', '通过', 1, 1, 11, 7, 0.01),
+			($1, $2, '模板渲染检查', '通过', 1, 1, 11, 7, 0.01),
 			($1, $2, 'Agent执行', '通过', 1, 1, 13, 9, 0.02),
-			($1, $3, '本地渲染', '通过', 1, 1, 100, 70, 0.10)
+			($1, $3, '模板渲染检查', '通过', 1, 1, 100, 70, 0.10)
 	`, testWorkspaceID, businessAssetID, acceptanceAssetID); err != nil {
 		t.Fatalf("create evaluation runs: %v", err)
 	}
@@ -937,7 +941,6 @@ func TestRunPromptEvaluationAssetReadsDatasetPayload(t *testing.T) {
 		"payload": map[string]any{
 			"schema_version": 1,
 			"schema":         "multica.training_evaluation.payload.v1",
-			"语义版本":           "multica.training_evaluation.v1",
 			"cases": []map[string]any{
 				{
 					"case_name":         "规范数据集用例",

@@ -89,7 +89,7 @@ func promptEvaluationRunToResponse(run db.PromptEvaluationRun) PromptEvaluationR
 		WorkspaceID:       uuidToString(run.WorkspaceID),
 		AssetID:           uuidToString(run.AssetID),
 		PromptID:          uuidToPtr(run.PromptID),
-		RunKind:           promptEvaluationRunKindLabel(run.RunKind),
+		RunKind:           run.RunKind,
 		Status:            run.Status,
 		TriggerSource:     run.TriggerSource,
 		AgentID:           uuidToPtr(run.AgentID),
@@ -121,13 +121,6 @@ func promptEvaluationRunToResponse(run db.PromptEvaluationRun) PromptEvaluationR
 		ReviewedBy:        uuidToPtr(run.ReviewedBy),
 		ReviewedAt:        timestampToString(run.ReviewedAt),
 	}
-}
-
-func promptEvaluationRunKindLabel(runKind string) string {
-	if runKind == "本地渲染" {
-		return "模板渲染检查"
-	}
-	return runKind
 }
 
 func promptEvaluationTrialToResponse(trial db.PromptEvaluationTrial) PromptEvaluationTrialResponse {
@@ -653,9 +646,9 @@ func promptEvaluationAssetProfileFromPayload(raw []byte, promptID pgtype.UUID) p
 		StructuredCaseCount:      int32(len(cases)),
 		StructuredVariableCount:  int32(variableCount),
 		StructuredAssertionCount: int32(assertionCount),
-		LinkedDatasetCount:       int32(countPromptEvaluationProfileValues(payload["linked_dataset_ids"])),
+		LinkedDatasetCount:       int32(countPromptEvaluationStringValues(payload["linked_dataset_ids"])),
 		LinkedPromptCount:        int32(linkedPromptCount),
-		EvaluationDimensionCount: int32(countPromptEvaluationProfileValues(payload["metric_contract"])),
+		EvaluationDimensionCount: int32(countPromptEvaluationStringValues(payload["metric_contract"])),
 		ExperimentDimensionCount: int32(len(experimentDimensions)),
 	}
 }
@@ -688,36 +681,18 @@ func withPromptEvaluationAssetProfile(
 	return params
 }
 
-func countPromptEvaluationProfileValues(value any) int {
-	seen := map[string]bool{}
-	collectPromptEvaluationProfileValues(seen, value)
-	return len(seen)
-}
-
-func collectPromptEvaluationProfileValues(seen map[string]bool, value any) {
-	switch v := value.(type) {
-	case nil:
-		return
-	case string:
-		if item := strings.TrimSpace(v); item != "" {
-			seen[item] = true
-		}
-	case []any:
-		for _, item := range v {
-			collectPromptEvaluationProfileValues(seen, item)
-		}
-	case map[string]any:
-		for key, item := range v {
-			if strings.TrimSpace(key) != "" {
-				seen[key] = true
-			}
-			collectPromptEvaluationProfileValues(seen, item)
-		}
-	default:
-		if item := strings.TrimSpace(util.StringFromAny(v)); item != "" {
-			seen[item] = true
+func countPromptEvaluationStringValues(value any) int {
+	values, ok := value.([]any)
+	if !ok {
+		return 0
+	}
+	seen := map[string]struct{}{}
+	for _, value := range values {
+		if item := strings.TrimSpace(util.StringFromAny(value)); item != "" {
+			seen[item] = struct{}{}
 		}
 	}
+	return len(seen)
 }
 
 func promptEvaluationExperimentDimensions(payload map[string]any) []normalizedPromptEvaluationExperimentDimension {

@@ -255,22 +255,6 @@ type PromptEvaluationSkillReEvalRunResponse struct {
 	ReEvalRun      map[string]any                                `json:"re_eval_run"`
 }
 
-type promptEvaluationSkillGongfengResourceRef struct {
-	Provider     string `json:"provider"`
-	URL          string `json:"url"`
-	ProjectPath  string `json:"project_path"`
-	ResourceKind string `json:"resource_kind"`
-	Ref          string `json:"ref"`
-	HeadCommit   string `json:"head_commit"`
-	Title        string `json:"title"`
-}
-
-type promptEvaluationSkillLocalDirectoryResourceRef struct {
-	LocalPath string `json:"local_path"`
-	DaemonID  string `json:"daemon_id"`
-	Label     string `json:"label"`
-}
-
 func (h *Handler) CreatePromptEvaluationSkillInventory(w http.ResponseWriter, r *http.Request) {
 	asset, ok := h.loadPromptEvaluationAsset(w, r)
 	if !ok {
@@ -730,13 +714,15 @@ func (h *Handler) PreparePromptEvaluationSkillReEvalAsset(w http.ResponseWriter,
 	if ok := h.syncPromptEvaluationCasesFromPayload(w, r, qtx, asset, requestActorID); !ok {
 		return
 	}
+	sourceSnapshotRecord := mustDecodePersistedJSONObject(mustJSONBytes(sourceSnapshot), "skill re-eval source snapshot")
+	reEvalSnapshotRecord := mustDecodePersistedJSONObject(mustJSONBytes(reEvalSnapshot), "skill re-eval snapshot")
 	reEvalPlan := map[string]any{
 		"required":             true,
 		"asset_id":             uuidToString(asset.ID),
 		"source_asset_id":      uuidToString(sourceAsset.ID),
 		"candidate_id":         uuidToString(candidate.ID),
-		"source_snapshot":      sourceSnapshot,
-		"re_eval_snapshot":     reEvalSnapshot,
+		"source_snapshot":      sourceSnapshotRecord,
+		"re_eval_snapshot":     reEvalSnapshotRecord,
 		"case_count":           len(cases),
 		"recommended_endpoint": "/api/prompt-evaluation-optimization-candidates/" + uuidToString(candidate.ID) + "/skill-re-eval-run",
 		"asset_run_endpoint":   "/api/prompt-evaluation-assets/" + uuidToString(asset.ID) + "/run",
@@ -757,15 +743,6 @@ func (h *Handler) PreparePromptEvaluationSkillReEvalAsset(w http.ResponseWriter,
 		CaseCount:      len(cases),
 		Cases:          cases,
 		ReEvalPlan:     reEvalPlan,
-	}
-	responseBody, err := json.Marshal(response)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to encode skill re-eval asset response")
-		return
-	}
-	if err := json.Unmarshal(responseBody, &response); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to normalize skill re-eval asset response")
-		return
 	}
 	if err := completeResourceCreateRequest(
 		r.Context(), qtx, workspaceUUID, requestActorID, resourceTypePromptReEvalAsset,
@@ -981,11 +958,11 @@ func applyPromptEvaluationSkillProjectResourceDefaults(
 ) error {
 	switch resource.ResourceType {
 	case "gongfeng_repo":
-		var ref promptEvaluationSkillGongfengResourceRef
+		var ref gongfengRepoRef
 		if err := json.Unmarshal(resource.ResourceRef, &ref); err != nil {
 			return fmt.Errorf("invalid gongfeng source resource payload: %w", err)
 		}
-		ref.ProjectPath = strings.Trim(strings.TrimSpace(ref.ProjectPath), "/")
+		ref.ProjectPath = normalizeGongfengProjectPath(ref.ProjectPath)
 		if ref.ProjectPath == "" {
 			return errors.New("gongfeng source resource is missing project_path")
 		}
@@ -1003,7 +980,7 @@ func applyPromptEvaluationSkillProjectResourceDefaults(
 		}
 		return nil
 	case "local_directory":
-		var ref promptEvaluationSkillLocalDirectoryResourceRef
+		var ref localDirectoryRef
 		if err := json.Unmarshal(resource.ResourceRef, &ref); err != nil {
 			return fmt.Errorf("invalid local_directory source resource payload: %w", err)
 		}

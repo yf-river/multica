@@ -37,7 +37,7 @@ func TestRunPromptEvaluationSkillReEvalRollsBackWhenCandidateEvidenceFails(t *te
 	}
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO prompt_evaluation_run (workspace_id, asset_id, prompt_id, run_kind, status, created_by)
-		VALUES ($1, $2, $3, '本地渲染', '未通过', $4)
+		VALUES ($1, $2, $3, '模板渲染检查', '未通过', $4)
 		RETURNING id
 	`, testWorkspaceID, sourceAssetID, promptID, testUserID).Scan(&sourceRunID); err != nil {
 		t.Fatalf("create source run: %v", err)

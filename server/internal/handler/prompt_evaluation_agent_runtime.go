@@ -402,7 +402,6 @@ func promptEvaluationPayloadWithCases(payload map[string]any, cases []map[string
 		result[key] = value
 	}
 	result["cases"] = cases
-	delete(result, "用例")
 	return result
 }
 
@@ -625,16 +624,8 @@ func normalizePromptEvaluationPayloadObject(payload map[string]any) map[string]a
 	for key, value := range payload {
 		normalized[key] = value
 	}
-	delete(normalized, "用例")
 	normalized["schema_version"] = 1
 	normalized["schema"] = "multica.training_evaluation.payload.v1"
-	normalized["语义版本"] = "multica.training_evaluation.v1"
-	normalized["payload_contract"] = map[string]any{
-		"schema_version": 1,
-		"schema":         "multica.training_evaluation.payload.v1",
-		"cases":          "cases[].case_name / variables / expected_contains / tags",
-		"写入策略":           "新建和更新统一写入规范 cases。",
-	}
 	cases := promptEvaluationCases(payload)
 	normalizedCases := make([]map[string]any, 0, len(cases))
 	for index, item := range cases {

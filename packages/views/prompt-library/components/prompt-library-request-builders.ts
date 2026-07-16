@@ -51,7 +51,6 @@ export function buildAssetPayload(
   const basePayload = {
     schema_version: 1,
     schema: "multica.training_evaluation.payload.v1",
-    语义版本: "multica.training_evaluation.v1",
     cases: [casePayload],
     metric_contract: [
       "总用例数",

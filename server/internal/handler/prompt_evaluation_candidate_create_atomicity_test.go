@@ -30,7 +30,7 @@ func TestCreatePromptEvaluationOptimizationCandidateRecoversExactResult(t *testi
 		INSERT INTO prompt_evaluation_run (
 			workspace_id, asset_id, prompt_id, run_kind, status,
 			total_cases, failed_cases, failure_reason, created_by
-		) VALUES ($1, $2, $3, '本地渲染', '未通过', 1, 1, 'missing current result', $4)
+		) VALUES ($1, $2, $3, '模板渲染检查', '未通过', 1, 1, 'missing current result', $4)
 		RETURNING id
 	`, testWorkspaceID, assetID, promptID, testUserID).Scan(&runID); err != nil {
 		t.Fatal(err)
@@ -39,7 +39,7 @@ func TestCreatePromptEvaluationOptimizationCandidateRecoversExactResult(t *testi
 		INSERT INTO prompt_evaluation_run (
 			workspace_id, asset_id, prompt_id, run_kind, status,
 			total_cases, failed_cases, failure_reason, created_by
-		) VALUES ($1, $2, $3, '本地渲染', '未通过', 1, 1, 'another failure', $4)
+		) VALUES ($1, $2, $3, '模板渲染检查', '未通过', 1, 1, 'another failure', $4)
 		RETURNING id
 	`, testWorkspaceID, assetID, promptID, testUserID).Scan(&otherRunID); err != nil {
 		t.Fatal(err)

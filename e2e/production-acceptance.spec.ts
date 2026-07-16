@@ -52,7 +52,6 @@ async function prepareTrainingDashboardEvidence() {
     payload: {
       schema: "multica.training_evaluation.payload.v1",
       schema_version: 1,
-      语义版本: "multica.training_evaluation.v1",
       cases: [{
         case_name: "登录失败澄清",
         variables: { issue_title: "user-center 登录失败" },
@@ -70,7 +69,6 @@ async function prepareTrainingDashboardEvidence() {
     payload: {
       schema: "multica.training_evaluation.payload.v1",
       schema_version: 1,
-      语义版本: "multica.training_evaluation.v1",
       linked_dataset_ids: [dataset.id],
       cases: [{
         case_name: "真实智能体证据样本",
@@ -89,7 +87,6 @@ async function prepareTrainingDashboardEvidence() {
     payload: {
       schema: "multica.training_evaluation.payload.v1",
       schema_version: 1,
-      语义版本: "multica.training_evaluation.v1",
       cases: [{
         case_name: "缺失 trace 的优化样本",
         variables: { issue_title: "user-center 登录失败" },

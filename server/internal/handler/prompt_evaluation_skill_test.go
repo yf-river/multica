@@ -722,7 +722,7 @@ func TestPromptEvaluationSkillReEvalRunHelpersValidateAssetAndEvidence(t *testin
 	run := db.PromptEvaluationRun{
 		ID:      parseUUID("55555555-5555-4555-8555-555555555555"),
 		Status:  "通过",
-		RunKind: "本地渲染",
+		RunKind: "模板渲染检查",
 	}
 	evidence := buildPromptEvaluationSkillReEvalRunEvidence(candidate, asset, run, promptEvaluationRunResult{
 		PassedCases: 2,

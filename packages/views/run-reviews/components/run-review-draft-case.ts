@@ -39,12 +39,7 @@ export async function createIssueReviewDraftCase(
       payload: {
         schema_version: 1,
         schema: "multica.training_evaluation.payload.v1",
-        语义版本: "multica.training_evaluation.v1",
         cases: [],
-        payload_contract: {
-          source: "run-review",
-          review_flow: "draft -> approved -> active",
-        },
       },
   });
   return api.createPromptEvaluationCase(buildIssueReviewDraftCaseRequest({

@@ -703,7 +703,7 @@ func buildPromptEvaluationSkillReEvalRunEvidence(candidate db.PromptEvaluationOp
 		"asset_id":       uuidToString(asset.ID),
 		"run_id":         uuidToString(run.ID),
 		"status":         run.Status,
-		"run_kind":       promptEvaluationRunKindLabel(run.RunKind),
+		"run_kind":       run.RunKind,
 		"case_count":     caseCount,
 		"passed_cases":   result.PassedCases,
 		"failed_cases":   result.FailedCases,
@@ -715,6 +715,7 @@ func buildPromptEvaluationSkillReEvalRunEvidence(candidate db.PromptEvaluationOp
 }
 
 func buildPromptEvaluationSkillReEvalCases(drafts []PromptEvaluationSkillCaseDraft, snapshot PromptEvaluationSkillSnapshotResponse, req PreparePromptEvaluationSkillReEvalRequest) []PromptEvaluationSkillReEvalCase {
+	snapshotRecord := mustDecodePersistedJSONObject(mustJSONBytes(snapshot), "skill re-eval case snapshot")
 	allowed := map[string]bool{}
 	statuses := req.Statuses
 	if len(statuses) == 0 {
@@ -769,7 +770,7 @@ func buildPromptEvaluationSkillReEvalCases(drafts []PromptEvaluationSkillCaseDra
 			Expected: map[string]any{
 				"expected_behavior": draft.ExpectedBehavior,
 				"verification":      draft.Verification,
-				"snapshot":          snapshot,
+				"snapshot":          snapshotRecord,
 			},
 			SourceCommit:   draft.SourceCommit,
 			EvidenceSource: draft.EvidenceSource,
@@ -790,9 +791,6 @@ func buildPromptEvaluationSkillReEvalPayload(sourceAsset db.PromptEvaluationAsse
 		})
 	}
 	return normalizePromptEvaluationPayloadObject(map[string]any{
-		"schema_version":         1,
-		"schema":                 "multica.skill.re_eval.payload.v1",
-		"语义版本":                   "multica.skill.re_eval.v1",
 		"optimization_target":    "skill",
 		"skill_re_eval_contract": "multica.skill.re_eval.v1",
 		"source_asset_id":        uuidToString(sourceAsset.ID),

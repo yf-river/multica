@@ -249,7 +249,6 @@ describe("PromptEvaluationAssetSchema", () => {
       payload: {
         schema_version: 1,
         schema: "multica.training_evaluation.payload.v1",
-        语义版本: "multica.training_evaluation.v1",
         cases: [{ case_name: "登录失败澄清", variables: { issue_title: "登录失败" }, expected_contains: ["验收条件"] }],
         metric_contract: ["pass_rate"],
         metric_notes: ["仅统计当前快照"],
