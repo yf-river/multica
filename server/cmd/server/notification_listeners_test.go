@@ -17,15 +17,19 @@ import (
 // (testPool, testUserID, testWorkspaceID are set in integration_test.go).
 
 // inboxItemsForRecipient returns all non-archived inbox items for a given recipient.
-func inboxItemsForRecipient(t *testing.T, queries *db.Queries, recipientID string) []db.ListInboxItemsRow {
+func inboxItemsForRecipient(t *testing.T, queries *db.Queries, recipientID string) []db.InboxItem {
 	t.Helper()
-	items, err := queries.ListInboxItems(context.Background(), db.ListInboxItemsParams{
+	rows, err := queries.ListInboxItems(context.Background(), db.ListInboxItemsParams{
 		WorkspaceID:   util.MustParseUUID(testWorkspaceID),
 		RecipientType: "member",
 		RecipientID:   util.MustParseUUID(recipientID),
 	})
 	if err != nil {
 		t.Fatalf("ListInboxItems: %v", err)
+	}
+	items := make([]db.InboxItem, len(rows))
+	for i, row := range rows {
+		items[i] = row.InboxItem
 	}
 	return items
 }
