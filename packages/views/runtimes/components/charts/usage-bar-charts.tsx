@@ -69,6 +69,10 @@ const timeSeries: UsageSeries[] = [
   { key: "totalSeconds", fill: "var(--color-totalSeconds)", radius: [3, 3, 0, 0] },
 ];
 
+const formatLocaleNumber = (value: number) => value.toLocaleString();
+const formatCostTick = (value: number) => `$${value}`;
+const formatCost = (value: number) => `$${value.toFixed(2)}`;
+
 interface WeeklyUsageDatum {
   weekStart: string;
   rangeLabel: string;
@@ -85,9 +89,8 @@ function UsageBarChart<T extends { label: string }>({
   allowDecimals,
   tickFormatter,
   valueFormatter,
-  totalLabel,
   totalFormatter,
-  weeklyLabel,
+  weekly,
 }: {
   config: ChartConfig;
   data: T[];
@@ -97,10 +100,11 @@ function UsageBarChart<T extends { label: string }>({
   allowDecimals?: boolean;
   tickFormatter?: (value: number) => string;
   valueFormatter: (value: number) => string;
-  totalLabel?: ReactNode;
   totalFormatter?: (total: number) => ReactNode;
-  weeklyLabel?: (row: T) => ReactNode;
+  weekly?: boolean;
 }) {
+  const { t: tRuntimes } = useT("runtimes");
+  const { t: tUsage } = useT("usage");
   return (
     <RuntimeBarChart
       config={config}
@@ -112,12 +116,17 @@ function UsageBarChart<T extends { label: string }>({
         <ChartTooltip
           content={
             <ChartTooltipContent
-              labelKey={weeklyLabel ? "rangeLabel" : undefined}
+              labelKey={weekly ? "rangeLabel" : undefined}
               labelFormatter={
-                weeklyLabel
+                weekly
                   ? (_label, payload) => {
-                      const row = payload[0]?.payload as T | undefined;
-                      return row ? weeklyLabel(row) : "";
+                      const row = payload[0]?.payload as WeeklyUsageDatum | undefined;
+                      return row
+                        ? tUsage(($) => $.weekly.partial_label, {
+                            range: row.rangeLabel,
+                            covered: row.daysCovered,
+                          })
+                        : "";
                     }
                   : undefined
               }
@@ -127,9 +136,13 @@ function UsageBarChart<T extends { label: string }>({
                   : `${value} ${name}`
               }
               footer={
-                totalLabel !== undefined && totalFormatter
+                totalFormatter
                   ? (payload) =>
-                      renderTooltipTotalFooter(payload, totalLabel, totalFormatter)
+                      renderTooltipTotalFooter(
+                        payload,
+                        tRuntimes(($) => $.charts.tooltip_total),
+                        totalFormatter,
+                      )
                   : undefined
               }
             />
@@ -145,7 +158,7 @@ function UsageBarChart<T extends { label: string }>({
           fill={item.fill}
           radius={item.radius}
         >
-          {weeklyLabel ? (
+          {weekly ? (
             <PartialWeekCells
               data={data as unknown as WeeklyUsageDatum[]}
               keySuffix={`-${item.key}`}
@@ -184,7 +197,6 @@ export interface WeeklyTasksData extends WeeklyUsageDatum {
 }
 
 export function DailyTokensChart({ data }: { data: DailyTokenData[] }) {
-  const { t } = useT("runtimes");
   return (
     <UsageBarChart
       config={tokenStackConfig}
@@ -194,14 +206,12 @@ export function DailyTokensChart({ data }: { data: DailyTokenData[] }) {
       yAxisWidth={50}
       tickFormatter={formatTokens}
       valueFormatter={formatTokens}
-      totalLabel={t(($) => $.charts.tooltip_total)}
-      totalFormatter={(total) => total.toLocaleString()}
+      totalFormatter={formatLocaleNumber}
     />
   );
 }
 
 export function WeeklyTokensChart({ data }: { data: WeeklyTokenData[] }) {
-  const { t } = useT("runtimes");
   return (
     <UsageBarChart
       config={tokenStackConfig}
@@ -211,20 +221,13 @@ export function WeeklyTokensChart({ data }: { data: WeeklyTokenData[] }) {
       yAxisWidth={50}
       tickFormatter={formatTokens}
       valueFormatter={formatTokens}
-      totalLabel={t(($) => $.charts.tooltip_total)}
-      totalFormatter={(total) => total.toLocaleString()}
-      weeklyLabel={(row) =>
-        t(($) => $.usage.weekly_partial_label, {
-          range: row.rangeLabel,
-          covered: row.daysCovered,
-        })
-      }
+      totalFormatter={formatLocaleNumber}
+      weekly
     />
   );
 }
 
 export function DailyCostChart({ data }: { data: DailyCostStackData[] }) {
-  const { t } = useT("runtimes");
   return (
     <UsageBarChart
       config={costStackConfig}
@@ -232,16 +235,14 @@ export function DailyCostChart({ data }: { data: DailyCostStackData[] }) {
       series={costSeries}
       stackId="cost"
       yAxisWidth={50}
-      tickFormatter={(value) => `$${value}`}
-      valueFormatter={(value) => `$${value.toFixed(2)}`}
-      totalLabel={t(($) => $.charts.tooltip_total)}
-      totalFormatter={(total) => `$${total.toFixed(2)}`}
+      tickFormatter={formatCostTick}
+      valueFormatter={formatCost}
+      totalFormatter={formatCost}
     />
   );
 }
 
 export function WeeklyCostChart({ data }: { data: WeeklyCostStackData[] }) {
-  const { t } = useT("runtimes");
   return (
     <UsageBarChart
       config={costStackConfig}
@@ -249,22 +250,15 @@ export function WeeklyCostChart({ data }: { data: WeeklyCostStackData[] }) {
       series={costSeries}
       stackId="cost"
       yAxisWidth={50}
-      tickFormatter={(value) => `$${value}`}
-      valueFormatter={(value) => `$${value.toFixed(2)}`}
-      totalLabel={t(($) => $.charts.tooltip_total)}
-      totalFormatter={(total) => `$${total.toFixed(2)}`}
-      weeklyLabel={(row) =>
-        t(($) => $.usage.weekly_partial_label, {
-          range: row.rangeLabel,
-          covered: row.daysCovered,
-        })
-      }
+      tickFormatter={formatCostTick}
+      valueFormatter={formatCost}
+      totalFormatter={formatCost}
+      weekly
     />
   );
 }
 
 export function DailyTasksChart({ data }: { data: DailyTasksData[] }) {
-  const { t } = useT("runtimes");
   return (
     <UsageBarChart
       config={taskStackConfig}
@@ -274,15 +268,12 @@ export function DailyTasksChart({ data }: { data: DailyTasksData[] }) {
       yAxisWidth={40}
       allowDecimals={false}
       valueFormatter={String}
-      totalLabel={t(($) => $.charts.tooltip_total)}
-      totalFormatter={(total) => total.toLocaleString()}
+      totalFormatter={formatLocaleNumber}
     />
   );
 }
 
 export function WeeklyTasksChart({ data }: { data: WeeklyTasksData[] }) {
-  const { t } = useT("usage");
-  const { t: tRuntimes } = useT("runtimes");
   return (
     <UsageBarChart
       config={taskStackConfig}
@@ -292,14 +283,8 @@ export function WeeklyTasksChart({ data }: { data: WeeklyTasksData[] }) {
       yAxisWidth={40}
       allowDecimals={false}
       valueFormatter={String}
-      totalLabel={tRuntimes(($) => $.charts.tooltip_total)}
-      totalFormatter={(total) => total.toLocaleString()}
-      weeklyLabel={(row) =>
-        t(($) => $.weekly.partial_label, {
-          range: row.rangeLabel,
-          covered: row.daysCovered,
-        })
-      }
+      totalFormatter={formatLocaleNumber}
+      weekly
     />
   );
 }
@@ -334,7 +319,6 @@ export function WeeklyTimeChart({
   formatY: (seconds: number) => string;
   formatTooltip: (seconds: number) => string;
 }) {
-  const { t } = useT("usage");
   return (
     <UsageBarChart
       config={timeChartConfig}
@@ -343,12 +327,7 @@ export function WeeklyTimeChart({
       yAxisWidth={56}
       tickFormatter={formatY}
       valueFormatter={formatTooltip}
-      weeklyLabel={(row) =>
-        t(($) => $.weekly.partial_label, {
-          range: row.rangeLabel,
-          covered: row.daysCovered,
-        })
-      }
+      weekly
     />
   );
 }
