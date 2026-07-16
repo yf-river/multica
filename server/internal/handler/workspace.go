@@ -24,6 +24,7 @@ import (
 
 var nonAlpha = regexp.MustCompile(`[^a-zA-Z]`)
 var workspaceSlugPattern = regexp.MustCompile(`^[a-z0-9]+(?:-[a-z0-9]+)*$`)
+var errExpectedWorkspaceReposArray = errors.New("decode workspace repos: expected JSON array")
 
 var workspaceBooleanSettingDefaults = map[string]bool{
 	"github_enabled":            true,
@@ -90,7 +91,7 @@ func workspaceToResponse(w db.Workspace) (WorkspaceResponse, error) {
 		return WorkspaceResponse{}, fmt.Errorf("decode workspace repos: %w", err)
 	}
 	if repos == nil {
-		return WorkspaceResponse{}, fmt.Errorf("decode workspace repos: expected JSON array")
+		return WorkspaceResponse{}, errExpectedWorkspaceReposArray
 	}
 	return WorkspaceResponse{
 		ID:          uuidToString(w.ID),

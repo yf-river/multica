@@ -63,6 +63,12 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 		writeEntityLoadError(w, err, "workspace", "workspace_id", req.WorkspaceID)
 		return
 	}
+	repoResp, err := workspaceReposResponse(req.WorkspaceID, ws.Repos, ws.Settings)
+	if err != nil {
+		slog.Error("decode workspace repos for daemon registration failed", "error", err, "workspace_id", req.WorkspaceID)
+		writeError(w, http.StatusInternalServerError, "failed to decode workspace repos")
+		return
+	}
 
 	resp := make([]AgentRuntimeResponse, 0, len(req.Runtimes))
 	for _, runtime := range req.Runtimes {
@@ -233,8 +239,6 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 		"runtimes": resp,
 	})
 
-	repoResp := workspaceReposResponse(req.WorkspaceID, ws.Repos, ws.Settings)
-
 	writeJSON(w, http.StatusOK, map[string]any{
 		"runtimes":      resp,
 		"repos":         repoResp.Repos,
@@ -255,7 +259,13 @@ func (h *Handler) GetDaemonWorkspaceRepos(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	writeJSON(w, http.StatusOK, workspaceReposResponse(workspaceID, ws.Repos, ws.Settings))
+	resp, err := workspaceReposResponse(workspaceID, ws.Repos, ws.Settings)
+	if err != nil {
+		slog.Error("decode workspace repos for daemon refresh failed", "error", err, "workspace_id", workspaceID)
+		writeError(w, http.StatusInternalServerError, "failed to decode workspace repos")
+		return
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // DaemonDeregister marks runtimes as offline when the daemon shuts down.

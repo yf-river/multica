@@ -2030,7 +2030,7 @@ func TestGetDaemonWorkspaceRepos_WithDaemonUserCredential(t *testing.T) {
 
 	setHandlerTestWorkspaceRepos(t, []map[string]string{
 		{"url": "git@example.com:team/api.git", "description": "API"},
-		{"url": "  git@example.com:team/web.git  ", "description": " Web "},
+		{"url": "git@example.com:team/web.git", "description": "Web"},
 	})
 
 	w := httptest.NewRecorder()
@@ -2058,10 +2058,51 @@ func TestGetDaemonWorkspaceRepos_WithDaemonUserCredential(t *testing.T) {
 		t.Fatalf("expected 2 repos, got %d", len(resp.Repos))
 	}
 	if resp.Repos[1]["url"] != "git@example.com:team/web.git" {
-		t.Fatalf("expected trimmed repo URL, got %q", resp.Repos[1]["url"])
+		t.Fatalf("unexpected repo URL %q", resp.Repos[1]["url"])
 	}
 	if resp.ReposVersion == "" {
 		t.Fatal("expected repos_version to be set")
+	}
+}
+
+func TestDaemonWorkspaceRepos_RejectsCorruptPersistedShapeBeforeRegistration(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	if _, err := testPool.Exec(context.Background(), `UPDATE workspace SET repos = $1 WHERE id = $2`, []byte(`[{"url":42}]`), testWorkspaceID); err != nil {
+		t.Fatalf("seed corrupt workspace repos: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `UPDATE workspace SET repos = '[]'::jsonb WHERE id = $1`, testWorkspaceID)
+	})
+
+	daemonID := "corrupt-repos-" + randomID()[:8]
+	w := httptest.NewRecorder()
+	req := newDaemonUserRequest("POST", "/api/daemon/register", map[string]any{
+		"workspace_id": testWorkspaceID,
+		"daemon_id":    daemonID,
+		"runtimes": []map[string]any{
+			{"name": "must-not-register", "type": "claude", "status": "online"},
+		},
+	}, testWorkspaceID, daemonID)
+	testHandler.DaemonRegister(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("register with corrupt repos: expected 500, got %d: %s", w.Code, w.Body.String())
+	}
+	var runtimeCount int
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*) FROM agent_runtime WHERE daemon_id = $1`, daemonID).Scan(&runtimeCount); err != nil {
+		t.Fatalf("count runtimes after rejected registration: %v", err)
+	}
+	if runtimeCount != 0 {
+		t.Fatalf("corrupt repos registration wrote %d runtimes", runtimeCount)
+	}
+
+	w = httptest.NewRecorder()
+	req = newDaemonUserRequest("GET", "/api/daemon/workspaces/"+testWorkspaceID+"/repos", nil, testWorkspaceID, "test-daemon-user")
+	req = withURLParam(req, "workspaceId", testWorkspaceID)
+	testHandler.GetDaemonWorkspaceRepos(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("corrupt repos: expected 500, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

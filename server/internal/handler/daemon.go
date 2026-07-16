@@ -136,33 +136,9 @@ func (h *Handler) verifyDaemonWorkspaceAccess(r *http.Request, workspaceID strin
 // Daemon Registration & Heartbeat
 // ---------------------------------------------------------------------------
 
-func normalizeWorkspaceRepos(repos []protocol.TaskRepository) []protocol.TaskRepository {
-	if len(repos) == 0 {
-		return []protocol.TaskRepository{}
-	}
-
-	normalized := make([]protocol.TaskRepository, 0, len(repos))
-	seen := make(map[string]struct{}, len(repos))
-	for _, repo := range repos {
-		url := strings.TrimSpace(repo.URL)
-		if url == "" {
-			continue
-		}
-		if _, exists := seen[url]; exists {
-			continue
-		}
-		seen[url] = struct{}{}
-		normalized = append(normalized, protocol.TaskRepository{URL: url, Description: repo.Description})
-	}
-	return normalized
-}
-
 func workspaceReposVersion(repos []protocol.TaskRepository) string {
 	urls := make([]string, 0, len(repos))
 	for _, repo := range repos {
-		if repo.URL == "" {
-			continue
-		}
 		urls = append(urls, repo.URL)
 	}
 	sort.Strings(urls)
@@ -170,20 +146,14 @@ func workspaceReposVersion(repos []protocol.TaskRepository) string {
 	return hex.EncodeToString(sum[:])
 }
 
-func parseWorkspaceRepos(raw []byte) []protocol.TaskRepository {
-	if len(raw) == 0 {
-		return []protocol.TaskRepository{}
-	}
-
+func workspaceReposResponse(workspaceID string, raw []byte, settingsRaw []byte) (protocol.DaemonWorkspaceReposResponse, error) {
 	var repos []protocol.TaskRepository
 	if err := json.Unmarshal(raw, &repos); err != nil {
-		return []protocol.TaskRepository{}
+		return protocol.DaemonWorkspaceReposResponse{}, err
 	}
-	return normalizeWorkspaceRepos(repos)
-}
-
-func workspaceReposResponse(workspaceID string, raw []byte, settingsRaw []byte) protocol.DaemonWorkspaceReposResponse {
-	repos := parseWorkspaceRepos(raw)
+	if repos == nil {
+		return protocol.DaemonWorkspaceReposResponse{}, errExpectedWorkspaceReposArray
+	}
 	resp := protocol.DaemonWorkspaceReposResponse{
 		WorkspaceID:  workspaceID,
 		Repos:        repos,
@@ -192,7 +162,7 @@ func workspaceReposResponse(workspaceID string, raw []byte, settingsRaw []byte) 
 	if len(settingsRaw) > 0 {
 		resp.Settings = json.RawMessage(settingsRaw)
 	}
-	return resp
+	return resp, nil
 }
 
 // normalizeProvider canonicalizes a provider string for storage: trimmed and
